@@ -1,0 +1,29 @@
+services:
+  skygate:
+    build: .
+    container_name: skygate
+    env_file:
+      - .env
+    environment:
+      - SKYGATE_DB=/data/skygate.db
+    volumes:
+      # Bind-mount source code - any change is picked up on container restart
+      - ./:/app
+      # Named volume for DB only
+      - skygate-data:/data
+      # docker.sock to call headscale CLI for preauth keys
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8080:8080"
+    networks:
+      - skygate-net
+    restart: unless-stopped
+
+networks:
+  skygate-net:
+    name: headscale_default
+    external: true
+
+volumes:
+  skygate-data:
+    name: skygate-data
