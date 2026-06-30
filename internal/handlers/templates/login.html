@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="{{.Theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skygate — Вход</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0a;--bg-card:#131313;--bg-elev:#1a1a1a;
+  --border:#262626;--border-strong:#3a3a3a;
+  --text:#ededed;--text-muted:#a0a0a0;--text-subtle:#6a6a6a;
+  --accent:#7c7aff;--accent-fg:#0a0a0a;--accent-hover:#9b9aff;--accent-soft:rgba(124,122,255,0.12);
+  --danger:#f87171;--danger-bg:rgba(248,113,113,0.1);
+  --shadow:0 8px 24px rgba(0,0,0,0.4);--shadow-lg:0 24px 48px rgba(0,0,0,0.5);
+  --radius:6px;--radius-lg:10px;
+  --font:'Inter',system-ui,-apple-system,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+[data-theme="vercel"]{
+  --bg:#ffffff;--bg-card:#fafafa;--bg-elev:#f4f4f5;
+  --border:#e4e4e7;--border-strong:#d4d4d8;
+  --text:#0a0a0a;--text-muted:#52525b;--text-subtle:#a1a1aa;
+  --accent:#0a0a0a;--accent-fg:#ffffff;--accent-hover:#27272a;--accent-soft:rgba(10,10,10,0.06);
+  --danger:#dc2626;--danger-bg:rgba(220,38,38,0.08);
+  --shadow:0 8px 24px rgba(0,0,0,0.08);--shadow-lg:0 24px 48px rgba(0,0,0,0.12);
+}
+[data-theme="sentry"]{
+  --bg:#1f1633;--bg-card:#2a1f44;--bg-elev:#362d59;
+  --border:#3a2f5e;--border-strong:#4d3f7a;
+  --text:#ffffff;--text-muted:#b8b0c8;--text-subtle:#8a8198;
+  --accent:#c2ef4e;--accent-fg:#1f1633;--accent-hover:#d4f77a;--accent-soft:rgba(194,239,78,0.15);
+  --danger:#fa7faa;--danger-bg:rgba(250,127,170,0.12);
+  --shadow:0 8px 24px rgba(0,0,0,0.3);--shadow-lg:0 24px 48px rgba(22,15,36,0.5);
+  --radius:8px;--radius-lg:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--font);font-size:14px;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;
+  background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(circle at 20% 0%,var(--accent-soft) 0%,transparent 50%),radial-gradient(circle at 80% 100%,var(--accent-soft) 0%,transparent 50%);
+}
+[data-theme="vercel"] body{background-image:radial-gradient(circle at 50% -20%,rgba(0,0,0,0.04) 0%,transparent 60%)}
+.login-box{
+  width:100%;max-width:380px;
+  background:var(--bg-card);
+  border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:32px 28px;box-shadow:var(--shadow-lg);
+}
+.brand{display:flex;align-items:center;gap:8px;margin-bottom:24px}
+.brand .logo{width:24px;height:24px;color:var(--accent)}
+.brand-name{font-size:17px;font-weight:600;letter-spacing:-0.015em}
+.brand-ver{color:var(--text-muted);font-family:var(--mono);font-size:10px;padding:1px 5px;border:1px solid var(--border);border-radius:3px}
+h1{font-size:20px;font-weight:600;margin:0 0 4px 0;letter-spacing:-0.015em;display:flex;align-items:center;gap:8px}
+h1 i{color:var(--accent);font-size:18px}
+.lead{color:var(--text-muted);font-size:13px;margin-bottom:24px;display:flex;align-items:center;gap:6px}
+.lead i{font-size:12px}
+label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;margin:16px 0 6px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em}
+label:first-of-type{margin-top:0}
+label i{font-size:11px}
+input[type=text],input[type=password]{
+  width:100%;padding:10px 12px;
+  border:1px solid var(--border-strong);border-radius:var(--radius);
+  background:var(--bg);color:var(--text);font:inherit;font-size:14px;
+  transition:all .15s;
+}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+button{
+  width:100%;margin-top:24px;
+  padding:10px 14px;background:var(--accent);color:var(--accent-fg);
+  border:none;border-radius:var(--radius);font:inherit;font-weight:500;font-size:14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;
+}
+button:hover{background:var(--accent-hover)}
+button:active{transform:translateY(1px)}
+.alert{border:1px solid var(--danger);border-left:3px solid var(--danger);background:var(--danger-bg);color:var(--danger);padding:10px 12px;border-radius:var(--radius);margin-bottom:14px;font-size:13px;display:flex;align-items:flex-start;gap:8px}
+.alert i{margin-top:2px;flex-shrink:0}
+.help{margin-top:20px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);display:flex;align-items:flex-start;gap:6px}
+.help i{font-size:11px;margin-top:2px;flex-shrink:0}
+code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:12px}
+.theme-picker{position:absolute;top:20px;right:20px}
+.theme-picker summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card);color:var(--text);font:inherit;font-size:12px;transition:all .15s}
+.theme-picker summary::-webkit-details-marker{display:none}
+.theme-picker summary:hover{background:var(--bg-elev)}
+.theme-picker .menu{position:absolute;right:0;top:calc(100% + 4px);min-width:140px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:4px;z-index:100}
+.theme-picker .menu a{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:13px;border-radius:4px;text-decoration:none;color:var(--text)}
+.theme-picker .menu a:hover{background:var(--bg-elev)}
+.theme-picker .menu a.active{background:var(--accent-soft);color:var(--accent);font-weight:500}
+.theme-picker .menu a i{font-size:11px;width:14px;text-align:center}
+.theme-picker .menu a small{color:var(--text-subtle);font-size:11px;margin-left:auto}
+</style>
+</head>
+<body>
+<details class="theme-picker">
+  <summary><i class="fa-solid fa-palette"></i>{{.ThemeLabel}}</summary>
+  <div class="menu">
+    <a href="/login?theme=linear" {{if eq .Theme "linear"}}class="active"{{end}}><i class="fa-solid fa-moon"></i>Linear <small>dark</small></a>
+    <a href="/login?theme=vercel" {{if eq .Theme "vercel"}}class="active"{{end}}><i class="fa-solid fa-sun"></i>Vercel <small>light</small></a>
+    <a href="/login?theme=sentry" {{if eq .Theme "sentry"}}class="active"{{end}}><i class="fa-solid fa-bolt"></i>Sentry <small>purple</small></a>
+  </div>
+</details>
+<div class="login-box">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+    <span class="brand-name">Skygate</span>
+    <span class="brand-ver">v0.2</span>
+  </div>
+  <h1><i class="fa-solid fa-right-to-bracket"></i>Вход</h1>
+  <div class="lead"><i class="fa-solid fa-info-circle"></i>Self-service portal для headscale</div>
+  {{if .Error}}<div class="alert"><i class="fa-solid fa-circle-exclamation"></i>{{.Error}}</div>{{end}}
+  <form method="post" action="/login?theme={{.Theme}}">
+    <label for="username"><i class="fa-solid fa-user"></i>Username</label>
+    <input type="text" id="username" name="username" required autofocus autocomplete="username" placeholder="skyadmin">
+    <label for="password"><i class="fa-solid fa-lock"></i>Password</label>
+    <input type="password" id="password" name="password" required autocomplete="current-password">
+    <button type="submit"><i class="fa-solid fa-arrow-right"></i>Войти</button>
+  </form>
+  <div class="help"><i class="fa-solid fa-lightbulb"></i>Нет аккаунта? Попросите администратора (<code>skyadmin</code>) создать его.</div>
+</div>
+</body>
+</html>

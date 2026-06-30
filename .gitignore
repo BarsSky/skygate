@@ -1,0 +1,9 @@
+skygate
+skygate.new
+*.bak
+*.bak.*
+*.tar
+*.tar.*
+.env
+/data/
+/static/

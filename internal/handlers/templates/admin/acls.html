@@ -1,0 +1,92 @@
+{{define "body-admin-acls"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-shield-halved"></i>ACL политика</h2>
+    <div class="sub">Управляется в <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane UI</a></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-pen-to-square"></i>Где редактировать ACL</h3>
+  <p style="color:var(--text-muted);margin-bottom:16px">
+    ACL политика headscale редактируется централизованно в Headplane.
+    Изменения применяются ко всем узлам tailnet в течение ~30 секунд.
+  </p>
+
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener" class="btn"><i class="fa-solid fa-arrow-up-right-from-square"></i>Открыть Headplane ACL</a>
+
+    {{if .APIKey}}
+    <form id="headplane-login" action="https://tsnet.skynas.ru/admin/login" method="post" target="_blank" style="display:inline">
+      <input type="hidden" name="api_key" value="{{.APIKey}}">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-right-to-bracket"></i>Войти в Headplane автоматически</button>
+    </form>
+    {{end}}
+  </div>
+</div>
+
+{{if .APIKey}}
+<div class="card">
+  <h3><i class="fa-solid fa-key"></i>API key для Headplane</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px;font-size:13px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-triangle-exclamation" style="color:var(--warning);margin-top:2px"></i>
+    <span>Ключ headscale API для входа в Headplane. <strong>Не передавайте его третьим лицам</strong> — он даёт полный доступ к управлению tailnet.</span>
+  </p>
+  <div style="display:flex;align-items:center;gap:8px">
+    <input
+      type="password"
+      id="apikey"
+      readonly
+      value="{{.APIKey}}"
+      style="flex:1;font-family:var(--mono);font-size:12px"
+      onclick="this.select()"
+    >
+    <button type="button" class="btn btn-secondary" onclick="toggleKey()"><i class="fa-solid fa-eye"></i>Показать</button>
+    <button type="button" class="btn btn-secondary" onclick="copyKey()"><i class="fa-solid fa-copy"></i>Копировать</button>
+  </div>
+  <p style="color:var(--text-subtle);font-size:12px;margin-top:8px;display:flex;align-items:center;gap:6px">
+    <i class="fa-solid fa-lightbulb"></i>
+    <span>Совет: откройте Headplane и вставьте ключ в поле API Key на странице входа.</span>
+  </p>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-file-code"></i>Текущая политика</h3>
+  {{if .Policy}}
+  <pre>{{.Policy}}</pre>
+  {{else}}
+  <div class="alert alert-danger" style="margin-top:0">
+    <i class="fa-solid fa-circle-exclamation"></i>
+    <div>
+      Не удалось прочитать policy напрямую. Откройте Headplane для просмотра и редактирования.
+      <br><br>
+      <span style="color:var(--text-subtle);font-size:12px">{{.Error}}</span>
+    </div>
+  </div>
+  {{end}}
+</div>
+
+<script>
+function toggleKey() {
+  const el = document.getElementById('apikey');
+  el.type = el.type === 'password' ? 'text' : 'password';
+  // toggle icon
+  const btn = event.currentTarget;
+  const icon = btn.querySelector('i');
+  if (icon) icon.className = el.type === 'password' ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash';
+}
+function copyKey() {
+  const el = document.getElementById('apikey');
+  const prevType = el.type;
+  el.type = 'text';
+  el.select();
+  document.execCommand('copy');
+  el.type = prevType;
+  const btn = event.currentTarget;
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<i class="fa-solid fa-check"></i>Скопировано!';
+  setTimeout(() => { btn.innerHTML = orig; }, 1500);
+}
+</script>
+{{end}}

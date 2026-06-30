@@ -1,0 +1,89 @@
+{{define "body-admin-derp"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-tower-broadcast"></i>DERP relay</h2>
+    <div class="sub">Custom DERP сервер на агенте — backup relay для tailnet</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/derp/refresh" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i>Обновить</a>
+  </div>
+</div>
+
+{{if .DerpStatus}}
+<div class="section-title"><i class="fa-solid fa-circle-nodes"></i>Статус сервиса</div>
+<div class="metric-grid">
+  <div class="metric {{if .DerpStatus.Running}}good{{else}}bad{{end}}">
+    <div class="icon"><i class="fa-solid fa-power-off"></i></div>
+    <div class="body">
+      <div class="label">derper.service</div>
+      <div class="value">{{if .DerpStatus.Running}}active{{else}}stopped{{end}}</div>
+      <div class="sub">{{.DerpStatus.UpTime}}</div>
+    </div>
+  </div>
+  <div class="metric {{if .DerpStatus.SocketListening}}good{{else}}bad{{end}}">
+    <div class="icon"><i class="fa-solid fa-plug"></i></div>
+    <div class="body">
+      <div class="label">DERP socket</div>
+      <div class="value">:{{.DerpStatus.DERPPort}}</div>
+      <div class="sub">{{if .DerpStatus.SocketListening}}TCP listening{{else}}closed{{end}}</div>
+    </div>
+  </div>
+  <div class="metric {{if .DerpStatus.STUNListening}}good{{else}}bad{{end}}">
+    <div class="icon"><i class="fa-solid fa-satellite-dish"></i></div>
+    <div class="body">
+      <div class="label">STUN UDP</div>
+      <div class="value">:{{.DerpStatus.STUNPort}}</div>
+      <div class="sub">{{if .DerpStatus.STUNListening}}listening{{else}}closed{{end}}</div>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="icon"><i class="fa-solid fa-code-branch"></i></div>
+    <div class="body">
+      <div class="label">Версия</div>
+      <div class="value" style="font-size:14px">v{{.DerpStatus.Version}}</div>
+      <div class="sub">tailscale/derper</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-server"></i>Сервис</h3>
+  <table>
+    <tbody>
+      <tr><td style="width:200px;color:var(--text-muted)">Hostname</td><td><code>{{.DerpStatus.Hostname}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">Region</td><td><code>{{.DerpStatus.RegionCode}} ({{.DerpStatus.RegionID}})</code> — {{.DerpStatus.RegionName}}</td></tr>
+      <tr><td style="color:var(--text-muted)">WebSocket endpoint</td><td><code>wss://{{.DerpStatus.Hostname}}:{{.DerpStatus.DERPPort}}/derp</code></td></tr>
+      <tr><td style="color:var(--text-muted)">STUN endpoint</td><td><code>{{.DerpStatus.Hostname}}:{{.DerpStatus.STUNPort}}</code> (UDP)</td></tr>
+      <tr><td style="color:var(--text-muted)">White IP</td><td><code>{{.DerpStatus.WhiteIP}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">Started</td><td>{{.DerpStatus.StartedAt}}</td></tr>
+      <tr><td style="color:var(--text-muted)">Process PID</td><td><code>{{.DerpStatus.PID}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">Memory</td><td>{{.DerpStatus.Memory}}</td></tr>
+    </tbody>
+  </table>
+</div>
+
+{{if .DerpStatus.RecentLog}}
+<div class="card">
+  <h3><i class="fa-solid fa-terminal"></i>Последние логи</h3>
+  <pre>{{.DerpStatus.RecentLog}}</pre>
+</div>
+{{end}}
+
+{{else}}
+<div class="alert alert-danger">
+  <i class="fa-solid fa-circle-exclamation"></i>
+  <div>Не удалось получить статус DERP. Проверьте что derper запущен на агенте.</div>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-question"></i>Что такое DERP?</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
+    DERP (Designated Encrypted Relay for Packets) — это relay-сервер Tailscale.
+    Когда прямое соединение между клиентами невозможно (CGNAT, файрвол), трафик идёт через DERP.
+  </p>
+  <p style="color:var(--text-muted);font-size:13px">
+    Подробнее: <a href="/help#derp"><i class="fa-solid fa-book"></i> Справка → DERP</a>
+  </p>
+</div>
+{{end}}

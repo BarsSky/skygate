@@ -1,0 +1,56 @@
+{{define "body-user-preauth_result"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-key"></i>Preauth ключ создан</h2>
+    <div class="sub">Одноразовый, действует {{.Expires}}</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-key"></i>Ваш ключ</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">Скопируйте и вставьте в Tailscale на устройстве:</p>
+  <div class="key-block"><code>{{.Key}}</code><button class="copy-btn" onclick="navigator.clipboard.writeText('{{.Key}}');this.textContent='Скопировано!';setTimeout(()=>{this.textContent='Копировать'},1500)"><i class="fa-solid fa-copy"></i></button></div>
+  <div class="alert alert-warn" style="margin-bottom:0">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <div>Ключ одноразовый и исчезнет через {{.Expires}}. Не показывайте его другим людям.</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-list-check"></i>Инструкция для {{.OS}}</h3>
+  {{if eq .OS "android"}}
+  <ol class="plain">
+    <li>Откройте Google Play, установите <b>Tailscale</b></li>
+    <li>Войдите в приложение → ☰ меню → <i>Use a custom coordination server</i></li>
+    <li>Укажите: <code>https://head.skynas.ru</code></li>
+    <li>Нажмите Sign in → вставьте ключ выше</li>
+  </ol>
+  {{else if eq .OS "ios"}}
+  <ol class="plain">
+    <li>App Store → установите Tailscale</li>
+    <li>Settings → Use Custom Control Server → <code>https://head.skynas.ru</code></li>
+    <li>Sign in → вставьте ключ</li>
+  </ol>
+  {{else if eq .OS "linux"}}
+  <pre>curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --login-server=https://head.skynas.ru --authkey={{.Key}}</pre>
+  <p>Готово — устройство появится на <a href="/my/devices">странице устройств</a> через несколько секунд.</p>
+  {{else if eq .OS "macos"}}
+  <ol class="plain">
+    <li>App Store → установите Tailscale for Mac</li>
+    <li>Settings → Use Custom Control Server → <code>https://head.skynas.ru</code></li>
+    <li>Sign in → вставьте ключ</li>
+  </ol>
+  {{else if eq .OS "windows"}}
+  <ol class="plain">
+    <li>Скачайте установщик: <a href="https://tailscale.com/download/windows" target="_blank" rel="noopener">tailscale.com/download/windows</a></li>
+    <li>Settings → Use Custom Control Server → <code>https://head.skynas.ru</code></li>
+    <li>Sign in → вставьте ключ</li>
+  </ol>
+  {{end}}
+</div>
+
+<div class="btn-row">
+  <a href="/my/devices" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i>Назад к устройствам</a>
+</div>
+{{end}}

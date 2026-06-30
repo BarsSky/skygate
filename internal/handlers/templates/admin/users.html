@@ -1,0 +1,91 @@
+{{define "body-admin-users"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-users"></i>Пользователи</h2>
+    <div class="sub">Пользователи skygate с правами доступа к tailnet</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/users/new" class="btn"><i class="fa-solid fa-user-plus"></i>Новый</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-check"></i>Активные ({{len .Users}})</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:60px">ID</th>
+        <th>Username</th>
+        <th style="width:100px">Headscale ID</th>
+        <th style="width:80px">Роль</th>
+        <th style="width:160px">Создан</th>
+        <th style="width:140px">Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Users}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td><code>{{.Username}}</code></td>
+        <td class="mono">{{if .HeadscaleUserID}}{{.HeadscaleUserID}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
+        <td>{{if .IsAdmin}}<span class="tag tag-admin"><i class="fa-solid fa-shield-halved"></i>admin</span>{{else}}<span style="color:var(--text-muted);font-size:12px"><i class="fa-solid fa-user"></i> user</span>{{end}}</td>
+        <td style="color:var(--text-muted)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        <td>
+          <form method="post" action="/admin/users/{{.ID}}/delete" style="display:inline" onsubmit="return confirm('Удалить {{.Username}}? Удалит и из headscale, включая все ноды')">
+            <button type="submit" class="btn btn-danger btn-sm" title="Удалить"><i class="fa-solid fa-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" style="color:var(--text-muted);text-align:center;padding:24px">Нет пользователей</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+{{if .HSOrphans}}
+<div class="card" style="border-color:var(--warning)">
+  <h3><i class="fa-solid fa-user-slash" style="color:var(--warning)"></i>Только в Headscale ({{len .HSOrphans}})</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
+    <span>Эти пользователи есть в headscale, но не зарегистрированы в skygate. Они могут подключаться к tailnet через свои preauth-ключи, но не имеют доступа к web-интерфейсу.</span>
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:100px">HS ID</th>
+        <th>Username</th>
+        <th style="width:160px">Создан</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .HSOrphans}}
+      <tr>
+        <td class="mono">{{.HeadscaleID}}</td>
+        <td><code>{{.Username}}</code></td>
+        <td style="color:var(--text-muted)">{{.CreatedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-plus"></i>Добавить пользователя</h3>
+  <form method="post" action="/admin/users" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end">
+    <label>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:flex;align-items:center;gap:4px"><i class="fa-solid fa-user"></i> Username</div>
+      <input name="username" required pattern="[a-z0-9_-]+" placeholder="например: alice" style="width:100%">
+    </label>
+    <label>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:flex;align-items:center;gap:4px"><i class="fa-solid fa-lock"></i> Password</div>
+      <input name="password" required minlength="6" type="password" style="width:100%">
+    </label>
+    <button type="submit" class="btn"><i class="fa-solid fa-plus"></i>Создать</button>
+  </form>
+  <label style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;color:var(--text-muted);cursor:pointer">
+    <input type="checkbox" name="is_admin"> Сделать администратором
+  </label>
+</div>
+{{end}}

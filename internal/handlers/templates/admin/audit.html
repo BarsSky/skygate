@@ -1,0 +1,39 @@
+{{define "body-admin-audit"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-clipboard-list"></i>Audit log</h2>
+    <div class="sub">Последние {{len .Entries}} действий</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i>Действия</h3>
+  {{if .Entries}}
+  <table>
+    <thead>
+      <tr>
+        <th style="width:160px"><i class="fa-solid fa-clock"></i> Время</th>
+        <th style="width:140px"><i class="fa-solid fa-user"></i> User</th>
+        <th style="width:160px"><i class="fa-solid fa-bolt"></i> Action</th>
+        <th><i class="fa-solid fa-message"></i> Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Entries}}
+      <tr>
+        <td class="mono" style="color:var(--text-muted)">{{.Time}}</td>
+        <td>{{.Username}}</td>
+        <td><code>{{.Action}}</code></td>
+        <td style="color:var(--text-muted)">{{.Detail}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>Действий пока нет.</div>
+  </div>
+  {{end}}
+</div>
+{{end}}

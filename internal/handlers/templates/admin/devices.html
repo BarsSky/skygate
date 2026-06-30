@@ -1,0 +1,71 @@
+{{define "body-admin-devices"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-server"></i>Все устройства</h2>
+    <div class="sub">Все ноды в headscale tailnet. Публичные устройства видны всем пользователям, приватные — только владельцу и админам.</div>
+  </div>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th><i class="fa-solid fa-tag"></i> Hostname</th>
+        <th><i class="fa-solid fa-user"></i> Owner</th>
+        <th><i class="fa-solid fa-network-wired"></i> Tailscale IP</th>
+        <th><i class="fa-solid fa-circle-nodes"></i> Тип</th>
+        <th><i class="fa-solid fa-eye"></i> Видимость</th>
+        <th><i class="fa-solid fa-signal"></i> Статус</th>
+        <th><i class="fa-solid fa-clock"></i> Последний раз видели</th>
+        <th><i class="fa-solid fa-gear"></i> Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Nodes}}
+      <tr>
+        <td class="mono">{{.ID}}</td>
+        <td><code>{{.Hostname}}</code></td>
+        <td>{{.UserName}}</td>
+        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td>{{if .IsExitNode}}<span class="tag tag-admin"><i class="fa-solid fa-route"></i>exit</span>{{else}}<span class="tag">node</span>{{end}}</td>
+        <td>
+          {{if .IsPublicView}}
+            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>public</span>
+          {{else if .IsPrivateView}}
+            <span class="tag"><i class="fa-solid fa-lock"></i>private</span>
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:12px">untagged</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .Online}}
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>online</span>
+          {{else}}
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>offline</span>
+          {{end}}
+        </td>
+        <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
+        <td>
+          {{if .IsPublicView}}
+          <form method="post" action="/admin/nodes/{{.ID}}/tag" style="display:inline">
+            <input type="hidden" name="tag" value="tag:private">
+            <button type="submit" class="btn btn-secondary btn-sm" title="Сделать приватной"><i class="fa-solid fa-lock"></i></button>
+          </form>
+          {{else}}
+          <form method="post" action="/admin/nodes/{{.ID}}/tag" style="display:inline">
+            <input type="hidden" name="tag" value="tag:public">
+            <button type="submit" class="btn btn-sm" title="Сделать публичной"><i class="fa-solid fa-globe"></i></button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:16px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
+    <span><strong>Публичные</strong> устройства доступны всем пользователям tailnet по ACL (тег <code>tag:public</code>). <strong>Приватные</strong> (тег <code>tag:private</code>) — только владельцу и администраторам.</span>
+  </p>
+</div>
+{{end}}

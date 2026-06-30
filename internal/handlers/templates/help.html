@@ -1,0 +1,201 @@
+{{define "body-help"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-circle-question"></i>Справка</h2>
+    <div class="sub">Как работает tailnet, exit nodes и DERP relay</div>
+  </div>
+</div>
+
+<div class="tabs">
+  <a href="#overview" class="active"><i class="fa-solid fa-diagram-project"></i>Обзор</a>
+  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>DERP</a>
+  <a href="#exit"><i class="fa-solid fa-route"></i>Exit node</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Диагностика</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>Глоссарий</a>
+</div>
+
+<div id="overview" class="doc-card">
+  <h3><i class="fa-solid fa-diagram-project"></i>Что такое tailnet</h3>
+  <p>Tailnet — это ваша персональная mesh-сеть на базе Tailscale. Устройства в tailnet получают IP из диапазона <code>100.64.0.0/10</code> и видят друг друга по этим адресам независимо от того, где они находятся физически.</p>
+
+  <h4>Поток данных</h4>
+  <div class="flow">
+    <span class="node you">skybars<br><small>100.64.0.5</small></span>
+    <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+    <span class="node">emilia<br><small>100.64.0.3 (exit)</small></span>
+    <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+    <span class="node">internet<br><small>8.8.8.8</small></span>
+  </div>
+  <div class="note">Когда skybars использует emilia как exit node, весь его трафик в интернет идёт через VPS emilia в Германии (или какой у нас регион).</div>
+
+  <h4>Кто в нашем tailnet</h4>
+  <p>5 устройств (см. <a href="/admin/devices">Все устройства</a>):</p>
+  <ul>
+    <li><strong>karolina</strong> — VPS в Германии (Hetzner), exit node</li>
+    <li><strong>emilia</strong> — VPS в РФ, exit node</li>
+    <li><strong>sharlotta</strong> — VPS в РФ, exit node</li>
+    <li><strong>skyworker</strong> — рабочая Windows машина</li>
+    <li><strong>skybars</strong> — Android (mobile), CGNAT</li>
+  </ul>
+</div>
+
+<div id="derp" class="doc-card">
+  <h3><i class="fa-solid fa-tower-broadcast"></i>Как работает DERP</h3>
+  <p><strong>DERP (Designated Encrypted Relay for Packets)</strong> — это relay-сервер, через который проходит трафик когда прямое соединение между двумя Tailscale клиентами невозможно (CGNAT, файрвол, NAT).</p>
+
+  <h4>Архитектура</h4>
+  <pre>┌──────────┐    WireGuard-over-WS    ┌─────────┐    WebSocket    ┌──────────┐
+│ skybars  │ ────TLS 1.3 + WSS────────▶│  DERP   │─────────────────▶│  emilia  │
+│ 4G CGNAT │   TCP 443 (как HTTPS)    │  relay  │  TCP 443        │  VPS EU  │
+└──────────┘                          └─────────┘                  └──────────┘
+                                            │
+                                  видит только:
+                                  • IP клиентов
+                                  • размер пакетов
+                                  • НЕ видит содержимое
+                                  (TLS 1.3 + WireGuard)</pre>
+
+  <h4>Когда включается DERP</h4>
+  <ul>
+    <li>🟢 <strong>Direct</strong> — клиенты могут соединиться напрямую (LAN, пробили NAT). <strong>Лучшая скорость</strong>.</li>
+    <li>🟡 <strong>DERP relay</strong> — direct невозможен. Tailscale автоматически выбирает ближайший DERP. <strong>Медленнее (200-400ms)</strong>, но работает.</li>
+  </ul>
+
+  <h4>Почему DERP устойчив к блокировкам (YouTube, Telegram в РФ)</h4>
+  <ul>
+    <li><strong>TLS 1.3</strong> — DPI не видит что внутри (только "клиент ↔ какой-то HTTPS сервер")</li>
+    <li><strong>TCP 443</strong> — РКН не может заблокировать (сломает весь интернет)</li>
+    <li><strong>WebSocket</strong> — выглядит как обычное HTTPS соединение</li>
+    <li><strong>Ротация IP</strong> — Tailscale имеет ~30 DERP серверов по миру, IP меняются</li>
+    <li><strong>Custom DERP</strong> — если все публичные заблокируют, используется <code>derp.skynas.ru</code> (наш белый IP, не заблокируют)</li>
+  </ul>
+
+  <h4>Слабые места</h4>
+  <ul>
+    <li>⚠️ <strong>Throttling</strong> — РКН может замедлять HTTPS к IP Tailscale (с 50 Mbit/s до 1-2 Mbit/s)</li>
+    <li>⚠️ <strong>Блокировка по IP</strong> — Tailscale IP могут попасть под блокировку (но наш derp.skynas.ru останется)</li>
+    <li>⚠️ <strong>Latency</strong> — DERP добавляет +100-300ms к round-trip</li>
+  </ul>
+
+  <h4>Наш DERP: <code>derp.skynas.ru</code></h4>
+  <p>Запущен на агенте (192.168.13.69, белый IP 95.165.170.190):</p>
+  <ul>
+    <li>📡 DERP endpoint: <code>derp.skynas.ru:443</code> (WebSocket)</li>
+    <li>🛰️ STUN: <code>derp.skynas.ru:3478</code> (UDP)</li>
+    <li>🗺️ Регион: <code>mow</code> (Москва, ID 900)</li>
+    <li>📦 Версия: tailscale derper v1.70.0</li>
+  </ul>
+  <p>Статус и метрики: <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i> DERP</a></p>
+</div>
+
+<div id="exit" class="doc-card">
+  <h3><i class="fa-solid fa-route"></i>Exit node</h3>
+  <p>Exit node — это устройство в tailnet, через которое другие клиенты выходят в интернет. У нас 3 exit node: karolina, emilia, sharlotta.</p>
+
+  <h4>Зачем это нужно</h4>
+  <ul>
+    <li>🌍 <strong>Обход геоблокировок</strong> — выход в интернет с IP другой страны (karolina = Германия → YouTube/Netflix EU)</li>
+    <li>🛡️ <strong>Приватность</strong> — провайдер видит только зашифрованный трафик до Tailscale, не знает какие сайты</li>
+    <li>📡 <strong>Безопасность</strong> — публичный WiFi не видит ваш трафик</li>
+    <li>🇷🇺 <strong>Обход блокировок в РФ</strong> — Telegram, YouTube через karolina (Германия) работают без блокировок</li>
+  </ul>
+
+  <h4>Как включить</h4>
+  <ol>
+    <li>Открой Tailscale app на устройстве</li>
+    <li>☰ Меню → Use exit node → выбери (emilia/karolina/sharlotta)</li>
+    <li>Готово — трафик идёт через выбранный exit node</li>
+  </ol>
+
+  <h4>Лучший выбор для разных задач</h4>
+  <table>
+    <thead><tr><th>Задача</th><th>Рекомендация</th></tr></thead>
+    <tbody>
+      <tr><td>YouTube / Telegram (обход РФ блокировок)</td><td><span class="tag tag-success"><i class="fa-solid fa-medal"></i>karolina</span> Германия</td></tr>
+      <tr><td>Дома (WiFi)</td><td><span class="tag tag-success"><i class="fa-solid fa-medal"></i>любой</span> LAN direct &lt; 5ms</td></tr>
+      <tr><td>Вне дома (4G)</td><td><span class="tag"><i class="fa-solid fa-house"></i>emilia</span> низкий RTT к мобильному оператору</td></tr>
+      <tr><td>Локальные РФ сервисы</td><td><span class="tag"><i class="fa-solid fa-house"></i>emilia</span> или <span class="tag"><i class="fa-solid fa-house"></i>sharlotta</span></td></tr>
+    </tbody>
+  </table>
+
+  <h4>Что нужно для работы (на стороне сервера)</h4>
+  <pre>iptables -t nat -A POSTROUTING -s 100.64.0.0/10 -o $EXT_IF -j MASQUERADE
+iptables -A FORWARD -i tailscale0 -o $EXT_IF -j ACCEPT
+iptables -A FORWARD -i $EXT_IF -o tailscale0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+# ACL в headscale (ОБЯЗАТЕЛЬНО для Tailscale 1.50+):
+{"action": "accept", "src": ["*"], "dst": ["autogroup:internet:*"]}</pre>
+</div>
+
+<div id="troubleshoot" class="doc-card">
+  <h3><i class="fa-solid fa-wrench"></i>Диагностика</h3>
+
+  <h4>На exit node</h4>
+  <pre># Проверить что exit node виден клиентам
+sudo journalctl -u tailscaled --since 5m | grep "suggested exit"
+# Если "suggested exit node: ()" — ACL блокирует
+
+# Счётчики трафика через exit node
+iptables -t nat -L POSTROUTING -n -v | grep "100.64.0.0/10"
+iptables -L FORWARD -n -v | grep "tailscale0"
+
+# Проверить direct vs relay
+tailscale status
+# active; direct 95.165.170.190:60822   ← хорошо
+# active; relay "waw"                    ← через DERP, медленно</pre>
+
+  <h4>На клиенте (Android)</h4>
+  <pre># Проверить какой DERP используется
+adb shell tailscale netcheck 2>/dev/null || tailscale netcheck
+
+# Принудительно переключить exit node
+adb shell tailscale set --exit-node=karolina</pre>
+
+  <h4>Частые проблемы</h4>
+
+  <h4>🔴 "Relay server unavailable Helsinki"</h4>
+  <p>Tailscale не может достучаться до публичного DERP в Хельсинки. Либо direct connection работает, либо нужен DERP в РФ.</p>
+  <ul>
+    <li>Проверь: Tailscale app → Settings → Use exit node — должен быть выбран</li>
+    <li>На exit node: <code>tailscale status</code> показывает <code>offers exit node</code>?</li>
+    <li>Отключи-включи Tailscale на устройстве</li>
+  </ul>
+
+  <h4>🔴 Exit node выбран, но нет интернета</h4>
+  <p>На exit node не хватает iptables правил. Должны быть:</p>
+  <pre>MASQUERADE -s 100.64.0.0/10
+FORWARD -i tailscale0 -o $EXT_IF -j ACCEPT</pre>
+  <p>Проверь через <code>iptables -t nat -L POSTROUTING</code> и <code>iptables -L FORWARD</code>.</p>
+
+  <h4>🔴 "DNS Unavailable" на Android</h4>
+  <p>Tailscale DNS на Android 4G часто ломается. Решение:</p>
+  <ul>
+    <li>Tailscale app → Settings → <strong>Tailscale DNS → OFF</strong></li>
+    <li>Использовать системный DNS</li>
+  </ul>
+</div>
+
+<div id="glossary" class="doc-card">
+  <h3><i class="fa-solid fa-book"></i>Глоссарий</h3>
+  <table>
+    <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Tailnet</strong></td><td>Ваша mesh-сеть Tailscale (mesh = каждый с каждым)</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>Встроенный DNS в Tailscale: <code>karolina.tsnet.skynas.ru</code> → 100.64.0.2</td></tr>
+      <tr><td><strong>DERP</strong></td><td>Designated Encrypted Relay for Packets — relay для трафика</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>Устройство, через которое другие выходят в интернет</td></tr>
+      <tr><td><strong>ACL</strong></td><td>Access Control List — кто к кому может подключаться</td></tr>
+      <tr><td><strong>Headscale</strong></td><td>Open-source Tailscale control server (наш)</td></tr>
+      <tr><td><strong>Headplane</strong></td><td>Web-интерфейс для headscale (<a href="https://tsnet.skynas.ru/admin/">tsnet.skynas.ru</a>)</td></tr>
+      <tr><td><strong>STUN</strong></td><td>Session Traversal Utilities for NAT — помогает NAT traversal</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — оператор прячет тысячи абонентов за 1 IP</td></tr>
+      <tr><td><strong>WireGuard</strong></td><td>Быстрый VPN-протокол, который использует Tailscale</td></tr>
+      <tr><td><strong>tag:public / tag:private</strong></td><td>Метки в headscale для multi-tenant изоляции</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="text-align:center;color:var(--text-muted);font-size:13px">
+  <i class="fa-solid fa-circle-info"></i> Нужна дополнительная помощь? Проверь <a href="/admin/derp">статус DERP relay</a> или <a href="/admin/devices">устройства в tailnet</a>.
+</div>
+{{end}}

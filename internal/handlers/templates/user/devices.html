@@ -1,0 +1,102 @@
+{{define "body-user-devices"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-laptop"></i>Мои устройства</h2>
+    <div class="sub">Устройства в headscale tailnet, привязанные к пользователю {{.Username}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/my/exit-nodes" class="btn btn-secondary"><i class="fa-solid fa-route"></i>Exit nodes</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-globe"></i>Публичные устройства (доступны всем)</h3>
+  {{if .PublicNodes}}
+  <table>
+    <thead><tr><th>Hostname</th><th>Owner</th><th>Tailscale IP</th><th>Статус</th></tr></thead>
+    <tbody>
+      {{range .PublicNodes}}
+      <tr>
+        <td><code>{{.Hostname}}</code></td>
+        <td>{{.UserName}}</td>
+        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td>
+          {{if .Online}}
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>online</span>
+          {{else}}
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>offline</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>В tailnet пока нет публичных устройств. Администратор может пометить устройство как публичное в разделе <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane</a>.</div>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-house-laptop"></i>Мои устройства</h3>
+  {{if .HasMyNodes}}
+  <table>
+    <thead><tr><th>Hostname</th><th>Tailscale IP</th><th>Статус</th><th>Последний раз видели</th><th>Видимость</th></tr></thead>
+    <tbody>
+      {{range .MyNodes}}
+      <tr>
+        <td><code>{{.Hostname}}</code></td>
+        <td class="mono">{{.IP}}</td>
+        <td>
+          {{if .Online}}
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>online</span>
+          {{else}}
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>offline</span>
+          {{end}}
+        </td>
+        <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
+        <td>
+          {{if .IsPublic}}
+            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>public</span>
+            {{if eq .Source "snapshot"}}
+              <span style="color:var(--text-muted);font-size:11px" title="headscale отображает владельца как tagged-devices, оригинальный owner сохранён в skygate">via snapshot</span>
+            {{end}}
+          {{else}}
+            <span class="tag"><i class="fa-solid fa-lock"></i>private</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:12px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
+    <span>Публичные устройства помечены администратором и видны всем пользователям tailnet. Приватные — только вам.</span>
+  </p>
+  {{else}}
+  <div class="alert alert-warn" style="margin-top:0">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <div>У вас пока нет устройств. Зарегистрируйте первое — это занимает минуту.</div>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-plus-circle"></i>Подключить новое устройство</h3>
+  <p style="color:var(--text-muted);margin-bottom:16px">Выберите ОС — мы сгенерируем одноразовый ключ, действующий 1 час.</p>
+  <form method="post" action="/my/preauth">
+    <div class="os-grid">
+      <label class="os-tile"><input type="radio" name="os" value="android" required><i class="fa-brands fa-android"></i>Android</label>
+      <label class="os-tile"><input type="radio" name="os" value="ios"><i class="fa-brands fa-apple"></i>iOS</label>
+      <label class="os-tile"><input type="radio" name="os" value="linux"><i class="fa-brands fa-linux"></i>Linux</label>
+      <label class="os-tile"><input type="radio" name="os" value="macos"><i class="fa-brands fa-apple"></i>macOS</label>
+      <label class="os-tile"><input type="radio" name="os" value="windows"><i class="fa-brands fa-windows"></i>Windows</label>
+    </div>
+    <div class="btn-row right">
+      <button type="submit" class="btn"><i class="fa-solid fa-key"></i>Получить ключ</button>
+    </div>
+  </form>
+</div>
+{{end}}
