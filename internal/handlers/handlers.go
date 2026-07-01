@@ -374,6 +374,20 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	t0 := time.Now()
 	all, _ := a.HS.ListAllNodes()
 
+	// Lazy-backfill node_owner_map from headscale's preAuthKey history.
+	// When a user creates a preauth key in /my/devices, we save its
+	// headscale ID. When that key is later used to register a node,
+	// headscale's API exposes node.PreAuthKey.ID. Match them and
+	// snapshot the (node -> user) link in node_owner_map. This is the
+	// ONLY way to recover ownership for nodes that headscale has
+	// reassigned to the synthetic "tagged-devices" user because of
+	// tag:private. We do this here, on the user's first /my/devices
+	// load, so the same fix happens for every node the user owns -
+	// without scanning the headscale DB up front.
+	if c.UserID != 0 {
+		backfillNodeOwnership(a.DB, all, c.UserID, username)
+	}
+
 	// headscale reassigns ownership to a synthetic "tagged-devices" user
 	// whenever a tag is applied, so we cannot rely on the live user_id
 	// alone. We keep a snapshot of the original owner in node_owner_map
@@ -469,8 +483,10 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at) VALUES(?,?,?)`,
-		c.UserID, key.Key, time.Now().Add(time.Hour).Unix())
+	// Save headscale_preauth_id so we can later map a node's preAuthKey
+	// back to this portal user when the device registers with this key.
+	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at, headscale_preauth_id) VALUES(?,?,?,?)`,
+		c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
 	a.audit(c.UserID, c.Username, "preauth_issued", "1h single-use")
 	a.renderWithLayout(w, "user/preauth_result.html", c, map[string]any{
 		"Key":     key.Key,
@@ -1097,6 +1113,61 @@ func (a *App) countMyPreAuthKeys(myUserID int64) int {
 	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=? AND used=0 AND (expires_at IS NULL OR expires_at > ?)`,
 		myUserID, time.Now().Unix()).Scan(&n)
 	return n
+}
+
+// backfillNodeOwnership walks all nodes, and for any node whose headscale
+// preAuthKey matches an unused/used preauth key issued by this portal user,
+// inserts a row in node_owner_map (idempotent via INSERT OR IGNORE).
+//
+// Why this exists:
+//   - When a user issues a preauth key via /my/devices, we save the
+//     headscale ID in preauth_keys.headscale_preauth_id.
+//   - When that key is later consumed by a Tailscale client, the resulting
+//     node reports its origin via the headscale API (node.preAuthKey.id).
+//   - If the node then gets a tag applied (e.g. tag:private by ACL),
+//     headscale reassigns ownership to a synthetic "tagged-devices" user
+//     and the live user_id link is lost.
+//   - This backfill reconstructs the link from the persisted key, so the
+//     node shows up under the original owner in /my/devices and on the
+//     user dashboard. Safe to call on every /my/devices load - the IGNORE
+//     makes it a no-op once the snapshot exists.
+func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
+	if portalUserID == 0 || portalUsername == "" {
+		return
+	}
+	type candidate struct {
+		nodeID string
+		keyID  string
+		tag    string
+	}
+	var matches []candidate
+	for _, n := range nodes {
+		if n.PreAuthKeyID == "" {
+			continue
+		}
+		if len(n.Tags) == 0 {
+			continue
+		}
+		matches = append(matches, candidate{
+			nodeID: n.ID,
+			keyID:  n.PreAuthKeyID,
+			tag:    n.Tags[0],
+		})
+	}
+	if len(matches) == 0 {
+		return
+	}
+	for _, m := range matches {
+		var ownerUserID int64
+		err := db.QueryRow(`SELECT user_id FROM preauth_keys WHERE headscale_preauth_id=?`, m.keyID).Scan(&ownerUserID)
+		if err != nil || ownerUserID != portalUserID {
+			continue
+		}
+		_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
+			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
+			VALUES (?, ?, ?, ?, ?)`,
+			m.nodeID, ownerUserID, portalUsername, m.tag, portalUserID)
+	}
 }
 
 // derpPeerNPM is the IP of Nginx Proxy Manager, which keeps persistent
