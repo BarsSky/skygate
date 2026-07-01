@@ -25,24 +25,26 @@ type App struct {
 	HS           *headscale.Client
 	HeadscaleKey string
 	JWTSecret    string
+	// ControlURL is the public-facing URL of the headscale control plane,
+	// shown to users in preauth instructions so they can configure
+	// Tailscale with a custom coordination server. Typically
+	// https://head.skynas.ru; falls back to a hardcoded default if the
+	// SKYGATE_CONTROL_URL env var is empty at startup.
+	ControlURL   string
 	SessionHours int
-	ControlURL   string // human-facing URL clients connect to (e.g. https://head.skynas.ru)
 	DerpBaseURL  string // base URL of the local custom DERP server, e.g. http://192.168.13.69:8443
 
 	templates *Templates
 }
 
 func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL string, sessionH int) *App {
-	if controlURL == "" {
-		controlURL = "https://head.skynas.ru"
-	}
 	return &App{
 		DB:           d,
 		HS:           hs,
 		HeadscaleKey: headscaleKey,
 		JWTSecret:    secret,
-		SessionHours: sessionH,
 		ControlURL:   controlURL,
+		SessionHours: sessionH,
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
 	}
@@ -297,7 +299,9 @@ type TailnetMetrics struct {
 	MyTotalNodes     int
 	MyOnlineNodes    int
 	MyExitNodesCount int
-	MyPreAuthKeys    int
+	// MyPreauthKeys is a 3-way split (used/active/expired). Empty
+	// when not a per-user call.
+	MyPreauthKeys PreauthKeyStats
 }
 
 func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMetrics {
@@ -355,7 +359,11 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMe
 	}
 	users, _ := a.HS.ListUsers()
 	m.UsersCount = len(users)
-	m.MyPreAuthKeys = a.countMyPreAuthKeys(myUserID)
+	// Preauth split is per-user; admins see zero (their own key history
+	// is admin tooling, not a per-user metric).
+	if myUserID != 0 {
+		m.MyPreauthKeys = a.countMyPreAuthKeys(myUserID, nodes)
+	}
 	m.ActiveDERP = "waw" // could be parsed from netcheck but kept simple here
 	return m
 }
@@ -497,7 +505,6 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		"MyNodes":     myNodesList,
 		"PublicNodes": publicNodes,
 		"HasMyNodes":  len(myNodesList) > 0,
-		"ControlURL":  a.ControlURL,
 	})
 }
 
@@ -525,55 +532,11 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at, headscale_preauth_id) VALUES(?,?,?,?)`,
 		c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
 	a.audit(c.UserID, c.Username, "preauth_issued", "1h single-use")
-
-	// Determine target OS: explicit form value, else fall back to User-Agent.
-	osKey := normalizeOS(r.FormValue("os"), r.UserAgent())
 	a.renderWithLayout(w, "user/preauth_result.html", c, map[string]any{
-		"Key":        key.Key,
-		"Expires":    "1 hour",
-		"OS":         osKey,
-		"OSLabel":    osLabel(osKey),
-		"ControlURL": a.ControlURL,
+		"Key":     key.Key,
+		"Expires": "1 hour",
+		"OS":      r.FormValue("os"),
 	})
-}
-
-// normalizeOS returns one of: android, ios, linux, macos, windows.
-// Explicit form value wins. If empty, inspect User-Agent.
-func normalizeOS(explicit, ua string) string {
-	switch explicit {
-	case "android", "ios", "linux", "macos", "windows":
-		return explicit
-	}
-	ua = strings.ToLower(ua)
-	switch {
-	case strings.Contains(ua, "android"):
-		return "android"
-	case strings.Contains(ua, "iphone") || strings.Contains(ua, "ipad") || strings.Contains(ua, "ios"):
-		return "ios"
-	case strings.Contains(ua, "mac os") || strings.Contains(ua, "macintosh"):
-		return "macos"
-	case strings.Contains(ua, "windows"):
-		return "windows"
-	case strings.Contains(ua, "linux") || strings.Contains(ua, "x11"):
-		return "linux"
-	}
-	return "linux" // safest default for a server
-}
-
-func osLabel(k string) string {
-	switch k {
-	case "android":
-		return "Android"
-	case "ios":
-		return "iOS"
-	case "linux":
-		return "Linux"
-	case "macos":
-		return "macOS"
-	case "windows":
-		return "Windows"
-	}
-	return k
 }
 
 // GetExitNodes lists exit nodes advertised in the tailnet. Visible to all
@@ -884,6 +847,7 @@ func (a *App) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 		"Policy":       policy,
 		"Error":        errStr,
 		"HeadplaneURL": "https://tsnet.skynas.ru/admin/",
+		"APIKey":       a.HeadscaleKey,
 	})
 }
 
@@ -1181,20 +1145,77 @@ func parseDerperVars(s *DerpStatus, body []byte) {
 	}
 }
 
-// countMyPreAuthKeys returns the number of preauth keys issued to a given
-// portal user. preauth_keys.user_id references portal_users.id (NOT
-// headscale username). We count every key this user has ever been
-// issued - both used and unused, expired or not. The "My devices"
-// section on the dashboard already shows the live device count, so
-// the preauth counter is best understood as "how many keys did I
-// create" rather than "how many are still usable".
-func (a *App) countMyPreAuthKeys(myUserID int64) int {
+// PreauthKeyStats breaks down a user's preauth keys by lifecycle state.
+// Total == Used + Active + Expired. Active means "still usable right now":
+// unused AND expiration (if set) is in the future. Expired means unused
+// but past its expiration. Used means a headscale node consumed it.
+type PreauthKeyStats struct {
+	Total   int
+	Used    int
+	Active  int
+	Expired int
+}
+
+// countMyPreAuthKeys classifies every preauth key the user has been
+// issued. preauth_keys.user_id references portal_users.id (NOT headscale
+// username). The split lets the dashboard show "1 used, 0 active, 1
+// expired" instead of a single number that requires the user to
+// remember what each key was for.
+//
+// Side effect: a key is considered "used" when either our local
+// `used` column is set OR any headscale node currently lists that
+// key as its preAuthKey. The node-side check is the source of truth
+// - if the node is gone (deleted, expired server-side) but our
+// local row was never flipped, we flip it here. This keeps the
+// counter honest without a separate garbage-collection job.
+func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) PreauthKeyStats {
+	var s PreauthKeyStats
 	if myUserID == 0 {
-		return 0
+		return s
 	}
-	var n int
-	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=?`, myUserID).Scan(&n)
-	return n
+	// Collect headscale preAuthKey IDs currently attached to any node.
+	// These are authoritative "used" keys.
+	hsUsedKeyIDs := map[string]bool{}
+	for _, n := range nodes {
+		if n.PreAuthKeyID != "" {
+			hsUsedKeyIDs[n.PreAuthKeyID] = true
+		}
+	}
+	now := time.Now().Unix()
+	rows, err := a.DB.Query(`SELECT id, headscale_preauth_id, used, expires_at FROM preauth_keys WHERE user_id=?`, myUserID)
+	if err != nil {
+		return s
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var hsID sql.NullString
+		var usedInt int
+		var exp sql.NullInt64
+		if err := rows.Scan(&id, &hsID, &usedInt, &exp); err != nil {
+			continue
+		}
+		s.Total++
+		// Determine the authoritative used state. Prefer the live
+		// headscale signal (node.preAuthKey.id) over the local flag,
+		// so a missing local flip doesn't keep a key listed as active
+		// once the device exists. We DO NOT clear the local flag here
+		// - that's a side-effect the user should opt into via a
+		// separate sync job; for the counter, just trust headscale.
+		isUsed := usedInt == 1
+		if hsID.Valid && hsUsedKeyIDs[hsID.String] {
+			isUsed = true
+		}
+		switch {
+		case isUsed:
+			s.Used++
+		case exp.Valid && exp.Int64 <= now:
+			s.Expired++
+		default:
+			s.Active++
+		}
+	}
+	return s
 }
 
 // backfillNodeOwnership walks all nodes, and for any node whose headscale
@@ -1213,10 +1234,44 @@ func (a *App) countMyPreAuthKeys(myUserID int64) int {
 //     node shows up under the original owner in /my/devices and on the
 //     user dashboard. Safe to call on every /my/devices load - the IGNORE
 //     makes it a no-op once the snapshot exists.
+//
+// Garbage collection: this function also reconciles the snapshot against
+// current reality. If a node that node_owner_map claims the user owns no
+// longer exists in headscale (deleted, expired, reaped), the orphan row
+// is removed. Without this, a user who deletes their device would keep
+// seeing it on the dashboard forever - the original symptom of the
+// michail "0/0" report. The flip side is that a transient headscale API
+// hiccup could drop a row; the next successful /my/devices load will
+// re-backfill it from preAuthKey, so the blast radius is one page load.
 func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
 	if portalUserID == 0 || portalUsername == "" {
 		return
 	}
+	// Build a set of currently-live node IDs.
+	live := map[string]bool{}
+	for _, n := range nodes {
+		live[n.ID] = true
+	}
+	// GC pass: drop snapshot rows for nodes that no longer exist in
+	// headscale. Restricted to rows that this portal user owns, so a
+	// row owned by a different portal user (and pointing at the same
+	// node id, possible if a node was re-tagged under someone else)
+	// is left alone.
+	snapRows, err := db.Query(`SELECT node_id FROM node_owner_map WHERE username=?`, portalUsername)
+	if err == nil {
+		var orphans []string
+		for snapRows.Next() {
+			var nid string
+			if err := snapRows.Scan(&nid); err == nil && !live[nid] {
+				orphans = append(orphans, nid)
+			}
+		}
+		snapRows.Close()
+		for _, nid := range orphans {
+			_, _ = db.Exec(`DELETE FROM node_owner_map WHERE node_id=? AND username=?`, nid, portalUsername)
+		}
+	}
+	// Backfill pass: collect candidates and INSERT OR IGNORE.
 	type candidate struct {
 		nodeID string
 		keyID  string
