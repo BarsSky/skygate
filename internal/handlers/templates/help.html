@@ -2,21 +2,217 @@
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-circle-question"></i>Справка</h2>
-    <div class="sub">Как работает tailnet, exit nodes и DERP relay</div>
+    <div class="sub">
+      {{if .IsAdmin}}
+        Полная документация: tailnet, exit nodes, DERP relay, ACL, диагностика
+      {{else}}
+        Как пользоваться Tailscale, exit node, и что делать если что-то не работает
+      {{end}}
+    </div>
   </div>
 </div>
 
+{{if .IsAdmin}}
+{{template "body-help-admin" .}}
+{{else}}
+{{template "body-help-user" .}}
+{{end}}
+
+{{end}}
+
+{{define "body-help-user"}}
+<div class="tabs">
+  <a href="#start" class="active"><i class="fa-solid fa-rocket"></i>Начало работы</a>
+  <a href="#exit"><i class="fa-solid fa-route"></i>Exit node</a>
+  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>DERP relay</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Проблемы</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>Глоссарий</a>
+</div>
+
+<div id="start" class="doc-card">
+  <h3><i class="fa-solid fa-rocket"></i>Как начать пользоваться</h3>
+  <p>Skygate — это web-интерфейс для управления Tailscale-нодой <strong>headscale</strong>. Через него вы добавляете свои устройства в общий tailnet и управляете ими.</p>
+
+  <h4>Шаг 1. Установить Tailscale</h4>
+  <ul>
+    <li><strong>Android</strong>: Google Play → "Tailscale" → Установить</li>
+    <li><strong>iOS</strong>: App Store → "Tailscale" → Установить</li>
+    <li><strong>Windows</strong>: <a href="https://tailscale.com/download/windows">tailscale.com/download/windows</a></li>
+    <li><strong>macOS</strong>: App Store → "Tailscale"</li>
+    <li><strong>Linux</strong>: <code>curl -fsSL https://tailscale.com/install.sh | sh</code></li>
+  </ul>
+
+  <h4>Шаг 2. Войти в свой аккаунт</h4>
+  <p>При первом запуске Tailscale попросит войти. Используйте:</p>
+  <ul>
+    <li>Сервер: <code>tsnet.skynas.ru</code> (наш headscale)</li>
+    <li>Логин: имя пользователя, которое вам выдал админ (например <code>ivan</code>)</li>
+  </ul>
+  <p>Tailscale откроет браузер → введите логин/пароль → устройство появится в tailnet.</p>
+
+  <h4>Шаг 3. Найти свои устройства</h4>
+  <p>Перейдите на <a href="/my/devices">Мои устройства</a> — увидите все свои ноды со статусами (online/offline, IP, теги).</p>
+
+  <h4>Шаг 4. Добавить ещё устройств</h4>
+  <p>В разделе <a href="/my/devices">Мои устройства</a> нажмите <strong>"Добавить устройство"</strong>:</p>
+  <ul>
+    <li>Введите имя (например <code>my-laptop</code>, <code>my-phone</code>)</li>
+    <li>Нажмите <strong>Создать</strong> — появится preauth key</li>
+    <li>Скопируйте команду <code>tailscale up --login-server=https://tsnet.skynas.ru --authkey=hskey-auth-XXXX</code></li>
+    <li>Вставьте её в терминал нового устройства</li>
+  </ul>
+  <p>Готово — устройство появится в списке.</p>
+
+  <div class="note">
+    <i class="fa-solid fa-circle-info"></i> По умолчанию ваши устройства получают тег <code>tag:private</code> — они видны только вам.
+  </div>
+</div>
+
+<div id="exit" class="doc-card">
+  <h3><i class="fa-solid fa-route"></i>Exit node (выход в интернет через другую страну)</h3>
+  <p><strong>Exit node</strong> — это сервер в tailnet, через который весь ваш трафик в интернет идёт. Полезно для:</p>
+  <ul>
+    <li>🌍 <strong>Обход геоблокировок</strong> — IP другой страны (YouTube/Netflix EU через Германию)</li>
+    <li>🇷🇺 <strong>Обход блокировок в РФ</strong> — Telegram, YouTube работают</li>
+    <li>🛡️ <strong>Приватность</strong> — провайдер не видит какие сайты вы посещаете</li>
+    <li>📡 <strong>Безопасность в публичном WiFi</strong></li>
+  </ul>
+
+  <h4>Какие exit node доступны</h4>
+  <table>
+    <thead><tr><th>Имя</th><th>Где</th><th>Когда использовать</th></tr></thead>
+    <tbody>
+      <tr><td><strong>karolina</strong></td><td>🇺🇸 США (Charlotte)</td><td>Американский Netflix, Disney+, Hulu</td></tr>
+      <tr><td><strong>emilia</strong></td><td>🇫🇮 Финляндия (Helsinki)</td><td>Лучший пинг до Европы, европейские сервисы</td></tr>
+      <tr><td><strong>sharlotta</strong></td><td>🇺🇸 США (Charlotte)</td><td>Альтернатива karolina, балансировка нагрузки</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Как включить exit node</h4>
+  <ol>
+    <li>Откройте <strong>Tailscale app</strong> на устройстве</li>
+    <li>☰ Меню → <strong>Use exit node</strong> → выберите (karolina / emilia / sharlotta)</li>
+    <li>Готово — весь трафик идёт через выбранный сервер</li>
+  </ol>
+
+  <h4>Как проверить что работает</h4>
+  <p>Откройте <a href="https://2ip.ru" target="_blank">2ip.ru</a> — должен показать IP страны exit node (например США для karolina).</p>
+
+  <h4>Как отключить</h4>
+  <p>Tailscale app → ☰ → <strong>None</strong> (Use exit node) → трафик снова идёт напрямую.</p>
+
+  <div class="note">
+    <i class="fa-solid fa-triangle-exclamation"></i> <strong>Внимание</strong>: при включённом exit node скорость = скорость до exit node. Для karolina (США) из РФ это обычно 80-150 Mbit/s, для emilia (Финляндия) — 50-100 Mbit/s.
+  </div>
+</div>
+
+<div id="derp" class="doc-card">
+  <h3><i class="fa-solid fa-tower-broadcast"></i>Что такое DERP relay</h3>
+  <p>Когда два Tailscale клиента не могут соединиться напрямую (CGNAT, файрвол, NAT), трафик идёт через <strong>DERP relay</strong> — промежуточный сервер.</p>
+
+  <h4>Что это значит для вас</h4>
+  <ul>
+    <li>🟢 <strong>Direct</strong> — устройства соединились напрямую. Быстро, низкий пинг.</li>
+    <li>🟡 <strong>Через DERP</strong> — трафик идёт через relay-сервер. Медленнее (+50-200ms), но работает всегда.</li>
+  </ul>
+
+  <h4>Где смотреть какой режим</h4>
+  <p>На странице <a href="/my/devices">Мои устройства</a> — в таблице виден пинг и способ соединения.</p>
+
+  <h4>Наш DERP relay</h4>
+  <p>Запущен на нашем агенте в Москве:</p>
+  <ul>
+    <li>Адрес: <code>derp.skynas.ru</code></li>
+    <li>Регион: <code>mow</code> (Москва)</li>
+  </ul>
+  <p>Для устройств в России он ближе всех — минимальный пинг.</p>
+
+  <h4>Полезные ссылки</h4>
+  <ul>
+    <li><a href="https://tailscale.com/kb/1232/derp-servers" target="_blank">Tailscale docs: DERP servers</a></li>
+    <li><a href="https://tailscale.com/kb/1073/magicdns" target="_blank">MagicDNS — как обращаться к нодам по имени</a></li>
+  </ul>
+</div>
+
+<div id="troubleshoot" class="doc-card">
+  <h3><i class="fa-solid fa-wrench"></i>Частые проблемы</h3>
+
+  <h4>🔴 "Не могу войти в Tailscale" / "Invalid login server"</h4>
+  <ol>
+    <li>Убедитесь что ввели <code>tsnet.skynas.ru</code> как login server</li>
+    <li>Проверьте интернет-соединение</li>
+    <li>Попробуйте <a href="https://tsnet.skynas.ru" target="_blank">открыть headscale</a> в браузере</li>
+    <li>Свяжитесь с админом — возможно ваш аккаунт заблокирован</li>
+  </ol>
+
+  <h4>🔴 "Exit node выбран, но нет интернета"</h4>
+  <ol>
+    <li>Проверьте что exit node <strong>online</strong> (см. <a href="/my/devices">Мои устройства</a> → раздел "Доступные exit nodes")</li>
+    <li>Попробуйте другой exit node</li>
+    <li>Перезапустите Tailscale на устройстве</li>
+    <li>Если не помогло — сообщите админу</li>
+  </ol>
+
+  <h4>🔴 "MagicDNS не работает" / не резолвит имена</h4>
+  <p>На Android 4G иногда ломается. Решение:</p>
+  <ol>
+    <li>Tailscale app → Settings → <strong>Tailscale DNS → OFF</strong></li>
+    <li>Используйте IP напрямую: <code>100.64.0.X</code> (видно на странице устройств)</li>
+  </ol>
+
+  <h4>🔴 "Устройство показывает online, но не пингуется"</h4>
+  <ul>
+    <li>Проверьте что Tailscale запущен на том устройстве</li>
+    <li>Устройство может быть в спящем режиме (ноутбук закрыт) — Tailscale засыпает</li>
+    <li>На Android: откройте Tailscale app — соединение восстановится</li>
+  </ul>
+
+  <h4>🟡 "Медленно работает интернет через exit node"</h4>
+  <ul>
+    <li>Попробуйте ближайший exit node</li>
+    <li>Проверьте пинг — если &gt; 200ms, возможно идёт через DERP (не напрямую)</li>
+    <li>Перезапустите Tailscale</li>
+  </ul>
+
+  <div class="card" style="background:var(--card-elevated);text-align:center;color:var(--text-muted);font-size:13px">
+    <i class="fa-solid fa-life-ring"></i> Не нашли решение? Напишите админу: <a href="https://tsnet.skynas.ru/admin/" target="_blank">Headplane</a>
+  </div>
+</div>
+
+<div id="glossary" class="doc-card">
+  <h3><i class="fa-solid fa-book"></i>Глоссарий</h3>
+  <table>
+    <thead><tr><th>Термин</th><th>Что это</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Tailnet</strong></td><td>Mesh-сеть Tailscale (все ваши устройства видят друг друга)</td></tr>
+      <tr><td><strong>Нода (Node)</strong></td><td>Одно устройство в tailnet (телефон, ноутбук, сервер)</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>Встроенный DNS: можно обращаться по имени <code>karolina</code> вместо IP</td></tr>
+      <tr><td><strong>DERP</strong></td><td>Relay-сервер (когда direct не работает)</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>Устройство, через которое выходите в интернет</td></tr>
+      <tr><td><strong>Preauth key</strong></td><td>Ключ для добавления нового устройства без интерактивного входа</td></tr>
+      <tr><td><strong>tag:private</strong></td><td>Метка "моё личное устройство" (видно только вам)</td></tr>
+      <tr><td><strong>tag:public</strong></td><td>Метка "общее устройство" (exit node)</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — мобильный оператор прячет вас за общим IP</td></tr>
+      <tr><td><strong>ACL</strong></td><td>Правила доступа (кто к кому может подключаться)</td></tr>
+      <tr><td><strong>Headscale</strong></td><td>Наш Tailscale-сервер (вместо облачного Tailscale)</td></tr>
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{define "body-help-admin"}}
 <div class="tabs">
   <a href="#overview" class="active"><i class="fa-solid fa-diagram-project"></i>Обзор</a>
   <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>DERP</a>
   <a href="#exit"><i class="fa-solid fa-route"></i>Exit node</a>
+  <a href="#acl"><i class="fa-solid fa-shield-halved"></i>ACL</a>
   <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Диагностика</a>
   <a href="#glossary"><i class="fa-solid fa-book"></i>Глоссарий</a>
 </div>
 
 <div id="overview" class="doc-card">
   <h3><i class="fa-solid fa-diagram-project"></i>Что такое tailnet</h3>
-  <p>Tailnet — это ваша персональная mesh-сеть на базе Tailscale. Устройства в tailnet получают IP из диапазона <code>100.64.0.0/10</code> и видят друг друга по этим адресам независимо от того, где они находятся физически.</p>
+  <p>Tailnet — это mesh-сеть на базе Tailscale. Устройства в tailnet получают IP из диапазона <code>100.64.0.0/10</code> и видят друг друга по этим адресам независимо от того, где они находятся физически.</p>
 
   <h4>Поток данных</h4>
   <div class="flow">
@@ -26,16 +222,24 @@
     <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
     <span class="node">internet<br><small>8.8.8.8</small></span>
   </div>
-  <div class="note">Когда skybars использует emilia как exit node, весь его трафик в интернет идёт через VPS emilia в Германии (или какой у нас регион).</div>
+  <div class="note">Когда skybars использует emilia как exit node, весь его трафик в интернет идёт через VPS emilia.</div>
 
   <h4>Кто в нашем tailnet</h4>
-  <p>5 устройств (см. <a href="/admin/devices">Все устройства</a>):</p>
+  <p>См. <a href="/admin/devices">Все устройства</a>:</p>
   <ul>
     <li><strong>karolina</strong> — VPS в Германии (Hetzner), exit node</li>
     <li><strong>emilia</strong> — VPS в РФ, exit node</li>
     <li><strong>sharlotta</strong> — VPS в РФ, exit node</li>
     <li><strong>skyworker</strong> — рабочая Windows машина</li>
     <li><strong>skybars</strong> — Android (mobile), CGNAT</li>
+  </ul>
+
+  <h4>Управление</h4>
+  <ul>
+    <li><a href="/admin/devices">Все устройства</a> — полный список, теги, удаление</li>
+    <li><a href="/admin/users">Пользователи</a> — создание, ACL, ресеты паролей</li>
+    <li><a href="/admin/derp">DERP relay</a> — статус, нагрузка, лента</li>
+    <li><a href="/admin/audit">Audit log</a> — кто что делал</li>
   </ul>
 </div>
 
@@ -127,13 +331,44 @@ iptables -A FORWARD -i $EXT_IF -o tailscale0 -m state --state RELATED,ESTABLISHE
 {"action": "accept", "src": ["*"], "dst": ["autogroup:internet:*"]}</pre>
 </div>
 
+<div id="acl" class="doc-card">
+  <h3><i class="fa-solid fa-shield-halved"></i>ACL (Access Control List)</h3>
+  <p>ACL управляет тем, кто к кому может подключаться в tailnet. Редактируется в <a href="https://tsnet.skynas.ru/admin/" target="_blank">Headplane</a> или в файле <code>/etc/headscale/acl.yaml</code>.</p>
+
+  <h4>Текущий ACL</h4>
+  <p>См. <a href="/admin/audit">Audit log</a> или напрямую в headscale.</p>
+
+  <h4>Частые задачи</h4>
+
+  <h4>🔧 Разрешить exit node</h4>
+  <pre>{
+  "action": "accept",
+  "src": ["*"],
+  "dst": ["autogroup:internet:*"]
+}</pre>
+  <p>Без этого правила exit node <strong>не виден</strong> клиентам (Tailscale 1.50+ требует явно разрешить).</p>
+
+  <h4>🔧 Изолировать пользователей</h4>
+  <pre>{
+  "action": "accept",
+  "src": ["skyadmin"],
+  "dst": ["*:*"]
+},
+{
+  "action": "accept",
+  "src": ["ivan"],
+  "dst": ["ivan:*", "tag:public:*"]
+}</pre>
+  <p>ivan видит только свои устройства + exit node.</p>
+</div>
+
 <div id="troubleshoot" class="doc-card">
   <h3><i class="fa-solid fa-wrench"></i>Диагностика</h3>
 
   <h4>На exit node</h4>
   <pre># Проверить что exit node виден клиентам
 sudo journalctl -u tailscaled --since 5m | grep "suggested exit"
-# Если "suggested exit node: ()" — ACL блокирует
+# Если "suggested exit node: ()\" — ACL блокирует
 
 # Счётчики трафика через exit node
 iptables -t nat -L POSTROUTING -n -v | grep "100.64.0.0/10"
@@ -180,8 +415,8 @@ FORWARD -i tailscale0 -o $EXT_IF -j ACCEPT</pre>
   <table>
     <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
     <tbody>
-      <tr><td><strong>Tailnet</strong></td><td>Ваша mesh-сеть Tailscale (mesh = каждый с каждым)</td></tr>
-      <tr><td><strong>MagicDNS</strong></td><td>Встроенный DNS в Tailscale: <code>karolina.tsnet.skynas.ru</code> → 100.64.0.2</td></tr>
+      <tr><td><strong>Tailnet</strong></td><td>Mesh-сеть Tailscale (mesh = каждый с каждым)</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>Встроенный DNS: <code>karolina.tsnet.skynas.ru</code> → 100.64.0.2</td></tr>
       <tr><td><strong>DERP</strong></td><td>Designated Encrypted Relay for Packets — relay для трафика</td></tr>
       <tr><td><strong>Exit node</strong></td><td>Устройство, через которое другие выходят в интернет</td></tr>
       <tr><td><strong>ACL</strong></td><td>Access Control List — кто к кому может подключаться</td></tr>
@@ -193,9 +428,5 @@ FORWARD -i tailscale0 -o $EXT_IF -j ACCEPT</pre>
       <tr><td><strong>tag:public / tag:private</strong></td><td>Метки в headscale для multi-tenant изоляции</td></tr>
     </tbody>
   </table>
-</div>
-
-<div class="card" style="text-align:center;color:var(--text-muted);font-size:13px">
-  <i class="fa-solid fa-circle-info"></i> Нужна дополнительная помощь? Проверь <a href="/admin/derp">статус DERP relay</a> или <a href="/admin/devices">устройства в tailnet</a>.
 </div>
 {{end}}

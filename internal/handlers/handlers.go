@@ -279,15 +279,22 @@ func stripThemeParam(url string) string {
 // ---------- DASHBOARD ----------
 
 // TailnetMetrics is a small summary of the tailnet for the dashboard hero.
+// For admin: shows the whole tailnet. For users: shows their own devices
+// and only the public/exit nodes they're allowed to see.
 type TailnetMetrics struct {
-	TotalNodes    int
-	OnlineNodes   int
+	TotalNodes     int
+	OnlineNodes    int
 	ExitNodesCount int
-	UsersCount    int
-	ActiveDERP    string
+	UsersCount     int
+	ActiveDERP     string
+	// User-scoped metrics (populated when called with a username)
+	MyTotalNodes     int
+	MyOnlineNodes    int
+	MyExitNodesCount int
+	MyPreAuthKeys    int
 }
 
-func (a *App) computeTailnetMetrics() TailnetMetrics {
+func (a *App) computeTailnetMetrics(myUsername string) TailnetMetrics {
 	m := TailnetMetrics{}
 	nodes, _ := a.HS.ListAllNodes()
 	m.TotalNodes = len(nodes)
@@ -298,9 +305,24 @@ func (a *App) computeTailnetMetrics() TailnetMetrics {
 		if n.IsExitNode {
 			m.ExitNodesCount++
 		}
+		// Per-user metrics
+		if myUsername != "" && n.UserName == myUsername {
+			m.MyTotalNodes++
+			if n.Online {
+				m.MyOnlineNodes++
+			}
+			if n.IsExitNode {
+				m.MyExitNodesCount++
+			}
+		}
 	}
 	users, _ := a.HS.ListUsers()
 	m.UsersCount = len(users)
+	// Count active preauth keys for this user
+	if myUsername != "" {
+		_ = a.DB.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE username=? AND (used=false OR expires_at > ?)`,
+			myUsername, time.Now()).Scan(&m.MyPreAuthKeys)
+	}
 	m.ActiveDERP = "waw" // could be parsed from netcheck but kept simple here
 	return m
 }
@@ -311,8 +333,17 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	// Look up the headscale username for this portal user (may be empty for
+	// brand-new users who haven't registered a device yet).
+	var hsUserName string
+	_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id=?`, c.UserID).Scan(&hsUserName)
+	// Admins see whole-tailnet metrics; users see only their own.
+	scope := ""
+	if !c.IsAdmin && hsUserName != "" {
+		scope = hsUserName
+	}
 	a.renderWithLayout(w, "dashboard.html", c, map[string]any{
-		"TailnetMetrics": a.computeTailnetMetrics(),
+		"TailnetMetrics": a.computeTailnetMetrics(scope),
 	})
 }
 
