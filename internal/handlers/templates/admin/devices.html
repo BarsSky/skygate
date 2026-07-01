@@ -28,12 +28,18 @@
         <td><code>{{.Hostname}}</code></td>
         <td>{{.UserName}}</td>
         <td class="mono">{{index .IPAddresses 0}}</td>
-        <td>{{if .IsExitNode}}<span class="tag tag-admin"><i class="fa-solid fa-route"></i>exit</span>{{else}}<span class="tag">node</span>{{end}}</td>
+        <td>
+          {{if .IsExitNode}}<span class="tag tag-admin"><i class="fa-solid fa-route"></i>exit</span>{{else}}<span class="tag">node</span>{{end}}
+        </td>
         <td>
           {{if .IsPublicView}}
-            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>public</span>
+            <span class="tag tag-success" title="tag:public"><i class="fa-solid fa-globe"></i>public</span>
           {{else if .IsPrivateView}}
-            <span class="tag"><i class="fa-solid fa-lock"></i>private</span>
+            <span class="tag" title="tag:private"><i class="fa-solid fa-lock"></i>private</span>
+          {{else if .Tags}}
+            {{range .Tags}}
+              <span class="tag">{{.}}</span>
+            {{end}}
           {{else}}
             <span style="color:var(--text-subtle);font-size:12px">untagged</span>
           {{end}}
