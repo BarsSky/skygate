@@ -790,7 +790,6 @@ func (a *App) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 		"Policy":       policy,
 		"Error":        errStr,
 		"HeadplaneURL": "https://tsnet.example.com/admin/",
-		"APIKey":       a.HeadscaleKey,
 	})
 }
 
