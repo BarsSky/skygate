@@ -850,6 +850,7 @@ type ConnSummary struct {
 	Relay int
 	Admin int
 	LAN   int
+	Self  int
 	Other int
 }
 
@@ -1126,11 +1127,13 @@ func summarizeDerpPeers(peers []DerpPeer) *ConnSummary {
 			s.Admin++
 		case "lan":
 			s.LAN++
+		case "self":
+			s.Self++
 		default:
 			s.Other++
 		}
 	}
-	if s.Relay == 0 && s.Admin == 0 && s.LAN == 0 && s.Other == 0 {
+	if s.Relay == 0 && s.Admin == 0 && s.LAN == 0 && s.Self == 0 && s.Other == 0 {
 		return nil
 	}
 	return s
