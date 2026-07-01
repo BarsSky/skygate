@@ -295,7 +295,7 @@ type TailnetMetrics struct {
 	MyPreAuthKeys    int
 }
 
-func (a *App) computeTailnetMetrics(myUsername string) TailnetMetrics {
+func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMetrics {
 	m := TailnetMetrics{}
 	nodes, _ := a.HS.ListAllNodes()
 	m.TotalNodes = len(nodes)
@@ -319,11 +319,7 @@ func (a *App) computeTailnetMetrics(myUsername string) TailnetMetrics {
 	}
 	users, _ := a.HS.ListUsers()
 	m.UsersCount = len(users)
-	// Count active preauth keys for this user
-	if myUsername != "" {
-		_ = a.DB.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE username=? AND (used=false OR expires_at > ?)`,
-			myUsername, time.Now()).Scan(&m.MyPreAuthKeys)
-	}
+	m.MyPreAuthKeys = a.countMyPreAuthKeys(myUserID)
 	m.ActiveDERP = "waw" // could be parsed from netcheck but kept simple here
 	return m
 }
@@ -344,7 +340,7 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		scope = hsUserName
 	}
 	a.renderWithLayout(w, "dashboard.html", c, map[string]any{
-		"TailnetMetrics": a.computeTailnetMetrics(scope),
+		"TailnetMetrics": a.computeTailnetMetrics(scope, c.UserID),
 	})
 }
 
@@ -1087,6 +1083,20 @@ func parseDerperVars(s *DerpStatus, body []byte) {
 	if v.STUN.CounterRequests.Success > 0 {
 		s.STUNListening = true
 	}
+}
+
+// countMyPreAuthKeys returns the number of unused, non-expired preauth keys
+// for a given portal user. preauth_keys.user_id references portal_users.id
+// (NOT headscale username). An "active" key is one that has not been used
+// yet AND has not expired.
+func (a *App) countMyPreAuthKeys(myUserID int64) int {
+	if myUserID == 0 {
+		return 0
+	}
+	var n int
+	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=? AND used=0 AND (expires_at IS NULL OR expires_at > ?)`,
+		myUserID, time.Now().Unix()).Scan(&n)
+	return n
 }
 
 // derpPeerNPM is the IP of Nginx Proxy Manager, which keeps persistent
