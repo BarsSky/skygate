@@ -85,8 +85,11 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-plus-circle"></i>Подключить новое устройство</h3>
-  <p style="color:var(--text-muted);margin-bottom:16px">Выберите ОС — мы сгенерируем одноразовый ключ, действующий 1 час.</p>
-  <form method="post" action="/my/preauth">
+  <p style="color:var(--text-muted);margin-bottom:16px">
+    Выберите ОС — мы сгенерируем одноразовый ключ, действующий 1 час.
+    Ключ будет привязан к вашему аккаунту <code>{{.Username}}</code>.
+  </p>
+  <form method="post" action="/my/preauth" id="preauth-form">
     <div class="os-grid">
       <label class="os-tile"><input type="radio" name="os" value="android" required><i class="fa-brands fa-android"></i>Android</label>
       <label class="os-tile"><input type="radio" name="os" value="ios"><i class="fa-brands fa-apple"></i>iOS</label>
@@ -99,4 +102,60 @@
     </div>
   </form>
 </div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-question"></i>Как подключить (краткая шпаргалка)</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+    Наш tailnet работает на собственном headscale. Перед вводом ключа нужно указать <b>адрес нашего control server</b>:
+  </p>
+  <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px;font-family:var(--mono);font-size:13px">
+    {{.ControlURL}}
+  </div>
+
+  <details>
+    <summary style="cursor:pointer;color:var(--accent)"><b>Android / iOS</b> — включить custom server и ввести ключ</summary>
+    <ol class="plain" style="margin-top:8px">
+      <li>Установите Tailscale (Google Play / App Store).</li>
+      <li>В приложении: <b>Settings → Use custom coordination server</b> → вставьте адрес выше.</li>
+      <li>Нажмите <b>Sign in</b> → на странице входа выберите <b>"Use a preauth key"</b> → вставьте полученный ключ.</li>
+    </ol>
+  </details>
+
+  <details>
+    <summary style="cursor:pointer;color:var(--accent);margin-top:8px"><b>Linux / macOS / Windows (CLI)</b> — одна команда</summary>
+    <pre style="margin-top:8px">sudo tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ</pre>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:4px">
+      Добавьте <code>--accept-routes</code> если хотите принимать маршруты от exit nodes.
+      Полная инструкция с GUI-вариантами появится на следующей странице после нажатия «Получить ключ».
+    </p>
+  </details>
+
+  <details>
+    <summary style="cursor:pointer;color:var(--accent);margin-top:8px"><b>Уже вошли под другим аккаунтом?</b></summary>
+    <p style="margin-top:8px">
+      Сначала выйдите: <code>tailscale logout</code> (на мобильных — <i class="fa-solid fa-bars"></i> → <b>Sign out</b>).
+      Затем повторите команду <code>tailscale up</code> с новым ключом.
+    </p>
+  </details>
+</div>
+
+<script>
+// Auto-select the OS radio button based on the browser's User-Agent.
+// Saves a click when the user is on the device they want to register.
+(function() {
+  try {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    var os = '';
+    if (ua.indexOf('android') !== -1)      os = 'android';
+    else if (ua.indexOf('iphone') !== -1 || ua.indexOf('ipad') !== -1 || ua.indexOf('ios') !== -1) os = 'ios';
+    else if (ua.indexOf('mac os') !== -1 || ua.indexOf('macintosh') !== -1) os = 'macos';
+    else if (ua.indexOf('windows') !== -1) os = 'windows';
+    else if (ua.indexOf('linux') !== -1 || ua.indexOf('x11') !== -1) os = 'linux';
+    if (os) {
+      var r = document.querySelector('input[name="os"][value="' + os + '"]');
+      if (r) r.checked = true;
+    }
+  } catch (e) { /* ignore */ }
+})();
+</script>
 {{end}}
