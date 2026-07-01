@@ -5,7 +5,7 @@
     <div class="sub">Custom DERP сервер на агенте — backup relay для tailnet</div>
   </div>
   <div class="btn-row">
-    <a href="/admin/derp/refresh" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i>Обновить</a>
+    <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i>Обновить</a>
   </div>
 </div>
 
@@ -46,7 +46,6 @@
   </div>
 </div>
 
-{{if or .DerpStatus.Connections .DerpStatus.Accepts .DerpStatus.BytesIn}}
 <div class="section-title"><i class="fa-solid fa-chart-line"></i>Трафик</div>
 <div class="metric-grid">
   <div class="metric">
@@ -62,7 +61,7 @@
     <div class="body">
       <div class="label">Tailscale клиенты</div>
       <div class="value">{{.DerpStatus.Clients}}</div>
-      <div class="sub">через этот DERP</div>
+      <div class="sub">с этим DERP как home</div>
     </div>
   </div>
   <div class="metric">
@@ -81,6 +80,80 @@
       <div class="sub">{{.DerpStatus.PacketsOut}} пакетов</div>
     </div>
   </div>
+</div>
+
+{{if or .DerpStatus.ActiveTCP .DerpStatus.ActiveUDP}}
+<div class="section-title"><i class="fa-solid fa-user-group"></i>Активные подключения (прямо сейчас)</div>
+<div class="card">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+    <div>
+      <h3 style="margin:0 0 8px;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">
+        <i class="fa-solid fa-network-wired"></i> TCP (DERP relay)
+      </h3>
+      {{if .DerpStatus.ActiveTCP}}
+      <table>
+        <thead><tr><th>IP</th><th>Hostname</th></tr></thead>
+        <tbody>
+          {{range .DerpStatus.ActiveTCP}}
+          <tr>
+            <td><code>{{.IP}}</code></td>
+            <td>{{if .Host}}{{.Host}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> Нет активных TCP подключений</div>
+      {{end}}
+    </div>
+    <div>
+      <h3 style="margin:0 0 8px;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">
+        <i class="fa-solid fa-satellite-dish"></i> UDP (STUN)
+      </h3>
+      {{if .DerpStatus.ActiveUDP}}
+      <table>
+        <thead><tr><th>IP</th><th>Hostname</th></tr></thead>
+        <tbody>
+          {{range .DerpStatus.ActiveUDP}}
+          <tr>
+            <td><code>{{.IP}}</code></td>
+            <td>{{if .Host}}{{.Host}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> Нет активных UDP клиентов</div>
+      {{end}}
+    </div>
+  </div>
+  <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
+    <i class="fa-solid fa-circle-info"></i> Источник: <code>ss -tn state established sport = :8443</code> + reverse DNS. Обновляется каждые 30 сек.
+  </p>
+</div>
+{{end}}
+
+{{if .DerpStatus.Snapshot}}
+<div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>Лента активности (последние 30 сек)</div>
+<div class="card">
+  <div style="max-height:340px;overflow-y:auto;font-family:var(--mono);font-size:12px">
+    {{range .DerpStatus.Snapshot}}
+    <div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+      <span style="color:var(--text-muted);min-width:130px">{{.TS}}</span>
+      <span style="color:var(--accent)">
+        conns: <b>{{len .Conns}}</b>
+      </span>
+      {{range .Conns}}
+      <span style="background:var(--bg-elev);padding:2px 6px;border-radius:3px">
+        <i class="fa-solid fa-arrow-right" style="font-size:10px"></i> {{.IP}}{{if .Host}} ({{.Host}}){{end}}
+      </span>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
+    <i class="fa-solid fa-circle-info"></i> Источник: <code>derper-snapshot.timer</code> (каждые 30 сек) пишет <code>/var/log/derper-snapshot.log</code>.
+  </p>
 </div>
 {{end}}
 
