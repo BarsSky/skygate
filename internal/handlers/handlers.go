@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -828,6 +829,8 @@ type DerpStatus struct {
 	// Active connections to derper (src IP, reverse DNS).
 	ActiveTCP []DerpPeer
 	ActiveUDP []DerpPeer
+	// ConnSummary aggregates ActiveTCP+ActiveUDP by kind for the hero badges.
+	ConnSummary *ConnSummary
 	// Snapshot history tail (parsed recent records).
 	Snapshot []DerpSnapshot
 }
@@ -837,6 +840,17 @@ type DerpPeer struct {
 	IP   string `json:"ip"`
 	Host string `json:"host"`
 	Port string `json:"port"`
+	// Kind classifies the source: ws_relay (Tailscale client),
+	// ws_admin (NPM WebSocket pool), lan, internet, unknown.
+	Kind string `json:"kind,omitempty"`
+}
+
+// ConnSummary aggregates connections by kind for the dashboard hero badges.
+type ConnSummary struct {
+	Relay int
+	Admin int
+	LAN   int
+	Other int
 }
 
 // DerpSnapshot is one entry from the rolling snapshot log on the agent.
@@ -844,6 +858,7 @@ type DerpSnapshot struct {
 	TS      string                 `json:"ts"`
 	Conns   []DerpPeer             `json:"conns"`
 	Metrics map[string]interface{} `json:"metrics"`
+	Summary *ConnSummary           `json:"summary,omitempty"`
 }
 
 func (a *App) collectDerpStatus() DerpStatus {
@@ -905,8 +920,9 @@ func (a *App) collectDerpStatus() DerpStatus {
 			UDPSTUN []DerpPeer `json:"udp_stun"`
 		}
 		if json.Unmarshal(body, &ac) == nil {
-			s.ActiveTCP = ac.TCP
-			s.ActiveUDP = ac.UDPSTUN
+			s.ActiveTCP = classifyDerpPeers(ac.TCP)
+			s.ActiveUDP = classifyDerpPeers(ac.UDPSTUN)
+			s.ConnSummary = summarizeDerpPeers(append(append([]DerpPeer{}, s.ActiveTCP...), s.ActiveUDP...))
 		}
 	}
 
@@ -924,6 +940,11 @@ func (a *App) collectDerpStatus() DerpStatus {
 			}
 			var snap DerpSnapshot
 			if json.Unmarshal([]byte(line), &snap) == nil {
+				// Apply classification to each conn (snapshot script
+				// in v0.3.4+ already includes kind, but be defensive
+				// about older entries that don't).
+				snap.Conns = classifyDerpPeers(snap.Conns)
+				snap.Summary = summarizeDerpPeers(snap.Conns)
 				s.Snapshot = append(s.Snapshot, snap)
 			}
 		}
@@ -1043,6 +1064,76 @@ func parseDerperVars(s *DerpStatus, body []byte) {
 	if v.STUN.CounterRequests.Success > 0 {
 		s.STUNListening = true
 	}
+}
+
+// derpPeerNPM is the IP of Nginx Proxy Manager, which keeps persistent
+// WebSocket connections to the derper for the /admin/derp page.
+const derpPeerNPM = "192.168.13.67"
+
+var (
+	derpTailscaleNet = net.IPNet{IP: net.ParseIP("100.64.0.0").To4(), Mask: net.CIDRMask(10, 32)}
+	derpLANNet       = net.IPNet{IP: net.ParseIP("192.168.13.0").To4(), Mask: net.CIDRMask(24, 32)}
+)
+
+// classifyDerpPeer labels a connection source.
+//   ws_relay - Tailscale client (100.64.0.0/10 or any public IP hitting derper)
+//   ws_admin - Nginx Proxy Manager WebSocket pool (192.168.13.67)
+//   lan      - other LAN client (192.168.13.0/24)
+//   local    - loopback (already filtered by the snapshot script)
+//   unknown  - anything else
+func classifyDerpPeer(ip string) string {
+	if ip == derpPeerNPM {
+		return "ws_admin"
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return "unknown"
+	}
+	if parsed.IsLoopback() {
+		return "local"
+	}
+	if derpTailscaleNet.Contains(parsed) {
+		return "ws_relay"
+	}
+	if derpLANNet.Contains(parsed) {
+		return "lan"
+	}
+	if !parsed.IsPrivate() {
+		return "ws_relay"
+	}
+	return "unknown"
+}
+
+// classifyDerpPeers fills the Kind field in-place; returns the same slice
+// for chaining.
+func classifyDerpPeers(peers []DerpPeer) []DerpPeer {
+	for i := range peers {
+		if peers[i].Kind == "" {
+			peers[i].Kind = classifyDerpPeer(peers[i].IP)
+		}
+	}
+	return peers
+}
+
+// summarizeDerpPeers counts connections per kind for the dashboard hero.
+func summarizeDerpPeers(peers []DerpPeer) *ConnSummary {
+	s := &ConnSummary{}
+	for _, p := range peers {
+		switch p.Kind {
+		case "ws_relay":
+			s.Relay++
+		case "ws_admin":
+			s.Admin++
+		case "lan":
+			s.LAN++
+		default:
+			s.Other++
+		}
+	}
+	if s.Relay == 0 && s.Admin == 0 && s.LAN == 0 && s.Other == 0 {
+		return nil
+	}
+	return s
 }
 
 func (a *App) GetAdminDERP(w http.ResponseWriter, r *http.Request) {
