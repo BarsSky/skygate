@@ -117,8 +117,13 @@
     <div class="icon"><i class="fa-solid fa-key"></i></div>
     <div class="body">
       <div class="label">Preauth ключей</div>
-      <div class="value">{{.MyPreAuthKeys}}</div>
-      <div class="sub">активных</div>
+      {{if gt .MyPreAuthKeys 0}}
+        <div class="value" style="color:var(--warning)">{{.MyPreAuthKeys}}</div>
+        <div class="sub">не использованы</div>
+      {{else}}
+        <div class="value" style="color:var(--text-muted)">—</div>
+        <div class="sub">нет активных</div>
+      {{end}}
     </div>
   </div>
   <div class="metric">
