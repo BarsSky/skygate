@@ -32,6 +32,7 @@ func LoadTemplates() *Templates {
 			if b == 0 { return 0 }
 			return a / b
 		},
+		"add": func(a, b int) int { return a + b },
 		"bytesfmt": func(n int64) string {
 			const k = 1024
 			if n >= 1024*1024 {
