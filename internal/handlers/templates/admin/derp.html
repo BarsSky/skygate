@@ -85,6 +85,22 @@
 {{if or .DerpStatus.ActiveTCP .DerpStatus.ActiveUDP}}
 <div class="section-title"><i class="fa-solid fa-user-group"></i>Активные подключения (прямо сейчас)</div>
 <div class="card">
+  {{if .DerpStatus.ConnSummary}}
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;font-size:12px">
+    {{if gt .DerpStatus.ConnSummary.Relay 0}}
+      <span class="tag tag-success"><i class="fa-solid fa-route"></i> Relay: <b>{{.DerpStatus.ConnSummary.Relay}}</b></span>
+    {{end}}
+    {{if gt .DerpStatus.ConnSummary.Admin 0}}
+      <span class="tag" title="Nginx Proxy Manager WebSocket pool"><i class="fa-solid fa-gauge-high"></i> NPM admin: <b>{{.DerpStatus.ConnSummary.Admin}}</b></span>
+    {{end}}
+    {{if gt .DerpStatus.ConnSummary.LAN 0}}
+      <span class="tag"><i class="fa-solid fa-network-wired"></i> LAN: <b>{{.DerpStatus.ConnSummary.LAN}}</b></span>
+    {{end}}
+    {{if gt .DerpStatus.ConnSummary.Other 0}}
+      <span class="tag"><i class="fa-solid fa-circle-question"></i> Other: <b>{{.DerpStatus.ConnSummary.Other}}</b></span>
+    {{end}}
+  </div>
+  {{end}}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
     <div>
       <h3 style="margin:0 0 8px;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">
@@ -92,12 +108,19 @@
       </h3>
       {{if .DerpStatus.ActiveTCP}}
       <table>
-        <thead><tr><th>IP</th><th>Hostname</th></tr></thead>
+        <thead><tr><th>IP</th><th>Hostname</th><th>Тип</th></tr></thead>
         <tbody>
           {{range .DerpStatus.ActiveTCP}}
           <tr>
             <td><code>{{.IP}}</code></td>
             <td>{{if .Host}}{{.Host}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
+            <td>
+              {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>relay</span>
+              {{else if eq .Kind "ws_admin"}}<span class="tag" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i>admin</span>
+              {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>lan</span>
+              {{else}}<span class="tag"><i class="fa-solid fa-circle-question"></i>?</span>
+              {{end}}
+            </td>
           </tr>
           {{end}}
         </tbody>
@@ -112,12 +135,19 @@
       </h3>
       {{if .DerpStatus.ActiveUDP}}
       <table>
-        <thead><tr><th>IP</th><th>Hostname</th></tr></thead>
+        <thead><tr><th>IP</th><th>Hostname</th><th>Тип</th></tr></thead>
         <tbody>
           {{range .DerpStatus.ActiveUDP}}
           <tr>
             <td><code>{{.IP}}</code></td>
             <td>{{if .Host}}{{.Host}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
+            <td>
+              {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>relay</span>
+              {{else if eq .Kind "ws_admin"}}<span class="tag"><i class="fa-solid fa-gauge-high"></i>admin</span>
+              {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>lan</span>
+              {{else}}<span class="tag"><i class="fa-solid fa-circle-question"></i>?</span>
+              {{end}}
+            </td>
           </tr>
           {{end}}
         </tbody>
@@ -128,7 +158,7 @@
     </div>
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    <i class="fa-solid fa-circle-info"></i> Источник: <code>ss -tn state established sport = :8443</code> + reverse DNS. Обновляется каждые 30 сек.
+    <i class="fa-solid fa-circle-info"></i> Источник: <code>ss -tn state established sport = :8443</code> + reverse DNS. <b>relay</b> = Tailscale клиент, <b>admin</b> = WebSocket от Nginx Proxy Manager. Обновляется каждые 30 сек.
   </p>
 </div>
 {{end}}
@@ -140,19 +170,24 @@
     {{range .DerpStatus.Snapshot}}
     <div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
       <span style="color:var(--text-muted);min-width:130px">{{.TS}}</span>
-      <span style="color:var(--accent)">
-        conns: <b>{{len .Conns}}</b>
-      </span>
-      {{range .Conns}}
-      <span style="background:var(--bg-elev);padding:2px 6px;border-radius:3px">
-        <i class="fa-solid fa-arrow-right" style="font-size:10px"></i> {{.IP}}{{if .Host}} ({{.Host}}){{end}}
-      </span>
+      {{if .Summary}}
+        <span class="tag" style="font-size:11px">all: <b>{{len .Conns}}</b></span>
+        {{if gt .Summary.Relay 0}}<span class="tag tag-success" style="font-size:11px"><i class="fa-solid fa-route"></i> relay: <b>{{.Summary.Relay}}</b></span>{{end}}
+        {{if gt .Summary.Admin 0}}<span class="tag" style="font-size:11px" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i> admin: <b>{{.Summary.Admin}}</b></span>{{end}}
+        {{if gt .Summary.LAN 0}}<span class="tag" style="font-size:11px"><i class="fa-solid fa-network-wired"></i> lan: <b>{{.Summary.LAN}}</b></span>{{end}}
+      {{else}}
+        <span style="color:var(--accent)">conns: <b>{{len .Conns}}</b></span>
+        {{range .Conns}}
+        <span style="background:var(--bg-elev);padding:2px 6px;border-radius:3px">
+          <i class="fa-solid fa-arrow-right" style="font-size:10px"></i> {{.IP}}{{if .Host}} ({{.Host}}){{end}}
+        </span>
+        {{end}}
       {{end}}
     </div>
     {{end}}
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    <i class="fa-solid fa-circle-info"></i> Источник: <code>derper-snapshot.timer</code> (каждые 30 сек) пишет <code>/var/log/derper-snapshot.log</code>.
+    <i class="fa-solid fa-circle-info"></i> Источник: <code>derper-snapshot.timer</code> (каждые 30 сек) пишет <code>/var/log/derper-snapshot.log</code>. <b>relay</b> = Tailscale клиенты, <b>admin</b> = Nginx Proxy Manager WebSocket pool (не Tailscale трафик).
   </p>
 </div>
 {{end}}
