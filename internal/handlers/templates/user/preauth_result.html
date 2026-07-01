@@ -8,49 +8,125 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-key"></i>Ваш ключ</h3>
-  <p style="color:var(--text-muted);margin-bottom:12px">Скопируйте и вставьте в Tailscale на устройстве:</p>
-  <div class="key-block"><code>{{.Key}}</code><button class="copy-btn" onclick="navigator.clipboard.writeText('{{.Key}}');this.textContent='Скопировано!';setTimeout(()=>{this.textContent='Копировать'},1500)"><i class="fa-solid fa-copy"></i></button></div>
+  <p style="color:var(--text-muted);margin-bottom:12px">Скопируйте и вставьте в Tailscale на устройстве (ниже — инструкция для <b>{{.OSLabel}}</b>):</p>
+  <div class="key-block"><code>{{.Key}}</code><button class="copy-btn" onclick="navigator.clipboard.writeText('{{.Key}}');this.textContent='Скопировано!';setTimeout(()=>{this.textContent='Копировать'},1500)"><i class="fa-solid fa-copy"></i>Копировать</button></div>
   <div class="alert alert-warn" style="margin-bottom:0">
     <i class="fa-solid fa-triangle-exclamation"></i>
-    <div>Ключ одноразовый и исчезнет через {{.Expires}}. Не показывайте его другим людям.</div>
+    <div>
+      <strong>Ключ привязан к аккаунту <code>{{.Username}}</code></strong> в нашем headscale.
+      Устройство появится в tailnet под этим пользователем.
+      <br>
+      Ключ одноразовый и исчезнет через {{.Expires}}. Не показывайте его другим людям.
+    </div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-list-check"></i>Инструкция для {{.OS}}</h3>
+  <h3><i class="fa-solid fa-server"></i>Шаг 0 — Подключиться к нашему control server</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">
+    Наш tailnet работает на собственном headscale, а не на дефолтном Tailscale.
+    Прежде чем вводить ключ — нужно на устройстве указать адрес нашего control server:
+  </p>
+  <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px;font-family:var(--mono);font-size:13px">
+    {{.ControlURL}}
+  </div>
+  <p style="color:var(--text-muted);font-size:13px">
+    Ниже — точные шаги для <b>{{.OSLabel}}</b>: сначала включите custom control server, затем введите ключ.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-list-check"></i>Инструкция для {{.OSLabel}}</h3>
   {{if eq .OS "android"}}
   <ol class="plain">
-    <li>Откройте Google Play, установите <b>Tailscale</b></li>
-    <li>Войдите в приложение → ☰ меню → <i>Use a custom coordination server</i></li>
-    <li>Укажите: <code>https://head.skynas.ru</code></li>
-    <li>Нажмите Sign in → вставьте ключ выше</li>
+    <li>Установите <b>Tailscale</b> из Google Play (если ещё нет).</li>
+    <li>Откройте приложение, <b>не нажимайте Sign in</b>. Сразу: <i class="fa-solid fa-bars"></i> меню (слева сверху) → <b>Settings</b> → прокрутите вниз до <b>"Use custom coordination server"</b> → переключите в ON.</li>
+    <li>В поле "Coordination server URL" вставьте: <code>{{.ControlURL}}</code></li>
+    <li>Вернитесь на главный экран → <b>Sign in</b>. Откроется страница нашего headscale.</li>
+    <li>На странице входа найдите опцию <b>"Use a preauth key"</b> (внизу формы) → нажмите.</li>
+    <li>Вставьте скопированный выше ключ → <b>Continue</b>.</li>
+    <li>Готово. Устройство появится на <a href="/my/devices">странице устройств</a> через несколько секунд.</li>
   </ol>
+  <div class="alert alert-warn" style="margin-top:12px">
+    <i class="fa-solid fa-circle-info"></i>
+    <div>Если опции "Use a preauth key" нет в вашей версии Tailscale — обновите приложение из Google Play (нужна версия 1.50+).</div>
+  </div>
+
   {{else if eq .OS "ios"}}
   <ol class="plain">
-    <li>App Store → установите Tailscale</li>
-    <li>Settings → Use Custom Control Server → <code>https://head.skynas.ru</code></li>
-    <li>Sign in → вставьте ключ</li>
+    <li>Установите <b>Tailscale</b> из App Store (если ещё нет).</li>
+    <li>Откройте приложение → <b>Settings</b> → <b>"Use Custom Control Server"</b> → переключите в ON.</li>
+    <li>В поле "Control Server URL" вставьте: <code>{{.ControlURL}}</code></li>
+    <li>Вернитесь на главный экран → <b>Sign in</b>. Откроется страница нашего headscale.</li>
+    <li>Найдите опцию <b>"Use a preauth key"</b> (внизу формы входа) → нажмите.</li>
+    <li>Вставьте скопированный выше ключ → <b>Continue</b>.</li>
+    <li>Готово. Устройство появится на <a href="/my/devices">странице устройств</a> через несколько секунд.</li>
   </ol>
+  <div class="alert alert-warn" style="margin-top:12px">
+    <i class="fa-solid fa-circle-info"></i>
+    <div>Нужен Tailscale 1.50+ (App Store). На более старых — обновите.</div>
+  </div>
+
   {{else if eq .OS "linux"}}
+  <p style="color:var(--text-muted);margin-bottom:12px">Одна команда — установит Tailscale (если нет), подключится к нашему control server и зарегистрирует устройство по ключу:</p>
   <pre>curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --login-server=https://head.skynas.ru --authkey={{.Key}}</pre>
+sudo tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
+  <p style="color:var(--text-muted);margin-top:8px">
+    <i class="fa-solid fa-circle-info"></i>
+    Флаг <code>--accept-routes</code> добавьте если хотите принимать маршруты от других узлов (например, exit nodes).
+    Полный список: <code>tailscale up --help</code>.
+  </p>
   <p>Готово — устройство появится на <a href="/my/devices">странице устройств</a> через несколько секунд.</p>
+
   {{else if eq .OS "macos"}}
+  <p style="color:var(--text-muted);margin-bottom:12px"><b>Способ 1 — через GUI (проще):</b></p>
   <ol class="plain">
-    <li>App Store → установите Tailscale for Mac</li>
-    <li>Settings → Use Custom Control Server → <code>https://head.skynas.ru</code></li>
-    <li>Sign in → вставьте ключ</li>
+    <li>App Store → установите <b>Tailscale</b>.</li>
+    <li>Menu bar (правый верх) → кликните на иконку Tailscale → <b>"Use Custom Control Server"</b> → вставьте: <code>{{.ControlURL}}</code></li>
+    <li>В том же меню → <b>Sign in</b> → откроется страница нашего headscale.</li>
+    <li>Найдите <b>"Use a preauth key"</b> → вставьте ключ → <b>Continue</b>.</li>
   </ol>
+  <p style="color:var(--text-muted);margin:12px 0 4px"><b>Способ 2 — через CLI (если стоит Homebrew):</b></p>
+  <pre>brew install --cask tailscale-app
+open -a Tailscale
+/usr/local/bin/tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
+  <p>Готово — устройство появится на <a href="/my/devices">странице устройств</a> через несколько секунд.</p>
+
   {{else if eq .OS "windows"}}
+  <p style="color:var(--text-muted);margin-bottom:12px"><b>Способ 1 — через GUI (проще):</b></p>
   <ol class="plain">
-    <li>Скачайте установщик: <a href="https://tailscale.com/download/windows" target="_blank" rel="noopener">tailscale.com/download/windows</a></li>
-    <li>Settings → Use Custom Control Server → <code>https://head.skynas.ru</code></li>
-    <li>Sign in → вставьте ключ</li>
+    <li>Скачайте установщик: <a href="https://tailscale.com/download/windows" target="_blank" rel="noopener">tailscale.com/download/windows</a> → установите.</li>
+    <li>System tray (правый нижний угол) → кликните на иконку Tailscale → <b>Sign in</b> → откроется браузер.</li>
+    <li>В браузере откроется страница нашего headscale. Найдите <b>"Use a preauth key"</b> → вставьте ключ → <b>Continue</b>.</li>
   </ol>
+  <p style="color:var(--text-muted);margin:12px 0 4px"><b>Способ 2 — через PowerShell (надёжнее):</b></p>
+  <pre>Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile $env:TEMP\ts.exe
+Start-Process $env:TEMP\ts.exe -ArgumentList "/quiet" -Wait
+&amp; "$env:ProgramFiles\Tailscale\tailscale.exe" up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
+  <p>Готово — устройство появится на <a href="/my/devices">странице устройств</a> через несколько секунд.</p>
+
+  {{else}}
+  <div class="alert alert-danger">
+    <i class="fa-solid fa-circle-exclamation"></i>
+    <div>Неизвестная ОС "{{.OS}}". Выберите ОС на <a href="/my/devices">странице устройств</a> и получите ключ заново.</div>
+  </div>
   {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-arrow-right-arrow-left"></i>Хотите войти под ДРУГИМ аккаунтом?</h3>
+  <p style="color:var(--text-muted);margin-bottom:8px">
+    По умолчанию ключ привязан к <code>{{.Username}}</code>. Если на этом устройстве уже выполнен вход в Tailscale под другим аккаунтом — сначала выйдите:
+  </p>
+  <pre>tailscale logout</pre>
+  <p style="color:var(--text-muted);margin-top:8px">
+    Затем повторите команду <code>tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</code>.
+    На мобильных (Android/iOS) — выйдите через <i class="fa-solid fa-bars"></i> → <b>Sign out</b>, затем повторите шаги выше.
+  </p>
 </div>
 
 <div class="btn-row">
   <a href="/my/devices" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i>Назад к устройствам</a>
+  <a href="/my/devices" class="btn"><i class="fa-solid fa-plus"></i>Получить ещё один ключ</a>
 </div>
 {{end}}

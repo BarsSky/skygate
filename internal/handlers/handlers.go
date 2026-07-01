@@ -26,18 +26,23 @@ type App struct {
 	HeadscaleKey string
 	JWTSecret    string
 	SessionHours int
+	ControlURL   string // human-facing URL clients connect to (e.g. https://head.skynas.ru)
 	DerpBaseURL  string // base URL of the local custom DERP server, e.g. http://192.168.13.69:8443
 
 	templates *Templates
 }
 
-func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret string, sessionH int) *App {
+func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL string, sessionH int) *App {
+	if controlURL == "" {
+		controlURL = "https://head.skynas.ru"
+	}
 	return &App{
 		DB:           d,
 		HS:           hs,
 		HeadscaleKey: headscaleKey,
 		JWTSecret:    secret,
 		SessionHours: sessionH,
+		ControlURL:   controlURL,
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
 	}
@@ -492,6 +497,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		"MyNodes":     myNodesList,
 		"PublicNodes": publicNodes,
 		"HasMyNodes":  len(myNodesList) > 0,
+		"ControlURL":  a.ControlURL,
 	})
 }
 
@@ -519,11 +525,55 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at, headscale_preauth_id) VALUES(?,?,?,?)`,
 		c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
 	a.audit(c.UserID, c.Username, "preauth_issued", "1h single-use")
+
+	// Determine target OS: explicit form value, else fall back to User-Agent.
+	osKey := normalizeOS(r.FormValue("os"), r.UserAgent())
 	a.renderWithLayout(w, "user/preauth_result.html", c, map[string]any{
-		"Key":     key.Key,
-		"Expires": "1 hour",
-		"OS":      r.FormValue("os"),
+		"Key":        key.Key,
+		"Expires":    "1 hour",
+		"OS":         osKey,
+		"OSLabel":    osLabel(osKey),
+		"ControlURL": a.ControlURL,
 	})
+}
+
+// normalizeOS returns one of: android, ios, linux, macos, windows.
+// Explicit form value wins. If empty, inspect User-Agent.
+func normalizeOS(explicit, ua string) string {
+	switch explicit {
+	case "android", "ios", "linux", "macos", "windows":
+		return explicit
+	}
+	ua = strings.ToLower(ua)
+	switch {
+	case strings.Contains(ua, "android"):
+		return "android"
+	case strings.Contains(ua, "iphone") || strings.Contains(ua, "ipad") || strings.Contains(ua, "ios"):
+		return "ios"
+	case strings.Contains(ua, "mac os") || strings.Contains(ua, "macintosh"):
+		return "macos"
+	case strings.Contains(ua, "windows"):
+		return "windows"
+	case strings.Contains(ua, "linux") || strings.Contains(ua, "x11"):
+		return "linux"
+	}
+	return "linux" // safest default for a server
+}
+
+func osLabel(k string) string {
+	switch k {
+	case "android":
+		return "Android"
+	case "ios":
+		return "iOS"
+	case "linux":
+		return "Linux"
+	case "macos":
+		return "macOS"
+	case "windows":
+		return "Windows"
+	}
+	return k
 }
 
 // GetExitNodes lists exit nodes advertised in the tailnet. Visible to all

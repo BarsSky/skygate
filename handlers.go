@@ -28,15 +28,17 @@ type App struct {
 	DerpBaseURL  string // base URL of the local custom DERP server, e.g. http://192.168.13.69:8443
 
 	templates *Templates
+	ControlURL   string // human-facing URL
 }
 
-func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret string, sessionH int) *App {
+func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL string, sessionH int) *App {
 	return &App{
 		DB:           d,
 		HS:           hs,
 		HeadscaleKey: headscaleKey,
 		JWTSecret:    secret,
 		SessionHours: sessionH,
+			ControlURL:   controlURL,
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
 	}
