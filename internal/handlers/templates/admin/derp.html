@@ -41,10 +41,48 @@
     <div class="body">
       <div class="label">Версия</div>
       <div class="value" style="font-size:14px">v{{.DerpStatus.Version}}</div>
-      <div class="sub">tailscale/derper</div>
+      <div class="sub">go {{.DerpStatus.GoVersion}}</div>
     </div>
   </div>
 </div>
+
+{{if or .DerpStatus.Connections .DerpStatus.Accepts .DerpStatus.BytesIn}}
+<div class="section-title"><i class="fa-solid fa-chart-line"></i>Трафик</div>
+<div class="metric-grid">
+  <div class="metric">
+    <div class="icon"><i class="fa-solid fa-plug-circle-bolt"></i></div>
+    <div class="body">
+      <div class="label">Активные коннекты</div>
+      <div class="value">{{.DerpStatus.Connections}}</div>
+      <div class="sub">всего с начала: {{.DerpStatus.Accepts}}</div>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="icon"><i class="fa-solid fa-users"></i></div>
+    <div class="body">
+      <div class="label">Tailscale клиенты</div>
+      <div class="value">{{.DerpStatus.Clients}}</div>
+      <div class="sub">через этот DERP</div>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="icon"><i class="fa-solid fa-arrow-down"></i></div>
+    <div class="body">
+      <div class="label">Bytes IN</div>
+      <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesIn}}</div>
+      <div class="sub">{{.DerpStatus.PacketsIn}} пакетов</div>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="icon"><i class="fa-solid fa-arrow-up"></i></div>
+    <div class="body">
+      <div class="label">Bytes OUT</div>
+      <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesOut}}</div>
+      <div class="sub">{{.DerpStatus.PacketsOut}} пакетов</div>
+    </div>
+  </div>
+</div>
+{{end}}
 
 <div class="card">
   <h3><i class="fa-solid fa-server"></i>Сервис</h3>
@@ -56,25 +94,14 @@
       <tr><td style="color:var(--text-muted)">STUN endpoint</td><td><code>{{.DerpStatus.Hostname}}:{{.DerpStatus.STUNPort}}</code> (UDP)</td></tr>
       <tr><td style="color:var(--text-muted)">White IP</td><td><code>{{.DerpStatus.WhiteIP}}</code></td></tr>
       <tr><td style="color:var(--text-muted)">Started</td><td>{{.DerpStatus.StartedAt}}</td></tr>
-      <tr><td style="color:var(--text-muted)">Process PID</td><td><code>{{.DerpStatus.PID}}</code></td></tr>
-      <tr><td style="color:var(--text-muted)">Memory</td><td>{{.DerpStatus.Memory}}</td></tr>
+      <tr><td style="color:var(--text-muted)">Uptime</td><td>{{.DerpStatus.UpTime}}</td></tr>
+      {{if .DerpStatus.Machine}}<tr><td style="color:var(--text-muted)">Machine</td><td><code>{{.DerpStatus.Machine}}</code></td></tr>{{end}}
+      {{if .DerpStatus.GoVersion}}<tr><td style="color:var(--text-muted)">Go version</td><td><code>{{.DerpStatus.GoVersion}}</code></td></tr>{{end}}
+      {{if .DerpStatus.Memory}}<tr><td style="color:var(--text-muted)">Memory</td><td>{{.DerpStatus.Memory}}</td></tr>{{end}}
+      {{if .DerpStatus.STUNRequests}}<tr><td style="color:var(--text-muted)">STUN requests</td><td>{{.DerpStatus.STUNRequests}} (successful)</td></tr>{{end}}
     </tbody>
   </table>
 </div>
-
-{{if .DerpStatus.RecentLog}}
-<div class="card">
-  <h3><i class="fa-solid fa-terminal"></i>Последние логи</h3>
-  <pre>{{.DerpStatus.RecentLog}}</pre>
-</div>
-{{end}}
-
-{{else}}
-<div class="alert alert-danger">
-  <i class="fa-solid fa-circle-exclamation"></i>
-  <div>Не удалось получить статус DERP. Проверьте что derper запущен на агенте.</div>
-</div>
-{{end}}
 
 <div class="card">
   <h3><i class="fa-solid fa-circle-question"></i>Что такое DERP?</h3>
@@ -86,4 +113,10 @@
     Подробнее: <a href="/help#derp"><i class="fa-solid fa-book"></i> Справка → DERP</a>
   </p>
 </div>
+{{else}}
+<div class="alert alert-danger">
+  <i class="fa-solid fa-circle-exclamation"></i>
+  <div>Не удалось получить статус DERP. Проверьте что derper запущен на агенте.</div>
+</div>
+{{end}}
 {{end}}
