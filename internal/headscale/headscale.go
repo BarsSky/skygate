@@ -234,20 +234,28 @@ func durationFlag(d time.Duration) string {
 	return d.String()
 }
 
+type HSPreauthKey struct {
+	ID     string `json:"id"`
+	User   HSUser `json:"user"`
+	Key    string `json:"key"`
+	Used   bool   `json:"used"`
+}
+
 type HSNode struct {
-	ID            string   `json:"id"`
-	MachineKey    string   `json:"machineKey"`
-	NodeKey       string   `json:"nodeKey"`
-	DiscoKey      string   `json:"discoKey"`
-	Name          string   `json:"name"`
-	GivenName     string   `json:"givenName"`
-	User          HSUser   `json:"user"`
-	IPAddresses   []string `json:"ipAddresses"`
-	Online        bool     `json:"online"`
-	LastSeen      string   `json:"lastSeen"`
-	CreatedAt     string   `json:"createdAt"`
-	Tags            []string `json:"tags"`
-	AvailableRoutes []string `json:"availableRoutes"`
+	ID            string         `json:"id"`
+	MachineKey    string         `json:"machineKey"`
+	NodeKey       string         `json:"nodeKey"`
+	DiscoKey      string         `json:"discoKey"`
+	Name          string         `json:"name"`
+	GivenName     string         `json:"givenName"`
+	User          HSUser         `json:"user"`
+	IPAddresses   []string       `json:"ipAddresses"`
+	Online        bool           `json:"online"`
+	LastSeen      string         `json:"lastSeen"`
+	CreatedAt     string         `json:"createdAt"`
+	Tags            []string     `json:"tags"`
+	AvailableRoutes []string     `json:"availableRoutes"`
+	PreAuthKey    *HSPreauthKey  `json:"preAuthKey"`
 }
 
 type NodeView struct {
@@ -262,6 +270,9 @@ type NodeView struct {
 	IsExitNode      bool
 	Tags            []string
 	AvailableRoutes []string
+	// PreAuthKeyID is the headscale ID of the preauth key this node
+	// registered with, or "" if the node predates our key tracking.
+	PreAuthKeyID string
 }
 
 func (n HSNode) toView() NodeView {
@@ -269,6 +280,10 @@ func (n HSNode) toView() NodeView {
 	host := n.GivenName
 	if host == "" {
 		host = n.Name
+	}
+	var pakID string
+	if n.PreAuthKey != nil {
+		pakID = n.PreAuthKey.ID
 	}
 	return NodeView{
 		ID:            n.ID,
@@ -282,6 +297,7 @@ func (n HSNode) toView() NodeView {
 		IsExitNode:    hasExitNodeTag(tags, n.Name, n.AvailableRoutes),
 		Tags:          tags,
 		AvailableRoutes: n.AvailableRoutes,
+		PreAuthKeyID:  pakID,
 	}
 }
 
