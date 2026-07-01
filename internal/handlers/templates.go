@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -27,6 +28,20 @@ func LoadTemplates() *Templates {
 	// We'll re-register with the real impl after parsing bodies.
 	t.Funcs(template.FuncMap{
 		"safeJS": func(s string) template.JS { return template.JS(s) },
+		"dividefloat": func(a, b float64) float64 {
+			if b == 0 { return 0 }
+			return a / b
+		},
+		"bytesfmt": func(n int64) string {
+			const k = 1024
+			if n >= 1024*1024 {
+				return fmt.Sprintf("%.1f MB", float64(n)/float64(k*k))
+			}
+			if n >= 1024 {
+				return fmt.Sprintf("%.1f KB", float64(n)/float64(k))
+			}
+			return fmt.Sprintf("%d B", n)
+		},
 		"renderBody": func(name string, data any) (template.HTML, error) {
 			return template.HTML("<!-- placeholder -->"), nil
 		},
