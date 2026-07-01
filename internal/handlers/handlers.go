@@ -1219,8 +1219,8 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 }
 
 // backfillNodeOwnership walks all nodes, and for any node whose headscale
-// preAuthKey matches an unused/used preauth key issued by this portal user,
-// inserts a row in node_owner_map (idempotent via INSERT OR IGNORE).
+// preAuthKey matches one of this portal user's preauth_keys, inserts a row
+// in node_owner_map (idempotent via INSERT OR IGNORE).
 //
 // Why this exists:
 //   - When a user issues a preauth key via /my/devices, we save the
@@ -1243,6 +1243,36 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 // michail "0/0" report. The flip side is that a transient headscale API
 // hiccup could drop a row; the next successful /my/devices load will
 // re-backfill it from preAuthKey, so the blast radius is one page load.
+//
+// Two strategies, applied in order, first match wins:
+//
+//   A. Strict join on n.PreAuthKeyID == preauth_keys.headscale_preauth_id.
+//      Works for keys whose headscale_preauth_id was captured at issue
+//      time. This is the original path from v0.3.9 - fast and accurate,
+//      but vulnerable to API response shape changes (a preauth key issued
+//      when the response field name shifted will not have a stored
+//      headscale_preauth_id, and the node will not match here).
+//
+//   C. Temporal fallback. If (A) failed AND the node has a non-empty
+//      CreatedAt AND the user has at least one preauth key created
+//      within 1 hour BEFORE the node's CreatedAt, we attribute the node
+//      to that key's owner. The 1-hour window is a safety margin: a
+//      user can't physically generate a preauth key, ship it to a remote
+//      device, and have that device register with headscale faster
+//      than that. If a key was created within the window, it's
+//      effectively the only plausible cause. This recovers ownership
+//      for keys whose headscale_preauth_id was never captured (the
+//      michail case: 5/7 keys have NULL headscale_preauth_id because
+//      the API stopped populating that field on the day they were
+//      generated).
+//
+// Safety: BOTH strategies skip nodes whose current headscale user
+// belongs to a *different* portal user. A node that headscale has
+// reassigned to "tagged-devices" still has user=tagged-devices there
+// (we never override that), and nodes still in someone's namespace
+// (user != "tagged-devices") keep their live link. We only insert
+// snapshot rows for nodes that headscale has effectively orphaned
+// OR for nodes that the user plausibly owns via temporal correlation.
 func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
 	if portalUserID == 0 || portalUsername == "" {
 		return
@@ -1271,40 +1301,117 @@ func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID 
 			_, _ = db.Exec(`DELETE FROM node_owner_map WHERE node_id=? AND username=?`, nid, portalUsername)
 		}
 	}
-	// Backfill pass: collect candidates and INSERT OR IGNORE.
-	type candidate struct {
-		nodeID string
-		keyID  string
-		tag    string
+	// Preload this user's preauth keys once.
+	type pakRow struct {
+		ID                int64
+		HeadscalePreauthID sql.NullString
+		CreatedAt         int64
 	}
-	var matches []candidate
-	for _, n := range nodes {
-		if n.PreAuthKeyID == "" {
-			continue
-		}
-		if len(n.Tags) == 0 {
-			continue
-		}
-		matches = append(matches, candidate{
-			nodeID: n.ID,
-			keyID:  n.PreAuthKeyID,
-			tag:    n.Tags[0],
-		})
-	}
-	if len(matches) == 0 {
+	rows, err := db.Query(`SELECT id, headscale_preauth_id, created_at FROM preauth_keys WHERE user_id=? ORDER BY created_at DESC`, portalUserID)
+	if err != nil {
 		return
 	}
-	for _, m := range matches {
-		var ownerUserID int64
-		err := db.QueryRow(`SELECT user_id FROM preauth_keys WHERE headscale_preauth_id=?`, m.keyID).Scan(&ownerUserID)
-		if err != nil || ownerUserID != portalUserID {
+	defer rows.Close()
+	var paks []pakRow
+	for rows.Next() {
+		var r pakRow
+		if err := rows.Scan(&r.ID, &r.HeadscalePreauthID, &r.CreatedAt); err == nil {
+			paks = append(paks, r)
+		}
+	}
+	// Look up the headscale user IDs that other portal users own,
+	// so we can detect "this node is currently in someone else's
+	// namespace" and refuse to steal it. A node whose n.UserID maps
+	// to a different portal user is theirs, not ours.
+	otherOwners := map[string]bool{}
+	if portalUserID != 0 {
+		oRows, _ := db.Query(`SELECT headscale_user_id FROM portal_users WHERE id != ? AND headscale_user_id IS NOT NULL AND headscale_user_id != ''`, portalUserID)
+		if oRows != nil {
+			defer oRows.Close()
+			for oRows.Next() {
+				var hid string
+				if err := oRows.Scan(&hid); err == nil {
+					otherOwners[hid] = true
+				}
+			}
+		}
+	}
+	// Track nodes we've already snapshotted in this pass so a node
+	// doesn't get two snapshot rows (e.g. matching (A) AND (C)).
+	inserted := map[string]bool{}
+	for _, n := range nodes {
+		if inserted[n.ID] {
+			continue
+		}
+		// Refuse to steal a node that headscale currently has in
+		// another portal user's namespace. tagged-devices is a
+		// synthetic user created by headscale for tag-bearing
+		// nodes, NOT a portal user, so it doesn't appear in
+		// otherOwners and is fair game for snapshot rows.
+		if n.UserID != "" && otherOwners[n.UserID] {
+			continue
+		}
+		var matchedTag string
+		// Strategy A: strict join on headscale_preauth_id.
+		if n.PreAuthKeyID != "" {
+			for _, p := range paks {
+				if p.HeadscalePreauthID.Valid && p.HeadscalePreauthID.String == n.PreAuthKeyID {
+					matchedTag = firstTagOrFallback(n)
+					break
+				}
+			}
+		}
+		// Strategy C: temporal fallback. Node has CreatedAt, and
+		// one of this user's preauth keys was created within the
+		// 1-hour window before the node.
+		if matchedTag == "" && n.CreatedAt != "" {
+			if nodeAt, err := time.Parse(time.RFC3339, n.CreatedAt); err == nil {
+				bestKey := int64(0)
+				bestDelta := time.Duration(0)
+				for _, p := range paks {
+					keyAt := time.Unix(p.CreatedAt, 0)
+					delta := nodeAt.Sub(keyAt)
+					// Preauth key must be created BEFORE the node
+					// (delta >= 0), and within 1 hour. The user
+					// can issue a key, send it to a device, and
+					// have the device register - but not faster
+					// than ~minute for a remote network, and we
+					// want a wide enough window to absorb clock
+					// skew, retries, slow SSH tunnels, etc.
+					if delta < 0 || delta > time.Hour {
+						continue
+					}
+					if bestKey == 0 || delta < bestDelta {
+						bestKey = p.ID
+						bestDelta = delta
+					}
+				}
+				if bestKey != 0 {
+					matchedTag = firstTagOrFallback(n)
+				}
+			}
+		}
+		if matchedTag == "" {
 			continue
 		}
 		_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
 			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
 			VALUES (?, ?, ?, ?, ?)`,
-			m.nodeID, ownerUserID, portalUsername, m.tag, portalUserID)
+			n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
+		inserted[n.ID] = true
 	}
+}
+
+// firstTagOrFallback returns the node's first tag, or "tag:untagged"
+// if the node has no tags. Used to populate node_owner_map.tag for
+// rows that come from strategies that don't otherwise carry a tag
+// (specifically the temporal fallback in C, which fires for both
+// tagged and untagged nodes).
+func firstTagOrFallback(n headscale.NodeView) string {
+	if len(n.Tags) > 0 {
+		return n.Tags[0]
+	}
+	return "tag:untagged"
 }
 
 // derpPeerNPM is the IP of Nginx Proxy Manager, which keeps persistent

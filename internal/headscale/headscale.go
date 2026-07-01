@@ -273,6 +273,14 @@ type NodeView struct {
 	// PreAuthKeyID is the headscale ID of the preauth key this node
 	// registered with, or "" if the node predates our key tracking.
 	PreAuthKeyID string
+	// CreatedAt is the RFC3339 timestamp from headscale for when the
+	// node first registered. Used by backfillNodeOwnership as a
+	// fallback when a user's preauth key has no stored headscale_preauth_id
+	// (e.g. because the headscale API response shape changed and the
+	// key ID field stopped being captured). In that case we still
+	// match by "node created after this preauth key" with a safety
+	// margin to avoid stealing another user's recent node.
+	CreatedAt string
 }
 
 func (n HSNode) toView() NodeView {
@@ -298,6 +306,7 @@ func (n HSNode) toView() NodeView {
 		Tags:          tags,
 		AvailableRoutes: n.AvailableRoutes,
 		PreAuthKeyID:  pakID,
+		CreatedAt:     n.CreatedAt,
 	}
 }
 
