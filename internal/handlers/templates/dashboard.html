@@ -96,8 +96,13 @@
     <div class="icon"><i class="fa-solid fa-laptop"></i></div>
     <div class="body">
       <div class="label">Мои устройства</div>
-      <div class="value">{{.MyOnlineNodes}}/{{.MyTotalNodes}}</div>
-      <div class="sub">online / всего</div>
+      {{if eq .MyTotalNodes 0}}
+        <div class="value" style="color:var(--text-muted)">—</div>
+        <div class="sub">ещё не добавлены</div>
+      {{else}}
+        <div class="value">{{.MyOnlineNodes}}/{{.MyTotalNodes}}</div>
+        <div class="sub">online / всего</div>
+      {{end}}
     </div>
   </div>
   <div class="metric">
