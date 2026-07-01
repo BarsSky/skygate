@@ -235,31 +235,33 @@ func durationFlag(d time.Duration) string {
 }
 
 type HSNode struct {
-	ID          string   `json:"id"`
-	MachineKey  string   `json:"machineKey"`
-	NodeKey     string   `json:"nodeKey"`
-	DiscoKey    string   `json:"discoKey"`
-	Name        string   `json:"name"`
-	GivenName   string   `json:"givenName"`
-	User        HSUser   `json:"user"`
-	IPAddresses []string `json:"ipAddresses"`
-	Online      bool     `json:"online"`
-	LastSeen    string   `json:"lastSeen"`
-	CreatedAt   string   `json:"createdAt"`
-	Tags        []string `json:"tags"`
+	ID            string   `json:"id"`
+	MachineKey    string   `json:"machineKey"`
+	NodeKey       string   `json:"nodeKey"`
+	DiscoKey      string   `json:"discoKey"`
+	Name          string   `json:"name"`
+	GivenName     string   `json:"givenName"`
+	User          HSUser   `json:"user"`
+	IPAddresses   []string `json:"ipAddresses"`
+	Online        bool     `json:"online"`
+	LastSeen      string   `json:"lastSeen"`
+	CreatedAt     string   `json:"createdAt"`
+	Tags            []string `json:"tags"`
+	AvailableRoutes []string `json:"availableRoutes"`
 }
 
 type NodeView struct {
-	ID          string
-	Hostname    string
-	GivenName   string
-	IPAddresses []string
-	Online      bool
-	LastSeen    string
-	UserName    string
-	UserID      string
-	IsExitNode  bool
-	Tags        []string
+	ID              string
+	Hostname        string
+	GivenName       string
+	IPAddresses     []string
+	Online          bool
+	LastSeen        string
+	UserName        string
+	UserID          string
+	IsExitNode      bool
+	Tags            []string
+	AvailableRoutes []string
 }
 
 func (n HSNode) toView() NodeView {
@@ -269,28 +271,40 @@ func (n HSNode) toView() NodeView {
 		host = n.Name
 	}
 	return NodeView{
-		ID:          n.ID,
-		Hostname:    host,
-		GivenName:   n.GivenName,
-		IPAddresses: n.IPAddresses,
-		Online:      n.Online,
-		LastSeen:    n.LastSeen,
-		UserName:    n.User.Name,
-		UserID:      n.User.ID,
-		IsExitNode:  hasExitNodeTag(tags, n.Name),
-		Tags:        tags,
+		ID:            n.ID,
+		Hostname:      host,
+		GivenName:     n.GivenName,
+		IPAddresses:   n.IPAddresses,
+		Online:        n.Online,
+		LastSeen:      n.LastSeen,
+		UserName:      n.User.Name,
+		UserID:        n.User.ID,
+		IsExitNode:    hasExitNodeTag(tags, n.Name, n.AvailableRoutes),
+		Tags:          tags,
+		AvailableRoutes: n.AvailableRoutes,
 	}
 }
 
-func hasExitNodeTag(tags []string, name string) bool {
+func hasExitNodeTag(tags []string, name string, availableRoutes []string) bool {
+	// 1. Explicit tag:exit-node (Tailscale convention)
 	for _, t := range tags {
 		if strings.EqualFold(t, "tag:exit-node") {
 			return true
 		}
 	}
+	// 2. Name starts with exit- or exitnode
 	n := strings.ToLower(name)
 	if strings.HasPrefix(n, "exit-") || strings.HasPrefix(n, "exitnode") {
 		return true
+	}
+	// 3. headscale 0.29: any node with availableRoutes containing 0.0.0.0/0
+	//    is functionally an exit node (advertises itself as a router for
+	//    the whole internet). This is how our karolina/emilia/sharlotta
+	//    work as exit nodes without an explicit tag.
+	for _, r := range availableRoutes {
+		if r == "0.0.0.0/0" || r == "::/0" {
+			return true
+		}
 	}
 	return false
 }

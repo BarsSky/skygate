@@ -793,6 +793,26 @@ type DerpStatus struct {
 	Clients         int
 	STUNRequests    int
 	RecentLog       string
+
+	// Active connections to derper (src IP, reverse DNS).
+	ActiveTCP []DerpPeer
+	ActiveUDP []DerpPeer
+	// Snapshot history tail (parsed recent records).
+	Snapshot []DerpSnapshot
+}
+
+// DerpPeer is one observed peer connecting to derper.
+type DerpPeer struct {
+	IP   string `json:"ip"`
+	Host string `json:"host"`
+	Port string `json:"port"`
+}
+
+// DerpSnapshot is one entry from the rolling snapshot log on the agent.
+type DerpSnapshot struct {
+	TS      string                 `json:"ts"`
+	Conns   []DerpPeer             `json:"conns"`
+	Metrics map[string]interface{} `json:"metrics"`
 }
 
 func (a *App) collectDerpStatus() DerpStatus {
@@ -844,6 +864,37 @@ func (a *App) collectDerpStatus() DerpStatus {
 		}
 		if json.Unmarshal(body, &j) == nil && j.STUN.CounterRequests.Success > 0 {
 			s.STUNListening = true
+		}
+	}
+
+	// 5. Active connections (current TCP/UDP peers with reverse DNS)
+	if body, err := httpGet(derpURL+"/active-conn", 3*time.Second); err == nil {
+		var ac struct {
+			TCP     []DerpPeer `json:"tcp"`
+			UDPSTUN []DerpPeer `json:"udp_stun"`
+		}
+		if json.Unmarshal(body, &ac) == nil {
+			s.ActiveTCP = ac.TCP
+			s.ActiveUDP = ac.UDPSTUN
+		}
+	}
+
+	// 6. Snapshot history (last 30 records from /var/log/derper-snapshot.log)
+	if body, err := httpGet(derpURL+"/all-recent", 3*time.Second); err == nil {
+		lines := strings.Split(string(body), "\n")
+		start := 0
+		if len(lines) > 30 {
+			start = len(lines) - 30
+		}
+		for _, line := range lines[start:] {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var snap DerpSnapshot
+			if json.Unmarshal([]byte(line), &snap) == nil {
+				s.Snapshot = append(s.Snapshot, snap)
+			}
 		}
 	}
 
