@@ -96,6 +96,9 @@
     {{if gt .DerpStatus.ConnSummary.LAN 0}}
       <span class="tag"><i class="fa-solid fa-network-wired"></i> LAN: <b>{{.DerpStatus.ConnSummary.LAN}}</b></span>
     {{end}}
+    {{if gt .DerpStatus.ConnSummary.Self 0}}
+      <span class="tag" title="derper self-monitoring (loopback)"><i class="fa-solid fa-rotate"></i> Self: <b>{{.DerpStatus.ConnSummary.Self}}</b></span>
+    {{end}}
     {{if gt .DerpStatus.ConnSummary.Other 0}}
       <span class="tag"><i class="fa-solid fa-circle-question"></i> Other: <b>{{.DerpStatus.ConnSummary.Other}}</b></span>
     {{end}}
@@ -118,6 +121,7 @@
               {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>relay</span>
               {{else if eq .Kind "ws_admin"}}<span class="tag" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i>admin</span>
               {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>lan</span>
+              {{else if eq .Kind "self"}}<span class="tag" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i>self</span>
               {{else}}<span class="tag"><i class="fa-solid fa-circle-question"></i>?</span>
               {{end}}
             </td>
@@ -145,6 +149,7 @@
               {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>relay</span>
               {{else if eq .Kind "ws_admin"}}<span class="tag"><i class="fa-solid fa-gauge-high"></i>admin</span>
               {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>lan</span>
+              {{else if eq .Kind "self"}}<span class="tag" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i>self</span>
               {{else}}<span class="tag"><i class="fa-solid fa-circle-question"></i>?</span>
               {{end}}
             </td>
@@ -175,6 +180,7 @@
         {{if gt .Summary.Relay 0}}<span class="tag tag-success" style="font-size:11px"><i class="fa-solid fa-route"></i> relay: <b>{{.Summary.Relay}}</b></span>{{end}}
         {{if gt .Summary.Admin 0}}<span class="tag" style="font-size:11px" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i> admin: <b>{{.Summary.Admin}}</b></span>{{end}}
         {{if gt .Summary.LAN 0}}<span class="tag" style="font-size:11px"><i class="fa-solid fa-network-wired"></i> lan: <b>{{.Summary.LAN}}</b></span>{{end}}
+        {{if gt .Summary.Self 0}}<span class="tag" style="font-size:11px" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i> self: <b>{{.Summary.Self}}</b></span>{{end}}
       {{else}}
         <span style="color:var(--accent)">conns: <b>{{len .Conns}}</b></span>
         {{range .Conns}}
