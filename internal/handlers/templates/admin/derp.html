@@ -177,13 +177,33 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-circle-question"></i>Что такое DERP?</h3>
+  <h3><i class="fa-solid fa-book"></i>Справка</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
-    DERP (Designated Encrypted Relay for Packets) — это relay-сервер Tailscale.
-    Когда прямое соединение между клиентами невозможно (CGNAT, файрвол), трафик идёт через DERP.
+    <strong>Параметры</strong>:
+    <ul style="margin:6px 0 12px 0;padding-left:20px;font-size:13px;color:var(--text-muted)">
+      <li><b>Accepts</b> — сколько раз derper принял WebSocket-апгрейд за всё время</li>
+      <li><b>Current conns</b> — сколько WebSocket-соединений открыто прямо сейчас</li>
+      <li><b>Home conns</b> — соединения от home-клиентов (чей home DERP = этот)</li>
+      <li><b>Clients total</b> — уникальных клиентов, для которых этот DERP = home</li>
+      <li><b>Bytes/Packets</b> — общий трафик (без разбивки по клиентам)</li>
+    </ul>
   </p>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
+    <strong>Почему клиент может не использовать этот DERP</strong>:
+    Tailscale выбирает home DERP по минимальной UDP-latency. Если публичный DERP
+    ближе, клиент его и выберет. Чтобы закрепить наш DERP на устройстве:
+  </p>
+  <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:var(--mono);font-size:12px;margin:8px 0;line-height:1.7">
+    <div style="color:var(--text-muted);margin-bottom:4px"># Linux/macOS (Tailscale CLI):</div>
+    <code style="color:var(--accent)">sudo tailscale debug force-prefer-derp 900</code>
+    <span style="color:var(--text-muted)">  (временно, до рестарта)</span>
+    <div style="color:var(--text-muted);margin:8px 0 4px"># Постоянно (через node-attrs):</div>
+    <code style="color:var(--accent)">sudo tailscale set --netfilter-mode=...</code>
+    <div style="color:var(--text-muted);margin:8px 0 4px"># Android/iOS:</div>
+    <code style="color:var(--accent)">Settings → Connection → Use DERP → Moscow (mow:900)</code>
+  </div>
   <p style="color:var(--text-muted);font-size:13px">
-    Подробнее: <a href="/help#derp"><i class="fa-solid fa-book"></i> Справка → DERP</a>
+    Полная справка: <a href="/help#derp"><i class="fa-solid fa-book"></i> DERP docs</a>
   </p>
 </div>
 {{else}}
