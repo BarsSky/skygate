@@ -87,20 +87,30 @@
 <div class="card">
   {{if .DerpStatus.ConnSummary}}
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;font-size:12px">
-    {{if gt .DerpStatus.ConnSummary.Relay 0}}
-      <span class="tag tag-success"><i class="fa-solid fa-route"></i> Relay: <b>{{.DerpStatus.ConnSummary.Relay}}</b></span>
+    {{$cs := .DerpStatus.ConnSummary}}
+    {{$allZero := and (eq $cs.Relay 0) (eq $cs.Admin 0) (eq $cs.LAN 0) (eq $cs.Self 0) (eq $cs.Other 0)}}
+    {{if and (not $allZero) (gt $cs.Relay 0)}}
+      <span class="tag tag-success"><i class="fa-solid fa-route"></i> Relay: <b>{{$cs.Relay}}</b></span>
     {{end}}
-    {{if gt .DerpStatus.ConnSummary.Admin 0}}
-      <span class="tag" title="Nginx Proxy Manager WebSocket pool"><i class="fa-solid fa-gauge-high"></i> NPM admin: <b>{{.DerpStatus.ConnSummary.Admin}}</b></span>
+    {{if and (not $allZero) (gt $cs.Admin 0)}}
+      <span class="tag" title="Nginx Proxy Manager WebSocket pool"><i class="fa-solid fa-gauge-high"></i> NPM admin: <b>{{$cs.Admin}}</b></span>
     {{end}}
-    {{if gt .DerpStatus.ConnSummary.LAN 0}}
-      <span class="tag"><i class="fa-solid fa-network-wired"></i> LAN: <b>{{.DerpStatus.ConnSummary.LAN}}</b></span>
+    {{if and (not $allZero) (gt $cs.LAN 0)}}
+      <span class="tag"><i class="fa-solid fa-network-wired"></i> LAN: <b>{{$cs.LAN}}</b></span>
     {{end}}
-    {{if gt .DerpStatus.ConnSummary.Self 0}}
-      <span class="tag" title="derper self-monitoring (loopback)"><i class="fa-solid fa-rotate"></i> Self: <b>{{.DerpStatus.ConnSummary.Self}}</b></span>
+    {{if and (not $allZero) (gt $cs.Self 0)}}
+      <span class="tag" title="derper self-monitoring (loopback)"><i class="fa-solid fa-rotate"></i> Self: <b>{{$cs.Self}}</b></span>
     {{end}}
-    {{if gt .DerpStatus.ConnSummary.Other 0}}
-      <span class="tag"><i class="fa-solid fa-circle-question"></i> Other: <b>{{.DerpStatus.ConnSummary.Other}}</b></span>
+    {{if and (not $allZero) (gt $cs.Other 0)}}
+      <span class="tag"><i class="fa-solid fa-circle-question"></i> Other: <b>{{$cs.Other}}</b></span>
+    {{end}}
+    {{if $allZero}}
+      {{$liveCC := .DerpStatus.Connections}}
+      {{if gt $liveCC 0}}
+        <span class="tag tag-warning" title="derper reports {{$liveCC}} current connections but ss snapshot sees 0 - WebSocket connections that already closed in this 30s window (NPM admin polls every few seconds)"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$liveCC}}</b> conn (transient)</span>
+      {{else}}
+        <span class="tag" title="no active connections in this snapshot"><i class="fa-solid fa-circle"></i> Нет активных</span>
+      {{end}}
     {{end}}
   </div>
   {{end}}
@@ -181,6 +191,10 @@
         {{if gt .Summary.Admin 0}}<span class="tag" style="font-size:11px" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i> admin: <b>{{.Summary.Admin}}</b></span>{{end}}
         {{if gt .Summary.LAN 0}}<span class="tag" style="font-size:11px"><i class="fa-solid fa-network-wired"></i> lan: <b>{{.Summary.LAN}}</b></span>{{end}}
         {{if gt .Summary.Self 0}}<span class="tag" style="font-size:11px" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i> self: <b>{{.Summary.Self}}</b></span>{{end}}
+        {{$cc := .CurrentConns}}
+        {{if and (eq (len .Conns) 0) (gt $cc 0)}}
+          <span class="tag tag-warning" style="font-size:11px" title="derper reports {{$cc}} current connections but ss snapshot sees 0 - WebSocket connections that already closed in this 30s window"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$cc}}</b> conn (transient)</span>
+        {{end}}
       {{else}}
         <span style="color:var(--accent)">conns: <b>{{len .Conns}}</b></span>
         {{range .Conns}}

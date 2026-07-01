@@ -862,6 +862,28 @@ type DerpSnapshot struct {
 	Summary *ConnSummary           `json:"summary,omitempty"`
 }
 
+// currentConns extracts gauge_current_connections (or current_conns)
+// from a snapshot metrics map. JSON numbers decode to float64 by default
+// so we always go through here rather than touching the map directly.
+func (s *DerpSnapshot) CurrentConns() int {
+	if s == nil {
+		return 0
+	}
+	for _, key := range []string{"gauge_current_connections", "current_conns"} {
+		if v, ok := s.Metrics[key]; ok {
+			switch n := v.(type) {
+			case float64:
+				return int(n)
+			case int:
+				return n
+			case int64:
+				return int(n)
+			}
+		}
+	}
+	return 0
+}
+
 func (a *App) collectDerpStatus() DerpStatus {
 	// DERP server runs on the host (not in the skygate container), so
 	// systemctl/ss from inside the container can't see it. Instead we
@@ -1117,6 +1139,9 @@ func classifyDerpPeers(peers []DerpPeer) []DerpPeer {
 }
 
 // summarizeDerpPeers counts connections per kind for the dashboard hero.
+// Always returns a non-nil pointer so the template can check per-kind
+// counts and decide whether to show "derper: N conn (transient)" when
+// ss sees zero connections but derper reports some.
 func summarizeDerpPeers(peers []DerpPeer) *ConnSummary {
 	s := &ConnSummary{}
 	for _, p := range peers {
@@ -1132,9 +1157,6 @@ func summarizeDerpPeers(peers []DerpPeer) *ConnSummary {
 		default:
 			s.Other++
 		}
-	}
-	if s.Relay == 0 && s.Admin == 0 && s.LAN == 0 && s.Self == 0 && s.Other == 0 {
-		return nil
 	}
 	return s
 }
