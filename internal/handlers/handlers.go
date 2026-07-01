@@ -306,8 +306,39 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMe
 		if n.IsExitNode {
 			m.ExitNodesCount++
 		}
-		// Per-user metrics
-		if myUsername != "" && n.UserName == myUsername {
+	}
+	// Per-user metrics: for non-admin users, count nodes via node_owner_map
+	// (same source /my/devices uses) rather than n.UserName, because
+	// headscale reassigns tagged nodes to a synthetic "tagged-devices"
+	// user and the live user_id link is lost. The backfill that runs in
+	// /my/devices also fires from here, so the dashboard sees the same
+	// set the moment the user lands on the page.
+	if myUserID != 0 {
+		backfillNodeOwnership(a.DB, nodes, myUserID, myUsername)
+	}
+	if myUsername != "" {
+		// Use a set of node IDs the user owns, sourced from node_owner_map.
+		owned := map[string]bool{}
+		rows, _ := a.DB.Query(`SELECT node_id FROM node_owner_map WHERE username=?`, myUsername)
+		if rows != nil {
+			defer rows.Close()
+			for rows.Next() {
+				var nid string
+				if err := rows.Scan(&nid); err == nil {
+					owned[nid] = true
+				}
+			}
+		}
+		// Plus any node still showing the live user name (untagged nodes).
+		for _, n := range nodes {
+			if n.UserName == myUsername {
+				owned[n.ID] = true
+			}
+		}
+		for _, n := range nodes {
+			if !owned[n.ID] {
+				continue
+			}
 			m.MyTotalNodes++
 			if n.Online {
 				m.MyOnlineNodes++
@@ -1101,17 +1132,19 @@ func parseDerperVars(s *DerpStatus, body []byte) {
 	}
 }
 
-// countMyPreAuthKeys returns the number of unused, non-expired preauth keys
-// for a given portal user. preauth_keys.user_id references portal_users.id
-// (NOT headscale username). An "active" key is one that has not been used
-// yet AND has not expired.
+// countMyPreAuthKeys returns the number of preauth keys issued to a given
+// portal user. preauth_keys.user_id references portal_users.id (NOT
+// headscale username). We count every key this user has ever been
+// issued - both used and unused, expired or not. The "My devices"
+// section on the dashboard already shows the live device count, so
+// the preauth counter is best understood as "how many keys did I
+// create" rather than "how many are still usable".
 func (a *App) countMyPreAuthKeys(myUserID int64) int {
 	if myUserID == 0 {
 		return 0
 	}
 	var n int
-	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=? AND used=0 AND (expires_at IS NULL OR expires_at > ?)`,
-		myUserID, time.Now().Unix()).Scan(&n)
+	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=?`, myUserID).Scan(&n)
 	return n
 }
 

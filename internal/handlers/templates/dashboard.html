@@ -118,11 +118,11 @@
     <div class="body">
       <div class="label">Preauth ключей</div>
       {{if gt .MyPreAuthKeys 0}}
-        <div class="value" style="color:var(--warning)">{{.MyPreAuthKeys}}</div>
-        <div class="sub">не использованы</div>
+        <div class="value">{{.MyPreAuthKeys}}</div>
+        <div class="sub">всего выдано</div>
       {{else}}
         <div class="value" style="color:var(--text-muted)">—</div>
-        <div class="sub">нет активных</div>
+        <div class="sub">ни разу не получал</div>
       {{end}}
     </div>
   </div>
