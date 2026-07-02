@@ -196,10 +196,53 @@ func (c *Client) CreatePreauthKey(userID int64, expiration string, reusable bool
 
 var preauthKeyRe = regexp.MustCompile(`hskey-[A-Za-z0-9_-]+`)
 
+// ExpirePreauthKey marks a preauth key as expired in headscale so it can
+// no longer be used to register a node. The key's row stays in
+// headscale (so audit history is preserved) but the used=false &&
+// !expired state flips to expired=true.
+//
+// Both API and CLI require the user_id that owns the key. The caller
+// passes it explicitly so we don't have to enumerate users.
+//
+// API path: headscale v0.29 has PUT /api/v1/preauthkey/{id}/expire.
+// We try that first and fall back to docker exec for older/newer
+// headscale versions that may use a different endpoint.
+//
+// On success, the caller is responsible for also updating the local
+// preauth_keys row (marking the key as expired) so the dashboard's
+// 3-way split reflects the new state. This function only talks to
+// headscale.
+func (c *Client) ExpirePreauthKey(userID int64, keyID string) error {
+	if keyID == "" {
+		return fmt.Errorf("empty key id")
+	}
+	if userID == 0 {
+		return fmt.Errorf("empty user id")
+	}
+	// API first.
+	apiErr := c.do("PUT", "/api/v1/preauthkey/"+keyID+"/expire", nil, nil)
+	if apiErr == nil {
+		return nil
+	}
+	// CLI fallback. -u is the headscale user ID, --id is the
+	// preauth key id. Returns 0 on success.
+	if c.ExecContainer == "" {
+		return fmt.Errorf("api: %v; no ExecContainer for CLI fallback", apiErr)
+	}
+	args := []string{"exec", c.ExecContainer, "headscale", "preauthkeys", "expire",
+		"-u", strconv.FormatInt(userID, 10), "--id", keyID}
+	cmd := exec.Command("docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("api: %v; cli: %v (%s)", apiErr, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (c *Client) createPreauthViaCLI(userID int64, dur time.Duration, reusable bool) (*PreauthKey, error) {
 	exp := durationFlag(dur)
 	args := []string{"exec", c.ExecContainer, "headscale", "preauthkeys", "create",
-		"-u", strconv.FormatInt(userID, 10), "--expiration", exp}
+		"-u", strconv.FormatInt(userID, 10), "--expiration", exp, "--output", "json"}
 	if reusable {
 		args = append(args, "--reusable")
 	} else {
@@ -214,12 +257,25 @@ func (c *Client) createPreauthViaCLI(userID int64, dur time.Duration, reusable b
 	if m == "" {
 		return nil, fmt.Errorf("no key in CLI output: %s", strings.TrimSpace(string(out)))
 	}
-	return &PreauthKey{
+	key := &PreauthKey{
 		UserID:     userID,
 		Key:        m,
 		Reusable:   reusable,
 		Expiration: time.Now().UTC().Add(dur).Format(time.RFC3339),
-	}, nil
+	}
+	// Best-effort parse of the id from JSON output (headscale --output json).
+	// If parsing fails, key.ID stays empty and temporal fallback in
+	// backfillNodeOwnership (v0.3.15) can still attribute new nodes.
+	// Parse the id from JSON output. The expiration field is a protobuf
+	// timestamp object ({"seconds":...,"nanos":...}) which we ignore
+	// because we already have the expiration from the function call.
+	var idOnly struct {
+		ID json.Number `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(out), &idOnly); err == nil {
+		key.ID = idOnly.ID.String()
+	}
+	return key, nil
 }
 
 func durationFlag(d time.Duration) string {
