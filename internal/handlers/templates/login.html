@@ -113,8 +113,11 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
   <div class="lead"><i class="fa-solid fa-info-circle"></i>Self-service portal для headscale</div>
   {{if .Error}}<div class="alert"><i class="fa-solid fa-circle-exclamation"></i>{{.Error}}</div>{{end}}
   <form method="post" action="/login?theme={{.Theme}}">
+    <!-- Dummy fields to absorb browser autofill (prevents cached credentials leak) -->
+    <input type="text" id="dummy" name="dummy" autocomplete="off" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none" readonly disabled>
+    <input type="password" id="dummy-pass" name="dummy-pass" autocomplete="off" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none" readonly disabled>
     <label for="username"><i class="fa-solid fa-user"></i>Username</label>
-    <input type="text" id="username" name="username" required autofocus autocomplete="username" placeholder="admin">
+    <input type="text" id="username" name="username" required autofocus autocomplete="off" placeholder="admin">
     <label for="password"><i class="fa-solid fa-lock"></i>Password</label>
     <input type="password" id="password" name="password" required autocomplete="current-password">
     <button type="submit"><i class="fa-solid fa-arrow-right"></i>Войти</button>
