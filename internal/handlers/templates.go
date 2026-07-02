@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"path"
 	"strings"
+	"time"
 )
 
 //go:embed templates/*.html templates/*/*.html
@@ -33,6 +34,12 @@ func LoadTemplates() *Templates {
 			return a / b
 		},
 		"add": func(a, b int) int { return a + b },
+		"datetimeformat": func(unix int64) string {
+			if unix <= 0 {
+				return "—"
+			}
+			return time.Unix(unix, 0).UTC().Format("2006-01-02 15:04")
+		},
 		"bytesfmt": func(n int64) string {
 			const k = 1024
 			if n >= 1024*1024 {
