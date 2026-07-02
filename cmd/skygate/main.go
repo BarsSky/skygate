@@ -1,0 +1,220 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"log"
+	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"skygate/internal/auth"
+	"skygate/internal/config"
+	"skygate/internal/db"
+	"skygate/internal/handlers"
+	"skygate/internal/headscale"
+	"skygate/internal/middleware"
+)
+
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	log.Printf("🌐 Skygate starting on :%s", cfg.Port)
+	log.Printf("   DB:            %s", cfg.DBPath)
+	log.Printf("   Headscale URL: %s", cfg.HeadscaleURL)
+
+	d, err := db.Open(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("db: %v", err)
+	}
+	defer d.Close()
+
+	// Bootstrap admin user
+	if cfg.BootstrapAdminPass == "" {
+		log.Printf("⚠️  SKYGATE_ADMIN_PASS empty - no admin user bootstrapped")
+		log.Printf("    Set SKYGATE_ADMIN_PASS in env to create admin on first start")
+	} else {
+		if err := bootstrapAdmin(d, cfg.BootstrapAdminUser, cfg.BootstrapAdminPass); err != nil {
+			log.Fatalf("bootstrap: %v", err)
+		}
+	}
+
+	// Ensure headscale user for admin
+	hs := headscale.New(cfg.HeadscaleURL, cfg.HeadscaleKey)
+	if err := ensureHeadscaleUser(d, hs, cfg.BootstrapAdminUser); err != nil {
+		log.Printf("warn: ensure headscale user: %v", err)
+	}
+
+	// Backfill node_owner_map: any headscale node with tag:public whose
+	// original owner we don't know is attributed to the bootstrap admin.
+	if err := backfillNodeOwners(d, hs, cfg.BootstrapAdminUser); err != nil {
+		log.Printf("warn: backfill node owners: %v", err)
+	}
+
+	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SessionHours)
+
+	mux := http.NewServeMux()
+
+	// Public
+	mux.HandleFunc("GET /login", app.GetLogin)
+	mux.HandleFunc("POST /login", app.PostLogin)
+	mux.HandleFunc("POST /logout", app.PostLogout)
+	mux.HandleFunc("/favicon.ico", app.FaviconHandler)
+	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
+	mux.HandleFunc("/static/", app.StaticHandler)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
+	})
+
+	// Settings (theme switcher) - accessible to all
+	mux.HandleFunc("GET /settings/theme", app.PostSettingsTheme)
+	mux.HandleFunc("POST /settings/theme", app.PostSettingsTheme)
+
+	// Authenticated
+	authMW := middleware.RequireAuth(cfg.JWTSecret)
+	mux.Handle("GET /dashboard", authMW(http.HandlerFunc(app.GetDashboard)))
+	mux.Handle("GET /help", authMW(http.HandlerFunc(app.GetHelp)))
+
+	// User self-service
+	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(app.GetMyDevices)))
+	mux.Handle("GET /my/exit-nodes", authMW(http.HandlerFunc(app.GetExitNodes)))
+	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(app.PostMyPreauth)))
+	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(app.GetMyKeys)))
+	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(app.PostMyKeyExpire)))
+
+	// Admin
+	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(app.GetAdminUsers)))
+	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(app.PostAdminUser)))
+	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(app.PostAdminDeleteUser)))
+	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
+	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
+	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))
+	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(app.GetAdminAudit)))
+	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(app.GetAdminACLs)))
+	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(app.GetAdminDERP)))
+	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(app.GetAdminBackup)))
+	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(app.PostAdminBackupSave)))
+	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))
+	mux.Handle("GET /admin/backup/download", authMW(http.HandlerFunc(app.GetAdminBackupDownload)))
+	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(app.GetAdminSettings)))
+	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
+	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
+
+	srv := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Printf("🌐 ready at http://localhost:%s", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("🌐 shutting down")
+	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(shutCtx)
+}
+
+// bootstrapAdmin creates the admin user in Skygate DB on first start.
+func bootstrapAdmin(d *sql.DB, username, password string) error {
+	var n int
+	if err := d.QueryRow("SELECT COUNT(*) FROM portal_users WHERE username=?", username).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		log.Printf("   bootstrap: user %q already exists, skipping", username)
+		return nil
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES(?,?,?)`,
+		username, hash, 1)
+	if err != nil {
+		return err
+	}
+	log.Printf("✅ bootstrap admin created: %q", username)
+	return nil
+}
+
+func backfillNodeOwners(d *sql.DB, hs *headscale.Client, adminName string) error {
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return err
+	}
+	var adminID sql.NullInt64
+	var adminHSID sql.NullInt64
+	if err := d.QueryRow(`SELECT id, headscale_user_id FROM portal_users WHERE username=? AND is_admin=1`, adminName).
+		Scan(&adminID, &adminHSID); err != nil {
+		return err
+	}
+	if !adminID.Valid || !adminHSID.Valid {
+		return nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, n := range nodes {
+		isPublic := false
+		for _, t := range n.Tags {
+			if t == "tag:public" {
+				isPublic = true
+				break
+			}
+		}
+		if !isPublic {
+			continue
+		}
+		if n.UserName != "tagged-devices" {
+			continue
+		}
+		_, err := tx.Exec(`INSERT OR IGNORE INTO node_owner_map
+			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
+			VALUES (?, ?, ?, ?, ?)`,
+			n.ID, adminHSID.Int64, adminName, "tag:public", adminID.Int64)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func ensureHeadscaleUser(d *sql.DB, hs *headscale.Client, username string) error {
+	var n int
+	if err := d.QueryRow("SELECT COUNT(*) FROM portal_users WHERE username=? AND headscale_user_id IS NOT NULL", username).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	existing, _ := hs.ListUsers()
+	for _, u := range existing {
+		if u.Name == username {
+			_, err := d.Exec("UPDATE portal_users SET headscale_user_id=? WHERE username=?", u.ID, username)
+			return err
+		}
+	}
+	created, err := hs.CreateUser(username)
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec("UPDATE portal_users SET headscale_user_id=? WHERE username=?", created.ID, username)
+	return err
+}
