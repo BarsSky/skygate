@@ -40,6 +40,8 @@
             {{range .Tags}}
               <span class="tag">{{.}}</span>
             {{end}}
+          {{else if ne .UserName "tagged-devices"}}
+            <span class="tag" title="default private — user-owned device"><i class="fa-solid fa-lock"></i>private</span>
           {{else}}
             <span class="tag tag-warning" title="no headscale tag assigned"><i class="fa-solid fa-circle-exclamation"></i>untagged</span>
           {{end}}

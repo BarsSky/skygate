@@ -157,5 +157,15 @@
     }
   } catch (e) { /* ignore */ }
 })();
+
+// Click handler: highlight selected OS tile (both CSS :has and class toggle)
+document.querySelectorAll('.os-tile').forEach(function(tile){
+  var input = tile.querySelector('input');
+  tile.addEventListener('click', function(e){
+    document.querySelectorAll('.os-tile').forEach(function(t){t.classList.remove('selected')});
+    if(input && input.checked) tile.classList.add('selected');
+  });
+  if(input && input.checked) tile.classList.add('selected');
+});
 </script>
 {{end}}

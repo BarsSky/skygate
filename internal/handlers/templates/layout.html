@@ -200,7 +200,7 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
 .os-tile{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px 12px;border:1px solid var(--border-strong);border-radius:var(--radius);cursor:pointer;background:var(--bg-card);font-size:13px;font-weight:500;transition:all .15s}
 .os-tile:hover{border-color:var(--accent);background:var(--bg-hover)}
 .os-tile input{display:none}
-.os-tile.selected{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.os-tile.selected,.os-tile:has(input:checked){border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
 .os-tile i{font-size:28px;color:var(--text-muted)}
 .os-tile.selected i{color:var(--accent)}
 

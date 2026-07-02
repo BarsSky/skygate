@@ -1562,6 +1562,12 @@ func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID 
 			VALUES (?, ?, ?, ?, ?)`,
 			n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
 		inserted[n.ID] = true
+		// Mark the preauth key as used if headscale has a node attached to it.
+		if n.PreAuthKeyID != "" {
+			if _, err := db.Exec(`UPDATE preauth_keys SET used=1 WHERE headscale_preauth_id=? AND used=0`, n.PreAuthKeyID); err != nil {
+				log.Printf("warn: mark key %s used: %v", n.PreAuthKeyID, err)
+			}
+		}
 	}
 }
 
