@@ -307,6 +307,29 @@ footer a:hover{color:var(--accent)}
     {{end}}
   </div>
 </header>
+
+<aside class="sidebar" id="sidebar">
+  <div class="shead">
+    <i class="fa-solid fa-cube logo"></i>
+    <h1>Skygate</h1>
+    <button class="toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')" title="Свернуть"><i class="fa-solid fa-bars"></i></button>
+  </div>
+  <nav>
+    <a href="/dashboard" {{if eq .Page "dashboard"}}class="active"{{end}}><i class="fa-solid fa-house"></i><span>Главная</span></a>
+    <a href="/my/devices" {{if eq .Page "my/devices"}}class="active"{{end}}><i class="fa-solid fa-laptop"></i><span>Мои устройства</span></a>
+    <a href="/my/exit-nodes" {{if eq .Page "my/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>Exit nodes</span></a>
+{{if .IsAdmin}}
+    <hr class="nav-sep">
+    <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>Backup</span></a>
+    <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>Настройки</span></a>
+    <a href="/admin/users"><i class="fa-solid fa-users"></i><span>Пользователи</span></a>
+    <a href="/admin/devices"><i class="fa-solid fa-server"></i><span>Все устройства</span></a>
+    <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>ACL</span></a>
+    <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>DERP</span></a>
+    <a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i><span>Audit</span></a>
+{{end}}
+  </nav>
+</aside>
 <main>
 <div class="shell">
 {{renderBody .BodyTemplate .}}
