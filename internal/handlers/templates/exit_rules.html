@@ -1,0 +1,194 @@
+{{define "body-exit_rules"}}
+<style>
+/* Two-column layout for exit rules page */
+.exit-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.exit-main { min-width: 0; }
+.exit-help { position: sticky; top: 80px; }
+.help-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
+.help-card h4 { font-size: 13px; font-weight: 600; margin: 0 0 8px 0; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+.help-card h4 i { font-size: 12px; }
+.help-card p, .help-card li { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin: 0 0 6px 0; }
+.help-card ul, .help-card ol { padding-left: 16px; margin: 0; }
+.help-card code { font-size: 11px; background: var(--bg-hover); padding: 1px 4px; border-radius: 3px; word-break: break-all; }
+.help-card .tag { font-size: 11px; }
+.device-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.device-row .os-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg-hover); color: var(--text-muted); }
+@media (max-width: 900px) { .exit-layout { grid-template-columns: 1fr; } .exit-help { position: static; } }
+</style>
+
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-route"></i> Exit Rules</h2>
+    <div class="sub">Избирательная маршрутизация трафика через exit-узлы Tailscale</div>
+  </div>
+  <div>
+    <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> API / AI-помощник</a>
+  </div>
+</div>
+
+{{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> Правило добавлено — ACL обновлён, exit-node синхронизирован</div>{{end}}
+{{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> Правило удалено</div>{{end}}
+
+<div class="exit-layout">
+
+  {{/* ===== LEFT COLUMN — forms + rules ===== */}}
+  <div class="exit-main">
+
+    <div class="card">
+      <h3><i class="fa-solid fa-plus"></i> Добавить правило</h3>
+      <form method="post" action="/my/exit-rules">
+        <div class="field">
+          <label>Устройство</label>
+          <select name="device_id">
+            {{range .Devices}}<option value="{{.id}}">{{.hostname}}</option>{{else}}<option value="">— нет устройств —</option>{{end}}
+          </select>
+          <div class="hint">Устройство, для которого применяется правило. Видны только ваши устройства.</div>
+        </div>
+        <div class="field">
+          <label>Exit node (выходной узел)</label>
+          <select name="exit_node">
+            {{range .ExitNodes}}<option value="{{.hostname}}">{{.hostname}}</option>{{else}}<option value="">— нет exit nodes —</option>{{end}}
+          </select>
+          <div class="hint">Сервер, через который пойдёт трафик. Все exit-узлы взаимозаменяемы.</div>
+        </div>
+        <div class="field">
+          <label>Действие</label>
+          <select name="action">
+            <option value="accept">✅ Allow — разрешить доступ</option>
+            <option value="deny">🚫 Deny — запретить доступ</option>
+          </select>
+          <div class="hint"><b>Allow:</b> трафик к цели идёт через exit-node. <b>Deny:</b> трафик к цели блокируется на уровне ACL.</div>
+        </div>
+        <div class="field">
+          <label>Тип цели</label>
+          <select name="target_type">
+            <option value="ip">IP адрес (например 1.2.3.4)</option>
+            <option value="subnet">Подсеть (например 10.0.0.0/24)</option>
+            <option value="domain">Домен (например example.com)</option>
+          </select>
+          <div class="hint"><b>IP/подсеть</b> — участвуют в advertised-routes и работают для split-туннеля. <b>Домен</b> — только ACL (не влияет на маршрутизацию).</div>
+        </div>
+        <div class="field">
+          <label>Значение</label>
+          <input type="text" name="target_value" placeholder="1.2.3.4 или 10.0.0.0/24 или example.com" required>
+        </div>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Добавить правило</button>
+      </form>
+    </div>
+
+    {{if .DeviceInfos}}
+    <div class="card">
+      <h3><i class="fa-solid fa-download"></i> Скрипты маршрутизации</h3>
+      <p style="margin:0 0 8px 0;">Для Linux (резервный способ). Windows — используйте <code>tailscale up --accept-routes</code>.</p>
+      <table>
+        <tr><th>Устройство</th><th>Правил</th><th>Linux скрипт</th><th>Откат</th></tr>
+        {{range .DeviceInfos}}
+        <tr>
+          <td><b>{{.Hostname}}</b></td>
+          <td>{{.RuleCount}} {{if .HasRoutes}}<span class="tag tag-success">IP</span>{{end}}</td>
+          <td>
+            {{if .HasRoutes}}
+            <a href="/my/exit-rules?script=1&os=linux&device_id={{.ID}}" class="btn btn-sm btn-primary"><i class="fa-solid fa-download"></i> .sh</a>
+            {{else}}<span class="tag">—</span>{{end}}
+          </td>
+          <td>
+            {{if .HasRoutes}}
+            <a href="/my/exit-rules?script=1&os=linux&device_id={{.ID}}&restore=1" class="btn btn-sm" style="background:var(--border);color:var(--text-muted);">↺ restore</a>
+            {{else}}<span class="tag">—</span>{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </table>
+    </div>
+    {{end}}
+
+    {{if .Rules}}
+    <div class="card">
+      <h3><i class="fa-solid fa-list"></i> Текущие правила ({{len .Rules}})</h3>
+      <table>
+        <tr><th>Устройство</th><th>Exit-node</th><th>Действие</th><th>Цель</th><th></th></tr>
+        {{range .Rules}}<tr>
+          <td><b>{{.DeviceName}}</b></td>
+          <td><span class="tag tag-info">{{.ExitNodeID}}</span></td>
+          <td>{{if eq .Action "accept"}}<span class="tag tag-success">✅ Allow</span>{{else}}<span class="tag tag-danger">🚫 Deny</span>{{end}}</td>
+          <td><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span></td>
+          <td>
+            <form method="post" action="/my/exit-rules/delete" style="display:inline" onsubmit="return confirm('Удалить правило?')">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+            </form>
+          </td>
+        </tr>{{end}}
+      </table>
+    </div>
+    {{end}}
+
+    <div class="card">
+      <h3><i class="fa-solid fa-info-circle"></i> Как это работает</h3>
+      <ol style="padding-left:20px;margin:0">
+        <li><b>Exit-узлы</b> анонсируют все whitelist-подсети через <code>--advertise-routes</code>. Headscale раздаёт их клиентам по ACL.</li>
+        <li><b>Skygate</b> автоматически синхронизирует advertised-routes при добавлении/удалении правил.</li>
+        <li><b>Клиенты:</b>
+          <ul>
+            <li><b>Windows/Linux:</b> <code>tailscale up --accept-routes</code> — split-туннель (только whitelist → exit-node)</li>
+            <li><b>Android/iOS:</b> <code>tailscale up --exit-node=&lt;имя&gt;</code> — полный туннель</li>
+          </ul>
+        </li>
+      </ol>
+    </div>
+
+  </div>
+
+  {{/* ===== RIGHT COLUMN — permanent help ===== */}}
+  <div class="exit-help">
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-play"></i> Быстрый старт</h4>
+      <ol>
+        <li>Выберите <b>устройство</b> и <b>exit-node</b></li>
+        <li>Укажите <b>тип</b> и <b>значение</b> цели</li>
+        <li>Нажмите <b>«Добавить»</b></li>
+        <li>На устройстве: <code>tailscale up --accept-routes</code></li>
+      </ol>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-laptop"></i> Подключение клиента</h4>
+      <p><b>Windows / Linux:</b></p>
+      <p><code>tailscale up --accept-routes</code></p>
+      <p style="font-size:11px;color:var(--text-muted)">Без <code>--exit-node</code> — только whitelist-трафик идёт через туннель, остальное напрямую.</p>
+      <p style="margin-top:8px"><b>Android / iOS:</b></p>
+      <p><code>tailscale up --exit-node=exit-node-name</code></p>
+      <p style="font-size:11px;color:var(--text-muted)">Полный туннель — избирательная маршрутизация не поддерживается на мобильных.</p>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-triangle-exclamation"></i> Важно</h4>
+      <ul>
+        <li><b>IP/подсеть</b> — работает для split-туннеля (Windows/Linux).</li>
+        <li><b>Домен</b> — только ACL-правило, не влияет на маршрутизацию.</li>
+        <li>После <b>перезапуска Tailscale</b> (<code>tailscale down/up</code>) выполните <code>--accept-routes</code> заново.</li>
+        <li>Правила <b>изолированы:</b> каждый пользователь управляет только своими устройствами.</li>
+      </ul>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-robot"></i> Массовое добавление</h4>
+      <p>Используйте <b>AI-помощника</b> (Hermes, Cline) для массового создания правил:</p>
+      <p style="font-size:11px">«Добавь правила для <b>my-laptop</b> (device_id=5) через exit-node <b>node-name</b>: подсети Telegram, YouTube, Google»</p>
+      <p><a href="/my/exit-rules/help" class="btn btn-sm" style="width:100%;text-align:center"><i class="fa-solid fa-book"></i> API и примеры</a></p>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-shield-halved"></i> Приватность</h4>
+      <ul>
+        <li>Правила видны только вам и администратору.</li>
+        <li>Другие пользователи не видят ваши устройства и правила.</li>
+        <li>ACL гарантирует что advertised-маршруты раздаются только вашим устройствам.</li>
+      </ul>
+    </div>
+
+  </div>
+
+</div>
+{{end}}
