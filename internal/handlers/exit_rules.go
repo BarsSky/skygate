@@ -722,7 +722,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	rows, err := a.DB.Query("SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.enabled, COALESCE(d.hostname,'?') as dev_name, COALESCE(u.username,'?') as user_name FROM device_rules r LEFT JOIN devices d ON d.id = r.device_id LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id")
+	rows, err := a.DB.Query("SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.enabled, COALESCE(r.device_ip,'') as device_ip, COALESCE(u.username,'?') as user_name FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id")
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -733,6 +733,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		ID          int
 		UserName    string
 		DeviceName  string
+		DeviceIP    string
 		ExitNode    string
 		TargetType  string
 		TargetValue string
@@ -741,10 +742,40 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var r AdminRule
 		var en int
-		if err := rows.Scan(&r.ID, &en, &en, &r.ExitNode, &r.TargetType, &r.TargetValue, &en, &r.DeviceName, &r.UserName); err != nil {
+		if err := rows.Scan(&r.ID, &en, &en, &r.ExitNode, &r.TargetType, &r.TargetValue, &en, &r.DeviceIP, &r.UserName); err != nil {
 			continue
 		}
 		rr = append(rr, r)
+	}
+
+	// Resolve device hostnames from headscale API — match by Tailscale IP
+	if nodes, e := a.HS.ListAllNodes(); e == nil {
+		for i := range rr {
+			if rr[i].DeviceIP == "" {
+				rr[i].DeviceName = "?"
+				continue
+			}
+			for _, n := range nodes {
+				found := false
+				for _, ip := range n.IPAddresses {
+					if ip == rr[i].DeviceIP {
+						hn := n.GivenName
+						if hn == "" {
+							hn = n.Hostname
+						}
+						rr[i].DeviceName = hn
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+			if rr[i].DeviceName == "" {
+				rr[i].DeviceName = "?"
+			}
+		}
 	}
 
 	logRows, _ := a.DB.Query("SELECT version, action, detail, created_at FROM exit_rule_logs ORDER BY id DESC LIMIT 20")
