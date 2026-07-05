@@ -16,6 +16,7 @@ type Config struct {
 	SessionHours       int
 	BootstrapAdminUser string
 	BootstrapAdminPass string
+	SSHKeyPath         string // path to SSH key for exit node sync
 }
 
 func Load() (*Config, error) {
@@ -29,6 +30,7 @@ func Load() (*Config, error) {
 		SessionHours:       24,
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "skyadmin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
+		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/home/skyadmin/.ssh/skygate_sync"),
 	}
 	if c.HeadscaleKey == "" {
 		return nil, fmt.Errorf("HEADSCALE_API_KEY is required")

@@ -1,3 +1,4 @@
+{{if false}}backup.html — без inline onclick с кавычками, чтобы Go template не падал{{end}}
 {{define "body-admin-backup"}}
 <div class="title-row">
   <div>
@@ -17,8 +18,8 @@
   <div class="card">
     <h3><i class="fa-solid fa-download"></i> Сохранить бэкап</h3>
     <p>Создать полный архив всех данных: базы Skygate, базы Headscale (ноды, ключи, ACL), конфигурации, DERP.</p>
-    <form action="/admin/backup/save" method="POST">
-      <button type="submit" class="btn btn-primary" onclick="this.disabled=true;this.innerHTML='<i class=\\\"fa-solid fa-spinner fa-spin\\\"></i> Создание...'">
+    <form action="/admin/backup/save" method="POST" id="backup-save-form">
+      <button type="submit" class="btn btn-primary" id="backup-save-btn">
         <i class="fa-solid fa-floppy-disk"></i> Создать и скачать
       </button>
     </form>
@@ -31,7 +32,7 @@
       <div class="form-group">
         <input type="file" name="archive" accept=".tar.gz" required class="form-control">
       </div>
-      <button type="submit" class="btn btn-warning" onclick="return confirm('Восстановление перезапишет текущие данные. Продолжить?')">
+      <button type="submit" class="btn btn-warning" id="backup-restore-btn">
         <i class="fa-solid fa-upload"></i> Восстановить
       </button>
     </form>
@@ -69,22 +70,22 @@
   <div class="alert alert-warning">
     <strong><i class="fa-solid fa-triangle-exclamation"></i> После восстановления на новом сервере обязательно:</strong>
     <ol style="margin:0.75rem 0 0 1.5rem">
-      <li>Перейти в <a href="/admin/settings">Настройки → Подключения</a> и обновить URL/IP Headscale и публичный домен</li>
-      <li>Проверить что <code>HEADSCALE_URL</code> в .env указывает на новый адрес headscale</li>
+      <li>Перейти в <a href="/admin/settings">Настройки</a> и обновить URL/IP Headscale и публичный домен</li>
+      <li>Проверить что HEADSCALE_URL в .env указывает на новый адрес headscale</li>
       <li>Если headscale API ключ изменился — обновить его в настройках</li>
-      <li>Перезапустить skygate: <code>sudo docker restart skygate</code></li>
+      <li>Перезапустить skygate: sudo docker restart skygate</li>
       <li>Проверить что dashboard отображает корректные данные</li>
     </ol>
   </div>
   <div class="sub">
     <strong>Порядок миграции:</strong>
     <ol>
-      <li>На старом сервере: <strong>Сохранить бэкап</strong> (кнопка выше или <code>./scripts/backup.sh</code>)</li>
+      <li>На старом сервере: Сохранить бэкап (кнопка выше или ./scripts/backup.sh)</li>
       <li>Скопировать архив на новый сервер</li>
-      <li>На новом сервере: установить Docker, клонировать <code>git clone</code> skygate</li>
-      <li>Загрузить архив через эту страницу или выполнить <code>./scripts/migrate.sh archive.tar.gz</code></li>
-      <li>Перейти в <strong>Настройки</strong> и обновить URL/IP</li>
-      <li>Проверить <strong>Тесты</strong> — все шаги должны быть зелёными</li>
+      <li>На новом сервере: установить Docker, клонировать git clone skygate</li>
+      <li>Загрузить архив через эту страницу или выполнить ./scripts/migrate.sh</li>
+      <li>Перейти в Настройки и обновить URL/IP</li>
+      <li>Проверить тесты — все шаги должны быть зелёными</li>
     </ol>
   </div>
 </div>

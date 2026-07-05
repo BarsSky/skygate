@@ -33,13 +33,12 @@ type App struct {
 	// SKYGATE_CONTROL_URL env var is empty at startup.
 	ControlURL   string
 	SessionHours int
-	DerpBaseURL  string // base URL of the local custom DERP server
-	SSHKeyPath   string // SSH key for exit node route sync
+	DerpBaseURL  string // base URL of the local custom DERP server, e.g. http://192.168.13.69:8443
 
 	templates *Templates
 }
 
-func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int) *App {
+func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL string, sessionH int) *App {
 	return &App{
 		DB:           d,
 		HS:           hs,
@@ -153,33 +152,14 @@ func dataValue(data any, key string) any {
 // currentUser parses JWT cookie and returns claims. nil if not authenticated.
 func (a *App) currentUser(r *http.Request) *auth.Claims {
 	c, err := r.Cookie("skygate_session")
-	if err == nil && c.Value != "" {
-		claims, err := auth.ParseJWT(a.JWTSecret, c.Value)
-		if err == nil {
-			return claims
-		}
+	if err != nil || c.Value == "" {
+		return nil
 	}
-	authHdr := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHdr, "Bearer ") {
-		tok := strings.TrimPrefix(authHdr, "Bearer ")
-		if tok != "" {
-			rows, err := a.DB.Query("SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id")
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var uid int64; var uname string; var adm bool; var hash string
-					if rows.Scan(&uid, &uname, &adm, &hash) == nil {
-						if auth.CheckAPIToken(hash, tok) {
-							rows.Close()
-							a.DB.Exec("UPDATE personal_api_tokens SET last_used_at=strftime('%s','now') WHERE token_hash=?", hash)
-							return &auth.Claims{UserID: uid, Username: uname, IsAdmin: adm}
-						}
-					}
-				}
-			}
-		}
+	claims, err := auth.ParseJWT(a.JWTSecret, c.Value)
+	if err != nil {
+		return nil
 	}
-	return nil
+	return claims
 }
 
 // audit writes a row to the audit log.
@@ -1691,47 +1671,4 @@ func (a *App) GetAdminDERP(w http.ResponseWriter, r *http.Request) {
 // GetAdminDERPRefresh forces a refresh - same page.
 func (a *App) GetAdminDERPRefresh(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/derp", http.StatusFound)
-}
-
-// ── API Tokens ──
-
-func (a *App) GetMyTokens(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Redirect(w, r, "/login", http.StatusFound); return }
-	rows, err := a.DB.Query("SELECT id, label, last_used_at, created_at FROM personal_api_tokens WHERE user_id=? ORDER BY created_at DESC", c.UserID)
-	if err != nil { http.Error(w, err.Error(), 500); return }
-	defer rows.Close()
-	type tRow struct { ID int64; Label string; LastUsed string; Created string }
-	var tokens []tRow
-	for rows.Next() {
-		var t tRow; var lu, cr int64
-		if rows.Scan(&t.ID, &t.Label, &lu, &cr) == nil {
-			if lu > 0 { t.LastUsed = time.Unix(lu, 0).Format("2006-01-02 15:04") } else { t.LastUsed = "—" }
-			t.Created = time.Unix(cr, 0).Format("2006-01-02 15:04")
-			tokens = append(tokens, t)
-		}
-	}
-	if tokens == nil { tokens = []tRow{} }
-	a.renderWithLayout(w, "my_tokens.html", c, map[string]any{"Page": "tokens", "Title": "API Tokens", "Tokens": tokens})
-}
-
-func (a *App) PostMyToken(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Error(w, "unauthorized", 401); return }
-	label := r.FormValue("label")
-	raw, hash := auth.GenerateAPIToken()
-	_, err := a.DB.Exec("INSERT INTO personal_api_tokens (user_id, token_hash, label) VALUES (?,?,?)", c.UserID, hash, label)
-	if err != nil { http.Error(w, err.Error(), 500); return }
-	a.audit(c.UserID, c.Username, "token_create", label)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, "<div class=\"card\"><h3>Токен создан</h3><p>Скопируйте сейчас — больше он показан не будет.</p><pre style=\"background:var(--bg);padding:12px;border-radius:4px;word-break:break-all\">%s</pre><p><a href=\"/my/tokens\">← Назад к списку</a></p></div>", raw)
-}
-
-func (a *App) PostMyTokenRevoke(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Error(w, "unauthorized", 401); return }
-	idStr := r.PathValue("id")
-	a.DB.Exec("DELETE FROM personal_api_tokens WHERE id=? AND user_id=?", idStr, c.UserID)
-	a.audit(c.UserID, c.Username, "token_revoke", idStr)
-	http.Redirect(w, r, "/my/tokens?revoked=1", http.StatusFound)
 }
