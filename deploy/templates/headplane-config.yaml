@@ -1,0 +1,19 @@
+# ============================================================================
+# Headplane configuration — static settings only.
+# Secrets (api_key, cookie_secret) are injected via HEADPLANE_* env vars
+# from the unified .env file. See headscale-compose.yml.tmpl.
+# ============================================================================
+
+headscale:
+  url: http://headscale:50444
+  insecure: true
+  dns_records: []
+  # api_key — provided via HEADPLANE_HEADSCALE__API_KEY env var
+
+server:
+  host: 0.0.0.0
+  port: 50445
+  cookie_secure: false
+  # cookie_secret — provided via HEADPLANE_SERVER__COOKIE_SECRET env var
+  agent:
+    single_binary_mode: false

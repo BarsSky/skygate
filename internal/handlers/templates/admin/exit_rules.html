@@ -1,0 +1,92 @@
+{{define "body-admin-exit_rules"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-route"></i> Управление exit rules</h2>
+    <div class="sub">Все правила туннелирования пользователей</div>
+  </div>
+</div>
+
+{{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL откачен</div>{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-list"></i> Все правила</h3>
+  {{if .Rules}}
+  <table>
+    <tr><th>Пользователь</th><th>Устройство</th><th>Через</th><th>Ресурс</th></tr>
+    {{range .Rules}}<tr>
+      <td>{{.UserName}}</td>
+      <td>{{.DeviceName}}</td>
+      <td><span class="tag tag-info">{{.ExitNode}}</span></td>
+      <td><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span></td>
+    </tr>{{end}}
+  </table>
+  {{else}}<p style="color:var(--text-muted)">Нет правил</p>{{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> История применения ACL</h3>
+  {{if .Logs}}
+  <table>
+    <tr><th>Время</th><th>Действие</th><th>Детали</th></tr>
+    {{range .Logs}}<tr>
+      <td class="mono">{{.time}}</td>
+      <td><span class="tag {{if eq .action "rollback"}}tag-warning{{else}}tag-success{{end}}">{{.action}}</span></td>
+      <td>{{.detail}}</td>
+    </tr>{{end}}
+  </table>
+  {{else}}<p style="color:var(--text-muted)">Нет записей</p>{{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-sync"></i> Синхронизация Advertised Routes</h3>
+  <p style="margin-bottom:8px">Обновляет <code>--advertise-routes</code> на всех exit-узлах согласно текущим правилам.</p>
+  <p>
+    <button class="btn btn-primary" id="btn-sync" onclick="syncRoutes()">
+      <i class="fa-solid fa-sync"></i> Синхронизировать
+    </button>
+    <span id="sync-status" style="margin-left:12px;color:var(--text-muted)"></span>
+  </p>
+  <pre id="sync-result" style="display:none;margin-top:8px;padding:8px;background:var(--bg);border-radius:4px;max-height:200px;overflow:auto"></pre>
+</div>
+<script>
+async function syncRoutes() {
+  const btn = document.getElementById('btn-sync');
+  const status = document.getElementById('sync-status');
+  const result = document.getElementById('sync-result');
+  btn.disabled = true;
+  status.textContent = 'Синхронизация...';
+  try {
+    const r = await fetch('/admin/exit-rules/sync');
+    const data = await r.json();
+    status.textContent = r.ok ? '✓ Готово' : '✗ Ошибка';
+    result.style.display = 'block';
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch(err) {
+    status.textContent = 'Ошибка: ' + err;
+  }
+  btn.disabled = false;
+}
+</script>
+
+
+<div class="card">
+  <h3><i class="fa-solid fa-rotate-left"></i> Откат ACL</h3>
+  {{if .Snapshots}}
+  <table>
+    <tr><th>Версия</th><th>Кем</th><th>Статус</th><th>Время</th><th></th></tr>
+    {{range .Snapshots}}<tr>
+      <td>#{{.version}}</td>
+      <td>{{.by}}</td>
+      <td>{{if .success}}<span class="tag tag-success">OK</span>{{else}}<span class="tag tag-danger">ERR</span>{{end}}</td>
+      <td>{{.time}}</td>
+      <td>
+        <form method="post" action="/admin/exit-rules/rollback" style="display:inline" onsubmit="return confirm('Откатить ACL к версии {{.version}}?')">
+          <input type="hidden" name="version" value="{{.version}}">
+          <button type="submit" class="btn btn-secondary btn-sm">Откатить</button>
+        </form>
+      </td>
+    </tr>{{end}}
+  </table>
+  {{else}}<p style="color:var(--text-muted)">Нет снапшотов</p>{{end}}
+</div>
+{{end}}

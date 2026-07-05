@@ -1,0 +1,184 @@
+{{define "body-exit_rules_help"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-book"></i> Exit Rules — справка</h2>
+    <div class="sub">Управление маршрутизацией · <a href="/my/tokens" style="color:var(--accent)"><i class="fa-solid fa-key"></i> API Tokens</a> · <a href="/my/exit-rules" style="color:var(--accent)"><i class="fa-solid fa-route"></i> Exit Rules</a></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-gear"></i> Для пользователей — как добавить правила</h3>
+  <ol style="padding-left:20px;margin:0">
+    <li>Перейдите на страницу <a href="/my/exit-rules"><b>/my/exit-rules</b></a>.</li>
+    <li>В форме «Добавить правило»:
+      <ul>
+        <li><b>Устройство</b> — выберите своё устройство (например «my-laptop»).</li>
+        <li><b>Exit node</b> — выберите сервер (например «node-europe»).</li>
+        <li><b>Действие</b> — Allow (разрешить) или Deny (запретить).</li>
+        <li><b>Тип цели</b> — IP адрес, подсеть (10.0.0.0/24), или домен (example.com).</li>
+        <li><b>Значение</b> — IP/подсеть/домен.</li>
+      </ul>
+    </li>
+    <li>Нажмите <b>«Добавить»</b>. Правило сразу применяется.</li>
+    <li>На устройстве: <code>tailscale up --accept-routes</code> (Windows/Linux) или <code>tailscale up --exit-node=node-name</code> (Android/iOS).</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-key"></i> API Tokens — токены доступа</h3>
+  <p>Для доступа к API используйте персональный токен. Это безопаснее cookie-сессии и удобнее для AI-помощников и скриптов.</p>
+  <ol style="padding-left:20px;margin:0">
+    <li>Перейдите на <a href="/my/tokens"><b>/my/tokens</b></a> → «Создать токен», укажите метку (например «Hermes»).</li>
+    <li><b>Скопируйте токен</b> — он показывается <u>только один раз</u>. Храните в безопасном месте.</li>
+    <li>Используйте в заголовке: <code>Authorization: Bearer &lt;ва...t;</code></li>
+    <li>Токен действует без ограничения срока. Отозвать можно в любой момент на /my/tokens.</li>
+  </ol>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;margin-top:8px;">
+# С токеном (рекомендуется):
+curl -H "Authorization: Bearer &lt;ва...t;" \
+  {{.BaseURL}}/my/exit-rules/api
+
+# Массовое создание:
+curl -X POST -H "Authorization: Bearer &lt;ва...t;" \
+  -H "Content-Type: application/json" \
+  -d '{"rules":[{"device_id":5,"exit_node":"node-europe","target_type":"subnet","target_value":"10.0.0.0/24","action":"accept"}]}' \
+  {{.BaseURL}}/my/exit-rules/api</pre>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-diagram-project"></i> Как это работает</h3>
+  <p>Skygate использует <b>advertised routes</b> для избирательной маршрутизации (split-tunnel).</p>
+  <ol style="padding-left:20px;margin:0">
+    <li><b>Exit-узлы</b> (VPS-серверы) анонсируют whitelist-подсети через <code>--advertise-routes</code>.</li>
+    <li><b>Headscale</b> (control plane) одобряет и раздаёт маршруты клиентам <b>по ACL</b> — каждое устройство получает только свои подсети.</li>
+    <li><b>Клиенты:</b>
+      <ul>
+        <li><b>Windows/Linux:</b> <code>tailscale up --accept-routes</code> — split-туннель (только whitelist → exit-node)</li>
+        <li><b>Android/iOS:</b> <code>tailscale up --exit-node=X</code> — полный туннель</li>
+      </ul>
+    </li>
+    <li>При изменении правил Skygate автоматически обновляет advertised-routes на всех exit-узлах.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-globe"></i> Tailnet — частная mesh-сеть</h3>
+  <p><b>Tailnet</b> — это mesh-сеть на базе Tailscale/headscale. Все устройства в tailnet получают IP из диапазона <code>100.64.0.0/10</code> и видят друг друга напрямую, независимо от физического расположения (дома, в офисе, в дата-центре, за CGNAT).</p>
+  <p>Пример:</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+my-phone (100.64.0.5) ──► exit-node (100.64.0.3) ──► internet (8.8.8.8)</pre>
+  <p>Когда клиент использует exit-node, его трафик в интернет идёт через VPS этого exit-узла. Для внешних сайтов источником запроса будет IP VPS-сервера, а не клиента.</p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-server"></i> Настройка exit-node (администратор)</h3>
+  <p>Выполнить <b>на каждом exit-узле</b> (VPS-сервер, который будет выходной точкой):</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+# Скрипт: /static/scripts/skygate_exit_node_setup.sh
+# Или вручную:
+
+tailscale set \
+  --ssh \
+  --advertise-exit-node \
+  --advertise-routes="10.0.0.0/24,172.16.0.0/16,192.168.0.0/24,..."</pre>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    ⚠️ <code>--advertise-routes</code> <b>заменяет</b> список. <code>0.0.0.0/0</code> и <code>::/0</code> сохраняются автоматически.
+  </p>
+  <p style="margin-top:4px"><b>Откат:</b> <code>tailscale set --advertise-exit-node --advertise-routes="0.0.0.0/0,::/0"</code></p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    Требования к exit-node: <code>ip_forward=1</code>, <code>iptables MASQUERADE</code> (настраивается автоматически при <code>--advertise-exit-node</code>).
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-tower-broadcast"></i> DERP relay</h3>
+  <p><b>DERP</b> (Designated Encrypted Relay for Packets) — relay-сервер, через который идёт трафик когда прямое соединение между клиентами невозможно (CGNAT, файрвол, NAT).</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+┌──────────┐   TLS 1.3 + WSS    ┌─────────┐   WebSocket   ┌──────────┐
+│ my-phone │ ──────────────────▶│  DERP   │──────────────▶│ exit-vps │
+│ 4G CGNAT │   TCP 443 (HTTPS)  │  relay  │  TCP 443      │  VPS EU  │
+└──────────┘                    └─────────┘               └──────────┘
+                                      │
+                            видит: IP клиентов, размер пакетов
+                            НЕ видит: содержимое (TLS 1.3 + WireGuard)</pre>
+  <p><b>Когда используется:</b></p>
+  <ul>
+    <li>🟢 <b>Direct</b> — клиенты соединяются напрямую (LAN, пробили NAT). Максимальная скорость.</li>
+    <li>🟡 <b>DERP relay</b> — direct невозможен. Автоматически выбирается ближайший relay. Медленнее, но работает всегда.</li>
+  </ul>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    DERP устойчив к блокировкам: TLS 1.3 + TCP 443 выглядит как обычный HTTPS, DPI не видит содержимое.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-terminal"></i> API Reference</h3>
+
+  <h4>GET /my/exit-rules/api — список правил</h4>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+# С токеном:
+curl -H "Authorization: Bearer &lt;ва...t;" {{.BaseURL}}/my/exit-rules/api
+
+# Или с cookie:
+curl -b skygate_session=TOKEN {{.BaseURL}}/my/exit-rules/api</pre>
+  <p>Ответ: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x"}]}</code></p>
+
+  <h4>POST /my/exit-rules/api — массовое создание</h4>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+# С токеном:
+curl -X POST -H "Authorization: Bearer &lt;ва...t;" \
+  -H "Content-Type: application/json" \
+  -d '{"rules":[
+    {"device_id":5, "exit_node":"node-europe", "target_type":"subnet", "target_value":"10.0.0.0/24", "action":"accept"},
+    {"device_id":5, "exit_node":"node-europe", "target_type":"ip",     "target_value":"1.2.3.4",     "action":"accept"}
+  ]}' \
+  {{.BaseURL}}/my/exit-rules/api
+
+# Или с cookie:
+curl -X POST -b skygate_session=TOKEN \
+  -H "Content-Type: application/json" \
+  -d '{"rules":[...]}' \
+  {{.BaseURL}}/my/exit-rules/api</pre>
+  <p>Ответ: <code>{"added": 2, "errors": []}</code></p>
+
+  <table style="margin-top:12px">
+    <tr><th>Поле</th><th>Тип</th><th>Обязательное</th><th>Описание</th></tr>
+    <tr><td><code>device_id</code></td><td>int</td><td>да</td><td>ID устройства (см. /my/devices)</td></tr>
+    <tr><td><code>exit_node</code></td><td>string</td><td>нет</td><td>Имя exit-node (например "node-europe")</td></tr>
+    <tr><td><code>target_type</code></td><td>string</td><td>да</td><td>"ip", "subnet", или "domain"</td></tr>
+    <tr><td><code>target_value</code></td><td>string</td><td>да</td><td>IP, подсеть (10.0.0.0/24), или домен (example.com)</td></tr>
+    <tr><td><code>action</code></td><td>string</td><td>нет</td><td>"accept" (по умолчанию) или "deny"</td></tr>
+  </table>
+
+  <h4 style="margin-top:16px">GET /admin/exit-rules/sync (admin)</h4>
+  <p>Синхронизирует advertised-routes на всех exit-node.</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer &lt;ва...t;" {{.BaseURL}}/admin/exit-rules/sync</pre>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-robot"></i> Пример промпта для AI-помощника</h3>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+Добавь правила маршрутизации для my-laptop (device_id=5) через exit-node node-europe.
+Токен: &lt;скопи...gt;
+
+Сервис 1 (подсети):
+  10.0.0.0/24, 10.0.1.0/24, 172.16.0.0/20
+
+Сервис 2 (подсети):
+  192.168.0.0/16, 198.51.100.0/24
+
+Используй POST /my/exit-rules/api.
+Базовый URL: {{.BaseURL}}</pre>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-lightbulb"></i> Источники IP-диапазонов</h3>
+  <p>Многие сервисы публикуют актуальные IP-диапазоны. Примеры:</p>
+  <ul>
+    <li>Сервис A: <code>https://example.com/ips.txt</code></li>
+    <li>Сервис B: <code>https://example.com/ipranges.json</code></li>
+    <li>Провайдер C: <code>https://example.com/ips-v4</code></li>
+  </ul>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">IP-диапазоны периодически меняются. Рекомендуется обновлять правила раз в 1-3 месяца.</p>
+</div>
+{{end}}

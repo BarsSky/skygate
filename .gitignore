@@ -7,3 +7,7 @@ skygate.new
 .env
 /data/
 /static/
+
+# Unified deploy system — sensitive files
+.env
+backup/
