@@ -13,7 +13,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 /* ============================================================
-   SKYGATE — 3 themes via [data-theme]
+   SKYGATE — 4 themes via [data-theme]
    - linear: dark, indigo accent (Inter)
    - vercel: light, monochrome (Inter, tight tracking)
    - sentry: dark purple, lime accent (Rubik)
@@ -70,6 +70,22 @@
   --radius:8px;--radius-lg:12px;
 }
 
+/* NVIDIA (dark green) */
+[data-theme="nvidia"]{
+  --bg:#0a0a0a;--bg-card:#141414;--bg-elev:#1a1a1a;--bg-hover:#222;
+  --border:#2a2a2a;--border-strong:#3d3d3d;
+  --text:#e0e0e0;--text-muted:#999;--text-subtle:#666;
+  --accent:#76b900;--accent-fg:#0a0a0a;--accent-hover:#8cd600;--accent-soft:rgba(118,185,0,0.12);
+  --success:#76b900;--success-bg:rgba(118,185,0,0.12);
+  --warning:#f5a623;--warning-bg:rgba(245,166,35,0.1);
+  --danger:#e74856;--danger-bg:rgba(231,72,86,0.1);
+  --info:#4cc2c4;--info-bg:rgba(76,194,196,0.1);
+  --header-bg:#0a0a0a;--header-fg:#e0e0e0;
+  --shadow:0 1px 0 rgba(255,255,255,0.03) inset,0 2px 8px rgba(0,0,0,0.4);
+  --shadow-lg:0 8px 24px rgba(0,0,0,0.5);
+  --radius:4px;--radius-lg:8px;
+}
+
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{font-family:var(--font);font-size:14px;line-height:1.55;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;font-feature-settings:"ss03","cv01"}
@@ -82,23 +98,51 @@ pre{background:var(--bg-elev);border:1px solid var(--border);border-radius:var(-
 kbd{background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:3px;padding:1px 5px;font-size:12px}
 
 /* HEADER */
-header{background:var(--header-bg);color:var(--header-fg);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:50;backdrop-filter:saturate(180%) blur(8px)}
+header{margin-left:220px;background:var(--header-bg);color:var(--header-fg);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:50;backdrop-filter:saturate(180%) blur(8px)}
 [data-theme="sentry"] header{box-shadow:0 4px 16px rgba(0,0,0,0.4)}
 header .shell{display:flex;align-items:center;gap:16px;padding:0 24px;height:var(--header-h)}
 header h1{font-size:15px;font-weight:600;margin:0;letter-spacing:-0.01em;display:flex;align-items:center;gap:8px;white-space:nowrap}
 header h1 .logo{width:18px;height:18px;color:var(--accent)}
 header h1 .ver{opacity:.5;font-size:10px;font-weight:500;margin-left:2px;font-family:var(--mono);padding:1px 5px;border:1px solid var(--border);border-radius:3px}
-header nav{display:flex;align-items:center;gap:2px;flex:1;margin-left:8px;overflow-x:auto}
-header nav a{color:var(--header-fg);text-decoration:none;padding:6px 10px;border-radius:var(--radius);font-size:13px;font-weight:500;opacity:.7;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;transition:all .15s}
-header nav a:hover{opacity:1;background:var(--bg-hover)}
-header nav a.active{opacity:1;background:var(--accent-soft);color:var(--accent)}
-header nav a i{font-size:12px;width:14px;text-align:center}
-header .user-area{display:flex;align-items:center;gap:10px;font-size:13px;opacity:.85;flex-shrink:0}
-header .user-area .user{display:flex;align-items:center;gap:6px}
-header .user-area .user i{font-size:12px;opacity:.7}
-header .user-area form{margin:0}
-header .user-area button{background:transparent;color:inherit;border:1px solid var(--border);padding:4px 10px;border-radius:var(--radius);font:inherit;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:all .15s}
-header .user-area button:hover{background:var(--bg-hover);opacity:1}
+
+/* sidebar */
+.sidebar{position:fixed;left:0;top:0;width:220px;height:100vh;background:var(--bg);border-right:1px solid var(--border);z-index:100;display:flex;flex-direction:column;overflow:hidden;transition:width .25s}
+.sidebar.collapsed{width:52px}
+.sidebar .shead{display:flex;align-items:center;gap:10px;padding:12px 14px;height:var(--header-h);border-bottom:1px solid var(--border);flex-shrink:0}
+.sidebar .shead h1{font-size:15px;font-weight:600;margin:0;white-space:nowrap;overflow:hidden}
+.sidebar .toggle{background:transparent;border:none;color:var(--fg);cursor:pointer;padding:4px;border-radius:var(--radius);margin-left:auto;font-size:14px;flex-shrink:0;opacity:.6}
+.sidebar .toggle:hover{opacity:1;background:var(--bg-hover)}
+.sidebar nav{display:flex;flex-direction:column;gap:2px;padding:8px;flex:1;overflow-y:auto}
+.sidebar nav a{color:var(--fg);text-decoration:none;padding:8px 10px;border-radius:var(--radius);font-size:13px;font-weight:500;display:flex;align-items:center;gap:10px;white-space:nowrap;transition:all .15s;opacity:.75;overflow:hidden}
+.sidebar nav a:hover{opacity:1;background:var(--bg-hover)}
+.sidebar nav a.active{opacity:1;background:var(--accent-soft);color:var(--accent)}
+.sidebar nav a i{width:16px;text-align:center;font-size:13px;flex-shrink:0}
+.sidebar.collapsed nav a span{display:none}
+.sidebar.collapsed .shead h1{opacity:0;width:0;overflow:hidden}
+.sidebar .nav-sep{margin:4px 0;border:none;border-top:1px solid var(--border);opacity:.2}
+.sidebar-user{padding:8px;border-top:1px solid var(--border);flex-shrink:0}
+.sidebar-user .user-info{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:13px}
+.sidebar-user .user-icon{width:16px;text-align:center;color:var(--accent)}
+.sidebar-user .user-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-user .sidebar-actions{display:flex;align-items:center;gap:4px;padding:4px 8px}
+.sidebar-user .sidebar-actions form{margin:0}
+.sidebar-user .sidebar-actions button{background:transparent;border:none;color:var(--text);cursor:pointer;padding:6px 8px;border-radius:var(--radius);opacity:.6;font-size:13px}
+.sidebar-user .sidebar-actions button:hover{opacity:1;background:var(--bg-hover)}
+.theme-picker-sb{position:relative}
+.theme-picker-sb summary{list-style:none;cursor:pointer;padding:6px 8px;border-radius:var(--radius);opacity:.6;font-size:13px}
+.theme-picker-sb summary:hover{opacity:1;background:var(--bg-hover)}
+.theme-picker-sb[open] summary{background:var(--bg-hover)}
+.theme-picker-sb .menu{position:absolute;bottom:100%;left:0;min-width:140px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:4px;z-index:200;margin-bottom:4px}
+.theme-picker-sb .menu a{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:13px;border-radius:4px;text-decoration:none;color:var(--text)}
+.theme-picker-sb .menu a:hover{background:var(--bg-hover)}
+.theme-picker-sb .menu a.active{background:var(--accent-soft);color:var(--accent)}
+.sidebar.collapsed .sidebar-user .user-name{display:none}
+.sidebar.collapsed .sidebar-user .sidebar-actions{justify-content:center}
+main .shell{margin-left:220px;transition:margin-left .25s}
+.sidebar.collapsed ~ main .shell{margin-left:52px}
+.sidebar.collapsed ~ header{margin-left:52px}
+.sidebar.collapsed ~ header{margin-left:52px}
+
 header .user-area button i{font-size:11px}
 
 /* THEME PICKER */
@@ -257,7 +301,7 @@ footer a:hover{color:var(--accent)}
 @media (max-width:760px){
   header .shell{flex-wrap:wrap;height:auto;padding:8px 14px;gap:8px}
   header h1{font-size:14px}
-  header nav{flex-basis:100%;flex-wrap:wrap;margin-left:0;overflow-x:auto;padding-bottom:4px}
+
   header .user-area{flex-basis:100%;justify-content:space-between;padding-bottom:6px}
   main{padding:20px 0 48px}
   .shell{padding:0 14px}
@@ -268,49 +312,8 @@ footer a:hover{color:var(--accent)}
 </style>
 </head>
 <body>
-<header>
-  <div class="shell">
-    <h1>
-      <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
-      Skygate
-      <span class="ver">v0.2</span>
-    </h1>
-    {{if .Username}}
-    <nav>
-      <a href="/dashboard" {{if eq .Page "dashboard"}}class="active"{{end}}><i class="fa-solid fa-house"></i>Главная</a>
-      <a href="/my/devices" {{if eq .Page "my/devices"}}class="active"{{end}}><i class="fa-solid fa-laptop"></i>Мои устройства</a>
-      <a href="/my/exit-nodes" {{if eq .Page "my/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i>Exit nodes</a>
-      <a href="/help" {{if eq .Page "help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i>Справка</a>
-      {{if .IsAdmin}}
-      <a href="/admin/users" {{if eq .Page "admin/users"}}class="active"{{end}}><i class="fa-solid fa-users"></i>Пользователи</a>
-      <a href="/admin/devices" {{if eq .Page "admin/devices"}}class="active"{{end}}><i class="fa-solid fa-server"></i>Все устройства</a>
-      <a href="/admin/acls" {{if eq .Page "admin/acls"}}class="active"{{end}}><i class="fa-solid fa-shield-halved"></i>ACL</a>
-      <a href="/admin/derp" {{if eq .Page "admin/derp"}}class="active"{{end}}><i class="fa-solid fa-tower-broadcast"></i>DERP</a>
-      <a href="/admin/audit" {{if eq .Page "admin/audit"}}class="active"{{end}}><i class="fa-solid fa-clipboard-list"></i>Audit</a>
-      {{end}}
-    </nav>
-    <div class="user-area">
-      <details class="theme-picker">
-        <summary title="Сменить тему"><i class="fa-solid fa-palette"></i>{{.ThemeLabel}} <i class="fa-solid fa-chevron-down" style="font-size:9px;opacity:.6"></i></summary>
-        <div class="menu">
-          <a href="/settings/theme?theme=linear" {{if eq .Theme "linear"}}class="active"{{end}}><i class="fa-solid fa-moon"></i>Linear <small>dark</small></a>
-          <a href="/settings/theme?theme=vercel" {{if eq .Theme "vercel"}}class="active"{{end}}><i class="fa-solid fa-sun"></i>Vercel <small>light</small></a>
-          <a href="/settings/theme?theme=sentry" {{if eq .Theme "sentry"}}class="active"{{end}}><i class="fa-solid fa-bolt"></i>Sentry <small>purple</small></a>
-        </div>
-      </details>
-      <span class="user"><i class="fa-solid fa-user"></i>{{.Username}}{{if .IsAdmin}} <span class="tag tag-admin">ADMIN</span>{{end}}</span>
-      <form method="post" action="/logout"><button type="submit" title="Выйти"><i class="fa-solid fa-right-from-bracket"></i></button></form>
-    </div>
-    {{else}}
-    <nav></nav>
-    <div class="user-area"></div>
-    {{end}}
-  </div>
-</header>
-
 <aside class="sidebar" id="sidebar">
   <div class="shead">
-    <i class="fa-solid fa-cube logo"></i>
     <h1>Skygate</h1>
     <button class="toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')" title="Свернуть"><i class="fa-solid fa-bars"></i></button>
   </div>
@@ -318,6 +321,9 @@ footer a:hover{color:var(--accent)}
     <a href="/dashboard" {{if eq .Page "dashboard"}}class="active"{{end}}><i class="fa-solid fa-house"></i><span>Главная</span></a>
     <a href="/my/devices" {{if eq .Page "my/devices"}}class="active"{{end}}><i class="fa-solid fa-laptop"></i><span>Мои устройства</span></a>
     <a href="/my/exit-nodes" {{if eq .Page "my/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>Exit nodes</span></a>
+    <a href="/help" {{if eq .Page "help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i><span>Справка</span></a>
+    <a href="/my/tokens" {{if eq .Page "tokens"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>API Tokens</span></a>
+    <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>Exit Rules</span></a>
 {{if .IsAdmin}}
     <hr class="nav-sep">
     <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>Backup</span></a>
@@ -327,8 +333,29 @@ footer a:hover{color:var(--accent)}
     <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>ACL</span></a>
     <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>DERP</span></a>
     <a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i><span>Audit</span></a>
+    <a href="/admin/exit-rules"><i class="fa-solid fa-route"></i><span>Exit Rules</span></a>
 {{end}}
   </nav>
+
+  <div class="sidebar-user">
+    <hr class="nav-sep">
+    <div class="user-info">
+      <span class="user-icon"><i class="fa-solid fa-user"></i></span>
+      <span class="user-name">{{.Username}}{{if .IsAdmin}} <span class="tag tag-admin">ADMIN</span>{{end}}</span>
+    </div>
+    <div class="sidebar-actions">
+      <details class="theme-picker-sb">
+        <summary title="Сменить тему"><i class="fa-solid fa-palette"></i></summary>
+        <div class="menu">
+          <a href="/settings/theme?theme=linear" {{if eq .Theme "linear"}}class="active"{{end}}><i class="fa-solid fa-moon"></i>Linear</a>
+          <a href="/settings/theme?theme=vercel" {{if eq .Theme "vercel"}}class="active"{{end}}><i class="fa-solid fa-sun"></i>Vercel</a>
+          <a href="/settings/theme?theme=sentry" {{if eq .Theme "sentry"}}class="active"{{end}}><i class="fa-solid fa-bolt"></i>Sentry</a>
+          <a href="/settings/theme?theme=nvidia" {{if eq .Theme "nvidia"}}class="active"{{end}}><i class="fa-solid fa-microchip"></i>NVIDIA</a>
+        </div>
+      </details>
+      <form method="post" action="/logout"><button type="submit" title="Выйти"><i class="fa-solid fa-right-from-bracket"></i></button></form>
+    </div>
+  </div>
 </aside>
 <main>
 <div class="shell">
@@ -336,7 +363,7 @@ footer a:hover{color:var(--accent)}
 </div>
 </main>
 <footer>
-  Skygate v0.2 · Tailscale + Headscale · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/help">Docs</a>
+  Skygate {{.Version}} · Tailscale + Headscale · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/help">Docs</a>
 </footer>
 </body>
 </html>{{end}}
