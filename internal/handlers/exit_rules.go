@@ -572,13 +572,17 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		exitServers = []map[string]any{}
 	}
 
-	// Build per-device route info
-	deviceRoutes := map[int][]DeviceRule{}  // device_id -> rules
-	hasRoutes := map[int]bool{}              // device_id -> has IP/subnet rules
+	// Build per-device route info — match by hostname (resolved from IP)
+	deviceRoutes := map[string][]DeviceRule{}  // hostname -> rules
+	hasRoutes := map[string]bool{}              // hostname -> has IP/subnet rules
 	for _, rl := range rules {
-		deviceRoutes[rl.DeviceID] = append(deviceRoutes[rl.DeviceID], rl)
+		name := rl.DeviceName
+		if name == "" {
+			name = fmt.Sprintf("device-%d", rl.DeviceID)
+		}
+		deviceRoutes[name] = append(deviceRoutes[name], rl)
 		if rl.TargetType == "ip" || rl.TargetType == "subnet" {
-			hasRoutes[rl.DeviceID] = true
+			hasRoutes[name] = true
 		}
 	}
 
@@ -591,12 +595,12 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	var deviceInfos []DeviceInfo
 	for _, d := range devices {
-		did, _ := strconv.Atoi(fmt.Sprint(d["id"]))
+		hn := fmt.Sprint(d["hostname"])
 		info := DeviceInfo{
 			ID:        fmt.Sprint(d["id"]),
-			Hostname:  fmt.Sprint(d["hostname"]),
-			RuleCount: len(deviceRoutes[did]),
-			HasRoutes: hasRoutes[did],
+			Hostname:  hn,
+			RuleCount: len(deviceRoutes[hn]),
+			HasRoutes: hasRoutes[hn],
 		}
 		deviceInfos = append(deviceInfos, info)
 	}
