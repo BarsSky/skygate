@@ -16,7 +16,7 @@ const backupDir = "/tmp/skygate-backup"
 
 func (a *App) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	c := a.currentUser(r)
-	if c == nil {
+	if c == nil || !c.IsAdmin {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
@@ -57,7 +57,7 @@ func (a *App) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Backups"] = backups
 
-	a.renderWithLayout(w, "body-admin-backup", c, data)
+	a.renderWithLayout(w, "admin-backup", c, data)
 }
 
 func formatSize(b int64) string {
@@ -74,6 +74,11 @@ func formatSize(b int64) string {
 }
 
 func (a *App) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	os.MkdirAll(backupDir, 0755)
 
 	backupScript := ""
@@ -131,6 +136,11 @@ func (a *App) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	name := r.URL.Query().Get("name")
 	if name == "" || strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		http.Error(w, "invalid name", http.StatusBadRequest)
@@ -147,6 +157,11 @@ func (a *App) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	r.ParseMultipartForm(100 << 20)
 	file, _, err := r.FormFile("archive")
 	if err != nil {
@@ -189,13 +204,18 @@ func (a *App) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 	c := a.currentUser(r)
-	if c == nil {
+	if c == nil || !c.IsAdmin {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 
+		var exitPolicy string
+	a.DB.QueryRow("SELECT value FROM global_settings WHERE key = 'exit_policy'").Scan(&exitPolicy)
+	if exitPolicy == "" { exitPolicy = "allow_all" }
+
 	data := map[string]any{
 		"HeadscaleURL":   a.ControlURL,
+		"ExitPolicy":     exitPolicy,
 		"PublicDomain":   a.ControlURL,
 		"JWTSecretMask":  maskSecret(a.JWTSecret),
 		"HeadscaleAPIKey": maskSecret(a.HeadscaleKey),
@@ -207,7 +227,7 @@ func (a *App) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 		data["FlashError"] = e
 	}
 
-	a.renderWithLayout(w, "body-admin-settings", c, data)
+	a.renderWithLayout(w, "admin-settings", c, data)
 }
 
 func maskSecret(s string) string {
@@ -218,7 +238,15 @@ func maskSecret(s string) string {
 }
 
 func (a *App) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+		r.ParseForm()
+	if ep := r.FormValue("exit_policy"); ep == "allow_all" || ep == "deny_all" {
+		a.DB.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', ?)", ep)
+	}
 	_ = r.FormValue("headscale_url")
 	_ = r.FormValue("headscale_api_key")
 	_ = r.FormValue("public_domain")
