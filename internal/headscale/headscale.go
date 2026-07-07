@@ -667,8 +667,14 @@ func (c *Client) GetACL() (string, error) {
 }
 
 // SetAdvertisedRoutes updates advertised routes on an exit node via SSH/docker exec.
-// ApproveAllRoutes enables all pending routes for a node via headscale API.
+// ApproveAllRoutes enables all pending routes for a node via headscale CLI (docker exec).
+// 2026-07-07: previously used /api/v1/routes but that's deprecated/404 in headscale 0.29.1.
+// Now we shell out to `docker exec headscale headscale nodes approve-routes -i <id> -r <routes>`.
 func (c *Client) ApproveAllRoutes(nodeHostname string) (int, error) {
+	return c.ApproveAllRoutesWithList(nodeHostname, nil)
+}
+
+func (c *Client) ApproveAllRoutesWithList(nodeHostname string, routes []string) (int, error) {
 	nodes, err := c.ListAllNodes()
 	if err != nil {
 		return 0, err
@@ -684,31 +690,32 @@ func (c *Client) ApproveAllRoutes(nodeHostname string) (int, error) {
 		return 0, fmt.Errorf("node %q not found", nodeHostname)
 	}
 
-	var routeList struct {
-		Routes []struct {
-			ID      int    `json:"id"`
-			Prefix  string `json:"prefix"`
-			Enabled bool   `json:"enabled"`
-			Node    struct {
-				ID int `json:"id"`
+	if len(routes) == 0 {
+		var nodeInfo struct {
+			Node struct {
+				AvailableRoutes []string `json:"availableRoutes"`
 			} `json:"node"`
-		} `json:"routes"`
-	}
-	if err := c.do("GET", "/api/v1/routes", nil, &routeList); err != nil {
-		return 0, fmt.Errorf("list routes: %w", err)
-	}
-
-	approved := 0
-	for _, r := range routeList.Routes {
-		if r.Node.ID == nodeID && !r.Enabled {
-			path := fmt.Sprintf("/api/v1/routes/%d/enable", r.ID)
-			if err := c.do("POST", path, nil, nil); err != nil {
-				continue
-			}
-			approved++
+		}
+		if err := c.do("GET", fmt.Sprintf("/api/v1/node/%d", nodeID), nil, &nodeInfo); err == nil {
+			routes = nodeInfo.Node.AvailableRoutes
 		}
 	}
-	return approved, nil
+
+	if len(routes) == 0 {
+		return 0, nil
+	}
+
+	routeStr := strings.Join(routes, ",")
+	cmd := exec.Command("docker", "exec", "headscale",
+		"/ko-app/headscale", "nodes", "approve-routes",
+		"-i", strconv.Itoa(nodeID),
+		"-r", routeStr,
+		"--force")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("approve-routes: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return len(routes), nil
 }
 
 func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string) (string, error) {

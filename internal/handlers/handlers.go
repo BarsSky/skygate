@@ -18,6 +18,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/config"
 )
 
 type App struct {
@@ -35,11 +36,12 @@ type App struct {
 	SessionHours int
 	DerpBaseURL  string // base URL of the local custom DERP server
 	SSHKeyPath   string // SSH key for exit node route sync
+	Cfg         *config.Config // 2026-07-07: issue #12 — limits & stagger sync
 
 	templates *Templates
 }
 
-func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int) *App {
+func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int, cfg *config.Config) *App {
 	return &App{
 		DB:           d,
 		HS:           hs,
@@ -49,6 +51,7 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		SessionHours: sessionH,
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
+		Cfg:          cfg,
 	}
 }
 
@@ -1734,4 +1737,14 @@ func (a *App) PostMyTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	a.DB.Exec("DELETE FROM personal_api_tokens WHERE id=? AND user_id=?", idStr, c.UserID)
 	a.audit(c.UserID, c.Username, "token_revoke", idStr)
 	http.Redirect(w, r, "/my/tokens?revoked=1", http.StatusFound)
+}
+
+
+// 2026-07-07: getMaxRulesForUser returns per-user rule limit or default.
+func (a *App) getMaxRulesForUser(username string) int {
+	if a.Cfg == nil { return 0 }
+	if v, ok := a.Cfg.UserMaxRules[username]; ok {
+		return v
+	}
+	return a.Cfg.MaxRulesPerDevice
 }

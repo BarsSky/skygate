@@ -2,8 +2,10 @@
 <style>
 /* Two-column layout for exit rules page */
 .exit-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
-.exit-main { min-width: 0; }
-.exit-help { position: sticky; top: 80px; }
+.exit-main { min-width: 0; min-height: 0; }
+.title-row > * { min-width: 0; }
+.exit-layout > * { min-width: 0; }
+.exit-help { position: static; align-self: start; }
 .help-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
 .help-card h4 { font-size: 13px; font-weight: 600; margin: 0 0 8px 0; color: var(--accent); display: flex; align-items: center; gap: 6px; }
 .help-card h4 i { font-size: 12px; }
@@ -14,6 +16,29 @@
 .device-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .device-row .os-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg-hover); color: var(--text-muted); }
 @media (max-width: 900px) { .exit-layout { grid-template-columns: 1fr; } .exit-help { position: static; } }
+
+/* 2026-07-07: issue #7 — table overflow fix.
+   Without table-wrap, long IPs in "Цель" column stretch the table past the
+   sidebar (especially when inner sidebar is 340px and outer sidebar is 220px/52px).
+   word-break on code allows IPs to wrap, table-wrap allows horizontal scroll if needed. */
+.exit-main .card .table-wrap { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.exit-main .card table { table-layout: auto; width: 100%; }
+.exit-main .card table code { word-break: break-all; font-size: 11px; }
+.exit-main .card table td { vertical-align: top; }
+.exit-main .card table th, .exit-main .card table td { white-space: normal; }
+.exit-main .card table th { white-space: nowrap; }
+/* Столбец "Цель" — ограничиваем ширину чтобы длинный IP переносился */
+.exit-main .card table td.col-target { max-width: 200px; word-break: break-all; }
+.exit-main .card table td.col-target code { display: inline-block; max-width: 100%; }
+/* Action column — Allow/Deny tag, keep compact */
+.exit-main .card table td.col-action { white-space: nowrap; }
+.exit-main .card table td.col-delete { white-space: nowrap; text-align: right; }
+/* 2026-07-07: under 1200px outer viewport, the 340px inner sidebar + 220px outer
+   sidebar + 1180px shell can't all fit. Stack: drop inner help below. */
+@media (max-width: 1200px) {
+  .exit-layout { grid-template-columns: minmax(0, 1fr) !important; }
+  .exit-help { position: static !important; }
+}
 </style>
 
 <div class="title-row">
@@ -22,11 +47,17 @@
     <div class="sub">Избирательная маршрутизация трафика через exit-узлы Tailscale</div>
   </div>
   <div>
+    <span class="tag tag-info" title="DNS auto-update каждые 5m">
+      <i class="fa-solid fa-arrows-rotate"></i> DNS auto-update
+    </span>
     <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> API / AI-помощник</a>
   </div>
 </div>
 
 {{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> Правило добавлено — ACL обновлён, exit-node синхронизирован</div>{{end}}
+{{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> Часть IP уже были в правилах — добавлены только новые</div>{{end}}
+{{if .duplicate}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> Правило для <code>{{.existing}}</code> уже существует — не дублируем. Удалите существующее, если нужно обновить.</div>{{end}}
+{{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> Домен добавлен, но DNS пока не отвечает: <code>{{.warn}}</code>. Autoupdater попробует при следующем цикле (до 5 минут).</div>{{end}}
 {{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> Правило удалено</div>{{end}}
 
 <div class="exit-layout">
@@ -40,39 +71,39 @@
         <div class="field">
           <label>Устройство</label>
           <select name="device_id">
-            {{range .Devices}}<option value="{{.id}}">{{.hostname}}</option>{{else}}<option value="">— нет устройств —</option>{{end}}
+            {{range .Devices}}<option value="{{.id}}"{{if eq (printf "%v" .id) $.FormValues.device_id}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">— нет устройств —</option>{{end}}
           </select>
           <div class="hint">Устройство, для которого применяется правило. Видны только ваши устройства.</div>
         </div>
         <div class="field">
           <label>Exit node (выходной узел)</label>
           <select name="exit_node">
-            {{range .ExitNodes}}<option value="{{.hostname}}">{{.hostname}}</option>{{else}}<option value="">— нет exit nodes —</option>{{end}}
+            {{range .ExitNodes}}<option value="{{.hostname}}"{{if eq .hostname $.FormValues.exit_node}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">— нет exit nodes —</option>{{end}}
           </select>
           <div class="hint">Сервер, через который пойдёт трафик. Все exit-узлы взаимозаменяемы.</div>
         </div>
         <div class="field">
           <label>Действие</label>
           <select name="action">
-            <option value="accept">✅ Allow — разрешить доступ</option>
-            <option value="deny">🚫 Deny — запретить доступ</option>
+            <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>✅ Allow — разрешить доступ</option>
+            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>🚫 Deny — запретить доступ</option>
           </select>
           <div class="hint"><b>Allow:</b> трафик к цели идёт через exit-node. <b>Deny:</b> трафик к цели блокируется на уровне ACL.</div>
         </div>
         <div class="field">
           <label>Тип цели</label>
           <select name="target_type">
-            <option value="ip">IP адрес (например 1.2.3.4)</option>
-            <option value="subnet">Подсеть (например 10.0.0.0/24)</option>
-            <option value="domain">Домен (например example.com)</option>
+            <option value="ip"{{if eq $.FormValues.target_type "ip"}} selected{{end}}>IP адрес (например 1.2.3.4)</option>
+            <option value="subnet"{{if eq $.FormValues.target_type "subnet"}} selected{{end}}>Подсеть (например 10.0.0.0/24)</option>
+            <option value="domain"{{if eq $.FormValues.target_type "domain"}} selected{{end}}>Домен (например example.com)</option>
           </select>
           <div class="hint"><b>IP/подсеть</b> — участвуют в advertised-routes и работают для split-туннеля. <b>Домен</b> — только ACL (не влияет на маршрутизацию).</div>
         </div>
         <div class="field">
           <label>Значение</label>
-          <input type="text" name="target_value" placeholder="1.2.3.4 или 10.0.0.0/24 или example.com" required>
+          <input type="text" name="target_value" placeholder="1.2.3.4 или 10.0.0.0/24 или example.com" value="{{.FormValues.target_value}}" required>
         </div>
-        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Добавить правило</button>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Добавить правило</button> <a href="/my/exit-rules" class="btn"><i class="fa-solid fa-eraser"></i> Очистить</a>
       </form>
     </div>
 
@@ -104,22 +135,46 @@
 
     {{if .Rules}}
     <div class="card">
-      <h3><i class="fa-solid fa-list"></i> Текущие правила ({{len .Rules}})</h3>
-      <table>
-        <tr><th>Устройство</th><th>Exit-node</th><th>Действие</th><th>Цель</th><th></th></tr>
-        {{range .Rules}}<tr>
-          <td><b>{{.DeviceName}}</b></td>
-          <td><span class="tag tag-info">{{.ExitNodeID}}</span></td>
-          <td>{{if eq .Action "accept"}}<span class="tag tag-success">✅ Allow</span>{{else}}<span class="tag tag-danger">🚫 Deny</span>{{end}}</td>
-          <td><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span></td>
-          <td>
-            <form method="post" action="/my/exit-rules/delete" style="display:inline" onsubmit="return confirm('Удалить правило?')">
-              <input type="hidden" name="id" value="{{.ID}}">
-              <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
-            </form>
-          </td>
-        </tr>{{end}}
-      </table>
+      <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span><i class="fa-solid fa-list"></i> Текущие правила ({{len .Rules}})</span>
+        {{if .MaxTotalRules}}<span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">Системная нагрузка: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
+      </h3>
+
+      {{range $devID, $nodes := .Grouped}}
+      <details open style="margin-bottom:8px">
+        <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
+          <i class="fa-solid fa-laptop"></i>
+          <span>{{index $.DeviceNames $devID}}</span>
+          <span class="tag">{{len $nodes}} exit-nodes</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
+        </summary>
+
+        {{range $exitNode, $rules := $nodes}}
+        <details style="margin:6px 0 6px 24px">
+          <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
+            <i class="fa-solid fa-route"></i>
+            <span class="tag tag-info">{{$exitNode}}</span>
+            <span style="color:var(--text-muted)">{{len $rules}} правил</span>
+          </summary>
+          <div class="table-wrap" style="margin-top:6px">
+            <table>
+              <tr><th>Действие</th><th>Цель</th><th></th></tr>
+              {{range $rules}}<tr>
+                <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                <td class="col-delete">
+                  <form method="post" action="/my/exit-rules/delete" style="display:inline" onsubmit="return confirm('Удалить правило?')">
+                    <input type="hidden" name="id" value="{{.ID}}">
+                    <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+                  </form>
+                </td>
+              </tr>{{end}}
+            </table>
+          </div>
+        </details>
+        {{end}}
+      </details>
+      {{end}}
     </div>
     {{end}}
 

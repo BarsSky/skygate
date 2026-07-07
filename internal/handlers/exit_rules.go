@@ -1,27 +1,64 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"sort"
+	"net/url"
+	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type DeviceRule struct {
-	ID          int
-	UserID      int
-	DeviceID    int
-	DeviceName  string
-	ExitNodeID  string
-	TargetType  string
-	TargetValue string
-	Action      string
-	DeviceIP    string
-	Enabled     bool
+	ID           int
+	UserID       int
+	DeviceID     int
+	DeviceName   string
+	ExitNodeID   string
+	TargetType   string
+	TargetValue  string
+	Action       string
+	DeviceIP     string
+	Enabled      bool
+	ParentDomain string
+}
+
+
+
+// 2026-07-07: issue #5 — dedup protection.
+// Returns:
+//   (true, existingID) — rule already existed; do not re-insert.
+//   (true, 0)          — new rule inserted successfully.
+//   (false, 0)         — DB error.
+func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP string) (bool, int) {
+	var existingID int
+	err := a.DB.QueryRow(
+		"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type=? AND target_value=? LIMIT 1",
+		userID, deviceID, exitNode, targetType, targetValue).Scan(&existingID)
+	if err == nil {
+		return true, existingID
+	}
+	// not found → insert. Set parent_domain = target_value for domain rules so
+	// autoupdater can track them and UI can show "auto" badge.
+	parentDomain := ""
+	if targetType == "domain" {
+		parentDomain = targetValue
+	}
+	_, err = a.DB.Exec(
+		"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain)
+	if err != nil {
+		return false, 0
+	}
+	return true, 0
 }
 
 func scanRules(rows *sql.Rows) ([]DeviceRule, error) {
@@ -29,17 +66,19 @@ func scanRules(rows *sql.Rows) ([]DeviceRule, error) {
 	for rows.Next() {
 		var r DeviceRule
 		var en int
-		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID, &r.TargetType, &r.TargetValue, &r.Action, &r.DeviceIP, &en); err != nil {
+		var pd string
+		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID, &r.TargetType, &r.TargetValue, &r.Action, &r.DeviceIP, &en, &pd); err != nil {
 			return nil, err
 		}
 		r.Enabled = en == 1
+		r.ParentDomain = pd
 		rr = append(rr, r)
 	}
 	return rr, rows.Err()
 }
 
 func (a *App) getDeviceRules(userID int) ([]DeviceRule, error) {
-	rows, err := a.DB.Query("SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action,'accept') as action, COALESCE(d.device_ip,'') as device_ip, d.enabled FROM device_rules d WHERE d.user_id = ? ORDER BY d.id", userID)
+	rows, err := a.DB.Query("SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action,'accept') as action, COALESCE(d.device_ip,'') as device_ip, d.enabled, COALESCE(d.parent_domain,'') as parent_domain FROM device_rules d WHERE d.user_id = ? ORDER BY d.id", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -611,15 +650,85 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// Overall HasRoutes for backward compat
 	anyRoutes := len(hasRoutes) > 0
 
-	a.renderWithLayout(w, "exit_rules.html", c, map[string]any{
-		"Page":        "exit-rules",
-		"Title":       "Exit Rules",
-		"Rules":       rules,
-		"Devices":     devices,
-		"DeviceInfos": deviceInfos,
-		"DeviceRoutes": deviceRoutes,
-		"ExitNodes":   exitServers,
-		"HasRoutes":   anyRoutes,
+	// 2026-07-07: issue #12 — hierarchical view
+	// Group rules by device_id -> exit_node
+	deviceNames := map[int]string{}
+	grouped := map[int]map[string][]DeviceRule{}
+	for _, r := range rules {
+		dn := deviceNames[r.DeviceID]
+		if dn == "" {
+			dn = fmt.Sprint(r.DeviceName)
+			if dn == "" {
+				dn = fmt.Sprint(r.DeviceID)
+			}
+			deviceNames[r.DeviceID] = dn
+		}
+		if grouped[r.DeviceID] == nil {
+			grouped[r.DeviceID] = map[string][]DeviceRule{}
+		}
+		grouped[r.DeviceID][r.ExitNodeID] = append(grouped[r.DeviceID][r.ExitNodeID], r)
+	}
+
+	// Total rules count (all enabled)
+	totalRules := 0
+	if a.Cfg != nil && a.Cfg.MaxTotalRules > 0 {
+		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1").Scan(&totalRules)
+	}
+	loadPct := 0
+	maxPerDeviceMax := 0
+	if a.Cfg != nil {
+		maxPerDeviceMax = a.Cfg.MaxTotalRules
+		if a.Cfg.MaxTotalRules > 0 {
+			loadPct = totalRules * 100 / a.Cfg.MaxTotalRules
+		}
+	}
+	_ = loadPct // used by /admin/exit-rules/nodes; not used here but compiler may complain
+
+		// 2026-07-07: issue #5 — query params for dedup notification
+	duplicate := r.URL.Query().Get("duplicate") == "1"
+	existing := r.URL.Query().Get("existing")
+	partial := r.URL.Query().Get("partial") == "1"
+
+	// 2026-07-06: form persistence (issue #1) — после добавления правила
+	// сохраняем введённые значения в URL, чтобы форма не сбрасывалась.
+	formDeviceID := r.URL.Query().Get("form_device_id")
+	formExitNode := r.URL.Query().Get("form_exit_node")
+	formTargetType := r.URL.Query().Get("form_target_type")
+	formTargetValue := r.URL.Query().Get("form_target_value")
+	formAction := r.URL.Query().Get("form_action")
+	if formTargetType == "" {
+		formTargetType = "ip"
+	}
+	if formAction == "" {
+		formAction = "accept"
+	}
+
+a.renderWithLayout(w, "exit_rules.html", c, map[string]any{
+		"Page":          "exit-rules",
+		"Title":         "Exit Rules",
+		"Rules":         rules,
+		"Devices":       devices,
+		"DeviceInfos":   deviceInfos,
+		"DeviceRoutes":  deviceRoutes,
+		"ExitNodes":     exitServers,
+		"DeviceNames":   deviceNames,
+		"Grouped":       grouped,
+		"TotalRules":    totalRules,
+		"MaxTotalRules": maxPerDeviceMax,
+		"LoadPct":       loadPct,
+				"FormValues": map[string]string{
+			"device_id":    formDeviceID,
+			"exit_node":    formExitNode,
+			"target_type":  formTargetType,
+			"target_value": formTargetValue,
+			"action":       formAction,
+		},
+		"duplicate": duplicate,
+		"warn":  r.URL.Query().Get("warn"),
+		"existing":  existing,
+		"partial":   partial,
+
+"HasRoutes":   anyRoutes,
 	})
 }
 
@@ -646,6 +755,37 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2026-07-07: issue #12 — limit check
+	// Check per-device and total limits before insert.
+	// 2026-07-07: per-user limit takes precedence over per-device
+	maxPerUser := a.getMaxRulesForUser(c.Username)
+	if maxPerUser > 0 {
+		var userRuleCount int
+		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE user_id=? AND enabled=1", c.UserID).Scan(&userRuleCount)
+		if userRuleCount >= maxPerUser {
+			http.Error(w, fmt.Sprintf("user limit exceeded: %d/%d rules for user %s", userRuleCount, maxPerUser, c.Username), 403)
+			return
+		}
+	}
+	maxPerDevice := a.Cfg.MaxRulesPerDevice
+	if maxPerDevice > 0 {
+		var deviceRuleCount int
+		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE device_id=? AND enabled=1", devID).Scan(&deviceRuleCount)
+		if deviceRuleCount >= maxPerDevice {
+			http.Error(w, fmt.Sprintf("device limit exceeded: %d/%d rules on this device", deviceRuleCount, maxPerDevice), 403)
+			return
+		}
+	}
+	maxTotal := a.Cfg.MaxTotalRules
+	if maxTotal > 0 {
+		var totalCount int
+		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1").Scan(&totalCount)
+		if totalCount >= maxTotal {
+			http.Error(w, fmt.Sprintf("system limit exceeded: %d/%d total rules", totalCount, maxTotal), 403)
+			return
+		}
+	}
+
 	// Validate device via node_owner_map, fallback headscale API
 	var count int
 	a.DB.QueryRow("SELECT COUNT(*) FROM node_owner_map WHERE node_id = ? AND username = ?", devID, c.Username).Scan(&count)
@@ -667,10 +807,92 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := a.DB.Exec("INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		c.UserID, devID, exitNode, targetType, targetValue, action, deviceIP)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
+	// 2026-07-07: issue #3 — для target_type=domain резолвим в IP через DNS
+	// и сохраняем каждую запись как subnet /32, иначе Tailscale ACL/advertised-routes
+	// не могут фильтровать по доменам. Tailscale работает на L3/L4, не L7.
+	// 2026-07-07: issue #10 — softer DNS handling.
+	// If domain resolves, store as subnet /32 (Issue #3).
+	// If not, store as target_type=domain anyway; autoupdater will try later.
+	dnsWarning := ""
+	ipsToInsert := []string{targetValue}
+	typeToInsert := targetType
+	if targetType == "domain" {
+		if addrs, err := net.LookupHost(targetValue); err == nil {
+			ipsToInsert = nil
+			seen := map[string]bool{}
+			for _, a := range addrs {
+				if strings.Contains(a, ":") { continue }
+				if seen[a] { continue }
+				seen[a] = true
+				ipsToInsert = append(ipsToInsert, a+"/32")
+			}
+			if len(ipsToInsert) > 0 {
+				typeToInsert = "subnet"
+			}
+		} else {
+			dnsWarning = targetValue + " (DNS: " + err.Error() + ")"
+		}
+	}
+
+	// 2026-07-07: also save the domain rule itself (target_type=domain) so
+	// autoupdater can track it and add knownSubdomains (e.g. static.rutracker.cc).
+	// Check for existing domain rule first to avoid dedup.
+	if targetType == "domain" {
+		var existingDomainID int
+		_ = a.DB.QueryRow(
+			"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='domain' AND target_value=? LIMIT 1",
+			c.UserID, devID, exitNode, targetValue).Scan(&existingDomainID)
+		if existingDomainID == 0 {
+			_, _ = a.DB.Exec(
+				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'domain', ?, ?, ?, ?)",
+				c.UserID, devID, exitNode, targetValue, action, deviceIP, targetValue)
+		}
+	}
+
+	dupCount := 0
+	dupIDs := []int{}
+	insertedCount := 0
+	for _, ip := range ipsToInsert {
+		ok, existingID := a.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP)
+		if !ok {
+			http.Error(w, "db error", 500)
+			return
+		}
+		if existingID > 0 {
+			// 2026-07-07: only count as dup if same parent_domain (or no parent_domain)
+			// If existing /32 has DIFFERENT parent_domain, it's a shared IP — insert new one
+			// with this domain's parent_domain (allowed for autoupdater to track).
+			var existingParent string
+			_ = a.DB.QueryRow("SELECT COALESCE(parent_domain,'') FROM device_rules WHERE id=?", existingID).Scan(&existingParent)
+			if existingParent == "" || existingParent == targetValue {
+				dupCount++
+				dupIDs = append(dupIDs, existingID)
+			} else {
+				// Shared IP with different parent — create new with our parent_domain
+				_, _ = a.DB.Exec(
+					"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
+					c.UserID, devID, exitNode, ip, action, deviceIP, targetValue)
+				insertedCount++
+			}
+		} else {
+			insertedCount++
+		}
+	}
+	if dupCount > 0 && insertedCount == 0 {
+		// All already exist — return user-friendly redirect
+		http.Redirect(w, r, fmt.Sprintf("/my/exit-rules?duplicate=1&existing=%s", url.QueryEscape(targetValue)), http.StatusFound)
+		return
+	}
+	warnParam := ""
+	if dnsWarning != "" { warnParam = "&warn=" + url.QueryEscape(dnsWarning) }
+	if dupCount > 0 {
+		// partial — at least one was new
+		http.Redirect(w, r, fmt.Sprintf("/my/exit-rules?applied=1&partial=1&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s%s",
+			url.QueryEscape(strconv.Itoa(devID)),
+			url.QueryEscape(exitNode),
+			url.QueryEscape(typeToInsert),
+			url.QueryEscape(targetValue),
+			url.QueryEscape(action), warnParam), http.StatusFound)
 		return
 	}
 
@@ -681,14 +903,28 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		if err := a.HS.SetPolicy(acl); err == nil {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=?", ver)
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'apply', ?)", ver,
-				fmt.Sprintf("user %s added rule for %s->%s", c.Username, targetValue, exitNode))
+				fmt.Sprintf("user %s added rule %s (type=%s) for %s->%s", c.Username, targetType, typeToInsert, targetValue, exitNode))
+			// 2026-07-06: issue #2 — sync advertised routes на exit-nodes.
+			// SetPolicy() обновляет ACL в Headscale, но advertised-routes
+			// (через которые фактически идёт трафик клиентов) не обновлялись.
+			if sync := a.SyncAdvertisedRoutes(); sync != nil {
+				for node, status := range sync {
+					a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'sync', ?)", ver,
+						fmt.Sprintf("sync %s: %s", node, status))
+				}
+			}
 		} else {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=? WHERE version=?", err.Error(), ver)
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'apply_fail', ?)", ver,
 				fmt.Sprintf("user %s: %v", c.Username, err))
 		}
 	}
-	http.Redirect(w, r, "/my/exit-rules?applied=1", http.StatusFound)
+	http.Redirect(w, r, fmt.Sprintf("/my/exit-rules?applied=1&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s%s",
+		url.QueryEscape(strconv.Itoa(devID)),
+		url.QueryEscape(exitNode),
+		url.QueryEscape(typeToInsert),
+		url.QueryEscape(targetValue),
+		url.QueryEscape(action), warnParam), http.StatusFound)
 }
 
 func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
@@ -708,6 +944,13 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		if err := a.HS.SetPolicy(acl); err == nil {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=?", ver)
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'delete', ?)", ver, fmt.Sprintf("user %s deleted rule #%d", c.Username, id))
+			// 2026-07-06: re-sync advertised routes after delete
+			if sync := a.SyncAdvertisedRoutes(); sync != nil {
+				for node, status := range sync {
+					a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'sync', ?)", ver,
+						fmt.Sprintf("sync %s: %s", node, status))
+				}
+			}
 		} else {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=? WHERE version=?", err.Error(), ver)
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'delete_fail', ?)", ver, fmt.Sprintf("user %s: %v", c.Username, err))
@@ -917,8 +1160,36 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	added := 0
+	dupCount := 0
 	errors := []string{}
+	// 2026-07-07: issue #12 — pre-check total limit before processing
+	maxTotal := a.Cfg.MaxTotalRules
+	if maxTotal > 0 {
+		var currentTotal int
+		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1").Scan(&currentTotal)
+		if currentTotal+len(req.Rules) > maxTotal {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(403)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error":     fmt.Sprintf("system limit exceeded: %d/%d", currentTotal, maxTotal),
+				"current":   currentTotal,
+				"max":       maxTotal,
+				"requested": len(req.Rules),
+			})
+			return
+		}
+	}
 	for i, rl := range req.Rules {
+		// 2026-07-07: per-device limit
+		maxPerDevice := a.Cfg.MaxRulesPerDevice
+		if maxPerDevice > 0 {
+			var deviceRuleCount int
+			a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE device_id=? AND enabled=1", rl.DeviceID).Scan(&deviceRuleCount)
+			if deviceRuleCount >= maxPerDevice {
+				errors = append(errors, fmt.Sprintf("rule[%d]: device limit exceeded (%d/%d)", i, deviceRuleCount, maxPerDevice))
+				continue
+			}
+		}
 		if rl.DeviceID == 0 || rl.TargetValue == "" {
 			errors = append(errors, fmt.Sprintf("rule[%d]: missing device_id or target_value", i))
 			continue
@@ -927,11 +1198,14 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 			rl.Action = "accept"
 		}
 		deviceIP := nodeIPs[rl.DeviceID]
-		_, err := a.DB.Exec(
-			"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip) VALUES (?,?,?,?,?,?,?)",
-			c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("rule[%d]: %v", i, err))
+		ok, existingID := a.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP)
+		if !ok {
+			errors = append(errors, fmt.Sprintf("rule[%d]: db error", i))
+			continue
+		}
+		if existingID > 0 {
+			errors = append(errors, fmt.Sprintf("rule[%d]: duplicate of #%d", i, existingID))
+			dupCount++
 			continue
 		}
 		added++
@@ -950,7 +1224,8 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := map[string]any{"added": added, "errors": errors}
+	resp := map[string]any{"added": added,
+		"duplicates": dupCount, "errors": errors}
 	if errors == nil {
 		resp["errors"] = []string{}
 	}
@@ -969,6 +1244,88 @@ func (a *App) GetExitRulesAPIHelp(w http.ResponseWriter, r *http.Request) {
 	a.renderWithLayout(w, "exit_rules_help.html", c, map[string]any{
 		"Page":  "exit-rules",
 		"Title": "Exit Rules API Help",
+	})
+}
+
+// GetAdminNodesLoad renders the admin node load dashboard.
+// GET /admin/exit-rules/nodes
+func (a *App) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	// Collect per-exit-node metrics
+	type NodeLoad struct {
+		Name           string
+		ApprovedRoutes int
+		AvailableRoutes int
+		RuleCount      int
+		LastSync       string
+		LoadPct        int
+	}
+	var nodes []NodeLoad
+	maxPerNode := a.Cfg.MaxRulesPerDevice * 5 // heuristic: total rules / 5 nodes
+	if maxPerNode == 0 { maxPerNode = 1000 }
+	// Get distinct exit_nodes from device_rules
+	rows, _ := a.DB.Query("SELECT DISTINCT exit_node_id FROM device_rules WHERE enabled=1 AND exit_node_id != ''")
+	exitNodeSet := map[string]bool{}
+	if rows != nil {
+		for rows.Next() {
+			var n string
+			if rows.Scan(&n) == nil { exitNodeSet[n] = true }
+		}
+		rows.Close()
+	}
+	// Also add known exit_servers
+	serverRows, _ := a.DB.Query("SELECT name FROM exit_servers WHERE enabled=1")
+	if serverRows != nil {
+		for serverRows.Next() {
+			var n string
+			if serverRows.Scan(&n) == nil { exitNodeSet[n] = true }
+		}
+		serverRows.Close()
+	}
+	for name := range exitNodeSet {
+		nl := NodeLoad{Name: name}
+		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id=?", name).Scan(&nl.RuleCount)
+		// Get from headscale
+		// Find node by hostname
+		if allNodes, err := a.HS.ListAllNodes(); err == nil {
+			for _, n := range allNodes {
+				if strings.EqualFold(n.Hostname, name) || strings.EqualFold(n.GivenName, name) {
+					nl.AvailableRoutes = len(n.AvailableRoutes)
+					// ApprovedRoutes not in NodeView — show 0 or call separate API
+					nl.ApprovedRoutes = nl.AvailableRoutes // approximation
+					break
+				}
+			}
+		}
+		nl.LoadPct = nl.RuleCount * 100 / maxPerNode
+		// Last sync: find most recent log
+		var lastSync time.Time
+		a.DB.QueryRow("SELECT COALESCE(MAX(created_at), '1970-01-01') FROM exit_rule_logs WHERE action='sync' AND detail LIKE ?", "%"+name+"%").Scan(&lastSync)
+		if !lastSync.IsZero() && lastSync.Year() > 2000 {
+			nl.LastSync = lastSync.Format("2006-01-02 15:04:05")
+		} else {
+			nl.LastSync = "никогда"
+		}
+		nodes = append(nodes, nl)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].LoadPct > nodes[j].LoadPct })
+	totalRules := 0
+	for _, n := range nodes { totalRules += n.RuleCount }
+	loadPct := 0
+	if a.Cfg != nil && a.Cfg.MaxTotalRules > 0 {
+		loadPct = totalRules * 100 / a.Cfg.MaxTotalRules
+	}
+	a.renderWithLayout(w, "admin/exit_rules_nodes.html", c, map[string]any{
+		"Page":         "exit-rules-nodes",
+		"Title":        "Node Load",
+		"Nodes":        nodes,
+		"TotalRules":   totalRules,
+		"MaxTotalRules": a.Cfg.MaxTotalRules,
+		"LoadPct":      loadPct,
 	})
 }
 
@@ -997,17 +1354,95 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 			result[node] = "ok"
 			_ = msg
 		}
-		// Approve all routes for this exit node via headscale API
-		if approved, approveErr := a.HS.ApproveAllRoutes(node); approveErr != nil {
-			result[node + "_approve"] = approveErr.Error()
+		// Approve all routes for this exit node via headscale CLI (docker exec).
+		// 2026-07-07: routes already passed in (avoid orphan approves).
+		if approved, approveErr := a.HS.ApproveAllRoutesWithList(node, routes); approveErr != nil {
+			result[node+"_approve_err"] = approveErr.Error()
+			result[node] = "ssh:ok approve:err=" + approveErr.Error()
 		} else if approved > 0 {
-			result[node + "_approved"] = fmt.Sprintf("%d", approved)
+			result[node] = fmt.Sprintf("ok approved=%d", approved)
 		}
 	}
 	if len(exitRoutes) == 0 {
 		result["info"] = "no IP/subnet rules configured"
 	}
 	return result
+}
+
+// 2026-07-07: issue #12 — staggered sync.
+// If SKYGATE_STAGGER_SYNC=true and total rules > batchSize, run sync in goroutine
+// that splits work by exit-node and applies batches with delay between them.
+// This prevents headscale from being overwhelmed by large approve-routes calls.
+func (a *App) staggeredSync() {
+	if a.Cfg == nil || !a.Cfg.StaggerSync {
+		a.SyncAdvertisedRoutes()
+		return
+	}
+	batchSize := a.Cfg.StaggerBatchSize
+	if batchSize <= 0 { batchSize = 20 }
+	interval := a.Cfg.StaggerInterval
+	if interval <= 0 { interval = 30 * time.Second }
+	maxPerNode := batchSize
+	// Collect exit_nodes with their rule counts
+	rows, _ := a.DB.Query("SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id != '' GROUP BY exit_node_id")
+	if rows == nil {
+		a.SyncAdvertisedRoutes()
+		return
+	}
+	defer rows.Close()
+	type nodeRules struct { name string; count int }
+	var nodes []nodeRules
+	totalRules := 0
+	for rows.Next() {
+		var n string; var c int
+		if rows.Scan(&n, &c) == nil {
+			nodes = append(nodes, nodeRules{n, c})
+			totalRules += c
+		}
+	}
+	// If small enough, sync immediately
+	if totalRules <= maxPerNode {
+		a.SyncAdvertisedRoutes()
+		return
+	}
+	log.Printf("staggeredSync: %d rules across %d nodes, batch=%d interval=%s",
+		totalRules, len(nodes), maxPerNode, interval)
+	go func() {
+		for _, n := range nodes {
+			// Sync this node alone (smaller batch)
+			rules, _ := a.DB.Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=? AND target_type IN ('subnet', 'ip')", n.name)
+			if rules == nil { continue }
+			defer rules.Close()
+			var routeList []string
+			for rules.Next() {
+				var v string
+				if rules.Scan(&v) == nil { routeList = append(routeList, v) }
+			}
+			if len(routeList) > maxPerNode {
+				// Split this node into batches
+				for i := 0; i < len(routeList); i += maxPerNode {
+					end := i + maxPerNode
+					if end > len(routeList) { end = len(routeList) }
+					batch := routeList[i:end]
+					log.Printf("staggeredSync: %s batch %d-%d/%d", n.name, i, end, len(routeList))
+					msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch)
+					log.Printf("staggeredSync: %s advertised: %s", n.name, msg)
+					if _, err := a.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
+						log.Printf("staggeredSync: %s approve err: %v", n.name, err)
+					}
+					time.Sleep(interval)
+				}
+			} else {
+				msg, _ := a.HS.SetAdvertisedRoutes(n.name, routeList)
+				log.Printf("staggeredSync: %s advertised: %s", n.name, msg)
+				if _, err := a.HS.ApproveAllRoutesWithList(n.name, routeList); err != nil {
+					log.Printf("staggeredSync: %s approve err: %v", n.name, err)
+				}
+			}
+			time.Sleep(interval / 2)
+		}
+		log.Printf("staggeredSync: done")
+	}()
 }
 
 // SyncAdvertisedRoutesHandler triggers route sync (admin only).
@@ -1021,3 +1456,216 @@ func (a *App) SyncAdvertisedRoutesHandler(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
+
+// knownSubdomains maps a main domain to its known subdomain hosts for static assets.
+// 2026-07-07: issue #9 — Cloudflare-routed sites have static on different subdomains.
+var knownSubdomains = map[string][]string{
+	"rutracker.org": {"static.rutracker.cc"},
+	"rutracker.cc":  {"static.rutracker.cc"},
+}
+
+// 2026-07-07: issue #6 — DomainAutoUpdater
+// Background job: resolves all domain rules every interval, reconciles with /32 IP rules.
+// Returns count of changes (added + removed) and writes log entries.
+func (a *App) DomainAutoUpdater() (added, removed int, err error) {
+	rows, qerr := a.DB.Query("SELECT id, user_id, device_id, exit_node_id, target_value, action, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND target_type = 'domain'")
+	if qerr != nil {
+		return 0, 0, qerr
+	}
+	defer rows.Close()
+	type domainRule struct {
+		id       int
+		userID   int64
+		deviceID int
+		exitNode string
+		domain   string
+		action   string
+		deviceIP string
+	}
+	var domains []domainRule
+	for rows.Next() {
+		var r domainRule
+		var uid int64
+		if err := rows.Scan(&r.id, &uid, &r.deviceID, &r.exitNode, &r.domain, &r.action, &r.deviceIP); err == nil {
+			r.userID = uid
+			domains = append(domains, r)
+		}
+	}
+
+	for _, d := range domains {
+		addrs, lerr := net.LookupHost(d.domain)
+		if lerr != nil {
+			a.logAutoUpdate(d.id, d.domain, 0, 0, "lookup failed: "+lerr.Error())
+			continue
+		}
+		currentIPs := map[string]bool{}
+		for _, a := range addrs {
+			if strings.Contains(a, ":") { continue } // skip IPv6
+			currentIPs[a] = true
+		}
+		if extraIPs := a.resolveDomainSubdomains(d.domain); extraIPs != nil {
+			for ip := range extraIPs { currentIPs[ip] = true }
+		}
+
+		// Get existing /32 rules for this domain
+		existing := map[string]int{} // IP -> rule id
+		rows2, eerr := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32'",
+			d.userID, d.deviceID, d.exitNode)
+		if eerr != nil {
+			continue
+		}
+		// Filter: only IPs that are NOT explicitly in currentIPs (could be from other rules)
+		// Strategy: for each IP in currentIPs that's not in DB → INSERT
+		//           for each /32 IP in DB that resolves to a removed domain IP → DELETE
+		// We track: for THIS domain, which /32 IPs correspond?
+		// Simplification: we know d.domain is the source, so any /32 that matches
+		// the pattern and exists in oldIPs but not in currentIPs is from this domain.
+		_ = existing
+		rows2.Close()
+
+		// Find all /32 rules for (user, device, exit_node) that LOOK like auto-resolved from this domain
+		// We track them via a side table OR a heuristic: for this domain, list all /32 rules where
+		// the same domain's last resolved IPs included them.
+		// Pragmatic approach: maintain a comment-style hint in another table? Or use a marker.
+		// Simpler: for this domain, list ALL /32 rules and diff against currentIPs.
+		// User-added /32 rules (manual) get deleted if we don't track — TOO DANGEROUS.
+		// Better: introduce column `parent_domain` (NULL = manual).
+		all32 := map[string]int{}
+		rows3, _ := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain,'')=?",
+			d.userID, d.deviceID, d.exitNode, d.domain)
+		if rows3 != nil {
+			for rows3.Next() {
+				var rid int
+				var val string
+				if rows3.Scan(&rid, &val) == nil {
+					// strip /32
+					ip := strings.TrimSuffix(val, "/32")
+					all32[ip] = rid
+				}
+			}
+			rows3.Close()
+		}
+
+		// Add new IPs
+		for ip := range currentIPs {
+			if _, exists := all32[ip]; exists { continue }
+			if _, ierr := a.DB.Exec(
+				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
+				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain); ierr == nil {
+				added++
+			}
+		}
+		// Remove old IPs
+		for ip, rid := range all32 {
+			if currentIPs[ip] { continue }
+			if _, derr := a.DB.Exec("DELETE FROM device_rules WHERE id=?", rid); derr == nil {
+				removed++
+			}
+		}
+
+		if len(currentIPs) > 0 || len(all32) > 0 {
+			a.logAutoUpdate(d.id, d.domain, added, removed, "")
+		}
+	}
+
+	return added, removed, nil
+}
+
+
+// resolveDomainSubdomains resolves known subdomains and (optionally) fetches
+// the main page to discover subdomains from href/src attributes. Returns a set
+// of IPv4 addresses to add to the rule list.
+func (a *App) resolveDomainSubdomains(domain string) map[string]bool {
+	httpClient := &http.Client{Timeout: 8 * time.Second}
+	var body []byte
+
+	// Check known subdomains first (fast path)
+	ips := map[string]bool{}
+	for _, sd := range knownSubdomains[domain] {
+		if addrs, err := net.LookupHost(sd); err == nil {
+			for _, ip := range addrs {
+				if !strings.Contains(ip, ":") { ips[ip] = true }
+			}
+		}
+	}
+	if len(ips) > 0 {
+		a.logAutoUpdate(0, domain, len(ips), 0, "known subdomains resolved: "+strconv.Itoa(len(knownSubdomains[domain])))
+		return ips
+	}
+
+	for _, scheme := range []string{"https", "http"} {
+		resp, err := httpClient.Get(scheme + "://" + domain + "/")
+		if err != nil { continue }
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+		resp.Body.Close()
+		if err == nil {
+			body = b
+			break
+		}
+	}
+	if len(body) == 0 { return nil }
+
+	subdomains := map[string]bool{}
+	hostRe := regexp.MustCompile(`(?:href|src)=["\']https?://([^/\s"\']+)`)
+	for _, m := range hostRe.FindAllStringSubmatch(string(body), -1) {
+		host := m[1]
+		// Skip self and subdomains of self
+		if host == domain || strings.HasSuffix(host, "."+domain) { continue }
+		subdomains[host] = true
+	}
+	for host := range subdomains {
+		if addrs, err := net.LookupHost(host); err == nil {
+			for _, ip := range addrs {
+				if !strings.Contains(ip, ":") { ips[ip] = true }
+			}
+		}
+	}
+	if len(ips) > 0 {
+		a.logAutoUpdate(0, domain, len(ips), 0, "subdomains resolved: "+strconv.Itoa(len(subdomains)))
+	}
+	return ips
+}
+
+func (a *App) logAutoUpdate(ruleID int, domain string, added, removed int, errMsg string) {
+	detail := fmt.Sprintf("domain=%s added=%d removed=%d", domain, added, removed)
+	if errMsg != "" {
+		detail += " err=" + errMsg
+	}
+	_, _ = a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (0, 'autoupdate', ?)", detail)
+}
+
+func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		log.Printf("autoupdater: disabled (interval=0)")
+		return
+	}
+	log.Printf("autoupdater: starting (interval=%s)", interval)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	// Run once immediately, then on tick
+	added, removed, err := a.DomainAutoUpdater()
+	if err != nil {
+		log.Printf("autoupdater: initial: %v", err)
+	} else if added > 0 || removed > 0 {
+		log.Printf("autoupdater: initial: added=%d removed=%d", added, removed)
+		a.staggeredSync() // 2026-07-07: issue #12 — staggered
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("autoupdater: stopping")
+			return
+		case <-t.C:
+			added, removed, err := a.DomainAutoUpdater()
+			if err != nil {
+				log.Printf("autoupdater: %v", err)
+				continue
+			}
+			if added > 0 || removed > 0 {
+				log.Printf("autoupdater: added=%d removed=%d, syncing exit-nodes", added, removed)
+				a.staggeredSync() // 2026-07-07: issue #12
+			}
+		}
+	}
+}
+

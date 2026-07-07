@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -17,6 +19,16 @@ type Config struct {
 	BootstrapAdminUser string
 	BootstrapAdminPass string
 	SSHKeyPath         string // path to SSH key for exit node sync
+	DNSAutoCheck       time.Duration // 0 = disabled, default 5m
+	// 2026-07-07: issue #12 — limits & staggered sync
+	MaxRulesPerDevice int           // 0 = no limit; default 200
+	MaxTotalRules     int           // 0 = no limit; default 10000
+	StaggerSync       bool          // split autoupdate work into batches
+	StaggerBatchSize  int           // rules per batch (default 20)
+	StaggerInterval   time.Duration // delay between batches (default 30s)
+	// 2026-07-07: per-user rule limits. Map username -> max rules. Default = MaxRulesPerDevice.
+	// Example: "SKYGATE_USER_MAX_RULES=skyadmin:1000,admin:500"
+	UserMaxRules       map[string]int
 }
 
 func Load() (*Config, error) {
@@ -31,6 +43,19 @@ func Load() (*Config, error) {
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "skyadmin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
 		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/home/skyadmin/.ssh/skygate_sync"),
+		DNSAutoCheck:       getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
+		MaxRulesPerDevice:  getInt("SKYGATE_MAX_RULES_PER_DEVICE", 200),
+		MaxTotalRules:      getInt("SKYGATE_MAX_TOTAL_RULES", 10000),
+		StaggerSync:        getenv("SKYGATE_STAGGER_SYNC", "true") == "true",
+		StaggerBatchSize:   getInt("SKYGATE_STAGGER_BATCH_SIZE", 20),
+		StaggerInterval:    getDuration("SKYGATE_STAGGER_INTERVAL", 30*time.Second),
+		UserMaxRules:       parseUserLimits(getenv("SKYGATE_USER_MAX_RULES", "")),
+	}
+
+	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
+		if v == "off" || v == "0" {
+			c.DNSAutoCheck = 0
+		}
 	}
 	if c.HeadscaleKey == "" {
 		return nil, fmt.Errorf("HEADSCALE_API_KEY is required")
@@ -68,4 +93,45 @@ func deriveControlURL(explicit, hsAPI string) string {
 		u = "https://" + u
 	}
 	return u
+}
+
+
+
+func getInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func getDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(n) * time.Second
+	}
+	return def
+}
+
+func parseUserLimits(s string) map[string]int {
+	m := map[string]int{}
+	if s == "" { return m }
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" { continue }
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 { continue }
+		name := strings.TrimSpace(parts[0])
+		n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || n <= 0 { continue }
+		m[name] = n
+	}
+	return m
 }

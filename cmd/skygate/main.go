@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"context"
 	"database/sql"
 	"errors"
@@ -34,6 +35,14 @@ func main() {
 	}
 	defer d.Close()
 
+	// 2026-07-07: issue #6 — ensure parent_domain column exists for domain auto-updater
+	if _, err := d.Exec("ALTER TABLE device_rules ADD COLUMN parent_domain TEXT DEFAULT ''"); err != nil {
+		// column may already exist; log only if it's not a duplicate-column error
+		if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "exists") {
+			log.Printf("warn: ALTER device_rules add parent_domain: %v", err)
+		}
+	}
+
 	// Bootstrap admin user
 	if cfg.BootstrapAdminPass == "" {
 		log.Printf("⚠️  SKYGATE_ADMIN_PASS empty - no admin user bootstrapped")
@@ -56,7 +65,7 @@ func main() {
 		log.Printf("warn: backfill node owners: %v", err)
 	}
 
-	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours)
+	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
 	app.Version = "v0.3"
 
 	mux := http.NewServeMux()
@@ -115,6 +124,7 @@ func main() {
 	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(app.AdminExitRules)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(app.PostAdminRollbackACL)))
 	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(app.SyncAdvertisedRoutesHandler)))
+	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(app.GetAdminNodesLoad)))
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(app.AdminExitNodes)))
@@ -138,6 +148,9 @@ func main() {
 			log.Fatalf("listen: %v", err)
 		}
 	}()
+
+	// 2026-07-07: issue #6 — start domain auto-updater goroutine
+	go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)
 
 	<-ctx.Done()
 	log.Println("🌐 shutting down")
