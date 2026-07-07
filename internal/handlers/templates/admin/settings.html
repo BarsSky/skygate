@@ -50,6 +50,21 @@
   </div>
 
   <div class="card" style="margin-top:1.5rem">
+    <h3><i class="fa-solid fa-right-from-bracket"></i> Exit Node Policy</h3>
+    <div class="form-group">
+      <label>Режим маршрутизации</label>
+      <select name="exit_policy" class="form-control">
+        <option value="allow_all"{{if eq .ExitPolicy "allow_all"}} selected{{end}}>Allow All (разрешено всё, deny-правила блокируют)</option>
+        <option value="deny_all"{{if eq .ExitPolicy "deny_all"}} selected{{end}}>Deny All (запрещено всё, accept-правила разрешают)</option>
+      </select>
+      <div class="sub">
+        <b>Allow All</b>: весь трафик через exit-ноды разрешён. Правила действуют как чёрный список.<br>
+        <b>Deny All</b>: трафик через exit-ноды запрещён. Правила действуют как белый список.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
     <h3><i class="fa-solid fa-circle-info"></i> После миграции</h3>
     <div class="alert alert-warning">
       <p>Если вы восстановили бэкап на новом сервере:</p>

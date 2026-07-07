@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"crypto/rand"
-	"fmt"
 	"errors"
 	"time"
 
@@ -28,21 +26,6 @@ func HashPassword(pw string) (string, error) {
 func CheckPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
-
-func GenerateAPIToken() (string, string) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	raw := fmt.Sprintf("%x", b)
-	hash, _ := HashPassword(raw)
-	return raw, hash
-}
-
-func CheckAPIToken(hash, token string) bool {
-	return CheckPassword(hash, token)
-}
-
 
 func IssueJWT(secret string, userID int64, username string, isAdmin bool, ttlHours int) (string, error) {
 	c := Claims{

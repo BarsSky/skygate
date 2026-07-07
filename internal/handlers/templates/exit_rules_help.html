@@ -25,21 +25,49 @@
 </div>
 
 <div class="card">
+  <h3><i class="fa-solid fa-arrows-rotate"></i> DNS авто-обновление (с июля 2026)</h3>
+  <p>Для правил с <b>типом «домен»</b> Skygate каждые <b>5 минут</b> автоматически:</p>
+  <ol style="padding-left:20px;margin:0">
+    <li>Резолвит домен через DNS (если ещё не резолвится — добавляет как <code>target_type=domain</code> и попробует позже).</li>
+    <li>Находит все статические поддомены (например <code>static.rutracker.cc</code> для <code>rutracker.org</code>) и добавляет их IP.</li>
+    <li>Обновляет /32 правила: удаляет устаревшие IP, добавляет новые.</li>
+    <li>Синхронизирует advertised-routes на exit-узлах и одобряет их через <code>headscale nodes approve-routes</code>.</li>
+  </ol>
+  <p style="margin-top:8px">В таблице правил доменные правила помечены бейджем <b><i class="fa-solid fa-arrows-rotate"></i> auto</b>.</p>
+  <p>Все IP, добавленные авто-апдейтером, имеют <code>parent_domain</code> в БД — autoupdater их различает и не трогает ручные /32 правила.</p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    ⚠️ Некоторые сайты (rutracker.org, kinozal.tv и др.) используют <b>отдельный поддомен для статики</b>. Если autoupdater найдёт его в HTML — он автоматически резолвит и добавит. Если нет — пришлите заявку админу, добавим в <code>knownSubdomains</code> map.
+  </p>
+  <p style="margin-top:4px"><b>Известные поддомены:</b> rutracker.org → static.rutracker.cc</p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-shield-halved"></i> Защита от дублирования</h3>
+  <p>При добавлении правила Skygate проверяет уникальность по комбинации <b>(device_id, exit_node, target_type, target_value)</b>:</p>
+  <ul>
+    <li>✅ <b>Новое правило</b> — добавлено, появится зелёный alert «Правило добавлено».</li>
+    <li>🔁 <b>Дубликат</b> — правило уже существует, появится красный alert «Правило для X уже существует».</li>
+    <li>⚠️ <b>Частичное добавление</b> — некоторые IP уже есть (для доменов, которые резолвятся в общие Cloudflare IP), появится жёлтый alert.</li>
+    <li>⚠️ <b>DNS warning</b> — домен не резолвится, сохранён как <code>target_type=domain</code>, autoupdater попробует при следующем цикле.</li>
+  </ul>
+</div>
+
+<div class="card">
   <h3><i class="fa-solid fa-key"></i> API Tokens — токены доступа</h3>
   <p>Для доступа к API используйте персональный токен. Это безопаснее cookie-сессии и удобнее для AI-помощников и скриптов.</p>
   <ol style="padding-left:20px;margin:0">
     <li>Перейдите на <a href="/my/tokens"><b>/my/tokens</b></a> → «Создать токен», укажите метку (например «Hermes»).</li>
     <li><b>Скопируйте токен</b> — он показывается <u>только один раз</u>. Храните в безопасном месте.</li>
-    <li>Используйте в заголовке: <code>Authorization: Bearer &lt;ва...t;</code></li>
+    <li>Используйте в заголовке: <code>Authorization: Bearer &lt;ва.../li>
     <li>Токен действует без ограничения срока. Отозвать можно в любой момент на /my/tokens.</li>
   </ol>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;margin-top:8px;">
 # С токеном (рекомендуется):
-curl -H "Authorization: Bearer &lt;ва...t;" \
+curl -H "Authorization: Bearer *** \
   {{.BaseURL}}/my/exit-rules/api
 
 # Массовое создание:
-curl -X POST -H "Authorization: Bearer &lt;ва...t;" \
+curl -X POST -H "Authorization: Bearer *** \
   -H "Content-Type: application/json" \
   -d '{"rules":[{"device_id":5,"exit_node":"node-europe","target_type":"subnet","target_value":"10.0.0.0/24","action":"accept"}]}' \
   {{.BaseURL}}/my/exit-rules/api</pre>
@@ -57,7 +85,7 @@ curl -X POST -H "Authorization: Bearer &lt;ва...t;" \
         <li><b>Android/iOS:</b> <code>tailscale up --exit-node=X</code> — полный туннель</li>
       </ul>
     </li>
-    <li>При изменении правил Skygate автоматически обновляет advertised-routes на всех exit-узлах.</li>
+    <li>При изменении правил Skygate автоматически обновляет advertised-routes на всех exit-узлах + <b>autoupdater</b> следит за доменами.</li>
   </ol>
 </div>
 
@@ -68,6 +96,9 @@ curl -X POST -H "Authorization: Bearer &lt;ва...t;" \
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 my-phone (100.64.0.5) ──► exit-node (100.64.0.3) ──► internet (8.8.8.8)</pre>
   <p>Когда клиент использует exit-node, его трафик в интернет идёт через VPS этого exit-узла. Для внешних сайтов источником запроса будет IP VPS-сервера, а не клиента.</p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    ⚠️ <b>Cloudflare Challenge:</b> некоторые сайты (rutracker.org и др.) показывают CAPTCHA если заходят с IP exit-узла вне РФ. Решение: используйте <b>exit-узел в РФ</b> (sharlotta) для таких сайтов, или работайте через <code>--exit-node=karolina</code> для всего трафика.
+  </p>
 </div>
 
 <div class="card">
@@ -117,20 +148,24 @@ tailscale set \
   <h4>GET /my/exit-rules/api — список правил</h4>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 # С токеном:
-curl -H "Authorization: Bearer &lt;ва...t;" {{.BaseURL}}/my/exit-rules/api
+curl -H "Authorization: Bearer *** {{.BaseURL}}/my/exit-rules/api
 
 # Или с cookie:
 curl -b skygate_session=TOKEN {{.BaseURL}}/my/exit-rules/api</pre>
-  <p>Ответ: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x"}]}</code></p>
+  <p>Ответ: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x", "parent_domain":""}]}</code></p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Поле <code>parent_domain</code> — для /32 правил, созданных autoupdater'ом, содержит исходный домен.
+  </p>
 
   <h4>POST /my/exit-rules/api — массовое создание</h4>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 # С токеном:
-curl -X POST -H "Authorization: Bearer &lt;ва...t;" \
+curl -X POST -H "Authorization: Bearer *** \
   -H "Content-Type: application/json" \
   -d '{"rules":[
     {"device_id":5, "exit_node":"node-europe", "target_type":"subnet", "target_value":"10.0.0.0/24", "action":"accept"},
-    {"device_id":5, "exit_node":"node-europe", "target_type":"ip",     "target_value":"1.2.3.4",     "action":"accept"}
+    {"device_id":5, "exit_node":"node-europe", "target_type":"ip",     "target_value":"1.2.3.4",     "action":"accept"},
+    {"device_id":5, "exit_node":"node-europe", "target_type":"domain",  "target_value":"rutracker.org", "action":"accept"}
   ]}' \
   {{.BaseURL}}/my/exit-rules/api
 
@@ -139,7 +174,10 @@ curl -X POST -b skygate_session=TOKEN \
   -H "Content-Type: application/json" \
   -d '{"rules":[...]}' \
   {{.BaseURL}}/my/exit-rules/api</pre>
-  <p>Ответ: <code>{"added": 2, "errors": []}</code></p>
+  <p>Ответ: <code>{"added": 3, "duplicates": 0, "errors": []}</code></p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Для <code>target_type=domain</code> сервер автоматически резолвит домен в IP (если DNS отвечает) и сохраняет каждую запись как <code>subnet /32</code>. Доменное правило само остаётся в БД для autoupdater.
+  </p>
 
   <table style="margin-top:12px">
     <tr><th>Поле</th><th>Тип</th><th>Обязательное</th><th>Описание</th></tr>
@@ -152,11 +190,12 @@ curl -X POST -b skygate_session=TOKEN \
 
   <h4 style="margin-top:16px">GET /admin/exit-rules/sync (admin)</h4>
   <p>Синхронизирует advertised-routes на всех exit-node.</p>
-  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer &lt;ва...t;" {{.BaseURL}}/admin/exit-rules/sync</pre>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer *** {{.BaseURL}}/admin/exit-rules/sync</pre>
 </div>
 
 <div class="card">
   <h3><i class="fa-solid fa-robot"></i> Пример промпта для AI-помощника</h3>
+  <p><b>Для добавления правил через AI (Hermes/Claude/Cline):</b></p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 Добавь правила маршрутизации для my-laptop (device_id=5) через exit-node node-europe.
 Токен: &lt;скопи...gt;
@@ -167,8 +206,19 @@ curl -X POST -b skygate_session=TOKEN \
 Сервис 2 (подсети):
   192.168.0.0/16, 198.51.100.0/24
 
+Сервис 3 (домены, autoupdater сам подтянет IP):
+  rutracker.org, kernel.org, github.com
+
 Используй POST /my/exit-rules/api.
 Базовый URL: {{.BaseURL}}</pre>
+
+  <p style="margin-top:8px"><b>Что AI-помощник должен знать:</b></p>
+  <ul>
+    <li>target_type может быть "ip", "subnet" или "domain".</li>
+    <li>Для доменов сервер сам резолвит и подтянет все IP (autoupdater каждые 5 мин).</li>
+    <li>Для российских сайтов используй exit-node в РФ (например sharlotta) — иначе Cloudflare даст challenge.</li>
+    <li>Список токенов и их отзыв — на <a href="/my/tokens">/my/tokens</a>.</li>
+  </ul>
 </div>
 
 <div class="card">
@@ -179,6 +229,10 @@ curl -X POST -b skygate_session=TOKEN \
     <li>Сервис B: <code>https://example.com/ipranges.json</code></li>
     <li>Провайдер C: <code>https://example.com/ips-v4</code></li>
   </ul>
-  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">IP-диапазоны периодически меняются. Рекомендуется обновлять правила раз в 1-3 месяца.</p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">IP-диапазоны периодически меняются. Рекомендуется:
+  <ul>
+    <li>Для <b>подсетей</b> — обновлять раз в 1-3 месяца вручную через AI.</li>
+    <li>Для <b>доменов</b> — autoupdater обновляет IP автоматически, ничего делать не нужно.</li>
+  </ul></p>
 </div>
 {{end}}
