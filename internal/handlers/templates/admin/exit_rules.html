@@ -2,24 +2,82 @@
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-route"></i> Управление exit rules</h2>
-    <div class="sub">Все правила туннелирования пользователей</div>
+    <div class="sub">Все правила туннелирования пользователей · hierarchical view</div>
+  </div>
+  <div>
+    <a href="/admin/exit-rules/nodes" class="btn btn-sm"><i class="fa-solid fa-server"></i> Node Load</a>
   </div>
 </div>
 
 {{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL откачен</div>{{end}}
 
+{{if .MaxTotalRules}}
 <div class="card">
-  <h3><i class="fa-solid fa-list"></i> Все правила</h3>
+  <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <span><i class="fa-solid fa-chart-pie"></i> Системная нагрузка</span>
+    <span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>
+  </h3>
+  <div style="background:var(--bg-elev);border-radius:6px;height:18px;position:relative;overflow:hidden;border:1px solid var(--border)">
+    {{if gt .LoadPct 80}}<div style="background:var(--danger);width:{{.LoadPct}}%;height:100%"></div>
+    {{else if gt .LoadPct 50}}<div style="background:var(--warning);width:{{.LoadPct}}%;height:100%"></div>
+    {{else}}<div style="background:var(--success);width:{{.LoadPct}}%;height:100%"></div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-list"></i> Все правила ({{.TotalRules}})</h3>
   {{if .Rules}}
-  <table>
-    <tr><th>Пользователь</th><th>Устройство</th><th>Через</th><th>Ресурс</th></tr>
-    {{range .Rules}}<tr>
-      <td>{{.UserName}}</td>
-      <td>{{.DeviceName}}</td>
-      <td><span class="tag tag-info">{{.ExitNode}}</span></td>
-      <td><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span></td>
-    </tr>{{end}}
-  </table>
+    {{range $user, $userData := .GroupedByUser}}
+    <details open style="margin-bottom:8px">
+      <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
+        <i class="fa-solid fa-user"></i>
+        <span>{{$user}}</span>
+        <span class="tag">{{$userData.TotalCount}} правил</span>
+        {{if gt $userData.UserLimit 0}}<span class="tag {{if gt $userData.LoadPct 80}}tag-danger{{else if gt $userData.LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{$userData.LoadPct}}% ({{$userData.UserCount}}/{{$userData.UserLimit}})</span>{{end}}
+        <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
+      </summary>
+
+      {{range $devID, $devData := $userData.Devices}}
+      <details style="margin:6px 0 6px 24px">
+        <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
+          <i class="fa-solid fa-laptop"></i>
+          <span>{{$devData.DeviceName}}</span>
+          <span class="tag">{{$devData.Count}} правил</span>
+        </summary>
+
+        {{range $exitNode, $rules := $devData.Nodes}}
+        <details style="margin:4px 0 4px 24px">
+          <summary style="cursor:pointer;padding:3px 6px;background:var(--bg);border-radius:3px;display:flex;align-items:center;gap:6px;font-size:12px">
+            <i class="fa-solid fa-route"></i>
+            <span class="tag tag-info">{{$exitNode}}</span>
+            <span style="color:var(--text-muted)">{{len $rules}} правил</span>
+          </summary>
+          <div class="table-wrap" style="margin-top:6px">
+            <table>
+              <tr><th>Действие</th><th>Тип</th><th>Ресурс</th><th>Parent</th><th>Создано</th><th></th></tr>
+              {{range $rules}}<tr>
+                <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                <td><span class="tag">{{.TargetType}}</span></td>
+                <td class="col-target"><code>{{.TargetValue}}</code></td>
+                <td>{{if .ParentDomain}}<span class="tag tag-info" title="Auto-managed"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
+                <td class="col-delete">
+                  <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('Удалить правило #{{.ID}}?')">
+                    <input type="hidden" name="id" value="{{.ID}}">
+                    <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+                  </form>
+                </td>
+              </tr>{{end}}
+            </table>
+          </div>
+        </details>
+        {{end}}
+      </details>
+      {{end}}
+    </details>
+    {{end}}
   {{else}}<p style="color:var(--text-muted)">Нет правил</p>{{end}}
 </div>
 
@@ -67,7 +125,6 @@ async function syncRoutes() {
   btn.disabled = false;
 }
 </script>
-
 
 <div class="card">
   <h3><i class="fa-solid fa-rotate-left"></i> Откат ACL</h3>
