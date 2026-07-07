@@ -1,0 +1,78 @@
+{{define "body-exit_rules_nodes"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-server"></i> Node Load Dashboard</h2>
+    <div class="sub">Метрики нагрузки exit-узлов</div>
+  </div>
+  <div>
+    <a href="/admin/exit-rules" class="btn btn-sm"><i class="fa-solid fa-route"></i> Exit Rules</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <span><i class="fa-solid fa-chart-pie"></i> Системная нагрузка</span>
+    {{if .MaxTotalRules}}
+    <span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>
+    {{end}}
+  </h3>
+  <div style="background:var(--bg-elev);border-radius:6px;height:24px;position:relative;overflow:hidden;border:1px solid var(--border)">
+    {{if gt .LoadPct 80}}<div style="background:var(--danger);width:{{.LoadPct}}%;height:100%"></div>
+    {{else if gt .LoadPct 50}}<div style="background:var(--warning);width:{{.LoadPct}}%;height:100%"></div>
+    {{else}}<div style="background:var(--success);width:{{.LoadPct}}%;height:100%"></div>
+    {{end}}
+  </div>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:12px">Лимит: SKYGATE_MAX_TOTAL_RULES={{.MaxTotalRules}}. При превышении пользователи получают 403.</p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-server"></i> Exit-nodes ({{len .Nodes}})</h3>
+  <div class="table-wrap">
+  <table>
+    <tr>
+      <th>Имя</th>
+      <th>Правил</th>
+      <th>Нагрузка</th>
+      <th>Available</th>
+      <th>Approved</th>
+      <th>Last Sync</th>
+    </tr>
+    {{range .Nodes}}
+    <tr>
+      <td><b><i class="fa-solid fa-server"></i> {{.Name}}</b></td>
+      <td>{{.RuleCount}}</td>
+      <td>
+        <span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">
+          {{.LoadPct}}%
+        </span>
+        <div style="background:var(--bg-elev);border-radius:3px;height:6px;width:100px;display:inline-block;vertical-align:middle;margin-left:6px;overflow:hidden;border:1px solid var(--border)">
+          {{if gt .LoadPct 80}}<div style="background:var(--danger);width:{{.LoadPct}}%;height:100%"></div>
+          {{else if gt .LoadPct 50}}<div style="background:var(--warning);width:{{.LoadPct}}%;height:100%"></div>
+          {{else}}<div style="background:var(--success);width:{{.LoadPct}}%;height:100%"></div>
+          {{end}}
+        </div>
+      </td>
+      <td>{{.AvailableRoutes}}</td>
+      <td>{{.ApprovedRoutes}}</td>
+      <td><code style="font-size:11px">{{.LastSync}}</code></td>
+    </tr>
+    {{end}}
+  </table>
+  </div>
+  <p style="margin-top:12px;color:var(--text-muted);font-size:12px">
+    <b>Цвета:</b> <span class="tag tag-success">green &lt; 50%</span> <span class="tag tag-warn">yellow 50-80%</span> <span class="tag tag-danger">red &gt; 80%</span>.<br>
+    Нагрузка = правила_на_узле / (MaxTotalRules / 5). Если load &gt; 80% — добавление новых правил на этот узел может замедлить sync.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> Рекомендации</h3>
+  <ul style="padding-left:20px;margin:0;line-height:1.6">
+    <li>🟢 <b>Зелёный (&lt;50%):</b> норма. Добавляйте правила свободно.</li>
+    <li>🟡 <b>Жёлтый (50-80%):</b> средняя нагрузка. Следите за latency sync.</li>
+    <li>🔴 <b>Красный (&gt;80%):</b> высокая нагрузка. Рекомендуется вынести часть правил на другой exit-node или уменьшить количество доменов (autoupdater резолвит много IP).</li>
+    <li>⏱️ <b>Staggered sync:</b> autoupdater обновляет IP батчами (SKYGATE_STAGGER_BATCH_SIZE) с интервалом (SKYGATE_STAGGER_INTERVAL) — не перегружает headscale approve-routes.</li>
+    <li>🔄 <b>Last sync:</b> последний успешный sync для этого узла. Если «никогда» — autoupdater ещё не дошёл.</li>
+  </ul>
+</div>
+{{end}}

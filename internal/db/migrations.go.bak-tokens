@@ -73,20 +73,3 @@ func migrateV022(d *sql.DB) error {
 	if err != nil { return nil } // column exists
 	return nil
 }
-
-func migrateV023(d *sql.DB) error {
-	_, err := d.Exec("CREATE TABLE IF NOT EXISTS personal_api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL DEFAULT , last_used_at INTEGER DEFAULT 0, created_at INTEGER DEFAULT (strftime('%s','now')), FOREIGN KEY (user_id) REFERENCES portal_users(id))")
-	return err
-}
-
-
-func migrateV024(d *sql.DB) error {
-	queries := []string{
-		"ALTER TABLE exit_servers ADD COLUMN ssh_target TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE exit_servers ADD COLUMN ssh_key_path TEXT NOT NULL DEFAULT ''",
-	}
-	for _, q := range queries {
-		d.Exec(q) // ignore errors (column may exist)
-	}
-	return nil
-}

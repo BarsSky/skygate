@@ -20,30 +20,27 @@ type User struct {
 }
 
 const (
+	ThemeDark   = "dark"
+	ThemeLight  = "light"
 	ThemeLinear = "linear"
-	ThemeVercel = "vercel"
-	ThemeSentry = "sentry"
-	ThemeNvidia = "nvidia"
 )
 
 func ThemeLabel(t string) string {
 	switch t {
+	case ThemeDark:
+		return "Dark"
+	case ThemeLight:
+		return "Light"
 	case ThemeLinear:
 		return "Linear"
-	case ThemeVercel:
-		return "Vercel"
-	case ThemeSentry:
-		return "Sentry"
-	case ThemeNvidia:
-		return "NVIDIA"
 	default:
-		return "Linear"
+		return "Dark"
 	}
 }
 
 func IsValidTheme(t string) bool {
 	switch t {
-	case ThemeLinear, ThemeVercel, ThemeSentry, ThemeNvidia:
+	case ThemeDark, ThemeLight, ThemeLinear:
 		return true
 	}
 	return false
@@ -53,7 +50,7 @@ func GetUserTheme(d *sql.DB, userID int64) string {
 	var theme string
 	err := d.QueryRow("SELECT COALESCE(theme, 'dark') FROM portal_users WHERE id = ?", userID).Scan(&theme)
 	if err != nil || !IsValidTheme(theme) {
-		return ThemeLinear
+		return ThemeDark
 	}
 	return theme
 }
@@ -91,8 +88,6 @@ func migrate(d *sql.DB) error {
 		}
 	}
 	migrateV022(d)
-	migrateV023(d)
-	migrateV024(d)
 	if err := migrateV021(d); err != nil {
 		return fmt.Errorf("migrate v0.21: %w", err)
 	}

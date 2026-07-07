@@ -11,3 +11,6 @@ skygate.new
 # Unified deploy system — sensitive files
 .env
 backup/
+skygate.db
+*.bak*
+.sg_*.ps1
