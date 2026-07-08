@@ -722,7 +722,19 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string) (stri
 	if len(routes) == 0 {
 		return "", fmt.Errorf("empty routes list")
 	}
-	routeStr := strings.Join(routes, ",")
+	// Always keep 0.0.0.0/0 and ::/0 advertised so the node stays a usable
+	// exit node. `tailscale set --advertise-routes=` replaces the list, so
+	// any call without these bases would silently strip the exit-node
+	// capability. Dedupe to avoid duplicate-route errors on tailscaled.
+	base := []string{"0.0.0.0/0", "::/0"}
+	seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
+	for _, r := range routes {
+		if !seen[r] {
+			seen[r] = true
+			base = append(base, r)
+		}
+	}
+	routeStr := strings.Join(base, ",")
 	cmd := fmt.Sprintf("tailscale set --advertise-exit-node --advertise-routes=%s", routeStr)
 	sshCmd := exec.Command("ssh", "-F", "/home/skyadmin/.ssh/config",
 		"-o", "StrictHostKeyChecking=accept-new",
