@@ -1400,16 +1400,30 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 		exitRoutes[node] = append(exitRoutes[node], target)
 	}
 	for node, routes := range exitRoutes {
-		msg, err := a.HS.SetAdvertisedRoutes(node, routes)
+		// 2026-07-08: prepend base exit-node routes (0.0.0.0/0, ::/0) so the
+		// node stays an exit node after sync. SetAdvertisedRoutes already
+		// adds these on the SSH side, but the headscale CLI approve-routes
+		// call below only knows about the routes we pass explicitly.
+		approveRoutes := []string{"0.0.0.0/0", "::/0"}
+		seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
+		for _, r := range routes {
+			if !seen[r] {
+				seen[r] = true
+				approveRoutes = append(approveRoutes, r)
+			}
+		}
+		msg, err := a.HS.SetAdvertisedRoutes(node, approveRoutes)
 		if err != nil {
 			result[node] = "ssh: " + err.Error()
 		} else {
 			result[node] = "ok"
 			_ = msg
 		}
-		// Approve all routes for this exit node via headscale CLI (docker exec).
-		// 2026-07-07: routes already passed in (avoid orphan approves).
-		if approved, approveErr := a.HS.ApproveAllRoutesWithList(node, routes); approveErr != nil {
+		// Approve all routes (including base 0.0.0.0/0, ::/0) for this exit
+		// node via headscale CLI (docker exec).
+		// 2026-07-08: pass full list (base + per-rule) so the node keeps
+		// its exit-node capability (default route advertised AND approved).
+		if approved, approveErr := a.HS.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
 			result[node+"_approve_err"] = approveErr.Error()
 			result[node] = "ssh:ok approve:err=" + approveErr.Error()
 		} else if approved > 0 {
