@@ -1485,12 +1485,22 @@ func (a *App) staggeredSync() {
 				var v string
 				if rules.Scan(&v) == nil { routeList = append(routeList, v) }
 			}
+			// 2026-07-08: always include base exit-node routes in every batch so
+			// the node never loses its exit-node capability mid-sync.
+			withBase := func(batch []string) []string {
+				out := []string{"0.0.0.0/0", "::/0"}
+				seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
+				for _, r := range batch {
+					if !seen[r] { seen[r] = true; out = append(out, r) }
+				}
+				return out
+			}
 			if len(routeList) > maxPerNode {
 				// Split this node into batches
 				for i := 0; i < len(routeList); i += maxPerNode {
 					end := i + maxPerNode
 					if end > len(routeList) { end = len(routeList) }
-					batch := routeList[i:end]
+					batch := withBase(routeList[i:end])
 					log.Printf("staggeredSync: %s batch %d-%d/%d", n.name, i, end, len(routeList))
 					msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch)
 					log.Printf("staggeredSync: %s advertised: %s", n.name, msg)
@@ -1500,9 +1510,10 @@ func (a *App) staggeredSync() {
 					time.Sleep(interval)
 				}
 			} else {
-				msg, _ := a.HS.SetAdvertisedRoutes(n.name, routeList)
+				batch := withBase(routeList)
+				msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch)
 				log.Printf("staggeredSync: %s advertised: %s", n.name, msg)
-				if _, err := a.HS.ApproveAllRoutesWithList(n.name, routeList); err != nil {
+				if _, err := a.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
 					log.Printf("staggeredSync: %s approve err: %v", n.name, err)
 				}
 			}
