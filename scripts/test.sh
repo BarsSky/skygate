@@ -221,6 +221,20 @@ else
     fail "no status.json at ${STATUS_JSON} — backup did not record final state?"
 fi
 
+# === STEP 13: Notify mock end-to-end ===
+echo ""
+echo "--- 13. Notify harness ---"
+if [[ -x scripts/.notify_mock_e2e.sh ]]; then
+    if scripts/.notify_mock_e2e.sh > /tmp/mock_test.out 2>&1; then
+        ok "notify.sh end-to-end mock delivery OK"
+    else
+        fail "notify.sh end-to-end mock FAILED — see /tmp/mock_test.out"
+        head -20 /tmp/mock_test.out | sed "s/^/    /"
+    fi
+else
+    fail "scripts/.notify_mock_e2e.sh missing — cannot run notify harness"
+fi
+
 # === CLEANUP ===
 rm -rf "${BACKUP_DIR}" "${BACKUP_HOME}"
 
