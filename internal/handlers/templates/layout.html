@@ -330,6 +330,7 @@ footer a:hover{color:var(--accent)}
     <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>ACL</span></a>
     <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>DERP</span></a>
     <a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i><span>Audit</span></a>
+    <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>Telegram</span></a>
     <a href="/admin/exit-rules"><i class="fa-solid fa-route"></i><span>Exit Rules</span></a>
 {{end}}
   </nav>
