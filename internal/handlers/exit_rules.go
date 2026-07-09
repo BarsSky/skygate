@@ -669,6 +669,24 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		grouped[r.DeviceID][r.ExitNodeID] = append(grouped[r.DeviceID][r.ExitNodeID], r)
 	}
 
+	// 2026-07-09: GroupedByHostname collapses rules from the SAME logical
+	// device that were accidentally recorded under multiple headscale node
+	// ids. node IDs are monotonically increasing and never re-used: when a
+	// node gets re-provisioned (eg tagged, re-keyed, brand-new host) the
+	// replacement arrives under a new id, but pre-existing rules still
+	// carry the OLD id. The hierarchical view used to render those as two
+	// identical sections ("skyworker" twice). GroupedByHostname reroutes
+	// the template over (hostname -> exitNode -> []rules), so device_id=1
+	// and device_id=9 (both skyworker) collapse into one section.
+	groupedByHostname := map[string]map[string][]DeviceRule{}
+	for _, r := range rules {
+		hn := deviceNames[r.DeviceID]
+		if groupedByHostname[hn] == nil {
+			groupedByHostname[hn] = map[string][]DeviceRule{}
+		}
+		groupedByHostname[hn][r.ExitNodeID] = append(groupedByHostname[hn][r.ExitNodeID], r)
+	}
+
 	// Total rules count (all enabled)
 	totalRules := 0
 	if a.Cfg != nil && a.Cfg.MaxTotalRules > 0 {
@@ -713,6 +731,7 @@ a.renderWithLayout(w, "exit_rules.html", c, map[string]any{
 		"ExitNodes":     exitServers,
 		"DeviceNames":   deviceNames,
 		"Grouped":       grouped,
+		"GroupedByHostname": groupedByHostname,
 		"TotalRules":    totalRules,
 		"MaxTotalRules": maxPerDeviceMax,
 		"LoadPct":       loadPct,
