@@ -83,10 +83,10 @@
       <form method="post" action="/my/exit-rules">
         <div class="field">
           <label>Устройство</label>
-          <select name="device_id">
-            {{range .Devices}}<option value="{{.id}}"{{if eq (printf "%v" .id) $.FormValues.device_id}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">— нет устройств —</option>{{end}}
+          <select name="device_id" id="device-select" onchange="updateDeviceUsageHint()">
+            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">— нет устройств —</option>{{end}}
           </select>
-          <div class="hint">Устройство, для которого применяется правило. Видны только ваши устройства.</div>
+          <div class="hint" id="device-usage-hint">Устройство, для которого применяется правило. Видны только ваши устройства.</div>
         </div>
         <div class="field">
           <label>Exit node (выходной узел)</label>
@@ -150,7 +150,10 @@
     <div class="card">
       <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <span><i class="fa-solid fa-list"></i> Текущие правила ({{len .Rules}})</span>
-        {{if .MaxTotalRules}}<span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">Системная нагрузка: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
+        <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="Только ваши правила (без учёта /32, которые autoupdater создаёт для доменов)">Мои правила: {{.UserFacingCount}}/{{.MaxPerUser}}</span>{{else}}<span class="tag">Мои правила: {{.UserFacingCount}}</span>{{end}}
+          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="Системный лимит (все пользователи). Обычно вам это не нужно.">Системная: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
+        </span>
       </h3>
 
       <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('Удалить выбранные правила? Для доменов также удалятся все связанные /32, которые autoupdater создал.')">
@@ -250,6 +253,34 @@
         });
         syncCount();
       };
+      // 2026-07-09: hint below device select — show usage level of currently
+      // selected device so user knows how close to the per-device limit.
+      window.updateDeviceUsageHint = function(){
+        var sel = document.getElementById('device-select');
+        if (!sel) return;
+        var opt = sel.options[sel.selectedIndex];
+        if (!opt) return;
+        var used = parseInt(opt.getAttribute('data-user-facing') || '0', 10);
+        var max = parseInt(opt.getAttribute('data-max') || '0', 10);
+        var hint = document.getElementById('device-usage-hint');
+        if (!hint) return;
+        if (max <= 0) {
+          hint.textContent = 'Устройство, для которого применяется правило. Видны только ваши устройства.';
+          return;
+        }
+        var pct = Math.round(used * 100 / max);
+        var level = used*4 > max*3 ? 'danger' : (used*2 > max ? 'warn' : 'ok');
+        var msg = 'Устройство: ' + used + '/' + max + ' (' + pct + '%)';
+        if (level === 'danger') msg += ' — близко к лимиту per-device. Удалите ненужные правила или обратитесь к админу.';
+        else if (level === 'warn') msg += ' — больше половины лимита per-device использовано.';
+        else msg += ' — лимит per-device в порядке.';
+        hint.textContent = msg;
+        hint.style.color = level === 'danger' ? 'var(--danger)' : (level === 'warn' ? 'var(--warning)' : '');
+      };
+      // Init on load (in case ?form_device_id=... is set).
+      if (document.getElementById('device-select')) {
+        updateDeviceUsageHint();
+      }
     })();
     </script>
     {{end}}

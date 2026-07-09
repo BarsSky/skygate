@@ -627,19 +627,33 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 
 	// Enrich devices with rule counts
 	type DeviceInfo struct {
-		ID        string
-		Hostname  string
-		RuleCount int
-		HasRoutes bool
+		ID            string
+		Hostname      string
+		RuleCount     int
+		UserFacing    int // 2026-07-09: user-facing count (excludes /32 from autoupdater)
+		HasRoutes     bool
+		MaxForDevice  int // 2026-07-09: per-device limit (MaxRulesPerDevice)
 	}
 	var deviceInfos []DeviceInfo
+	maxPerDeviceLimit := 0
+	if a.Cfg != nil {
+		maxPerDeviceLimit = a.Cfg.MaxRulesPerDevice
+	}
 	for _, d := range devices {
 		hn := fmt.Sprint(d["hostname"])
 		info := DeviceInfo{
-			ID:        fmt.Sprint(d["id"]),
-			Hostname:  hn,
-			RuleCount: len(deviceRoutes[hn]),
-			HasRoutes: hasRoutes[hn],
+			ID:           fmt.Sprint(d["id"]),
+			Hostname:     hn,
+			RuleCount:    len(deviceRoutes[hn]),
+			HasRoutes:    hasRoutes[hn],
+			MaxForDevice: maxPerDeviceLimit,
+		}
+		// Count user-facing rules for THIS device (excludes autoupdater /32).
+		did, _ := strconv.Atoi(info.ID)
+		if did > 0 {
+			a.DB.QueryRow(
+				"SELECT COUNT(*) FROM device_rules WHERE user_id=? AND device_id=? AND enabled=1 AND (target_type!='subnet' OR COALESCE(parent_domain,'')='')",
+				c.UserID, did).Scan(&info.UserFacing)
 		}
 		deviceInfos = append(deviceInfos, info)
 	}
@@ -721,20 +735,64 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		formAction = "accept"
 	}
 
+	// 2026-07-09: per-user and per-device usage counters (user-facing only,
+	// excludes /32 from autoupdater). Shown in the UI so the user sees
+	// their personal limit, not just the system-wide MaxTotalRules.
+	userFacingCount := 0
+	if c.UserID > 0 {
+		a.DB.QueryRow(
+			"SELECT COUNT(*) FROM device_rules WHERE user_id=? AND enabled=1 AND (target_type!='subnet' OR COALESCE(parent_domain,'')='')",
+			c.UserID).Scan(&userFacingCount)
+	}
+	maxPerUser := a.getMaxRulesForUser(c.Username)
+
+	// 2026-07-09: per-device breakdown — shows count per device_id so the
+	// UI can label each device with its own quota.
+	type DeviceUsage struct {
+		DeviceID int
+		Count    int
+	}
+	var deviceUsageList []DeviceUsage
+	rowsUsage, qerr := a.DB.Query(
+		"SELECT device_id, COUNT(*) FROM device_rules WHERE user_id=? AND enabled=1 AND (target_type!='subnet' OR COALESCE(parent_domain,'')='') GROUP BY device_id",
+		c.UserID)
+	if qerr == nil {
+		for rowsUsage.Next() {
+			var du DeviceUsage
+			if rowsUsage.Scan(&du.DeviceID, &du.Count) == nil {
+				deviceUsageList = append(deviceUsageList, du)
+			}
+		}
+		rowsUsage.Close()
+	}
+	deviceUsage := map[int]int{}
+	for _, du := range deviceUsageList {
+		deviceUsage[du.DeviceID] = du.Count
+	}
+
+	// Update deviceInfos with the aggregated deviceUsage (avoids N queries in template).
+	for i := range deviceInfos {
+		did, _ := strconv.Atoi(deviceInfos[i].ID)
+		deviceInfos[i].UserFacing = deviceUsage[did]
+	}
+
 a.renderWithLayout(w, "exit_rules.html", c, map[string]any{
-		"Page":          "exit-rules",
-		"Title":         "Exit Rules",
-		"Rules":         rules,
-		"Devices":       devices,
-		"DeviceInfos":   deviceInfos,
-		"DeviceRoutes":  deviceRoutes,
-		"ExitNodes":     exitServers,
-		"DeviceNames":   deviceNames,
-		"Grouped":       grouped,
+		"Page":             "exit-rules",
+		"Title":            "Exit Rules",
+		"Rules":            rules,
+		"Devices":          devices,
+		"DeviceInfos":      deviceInfos,
+		"DeviceRoutes":     deviceRoutes,
+		"ExitNodes":        exitServers,
+		"DeviceNames":      deviceNames,
+		"Grouped":          grouped,
 		"GroupedByHostname": groupedByHostname,
-		"TotalRules":    totalRules,
-		"MaxTotalRules": maxPerDeviceMax,
-		"LoadPct":       loadPct,
+		"TotalRules":       totalRules,
+		"MaxTotalRules":    maxPerDeviceMax,
+		"LoadPct":          loadPct,
+		"UserFacingCount":  userFacingCount,
+		"MaxPerUser":       maxPerUser,
+		"MaxPerDevice":     maxPerDeviceLimit,
 				"FormValues": map[string]string{
 			"device_id":    formDeviceID,
 			"exit_node":    formExitNode,

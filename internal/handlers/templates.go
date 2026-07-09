@@ -34,6 +34,19 @@ func LoadTemplates() *Templates {
 			return a / b
 		},
 		"add": func(a, b int) int { return a + b },
+		"usageLevel": func(count, max int) string {
+			// Returns tag class for usage display: "danger" >75%, "warn" >50%, else "success".
+			if max <= 0 {
+				return "success"
+			}
+			if count*4 > max*3 {
+				return "danger"
+			}
+			if count*2 > max {
+				return "warn"
+			}
+			return "success"
+		},
 		"datetimeformat": func(unix int64) string {
 			if unix <= 0 {
 				return "—"
