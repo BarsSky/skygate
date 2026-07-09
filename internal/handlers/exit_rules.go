@@ -1412,7 +1412,7 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 				approveRoutes = append(approveRoutes, r)
 			}
 		}
-		msg, err := a.HS.SetAdvertisedRoutes(node, approveRoutes)
+		msg, err := a.HS.SetAdvertisedRoutes(node, approveRoutes, a.lookupAcceptRoutes(node))
 		if err != nil {
 			result[node] = "ssh: " + err.Error()
 		} else {
@@ -1436,20 +1436,29 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 	return result
 }
 
-// 2026-07-07: issue #12 — staggered sync.
-// If SKYGATE_STAGGER_SYNC=true and total rules > batchSize, run sync in goroutine
-// that splits work by exit-node and applies batches with delay between them.
-// This prevents headscale from being overwhelmed by large approve-routes calls.
+// 2026-07-09: aggregated sync per node (issue: stale batches overwrote each other).
+//
+// Previous implementation called SetAdvertisedRoutes once per 20-rule batch within
+// a single node. Because `tailscale set --advertise-routes=` REPLACES the node's
+// advertised-route list, every batch wiped the previous one - only the last
+// batch survived. For karolina (145 rules) that meant roughly 7 of 8 subnets
+// were silently lost after every staggered sync.
+//
+// New behaviour: even when SKYGATE_STAGGER_SYNC=true and totalRules > batchSize,
+// we still call SetAdvertisedRoutes exactly ONCE per node with the full
+// de-duplicated list (with 0.0.0.0/0 + ::/0 always prepended). Approve follows
+// in the same call. The stagger flag is kept for back-compat but is effectively
+// a no-op now - headscale accepts the full payload in one round-trip.
+//
+// `interval` is still applied between NODES (not between batches within a
+// node) so headscale isn't hammered when many exit-nodes sync at once.
 func (a *App) staggeredSync() {
 	if a.Cfg == nil || !a.Cfg.StaggerSync {
 		a.SyncAdvertisedRoutes()
 		return
 	}
-	batchSize := a.Cfg.StaggerBatchSize
-	if batchSize <= 0 { batchSize = 20 }
 	interval := a.Cfg.StaggerInterval
 	if interval <= 0 { interval = 30 * time.Second }
-	maxPerNode := batchSize
 	// Collect exit_nodes with their rule counts
 	rows, _ := a.DB.Query("SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id != '' GROUP BY exit_node_id")
 	if rows == nil {
@@ -1467,59 +1476,42 @@ func (a *App) staggeredSync() {
 			totalRules += c
 		}
 	}
-	// If small enough, sync immediately
-	if totalRules <= maxPerNode {
+	if len(nodes) == 0 {
 		a.SyncAdvertisedRoutes()
 		return
 	}
-	log.Printf("staggeredSync: %d rules across %d nodes, batch=%d interval=%s",
-		totalRules, len(nodes), maxPerNode, interval)
+	// Old behaviour fell through to SyncAdvertisedRoutes when totalRules <= batchSize.
+	// SyncAdvertisedRoutes already does aggregated per-node sync, so just call it.
+	// Old staggered path is replaced entirely: one SetAdvertisedRoutes per node,
+	// not per batch.
+	log.Printf("staggeredSync(aggregated): %d rules across %d nodes, interval=%s",
+		totalRules, len(nodes), interval)
 	go func() {
 		for _, n := range nodes {
-			// Sync this node alone (smaller batch)
 			rules, _ := a.DB.Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=? AND target_type IN ('subnet', 'ip')", n.name)
 			if rules == nil { continue }
-			defer rules.Close()
 			var routeList []string
 			for rules.Next() {
 				var v string
 				if rules.Scan(&v) == nil { routeList = append(routeList, v) }
 			}
-			// 2026-07-08: always include base exit-node routes in every batch so
-			// the node never loses its exit-node capability mid-sync.
-			withBase := func(batch []string) []string {
-				out := []string{"0.0.0.0/0", "::/0"}
-				seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
-				for _, r := range batch {
-					if !seen[r] { seen[r] = true; out = append(out, r) }
-				}
-				return out
+			rules.Close()
+			// Always include base exit-node routes.
+			batch := []string{"0.0.0.0/0", "::/0"}
+			seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
+			for _, r := range routeList {
+				if !seen[r] { seen[r] = true; batch = append(batch, r) }
 			}
-			if len(routeList) > maxPerNode {
-				// Split this node into batches
-				for i := 0; i < len(routeList); i += maxPerNode {
-					end := i + maxPerNode
-					if end > len(routeList) { end = len(routeList) }
-					batch := withBase(routeList[i:end])
-					log.Printf("staggeredSync: %s batch %d-%d/%d", n.name, i, end, len(routeList))
-					msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch)
-					log.Printf("staggeredSync: %s advertised: %s", n.name, msg)
-					if _, err := a.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
-						log.Printf("staggeredSync: %s approve err: %v", n.name, err)
-					}
-					time.Sleep(interval)
-				}
-			} else {
-				batch := withBase(routeList)
-				msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch)
-				log.Printf("staggeredSync: %s advertised: %s", n.name, msg)
-				if _, err := a.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
-					log.Printf("staggeredSync: %s approve err: %v", n.name, err)
-				}
+			log.Printf("staggeredSync(aggregated): %s advertising %d unique routes (was: per-batch, lost all but last batch)",
+				n.name, len(batch))
+			msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch, a.lookupAcceptRoutes(n.name))
+			log.Printf("staggeredSync(aggregated): %s advertised: %s", n.name, msg)
+			if _, err := a.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
+				log.Printf("staggeredSync(aggregated): %s approve err: %v", n.name, err)
 			}
-			time.Sleep(interval / 2)
+			time.Sleep(interval)
 		}
-		log.Printf("staggeredSync: done")
+		log.Printf("staggeredSync(aggregated): done")
 	}()
 }
 
@@ -1747,3 +1739,22 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 	}
 }
 
+// lookupAcceptRoutes returns the per-exit-node Tailscale AcceptRoutes
+// preference stored in exit_servers.accept_routes:
+//   -1 -> --accept-routes=false (nodes that co-host another VPN, e.g. Amnezia-AWG)
+//    0 -> unset, do not change AcceptRoutes on the node
+//    1 -> --accept-routes=true
+//
+// Lookup is keyed on the node's hostname. Falls back to 0 (do not change)
+// if the node is not in exit_servers or the column is missing.
+func (a *App) lookupAcceptRoutes(nodeHostname string) int {
+	if a == nil || a.DB == nil || nodeHostname == "" {
+		return 0
+	}
+	var accept int
+	err := a.DB.QueryRow("SELECT accept_routes FROM exit_servers WHERE hostname = ? LIMIT 1", nodeHostname).Scan(&accept)
+	if err != nil {
+		return 0
+	}
+	return accept
+}
