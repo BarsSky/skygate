@@ -718,7 +718,20 @@ func (c *Client) ApproveAllRoutesWithList(nodeHostname string, routes []string) 
 	return len(routes), nil
 }
 
-func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string) (string, error) {
+// SetAdvertisedRoutes updates advertised routes on an exit node via SSH.
+//
+// acceptRoutes controls whether --accept-routes is also re-applied on the
+// node:
+//   -1 -> --accept-routes=false (recommended for nodes that co-host another
+//                              VPN server, e.g. Amnezia-AWG on karolina;
+//                              without this, Tailscale pulls Google/Telegram
+//                              subnets from peers into source-routing table
+//                              52 and traffic from the other VPN black-holes)
+//    0 -> do not touch AcceptRoutes (legacy behaviour, default for nodes
+//         that do not opt in via exit_servers.accept_routes)
+//    1 -> --accept-routes=true  (full legacy behaviour, OK for pure
+//                                exit-nodes that share no other VPN)
+func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int) (string, error) {
 	if len(routes) == 0 {
 		return "", fmt.Errorf("empty routes list")
 	}
@@ -735,7 +748,14 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string) (stri
 		}
 	}
 	routeStr := strings.Join(base, ",")
-	cmd := fmt.Sprintf("tailscale set --advertise-exit-node --advertise-routes=%s", routeStr)
+	var acceptFlag string
+	switch acceptRoutes {
+	case -1:
+		acceptFlag = " --accept-routes=false"
+	case 1:
+		acceptFlag = " --accept-routes=true"
+	}
+	cmd := fmt.Sprintf("tailscale set --advertise-exit-node --advertise-routes=%s%s", routeStr, acceptFlag)
 	sshCmd := exec.Command("ssh", "-F", "/home/skyadmin/.ssh/config",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",

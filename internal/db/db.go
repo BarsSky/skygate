@@ -102,6 +102,7 @@ func migrate(d *sql.DB) error {
 	// the legacy migrations that ALTER or FK-reference these tables (v0.20,
 	// v0.21) succeed on a fresh database.
 	migrateV025(d)
+	migrateV026(d)
 	migrateV022(d)
 	migrateV023(d)
 	migrateV024(d)

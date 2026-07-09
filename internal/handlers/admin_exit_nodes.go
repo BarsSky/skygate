@@ -19,6 +19,7 @@ type ExitNodeInfo struct {
 	RouteCount   int      `json:"route_count"`
 	SyncStatus   string   `json:"sync_status"`
 	Description  string   `json:"description"`
+	AcceptRoutes int      `json:"accept_routes"` // -1=false, 0=unset, 1=true
 }
 
 func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +30,7 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ensureExitServers()
 
-	rows, err := a.DB.Query("SELECT id, node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, enabled, COALESCE(description,'') FROM exit_servers ORDER BY hostname")
+	rows, err := a.DB.Query("SELECT id, node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, enabled, COALESCE(description,''), accept_routes FROM exit_servers ORDER BY hostname")
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -40,7 +41,7 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var n ExitNodeInfo
 		var en, id int
-		if err := rows.Scan(&id, &n.NodeID, &n.Hostname, &n.TailscaleIP, &n.SSHTarget, &n.SSHKeyPath, &en, &n.Description); err != nil {
+		if err := rows.Scan(&id, &n.NodeID, &n.Hostname, &n.TailscaleIP, &n.SSHTarget, &n.SSHKeyPath, &en, &n.Description, &n.AcceptRoutes); err != nil {
 			continue
 		}
 		n.Enabled = en == 1
@@ -110,8 +111,15 @@ func (a *App) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "node_id and hostname required", 400)
 		return
 	}
-	_, err := a.DB.Exec("INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description) VALUES (?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET hostname=excluded.hostname, ssh_target=excluded.ssh_target, ssh_key_path=excluded.ssh_key_path, description=excluded.description",
-		nodeID, hostname, sshTarget, sshKey, desc)
+	acceptRoutes := 0
+	switch strings.TrimSpace(r.FormValue("accept_routes")) {
+	case "true":
+		acceptRoutes = 1
+	case "false":
+		acceptRoutes = -1
+	}
+	_, err := a.DB.Exec("INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, accept_routes) VALUES (?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET hostname=excluded.hostname, ssh_target=excluded.ssh_target, ssh_key_path=excluded.ssh_key_path, description=excluded.description, accept_routes=excluded.accept_routes",
+		nodeID, hostname, sshTarget, sshKey, desc, acceptRoutes)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return

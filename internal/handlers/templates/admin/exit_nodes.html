@@ -9,7 +9,7 @@
   {{if .Nodes}}
   <table>
     <tr>
-      <th>Узел</th><th>IP</th><th>SSH</th><th>Routes</th><th>Статус</th><th></th>
+      <th>Узел</th><th>IP</th><th>SSH</th><th>Accept routes</th><th>Routes</th><th>Статус</th><th></th>
     </tr>
     {{range .Nodes}}
     <tr>
@@ -17,6 +17,11 @@
       <td><code>{{.TailscaleIP}}</code></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{.SSHTarget}}">
         {{if .SSHTarget}}<code>{{.SSHTarget}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}
+      </td>
+      <td>
+        {{if eq .AcceptRoutes 1}}<span class="tag" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info)">true</span>
+        {{else if eq .AcceptRoutes -1}}<span class="tag" style="background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning)">false</span>
+        {{else}}<span style="color:var(--text-subtle)">default</span>{{end}}
       </td>
       <td>
         {{if .RouteCount}}
@@ -100,6 +105,12 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
   </div>
 
   <h4 style="margin:0 0 8px 0">5. Зарегистрировать узел в Skygate</h4>
+  <p style="color:var(--text-muted);margin:0 0 8px;font-size:12px">
+    В форме ниже укажите <b>Headscale Node ID</b> (видно на странице <a href="/admin/devices">/admin/devices</a>), <b>Hostname</b> и <b>SSH Target</b>.
+    Поле <b>Accept routes</b> управляет флагом <code>--accept-routes</code> на самом узле:
+    <b>для нод, на которых работают другие VPN-сервисы</b> (Amnezia-AWG, OpenVPN, WireGuard, WG-Easy) <b>выбирайте <code>false</code></b> —
+    иначе Tailscale заберёт маршруты Google/Telegram от peer'ов в source-routing таблицу 52 и трафик из VPN-контейнера пойдёт «в чёрную дыру».
+  </p>
   <form method="post" action="/admin/exit-nodes/add" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
     <div>
       <label style="font-size:12px;color:var(--text-muted)">Headscale Node ID</label>
@@ -116,6 +127,14 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
     <div>
       <label style="font-size:12px;color:var(--text-muted)">SSH Key Path</label>
       <input name="ssh_key_path" value="{{.SSHKeyPath}}" style="width:260px">
+    </div>
+    <div>
+      <label style="font-size:12px;color:var(--text-muted)">Accept routes</label>
+      <select name="accept_routes" style="width:160px">
+        <option value="">default (Tailscale решит сам)</option>
+        <option value="false">false (нода НЕ принимает маршруты от peer'ов)</option>
+        <option value="true">true (нода принимает маршруты от peer'ов)</option>
+      </select>
     </div>
     <div>
       <label style="font-size:12px;color:var(--text-muted)">Описание</label>
