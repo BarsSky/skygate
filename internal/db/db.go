@@ -77,6 +77,14 @@ func Open(dataDir string) (*sql.DB, error) {
 	}
 	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
+	// 2026-07-09: refactor v0.6.0 — Open() now bootstraps schema. Migrations
+	// are idempotent (CREATE TABLE IF NOT EXISTS + ALTER with duplicate-column
+	// guards) so calling migrate() on every Open is safe and matches what
+	// fresh deployments + unit tests expect.
+	if err := migrate(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return conn, nil
 }
 
@@ -90,6 +98,10 @@ func migrate(d *sql.DB) error {
 			return err
 		}
 	}
+	// 2026-07-09: refactor v0.6.0 — bootstrap portal_users + friends first so
+	// the legacy migrations that ALTER or FK-reference these tables (v0.20,
+	// v0.21) succeed on a fresh database.
+	migrateV025(d)
 	migrateV022(d)
 	migrateV023(d)
 	migrateV024(d)

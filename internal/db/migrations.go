@@ -75,8 +75,24 @@ func migrateV022(d *sql.DB) error {
 }
 
 func migrateV023(d *sql.DB) error {
-	_, err := d.Exec("CREATE TABLE IF NOT EXISTS personal_api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL DEFAULT , last_used_at INTEGER DEFAULT 0, created_at INTEGER DEFAULT (strftime('%s','now')), FOREIGN KEY (user_id) REFERENCES portal_users(id))")
-	return err
+	// 2026-07-09: refactor v0.6.0 — original statement had a syntax error
+	// (`DEFAULT ,` with no value) which made the table creation silently
+	// fail — the function was invoked without an err check so the migration
+	// was a no-op. Production tables were created out-of-band and exist
+	// today, but fresh deployments lost this table. Fixed below.
+	const q = `CREATE TABLE IF NOT EXISTS personal_api_tokens (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		label TEXT NOT NULL DEFAULT '',
+		last_used_at INTEGER DEFAULT 0,
+		created_at INTEGER DEFAULT (strftime('%s','now')),
+		FOREIGN KEY (user_id) REFERENCES portal_users(id)
+	)`
+	if _, err := d.Exec(q); err != nil {
+		return err
+	}
+	return nil
 }
 
 
