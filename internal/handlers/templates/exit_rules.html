@@ -140,11 +140,11 @@
         {{if .MaxTotalRules}}<span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">Системная нагрузка: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
       </h3>
 
-      {{range $devID, $nodes := .Grouped}}
+      {{range $host, $nodes := .GroupedByHostname}}
       <details open style="margin-bottom:8px">
         <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
           <i class="fa-solid fa-laptop"></i>
-          <span>{{index $.DeviceNames $devID}}</span>
+          <span>{{$host}}</span>
           <span class="tag">{{len $nodes}} exit-nodes</span>
           <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
         </summary>
