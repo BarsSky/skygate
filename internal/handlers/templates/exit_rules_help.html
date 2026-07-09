@@ -222,6 +222,56 @@ curl -X POST -b skygate_session=TOKEN \
 </div>
 
 <div class="card">
+  <h3><i class="fa-solid fa-square-check"></i> Массовое удаление (multi-delete)</h3>
+  <p>В таблице правил появились <b>чекбоксы</b> и <b>sticky-панель</b> вверху и внизу страницы:</p>
+  <ul>
+    <li><b>Select all</b> в верхней и нижней панели - выделяет все видимые правила.</li>
+    <li><b>Фильтр по типу</b> (Все типы / Только домены / Только /32 / Только IP) - сужает выбор.</li>
+    <li><b>Поиск</b> по IP/подсети/домену - скрывает неподходящие строки.</li>
+    <li><b>Счётчик</b> «Выбрано: N» - обновляется в обеих панелях в реальном времени.</li>
+    <li>Кнопка <b>«Удалить выбранные»</b> внизу - каскадно удаляет все выделенные правила.</li>
+  </ul>
+  <p style="margin-top:8px"><b>Каскадное удаление (cascade):</b> при удалении правила с типом <code>domain</code> автоматически удаляются все связанные /32 правила с тем же <code>parent_domain</code>. Без этого autoupdater оставлял бы «осиротевшие» /32 для доменов, которые пользователь больше не отслеживает.</p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Одиночное удаление (кнопка <i class="fa-solid fa-trash"></i> в строке) тоже работает каскадно для доменов.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-scale-balanced"></i> Лимиты правил</h3>
+  <p>Лимиты (per-user / per-device / system) считают <b>только «user-facing» правила</b>:</p>
+  <ul>
+    <li>Считаются: <code>target_type=ip</code>, <code>target_type=subnet</code> без <code>parent_domain</code>, <code>target_type=domain</code>.</li>
+    <li>НЕ считаются: <code>target_type=subnet</code> <b>с</b> <code>parent_domain</code> (это /32, созданные autoupdater'ом для резолва доменов).</li>
+  </ul>
+  <p style="margin-top:8px">Это значит: если у вас 9 доменов и autoupdater добавил 240 /32 IP, лимит per-user (по умолчанию 200) <b>не блокирует</b> добавление новых доменов. Домен считается как 1 правило.</p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Настройка: <code>SKYGATE_MAX_RULES_PER_DEVICE</code> (default 200), <code>SKYGATE_MAX_TOTAL_RULES</code> (default 10000), <code>SKYGATE_USER_MAX_RULES</code> (опционально, формат <code>user1:500,user2:1000</code>).
+  </p>
+  <p style="margin-top:8px"><b>Пример:</b> 9 доменов + 130 ручных /32 + 240 autoupdater /32 = 379 правил всего, но лимит видит только 9+130=139, остальные 240 - служебные.</p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-broom"></i> Cleanup orphaned /32 (admin)</h3>
+  <p>Если раньше удаляли правила вручную и остались «осиротевшие» /32 (autoupdater не может их убрать, так как родительского домена уже нет), откройте <a href="/admin/exit-rules/cleanup"><b>/admin/exit-rules/cleanup</b></a>. Там:</p>
+  <ul>
+    <li>Анализ текущего состояния: разные <code>device_id</code>, разные <code>hostname</code>, ожидающие удаления /32, ожидающие <code>backfill device_ip</code>.</li>
+    <li>Кнопка <b>«Apply»</b> - объединяет дублирующиеся <code>device_id</code> под один канонический (по hostname) и дозаполняет <code>device_ip</code> для всех правил.</li>
+    <li><b>Идемпотентно:</b> повторный запуск не делает ничего, если данные уже вычищены.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-bug"></i> Типичные грабли</h3>
+  <ul>
+    <li><b>target_type=ip без /32</b> - sky-gate автоматически добавляет <code>/32</code> (например <code>5.5.5.5</code> → <code>5.5.5.5/32</code>), чтобы headscale <code>approve-routes</code> не падал с <code>parsing route: no '/'</code>.</li>
+    <li><b>Общий IP у двух доменов</b> (например <code>gcr.io</code> и <code>ghcr.io</code> иногда резолвятся в один IP) - sky-gate хранит <b>одну</b> строку /32, без дублей. autoupdater не удалит этот IP, пока он нужен любому из доменов.</li>
+    <li><b>DNS не резолвится</b> при добавлении домена - правило сохраняется как <code>target_type=domain</code>, autoupdater попробует при следующем цикле (до 5 минут).</li>
+    <li><b>Cloudflare Challenge</b> на российских сайтах (rutracker и др.) - используйте exit-узел в РФ (sharlotta), а не за рубежом.</li>
+  </ul>
+</div>
+
+<div class="card">
   <h3><i class="fa-solid fa-lightbulb"></i> Источники IP-диапазонов</h3>
   <p>Многие сервисы публикуют актуальные IP-диапазоны. Примеры:</p>
   <ul>
