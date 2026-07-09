@@ -38,3 +38,6 @@ Thumbs.db
 
 # ---- Backup output directory ----
 backup/
+
+# Hermes agent backup directories (do not commit)
+.hermes-*/
