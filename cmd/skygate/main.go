@@ -1,13 +1,14 @@
 package main
 
 import (
-	"strings"
 	"context"
 	"database/sql"
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -57,6 +58,13 @@ func main() {
 	hs := headscale.New(cfg.HeadscaleURL, cfg.HeadscaleKey)
 	if err := ensureHeadscaleUser(d, hs, cfg.BootstrapAdminUser); err != nil {
 		log.Printf("warn: ensure headscale user: %v", err)
+	}
+
+	// Bootstrap Telegram credentials: copy from .env to DB once on
+	// startup if no DB record exists. After that, the admin page at
+	// /admin/telegram is the source of truth.
+	if err := bootstrapTelegramFromEnv(d); err != nil {
+		log.Printf("warn: bootstrap telegram: %v", err)
 	}
 
 	// Backfill node_owner_map: any headscale node with tag:public whose
@@ -112,7 +120,9 @@ func main() {
 	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))
 	mux.Handle("GET /admin/backup/download", authMW(http.HandlerFunc(app.GetAdminBackupDownload)))
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(app.GetAdminSettings)))
-			mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(app.GetMyTokens)))
+	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegram)))
+	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegramPost)))
+	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(app.GetMyTokens)))
 	mux.Handle("POST /my/token", authMW(http.HandlerFunc(app.PostMyToken)))
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(app.PostMyTokenRevoke)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(app.GetMyExitRules)))
@@ -247,4 +257,24 @@ func ensureHeadscaleUser(d *sql.DB, hs *headscale.Client, username string) error
 	}
 	_, err = d.Exec("UPDATE portal_users SET headscale_user_id=? WHERE username=?", created.ID, username)
 	return err
+}
+
+// bootstrapTelegramFromEnv copies the Telegram bot token and chat id
+// from .env into the global_settings table the first time the app
+// starts. After that, /admin/telegram is the canonical source — the
+// admin page can rotate / disable the bot without touching .env.
+func bootstrapTelegramFromEnv(d *sql.DB) error {
+	_, _, ok, err := db.LoadTelegramToken(d)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil // already configured via UI
+	}
+	token := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
+	chat := strings.TrimSpace(os.Getenv("TELEGRAM_CHAT_ID"))
+	if token == "" && chat == "" {
+		return nil
+	}
+	return db.SaveTelegramToken(d, token, chat)
 }
