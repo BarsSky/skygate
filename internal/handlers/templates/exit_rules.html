@@ -40,6 +40,19 @@
   .exit-help { position: static !important; }
 }
 </style>
+<style>
+/* 2026-07-09: multi-delete styles */
+.exit-main .card table .col-check { width: 32px; text-align: center; }
+.exit-main .card table input[type="checkbox"].rule-check { cursor: pointer; transform: scale(1.15); }
+.multi-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 6px 0; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); flex-wrap: wrap; }
+.multi-bar .count { font-size: 12px; color: var(--text-muted); }
+.multi-bar .count b { color: var(--text); font-weight: 600; }
+.multi-bar .spacer { flex: 1; }
+.multi-bar select.filter-target { padding: 4px 8px; font-size: 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border-strong); border-radius: 4px; }
+.multi-bar input.search { padding: 4px 8px; font-size: 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border-strong); border-radius: 4px; min-width: 180px; }
+.multi-bar.sticky { position: sticky; bottom: 0; z-index: 10; box-shadow: 0 -2px 8px rgba(0,0,0,0.15); }
+.exit-main .card table tr.hidden { display: none; }
+</style>
 
 <div class="title-row">
   <div>
@@ -140,6 +153,26 @@
         {{if .MaxTotalRules}}<span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">Системная нагрузка: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
       </h3>
 
+      <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('Удалить выбранные правила? Для доменов также удалятся все связанные /32, которые autoupdater создал.')">
+        <div class="multi-bar">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <input type="checkbox" id="select-all-top" onclick="toggleAll(this.checked)">
+            Выбрать все
+          </label>
+          <span class="count">Выбрано: <b id="sel-count">0</b></span>
+          <select class="filter-target" id="filter-type" onchange="applyFilter()">
+            <option value="">Все типы</option>
+            <option value="domain">Только домены</option>
+            <option value="subnet">Только /32</option>
+            <option value="ip">Только IP</option>
+          </select>
+          <input type="text" class="search" id="search-input" placeholder="Поиск по IP/домену..." oninput="applyFilter()">
+          <span class="spacer"></span>
+          <span style="font-size:11px;color:var(--text-muted)" title="Удаление домена каскадно удалит все связанные /32">
+            <i class="fa-solid fa-circle-info"></i> Домен → каскад /32
+          </span>
+        </div>
+
       {{range $host, $nodes := .GroupedByHostname}}
       <details open style="margin-bottom:8px">
         <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
@@ -158,24 +191,67 @@
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             <table>
-              <tr><th>Действие</th><th>Цель</th><th></th></tr>
-              {{range $rules}}<tr>
+              <tr><th class="col-check"></th><th>Действие</th><th>Цель</th><th></th></tr>
+              {{range $rules}}<tr class="rule-row" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
+                <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                 <td class="col-delete">
-                  <form method="post" action="/my/exit-rules/delete" style="display:inline" onsubmit="return confirm('Удалить правило?')">
-                    <input type="hidden" name="id" value="{{.ID}}">
-                    <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
-                  </form>
+                  <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="Удалить только это правило" onclick="return confirm('Удалить правило?')"><i class="fa-solid fa-trash"></i></button>
                 </td>
-              </tr>{{end}}
+              </tr>
+              <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
+                <input type="hidden" name="id" value="{{.ID}}">
+              </form>
+              {{end}}
             </table>
           </div>
         </details>
         {{end}}
       </details>
       {{end}}
+
+        <div class="multi-bar sticky">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <input type="checkbox" id="select-all-bottom" onclick="toggleAll(this.checked); document.getElementById('select-all-top').checked=this.checked">
+            Выбрать все
+          </label>
+          <span class="count">Выбрано: <b id="sel-count-bottom">0</b></span>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-sm" onclick="document.getElementById('search-input').value=''; document.getElementById('filter-type').value=''; applyFilter()"><i class="fa-solid fa-eraser"></i> Сбросить фильтры</button>
+          <button type="submit" class="btn btn-danger"><i class="fa-solid fa-trash"></i> Удалить выбранные</button>
+        </div>
+      </form>
     </div>
+
+    <script>
+    (function(){
+      function syncCount(){
+        var n = document.querySelectorAll('.rule-check:checked:not(#select-all-top):not(#select-all-bottom)').length;
+        var a = document.getElementById('sel-count'); if(a) a.textContent = n;
+        var b = document.getElementById('sel-count-bottom'); if(b) b.textContent = n;
+        var t = document.getElementById('select-all-top'); if(t) t.indeterminate = n>0 && !t.checked;
+        var bb = document.getElementById('select-all-bottom'); if(bb) bb.indeterminate = n>0 && !bb.checked;
+      }
+      window.updateSelCount = syncCount;
+      window.toggleAll = function(checked){
+        var visible = document.querySelectorAll('.rule-row:not(.hidden) input.rule-check');
+        visible.forEach(function(cb){ cb.checked = checked; });
+        syncCount();
+      };
+      window.applyFilter = function(){
+        var t = document.getElementById('filter-type').value;
+        var q = (document.getElementById('search-input').value || '').toLowerCase();
+        document.querySelectorAll('.rule-row').forEach(function(r){
+          var type = r.getAttribute('data-type') || '';
+          var target = (r.getAttribute('data-target') || '').toLowerCase();
+          var ok = (!t || type===t) && (!q || target.indexOf(q)>=0);
+          if(ok) r.classList.remove('hidden'); else r.classList.add('hidden');
+        });
+        syncCount();
+      };
+    })();
+    </script>
     {{end}}
 
     <div class="card">

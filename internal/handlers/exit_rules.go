@@ -774,33 +774,46 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2026-07-09: issue — лимиты per-user / per-device / total теперь считают
+	// только "user-facing" правила (target_type != 'subnet' ИЛИ
+	// parent_domain == '').  /32 правила, созданные autoupdater'ом для
+	// резолва домена, считаются СЛУЖЕБНЫМИ и не должны блокировать
+	// добавление новых доменов.  В противном случае у пользователя
+	// 9 доменов и 243 правила → лимит 200 забит и невозможно ничего
+	// добавить.  IP / subnet правила, введённые вручную (без parent_domain),
+	// по-прежнему считаются.
+	countUserFacing := func(userID int64, deviceID int, total bool) int {
+		q := "SELECT COUNT(*) FROM device_rules WHERE enabled=1 AND (target_type != 'subnet' OR COALESCE(parent_domain,'') = '')"
+		args := []any{}
+		if userID > 0 { q += " AND user_id=?"; args = append(args, userID) }
+		if deviceID > 0 { q += " AND device_id=?"; args = append(args, deviceID) }
+		var n int
+		_ = a.DB.QueryRow(q, args...).Scan(&n)
+		return n
+	}
 	// 2026-07-07: issue #12 — limit check
-	// Check per-device and total limits before insert.
-	// 2026-07-07: per-user limit takes precedence over per-device
+	// 2026-07-09: считаем только "user-facing" правила (см. выше).
 	maxPerUser := a.getMaxRulesForUser(c.Username)
 	if maxPerUser > 0 {
-		var userRuleCount int
-		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE user_id=? AND enabled=1", c.UserID).Scan(&userRuleCount)
+		userRuleCount := countUserFacing(c.UserID, 0, false)
 		if userRuleCount >= maxPerUser {
-			http.Error(w, fmt.Sprintf("user limit exceeded: %d/%d rules for user %s", userRuleCount, maxPerUser, c.Username), 403)
+			http.Error(w, fmt.Sprintf("user limit exceeded: %d/%d rules for user %s (auto-resolved /32 IP rules не учитываются)", userRuleCount, maxPerUser, c.Username), 403)
 			return
 		}
 	}
 	maxPerDevice := a.Cfg.MaxRulesPerDevice
 	if maxPerDevice > 0 {
-		var deviceRuleCount int
-		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE device_id=? AND enabled=1", devID).Scan(&deviceRuleCount)
+		deviceRuleCount := countUserFacing(0, devID, false)
 		if deviceRuleCount >= maxPerDevice {
-			http.Error(w, fmt.Sprintf("device limit exceeded: %d/%d rules on this device", deviceRuleCount, maxPerDevice), 403)
+			http.Error(w, fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on this device (auto-resolved /32 IP rules не учитываются)", deviceRuleCount, maxPerDevice), 403)
 			return
 		}
 	}
 	maxTotal := a.Cfg.MaxTotalRules
 	if maxTotal > 0 {
-		var totalCount int
-		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1").Scan(&totalCount)
+		totalCount := countUserFacing(0, 0, true)
 		if totalCount >= maxTotal {
-			http.Error(w, fmt.Sprintf("system limit exceeded: %d/%d total rules", totalCount, maxTotal), 403)
+			http.Error(w, fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", totalCount, maxTotal), 403)
 			return
 		}
 	}
@@ -835,6 +848,11 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	dnsWarning := ""
 	ipsToInsert := []string{targetValue}
 	typeToInsert := targetType
+	// 2026-07-09: для type=ip автоматически добавляем /32.  Tailscale advertised-routes
+	// требует CIDR, иначе headscale approve-routes падает с "no '/'".
+	if typeToInsert == "ip" && !strings.Contains(targetValue, "/") {
+		ipsToInsert = []string{targetValue + "/32"}
+	}
 	if targetType == "domain" {
 		if addrs, err := net.LookupHost(targetValue); err == nil {
 			ipsToInsert = nil
@@ -878,20 +896,19 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existingID > 0 {
-			// 2026-07-07: only count as dup if same parent_domain (or no parent_domain)
-			// If existing /32 has DIFFERENT parent_domain, it's a shared IP — insert new one
-			// with this domain's parent_domain (allowed for autoupdater to track).
 			var existingParent string
 			_ = a.DB.QueryRow("SELECT COALESCE(parent_domain,'') FROM device_rules WHERE id=?", existingID).Scan(&existingParent)
 			if existingParent == "" || existingParent == targetValue {
+				// Ручной IP/subnet (без parent_domain) или уже наш parent_domain → дубликат
 				dupCount++
 				dupIDs = append(dupIDs, existingID)
 			} else {
-				// Shared IP with different parent — create new with our parent_domain
-				_, _ = a.DB.Exec(
-					"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
-					c.UserID, devID, exitNode, ip, action, deviceIP, targetValue)
-				insertedCount++
+				// Shared IP: уже есть /32 с другим parent_domain (другой домен
+				// резолвится в тот же IP).  Не создаём дубль — autoupdater
+				// всё равно не удалит этот IP (см. DomainAutoUpdater), потому
+				// что для другого домена этот IP ещё нужен.
+				dupCount++
+				dupIDs = append(dupIDs, existingID)
 			}
 		} else {
 			insertedCount++
@@ -952,17 +969,70 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
-	id, _ := strconv.Atoi(r.FormValue("id"))
-	if id == 0 {
-		http.Error(w, "missing id", 400)
+
+	// 2026-07-09: поддерживаем multi-delete через form field ids (multi-value).
+	// Один id — старый путь для обратной совместимости. Поддерживаем ОБА:
+	// `id=X` (single, old) + `ids=X&ids=Y&ids=Z` (multi, new). Объединяем.
+	// ВАЖНО: r.Form парсит query+body лениво; первый доступ через r.FormValue
+	// триггерит ParseForm, иначе r.Form вернёт nil. Используем ParseForm явно.
+	if err := r.ParseForm(); err == nil {
+		// можно работать с r.Form
+	}
+	rawIDs := []string{}
+	for _, v := range r.Form["ids"] {
+		if v != "" {
+			rawIDs = append(rawIDs, v)
+		}
+	}
+	if v := r.FormValue("id"); v != "" {
+		rawIDs = append(rawIDs, v)
+	}
+	if len(rawIDs) == 0 {
+		http.Error(w, "missing id(s)", 400)
 		return
 	}
-	a.DB.Exec("DELETE FROM device_rules WHERE id = ? AND user_id = ?", id, c.UserID)
+
+	// Сначала собираем target_type/parent_domain для каждого id,
+	// чтобы потом каскадно удалить /32 для доменов.
+	type ruleInfo struct {
+		id           int
+		targetType   string
+		parentDomain string
+	}
+	var infos []ruleInfo
+	totalCascade := 0
+	for _, s := range rawIDs {
+		id, _ := strconv.Atoi(s)
+		if id == 0 { continue }
+		var targetType, parentDomain string
+		_ = a.DB.QueryRow("SELECT target_type, COALESCE(parent_domain,'') FROM device_rules WHERE id=? AND user_id=?", id, c.UserID).Scan(&targetType, &parentDomain)
+		infos = append(infos, ruleInfo{id: id, targetType: targetType, parentDomain: parentDomain})
+	}
+
+	// Удаление: для каждого правила удаляем его + если это домен — все /32
+	// с тем же parent_domain.  Идемпотентно.
+	for _, info := range infos {
+		if info.targetType == "domain" && info.parentDomain != "" {
+			res, _ := a.DB.Exec(
+				"DELETE FROM device_rules WHERE user_id=? AND (id=? OR (target_type='subnet' AND parent_domain=?))",
+				c.UserID, info.id, info.parentDomain)
+			if n, err := res.RowsAffected(); err == nil {
+				totalCascade += int(n) - 1
+			}
+		} else {
+			a.DB.Exec("DELETE FROM device_rules WHERE id=? AND user_id=?", info.id, c.UserID)
+		}
+	}
+
 	if acl, err := a.GenerateACL(); err == nil {
 		ver := a.saveACLSnapshot(acl, c.Username)
 		if err := a.HS.SetPolicy(acl); err == nil {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=?", ver)
-			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'delete', ?)", ver, fmt.Sprintf("user %s deleted rule #%d", c.Username, id))
+			detail := fmt.Sprintf("user %s deleted %d rule(s)", c.Username, len(infos))
+			if totalCascade > 0 {
+				detail += fmt.Sprintf(" (cascade: %d /32)", totalCascade)
+			}
+			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'delete', ?)", ver, detail)
 			// 2026-07-06: re-sync advertised routes after delete
 			if sync := a.SyncAdvertisedRoutes(); sync != nil {
 				for node, status := range sync {
@@ -1638,6 +1708,14 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 		// Add new IPs
 		for ip := range currentIPs {
 			if _, exists := all32[ip]; exists { continue }
+			// 2026-07-09: проверяем, нет ли уже /32 с этим target_value
+			// (под другим parent_domain — shared IP между доменами).
+			// Не дублируем — autoupdater другого домена уже покрыл.
+			var existingSharedID int
+			_ = a.DB.QueryRow(
+				"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value=? LIMIT 1",
+				d.userID, d.deviceID, d.exitNode, ip+"/32").Scan(&existingSharedID)
+			if existingSharedID > 0 { continue }
 			if _, ierr := a.DB.Exec(
 				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
 				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain); ierr == nil {
