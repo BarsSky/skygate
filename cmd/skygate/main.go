@@ -135,6 +135,8 @@ func main() {
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(app.PostAdminRollbackACL)))
 	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(app.SyncAdvertisedRoutesHandler)))
 	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(app.GetAdminNodesLoad)))
+	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(app.AdminCleanupRules)))
+	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(app.AdminCleanupRulesApply)))
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(app.AdminExitNodes)))
