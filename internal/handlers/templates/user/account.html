@@ -1,0 +1,57 @@
+{{define "body-account"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-user-gear"></i>Account</h2>
+    <div class="sub">Смена пароля пользователя {{.Username}}</div>
+  </div>
+</div>
+
+{{if .FlashOK}}
+<div class="alert alert-ok" style="margin-top:0">
+  <i class="fa-solid fa-check-circle"></i>
+  <div>Пароль успешно изменён. Используйте новый пароль при следующем входе.</div>
+</div>
+{{end}}
+
+{{if .FlashError}}
+<div class="alert alert-error" style="margin-top:0">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <div>{{if eq .FlashError "wrong_current_password"}}Неверный текущий пароль.{{else if eq .FlashError "passwords_dont_match"}}Новые пароли не совпадают.{{else if eq .FlashError "password_too_short"}}Пароль слишком короткий (минимум 8 символов).{{else if eq .FlashError "fields_empty"}}Все поля обязательны.{{else if eq .FlashError "user_not_found"}}Пользователь не найден.{{else if eq .FlashError "hash_failed"}}Не удалось захешировать пароль.{{else if eq .FlashError "db_error"}}Ошибка базы данных. Попробуйте позже.{{else if eq .FlashError "bad_form"}}Некорректная форма.{{else}}Ошибка: {{.FlashError}}{{end}}</div>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-lock"></i>Сменить пароль</h3>
+  <form method="post" action="/my/account/password" autocomplete="off">
+    <div class="field">
+      <label>Текущий пароль</label>
+      <input type="password" name="current_password" required autofocus autocomplete="current-password">
+    </div>
+    <div class="field">
+      <label>Новый пароль</label>
+      <input type="password" name="new_password" minlength="8" required autocomplete="new-password">
+      <p class="hint">Минимум 8 символов.</p>
+    </div>
+    <div class="field">
+      <label>Подтвердите новый пароль</label>
+      <input type="password" name="confirm_new_password" minlength="8" required autocomplete="new-password">
+    </div>
+    <div class="btn-row" style="margin-top:16px;display:flex;gap:8px">
+      <button type="submit" class="btn btn-primary">
+        <i class="fa-solid fa-floppy-disk"></i>Сменить пароль
+      </button>
+      <a href="/dashboard" class="btn btn-secondary">
+        <i class="fa-solid fa-xmark"></i>Отмена
+      </a>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h3><i class="fa-solid fa-key"></i>API-токены</h3>
+  <p>Для интеграций с AI-помощниками используйте персональные токены.</p>
+  <a href="/my/tokens" class="btn btn-secondary">
+    <i class="fa-solid fa-key"></i>Управление токенами
+  </a>
+</div>
+{{end}}

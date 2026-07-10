@@ -125,6 +125,8 @@ func main() {
 	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(app.GetMyTokens)))
 	mux.Handle("POST /my/token", authMW(http.HandlerFunc(app.PostMyToken)))
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(app.PostMyTokenRevoke)))
+	mux.Handle("GET /my/account", authMW(http.HandlerFunc(app.GetMyAccount)))
+	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(app.PostMyAccountPassword)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(app.GetMyExitRules)))
 	mux.Handle("POST /my/exit-rules", authMW(http.HandlerFunc(app.PostMyExitRule)))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(app.PostDeleteExitRule)))

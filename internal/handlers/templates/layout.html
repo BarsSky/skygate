@@ -23,6 +23,7 @@
     <a href="/help" {{if eq .Page "help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i><span>Справка</span></a>
     <a href="/my/tokens" {{if eq .Page "tokens"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>API Tokens</span></a>
     <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>Exit Rules</span></a>
+    <a href="/my/account" {{if eq .Page "account"}}class="active"{{end}}><i class="fa-solid fa-user-gear"></i><span>Account</span></a>
 {{if .IsAdmin}}
     <hr class="nav-sep">
     <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>Backup</span></a>
