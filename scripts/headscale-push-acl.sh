@@ -43,17 +43,27 @@ users = req("GET", "/api/v1/user")["users"]
 user_emails = [u["name"] + "@tsnet.skynas.ru" for u in users]
 print("users:", user_emails)
 
+# Tag-based ACL: every portal user can reach their own user@...:* devices
+# (legacy, for non-tagged devices) plus every tag:private, tag:public,
+# and tag:exit-node device.
+#
+# Why 16 rules: 4 per-user user@...:* + 4 users * 3 tag types (private,
+# public, exit-node). With "*" src as a wildcard the Tailscale Android
+# client shows every node to every user, which is what we want to avoid.
+# With explicit per-user src we let Tailscale filter the node list
+# according to each user.
+#
+# Trade-off: tag:private is shared between all users, so michail/guest/
+# daniil can see other users' private devices in their Tailscale UI.
+# The proper fix is per-user-private tags (tag:skyadmin, tag:michail, ...)
+# which would require re-tagging every node. For now the simpler model
+# keeps the UI populated.
 new_acls = []
 for ue in user_emails:
     new_acls.append({"action": "accept", "src": [ue], "dst": [ue + ":*"]})
-new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:public:*"]})
-new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:exit-node:*"]})
-# NOTE: deliberately no "*:*" rule. Without it headscale applies
-# default-deny, and the Tailscale Android client hides nodes that
-# are not allowed for the current user. Internet egress still works
-# because each user@...:* rule above covers the device's own
-# advertised routes (including 0.0.0.0/0 advertised by tag:exit-node
-# devices). Direct internet from a device is denied.
+    new_acls.append({"action": "accept", "src": [ue], "dst": ["tag:private:*"]})
+    new_acls.append({"action": "accept", "src": [ue], "dst": ["tag:public:*"]})
+    new_acls.append({"action": "accept", "src": [ue], "dst": ["tag:exit-node:*"]})
 
 new_tag_owners = {
     "tag:public": ["skyadmin@tsnet.skynas.ru"],
