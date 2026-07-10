@@ -31,9 +31,18 @@
         <td>{{if .IsAdmin}}<span class="tag tag-admin"><i class="fa-solid fa-shield-halved"></i>admin</span>{{else}}<span style="color:var(--text-muted);font-size:12px"><i class="fa-solid fa-user"></i> user</span>{{end}}</td>
         <td style="color:var(--text-muted)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
         <td>
-          <form method="post" action="/admin/users/{{.ID}}/delete" style="display:inline" onsubmit="return confirm('Удалить {{.Username}}? Удалит и из headscale, включая все ноды')">
-            <button type="submit" class="btn btn-danger btn-sm" title="Удалить"><i class="fa-solid fa-trash"></i></button>
-          </form>
+          <details class="user-actions">
+            <summary class="btn btn-sm"><i class="fa-solid fa-ellipsis-vertical"></i></summary>
+            <div class="user-actions-menu">
+              <form method="post" action="/admin/users/{{.ID}}/reset-password" class="user-reset-form" onsubmit="return confirm('Сбросить пароль {{.Username}}? Текущий пароль перестанет работать немедленно.')">
+                <input type="password" name="new_password" required minlength="6" placeholder="Новый пароль (>=6)" class="ufg-input-sm">
+                <button type="submit" class="btn btn-sm" title="Сбросить пароль"><i class="fa-solid fa-key"></i> Сброс</button>
+              </form>
+              <form method="post" action="/admin/users/{{.ID}}/delete" onsubmit="return confirm('Удалить {{.Username}}? Удалит и из headscale, включая все ноды')">
+                <button type="submit" class="btn btn-danger btn-sm" title="Удалить"><i class="fa-solid fa-trash"></i> Удалить</button>
+              </form>
+            </div>
+          </details>
         </td>
       </tr>
       {{else}}
@@ -73,16 +82,16 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-user-plus"></i>Добавить пользователя</h3>
-  <form method="post" action="/admin/users" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end">
-    <label>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:flex;align-items:center;gap:4px"><i class="fa-solid fa-user"></i> Username</div>
-      <input name="username" required pattern="[a-z0-9_-]+" placeholder="например: alice" style="width:100%">
+  <form method="post" action="/admin/users" class="user-form-grid">
+    <label class="ufg-field">
+      <div class="ufg-label"><i class="fa-solid fa-user"></i> Username</div>
+      <input name="username" required pattern="[a-z0-9_-]+" placeholder="например: alice" class="ufg-input">
     </label>
-    <label>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:flex;align-items:center;gap:4px"><i class="fa-solid fa-lock"></i> Password</div>
-      <input name="password" required minlength="6" type="password" style="width:100%">
+    <label class="ufg-field">
+      <div class="ufg-label"><i class="fa-solid fa-lock"></i> Password</div>
+      <input name="password" required minlength="6" type="password" class="ufg-input">
     </label>
-    <button type="submit" class="btn"><i class="fa-solid fa-plus"></i>Создать</button>
+    <button type="submit" class="btn ufg-btn"><i class="fa-solid fa-plus"></i>Создать</button>
   </form>
   <label style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;color:var(--text-muted);cursor:pointer">
     <input type="checkbox" name="is_admin"> Сделать администратором
