@@ -743,92 +743,9 @@ func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 
 // Admin user management functions moved to handlers_admin_users.go.
 // (GetAdminUsers, PostAdminUser, extractIDFromPath, PostAdminDeleteUser)
-func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	users, _ := a.HS.ListUsers()
-	allNodes, _ := a.HS.ListAllNodes()
-	a.renderWithLayout(w, "admin/devices.html", c, map[string]any{
-		"Nodes": allNodes,
-		"Users": users,
-	})
-}
 
-// PostAdminNodeTag adds a headscale tag to a node.
-func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	idStr := extractIDFromPath(r.URL.Path)
-	nodeID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "bad node id", 400)
-		return
-	}
-	tag := r.FormValue("tag")
-	if tag == "" {
-		tag = headscale.TagPublicTag
-	}
-
-	var origUserID, origUserName string
-	if nodes, err := a.HS.ListAllNodes(); err == nil {
-		for _, n := range nodes {
-			if n.ID == strconv.FormatInt(nodeID, 10) {
-				origUserID = n.UserID
-				origUserName = n.UserName
-				break
-			}
-		}
-	}
-
-	if err := a.HS.TagNode(nodeID, tag); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	if origUserID != "" && origUserName != "" && origUserName != "tagged-devices" {
-		_, _ = a.DB.Exec(`INSERT OR REPLACE INTO node_owner_map
-			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, ?, ?, ?, ?)`,
-			nodeID, origUserID, origUserName, tag, c.UserID)
-	}
-
-	a.HS.InvalidateCache()
-	a.audit(c.UserID, c.Username, "node_tag", fmt.Sprintf("node=%d tag=%s owner=%s", nodeID, tag, origUserName))
-	http.Redirect(w, r, "/admin/devices", http.StatusFound)
-}
-
-func (a *App) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	idStr := extractIDFromPath(r.URL.Path)
-	nodeID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "bad node id", 400)
-		return
-	}
-	tag := r.FormValue("tag")
-	if tag == "" {
-		tag = headscale.TagPublicTag
-	}
-	if err := a.HS.UntagNode(nodeID, tag); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	_, _ = a.DB.Exec(`DELETE FROM node_owner_map WHERE node_id=? AND tag=?`, nodeID, tag)
-
-	a.HS.InvalidateCache()
-	a.audit(c.UserID, c.Username, "node_untag", fmt.Sprintf("node=%d tag=%s", nodeID, tag))
-	http.Redirect(w, r, "/admin/devices", http.StatusFound)
-}
+// Admin device/tag handlers moved to handlers_admin_nodes.go.
+// (GetAdminDevices, PostAdminNodeTag, PostAdminNodeUntag)
 
 func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	c := a.currentUser(r)
@@ -1242,46 +1159,8 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 
 // ── API Tokens ──
 
-func (a *App) GetMyTokens(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Redirect(w, r, "/login", http.StatusFound); return }
-	rows, err := a.DB.Query("SELECT id, label, last_used_at, created_at FROM personal_api_tokens WHERE user_id=? ORDER BY created_at DESC", c.UserID)
-	if err != nil { http.Error(w, err.Error(), 500); return }
-	defer rows.Close()
-	type tRow struct { ID int64; Label string; LastUsed string; Created string }
-	var tokens []tRow
-	for rows.Next() {
-		var t tRow; var lu, cr int64
-		if rows.Scan(&t.ID, &t.Label, &lu, &cr) == nil {
-			if lu > 0 { t.LastUsed = time.Unix(lu, 0).Format("2006-01-02 15:04") } else { t.LastUsed = "—" }
-			t.Created = time.Unix(cr, 0).Format("2006-01-02 15:04")
-			tokens = append(tokens, t)
-		}
-	}
-	if tokens == nil { tokens = []tRow{} }
-	a.renderWithLayout(w, "my_tokens.html", c, map[string]any{"Page": "tokens", "Title": "API Tokens", "Tokens": tokens})
-}
-
-func (a *App) PostMyToken(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Error(w, "unauthorized", 401); return }
-	label := r.FormValue("label")
-	raw, hash := auth.GenerateAPIToken()
-	_, err := a.DB.Exec("INSERT INTO personal_api_tokens (user_id, token_hash, label) VALUES (?,?,?)", c.UserID, hash, label)
-	if err != nil { http.Error(w, err.Error(), 500); return }
-	a.audit(c.UserID, c.Username, "token_create", label)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, "<div class=\"card\"><h3>Токен создан</h3><p>Скопируйте сейчас — больше он показан не будет.</p><pre style=\"background:var(--bg);padding:12px;border-radius:4px;word-break:break-all\">%s</pre><p><a href=\"/my/tokens\">← Назад к списку</a></p></div>", raw)
-}
-
-func (a *App) PostMyTokenRevoke(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Error(w, "unauthorized", 401); return }
-	idStr := r.PathValue("id")
-	a.DB.Exec("DELETE FROM personal_api_tokens WHERE id=? AND user_id=?", idStr, c.UserID)
-	a.audit(c.UserID, c.Username, "token_revoke", idStr)
-	http.Redirect(w, r, "/my/tokens?revoked=1", http.StatusFound)
-}
+// API token handlers moved to handlers_api_tokens.go.
+// (GetMyTokens, PostMyToken, PostMyTokenRevoke)
 
 
 // 2026-07-07: getMaxRulesForUser returns per-user rule limit or default.
