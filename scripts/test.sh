@@ -4,14 +4,15 @@
 # Проверяет каждый шаг механизма бэкапа и восстановления
 # Usage: ./test.sh [--verbose]
 #===============================================================================
-set -euo pipefail
+set -uo pipefail
 
 VERBOSE=false
 [[ "${1:-}" == "--verbose" ]] && VERBOSE=true
 
 PASS=0; FAIL=0
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "${SCRIPT_DIR}/.."
+SKYGATE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${SKYGATE_DIR}"
 
 log_test() { echo -e "  [${1}] ${2}"; }
 ok()   { PASS=$((PASS+1)); log_test "✅" "$1"; }
@@ -44,6 +45,33 @@ else
     fail "scripts/restore.sh NOT FOUND"
 fi
 
+# === STEP 2b: Notify helper ===
+echo ""
+echo "--- 2b. Notify Helper ---"
+if [ -x scripts/notify.sh ]; then
+    if scripts/notify.sh --dry-run "test smoke" "dry-run path" >/tmp/notify.out 2>&1; then
+        ok "notify.sh --dry-run OK"
+    else
+        fail "notify.sh --dry-run failed"
+    fi
+else
+    fail "scripts/notify.sh missing or not executable"
+fi
+
+# === STEP 2c: Cron installer ===
+echo ""
+echo "--- 2c. Cron Installer ---"
+if [ -x scripts/backup_cron.sh ]; then
+    ok "backup_cron.sh exists and is executable"
+    if scripts/backup_cron.sh status >/tmp/cron.out 2>&1; then
+        ok "backup_cron.sh status OK"
+    else
+        fail "backup_cron.sh status failed"
+    fi
+else
+    fail "scripts/backup_cron.sh missing or not executable"
+fi
+
 # === STEP 3: Migrate script exists ===
 echo ""
 echo "--- 3. Migration Script ---"
@@ -57,11 +85,21 @@ fi
 echo ""
 echo "--- 4. Backup produces valid archive ---"
 BACKUP_DIR="/tmp/skygate-test-$$"
-mkdir -p "${BACKUP_DIR}"
-if bash scripts/backup.sh "${BACKUP_DIR}" > /dev/null 2>&1; then
-    ok "backup.sh ran without errors"
+BACKUP_HOME="/tmp/skygate-backup-home-$$"
+mkdir -p "${BACKUP_DIR}" "${BACKUP_HOME}"
+# Isolate HOME for the backup run so it writes status.json inside BACKUP_HOME
+# which we preserve for STEP 12. BACKUP_DIR is the archive target.
+if HOME="${BACKUP_HOME}" SKYGATE_BACKUP_STATUS_JSON="${BACKUP_HOME}/.skygate-backup-status.json" \
+    scripts/backup.sh "${BACKUP_DIR}" >/dev/null 2>&1; then
+    ok "backup.sh ran without errors (full prod path)"
 else
-    fail "backup.sh failed"
+    rc=$?
+    # Backup is allowed to complete with warnings, but exit must be 0 or 2
+    if [[ $rc -eq 0 || $rc -eq 2 ]]; then
+        ok "backup.sh exit code=${rc} (acceptable)"
+    else
+        fail "backup.sh exited ${rc} (expected 0 or 2)"
+    fi
 fi
 
 ARCHIVE=$(ls "${BACKUP_DIR}"/*.tar.gz 2>/dev/null | head -1)
@@ -80,8 +118,7 @@ if [ -n "${ARCHIVE}" ]; then
     else
         fail "Archive corrupted (tar tzf failed)"
     fi
-    
-    # Check contents
+
     CONTENTS=$(tar tzf "${ARCHIVE}")
     for needed in "skygate.env" "inventory.txt"; do
         if echo "${CONTENTS}" | grep -q "${needed}"; then
@@ -107,18 +144,18 @@ done
 # === STEP 7: Skygate API ===
 echo ""
 echo "--- 7. Skygate HTTP ---"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/login 2>/dev/null || echo "FAIL")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/login 2>/dev/null || echo "FAIL")
 if [ "${HTTP_CODE}" = "200" ]; then
     ok "HTTP 200 on /login"
 else
     fail "HTTP ${HTTP_CODE} on /login"
 fi
 
-# === STEP 8: Admin backup page (redirect to login w/o auth) ===
+# === STEP 8: Admin pages ===
 echo ""
 echo "--- 8. Admin pages ---"
 for page in "/admin/backup" "/admin/settings"; do
-    CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080${page}" 2>/dev/null || echo "FAIL")
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:8080${page}" 2>/dev/null || echo "FAIL")
     if [ "${CODE}" = "302" ] || [ "${CODE}" = "200" ]; then
         ok "  ${page} → ${CODE}"
     else
@@ -126,10 +163,26 @@ for page in "/admin/backup" "/admin/settings"; do
     fi
 done
 
-# === STEP 9: Migrate.sh prerequisite check ===
+# === STEP 9: Go unit tests ===
 echo ""
-echo "--- 9. Migration prerequisites ---"
-for cmd in docker git; do
+echo "--- 9. Go unit tests ---"
+if command -v go >/dev/null 2>&1; then
+    if GOTOOLCHAIN=local go test -count=1 ./internal/... >/tmp/gotest.out 2>&1; then
+        ran=$(grep -c '^=== RUN ' /tmp/gotest.out || echo 0)
+        passed=$(grep -c '^--- PASS' /tmp/gotest.out || echo 0)
+        ok "go test ./internal/... OK (${ran} ran, ${passed} passed)"
+    else
+        fail "go test ./internal/... failed"
+        head -20 /tmp/gotest.out | sed 's/^/    /'
+    fi
+else
+    fail "go binary missing — cannot run unit tests"
+fi
+
+# === STEP 10: Migrate.sh prerequisite check ===
+echo ""
+echo "--- 10. Migration prerequisites ---"
+for cmd in docker git crontab; do
     if command -v "${cmd}" &>/dev/null; then
         ok "${cmd} installed"
     else
@@ -137,11 +190,10 @@ for cmd in docker git; do
     fi
 done
 
-# === STEP 10: Restore.sh can parse a backup ===
+# === STEP 11: Restore.sh can parse a backup ===
 echo ""
-echo "--- 10. Restore script parsing ---"
+echo "--- 11. Restore script parsing ---"
 if [ -n "${ARCHIVE}" ]; then
-    # Test that restore.sh can at least list contents (inventory)
     TMPDIR="/tmp/restore-test-$$"
     mkdir -p "${TMPDIR}"
     tar xzf "${ARCHIVE}" -C "${TMPDIR}"
@@ -154,8 +206,37 @@ if [ -n "${ARCHIVE}" ]; then
     rm -rf "${TMPDIR}"
 fi
 
+# === STEP 12: Backup status JSON writeable ===
+echo ""
+echo "--- 12. Status JSON ---"
+STATUS_JSON="${BACKUP_HOME}/.skygate-backup-status.json"
+if [[ -s "${STATUS_JSON}" ]]; then
+    ok "status.json present ($(stat -c '%s' "${STATUS_JSON}") bytes)"
+    if python3 -c "import json; json.load(open('${STATUS_JSON}'))" 2>/dev/null; then
+        ok "status.json is valid JSON"
+    else
+        fail "status.json is NOT valid JSON"
+    fi
+else
+    fail "no status.json at ${STATUS_JSON} — backup did not record final state?"
+fi
+
+# === STEP 13: Notify mock end-to-end ===
+echo ""
+echo "--- 13. Notify harness ---"
+if [[ -x scripts/.notify_mock_e2e.sh ]]; then
+    if scripts/.notify_mock_e2e.sh > /tmp/mock_test.out 2>&1; then
+        ok "notify.sh end-to-end mock delivery OK"
+    else
+        fail "notify.sh end-to-end mock FAILED — see /tmp/mock_test.out"
+        head -20 /tmp/mock_test.out | sed "s/^/    /"
+    fi
+else
+    fail "scripts/.notify_mock_e2e.sh missing — cannot run notify harness"
+fi
+
 # === CLEANUP ===
-rm -rf "${BACKUP_DIR}"
+rm -rf "${BACKUP_DIR}" "${BACKUP_HOME}"
 
 echo ""
 echo "=============================================="
