@@ -12,6 +12,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/ratelimit"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
@@ -23,6 +24,7 @@ import (
 
 type App struct {
 	Version string
+	RateLimiter *ratelimit.Limiter
 	DB           *sql.DB
 	HS           *headscale.Client
 	HeadscaleKey string
