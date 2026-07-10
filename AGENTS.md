@@ -39,6 +39,10 @@ User-facing pages:
 - `/admin/backup` — admin: backup/restore ACL
 - `/admin/telegram` — admin: bot config (NOTIFICATIONS ONLY; no `sendMessage` is implemented)
 - `/my/account` — self-service password change (current + new + confirm)
+- Rate limits (in-memory, single-instance only):
+  - POST /login: 5 attempts per username per 15s, 20 per IP per 30s
+  - /api endpoints: 30 requests per IP per 60s
+  - 429 + Retry-After header on block; sweep every 5 min
 - `/my/tokens` — personal API tokens
 - `/my/devices` — user's devices (tagged via portal)
 
