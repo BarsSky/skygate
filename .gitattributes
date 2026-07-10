@@ -1,0 +1,53 @@
+# .gitattributes — control line endings and diff behavior for cross-platform
+# development (Windows + Linux VM). The repo is edited on Windows and built on
+# `skyadmin@192.168.13.69` (Linux). Without this, `scp` from Windows lands
+# files with CRLF in the repo and they stay CRLF forever.
+#
+# Strategy: `* text=auto` lets git auto-detect per file; explicit `eol=lf`
+# pins LF for files that must be LF to run on Linux (shell scripts, Makefile,
+# Python entry points, Go source).
+#
+# Existing CRLF files in the repo (23) are NOT renormalized in the same
+# commit. Re-normalize them later with `git add --renormalize .` as a
+# separate, single-purpose PR.
+
+# Default: auto-detect text/binary, normalize to LF on checkout.
+* text=auto
+
+# Build / deploy scripts — must be LF on Linux.
+Makefile              text eol=lf
+*.sh                  text eol=lf
+*.mk                  text eol=lf
+
+# Python and Go source — LF.
+*.py                  text eol=lf
+*.go                  text eol=lf
+
+# Shell scripts that live under deploy/ and scripts/ are covered by the
+# `*.sh` rule above; explicit paths kept as documentation:
+/deploy/*.sh          text eol=lf
+/scripts/*.sh         text eol=lf
+
+# Markdown and YAML are fine with CRLF, but pinning LF avoids noisy diffs
+# from accidental editor saves on Windows.
+*.md                  text eol=lf
+*.yml                 text eol=lf
+*.yaml                text eol=lf
+
+# Binary — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.tar binary
+*.db binary
+*.db-wal binary
+*.db-shm binary
+*.so binary
+*.dll binary
+*.exe binary
