@@ -13,6 +13,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/config"
 	"skygate/internal/ratelimit"
+	"skygate/internal/telegram"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
@@ -25,6 +26,7 @@ import (
 type App struct {
 	Version string
 	RateLimiter *ratelimit.Limiter
+	Notifier    telegram.Notifier
 	DB           *sql.DB
 	HS           *headscale.Client
 	HeadscaleKey string
@@ -53,6 +55,7 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		SessionHours: sessionH,
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
+	Notifier:    telegram.NoopNotifier{},
 		Cfg:          cfg,
 	}
 }
