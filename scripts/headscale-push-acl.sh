@@ -48,7 +48,12 @@ for ue in user_emails:
     new_acls.append({"action": "accept", "src": [ue], "dst": [ue + ":*"]})
 new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:public:*"]})
 new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:exit-node:*"]})
-new_acls.append({"action": "accept", "src": ["*"], "dst": ["*:*"]})
+# NOTE: deliberately no "*:*" rule. Without it headscale applies
+# default-deny, and the Tailscale Android client hides nodes that
+# are not allowed for the current user. Internet egress still works
+# because each user@...:* rule above covers the device's own
+# advertised routes (including 0.0.0.0/0 advertised by tag:exit-node
+# devices). Direct internet from a device is denied.
 
 new_tag_owners = {
     "tag:public": ["skyadmin@tsnet.skynas.ru"],
@@ -61,11 +66,22 @@ for ue in user_emails:
     gname = "group:" + ue.split(chr(64))[0]
     new_groups[gname] = [ue]
 
+new_ssh = current.get("ssh", [])
+if not new_ssh:
+    new_ssh = [
+        {
+            "action": "accept",
+            "src": ["tag:private", "skyadmin@tsnet.skynas.ru"],
+            "dst": ["tag:exit-node"],
+            "users": ["root"],
+        }
+    ]
+
 new_policy = {
     "acls": new_acls,
     "tagOwners": new_tag_owners,
     "groups": new_groups,
-    "ssh": current.get("ssh", []),
+    "ssh": new_ssh,
 }
 print("new policy size:", len(json.dumps(new_policy)))
 
