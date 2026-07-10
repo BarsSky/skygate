@@ -1,13 +1,14 @@
 package main
 
 import (
-	"strings"
 	"context"
 	"database/sql"
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
+	"skygate/internal/ratelimit"
+	"skygate/internal/telegram"
 )
 
 func main() {
@@ -59,6 +62,13 @@ func main() {
 		log.Printf("warn: ensure headscale user: %v", err)
 	}
 
+	// Bootstrap Telegram credentials: copy from .env to DB once on
+	// startup if no DB record exists. After that, the admin page at
+	// /admin/telegram is the source of truth.
+	if err := bootstrapTelegramFromEnv(d); err != nil {
+		log.Printf("warn: bootstrap telegram: %v", err)
+	}
+
 	// Backfill node_owner_map: any headscale node with tag:public whose
 	// original owner we don't know is attributed to the bootstrap admin.
 	if err := backfillNodeOwners(d, hs, cfg.BootstrapAdminUser); err != nil {
@@ -66,13 +76,28 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+
+		// 2026-07-10: rate limiting for /login (per-user + per-IP) and /api endpoints
+		// (per-IP). In-memory token bucket; auto-cleans stale entries.
+		app.RateLimiter = ratelimit.New()
+		go func() {
+			t := time.NewTicker(5 * time.Minute)
+			defer t.Stop()
+			for range t.C { app.RateLimiter.Sweep() }
+		}()
+		loginMW := middleware.RequireLoginLimit(app.RateLimiter)
+		apiMW := middleware.RequireAPILimit(app.RateLimiter)
+		_ = apiMW  // exposed for explicit endpoint wrapping (currently routes attach via authMW only)
+
+
 	app.Version = "v0.3"
 
 	mux := http.NewServeMux()
 
 	// Public
 	mux.HandleFunc("GET /login", app.GetLogin)
-	mux.HandleFunc("POST /login", app.PostLogin)
+	mux.HandleFunc("POST /lang", app.PostLang)
+	mux.Handle("POST /login", loginMW(http.HandlerFunc(app.PostLogin)))
 	mux.HandleFunc("POST /logout", app.PostLogout)
 	mux.HandleFunc("/favicon.ico", app.FaviconHandler)
 	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
@@ -101,6 +126,7 @@ func main() {
 	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(app.GetAdminUsers)))
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(app.PostAdminUser)))
 	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(app.PostAdminDeleteUser)))
+	mux.Handle("POST /admin/users/{id}/reset-password", authMW(http.HandlerFunc(app.PostAdminUserResetPassword)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
 	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))
@@ -112,19 +138,25 @@ func main() {
 	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))
 	mux.Handle("GET /admin/backup/download", authMW(http.HandlerFunc(app.GetAdminBackupDownload)))
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(app.GetAdminSettings)))
-			mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(app.GetMyTokens)))
+	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegram)))
+	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegramPost)))
+	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(app.GetMyTokens)))
 	mux.Handle("POST /my/token", authMW(http.HandlerFunc(app.PostMyToken)))
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(app.PostMyTokenRevoke)))
+	mux.Handle("GET /my/account", authMW(http.HandlerFunc(app.GetMyAccount)))
+	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(app.PostMyAccountPassword)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(app.GetMyExitRules)))
-	mux.Handle("POST /my/exit-rules", authMW(http.HandlerFunc(app.PostMyExitRule)))
+	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(app.PostMyExitRule))))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(app.PostDeleteExitRule)))
-	mux.Handle("GET /my/exit-rules/api", authMW(http.HandlerFunc(app.GetExitRulesAPI)))
-	mux.Handle("POST /my/exit-rules/api", authMW(http.HandlerFunc(app.PostExitRulesAPI)))
+	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(app.GetExitRulesAPI))))
+	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(app.PostExitRulesAPI))))
 	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(app.GetExitRulesAPIHelp)))
 	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(app.AdminExitRules)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(app.PostAdminRollbackACL)))
 	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(app.SyncAdvertisedRoutesHandler)))
 	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(app.GetAdminNodesLoad)))
+	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(app.AdminCleanupRules)))
+	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(app.AdminCleanupRulesApply)))
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(app.AdminExitNodes)))
@@ -140,6 +172,19 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+
+		// 2026-07-10: Telegram bot. If a token is in the DB, upgrade Notifier
+		// to the real client and start the polling loop for incoming commands.
+		{
+			rn := telegram.NewRealNotifier(d)
+			if rn.Configured() {
+				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")
+				app.Notifier = rn
+				go rn.Run(ctx)
+			} else {
+				log.Printf("🤖 Telegram bot not configured; notifications will noop")
+			}
+		}
 	defer stop()
 
 	go func() {
@@ -247,4 +292,24 @@ func ensureHeadscaleUser(d *sql.DB, hs *headscale.Client, username string) error
 	}
 	_, err = d.Exec("UPDATE portal_users SET headscale_user_id=? WHERE username=?", created.ID, username)
 	return err
+}
+
+// bootstrapTelegramFromEnv copies the Telegram bot token and chat id
+// from .env into the global_settings table the first time the app
+// starts. After that, /admin/telegram is the canonical source — the
+// admin page can rotate / disable the bot without touching .env.
+func bootstrapTelegramFromEnv(d *sql.DB) error {
+	_, _, ok, err := db.LoadTelegramToken(d)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil // already configured via UI
+	}
+	token := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
+	chat := strings.TrimSpace(os.Getenv("TELEGRAM_CHAT_ID"))
+	if token == "" && chat == "" {
+		return nil
+	}
+	return db.SaveTelegramToken(d, token, chat)
 }
