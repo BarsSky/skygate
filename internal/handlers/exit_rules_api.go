@@ -80,6 +80,7 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	added := 0
+	addedIDs := []int{}
 	dupCount := 0
 	errors := []string{}
 	// 2026-07-07: issue #12 — pre-check total limit before processing
@@ -118,16 +119,16 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 			rl.Action = "accept"
 		}
 		deviceIP := nodeIPs[rl.DeviceID]
-		ok, existingID := a.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP)
+		ok, newID := a.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP)
 		if !ok {
 			errors = append(errors, fmt.Sprintf("rule[%d]: db error", i))
 			continue
 		}
-		if existingID > 0 {
-			errors = append(errors, fmt.Sprintf("rule[%d]: duplicate of #%d", i, existingID))
-			dupCount++
+		if newID == 0 {
+			errors = append(errors, fmt.Sprintf("rule[%d]: insert returned no id", i))
 			continue
 		}
+		addedIDs = append(addedIDs, newID)
 		added++
 	}
 
@@ -145,7 +146,7 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{"added": added,
-		"duplicates": dupCount, "errors": errors}
+		"duplicates": dupCount, "errors": errors, "ids": addedIDs}
 	if errors == nil {
 		resp["errors"] = []string{}
 	}

@@ -49,13 +49,14 @@ func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType,
 	if targetType == "domain" {
 		parentDomain = targetValue
 	}
-	_, err = a.DB.Exec(
+	res, err := a.DB.Exec(
 		"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain)
 	if err != nil {
 		return false, 0
 	}
-	return true, 0
+	newID, _ := res.LastInsertId()
+	return true, int(newID)
 }
 
 func scanRules(rows *sql.Rows) ([]DeviceRule, error) {
