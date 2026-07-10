@@ -1174,18 +1174,44 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 					}
 				}
 				if bestKey != 0 {
-					matchedTag = firstTagOrFallback(n)
+				// 2026-07-10: bug fix — when the match came through a skygate-issued preauth
+				// key, the node must have been registered BY our user. Default to
+				// tag:private (so the user only sees their own devices in Tailscale).
+				// Previously firstTagOrFallback(n) returned tag:untagged for
+				// headscale-tagless nodes — UI showed tag:private locally but
+				// headscale had no tag. Admins can still set tag:public manually
+				// via /admin/devices/taged (PostAdminNodeTag).
+				matchedTag = "tag:private"
 				}
 			}
 		}
 		if matchedTag == "" {
 			continue
 		}
-		_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
-			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, ?, ?, ?, ?)`,
-			n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
-		inserted[n.ID] = true
+		if matchedTag == "tag:private" {
+			// 2026-07-10: bug fix — sync DB and headscale. If we already
+			// have a stale "tag:untagged" row from an older build (or empty
+			// tag), upgrade to tag:private. Skip rows that already carry
+			// tag:public (admin-assigned exit-node tag).
+			_, _ = db.Exec(`UPDATE node_owner_map SET tag=?, tagged_by_user_id=?, tagged_at=strftime('%s','now')
+				WHERE node_id=? AND (tag = '' OR tag = 'tag:untagged')`,
+				matchedTag, portalUserID, n.ID)
+		} else {
+			_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
+				(node_id, headscale_user_id, username, tag, tagged_by_user_id)
+				VALUES (?, ?, ?, ?, ?)`,
+				n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
+		}
+		// Push tag:private to headscale if matched. Safe for empty/untagged rows.
+		if matchedTag == "tag:private" {
+			if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil && a != nil && a.HS != nil {
+				if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
+					log.Printf("warn: auto-tag node %s: %v", n.ID, err)
+				}
+				a.HS.InvalidateCache()
+			}
+		}
+				inserted[n.ID] = true
 		// 2026-07-10: bug fix — sync node tag to headscale. New nodes
 		// registered via skygate now get tag:private automatically so the
 		// in-DB node_owner_map and headscale's tag reflect the same state
