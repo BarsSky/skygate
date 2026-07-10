@@ -377,7 +377,7 @@ func (a *App) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 	if a.Cfg != nil && a.Cfg.MaxTotalRules > 0 {
 		loadPct = totalRules * 100 / a.Cfg.MaxTotalRules
 	}
-	a.renderWithLayout(w, "admin/exit_rules_nodes.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/exit_rules_nodes.html", c, map[string]any{
 		"Page":         "exit-rules-nodes",
 		"Title":        "Node Load",
 		"Nodes":        nodes,

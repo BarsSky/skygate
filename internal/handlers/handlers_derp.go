@@ -29,7 +29,7 @@ func (a *App) GetAdminDERP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	a.renderWithLayout(w, "admin/derp.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/derp.html", c, map[string]any{
 		"DerpStatus": a.collectDerpStatus(),
 	})
 }

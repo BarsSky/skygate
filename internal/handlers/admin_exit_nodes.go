@@ -88,7 +88,7 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.renderWithLayout(w, "admin/exit_nodes.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/exit_nodes.html", c, map[string]any{
 		"Page":       "exit-nodes",
 		"Title":      "Exit Nodes",
 		"Nodes":      nodes,

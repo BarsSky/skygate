@@ -282,7 +282,7 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		deviceInfos[i].UserFacing = deviceUsage[did]
 	}
 
-a.renderWithLayout(w, "exit_rules.html", c, map[string]any{
+a.renderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":             "exit-rules",
 		"Title":            "Exit Rules",
 		"Rules":            rules,
@@ -745,7 +745,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = totalPct
 
-	a.renderWithLayout(w, "admin/exit_rules.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
 		"Page":          "exit-rules",
 		"Title":         "Exit Rules",
 		"Rules":         rr,

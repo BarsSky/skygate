@@ -38,7 +38,7 @@ func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		e.Time = time.Unix(t, 0).Format("2006-01-02 15:04:05")
 		entries = append(entries, e)
 	}
-	a.renderWithLayout(w, "admin/audit.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/audit.html", c, map[string]any{
 		"Entries": entries,
 	})
 }
@@ -54,7 +54,7 @@ func (a *App) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	if policyErr != nil {
 		errStr = policyErr.Error()
 	}
-	a.renderWithLayout(w, "admin/acls.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/acls.html", c, map[string]any{
 		"Policy":       policy,
 		"Error":        errStr,
 		"HeadplaneURL": "https://tsnet.skynas.ru/admin/",
