@@ -99,9 +99,9 @@
           <label>Действие</label>
           <select name="action">
             <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>✅ Allow — разрешить доступ</option>
-            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>🚫 Deny — запретить доступ</option>
+            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>🚫 Deny — отбрасывать трафик</option>
           </select>
-          <div class="hint"><b>Allow:</b> трафик к цели идёт через exit-node. <b>Deny:</b> трафик к цели блокируется на уровне ACL.</div>
+          <div class="hint"><b>Allow:</b> трафик к цели идёт через exit-node. <b>Deny:</b> трафик к цели отбрасывается на уровне ACL.</div>
         </div>
         <div class="field">
           <label>Тип цели</label>
@@ -152,7 +152,7 @@
         <span><i class="fa-solid fa-list"></i> Текущие правила ({{len .Rules}})</span>
         <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="Только ваши правила (без учёта /32, которые autoupdater создаёт для доменов)">Мои правила: {{.UserFacingCount}}/{{.MaxPerUser}}</span>{{else}}<span class="tag">Мои правила: {{.UserFacingCount}}</span>{{end}}
-          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="Системный лимит (все пользователи). Обычно вам это не нужно.">Системная: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
+          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="Системный счётчик (по всем пользователям). Обычно это не требуется.">Системная: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
         </span>
       </h3>
 
