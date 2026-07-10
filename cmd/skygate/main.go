@@ -19,6 +19,7 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
 	"skygate/internal/ratelimit"
+	"skygate/internal/telegram"
 )
 
 func main() {
@@ -169,6 +170,19 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+
+		// 2026-07-10: Telegram bot. If a token is in the DB, upgrade Notifier
+		// to the real client and start the polling loop for incoming commands.
+		{
+			rn := telegram.NewRealNotifier(d)
+			if rn.Configured() {
+				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")
+				app.Notifier = rn
+				go rn.Run(ctx)
+			} else {
+				log.Printf("🤖 Telegram bot not configured; notifications will noop")
+			}
+		}
 	defer stop()
 
 	go func() {
