@@ -348,7 +348,7 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMe
 	// /my/devices also fires from here, so the dashboard sees the same
 	// set the moment the user lands on the page.
 	if myUserID != 0 {
-		backfillNodeOwnership(a.DB, nodes, myUserID, myUsername)
+		a.backfillNodeOwnership(a.DB, nodes, myUserID, myUsername)
 	}
 	if myUsername != "" {
 		// Use a set of node IDs the user owns, sourced from node_owner_map.
@@ -616,7 +616,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// load, so the same fix happens for every node the user owns -
 	// without scanning the headscale DB up front.
 	if c.UserID != 0 {
-		backfillNodeOwnership(a.DB, all, c.UserID, username)
+		a.backfillNodeOwnership(a.DB, all, c.UserID, username)
 	}
 
 	// headscale reassigns ownership to a synthetic "tagged-devices" user
@@ -1060,7 +1060,7 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 // (user != "tagged-devices") keep their live link. We only insert
 // snapshot rows for nodes that headscale has effectively orphaned
 // OR for nodes that the user plausibly owns via temporal correlation.
-func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
+func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
 	if portalUserID == 0 || portalUsername == "" {
 		return
 	}
@@ -1186,6 +1186,21 @@ func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID 
 			VALUES (?, ?, ?, ?, ?)`,
 			n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
 		inserted[n.ID] = true
+		// 2026-07-10: bug fix — sync node tag to headscale. New nodes
+		// registered via skygate now get tag:private automatically so the
+		// in-DB node_owner_map and headscale's tag reflect the same state
+		// (was a real bug — UI showed private but Android Tailscale still
+		// saw all clients). Only re-tag when matchedTag is tag:private to
+		// avoid clobbering an admin's manual public/exit tags. Fire-and-
+		// forget: tag failures are logged but do not block the backfill.
+		if matchedTag == "tag:private" {
+			if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil && a != nil && a.HS != nil {
+				if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
+					log.Printf("warn: auto-tag node %s: %v", n.ID, err)
+				}
+				a.HS.InvalidateCache()
+			}
+		}
 		// Mark the preauth key as used if headscale has a node attached to it.
 		if n.PreAuthKeyID != "" {
 			if _, err := db.Exec(`UPDATE preauth_keys SET used=1 WHERE headscale_preauth_id=? AND used=0`, n.PreAuthKeyID); err != nil {
