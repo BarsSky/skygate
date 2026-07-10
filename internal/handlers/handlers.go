@@ -14,9 +14,13 @@ import (
 	"skygate/internal/config"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
+	"skygate/internal/i18n"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
+
+func init() { i18n.SetGlobal(i18n.New()) }
+
 
 
 
@@ -27,6 +31,7 @@ type App struct {
 	Version string
 	RateLimiter *ratelimit.Limiter
 	Notifier    telegram.Notifier
+	I18n         *i18n.Catalog
 	DB           *sql.DB
 	HS           *headscale.Client
 	HeadscaleKey string
@@ -56,6 +61,7 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
 	Notifier:    telegram.NoopNotifier{},
+		I18n:         i18n.New(),
 		Cfg:          cfg,
 	}
 }
@@ -71,7 +77,12 @@ func (a *App) render(w http.ResponseWriter, name string, data any) {
 // renderWithLayout wraps a fragment template in the layout. data is merged into
 // the wrapper, so handlers can add per-page fields (Nodes, Users, Entries, ...).
 // IsAdmin and Page are auto-derived from c (the JWT claims) so admin nav stays visible.
-func (a *App) renderWithLayout(w http.ResponseWriter, name string, c *auth.Claims, data map[string]any) {
+func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name string, c *auth.Claims, data map[string]any) {
+	// 2026-07-10: i18n. Detect lang from cookie/Accept-Language, build
+	// a Translations object so templates can call {{.T "key"}}.
+	lang := a.I18n.LangFromRequest(r)
+	data["Lang"] = lang
+	data["T"] = &i18n.Translations{Catalog: a.I18n, Lang: lang}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data["Page"] = pageFromName(name)
 	if c != nil {
@@ -253,6 +264,30 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
+// 2026-07-10: i18n. Set the lang cookie from a POST form, then redirect back.
+func (a *App) PostLang(w http.ResponseWriter, r *http.Request) {
+	lang := strings.ToLower(strings.TrimSpace(r.FormValue("lang")))
+	if lang != i18n.LangEN && lang != i18n.LangRU {
+		lang = i18n.LangRU
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "lang",
+		Value:    lang,
+		Path:     "/",
+		MaxAge:   365 * 24 * 3600,
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+	})
+	returnTo := r.FormValue("return_to")
+	if returnTo == "" {
+		returnTo = "/dashboard"
+	}
+	if !strings.HasPrefix(returnTo, "/") {
+		returnTo = "/dashboard"
+	}
+	http.Redirect(w, r, returnTo, http.StatusFound)
+}
+
 func (a *App) PostLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: "skygate_session", Value: "", Path: "/", MaxAge: -1,
@@ -413,7 +448,7 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	if !c.IsAdmin && hsUserName != "" {
 		scope = hsUserName
 	}
-	a.renderWithLayout(w, "dashboard.html", c, map[string]any{
+	a.renderWithLayout(w, r, "dashboard.html", c, map[string]any{
 		"TailnetMetrics": a.computeTailnetMetrics(scope, c.UserID),
 	})
 }
@@ -480,7 +515,7 @@ func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	a.renderWithLayout(w, "user/keys.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/keys.html", c, map[string]any{
 		"Keys":     keys,
 		"HasKeys":  len(keys) > 0,
 		"Now":      now,
@@ -588,7 +623,7 @@ func (a *App) GetHelp(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	a.renderWithLayout(w, "help.html", c, map[string]any{})
+	a.renderWithLayout(w, r, "help.html", c, map[string]any{})
 }
 
 // ---------- USER SELF-SERVICE ----------
@@ -693,7 +728,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("DBG GetMyDevices fetch took %v nodes=%d my=%d public=%d", time.Since(t0), len(all), len(myNodesList), len(publicNodes))
 
-	a.renderWithLayout(w, "user/devices.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/devices.html", c, map[string]any{
 		"MyNodes":     myNodesList,
 		"PublicNodes": publicNodes,
 		"HasMyNodes":  len(myNodesList) > 0,
@@ -725,7 +760,7 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at, headscale_preauth_id) VALUES(?,?,?,?)`,
 		c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
 	a.audit(c.UserID, c.Username, "preauth_issued", "1h single-use")
-	a.renderWithLayout(w, "user/preauth_result.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/preauth_result.html", c, map[string]any{
 		"Key":     key.Key,
 		"Expires": "1 hour",
 		"OS":      r.FormValue("os"),
@@ -741,7 +776,7 @@ func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exits, _ := a.HS.ListExitNodes()
-	a.renderWithLayout(w, "user/exit_nodes.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
 		"ExitNodes": exits,
 	})
 }

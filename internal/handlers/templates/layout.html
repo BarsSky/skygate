@@ -54,6 +54,22 @@
           <a href="/settings/theme?theme=nvidia" {{if eq .Theme "nvidia"}}class="active"{{end}}><i class="fa-solid fa-microchip"></i>NVIDIA</a>
         </div>
       </details>
+      <details class="theme-picker-sb">
+        <summary title="{{t "lang.toggle_label"}}"><i class="fa-solid fa-language"></i>{{if eq .Lang "en"}}EN{{else}}RU{{end}}</summary>
+        <div class="menu">
+          <form method="post" action="/lang" style="margin:0">
+            <input type="hidden" name="lang" value="ru">
+            <input type="hidden" name="return_to" value="">
+            <button type="submit" class="menu-btn{{if eq .Lang "ru"}} active{{end}}">Русский</button>
+          </form>
+          <form method="post" action="/lang" style="margin:0">
+            <input type="hidden" name="lang" value="en">
+            <input type="hidden" name="return_to" value="">
+            <button type="submit" class="menu-btn{{if eq .Lang "en"}} active{{end}}">English</button>
+          </form>
+        </div>
+      </details>
+      </details>
       <form method="post" action="/logout"><button type="submit" title="Выйти"><i class="fa-solid fa-right-from-bracket"></i></button></form>
     </div>
   </div>
