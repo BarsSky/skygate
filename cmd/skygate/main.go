@@ -18,6 +18,7 @@ import (
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
+	"skygate/internal/ratelimit"
 )
 
 func main() {
@@ -74,13 +75,27 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+
+		// 2026-07-10: rate limiting for /login (per-user + per-IP) and /api endpoints
+		// (per-IP). In-memory token bucket; auto-cleans stale entries.
+		app.RateLimiter = ratelimit.New()
+		go func() {
+			t := time.NewTicker(5 * time.Minute)
+			defer t.Stop()
+			for range t.C { app.RateLimiter.Sweep() }
+		}()
+		loginMW := middleware.RequireLoginLimit(app.RateLimiter)
+		apiMW := middleware.RequireAPILimit(app.RateLimiter)
+		_ = apiMW  // exposed for explicit endpoint wrapping (currently routes attach via authMW only)
+
+
 	app.Version = "v0.3"
 
 	mux := http.NewServeMux()
 
 	// Public
 	mux.HandleFunc("GET /login", app.GetLogin)
-	mux.HandleFunc("POST /login", app.PostLogin)
+	mux.Handle("POST /login", loginMW(http.HandlerFunc(app.PostLogin)))
 	mux.HandleFunc("POST /logout", app.PostLogout)
 	mux.HandleFunc("/favicon.ico", app.FaviconHandler)
 	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
@@ -128,10 +143,10 @@ func main() {
 	mux.Handle("GET /my/account", authMW(http.HandlerFunc(app.GetMyAccount)))
 	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(app.PostMyAccountPassword)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(app.GetMyExitRules)))
-	mux.Handle("POST /my/exit-rules", authMW(http.HandlerFunc(app.PostMyExitRule)))
+	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(app.PostMyExitRule))))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(app.PostDeleteExitRule)))
-	mux.Handle("GET /my/exit-rules/api", authMW(http.HandlerFunc(app.GetExitRulesAPI)))
-	mux.Handle("POST /my/exit-rules/api", authMW(http.HandlerFunc(app.PostExitRulesAPI)))
+	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(app.GetExitRulesAPI))))
+	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(app.PostExitRulesAPI))))
 	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(app.GetExitRulesAPIHelp)))
 	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(app.AdminExitRules)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(app.PostAdminRollbackACL)))
