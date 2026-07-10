@@ -56,7 +56,10 @@ check-nodes:
 		exit 1; \
 	fi
 
-test: smoke check-nodes
+test: go-test smoke check-nodes
+
+go-test:
+	@if command -v go >/dev/null 2>&1; then 		go test ./... 2>&1; 	else 		echo "go not installed; skipping go test"; 	fi
 
 clean:
 	rm -f $(BINARY)
