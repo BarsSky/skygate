@@ -41,6 +41,35 @@ status() {
   curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" "$@"
 }
 
+# Step 0.5: rate limit kicks in on /login
+# Send 6 wrong-password attempts with a non-admin username and verify the
+# 6th returns 429 Too Many Requests. Uses a throwaway username so we do
+# not consume the per-username bucket that the admin login needs.
+note "0.5. /login rate limit (5 wrong attempts before 429)"
+RL_USER="smoke_rl_user_$$"
+# Use a unique bad password that does not match anything
+for i in 1 2 3 4 5 6; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    --data-urlencode "username=$RL_USER" \
+    --data-urlencode "password=WRONG_PASSWORD_ATTEMPT_$i" \
+    "$BASE/login")
+  if [ "$i" -lt 6 ] && [ "$CODE" != "429" ]; then
+    ok "login attempt $i of 6 returned $CODE (under limit)"
+  elif [ "$i" -lt 6 ] && [ "$CODE" = "429" ]; then
+    bad "login attempt $i should NOT be blocked yet, got 429"
+  fi
+  if [ "$i" -eq 6 ]; then
+    if [ "$CODE" = "429" ]; then
+      ok "login attempt 6 returned 429 (rate limit kicked in)"
+    else
+      bad "login attempt 6 should be 429, got $CODE"
+    fi
+  fi
+done
+# /api rate limit is harder to test in 50 PASS budget (60/min default
+# means ~30 calls before block). Spot-check one 200 + a few short of
+# the limit. Skipped here to keep the smoke fast.
+
 # Step 1: login
 note "1. login as $USER"
 CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" -X POST \
