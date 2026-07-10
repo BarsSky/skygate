@@ -58,24 +58,28 @@ API:
 
 ```
 cmd/skygate/main.go                                — entry point, HTTP routes
-internal/handlers/handlers.go                       — login/logout/theme/devices/dashboard/preauth (1210 lines)
-internal/handlers/handlers_derp.go                  — DERP status + helpers (~370 lines)
-internal/handlers/handlers_admin_users.go           — admin user CRUD (~180 lines)
-internal/handlers/handlers_admin_nodes.go           — admin device/tag handlers (~90 lines)
-internal/handlers/exit_rules.go                     — GenerateACL + sync (1146 lines)
-internal/handlers/exit_rules_api.go                 — public REST API (~170 lines)
-internal/handlers/exit_rules_sync.go                — ACL sync, staggeredSync, autoupdater (~410 lines)
-internal/handlers/exit_rules_routescript.go         — route setup bash script gen (~325 lines)
-internal/handlers/exit_rules_cleanup.go              — admin cleanup + orphan /32 cleanup (~390 lines)
-internal/handlers/admin_backup.go                   — admin backup/restore ACL (~280 lines)
-internal/handlers/admin_telegram.go                 — admin telegram UI (UI only; sending not implemented)
-internal/handlers/admin_exit_nodes.go               — admin exit nodes
-internal/handlers/templates.go                      — `//go:embed` for all HTML
+internal/handlers/handlers.go                       — shared infra (App, render, i18n, currentUser, audit) + login/logout/lang/theme/dashboard/devices/preauth/keys/backfillNodeOwnership (~1100 lines)
+internal/handlers/handlers_my_account.go            — self-service password change at /my/account (~84 lines)
+internal/handlers/handlers_api_tokens.go            — personal API tokens (Bearer auth) at /my/tokens (~52 lines)
+internal/handlers/handlers_admin_pages.go           — admin read-only views: /admin/audit, /admin/acls (~58 lines)
+internal/handlers/handlers_derp.go                  — DERP status + helpers (~337 lines)
+internal/handlers/handlers_admin_users.go           — admin user CRUD (~209 lines)
+internal/handlers/handlers_admin_nodes.go           — admin device/tag handlers (~91 lines)
+internal/handlers/exit_rules.go                     — DeviceRule struct + DB helpers (insertRuleUnique, getDeviceRules, getUserDevices) + GenerateACL() + ACL helpers (~359 lines)
+internal/handlers/exit_rules_form.go                — HTML form handlers for /my/exit-rules, /admin/exit-rules, /admin/exit-rules/rollback; owns countUserFacing (~744 lines, extracted from exit_rules.go)
+internal/handlers/exit_rules_api.go                 — public REST API (~159 lines)
+internal/handlers/exit_rules_sync.go                — ACL sync, staggeredSync, autoupdater (~387 lines)
+internal/handlers/exit_rules_routescript.go         — route setup bash script gen (~299 lines)
+internal/handlers/exit_rules_cleanup.go              — admin cleanup + orphan /32 cleanup (~357 lines)
+internal/handlers/admin_backup.go                   — admin backup/restore ACL (~247 lines)
+internal/handlers/admin_telegram.go                 — admin telegram UI (UI only; sending not implemented, ~283 lines)
+internal/handlers/admin_exit_nodes.go               — admin exit nodes (~164 lines)
+internal/handlers/templates.go                      — `//go:embed` for all HTML (~117 lines)
 internal/handlers/static.go                         — empty stub (file is unused placeholder)
 internal/handlers/templates/exit_rules.html         — /my/exit-rules UI (filter, search, multi-delete)
 internal/handlers/templates/exit_rules_help.html    — /my/exit-rules/help page
 internal/handlers/templates/admin/                  — admin templates
-internal/handlers/templates/user/                   — user-facing templates (/my/devices, exit_nodes, etc.)
+internal/handlers/templates/user/                   — user-facing templates (/my/devices, account, exit_nodes, tokens, etc.)
 internal/config/config.go                           — env-based config
 internal/db/secrets.go                              — telegram/bot credentials (encrypted at rest)
 internal/headscale/                                 — headscale API client (incl. CLI fallback for tag/untag)
@@ -83,9 +87,10 @@ internal/db/                                        — SQLite layer
 internal/auth/                                      — JWT session + API tokens
 internal/handlers/templates/themes.css              — CSS embedded from static/css/themes.css
 deploy/{deploy,backup,validate}.sh                  — deployment scripts
-scripts/smoke.sh                                    — 35-step HTTP smoke test (uses make test)
+scripts/smoke.sh                                    — 56-step HTTP smoke test (uses make test)
 scripts/check_exit_nodes.py                         — verifies all exit-nodes advertise 0.0.0.0/0 + ::/0
-Makefile                                            — build / run / test / smoke targets
+scripts/audit_routes.py                             — static main.go vs handlers route-vs-handler audit
+Makefile                                            — build / run / test / smoke / audit targets
 AGENTS.md                                           — this file
 ```
 
@@ -151,13 +156,40 @@ to propagate through to the Tailscale clients).
 
 ---
 
+## Working environment (VM vs Windows)
+
+**The VM is the source of truth for runtime behaviour.** All deployment,
+runtime, and end-to-end verification work happens on the VM:
+`skyadmin@192.168.13.69` (a.k.a. `192.168.13.69`).
+
+**VM is for:**
+- Building skygate (`docker compose restart skygate`)
+- Running `make test` (smoke + `check_exit_nodes.py`)
+- Any `docker exec` / `docker compose` / `headscale` CLI work
+- Final go/no-go decision before pushing to `origin/main`
+
+**Windows (this workspace) is for:**
+- Editing source code, SQL migrations, configs
+- Static checks only — schema diffs, migration ordering, env-var review in
+  `internal/config/config.go`, headscale API surface checks
+- Fast iteration on code (build locally for syntax/compile sanity)
+
+**Never** use Windows as the `make test` source for a shipping decision.
+If local and VM results disagree, **VM wins**. Local build = iteration
+speed; VM `make test` green = ship.
+
+Quick rule: before any `git push`, ssh to the VM, pull, and run
+`make test`. Only push if `FINAL_EXIT=0`.
+
+---
+
 ## Smoke testing (make test)
 
 ```bash
 make test    # = smoke + check_exit_nodes
 ```
 
-`scripts/smoke.sh` is a 35-step HTTP-level smoke test that exercises login,
+`scripts/smoke.sh` is a 56-step HTTP-level smoke test that exercises login,
 device listing, /my/exit-rules CRUD, multi-delete, cascading, the /help page,
 admin sync, admin cleanup, /admin/exit-rules/sync, /admin/users, /admin/devices,
 static assets. Each step uses `curl` against `localhost:8080`.
@@ -231,8 +263,9 @@ If smoke fails at "step 8" (delete) — `smoke.sh` expects the API to return
 the new rule id in `{ids: [N]}`. Check `internal/handlers/exit_rules_api.go`.
 
 If smoke fails at "step 11" (per-user / per-device counters) — check
-`internal/handlers/exit_rules.go` (`countUserFacing` and the device-info
-enrichment in `renderWithLayout`).
+`internal/handlers/exit_rules_form.go` (`countUserFacing` lives there now
+after the extraction; it used to be in `exit_rules.go`) and the device-info
+enrichment in `renderWithLayout`.
 
 If smoke fails at "step 10" (admin sync) — check `/admin/exit-rules/sync`
 route registration in `cmd/skygate/main.go`.
@@ -241,21 +274,32 @@ route registration in `cmd/skygate/main.go`.
 
 ## Decomposition status
 
-`exit_rules.go` and `handlers.go` are continuously being decomposed into
-smaller files. The god-objects are now ~1100 lines each (was 1915 / 1750
-in earlier commits). When adding a new handler, prefer creating a focused
-file rather than growing either god-object:
+`exit_rules.go` has been largely decomposed (1146 → 359 lines) — the
+form/HTML handlers moved to `exit_rules_form.go` (744 lines), which itself
+is the next candidate for further splitting. `handlers.go` is still a
+god-object at ~1100 lines and is the main remaining target.
+
+When adding a new handler, prefer creating a focused file rather than
+growing either god-object:
 - `internal/handlers/handlers_yourfeature.go` for user-facing handlers
 - `internal/handlers/exit_rules_yourfeature.go` for exit-rule-related logic
+- `internal/handlers/handlers_admin_*.go` for admin pages
 
-Sister files in `internal/handlers/`:
-- `handlers.go` (1210 lines) — login, logout, theme, dashboard, devices,
-  preauth, My tokens (Pass), Admin Tokens (TODO extract).
-- `handlers_derp.go` (370) — DERP relay status
-- `handlers_admin_users.go` (180) — admin user CRUD
-- `handlers_admin_nodes.go` (90) — admin device/tag
-- `exit_rules.go` (1146) — GenerateACL + sync + form handlers
-- `exit_rules_api.go` (170) — public REST API
-- `exit_rules_sync.go` (410) — ACL sync, staggeredSync, autoupdater
-- `exit_rules_routescript.go` (325) — route setup bash script gen
-- `exit_rules_cleanup.go` (390) — admin cleanup + orphan /32 cleanup
+Sister files in `internal/handlers/` (current line counts):
+- `handlers.go` (1099) — shared infra + login/logout/lang/theme/dashboard/
+  devices/preauth/keys + `backfillNodeOwnership` + `computeTailnetMetrics`
+- `handlers_my_account.go` (84) — self-service password change
+- `handlers_api_tokens.go` (52) — personal API tokens
+- `handlers_admin_pages.go` (58) — read-only admin views (audit, ACLs)
+- `handlers_derp.go` (337) — DERP relay status
+- `handlers_admin_users.go` (209) — admin user CRUD
+- `handlers_admin_nodes.go` (91) — admin device/tag
+- `exit_rules.go` (359) — DeviceRule struct + DB helpers + `GenerateACL()` + ACL helpers
+- `exit_rules_form.go` (744) — HTML form handlers for /my/exit-rules + /admin/exit-rules + rollback
+- `exit_rules_api.go` (159) — public REST API
+- `exit_rules_sync.go` (387) — ACL sync, staggeredSync, autoupdater
+- `exit_rules_routescript.go` (299) — route setup bash script gen
+- `exit_rules_cleanup.go` (357) — admin cleanup + orphan /32 cleanup
+- `admin_backup.go` (247) — backup/restore ACL
+- `admin_telegram.go` (283) — telegram UI (no send)
+- `admin_exit_nodes.go` (164) — exit node admin
