@@ -162,7 +162,7 @@ func (a *App) GetExitRulesAPIHelp(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	a.renderWithLayout(w, "exit_rules_help.html", c, map[string]any{
+	a.renderWithLayout(w, r, "exit_rules_help.html", c, map[string]any{
 		"Page":  "exit-rules",
 		"Title": "Exit Rules API Help",
 	})

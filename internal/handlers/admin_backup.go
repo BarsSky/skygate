@@ -57,7 +57,7 @@ func (a *App) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Backups"] = backups
 
-	a.renderWithLayout(w, "admin-backup", c, data)
+	a.renderWithLayout(w, r, "admin-backup", c, data)
 }
 
 func formatSize(b int64) string {
@@ -227,7 +227,7 @@ func (a *App) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 		data["FlashError"] = e
 	}
 
-	a.renderWithLayout(w, "admin-settings", c, data)
+	a.renderWithLayout(w, r, "admin-settings", c, data)
 }
 
 func maskSecret(s string) string {
