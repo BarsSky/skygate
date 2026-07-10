@@ -89,9 +89,9 @@ RESP=$(curl -s -b "$COOKIE" -X POST \
 ADDED=$(echo "$RESP" | grep -oE '"added":[0-9]+' | grep -oE '[0-9]+' | head -1)
 if [ -n "$ADDED" ] && [ "$ADDED" -gt 0 ]; then
   ok "POST /my/exit-rules/api added=$ADDED rules"
-  # Extract first id of newly added rule
-  ID=$(echo "$RESP" | grep -oE '"id":[0-9]+' | head -1 | grep -oE '[0-9]+')
-  [ -n "$ID" ] && ok "got rule id=$ID"
+  # Extract ids from "ids":[N1,N2,...] array
+  IDS=$(echo "$RESP" | grep -oE '"ids":[[0-9,]+]' | grep -oE '[0-9]+' | tr '"' ' ')
+  [ -n "$IDS" ] && ok "got rule ids: $IDS"
 else
   bad "POST /my/exit-rules/api did not add: ${RESP:0:200}"
 fi
@@ -108,10 +108,14 @@ fi
 
 # Step 8: delete via multi-delete API
 note "8. delete the smoke-test rule (cascade test included)"
-if [ -n "$ID" ]; then
+if [ -n "$IDS" ]; then
+  # Build --data-urlencode ids=N for each id
+  ARGS=""
+  for i in $IDS; do
+    ARGS="$ARGS --data-urlencode ids=$i"
+  done
   CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" -X POST \
-    --data-raw "ids=$ID" \
-    "$BASE/my/exit-rules/delete")
+    "$BASE/my/exit-rules/delete" $ARGS)
   [ "$CODE" = "302" ] && ok "delete via ids= returned 302" || bad "delete returned $CODE"
   sleep 1
   RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
@@ -120,6 +124,8 @@ if [ -n "$ID" ]; then
   else
     ok "rule $RAND_VAL/32 removed (no orphans)"
   fi
+else
+  bad "no IDS captured from step 6; cannot delete"
 fi
 
 # Step 9: static assets
