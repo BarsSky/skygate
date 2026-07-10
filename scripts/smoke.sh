@@ -70,6 +70,26 @@ for path in /admin/users /admin/devices /admin/audit /admin/acls \
   [ "$CODE" = "200" ] && ok "$path 200" || bad "$path $CODE"
 done
 
+# Body render check on a subset of admin pages. renderBody looks up
+# {{define "body-{slug}"}}; any mismatch raises "html/template: ... is
+# undefined" written to the response body. We anchor to the leading
+# 'template:' on the first three response lines.
+for path in /admin/users /admin/acls /admin/devices /admin/audit; do
+  HTML=$(curl -s -b "$COOKIE" "$BASE$path")
+  if echo "$HTML" | head -3 | grep -q "^template:"; then
+    bad "$path: template render error ($(echo "$HTML" | head -3 | grep '^template:' | head -1))"
+  else
+    ok "$path HTML renders cleanly"
+  fi
+done
+
+# Content sanity: /admin/users must list skyadmin
+if curl -s -b "$COOKIE" "$BASE/admin/users" | grep -q "skyadmin"; then
+  ok "/admin/users lists skyadmin"
+else
+  bad "/admin/users: missing skyadmin"
+fi
+
 # Step 5: API endpoints
 note "5. API: GET /my/exit-rules/api"
 RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
@@ -106,6 +126,14 @@ if echo "$RESP" | grep -q "$RAND_VAL"; then
   ok "rule $RAND_VAL/32 present in API response"
 else
   bad "rule $RAND_VAL/32 NOT in API response"
+fi
+
+# Verify /my/exit-rules HTML renders with no template error
+HTML=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules")
+if echo "$HTML" | grep -q "^template:"; then
+  bad "GET /my/exit-rules: template error"
+else
+  ok "/my/exit-rules HTML renders"
 fi
 
 # Step 8: delete via multi-delete API
@@ -160,6 +188,22 @@ note "11.5. password change at /my/account (with revert)"
 
 CODE=$(status "$BASE/my/account")
 [ "$CODE" = "200" ] && ok "/my/account 200" || bad "/my/account $CODE"
+
+# Verify body renders (template not undefined error).
+# Any "template:" line in the response means renderBody failed because
+# {{define "body-..."}} name does not match what renderBody looks up.
+# As of 2026-07-10 the convention is body-{dir}-{filename} (e.g. body-user-account).
+HTML=$(curl -s -b "$COOKIE" "$BASE/my/account")
+if echo "$HTML" | grep -q "^template:"; then
+  bad "GET /my/account: template error ($(echo "$HTML" | grep -oE 'template:[^<]*' | head -1))"
+else
+  ok "/my/account HTML renders without template error"
+fi
+if echo "$HTML" | grep -q 'name="current_password"' && echo "$HTML" | grep -q 'name="new_password"'; then
+  ok "/my/account contains password-change form fields"
+else
+  bad "/my/account: missing current_password or new_password field"
+fi
 
 # Wrong current: redirect to ?err=wrong_current_password
 LOC=$(curl -s -i -b "$COOKIE" -X POST \
