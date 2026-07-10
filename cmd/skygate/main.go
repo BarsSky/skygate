@@ -96,6 +96,7 @@ func main() {
 
 	// Public
 	mux.HandleFunc("GET /login", app.GetLogin)
+	mux.HandleFunc("POST /lang", app.PostLang)
 	mux.Handle("POST /login", loginMW(http.HandlerFunc(app.PostLogin)))
 	mux.HandleFunc("POST /logout", app.PostLogout)
 	mux.HandleFunc("/favicon.ico", app.FaviconHandler)
