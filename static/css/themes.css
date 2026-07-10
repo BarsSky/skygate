@@ -297,3 +297,83 @@ footer a:hover{color:var(--accent)}
   .title-row h2{font-size:18px}
 }
 </style>
+/* Align username/password fields in the create-user form on /admin/users. */
+.user-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+.ufg-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* prevent grid blowout on long placeholders */
+}
+.ufg-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ufg-input,
+.ufg-input-sm {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.ufg-input-sm {
+  height: 30px;
+  font-size: 13px;
+}
+.ufg-btn {
+  height: 36px;
+  align-self: end;
+}
+
+/* Per-row action menu in the users table. */
+.user-actions { position: relative; }
+.user-actions summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  height: 28px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.user-actions summary::-webkit-details-marker { display: none; }
+.user-actions[open] summary { background: var(--border); }
+.user-actions-menu {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  z-index: 50;
+  background: var(--card-bg, var(--bg));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  min-width: 220px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.user-reset-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}

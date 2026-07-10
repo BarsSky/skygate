@@ -178,3 +178,45 @@ func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	a.audit(c.UserID, c.Username, "user_delete", fmt.Sprintf("id=%d %s hs_id=%d%s", id, username, hsID.Int64, hsDeleteMsg))
 	http.Redirect(w, r, "/admin/users", http.StatusFound)
 }
+
+// PostAdminUserResetPassword updates the password hash for an existing user.
+// Used by the per-row reset form on /admin/users.
+func (a *App) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	idStr := extractIDFromPath(r.URL.Path)
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		http.Error(w, "bad id", 400)
+		return
+	}
+	newPassword := r.FormValue("new_password")
+	if len(newPassword) < 6 {
+		http.Error(w, "password too short (min 6)", 400)
+		return
+	}
+	var username string
+	err := a.DB.QueryRow(`SELECT username FROM portal_users WHERE id=?`, id).Scan(&username)
+	if err != nil {
+		http.Error(w, "user not found", 404)
+		return
+	}
+	hash, err := auth.HashPassword(newPassword)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if _, err := a.DB.Exec(`UPDATE portal_users SET password_hash=? WHERE id=?`, hash, id); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	a.audit(c.UserID, c.Username, "user_password_reset", fmt.Sprintf("id=%d %s", id, username))
+	if a.Notifier != nil {
+		go a.Notifier.SendTelegram(fmt.Sprintf("🔑 Password reset by %s\nuser: %s (id=%d)", c.Username, username, id))
+	}
+	http.Redirect(w, r, "/admin/users?reset=1", http.StatusFound)
+}
+
