@@ -77,6 +77,32 @@ CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" -X POST \
   "$BASE/login")
 [ "$CODE" = "302" ] && ok "login returned 302" || bad "login returned $CODE"
 
+# Pre-flight: remove any leftover smoke-test rules on device 3 (emilia)
+# from previous smoke runs. These were created by step 6 below; if step 8
+# ever failed (e.g. timeout), the rule remained and accumulated.
+RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+ORPHAN_IDS=$(echo "$RESP" | grep -oE '"id":[0-9]+,"user_id":[0-9]+,"device_id":3' | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | tr '\n' ' ')
+# More robust: find rules with target_value 198.51.100.x on device 3
+ORPHAN_IDS=$(echo "$RESP" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for r in d.get('rules', []):
+    if r.get('device_id') == 3 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
+        print(r['id'])
+" 2>/dev/null | tr '\n' ' ')
+if [ -n "$ORPHAN_IDS" ]; then
+  ARGS=""
+  for i in $ORPHAN_IDS; do
+    ARGS="$ARGS --data-urlencode ids=$i"
+  done
+  curl -s -o /dev/null -b "$COOKIE" -X POST "$BASE/my/exit-rules/delete" $ARGS
+  note "0. cleanup: removed $(echo $ORPHAN_IDS | wc -w) orphan smoke rules on device 3 (emilia)"
+fi
+
+
 # Step 2: dashboard
 note "2. /dashboard"
 CODE=$(status "$BASE/dashboard")
@@ -289,6 +315,29 @@ curl -s -o /dev/null -b /tmp/smoke_new_ck -X POST \
   --data-urlencode "confirm_new_password=${SKYGATE_ADMIN_PASS}" \
   "$BASE/my/account/password"
 ok "reverted admin password back to original"
+
+# Post-flight: wipe any remaining 198.51.100.x rules on device 3 that
+# were created during this run (defense in depth; step 8 should already
+# have removed them).
+RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+ORPHAN_IDS=$(echo "$RESP" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for r in d.get('rules', []):
+    if r.get('device_id') == 3 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
+        print(r['id'])
+" 2>/dev/null | tr '\n' ' ')
+if [ -n "$ORPHAN_IDS" ]; then
+  ARGS=""
+  for i in $ORPHAN_IDS; do
+    ARGS="$ARGS --data-urlencode ids=$i"
+  done
+  curl -s -o /dev/null -b "$COOKIE" -X POST "$BASE/my/exit-rules/delete" $ARGS
+  note "11.6. cleanup: removed $(echo $ORPHAN_IDS | wc -w) post-run smoke artifacts"
+fi
 
 # Step 12: logout
 note "12. logout"
