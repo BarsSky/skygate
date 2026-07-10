@@ -71,7 +71,7 @@ func (a *App) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.renderWithLayout(w, "admin/users.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/users.html", c, map[string]any{
 		"Users":     users,
 		"HSOrphans": orphans,
 	})

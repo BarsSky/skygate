@@ -26,7 +26,7 @@ func (a *App) GetMyAccount(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	a.renderWithLayout(w, "user/account.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/account.html", c, map[string]any{
 		"Page":        "account",
 		"Title":       "Account",
 		"FlashOK":     r.URL.Query().Get("saved"),

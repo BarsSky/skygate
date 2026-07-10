@@ -34,7 +34,7 @@ func (a *App) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if tokens == nil { tokens = []tRow{} }
-	a.renderWithLayout(w, "my_tokens.html", c, map[string]any{"Page": "tokens", "Title": "API Tokens", "Tokens": tokens})
+	a.renderWithLayout(w, r, "my_tokens.html", c, map[string]any{"Page": "tokens", "Title": "API Tokens", "Tokens": tokens})
 }
 
 func (a *App) PostMyToken(w http.ResponseWriter, r *http.Request) {

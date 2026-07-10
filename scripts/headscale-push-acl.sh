@@ -58,12 +58,31 @@ print("users:", user_emails)
 # The proper fix is per-user-private tags (tag:skyadmin, tag:michail, ...)
 # which would require re-tagging every node. For now the simpler model
 # keeps the UI populated.
-new_acls = []
+# Catch-all egress rules. Required for exit-node traffic: the user's
+# Tailscale client checks the ACL for the actual destination (0.0.0.0/0,
+# ::/0) before forwarding via the exit node. Without these, the client
+# drops exit-node traffic at the ACL check, even though the exit node
+# itself is reachable.
+#
+# Trade-off: the f0881e2 commit removed the catch-all to avoid the
+# "Tailscale Android all devices visible" bug. We re-add it (in explicit
+# subnet-route form rather than "*:*") because exit-node functionality
+# is the core feature of the public exit nodes. If Android UI filtering
+# becomes critical, the proper fix is per-user-private tags
+# (tag:skyadmin, tag:michail, ...) — bigger refactor.
+new_acls = [
+    {"action": "accept", "src": ["*"], "dst": ["0.0.0.0/0:*"]},
+    {"action": "accept", "src": ["*"], "dst": ["::/0:*"]},
+]
 for ue in user_emails:
     new_acls.append({"action": "accept", "src": [ue], "dst": [ue + ":*"]})
     new_acls.append({"action": "accept", "src": [ue], "dst": ["tag:private:*"]})
-    new_acls.append({"action": "accept", "src": [ue], "dst": ["tag:public:*"]})
-    new_acls.append({"action": "accept", "src": [ue], "dst": ["tag:exit-node:*"]})
+# tag:public and tag:exit-node are SHARED INFRASTRUCTURE — they must be
+# reachable from any Tailscale client, not only portal users. This matches
+# the original (pre-1386449) design and fixes the regression where exit
+# nodes became invisible to non-portal Tailscale clients.
+new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:public:*"]})
+new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:exit-node:*"]})
 
 new_tag_owners = {
     "tag:public": ["skyadmin@tsnet.skynas.ru"],
