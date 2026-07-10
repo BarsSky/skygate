@@ -5,6 +5,8 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+		
+		"skygate/internal/i18n"
 	"io"
 	"io/fs"
 	"path"
@@ -28,12 +30,28 @@ func LoadTemplates() *Templates {
 	// First pass: register renderBody placeholder so ParseFS doesn't fail.
 	// We'll re-register with the real impl after parsing bodies.
 	t.Funcs(template.FuncMap{
+		"t": func(key string) string {
+			return i18n.GlobalCatalog.T(i18n.GlobalLang, key)
+		},
 		"safeJS": func(s string) template.JS { return template.JS(s) },
 		"dividefloat": func(a, b float64) float64 {
 			if b == 0 { return 0 }
 			return a / b
 		},
 		"add": func(a, b int) int { return a + b },
+		"usageLevel": func(count, max int) string {
+			// Returns tag class for usage display: "danger" >75%, "warn" >50%, else "success".
+			if max <= 0 {
+				return "success"
+			}
+			if count*4 > max*3 {
+				return "danger"
+			}
+			if count*2 > max {
+				return "warn"
+			}
+			return "success"
+		},
 		"datetimeformat": func(unix int64) string {
 			if unix <= 0 {
 				return "—"

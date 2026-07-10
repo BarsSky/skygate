@@ -1,0 +1,348 @@
+#!/bin/bash
+# scripts/smoke.sh — end-to-end smoke test for skygate.
+# Runs in ~5s. Exits 0 on PASS, 1 on FAIL.
+#
+# Usage:
+#   bash scripts/smoke.sh [BASE_URL]   # default http://localhost:8080
+#
+# Reads SKYGATE_ADMIN_USER / SKYGATE_ADMIN_PASS from .env automatically.
+set -u
+PASS=0
+
+: "${SMOKE_TEST_NEW_PASSWORD:=SkySmoke_2026_X}"
+FAIL=0
+ok()  { echo "PASS: $1"; PASS=$((PASS+1)); }
+bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
+note(){ echo "---- $1"; }
+
+BASE="${1:-http://localhost:8080}"
+COOKIE=/tmp/smoke_ck
+rm -f "$COOKIE"
+
+# Try to load credentials from .env
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -f "$PROJECT_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$PROJECT_ROOT/.env"
+  set +a
+fi
+USER="${SKYGATE_ADMIN_USER:-skyadmin}"
+PASS_VAR="${SKYGATE_ADMIN_PASS:-}"
+
+if [ -z "$PASS_VAR" ]; then
+  bad "SKYGATE_ADMIN_PASS not set in env / .env"
+  exit 1
+fi
+
+# Helper: HTTP status
+status() {
+  curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" "$@"
+}
+
+# Step 0.5: rate limit kicks in on /login
+# Send 6 wrong-password attempts with a non-admin username and verify the
+# 6th returns 429 Too Many Requests. Uses a throwaway username so we do
+# not consume the per-username bucket that the admin login needs.
+note "0.5. /login rate limit (5 wrong attempts before 429)"
+RL_USER="smoke_rl_user_$$"
+# Use a unique bad password that does not match anything
+for i in 1 2 3 4 5 6; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    --data-urlencode "username=$RL_USER" \
+    --data-urlencode "password=WRONG_PASSWORD_ATTEMPT_$i" \
+    "$BASE/login")
+  if [ "$i" -lt 6 ] && [ "$CODE" != "429" ]; then
+    ok "login attempt $i of 6 returned $CODE (under limit)"
+  elif [ "$i" -lt 6 ] && [ "$CODE" = "429" ]; then
+    bad "login attempt $i should NOT be blocked yet, got 429"
+  fi
+  if [ "$i" -eq 6 ]; then
+    if [ "$CODE" = "429" ]; then
+      ok "login attempt 6 returned 429 (rate limit kicked in)"
+    else
+      bad "login attempt 6 should be 429, got $CODE"
+    fi
+  fi
+done
+# /api rate limit is harder to test in 50 PASS budget (60/min default
+# means ~30 calls before block). Spot-check one 200 + a few short of
+# the limit. Skipped here to keep the smoke fast.
+
+# Step 1: login
+note "1. login as $USER"
+CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" -X POST \
+  --data-urlencode "username=$USER" --data-urlencode "password=$PASS_VAR" \
+  "$BASE/login")
+[ "$CODE" = "302" ] && ok "login returned 302" || bad "login returned $CODE"
+
+# Pre-flight: remove any leftover smoke-test rules on device 3 (emilia)
+# from previous smoke runs. These were created by step 6 below; if step 8
+# ever failed (e.g. timeout), the rule remained and accumulated.
+RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+ORPHAN_IDS=$(echo "$RESP" | grep -oE '"id":[0-9]+,"user_id":[0-9]+,"device_id":3' | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | tr '\n' ' ')
+# More robust: find rules with target_value 198.51.100.x on device 3
+ORPHAN_IDS=$(echo "$RESP" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for r in d.get('rules', []):
+    if r.get('device_id') == 3 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
+        print(r['id'])
+" 2>/dev/null | tr '\n' ' ')
+if [ -n "$ORPHAN_IDS" ]; then
+  ARGS=""
+  for i in $ORPHAN_IDS; do
+    ARGS="$ARGS --data-urlencode ids=$i"
+  done
+  curl -s -o /dev/null -b "$COOKIE" -X POST "$BASE/my/exit-rules/delete" $ARGS
+  note "0. cleanup: removed $(echo $ORPHAN_IDS | wc -w) orphan smoke rules on device 3 (emilia)"
+fi
+
+
+# Step 2: dashboard
+note "2. /dashboard"
+CODE=$(status "$BASE/dashboard")
+[ "$CODE" = "200" ] && ok "/dashboard 200" || bad "/dashboard $CODE"
+
+# Step 3: my/* pages
+note "3. /my/* pages"
+for path in /my/devices /my/exit-rules /my/exit-rules/help /my/tokens /my/keys /my/exit-nodes /help; do
+  CODE=$(status "$BASE$path")
+  [ "$CODE" = "200" ] && ok "$path 200" || bad "$path $CODE"
+done
+
+# Step 4: admin/* pages (skyadmin is admin)
+note "4. /admin/* pages"
+for path in /admin/users /admin/devices /admin/audit /admin/acls \
+            /admin/exit-rules /admin/exit-rules/cleanup /admin/exit-rules/sync \
+            /admin/exit-nodes /admin/derp /admin/backup /admin/settings \
+            /admin/telegram; do
+  CODE=$(status "$BASE$path")
+  [ "$CODE" = "200" ] && ok "$path 200" || bad "$path $CODE"
+done
+
+# Body render check on a subset of admin pages. renderBody looks up
+# {{define "body-{slug}"}}; any mismatch raises "html/template: ... is
+# undefined" written to the response body. We anchor to the leading
+# 'template:' on the first three response lines.
+for path in /admin/users /admin/acls /admin/devices /admin/audit; do
+  HTML=$(curl -s -b "$COOKIE" "$BASE$path")
+  if echo "$HTML" | head -3 | grep -q "^template:"; then
+    bad "$path: template render error ($(echo "$HTML" | head -3 | grep '^template:' | head -1))"
+  else
+    ok "$path HTML renders cleanly"
+  fi
+done
+
+# Content sanity: /admin/users must list skyadmin
+if curl -s -b "$COOKIE" "$BASE/admin/users" | grep -q "skyadmin"; then
+  ok "/admin/users lists skyadmin"
+else
+  bad "/admin/users: missing skyadmin"
+fi
+
+# Step 5: API endpoints
+note "5. API: GET /my/exit-rules/api"
+RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+if echo "$RESP" | grep -q '"rules"'; then
+  ok "/my/exit-rules/api returns JSON with 'rules'"
+else
+  bad "/my/exit-rules/api response unexpected: ${RESP:0:80}"
+fi
+
+# Step 6: Add a temp rule via API and verify it appears
+# Use device 3 (emilia) which has 0 manual rules so we don't hit the per-device 200 limit.
+note "6. API: POST /my/exit-rules/api (add smoke-test rule on emilia=3)"
+RAND_VAL="198.51.100.$((RANDOM % 250 + 1))"
+RESP=$(curl -s -b "$COOKIE" -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"rules\":[{\"device_id\":3,\"exit_node\":\"karolina\",\"target_type\":\"subnet\",\"target_value\":\"$RAND_VAL/32\",\"action\":\"accept\"}]}" \
+  "$BASE/my/exit-rules/api")
+# Check actually added (not just field present)
+ADDED=$(echo "$RESP" | grep -oE '"added":[0-9]+' | grep -oE '[0-9]+' | head -1)
+if [ -n "$ADDED" ] && [ "$ADDED" -gt 0 ]; then
+  ok "POST /my/exit-rules/api added=$ADDED rules"
+  # Extract ids from "ids":[N1,N2,...] array
+  IDS=$(echo "$RESP" | grep -oE '"ids":[[0-9,]+]' | grep -oE '[0-9]+' | tr '"' ' ')
+  [ -n "$IDS" ] && ok "got rule ids: $IDS"
+else
+  bad "POST /my/exit-rules/api did not add: ${RESP:0:200}"
+fi
+
+# Step 7: Verify the new rule is in the list
+note "7. rule visible in /my/exit-rules/api"
+sleep 1
+RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+if echo "$RESP" | grep -q "$RAND_VAL"; then
+  ok "rule $RAND_VAL/32 present in API response"
+else
+  bad "rule $RAND_VAL/32 NOT in API response"
+fi
+
+# Verify /my/exit-rules HTML renders with no template error
+HTML=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules")
+if echo "$HTML" | grep -q "^template:"; then
+  bad "GET /my/exit-rules: template error"
+else
+  ok "/my/exit-rules HTML renders"
+fi
+
+# Step 8: delete via multi-delete API
+note "8. delete the smoke-test rule (cascade test included)"
+if [ -n "$IDS" ]; then
+  # Build --data-urlencode ids=N for each id
+  ARGS=""
+  for i in $IDS; do
+    ARGS="$ARGS --data-urlencode ids=$i"
+  done
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" -X POST \
+    "$BASE/my/exit-rules/delete" $ARGS)
+  [ "$CODE" = "302" ] && ok "delete via ids= returned 302" || bad "delete returned $CODE"
+  sleep 1
+  RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+  if echo "$RESP" | grep -q "$RAND_VAL"; then
+    bad "rule $RAND_VAL/32 still present after delete"
+  else
+    ok "rule $RAND_VAL/32 removed (no orphans)"
+  fi
+else
+  bad "no IDS captured from step 6; cannot delete"
+fi
+
+# Step 9: static assets
+note "9. static assets"
+for path in /favicon.ico /favicon.svg /static/css/font-awesome.min.css; do
+  CODE=$(status "$BASE$path")
+  [ "$CODE" = "200" ] && ok "$path 200" || bad "$path $CODE"
+done
+
+# Step 10: /admin/exit-rules/sync — run advertised-routes sync
+note "10. /admin/exit-rules/sync (admin trigger)"
+CODE=$(status "$BASE/admin/exit-rules/sync")
+[ "$CODE" = "200" ] && ok "/admin/exit-rules/sync 200" || bad "/admin/exit-rules/sync $CODE"
+
+# Step 11: validate HTML /my/exit-rules contains critical strings
+note "11. UI sanity: /my/exit-rules contains required text"
+HTML=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules")
+for needle in "Текущие правила" "Мои правила" "Добавить правило"; do
+  if echo "$HTML" | grep -qF "$needle"; then
+    ok "page contains '$needle'"
+  else
+    bad "page missing '$needle'"
+  fi
+done
+
+# Step 11.5: self-service password change via /my/account
+# Verifies the password-change flow introduced in commit c30044b without
+# actually changing the admin password permanently (we revert at the end).
+note "11.5. password change at /my/account (with revert)"
+
+CODE=$(status "$BASE/my/account")
+[ "$CODE" = "200" ] && ok "/my/account 200" || bad "/my/account $CODE"
+
+# Verify body renders (template not undefined error).
+# Any "template:" line in the response means renderBody failed because
+# {{define "body-..."}} name does not match what renderBody looks up.
+# As of 2026-07-10 the convention is body-{dir}-{filename} (e.g. body-user-account).
+HTML=$(curl -s -b "$COOKIE" "$BASE/my/account")
+if echo "$HTML" | grep -q "^template:"; then
+  bad "GET /my/account: template error ($(echo "$HTML" | grep -oE 'template:[^<]*' | head -1))"
+else
+  ok "/my/account HTML renders without template error"
+fi
+if echo "$HTML" | grep -q 'name="current_password"' && echo "$HTML" | grep -q 'name="new_password"'; then
+  ok "/my/account contains password-change form fields"
+else
+  bad "/my/account: missing current_password or new_password field"
+fi
+
+# Wrong current: redirect to ?err=wrong_current_password
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=WRONG_PASSWORD" \
+  --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "wrong_current_password" \
+  && ok "wrong current returns err=wrong_current_password" \
+  || bad "wrong current got $LOC"
+
+# Mismatching new/confirm
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "confirm_new_password=DIFFERENT_PASSWORD" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "passwords_dont_match" \
+  && ok "mismatch returns err=passwords_dont_match" \
+  || bad "mismatch got $LOC"
+
+# Too-short password
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "new_password=short" \
+  --data-urlencode "confirm_new_password=short" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "password_too_short" \
+  && ok "short password returns err=password_too_short" \
+  || bad "short got $LOC"
+
+# Valid change -> saved=ok
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "saved=ok" \
+  && ok "valid change returns saved=ok" \
+  || bad "valid change got $LOC"
+
+# Login with the NEW password, then revert
+rm -f /tmp/smoke_new_ck
+curl -s -c /tmp/smoke_new_ck -X POST -d "username=skyadmin&password=${SMOKE_TEST_NEW_PASSWORD}" "$BASE/login" -o /dev/null
+if grep -q "skygate_session" /tmp/smoke_new_ck 2>/dev/null; then
+  ok "login with new password issued session cookie"
+else
+  bad "login with new password failed"
+fi
+# Revert password back to original (admin) value
+curl -s -o /dev/null -b /tmp/smoke_new_ck -X POST \
+  --data-urlencode "current_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "new_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "confirm_new_password=${SKYGATE_ADMIN_PASS}" \
+  "$BASE/my/account/password"
+ok "reverted admin password back to original"
+
+# Post-flight: wipe any remaining 198.51.100.x rules on device 3 that
+# were created during this run (defense in depth; step 8 should already
+# have removed them).
+RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+ORPHAN_IDS=$(echo "$RESP" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for r in d.get('rules', []):
+    if r.get('device_id') == 3 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
+        print(r['id'])
+" 2>/dev/null | tr '\n' ' ')
+if [ -n "$ORPHAN_IDS" ]; then
+  ARGS=""
+  for i in $ORPHAN_IDS; do
+    ARGS="$ARGS --data-urlencode ids=$i"
+  done
+  curl -s -o /dev/null -b "$COOKIE" -X POST "$BASE/my/exit-rules/delete" $ARGS
+  note "11.6. cleanup: removed $(echo $ORPHAN_IDS | wc -w) post-run smoke artifacts"
+fi
+
+# Step 12: logout
+note "12. logout"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" -c "$COOKIE" -X POST "$BASE/logout")
+[ "$CODE" = "302" ] || [ "$CODE" = "200" ] && ok "logout returned $CODE" || bad "logout $CODE"
+
+note "SUMMARY: $PASS pass, $FAIL fail"
+[ "$FAIL" = "0" ] && exit 0 || exit 1

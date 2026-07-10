@@ -1,0 +1,303 @@
+package handlers
+
+import (
+	"crypto/subtle"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"skygate/internal/auth"
+	"skygate/internal/db"
+)
+
+// Telegram admin UI lives at /admin/telegram (GET) and /admin/telegram
+// (POST). It is admin-only.
+//
+// Flash messages are passed via redirect query parameters
+// (?saved=ok|err&msg=...) instead of cookies — every other admin page in
+// this codebase follows that pattern and we keep consistent here.
+
+func (a *App) AdminTelegram(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	state := a.loadTelegramUIState()
+	csrf, err := db.RandomConfirmationToken(8)
+	if err != nil {
+		http.Error(w, "csrf generation failed", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "skygate_tg_csrf",
+		Value:    csrf,
+		Path:     "/admin/telegram",
+		MaxAge:   600,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	a.renderWithLayout(w, "admin/telegram.html", c, map[string]any{
+		"Page":         "admin/telegram",
+		"Title":        "Telegram",
+		"State":        state,
+		"FlashSuccess": r.URL.Query().Get("ok"),
+		"FlashError":   r.URL.Query().Get("err"),
+		"CSRF":         csrf,
+	})
+}
+
+func (a *App) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		a.redirectWithFlash(w, r, "", fmt.Sprintf("Ошибка парсинга формы: %s", err.Error()))
+		return
+	}
+	action := strings.TrimSpace(r.FormValue("action"))
+	cookie, err := r.Cookie("skygate_tg_csrf")
+	if err != nil || cookie.Value == "" {
+		a.redirectWithFlash(w, r, "", "CSRF-cookie отсутствует — обновите страницу и повторите")
+		return
+	}
+	submitted := r.FormValue("csrf")
+	if subtle.ConstantTimeCompare([]byte(submitted), []byte(cookie.Value)) != 1 {
+		a.audit(c.UserID, c.Username, "telegram_csrf_fail",
+			fmt.Sprintf("action=%s ip=%s", action, r.RemoteAddr))
+		a.redirectWithFlash(w, r, "", "Неверный CSRF-токен — обновите страницу и повторите")
+		return
+	}
+	switch action {
+	case "save":
+		a.handleTelegramSave(w, r, c)
+	case "test":
+		a.handleTelegramTest(w, r, c)
+	case "rotate":
+		a.handleTelegramRotate(w, r, c)
+	case "disable":
+		a.handleTelegramDisable(w, r, c)
+	default:
+		a.redirectWithFlash(w, r, "", "Неизвестное действие: "+action)
+	}
+}
+
+func (a *App) handleTelegramSave(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	token := strings.TrimSpace(r.FormValue("bot_token"))
+	chatID := strings.TrimSpace(r.FormValue("chat_id"))
+	if token == "" && chatID == "" {
+		a.redirectWithFlash(w, r, "", "Заполните хотя бы одно поле (токен или chat_id)")
+		return
+	}
+	if token != "" && !looksLikeTelegramBotToken(token) {
+		a.redirectWithFlash(w, r, "", "Токен выглядит не как BotFather token: ожидается '<id>:<secret>'")
+		return
+	}
+	if chatID != "" && !looksLikeTelegramChatID(chatID) {
+		a.redirectWithFlash(w, r, "", "chat_id должен быть числом (например 12345) или -100… для супергруппы")
+		return
+	}
+	if err := db.SaveTelegramToken(a.DB, token, chatID); err != nil {
+		a.redirectWithFlash(w, r, "", "Не удалось сохранить: "+err.Error())
+		return
+	}
+	mask := ""
+	if token != "" {
+		mask = db.TelegramFingerprint(token)
+	} else {
+		existing, _, _, _ := db.LoadTelegramToken(a.DB)
+		mask = db.TelegramFingerprint(existing)
+	}
+	a.audit(c.UserID, c.Username, "telegram_save",
+		fmt.Sprintf("token=%s chat=%s", mask, redactChatID(chatID, token, c)))
+	writeFlashRedirect(w, r, fmt.Sprintf("Сохранено. Токен: %s. Проверьте кнопкой «Отправить тест».", mask))
+}
+
+func (a *App) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	token, chatID, ok, err := db.LoadTelegramToken(a.DB)
+	if err != nil {
+		a.redirectWithFlash(w, r, "", "Ошибка чтения из БД: "+err.Error())
+		return
+	}
+	if !ok {
+		a.redirectWithFlash(w, r, "", "Сначала сохраните токен и chat_id")
+		return
+	}
+	subject := strings.TrimSpace(r.FormValue("test_subject"))
+	body := strings.TrimSpace(r.FormValue("test_body"))
+	if subject == "" {
+		subject = "skygate test"
+	}
+	if body == "" {
+		body = "Telegram notification channel is operational. Sent from admin → telegram page."
+	}
+
+	tgAPI := "https://api.telegram.org"
+	if v := os.Getenv("TELEGRAM_API"); v != "" {
+		tgAPI = v
+	}
+	endpoint := tgAPI + "/bot" + url.PathEscape(token) + "/sendMessage"
+	payload := fmt.Sprintf(`{"chat_id":%q,"text":%q,"disable_web_page_preview":true}`,
+		chatID, formatTelegramMessage(r.Host, subject, body))
+
+	cmd := exec.Command("curl", "-sS", "--max-time", "10",
+		"-X", "POST", endpoint,
+		"-H", "Content-Type: application/json",
+		"--data-binary", payload,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		a.audit(c.UserID, c.Username, "telegram_test_fail", err.Error())
+		writeErrRedirect(w, r, "curl: "+err.Error()+" — "+string(out))
+		return
+	}
+	if !strings.Contains(string(out), `"ok":true`) {
+		a.audit(c.UserID, c.Username, "telegram_test_fail", string(out))
+		writeErrRedirect(w, r, "Telegram API отклонил запрос: "+string(out))
+		return
+	}
+	a.audit(c.UserID, c.Username, "telegram_test_ok", db.TelegramFingerprint(token))
+	writeFlashRedirect(w, r, "Сообщение отправлено. Проверьте Telegram.")
+}
+
+func (a *App) handleTelegramRotate(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	if r.FormValue("confirm") != "yes" {
+		a.redirectWithFlash(w, r, "", "Поставьте галочку подтверждения для rotate")
+		return
+	}
+	if err := db.DeleteTelegramToken(a.DB); err != nil {
+		a.redirectWithFlash(w, r, "", "Не удалось очистить старый токен: "+err.Error())
+		return
+	}
+	a.audit(c.UserID, c.Username, "telegram_rotate", "")
+	writeFlashRedirect(w, r, "Старый токен удалён. Сохраните новый.")
+}
+
+func (a *App) handleTelegramDisable(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	if r.FormValue("confirm") != "yes" {
+		a.redirectWithFlash(w, r, "", "Поставьте галочку подтверждения для disable")
+		return
+	}
+	if err := db.DeleteTelegramToken(a.DB); err != nil {
+		a.redirectWithFlash(w, r, "", "Ошибка при удалении: "+err.Error())
+		return
+	}
+	a.audit(c.UserID, c.Username, "telegram_disable", "")
+	writeFlashRedirect(w, r, "Telegram отключён. Уведомления будут писаться в ~/.skygate-notify.log")
+}
+
+// telegramUIState is the shape the template consumes.
+type telegramUIState struct {
+	Configured bool
+	TokenFP    string
+	ChatID     string
+	UpdatedAt  string
+}
+
+func (a *App) loadTelegramUIState() telegramUIState {
+	token, chatID, ok, err := db.LoadTelegramToken(a.DB)
+	state := telegramUIState{}
+	if err != nil || !ok {
+		return state
+	}
+	state.Configured = true
+	state.TokenFP = db.TelegramFingerprint(token)
+	state.ChatID = chatID
+	var ts int64
+	row := a.DB.QueryRow(`SELECT MAX(updated_at) FROM global_settings WHERE key IN (?, ?)`,
+		"telegram.bot_token", "telegram.chat_id")
+	if err := row.Scan(&ts); err == nil && ts > 0 {
+		state.UpdatedAt = time.Unix(ts, 0).UTC().Format("2006-01-02 15:04:05 UTC")
+	}
+	return state
+}
+
+// looksLikeTelegramBotToken: structural sanity check. "<bot-id>:<secret>",
+// bot-id must be digits, secret non-empty. Length is not enforced
+// because Telegram has changed it historically.
+func looksLikeTelegramBotToken(s string) bool {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, r := range parts[0] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// looksLikeTelegramChatID: digits, optional leading minus. Empty OK
+// (token-only path).
+func looksLikeTelegramChatID(s string) bool {
+	if s == "" {
+		return true
+	}
+	if s[0] == '-' {
+		s = s[1:]
+	}
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// formatTelegramMessage mirrors what scripts/notify.sh builds, so
+// on-call engineers recognise the layout from both channels.
+func formatTelegramMessage(host, subject, body string) string {
+	return fmt.Sprintf("[%s] %s\n%s\n—\n%s",
+		host, subject, time.Now().UTC().Format("2006-01-02T15:04:05Z"), body)
+}
+
+// redirectWithFlash centralises the redirect + flash query param logic
+// so handler branches don't have to repeat it.
+func (a *App) redirectWithFlash(w http.ResponseWriter, r *http.Request, okMsg, errMsg string) {
+	q := url.Values{}
+	if okMsg != "" {
+		q.Set("ok", okMsg)
+	}
+	if errMsg != "" {
+		q.Set("err", errMsg)
+	}
+	target := "/admin/telegram"
+	if encoded := q.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func writeFlashRedirect(w http.ResponseWriter, r *http.Request, okMsg string) {
+	q := url.Values{}
+	if okMsg != "" {
+		q.Set("ok", okMsg)
+	}
+	http.Redirect(w, r, "/admin/telegram?"+q.Encode(), http.StatusSeeOther)
+}
+
+func writeErrRedirect(w http.ResponseWriter, r *http.Request, errMsg string) {
+	q := url.Values{}
+	q.Set("err", errMsg)
+	http.Redirect(w, r, "/admin/telegram?"+q.Encode(), http.StatusSeeOther)
+}
+
+// redactChatID returns "<id>" if token was unchanged (chat_id is the
+// new value), or hides the chat_id if it was a token rotation only.
+// We use it for audit_log only — never anywhere else.
+func redactChatID(chatID, token string, c *auth.Claims) string {
+	if chatID == "" {
+		return "<token-only>"
+	}
+	return chatID
+}

@@ -291,27 +291,27 @@ func durationFlag(d time.Duration) string {
 }
 
 type HSPreauthKey struct {
-	ID     string `json:"id"`
-	User   HSUser `json:"user"`
-	Key    string `json:"key"`
-	Used   bool   `json:"used"`
+	ID   string `json:"id"`
+	User HSUser `json:"user"`
+	Key  string `json:"key"`
+	Used bool   `json:"used"`
 }
 
 type HSNode struct {
-	ID            string         `json:"id"`
-	MachineKey    string         `json:"machineKey"`
-	NodeKey       string         `json:"nodeKey"`
-	DiscoKey      string         `json:"discoKey"`
-	Name          string         `json:"name"`
-	GivenName     string         `json:"givenName"`
-	User          HSUser         `json:"user"`
-	IPAddresses   []string       `json:"ipAddresses"`
-	Online        bool           `json:"online"`
-	LastSeen      string         `json:"lastSeen"`
-	CreatedAt     string         `json:"createdAt"`
-	Tags            []string     `json:"tags"`
-	AvailableRoutes []string     `json:"availableRoutes"`
-	PreAuthKey    *HSPreauthKey  `json:"preAuthKey"`
+	ID              string        `json:"id"`
+	MachineKey      string        `json:"machineKey"`
+	NodeKey         string        `json:"nodeKey"`
+	DiscoKey        string        `json:"discoKey"`
+	Name            string        `json:"name"`
+	GivenName       string        `json:"givenName"`
+	User            HSUser        `json:"user"`
+	IPAddresses     []string      `json:"ipAddresses"`
+	Online          bool          `json:"online"`
+	LastSeen        string        `json:"lastSeen"`
+	CreatedAt       string        `json:"createdAt"`
+	Tags            []string      `json:"tags"`
+	AvailableRoutes []string      `json:"availableRoutes"`
+	PreAuthKey      *HSPreauthKey `json:"preAuthKey"`
 }
 
 type NodeView struct {
@@ -350,19 +350,19 @@ func (n HSNode) toView() NodeView {
 		pakID = n.PreAuthKey.ID
 	}
 	return NodeView{
-		ID:            n.ID,
-		Hostname:      host,
-		GivenName:     n.GivenName,
-		IPAddresses:   n.IPAddresses,
-		Online:        n.Online,
-		LastSeen:      n.LastSeen,
-		UserName:      n.User.Name,
-		UserID:        n.User.ID,
-		IsExitNode:    hasExitNodeTag(tags, n.Name, n.AvailableRoutes),
-		Tags:          tags,
+		ID:              n.ID,
+		Hostname:        host,
+		GivenName:       n.GivenName,
+		IPAddresses:     n.IPAddresses,
+		Online:          n.Online,
+		LastSeen:        n.LastSeen,
+		UserName:        n.User.Name,
+		UserID:          n.User.ID,
+		IsExitNode:      hasExitNodeTag(tags, n.Name, n.AvailableRoutes),
+		Tags:            tags,
 		AvailableRoutes: n.AvailableRoutes,
-		PreAuthKeyID:  pakID,
-		CreatedAt:     n.CreatedAt,
+		PreAuthKeyID:    pakID,
+		CreatedAt:       n.CreatedAt,
 	}
 }
 
@@ -718,12 +718,33 @@ func (c *Client) ApproveAllRoutesWithList(nodeHostname string, routes []string) 
 	return len(routes), nil
 }
 
-func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string) (string, error) {
+// SetAdvertisedRoutes updates advertised routes on an exit node via SSH.
+//
+// acceptRoutes controls whether --accept-routes is also re-applied on the
+// node:
+//
+//	-1 -> --accept-routes=false (recommended for nodes that co-host another
+//	                           VPN server, e.g. Amnezia-AWG on karolina;
+//	                           without this, Tailscale pulls Google/Telegram
+//	                           subnets from peers into source-routing table
+//	                           52 and traffic from the other VPN black-holes)
+//	 0 -> do not touch AcceptRoutes (legacy behaviour, default for nodes
+//	      that do not opt in via exit_servers.accept_routes)
+//	 1 -> --accept-routes=true  (full legacy behaviour, OK for pure
+//	                             exit-nodes that share no other VPN)
+func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int) (string, error) {
 	if len(routes) == 0 {
 		return "", fmt.Errorf("empty routes list")
 	}
-	routeStr := strings.Join(routes, ",")
-	cmd := fmt.Sprintf("tailscale set --advertise-exit-node --advertise-routes=%s", routeStr)
+	// Always keep 0.0.0.0/0 and ::/0 advertised so the node stays a usable
+	// exit node. `tailscale set --advertise-routes=` replaces the list, so
+	// any call without these bases would silently strip the exit-node
+	// capability. Dedupe to avoid duplicate-route errors on tailscaled.
+	// Base routes + dedup + AcceptRoutes flag fragment are pure helpers
+	// (see route_args.go) so the SSH invocation below stays narrowly
+	// focused on actually placing the command. Any future change to the
+	// tailscale flag set belongs in the helper, not here.
+	cmd := BuildTailscaleSetCommand(routes, acceptRoutes)
 	sshCmd := exec.Command("ssh", "-F", "/home/skyadmin/.ssh/config",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",
@@ -734,4 +755,3 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string) (stri
 	}
 	return "", fmt.Errorf("run manually on %s: %s", nodeHostname, cmd)
 }
-

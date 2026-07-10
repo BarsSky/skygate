@@ -2,27 +2,36 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-
 	"skygate/internal/auth"
+	"skygate/internal/config"
+	"skygate/internal/ratelimit"
+	"skygate/internal/telegram"
+	"skygate/internal/i18n"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
-	"skygate/internal/config"
 )
+
+func init() { i18n.SetGlobal(i18n.New()) }
+
+
+
+
+
+
 
 type App struct {
 	Version string
+	RateLimiter *ratelimit.Limiter
+	Notifier    telegram.Notifier
+	I18n         *i18n.Catalog
 	DB           *sql.DB
 	HS           *headscale.Client
 	HeadscaleKey string
@@ -51,6 +60,8 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		SessionHours: sessionH,
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
+	Notifier:    telegram.NoopNotifier{},
+		I18n:         i18n.New(),
 		Cfg:          cfg,
 	}
 }
@@ -66,7 +77,12 @@ func (a *App) render(w http.ResponseWriter, name string, data any) {
 // renderWithLayout wraps a fragment template in the layout. data is merged into
 // the wrapper, so handlers can add per-page fields (Nodes, Users, Entries, ...).
 // IsAdmin and Page are auto-derived from c (the JWT claims) so admin nav stays visible.
-func (a *App) renderWithLayout(w http.ResponseWriter, name string, c *auth.Claims, data map[string]any) {
+func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name string, c *auth.Claims, data map[string]any) {
+	// 2026-07-10: i18n. Detect lang from cookie/Accept-Language, build
+	// a Translations object so templates can call {{.T "key"}}.
+	lang := a.I18n.LangFromRequest(r)
+	data["Lang"] = lang
+	data["T"] = &i18n.Translations{Catalog: a.I18n, Lang: lang}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data["Page"] = pageFromName(name)
 	if c != nil {
@@ -248,6 +264,30 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
+// 2026-07-10: i18n. Set the lang cookie from a POST form, then redirect back.
+func (a *App) PostLang(w http.ResponseWriter, r *http.Request) {
+	lang := strings.ToLower(strings.TrimSpace(r.FormValue("lang")))
+	if lang != i18n.LangEN && lang != i18n.LangRU {
+		lang = i18n.LangRU
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "lang",
+		Value:    lang,
+		Path:     "/",
+		MaxAge:   365 * 24 * 3600,
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+	})
+	returnTo := r.FormValue("return_to")
+	if returnTo == "" {
+		returnTo = "/dashboard"
+	}
+	if !strings.HasPrefix(returnTo, "/") {
+		returnTo = "/dashboard"
+	}
+	http.Redirect(w, r, returnTo, http.StatusFound)
+}
+
 func (a *App) PostLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: "skygate_session", Value: "", Path: "/", MaxAge: -1,
@@ -348,7 +388,7 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMe
 	// /my/devices also fires from here, so the dashboard sees the same
 	// set the moment the user lands on the page.
 	if myUserID != 0 {
-		backfillNodeOwnership(a.DB, nodes, myUserID, myUsername)
+		a.backfillNodeOwnership(a.DB, nodes, myUserID, myUsername)
 	}
 	if myUsername != "" {
 		// Use a set of node IDs the user owns, sourced from node_owner_map.
@@ -408,7 +448,7 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	if !c.IsAdmin && hsUserName != "" {
 		scope = hsUserName
 	}
-	a.renderWithLayout(w, "dashboard.html", c, map[string]any{
+	a.renderWithLayout(w, r, "dashboard.html", c, map[string]any{
 		"TailnetMetrics": a.computeTailnetMetrics(scope, c.UserID),
 	})
 }
@@ -475,7 +515,7 @@ func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	a.renderWithLayout(w, "user/keys.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/keys.html", c, map[string]any{
 		"Keys":     keys,
 		"HasKeys":  len(keys) > 0,
 		"Now":      now,
@@ -583,7 +623,7 @@ func (a *App) GetHelp(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	a.renderWithLayout(w, "help.html", c, map[string]any{})
+	a.renderWithLayout(w, r, "help.html", c, map[string]any{})
 }
 
 // ---------- USER SELF-SERVICE ----------
@@ -616,7 +656,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// load, so the same fix happens for every node the user owns -
 	// without scanning the headscale DB up front.
 	if c.UserID != 0 {
-		backfillNodeOwnership(a.DB, all, c.UserID, username)
+		a.backfillNodeOwnership(a.DB, all, c.UserID, username)
 	}
 
 	// headscale reassigns ownership to a synthetic "tagged-devices" user
@@ -688,7 +728,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("DBG GetMyDevices fetch took %v nodes=%d my=%d public=%d", time.Since(t0), len(all), len(myNodesList), len(publicNodes))
 
-	a.renderWithLayout(w, "user/devices.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/devices.html", c, map[string]any{
 		"MyNodes":     myNodesList,
 		"PublicNodes": publicNodes,
 		"HasMyNodes":  len(myNodesList) > 0,
@@ -720,7 +760,7 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at, headscale_preauth_id) VALUES(?,?,?,?)`,
 		c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
 	a.audit(c.UserID, c.Username, "preauth_issued", "1h single-use")
-	a.renderWithLayout(w, "user/preauth_result.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/preauth_result.html", c, map[string]any{
 		"Key":     key.Key,
 		"Expires": "1 hour",
 		"OS":      r.FormValue("os"),
@@ -736,308 +776,19 @@ func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exits, _ := a.HS.ListExitNodes()
-	a.renderWithLayout(w, "user/exit_nodes.html", c, map[string]any{
+	a.renderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
 		"ExitNodes": exits,
 	})
 }
 
-// ---------- ADMIN ----------
+// Admin user management functions moved to handlers_admin_users.go.
+// (GetAdminUsers, PostAdminUser, extractIDFromPath, PostAdminDeleteUser)
 
-func (a *App) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	rows, err := a.DB.Query(`SELECT id, username, is_admin, headscale_user_id, created_at, theme FROM portal_users ORDER BY id`)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	defer rows.Close()
-	var users []db.User
-	for rows.Next() {
-		var u db.User
-		var adminI int
-		var createdI int64
-		var hsID sql.NullInt64
-		var theme sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme); err == nil {
-			u.IsAdmin = adminI == 1
-			u.HeadscaleUserID = hsID.Int64
-			u.CreatedAt = time.Unix(createdI, 0)
-			if theme.Valid {
-				u.Theme = theme.String
-			}
-			u.PasswordHash = ""
-			users = append(users, u)
-		}
-	}
+// Admin device/tag handlers moved to handlers_admin_nodes.go.
+// (GetAdminDevices, PostAdminNodeTag, PostAdminNodeUntag)
 
-	// Fetch headscale users and detect orphans (in headscale but not in skygate)
-	hsUsers, _ := a.HS.ListUsers()
-	linked := make(map[string]bool)
-	for _, u := range users {
-		if u.HeadscaleUserID > 0 {
-			linked[strconv.FormatInt(u.HeadscaleUserID, 10)] = true
-		}
-	}
-	var orphans []map[string]any
-	for _, h := range hsUsers {
-		if !linked[h.ID] {
-			orphans = append(orphans, map[string]any{
-				"HeadscaleID": h.ID,
-				"Username":    h.Name,
-				"CreatedAt":   h.CreatedAt,
-			})
-		}
-	}
-
-	a.renderWithLayout(w, "admin/users.html", c, map[string]any{
-		"Users":     users,
-		"HSOrphans": orphans,
-	})
-}
-
-func (a *App) PostAdminUser(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	username := strings.TrimSpace(r.FormValue("username"))
-	password := r.FormValue("password")
-	isAdmin := r.FormValue("is_admin") == "on"
-	if username == "" || password == "" {
-		http.Error(w, "username and password required", 400)
-		return
-	}
-	if len(password) < 6 {
-		http.Error(w, "password too short (min 6)", 400)
-		return
-	}
-	if !regexp.MustCompile(`^[a-z0-9_-]+$`).MatchString(username) {
-		http.Error(w, "username: lowercase letters, digits, _ and - only", 400)
-		return
-	}
-	var existingID int64
-	err := a.DB.QueryRow(`SELECT id FROM portal_users WHERE username=?`, username).Scan(&existingID)
-	if err == nil {
-		http.Error(w, fmt.Sprintf("user %q already exists in skygate", username), 409)
-		return
-	}
-	hsUser, err := a.HS.CreateUser(username)
-	if err != nil {
-		http.Error(w, "headscale create user: "+err.Error(), 500)
-		return
-	}
-	hsID, _ := strconv.ParseInt(hsUser.ID, 10, 64)
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	_, err = a.DB.Exec(`INSERT INTO portal_users(username, password_hash, is_admin, headscale_user_id) VALUES(?,?,?,?)`,
-		username, hash, isAdmin, hsID)
-	if err != nil {
-		http.Error(w, "portal insert: "+err.Error(), 500)
-		return
-	}
-	a.audit(c.UserID, c.Username, "user_create", fmt.Sprintf("%s hs_id=%d admin=%v", username, hsID, isAdmin))
-	http.Redirect(w, r, "/admin/users", http.StatusFound)
-}
-
-func extractIDFromPath(path string) string {
-	// Supports:
-	//   /admin/users/123/delete -> "123"
-	//   /admin/nodes/123/untag  -> "123"
-	//   /admin/nodes/123/tag    -> "123"
-	parts := strings.Split(path, "/")
-	if len(parts) >= 4 && parts[1] == "admin" {
-		switch parts[2] {
-		case "users", "nodes":
-			return parts[3]
-		}
-	}
-	return ""
-}
-
-func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	idStr := extractIDFromPath(r.URL.Path)
-	id, _ := strconv.ParseInt(idStr, 10, 64)
-	if id == c.UserID {
-		http.Error(w, "cannot delete yourself", 400)
-		return
-	}
-	var username string
-	var hsID sql.NullInt64
-	err := a.DB.QueryRow(`SELECT username, headscale_user_id FROM portal_users WHERE id=?`, id).
-		Scan(&username, &hsID)
-	if err != nil {
-		http.Error(w, "user not found", 404)
-		return
-	}
-	hsDeleteMsg := ""
-	if hsID.Valid && hsID.Int64 > 0 {
-		if err := a.HS.DeleteUser(hsID.Int64); err != nil {
-			hsDeleteMsg = fmt.Sprintf(" [headscale: %v]", err)
-		} else {
-			hsDeleteMsg = " [headscale: deleted]"
-		}
-	}
-	_, _ = a.DB.Exec(`DELETE FROM preauth_keys WHERE user_id=?`, id)
-	_, _ = a.DB.Exec(`DELETE FROM audit_log WHERE user_id=?`, id)
-	_, err = a.DB.Exec(`DELETE FROM portal_users WHERE id=?`, id)
-	if err != nil {
-		http.Error(w, "delete: "+err.Error(), 500)
-		return
-	}
-	a.audit(c.UserID, c.Username, "user_delete", fmt.Sprintf("id=%d %s hs_id=%d%s", id, username, hsID.Int64, hsDeleteMsg))
-	http.Redirect(w, r, "/admin/users", http.StatusFound)
-}
-
-func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	users, _ := a.HS.ListUsers()
-	allNodes, _ := a.HS.ListAllNodes()
-	a.renderWithLayout(w, "admin/devices.html", c, map[string]any{
-		"Nodes": allNodes,
-		"Users": users,
-	})
-}
-
-// PostAdminNodeTag adds a headscale tag to a node.
-func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	idStr := extractIDFromPath(r.URL.Path)
-	nodeID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "bad node id", 400)
-		return
-	}
-	tag := r.FormValue("tag")
-	if tag == "" {
-		tag = headscale.TagPublicTag
-	}
-
-	var origUserID, origUserName string
-	if nodes, err := a.HS.ListAllNodes(); err == nil {
-		for _, n := range nodes {
-			if n.ID == strconv.FormatInt(nodeID, 10) {
-				origUserID = n.UserID
-				origUserName = n.UserName
-				break
-			}
-		}
-	}
-
-	if err := a.HS.TagNode(nodeID, tag); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	if origUserID != "" && origUserName != "" && origUserName != "tagged-devices" {
-		_, _ = a.DB.Exec(`INSERT OR REPLACE INTO node_owner_map
-			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, ?, ?, ?, ?)`,
-			nodeID, origUserID, origUserName, tag, c.UserID)
-	}
-
-	a.HS.InvalidateCache()
-	a.audit(c.UserID, c.Username, "node_tag", fmt.Sprintf("node=%d tag=%s owner=%s", nodeID, tag, origUserName))
-	http.Redirect(w, r, "/admin/devices", http.StatusFound)
-}
-
-func (a *App) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	idStr := extractIDFromPath(r.URL.Path)
-	nodeID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "bad node id", 400)
-		return
-	}
-	tag := r.FormValue("tag")
-	if tag == "" {
-		tag = headscale.TagPublicTag
-	}
-	if err := a.HS.UntagNode(nodeID, tag); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	_, _ = a.DB.Exec(`DELETE FROM node_owner_map WHERE node_id=? AND tag=?`, nodeID, tag)
-
-	a.HS.InvalidateCache()
-	a.audit(c.UserID, c.Username, "node_untag", fmt.Sprintf("node=%d tag=%s", nodeID, tag))
-	http.Redirect(w, r, "/admin/devices", http.StatusFound)
-}
-
-func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	rows, err := a.DB.Query(`SELECT id, user_id, username, action, detail, created_at FROM audit_log ORDER BY id DESC LIMIT 200`)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	defer rows.Close()
-	type Entry struct {
-		ID               int64
-		UserID           int64
-		Username, Action string
-		Detail           string
-		Time             string
-	}
-	var entries []Entry
-	for rows.Next() {
-		var e Entry
-		var t int64
-		_ = rows.Scan(&e.ID, &e.UserID, &e.Username, &e.Action, &e.Detail, &t)
-		e.Time = time.Unix(t, 0).Format("2006-01-02 15:04:05")
-		entries = append(entries, e)
-	}
-	a.renderWithLayout(w, "admin/audit.html", c, map[string]any{
-		"Entries": entries,
-	})
-}
-
-func (a *App) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	policy, policyErr := a.HS.GetACL()
-	errStr := ""
-	if policyErr != nil {
-		errStr = policyErr.Error()
-	}
-	a.renderWithLayout(w, "admin/acls.html", c, map[string]any{
-		"Policy":       policy,
-		"Error":        errStr,
-		"HeadplaneURL": "https://tsnet.skynas.ru/admin/",
-		"APIKey":       a.HeadscaleKey,
-	})
-}
+// Admin read-only pages moved to handlers_admin_pages.go.
+// (GetAdminAudit, GetAdminACLs)
 
 // ---------- ADMIN DERP ----------
 
@@ -1109,252 +860,9 @@ type DerpSnapshot struct {
 // currentConns extracts gauge_current_connections (or current_conns)
 // from a snapshot metrics map. JSON numbers decode to float64 by default
 // so we always go through here rather than touching the map directly.
-func (s *DerpSnapshot) CurrentConns() int {
-	if s == nil {
-		return 0
-	}
-	for _, key := range []string{"gauge_current_connections", "current_conns"} {
-		if v, ok := s.Metrics[key]; ok {
-			switch n := v.(type) {
-			case float64:
-				return int(n)
-			case int:
-				return n
-			case int64:
-				return int(n)
-			}
-		}
-	}
-	return 0
-}
 
-func (a *App) collectDerpStatus() DerpStatus {
-	// DERP server runs on the host (not in the skygate container), so
-	// systemctl/ss from inside the container can't see it. Instead we
-	// query the derper's own debug endpoint at 192.168.13.69:8443/debug/
-	// which is reachable from the container via the host bridge.
-	s := DerpStatus{
-		DERPPort:   "443",
-		STUNPort:   "3478",
-		Version:    "1.70.0",
-		Hostname:   "derp.skynas.ru",
-		RegionCode: "mow",
-		RegionID:   "900",
-		RegionName: "Moscow Custom",
-		WhiteIP:    "95.165.170.190",
-	}
-
-	// Try derper debug endpoints (in priority order)
-	derpURL := "http://192.168.13.69:8443"
-	if v := a.DerpBaseURL; v != "" {
-		derpURL = v
-	}
-
-	// 1. /debug/  -> HTML, contains Uptime, Version, etc.
-	if html, err := httpGet(derpURL+"/debug/", 3*time.Second); err == nil {
-		parseDerperDebugHTML(&s, html)
-	}
-
-	// 2. /debug/vars -> JSON, real metrics
-	if body, err := httpGet(derpURL+"/debug/vars", 3*time.Second); err == nil {
-		parseDerperVars(&s, body)
-	}
-
-	// 3. Plain / -> quick liveness check
-	if _, err := httpGet(derpURL+"/", 3*time.Second); err == nil {
-		s.SocketListening = true
-	}
-
-	// 4. STUN UDP check (skygate is in container; check via long TCP probe is misleading).
-	//    We trust the derper stats: if stun.counter_requests > 0, STUN is alive.
-	if body, err := httpGet(derpURL+"/debug/vars", 3*time.Second); err == nil {
-		var j struct {
-			STUN struct {
-				CounterRequests struct {
-					Success int `json:"success"`
-				} `json:"counter_requests"`
-			} `json:"stun"`
-		}
-		if json.Unmarshal(body, &j) == nil && j.STUN.CounterRequests.Success > 0 {
-			s.STUNListening = true
-		}
-	}
-
-	// 5. Active connections (current TCP/UDP peers with reverse DNS)
-	if body, err := httpGet(derpURL+"/active-conn", 3*time.Second); err == nil {
-		var ac struct {
-			TCP     []DerpPeer `json:"tcp"`
-			UDPSTUN []DerpPeer `json:"udp_stun"`
-		}
-		if json.Unmarshal(body, &ac) == nil {
-			s.ActiveTCP = classifyDerpPeers(ac.TCP)
-			s.ActiveUDP = classifyDerpPeers(ac.UDPSTUN)
-			s.ConnSummary = summarizeDerpPeers(append(append([]DerpPeer{}, s.ActiveTCP...), s.ActiveUDP...))
-		}
-	}
-
-	// 6. Snapshot history (last 30 records from /var/log/derper-snapshot.log)
-	if body, err := httpGet(derpURL+"/all-recent", 3*time.Second); err == nil {
-		lines := strings.Split(string(body), "\n")
-		start := 0
-		if len(lines) > 30 {
-			start = len(lines) - 30
-		}
-		for _, line := range lines[start:] {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			var snap DerpSnapshot
-			if json.Unmarshal([]byte(line), &snap) == nil {
-				// Apply classification to each conn (snapshot script
-				// in v0.3.4+ already includes kind, but be defensive
-				// about older entries that don't).
-				snap.Conns = classifyDerpPeers(snap.Conns)
-				snap.Summary = summarizeDerpPeers(snap.Conns)
-				s.Snapshot = append(s.Snapshot, snap)
-			}
-		}
-	}
-
-	// Hostname (white IP) from outbound interface (best-effort, no actual HTTP needed)
-	s.WhiteIP = "95.165.170.190"
-
-	return s
-}
-
-func httpGet(url string, timeout time.Duration) ([]byte, error) {
-	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	// derper checks Host header against its TLS hostname. When we
-	// query it over plain HTTP from inside the skygate container (to
-	// 192.168.13.69:8443) we must present the public hostname, otherwise
-	// /debug/ returns 403 Forbidden.
-	req.Host = "derp.skynas.ru"
-	req.Header.Set("Host", "derp.skynas.ru")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
-}
-
-// parseDerperDebugHTML extracts Uptime, Version, TLS hostname, machine from the
-// derper /debug/ HTML page.
-func parseDerperDebugHTML(s *DerpStatus, html []byte) {
-	text := string(html)
-	if m := regexp.MustCompile(`Uptime:</b>\s*([^<]+)`).FindStringSubmatch(text); len(m) > 1 {
-		s.UpTime = strings.TrimSpace(m[1])
-	}
-	if m := regexp.MustCompile(`Version:</b>\s*([^<]+)`).FindStringSubmatch(text); len(m) > 1 {
-		v := strings.TrimSpace(m[1])
-		// strip "-ERR-BuildInfo" suffix
-		if i := strings.Index(v, "-ERR-"); i > 0 {
-			v = v[:i]
-		}
-		s.Version = v
-	}
-	if m := regexp.MustCompile(`TLS hostname:</b>\s*([^<]+)`).FindStringSubmatch(text); len(m) > 1 {
-		s.Hostname = strings.TrimSpace(m[1])
-	}
-	if m := regexp.MustCompile(`Machine:</b>\s*([^<]+)`).FindStringSubmatch(text); len(m) > 1 {
-		s.Machine = strings.TrimSpace(m[1])
-	}
-}
-
-// parseDerperVars pulls metrics out of /debug/vars JSON.
-func parseDerperVars(s *DerpStatus, body []byte) {
-	var v struct {
-		ProcessStartUnixTime float64 `json:"process_start_unix_time"`
-		DERP                 struct {
-			Accepts              int   `json:"accepts"`
-			BytesReceived        int64 `json:"bytes_received"`
-			BytesSent            int64 `json:"bytes_sent"`
-			CurrentConnections   int   `json:"gauge_current_connections"`
-			CurrentHomeConns     int   `json:"gauge_current_home_connections"`
-			ClientsTotal         int   `json:"gauge_clients_total"`
-			ClientsLocal         int   `json:"gauge_clients_local"`
-			PacketsReceived      int   `json:"packets_received"`
-			PacketsSent          int   `json:"packets_sent"`
-			PacketsDropped       int   `json:"packets_dropped"`
-		} `json:"derp"`
-		STUN struct {
-			CounterRequests struct {
-				Success int `json:"success"`
-			} `json:"counter_requests"`
-		} `json:"stun"`
-		GoSyncMutexWaitSeconds float64 `json:"go_sync_mutex_wait_seconds"`
-		GoVersion              string  `json:"go_version"`
-		Memstats               struct {
-			Alloc      uint64 `json:"Alloc"`
-			Sys        uint64 `json:"Sys"`
-			NumGC      uint32 `json:"NumGC"`
-		} `json:"memstats"`
-	}
-	if err := json.Unmarshal(body, &v); err != nil {
-		return
-	}
-	// Memory in MB
-	if v.Memstats.Alloc > 0 {
-		s.Memory = fmt.Sprintf("%.1f MB heap", float64(v.Memstats.Alloc)/1024/1024)
-	}
-	// Stash extra metrics in extra fields via concat
-	s.Connections = v.DERP.CurrentConnections
-	s.Accepts = v.DERP.Accepts
-	s.BytesIn = v.DERP.BytesReceived
-	s.BytesOut = v.DERP.BytesSent
-	s.PacketsIn = v.DERP.PacketsReceived
-	s.PacketsOut = v.DERP.PacketsSent
-	s.Clients = v.DERP.ClientsTotal
-	s.STUNRequests = v.STUN.CounterRequests.Success
-	// Derive started-at from process_start_unix_time
-	if v.ProcessStartUnixTime > 0 {
-		s.StartedAt = time.Unix(int64(v.ProcessStartUnixTime), 0).Format("2006-01-02 15:04:05 MST")
-		// Recompute uptime if we got it from vars
-		d := time.Since(time.Unix(int64(v.ProcessStartUnixTime), 0)).Round(time.Second)
-		if s.UpTime == "" || s.UpTime == "n/a" {
-			s.UpTime = d.String()
-		}
-	}
-	// Go version
-	if v.GoVersion != "" {
-		s.GoVersion = v.GoVersion
-	}
-	// If we got DERP responses, it's running
-	if v.DERP.Accepts >= 0 {
-		s.Running = true
-	}
-	if v.STUN.CounterRequests.Success > 0 {
-		s.STUNListening = true
-	}
-}
-
-// PreauthKeyStats breaks down a user's preauth keys by lifecycle state.
-// Total == Used + Active + Expired. Active means "still usable right now":
-// unused AND expiration (if set) is in the future. Expired means unused
-// but past its expiration. Used means a headscale node consumed it.
-type PreauthKeyStats struct {
-	Total   int
-	Used    int
-	Active  int
-	Expired int
-}
-
-// countMyPreAuthKeys classifies every preauth key the user has been
-// issued. preauth_keys.user_id references portal_users.id (NOT headscale
-// username). The split lets the dashboard show "1 used, 0 active, 1
-// expired" instead of a single number that requires the user to
-// remember what each key was for.
-//
-// Side effect: a key is considered "used" when either our local
-// `used` column is set OR any headscale node currently lists that
-// key as its preAuthKey. The node-side check is the source of truth
-// - if the node is gone (deleted, expired server-side) but our
-// local row was never flipped, we flip it here. This keeps the
+// DERP types and collectors moved to handlers_derp.go.
+// (DerpSnapshot.CurrentConns, collectDerpStatus)
 // counter honest without a separate garbage-collection job.
 func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) PreauthKeyStats {
 	var s PreauthKeyStats
@@ -1461,7 +969,7 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 // (user != "tagged-devices") keep their live link. We only insert
 // snapshot rows for nodes that headscale has effectively orphaned
 // OR for nodes that the user plausibly owns via temporal correlation.
-func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
+func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
 	if portalUserID == 0 || portalUsername == "" {
 		return
 	}
@@ -1575,18 +1083,56 @@ func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID 
 					}
 				}
 				if bestKey != 0 {
-					matchedTag = firstTagOrFallback(n)
+				// 2026-07-10: bug fix — when the match came through a skygate-issued preauth
+				// key, the node must have been registered BY our user. Default to
+				// tag:private (so the user only sees their own devices in Tailscale).
+				// Previously firstTagOrFallback(n) returned tag:untagged for
+				// headscale-tagless nodes — UI showed tag:private locally but
+				// headscale had no tag. Admins can still set tag:public manually
+				// via /admin/devices/taged (PostAdminNodeTag).
+				matchedTag = "tag:private"
 				}
 			}
 		}
 		if matchedTag == "" {
 			continue
 		}
-		_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
-			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, ?, ?, ?, ?)`,
-			n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
-		inserted[n.ID] = true
+		if matchedTag == "tag:private" {
+			// 2026-07-10: bug fix — sync DB and headscale. If we already
+			// have a stale "tag:untagged" row from an older build (or empty
+			// tag), upgrade to tag:private. Skip rows that already carry
+			// tag:public (admin-assigned exit-node tag).
+			_, _ = db.Exec(`UPDATE node_owner_map SET tag=?, tagged_by_user_id=?, tagged_at=strftime('%s','now')
+				WHERE node_id=? AND (tag = '' OR tag = 'tag:untagged')`,
+				matchedTag, portalUserID, n.ID)
+		} else {
+			_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
+				(node_id, headscale_user_id, username, tag, tagged_by_user_id)
+				VALUES (?, ?, ?, ?, ?)`,
+				n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
+		}
+		// Push tag:private to headscale if matched. Safe for empty/untagged rows.
+		// Idempotent: skip if the node already carries tag:private — otherwise every
+		// /my/devices load would do an HTTP roundtrip to headscale per device,
+		// AND call InvalidateCache() which forces the next /my/devices load to
+		// re-fetch everything (the bug that was making the page take ~2s).
+		if matchedTag == "tag:private" && a != nil && a.HS != nil {
+			hasPrivate := false
+			for _, t := range n.Tags {
+				if t == "tag:private" {
+					hasPrivate = true
+					break
+				}
+			}
+			if !hasPrivate {
+				if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
+					if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
+						log.Printf("warn: auto-tag node %s: %v", n.ID, err)
+					}
+				}
+			}
+		}
+				inserted[n.ID] = true
 		// Mark the preauth key as used if headscale has a node attached to it.
 		if n.PreAuthKeyID != "" {
 			if _, err := db.Exec(`UPDATE preauth_keys SET used=1 WHERE headscale_preauth_id=? AND used=0`, n.PreAuthKeyID); err != nil {
@@ -1596,148 +1142,14 @@ func backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID 
 	}
 }
 
-// firstTagOrFallback returns the node's first tag, or "tag:untagged"
-// if the node has no tags. Used to populate node_owner_map.tag for
-// rows that come from strategies that don't otherwise carry a tag
-// (specifically the temporal fallback in C, which fires for both
-// tagged and untagged nodes).
-func firstTagOrFallback(n headscale.NodeView) string {
-	if len(n.Tags) > 0 {
-		return n.Tags[0]
-	}
-	return "tag:untagged"
-}
-
-// derpPeerNPM is the IP of Nginx Proxy Manager, which keeps persistent
-// WebSocket connections to the derper for the /admin/derp page.
-const derpPeerNPM = "192.168.13.67"
-
-var (
-	derpTailscaleNet = net.IPNet{IP: net.ParseIP("100.64.0.0").To4(), Mask: net.CIDRMask(10, 32)}
-	derpLANNet       = net.IPNet{IP: net.ParseIP("192.168.13.0").To4(), Mask: net.CIDRMask(24, 32)}
-)
-
-// classifyDerpPeer labels a connection source.
-//   ws_relay - Tailscale client (100.64.0.0/10 or any public IP hitting derper)
-//   ws_admin - Nginx Proxy Manager WebSocket pool (192.168.13.67)
-//   lan      - other LAN client (192.168.13.0/24)
-//   local    - loopback (already filtered by the snapshot script)
-//   unknown  - anything else
-func classifyDerpPeer(ip string) string {
-	if ip == derpPeerNPM {
-		return "ws_admin"
-	}
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return "unknown"
-	}
-	if parsed.IsLoopback() {
-		return "local"
-	}
-	if derpTailscaleNet.Contains(parsed) {
-		return "ws_relay"
-	}
-	if derpLANNet.Contains(parsed) {
-		return "lan"
-	}
-	if !parsed.IsPrivate() {
-		return "ws_relay"
-	}
-	return "unknown"
-}
-
-// classifyDerpPeers fills the Kind field in-place; returns the same slice
-// for chaining.
-func classifyDerpPeers(peers []DerpPeer) []DerpPeer {
-	for i := range peers {
-		if peers[i].Kind == "" {
-			peers[i].Kind = classifyDerpPeer(peers[i].IP)
-		}
-	}
-	return peers
-}
-
-// summarizeDerpPeers counts connections per kind for the dashboard hero.
-// Always returns a non-nil pointer so the template can check per-kind
-// counts and decide whether to show "derper: N conn (transient)" when
-// ss sees zero connections but derper reports some.
-func summarizeDerpPeers(peers []DerpPeer) *ConnSummary {
-	s := &ConnSummary{}
-	for _, p := range peers {
-		switch p.Kind {
-		case "ws_relay":
-			s.Relay++
-		case "ws_admin":
-			s.Admin++
-		case "lan":
-			s.LAN++
-		case "self":
-			s.Self++
-		default:
-			s.Other++
-		}
-	}
-	return s
-}
-
-func (a *App) GetAdminDERP(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	a.renderWithLayout(w, "admin/derp.html", c, map[string]any{
-		"DerpStatus": a.collectDerpStatus(),
-	})
-}
-
-// GetAdminDERPRefresh forces a refresh - same page.
-func (a *App) GetAdminDERPRefresh(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/admin/derp", http.StatusFound)
-}
+// DERP helpers (firstTagOrFallback, classifyDerp*, summarizeDerpPeers) moved to handlers_derp.go.
+// DERP admin handlers moved to handlers_derp.go.
+// (GetAdminDERP, GetAdminDERPRefresh)
 
 // ── API Tokens ──
 
-func (a *App) GetMyTokens(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Redirect(w, r, "/login", http.StatusFound); return }
-	rows, err := a.DB.Query("SELECT id, label, last_used_at, created_at FROM personal_api_tokens WHERE user_id=? ORDER BY created_at DESC", c.UserID)
-	if err != nil { http.Error(w, err.Error(), 500); return }
-	defer rows.Close()
-	type tRow struct { ID int64; Label string; LastUsed string; Created string }
-	var tokens []tRow
-	for rows.Next() {
-		var t tRow; var lu, cr int64
-		if rows.Scan(&t.ID, &t.Label, &lu, &cr) == nil {
-			if lu > 0 { t.LastUsed = time.Unix(lu, 0).Format("2006-01-02 15:04") } else { t.LastUsed = "—" }
-			t.Created = time.Unix(cr, 0).Format("2006-01-02 15:04")
-			tokens = append(tokens, t)
-		}
-	}
-	if tokens == nil { tokens = []tRow{} }
-	a.renderWithLayout(w, "my_tokens.html", c, map[string]any{"Page": "tokens", "Title": "API Tokens", "Tokens": tokens})
-}
-
-func (a *App) PostMyToken(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Error(w, "unauthorized", 401); return }
-	label := r.FormValue("label")
-	raw, hash := auth.GenerateAPIToken()
-	_, err := a.DB.Exec("INSERT INTO personal_api_tokens (user_id, token_hash, label) VALUES (?,?,?)", c.UserID, hash, label)
-	if err != nil { http.Error(w, err.Error(), 500); return }
-	a.audit(c.UserID, c.Username, "token_create", label)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, "<div class=\"card\"><h3>Токен создан</h3><p>Скопируйте сейчас — больше он показан не будет.</p><pre style=\"background:var(--bg);padding:12px;border-radius:4px;word-break:break-all\">%s</pre><p><a href=\"/my/tokens\">← Назад к списку</a></p></div>", raw)
-}
-
-func (a *App) PostMyTokenRevoke(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil { http.Error(w, "unauthorized", 401); return }
-	idStr := r.PathValue("id")
-	a.DB.Exec("DELETE FROM personal_api_tokens WHERE id=? AND user_id=?", idStr, c.UserID)
-	a.audit(c.UserID, c.Username, "token_revoke", idStr)
-	http.Redirect(w, r, "/my/tokens?revoked=1", http.StatusFound)
-}
+// API token handlers moved to handlers_api_tokens.go.
+// (GetMyTokens, PostMyToken, PostMyTokenRevoke)
 
 
 // 2026-07-07: getMaxRulesForUser returns per-user rule limit or default.

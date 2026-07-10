@@ -1,16 +1,43 @@
+# ---- Build artifacts ----
 skygate
 skygate.new
+skygate-*-linux-*
+*.exe
+
+# ---- Backups & patches ----
 *.bak
 *.bak.*
+*.orig
+*.rej
+*.tmp
 *.tar
 *.tar.*
+*.tgz
+
+# ---- Local-only state ----
 .env
 /data/
 /static/
-
-# Unified deploy system — sensitive files
-.env
-backup/
 skygate.db
-*.bak*
+*.log
+*.pid
+
+# ---- Dump/experimental scripts ----
 .sg_*.ps1
+sg_*.ps1
+sg_*.sh
+/sg_*.html
+/sg_*.txt
+
+# ---- Editor / OS ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ---- Backup output directory ----
+backup/
+
+# Hermes agent backup directories (do not commit)
+.hermes-*/

@@ -1,0 +1,109 @@
+{{define "body-admin-telegram"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-brands fa-telegram"></i> Telegram</h2>
+    <div class="sub">Управление ботом уведомлений. Токен хранится в БД <code>global_settings</code>, файлы <code>.env</code> используются как запасной источник при первом старте.</div>
+  </div>
+  {{if .State.Configured}}
+  <span class="pill pill-success" title="Бот сконфигурирован через БД"><i class="fa-solid fa-circle-check"></i> configured</span>
+  {{else}}
+  <span class="pill pill-warn"><i class="fa-solid fa-triangle-exclamation"></i> not configured</span>
+  {{end}}
+</div>
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="card-grid">
+  <div class="card">
+    <h3><i class="fa-solid fa-key"></i> Bot token &amp; chat id</h3>
+    <form action="/admin/telegram" method="POST" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="save">
+      <div class="form-group">
+        <label>Bot token</label>
+        <input type="password" name="bot_token" class="form-control" placeholder="оставьте пустым чтобы не менять">
+        <div class="sub">
+          {{if .State.Configured}}
+            Сохранён: <code>{{.State.TokenFP}}</code> · обновлён {{.State.UpdatedAt}}
+          {{else}}
+            Получите токен через @BotFather → <code>/newbot</code>. См. <code>docs/TELEGRAM.md</code>.
+          {{end}}
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Chat id</label>
+        <input type="text" name="chat_id" value="{{.State.ChatID}}" class="form-control" placeholder="оставьте пустым чтобы не менять">
+        <div class="sub">Где бот уже стартовал. Узнать: <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.</div>
+      </div>
+      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> Сохранить</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3><i class="fa-solid fa-paper-plane"></i> Тест</h3>
+    <p class="sub">Отправляет сообщение в Telegram, используя уже сохранённый токен. Без токена кнопка отключена.</p>
+    <form action="/admin/telegram" method="POST">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="test">
+      <div class="form-group">
+        <label>Тема</label>
+        <input type="text" name="test_subject" class="form-control" placeholder="skygate test" value="skygate test">
+      </div>
+      <div class="form-group">
+        <label>Тело</label>
+        <textarea name="test_body" class="form-control" rows="3">Telegram notification channel is operational. Sent from admin → telegram page.</textarea>
+      </div>
+      <button type="submit" class="btn" {{if not .State.Configured}}disabled{{end}}><i class="fa-solid fa-paper-plane"></i> Отправить тест</button>
+      {{if not .State.Configured}}
+      <div class="sub" style="margin-top:.5rem">Сначала сохраните токен и chat_id.</div>
+      {{end}}
+    </form>
+  </div>
+
+  <div class="card">
+    <h3><i class="fa-solid fa-arrows-rotate"></i> Rotate</h3>
+    <p class="sub">Если токен скомпрометирован (например, утёк в логи): удалите его и сохраните новый. Все будущие события (backup/upgrade) пойдут в ~/.skygate-notify.log пока не настроите заново.</p>
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Удалить текущий токен Telegram? Потребуется сохранить новый.')">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="rotate">
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> Я понимаю, что потребуется сохранить новый токен</label>
+      <button type="submit" class="btn btn-warn" style="margin-top:1rem"><i class="fa-solid fa-arrows-rotate"></i> Rotate token</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3><i class="fa-solid fa-power-off"></i> Disable</h3>
+    <p class="sub">Полностью выключает Telegram. <code>scripts/notify.sh</code> будет писать в локальный лог.</p>
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Отключить Telegram? Уведомления перестанут приходить в мессенджер.')">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="disable">
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> Я понимаю последствия</label>
+      <button type="submit" class="btn btn-danger" style="margin-top:1rem"><i class="fa-solid fa-power-off"></i> Disable Telegram</button>
+    </form>
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-circle-info"></i> Куда смотрят другие компоненты</h3>
+    <ul class="sub" style="line-height:1.7">
+      <li><code>scripts/backup.sh</code> — <code>notify.sh --severity=fail</code> всегда; <code>--severity=ok</code> при <code>SKYGATE_NOTIFY_ON_OK=1</code>.</li>
+      <li><code>scripts/upgrade.sh</code> — <code>notify.sh --severity=ok|fail</code> после merge &amp; restart.</li>
+      <li>Переменные <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> из <code>.env</code> применяются, только если в БД не настроено (см. <code>cmd/skygate/main.go</code>).</li>
+      <li>Полная процедура получения токена: <a href="/docs/TELEGRAM.md" target="_blank" rel="noopener">docs/TELEGRAM.md</a>.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  // Hide CSRF token from URL params when state changes
+  if (window.history && window.history.replaceState) {
+    var u = new URL(window.location.href);
+    u.searchParams.delete('ok'); u.searchParams.delete('err');
+    window.history.replaceState({}, '', u);
+  }
+</script>
+{{end}}

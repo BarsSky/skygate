@@ -14,7 +14,7 @@
       <ul>
         <li><b>Устройство</b> — выберите своё устройство (например «my-laptop»).</li>
         <li><b>Exit node</b> — выберите сервер (например «node-europe»).</li>
-        <li><b>Действие</b> — Allow (разрешить) или Deny (запретить).</li>
+        <li><b>Действие</b> — Allow (пропустить трафик) или Deny (отбросить трафик).</li>
         <li><b>Тип цели</b> — IP адрес, подсеть (10.0.0.0/24), или домен (example.com).</li>
         <li><b>Значение</b> — IP/подсеть/домен.</li>
       </ul>
@@ -42,7 +42,7 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-shield-halved"></i> Защита от дублирования</h3>
+  <h3><i class="fa-solid fa-shield-halved"></i> Дедупликация правил</h3>
   <p>При добавлении правила Skygate проверяет уникальность по комбинации <b>(device_id, exit_node, target_type, target_value)</b>:</p>
   <ul>
     <li>✅ <b>Новое правило</b> — добавлено, появится зелёный alert «Правило добавлено».</li>
@@ -138,7 +138,7 @@ tailscale set \
     <li>🟡 <b>DERP relay</b> — direct невозможен. Автоматически выбирается ближайший relay. Медленнее, но работает всегда.</li>
   </ul>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    DERP устойчив к блокировкам: TLS 1.3 + TCP 443 выглядит как обычный HTTPS, DPI не видит содержимое.
+    DERP использует TLS 1.3 на порте TCP 443 — трафик выглядит как обычный HTTPS, включая для DPI.
   </p>
 </div>
 
@@ -218,6 +218,96 @@ curl -X POST -b skygate_session=TOKEN \
     <li>Для доменов сервер сам резолвит и подтянет все IP (autoupdater каждые 5 мин).</li>
     <li>Для российских сайтов используй exit-node в РФ (например sharlotta) — иначе Cloudflare даст challenge.</li>
     <li>Список токенов и их отзыв — на <a href="/my/tokens">/my/tokens</a>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-square-check"></i> Массовое удаление (multi-delete)</h3>
+  <p>В таблице правил появились <b>чекбоксы</b> и <b>sticky-панель</b> вверху и внизу страницы:</p>
+  <ul>
+    <li><b>Select all</b> в верхней и нижней панели - выделяет все видимые правила.</li>
+    <li><b>Фильтр по типу</b> (Все типы / Только домены / Только /32 / Только IP) - сужает выбор.</li>
+    <li><b>Поиск</b> по IP/подсети/домену - скрывает неподходящие строки.</li>
+    <li><b>Счётчик</b> «Выбрано: N» - обновляется в обеих панелях в реальном времени.</li>
+    <li>Кнопка <b>«Удалить выбранные»</b> внизу - каскадно удаляет все выделенные правила.</li>
+  </ul>
+  <p style="margin-top:8px"><b>Каскадное удаление (cascade):</b> при удалении правила с типом <code>domain</code> автоматически удаляются все связанные /32 правила с тем же <code>parent_domain</code>. Без этого autoupdater оставлял бы «осиротевшие» /32 для доменов, которые пользователь больше не отслеживает.</p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Одиночное удаление (кнопка <i class="fa-solid fa-trash"></i> в строке) тоже работает каскадно для доменов.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-scale-balanced"></i> Счётчики правил</h3>
+  <p>Счётчики (per-user / per-device / system) учитывают <b>только правила, заданные пользователем («user-facing»)</b>:</p>
+  <ul>
+    <li>Считаются: <code>target_type=ip</code>, <code>target_type=subnet</code> без <code>parent_domain</code>, <code>target_type=domain</code>.</li>
+    <li>НЕ считаются: <code>target_type=subnet</code> <b>с</b> <code>parent_domain</code> (это /32, созданные autoupdater'ом для резолва доменов).</li>
+  </ul>
+  <p style="margin-top:8px">То есть: если у вас 9 доменов и autoupdater добавил 240 /32 IP, счётчик per-user (по умолчанию 200) <b>не учитывает</b> домены при подстановке автоматически разадресации. Домен считается как 1 правило.</p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Настройка: <code>SKYGATE_MAX_RULES_PER_DEVICE</code> (default 200), <code>SKYGATE_MAX_TOTAL_RULES</code> (default 10000), <code>SKYGATE_USER_MAX_RULES</code> (опционально, формат <code>user1:500,user2:1000</code>).
+  </p>
+  <p style="margin-top:8px"><b>Пэример:</b> 9 доменов + 130 ручных /32 + 240 autoupdater /32 = 379 правил всего, но счётчик видит только 9+130=139, остальные 240 — служебные (автоматическо разадресованные).</p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-broom"></i> Cleanup orphaned /32 (admin)</h3>
+  <p>Если раньше удаляли правила вручную и остались «осиротевшие» /32 (autoupdater не может их убрать, так как родительского домена уже нет), откройте <a href="/admin/exit-rules/cleanup"><b>/admin/exit-rules/cleanup</b></a>. Там:</p>
+  <ul>
+    <li>Анализ текущего состояния: разные <code>device_id</code>, разные <code>hostname</code>, ожидающие удаления /32, ожидающие <code>backfill device_ip</code>.</li>
+    <li>Кнопка <b>«Apply»</b> - объединяет дублирующиеся <code>device_id</code> под один канонический (по hostname) и дозаполняет <code>device_ip</code> для всех правил.</li>
+    <li><b>Идемпотентно:</b> повторный запуск не делает ничего, если данные уже вычищены.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-shield"></i> Видимость в Tailnet (ACL)</h3>
+  <p>Skygate генерирует <strong>per-user ACL policy</strong>. Каждый пользователь
+  видит и ходит только к своим устройствам и к общим exit-nodes
+  (tag:public / tag:exit-node).</p>
+  <pre style="background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto">{
+  "acls": [
+    {"src": ["skyadmin@tsnet.skynas.ru"], "dst": ["skyadmin@tsnet.skynas.ru:*"]},
+    ... по одному правилу на каждого portal-пользователя ...
+    {"src": ["*"], "dst": ["tag:public:*"]},
+    {"src": ["*"], "dst": ["tag:exit-node:*"]},
+    {"src": ["*"], "dst": ["*:*"]}
+  ],
+  "tagOwners": {
+    "tag:private": [skyadmin, michail, guest, daniil, ...],
+    "tag:public": ["skyadmin@tsnet.skynas.ru"],
+    "tag:exit-node": ["skyadmin@tsnet.skynas.ru"]
+  }
+}</pre>
+  <p><strong>Первое правило матча выигрывает</strong> — если бы <code>*:*</code>
+  шло первым, оно открывало бы весь tailnet всем. Сейчас первое правило —
+  <em>только своё</em>, Tailscale Android показывает только свои устройства +
+  exit-nodes. Чужие пользователи с tag:private друг друга не видят.</p>
+
+  <h3><i class="fa-solid fa-tags"></i> Автотегирование (tag:private)</h3>
+  <p>Когда вы добавляете новое устройство через Skygate, оно автоматически
+  получает тег <code>tag:private</code> в headscale. Это происходит через
+  <code>backfillNodeOwnership</code> при первой загрузке страницы
+  <a href="/my/devices">/my/devices</a>:</p>
+  <ul>
+    <li>Если нода зарегистрирована через skygate-выданный preauth key — она
+      автоматически помечается <code>tag:private</code>.</li>
+    <li>Exit-nodes (karolina, emilia, sharlotta) остаются <code>tag:public</code>
+      — администратор помечает их вручную через <code>/admin/devices</code>.</li>
+    <li>Изменения тега применяются к headscale через CLI fallback
+      (<code>docker exec headscale headscale nodes tag</code>). Видимость на
+      Tailscale Android обновляется в течение ~60 с.</li>
+  </ul>
+  <p>Для ручной установки тега (например чтобы расшарить устройство) — это
+  делает администратор через <a href="/admin/devices">/admin/devices</a>.</p>
+
+  <h3><i class="fa-solid fa-bug"></i> Типичные грабли</h3>
+  <ul>
+    <li><b>target_type=ip без /32</b> - sky-gate автоматически добавляет <code>/32</code> (например <code>5.5.5.5</code> → <code>5.5.5.5/32</code>), чтобы headscale <code>approve-routes</code> не падал с <code>parsing route: no '/'</code>.</li>
+    <li><b>Общий IP у двух доменов</b> (например <code>gcr.io</code> и <code>ghcr.io</code> иногда резолвятся в один IP) - sky-gate хранит <b>одну</b> строку /32, без дублей. autoupdater не удалит этот IP, пока он нужен любому из доменов.</li>
+    <li><b>DNS не резолвится</b> при добавлении домена - правило сохраняется как <code>target_type=domain</code>, autoupdater попробует при следующем цикле (до 5 минут).</li>
+    <li><b>Cloudflare Challenge</b> на российских сайтах (rutracker и др.) - используйте exit-узел в РФ (sharlotta), а не за рубежом.</li>
   </ul>
 </div>
 
