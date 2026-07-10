@@ -8,6 +8,8 @@
 # Reads SKYGATE_ADMIN_USER / SKYGATE_ADMIN_PASS from .env automatically.
 set -u
 PASS=0
+
+: "${SMOKE_TEST_NEW_PASSWORD:=SkySmoke_2026_X}"
 FAIL=0
 ok()  { echo "PASS: $1"; PASS=$((PASS+1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
@@ -150,6 +152,70 @@ for needle in "Текущие правила" "Мои правила" "Доба�
     bad "page missing '$needle'"
   fi
 done
+
+# Step 11.5: self-service password change via /my/account
+# Verifies the password-change flow introduced in commit c30044b without
+# actually changing the admin password permanently (we revert at the end).
+note "11.5. password change at /my/account (with revert)"
+
+CODE=$(status "$BASE/my/account")
+[ "$CODE" = "200" ] && ok "/my/account 200" || bad "/my/account $CODE"
+
+# Wrong current: redirect to ?err=wrong_current_password
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=WRONG_PASSWORD" \
+  --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "wrong_current_password" \
+  && ok "wrong current returns err=wrong_current_password" \
+  || bad "wrong current got $LOC"
+
+# Mismatching new/confirm
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "confirm_new_password=DIFFERENT_PASSWORD" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "passwords_dont_match" \
+  && ok "mismatch returns err=passwords_dont_match" \
+  || bad "mismatch got $LOC"
+
+# Too-short password
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "new_password=short" \
+  --data-urlencode "confirm_new_password=short" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "password_too_short" \
+  && ok "short password returns err=password_too_short" \
+  || bad "short got $LOC"
+
+# Valid change -> saved=ok
+LOC=$(curl -s -i -b "$COOKIE" -X POST \
+  --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
+echo "$LOC" | grep -q "saved=ok" \
+  && ok "valid change returns saved=ok" \
+  || bad "valid change got $LOC"
+
+# Login with the NEW password, then revert
+rm -f /tmp/smoke_new_ck
+curl -s -c /tmp/smoke_new_ck -X POST -d "username=skyadmin&password=${SMOKE_TEST_NEW_PASSWORD}" "$BASE/login" -o /dev/null
+if grep -q "skygate_session" /tmp/smoke_new_ck 2>/dev/null; then
+  ok "login with new password issued session cookie"
+else
+  bad "login with new password failed"
+fi
+# Revert password back to original (admin) value
+curl -s -o /dev/null -b /tmp/smoke_new_ck -X POST \
+  --data-urlencode "current_password=${SMOKE_TEST_NEW_PASSWORD}" \
+  --data-urlencode "new_password=${SKYGATE_ADMIN_PASS}" \
+  --data-urlencode "confirm_new_password=${SKYGATE_ADMIN_PASS}" \
+  "$BASE/my/account/password"
+ok "reverted admin password back to original"
 
 # Step 12: logout
 note "12. logout"
