@@ -1112,30 +1112,27 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 				n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
 		}
 		// Push tag:private to headscale if matched. Safe for empty/untagged rows.
-		if matchedTag == "tag:private" {
-			if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil && a != nil && a.HS != nil {
-				if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
-					log.Printf("warn: auto-tag node %s: %v", n.ID, err)
+		// Idempotent: skip if the node already carries tag:private — otherwise every
+		// /my/devices load would do an HTTP roundtrip to headscale per device,
+		// AND call InvalidateCache() which forces the next /my/devices load to
+		// re-fetch everything (the bug that was making the page take ~2s).
+		if matchedTag == "tag:private" && a != nil && a.HS != nil {
+			hasPrivate := false
+			for _, t := range n.Tags {
+				if t == "tag:private" {
+					hasPrivate = true
+					break
 				}
-				a.HS.InvalidateCache()
+			}
+			if !hasPrivate {
+				if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
+					if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
+						log.Printf("warn: auto-tag node %s: %v", n.ID, err)
+					}
+				}
 			}
 		}
 				inserted[n.ID] = true
-		// 2026-07-10: bug fix — sync node tag to headscale. New nodes
-		// registered via skygate now get tag:private automatically so the
-		// in-DB node_owner_map and headscale's tag reflect the same state
-		// (was a real bug — UI showed private but Android Tailscale still
-		// saw all clients). Only re-tag when matchedTag is tag:private to
-		// avoid clobbering an admin's manual public/exit tags. Fire-and-
-		// forget: tag failures are logged but do not block the backfill.
-		if matchedTag == "tag:private" {
-			if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil && a != nil && a.HS != nil {
-				if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
-					log.Printf("warn: auto-tag node %s: %v", n.ID, err)
-				}
-				a.HS.InvalidateCache()
-			}
-		}
 		// Mark the preauth key as used if headscale has a node attached to it.
 		if n.PreAuthKeyID != "" {
 			if _, err := db.Exec(`UPDATE preauth_keys SET used=1 WHERE headscale_preauth_id=? AND used=0`, n.PreAuthKeyID); err != nil {
