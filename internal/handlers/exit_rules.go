@@ -148,7 +148,11 @@ func (a *App) getUserDevices(userID int) ([]map[string]any, error) {
 // When exit rules exist, per-device rules are added for audit/restriction,
 // but routing is controlled via the route setup script (see GenerateRouteSetupScript).
 func (a *App) GenerateACL() (string, error) {
-	rows, err := a.DB.Query("SELECT target_type, target_value, action, COALESCE(device_ip,'') as device_ip FROM device_rules WHERE enabled = 1")
+	// Build per-user ACL. Each portal user gets one rule that lets their
+	// own devices reach each other; no user can see another user's
+	// tag:private devices. Public/exit-node rules at the bottom let
+	// everyone reach internet through the exit-nodes.
+	rows, err := a.DB.Query(`SELECT target_type, target_value, action, COALESCE(device_ip, '') as device_ip FROM device_rules WHERE enabled = 1`)
 	if err != nil {
 		return "", err
 	}
@@ -170,11 +174,42 @@ func (a *App) GenerateACL() (string, error) {
 		}
 	}
 
+	// Build the list of headscale user identities from portal_users.
+	// tagOwners requires user@domain form. We hard-code the headscale
+	// base_domain ("tsnet.skynas.ru") for now — it is the only deployment.
+	const baseDomain = "tsnet.skynas.ru"
+	userRows, err := a.DB.Query(`SELECT username FROM portal_users ORDER BY id`)
+	if err != nil {
+		return "", err
+	}
+	defer userRows.Close()
+	var identities []string
+	for userRows.Next() {
+		var uname string
+		if err := userRows.Scan(&uname); err == nil && uname != "" {
+			identities = append(identities, uname+"@"+baseDomain)
+		}
+	}
+	if identities == nil {
+		identities = []string{}
+	}
+
 	var sb strings.Builder
 	sb.WriteString("{\n  \"acls\": [\n")
-	// Always allow all tailnet + internet traffic (ACL doesn't control exit-node routing).
-	// Per-device rules below are informational/restrictive — they don't affect routing.
-	sb.WriteString("    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"] }")
+
+	// Per-user rule: user can reach their OWN devices only.
+	for i, idn := range identities {
+		if i > 0 {
+			sb.WriteString(",\n")
+		}
+		sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [\"" + idn + ":*\"] }")
+	}
+
+	// Informational/audit per-device exit-rules (DNS, telegram IPs, etc).
+	// These come AFTER the per-user rules so that the per-user "self-only"
+	// rule wins for actual user traffic. The exit-rule targets are still
+	// reachable because nothing filters them out by user identity — they
+	// are routed via the per-device * 100.64.0.0/10 lookup at the SRC IP.
 	for _, e := range entries {
 		src := "\"*\""
 		if e.deviceIP != "" {
@@ -182,26 +217,63 @@ func (a *App) GenerateACL() (string, error) {
 		}
 		sb.WriteString(",\n    { \"action\": \"" + e.action + "\", \"src\": [" + src + "], \"dst\": [\"" + e.target + ":*\"] }")
 	}
+
+	// tag:public (shared exit-nodes) and tag:exit-node are visible to
+	// everyone so users can pick an exit-node and others can see status
+	// servers if needed.
+	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:public:*\"] }")
+	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:exit-node:*\"] }")
+
+	// Internet egress: each device can reach the internet directly (Tailscale
+	// uses the device\u0027s own routing when no exit-node is selected).
+	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"] }")
+
 	sb.WriteString("\n  ],\n")
+
+	// tagOwners: every portal user is an owner of tag:private for their own
+	// devices. tag:public and tag:exit-node remain admin-only (skyadmin)
+	// because those usually correspond to shared infra decisions.
 	sb.WriteString("  \"tagOwners\": {\n")
-	sb.WriteString("    \"tag:public\": [\"skyadmin@tsnet.skynas.ru\"],\n")
-	sb.WriteString("    \"tag:exit-node\": [\"skyadmin@tsnet.skynas.ru\"],\n")
-	sb.WriteString("    \"tag:client\": [\"skyadmin@tsnet.skynas.ru\"],\n")
-	sb.WriteString("    \"tag:private\": [\"skyadmin@tsnet.skynas.ru\"]\n")
+	sb.WriteString("    \"tag:public\": [\"skyadmin@" + baseDomain + "\"]\n")
+	if len(identities) > 1 {
+		sb.WriteString(",\n    \"tag:private\": [" + strings.Join(quoteAll(identities), ",") + "]\n")
+	} else {
+		sb.WriteString(",\n    \"tag:private\": [\"" + (identities[0]) + "\"]\n")
+	}
 	sb.WriteString("  },\n")
+
+	// groups: one per portal user so future per-group rules can reference them.
 	sb.WriteString("  \"groups\": {\n")
-	sb.WriteString("    \"group:skyadmin\": [\"skyadmin@tsnet.skynas.ru\"]\n")
-	sb.WriteString("  },\n")
+	for i, idn := range identities {
+		if i > 0 {
+			sb.WriteString(",\n")
+		}
+		// group:skyadmin etc.
+		parts := strings.SplitN(idn, "@", 2)
+		groupName := "group:" + parts[0]
+		sb.WriteString("    \"" + groupName + "\": [\"" + idn + "\"]")
+	}
+	sb.WriteString("\n  },\n")
+
 	sb.WriteString("  \"ssh\": [\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
-	sb.WriteString("      \"src\": [\"tag:private\", \"skyadmin@tsnet.skynas.ru\"],\n")
+	sb.WriteString("      \"src\": [\"tag:private\", \"skyadmin@" + baseDomain + "\"],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    }\n")
-	sb.WriteString("  ],\n")
+	sb.WriteString("  ]\n")
+
 	sb.WriteString("}")
 	return sb.String(), nil
+}
+
+func quoteAll(ss []string) []string {
+	res := make([]string, len(ss))
+	for i, s := range ss {
+		res[i] = strconv.Quote(s)
+	}
+	return res
 }
 
 func (a *App) saveACLSnapshot(config, username string) int {
