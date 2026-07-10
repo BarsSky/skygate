@@ -41,7 +41,7 @@ func (a *App) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	a.renderWithLayout(w, "admin/telegram.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/telegram.html", c, map[string]any{
 		"Page":         "admin/telegram",
 		"Title":        "Telegram",
 		"State":        state,

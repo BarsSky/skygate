@@ -341,7 +341,7 @@ func (a *App) AdminCleanupRules(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	a.renderWithLayout(w, "admin/exit_rules_cleanup.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/exit_rules_cleanup.html", c, map[string]any{
 		"Page":      "admin/exit-rules-cleanup",
 		"Title":     "Cleanup exit rules",
 		"Plan":      plan,
@@ -363,7 +363,7 @@ func (a *App) AdminCleanupRulesApply(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(c.UserID, c.Username, "exit_rules_cleanup",
 		fmt.Sprintf("merged=%d resolved_ips=%d", plan.MergedIDs, plan.ResolvedIPs))
-	a.renderWithLayout(w, "admin/exit_rules_cleanup.html", c, map[string]any{
+	a.renderWithLayout(w, r, "admin/exit_rules_cleanup.html", c, map[string]any{
 		"Page":      "admin/exit-rules-cleanup",
 		"Title":     "Cleanup exit rules",
 		"Plan":      plan,
