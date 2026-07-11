@@ -1,8 +1,8 @@
-{{define "body-admin-settings"}}
+﻿{{define "body-admin-settings"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-gear"></i> {{.T "settings.title"}}</h2>
-    <div class="sub">{{.T "settings.subtitle"}}.</div>
+    <h2><i class="fa-solid fa-gear"></i> {{.Tr "settings.title"}}</h2>
+    <div class="sub">{{.Tr "settings.subtitle"}}.</div>
   </div>
 </div>
 
@@ -16,14 +16,14 @@
 <form action="/admin/settings" method="POST">
   <div class="card-grid">
     <div class="card">
-      <h3><i class="fa-solid fa-plug"></i> {{.T "settings.title"}}</h3>
+      <h3><i class="fa-solid fa-plug"></i> {{.Tr "settings.title"}}</h3>
       <div class="form-group">
         <label>Headscale URL (internal)</label>
         <input type="text" name="headscale_url" value="{{.HeadscaleURL}}" class="form-control" placeholder="http://headscale:50444">
         <div class="sub">Internal headscale address on the Docker network. Update when changing host.</div>
       </div>
       <div class="form-group">
-        <label>{{.T "settings.headscale_key"}}</label>
+        <label>{{.Tr "settings.headscale_key"}}</label>
         <input type="password" name="headscale_api_key" value="{{.HeadscaleAPIKey}}" class="form-control" placeholder="leave empty to keep current">
         <div class="sub">Generate: <code>docker exec headscale headscale apikeys create</code></div>
       </div>
@@ -77,8 +77,8 @@
       </ol>
     </div>
     <div style="display:flex;gap:1rem;margin-top:1rem">
-      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{.T "settings.save"}}</button>
-      <a href="/admin/backup" class="btn"><i class="fa-solid fa-arrow-left"></i> {{.T "common.back"}}</a>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{.Tr "settings.save"}}</button>
+      <a href="/admin/backup" class="btn"><i class="fa-solid fa-arrow-left"></i> {{.Tr "common.back"}}</a>
     </div>
   </div>
 </form>

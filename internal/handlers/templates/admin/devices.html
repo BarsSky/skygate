@@ -1,8 +1,8 @@
-{{define "body-admin-devices"}}
+﻿{{define "body-admin-devices"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-server"></i>{{.T "devices.title_all"}}</h2>
-    <div class="sub">{{.T "devices.subtitle"}}. {{.T "devices.tag_hint"}}.</div>
+    <h2><i class="fa-solid fa-server"></i>{{.Tr "devices.title_all"}}</h2>
+    <div class="sub">{{.Tr "devices.subtitle"}}. {{.Tr "devices.tag_hint"}}.</div>
   </div>
 </div>
 
@@ -11,14 +11,14 @@
     <thead>
       <tr>
         <th>ID</th>
-        <th><i class="fa-solid fa-tag"></i> {{.T "devices.hostname"}}</th>
-        <th><i class="fa-solid fa-user"></i> {{.T "devices.user"}}</th>
-        <th><i class="fa-solid fa-network-wired"></i> {{.T "devices.ip"}}</th>
+        <th><i class="fa-solid fa-tag"></i> {{.Tr "devices.hostname"}}</th>
+        <th><i class="fa-solid fa-user"></i> {{.Tr "devices.user"}}</th>
+        <th><i class="fa-solid fa-network-wired"></i> {{.Tr "devices.ip"}}</th>
         <th><i class="fa-solid fa-circle-nodes"></i> Type</th>
-        <th><i class="fa-solid fa-eye"></i> {{.T "devices.tag"}}</th>
-        <th><i class="fa-solid fa-signal"></i> {{.T "devices.status"}}</th>
-        <th><i class="fa-solid fa-clock"></i> {{.T "devices.last_seen"}}</th>
-        <th><i class="fa-solid fa-gear"></i> {{.T "common.actions"}}</th>
+        <th><i class="fa-solid fa-eye"></i> {{.Tr "devices.tag"}}</th>
+        <th><i class="fa-solid fa-signal"></i> {{.Tr "devices.status"}}</th>
+        <th><i class="fa-solid fa-clock"></i> {{.Tr "devices.last_seen"}}</th>
+        <th><i class="fa-solid fa-gear"></i> {{.Tr "common.actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -33,24 +33,24 @@
         </td>
         <td>
           {{if .IsPublicView}}
-            <span class="tag tag-success" title="tag:public"><i class="fa-solid fa-globe"></i>{{.T "devices.tag_public"}}</span>
+            <span class="tag tag-success" title="tag:public"><i class="fa-solid fa-globe"></i>{{.Tr "devices.tag_public"}}</span>
           {{else if .IsPrivateView}}
-            <span class="tag" title="tag:private"><i class="fa-solid fa-lock"></i>{{.T "devices.tag_private"}}</span>
+            <span class="tag" title="tag:private"><i class="fa-solid fa-lock"></i>{{.Tr "devices.tag_private"}}</span>
           {{else if .Tags}}
             {{range .Tags}}
               <span class="tag">{{.}}</span>
             {{end}}
           {{else if ne .UserName "tagged-devices"}}
-            <span class="tag" title="default private — user-owned device"><i class="fa-solid fa-lock"></i>{{.T "devices.tag_private"}}</span>
+            <span class="tag" title="default private — user-owned device"><i class="fa-solid fa-lock"></i>{{.Tr "devices.tag_private"}}</span>
           {{else}}
-            <span class="tag tag-warning" title="no headscale tag assigned"><i class="fa-solid fa-circle-exclamation"></i>{{.T "devices.tag_untagged"}}</span>
+            <span class="tag tag-warning" title="no headscale tag assigned"><i class="fa-solid fa-circle-exclamation"></i>{{.Tr "devices.tag_untagged"}}</span>
           {{end}}
         </td>
         <td>
           {{if .Online}}
-            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.T "devices.online"}}</span>
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.Tr "devices.online"}}</span>
           {{else}}
-            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.T "devices.offline"}}</span>
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.Tr "devices.offline"}}</span>
           {{end}}
         </td>
         <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
@@ -58,12 +58,12 @@
           {{if .IsPublicView}}
           <form method="post" action="/admin/nodes/{{.ID}}/tag" style="display:inline">
             <input type="hidden" name="tag" value="tag:private">
-            <button type="submit" class="btn btn-secondary btn-sm" title="{{.T "devices.tag_remove"}}"><i class="fa-solid fa-lock"></i></button>
+            <button type="submit" class="btn btn-secondary btn-sm" title="{{.Tr "devices.tag_remove"}}"><i class="fa-solid fa-lock"></i></button>
           </form>
           {{else}}
           <form method="post" action="/admin/nodes/{{.ID}}/tag" style="display:inline">
             <input type="hidden" name="tag" value="tag:public">
-            <button type="submit" class="btn btn-sm" title="{{.T "devices.tag_set"}}"><i class="fa-solid fa-globe"></i></button>
+            <button type="submit" class="btn btn-sm" title="{{.Tr "devices.tag_set"}}"><i class="fa-solid fa-globe"></i></button>
           </form>
           {{end}}
         </td>
@@ -73,7 +73,7 @@
   </table>
   <p style="color:var(--text-muted);font-size:12px;margin-top:16px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
-    <span><strong>{{.T "devices.tag_public"}}</strong> — visible to all tailnet users via ACL. <strong>{{.T "devices.tag_private"}}</strong> — only owner and admins.</span>
+    <span><strong>{{.Tr "devices.tag_public"}}</strong> — visible to all tailnet users via ACL. <strong>{{.Tr "devices.tag_private"}}</strong> — only owner and admins.</span>
   </p>
 </div>
 {{end}}
