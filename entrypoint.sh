@@ -11,8 +11,15 @@ echo "Building Skygate..."
 # docker-compose (`./:/app`); if it's missing (e.g. CI build from a
 # tarball), fall back to "dev". The alpine base image does NOT include
 # git, so we install it via apk above.
+# git 2.35+ refuses to operate on a repo whose owner doesn't match
+# the current uid ("dubious ownership"). The host bind-mounts .git
+# as uid 1000 while we run as root, so mark /app as safe explicitly.
+git config --global --add safe.directory /app
 GIT_VER=$(git describe --tags --always 2>/dev/null || echo "dev")
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+if [ "${GIT_VER}" = "dev" ] || [ "${GIT_COMMIT}" = "unknown" ]; then
+    echo "  WARN: build label not resolved (GIT_VER=${GIT_VER} GIT_COMMIT=${GIT_COMMIT})" >&2
+fi
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS="-X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}"
 echo "  version=${GIT_VER} commit=${GIT_COMMIT} built=${BUILD_TIME}"
