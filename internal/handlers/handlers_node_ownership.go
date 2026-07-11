@@ -9,6 +9,21 @@ import (
 	"skygate/internal/headscale"
 )
 
+// firstTagOrFallback returns the node's first tag, or "tag:untagged"
+// if the node has no tags. Used to populate node_owner_map.tag for
+// rows that come from strategies that don't otherwise carry a tag
+// (specifically the temporal fallback in C, which fires for both
+// tagged and untagged nodes).
+//
+// Moved from handlers_derp.go during Этап 8 — only used by
+// backfillNodeOwnership, so it lives here.
+func firstTagOrFallback(n headscale.NodeView) string {
+	if len(n.Tags) > 0 {
+		return n.Tags[0]
+	}
+	return "tag:untagged"
+}
+
 // backfillNodeOwnership walks all nodes, and for any node whose headscale
 // preAuthKey matches one of this portal user's preauth_keys, inserts a row
 // in node_owner_map (idempotent via INSERT OR IGNORE).
