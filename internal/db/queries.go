@@ -351,6 +351,25 @@ const (
 )
 
 // ---------------------------------------------------------------
+// telegram_bindings  —  v0.29 migration
+//   chat_id           INTEGER PRIMARY KEY
+//   portal_user_id    INTEGER NOT NULL
+//   is_admin          INTEGER NOT NULL DEFAULT 0
+//   bound_at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+//   bound_by_user_id  INTEGER NOT NULL DEFAULT 0
+// ---------------------------------------------------------------
+
+const (
+	qSelectTelegramBindingByChatID = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id FROM telegram_bindings WHERE chat_id = ?`
+	qSelectTelegramBindingByUser   = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id FROM telegram_bindings WHERE portal_user_id = ?`
+	qSelectAllTelegramBindings     = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id FROM telegram_bindings ORDER BY bound_at DESC`
+	qInsertTelegramBinding         = `INSERT INTO telegram_bindings (chat_id, portal_user_id, is_admin, bound_by_user_id) VALUES (?, ?, ?, ?)
+		ON CONFLICT(chat_id) DO UPDATE SET portal_user_id = excluded.portal_user_id, is_admin = excluded.is_admin, bound_at = strftime('%s','now'), bound_by_user_id = excluded.bound_by_user_id`
+	qDeleteTelegramBindingByChat   = `DELETE FROM telegram_bindings WHERE chat_id = ?`
+	qDeleteTelegramBindingsByUser  = `DELETE FROM telegram_bindings WHERE portal_user_id = ?`
+)
+
+// ---------------------------------------------------------------
 // exit_servers  —  v0.20 + v0.24
 //   id                INTEGER PRIMARY KEY AUTOINCREMENT
 //   node_id           TEXT NOT NULL UNIQUE
