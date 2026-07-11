@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"net/http"
 	"strings"
-	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
@@ -237,55 +236,6 @@ func (a *App) audit(userID int64, username, action, detail string) {
 // DERP types moved to handlers_derp.go.
 // (DerpStatus, DerpPeer, ConnSummary, DerpSnapshot)
 // (DerpSnapshot.CurrentConns, collectDerpStatus)
-func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) PreauthKeyStats {
-	var s PreauthKeyStats
-	if myUserID == 0 {
-		return s
-	}
-	// Collect headscale preAuthKey IDs currently attached to any node.
-	// These are authoritative "used" keys.
-	hsUsedKeyIDs := map[string]bool{}
-	for _, n := range nodes {
-		if n.PreAuthKeyID != "" {
-			hsUsedKeyIDs[n.PreAuthKeyID] = true
-		}
-	}
-	now := time.Now().Unix()
-	rows, err := a.DB.Query(`SELECT id, headscale_preauth_id, used, expires_at FROM preauth_keys WHERE user_id=?`, myUserID)
-	if err != nil {
-		return s
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var hsID sql.NullString
-		var usedInt int
-		var exp sql.NullInt64
-		if err := rows.Scan(&id, &hsID, &usedInt, &exp); err != nil {
-			continue
-		}
-		s.Total++
-		// Determine the authoritative used state. Prefer the live
-		// headscale signal (node.preAuthKey.id) over the local flag,
-		// so a missing local flip doesn't keep a key listed as active
-		// once the device exists. We DO NOT clear the local flag here
-		// - that's a side-effect the user should opt into via a
-		// separate sync job; for the counter, just trust headscale.
-		isUsed := usedInt == 1
-		if hsID.Valid && hsUsedKeyIDs[hsID.String] {
-			isUsed = true
-		}
-		switch {
-		case isUsed:
-			s.Used++
-		case exp.Valid && exp.Int64 <= now:
-			s.Expired++
-		default:
-			s.Active++
-		}
-	}
-	return s
-}
 
 // DERP helpers (firstTagOrFallback, classifyDerp*, summarizeDerpPeers) moved to handlers_derp.go.
 // DERP admin handlers moved to handlers_derp.go.
