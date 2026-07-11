@@ -58,11 +58,14 @@ API:
 
 ```
 cmd/skygate/main.go                                — entry point, HTTP routes
-internal/handlers/handlers.go                       — shared infra (App, render, i18n, currentUser, audit) + login/logout/lang/theme/dashboard/devices/preauth/keys/backfillNodeOwnership (~1100 lines)
+internal/handlers/handlers.go                       — shared infra (App, render, i18n, currentUser, audit) + settings/theme + my/keys + my/devices + my/preauth + my/exit-nodes + get-help + DERP type defs + misc helpers (~688 lines)
+internal/handlers/handlers_dashboard.go             — TailnetMetrics struct + computeTailnetMetrics + GetDashboard handler (~104 lines)
+internal/handlers/handlers_auth.go                  — GetLogin/PostLogin/PostLogout + i18n PostLang cookie (~93 lines)
+internal/handlers/handlers_node_ownership.go        — backfillNodeOwnership (Strategy C temporal preauth->tag:private match) (~235 lines)
 internal/handlers/handlers_my_account.go            — self-service password change at /my/account (~84 lines)
 internal/handlers/handlers_api_tokens.go            — personal API tokens (Bearer auth) at /my/tokens (~52 lines)
 internal/handlers/handlers_admin_pages.go           — admin read-only views: /admin/audit, /admin/acls (~58 lines)
-internal/handlers/handlers_derp.go                  — DERP status + helpers (~337 lines)
+internal/handlers/handlers_derp.go                  — DERP status + handlers + ConnSummary/DerpSnapshot types (~337 lines)
 internal/handlers/handlers_admin_users.go           — admin user CRUD (~209 lines)
 internal/handlers/handlers_admin_nodes.go           — admin device/tag handlers (~91 lines)
 internal/handlers/exit_rules.go                     — DeviceRule struct + DB helpers (insertRuleUnique, getDeviceRules, getUserDevices) + GenerateACL() + ACL helpers (~359 lines)
@@ -274,10 +277,23 @@ route registration in `cmd/skygate/main.go`.
 
 ## Decomposition status
 
-`exit_rules.go` has been largely decomposed (1146 → 359 lines) — the
-form/HTML handlers moved to `exit_rules_form.go` (744 lines), which itself
-is the next candidate for further splitting. `handlers.go` is still a
-god-object at ~1100 lines and is the main remaining target.
+`handlers.go` was a god-object at ~1100 lines and has been the main
+decomposition target. Progress so far:
+- `handlers_node_ownership.go` (235) — `backfillNodeOwnership` extracted.
+- `handlers_dashboard.go` (104) — `TailnetMetrics` + `computeTailnetMetrics`
+  + `GetDashboard` extracted.
+- `handlers_auth.go` (93) — `GetLogin` / `PostLogin` / `PostLogout` /
+  `PostLang` extracted.
+
+`handlers.go` is now **~688 lines**. Remaining blocks are all small
+(<100 lines each): settings/theme, my/keys, my/devices, my/preauth,
+my/exit-nodes, get-help, DERP type defs, misc helpers. Each candidate
+is below the threshold where extraction pays off, so further splitting
+is cosmetic — the file is no longer a god-object.
+
+`exit_rules.go` (1146 → 359) was already largely decomposed; the form
+handlers live in `exit_rules_form.go` (744 lines), which is the next
+candidate for further splitting if we ever revisit it.
 
 When adding a new handler, prefer creating a focused file rather than
 growing either god-object:
@@ -286,12 +302,16 @@ growing either god-object:
 - `internal/handlers/handlers_admin_*.go` for admin pages
 
 Sister files in `internal/handlers/` (current line counts):
-- `handlers.go` (1099) — shared infra + login/logout/lang/theme/dashboard/
-  devices/preauth/keys + `backfillNodeOwnership` + `computeTailnetMetrics`
+- `handlers.go` (688) — shared infra + settings/theme + my/keys +
+  my/devices + my/preauth + my/exit-nodes + get-help + DERP type defs +
+  misc helpers
+- `handlers_dashboard.go` (104) — TailnetMetrics + computeTailnetMetrics + GetDashboard
+- `handlers_auth.go` (93) — GetLogin / PostLogin / PostLogout / PostLang
+- `handlers_node_ownership.go` (235) — backfillNodeOwnership
 - `handlers_my_account.go` (84) — self-service password change
 - `handlers_api_tokens.go` (52) — personal API tokens
 - `handlers_admin_pages.go` (58) — read-only admin views (audit, ACLs)
-- `handlers_derp.go` (337) — DERP relay status
+- `handlers_derp.go` (337) — DERP status + handlers + type defs
 - `handlers_admin_users.go` (209) — admin user CRUD
 - `handlers_admin_nodes.go` (91) — admin device/tag
 - `exit_rules.go` (359) — DeviceRule struct + DB helpers + `GenerateACL()` + ACL helpers
