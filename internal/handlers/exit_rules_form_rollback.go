@@ -33,10 +33,19 @@ func (a *App) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.HS.SetPolicy(config); err != nil {
 		a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'rollback_fail', ?)", ver, err.Error())
+		// 2026-07-11: rollback failure is loud — admin tried to restore
+		// a known-good policy and the headscale API rejected it. Pager time.
+		if a.Notifier != nil {
+			go a.Notifier.SendTelegram(fmt.Sprintf("❌ ACL rollback failed (by %s, target v%d)\n  err: %v",
+				c.Username, ver, err))
+		}
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	a.saveACLSnapshot(config, c.Username)
 	a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'rollback', ?)", ver, fmt.Sprintf("rolled back by %s", c.Username))
+	if a.Notifier != nil {
+		go a.Notifier.SendTelegram(fmt.Sprintf("⏪ ACL rollback by %s → v%d", c.Username, ver))
+	}
 	http.Redirect(w, r, "/admin/exit-rules?rolled=1", http.StatusFound)
 }

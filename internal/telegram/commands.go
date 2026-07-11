@@ -10,8 +10,8 @@ import (
 // HandleCommand returns the reply text for a command message.
 // It is safe to call from the polling loop in Run().
 //
-// Phase 1 (MVP) implements /status only. Phase 2 will add /nodes,
-// /exit_nodes, /rules, /quota, /audit, /ack, /help.
+// Phase 1 (MVP) implements /status. Phase 2 adds /nodes, /rules, /audit
+// on top of the same HandleCommand dispatch (see commands_phase2.go).
 func HandleCommand(ctx context.Context, d *sql.DB, raw string) string {
 	parts := strings.Fields(strings.TrimSpace(raw))
 	if len(parts) == 0 {
@@ -25,6 +25,12 @@ func HandleCommand(ctx context.Context, d *sql.DB, raw string) string {
 		return statusReply(d)
 	case "/help":
 		return helpReply()
+	case "/nodes":
+		return nodesReply(d)
+	case "/rules":
+		return rulesReply(d)
+	case "/audit":
+		return auditReply(d)
 	default:
 		return fmt.Sprintf("Unknown command: %s. Try /help.", cmd)
 	}
@@ -45,5 +51,10 @@ func statusReply(d *sql.DB) string {
 }
 
 func helpReply() string {
-	return "Commands (phase 1):\n/status \u2014 summary\n/help \u2014 this list\n\n(More commands coming in phase 2: /nodes, /exit_nodes, /rules, /quota, /audit)"
+	return "Commands:\n" +
+		"/status — summary (rules/users/last acl)\n" +
+		"/nodes — list tailnet devices by user+tag\n" +
+		"/rules — recent exit-rules (id, user, target, action)\n" +
+		"/audit — last 20 audit_log entries\n" +
+		"/help — this list"
 }

@@ -173,17 +173,20 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
-		// 2026-07-10: Telegram bot. If a token is in the DB, upgrade Notifier
-		// to the real client and start the polling loop for incoming commands.
+		// 2026-07-11: Telegram bot — always arm the RealNotifier so a
+		// hot-swap (admin saving a token at runtime) takes effect without
+		// restart. RealNotifier.SendTelegram no-ops when Configured()==false,
+		// and Run() sleeps-and-rechecks every 5s when the DB has no token.
+		// No more "boot-time gate" on app.Notifier — it's always non-nil.
 		{
 			rn := telegram.NewRealNotifier(d)
+			app.Notifier = rn
 			if rn.Configured() {
 				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")
-				app.Notifier = rn
-				go rn.Run(ctx)
 			} else {
-				log.Printf("🤖 Telegram bot not configured; notifications will noop")
+				log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
 			}
+			go rn.Run(ctx)
 		}
 	defer stop()
 

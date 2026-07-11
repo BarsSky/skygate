@@ -37,7 +37,7 @@ User-facing pages:
 - `/admin/derp` — admin: DERP relay status
 - `/admin/exit-nodes` — admin: list exit nodes
 - `/admin/backup` — admin: backup/restore ACL
-- `/admin/telegram` — admin: bot config (NOTIFICATIONS ONLY; no `sendMessage` is implemented)
+- `/admin/telegram` — admin: bot config (token in `global_settings`, sendMessage via Go-native HTTP in `internal/telegram/notify.go`)
 - `/my/account` — self-service password change (current + new + confirm)
 - Rate limits (in-memory, single-instance only):
   - POST /login: 5 attempts per username per 15s, 20 per IP per 30s
@@ -82,7 +82,7 @@ internal/handlers/exit_rules_routescript_windows_body.go — buildWindowsRouteSc
 internal/handlers/exit_rules_routescript_linux_body.go   — buildLinuxRouteScript + writeLinux{Setup,Restore}Script helpers — pure .sh builder for Linux + macOS, no I/O (~147 lines)
 internal/handlers/exit_rules_cleanup.go              — admin cleanup + orphan /32 cleanup (~357 lines)
 internal/handlers/admin_backup.go                   — admin backup/restore ACL (~247 lines)
-internal/handlers/admin_telegram.go                 — admin telegram UI (UI only; sending not implemented, ~283 lines)
+internal/handlers/admin_telegram.go                 — admin telegram UI + save/test/rotate/disable (~303 lines)
 internal/handlers/admin_exit_nodes.go               — admin exit nodes (~164 lines)
 internal/handlers/templates.go                      — `//go:embed` for all HTML (~117 lines)
 internal/handlers/static.go                         — empty stub (file is unused placeholder)
@@ -367,5 +367,5 @@ Sister files in `internal/handlers/` (current line counts):
 - `exit_rules_routescript_linux_body.go` (147) — `buildLinuxRouteScript` + `writeLinux{Setup,Restore}Script` helpers (pure .sh builder, no I/O)
 - `exit_rules_cleanup.go` (357) — admin cleanup + orphan /32 cleanup
 - `admin_backup.go` (247) — backup/restore ACL
-- `admin_telegram.go` (283) — telegram UI (no send)
+- `admin_telegram.go` (303) — telegram UI; test handler routes through `app.Notifier.SendTelegram` (Go-native HTTP, no curl)
 - `admin_exit_nodes.go` (164) — exit node admin
