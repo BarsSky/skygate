@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 
@@ -51,19 +53,12 @@ func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	// Distinct action list for the dropdown. Read first because
 	// the operator needs it to pick a filter, and it's cheap
 	// (a few dozen rows at most).
-	actionRows, err := a.DB.Query(`SELECT DISTINCT action FROM audit_log ORDER BY action`)
+	// 2026-07-11: Этап 9 part 2 — moved to db.ListAuditActions
+	actions, err := db.ListAuditActions(a.DB)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	var actions []string
-	for actionRows.Next() {
-		var a string
-		if err := actionRows.Scan(&a); err == nil {
-			actions = append(actions, a)
-		}
-	}
-	actionRows.Close()
 
 	// Main query — apply the WHERE we built above.
 	rows, err := a.DB.Query(`

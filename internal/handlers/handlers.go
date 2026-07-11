@@ -230,8 +230,11 @@ func (a *App) currentUser(r *http.Request) *auth.Claims {
 
 // audit writes a row to the audit log.
 func (a *App) audit(userID int64, username, action, detail string) {
-	_, _ = a.DB.Exec(`INSERT INTO audit_log(user_id, username, action, detail) VALUES(?,?,?,?)`,
-		userID, username, action, detail)
+	// 2026-07-11: Этап 9 part 2 — INSERT moved to db.AppendAuditLog
+	// so the SQL string lives in queries.go. Audit failures remain
+	// best-effort (the error is intentionally dropped) — a transient
+	// DB hiccup must not break the main action (login, rule add, etc).
+	_ = db.AppendAuditLog(a.DB, userID, username, action, detail)
 }
 
 // ---------- FILE INDEX ----------

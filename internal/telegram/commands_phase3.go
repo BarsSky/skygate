@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // Phase 3 commands: /exit_nodes, /quota, /ack <id>.
@@ -177,8 +179,8 @@ func ackReply(d *sql.DB, arg string) string {
 	// 3. Mirror into audit_log so /admin/audit shows the operator's
 	// response, not just the alert itself.
 	detail := fmt.Sprintf("alert_id=%d", id)
-	if _, err := d.Exec(`INSERT INTO audit_log(username, action, detail) VALUES (?, ?, ?)`,
-		"telegram", "telegram_ack", detail); err != nil {
+	// 2026-07-11: Этап 9 part 2 — moved to db.AppendAuditLogNoUser
+	if err := db.AppendAuditLogNoUser(d, "telegram", "telegram_ack", detail); err != nil {
 		// audit_log failure isn't fatal — the ack itself succeeded.
 		// We log but don't surface the error to keep the operator's
 		// flow uninterrupted.

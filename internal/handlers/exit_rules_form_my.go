@@ -72,7 +72,7 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rules, _ := a.getDeviceRules(int(c.UserID))
+	rules, _ := a.getDeviceRules(c.UserID)
 
 	var devices []map[string]any
 	if nodes, e := a.HS.ListAllNodes(); e == nil {
@@ -174,9 +174,8 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// Count user-facing rules for THIS device (excludes autoupdater /32).
 		did, _ := strconv.Atoi(info.ID)
 		if did > 0 {
-			a.DB.QueryRow(
-				"SELECT COUNT(*) FROM device_rules WHERE user_id=? AND device_id=? AND enabled=1 AND (target_type!='subnet' OR COALESCE(parent_domain,'')='')",
-				c.UserID, did).Scan(&info.UserFacing)
+			// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledNonSubnetRulesForUserDevice
+			info.UserFacing, _ = db.CountEnabledNonSubnetRulesForUserDevice(a.DB, c.UserID, did)
 		}
 		deviceInfos = append(deviceInfos, info)
 	}
@@ -227,7 +226,8 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// Total rules count (all enabled)
 	totalRules := 0
 	if a.Cfg != nil && a.Cfg.MaxTotalRules > 0 {
-		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1").Scan(&totalRules)
+		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRules
+		totalRules, _ = db.CountEnabledRules(a.DB)
 	}
 	loadPct := 0
 	maxPerDeviceMax := 0
@@ -263,9 +263,8 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// their personal limit, not just the system-wide MaxTotalRules.
 	userFacingCount := 0
 	if c.UserID > 0 {
-		a.DB.QueryRow(
-			"SELECT COUNT(*) FROM device_rules WHERE user_id=? AND enabled=1 AND (target_type!='subnet' OR COALESCE(parent_domain,'')='')",
-			c.UserID).Scan(&userFacingCount)
+		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledNonSubnetRulesForUser
+		userFacingCount, _ = db.CountEnabledNonSubnetRulesForUser(a.DB, c.UserID)
 	}
 	maxPerUser := a.getMaxRulesForUser(c.Username)
 
@@ -276,17 +275,12 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		Count    int
 	}
 	var deviceUsageList []DeviceUsage
-	rowsUsage, qerr := a.DB.Query(
-		"SELECT device_id, COUNT(*) FROM device_rules WHERE user_id=? AND enabled=1 AND (target_type!='subnet' OR COALESCE(parent_domain,'')='') GROUP BY device_id",
-		c.UserID)
+	// 2026-07-11: Этап 9 part 2 — moved to db.CountRulesByDeviceForUser
+	deviceCounts, qerr := db.CountRulesByDeviceForUser(a.DB, c.UserID)
 	if qerr == nil {
-		for rowsUsage.Next() {
-			var du DeviceUsage
-			if rowsUsage.Scan(&du.DeviceID, &du.Count) == nil {
-				deviceUsageList = append(deviceUsageList, du)
-			}
+		for devID, count := range deviceCounts {
+			deviceUsageList = append(deviceUsageList, DeviceUsage{DeviceID: devID, Count: count})
 		}
-		rowsUsage.Close()
 	}
 	deviceUsage := map[int]int{}
 	for _, du := range deviceUsageList {
@@ -363,14 +357,23 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	// 9 доменов и 243 правила → лимит 200 забит и невозможно ничего
 	// добавить.  IP / subnet правила, введённые вручную (без parent_domain),
 	// по-прежнему считаются.
-	countUserFacing := func(userID int64, deviceID int, total bool) int {
-		q := "SELECT COUNT(*) FROM device_rules WHERE enabled=1 AND (target_type != 'subnet' OR COALESCE(parent_domain,'') = '')"
-		args := []any{}
-		if userID > 0 { q += " AND user_id=?"; args = append(args, userID) }
-		if deviceID > 0 { q += " AND device_id=?"; args = append(args, deviceID) }
-		var n int
-		_ = a.DB.QueryRow(q, args...).Scan(&n)
-		return n
+	// 2026-07-11: Этап 9 part 2 — closure replaced with the typed
+	// db.* helpers. The `total` flag is now a no-op (the system
+	// always uses the non-subnet count for the per-user cap; the
+	// total-rules ceiling lives in Cfg.MaxTotalRules and is checked
+	// separately in the API).
+	countUserFacing := func(userID int64, deviceID int, _ bool) int {
+		switch {
+		case userID > 0 && deviceID > 0:
+			n, _ := db.CountEnabledNonSubnetRulesForUserDevice(a.DB, userID, deviceID)
+			return n
+		case userID > 0:
+			n, _ := db.CountEnabledNonSubnetRulesForUser(a.DB, userID)
+			return n
+		default:
+			n, _ := db.CountEnabledRules(a.DB)
+			return n
+		}
 	}
 	// 2026-07-07: issue #12 — limit check
 	// 2026-07-09: считаем только "user-facing" правила (см. выше).
@@ -470,14 +473,10 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	// autoupdater can track it and add knownSubdomains (e.g. static.rutracker.cc).
 	// Check for existing domain rule first to avoid dedup.
 	if targetType == "domain" {
-		var existingDomainID int
-		_ = a.DB.QueryRow(
-			"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='domain' AND target_value=? LIMIT 1",
-			c.UserID, devID, exitNode, targetValue).Scan(&existingDomainID)
+		// 2026-07-11: Этап 9 part 2 — moved to db.FindDomainRuleID + db.AppendDeviceRule
+		existingDomainID, _ := db.FindDomainRuleID(a.DB, c.UserID, devID, exitNode, targetValue)
 		if existingDomainID == 0 {
-			_, _ = a.DB.Exec(
-				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'domain', ?, ?, ?, ?)",
-				c.UserID, devID, exitNode, targetValue, action, deviceIP, targetValue)
+			_, _ = db.AppendDeviceRule(a.DB, c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue)
 		}
 	}
 
@@ -491,8 +490,8 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existingID > 0 {
-			var existingParent string
-			_ = a.DB.QueryRow("SELECT COALESCE(parent_domain,'') FROM device_rules WHERE id=?", existingID).Scan(&existingParent)
+			// 2026-07-11: Этап 9 part 2 — moved to db.GetParentDomain
+			existingParent, _ := db.GetParentDomain(a.DB, existingID)
 			if existingParent == "" || existingParent == targetValue {
 				// Ручной IP/subnet (без parent_domain) или уже наш parent_domain → дубликат
 				dupCount++
@@ -612,8 +611,8 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 	for _, s := range rawIDs {
 		id, _ := strconv.Atoi(s)
 		if id == 0 { continue }
-		var targetType, parentDomain string
-		_ = a.DB.QueryRow("SELECT target_type, COALESCE(parent_domain,'') FROM device_rules WHERE id=? AND user_id=?", id, c.UserID).Scan(&targetType, &parentDomain)
+		// 2026-07-11: Этап 9 part 2 — moved to db.GetRuleTargetTypeAndParent
+		targetType, parentDomain, _ := db.GetRuleTargetTypeAndParent(a.DB, id, c.UserID)
 		infos = append(infos, ruleInfo{id: id, targetType: targetType, parentDomain: parentDomain})
 	}
 
@@ -621,14 +620,13 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 	// с тем же parent_domain.  Идемпотентно.
 	for _, info := range infos {
 		if info.targetType == "domain" && info.parentDomain != "" {
-			res, _ := a.DB.Exec(
-				"DELETE FROM device_rules WHERE user_id=? AND (id=? OR (target_type='subnet' AND parent_domain=?))",
-				c.UserID, info.id, info.parentDomain)
-			if n, err := res.RowsAffected(); err == nil {
+			// 2026-07-11: Этап 9 part 2 — moved to db.DeleteRuleOrCascadeByParentDomain
+			if n, err := db.DeleteRuleOrCascadeByParentDomain(a.DB, c.UserID, info.id, info.parentDomain); err == nil {
 				totalCascade += int(n) - 1
 			}
 		} else {
-			a.DB.Exec("DELETE FROM device_rules WHERE id=? AND user_id=?", info.id, c.UserID)
+			// 2026-07-11: Этап 9 part 2 — moved to db.DeleteRuleForUser
+			_ = db.DeleteRuleForUser(a.DB, info.id, c.UserID)
 		}
 	}
 
