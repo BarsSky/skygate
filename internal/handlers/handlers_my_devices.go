@@ -83,31 +83,30 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if username != "" {
-		rows, _ := a.DB.Query(`SELECT node_id FROM node_owner_map WHERE username=?`, username)
-		if rows != nil {
-			defer rows.Close()
-			snapIDs := map[string]bool{}
-			for rows.Next() {
-				var nid string
-				if err := rows.Scan(&nid); err == nil {
-					snapIDs[nid] = true
-				}
+		// 2026-07-12: Этап 10 part 4 — moved to
+		// db.ListNodeOwnerNodeIDsByUsername.
+		snapIDList, _ := db.ListNodeOwnerNodeIDsByUsername(a.DB, username)
+		// Build a set for O(1) membership test. The list is small
+		// (a user's owned devices) but a map keeps the lookups in
+		// the inner loop tidy.
+		snapIDs := map[string]bool{}
+		for _, id := range snapIDList {
+			snapIDs[id] = true
+		}
+		for _, n := range all {
+			if !snapIDs[n.ID] || mySet[n.ID] {
+				continue
 			}
-			for _, n := range all {
-				if !snapIDs[n.ID] || mySet[n.ID] {
-					continue
-				}
-				ip := ""
-				if len(n.IPAddresses) > 0 {
-					ip = n.IPAddresses[0]
-				}
-				myNodesList = append(myNodesList, myNodeRow{
-					ID: n.ID, Hostname: n.Hostname, IP: ip,
-					Online: n.Online, LastSeen: n.LastSeen,
-					UserName: n.UserName, IsPublic: n.IsPublicView(),
-					Source: "snapshot",
-				})
+			ip := ""
+			if len(n.IPAddresses) > 0 {
+				ip = n.IPAddresses[0]
 			}
+			myNodesList = append(myNodesList, myNodeRow{
+				ID: n.ID, Hostname: n.Hostname, IP: ip,
+				Online: n.Online, LastSeen: n.LastSeen,
+				UserName: n.UserName, IsPublic: n.IsPublicView(),
+				Source: "snapshot",
+			})
 		}
 	}
 

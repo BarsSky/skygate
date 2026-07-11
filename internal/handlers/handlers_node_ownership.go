@@ -95,18 +95,12 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 	// row owned by a different portal user (and pointing at the same
 	// node id, possible if a node was re-tagged under someone else)
 	// is left alone.
-	snapRows, err := db.Query(`SELECT node_id FROM node_owner_map WHERE username=?`, portalUsername)
-	if err == nil {
-		var orphans []string
-		for snapRows.Next() {
-			var nid string
-			if err := snapRows.Scan(&nid); err == nil && !live[nid] {
-				orphans = append(orphans, nid)
-			}
-		}
-		snapRows.Close()
-		for _, nid := range orphans {
-			_, _ = db.Exec(`DELETE FROM node_owner_map WHERE node_id=? AND username=?`, nid, portalUsername)
+	// 2026-07-12: Этап 10 part 4 — both queries moved to
+	// db.ListNodeOwnerNodeIDsByUsername + db.DeleteNodeOwnerByID.
+	snapNodeIDs, _ := dbpkg.ListNodeOwnerNodeIDsByUsername(db, portalUsername)
+	for _, nid := range snapNodeIDs {
+		if !live[nid] {
+			_ = dbpkg.DeleteNodeOwnerByID(db, nid, portalUsername)
 		}
 	}
 	// Preload this user's preauth keys once.
@@ -209,18 +203,12 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 			// preserved because INSERT OR IGNORE respects the node_id
 			// PK (it skips the insert when a row already exists), and
 			// the UPDATE's WHERE clause only matches empty/untagged.
-			_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
-				(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-				VALUES (?, ?, ?, ?, ?)`,
-				n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
-			_, _ = db.Exec(`UPDATE node_owner_map SET tag=?, tagged_by_user_id=?, tagged_at=strftime('%s','now')
-				WHERE node_id=? AND (tag = '' OR tag = 'tag:untagged')`,
-				matchedTag, portalUserID, n.ID)
+			// 2026-07-12: Этап 10 part 4 — both queries moved to
+			// db.InsertIgnoreNodeOwner + db.UpgradeStaleNodeOwnerToPrivate.
+			_ = dbpkg.InsertIgnoreNodeOwner(db, n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
+			_ = dbpkg.UpgradeStaleNodeOwnerToPrivate(db, n.ID, matchedTag, portalUserID)
 		} else {
-			_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
-				(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-				VALUES (?, ?, ?, ?, ?)`,
-				n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
+			_ = dbpkg.InsertIgnoreNodeOwner(db, n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
 		}
 		// Push tag:private to headscale if matched. Safe for empty/untagged rows.
 		// Idempotent: skip if the node already carries tag:private — otherwise every

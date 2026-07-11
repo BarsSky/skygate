@@ -42,9 +42,13 @@ func myStatusReply(env BotEnv) string {
 	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = ?`, env.PortalUserID).Scan(&ruleCount); err != nil {
 		return fmt.Sprintf("my_status: db error: %v", err)
 	}
-	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM node_owner_map WHERE username = ?`, env.Username).Scan(&deviceCount); err != nil {
-		return fmt.Sprintf("my_status: db error: %v", err)
-	}
+	// 2026-07-12: Этап 10 part 4 — count of owned devices derived
+	// from db.ListNodeOwnersByUsername. We use the full row list
+	// (rather than a separate COUNT query) so the helper stays a
+	// single source of truth; the slice is tiny (a user's devices)
+	// so the cost is negligible.
+	owned, _ := db.ListNodeOwnersByUsername(env.DB, env.Username)
+	deviceCount = int64(len(owned))
 	var lastACL int64
 	_ = env.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success = 1`).Scan(&lastACL)
 
@@ -65,23 +69,20 @@ func myNodesReply(env BotEnv) string {
 	if !env.IsIdentified() {
 		return "my_nodes: chat not bound to a portal user. Ask an admin to /bind your chat_id."
 	}
-	rows, err := env.DB.Query(`
-		SELECT n.node_id, COALESCE(NULLIF(n.tag, ''), 'tag:untagged') AS tag
-		  FROM node_owner_map n
-		 WHERE n.username = ?
-		 ORDER BY n.tag, n.node_id`, env.Username)
+	// 2026-07-12: Этап 10 part 4 — moved to
+	// db.ListNodeOwnersByUsername.
+	owners, err := db.ListNodeOwnersByUsername(env.DB, env.Username)
 	if err != nil {
 		return fmt.Sprintf("my_nodes: db error: %v", err)
 	}
-	defer rows.Close()
 	type row struct{ node, tag string }
 	var nodes []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.node, &r.tag); err != nil {
-			return fmt.Sprintf("my_nodes: scan error: %v", err)
+	for _, n := range owners {
+		tag := n.Tag
+		if tag == "" {
+			tag = "tag:untagged"
 		}
-		nodes = append(nodes, r)
+		nodes = append(nodes, row{node: n.NodeID, tag: tag})
 	}
 	if len(nodes) == 0 {
 		return fmt.Sprintf("my_nodes (%s): no devices yet. Use /add_device to issue a 1h preauth key for a new one.", env.Username)
