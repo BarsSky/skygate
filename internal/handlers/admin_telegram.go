@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/telegram"
 )
 
 // Telegram admin UI lives at /admin/telegram (GET) and /admin/telegram
@@ -120,7 +119,7 @@ func (a *App) handleTelegramSave(w http.ResponseWriter, r *http.Request, c *auth
 }
 
 func (a *App) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
-	token, chatID, ok, err := db.LoadTelegramToken(a.DB)
+	_, _, ok, err := db.LoadTelegramToken(a.DB)
 	if err != nil {
 		a.redirectWithFlash(w, r, "", "Ошибка чтения из БД: "+err.Error())
 		return
@@ -138,31 +137,25 @@ func (a *App) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *auth
 		body = "Telegram notification channel is operational. Sent from admin → telegram page."
 	}
 
-	tgAPI := "https://api.telegram.org"
-	if v := os.Getenv("TELEGRAM_API"); v != "" {
-		tgAPI = v
-	}
-	endpoint := tgAPI + "/bot" + url.PathEscape(token) + "/sendMessage"
-	payload := fmt.Sprintf(`{"chat_id":%q,"text":%q,"disable_web_page_preview":true}`,
-		chatID, formatTelegramMessage(r.Host, subject, body))
-
-	cmd := exec.Command("curl", "-sS", "--max-time", "10",
-		"-X", "POST", endpoint,
-		"-H", "Content-Type: application/json",
-		"--data-binary", payload,
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		a.audit(c.UserID, c.Username, "telegram_test_fail", err.Error())
-		writeErrRedirect(w, r, "curl: "+err.Error()+" — "+string(out))
+	// 2026-07-11: route the test message through app.Notifier (Go-native
+	// HTTP) instead of shelling out to curl. No dep on /usr/bin/curl,
+	// same code path as real notifications, errors logged by RealNotifier.
+	text := formatTelegramMessage(r.Host, subject, body)
+	if a.Notifier == nil {
+		a.redirectWithFlash(w, r, "", "Notifier не инициализирован — перезапустите skygate")
 		return
 	}
-	if !strings.Contains(string(out), `"ok":true`) {
-		a.audit(c.UserID, c.Username, "telegram_test_fail", string(out))
-		writeErrRedirect(w, r, "Telegram API отклонил запрос: "+string(out))
+	if _, isNoop := a.Notifier.(telegram.NoopNotifier); isNoop {
+		// Should not happen because the form button is disabled when !Configured,
+		// but guard anyway in case of a race.
+		a.redirectWithFlash(w, r, "", "Бот не сконфигурирован — Notifier в no-op режиме")
 		return
 	}
-	a.audit(c.UserID, c.Username, "telegram_test_ok", db.TelegramFingerprint(token))
+	a.Notifier.SendTelegram(text)
+	// We can't tell from this interface whether the HTTP POST succeeded;
+	// audit as "telegram_test_sent" and let the operator verify in Telegram.
+	// The RealNotifier already logs the Telegram response on failure.
+	a.audit(c.UserID, c.Username, "telegram_test_sent", subject)
 	writeFlashRedirect(w, r, "Сообщение отправлено. Проверьте Telegram.")
 }
 

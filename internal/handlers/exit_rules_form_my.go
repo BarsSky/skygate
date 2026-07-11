@@ -501,6 +501,12 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=?", ver)
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'apply', ?)", ver,
 				fmt.Sprintf("user %s added rule %s (type=%s) for %s->%s", c.Username, targetType, typeToInsert, targetValue, exitNode))
+			// 2026-07-11: notify the operator that a new exit-rule landed
+			// (security audit trail). Sent async so the redirect isn't blocked.
+			if a.Notifier != nil {
+				go a.Notifier.SendTelegram(fmt.Sprintf("📥 New rule #%d by %s\n  %s %s → %s\n  exit-node: %s",
+					ver, c.Username, typeToInsert, targetValue, action, exitNode))
+			}
 			// 2026-07-06: issue #2 — sync advertised routes на exit-nodes.
 			// SetPolicy() обновляет ACL в Headscale, но advertised-routes
 			// (через которые фактически идёт трафик клиентов) не обновлялись.
@@ -514,6 +520,13 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=? WHERE version=?", err.Error(), ver)
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'apply_fail', ?)", ver,
 				fmt.Sprintf("user %s: %v", c.Username, err))
+			// 2026-07-11: ACL apply failure is exactly the kind of thing
+			// the operator wants to wake up to. Telegram goes first, the
+			// log row is the audit trail.
+			if a.Notifier != nil {
+				go a.Notifier.SendTelegram(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
+					c.Username, typeToInsert, targetValue, err))
+			}
 		}
 	}
 	http.Redirect(w, r, fmt.Sprintf("/my/exit-rules?applied=1&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s%s",
@@ -594,6 +607,15 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 				detail += fmt.Sprintf(" (cascade: %d /32)", totalCascade)
 			}
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'delete', ?)", ver, detail)
+			// 2026-07-11: mirror the create-path notification so deletes are
+			// equally visible in the audit channel.
+			if a.Notifier != nil {
+				msg := fmt.Sprintf("🗑 Deleted %d rule(s) by %s", len(infos), c.Username)
+				if totalCascade > 0 {
+					msg += fmt.Sprintf(" (+%d /32 cascade)", totalCascade)
+				}
+				go a.Notifier.SendTelegram(msg)
+			}
 			// 2026-07-06: re-sync advertised routes after delete
 			if sync := a.SyncAdvertisedRoutes(); sync != nil {
 				for node, status := range sync {
@@ -604,6 +626,11 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		} else {
 			a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=? WHERE version=?", err.Error(), ver)
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'delete_fail', ?)", ver, fmt.Sprintf("user %s: %v", c.Username, err))
+			// 2026-07-11: ACL delete-failure is also worth waking up for.
+			if a.Notifier != nil {
+				go a.Notifier.SendTelegram(fmt.Sprintf("❌ ACL delete failed (by %s, %d rules)\n  err: %v",
+					c.Username, len(infos), err))
+			}
 		}
 	}
 	http.Redirect(w, r, "/my/exit-rules?deleted=1", http.StatusFound)
