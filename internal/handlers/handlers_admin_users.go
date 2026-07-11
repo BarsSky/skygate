@@ -157,13 +157,17 @@ func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.Exec(`DELETE FROM preauth_keys WHERE user_id=?`, id)
 	// 2026-07-11: Этап 9 part 2 — DELETE moved to db.DeleteAuditLogByUserID
 	_ = db.DeleteAuditLogByUserID(a.DB, int64(id))
+	// 2026-07-11: Этап 10 part 2 — DELETE moved to db.DeleteAPITokensByUserID.
+	// Pre-refactor this cascade was MISSING, which left orphaned
+	// personal_api_tokens rows behind. Now fixed.
+	tokensDeleted, _ := db.DeleteAPITokensByUserID(a.DB, int64(id))
 	// 2026-07-11: Этап 10 part 1 — DELETE moved to db.DeletePortalUserByID
 	_, err = db.DeletePortalUserByID(a.DB, id)
 	if err != nil {
 		http.Error(w, "delete: "+err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "user_delete", fmt.Sprintf("id=%d %s hs_id=%d%s", id, username, hsID.Int64, hsDeleteMsg))
+	a.audit(c.UserID, c.Username, "user_delete", fmt.Sprintf("id=%d %s hs_id=%d%s tokens=%d", id, username, hsID.Int64, hsDeleteMsg, tokensDeleted))
 	http.Redirect(w, r, "/admin/users", http.StatusFound)
 }
 

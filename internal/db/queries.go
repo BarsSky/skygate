@@ -331,6 +331,7 @@ const (
 	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at FROM personal_api_tokens WHERE user_id = ? ORDER BY created_at DESC`
 	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label) VALUES (?, ?, ?)`
 	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = ? AND user_id = ?`
+	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = ?`
 	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = ?`
 )
 
