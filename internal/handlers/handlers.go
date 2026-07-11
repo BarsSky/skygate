@@ -486,19 +486,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 // PostMyPreauth handler moved to handlers_my_preauth.go.
 // (PostMyPreauth)
 
-// GetExitNodes lists exit nodes advertised in the tailnet. Visible to all
-// authenticated users so they can pick one to route through.
-func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	exits, _ := a.HS.ListExitNodes()
-	a.renderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
-		"ExitNodes": exits,
-	})
-}
+// GetExitNodes handler moved to handlers_my_exit_nodes.go.
+// (GetExitNodes)
 
 // Admin user management functions moved to handlers_admin_users.go.
 // (GetAdminUsers, PostAdminUser, extractIDFromPath, PostAdminDeleteUser)
