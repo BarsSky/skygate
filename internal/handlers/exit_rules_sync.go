@@ -146,6 +146,11 @@ func (a *App) staggeredSync() {
 			log.Printf("staggeredSync(aggregated): %s advertising %d unique routes (was: per-batch, lost all but last batch)",
 				n.name, len(batch))
 			msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch, a.lookupAcceptRoutes(n.name))
+			// 2026-07-11: `tailscale set` on unix exits 0 with empty stdout, so
+			// `msg` is often "". Render an "ok" marker instead of a dangling colon.
+			if strings.TrimSpace(msg) == "" {
+				msg = "ok"
+			}
 			log.Printf("staggeredSync(aggregated): %s advertised: %s", n.name, msg)
 			if _, err := a.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
 				log.Printf("staggeredSync(aggregated): %s approve err: %v", n.name, err)
