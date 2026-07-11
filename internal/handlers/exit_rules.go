@@ -286,9 +286,10 @@ func (a *App) saveACLSnapshot(config, username string) int {
 	return ver
 }
 
-// HTML form handlers moved to exit_rules_form.go.
-// (GetMyExitRules, PostMyExitRule, PostDeleteExitRule,
-//  AdminExitRules, PostAdminRollbackACL)
+// HTML form handlers split across:
+//   exit_rules_form_my.go        — GetMyExitRules, PostMyExitRule, PostDeleteExitRule
+//   exit_rules_form_admin.go     — AdminExitRules
+//   exit_rules_form_rollback.go  — PostAdminRollbackACL
 // --- JSON API for AI assistant integration ---
 
 // apiRule is the JSON structure for rule creation/listing.
