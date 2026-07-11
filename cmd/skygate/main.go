@@ -185,6 +185,9 @@ func main() {
 			// once at boot; the BotEnv snapshot is per-message so a
 			// future reload still works without restart.
 			rn.SetLimits(cfg.UserMaxRules, cfg.MaxRulesPerDevice)
+			// 2026-07-11: Phase 4 (/version) needs the build label
+			// (the same one app.Version holds for the dashboard).
+			rn.SetVersion(app.Version)
 			app.Notifier = rn
 			if rn.Configured() {
 				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")
