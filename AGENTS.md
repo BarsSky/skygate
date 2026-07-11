@@ -202,13 +202,25 @@ Quick rule: before any `git push`, ssh to the VM, pull, and run
 ## Smoke testing (make test)
 
 ```bash
-make test    # = smoke + check_exit_nodes
+make test                        # = smoke (bilingual: ru + en) + check_exit_nodes
+SMOKE_LANG=ru make test          # one language only
+SMOKE_LANG=en make test          # one language only
 ```
 
-`scripts/smoke.sh` is a 56-step HTTP-level smoke test that exercises login,
+`scripts/smoke.sh` is a bilingual HTTP-level smoke test that exercises login,
 device listing, /my/exit-rules CRUD, multi-delete, cascading, the /help page,
 admin sync, admin cleanup, /admin/exit-rules/sync, /admin/users, /admin/devices,
 static assets. Each step uses `curl` against `localhost:8080`.
+
+**Bilingual mode (since 2026-07-11).** When `SMOKE_LANG` is unset, the script
+re-invokes itself once per language (ru, then en) and prints two SUMMARY
+lines. All curl calls carry `-H "Accept-Language: $SMOKE_LANG"`; each
+sub-run uses its own cookie jar (`/tmp/smoke_ck.<lang>`). Per-language UI
+strings (active-count label, page headings, add-rule button text, etc.)
+are checked in steps 2/4/11 — a missing or stale `enCatalog` key now fails
+the run. ok/bad/note are prefixed `[ru]` or `[en]` so the two streams are
+visually separable when interleaved. Total budget: 59 + 59 = 118 smoke
+assertions per `make test`.
 
 **Critical pitfalls smoke catches**:
 - API returns `ids: [N]` after POST so cleanup-by-id works (was: API didn't
@@ -278,10 +290,11 @@ make test
 If smoke fails at "step 8" (delete) — `smoke.sh` expects the API to return
 the new rule id in `{ids: [N]}`. Check `internal/handlers/exit_rules_api.go`.
 
-If smoke fails at "step 11" (per-user / per-device counters) — check
-`internal/handlers/exit_rules_form_my.go` (`countUserFacing` lives there now
-after the extraction; it used to be in `exit_rules.go`) and the device-info
-enrichment in `renderWithLayout`.
+If smoke fails at "step 11" (UI sanity: localized strings) — a key is
+missing in the active language's catalog. Run `go test -count=1
+./internal/i18n/...` to find it (TestCatalogsParity catches missing
+keys; TestPlaceholderOrder catches %s/%d count mismatches between
+languages).
 
 If smoke fails at "step 10" (admin sync) — check `/admin/exit-rules/sync`
 route registration in `cmd/skygate/main.go`.
