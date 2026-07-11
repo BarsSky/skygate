@@ -1,5 +1,7 @@
 # Skygate
 
+[![CI](https://github.com/BarsSky/skygate/actions/workflows/ci.yml/badge.svg)](https://github.com/BarsSky/skygate/actions/workflows/ci.yml)
+
 Self-service web portal for Tailscale headscale — gives users a friendly
 UI to grab preauth keys, see their devices, pick an exit node, without
 touching the headscale CLI.

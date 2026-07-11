@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress run when a new commit lands on the same ref
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go vet + test + build (linux/amd64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # CGO is required for github.com/mattn/go-sqlite3; GitHub runners
+      # ship gcc so we don't need an extra apt-get step.
+      CGO_ENABLED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: go mod download
+        run: go mod download
+
+      - name: go vet ./...
+        run: go vet ./...
+
+      - name: go test ./... (race + verbose)
+        run: go test -race -count=1 -v ./...
+
+      - name: go build ./... (sanity, no output)
+        run: go build ./...
+
+  audit:
+    name: static route audit (audit_routes.py)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run audit_routes.py
+        run: python3 scripts/audit_routes.py
