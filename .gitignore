@@ -1,7 +1,10 @@
 # ---- Build artifacts ----
-skygate
-skygate.new
-skygate-*-linux-*
+# Anchored to repo root so `cmd/skygate/` (the source dir) is NOT ignored.
+# Without the leading slash, `skygate` would match any path segment named
+# `skygate` — including the source tree.
+/skygate
+/skygate.new
+/skygate-*-linux-*
 *.exe
 
 # ---- Backups & patches ----
