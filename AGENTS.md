@@ -69,7 +69,9 @@ internal/handlers/handlers_derp.go                  — DERP status + handlers +
 internal/handlers/handlers_admin_users.go           — admin user CRUD (~209 lines)
 internal/handlers/handlers_admin_nodes.go           — admin device/tag handlers (~91 lines)
 internal/handlers/exit_rules.go                     — DeviceRule struct + DB helpers (insertRuleUnique, getDeviceRules, getUserDevices) + GenerateACL() + ACL helpers (~359 lines)
-internal/handlers/exit_rules_form.go                — HTML form handlers for /my/exit-rules, /admin/exit-rules, /admin/exit-rules/rollback; owns countUserFacing (~744 lines, extracted from exit_rules.go)
+internal/handlers/exit_rules_form_my.go             — /my/exit-rules: GetMyExitRules (incl. ?script= download), PostMyExitRule (DNS resolve + dedup), PostDeleteExitRule (multi-delete with cascade); owns countUserFacing closure (~625 lines)
+internal/handlers/exit_rules_form_admin.go          — /admin/exit-rules: AdminExitRules (cross-user hierarchical view) (~165 lines)
+internal/handlers/exit_rules_form_rollback.go       — /admin/exit-rules/rollback: PostAdminRollbackACL (~40 lines)
 internal/handlers/exit_rules_api.go                 — public REST API (~159 lines)
 internal/handlers/exit_rules_sync.go                — ACL sync, staggeredSync, autoupdater (~387 lines)
 internal/handlers/exit_rules_routescript.go              — route-setup script orchestrator: GenerateRouteSetupScript (~42 lines)
@@ -269,7 +271,7 @@ If smoke fails at "step 8" (delete) — `smoke.sh` expects the API to return
 the new rule id in `{ids: [N]}`. Check `internal/handlers/exit_rules_api.go`.
 
 If smoke fails at "step 11" (per-user / per-device counters) — check
-`internal/handlers/exit_rules_form.go` (`countUserFacing` lives there now
+`internal/handlers/exit_rules_form_my.go` (`countUserFacing` lives there now
 after the extraction; it used to be in `exit_rules.go`) and the device-info
 enrichment in `renderWithLayout`.
 
@@ -316,7 +318,7 @@ bash is platform-independent, so the original `_windows.go` /
 and broken the build on the wrong host OS).
 
 `exit_rules.go` (1146 → 359) was already largely decomposed; the form
-handlers live in `exit_rules_form.go` (744 lines), which is the next
+handlers lived in `exit_rules_form.go` (787 lines, Этап 7 split into form_my/admin/rollback)
 candidate for further splitting if we ever revisit it.
 
 When adding a new handler, prefer creating a focused file rather than
@@ -343,7 +345,9 @@ Sister files in `internal/handlers/` (current line counts):
 - `handlers_my_keys.go` (173) — /my/keys (list + expire)
 - `handlers_my_devices.go` (127) — GET /my/devices (with lazy node_owner_map backfill)
 - `exit_rules.go` (359) — DeviceRule struct + DB helpers + `GenerateACL()` + ACL helpers
-- `exit_rules_form.go` (744) — HTML form handlers for /my/exit-rules + /admin/exit-rules + rollback
+- `exit_rules_form_my.go` (625) — /my/exit-rules: Get + Post + Delete (incl. script download, DNS resolve, multi-delete cascade, user-facing counters)
+- `exit_rules_form_admin.go` (165) — /admin/exit-rules cross-user view (hierarchical by user → device → exit_node)
+- `exit_rules_form_rollback.go` (40) — /admin/exit-rules/rollback (restore prev acl_snapshot)
 - `exit_rules_api.go` (159) — public REST API
 - `exit_rules_sync.go` (387) — ACL sync, staggeredSync, autoupdater
 - `exit_rules_routescript.go` (42) — orchestrator: `GenerateRouteSetupScript` (load data → dispatch to OS builder)
