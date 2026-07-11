@@ -22,6 +22,23 @@ import (
 	"skygate/internal/telegram"
 )
 
+// Build-time variables, overridden via -ldflags by entrypoint.sh:
+//
+//	go build -ldflags "\
+//	    -X main.version=$(git describe --tags --always) \
+//	    -X main.commit=$(git rev-parse --short HEAD) \
+//	    -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//
+// `version` is the only one shown to end-users (web footer + telegram
+// /version). `commit` and `buildTime` are for /version and the startup
+// log line. The defaults below are used when the binary is built
+// without -ldflags (e.g. `go run` on a developer machine).
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildTime = "unknown"
+)
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -90,7 +107,8 @@ func main() {
 		_ = apiMW  // exposed for explicit endpoint wrapping (currently routes attach via authMW only)
 
 
-	app.Version = "v0.3"
+	app.Version = version
+	log.Printf("🌐 Skygate %s (commit %s, built %s)", version, commit, buildTime)
 
 	mux := http.NewServeMux()
 
