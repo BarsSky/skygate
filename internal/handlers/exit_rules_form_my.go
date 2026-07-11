@@ -76,24 +76,32 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 
 	var devices []map[string]any
 	if nodes, e := a.HS.ListAllNodes(); e == nil {
+		// 2026-07-11: bug fix — even admin sees only their own devices in the
+		// user-facing form. Cross-user view lives at /admin/exit-rules. The
+		// filter applies uniformly regardless of IsAdmin so the "device"
+		// dropdown can't be abused to assign rules to another user's device.
 		userNodes := map[int]bool{}
-		if !c.IsAdmin {
-			if rows, qe := a.DB.Query("SELECT node_id FROM node_owner_map WHERE username=?", c.Username); qe == nil {
-				for rows.Next() {
-					var nid int
-					if rows.Scan(&nid) == nil {
-						userNodes[nid] = true
-					}
+		if rows, qe := a.DB.Query("SELECT node_id FROM node_owner_map WHERE username=?", c.Username); qe == nil {
+			for rows.Next() {
+				var nid int
+				if rows.Scan(&nid) == nil {
+					userNodes[nid] = true
 				}
-				rows.Close()
 			}
+			rows.Close()
 		}
 		for _, n := range nodes {
-			if !c.IsAdmin {
-				nid, _ := strconv.Atoi(n.ID)
-				if !userNodes[nid] {
-					continue
-				}
+			nid, _ := strconv.Atoi(n.ID)
+			if !userNodes[nid] {
+				continue
+			}
+			// 2026-07-11: bug fix — exit-nodes are routing infrastructure
+			// (tag:exit-node, name starts with "exit-", or advertises
+			// 0.0.0.0/0). They belong in the "exit node" dropdown (target
+			// side), never the "device" dropdown (source side) where a
+			// user-facing rule would be attached.
+			if n.IsExitNode {
+				continue
 			}
 			hn := n.GivenName
 			if hn == "" {
@@ -391,24 +399,38 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate device via node_owner_map, fallback headscale API
-	var count int
-	a.DB.QueryRow("SELECT COUNT(*) FROM node_owner_map WHERE node_id = ? AND username = ?", devID, c.Username).Scan(&count)
-	// Resolve device Tailscale IP
+	// 2026-07-11: bug fix — strict ownership + role validation.
+	// The previous code queried node_owner_map but then a headscale API
+	// loop unconditionally set count=1, defeating the ownership check.
+	// Any authenticated user could POST any devID in the tailnet and the
+	// rule would be saved under their user_id. Now node_owner_map is the
+	// single source of truth for ownership, and exit-nodes are rejected
+	// outright (they are routing infrastructure, not endpoints to attach
+	// rules to).
 	var deviceIP string
+	var isExitNode bool
+	owned := false
 	if nodes, err := a.HS.ListAllNodes(); err == nil {
 		for _, n := range nodes {
-			if n.ID == strconv.Itoa(devID) {
-				count = 1
-				if len(n.IPAddresses) > 0 {
-					deviceIP = n.IPAddresses[0]
-				}
-				break
+			if n.ID != strconv.Itoa(devID) {
+				continue
 			}
+			isExitNode = n.IsExitNode
+			if len(n.IPAddresses) > 0 {
+				deviceIP = n.IPAddresses[0]
+			}
+			var c2 int
+			a.DB.QueryRow("SELECT COUNT(*) FROM node_owner_map WHERE node_id = ? AND username = ?", devID, c.Username).Scan(&c2)
+			owned = c2 > 0
+			break
 		}
 	}
-	if count == 0 {
-		http.Error(w, "invalid device", 403)
+	if !owned {
+		http.Error(w, "invalid device (not in your node_owner_map)", 403)
+		return
+	}
+	if isExitNode {
+		http.Error(w, "cannot attach rules to exit-node (routing infrastructure)", 403)
 		return
 	}
 

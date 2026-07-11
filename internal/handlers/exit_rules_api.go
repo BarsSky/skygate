@@ -69,16 +69,35 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve device IPs from headscale
+	// Resolve device IPs + exit-node set from headscale.
 	nodes, _ := a.HS.ListAllNodes()
 	nodeIPs := map[int]string{}
+	exitNodeSet := map[int]bool{}
 	if nodes != nil {
 		for _, n := range nodes {
 			nid, _ := strconv.Atoi(n.ID)
 			if len(n.IPAddresses) > 0 {
 				nodeIPs[nid] = n.IPAddresses[0]
 			}
+			if n.IsExitNode {
+				exitNodeSet[nid] = true
+			}
 		}
+	}
+	// 2026-07-11: bug fix — only the user's own devices can be rule sources.
+	// Prevents the API consumer (AI assistant) from assigning rules to
+	// another user's device via the user_id of the API caller. node_owner_map
+	// is the source of truth for ownership; headscale's user_name is unreliable
+	// once a tag has been applied (headscale reassigns to "tagged-devices").
+	ownedByUser := map[int]bool{}
+	if rows, qerr := a.DB.Query("SELECT node_id FROM node_owner_map WHERE username=?", c.Username); qerr == nil {
+		for rows.Next() {
+			var nid int
+			if rows.Scan(&nid) == nil {
+				ownedByUser[nid] = true
+			}
+		}
+		rows.Close()
 	}
 
 	added := 0
@@ -115,6 +134,17 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		if rl.DeviceID == 0 || rl.TargetValue == "" {
 			errors = append(errors, fmt.Sprintf("rule[%d]: missing device_id or target_value", i))
+			continue
+		}
+		// 2026-07-11: bug fix — reject rules for devices the caller doesn't
+		// own, and reject rules targeting exit-nodes (they are routing
+		// infrastructure, not source devices to attach rules to).
+		if !ownedByUser[rl.DeviceID] {
+			errors = append(errors, fmt.Sprintf("rule[%d]: device %d not owned by user", i, rl.DeviceID))
+			continue
+		}
+		if exitNodeSet[rl.DeviceID] {
+			errors = append(errors, fmt.Sprintf("rule[%d]: device %d is an exit-node", i, rl.DeviceID))
 			continue
 		}
 		if rl.Action == "" {
