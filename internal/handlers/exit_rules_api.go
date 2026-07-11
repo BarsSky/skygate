@@ -23,7 +23,7 @@ func (a *App) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, 401)
 		return
 	}
-	rules, err := a.getDeviceRules(int(c.UserID))
+	rules, err := a.getDeviceRules(c.UserID)
 	if err != nil {
 		http.Error(w, `{"error":"db error"}`, 500)
 		return
@@ -107,8 +107,8 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-07: issue #12 — pre-check total limit before processing
 	maxTotal := a.Cfg.MaxTotalRules
 	if maxTotal > 0 {
-		var currentTotal int
-		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1").Scan(&currentTotal)
+		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRules
+		currentTotal, _ := db.CountEnabledRules(a.DB)
 		if currentTotal+len(req.Rules) > maxTotal {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(403)
@@ -125,8 +125,8 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		// 2026-07-07: per-device limit
 		maxPerDevice := a.Cfg.MaxRulesPerDevice
 		if maxPerDevice > 0 {
-			var deviceRuleCount int
-			a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE device_id=? AND enabled=1", rl.DeviceID).Scan(&deviceRuleCount)
+			// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRulesForDevice
+			deviceRuleCount, _ := db.CountEnabledRulesForDevice(a.DB, rl.DeviceID)
 			if deviceRuleCount >= maxPerDevice {
 				errors = append(errors, fmt.Sprintf("rule[%d]: device limit exceeded (%d/%d)", i, deviceRuleCount, maxPerDevice))
 				continue

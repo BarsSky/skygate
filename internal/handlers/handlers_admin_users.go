@@ -169,7 +169,8 @@ func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_, _ = a.DB.Exec(`DELETE FROM preauth_keys WHERE user_id=?`, id)
-	_, _ = a.DB.Exec(`DELETE FROM audit_log WHERE user_id=?`, id)
+	// 2026-07-11: Этап 9 part 2 — DELETE moved to db.DeleteAuditLogByUserID
+	_ = db.DeleteAuditLogByUserID(a.DB, int64(id))
 	_, err = a.DB.Exec(`DELETE FROM portal_users WHERE id=?`, id)
 	if err != nil {
 		http.Error(w, "delete: "+err.Error(), 500)

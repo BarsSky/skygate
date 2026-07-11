@@ -98,20 +98,47 @@ func migrate(d *sql.DB) error {
 			return err
 		}
 	}
-	// 2026-07-09: refactor v0.6.0 — bootstrap portal_users + friends first so
-	// the legacy migrations that ALTER or FK-reference these tables (v0.20,
-	// v0.21) succeed on a fresh database.
+	// 2026-07-11: Этап 9 part 2 — fixed migration ordering. The
+	// 2026-07-09 refactor moved V020 (CREATE device_rules + friends) to
+	// AFTER V021/V022 (ALTER device_rules), which made the ALTERs no-ops
+	// (the table didn't exist yet) and then V020 created device_rules
+	// WITHOUT the action + device_ip columns. The bug was latent
+	// because the VM DB was bootstrapped under the old order; only a
+	// fresh DB exposes it (which the new db_helpers_part2_test.go
+	// does). Correct order:
+	//
+	//   V025 — portal_users + friends (FK target for everything else)
+	//   V020 — CREATE device_rules / exit_servers / acl_snapshots / exit_rule_logs
+	//   V021 — ALTER device_rules ADD action + global_settings
+	//   V022 — ALTER device_rules ADD device_ip
+	//   V023 — CREATE personal_api_tokens (FK → portal_users, already exists)
+	//   V024 — ALTER exit_servers (needs exit_servers, already exists)
+	//   V026 — ALTER exit_servers ADD accept_routes (needs V024 done)
+	//   V027 — CREATE telegram_alerts (independent)
 	migrateV025(d)
-	migrateV026(d)
-	migrateV027(d)
-	migrateV022(d)
-	migrateV023(d)
-	migrateV024(d)
+	if err := migrateV020(d); err != nil {
+		return fmt.Errorf("migrate v0.20: %w", err)
+	}
 	if err := migrateV021(d); err != nil {
 		return fmt.Errorf("migrate v0.21: %w", err)
 	}
-	if err := migrateV020(d); err != nil {
-		return fmt.Errorf("migrate v0.20: %w", err)
+	if err := migrateV022(d); err != nil {
+		return fmt.Errorf("migrate v0.22: %w", err)
+	}
+	if err := migrateV023(d); err != nil {
+		return fmt.Errorf("migrate v0.23: %w", err)
+	}
+	if err := migrateV024(d); err != nil {
+		return fmt.Errorf("migrate v0.24: %w", err)
+	}
+	if err := migrateV026(d); err != nil {
+		return fmt.Errorf("migrate v0.26: %w", err)
+	}
+	if err := migrateV027(d); err != nil {
+		return fmt.Errorf("migrate v0.27: %w", err)
+	}
+	if err := migrateV028(d); err != nil {
+		return fmt.Errorf("migrate v0.28: %w", err)
 	}
 	return nil
 }

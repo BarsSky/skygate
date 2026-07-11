@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // Phase 4 commands: /version, /restart, /help <command>.
@@ -166,8 +168,8 @@ func restartReply(env BotEnv, arg string) string {
 	// operator scanning the audit log right before the restart
 	// (and after, when the new container comes up) sees who
 	// triggered it.
-	_, _ = env.DB.Exec(`INSERT INTO audit_log(username, action, detail) VALUES (?, ?, ?)`,
-		"telegram", "telegram_restart", fmt.Sprintf("token=%s", arg))
+	// 2026-07-11: Этап 9 part 2 — moved to db.AppendAuditLogNoUser
+	_ = db.AppendAuditLogNoUser(env.DB, "telegram", "telegram_restart", fmt.Sprintf("token=%s", arg))
 
 	// SIGTERM the process. main.go's signal handler does
 	// srv.Shutdown(5s) and then returns; the container's

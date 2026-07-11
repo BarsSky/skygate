@@ -10,6 +10,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"skygate/internal/db"
 )
@@ -22,12 +23,12 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	rows, err := a.DB.Query("SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain,''), r.created_at, r.enabled, COALESCE(r.device_ip,'') as device_ip, COALESCE(u.username,'?') as user_name FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id")
+	// 2026-07-11: Этап 9 part 2 — SQL moved to db.GetAllRulesForAdmin
+	dbRules, err := db.GetAllRulesForAdmin(a.DB)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	defer rows.Close()
 
 	type AdminRule struct {
 		ID          int
@@ -44,13 +45,20 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		CreatedAt   string
 	}
 	var rr []AdminRule
-	for rows.Next() {
-		var r AdminRule
-		var en int
-		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNode, &r.TargetType, &r.TargetValue, &r.Action, &r.ParentDomain, &r.CreatedAt, &en, &r.DeviceIP, &r.UserName); err != nil {
-			continue
-		}
-		rr = append(rr, r)
+	for _, r := range dbRules {
+		rr = append(rr, AdminRule{
+			ID:           r.ID,
+			UserID:       r.UserID,
+			UserName:     r.UserName,
+			DeviceID:     r.DeviceID,
+			DeviceIP:     r.DeviceIP,
+			ExitNode:     r.ExitNodeID,
+			TargetType:   r.TargetType,
+			TargetValue:  r.TargetValue,
+			Action:       r.Action,
+			ParentDomain: r.ParentDomain,
+			CreatedAt:    time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"),
+		})
 	}
 
 	// Resolve device hostnames from headscale API — match by Tailscale IP

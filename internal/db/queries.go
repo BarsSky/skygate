@@ -162,7 +162,12 @@ const qSelectOtherHSUserIDs = `SELECT headscale_user_id FROM portal_users WHERE 
 // ---------------------------------------------------------------
 
 const (
-	qSelectUserDevices = `SELECT id, hostname, last_seen FROM devices WHERE user_id = ? ORDER BY hostname`
+	// QSelectUserDevices is the user-scoped device list. Exported
+	// (uppercase Q) so handlers can still use the raw constant
+	// when they need the underlying *sql.Rows for App-level
+	// enrichment (e.g. fall back to headscale.NodeList when the
+	// devices table is empty).
+	QSelectUserDevices = `SELECT id, hostname, last_seen FROM devices WHERE user_id = ? ORDER BY hostname`
 )
 
 // ---------------------------------------------------------------

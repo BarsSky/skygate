@@ -69,7 +69,11 @@ func migrateV021(d *sql.DB) error {
 }
 
 func migrateV022(d *sql.DB) error {
-	_, err := d.Exec("ALTER TABLE device_rules ADD COLUMN device_ip TEXT NOT NULL DEFAULT ")
+	// 2026-07-11: Этап 9 part 2 — the original 2026-07-09 statement had
+	// `DEFAULT ` with no value, which is a syntax error. The function
+	// ignored the error so the migration silently no-op'd, leaving
+	// device_rules without device_ip on fresh DBs. Fixed.
+	_, err := d.Exec("ALTER TABLE device_rules ADD COLUMN device_ip TEXT NOT NULL DEFAULT ''")
 	if err != nil { return nil } // column exists
 	return nil
 }

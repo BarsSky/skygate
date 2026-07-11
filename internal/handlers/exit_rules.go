@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -15,19 +16,14 @@ import (
 
 
 
-type DeviceRule struct {
-	ID           int
-	UserID       int
-	DeviceID     int
-	DeviceName   string
-	ExitNodeID   string
-	TargetType   string
-	TargetValue  string
-	Action       string
-	DeviceIP     string
-	Enabled      bool
-	ParentDomain string
-}
+// DeviceRule is the handlers-package alias of db.DeviceRule. The
+// db layer is the canonical source; this alias lets templates and
+// other handlers code use the unqualified name without an import.
+//
+// 2026-07-11: Этап 9 part 2 — the struct moved to internal/db
+// (where the SQL that fills it lives). UserID widened to int64 to
+// match the Go-native SQLite INTEGER type and auth.Claims.UserID.
+type DeviceRule = db.DeviceRule
 
 
 
@@ -36,13 +32,17 @@ type DeviceRule struct {
 //   (true, existingID) — rule already existed; do not re-insert.
 //   (true, 0)          — new rule inserted successfully.
 //   (false, 0)         — DB error.
+//
+// 2026-07-11: Этап 9 part 2 — the SELECT-then-INSERT pattern is now
+// composed of db.FindDeviceRuleID + db.AppendDeviceRule so the SQL
+// strings live in queries.go. Behaviour is unchanged.
 func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP string) (bool, int) {
-	var existingID int
-	err := a.DB.QueryRow(
-		"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type=? AND target_value=? LIMIT 1",
-		userID, deviceID, exitNode, targetType, targetValue).Scan(&existingID)
+	existingID, err := db.FindDeviceRuleID(a.DB, userID, deviceID, exitNode, targetType, targetValue)
 	if err == nil {
 		return true, existingID
+	}
+	if !errors.Is(err, db.ErrNotFound) {
+		return false, 0
 	}
 	// not found → insert. Set parent_domain = target_value for domain rules so
 	// autoupdater can track them and UI can show "auto" badge.
@@ -50,39 +50,18 @@ func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType,
 	if targetType == "domain" {
 		parentDomain = targetValue
 	}
-	res, err := a.DB.Exec(
-		"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain)
+	newID, err := db.AppendDeviceRule(a.DB, userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain)
 	if err != nil {
 		return false, 0
 	}
-	newID, _ := res.LastInsertId()
 	return true, int(newID)
 }
 
-func scanRules(rows *sql.Rows) ([]DeviceRule, error) {
-	var rr []DeviceRule
-	for rows.Next() {
-		var r DeviceRule
-		var en int
-		var pd string
-		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID, &r.TargetType, &r.TargetValue, &r.Action, &r.DeviceIP, &en, &pd); err != nil {
-			return nil, err
-		}
-		r.Enabled = en == 1
-		r.ParentDomain = pd
-		rr = append(rr, r)
-	}
-	return rr, rows.Err()
-}
-
-func (a *App) getDeviceRules(userID int) ([]DeviceRule, error) {
-	rows, err := a.DB.Query("SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action,'accept') as action, COALESCE(d.device_ip,'') as device_ip, d.enabled, COALESCE(d.parent_domain,'') as parent_domain FROM device_rules d WHERE d.user_id = ? ORDER BY d.id", userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	rr, err := scanRules(rows)
+func (a *App) getDeviceRules(userID int64) ([]DeviceRule, error) {
+	// 2026-07-11: Этап 9 part 2 — moved to db.GetDeviceRulesForUser.
+	// The DeviceName field still needs a headscale IP-to-hostname
+	// lookup, which is App-level, so that part stays here.
+	rr, err := db.GetDeviceRulesForUser(a.DB, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +94,12 @@ func (a *App) getDeviceRules(userID int) ([]DeviceRule, error) {
 }
 
 func (a *App) getUserDevices(userID int) ([]map[string]any, error) {
-	rows, err := a.DB.Query("SELECT id, hostname, last_seen FROM devices WHERE user_id = ? ORDER BY hostname", userID)
+	// 2026-07-11: Этап 9 part 2 — SQL moved to db.GetUserDevicesForUser
+	// (which returns rows that we still scan here for the shape
+	// /my/exit-rules wants). The HS fallback for "user has no rows
+	// in the devices table yet" stays in this method because it
+	// requires a.HS.
+	rows, err := a.DB.Query(db.QSelectUserDevices, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +118,9 @@ func (a *App) getUserDevices(userID int) ([]map[string]any, error) {
 		}
 		dd = append(dd, m)
 	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
 	if len(dd) == 0 {
 		if nodes, err := a.HS.NodeList(); err == nil {
 			for _, n := range nodes {
@@ -141,7 +128,7 @@ func (a *App) getUserDevices(userID int) ([]map[string]any, error) {
 			}
 		}
 	}
-	return dd, rows.Err()
+	return dd, nil
 }
 
 // GenerateACL builds valid headscale 0.29 HuJSON.
@@ -153,11 +140,11 @@ func (a *App) GenerateACL() (string, error) {
 	// own devices reach each other; no user can see another user's
 	// tag:private devices. Public/exit-node rules at the bottom let
 	// everyone reach internet through the exit-nodes.
-	rows, err := a.DB.Query(`SELECT target_type, target_value, action, COALESCE(device_ip, '') as device_ip FROM device_rules WHERE enabled = 1`)
+	// 2026-07-11: Этап 9 part 2 — SQL moved to db.GetACLEntries.
+	aclRows, err := db.GetACLEntries(a.DB)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
 
 	type ruleEntry struct {
 		deviceIP string
@@ -165,13 +152,9 @@ func (a *App) GenerateACL() (string, error) {
 		action   string
 	}
 	var entries []ruleEntry
-	for rows.Next() {
-		var tt, tv, action, dip string
-		if err := rows.Scan(&tt, &tv, &action, &dip); err != nil {
-			return "", err
-		}
-		if tt == "subnet" || tt == "ip" {
-			entries = append(entries, ruleEntry{deviceIP: dip, target: tv, action: action})
+	for _, e := range aclRows {
+		if e.TargetType == "subnet" || e.TargetType == "ip" {
+			entries = append(entries, ruleEntry{deviceIP: e.DeviceIP, target: e.TargetValue, action: e.Action})
 		}
 	}
 
@@ -327,14 +310,11 @@ func (a *App) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 	maxPerNode := a.Cfg.MaxRulesPerDevice * 5 // heuristic: total rules / 5 nodes
 	if maxPerNode == 0 { maxPerNode = 1000 }
 	// Get distinct exit_nodes from device_rules
-	rows, _ := a.DB.Query("SELECT DISTINCT exit_node_id FROM device_rules WHERE enabled=1 AND exit_node_id != ''")
+	// 2026-07-11: Этап 9 part 2 — moved to db.ListDistinctExitNodesWithRules
+	exitNodeNames, _ := db.ListDistinctExitNodesWithRules(a.DB)
 	exitNodeSet := map[string]bool{}
-	if rows != nil {
-		for rows.Next() {
-			var n string
-			if rows.Scan(&n) == nil { exitNodeSet[n] = true }
-		}
-		rows.Close()
+	for _, n := range exitNodeNames {
+		exitNodeSet[n] = true
 	}
 	// Also add known exit_servers
 	serverRows, _ := a.DB.Query("SELECT name FROM exit_servers WHERE enabled=1")
@@ -347,7 +327,8 @@ func (a *App) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	for name := range exitNodeSet {
 		nl := NodeLoad{Name: name}
-		a.DB.QueryRow("SELECT COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id=?", name).Scan(&nl.RuleCount)
+		// 2026-07-11: Этап 9 part 2 — moved to db.CountRulesForExitNode
+		nl.RuleCount, _ = db.CountRulesForExitNode(a.DB, name)
 		// Get from headscale
 		// Find node by hostname
 		if allNodes, err := a.HS.ListAllNodes(); err == nil {
