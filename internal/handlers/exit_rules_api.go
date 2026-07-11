@@ -89,15 +89,14 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	// another user's device via the user_id of the API caller. node_owner_map
 	// is the source of truth for ownership; headscale's user_name is unreliable
 	// once a tag has been applied (headscale reassigns to "tagged-devices").
+	// 2026-07-12: Этап 10 part 4 — moved to
+	// db.ListNodeOwnerNodeIDsByUsername.
 	ownedByUser := map[int]bool{}
-	if rows, qerr := a.DB.Query("SELECT node_id FROM node_owner_map WHERE username=?", c.Username); qerr == nil {
-		for rows.Next() {
-			var nid int
-			if rows.Scan(&nid) == nil {
-				ownedByUser[nid] = true
-			}
+	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(a.DB, c.Username)
+	for _, nid := range snapIDs {
+		if n, err := strconv.Atoi(nid); err == nil {
+			ownedByUser[n] = true
 		}
-		rows.Close()
 	}
 
 	added := 0

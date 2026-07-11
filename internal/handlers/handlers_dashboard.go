@@ -65,17 +65,14 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMe
 		a.backfillNodeOwnership(a.DB, nodes, myUserID, myUsername)
 	}
 	if myUsername != "" {
-		// Use a set of node IDs the user owns, sourced from node_owner_map.
+		// Use a set of node IDs the user owns, sourced from
+		// node_owner_map.
+		// 2026-07-12: Этап 10 part 4 — moved to
+		// db.ListNodeOwnerNodeIDsByUsername.
 		owned := map[string]bool{}
-		rows, _ := a.DB.Query(`SELECT node_id FROM node_owner_map WHERE username=?`, myUsername)
-		if rows != nil {
-			defer rows.Close()
-			for rows.Next() {
-				var nid string
-				if err := rows.Scan(&nid); err == nil {
-					owned[nid] = true
-				}
-			}
+		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(a.DB, myUsername)
+		for _, nid := range snapIDs {
+			owned[nid] = true
 		}
 		// Plus any node still showing the live user name (untagged nodes).
 		for _, n := range nodes {

@@ -80,15 +80,16 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// user-facing form. Cross-user view lives at /admin/exit-rules. The
 		// filter applies uniformly regardless of IsAdmin so the "device"
 		// dropdown can't be abused to assign rules to another user's device.
+		// 2026-07-12: Этап 10 part 4 — moved to
+		// db.ListNodeOwnerNodeIDsByUsername. The int conversion stays
+		// here because headscale.NodeView.ID is a string and the
+		// existing form renders device ids as ints.
 		userNodes := map[int]bool{}
-		if rows, qe := a.DB.Query("SELECT node_id FROM node_owner_map WHERE username=?", c.Username); qe == nil {
-			for rows.Next() {
-				var nid int
-				if rows.Scan(&nid) == nil {
-					userNodes[nid] = true
-				}
+		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(a.DB, c.Username)
+		for _, nid := range snapIDs {
+			if n, err := strconv.Atoi(nid); err == nil {
+				userNodes[n] = true
 			}
-			rows.Close()
 		}
 		for _, n := range nodes {
 			nid, _ := strconv.Atoi(n.ID)
@@ -422,10 +423,13 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			if len(n.IPAddresses) > 0 {
 				deviceIP = n.IPAddresses[0]
 			}
-			var c2 int
-			a.DB.QueryRow("SELECT COUNT(*) FROM node_owner_map WHERE node_id = ? AND username = ?", devID, c.Username).Scan(&c2)
-			owned = c2 > 0
-			break
+		// 2026-07-12: Этап 10 part 4 — moved to
+		// db.CountNodeOwnerByNodeUser. devID is an int here
+		// (it came from a strconv.Atoi above); the helper
+		// expects the string form that node_owner_map stores.
+		c2, _ := db.CountNodeOwnerByNodeUser(a.DB, strconv.Itoa(devID), c.Username)
+		owned = c2 > 0
+		break
 		}
 	}
 	if !owned {

@@ -33,38 +33,42 @@ import (
 // Output is grouped by user, with last_seen (from devices table)
 // when available — exit-nodes without a last_seen are likely offline.
 func exitNodesReply(d *sql.DB) string {
-	// 2026-07-11: node_owner_map is the portal's snapshot of the
-	// headscale tag layout (see handlers_node_ownership.go). We
-	// LEFT JOIN devices on node_id so the operator can see the
-	// last-seen timestamp; null last_seen = the headscale side
-	// hasn't reported this node recently, which usually means
-	// "offline, investigate".
-	rows, err := d.Query(`
-		SELECT COALESCE(n.username, '?') AS username,
-		       n.node_id,
-		       COALESCE(dev.last_seen, 0) AS last_seen,
-		       COALESCE(dev.online, 0)    AS online
-		  FROM node_owner_map n
-		  LEFT JOIN devices dev ON dev.node_id = n.node_id
-		 WHERE n.tag = 'tag:exit-node'
-		 ORDER BY n.username, n.node_id`)
+	// 2026-07-12: Этап 10 part 4 — node_owner_map rows for exit-nodes
+	// come from db.ListExitNodeOwners. The devices-table LEFT JOIN for
+	// last_seen/online stays in the bot (presentation concern), so we
+	// build a small id→{last_seen,online} map and merge.
+	owners, err := db.ListExitNodeOwners(d)
 	if err != nil {
 		return fmt.Sprintf("exit_nodes: db error: %v", err)
 	}
-	defer rows.Close()
-
+	type devState struct {
+		lastSeen int64
+		online   int
+	}
+	devMap := map[string]devState{}
+	if rows, derr := d.Query(`SELECT node_id, COALESCE(last_seen, 0), COALESCE(online, 0) FROM devices`); derr == nil {
+		for rows.Next() {
+			var nid string
+			var st devState
+			if err := rows.Scan(&nid, &st.lastSeen, &st.online); err == nil {
+				devMap[nid] = st
+			}
+		}
+		rows.Close()
+	}
 	type row struct {
 		user, nodeID string
 		lastSeen     int64
 		online       int
 	}
 	var byUser []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.user, &r.nodeID, &r.lastSeen, &r.online); err != nil {
-			return fmt.Sprintf("exit_nodes: scan error: %v", err)
+	for _, n := range owners {
+		user := n.Username
+		if user == "" {
+			user = "?"
 		}
-		byUser = append(byUser, r)
+		st := devMap[n.NodeID]
+		byUser = append(byUser, row{user: user, nodeID: n.NodeID, lastSeen: st.lastSeen, online: st.online})
 	}
 	if len(byUser) == 0 {
 		return "exit_nodes: (no nodes with tag:exit-node in node_owner_map —\ntag some nodes from /admin/devices, then re-run)"

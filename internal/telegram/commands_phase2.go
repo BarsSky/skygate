@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // Phase 2 commands: /nodes, /rules, /audit.
@@ -24,41 +26,37 @@ import (
 // this happens for nodes that joined before node_owner_map existed or
 // for nodes the backfill hasn't visited yet.
 func nodesReply(d *sql.DB) string {
-	// 2026-07-11: tag and username columns were added by handlers_node_ownership.go
-	// as a runtime ALTER (not in migrations); we use COALESCE so an older schema
-	// still works. ORDER BY tag so the operator sees the same grouping in Telegram
-	// as in /admin/devices.
-	rows, err := d.Query(`
-		SELECT COALESCE(n.username, '?')      AS username,
-		       COALESCE(NULLIF(n.tag, ''), 'tag:untagged') AS tag,
-		       n.node_id
-		  FROM node_owner_map n
-		 ORDER BY tag, username, node_id`)
+	// 2026-07-12: Этап 10 part 4 — raw SQL replaced by
+	// db.ListAllNodeOwners. The helper returns the same
+	// (node_id, username, tag) shape we need; presentation grouping
+	// stays in the bot.
+	owners, err := db.ListAllNodeOwners(d)
 	if err != nil {
 		return fmt.Sprintf("nodes: db error: %v", err)
 	}
-	defer rows.Close()
-
 	type key struct{ user, tag string }
 	byGroup := map[key][]string{}
 	order := []key{}
 	totals := map[string]int{"tag:private": 0, "tag:public": 0, "tag:exit-node": 0, "tag:untagged": 0}
-	for rows.Next() {
-		var user, tag, nodeID string
-		if err := rows.Scan(&user, &tag, &nodeID); err != nil {
-			return fmt.Sprintf("nodes: scan error: %v", err)
+	for _, n := range owners {
+		tag := n.Tag
+		if tag == "" {
+			tag = "tag:untagged"
+		}
+		user := n.Username
+		if user == "" {
+			user = "?"
 		}
 		k := key{user, tag}
 		if _, ok := byGroup[k]; !ok {
 			order = append(order, k)
 		}
-		byGroup[k] = append(byGroup[k], nodeID)
+		byGroup[k] = append(byGroup[k], n.NodeID)
 		totals[tag]++
 	}
 	if len(order) == 0 {
 		return "nodes: (no nodes in node_owner_map — run backfill from /admin/devices)"
 	}
-
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Tailnet nodes: %d total\n", totals["tag:private"]+totals["tag:public"]+totals["tag:exit-node"]+totals["tag:untagged"])
 	fmt.Fprintf(&sb, "  private: %d  public: %d  exit-node: %d  untagged: %d\n\n",

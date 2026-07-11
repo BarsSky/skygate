@@ -289,11 +289,9 @@ func backfillNodeOwners(d *sql.DB, hs *headscale.Client, adminName string) error
 		if n.UserName != "tagged-devices" {
 			continue
 		}
-		_, err := tx.Exec(`INSERT OR IGNORE INTO node_owner_map
-			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, ?, ?, ?, ?)`,
-			n.ID, adminHSID.Int64, adminName, "tag:public", adminID.Int64)
-		if err != nil {
+		// 2026-07-12: Этап 10 part 4 — moved to
+		// db.InsertIgnoreNodeOwner.
+		if err := db.InsertIgnoreNodeOwner(tx, n.ID, adminHSID.Int64, adminName, "tag:public", adminID.Int64); err != nil {
 			return err
 		}
 	}
