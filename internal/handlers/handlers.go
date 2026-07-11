@@ -483,37 +483,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	var hsUserID sql.NullInt64
-	var username string
-	err := a.DB.QueryRow(`SELECT headscale_user_id, username FROM portal_users WHERE id=?`, c.UserID).
-		Scan(&hsUserID, &username)
-	if err != nil || !hsUserID.Valid {
-		http.Error(w, "no headscale user linked", 400)
-		return
-	}
-	key, err := a.HS.CreatePreauthKey(hsUserID.Int64, "1h", false)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	// TEMP DEBUG (v0.3.16)
-	// Save headscale_preauth_id so we can later map a node's preAuthKey
-	// back to this portal user when the device registers with this key.
-	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at, headscale_preauth_id) VALUES(?,?,?,?)`,
-		c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
-	a.audit(c.UserID, c.Username, "preauth_issued", "1h single-use")
-	a.renderWithLayout(w, r, "user/preauth_result.html", c, map[string]any{
-		"Key":     key.Key,
-		"Expires": "1 hour",
-		"OS":      r.FormValue("os"),
-	})
-}
+// PostMyPreauth handler moved to handlers_my_preauth.go.
+// (PostMyPreauth)
 
 // GetExitNodes lists exit nodes advertised in the tailnet. Visible to all
 // authenticated users so they can pick one to route through.
