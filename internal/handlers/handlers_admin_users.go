@@ -1,13 +1,12 @@
 package handlers
 
 import (
-	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
@@ -27,29 +26,11 @@ func (a *App) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	rows, err := a.DB.Query(`SELECT id, username, is_admin, headscale_user_id, created_at, theme FROM portal_users ORDER BY id`)
+	// 2026-07-11: Этап 10 part 1 — list of users moved to db.GetAllPortalUsers
+	users, err := db.GetAllPortalUsers(a.DB)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
-	}
-	defer rows.Close()
-	var users []db.User
-	for rows.Next() {
-		var u db.User
-		var adminI int
-		var createdI int64
-		var hsID sql.NullInt64
-		var theme sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme); err == nil {
-			u.IsAdmin = adminI == 1
-			u.HeadscaleUserID = hsID.Int64
-			u.CreatedAt = time.Unix(createdI, 0)
-			if theme.Valid {
-				u.Theme = theme.String
-			}
-			u.PasswordHash = ""
-			users = append(users, u)
-		}
 	}
 
 	// Fetch headscale users and detect orphans (in headscale but not in skygate)
@@ -98,10 +79,14 @@ func (a *App) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "username: lowercase letters, digits, _ and - only", 400)
 		return
 	}
-	var existingID int64
-	err := a.DB.QueryRow(`SELECT id FROM portal_users WHERE username=?`, username).Scan(&existingID)
+	var err error
+	_, err = db.GetUserIDByName(a.DB, username)
 	if err == nil {
 		http.Error(w, fmt.Sprintf("user %q already exists in skygate", username), 409)
+		return
+	}
+	if !errors.Is(err, db.ErrUserNotFound) {
+		http.Error(w, err.Error(), 500)
 		return
 	}
 	hsUser, err := a.HS.CreateUser(username)
@@ -115,8 +100,8 @@ func (a *App) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	_, err = a.DB.Exec(`INSERT INTO portal_users(username, password_hash, is_admin, headscale_user_id) VALUES(?,?,?,?)`,
-		username, hash, isAdmin, hsID)
+	// 2026-07-11: Этап 10 part 1 — INSERT moved to db.InsertPortalUser
+	_, err = db.InsertPortalUser(a.DB, username, hash, isAdmin, hsID)
 	if err != nil {
 		http.Error(w, "portal insert: "+err.Error(), 500)
 		return
@@ -152,12 +137,13 @@ func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot delete yourself", 400)
 		return
 	}
-	var username string
-	var hsID sql.NullInt64
-	err := a.DB.QueryRow(`SELECT username, headscale_user_id FROM portal_users WHERE id=?`, id).
-		Scan(&username, &hsID)
-	if err != nil {
+	username, hsID, err := db.GetUserNameAndHSByID(a.DB, id)
+	if errors.Is(err, db.ErrUserNotFound) {
 		http.Error(w, "user not found", 404)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), 500)
 		return
 	}
 	hsDeleteMsg := ""
@@ -171,7 +157,8 @@ func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.Exec(`DELETE FROM preauth_keys WHERE user_id=?`, id)
 	// 2026-07-11: Этап 9 part 2 — DELETE moved to db.DeleteAuditLogByUserID
 	_ = db.DeleteAuditLogByUserID(a.DB, int64(id))
-	_, err = a.DB.Exec(`DELETE FROM portal_users WHERE id=?`, id)
+	// 2026-07-11: Этап 10 part 1 — DELETE moved to db.DeletePortalUserByID
+	_, err = db.DeletePortalUserByID(a.DB, id)
 	if err != nil {
 		http.Error(w, "delete: "+err.Error(), 500)
 		return
@@ -199,10 +186,13 @@ func (a *App) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "password too short (min 6)", 400)
 		return
 	}
-	var username string
-	err := a.DB.QueryRow(`SELECT username FROM portal_users WHERE id=?`, id).Scan(&username)
-	if err != nil {
+	username, err := db.GetUserNameByID(a.DB, id)
+	if errors.Is(err, db.ErrUserNotFound) {
 		http.Error(w, "user not found", 404)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), 500)
 		return
 	}
 	hash, err := auth.HashPassword(newPassword)
@@ -210,7 +200,8 @@ func (a *App) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	if _, err := a.DB.Exec(`UPDATE portal_users SET password_hash=? WHERE id=?`, hash, id); err != nil {
+	// 2026-07-11: Этап 10 part 1 — UPDATE moved to db.UpdatePasswordHash
+	if _, err := db.UpdatePasswordHash(a.DB, id, hash); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}

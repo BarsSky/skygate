@@ -7,9 +7,10 @@ package handlers
 // Extracted from handlers.go.
 
 import (
-	"database/sql"
 	"net/http"
 	"time"
+
+	"skygate/internal/db"
 )
 
 func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
@@ -18,10 +19,8 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	var hsUserID sql.NullInt64
-	var username string
-	err := a.DB.QueryRow(`SELECT headscale_user_id, username FROM portal_users WHERE id=?`, c.UserID).
-		Scan(&hsUserID, &username)
+	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
+	hsUserID, _, err := db.GetUserHSByID(a.DB, c.UserID)
 	if err != nil || !hsUserID.Valid {
 		http.Error(w, "no headscale user linked", 400)
 		return

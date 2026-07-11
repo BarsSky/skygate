@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -27,8 +28,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	var hsUserID sql.NullInt64
 	var username string
-	_ = a.DB.QueryRow(`SELECT headscale_user_id, username FROM portal_users WHERE id=?`, c.UserID).
-		Scan(&hsUserID, &username)
+	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
+	hsUserID, username, _ = db.GetUserHSByID(a.DB, c.UserID)
 
 	// Get all nodes (cached). Reuse them for both my-nodes (filter by user)
 	// and public nodes (filter by tag/exit) - one HTTP call to headscale

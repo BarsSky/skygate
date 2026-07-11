@@ -162,15 +162,14 @@ func (a *App) GenerateACL() (string, error) {
 	// tagOwners requires user@domain form. We hard-code the headscale
 	// base_domain ("tsnet.skynas.ru") for now — it is the only deployment.
 	const baseDomain = "tsnet.skynas.ru"
-	userRows, err := a.DB.Query(`SELECT username FROM portal_users ORDER BY id`)
+	// 2026-07-11: Этап 10 part 1 — moved to db.GetPortalUsernames
+	usernames, err := db.GetPortalUsernames(a.DB)
 	if err != nil {
 		return "", err
 	}
-	defer userRows.Close()
 	var identities []string
-	for userRows.Next() {
-		var uname string
-		if err := userRows.Scan(&uname); err == nil && uname != "" {
+	for _, uname := range usernames {
+		if uname != "" {
 			identities = append(identities, uname+"@"+baseDomain)
 		}
 	}

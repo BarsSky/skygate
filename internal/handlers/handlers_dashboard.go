@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -115,8 +116,8 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	// Look up the headscale username for this portal user (may be empty for
 	// brand-new users who haven't registered a device yet).
-	var hsUserName string
-	_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id=?`, c.UserID).Scan(&hsUserName)
+	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserNameByID
+	hsUserName, _ := db.GetUserNameByID(a.DB, c.UserID)
 	// Admins see whole-tailnet metrics; users see only their own.
 	scope := ""
 	if !c.IsAdmin && hsUserName != "" {

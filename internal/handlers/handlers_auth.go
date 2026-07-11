@@ -1,8 +1,6 @@
 ﻿package handlers
 
 import (
-	"database/sql"
-	"errors"
 	"net/http"
 	"strings"
 
@@ -48,10 +46,9 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var id int64
 	var hash string
-	var isAdmin int
-	err := a.DB.QueryRow(`SELECT id, password_hash, is_admin FROM portal_users WHERE username=?`, u).
-		Scan(&id, &hash, &isAdmin)
-	if errors.Is(err, sql.ErrNoRows) || !auth.CheckPassword(hash, p) {
+	var isAdmin bool
+	id, hash, isAdmin, err := db.GetUserCredentials(a.DB, u)
+	if err != nil || !auth.CheckPassword(hash, p) {
 		a.audit(id, u, "login_fail", "")
 		baseData["Error"] = a.I18n.T(lang, "login.invalid_credentials")
 		a.render(w, r, "login.html", baseData)
@@ -61,7 +58,7 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	tok, err := auth.IssueJWT(a.JWTSecret, id, u, isAdmin == 1, a.SessionHours)
+	tok, err := auth.IssueJWT(a.JWTSecret, id, u, isAdmin, a.SessionHours)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
