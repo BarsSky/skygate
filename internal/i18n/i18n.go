@@ -79,22 +79,26 @@ func (c *Catalog) Tf(lang, key string, args ...any) string {
 }
 
 // All returns the full map for a language (lang -> key -> string).
-// Used by templates that need to call T through dot syntax:
-//   {{.T "key"}}
+// Used by templates that need to call Tr through dot syntax:
+//   {{.Tr "key"}}
 type Translations struct {
 	Catalog *Catalog
 	Lang    string
 }
 
-func (t *Translations) T(key string) string {
+// 2026-07-11: renamed T → Tr. Go's html/template engine refuses to
+// resolve a single-letter method named "T" on a struct pointer
+// ("T is not a method but has arguments"). Multi-letter names like
+// "Tr" or "Translate" work fine. Same rename applies to Tf → Trf.
+func (t *Translations) Tr(key string) string {
 	if t == nil || t.Catalog == nil {
 		return key
 	}
 	return t.Catalog.T(t.Lang, key)
 }
 
-// Tf is the formatted variant: substitutes args into the translation.
-func (t *Translations) Tf(key string, args ...any) string {
+// Trf is the formatted variant: substitutes args into the translation.
+func (t *Translations) Trf(key string, args ...any) string {
 	if t == nil || t.Catalog == nil {
 		return key
 	}

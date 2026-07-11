@@ -1,15 +1,15 @@
-{{define "body-admin-exit_nodes"}}
+﻿{{define "body-admin-exit_nodes"}}
 <div class="card" style="margin-bottom:24px">
-  <h3><i class="fa-solid fa-server"></i> {{.T "exit_nodes.admin_title"}}</h3>
+  <h3><i class="fa-solid fa-server"></i> {{.Tr "exit_nodes.admin_title"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:12px">
-    {{.T "exit_nodes.admin_subtitle"}}.
+    {{.Tr "exit_nodes.admin_subtitle"}}.
     Formed from headscale (nodes tagged <code>tag:exit-node</code> and approved routes).
   </p>
 
   {{if .Nodes}}
   <table>
     <tr>
-      <th>{{.T "exit_nodes.hostname"}}</th><th>{{.T "exit_nodes.ip"}}</th><th>SSH</th><th>{{.T "exit_nodes.form_accept_routes"}}</th><th>{{.T "exit_nodes.routes"}}</th><th>{{.T "exit_nodes.status"}}</th><th></th>
+      <th>{{.Tr "exit_nodes.hostname"}}</th><th>{{.Tr "exit_nodes.ip"}}</th><th>SSH</th><th>{{.Tr "exit_nodes.form_accept_routes"}}</th><th>{{.Tr "exit_nodes.routes"}}</th><th>{{.Tr "exit_nodes.status"}}</th><th></th>
     </tr>
     {{range .Nodes}}
     <tr>
@@ -34,7 +34,7 @@
         {{else}}<span class="tag" style="background:var(--bg-hover)">idle</span>{{end}}
       </td>
       <td>
-        <form method="post" action="/admin/exit-nodes/delete" style="display:inline" onsubmit="return confirm('{{.Tf "exit_nodes.delete_confirm" .Hostname}}')">
+        <form method="post" action="/admin/exit-nodes/delete" style="display:inline" onsubmit="return confirm('{{.Trf "exit_nodes.delete_confirm" .Hostname}}')">
           <input type="hidden" name="node_id" value="{{.NodeID}}">
           <button class="btn btn-sm" style="background:var(--danger-bg);color:var(--danger)"><i class="fa-solid fa-trash"></i></button>
         </form>
@@ -43,7 +43,7 @@
     {{end}}
   </table>
   {{else}}
-  <p style="color:var(--text-muted)">{{.T "exit_nodes.empty"}}. Configure exit-node and add advertised routes.</p>
+  <p style="color:var(--text-muted)">{{.Tr "exit_nodes.empty"}}. Configure exit-node and add advertised routes.</p>
   {{end}}
 
   <div style="margin-top:12px;display:flex;gap:8px">
@@ -54,7 +54,7 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-plus"></i> {{.T "exit_nodes.add"}}</h3>
+  <h3><i class="fa-solid fa-plus"></i> {{.Tr "exit_nodes.add"}}</h3>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">1. Linux host setup as exit-node</h4>
@@ -117,19 +117,19 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
       <input name="node_id" placeholder="2" style="width:80px" required>
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_hostname"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.Tr "exit_nodes.form_hostname"}}</label>
       <input name="hostname" placeholder="karolina" style="width:140px" required>
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_ssh_target"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.Tr "exit_nodes.form_ssh_target"}}</label>
       <input name="ssh_target" placeholder="root@karolina" style="width:200px">
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_ssh_key"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.Tr "exit_nodes.form_ssh_key"}}</label>
       <input name="ssh_key_path" value="{{.SSHKeyPath}}" style="width:260px">
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_accept_routes"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.Tr "exit_nodes.form_accept_routes"}}</label>
       <select name="accept_routes" style="width:160px">
         <option value="">default (Tailscale decides)</option>
         <option value="false">false (node does NOT accept routes from peers)</option>
@@ -137,10 +137,10 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
       </select>
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_desc"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.Tr "exit_nodes.form_desc"}}</label>
       <input name="description" placeholder="VPS in Europe" style="width:150px">
     </div>
-    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{.T "common.add"}}</button>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{.Tr "common.add"}}</button>
   </form>
 </div>
 

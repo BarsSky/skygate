@@ -1,19 +1,19 @@
-{{define "body-user-preauth_result"}}
+﻿{{define "body-user-preauth_result"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-key"></i>{{.T "preauth.title"}}</h2>
+    <h2><i class="fa-solid fa-key"></i>{{.Tr "preauth.title"}}</h2>
     <div class="sub">One-time use, valid for {{.Expires}}</div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-key"></i>{{.T "devices.preauth_key"}}</h3>
-  <p style="color:var(--text-muted);margin-bottom:12px">{{.T "preauth.warning"}} (instructions for <b>{{.OSLabel}}</b>):</p>
-  <div class="key-block"><code>{{.Key}}</code><button class="copy-btn" onclick="navigator.clipboard.writeText('{{.Key}}');this.textContent='{{.T "common.copied"}}!';setTimeout(()=>{this.textContent='{{.T "common.copy"}}'},1500)"><i class="fa-solid fa-copy"></i>{{.T "common.copy"}}</button></div>
+  <h3><i class="fa-solid fa-key"></i>{{.Tr "devices.preauth_key"}}</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{.Tr "preauth.warning"}} (instructions for <b>{{.OSLabel}}</b>):</p>
+  <div class="key-block"><code>{{.Key}}</code><button class="copy-btn" onclick="navigator.clipboard.writeText('{{.Key}}');this.textContent='{{.Tr "common.copied"}}!';setTimeout(()=>{this.textContent='{{.Tr "common.copy"}}'},1500)"><i class="fa-solid fa-copy"></i>{{.Tr "common.copy"}}</button></div>
   <div class="alert alert-warn" style="margin-bottom:0">
     <i class="fa-solid fa-triangle-exclamation"></i>
     <div>
-      <strong>{{.T "preauth.warning"}} <code>{{.Username}}</code></strong>
+      <strong>{{.Tr "preauth.warning"}} <code>{{.Username}}</code></strong>
       <br>
       Single-use, expires in {{.Expires}}. Do not share with others.
     </div>
@@ -125,7 +125,7 @@ Start-Process $env:TEMP\ts.exe -ArgumentList "/quiet" -Wait
 </div>
 
 <div class="btn-row">
-  <a href="/my/devices" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i>{{.T "common.back"}}</a>
-  <a href="/my/devices" class="btn"><i class="fa-solid fa-plus"></i>{{.T "keys.issue"}}</a>
+  <a href="/my/devices" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i>{{.Tr "common.back"}}</a>
+  <a href="/my/devices" class="btn"><i class="fa-solid fa-plus"></i>{{.Tr "keys.issue"}}</a>
 </div>
 {{end}}

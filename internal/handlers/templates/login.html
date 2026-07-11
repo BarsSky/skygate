@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="{{.Lang}}" data-theme="{{.Theme}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Skygate — {{.T "login.title"}}</title>
+<title>Skygate — {{.Tr "login.title"}}</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -109,20 +109,20 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
     <span class="brand-name">Skygate</span>
     <span class="brand-ver">v0.2</span>
   </div>
-  <h1><i class="fa-solid fa-right-to-bracket"></i>{{.T "login.title"}}</h1>
-  <div class="lead"><i class="fa-solid fa-info-circle"></i>{{.T "login.subtitle"}}</div>
+  <h1><i class="fa-solid fa-right-to-bracket"></i>{{.Tr "login.title"}}</h1>
+  <div class="lead"><i class="fa-solid fa-info-circle"></i>{{.Tr "login.subtitle"}}</div>
   {{if .Error}}<div class="alert"><i class="fa-solid fa-circle-exclamation"></i>{{.Error}}</div>{{end}}
   <form method="post" action="/login?theme={{.Theme}}">
     <!-- Dummy fields to absorb browser autofill (prevents cached credentials leak) -->
     <input type="text" id="dummy" name="dummy" autocomplete="off" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none" readonly disabled>
     <input type="password" id="dummy-pass" name="dummy-pass" autocomplete="off" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none" readonly disabled>
-    <label for="username"><i class="fa-solid fa-user"></i>{{.T "login.username"}}</label>
+    <label for="username"><i class="fa-solid fa-user"></i>{{.Tr "login.username"}}</label>
     <input type="text" id="username" name="username" required autofocus autocomplete="off" placeholder="admin">
-    <label for="password"><i class="fa-solid fa-lock"></i>{{.T "login.password"}}</label>
+    <label for="password"><i class="fa-solid fa-lock"></i>{{.Tr "login.password"}}</label>
     <input type="password" id="password" name="password" required autocomplete="current-password">
-    <button type="submit"><i class="fa-solid fa-arrow-right"></i>{{.T "login.submit"}}</button>
+    <button type="submit"><i class="fa-solid fa-arrow-right"></i>{{.Tr "login.submit"}}</button>
   </form>
-  <div class="help"><i class="fa-solid fa-lightbulb"></i>{{.T "login.no_account"}}</div>
+  <div class="help"><i class="fa-solid fa-lightbulb"></i>{{.Tr "login.no_account"}}</div>
 </div>
 </body>
 </html>

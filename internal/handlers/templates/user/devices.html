@@ -1,19 +1,19 @@
-{{define "body-user-devices"}}
+﻿{{define "body-user-devices"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-laptop"></i>{{.T "devices.title"}}</h2>
-    <div class="sub">{{.T "devices.subtitle"}}: {{.Username}}</div>
+    <h2><i class="fa-solid fa-laptop"></i>{{.Tr "devices.title"}}</h2>
+    <div class="sub">{{.Tr "devices.subtitle"}}: {{.Username}}</div>
   </div>
   <div class="btn-row">
-    <a href="/my/exit-nodes" class="btn btn-secondary"><i class="fa-solid fa-route"></i>{{.T "nav.exit_nodes"}}</a>
+    <a href="/my/exit-nodes" class="btn btn-secondary"><i class="fa-solid fa-route"></i>{{.Tr "nav.exit_nodes"}}</a>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-globe"></i>{{.T "devices.tag_public"}} ({{.T "nav.exit_nodes"}})</h3>
+  <h3><i class="fa-solid fa-globe"></i>{{.Tr "devices.tag_public"}} ({{.Tr "nav.exit_nodes"}})</h3>
   {{if .PublicNodes}}
   <table>
-    <thead><tr><th>{{.T "devices.hostname"}}</th><th>Owner</th><th>{{.T "devices.ip"}}</th><th>{{.T "devices.status"}}</th></tr></thead>
+    <thead><tr><th>{{.Tr "devices.hostname"}}</th><th>Owner</th><th>{{.Tr "devices.ip"}}</th><th>{{.Tr "devices.status"}}</th></tr></thead>
     <tbody>
       {{range .PublicNodes}}
       <tr>
@@ -22,9 +22,9 @@
         <td class="mono">{{index .IPAddresses 0}}</td>
         <td>
           {{if .Online}}
-            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.T "devices.online"}}</span>
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.Tr "devices.online"}}</span>
           {{else}}
-            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.T "devices.offline"}}</span>
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.Tr "devices.offline"}}</span>
           {{end}}
         </td>
       </tr>
@@ -34,16 +34,16 @@
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>
-    <div>{{.T "exit_nodes.empty"}} — admin can mark devices as public via <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane</a>.</div>
+    <div>{{.Tr "exit_nodes.empty"}} — admin can mark devices as public via <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane</a>.</div>
   </div>
   {{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-house-laptop"></i>{{.T "devices.title"}}</h3>
+  <h3><i class="fa-solid fa-house-laptop"></i>{{.Tr "devices.title"}}</h3>
   {{if .HasMyNodes}}
   <table>
-    <thead><tr><th>{{.T "devices.hostname"}}</th><th>{{.T "devices.ip"}}</th><th>{{.T "devices.status"}}</th><th>{{.T "devices.last_seen"}}</th><th>{{.T "devices.tag"}}</th></tr></thead>
+    <thead><tr><th>{{.Tr "devices.hostname"}}</th><th>{{.Tr "devices.ip"}}</th><th>{{.Tr "devices.status"}}</th><th>{{.Tr "devices.last_seen"}}</th><th>{{.Tr "devices.tag"}}</th></tr></thead>
     <tbody>
       {{range .MyNodes}}
       <tr>
@@ -51,20 +51,20 @@
         <td class="mono">{{.IP}}</td>
         <td>
           {{if .Online}}
-            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.T "devices.online"}}</span>
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.Tr "devices.online"}}</span>
           {{else}}
-            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.T "devices.offline"}}</span>
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.Tr "devices.offline"}}</span>
           {{end}}
         </td>
         <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
         <td>
           {{if .IsPublic}}
-            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>{{.T "devices.tag_public"}}</span>
+            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>{{.Tr "devices.tag_public"}}</span>
             {{if eq .Source "snapshot"}}
               <span style="color:var(--text-muted);font-size:11px" title="headscale shows the owner as tagged-devices, original owner is preserved in skygate">via snapshot</span>
             {{end}}
           {{else}}
-            <span class="tag"><i class="fa-solid fa-lock"></i>{{.T "devices.tag_private"}}</span>
+            <span class="tag"><i class="fa-solid fa-lock"></i>{{.Tr "devices.tag_private"}}</span>
           {{end}}
         </td>
       </tr>
@@ -73,22 +73,22 @@
   </table>
   <p style="color:var(--text-muted);font-size:12px;margin-top:12px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
-    <span>{{.T "devices.tag_hint"}}.</span>
+    <span>{{.Tr "devices.tag_hint"}}.</span>
   </p>
   {{else}}
   <div class="alert alert-warn" style="margin-top:0">
     <i class="fa-solid fa-triangle-exclamation"></i>
-    <div>{{.T "devices.no_devices"}}.</div>
+    <div>{{.Tr "devices.no_devices"}}.</div>
   </div>
   {{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-plus-circle"></i>{{.T "devices.add"}}</h3>
+  <h3><i class="fa-solid fa-plus-circle"></i>{{.Tr "devices.add"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:16px">
-    {{.T "devices.add_hint"}}
-    {{.T "preauth.warning"}}
-    {{.T "devices.tag_hint"}}.
+    {{.Tr "devices.add_hint"}}
+    {{.Tr "preauth.warning"}}
+    {{.Tr "devices.tag_hint"}}.
   </p>
   <form method="post" action="/my/preauth" id="preauth-form">
     <div class="os-grid">
@@ -99,7 +99,7 @@
       <label class="os-tile"><input type="radio" name="os" value="windows"><i class="fa-brands fa-windows"></i>Windows</label>
     </div>
     <div class="btn-row right">
-      <button type="submit" class="btn"><i class="fa-solid fa-key"></i>{{.T "keys.issue"}}</button>
+      <button type="submit" class="btn"><i class="fa-solid fa-key"></i>{{.Tr "keys.issue"}}</button>
     </div>
   </form>
 </div>
@@ -107,7 +107,7 @@
 <div class="card">
   <h3><i class="fa-solid fa-circle-question"></i>FAQ</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
-    {{.T "dashboard.quickref_control"}} <code>{{.ControlURL}}</code>
+    {{.Tr "dashboard.quickref_control"}} <code>{{.ControlURL}}</code>
   </p>
 
   <details>

@@ -1,33 +1,33 @@
-{{define "body-admin-acls"}}
+﻿{{define "body-admin-acls"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-shield-halved"></i>{{.T "acls.title"}}</h2>
-    <div class="sub">{{.T "acls.subtitle"}}: <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane UI</a></div>
+    <h2><i class="fa-solid fa-shield-halved"></i>{{.Tr "acls.title"}}</h2>
+    <div class="sub">{{.Tr "acls.subtitle"}}: <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane UI</a></div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-pen-to-square"></i>{{.T "acls.external"}}</h3>
+  <h3><i class="fa-solid fa-pen-to-square"></i>{{.Tr "acls.external"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:16px">
-    {{.T "acls.subtitle"}}.
+    {{.Tr "acls.subtitle"}}.
   </p>
 
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener" class="btn">
-      <i class="fa-solid fa-arrow-up-right-from-square"></i>{{.T "acls.external"}}
+      <i class="fa-solid fa-arrow-up-right-from-square"></i>{{.Tr "acls.external"}}
     </a>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-file-code"></i>{{.T "acls.title"}}</h3>
+  <h3><i class="fa-solid fa-file-code"></i>{{.Tr "acls.title"}}</h3>
   {{if .Policy}}
   <pre>{{.Policy}}</pre>
   {{else}}
   <div class="alert alert-danger" style="margin-top:0">
     <i class="fa-solid fa-circle-exclamation"></i>
     <div>
-      {{.T "acls.empty"}}.
+      {{.Tr "acls.empty"}}.
       <br><br>
       <span style="color:var(--text-subtle);font-size:12px">{{.Error}}</span>
     </div>
