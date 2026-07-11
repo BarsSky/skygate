@@ -349,7 +349,7 @@ Sister files in `internal/handlers/` (current line counts):
 - `handlers_node_ownership.go` (248) — backfillNodeOwnership + firstTagOrFallback
 - `handlers_my_account.go` (92) — self-service password change
 - `handlers_api_tokens.go` (59) — personal API tokens
-- `handlers_admin_pages.go` (63) — read-only admin views (audit, ACLs)
+- `handlers_admin_pages.go` (~115) — read-only admin views (audit, ACLs); audit supports `?action=` and `?user=` filters (Phase 5, 2026-07-11)
 - `handlers_derp.go` (115) — /admin/derp handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot types
 - `handlers_derp_collect.go` (245) — collectDerpStatus + httpGet + parseDerper{DebugHTML,Vars}
 - `handlers_derp_classify.go` (80) — classifyDerpPeer(s) + summarizeDerpPeers
