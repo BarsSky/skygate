@@ -106,7 +106,13 @@ func (n *RealNotifier) SetVersion(v string) {
 // env returns a BotEnv snapshot for HandleCommand. The DB pointer
 // is the same one we already hold; the limits are read under the
 // mu lock so a future SetLimits call mid-poll doesn't tear the map.
-func (n *RealNotifier) env() BotEnv {
+//
+// 2026-07-12: Этап 11 — env() now takes a chat_id and looks up the
+// binding in telegram_bindings. The legacy single-chat deploy
+// (no rows in telegram_bindings) keeps working because the
+// dispatcher in Run() also falls back to "treat as admin" when
+// chat_id matches the configured telegram.chat_id.
+func (n *RealNotifier) env(chatID int64) BotEnv {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	// Copy the map so HandleCommand can't observe a concurrent
@@ -116,7 +122,37 @@ func (n *RealNotifier) env() BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
-	return BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version}
+	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID}
+	if chatID == 0 {
+		return env // legacy / no identity
+	}
+	// Look up the binding. ErrTelegramBindingNotFound is a normal
+	// case (chat not bound yet) — we leave the env unidentified so
+	// admin-only commands short-circuit to "chat not bound" rather
+	// than being treated as admin. The dispatcher in Run() applies
+	// the bootstrap-admin fallback before we get here.
+	b, err := db.GetTelegramBinding(n.db, chatID)
+	if err != nil {
+		return env
+	}
+	env.PortalUserID = b.PortalUserID
+	env.IsAdmin = b.IsAdmin
+	// Username is not denormalized in the binding (we keep it lean);
+	// look it up on demand. One indexed read per command is fine.
+	if u, err := lookupPortalUsername(n.db, b.PortalUserID); err == nil {
+		env.Username = u
+	}
+	return env
+}
+
+// lookupPortalUsername reads portal_users.username for a single
+// portal_user_id. Used by env() to populate BotEnv.Username from
+// the binding. Returning "" on error is fine — the bot's
+// user-scope commands check Username == "" explicitly.
+func lookupPortalUsername(d *sql.DB, userID int64) (string, error) {
+	var u string
+	err := d.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, userID).Scan(&u)
+	return u, err
 }
 
 // SendTelegram posts text to the configured chat_id. Silently no-ops if
@@ -174,6 +210,12 @@ func (n *RealNotifier) Configured() bool {
 
 // Run polls getUpdates and dispatches commands. Blocks until ctx is
 // done. Errors are logged and retried after a backoff.
+//
+// 2026-07-12: Этап 11 — Run now reads each update's chat_id and
+// replies to the originating chat (not the configured admin chat
+// only). The chat_id is also fed to env() so HandleCommand knows
+// who's messaging. Replies to unbound chats are silently dropped
+// (the bot silently ignores — there's no chat to send to).
 func (n *RealNotifier) Run(ctx context.Context) {
 	offset := int64(0)
 	backoff := n.pollInt
@@ -181,7 +223,7 @@ func (n *RealNotifier) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		token, chatID, ok, err := db.LoadTelegramToken(n.db)
+		token, _, ok, err := db.LoadTelegramToken(n.db)
 		if err != nil || !ok {
 			// No token configured; sleep and re-check.
 			select {
@@ -211,8 +253,25 @@ func (n *RealNotifier) Run(ctx context.Context) {
 			if !strings.HasPrefix(text, "/") {
 				continue
 			}
-			reply := HandleCommand(ctx, n.env(), text)
-			n.reply(token, chatID, reply)
+			updateChatID := u.Message.Chat.ID
+			// Apply the bootstrap-admin fallback: if the chat_id
+			// matches the configured admin chat, force IsAdmin
+			// even without a binding row. This keeps the legacy
+			// single-admin deploy (chat_id configured but no
+			// telegram_bindings row) working.
+			effectiveChatID, isBootstrapAdmin := n.resolveBootstrapAdmin(updateChatID)
+			env := n.env(effectiveChatID)
+			if isBootstrapAdmin && !env.IsAdmin {
+				env.IsAdmin = true
+			}
+			reply := HandleCommand(ctx, env, text)
+			// Reply goes to the originating chat (not the configured
+			// admin chat). If the chat is unbound, the reply is
+			// generated but sent to the same chat — which works
+			// for the bootstrap case (admin chat replies) and
+			// degrades gracefully for unbound chats (the user
+			// sees the "admin only" / "chat not bound" message).
+			n.reply(token, updateChatID, reply)
 		}
 		select {
 		case <-ctx.Done():
@@ -220,6 +279,43 @@ func (n *RealNotifier) Run(ctx context.Context) {
 		case <-time.After(n.pollInt):
 		}
 	}
+}
+
+// resolveBootstrapAdmin checks whether the inbound chat_id matches
+// the configured admin chat. When it does, the bot treats the
+// message as coming from the bootstrap admin even without a row in
+// telegram_bindings — preserving the original single-chat deploy.
+//
+// Returned effectiveChatID: 0 when the chat is unbound AND not the
+// admin chat (so HandleCommand sees "no identity"). The bootstrap
+// admin chat keeps its real id so env() does a normal lookup
+// (which returns ErrTelegramBindingNotFound; env() then leaves the
+// BotEnv unidentified; Run() re-flags IsAdmin=true on the way
+// back).
+func (n *RealNotifier) resolveBootstrapAdmin(chatID int64) (int64, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	_, adminChatID, ok, err := db.LoadTelegramToken(n.db)
+	if err != nil || !ok {
+		return 0, false
+	}
+	// adminChatID is stored as a string in global_settings;
+	// compare as int64.
+	var adminID int64
+	if _, err := fmt.Sscanf(adminChatID, "%d", &adminID); err != nil {
+		return 0, false
+	}
+	if chatID == adminID {
+		return chatID, true
+	}
+	// Look up the binding; if the chat is bound, return its real id.
+	if b, err := db.GetTelegramBinding(n.db, chatID); err == nil {
+		return b.ChatID, b.IsAdmin
+	}
+	// Unbound, non-admin chat: tell the dispatcher to treat as
+	// unidentified (so admin-only commands return "chat not bound"
+	// instead of being implicitly allowed).
+	return 0, false
 }
 
 func (n *RealNotifier) fetch(token string, offset int64) ([]update, error) {
@@ -247,7 +343,7 @@ func (n *RealNotifier) fetch(token string, offset int64) ([]update, error) {
 	return out.Result, nil
 }
 
-func (n *RealNotifier) reply(token, chatID, text string) {
+func (n *RealNotifier) reply(token string, chatID int64, text string) {
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendMessage"
 	payload := map[string]any{
 		"chat_id":                chatID,
