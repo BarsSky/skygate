@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"database/sql"
@@ -24,12 +24,11 @@ func (a *App) GetLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	lang := a.I18n.LangFromRequest(r)
-	a.render(w, "login.html", map[string]any{
+	a.render(w, r, "login.html", map[string]any{
 		"Error":      "",
 		"Theme":      theme,
 		"ThemeLabel": db.ThemeLabel(theme),
 		"Lang":       lang,
-		"T":          &i18n.Translations{Catalog: a.I18n, Lang: lang},
 	})
 }
 
@@ -41,11 +40,10 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 		"Theme":      db.ThemeLinear,
 		"ThemeLabel": db.ThemeLabel(db.ThemeLinear),
 		"Lang":       lang,
-		"T":          &i18n.Translations{Catalog: a.I18n, Lang: lang},
 	}
 	if u == "" || p == "" {
 		baseData["Error"] = a.I18n.T(lang, "login.invalid_credentials")
-		a.render(w, "login.html", baseData)
+		a.render(w, r, "login.html", baseData)
 		return
 	}
 	var id int64
@@ -56,7 +54,7 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, sql.ErrNoRows) || !auth.CheckPassword(hash, p) {
 		a.audit(id, u, "login_fail", "")
 		baseData["Error"] = a.I18n.T(lang, "login.invalid_credentials")
-		a.render(w, "login.html", baseData)
+		a.render(w, r, "login.html", baseData)
 		return
 	}
 	if err != nil {
