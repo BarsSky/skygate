@@ -5,7 +5,7 @@ package handlers
 // Extracted from handlers.go.
 
 import (
-	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -25,38 +25,16 @@ func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	type keyRow struct {
-		ID                int64
-		Key               string
-		Used              bool
-		ExpiresAt         int64
-		CreatedAt         int64
-		HeadscalePreauthID string
-	}
-	rows, err := a.DB.Query(`SELECT id, key, used, expires_at, created_at, headscale_preauth_id
-		FROM preauth_keys WHERE user_id=? ORDER BY created_at DESC`, c.UserID)
+	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.ListPreauthKeysByUser
+	// Returns []db.PreauthKey, which the template iterates over the
+	// same fields the old local keyRow did (ID, Key, Used, ExpiresAt,
+	// CreatedAt, HeadscalePreauthID). We rebind the slice into a
+	// []any for the template rather than introducing a template-
+	// specific wrapper struct.
+	rows, err := db.ListPreauthKeysByUser(a.DB, c.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
-	}
-	defer rows.Close()
-	var keys []keyRow
-	now := time.Now().Unix()
-	for rows.Next() {
-		var k keyRow
-		var hsID sql.NullString
-		var usedInt, expNull int64
-		if err := rows.Scan(&k.ID, &k.Key, &usedInt, &expNull, &k.CreatedAt, &hsID); err != nil {
-			continue
-		}
-		k.Used = usedInt == 1
-		if expNull > 0 {
-			k.ExpiresAt = expNull
-		}
-		if hsID.Valid {
-			k.HeadscalePreauthID = hsID.String
-		}
-		keys = append(keys, k)
 	}
 	// Live "used" check: if any headscale node currently has this
 	// key as its preAuthKey, mark used even if our local flag is
@@ -68,15 +46,16 @@ func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 				liveByKeyID[n.PreAuthKeyID] = true
 			}
 		}
-		for i := range keys {
-			if keys[i].HeadscalePreauthID != "" && liveByKeyID[keys[i].HeadscalePreauthID] {
-				keys[i].Used = true
+		for i := range rows {
+			if rows[i].HeadscalePreauthID != "" && liveByKeyID[rows[i].HeadscalePreauthID] {
+				rows[i].Used = true
 			}
 		}
 	}
+	now := time.Now().Unix()
 	a.renderWithLayout(w, r, "user/keys.html", c, map[string]any{
-		"Keys":    keys,
-		"HasKeys": len(keys) > 0,
+		"Keys":    rows,
+		"HasKeys": len(rows) > 0,
 		"Now":     now,
 	})
 }
@@ -115,12 +94,9 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Look up the key, scoped to current user.
-	var usedInt int
-	var expNull sql.NullInt64
-	var hsID sql.NullString
-	err = a.DB.QueryRow(`SELECT used, expires_at, headscale_preauth_id FROM preauth_keys
-		WHERE id=? AND user_id=?`, id, c.UserID).Scan(&usedInt, &expNull, &hsID)
-	if err == sql.ErrNoRows {
+	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.GetPreauthKeyByID
+	k, err := db.GetPreauthKeyByID(a.DB, id, c.UserID)
+	if errors.Is(err, db.ErrPreauthKeyNotFound) {
 		http.Error(w, "key not found", 404)
 		return
 	}
@@ -130,12 +106,12 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	}
 	// No-ops for used or already-expired keys.
 	now := time.Now().Unix()
-	if usedInt == 1 {
+	if k.Used {
 		a.audit(c.UserID, c.Username, "preauth_expire_noop", fmt.Sprintf("key_id=%d already used", id))
 		http.Redirect(w, r, "/my/keys", http.StatusFound)
 		return
 	}
-	if expNull.Valid && expNull.Int64 <= now {
+	if k.ExpiresAt > 0 && k.ExpiresAt <= now {
 		a.audit(c.UserID, c.Username, "preauth_expire_noop", fmt.Sprintf("key_id=%d already expired", id))
 		http.Redirect(w, r, "/my/keys", http.StatusFound)
 		return
@@ -156,8 +132,8 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// we mark the local row expired and move on. They can't
 	// register a device with the key anyway because the underlying
 	// key string is in our DB only, not headscale.)
-	if hsID.Valid && hsID.String != "" {
-		if err := a.HS.ExpirePreauthKey(hsUserID.Int64, hsID.String); err != nil {
+	if k.HeadscalePreauthID != "" {
+		if err := a.HS.ExpirePreauthKey(hsUserID.Int64, k.HeadscalePreauthID); err != nil {
 			http.Error(w, "headscale expire failed: "+err.Error(), 500)
 			return
 		}
@@ -166,8 +142,8 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// time so the dashboard's 3-way split picks it up immediately
 	// on next render (no separate 'expired' column; we reuse the
 	// expires_at timestamp convention used for TTL-based expiry).
-	if _, err := a.DB.Exec(`UPDATE preauth_keys SET expires_at=? WHERE id=? AND user_id=?`,
-		now, id, c.UserID); err != nil {
+	// 2026-07-11: Этап 10 part 3 — UPDATE moved to db.ExpirePreauthKey
+	if err := db.ExpirePreauthKey(a.DB, id, c.UserID, now); err != nil {
 		http.Error(w, "local update failed: "+err.Error(), 500)
 		return
 	}

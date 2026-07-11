@@ -110,22 +110,13 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		}
 	}
 	// Preload this user's preauth keys once.
-	type pakRow struct {
-		ID                 int64
-		HeadscalePreauthID sql.NullString
-		CreatedAt          int64
-	}
-	rows, err := db.Query(`SELECT id, headscale_preauth_id, created_at FROM preauth_keys WHERE user_id=? ORDER BY created_at DESC`, portalUserID)
+	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.ListPreauthKeysByUser.
+	// We use the full row even though only (ID, HeadscalePreauthID,
+	// CreatedAt) feed the temporal-match logic. The full struct keeps
+	// the helper single-purpose; the unused fields are zero-cost.
+	paks, err := dbpkg.ListPreauthKeysByUser(db, portalUserID)
 	if err != nil {
 		return
-	}
-	defer rows.Close()
-	var paks []pakRow
-	for rows.Next() {
-		var r pakRow
-		if err := rows.Scan(&r.ID, &r.HeadscalePreauthID, &r.CreatedAt); err == nil {
-			paks = append(paks, r)
-		}
 	}
 	// Look up the headscale user IDs that other portal users own,
 	// so we can detect "this node is currently in someone else's
@@ -162,7 +153,7 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		// Strategy A: strict join on headscale_preauth_id.
 		if n.PreAuthKeyID != "" {
 			for _, p := range paks {
-				if p.HeadscalePreauthID.Valid && p.HeadscalePreauthID.String == n.PreAuthKeyID {
+				if p.HeadscalePreauthID != "" && p.HeadscalePreauthID == n.PreAuthKeyID {
 					matchedTag = firstTagOrFallback(n)
 					break
 				}
@@ -245,8 +236,13 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		}
 		inserted[n.ID] = true
 		// Mark the preauth key as used if headscale has a node attached to it.
+		// 2026-07-11: Этап 10 part 3 — UPDATE moved to db.MarkPreauthKeyUsedByHSID.
+		// Best-effort (helper returns error, we log + continue). The
+		// helper is a no-op for empty headscaleID, so the n.PreAuthKeyID
+		// != "" guard is technically redundant but kept for symmetry
+		// with the original inline code and as a fast-path skip.
 		if n.PreAuthKeyID != "" {
-			if _, err := db.Exec(`UPDATE preauth_keys SET used=1 WHERE headscale_preauth_id=? AND used=0`, n.PreAuthKeyID); err != nil {
+			if err := dbpkg.MarkPreauthKeyUsedByHSID(db, n.PreAuthKeyID); err != nil {
 				log.Printf("warn: mark key %s used: %v", n.PreAuthKeyID, err)
 			}
 		}

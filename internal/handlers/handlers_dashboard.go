@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"net/http"
 	"time"
 
@@ -154,19 +153,15 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 		}
 	}
 	now := time.Now().Unix()
-	rows, err := a.DB.Query(`SELECT id, headscale_preauth_id, used, expires_at FROM preauth_keys WHERE user_id=?`, myUserID)
+	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.ListPreauthKeysByUser.
+	// The full row (including Key, CreatedAt) is loaded but only
+	// HeadscalePreauthID, Used, ExpiresAt are used here. The extra
+	// columns are tiny; having one read function is worth it.
+	rows, err := db.ListPreauthKeysByUser(a.DB, myUserID)
 	if err != nil {
 		return s
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var hsID sql.NullString
-		var usedInt int
-		var exp sql.NullInt64
-		if err := rows.Scan(&id, &hsID, &usedInt, &exp); err != nil {
-			continue
-		}
+	for _, k := range rows {
 		s.Total++
 		// Determine the authoritative used state. Prefer the live
 		// headscale signal (node.preAuthKey.id) over the local flag,
@@ -174,14 +169,14 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 		// once the device exists. We DO NOT clear the local flag here
 		// - that's a side-effect the user should opt into via a
 		// separate sync job; for the counter, just trust headscale.
-		isUsed := usedInt == 1
-		if hsID.Valid && hsUsedKeyIDs[hsID.String] {
+		isUsed := k.Used
+		if k.HeadscalePreauthID != "" && hsUsedKeyIDs[k.HeadscalePreauthID] {
 			isUsed = true
 		}
 		switch {
 		case isUsed:
 			s.Used++
-		case exp.Valid && exp.Int64 <= now:
+		case k.ExpiresAt > 0 && k.ExpiresAt <= now:
 			s.Expired++
 		default:
 			s.Active++
