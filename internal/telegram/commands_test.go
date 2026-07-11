@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 	for _, q := range []string{
 		`CREATE TABLE device_rules (id INTEGER PRIMARY KEY, user_id INTEGER, device_id INTEGER, exit_node_id TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'domain', target_value TEXT, action TEXT DEFAULT 'accept', device_ip TEXT DEFAULT '', parent_domain TEXT DEFAULT '', enabled INTEGER DEFAULT 1)`,
-		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT)`,
+		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0)`,
 		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, applied_success INTEGER)`,
 		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged')`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
@@ -32,6 +33,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// last_seen) and telegram_alerts (/ack round-trip).
 		`CREATE TABLE devices (id INTEGER PRIMARY KEY, user_id INTEGER, hostname TEXT NOT NULL DEFAULT '', node_id TEXT DEFAULT '', headscale_node_id TEXT DEFAULT '', ip_addresses TEXT DEFAULT '', os TEXT DEFAULT '', last_seen INTEGER DEFAULT 0, online INTEGER DEFAULT 0, created_at INTEGER DEFAULT 0)`,
 		`CREATE TABLE telegram_alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), acked_at INTEGER NOT NULL DEFAULT 0, acked_by TEXT NOT NULL DEFAULT '')`,
+		// 2026-07-12: Этап 11 — telegram_bindings (chat_id → portal_user).
+		`CREATE TABLE telegram_bindings (chat_id INTEGER PRIMARY KEY, portal_user_id INTEGER NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, bound_at INTEGER NOT NULL DEFAULT 0, bound_by_user_id INTEGER NOT NULL DEFAULT 0)`,
+		// 2026-07-12: Этап 11 — preauth_keys (add_device reply needs it).
+		`CREATE TABLE preauth_keys (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, key TEXT NOT NULL DEFAULT '', headscale_preauth_id TEXT NOT NULL DEFAULT '', used INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
@@ -41,8 +46,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 	// rows are owned by skyadmin (user_id=1) so /quota sees the
 	// expected 12-rule count under that user; /rules is the only
 	// command that doesn't care about user_id.
-	_, _ = d.Exec(`INSERT INTO portal_users(username) VALUES ('skyadmin')`)
-	_, _ = d.Exec(`INSERT INTO portal_users(username) VALUES ('alice')`)
+	_, _ = d.Exec(`INSERT INTO portal_users(id, username, is_admin) VALUES (1, 'skyadmin', 1)`)
+	_, _ = d.Exec(`INSERT INTO portal_users(id, username, is_admin) VALUES (2, 'alice', 0)`)
 	for i := 0; i < 12; i++ {
 		_, _ = d.Exec(`INSERT INTO device_rules(user_id, target_value) VALUES (1, ?)`, "x")
 	}
@@ -534,8 +539,8 @@ func TestMintRestartToken(t *testing.T) {
 
 func TestHelpDetailKnown(t *testing.T) {
 	// Every command listed in /help should have a detailed help entry.
-	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help"} {
-		got := helpDetailReply(cmd)
+	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help", "bind", "unbind", "my_status", "my_nodes", "my_rules", "my_quota", "add_device", "add_rule", "delete_rule"} {
+		got := helpDetailReply(cmd, BotEnv{})
 		if !strings.HasPrefix(got, "/"+cmd+" ") {
 			t.Errorf("expected /%s detailed help, got: %q", cmd, got)
 		}
@@ -543,7 +548,7 @@ func TestHelpDetailKnown(t *testing.T) {
 }
 
 func TestHelpDetailUnknown(t *testing.T) {
-	got := helpDetailReply("nonexistent")
+	got := helpDetailReply("nonexistent", BotEnv{})
 	if !strings.Contains(got, "No detailed help") {
 		t.Errorf("expected 'No detailed help' for unknown command, got: %q", got)
 	}
@@ -561,12 +566,280 @@ func TestHandleCommandHelpDetailed(t *testing.T) {
 	}
 	// /help with no arg must still return the short list (backward compat).
 	short := HandleCommand(context.Background(), envFor(d), "/help")
-	if !strings.Contains(short, "Commands:") {
+	if !strings.Contains(short, "Commands") {
 		t.Errorf("expected short list with no /help arg, got: %q", short)
 	}
 	// /help unknown should fall through to the "no detailed help" branch.
 	unknown := HandleCommand(context.Background(), envFor(d), "/help foo")
 	if !strings.Contains(unknown, "No detailed help") {
 		t.Errorf("expected 'No detailed help' for unknown, got: %q", unknown)
+	}
+}
+
+// --- Этап 11 user/admin distinction tests ---
+
+// userEnv builds a BotEnv pre-populated as a non-admin user "alice"
+// (id=2, the second row seeded by setupTestDB).
+func userEnv(d *sql.DB) BotEnv {
+	return BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false}
+}
+
+func adminEnv(d *sql.DB) BotEnv {
+	return BotEnv{DB: d, ChatID: 999, PortalUserID: 1, Username: "skyadmin", IsAdmin: true}
+}
+
+func TestMyStatusReplyUser(t *testing.T) {
+	d := setupTestDB(t)
+	got := myStatusReply(userEnv(d))
+	// alice owns 0 rules (only skyadmin's 12 are seeded), and 0 devices.
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected username in my_status, got: %q", got)
+	}
+	if !strings.Contains(got, "rules: 0") {
+		t.Errorf("expected rules: 0 for alice, got: %q", got)
+	}
+	if !strings.Contains(got, "devices: 0") {
+		t.Errorf("expected devices: 0 for alice, got: %q", got)
+	}
+}
+
+func TestMyStatusReplyUnidentified(t *testing.T) {
+	d := setupTestDB(t)
+	got := myStatusReply(BotEnv{DB: d})
+	if !strings.Contains(got, "chat not bound") {
+		t.Errorf("expected 'chat not bound' for unidentified caller, got: %q", got)
+	}
+}
+
+func TestMyNodesReplyUserFiltersToCaller(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has one device.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-laptop', 'alice', 'tag:private')`)
+	got := myNodesReply(userEnv(d))
+	if !strings.Contains(got, "alice-laptop") {
+		t.Errorf("expected alice-laptop in my_nodes, got: %q", got)
+	}
+	// skyadmin's nodes must NOT leak through.
+	if strings.Contains(got, "n1") {
+		t.Errorf("alice must not see skyadmin's nodes, got: %q", got)
+	}
+}
+
+func TestMyNodesReplyEmpty(t *testing.T) {
+	d := setupTestDB(t)
+	got := myNodesReply(userEnv(d))
+	if !strings.Contains(got, "no devices yet") {
+		t.Errorf("expected 'no devices yet' for user with no devices, got: %q", got)
+	}
+}
+
+func TestMyRulesReplyUserFiltersToCaller(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has 1 rule, skyadmin has 12 (from setup).
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, target_value) VALUES (2, 'github.com')`)
+	got := myRulesReply(userEnv(d))
+	if !strings.Contains(got, "github.com") {
+		t.Errorf("expected github.com in my_rules for alice, got: %q", got)
+	}
+	// The seed for skyadmin uses target_value "x" — alice must not see those.
+	if strings.Contains(got, "\n  domain x →") {
+		t.Errorf("alice must not see skyadmin's rules, got: %q", got)
+	}
+}
+
+func TestMyQuotaReplyUser(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false, UserMaxRules: map[string]int{"alice": 5}, DefaultMax: 200}
+	got := myQuotaReply(env)
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected alice in my_quota, got: %q", got)
+	}
+	// alice has 0 rules; her cap is 5; expect 0/5 + 0%.
+	if !strings.Contains(got, "0 / 5") {
+		t.Errorf("expected '0 / 5' (0 rules, 5 cap) for alice, got: %q", got)
+	}
+}
+
+func TestAdminOnlyRejectsUser(t *testing.T) {
+	d := setupTestDB(t)
+	for _, cmd := range []string{"/status", "/nodes", "/rules", "/quota", "/audit", "/exit_nodes", "/ack", "/restart", "/bind", "/unbind"} {
+		got := HandleCommand(context.Background(), userEnv(d), cmd)
+		if !strings.Contains(got, "admin only") {
+			t.Errorf("expected 'admin only' for %s as user, got: %q", cmd, got)
+		}
+	}
+}
+
+func TestAdminCommandsWorkForAdmin(t *testing.T) {
+	d := setupTestDB(t)
+	// /status should still work for admin (backward compat).
+	got := HandleCommand(context.Background(), adminEnv(d), "/status")
+	if !strings.Contains(got, "rules: 12") {
+		t.Errorf("expected /status to work for admin, got: %q", got)
+	}
+	// /nodes should list all tailnet nodes.
+	got = HandleCommand(context.Background(), adminEnv(d), "/nodes")
+	if !strings.Contains(got, "Tailnet nodes") {
+		t.Errorf("expected /nodes to work for admin, got: %q", got)
+	}
+}
+
+func TestHelpReplyAdminShowsAllCategories(t *testing.T) {
+	d := setupTestDB(t)
+	got := helpReply(adminEnv(d))
+	// Admin sees all three categories (one header, three sections).
+	for _, expected := range []string{"Commands", "/my_status", "/restart", "/bind"} {
+		if !strings.Contains(got, expected) {
+			t.Errorf("admin /help should contain %q, got: %q", expected, got)
+		}
+	}
+}
+
+func TestHelpReplyUserHidesAdmin(t *testing.T) {
+	d := setupTestDB(t)
+	got := helpReply(userEnv(d))
+	// User sees "Your commands" + user-scope, but NOT admin-scope.
+	if !strings.Contains(got, "/my_status") {
+		t.Errorf("user /help should contain /my_status, got: %q", got)
+	}
+	if strings.Contains(got, "/restart") {
+		t.Errorf("user /help should NOT contain admin /restart, got: %q", got)
+	}
+	if strings.Contains(got, "/bind") {
+		t.Errorf("user /help should NOT contain admin /bind, got: %q", got)
+	}
+}
+
+func TestBindReplyAdminHappy(t *testing.T) {
+	d := setupTestDB(t)
+	// /bind 123456789 alice
+	got := HandleCommand(context.Background(), adminEnv(d), "/bind 123456789 alice")
+	if !strings.Contains(got, "✓") {
+		t.Errorf("expected ✓ in bind reply, got: %q", got)
+	}
+	// The binding must be in the DB.
+	var chatID, userID int64
+	var isAdmin int
+	if err := d.QueryRow(`SELECT chat_id, portal_user_id, is_admin FROM telegram_bindings WHERE chat_id = 123456789`).Scan(&chatID, &userID, &isAdmin); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if chatID != 123456789 || userID != 2 || isAdmin != 0 {
+		t.Errorf("unexpected binding row: chat=%d user=%d admin=%d", chatID, userID, isAdmin)
+	}
+}
+
+func TestBindReplyRejectsUser(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/bind 123456789 alice")
+	if !strings.Contains(got, "admin only") {
+		t.Errorf("expected 'admin only' for /bind as user, got: %q", got)
+	}
+}
+
+func TestBindReplyBadArgs(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), adminEnv(d), "/bind 123")
+	if !strings.Contains(got, "usage") {
+		t.Errorf("expected usage hint for /bind with 1 arg, got: %q", got)
+	}
+	got = HandleCommand(context.Background(), adminEnv(d), "/bind notanumber alice")
+	if !strings.Contains(got, "is not a valid chat_id") {
+		t.Errorf("expected 'is not a valid chat_id' for /bind with non-numeric chat, got: %q", got)
+	}
+	got = HandleCommand(context.Background(), adminEnv(d), "/bind 123456789 nobody")
+	if !strings.Contains(got, "no portal user") {
+		t.Errorf("expected 'no portal user' for unknown username, got: %q", got)
+	}
+}
+
+func TestUnbindReplyAdminHappy(t *testing.T) {
+	d := setupTestDB(t)
+	// Bind first.
+	_, _ = d.Exec(`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin) VALUES (42, 1, 1)`)
+	got := HandleCommand(context.Background(), adminEnv(d), "/unbind 42")
+	if !strings.Contains(got, "✓") {
+		t.Errorf("expected ✓ in unbind reply, got: %q", got)
+	}
+	// Row must be gone.
+	var n int
+	d.QueryRow(`SELECT COUNT(*) FROM telegram_bindings WHERE chat_id = 42`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected binding to be deleted, got %d rows", n)
+	}
+}
+
+func TestAddRuleReplyUsageHint(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/add_rule")
+	if !strings.Contains(got, "usage") {
+		t.Errorf("expected usage hint for /add_rule with no args, got: %q", got)
+	}
+}
+
+func TestDeleteRuleReplyRejectsCrossUser(t *testing.T) {
+	d := setupTestDB(t)
+	// Insert a rule owned by skyadmin (id=1).
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (1, 'emilia', 'domain', 'foo.com', 'accept')`)
+	rid, _ := res.LastInsertId()
+	got := HandleCommand(context.Background(), userEnv(d), fmt.Sprintf("/delete_rule %d", rid))
+	if !strings.Contains(got, "belongs to another user") {
+		t.Errorf("expected cross-user rejection, got: %q", got)
+	}
+}
+
+func TestClassifyTarget(t *testing.T) {
+	cases := []struct {
+		in, kind string
+		errOK    bool
+	}{
+		{"1.2.3.4", "ip", true},
+		{"10.0.0.0/8", "subnet", true},
+		{"telegram.org", "domain", true},
+		{"  GITHUB.COM  ", "domain", true},
+		{"foo", "", false},     // no dot → fail
+		{"", "", false},        // empty
+		{"foo bar", "", false}, // space
+	}
+	for _, c := range cases {
+		val, kind, err := classifyTarget(c.in)
+		if (err == nil) != c.errOK {
+			t.Errorf("classifyTarget(%q): err=%v want_err_ok=%v", c.in, err, c.errOK)
+		}
+		if err == nil && (val == "" || kind != c.kind) {
+			t.Errorf("classifyTarget(%q) → (%q, %q), want kind %q", c.in, val, kind, c.kind)
+		}
+	}
+}
+
+func TestResolveTargetUser(t *testing.T) {
+	d := setupTestDB(t)
+	// Empty arg → caller.
+	u, isOther, err := resolveTargetUser(userEnv(d), "")
+	if err != nil {
+		t.Fatalf("empty arg: %v", err)
+	}
+	if isOther || u.Username != "alice" {
+		t.Errorf("empty arg should resolve to caller, got user=%+v isOther=%v", u, isOther)
+	}
+	// Self username → caller.
+	u, isOther, err = resolveTargetUser(userEnv(d), "alice")
+	if err != nil {
+		t.Fatalf("self: %v", err)
+	}
+	if isOther || u.Username != "alice" {
+		t.Errorf("self username should resolve to caller, got user=%+v isOther=%v", u, isOther)
+	}
+	// Different user → other.
+	u, isOther, err = resolveTargetUser(userEnv(d), "skyadmin")
+	if err != nil {
+		t.Fatalf("other: %v", err)
+	}
+	if !isOther || u.Username != "skyadmin" {
+		t.Errorf("other username should resolve to skyadmin with isOther=true, got user=%+v isOther=%v", u, isOther)
+	}
+	// Looks like a target → error.
+	_, _, err = resolveTargetUser(userEnv(d), "telegram.org")
+	if err == nil {
+		t.Errorf("expected error for target-shaped arg, got nil")
 	}
 }

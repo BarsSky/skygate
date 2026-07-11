@@ -35,7 +35,7 @@ import (
 // when a new migrations_v*.go is added. The version string is the
 // number of the highest migration in cmd/skygate's migrate() chain
 // (see internal/db/db.go).
-const dbSchemaVersion = "v0.27"
+const dbSchemaVersion = "v0.29"
 
 // restartTTL is how long a freshly-issued /restart token is valid.
 // 30s is enough for a human to type the 6-char token in a follow-up
@@ -204,39 +204,46 @@ func mintRestartToken() (string, error) {
 // Unknown commands return a hint pointing the operator back at /help.
 // The short /help (no arg) still calls the legacy helpReply in
 // commands.go so existing operators don't lose the overview.
-func helpDetailReply(cmd string) string {
+//
+// env is currently unused but kept in the signature so the help
+// text can be tailored (e.g. omit admin commands for non-admin
+// callers) in a future change without a separate API.
+func helpDetailReply(cmd string, env BotEnv) string {
+	_ = env
 	cmd = strings.ToLower(strings.TrimPrefix(cmd, "/"))
 	switch cmd {
 	case "status":
-		return "/status — quick system summary.\n" +
+		return "/status — quick system summary (admin only).\n" +
 			"Shows: total exit-rules, total portal users, last applied ACL snapshot version.\n" +
+			"Use /my_status for your own summary instead.\n" +
 			"Example: /status"
 	case "nodes":
-		return "/nodes — list all tailnet devices grouped by tag.\n" +
+		return "/nodes — list all tailnet devices grouped by tag (admin only).\n" +
 			"Reads node_owner_map (the portal's snapshot of headscale's tag layout).\n" +
 			"Tags: tag:private (per-user), tag:public (shared), tag:exit-node (egress), tag:untagged.\n" +
+			"Use /my_nodes to see only your own devices.\n" +
 			"Example: /nodes"
 	case "exit_nodes":
-		return "/exit_nodes — list ONLY nodes tagged as exit-nodes, with last-seen.\n" +
+		return "/exit_nodes — list ONLY nodes tagged as exit-nodes, with last-seen (admin only).\n" +
 			"Use this when /nodes is too noisy and you want to check egress health.\n" +
 			"offline = devices.last_seen is null (headscale hasn't reported it recently).\n" +
 			"Example: /exit_nodes"
 	case "rules":
-		return "/rules — show the 25 most recent exit-rules.\n" +
+		return "/rules — show the 25 most recent exit-rules across all users (admin only).\n" +
 			"Each row: id, user, exit-node, target_type/value, action (accept/deny).\n" +
-			"Use this to verify a rule was added, or to find an id to delete from the UI.\n" +
+			"Use /my_rules to see only your own.\n" +
 			"Example: /rules"
 	case "quota":
-		return "/quota — per-user rule count vs per-user cap (SKYGATE_USER_MAX_RULES).\n" +
+		return "/quota — per-user rule count vs per-user cap (admin only).\n" +
 			"Includes a progress bar. '∞' / '[no limit]' means no cap is configured.\n" +
-			"Use this to spot a user about to hit their cap.\n" +
+			"Use /my_quota to see only your own.\n" +
 			"Example: /quota"
 	case "audit":
-		return "/audit — last 20 audit_log entries.\n" +
+		return "/audit — last 20 audit_log entries (admin only).\n" +
 			"Shows admin actions: user_create, password_reset, telegram_save/disable, ACL_*.\n" +
 			"Example: /audit"
 	case "ack":
-		return "/ack <id> — mark a previously-sent alert as acknowledged.\n" +
+		return "/ack <id> — mark a previously-sent alert as acknowledged (admin only).\n" +
 			"The id is the [#N] prefix on every alert message.\n" +
 			"Idempotent: re-acking returns 'already acked' and writes no extra audit row.\n" +
 			"Example: /ack 7"
@@ -245,12 +252,57 @@ func helpDetailReply(cmd string) string {
 			"Use to confirm what's running after a deploy.\n" +
 			"Example: /version"
 	case "restart":
-		return "/restart [confirm <token>] — graceful container restart.\n" +
+		return "/restart [confirm <token>] — graceful container restart (admin only).\n" +
 			"First call mints a 6-char token (valid 30s).\n" +
 			"Second call (with the token) sends SIGTERM to this process; the\n" +
 			"container's `restart: unless-stopped` policy brings it back up, and\n" +
 			"entrypoint.sh re-builds the binary from the bind-mounted source.\n" +
 			"Example: /restart → /restart K7M2P9"
+	case "bind":
+		return "/bind <chat_id> <username> — bind a Telegram chat to a portal user (admin only).\n" +
+			"The user supplies their chat_id (a positive integer for a DM, negative for a group)\n" +
+			"and the admin pastes the command. Once bound, the chat can use /my_* commands\n" +
+			"and write rules for the bound user.\n" +
+			"Example: /bind 123456789 michail"
+	case "unbind":
+		return "/unbind <chat_id> — remove a chat binding (admin only).\n" +
+			"Example: /unbind 123456789"
+	case "my_status":
+		return "/my_status — your own summary (rules count / cap, device count, last ACL).\n" +
+			"Example: /my_status"
+	case "my_nodes":
+		return "/my_nodes — list only your own devices.\n" +
+			"Filtered by telegram_bindings.portal_user_id. Admin uses this to see their own devices.\n" +
+			"Example: /my_nodes"
+	case "my_rules":
+		return "/my_rules — list only your own exit-rules, newest first (max 25).\n" +
+			"Use /delete_rule <id> to remove one.\n" +
+			"Example: /my_rules"
+	case "my_quota":
+		return "/my_quota — your own rule count vs your per-user cap.\n" +
+			"Same bar format as /quota, but only one row.\n" +
+			"Example: /my_quota"
+	case "add_device":
+		return "/add_device [username] — issue a 1h single-use preauth key.\n" +
+			"Default: a key for yourself. With a username arg (admin only), for that user.\n" +
+			"Note: bot-side key issuance is on the roadmap; the bot currently redirects to /my/preauth.\n" +
+			"Examples:\n" +
+			"  /add_device             (self)\n" +
+			"  /add_device michail     (admin → michail)"
+	case "add_rule":
+		return "/add_rule <target> [deny]  — add a new exit-rule.\n" +
+			"      /add_rule <username> <target> [deny]  (admin only)\n" +
+			"target: domain (e.g. telegram.org), ip (1.2.3.4), or subnet (10.0.0.0/8).\n" +
+			"Note: bot-side rule writes are on the roadmap; the bot currently redirects to /my/exit-rules.\n" +
+			"Examples:\n" +
+			"  /add_rule telegram.org\n" +
+			"  /add_rule 1.2.3.4 deny\n" +
+			"  /add_rule michail telegram.org"
+	case "delete_rule":
+		return "/delete_rule <id> — remove one of your own rules.\n" +
+			"Admin can delete any user's rule. Cross-user is rejected for non-admins.\n" +
+			"Note: bot-side deletes are on the roadmap; the bot currently redirects to /my/exit-rules.\n" +
+			"Example: /delete_rule 7"
 	case "help":
 		return "/help [command] — list all commands, or show detailed help for one.\n" +
 			"Examples:\n" +

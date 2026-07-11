@@ -200,10 +200,19 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 			continue
 		}
 		if matchedTag == "tag:private" {
-			// 2026-07-10: bug fix — sync DB and headscale. If we already
-			// have a stale "tag:untagged" row from an older build (or empty
-			// tag), upgrade to tag:private. Skip rows that already carry
-			// tag:public (admin-assigned exit-node tag).
+			// 2026-07-12: bug fix — SKYWORKER (id=9) disappeared from
+			// skyadmin's /my/devices because the original a7aeb40 fix
+			// replaced INSERT OR IGNORE with UPDATE-only, which is a
+			// no-op when no row exists. For new nodes the backfill
+			// must INSERT first; the UPDATE then upgrades any stale
+			// tag:untagged/empty rows. Admin-set tag:public rows are
+			// preserved because INSERT OR IGNORE respects the node_id
+			// PK (it skips the insert when a row already exists), and
+			// the UPDATE's WHERE clause only matches empty/untagged.
+			_, _ = db.Exec(`INSERT OR IGNORE INTO node_owner_map
+				(node_id, headscale_user_id, username, tag, tagged_by_user_id)
+				VALUES (?, ?, ?, ?, ?)`,
+				n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
 			_, _ = db.Exec(`UPDATE node_owner_map SET tag=?, tagged_by_user_id=?, tagged_at=strftime('%s','now')
 				WHERE node_id=? AND (tag = '' OR tag = 'tag:untagged')`,
 				matchedTag, portalUserID, n.ID)
