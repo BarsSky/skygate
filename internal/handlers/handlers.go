@@ -209,17 +209,17 @@ func (a *App) currentUser(r *http.Request) *auth.Claims {
 	if strings.HasPrefix(authHdr, "Bearer ") {
 		tok := strings.TrimPrefix(authHdr, "Bearer ")
 		if tok != "" {
-			rows, err := a.DB.Query("SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id")
+			// 2026-07-11: Этап 10 part 2 — SQL moved to db helpers.
+			// We still need to walk every row because the stored
+			// token_hash is a bcrypt hash (see auth.GenerateAPIToken),
+			// so we have to CompareHashAndPassword every candidate
+			// — there's no way to do an indexed lookup.
+			candidates, err := db.ListAPITokenHashesForLookup(a.DB)
 			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var uid int64; var uname string; var adm bool; var hash string
-					if rows.Scan(&uid, &uname, &adm, &hash) == nil {
-						if auth.CheckAPIToken(hash, tok) {
-							rows.Close()
-							a.DB.Exec("UPDATE personal_api_tokens SET last_used_at=strftime('%s','now') WHERE token_hash=?", hash)
-							return &auth.Claims{UserID: uid, Username: uname, IsAdmin: adm}
-						}
+				for _, c := range candidates {
+					if auth.CheckAPIToken(c.TokenHash, tok) {
+						_ = db.TouchAPITokenLastUsed(a.DB, c.TokenHash)
+						return &auth.Claims{UserID: c.UserID, Username: c.Username, IsAdmin: c.IsAdmin}
 					}
 				}
 			}
