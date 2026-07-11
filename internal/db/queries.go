@@ -285,16 +285,24 @@ const qCountRulesByDeviceGrouped = `SELECT device_id, COUNT(*) FROM device_rules
 // ---------------------------------------------------------------
 
 const (
-	qSelectPreauthByUser         = `SELECT id, headscale_preauth_id, used, expires_at FROM preauth_keys WHERE user_id = ?`
-	qSelectPreauthByUserDetailed = `SELECT id, key, used, expires_at, created_at, headscale_preauth_id FROM preauth_keys WHERE user_id = ? ORDER BY created_at DESC`
-	qSelectPreauthByID           = `SELECT used, expires_at, headscale_preauth_id FROM preauth_keys WHERE id = ? AND user_id = ?`
+	qSelectPreauthByUser         = `SELECT id, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0) FROM preauth_keys WHERE user_id = ?`
+	qSelectPreauthByUserDetailed = `SELECT id, key, used, COALESCE(expires_at, 0), created_at, COALESCE(headscale_preauth_id, '') FROM preauth_keys WHERE user_id = ? ORDER BY created_at DESC`
+	qSelectPreauthByID           = `SELECT used, COALESCE(expires_at, 0), COALESCE(headscale_preauth_id, '') FROM preauth_keys WHERE id = ? AND user_id = ?`
 	// qSelectPreauthFullByID returns every column for a single row
 	// scoped to (id, user_id). Used by GetPreauthKeyByID for the
 	// /my/keys/{id}/expire flow which needs headscale_preauth_id
 	// to call headscale.ExpirePreauthKey. qSelectPreauthByID is
 	// the legacy 3-column variant kept for any future lightweight
 	// callers.
-	qSelectPreauthFullByID       = `SELECT id, user_id, key, headscale_preauth_id, used, expires_at, created_at FROM preauth_keys WHERE id = ? AND user_id = ?`
+	//
+	// 2026-07-11: COALESCE wraps the two nullable columns
+	// (headscale_preauth_id, expires_at) so the helper can scan
+	// into plain string / int64. The live DB schema (legacy
+	// bootstrap, not v0.25's CREATE) declares both columns as
+	// nullable; COALESCE normalizes NULL → '' / 0 and lets the
+	// single helper serve both fresh DBs (NOT NULL DEFAULT) and
+	// the live install.
+	qSelectPreauthFullByID       = `SELECT id, user_id, key, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0), created_at FROM preauth_keys WHERE id = ? AND user_id = ?`
 	qInsertPreauthKey            = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES (?, ?, ?, ?)`
 	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = ? WHERE id = ? AND user_id = ?`
 	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = ? AND used = 0`
