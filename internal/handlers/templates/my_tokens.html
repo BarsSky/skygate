@@ -1,30 +1,30 @@
 ﻿{{define "body-my_tokens"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-key"></i> {{.Tr "tokens.title"}}</h2>
-    <div class="sub">{{.Tr "tokens.subtitle"}}</div>
+    <h2><i class="fa-solid fa-key"></i> {{t "tokens.title"}}</h2>
+    <div class="sub">{{t "tokens.subtitle"}}</div>
   </div>
 </div>
-{{if .revoked}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{.Tr "tokens.revoke"}}</div>{{end}}
+{{if .revoked}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "tokens.revoke"}}</div>{{end}}
 <div class="card">
-  <h3><i class="fa-solid fa-plus"></i> {{.Tr "tokens.create"}}</h3>
+  <h3><i class="fa-solid fa-plus"></i> {{t "tokens.create"}}</h3>
   <form method="post" action="/my/token">
     <div class="field">
-      <label>{{.Tr "tokens.name"}}</label>
-      <input type="text" name="label" placeholder="{{.Tr "tokens.name_placeholder"}}" required>
+      <label>{{t "tokens.name"}}</label>
+      <input type="text" name="label" placeholder="{{t "tokens.name_placeholder"}}" required>
     </div>
-    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{.Tr "tokens.create"}}</button>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "tokens.create"}}</button>
   </form>
 </div>
 {{if .Tokens}}
 <div class="card">
-  <h3><i class="fa-solid fa-list"></i> {{.Tr "tokens.title"}} ({{len .Tokens}})</h3>
+  <h3><i class="fa-solid fa-list"></i> {{t "tokens.title"}} ({{len .Tokens}})</h3>
   <table>
-    <tr><th>{{.Tr "tokens.name"}}</th><th>{{.Tr "tokens.created"}}</th><th>{{.Tr "tokens.last_used"}}</th><th></th></tr>
+    <tr><th>{{t "tokens.name"}}</th><th>{{t "tokens.created"}}</th><th>{{t "tokens.last_used"}}</th><th></th></tr>
     {{range .Tokens}}<tr>
       <td><b>{{.Label}}</b></td><td>{{.Created}}</td><td>{{.LastUsed}}</td>
       <td>
-        <form method="post" action="/my/token/{{.ID}}/revoke" style="display:inline" onsubmit="return confirm('{{.Tr "tokens.revoke"}}?')">
+        <form method="post" action="/my/token/{{.ID}}/revoke" style="display:inline" onsubmit="return confirm('{{t "tokens.revoke"}}?')">
           <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
         </form>
       </td>
@@ -33,8 +33,8 @@
 </div>
 {{end}}
 <div class="card">
-  <h3><i class="fa-solid fa-terminal"></i> {{.Tr "tokens.usage_hint"}}</h3>
+  <h3><i class="fa-solid fa-terminal"></i> {{t "tokens.usage_hint"}}</h3>
   <pre style="background:var(--bg);padding:12px;border-radius:4px;overflow-x:auto">curl -H "Authorization: Bearer *** {{.BaseURL}}/my/exit-rules/api</pre>
-  <p style="color:var(--text-muted);font-size:0.85em">{{.Tr "tokens.new_token_warning"}}</p>
+  <p style="color:var(--text-muted);font-size:0.85em">{{t "tokens.new_token_warning"}}</p>
 </div>
 {{end}}

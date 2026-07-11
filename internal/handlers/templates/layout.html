@@ -14,27 +14,27 @@
 <aside class="sidebar" id="sidebar">
   <div class="shead">
     <h1>Skygate</h1>
-    <button class="toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')" title="{{.Tr "common.collapse_sidebar"}}"><i class="fa-solid fa-bars"></i></button>
+    <button class="toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')" title="{{t "common.collapse_sidebar"}}"><i class="fa-solid fa-bars"></i></button>
   </div>
   <nav>
-    <a href="/dashboard" {{if eq .Page "dashboard"}}class="active"{{end}}><i class="fa-solid fa-house"></i><span>{{.Tr "nav.dashboard"}}</span></a>
-    <a href="/my/devices" {{if eq .Page "my/devices"}}class="active"{{end}}><i class="fa-solid fa-laptop"></i><span>{{.Tr "nav.devices"}}</span></a>
-    <a href="/my/exit-nodes" {{if eq .Page "my/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{.Tr "nav.exit_nodes"}}</span></a>
-    <a href="/help" {{if eq .Page "help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i><span>{{.Tr "nav.help"}}</span></a>
-    <a href="/my/tokens" {{if eq .Page "tokens"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{.Tr "nav.tokens"}}</span></a>
-    <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{.Tr "nav.exit_rules"}}</span></a>
-    <a href="/my/account" {{if eq .Page "account"}}class="active"{{end}}><i class="fa-solid fa-user-gear"></i><span>{{.Tr "nav.account"}}</span></a>
+    <a href="/dashboard" {{if eq .Page "dashboard"}}class="active"{{end}}><i class="fa-solid fa-house"></i><span>{{t "nav.dashboard"}}</span></a>
+    <a href="/my/devices" {{if eq .Page "my/devices"}}class="active"{{end}}><i class="fa-solid fa-laptop"></i><span>{{t "nav.devices"}}</span></a>
+    <a href="/my/exit-nodes" {{if eq .Page "my/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_nodes"}}</span></a>
+    <a href="/help" {{if eq .Page "help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i><span>{{t "nav.help"}}</span></a>
+    <a href="/my/tokens" {{if eq .Page "tokens"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.tokens"}}</span></a>
+    <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules"}}</span></a>
+    <a href="/my/account" {{if eq .Page "account"}}class="active"{{end}}><i class="fa-solid fa-user-gear"></i><span>{{t "nav.account"}}</span></a>
 {{if .IsAdmin}}
     <hr class="nav-sep">
-    <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{.Tr "nav.backup"}}</span></a>
-    <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{.Tr "nav.settings"}}</span></a>
-    <a href="/admin/users"><i class="fa-solid fa-users"></i><span>{{.Tr "nav.users"}}</span></a>
-    <a href="/admin/devices"><i class="fa-solid fa-server"></i><span>{{.Tr "nav.devices_all"}}</span></a>
-    <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>{{.Tr "nav.acls"}}</span></a>
-    <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>{{.Tr "nav.derp"}}</span></a>
-    <a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i><span>{{.Tr "nav.audit"}}</span></a>
-    <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{.Tr "nav.telegram"}}</span></a>
-    <a href="/admin/exit-rules"><i class="fa-solid fa-route"></i><span>{{.Tr "nav.exit_rules_all"}}</span></a>
+    <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
+    <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{t "nav.settings"}}</span></a>
+    <a href="/admin/users"><i class="fa-solid fa-users"></i><span>{{t "nav.users"}}</span></a>
+    <a href="/admin/devices"><i class="fa-solid fa-server"></i><span>{{t "nav.devices_all"}}</span></a>
+    <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.acls"}}</span></a>
+    <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.derp"}}</span></a>
+    <a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i><span>{{t "nav.audit"}}</span></a>
+    <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram"}}</span></a>
+    <a href="/admin/exit-rules"><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules_all"}}</span></a>
 {{end}}
   </nav>
 
@@ -46,7 +46,7 @@
     </div>
     <div class="sidebar-actions">
       <details class="theme-picker-sb">
-        <summary title="{{.Tr "common.toggle_theme"}}"><i class="fa-solid fa-palette"></i></summary>
+        <summary title="{{t "common.toggle_theme"}}"><i class="fa-solid fa-palette"></i></summary>
         <div class="menu">
           <a href="/settings/theme?theme=linear" {{if eq .Theme "linear"}}class="active"{{end}}><i class="fa-solid fa-moon"></i>Linear</a>
           <a href="/settings/theme?theme=vercel" {{if eq .Theme "vercel"}}class="active"{{end}}><i class="fa-solid fa-sun"></i>Vercel</a>
@@ -55,21 +55,21 @@
         </div>
       </details>
       <details class="theme-picker-sb">
-        <summary title="{{.Tr "lang.toggle_label"}}"><i class="fa-solid fa-language"></i>{{if eq .Lang "en"}}EN{{else}}RU{{end}}</summary>
+        <summary title="{{t "lang.toggle_label"}}"><i class="fa-solid fa-language"></i>{{if eq .Lang "en"}}EN{{else}}RU{{end}}</summary>
         <div class="menu">
           <form method="post" action="/lang" style="margin:0">
             <input type="hidden" name="lang" value="ru">
             <input type="hidden" name="return_to" value="">
-            <button type="submit" class="menu-btn{{if eq .Lang "ru"}} active{{end}}">{{.Tr "lang.ru"}}</button>
+            <button type="submit" class="menu-btn{{if eq .Lang "ru"}} active{{end}}">{{t "lang.ru"}}</button>
           </form>
           <form method="post" action="/lang" style="margin:0">
             <input type="hidden" name="lang" value="en">
             <input type="hidden" name="return_to" value="">
-            <button type="submit" class="menu-btn{{if eq .Lang "en"}} active{{end}}">{{.Tr "lang.en"}}</button>
+            <button type="submit" class="menu-btn{{if eq .Lang "en"}} active{{end}}">{{t "lang.en"}}</button>
           </form>
         </div>
       </details>
-      <form method="post" action="/logout"><button type="submit" title="{{.Tr "common.logout"}}"><i class="fa-solid fa-right-from-bracket"></i></button></form>
+      <form method="post" action="/logout"><button type="submit" title="{{t "common.logout"}}"><i class="fa-solid fa-right-from-bracket"></i></button></form>
     </div>
   </div>
 </aside>
@@ -79,7 +79,7 @@
 </div>
 </main>
 <footer>
-  Skygate {{.Version}} · {{.Tr "footer.powered_by"}} · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/help">{{.Tr "footer.docs"}}</a>
+  Skygate {{.Version}} · {{t "footer.powered_by"}} · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/help">{{t "footer.docs"}}</a>
 </footer>
 </body>
 </html>{{end}}

@@ -1,8 +1,8 @@
 ﻿{{define "body-admin-backup"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-floppy-disk"></i> {{.Tr "backup.title"}}</h2>
-    <div class="sub">{{.Tr "backup.subtitle"}}.</div>
+    <h2><i class="fa-solid fa-floppy-disk"></i> {{t "backup.title"}}</h2>
+    <div class="sub">{{t "backup.subtitle"}}.</div>
   </div>
 </div>
 
@@ -15,24 +15,24 @@
 
 <div class="card-grid">
   <div class="card">
-    <h3><i class="fa-solid fa-download"></i> {{.Tr "backup.create"}}</h3>
+    <h3><i class="fa-solid fa-download"></i> {{t "backup.create"}}</h3>
     <p>Create full archive of all data: Skygate DB, Headscale DB (nodes, keys, ACL), configs, DERP.</p>
     <form action="/admin/backup/save" method="POST" id="backup-save-form">
       <button type="submit" class="btn btn-primary" id="backup-save-btn">
-        <i class="fa-solid fa-floppy-disk"></i> {{.Tr "backup.create"}} &amp; download
+        <i class="fa-solid fa-floppy-disk"></i> {{t "backup.create"}} &amp; download
       </button>
     </form>
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-upload"></i> {{.Tr "backup.restore"}}</h3>
+    <h3><i class="fa-solid fa-upload"></i> {{t "backup.restore"}}</h3>
     <p>Upload previously saved archive (.tar.gz) to restore the state.</p>
     <form action="/admin/backup/restore" method="POST" enctype="multipart/form-data">
       <div class="form-group">
         <input type="file" name="archive" accept=".tar.gz" required class="form-control">
       </div>
       <button type="submit" class="btn btn-warning" id="backup-restore-btn">
-        <i class="fa-solid fa-upload"></i> {{.Tr "backup.restore"}}
+        <i class="fa-solid fa-upload"></i> {{t "backup.restore"}}
       </button>
     </form>
   </div>
@@ -47,7 +47,7 @@
         <th>File</th>
         <th>Size</th>
         <th>SHA256</th>
-        <th>{{.Tr "common.actions"}}</th>
+        <th>{{t "common.actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -69,7 +69,7 @@
   <div class="alert alert-warning">
     <strong><i class="fa-solid fa-triangle-exclamation"></i> After restore on a new server, make sure to:</strong>
     <ol style="margin:0.75rem 0 0 1.5rem">
-      <li>Go to <a href="/admin/settings">{{.Tr "settings.title"}}</a> and update Headscale URL/IP and public domain</li>
+      <li>Go to <a href="/admin/settings">{{t "settings.title"}}</a> and update Headscale URL/IP and public domain</li>
       <li>Check that HEADSCALE_URL in .env points to the new headscale address</li>
       <li>If the headscale API key changed — update it in settings</li>
       <li>Restart skygate: sudo docker restart skygate</li>

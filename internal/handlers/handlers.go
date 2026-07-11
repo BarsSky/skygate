@@ -62,7 +62,11 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 }
 
 // render executes a template directly (no layout). Used for self-contained pages.
-func (a *App) render(w http.ResponseWriter, name string, data any) {
+func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data any) {
+	// 2026-07-11: publish per-request lang to the funcmap before ExecuteTemplate.
+	// The funcmap `t` / `tf` helpers read i18n.GlobalLang atomically.
+	lang := a.I18n.LangFromRequest(r)
+	i18n.SetLang(lang)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.templates.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, "render: "+err.Error(), 500)
@@ -73,11 +77,12 @@ func (a *App) render(w http.ResponseWriter, name string, data any) {
 // the wrapper, so handlers can add per-page fields (Nodes, Users, Entries, ...).
 // IsAdmin and Page are auto-derived from c (the JWT claims) so admin nav stays visible.
 func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name string, c *auth.Claims, data map[string]any) {
-	// 2026-07-10: i18n. Detect lang from cookie/Accept-Language, build
-	// a Translations object so templates can call {{.T "key"}}.
+	// 2026-07-11: i18n. Detect lang and publish it to the funcmap. The funcmap
+	// helpers `t` / `tf` in templates.go read i18n.GlobalLang atomically, so
+	// concurrent requests each see their own language without a data race.
 	lang := a.I18n.LangFromRequest(r)
+	i18n.SetLang(lang)
 	data["Lang"] = lang
-	data["T"] = &i18n.Translations{Catalog: a.I18n, Lang: lang}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data["Page"] = pageFromName(name)
 	if c != nil {
@@ -132,7 +137,7 @@ func pageFromName(name string) string {
 
 // pageTitle returns an i18n key (not a translated string) for the given
 // template name. The caller (renderWithLayout) resolves it through the
-// per-request Translations so the title follows the chosen language.
+// per-request language so the title follows the chosen language.
 func pageTitle(name string) string {
 	switch name {
 	case "dashboard.html":

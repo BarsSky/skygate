@@ -10,6 +10,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"skygate/internal/i18n"
 )
 
 //go:embed templates/*.html templates/*/*.html
@@ -23,16 +25,24 @@ type Templates struct {
 // Uses {{define "body-..."}} blocks for body content and a single "layout"
 // template that calls {{renderBody .BodyTemplate .}} to inject the body.
 //
-// i18n note: translations are accessed via {{.T "key"}} / {{.Tf "key" arg}}
-// where .T is *i18n.Translations injected by the caller (render or
-// renderWithLayout). The bare {{t "key"}} helper is not used because
-// funcmap functions can't see per-request dot context.
+// i18n: translations are resolved via the funcmap helpers `t` and `tf`,
+// which read the per-request language from i18n.GlobalLang (atomic.Value).
+// The caller (renderWithLayout / render) MUST call i18n.SetLang(lang)
+// before ExecuteTemplate so the helpers see the right catalog.
 func LoadTemplates() *Templates {
 	t := template.New("root")
 
 	// First pass: register renderBody placeholder so ParseFS doesn't fail.
 	// We'll re-register with the real impl after parsing bodies.
 	t.Funcs(template.FuncMap{
+		"t": func(key string) string {
+			lang, _ := i18n.GlobalLang.Load().(string)
+			return i18n.GlobalCatalog.T(lang, key)
+		},
+		"tf": func(key string, args ...any) string {
+			lang, _ := i18n.GlobalLang.Load().(string)
+			return i18n.GlobalCatalog.Tf(lang, key, args...)
+		},
 		"safeJS": func(s string) template.JS { return template.JS(s) },
 		"dividefloat": func(a, b float64) float64 {
 			if b == 0 { return 0 }
