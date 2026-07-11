@@ -85,9 +85,10 @@ internal/handlers/admin_backup.go                   — admin backup/restore ACL
 internal/handlers/admin_telegram.go                 — admin telegram UI + save/test/rotate/disable (~303 lines)
 internal/handlers/admin_exit_nodes.go               — admin exit nodes (~164 lines)
 internal/telegram/notify.go                         — Notifier interface + RealNotifier (hot-swap, getUpdates loop) + reply/send HTTP (~245 lines)
-internal/telegram/commands.go                       — `BotEnv` + `HandleCommand` dispatch + /status + /help (~85 lines)
+internal/telegram/commands.go                       — `BotEnv` + `HandleCommand` dispatch + /status + /help (~96 lines)
 internal/telegram/commands_phase2.go                — /nodes + /rules + /audit (DB queries, trimForTelegram) (~166 lines)
-internal/telegram/commands_phase3.go                — /exit_nodes + /quota + /ack + unixToShort (~150 lines)
+internal/telegram/commands_phase3.go                — /exit_nodes + /quota + /ack + unixToShort (~222 lines)
+internal/telegram/commands_phase4.go                — /version + /restart (token confirm, SIGTERM) + /help <command> (~205 lines)
 internal/telegram/alerts.go                         — `SendAlert` on Notifier + telegram_alerts ring buffer (cap 500) (~85 lines)
 internal/handlers/templates.go                      — `//go:embed` for all HTML (~117 lines)
 internal/handlers/static.go                         — empty stub (file is unused placeholder)
@@ -375,7 +376,8 @@ Sister files in `internal/handlers/` (current line counts):
 - `admin_telegram.go` (303) — telegram UI; test handler routes through `app.Notifier.SendTelegram` (Go-native HTTP, no curl)
 - `notify.go` (245) — `Notifier` interface (`SendTelegram` + `SendAlert`); `RealNotifier` is always armed, sleeps 5s when token absent
 - `alerts.go` (85) — `SendAlert` returns alert id from `telegram_alerts`; outgoing message is prefixed with `[#<id>]` so `/ack <id>` can find it
-- `commands.go` (85) — `HandleCommand(ctx, env BotEnv, raw)`; `BotEnv` carries DB + per-user rule limits (`/quota`); dispatch table for /status /help /nodes /rules /audit /exit_nodes /quota /ack
+- `commands.go` (96) — `HandleCommand(ctx, env BotEnv, raw)`; `BotEnv` carries DB + per-user rule limits (`/quota`) + build version (`/version`); dispatch table for /status /help /nodes /rules /audit /exit_nodes /quota /ack /version /restart
 - `commands_phase2.go` (166) — read-only DB-query commands; `trimForTelegram` (cap 3800) shared with phase 3
-- `commands_phase3.go` (150) — /exit_nodes (filter on tag:exit-node + last_seen), /quota (per-user bars), /ack (idempotent UPDATE WHERE acked_at=0 + audit_log mirror)
+- `commands_phase3.go` (222) — /exit_nodes (filter on tag:exit-node + last_seen), /quota (per-user bars), /ack (idempotent UPDATE WHERE acked_at=0 + audit_log mirror)
+- `commands_phase4.go` (205) — /version (build + Go runtime + DB schema), /restart (6-char token confirm, 30s TTL, SIGTERM via `os.FindProcess` for cross-platform compile, audit_log row), /help <command> (detailed per-command help)
 - `admin_exit_nodes.go` (164) — exit node admin
