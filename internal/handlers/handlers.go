@@ -234,78 +234,9 @@ func (a *App) audit(userID int64, username, action, detail string) {
 
 // ---------- ADMIN DERP ----------
 
-// DerpStatus describes the local custom DERP relay (derper) for /admin/derp.
-type DerpStatus struct {
-	Running         bool
-	SocketListening bool
-	STUNListening   bool
-	DERPPort        string
-	STUNPort        string
-	Version         string
-	Hostname        string
-	RegionCode      string
-	RegionID        string
-	RegionName      string
-	WhiteIP         string
-	UpTime          string
-	StartedAt       string
-	PID             string
-	Memory          string
-	GoVersion       string
-	Machine         string
-	Connections     int
-	Accepts         int
-	BytesIn         int64
-	BytesOut        int64
-	PacketsIn       int
-	PacketsOut      int
-	Clients         int
-	STUNRequests    int
-	RecentLog       string
-
-	// Active connections to derper (src IP, reverse DNS).
-	ActiveTCP []DerpPeer
-	ActiveUDP []DerpPeer
-	// ConnSummary aggregates ActiveTCP+ActiveUDP by kind for the hero badges.
-	ConnSummary *ConnSummary
-	// Snapshot history tail (parsed recent records).
-	Snapshot []DerpSnapshot
-}
-
-// DerpPeer is one observed peer connecting to derper.
-type DerpPeer struct {
-	IP   string `json:"ip"`
-	Host string `json:"host"`
-	Port string `json:"port"`
-	// Kind classifies the source: ws_relay (Tailscale client),
-	// ws_admin (NPM WebSocket pool), lan, internet, unknown.
-	Kind string `json:"kind,omitempty"`
-}
-
-// ConnSummary aggregates connections by kind for the dashboard hero badges.
-type ConnSummary struct {
-	Relay int
-	Admin int
-	LAN   int
-	Self  int
-	Other int
-}
-
-// DerpSnapshot is one entry from the rolling snapshot log on the agent.
-type DerpSnapshot struct {
-	TS      string                 `json:"ts"`
-	Conns   []DerpPeer             `json:"conns"`
-	Metrics map[string]interface{} `json:"metrics"`
-	Summary *ConnSummary           `json:"summary,omitempty"`
-}
-
-// currentConns extracts gauge_current_connections (or current_conns)
-// from a snapshot metrics map. JSON numbers decode to float64 by default
-// so we always go through here rather than touching the map directly.
-
-// DERP types and collectors moved to handlers_derp.go.
+// DERP types moved to handlers_derp.go.
+// (DerpStatus, DerpPeer, ConnSummary, DerpSnapshot)
 // (DerpSnapshot.CurrentConns, collectDerpStatus)
-// counter honest without a separate garbage-collection job.
 func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) PreauthKeyStats {
 	var s PreauthKeyStats
 	if myUserID == 0 {
