@@ -1,0 +1,255 @@
+// Headscale node operations + node types.
+//
+// HSNode is the headscale-side wire representation; NodeView is the
+// flattended, UI-friendly projection (hostname, exit-node flag, IP
+// slice, etc.) that handlers and templates actually consume. The
+// toView() conversion is the seam between the two.
+package headscale
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type HSNode struct {
+	ID              string        `json:"id"`
+	MachineKey      string        `json:"machineKey"`
+	NodeKey         string        `json:"nodeKey"`
+	DiscoKey        string        `json:"discoKey"`
+	Name            string        `json:"name"`
+	GivenName       string        `json:"givenName"`
+	User            HSUser        `json:"user"`
+	IPAddresses     []string      `json:"ipAddresses"`
+	Online          bool          `json:"online"`
+	LastSeen        string        `json:"lastSeen"`
+	CreatedAt       string        `json:"createdAt"`
+	Tags            []string      `json:"tags"`
+	AvailableRoutes []string      `json:"availableRoutes"`
+	PreAuthKey      *HSPreauthKey `json:"preAuthKey"`
+}
+
+type NodeView struct {
+	ID              string
+	Hostname        string
+	GivenName       string
+	IPAddresses     []string
+	Online          bool
+	LastSeen        string
+	UserName        string
+	UserID          string
+	IsExitNode      bool
+	Tags            []string
+	AvailableRoutes []string
+	// PreAuthKeyID is the headscale ID of the preauth key this node
+	// registered with, or "" if the node predates our key tracking.
+	PreAuthKeyID string
+	// CreatedAt is the RFC3339 timestamp from headscale for when the
+	// node first registered. Used by backfillNodeOwnership as a
+	// fallback when a user's preauth key has no stored headscale_preauth_id
+	// (e.g. because the headscale API response shape changed and the
+	// key ID field stopped being captured). In that case we still
+	// match by "node created after this preauth key" with a safety
+	// margin to avoid stealing another user's recent node.
+	CreatedAt string
+}
+
+// toView flattens an HSNode into a NodeView. The conversion copies
+// fields and computes IsExitNode via hasExitNodeTag (see below), so
+// handlers can pass NodeView around without re-running that check.
+func (n HSNode) toView() NodeView {
+	tags := append([]string{}, n.Tags...)
+	host := n.GivenName
+	if host == "" {
+		host = n.Name
+	}
+	var pakID string
+	if n.PreAuthKey != nil {
+		pakID = n.PreAuthKey.ID
+	}
+	return NodeView{
+		ID:              n.ID,
+		Hostname:        host,
+		GivenName:       n.GivenName,
+		IPAddresses:     n.IPAddresses,
+		Online:          n.Online,
+		LastSeen:        n.LastSeen,
+		UserName:        n.User.Name,
+		UserID:          n.User.ID,
+		IsExitNode:      hasExitNodeTag(tags, n.Name, n.AvailableRoutes),
+		Tags:            tags,
+		AvailableRoutes: n.AvailableRoutes,
+		PreAuthKeyID:    pakID,
+		CreatedAt:       n.CreatedAt,
+	}
+}
+
+// hasExitNodeTag decides whether a node should be exposed as an exit
+// node to portal users. Three signals, in order:
+//
+//  1. Explicit `tag:exit-node` (Tailscale convention).
+//  2. Node name starts with `exit-` or `exitnode` (legacy convention).
+//  3. Node advertises 0.0.0.0/0 or ::/0 — headscale 0.29 lets a node
+//     function as an exit node by advertising the base routes even
+//     without an explicit tag (this is how karolina/emilia/sharlotta
+//     work in our deployment).
+func hasExitNodeTag(tags []string, name string, availableRoutes []string) bool {
+	// 1. Explicit tag:exit-node (Tailscale convention)
+	for _, t := range tags {
+		if strings.EqualFold(t, "tag:exit-node") {
+			return true
+		}
+	}
+	// 2. Name starts with exit- or exitnode
+	n := strings.ToLower(name)
+	if strings.HasPrefix(n, "exit-") || strings.HasPrefix(n, "exitnode") {
+		return true
+	}
+	// 3. headscale 0.29: any node with availableRoutes containing 0.0.0.0/0
+	//    is functionally an exit node (advertises itself as a router for
+	//    the whole internet). This is how our karolina/emilia/sharlotta
+	//    work as exit nodes without an explicit tag.
+	for _, r := range availableRoutes {
+		if r == "0.0.0.0/0" || r == "::/0" {
+			return true
+		}
+	}
+	return false
+}
+
+type hsNodeList struct {
+	Nodes []HSNode `json:"nodes"`
+}
+
+// ListAllNodes returns every node in the tailnet (admin). Result is cached
+// for cacheTTL to absorb the ~50ms cost of headscale's gRPC-to-HTTP gateway
+// on every page render.
+func (c *Client) ListAllNodes() ([]NodeView, error) {
+	c.cacheMu.RLock()
+	if c.cacheAll != nil && time.Since(c.cacheAllAt) < c.cacheTTL {
+		out := c.cacheAll
+		c.cacheMu.RUnlock()
+		return out, nil
+	}
+	c.cacheMu.RUnlock()
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	// double-check after acquiring write lock
+	if c.cacheAll != nil && time.Since(c.cacheAllAt) < c.cacheTTL {
+		return c.cacheAll, nil
+	}
+
+	var raw hsNodeList
+	err := c.do("GET", "/api/v1/node", nil, &raw)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NodeView, 0, len(raw.Nodes))
+	for _, n := range raw.Nodes {
+		out = append(out, n.toView())
+	}
+	c.cacheAll = out
+	c.cacheAllAt = time.Now()
+	return out, nil
+}
+
+// ListExitNodes returns the subset of all nodes flagged as exit nodes
+// by hasExitNodeTag (see above). Cached indirectly via ListAllNodes.
+func (c *Client) ListExitNodes() ([]NodeView, error) {
+	all, err := c.ListAllNodes()
+	if err != nil {
+		return nil, err
+	}
+	var exits []NodeView
+	for _, n := range all {
+		if n.IsExitNode {
+			exits = append(exits, n)
+		}
+	}
+	return exits, nil
+}
+
+// ListNodesByUser returns all nodes belonging to a headscale user.
+// Handles {"nodes":[...]} wrapper.
+func (c *Client) ListNodesByUser(userName string) ([]NodeView, error) {
+	var list hsNodeList
+	err := c.do("GET", "/api/v1/node?user="+userName, nil, &list)
+	if err == nil && list.Nodes != nil {
+		out := make([]NodeView, 0, len(list.Nodes))
+		for _, n := range list.Nodes {
+			out = append(out, n.toView())
+		}
+		return out, nil
+	}
+	var flat []HSNode
+	if err2 := c.do("GET", "/api/v1/node?user="+userName, nil, &flat); err2 == nil {
+		out := make([]NodeView, 0, len(flat))
+		for _, n := range flat {
+			out = append(out, n.toView())
+		}
+		return out, nil
+	}
+	return nil, err
+}
+
+// DeleteNode removes a node from headscale by its numeric ID. The cache
+// is invalidated on success so the next ListAllNodes reflects the change.
+func (c *Client) DeleteNode(nodeID int64) error {
+	err := c.do("DELETE", "/api/v1/node/"+strconv.FormatInt(nodeID, 10), nil, nil)
+	if err == nil {
+		c.InvalidateCache()
+	}
+	return err
+}
+
+// NodeList returns every node in the tailnet as a generic []map[string]any
+// projection. Used by exit-rules code paths that only need a few fields
+// (id, hostname, ip, user) and don't want to depend on NodeView.
+func (c *Client) NodeList() ([]map[string]any, error) {
+	var list struct {
+		Nodes []struct {
+			ID        string   `json:"id"`
+			GivenName string   `json:"givenName"`
+			IPAddress string   `json:"ipAddress4"`
+			UserID    string   `json:"user"`
+			Tags      []string `json:"forcedTags"`
+		} `json:"nodes"`
+	}
+	err := c.do("GET", "/api/v1/node?show_all=true", nil, &list)
+	if err != nil {
+		return nil, err
+	}
+	var out []map[string]any
+	for _, n := range list.Nodes {
+		out = append(out, map[string]any{
+			"id": n.ID, "hostname": n.GivenName,
+			"ip": n.IPAddress, "user": n.UserID,
+		})
+	}
+	return out, nil
+}
+
+// NodeInfo returns hostname + IPv4 for a node matching hostname prefix.
+// Used by the route-setup script orchestrator to resolve exit-node IPs
+// without forcing the script's host to know the headscale node IDs.
+func (c *Client) NodeInfo(hostname string) (string, string, error) {
+	var list struct {
+		Nodes []struct {
+			ID         string   `json:"id"`
+			GivenName  string   `json:"givenName"`
+			IPAddress4 string   `json:"ipAddress4"`
+			Tags       []string `json:"forcedTags"`
+		} `json:"nodes"`
+	}
+	if err := c.do("GET", "/api/v1/node?show_all=true", nil, &list); err != nil {
+		return "", "", err
+	}
+	for _, n := range list.Nodes {
+		if strings.EqualFold(n.GivenName, hostname) || strings.HasPrefix(n.GivenName, hostname) {
+			return n.GivenName, n.IPAddress4, nil
+		}
+	}
+	return "", "", fmt.Errorf("node %q not found", hostname)
+}

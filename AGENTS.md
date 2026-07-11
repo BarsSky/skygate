@@ -98,7 +98,16 @@ internal/handlers/templates/admin/                  — admin templates
 internal/handlers/templates/user/                   — user-facing templates (/my/devices, account, exit_nodes, tokens, etc.)
 internal/config/config.go                           — env-based config
 internal/db/secrets.go                              — telegram/bot credentials (encrypted at rest)
-internal/headscale/                                 — headscale API client (incl. CLI fallback for tag/untag)
+internal/headscale/                                 — headscale API client (incl. CLI fallback for tag/untag). Split:
+  - headscale.go (3.5 KB) — Client struct, New, HTTP do() helper, InvalidateCache + cache fields
+  - users.go (3.8 KB)     — HSUser, ListUsers, CreateUser, DeleteUser
+  - preauth.go (6.8 KB)   — PreauthKey, CreatePreauthKey, ExpirePreauthKey (API + docker exec CLI fallback)
+  - nodes.go (8.1 KB)     — HSNode, NodeView, ListAllNodes, ListNodesByUser, ListExitNodes, DeleteNode, NodeList, NodeInfo + hasExitNodeTag
+  - tags.go (3.5 KB)      — TagPublicTag, TagPrivateTag, TagNode, UntagNode + IsPublic/IsPublicView/IsPrivateView
+  - acl.go (3.7 KB)       — ACLPolicy, GetACL (cached), SetPolicy (API + file-mode fallback)
+  - routes.go (4.3 KB)    — ApproveAllRoutes* (headscale CLI) + SetAdvertisedRoutes (SSH)
+  - route_args.go (3.3 KB) — pure helpers for `tailscale set` command (BuildTailscaleSetRoutes, AcceptRoutesFlag)
+  - headscale_test.go + route_args_test.go — unit tests (parseDuration, durationFlag, hasExitNodeTag, IsPublic*)
 internal/db/                                        — SQLite layer
 internal/auth/                                      — JWT session + API tokens
 internal/handlers/templates/themes.css              — CSS embedded from static/css/themes.css
