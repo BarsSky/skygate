@@ -180,6 +180,11 @@ func main() {
 		// No more "boot-time gate" on app.Notifier — it's always non-nil.
 		{
 			rn := telegram.NewRealNotifier(d)
+			// 2026-07-11: Phase 3 (/quota) needs per-user rule limits
+			// to render "user X used N of M" rather than just N. Set
+			// once at boot; the BotEnv snapshot is per-message so a
+			// future reload still works without restart.
+			rn.SetLimits(cfg.UserMaxRules, cfg.MaxRulesPerDevice)
 			app.Notifier = rn
 			if rn.Configured() {
 				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")

@@ -215,7 +215,7 @@ func (a *App) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Request)
 	}
 	a.audit(c.UserID, c.Username, "user_password_reset", fmt.Sprintf("id=%d %s", id, username))
 	if a.Notifier != nil {
-		go a.Notifier.SendTelegram(fmt.Sprintf("🔑 Password reset by %s\nuser: %s (id=%d)", c.Username, username, id))
+		go a.Notifier.SendAlert(fmt.Sprintf("🔑 Password reset by %s\nuser: %s (id=%d)", c.Username, username, id))
 	}
 	http.Redirect(w, r, "/admin/users?reset=1", http.StatusFound)
 }

@@ -281,7 +281,7 @@ func (a *App) saveACLSnapshot(config, username string) int {
 	ver := maxVer + 1
 	a.DB.Exec("INSERT INTO acl_snapshots (version, config, created_by, applied_success) VALUES (?, ?, ?, 1)", ver, config, username)
 	if a.Notifier != nil {
-		go a.Notifier.SendTelegram(fmt.Sprintf("🛡️ ACL #%d by %s\nLength: %d bytes", ver, username, len(config)))
+		go a.Notifier.SendAlert(fmt.Sprintf("🛡️ ACL #%d by %s\nLength: %d bytes", ver, username, len(config)))
 	}
 	return ver
 }

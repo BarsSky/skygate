@@ -10,11 +10,13 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// setupTestDB builds a fresh in-memory DB with the minimal schema
+// the bot commands need. We don't run the production migrations
+// here because the test runs in isolation; the schema is kept in
+// lock-step with internal/db/migrations_v*.go by hand. When you
+// add a column/table that HandleCommand reads, update this list
+// and any seed inserts below.
 func setupTestDB(t *testing.T) *sql.DB {
-	// Open a private in-memory DB and create the minimal tables
-	// commands_test.go needs (device_rules, portal_users, acl_snapshots,
-	// node_owner_map, audit_log). We build the schema fresh here because
-	// the test runs without the production migrations.
 	d, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -25,16 +27,24 @@ func setupTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, applied_success INTEGER)`,
 		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged')`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
+		// 2026-07-11: Phase 3 — devices (joined to node_owner_map for
+		// last_seen) and telegram_alerts (/ack round-trip).
+		`CREATE TABLE devices (id INTEGER PRIMARY KEY, user_id INTEGER, hostname TEXT NOT NULL DEFAULT '', node_id TEXT DEFAULT '', headscale_node_id TEXT DEFAULT '', ip_addresses TEXT DEFAULT '', os TEXT DEFAULT '', last_seen INTEGER DEFAULT 0, online INTEGER DEFAULT 0, created_at INTEGER DEFAULT 0)`,
+		`CREATE TABLE telegram_alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), acked_at INTEGER NOT NULL DEFAULT 0, acked_by TEXT NOT NULL DEFAULT '')`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
 		}
 	}
-	// Seed a few rows so the reply has substance.
-	for i := 0; i < 12; i++ {
-		_, _ = d.Exec(`INSERT INTO device_rules(target_value) VALUES (?)`, "x")
-	}
+	// Seed a few rows so the reply has substance. device_rules
+	// rows are owned by skyadmin (user_id=1) so /quota sees the
+	// expected 12-rule count under that user; /rules is the only
+	// command that doesn't care about user_id.
 	_, _ = d.Exec(`INSERT INTO portal_users(username) VALUES ('skyadmin')`)
+	_, _ = d.Exec(`INSERT INTO portal_users(username) VALUES ('alice')`)
+	for i := 0; i < 12; i++ {
+		_, _ = d.Exec(`INSERT INTO device_rules(user_id, target_value) VALUES (1, ?)`, "x")
+	}
 	_, _ = d.Exec(`INSERT INTO acl_snapshots(version, applied_success) VALUES (5, 1)`)
 	// Seed nodes + audit_log for phase-2 commands.
 	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('n1', 'skyadmin', 'tag:private')`)
@@ -42,17 +52,27 @@ func setupTestDB(t *testing.T) *sql.DB {
 	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('n3', 'skyadmin', 'tag:public')`)
 	_, _ = d.Exec(`INSERT INTO audit_log(username, action, detail, created_at) VALUES ('skyadmin', 'user_create', 'created alice', 1700000000)`)
 	_, _ = d.Exec(`INSERT INTO audit_log(username, action, detail, created_at) VALUES ('skyadmin', 'telegram_save', 'token=*** chat=1', 1700000010)`)
+	// Phase-3 seeds: a tagged exit-node with a recent last_seen,
+	// and one alert row to ack.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('exit-emilia', 'skyadmin', 'tag:exit-node')`)
+	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('exit-emilia', 1700000200, 1)`)
+	_, _ = d.Exec(`INSERT INTO telegram_alerts(body) VALUES ('📥 New rule #7 by skyadmin')`)
 	t.Cleanup(func() { _ = d.Close(); _ = filepath.Clean("") })
 	return d
 }
 
+// envFor wraps a test DB in a BotEnv with empty limits. The /quota
+// tests construct their own BotEnv directly when they need to
+// exercise the limit math.
+func envFor(d *sql.DB) BotEnv { return BotEnv{DB: d} }
+
 func TestHandleCommandStatus(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "/status")
+	got := HandleCommand(context.Background(), envFor(d), "/status")
 	if !strings.Contains(got, "rules: 12") {
 		t.Errorf("expected rules count, got: %q", got)
 	}
-	if !strings.Contains(got, "users: 1") {
+	if !strings.Contains(got, "users: 2") {
 		t.Errorf("expected users count, got: %q", got)
 	}
 	if !strings.Contains(got, "last acl: #5") {
@@ -62,15 +82,21 @@ func TestHandleCommandStatus(t *testing.T) {
 
 func TestHandleCommandHelp(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "/help")
+	got := HandleCommand(context.Background(), envFor(d), "/help")
 	if !strings.Contains(got, "/status") {
 		t.Errorf("expected /status in /help, got: %q", got)
+	}
+	if !strings.Contains(got, "/exit_nodes") {
+		t.Errorf("expected /exit_nodes in /help, got: %q", got)
+	}
+	if !strings.Contains(got, "/ack") {
+		t.Errorf("expected /ack in /help, got: %q", got)
 	}
 }
 
 func TestHandleCommandUnknown(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "/foobar")
+	got := HandleCommand(context.Background(), envFor(d), "/foobar")
 	if !strings.Contains(got, "Unknown") {
 		t.Errorf("expected unknown message, got: %q", got)
 	}
@@ -78,7 +104,7 @@ func TestHandleCommandUnknown(t *testing.T) {
 
 func TestHandleCommandCaseInsensitive(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "/STATUS")
+	got := HandleCommand(context.Background(), envFor(d), "/STATUS")
 	if !strings.Contains(got, "rules:") {
 		t.Errorf("expected status body, got: %q", got)
 	}
@@ -86,7 +112,7 @@ func TestHandleCommandCaseInsensitive(t *testing.T) {
 
 func TestHandleCommandEmpty(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "")
+	got := HandleCommand(context.Background(), envFor(d), "")
 	if !strings.Contains(got, "Empty") {
 		t.Errorf("expected empty message, got: %q", got)
 	}
@@ -94,7 +120,7 @@ func TestHandleCommandEmpty(t *testing.T) {
 
 func TestHandleCommandNodes(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "/nodes")
+	got := HandleCommand(context.Background(), envFor(d), "/nodes")
 	if !strings.Contains(got, "Tailnet nodes") {
 		t.Errorf("expected header, got: %q", got)
 	}
@@ -111,7 +137,7 @@ func TestHandleCommandNodes(t *testing.T) {
 
 func TestHandleCommandRules(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "/rules")
+	got := HandleCommand(context.Background(), envFor(d), "/rules")
 	if !strings.Contains(got, "exit-rules") {
 		t.Errorf("expected header, got: %q", got)
 	}
@@ -123,7 +149,7 @@ func TestHandleCommandRules(t *testing.T) {
 
 func TestHandleCommandAudit(t *testing.T) {
 	d := setupTestDB(t)
-	got := HandleCommand(context.Background(), d, "/audit")
+	got := HandleCommand(context.Background(), envFor(d), "/audit")
 	if !strings.Contains(got, "audit_log") {
 		t.Errorf("expected header, got: %q", got)
 	}
@@ -135,6 +161,204 @@ func TestHandleCommandAudit(t *testing.T) {
 	}
 	if !strings.Contains(got, "created alice") {
 		t.Errorf("expected detail text, got: %q", got)
+	}
+}
+
+// --- Phase 3 tests ---
+
+func TestHandleCommandExitNodes(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/exit_nodes")
+	if !strings.Contains(got, "Exit-nodes") {
+		t.Errorf("expected header, got: %q", got)
+	}
+	if !strings.Contains(got, "exit-emilia") {
+		t.Errorf("expected seeded exit-node, got: %q", got)
+	}
+	if !strings.Contains(got, "online") {
+		t.Errorf("expected online status, got: %q", got)
+	}
+	// Should NOT include private nodes that aren't exit-nodes.
+	if strings.Contains(got, "n1") {
+		t.Errorf("exit_nodes should not list tag:private nodes, got: %q", got)
+	}
+}
+
+func TestHandleCommandExitNodesEmpty(t *testing.T) {
+	d, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	for _, q := range []string{
+		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged')`,
+		`CREATE TABLE devices (id INTEGER PRIMARY KEY, node_id TEXT DEFAULT '', last_seen INTEGER DEFAULT 0, online INTEGER DEFAULT 0)`,
+	} {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatalf("schema: %v", err)
+		}
+	}
+	got := HandleCommand(context.Background(), envFor(d), "/exit_nodes")
+	if !strings.Contains(got, "no nodes with tag:exit-node") {
+		t.Errorf("expected empty-state message, got: %q", got)
+	}
+}
+
+func TestHandleCommandQuota(t *testing.T) {
+	d := setupTestDB(t)
+	// skyadmin has all 12 rules; alice has 0. With DefaultMax=200,
+	// skyadmin should show 12/200 ~ 6%, alice should show 0/200 ~ 0%.
+	env := BotEnv{DB: d, DefaultMax: 200}
+	got := HandleCommand(context.Background(), env, "/quota")
+	if !strings.Contains(got, "skyadmin") {
+		t.Errorf("expected skyadmin in quota, got: %q", got)
+	}
+	if !strings.Contains(got, "12") {
+		t.Errorf("expected rule count, got: %q", got)
+	}
+	if !strings.Contains(got, "200") {
+		t.Errorf("expected cap, got: %q", got)
+	}
+	if !strings.Contains(got, "Per-user rule quota") {
+		t.Errorf("expected header, got: %q", got)
+	}
+}
+
+func TestHandleCommandQuotaPerUserOverride(t *testing.T) {
+	d := setupTestDB(t)
+	// skyadmin gets a tiny 10-rule cap so it shows as warning-level
+	// fill (12/10 → 100%). alice stays at the default.
+	env := BotEnv{DB: d, UserMaxRules: map[string]int{"skyadmin": 10}, DefaultMax: 200}
+	got := HandleCommand(context.Background(), env, "/quota")
+	if !strings.Contains(got, "12") {
+		t.Errorf("expected rule count, got: %q", got)
+	}
+	if !strings.Contains(got, "10") {
+		t.Errorf("expected per-user cap of 10, got: %q", got)
+	}
+	// Verify alice still shows with 200 (default cap), proving
+	// the per-user override is scoped to skyadmin only.
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected alice in quota, got: %q", got)
+	}
+}
+
+func TestHandleCommandQuotaNoLimit(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d} // both UserMaxRules and DefaultMax are zero → "no limit"
+	got := HandleCommand(context.Background(), env, "/quota")
+	if !strings.Contains(got, "no limit") {
+		t.Errorf("expected 'no limit' marker when no caps configured, got: %q", got)
+	}
+}
+
+func TestHandleCommandAckHappy(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/ack 1")
+	if !strings.Contains(got, "[#1]") {
+		t.Errorf("expected alert id prefix in ack reply, got: %q", got)
+	}
+	if !strings.Contains(got, "📥 New rule #7") {
+		t.Errorf("expected alert body echo, got: %q", got)
+	}
+	// The row should be acked in DB.
+	var ackedAt int64
+	var ackedBy string
+	if err := d.QueryRow(`SELECT acked_at, acked_by FROM telegram_alerts WHERE id = 1`).Scan(&ackedAt, &ackedBy); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if ackedAt == 0 {
+		t.Errorf("expected acked_at > 0, got 0")
+	}
+	if ackedBy != "telegram" {
+		t.Errorf("expected acked_by=telegram, got %q", ackedBy)
+	}
+	// And the audit_log row should have been written.
+	var count int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'telegram_ack'`).Scan(&count); err != nil {
+		t.Fatalf("audit readback: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 telegram_ack row in audit_log, got %d", count)
+	}
+}
+
+func TestHandleCommandAckAlreadyAcked(t *testing.T) {
+	d := setupTestDB(t)
+	// Ack once.
+	_ = HandleCommand(context.Background(), envFor(d), "/ack 1")
+	// Ack again — should be idempotent and report "already acked".
+	got := HandleCommand(context.Background(), envFor(d), "/ack 1")
+	if !strings.Contains(got, "already acked") {
+		t.Errorf("expected 'already acked' on re-ack, got: %q", got)
+	}
+	// Second ack should NOT have produced a second audit_log row.
+	var count int
+	d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'telegram_ack'`).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 audit_log row after re-ack, got %d", count)
+	}
+}
+
+func TestHandleCommandAckUnknown(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/ack 9999")
+	if !strings.Contains(got, "no alert with id=9999") {
+		t.Errorf("expected unknown-id message, got: %q", got)
+	}
+}
+
+func TestHandleCommandAckBadArg(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/ack")
+	if !strings.Contains(got, "usage: /ack") {
+		t.Errorf("expected usage hint, got: %q", got)
+	}
+	got = HandleCommand(context.Background(), envFor(d), "/ack notanumber")
+	if !strings.Contains(got, "is not a valid alert id") {
+		t.Errorf("expected invalid-id message, got: %q", got)
+	}
+}
+
+func TestFormatAlertRow(t *testing.T) {
+	// Long body gets truncated; newlines get collapsed.
+	body := "line one\nline two\nline three with quite a lot of detail that exceeds the 120 char cap and so should be trimmed to fit the ack reply form"
+	got := formatAlertRow(42, body)
+	if !strings.HasPrefix(got, "[#42] ") {
+		t.Errorf("expected [#42] prefix, got: %q", got)
+	}
+	if strings.Contains(got, "\n") {
+		t.Errorf("expected no newlines, got: %q", got)
+	}
+	if len(got) > 130 {
+		t.Errorf("expected truncation, got len=%d", len(got))
+	}
+}
+
+func TestQuotaBar(t *testing.T) {
+	if !strings.Contains(quotaBar(0), "░") {
+		t.Errorf("0%% should be empty bar, got: %q", quotaBar(0))
+	}
+	if !strings.Contains(quotaBar(50), "█") {
+		t.Errorf("50%% should have fills, got: %q", quotaBar(50))
+	}
+	if quotaBar(-1) != "[no limit]" {
+		t.Errorf("negative pct should be no-limit, got: %q", quotaBar(-1))
+	}
+	// Over 100% clamps to full bar.
+	if !strings.HasPrefix(quotaBar(150), "[██████████") {
+		t.Errorf("150%% should clamp to full bar, got: %q", quotaBar(150))
+	}
+}
+
+func TestUnixToShort(t *testing.T) {
+	// 2023-11-14 22:13:20 UTC = 1700000000
+	if got := unixToShort(1700000000); got != "2023-11-14 22:13Z" {
+		t.Errorf("expected 2023-11-14 22:13Z, got %q", got)
+	}
+	// 0 = unix epoch
+	if got := unixToShort(0); got != "1970-01-01 00:00Z" {
+		t.Errorf("expected epoch, got %q", got)
 	}
 }
 
