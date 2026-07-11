@@ -11,6 +11,7 @@
 package i18n
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -71,6 +72,12 @@ func (c *Catalog) T(lang, key string) string {
 	return key
 }
 
+// Tf is T with printf-style argument substitution. Use when a translation
+// contains placeholders like "Delete %s?".
+func (c *Catalog) Tf(lang, key string, args ...any) string {
+	return fmt.Sprintf(c.T(lang, key), args...)
+}
+
 // All returns the full map for a language (lang -> key -> string).
 // Used by templates that need to call T through dot syntax:
 //   {{.T "key"}}
@@ -84,4 +91,12 @@ func (t *Translations) T(key string) string {
 		return key
 	}
 	return t.Catalog.T(t.Lang, key)
+}
+
+// Tf is the formatted variant: substitutes args into the translation.
+func (t *Translations) Tf(key string, args ...any) string {
+	if t == nil || t.Catalog == nil {
+		return key
+	}
+	return t.Catalog.Tf(t.Lang, key, args...)
 }

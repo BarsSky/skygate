@@ -1,23 +1,23 @@
 {{define "body-admin-audit"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-clipboard-list"></i>Audit log</h2>
+    <h2><i class="fa-solid fa-clipboard-list"></i>{{.T "audit.title"}}</h2>
     <div class="sub">
-      Показано {{len .Entries}} действий
-      {{if .FilterActive}}<span style="color:var(--accent)"> (фильтр активен)</span>{{end}}
+      {{.T "audit.subtitle"}}: {{len .Entries}}
+      {{if .FilterActive}}<span style="color:var(--accent)"> ({{.T "audit.filter_action"}})</span>{{end}}
     </div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-filter"></i>Фильтр</h3>
+  <h3><i class="fa-solid fa-filter"></i>{{.T "common.search"}}</h3>
   <form method="get" action="/admin/audit" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
     <div>
       <label for="action" style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">
-        <i class="fa-solid fa-bolt"></i> Action
+        <i class="fa-solid fa-bolt"></i> {{.T "audit.col_action"}}
       </label>
       <select name="action" id="action" style="min-width:200px;padding:6px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px">
-        <option value="">— все —</option>
+        <option value="">— {{.T "audit.all_actions"}} —</option>
         {{range .Actions}}
         <option value="{{.}}" {{if eq . $.ActionFilter}}selected{{end}}>{{.}}</option>
         {{end}}
@@ -25,7 +25,7 @@
     </div>
     <div>
       <label for="user" style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">
-        <i class="fa-solid fa-user"></i> User (substring)
+        <i class="fa-solid fa-user"></i> {{.T "audit.col_user"}}
       </label>
       <input type="text" name="user" id="user" value="{{.UserFilter}}"
              placeholder="alice, telegram, ..."
@@ -33,33 +33,29 @@
     </div>
     <div>
       <button type="submit" class="btn" style="padding:6px 14px">
-        <i class="fa-solid fa-magnifying-glass"></i> Применить
+        <i class="fa-solid fa-magnifying-glass"></i> {{.T "common.search"}}
       </button>
     </div>
     {{if .FilterActive}}
     <div>
       <a href="/admin/audit" class="btn" style="background:var(--bg-input);padding:6px 14px;text-decoration:none">
-        <i class="fa-solid fa-xmark"></i> Сброс
+        <i class="fa-solid fa-xmark"></i> {{.T "common.refresh"}}
       </a>
     </div>
     {{end}}
   </form>
-  <div class="sub" style="margin-top:10px;color:var(--text-muted);font-size:12px">
-    <i class="fa-solid fa-circle-info"></i> Действия — это то, что пишется в audit_log (user_create, password_reset, telegram_ack, ACL_*, telegram_restart и т.д.).
-    User ищется по подстроке, Action — точное совпадение.
-  </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-clock-rotate-left"></i>Действия</h3>
+  <h3><i class="fa-solid fa-clock-rotate-left"></i>{{.T "audit.col_action"}}</h3>
   {{if .Entries}}
   <table>
     <thead>
       <tr>
-        <th style="width:160px"><i class="fa-solid fa-clock"></i> Время</th>
-        <th style="width:140px"><i class="fa-solid fa-user"></i> User</th>
-        <th style="width:160px"><i class="fa-solid fa-bolt"></i> Action</th>
-        <th><i class="fa-solid fa-message"></i> Detail</th>
+        <th style="width:160px"><i class="fa-solid fa-clock"></i> {{.T "audit.col_time"}}</th>
+        <th style="width:140px"><i class="fa-solid fa-user"></i> {{.T "audit.col_user"}}</th>
+        <th style="width:160px"><i class="fa-solid fa-bolt"></i> {{.T "audit.col_action"}}</th>
+        <th><i class="fa-solid fa-message"></i> {{.T "audit.col_detail"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -76,9 +72,7 @@
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>
-    <div>
-      {{if .FilterActive}}Нет действий, удовлетворяющих фильтру.{{else}}Действий пока нет.{{end}}
-    </div>
+    <div>{{.T "audit.empty"}}.</div>
   </div>
   {{end}}
 </div>

@@ -1,35 +1,35 @@
 {{define "body-admin-exit_rules_cleanup"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-broom"></i> Cleanup exit rules</h2>
-    <div class="sub">Слияние дубликатов по device_id и бэкфилл device_ip. Идемпотентно.</div>
+    <h2><i class="fa-solid fa-broom"></i> {{.T "cleanup.title"}}</h2>
+    <div class="sub">Merge duplicates by device_id and backfill device_ip. Idempotent.</div>
   </div>
   <div>
-    <a href="/admin/exit-rules" class="btn btn-sm"><i class="fa-solid fa-arrow-left"></i> Назад к правилам</a>
+    <a href="/admin/exit-rules" class="btn btn-sm"><i class="fa-solid fa-arrow-left"></i> {{.T "common.back"}}</a>
   </div>
 </div>
 
 {{if eq .RunResult "applied"}}
-<div class="alert alert-success"><i class="fa-solid fa-check"></i> Применено. Пересчитано: merged={{.Plan.MergedIDs}}, resolved_ips={{.Plan.ResolvedIPs}}.</div>
+<div class="alert alert-success"><i class="fa-solid fa-check"></i> Applied. Recomputed: merged={{.Plan.MergedIDs}}, resolved_ips={{.Plan.ResolvedIPs}}.</div>
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-magnifying-glass"></i> План</h3>
+  <h3><i class="fa-solid fa-magnifying-glass"></i> Plan</h3>
   <table class="kv" style="width:auto">
-    <tr><th>Всего правил</th><td>{{.Plan.TotalRules}}</td></tr>
-    <tr><th>Различных device_id</th><td>{{.Plan.DistinctDevIDs}}</td></tr>
-    <tr><th>Различных hostname</th><td>{{.Plan.DistinctHosts}}</td></tr>
-    <tr><th>К слиянию</th><td>{{.Plan.MergedIDs}}</td></tr>
-    <tr><th>К бэкфиллу device_ip</th><td>{{.Plan.ResolvedIPs}}</td></tr>
+    <tr><th>Total rules</th><td>{{.Plan.TotalRules}}</td></tr>
+    <tr><th>Distinct device_id</th><td>{{.Plan.DistinctDevIDs}}</td></tr>
+    <tr><th>Distinct hostname</th><td>{{.Plan.DistinctHosts}}</td></tr>
+    <tr><th>To merge</th><td>{{.Plan.MergedIDs}}</td></tr>
+    <tr><th>To backfill device_ip</th><td>{{.Plan.ResolvedIPs}}</td></tr>
     <tr><th>Stale device_id</th><td>{{range $i,$d := .Plan.StaleDevIDs}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}</td></tr>
   </table>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-layer-group"></i> Группы по hostname</h3>
+  <h3><i class="fa-solid fa-layer-group"></i> Groups by hostname</h3>
   <div class="table-wrap">
     <table>
-      <tr><th>Hostname</th><th>Canonical device_id</th><th>Все device_id в группе</th><th>Правил</th></tr>
+      <tr><th>Hostname</th><th>Canonical device_id</th><th>All device_id in group</th><th>Rules</th></tr>
       {{range .Plan.Groups}}
       <tr>
         <td>
@@ -47,11 +47,11 @@
 </div>
 
 <form method="post" action="/admin/exit-rules/cleanup/apply"
-      onsubmit="return confirm('Применить cleanup? Это изменит device_id и device_ip у некоторых правил и необратимо без backup.')">
+      onsubmit="return confirm('Apply cleanup? This will change device_id and device_ip for some rules and is irreversible without a backup.')">
   <button type="submit" class="btn"
           {{if and (eq .Plan.MergedIDs 0) (eq .Plan.ResolvedIPs 0)}}disabled{{end}}>
-    <i class="fa-solid fa-play"></i> Применить
+    <i class="fa-solid fa-play"></i> Apply
   </button>
-  <a href="/admin/exit-rules/cleanup" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> Пересчитать</a>
+  <a href="/admin/exit-rules/cleanup" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> Recompute</a>
 </form>
 {{end}}
