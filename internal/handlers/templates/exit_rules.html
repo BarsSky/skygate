@@ -47,22 +47,22 @@
 
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-route"></i> {{.Tr "exit_rules.title"}}</h2>
-    <div class="sub">{{.Tr "exit_rules.subtitle"}}</div>
+    <h2><i class="fa-solid fa-route"></i> {{t "exit_rules.title"}}</h2>
+    <div class="sub">{{t "exit_rules.subtitle"}}</div>
   </div>
   <div>
-    <span class="tag tag-info" title="{{.Tr "exit_rules.dns_autoupdate_title"}}">
-      <i class="fa-solid fa-arrows-rotate"></i> {{.Tr "exit_rules.dns_autoupdate"}}
+    <span class="tag tag-info" title="{{t "exit_rules.dns_autoupdate_title"}}">
+      <i class="fa-solid fa-arrows-rotate"></i> {{t "exit_rules.dns_autoupdate"}}
     </span>
-    <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> {{.Tr "exit_rules.api_help_btn"}}</a>
+    <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> {{t "exit_rules.api_help_btn"}}</a>
   </div>
 </div>
 
-{{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{.Tr "exit_rules.added_ok"}}</div>{{end}}
-{{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{.Tr "exit_rules.partial"}}</div>{{end}}
-{{if .duplicate}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{.Trf "exit_rules.duplicate" .existing}}</div>{{end}}
-{{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{.Trf "exit_rules.dns_pending" .warn}}</div>{{end}}
-{{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{.Tr "exit_rules.deleted"}}</div>{{end}}
+{{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules.added_ok"}}</div>{{end}}
+{{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{t "exit_rules.partial"}}</div>{{end}}
+{{if .duplicate}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.duplicate" .existing}}</div>{{end}}
+{{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{tf "exit_rules.dns_pending" .warn}}</div>{{end}}
+{{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "exit_rules.deleted"}}</div>{{end}}
 
 <div class="exit-layout">
 
@@ -70,53 +70,53 @@
   <div class="exit-main">
 
     <div class="card">
-      <h3><i class="fa-solid fa-plus"></i> {{.Tr "exit_rules.add_rule"}}</h3>
+      <h3><i class="fa-solid fa-plus"></i> {{t "exit_rules.add_rule"}}</h3>
       <form method="post" action="/my/exit-rules">
         <div class="field">
-          <label>{{.Tr "exit_rules.device"}}</label>
+          <label>{{t "exit_rules.device"}}</label>
           <select name="device_id" id="device-select" onchange="updateDeviceUsageHint()">
-            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}" data-hint-ok="{{.HintOK}}" data-hint-warn="{{.HintWarn}}" data-hint-danger="{{.HintDanger}}" data-hint-default="{{$.Tr "exit_rules.usage_default"}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">{{.Tr "exit_rules.no_devices"}}</option>{{end}}
+            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}" data-hint-ok="{{.HintOK}}" data-hint-warn="{{.HintWarn}}" data-hint-danger="{{.HintDanger}}" data-hint-default="{{$t := t}}{{$t "exit_rules.usage_default"}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">{{t "exit_rules.no_devices"}}</option>{{end}}
           </select>
-          <div class="hint" id="device-usage-hint">{{.Tr "exit_rules.device_hint"}}</div>
+          <div class="hint" id="device-usage-hint">{{t "exit_rules.device_hint"}}</div>
         </div>
         <div class="field">
-          <label>{{.Tr "exit_rules.exit_node"}}</label>
+          <label>{{t "exit_rules.exit_node"}}</label>
           <select name="exit_node">
-            {{range .ExitNodes}}<option value="{{.hostname}}"{{if eq .hostname $.FormValues.exit_node}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">{{.Tr "exit_rules.no_exit_nodes"}}</option>{{end}}
+            {{range .ExitNodes}}<option value="{{.hostname}}"{{if eq .hostname $.FormValues.exit_node}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">{{t "exit_rules.no_exit_nodes"}}</option>{{end}}
           </select>
-          <div class="hint">{{.Tr "exit_rules.exit_node_hint"}}</div>
+          <div class="hint">{{t "exit_rules.exit_node_hint"}}</div>
         </div>
         <div class="field">
-          <label>{{.Tr "exit_rules.action"}}</label>
+          <label>{{t "exit_rules.action"}}</label>
           <select name="action">
-            <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>{{.Tr "exit_rules.action_accept"}}</option>
-            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>{{.Tr "exit_rules.action_deny"}}</option>
+            <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>{{t "exit_rules.action_accept"}}</option>
+            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>{{t "exit_rules.action_deny"}}</option>
           </select>
-          <div class="hint">{{.Tr "exit_rules.action_hint"}}</div>
+          <div class="hint">{{t "exit_rules.action_hint"}}</div>
         </div>
         <div class="field">
-          <label>{{.Tr "exit_rules.target_type"}}</label>
+          <label>{{t "exit_rules.target_type"}}</label>
           <select name="target_type">
-            <option value="ip"{{if eq $.FormValues.target_type "ip"}} selected{{end}}>{{.Tr "exit_rules.target_type_ip"}}</option>
-            <option value="subnet"{{if eq $.FormValues.target_type "subnet"}} selected{{end}}>{{.Tr "exit_rules.target_type_subnet"}}</option>
-            <option value="domain"{{if eq $.FormValues.target_type "domain"}} selected{{end}}>{{.Tr "exit_rules.target_type_domain"}}</option>
+            <option value="ip"{{if eq $.FormValues.target_type "ip"}} selected{{end}}>{{t "exit_rules.target_type_ip"}}</option>
+            <option value="subnet"{{if eq $.FormValues.target_type "subnet"}} selected{{end}}>{{t "exit_rules.target_type_subnet"}}</option>
+            <option value="domain"{{if eq $.FormValues.target_type "domain"}} selected{{end}}>{{t "exit_rules.target_type_domain"}}</option>
           </select>
-          <div class="hint">{{.Tr "exit_rules.target_type_hint"}}</div>
+          <div class="hint">{{t "exit_rules.target_type_hint"}}</div>
         </div>
         <div class="field">
-          <label>{{.Tr "exit_rules.target_value"}}</label>
-          <input type="text" name="target_value" placeholder="{{.Tr "exit_rules.target_value_ph"}}" value="{{.FormValues.target_value}}" required>
+          <label>{{t "exit_rules.target_value"}}</label>
+          <input type="text" name="target_value" placeholder="{{t "exit_rules.target_value_ph"}}" value="{{.FormValues.target_value}}" required>
         </div>
-        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{.Tr "exit_rules.submit"}}</button> <a href="/my/exit-rules" class="btn"><i class="fa-solid fa-eraser"></i> {{.Tr "exit_rules.clear"}}</a>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "exit_rules.submit"}}</button> <a href="/my/exit-rules" class="btn"><i class="fa-solid fa-eraser"></i> {{t "exit_rules.clear"}}</a>
       </form>
     </div>
 
     {{if .DeviceInfos}}
     <div class="card">
-      <h3><i class="fa-solid fa-download"></i> {{.Tr "exit_rules.scripts_title"}}</h3>
-      <p style="margin:0 0 8px 0;">{{.Tr "exit_rules.scripts_sub"}}</p>
+      <h3><i class="fa-solid fa-download"></i> {{t "exit_rules.scripts_title"}}</h3>
+      <p style="margin:0 0 8px 0;">{{t "exit_rules.scripts_sub"}}</p>
       <table>
-        <tr><th>{{.Tr "exit_rules.col_device"}}</th><th>{{.Tr "exit_rules.col_rules"}}</th><th>{{.Tr "exit_rules.col_linux_script"}}</th><th>{{.Tr "exit_rules.col_restore"}}</th></tr>
+        <tr><th>{{t "exit_rules.col_device"}}</th><th>{{t "exit_rules.col_rules"}}</th><th>{{t "exit_rules.col_linux_script"}}</th><th>{{t "exit_rules.col_restore"}}</th></tr>
         {{range .DeviceInfos}}
         <tr>
           <td><b>{{.Hostname}}</b></td>
@@ -140,30 +140,30 @@
     {{if .Rules}}
     <div class="card">
       <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <span><i class="fa-solid fa-list"></i> {{.Trf "exit_rules.current_rules" (len .Rules)}}</span>
+        <span><i class="fa-solid fa-list"></i> {{tf "exit_rules.current_rules" (len .Rules)}}</span>
         <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-          {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="{{.Tr "exit_rules.user_facing_title"}}">{{.Trf "exit_rules.user_facing" .UserFacingCount .MaxPerUser}}</span>{{else}}<span class="tag">{{.Trf "exit_rules.user_facing" .UserFacingCount 0}}</span>{{end}}
-          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="{{.Tr "exit_rules.system_title"}}">{{.Trf "exit_rules.system" .LoadPct .TotalRules .MaxTotalRules}}</span>{{end}}
+          {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="{{t "exit_rules.user_facing_title"}}">{{tf "exit_rules.user_facing" .UserFacingCount .MaxPerUser}}</span>{{else}}<span class="tag">{{tf "exit_rules.user_facing" .UserFacingCount 0}}</span>{{end}}
+          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="{{t "exit_rules.system_title"}}">{{tf "exit_rules.system" .LoadPct .TotalRules .MaxTotalRules}}</span>{{end}}
         </span>
       </h3>
 
-      <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('{{.Tr "exit_rules.confirm_multi_delete"}}')">
+      <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('{{t "exit_rules.confirm_multi_delete"}}')">
         <div class="multi-bar">
           <label style="display:flex;align-items:center;gap:6px;font-size:12px">
             <input type="checkbox" id="select-all-top" onclick="toggleAll(this.checked)">
-            {{.Tr "exit_rules.select_all"}}
+            {{t "exit_rules.select_all"}}
           </label>
-          <span class="count">{{.Tr "exit_rules.selected"}} <b id="sel-count">0</b></span>
+          <span class="count">{{t "exit_rules.selected"}} <b id="sel-count">0</b></span>
           <select class="filter-target" id="filter-type" onchange="applyFilter()">
-            <option value="">{{.Tr "exit_rules.filter_type"}}</option>
-            <option value="domain">{{.Tr "exit_rules.filter_domain"}}</option>
-            <option value="subnet">{{.Tr "exit_rules.filter_subnet"}}</option>
-            <option value="ip">{{.Tr "exit_rules.filter_ip"}}</option>
+            <option value="">{{t "exit_rules.filter_type"}}</option>
+            <option value="domain">{{t "exit_rules.filter_domain"}}</option>
+            <option value="subnet">{{t "exit_rules.filter_subnet"}}</option>
+            <option value="ip">{{t "exit_rules.filter_ip"}}</option>
           </select>
-          <input type="text" class="search" id="search-input" placeholder="{{.Tr "exit_rules.search_ph"}}" oninput="applyFilter()">
+          <input type="text" class="search" id="search-input" placeholder="{{t "exit_rules.search_ph"}}" oninput="applyFilter()">
           <span class="spacer"></span>
-          <span style="font-size:11px;color:var(--text-muted)" title="{{.Tr "exit_rules.cascade_hint_title"}}">
-            <i class="fa-solid fa-circle-info"></i> {{.Tr "exit_rules.cascade_hint"}}
+          <span style="font-size:11px;color:var(--text-muted)" title="{{t "exit_rules.cascade_hint_title"}}">
+            <i class="fa-solid fa-circle-info"></i> {{t "exit_rules.cascade_hint"}}
           </span>
         </div>
 
@@ -172,7 +172,7 @@
         <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$host}}</span>
-          <span class="tag">{{len $nodes}}{{.Tr "exit_rules.exit_nodes_suffix"}}</span>
+          <span class="tag">{{len $nodes}}{{t "exit_rules.exit_nodes_suffix"}}</span>
           <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
         </summary>
 
@@ -181,17 +181,17 @@
           <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
             <i class="fa-solid fa-route"></i>
             <span class="tag tag-info">{{$exitNode}}</span>
-            <span style="color:var(--text-muted)">{{len $rules}}{{.Tr "exit_rules.rules_count_suffix"}}</span>
+            <span style="color:var(--text-muted)">{{len $rules}}{{t "exit_rules.rules_count_suffix"}}</span>
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             <table>
-              <tr><th class="col-check"></th><th>{{.Tr "exit_rules.col_action"}}</th><th>{{.Tr "exit_rules.col_target"}}</th><th></th></tr>
+              <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th></th></tr>
               {{range $rules}}<tr class="rule-row" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                 <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                 <td class="col-delete">
-                  <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{.Tr "common.delete"}}" onclick="return confirm('{{.Tr "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
+                  <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                 </td>
               </tr>
               <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
@@ -208,12 +208,12 @@
         <div class="multi-bar sticky">
           <label style="display:flex;align-items:center;gap:6px;font-size:12px">
             <input type="checkbox" id="select-all-bottom" onclick="toggleAll(this.checked); document.getElementById('select-all-top').checked=this.checked">
-            {{.Tr "exit_rules.select_all"}}
+            {{t "exit_rules.select_all"}}
           </label>
-          <span class="count">{{.Tr "exit_rules.selected"}} <b id="sel-count-bottom">0</b></span>
+          <span class="count">{{t "exit_rules.selected"}} <b id="sel-count-bottom">0</b></span>
           <span class="spacer"></span>
-          <button type="button" class="btn btn-sm" onclick="document.getElementById('search-input').value=''; document.getElementById('filter-type').value=''; applyFilter()"><i class="fa-solid fa-eraser"></i> {{.Tr "exit_rules.reset_filters"}}</button>
-          <button type="submit" class="btn btn-danger"><i class="fa-solid fa-trash"></i> {{.Tr "exit_rules.delete_selected"}}</button>
+          <button type="button" class="btn btn-sm" onclick="document.getElementById('search-input').value=''; document.getElementById('filter-type').value=''; applyFilter()"><i class="fa-solid fa-eraser"></i> {{t "exit_rules.reset_filters"}}</button>
+          <button type="submit" class="btn btn-danger"><i class="fa-solid fa-trash"></i> {{t "exit_rules.delete_selected"}}</button>
         </div>
       </form>
     </div>
@@ -277,14 +277,14 @@
     {{end}}
 
     <div class="card">
-      <h3><i class="fa-solid fa-info-circle"></i> {{.Tr "exit_rules.how_title"}}</h3>
+      <h3><i class="fa-solid fa-info-circle"></i> {{t "exit_rules.how_title"}}</h3>
       <ol style="padding-left:20px;margin:0">
-        <li>{{.Tr "exit_rules.how_li1"}}</li>
-        <li>{{.Tr "exit_rules.how_li2"}}</li>
-        <li>{{.Tr "exit_rules.how_li3"}}
+        <li>{{t "exit_rules.how_li1"}}</li>
+        <li>{{t "exit_rules.how_li2"}}</li>
+        <li>{{t "exit_rules.how_li3"}}
           <ul>
-            <li>{{.Tr "exit_rules.how_li3_win"}}</li>
-            <li>{{.Tr "exit_rules.how_li3_mobile"}}</li>
+            <li>{{t "exit_rules.how_li3_win"}}</li>
+            <li>{{t "exit_rules.how_li3_mobile"}}</li>
           </ul>
         </li>
       </ol>
@@ -296,48 +296,48 @@
   <div class="exit-help">
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-play"></i> {{.Tr "exit_rules.quick_title"}}</h4>
+      <h4><i class="fa-solid fa-play"></i> {{t "exit_rules.quick_title"}}</h4>
       <ol>
-        <li>{{.Tr "exit_rules.quick_li1"}}</li>
-        <li>{{.Tr "exit_rules.quick_li2"}}</li>
-        <li>{{.Tr "exit_rules.quick_li3"}}</li>
-        <li>{{.Tr "exit_rules.quick_li4"}}</li>
+        <li>{{t "exit_rules.quick_li1"}}</li>
+        <li>{{t "exit_rules.quick_li2"}}</li>
+        <li>{{t "exit_rules.quick_li3"}}</li>
+        <li>{{t "exit_rules.quick_li4"}}</li>
       </ol>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-laptop"></i> {{.Tr "exit_rules.client_title"}}</h4>
-      <p><b>{{.Tr "exit_rules.client_win_linux"}}</b></p>
+      <h4><i class="fa-solid fa-laptop"></i> {{t "exit_rules.client_title"}}</h4>
+      <p><b>{{t "exit_rules.client_win_linux"}}</b></p>
       <p><code>tailscale up --accept-routes</code></p>
-      <p style="font-size:11px;color:var(--text-muted)">{{.Tr "exit_rules.client_split_hint"}}</p>
-      <p style="margin-top:8px"><b>{{.Tr "exit_rules.client_mobile"}}</b></p>
+      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_split_hint"}}</p>
+      <p style="margin-top:8px"><b>{{t "exit_rules.client_mobile"}}</b></p>
       <p><code>tailscale up --exit-node=exit-node-name</code></p>
-      <p style="font-size:11px;color:var(--text-muted)">{{.Tr "exit_rules.client_full_hint"}}</p>
+      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_full_hint"}}</p>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-triangle-exclamation"></i> {{.Tr "exit_rules.important"}}</h4>
+      <h4><i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_rules.important"}}</h4>
       <ul>
-        <li>{{.Tr "exit_rules.important_li1"}}</li>
-        <li>{{.Tr "exit_rules.important_li2"}}</li>
-        <li>{{.Tr "exit_rules.important_li3"}}</li>
-        <li>{{.Tr "exit_rules.important_li4"}}</li>
+        <li>{{t "exit_rules.important_li1"}}</li>
+        <li>{{t "exit_rules.important_li2"}}</li>
+        <li>{{t "exit_rules.important_li3"}}</li>
+        <li>{{t "exit_rules.important_li4"}}</li>
       </ul>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-robot"></i> {{.Tr "exit_rules.bulk_title"}}</h4>
-      <p>{{.Tr "exit_rules.bulk_desc"}}</p>
-      <p style="font-size:11px">{{.Tr "exit_rules.bulk_example"}}</p>
-      <p><a href="/my/exit-rules/help" class="btn btn-sm" style="width:100%;text-align:center"><i class="fa-solid fa-book"></i> {{.Tr "exit_rules.api_help_btn"}}</a></p>
+      <h4><i class="fa-solid fa-robot"></i> {{t "exit_rules.bulk_title"}}</h4>
+      <p>{{t "exit_rules.bulk_desc"}}</p>
+      <p style="font-size:11px">{{t "exit_rules.bulk_example"}}</p>
+      <p><a href="/my/exit-rules/help" class="btn btn-sm" style="width:100%;text-align:center"><i class="fa-solid fa-book"></i> {{t "exit_rules.api_help_btn"}}</a></p>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-shield-halved"></i> {{.Tr "exit_rules.privacy_title"}}</h4>
+      <h4><i class="fa-solid fa-shield-halved"></i> {{t "exit_rules.privacy_title"}}</h4>
       <ul>
-        <li>{{.Tr "exit_rules.privacy_li1"}}</li>
-        <li>{{.Tr "exit_rules.privacy_li2"}}</li>
-        <li>{{.Tr "exit_rules.privacy_li3"}}</li>
+        <li>{{t "exit_rules.privacy_li1"}}</li>
+        <li>{{t "exit_rules.privacy_li2"}}</li>
+        <li>{{t "exit_rules.privacy_li3"}}</li>
       </ul>
     </div>
 

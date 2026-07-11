@@ -1,8 +1,8 @@
 ﻿{{define "body-admin-telegram"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-brands fa-telegram"></i> {{.Tr "telegram.title"}}</h2>
-    <div class="sub">{{.Tr "telegram.subtitle"}}. Token stored in DB <code>global_settings</code>, <code>.env</code> used as fallback at first start.</div>
+    <h2><i class="fa-brands fa-telegram"></i> {{t "telegram.title"}}</h2>
+    <div class="sub">{{t "telegram.subtitle"}}. Token stored in DB <code>global_settings</code>, <code>.env</code> used as fallback at first start.</div>
   </div>
   {{if .State.Configured}}
   <span class="pill pill-success" title="Bot configured via DB"><i class="fa-solid fa-circle-check"></i> configured</span>
@@ -20,12 +20,12 @@
 
 <div class="card-grid">
   <div class="card">
-    <h3><i class="fa-solid fa-key"></i> {{.Tr "telegram.token"}} &amp; {{.Tr "telegram.chat_id"}}</h3>
+    <h3><i class="fa-solid fa-key"></i> {{t "telegram.token"}} &amp; {{t "telegram.chat_id"}}</h3>
     <form action="/admin/telegram" method="POST" autocomplete="off">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="save">
       <div class="form-group">
-        <label>{{.Tr "telegram.token"}}</label>
+        <label>{{t "telegram.token"}}</label>
         <input type="password" name="bot_token" class="form-control" placeholder="leave empty to keep current">
         <div class="sub">
           {{if .State.Configured}}
@@ -36,16 +36,16 @@
         </div>
       </div>
       <div class="form-group">
-        <label>{{.Tr "telegram.chat_id"}}</label>
+        <label>{{t "telegram.chat_id"}}</label>
         <input type="text" name="chat_id" value="{{.State.ChatID}}" class="form-control" placeholder="leave empty to keep current">
         <div class="sub">Where the bot has already started. Find out: <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.</div>
       </div>
-      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{.Tr "common.save"}}</button>
+      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "common.save"}}</button>
     </form>
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-paper-plane"></i> {{.Tr "telegram.test"}}</h3>
+    <h3><i class="fa-solid fa-paper-plane"></i> {{t "telegram.test"}}</h3>
     <p class="sub">Sends a message to Telegram using the already-saved token. Without a token the button is disabled.</p>
     <form action="/admin/telegram" method="POST">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -56,9 +56,9 @@
       </div>
       <div class="form-group">
         <label>Body</label>
-        <textarea name="test_body" class="form-control" rows="3">{{.Tr "telegram.test_message"}}</textarea>
+        <textarea name="test_body" class="form-control" rows="3">{{t "telegram.test_message"}}</textarea>
       </div>
-      <button type="submit" class="btn" {{if not .State.Configured}}disabled{{end}}><i class="fa-solid fa-paper-plane"></i> {{.Tr "telegram.test"}}</button>
+      <button type="submit" class="btn" {{if not .State.Configured}}disabled{{end}}><i class="fa-solid fa-paper-plane"></i> {{t "telegram.test"}}</button>
       {{if not .State.Configured}}
       <div class="sub" style="margin-top:.5rem">Save token and chat_id first.</div>
       {{end}}
@@ -66,24 +66,24 @@
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-arrows-rotate"></i> {{.Tr "telegram.rotate"}}</h3>
+    <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "telegram.rotate"}}</h3>
     <p class="sub">If the token is compromised (e.g. leaked in logs): delete it and save a new one. All future events (backup/upgrade) will go to ~/.skygate-notify.log until reconfigured.</p>
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('Delete the current Telegram token? You will need to save a new one.')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="rotate">
       <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> I understand a new token will be required</label>
-      <button type="submit" class="btn btn-warn" style="margin-top:1rem"><i class="fa-solid fa-arrows-rotate"></i> {{.Tr "telegram.rotate"}}</button>
+      <button type="submit" class="btn btn-warn" style="margin-top:1rem"><i class="fa-solid fa-arrows-rotate"></i> {{t "telegram.rotate"}}</button>
     </form>
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-power-off"></i> {{.Tr "telegram.disable"}}</h3>
+    <h3><i class="fa-solid fa-power-off"></i> {{t "telegram.disable"}}</h3>
     <p class="sub">Completely turns off Telegram. <code>scripts/notify.sh</code> will write to a local log.</p>
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('Disable Telegram? Notifications will stop arriving in the messenger.')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="disable">
       <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> I understand the consequences</label>
-      <button type="submit" class="btn btn-danger" style="margin-top:1rem"><i class="fa-solid fa-power-off"></i> {{.Tr "telegram.disable"}}</button>
+      <button type="submit" class="btn btn-danger" style="margin-top:1rem"><i class="fa-solid fa-power-off"></i> {{t "telegram.disable"}}</button>
     </form>
   </div>
 
