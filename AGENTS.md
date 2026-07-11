@@ -72,7 +72,10 @@ internal/handlers/exit_rules.go                     — DeviceRule struct + DB h
 internal/handlers/exit_rules_form.go                — HTML form handlers for /my/exit-rules, /admin/exit-rules, /admin/exit-rules/rollback; owns countUserFacing (~744 lines, extracted from exit_rules.go)
 internal/handlers/exit_rules_api.go                 — public REST API (~159 lines)
 internal/handlers/exit_rules_sync.go                — ACL sync, staggeredSync, autoupdater (~387 lines)
-internal/handlers/exit_rules_routescript.go         — route setup bash script gen (~299 lines)
+internal/handlers/exit_rules_routescript.go              — route-setup script orchestrator: GenerateRouteSetupScript (~42 lines)
+internal/handlers/exit_rules_routescript_data.go         — DB query (loadRoutesForScript) + HS exit-node IP lookup (resolveExitNodeIPForScript) + routeEntry struct (~67 lines)
+internal/handlers/exit_rules_routescript_windows_body.go — buildWindowsRouteScript + writeWindows{Setup,Restore}Script helpers — pure .cmd builder, no I/O (~185 lines)
+internal/handlers/exit_rules_routescript_linux_body.go   — buildLinuxRouteScript + writeLinux{Setup,Restore}Script helpers — pure .sh builder for Linux + macOS, no I/O (~147 lines)
 internal/handlers/exit_rules_cleanup.go              — admin cleanup + orphan /32 cleanup (~357 lines)
 internal/handlers/admin_backup.go                   — admin backup/restore ACL (~247 lines)
 internal/handlers/admin_telegram.go                 — admin telegram UI (UI only; sending not implemented, ~283 lines)
@@ -298,9 +301,19 @@ decomposition target. Progress so far:
 - `handlers_my_keys.go` (173) — /my/keys list+expire extracted.
 - `handlers_my_devices.go` (127) — GET /my/devices extracted.
 
-`handlers.go` is now **~257 lines** — pure shared infrastructure
+`handlers.go` is now **~236 lines** — pure shared infrastructure
 (App struct, render helpers, currentUser, audit, getMaxRulesForUser).
 Nothing left to extract; the file is no longer a god-object.
+
+`exit_rules_routescript.go` was a ~300-line generator dominated by
+inline shell script literals. After Этап 6 it is a 42-line
+orchestrator: `load data → dispatch to OS builder`. The OS-specific
+bodies (Windows .cmd / Linux bash) are pure functions in
+`exit_rules_routescript_{windows,linux}_body.go` (note the `_body`
+suffix — the Go code that builds a Windows .cmd script or Linux
+bash is platform-independent, so the original `_windows.go` /
+`_linux.go` filenames would have triggered GOOS build constraints
+and broken the build on the wrong host OS).
 
 `exit_rules.go` (1146 → 359) was already largely decomposed; the form
 handlers live in `exit_rules_form.go` (744 lines), which is the next
@@ -333,7 +346,10 @@ Sister files in `internal/handlers/` (current line counts):
 - `exit_rules_form.go` (744) — HTML form handlers for /my/exit-rules + /admin/exit-rules + rollback
 - `exit_rules_api.go` (159) — public REST API
 - `exit_rules_sync.go` (387) — ACL sync, staggeredSync, autoupdater
-- `exit_rules_routescript.go` (299) — route setup bash script gen
+- `exit_rules_routescript.go` (42) — orchestrator: `GenerateRouteSetupScript` (load data → dispatch to OS builder)
+- `exit_rules_routescript_data.go` (67) — `loadRoutesForScript` + `resolveExitNodeIPForScript` + `routeEntry` struct
+- `exit_rules_routescript_windows_body.go` (185) — `buildWindowsRouteScript` + `writeWindows{Setup,Restore}Script` helpers (pure .cmd builder, no I/O)
+- `exit_rules_routescript_linux_body.go` (147) — `buildLinuxRouteScript` + `writeLinux{Setup,Restore}Script` helpers (pure .sh builder, no I/O)
 - `exit_rules_cleanup.go` (357) — admin cleanup + orphan /32 cleanup
 - `admin_backup.go` (247) — backup/restore ACL
 - `admin_telegram.go` (283) — telegram UI (no send)
