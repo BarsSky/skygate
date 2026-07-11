@@ -59,13 +59,15 @@ API:
 ```
 cmd/skygate/main.go                                — entry point, HTTP routes
 internal/handlers/handlers.go                       — shared infra only: App struct + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser (~257 lines)
-internal/handlers/handlers_dashboard.go             — TailnetMetrics struct + computeTailnetMetrics + GetDashboard handler (~104 lines)
+internal/handlers/handlers_dashboard.go             — TailnetMetrics + PreauthKeyStats types + computeTailnetMetrics + GetDashboard + countMyPreauthKeys (~185 lines)
 internal/handlers/handlers_auth.go                  — GetLogin/PostLogin/PostLogout + i18n PostLang cookie (~93 lines)
-internal/handlers/handlers_node_ownership.go        — backfillNodeOwnership (Strategy C temporal preauth->tag:private match) (~235 lines)
+internal/handlers/handlers_node_ownership.go        — backfillNodeOwnership + firstTagOrFallback helper (Strategy C temporal preauth->tag:private match) (~248 lines)
 internal/handlers/handlers_my_account.go            — self-service password change at /my/account (~84 lines)
 internal/handlers/handlers_api_tokens.go            — personal API tokens (Bearer auth) at /my/tokens (~52 lines)
 internal/handlers/handlers_admin_pages.go           — admin read-only views: /admin/audit, /admin/acls (~58 lines)
-internal/handlers/handlers_derp.go                  — DERP status + handlers + ConnSummary/DerpSnapshot types (~337 lines)
+internal/handlers/handlers_derp.go                  — /admin/derp handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot types (~115 lines)
+internal/handlers/handlers_derp_collect.go          — collectDerpStatus + httpGet + parseDerper{DebugHTML,Vars} (fetch & parse derper debug endpoints) (~245 lines)
+internal/handlers/handlers_derp_classify.go         — classifyDerpPeer(s) + summarizeDerpPeers + derpLAN/derpTailscale/derpPeerNPM constants (~80 lines)
 internal/handlers/handlers_admin_users.go           — admin user CRUD (~209 lines)
 internal/handlers/handlers_admin_nodes.go           — admin device/tag handlers (~91 lines)
 internal/handlers/exit_rules.go                     — DeviceRule struct + DB helpers (insertRuleUnique, getDeviceRules, getUserDevices) + GenerateACL() + ACL helpers (~359 lines)
@@ -284,8 +286,8 @@ route registration in `cmd/skygate/main.go`.
 
 `handlers.go` was a god-object at ~1100 lines and has been the main
 decomposition target. Progress so far:
-- `handlers_node_ownership.go` (238) — `backfillNodeOwnership` extracted.
-- `handlers_dashboard.go` (175) — `TailnetMetrics` + `computeTailnetMetrics`
+- `handlers_node_ownership.go` (248) — `backfillNodeOwnership` + `firstTagOrFallback` extracted.
+- `handlers_dashboard.go` (185) — `TailnetMetrics` + `PreauthKeyStats` + `computeTailnetMetrics`
   + `GetDashboard` + `countMyPreAuthKeys` extracted.
 - `handlers_auth.go` (100) — `GetLogin` / `PostLogin` / `PostLogout` /
   `PostLang` extracted.
@@ -294,14 +296,21 @@ decomposition target. Progress so far:
 - `handlers_admin_pages.go` (63) — read-only admin views extracted.
 - `handlers_admin_users.go` (222) — admin user CRUD extracted.
 - `handlers_admin_nodes.go` (102) — admin device/tag extracted.
-- `handlers_derp.go` (438) — DERP status + handlers + DerpStatus/DerpPeer/
-  ConnSummary/DerpSnapshot/PreauthKeyStats types extracted.
+- `handlers_derp.go` (115) — /admin/derp handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot types.
+- `handlers_derp_collect.go` (245) — `collectDerpStatus` + `httpGet` + `parseDerperDebugHTML` + `parseDerperVars` (fetch & parse derper debug endpoints).
+- `handlers_derp_classify.go` (80) — `classifyDerpPeer(s)` + `summarizeDerpPeers` + IP-net constants.
 - `handlers_settings.go` (63) — theme switcher extracted.
 - `handlers_help.go` (20) — /help page extracted.
 - `handlers_my_preauth.go` (44) — POST /my/preauth extracted.
 - `handlers_my_exit_nodes.go` (23) — GET /my/exit-nodes extracted.
 - `handlers_my_keys.go` (173) — /my/keys list+expire extracted.
 - `handlers_my_devices.go` (127) — GET /my/devices extracted.
+- `exit_rules_routescript_data.go` (67) — `loadRoutesForScript` + `resolveExitNodeIPForScript` + `routeEntry` struct.
+- `exit_rules_routescript_windows_body.go` (185) — `buildWindowsRouteScript` + `writeWindows{Setup,Restore}Script` helpers (pure .cmd builder).
+- `exit_rules_routescript_linux_body.go` (147) — `buildLinuxRouteScript` + `writeLinux{Setup,Restore}Script` helpers (pure .sh builder).
+- `exit_rules_form_my.go` (576) — /my/exit-rules: Get + Post + Delete (script download, DNS resolve, multi-delete cascade).
+- `exit_rules_form_admin.go` (150) — /admin/exit-rules cross-user view.
+- `exit_rules_form_rollback.go` (37) — /admin/exit-rules/rollback restore.
 
 `handlers.go` is now **~236 lines** — pure shared infrastructure
 (App struct, render helpers, currentUser, audit, getMaxRulesForUser).
@@ -329,13 +338,15 @@ growing either god-object:
 
 Sister files in `internal/handlers/` (current line counts):
 - `handlers.go` (257) — shared infra only: App + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser
-- `handlers_dashboard.go` (175) — TailnetMetrics + computeTailnetMetrics + GetDashboard + countMyPreAuthKeys
+- `handlers_dashboard.go` (185) — TailnetMetrics + PreauthKeyStats + computeTailnetMetrics + GetDashboard + countMyPreAuthKeys
 - `handlers_auth.go` (100) — GetLogin / PostLogin / PostLogout / PostLang
-- `handlers_node_ownership.go` (238) — backfillNodeOwnership
+- `handlers_node_ownership.go` (248) — backfillNodeOwnership + firstTagOrFallback
 - `handlers_my_account.go` (92) — self-service password change
 - `handlers_api_tokens.go` (59) — personal API tokens
 - `handlers_admin_pages.go` (63) — read-only admin views (audit, ACLs)
-- `handlers_derp.go` (438) — DERP status + handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot/PreauthKeyStats types
+- `handlers_derp.go` (115) — /admin/derp handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot types
+- `handlers_derp_collect.go` (245) — collectDerpStatus + httpGet + parseDerper{DebugHTML,Vars}
+- `handlers_derp_classify.go` (80) — classifyDerpPeer(s) + summarizeDerpPeers
 - `handlers_admin_users.go` (222) — admin user CRUD
 - `handlers_admin_nodes.go` (102) — admin device/tag
 - `handlers_settings.go` (63) — /settings/theme (theme switcher)
