@@ -430,10 +430,12 @@ func TestHandleCommandRestartIssuesToken(t *testing.T) {
 func TestHandleCommandRestartConfirmHappy(t *testing.T) {
 	d := setupTestDB(t)
 	// Override killProcess so the test binary doesn't actually die.
-	saved := killProcess
-	killed := false
-	killProcess = func() { killed = true }
-	defer func() { killProcess = saved }()
+	// Use a channel (closed by the goroutine) for the done signal —
+	// polling a bool races with the goroutine that sets it.
+	saved := getKillProcess()
+	killed := make(chan struct{})
+	setKillProcess(func() { close(killed) })
+	t.Cleanup(func() { setKillProcess(saved) })
 
 	// Phase 1: mint a token.
 	first := HandleCommand(context.Background(), envFor(d), "/restart")
@@ -458,12 +460,10 @@ func TestHandleCommandRestartConfirmHappy(t *testing.T) {
 	if !strings.Contains(second, "SIGTERM in 200ms") {
 		t.Errorf("expected 'SIGTERM in 200ms' in confirm reply, got: %q", second)
 	}
-	// Wait briefly for the goroutine to fire killProcess.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && !killed {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !killed {
+	// Wait for the goroutine to fire killProcess (with timeout).
+	select {
+	case <-killed:
+	case <-time.After(2 * time.Second):
 		t.Errorf("expected killProcess to be invoked within 2s")
 	}
 	// Audit log row should be written.
@@ -483,9 +483,9 @@ func TestHandleCommandRestartConfirmHappy(t *testing.T) {
 
 func TestHandleCommandRestartBadToken(t *testing.T) {
 	d := setupTestDB(t)
-	saved := killProcess
-	killProcess = func() { t.Errorf("killProcess must NOT be called for a bad token") }
-	defer func() { killProcess = saved }()
+	saved := getKillProcess()
+	setKillProcess(func() { t.Errorf("killProcess must NOT be called for a bad token") })
+	t.Cleanup(func() { setKillProcess(saved) })
 
 	got := HandleCommand(context.Background(), envFor(d), "/restart NOTATOKEN")
 	if !strings.Contains(got, "not a valid confirmation token") {
@@ -495,9 +495,9 @@ func TestHandleCommandRestartBadToken(t *testing.T) {
 
 func TestHandleCommandRestartExpiredToken(t *testing.T) {
 	d := setupTestDB(t)
-	saved := killProcess
-	killProcess = func() { t.Errorf("killProcess must NOT be called for an expired token") }
-	defer func() { killProcess = saved }()
+	saved := getKillProcess()
+	setKillProcess(func() { t.Errorf("killProcess must NOT be called for an expired token") })
+	t.Cleanup(func() { setKillProcess(saved) })
 
 	// Manually plant an already-expired token.
 	pendingRestarts.Store("EXPIRD", time.Now().Add(-1*time.Second))
