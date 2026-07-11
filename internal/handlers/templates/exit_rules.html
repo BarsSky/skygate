@@ -17,31 +17,22 @@
 .device-row .os-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg-hover); color: var(--text-muted); }
 @media (max-width: 900px) { .exit-layout { grid-template-columns: 1fr; } .exit-help { position: static; } }
 
-/* 2026-07-07: issue #7 — table overflow fix.
-   Without table-wrap, long IPs in "Цель" column stretch the table past the
-   sidebar (especially when inner sidebar is 340px and outer sidebar is 220px/52px).
-   word-break on code allows IPs to wrap, table-wrap allows horizontal scroll if needed. */
 .exit-main .card .table-wrap { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
 .exit-main .card table { table-layout: auto; width: 100%; }
 .exit-main .card table code { word-break: break-all; font-size: 11px; }
 .exit-main .card table td { vertical-align: top; }
 .exit-main .card table th, .exit-main .card table td { white-space: normal; }
 .exit-main .card table th { white-space: nowrap; }
-/* Столбец "Цель" — ограничиваем ширину чтобы длинный IP переносился */
 .exit-main .card table td.col-target { max-width: 200px; word-break: break-all; }
 .exit-main .card table td.col-target code { display: inline-block; max-width: 100%; }
-/* Action column — Allow/Deny tag, keep compact */
 .exit-main .card table td.col-action { white-space: nowrap; }
 .exit-main .card table td.col-delete { white-space: nowrap; text-align: right; }
-/* 2026-07-07: under 1200px outer viewport, the 340px inner sidebar + 220px outer
-   sidebar + 1180px shell can't all fit. Stack: drop inner help below. */
 @media (max-width: 1200px) {
   .exit-layout { grid-template-columns: minmax(0, 1fr) !important; }
   .exit-help { position: static !important; }
 }
 </style>
 <style>
-/* 2026-07-09: multi-delete styles */
 .exit-main .card table .col-check { width: 32px; text-align: center; }
 .exit-main .card table input[type="checkbox"].rule-check { cursor: pointer; transform: scale(1.15); }
 .multi-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 6px 0; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); flex-wrap: wrap; }
@@ -56,22 +47,22 @@
 
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-route"></i> Exit Rules</h2>
-    <div class="sub">Избирательная маршрутизация трафика через exit-узлы Tailscale</div>
+    <h2><i class="fa-solid fa-route"></i> {{.T "exit_rules.title"}}</h2>
+    <div class="sub">{{.T "exit_rules.subtitle"}}</div>
   </div>
   <div>
-    <span class="tag tag-info" title="DNS auto-update каждые 5m">
-      <i class="fa-solid fa-arrows-rotate"></i> DNS auto-update
+    <span class="tag tag-info" title="{{.T "exit_rules.dns_autoupdate_title"}}">
+      <i class="fa-solid fa-arrows-rotate"></i> {{.T "exit_rules.dns_autoupdate"}}
     </span>
-    <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> API / AI-помощник</a>
+    <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> {{.T "exit_rules.api_help_btn"}}</a>
   </div>
 </div>
 
-{{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> Правило добавлено — ACL обновлён, exit-node синхронизирован</div>{{end}}
-{{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> Часть IP уже были в правилах — добавлены только новые</div>{{end}}
-{{if .duplicate}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> Правило для <code>{{.existing}}</code> уже существует — не дублируем. Удалите существующее, если нужно обновить.</div>{{end}}
-{{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> Домен добавлен, но DNS пока не отвечает: <code>{{.warn}}</code>. Autoupdater попробует при следующем цикле (до 5 минут).</div>{{end}}
-{{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> Правило удалено</div>{{end}}
+{{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{.T "exit_rules.added_ok"}}</div>{{end}}
+{{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{.T "exit_rules.partial"}}</div>{{end}}
+{{if .duplicate}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{.Tf "exit_rules.duplicate" .existing}}</div>{{end}}
+{{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{.Tf "exit_rules.dns_pending" .warn}}</div>{{end}}
+{{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{.T "exit_rules.deleted"}}</div>{{end}}
 
 <div class="exit-layout">
 
@@ -79,53 +70,53 @@
   <div class="exit-main">
 
     <div class="card">
-      <h3><i class="fa-solid fa-plus"></i> Добавить правило</h3>
+      <h3><i class="fa-solid fa-plus"></i> {{.T "exit_rules.add_rule"}}</h3>
       <form method="post" action="/my/exit-rules">
         <div class="field">
-          <label>Устройство</label>
+          <label>{{.T "exit_rules.device"}}</label>
           <select name="device_id" id="device-select" onchange="updateDeviceUsageHint()">
-            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">— нет устройств —</option>{{end}}
+            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}" data-hint-ok="{{.HintOK}}" data-hint-warn="{{.HintWarn}}" data-hint-danger="{{.HintDanger}}" data-hint-default="{{$.T "exit_rules.usage_default"}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">{{.T "exit_rules.no_devices"}}</option>{{end}}
           </select>
-          <div class="hint" id="device-usage-hint">Устройство, для которого применяется правило. Видны только ваши устройства.</div>
+          <div class="hint" id="device-usage-hint">{{.T "exit_rules.device_hint"}}</div>
         </div>
         <div class="field">
-          <label>Exit node (выходной узел)</label>
+          <label>{{.T "exit_rules.exit_node"}}</label>
           <select name="exit_node">
-            {{range .ExitNodes}}<option value="{{.hostname}}"{{if eq .hostname $.FormValues.exit_node}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">— нет exit nodes —</option>{{end}}
+            {{range .ExitNodes}}<option value="{{.hostname}}"{{if eq .hostname $.FormValues.exit_node}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">{{.T "exit_rules.no_exit_nodes"}}</option>{{end}}
           </select>
-          <div class="hint">Сервер, через который пойдёт трафик. Все exit-узлы взаимозаменяемы.</div>
+          <div class="hint">{{.T "exit_rules.exit_node_hint"}}</div>
         </div>
         <div class="field">
-          <label>Действие</label>
+          <label>{{.T "exit_rules.action"}}</label>
           <select name="action">
-            <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>✅ Allow — разрешить доступ</option>
-            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>🚫 Deny — отбрасывать трафик</option>
+            <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>{{.T "exit_rules.action_accept"}}</option>
+            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>{{.T "exit_rules.action_deny"}}</option>
           </select>
-          <div class="hint"><b>Allow:</b> трафик к цели идёт через exit-node. <b>Deny:</b> трафик к цели отбрасывается на уровне ACL.</div>
+          <div class="hint">{{.T "exit_rules.action_hint"}}</div>
         </div>
         <div class="field">
-          <label>Тип цели</label>
+          <label>{{.T "exit_rules.target_type"}}</label>
           <select name="target_type">
-            <option value="ip"{{if eq $.FormValues.target_type "ip"}} selected{{end}}>IP адрес (например 1.2.3.4)</option>
-            <option value="subnet"{{if eq $.FormValues.target_type "subnet"}} selected{{end}}>Подсеть (например 10.0.0.0/24)</option>
-            <option value="domain"{{if eq $.FormValues.target_type "domain"}} selected{{end}}>Домен (например example.com)</option>
+            <option value="ip"{{if eq $.FormValues.target_type "ip"}} selected{{end}}>{{.T "exit_rules.target_type_ip"}}</option>
+            <option value="subnet"{{if eq $.FormValues.target_type "subnet"}} selected{{end}}>{{.T "exit_rules.target_type_subnet"}}</option>
+            <option value="domain"{{if eq $.FormValues.target_type "domain"}} selected{{end}}>{{.T "exit_rules.target_type_domain"}}</option>
           </select>
-          <div class="hint"><b>IP/подсеть</b> — участвуют в advertised-routes и работают для split-туннеля. <b>Домен</b> — только ACL (не влияет на маршрутизацию).</div>
+          <div class="hint">{{.T "exit_rules.target_type_hint"}}</div>
         </div>
         <div class="field">
-          <label>Значение</label>
-          <input type="text" name="target_value" placeholder="1.2.3.4 или 10.0.0.0/24 или example.com" value="{{.FormValues.target_value}}" required>
+          <label>{{.T "exit_rules.target_value"}}</label>
+          <input type="text" name="target_value" placeholder="{{.T "exit_rules.target_value_ph"}}" value="{{.FormValues.target_value}}" required>
         </div>
-        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Добавить правило</button> <a href="/my/exit-rules" class="btn"><i class="fa-solid fa-eraser"></i> Очистить</a>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{.T "exit_rules.submit"}}</button> <a href="/my/exit-rules" class="btn"><i class="fa-solid fa-eraser"></i> {{.T "exit_rules.clear"}}</a>
       </form>
     </div>
 
     {{if .DeviceInfos}}
     <div class="card">
-      <h3><i class="fa-solid fa-download"></i> Скрипты маршрутизации</h3>
-      <p style="margin:0 0 8px 0;">Для Linux (резервный способ). Windows — используйте <code>tailscale up --accept-routes</code>.</p>
+      <h3><i class="fa-solid fa-download"></i> {{.T "exit_rules.scripts_title"}}</h3>
+      <p style="margin:0 0 8px 0;">{{.T "exit_rules.scripts_sub"}}</p>
       <table>
-        <tr><th>Устройство</th><th>Правил</th><th>Linux скрипт</th><th>Откат</th></tr>
+        <tr><th>{{.T "exit_rules.col_device"}}</th><th>{{.T "exit_rules.col_rules"}}</th><th>{{.T "exit_rules.col_linux_script"}}</th><th>{{.T "exit_rules.col_restore"}}</th></tr>
         {{range .DeviceInfos}}
         <tr>
           <td><b>{{.Hostname}}</b></td>
@@ -149,30 +140,30 @@
     {{if .Rules}}
     <div class="card">
       <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <span><i class="fa-solid fa-list"></i> Текущие правила ({{len .Rules}})</span>
+        <span><i class="fa-solid fa-list"></i> {{.Tf "exit_rules.current_rules" (len .Rules)}}</span>
         <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-          {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="Только ваши правила (без учёта /32, которые autoupdater создаёт для доменов)">Мои правила: {{.UserFacingCount}}/{{.MaxPerUser}}</span>{{else}}<span class="tag">Мои правила: {{.UserFacingCount}}</span>{{end}}
-          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="Системный счётчик (по всем пользователям). Обычно это не требуется.">Системная: {{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>{{end}}
+          {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="{{.T "exit_rules.user_facing_title"}}">{{.Tf "exit_rules.user_facing" .UserFacingCount .MaxPerUser}}</span>{{else}}<span class="tag">{{.Tf "exit_rules.user_facing" .UserFacingCount 0}}</span>{{end}}
+          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="{{.T "exit_rules.system_title"}}">{{.Tf "exit_rules.system" .LoadPct .TotalRules .MaxTotalRules}}</span>{{end}}
         </span>
       </h3>
 
-      <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('Удалить выбранные правила? Для доменов также удалятся все связанные /32, которые autoupdater создал.')">
+      <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('{{.T "exit_rules.confirm_multi_delete"}}')">
         <div class="multi-bar">
           <label style="display:flex;align-items:center;gap:6px;font-size:12px">
             <input type="checkbox" id="select-all-top" onclick="toggleAll(this.checked)">
-            Выбрать все
+            {{.T "exit_rules.select_all"}}
           </label>
-          <span class="count">Выбрано: <b id="sel-count">0</b></span>
+          <span class="count">{{.T "exit_rules.selected"}} <b id="sel-count">0</b></span>
           <select class="filter-target" id="filter-type" onchange="applyFilter()">
-            <option value="">Все типы</option>
-            <option value="domain">Только домены</option>
-            <option value="subnet">Только /32</option>
-            <option value="ip">Только IP</option>
+            <option value="">{{.T "exit_rules.filter_type"}}</option>
+            <option value="domain">{{.T "exit_rules.filter_domain"}}</option>
+            <option value="subnet">{{.T "exit_rules.filter_subnet"}}</option>
+            <option value="ip">{{.T "exit_rules.filter_ip"}}</option>
           </select>
-          <input type="text" class="search" id="search-input" placeholder="Поиск по IP/домену..." oninput="applyFilter()">
+          <input type="text" class="search" id="search-input" placeholder="{{.T "exit_rules.search_ph"}}" oninput="applyFilter()">
           <span class="spacer"></span>
-          <span style="font-size:11px;color:var(--text-muted)" title="Удаление домена каскадно удалит все связанные /32">
-            <i class="fa-solid fa-circle-info"></i> Домен → каскад /32
+          <span style="font-size:11px;color:var(--text-muted)" title="{{.T "exit_rules.cascade_hint_title"}}">
+            <i class="fa-solid fa-circle-info"></i> {{.T "exit_rules.cascade_hint"}}
           </span>
         </div>
 
@@ -181,7 +172,7 @@
         <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$host}}</span>
-          <span class="tag">{{len $nodes}} exit-nodes</span>
+          <span class="tag">{{len $nodes}}{{.T "exit_rules.exit_nodes_suffix"}}</span>
           <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
         </summary>
 
@@ -190,17 +181,17 @@
           <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
             <i class="fa-solid fa-route"></i>
             <span class="tag tag-info">{{$exitNode}}</span>
-            <span style="color:var(--text-muted)">{{len $rules}} правил</span>
+            <span style="color:var(--text-muted)">{{len $rules}}{{.T "exit_rules.rules_count_suffix"}}</span>
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             <table>
-              <tr><th class="col-check"></th><th>Действие</th><th>Цель</th><th></th></tr>
+              <tr><th class="col-check"></th><th>{{.T "exit_rules.col_action"}}</th><th>{{.T "exit_rules.col_target"}}</th><th></th></tr>
               {{range $rules}}<tr class="rule-row" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                 <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                 <td class="col-delete">
-                  <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="Удалить только это правило" onclick="return confirm('Удалить правило?')"><i class="fa-solid fa-trash"></i></button>
+                  <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{.T "common.delete"}}" onclick="return confirm('{{.T "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                 </td>
               </tr>
               <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
@@ -217,12 +208,12 @@
         <div class="multi-bar sticky">
           <label style="display:flex;align-items:center;gap:6px;font-size:12px">
             <input type="checkbox" id="select-all-bottom" onclick="toggleAll(this.checked); document.getElementById('select-all-top').checked=this.checked">
-            Выбрать все
+            {{.T "exit_rules.select_all"}}
           </label>
-          <span class="count">Выбрано: <b id="sel-count-bottom">0</b></span>
+          <span class="count">{{.T "exit_rules.selected"}} <b id="sel-count-bottom">0</b></span>
           <span class="spacer"></span>
-          <button type="button" class="btn btn-sm" onclick="document.getElementById('search-input').value=''; document.getElementById('filter-type').value=''; applyFilter()"><i class="fa-solid fa-eraser"></i> Сбросить фильтры</button>
-          <button type="submit" class="btn btn-danger"><i class="fa-solid fa-trash"></i> Удалить выбранные</button>
+          <button type="button" class="btn btn-sm" onclick="document.getElementById('search-input').value=''; document.getElementById('filter-type').value=''; applyFilter()"><i class="fa-solid fa-eraser"></i> {{.T "exit_rules.reset_filters"}}</button>
+          <button type="submit" class="btn btn-danger"><i class="fa-solid fa-trash"></i> {{.T "exit_rules.delete_selected"}}</button>
         </div>
       </form>
     </div>
@@ -253,8 +244,8 @@
         });
         syncCount();
       };
-      // 2026-07-09: hint below device select — show usage level of currently
-      // selected device so user knows how close to the per-device limit.
+      // Per-device usage hint — translated strings come from data-* attributes
+      // (server-rendered via the user's language) so JS just substitutes numbers.
       window.updateDeviceUsageHint = function(){
         var sel = document.getElementById('device-select');
         if (!sel) return;
@@ -265,19 +256,19 @@
         var hint = document.getElementById('device-usage-hint');
         if (!hint) return;
         if (max <= 0) {
-          hint.textContent = 'Устройство, для которого применяется правило. Видны только ваши устройства.';
+          hint.textContent = opt.getAttribute('data-hint-default') || '';
+          hint.style.color = '';
           return;
         }
         var pct = Math.round(used * 100 / max);
         var level = used*4 > max*3 ? 'danger' : (used*2 > max ? 'warn' : 'ok');
-        var msg = 'Устройство: ' + used + '/' + max + ' (' + pct + '%)';
-        if (level === 'danger') msg += ' — близко к лимиту per-device. Удалите ненужные правила или обратитесь к админу.';
-        else if (level === 'warn') msg += ' — больше половины лимита per-device использовано.';
-        else msg += ' — лимит per-device в порядке.';
+        var tpl = opt.getAttribute('data-hint-' + level) || '';
+        // Replace placeholders %d/%d (%d%%) with used/max/pct.
+        var parts = tpl.split('%d');
+        var msg = parts[0] + used + parts[1] + max + parts[2] + '(' + pct + '%)' + (parts[3] || '');
         hint.textContent = msg;
         hint.style.color = level === 'danger' ? 'var(--danger)' : (level === 'warn' ? 'var(--warning)' : '');
       };
-      // Init on load (in case ?form_device_id=... is set).
       if (document.getElementById('device-select')) {
         updateDeviceUsageHint();
       }
@@ -286,14 +277,14 @@
     {{end}}
 
     <div class="card">
-      <h3><i class="fa-solid fa-info-circle"></i> Как это работает</h3>
+      <h3><i class="fa-solid fa-info-circle"></i> {{.T "exit_rules.how_title"}}</h3>
       <ol style="padding-left:20px;margin:0">
-        <li><b>Exit-узлы</b> анонсируют все whitelist-подсети через <code>--advertise-routes</code>. Headscale раздаёт их клиентам по ACL.</li>
-        <li><b>Skygate</b> автоматически синхронизирует advertised-routes при добавлении/удалении правил.</li>
-        <li><b>Клиенты:</b>
+        <li>{{.T "exit_rules.how_li1"}}</li>
+        <li>{{.T "exit_rules.how_li2"}}</li>
+        <li>{{.T "exit_rules.how_li3"}}
           <ul>
-            <li><b>Windows/Linux:</b> <code>tailscale up --accept-routes</code> — split-туннель (только whitelist → exit-node)</li>
-            <li><b>Android/iOS:</b> <code>tailscale up --exit-node=&lt;имя&gt;</code> — полный туннель</li>
+            <li>{{.T "exit_rules.how_li3_win"}}</li>
+            <li>{{.T "exit_rules.how_li3_mobile"}}</li>
           </ul>
         </li>
       </ol>
@@ -305,48 +296,48 @@
   <div class="exit-help">
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-play"></i> Быстрый старт</h4>
+      <h4><i class="fa-solid fa-play"></i> {{.T "exit_rules.quick_title"}}</h4>
       <ol>
-        <li>Выберите <b>устройство</b> и <b>exit-node</b></li>
-        <li>Укажите <b>тип</b> и <b>значение</b> цели</li>
-        <li>Нажмите <b>«Добавить»</b></li>
-        <li>На устройстве: <code>tailscale up --accept-routes</code></li>
+        <li>{{.T "exit_rules.quick_li1"}}</li>
+        <li>{{.T "exit_rules.quick_li2"}}</li>
+        <li>{{.T "exit_rules.quick_li3"}}</li>
+        <li>{{.T "exit_rules.quick_li4"}}</li>
       </ol>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-laptop"></i> Подключение клиента</h4>
-      <p><b>Windows / Linux:</b></p>
+      <h4><i class="fa-solid fa-laptop"></i> {{.T "exit_rules.client_title"}}</h4>
+      <p><b>{{.T "exit_rules.client_win_linux"}}</b></p>
       <p><code>tailscale up --accept-routes</code></p>
-      <p style="font-size:11px;color:var(--text-muted)">Без <code>--exit-node</code> — только whitelist-трафик идёт через туннель, остальное напрямую.</p>
-      <p style="margin-top:8px"><b>Android / iOS:</b></p>
+      <p style="font-size:11px;color:var(--text-muted)">{{.T "exit_rules.client_split_hint"}}</p>
+      <p style="margin-top:8px"><b>{{.T "exit_rules.client_mobile"}}</b></p>
       <p><code>tailscale up --exit-node=exit-node-name</code></p>
-      <p style="font-size:11px;color:var(--text-muted)">Полный туннель — избирательная маршрутизация не поддерживается на мобильных.</p>
+      <p style="font-size:11px;color:var(--text-muted)">{{.T "exit_rules.client_full_hint"}}</p>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-triangle-exclamation"></i> Важно</h4>
+      <h4><i class="fa-solid fa-triangle-exclamation"></i> {{.T "exit_rules.important"}}</h4>
       <ul>
-        <li><b>IP/подсеть</b> — работает для split-туннеля (Windows/Linux).</li>
-        <li><b>Домен</b> — только ACL-правило, не влияет на маршрутизацию.</li>
-        <li>После <b>перезапуска Tailscale</b> (<code>tailscale down/up</code>) выполните <code>--accept-routes</code> заново.</li>
-        <li>Правила <b>изолированы:</b> каждый пользователь управляет только своими устройствами.</li>
+        <li>{{.T "exit_rules.important_li1"}}</li>
+        <li>{{.T "exit_rules.important_li2"}}</li>
+        <li>{{.T "exit_rules.important_li3"}}</li>
+        <li>{{.T "exit_rules.important_li4"}}</li>
       </ul>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-robot"></i> Массовое добавление</h4>
-      <p>Используйте <b>AI-помощника</b> (Hermes, Cline) для массового создания правил:</p>
-      <p style="font-size:11px">«Добавь правила для <b>my-laptop</b> (device_id=5) через exit-node <b>node-name</b>: подсети Telegram, YouTube, Google»</p>
-      <p><a href="/my/exit-rules/help" class="btn btn-sm" style="width:100%;text-align:center"><i class="fa-solid fa-book"></i> API и примеры</a></p>
+      <h4><i class="fa-solid fa-robot"></i> {{.T "exit_rules.bulk_title"}}</h4>
+      <p>{{.T "exit_rules.bulk_desc"}}</p>
+      <p style="font-size:11px">{{.T "exit_rules.bulk_example"}}</p>
+      <p><a href="/my/exit-rules/help" class="btn btn-sm" style="width:100%;text-align:center"><i class="fa-solid fa-book"></i> {{.T "exit_rules.api_help_btn"}}</a></p>
     </div>
 
     <div class="help-card">
-      <h4><i class="fa-solid fa-shield-halved"></i> Приватность</h4>
+      <h4><i class="fa-solid fa-shield-halved"></i> {{.T "exit_rules.privacy_title"}}</h4>
       <ul>
-        <li>Правила видны только вам и администратору.</li>
-        <li>Другие пользователи не видят ваши устройства и правила.</li>
-        <li>ACL гарантирует что advertised-маршруты раздаются только вашим устройствам.</li>
+        <li>{{.T "exit_rules.privacy_li1"}}</li>
+        <li>{{.T "exit_rules.privacy_li2"}}</li>
+        <li>{{.T "exit_rules.privacy_li3"}}</li>
       </ul>
     </div>
 

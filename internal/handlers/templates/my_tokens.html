@@ -1,30 +1,30 @@
 {{define "body-my_tokens"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-key"></i> API Tokens</h2>
-    <div class="sub">Персональные токены для доступа к API (AI-помощники, скрипты, curl)</div>
+    <h2><i class="fa-solid fa-key"></i> {{.T "tokens.title"}}</h2>
+    <div class="sub">{{.T "tokens.subtitle"}}</div>
   </div>
 </div>
-{{if .revoked}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> Токен отозван</div>{{end}}
+{{if .revoked}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{.T "tokens.revoke"}}</div>{{end}}
 <div class="card">
-  <h3><i class="fa-solid fa-plus"></i> Создать токен</h3>
+  <h3><i class="fa-solid fa-plus"></i> {{.T "tokens.create"}}</h3>
   <form method="post" action="/my/token">
     <div class="field">
-      <label>Метка</label>
-      <input type="text" name="label" placeholder="Hermes, Cline, backup-script" required>
+      <label>{{.T "tokens.name"}}</label>
+      <input type="text" name="label" placeholder="{{.T "tokens.name_placeholder"}}" required>
     </div>
-    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Создать</button>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{.T "tokens.create"}}</button>
   </form>
 </div>
 {{if .Tokens}}
 <div class="card">
-  <h3><i class="fa-solid fa-list"></i> Токены ({{len .Tokens}})</h3>
+  <h3><i class="fa-solid fa-list"></i> {{.T "tokens.title"}} ({{len .Tokens}})</h3>
   <table>
-    <tr><th>Метка</th><th>Создан</th><th>Использован</th><th></th></tr>
+    <tr><th>{{.T "tokens.name"}}</th><th>{{.T "tokens.created"}}</th><th>{{.T "tokens.last_used"}}</th><th></th></tr>
     {{range .Tokens}}<tr>
       <td><b>{{.Label}}</b></td><td>{{.Created}}</td><td>{{.LastUsed}}</td>
       <td>
-        <form method="post" action="/my/token/{{.ID}}/revoke" style="display:inline" onsubmit="return confirm('Отозвать?')">
+        <form method="post" action="/my/token/{{.ID}}/revoke" style="display:inline" onsubmit="return confirm('{{.T "tokens.revoke"}}?')">
           <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
         </form>
       </td>
@@ -33,8 +33,8 @@
 </div>
 {{end}}
 <div class="card">
-  <h3><i class="fa-solid fa-terminal"></i> Использование</h3>
+  <h3><i class="fa-solid fa-terminal"></i> {{.T "tokens.usage_hint"}}</h3>
   <pre style="background:var(--bg);padding:12px;border-radius:4px;overflow-x:auto">curl -H "Authorization: Bearer *** {{.BaseURL}}/my/exit-rules/api</pre>
-  <p style="color:var(--text-muted);font-size:0.85em">Токен показывается <b>один раз</b>. Отозвать можно в любое время.</p>
+  <p style="color:var(--text-muted);font-size:0.85em">{{.T "tokens.new_token_warning"}}</p>
 </div>
 {{end}}

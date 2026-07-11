@@ -1,26 +1,26 @@
 {{define "body-user-keys"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-key"></i>Preauth ключи</h2>
-    <div class="sub">Ключи, которые вы получали для регистрации устройств. Неиспользованные ключи можно отозвать.</div>
+    <h2><i class="fa-solid fa-key"></i>{{.T "keys.title"}}</h2>
+    <div class="sub">{{.T "keys.subtitle"}}.</div>
   </div>
   <div class="btn-row">
-    <a href="/my/devices" class="btn btn-secondary"><i class="fa-solid fa-laptop"></i>К устройствам</a>
+    <a href="/my/devices" class="btn btn-secondary"><i class="fa-solid fa-laptop"></i>{{.T "nav.devices"}}</a>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-key"></i>Все выданные ключи</h3>
+  <h3><i class="fa-solid fa-key"></i>{{.T "keys.title"}}</h3>
   {{if .Keys}}
   <table>
     <thead>
       <tr>
         <th style="width:60px">ID</th>
-        <th>Ключ</th>
-        <th style="width:160px">Создан</th>
-        <th style="width:160px">Истекает</th>
-        <th style="width:120px">Статус</th>
-        <th style="width:140px">Действие</th>
+        <th>{{.T "devices.preauth_key"}}</th>
+        <th style="width:160px">{{.T "devices.created"}}</th>
+        <th style="width:160px">{{.T "devices.expire"}}</th>
+        <th style="width:120px">{{.T "devices.status"}}</th>
+        <th style="width:140px">{{.T "common.actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -30,23 +30,23 @@
         <td><code style="font-size:11px">{{slice .Key 0 18}}…</code></td>
         <td class="mono" style="color:var(--text-muted)">{{datetimeformat .CreatedAt}}</td>
         <td class="mono" style="color:var(--text-muted)">
-          {{if gt .ExpiresAt 0}}{{datetimeformat .ExpiresAt}}{{else}}—{{end}}
+          {{if gt .ExpiresAt 0}}{{datetimeformat .ExpiresAt}}{{else}}{{.T "keys.not_set"}}{{end}}
         </td>
         <td>
           {{if .Used}}
-            <span class="tag tag-online" style="color:var(--success)">использован</span>
+            <span class="tag tag-online" style="color:var(--success)">{{.T "keys.used"}}</span>
           {{else if and (gt .ExpiresAt 0) (le .ExpiresAt $.Now)}}
-            <span class="tag" style="color:var(--text-subtle)">истёк</span>
+            <span class="tag" style="color:var(--text-subtle)">{{.T "devices.expired"}}</span>
           {{else}}
-            <span class="tag" style="color:var(--info,#075985);background:var(--info-bg,#f0f9ff);padding:2px 7px;border-radius:3px">активен</span>
+            <span class="tag" style="color:var(--info,#075985);background:var(--info-bg,#f0f9ff);padding:2px 7px;border-radius:3px">{{.T "devices.status"}}: ok</span>
           {{end}}
         </td>
         <td>
           {{if or .Used (and (gt .ExpiresAt 0) (le .ExpiresAt $.Now))}}
             <span style="color:var(--text-subtle);font-size:12px">—</span>
           {{else}}
-            <form method="post" action="/my/keys/{{.ID}}/expire" onsubmit="return confirm('Отозвать ключ {{.ID}}? После отзыва регистрация нового устройства с этим ключом будет невозможна.');" style="margin:0">
-              <button type="submit" class="btn btn-secondary" style="padding:3px 10px;font-size:12px"><i class="fa-solid fa-ban"></i>Отозвать</button>
+            <form method="post" action="/my/keys/{{.ID}}/expire" onsubmit="return confirm('{{.Tf "devices.expire_confirm" .ID}}');" style="margin:0">
+              <button type="submit" class="btn btn-secondary" style="padding:3px 10px;font-size:12px"><i class="fa-solid fa-ban"></i>{{.T "devices.expire_action"}}</button>
             </form>
           {{end}}
         </td>
@@ -57,19 +57,18 @@
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>
-    <div>У вас пока нет выданных ключей. Получите первый на странице <a href="/my/devices">Мои устройства</a>.</div>
+    <div>{{.T "keys.empty"}}. <a href="/my/devices">{{.T "nav.devices"}}</a></div>
   </div>
   {{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-circle-info"></i>Как это работает</h3>
+  <h3><i class="fa-solid fa-circle-info"></i>{{.T "exit_rules.how_title"}}</h3>
   <ul class="plain">
-    <li><b>Активен</b> — ключ можно использовать для регистрации нового устройства прямо сейчас.</li>
-    <li><b>Использован</b> — устройство уже зарегистрировано с этим ключом. Отзыву не подлежит.</li>
-    <li><b>Истёк</b> — срок жизни ключа (1 час с момента выдачи) прошёл, или вы отозвали ключ вручную.</li>
-    <li>Ключ — одноразовый. После регистрации одного устройства он автоматически становится «использован».</li>
-    <li>Отзыв действует и в headscale (ключ больше не был принят ни одним устройством), и локально — отозванный ключ не будет пюанно использован.</li>
+    <li><b>{{.T "devices.status"}}: ok</b> — {{.T "keys.unused"}}.</li>
+    <li><b>{{.T "keys.used"}}</b> — {{.T "keys.used"}}.</li>
+    <li><b>{{.T "devices.expired"}}</b> — {{.T "devices.expire"}}.</li>
+    <li>{{.T "keys.subtitle"}}.</li>
   </ul>
 </div>
 {{end}}
