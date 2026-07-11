@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"skygate/internal/db"
 )
 
 
@@ -137,8 +139,8 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		if acl, err := a.GenerateACL(); err == nil {
 			ver := a.saveACLSnapshot(acl, c.Username)
 			if err := a.HS.SetPolicy(acl); err == nil {
-				a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=?", ver)
-				a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'api_bulk', ?)", ver,
+				db.MarkACLApplied(a.DB, ver)
+				db.AppendExitRuleLog(a.DB, ver, db.ExitRuleActionAPIBulk,
 					fmt.Sprintf("user %s added %d rules via API", c.Username, added))
 				// 2026-07-11: same operator-channel as the form path.
 				if a.Notifier != nil {
@@ -146,7 +148,7 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 				}
 				_ = a.SyncAdvertisedRoutes()
 			} else {
-				a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=? WHERE version=?", err.Error(), ver)
+				db.MarkACLFail(a.DB, ver, err.Error())
 				if a.Notifier != nil {
 					go a.Notifier.SendAlert(fmt.Sprintf("❌ ACL bulk-apply failed (by %s, %d rules)\n  err: %v",
 						c.Username, added, err))

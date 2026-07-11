@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"skygate/internal/db"
 )
 
 
@@ -26,13 +28,13 @@ func (a *App) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid version", 400)
 		return
 	}
-	var config string
-	if err := a.DB.QueryRow("SELECT config FROM acl_snapshots WHERE version = ?", ver).Scan(&config); err != nil {
+	config, err := db.GetACLConfig(a.DB, ver)
+	if err != nil {
 		http.Error(w, "version not found", 404)
 		return
 	}
 	if err := a.HS.SetPolicy(config); err != nil {
-		a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'rollback_fail', ?)", ver, err.Error())
+		db.AppendExitRuleLog(a.DB, ver, db.ExitRuleActionRollbackFail, err.Error())
 		// 2026-07-11: rollback failure is loud — admin tried to restore
 		// a known-good policy and the headscale API rejected it. Pager time.
 		if a.Notifier != nil {
@@ -43,7 +45,7 @@ func (a *App) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.saveACLSnapshot(config, c.Username)
-	a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'rollback', ?)", ver, fmt.Sprintf("rolled back by %s", c.Username))
+	db.AppendExitRuleLog(a.DB, ver, db.ExitRuleActionRollback, fmt.Sprintf("rolled back by %s", c.Username))
 	if a.Notifier != nil {
 		go a.Notifier.SendAlert(fmt.Sprintf("⏪ ACL rollback by %s → v%d", c.Username, ver))
 	}

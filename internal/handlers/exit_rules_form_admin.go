@@ -10,6 +10,8 @@ package handlers
 
 import (
 	"net/http"
+
+	"skygate/internal/db"
 )
 
 
@@ -81,29 +83,32 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logRows, _ := a.DB.Query("SELECT version, action, detail, created_at FROM exit_rule_logs ORDER BY id DESC LIMIT 20")
-	var logs []map[string]any
-	if logRows != nil {
-		defer logRows.Close()
-		for logRows.Next() {
-			var v int
-			var a, d, ts string
-			if err := logRows.Scan(&v, &a, &d, &ts); err == nil {
-				logs = append(logs, map[string]any{"version": v, "action": a, "detail": d, "time": ts})
-			}
+	logs := []map[string]any{}
+	if recent, err := db.RecentExitRuleLogs(a.DB); err == nil {
+		for _, l := range recent {
+			logs = append(logs, map[string]any{
+				"version": l.Version,
+				"action":  l.Action,
+				"detail":  l.Detail,
+				"time":    db.ExitRuleLogTime(l.CreatedAt),
+			})
 		}
 	}
 
-	snapRows, _ := a.DB.Query("SELECT version, created_by, applied_success, error_msg, created_at FROM acl_snapshots ORDER BY version DESC LIMIT 10")
-	var snaps []map[string]any
-	if snapRows != nil {
-		defer snapRows.Close()
-		for snapRows.Next() {
-			var v, success int
-			var by, errMsg, ts string
-			if err := snapRows.Scan(&v, &by, &success, &errMsg, &ts); err == nil {
-				snaps = append(snaps, map[string]any{"version": v, "by": by, "success": success == 1, "error": errMsg, "time": ts})
+	snaps := []map[string]any{}
+	if recent, err := db.RecentACLSnapshots(a.DB); err == nil {
+		for _, s := range recent {
+			success := false
+			if s.AppliedSuccess.Valid && s.AppliedSuccess.Int64 == 1 {
+				success = true
 			}
+			snaps = append(snaps, map[string]any{
+				"version": s.Version,
+				"by":      s.CreatedBy,
+				"success": success,
+				"error":   s.ErrorMsg,
+				"time":    db.ExitRuleLogTime(s.CreatedAt),
+			})
 		}
 	}
 
