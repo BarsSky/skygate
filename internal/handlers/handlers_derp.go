@@ -160,6 +160,73 @@ type PreauthKeyStats struct {
 	Expired int
 }
 
+// ---------- DERP TYPES ----------
+
+// DerpStatus describes the local custom DERP relay (derper) for /admin/derp.
+type DerpStatus struct {
+	Running         bool
+	SocketListening bool
+	STUNListening   bool
+	DERPPort        string
+	STUNPort        string
+	Version         string
+	Hostname        string
+	RegionCode      string
+	RegionID        string
+	RegionName      string
+	WhiteIP         string
+	UpTime          string
+	StartedAt       string
+	PID             string
+	Memory          string
+	GoVersion       string
+	Machine         string
+	Connections     int
+	Accepts         int
+	BytesIn         int64
+	BytesOut        int64
+	PacketsIn       int
+	PacketsOut      int
+	Clients         int
+	STUNRequests    int
+	RecentLog       string
+
+	// Active connections to derper (src IP, reverse DNS).
+	ActiveTCP []DerpPeer
+	ActiveUDP []DerpPeer
+	// ConnSummary aggregates ActiveTCP+ActiveUDP by kind for the hero badges.
+	ConnSummary *ConnSummary
+	// Snapshot history tail (parsed recent records).
+	Snapshot []DerpSnapshot
+}
+
+// DerpPeer is one observed peer connecting to derper.
+type DerpPeer struct {
+	IP   string `json:"ip"`
+	Host string `json:"host"`
+	Port string `json:"port"`
+	// Kind classifies the source: ws_relay (Tailscale client),
+	// ws_admin (NPM WebSocket pool), lan, internet, unknown.
+	Kind string `json:"kind,omitempty"`
+}
+
+// ConnSummary aggregates connections by kind for the dashboard hero badges.
+type ConnSummary struct {
+	Relay int
+	Admin int
+	LAN   int
+	Self  int
+	Other int
+}
+
+// DerpSnapshot is one entry from the rolling snapshot log on the agent.
+type DerpSnapshot struct {
+	TS      string                 `json:"ts"`
+	Conns   []DerpPeer             `json:"conns"`
+	Metrics map[string]interface{} `json:"metrics"`
+	Summary *ConnSummary           `json:"summary,omitempty"`
+}
+
 // countMyPreAuthKeys classifies every preauth key the user has been
 // issued. preauth_keys.user_id references portal_users.id (NOT headscale
 // username). The split lets the dashboard show "1 used, 0 active, 1
