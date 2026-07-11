@@ -32,8 +32,8 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	}
 	// Save headscale_preauth_id so we can later map a node's preAuthKey
 	// back to this portal user when the device registers with this key.
-	_, _ = a.DB.Exec(`INSERT INTO preauth_keys(user_id, key, expires_at, headscale_preauth_id) VALUES(?,?,?,?)`,
-		c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
+	// 2026-07-11: Этап 10 part 3 — INSERT moved to db.InsertPreauthKey
+	_, _ = db.InsertPreauthKey(a.DB, c.UserID, key.Key, time.Now().Add(time.Hour).Unix(), key.ID)
 	a.audit(c.UserID, c.Username, "preauth_issued", "1h single-use")
 	a.renderWithLayout(w, r, "user/preauth_result.html", c, map[string]any{
 		"Key":     key.Key,
