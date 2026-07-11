@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -63,10 +64,17 @@ func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if origUserID != "" && origUserName != "" && origUserName != "tagged-devices" {
-		_, _ = a.DB.Exec(`INSERT OR REPLACE INTO node_owner_map
-			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, ?, ?, ?, ?)`,
-			nodeID, origUserID, origUserName, tag, c.UserID)
+		// 2026-07-12: Этап 10 part 4 — moved to db.UpsertNodeOwner.
+		// nodeID is int64 here (from headscale.NodeView.ID parsed
+		// via strconv above); UpsertNodeOwner wants the string form
+		// (matches the column type TEXT). origUserID is a string
+		// headscale user id; we best-effort parse it to int64 for
+		// the headscale_user_id column.
+		var hsUID int64
+		if n, err := strconv.ParseInt(origUserID, 10, 64); err == nil {
+			hsUID = n
+		}
+		_ = db.UpsertNodeOwner(a.DB, strconv.FormatInt(nodeID, 10), hsUID, origUserName, tag, c.UserID)
 	}
 
 	a.HS.InvalidateCache()
@@ -94,7 +102,8 @@ func (a *App) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	_, _ = a.DB.Exec(`DELETE FROM node_owner_map WHERE node_id=? AND tag=?`, nodeID, tag)
+	// 2026-07-12: Этап 10 part 4 — moved to db.DeleteNodeOwnerByNodeTag.
+	_ = db.DeleteNodeOwnerByNodeTag(a.DB, strconv.FormatInt(nodeID, 10), tag)
 
 	a.HS.InvalidateCache()
 	a.audit(c.UserID, c.Username, "node_untag", fmt.Sprintf("node=%d tag=%s", nodeID, tag))
