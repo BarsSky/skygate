@@ -2,11 +2,13 @@ package handlers
 
 // handlers_admin_pages.go — extracted from handlers.go.
 // Admin pages that are read-only views:
-// - GetAdminAudit (/admin/audit — audit_log view, paginated DESC)
+// - GetAdminAudit (/admin/audit — audit_log view, paginated DESC, with
+//   optional ?action= and ?user= filters added 2026-07-11)
 // - GetAdminACLs  (/admin/acls — current headscale ACL policy view)
 
 import (
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,7 +19,58 @@ func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	rows, err := a.DB.Query(`SELECT id, user_id, username, action, detail, created_at FROM audit_log ORDER BY id DESC LIMIT 200`)
+	// 2026-07-11: read optional ?action= and ?user= filters so the
+	// operator can scope to "telegram_ack", "user_create", or a
+	// specific username without scrolling through 200 rows.
+	q := r.URL.Query()
+	actionFilter := strings.TrimSpace(q.Get("action"))
+	userFilter := strings.TrimSpace(q.Get("user"))
+
+	// Build the WHERE clause incrementally so empty filters don't
+	// leave dangling ANDs.
+	var (
+		conds []string
+		args  []any
+	)
+	if actionFilter != "" {
+		conds = append(conds, "action = ?")
+		args = append(args, actionFilter)
+	}
+	if userFilter != "" {
+		// 2026-07-11: substring match on username — "alice" hits
+		// "alice", "alice@..." etc. The exact match (`=`) is too
+		// strict when operators are searching for a person.
+		conds = append(conds, "username LIKE ?")
+		args = append(args, "%"+userFilter+"%")
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	// Distinct action list for the dropdown. Read first because
+	// the operator needs it to pick a filter, and it's cheap
+	// (a few dozen rows at most).
+	actionRows, err := a.DB.Query(`SELECT DISTINCT action FROM audit_log ORDER BY action`)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	var actions []string
+	for actionRows.Next() {
+		var a string
+		if err := actionRows.Scan(&a); err == nil {
+			actions = append(actions, a)
+		}
+	}
+	actionRows.Close()
+
+	// Main query — apply the WHERE we built above.
+	rows, err := a.DB.Query(`
+		SELECT id, user_id, username, action, detail, created_at
+		  FROM audit_log `+where+`
+		 ORDER BY id DESC
+		 LIMIT 200`, args...)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -39,7 +92,11 @@ func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 	a.renderWithLayout(w, r, "admin/audit.html", c, map[string]any{
-		"Entries": entries,
+		"Entries":       entries,
+		"Actions":       actions,
+		"ActionFilter":  actionFilter,
+		"UserFilter":    userFilter,
+		"FilterActive":  actionFilter != "" || userFilter != "",
 	})
 }
 
