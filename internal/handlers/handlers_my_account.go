@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	"skygate/internal/auth"
+	"skygate/internal/db"
 )
 
 // GetMyAccount renders the account page with a password-change form.
@@ -64,8 +65,8 @@ func (a *App) PostMyAccountPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify current password against stored hash
-	var hash string
-	err := a.DB.QueryRow(`SELECT password_hash FROM portal_users WHERE id=?`, c.UserID).Scan(&hash)
+	// 2026-07-11: Этап 10 part 1 — moved to db.GetPasswordHashByID
+	hash, err := db.GetPasswordHashByID(a.DB, c.UserID)
 	if err != nil {
 		http.Redirect(w, r, "/my/account?err=user_not_found", http.StatusFound)
 		return
@@ -82,7 +83,8 @@ func (a *App) PostMyAccountPassword(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/my/account?err=hash_failed", http.StatusFound)
 		return
 	}
-	if _, err := a.DB.Exec(`UPDATE portal_users SET password_hash=? WHERE id=?`, newHash, c.UserID); err != nil {
+	// 2026-07-11: Этап 10 part 1 — UPDATE moved to db.UpdatePasswordHash
+	if _, err := db.UpdatePasswordHash(a.DB, c.UserID, newHash); err != nil {
 		http.Redirect(w, r, "/my/account?err=db_error", http.StatusFound)
 		return
 	}

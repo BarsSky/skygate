@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"skygate/internal/headscale"
+
+	dbpkg "skygate/internal/db"
 )
 
 // firstTagOrFallback returns the node's first tag, or "tag:untagged"
@@ -131,14 +133,13 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 	// to a different portal user is theirs, not ours.
 	otherOwners := map[string]bool{}
 	if portalUserID != 0 {
-		oRows, _ := db.Query(`SELECT headscale_user_id FROM portal_users WHERE id != ? AND headscale_user_id IS NOT NULL AND headscale_user_id != ''`, portalUserID)
-		if oRows != nil {
-			defer oRows.Close()
-			for oRows.Next() {
-				var hid string
-				if err := oRows.Scan(&hid); err == nil {
-					otherOwners[hid] = true
-				}
+		// 2026-07-11: Этап 10 part 1 — moved to db.GetOtherHSUserIDs
+		// (uses a.DB because `db` here is the local *sql.DB param
+		// and shadows the db package import)
+		ids, _ := dbpkg.GetOtherHSUserIDs(a.DB, portalUserID)
+		for _, hid := range ids {
+			if hid != "" {
+				otherOwners[hid] = true
 			}
 		}
 	}

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // GetMyKeys lists every preauth key the current user has been issued,
@@ -140,8 +142,9 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	}
 	// Resolve the headscale user ID for this portal user. We need
 	// it for the headscale API/CLI call.
-	var hsUserID sql.NullInt64
-	if err := a.DB.QueryRow(`SELECT headscale_user_id FROM portal_users WHERE id=?`, c.UserID).Scan(&hsUserID); err != nil || !hsUserID.Valid {
+	// 2026-07-11: Этап 10 part 1 — moved to db.GetHSIDByID
+	hsUserID, err := db.GetHSIDByID(a.DB, c.UserID)
+	if err != nil || !hsUserID.Valid {
 		http.Error(w, "no headscale user linked", 400)
 		return
 	}
