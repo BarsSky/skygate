@@ -504,7 +504,7 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			// 2026-07-11: notify the operator that a new exit-rule landed
 			// (security audit trail). Sent async so the redirect isn't blocked.
 			if a.Notifier != nil {
-				go a.Notifier.SendTelegram(fmt.Sprintf("📥 New rule #%d by %s\n  %s %s → %s\n  exit-node: %s",
+				go a.Notifier.SendAlert(fmt.Sprintf("📥 New rule #%d by %s\n  %s %s → %s\n  exit-node: %s",
 					ver, c.Username, typeToInsert, targetValue, action, exitNode))
 			}
 			// 2026-07-06: issue #2 — sync advertised routes на exit-nodes.
@@ -524,7 +524,7 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			// the operator wants to wake up to. Telegram goes first, the
 			// log row is the audit trail.
 			if a.Notifier != nil {
-				go a.Notifier.SendTelegram(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
+				go a.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
 					c.Username, typeToInsert, targetValue, err))
 			}
 		}
@@ -614,7 +614,7 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 				if totalCascade > 0 {
 					msg += fmt.Sprintf(" (+%d /32 cascade)", totalCascade)
 				}
-				go a.Notifier.SendTelegram(msg)
+				go a.Notifier.SendAlert(msg)
 			}
 			// 2026-07-06: re-sync advertised routes after delete
 			if sync := a.SyncAdvertisedRoutes(); sync != nil {
@@ -628,7 +628,7 @@ func (a *App) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 			a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'delete_fail', ?)", ver, fmt.Sprintf("user %s: %v", c.Username, err))
 			// 2026-07-11: ACL delete-failure is also worth waking up for.
 			if a.Notifier != nil {
-				go a.Notifier.SendTelegram(fmt.Sprintf("❌ ACL delete failed (by %s, %d rules)\n  err: %v",
+				go a.Notifier.SendAlert(fmt.Sprintf("❌ ACL delete failed (by %s, %d rules)\n  err: %v",
 					c.Username, len(infos), err))
 			}
 		}

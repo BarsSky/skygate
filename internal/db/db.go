@@ -103,6 +103,7 @@ func migrate(d *sql.DB) error {
 	// v0.21) succeed on a fresh database.
 	migrateV025(d)
 	migrateV026(d)
+	migrateV027(d)
 	migrateV022(d)
 	migrateV023(d)
 	migrateV024(d)

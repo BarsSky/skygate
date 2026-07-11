@@ -39,6 +39,9 @@ import (
 // token is configured).
 type Notifier interface {
 	SendTelegram(text string)
+	// SendAlert posts text as a numbered alert (for /ack). Returns
+	// the alert id, or 0 when the bot is not configured.
+	SendAlert(text string) int64
 }
 
 // NoopNotifier discards all messages. Used when no token is configured.
@@ -56,6 +59,12 @@ type RealNotifier struct {
 	client   *http.Client
 	pollInt  time.Duration
 	off      bool
+	// 2026-07-11: Phase 3 — per-user rule limits, used by /quota.
+	// Stored on the notifier because main.go already constructs
+	// NewRealNotifier with full config in hand; HandleCommand asks
+	// the notifier for limits via BotEnv.
+	userMaxRules map[string]int
+	defaultMax   int
 }
 
 func NewRealNotifier(d *sql.DB) *RealNotifier {
@@ -69,6 +78,33 @@ func NewRealNotifier(d *sql.DB) *RealNotifier {
 		client:  &http.Client{Timeout: 15 * time.Second},
 		pollInt: 2 * time.Second,
 	}
+}
+
+// SetLimits configures per-user rule caps consumed by /quota. Called
+// once at startup from cmd/skygate/main.go after config.Load().
+// Safe to leave at zero-values: /quota then shows "no limit" for
+// every user.
+func (n *RealNotifier) SetLimits(userMax map[string]int, defaultMax int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.userMaxRules = userMax
+	n.defaultMax = defaultMax
+}
+
+// env returns a BotEnv snapshot for HandleCommand. The DB pointer
+// is the same one we already hold; the limits are read under the
+// mu lock so a future SetLimits call mid-poll doesn't tear the map.
+func (n *RealNotifier) env() BotEnv {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	// Copy the map so HandleCommand can't observe a concurrent
+	// SetLimits. The map is tiny (one entry per user) so the cost
+	// is negligible.
+	max := make(map[string]int, len(n.userMaxRules))
+	for k, v := range n.userMaxRules {
+		max[k] = v
+	}
+	return BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax}
 }
 
 // SendTelegram posts text to the configured chat_id. Silently no-ops if
@@ -163,7 +199,7 @@ func (n *RealNotifier) Run(ctx context.Context) {
 			if !strings.HasPrefix(text, "/") {
 				continue
 			}
-			reply := HandleCommand(ctx, n.db, text)
+			reply := HandleCommand(ctx, n.env(), text)
 			n.reply(token, chatID, reply)
 		}
 		select {
