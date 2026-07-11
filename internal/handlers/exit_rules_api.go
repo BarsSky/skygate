@@ -140,7 +140,17 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 				a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=?", ver)
 				a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, 'api_bulk', ?)", ver,
 					fmt.Sprintf("user %s added %d rules via API", c.Username, added))
+				// 2026-07-11: same operator-channel as the form path.
+				if a.Notifier != nil {
+					go a.Notifier.SendTelegram(fmt.Sprintf("📥 Bulk add by %s: %d rules (api)", c.Username, added))
+				}
 				_ = a.SyncAdvertisedRoutes()
+			} else {
+				a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=? WHERE version=?", err.Error(), ver)
+				if a.Notifier != nil {
+					go a.Notifier.SendTelegram(fmt.Sprintf("❌ ACL bulk-apply failed (by %s, %d rules)\n  err: %v",
+						c.Username, added, err))
+				}
 			}
 		}
 	}
