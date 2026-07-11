@@ -58,7 +58,7 @@ API:
 
 ```
 cmd/skygate/main.go                                — entry point, HTTP routes
-internal/handlers/handlers.go                       — shared infra (App, render, i18n, currentUser, audit) + settings/theme + my/keys + my/devices + my/preauth + my/exit-nodes + get-help + DERP type defs + misc helpers (~688 lines)
+internal/handlers/handlers.go                       — shared infra only: App struct + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser (~257 lines)
 internal/handlers/handlers_dashboard.go             — TailnetMetrics struct + computeTailnetMetrics + GetDashboard handler (~104 lines)
 internal/handlers/handlers_auth.go                  — GetLogin/PostLogin/PostLogout + i18n PostLang cookie (~93 lines)
 internal/handlers/handlers_node_ownership.go        — backfillNodeOwnership (Strategy C temporal preauth->tag:private match) (~235 lines)
@@ -279,17 +279,28 @@ route registration in `cmd/skygate/main.go`.
 
 `handlers.go` was a god-object at ~1100 lines and has been the main
 decomposition target. Progress so far:
-- `handlers_node_ownership.go` (235) — `backfillNodeOwnership` extracted.
-- `handlers_dashboard.go` (104) — `TailnetMetrics` + `computeTailnetMetrics`
-  + `GetDashboard` extracted.
-- `handlers_auth.go` (93) — `GetLogin` / `PostLogin` / `PostLogout` /
+- `handlers_node_ownership.go` (238) — `backfillNodeOwnership` extracted.
+- `handlers_dashboard.go` (175) — `TailnetMetrics` + `computeTailnetMetrics`
+  + `GetDashboard` + `countMyPreAuthKeys` extracted.
+- `handlers_auth.go` (100) — `GetLogin` / `PostLogin` / `PostLogout` /
   `PostLang` extracted.
+- `handlers_my_account.go` (92) — self-service password change extracted.
+- `handlers_api_tokens.go` (59) — personal API tokens extracted.
+- `handlers_admin_pages.go` (63) — read-only admin views extracted.
+- `handlers_admin_users.go` (222) — admin user CRUD extracted.
+- `handlers_admin_nodes.go` (102) — admin device/tag extracted.
+- `handlers_derp.go` (438) — DERP status + handlers + DerpStatus/DerpPeer/
+  ConnSummary/DerpSnapshot/PreauthKeyStats types extracted.
+- `handlers_settings.go` (63) — theme switcher extracted.
+- `handlers_help.go` (20) — /help page extracted.
+- `handlers_my_preauth.go` (44) — POST /my/preauth extracted.
+- `handlers_my_exit_nodes.go` (23) — GET /my/exit-nodes extracted.
+- `handlers_my_keys.go` (173) — /my/keys list+expire extracted.
+- `handlers_my_devices.go` (127) — GET /my/devices extracted.
 
-`handlers.go` is now **~688 lines**. Remaining blocks are all small
-(<100 lines each): settings/theme, my/keys, my/devices, my/preauth,
-my/exit-nodes, get-help, DERP type defs, misc helpers. Each candidate
-is below the threshold where extraction pays off, so further splitting
-is cosmetic — the file is no longer a god-object.
+`handlers.go` is now **~257 lines** — pure shared infrastructure
+(App struct, render helpers, currentUser, audit, getMaxRulesForUser).
+Nothing left to extract; the file is no longer a god-object.
 
 `exit_rules.go` (1146 → 359) was already largely decomposed; the form
 handlers live in `exit_rules_form.go` (744 lines), which is the next
@@ -302,18 +313,22 @@ growing either god-object:
 - `internal/handlers/handlers_admin_*.go` for admin pages
 
 Sister files in `internal/handlers/` (current line counts):
-- `handlers.go` (688) — shared infra + settings/theme + my/keys +
-  my/devices + my/preauth + my/exit-nodes + get-help + DERP type defs +
-  misc helpers
-- `handlers_dashboard.go` (104) — TailnetMetrics + computeTailnetMetrics + GetDashboard
-- `handlers_auth.go` (93) — GetLogin / PostLogin / PostLogout / PostLang
-- `handlers_node_ownership.go` (235) — backfillNodeOwnership
-- `handlers_my_account.go` (84) — self-service password change
-- `handlers_api_tokens.go` (52) — personal API tokens
-- `handlers_admin_pages.go` (58) — read-only admin views (audit, ACLs)
-- `handlers_derp.go` (337) — DERP status + handlers + type defs
-- `handlers_admin_users.go` (209) — admin user CRUD
-- `handlers_admin_nodes.go` (91) — admin device/tag
+- `handlers.go` (257) — shared infra only: App + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser
+- `handlers_dashboard.go` (175) — TailnetMetrics + computeTailnetMetrics + GetDashboard + countMyPreAuthKeys
+- `handlers_auth.go` (100) — GetLogin / PostLogin / PostLogout / PostLang
+- `handlers_node_ownership.go` (238) — backfillNodeOwnership
+- `handlers_my_account.go` (92) — self-service password change
+- `handlers_api_tokens.go` (59) — personal API tokens
+- `handlers_admin_pages.go` (63) — read-only admin views (audit, ACLs)
+- `handlers_derp.go` (438) — DERP status + handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot/PreauthKeyStats types
+- `handlers_admin_users.go` (222) — admin user CRUD
+- `handlers_admin_nodes.go` (102) — admin device/tag
+- `handlers_settings.go` (63) — /settings/theme (theme switcher)
+- `handlers_help.go` (20) — /help
+- `handlers_my_preauth.go` (44) — POST /my/preauth (issue 1h single-use key)
+- `handlers_my_exit_nodes.go` (23) — GET /my/exit-nodes
+- `handlers_my_keys.go` (173) — /my/keys (list + expire)
+- `handlers_my_devices.go` (127) — GET /my/devices (with lazy node_owner_map backfill)
 - `exit_rules.go` (359) — DeviceRule struct + DB helpers + `GenerateACL()` + ACL helpers
 - `exit_rules_form.go` (744) — HTML form handlers for /my/exit-rules + /admin/exit-rules + rollback
 - `exit_rules_api.go` (159) — public REST API

@@ -202,50 +202,29 @@ func (a *App) audit(userID int64, username, action, detail string) {
 		userID, username, action, detail)
 }
 
-// Settings (theme switcher) handlers moved to handlers_settings.go.
-// (PostSettingsTheme, stripThemeParam)
-
-// My/keys handlers moved to handlers_my_keys.go.
-// (GetMyKeys, PostMyKeyExpire)
-
-// Help handler moved to handlers_help.go.
-// (GetHelp)
-
-// ---------- USER SELF-SERVICE ----------
-
-// GetMyDevices handler moved to handlers_my_devices.go.
-// (GetMyDevices)
-
-// PostMyPreauth handler moved to handlers_my_preauth.go.
-// (PostMyPreauth)
-
-// GetExitNodes handler moved to handlers_my_exit_nodes.go.
-// (GetExitNodes)
-
-// Admin user management functions moved to handlers_admin_users.go.
-// (GetAdminUsers, PostAdminUser, extractIDFromPath, PostAdminDeleteUser)
-
-// Admin device/tag handlers moved to handlers_admin_nodes.go.
-// (GetAdminDevices, PostAdminNodeTag, PostAdminNodeUntag)
-
-// Admin read-only pages moved to handlers_admin_pages.go.
-// (GetAdminAudit, GetAdminACLs)
-
-// ---------- ADMIN DERP ----------
-
-// DERP types moved to handlers_derp.go.
-// (DerpStatus, DerpPeer, ConnSummary, DerpSnapshot)
-// (DerpSnapshot.CurrentConns, collectDerpStatus)
-
-// DERP helpers (firstTagOrFallback, classifyDerp*, summarizeDerpPeers) moved to handlers_derp.go.
-// DERP admin handlers moved to handlers_derp.go.
-// (GetAdminDERP, GetAdminDERPRefresh)
-
-// ── API Tokens ──
-
-// API token handlers moved to handlers_api_tokens.go.
-// (GetMyTokens, PostMyToken, PostMyTokenRevoke)
-
+// ---------- FILE INDEX ----------
+//
+// handlers.go owns only shared infra: App struct, render helpers,
+// currentUser, audit, getMaxRulesForUser.
+//
+// All per-feature handlers live in focused siblings:
+//   - handlers_settings.go          — /settings/theme (theme switcher)
+//   - handlers_help.go              — /help
+//   - handlers_my_preauth.go        — POST /my/preauth
+//   - handlers_my_exit_nodes.go     — GET  /my/exit-nodes
+//   - handlers_my_keys.go           — /my/keys (list + expire)
+//   - handlers_my_devices.go        — GET  /my/devices
+//   - handlers_dashboard.go         — /dashboard + TailnetMetrics
+//   - handlers_auth.go              — login / logout / lang
+//   - handlers_my_account.go        — /my/account (password change)
+//   - handlers_api_tokens.go        — /my/tokens (API tokens)
+//   - handlers_node_ownership.go    — backfillNodeOwnership helper
+//   - handlers_admin_users.go       — /admin/users
+//   - handlers_admin_nodes.go       — /admin/devices (tag/untag)
+//   - handlers_admin_pages.go       — /admin/audit, /admin/acls
+//   - handlers_derp.go              — /admin/derp + DERP types
+//
+// See AGENTS.md "Sister files" for current line counts.
 
 // 2026-07-07: getMaxRulesForUser returns per-user rule limit or default.
 func (a *App) getMaxRulesForUser(username string) int {
