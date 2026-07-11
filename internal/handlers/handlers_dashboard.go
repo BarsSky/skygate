@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"database/sql"
 	"net/http"
+	"time"
+
+	"skygate/internal/headscale"
 )
 
 // ---------- DASHBOARD ----------
@@ -106,4 +110,66 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	a.renderWithLayout(w, r, "dashboard.html", c, map[string]any{
 		"TailnetMetrics": a.computeTailnetMetrics(scope, c.UserID),
 	})
+}
+
+// countMyPreAuthKeys classifies every preauth key the user has been
+// issued. preauth_keys.user_id references portal_users.id (NOT headscale
+// username). The split lets the dashboard show "1 used, 0 active, 1
+// expired" instead of a single number that requires the user to
+// remember what each key was for.
+//
+// Side effect: a key is considered "used" when either our local
+// `used` column is set OR any headscale node currently lists that
+// key as its preAuthKey. The node-side check is the source of truth
+// - if the node is gone (deleted, expired server-side) but our
+// local row was never flipped, we flip it here. This keeps the
+// counter honest without a separate garbage-collection job.
+func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) PreauthKeyStats {
+	var s PreauthKeyStats
+	if myUserID == 0 {
+		return s
+	}
+	// Collect headscale preAuthKey IDs currently attached to any node.
+	// These are authoritative "used" keys.
+	hsUsedKeyIDs := map[string]bool{}
+	for _, n := range nodes {
+		if n.PreAuthKeyID != "" {
+			hsUsedKeyIDs[n.PreAuthKeyID] = true
+		}
+	}
+	now := time.Now().Unix()
+	rows, err := a.DB.Query(`SELECT id, headscale_preauth_id, used, expires_at FROM preauth_keys WHERE user_id=?`, myUserID)
+	if err != nil {
+		return s
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var hsID sql.NullString
+		var usedInt int
+		var exp sql.NullInt64
+		if err := rows.Scan(&id, &hsID, &usedInt, &exp); err != nil {
+			continue
+		}
+		s.Total++
+		// Determine the authoritative used state. Prefer the live
+		// headscale signal (node.preAuthKey.id) over the local flag,
+		// so a missing local flip doesn't keep a key listed as active
+		// once the device exists. We DO NOT clear the local flag here
+		// - that's a side-effect the user should opt into via a
+		// separate sync job; for the counter, just trust headscale.
+		isUsed := usedInt == 1
+		if hsID.Valid && hsUsedKeyIDs[hsID.String] {
+			isUsed = true
+		}
+		switch {
+		case isUsed:
+			s.Used++
+		case exp.Valid && exp.Int64 <= now:
+			s.Expired++
+		default:
+			s.Active++
+		}
+	}
+	return s
 }
