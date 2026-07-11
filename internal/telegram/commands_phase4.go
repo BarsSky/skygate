@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -50,18 +51,48 @@ const restartAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no I,O,0,1 — eas
 // confirmation) and reads are common (we check on every /restart).
 var pendingRestarts sync.Map
 
-// killProcess is the function /restart uses to terminate the
-// process. Production calls os.FindProcess + Signal(SIGTERM); tests
-// override it so the test binary doesn't die. We use os.FindProcess
-// (not syscall.Kill) so the file compiles on Windows dev machines —
-// syscall.Kill is unix-only. The runtime target is the Linux
-// container, where SIGTERM produces a graceful shutdown.
-var killProcess = func() {
-	p, err := os.FindProcess(os.Getpid())
-	if err != nil {
-		return
+// killProcess holds the function /restart uses to terminate the
+// process. Production loads it once at init and never reassigns;
+// tests reassign it (via setKillProcess) to a no-op or a
+// channel-signalling stub so the test binary doesn't actually die.
+//
+// We use atomic.Pointer[func()] (not a plain var) so that the
+// restart goroutine (which reads killProcess ~200ms after the
+// HandleCommand call returns) and the test's override/teardown
+// don't race. -race catches the plain-var version.
+//
+// We use os.FindProcess (not syscall.Kill) so the file compiles
+// on Windows dev machines — syscall.Kill is unix-only. The
+// runtime target is the Linux container, where SIGTERM produces
+// a graceful shutdown.
+var killProcess atomic.Pointer[func()]
+
+func init() {
+	defaultKill := func() {
+		p, err := os.FindProcess(os.Getpid())
+		if err != nil {
+			return
+		}
+		_ = p.Signal(syscall.SIGTERM)
 	}
-	_ = p.Signal(syscall.SIGTERM)
+	killProcess.Store(&defaultKill)
+}
+
+// getKillProcess atomically loads the current killProcess func.
+// Returns nil if the atomic has never been initialised (shouldn't
+// happen — init() always stores — but defensive against manual
+// zero-value usage in future tests).
+func getKillProcess() func() {
+	if p := killProcess.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// setKillProcess atomically replaces the killProcess func.
+// Used by tests to install a no-op or signalling stub.
+func setKillProcess(fn func()) {
+	killProcess.Store(&fn)
 }
 
 // versionReply returns the build label, Go runtime, and DB schema
@@ -145,7 +176,9 @@ func restartReply(env BotEnv, arg string) string {
 		// Brief delay so the reply message lands on Telegram
 		// before the process dies.
 		time.Sleep(200 * time.Millisecond)
-		killProcess()
+		if fn := getKillProcess(); fn != nil {
+			fn()
+		}
 	}()
 	return "restart: confirmed — SIGTERM in 200ms, container will restart"
 }
