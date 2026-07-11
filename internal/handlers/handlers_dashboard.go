@@ -10,6 +10,21 @@ import (
 
 // ---------- DASHBOARD ----------
 
+// PreauthKeyStats breaks down a user's preauth keys by lifecycle state.
+// Total == Used + Active + Expired. Active means "still usable right now":
+// unused AND expiration (if set) is in the future. Expired means unused
+// but past its expiration. Used means a headscale node consumed it.
+//
+// Moved from handlers_derp.go during Этап 8 — this type is dashboard-
+// specific (used by TailnetMetrics.MyPreauthKeys) and doesn't belong
+// in the DERP file.
+type PreauthKeyStats struct {
+	Total   int
+	Used    int
+	Active  int
+	Expired int
+}
+
 // TailnetMetrics is a small summary of the tailnet for the dashboard hero.
 // For admin: shows the whole tailnet. For users: shows their own devices
 // and only the public/exit nodes they're allowed to see.
