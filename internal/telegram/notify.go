@@ -65,6 +65,9 @@ type RealNotifier struct {
 	// the notifier for limits via BotEnv.
 	userMaxRules map[string]int
 	defaultMax   int
+	// 2026-07-11: Phase 4 — build version (set by main.go from
+	// app.Version). Surfaces in /version reply.
+	version string
 }
 
 func NewRealNotifier(d *sql.DB) *RealNotifier {
@@ -91,6 +94,15 @@ func (n *RealNotifier) SetLimits(userMax map[string]int, defaultMax int) {
 	n.defaultMax = defaultMax
 }
 
+// SetVersion stores the build label (e.g. "v0.3") used by /version.
+// Called once at startup from cmd/skygate/main.go. Empty string is
+// fine — /version then prints "v0.0-dev".
+func (n *RealNotifier) SetVersion(v string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.version = v
+}
+
 // env returns a BotEnv snapshot for HandleCommand. The DB pointer
 // is the same one we already hold; the limits are read under the
 // mu lock so a future SetLimits call mid-poll doesn't tear the map.
@@ -104,7 +116,7 @@ func (n *RealNotifier) env() BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
-	return BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax}
+	return BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version}
 }
 
 // SendTelegram posts text to the configured chat_id. Silently no-ops if

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -374,5 +375,198 @@ func TestTrimForTelegram(t *testing.T) {
 	short := "hello"
 	if trimForTelegram(short) != short {
 		t.Errorf("short strings must pass through unchanged")
+	}
+}
+
+// --- Phase 4 tests ---
+
+func TestHandleCommandVersion(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, Version: "v0.3"}
+	got := HandleCommand(context.Background(), env, "/version")
+	if !strings.Contains(got, "v0.3") {
+		t.Errorf("expected build label v0.3, got: %q", got)
+	}
+	// Go runtime version is whatever the test binary is built with.
+	if !strings.Contains(got, "Go:") {
+		t.Errorf("expected 'Go:' prefix, got: %q", got)
+	}
+	// Schema level is the constant; lets the operator confirm
+	// whether migrations have caught up to the binary.
+	if !strings.Contains(got, "DB schema:") {
+		t.Errorf("expected 'DB schema:' prefix, got: %q", got)
+	}
+	if !strings.Contains(got, dbSchemaVersion) {
+		t.Errorf("expected schema level %q, got: %q", dbSchemaVersion, got)
+	}
+}
+
+func TestHandleCommandVersionEmptyFallback(t *testing.T) {
+	d := setupTestDB(t)
+	// No Version set — /version must still work and report a
+	// placeholder rather than failing the command.
+	got := HandleCommand(context.Background(), envFor(d), "/version")
+	if !strings.Contains(got, "v0.0-dev") {
+		t.Errorf("expected placeholder 'v0.0-dev' when Version is empty, got: %q", got)
+	}
+}
+
+func TestHandleCommandRestartIssuesToken(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/restart")
+	if !strings.Contains(got, "confirm by sending within 30s") {
+		t.Errorf("expected confirmation prompt, got: %q", got)
+	}
+	// Token must be 6 chars from the alphabet — extract and verify.
+	// The reply format is: "/restart <token>".
+	// The first call doesn't write to audit_log (only phase 2 does).
+	var count int
+	d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'telegram_restart'`).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 audit rows after first /restart call, got %d", count)
+	}
+}
+
+func TestHandleCommandRestartConfirmHappy(t *testing.T) {
+	d := setupTestDB(t)
+	// Override killProcess so the test binary doesn't actually die.
+	saved := killProcess
+	killed := false
+	killProcess = func() { killed = true }
+	defer func() { killProcess = saved }()
+
+	// Phase 1: mint a token.
+	first := HandleCommand(context.Background(), envFor(d), "/restart")
+	// Extract the 6-char token. Reply format:
+	//   "restart: confirm by sending within 30s\n  /restart XXXXXX\n..."
+	// Find the line starting with "  /restart ".
+	var token string
+	for _, line := range strings.Split(first, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "/restart ") {
+			token = strings.TrimPrefix(line, "/restart ")
+			break
+		}
+	}
+	if len(token) != 6 {
+		t.Fatalf("expected 6-char token, got %q (from reply: %q)", token, first)
+	}
+	// Phase 2: confirm. The goroutine that calls killProcess will
+	// wait 200ms before firing; for the test we don't need to wait —
+	// we just check the reply and the audit row.
+	second := HandleCommand(context.Background(), envFor(d), "/restart "+token)
+	if !strings.Contains(second, "SIGTERM in 200ms") {
+		t.Errorf("expected 'SIGTERM in 200ms' in confirm reply, got: %q", second)
+	}
+	// Wait briefly for the goroutine to fire killProcess.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !killed {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !killed {
+		t.Errorf("expected killProcess to be invoked within 2s")
+	}
+	// Audit log row should be written.
+	var count int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'telegram_restart'`).Scan(&count); err != nil {
+		t.Fatalf("audit readback: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 telegram_restart row, got %d", count)
+	}
+	// Token must be consumed — replaying it returns "not a valid".
+	third := HandleCommand(context.Background(), envFor(d), "/restart "+token)
+	if !strings.Contains(third, "not a valid") {
+		t.Errorf("expected 'not a valid' on token replay, got: %q", third)
+	}
+}
+
+func TestHandleCommandRestartBadToken(t *testing.T) {
+	d := setupTestDB(t)
+	saved := killProcess
+	killProcess = func() { t.Errorf("killProcess must NOT be called for a bad token") }
+	defer func() { killProcess = saved }()
+
+	got := HandleCommand(context.Background(), envFor(d), "/restart NOTATOKEN")
+	if !strings.Contains(got, "not a valid confirmation token") {
+		t.Errorf("expected 'not a valid' for unknown token, got: %q", got)
+	}
+}
+
+func TestHandleCommandRestartExpiredToken(t *testing.T) {
+	d := setupTestDB(t)
+	saved := killProcess
+	killProcess = func() { t.Errorf("killProcess must NOT be called for an expired token") }
+	defer func() { killProcess = saved }()
+
+	// Manually plant an already-expired token.
+	pendingRestarts.Store("EXPIRD", time.Now().Add(-1*time.Second))
+	got := HandleCommand(context.Background(), envFor(d), "/restart EXPIRD")
+	if !strings.Contains(got, "expired") {
+		t.Errorf("expected 'expired' for stale token, got: %q", got)
+	}
+	// Expired tokens must be evicted.
+	if _, ok := pendingRestarts.Load("EXPIRD"); ok {
+		t.Errorf("expected expired token to be evicted from pendingRestarts")
+	}
+}
+
+func TestMintRestartToken(t *testing.T) {
+	tok, err := mintRestartToken()
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if len(tok) != 6 {
+		t.Errorf("expected 6-char token, got %q (len=%d)", tok, len(tok))
+	}
+	for _, r := range tok {
+		if !strings.ContainsRune(restartAlphabet, r) {
+			t.Errorf("token char %q not in alphabet %q", r, restartAlphabet)
+		}
+	}
+	// Two consecutive tokens must differ (probabilistic but ~1 in 10^9
+	// of collision with 32^6 alphabet).
+	tok2, _ := mintRestartToken()
+	if tok == tok2 {
+		t.Errorf("expected different tokens on consecutive mints, both were %q", tok)
+	}
+}
+
+func TestHelpDetailKnown(t *testing.T) {
+	// Every command listed in /help should have a detailed help entry.
+	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help"} {
+		got := helpDetailReply(cmd)
+		if !strings.HasPrefix(got, "/"+cmd+" ") {
+			t.Errorf("expected /%s detailed help, got: %q", cmd, got)
+		}
+	}
+}
+
+func TestHelpDetailUnknown(t *testing.T) {
+	got := helpDetailReply("nonexistent")
+	if !strings.Contains(got, "No detailed help") {
+		t.Errorf("expected 'No detailed help' for unknown command, got: %q", got)
+	}
+}
+
+func TestHandleCommandHelpDetailed(t *testing.T) {
+	d := setupTestDB(t)
+	// /help ack must return the detailed ack help, not the short list.
+	got := HandleCommand(context.Background(), envFor(d), "/help ack")
+	if !strings.HasPrefix(got, "/ack ") {
+		t.Errorf("expected detailed /ack help, got: %q", got)
+	}
+	if !strings.Contains(got, "Idempotent") {
+		t.Errorf("expected ack-specific detail ('Idempotent'), got: %q", got)
+	}
+	// /help with no arg must still return the short list (backward compat).
+	short := HandleCommand(context.Background(), envFor(d), "/help")
+	if !strings.Contains(short, "Commands:") {
+		t.Errorf("expected short list with no /help arg, got: %q", short)
+	}
+	// /help unknown should fall through to the "no detailed help" branch.
+	unknown := HandleCommand(context.Background(), envFor(d), "/help foo")
+	if !strings.Contains(unknown, "No detailed help") {
+		t.Errorf("expected 'No detailed help' for unknown, got: %q", unknown)
 	}
 }

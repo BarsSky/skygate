@@ -9,18 +9,23 @@ import (
 
 // BotEnv is the read-only context HandleCommand needs beyond the
 // database: per-user rule limits (from SKYGATE_USER_MAX_RULES), the
-// default cap, and the DB itself.
+// default cap, the app version (set once in main.go from app.Version),
+// and the DB itself.
 //
 // Why a struct: Phase 3 (/quota) needs to know per-user caps to
 // answer "who is close to the limit". /ack needs the DB to update
-// telegram_alerts. /exit_nodes and /nodes only need the DB. Threading
-// a single struct is cleaner than a growing argument list, and
+// telegram_alerts. /version needs the build version. Threading a
+// single struct is cleaner than a growing argument list, and
 // tests can construct a BotEnv with empty limits to exercise the
 // reply formatters without pulling in the full config stack.
 type BotEnv struct {
 	DB           *sql.DB
 	UserMaxRules map[string]int
 	DefaultMax   int
+	// Version is the build label set by main.go (e.g. "v0.3").
+	// Empty string means "version not configured" — /version then
+	// prints "v0.0-dev" rather than failing the command.
+	Version string
 }
 
 // MaxFor returns the per-user cap (from UserMaxRules) or the default.
@@ -38,7 +43,8 @@ func (e BotEnv) MaxFor(username string) int {
 //
 // Phase 1 (MVP) implements /status. Phase 2 adds /nodes, /rules, /audit
 // (see commands_phase2.go). Phase 3 adds /exit_nodes, /quota, /ack
-// (see commands_phase3.go).
+// (see commands_phase3.go). Phase 4 adds /version, /restart, and
+// detailed /help <command> (see commands_phase4.go).
 func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 	_ = ctx
 	parts := strings.Fields(strings.TrimSpace(raw))
@@ -51,7 +57,10 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 	case "/status":
 		return statusReply(env.DB)
 	case "/help":
-		return helpReply()
+		if len(args) == 0 {
+			return helpReply()
+		}
+		return helpDetailReply(args[0])
 	case "/nodes":
 		return nodesReply(env.DB)
 	case "/rules":
@@ -64,6 +73,10 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return quotaReply(env.DB, env)
 	case "/ack":
 		return ackReply(env.DB, strings.Join(args, " "))
+	case "/version":
+		return versionReply(env)
+	case "/restart":
+		return restartReply(env, strings.Join(args, " "))
 	default:
 		return fmt.Sprintf("Unknown command: %s. Try /help.", cmd)
 	}
@@ -86,11 +99,13 @@ func statusReply(d *sql.DB) string {
 func helpReply() string {
 	return "Commands:\n" +
 		"/status — summary (rules/users/last acl)\n" +
+		"/version — Skygate build, Go runtime, DB schema level\n" +
+		"/restart — graceful container restart (requires confirm)\n" +
 		"/nodes — list tailnet devices by user+tag\n" +
 		"/exit_nodes — list tailnet exit-nodes (tag:exit-node) with last-seen\n" +
 		"/rules — recent exit-rules (id, user, target, action)\n" +
 		"/quota — per-user rule count vs per-user cap\n" +
 		"/audit — last 20 audit_log entries\n" +
 		"/ack <id> — acknowledge an alert (id is the [#N] prefix)\n" +
-		"/help — this list"
+		"/help [command] — this list, or detailed help for one command"
 }
