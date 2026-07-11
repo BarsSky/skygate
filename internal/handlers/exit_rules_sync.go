@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"encoding/json"
+
+	"skygate/internal/db"
 )
 
 
@@ -355,7 +357,7 @@ func (a *App) logAutoUpdate(ruleID int, domain string, added, removed int, errMs
 	if errMsg != "" {
 		detail += " err=" + errMsg
 	}
-	_, _ = a.DB.Exec("INSERT INTO exit_rule_logs (version, action, detail) VALUES (0, 'autoupdate', ?)", detail)
+	_ = db.AppendExitRuleLog(a.DB, db.ExitRuleLogNoVersion, db.ExitRuleActionAutoupdate, detail)
 }
 
 func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) {
