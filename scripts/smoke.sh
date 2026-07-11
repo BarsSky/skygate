@@ -1,23 +1,53 @@
 #!/bin/bash
 # scripts/smoke.sh — end-to-end smoke test for skygate.
-# Runs in ~5s. Exits 0 on PASS, 1 on FAIL.
+# Runs in ~5s per language. Exits 0 on PASS, 1 on FAIL.
 #
 # Usage:
-#   bash scripts/smoke.sh [BASE_URL]   # default http://localhost:8080
+#   bash scripts/smoke.sh [BASE_URL]                    # runs both ru and en
+#   SMOKE_LANG=ru bash scripts/smoke.sh [BASE_URL]      # one language only
+#   SMOKE_LANG=en bash scripts/smoke.sh [BASE_URL]
 #
 # Reads SKYGATE_ADMIN_USER / SKYGATE_ADMIN_PASS from .env automatically.
+#
+# When SMOKE_LANG is unset, this script re-invokes itself once per
+# language (ru, then en) and prints a combined SUMMARY. The base URL
+# is forwarded so a caller can do `make test BASE=...`.
 set -u
 PASS=0
-
 : "${SMOKE_TEST_NEW_PASSWORD:=SkySmoke_2026_X}"
 FAIL=0
-ok()  { echo "PASS: $1"; PASS=$((PASS+1)); }
-bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
-note(){ echo "---- $1"; }
+
+# Multi-language dispatch.
+# If SMOKE_LANG is unset, fan out: run this script once for each
+# supported language. Each sub-run uses its own cookie file and
+# cookie jar so they don't interfere with each other. Forward $@
+# so the BASE URL is preserved.
+if [ -z "${SMOKE_LANG:-}" ]; then
+  echo "=== smoke fan-out: ru then en ==="
+  OVERALL=0
+  for L in ru en; do
+    SMOKE_LANG=$L COOKIE=/tmp/smoke_ck.$L bash "$0" "$@" || OVERALL=$?
+  done
+  echo "=== smoke done (overall exit=$OVERALL) ==="
+  exit $OVERALL
+fi
+
+# From here on we are in a single-language sub-run.
+ok()  { echo "[$SMOKE_LANG] PASS: $1"; PASS=$((PASS+1)); }
+bad() { echo "[$SMOKE_LANG] FAIL: $1"; FAIL=$((FAIL+1)); }
+note(){ echo "[$SMOKE_LANG] ---- $1"; }
 
 BASE="${1:-http://localhost:8080}"
-COOKIE=/tmp/smoke_ck
+# Use a per-language cookie file so the two sub-runs don't trample
+# each other's session.
+COOKIE="${COOKIE:-/tmp/smoke_ck}"
 rm -f "$COOKIE"
+
+# Per-language Accept-Language header. The server reads this when no
+# `lang` cookie is set. Setting it on every request is enough — we
+# don't need a lang cookie because LangFromRequest falls through to
+# Accept-Language.
+ACCEPT_LANG_HDR=(-H "Accept-Language: $SMOKE_LANG")
 
 # Try to load credentials from .env
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -36,10 +66,51 @@ if [ -z "$PASS_VAR" ]; then
   exit 1
 fi
 
-# Helper: HTTP status
+# Helper: HTTP status. Always sends Accept-Language.
 status() {
-  curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" "$@"
+  curl -s -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$@"
 }
+
+# Helper: HTML body. Always sends Accept-Language.
+html() {
+  curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$@"
+}
+
+# Helper: JSON body. Always sends Accept-Language.
+json() {
+  curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$@"
+}
+
+# ---- Per-language UI strings (for content sanity checks) ----
+# English is the source of truth; Russian must match the i18n catalog.
+case "$SMOKE_LANG" in
+  ru)
+    S_ACTIVE="Активные"
+    S_TITLE_HELP="Справка"
+    S_TITLE_DEVICES="Мои устройства"
+    S_TITLE_EXIT_RULES="Exit Rules"            # intentionally ASCII for both
+    S_PAGE_RULES_HEADER="Текущие правила"
+    S_PAGE_MY_RULES="Мои правила"
+    S_PAGE_ADD_RULE="Добавить правило"
+    S_PAGE_DASHBOARD="Главная"
+    S_TOGGLE_LANG="Язык"
+    ;;
+  en)
+    S_ACTIVE="Active"
+    S_TITLE_HELP="Help"
+    S_TITLE_DEVICES="My devices"
+    S_TITLE_EXIT_RULES="Exit Rules"
+    S_PAGE_RULES_HEADER="Current rules"
+    S_PAGE_MY_RULES="My rules"
+    S_PAGE_ADD_RULE="Add rule"
+    S_PAGE_DASHBOARD="Dashboard"
+    S_TOGGLE_LANG="Language"
+    ;;
+  *)
+    bad "unknown SMOKE_LANG=$SMOKE_LANG (use ru or en)"
+    exit 1
+    ;;
+esac
 
 # Step 0.5: rate limit kicks in on /login
 # Send 6 wrong-password attempts with a non-admin username and verify the
@@ -47,9 +118,8 @@ status() {
 # not consume the per-username bucket that the admin login needs.
 note "0.5. /login rate limit (5 wrong attempts before 429)"
 RL_USER="smoke_rl_user_$$"
-# Use a unique bad password that does not match anything
 for i in 1 2 3 4 5 6; do
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]}" -X POST \
     --data-urlencode "username=$RL_USER" \
     --data-urlencode "password=WRONG_PASSWORD_ATTEMPT_$i" \
     "$BASE/login")
@@ -66,13 +136,10 @@ for i in 1 2 3 4 5 6; do
     fi
   fi
 done
-# /api rate limit is harder to test in 50 PASS budget (60/min default
-# means ~30 calls before block). Spot-check one 200 + a few short of
-# the limit. Skipped here to keep the smoke fast.
 
 # Step 1: login
 note "1. login as $USER"
-CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" -X POST \
+CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]}" -X POST \
   --data-urlencode "username=$USER" --data-urlencode "password=$PASS_VAR" \
   "$BASE/login")
 [ "$CODE" = "302" ] && ok "login returned 302" || bad "login returned $CODE"
@@ -80,9 +147,7 @@ CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" -X POST \
 # Pre-flight: remove any leftover smoke-test rules on device 3 (emilia)
 # from previous smoke runs. These were created by step 6 below; if step 8
 # ever failed (e.g. timeout), the rule remained and accumulated.
-RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
-ORPHAN_IDS=$(echo "$RESP" | grep -oE '"id":[0-9]+,"user_id":[0-9]+,"device_id":3' | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | tr '\n' ' ')
-# More robust: find rules with target_value 198.51.100.x on device 3
+RESP=$(json "$BASE/my/exit-rules/api")
 ORPHAN_IDS=$(echo "$RESP" | python3 -c "
 import json, sys
 try:
@@ -102,20 +167,36 @@ if [ -n "$ORPHAN_IDS" ]; then
   note "0. cleanup: removed $(echo $ORPHAN_IDS | wc -w) orphan smoke rules on device 3 (emilia)"
 fi
 
-
 # Step 2: dashboard
 note "2. /dashboard"
 CODE=$(status "$BASE/dashboard")
 [ "$CODE" = "200" ] && ok "/dashboard 200" || bad "/dashboard $CODE"
 
-# Step 3: my/* pages
+# Step 2.5: dashboard title matches the language. /dashboard has a
+# <h2>Welcome with the username, plus a sub line and the page title
+# in the <title> tag (resolved by pageTitle() per language).
+H=$(html "$BASE/dashboard")
+if echo "$H" | grep -q "<title>${S_TITLE_DEVICES}\\|<title>${S_PAGE_DASHBOARD}\\|<title>Skygate"; then
+  ok "/dashboard title rendered"
+else
+  bad "/dashboard title missing or wrong language"
+fi
+# The first <h2> in the body must contain either the localized nav label
+# or the localized heading. (Some pages reuse the title for both.)
+if echo "$H" | grep -q "Welcome, $USER\|Добро пожаловать, $USER"; then
+  ok "/dashboard greets the user in the right language"
+else
+  bad "/dashboard greeting missing or wrong language"
+fi
+
+# Step 3: my/* pages — only HTTP status, language-agnostic
 note "3. /my/* pages"
 for path in /my/devices /my/exit-rules /my/exit-rules/help /my/tokens /my/keys /my/exit-nodes /help; do
   CODE=$(status "$BASE$path")
   [ "$CODE" = "200" ] && ok "$path 200" || bad "$path $CODE"
 done
 
-# Step 4: admin/* pages (skyadmin is admin)
+# Step 4: admin/* pages — HTTP status + render-clean check
 note "4. /admin/* pages"
 for path in /admin/users /admin/devices /admin/audit /admin/acls \
             /admin/exit-rules /admin/exit-rules/cleanup /admin/exit-rules/sync \
@@ -130,7 +211,7 @@ done
 # undefined" written to the response body. We anchor to the leading
 # 'template:' on the first three response lines.
 for path in /admin/users /admin/acls /admin/devices /admin/audit; do
-  HTML=$(curl -s -b "$COOKIE" "$BASE$path")
+  HTML=$(html "$BASE$path")
   if echo "$HTML" | head -3 | grep -q "^template:"; then
     bad "$path: template render error ($(echo "$HTML" | head -3 | grep '^template:' | head -1))"
   else
@@ -139,15 +220,22 @@ for path in /admin/users /admin/acls /admin/devices /admin/audit; do
 done
 
 # Content sanity: /admin/users must list skyadmin
-if curl -s -b "$COOKIE" "$BASE/admin/users" | grep -q "skyadmin"; then
+if html "$BASE/admin/users" | grep -q "skyadmin"; then
   ok "/admin/users lists skyadmin"
 else
   bad "/admin/users: missing skyadmin"
 fi
 
+# Content sanity: /admin/users active-count uses the localized word.
+if html "$BASE/admin/users" | grep -q "$S_ACTIVE"; then
+  ok "/admin/users uses '$S_ACTIVE' (active count label)"
+else
+  bad "/admin/users missing active-count label '$S_ACTIVE'"
+fi
+
 # Step 5: API endpoints
 note "5. API: GET /my/exit-rules/api"
-RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+RESP=$(json "$BASE/my/exit-rules/api")
 if echo "$RESP" | grep -q '"rules"'; then
   ok "/my/exit-rules/api returns JSON with 'rules'"
 else
@@ -158,7 +246,7 @@ fi
 # Use device 3 (emilia) which has 0 manual rules so we don't hit the per-device 200 limit.
 note "6. API: POST /my/exit-rules/api (add smoke-test rule on emilia=3)"
 RAND_VAL="198.51.100.$((RANDOM % 250 + 1))"
-RESP=$(curl -s -b "$COOKIE" -X POST \
+RESP=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   -H "Content-Type: application/json" \
   -d "{\"rules\":[{\"device_id\":3,\"exit_node\":\"karolina\",\"target_type\":\"subnet\",\"target_value\":\"$RAND_VAL/32\",\"action\":\"accept\"}]}" \
   "$BASE/my/exit-rules/api")
@@ -176,7 +264,7 @@ fi
 # Step 7: Verify the new rule is in the list
 note "7. rule visible in /my/exit-rules/api"
 sleep 1
-RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+RESP=$(json "$BASE/my/exit-rules/api")
 if echo "$RESP" | grep -q "$RAND_VAL"; then
   ok "rule $RAND_VAL/32 present in API response"
 else
@@ -184,7 +272,7 @@ else
 fi
 
 # Verify /my/exit-rules HTML renders with no template error
-HTML=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules")
+HTML=$(html "$BASE/my/exit-rules")
 if echo "$HTML" | grep -q "^template:"; then
   bad "GET /my/exit-rules: template error"
 else
@@ -199,11 +287,11 @@ if [ -n "$IDS" ]; then
   for i in $IDS; do
     ARGS="$ARGS --data-urlencode ids=$i"
   done
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" -X POST \
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
     "$BASE/my/exit-rules/delete" $ARGS)
   [ "$CODE" = "302" ] && ok "delete via ids= returned 302" || bad "delete returned $CODE"
   sleep 1
-  RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+  RESP=$(json "$BASE/my/exit-rules/api")
   if echo "$RESP" | grep -q "$RAND_VAL"; then
     bad "rule $RAND_VAL/32 still present after delete"
   else
@@ -225,10 +313,14 @@ note "10. /admin/exit-rules/sync (admin trigger)"
 CODE=$(status "$BASE/admin/exit-rules/sync")
 [ "$CODE" = "200" ] && ok "/admin/exit-rules/sync 200" || bad "/admin/exit-rules/sync $CODE"
 
-# Step 11: validate HTML /my/exit-rules contains critical strings
-note "11. UI sanity: /my/exit-rules contains required text"
-HTML=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules")
-for needle in "Текущие правила" "Мои правила" "Добавить правило"; do
+# Step 11: validate /my/exit-rules HTML contains the localized strings.
+# Same page must render in both languages with no template errors.
+note "11. UI sanity: /my/exit-rules contains localized strings ($SMOKE_LANG)"
+HTML=$(html "$BASE/my/exit-rules")
+if echo "$HTML" | grep -q "^template:"; then
+  bad "/my/exit-rules template error"
+fi
+for needle in "$S_PAGE_RULES_HEADER" "$S_PAGE_MY_RULES" "$S_PAGE_ADD_RULE"; do
   if echo "$HTML" | grep -qF "$needle"; then
     ok "page contains '$needle'"
   else
@@ -245,15 +337,13 @@ CODE=$(status "$BASE/my/account")
 [ "$CODE" = "200" ] && ok "/my/account 200" || bad "/my/account $CODE"
 
 # Verify body renders (template not undefined error).
-# Any "template:" line in the response means renderBody failed because
-# {{define "body-..."}} name does not match what renderBody looks up.
-# As of 2026-07-10 the convention is body-{dir}-{filename} (e.g. body-user-account).
-HTML=$(curl -s -b "$COOKIE" "$BASE/my/account")
+HTML=$(html "$BASE/my/account")
 if echo "$HTML" | grep -q "^template:"; then
   bad "GET /my/account: template error ($(echo "$HTML" | grep -oE 'template:[^<]*' | head -1))"
 else
   ok "/my/account HTML renders without template error"
 fi
+# form name attributes are language-agnostic — check them in both langs.
 if echo "$HTML" | grep -q 'name="current_password"' && echo "$HTML" | grep -q 'name="new_password"'; then
   ok "/my/account contains password-change form fields"
 else
@@ -261,7 +351,7 @@ else
 fi
 
 # Wrong current: redirect to ?err=wrong_current_password
-LOC=$(curl -s -i -b "$COOKIE" -X POST \
+LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "current_password=WRONG_PASSWORD" \
   --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
@@ -271,7 +361,7 @@ echo "$LOC" | grep -q "wrong_current_password" \
   || bad "wrong current got $LOC"
 
 # Mismatching new/confirm
-LOC=$(curl -s -i -b "$COOKIE" -X POST \
+LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
   --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   --data-urlencode "confirm_new_password=DIFFERENT_PASSWORD" \
@@ -281,7 +371,7 @@ echo "$LOC" | grep -q "passwords_dont_match" \
   || bad "mismatch got $LOC"
 
 # Too-short password
-LOC=$(curl -s -i -b "$COOKIE" -X POST \
+LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
   --data-urlencode "new_password=short" \
   --data-urlencode "confirm_new_password=short" \
@@ -291,7 +381,7 @@ echo "$LOC" | grep -q "password_too_short" \
   || bad "short got $LOC"
 
 # Valid change -> saved=ok
-LOC=$(curl -s -i -b "$COOKIE" -X POST \
+LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "current_password=${SKYGATE_ADMIN_PASS}" \
   --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
@@ -302,7 +392,9 @@ echo "$LOC" | grep -q "saved=ok" \
 
 # Login with the NEW password, then revert
 rm -f /tmp/smoke_new_ck
-curl -s -c /tmp/smoke_new_ck -X POST -d "username=skyadmin&password=${SMOKE_TEST_NEW_PASSWORD}" "$BASE/login" -o /dev/null
+curl -s -c /tmp/smoke_new_ck "${ACCEPT_LANG_HDR[@]}" -X POST \
+  --data-urlencode "username=skyadmin" --data-urlencode "password=${SMOKE_TEST_NEW_PASSWORD}" \
+  "$BASE/login" -o /dev/null
 if grep -q "skygate_session" /tmp/smoke_new_ck 2>/dev/null; then
   ok "login with new password issued session cookie"
 else
@@ -319,7 +411,7 @@ ok "reverted admin password back to original"
 # Post-flight: wipe any remaining 198.51.100.x rules on device 3 that
 # were created during this run (defense in depth; step 8 should already
 # have removed them).
-RESP=$(curl -s -b "$COOKIE" "$BASE/my/exit-rules/api")
+RESP=$(json "$BASE/my/exit-rules/api")
 ORPHAN_IDS=$(echo "$RESP" | python3 -c "
 import json, sys
 try:
@@ -341,8 +433,8 @@ fi
 
 # Step 12: logout
 note "12. logout"
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE" -c "$COOKIE" -X POST "$BASE/logout")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -c "$COOKIE" -X POST "$BASE/logout")
 [ "$CODE" = "302" ] || [ "$CODE" = "200" ] && ok "logout returned $CODE" || bad "logout $CODE"
 
-note "SUMMARY: $PASS pass, $FAIL fail"
+note "SUMMARY ($SMOKE_LANG): $PASS pass, $FAIL fail"
 [ "$FAIL" = "0" ] && exit 0 || exit 1
