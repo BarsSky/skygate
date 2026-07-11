@@ -1,57 +1,57 @@
-{{define "body-user-account"}}
+﻿{{define "body-user-account"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-user-gear"></i>{{.T "account.title"}}</h2>
-    <div class="sub">{{.Tf "account.subtitle" .Username}}</div>
+    <h2><i class="fa-solid fa-user-gear"></i>{{.Tr "account.title"}}</h2>
+    <div class="sub">{{.Trf "account.subtitle" .Username}}</div>
   </div>
 </div>
 
 {{if .FlashOK}}
 <div class="alert alert-ok" style="margin-top:0">
   <i class="fa-solid fa-check-circle"></i>
-  <div>{{.T "account.password_changed_ok"}}</div>
+  <div>{{.Tr "account.password_changed_ok"}}</div>
 </div>
 {{end}}
 
 {{if .FlashError}}
 <div class="alert alert-error" style="margin-top:0">
   <i class="fa-solid fa-triangle-exclamation"></i>
-  <div>{{if eq .FlashError "wrong_current_password"}}{{.T "account.wrong_current_password"}}{{else if eq .FlashError "passwords_dont_match"}}{{.T "account.passwords_dont_match"}}{{else if eq .FlashError "password_too_short"}}{{.T "account.password_too_short"}}{{else if eq .FlashError "fields_empty"}}{{.T "account.fields_empty"}}{{else if eq .FlashError "user_not_found"}}{{.T "account.user_not_found"}}{{else if eq .FlashError "hash_failed"}}{{.T "account.hash_failed"}}{{else if eq .FlashError "db_error"}}{{.T "account.db_error"}}{{else if eq .FlashError "bad_form"}}{{.T "account.bad_form"}}{{else}}{{.Tf "account.error_generic" .FlashError}}{{end}}</div>
+  <div>{{if eq .FlashError "wrong_current_password"}}{{.Tr "account.wrong_current_password"}}{{else if eq .FlashError "passwords_dont_match"}}{{.Tr "account.passwords_dont_match"}}{{else if eq .FlashError "password_too_short"}}{{.Tr "account.password_too_short"}}{{else if eq .FlashError "fields_empty"}}{{.Tr "account.fields_empty"}}{{else if eq .FlashError "user_not_found"}}{{.Tr "account.user_not_found"}}{{else if eq .FlashError "hash_failed"}}{{.Tr "account.hash_failed"}}{{else if eq .FlashError "db_error"}}{{.Tr "account.db_error"}}{{else if eq .FlashError "bad_form"}}{{.Tr "account.bad_form"}}{{else}}{{.Trf "account.error_generic" .FlashError}}{{end}}</div>
 </div>
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-lock"></i>{{.T "account.change_password"}}</h3>
+  <h3><i class="fa-solid fa-lock"></i>{{.Tr "account.change_password"}}</h3>
   <form method="post" action="/my/account/password" autocomplete="off">
     <div class="field">
-      <label>{{.T "account.current_password"}}</label>
+      <label>{{.Tr "account.current_password"}}</label>
       <input type="password" name="current_password" required autofocus autocomplete="current-password">
     </div>
     <div class="field">
-      <label>{{.T "account.new_password"}}</label>
+      <label>{{.Tr "account.new_password"}}</label>
       <input type="password" name="new_password" minlength="8" required autocomplete="new-password">
-      <p class="hint">{{.T "account.password_min_hint"}}</p>
+      <p class="hint">{{.Tr "account.password_min_hint"}}</p>
     </div>
     <div class="field">
-      <label>{{.T "account.confirm_new_password"}}</label>
+      <label>{{.Tr "account.confirm_new_password"}}</label>
       <input type="password" name="confirm_new_password" minlength="8" required autocomplete="new-password">
     </div>
     <div class="btn-row" style="margin-top:16px;display:flex;gap:8px">
       <button type="submit" class="btn btn-primary">
-        <i class="fa-solid fa-floppy-disk"></i>{{.T "account.change_password"}}
+        <i class="fa-solid fa-floppy-disk"></i>{{.Tr "account.change_password"}}
       </button>
       <a href="/dashboard" class="btn btn-secondary">
-        <i class="fa-solid fa-xmark"></i>{{.T "common.cancel"}}
+        <i class="fa-solid fa-xmark"></i>{{.Tr "common.cancel"}}
       </a>
     </div>
   </form>
 </div>
 
 <div class="card" style="margin-top:16px">
-  <h3><i class="fa-solid fa-key"></i>{{.T "account.api_tokens"}}</h3>
-  <p>{{.T "account.api_tokens_desc"}}</p>
+  <h3><i class="fa-solid fa-key"></i>{{.Tr "account.api_tokens"}}</h3>
+  <p>{{.Tr "account.api_tokens_desc"}}</p>
   <a href="/my/tokens" class="btn btn-secondary">
-    <i class="fa-solid fa-key"></i>{{.T "account.manage_tokens"}}
+    <i class="fa-solid fa-key"></i>{{.Tr "account.manage_tokens"}}
   </a>
 </div>
 {{end}}
