@@ -154,7 +154,8 @@ func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 			hsDeleteMsg = " [headscale: deleted]"
 		}
 	}
-	_, _ = a.DB.Exec(`DELETE FROM preauth_keys WHERE user_id=?`, id)
+	// 2026-07-11: Этап 10 part 3 — DELETE moved to db.DeletePreauthKeysByUserID
+	keysDeleted, _ := db.DeletePreauthKeysByUserID(a.DB, int64(id))
 	// 2026-07-11: Этап 9 part 2 — DELETE moved to db.DeleteAuditLogByUserID
 	_ = db.DeleteAuditLogByUserID(a.DB, int64(id))
 	// 2026-07-11: Этап 10 part 2 — DELETE moved to db.DeleteAPITokensByUserID.
@@ -167,7 +168,7 @@ func (a *App) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete: "+err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "user_delete", fmt.Sprintf("id=%d %s hs_id=%d%s tokens=%d", id, username, hsID.Int64, hsDeleteMsg, tokensDeleted))
+	a.audit(c.UserID, c.Username, "user_delete", fmt.Sprintf("id=%d %s hs_id=%d%s keys=%d tokens=%d", id, username, hsID.Int64, hsDeleteMsg, keysDeleted, tokensDeleted))
 	http.Redirect(w, r, "/admin/users", http.StatusFound)
 }
 
