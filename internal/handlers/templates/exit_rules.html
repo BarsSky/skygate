@@ -75,7 +75,7 @@
         <div class="field">
           <label>{{t "exit_rules.device"}}</label>
           <select name="device_id" id="device-select" onchange="updateDeviceUsageHint()">
-            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}" data-hint-ok="{{.HintOK}}" data-hint-warn="{{.HintWarn}}" data-hint-danger="{{.HintDanger}}" data-hint-default="{{$t := t}}{{$t "exit_rules.usage_default"}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">{{t "exit_rules.no_devices"}}</option>{{end}}
+            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}" data-hint-ok="{{.HintOK}}" data-hint-warn="{{.HintWarn}}" data-hint-danger="{{.HintDanger}}" data-hint-default="{{t "exit_rules.usage_default"}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">{{t "exit_rules.no_devices"}}</option>{{end}}
           </select>
           <div class="hint" id="device-usage-hint">{{t "exit_rules.device_hint"}}</div>
         </div>
