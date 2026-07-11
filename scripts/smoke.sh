@@ -144,9 +144,12 @@ CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]
   "$BASE/login")
 [ "$CODE" = "302" ] && ok "login returned 302" || bad "login returned $CODE"
 
-# Pre-flight: remove any leftover smoke-test rules on device 3 (emilia)
-# from previous smoke runs. These were created by step 6 below; if step 8
-# ever failed (e.g. timeout), the rule remained and accumulated.
+# Pre-flight: remove any leftover smoke-test rules on device 8
+# (skyadmin's tag:private device) from previous smoke runs. These were
+# created by step 6 below; if step 8 ever failed (e.g. timeout), the
+# rule remained and accumulated. We deliberately pick device 8 (not
+# 3/4/11, which are exit-nodes emilia/sharlotta/karolina) because the
+# 2026-07-11 fix rejects rule attachment to exit-nodes.
 RESP=$(json "$BASE/my/exit-rules/api")
 ORPHAN_IDS=$(echo "$RESP" | python3 -c "
 import json, sys
@@ -155,7 +158,7 @@ try:
 except Exception:
     sys.exit(0)
 for r in d.get('rules', []):
-    if r.get('device_id') == 3 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
+    if r.get('device_id') == 8 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
         print(r['id'])
 " 2>/dev/null | tr '\n' ' ')
 if [ -n "$ORPHAN_IDS" ]; then
@@ -164,7 +167,7 @@ if [ -n "$ORPHAN_IDS" ]; then
     ARGS="$ARGS --data-urlencode ids=$i"
   done
   curl -s -o /dev/null -b "$COOKIE" -X POST "$BASE/my/exit-rules/delete" $ARGS
-  note "0. cleanup: removed $(echo $ORPHAN_IDS | wc -w) orphan smoke rules on device 3 (emilia)"
+  note "0. cleanup: removed $(echo $ORPHAN_IDS | wc -w) orphan smoke rules on device 8"
 fi
 
 # Step 2: dashboard
@@ -243,12 +246,15 @@ else
 fi
 
 # Step 6: Add a temp rule via API and verify it appears
-# Use device 3 (emilia) which has 0 manual rules so we don't hit the per-device 200 limit.
-note "6. API: POST /my/exit-rules/api (add smoke-test rule on emilia=3)"
+# Use device 8 (skyadmin's tag:private device) which has 0 manual rules
+# so we don't hit the per-device 200 limit. NOT device 3 (emilia),
+# 4 (sharlotta) or 11 (karolina) — those are exit-nodes and the
+# 2026-07-11 fix correctly rejects rule attachment to them.
+note "6. API: POST /my/exit-rules/api (add smoke-test rule on device=8)"
 RAND_VAL="198.51.100.$((RANDOM % 250 + 1))"
 RESP=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   -H "Content-Type: application/json" \
-  -d "{\"rules\":[{\"device_id\":3,\"exit_node\":\"karolina\",\"target_type\":\"subnet\",\"target_value\":\"$RAND_VAL/32\",\"action\":\"accept\"}]}" \
+  -d "{\"rules\":[{\"device_id\":8,\"exit_node\":\"karolina\",\"target_type\":\"subnet\",\"target_value\":\"$RAND_VAL/32\",\"action\":\"accept\"}]}" \
   "$BASE/my/exit-rules/api")
 # Check actually added (not just field present)
 ADDED=$(echo "$RESP" | grep -oE '"added":[0-9]+' | grep -oE '[0-9]+' | head -1)
@@ -408,7 +414,7 @@ curl -s -o /dev/null -b /tmp/smoke_new_ck -X POST \
   "$BASE/my/account/password"
 ok "reverted admin password back to original"
 
-# Post-flight: wipe any remaining 198.51.100.x rules on device 3 that
+# Post-flight: wipe any remaining 198.51.100.x rules on device 8 that
 # were created during this run (defense in depth; step 8 should already
 # have removed them).
 RESP=$(json "$BASE/my/exit-rules/api")
@@ -419,7 +425,7 @@ try:
 except Exception:
     sys.exit(0)
 for r in d.get('rules', []):
-    if r.get('device_id') == 3 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
+    if r.get('device_id') == 8 and r.get('target_value', '').startswith('198.51.100.') and r.get('target_value', '').endswith('/32'):
         print(r['id'])
 " 2>/dev/null | tr '\n' ' ')
 if [ -n "$ORPHAN_IDS" ]; then
