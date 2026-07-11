@@ -1,8 +1,8 @@
 {{define "body-admin-settings"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-gear"></i> Настройки</h2>
-    <div class="sub">Параметры подключения к Headscale, домен, безопасность. Меняйте их при миграции на новый хост.</div>
+    <h2><i class="fa-solid fa-gear"></i> {{.T "settings.title"}}</h2>
+    <div class="sub">{{.T "settings.subtitle"}}.</div>
   </div>
 </div>
 
@@ -16,35 +16,35 @@
 <form action="/admin/settings" method="POST">
   <div class="card-grid">
     <div class="card">
-      <h3><i class="fa-solid fa-plug"></i> Подключения</h3>
+      <h3><i class="fa-solid fa-plug"></i> {{.T "settings.title"}}</h3>
       <div class="form-group">
-        <label>Headscale URL (внутренний)</label>
+        <label>Headscale URL (internal)</label>
         <input type="text" name="headscale_url" value="{{.HeadscaleURL}}" class="form-control" placeholder="http://headscale:50444">
-        <div class="sub">Внутренний адрес headscale в Docker сети. Менять при смене хоста.</div>
+        <div class="sub">Internal headscale address on the Docker network. Update when changing host.</div>
       </div>
       <div class="form-group">
-        <label>Headscale API Key</label>
-        <input type="password" name="headscale_api_key" value="{{.HeadscaleAPIKey}}" class="form-control" placeholder="оставьте пустым чтобы не менять">
-        <div class="sub">Сгенерировать: <code>docker exec headscale headscale apikeys create</code></div>
+        <label>{{.T "settings.headscale_key"}}</label>
+        <input type="password" name="headscale_api_key" value="{{.HeadscaleAPIKey}}" class="form-control" placeholder="leave empty to keep current">
+        <div class="sub">Generate: <code>docker exec headscale headscale apikeys create</code></div>
       </div>
       <div class="form-group">
-        <label>Публичный домен/URL</label>
+        <label>Public domain/URL</label>
         <input type="text" name="public_domain" value="{{.PublicDomain}}" class="form-control" placeholder="skygate.skynas.ru">
-        <div class="sub">Домен для DERP карты и ссылок. Менять при новом домене.</div>
+        <div class="sub">Domain for DERP map and links. Update when domain changes.</div>
       </div>
     </div>
 
     <div class="card">
-      <h3><i class="fa-solid fa-lock"></i> Безопасность</h3>
+      <h3><i class="fa-solid fa-lock"></i> Security</h3>
       <div class="form-group">
-        <label>Новый пароль admin</label>
-        <input type="password" name="admin_password" class="form-control" placeholder="оставьте пустым чтобы не менять">
-        <div class="sub">Минимум 8 символов. После смены нужно перелогиниться.</div>
+        <label>New admin password</label>
+        <input type="password" name="admin_password" class="form-control" placeholder="leave empty to keep current">
+        <div class="sub">Minimum 8 characters. After change, re-login is required.</div>
       </div>
       <div class="form-group">
         <label>JWT Secret</label>
         <div class="mono" style="padding:0.5rem;background:var(--bg2);border-radius:6px">{{.JWTSecretMask}}</div>
-        <div class="sub">Хранится в .env. Не меняйте без необходимости — все сессии сбросятся.</div>
+        <div class="sub">Stored in .env. Don't change unless necessary — all sessions will be invalidated.</div>
       </div>
     </div>
   </div>
@@ -52,33 +52,33 @@
   <div class="card" style="margin-top:1.5rem">
     <h3><i class="fa-solid fa-right-from-bracket"></i> Exit Node Policy</h3>
     <div class="form-group">
-      <label>Режим маршрутизации</label>
+      <label>Routing mode</label>
       <select name="exit_policy" class="form-control">
-        <option value="allow_all"{{if eq .ExitPolicy "allow_all"}} selected{{end}}>Allow All (разрешено всё, deny-правила блокируют)</option>
-        <option value="deny_all"{{if eq .ExitPolicy "deny_all"}} selected{{end}}>Deny All (запрещено всё, accept-правила разрешают)</option>
+        <option value="allow_all"{{if eq .ExitPolicy "allow_all"}} selected{{end}}>Allow All (everything allowed, deny rules block)</option>
+        <option value="deny_all"{{if eq .ExitPolicy "deny_all"}} selected{{end}}>Deny All (everything blocked, accept rules allow)</option>
       </select>
       <div class="sub">
-        <b>Allow All</b>: весь трафик через exit-ноды разрешён. Правила действуют как чёрный список.<br>
-        <b>Deny All</b>: трафик через exit-ноды запрещён. Правила действуют как белый список.
+        <b>Allow All</b>: all traffic through exit-nodes allowed. Rules act as a deny list.<br>
+        <b>Deny All</b>: traffic through exit-nodes denied. Rules act as an allow list.
       </div>
     </div>
   </div>
 
   <div class="card" style="margin-top:1.5rem">
-    <h3><i class="fa-solid fa-circle-info"></i> После миграции</h3>
+    <h3><i class="fa-solid fa-circle-info"></i> After migration</h3>
     <div class="alert alert-warning">
-      <p>Если вы восстановили бэкап на новом сервере:</p>
+      <p>If you restored a backup on a new server:</p>
       <ol>
-        <li>Адрес Headscale внутри Docker сети (обычно <code>headscale</code>) — может отличаться</li>
-        <li>Публичный домен изменится — обновите выше</li>
-        <li>API ключ headscale нужно создать заново на новом сервере: <code>docker exec headscale headscale apikeys create</code></li>
-        <li>После сохранения настроек — <strong>перезапустите skygate</strong></li>
-        <li>Проверьте <a href="/admin/backup">Бэкапы → Тесты</a> для верификации</li>
+        <li>Headscale address inside the Docker network (usually <code>headscale</code>) — may differ</li>
+        <li>Public domain will change — update it above</li>
+        <li>The headscale API key must be recreated on the new server: <code>docker exec headscale headscale apikeys create</code></li>
+        <li>After saving settings — <strong>restart skygate</strong></li>
+        <li>Check <a href="/admin/backup">Backups → Tests</a> for verification</li>
       </ol>
     </div>
     <div style="display:flex;gap:1rem;margin-top:1rem">
-      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Сохранить настройки</button>
-      <a href="/admin/backup" class="btn"><i class="fa-solid fa-arrow-left"></i> Назад к бэкапам</a>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{.T "settings.save"}}</button>
+      <a href="/admin/backup" class="btn"><i class="fa-solid fa-arrow-left"></i> {{.T "common.back"}}</a>
     </div>
   </div>
 </form>

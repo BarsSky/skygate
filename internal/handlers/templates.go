@@ -5,8 +5,6 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
-		
-		"skygate/internal/i18n"
 	"io"
 	"io/fs"
 	"path"
@@ -24,15 +22,17 @@ type Templates struct {
 // LoadTemplates parses all templates and returns a renderer.
 // Uses {{define "body-..."}} blocks for body content and a single "layout"
 // template that calls {{renderBody .BodyTemplate .}} to inject the body.
+//
+// i18n note: translations are accessed via {{.T "key"}} / {{.Tf "key" arg}}
+// where .T is *i18n.Translations injected by the caller (render or
+// renderWithLayout). The bare {{t "key"}} helper is not used because
+// funcmap functions can't see per-request dot context.
 func LoadTemplates() *Templates {
 	t := template.New("root")
 
 	// First pass: register renderBody placeholder so ParseFS doesn't fail.
 	// We'll re-register with the real impl after parsing bodies.
 	t.Funcs(template.FuncMap{
-		"t": func(key string) string {
-			return i18n.GlobalCatalog.T(i18n.GlobalLang, key)
-		},
 		"safeJS": func(s string) template.JS { return template.JS(s) },
 		"dividefloat": func(a, b float64) float64 {
 			if b == 0 { return 0 }

@@ -23,18 +23,29 @@ func (a *App) GetLogin(w http.ResponseWriter, r *http.Request) {
 			theme = db.GetUserTheme(a.DB, claims.UserID)
 		}
 	}
+	lang := a.I18n.LangFromRequest(r)
 	a.render(w, "login.html", map[string]any{
 		"Error":      "",
 		"Theme":      theme,
 		"ThemeLabel": db.ThemeLabel(theme),
+		"Lang":       lang,
+		"T":          &i18n.Translations{Catalog: a.I18n, Lang: lang},
 	})
 }
 
 func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 	u := strings.TrimSpace(r.FormValue("username"))
 	p := r.FormValue("password")
+	lang := a.I18n.LangFromRequest(r)
+	baseData := map[string]any{
+		"Theme":      db.ThemeLinear,
+		"ThemeLabel": db.ThemeLabel(db.ThemeLinear),
+		"Lang":       lang,
+		"T":          &i18n.Translations{Catalog: a.I18n, Lang: lang},
+	}
 	if u == "" || p == "" {
-		a.render(w, "login.html", map[string]any{"Error": "username and password required", "Theme": db.ThemeLinear, "ThemeLabel": db.ThemeLabel(db.ThemeLinear)})
+		baseData["Error"] = a.I18n.T(lang, "login.invalid_credentials")
+		a.render(w, "login.html", baseData)
 		return
 	}
 	var id int64
@@ -44,7 +55,8 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 		Scan(&id, &hash, &isAdmin)
 	if errors.Is(err, sql.ErrNoRows) || !auth.CheckPassword(hash, p) {
 		a.audit(id, u, "login_fail", "")
-		a.render(w, "login.html", map[string]any{"Error": "invalid credentials", "Theme": db.ThemeLinear, "ThemeLabel": db.ThemeLabel(db.ThemeLinear)})
+		baseData["Error"] = a.I18n.T(lang, "login.invalid_credentials")
+		a.render(w, "login.html", baseData)
 		return
 	}
 	if err != nil {

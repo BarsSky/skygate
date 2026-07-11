@@ -1,16 +1,16 @@
 {{define "body-admin-derp"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-tower-broadcast"></i>DERP relay</h2>
-    <div class="sub">Custom DERP сервер на агенте — backup relay для tailnet</div>
+    <h2><i class="fa-solid fa-tower-broadcast"></i>{{.T "derp.title"}}</h2>
+    <div class="sub">Custom DERP server on agent — backup relay for the tailnet</div>
   </div>
   <div class="btn-row">
-    <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i>Обновить</a>
+    <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i>{{.T "common.refresh"}}</a>
   </div>
 </div>
 
 {{if .DerpStatus}}
-<div class="section-title"><i class="fa-solid fa-circle-nodes"></i>Статус сервиса</div>
+<div class="section-title"><i class="fa-solid fa-circle-nodes"></i>Service status</div>
 <div class="metric-grid">
   <div class="metric {{if .DerpStatus.Running}}good{{else}}bad{{end}}">
     <div class="icon"><i class="fa-solid fa-power-off"></i></div>
@@ -39,29 +39,29 @@
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-code-branch"></i></div>
     <div class="body">
-      <div class="label">Версия</div>
+      <div class="label">Version</div>
       <div class="value" style="font-size:14px">v{{.DerpStatus.Version}}</div>
       <div class="sub">go {{.DerpStatus.GoVersion}}</div>
     </div>
   </div>
 </div>
 
-<div class="section-title"><i class="fa-solid fa-chart-line"></i>Трафик</div>
+<div class="section-title"><i class="fa-solid fa-chart-line"></i>Traffic</div>
 <div class="metric-grid">
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-plug-circle-bolt"></i></div>
     <div class="body">
-      <div class="label">Активные коннекты</div>
+      <div class="label">Active connections</div>
       <div class="value">{{.DerpStatus.Connections}}</div>
-      <div class="sub">всего с начала: {{.DerpStatus.Accepts}}</div>
+      <div class="sub">total since start: {{.DerpStatus.Accepts}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-users"></i></div>
     <div class="body">
-      <div class="label">Tailscale клиенты</div>
+      <div class="label">Tailscale clients</div>
       <div class="value">{{.DerpStatus.Clients}}</div>
-      <div class="sub">с этим DERP как home</div>
+      <div class="sub">with this DERP as home</div>
     </div>
   </div>
   <div class="metric">
@@ -69,7 +69,7 @@
     <div class="body">
       <div class="label">Bytes IN</div>
       <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesIn}}</div>
-      <div class="sub">{{.DerpStatus.PacketsIn}} пакетов</div>
+      <div class="sub">{{.DerpStatus.PacketsIn}} packets</div>
     </div>
   </div>
   <div class="metric">
@@ -77,13 +77,13 @@
     <div class="body">
       <div class="label">Bytes OUT</div>
       <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesOut}}</div>
-      <div class="sub">{{.DerpStatus.PacketsOut}} пакетов</div>
+      <div class="sub">{{.DerpStatus.PacketsOut}} packets</div>
     </div>
   </div>
 </div>
 
 {{if or .DerpStatus.ActiveTCP .DerpStatus.ActiveUDP}}
-<div class="section-title"><i class="fa-solid fa-user-group"></i>Активные подключения (прямо сейчас)</div>
+<div class="section-title"><i class="fa-solid fa-user-group"></i>Active connections (right now)</div>
 <div class="card">
   {{if .DerpStatus.ConnSummary}}
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;font-size:12px">
@@ -107,9 +107,9 @@
     {{if $allZero}}
       {{$liveCC := .DerpStatus.Connections}}
       {{if gt $liveCC 0}}
-        <span class="tag tag-warning" title="derper reports {{$liveCC}} current connections but ss snapshot sees 0 - WebSocket connections that already closed in this 30s window (NPM admin polls every few seconds)"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$liveCC}}</b> conn (transient)</span>
+        <span class="tag tag-warning" title="derper reports {{$liveCC}} current connections but ss snapshot sees 0"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$liveCC}}</b> conn (transient)</span>
       {{else}}
-        <span class="tag" title="no active connections in this snapshot"><i class="fa-solid fa-circle"></i> Нет активных</span>
+        <span class="tag" title="no active connections in this snapshot"><i class="fa-solid fa-circle"></i> No active</span>
       {{end}}
     {{end}}
   </div>
@@ -121,7 +121,7 @@
       </h3>
       {{if .DerpStatus.ActiveTCP}}
       <table>
-        <thead><tr><th>IP</th><th>Hostname</th><th>Тип</th></tr></thead>
+        <thead><tr><th>IP</th><th>Hostname</th><th>Type</th></tr></thead>
         <tbody>
           {{range .DerpStatus.ActiveTCP}}
           <tr>
@@ -140,7 +140,7 @@
         </tbody>
       </table>
       {{else}}
-      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> Нет активных TCP подключений</div>
+      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> No active TCP connections</div>
       {{end}}
     </div>
     <div>
@@ -149,7 +149,7 @@
       </h3>
       {{if .DerpStatus.ActiveUDP}}
       <table>
-        <thead><tr><th>IP</th><th>Hostname</th><th>Тип</th></tr></thead>
+        <thead><tr><th>IP</th><th>Hostname</th><th>Type</th></tr></thead>
         <tbody>
           {{range .DerpStatus.ActiveUDP}}
           <tr>
@@ -168,18 +168,18 @@
         </tbody>
       </table>
       {{else}}
-      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> Нет активных UDP клиентов</div>
+      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> No active UDP clients</div>
       {{end}}
     </div>
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    <i class="fa-solid fa-circle-info"></i> Источник: <code>ss -tn state established sport = :8443</code> + reverse DNS. <b>relay</b> = Tailscale клиент, <b>admin</b> = WebSocket от Nginx Proxy Manager. Обновляется каждые 30 сек.
+    <i class="fa-solid fa-circle-info"></i> Source: <code>ss -tn state established sport = :8443</code> + reverse DNS. <b>relay</b> = Tailscale client, <b>admin</b> = WebSocket from Nginx Proxy Manager. Updates every 30 sec.
   </p>
 </div>
 {{end}}
 
 {{if .DerpStatus.Snapshot}}
-<div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>Лента активности (последние 30 сек)</div>
+<div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>Activity log (last 30 sec)</div>
 <div class="card">
   <div style="max-height:340px;overflow-y:auto;font-family:var(--mono);font-size:12px">
     {{range .DerpStatus.Snapshot}}
@@ -193,7 +193,7 @@
         {{if gt .Summary.Self 0}}<span class="tag" style="font-size:11px" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i> self: <b>{{.Summary.Self}}</b></span>{{end}}
         {{$cc := .CurrentConns}}
         {{if and (eq (len .Conns) 0) (gt $cc 0)}}
-          <span class="tag tag-warning" style="font-size:11px" title="derper reports {{$cc}} current connections but ss snapshot sees 0 - WebSocket connections that already closed in this 30s window"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$cc}}</b> conn (transient)</span>
+          <span class="tag tag-warning" style="font-size:11px" title="derper reports {{$cc}} current connections but ss snapshot sees 0"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$cc}}</b> conn (transient)</span>
         {{end}}
       {{else}}
         <span style="color:var(--accent)">conns: <b>{{len .Conns}}</b></span>
@@ -207,20 +207,20 @@
     {{end}}
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    <i class="fa-solid fa-circle-info"></i> Источник: <code>derper-snapshot.timer</code> (каждые 30 сек) пишет <code>/var/log/derper-snapshot.log</code>. <b>relay</b> = Tailscale клиенты, <b>admin</b> = Nginx Proxy Manager WebSocket pool (не Tailscale трафик).
+    <i class="fa-solid fa-circle-info"></i> Source: <code>derper-snapshot.timer</code> (every 30 sec) writes <code>/var/log/derper-snapshot.log</code>. <b>relay</b> = Tailscale clients, <b>admin</b> = Nginx Proxy Manager WebSocket pool (not Tailscale traffic).
   </p>
 </div>
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i>Сервис</h3>
+  <h3><i class="fa-solid fa-server"></i>Service</h3>
   <table>
     <tbody>
       <tr><td style="width:200px;color:var(--text-muted)">Hostname</td><td><code>{{.DerpStatus.Hostname}}</code></td></tr>
       <tr><td style="color:var(--text-muted)">Region</td><td><code>{{.DerpStatus.RegionCode}} ({{.DerpStatus.RegionID}})</code> — {{.DerpStatus.RegionName}}</td></tr>
       <tr><td style="color:var(--text-muted)">WebSocket endpoint</td><td><code>wss://{{.DerpStatus.Hostname}}:{{.DerpStatus.DERPPort}}/derp</code></td></tr>
       <tr><td style="color:var(--text-muted)">STUN endpoint</td><td><code>{{.DerpStatus.Hostname}}:{{.DerpStatus.STUNPort}}</code> (UDP)</td></tr>
-      <tr><td style="color:var(--text-muted)">White IP</td><td><code>{{.DerpStatus.WhiteIP}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">Public IP</td><td><code>{{.DerpStatus.WhiteIP}}</code></td></tr>
       <tr><td style="color:var(--text-muted)">Started</td><td>{{.DerpStatus.StartedAt}}</td></tr>
       <tr><td style="color:var(--text-muted)">Uptime</td><td>{{.DerpStatus.UpTime}}</td></tr>
       {{if .DerpStatus.Machine}}<tr><td style="color:var(--text-muted)">Machine</td><td><code>{{.DerpStatus.Machine}}</code></td></tr>{{end}}
@@ -232,39 +232,39 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-book"></i>Справка</h3>
+  <h3><i class="fa-solid fa-book"></i>Help</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
-    <strong>Параметры</strong>:
+    <strong>Parameters</strong>:
     <ul style="margin:6px 0 12px 0;padding-left:20px;font-size:13px;color:var(--text-muted)">
-      <li><b>Accepts</b> — сколько раз derper принял WebSocket-апгрейд за всё время</li>
-      <li><b>Current conns</b> — сколько WebSocket-соединений открыто прямо сейчас</li>
-      <li><b>Home conns</b> — соединения от home-клиентов (чей home DERP = этот)</li>
-      <li><b>Clients total</b> — уникальных клиентов, для которых этот DERP = home</li>
-      <li><b>Bytes/Packets</b> — общий трафик (без разбивки по клиентам)</li>
+      <li><b>Accepts</b> — how many times derper accepted a WebSocket upgrade in total</li>
+      <li><b>Current conns</b> — number of WebSocket connections open right now</li>
+      <li><b>Home conns</b> — connections from home clients (whose home DERP = this)</li>
+      <li><b>Clients total</b> — unique clients for whom this DERP = home</li>
+      <li><b>Bytes/Packets</b> — total traffic (no per-client breakdown)</li>
     </ul>
   </p>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
-    <strong>Почему клиент может не использовать этот DERP</strong>:
-    Tailscale выбирает home DERP по минимальной UDP-latency. Если публичный DERP
-    ближе, клиент его и выберет. Чтобы закрепить наш DERP на устройстве:
+    <strong>Why a client may not use this DERP</strong>:
+    Tailscale picks the home DERP by minimum UDP-latency. If a public DERP is closer, the client will pick that.
+    To pin our DERP on a device:
   </p>
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:var(--mono);font-size:12px;margin:8px 0;line-height:1.7">
     <div style="color:var(--text-muted);margin-bottom:4px"># Linux/macOS (Tailscale CLI):</div>
     <code style="color:var(--accent)">sudo tailscale debug force-prefer-derp 900</code>
-    <span style="color:var(--text-muted)">  (временно, до рестарта)</span>
-    <div style="color:var(--text-muted);margin:8px 0 4px"># Постоянно (через node-attrs):</div>
+    <span style="color:var(--text-muted)">  (temporary, until restart)</span>
+    <div style="color:var(--text-muted);margin:8px 0 4px"># Permanent (via node-attrs):</div>
     <code style="color:var(--accent)">sudo tailscale set --netfilter-mode=...</code>
     <div style="color:var(--text-muted);margin:8px 0 4px"># Android/iOS:</div>
     <code style="color:var(--accent)">Settings → Connection → Use DERP → Moscow (mow:900)</code>
   </div>
   <p style="color:var(--text-muted);font-size:13px">
-    Полная справка: <a href="/help#derp"><i class="fa-solid fa-book"></i> DERP docs</a>
+    Full docs: <a href="/help#derp"><i class="fa-solid fa-book"></i> DERP docs</a>
   </p>
 </div>
 {{else}}
 <div class="alert alert-danger">
   <i class="fa-solid fa-circle-exclamation"></i>
-  <div>Не удалось получить статус DERP. Проверьте что derper запущен на агенте.</div>
+  <div>Failed to fetch DERP status. Check that derper is running on the agent.</div>
 </div>
 {{end}}
 {{end}}

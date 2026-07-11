@@ -1,20 +1,20 @@
 {{define "body-admin-exit_rules"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-route"></i> Управление exit rules</h2>
-    <div class="sub">Все правила туннелирования пользователей · hierarchical view</div>
+    <h2><i class="fa-solid fa-route"></i> {{.T "exit_rules_admin.title"}}</h2>
+    <div class="sub">{{.T "exit_rules_admin.subtitle"}} · hierarchical view</div>
   </div>
   <div>
     <a href="/admin/exit-rules/nodes" class="btn btn-sm"><i class="fa-solid fa-server"></i> Node Load</a>
   </div>
 </div>
 
-{{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL откачен</div>{{end}}
+{{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL rolled back</div>{{end}}
 
 {{if .MaxTotalRules}}
 <div class="card">
   <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-    <span><i class="fa-solid fa-chart-pie"></i> Системная нагрузка</span>
+    <span><i class="fa-solid fa-chart-pie"></i> System load</span>
     <span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>
   </h3>
   <div style="background:var(--bg-elev);border-radius:6px;height:18px;position:relative;overflow:hidden;border:1px solid var(--border)">
@@ -27,14 +27,14 @@
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-list"></i> Все правила ({{.TotalRules}})</h3>
+  <h3><i class="fa-solid fa-list"></i> All rules ({{.TotalRules}})</h3>
   {{if .Rules}}
     {{range $user, $userData := .GroupedByUser}}
     <details open style="margin-bottom:8px">
       <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
         <i class="fa-solid fa-user"></i>
         <span>{{$user}}</span>
-        <span class="tag">{{$userData.TotalCount}} правил</span>
+        <span class="tag">{{$userData.TotalCount}} rules</span>
         {{if gt $userData.UserLimit 0}}<span class="tag {{if gt $userData.LoadPct 80}}tag-danger{{else if gt $userData.LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{$userData.LoadPct}}% ({{$userData.UserCount}}/{{$userData.UserLimit}})</span>{{end}}
         <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
       </summary>
@@ -44,7 +44,7 @@
         <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$devData.DeviceName}}</span>
-          <span class="tag">{{$devData.Count}} правил</span>
+          <span class="tag">{{$devData.Count}} rules</span>
         </summary>
 
         {{range $exitNode, $rules := $devData.Nodes}}
@@ -52,11 +52,11 @@
           <summary style="cursor:pointer;padding:3px 6px;background:var(--bg);border-radius:3px;display:flex;align-items:center;gap:6px;font-size:12px">
             <i class="fa-solid fa-route"></i>
             <span class="tag tag-info">{{$exitNode}}</span>
-            <span style="color:var(--text-muted)">{{len $rules}} правил</span>
+            <span style="color:var(--text-muted)">{{len $rules}} rules</span>
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             <table>
-              <tr><th>Действие</th><th>Тип</th><th>Ресурс</th><th>Parent</th><th>Создано</th><th></th></tr>
+              <tr><th>Action</th><th>Type</th><th>Resource</th><th>Parent</th><th>Created</th><th></th></tr>
               {{range $rules}}<tr>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td><span class="tag">{{.TargetType}}</span></td>
@@ -64,7 +64,7 @@
                 <td>{{if .ParentDomain}}<span class="tag tag-info" title="Auto-managed"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
                 <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
                 <td class="col-delete">
-                  <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('Удалить правило #{{.ID}}?')">
+                  <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('Delete rule #{{.ID}}?')">
                     <input type="hidden" name="id" value="{{.ID}}">
                     <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
                   </form>
@@ -78,29 +78,29 @@
       {{end}}
     </details>
     {{end}}
-  {{else}}<p style="color:var(--text-muted)">Нет правил</p>{{end}}
+  {{else}}<p style="color:var(--text-muted)">No rules</p>{{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-clock-rotate-left"></i> История применения ACL</h3>
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> ACL application history</h3>
   {{if .Logs}}
   <table>
-    <tr><th>Время</th><th>Действие</th><th>Детали</th></tr>
+    <tr><th>Time</th><th>Action</th><th>Details</th></tr>
     {{range .Logs}}<tr>
       <td class="mono">{{.time}}</td>
       <td><span class="tag {{if eq .action "rollback"}}tag-warning{{else}}tag-success{{end}}">{{.action}}</span></td>
       <td>{{.detail}}</td>
     </tr>{{end}}
   </table>
-  {{else}}<p style="color:var(--text-muted)">Нет записей</p>{{end}}
+  {{else}}<p style="color:var(--text-muted)">No records</p>{{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-sync"></i> Синхронизация Advertised Routes</h3>
-  <p style="margin-bottom:8px">Обновляет <code>--advertise-routes</code> на всех exit-узлах согласно текущим правилам.</p>
+  <h3><i class="fa-solid fa-sync"></i> Advertised-routes sync</h3>
+  <p style="margin-bottom:8px">Updates <code>--advertise-routes</code> on all exit-nodes according to the current rules.</p>
   <p>
     <button class="btn btn-primary" id="btn-sync" onclick="syncRoutes()">
-      <i class="fa-solid fa-sync"></i> Синхронизировать
+      <i class="fa-solid fa-sync"></i> Sync
     </button>
     <span id="sync-status" style="margin-left:12px;color:var(--text-muted)"></span>
   </p>
@@ -112,38 +112,38 @@ async function syncRoutes() {
   const status = document.getElementById('sync-status');
   const result = document.getElementById('sync-result');
   btn.disabled = true;
-  status.textContent = 'Синхронизация...';
+  status.textContent = 'Syncing...';
   try {
     const r = await fetch('/admin/exit-rules/sync');
     const data = await r.json();
-    status.textContent = r.ok ? '✓ Готово' : '✗ Ошибка';
+    status.textContent = r.ok ? '✓ Done' : '✗ Error';
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
   } catch(err) {
-    status.textContent = 'Ошибка: ' + err;
+    status.textContent = 'Error: ' + err;
   }
   btn.disabled = false;
 }
 </script>
 
 <div class="card">
-  <h3><i class="fa-solid fa-rotate-left"></i> Откат ACL</h3>
+  <h3><i class="fa-solid fa-rotate-left"></i> ACL rollback</h3>
   {{if .Snapshots}}
   <table>
-    <tr><th>Версия</th><th>Кем</th><th>Статус</th><th>Время</th><th></th></tr>
+    <tr><th>Version</th><th>By</th><th>Status</th><th>Time</th><th></th></tr>
     {{range .Snapshots}}<tr>
       <td>#{{.version}}</td>
       <td>{{.by}}</td>
       <td>{{if .success}}<span class="tag tag-success">OK</span>{{else}}<span class="tag tag-danger">ERR</span>{{end}}</td>
       <td>{{.time}}</td>
       <td>
-        <form method="post" action="/admin/exit-rules/rollback" style="display:inline" onsubmit="return confirm('Откатить ACL к версии {{.version}}?')">
+        <form method="post" action="/admin/exit-rules/rollback" style="display:inline" onsubmit="return confirm('Roll back ACL to version {{.version}}?')">
           <input type="hidden" name="version" value="{{.version}}">
-          <button type="submit" class="btn btn-secondary btn-sm">Откатить</button>
+          <button type="submit" class="btn btn-secondary btn-sm">Roll back</button>
         </form>
       </td>
     </tr>{{end}}
   </table>
-  {{else}}<p style="color:var(--text-muted)">Нет снапшотов</p>{{end}}
+  {{else}}<p style="color:var(--text-muted)">No snapshots</p>{{end}}
 </div>
 {{end}}

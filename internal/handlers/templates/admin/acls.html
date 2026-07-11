@@ -1,39 +1,33 @@
 {{define "body-admin-acls"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-shield-halved"></i>ACL политика</h2>
-    <div class="sub">Управляется в <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane UI</a></div>
+    <h2><i class="fa-solid fa-shield-halved"></i>{{.T "acls.title"}}</h2>
+    <div class="sub">{{.T "acls.subtitle"}}: <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane UI</a></div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-pen-to-square"></i>Где редактировать ACL</h3>
+  <h3><i class="fa-solid fa-pen-to-square"></i>{{.T "acls.external"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:16px">
-    ACL политика headscale редактируется централизованно в Headplane.
-    Изменения применяются ко всем узлам tailnet в течение ~30 секунд.
+    {{.T "acls.subtitle"}}.
   </p>
 
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener" class="btn">
-      <i class="fa-solid fa-arrow-up-right-from-square"></i>Открыть Headplane ACL
+      <i class="fa-solid fa-arrow-up-right-from-square"></i>{{.T "acls.external"}}
     </a>
-    <span style="color:var(--text-subtle);font-size:12px">
-      <i class="fa-solid fa-circle-info"></i>
-      Для входа используйте API-ключ из <code>HEADSCALE_API_KEY</code> в <code>.env</code> на сервере
-      (см. раздел «Безопасность» в README).
-    </span>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-file-code"></i>Текущая политика</h3>
+  <h3><i class="fa-solid fa-file-code"></i>{{.T "acls.title"}}</h3>
   {{if .Policy}}
   <pre>{{.Policy}}</pre>
   {{else}}
   <div class="alert alert-danger" style="margin-top:0">
     <i class="fa-solid fa-circle-exclamation"></i>
     <div>
-      Не удалось прочитать policy напрямую. Откройте Headplane для просмотра и редактирования.
+      {{.T "acls.empty"}}.
       <br><br>
       <span style="color:var(--text-subtle);font-size:12px">{{.Error}}</span>
     </div>

@@ -136,12 +136,19 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		UserFacing    int // 2026-07-09: user-facing count (excludes /32 from autoupdater)
 		HasRoutes     bool
 		MaxForDevice  int // 2026-07-09: per-device limit (MaxRulesPerDevice)
+		// i18n: pre-rendered hint templates the JS uses to display per-device
+		// usage at the current usage level. %d/%d (%d%%) gets replaced with
+		// used/max/pct in the browser.
+		HintOK     string
+		HintWarn   string
+		HintDanger string
 	}
 	var deviceInfos []DeviceInfo
 	maxPerDeviceLimit := 0
 	if a.Cfg != nil {
 		maxPerDeviceLimit = a.Cfg.MaxRulesPerDevice
 	}
+	lang := a.I18n.LangFromRequest(r)
 	for _, d := range devices {
 		hn := fmt.Sprint(d["hostname"])
 		info := DeviceInfo{
@@ -150,6 +157,9 @@ func (a *App) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			RuleCount:    len(deviceRoutes[hn]),
 			HasRoutes:    hasRoutes[hn],
 			MaxForDevice: maxPerDeviceLimit,
+			HintOK:       a.I18n.T(lang, "exit_rules.usage_ok"),
+			HintWarn:     a.I18n.T(lang, "exit_rules.usage_warn"),
+			HintDanger:   a.I18n.T(lang, "exit_rules.usage_danger"),
 		}
 		// Count user-facing rules for THIS device (excludes autoupdater /32).
 		did, _ := strconv.Atoi(info.ID)

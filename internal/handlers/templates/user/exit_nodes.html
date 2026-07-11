@@ -1,21 +1,21 @@
 {{define "body-user-exit_nodes"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-route"></i>Exit nodes</h2>
-    <div class="sub">Устройства, рекламируемые как exit-node в этом tailnet</div>
+    <h2><i class="fa-solid fa-route"></i>{{.T "exit_nodes.title"}}</h2>
+    <div class="sub">{{.T "exit_nodes.subtitle"}}</div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i>Доступные exit nodes</h3>
+  <h3><i class="fa-solid fa-server"></i>{{.T "exit_nodes.title"}}</h3>
   {{if .ExitNodes}}
   <table>
     <thead>
       <tr>
-        <th>Hostname</th>
-        <th>Tailscale IP</th>
+        <th>{{.T "exit_nodes.hostname"}}</th>
+        <th>{{.T "exit_nodes.ip"}}</th>
         <th>Owner</th>
-        <th style="width:100px">Статус</th>
+        <th style="width:100px">{{.T "exit_nodes.status"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -26,9 +26,9 @@
         <td>{{.UserName}}</td>
         <td>
           {{if .Online}}
-            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>online</span>
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.T "exit_nodes.online"}}</span>
           {{else}}
-            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>offline</span>
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.T "exit_nodes.offline"}}</span>
           {{end}}
         </td>
       </tr>
@@ -38,25 +38,25 @@
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>
-    <div>В tailnet пока нет устройств, рекламируемых как exit-node.</div>
+    <div>{{.T "exit_nodes.empty"}}.</div>
   </div>
   <p style="color:var(--text-muted);margin-top:12px;font-size:12px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
-    <span>Exit-node — это устройство с тегом <code>tag:exit-node</code> в headscale ACL policy, или с именем начинающимся на <code>exit-</code>. Настройка тегов делается в <a href="https://tsnet.skynas.ru/admin/" target="_blank" rel="noopener">Headplane UI</a>.</span>
+    <span>Exit-node = <code>tag:exit-node</code> in headscale ACL policy, or hostname starts with <code>exit-</code>. Configure tags in <a href="https://tsnet.skynas.ru/admin/" target="_blank" rel="noopener">Headplane UI</a>.</span>
   </p>
   {{end}}
 </div>
 
 {{if .ExitNodes}}
 <div class="card">
-  <h3><i class="fa-solid fa-terminal"></i>Как подключиться</h3>
-  <p style="color:var(--text-muted);margin-bottom:12px">Скачайте exit-node на своём устройстве:</p>
+  <h3><i class="fa-solid fa-terminal"></i>How to connect</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">Pick an exit-node on your device:</p>
   <pre>tailscale set --exit-node=&lt;hostname&gt;
 
-# пример: tailscale set --exit-node={{(index .ExitNodes 0).Hostname}}</pre>
+# example: tailscale set --exit-node={{(index .ExitNodes 0).Hostname}}</pre>
   <p style="color:var(--text-muted);margin-top:12px;font-size:12px;display:flex;align-items:center;gap:6px">
     <i class="fa-solid fa-circle-info"></i>
-    <span>Отключить: <code>tailscale set --exit-node=</code></span>
+    <span>Disable: <code>tailscale set --exit-node=</code></span>
   </p>
 </div>
 {{end}}

@@ -1,19 +1,19 @@
 {{define "body-user-devices"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-laptop"></i>Мои устройства</h2>
-    <div class="sub">Устройства в headscale tailnet, привязанные к пользователю {{.Username}}</div>
+    <h2><i class="fa-solid fa-laptop"></i>{{.T "devices.title"}}</h2>
+    <div class="sub">{{.T "devices.subtitle"}}: {{.Username}}</div>
   </div>
   <div class="btn-row">
-    <a href="/my/exit-nodes" class="btn btn-secondary"><i class="fa-solid fa-route"></i>Exit nodes</a>
+    <a href="/my/exit-nodes" class="btn btn-secondary"><i class="fa-solid fa-route"></i>{{.T "nav.exit_nodes"}}</a>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-globe"></i>Публичные устройства (доступны всем)</h3>
+  <h3><i class="fa-solid fa-globe"></i>{{.T "devices.tag_public"}} ({{.T "nav.exit_nodes"}})</h3>
   {{if .PublicNodes}}
   <table>
-    <thead><tr><th>Hostname</th><th>Owner</th><th>Tailscale IP</th><th>Статус</th></tr></thead>
+    <thead><tr><th>{{.T "devices.hostname"}}</th><th>Owner</th><th>{{.T "devices.ip"}}</th><th>{{.T "devices.status"}}</th></tr></thead>
     <tbody>
       {{range .PublicNodes}}
       <tr>
@@ -22,9 +22,9 @@
         <td class="mono">{{index .IPAddresses 0}}</td>
         <td>
           {{if .Online}}
-            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>online</span>
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.T "devices.online"}}</span>
           {{else}}
-            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>offline</span>
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.T "devices.offline"}}</span>
           {{end}}
         </td>
       </tr>
@@ -34,16 +34,16 @@
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>
-    <div>В tailnet пока нет публичных устройств. Администратор может пометить устройство как публичное в разделе <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane</a>.</div>
+    <div>{{.T "exit_nodes.empty"}} — admin can mark devices as public via <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane</a>.</div>
   </div>
   {{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-house-laptop"></i>Мои устройства</h3>
+  <h3><i class="fa-solid fa-house-laptop"></i>{{.T "devices.title"}}</h3>
   {{if .HasMyNodes}}
   <table>
-    <thead><tr><th>Hostname</th><th>Tailscale IP</th><th>Статус</th><th>Последний раз видели</th><th>Видимость</th></tr></thead>
+    <thead><tr><th>{{.T "devices.hostname"}}</th><th>{{.T "devices.ip"}}</th><th>{{.T "devices.status"}}</th><th>{{.T "devices.last_seen"}}</th><th>{{.T "devices.tag"}}</th></tr></thead>
     <tbody>
       {{range .MyNodes}}
       <tr>
@@ -51,20 +51,20 @@
         <td class="mono">{{.IP}}</td>
         <td>
           {{if .Online}}
-            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>online</span>
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{.T "devices.online"}}</span>
           {{else}}
-            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>offline</span>
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{.T "devices.offline"}}</span>
           {{end}}
         </td>
         <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
         <td>
           {{if .IsPublic}}
-            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>public</span>
+            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>{{.T "devices.tag_public"}}</span>
             {{if eq .Source "snapshot"}}
-              <span style="color:var(--text-muted);font-size:11px" title="headscale отображает владельца как tagged-devices, оригинальный owner сохранён в skygate">via snapshot</span>
+              <span style="color:var(--text-muted);font-size:11px" title="headscale shows the owner as tagged-devices, original owner is preserved in skygate">via snapshot</span>
             {{end}}
           {{else}}
-            <span class="tag"><i class="fa-solid fa-lock"></i>private</span>
+            <span class="tag"><i class="fa-solid fa-lock"></i>{{.T "devices.tag_private"}}</span>
           {{end}}
         </td>
       </tr>
@@ -73,21 +73,22 @@
   </table>
   <p style="color:var(--text-muted);font-size:12px;margin-top:12px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
-    <span>Публичные устройства помечены администратором и видны всем пользователям tailnet. Приватные — только вам.</span>
+    <span>{{.T "devices.tag_hint"}}.</span>
   </p>
   {{else}}
   <div class="alert alert-warn" style="margin-top:0">
     <i class="fa-solid fa-triangle-exclamation"></i>
-    <div>У вас пока нет устройств. Зарегистрируйте первое — это занимает минуту.</div>
+    <div>{{.T "devices.no_devices"}}.</div>
   </div>
   {{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-plus-circle"></i>Подключить новое устройство</h3>
+  <h3><i class="fa-solid fa-plus-circle"></i>{{.T "devices.add"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:16px">
-    Выберите ОС — мы сгенерируем одноразовый ключ, действующий 1 час.
-    Ключ будет привязан к вашему аккаунту <code>{{.Username}}</code>.
+    {{.T "devices.add_hint"}}
+    {{.T "preauth.warning"}}
+    {{.T "devices.tag_hint"}}.
   </p>
   <form method="post" action="/my/preauth" id="preauth-form">
     <div class="os-grid">
@@ -98,50 +99,37 @@
       <label class="os-tile"><input type="radio" name="os" value="windows"><i class="fa-brands fa-windows"></i>Windows</label>
     </div>
     <div class="btn-row right">
-      <button type="submit" class="btn"><i class="fa-solid fa-key"></i>Получить ключ</button>
+      <button type="submit" class="btn"><i class="fa-solid fa-key"></i>{{.T "keys.issue"}}</button>
     </div>
   </form>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-circle-question"></i>Как подключить (краткая шпаргалка)</h3>
+  <h3><i class="fa-solid fa-circle-question"></i>FAQ</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
-    Наш tailnet работает на собственном headscale. Перед вводом ключа нужно указать <b>адрес нашего control server</b>:
+    {{.T "dashboard.quickref_control"}} <code>{{.ControlURL}}</code>
   </p>
-  <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px;font-family:var(--mono);font-size:13px">
-    {{.ControlURL}}
-  </div>
 
   <details>
-    <summary style="cursor:pointer;color:var(--accent)"><b>Android / iOS</b> — включить custom server и ввести ключ</summary>
+    <summary style="cursor:pointer;color:var(--accent)"><b>Android / iOS</b></summary>
     <ol class="plain" style="margin-top:8px">
-      <li>Установите Tailscale (Google Play / App Store).</li>
-      <li>В приложении: <b>Settings → Use custom coordination server</b> → вставьте адрес выше.</li>
-      <li>Нажмите <b>Sign in</b> → на странице входа выберите <b>"Use a preauth key"</b> → вставьте полученный ключ.</li>
+      <li>Install Tailscale (Google Play / App Store).</li>
+      <li>In the app: <b>Settings → Use custom coordination server</b> → paste the URL above.</li>
+      <li>Tap <b>Sign in</b> → on the login page pick <b>"Use a preauth key"</b> → paste the key.</li>
     </ol>
   </details>
 
   <details>
-    <summary style="cursor:pointer;color:var(--accent);margin-top:8px"><b>Linux / macOS / Windows (CLI)</b> — одна команда</summary>
-    <pre style="margin-top:8px">sudo tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ</pre>
+    <summary style="cursor:pointer;color:var(--accent);margin-top:8px"><b>Linux / macOS / Windows (CLI)</b></summary>
+    <pre style="margin-top:8px">sudo tailscale up --login-server={{.ControlURL}} --authkey=YOUR_KEY</pre>
     <p style="color:var(--text-muted);font-size:12px;margin-top:4px">
-      Добавьте <code>--accept-routes</code> если хотите принимать маршруты от exit nodes.
-      Полная инструкция с GUI-вариантами появится на следующей странице после нажатия «Получить ключ».
-    </p>
-  </details>
-
-  <details>
-    <summary style="cursor:pointer;color:var(--accent);margin-top:8px"><b>Уже вошли под другим аккаунтом?</b></summary>
-    <p style="margin-top:8px">
-      Сначала выйдите: <code>tailscale logout</code> (на мобильных — <i class="fa-solid fa-bars"></i> → <b>Sign out</b>).
-      Затем повторите команду <code>tailscale up</code> с новым ключом.
+      Add <code>--accept-routes</code> if you want to accept routes from exit nodes.
     </p>
   </details>
 </div>
 
 <script>
 // Auto-select the OS radio button based on the browser's User-Agent.
-// Saves a click when the user is on the device they want to register.
 (function() {
   try {
     var ua = (navigator.userAgent || '').toLowerCase();
@@ -158,7 +146,6 @@
   } catch (e) { /* ignore */ }
 })();
 
-// Click handler: highlight selected OS tile (both CSS :has and class toggle)
 document.querySelectorAll('.os-tile').forEach(function(tile){
   var input = tile.querySelector('input');
   tile.addEventListener('click', function(e){

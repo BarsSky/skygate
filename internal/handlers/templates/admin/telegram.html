@@ -1,11 +1,11 @@
 {{define "body-admin-telegram"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-brands fa-telegram"></i> Telegram</h2>
-    <div class="sub">Управление ботом уведомлений. Токен хранится в БД <code>global_settings</code>, файлы <code>.env</code> используются как запасной источник при первом старте.</div>
+    <h2><i class="fa-brands fa-telegram"></i> {{.T "telegram.title"}}</h2>
+    <div class="sub">{{.T "telegram.subtitle"}}. Token stored in DB <code>global_settings</code>, <code>.env</code> used as fallback at first start.</div>
   </div>
   {{if .State.Configured}}
-  <span class="pill pill-success" title="Бот сконфигурирован через БД"><i class="fa-solid fa-circle-check"></i> configured</span>
+  <span class="pill pill-success" title="Bot configured via DB"><i class="fa-solid fa-circle-check"></i> configured</span>
   {{else}}
   <span class="pill pill-warn"><i class="fa-solid fa-triangle-exclamation"></i> not configured</span>
   {{end}}
@@ -20,86 +20,85 @@
 
 <div class="card-grid">
   <div class="card">
-    <h3><i class="fa-solid fa-key"></i> Bot token &amp; chat id</h3>
+    <h3><i class="fa-solid fa-key"></i> {{.T "telegram.token"}} &amp; {{.T "telegram.chat_id"}}</h3>
     <form action="/admin/telegram" method="POST" autocomplete="off">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="save">
       <div class="form-group">
-        <label>Bot token</label>
-        <input type="password" name="bot_token" class="form-control" placeholder="оставьте пустым чтобы не менять">
+        <label>{{.T "telegram.token"}}</label>
+        <input type="password" name="bot_token" class="form-control" placeholder="leave empty to keep current">
         <div class="sub">
           {{if .State.Configured}}
-            Сохранён: <code>{{.State.TokenFP}}</code> · обновлён {{.State.UpdatedAt}}
+            Saved: <code>{{.State.TokenFP}}</code> · updated {{.State.UpdatedAt}}
           {{else}}
-            Получите токен через @BotFather → <code>/newbot</code>. См. <code>docs/TELEGRAM.md</code>.
+            Get a token via @BotFather → <code>/newbot</code>. See <code>docs/TELEGRAM.md</code>.
           {{end}}
         </div>
       </div>
       <div class="form-group">
-        <label>Chat id</label>
-        <input type="text" name="chat_id" value="{{.State.ChatID}}" class="form-control" placeholder="оставьте пустым чтобы не менять">
-        <div class="sub">Где бот уже стартовал. Узнать: <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.</div>
+        <label>{{.T "telegram.chat_id"}}</label>
+        <input type="text" name="chat_id" value="{{.State.ChatID}}" class="form-control" placeholder="leave empty to keep current">
+        <div class="sub">Where the bot has already started. Find out: <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.</div>
       </div>
-      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> Сохранить</button>
+      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{.T "common.save"}}</button>
     </form>
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-paper-plane"></i> Тест</h3>
-    <p class="sub">Отправляет сообщение в Telegram, используя уже сохранённый токен. Без токена кнопка отключена.</p>
+    <h3><i class="fa-solid fa-paper-plane"></i> {{.T "telegram.test"}}</h3>
+    <p class="sub">Sends a message to Telegram using the already-saved token. Without a token the button is disabled.</p>
     <form action="/admin/telegram" method="POST">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="test">
       <div class="form-group">
-        <label>Тема</label>
+        <label>Subject</label>
         <input type="text" name="test_subject" class="form-control" placeholder="skygate test" value="skygate test">
       </div>
       <div class="form-group">
-        <label>Тело</label>
-        <textarea name="test_body" class="form-control" rows="3">Telegram notification channel is operational. Sent from admin → telegram page.</textarea>
+        <label>Body</label>
+        <textarea name="test_body" class="form-control" rows="3">{{.T "telegram.test_message"}}</textarea>
       </div>
-      <button type="submit" class="btn" {{if not .State.Configured}}disabled{{end}}><i class="fa-solid fa-paper-plane"></i> Отправить тест</button>
+      <button type="submit" class="btn" {{if not .State.Configured}}disabled{{end}}><i class="fa-solid fa-paper-plane"></i> {{.T "telegram.test"}}</button>
       {{if not .State.Configured}}
-      <div class="sub" style="margin-top:.5rem">Сначала сохраните токен и chat_id.</div>
+      <div class="sub" style="margin-top:.5rem">Save token and chat_id first.</div>
       {{end}}
     </form>
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-arrows-rotate"></i> Rotate</h3>
-    <p class="sub">Если токен скомпрометирован (например, утёк в логи): удалите его и сохраните новый. Все будущие события (backup/upgrade) пойдут в ~/.skygate-notify.log пока не настроите заново.</p>
-    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Удалить текущий токен Telegram? Потребуется сохранить новый.')">
+    <h3><i class="fa-solid fa-arrows-rotate"></i> {{.T "telegram.rotate"}}</h3>
+    <p class="sub">If the token is compromised (e.g. leaked in logs): delete it and save a new one. All future events (backup/upgrade) will go to ~/.skygate-notify.log until reconfigured.</p>
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Delete the current Telegram token? You will need to save a new one.')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="rotate">
-      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> Я понимаю, что потребуется сохранить новый токен</label>
-      <button type="submit" class="btn btn-warn" style="margin-top:1rem"><i class="fa-solid fa-arrows-rotate"></i> Rotate token</button>
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> I understand a new token will be required</label>
+      <button type="submit" class="btn btn-warn" style="margin-top:1rem"><i class="fa-solid fa-arrows-rotate"></i> {{.T "telegram.rotate"}}</button>
     </form>
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-power-off"></i> Disable</h3>
-    <p class="sub">Полностью выключает Telegram. <code>scripts/notify.sh</code> будет писать в локальный лог.</p>
-    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Отключить Telegram? Уведомления перестанут приходить в мессенджер.')">
+    <h3><i class="fa-solid fa-power-off"></i> {{.T "telegram.disable"}}</h3>
+    <p class="sub">Completely turns off Telegram. <code>scripts/notify.sh</code> will write to a local log.</p>
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Disable Telegram? Notifications will stop arriving in the messenger.')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="disable">
-      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> Я понимаю последствия</label>
-      <button type="submit" class="btn btn-danger" style="margin-top:1rem"><i class="fa-solid fa-power-off"></i> Disable Telegram</button>
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> I understand the consequences</label>
+      <button type="submit" class="btn btn-danger" style="margin-top:1rem"><i class="fa-solid fa-power-off"></i> {{.T "telegram.disable"}}</button>
     </form>
   </div>
 
   <div class="card" style="grid-column:1 / -1">
-    <h3><i class="fa-solid fa-circle-info"></i> Куда смотрят другие компоненты</h3>
+    <h3><i class="fa-solid fa-circle-info"></i> Where other components look</h3>
     <ul class="sub" style="line-height:1.7">
-      <li><code>scripts/backup.sh</code> — <code>notify.sh --severity=fail</code> всегда; <code>--severity=ok</code> при <code>SKYGATE_NOTIFY_ON_OK=1</code>.</li>
-      <li><code>scripts/upgrade.sh</code> — <code>notify.sh --severity=ok|fail</code> после merge &amp; restart.</li>
-      <li>Переменные <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> из <code>.env</code> применяются, только если в БД не настроено (см. <code>cmd/skygate/main.go</code>).</li>
-      <li>Полная процедура получения токена: <a href="/docs/TELEGRAM.md" target="_blank" rel="noopener">docs/TELEGRAM.md</a>.</li>
+      <li><code>scripts/backup.sh</code> — <code>notify.sh --severity=fail</code> always; <code>--severity=ok</code> when <code>SKYGATE_NOTIFY_ON_OK=1</code>.</li>
+      <li><code>scripts/upgrade.sh</code> — <code>notify.sh --severity=ok|fail</code> after merge &amp; restart.</li>
+      <li>Variables <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> from <code>.env</code> apply only if not set in DB (see <code>cmd/skygate/main.go</code>).</li>
+      <li>Full token procedure: <a href="/docs/TELEGRAM.md" target="_blank" rel="noopener">docs/TELEGRAM.md</a>.</li>
     </ul>
   </div>
 </div>
 
 <script>
-  // Hide CSRF token from URL params when state changes
   if (window.history && window.history.replaceState) {
     var u = new URL(window.location.href);
     u.searchParams.delete('ok'); u.searchParams.delete('err');

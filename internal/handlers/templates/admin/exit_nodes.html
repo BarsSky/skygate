@@ -1,19 +1,19 @@
 {{define "body-admin-exit_nodes"}}
 <div class="card" style="margin-bottom:24px">
-  <h3><i class="fa-solid fa-server"></i> Exit Nodes</h3>
+  <h3><i class="fa-solid fa-server"></i> {{.T "exit_nodes.admin_title"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:12px">
-    Управление exit-узлами: SSH-доступ, advertised routes, синхронизация.
-    Список формируется из headscale (узлы с тегом <code>tag:exit-node</code> и approved routes).
+    {{.T "exit_nodes.admin_subtitle"}}.
+    Formed from headscale (nodes tagged <code>tag:exit-node</code> and approved routes).
   </p>
 
   {{if .Nodes}}
   <table>
     <tr>
-      <th>Узел</th><th>IP</th><th>SSH</th><th>Accept routes</th><th>Routes</th><th>Статус</th><th></th>
+      <th>{{.T "exit_nodes.hostname"}}</th><th>{{.T "exit_nodes.ip"}}</th><th>SSH</th><th>{{.T "exit_nodes.form_accept_routes"}}</th><th>{{.T "exit_nodes.routes"}}</th><th>{{.T "exit_nodes.status"}}</th><th></th>
     </tr>
     {{range .Nodes}}
     <tr>
-      <td><b>{{.Hostname}}</b>{{if not .Enabled}} <span class="tag tag-danger">выкл</span>{{end}}</td>
+      <td><b>{{.Hostname}}</b>{{if not .Enabled}} <span class="tag tag-danger">off</span>{{end}}</td>
       <td><code>{{.TailscaleIP}}</code></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{.SSHTarget}}">
         {{if .SSHTarget}}<code>{{.SSHTarget}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}
@@ -34,7 +34,7 @@
         {{else}}<span class="tag" style="background:var(--bg-hover)">idle</span>{{end}}
       </td>
       <td>
-        <form method="post" action="/admin/exit-nodes/delete" style="display:inline" onsubmit="return confirm('Удалить {{.Hostname}} из конфигурации?')">
+        <form method="post" action="/admin/exit-nodes/delete" style="display:inline" onsubmit="return confirm('{{.Tf "exit_nodes.delete_confirm" .Hostname}}')">
           <input type="hidden" name="node_id" value="{{.NodeID}}">
           <button class="btn btn-sm" style="background:var(--danger-bg);color:var(--danger)"><i class="fa-solid fa-trash"></i></button>
         </form>
@@ -43,73 +43,73 @@
     {{end}}
   </table>
   {{else}}
-  <p style="color:var(--text-muted)">Exit-узлы не обнаружены. Настройте exit-node и добавьте advertised routes.</p>
+  <p style="color:var(--text-muted)">{{.T "exit_nodes.empty"}}. Configure exit-node and add advertised routes.</p>
   {{end}}
 
   <div style="margin-top:12px;display:flex;gap:8px">
-    <button class="btn btn-primary" onclick="syncExitNodes()"><i class="fa-solid fa-sync"></i> Синхронизировать все</button>
+    <button class="btn btn-primary" onclick="syncExitNodes()"><i class="fa-solid fa-sync"></i> Sync all</button>
     <span id="sync-all-status" style="color:var(--text-muted);line-height:32px"></span>
   </div>
   <pre id="sync-all-result" style="display:none;margin-top:8px;padding:8px;background:var(--bg);border-radius:4px;max-height:200px;overflow:auto;font-size:12px"></pre>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-plus"></i> Добавить Exit Node</h3>
-  
+  <h3><i class="fa-solid fa-plus"></i> {{.T "exit_nodes.add"}}</h3>
+
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
-    <h4 style="margin:0 0 8px 0">1. Настройка Linux-хоста как exit-node</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">Выполнить <b>на самом exit-узле</b> (один раз):</p>
-    <pre style="font-size:12px;background:var(--bg)"># Включить IP forwarding
+    <h4 style="margin:0 0 8px 0">1. Linux host setup as exit-node</h4>
+    <p style="color:var(--text-muted);margin-bottom:8px">Run <b>on the exit-node</b> (one-time):</p>
+    <pre style="font-size:12px;background:var(--bg)"># Enable IP forwarding
 echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/99-tailscale-exit.conf
 sudo sysctl -p /etc/sysctl.d/99-tailscale-exit.conf
 
-# NAT для tailnet (100.64.0.0/10)
+# NAT for tailnet (100.64.0.0/10)
 EXT_IF=$(ip route | awk '/default/ {print $5; exit}')
 sudo iptables -t nat -A POSTROUTING -s 100.64.0.0/10 -o "$EXT_IF" -j MASQUERADE
 sudo iptables -A FORWARD -i tailscale0 -o "$EXT_IF" -j ACCEPT
 sudo iptables -A FORWARD -i "$EXT_IF" -o tailscale0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 
-# Сохранить правила
+# Persist rules
 sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules.v4</pre>
   </div>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
-    <h4 style="margin:0 0 8px 0">2. Подключение Tailscale с exit-node флагами</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">Выполнить <b>на exit-узле</b> после регистрации в headscale:</p>
+    <h4 style="margin:0 0 8px 0">2. Tailscale up with exit-node flags</h4>
+    <p style="color:var(--text-muted);margin-bottom:8px">Run <b>on the exit-node</b> after registering with headscale:</p>
     <pre style="font-size:12px;background:var(--bg)">tailscale up --login-server={{.ControlURL}} --ssh --advertise-exit-node --accept-routes</pre>
     <p style="color:var(--text-muted);margin-top:4px;font-size:12px">
-      <code>--ssh</code> — Tailscale SSH для удалённого управления<br>
-      <code>--advertise-exit-node</code> — режим exit-узла<br>
-      <code>--accept-routes</code> — принимать маршруты от других узлов
+      <code>--ssh</code> — Tailscale SSH for remote management<br>
+      <code>--advertise-exit-node</code> — act as exit node<br>
+      <code>--accept-routes</code> — accept routes from other nodes
     </p>
   </div>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
-    <h4 style="margin:0 0 8px 0">3. Windows-клиент: split-tunnel</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">На Windows-машине <b>НЕ использовать</b> <code>--exit-node</code>. Вместо этого:</p>
+    <h4 style="margin:0 0 8px 0">3. Windows client: split-tunnel</h4>
+    <p style="color:var(--text-muted);margin-bottom:8px">On Windows, do <b>NOT</b> use <code>--exit-node</code>. Instead:</p>
     <pre style="font-size:12px;background:var(--bg)">tailscale up --accept-routes</pre>
     <p style="color:var(--text-muted);margin-top:4px;font-size:12px">
-      <code>--accept-routes</code> принимает advertised routes от exit-узлов — только whitelist-IP идут через туннель.<br>
-      <b>Важно:</b> НЕ использовать <code>--exit-node</code> на Windows — WireGuardNT (WFP) перехватывает весь трафик до таблицы маршрутизации, статические маршруты не работают.
+      <code>--accept-routes</code> accepts advertised routes from exit-nodes — only whitelisted IPs go through the tunnel.<br>
+      <b>Important:</b> do NOT use <code>--exit-node</code> on Windows — WireGuardNT (WFP) intercepts all traffic before the routing table, static routes don't work.
     </p>
   </div>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
-    <h4 style="margin:0 0 8px 0">4. SSH-доступ для автосинхронизации</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">Skygate использует SSH для удалённого обновления <code>--advertise-routes</code> на exit-узлах.</p>
-    <p style="color:var(--text-muted);margin-bottom:8px">На <b>Skygate-хосте</b> (где запущен Docker):</p>
-    <pre style="font-size:12px;background:var(--bg)"># Путь к SSH-ключу (должен быть доступен в контейнере skygate)
-# По умолчанию: {{.SSHKeyPath}}
+    <h4 style="margin:0 0 8px 0">4. SSH access for auto-sync</h4>
+    <p style="color:var(--text-muted);margin-bottom:8px">Skygate uses SSH to update <code>--advertise-routes</code> on exit-nodes remotely.</p>
+    <p style="color:var(--text-muted);margin-bottom:8px">On <b>Skygate host</b> (where Docker runs):</p>
+    <pre style="font-size:12px;background:var(--bg)"># Path to SSH key (must be reachable from the skygate container)
+# Default: {{.SSHKeyPath}}
 ssh-keygen -t ed25519 -f ~/.ssh/skygate_sync -N "" -C "skygate-sync"
 ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
   </div>
 
-  <h4 style="margin:0 0 8px 0">5. Зарегистрировать узел в Skygate</h4>
+  <h4 style="margin:0 0 8px 0">5. Register the node in Skygate</h4>
   <p style="color:var(--text-muted);margin:0 0 8px;font-size:12px">
-    В форме ниже укажите <b>Headscale Node ID</b> (видно на странице <a href="/admin/devices">/admin/devices</a>), <b>Hostname</b> и <b>SSH Target</b>.
-    Поле <b>Accept routes</b> управляет флагом <code>--accept-routes</code> на самом узле:
-    <b>для нод, на которых работают другие VPN-сервисы</b> (Amnezia-AWG, OpenVPN, WireGuard, WG-Easy) <b>выбирайте <code>false</code></b> —
-    иначе Tailscale заберёт маршруты Google/Telegram от peer'ов в source-routing таблицу 52 и трафик из VPN-контейнера пойдёт «в чёрную дыру».
+    In the form below specify the <b>Headscale Node ID</b> (visible on <a href="/admin/devices">/admin/devices</a>), <b>Hostname</b>, and <b>SSH Target</b>.
+    The <b>Accept routes</b> field controls the <code>--accept-routes</code> flag on the node itself:
+    <b>for nodes that run other VPN services</b> (Amnezia-AWG, OpenVPN, WireGuard, WG-Easy) <b>choose <code>false</code></b> —
+    otherwise Tailscale will pick up Google/Telegram routes from peers into the source-routing table 52 and traffic from the VPN container will go into a "black hole".
   </p>
   <form method="post" action="/admin/exit-nodes/add" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
     <div>
@@ -117,30 +117,30 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
       <input name="node_id" placeholder="2" style="width:80px" required>
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">Hostname</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_hostname"}}</label>
       <input name="hostname" placeholder="karolina" style="width:140px" required>
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">SSH Target</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_ssh_target"}}</label>
       <input name="ssh_target" placeholder="root@karolina" style="width:200px">
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">SSH Key Path</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_ssh_key"}}</label>
       <input name="ssh_key_path" value="{{.SSHKeyPath}}" style="width:260px">
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">Accept routes</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_accept_routes"}}</label>
       <select name="accept_routes" style="width:160px">
-        <option value="">default (Tailscale решит сам)</option>
-        <option value="false">false (нода НЕ принимает маршруты от peer'ов)</option>
-        <option value="true">true (нода принимает маршруты от peer'ов)</option>
+        <option value="">default (Tailscale decides)</option>
+        <option value="false">false (node does NOT accept routes from peers)</option>
+        <option value="true">true (node accepts routes from peers)</option>
       </select>
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">Описание</label>
-      <input name="description" placeholder="VPS в Европе" style="width:150px">
+      <label style="font-size:12px;color:var(--text-muted)">{{.T "exit_nodes.form_desc"}}</label>
+      <input name="description" placeholder="VPS in Europe" style="width:150px">
     </div>
-    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Добавить</button>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{.T "common.add"}}</button>
   </form>
 </div>
 
@@ -148,16 +148,16 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
 async function syncExitNodes() {
   const status = document.getElementById('sync-all-status');
   const result = document.getElementById('sync-all-result');
-  status.textContent = 'Синхронизация...';
+  status.textContent = 'Syncing...';
   try {
     const r = await fetch('/admin/exit-nodes/sync', {method:'POST'});
     const data = await r.json();
-    status.textContent = r.ok ? '✓ Готово' : '✗ Ошибка';
+    status.textContent = r.ok ? '✓ Done' : '✗ Error';
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
     setTimeout(() => location.reload(), 1500);
   } catch(err) {
-    status.textContent = 'Ошибка: ' + err;
+    status.textContent = 'Error: ' + err;
   }
   status.style.color = 'var(--text-muted)';
 }

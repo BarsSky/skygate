@@ -98,7 +98,7 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	wrapper := map[string]any{
 		"Page":         data["Page"],
 		"BodyTemplate": name,
-		"Title":        pageTitle(name),
+		"Title":        a.I18n.T(lang, pageTitle(name)),
 		"Theme":        theme,
 		"ThemeLabel":   db.ThemeLabel(theme),
 	}
@@ -130,30 +130,57 @@ func pageFromName(name string) string {
 	return name
 }
 
+// pageTitle returns an i18n key (not a translated string) for the given
+// template name. The caller (renderWithLayout) resolves it through the
+// per-request Translations so the title follows the chosen language.
 func pageTitle(name string) string {
 	switch name {
 	case "dashboard.html":
-		return "Главная"
+		return "title.dashboard"
 	case "user/devices.html":
-		return "Мои устройства"
+		return "title.my_devices"
 	case "user/preauth_result.html":
-		return "Preauth ключ"
+		return "title.preauth"
 	case "user/exit_nodes.html":
-		return "Exit nodes"
+		return "title.my_exit_nodes"
+	case "user/account.html":
+		return "title.account"
+	case "user/keys.html":
+		return "title.my_keys"
+	case "user/exit_rules_help.html":
+		return "title.exit_rules_help"
+	case "my_tokens.html":
+		return "title.my_tokens"
 	case "admin/users.html":
-		return "Пользователи"
+		return "title.admin_users"
 	case "admin/devices.html":
-		return "Все устройства"
+		return "title.admin_devices"
 	case "admin/acls.html":
-		return "ACL"
+		return "title.admin_acls"
 	case "admin/audit.html":
-		return "Audit log"
+		return "title.admin_audit"
 	case "admin/derp.html":
-		return "DERP relay"
+		return "title.admin_derp"
+	case "admin/backup.html":
+		return "title.admin_backup"
+	case "admin/settings.html":
+		return "title.admin_settings"
+	case "admin/telegram.html":
+		return "title.admin_telegram"
+	case "admin/exit_rules.html":
+		return "title.admin_exit_rules"
+	case "admin/exit_rules_cleanup.html":
+		return "title.admin_exit_rules_cleanup"
+	case "admin/exit_rules_nodes.html":
+		return "title.admin_exit_rules_nodes"
+	case "admin/exit_nodes.html":
+		return "title.admin_exit_nodes"
 	case "help.html":
-		return "Справка"
+		return "title.help"
+	case "exit_rules.html":
+		return "title.exit_rules"
 	default:
-		return "Skygate"
+		return "title.skygate"
 	}
 }
 

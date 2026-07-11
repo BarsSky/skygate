@@ -1,59 +1,59 @@
 {{define "body-dashboard"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-hand-sparkles"></i>Добро пожаловать, {{.Username}}</h2>
-    <div class="sub">{{if .IsAdmin}}Вы администратор headscale tailnet{{else}}Управление вашими устройствами в tailnet{{end}}</div>
+    <h2><i class="fa-solid fa-hand-sparkles"></i>{{.Tf "dashboard.welcome" .Username}}</h2>
+    <div class="sub">{{if .IsAdmin}}{{.T "dashboard.admin_sub"}}{{else}}{{.T "dashboard.user_sub"}}{{end}}</div>
   </div>
 </div>
 
 {{if .TailnetMetrics}}
-<div class="section-title"><i class="fa-solid fa-chart-line"></i>{{if .IsAdmin}}Tailscale{{else}}Мой tailnet{{end}}</div>
+<div class="section-title"><i class="fa-solid fa-chart-line"></i>{{if .IsAdmin}}{{.T "dashboard.admin_section"}}{{else}}{{.T "dashboard.user_section"}}{{end}}</div>
 <div class="metric-grid">
   {{if .IsAdmin}}
   <div class="metric {{if gt .TailnetMetrics.OnlineNodes .TailnetMetrics.TotalNodes|not}}good{{end}}">
     <div class="icon"><i class="fa-solid fa-server"></i></div>
     <div class="body">
-      <div class="label">Устройства</div>
+      <div class="label">{{.T "dashboard.metric_devices"}}</div>
       <div class="value">{{.TailnetMetrics.OnlineNodes}}/{{.TailnetMetrics.TotalNodes}}</div>
-      <div class="sub">online / всего</div>
+      <div class="sub">{{.T "dashboard.metric_devices_sub"}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-route"></i></div>
     <div class="body">
-      <div class="label">Exit nodes</div>
+      <div class="label">{{.T "dashboard.metric_exit_nodes"}}</div>
       <div class="value">{{.TailnetMetrics.ExitNodesCount}}</div>
-      <div class="sub">advertise 0.0.0.0/0</div>
+      <div class="sub">{{.T "dashboard.metric_exit_nodes_sub"}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-tower-broadcast"></i></div>
     <div class="body">
-      <div class="label">Active DERP</div>
+      <div class="label">{{.T "dashboard.metric_active_derp"}}</div>
       <div class="value">{{.TailnetMetrics.ActiveDERP}}</div>
-      <div class="sub">relay</div>
+      <div class="sub">{{.T "dashboard.metric_active_derp_sub"}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-users"></i></div>
     <div class="body">
-      <div class="label">Пользователи</div>
+      <div class="label">{{.T "dashboard.metric_users"}}</div>
       <div class="value">{{.TailnetMetrics.UsersCount}}</div>
-      <div class="sub">в tailnet</div>
+      <div class="sub">{{.T "dashboard.metric_users_sub"}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-key"></i></div>
     <div class="body">
-      <div class="label">Preauth ключей</div>
+      <div class="label">{{.T "dashboard.metric_preauth"}}</div>
       {{if gt .TailnetMetrics.MyPreauthKeys.Total 0}}
         <div class="value">
           {{.TailnetMetrics.MyPreauthKeys.Used}}<span style="color:var(--text-subtle)">/{{add .TailnetMetrics.MyPreauthKeys.Active .TailnetMetrics.MyPreauthKeys.Used}}</span><span style="color:var(--text-subtle);font-size:13px">/{{.TailnetMetrics.MyPreauthKeys.Total}}</span>
         </div>
-        <div class="sub">использовано / активных / всего</div>
+        <div class="sub">{{.T "dashboard.metric_preauth_sub"}}</div>
       {{else}}
         <div class="value" style="color:var(--text-muted)">—</div>
-        <div class="sub">никто не получал</div>
+        <div class="sub">{{.T "dashboard.metric_preauth_none"}}</div>
       {{end}}
     </div>
   </div>
@@ -61,45 +61,45 @@
   <div class="metric {{if gt .TailnetMetrics.MyOnlineNodes .TailnetMetrics.MyTotalNodes|not}}good{{end}}">
     <div class="icon"><i class="fa-solid fa-laptop"></i></div>
     <div class="body">
-      <div class="label">Мои устройства</div>
+      <div class="label">{{.T "dashboard.metric_my_devices"}}</div>
       {{if eq .TailnetMetrics.MyTotalNodes 0}}
         <div class="value" style="color:var(--text-muted)">—</div>
-        <div class="sub">ещё не добавлены</div>
+        <div class="sub">{{.T "dashboard.metric_my_devices_none"}}</div>
       {{else}}
         <div class="value">{{.TailnetMetrics.MyOnlineNodes}}/{{.TailnetMetrics.MyTotalNodes}}</div>
-        <div class="sub">online / всего</div>
+        <div class="sub">{{.T "dashboard.metric_devices_sub"}}</div>
       {{end}}
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-route"></i></div>
     <div class="body">
-      <div class="label">Доступные exit nodes</div>
+      <div class="label">{{.T "dashboard.metric_available_exit"}}</div>
       <div class="value">{{.TailnetMetrics.ExitNodesCount}}</div>
-      <div class="sub">могу использовать</div>
+      <div class="sub">{{.T "dashboard.metric_available_exit_sub"}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-key"></i></div>
     <div class="body">
-      <div class="label">Preauth ключей</div>
+      <div class="label">{{.T "dashboard.metric_preauth"}}</div>
       {{if gt .TailnetMetrics.MyPreauthKeys.Total 0}}
         <div class="value">
           {{.TailnetMetrics.MyPreauthKeys.Used}}<span style="color:var(--text-subtle)">/{{add .TailnetMetrics.MyPreauthKeys.Active .TailnetMetrics.MyPreauthKeys.Used}}</span><span style="color:var(--text-subtle);font-size:13px">/{{.TailnetMetrics.MyPreauthKeys.Total}}</span>
         </div>
-        <div class="sub">использовано / активных / всего</div>
+        <div class="sub">{{.T "dashboard.metric_preauth_sub"}}</div>
       {{else}}
         <div class="value" style="color:var(--text-muted)">—</div>
-        <div class="sub">ни разу не получал</div>
+        <div class="sub">{{.T "dashboard.metric_preauth_user_none"}}</div>
       {{end}}
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-tower-broadcast"></i></div>
     <div class="body">
-      <div class="label">Лучший DERP</div>
+      <div class="label">{{.T "dashboard.metric_best_derp"}}</div>
       <div class="value">{{.TailnetMetrics.ActiveDERP}}</div>
-      <div class="sub">relay</div>
+      <div class="sub">{{.T "dashboard.metric_active_derp_sub"}}</div>
     </div>
   </div>
   {{end}}
@@ -108,40 +108,40 @@
 
 {{if .IsAdmin}}
 <div class="card">
-  <h3><i class="fa-solid fa-gauge-high"></i>Администрирование</h3>
+  <h3><i class="fa-solid fa-gauge-high"></i>{{.T "dashboard.admin_section_title"}}</h3>
   <ul class="plain">
-    <li><a href="/admin/users"><i class="fa-solid fa-users"></i> Пользователи</a> — создание и удаление headscale users + portal accounts</li>
-    <li><a href="/admin/devices"><i class="fa-solid fa-server"></i> Все устройства</a> — ноды во всех user namespaces</li>
-    <li><a href="/admin/exit-rules"><i class="fa-solid fa-route"></i> Exit rules</a> — все правила всех пользователей, sync advertised-routes, cleanup, rollback</li>
-    <li><a href="/admin/exit-nodes"><i class="fa-solid fa-network-wired"></i> Exit nodes</a> — зарегистрированные exit-ноды и их advertised-routes</li>
-    <li><a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i> ACL политика</a> — просмотр, редактирование через <a href="https://tsnet.skynas.ru/admin/" target="_blank" rel="noopener">Headplane UI</a></li>
-    <li><a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i> DERP relay</a> — статус custom DERP сервера</li>
-    <li><a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i> Audit log</a> — последние 200 действий</li>
-    <li><a href="/admin/backup"><i class="fa-solid fa-floppy-disk"></i> Backup</a> — бэкап и восстановление всех данных</li>
-    <li><a href="/admin/settings"><i class="fa-solid fa-gear"></i> Настройки</a> — URL, API ключ, пароль, миграция</li>
+    <li><a href="/admin/users"><i class="fa-solid fa-users"></i> {{.T "dashboard.admin_users"}}</a> — {{.T "dashboard.admin_users_desc"}}</li>
+    <li><a href="/admin/devices"><i class="fa-solid fa-server"></i> {{.T "dashboard.admin_devices"}}</a> — {{.T "dashboard.admin_devices_desc"}}</li>
+    <li><a href="/admin/exit-rules"><i class="fa-solid fa-route"></i> {{.T "dashboard.admin_exit_rules"}}</a> — {{.T "dashboard.admin_exit_rules_desc"}}</li>
+    <li><a href="/admin/exit-nodes"><i class="fa-solid fa-network-wired"></i> {{.T "dashboard.admin_exit_nodes"}}</a> — {{.T "dashboard.admin_exit_nodes_desc"}}</li>
+    <li><a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i> {{.T "dashboard.admin_acls"}}</a> — {{.T "dashboard.admin_acls_desc"}}</li>
+    <li><a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i> {{.T "dashboard.admin_derp"}}</a> — {{.T "dashboard.admin_derp_desc"}}</li>
+    <li><a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i> {{.T "dashboard.admin_audit"}}</a> — {{.T "dashboard.admin_audit_desc"}}</li>
+    <li><a href="/admin/backup"><i class="fa-solid fa-floppy-disk"></i> {{.T "dashboard.admin_backup"}}</a> — {{.T "dashboard.admin_backup_desc"}}</li>
+    <li><a href="/admin/settings"><i class="fa-solid fa-gear"></i> {{.T "dashboard.admin_settings"}}</a> — {{.T "dashboard.admin_settings_desc"}}</li>
   </ul>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-link"></i>Quick reference</h3>
+  <h3><i class="fa-solid fa-link"></i>{{.T "dashboard.quickref"}}</h3>
   <ul class="plain">
-    <li>Контроль plane: <code>head.skynas.ru</code></li>
-    <li>MagicDNS домен: <code>tsnet.skynas.ru</code></li>
-    <li>Custom DERP: <code>derp.skynas.ru</code> (region <code>mow</code>)</li>
-    <li>Portal: <code>{{.Username}}@skygate.skynas.ru</code></li>
+    <li>{{.T "dashboard.quickref_control"}} <code>head.skynas.ru</code></li>
+    <li>{{.T "dashboard.quickref_dns"}} <code>tsnet.skynas.ru</code></li>
+    <li>{{.T "dashboard.quickref_derp"}} <code>derp.skynas.ru</code> (region <code>mow</code>)</li>
+    <li>{{.T "dashboard.quickref_portal"}} <code>{{.Username}}@skygate.skynas.ru</code></li>
   </ul>
 </div>
 {{else}}
 <div class="card">
-  <h3><i class="fa-solid fa-rocket"></i>Ваши устройства</h3>
-  <p style="color:var(--text-muted);margin-bottom:16px">Регистрация нового устройства занимает меньше минуты:</p>
+  <h3><i class="fa-solid fa-rocket"></i>{{.T "dashboard.devices_card"}}</h3>
+  <p style="color:var(--text-muted);margin-bottom:16px">{{.T "dashboard.devices_card_sub"}}</p>
   <ol class="plain">
-    <li>Откройте <a href="/my/devices"><i class="fa-solid fa-laptop"></i> Мои устройства</a></li>
-    <li>Нажмите «Получить ключ», выберите вашу ОС</li>
-    <li>Установите Tailscale на устройство и вставьте ключ</li>
+    <li>{{.T "dashboard.devices_step1"}}</li>
+    <li>{{.T "dashboard.devices_step2"}}</li>
+    <li>{{.T "dashboard.devices_step3"}}</li>
   </ol>
   <div class="btn-row">
-    <a href="/my/devices" class="btn"><i class="fa-solid fa-arrow-right"></i>К моим устройствам</a>
+    <a href="/my/devices" class="btn"><i class="fa-solid fa-arrow-right"></i>{{.T "dashboard.devices_cta"}}</a>
   </div>
 </div>
 {{end}}

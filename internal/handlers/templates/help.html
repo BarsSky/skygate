@@ -1,12 +1,12 @@
 {{define "body-help"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-circle-question"></i>Справка</h2>
+    <h2><i class="fa-solid fa-circle-question"></i>{{.T "title.help"}}</h2>
     <div class="sub">
       {{if .IsAdmin}}
-        Полная документация: tailnet, exit nodes, DERP relay, ACL, диагностика
+        Full documentation: tailnet, exit nodes, DERP relay, ACL, diagnostics
       {{else}}
-        Как пользоваться Tailscale, exit node, и что делать если что-то не работает
+        How to use Tailscale, exit nodes, and what to do if something doesn't work
       {{end}}
     </div>
   </div>
@@ -22,164 +22,164 @@
 
 {{define "body-help-user"}}
 <div class="tabs">
-  <a href="#start" class="active"><i class="fa-solid fa-rocket"></i>Начало работы</a>
+  <a href="#start" class="active"><i class="fa-solid fa-rocket"></i>Getting started</a>
   <a href="#exit"><i class="fa-solid fa-route"></i>Exit node</a>
   <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>DERP relay</a>
-  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Проблемы</a>
-  <a href="#glossary"><i class="fa-solid fa-book"></i>Глоссарий</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Troubleshooting</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>Glossary</a>
 </div>
 
 <div id="start" class="doc-card">
-  <h3><i class="fa-solid fa-rocket"></i>Как начать пользоваться</h3>
-  <p>Skygate — это web-интерфейс для управления своим Tailscale-сервером <strong>headscale</strong>. Через него вы добавляете свои устройства в общий tailnet и управляете ими.</p>
+  <h3><i class="fa-solid fa-rocket"></i>Getting started</h3>
+  <p>Skygate is a web interface for managing your own Tailscale server, <strong>headscale</strong>. Through it you add your devices to a shared tailnet and manage them.</p>
 
-  <h4>Шаг 1. Установить Tailscale</h4>
+  <h4>Step 1. Install Tailscale</h4>
   <ul>
-    <li><strong>Android</strong>: Google Play → "Tailscale" → Установить</li>
-    <li><strong>iOS</strong>: App Store → "Tailscale" → Установить</li>
+    <li><strong>Android</strong>: Google Play → "Tailscale" → Install</li>
+    <li><strong>iOS</strong>: App Store → "Tailscale" → Install</li>
     <li><strong>Windows</strong>: <a href="https://tailscale.com/download/windows">tailscale.com/download/windows</a></li>
     <li><strong>macOS</strong>: App Store → "Tailscale"</li>
     <li><strong>Linux</strong>: <code>curl -fsSL https://tailscale.com/install.sh | sh</code></li>
   </ul>
 
-  <h4>Шаг 2. Войти в свой аккаунт</h4>
-  <p>При первом запуске Tailscale попросит войти. Используйте:</p>
+  <h4>Step 2. Sign in to your account</h4>
+  <p>On the first launch Tailscale will ask you to sign in. Use:</p>
   <ul>
-    <li>Сервер: <code>headscale.example.com</code></li>
-    <li>Логин: имя пользователя, которое вам выдал админ (например <code>user1</code>)</li>
+    <li>Server: <code>headscale.example.com</code></li>
+    <li>Login: the username your admin gave you (e.g. <code>user1</code>)</li>
   </ul>
-  <p>Tailscale откроет браузер → введите логин/пароль → устройство появится в tailnet.</p>
+  <p>Tailscale opens a browser → enter login/password → the device appears in the tailnet.</p>
 
-  <h4>Шаг 3. Найти свои устройства</h4>
-  <p>Перейдите на <a href="/my/devices">Мои устройства</a> — увидите все свои ноды со статусами (online/offline, IP, теги).</p>
+  <h4>Step 3. Find your devices</h4>
+  <p>Go to <a href="/my/devices">My devices</a> — you'll see all your nodes with statuses (online/offline, IP, tags).</p>
 
-  <h4>Шаг 4. Добавить ещё устройств</h4>
-  <p>В разделе <a href="/my/devices">Мои устройства</a> нажмите <strong>"Добавить устройство"</strong>:</p>
+  <h4>Step 4. Add more devices</h4>
+  <p>On the <a href="/my/devices">My devices</a> page click <strong>"Add device"</strong>:</p>
   <ul>
-    <li>Введите имя (например <code>my-laptop</code>, <code>my-phone</code>)</li>
-    <li>Нажмите <strong>Создать</strong> — появится preauth key</li>
-    <li>Скопируйте команду <code>tailscale up --login-server=https://headscale.example.com --authkey=hskey-auth-XXXX</code></li>
-    <li>Вставьте её в терминал нового устройства</li>
+    <li>Enter a name (e.g. <code>my-laptop</code>, <code>my-phone</code>)</li>
+    <li>Click <strong>Create</strong> — a preauth key appears</li>
+    <li>Copy the command <code>tailscale up --login-server=https://headscale.example.com --authkey=hskey-auth-XXXX</code></li>
+    <li>Paste it into a terminal on the new device</li>
   </ul>
-  <p>Готово — устройство появится в списке.</p>
+  <p>Done — the device appears in the list.</p>
 
   <div class="note">
-    <i class="fa-solid fa-circle-info"></i> По умолчанию ваши устройства получают тег <code>tag:private</code> — они видны только вам.
+    <i class="fa-solid fa-circle-info"></i> By default your devices get the <code>tag:private</code> tag — visible only to you.
   </div>
 </div>
 
 <div id="exit" class="doc-card">
-  <h3><i class="fa-solid fa-route"></i>Exit node (выход в интернет через другой узел)</h3>
-  <p><strong>Exit node</strong> — это сервер в tailnet, через который весь ваш трафик в интернет идёт. Полезно для:</p>
+  <h3><i class="fa-solid fa-route"></i>Exit node (routing internet through another node)</h3>
+  <p><strong>Exit node</strong> is a server in the tailnet through which all your internet traffic goes. Useful for:</p>
   <ul>
-    <li>🌍 <strong>Маршрутизация</strong> — IP, отличный от вашего</li>
-    <li>🇷🇺 <strong>Маршрутизация</strong> — сервисы доступны через exit node</li>
-    <li>🛡️ <strong>Приватность</strong> — провайдер не видит какие сайты вы посещаете</li>
-    <li>📡 <strong>Безопасность в публичном WiFi</strong></li>
+    <li>🌍 <strong>Routing</strong> — IP different from your own</li>
+    <li>🇷🇺 <strong>Routing</strong> — services reachable through the exit node</li>
+    <li>🛡️ <strong>Privacy</strong> — your ISP doesn't see which sites you visit</li>
+    <li>📡 <strong>Public WiFi safety</strong></li>
   </ul>
 
-  <h4>Какие exit node доступны</h4>
-  <p>Список доступных exit-узлов смотрите на странице <a href="/my/exit-nodes">Exit nodes</a>. Администратор tailnet настраивает их состав.</p>
+  <h4>Which exit nodes are available</h4>
+  <p>See the list of available exit nodes on the <a href="/my/exit-nodes">Exit nodes</a> page. The tailnet administrator manages the set.</p>
 
-  <h4>Как включить exit node</h4>
+  <h4>How to enable an exit node</h4>
   <ol>
-    <li>Откройте <strong>Tailscale app</strong> на устройстве</li>
-    <li>☰ Меню → <strong>Use exit node</strong> → выберите нужный узел</li>
-    <li>Готово — весь трафик идёт через выбранный сервер</li>
+    <li>Open <strong>Tailscale app</strong> on your device</li>
+    <li>☰ Menu → <strong>Use exit node</strong> → pick the node you need</li>
+    <li>Done — all traffic goes through the chosen server</li>
   </ol>
 
-  <h4>Как проверить что работает</h4>
-  <p>Откройте любой сервис проверки IP — должен показать IP страны exit-узла.</p>
+  <h4>How to verify it works</h4>
+  <p>Open any IP-check service — it should show the IP of the exit node's country.</p>
 
-  <h4>Как отключить</h4>
-  <p>Tailscale app → ☰ → <strong>None</strong> (Use exit node) → трафик снова идёт напрямую.</p>
+  <h4>How to disable</h4>
+  <p>Tailscale app → ☰ → <strong>None</strong> (Use exit node) → traffic flows direct again.</p>
 
   <div class="note">
-    <i class="fa-solid fa-triangle-exclamation"></i> <strong>Внимание</strong>: при включённом exit node скорость ограничена скоростью канала до exit-узла.
+    <i class="fa-solid fa-triangle-exclamation"></i> <strong>Note</strong>: with an exit node enabled, your speed is capped by the link to the exit node.
   </div>
 </div>
 
 <div id="derp" class="doc-card">
-  <h3><i class="fa-solid fa-tower-broadcast"></i>Что такое DERP relay</h3>
-  <p>Когда два Tailscale клиента не могут соединиться напрямую (CGNAT, файрвол, NAT), трафик идёт через <strong>DERP relay</strong> — промежуточный сервер.</p>
+  <h3><i class="fa-solid fa-tower-broadcast"></i>What DERP relay is</h3>
+  <p>When two Tailscale clients can't connect directly (CGNAT, firewall, NAT), traffic flows through a <strong>DERP relay</strong> — an intermediate server.</p>
 
-  <h4>Что это значит для вас</h4>
+  <h4>What this means for you</h4>
   <ul>
-    <li>🟢 <strong>Direct</strong> — устройства соединились напрямую. Быстро, низкий пинг.</li>
-    <li>🟡 <strong>Через DERP</strong> — трафик идёт через relay-сервер. Медленнее (+50-200ms), но работает всегда.</li>
+    <li>🟢 <strong>Direct</strong> — devices connected directly. Fast, low ping.</li>
+    <li>🟡 <strong>Through DERP</strong> — traffic goes via a relay. Slower (+50-200ms), but always works.</li>
   </ul>
 
-  <h4>Наш DERP relay</h4>
-  <p>Администратор tailnet может запустить собственный DERP-сервер для минимального пинга внутри региона. Адрес и статус — на странице <a href="/admin/derp">DERP</a>.</p>
+  <h4>Our DERP relay</h4>
+  <p>The tailnet admin can run a custom DERP server for minimum ping within the region. Address and status — on the <a href="/admin/derp">DERP</a> page.</p>
 
-  <h4>Полезные ссылки</h4>
+  <h4>Useful links</h4>
   <ul>
     <li><a href="https://tailscale.com/kb/1232/derp-servers" target="_blank">Tailscale docs: DERP servers</a></li>
-    <li><a href="https://tailscale.com/kb/1073/magicdns" target="_blank">MagicDNS — как обращаться к нодам по имени</a></li>
+    <li><a href="https://tailscale.com/kb/1073/magicdns" target="_blank">MagicDNS — addressing nodes by name</a></li>
   </ul>
 </div>
 
 <div id="troubleshoot" class="doc-card">
-  <h3><i class="fa-solid fa-wrench"></i>Частые проблемы</h3>
+  <h3><i class="fa-solid fa-wrench"></i>Common problems</h3>
 
-  <h4>🔴 "Не могу войти в Tailscale" / "Invalid login server"</h4>
+  <h4>🔴 "Can't sign in to Tailscale" / "Invalid login server"</h4>
   <ol>
-    <li>Убедитесь что ввели правильный login server (уточните у администратора)</li>
-    <li>Проверьте интернет-соединение</li>
-    <li>Попробуйте открыть headscale в браузере</li>
-    <li>Свяжитесь с админом — возможно ваш аккаунт деактивирован</li>
+    <li>Check that you entered the correct login server (ask the admin)</li>
+    <li>Verify your internet connection</li>
+    <li>Try opening headscale in your browser</li>
+    <li>Contact the admin — your account may be deactivated</li>
   </ol>
 
-  <h4>🔴 "Exit node выбран, но нет интернета"</h4>
+  <h4>🔴 "Exit node selected, but no internet"</h4>
   <ol>
-    <li>Проверьте что exit node <strong>online</strong> (см. <a href="/my/devices">Мои устройства</a>)</li>
-    <li>Попробуйте другой exit node</li>
-    <li>Перезапустите Tailscale на устройстве</li>
-    <li>Если не помогло — сообщите админу</li>
+    <li>Check that the exit node is <strong>online</strong> (see <a href="/my/devices">My devices</a>)</li>
+    <li>Try a different exit node</li>
+    <li>Restart Tailscale on the device</li>
+    <li>If nothing helps — notify the admin</li>
   </ol>
 
-  <h4>🔴 "MagicDNS не работает" / не резолвит имена</h4>
-  <p>На Android 4G иногда ломается. Решение:</p>
+  <h4>🔴 "MagicDNS doesn't work" / names don't resolve</h4>
+  <p>On Android 4G it sometimes breaks. Fix:</p>
   <ol>
     <li>Tailscale app → Settings → <strong>Tailscale DNS → OFF</strong></li>
-    <li>Используйте IP напрямую: <code>100.64.0.X</code> (видно на странице устройств)</li>
+    <li>Use the IP directly: <code>100.64.0.X</code> (visible on the devices page)</li>
   </ol>
 
-  <h4>🔴 "Устройство показывает online, но не пингуется"</h4>
+  <h4>🔴 "Device shows online, but doesn't ping"</h4>
   <ul>
-    <li>Проверьте что Tailscale запущен на том устройстве</li>
-    <li>Устройство может быть в спящем режиме — Tailscale засыпает</li>
-    <li>На Android: откройте Tailscale app — соединение восстановится</li>
+    <li>Check that Tailscale is running on that device</li>
+    <li>Device may be in sleep mode — Tailscale sleeps with it</li>
+    <li>On Android: open the Tailscale app — the connection will resume</li>
   </ul>
 
-  <h4>🟡 "Медленно работает интернет через exit node"</h4>
+  <h4>🟡 "Internet through exit node is slow"</h4>
   <ul>
-    <li>Попробуйте ближайший exit node</li>
-    <li>Проверьте пинг — если &gt; 200ms, возможно идёт через DERP</li>
-    <li>Перезапустите Tailscale</li>
+    <li>Try the nearest exit node</li>
+    <li>Check the ping — if &gt; 200ms, traffic likely goes through DERP</li>
+    <li>Restart Tailscale</li>
   </ul>
 
   <div class="card" style="background:var(--card-elevated);text-align:center;color:var(--text-muted);font-size:13px">
-    <i class="fa-solid fa-life-ring"></i> Не нашли решение? Напишите администратору tailnet.
+    <i class="fa-solid fa-life-ring"></i> Didn't find a solution? Message the tailnet admin.
   </div>
 </div>
 
 <div id="glossary" class="doc-card">
-  <h3><i class="fa-solid fa-book"></i>Глоссарий</h3>
+  <h3><i class="fa-solid fa-book"></i>Glossary</h3>
   <table>
-    <thead><tr><th>Термин</th><th>Что это</th></tr></thead>
+    <thead><tr><th>Term</th><th>What it is</th></tr></thead>
     <tbody>
-      <tr><td><strong>Tailnet</strong></td><td>Mesh-сеть Tailscale (все ваши устройства видят друг друга)</td></tr>
-      <tr><td><strong>Нода (Node)</strong></td><td>Одно устройство в tailnet (телефон, ноутбук, сервер)</td></tr>
-      <tr><td><strong>MagicDNS</strong></td><td>Встроенный DNS: обращение по имени ноды вместо IP</td></tr>
-      <tr><td><strong>DERP</strong></td><td>Relay-сервер (когда direct не работает)</td></tr>
-      <tr><td><strong>Exit node</strong></td><td>Устройство, через которое выходите в интернет</td></tr>
-      <tr><td><strong>Preauth key</strong></td><td>Ключ для добавления нового устройства без интерактивного входа</td></tr>
-      <tr><td><strong>tag:private</strong></td><td>Метка "личное устройство" (видно только вам)</td></tr>
-      <tr><td><strong>tag:public</strong></td><td>Метка "общее устройство" (exit node)</td></tr>
-      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — мобильный оператор прячет вас за общим IP</td></tr>
-      <tr><td><strong>ACL</strong></td><td>Правила доступа (кто к кому может подключаться)</td></tr>
-      <tr><td><strong>Headscale</strong></td><td>Свой Tailscale-сервер (вместо облачного Tailscale)</td></tr>
+      <tr><td><strong>Tailnet</strong></td><td>Tailscale mesh network (all your devices see each other)</td></tr>
+      <tr><td><strong>Node</strong></td><td>One device in the tailnet (phone, laptop, server)</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>Built-in DNS: address by node name instead of IP</td></tr>
+      <tr><td><strong>DERP</strong></td><td>Relay server (when direct doesn't work)</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>Device through which you go to the internet</td></tr>
+      <tr><td><strong>Preauth key</strong></td><td>Key to add a new device without interactive login</td></tr>
+      <tr><td><strong>tag:private</strong></td><td>"Personal device" label (visible only to you)</td></tr>
+      <tr><td><strong>tag:public</strong></td><td>"Shared device" label (exit node)</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — mobile operator hides you behind a shared IP</td></tr>
+      <tr><td><strong>ACL</strong></td><td>Access rules (who can connect to whom)</td></tr>
+      <tr><td><strong>Headscale</strong></td><td>Self-hosted Tailscale server (instead of cloud Tailscale)</td></tr>
     </tbody>
   </table>
 </div>
@@ -187,19 +187,19 @@
 
 {{define "body-help-admin"}}
 <div class="tabs">
-  <a href="#overview" class="active"><i class="fa-solid fa-diagram-project"></i>Обзор</a>
+  <a href="#overview" class="active"><i class="fa-solid fa-diagram-project"></i>Overview</a>
   <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>DERP</a>
   <a href="#exit"><i class="fa-solid fa-route"></i>Exit node</a>
   <a href="#acl"><i class="fa-solid fa-shield-halved"></i>ACL</a>
-  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Диагностика</a>
-  <a href="#glossary"><i class="fa-solid fa-book"></i>Глоссарий</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Diagnostics</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>Glossary</a>
 </div>
 
 <div id="overview" class="doc-card">
-  <h3><i class="fa-solid fa-diagram-project"></i>Что такое tailnet</h3>
-  <p>Tailnet — это mesh-сеть на базе Tailscale. Устройства в tailnet получают IP из диапазона <code>100.64.0.0/10</code> и видят друг друга по этим адресам независимо от того, где они находятся физически.</p>
+  <h3><i class="fa-solid fa-diagram-project"></i>What tailnet is</h3>
+  <p>Tailnet is a mesh network built on Tailscale. Devices in the tailnet get IPs in the <code>100.64.0.0/10</code> range and see each other at those addresses regardless of where they physically are.</p>
 
-  <h4>Поток данных</h4>
+  <h4>Data flow</h4>
   <div class="flow">
     <span class="node you">my-phone<br><small>100.64.0.5</small></span>
     <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
@@ -207,79 +207,79 @@
     <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
     <span class="node">internet<br><small>8.8.8.8</small></span>
   </div>
-  <div class="note">Когда my-phone использует exit-vps как exit node, весь его трафик в интернет идёт через VPS exit-vps.</div>
+  <div class="note">When my-phone uses exit-vps as an exit node, all of its internet traffic goes through the exit-vps VPS.</div>
 
-  <h4>Управление</h4>
+  <h4>Management</h4>
   <ul>
-    <li><a href="/admin/devices">Все устройства</a> — полный список, теги, удаление</li>
-    <li><a href="/admin/users">Пользователи</a> — создание, ACL, ресеты паролей</li>
-    <li><a href="/admin/derp">DERP relay</a> — статус, нагрузка</li>
-    <li><a href="/admin/audit">Audit log</a> — кто что делал</li>
+    <li><a href="/admin/devices">All devices</a> — full list, tags, delete</li>
+    <li><a href="/admin/users">Users</a> — create, ACL, password resets</li>
+    <li><a href="/admin/derp">DERP relay</a> — status, load</li>
+    <li><a href="/admin/audit">Audit log</a> — who did what</li>
   </ul>
 </div>
 
 <div id="derp" class="doc-card">
-  <h3><i class="fa-solid fa-tower-broadcast"></i>Как работает DERP</h3>
-  <p><strong>DERP (Designated Encrypted Relay for Packets)</strong> — это relay-сервер, через который проходит трафик когда прямое соединение между двумя Tailscale клиентами невозможно (CGNAT, файрвол, NAT).</p>
+  <h3><i class="fa-solid fa-tower-broadcast"></i>How DERP works</h3>
+  <p><strong>DERP (Designated Encrypted Relay for Packets)</strong> is a relay server through which traffic flows when a direct connection between two Tailscale clients is impossible (CGNAT, firewall, NAT).</p>
 
-  <h4>Архитектура</h4>
+  <h4>Architecture</h4>
   <pre>┌──────────┐    WireGuard-over-WS    ┌─────────┐    WebSocket    ┌──────────┐
 │ my-phone │ ────TLS 1.3 + WSS────────▶│  DERP   │─────────────────▶│ exit-vps │
-│ 4G CGNAT │   TCP 443 (как HTTPS)    │  relay  │  TCP 443        │  VPS EU  │
+│ 4G CGNAT │   TCP 443 (like HTTPS)   │  relay  │  TCP 443        │  VPS EU  │
 └──────────┘                          └─────────┘                  └──────────┘
                                             │
-                                  видит только:
-                                  • IP клиентов
-                                  • размер пакетов
-                                  • НЕ видит содержимое
+                                  sees only:
+                                  • client IPs
+                                  • packet sizes
+                                  • NOT contents
                                   (TLS 1.3 + WireGuard)</pre>
 
-  <h4>Когда включается DERP</h4>
+  <h4>When DERP kicks in</h4>
   <ul>
-    <li>🟢 <strong>Direct</strong> — клиенты могут соединиться напрямую. <strong>Лучшая скорость</strong>.</li>
-    <li>🟡 <strong>DERP relay</strong> — direct невозможен. Tailscale автоматически выбирает ближайший DERP. <strong>Медленнее</strong>, но работает всегда.</li>
+    <li>🟢 <strong>Direct</strong> — clients can connect directly. <strong>Best speed</strong>.</li>
+    <li>🟡 <strong>DERP relay</strong> — direct not possible. Tailscale automatically picks the nearest DERP. <strong>Slower</strong>, but always works.</li>
   </ul>
 
-  <h4>Технические особенности протокола DERP</h4>
+  <h4>DERP protocol details</h4>
   <ul>
-    <li><strong>TLS 1.3</strong> — DPI не видит что внутри (только "клиент ↔ HTTPS сервер")</li>
-    <li><strong>TCP 443</strong> — стандартный HTTPS-порт, используемый повсеместно</li>
-    <li><strong>WebSocket</strong> — выглядит как обычное HTTPS соединение</li>
-    <li><strong>Ротация IP</strong> — Tailscale имеет множество DERP серверов по миру</li>
-    <li><strong>Custom DERP</strong> — можно запустить свой relay с белым IP</li>
+    <li><strong>TLS 1.3</strong> — DPI cannot see inside (only "client ↔ HTTPS server")</li>
+    <li><strong>TCP 443</strong> — standard HTTPS port, ubiquitous</li>
+    <li><strong>WebSocket</strong> — looks like a normal HTTPS connection</li>
+    <li><strong>IP rotation</strong> — Tailscale has many DERP servers worldwide</li>
+    <li><strong>Custom DERP</strong> — you can run your own relay on a white IP</li>
   </ul>
 
-  <h4>Слабые места</h4>
+  <h4>Weak points</h4>
   <ul>
-    <li>⚠️ <strong>Throttling</strong> — провайдер может замедлять HTTPS к IP Tailscale</li>
-    <li>⚠️ <strong>IP-фильтрация</strong> — публичные DERP-серверы могут быть недоступны из некоторых сетей</li>
-    <li>⚠️ <strong>Latency</strong> — DERP добавляет +100-300ms к round-trip</li>
+    <li>⚠️ <strong>Throttling</strong> — ISP may slow down HTTPS to Tailscale IPs</li>
+    <li>⚠️ <strong>IP filtering</strong> — public DERP servers may be unreachable from some networks</li>
+    <li>⚠️ <strong>Latency</strong> — DERP adds +100-300ms to round-trip</li>
   </ul>
 
-  <h4>Свой DERP relay</h4>
-  <p>Запускается на сервере с белым IP. Статус и метрики: <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i> DERP</a></p>
+  <h4>Your own DERP relay</h4>
+  <p>Run on a server with a public IP. Status and metrics: <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i> DERP</a></p>
 </div>
 
 <div id="exit" class="doc-card">
   <h3><i class="fa-solid fa-route"></i>Exit node</h3>
-  <p>Exit node — это устройство в tailnet, через которое другие клиенты выходят в интернет.</p>
+  <p>Exit node is a device in the tailnet through which other clients go to the internet.</p>
 
-  <h4>Зачем это нужно</h4>
+  <h4>Why it's needed</h4>
   <ul>
-    <li>🌍 <strong>Маршрутизация</strong> — выход в интернет с IP exit-узла</li>
-    <li>🛡️ <strong>Приватность</strong> — провайдер видит только зашифрованный трафик до Tailscale</li>
-    <li>📡 <strong>Безопасность</strong> — публичный WiFi не видит ваш трафик</li>
-    <li>🇷🇺 <strong>Маршрутизация</strong> — сервисы доступны через exit node</li>
+    <li>🌍 <strong>Routing</strong> — go to the internet with the exit-node's IP</li>
+    <li>🛡️ <strong>Privacy</strong> — ISP only sees encrypted traffic to Tailscale</li>
+    <li>📡 <strong>Security</strong> — public WiFi can't see your traffic</li>
+    <li>🇷🇺 <strong>Routing</strong> — services reachable through the exit node</li>
   </ul>
 
-  <h4>Как включить</h4>
+  <h4>How to enable</h4>
   <ol>
-    <li>Откройте Tailscale app на устройстве</li>
-    <li>☰ Меню → Use exit node → выберите узел</li>
-    <li>Готово — трафик идёт через выбранный exit node</li>
+    <li>Open the Tailscale app on your device</li>
+    <li>☰ Menu → Use exit node → pick a node</li>
+    <li>Done — traffic flows through the chosen exit node</li>
   </ol>
 
-  <h4>Что нужно для работы (на стороне сервера)</h4>
+  <h4>What's needed on the server</h4>
   <pre>iptables -t nat -A POSTROUTING -s 100.64.0.0/10 -o $EXT_IF -j MASQUERADE
 iptables -A FORWARD -i tailscale0 -o $EXT_IF -j ACCEPT
 iptables -A FORWARD -i $EXT_IF -o tailscale0 -m state --state RELATED,ESTABLISHED -j ACCEPT</pre>
@@ -287,17 +287,17 @@ iptables -A FORWARD -i $EXT_IF -o tailscale0 -m state --state RELATED,ESTABLISHE
 
 <div id="acl" class="doc-card">
   <h3><i class="fa-solid fa-shield-halved"></i>ACL (Access Control List)</h3>
-  <p>ACL управляет тем, кто к кому может подключаться в tailnet. Редактируется в Skygate или напрямую в headscale.</p>
+  <p>ACL controls who can connect to whom in the tailnet. Edit in Skygate or directly in headscale.</p>
 
-  <h4>Разрешить exit node</h4>
+  <h4>Allow exit node</h4>
   <pre>{
   "action": "accept",
   "src": ["*"],
   "dst": ["autogroup:internet:*"]
 }</pre>
-  <p>Без этого правила exit node <strong>не виден</strong> клиентам (Tailscale 1.50+ требует явно разрешить).</p>
+  <p>Without this rule the exit node is <strong>invisible</strong> to clients (Tailscale 1.50+ requires explicit allow).</p>
 
-  <h4>Изолировать пользователей</h4>
+  <h4>Isolate users</h4>
   <pre>{
   "action": "accept",
   "src": ["admin"],
@@ -308,50 +308,50 @@ iptables -A FORWARD -i $EXT_IF -o tailscale0 -m state --state RELATED,ESTABLISHE
   "src": ["user1"],
   "dst": ["user1:*", "tag:public:*"]
 }</pre>
-  <p>user1 видит только свои устройства + exit node.</p>
+  <p>user1 sees only their own devices + exit node.</p>
 </div>
 
 <div id="troubleshoot" class="doc-card">
-  <h3><i class="fa-solid fa-wrench"></i>Диагностика</h3>
+  <h3><i class="fa-solid fa-wrench"></i>Diagnostics</h3>
 
-  <h4>На exit node</h4>
-  <pre># Проверить что exit node виден клиентам
+  <h4>On an exit node</h4>
+  <pre># Check that the exit node is visible to clients
 sudo journalctl -u tailscaled --since 5m | grep "suggested exit"
-# Если "suggested exit node: ()" — ACL блокирует
+# If "suggested exit node: ()" — ACL is blocking
 
-# Счётчики трафика через exit node
+# Traffic counters through exit node
 iptables -t nat -L POSTROUTING -n -v | grep "100.64.0.0/10"
 iptables -L FORWARD -n -v | grep "tailscale0"
 
-# Проверить direct vs relay
+# Direct vs relay
 tailscale status
-# active; direct 203.0.113.1:41641   ← хорошо
-# active; relay "fra"                  ← через DERP</pre>
+# active; direct 203.0.113.1:41641   ← good
+# active; relay "fra"                  ← through DERP</pre>
 
-  <h4>Частые проблемы</h4>
+  <h4>Common problems</h4>
 
-  <h4>🔴 Exit node выбран, но нет интернета</h4>
-  <p>На exit node не хватает iptables правил. Проверьте <code>iptables -t nat -L POSTROUTING</code> и <code>iptables -L FORWARD</code>.</p>
+  <h4>🔴 Exit node selected, no internet</h4>
+  <p>The exit node is missing iptables rules. Check <code>iptables -t nat -L POSTROUTING</code> and <code>iptables -L FORWARD</code>.</p>
 
-  <h4>🔴 "DNS Unavailable" на Android</h4>
-  <p>Tailscale DNS на Android 4G часто ломается. Решение: Tailscale app → Settings → <strong>Tailscale DNS → OFF</strong>.</p>
+  <h4>🔴 "DNS Unavailable" on Android</h4>
+  <p>Tailscale DNS on Android 4G frequently breaks. Fix: Tailscale app → Settings → <strong>Tailscale DNS → OFF</strong>.</p>
 </div>
 
 <div id="glossary" class="doc-card">
-  <h3><i class="fa-solid fa-book"></i>Глоссарий</h3>
+  <h3><i class="fa-solid fa-book"></i>Glossary</h3>
   <table>
-    <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
+    <thead><tr><th>Term</th><th>Definition</th></tr></thead>
     <tbody>
-      <tr><td><strong>Tailnet</strong></td><td>Mesh-сеть Tailscale (mesh = каждый с каждым)</td></tr>
-      <tr><td><strong>MagicDNS</strong></td><td>Встроенный DNS в формате <code>hostname.domain</code></td></tr>
-      <tr><td><strong>DERP</strong></td><td>Designated Encrypted Relay for Packets — relay для трафика</td></tr>
-      <tr><td><strong>Exit node</strong></td><td>Устройство, через которое другие выходят в интернет</td></tr>
-      <tr><td><strong>ACL</strong></td><td>Access Control List — кто к кому может подключаться</td></tr>
+      <tr><td><strong>Tailnet</strong></td><td>Tailscale mesh network (mesh = every node with every other)</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>Built-in DNS in <code>hostname.domain</code> format</td></tr>
+      <tr><td><strong>DERP</strong></td><td>Designated Encrypted Relay for Packets — relay for traffic</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>Device through which others go to the internet</td></tr>
+      <tr><td><strong>ACL</strong></td><td>Access Control List — who can connect to whom</td></tr>
       <tr><td><strong>Headscale</strong></td><td>Open-source Tailscale control server</td></tr>
-      <tr><td><strong>STUN</strong></td><td>Session Traversal Utilities for NAT — помогает NAT traversal</td></tr>
-      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — оператор прячет тысячи абонентов за 1 IP</td></tr>
-      <tr><td><strong>WireGuard</strong></td><td>Быстрый VPN-протокол, который использует Tailscale</td></tr>
-      <tr><td><strong>tag:public / tag:private</strong></td><td>Метки в headscale для multi-tenant изоляции</td></tr>
+      <tr><td><strong>STUN</strong></td><td>Session Traversal Utilities for NAT — helps NAT traversal</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — operator hides thousands of subscribers behind 1 IP</td></tr>
+      <tr><td><strong>WireGuard</strong></td><td>Fast VPN protocol used by Tailscale</td></tr>
+      <tr><td><strong>tag:public / tag:private</strong></td><td>Labels in headscale for multi-tenant isolation</td></tr>
     </tbody>
   </table>
 </div>

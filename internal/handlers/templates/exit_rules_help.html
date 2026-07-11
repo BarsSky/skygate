@@ -1,166 +1,166 @@
 {{define "body-exit_rules_help"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-book"></i> Exit Rules — справка</h2>
-    <div class="sub">Управление маршрутизацией · <a href="/my/tokens" style="color:var(--accent)"><i class="fa-solid fa-key"></i> API Tokens</a> · <a href="/my/exit-rules" style="color:var(--accent)"><i class="fa-solid fa-route"></i> Exit Rules</a></div>
+    <h2><i class="fa-solid fa-book"></i> {{.T "title.exit_rules_help"}}</h2>
+    <div class="sub">Routing management · <a href="/my/tokens" style="color:var(--accent)"><i class="fa-solid fa-key"></i> API Tokens</a> · <a href="/my/exit-rules" style="color:var(--accent)"><i class="fa-solid fa-route"></i> Exit Rules</a></div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-user-gear"></i> Для пользователей — как добавить правила</h3>
+  <h3><i class="fa-solid fa-user-gear"></i> For users — how to add rules</h3>
   <ol style="padding-left:20px;margin:0">
-    <li>Перейдите на страницу <a href="/my/exit-rules"><b>/my/exit-rules</b></a>.</li>
-    <li>В форме «Добавить правило»:
+    <li>Go to <a href="/my/exit-rules"><b>/my/exit-rules</b></a>.</li>
+    <li>In the "Add rule" form:
       <ul>
-        <li><b>Устройство</b> — выберите своё устройство (например «my-laptop»).</li>
-        <li><b>Exit node</b> — выберите сервер (например «node-europe»).</li>
-        <li><b>Действие</b> — Allow (пропустить трафик) или Deny (отбросить трафик).</li>
-        <li><b>Тип цели</b> — IP адрес, подсеть (10.0.0.0/24), или домен (example.com).</li>
-        <li><b>Значение</b> — IP/подсеть/домен.</li>
+        <li><b>Device</b> — pick your device (e.g. "my-laptop").</li>
+        <li><b>Exit node</b> — pick a server (e.g. "node-europe").</li>
+        <li><b>Action</b> — Allow (pass traffic) or Deny (drop traffic).</li>
+        <li><b>Target type</b> — IP address, subnet (10.0.0.0/24), or domain (example.com).</li>
+        <li><b>Value</b> — IP/subnet/domain.</li>
       </ul>
     </li>
-    <li>Нажмите <b>«Добавить»</b>. Правило сразу применяется.</li>
-    <li>На устройстве: <code>tailscale up --accept-routes</code> (Windows/Linux) или <code>tailscale up --exit-node=node-name</code> (Android/iOS).</li>
+    <li>Click <b>"Add"</b>. The rule is applied immediately.</li>
+    <li>On the device: <code>tailscale up --accept-routes</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS).</li>
   </ol>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-arrows-rotate"></i> DNS авто-обновление (с июля 2026)</h3>
-  <p>Для правил с <b>типом «домен»</b> Skygate каждые <b>5 минут</b> автоматически:</p>
+  <h3><i class="fa-solid fa-arrows-rotate"></i> DNS auto-update (since July 2026)</h3>
+  <p>For rules with <b>target type "domain"</b>, Skygate every <b>5 minutes</b> automatically:</p>
   <ol style="padding-left:20px;margin:0">
-    <li>Резолвит домен через DNS (если ещё не резолвится — добавляет как <code>target_type=domain</code> и попробует позже).</li>
-    <li>Находит все статические поддомены (например <code>static.rutracker.cc</code> для <code>rutracker.org</code>) и добавляет их IP.</li>
-    <li>Обновляет /32 правила: удаляет устаревшие IP, добавляет новые.</li>
-    <li>Синхронизирует advertised-routes на exit-узлах и одобряет их через <code>headscale nodes approve-routes</code>.</li>
+    <li>Resolves the domain via DNS (if it doesn't resolve yet, adds as <code>target_type=domain</code> and retries later).</li>
+    <li>Finds static subdomains (e.g. <code>static.rutracker.cc</code> for <code>rutracker.org</code>) and adds their IPs.</li>
+    <li>Updates /32 rules: removes stale IPs, adds new ones.</li>
+    <li>Syncs advertised-routes on exit-nodes and approves them through <code>headscale nodes approve-routes</code>.</li>
   </ol>
-  <p style="margin-top:8px">В таблице правил доменные правила помечены бейджем <b><i class="fa-solid fa-arrows-rotate"></i> auto</b>.</p>
-  <p>Все IP, добавленные авто-апдейтером, имеют <code>parent_domain</code> в БД — autoupdater их различает и не трогает ручные /32 правила.</p>
+  <p style="margin-top:8px">In the rules table domain rules are marked with the <b><i class="fa-solid fa-arrows-rotate"></i> auto</b> badge.</p>
+  <p>All IPs added by the auto-updater have <code>parent_domain</code> in the DB — autoupdater distinguishes them and doesn't touch manual /32 rules.</p>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    ⚠️ Некоторые сайты (rutracker.org, kinozal.tv и др.) используют <b>отдельный поддомен для статики</b>. Если autoupdater найдёт его в HTML — он автоматически резолвит и добавит. Если нет — пришлите заявку админу, добавим в <code>knownSubdomains</code> map.
+    ⚠️ Some sites (rutracker.org, kinozal.tv, etc.) use a <b>separate subdomain for static content</b>. If autoupdater finds it in HTML, it auto-resolves and adds it. If not — file a request to the admin, we'll add to the <code>knownSubdomains</code> map.
   </p>
-  <p style="margin-top:4px"><b>Известные поддомены:</b> rutracker.org → static.rutracker.cc</p>
+  <p style="margin-top:4px"><b>Known subdomains:</b> rutracker.org → static.rutracker.cc</p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-shield-halved"></i> Дедупликация правил</h3>
-  <p>При добавлении правила Skygate проверяет уникальность по комбинации <b>(device_id, exit_node, target_type, target_value)</b>:</p>
+  <h3><i class="fa-solid fa-shield-halved"></i> Rule deduplication</h3>
+  <p>When you add a rule Skygate checks uniqueness by the combination <b>(device_id, exit_node, target_type, target_value)</b>:</p>
   <ul>
-    <li>✅ <b>Новое правило</b> — добавлено, появится зелёный alert «Правило добавлено».</li>
-    <li>🔁 <b>Дубликат</b> — правило уже существует, появится красный alert «Правило для X уже существует».</li>
-    <li>⚠️ <b>Частичное добавление</b> — некоторые IP уже есть (для доменов, которые резолвятся в общие Cloudflare IP), появится жёлтый alert.</li>
-    <li>⚠️ <b>DNS warning</b> — домен не резолвится, сохранён как <code>target_type=domain</code>, autoupdater попробует при следующем цикле.</li>
+    <li>✅ <b>New rule</b> — added, you'll see the green "Rule added" alert.</li>
+    <li>🔁 <b>Duplicate</b> — the rule already exists, you'll see the red alert "A rule for X already exists".</li>
+    <li>⚠️ <b>Partial add</b> — some IPs already exist (for domains resolving to shared Cloudflare IPs), you'll see the yellow alert.</li>
+    <li>⚠️ <b>DNS warning</b> — domain doesn't resolve, saved as <code>target_type=domain</code>, autoupdater will try on the next cycle.</li>
   </ul>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-key"></i> API Tokens — токены доступа</h3>
-  <p>Для доступа к API используйте персональный токен. Это безопаснее cookie-сессии и удобнее для AI-помощников и скриптов.</p>
+  <h3><i class="fa-solid fa-key"></i> API Tokens — access tokens</h3>
+  <p>For API access use a personal token. It's safer than a cookie session and more convenient for AI assistants and scripts.</p>
   <ol style="padding-left:20px;margin:0">
-    <li>Перейдите на <a href="/my/tokens"><b>/my/tokens</b></a> → «Создать токен», укажите метку (например «Hermes»).</li>
-    <li><b>Скопируйте токен</b> — он показывается <u>только один раз</u>. Храните в безопасном месте.</li>
-    <li>Используйте в заголовке: <code>Authorization: Bearer &lt;ва.../li>
-    <li>Токен действует без ограничения срока. Отозвать можно в любой момент на /my/tokens.</li>
+    <li>Go to <a href="/my/tokens"><b>/my/tokens</b></a> → "Create token", specify a label (e.g. "Hermes").</li>
+    <li><b>Copy the token</b> — it's shown <u>only once</u>. Store it safely.</li>
+    <li>Use in the header: <code>Authorization: Bearer &lt;your token&gt;</code></li>
+    <li>The token has no expiration. Revoke anytime on /my/tokens.</li>
   </ol>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;margin-top:8px;">
-# С токеном (рекомендуется):
-curl -H "Authorization: Bearer *** \
+# With token (recommended):
+curl -H "Authorization: Bearer &lt;token&gt;" \
   {{.BaseURL}}/my/exit-rules/api
 
-# Массовое создание:
-curl -X POST -H "Authorization: Bearer *** \
+# Bulk create:
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
   -H "Content-Type: application/json" \
   -d '{"rules":[{"device_id":5,"exit_node":"node-europe","target_type":"subnet","target_value":"10.0.0.0/24","action":"accept"}]}' \
   {{.BaseURL}}/my/exit-rules/api</pre>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-diagram-project"></i> Как это работает</h3>
-  <p>Skygate использует <b>advertised routes</b> для избирательной маршрутизации (split-tunnel).</p>
+  <h3><i class="fa-solid fa-diagram-project"></i> How it works</h3>
+  <p>Skygate uses <b>advertised routes</b> for selective routing (split-tunnel).</p>
   <ol style="padding-left:20px;margin:0">
-    <li><b>Exit-узлы</b> (VPS-серверы) анонсируют whitelist-подсети через <code>--advertise-routes</code>.</li>
-    <li><b>Headscale</b> (control plane) одобряет и раздаёт маршруты клиентам <b>по ACL</b> — каждое устройство получает только свои подсети.</li>
-    <li><b>Клиенты:</b>
+    <li><b>Exit nodes</b> (VPS servers) advertise whitelist subnets via <code>--advertise-routes</code>.</li>
+    <li><b>Headscale</b> (control plane) approves and distributes routes to clients <b>per ACL</b> — each device gets only its own subnets.</li>
+    <li><b>Clients:</b>
       <ul>
-        <li><b>Windows/Linux:</b> <code>tailscale up --accept-routes</code> — split-туннель (только whitelist → exit-node)</li>
-        <li><b>Android/iOS:</b> <code>tailscale up --exit-node=X</code> — полный туннель</li>
+        <li><b>Windows/Linux:</b> <code>tailscale up --accept-routes</code> — split-tunnel (only whitelist → exit-node)</li>
+        <li><b>Android/iOS:</b> <code>tailscale up --exit-node=X</code> — full tunnel</li>
       </ul>
     </li>
-    <li>При изменении правил Skygate автоматически обновляет advertised-routes на всех exit-узлах + <b>autoupdater</b> следит за доменами.</li>
+    <li>When rules change Skygate auto-updates advertised-routes on all exit-nodes + <b>autoupdater</b> watches domains.</li>
   </ol>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-globe"></i> Tailnet — частная mesh-сеть</h3>
-  <p><b>Tailnet</b> — это mesh-сеть на базе Tailscale/headscale. Все устройства в tailnet получают IP из диапазона <code>100.64.0.0/10</code> и видят друг друга напрямую, независимо от физического расположения (дома, в офисе, в дата-центре, за CGNAT).</p>
-  <p>Пример:</p>
+  <h3><i class="fa-solid fa-globe"></i> Tailnet — private mesh network</h3>
+  <p><b>Tailnet</b> is a mesh network based on Tailscale/headscale. All devices in the tailnet get IPs in the <code>100.64.0.0/10</code> range and see each other directly, regardless of physical location (home, office, datacenter, behind CGNAT).</p>
+  <p>Example:</p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 my-phone (100.64.0.5) ──► exit-node (100.64.0.3) ──► internet (8.8.8.8)</pre>
-  <p>Когда клиент использует exit-node, его трафик в интернет идёт через VPS этого exit-узла. Для внешних сайтов источником запроса будет IP VPS-сервера, а не клиента.</p>
+  <p>When a client uses an exit-node, its internet traffic goes through that exit-node's VPS. For external sites the request source will be the VPS IP, not the client's.</p>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    ⚠️ <b>Cloudflare Challenge:</b> некоторые сайты (rutracker.org и др.) показывают CAPTCHA если заходят с IP exit-узла вне РФ. Решение: используйте <b>exit-узел в РФ</b> (sharlotta) для таких сайтов, или работайте через <code>--exit-node=karolina</code> для всего трафика.
+    ⚠️ <b>Cloudflare Challenge:</b> some sites (rutracker.org, etc.) show a CAPTCHA when accessed from an exit-node IP outside Russia. Fix: use a <b>Russian exit-node</b> (sharlotta) for such sites, or work via <code>--exit-node=karolina</code> for all traffic.
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i> Настройка exit-node (администратор)</h3>
-  <p>Выполнить <b>на каждом exit-узле</b> (VPS-сервер, который будет выходной точкой):</p>
+  <h3><i class="fa-solid fa-server"></i> Setting up an exit node (admin)</h3>
+  <p>Run <b>on each exit node</b> (the VPS server that will be the egress point):</p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
-# Скрипт: /static/scripts/skygate_exit_node_setup.sh
-# Или вручную:
+# Script: /static/scripts/skygate_exit_node_setup.sh
+# Or manually:
 
 tailscale set \
   --ssh \
   --advertise-exit-node \
   --advertise-routes="10.0.0.0/24,172.16.0.0/16,192.168.0.0/24,..."</pre>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    ⚠️ <code>--advertise-routes</code> <b>заменяет</b> список. <code>0.0.0.0/0</code> и <code>::/0</code> сохраняются автоматически.
+    ⚠️ <code>--advertise-routes</code> <b>replaces</b> the list. <code>0.0.0.0/0</code> and <code>::/0</code> are kept automatically.
   </p>
-  <p style="margin-top:4px"><b>Откат:</b> <code>tailscale set --advertise-exit-node --advertise-routes="0.0.0.0/0,::/0"</code></p>
+  <p style="margin-top:4px"><b>Rollback:</b> <code>tailscale set --advertise-exit-node --advertise-routes="0.0.0.0/0,::/0"</code></p>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    Требования к exit-node: <code>ip_forward=1</code>, <code>iptables MASQUERADE</code> (настраивается автоматически при <code>--advertise-exit-node</code>).
+    Requirements for an exit node: <code>ip_forward=1</code>, <code>iptables MASQUERADE</code> (auto-configured with <code>--advertise-exit-node</code>).
   </p>
 </div>
 
 <div class="card">
   <h3><i class="fa-solid fa-tower-broadcast"></i> DERP relay</h3>
-  <p><b>DERP</b> (Designated Encrypted Relay for Packets) — relay-сервер, через который идёт трафик когда прямое соединение между клиентами невозможно (CGNAT, файрвол, NAT).</p>
+  <p><b>DERP</b> (Designated Encrypted Relay for Packets) is a relay server that carries traffic when a direct connection between clients is impossible (CGNAT, firewall, NAT).</p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 ┌──────────┐   TLS 1.3 + WSS    ┌─────────┐   WebSocket   ┌──────────┐
 │ my-phone │ ──────────────────▶│  DERP   │──────────────▶│ exit-vps │
 │ 4G CGNAT │   TCP 443 (HTTPS)  │  relay  │  TCP 443      │  VPS EU  │
 └──────────┘                    └─────────┘               └──────────┘
                                       │
-                            видит: IP клиентов, размер пакетов
-                            НЕ видит: содержимое (TLS 1.3 + WireGuard)</pre>
-  <p><b>Когда используется:</b></p>
+                          sees: client IPs, packet sizes
+                          does NOT see: contents (TLS 1.3 + WireGuard)</pre>
+  <p><b>When it's used:</b></p>
   <ul>
-    <li>🟢 <b>Direct</b> — клиенты соединяются напрямую (LAN, пробили NAT). Максимальная скорость.</li>
-    <li>🟡 <b>DERP relay</b> — direct невозможен. Автоматически выбирается ближайший relay. Медленнее, но работает всегда.</li>
+    <li>🟢 <b>Direct</b> — clients connect directly (LAN, NAT punched). Maximum speed.</li>
+    <li>🟡 <b>DERP relay</b> — direct not possible. The nearest relay is auto-picked. Slower, but always works.</li>
   </ul>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    DERP использует TLS 1.3 на порте TCP 443 — трафик выглядит как обычный HTTPS, включая для DPI.
+    DERP uses TLS 1.3 on TCP 443 — traffic looks like regular HTTPS, including to DPI.
   </p>
 </div>
 
 <div class="card">
   <h3><i class="fa-solid fa-terminal"></i> API Reference</h3>
 
-  <h4>GET /my/exit-rules/api — список правил</h4>
+  <h4>GET /my/exit-rules/api — list rules</h4>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
-# С токеном:
-curl -H "Authorization: Bearer *** {{.BaseURL}}/my/exit-rules/api
+# With token:
+curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/my/exit-rules/api
 
-# Или с cookie:
+# Or with cookie:
 curl -b skygate_session=TOKEN {{.BaseURL}}/my/exit-rules/api</pre>
-  <p>Ответ: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x", "parent_domain":""}]}</code></p>
+  <p>Response: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x", "parent_domain":""}]}</code></p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
-    Поле <code>parent_domain</code> — для /32 правил, созданных autoupdater'ом, содержит исходный домен.
+    The <code>parent_domain</code> field — for /32 rules created by autoupdater, contains the originating domain.
   </p>
 
-  <h4>POST /my/exit-rules/api — массовое создание</h4>
+  <h4>POST /my/exit-rules/api — bulk create</h4>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
-# С токеном:
-curl -X POST -H "Authorization: Bearer *** \
+# With token:
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
   -H "Content-Type: application/json" \
   -d '{"rules":[
     {"device_id":5, "exit_node":"node-europe", "target_type":"subnet", "target_value":"10.0.0.0/24", "action":"accept"},
@@ -169,107 +169,107 @@ curl -X POST -H "Authorization: Bearer *** \
   ]}' \
   {{.BaseURL}}/my/exit-rules/api
 
-# Или с cookie:
+# Or with cookie:
 curl -X POST -b skygate_session=TOKEN \
   -H "Content-Type: application/json" \
   -d '{"rules":[...]}' \
   {{.BaseURL}}/my/exit-rules/api</pre>
-  <p>Ответ: <code>{"added": 3, "duplicates": 0, "errors": []}</code></p>
+  <p>Response: <code>{"added": 3, "duplicates": 0, "errors": []}</code></p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
-    Для <code>target_type=domain</code> сервер автоматически резолвит домен в IP (если DNS отвечает) и сохраняет каждую запись как <code>subnet /32</code>. Доменное правило само остаётся в БД для autoupdater.
+    For <code>target_type=domain</code> the server auto-resolves the domain to IPs (if DNS answers) and saves each as <code>subnet /32</code>. The domain rule itself stays in the DB for autoupdater.
   </p>
 
   <table style="margin-top:12px">
-    <tr><th>Поле</th><th>Тип</th><th>Обязательное</th><th>Описание</th></tr>
-    <tr><td><code>device_id</code></td><td>int</td><td>да</td><td>ID устройства (см. /my/devices)</td></tr>
-    <tr><td><code>exit_node</code></td><td>string</td><td>нет</td><td>Имя exit-node (например "node-europe")</td></tr>
-    <tr><td><code>target_type</code></td><td>string</td><td>да</td><td>"ip", "subnet", или "domain"</td></tr>
-    <tr><td><code>target_value</code></td><td>string</td><td>да</td><td>IP, подсеть (10.0.0.0/24), или домен (example.com)</td></tr>
-    <tr><td><code>action</code></td><td>string</td><td>нет</td><td>"accept" (по умолчанию) или "deny"</td></tr>
+    <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+    <tr><td><code>device_id</code></td><td>int</td><td>yes</td><td>Device ID (see /my/devices)</td></tr>
+    <tr><td><code>exit_node</code></td><td>string</td><td>no</td><td>Exit node name (e.g. "node-europe")</td></tr>
+    <tr><td><code>target_type</code></td><td>string</td><td>yes</td><td>"ip", "subnet", or "domain"</td></tr>
+    <tr><td><code>target_value</code></td><td>string</td><td>yes</td><td>IP, subnet (10.0.0.0/24), or domain (example.com)</td></tr>
+    <tr><td><code>action</code></td><td>string</td><td>no</td><td>"accept" (default) or "deny"</td></tr>
   </table>
 
   <h4 style="margin-top:16px">GET /admin/exit-rules/sync (admin)</h4>
-  <p>Синхронизирует advertised-routes на всех exit-node.</p>
-  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer *** {{.BaseURL}}/admin/exit-rules/sync</pre>
+  <p>Syncs advertised-routes on all exit nodes.</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/admin/exit-rules/sync</pre>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-robot"></i> Пример промпта для AI-помощника</h3>
-  <p><b>Для добавления правил через AI (Hermes/Claude/Cline):</b></p>
+  <h3><i class="fa-solid fa-robot"></i> Example prompt for an AI assistant</h3>
+  <p><b>To add rules via AI (Hermes/Claude/Cline):</b></p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
-Добавь правила маршрутизации для my-laptop (device_id=5) через exit-node node-europe.
-Токен: &lt;скопи...gt;
+Add routing rules for my-laptop (device_id=5) through exit-node node-europe.
+Token: &lt;copy from /my/tokens&gt;
 
-Сервис 1 (подсети):
+Service 1 (subnets):
   10.0.0.0/24, 10.0.1.0/24, 172.16.0.0/20
 
-Сервис 2 (подсети):
+Service 2 (subnets):
   192.168.0.0/16, 198.51.100.0/24
 
-Сервис 3 (домены, autoupdater сам подтянет IP):
+Service 3 (domains, autoupdater will pick up the IPs):
   rutracker.org, kernel.org, github.com
 
-Используй POST /my/exit-rules/api.
-Базовый URL: {{.BaseURL}}</pre>
+Use POST /my/exit-rules/api.
+Base URL: {{.BaseURL}}</pre>
 
-  <p style="margin-top:8px"><b>Что AI-помощник должен знать:</b></p>
+  <p style="margin-top:8px"><b>What the AI assistant should know:</b></p>
   <ul>
-    <li>target_type может быть "ip", "subnet" или "domain".</li>
-    <li>Для доменов сервер сам резолвит и подтянет все IP (autoupdater каждые 5 мин).</li>
-    <li>Для российских сайтов используй exit-node в РФ (например sharlotta) — иначе Cloudflare даст challenge.</li>
-    <li>Список токенов и их отзыв — на <a href="/my/tokens">/my/tokens</a>.</li>
+    <li>target_type can be "ip", "subnet", or "domain".</li>
+    <li>For domains, the server auto-resolves and pulls in all IPs (autoupdater every 5 min).</li>
+    <li>For Russian sites, use a Russian exit-node (e.g. sharlotta) — otherwise Cloudflare shows a challenge.</li>
+    <li>List and revoke tokens at <a href="/my/tokens">/my/tokens</a>.</li>
   </ul>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-square-check"></i> Массовое удаление (multi-delete)</h3>
-  <p>В таблице правил появились <b>чекбоксы</b> и <b>sticky-панель</b> вверху и внизу страницы:</p>
+  <h3><i class="fa-solid fa-square-check"></i> Bulk delete (multi-delete)</h3>
+  <p>The rules table has <b>checkboxes</b> and a <b>sticky bar</b> at top and bottom:</p>
   <ul>
-    <li><b>Select all</b> в верхней и нижней панели - выделяет все видимые правила.</li>
-    <li><b>Фильтр по типу</b> (Все типы / Только домены / Только /32 / Только IP) - сужает выбор.</li>
-    <li><b>Поиск</b> по IP/подсети/домену - скрывает неподходящие строки.</li>
-    <li><b>Счётчик</b> «Выбрано: N» - обновляется в обеих панелях в реальном времени.</li>
-    <li>Кнопка <b>«Удалить выбранные»</b> внизу - каскадно удаляет все выделенные правила.</li>
+    <li><b>Select all</b> in top and bottom bars — selects all visible rules.</li>
+    <li><b>Type filter</b> (All types / Domains only / /32 only / IP only) — narrows the selection.</li>
+    <li><b>Search</b> by IP/subnet/domain — hides non-matching rows.</li>
+    <li><b>Counter</b> "Selected: N" — updates in real time in both bars.</li>
+    <li>Button <b>"Delete selected"</b> at the bottom — cascade-deletes all selected rules.</li>
   </ul>
-  <p style="margin-top:8px"><b>Каскадное удаление (cascade):</b> при удалении правила с типом <code>domain</code> автоматически удаляются все связанные /32 правила с тем же <code>parent_domain</code>. Без этого autoupdater оставлял бы «осиротевшие» /32 для доменов, которые пользователь больше не отслеживает.</p>
+  <p style="margin-top:8px"><b>Cascade delete:</b> when you delete a rule with type <code>domain</code>, all related /32 rules with the same <code>parent_domain</code> are removed automatically. Without this, autoupdater would leave "orphaned" /32 for domains the user no longer tracks.</p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
-    Одиночное удаление (кнопка <i class="fa-solid fa-trash"></i> в строке) тоже работает каскадно для доменов.
+    Single delete (the <i class="fa-solid fa-trash"></i> button in a row) is also cascade for domains.
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-scale-balanced"></i> Счётчики правил</h3>
-  <p>Счётчики (per-user / per-device / system) учитывают <b>только правила, заданные пользователем («user-facing»)</b>:</p>
+  <h3><i class="fa-solid fa-scale-balanced"></i> Rule counters</h3>
+  <p>Counters (per-user / per-device / system) count only <b>user-set ("user-facing") rules</b>:</p>
   <ul>
-    <li>Считаются: <code>target_type=ip</code>, <code>target_type=subnet</code> без <code>parent_domain</code>, <code>target_type=domain</code>.</li>
-    <li>НЕ считаются: <code>target_type=subnet</code> <b>с</b> <code>parent_domain</code> (это /32, созданные autoupdater'ом для резолва доменов).</li>
+    <li>Counted: <code>target_type=ip</code>, <code>target_type=subnet</code> without <code>parent_domain</code>, <code>target_type=domain</code>.</li>
+    <li>NOT counted: <code>target_type=subnet</code> <b>with</b> <code>parent_domain</code> (these are /32 created by autoupdater for domain resolution).</li>
   </ul>
-  <p style="margin-top:8px">То есть: если у вас 9 доменов и autoupdater добавил 240 /32 IP, счётчик per-user (по умолчанию 200) <b>не учитывает</b> домены при подстановке автоматически разадресации. Домен считается как 1 правило.</p>
+  <p style="margin-top:8px">In other words: if you have 9 domains and autoupdater added 240 /32 IPs, the per-user counter (default 200) does <b>not</b> count the auto-expanded IPs. Each domain counts as 1 rule.</p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
-    Настройка: <code>SKYGATE_MAX_RULES_PER_DEVICE</code> (default 200), <code>SKYGATE_MAX_TOTAL_RULES</code> (default 10000), <code>SKYGATE_USER_MAX_RULES</code> (опционально, формат <code>user1:500,user2:1000</code>).
+    Settings: <code>SKYGATE_MAX_RULES_PER_DEVICE</code> (default 200), <code>SKYGATE_MAX_TOTAL_RULES</code> (default 10000), <code>SKYGATE_USER_MAX_RULES</code> (optional, format <code>user1:500,user2:1000</code>).
   </p>
-  <p style="margin-top:8px"><b>Пэример:</b> 9 доменов + 130 ручных /32 + 240 autoupdater /32 = 379 правил всего, но счётчик видит только 9+130=139, остальные 240 — служебные (автоматическо разадресованные).</p>
+  <p style="margin-top:8px"><b>Example:</b> 9 domains + 130 manual /32 + 240 autoupdater /32 = 379 rules total, but the counter sees only 9+130=139, the other 240 are service (auto-resolved).</p>
 </div>
 
 <div class="card">
   <h3><i class="fa-solid fa-broom"></i> Cleanup orphaned /32 (admin)</h3>
-  <p>Если раньше удаляли правила вручную и остались «осиротевшие» /32 (autoupdater не может их убрать, так как родительского домена уже нет), откройте <a href="/admin/exit-rules/cleanup"><b>/admin/exit-rules/cleanup</b></a>. Там:</p>
+  <p>If you used to delete rules manually and "orphaned" /32 remain (autoupdater can't remove them since the parent domain is gone), open <a href="/admin/exit-rules/cleanup"><b>/admin/exit-rules/cleanup</b></a>. There:</p>
   <ul>
-    <li>Анализ текущего состояния: разные <code>device_id</code>, разные <code>hostname</code>, ожидающие удаления /32, ожидающие <code>backfill device_ip</code>.</li>
-    <li>Кнопка <b>«Apply»</b> - объединяет дублирующиеся <code>device_id</code> под один канонический (по hostname) и дозаполняет <code>device_ip</code> для всех правил.</li>
-    <li><b>Идемпотентно:</b> повторный запуск не делает ничего, если данные уже вычищены.</li>
+    <li>Analysis of current state: distinct <code>device_id</code>, distinct <code>hostname</code>, pending /32 deletions, pending <code>backfill device_ip</code>.</li>
+    <li>Button <b>"Apply"</b> — merges duplicate <code>device_id</code> under one canonical (by hostname) and backfills <code>device_ip</code> for all rules.</li>
+    <li><b>Idempotent:</b> re-running does nothing if the data is already clean.</li>
   </ul>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-user-shield"></i> Видимость в Tailnet (ACL)</h3>
-  <p>Skygate генерирует <strong>per-user ACL policy</strong>. Каждый пользователь
-  видит и ходит только к своим устройствам и к общим exit-nodes
+  <h3><i class="fa-solid fa-user-shield"></i> Visibility in the tailnet (ACL)</h3>
+  <p>Skygate generates a <strong>per-user ACL policy</strong>. Each user
+  sees and reaches only their own devices plus shared exit-nodes
   (tag:public / tag:exit-node).</p>
   <pre style="background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto">{
   "acls": [
     {"src": ["skyadmin@tsnet.skynas.ru"], "dst": ["skyadmin@tsnet.skynas.ru:*"]},
-    ... по одному правилу на каждого portal-пользователя ...
+    ... per portal user ...
     {"src": ["*"], "dst": ["tag:public:*"]},
     {"src": ["*"], "dst": ["tag:exit-node:*"]},
     {"src": ["*"], "dst": ["*:*"]}
@@ -280,49 +280,49 @@ curl -X POST -b skygate_session=TOKEN \
     "tag:exit-node": ["skyadmin@tsnet.skynas.ru"]
   }
 }</pre>
-  <p><strong>Первое правило матча выигрывает</strong> — если бы <code>*:*</code>
-  шло первым, оно открывало бы весь tailnet всем. Сейчас первое правило —
-  <em>только своё</em>, Tailscale Android показывает только свои устройства +
-  exit-nodes. Чужие пользователи с tag:private друг друга не видят.</p>
+  <p><strong>First match wins</strong> — if <code>*:*</code> were first,
+  it would open the entire tailnet to everyone. Right now the first rule
+  is <em>only your own</em>; Tailscale Android shows only your devices plus
+  exit-nodes. Other users' tag:private are not visible to each other.</p>
 
-  <h3><i class="fa-solid fa-tags"></i> Автотегирование (tag:private)</h3>
-  <p>Когда вы добавляете новое устройство через Skygate, оно автоматически
-  получает тег <code>tag:private</code> в headscale. Это происходит через
-  <code>backfillNodeOwnership</code> при первой загрузке страницы
+  <h3><i class="fa-solid fa-tags"></i> Auto-tagging (tag:private)</h3>
+  <p>When you add a new device through Skygate it auto-receives the
+  <code>tag:private</code> tag in headscale. This happens through
+  <code>backfillNodeOwnership</code> on the first load of
   <a href="/my/devices">/my/devices</a>:</p>
   <ul>
-    <li>Если нода зарегистрирована через skygate-выданный preauth key — она
-      автоматически помечается <code>tag:private</code>.</li>
-    <li>Exit-nodes (karolina, emilia, sharlotta) остаются <code>tag:public</code>
-      — администратор помечает их вручную через <code>/admin/devices</code>.</li>
-    <li>Изменения тега применяются к headscale через CLI fallback
-      (<code>docker exec headscale headscale nodes tag</code>). Видимость на
-      Tailscale Android обновляется в течение ~60 с.</li>
+    <li>If a node was registered through a skygate-issued preauth key, it
+      is auto-tagged <code>tag:private</code>.</li>
+    <li>Exit-nodes (karolina, emilia, sharlotta) stay <code>tag:public</code>
+      — the admin tags them manually through <code>/admin/devices</code>.</li>
+    <li>Tag changes apply to headscale through the CLI fallback
+      (<code>docker exec headscale headscale nodes tag</code>). Visibility on
+      Tailscale Android updates within ~60s.</li>
   </ul>
-  <p>Для ручной установки тега (например чтобы расшарить устройство) — это
-  делает администратор через <a href="/admin/devices">/admin/devices</a>.</p>
+  <p>To set a tag manually (e.g. to share a device) — the admin does it
+  through <a href="/admin/devices">/admin/devices</a>.</p>
 
-  <h3><i class="fa-solid fa-bug"></i> Типичные грабли</h3>
+  <h3><i class="fa-solid fa-bug"></i> Common pitfalls</h3>
   <ul>
-    <li><b>target_type=ip без /32</b> - sky-gate автоматически добавляет <code>/32</code> (например <code>5.5.5.5</code> → <code>5.5.5.5/32</code>), чтобы headscale <code>approve-routes</code> не падал с <code>parsing route: no '/'</code>.</li>
-    <li><b>Общий IP у двух доменов</b> (например <code>gcr.io</code> и <code>ghcr.io</code> иногда резолвятся в один IP) - sky-gate хранит <b>одну</b> строку /32, без дублей. autoupdater не удалит этот IP, пока он нужен любому из доменов.</li>
-    <li><b>DNS не резолвится</b> при добавлении домена - правило сохраняется как <code>target_type=domain</code>, autoupdater попробует при следующем цикле (до 5 минут).</li>
-    <li><b>Cloudflare Challenge</b> на российских сайтах (rutracker и др.) - используйте exit-узел в РФ (sharlotta), а не за рубежом.</li>
+    <li><b>target_type=ip without /32</b> — Skygate auto-adds <code>/32</code> (e.g. <code>5.5.5.5</code> → <code>5.5.5.5/32</code>) so headscale <code>approve-routes</code> doesn't fail with <code>parsing route: no '/'</code>.</li>
+    <li><b>Shared IP for two domains</b> (e.g. <code>gcr.io</code> and <code>ghcr.io</code> sometimes resolve to one IP) — Skygate stores <b>one</b> /32 row, no duplicates. Autoupdater won't remove this IP while any of the domains needs it.</li>
+    <li><b>DNS doesn't resolve</b> when adding a domain — the rule is saved as <code>target_type=domain</code>, autoupdater will try on the next cycle (up to 5 minutes).</li>
+    <li><b>Cloudflare Challenge</b> on Russian sites (rutracker etc.) — use a Russian exit-node (sharlotta), not one abroad.</li>
   </ul>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-lightbulb"></i> Источники IP-диапазонов</h3>
-  <p>Многие сервисы публикуют актуальные IP-диапазоны. Примеры:</p>
+  <h3><i class="fa-solid fa-lightbulb"></i> IP-range sources</h3>
+  <p>Many services publish current IP ranges. Examples:</p>
   <ul>
-    <li>Сервис A: <code>https://example.com/ips.txt</code></li>
-    <li>Сервис B: <code>https://example.com/ipranges.json</code></li>
-    <li>Провайдер C: <code>https://example.com/ips-v4</code></li>
+    <li>Service A: <code>https://example.com/ips.txt</code></li>
+    <li>Service B: <code>https://example.com/ipranges.json</code></li>
+    <li>Provider C: <code>https://example.com/ips-v4</code></li>
   </ul>
-  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">IP-диапазоны периодически меняются. Рекомендуется:
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">IP ranges change over time. Recommended:
   <ul>
-    <li>Для <b>подсетей</b> — обновлять раз в 1-3 месяца вручную через AI.</li>
-    <li>Для <b>доменов</b> — autoupdater обновляет IP автоматически, ничего делать не нужно.</li>
+    <li>For <b>subnets</b> — update every 1-3 months manually via AI.</li>
+    <li>For <b>domains</b> — autoupdater updates IPs automatically, nothing to do.</li>
   </ul></p>
 </div>
 {{end}}
