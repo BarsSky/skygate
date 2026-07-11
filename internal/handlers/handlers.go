@@ -371,16 +371,8 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/my/keys", http.StatusFound)
 }
 
-// ---------- HELP ----------
-
-func (a *App) GetHelp(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	a.renderWithLayout(w, r, "help.html", c, map[string]any{})
-}
+// Help handler moved to handlers_help.go.
+// (GetHelp)
 
 // ---------- USER SELF-SERVICE ----------
 
