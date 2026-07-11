@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 
@@ -276,10 +278,8 @@ func quoteAll(ss []string) []string {
 }
 
 func (a *App) saveACLSnapshot(config, username string) int {
-	var maxVer int
-	a.DB.QueryRow("SELECT COALESCE(MAX(version),0) FROM acl_snapshots").Scan(&maxVer)
-	ver := maxVer + 1
-	a.DB.Exec("INSERT INTO acl_snapshots (version, config, created_by, applied_success) VALUES (?, ?, ?, 1)", ver, config, username)
+	ver, _ := db.NextACLVersion(a.DB)
+	_ = db.SaveACLSnapshot(a.DB, ver, config, username)
 	if a.Notifier != nil {
 		go a.Notifier.SendAlert(fmt.Sprintf("🛡️ ACL #%d by %s\nLength: %d bytes", ver, username, len(config)))
 	}
@@ -362,10 +362,9 @@ func (a *App) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 		}
 		nl.LoadPct = nl.RuleCount * 100 / maxPerNode
 		// Last sync: find most recent log
-		var lastSync time.Time
-		a.DB.QueryRow("SELECT COALESCE(MAX(created_at), '1970-01-01') FROM exit_rule_logs WHERE action='sync' AND detail LIKE ?", "%"+name+"%").Scan(&lastSync)
-		if !lastSync.IsZero() && lastSync.Year() > 2000 {
-			nl.LastSync = lastSync.Format("2006-01-02 15:04:05")
+		ts, _ := db.LastSyncForExitNode(a.DB, name)
+		if ts > 0 {
+			nl.LastSync = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
 		} else {
 			nl.LastSync = "никогда"
 		}
