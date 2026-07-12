@@ -384,12 +384,20 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectEnabledExitServers     = `SELECT name FROM exit_servers WHERE enabled = 1`                                 // legacy "name" column? — see note
+	// qSelectAllExitServers is the row shape used by db.ListExitServers.
 	qSelectAllExitServers         = `SELECT id, node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, enabled, COALESCE(description, ''), accept_routes FROM exit_servers ORDER BY hostname`
+	// qSelectEnabledExitServerNames powers the dashboard's per-exit-node
+	// load panel (set of exit-node names that have device_rules).
+	// It is the device_rules-side query, NOT the exit_servers-side one —
+	// the exit_servers hostnames come from db.ListEnabledExitServerHostnames.
 	qSelectEnabledExitServerNames = `SELECT DISTINCT exit_node_id FROM device_rules WHERE enabled = 1 AND exit_node_id != ''`
+	// qSelectAcceptRoutesByHost powers db.LookupExitServerAcceptRoutes.
 	qSelectAcceptRoutesByHost     = `SELECT accept_routes FROM exit_servers WHERE hostname = ? LIMIT 1`
+	// qInsertOrReplaceExitServer powers db.UpsertExitServer.
 	qInsertOrReplaceExitServer    = `INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, accept_routes) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(node_id) DO UPDATE SET hostname = excluded.hostname, ssh_target = excluded.ssh_target, ssh_key_path = excluded.ssh_key_path, description = excluded.description, accept_routes = excluded.accept_routes`
+	// qDeleteExitServerByNodeID powers db.DeleteExitServerByNodeID.
 	qDeleteExitServerByNodeID     = `DELETE FROM exit_servers WHERE node_id = ?`
+	// qInsertExitServerOnDiscovery powers db.InsertIgnoreExitServerOnDiscovery.
 	qInsertExitServerOnDiscovery  = `INSERT OR IGNORE INTO exit_servers (node_id, hostname, tailscale_ip) VALUES (?, ?, ?)`
 )
 

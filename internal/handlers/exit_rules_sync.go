@@ -403,14 +403,13 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 //
 // Lookup is keyed on the node's hostname. Falls back to 0 (do not change)
 // if the node is not in exit_servers or the column is missing.
+//
+// 2026-07-12: Этап 10 part 5 — moved the SELECT to db.LookupExitServerAcceptRoutes
+// (which centralises the column name + the no-row fallback to 0).
 func (a *App) lookupAcceptRoutes(nodeHostname string) int {
 	if a == nil || a.DB == nil || nodeHostname == "" {
 		return 0
 	}
-	var accept int
-	err := a.DB.QueryRow("SELECT accept_routes FROM exit_servers WHERE hostname = ? LIMIT 1", nodeHostname).Scan(&accept)
-	if err != nil {
-		return 0
-	}
+	accept, _ := db.LookupExitServerAcceptRoutes(a.DB, nodeHostname)
 	return accept
 }

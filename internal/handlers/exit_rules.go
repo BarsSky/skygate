@@ -316,13 +316,19 @@ func (a *App) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 		exitNodeSet[n] = true
 	}
 	// Also add known exit_servers
-	serverRows, _ := a.DB.Query("SELECT name FROM exit_servers WHERE enabled=1")
-	if serverRows != nil {
-		for serverRows.Next() {
-			var n string
-			if serverRows.Scan(&n) == nil { exitNodeSet[n] = true }
+	// 2026-07-12: Этап 10 part 5 — moved to db.ListEnabledExitServerHostnames.
+	// BUG FIX in passing: the previous inline query was
+	//   `SELECT name FROM exit_servers WHERE enabled=1`
+	// which referenced a `name` column that has never existed in any
+	// migration (the table has `hostname`). The result was being
+	// silently dropped (`serverRows, _ := a.DB.Query(...)`), so the
+	// dashboard never showed admin-curated exit-nodes that had no
+	// device_rules. ListEnabledExitServerHostnames queries the right
+	// column and surfaces any error to the caller.
+	if names, err := db.ListEnabledExitServerHostnames(a.DB); err == nil {
+		for _, n := range names {
+			exitNodeSet[n] = true
 		}
-		serverRows.Close()
 	}
 	for name := range exitNodeSet {
 		nl := NodeLoad{Name: name}
