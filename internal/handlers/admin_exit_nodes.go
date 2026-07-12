@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"skygate/internal/db"
 )
 
 type ExitNodeInfo struct {
@@ -30,21 +32,28 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ensureExitServers()
 
-	rows, err := a.DB.Query("SELECT id, node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, enabled, COALESCE(description,''), accept_routes FROM exit_servers ORDER BY hostname")
+	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers. The
+	// row shape matches ExitNodeInfo 1:1 except the auto-increment id
+	// (which the web UI doesn't render) and the headscale enrichment
+	// (which happens below from a.HS.ListAllNodes()).
+	dbRows, err := db.ListExitServers(a.DB)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	defer rows.Close()
 
 	var nodes []ExitNodeInfo
-	for rows.Next() {
-		var n ExitNodeInfo
-		var en, id int
-		if err := rows.Scan(&id, &n.NodeID, &n.Hostname, &n.TailscaleIP, &n.SSHTarget, &n.SSHKeyPath, &en, &n.Description, &n.AcceptRoutes); err != nil {
-			continue
+	for _, e := range dbRows {
+		n := ExitNodeInfo{
+			NodeID:       e.NodeID,
+			Hostname:     e.Hostname,
+			TailscaleIP:  e.TailscaleIP,
+			SSHTarget:    e.SSHTarget,
+			SSHKeyPath:   e.SSHKeyPath,
+			Enabled:      e.Enabled,
+			Description:  e.Description,
+			AcceptRoutes: e.AcceptRoutes,
 		}
-		n.Enabled = en == 1
 		nodes = append(nodes, n)
 	}
 
@@ -118,9 +127,8 @@ func (a *App) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) {
 	case "false":
 		acceptRoutes = -1
 	}
-	_, err := a.DB.Exec("INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, accept_routes) VALUES (?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET hostname=excluded.hostname, ssh_target=excluded.ssh_target, ssh_key_path=excluded.ssh_key_path, description=excluded.description, accept_routes=excluded.accept_routes",
-		nodeID, hostname, sshTarget, sshKey, desc, acceptRoutes)
-	if err != nil {
+	// 2026-07-12: Этап 10 part 5 — moved to db.UpsertExitServer.
+	if err := db.UpsertExitServer(a.DB, nodeID, hostname, sshTarget, sshKey, desc, acceptRoutes); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -139,7 +147,11 @@ func (a *App) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "node_id required", 400)
 		return
 	}
-	a.DB.Exec("DELETE FROM exit_servers WHERE node_id = ?", nodeID)
+	// 2026-07-12: Этап 10 part 5 — moved to db.DeleteExitServerByNodeID.
+	if err := db.DeleteExitServerByNodeID(a.DB, nodeID); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	a.audit(c.UserID, c.Username, "exit_node_delete", nodeID)
 	http.Redirect(w, r, "/admin/exit-nodes?deleted=1", http.StatusFound)
 }
@@ -169,8 +181,10 @@ func (a *App) ensureExitServers() {
 			}
 		}
 		if isExit || len(n.AvailableRoutes) > 0 {
-			a.DB.Exec("INSERT OR IGNORE INTO exit_servers (node_id, hostname, tailscale_ip) VALUES (?,?,?)",
-				n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
+			// 2026-07-12: Этап 10 part 5 — moved to db.InsertIgnoreExitServerOnDiscovery.
+			// INSERT OR IGNORE so an admin's manual row (possibly
+			// enabled=0) is preserved.
+			db.InsertIgnoreExitServerOnDiscovery(a.DB, n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
 		}
 	}
 }
