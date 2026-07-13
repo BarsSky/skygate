@@ -85,6 +85,20 @@ type BotEnv struct {
 	// (no notifier configured) skip the alert; audit_log
 	// is the audit trail regardless.
 	Notifier Notifier
+
+	// 2026-07-13: Этап 12 — strict mode flag. When true, an
+	// unidentified chat (no row in telegram_bindings) is
+	// rejected for every command except /help and /version
+	// (and /login, which is the only way to *become*
+	// identified). Loaded from global_settings on every
+	// message by env() so an operator can flip the toggle
+	// in /admin/telegram without restarting skygate.
+	//
+	// When false, the legacy behaviour holds: unidentified
+	// callers fall through to the bootstrap-admin path. This
+	// is preserved for single-admin-chat deploys that
+	// predate the v0.29 bindings table.
+	StrictMode bool
 }
 
 // IsIdentified returns true when the bot knows which Telegram chat
@@ -97,13 +111,22 @@ func (e BotEnv) IsIdentified() bool { return e.ChatID != 0 }
 // EffectiveAdmin returns true when this call should be treated as
 // admin-level. True when:
 //   - the caller is bound and IsAdmin, OR
-//   - the caller is unidentified (legacy/anon mode)
+//   - the caller is unidentified AND strict mode is OFF (legacy/anon mode)
 //
-// Used by every admin-only command (e.g. /restart) to decide whether
-// to run or to return "admin only".
+// When strict mode is ON, an unidentified caller is NOT admin
+// (they have to /login first). The HandleCommand gate is the
+// first line of defence; this helper is the second — admin-only
+// commands also check `env.EffectiveAdmin()` directly.
 func (e BotEnv) EffectiveAdmin() bool {
 	if !e.IsIdentified() {
-		return true // legacy fallback
+		// Strict mode flips the legacy "unknown = admin" fallback
+		// off. Without this single check, every multi-user
+		// deploy would leak /status, /nodes, /audit to anyone
+		// who can guess the bot username.
+		if e.StrictMode {
+			return false
+		}
+		return true // legacy fallback (single-admin-chat deploys)
 	}
 	return e.IsAdmin
 }
@@ -121,7 +144,7 @@ func (e BotEnv) MaxFor(username string) int {
 // HandleCommand returns the reply text for a command message.
 // It is safe to call from the polling loop in Run().
 //
-// Command categories (2026-07-12: Этап 11):
+// Command categories (2026-07-12: Этап 11; 2026-07-13: Этап 12):
 //
 //   user-scope  /my_status, /my_nodes, /my_rules, /my_quota,
 //                /myexitnodes, /add_device, /add_rule,
@@ -137,9 +160,19 @@ func (e BotEnv) MaxFor(username string) int {
 //   common      /help [command], /version
 //                — open to any caller.
 //
+//   auth        /login, /start
+//                — open to any caller (including unidentified),
+//                  because they're the ONLY way an unidentified
+//                  chat can become identified. /start <token> is
+//                  an alias of /login <token> for Telegram UX
+//                  convention (Telegram sends /start when the user
+//                  first opens a chat, so we can't ignore it).
+//
 // Legacy (single-admin-chat deploys and tests) treats unidentified
 // callers (BotEnv.ChatID==0) as admin so the original behaviour is
-// preserved.
+// preserved — UNLESS strict mode is on, in which case unidentified
+// callers get a "🔒 chat not bound" reply for everything except
+// /help, /version, /login, /start.
 func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 	_ = ctx
 	parts := strings.Fields(strings.TrimSpace(raw))
@@ -148,6 +181,22 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 	}
 	cmd := strings.ToLower(parts[0])
 	args := parts[1:]
+	// Strict-mode gate: when the operator has flipped strict mode
+	// on, an unidentified chat cannot touch any portal data. We
+	// allow /help, /version, /login, and /start through the gate
+	// — the first two are pure read-only metadata, the last two
+	// are the path TO becoming identified. Everything else gets
+	// the same "chat not bound" hint so the user has a clear next
+	// step (paste a key) instead of an opaque "admin only".
+	if env.StrictMode && !env.IsIdentified() {
+		authCmds := map[string]bool{
+			"/help": true, "/version": true,
+			"/login": true, "/start": true,
+		}
+		if !authCmds[cmd] {
+			return strictModeLockedReply()
+		}
+	}
 	// Admin-only commands: short-circuit to "admin only" when the
 	// caller is identified and not admin. We check each case
 	// explicitly (not a generic "if !admin return error" guard)
@@ -223,9 +272,38 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return setExitNodeReply(env, strings.TrimSpace(strings.Join(args, " ")))
 	case "/defaultexitnode":
 		return defaultExitNodeReply(env)
+	// --- Этап 12: login-by-key ---
+	// /login and /start are open to any chat (the strict-mode gate
+	// above whitelists them, and when strict mode is off they work
+	// the same way for legacy single-admin deploys). /start <token>
+	// is the Telegram UX convention: the first thing every user
+	// sends to a bot is /start, so making it the entry point to
+	// the login flow removes a "I have to remember /login" step.
+	case "/login":
+		return loginReply(env, args)
+	case "/start":
+		return startReply(env, args)
+	case "/unbind_self":
+		// User-self service: drop your own binding without
+		// asking admin. Useful for switching phones or
+		// revoking a lost device. Admin path is still
+		// /unbind <chat_id> (admin-only).
+		return unbindSelfReply(env)
 	default:
 		return fmt.Sprintf("Unknown command: %s. Try /help.", cmd)
 	}
+}
+
+// strictModeLockedReply is the message an unidentified chat gets
+// when strict mode is on and it tries anything other than
+// /help /version /login /start. The hint points the user at the
+// exact next step (open /my/telegram in the web, generate a key,
+// paste it back here) so they don't have to guess.
+func strictModeLockedReply() string {
+	return "🔒 This chat is not bound to a skygate user.\n" +
+		"Open skygate → /my/telegram → 'Generate login key' → paste the key here:\n" +
+		"  /login <key>\n" +
+		"The key expires in 5 minutes and is single-use."
 }
 
 func statusReply(d *sql.DB) string {
@@ -247,9 +325,16 @@ func statusReply(d *sql.DB) string {
 // (identified callers), admin-scope (admin only). Unidentified
 // callers (legacy single-chat deploys) see the full list collapsed
 // into one section.
+//
+// Этап 12 (2026-07-13): strict mode is reflected in the auth
+// section. An unidentified chat in a strict deploy sees only
+// /login /start /help /version — every other command is locked
+// until they bind.
 func helpReply(env BotEnv) string {
 	common := "/version — Skygate build, Go runtime, DB schema level\n" +
 		"/help [command] — this list, or detailed help for one command"
+	auth := "/login <key> — bind this chat to your skygate account (paste the key from /my/telegram)\n" +
+		"/start <key> — same as /login, Telegram UX convention"
 	userScope := "/my_status — your own summary (rules, devices, quota)\n" +
 		"/my_nodes — your own devices\n" +
 		"/my_rules — your own exit-rules\n" +
@@ -271,10 +356,19 @@ func helpReply(env BotEnv) string {
 		"/audit — last 20 audit_log entries\n" +
 		"/ack <id> — acknowledge an alert (id is the [#N] prefix)\n" +
 		"/restart — graceful container restart (requires confirm)\n" +
-		"/bind <chat_id> <username> — bind a chat to a portal user\n" +
-		"/unbind <chat_id> — remove a binding"
-	if !env.IsIdentified() || env.IsAdmin {
-		return "Commands (all):\n\n" + common + "\n\n" + userScope + "\n\n" + adminScope
+		"/bind <chat_id> <username> — bind a chat to a portal user (admin only)\n" +
+		"/unbind <chat_id> — remove a binding (admin only)"
+	// Three layouts:
+	//   - unidentified + strict mode: only auth + common (locked)
+	//   - identified non-admin: auth + common + user-scope
+	//   - admin (identified or legacy unidentified): all four
+	switch {
+	case !env.IsIdentified() && env.StrictMode:
+		return "🔒 Strict mode is ON. This chat is not bound to a skygate user.\n\n" +
+			auth + "\n\n" + common
+	case !env.IsIdentified() || env.IsAdmin:
+		return "Commands (all):\n\n" + common + "\n\n" + auth + "\n\n" + userScope + "\n\n" + adminScope
+	default:
+		return "Your commands:\n\n" + common + "\n\n" + auth + "\n\n" + userScope
 	}
-	return "Your commands:\n\n" + common + "\n\n" + userScope
 }

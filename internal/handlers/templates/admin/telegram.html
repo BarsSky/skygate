@@ -96,6 +96,25 @@
       <li>Full token procedure: <a href="/docs/TELEGRAM.md" target="_blank" rel="noopener">docs/TELEGRAM.md</a>.</li>
     </ul>
   </div>
+
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-shield-halved"></i> {{t "telegram.strict_mode"}}</h3>
+    <p class="sub">{{t "telegram.strict_mode_desc"}}</p>
+    <p class="sub">{{t "telegram.strict_mode_state"}}: <strong>{{if .State.StrictMode}}{{t "telegram.strict_mode_on"}}{{else}}{{t "telegram.strict_mode_off"}}{{end}}</strong></p>
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.strict_mode_confirm"}}')">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="strict">
+      <input type="hidden" name="enabled" value="{{if .State.StrictMode}}0{{else}}1{{end}}">
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:0.75rem">
+        <input type="checkbox" name="confirm" value="yes">
+        {{if .State.StrictMode}}{{t "telegram.strict_mode_uncheck_warn"}}{{else}}{{t "telegram.strict_mode_check_warn"}}{{end}}
+      </label>
+      <button type="submit" class="btn {{if .State.StrictMode}}btn-warn{{else}}btn-primary{{end}}">
+        <i class="fa-solid fa-shield-halved"></i>
+        {{if .State.StrictMode}}{{t "telegram.strict_mode_disable"}}{{else}}{{t "telegram.strict_mode_enable"}}{{end}}
+      </button>
+    </form>
+  </div>
 </div>
 
 <script>

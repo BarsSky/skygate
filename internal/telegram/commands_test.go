@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -48,6 +49,13 @@ func setupTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE exit_servers (id INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT NOT NULL UNIQUE, hostname TEXT NOT NULL, tailscale_ip TEXT NOT NULL DEFAULT '', ssh_target TEXT NOT NULL DEFAULT '', ssh_key_path TEXT NOT NULL DEFAULT '', description TEXT DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, accept_routes INTEGER NOT NULL DEFAULT 0, created_at INTEGER DEFAULT 0)`,
 		// 2026-07-13: Этап 11 part 2b — exit_rule_logs (AppendExitRuleLog).
 		`CREATE TABLE exit_rule_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, version INTEGER NOT NULL, action TEXT NOT NULL, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
+		// 2026-07-13: Этап 12 — telegram_login_tokens (login-by-key).
+		`CREATE TABLE telegram_login_tokens (token TEXT PRIMARY KEY, portal_user_id INTEGER NOT NULL, created_at INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL, used_at INTEGER NOT NULL DEFAULT 0, used_by_chat_id INTEGER NOT NULL DEFAULT 0, request_ip TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX idx_telegram_login_tokens_user ON telegram_login_tokens(portal_user_id)`,
+		`CREATE INDEX idx_telegram_login_tokens_expiry ON telegram_login_tokens(expires_at)`,
+		// 2026-07-13: Этап 12 — global_settings for strict_mode
+		// (read on every message by env()).
+		`CREATE TABLE global_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL DEFAULT 0)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
@@ -85,6 +93,12 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// leftover entry visible to the next test.
 		pendingClears = sync.Map{}
 		pendingRestarts = sync.Map{}
+		// 2026-07-13: Этап 12 — loginAttempts (used by /login
+		// rate-limit) is also a package-level map; reset so
+		// tests don't see rate-limit leftovers from each other.
+		loginAttemptsMu.Lock()
+		loginAttempts = map[int64][]int64{}
+		loginAttemptsMu.Unlock()
 	})
 	return d
 }
@@ -2511,5 +2525,318 @@ func TestMyExitNodesReplyHelpDetail(t *testing.T) {
 	}
 	if !strings.Contains(got, "[default]") {
 		t.Errorf("expected '[default]' in /help myexitnodes, got: %q", got)
+	}
+}
+
+// ---------------------------------------------------------------
+// Этап 12 (2026-07-13) — login-by-key + strict mode.
+//
+// These tests live at the bottom of the file so the existing
+// helper definitions (envFor, adminEnv, userEnv, setupTestDB)
+// are visible. The tests use the per-test in-memory DB seeded
+// by setupTestDB (alice = id=2, skyadmin = id=1, IsAdmin=1).
+// ---------------------------------------------------------------
+
+// strictEnv returns a BotEnv with the same shape as userEnv
+// (caller is identified as alice, not admin) but with
+// StrictMode=true. Used to exercise the strict-mode gate.
+func strictEnv(d *sql.DB) BotEnv {
+	_, _ = d.Exec(`INSERT INTO global_settings(key, value) VALUES ('telegram.strict_mode', '1')`)
+	return BotEnv{DB: d, ChatID: 99999, PortalUserID: 2, Username: "alice", IsAdmin: false, StrictMode: true}
+}
+
+// testLoginToken is a known-shape token (skg-XXXX-XXXX-XXXX
+// with alphabet A-Z minus I/O, plus 2-9) used by the login
+// tests. We can't use mintLoginToken (it would round-trip
+// through the real crypto/rand) — these tests need a
+// deterministic token to assert against.
+const testLoginToken = "skg-ABCD-EFGH-JKLM"
+
+// insertValidLoginToken seeds a fresh, unused, not-yet-expired
+// token for portal_user_id=2 (alice) and returns the token
+// string. The expires_at is 1 hour in the future, well past
+// the rate-limit / TTL interactions we test.
+func insertValidLoginToken(t *testing.T, d *sql.DB, token string, userID int64, ttlSeconds int) {
+	t.Helper()
+	now := time.Now().Unix()
+	if _, err := d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip)
+		VALUES (?, ?, ?, ?, 0, 0, '127.0.0.1')`, token, userID, now, now+int64(ttlSeconds)); err != nil {
+		t.Fatalf("insertValidLoginToken: %v", err)
+	}
+}
+
+func TestLoginReplyNoArgs(t *testing.T) {
+	d := setupTestDB(t)
+	// Unbound chat in strict mode: should print the hint
+	// (NOT a generic error, NOT a "chat not bound" gate).
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	got := HandleCommand(context.Background(), env, "/login")
+	if !strings.Contains(got, "Generate login key") {
+		t.Errorf("expected hint pointing to /my/telegram, got: %q", got)
+	}
+}
+
+func TestLoginReplyValid(t *testing.T) {
+	d := setupTestDB(t)
+	insertValidLoginToken(t, d, testLoginToken, 2, 300) // for alice
+	// Unbound chat in strict mode that pastes the key.
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
+	if !strings.Contains(got, "Logged in as alice") {
+		t.Errorf("expected 'Logged in as alice', got: %q", got)
+	}
+	// The token is now consumed.
+	var usedAt int64
+	if err := d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = ?`, testLoginToken).Scan(&usedAt); err != nil {
+		t.Fatalf("read used_at: %v", err)
+	}
+	if usedAt == 0 {
+		t.Errorf("expected used_at > 0 after successful login, got 0")
+	}
+	// The binding is now present.
+	var boundUser int64
+	if err := d.QueryRow(`SELECT portal_user_id FROM telegram_bindings WHERE chat_id = 555`).Scan(&boundUser); err != nil {
+		t.Fatalf("read binding: %v", err)
+	}
+	if boundUser != 2 {
+		t.Errorf("expected chat 555 → user 2, got %d", boundUser)
+	}
+}
+
+func TestLoginReplyInvalid(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	// Not in DB.
+	got := HandleCommand(context.Background(), env, "/login skg-ZZZZ-ZZZZ-ZZZZ")
+	if !strings.Contains(got, "invalid or expired key") {
+		t.Errorf("expected 'invalid or expired key' for not-found, got: %q", got)
+	}
+	// Right shape, but no row in DB.
+	got2 := HandleCommand(context.Background(), env, "/login skg-AAAA-BBBB-CCCC")
+	if !strings.Contains(got2, "invalid or expired key") {
+		t.Errorf("expected 'invalid or expired key' for unknown shape, got: %q", got2)
+	}
+}
+
+func TestLoginReplyExpired(t *testing.T) {
+	d := setupTestDB(t)
+	// Token whose expires_at is 10s in the past.
+	insertValidLoginToken(t, d, testLoginToken, 2, -10)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
+	if !strings.Contains(got, "invalid or expired key") {
+		t.Errorf("expected 'invalid or expired key' for expired, got: %q", got)
+	}
+}
+
+func TestLoginReplyAlreadyUsed(t *testing.T) {
+	d := setupTestDB(t)
+	insertValidLoginToken(t, d, testLoginToken, 2, 300)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	// First call consumes the token.
+	_ = HandleCommand(context.Background(), env, "/login "+testLoginToken)
+	// Reset rate-limit so the second call isn't blocked by that.
+	resetLoginAttempts(555)
+	// Second call: token already used, should fail.
+	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
+	if !strings.Contains(got, "invalid or expired key") {
+		t.Errorf("expected 'invalid or expired key' for already-used, got: %q", got)
+	}
+}
+
+func TestLoginReplyRateLimit(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	// 5 attempts in <60s (rate limit max). All should fail
+	// (no token seeded), but the rate-limit gate only kicks
+	// in on the 6th.
+	for i := 0; i < loginRateLimitMax; i++ {
+		got := HandleCommand(context.Background(), env, "/login skg-ZZZZ-ZZZZ-ZZZZ")
+		if strings.Contains(got, "too many attempts") {
+			t.Errorf("attempt #%d unexpectedly rate-limited: %q", i+1, got)
+		}
+	}
+	// 6th attempt should be rate-limited.
+	got := HandleCommand(context.Background(), env, "/login skg-ZZZZ-ZZZZ-ZZZZ")
+	if !strings.Contains(got, "too many attempts") {
+		t.Errorf("expected 'too many attempts' on 6th call, got: %q", got)
+	}
+}
+
+func TestStartReplyWithTokenIsAlias(t *testing.T) {
+	d := setupTestDB(t)
+	insertValidLoginToken(t, d, testLoginToken, 2, 300)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	// /start <token> should work the same as /login <token>.
+	got := HandleCommand(context.Background(), env, "/start "+testLoginToken)
+	if !strings.Contains(got, "Logged in as alice") {
+		t.Errorf("expected /start <token> to log in, got: %q", got)
+	}
+}
+
+func TestStartReplyNoTokenShowsHint(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	got := HandleCommand(context.Background(), env, "/start")
+	if !strings.Contains(got, "Generate login key") {
+		t.Errorf("expected /start (no arg) to show the hint, got: %q", got)
+	}
+}
+
+func TestStrictModeRejectsAdminCommandForUnboundChat(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO global_settings(key, value) VALUES ('telegram.strict_mode', '1')`)
+	// Unbound chat (no ChatID — IsIdentified()==false) in strict mode.
+	env := BotEnv{DB: d, StrictMode: true}
+	for _, cmd := range []string{"/status", "/nodes", "/rules", "/audit", "/quota", "/exit_nodes"} {
+		got := HandleCommand(context.Background(), env, cmd)
+		if !strings.Contains(got, "chat is not bound") {
+			t.Errorf("strict mode should reject %s for unbound chat, got: %q", cmd, got)
+		}
+	}
+}
+
+func TestStrictModeAllowsAuthAndHelp(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO global_settings(key, value) VALUES ('telegram.strict_mode', '1')`)
+	// Unbound chat in production has ChatID=0 (the dispatcher
+	// clears it for unbound non-admin chats; see
+	// RealNotifier.resolveBootstrapAdmin). Mirror that here
+	// so helpReply takes the "strict + unidentified" branch.
+	env := BotEnv{DB: d, ChatID: 0, StrictMode: true}
+	// /help and /version MUST work for an unbound chat in
+	// strict mode (otherwise a stranger can't even read the
+	// docs that tell them to /login).
+	if got := HandleCommand(context.Background(), env, "/help"); !strings.Contains(got, "Strict mode") {
+		t.Errorf("strict mode should still allow /help, got: %q", got)
+	}
+	if got := HandleCommand(context.Background(), env, "/version"); !strings.Contains(got, "Skygate") {
+		t.Errorf("strict mode should still allow /version, got: %q", got)
+	}
+	// /login and /start MUST work (they're the path to
+	// becoming identified).
+	if got := HandleCommand(context.Background(), env, "/login"); !strings.Contains(got, "Generate login key") {
+		t.Errorf("strict mode should allow /login, got: %q", got)
+	}
+}
+
+func TestStrictModeOffKeepsLegacyFallback(t *testing.T) {
+	d := setupTestDB(t)
+	// No global_settings row → strict mode defaults to false.
+	// Unbound chat + non-strict = admin (legacy behaviour).
+	env := BotEnv{DB: d}
+	if !env.EffectiveAdmin() {
+		t.Errorf("without strict mode, unidentified chat should be admin (legacy)")
+	}
+	// With strict mode on, the same env should NOT be admin.
+	envStrict := BotEnv{DB: d, StrictMode: true}
+	if envStrict.EffectiveAdmin() {
+		t.Errorf("with strict mode, unidentified chat should NOT be admin")
+	}
+}
+
+func TestUnbindSelfReplyRemovesBinding(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed a binding for alice (chat 555 → user 2).
+	_, _ = d.Exec(`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id) VALUES (555, 2, 0, 1700000000, 0)`)
+	env := BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false}
+	got := HandleCommand(context.Background(), env, "/unbind_self")
+	if !strings.Contains(got, "no longer bound") {
+		t.Errorf("expected 'no longer bound' in /unbind_self reply, got: %q", got)
+	}
+	// Row should be gone.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM telegram_bindings WHERE chat_id = 555`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 rows in telegram_bindings after /unbind_self, got %d", n)
+	}
+}
+
+func TestUnbindSelfReplyNotBound(t *testing.T) {
+	d := setupTestDB(t)
+	// In production, an unbound chat has ChatID=0 (the
+	// dispatcher's resolveBootstrapAdmin clears it). We
+	// mirror that here.
+	env := BotEnv{DB: d, ChatID: 0}
+	got := HandleCommand(context.Background(), env, "/unbind_self")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /unbind_self, got: %q", got)
+	}
+}
+
+func TestLooksLikeLoginTokenShape(t *testing.T) {
+	// Valid shapes.
+	for _, s := range []string{
+		"skg-ABCD-EFGH-JKLM",
+		"skg-2345-6789-ZXYZ",
+		"skg-ZZZZ-AAAA-2222",
+	} {
+		if !looksLikeLoginToken(s) {
+			t.Errorf("expected %q to look like a valid login token", s)
+		}
+	}
+	// Invalid: wrong prefix, wrong separators, illegal chars.
+	for _, s := range []string{
+		"ABC-EFGH-JKLM-NOPQ",       // wrong prefix
+		"skg-ABCD-EFGH-JKLMN",      // too long
+		"skg-ABCD-EFGH-JK",         // too short
+		"skg-ABCD.EFGH.JKLM",       // wrong separator
+		"skg-abcd-efgh-jklm",       // lowercase
+		"skg-ABCD-EFG1-JKLM",       // contains '1'
+		"skg-ABCD-EFGO-JKLM",       // contains 'O'
+		"skg-ABCD-EFG0-JKLM",       // contains '0'
+		"skg-ABCD-EFGI-JKLM",       // contains 'I'
+	} {
+		if looksLikeLoginToken(s) {
+			t.Errorf("expected %q to FAIL the login-token shape check", s)
+		}
+	}
+}
+
+func TestStrictModeSavedAndLoaded(t *testing.T) {
+	d := setupTestDB(t)
+	// Default: not set → false.
+	if db.LoadTelegramStrictMode(d) {
+		t.Errorf("expected default strict_mode=false, got true")
+	}
+	// Save true → loads as true.
+	if err := db.SaveTelegramStrictMode(d, true); err != nil {
+		t.Fatalf("SaveTelegramStrictMode: %v", err)
+	}
+	if !db.LoadTelegramStrictMode(d) {
+		t.Errorf("expected strict_mode=true after save, got false")
+	}
+	// Save false → loads as false.
+	if err := db.SaveTelegramStrictMode(d, false); err != nil {
+		t.Fatalf("SaveTelegramStrictMode(false): %v", err)
+	}
+	if db.LoadTelegramStrictMode(d) {
+		t.Errorf("expected strict_mode=false after save(false), got true")
+	}
+}
+
+func TestLoginTokenTTLSavedAndLoaded(t *testing.T) {
+	d := setupTestDB(t)
+	// Default: 300s.
+	if got := db.LoadTelegramLoginTokenTTL(d); got != 300 {
+		t.Errorf("expected default TTL=300, got %d", got)
+	}
+	// After a manual save... wait, we don't have a Save
+	// helper for TTL. Set it via raw SQL to test the loader's
+	// integer-parse path (the loader also tolerates non-numeric
+	// strings by falling back to 300 — see the comment in
+	// telegram_login_tokens.go).
+	if _, err := d.Exec(`INSERT INTO global_settings(key, value) VALUES ('telegram.login_token_ttl_seconds', '120')`); err != nil {
+		t.Fatalf("seed TTL: %v", err)
+	}
+	if got := db.LoadTelegramLoginTokenTTL(d); got != 120 {
+		t.Errorf("expected TTL=120 after seed, got %d", got)
+	}
+	// Garbage value → 300.
+	if _, err := d.Exec(`UPDATE global_settings SET value = 'five minutes' WHERE key = 'telegram.login_token_ttl_seconds'`); err != nil {
+		t.Fatalf("garbage seed: %v", err)
+	}
+	if got := db.LoadTelegramLoginTokenTTL(d); got != 300 {
+		t.Errorf("expected TTL=300 (fallback) for garbage value, got %d", got)
 	}
 }
