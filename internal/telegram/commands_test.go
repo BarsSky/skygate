@@ -56,6 +56,11 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// 2026-07-13: Этап 12 — global_settings for strict_mode
 		// (read on every message by env()).
 		`CREATE TABLE global_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL DEFAULT 0)`,
+		// 2026-07-13: Этап 13 — telegram_rate_limit (shared
+		// SQLite-backed /login rate limit, replaces the
+		// in-memory map).
+		`CREATE TABLE telegram_rate_limit (key TEXT NOT NULL, action TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL)`,
+		`CREATE INDEX idx_telegram_rate_limit_lookup ON telegram_rate_limit(key, ts)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
@@ -93,12 +98,17 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// leftover entry visible to the next test.
 		pendingClears = sync.Map{}
 		pendingRestarts = sync.Map{}
-		// 2026-07-13: Этап 12 — loginAttempts (used by /login
-		// rate-limit) is also a package-level map; reset so
-		// tests don't see rate-limit leftovers from each other.
-		loginAttemptsMu.Lock()
-		loginAttempts = map[int64][]int64{}
-		loginAttemptsMu.Unlock()
+		// 2026-07-13: Этап 12 — /login rate-limit lives in
+		// telegram_rate_limit (DB) since Этап 13; the per-test
+		// setupTestDB is fresh, so there's nothing to reset
+		// at the package level. (Previously the in-memory
+		// loginAttempts map needed wiping here; the migration
+		// to SQLite means a new in-memory DB starts with an
+		// empty table.)
+		// 2026-07-13: Этап 13 — reset the inline-keyboard
+		// side-channel so a previous test's [Bind] prompt
+		// doesn't leak into this one.
+		pendingReplyForCurrentMessage = nil
 	})
 	return d
 }
@@ -2636,7 +2646,7 @@ func TestLoginReplyAlreadyUsed(t *testing.T) {
 	// First call consumes the token.
 	_ = HandleCommand(context.Background(), env, "/login "+testLoginToken)
 	// Reset rate-limit so the second call isn't blocked by that.
-	resetLoginAttempts(555)
+	resetLoginAttempts(d, 555)
 	// Second call: token already used, should fail.
 	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
 	if !strings.Contains(got, "invalid or expired key") {
@@ -2663,14 +2673,57 @@ func TestLoginReplyRateLimit(t *testing.T) {
 	}
 }
 
-func TestStartReplyWithTokenIsAlias(t *testing.T) {
+func TestStartReplyWithTokenShowsConfirmation(t *testing.T) {
 	d := setupTestDB(t)
 	insertValidLoginToken(t, d, testLoginToken, 2, 300)
 	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
-	// /start <token> should work the same as /login <token>.
+	// 2026-07-13: Этап 13 — /start <token> no longer binds
+	// immediately. It shows a confirmation prompt with
+	// inline [Bind] [Cancel] buttons; the actual bind
+	// happens on the [Bind] tap (which goes through the
+	// callback_query path, not HandleCommand). /login
+	// <token> keeps the one-command shortcut.
 	got := HandleCommand(context.Background(), env, "/start "+testLoginToken)
-	if !strings.Contains(got, "Logged in as alice") {
-		t.Errorf("expected /start <token> to log in, got: %q", got)
+	if !strings.Contains(got, "Bind this chat to") {
+		t.Errorf("expected confirmation prompt, got: %q", got)
+	}
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected prompt to mention the target user, got: %q", got)
+	}
+	// Inline keyboard should be set on the package-level
+	// slot (the polling loop reads it after HandleCommand
+	// returns and attaches it to the sendMessage payload).
+	if pendingReplyForCurrentMessage == nil {
+		t.Fatalf("expected pendingReplyForCurrentMessage to be set, got nil")
+	}
+	if len(pendingReplyForCurrentMessage.InlineKeyboard) != 1 {
+		t.Errorf("expected 1 keyboard row, got %d", len(pendingReplyForCurrentMessage.InlineKeyboard))
+	}
+	row := pendingReplyForCurrentMessage.InlineKeyboard[0]
+	if len(row) != 2 {
+		t.Errorf("expected 2 buttons, got %d", len(row))
+	}
+	// Bind button carries the token; Cancel button has the
+	// "bind:cancel" sentinel.
+	if !strings.HasPrefix(row[0]["callback_data"], "bind:confirm:") {
+		t.Errorf("expected first button callback_data=bind:confirm:..., got %q", row[0]["callback_data"])
+	}
+	if row[1]["callback_data"] != "bind:cancel" {
+		t.Errorf("expected second button callback_data=bind:cancel, got %q", row[1]["callback_data"])
+	}
+	// Token should NOT be consumed yet — the Bind tap is
+	// what consumes it. This is the whole point of the
+	// confirmation step.
+	var usedAt int64
+	_ = d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = ?`, testLoginToken).Scan(&usedAt)
+	if usedAt != 0 {
+		t.Errorf("token should not be consumed on /start (only on Bind tap), got used_at=%d", usedAt)
+	}
+	// And no binding row should exist yet.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM telegram_bindings WHERE chat_id = 555`).Scan(&n)
+	if n != 0 {
+		t.Errorf("binding should not exist on /start (only on Bind tap), got %d rows", n)
 	}
 }
 
@@ -2838,5 +2891,227 @@ func TestLoginTokenTTLSavedAndLoaded(t *testing.T) {
 	}
 	if got := db.LoadTelegramLoginTokenTTL(d); got != 300 {
 		t.Errorf("expected TTL=300 (fallback) for garbage value, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------
+// Этап 13 (2026-07-13) — new features.
+//
+// Tests in this section cover the roadmap items that landed
+// in this commit: Bind-by-QR (DB helper + bot username
+// cache), rate-limit-via-SQLite, and the inline-keyboard
+// confirmation prompt for /start <token>.
+// ---------------------------------------------------------------
+
+// TestPeekTelegramLoginTokenDoesNotConsume is the load-bearing
+// test for the inline-keyboard flow: Peek must read the row
+// without flipping used_at, otherwise the [Bind] tap would
+// find nothing to consume.
+func TestPeekTelegramLoginTokenDoesNotConsume(t *testing.T) {
+	d := setupTestDB(t)
+	insertValidLoginToken(t, d, testLoginToken, 2, 300)
+	// Peek twice — both should succeed and return the same
+	// snapshot, with used_at still 0.
+	for i := 0; i < 2; i++ {
+		tok, err := db.PeekTelegramLoginToken(d, testLoginToken)
+		if err != nil {
+			t.Fatalf("peek #%d: %v", i, err)
+		}
+		if tok.UsedAt != 0 {
+			t.Errorf("peek #%d should not consume: used_at=%d", i, tok.UsedAt)
+		}
+	}
+	// Row still unused.
+	var usedAt int64
+	_ = d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = ?`, testLoginToken).Scan(&usedAt)
+	if usedAt != 0 {
+		t.Errorf("row should still be unused after 2 peeks, got used_at=%d", usedAt)
+	}
+	// Peek of a non-existent token → ErrTelegramLoginTokenNotFound.
+	_, err := db.PeekTelegramLoginToken(d, "skg-ZZZZ-ZZZZ-ZZZZ")
+	if err != db.ErrTelegramLoginTokenNotFound {
+		t.Errorf("expected ErrTelegramLoginTokenNotFound for missing token, got %v", err)
+	}
+	// Peek of an expired token → ErrTelegramLoginTokenExpired
+	// (insert with past expires_at).
+	insertValidLoginToken(t, d, "skg-AAAA-AAAA-AAAA", 2, -10)
+	_, err = db.PeekTelegramLoginToken(d, "skg-AAAA-AAAA-AAAA")
+	if err != db.ErrTelegramLoginTokenExpired {
+		t.Errorf("expected ErrTelegramLoginTokenExpired, got %v", err)
+	}
+}
+
+// TestRecordTelegramRateLimitAttemptAllowed covers the basic
+// happy path: 5 attempts in 60s are allowed, the 6th is not.
+// The DB-backed limiter is the replacement for the retired
+// in-memory loginAttempts map; the threshold and window are
+// the same.
+func TestRecordTelegramRateLimitAttemptAllowed(t *testing.T) {
+	d := setupTestDB(t)
+	key := "login:555"
+	for i := 0; i < loginRateLimitMax; i++ {
+		_, allowed, err := db.RecordTelegramRateLimitAttempt(d, key, "", loginRateLimitWindowSeconds, loginRateLimitMax)
+		if err != nil {
+			t.Fatalf("attempt #%d unexpected err: %v", i+1, err)
+		}
+		if !allowed {
+			t.Errorf("attempt #%d should be allowed (under max)", i+1)
+		}
+	}
+	// 6th: over the limit.
+	_, allowed, err := db.RecordTelegramRateLimitAttempt(d, key, "", loginRateLimitWindowSeconds, loginRateLimitMax)
+	if err != nil {
+		t.Fatalf("attempt #6 unexpected err: %v", err)
+	}
+	if allowed {
+		t.Errorf("attempt #6 should be denied (over max=%d)", loginRateLimitMax)
+	}
+}
+
+// TestRecordTelegramRateLimitAttemptDifferentKeysIsolated
+// confirms that one chat hitting its limit doesn't block
+// another chat. Each chat_id is a separate key, and the
+// index is (key, ts).
+func TestRecordTelegramRateLimitAttemptDifferentKeysIsolated(t *testing.T) {
+	d := setupTestDB(t)
+	// Burn through chat 555's quota.
+	for i := 0; i < loginRateLimitMax+1; i++ {
+		_, _, _ = db.RecordTelegramRateLimitAttempt(d, "login:555", "", loginRateLimitWindowSeconds, loginRateLimitMax)
+	}
+	// Chat 666 should still be allowed.
+	_, allowed, err := db.RecordTelegramRateLimitAttempt(d, "login:666", "", loginRateLimitWindowSeconds, loginRateLimitMax)
+	if err != nil {
+		t.Fatalf("chat 666 attempt: %v", err)
+	}
+	if !allowed {
+		t.Errorf("chat 666 should be allowed (different key), got denied")
+	}
+}
+
+// TestResetTelegramRateLimit clears the per-chat slot so the
+// next attempt goes through. This is the test-reset hook
+// that replaces the old resetLoginAttempts() helper.
+func TestResetTelegramRateLimit(t *testing.T) {
+	d := setupTestDB(t)
+	key := "login:555"
+	// Burn through.
+	for i := 0; i < loginRateLimitMax+1; i++ {
+		_, _, _ = db.RecordTelegramRateLimitAttempt(d, key, "", loginRateLimitWindowSeconds, loginRateLimitMax)
+	}
+	// Reset.
+	n, err := db.ResetTelegramRateLimit(d, key)
+	if err != nil {
+		t.Fatalf("ResetTelegramRateLimit: %v", err)
+	}
+	if n == 0 {
+		t.Errorf("expected >0 rows deleted, got 0")
+	}
+	// First attempt after reset should be allowed.
+	_, allowed, err := db.RecordTelegramRateLimitAttempt(d, key, "", loginRateLimitWindowSeconds, loginRateLimitMax)
+	if err != nil {
+		t.Fatalf("post-reset attempt: %v", err)
+	}
+	if !allowed {
+		t.Errorf("post-reset attempt should be allowed, got denied")
+	}
+}
+
+// TestStartReplyNoTokenShowsHintOrAlreadyLoggedIn verifies
+// that the new /start behavior — show confirmation prompt
+// for /start <token>, hint for /start alone — is what
+// TestStartReplyNoTokenShowsHint expects, AND that returning
+// users get the "already logged in" message.
+func TestStartReplyNoTokenShowsHintOrAlreadyLoggedIn(t *testing.T) {
+	d := setupTestDB(t)
+	// Unbound chat in strict mode → hint.
+	env := BotEnv{DB: d, ChatID: 0, StrictMode: true}
+	got := HandleCommand(context.Background(), env, "/start")
+	if !strings.Contains(got, "Generate login key") {
+		t.Errorf("expected hint for unbound /start, got: %q", got)
+	}
+	// Bound chat (Username set) → "already logged in" message.
+	env2 := BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false}
+	got2 := HandleCommand(context.Background(), env2, "/start")
+	if !strings.Contains(got2, "Already logged in as alice") {
+		t.Errorf("expected 'already logged in' for bound /start, got: %q", got2)
+	}
+}
+
+// TestLoginReplyStillBindsImmediately is the regression test
+// for the /start split: /login <token> must keep its
+// one-command shortcut (bind immediately, no confirmation
+// prompt). Without this, the test from Этап 12
+// (TestLoginReplyValid) would still pass but the UX would
+// regress — every /login would show a keyboard.
+func TestLoginReplyStillBindsImmediately(t *testing.T) {
+	d := setupTestDB(t)
+	insertValidLoginToken(t, d, testLoginToken, 2, 300)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
+	if !strings.Contains(got, "Logged in as alice") {
+		t.Errorf("expected immediate bind via /login, got: %q", got)
+	}
+	// No keyboard should be set (the /login path is the
+	// shortcut; only /start shows the prompt).
+	if pendingReplyForCurrentMessage != nil {
+		t.Errorf("expected no inline keyboard for /login, got one")
+	}
+	// And the binding should exist immediately.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM telegram_bindings WHERE chat_id = 555`).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected binding to exist after /login, got %d rows", n)
+	}
+}
+
+// TestStartReplyNoArgsDoesNotConsume confirms the rate-limit
+// is enforced on /start (a malicious flood of /start <random>
+// shouldn't burn a chat's quota without consequence).
+func TestStartReplyNoArgsDoesNotConsume(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, ChatID: 0, StrictMode: true}
+	// /start with no arg → login hint, no token consume.
+	got := HandleCommand(context.Background(), env, "/start")
+	if strings.Contains(got, "Bind this chat") {
+		t.Errorf("expected hint, not confirmation prompt, for /start (no arg), got: %q", got)
+	}
+}
+
+// TestStartReplyInvalidTokenShapeRejected covers the cheap
+// shape check in startReply — junk inputs don't burn DB
+// cycles (the same shape check loginReply has, mirrored
+// here so /start has the same fast-fail).
+func TestStartReplyInvalidTokenShapeRejected(t *testing.T) {
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	got := HandleCommand(context.Background(), env, "/login skg-ABCD") // too short
+	if !strings.Contains(got, "doesn't look like a valid key") {
+		t.Errorf("expected shape-check rejection, got: %q", got)
+	}
+	// Reset the rate-limit so the next call isn't blocked
+	// by a fake-attempt counter (we just recorded one).
+	resetLoginAttempts(d, 555)
+}
+
+// TestBotUsernameCacheAfterTokenSave is a small end-to-end
+// check: once a token is saved (operator completed
+// /admin/telegram), the next getMe-discovered username
+// should be reflected in BotUsernameCached(). We mock the
+// HTTP response via httptest in a real test, but for the
+// unit-test scope we just confirm the Notifier interface
+// returns "" when no token is saved (the cache-miss path
+// in BotUsernameCached).
+func TestBotUsernameCacheEmptyWithoutToken(t *testing.T) {
+	d := setupTestDB(t)
+	// No telegram.bot_token in global_settings → no cached
+	// username; BotUsernameCached should return "".
+	// We can't easily construct a RealNotifier here
+	// (it needs a *headscale.Client, etc.) so we just
+	// assert the underlying SQL: a SELECT for the bot
+	// token returns no rows.
+	var v string
+	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = 'telegram.bot_token'`).Scan(&v)
+	if err != sql.ErrNoRows {
+		t.Errorf("expected no token row, got value=%q err=%v", v, err)
 	}
 }

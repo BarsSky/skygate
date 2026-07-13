@@ -30,7 +30,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"skygate/internal/db"
@@ -44,55 +43,45 @@ import (
 // to traverse the 16-char token space at >5 guesses/sec —
 // realistically cannot crack a 5-min-TTL key in time.
 const (
-	loginRateLimitWindow = 60 * time.Second
-	loginRateLimitMax    = 5
+	loginRateLimitWindowSeconds = 60
+	loginRateLimitMax           = 5
 )
 
-// loginAttempts holds per-chat_id login attempt timestamps.
-// A chat's slot is a FIFO slice of unix-second timestamps; an
-// attempt is allowed when len(slot) < max AND all timestamps
-// are within the window. Stale timestamps are evicted on every
-// check so the slice stays small.
-var (
-	loginAttemptsMu sync.Mutex
-	loginAttempts   = map[int64][]int64{}
-)
-
-// loginAttemptAllowed returns true if the chat is under the
-// /login rate limit. Side-effect: records the current attempt
-// (the caller doesn't need to do bookkeeping). Returns false
-// when over the limit; the caller should reply with a "slow
-// down" message and not actually call ConsumeTelegramLoginToken.
-func loginAttemptAllowed(chatID int64) bool {
-	now := time.Now().Unix()
-	loginAttemptsMu.Lock()
-	defer loginAttemptsMu.Unlock()
-	slot := loginAttempts[chatID]
-	// Evict anything older than the window.
-	cutoff := now - int64(loginRateLimitWindow.Seconds())
-	keep := slot[:0]
-	for _, t := range slot {
-		if t >= cutoff {
-			keep = append(keep, t)
-		}
+// loginAttemptAllowed records an attempt for `chatID` and
+// returns true when the chat is under the limit. The state
+// lives in telegram_rate_limit (DB) since Этап 13; the
+// in-memory map was retired because it (a) reset on every
+// container restart, (b) didn't work across multi-instance
+// deploys, (c) wouldn't survive the rate-limit being applied
+// to a /start callback flow (which lives outside this
+// function's lock). The DB version is one INSERT + one
+// indexed SELECT — same big-O as the in-memory version, and
+// the table is tiny (≤5 rows per active chat per minute).
+//
+// Этап 13 (2026-07-13): migrated from in-memory
+// `loginAttempts` map to db.RecordTelegramRateLimitAttempt.
+// Tests reset the per-chat slot via db.ResetTelegramRateLimit.
+func loginAttemptAllowed(d *sql.DB, chatID int64) bool {
+	key := fmt.Sprintf("login:%d", chatID)
+	_, allowed, err := db.RecordTelegramRateLimitAttempt(
+		d, key, "", loginRateLimitWindowSeconds, loginRateLimitMax)
+	if err != nil {
+		// Fail-open: a DB error on the rate-limit path
+		// shouldn't block legitimate /login attempts. The
+		// alternative (fail-closed) would mean a transient
+		// DB hiccup locks everyone out. Audit_log isn't
+		// necessary here — the next message will surface
+		// any real DB problem via the binding UPSERT.
+		return true
 	}
-	slot = keep
-	if len(slot) >= loginRateLimitMax {
-		loginAttempts[chatID] = slot
-		return false
-	}
-	slot = append(slot, now)
-	loginAttempts[chatID] = slot
-	return true
+	return allowed
 }
 
 // resetLoginAttempts clears the rate-limit slot for a chat.
 // Used by tests (and could be used by an admin "clear" path
 // in the future if a user legitimately tripped the limiter).
-func resetLoginAttempts(chatID int64) {
-	loginAttemptsMu.Lock()
-	defer loginAttemptsMu.Unlock()
-	delete(loginAttempts, chatID)
+func resetLoginAttempts(d *sql.DB, chatID int64) {
+	_, _ = db.ResetTelegramRateLimit(d, fmt.Sprintf("login:%d", chatID))
 }
 
 // loginReply handles /login [key]. The strict-mode gate in
@@ -114,9 +103,9 @@ func loginReply(env BotEnv, args []string) string {
 		// the consuming chat.
 		return "login: internal error (chat_id missing); contact admin"
 	}
-	if !loginAttemptAllowed(env.ChatID) {
-		return fmt.Sprintf("login: too many attempts. Wait %s and try again.",
-			loginRateLimitWindow)
+	if !loginAttemptAllowed(env.DB, env.ChatID) {
+		return fmt.Sprintf("login: too many attempts. Wait %ds and try again.",
+			loginRateLimitWindowSeconds)
 	}
 	token := strings.TrimSpace(args[0])
 	// Cheap shape check: a real token is 19 chars (skg-XXXX-XXXX-XXXX).
@@ -169,12 +158,67 @@ func loginReply(env BotEnv, args []string) string {
 
 // startReply is /start. With no args: Telegram-UX welcome that
 // doubles as the login hint (most users will /start a bot before
-// reading any docs). With an arg: same as /login <token>.
+// reading any docs). With an arg: the bot shows a confirmation
+// prompt with [Bind] [Cancel] inline buttons instead of binding
+// immediately. /login <token> still binds in one command (the
+// shortcut for users who already know the flow).
+//
+// 2026-07-13: Этап 13 — split /start from /login so a phone
+// scan (which lands in /start <token>) gets an explicit
+// "are you sure?" step before binding the chat. /login keeps
+// the one-command path for users who already pasted the key
+// from the web page.
 func startReply(env BotEnv, args []string) string {
 	if len(args) == 0 {
 		return loginHint(env)
 	}
-	return loginReply(env, args)
+	if env.ChatID == 0 {
+		return "start: internal error (chat_id missing); contact admin"
+	}
+	if !loginAttemptAllowed(env.DB, env.ChatID) {
+		return fmt.Sprintf("start: too many attempts. Wait %ds and try again.",
+			loginRateLimitWindowSeconds)
+	}
+	token := strings.TrimSpace(args[0])
+	if !looksLikeLoginToken(token) {
+		return "start: that doesn't look like a valid key. " +
+			"Open /my/telegram and copy the key exactly."
+	}
+	// Peek at the token WITHOUT consuming it. We want the
+	// confirmation prompt to show "Bind to <username>?" — the
+	// user reads that, clicks Bind, and only THEN do we
+	// consume. Consuming on /start would be a race: the
+	// user might tap Cancel after a few seconds and the
+	// token would already be spent.
+	t, err := db.PeekTelegramLoginToken(env.DB, token)
+	if err != nil {
+		return "start: invalid or expired key. " +
+			"Generate a new one in /my/telegram."
+	}
+	// Look up the target user's display name. Failure here
+	// is non-fatal — the prompt just shows the user_id
+	// instead of the username, which is still informative.
+	username, _, _ := lookupPortalUser(env.DB, t.PortalUserID)
+	if username == "" {
+		username = fmt.Sprintf("user#%d", t.PortalUserID)
+	}
+	// Build the inline keyboard. Two buttons, side by side:
+	//   [Bind to <username>]   [Cancel]
+	// The callback data follows the convention used by
+	// RealNotifier.handleCallback: "bind:confirm:<token>" or
+	// "bind:cancel".
+	rows := [][]map[string]string{
+		{
+			{"text": fmt.Sprintf("✅ Bind to %s", username), "callback_data": "bind:confirm:" + token},
+			{"text": "❌ Cancel", "callback_data": "bind:cancel"},
+		},
+	}
+	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: rows}
+	return fmt.Sprintf(
+		"🔑 Bind this chat to **%s**?\n\n"+
+			"This will let you use /my_rules, /add_rule, /delrule and the rest of the user commands.\n"+
+			"Token expires %s.",
+		username, time.Unix(t.ExpiresAt, 0).UTC().Format("15:04:05 MST"))
 }
 
 // loginHint is the welcome message. It branches on whether

@@ -407,6 +407,26 @@ const (
 )
 
 // ---------------------------------------------------------------
+// telegram_rate_limit  —  v0.32
+//   key     TEXT NOT NULL   "<scope>:<id>", e.g. "login:555"
+//   action  TEXT NOT NULL DEFAULT ''  (reserved for future use)
+//   ts      INTEGER NOT NULL  unix seconds
+//
+// Этап 13 (2026-07-13): replaces the in-memory loginAttempts
+// map in internal/telegram. Atomic per attempt: one INSERT,
+// one SELECT (count rows in the window). Survives restarts
+// and works across instances.
+// ---------------------------------------------------------------
+
+const (
+	qInsertTelegramRateLimit = `INSERT INTO telegram_rate_limit(key, action, ts)
+		VALUES (?, ?, ?)`
+	qCountTelegramRateLimitInWindow = `SELECT COUNT(*) FROM telegram_rate_limit
+		WHERE key = ? AND ts >= ?`
+	qDeleteTelegramRateLimitOlderThan = `DELETE FROM telegram_rate_limit WHERE ts < ?`
+)
+
+// ---------------------------------------------------------------
 // exit_servers  —  v0.20 + v0.24
 //   id                INTEGER PRIMARY KEY AUTOINCREMENT
 //   node_id           TEXT NOT NULL UNIQUE

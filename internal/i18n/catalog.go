@@ -148,6 +148,15 @@ var ruCatalog = map[string]string{
 	"my_telegram.fresh_key_ttl":       "Истекает через",
 	"my_telegram.fresh_key_next_step": "Откройте Telegram и отправьте боту:",
 	"my_telegram.expired":             "истёк",
+	// 2026-07-13: Этап 13 — Bind-by-QR. The fresh-key card now
+	// shows a QR alongside three "how to bind" options (scan,
+	// deep link, paste). All three resolve to the same /start
+	// <key> or /login <key> on the bot side.
+	"my_telegram.qr_caption":          "Отсканируйте камерой телефона",
+	"my_telegram.bind_options_title":  "Три способа привязать чат",
+	"my_telegram.bind_option_qr":      "Отсканируйте QR-код камерой — Telegram откроется с уже заполненным /start.",
+	"my_telegram.bind_option_open":    "Или откройте эту ссылку:",
+	"my_telegram.bind_option_paste":   "Или скопируйте ключ и отправьте боту вручную:",
 	"my_telegram.current_binding":     "Текущая привязка",
 	"my_telegram.bound_to":            "Chat ID",
 	"my_telegram.bound_at":            "Привязан",
@@ -697,6 +706,13 @@ var enCatalog = map[string]string{
 	"my_telegram.fresh_key_ttl":       "Expires in",
 	"my_telegram.fresh_key_next_step": "Open Telegram and send the bot:",
 	"my_telegram.expired":             "expired",
+	// 2026-07-13: Этап 13 — Bind-by-QR. Keep in lockstep with
+	// the ruCatalog block above.
+	"my_telegram.qr_caption":          "Scan with your phone camera",
+	"my_telegram.bind_options_title":  "Three ways to bind",
+	"my_telegram.bind_option_qr":      "Scan the QR with your phone camera — Telegram opens with /start pre-filled.",
+	"my_telegram.bind_option_open":    "Or open this link:",
+	"my_telegram.bind_option_paste":   "Or copy the key and send it to the bot manually:",
 	"my_telegram.current_binding":     "Current binding",
 	"my_telegram.bound_to":            "Chat ID",
 	"my_telegram.bound_at":            "Bound at",
