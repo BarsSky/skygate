@@ -1,4 +1,22 @@
 services:
+  # 2026-07-14: Этап 14 v2 — Tailscale in-image (no sidecar).
+  #
+  # The skygate container runs tailscaled in its own network
+  # namespace and joins the tailnet with `tailscale up --accept-routes`.
+  # The relay (a separate node, e.g. emilia) advertises the Telegram
+  # IP ranges as subnet routes; skygate accepts them, so
+  # api.telegram.org traffic flows through the relay while
+  # headscale (which is on the tailnet) stays direct.
+  #
+  # Required capabilities for the in-image tailscaled:
+  #   - NET_ADMIN: manipulate routing tables / iptables
+  #   - SYS_ADMIN: mount /dev/net/tun (some kernels also need this)
+  #   - /dev/net/tun: the TUN device tailscale0 lives on
+  #
+  # To disable Tailscale entirely (non-RF deployments, testing,
+  # local dev), just remove the TS_AUTHKEY_FILE env var and the
+  # secrets: mount — the entrypoint will skip tailscaled and
+  # skygate will use direct internet.
   skygate:
     build: .
     container_name: skygate
@@ -6,6 +24,11 @@ services:
       - .env
     environment:
       - SKYGATE_DB=/data/skygate.db
+      # Tailscale config. All three are optional; if TS_AUTHKEY_FILE
+      # is unset the entrypoint skips tailscaled entirely.
+      - TS_AUTHKEY_FILE=/run/secrets/ts_authkey
+      - TS_LOGIN_SERVER=https://head.skynas.ru
+      - TS_HOSTNAME=skygate-vm
     volumes:
       # Bind-mount source code - any change is picked up on container restart
       - ./:/app
@@ -13,6 +36,22 @@ services:
       - skygate-data:/data
       # docker.sock to call headscale CLI for preauth keys
       - /var/run/docker.sock:/var/run/docker.sock
+      # Tailscale state dir. Persists across container restarts so we
+      # don't re-auth on every `docker compose restart`. The
+      # tailscaled.state file holds the node key; losing it forces
+      # a re-auth (and a new preauth key from headscale).
+      - ./data/ts:/var/lib/tailscale
+      # Bind-mount the control socket path so tailscale CLI can
+      # talk to tailscaled. Not strictly required (tailscale finds
+      # the socket via /var/run/tailscale), but explicit.
+      - ./data/ts/run:/var/run/tailscale
+    secrets:
+      - ts_authkey
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
     ports:
       - "8080:8080"
     networks:
@@ -27,3 +66,7 @@ networks:
 volumes:
   skygate-data:
     name: skygate-data
+
+secrets:
+  ts_authkey:
+    file: ./secrets/ts_authkey
