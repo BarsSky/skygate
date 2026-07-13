@@ -84,7 +84,27 @@ type RealNotifier struct {
 	// userMaxRules / defaultMax.
 	maxRulesPerDevice int
 	maxTotalRules     int
+
+	// 2026-07-13: Этап 13 — bot's own @username (set by
+	// getMe discovery, cached 1h). Used by the /my/telegram
+	// page to render a QR code that opens Telegram with the
+	// login token pre-filled. Empty = not yet discovered;
+	// the page falls back to plain-text "send the key to the
+	// bot" instructions in that case.
+	BotUsername string
+
+	// botUsernameFetchedAt is the unix-second timestamp of
+	// the last successful getMe. Combined with
+	// botUsernameCacheTTL, decides when to refresh.
+	// 2026-07-13: Этап 13.
+	botUsernameFetchedAt int64
 }
+
+// botUsernameCacheTTL is how long we cache the bot's username
+// returned by getMe. The username is set at @BotFather time and
+// changes only when the operator re-registers the bot — a 1-hour
+// cache is plenty fresh. 2026-07-13: Этап 13.
+const botUsernameCacheTTL = 3600
 
 func NewRealNotifier(d *sql.DB) *RealNotifier {
 	api := os.Getenv("TELEGRAM_API")
@@ -144,6 +164,75 @@ func (n *RealNotifier) SetRuleCaps(maxPerDevice, maxTotal int) {
 	defer n.mu.Unlock()
 	n.maxRulesPerDevice = maxPerDevice
 	n.maxTotalRules = maxTotal
+}
+
+// BotUsernameCached returns the bot's @username, refreshing
+// from Telegram's getMe API at most once per
+// botUsernameCacheTTL. Returns "" if the token isn't
+// configured yet (the operator hasn't completed setup at
+// /admin/telegram) OR if the last getMe call failed.
+//
+// This is the entry point the /my/telegram page uses to
+// decide whether to render a QR code (when username is known)
+// or fall back to plain-text "send the key to the bot"
+// instructions (when it isn't).
+//
+// 2026-07-13: Этап 13 — Bind-by-QR.
+func (n *RealNotifier) BotUsernameCached() string {
+	n.mu.Lock()
+	username := n.BotUsername
+	fetchedAt := n.botUsernameFetchedAt
+	n.mu.Unlock()
+	// Cache hit.
+	if username != "" && time.Now().Unix()-fetchedAt < botUsernameCacheTTL {
+		return username
+	}
+	// Refresh. We don't return the error to the caller; the
+	// web page handles the empty-string case the same way
+	// regardless of WHY it's empty.
+	token, _, ok, err := db.LoadTelegramToken(n.db)
+	if err != nil || !ok {
+		return ""
+	}
+	newUsername, err := n.fetchBotUsername(token)
+	if err != nil || newUsername == "" {
+		// Don't update the timestamp on failure — a fresh
+		// page load retries immediately. This trades a bit
+		// of latency on a misconfigured bot for prompt
+		// recovery once the operator saves a token.
+		return ""
+	}
+	n.mu.Lock()
+	n.BotUsername = newUsername
+	n.botUsernameFetchedAt = time.Now().Unix()
+	n.mu.Unlock()
+	return newUsername
+}
+
+// fetchBotUsername calls Telegram's getMe and returns the
+// bot's @username (without the @ prefix). Used by
+// BotUsernameCached for the cache-miss path.
+func (n *RealNotifier) fetchBotUsername(token string) (string, error) {
+	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/getMe"
+	resp, err := n.client.Get(endpoint)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	var out struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Username string `json:"username"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rb, &out); err != nil {
+		return "", err
+	}
+	if !out.OK {
+		return "", fmt.Errorf("telegram getMe: not ok: %s", string(rb))
+	}
+	return out.Result.Username, nil
 }
 
 // env returns a BotEnv snapshot for HandleCommand. The DB pointer
@@ -315,6 +404,25 @@ func (n *RealNotifier) Run(ctx context.Context) {
 		backoff = n.pollInt
 		for _, u := range updates {
 			offset = u.UpdateID + 1
+			// 2026-07-13: Этап 13 — inline-keyboard callbacks.
+			// Callback queries are routed through the same
+			// HandleCommand path as text commands; the helper
+			// detects the "data:bind:..." prefix and switches
+			// to callback semantics. We don't bail on
+			// non-/command text here anymore: the callback
+			// path also delivers via Message-bearing updates
+			// (the inline button's "callback_data" sits in
+			// CallbackQuery, not Message), so the text
+			// prefix check belongs to the message branch
+			// only.
+			if u.CallbackQuery != nil {
+				pendingReplyForCurrentMessage = nil
+				n.handleCallback(token, u.CallbackQuery)
+				continue
+			}
+			if u.Message == nil {
+				continue
+			}
 			text := u.Message.Text
 			if !strings.HasPrefix(text, "/") {
 				continue
@@ -330,6 +438,7 @@ func (n *RealNotifier) Run(ctx context.Context) {
 			if isBootstrapAdmin && !env.IsAdmin {
 				env.IsAdmin = true
 			}
+			pendingReplyForCurrentMessage = nil
 			reply := HandleCommand(ctx, env, text)
 			// Reply goes to the originating chat (not the configured
 			// admin chat). If the chat is unbound, the reply is
@@ -337,7 +446,7 @@ func (n *RealNotifier) Run(ctx context.Context) {
 			// for the bootstrap case (admin chat replies) and
 			// degrades gracefully for unbound chats (the user
 			// sees the "admin only" / "chat not bound" message).
-			n.reply(token, updateChatID, reply)
+			n.reply(token, updateChatID, reply, pendingReplyForCurrentMessage)
 		}
 		select {
 		case <-ctx.Done():
@@ -409,17 +518,120 @@ func (n *RealNotifier) fetch(token string, offset int64) ([]update, error) {
 	return out.Result, nil
 }
 
-func (n *RealNotifier) reply(token string, chatID int64, text string) {
+// reply posts `text` to `chatID` as a plain message. Errors are
+// logged but not returned (this is fire-and-forget notification code;
+// callers should not block on Telegram availability). For a real
+// response the user's Telegram client renders the bot's reply.
+//
+// 2026-07-13: Этап 13 — accepts an optional *PendingReply to
+// attach an inline-keyboard (or future rich-reply extras) to
+// the message. nil = plain text. Callers that want a keyboard
+// pass env.PendingReply; the rest pass nil.
+func (n *RealNotifier) reply(token string, chatID int64, text string, pending *PendingReply) {
+	n.sendPlain(token, chatID, text, pending)
+}
+
+// sendPlain is the shared POST /sendMessage implementation
+// used by both the text-message path and the inline-keyboard
+// callback path. Kept private so callers go through reply()
+// (the only public entry point); handleCallback also calls
+// it directly because it doesn't go through the public reply.
+func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pending *PendingReply) {
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendMessage"
 	payload := map[string]any{
 		"chat_id":                chatID,
 		"text":                   text,
 		"disable_web_page_preview": true,
 	}
+	if pending != nil && len(pending.InlineKeyboard) > 0 {
+		payload["reply_markup"] = map[string]any{
+			"inline_keyboard": pending.InlineKeyboard,
+		}
+	}
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("telegram: reply POST failed: %v", err)
+		log.Printf("telegram: sendMessage failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+}
+
+// handleCallback dispatches a callback_query (an inline
+// button tap) to the right handler. We translate the
+// callback data into a synthetic command and route through
+// HandleCommand so the binding logic stays in one place. The
+// callback acknowledgement (answerCallbackQuery) is sent
+// first so the Telegram client dismisses the loading spinner;
+// a follow-up sendMessage delivers the visible reply.
+//
+// 2026-07-13: Этап 13 — inline-keyboard confirmation for
+// /start <token>. The user scans the QR or taps the deep
+// link, lands in the chat with /start pre-filled, and the
+// bot shows a [Bind] [Cancel] prompt instead of binding
+// immediately. /login <token> still binds immediately
+// (one-command shortcut for users who already know the flow).
+func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
+	// 1. Acknowledge the callback so the loading spinner
+	//    dismisses. Empty text = silent dismiss; we always
+	//    send a follow-up sendMessage, so the ack just
+	//    signals "I got it".
+	n.ackCallback(token, cq.ID, "")
+	if cq == nil || cq.Data == "" {
+		return
+	}
+	data := cq.Data
+	// 2. Resolve the chat_id from the callback envelope.
+	//    Some Telegram clients put chat_id at the top level;
+	//    others nest it under message.chat. We try both.
+	chatID := cq.ChatID
+	if chatID == 0 && cq.Message != nil {
+		chatID = cq.Message.Chat.ID
+	}
+	if chatID == 0 {
+		return
+	}
+	// 3. Translate the callback data into a synthetic
+	//    command so HandleCommand's existing logic does
+	//    the heavy lifting.
+	var synthetic string
+	switch {
+	case data == "bind:cancel":
+		synthetic = "/_bind_cancel"
+	case strings.HasPrefix(data, "bind:confirm:"):
+		tokenStr := strings.TrimPrefix(data, "bind:confirm:")
+		synthetic = "/login " + tokenStr
+	default:
+		return
+	}
+	// 4. Build the same env the text-message path uses.
+	effectiveChatID, isBootstrapAdmin := n.resolveBootstrapAdmin(chatID)
+	env := n.env(effectiveChatID)
+	if isBootstrapAdmin && !env.IsAdmin {
+		env.IsAdmin = true
+	}
+	pendingReplyForCurrentMessage = nil
+	reply := HandleCommand(context.Background(), env, synthetic)
+	n.sendPlain(token, chatID, reply, pendingReplyForCurrentMessage)
+}
+
+// ackCallback posts answerCallbackQuery so the Telegram
+// client dismisses the inline button's loading spinner.
+// `text` (optional, ≤200 chars) is shown as a toast on the
+// client. We pass empty text because we always send a
+// follow-up sendMessage; the toast would be redundant.
+func (n *RealNotifier) ackCallback(token, callbackID, text string) {
+	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/answerCallbackQuery"
+	payload := map[string]any{
+		"callback_query_id": callbackID,
+	}
+	if text != "" {
+		payload["text"] = text
+	}
+	body, _ := json.Marshal(payload)
+	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("telegram: answerCallbackQuery failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -427,10 +639,35 @@ func (n *RealNotifier) reply(token string, chatID int64, text string) {
 
 type update struct {
 	UpdateID int64 `json:"update_id"`
-	Message  struct {
+	// 2026-07-13: Этап 13 — inline-keyboard callback support.
+	// CallbackQuery fires when the user taps a button under a
+	// bot message; the bot answers via answerCallbackQuery
+	// (separate API from sendMessage) and may edit the
+	// original message via editMessageText. The polling loop
+	// dispatches both shapes through the same HandleCommand
+	// path so the command/binding logic stays in one place.
+	CallbackQuery *callbackQuery `json:"callback_query"`
+	Message       *struct {
 		Text string `json:"text"`
 		Chat struct {
 			ID int64 `json:"id"`
 		} `json:"chat"`
+	} `json:"message"`
+}
+
+// callbackQuery is the subset of Telegram's callback_query
+// payload we read. We use a flat data field (the inline
+// button's "callback_data" string) and the originating
+// message's chat for routing — the inline message ID is
+// optional (we edit it to acknowledge the action).
+type callbackQuery struct {
+	ID      string `json:"id"`
+	Data    string `json:"data"`
+	ChatID  int64  `json:"chat_id"` // populated by some
+	Message *struct {
+		Chat struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+		MessageID int64 `json:"message_id"`
 	} `json:"message"`
 }
