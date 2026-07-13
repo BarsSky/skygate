@@ -186,6 +186,15 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return addRuleReply(env, args)
 	case "/delete_rule":
 		return deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " ")))
+	// --- Этап 11 part 2a: per-user preferences ---
+	case "/setdefaultdevice":
+		return setDefaultDeviceReply(env, strings.TrimSpace(strings.Join(args, " ")))
+	case "/defaultdevice":
+		return defaultDeviceReply(env)
+	case "/setexitnode":
+		return setExitNodeReply(env, strings.TrimSpace(strings.Join(args, " ")))
+	case "/defaultexitnode":
+		return defaultExitNodeReply(env)
 	default:
 		return fmt.Sprintf("Unknown command: %s. Try /help.", cmd)
 	}
@@ -219,7 +228,11 @@ func helpReply(env BotEnv) string {
 		"/my_quota — your rule count vs cap\n" +
 		"/add_device — issue a 1h single-use preauth key for yourself\n" +
 		"/add_rule <target> — add an exit-rule for yourself\n" +
-		"/delete_rule <id> — delete one of your rules"
+		"/delete_rule <id> — delete one of your rules\n" +
+		"/setdefaultdevice [node_id|clear] — set your default device for /add_rule\n" +
+		"/defaultdevice — show your current default device\n" +
+		"/setexitnode [node_id|clear] — set your default exit-node for /add_rule\n" +
+		"/defaultexitnode — show your current default exit-node"
 	adminScope := "/status — system-wide summary (rules/users/last acl)\n" +
 		"/nodes — list ALL tailnet devices by user+tag\n" +
 		"/exit_nodes — list exit-nodes (tag:exit-node) with last-seen\n" +

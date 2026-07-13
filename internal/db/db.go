@@ -115,6 +115,10 @@ func migrate(d *sql.DB) error {
 	//   V024 — ALTER exit_servers (needs exit_servers, already exists)
 	//   V026 — ALTER exit_servers ADD accept_routes (needs V024 done)
 	//   V027 — CREATE telegram_alerts (independent)
+	//   V028 — ALTER node_owner_map (tag columns)
+	//   V029 — CREATE telegram_bindings (chat_id → portal_user)
+	//   V030 — ALTER portal_users (default_device_node_id,
+	//          default_exit_node_id) — Этап 11 part 2a
 	migrateV025(d)
 	if err := migrateV020(d); err != nil {
 		return fmt.Errorf("migrate v0.20: %w", err)
@@ -142,6 +146,9 @@ func migrate(d *sql.DB) error {
 	}
 	if err := migrateV029(d); err != nil {
 		return fmt.Errorf("migrate v0.29: %w", err)
+	}
+	if err := migrateV030(d); err != nil {
+		return fmt.Errorf("migrate v0.30: %w", err)
 	}
 	return nil
 }
