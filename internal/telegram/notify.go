@@ -77,6 +77,13 @@ type RealNotifier struct {
 	// commands guard explicitly and return a clear "telegram not wired
 	// for writes" hint so the existing read-only deploys keep working.
 	HS *headscale.Client
+	// 2026-07-13: Этап 11 part 2b — per-device + total rule caps,
+	// set by main.go from config.Load(). Surfaced in BotEnv so
+	// /add_rule can enforce them (mirrors the web form's
+	// PostMyExitRule checks). Zero = "no cap" — same as
+	// userMaxRules / defaultMax.
+	maxRulesPerDevice int
+	maxTotalRules     int
 }
 
 func NewRealNotifier(d *sql.DB) *RealNotifier {
@@ -127,6 +134,18 @@ func (n *RealNotifier) SetHS(hs *headscale.Client) {
 	n.HS = hs
 }
 
+// SetRuleCaps stores the per-device and total rule caps used by
+// /add_rule. 2026-07-13: Этап 11 part 2b. Called once at
+// startup from cmd/skygate/main.go after config.Load(). Zero
+// values mean "no cap" — /add_rule then skips the check (same
+// convention as SetLimits).
+func (n *RealNotifier) SetRuleCaps(maxPerDevice, maxTotal int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.maxRulesPerDevice = maxPerDevice
+	n.maxTotalRules = maxTotal
+}
+
 // env returns a BotEnv snapshot for HandleCommand. The DB pointer
 // is the same one we already hold; the limits are read under the
 // mu lock so a future SetLimits call mid-poll doesn't tear the map.
@@ -146,7 +165,7 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
-	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID, HS: n.HS}
+	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID, HS: n.HS, MaxRulesPerDevice: n.maxRulesPerDevice, MaxTotalRules: n.maxTotalRules}
 	if chatID == 0 {
 		return env // legacy / no identity
 	}

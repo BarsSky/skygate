@@ -67,6 +67,14 @@ type BotEnv struct {
 	// status/nodes/rules/audit without writes. Write commands guard
 	// against nil and reply with a clear hint.
 	HS *headscale.Client
+
+	// 2026-07-13: Этап 11 part 2b — per-device and total rule
+	// caps, snapshotted from the App's *config.Config at startup.
+	// /add_rule checks these before inserting (the web form does
+	// the same in PostMyExitRule). Zero means "no cap" — same
+	// convention as UserMaxRules / DefaultMax.
+	MaxRulesPerDevice int
+	MaxTotalRules     int
 }
 
 // IsIdentified returns true when the bot knows which Telegram chat
