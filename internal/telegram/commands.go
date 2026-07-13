@@ -114,7 +114,7 @@ func (e BotEnv) MaxFor(username string) int {
 // Command categories (2026-07-12: Этап 11):
 //
 //   user-scope  /my_status, /my_nodes, /my_rules, /my_quota,
-//                /add_device, /add_rule, /delrule
+//                /add_device, /add_rule, /delrule, /clearrules
 //                — work for any identified user; data is filtered
 //                  to the caller's own. Admin can use them too and
 //                  gets the same scoping (admin's own data).
@@ -194,6 +194,8 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return addRuleReply(env, args)
 	case "/delrule":
 		return deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " ")))
+	case "/clearrules":
+		return clearRulesReply(env, strings.TrimSpace(strings.Join(args, " ")))
 	case "/delete_rule":
 		// Deprecated alias of /delrule. Kept for back-compat with
 		// existing /help text + scripts that still call the old name.
@@ -242,6 +244,7 @@ func helpReply(env BotEnv) string {
 		"/add_device — issue a 1h single-use preauth key for yourself\n" +
 		"/add_rule <target> — add an exit-rule for yourself\n" +
 		"/delrule <id> [id2 ...] — delete one or more of your rules\n" +
+		"/clearrules [username] — wipe ALL exit-rules for you (or another user, admin only); requires /clearrules confirm within 30s\n" +
 		"/setdefaultdevice [node_id|clear] — set your default device for /add_rule\n" +
 		"/defaultdevice — show your current default device\n" +
 		"/setexitnode [node_id|clear] — set your default exit-node for /add_rule\n" +
