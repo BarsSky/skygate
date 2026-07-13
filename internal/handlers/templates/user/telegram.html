@@ -57,7 +57,7 @@
 <div class="card" style="border:2px solid var(--accent)">
   <h3 style="color:var(--accent)"><i class="fa-solid fa-key"></i>{{t "my_telegram.fresh_key_title"}}</h3>
   <p>{{t "my_telegram.fresh_key_warning"}}</p>
-  <div style="background:var(--bg-2);padding:1rem;border-radius:8px;display:flex;align-items:center;gap:1rem;margin:1rem 0">
+  <div style="background:var(--bg-2);padding:1rem;border-radius:8px;display:flex;align-items:center;gap:1rem;margin:1rem 0;flex-wrap:wrap">
     <code id="key-display" style="font-size:1.5rem;font-family:monospace;letter-spacing:0.1em;color:var(--accent);user-select:all">{{.FreshKey}}</code>
     <button type="button" class="btn btn-secondary" onclick="navigator.clipboard.writeText('{{.FreshKey}}');this.innerHTML='<i class=\&quot;fa-solid fa-check\&quot;></i> {{t "common.copied"}}'">
       <i class="fa-solid fa-copy"></i>{{t "common.copy"}}
@@ -66,8 +66,28 @@
   <p class="hint">
     {{t "my_telegram.fresh_key_ttl"}}: <strong id="key-ttl" data-exp="{{.FreshExp}}">…</strong>
   </p>
-  <p>{{t "my_telegram.fresh_key_next_step"}}</p>
-  <pre style="background:var(--bg-2);padding:0.5rem;border-radius:4px;display:inline-block">/login {{.FreshKey}}</pre>
+
+  <div style="display:grid;grid-template-columns:auto 1fr;gap:1.5rem;align-items:center;margin-top:1.5rem;padding:1rem;background:var(--bg-2);border-radius:8px">
+    <div>
+      {{/* 2026-07-13: Этап 13 — Bind-by-QR. The PNG is served
+          by /my/telegram/qr?token=… (cookie-authenticated, so
+          only the page owner can render a QR for a token they
+          just minted). The image is regenerated every page
+          load; the server doesn't cache it. */}}
+      <img src="/my/telegram/qr?token={{.FreshKey}}" alt="QR code" width="200" height="200" style="border-radius:4px;background:white;padding:8px;display:block">
+      <p class="hint" style="text-align:center;margin-top:0.5rem">{{t "my_telegram.qr_caption"}}</p>
+    </div>
+    <div>
+      <h4 style="margin:0 0 0.5rem 0"><i class="fa-solid fa-mobile-screen"></i>{{t "my_telegram.bind_options_title"}}</h4>
+      <p style="margin:0 0 0.5rem 0"><strong>①</strong> {{t "my_telegram.bind_option_qr"}}</p>
+      <p style="margin:0 0 0.5rem 0"><strong>②</strong> {{t "my_telegram.bind_option_open"}}</p>
+      <p style="margin:0 0 0.5rem 0;font-family:monospace;background:var(--bg);padding:0.4rem;border-radius:4px">
+        <a href="https://t.me/{{.BotUsername}}?start={{.FreshKey}}" target="_blank" rel="noopener">@{{.BotUsername}}?start={{.FreshKey}}</a>
+      </p>
+      <p style="margin:0 0 0.5rem 0"><strong>③</strong> {{t "my_telegram.bind_option_paste"}}</p>
+      <pre style="background:var(--bg);padding:0.4rem;border-radius:4px;display:inline-block;margin:0">/login {{.FreshKey}}</pre>
+    </div>
+  </div>
 </div>
 {{end}}
 

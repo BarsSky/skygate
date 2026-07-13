@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skip2/go-qrcode"
 	"skygate/internal/db"
 )
 
@@ -103,15 +104,29 @@ func (a *App) GetMyTelegram(w http.ResponseWriter, r *http.Request) {
 	// (it's gone from the URL on the second load).
 	freshKey := r.URL.Query().Get("key")
 	freshExp := r.URL.Query().Get("exp")
+	// 2026-07-13: Этап 13 — BotUsername for the deep-link button.
+	// Empty string is fine; the template falls back to a plain
+	// /login instruction. We only fetch once per page load (the
+	// Notifier caches the value 1h internally).
+	botUsername := ""
+	if a.Notifier != nil {
+		type withUsername interface {
+			BotUsernameCached() string
+		}
+		if u, ok := a.Notifier.(withUsername); ok {
+			botUsername = u.BotUsernameCached()
+		}
+	}
 	a.renderWithLayout(w, r, "user/telegram.html", c, map[string]any{
-		"Page":       "telegram",
-		"Title":      "Telegram",
-		"State":      state,
-		"FlashOK":    r.URL.Query().Get("ok"),
-		"FlashError": r.URL.Query().Get("err"),
-		"FreshKey":   freshKey,
-		"FreshExp":   freshExp,
-		"CSRF":       csrf,
+		"Page":        "telegram",
+		"Title":       "Telegram",
+		"State":       state,
+		"FlashOK":     r.URL.Query().Get("ok"),
+		"FlashError":  r.URL.Query().Get("err"),
+		"FreshKey":    freshKey,
+		"FreshExp":    freshExp,
+		"BotUsername": botUsername,
+		"CSRF":        csrf,
 	})
 }
 
@@ -354,6 +369,124 @@ type myTelegramState struct {
 type myTelegramTokenView struct {
 	db.TelegramLoginToken
 	Status string
+}
+
+// GetMyTelegramQR serves a PNG QR code that, when scanned with
+// a phone camera, opens Telegram with a /start <token> deep
+// link. The web page shows this QR alongside the freshly-minted
+// key so the user can "scan to bind" in one tap on a phone that
+// has Telegram installed.
+//
+// 2026-07-13: Этап 13 — Bind-by-QR.
+//
+// The encoded URL is `https://t.me/<bot_username>?start=<token>`.
+// Telegram handles the `?start=` parameter natively: when the
+// user opens the URL, Telegram opens the chat with the bot and
+// sends the bot a message "/start <token>". The bot's existing
+// /start <token> handler (commands_login.go) then binds the
+// chat. End-to-end: scan → bind.
+//
+// The token is read from the `token` query param (we never
+// persist the QR in a way that outlives the page — the page
+// shows the QR as part of the freshly-minted-key card, with a
+// JS countdown; after 5 min the QR is meaningless anyway because
+// the token has expired). The query is also available without
+// CSRF for read-only QR generation: an attacker who can read
+// this URL can't bind a different chat because the bind
+// requires a row in telegram_bindings for the chat that scanned
+// it, and the bot refuses to bind a chat_id that's already
+// taken.
+//
+// Returns 400 if the token doesn't match the
+// `^skg-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$` shape — same
+// validator the bot uses. Returns 503 if the bot username
+// hasn't been discovered yet (token configured but getMe
+// hasn't run, or just failed).
+func (a *App) GetMyTelegramQR(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if !looksLikeLoginTokenForQR(token) {
+		http.Error(w, "bad token", http.StatusBadRequest)
+		return
+	}
+	username := ""
+	if a.Notifier != nil {
+		// RealNotifier exposes a BotUsernameCached() method
+		// (set by main.go, refreshed via getMe). NoopNotifier
+		// doesn't, but the bot isn't configured in that case
+		// so a.Notifier is NoopNotifier — handled by the
+		// interface assertion below.
+		type withUsername interface {
+			BotUsernameCached() string
+		}
+		if u, ok := a.Notifier.(withUsername); ok {
+			username = u.BotUsernameCached()
+		}
+	}
+	if username == "" {
+		http.Error(w, "bot username not yet discovered (save a token at /admin/telegram first)", http.StatusServiceUnavailable)
+		return
+	}
+	// Build the deep link. Telegram accepts both `t.me/...` and
+	// `https://t.me/...`; we use https for QR scanners that
+	// resolve links via the camera app's HTTPS handler.
+	deepLink := fmt.Sprintf("https://t.me/%s?start=%s", username, token)
+	// Render the QR. We pick a 256×256 PNG (the standard
+	// `qrcode.Medium` recovery level handles up to 15%
+	// damage; the deep link is short — well within the
+	// error-correction budget at this size). 8px-per-module
+	// is a sweet spot for phone screens.
+	png, err := qrcode.Encode(deepLink, qrcode.Medium, 256)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("qr encode: %v", err), http.StatusInternalServerError)
+		return
+	}
+	// Cache headers: the QR is bound to a specific token, so
+	// we want it cached on the browser for as long as the
+	// token is valid (5 min default), and no longer. The
+	// `private` directive means an intermediary proxy won't
+	// accidentally serve a previous user's QR to the next
+	// user.
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", fmt.Sprintf("private, max-age=%d", a.loginTokenTTLSeconds()))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(png)))
+	_, _ = w.Write(png)
+}
+
+// loginTokenTTLSeconds is the cached TTL for the
+// Content-Max-Age header on the QR. Read from DB once at
+// startup via SetRuleCaps-style wiring would be cleaner, but
+// the value is rarely tuned and re-reading per request is
+// cheap (one indexed SELECT). This indirection exists so the
+// test code can mock the value.
+func (a *App) loginTokenTTLSeconds() int {
+	return db.LoadTelegramLoginTokenTTL(a.DB)
+}
+
+// looksLikeLoginTokenForQR is the QR handler's copy of
+// telegram/commands_login.go:looksLikeLoginToken. The two
+// implementations are intentionally duplicated (rather than
+// imported) because internal/handlers already imports
+// internal/telegram through Notifier, and a back-import would
+// create a cycle. The 18-char `skg-XXXX-XXXX-XXXX` shape is
+// stable; if a future change touches one copy, it must touch
+// both.
+func looksLikeLoginTokenForQR(s string) bool {
+	if len(s) != 18 || !strings.HasPrefix(s, "skg-") {
+		return false
+	}
+	for _, i := range []int{3, 8, 13} {
+		if s[i] != '-' {
+			return false
+		}
+	}
+	for _, i := range []int{4, 5, 6, 7, 9, 10, 11, 12, 14, 15, 16, 17} {
+		r := s[i]
+		if !((r >= 'A' && r <= 'Z' && r != 'I' && r != 'O') ||
+			(r >= '2' && r <= '9')) {
+			return false
+		}
+	}
+	return true
 }
 
 // mintLoginToken returns a 16-char token formatted as

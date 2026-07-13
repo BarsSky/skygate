@@ -122,6 +122,8 @@ func migrate(d *sql.DB) error {
 	//   V031 — CREATE telegram_login_tokens (login-by-key) +
 	//          global_settings rows (telegram.strict_mode,
 	//          telegram.login_token_ttl_seconds) — Этап 12
+	//   V032 — CREATE telegram_rate_limit (shared rate-limit
+	//          store, replaces in-memory map) — Этап 13
 	migrateV025(d)
 	if err := migrateV020(d); err != nil {
 		return fmt.Errorf("migrate v0.20: %w", err)
@@ -155,6 +157,9 @@ func migrate(d *sql.DB) error {
 	}
 	if err := migrateV031(d); err != nil {
 		return fmt.Errorf("migrate v0.31: %w", err)
+	}
+	if err := migrateV032(d); err != nil {
+		return fmt.Errorf("migrate v0.32: %w", err)
 	}
 	return nil
 }

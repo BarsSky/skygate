@@ -35,7 +35,7 @@ import (
 // when a new migrations_v*.go is added. The version string is the
 // number of the highest migration in cmd/skygate's migrate() chain
 // (see internal/db/db.go).
-const dbSchemaVersion = "v0.31"
+const dbSchemaVersion = "v0.32"
 
 // restartTTL is how long a freshly-issued /restart token is valid.
 // 30s is enough for a human to type the 6-char token in a follow-up
@@ -292,7 +292,9 @@ func helpDetailReply(cmd string, env BotEnv) string {
 	case "add_device":
 		return "/add_device [username] — issue a 1h single-use preauth key.\n" +
 			"Default: a key for yourself. With a username arg (admin only), for that user.\n" +
-			"Note: bot-side key issuance is on the roadmap; the bot currently redirects to /my/preauth.\n" +
+			"Bot calls headscale.CreatePreauthKey directly (same code path as /my/preauth).\n" +
+			"Reply includes the key in a fenced code block — copy and paste into the device.\n" +
+			"Read-only deploys (HS == nil) get a clear hint, not a panic.\n" +
 			"Examples:\n" +
 			"  /add_device             (self)\n" +
 			"  /add_device michail     (admin → michail)"
@@ -300,7 +302,9 @@ func helpDetailReply(cmd string, env BotEnv) string {
 		return "/add_rule <target> [deny]  — add a new exit-rule.\n" +
 			"      /add_rule <username> <target> [deny]  (admin only)\n" +
 			"target: domain (e.g. telegram.org), ip (1.2.3.4), or subnet (10.0.0.0/8).\n" +
-			"Note: bot-side rule writes are on the roadmap; the bot currently redirects to /my/exit-rules.\n" +
+			"Mirrors /my/exit-rules POST: uses your /setdefaultdevice + /setexitnode,\n" +
+			"resolves domains to /32, inserts, then triggers ACL sync (GenerateACL → SetPolicy).\n" +
+			"On SetPolicy failure you get a ⚠️ warning in the reply AND an async Telegram alert.\n" +
 			"Examples:\n" +
 			"  /add_rule telegram.org\n" +
 			"  /add_rule 1.2.3.4 deny\n" +
