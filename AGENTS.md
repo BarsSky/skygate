@@ -160,6 +160,106 @@ from `config.Config`.
 
 ---
 
+## Tailscale in skygate (Этап 14 v2, 2026-07-14)
+
+The skygate container runs `tailscaled` in its own network namespace
+and joins the tailnet with `tailscale up --accept-routes --accept-dns=false`.
+**No `--exit-node` is ever set on skygate.** A separate node in the
+tailnet (a "relay", e.g. emilia) advertises the canonical Telegram IP
+ranges as subnet routes; skygate accepts them, so api.telegram.org
+traffic flows through the relay while everything else (headscale, etc.)
+stays direct. The bot is in this subnet-route path, NOT in a global
+exit-node path.
+
+### Why not a sidecar or an exit-node?
+
+* **Sidecar (skygate-ts, removed in Этап 14 v2)**: `network_mode:
+  service:tailscale` broke docker's embedded DNS (127.0.0.11:53
+  refused UDP). Also the sidecar's entrypoint.sh called `tailscale up
+  --state=...` with a flag `tailscale up` doesn't accept, so the
+  sidecar died at startup and took skygate down with it (exit 137).
+* **Exit-node on skygate**: `tailscale set --exit-node=<X>` replaces
+  the default route for skygate — every non-tailnet packet goes via
+  the relay, including unrelated future traffic. Subnet routes are
+  scoped to just the Telegram IP ranges; cleaner and auditable.
+* **Subnets-route mode wins**: per-destination routing, no global
+  default-route hijack, no DNS collisions with Docker.
+
+### Container layout
+
+* `Dockerfile` (multi-stage): pulls `tailscale` + `tailscaled` from
+  `tailscale/tailscale:latest`, copies them into the skygate runtime
+  image along with `iptables`, `ip6tables`, `libcap`, etc.
+* `entrypoint.sh`: if `TS_AUTHKEY_FILE` is set, starts `tailscaled`,
+  runs `tailscale up --accept-routes --accept-dns=false`. Otherwise
+  logs "Tailscale skipped (non-RF mode)" and continues with the
+  skygate build. tailscaled is reparented to skygate (PID 1) when
+  skygate execs.
+* `docker-compose.yml`: skygate gets `NET_ADMIN` + `SYS_ADMIN` +
+  `/dev/net/tun` + the `ts_authkey` docker secret. Tailscale state
+  persists at `./data/ts/` across container restarts so we don't
+  re-auth on every `docker compose restart`.
+
+### `--accept-dns=false` is required
+
+Tailscale's MagicDNS replaces `/etc/resolv.conf` with `100.100.100.100`,
+which only knows about tailnet names. The Docker service name
+`headscale` (used by `HEADSCALE_URL=http://headscale:50444`) stops
+resolving, and skygate's API client dies with "lookup headscale on
+100.100.100.100:53: no such host". With `--accept-dns=false` the
+container keeps Docker's `127.0.0.11` DNS, and only the tailnet's
+subnet routes (not its DNS) are accepted. Tailnet-name resolution
+isn't currently needed.
+
+### Relay setup (one-time, on a separate node)
+
+* `deploy/tailscale-relay/setup.sh` — run on the relay host
+  (emilia/sharlotta/karolina). Calls `tailscale set
+  --advertise-routes=...` with the canonical 8 v4 + 4 v6 CIDRs.
+  Headscale admin must then approve them via
+  `headscale nodes approve-routes --identifier N --routes ...`.
+* `deploy/tailscale-relay/update-routes.sh` — cron-friendly refresh
+  of the Telegram IP ranges. Resolves api.telegram.org from three
+  public resolvers, aggregates to canonical CIDRs, re-applies.
+  Refuses to apply an empty route list.
+* `Makefile` has a `tailscale-update-telegram-routes RELAY=<host>`
+  target that SSHes to the relay and runs the update script.
+
+### 3-state reachability probe
+
+`/admin/telegram` runs a 5s HEAD probe to api.telegram.org on every
+GET. Banner shows one of three states:
+
+* **ok_direct** — tailscaled not running. Tailscale layer skipped.
+* **ok_relay** — tailscaled running. The path can be either
+  relay-via-subnet-route OR direct-via-eth0 (Tailscale's default
+  route isn't hijacked in this design), depending on whether
+  the relay's subnet routes are accepted.
+* **unreachable** — 5s timeout, 5xx, or DNS failure. Banner shows
+  a troubleshooting bullet list with the resolved IPs.
+
+Implementation: `internal/handlers/handlers_telegram_probe.go` + test
+in `handlers_telegram_probe_test.go` (8 unit tests, all PASS).
+Template: `internal/handlers/templates/admin/telegram.html`
+(`.alert-probe` / `.probe-ok-direct` / `.probe-ok-relay` /
+`.probe-unreachable`).
+
+### Files for this feature
+
+* `Dockerfile` — multi-stage with tailscale binaries
+* `entrypoint.sh` — tailscaled + tailscale up --accept-routes
+* `docker-compose.yml` — caps + tun + secret
+* `internal/handlers/handlers_telegram_probe.go` — probe logic
+* `internal/handlers/handlers_telegram_probe_test.go` — 8 tests
+* `internal/handlers/admin_telegram.go` — integrates probe
+* `internal/handlers/templates/admin/telegram.html` — banner
+* `static/css/themes.css` — probe-state CSS
+* `deploy/tailscale-relay/setup.sh` — one-time relay setup
+* `deploy/tailscale-relay/update-routes.sh` — IP refresh
+* `docs/telegram-relay.md` — full procedure + troubleshooting
+
+---
+
 ## Node tagging (tag:private auto-applied)
 
 `backfillNodeOwnership` (method on `*App` since commit `cebabab`) propagates
