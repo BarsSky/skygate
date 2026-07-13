@@ -271,19 +271,23 @@ func (a *App) PostMyTelegramRevoke(w http.ResponseWriter, r *http.Request) {
 	// Make sure the token belongs to this user before deleting —
 	// an attacker who knows a token string (e.g. from a leaked
 	// log) shouldn't be able to revoke it for someone else.
-	rows, err := a.DB.Query(`SELECT portal_user_id FROM telegram_login_tokens WHERE token = ?`, token)
-	if err != nil {
-		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
-		return
-	}
-	defer rows.Close()
+	//
+	// 2026-07-13: use QueryRow + Scan to ensure the implicit
+	// transaction is closed BEFORE the DELETE. The previous
+	// Query + for-rows.Next() loop held a transaction open
+	// (defer rows.Close() doesn't fire until function return),
+	// which made the subsequent DeleteTelegramLoginToken hit
+	// "database table is locked" on SQLite. With a single
+	// connection in the test pool the failure was guaranteed;
+	// in production it would manifest as a rare race when a
+	// user revokes a token they just inspected.
 	var ownerID int64
 	ownerFound := false
-	for rows.Next() {
-		if err := rows.Scan(&ownerID); err == nil {
-			ownerFound = true
-			break
-		}
+	if err := a.DB.QueryRow(`SELECT portal_user_id FROM telegram_login_tokens WHERE token = ?`, token).Scan(&ownerID); err == nil {
+		ownerFound = true
+	} else if err != sql.ErrNoRows {
+		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
+		return
 	}
 	if !ownerFound {
 		http.Redirect(w, r, "/my/telegram?err=token_not_found", http.StatusFound)
