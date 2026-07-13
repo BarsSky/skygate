@@ -1,0 +1,174 @@
+{{define "body-user-telegram"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-brands fa-telegram"></i>{{t "my_telegram.title"}}</h2>
+    <div class="sub">{{t "my_telegram.subtitle"}}</div>
+  </div>
+  {{if .State.Binding}}
+  <span class="pill pill-success" title="Bot configured for this user"><i class="fa-solid fa-circle-check"></i> {{t "my_telegram.bound"}}</span>
+  {{else}}
+  <span class="pill pill-warn"><i class="fa-solid fa-circle-exclamation"></i> {{t "my_telegram.not_bound"}}</span>
+  {{end}}
+</div>
+
+{{if .FlashOK}}
+<div class="alert alert-ok">
+  <i class="fa-solid fa-check-circle"></i>
+  <div>
+    {{if eq .FlashOK "unbound"}}{{t "my_telegram.unbound_ok"}}
+    {{else if eq .FlashOK "token_revoked"}}{{t "my_telegram.token_revoked_ok"}}
+    {{else}}{{.FlashOK}}{{end}}
+  </div>
+</div>
+{{end}}
+
+{{if .FlashError}}
+<div class="alert alert-error">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <div>
+    {{if eq .FlashError "csrf_invalid"}}{{t "my_telegram.csrf_invalid"}}
+    {{else if eq .FlashError "csrf_missing"}}{{t "my_telegram.csrf_missing"}}
+    {{else if eq .FlashError "token_cap"}}{{t "my_telegram.token_cap"}}
+    {{else if eq .FlashError "mint_failed"}}{{t "my_telegram.mint_failed"}}
+    {{else if eq .FlashError "db_error"}}{{t "my_telegram.db_error"}}
+    {{else if eq .FlashError "not_bound"}}{{t "my_telegram.not_bound_err"}}
+    {{else if eq .FlashError "token_not_found"}}{{t "my_telegram.token_not_found"}}
+    {{else if eq .FlashError "not_your_token"}}{{t "my_telegram.not_your_token"}}
+    {{else if eq .FlashError "missing_token"}}{{t "my_telegram.missing_token"}}
+    {{else if eq .FlashError "bad_form"}}{{t "my_telegram.bad_form"}}
+    {{else}}{{.FlashError}}{{end}}
+  </div>
+</div>
+{{end}}
+
+{{if .State.StrictMode}}
+<div class="alert alert-info" style="margin-top:0">
+  <i class="fa-solid fa-shield-halved"></i>
+  <div>{{t "my_telegram.strict_mode_on"}}</div>
+</div>
+{{else}}
+<div class="alert alert-info" style="margin-top:0">
+  <i class="fa-solid fa-circle-info"></i>
+  <div>{{t "my_telegram.strict_mode_off"}}</div>
+</div>
+{{end}}
+
+{{if .FreshKey}}
+<div class="card" style="border:2px solid var(--accent)">
+  <h3 style="color:var(--accent)"><i class="fa-solid fa-key"></i>{{t "my_telegram.fresh_key_title"}}</h3>
+  <p>{{t "my_telegram.fresh_key_warning"}}</p>
+  <div style="background:var(--bg-2);padding:1rem;border-radius:8px;display:flex;align-items:center;gap:1rem;margin:1rem 0">
+    <code id="key-display" style="font-size:1.5rem;font-family:monospace;letter-spacing:0.1em;color:var(--accent);user-select:all">{{.FreshKey}}</code>
+    <button type="button" class="btn btn-secondary" onclick="navigator.clipboard.writeText('{{.FreshKey}}');this.innerHTML='<i class=\&quot;fa-solid fa-check\&quot;></i> {{t "common.copied"}}'">
+      <i class="fa-solid fa-copy"></i>{{t "common.copy"}}
+    </button>
+  </div>
+  <p class="hint">
+    {{t "my_telegram.fresh_key_ttl"}}: <strong id="key-ttl" data-exp="{{.FreshExp}}">…</strong>
+  </p>
+  <p>{{t "my_telegram.fresh_key_next_step"}}</p>
+  <pre style="background:var(--bg-2);padding:0.5rem;border-radius:4px;display:inline-block">/login {{.FreshKey}}</pre>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-mobile-screen"></i>{{t "my_telegram.current_binding"}}</h3>
+  {{if .State.Binding}}
+  <p>{{t "my_telegram.bound_to"}}: <code>{{.State.Binding.ChatID}}</code></p>
+  <p class="hint">{{t "my_telegram.bound_at"}}: {{.State.Binding.BoundAt}}</p>
+  <form method="post" action="/my/telegram/unbind" onsubmit="return confirm('{{t "my_telegram.unbind_confirm"}}')" style="margin-top:1rem">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="btn btn-danger">
+      <i class="fa-solid fa-link-slash"></i>{{t "my_telegram.unbind_button"}}
+    </button>
+  </form>
+  {{else}}
+  <p>{{t "my_telegram.no_binding_yet"}}</p>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-key"></i>{{t "my_telegram.generate_title"}}</h3>
+  <p>{{t "my_telegram.generate_explainer"}}</p>
+  <p class="hint">{{t "my_telegram.generate_ttl"}} <strong>{{.State.TTLSeconds}}</strong> {{t "my_telegram.generate_ttl_seconds"}}.</p>
+  <form method="post" action="/my/telegram/generate">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="btn btn-primary">
+      <i class="fa-solid fa-key"></i>{{t "my_telegram.generate_button"}}
+    </button>
+  </form>
+</div>
+
+{{if .State.RecentTokens}}
+<div class="card">
+  <h3><i class="fa-solid fa-list"></i>{{t "my_telegram.recent_keys"}}</h3>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{t "my_telegram.col_status"}}</th>
+        <th>{{t "my_telegram.col_created"}}</th>
+        <th>{{t "my_telegram.col_expires"}}</th>
+        <th>{{t "my_telegram.col_chat"}}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .State.RecentTokens}}
+      <tr>
+        <td>
+          {{if eq .Status "used"}}
+            <span class="pill pill-ok"><i class="fa-solid fa-check"></i> {{t "my_telegram.status_used"}}</span>
+          {{else if eq .Status "expired"}}
+            <span class="pill pill-warn"><i class="fa-solid fa-clock"></i> {{t "my_telegram.status_expired"}}</span>
+          {{else}}
+            <span class="pill pill-info"><i class="fa-solid fa-hourglass-half"></i> {{t "my_telegram.status_active"}}</span>
+          {{end}}
+        </td>
+        <td><code>{{.CreatedAt}}</code></td>
+        <td><code>{{.ExpiresAt}}</code></td>
+        <td>
+          {{if gt .UsedByChatID 0}}<code>{{.UsedByChatID}}</code>{{else}}—{{end}}
+        </td>
+        <td>
+          {{if eq .Status "active"}}
+          <form method="post" action="/my/telegram/revoke" onsubmit="return confirm('{{t "my_telegram.revoke_confirm"}}')" style="display:inline">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="token" value="{{.Token}}">
+            <button type="submit" class="btn btn-secondary btn-sm">
+              <i class="fa-solid fa-trash"></i>{{t "my_telegram.revoke_button"}}
+            </button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+<script>
+// Countdown timer for the freshly-minted key. Re-renders every
+// second until exp, then renders "expired" in red.
+(function() {
+  var el = document.getElementById('key-ttl');
+  if (!el) return;
+  var exp = parseInt(el.getAttribute('data-exp'), 10);
+  if (!exp || isNaN(exp)) return;
+  function tick() {
+    var now = Math.floor(Date.now() / 1000);
+    var left = exp - now;
+    if (left <= 0) {
+      el.textContent = '{{t "my_telegram.expired"}}';
+      el.style.color = 'var(--danger)';
+      return;
+    }
+    var m = Math.floor(left / 60);
+    var s = left % 60;
+    el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+{{end}}

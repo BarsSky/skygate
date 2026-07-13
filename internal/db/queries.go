@@ -370,6 +370,43 @@ const (
 )
 
 // ---------------------------------------------------------------
+// telegram_login_tokens  —  v0.31
+//   token            TEXT PRIMARY KEY
+//   portal_user_id   INTEGER NOT NULL
+//   created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+//   expires_at       INTEGER NOT NULL
+//   used_at          INTEGER NOT NULL DEFAULT 0
+//   used_by_chat_id  INTEGER NOT NULL DEFAULT 0
+//   request_ip       TEXT    NOT NULL DEFAULT ''
+//
+// Этап 12 (2026-07-13): login-by-key. User generates a one-time
+// token in /my/telegram, pastes it into the bot via /login, the bot
+// UPSERTs the binding and marks the token used. Strict-mode gate
+// in HandleCommand requires a binding row before letting the chat
+// touch any portal data.
+// ---------------------------------------------------------------
+
+const (
+	qInsertTelegramLoginToken = `INSERT INTO telegram_login_tokens
+		(token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip)
+		VALUES (?, ?, strftime('%s','now'), ?, 0, 0, ?)`
+	qSelectTelegramLoginToken = `SELECT token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip
+		FROM telegram_login_tokens WHERE token = ?`
+	qConsumeTelegramLoginToken = `UPDATE telegram_login_tokens
+		SET used_at = strftime('%s','now'),
+		    used_by_chat_id = ?
+		WHERE token = ? AND used_at = 0`
+	qDeleteTelegramLoginToken         = `DELETE FROM telegram_login_tokens WHERE token = ?`
+	qDeleteExpiredTelegramLoginTokens = `DELETE FROM telegram_login_tokens WHERE expires_at < ?`
+	qDeleteTelegramLoginTokensByUser  = `DELETE FROM telegram_login_tokens WHERE portal_user_id = ?`
+	qCountActiveTelegramLoginTokensByUser = `SELECT COUNT(*) FROM telegram_login_tokens
+		WHERE portal_user_id = ? AND used_at = 0 AND expires_at > strftime('%s','now')`
+	qListTelegramLoginTokensByUser = `SELECT token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip
+		FROM telegram_login_tokens WHERE portal_user_id = ?
+		ORDER BY created_at DESC LIMIT ?`
+)
+
+// ---------------------------------------------------------------
 // exit_servers  —  v0.20 + v0.24
 //   id                INTEGER PRIMARY KEY AUTOINCREMENT
 //   node_id           TEXT NOT NULL UNIQUE

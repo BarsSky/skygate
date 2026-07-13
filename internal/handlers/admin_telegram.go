@@ -82,6 +82,11 @@ func (a *App) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 		a.handleTelegramRotate(w, r, c)
 	case "disable":
 		a.handleTelegramDisable(w, r, c)
+	case "strict":
+		// 2026-07-13: Этап 12 — toggle strict mode. The form
+		// submits a single checkbox; checked means "enable".
+		// The handler reads the checkbox's presence to decide.
+		a.handleTelegramStrict(w, r, c)
 	default:
 		a.redirectWithFlash(w, r, "", "Неизвестное действие: "+action)
 	}
@@ -185,17 +190,78 @@ func (a *App) handleTelegramDisable(w http.ResponseWriter, r *http.Request, c *a
 	writeFlashRedirect(w, r, "Telegram отключён. Уведомления будут писаться в ~/.skygate-notify.log")
 }
 
+// handleTelegramStrict (Этап 12, 2026-07-13) toggles strict
+// mode in global_settings.telegram.strict_mode. The bot reads
+// this on every incoming message, so the change takes effect
+// within the next poll (≤2s, the configured poll interval).
+//
+// "Strict mode" is a one-way ratchet in spirit: enabling it is
+// safe (it only blocks chats that have no row in
+// telegram_bindings, i.e. nobody who was using the bot before),
+// disabling it requires a confirmation checkbox so a stray
+// "save" click doesn't silently re-open the bot to strangers.
+// We accept the "confirm" field on enable too — same UX, same
+// pattern as rotate/disable.
+//
+// We log the old value in the audit row so the timeline shows
+// the transition (off → on vs on → off) without needing to
+// query the DB at audit-read time.
+func (a *App) handleTelegramStrict(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	if r.FormValue("confirm") != "yes" {
+		a.redirectWithFlash(w, r, "", "Поставьте галочку подтверждения для strict mode")
+		return
+	}
+	want := r.FormValue("enabled") == "1"
+	old := db.LoadTelegramStrictMode(a.DB)
+	if want == old {
+		// No-op: still want to confirm so the operator's
+		// intent is recorded (someone might have submitted
+		// the form by accident).
+		writeFlashRedirect(w, r, "Strict mode already in the requested state.")
+		return
+	}
+	if err := db.SaveTelegramStrictMode(a.DB, want); err != nil {
+		a.redirectWithFlash(w, r, "", "Ошибка при сохранении: "+err.Error())
+		return
+	}
+	state := "off"
+	if want {
+		state = "on"
+	}
+	a.audit(c.UserID, c.Username, "telegram_strict_mode_changed",
+		fmt.Sprintf("from=%s to=%s", boolToOnOff(old), state))
+	writeFlashRedirect(w, r, fmt.Sprintf("Strict mode %s. Bot will read the new state within 2s.", state))
+}
+
+// boolToOnOff renders a bool as "on" / "off" for the audit row.
+func boolToOnOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
 // telegramUIState is the shape the template consumes.
 type telegramUIState struct {
 	Configured bool
 	TokenFP    string
 	ChatID     string
 	UpdatedAt  string
+	// 2026-07-13: Этап 12 — strict mode toggle. When true, the
+	// bot rejects any chat that has no row in telegram_bindings
+	// (with a small whitelist for /help /version /login /start).
+	// Loaded from global_settings on every GET so the operator
+	// sees the current value without a refresh dance.
+	StrictMode    bool
+	LoginTokenTTL int
 }
 
 func (a *App) loadTelegramUIState() telegramUIState {
 	token, chatID, ok, err := db.LoadTelegramToken(a.DB)
-	state := telegramUIState{}
+	state := telegramUIState{
+		LoginTokenTTL: db.LoadTelegramLoginTokenTTL(a.DB),
+		StrictMode:    db.LoadTelegramStrictMode(a.DB),
+	}
 	if err != nil || !ok {
 		return state
 	}
