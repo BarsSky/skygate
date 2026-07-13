@@ -327,10 +327,17 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 
 	// Reply. Success: list count + cascade + ACL version.
 	// Failure: rules deleted but ACL not applied — ask admin
-	// to sync.
+	// to sync AND ping the operator via Notifier (same
+	// pattern as addRuleReply / deleteRuleReply) so the
+	// operator wakes up even if the user doesn't notice the
+	// warning in the bot reply.
 	if pipe.Applied {
 		return fmt.Sprintf("clearrules: ✓ cleared %d rule(s) for %s (cascade: %d)\n  ACL v%d applied to headscale",
 			deleted, target.Username, totalCascade, pipe.Version)
+	}
+	if env.Notifier != nil {
+		go env.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (clearrules by %s)\n  cleared=%d (cascade=%d)\n  err: %v",
+			target.Username, deleted, totalCascade, pipe.Err))
 	}
 	return fmt.Sprintf("clearrules: ⚠ all %d rule(s) deleted from DB for %s (cascade: %d) but ACL v%d was NOT applied to headscale: %v\nAsk an admin to /admin/exit-rules/sync.",
 		deleted, target.Username, totalCascade, pipe.Version, pipe.Err)
