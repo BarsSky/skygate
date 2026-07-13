@@ -206,6 +206,12 @@ func main() {
 			// 2026-07-11: Phase 4 (/version) needs the build label
 			// (the same one app.Version holds for the dashboard).
 			rn.SetVersion(app.Version)
+			// 2026-07-13: Этап 11 part 1 — wire the headscale
+			// client so /add_device can issue real preauth keys
+			// from the bot. Reuse the same *headscale.Client that
+			// the web handlers use (hs was constructed at line 77)
+			// so both surfaces share one source of truth.
+			rn.SetHS(hs)
 			app.Notifier = rn
 			if rn.Configured() {
 				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")
