@@ -168,6 +168,96 @@ func myQuotaReply(env BotEnv) string {
 		env.Username, cnt, maxStr, bar, safePct(pct))
 }
 
+// myExitNodesReply lists every enabled exit-server the user can
+// route through, with online/last-seen status (same data as admin
+// /exit_nodes) plus a "[default]" marker on the user's currently
+// configured default exit-node (set via /setexitnode).
+//
+// The admin /exit_nodes shows the same data but is restricted to
+// admin callers. This user-scope variant lets a non-admin user
+// see what's available, pick one with /setexitnode, then
+// /add_rule to write rules that route through it. Workflow:
+//
+//	/myexitnodes          — see the menu
+//	/setexitnode 5        — pick node 5 as your default
+//	/defaultexitnode      — confirm it's set
+//	/add_rule telegram.org — write a rule using the default
+//
+// 2026-07-13: Этап 14 — added so a user doesn't have to go to the
+// web UI just to see the exit-node menu. Mirrors exitNodesReply
+// (commands_phase3.go) but adds the [default] highlight and
+// filters to enabled=1 (the admin variant shows every node with
+// tag:exit-node regardless of enabled state, which is the
+// operator view, not the user view).
+func myExitNodesReply(env BotEnv) string {
+	if !env.IsIdentified() {
+		return "myexitnodes: chat not bound to a portal user. Ask an admin to /bind your chat_id."
+	}
+	servers, err := db.ListExitServers(env.DB)
+	if err != nil {
+		return fmt.Sprintf("myexitnodes: db error: %v", err)
+	}
+	// Filter to enabled. Disabled servers stay in the DB for the
+	// admin to re-enable; users shouldn't see them in the menu.
+	var enabled []db.ExitServer
+	for _, s := range servers {
+		if s.Enabled {
+			enabled = append(enabled, s)
+		}
+	}
+	if len(enabled) == 0 {
+		return "myexitnodes: no enabled exit-nodes in skygate. Ask an admin to enable one in /admin/exit-nodes."
+	}
+	// Build a node_id → {last_seen, online} map from the devices
+	// table so the reply shows the same health info as admin
+	// /exit_nodes. Best-effort: a headscale unreachable won't
+	// hide the menu, the row just shows "offline".
+	devMap := map[string]struct {
+		lastSeen int64
+		online   int
+	}{}
+	if rows, derr := env.DB.Query(`SELECT node_id, COALESCE(last_seen, 0), COALESCE(online, 0) FROM devices`); derr == nil {
+		for rows.Next() {
+			var nid string
+			var st struct {
+				lastSeen int64
+				online   int
+			}
+			if err := rows.Scan(&nid, &st.lastSeen, &st.online); err == nil {
+				devMap[nid] = st
+			}
+		}
+		rows.Close()
+	}
+	// Look up the user's current default (if any) to mark the
+	// matching row with [default]. Failures are non-fatal: the
+	// reply still shows the menu, just without the highlight.
+	defaultNodeID, _ := db.GetDefaultExitNode(env.DB, env.PortalUserID)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Available exit-nodes (%d):\n\n", len(enabled))
+	for _, s := range enabled {
+		st := devMap[s.NodeID]
+		status := "offline"
+		if st.online == 1 {
+			status = "online"
+		}
+		var seen string
+		if st.lastSeen > 0 {
+			seen = fmt.Sprintf(", last_seen %s", unixToShort(st.lastSeen))
+		}
+		marker := ""
+		if s.NodeID == defaultNodeID {
+			marker = "  [default]"
+		}
+		fmt.Fprintf(&sb, "  • %s (node %s) — %s%s%s\n", s.Hostname, s.NodeID, status, seen, marker)
+	}
+	sb.WriteString("\nPick one as your default: /setexitnode <node_id>\n")
+	sb.WriteString("Clear default: /setexitnode clear\n")
+	sb.WriteString("Show current: /defaultexitnode")
+	return trimForTelegram(sb.String())
+}
+
 // addDeviceReply issues a 1h single-use preauth key. For a regular
 // user, the key is for themselves; for an admin, an optional
 // `<username>` arg makes it for that user instead.
