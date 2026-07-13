@@ -232,8 +232,17 @@ func main() {
 			// as SetLimits above).
 			rn.SetRuleCaps(cfg.MaxRulesPerDevice, cfg.MaxTotalRules)
 			app.Notifier = rn
-			if rn.Configured() {
-				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")
+			// 2026-07-13: split the startup message by what's
+			// actually configured. The polling gate in Run()
+			// uses Configured() which is now token-only, so the
+			// bot can start receiving /login as soon as the
+			// admin saves the token (chat_id is needed only
+			// for outgoing notifications, not for receiving
+			// commands).
+			if _, _, ok, _ := db.LoadTelegramSendTarget(d); ok {
+				log.Printf("🤖 Telegram bot fully configured (token + chat_id); starting getUpdates loop")
+			} else if _, _, ok, _ := db.LoadTelegramToken(d); ok {
+				log.Printf("🤖 Telegram bot token set (no chat_id yet — receive-only); starting getUpdates loop. Use the 'Send test' button on /admin/telegram to populate chat_id.")
 			} else {
 				log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
 			}
