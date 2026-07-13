@@ -225,6 +225,22 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
 .alert-success{border-left-color:var(--success);background:var(--success-bg);color:var(--success)}
 .alert-warn{border-left-color:var(--warning);background:var(--warning-bg);color:var(--warning)}
 .alert-danger{border-left-color:var(--danger);background:var(--danger-bg);color:var(--danger)}
+/* 2026-07-14: Этап 14 v2 — Tailscale reachability probe. The
+   .alert-probe class uses the same layout as .alert but adds
+   room for a multi-line body (sub-text + a troubleshooting
+   bullet list). The .probe-ok-direct / .probe-ok-relay variants
+   use the success palette; .probe-unreachable uses the danger
+   palette. The "ok_relay" variant also gets a subtle icon tint
+   to hint "this is going through a relay" — operators on RF
+   VPSes want visual confirmation that the relay path is active
+   vs. a fallback to direct. */
+.alert-probe{align-items:flex-start}
+.alert-probe>div{flex:1;min-width:0}
+.alert-probe ul{margin:0}
+.probe-ok-direct{border-left-color:var(--success);background:var(--success-bg);color:var(--success)}
+.probe-ok-relay{border-left-color:var(--success);background:var(--success-bg);color:var(--success)}
+.probe-ok-relay i{color:var(--info)}
+.probe-unreachable{border-left-color:var(--danger);background:var(--danger-bg);color:var(--danger)}
 
 /* OS TILES */
 .os-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:16px}
