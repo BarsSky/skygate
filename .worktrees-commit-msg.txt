@@ -1,0 +1,27 @@
+Этап 14 v2: disable MagicDNS to keep Docker's embedded DNS working
+
+tailscaled by default rewrites /etc/resolv.conf to use Tailscale's
+MagicDNS resolver at 100.100.100.100. That resolver only knows
+about tailnet names, so Docker-network service names (most
+importantly 'headscale', which the HEADSCALE_URL env var points
+at as http://headscale:50444) stop resolving.
+
+Symptom in the previous deploy:
+
+  2026/07/13 21:47:02 warn: backfill node owners: Get
+    "http://headscale:50444/api/v1/node": dial tcp:
+    lookup headscale on 100.100.100.100:53: no such host
+
+Fix: add --accept-dns=false to 'tailscale up'. The container
+keeps using Docker's embedded DNS (127.0.0.11) for the
+headscale hostname, and only the tailnet's subnet routes
+(not its DNS) are accepted.
+
+Trade-off: tailnet names (e.g. emilia.tailnet) don't resolve
+from inside the container. We don't currently need that --
+skygate talks to the Docker service 'headscale' and to
+api.telegram.org (an IP literal at probe time). If a future
+feature needs tailnet-name resolution, the right move is
+split-DNS (forward *.tsnet.skynas.ru to 100.100.100.100,
+everything else to 127.0.0.11) via Tailscale's --dns option
+on the relay.

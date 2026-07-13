@@ -63,11 +63,35 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     HOSTNAME="${TS_HOSTNAME:-skygate-vm}"
 
     echo "[init] tailscale up --accept-routes (login-server=$LOGIN_SERVER, hostname=$HOSTNAME)"
+    # 2026-07-14: --accept-dns=false is critical. By default
+    # tailscaled overwrites /etc/resolv.conf with Tailscale's
+    # MagicDNS resolver (100.100.100.100), which only knows
+    # about tailnet names. Docker's own DNS (127.0.0.11) is no
+    # longer consulted, so the container can't resolve its
+    # Docker-network peers by name — most importantly
+    # "headscale" (the headscale API endpoint configured via
+    # HEADSCALE_URL=http://headscale:50444).
+    #
+    # Disabling accept-dns means the container keeps using
+    # Docker's DNS. The downside is that tailnet names (e.g.
+    # `emilia.tailnet`) won't resolve from inside the
+    # container — but skygate doesn't currently need to
+    # resolve tailnet names; it only talks to the Docker
+    # service named "headscale" and to api.telegram.org (an
+    # IP literal, after the resolver at probe time).
+    #
+    # The previous "sidecar + network_mode: service:tailscale"
+    # setup hit the same DNS problem differently: the shared
+    # netns broke Docker's embedded DNS responder. In-image
+    # tailscaled doesn't share netns, so the responder works
+    # — we just need to stop tailscaled from replacing
+    # /etc/resolv.conf.
     if ! tailscale up \
         --login-server="$LOGIN_SERVER" \
         --authkey="$AUTHKEY" \
         --hostname="$HOSTNAME" \
-        --accept-routes 2>&1; then
+        --accept-routes \
+        --accept-dns=false 2>&1; then
         echo "[init] WARNING: tailscale up failed; continuing without Tailscale"
     fi
 
