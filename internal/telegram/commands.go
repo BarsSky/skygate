@@ -62,7 +62,7 @@ type BotEnv struct {
 	// 2026-07-13: Этап 11 part 1 — *headscale.Client, snapshotted
 	// from RealNotifier.HS by env() once per message. Needed by
 	// write-side bot commands (/add_device issues a real preauth key;
-	// /add_rule and /delete_rule will need it for ACL sync).
+	// /add_rule and /delrule trigger an ACL sync).
 	// nil is a valid value: read-only deploys run the bot for
 	// status/nodes/rules/audit without writes. Write commands guard
 	// against nil and reply with a clear hint.
@@ -114,7 +114,7 @@ func (e BotEnv) MaxFor(username string) int {
 // Command categories (2026-07-12: Этап 11):
 //
 //   user-scope  /my_status, /my_nodes, /my_rules, /my_quota,
-//                /add_device, /add_rule, /delete_rule
+//                /add_device, /add_rule, /delrule
 //                — work for any identified user; data is filtered
 //                  to the caller's own. Admin can use them too and
 //                  gets the same scoping (admin's own data).
@@ -192,7 +192,12 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return addDeviceReply(env, strings.Join(args, " "))
 	case "/add_rule":
 		return addRuleReply(env, args)
+	case "/delrule":
+		return deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " ")))
 	case "/delete_rule":
+		// Deprecated alias of /delrule. Kept for back-compat with
+		// existing /help text + scripts that still call the old name.
+		// Этап 12 (2026-07-13) added /delrule as the new short form.
 		return deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " ")))
 	// --- Этап 11 part 2a: per-user preferences ---
 	case "/setdefaultdevice":
@@ -236,7 +241,7 @@ func helpReply(env BotEnv) string {
 		"/my_quota — your rule count vs cap\n" +
 		"/add_device — issue a 1h single-use preauth key for yourself\n" +
 		"/add_rule <target> — add an exit-rule for yourself\n" +
-		"/delete_rule <id> — delete one of your rules\n" +
+		"/delrule <id> [id2 ...] — delete one or more of your rules\n" +
 		"/setdefaultdevice [node_id|clear] — set your default device for /add_rule\n" +
 		"/defaultdevice — show your current default device\n" +
 		"/setexitnode [node_id|clear] — set your default exit-node for /add_rule\n" +
