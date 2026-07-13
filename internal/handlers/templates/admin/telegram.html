@@ -18,6 +18,48 @@
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
 {{end}}
 
+{{/*
+  2026-07-14: Этап 14 v2 — Tailscale reachability banner. Three states:
+    .probe-ok-direct  — green; api.telegram.org reachable, no Tailscale.
+    .probe-ok-relay   — green; reachable via Tailscale relay.
+    .probe-unreachable — red; unreachable. Show troubleshooting.
+  The probe only runs when a token is set; otherwise the section
+  is omitted entirely (the "configured" pill above already tells
+  the operator to save a token first).
+*/}}
+{{if .State.Configured}}
+<div class="alert alert-probe probe-{{.State.Probe.State}}">
+  <i class="fa-solid {{if eq .State.Probe.State.String "ok_direct"}}fa-globe{{else if eq .State.Probe.State.String "ok_relay"}}fa-route{{else}}fa-triangle-exclamation{{end}}"></i>
+  <div>
+    <strong>
+      {{if eq .State.Probe.State.String "ok_direct"}}Telegram API: reachable (direct internet){{end}}
+      {{if eq .State.Probe.State.String "ok_relay"}}Telegram API: reachable (Tailscale relay){{end}}
+      {{if eq .State.Probe.State.String "unreachable"}}Telegram API: unreachable{{end}}
+    </strong>
+    <div class="sub">
+      {{.State.Probe.Message}}
+      {{if .State.Probe.LatencyMS}} · latency {{.State.Probe.LatencyMS}}{{end}}
+    </div>
+    {{if .State.Probe.ResolvedIPs}}
+    <div class="sub" style="font-family:monospace;font-size:.85em">
+      Resolved: {{range .State.Probe.ResolvedIPs}}<code>{{.}}</code> {{end}}
+    </div>
+    {{end}}
+    {{if eq .State.Probe.State.String "unreachable"}}
+    <div class="sub" style="margin-top:.5rem">
+      <strong>Troubleshooting:</strong>
+      <ul style="margin:.4rem 0 0 1.2rem;line-height:1.5">
+        <li>Check that the relay's <code>tailscale up --advertise-routes</code> covers the IPs above (run <code>tailscale status</code> in the relay container).</li>
+        <li>Check that headscale has approved the relay's subnet routes: <code>docker exec headscale headscale nodes list</code> → look for the relay's <code>advertised-routes</code> vs <code>enabled-routes</code>.</li>
+        <li>Run <code>make tailscale-update-telegram-routes</code> on the relay if Telegram added new IP ranges.</li>
+        <li>See <a href="/docs/telegram-relay.md" target="_blank" rel="noopener">docs/telegram-relay.md</a> for the full setup procedure.</li>
+      </ul>
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
 <div class="card-grid">
   <div class="card">
     <h3><i class="fa-solid fa-key"></i> {{t "telegram.token"}} &amp; {{t "telegram.chat_id"}}</h3>
