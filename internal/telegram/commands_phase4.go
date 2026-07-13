@@ -35,7 +35,7 @@ import (
 // when a new migrations_v*.go is added. The version string is the
 // number of the highest migration in cmd/skygate's migrate() chain
 // (see internal/db/db.go).
-const dbSchemaVersion = "v0.29"
+const dbSchemaVersion = "v0.31"
 
 // restartTTL is how long a freshly-issued /restart token is valid.
 // 30s is enough for a human to type the 6-char token in a follow-up

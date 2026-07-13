@@ -119,6 +119,9 @@ func migrate(d *sql.DB) error {
 	//   V029 — CREATE telegram_bindings (chat_id → portal_user)
 	//   V030 — ALTER portal_users (default_device_node_id,
 	//          default_exit_node_id) — Этап 11 part 2a
+	//   V031 — CREATE telegram_login_tokens (login-by-key) +
+	//          global_settings rows (telegram.strict_mode,
+	//          telegram.login_token_ttl_seconds) — Этап 12
 	migrateV025(d)
 	if err := migrateV020(d); err != nil {
 		return fmt.Errorf("migrate v0.20: %w", err)
@@ -149,6 +152,9 @@ func migrate(d *sql.DB) error {
 	}
 	if err := migrateV030(d); err != nil {
 		return fmt.Errorf("migrate v0.30: %w", err)
+	}
+	if err := migrateV031(d); err != nil {
+		return fmt.Errorf("migrate v0.31: %w", err)
 	}
 	return nil
 }
