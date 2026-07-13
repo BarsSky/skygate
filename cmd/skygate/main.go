@@ -163,6 +163,15 @@ func main() {
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(app.PostMyTokenRevoke)))
 	mux.Handle("GET /my/account", authMW(http.HandlerFunc(app.GetMyAccount)))
 	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(app.PostMyAccountPassword)))
+	// 2026-07-13: Этап 12 — self-service Telegram binding. Any
+	// portal user (not just admin) can generate a one-time login
+	// key here and paste it into the bot. The /my/telegram page
+	// also lets a user unbind their own chat (mirror of the
+	// bot's /unbind_self) and revoke unused keys.
+	mux.Handle("GET /my/telegram", authMW(http.HandlerFunc(app.GetMyTelegram)))
+	mux.Handle("POST /my/telegram/generate", authMW(http.HandlerFunc(app.PostMyTelegramGenerate)))
+	mux.Handle("POST /my/telegram/unbind", authMW(http.HandlerFunc(app.PostMyTelegramUnbind)))
+	mux.Handle("POST /my/telegram/revoke", authMW(http.HandlerFunc(app.PostMyTelegramRevoke)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(app.GetMyExitRules)))
 	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(app.PostMyExitRule))))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(app.PostDeleteExitRule)))

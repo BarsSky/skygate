@@ -155,9 +155,16 @@ func (n *RealNotifier) SetRuleCaps(maxPerDevice, maxTotal int) {
 // (no rows in telegram_bindings) keeps working because the
 // dispatcher in Run() also falls back to "treat as admin" when
 // chat_id matches the configured telegram.chat_id.
+//
+// 2026-07-13: Этап 12 — env() now also reads telegram.strict_mode
+// from global_settings. We release n.mu before the DB read so a
+// slow DB doesn't block the polling loop (and so the DB read
+// doesn't hold a lock that another goroutine wants). The cost
+// is a single extra SELECT per message; that is negligible
+// against the network round-trip to api.telegram.org that
+// already dominates per-message latency.
 func (n *RealNotifier) env(chatID int64) BotEnv {
 	n.mu.Lock()
-	defer n.mu.Unlock()
 	// Copy the map so HandleCommand can't observe a concurrent
 	// SetLimits. The map is tiny (one entry per user) so the cost
 	// is negligible.
@@ -165,7 +172,23 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
-	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID, HS: n.HS, MaxRulesPerDevice: n.maxRulesPerDevice, MaxTotalRules: n.maxTotalRules, Notifier: n}
+	env := BotEnv{
+		DB:                 n.db,
+		UserMaxRules:       max,
+		DefaultMax:         n.defaultMax,
+		Version:            n.version,
+		ChatID:             chatID,
+		HS:                 n.HS,
+		MaxRulesPerDevice:  n.maxRulesPerDevice,
+		MaxTotalRules:      n.maxTotalRules,
+		Notifier:           n,
+	}
+	n.mu.Unlock()
+	// Strict mode is read OUTSIDE the n.mu lock so a slow DB
+	// doesn't starve other notifier calls. The flag is loaded
+	// per-message so an operator toggle in /admin/telegram
+	// takes effect on the next inbound update (typically <2s).
+	env.StrictMode = db.LoadTelegramStrictMode(n.db)
 	if chatID == 0 {
 		return env // legacy / no identity
 	}
