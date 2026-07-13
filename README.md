@@ -12,7 +12,7 @@ UI to grab preauth keys, see their devices, manage per-device exit-node
 rules, and (optionally) interact with the whole thing from a Telegram bot
 without ever touching the headscale CLI.
 
-> **Status:** `main` is 27 commits ahead of `v0.8.0` (v0.9.0-dev).
+> **Status:** at tag `v0.9.0`. Work in progress on `main` is `v0.9.1-dev`.
 > **Last `make test` on VM:** green — `59+59` smoke assertions, 3/3 exit-nodes
 > advertise `0.0.0.0/0` + `::/0`, `go test ./...` race-free.
 

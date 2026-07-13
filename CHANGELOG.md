@@ -5,7 +5,7 @@ All notable changes to Skygate are documented here. The format is based on
 [Semantic Versioning](https://semver.org/) (best-effort; we don't ship API
 stability promises yet — pin to a tag if you depend on a specific shape).
 
-## [Unreleased] — v0.9.0-dev (27 commits ahead of v0.8.0)
+## [Unreleased] — v0.9.1-dev (work in progress on main)
 
 ### Added
 
