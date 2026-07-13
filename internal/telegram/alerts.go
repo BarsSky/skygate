@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
+
+	"skygate/internal/db"
 )
 
 // alertsKeep is the cap on telegram_alerts rows. We prune older rows
@@ -25,14 +27,21 @@ const alertsKeep = 500
 // SendAlert posts text as an alert (i.e. as a numbered row in
 // telegram_alerts) and returns the id that /ack can reference.
 //
-// Returns 0 when the notifier is not configured (admin hasn't saved
-// a token yet) — in that case we don't write to the table either,
-// because an alert nobody can see shouldn't pollute the ack list.
+// Returns 0 when the notifier is not configured to send (admin
+// hasn't saved a token + chat_id yet) — in that case we don't
+// write to the table either, because an alert nobody can see
+// shouldn't pollute the ack list.
+//
+// 2026-07-13: switched from Configured() (token-only) to
+// LoadTelegramSendTarget (token + chat_id) — SendAlert posts
+// to a specific chat, so it needs the chat_id. The
+// "Configured-or-send" check would silently drop alerts.
 func (n *RealNotifier) SendAlert(text string) int64 {
 	if n == nil {
 		return 0
 	}
-	if !n.Configured() {
+	_, _, ok, err := db.LoadTelegramSendTarget(n.db)
+	if err != nil || !ok {
 		return 0
 	}
 	id, err := insertAlert(n.db, text)

@@ -68,10 +68,41 @@ func SaveTelegramToken(d *sql.DB, token, chatID string) error {
 	return nil
 }
 
-// LoadTelegramToken returns (bot_token, chat_id, ok). ok is false when
-// either of the two keys is missing. Either value may be present alone
-// (degraded state) but the admin UI treats that as "not configured".
+// LoadTelegramToken returns (bot_token, chat_id, ok). ok is true when
+// EITHER the token OR the chat_id is set (token-only is enough to
+// receive messages via getUpdates; chat_id is only needed for outgoing
+// notifications via sendMessage).
+//
+// 2026-07-13: Этап 12 follow-up — ok used to require both, which
+// meant the bot wouldn't even start polling until the admin had
+// pasted a chat_id (a chicken-and-egg: chat_id only becomes known
+// AFTER the bot is polling and the admin messages it). The new
+// semantics: token-only = polling-enabled (can receive commands);
+// chat_id additionally = can-send (notifications work).
+//
+// For callers that need to know "can I send?" use
+// LoadTelegramSendTarget which returns ok only when chat_id is
+// also set.
 func LoadTelegramToken(d *sql.DB) (token, chatID string, ok bool, err error) {
+	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, tgBotTokenKey).Scan(&token); err == sql.ErrNoRows {
+		token, err = "", nil
+	} else if err != nil {
+		return "", "", false, err
+	}
+	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, tgChatIDKey).Scan(&chatID); err == sql.ErrNoRows {
+		chatID, err = "", nil
+	} else if err != nil {
+		return "", "", false, err
+	}
+	// 2026-07-13: changed from `token != "" && chatID != ""` to
+	// `token != "" || chatID != ""` — see function comment.
+	return token, chatID, token != "" || chatID != "", nil
+}
+
+// LoadTelegramSendTarget returns (token, chat_id, ok). ok is true
+// only when BOTH are set, so callers that need to sendMessage can
+// short-circuit with a clear "no chat_id configured" path.
+func LoadTelegramSendTarget(d *sql.DB) (token, chatID string, ok bool, err error) {
 	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, tgBotTokenKey).Scan(&token); err == sql.ErrNoRows {
 		token, err = "", nil
 	} else if err != nil {
