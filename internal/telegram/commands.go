@@ -101,6 +101,40 @@ type BotEnv struct {
 	StrictMode bool
 }
 
+// pendingReplyForCurrentMessage is a package-level slot
+// reply functions use to attach an inline-keyboard to the
+// message they're about to return. The polling loop sets
+// it to nil before each call, then reads it after.
+//
+// Why a package var and not a BotEnv field: BotEnv is
+// passed by value throughout, so a reply function writing
+// `env.PendingReply = ...` would mutate a local copy and
+// the polling loop would never see the keyboard. The
+// package var sidesteps the value-semantics problem without
+// the refactor of every reply-function signature from
+// `env BotEnv` to `env *BotEnv` (which would be ~50 sites).
+//
+// Concurrency: safe because the polling loop is
+// single-threaded — getUpdates runs in one goroutine, and
+// the var is set+read by the same goroutine. A future
+// second poller would need its own per-goroutine slot, but
+// that's a follow-up.
+//
+// 2026-07-13: Этап 13.
+var pendingReplyForCurrentMessage *PendingReply
+
+// PendingReply carries the optional inline-keyboard markup
+// for a bot reply. Kept minimal for now — the only consumer
+// is the /start <token> confirmation prompt. 2026-07-13:
+// Этап 13.
+type PendingReply struct {
+	// InlineKeyboard is the JSON shape Telegram expects
+	// under reply_markup.inline_keyboard. We build the rows
+	// here (server-side) so the polling loop can include
+	// them verbatim in the sendMessage payload.
+	InlineKeyboard [][]map[string]string
+}
+
 // IsIdentified returns true when the bot knows which Telegram chat
 // (and therefore which portal user) the message came from. Identified
 // callers get permission checks; unidentified callers fall through to
@@ -283,6 +317,17 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return loginReply(env, args)
 	case "/start":
 		return startReply(env, args)
+	case "/_bind_cancel":
+		// 2026-07-13: Этап 13 — synthetic command used by the
+		// inline-keyboard "Cancel" button on the /start
+		// confirmation prompt. Not a user-facing command;
+		// the dispatcher never sees it from a real Telegram
+		// update because the polling loop only routes text
+		// starting with "/" and "_" is filtered out. The
+		// callback dispatcher (notify.go:handleCallback)
+		// reuses HandleCommand's reply rendering by passing
+		// this synthetic command.
+		return "Cancelled. The key is still valid — send /login <key> any time to bind."
 	case "/unbind_self":
 		// User-self service: drop your own binding without
 		// asking admin. Useful for switching phones or

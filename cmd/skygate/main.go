@@ -172,6 +172,11 @@ func main() {
 	mux.Handle("POST /my/telegram/generate", authMW(http.HandlerFunc(app.PostMyTelegramGenerate)))
 	mux.Handle("POST /my/telegram/unbind", authMW(http.HandlerFunc(app.PostMyTelegramUnbind)))
 	mux.Handle("POST /my/telegram/revoke", authMW(http.HandlerFunc(app.PostMyTelegramRevoke)))
+	// 2026-07-13: Этап 13 — Bind-by-QR. The QR PNG is served from
+	// the same /my/telegram path tree (cookie-authenticated like
+	// the rest of the page) so anonymous users can't spam the
+	// generator with arbitrary tokens.
+	mux.Handle("GET /my/telegram/qr", authMW(http.HandlerFunc(app.GetMyTelegramQR)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(app.GetMyExitRules)))
 	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(app.PostMyExitRule))))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(app.PostDeleteExitRule)))
