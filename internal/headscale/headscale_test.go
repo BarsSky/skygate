@@ -1,6 +1,9 @@
 package headscale
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -146,4 +149,107 @@ func TestHSNodeIsPublic(t *testing.T) {
 	if !n.IsPublic() {
 		t.Error("HSNode with tag:public should be IsPublic")
 	}
+}
+
+// --- 2026-07-13: APIError + SetPolicy status-code gating ---
+//
+// SetPolicy used to fall back to file-mode on ANY non-2xx response,
+// which silently masked transient headscale 5xx errors. The fix gates
+// the fallback on 404/405 only and propagates 5xx via *APIError.
+// These tests pin that contract.
+
+// TestAPIErrorMessage pins the legacy "headscale METHOD PATH: CODE BODY"
+// format so log scrapers / greps stay readable.
+func TestAPIErrorMessage(t *testing.T) {
+	e := &APIError{Method: "PUT", Path: "/api/v1/policy", StatusCode: 500, Body: "policy boom"}
+	got := e.Error()
+	want := "headscale PUT /api/v1/policy: 500 policy boom"
+	if got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+// fakeHS is a minimal httptest server that responds to PUT
+// /api/v1/policy with the given status + body. Other methods/paths
+// return 404 so unexpected calls are visible.
+func fakeHS(t *testing.T, status int, body string) (*httptest.Server, *Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/policy" && r.Method == http.MethodPut {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		http.Error(w, "unexpected: "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, New(srv.URL, "fake-key")
+}
+
+// TestSetPolicyPropagates5xx verifies that a 500 from headscale is
+// returned as *APIError and that the file-mode docker fallback is NOT
+// attempted. The previous behaviour masked 5xx by writing a hujson
+// file via docker run (which succeeded on the deployment VM because
+// docker is available there).
+func TestSetPolicyPropagates5xx(t *testing.T) {
+	_, c := fakeHS(t, http.StatusInternalServerError, "policy boom")
+	err := c.SetPolicy(`{"acls":[]}`)
+	if err == nil {
+		t.Fatal("SetPolicy returned nil; expected *APIError for 500")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err is not *APIError: %T %v", err, err)
+	}
+	if apiErr.StatusCode != 500 {
+		t.Errorf("StatusCode = %d, want 500", apiErr.StatusCode)
+	}
+	if apiErr.Body != "policy boom" {
+		t.Errorf("Body = %q, want %q", apiErr.Body, "policy boom")
+	}
+}
+
+// TestSetPolicy404TriggersFileModeFallback documents the contract:
+// 404 from headscale is the signal for "policy endpoint not available
+// in this mode" and the fallback fires. We can't observe the docker
+// write itself in a unit test (no docker in CI), but we CAN observe
+// that the returned error is NOT the *APIError — the fallback
+// either succeeds (returning nil) or wraps the docker failure.
+// Either way, the raw APIError must not be returned to the caller.
+func TestSetPolicy404NotPropagatedAsAPIError(t *testing.T) {
+	_, c := fakeHS(t, http.StatusNotFound, "policy not in database mode")
+	err := c.SetPolicy(`{"acls":[]}`)
+	if err == nil {
+		// docker not available in CI → fallback returns wrapped error.
+		// On a deployment VM with docker, this would also be nil
+		// (fallback succeeds).
+		return
+	}
+	// The fallback path on a CI machine fails to run `docker` and
+	// returns fmt.Errorf("api: %v; write acl file: %v", err, cerr).
+	// The wrapped *APIError is still extractable via errors.As, but
+	// the outer error MUST be a non-nil combined message — proving
+	// the fallback path was taken (not the "return apiErr early" path).
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected wrapped APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 404 {
+		t.Errorf("wrapped StatusCode = %d, want 404", apiErr.StatusCode)
+	}
+	// The outer error message should mention the fallback write failure.
+	if msg := err.Error(); !contains(msg, "write acl file") && !contains(msg, "restart") {
+		t.Errorf("error message %q does not look like a file-mode fallback failure", msg)
+	}
+}
+
+// contains is a tiny strings.Contains shim so we don't pull in the
+// strings package just for two substring checks.
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

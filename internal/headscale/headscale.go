@@ -68,9 +68,28 @@ func getenvDefault(key, def string) string {
 	return def
 }
 
+// APIError is the typed error returned by do() for non-2xx responses.
+// Callers can use errors.As(err, &apiErr) to inspect StatusCode and
+// decide between "endpoint not supported in this headscale mode" (e.g.
+// file-mode 404/405) and "request failed for other reasons" (5xx,
+// network). The Error() string keeps the legacy "headscale METHOD PATH:
+// CODE BODY" format so existing log scrapers / human greps stay
+// readable.
+type APIError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("headscale %s %s: %d %s", e.Method, e.Path, e.StatusCode, e.Body)
+}
+
 // do executes a JSON request against c.BaseURL + path and decodes
 // the response into out (if non-nil). 4xx/5xx responses are returned
-// as errors with the body text appended.
+// as *APIError so callers can branch on the status code (e.g. file-mode
+// fallback detection in SetPolicy).
 func (c *Client) do(method, path string, body any, out any) error {
 	var rdr io.Reader
 	if body != nil {
@@ -90,7 +109,12 @@ func (c *Client) do(method, path string, body any, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		buf, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("headscale %s %s: %d %s", method, path, resp.StatusCode, string(buf))
+		return &APIError{
+			Method:     method,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Body:       string(buf),
+		}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
