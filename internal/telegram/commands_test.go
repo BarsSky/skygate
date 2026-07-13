@@ -2034,6 +2034,127 @@ func TestDelRuleReplyHelpDetail(t *testing.T) {
 	}
 }
 
+// --- Этап 13 follow-up: addRuleReply robustness ---
+//
+// 4 tests covering the read-only guard + SendAlert on SetPolicy
+// failure for /add_rule, /delrule, /clearrules:
+//   1. /add_rule in read-only mode (HS == nil): rule inserted, no pipeline
+//   2. /add_rule on SetPolicy fail: SendAlert called with ❌ ACL apply failed
+//   3. /delrule on SetPolicy fail: SendAlert called
+//   4. /clearrules on SetPolicy fail: SendAlert called
+
+// recordingNotifier is a Notifier implementation that records every
+// SendAlert call into a channel. The buffer is large enough for any
+// single test (a /add_rule or /delrule fires at most one alert).
+// Tests that don't expect an alert simply don't read from the channel
+// — the channel drain is implicit at test exit.
+type recordingNotifier struct {
+	alerts chan string
+}
+
+func newRecordingNotifier() *recordingNotifier {
+	return &recordingNotifier{alerts: make(chan string, 10)}
+}
+
+func (n *recordingNotifier) SendTelegram(string) {}
+
+func (n *recordingNotifier) SendAlert(text string) int64 {
+	n.alerts <- text
+	return 0
+}
+
+// waitForAlert reads one alert from the channel with a 2s timeout.
+// Returns "" + nil on timeout, or the alert text + nil on success.
+func (n *recordingNotifier) waitForAlert(t *testing.T, contains string) {
+	t.Helper()
+	select {
+	case got := <-n.alerts:
+		if !strings.Contains(got, contains) {
+			t.Errorf("expected alert to contain %q, got: %q", contains, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected SendAlert call within 2s, none received (looking for %q)", contains)
+	}
+}
+
+// expectNoAlert verifies no SendAlert fired within 200ms. Used by
+// the success-path tests to confirm we DON'T ping the operator
+// when the pipeline succeeds.
+func (n *recordingNotifier) expectNoAlert(t *testing.T) {
+	t.Helper()
+	select {
+	case got := <-n.alerts:
+		t.Errorf("expected no alert, got: %q", got)
+	case <-time.After(200 * time.Millisecond):
+		// no alert = expected
+	}
+}
+
+func TestAddRuleReplyReadOnlyMode(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	// env.HS == nil → read-only mode. Rule should still be
+	// inserted but ACL pipeline must be skipped.
+	got := HandleCommand(context.Background(), userEnvWithHS(d, nil), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "read-only mode") {
+		t.Errorf("expected 'read-only mode' in reply, got: %q", got)
+	}
+	if !strings.Contains(got, "ask admin") {
+		t.Errorf("expected 'ask admin' hint in reply, got: %q", got)
+	}
+	// Rule row inserted.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2 AND target_value = '1.2.3.4/32'`).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected 1 device_rule row even in read-only mode, got %d", n)
+	}
+	// audit_log row under alice mentions read-only mode.
+	var detail string
+	_ = d.QueryRow(`SELECT detail FROM audit_log WHERE user_id = 2 AND action = 'rule_added' ORDER BY id DESC LIMIT 1`).Scan(&detail)
+	if !strings.Contains(detail, "read-only mode") {
+		t.Errorf("expected 'read-only mode' in audit detail, got: %q", detail)
+	}
+	// No NEW acl_snapshots row (seed counts as 1).
+	var nSnapshots int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots`).Scan(&nSnapshots)
+	if nSnapshots != 1 {
+		t.Errorf("expected 1 acl_snapshots row (the seed) in read-only mode, got %d", nSnapshots)
+	}
+}
+
+func TestAddRuleReplySendsAlertOnSetPolicyFailure(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	_, hs := fakeHeadscaleSetPolicyFail(t)
+	notif := newRecordingNotifier()
+	env := userEnvWithHS(d, hs)
+	env.Notifier = notif
+	HandleCommand(context.Background(), env, "/add_rule 1.2.3.4")
+	notif.waitForAlert(t, "ACL apply failed")
+}
+
+func TestDelRuleReplySendsAlertOnSetPolicyFailure(t *testing.T) {
+	d := setupTestDB(t)
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	rid, _ := res.LastInsertId()
+	_, hs := fakeHeadscaleSetPolicyFail(t)
+	notif := newRecordingNotifier()
+	env := userEnvWithHS(d, hs)
+	env.Notifier = notif
+	HandleCommand(context.Background(), env, fmt.Sprintf("/delrule %d", rid))
+	notif.waitForAlert(t, "ACL apply failed")
+}
+
+func TestClearRulesReplySendsAlertOnSetPolicyFailure(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	_, hs := fakeHeadscaleSetPolicyFail(t)
+	notif := newRecordingNotifier()
+	env := userEnvWithHS(d, hs)
+	env.Notifier = notif
+	HandleCommand(context.Background(), env, "/clearrules")
+	HandleCommand(context.Background(), env, "/clearrules confirm")
+	notif.waitForAlert(t, "ACL apply failed")
+}
+
 // --- Этап 13: /clearrules two-phase confirmation tests (2026-07-13) ---
 //
 // 14 tests covering the nuclear-wipe flow end-to-end:

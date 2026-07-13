@@ -75,6 +75,16 @@ type BotEnv struct {
 	// convention as UserMaxRules / DefaultMax.
 	MaxRulesPerDevice int
 	MaxTotalRules     int
+
+	// 2026-07-13: Этап 11 part 2b follow-up — Notifier for
+	// async operator alerts. addRuleReply / delRuleReply /
+	// clearRulesReply ping this on SetPolicy failure so the
+	// operator gets a Telegram alert ("ACL apply failed")
+	// even if the user doesn't notice the warning in the
+	// bot reply. nil is a valid value: read-only deploys
+	// (no notifier configured) skip the alert; audit_log
+	// is the audit trail regardless.
+	Notifier Notifier
 }
 
 // IsIdentified returns true when the bot knows which Telegram chat

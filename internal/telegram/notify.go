@@ -165,7 +165,7 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
-	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID, HS: n.HS, MaxRulesPerDevice: n.maxRulesPerDevice, MaxTotalRules: n.maxTotalRules}
+	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID, HS: n.HS, MaxRulesPerDevice: n.maxRulesPerDevice, MaxTotalRules: n.maxTotalRules, Notifier: n}
 	if chatID == 0 {
 		return env // legacy / no identity
 	}
