@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"skygate/internal/headscale"
 )
 
 // BotEnv is the read-only context HandleCommand needs beyond the
@@ -56,6 +58,15 @@ type BotEnv struct {
 	// telegram.chat_id (bootstrap admin chat) even without a binding
 	// row, for backward compat with the single-admin deploy.
 	IsAdmin bool
+
+	// 2026-07-13: Этап 11 part 1 — *headscale.Client, snapshotted
+	// from RealNotifier.HS by env() once per message. Needed by
+	// write-side bot commands (/add_device issues a real preauth key;
+	// /add_rule and /delete_rule will need it for ACL sync).
+	// nil is a valid value: read-only deploys run the bot for
+	// status/nodes/rules/audit without writes. Write commands guard
+	// against nil and reply with a clear hint.
+	HS *headscale.Client
 }
 
 // IsIdentified returns true when the bot knows which Telegram chat

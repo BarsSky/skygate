@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"skygate/internal/db"
 )
@@ -174,10 +175,19 @@ func myQuotaReply(env BotEnv) string {
 // so the workflow is: bot user types /add_device, copies the key,
 // pastes into the device. ~10 seconds end-to-end.
 //
-// SCOPE NOTE: preauth issuance needs a *headscale.Client (the bot
-// only has a *sql.DB). The web path goes through (a *App).PostMyPreauth
-// which has the headscale client. Wiring headscale into the bot is a
-// larger task — for now the reply sends the user to the web UI.
+// 2026-07-13: Этап 11 part 1 — real preauth issuance. Mirrors
+// handlers_my_preauth.go:PostMyPreauth exactly:
+//   1. env.HS.CreatePreauthKey (API + CLI fallback inside headscale pkg)
+//   2. db.InsertPreauthKey (local row for the temporal backfill match)
+//   3. db.AppendAuditLog (user can see "where did this key come from")
+//
+// The audit log records the action under the *target* user (so per-
+// user audit views work) with detail "1h single-use (via bot)" so
+// the bot-driven issuance is distinguishable from web-driven.
+//
+// Read-only deploys (HS == nil) get a clear hint instead of a panic.
+// That keeps the legacy single-admin-chat deploy working even
+// before SetHS is called from main.go.
 func addDeviceReply(env BotEnv, arg string) string {
 	if !env.IsIdentified() {
 		return "add_device: chat not bound to a portal user. Ask an admin to /bind your chat_id."
@@ -189,15 +199,31 @@ func addDeviceReply(env BotEnv, arg string) string {
 	if isAdminArg && !env.IsAdmin {
 		return "add_device: only admins can issue a preauth key for another user. Drop the username to issue one for yourself."
 	}
+	// 2026-07-13: Этап 11 part 1 — guard read-only deploys. SetHS is
+	// called from main.go so HS is non-nil in production; the check
+	// exists so a future operator who restarts skygate without
+	// SetHS sees a clear error rather than a nil-deref panic.
+	if env.HS == nil {
+		return "add_device: telegram bot is in read-only mode (headscale client not wired at startup). Ask an admin to enable bot writes."
+	}
 	hsUserID, _, err := db.GetUserHSByID(env.DB, target.ID)
 	if err != nil || !hsUserID.Valid {
 		return fmt.Sprintf("add_device: %s has no headscale user linked. Ask an admin to repair the headscale binding first.", target.Username)
 	}
-	_ = hsUserID
-	return fmt.Sprintf(
-		"add_device: preauth key issuance from the bot is on the roadmap. "+
-			"For now, open https://<skygate>/my/preauth to generate a 1h key for %s.",
-		target.Username)
+	key, err := env.HS.CreatePreauthKey(hsUserID.Int64, "1h", false)
+	if err != nil {
+		return fmt.Sprintf("add_device: headscale call failed: %v", err)
+	}
+	expiresAt := time.Now().Add(time.Hour).Unix()
+	if _, err := db.InsertPreauthKey(env.DB, target.ID, key.Key, expiresAt, key.ID); err != nil {
+		return fmt.Sprintf("add_device: persist key failed: %v", err)
+	}
+	if err := db.AppendAuditLog(env.DB, target.ID, target.Username, "preauth_issued", "1h single-use (via bot)"); err != nil {
+		return fmt.Sprintf("add_device: audit write failed: %v", err)
+	}
+	// The fenced hskey line is monospaced in the Telegram client so
+	// it's easy to copy. The surrounding message is plain text.
+	return fmt.Sprintf("add_device: 1h key for %s (single-use)\n\n```\n%s\n```\n\nExpires in 1h. Paste into the device to register.", target.Username, key.Key)
 }
 
 // addRuleReply adds a new exit-rule for the caller (or, for admins,

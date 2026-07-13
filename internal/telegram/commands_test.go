@@ -3,11 +3,17 @@ package telegram
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"skygate/internal/headscale"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -841,5 +847,196 @@ func TestResolveTargetUser(t *testing.T) {
 	_, _, err = resolveTargetUser(userEnv(d), "telegram.org")
 	if err == nil {
 		t.Errorf("expected error for target-shaped arg, got nil")
+	}
+}
+
+// --- Этап 11 part 1: addDeviceReply real-write tests (2026-07-13) ---
+//
+// The placeholder addDeviceReply returned a "on the roadmap" hint;
+// Этап 11 wires *headscale.Client into the bot and the reply now
+// performs the same flow as handlers_my_preauth.go:PostMyPreauth:
+//   HS.CreatePreauthKey → db.InsertPreauthKey → db.AppendAuditLog.
+//
+// The tests below exercise:
+//   1. The unbound-chat guard (IsIdentified == false)
+//   2. The read-only deploy guard (HS == nil)
+//   3. The "no headscale_user_id linked" guard
+//   4. The success path (fake headscale via httptest, real DB writes)
+//   5. The admin-issues-for-other-user path (audit + DB row go to the
+//      target user, not the caller)
+//   6. The non-admin-tries-for-other-user guard
+
+// fakeHeadscale stands up an httptest server that mimics headscale's
+// POST /api/v1/preauthkey endpoint. The returned key is shaped like
+// "hskey-fake-<userID>" so tests can grep for it; the key id is the
+// literal "42" so db.InsertPreauthKey records a non-empty
+// headscale_preauth_id and the temporal backfill path in
+// backfillNodeOwnership has something to match on.
+func fakeHeadscale(t *testing.T) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/preauthkey" {
+			http.Error(w, "unexpected path: "+r.URL.Path, 404)
+			return
+		}
+		var body struct {
+			UserID int64 `json:"user_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		resp := map[string]any{
+			"id":         "42",
+			"key":        "hskey-fake-" + strconv.FormatInt(body.UserID, 10),
+			"user_id":    body.UserID,
+			"user":       "alice",
+			"reusable":   false,
+			"ephemeral":  false,
+			"used":       false,
+			"expiration": "2026-07-13T07:30:00Z",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	hs := headscale.New(srv.URL, "fake-api-key")
+	return srv, hs
+}
+
+// userEnvWithHS is userEnv plus a *headscale.Client (for write tests).
+func userEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
+	return BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false, HS: hs}
+}
+
+// adminEnvWithHS is the admin-scope variant of userEnvWithHS. Used
+// to test "/add_device <username>" acting on another user.
+func adminEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
+	return BotEnv{DB: d, ChatID: 1, PortalUserID: 1, Username: "skyadmin", IsAdmin: true, HS: hs}
+}
+
+func TestAddDeviceReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/add_device")
+	if !strings.Contains(got, "chat not bound") {
+		t.Errorf("expected 'chat not bound' for unbound /add_device, got: %q", got)
+	}
+}
+
+func TestAddDeviceReplyRejectsNoHS(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/add_device")
+	if !strings.Contains(got, "read-only") {
+		t.Errorf("expected 'read-only' hint for /add_device without HS, got: %q", got)
+	}
+}
+
+func TestAddDeviceReplyRejectsNoHSUser(t *testing.T) {
+	d := setupTestDB(t)
+	_, hs := fakeHeadscale(t)
+	// setupTestDB does not set headscale_user_id on alice, so the
+	// "ask admin to repair" guard fires before any headscale call.
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_device")
+	if !strings.Contains(got, "no headscale user linked") {
+		t.Errorf("expected 'no headscale user linked' for /add_device, got: %q", got)
+	}
+	// The HS server should NOT have been hit: count must be 0 preauth rows.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 preauth_keys rows after a rejected call, got %d", n)
+	}
+}
+
+func TestAddDeviceReplySuccess(t *testing.T) {
+	d := setupTestDB(t)
+	// Link alice to headscale user id 7.
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 7 WHERE id = 2`); err != nil {
+		t.Fatalf("update alice: %v", err)
+	}
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_device")
+	if !strings.Contains(got, "hskey-fake-7") {
+		t.Errorf("expected 'hskey-fake-7' in reply, got: %q", got)
+	}
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected 'alice' in reply, got: %q", got)
+	}
+	// preauth_keys row check.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id = 2`).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected 1 preauth_keys row for alice, got %d", n)
+	}
+	var storedKey string
+	var storedHSID string
+	_ = d.QueryRow(`SELECT key, headscale_preauth_id FROM preauth_keys WHERE user_id = 2`).Scan(&storedKey, &storedHSID)
+	if storedKey != "hskey-fake-7" {
+		t.Errorf("expected stored key 'hskey-fake-7', got %q", storedKey)
+	}
+	if storedHSID != "42" {
+		t.Errorf("expected headscale_preauth_id '42', got %q", storedHSID)
+	}
+	// audit_log row check.
+	var action, detail string
+	_ = d.QueryRow(`SELECT action, detail FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action, &detail)
+	if action != "preauth_issued" {
+		t.Errorf("expected action='preauth_issued', got %q", action)
+	}
+	if !strings.Contains(detail, "via bot") {
+		t.Errorf("expected 'via bot' in audit detail, got %q", detail)
+	}
+}
+
+func TestAddDeviceReplyAdminForOtherUser(t *testing.T) {
+	d := setupTestDB(t)
+	// Link alice to headscale user id 7.
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 7 WHERE id = 2`); err != nil {
+		t.Fatalf("update alice: %v", err)
+	}
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/add_device alice")
+	if !strings.Contains(got, "hskey-fake-7") {
+		t.Errorf("expected 'hskey-fake-7' in reply, got: %q", got)
+	}
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected 'alice' in reply, got: %q", got)
+	}
+	// preauth_keys row must be under alice (id=2), NOT skyadmin (id=1).
+	var aliceKeys, adminKeys int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id = 2`).Scan(&aliceKeys)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id = 1`).Scan(&adminKeys)
+	if aliceKeys != 1 {
+		t.Errorf("expected 1 preauth_keys row for alice, got %d", aliceKeys)
+	}
+	if adminKeys != 0 {
+		t.Errorf("expected 0 preauth_keys rows for skyadmin (admin), got %d", adminKeys)
+	}
+	// audit_log row under alice, not skyadmin.
+	var aliceAudit, adminAudit int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE user_id = 2 AND action = 'preauth_issued'`).Scan(&aliceAudit)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE user_id = 1 AND action = 'preauth_issued'`).Scan(&adminAudit)
+	if aliceAudit != 1 {
+		t.Errorf("expected 1 preauth_issued audit row for alice, got %d", aliceAudit)
+	}
+	if adminAudit != 0 {
+		t.Errorf("expected 0 preauth_issued audit rows for skyadmin, got %d", adminAudit)
+	}
+}
+
+func TestAddDeviceReplyRejectsNonAdminForOtherUser(t *testing.T) {
+	d := setupTestDB(t)
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 7 WHERE id = 2`); err != nil {
+		t.Fatalf("update alice: %v", err)
+	}
+	_, hs := fakeHeadscale(t)
+	// alice is a regular user (IsAdmin=false); she cannot issue a
+	// key for skyadmin. The IsIdentified + isAdminArg check fires
+	// before HS even gets called.
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_device skyadmin")
+	if !strings.Contains(got, "only admins") {
+		t.Errorf("expected 'only admins' for non-admin targeting another user, got: %q", got)
+	}
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 preauth_keys rows after a rejected call, got %d", n)
 	}
 }
