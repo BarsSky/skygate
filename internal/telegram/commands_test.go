@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,7 +74,18 @@ func setupTestDB(t *testing.T) *sql.DB {
 	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('exit-emilia', 'skyadmin', 'tag:exit-node')`)
 	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('exit-emilia', 1700000200, 1)`)
 	_, _ = d.Exec(`INSERT INTO telegram_alerts(body) VALUES ('📥 New rule #7 by skyadmin')`)
-	t.Cleanup(func() { _ = d.Close(); _ = filepath.Clean("") })
+	t.Cleanup(func() {
+		_ = d.Close()
+		_ = filepath.Clean("")
+		// 2026-07-13: Этап 13 — pendingClears (used by /clearrules)
+		// and pendingRestarts (used by /restart) are package-level
+		// sync.Maps. They leak across tests if not reset, so
+		// every setupTestDB also wipes them. Without this, a test
+		// that mints a clear/restart in one run would have a
+		// leftover entry visible to the next test.
+		pendingClears = sync.Map{}
+		pendingRestarts = sync.Map{}
+	})
 	return d
 }
 
@@ -549,7 +561,7 @@ func TestMintRestartToken(t *testing.T) {
 
 func TestHelpDetailKnown(t *testing.T) {
 	// Every command listed in /help should have a detailed help entry.
-	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help", "bind", "unbind", "my_status", "my_nodes", "my_rules", "my_quota", "add_device", "add_rule", "delrule", "delete_rule"} {
+	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help", "bind", "unbind", "my_status", "my_nodes", "my_rules", "my_quota", "add_device", "add_rule", "delrule", "clearrules", "delete_rule"} {
 		got := helpDetailReply(cmd, BotEnv{})
 		if !strings.HasPrefix(got, "/"+cmd+" ") {
 			t.Errorf("expected /%s detailed help, got: %q", cmd, got)
@@ -2019,5 +2031,261 @@ func TestDelRuleReplyHelpDetail(t *testing.T) {
 	got2 := helpDetailReply("delete_rule", BotEnv{})
 	if !strings.Contains(got2, "DEPRECATED") {
 		t.Errorf("expected 'DEPRECATED' in /help delete_rule, got: %q", got2)
+	}
+}
+
+// --- Этап 13: /clearrules two-phase confirmation tests (2026-07-13) ---
+//
+// 14 tests covering the nuclear-wipe flow end-to-end:
+//   1.  Reject unbound chat
+//   2.  Reject non-admin targeting another user
+//   3.  Mint for caller (with rules) — counts + sample, asks confirm
+//   4.  Mint for caller (no rules) — "nothing to clear"
+//   5.  Confirm without pending — "no pending request"
+//   6.  Full mint+confirm — rules wiped, ACL applied
+//   7.  Admin mints for another user
+//   8.  Admin mint+confirm wipes another user's rules
+//   9.  Domain cascade: /32s go too
+//   10. Read-only mode (HS == nil): wipe + no pipeline
+//   11. SetPolicy failure: wipe + ACL not applied
+//   12. New mint overwrites previous pending (most-recent-wins)
+//   13. /clearrules in /help
+//   14. /help clearrules returns detailed help
+//
+// Note: we can't easily test TTL expiry in a unit test without
+// sleeping for 30s, so that branch is covered by code review of
+// the expiry check (time.Now().After(req.expiry)) — not a test.
+
+func TestClearRulesReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/clearrules")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /clearrules, got: %q", got)
+	}
+}
+
+func TestClearRulesReplyRejectsNonAdminForOtherUser(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/clearrules skyadmin")
+	if !strings.Contains(got, "extra args") {
+		t.Errorf("expected 'extra args' for non-admin /clearrules <user>, got: %q", got)
+	}
+}
+
+func TestClearRulesReplyMintForCallerWithRules(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed alice's rules.
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '2.2.2.2/32', 'accept')`)
+	got := HandleCommand(context.Background(), userEnv(d), "/clearrules")
+	if !strings.Contains(got, "delete ALL 2 rule") {
+		t.Errorf("expected 'delete ALL 2 rule' in mint reply, got: %q", got)
+	}
+	if !strings.Contains(got, "/clearrules confirm") {
+		t.Errorf("expected '/clearrules confirm' instruction, got: %q", got)
+	}
+	if !strings.Contains(got, "1.1.1.1/32") || !strings.Contains(got, "2.2.2.2/32") {
+		t.Errorf("expected rule samples in reply, got: %q", got)
+	}
+	// Rules still in DB (mint doesn't delete).
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 2 {
+		t.Errorf("expected 2 rules after mint (no delete yet), got %d", n)
+	}
+	// audit_log has the "requested" row.
+	var action string
+	_ = d.QueryRow(`SELECT action FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action)
+	if action != "rules_clear_requested" {
+		t.Errorf("expected 'rules_clear_requested' audit row, got %q", action)
+	}
+}
+
+func TestClearRulesReplyMintForCallerNoRules(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/clearrules")
+	if !strings.Contains(got, "no exit-rules") {
+		t.Errorf("expected 'no exit-rules' when caller has 0 rules, got: %q", got)
+	}
+	if !strings.Contains(got, "Nothing to clear") {
+		t.Errorf("expected 'Nothing to clear' hint, got: %q", got)
+	}
+}
+
+func TestClearRulesReplyConfirmWithoutPending(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/clearrules confirm")
+	if !strings.Contains(got, "no pending clear request") {
+		t.Errorf("expected 'no pending clear request', got: %q", got)
+	}
+}
+
+func TestClearRulesReplyFullMintAndConfirm(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '2.2.2.2/32', 'accept')`)
+	_, hs := fakeHeadscale(t)
+	// Phase 1: mint.
+	HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules")
+	// Phase 2: confirm.
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
+	if !strings.Contains(got, "cleared 2 rule") {
+		t.Errorf("expected 'cleared 2 rule' in confirm reply, got: %q", got)
+	}
+	if !strings.Contains(got, "ACL") {
+		t.Errorf("expected 'ACL v#' in reply, got: %q", got)
+	}
+	// All alice's rules gone.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 rules after confirm, got %d", n)
+	}
+	// Second confirm is a no-op.
+	got2 := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
+	if !strings.Contains(got2, "no pending") {
+		t.Errorf("expected second confirm to be a no-op, got: %q", got2)
+	}
+	// audit_log has BOTH rows (request + action).
+	var reqCount, actCount int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE user_id = 2 AND action = 'rules_clear_requested'`).Scan(&reqCount)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE user_id = 2 AND action = 'rules_cleared'`).Scan(&actCount)
+	if reqCount != 1 {
+		t.Errorf("expected 1 'rules_clear_requested' audit row, got %d", reqCount)
+	}
+	if actCount != 1 {
+		t.Errorf("expected 1 'rules_cleared' audit row, got %d", actCount)
+	}
+}
+
+func TestClearRulesReplyAdminMintForOtherUser(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	// skyadmin (admin) mints for alice.
+	got := HandleCommand(context.Background(), adminEnv(d), "/clearrules alice")
+	if !strings.Contains(got, "delete ALL 1 rule") {
+		t.Errorf("expected 'delete ALL 1 rule' for alice, got: %q", got)
+	}
+	if !strings.Contains(got, "for alice") {
+		t.Errorf("expected 'for alice' in reply, got: %q", got)
+	}
+}
+
+func TestClearRulesReplyAdminMintAndConfirm(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	_, hs := fakeHeadscale(t)
+	HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/clearrules alice")
+	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/clearrules alice confirm")
+	if !strings.Contains(got, "cleared 1 rule") {
+		t.Errorf("expected 'cleared 1 rule' in admin confirm reply, got: %q", got)
+	}
+	if !strings.Contains(got, "for alice") {
+		t.Errorf("expected 'for alice' in reply, got: %q", got)
+	}
+	// Alice's rules gone.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 alice rules after admin confirm, got %d", n)
+	}
+}
+
+func TestClearRulesReplyDomainCascade(t *testing.T) {
+	d := setupTestDB(t)
+	// Domain rule + 2 /32 children (autoupdater fan-out) + 1 unrelated.
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 'emilia', 'domain', 'telegram.org', 'accept', 'telegram.org')`)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept', 'telegram.org')`)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 'emilia', 'subnet', '2.2.2.2/32', 'accept', 'telegram.org')`)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '9.9.9.9/32', 'accept')`)
+	_, hs := fakeHeadscale(t)
+	HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules")
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
+	if !strings.Contains(got, "cleared 4 rule") {
+		t.Errorf("expected 'cleared 4 rule' (3 original + 0 extra — cascade counted into the 4), got: %q", got)
+	}
+	if !strings.Contains(got, "cascade: 2") {
+		t.Errorf("expected 'cascade: 2' (the 2 /32 children), got: %q", got)
+	}
+	// All alice's rules gone.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 alice rules after confirm, got %d", n)
+	}
+}
+
+func TestClearRulesReplyReadOnlyMode(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	HandleCommand(context.Background(), userEnvWithHS(d, nil), "/clearrules")
+	got := HandleCommand(context.Background(), userEnvWithHS(d, nil), "/clearrules confirm")
+	if !strings.Contains(got, "read-only mode") {
+		t.Errorf("expected 'read-only mode' in reply, got: %q", got)
+	}
+	// Rules wiped despite read-only.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 alice rules after read-only confirm, got %d", n)
+	}
+	// No NEW acl_snapshots row (seed counts as 1).
+	var nSnapshots int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots`).Scan(&nSnapshots)
+	if nSnapshots != 1 {
+		t.Errorf("expected 1 acl_snapshots row (the seed) in read-only mode, got %d", nSnapshots)
+	}
+}
+
+func TestClearRulesReplySetPolicyFailure(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	_, hs := fakeHeadscaleSetPolicyFail(t)
+	HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules")
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
+	if !strings.Contains(got, "NOT applied") {
+		t.Errorf("expected 'NOT applied' in reply, got: %q", got)
+	}
+	// Rules deleted even on SetPolicy failure.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 alice rules on SetPolicy failure, got %d", n)
+	}
+	// Failed acl_snapshots row exists.
+	var nFailed int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE applied_success = 0`).Scan(&nFailed)
+	if nFailed < 1 {
+		t.Errorf("expected at least 1 failed acl_snapshots row, got %d", nFailed)
+	}
+}
+
+func TestClearRulesReplyNewMintOverwritesPending(t *testing.T) {
+	d := setupTestDB(t)
+	// Alice mints for herself.
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	HandleCommand(context.Background(), userEnv(d), "/clearrules")
+	// Then mints again — should overwrite, not error.
+	got := HandleCommand(context.Background(), userEnv(d), "/clearrules")
+	if !strings.Contains(got, "/clearrules confirm") {
+		t.Errorf("expected second mint to succeed and ask for confirm, got: %q", got)
+	}
+}
+
+func TestClearRulesReplyListedInHelp(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/help")
+	if !strings.Contains(got, "/clearrules") {
+		t.Errorf("expected /clearrules in /help output, got: %q", got)
+	}
+}
+
+func TestClearRulesReplyHelpDetail(t *testing.T) {
+	got := helpDetailReply("clearrules", BotEnv{})
+	if !strings.HasPrefix(got, "/clearrules ") {
+		t.Errorf("expected /clearrules detailed help, got: %q", got)
+	}
+	if !strings.Contains(got, "Two-phase") {
+		t.Errorf("expected 'Two-phase' in /help clearrules, got: %q", got)
 	}
 }

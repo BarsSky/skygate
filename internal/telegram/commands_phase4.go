@@ -308,6 +308,17 @@ func helpDetailReply(cmd string, env BotEnv) string {
 			"  /delrule 7\n" +
 			"  /delrule 7 8 9\n" +
 			"  /delrule alice 5 6    (admin → alice)"
+	case "clearrules":
+		return "/clearrules [username] — wipe ALL exit-rules for you (admin: another user).\n" +
+			"Two-phase: first call counts + samples the rules, second call (within 30s) confirms.\n" +
+			"Domain rules cascade to /32 siblings (same as /delrule).\n" +
+			"Triggers an ACL sync.\n" +
+			"Use /delrule if you want to keep some rules; /clearrules is the nuclear option.\n" +
+			"Examples:\n" +
+			"  /clearrules\n" +
+			"  /clearrules confirm          (within 30s)\n" +
+			"  /clearrules alice            (admin → alice)\n" +
+			"  /clearrules alice confirm    (admin confirms)"
 	case "delete_rule":
 		return "/delete_rule <id> — DEPRECATED alias of /delrule.\n" +
 			"Use /delrule instead. The command still works for back-compat.\n" +
