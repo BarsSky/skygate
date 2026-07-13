@@ -7,6 +7,7 @@
 package headscale
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -80,12 +81,29 @@ func (c *Client) GetACL() (string, error) {
 // SetPolicy sets the ACL policy.
 // Tries REST API first (database mode), then file-mode fallback:
 // write ACL to config volume + update config.yaml + restart headscale.
+//
+// 2026-07-13: the file-mode fallback is now strictly gated on 404/405
+// from the headscale API. A 5xx (or any non-2xx other than 404/405) is
+// treated as a real failure and returned to the caller. The previous
+// "any error → fallback" heuristic silently masked transient headscale
+// failures (e.g. policy rejected mid-restart) by writing to
+// acl_policy.hujson while the running headscale was still using the
+// database policy — the operator saw "ok" in the audit log while the
+// new rules never reached Tailscale clients. 404/405 are the
+// documented headscale signals for "policy endpoint not available in
+// this mode" and the only codes the fallback should react to.
 func (c *Client) SetPolicy(policy string) error {
 	var out PolicyBody
 	err := c.do("PUT", "/api/v1/policy", PolicyBody{Policy: policy}, &out)
 	if err == nil {
 		c.clearACLCache()
 		return nil
+	}
+
+	// Only fall back to file-mode on 404/405. Any other error is real.
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || (apiErr.StatusCode != 404 && apiErr.StatusCode != 405) {
+		return err
 	}
 
 	// File-mode fallback: headscale rejects API in non-database mode.
@@ -96,13 +114,13 @@ func (c *Client) SetPolicy(policy string) error {
 		"alpine", "sh", "-c", "cat > /config/acl_policy.hujson")
 	writeCmd.Stdin = strings.NewReader(policy)
 	if cerr := writeCmd.Run(); cerr != nil {
-		return fmt.Errorf("api: %v; write acl file: %v", err, cerr)
+		return fmt.Errorf("api: %w; write acl file: %v", err, cerr)
 	}
 
 	// Restart headscale to pick up new policy
 	restartCmd := exec.Command("docker", "restart", c.ExecContainer)
 	if o, e := restartCmd.CombinedOutput(); e != nil {
-		return fmt.Errorf("api: %v; restart: %v (%s)", err, e, strings.TrimSpace(string(o)))
+		return fmt.Errorf("api: %w; restart: %v (%s)", err, e, strings.TrimSpace(string(o)))
 	}
 
 	c.clearACLCache()
