@@ -31,7 +31,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 	for _, q := range []string{
 		`CREATE TABLE device_rules (id INTEGER PRIMARY KEY, user_id INTEGER, device_id INTEGER, exit_node_id TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'domain', target_value TEXT, action TEXT DEFAULT 'accept', device_ip TEXT DEFAULT '', parent_domain TEXT DEFAULT '', enabled INTEGER DEFAULT 1)`,
-		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0)`,
+		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, applied_success INTEGER)`,
 		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
@@ -43,6 +43,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE telegram_bindings (chat_id INTEGER PRIMARY KEY, portal_user_id INTEGER NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, bound_at INTEGER NOT NULL DEFAULT 0, bound_by_user_id INTEGER NOT NULL DEFAULT 0)`,
 		// 2026-07-12: Этап 11 — preauth_keys (add_device reply needs it).
 		`CREATE TABLE preauth_keys (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, key TEXT NOT NULL DEFAULT '', headscale_preauth_id TEXT NOT NULL DEFAULT '', used INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0)`,
+		// 2026-07-13: Этап 11 part 2a — exit_servers (setexitnode / defaultexitnode).
+		`CREATE TABLE exit_servers (id INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT NOT NULL UNIQUE, hostname TEXT NOT NULL, tailscale_ip TEXT NOT NULL DEFAULT '', ssh_target TEXT NOT NULL DEFAULT '', ssh_key_path TEXT NOT NULL DEFAULT '', description TEXT DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, accept_routes INTEGER NOT NULL DEFAULT 0, created_at INTEGER DEFAULT 0)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
@@ -1038,5 +1040,349 @@ func TestAddDeviceReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys`).Scan(&n)
 	if n != 0 {
 		t.Errorf("expected 0 preauth_keys rows after a rejected call, got %d", n)
+	}
+}
+
+// --- Этап 11 part 2a: default-device / default-exit-node replies ---
+//
+// The four new commands (/setdefaultdevice, /defaultdevice,
+// /setexitnode, /defaultexitnode) are pure preference writes —
+// they touch portal_users + audit_log and don't go anywhere near
+// headscale, so the tests use the in-memory schema directly.
+//
+// What's covered:
+//   1. /setdefaultdevice without args → list with valid node_ids
+//   2. /setdefaultdevice <node_id> → set, audit row, Get* round-trip
+//   3. /setdefaultdevice <exit_node> → rejected (exit-node tag)
+//   4. /setdefaultdevice <other_user_node> → rejected (not in
+//      the caller's node_owner_map)
+//   5. /setdefaultdevice clear → reset, audit row
+//   6. /setdefaultdevice 9999 → rejected (not a valid node_id)
+//   7. /defaultdevice → "not set" hint when empty
+//   8. /defaultdevice → shows node_id when set
+//   9. /setexitnode without args → list enabled exit_servers
+//  10. /setexitnode <node_id> → set, audit row
+//  11. /setexitnode <disabled> → rejected
+//  12. /setexitnode <not_an_exit> → rejected
+//  13. /setexitnode clear → reset
+//  14. /defaultexitnode → "not set" hint when empty
+//  15. /defaultexitnode → shows hostname when set
+//  16. Unbound chat guard for all four
+
+func TestSetDefaultDeviceReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	// envFor has ChatID=0 (unbound).
+	got := HandleCommand(context.Background(), envFor(d), "/setdefaultdevice")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /setdefaultdevice, got: %q", got)
+	}
+}
+
+func TestSetDefaultDeviceReplyListsDevices(t *testing.T) {
+	d := setupTestDB(t)
+	// setupTestDB seeds skyadmin (id=1) with two tag:private devices
+	// (n1, n2) and one tag:public (n3). alice has no devices yet —
+	// so we'll seed one for her.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-2', 'alice', 'tag:private')`)
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-exit', 'alice', 'tag:exit-node')`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setdefaultdevice")
+	// Both tag:private devices should appear; tag:exit-node should NOT.
+	if !strings.Contains(got, "alice-dev-1") {
+		t.Errorf("expected alice-dev-1 in device list, got: %q", got)
+	}
+	if !strings.Contains(got, "alice-dev-2") {
+		t.Errorf("expected alice-dev-2 in device list, got: %q", got)
+	}
+	if strings.Contains(got, "alice-exit") {
+		t.Errorf("tag:exit-node should NOT appear in /setdefaultdevice list, got: %q", got)
+	}
+}
+
+func TestSetDefaultDeviceReplyNoDevices(t *testing.T) {
+	d := setupTestDB(t)
+	// alice has no devices.
+	got := HandleCommand(context.Background(), userEnv(d), "/setdefaultdevice")
+	if !strings.Contains(got, "no devices") {
+		t.Errorf("expected 'no devices' hint, got: %q", got)
+	}
+}
+
+func TestSetDefaultDeviceReplySuccess(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setdefaultdevice alice-dev-1")
+	if !strings.Contains(got, "set to") {
+		t.Errorf("expected 'set to' confirmation, got: %q", got)
+	}
+	// DB round-trip: column was written.
+	var got2 string
+	_ = d.QueryRow(`SELECT default_device_node_id FROM portal_users WHERE id = 2`).Scan(&got2)
+	if got2 != "alice-dev-1" {
+		t.Errorf("default_device_node_id = %q, want %q", got2, "alice-dev-1")
+	}
+	// Audit log row.
+	var action, detail string
+	_ = d.QueryRow(`SELECT action, detail FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action, &detail)
+	if action != "default_device_changed" {
+		t.Errorf("audit action = %q, want %q", action, "default_device_changed")
+	}
+	if !strings.Contains(detail, "alice-dev-1") {
+		t.Errorf("audit detail = %q, expected to contain 'alice-dev-1'", detail)
+	}
+}
+
+func TestSetDefaultDeviceRejectsExitNode(t *testing.T) {
+	d := setupTestDB(t)
+	// alice has alice-dev-1 (tag:private) and alice-exit (tag:exit-node).
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-exit', 'alice', 'tag:exit-node')`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setdefaultdevice alice-exit")
+	// The exit-node should be filtered out of the device list at the
+	// "is this one of your devices?" check; the reply says the node
+	// is not in the device list.
+	if !strings.Contains(got, "not in your device list") {
+		t.Errorf("expected 'not in your device list' for exit-node as device, got: %q", got)
+	}
+	// Column must NOT have been written.
+	var got2 string
+	_ = d.QueryRow(`SELECT default_device_node_id FROM portal_users WHERE id = 2`).Scan(&got2)
+	if got2 != "" {
+		t.Errorf("default_device_node_id should be empty, got %q", got2)
+	}
+}
+
+func TestSetDefaultDeviceRejectsOtherUsersNode(t *testing.T) {
+	d := setupTestDB(t)
+	// alice has one device of her own; skyadmin's n1 is NOT one
+	// of her devices — she should not be able to claim it.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setdefaultdevice n1")
+	if !strings.Contains(got, "not in your device list") {
+		t.Errorf("expected 'not in your device list' for cross-user claim, got: %q", got)
+	}
+}
+
+func TestSetDefaultDeviceRejectsInvalidNodeID(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setdefaultdevice 9999")
+	if !strings.Contains(got, "not in your device list") {
+		t.Errorf("expected rejection for non-existent node_id, got: %q", got)
+	}
+}
+
+func TestSetDefaultDeviceClear(t *testing.T) {
+	d := setupTestDB(t)
+	// alice needs at least one device so the reply doesn't short-
+	// circuit to "no devices yet" before reaching the clear branch.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	// Pre-set so we can verify clear actually wipes it.
+	_, _ = d.Exec(`UPDATE portal_users SET default_device_node_id = 'alice-dev-1' WHERE id = 2`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setdefaultdevice clear")
+	if !strings.Contains(got, "cleared") {
+		t.Errorf("expected 'cleared' confirmation, got: %q", got)
+	}
+	var got2 string
+	_ = d.QueryRow(`SELECT default_device_node_id FROM portal_users WHERE id = 2`).Scan(&got2)
+	if got2 != "" {
+		t.Errorf("default_device_node_id after clear = %q, want empty", got2)
+	}
+	// Audit row.
+	var action, detail string
+	_ = d.QueryRow(`SELECT action, detail FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action, &detail)
+	if action != "default_device_changed" {
+		t.Errorf("audit action = %q, want %q", action, "default_device_changed")
+	}
+	if !strings.Contains(detail, "cleared") {
+		t.Errorf("audit detail = %q, expected to contain 'cleared'", detail)
+	}
+}
+
+func TestDefaultDeviceReplyNotSet(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/defaultdevice")
+	if !strings.Contains(got, "no default") {
+		t.Errorf("expected 'no default' for unset default, got: %q", got)
+	}
+	if !strings.Contains(got, "/setdefaultdevice") {
+		t.Errorf("expected hint to /setdefaultdevice, got: %q", got)
+	}
+}
+
+func TestDefaultDeviceReplySet(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`UPDATE portal_users SET default_device_node_id = 'alice-dev-1' WHERE id = 2`)
+	got := HandleCommand(context.Background(), userEnv(d), "/defaultdevice")
+	if !strings.Contains(got, "alice-dev-1") {
+		t.Errorf("expected node_id in /defaultdevice reply, got: %q", got)
+	}
+}
+
+func TestDefaultDeviceReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/defaultdevice")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /defaultdevice, got: %q", got)
+	}
+}
+
+func TestSetExitNodeReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/setexitnode")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /setexitnode, got: %q", got)
+	}
+}
+
+func TestSetExitNodeReplyNoExitServers(t *testing.T) {
+	d := setupTestDB(t)
+	// setupTestDB does not seed exit_servers, so the reply should
+	// tell alice to ask an admin.
+	got := HandleCommand(context.Background(), userEnv(d), "/setexitnode")
+	if !strings.Contains(got, "no enabled exit-nodes") {
+		t.Errorf("expected 'no enabled exit-nodes' hint, got: %q", got)
+	}
+}
+
+func TestSetExitNodeReplyListsEnabled(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('karolina-1', 'karolina', 1)`)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('disabled-1', 'disabled', 0)`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setexitnode")
+	if !strings.Contains(got, "emilia") {
+		t.Errorf("expected 'emilia' in /setexitnode list, got: %q", got)
+	}
+	if !strings.Contains(got, "karolina") {
+		t.Errorf("expected 'karolina' in /setexitnode list, got: %q", got)
+	}
+	// disabled-1 should NOT appear.
+	if strings.Contains(got, "disabled") {
+		t.Errorf("disabled exit-server should NOT appear in /setexitnode list, got: %q", got)
+	}
+}
+
+func TestSetExitNodeReplySuccess(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setexitnode emilia-1")
+	if !strings.Contains(got, "set to") {
+		t.Errorf("expected 'set to' confirmation, got: %q", got)
+	}
+	if !strings.Contains(got, "emilia") {
+		t.Errorf("expected 'emilia' hostname in reply, got: %q", got)
+	}
+	// DB round-trip.
+	var got2 string
+	_ = d.QueryRow(`SELECT default_exit_node_id FROM portal_users WHERE id = 2`).Scan(&got2)
+	if got2 != "emilia-1" {
+		t.Errorf("default_exit_node_id = %q, want %q", got2, "emilia-1")
+	}
+	// Audit row.
+	var action, detail string
+	_ = d.QueryRow(`SELECT action, detail FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action, &detail)
+	if action != "default_exit_node_changed" {
+		t.Errorf("audit action = %q, want %q", action, "default_exit_node_changed")
+	}
+	if !strings.Contains(detail, "emilia") {
+		t.Errorf("audit detail = %q, expected to contain 'emilia'", detail)
+	}
+}
+
+func TestSetExitNodeRejectsDisabled(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed an enabled exit-server so the "no enabled exit-nodes"
+	// short-circuit doesn't fire first; the disabled one is the
+	// one we want the rejection message for.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('karolina-1', 'karolina', 1)`)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 0)`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setexitnode emilia-1")
+	if !strings.Contains(got, "not an enabled exit-node") {
+		t.Errorf("expected rejection for disabled exit-server, got: %q", got)
+	}
+}
+
+func TestSetExitNodeRejectsNotAnExit(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed an enabled exit-server so the "no enabled exit-nodes"
+	// short-circuit doesn't fire first. Then ask to set a node
+	// that is in node_owner_map but NOT in exit_servers.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('karolina-1', 'karolina', 1)`)
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setexitnode alice-dev-1")
+	if !strings.Contains(got, "not an enabled exit-node") {
+		t.Errorf("expected rejection for non-exit-server node_id, got: %q", got)
+	}
+}
+
+func TestSetExitNodeClear(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	_, _ = d.Exec(`UPDATE portal_users SET default_exit_node_id = 'emilia-1' WHERE id = 2`)
+	got := HandleCommand(context.Background(), userEnv(d), "/setexitnode clear")
+	if !strings.Contains(got, "cleared") {
+		t.Errorf("expected 'cleared' confirmation, got: %q", got)
+	}
+	var got2 string
+	_ = d.QueryRow(`SELECT default_exit_node_id FROM portal_users WHERE id = 2`).Scan(&got2)
+	if got2 != "" {
+		t.Errorf("default_exit_node_id after clear = %q, want empty", got2)
+	}
+	// Audit row.
+	var action, detail string
+	_ = d.QueryRow(`SELECT action, detail FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action, &detail)
+	if action != "default_exit_node_changed" {
+		t.Errorf("audit action = %q, want %q", action, "default_exit_node_changed")
+	}
+	if !strings.Contains(detail, "cleared") {
+		t.Errorf("audit detail = %q, expected to contain 'cleared'", detail)
+	}
+}
+
+func TestDefaultExitNodeReplyNotSet(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/defaultexitnode")
+	if !strings.Contains(got, "no default") {
+		t.Errorf("expected 'no default' for unset default, got: %q", got)
+	}
+	if !strings.Contains(got, "/setexitnode") {
+		t.Errorf("expected hint to /setexitnode, got: %q", got)
+	}
+}
+
+func TestDefaultExitNodeReplySet(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	_, _ = d.Exec(`UPDATE portal_users SET default_exit_node_id = 'emilia-1' WHERE id = 2`)
+	got := HandleCommand(context.Background(), userEnv(d), "/defaultexitnode")
+	if !strings.Contains(got, "emilia") {
+		t.Errorf("expected 'emilia' hostname in /defaultexitnode reply, got: %q", got)
+	}
+	if !strings.Contains(got, "emilia-1") {
+		t.Errorf("expected node_id 'emilia-1' in reply, got: %q", got)
+	}
+}
+
+func TestDefaultExitNodeReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/defaultexitnode")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /defaultexitnode, got: %q", got)
+	}
+}
+
+func TestHelpListsNewCommands(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/help")
+	for _, c := range []string{
+		"/setdefaultdevice",
+		"/defaultdevice",
+		"/setexitnode",
+		"/defaultexitnode",
+	} {
+		if !strings.Contains(got, c) {
+			t.Errorf("expected %q in /help, got: %q", c, got)
+		}
 	}
 }

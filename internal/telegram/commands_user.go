@@ -471,3 +471,271 @@ func lookupUserByUsername(d *sql.DB, username string) (*db.User, error) {
 	}
 	return &u, nil
 }
+
+// --- Default device + default exit_node (Этап 11 part 2a, 2026-07-13) ---
+//
+// These four commands let a user pick the per-user defaults that
+// /add_rule will use (in Этап 11 part 2b). The defaults are stored
+// in two TEXT columns on portal_users (migration v0.30):
+//
+//   default_device_node_id   — headscale node_id of the device
+//   default_exit_node_id     — headscale node_id of the exit-node
+//
+// Empty string is the "no default" sentinel. /add_rule (part 2b)
+// will refuse to proceed if either default is unset — for now the
+// defaults are pure preferences with no functional effect, so
+// nothing breaks if they're unset.
+//
+// The four commands:
+//
+//   /setdefaultdevice [node_id | clear]
+//       no args → list user's devices, ask for node_id
+//       <node_id> → set as default (validated against the user's
+//                   own node_owner_map, excluding exit-nodes)
+//       clear    → reset to ""
+//
+//   /defaultdevice
+//       show the current default (or "not set" + hint)
+//
+//   /setexitnode [node_id | clear]
+//       no args → list enabled exit_servers, ask for node_id
+//       <node_id> → set as default (validated against enabled
+//                   exit_servers only)
+//       clear    → reset to ""
+//
+//   /defaultexitnode
+//       show the current default (or "not set" + hint)
+//
+// All four are user-scope: each user manages their own defaults.
+// Admin can NOT set defaults for other users (per-user preference,
+// not a global policy) — admins wanting to seed defaults for a
+// user would have to bind their own chat as that user, which is
+// the existing /bind mechanism, not a new code path.
+
+// setDefaultDeviceReply is the user-scope reply for /setdefaultdevice.
+// Mirrors the "list with no args, set with arg, clear with 'clear'"
+// grammar that /setexitnode uses — keeping both commands uniform
+// means /help can describe them in one sentence.
+func setDefaultDeviceReply(env BotEnv, arg string) string {
+	if !env.IsIdentified() {
+		return "setdefaultdevice: chat not bound to a portal user. Ask an admin to /bind your chat_id."
+	}
+	arg = strings.TrimSpace(arg)
+
+	// Get the user's devices from node_owner_map, filtering out
+	// exit-nodes and public nodes (those are infrastructure, not
+	// endpoints a user would route through). We use the db helper
+	// (not an inline query) to keep the SQL in one place.
+	owners, err := db.ListNodeOwnersByUsername(env.DB, env.Username)
+	if err != nil {
+		return fmt.Sprintf("setdefaultdevice: db error: %v", err)
+	}
+	var deviceIDs []string
+	for _, o := range owners {
+		// tag:exit-node and tag:public are not "devices" in the
+		// user-routing sense — they are shared infrastructure.
+		if o.Tag == "tag:exit-node" || o.Tag == "tag:public" {
+			continue
+		}
+		deviceIDs = append(deviceIDs, o.NodeID)
+	}
+	if len(deviceIDs) == 0 {
+		return "setdefaultdevice: you have no devices yet. Use /add_device to issue a 1h preauth key for a new one, then /setdefaultdevice again."
+	}
+
+	// Build a node_id → hostname map for the list/confirm views.
+	// Best-effort: if headscale is unreachable we still print the
+	// node_ids (the user can read them off /my_nodes).
+	hostnameMap := map[string]string{}
+	if env.HS != nil {
+		if nodes, err := env.HS.ListAllNodes(); err == nil {
+			for _, n := range nodes {
+				hn := n.GivenName
+				if hn == "" {
+					hn = n.Hostname
+				}
+				hostnameMap[n.ID] = hn
+			}
+		}
+	}
+
+	// No arg → list the devices and ask for the node_id.
+	if arg == "" {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Your devices (%d):\n\n", len(deviceIDs))
+		for _, id := range deviceIDs {
+			hn := hostnameMap[id]
+			if hn == "" {
+				hn = "(unknown hostname)"
+			}
+			fmt.Fprintf(&sb, "  %s (node %s)\n", hn, id)
+		}
+		sb.WriteString("\nSend /setdefaultdevice <node_id> to pick one.\n")
+		sb.WriteString("Pass \"clear\" to remove the default.")
+		return trimForTelegram(sb.String())
+	}
+
+	// "clear" → reset to no default.
+	if strings.EqualFold(arg, "clear") {
+		if _, err := db.SetDefaultDevice(env.DB, env.PortalUserID, ""); err != nil {
+			return fmt.Sprintf("setdefaultdevice: db error: %v", err)
+		}
+		_ = db.AppendAuditLog(env.DB, env.PortalUserID, env.Username, "default_device_changed", "cleared")
+		return "setdefaultdevice: default device cleared ✓"
+	}
+
+	// Validate that arg is one of the user's devices.
+	valid := false
+	for _, id := range deviceIDs {
+		if id == arg {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Sprintf("setdefaultdevice: %q is not in your device list. Try /my_nodes to see valid node_ids.", arg)
+	}
+
+	if _, err := db.SetDefaultDevice(env.DB, env.PortalUserID, arg); err != nil {
+		return fmt.Sprintf("setdefaultdevice: db error: %v", err)
+	}
+	_ = db.AppendAuditLog(env.DB, env.PortalUserID, env.Username, "default_device_changed", "set to node "+arg)
+	hn := hostnameMap[arg]
+	if hn != "" {
+		return fmt.Sprintf("setdefaultdevice: default device set to %s (node %s) ✓", hn, arg)
+	}
+	return fmt.Sprintf("setdefaultdevice: default device set to node %s ✓", arg)
+}
+
+// defaultDeviceReply is the user-scope reply for /defaultdevice.
+// Shows the current default (resolved to a hostname when possible)
+// or a "not set" hint pointing at /setdefaultdevice.
+func defaultDeviceReply(env BotEnv) string {
+	if !env.IsIdentified() {
+		return "defaultdevice: chat not bound to a portal user. Ask an admin to /bind your chat_id."
+	}
+	nodeID, err := db.GetDefaultDevice(env.DB, env.PortalUserID)
+	if err != nil {
+		return fmt.Sprintf("defaultdevice: db error: %v", err)
+	}
+	if nodeID == "" {
+		return "defaultdevice: no default device set.\nUse /setdefaultdevice to pick one."
+	}
+	// Resolve the hostname best-effort. If headscale is down we
+	// still return the node_id (it's enough to act on).
+	if env.HS != nil {
+		if nodes, err := env.HS.ListAllNodes(); err == nil {
+			for _, n := range nodes {
+				if n.ID == nodeID {
+					hn := n.GivenName
+					if hn == "" {
+						hn = n.Hostname
+					}
+					if hn != "" {
+						return fmt.Sprintf("defaultdevice: %s (node %s)\nChange with /setdefaultdevice.", hn, nodeID)
+					}
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("defaultdevice: node %s (hostname lookup failed)\nChange with /setdefaultdevice.", nodeID)
+}
+
+// setExitNodeReply is the user-scope reply for /setexitnode. The
+// grammar mirrors /setdefaultdevice exactly (no args → list,
+// <node_id> → set, "clear" → reset) so /help can describe them
+// in one sentence.
+//
+// Validation: the node_id must be a row in exit_servers with
+// enabled=1. The node_owner_map tag:exit-node view is NOT enough
+// on its own (a node can be tagged exit-node in headscale but
+// disabled in skygate's exit_servers — admin controls that flag).
+// We use exit_servers.enabled as the source of truth.
+func setExitNodeReply(env BotEnv, arg string) string {
+	if !env.IsIdentified() {
+		return "setexitnode: chat not bound to a portal user. Ask an admin to /bind your chat_id."
+	}
+	arg = strings.TrimSpace(arg)
+
+	servers, err := db.ListExitServers(env.DB)
+	if err != nil {
+		return fmt.Sprintf("setexitnode: db error: %v", err)
+	}
+	var enabled []db.ExitServer
+	for _, s := range servers {
+		if s.Enabled {
+			enabled = append(enabled, s)
+		}
+	}
+	if len(enabled) == 0 {
+		return "setexitnode: no enabled exit-nodes in skygate. Ask an admin to enable one in /admin/exit-nodes."
+	}
+
+	// No arg → list enabled exit-nodes.
+	if arg == "" {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Enabled exit-nodes (%d):\n\n", len(enabled))
+		for _, s := range enabled {
+			fmt.Fprintf(&sb, "  %s (node %s)\n", s.Hostname, s.NodeID)
+		}
+		sb.WriteString("\nSend /setexitnode <node_id> to pick one.\n")
+		sb.WriteString("Pass \"clear\" to remove the default.")
+		return trimForTelegram(sb.String())
+	}
+
+	// "clear" → reset.
+	if strings.EqualFold(arg, "clear") {
+		if _, err := db.SetDefaultExitNode(env.DB, env.PortalUserID, ""); err != nil {
+			return fmt.Sprintf("setexitnode: db error: %v", err)
+		}
+		_ = db.AppendAuditLog(env.DB, env.PortalUserID, env.Username, "default_exit_node_changed", "cleared")
+		return "setexitnode: default exit-node cleared ✓"
+	}
+
+	// Validate: arg must be a node_id of an enabled exit_servers row.
+	var picked *db.ExitServer
+	for i := range enabled {
+		if enabled[i].NodeID == arg {
+			picked = &enabled[i]
+			break
+		}
+	}
+	if picked == nil {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "setexitnode: %q is not an enabled exit-node. Valid:\n", arg)
+		for _, s := range enabled {
+			fmt.Fprintf(&sb, "  %s (node %s)\n", s.Hostname, s.NodeID)
+		}
+		return trimForTelegram(sb.String())
+	}
+
+	if _, err := db.SetDefaultExitNode(env.DB, env.PortalUserID, picked.NodeID); err != nil {
+		return fmt.Sprintf("setexitnode: db error: %v", err)
+	}
+	_ = db.AppendAuditLog(env.DB, env.PortalUserID, env.Username, "default_exit_node_changed", "set to "+picked.Hostname+" (node "+picked.NodeID+")")
+	return fmt.Sprintf("setexitnode: default exit-node set to %s (node %s) ✓", picked.Hostname, picked.NodeID)
+}
+
+// defaultExitNodeReply is the user-scope reply for /defaultexitnode.
+// Symmetric with defaultDeviceReply: shows the current default
+// (resolved to hostname when possible) or a "not set" hint.
+func defaultExitNodeReply(env BotEnv) string {
+	if !env.IsIdentified() {
+		return "defaultexitnode: chat not bound to a portal user. Ask an admin to /bind your chat_id."
+	}
+	nodeID, err := db.GetDefaultExitNode(env.DB, env.PortalUserID)
+	if err != nil {
+		return fmt.Sprintf("defaultexitnode: db error: %v", err)
+	}
+	if nodeID == "" {
+		return "defaultexitnode: no default exit-node set.\nUse /setexitnode to pick one."
+	}
+	// Look up the hostname from exit_servers (no headscale call
+	// needed — the hostname is right there). Falls back to node_id
+	// if the row is gone (e.g. admin deleted the exit-server
+	// between when the user set the default and now).
+	if hostname, _ := db.LookupExitServerHostname(env.DB, nodeID); hostname != "" {
+		return fmt.Sprintf("defaultexitnode: %s (node %s)\nChange with /setexitnode.", hostname, nodeID)
+	}
+	return fmt.Sprintf("defaultexitnode: node %s (exit-server row not found, may be disabled/deleted)\nChange with /setexitnode.", nodeID)
+}
