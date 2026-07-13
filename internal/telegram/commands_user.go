@@ -470,8 +470,31 @@ func addRuleReply(env BotEnv, args []string) string {
 	// can roll back. We pass nil for the Alerter — the bot
 	// audit_log row is the bot's audit trail; an extra
 	// Telegram ping per /add_rule would be noise.
+	//
+	// 2026-07-13: Этап 13 follow-up — read-only guard.
+	// /delrule and /clearrules already skip the pipeline
+	// when env.HS == nil (read-only deploy). This brings
+	// /add_rule in line with them: insert the rules + audit,
+	// but skip the headscale.SetPolicy call (which would
+	// nil-deref) and tell the user to ask an admin to sync.
+	// This also matches addDeviceReply's "telegram not wired
+	// for writes" guard pattern.
 	detailForLog := fmt.Sprintf("user %s added rule(s) (type=%s target=%s exit=%s) for %s via bot",
 		target.Username, typeToInsert, rawTarget, exitNodeHostname, target.Username)
+	if env.HS == nil {
+		auditDetail := fmt.Sprintf("via bot: %s %s → %s (exit=%s, action=%s, ids=%v) — ACL sync skipped (read-only mode)",
+			typeToInsert, rawTarget, exitNodeHostname, exitNodeHostname, action, insertedIDs)
+		if dnsWarning != "" {
+			auditDetail += "; " + dnsWarning
+		}
+		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_added", auditDetail)
+		reply := fmt.Sprintf("add_rule: ✓ added %d rule(s) for %s (ids=%v) — ACL sync skipped (read-only mode) — ask admin to /admin/exit-rules/sync.",
+			len(insertedIDs), target.Username, insertedIDs)
+		if dnsWarning != "" {
+			reply += "\n  ⚠ " + dnsWarning
+		}
+		return reply
+	}
 	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, target.Username, detailForLog)
 
 	// Audit log (under the target user, so per-user audit
@@ -487,7 +510,12 @@ func addRuleReply(env BotEnv, args []string) string {
 	// Reply. Success case: list the inserted ids + the
 	// ACL version that was applied. SetPolicy failure case:
 	// the snapshot is still saved — call it out so the user
-	// knows to ask an admin to retry the sync.
+	// knows to ask an admin to retry the sync. ALSO send a
+	// Telegram alert to the operator (the "🛡️ ACL" alert
+	// fires on snapshot save; the "❌ ACL apply failed" alert
+	// fires here, in the failure-only branch) so the
+	// operator wakes up even if the user doesn't notice
+	// the warning in the bot reply.
 	if pipe.Applied {
 		reply := fmt.Sprintf("add_rule: ✓ added %d rule(s) for %s\n  target: %s %s (action=%s)\n  exit: %s\n  rule_ids=%v\n  ACL v%d applied to headscale",
 			len(insertedIDs), target.Username, typeToInsert, rawTarget, action, exitNodeHostname, insertedIDs, pipe.Version)
@@ -495,6 +523,13 @@ func addRuleReply(env BotEnv, args []string) string {
 			reply += "\n  ⚠ " + dnsWarning
 		}
 		return reply
+	}
+	// SetPolicy failed — ping the operator via the same
+	// Notifier that /ack uses. Async so the bot reply
+	// isn't blocked on the Telegram API call.
+	if env.Notifier != nil {
+		go env.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
+			target.Username, typeToInsert, rawTarget, pipe.Err))
 	}
 	return fmt.Sprintf("add_rule: ⚠ rule(s) added to DB for %s (target=%s %s, ids=%v) but ACL v%d was NOT applied to headscale: %v\nAsk an admin to /admin/exit-rules/sync.",
 		target.Username, typeToInsert, rawTarget, insertedIDs, pipe.Version, pipe.Err)
@@ -668,7 +703,10 @@ func deleteRuleReply(env BotEnv, arg string) string {
 	_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_deleted", auditDetail)
 
 	// Reply. Success: list deleted ids + ACL version. Failure:
-	// rules deleted but ACL not applied — ask admin to sync.
+	// rules deleted but ACL not applied — ask admin to sync
+	// AND ping the operator via Notifier (same pattern as
+	// addRuleReply) so the operator wakes up even if the
+	// user doesn't notice the warning in the bot reply.
 	if pipe.Applied {
 		reply := fmt.Sprintf("delrule: ✓ deleted %d rule(s) for %s (cascade: %d)\n  rule_ids=%v\n  ACL v%d applied to headscale",
 			len(deletedIDs), target.Username, totalCascade, deletedIDs, pipe.Version)
@@ -676,6 +714,10 @@ func deleteRuleReply(env BotEnv, arg string) string {
 			reply += fmt.Sprintf("\n  ⚠ skipped: %s", strings.Join(skipped, ", "))
 		}
 		return reply
+	}
+	if env.Notifier != nil {
+		go env.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (delete by %s)\n  ids=%v\n  err: %v",
+			target.Username, deletedIDs, pipe.Err))
 	}
 	return fmt.Sprintf("delrule: ⚠ rule(s) deleted from DB for %s (ids=%v) but ACL v%d was NOT applied to headscale: %v\nAsk an admin to /admin/exit-rules/sync.",
 		target.Username, deletedIDs, pipe.Version, pipe.Err)
