@@ -1,19 +1,20 @@
 // Package telegram — user-scope reply functions (Этап 11, 2026-07-12).
 //
-// These power the /my_* commands plus /add_device, /add_rule, /delete_rule.
+// These power the /my_* commands plus /add_device, /add_rule, /delrule.
 // Every function takes a BotEnv and uses env.PortalUserID / env.Username
 // to filter data to the calling user. Admin callers see their own data
 // too (not all-user data) — admins wanting the cross-user view use the
 // admin-scope commands (/nodes, /rules, /quota) which are unchanged.
 //
-// The new /add_* commands also accept an optional username argument so
-// the admin can act on a user's behalf. e.g.:
+// The /add_* and /delrule commands also accept an optional username
+// argument so the admin can act on a user's behalf. e.g.:
 //   /add_rule alice telegram.org      → adds "telegram.org" for alice
 //   /add_rule telegram.org            → adds "telegram.org" for the caller
+//   /delrule alice 5 6 7              → deletes alice's rules 5, 6, 7
+//   /delrule 5 6 7                    → deletes the caller's rules 5, 6, 7
 //
-// The actual rule/preauth writes are still done via the web UI for
-// now (see addDeviceReply/addRuleReply); wiring headscale + ACL sync
-// into the bot is a larger task tracked separately.
+// /delete_rule is kept as a deprecated alias of /delrule (same handler
+// function) for back-compat with the original /help text.
 
 package telegram
 
@@ -499,44 +500,185 @@ func addRuleReply(env BotEnv, args []string) string {
 		target.Username, typeToInsert, rawTarget, insertedIDs, pipe.Version, pipe.Err)
 }
 
-// deleteRuleReply removes one of the caller's own rules by id.
+// deleteRuleReply removes one or more of the caller's own rules by id.
 // Cross-user is rejected: a regular user can only delete rules
-// where user_id = env.PortalUserID. Admin users can delete any
-// user's rule.
+// where user_id = env.PortalUserID. Admin users can delete another
+// user's rule via the optional <username> prefix.
 //
-// SCOPE NOTE: rule deletes need the full App context (cascade + ACL
-// sync). The bot returns a guided hint rather than half-deleting.
+// The function is named deleteRuleReply (the historical name from
+// when the only command was /delete_rule); it powers BOTH /delrule
+// (the new short form, primary) AND /delete_rule (deprecated alias,
+// kept for back-compat with the original /help text). HandleCommand
+// routes both commands to this function.
+//
+// Grammar:
+//
+//	/delrule <id>                  — delete one rule
+//	/delrule <id1> <id2> <id3>     — delete multiple (whitespace-separated)
+//	/delrule <username> <id> ...   — admin only: delete for that user
+//	/delete_rule <id>              — same (deprecated alias)
+//
+// 2026-07-13: Этап 12 — real write. Mirrors
+// handlers/exit_rules_form_my.go:PostDeleteExitRule:
+//
+//	1. For each id: GetRuleTargetTypeAndParent verifies ownership
+//	   (the helper's WHERE filters by user_id, so a non-owned id
+//	   returns ErrNotFound — we surface both "missing" and
+//	   "not yours" as "not found / not yours" to avoid leaking
+//	   rule existence across users).
+//	2. If target_type=domain + parent_domain: DeleteRuleOrCascadeByParentDomain
+//	   deletes the rule + any sibling /32 entries with the same
+//	   parent_domain (autoupdater-derived entries).
+//	3. Else: DeleteRuleForUser deletes the single row.
+//	4. acl.ApplyACLPipeline → GenerateACL → SetPolicy → Mark+Log.
+//	5. audit_log row under the *target* user (so per-user audit
+//	   views stay correct).
+//
+// We collect per-id errors so the user gets a full report of "what
+// was skipped" rather than failing on the first bad id. Multi-id
+// deletes are best-effort: if SOME ids are valid we still process
+// them and only fail completely when NO id is valid.
+//
+// Read-only deploys (env.HS == nil) get a guard: the DB delete
+// still runs but the ACL pipeline is skipped with a clear hint
+// ("ACL sync skipped — ask admin to /admin/exit-rules/sync"). This
+// is a small improvement over addRuleReply (which would crash on
+// nil HS); the same guard should be backported to addRuleReply in
+// a follow-up.
+//
+// The bot skips the per-rule SyncAdvertisedRoutes call and the
+// Telegram Notifier alert that the web form does — admin can
+// trigger sync via /admin/exit-rules/sync, and audit_log is the
+// bot's audit trail.
 func deleteRuleReply(env BotEnv, arg string) string {
 	if !env.IsIdentified() {
-		return "delete_rule: chat not bound to a portal user. Ask an admin to /bind your chat_id."
+		return "delrule: chat not bound to a portal user. Ask an admin to /bind your chat_id."
 	}
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		return "delete_rule: usage: /delete_rule <id>   (id is from /my_rules)"
+	args := strings.Fields(strings.TrimSpace(arg))
+	if len(args) == 0 {
+		return "delrule: usage: /delrule <id> [id2 ...]\n       /delrule <username> <id> [id2 ...]   (admin only)"
 	}
-	id, err := strconv.ParseInt(arg, 10, 64)
-	if err != nil || id <= 0 {
-		return fmt.Sprintf("delete_rule: %q is not a valid rule id", arg)
+
+	// Admin target: /delrule <username> <id> ... — first arg is the
+	// target user (admin only), rest are rule ids. We detect
+	// "username vs id" by trying strconv.Atoi on the first arg:
+	// an all-digit arg is a rule id, anything else is treated as
+	// a username. This avoids the admin getting tripped up when
+	// their own username happens to be a positive integer.
+	target := db.User{ID: env.PortalUserID, Username: env.Username, IsAdmin: env.IsAdmin}
+	_, firstErr := strconv.Atoi(args[0])
+	firstIsNum := firstErr == nil
+	if env.IsAdmin && !firstIsNum {
+		// First arg is non-numeric — treat as a username.
+		u, err := lookupUserByUsername(env.DB, args[0])
+		if err != nil {
+			return fmt.Sprintf("delrule: %v (admin can target another user with: /delrule <username> <id>)", err)
+		}
+		target = *u
+		args = args[1:]
+	} else if !env.IsAdmin && !firstIsNum {
+		// Non-admin: a non-numeric first arg in a multi-arg
+		// command looks like an attempt to use the admin
+		// <username> <id> form. Reject explicitly.
+		if len(args) > 1 {
+			return "delrule: extra args (admin-only: /delrule <username> <id>)"
+		}
+		// Single non-numeric arg: it's just a bad id — fall
+		// through to the per-id validation below.
 	}
-	var ownerID int64
-	var exitNode, tType, tVal, act string
-	if err := env.DB.QueryRow(
-		`SELECT user_id, exit_node_id, target_type, target_value, action
-		   FROM device_rules WHERE id = ?`, id,
-	).Scan(&ownerID, &exitNode, &tType, &tVal, &act); err != nil {
-		return fmt.Sprintf("delete_rule: no rule with id=%d", id)
+	if len(args) == 0 {
+		return "delrule: missing ids. Usage: /delrule <id> [id2 ...]"
 	}
-	if !env.IsAdmin && ownerID != env.PortalUserID {
-		return fmt.Sprintf("delete_rule: rule #%d belongs to another user; you can only delete your own rules", id)
+
+	// Parse all ids. Per-id errors are collected into `skipped`
+	// so the reply can list "what we couldn't do" alongside the
+	// successful deletes.
+	type idJob struct {
+		id           int
+		targetType   string
+		parentDomain string
 	}
-	_ = exitNode
-	_ = tType
-	_ = tVal
-	_ = act
-	return fmt.Sprintf(
-		"delete_rule: removing rules from the bot is on the roadmap. "+
-			"For now, open https://<skygate>/my/exit-rules and delete rule #%d (or /admin/exit-rules if you're an admin).",
-		id)
+	var jobs []idJob
+	var skipped []string
+	for _, a := range args {
+		id, err := strconv.Atoi(a)
+		if err != nil || id <= 0 {
+			skipped = append(skipped, fmt.Sprintf("%q (not a positive integer)", a))
+			continue
+		}
+		// GetRuleTargetTypeAndParent filters by (id, user_id) —
+		// a missing id OR a cross-user id both return ErrNotFound.
+		// We surface them as "not found / not yours" so we don't
+		// leak rule existence across users.
+		tType, parentDomain, err := db.GetRuleTargetTypeAndParent(env.DB, id, target.ID)
+		if err != nil {
+			skipped = append(skipped, fmt.Sprintf("%d (not found / not yours)", id))
+			continue
+		}
+		jobs = append(jobs, idJob{id: id, targetType: tType, parentDomain: parentDomain})
+	}
+	if len(jobs) == 0 {
+		return fmt.Sprintf("delrule: no valid ids to delete. Skipped: %s", strings.Join(skipped, ", "))
+	}
+
+	// Delete each rule. Domain rules cascade to /32 siblings
+	// (the autoupdater-derived entries with the same parent_domain).
+	// The cascade count = rows_affected - 1 (the "extra" /32s beyond
+	// the row we asked to delete).
+	var deletedIDs []int
+	totalCascade := 0
+	for _, j := range jobs {
+		if j.targetType == "domain" && j.parentDomain != "" {
+			n, err := db.DeleteRuleOrCascadeByParentDomain(env.DB, target.ID, j.id, j.parentDomain)
+			if err == nil {
+				totalCascade += int(n) - 1
+			}
+		} else {
+			_ = db.DeleteRuleForUser(env.DB, j.id, target.ID)
+		}
+		deletedIDs = append(deletedIDs, j.id)
+	}
+
+	// ACL pipeline. Read-only deploys (HS == nil) skip the
+	// pipeline — the rules are already gone, admin can
+	// /admin/exit-rules/sync to push the updated policy manually.
+	if env.HS == nil {
+		auditDetail := fmt.Sprintf("via bot: deleted %d rule(s) for %s (cascade: %d, ids=%v) — ACL sync skipped (read-only mode)",
+			len(deletedIDs), target.Username, totalCascade, deletedIDs)
+		if len(skipped) > 0 {
+			auditDetail += fmt.Sprintf("; skipped: %s", strings.Join(skipped, ", "))
+		}
+		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_deleted", auditDetail)
+		return fmt.Sprintf("delrule: ✓ removed %d rule(s) for %s (cascade: %d). ACL sync skipped (read-only mode) — ask admin to /admin/exit-rules/sync.",
+			len(deletedIDs), target.Username, totalCascade)
+	}
+
+	detailForLog := fmt.Sprintf("user %s deleted %d rule(s) (cascade: %d) for %s via bot",
+		target.Username, len(deletedIDs), totalCascade, target.Username)
+	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, target.Username, detailForLog)
+
+	// Audit log under target user. The action is rule_deleted; the
+	// detail captures what was deleted + cascade count + skipped ids
+	// (so an operator scanning audit_log sees the full picture).
+	auditDetail := fmt.Sprintf("via bot: deleted %d rule(s) for %s (cascade: %d, ids=%v)",
+		len(deletedIDs), target.Username, totalCascade, deletedIDs)
+	if len(skipped) > 0 {
+		auditDetail += fmt.Sprintf("; skipped: %s", strings.Join(skipped, ", "))
+	}
+	_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_deleted", auditDetail)
+
+	// Reply. Success: list deleted ids + ACL version. Failure:
+	// rules deleted but ACL not applied — ask admin to sync.
+	if pipe.Applied {
+		reply := fmt.Sprintf("delrule: ✓ deleted %d rule(s) for %s (cascade: %d)\n  rule_ids=%v\n  ACL v%d applied to headscale",
+			len(deletedIDs), target.Username, totalCascade, deletedIDs, pipe.Version)
+		if len(skipped) > 0 {
+			reply += fmt.Sprintf("\n  ⚠ skipped: %s", strings.Join(skipped, ", "))
+		}
+		return reply
+	}
+	return fmt.Sprintf("delrule: ⚠ rule(s) deleted from DB for %s (ids=%v) but ACL v%d was NOT applied to headscale: %v\nAsk an admin to /admin/exit-rules/sync.",
+		target.Username, deletedIDs, pipe.Version, pipe.Err)
 }
 
 // bindReply binds a Telegram chat_id to a portal user. Admin-only.
