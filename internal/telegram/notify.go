@@ -310,20 +310,24 @@ func lookupPortalUsername(d *sql.DB, userID int64) (string, error) {
 	return u, err
 }
 
-// SendTelegram posts text to the configured chat_id. Silently no-ops if
-// the token is not configured. Errors are logged but not returned, since
-// this is fire-and-forget notification code; callers should not block
-// on Telegram availability.
+// SendTelegram posts text to the configured chat_id. Silently no-ops
+// if EITHER the token OR the chat_id is missing (we need both to
+// sendMessage). Errors are logged but not returned, since this is
+// fire-and-forget notification code; callers should not block on
+// Telegram availability.
+//
+// 2026-07-13: switched from Configured() to LoadTelegramSendTarget
+// so we correctly distinguish "polling" (token-only is enough) from
+// "sending" (need both). Without this, Configured() returned true
+// for a token-only config and SendTelegram would proceed with
+// chatID="" → Telegram API returns 400.
 func (n *RealNotifier) SendTelegram(text string) {
 	if n == nil {
 		return
 	}
-	if !n.Configured() {
-		return
-	}
-	token, chatID, ok, err := db.LoadTelegramToken(n.db)
+	token, chatID, ok, err := db.LoadTelegramSendTarget(n.db)
 	if err != nil || !ok {
-		log.Printf("telegram: skip send: load err=%v ok=%v", err, ok)
+		log.Printf("telegram: skip send: load err=%v ok=%v (need both token AND chat_id)", err, ok)
 		return
 	}
 	if !strings.HasPrefix(text, "```") {
