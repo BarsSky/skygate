@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 )
 
 // Notifier is the interface used by code that wants to emit a message.
@@ -68,6 +69,14 @@ type RealNotifier struct {
 	// 2026-07-11: Phase 4 — build version (set by main.go from
 	// app.Version). Surfaces in /version reply.
 	version string
+	// 2026-07-13: Этап 11 part 1 — *headscale.Client, set by main.go
+	// from the same instance that handlers use. Needed by write-side
+	// bot commands (/add_device issues a real preauth key against
+	// headscale; /add_rule and /delete_rule, planned for part 2, will
+	// need it for ACL sync via SetPolicy). nil is allowed — write
+	// commands guard explicitly and return a clear "telegram not wired
+	// for writes" hint so the existing read-only deploys keep working.
+	HS *headscale.Client
 }
 
 func NewRealNotifier(d *sql.DB) *RealNotifier {
@@ -103,6 +112,21 @@ func (n *RealNotifier) SetVersion(v string) {
 	n.version = v
 }
 
+// SetHS stores the *headscale.Client used by write-side bot commands
+// (/add_device issues a real preauth key, /add_rule and /delete_rule
+// planned for part 2 trigger ACL sync). Called once at startup from
+// cmd/skygate/main.go — pass the same *headscale.Client that the
+// web handlers use so a single source of truth drives both surfaces.
+//
+// nil is a valid value: it means the bot is running in read-only
+// mode (the legacy single-admin-chat deploy). Write commands guard
+// against nil and reply with a clear hint instead of crashing.
+func (n *RealNotifier) SetHS(hs *headscale.Client) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.HS = hs
+}
+
 // env returns a BotEnv snapshot for HandleCommand. The DB pointer
 // is the same one we already hold; the limits are read under the
 // mu lock so a future SetLimits call mid-poll doesn't tear the map.
@@ -122,7 +146,7 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
-	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID}
+	env := BotEnv{DB: n.db, UserMaxRules: max, DefaultMax: n.defaultMax, Version: n.version, ChatID: chatID, HS: n.HS}
 	if chatID == 0 {
 		return env // legacy / no identity
 	}
