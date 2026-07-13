@@ -12,6 +12,11 @@
 #   make backup      — run deploy/backup.sh
 #   make restart     — docker compose restart skygate (in-place reload)
 #   make logs        — tail skygate container logs
+#   make tailscale-update-telegram-routes \
+#                    — SSH to the relay (RELAY=emilia) and re-derive
+#                      its advertised Telegram IP ranges from DNS.
+#                      See docs/telegram-relay.md for the manual
+#                      headscale approve-routes step that follows.
 #
 # All targets are no-ops if their dependencies are missing (deploy/
 # scripts/ may be empty in some checkouts).
@@ -21,7 +26,7 @@ GIT      ?= git
 BINARY   ?= ./skygate
 PKG      ?= ./cmd/skygate
 
-.PHONY: build run smoke check-nodes audit-routes test clean deploy backup restart logs help
+.PHONY: build run smoke check-nodes audit-routes test clean deploy backup restart logs tailscale-update-telegram-routes help
 
 help:
 	@echo "Targets:"
@@ -79,3 +84,24 @@ restart:
 
 logs:
 	docker logs --tail 100 -f skygate
+
+# 2026-07-14: Этап 14 v2 — refresh the relay's Telegram IP routes.
+# REQUIRES: ssh access to the relay host with sudo, and the
+# update-routes.sh script present there (deployed via deploy.sh or
+# copied manually). See docs/telegram-relay.md.
+#
+# After this runs, the operator must still execute the
+# `headscale nodes approve-routes` command printed at the end of
+# update-routes.sh. This Makefile target does NOT automate the
+# headscale admin step — that requires the headscale API key
+# and lives in deploy/, not here.
+tailscale-update-telegram-routes:
+	@if [ -z "$(RELAY)" ]; then \
+		echo "RELAY=<hostname> required, e.g. make tailscale-update-telegram-routes RELAY=emilia"; \
+		exit 1; \
+	fi
+	@if [ ! -x deploy/tailscale-relay/update-routes.sh ]; then \
+		echo "deploy/tailscale-relay/update-routes.sh not found or not executable"; \
+		exit 1; \
+	fi
+	ssh -t $(RELAY) "sudo /opt/skygate/deploy/tailscale-relay/update-routes.sh"

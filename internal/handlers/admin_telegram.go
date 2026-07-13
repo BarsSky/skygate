@@ -27,6 +27,16 @@ func (a *App) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := a.loadTelegramUIState()
+	// 2026-07-14: Этап 14 v2 — Tailscale reachability probe.
+	// Runs synchronously on every GET so the banner is always
+	// current. 5s timeout via the probe function. We only run it
+	// when the bot is configured (token is set); otherwise the
+	// banner shows "save a token to enable the probe" instead
+	// of attempting an unauthenticated request.
+	if state.Configured {
+		token, _, _, _ := db.LoadTelegramToken(a.DB)
+		state.Probe = probeTelegramAPI(r.Context(), token)
+	}
 	csrf, err := db.RandomConfirmationToken(8)
 	if err != nil {
 		http.Error(w, "csrf generation failed", http.StatusInternalServerError)
@@ -254,6 +264,13 @@ type telegramUIState struct {
 	// sees the current value without a refresh dance.
 	StrictMode    bool
 	LoginTokenTTL int
+	// 2026-07-14: Этап 14 v2 — Tailscale reachability probe.
+	// Probe.State is the discrete outcome (unreachable / ok_direct
+	// / ok_relay); the template renders a banner that matches.
+	// Probe is the zero value (State=unreachable, Message="")
+	// when the bot isn't configured — the template treats that
+	// case as "no probe yet" rather than as a failure.
+	Probe TelegramProbeResult
 }
 
 func (a *App) loadTelegramUIState() telegramUIState {
