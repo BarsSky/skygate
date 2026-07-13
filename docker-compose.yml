@@ -52,6 +52,8 @@ services:
       - SYS_ADMIN
     devices:
       - /dev/net/tun
+    ports:
+      - "8080:8080"
     networks:
       - skygate-net
     restart: unless-stopped
