@@ -72,10 +72,10 @@ type RealNotifier struct {
 	// 2026-07-13: Этап 11 part 1 — *headscale.Client, set by main.go
 	// from the same instance that handlers use. Needed by write-side
 	// bot commands (/add_device issues a real preauth key against
-	// headscale; /add_rule and /delete_rule, planned for part 2, will
-	// need it for ACL sync via SetPolicy). nil is allowed — write
-	// commands guard explicitly and return a clear "telegram not wired
-	// for writes" hint so the existing read-only deploys keep working.
+	// headscale; /add_rule and /delrule trigger an ACL sync via
+	// SetPolicy). nil is allowed — write commands guard explicitly
+	// and return a clear "telegram not wired for writes" hint so the
+	// existing read-only deploys keep working.
 	HS *headscale.Client
 	// 2026-07-13: Этап 11 part 2b — per-device + total rule caps,
 	// set by main.go from config.Load(). Surfaced in BotEnv so
@@ -120,8 +120,8 @@ func (n *RealNotifier) SetVersion(v string) {
 }
 
 // SetHS stores the *headscale.Client used by write-side bot commands
-// (/add_device issues a real preauth key, /add_rule and /delete_rule
-// planned for part 2 trigger ACL sync). Called once at startup from
+// (/add_device issues a real preauth key, /add_rule and /delrule
+// trigger ACL sync). Called once at startup from
 // cmd/skygate/main.go — pass the same *headscale.Client that the
 // web handlers use so a single source of truth drives both surfaces.
 //

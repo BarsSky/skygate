@@ -549,7 +549,7 @@ func TestMintRestartToken(t *testing.T) {
 
 func TestHelpDetailKnown(t *testing.T) {
 	// Every command listed in /help should have a detailed help entry.
-	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help", "bind", "unbind", "my_status", "my_nodes", "my_rules", "my_quota", "add_device", "add_rule", "delete_rule"} {
+	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help", "bind", "unbind", "my_status", "my_nodes", "my_rules", "my_quota", "add_device", "add_rule", "delrule", "delete_rule"} {
 		got := helpDetailReply(cmd, BotEnv{})
 		if !strings.HasPrefix(got, "/"+cmd+" ") {
 			t.Errorf("expected /%s detailed help, got: %q", cmd, got)
@@ -788,12 +788,22 @@ func TestAddRuleReplyUsageHint(t *testing.T) {
 
 func TestDeleteRuleReplyRejectsCrossUser(t *testing.T) {
 	d := setupTestDB(t)
-	// Insert a rule owned by skyadmin (id=1).
+	// Insert a rule owned by skyadmin (id=1). alice (userEnv) tries
+	// to delete it. The new /delrule implementation surfaces
+	// cross-user ids as "not found / not yours" (single bucket
+	// alongside truly missing ids, to avoid leaking rule
+	// existence across users).
 	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (1, 'emilia', 'domain', 'foo.com', 'accept')`)
 	rid, _ := res.LastInsertId()
-	got := HandleCommand(context.Background(), userEnv(d), fmt.Sprintf("/delete_rule %d", rid))
-	if !strings.Contains(got, "belongs to another user") {
+	got := HandleCommand(context.Background(), userEnv(d), fmt.Sprintf("/delrule %d", rid))
+	if !strings.Contains(got, "not found / not yours") {
 		t.Errorf("expected cross-user rejection, got: %q", got)
+	}
+	// Skyadmin's rule must still be there.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected skyadmin's rule to be preserved, got %d rows", n)
 	}
 }
 
@@ -1699,5 +1709,315 @@ func TestAddRuleReplySetPolicyFailure(t *testing.T) {
 	_ = d.QueryRow(`SELECT action FROM exit_rule_logs WHERE action = 'apply_fail'`).Scan(&logAction)
 	if logAction != "apply_fail" {
 		t.Errorf("expected 'apply_fail' in exit_rule_logs, got %q", logAction)
+	}
+}
+
+// --- Этап 12: /delrule real-write tests (2026-07-13) ---
+//
+// 14 tests covering the delete flow end-to-end:
+//   1.  Usage hint (no args)
+//   2.  Reject unbound chat
+//   3.  Reject bad arg (non-numeric)
+//   4.  Reject unknown id
+//   5.  Single success (rule gone, audit + ACL)
+//   6.  Multi success (multiple ids, partial skip)
+//   7.  Domain cascade (delete domain rule + /32 siblings go too)
+//   8.  Admin targets another user
+//   9.  Non-admin can't target another user
+//   10. SetPolicy failure (rule deleted, ACL saved but not applied)
+//   11. Read-only mode (HS == nil, DB delete + no pipeline)
+//   12. /delrule and /delete_rule route to the same handler
+//   13. /delrule is listed in /help
+//   14. /help delrule returns detailed help
+
+func TestDelRuleReplyUsageHint(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/delrule")
+	if !strings.Contains(got, "usage") {
+		t.Errorf("expected usage hint for /delrule with no args, got: %q", got)
+	}
+}
+
+func TestDelRuleReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/delrule 1")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /delrule, got: %q", got)
+	}
+}
+
+func TestDelRuleReplyRejectsBadArg(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/delrule abc")
+	if !strings.Contains(got, "no valid ids") {
+		t.Errorf("expected 'no valid ids' for non-numeric arg, got: %q", got)
+	}
+	if !strings.Contains(got, "not a positive integer") {
+		t.Errorf("expected 'not a positive integer' in skipped list, got: %q", got)
+	}
+}
+
+func TestDelRuleReplyRejectsUnknownID(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/delrule 9999")
+	if !strings.Contains(got, "no valid ids") {
+		t.Errorf("expected 'no valid ids' for missing id, got: %q", got)
+	}
+	if !strings.Contains(got, "not found / not yours") {
+		t.Errorf("expected 'not found / not yours' for missing id, got: %q", got)
+	}
+}
+
+func TestDelRuleReplySingleSuccess(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed alice's rule.
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	rid, _ := res.LastInsertId()
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
+	if !strings.Contains(got, "deleted 1 rule") {
+		t.Errorf("expected 'deleted 1 rule' in success reply, got: %q", got)
+	}
+	if !strings.Contains(got, "ACL") {
+		t.Errorf("expected 'ACL v#' in reply, got: %q", got)
+	}
+	// device_rules row gone.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected rule row to be deleted, got %d rows", n)
+	}
+	// audit_log row under alice with action=rule_deleted.
+	var action, detail string
+	_ = d.QueryRow(`SELECT action, detail FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action, &detail)
+	if action != "rule_deleted" {
+		t.Errorf("audit action = %q, want 'rule_deleted'", action)
+	}
+	if !strings.Contains(detail, "via bot") {
+		t.Errorf("audit detail = %q, want to contain 'via bot'", detail)
+	}
+	// acl_snapshots row exists with applied_success=1.
+	var nApplied int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE applied_success = 1`).Scan(&nApplied)
+	if nApplied < 1 {
+		t.Errorf("expected at least 1 applied acl_snapshots row, got %d", nApplied)
+	}
+}
+
+func TestDelRuleReplyMultiSuccess(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed three of alice's rules + one missing id.
+	r1, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	r2, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '2.2.2.2/32', 'accept')`)
+	r3, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '3.3.3.3/32', 'accept')`)
+	id1, _ := r1.LastInsertId()
+	id2, _ := r2.LastInsertId()
+	id3, _ := r3.LastInsertId()
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs),
+		fmt.Sprintf("/delrule %d %d 9999 %d", id1, id2, id3))
+	if !strings.Contains(got, "deleted 3 rule") {
+		t.Errorf("expected 'deleted 3 rule' in multi-success reply, got: %q", got)
+	}
+	if !strings.Contains(got, "skipped") {
+		t.Errorf("expected 'skipped' in reply for the missing id, got: %q", got)
+	}
+	// All three rows gone.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 alice rules after multi-delete, got %d", n)
+	}
+}
+
+func TestDelRuleReplyDomainCascade(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: a domain rule + two /32 children with the same parent_domain
+	// (mimics the autoupder's /32 fan-out from a single domain rule).
+	res1, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 'emilia', 'domain', 'telegram.org', 'accept', 'telegram.org')`)
+	rid, _ := res1.LastInsertId()
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept', 'telegram.org')`)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 'emilia', 'subnet', '2.2.2.2/32', 'accept', 'telegram.org')`)
+	// One unrelated rule that must NOT be touched.
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '9.9.9.9/32', 'accept')`)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
+	if !strings.Contains(got, "deleted 1 rule") {
+		t.Errorf("expected 'deleted 1 rule' (the original), got: %q", got)
+	}
+	if !strings.Contains(got, "cascade: 2") {
+		t.Errorf("expected 'cascade: 2' in reply, got: %q", got)
+	}
+	// The 2 /32 children must be gone too.
+	var remaining int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2 AND parent_domain = 'telegram.org'`).Scan(&remaining)
+	if remaining != 0 {
+		t.Errorf("expected 0 rows with parent_domain='telegram.org', got %d", remaining)
+	}
+	// Unrelated rule untouched.
+	var untouched int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE target_value = '9.9.9.9/32'`).Scan(&untouched)
+	if untouched != 1 {
+		t.Errorf("expected 1 row for 9.9.9.9/32 (unrelated), got %d", untouched)
+	}
+}
+
+func TestDelRuleReplyAdminForOtherUser(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed alice's rule.
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	rid, _ := res.LastInsertId()
+	_, hs := fakeHeadscale(t)
+	// skyadmin (admin) deletes alice's rule.
+	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), fmt.Sprintf("/delrule alice %d", rid))
+	if !strings.Contains(got, "deleted 1 rule") {
+		t.Errorf("expected 'deleted 1 rule' for admin-for-other, got: %q", got)
+	}
+	if !strings.Contains(got, "for alice") {
+		t.Errorf("expected 'for alice' in reply, got: %q", got)
+	}
+	// Row gone.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected alice's rule to be deleted by admin, got %d rows", n)
+	}
+	// Audit row under alice.
+	var action string
+	_ = d.QueryRow(`SELECT action FROM audit_log WHERE user_id = 2 AND action = 'rule_deleted'`).Scan(&action)
+	if action != "rule_deleted" {
+		t.Errorf("expected 'rule_deleted' audit row under alice, got %q", action)
+	}
+}
+
+func TestDelRuleReplyRejectsNonAdminForOtherUser(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed skyadmin's rule.
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (1, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	rid, _ := res.LastInsertId()
+	_, hs := fakeHeadscale(t)
+	// alice (non-admin) tries /delrule skyadmin <id>.
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule skyadmin %d", rid))
+	if !strings.Contains(got, "extra args") {
+		t.Errorf("expected 'extra args' rejection for non-admin, got: %q", got)
+	}
+	// skyadmin's rule untouched.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected skyadmin's rule untouched, got %d rows", n)
+	}
+}
+
+func TestDelRuleReplySetPolicyFailure(t *testing.T) {
+	d := setupTestDB(t)
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	rid, _ := res.LastInsertId()
+	_, hs := fakeHeadscaleSetPolicyFail(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
+	if !strings.Contains(got, "NOT applied") {
+		t.Errorf("expected 'NOT applied' in reply, got: %q", got)
+	}
+	// Rule row IS deleted (the failure is downstream of the DELETE).
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected rule row to be deleted even on SetPolicy failure, got %d rows", n)
+	}
+	// acl_snapshots row exists with applied_success=0.
+	var nFailed int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE applied_success = 0`).Scan(&nFailed)
+	if nFailed < 1 {
+		t.Errorf("expected at least 1 failed acl_snapshots row, got %d", nFailed)
+	}
+	// exit_rule_logs has an apply_fail row.
+	var logAction string
+	_ = d.QueryRow(`SELECT action FROM exit_rule_logs WHERE action = 'apply_fail'`).Scan(&logAction)
+	if logAction != "apply_fail" {
+		t.Errorf("expected 'apply_fail' in exit_rule_logs, got %q", logAction)
+	}
+}
+
+func TestDelRuleReplyReadOnlyMode(t *testing.T) {
+	d := setupTestDB(t)
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	rid, _ := res.LastInsertId()
+	// No HS — read-only deploy.
+	got := HandleCommand(context.Background(), userEnvWithHS(d, nil), fmt.Sprintf("/delrule %d", rid))
+	if !strings.Contains(got, "read-only mode") {
+		t.Errorf("expected 'read-only mode' in reply, got: %q", got)
+	}
+	if !strings.Contains(got, "ask admin") {
+		t.Errorf("expected 'ask admin' hint in reply, got: %q", got)
+	}
+	// Rule row IS deleted (DB delete is local; the read-only guard
+	// only skips the headscale.SetPolicy call).
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	if n != 0 {
+		t.Errorf("expected rule row to be deleted in read-only mode, got %d rows", n)
+	}
+	// Audit row should mention the read-only mode.
+	var detail string
+	_ = d.QueryRow(`SELECT detail FROM audit_log WHERE user_id = 2 AND action = 'rule_deleted' ORDER BY id DESC LIMIT 1`).Scan(&detail)
+	if !strings.Contains(detail, "read-only mode") {
+		t.Errorf("expected 'read-only mode' in audit detail, got: %q", detail)
+	}
+	// No NEW acl_snapshots row should be written (no pipeline → no
+	// snapshot). setupTestDB seeds one row at version=5, so we
+	// expect the count to still be 1.
+	var nSnapshots int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots`).Scan(&nSnapshots)
+	if nSnapshots != 1 {
+		t.Errorf("expected exactly 1 acl_snapshots row (the seed) in read-only mode, got %d", nSnapshots)
+	}
+}
+
+func TestDelRuleIsAliasOfDeleteRule(t *testing.T) {
+	d := setupTestDB(t)
+	res, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.2.3.4/32', 'accept')`)
+	rid, _ := res.LastInsertId()
+	_, hs := fakeHeadscale(t)
+	// /delrule and /delete_rule must route to the same handler and
+	// produce equivalent results.
+	got1 := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
+	if !strings.Contains(got1, "deleted 1 rule") {
+		t.Errorf("/delroute expected success, got: %q", got1)
+	}
+	// Re-seed and try the alias.
+	res2, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '5.5.5.5/32', 'accept')`)
+	rid2, _ := res2.LastInsertId()
+	got2 := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delete_rule %d", rid2))
+	if !strings.Contains(got2, "deleted 1 rule") {
+		t.Errorf("/delete_rule alias expected success, got: %q", got2)
+	}
+}
+
+func TestDelRuleReplyListedInHelp(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/help")
+	if !strings.Contains(got, "/delrule") {
+		t.Errorf("expected /delrule in /help output, got: %q", got)
+	}
+	// /delete_rule is the deprecated alias — should NOT appear in
+	// the short /help list (only in /help delete_rule detailed view).
+	if strings.Contains(got, "/delete_rule") {
+		t.Errorf("expected /delete_rule to be hidden from short /help, got: %q", got)
+	}
+}
+
+func TestDelRuleReplyHelpDetail(t *testing.T) {
+	got := helpDetailReply("delrule", BotEnv{})
+	if !strings.HasPrefix(got, "/delrule ") {
+		t.Errorf("expected /delrule detailed help, got: %q", got)
+	}
+	if !strings.Contains(got, "cascade") {
+		t.Errorf("expected 'cascade' in /help delrule, got: %q", got)
+	}
+	// delete_rule detailed help should still work (deprecated alias
+	// has its own /help entry).
+	got2 := helpDetailReply("delete_rule", BotEnv{})
+	if !strings.Contains(got2, "DEPRECATED") {
+		t.Errorf("expected 'DEPRECATED' in /help delete_rule, got: %q", got2)
 	}
 }

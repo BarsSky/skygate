@@ -276,7 +276,7 @@ func helpDetailReply(cmd string, env BotEnv) string {
 			"Example: /my_nodes"
 	case "my_rules":
 		return "/my_rules — list only your own exit-rules, newest first (max 25).\n" +
-			"Use /delete_rule <id> to remove one.\n" +
+			"Use /delrule <id> to remove one.\n" +
 			"Example: /my_rules"
 	case "my_quota":
 		return "/my_quota — your own rule count vs your per-user cap.\n" +
@@ -298,11 +298,20 @@ func helpDetailReply(cmd string, env BotEnv) string {
 			"  /add_rule telegram.org\n" +
 			"  /add_rule 1.2.3.4 deny\n" +
 			"  /add_rule michail telegram.org"
+	case "delrule":
+		return "/delrule <id> [id2 ...] — remove one or more of your own rules.\n" +
+			"/delrule <username> <id> ... — admin only: delete for another user.\n" +
+			"Domain rules cascade to their /32 siblings (one delete covers the whole domain).\n" +
+			"Multi-id: space-separated. Skipped ids are reported in the reply, not failed.\n" +
+			"Triggers an ACL sync (same as /add_rule).\n" +
+			"Examples:\n" +
+			"  /delrule 7\n" +
+			"  /delrule 7 8 9\n" +
+			"  /delrule alice 5 6    (admin → alice)"
 	case "delete_rule":
-		return "/delete_rule <id> — remove one of your own rules.\n" +
-			"Admin can delete any user's rule. Cross-user is rejected for non-admins.\n" +
-			"Note: bot-side deletes are on the roadmap; the bot currently redirects to /my/exit-rules.\n" +
-			"Example: /delete_rule 7"
+		return "/delete_rule <id> — DEPRECATED alias of /delrule.\n" +
+			"Use /delrule instead. The command still works for back-compat.\n" +
+			"Example: /delete_rule 7   (use /delrule 7)"
 	case "help":
 		return "/help [command] — list all commands, or show detailed help for one.\n" +
 			"Examples:\n" +
