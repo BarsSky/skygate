@@ -172,6 +172,36 @@ func DeleteTelegramLoginToken(d *sql.DB, token string) error {
 	return err
 }
 
+// PeekTelegramLoginToken reads a token's row WITHOUT marking
+// it consumed. Used by the bot's /start <token> confirmation
+// flow (Этап 13) which needs to render "Bind to <username>?"
+// before the user taps the [Bind] button. The actual consume
+// happens on the Bind tap, via ConsumeTelegramLoginToken.
+//
+// Returns the same ErrTelegramLoginTokenNotFound / Expired /
+// AlreadyUsed sentinels as the consume path so the caller's
+// switch statement doesn't need a separate code path.
+func PeekTelegramLoginToken(d *sql.DB, token string) (*TelegramLoginToken, error) {
+	var t TelegramLoginToken
+	err := d.QueryRow(qSelectTelegramLoginToken, token).Scan(
+		&t.Token, &t.PortalUserID, &t.CreatedAt, &t.ExpiresAt,
+		&t.UsedAt, &t.UsedByChatID, &t.RequestIP)
+	if err == sql.ErrNoRows {
+		return nil, ErrTelegramLoginTokenNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := unixNow()
+	if t.ExpiresAt < now {
+		return nil, ErrTelegramLoginTokenExpired
+	}
+	if t.UsedAt > 0 {
+		return nil, ErrTelegramLoginTokenAlreadyUsed
+	}
+	return &t, nil
+}
+
 // PruneExpiredTelegramLoginTokens deletes every row whose
 // expires_at < nowSeconds. Called by the web handler after
 // generating a new key (keeps the table small) and by a future
