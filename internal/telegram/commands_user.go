@@ -20,10 +20,12 @@ package telegram
 import (
 	"database/sql"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
 
+	"skygate/internal/acl"
 	"skygate/internal/db"
 )
 
@@ -230,13 +232,37 @@ func addDeviceReply(env BotEnv, arg string) string {
 // for a named user).
 //
 // The argument grammar is intentionally simple:
-//   /add_rule <target>                → action=accept
-//   /add_rule <target> deny           → action=deny
+//   /add_rule <target>                → action=accept (uses defaults)
+//   /add_rule <target> deny           → action=deny (uses defaults)
 //   /add_rule <username> <target>     → admin-only: add for that user
 //
-// SCOPE NOTE: rule writes need the full App context (audit + ACL
-// sync). The web path is /my/exit-rules. The bot returns a guided
-// hint rather than performing a half-baked insert.
+// "Defaults" = the user's /setdefaultdevice + /setexitnode
+// preferences (Этап 11 part 2a). The bot refuses to add a rule
+// if either default is unset, so the user is forced to pick
+// their device + exit-node explicitly before they start writing
+// rules — matches the web form's device_id + exit_node
+// selectors, just in a "set once, reuse" shape.
+//
+// 2026-07-13: Этап 11 part 2b — real write. Mirrors
+// handlers/exit_rules_form_my.go:PostMyExitRule:
+//
+//   1. Read defaults (device_node_id, exit_node_id) for the
+//      target user.
+//   2. Validate defaults are still current (device in
+//      node_owner_map, exit-node still enabled in exit_servers).
+//   3. Per-user / per-device / total rule-limit check.
+//   4. DNS resolve for domains → split into /32 subnets
+//      (Tailscale ACLs work at L3/L4, not L7 — domains are
+//      resolved to IPs and pinned as /32 subnets).
+//   5. Insert rule(s) into device_rules.
+//   6. acl.ApplyACLPipeline → GenerateACL → SetPolicy →
+//      MarkACLApplied/Fail + AppendExitRuleLog.
+//   7. audit_log row under the *target* user (so per-user
+//      audit views stay correct).
+//
+// The bot skips the per-rule SyncAdvertisedRoutes call (admin
+// can trigger via /admin/exit-rules/sync) and the Telegram
+// Notifier alert (audit_log is the bot's audit trail).
 func addRuleReply(env BotEnv, args []string) string {
 	if !env.IsIdentified() {
 		return "add_rule: chat not bound to a portal user. Ask an admin to /bind your chat_id."
@@ -244,6 +270,7 @@ func addRuleReply(env BotEnv, args []string) string {
 	if len(args) == 0 {
 		return "add_rule: usage: /add_rule <target> [deny]\n       /add_rule <username> <target> [deny]   (admin only)"
 	}
+
 	// Pull off a possible trailing "deny" / "accept".
 	action := "accept"
 	last := args[len(args)-1]
@@ -258,25 +285,218 @@ func addRuleReply(env BotEnv, args []string) string {
 	if len(args) == 0 {
 		return "add_rule: missing target after action. Usage: /add_rule <target> [deny]"
 	}
-	target, isAdminArg, err := resolveTargetUser(env, strings.Join(args, " "))
+
+	// Admin target: /add_rule <username> <target> [...]
+	// Two args + admin = username is first; otherwise the
+	// first arg is the target. We don't use resolveTargetUser
+	// here because that helper wants a single string; we
+	// already have args[0] / args[1] split.
+	target := db.User{ID: env.PortalUserID, Username: env.Username, IsAdmin: env.IsAdmin}
+	if len(args) >= 2 && env.IsAdmin {
+		u, err := lookupUserByUsername(env.DB, args[0])
+		if err != nil {
+			return fmt.Sprintf("add_rule: %v (admin can target another user with: /add_rule <username> <target>)", err)
+		}
+		target = *u
+		args = args[1:]
+	} else if len(args) >= 2 && !env.IsAdmin {
+		return "add_rule: extra args (admin-only: /add_rule <username> <target>)"
+	}
+	if len(args) == 0 {
+		return "add_rule: missing target. Usage: /add_rule <target> [deny]"
+	}
+
+	value, _, err := classifyTarget(args[0])
 	if err != nil {
 		return fmt.Sprintf("add_rule: %v", err)
 	}
-	if isAdminArg && !env.IsAdmin {
-		return "add_rule: only admins can add a rule for another user."
+
+	// Read defaults.
+	deviceNodeID, err := db.GetDefaultDevice(env.DB, target.ID)
+	if err != nil || deviceNodeID == "" {
+		return "add_rule: no default device set. Use /setdefaultdevice to pick one first."
 	}
-	value, ttype, err := classifyTarget(args[0])
+	exitNodeNodeID, err := db.GetDefaultExitNode(env.DB, target.ID)
+	if err != nil || exitNodeNodeID == "" {
+		return "add_rule: no default exit-node set. Use /setexitnode to pick one first."
+	}
+
+	// Validate defaults are still current. The default columns
+	// are TEXT pointers into node_owner_map / exit_servers;
+	// those rows can disappear (device removed from tailnet,
+	// exit-server disabled) and the default becomes stale.
+	// We re-check on every insert so a rule never lands with
+	// a dead device or disabled exit-node.
+	var deviceIP string
+	if env.HS != nil {
+		if nodes, err := env.HS.ListAllNodes(); err == nil {
+			for _, n := range nodes {
+				if n.ID == deviceNodeID {
+					if len(n.IPAddresses) > 0 {
+						deviceIP = n.IPAddresses[0]
+					}
+					break
+				}
+			}
+		}
+	}
+	deviceOwned, err := db.CountNodeOwnerByNodeUser(env.DB, deviceNodeID, target.Username)
+	if err != nil || deviceOwned == 0 {
+		return fmt.Sprintf("add_rule: default device (node %s) is not in %s's devices anymore. Use /setdefaultdevice to pick another.", deviceNodeID, target.Username)
+	}
+	// device_id: device_rules.device_id is INT, default column
+	// is TEXT (node_id). headscale node_ids are always numeric,
+	// so Atoi is safe; we surface a clear error otherwise.
+	devID, err := strconv.Atoi(deviceNodeID)
 	if err != nil {
-		return fmt.Sprintf("add_rule: %v", err)
+		return fmt.Sprintf("add_rule: default device node_id %q is not numeric (skygate expects headscale node ids like 42): %v", deviceNodeID, err)
 	}
-	_ = ttype
-	_ = target
-	_ = value
-	return fmt.Sprintf(
-		"add_rule: writing rules from the bot is on the roadmap. "+
-			"For now, open https://<skygate>/my/exit-rules and add:\n"+
-			"  user: %s\n  target: %s\n  action: %s",
-		target.Username, value, action)
+
+	// Resolve the exit-node hostname. device_rules.exit_node_id
+	// stores the hostname (matches what the web form inserts);
+	// the default column stores the node_id. The lookup is a
+	// single indexed read against exit_servers. We also check
+	// enabled=1 because the user might have picked an
+	// exit-server that the admin later disabled — the default
+	// is then stale and we should refuse to insert a rule
+	// pointing at a disabled server.
+	var exitNodeHostname string
+	var exitNodeEnabled int
+	err = env.DB.QueryRow(
+		`SELECT COALESCE(hostname, ''), COALESCE(enabled, 0)
+		   FROM exit_servers WHERE node_id = ?`,
+		exitNodeNodeID,
+	).Scan(&exitNodeHostname, &exitNodeEnabled)
+	if err != nil || exitNodeHostname == "" {
+		return fmt.Sprintf("add_rule: default exit-node (node %s) is no longer an enabled exit-server. Use /setexitnode to pick another.", exitNodeNodeID)
+	}
+	if exitNodeEnabled == 0 {
+		return fmt.Sprintf("add_rule: default exit-node (node %s, %s) is currently disabled. Use /setexitnode to pick another.", exitNodeNodeID, exitNodeHostname)
+	}
+
+	// Per-user / per-device / total rule-limit checks. Same
+	// counts the web form uses (CountEnabledNonSubnetRules*).
+	maxPerUser := env.MaxFor(target.Username)
+	if maxPerUser > 0 {
+		cnt, _ := db.CountEnabledNonSubnetRulesForUser(env.DB, target.ID)
+		if cnt >= maxPerUser {
+			return fmt.Sprintf("add_rule: user limit reached (%d/%d rules for %s). Delete an existing rule first.", cnt, maxPerUser, target.Username)
+		}
+	}
+	if env.MaxRulesPerDevice > 0 {
+		cnt, _ := db.CountEnabledNonSubnetRulesForUserDevice(env.DB, target.ID, devID)
+		if cnt >= env.MaxRulesPerDevice {
+			return fmt.Sprintf("add_rule: per-device limit reached (%d/%d rules on device %d).", cnt, env.MaxRulesPerDevice, devID)
+		}
+	}
+	if env.MaxTotalRules > 0 {
+		cnt, _ := db.CountEnabledRules(env.DB)
+		if cnt >= env.MaxTotalRules {
+			return fmt.Sprintf("add_rule: system-wide limit reached (%d/%d rules). Ask an admin to free some.", cnt, env.MaxTotalRules)
+		}
+	}
+
+	// Classify + DNS resolve. Mirrors the web form: domains get
+	// resolved to A records and inserted as /32 subnets
+	// (Tailscale advertises routes as CIDR, not bare IPs).
+	// If DNS fails, the bot still inserts the original target
+	// as target_type=domain so the autoupdater can retry later.
+	dnsWarning := ""
+	ipsToInsert := []string{value}
+	typeToInsert := "ip"
+	if strings.Contains(value, "/") {
+		typeToInsert = "subnet"
+	}
+	// Reclassify "domain" targets by looking at the raw arg.
+	rawTarget := args[0]
+	if !strings.Contains(rawTarget, "/") && !isIPLiteral(rawTarget) {
+		// Domain.
+		typeToInsert = "subnet"
+		if addrs, err := net.LookupHost(rawTarget); err == nil {
+			ipsToInsert = nil
+			seen := map[string]bool{}
+			for _, a := range addrs {
+				if strings.Contains(a, ":") {
+					continue
+				}
+				if seen[a] {
+					continue
+				}
+				seen[a] = true
+				ipsToInsert = append(ipsToInsert, a+"/32")
+			}
+			if len(ipsToInsert) == 0 {
+				// Domain resolved only to IPv6 — fall back
+				// to storing the bare domain so the
+				// autoupdater retries A records later.
+				typeToInsert = "domain"
+				ipsToInsert = []string{rawTarget}
+			}
+		} else {
+			dnsWarning = rawTarget + " (DNS: " + err.Error() + ")"
+			typeToInsert = "domain"
+			ipsToInsert = []string{rawTarget}
+		}
+	} else if typeToInsert == "ip" && !strings.Contains(value, "/") {
+		// Bare IP → add /32 so Tailscale accepts it as a
+		// CIDR route.
+		ipsToInsert = []string{value + "/32"}
+		typeToInsert = "subnet"
+	}
+
+	// Save the parent domain (target_type=domain) so the
+	// autoupdater can track it and add knownSubdomains.
+	parentDomain := ""
+	if typeToInsert == "domain" {
+		parentDomain = rawTarget
+	}
+
+	// Insert the rules. The web form does dedup via
+	// FindDeviceRuleID + AppendDeviceRule; the bot skips the
+	// dedup check for v1 (admin can clean up duplicates later
+	// via /admin/exit-rules/cleanup). One insert per IP.
+	var insertedIDs []int64
+	for _, ip := range ipsToInsert {
+		rowID, err := db.AppendDeviceRule(env.DB, target.ID, devID, exitNodeHostname, typeToInsert, ip, action, deviceIP, parentDomain)
+		if err != nil {
+			return fmt.Sprintf("add_rule: db error: %v", err)
+		}
+		insertedIDs = append(insertedIDs, rowID)
+	}
+
+	// Apply ACL pipeline. The pipeline ALWAYS saves the
+	// snapshot (even on SetPolicy failure) so the operator
+	// can roll back. We pass nil for the Alerter — the bot
+	// audit_log row is the bot's audit trail; an extra
+	// Telegram ping per /add_rule would be noise.
+	detailForLog := fmt.Sprintf("user %s added rule(s) (type=%s target=%s exit=%s) for %s via bot",
+		target.Username, typeToInsert, rawTarget, exitNodeHostname, target.Username)
+	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, target.Username, detailForLog)
+
+	// Audit log (under the target user, so per-user audit
+	// views stay correct). The action is rule_added; the
+	// detail captures what was added and which exit-node.
+	auditDetail := fmt.Sprintf("via bot: %s %s → %s (exit=%s, action=%s, ids=%v)",
+		typeToInsert, rawTarget, exitNodeHostname, exitNodeHostname, action, insertedIDs)
+	if dnsWarning != "" {
+		auditDetail += "; " + dnsWarning
+	}
+	_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_added", auditDetail)
+
+	// Reply. Success case: list the inserted ids + the
+	// ACL version that was applied. SetPolicy failure case:
+	// the snapshot is still saved — call it out so the user
+	// knows to ask an admin to retry the sync.
+	if pipe.Applied {
+		reply := fmt.Sprintf("add_rule: ✓ added %d rule(s) for %s\n  target: %s %s (action=%s)\n  exit: %s\n  rule_ids=%v\n  ACL v%d applied to headscale",
+			len(insertedIDs), target.Username, typeToInsert, rawTarget, action, exitNodeHostname, insertedIDs, pipe.Version)
+		if dnsWarning != "" {
+			reply += "\n  ⚠ " + dnsWarning
+		}
+		return reply
+	}
+	return fmt.Sprintf("add_rule: ⚠ rule(s) added to DB for %s (target=%s %s, ids=%v) but ACL v%d was NOT applied to headscale: %v\nAsk an admin to /admin/exit-rules/sync.",
+		target.Username, typeToInsert, rawTarget, insertedIDs, pipe.Version, pipe.Err)
 }
 
 // deleteRuleReply removes one of the caller's own rules by id.

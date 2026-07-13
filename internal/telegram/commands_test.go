@@ -32,7 +32,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	for _, q := range []string{
 		`CREATE TABLE device_rules (id INTEGER PRIMARY KEY, user_id INTEGER, device_id INTEGER, exit_node_id TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'domain', target_value TEXT, action TEXT DEFAULT 'accept', device_ip TEXT DEFAULT '', parent_domain TEXT DEFAULT '', enabled INTEGER DEFAULT 1)`,
 		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '')`,
-		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, applied_success INTEGER)`,
+		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, config TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', applied_success INTEGER, error_msg TEXT DEFAULT '')`,
 		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
 		// 2026-07-11: Phase 3 — devices (joined to node_owner_map for
@@ -45,6 +45,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE preauth_keys (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, key TEXT NOT NULL DEFAULT '', headscale_preauth_id TEXT NOT NULL DEFAULT '', used INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0)`,
 		// 2026-07-13: Этап 11 part 2a — exit_servers (setexitnode / defaultexitnode).
 		`CREATE TABLE exit_servers (id INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT NOT NULL UNIQUE, hostname TEXT NOT NULL, tailscale_ip TEXT NOT NULL DEFAULT '', ssh_target TEXT NOT NULL DEFAULT '', ssh_key_path TEXT NOT NULL DEFAULT '', description TEXT DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, accept_routes INTEGER NOT NULL DEFAULT 0, created_at INTEGER DEFAULT 0)`,
+		// 2026-07-13: Этап 11 part 2b — exit_rule_logs (AppendExitRuleLog).
+		`CREATE TABLE exit_rule_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, version INTEGER NOT NULL, action TEXT NOT NULL, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
@@ -874,29 +876,42 @@ func TestResolveTargetUser(t *testing.T) {
 // literal "42" so db.InsertPreauthKey records a non-empty
 // headscale_preauth_id and the temporal backfill path in
 // backfillNodeOwnership has something to match on.
+//
+// 2026-07-13: Этап 11 part 2b — also handles PUT /api/v1/policy
+// (headscale.SetPolicy) so the /add_rule tests can exercise the
+// full pipeline end-to-end. SetPolicy always returns 200 OK with
+// a minimal body — tests that need it to fail should use a
+// dedicated server (see fakeHeadscaleSetPolicyFail).
 func fakeHeadscale(t *testing.T) (*httptest.Server, *headscale.Client) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/preauthkey" {
+		switch r.URL.Path {
+		case "/api/v1/preauthkey":
+			var body struct {
+				UserID int64 `json:"user_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			resp := map[string]any{
+				"id":         "42",
+				"key":        "hskey-fake-" + strconv.FormatInt(body.UserID, 10),
+				"user_id":    body.UserID,
+				"user":       "alice",
+				"reusable":   false,
+				"ephemeral":  false,
+				"used":       false,
+				"expiration": "2026-07-13T07:30:00Z",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		case "/api/v1/policy":
+			// 2026-07-13: Этап 11 part 2b — accept any ACL
+			// JSON, return success. Tests that need SetPolicy
+			// to fail use fakeHeadscaleSetPolicyFail.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"policy":"...","updated_at":"x"}`))
+		default:
 			http.Error(w, "unexpected path: "+r.URL.Path, 404)
-			return
 		}
-		var body struct {
-			UserID int64 `json:"user_id"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		resp := map[string]any{
-			"id":         "42",
-			"key":        "hskey-fake-" + strconv.FormatInt(body.UserID, 10),
-			"user_id":    body.UserID,
-			"user":       "alice",
-			"reusable":   false,
-			"ephemeral":  false,
-			"used":       false,
-			"expiration": "2026-07-13T07:30:00Z",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(srv.Close)
 	hs := headscale.New(srv.URL, "fake-api-key")
@@ -1384,5 +1399,305 @@ func TestHelpListsNewCommands(t *testing.T) {
 		if !strings.Contains(got, c) {
 			t.Errorf("expected %q in /help, got: %q", c, got)
 		}
+	}
+}
+
+// --- Этап 11 part 2b: /add_rule real-write tests (2026-07-13) ---
+//
+// The placeholder addRuleReply returned a "on the roadmap" hint;
+// Этап 11 part 2b wires the full pipeline (defaults →
+// validate → insert → GenerateACL → SetPolicy → Mark + Log →
+// audit) into the bot, mirroring handlers/exit_rules_form_my.go:
+// PostMyExitRule.
+//
+// What's covered:
+//   1. Unbound chat guard
+//   2. No default device → "set defaults first"
+//   3. No default exit-node → "set defaults first"
+//   4. Stale default device (no longer in node_owner_map)
+//   5. Stale default exit-node (no longer in exit_servers)
+//   6. Per-user limit reached
+//   7. Per-device limit reached
+//   8. Total limit reached
+//   9. Success: IP target → /32 inserted
+//  10. Success: domain target → DNS resolved → multiple /32 rows
+//  11. Success: deny action
+//  12. Success: admin issues for alice (row + audit under alice)
+//  13. SetPolicy failure: rule in DB, ACL saved but not applied
+//  14. admin-only: alice cannot target skyadmin
+//  15. Audit log row under the target user
+
+// setupAddRuleTestDB seeds alice with a default device + default
+// exit-node, the corresponding node_owner_map row, and an enabled
+// exit_servers row. Returns the same DB. Tests that need a
+// different state modify after this returns.
+//
+// The default device node_id is a numeric string ("100") because
+// device_rules.device_id is INT and the bot Atoi's the default
+// column — using a non-numeric node_id would short-circuit the
+// success path with a "node_id not numeric" error.
+func setupAddRuleTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	d := setupTestDB(t)
+	// alice owns a device with numeric node_id "100".
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('100', 'alice', 'tag:private')`)
+	// exit_servers row that /setexitnode would have stored.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	// alice's defaults.
+	_, _ = d.Exec(`UPDATE portal_users SET default_device_node_id = '100', default_exit_node_id = 'emilia-1' WHERE id = 2`)
+	return d
+}
+
+func TestAddRuleReplyRejectsUnbound(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /add_rule, got: %q", got)
+	}
+}
+
+func TestAddRuleReplyRejectsNoDefaultDevice(t *testing.T) {
+	d := setupTestDB(t)
+	// Has exit-node default but not device default.
+	_, _ = d.Exec(`UPDATE portal_users SET default_exit_node_id = 'emilia-1' WHERE id = 2`)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "default device") {
+		t.Errorf("expected 'default device' hint, got: %q", got)
+	}
+}
+
+func TestAddRuleReplyRejectsNoDefaultExitNode(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`UPDATE portal_users SET default_device_node_id = 'alice-dev-1' WHERE id = 2`)
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag) VALUES ('alice-dev-1', 'alice', 'tag:private')`)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "default exit-node") {
+		t.Errorf("expected 'default exit-node' hint, got: %q", got)
+	}
+}
+
+func TestAddRuleReplyRejectsStaleDefaultDevice(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	// Remove alice's device from node_owner_map but leave the
+	// default column pointing at it.
+	_, _ = d.Exec(`DELETE FROM node_owner_map WHERE node_id = '100'`)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "is not in alice's devices") {
+		t.Errorf("expected stale-device message, got: %q", got)
+	}
+}
+
+func TestAddRuleReplyRejectsStaleDefaultExitNode(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	// Disable alice's default exit-server.
+	_, _ = d.Exec(`UPDATE exit_servers SET enabled = 0 WHERE node_id = 'emilia-1'`)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "no longer an enabled exit-server") && !strings.Contains(got, "currently disabled") {
+		t.Errorf("expected stale-exit-node message, got: %q", got)
+	}
+}
+
+func TestAddRuleReplyRejectsPerUserLimit(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	// Seed 5 rules for alice on device 100.
+	for i := 0; i < 5; i++ {
+		_, _ = d.Exec(`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 100, 'emilia', 'ip', '1.1.1.1', 'accept', '')`)
+	}
+	// Cap alice at 5.
+	env := userEnvWithHS(d, nil)
+	env.UserMaxRules = map[string]int{"alice": 5}
+	env.DefaultMax = 5
+	_, hs := fakeHeadscale(t)
+	env.HS = hs
+	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
+	if !strings.Contains(got, "user limit reached") {
+		t.Errorf("expected 'user limit reached', got: %q", got)
+	}
+	// No new rule row should have been inserted.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 5 {
+		t.Errorf("expected 5 device_rules rows after rejection, got %d", n)
+	}
+}
+
+func TestAddRuleReplyRejectsPerDeviceLimit(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	// setupAddRuleTestDB uses device node_id "100" so device_id
+	// after Atoi is 100. Seed 2 rules on it.
+	for i := 0; i < 2; i++ {
+		_, _ = d.Exec(`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, parent_domain) VALUES (2, 100, 'emilia', 'ip', '1.1.1.1', 'accept', '')`)
+	}
+	env := userEnvWithHS(d, nil)
+	env.MaxRulesPerDevice = 2
+	_, hs := fakeHeadscale(t)
+	env.HS = hs
+	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
+	if !strings.Contains(got, "per-device limit") {
+		t.Errorf("expected 'per-device limit', got: %q", got)
+	}
+}
+
+func TestAddRuleReplyRejectsTotalLimit(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	// Seed 3 rules across all users (skyadmin's existing 12
+	// already make this > 3, so we use a tighter cap below).
+	// We test with a cap of 12 which the seed (12 skyadmin rules)
+	// exactly meets.
+	env := userEnvWithHS(d, nil)
+	env.MaxTotalRules = 12
+	_, hs := fakeHeadscale(t)
+	env.HS = hs
+	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
+	if !strings.Contains(got, "system-wide limit") {
+		t.Errorf("expected 'system-wide limit', got: %q", got)
+	}
+}
+
+func TestAddRuleReplySuccessIP(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "added") || !strings.Contains(got, "1.2.3.4") {
+		t.Errorf("expected success message with '1.2.3.4', got: %q", got)
+	}
+	if !strings.Contains(got, "ACL") {
+		t.Errorf("expected ACL v# in reply, got: %q", got)
+	}
+	// device_rules row inserted as /32 subnet.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2 AND target_type = 'subnet' AND target_value = '1.2.3.4/32'`).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected 1 device_rule row for 1.2.3.4/32, got %d", n)
+	}
+	// exit_node_id stored as hostname 'emilia' (not node_id).
+	var exitNodeID string
+	_ = d.QueryRow(`SELECT exit_node_id FROM device_rules WHERE user_id = 2 LIMIT 1`).Scan(&exitNodeID)
+	if exitNodeID != "emilia" {
+		t.Errorf("exit_node_id = %q, want 'emilia'", exitNodeID)
+	}
+	// audit_log row under alice.
+	var action, detail string
+	_ = d.QueryRow(`SELECT action, detail FROM audit_log WHERE user_id = 2 ORDER BY id DESC LIMIT 1`).Scan(&action, &detail)
+	if action != "rule_added" {
+		t.Errorf("audit action = %q, want 'rule_added'", action)
+	}
+	if !strings.Contains(detail, "via bot") {
+		t.Errorf("audit detail = %q, want to contain 'via bot'", detail)
+	}
+}
+
+func TestAddRuleReplySuccessDeny(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4 deny")
+	if !strings.Contains(got, "action=deny") {
+		t.Errorf("expected 'action=deny' in reply, got: %q", got)
+	}
+	var action string
+	_ = d.QueryRow(`SELECT action FROM device_rules WHERE user_id = 2`).Scan(&action)
+	if action != "deny" {
+		t.Errorf("device_rules.action = %q, want 'deny'", action)
+	}
+}
+
+func TestAddRuleReplyAdminForOtherUser(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	_, hs := fakeHeadscale(t)
+	// skyadmin (admin) issues /add_rule alice 1.2.3.4.
+	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/add_rule alice 1.2.3.4")
+	if !strings.Contains(got, "added") {
+		t.Errorf("expected 'added' in admin-for-other reply, got: %q", got)
+	}
+	// Rule row under alice (id=2), NOT skyadmin (id=1).
+	var aliceCnt, adminCnt int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&aliceCnt)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 1 AND target_value = '1.2.3.4/32'`).Scan(&adminCnt)
+	if aliceCnt != 1 {
+		t.Errorf("expected 1 rule under alice, got %d", aliceCnt)
+	}
+	if adminCnt != 0 {
+		t.Errorf("expected 0 rules under skyadmin for this target, got %d", adminCnt)
+	}
+	// audit row under alice.
+	var action string
+	_ = d.QueryRow(`SELECT action FROM audit_log WHERE user_id = 2 AND action = 'rule_added'`).Scan(&action)
+	if action != "rule_added" {
+		t.Errorf("expected 'rule_added' audit row under alice, got %q", action)
+	}
+}
+
+func TestAddRuleReplyRejectsNonAdminForOtherUser(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	_, hs := fakeHeadscale(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule skyadmin 1.2.3.4")
+	if !strings.Contains(got, "extra args") {
+		t.Errorf("expected 'extra args' rejection, got: %q", got)
+	}
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules`).Scan(&n)
+	if n != 12 { // only the seeded 12 skyadmin rules
+		t.Errorf("expected 12 device_rules (no insert), got %d", n)
+	}
+}
+
+// fakeHeadscaleSetPolicyFail is a variant of fakeHeadscale where
+// PUT /api/v1/policy returns 500. Used to exercise the
+// "rule inserted, ACL saved but not applied" branch.
+func fakeHeadscaleSetPolicyFail(t *testing.T) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/preauthkey":
+			var body struct {
+				UserID int64 `json:"user_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			resp := map[string]any{
+				"id":  "42",
+				"key": "hskey-fake-" + strconv.FormatInt(body.UserID, 10),
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		case "/api/v1/policy":
+			http.Error(w, "policy rejected", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected path: "+r.URL.Path, 404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, headscale.New(srv.URL, "fake-key")
+}
+
+func TestAddRuleReplySetPolicyFailure(t *testing.T) {
+	d := setupAddRuleTestDB(t)
+	_, hs := fakeHeadscaleSetPolicyFail(t)
+	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
+	if !strings.Contains(got, "NOT applied") {
+		t.Errorf("expected 'NOT applied' in reply, got: %q", got)
+	}
+	// Rule row IS inserted (the failure is downstream of the
+	// device_rules INSERT).
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = 2`).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected 1 device_rule row even on SetPolicy failure, got %d", n)
+	}
+	// acl_snapshots row exists with applied_success=0.
+	var nFailed int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE applied_success = 0`).Scan(&nFailed)
+	if nFailed != 1 {
+		t.Errorf("expected 1 failed acl_snapshots row, got %d", nFailed)
+	}
+	// exit_rule_logs has an apply_fail row.
+	var logAction string
+	_ = d.QueryRow(`SELECT action FROM exit_rule_logs WHERE action = 'apply_fail'`).Scan(&logAction)
+	if logAction != "apply_fail" {
+		t.Errorf("expected 'apply_fail' in exit_rule_logs, got %q", logAction)
 	}
 }

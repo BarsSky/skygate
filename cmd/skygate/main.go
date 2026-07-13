@@ -212,6 +212,11 @@ func main() {
 			// the web handlers use (hs was constructed at line 77)
 			// so both surfaces share one source of truth.
 			rn.SetHS(hs)
+			// 2026-07-13: Этап 11 part 2b — per-device and total
+			// rule caps for /add_rule. Mirrors the web form's
+			// PostMyExitRule checks. Zero = no cap (same convention
+			// as SetLimits above).
+			rn.SetRuleCaps(cfg.MaxRulesPerDevice, cfg.MaxTotalRules)
 			app.Notifier = rn
 			if rn.Configured() {
 				log.Printf("🤖 Telegram bot configured; starting getUpdates loop")
