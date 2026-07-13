@@ -282,6 +282,13 @@ func helpDetailReply(cmd string, env BotEnv) string {
 		return "/my_quota — your own rule count vs your per-user cap.\n" +
 			"Same bar format as /quota, but only one row.\n" +
 			"Example: /my_quota"
+	case "myexitnodes":
+		return "/myexitnodes — list every enabled exit-node you can route through.\n" +
+			"Same data as admin /exit_nodes (hostname, online, last_seen) but\n" +
+			"filtered to enabled=1 and tagged with [default] for the exit-node\n" +
+			"your /setexitnode is currently pointing at.\n" +
+			"Workflow: /myexitnodes -> /setexitnode <node_id> -> /add_rule <target>\n" +
+			"Example: /myexitnodes"
 	case "add_device":
 		return "/add_device [username] — issue a 1h single-use preauth key.\n" +
 			"Default: a key for yourself. With a username arg (admin only), for that user.\n" +
