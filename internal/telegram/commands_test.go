@@ -561,7 +561,7 @@ func TestMintRestartToken(t *testing.T) {
 
 func TestHelpDetailKnown(t *testing.T) {
 	// Every command listed in /help should have a detailed help entry.
-	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help", "bind", "unbind", "my_status", "my_nodes", "my_rules", "my_quota", "add_device", "add_rule", "delrule", "clearrules", "delete_rule"} {
+	for _, cmd := range []string{"status", "nodes", "exit_nodes", "rules", "quota", "audit", "ack", "version", "restart", "help", "bind", "unbind", "my_status", "my_nodes", "my_rules", "my_quota", "myexitnodes", "add_device", "add_rule", "delrule", "clearrules", "delete_rule"} {
 		got := helpDetailReply(cmd, BotEnv{})
 		if !strings.HasPrefix(got, "/"+cmd+" ") {
 			t.Errorf("expected /%s detailed help, got: %q", cmd, got)
@@ -2408,5 +2408,108 @@ func TestClearRulesReplyHelpDetail(t *testing.T) {
 	}
 	if !strings.Contains(got, "Two-phase") {
 		t.Errorf("expected 'Two-phase' in /help clearrules, got: %q", got)
+	}
+}
+
+// --- Этап 14: /myexitnodes (user-scope exit-node menu) ---
+//
+// 5 tests covering the user-scope exit-node list:
+//   1. Reject unbound chat
+//   2. Empty menu (no enabled exit_servers) → "ask admin"
+//   3. List enabled exit-servers with status + last_seen
+//   4. Disabled exit-servers are hidden from the menu
+//   5. [default] marker on the user's currently configured default
+//   6. /myexitnodes in /help
+//   7. /help myexitnodes returns detailed help
+
+func TestMyExitNodesReplyRejectsUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/myexitnodes")
+	if !strings.Contains(got, "not bound") {
+		t.Errorf("expected 'not bound' for unbound /myexitnodes, got: %q", got)
+	}
+}
+
+func TestMyExitNodesReplyEmptyMenu(t *testing.T) {
+	d := setupTestDB(t)
+	// setupTestDB doesn't seed exit_servers, so the menu is empty.
+	got := HandleCommand(context.Background(), userEnv(d), "/myexitnodes")
+	if !strings.Contains(got, "no enabled exit-nodes") {
+		t.Errorf("expected 'no enabled exit-nodes' for empty menu, got: %q", got)
+	}
+	if !strings.Contains(got, "Ask an admin") {
+		t.Errorf("expected 'Ask an admin' hint, got: %q", got)
+	}
+}
+
+func TestMyExitNodesReplyListsEnabled(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: one enabled, one disabled.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('aphrodite-1', 'aphrodite', 1)`)
+	// Disabled row — must NOT appear.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('demeter-1', 'demeter', 0)`)
+	// Seed devices for online/last_seen.
+	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('emilia-1', 1700000000, 1)`)
+	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('aphrodite-1', 1700000100, 0)`)
+	got := HandleCommand(context.Background(), userEnv(d), "/myexitnodes")
+	if !strings.Contains(got, "Available exit-nodes (2)") {
+		t.Errorf("expected 'Available exit-nodes (2)', got: %q", got)
+	}
+	if !strings.Contains(got, "emilia") {
+		t.Errorf("expected emilia in menu, got: %q", got)
+	}
+	if !strings.Contains(got, "aphrodite") {
+		t.Errorf("expected aphrodite in menu, got: %q", got)
+	}
+	// Disabled server must be hidden.
+	if strings.Contains(got, "demeter") {
+		t.Errorf("disabled server demeter must NOT appear in user menu, got: %q", got)
+	}
+	// Online status per node.
+	if !strings.Contains(got, "emilia") || !strings.Contains(got, "online") {
+		t.Errorf("expected emilia marked online, got: %q", got)
+	}
+	if !strings.Contains(got, "aphrodite") || !strings.Contains(got, "offline") {
+		t.Errorf("expected aphrodite marked offline, got: %q", got)
+	}
+	// Workflow hint.
+	if !strings.Contains(got, "/setexitnode") {
+		t.Errorf("expected /setexitnode hint, got: %q", got)
+	}
+}
+
+func TestMyExitNodesReplyMarksDefault(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed two enabled exit-servers.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('aphrodite-1', 'aphrodite', 1)`)
+	// Set alice's default to aphrodite-1.
+	_, _ = d.Exec(`UPDATE portal_users SET default_exit_node_id = 'aphrodite-1' WHERE id = 2`)
+	got := HandleCommand(context.Background(), userEnv(d), "/myexitnodes")
+	if !strings.Contains(got, "aphrodite-1) — offline  [default]") {
+		t.Errorf("expected aphrodite-1 row to carry [default] marker, got: %q", got)
+	}
+	// emilia must NOT carry the [default] marker.
+	if strings.Contains(got, "emilia-1) — offline  [default]") {
+		t.Errorf("emilia must not be marked default, got: %q", got)
+	}
+}
+
+func TestMyExitNodesReplyListedInHelp(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/help")
+	if !strings.Contains(got, "/myexitnodes") {
+		t.Errorf("expected /myexitnodes in /help output, got: %q", got)
+	}
+}
+
+func TestMyExitNodesReplyHelpDetail(t *testing.T) {
+	got := helpDetailReply("myexitnodes", BotEnv{})
+	if !strings.HasPrefix(got, "/myexitnodes ") {
+		t.Errorf("expected /myexitnodes detailed help, got: %q", got)
+	}
+	if !strings.Contains(got, "[default]") {
+		t.Errorf("expected '[default]' in /help myexitnodes, got: %q", got)
 	}
 }

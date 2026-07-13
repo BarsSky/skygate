@@ -124,7 +124,8 @@ func (e BotEnv) MaxFor(username string) int {
 // Command categories (2026-07-12: Этап 11):
 //
 //   user-scope  /my_status, /my_nodes, /my_rules, /my_quota,
-//                /add_device, /add_rule, /delrule, /clearrules
+//                /myexitnodes, /add_device, /add_rule,
+//                /delrule, /clearrules
 //                — work for any identified user; data is filtered
 //                  to the caller's own. Admin can use them too and
 //                  gets the same scoping (admin's own data).
@@ -198,6 +199,8 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return myRulesReply(env)
 	case "/my_quota":
 		return myQuotaReply(env)
+	case "/myexitnodes":
+		return myExitNodesReply(env)
 	case "/add_device":
 		return addDeviceReply(env, strings.Join(args, " "))
 	case "/add_rule":
@@ -251,6 +254,7 @@ func helpReply(env BotEnv) string {
 		"/my_nodes — your own devices\n" +
 		"/my_rules — your own exit-rules\n" +
 		"/my_quota — your rule count vs cap\n" +
+		"/myexitnodes — list enabled exit-nodes with [default] marker\n" +
 		"/add_device — issue a 1h single-use preauth key for yourself\n" +
 		"/add_rule <target> — add an exit-rule for yourself\n" +
 		"/delrule <id> [id2 ...] — delete one or more of your rules\n" +
