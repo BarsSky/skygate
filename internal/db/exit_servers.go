@@ -126,6 +126,29 @@ func ListEnabledExitServerHostnames(d *sql.DB) ([]string, error) {
 	return out, rows.Err()
 }
 
+// LookupExitServerHostname returns the hostname of the exit_servers
+// row whose node_id matches, or "" if no row exists. Used by
+// the telegram /defaultexitnode command to render a friendly
+// "current default is X" reply without a headscale call (the
+// hostname is right there in the table).
+//
+// 2026-07-13: Этап 11 part 2a. Returns "" (not sql.ErrNoRows) for
+// the "row gone" case so the caller can use a single empty-string
+// check ("if hostname != \"\"") to distinguish "row exists" from
+// "row missing or empty hostname" — both of which mean "no
+// friendly name to show, fall back to the node_id".
+func LookupExitServerHostname(d *sql.DB, nodeID string) (string, error) {
+	var h string
+	err := d.QueryRow(
+		`SELECT COALESCE(hostname, '') FROM exit_servers WHERE node_id = ?`,
+		nodeID,
+	).Scan(&h)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return h, err
+}
+
 // LookupExitServerAcceptRoutes returns the AcceptRoutes preference
 // stored on the exit_servers row whose hostname matches. The value
 // uses the tri-state encoding (-1 / 0 / 1) documented in
