@@ -24,6 +24,7 @@
     <a href="/my/tokens" {{if eq .Page "tokens"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.tokens"}}</span></a>
     <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules"}}</span></a>
     <a href="/my/account" {{if eq .Page "account"}}class="active"{{end}}><i class="fa-solid fa-user-gear"></i><span>{{t "nav.account"}}</span></a>
+    <a href="/my/telegram" {{if eq .Page "telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram_my"}}</span></a>
 {{if .IsAdmin}}
     <hr class="nav-sep">
     <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
