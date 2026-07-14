@@ -236,6 +236,11 @@ func main() {
 	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(app.GetExitRulesAPIHelp)))
 	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(app.AdminExitRules)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(app.PostAdminRollbackACL)))
+	// 2026-07-14: Этап 14 v7 — re-apply ACL without
+	// touching rules. Use when GenerateACL() output
+	// changed (e.g. new SSH rule) but no exit-rule
+	// add/delete has fired SetPolicy yet.
+	mux.Handle("POST /admin/exit-rules/reapply", authMW(http.HandlerFunc(app.PostAdminACLReapply)))
 	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(app.SyncAdvertisedRoutesHandler)))
 	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(app.GetAdminNodesLoad)))
 	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(app.AdminCleanupRules)))

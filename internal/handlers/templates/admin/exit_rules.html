@@ -6,10 +6,14 @@
   </div>
   <div>
     <a href="/admin/exit-rules/nodes" class="btn btn-sm"><i class="fa-solid fa-server"></i> Node Load</a>
+    <form method="post" action="/admin/exit-rules/reapply" style="display:inline" onsubmit="return confirm('Re-apply ACL? This regenerates the policy from current DB state and pushes to headscale. Use after changes to GenerateACL().')">
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> Re-apply ACL</button>
+    </form>
   </div>
 </div>
 
 {{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL rolled back</div>{{end}}
+{{if .reapplied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL re-applied</div>{{end}}
 
 {{if .MaxTotalRules}}
 <div class="card">
