@@ -41,13 +41,22 @@ import (
 // "bot username not yet discovered" path AND the real
 // "render the QR" path in the same test binary.
 type testNotifier struct {
-	sendTelegramCalls []string
-	sendAlertCalls   []string
-	botUsername      string
+	sendTelegramCalls        []string
+	sendTelegramToChatCalls  []sendToChatCall
+	sendAlertCalls           []string
+	botUsername              string
+}
+
+type sendToChatCall struct {
+	Text   string
+	ChatID int64
 }
 
 func (n *testNotifier) SendTelegram(text string) {
 	n.sendTelegramCalls = append(n.sendTelegramCalls, text)
+}
+func (n *testNotifier) SendTelegramToChat(text string, chatID int64) {
+	n.sendTelegramToChatCalls = append(n.sendTelegramToChatCalls, sendToChatCall{Text: text, ChatID: chatID})
 }
 func (n *testNotifier) SendAlert(text string) int64 {
 	n.sendAlertCalls = append(n.sendAlertCalls, text)
