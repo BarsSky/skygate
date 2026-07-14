@@ -7,7 +7,21 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.10.11 — RU/EN localisation polish + Copy
+* **Current**: v0.10.12 — lazy hostname backfill + i18n
+  bot menu + RU/EN polish + Headplane/DERP external +
+  Skygate-as-shell roadmap
+  ([release notes](RELEASE-NOTES-v0.10.12.md)). /my_nodes
+  and /nodes now self-heal the empty-hostname column on
+  read (the migration v0.34 column had no backfill since
+  deploy). The Telegram bot menu is now per-language via
+  `language_code`, so RU-locale chats see Russian menu
+  items (the v0.10.4 worktree had hardcoded English).
+  `HEADPLANE_EXTERNAL_URL` and `DERP_EXTERNAL_URLS` let
+  operators point at existing modules without starting
+  new sidecars. `docs/skygate-as-shell.md` captures the
+  v0.11.0+ roadmap for pluggable headscale and ACL
+  import.
+* **Previous**: v0.10.11 — RU/EN localisation polish + Copy
   button for /add_device
   ([release notes](RELEASE-NOTES-v0.10.11.md)). The /help
   RU-locale output no longer leaks English suffixes ("add an
@@ -15,14 +29,16 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   "with last-seen"). The /add_device reply now ships an
   inline-keyboard `📋 Copy` button (Telegram `copy_text`
   field) so the preauth key lands in the clipboard on tap.
-* **Previous**: v0.10.10 — Headplane as optional pinned module
-  ([release notes](RELEASE-NOTES-v0.10.10.md)). `HEADPLANE_IMAGE`
-  pinned to `:0.6.3`, `HEADPLANE_ENABLED` opt-out toggle,
-  [docs/headplane.md](docs/headplane.md) integration contract.
-* **What we're working on next (v0.10.12 candidates)**:
+* **What we're working on next (v0.11.0 candidates)**:
+  - **Web-UI runtime config for DERP/Headplane** — lift the
+    v0.10.12 deploy-time env vars into `global_settings` and
+    the existing backup-config-ui pattern. New
+    `/admin/integrations` page lists every pluggable
+    component (DERP, Headplane, Headscale) with current
+    mode + a "Configure" button. v0.11.0 follow-up.
   - **`/clearrules` i18n** — body helper still has hardcoded
     English. Catalog has all the keys; just needs the body
-    touched. v0.10.12 follow-up.
+    touched. v0.11.0 follow-up.
   - **Butler voice v3** (deferred until user feedback on v2 lands):
     header carries urgency level (`🪶` / `🪶!` / `🪶!!`), body uses
     subtle inline color marks for status.
@@ -409,7 +425,17 @@ relay still says "tailnet policy does not permit you to SSH".
 * `docs/telegram-relay.md` — full procedure + troubleshooting
 * `docs/headplane.md` — Headplane (optional sidecar UI) integration
   contract, version pin policy, compatibility matrix, optional/required
-  status, upgrade procedure. The module is documented as a peer
+  status, upgrade procedure, **existing-Headplane mode
+  (`HEADPLANE_EXTERNAL_URL`)** added in v0.10.12. The module is documented as a peer
+  service that talks to Headscale independently — Skygate has no
+  code-level integration with it.
+* `docs/derp.md` — DERP relay (bundled + existing) integration
+  contract. `DERP_ENABLED` and `DERP_EXTERNAL_URLS` cover both
+  modes; admin-side web-UI config is the v0.11.0 follow-up.
+* `docs/skygate-as-shell.md` — the v0.11.0+ roadmap for
+  pluggable Headscale / multi-control-plane / ACL import.
+  Architectural doc, no code; tracks B and C from the
+  user's "shelled module" idea.
   service that talks to Headscale independently — Skygate has no
   code-level integration with it.
 * `internal/acl/acl.go` — GenerateACL (per-user policy + ssh rules

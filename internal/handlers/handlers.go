@@ -41,6 +41,12 @@ type App struct {
 	DerpBaseURL  string // base URL of the local custom DERP server
 	SSHKeyPath   string // SSH key for exit node route sync
 	Cfg         *config.Config // 2026-07-07: issue #12 — limits & stagger sync
+	// 2026-07-15: v0.10.12 — public URL of an existing Headplane
+	// instance (HEADPLANE_EXTERNAL_URL). When set, the admin
+	// ACL page links to this URL instead of the bundled
+	// sidecar. Empty = use the bundled sidecar at
+	// https://${ControlURL-host}:50445/admin/.
+	HeadplaneExternalURL string
 
 	templates *Templates
 }
