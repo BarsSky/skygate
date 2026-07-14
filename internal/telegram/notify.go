@@ -749,7 +749,15 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 	if chatID == 0 {
 		return
 	}
-	// 3. Translate the callback data into a synthetic
+	// 3. Build the env first (we need env.Lang for the
+	//    platform-picker callback handler below).
+	langCode := ""
+	if cq.From != nil {
+		langCode = cq.From.LanguageCode
+	}
+	env, _ := n.envForMessage(chatID, langCode)
+
+	// 4. Translate the callback data into a synthetic
 	//    command so HandleCommand's existing logic does
 	//    the heavy lifting.
 	var synthetic string
@@ -759,23 +767,33 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 	case strings.HasPrefix(data, "bind:confirm:"):
 		tokenStr := strings.TrimPrefix(data, "bind:confirm:")
 		synthetic = "/login " + tokenStr
+	case strings.HasPrefix(data, "add_device_platform:"):
+		// 2026-07-14: Этап 14 v10 — /add_device platform
+		// picker. The user picked a platform after the
+		// preauth key was issued. We can't use
+		// HandleCommand here because the answer is a
+		// rendering of the just-issued preauth key, not a
+		// new command — so we look up the user's last
+		// preauth key and render the per-platform
+		// instructions directly.
+		platform := strings.TrimPrefix(data, "add_device_platform:")
+		key, lookupErr := db.GetLastPreauthKeyForChatID(env.DB, chatID)
+		if lookupErr != nil || key == "" {
+			n.sendPlain(token, chatID, i18n.T(env.Lang, "bot.add_device.platform.unknown"), nil)
+			return
+		}
+		reply := renderPlatformInstructions(env.Lang, platform, key)
+		n.sendPlain(token, chatID, reply, nil)
+		return
 	default:
 		return
 	}
-	// 4. Build the same env the text-message path uses.
-	// See the v0.10.3 fix in Run(): envForMessage uses the
-	// actual chat_id (the chat that tapped the button), not
-	// the "effective" chat_id from resolveBootstrapAdmin.
-	//
-	// 2026-07-14 (Этап 14 v5): callback_query carries
-	// From.LanguageCode on the envelope (same field as
-	// text messages), so we forward it to envForMessage
-	// for the auto-detect pass on /login via [Bind].
-	langCode := ""
-	if cq.From != nil {
-		langCode = cq.From.LanguageCode
-	}
-	env, _ := n.envForMessage(chatID, langCode)
+	// 5. Build the same env the text-message path uses.
+	//    The platform-picker branch above already built env;
+	//    this is the fallback path for synthetic /<cmd>.
+	//    See the v0.10.3 fix in Run(): envForMessage uses the
+	//    actual chat_id (the chat that tapped the button), not
+	//    the "effective" chat_id from resolveBootstrapAdmin.
 	pendingReplyForCurrentMessage = nil
 	reply := HandleCommand(context.Background(), env, synthetic)
 	n.sendPlain(token, chatID, reply, pendingReplyForCurrentMessage)

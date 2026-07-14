@@ -41,7 +41,8 @@ func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 			username          TEXT NOT NULL DEFAULT '',
 			tag               TEXT NOT NULL DEFAULT '',
 			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
-			tagged_at         INTEGER NOT NULL DEFAULT 0
+			tagged_at         INTEGER NOT NULL DEFAULT 0,
+			hostname          TEXT NOT NULL DEFAULT ''
 		)`,
 	}
 	for _, q := range stmts {

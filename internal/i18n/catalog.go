@@ -651,7 +651,7 @@ var ruCatalog = map[string]string{
 	// confirmations ("Rule added") skip it to keep
 	// the message feeling crisp.
 	"bot.footer.signoff":              "Искренне Ваш, Хранитель Порога",
-	"bot.welcome.sealed_intro":         "Врата запечатаны. Назови своё имя в углях — и стражи узнают тебя.",
+	"bot.welcome.sealed_intro":         "Врата запечатаны. Назови себя в углях — и стражи узнают тебя.",
 	"bot.welcome.bind_title":           "Чтобы привязать этот чат к аккаунту skygate:",
 	"bot.welcome.bind_step1":           "Открой skygate → `/my/telegram`",
 	"bot.welcome.bind_step2":           "Нажми *Generate login key* — скопируй ключ",
@@ -673,6 +673,28 @@ var ruCatalog = map[string]string{
 	"bot.lang.usage":                   "использование: /lang ru | /lang en",
 	"bot.lang.invalid":                 "lang: %q не поддерживается. Попробуй /lang ru или /lang en.",
 	"bot.lang.unknown":                 "lang: (неизвестно — откатываюсь на английский)",
+	// 2026-07-14: Этап 14 v10 — platform picker labels for
+	// the /add_device inline keyboard. Short and friendly;
+	// the per-platform install instructions are a separate
+	// i18n block below.
+	"bot.platform.linux":               "Linux",
+	"bot.platform.windows":             "Windows",
+	"bot.platform.macos":               "macOS",
+	"bot.platform.ios":                 "iOS",
+	"bot.platform.android":             "Android",
+	// /add_device per-platform instructions. The %s is the
+	// preauth key issued a moment earlier. The text assumes
+	// the headscale URL is reachable from the device — a
+	// private tailnet (where Tailscale on the device joins
+	// via the headscale control server) or a public headscale
+	// deployment.
+	"bot.add_device.platform.header":   "Инструкции для %s:",
+	"bot.add_device.platform.linux":    "🐧 Linux:\n\n1. Установи Tailscale: `curl -fsSL https://tailscale.com/install.sh | sh`\n2. Подключись к своему headscale-серверу и зарегистрируй устройство:\n\n```\nsudo tailscale up --login-server <HEADSCALE_URL> --authkey %s\n```\n\n3. Проверь: `tailscale status` — устройство появится в списке.",
+	"bot.add_device.platform.windows":  "⊞ Windows:\n\n1. Скачай Tailscale с https://tailscale.com/download/windows\n2. Установи, в трее появится иконка Tailscale\n3. Открой PowerShell от администратора:\n\n```\n& `\"$env:ProgramFiles\\Tailscale CLI\\tailscale.exe\" up --login-server <HEADSCALE_URL> --authkey %s\n```\n\n4. Дождись подключения и проверь `tailscale status`.",
+	"bot.add_device.platform.macos":    "🍎 macOS:\n\n1. Скачай Tailscale с https://tailscale.com/download/mac\n2. Установи из .dmg, запусти Tailscale из Applications\n3. В терминале:\n\n```\nsudo tailscale up --login-server <HEADSCALE_URL> --authkey %s\n```\n\n4. Проверь: `tailscale status`.",
+	"bot.add_device.platform.ios":      "📱 iOS:\n\n1. Установи Tailscale из App Store\n2. Открой приложение, в Settings → Account Name введи адрес своего headscale-сервера\n3. Затем на ЭТОМ Telegram-устройстве нажми кнопку \"Approve\" в headscale UI для авторизации\n4. Готово — iOS-устройство зарегистрировано.",
+	"bot.add_device.platform.android":  "🤖 Android:\n\n1. Установи Tailscale из Google Play\n2. Открой приложение, в Settings → Account Name введи адрес своего headscale-сервера\n3. Затем на ЭТОМ Telegram-устройстве нажми кнопку \"Approve\" в headscale UI для авторизации\n4. Готово — Android-устройство зарегистрировано.",
+	"bot.add_device.platform.unknown":  "Платформа не распознана. Выбери одну из кнопок выше.",
 	"bot.start.confirm_prompt":         "🔑 Привязать этот чат к **%s**?\n\nПосле привязки тебе станут доступны /my_rules, /add_rule, /delrule и остальные пользовательские команды.\nКлюч истекает %s.",
 	"bot.start.bind_button":            "✅ Привязать к %s",
 	"bot.start.cancel_button":          "❌ Отмена",
@@ -770,6 +792,7 @@ var ruCatalog = map[string]string{
 	"bot.nodes.empty":                   "nodes: (в node_owner_map пусто — запусти backfill из /admin/devices)",
 	"bot.nodes.db_error":                "nodes: ошибка БД: %v",
 	"bot.rules.header":                  "Последние exit-правила (показано 25 из %d):",
+	"bot.rules.row":                     "#%d %s @%s\n  %s %s → %s",
 	"bot.rules.empty":                   "rules: (в БД нет exit-правил)",
 	"bot.rules.db_error":                "rules: ошибка БД: %v",
 	"bot.rules.scan_error":              "rules: ошибка чтения: %v",
@@ -1559,7 +1582,7 @@ var enCatalog = map[string]string{
 	"bot.header.err":                  "A Closed Door",
 	"bot.header.welcome_back":         "Welcome Back",
 	"bot.footer.signoff":              "Yours in service, the Warden of the Threshold",
-	"bot.welcome.sealed_intro":         "The gate is sealed. Speak your name into the embers and the wardens will know you.",
+	"bot.welcome.sealed_intro":         "The gate is sealed. Send your name into the embers and the wardens will know you.",
 	"bot.welcome.bind_title":           "To bind this chat to your skygate account:",
 	"bot.welcome.bind_step1":           "Open skygate → `/my/telegram`",
 	"bot.welcome.bind_step2":           "Click *Generate login key* — copy the key",
@@ -1581,6 +1604,19 @@ var enCatalog = map[string]string{
 	"bot.lang.usage":                   "usage: /lang ru | /lang en",
 	"bot.lang.invalid":                 "lang: %q is not a supported language. Try /lang ru or /lang en.",
 	"bot.lang.unknown":                 "lang: (unknown — falling back to English)",
+	// 2026-07-14: Этап 14 v10 — platform picker labels (EN).
+	"bot.platform.linux":               "Linux",
+	"bot.platform.windows":             "Windows",
+	"bot.platform.macos":               "macOS",
+	"bot.platform.ios":                 "iOS",
+	"bot.platform.android":             "Android",
+	"bot.add_device.platform.header":   "Instructions for %s:",
+	"bot.add_device.platform.linux":    "🐧 Linux:\n\n1. Install Tailscale: `curl -fsSL https://tailscale.com/install.sh | sh`\n2. Connect to your headscale server and register the device:\n\n```\nsudo tailscale up --login-server <HEADSCALE_URL> --authkey %s\n```\n\n3. Verify: `tailscale status` — the device should appear in the list.",
+	"bot.add_device.platform.windows":  "⊞ Windows:\n\n1. Download Tailscale from https://tailscale.com/download/windows\n2. Install, the Tailscale icon appears in the system tray\n3. Open PowerShell as Administrator:\n\n```\n& `\"$env:ProgramFiles\\Tailscale CLI\\tailscale.exe\" up --login-server <HEADSCALE_URL> --authkey %s\n```\n\n4. Wait for the connection and run `tailscale status`.",
+	"bot.add_device.platform.macos":    "🍎 macOS:\n\n1. Download Tailscale from https://tailscale.com/download/mac\n2. Install from the .dmg, launch Tailscale from Applications\n3. In a terminal:\n\n```\nsudo tailscale up --login-server <HEADSCALE_URL> --authkey %s\n```\n\n4. Verify: `tailscale status`.",
+	"bot.add_device.platform.ios":      "📱 iOS:\n\n1. Install Tailscale from the App Store\n2. Open the app, in Settings → Account Name enter your headscale server address\n3. Then on THIS Telegram device, click \"Approve\" in the headscale UI to authorise the login\n4. Done — your iOS device is registered.",
+	"bot.add_device.platform.android":  "🤖 Android:\n\n1. Install Tailscale from Google Play\n2. Open the app, in Settings → Account Name enter your headscale server address\n3. Then on THIS Telegram device, click \"Approve\" in the headscale UI to authorise the login\n4. Done — your Android device is registered.",
+	"bot.add_device.platform.unknown":  "Unknown platform. Please pick one of the buttons above.",
 	"bot.start.confirm_prompt":         "🔑 Bind this chat to **%s**?\n\nThis will let you use /my_rules, /add_rule, /delrule and the rest of the user commands.\nToken expires %s.",
 	"bot.start.bind_button":            "✅ Bind to %s",
 	"bot.start.cancel_button":          "❌ Cancel",
@@ -1678,6 +1714,7 @@ var enCatalog = map[string]string{
 	"bot.nodes.empty":                 "nodes: (no nodes in node_owner_map — run backfill from /admin/devices)",
 	"bot.nodes.db_error":              "nodes: db error: %v",
 	"bot.rules.header":                "Recent exit-rules (latest 25 of %d shown):",
+	"bot.rules.row":                   "#%d %s @%s\n  %s %s → %s",
 	"bot.rules.empty":                 "rules: (no exit-rules in DB)",
 	"bot.rules.db_error":              "rules: db error: %v",
 	"bot.rules.scan_error":            "rules: scan error: %v",

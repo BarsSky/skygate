@@ -42,13 +42,23 @@ var ErrNodeOwnerNotFound = errors.New("db: node_owner_map: no row")
 // that headscale currently reports for the node — the
 // denormalization lets /my/devices and /admin/devices read
 // node→user and node→tag from a single SELECT.
+//
+// 2026-07-14: Этап 14 v10 — added Hostname. The bot's
+// /my_nodes output now prefers "hostname (node_id) [tag]" over
+// the bare node_id, so users recognise their device by the name
+// they set in `tailscale up --hostname=` (or via the
+// Headplane node-edit UI). Hostname is backfilled from headscale
+// during backfillNodeOwnership (see handlers_node_ownership.go)
+// and is optional — empty string means "not yet looked up" and
+// the bot falls back to the raw node_id.
 type NodeOwner struct {
-	NodeID         string
+	NodeID          string
 	HeadscaleUserID int64
-	Username       string
-	Tag            string
-	TaggedByUserID int64
-	TaggedAt       int64
+	Username        string
+	Tag             string
+	TaggedByUserID  int64
+	TaggedAt        int64
+	Hostname        string
 }
 
 // dbExec is the small subset of *sql.DB / *sql.Tx that every
@@ -72,10 +82,11 @@ func GetNodeOwner(d *sql.DB, nodeID string) (*NodeOwner, error) {
 	var n NodeOwner
 	err := d.QueryRow(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
-		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0)
+		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
+		        COALESCE(hostname, '')
 		   FROM node_owner_map
 		  WHERE node_id = ?`, nodeID,
-	).Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt)
+	).Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname)
 	if err == sql.ErrNoRows {
 		return nil, ErrNodeOwnerNotFound
 	}
@@ -120,7 +131,8 @@ func ListNodeOwnerNodeIDsByUsername(d *sql.DB, username string) ([]string, error
 func ListNodeOwnersByUsername(d *sql.DB, username string) ([]NodeOwner, error) {
 	rows, err := d.Query(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
-		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0)
+		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
+		        COALESCE(hostname, '')
 		   FROM node_owner_map
 		  WHERE username = ?
 		  ORDER BY tag, node_id`, username,
@@ -132,7 +144,7 @@ func ListNodeOwnersByUsername(d *sql.DB, username string) ([]NodeOwner, error) {
 	out := []NodeOwner{}
 	for rows.Next() {
 		var n NodeOwner
-		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt); err != nil {
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -147,7 +159,8 @@ func ListNodeOwnersByUsername(d *sql.DB, username string) ([]NodeOwner, error) {
 func ListAllNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	rows, err := d.Query(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
-		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0)
+		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
+		        COALESCE(hostname, '')
 		   FROM node_owner_map
 		  ORDER BY COALESCE(tag, ''), COALESCE(username, ''), node_id`,
 	)
@@ -158,7 +171,7 @@ func ListAllNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	out := []NodeOwner{}
 	for rows.Next() {
 		var n NodeOwner
-		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt); err != nil {
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -174,7 +187,8 @@ func ListAllNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 func ListExitNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	rows, err := d.Query(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
-		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0)
+		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
+		        COALESCE(hostname, '')
 		   FROM node_owner_map
 		  WHERE tag = 'tag:exit-node'
 		  ORDER BY COALESCE(username, ''), node_id`,
@@ -186,7 +200,7 @@ func ListExitNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	out := []NodeOwner{}
 	for rows.Next() {
 		var n NodeOwner
-		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt); err != nil {
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -234,6 +248,23 @@ func InsertIgnoreNodeOwner(d dbExec, nodeID string, headscaleUserID int64, usern
 			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
 			VALUES (?, ?, ?, ?, ?)`,
 		nodeID, headscaleUserID, username, tag, taggedByUserID,
+	)
+	return err
+}
+
+// InsertIgnoreNodeOwnerWithHostname is the same as
+// InsertIgnoreNodeOwner but also stores the headscale hostname
+// (the friendly `tailscale up --hostname=...` name). Used by
+// the lazy backfill so the bot's /my_nodes can show
+// "hostname (node_id) [tag]" instead of the bare node_id.
+//
+// 2026-07-14: Этап 14 v10.
+func InsertIgnoreNodeOwnerWithHostname(d dbExec, nodeID string, headscaleUserID int64, username, tag, hostname string, taggedByUserID int64) error {
+	_, err := d.Exec(
+		`INSERT OR IGNORE INTO node_owner_map
+			(node_id, headscale_user_id, username, tag, tagged_by_user_id, hostname)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+		nodeID, headscaleUserID, username, tag, taggedByUserID, hostname,
 	)
 	return err
 }

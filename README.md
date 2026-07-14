@@ -1,10 +1,10 @@
 # Skygate
 
 [![CI](https://github.com/BarsSky/skygate/actions/workflows/ci.yml/badge.svg)](https://github.com/BarsSky/skygate/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-v0.10.7-blue)
+![Version](https://img.shields.io/badge/version-v0.10.8-blue)
 ![Headscale](https://img.shields.io/badge/headscale-0.29-green)
 ![Go](https://img.shields.io/badge/go-1.23%2B-00ADD8)
-![License](https://img.shields.io/badge/license-proprietary-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 Self-service web portal for [Tailscale](https://tailscale.com) /
 [headscale](https://github.com/juanfont/headscale) — gives users a friendly
@@ -12,7 +12,7 @@ UI to grab preauth keys, see their devices, manage per-device exit-node
 rules, and (optionally) interact with the whole thing from a Telegram bot
 without ever touching the headscale CLI.
 
-> **Status:** at tag `v0.10.7`. Work in progress on `main` is `v0.10.8-dev`.
+> **Status:** at tag `v0.10.8`. Work in progress on `main` is `v0.10.9-dev`.
 > **Last `make test` on VM:** green — `59+59` smoke assertions, 3/3 exit-nodes
 > advertise `0.0.0.0/0` + `::/0` (emilia, sharlotta, karolina), `go test ./...`
 > race-free.
@@ -293,5 +293,15 @@ point Headplane at the same `HEADSCALE_API_KEY` (see the
 
 ## License
 
-Proprietary — see the upstream `LICENSE` if/when it lands. For now,
-treat as "all rights reserved" and ask before redistributing.
+[MIT](LICENSE) — Copyright (c) 2026 BarsSky. Use, modify, redistribute
+under the terms of the MIT License. See [LICENSE](LICENSE) for the
+full text.
+
+---
+
+## Trademarks
+
+*Tailscale* is a trademark of Tailscale Inc. *headscale* is an
+open-source project by Juan Font. Skygate is an independent
+self-service portal and is not affiliated with or endorsed by
+either project.

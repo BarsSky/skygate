@@ -39,7 +39,7 @@ This release collects everything we shipped between `v0.10.0` and
   — tailscaled running is not enough).
 
 * **Tailscale exit-node unification** (Этап 14 v7). All three
-  relay nodes (emilia, sharlotta, karolina) advertise both
+  relay nodes (`relay-a`, `relay-b`, `relay-c`) advertise both
   `exit-node = true` and a shared set of subnet routes. Clients
   pick any exit, Tailscale handles failover by metric. There is
   no "primary" exit and no "Telegram-special" routing — every
@@ -68,10 +68,10 @@ This release collects everything we shipped between `v0.10.0` and
 * **Admin SSH into the relay VPSes** (v0.10.7). New SSH rule in
   the headscale ACL: `skyadmin@tsnet.skynas.ru → tag:public (root)`.
   Combined with the existing `tag:exit-node` rule, the operator
-  can now manage emilia, sharlotta, and karolina from the
-  tailnet without needing public-IP SSH on the host firewall.
-  Triggered a `tag:exit-node` entry in `tagOwners` that was
-  missing and was breaking reapply.
+  can now manage the relay nodes from the tailnet without
+  needing public-IP SSH on the host firewall. Triggered a
+  `tag:exit-node` entry in `tagOwners` that was missing and
+  was breaking reapply.
 
 ### Deployment
 
@@ -204,7 +204,7 @@ headscale и локальную SQLite.
   истины; одного запущенного tailscaled мало).
 
 * **Унификация exit-node в Tailscale** (Этап 14 v7). Все три
-  relay-ноды (emilia, sharlotta, karolina) анонсируют и
+  relay-ноды (`relay-a`, `relay-b`, `relay-c`) анонсируют и
   `exit-node = true`, и общий набор subnet routes. Клиент
   выбирает любой, Tailscale делает failover по metric. Нет
   «основного» exit-node, нет «специальной» маршрутизации для
@@ -232,7 +232,7 @@ headscale и локальную SQLite.
 * **Админ-SSH на relay VPS** (v0.10.7). Новое SSH-правило в
   headscale ACL: `skyadmin@tsnet.skynas.ru → tag:public (root)`.
   Вместе с существующим правилом `tag:exit-node` администратор
-  может управлять emilia, sharlotta и karolina прямо из
+  может управлять relay-нодами прямо из
   tailnet без публичного SSH на host-firewall. Потребовало
   добавить `tag:exit-node` в `tagOwners` (раньше
   отсутствовал и ломал reapply).
