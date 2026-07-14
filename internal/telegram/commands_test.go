@@ -420,8 +420,11 @@ func TestTrimForTelegram(t *testing.T) {
 	if len(got) > 3800 {
 		t.Errorf("expected trim, got len=%d", len(got))
 	}
-	if !strings.HasSuffix(got, "(truncated, see /admin/audit)") {
-		t.Errorf("expected truncation marker, got tail: %q", got[len(got)-40:])
+	// v0.10.4: trim message uses the butler-gatekeeper
+	// voice ("too much; ask for a narrower slice") rather
+	// than the admin-tooling pointer ("see /admin/audit").
+	if !strings.HasSuffix(got, "narrower slice)") {
+		t.Errorf("expected gatekeeper truncation marker, got tail: %q", got[len(got)-40:])
 	}
 	short := "hello"
 	if trimForTelegram(short) != short {
@@ -610,10 +613,14 @@ func TestHandleCommandHelpDetailed(t *testing.T) {
 	if !strings.Contains(got, "Idempotent") {
 		t.Errorf("expected ack-specific detail ('Idempotent'), got: %q", got)
 	}
-	// /help with no arg must still return the short list (backward compat).
+	// /help with no arg must still return the short list
+	// (backward compat). The list now opens with the
+	// gatekeeper codex header (✦  The Threshold's Codex)
+	// instead of the old "Commands (all):" line — the
+	// marker is the codex header itself.
 	short := HandleCommand(context.Background(), envFor(d), "/help")
-	if !strings.Contains(short, "Commands") {
-		t.Errorf("expected short list with no /help arg, got: %q", short)
+	if !strings.Contains(short, "Threshold") {
+		t.Errorf("expected codex header on /help, got: %q", short)
 	}
 	// /help unknown should fall through to the "no detailed help" branch.
 	unknown := HandleCommand(context.Background(), envFor(d), "/help foo")
@@ -733,8 +740,20 @@ func TestAdminCommandsWorkForAdmin(t *testing.T) {
 func TestHelpReplyAdminShowsAllCategories(t *testing.T) {
 	d := setupTestDB(t)
 	got := helpReply(adminEnv(d))
-	// Admin sees all three categories (one header, three sections).
-	for _, expected := range []string{"Commands", "/my_status", "/restart", "/bind"} {
+	// Admin sees all three categories. The new butler-gatekeeper
+	// help (v0.10.4) leads with the codex header and uses
+	// section icons + bold labels instead of "Commands (all):"
+	// and free-form sections.
+	if !strings.Contains(got, "Threshold") {
+		t.Errorf("admin /help should lead with codex header, got: %q", got)
+	}
+	if !strings.Contains(got, "*Your top three:*") {
+		t.Errorf("admin /help should include user-scope section, got: %q", got)
+	}
+	if !strings.Contains(got, "*Warden's view:*") {
+		t.Errorf("admin /help should include admin-scope section, got: %q", got)
+	}
+	for _, expected := range []string{"/my_status", "/restart", "/bind"} {
 		if !strings.Contains(got, expected) {
 			t.Errorf("admin /help should contain %q, got: %q", expected, got)
 		}
@@ -2082,6 +2101,7 @@ func newRecordingNotifier() *recordingNotifier {
 
 func (n *recordingNotifier) SendTelegram(string)              {}
 func (n *recordingNotifier) SendTelegramToChat(string, int64) {}
+func (n *recordingNotifier) BotUsernameCached() string       { return "" }
 
 func (n *recordingNotifier) SendAlert(text string) int64 {
 	n.alerts <- text
@@ -3033,8 +3053,16 @@ func TestStartReplyNoTokenShowsHintOrAlreadyLoggedIn(t *testing.T) {
 	// Bound chat (Username set) → "already logged in" message.
 	env2 := BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false}
 	got2 := HandleCommand(context.Background(), env2, "/start")
-	if !strings.Contains(got2, "Already logged in as alice") {
-		t.Errorf("expected 'already logged in' for bound /start, got: %q", got2)
+	// v0.10.4: the butler-gatekeeper voice for a bound
+	// /start is "the gate knows you" + a codex footer
+	// pointing at /help. The user's name still appears
+	// in the welcome line.
+	if !strings.Contains(got2, "the gate knows you") &&
+		!strings.Contains(got2, "The gate knows you") {
+		t.Errorf("expected 'the gate knows you' in bound /start, got: %q", got2)
+	}
+	if !strings.Contains(got2, "alice") {
+		t.Errorf("expected username 'alice' in bound /start, got: %q", got2)
 	}
 }
 

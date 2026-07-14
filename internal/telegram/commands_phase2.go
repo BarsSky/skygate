@@ -153,12 +153,7 @@ func auditReply(d *sql.DB) string {
 
 // trimForTelegram keeps the body under 3800 chars so the markdown fence
 // RealNotifier wraps around it (```...```) plus headroom stays under
-// the 4096-char Telegram limit.
-func trimForTelegram(s string) string {
-	const maxLen = 3800
-	if len(s) <= maxLen {
-		return s
-	}
-	suffix := "\n... (truncated, see /admin/audit)"
-	return s[:maxLen-len(suffix)] + suffix
-}
+// the 4096-char Telegram limit. The implementation lives in
+// personality.go now (single source of truth for the butler
+// gatekeeper voice); kept as a thin re-export so the existing
+// command files don't need to be touched.

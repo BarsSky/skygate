@@ -232,6 +232,26 @@ func main() {
 			// as SetLimits above).
 			rn.SetRuleCaps(cfg.MaxRulesPerDevice, cfg.MaxTotalRules)
 			app.Notifier = rn
+			// 2026-07-14: Этап 14 v4 — register the bot's
+			// command menu with Telegram. Best-effort: a
+			// Telegram-side failure (rate limit, network)
+			// shouldn't block the bot from starting, so we
+			// run it in a separate goroutine and log the
+			// outcome. The menu shows up in the chat within
+			// a few seconds of the bot coming up; until then
+			// users can still type commands by hand.
+			go func() {
+				// Use a fresh background context with its
+				// own timeout so the registration can't hang
+				// past the bot's overall lifetime.
+				regCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := rn.SetMyCommands(regCtx, telegram.DefaultMyCommandsSpec); err != nil {
+					log.Printf("telegram: SetMyCommands failed (bot menu won't appear): %v", err)
+				} else {
+					log.Printf("telegram: SetMyCommands registered %d default + %d admin commands", len(telegram.DefaultMyCommandsSpec.Default), len(telegram.DefaultMyCommandsSpec.AdminOnly))
+				}
+			}()
 			// 2026-07-13: split the startup message by what's
 			// actually configured. The polling gate in Run()
 			// uses Configured() which is now token-only, so the

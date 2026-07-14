@@ -231,18 +231,38 @@ func startReply(env BotEnv, args []string) string {
 // returning user (already bound) gets the short "logged in as
 // X" message; everyone else gets the welcome + how-to-bind
 // instructions.
+// loginHint is the message returned by /start with no
+// args (and by /login with no args). It branches on whether
+// the caller has a BINDING (env.Username != ""), not on the
+// raw ChatID. In production, the dispatcher in notify.go
+// always sets ChatID to the actual inbound chat — even when
+// the binding row doesn't exist — so an unbound chat can
+// have IsIdentified()==true. The right "am I bound" signal
+// is the binding row itself, which manifests as env.Username
+// != "". A returning user (already bound) gets the short
+// "the gate knows you" line; everyone else gets the new-chat
+// welcome with the three binding steps and a teaser of
+// what /help reveals.
+//
+// 2026-07-14: Этап 14 v4 — replaced the terse "👋 This is
+// the Skygate bot" + 3-step list with a butler-gatekeeper
+// voice. The actual binding flow is unchanged; only the
+// presentation is. See personality.go for the shared
+// formatters this delegates to.
 func loginHint(env BotEnv) string {
 	if env.Username != "" {
-		return fmt.Sprintf("Already logged in as %s. Use /help to see your commands.",
-			env.Username)
+		return greetingForReturningUser(env.Username)
 	}
-	return "👋 This is the Skygate bot.\n\n" +
-		"To bind this chat to your skygate account:\n" +
-		"  1. Open skygate → /my/telegram\n" +
-		"  2. Click 'Generate login key' and copy it\n" +
-		"  3. Send it here:\n" +
-		"     /login <key>\n\n" +
-		"The key expires in 5 minutes and is single-use."
+	// Pass the bot's @username (if discovered) so the
+	// welcome can render a tap-to-open link for mobile
+	// users. Notifier.BotUsername is set by getMe
+	// discovery; empty means "not yet discovered", in
+	// which case the welcome skips the link line.
+	var username string
+	if env.Notifier != nil {
+		username = env.Notifier.BotUsernameCached()
+	}
+	return greetingForNewChat(username)
 }
 
 // unbindAdminReply is kept as a comment-shim to make the file's

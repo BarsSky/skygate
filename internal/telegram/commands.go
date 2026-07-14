@@ -375,45 +375,77 @@ func statusReply(d *sql.DB) string {
 // section. An unidentified chat in a strict deploy sees only
 // /login /start /help /version — every other command is locked
 // until they bind.
+//
+// 2026-07-14: Этап 14 v4 — wrapped in the butler-gatekeeper
+// voice via personality.go. The command list is unchanged;
+// the presentation now has a "codex" header, section icons,
+// and a "try these first" hint so the help is useful even
+// before the user has read the whole thing.
 func helpReply(env BotEnv) string {
-	common := "/version — Skygate build, Go runtime, DB schema level\n" +
-		"/help [command] — this list, or detailed help for one command"
-	auth := "/login <key> — bind this chat to your skygate account (paste the key from /my/telegram)\n" +
-		"/start <key> — same as /login, Telegram UX convention"
-	userScope := "/my_status — your own summary (rules, devices, quota)\n" +
-		"/my_nodes — your own devices\n" +
-		"/my_rules — your own exit-rules\n" +
-		"/my_quota — your rule count vs cap\n" +
-		"/myexitnodes — list enabled exit-nodes with [default] marker\n" +
-		"/add_device — issue a 1h single-use preauth key for yourself\n" +
-		"/add_rule <target> — add an exit-rule for yourself\n" +
-		"/delrule <id> [id2 ...] — delete one or more of your rules\n" +
-		"/clearrules [username] — wipe ALL exit-rules for you (or another user, admin only); requires /clearrules confirm within 30s\n" +
-		"/setdefaultdevice [node_id|clear] — set your default device for /add_rule\n" +
-		"/defaultdevice — show your current default device\n" +
-		"/setexitnode [node_id|clear] — set your default exit-node for /add_rule\n" +
-		"/defaultexitnode — show your current default exit-node"
-	adminScope := "/status — system-wide summary (rules/users/last acl)\n" +
-		"/nodes — list ALL tailnet devices by user+tag\n" +
-		"/exit_nodes — list exit-nodes (tag:exit-node) with last-seen\n" +
-		"/rules — recent exit-rules across all users\n" +
-		"/quota — per-user rule count vs cap\n" +
-		"/audit — last 20 audit_log entries\n" +
-		"/ack <id> — acknowledge an alert (id is the [#N] prefix)\n" +
-		"/restart — graceful container restart (requires confirm)\n" +
-		"/bind <chat_id> <username> — bind a chat to a portal user (admin only)\n" +
-		"/unbind <chat_id> — remove a binding (admin only)"
-	// Three layouts:
-	//   - unidentified + strict mode: only auth + common (locked)
-	//   - identified non-admin: auth + common + user-scope
-	//   - admin (identified or legacy unidentified): all four
+	common := iconForCaller(env.IsAdmin) + "  `/version` — build, runtime, schema level\n" +
+		iconForCaller(env.IsAdmin) + "  `/help [command]` — this list, or detailed help for one"
+
+	auth := infoWax + "  `/login <key>` — bind this chat to your skygate account\n" +
+		infoWax + "  `/start` — same welcome as a brand-new chat (alias of /login no-arg)\n" +
+		infoWax + "  `/unbind_self` — drop your own binding (no admin needed)"
+
+	// Top 3 user-scope commands first, then "and the rest".
+	// New users get the most useful actions visible without
+	// scrolling through a 30-line dump; the rest is
+	// below the rule for those who want to know everything.
+	userTop := "◈  *Your top three:*\n" +
+		"        `/my_status` — your rules, devices, last ACL\n" +
+		"        `/add_rule telegram.org` — let a domain through\n" +
+		"        `/my_rules` — see your existing exit-rules"
+
+	userRest := "◈  *And the rest:*\n" +
+		"        `/my_nodes` — your devices\n" +
+		"        `/my_quota` — your rule count vs cap\n" +
+		"        `/myexitnodes` — list enabled exit-nodes you can route through\n" +
+		"        `/add_device` — issue a 1h single-use preauth key\n" +
+		"        `/delrule <id> [id2 ...]` — delete one or more of your rules\n" +
+		"        `/clearrules` — wipe ALL your exit-rules (requires confirm within 30s)\n" +
+		"        `/setdefaultdevice [node_id|clear]` — set default device for /add_rule\n" +
+		"        `/defaultdevice` — show your current default device\n" +
+		"        `/setexitnode [node_id|clear]` — set default exit-node for /add_rule\n" +
+		"        `/defaultexitnode` — show your current default exit-node"
+
+	adminTop := "✦  *Warden's view:*\n" +
+		"        `/status` — system-wide summary (rules/users/last acl)\n" +
+		"        `/nodes` — every tailnet device by user+tag\n" +
+		"        `/exit_nodes` — exit-nodes with last-seen"
+
+	adminRest := "✦  *And the rest:*\n" +
+		"        `/rules` — recent exit-rules across all users\n" +
+		"        `/quota` — per-user rule count vs cap\n" +
+		"        `/audit` — last 20 audit_log entries\n" +
+		"        `/ack <id>` — acknowledge an alert (id is the [#N] prefix)\n" +
+		"        `/restart` — graceful container restart (requires confirm)\n" +
+		"        `/bind <chat_id> <username>` — bind a chat to a portal user\n" +
+		"        `/unbind <chat_id>` — remove a binding\n" +
+		"        `/add_device <username>` — issue a preauth key for another user\n" +
+		"        `/add_rule <username> <target>` — add rule for another user"
+
+	// Three layouts, mirroring the strict-mode gate above.
 	switch {
 	case !env.IsIdentified() && env.StrictMode:
-		return "🔒 Strict mode is ON. This chat is not bound to a skygate user.\n\n" +
+		return gateHeader() + "\n" + thinRule + "\n\n" +
+			lockWax + "  Strict mode is ON. This chat is not bound to a skygate user.\n\n" +
 			auth + "\n\n" + common
 	case !env.IsIdentified() || env.IsAdmin:
-		return "Commands (all):\n\n" + common + "\n\n" + auth + "\n\n" + userScope + "\n\n" + adminScope
+		// Admin (or legacy anonymous-admin) sees EVERYTHING.
+		return gateHeader() + "\n" + thinRule + "\n\n" +
+			common + "\n\n" + ruleBreak() +
+			auth + "\n\n" + ruleBreak() +
+			userTop + "\n\n" + userRest + "\n\n" + ruleBreak() +
+			adminTop + "\n\n" + adminRest + "\n\n" +
+			"`/help <command>` — details + examples for any one command."
 	default:
-		return "Your commands:\n\n" + common + "\n\n" + auth + "\n\n" + userScope
+		// Identified non-admin: own scope only.
+		return gateHeader() + "\n" + thinRule + "\n\n" +
+			common + "\n\n" + ruleBreak() +
+			auth + "\n\n" + ruleBreak() +
+			userTop + "\n\n" + userRest + "\n\n" +
+			"`/help <command>` — details + examples for any one command."
 	}
 }
