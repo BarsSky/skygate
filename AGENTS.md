@@ -74,6 +74,9 @@ internal/handlers/exit_rules.go                     — DeviceRule struct + DB h
 internal/handlers/exit_rules_form_my.go             — /my/exit-rules: GetMyExitRules (incl. ?script= download), PostMyExitRule (DNS resolve + dedup), PostDeleteExitRule (multi-delete with cascade); owns countUserFacing closure (~625 lines)
 internal/handlers/exit_rules_form_admin.go          — /admin/exit-rules: AdminExitRules (cross-user hierarchical view) (~165 lines)
 internal/handlers/exit_rules_form_rollback.go       — /admin/exit-rules/rollback: PostAdminRollbackACL (~40 lines)
+internal/handlers/exit_rules_form_reapply.go        — /admin/exit-rules/reapply: PostAdminACLReapply (Этап 14 v7, push current GenerateACL output to headscale without needing exit-rule churn) (~57 lines)
+internal/acl/acl.go                                 — Free function GenerateACL(db) (per-user policy + ssh rules + tagOwners). Was inside exit_rules.go before v7 (~190 lines)
+internal/acl/acl_test.go                            — TestGenerateACLValidJSONShape + TestGenerateACLIncludesDeviceRules + per-identity tests (~210 lines)
 internal/handlers/exit_rules_api.go                 — public REST API (~159 lines)
 internal/handlers/exit_rules_sync.go                — ACL sync, staggeredSync, autoupdater (~387 lines)
 internal/handlers/exit_rules_routescript.go              — route-setup script orchestrator: GenerateRouteSetupScript (~42 lines)
@@ -123,8 +126,7 @@ AGENTS.md                                           — this file
 
 ## Per-user headscale ACL policy
 
-`GenerateACL()` in `internal/handlers/exit_rules.go` builds a **per-user** headscale
-ACL using identities from `portal_users`. The very first rule is `*:*` was REMOVED.
+`GenerateACL()` in `internal/acl/acl.go` (was inside `internal/handlers/exit_rules.go` before Этап 14 v7; extracted to its own package so the telegram bot can call it without an `*App` reference) builds a **per-user** headscale ACL using identities from `portal_users`. The catch-all `*:*` rule that used to be first is REMOVED.
 
 ```json
 {
@@ -137,11 +139,15 @@ ACL using identities from `portal_users`. The very first rule is `*:*` was REMOV
     {"src": ["*"], "dst": ["*:*"]}    // internet egress (last rule)
   ],
   "tagOwners": {
-    "tag:private": ["skyadmin@...", "michail@...", ...ALL portal users...],
-    "tag:public": ["skyadmin@tsnet.skynas.ru"],
-    "tag:exit-node": ["skyadmin@tsnet.skynas.ru"]
+    "tag:private":   ["skyadmin@...", "michail@...", ...ALL portal users...],
+    "tag:public":    ["skyadmin@tsnet.skynas.ru"],
+    "tag:exit-node": ["skyadmin@tsnet.skynas.ru"]   // added in v7 — was missing
   },
-  "groups": { "group:skyadmin": [...], "group:michail": [...], ... }
+  "groups": { "group:skyadmin": [...], "group:michail": [...], ... },
+  "ssh": [
+    {"action":"accept","src":["tag:private","skyadmin@…"],"dst":["tag:exit-node"],"users":["root"]},
+    {"action":"accept","src":["skyadmin@…"],"dst":["tag:public"],"users":["root"]}
+  ]
 }
 ```
 
@@ -152,7 +158,10 @@ tag:exit-node are visible to everyone (so users can pick exit-nodes).
 
 **When editing `GenerateACL()`**: do NOT add `{"*", "*:*"}` as the first rule.
 First-match semantics make it override everything else. The internet egress
-must remain LAST, after per-user and tag rules.
+must remain LAST, after per-user and tag rules. Also remember that every
+`tag:*` referenced in `acls[]` or `ssh[]` must have a corresponding entry in
+`tagOwners{}` (the v7 fix that broke reapply otherwise — see
+"Admin SSH into tag:public relays" above for the full story).
 
 The headscale base domain is hard-coded as `tsnet.skynas.ru` for now — it
 is the only deployment. If you add another deployment, refactor to read it
@@ -160,30 +169,30 @@ from `config.Config`.
 
 ---
 
-## Tailscale in skygate (Этап 14 v2, 2026-07-14)
+## Tailscale in skygate (Этап 14 v2 + v3 + v7, 2026-07-14)
 
 The skygate container runs `tailscaled` in its own network namespace
 and joins the tailnet with `tailscale up --accept-routes --accept-dns=false`.
-**No `--exit-node` is ever set on skygate.** A separate node in the
-tailnet (a "relay", e.g. emilia) advertises the canonical Telegram IP
-ranges as subnet routes; skygate accepts them, so api.telegram.org
-traffic flows through the relay while everything else (headscale, etc.)
-stays direct. The bot is in this subnet-route path, NOT in a global
-exit-node path.
+The default-flag set has been `--accept-routes` only (no `--exit-node`):
+the bot's traffic to api.telegram.org used to be routed through a
+relay's subnet routes rather than a global exit-node. As of Этап 14
+v7 the operator unified the relay model (see "Unified exit-node +
+accept-routes" below) and may switch skygate to
+`tailscale up --accept-routes --exit-node=<chosen-relay>` —
+either is fine; the probe (described further down) is the source of
+truth for whether a packet actually goes through Tailscale.
 
-### Why not a sidecar or an exit-node?
+### Why not a sidecar (Этап 14 v2)
 
 * **Sidecar (skygate-ts, removed in Этап 14 v2)**: `network_mode:
   service:tailscale` broke docker's embedded DNS (127.0.0.11:53
-  refused UDP). Also the sidecar's entrypoint.sh called `tailscale up
-  --state=...` with a flag `tailscale up` doesn't accept, so the
-  sidecar died at startup and took skygate down with it (exit 137).
-* **Exit-node on skygate**: `tailscale set --exit-node=<X>` replaces
-  the default route for skygate — every non-tailnet packet goes via
-  the relay, including unrelated future traffic. Subnet routes are
-  scoped to just the Telegram IP ranges; cleaner and auditable.
-* **Subnets-route mode wins**: per-destination routing, no global
-  default-route hijack, no DNS collisions with Docker.
+  refused UDP). The sidecar's `entrypoint.sh` also called
+  `tailscale up --state=...` with a flag `tailscale up` doesn't
+  accept, so the sidecar died at startup and took skygate down
+  with it (exit 137).
+* **Subnets-route / accept-routes model won** (Этап 14 v2) because
+  per-destination routing keeps Docker's DNS, doesn't hijack the
+  default route, and is auditable.
 
 ### Container layout
 
@@ -211,13 +220,65 @@ container keeps Docker's `127.0.0.11` DNS, and only the tailnet's
 subnet routes (not its DNS) are accepted. Tailnet-name resolution
 isn't currently needed.
 
-### Relay setup (one-time, on a separate node)
+### Unified exit-node + accept-routes (Этап 14 v7, 2026-07-14)
 
-* `deploy/tailscale-relay/setup.sh` — run on the relay host
-  (emilia/sharlotta/karolina). Calls `tailscale set
-  --advertise-routes=...` with the canonical 8 v4 + 4 v6 CIDRs.
-  Headscale admin must then approve them via
-  `headscale nodes approve-routes --identifier N --routes ...`.
+The project principle (confirmed by the operator) is that **every
+relay node does BOTH things** and is interchangeable:
+
+  1. **Exit node** — `tailscale set --advertise-exit-node` makes
+     a node appear in the client's exit-node menu.
+  2. **Accept-routes (subnet routes)** — the same node advertises
+     a set of CIDRs that other tailnet members receive when they
+     run `tailscale up --accept-routes`. The exit-node client then
+     has both its default route AND the subnet routes pointing at
+     that node, with the kernel doing the right thing for each
+     destination.
+
+There is no "Telegram-special" logic and no "primary" exit node.
+skygate-vm is a regular client — it can be pointed at any relay,
+and the operator may change it if a relay becomes flaky. The
+client's Tailscale GUI shows all available exit nodes and
+auto-failover happens at the metric level (Tailscale native).
+
+The three relay nodes (Этап 14 v7 state):
+
+* **emilia** (100.64.0.3) — exit-node + Telegram 8 v4 + 4 v6 CIDRs
+  (`91.108.4.0/22` etc.) + 2 v6 (Telegram 2001:.../48). Approx 14
+  routes, all approved.
+* **sharlotta** (100.64.0.4) — exit-node + the same Telegram 8 v4
+  + 4 v6 CIDRs as emilia. Approx 10 routes, all approved.
+* **karolina** (100.64.0.2) — exit-node + ~148 PrimaryRoutes that
+  were configured by the operator's Windows setup (WARP/Google/
+  Cloudflare/Telegram/Amazon/... — whatever `tailscale up` was
+  told to advertise on the operator's box). Approved as-is, do
+  not touch without explicit operator request.
+
+For an admin to enable exit-node on a fresh relay:
+
+```bash
+# On the relay (as root or via sudo):
+sudo tailscale set --advertise-exit-node
+# Then on the headscale host:
+docker exec headscale headscale nodes approve-routes \
+  --identifier <N> --routes 0.0.0.0/0,::/0
+```
+
+To re-synchronise karolina's full route set after a re-install:
+
+```bash
+# On headscale host (uses headscale API key from .env):
+API_KEY=$(grep ^HEADSCALE_API_KEY= /home/skyadmin/skygate/.env | cut -d= -f2-)
+ROUTES=$(curl -s -H "Authorization: Bearer $API_KEY" \
+  http://localhost:50444/api/v1/node/11 | python3 -c \
+  "import sys,json; print(','.join(json.load(sys.stdin)['node']['availableRoutes']))")
+docker exec headscale headscale nodes approve-routes \
+  --identifier 11 --routes "$ROUTES"
+```
+
+### Relay setup scripts
+
+* `deploy/tailscale-relay/setup.sh` — one-time per node: joins
+  tailnet, advertises the canonical Telegram 8 v4 + 4 v6 CIDRs.
 * `deploy/tailscale-relay/update-routes.sh` — cron-friendly refresh
   of the Telegram IP ranges. Resolves api.telegram.org from three
   public resolvers, aggregates to canonical CIDRs, re-applies.
@@ -255,16 +316,56 @@ Template: `internal/handlers/templates/admin/telegram.html`
 (`.alert-probe` / `.probe-ok-direct` / `.probe-ok-relay` /
 `.probe-unreachable`).
 
-### Relay failover (2026-07-14, Этап 14 v3)
+### Relay failover (Этап 14 v3)
 
-Both **emilia** and **sharlotta** advertise the same 8 v4 + 4 v6
-Telegram CIDRs; Tailscale picks one based on metric. If emilia
-goes down, the bot automatically starts using sharlotta within
-~60s. Both have a weekly cron (`0 4 * * 1`) running
-`/usr/local/bin/skygate-update-telegram-routes` to refresh the
-routes from DNS. **karolina** is available as a third-tier backup
-(not yet configured). See `docs/telegram-relay.md` for the
-re-deploy recipe after a fresh relay setup.
+All three relays offer the same exit-node capability. Tailscale's
+client GUI lists them all; the client picks based on metric and
+auto-failover is native. If a relay goes down, the client just
+uses the next one — no skygate-side logic involved.
+
+`update-routes.sh` on emilia and sharlotta is still cron'd weekly
+(`0 4 * * 1`) to refresh the Telegram CIDR list from DNS. The
+operator's karolina route set is a one-shot — no cron.
+
+### Admin SSH into tag:public relays (Этап 14 v7)
+
+The default headscale ACL is per-user isolation; without an
+explicit rule, no Tailscale peer can SSH into the relay VPSes
+(emilia, sharlotta, karolina) because the broker-level `acls[]`
+rule "allow * → tag:public:*" is overridden by Tailscale's
+SSH-enforcement layer (which only consults `ssh[]`).
+
+Two pieces are required to make admin SSH work:
+
+1. **ACL rule** in `internal/acl/acl.go`:
+   ```json
+   {"action":"accept","src":["skyadmin@tsnet.skynas.ru"],
+    "dst":["tag:public"],"users":["root"]}
+   ```
+   The existing `tag:exit-node` rule is preserved. Both rules
+   must be present in the rendered JSON (asserted by
+   `TestGenerateACLValidJSONShape`).
+2. **tagOwners entry**: `tag:exit-node` is referenced in the
+   SSH rules and elsewhere in the policy, so the parser requires
+   it in `tagOwners`. Without it, `headscale policy set` rejects
+   the policy with "tag not found: tag:exit-node".
+
+After editing `acl.go` (e.g. to add new tags or new rules), the
+policy must be re-applied. Three paths exist:
+
+  - `POST /my/exit-rules` or `POST /my/exit-rules/delete` —
+    any data change to exit rules triggers a SetPolicy
+  - `POST /admin/exit-rules/rollback` — restore a previous
+    `acl_snapshots` row
+  - **NEW in v7**: `POST /admin/exit-rules/reapply` — regenerates
+    the policy from the current DB state and pushes to headscale.
+    Use this when only the *shape* of the policy changed (a new
+    SSH rule, a new tag) but no exit rule was added/removed.
+    Has a "Re-apply ACL" button on `/admin/exit-rules` (admin-only).
+
+Tailscale on each relay polls for the new ACL within ~5-10 min
+(usually faster). Until then, SSH from a Tailscale client to that
+relay still says "tailnet policy does not permit you to SSH".
 
 ### Files for this feature
 
@@ -272,13 +373,19 @@ re-deploy recipe after a fresh relay setup.
 * `entrypoint.sh` — tailscaled + tailscale up --accept-routes
 * `docker-compose.yml` — caps + tun + secret
 * `internal/handlers/handlers_telegram_probe.go` — probe logic
-* `internal/handlers/handlers_telegram_probe_test.go` — 8 tests
+* `internal/handlers/handlers_telegram_probe_test.go` — 17 tests
 * `internal/handlers/admin_telegram.go` — integrates probe
 * `internal/handlers/templates/admin/telegram.html` — banner
 * `static/css/themes.css` — probe-state CSS
 * `deploy/tailscale-relay/setup.sh` — one-time relay setup
 * `deploy/tailscale-relay/update-routes.sh` — IP refresh
 * `docs/telegram-relay.md` — full procedure + troubleshooting
+* `internal/acl/acl.go` — GenerateACL (per-user policy + ssh rules
+  + tagOwners). Edit + reapply via `/admin/exit-rules/reapply`.
+* `internal/handlers/exit_rules_form_reapply.go` — admin
+  "Re-apply ACL" endpoint (v7)
+* `internal/handlers/templates/admin/exit_rules.html` — adds
+  "Re-apply ACL" button to the admin exit-rules page (v7)
 
 ---
 
@@ -300,6 +407,62 @@ are **preserved** (the UPDATE only fires when the current tag is empty or
 The UI at `/my/devices` shows the local `node_owner_map.tag` snapshot (so the
 Tailscale Android client must wait ~60 s after a tag change for ACL updates
 to propagate through to the Tailscale clients).
+
+---
+
+## Tailnet node state (Этап 14 v7, 2026-07-14)
+
+All nodes in the tailnet `tsnet.skynas.ru`, headscale id assignments
+approximate — they shift on node re-create.
+
+**Relays (`tag:public`, all `offers exit node` since 2026-07-14):**
+
+* `emilia` (100.64.0.3, headscale id=3) — exit-node + 8 v4 + 4 v6
+  Telegram CIDRs. Update-routes cron: weekly Monday 04:00.
+* `sharlotta` (100.64.0.4, id=4) — exit-node + same Telegram 8 v4
+  + 4 v6 CIDRs. Update-routes cron: weekly Monday 04:00.
+* `karolina` (100.64.0.2, id=11) — exit-node + ~148 PrimaryRoutes
+  (operator's Windows setup, includes WARP/Google/Cloudflare/Amazon
+  /Telegram/...). No cron — one-shot config.
+
+**Clients (`tag:private`):**
+
+* `skygate-vm` (100.64.0.10, id=13) — the in-image skygate container.
+  Was `skygate-vm-1` originally, auto-promoted after the old
+  host-side node was deleted (commit `f784b48`). The host's
+  `tailscaled` was stopped and disabled on 2026-07-14 to eliminate
+  the duplicate `skygate-vm-1` node.
+* `skyworker` (100.64.0.1, id=9) — operator's Windows machine.
+  Has `tailscale up --accept-routes` and may pick any relay as
+  exit-node from the Tailscale GUI.
+* `base` (100.64.0.7, id=7) — older Windows box, currently
+  `offline` since 2026-07-13. Tagged `tag:private` but not in
+  active use.
+* `skybars` (100.64.0.5, id=10) — Android phone, `active; relay
+  "mow"` (uses DERP for direct, not direct endpoint).
+* `skybars-1` (100.64.0.8, id=8) — older phone, `offline` since
+  2026-07-14 morning.
+* `nothing-phone-2` (100.64.0.6, id=6) — Android phone, `active`
+  via DERP relay.
+
+**Health check pattern:** Tailscale on any relay that doesn't have
+an `ssh[]` rule covering itself prints to `sudo tailscale status`:
+
+> `# Health check:`
+> `#     - Tailscale SSH enabled, but access controls don't allow`
+> `#       anyone to access this device. Update your tailnet's`
+> `#       ACLs to allow access.`
+
+This is a noisy "ACL doesn't permit SSH inbound" warning — it
+appears on relays because no rule says "allow SSH into this
+specific node". The `ssh[]` rules in `acl.go` only say
+"admin → tag:exit-node" and "admin → tag:public" — they permit
+SSH *to* the tag, not from the tag to itself. The warning is
+**expected** and does not affect exit-node functionality. To
+silence it, add a rule like
+`{"src":["skyadmin@…"],"dst":["autogroup:self"],"users":["root"]}`
+to `ssh[]` — but it's a cosmetic improvement, not a functional
+one.
 
 ---
 
@@ -509,6 +672,9 @@ Sister files in `internal/handlers/` (current line counts):
 - `exit_rules_form_my.go` (625) — /my/exit-rules: Get + Post + Delete (incl. script download, DNS resolve, multi-delete cascade, user-facing counters)
 - `exit_rules_form_admin.go` (165) — /admin/exit-rules cross-user view (hierarchical by user → device → exit_node)
 - `exit_rules_form_rollback.go` (40) — /admin/exit-rules/rollback (restore prev acl_snapshot)
+- `exit_rules_form_reapply.go` (57) — /admin/exit-rules/reapply (v7: regenerate policy without exit-rule churn)
+- `acl/acl.go` (190) — GenerateACL as a free function so the bot (no *App) can reuse it; per-user policy + ssh rules + tagOwners. v7 added tag:exit-node to tagOwners + skyadmin→tag:public SSH rule.
+- `acl/acl_test.go` (210) — parity + placeholder + per-identity tests.
 - `exit_rules_api.go` (159) — public REST API
 - `exit_rules_sync.go` (387) — ACL sync, staggeredSync, autoupdater
 - `exit_rules_routescript.go` (42) — orchestrator: `GenerateRouteSetupScript` (load data → dispatch to OS builder)

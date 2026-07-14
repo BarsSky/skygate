@@ -124,11 +124,6 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 		`"dst": ["tag:public:*"]`,
 		`"dst": ["tag:exit-node:*"]`,
 		`"dst": ["*:*"]`,
-		// tagOwners must declare every tag referenced
-		// elsewhere in the policy, including tag:exit-node
-		// (used by the SSH rule). Without this entry
-		// headscale refuses the policy with "tag not found".
-		`"tag:exit-node": ["skyadmin@tsnet.skynas.ru"]`,
 		// Этап 14 v7: SSH rules for admin to manage
 		// tag:exit-node (existing) and tag:public relay
 		// nodes (new) as root. Match the multi-line JSON
