@@ -335,10 +335,13 @@ func addDeviceReply(env BotEnv, arg string) string {
 	// Set the pending reply with platform picker. The polling
 	// loop reads pendingReplyForCurrentMessage after this
 	// returns and attaches the inline keyboard to the
-	// sendMessage payload. After the user picks a platform,
-	// the callback handler in notify.go renders the
-	// per-platform instructions.
-	pendingReplyForCurrentMessage = buildPlatformPicker(lang)
+	// sendMessage payload. The picker includes a 📋 Copy
+	// button (Telegram copy_text field) so the user can copy
+	// the preauth key to the clipboard without long-pressing
+	// the code block. After the user picks a platform, the
+	// callback handler in notify.go renders the per-platform
+	// install instructions.
+	pendingReplyForCurrentMessage = buildPlatformPicker(lang, key.Key)
 	return i18n.Tf(lang, "bot.add_device.ok", target.Username, key.Key)
 }
 

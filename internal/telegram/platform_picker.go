@@ -39,20 +39,36 @@ const (
 )
 
 // buildPlatformPicker constructs the inline-keyboard reply for
-// /add_device. Five buttons on two rows:
+// /add_device. Three rows:
 //
-//   🐧 Linux    ⊞ Windows    🍎 macOS
-//   📱 iOS      🤖 Android
+//   📋 Скопировать            ← (full-width, copy_text = preauth key)
+//   🐧 Linux  ⊞ Windows  🍎 macOS
+//   📱 iOS    🤖 Android
 //
-// Each button's callback_data is
-// "add_device_platform:<platform>" so handleCallback can route
-// to the platform-specific instructions. The button label is
-// from the i18n catalog so the picker is bilingual.
-func buildPlatformPicker(lang string) *PendingReply {
+// The Copy button is the new addition (Этап 14 v12,
+// 2026-07-14): Telegram Bot API v7.0+ supports a `copy_text`
+// field on inline-keyboard buttons, which copies the value
+// to the user's clipboard on tap. We use it for the preauth
+// key so the user doesn't have to long-press the code block
+// in the body to copy it. The copy_text value is bound at
+// button-construction time (passed in as preauthKey).
+//
+// The platform buttons keep the v9 callback_data shape so
+// handleCallback can route to the per-platform install
+// instructions.
+func buildPlatformPicker(lang, preauthKey string) *PendingReply {
 	mkBtn := func(label, data string) map[string]string {
 		return map[string]string{"text": label, "callback_data": data}
 	}
+	// The Copy button uses copy_text instead of callback_data —
+	// tapping it just copies the preauth key to the clipboard,
+	// no callback handler needed.
+	copyBtn := map[string]string{
+		"text":      "📋 " + i18n.T(lang, "bot.add_device.copy_button"),
+		"copy_text": preauthKey,
+	}
 	rows := [][]map[string]string{
+		{copyBtn},
 		{
 			mkBtn("🐧 "+i18n.T(lang, "bot.platform.linux"), "add_device_platform:linux"),
 			mkBtn("⊞ "+i18n.T(lang, "bot.platform.windows"), "add_device_platform:windows"),
