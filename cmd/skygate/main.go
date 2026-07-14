@@ -135,6 +135,10 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+	// 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set,
+	// /admin/acls (and a few other admin pages) link to the
+	// existing Headplane instead of the local sidecar.
+	app.HeadplaneExternalURL = cfg.HeadplaneExternalURL
 
 		// 2026-07-10: rate limiting for /login (per-user + per-IP) and /api endpoints
 		// (per-IP). In-memory token bucket; auto-cleans stale entries.
@@ -304,6 +308,17 @@ func main() {
 				log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
 			}
 			go rn.Run(ctx)
+			// 2026-07-15: Этап 14 v13 — register the per-language
+			// command menu. Best-effort: a Telegram-side failure
+			// is logged inside SetMyCommandsAll and the bot
+			// keeps running without a menu. The user can still
+			// type commands from memory; the menu is a
+			// convenience, not a gate.
+			go func() {
+				if err := rn.SetMyCommandsAll(context.Background(), telegram.DefaultMyCommandsSpec); err != nil {
+					log.Printf("🤖 setMyCommandsAll: %v", err)
+				}
+			}()
 		}
 	defer stop()
 

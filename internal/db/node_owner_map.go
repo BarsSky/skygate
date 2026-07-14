@@ -322,3 +322,66 @@ func DeleteNodeOwnersByUser(d dbExec, username string) error {
 	_, err := d.Exec(`DELETE FROM node_owner_map WHERE username = ?`, username)
 	return err
 }
+
+// BackfillEmptyHostnames updates node_owner_map.hostname for every
+// row whose hostname is currently the empty string AND whose
+// node_id appears as a key in the map. Rows with a non-empty
+// hostname are left alone (we never overwrite a known value —
+// the headscale copy could have drifted and we trust the most
+// recent successful backfill).
+//
+// 2026-07-15: Этап 14 v13 — added to power lazy backfill in the
+// bot's /my_nodes and /nodes commands. The migration v0.34 added
+// the hostname column, but the operator-driven backfill only runs
+// from /admin/devices — if a user opened the bot before visiting
+// /admin/devices, every row in node_owner_map had an empty
+// hostname and the bot's "hostname (node_id)" formatting silently
+// fell back to the bare node_id (see screenshot in the v0.10.12
+// release notes). Now the bot's read paths self-heal: on the
+// first /my_nodes or /nodes after startup, if any visible row
+// has an empty hostname, we call ListAllNodes, build the map,
+// and call this helper.
+//
+// Returns the number of rows updated, for tests and operator
+// visibility. An error from Exec is returned as-is; the caller
+// is expected to log it but not fail the bot reply (the user
+// still gets the read they asked for, just with bare node_ids).
+func BackfillEmptyHostnames(d *sql.DB, hostnameByNodeID map[string]string) (int, error) {
+	if len(hostnameByNodeID) == 0 {
+		return 0, nil
+	}
+	var updated int
+	for nodeID, hn := range hostnameByNodeID {
+		if hn == "" {
+			continue
+		}
+		res, err := d.Exec(
+			`UPDATE node_owner_map
+			    SET hostname = ?
+			  WHERE node_id = ? AND (hostname = '' OR hostname IS NULL)`,
+			hn, nodeID,
+		)
+		if err != nil {
+			return updated, err
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			updated += int(n)
+		}
+	}
+	return updated, nil
+}
+
+// AnyHostnameEmpty reports whether any of the given NodeOwners
+// has an empty Hostname. Used by the bot's read paths to decide
+// whether to trigger the lazy backfill (avoids the headscale
+// round-trip when nothing needs updating). O(n) over the slice;
+// a few dozen rows is negligible compared to the API call it
+// saves.
+func AnyHostnameEmpty(owners []NodeOwner) bool {
+	for _, o := range owners {
+		if o.Hostname == "" {
+			return true
+		}
+	}
+	return false
+}

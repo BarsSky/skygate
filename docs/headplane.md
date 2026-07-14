@@ -54,6 +54,46 @@ The default is `true` (the sidecar deploys by default) for
 backward compat with existing installations. New deployments
 can choose either mode.
 
+## Use an existing Headplane (2026-07-15, v0.10.12)
+
+If you already run Headplane somewhere (e.g. on a separate
+VM, on Kubernetes, on another docker host) you can point
+Skygate at it instead of starting a second instance. Two
+env vars control this mode:
+
+| Env var | What | Required |
+|---------|------|----------|
+| `HEADPLANE_EXTERNAL_URL` | Public URL of the existing Headplane UI (e.g. `https://headplane.example.com`) | yes, when `HEADPLANE_ENABLED=true` |
+| `HEADPLANE_ENABLED` | set to `true` AND `HEADPLANE_EXTERNAL_URL` to use the existing one; set to `false` to skip entirely | no (default `true`) |
+
+When `HEADPLANE_EXTERNAL_URL` is set, `deploy/deploy.sh`:
+
+- Skips the `headplane` service block in the rendered
+  `docker-compose.yml` (no second container).
+- Skips the readiness check for `:50445`.
+- Saves `HEADPLANE_EXTERNAL_URL` in the backup manifest so
+  a `deploy.sh --from-path` restore on another host can
+  reproduce the same wiring.
+
+The `/admin/acls` view in Skygate links to
+`HEADPLANE_EXTERNAL_URL` (when set) instead of the local
+sidecar URL, so the operator clicks through to the existing
+Headplane instance.
+
+If you don't set `HEADPLANE_EXTERNAL_URL`, the default
+behaviour holds: the local sidecar is deployed and
+`/admin/acls` links to it. The two modes are interchangeable
+at runtime — flipping the env var and re-running
+`./deploy/deploy.sh` is the only step to migrate.
+
+> **Note**: Skygate does not call the Headplane API
+> directly — the only integration is the link from
+> `/admin/acls`. The "existing Headplane" is therefore
+> just a different URL for the same UI; the credentials
+> and ACL data live on whichever Headscale the existing
+> Headplane is pointed at, and Skygate talks to the same
+> Headscale via `HEADSCALE_URL` + `HEADSCALE_API_KEY`.
+
 ## Version pin policy
 
 `HEADPLANE_IMAGE` in `.env` is the only place the version lives.

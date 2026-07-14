@@ -76,6 +76,19 @@ HEADSCALE_BASE_DOMAIN="${HEADSCALE_BASE_DOMAIN:-tsnet.example.com}"
 # never silently bumps the dependency.
 HEADPLANE_ENABLED="${HEADPLANE_ENABLED:-true}"
 HEADPLANE_IMAGE="${HEADPLANE_IMAGE:-ghcr.io/tale/headplane:0.6.3}"
+# 2026-07-15: v0.10.12 — point Skygate at an EXISTING Headplane
+# instead of starting a second sidecar. When set, deploy.sh
+# strips the headplane service block from docker-compose.yml
+# and /admin/acls links to this URL. Leave empty to use the
+# bundled sidecar. See docs/headplane.md "Use an existing
+# Headplane" for the full contract.
+HEADPLANE_EXTERNAL_URL="${HEADPLANE_EXTERNAL_URL:-}"
+# 2026-07-15: v0.10.12 — comma-separated URLs of EXISTING DERP
+# relays. When non-empty, deploy.sh skips the bundled derper
+# container and appends these URLs to headscale's derp.urls
+# list. See docs/derp.md "Use an existing DERP relay" for
+# the full contract.
+DERP_EXTERNAL_URLS="${DERP_EXTERNAL_URLS:-}"
 HEADSCALE_AUTO_APPROVE_ROUTES="${HEADSCALE_AUTO_APPROVE_ROUTES:-0.0.0.0/0,::/0}"
 HEADSCALE_DERP_URLS="${HEADSCALE_DERP_URLS:-https://controlplane.tailscale.com/derpmap/default}"
 DOCKER_NETWORK="${DOCKER_NETWORK:-headscale_default}"

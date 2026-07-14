@@ -36,6 +36,21 @@ func nodesReply(env BotEnv) string {
 	if err != nil {
 		return i18n.Tf(lang, "bot.nodes.db_error", err)
 	}
+	// 2026-07-15: Этап 14 v13 — lazy hostname backfill. Mirrors
+	// the one in myNodesReply: if any visible row has an empty
+	// hostname, call ListAllNodes and update the empty ones in
+	// place. See db.BackfillEmptyHostnames for why we only touch
+	// rows where hostname is currently empty (we never overwrite
+	// a known value).
+	if db.AnyHostnameEmpty(owners) && env.HS != nil {
+		if hnMap := hostnameMapFromHeadscale(env.HS); len(hnMap) > 0 {
+			if n, berr := db.BackfillEmptyHostnames(d, hnMap); berr == nil && n > 0 {
+				if refreshed, rerr := db.ListAllNodeOwners(d); rerr == nil {
+					owners = refreshed
+				}
+			}
+		}
+	}
 	type key struct{ user, tag string }
 	byGroup := map[key][]string{}
 	order := []key{}
