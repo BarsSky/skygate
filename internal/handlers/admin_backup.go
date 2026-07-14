@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"strconv"
+
+	"skygate/internal/backup"
 )
 
 const backupDir = "/tmp/skygate-backup"
@@ -29,6 +31,19 @@ func (a *App) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
 		data["FlashError"] = e
+	}
+
+	// 2026-07-14: Этап 14 v6 — load the persistent
+	// backup config so the "Destination & schedule"
+	// card renders on the same page (the new
+	// /admin/backup/config handler is a thin wrapper
+	// that does the same thing and exposes the same
+	// template). We do this here so the legacy
+	// /admin/backup URL keeps working — admins can
+	// bookmark either.
+	if cfg, err := backup.Load(a.DB); err == nil {
+		data["Config"] = cfg
+		data["Protocols"] = backup.AllProtocols
 	}
 
 	// List existing backups
