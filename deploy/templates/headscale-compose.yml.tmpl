@@ -19,8 +19,14 @@ services:
     networks:
       - headscale_default
 
+  # 2026-07-14: Этап 14 v11 — Headplane is now a pinned, documented
+  # optional module (see docs/headplane.md). The image tag is
+  # sourced from ${HEADPLANE_IMAGE} in .env so a Skygate upgrade
+  # never silently bumps a dependency. To skip the sidecar
+  # entirely, set HEADPLANE_ENABLED=false (the deploy script
+  # removes this block before generating the compose file).
   headplane:
-    image: ghcr.io/tale/headplane:latest
+    image: ${HEADPLANE_IMAGE}
     container_name: headplane
     restart: unless-stopped
     depends_on:

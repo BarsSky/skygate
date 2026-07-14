@@ -59,13 +59,25 @@ if [ -d "${DEPLOY_HEADSCALE_DIR}/config" ]; then
 else warn "  config not found"; fi
 
 # ── 7. Headplane config ──
-log "Backing up Headplane config..."
-HP_CONFIG="${DEPLOY_HEADSCALE_DIR}/headplane/config.yaml"
-[ -f "${HP_CONFIG}" ] && cp "${HP_CONFIG}" "${BACKUP_PATH}/headplane-config.yaml" && log "  headplane-config.yaml" || warn "  not found"
+# 2026-07-14: Этап 14 v11 — Headplane is an optional module.
+# When HEADPLANE_ENABLED=false, the sidecar isn't running and
+# there's nothing to back up. The script still records the
+# env var in the manifest so a restore on a different host
+# can decide whether to redeploy the sidecar.
+if [ "${HEADPLANE_ENABLED}" = "false" ]; then
+    log "  Headplane skipped (HEADPLANE_ENABLED=false)"
+else
+    log "Backing up Headplane config..."
+    HP_CONFIG="${DEPLOY_HEADSCALE_DIR}/headplane/config.yaml"
+    [ -f "${HP_CONFIG}" ] && cp "${HP_CONFIG}" "${BACKUP_PATH}/headplane-config.yaml" && log "  headplane-config.yaml" || warn "  not found"
+fi
 
 # ── 8. Headplane data ──
-log "Backing up Headplane data..."
-${DOCKER_CMD} run --rm -v headscale_headplane_data:/data -v "${BACKUP_PATH}:/backup" alpine sh -c "cp -r /data /backup/headplane-data 2>/dev/null" &&     log "  headplane data" || warn "  headplane data copy failed"
+# 2026-07-14: Этап 14 v11 — see above; data backup also gated.
+if [ "${HEADPLANE_ENABLED}" != "false" ]; then
+    log "Backing up Headplane data..."
+    ${DOCKER_CMD} run --rm -v headscale_headplane_data:/data -v "${BACKUP_PATH}:/backup" alpine sh -c "cp -r /data /backup/headplane-data 2>/dev/null" &&     log "  headplane data" || warn "  headplane data copy failed"
+fi
 
 # ── 9. SSH keys ──
 log "Backing up SSH keys..."
@@ -84,7 +96,7 @@ for _key in skygate_sync skygate_sync.pub; do
 log "Saving Docker images..."
 ${DOCKER_CMD} save skygate-skygate:latest -o "${BACKUP_PATH}/skygate-image.tar" 2>/dev/null && log "  skygate-image.tar" || warn "  skygate image save failed"
 ${DOCKER_CMD} save headscale/headscale:0.29.1 -o "${BACKUP_PATH}/headscale-image.tar" 2>/dev/null && log "  headscale-image.tar" || warn "  headscale image save failed"
-${DOCKER_CMD} save ghcr.io/tale/headplane:latest -o "${BACKUP_PATH}/headplane-image.tar" 2>/dev/null && log "  headplane-image.tar" || warn "  headplane image save failed"
+${DOCKER_CMD} save "${HEADPLANE_IMAGE}" -o "${BACKUP_PATH}/headplane-image.tar" 2>/dev/null && log "  headplane-image.tar" || warn "  headplane image save failed"
 
 # ── 12. Inventory ──
 cat > "${BACKUP_PATH}/inventory.txt" << INVEOF
@@ -93,6 +105,9 @@ Skygate Full Backup — ${DATE_TAG} (OS: ${SKYGATE_OS})
   .env . skygate-repo.bundle . skygate.db . headscale-db.sqlite
   headscale-config/ . headplane-config.yaml . headplane-data/
   ssh/ . skygate-image.tar . headscale-image.tar . headplane-image.tar
+HEADPLANE_ENABLED=${HEADPLANE_ENABLED:-true}
+HEADPLANE_IMAGE=${HEADPLANE_IMAGE:-ghcr.io/tale/headplane:0.6.3}
+SKYGATE_IMAGE=skygate-skygate:latest  # set by the running container; the actual tag is in .git describe
 Restore: ./deploy/deploy.sh --from-path <this-directory>
 INVEOF
 
