@@ -99,11 +99,19 @@ func resetLoginAttempts(d *sql.DB, chatID int64) {
 // to HandleCommand via env.TelegramLangCode). A re-bind does
 // NOT overwrite lang (the qInsertTelegramBinding query
 // deliberately omits lang from the ON CONFLICT UPDATE clause).
-func loginReply(env BotEnv, args []string) string {
+// loginReplyBody is the "with args" branch of /login —
+// paste-a-key. dispatchCommand calls loginHint directly for
+// the no-args case, and loginReplyBody for /login <token>.
+// Renamed from loginReply during Этап 14 v9 (butler voice
+// refactor) so the dispatcher can pick the envelope context
+// per branch (no-args gets "welcome" + skipWrap, with-args
+// gets "bind" + wrap).
+func loginReplyBody(env BotEnv, args []string) string {
 	lang := env.Lang
-	// /login with no args: print the hint. This is also what
-	// /start with no args prints (they're the same UX — tell
-	// the user what to do next).
+	// /login always has at least one non-empty arg here
+	// (dispatchCommand handles the no-args case). The
+	// defensive check below covers the edge case where
+	// args[0] is whitespace-only.
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
 		return loginHint(env)
 	}
@@ -185,7 +193,14 @@ func loginReply(env BotEnv, args []string) string {
 // "are you sure?" step before binding the chat. /login keeps
 // the one-command path for users who already pasted the key
 // from the web page.
-func startReply(env BotEnv, args []string) string {
+// startReplyBody is the "with token" branch of /start —
+// confirmation prompt with [Bind] [Cancel] inline buttons.
+// dispatchCommand calls loginHint directly for the no-args
+// case, and startReplyBody for /start <token>. Renamed from
+// startReply during Этап 14 v9 for the same reason as
+// loginReplyBody: the dispatcher needs to pick the envelope
+// per branch.
+func startReplyBody(env BotEnv, args []string) string {
 	lang := env.Lang
 	if len(args) == 0 {
 		return loginHint(env)

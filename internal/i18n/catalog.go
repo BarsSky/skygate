@@ -628,6 +628,29 @@ var ruCatalog = map[string]string{
 	"bot.personality.gatekeeper_sign":  "⟡  Хранитель Порога",
 	"bot.personality.role_warden_of_self": "ты — Хранитель своих устройств",
 	"bot.personality.gate_header":      "Кодекс Порога",
+	// 2026-07-14: Этап 14 v9 — butler voice v2.
+	// Every reply opens with a single-line header that
+	// names the context. The values are short and
+	// scannable, never wrapping on phones. The
+	// context names are passed by the Go code (headerFor)
+	// — adding a new context is a code change that
+	// references one of these keys.
+	"bot.header.welcome":              "Врата",
+	"bot.header.registry":             "Реестр",
+	"bot.header.codex":                "Кодекс",
+	"bot.header.version":              "Свиток версии",
+	"bot.header.ack":                  "Подтверждение",
+	"bot.header.bind":                 "Привязка",
+	"bot.header.unbind":               "Отвязка",
+	"bot.header.add":                  "Добавление",
+	"bot.header.del":                  "Удаление",
+	"bot.header.err":                  "Закрытая дверь",
+	"bot.header.welcome_back":         "С возвращением",
+	// Sign-off line at the end of long replies
+	// (more than 3 body lines or > 300 runes). Short
+	// confirmations ("Rule added") skip it to keep
+	// the message feeling crisp.
+	"bot.footer.signoff":              "Искренне Ваш, Хранитель Порога",
 	"bot.welcome.sealed_intro":         "Врата запечатаны. Назови своё имя в углях — и стражи узнают тебя.",
 	"bot.welcome.bind_title":           "Чтобы привязать этот чат к аккаунту skygate:",
 	"bot.welcome.bind_step1":           "Открой skygate → `/my/telegram`",
@@ -1523,6 +1546,19 @@ var enCatalog = map[string]string{
 	"bot.personality.gatekeeper_sign":  "⟡  Warden of the Threshold",
 	"bot.personality.role_warden_of_self": "you are Warden of your own devices",
 	"bot.personality.gate_header":      "The Threshold's Codex",
+	// 2026-07-14: Этап 14 v9 — butler voice v2 (EN).
+	"bot.header.welcome":              "The Gate",
+	"bot.header.registry":             "The Registry",
+	"bot.header.codex":                "The Codex",
+	"bot.header.version":              "The Version Scroll",
+	"bot.header.ack":                  "Acknowledged",
+	"bot.header.bind":                 "Binding",
+	"bot.header.unbind":               "Unbinding",
+	"bot.header.add":                  "Added",
+	"bot.header.del":                  "Removed",
+	"bot.header.err":                  "A Closed Door",
+	"bot.header.welcome_back":         "Welcome Back",
+	"bot.footer.signoff":              "Yours in service, the Warden of the Threshold",
 	"bot.welcome.sealed_intro":         "The gate is sealed. Speak your name into the embers and the wardens will know you.",
 	"bot.welcome.bind_title":           "To bind this chat to your skygate account:",
 	"bot.welcome.bind_step1":           "Open skygate → `/my/telegram`",
