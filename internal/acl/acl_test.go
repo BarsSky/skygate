@@ -124,6 +124,13 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 		`"dst": ["tag:public:*"]`,
 		`"dst": ["tag:exit-node:*"]`,
 		`"dst": ["*:*"]`,
+		// Этап 14 v7: SSH rules for admin to manage
+		// tag:exit-node (existing) and tag:public relay
+		// nodes (new) as root. Match the multi-line JSON
+		// formatting exactly so we catch accidental
+		// whitespace regressions.
+		`"src": ["tag:private", "skyadmin@tsnet.skynas.ru"],` + "\n" + `      "dst": ["tag:exit-node"]`,
+		`"src": ["skyadmin@tsnet.skynas.ru"],` + "\n" + `      "dst": ["tag:public"]`,
 	} {
 		if !strings.Contains(aclStr, want) {
 			t.Errorf("ACL missing %q", want)
