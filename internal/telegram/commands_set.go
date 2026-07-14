@@ -117,6 +117,20 @@ var DefaultMyCommandsSpec = myCommandsSpec{
 // continue without a command menu than have a hung
 // registration block the bot. Telegram's docs don't specify
 // a recommended timeout, but the average reply is <300ms.
+//
+// v0.10.4 design note: we use the "default" scope only.
+// The "all_chat_admins" scope would let us hide the admin
+// commands from non-admin users, but as of Telegram Bot API
+// 7.x the scope type "all_chat_admins" returns
+// "can't parse BotCommandScope: Unsupported type specified"
+// for bots that aren't admin in any chat. Since we don't
+// have a way to discover that up-front, the safer choice
+// is to register all commands in the default scope and rely
+// on the dispatcher's IsAdmin check to gate the actual
+// execution. (The /help text marks admin commands with
+// ✦ so a user can still see at a glance that a command is
+// wardens-only.) If/when Telegram fixes the scope API, we
+// can split the menu.
 func (n *RealNotifier) SetMyCommands(ctx context.Context, spec myCommandsSpec) error {
 	if n.apiBase == "" || n.db == nil {
 		return fmt.Errorf("SetMyCommands: notifier not configured")
@@ -126,18 +140,16 @@ func (n *RealNotifier) SetMyCommands(ctx context.Context, spec myCommandsSpec) e
 		return fmt.Errorf("SetMyCommands: token not configured: %v", err)
 	}
 
-	// Two scopes: default (everyone) and all_chat_admins.
-	// Telegram documents the second as
-	// {"type":"all_chat_admins"}, which restricts the menu
-	// to chats where the bot considers the user an admin.
-	// We use it instead of a per-user ACL because the bot
-	// doesn't have a way to push per-user command lists
-	// without a separate API call per user (impractical).
-	if err := postSetMyCommands(ctx, n, token, "default", "", spec.Default); err != nil {
+	// Single scope: default. We merge the admin list into
+	// the default list so the menu is one register call
+	// and one menu visible to everyone. See the function
+	// comment above for why we don't use a separate
+	// admin scope.
+	merged := make([]telegramCommand, 0, len(spec.Default)+len(spec.AdminOnly))
+	merged = append(merged, spec.Default...)
+	merged = append(merged, spec.AdminOnly...)
+	if err := postSetMyCommands(ctx, n, token, "default", "", merged); err != nil {
 		return fmt.Errorf("set default: %w", err)
-	}
-	if err := postSetMyCommands(ctx, n, token, "all_chat_admins", "", spec.AdminOnly); err != nil {
-		return fmt.Errorf("set admin: %w", err)
 	}
 	return nil
 }
