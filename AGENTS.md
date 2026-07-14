@@ -7,21 +7,27 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.10.8 — butler voice v2 (Telegram bot envelope)
-  ([release notes](RELEASE-NOTES-v0.10.8.md)). Every bot reply now
-  opens with a one-line butler header (`🪶  <context>`) + body +
-  optional sign-off footer. 11 envelope contexts (registry / codex
-  / version / ack / bind / unbind / add / del / err / welcome). v1
-  helper API kept stable for backward compat.
-* **Previous**: v0.10.7 — Tailscale exit-node unification + admin
-  SSH into tag:public relays + bilingual first official release.
-* **What we're working on next (v0.10.9 candidates)**:
-  - **Personal API token rotation** (admin override): TTL +
-    auto-rotate field, so the bot integration can issue 24h / 7d /
-    30d tokens. Currently tokens only have manual revocation.
+* **Current**: v0.10.9 — full i18n + hostname in node list +
+  /add_device platform picker + MIT license
+  ([release notes](RELEASE-NOTES-v0.10.9.md)). Every bot reply
+  goes through the i18n catalog now (v0.10.8 still had
+  hardcoded English in /my_* and admin helper outputs). New
+  `node_owner_map.hostname` column (migration v0.34) is
+  backfilled by the next `backfillNodeOwnership` pass. After
+  upgrade, run `/admin/devices` "Backfill" to populate
+  hostname for existing nodes.
+* **Previous**: v0.10.8 — butler voice v2 (Telegram bot envelope).
+  11 envelope contexts, v1 helper API kept stable.
+* **What we're working on next (v0.10.10 candidates)**:
+  - **`/clearrules` i18n** — body helper still has hardcoded
+    English. Catalog has all the keys; just needs the body
+    touched. v0.10.10 follow-up.
   - **Butler voice v3** (deferred until user feedback on v2 lands):
     header carries urgency level (`🪶` / `🪶!` / `🪶!!`), body uses
     subtle inline color marks for status.
+  - **Personal API token rotation** (admin override): TTL +
+    auto-rotate field, so the bot integration can issue 24h / 7d /
+    30d tokens. Currently tokens only have manual revocation.
 
 ---
 
