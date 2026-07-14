@@ -17,6 +17,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/backup"
 	"skygate/internal/config"
+	"skygate/internal/release"
 	"skygate/internal/db"
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
@@ -325,6 +326,21 @@ func main() {
 	})
 	backupSched := &backup.Scheduler{DB: d}
 	backupSched.Start(ctx)
+
+	// 2026-07-14: Этап 14 v8 — release-monitor goroutine.
+	// Polls GitHub Releases once an hour and emits a
+	// Notifier.SendAlert when a newer version is available.
+	// Independent of system cron / external tooling — the
+	// bot carries the message to admin and the operator
+	// decides when to upgrade (see AGENTS.md "Updating").
+	releaseMon := &release.Monitor{
+		HTTP:      &http.Client{Timeout: 10 * time.Second},
+		Current:   version,
+		Notified:  make(map[string]bool),
+		Notifier:  app.Notifier,
+		CheckEvery: 1 * time.Hour,
+	}
+	releaseMon.Start(ctx)
 
 	<-ctx.Done()
 	log.Println("🌐 shutting down")
