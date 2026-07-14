@@ -83,6 +83,10 @@ v0.10.7 notes for the full intro.
   body. Defer until user feedback on v2 lands.
 * **Personal API token rotation** — TTL + auto-rotate for
   the AI integration. v0.10.10 candidate.
+* **Headplane as documented optional module** — release
+  v0.10.10 pins the version, adds the opt-out toggle, and
+  ships [docs/headplane.md](docs/headplane.md) with the
+  integration contract.
 
 ---
 

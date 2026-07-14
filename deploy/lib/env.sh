@@ -68,6 +68,14 @@ HEADSCALE_URL="${HEADSCALE_URL:-http://headscale:50444}"
 HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-headscale}"
 HEADSCALE_LOG_LEVEL="${HEADSCALE_LOG_LEVEL:-info}"
 HEADSCALE_BASE_DOMAIN="${HEADSCALE_BASE_DOMAIN:-tsnet.example.com}"
+# 2026-07-14: Этап 14 v11 — Headplane is now an optional
+# module. HEADPLANE_ENABLED defaults to true for backward
+# compat (the original deploy shipped Headplane by default);
+# set HEADPLANE_ENABLED=false in .env to skip the sidecar.
+# HEADPLANE_IMAGE pins the upstream tag so a Skygate upgrade
+# never silently bumps the dependency.
+HEADPLANE_ENABLED="${HEADPLANE_ENABLED:-true}"
+HEADPLANE_IMAGE="${HEADPLANE_IMAGE:-ghcr.io/tale/headplane:0.6.3}"
 HEADSCALE_AUTO_APPROVE_ROUTES="${HEADSCALE_AUTO_APPROVE_ROUTES:-0.0.0.0/0,::/0}"
 HEADSCALE_DERP_URLS="${HEADSCALE_DERP_URLS:-https://controlplane.tailscale.com/derpmap/default}"
 DOCKER_NETWORK="${DOCKER_NETWORK:-headscale_default}"

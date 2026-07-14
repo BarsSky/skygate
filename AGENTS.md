@@ -7,21 +7,18 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.10.9 — full i18n + hostname in node list +
-  /add_device platform picker + MIT license
-  ([release notes](RELEASE-NOTES-v0.10.9.md)). Every bot reply
-  goes through the i18n catalog now (v0.10.8 still had
-  hardcoded English in /my_* and admin helper outputs). New
-  `node_owner_map.hostname` column (migration v0.34) is
-  backfilled by the next `backfillNodeOwnership` pass. After
-  upgrade, run `/admin/devices` "Backfill" to populate
-  hostname for existing nodes.
-* **Previous**: v0.10.8 — butler voice v2 (Telegram bot envelope).
-  11 envelope contexts, v1 helper API kept stable.
-* **What we're working on next (v0.10.10 candidates)**:
+* **Current**: v0.10.10 — Headplane as optional pinned module
+  ([release notes](RELEASE-NOTES-v0.10.10.md)). `HEADPLANE_IMAGE`
+  is now pinned to `ghcr.io/tale/headplane:0.6.3` (no more
+  silent `:latest` upgrades), `HEADPLANE_ENABLED=false` skips
+  the sidecar entirely, and the integration contract is
+  documented in [docs/headplane.md](docs/headplane.md).
+* **Previous**: v0.10.9 — full i18n + hostname in node list +
+  /add_device platform picker + MIT license.
+* **What we're working on next (v0.10.11 candidates)**:
   - **`/clearrules` i18n** — body helper still has hardcoded
     English. Catalog has all the keys; just needs the body
-    touched. v0.10.10 follow-up.
+    touched. v0.10.11 follow-up.
   - **Butler voice v3** (deferred until user feedback on v2 lands):
     header carries urgency level (`🪶` / `🪶!` / `🪶!!`), body uses
     subtle inline color marks for status.
@@ -406,6 +403,11 @@ relay still says "tailnet policy does not permit you to SSH".
 * `deploy/tailscale-relay/setup.sh` — one-time relay setup
 * `deploy/tailscale-relay/update-routes.sh` — IP refresh
 * `docs/telegram-relay.md` — full procedure + troubleshooting
+* `docs/headplane.md` — Headplane (optional sidecar UI) integration
+  contract, version pin policy, compatibility matrix, optional/required
+  status, upgrade procedure. The module is documented as a peer
+  service that talks to Headscale independently — Skygate has no
+  code-level integration with it.
 * `internal/acl/acl.go` — GenerateACL (per-user policy + ssh rules
   + tagOwners). Edit + reapply via `/admin/exit-rules/reapply`.
 * `internal/handlers/exit_rules_form_reapply.go` — admin

@@ -132,6 +132,15 @@ func GenerateACL(d *sql.DB) (string, error) {
 	// never *apply* this tag through skygate (it stays as
 	// a headplane admin task), but headscale still requires
 	// the owner entry to be present in the policy file.
+	// 2026-07-14: Этап 14 v7 — register tag:exit-node as
+	// owned by skyadmin so the headscale parser accepts the
+	// policy. The SSH rule (and the per-user ACL) references
+	// this tag; without an entry in tagOwners the policy
+	// load fails with "tag not found: tag:exit-node". We
+	// never *apply* this tag through skygate (it stays as
+	// a Headplane admin task — see docs/headplane.md), but
+	// headscale still requires the owner entry to be
+	// present in the policy file.
 	sb.WriteString(",\n    \"tag:exit-node\": [\"skyadmin@" + baseDomain + "\"]\n")
 	if len(identities) > 1 {
 		sb.WriteString(",\n    \"tag:private\": [" + strings.Join(quoteAll(identities), ",") + "]\n")

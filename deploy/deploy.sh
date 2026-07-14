@@ -103,12 +103,39 @@ fi
 
 render_template "${PROJECT_DIR}/deploy/templates/headscale-compose.yml.tmpl"     "${DEPLOY_HEADSCALE_DIR}/docker-compose.yml"
 
+# 2026-07-14: Этап 14 v11 — Headplane is a documented optional
+# module. When HEADPLANE_ENABLED=false, strip the headplane service
+# block + its volume from the rendered compose file so the
+# container is never started. The template still includes the
+# block (so a future flip to true re-creates the container).
+# See docs/headplane.md for the integration contract.
+if [ "${HEADPLANE_ENABLED}" = "false" ]; then
+    log "HEADPLANE_ENABLED=false — stripping Headplane from docker-compose.yml"
+    # Delete the headplane service block (from "  headplane:" up
+    # to the next top-level key). sed -n with `p` after a `/^  headplane:/,/^[^ ]/!p`
+    # doesn't work portably, so use a Python one-liner.
+    python3 - <<'PY'
+import re, pathlib
+p = pathlib.Path("/home/skyadmin/headscale/docker-compose.yml")
+text = p.read_text()
+# Drop the headplane service block.
+text = re.sub(r"\n  headplane:.*?(?=\nvolumes:)", "", text, count=1, flags=re.S)
+# Drop the headplane_data volume.
+text = re.sub(r"\n  headplane_data:\n", "", text, count=1)
+p.write_text(text)
+PY
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 # STEP 3: Headplane configuration
 # ═══════════════════════════════════════════════════════════════════════════
 echo ""; echo "-- Step 3: Headplane configuration --"
-cp "${PROJECT_DIR}/deploy/templates/headplane-config.yaml"    "${DEPLOY_HEADSCALE_DIR}/headplane/config.yaml"
-log "Copied headplane config"
+if [ "${HEADPLANE_ENABLED}" = "false" ]; then
+    log "  skipped (HEADPLANE_ENABLED=false)"
+else
+    cp "${PROJECT_DIR}/deploy/templates/headplane-config.yaml"    "${DEPLOY_HEADSCALE_DIR}/headplane/config.yaml"
+    log "Copied headplane config"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STEP 4: Start Headscale + Headplane
@@ -121,7 +148,7 @@ if [ "${MODE}" = "restore" ]; then
     if [ -f "${HS_DB}" ]; then
         ${DOCKER_CMD} volume create headscale_headscale_data 2>/dev/null || true
         volume_copy_in headscale_headscale_data "${HS_DB}" db.sqlite; fi
-    if [ -d "${FROM_PATH}/headplane-data" ] && [ "$(ls -A "${FROM_PATH}/headplane-data" 2>/dev/null)" ]; then
+    if [ "${HEADPLANE_ENABLED}" != "false" ] && [ -d "${FROM_PATH}/headplane-data" ] && [ "$(ls -A "${FROM_PATH}/headplane-data" 2>/dev/null)" ]; then
         ${DOCKER_CMD} volume create headscale_headplane_data 2>/dev/null || true
         volume_copy_dir headscale_headplane_data "${FROM_PATH}/headplane-data"; fi
 fi
@@ -129,8 +156,12 @@ fi
 ${DOCKER_CMD} compose up -d 2>&1 || warn "docker compose up had warnings"
 wait_for_http "http://localhost:50444/api/v1/node" 200 60
 container_stable headscale 10
-wait_for_http "http://localhost:50445/admin/" "2xx" 30
-container_stable headplane 5
+if [ "${HEADPLANE_ENABLED}" = "false" ]; then
+    log "  skipped headplane readiness check (HEADPLANE_ENABLED=false)"
+else
+    wait_for_http "http://localhost:50445/admin/" "2xx" 30
+    container_stable headplane 5
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STEP 5: Skygate

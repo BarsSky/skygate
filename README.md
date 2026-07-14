@@ -69,6 +69,11 @@ For **ops** (Telegram bot, optional but recommended):
 - **Headscale integration:** REST API with API key; CLI fallback via
   `docker exec headscale headscale …` for tag changes (admin API lacks
   the permission); SSH for exit-node advertised-routes sync
+- **Headplane (optional sidecar):** visual ACL editor + admin
+  cockpit. Version-pinned via `HEADPLANE_IMAGE` in `.env`,
+  default `ghcr.io/tale/headplane:0.6.3`. See
+  [docs/headplane.md](docs/headplane.md) for the integration
+  contract. Set `HEADPLANE_ENABLED=false` to skip the sidecar.
 - **i18n:** 270+ catalog keys EN+RU, per-request locale via `atomic.Value`
   + funcmap `Tr/Trf`
 - **Rate limits:** in-memory token bucket (per-username / per-IP),
