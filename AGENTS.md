@@ -5,6 +5,26 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ---
 
+## Release status
+
+* **Current**: v0.10.8 — butler voice v2 (Telegram bot envelope)
+  ([release notes](RELEASE-NOTES-v0.10.8.md)). Every bot reply now
+  opens with a one-line butler header (`🪶  <context>`) + body +
+  optional sign-off footer. 11 envelope contexts (registry / codex
+  / version / ack / bind / unbind / add / del / err / welcome). v1
+  helper API kept stable for backward compat.
+* **Previous**: v0.10.7 — Tailscale exit-node unification + admin
+  SSH into tag:public relays + bilingual first official release.
+* **What we're working on next (v0.10.9 candidates)**:
+  - **Personal API token rotation** (admin override): TTL +
+    auto-rotate field, so the bot integration can issue 24h / 7d /
+    30d tokens. Currently tokens only have manual revocation.
+  - **Butler voice v3** (deferred until user feedback on v2 lands):
+    header carries urgency level (`🪶` / `🪶!` / `🪶!!`), body uses
+    subtle inline color marks for status.
+
+---
+
 ## What is Skygate?
 
 Tailscale/headscale management portal. Stack: **Go 1.23 + SQLite + Docker +
