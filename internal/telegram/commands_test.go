@@ -2080,7 +2080,8 @@ func newRecordingNotifier() *recordingNotifier {
 	return &recordingNotifier{alerts: make(chan string, 10)}
 }
 
-func (n *recordingNotifier) SendTelegram(string) {}
+func (n *recordingNotifier) SendTelegram(string)              {}
+func (n *recordingNotifier) SendTelegramToChat(string, int64) {}
 
 func (n *recordingNotifier) SendAlert(text string) int64 {
 	n.alerts <- text
