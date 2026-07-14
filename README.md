@@ -1,7 +1,7 @@
 # Skygate
 
 [![CI](https://github.com/BarsSky/skygate/actions/workflows/ci.yml/badge.svg)](https://github.com/BarsSky/skygate/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-v0.9.0--dev-blue)
+![Version](https://img.shields.io/badge/version-v0.10.7-blue)
 ![Headscale](https://img.shields.io/badge/headscale-0.29-green)
 ![Go](https://img.shields.io/badge/go-1.23%2B-00ADD8)
 ![License](https://img.shields.io/badge/license-proprietary-lightgrey)
@@ -12,9 +12,10 @@ UI to grab preauth keys, see their devices, manage per-device exit-node
 rules, and (optionally) interact with the whole thing from a Telegram bot
 without ever touching the headscale CLI.
 
-> **Status:** at tag `v0.9.0`. Work in progress on `main` is `v0.9.1-dev`.
+> **Status:** at tag `v0.10.7`. Work in progress on `main` is `v0.10.8-dev`.
 > **Last `make test` on VM:** green — `59+59` smoke assertions, 3/3 exit-nodes
-> advertise `0.0.0.0/0` + `::/0`, `go test ./...` race-free.
+> advertise `0.0.0.0/0` + `::/0` (emilia, sharlotta, karolina), `go test ./...`
+> race-free.
 
 ## What it does
 
