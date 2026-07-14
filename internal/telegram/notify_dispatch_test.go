@@ -54,7 +54,7 @@ func TestEnvForMessagePreservesRealChatID(t *testing.T) {
 		client:  nil, // not exercised by this test
 		pollInt: 0,
 	}
-	got, _ := n.envForMessage(555)
+	got, _ := n.envForMessage(555, "")
 	if got.ChatID != 555 {
 		t.Errorf("env.ChatID = %d, want 555 (was 0 before the v0.10.3 fix; the dispatcher was passing effectiveChatID=0 from resolveBootstrapAdmin when neither binding nor global chat_id was set)", got.ChatID)
 	}
@@ -84,7 +84,7 @@ func TestEnvForMessageStillTriggersBindingLookup(t *testing.T) {
 		t.Fatalf("seed binding: %v", err)
 	}
 	n := &RealNotifier{apiBase: "https://api.telegram.org", db: d, client: nil, pollInt: 0}
-	got, _ := n.envForMessage(555)
+	got, _ := n.envForMessage(555, "")
 	if got.ChatID != 555 {
 		t.Errorf("env.ChatID = %d, want 555", got.ChatID)
 	}
@@ -119,7 +119,7 @@ func TestEnvForMessageBootstrapAdminFlag(t *testing.T) {
 
 	// Bootstrap admin chat: should get IsAdmin=true even
 	// without a binding row.
-	env, isBootstrap := n.envForMessage(999)
+	env, isBootstrap := n.envForMessage(999, "")
 	if !isBootstrap {
 		t.Errorf("isBootstrapAdmin = false, want true for chat_id == global chat_id")
 	}
@@ -132,7 +132,7 @@ func TestEnvForMessageBootstrapAdminFlag(t *testing.T) {
 
 	// Some other chat: should NOT be admin, should keep its
 	// real chat_id (this is the fix).
-	env, isBootstrap = n.envForMessage(888)
+	env, isBootstrap = n.envForMessage(888, "")
 	if isBootstrap {
 		t.Errorf("isBootstrapAdmin = true, want false for chat_id != global chat_id")
 	}
@@ -164,7 +164,7 @@ func TestEnvForMessageLoginHandler(t *testing.T) {
 	insertValidLoginToken(t, d, testLoginToken, 2, 300) // for alice
 
 	n := &RealNotifier{apiBase: "https://api.telegram.org", db: d, client: nil, pollInt: 0}
-	env, _ := n.envForMessage(555)
+	env, _ := n.envForMessage(555, "")
 	got := HandleCommand(nil, env, "/login "+testLoginToken)
 	if strings.Contains(got, "internal error") {
 		t.Errorf("loginReply returned the v0.10.2 'chat_id missing' error: %q — the v0.10.3 fix should prevent this", got)
