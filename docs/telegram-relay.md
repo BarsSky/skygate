@@ -138,17 +138,28 @@ The cron-friendly script is
 4. Prints the `headscale nodes approve-routes` command the
    admin needs to run.
 
-Run it weekly on the relay host:
+The script is deployed to `/usr/local/bin/skygate-update-telegram-routes`
+on each relay. A weekly cron on the relay refreshes the routes
+automatically:
 
 ```cron
-0 4 * * 1  /opt/skygate/deploy/tailscale-relay/update-routes.sh >> /var/log/tailscale-routes.log 2>&1
+0 4 * * 1  /usr/local/bin/skygate-update-telegram-routes >> /var/log/skygate-telegram-routes.log 2>&1
+```
+
+**Current state (2026-07-14):** cron installed on both
+emilia and sharlotta. To re-deploy after a fresh relay setup:
+
+```sh
+scp deploy/tailscale-relay/update-routes.sh relay:/usr/local/bin/skygate-update-telegram-routes
+ssh relay 'chmod +x /usr/local/bin/skygate-update-telegram-routes && \
+           echo "0 4 * * 1 /usr/local/bin/skygate-update-telegram-routes >> /var/log/skygate-telegram-routes.log 2>&1" | crontab -'
 ```
 
 Or trigger it manually:
 
 ```sh
 ssh relay-host
-sudo /opt/skygate/deploy/tailscale-relay/update-routes.sh
+sudo /usr/local/bin/skygate-update-telegram-routes
 ```
 
 The script refuses to apply an empty route list (would wipe
@@ -172,6 +183,12 @@ Both emilia and sharlotta can advertise the same routes
 simultaneously — Tailscale uses the route metric to pick one.
 Only disable a route on the down relay when the operator
 wants to force the other one.
+
+**Current state (2026-07-14):** both emilia and sharlotta are
+configured as primary relays (Tailscale picks one based on
+metrics — typically the closer / faster one). karolina is
+available as a third-tier backup; flip the same way if both
+emilia and sharlotta go down.
 
 ### Disabling Tailscale on skygate entirely
 
