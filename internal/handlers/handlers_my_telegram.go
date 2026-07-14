@@ -430,10 +430,24 @@ func (a *App) GetMyTelegramQR(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bot username not yet discovered (save a token at /admin/telegram first)", http.StatusServiceUnavailable)
 		return
 	}
-	// Build the deep link. Telegram accepts both `t.me/...` and
-	// `https://t.me/...`; we use https for QR scanners that
-	// resolve links via the camera app's HTTPS handler.
-	deepLink := fmt.Sprintf("https://t.me/%s?start=%s", username, token)
+	// Build the deep link. We expose the URL builder as a
+	// package-level function so (a) the QR handler and the
+	// /my/telegram page use the same format, and (b) tests
+	// can verify the URL shape without decoding a PNG.
+	//
+	// Telegram accepts both `t.me/...` and `https://t.me/...`;
+	// we use https for QR scanners that resolve links via the
+	// camera app's HTTPS handler. (Android's default camera
+	// app treats `https://t.me/...` as a "verified app link"
+	// for the Telegram app — but this requires the user to
+	// have the Telegram app installed and to tap "open in
+	// Telegram" if the chooser appears. For users whose QR
+	// scanner is more conservative and just opens https in
+	// the browser, the QR image is now wrapped in an anchor
+	// tag (see templates/user/telegram.html) so the page's
+	// own click on the QR also opens the deep link in the
+	// browser — which Chrome then hands off to Telegram.)
+	deepLink := TelegramDeepLink(username, token)
 	// Render the QR. We pick a 256×256 PNG (the standard
 	// `qrcode.Medium` recovery level handles up to 15%
 	// damage; the deep link is short — well within the
