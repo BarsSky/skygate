@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // Phase 4 commands: /version, /restart, /help <command>.
@@ -122,12 +123,13 @@ func versionReply(env BotEnv) string {
 // for 30s. After that, the entry is dropped (lazy eviction on
 // next /restart call).
 func restartReply(env BotEnv, arg string) string {
+	lang := env.Lang
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
 		// Phase 1: mint a token.
 		token, err := mintRestartToken()
 		if err != nil {
-			return fmt.Sprintf("restart: token mint failed: %v", err)
+			return i18n.Tf(lang, "bot.restart.mint_failed", err)
 		}
 		exp := time.Now().Add(restartTTL)
 		pendingRestarts.Store(token, exp)
@@ -135,29 +137,23 @@ func restartReply(env BotEnv, arg string) string {
 		// the second phase writes). Lets the operator see who asked
 		// for a restart, even if they don't follow through.
 		_ = env.DB // not used here; kept for symmetry with other reply funcs
-		return fmt.Sprintf(
-			"restart: confirm by sending within 30s\n"+
-				"  /restart %s\n"+
-				"(ignored if the token is wrong, expired, or the request is older than 30s)",
-			token)
+		return i18n.Tf(lang, "bot.restart.confirm_prompt", token)
 	}
 	// Phase 2: confirm with a token.
 	v, ok := pendingRestarts.Load(arg)
 	if !ok {
-		return fmt.Sprintf("restart: %q is not a valid confirmation token\n"+
-			"(send /restart alone to mint a new one)", arg)
+		return i18n.Tf(lang, "bot.restart.invalid_token", arg)
 	}
 	expiry, ok := v.(time.Time)
 	if !ok {
 		// shouldn't happen — we only ever store time.Time — but
 		// treat a malformed entry as "expired" rather than panic.
 		pendingRestarts.Delete(arg)
-		return "restart: token store is corrupted; mint a new one with /restart"
+		return i18n.T(lang, "bot.restart.corrupt")
 	}
 	if time.Now().After(expiry) {
 		pendingRestarts.Delete(arg)
-		return fmt.Sprintf("restart: token %q expired (>%s old); mint a new one with /restart",
-			arg, restartTTL)
+		return i18n.Tf(lang, "bot.restart.expired", arg, restartTTL)
 	}
 	// Valid token, not expired. Consume it (delete so it can't be
 	// reused) and trigger the restart.
@@ -182,7 +178,7 @@ func restartReply(env BotEnv, arg string) string {
 			fn()
 		}
 	}()
-	return "restart: confirmed — SIGTERM in 200ms, container will restart"
+	return i18n.T(lang, "bot.restart.confirmed")
 }
 
 // mintRestartToken returns a 6-char token from restartAlphabet.

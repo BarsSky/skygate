@@ -205,10 +205,16 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 			// the UPDATE's WHERE clause only matches empty/untagged.
 			// 2026-07-12: Этап 10 part 4 — both queries moved to
 			// db.InsertIgnoreNodeOwner + db.UpgradeStaleNodeOwnerToPrivate.
-			_ = dbpkg.InsertIgnoreNodeOwner(db, n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
+			// 2026-07-14: Этап 14 v10 — also persist the headscale
+			// hostname (or GivenName) so the bot's /my_nodes can
+			// show "hostname (node_id) [tag]" instead of the bare
+			// node_id. Without this, /my_nodes is a list of opaque
+			// node ids the user has to cross-reference with
+			// Headplane.
+			_ = dbpkg.InsertIgnoreNodeOwnerWithHostname(db, n.ID, portalUserID, portalUsername, matchedTag, n.Hostname, portalUserID)
 			_ = dbpkg.UpgradeStaleNodeOwnerToPrivate(db, n.ID, matchedTag, portalUserID)
 		} else {
-			_ = dbpkg.InsertIgnoreNodeOwner(db, n.ID, portalUserID, portalUsername, matchedTag, portalUserID)
+			_ = dbpkg.InsertIgnoreNodeOwnerWithHostname(db, n.ID, portalUserID, portalUsername, matchedTag, n.Hostname, portalUserID)
 		}
 		// Push tag:private to headscale if matched. Safe for empty/untagged rows.
 		// Idempotent: skip if the node already carries tag:private — otherwise every

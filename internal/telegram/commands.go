@@ -385,17 +385,17 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: versionReply(env), context: lookupContext(cmd)}
 	// --- admin scope ---
 	case "/nodes":
-		return cmdReply{body: nodesReply(env.DB), context: lookupContext(cmd)}
+		return cmdReply{body: nodesReply(env), context: lookupContext(cmd)}
 	case "/rules":
-		return cmdReply{body: rulesReply(env.DB), context: lookupContext(cmd)}
+		return cmdReply{body: rulesReply(env), context: lookupContext(cmd)}
 	case "/audit":
-		return cmdReply{body: auditReply(env.DB), context: lookupContext(cmd)}
+		return cmdReply{body: auditReply(env), context: lookupContext(cmd)}
 	case "/exit_nodes":
-		return cmdReply{body: exitNodesReply(env.DB), context: lookupContext(cmd)}
+		return cmdReply{body: exitNodesReply(env), context: lookupContext(cmd)}
 	case "/quota":
-		return cmdReply{body: quotaReply(env.DB, env), context: lookupContext(cmd)}
+		return cmdReply{body: quotaReply(env), context: lookupContext(cmd)}
 	case "/ack":
-		return cmdReply{body: ackReply(env.DB, strings.Join(args, " ")), context: lookupContext(cmd)}
+		return cmdReply{body: ackReply(env, strings.Join(args, " ")), context: lookupContext(cmd)}
 	case "/restart":
 		return cmdReply{body: restartReply(env, strings.Join(args, " ")), context: lookupContext(cmd)}
 	case "/bind":
@@ -572,7 +572,8 @@ func helpReply(env BotEnv) string {
 	// lives on the v0.10.4 branch and is a future upgrade once
 	// the bot i18n MVP is shipping and verified.
 	common := i18n.T(lang, "bot.help.common_version") + "\n" +
-		i18n.T(lang, "bot.help.common_help")
+		i18n.T(lang, "bot.help.common_help") + "\n" +
+		i18n.T(lang, "bot.help.lang")
 	auth := i18n.T(lang, "bot.help.auth_login") + " (paste the key from /my/telegram)\n" +
 		"/start <key> — same as /login, Telegram UX convention"
 	userScope := i18n.T(lang, "bot.help.user_top_my_status") + "\n" +

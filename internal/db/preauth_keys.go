@@ -134,6 +134,38 @@ func InsertPreauthKey(d *sql.DB, userID int64, key string, expiresAt int64, head
 	return res.LastInsertId()
 }
 
+// GetLastPreauthKeyForChatID returns the most-recently-created
+// preauth_keys row for the portal user bound to chatID. Used by
+// the bot's /add_device platform picker to retrieve the key it
+// just issued (the bot keeps the key in the bot's local memory
+// for one turn, but the picker callback may arrive a few
+// seconds later — long enough that a re-render would miss it,
+// short enough that the key is still in the DB unused).
+//
+// 2026-07-14: Этап 14 v10.
+//
+// Returns ErrPreauthKeyNotFound when no row matches (the chat
+// isn't bound, or the user has never issued a preauth key, or
+// the last one was already used and reaped).
+func GetLastPreauthKeyForChatID(d *sql.DB, chatID int64) (string, error) {
+	var k string
+	err := d.QueryRow(
+		`SELECT pk.key
+		   FROM preauth_keys pk
+		   JOIN telegram_bindings tb ON tb.portal_user_id = pk.user_id
+		  WHERE tb.chat_id = ? AND pk.used = 0
+		  ORDER BY pk.id DESC
+		  LIMIT 1`, chatID,
+	).Scan(&k)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrPreauthKeyNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return k, nil
+}
+
 // ExpirePreauthKey sets expires_at on a single row, scoped to userID.
 // No-op (returns nil) if the row doesn't exist for that user.
 //

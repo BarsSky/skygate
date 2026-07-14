@@ -1,13 +1,13 @@
 package telegram
 
 import (
-	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // Phase 3 commands: /exit_nodes, /quota, /ack <id>.
@@ -32,14 +32,16 @@ import (
 // exitNodesReply lists the nodes currently tagged as exit-nodes.
 // Output is grouped by user, with last_seen (from devices table)
 // when available — exit-nodes without a last_seen are likely offline.
-func exitNodesReply(d *sql.DB) string {
+func exitNodesReply(env BotEnv) string {
+	lang := env.Lang
+	d := env.DB
 	// 2026-07-12: Этап 10 part 4 — node_owner_map rows for exit-nodes
 	// come from db.ListExitNodeOwners. The devices-table LEFT JOIN for
 	// last_seen/online stays in the bot (presentation concern), so we
 	// build a small id→{last_seen,online} map and merge.
 	owners, err := db.ListExitNodeOwners(d)
 	if err != nil {
-		return fmt.Sprintf("exit_nodes: db error: %v", err)
+		return i18n.Tf(lang, "bot.exit_nodes.db_error", err)
 	}
 	type devState struct {
 		lastSeen int64
@@ -71,10 +73,10 @@ func exitNodesReply(d *sql.DB) string {
 		byUser = append(byUser, row{user: user, nodeID: n.NodeID, lastSeen: st.lastSeen, online: st.online})
 	}
 	if len(byUser) == 0 {
-		return "exit_nodes: (no nodes with tag:exit-node in node_owner_map —\ntag some nodes from /admin/devices, then re-run)"
+		return i18n.T(lang, "bot.exit_nodes.empty")
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Exit-nodes: %d total\n\n", len(byUser))
+	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.exit_nodes.header", len(byUser)))
 	for _, r := range byUser {
 		status := "offline"
 		if r.online == 1 {
@@ -84,7 +86,7 @@ func exitNodesReply(d *sql.DB) string {
 		if r.lastSeen > 0 {
 			seen = fmt.Sprintf(", last_seen %s", unixToShort(r.lastSeen))
 		}
-		fmt.Fprintf(&sb, "• %s @%s — %s%s\n", r.nodeID, r.user, status, seen)
+		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.exit_nodes.row", r.nodeID, r.user, status, seen))
 	}
 	return trimForTelegram(sb.String())
 }
@@ -92,7 +94,9 @@ func exitNodesReply(d *sql.DB) string {
 // quotaReply shows rule counts per user alongside their per-user
 // limit (from BotEnv.UserMaxRules / DefaultMax). Operators scan
 // this to spot users close to their cap before they hit the wall.
-func quotaReply(d *sql.DB, env BotEnv) string {
+func quotaReply(env BotEnv) string {
+	lang := env.Lang
+	d := env.DB
 	rows, err := d.Query(`
 		SELECT u.id, u.username, COUNT(r.id) AS cnt
 		  FROM portal_users u
@@ -100,7 +104,7 @@ func quotaReply(d *sql.DB, env BotEnv) string {
 		 GROUP BY u.id, u.username
 		 ORDER BY cnt DESC, u.username`)
 	if err != nil {
-		return fmt.Sprintf("quota: db error: %v", err)
+		return i18n.Tf(lang, "bot.quota.db_error", err)
 	}
 	defer rows.Close()
 
@@ -114,7 +118,7 @@ func quotaReply(d *sql.DB, env BotEnv) string {
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.id, &r.username, &r.cnt); err != nil {
-			return fmt.Sprintf("quota: scan error: %v", err)
+			return i18n.Tf(lang, "bot.quota.scan_error", err)
 		}
 		r.max = env.MaxFor(r.username)
 		users = append(users, r)
@@ -122,10 +126,10 @@ func quotaReply(d *sql.DB, env BotEnv) string {
 		totalMax += r.max
 	}
 	if len(users) == 0 {
-		return "quota: (no portal_users in DB)"
+		return i18n.T(lang, "bot.quota.empty")
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Per-user rule quota (top users by count):\n\n")
+	fmt.Fprintf(&sb, "%s\n\n", i18n.T(lang, "bot.quota.header"))
 	for _, r := range users {
 		pct := 0
 		if r.max > 0 {
@@ -138,12 +142,13 @@ func quotaReply(d *sql.DB, env BotEnv) string {
 		if r.max == 0 {
 			maxStr = "∞"
 		}
-		fmt.Fprintf(&sb, "• %-16s %4d / %-4s %s %d%%\n",
-			r.username, r.cnt, maxStr, bar, safePct(pct))
+		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.quota.row", r.username, r.cnt, maxStr, bar, safePct(pct)))
 	}
-	fmt.Fprintf(&sb, "\nTotal: %d rules", total)
 	if totalMax > 0 {
-		fmt.Fprintf(&sb, " / %d cap", totalMax)
+		fmt.Fprintf(&sb, "%s", i18n.Tf(lang, "bot.quota.total", total))
+		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.quota.total_with_cap", totalMax))
+	} else {
+		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.quota.total", total))
 	}
 	return trimForTelegram(sb.String())
 }
@@ -153,19 +158,21 @@ func quotaReply(d *sql.DB, env BotEnv) string {
 // acked_at is already set returns a friendly "already acked"
 // message) and mirrors the action into audit_log so the dashboard
 // reflects the operator's response.
-func ackReply(d *sql.DB, arg string) string {
+func ackReply(env BotEnv, arg string) string {
+	lang := env.Lang
+	d := env.DB
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
-		return "ack: usage: /ack <id>  (id is the [#N] prefix on every alert)"
+		return i18n.T(lang, "bot.ack.usage")
 	}
 	id, err := strconv.ParseInt(arg, 10, 64)
 	if err != nil || id <= 0 {
-		return fmt.Sprintf("ack: %q is not a valid alert id", arg)
+		return i18n.Tf(lang, "bot.ack.invalid_id", arg)
 	}
 	// 1. Look up the row first so we can echo the body.
 	var body string
 	if err := d.QueryRow(`SELECT body FROM telegram_alerts WHERE id = ?`, id).Scan(&body); err != nil {
-		return fmt.Sprintf("ack: no alert with id=%d (already pruned, or never existed)", id)
+		return i18n.Tf(lang, "bot.ack.not_found", id)
 	}
 	// 2. Idempotent UPDATE — only flips rows that are still open.
 	res, err := d.Exec(`UPDATE telegram_alerts
@@ -173,12 +180,12 @@ func ackReply(d *sql.DB, arg string) string {
 	                           acked_by = 'telegram'
 	                     WHERE id = ? AND acked_at = 0`, id)
 	if err != nil {
-		return fmt.Sprintf("ack: db error: %v", err)
+		return i18n.Tf(lang, "bot.ack.db_error", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		// Row exists but acked_at > 0 — already acked before.
-		return fmt.Sprintf("ack: %s\n  (already acked earlier)", formatAlertRow(id, body))
+		return i18n.Tf(lang, "bot.ack.already", formatAlertRow(id, body))
 	}
 	// 3. Mirror into audit_log so /admin/audit shows the operator's
 	// response, not just the alert itself.
@@ -190,7 +197,7 @@ func ackReply(d *sql.DB, arg string) string {
 		// flow uninterrupted.
 		ackAuditLogErr = err
 	}
-	return fmt.Sprintf("ack: %s ✓", formatAlertRow(id, body))
+	return i18n.Tf(lang, "bot.ack.done", formatAlertRow(id, body))
 }
 
 // ackAuditLogErr is set when the audit_log write inside ackReply
