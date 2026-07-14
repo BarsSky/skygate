@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,14 @@ import (
 // token is configured).
 type Notifier interface {
 	SendTelegram(text string)
+	// SendTelegramToChat is the explicit-target variant. Used by
+	// /admin/telegram's "Send test" handler when the operator
+	// hasn't yet set global_settings.telegram.chat_id but HAS
+	// bound a chat via /start + [Bind] — in that case the test
+	// message can still be sent to the bound chat, and we don't
+	// want the handler to no-op just because the global chat_id
+	// is empty.
+	SendTelegramToChat(text string, chatID int64)
 	// SendAlert posts text as a numbered alert (for /ack). Returns
 	// the alert id, or 0 when the bot is not configured.
 	SendAlert(text string) int64
@@ -48,7 +57,8 @@ type Notifier interface {
 // NoopNotifier discards all messages. Used when no token is configured.
 type NoopNotifier struct{}
 
-func (NoopNotifier) SendTelegram(string) {}
+func (NoopNotifier) SendTelegram(string)              {}
+func (NoopNotifier) SendTelegramToChat(string, int64) {}
 
 // RealNotifier holds the per-process Telegram configuration. The
 // configured flag is consulted at SendTelegram time so a hot-swap
@@ -325,11 +335,70 @@ func (n *RealNotifier) SendTelegram(text string) {
 	if n == nil {
 		return
 	}
-	token, chatID, ok, err := db.LoadTelegramSendTarget(n.db)
+	token, chatIDStr, ok, err := db.LoadTelegramSendTarget(n.db)
 	if err != nil || !ok {
 		log.Printf("telegram: skip send: load err=%v ok=%v (need both token AND chat_id)", err, ok)
 		return
 	}
+	// chat_id is stored as a string in global_settings (so it can
+	// hold either a plain user id "12345" or a -100… supergroup id);
+	// convert to int64 for the postToChat helper which mirrors
+	// Telegram's API type.
+	chatID, perr := strconv.ParseInt(chatIDStr, 10, 64)
+	if perr != nil || chatID == 0 {
+		log.Printf("telegram: skip send: chat_id %q is not a valid int64: %v", chatIDStr, perr)
+		return
+	}
+	n.postToChat(token, chatID, text)
+}
+
+// SendTelegramToChat sends text to an explicit chat_id. It does NOT
+// consult global_settings or the bindings table — the caller is
+// responsible for choosing the target. Used by the /admin/telegram
+// "Send test" handler as a fallback when global chat_id is empty
+// but a bound chat exists.
+//
+// 2026-07-14 (Этап 14 v3 followup): the previous behaviour was
+// "Send test" → no-op when global chat_id was empty, which left
+// operators who had bound via /start+[Bind] but never pasted a
+// chat_id in the form with no way to verify the bot was reachable
+// from the web UI. SendTelegramToChat lets the handler iterate
+// over telegram_bindings and reach the bound chats directly.
+//
+// If the bot token isn't configured (no token in global_settings)
+// the call no-ops; the caller should check via a.Notifier.Configured()
+// first. We log on failure (network / 4xx) but don't return an error
+// — this matches the existing SendTelegram fire-and-forget style
+// and keeps the test handler's audit/log shape simple.
+func (n *RealNotifier) SendTelegramToChat(text string, chatID int64) {
+	if n == nil {
+		return
+	}
+	if chatID == 0 {
+		// Defensive: 0 is the zero value for int64, and Telegram
+		// returns 400 for chat_id=0. Bail rather than POST a
+		// malformed request.
+		log.Printf("telegram: SendTelegramToChat called with chatID=0; skipping")
+		return
+	}
+	token, _, ok, err := db.LoadTelegramToken(n.db)
+	if err != nil || !ok {
+		log.Printf("telegram: SendTelegramToChat skip: load err=%v ok=%v (token not configured)", err, ok)
+		return
+	}
+	n.postToChat(token, chatID, text)
+}
+
+// postToChat is the shared sendMessage implementation. Both
+// SendTelegram and SendTelegramToChat funnel through here so the
+// HTTP shape, error logging, and ``` wrapping stay in one place.
+// Kept private — callers go through the public methods.
+//
+// chatID is taken as int64 (matching Telegram's chat_id type) and
+// stringified inside via fmt.Sprintf. Using string here would force
+// every caller to convert, and SendTelegramToChat already has the
+// int64 from telegram_bindings.ChatID.
+func (n *RealNotifier) postToChat(token string, chatID int64, text string) {
 	if !strings.HasPrefix(text, "```") {
 		// Wrap plain text in a small fence so replies render monospaced.
 		text = "```\n" + text + "\n```"
