@@ -16,7 +16,7 @@ package telegram
 //   │ body text                                                  │  ← body (1..N lines)
 //   │ …                                                          │
 //   │                                                            │
-//   │ ─ Искренне Ваш, Хранитель Порога                          │  ← footer (1 line, only when body > 3 lines)
+//   │ ─ Ваш Дворецкий                                           │  ← footer (1 line, only when body > 3 lines)
 //   └────────────────────────────────────────────────────────────┘
 //
 // The header tells you the topic at a glance (the registry, the

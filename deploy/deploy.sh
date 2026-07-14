@@ -54,8 +54,17 @@ with open('${dest}.tmp', 'w') as f:
     # Special markers -> YAML list conversion
     local routes_list=""; IFS=',' read -ra ROUTES <<< "${HEADSCALE_AUTO_APPROVE_ROUTES}"
     for r in "${ROUTES[@]}"; do r=$(echo "$r" | xargs); [ -n "$r" ] && routes_list+="     - ${r}\n"; done
+    # 2026-07-15: v0.10.12 — DERP_EXTERNAL_URLS is appended to the
+    # headscale DERP map list (alongside HEADSCALE_DERP_URLS and
+    # the bundled derper, if DERP_ENABLED=true). This lets an
+    # operator point at third-party derpers without touching the
+    # default Tailscale DERP relay list.
     local derp_list=""; IFS=',' read -ra DERPS <<< "${HEADSCALE_DERP_URLS}"
     for d in "${DERPS[@]}"; do d=$(echo "$d" | xargs); [ -n "$d" ] && derp_list+="    - ${d}\n"; done
+    if [ -n "${DERP_EXTERNAL_URLS}" ]; then
+        IFS=',' read -ra EXT_DERPS <<< "${DERP_EXTERNAL_URLS}"
+        for d in "${EXT_DERPS[@]}"; do d=$(echo "$d" | xargs); [ -n "$d" ] && derp_list+="    - ${d}\n"; done
+    fi
     # Use python for sed replacement to avoid BSD/GNU sed differences
     python3 -c "
 import re
@@ -109,8 +118,18 @@ render_template "${PROJECT_DIR}/deploy/templates/headscale-compose.yml.tmpl"    
 # container is never started. The template still includes the
 # block (so a future flip to true re-creates the container).
 # See docs/headplane.md for the integration contract.
-if [ "${HEADPLANE_ENABLED}" = "false" ]; then
-    log "HEADPLANE_ENABLED=false — stripping Headplane from docker-compose.yml"
+#
+# 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set, also
+# strip the sidecar (we point at the existing one). The two
+# conditions are equivalent for the deploy step; the only
+# difference is the backup manifest records the external URL
+# so a restore on another host can reproduce the wiring.
+if [ "${HEADPLANE_ENABLED}" = "false" ] || [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+    if [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+        log "HEADPLANE_EXTERNAL_URL is set — stripping Headplane sidecar (using existing ${HEADPLANE_EXTERNAL_URL})"
+    else
+        log "HEADPLANE_ENABLED=false — stripping Headplane from docker-compose.yml"
+    fi
     # Delete the headplane service block (from "  headplane:" up
     # to the next top-level key). sed -n with `p` after a `/^  headplane:/,/^[^ ]/!p`
     # doesn't work portably, so use a Python one-liner.
@@ -156,8 +175,12 @@ fi
 ${DOCKER_CMD} compose up -d 2>&1 || warn "docker compose up had warnings"
 wait_for_http "http://localhost:50444/api/v1/node" 200 60
 container_stable headscale 10
-if [ "${HEADPLANE_ENABLED}" = "false" ]; then
-    log "  skipped headplane readiness check (HEADPLANE_ENABLED=false)"
+if [ "${HEADPLANE_ENABLED}" = "false" ] || [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+    if [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+        log "  skipped headplane readiness check (using HEADPLANE_EXTERNAL_URL=${HEADPLANE_EXTERNAL_URL})"
+    else
+        log "  skipped headplane readiness check (HEADPLANE_ENABLED=false)"
+    fi
 else
     wait_for_http "http://localhost:50445/admin/" "2xx" 30
     container_stable headplane 5

@@ -175,13 +175,13 @@ func TestHandleCommandStatusEnvelope(t *testing.T) {
 		t.Errorf("expected body content, got: %q", got)
 	}
 	// /status body is >3 lines → verbose → footer present.
-	if !strings.Contains(got, "Yours in service") {
+	if !strings.Contains(got, "butler") {
 		t.Errorf("expected verbose footer for multi-line /status, got: %q", got)
 	}
 }
 
 func TestHandleCommandVersionEnvelope(t *testing.T) {
-	// /version → "version" context (The Version Scroll).
+	// /version → "version" context (header line from the catalog).
 	d := setupTestDB(t)
 	env := BotEnv{DB: d, Version: "v0.10.8-dev", Lang: i18n.LangEN}
 	got := HandleCommand(context.Background(), env, "/version")
@@ -907,6 +907,139 @@ func TestMyNodesReplyEmpty(t *testing.T) {
 	got := myNodesReply(userEnv(d))
 	if !strings.Contains(got, "no devices yet") {
 		t.Errorf("expected 'no devices yet' for user with no devices, got: %q", got)
+	}
+}
+
+// 2026-07-15: Этап 14 v13 — lazy hostname backfill tests.
+//
+// Before v0.10.12, /my_nodes and /nodes silently showed bare
+// node_ids when node_owner_map.hostname was empty (the column was
+// added in migration v0.34, but backfillNodeOwnership only runs
+// via /admin/devices — so any user who opened the bot before that
+// page saw the bare-id view in the screenshot in the v0.10.12
+// release notes). These tests pin the new self-healing behaviour.
+
+// fakeNodeServer builds a tiny httptest server that returns the
+// given nodes from GET /api/v1/node, plus a *headscale.Client
+// pointed at it. Used by the lazy-backfill tests to drive the
+// production code path (env.HS.ListAllNodes) without spinning up
+// a real headscale instance.
+func fakeNodeServer(t *testing.T, nodes []headscale.HSNode) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/node":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": nodes})
+		default:
+			http.Error(w, "unexpected: "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, headscale.New(srv.URL, "fake-api-key")
+}
+
+func TestHostnameMapFromHeadscale_NilReturnsEmpty(t *testing.T) {
+	got := hostnameMapFromHeadscale(nil)
+	if len(got) != 0 {
+		t.Errorf("nil client should return empty map, got %v", got)
+	}
+}
+
+func TestHostnameMapFromHeadscale_BuildsMapFromRealClient(t *testing.T) {
+	_, hs := fakeNodeServer(t, []headscale.HSNode{
+		{ID: "1", GivenName: "skygate-vm", Name: "other"},
+		{ID: "2", GivenName: "", Name: "fallback-host"},
+		{ID: "3", GivenName: "", Name: ""}, // both empty: toView() will produce "" — must be skipped
+	})
+	got := hostnameMapFromHeadscale(hs)
+	if got["1"] != "skygate-vm" {
+		t.Errorf("id=1: got %q, want skygate-vm", got["1"])
+	}
+	if got["2"] != "fallback-host" {
+		t.Errorf("id=2: got %q, want fallback-host (Name fallback)", got["2"])
+	}
+	if _, ok := got["3"]; ok {
+		t.Errorf("id=3 should be skipped (both names empty)")
+	}
+}
+
+func TestHostnameMapFromHeadscale_ServerErrorReturnsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	hs := headscale.New(srv.URL, "fake-api-key")
+	got := hostnameMapFromHeadscale(hs)
+	if len(got) != 0 {
+		t.Errorf("error should return empty map, got %v", got)
+	}
+}
+
+func TestMyNodesReply_LazyBackfillEmptyHostname(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with empty hostname (the v0.10.11
+	// regression state). The mock HS will return a friendly name.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', '')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{{ID: "alice-laptop", GivenName: "alice-laptop-fancy"}})
+	env := userEnv(d)
+	env.HS = hs
+	got := myNodesReply(env)
+	if !strings.Contains(got, "alice-laptop-fancy") {
+		t.Errorf("expected friendly hostname in reply, got: %q", got)
+	}
+	if !strings.Contains(got, "alice-laptop") {
+		t.Errorf("expected node_id in reply (alongside the hostname), got: %q", got)
+	}
+	// Confirm the DB row was actually updated.
+	var hn string
+	if err := d.QueryRow(`SELECT hostname FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&hn); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if hn != "alice-laptop-fancy" {
+		t.Errorf("DB hostname=%q, want alice-laptop-fancy", hn)
+	}
+}
+
+func TestMyNodesReply_NoBackfillWhenAllHostnamesSet(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with hostname already set. The mock
+	// returns a DIFFERENT name; we must NOT overwrite the existing
+	// value (the column is the cached copy, not live data — we
+	// only fill empty cells).
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', 'cached-name')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{{ID: "alice-laptop", GivenName: "would-clobber"}})
+	env := userEnv(d)
+	env.HS = hs
+	_ = myNodesReply(env)
+	var hn string
+	if err := d.QueryRow(`SELECT hostname FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&hn); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if hn != "cached-name" {
+		t.Errorf("hostname overwritten: got %q, want cached-name", hn)
+	}
+}
+
+func TestMyNodesReply_NilHSNoCrash(t *testing.T) {
+	d := setupTestDB(t)
+	// Regression guard: the v0.10.11 code path assumed env.HS
+	// was always non-nil. When it's nil (read-only deploy) the
+	// backfill must be skipped, not panic.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', '')`)
+	env := userEnv(d)
+	env.HS = nil
+	got := myNodesReply(env)
+	if !strings.Contains(got, "alice-laptop") {
+		t.Errorf("expected node_id in reply (no HS to backfill from), got: %q", got)
+	}
+	// Row must still be empty (no HS, no update).
+	var hn string
+	if err := d.QueryRow(`SELECT hostname FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&hn); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if hn != "" {
+		t.Errorf("hostname should still be empty (no HS), got %q", hn)
 	}
 }
 

@@ -297,3 +297,87 @@ func TestGetNodeOwner_NotFound(t *testing.T) {
 		t.Errorf("expected ErrNodeOwnerNotFound, got %v", err)
 	}
 }
+
+// 2026-07-15: Этап 14 v13 — tests for the lazy hostname backfill
+// helpers (BackfillEmptyHostnames + AnyHostnameEmpty). The bot's
+// /my_nodes and /nodes used to silently show bare node_ids when
+// the migration-v0.34 hostname column was empty; these helpers
+// let the read paths self-heal by pulling the friendly name from
+// headscale and updating the rows that need it.
+
+func TestBackfillEmptyHostnames_OnlyUpdatesEmpty(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	// Two rows: one with empty hostname (will be filled), one with
+	// a non-empty hostname (must NOT be touched).
+	_ = UpsertNodeOwner(d, "n-empty", 0, "alice", "tag:private", 1)
+	_ = UpsertNodeOwner(d, "n-known", 0, "alice", "tag:private", 1)
+	if _, err := d.Exec(`UPDATE node_owner_map SET hostname = 'old-name' WHERE node_id = 'n-known'`); err != nil {
+		t.Fatalf("seed hostname: %v", err)
+	}
+	updated, err := BackfillEmptyHostnames(d, map[string]string{
+		"n-empty":  "fresh-name",
+		"n-known":  "would-clobber",
+		"n-missing": "no-such-row", // not in the table; must be silently ignored
+	})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if updated != 1 {
+		t.Errorf("expected 1 row updated, got %d", updated)
+	}
+	got, _ := GetNodeOwner(d, "n-empty")
+	if got.Hostname != "fresh-name" {
+		t.Errorf("n-empty: hostname=%q, want fresh-name", got.Hostname)
+	}
+	got, _ = GetNodeOwner(d, "n-known")
+	if got.Hostname != "old-name" {
+		t.Errorf("n-known: hostname=%q, want old-name (must NOT be overwritten)", got.Hostname)
+	}
+}
+
+func TestBackfillEmptyHostnames_EmptyMapIsNoop(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "alice", "tag:private", 1)
+	updated, err := BackfillEmptyHostnames(d, map[string]string{})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates, got %d", updated)
+	}
+}
+
+func TestBackfillEmptyHostnames_EmptyValueSkipped(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "alice", "tag:private", 1)
+	// Map entry with empty value must be a no-op (we never write "").
+	updated, err := BackfillEmptyHostnames(d, map[string]string{"n1": ""})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates for empty value, got %d", updated)
+	}
+	got, _ := GetNodeOwner(d, "n1")
+	if got.Hostname != "" {
+		t.Errorf("hostname=%q, want \"\" (empty value must not be written)", got.Hostname)
+	}
+}
+
+func TestAnyHostnameEmpty(t *testing.T) {
+	cases := []struct {
+		name   string
+		owners []NodeOwner
+		want   bool
+	}{
+		{"empty slice", nil, false},
+		{"all set", []NodeOwner{{NodeID: "a", Hostname: "x"}}, false},
+		{"one missing", []NodeOwner{{NodeID: "a", Hostname: "x"}, {NodeID: "b", Hostname: ""}}, true},
+		{"all missing", []NodeOwner{{NodeID: "a", Hostname: ""}}, true},
+	}
+	for _, c := range cases {
+		if got := AnyHostnameEmpty(c.owners); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}

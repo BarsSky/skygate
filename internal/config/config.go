@@ -13,7 +13,13 @@ type Config struct {
 	DBPath             string
 	HeadscaleURL       string
 	HeadscaleKey       string
-	ControlURL         string // human-facing URL clients connect to (e.g. https://head.skynas.ru)
+	// HeadplaneExternalURL is the public URL of an existing
+	// Headplane instance the operator wants to use instead of
+	// the bundled sidecar. Empty = use the bundled sidecar.
+	// See docs/headplane.md "Use an existing Headplane" for
+	// the full contract.
+	HeadplaneExternalURL string
+	ControlURL           string // human-facing URL clients connect to (e.g. https://head.skynas.ru)
 	JWTSecret          string
 	SessionHours       int
 	BootstrapAdminUser string
@@ -37,6 +43,7 @@ func Load() (*Config, error) {
 		DBPath:             getenv("SKYGATE_DB", "/var/lib/skygate/skygate.db"),
 		HeadscaleURL:       getenv("HEADSCALE_URL", "http://headscale:50444"),
 		HeadscaleKey:       os.Getenv("HEADSCALE_API_KEY"),
+		HeadplaneExternalURL: os.Getenv("HEADPLANE_EXTERNAL_URL"),
 		ControlURL:         deriveControlURL(getenv("SKYGATE_CONTROL_URL", ""), getenv("HEADSCALE_URL", "http://headscale:50444")),
 		JWTSecret:          os.Getenv("SKYGATE_JWT_SECRET"),
 		SessionHours:       24,

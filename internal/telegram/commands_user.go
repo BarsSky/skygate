@@ -28,6 +28,7 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 	"skygate/internal/i18n"
 )
 
@@ -84,6 +85,25 @@ func myNodesReply(env BotEnv) string {
 	if err != nil {
 		return i18n.Tf(lang, "bot.my_nodes.db_error", err)
 	}
+	// 2026-07-15: Этап 14 v13 — lazy hostname backfill. Migration
+	// v0.34 added the hostname column, but rows are empty until
+	// backfillNodeOwnership visits them (which only happens via
+	// /admin/devices). The bot's read paths used to silently fall
+	// back to the bare node_id; now we self-heal on the first
+	// /my_nodes that sees a missing hostname. Headscale is the
+	// source of truth for the friendly name; if the call fails or
+	// env.HS is nil, we just render with bare node_ids and try
+	// again next time.
+	if db.AnyHostnameEmpty(owners) && env.HS != nil {
+		if hnMap := hostnameMapFromHeadscale(env.HS); len(hnMap) > 0 {
+			if n, berr := db.BackfillEmptyHostnames(env.DB, hnMap); berr == nil && n > 0 {
+				// Re-read so the rendered list reflects the update.
+				if refreshed, rerr := db.ListNodeOwnersByUsername(env.DB, env.Username); rerr == nil {
+					owners = refreshed
+				}
+			}
+		}
+	}
 	type row struct{ node, tag, hostname string }
 	var nodes []row
 	for _, n := range owners {
@@ -110,6 +130,35 @@ func myNodesReply(env BotEnv) string {
 		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.my_nodes.row", label, n.tag))
 	}
 	return trimForTelegram(sb.String())
+}
+
+// hostnameMapFromHeadscale calls hs.ListAllNodes and returns
+// a node_id → friendly-name map. Shared by /my_nodes, /nodes, and
+// the existing /setdefaultdevice / /defaultdevice paths; keeping
+// the choice of "GivenName first, fall back to Hostname" in one
+// place stops the three sites from drifting.
+//
+// 2026-07-15: Этап 14 v13 — extracted for the lazy backfill
+// helper; previously inlined in three places.
+func hostnameMapFromHeadscale(hs *headscale.Client) map[string]string {
+	out := map[string]string{}
+	if hs == nil {
+		return out
+	}
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return out
+	}
+	for _, n := range nodes {
+		hn := n.GivenName
+		if hn == "" {
+			hn = n.Hostname
+		}
+		if hn != "" {
+			out[n.ID] = hn
+		}
+	}
+	return out
 }
 
 // myRulesReply lists the caller's own exit-rules, newest first.

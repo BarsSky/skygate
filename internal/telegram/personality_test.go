@@ -62,16 +62,16 @@ func TestHeaderForEachContext(t *testing.T) {
 		wantEN  string
 		wantRU  string
 	}{
-		{"welcome", "Gate", "Врата"},
+		{"welcome", "Gate", "Добро пожаловать"},
 		{"registry", "Registry", "Реестр"},
 		{"codex", "Codex", "Кодекс"},
-		{"version", "Version", "Свиток"},
+		{"version", "Version", "Версия"},
 		{"ack", "Acknowledged", "Подтверждение"},
 		{"bind", "Binding", "Привязка"},
 		{"unbind", "Unbinding", "Отвязка"},
-		{"add", "Added", "Добавление"},
-		{"del", "Removed", "Удаление"},
-		{"err", "Closed", "Закрытая"},
+		{"add", "Added", "Готово — добавлено"},
+		{"del", "Removed", "Готово — удалено"},
+		{"err", "Closed", "Дверь"},
 		{"welcome_back", "Welcome Back", "С возвращением"},
 	}
 	for _, c := range cases {
@@ -113,12 +113,12 @@ func TestHeaderForFallback(t *testing.T) {
 // languages so a translation drift is caught.
 func TestFooterForBothLanguages(t *testing.T) {
 	en := footerFor(i18n.LangEN)
-	if !strings.Contains(en, "Yours in service") {
-		t.Errorf("EN footer missing 'Yours in service' phrase, got: %q", en)
+	if !strings.Contains(en, "butler") {
+		t.Errorf("EN footer missing 'butler' phrase, got: %q", en)
 	}
 	ru := footerFor(i18n.LangRU)
-	if !strings.Contains(ru, "Искренне Ваш") {
-		t.Errorf("RU footer missing 'Искренне Ваш' phrase, got: %q", ru)
+	if !strings.Contains(ru, "Дворецкий") {
+		t.Errorf("RU footer missing 'Дворецкий' phrase, got: %q", ru)
 	}
 }
 
@@ -133,8 +133,8 @@ func TestComposeEnvelope(t *testing.T) {
 	// Even when verbose=true is forced, the envelope
 	// should still match (the caller asked for a footer).
 	// This is for error cases where the butler always
-	// signs off ("regretfully yours").
-	if !strings.Contains(short, "Yours in service") {
+	// signs off.
+	if !strings.Contains(short, "butler") {
 		t.Errorf("forced-verbose reply should still carry the footer, got: %q", short)
 	}
 
@@ -195,11 +195,11 @@ func TestVerboseForBody(t *testing.T) {
 // typing at every call site.
 func TestComposeDefault(t *testing.T) {
 	short := ComposeDefault(i18n.LangEN, "add", "Done.")
-	if strings.Contains(short, "Yours in service") {
+	if strings.Contains(short, "butler") {
 		t.Errorf("ComposeDefault should drop the footer for short bodies, got: %q", short)
 	}
 	long := ComposeDefault(i18n.LangEN, "registry", "rule 1\n\nrule 2\n\nrule 3\n\nrule 4")
-	if !strings.Contains(long, "Yours in service") {
+	if !strings.Contains(long, "butler") {
 		t.Errorf("ComposeDefault should include the footer for long bodies, got: %q", long)
 	}
 }
@@ -283,8 +283,8 @@ func TestGreetingForNewChatRussian(t *testing.T) {
 	if !strings.Contains(got, "/login") {
 		t.Errorf("Russian new-chat welcome should still mention the /login command: %q", got)
 	}
-	if !strings.Contains(got, "5 минут") {
-		t.Errorf("Russian new-chat welcome should mention 5-минутный TTL: %q", got)
+	if !strings.Contains(got, "пять минут") {
+		t.Errorf("Russian new-chat welcome should mention пятиминутный TTL: %q", got)
 	}
 }
 
@@ -295,8 +295,8 @@ func TestGreetingForReturningUserRussian(t *testing.T) {
 	if !strings.Contains(got, "alice") {
 		t.Errorf("Russian returning user welcome should name the user, got: %q", got)
 	}
-	if !strings.Contains(got, "Врата знают тебя") {
-		t.Errorf("Russian returning user welcome missing the 'Врата знают тебя' line: %q", got)
+	if !strings.Contains(got, "Рад вас видеть снова") {
+		t.Errorf("Russian returning user welcome missing the returning-user line: %q", got)
 	}
 }
 

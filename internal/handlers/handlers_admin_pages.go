@@ -106,10 +106,17 @@ func (a *App) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	if policyErr != nil {
 		errStr = policyErr.Error()
 	}
+	// 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set,
+	// link to the existing Headplane instead of the local sidecar.
+	// The local sidecar URL remains the default for backward compat.
+	headplaneURL := a.HeadplaneExternalURL
+	if headplaneURL == "" {
+		headplaneURL = "https://tsnet.skynas.ru/admin/"
+	}
 	a.renderWithLayout(w, r, "admin/acls.html", c, map[string]any{
 		"Policy":       policy,
 		"Error":        errStr,
-		"HeadplaneURL": "https://tsnet.skynas.ru/admin/",
+		"HeadplaneURL": headplaneURL,
 		"APIKey":       a.HeadscaleKey,
 	})
 }
