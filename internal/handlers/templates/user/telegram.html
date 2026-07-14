@@ -73,8 +73,16 @@
           by /my/telegram/qr?token=… (cookie-authenticated, so
           only the page owner can render a QR for a token they
           just minted). The image is regenerated every page
-          load; the server doesn't cache it. */}}
-      <img src="/my/telegram/qr?token={{.FreshKey}}" alt="QR code" width="200" height="200" style="border-radius:4px;background:white;padding:8px;display:block">
+          load; the server doesn't cache it.
+          2026-07-14 (v0.10.3): wrap the image in an anchor so
+          a desktop click on the QR opens the deep link
+          (instead of triggering Chrome's "search image with
+          Google" / context menu). On a phone the user scans
+          the QR with the camera app, which is unaffected by
+          the wrapping. */}}
+      <a href="https://t.me/{{.BotUsername}}?start={{.FreshKey}}" target="_blank" rel="noopener" title="{{t "my_telegram.qr_link_title"}}" style="display:inline-block;cursor:pointer;text-decoration:none">
+        <img src="/my/telegram/qr?token={{.FreshKey}}" alt="QR code" width="200" height="200" style="border-radius:4px;background:white;padding:8px;display:block;border:1px solid var(--border)">
+      </a>
       <p class="hint" style="text-align:center;margin-top:0.5rem">{{t "my_telegram.qr_caption"}}</p>
     </div>
     <div>
