@@ -1,4 +1,4 @@
-﻿{{define "body-admin-backup"}}
+{{define "body-admin-backup"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-floppy-disk"></i> {{t "backup.title"}}</h2>
@@ -37,6 +37,173 @@
     </form>
   </div>
 </div>
+
+{{/* 2026-07-14: Этап 14 v6 — destination & schedule. The .Config
+     key is set by the new GET handler at /admin/backup/config
+     (which we redirect to) and by GetAdminBackup via the data
+     pipeline. Render only if present, so the legacy render path
+     (no Config key) still works without panics. */}}
+{{if .Config}}
+<div class="card" style="margin-top:1.5rem">
+  <h3><i class="fa-solid fa-cloud-arrow-up"></i> {{t "backup.config_title"}}</h3>
+  <div class="sub" style="margin-bottom:0.75rem">{{t "backup.config_subtitle"}}.</div>
+
+  <form action="/admin/backup/config" method="POST" id="backup-config-form">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>{{t "backup.protocol"}}</label>
+        <select name="protocol" class="form-control" id="backup-protocol-select">
+          {{$currentProto := .Config.Protocol}}
+          <option value="">{{t "backup.protocol"}}…</option>
+          {{range .Protocols}}
+            <option value="{{.}}" {{if eq . $currentProto}}selected{{end}}>{{t (printf "backup.protocol_%s" .)}}</option>
+          {{end}}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>{{t "backup.destination"}} *</label>
+        <input type="text" name="destination" class="form-control"
+               value="{{.Config.Destination}}"
+               placeholder="//synology.local/backups/skygate"
+               required>
+        <div class="form-hint">{{t "backup.destination_help"}}</div>
+      </div>
+
+      <div class="form-group" data-show-for="smb nfs sftp">
+        <label>{{t "backup.mountpoint"}}</label>
+        <input type="text" name="mountpoint" class="form-control"
+               value="{{.Config.Mountpoint}}"
+               placeholder="/mnt/skygate-backups">
+        <div class="form-hint">{{t "backup.mountpoint_help"}}</div>
+      </div>
+
+      <div class="form-group" data-show-for="smb">
+        <label>{{t "backup.username"}}</label>
+        <input type="text" name="username" class="form-control"
+               value="{{.Config.Username}}"
+               placeholder="backup_user">
+      </div>
+
+      <div class="form-group" data-show-for="smb">
+        <label>{{t "backup.password"}}</label>
+        <input type="password" name="password" class="form-control"
+               value="{{.Config.Password}}"
+               autocomplete="new-password">
+      </div>
+
+      <div class="form-group" data-show-for="sftp">
+        <label>{{t "backup.ssh_key_path"}}</label>
+        <input type="text" name="ssh_key_path" class="form-control"
+               value="{{.Config.SSHKeyPath}}"
+               placeholder="/home/skyadmin/.ssh/skygate_sync">
+        <div class="form-hint">{{t "backup.ssh_key_path_help"}}</div>
+      </div>
+
+      <div class="form-group">
+        <label>{{t "backup.keep_count"}}</label>
+        <input type="number" name="keep_count" class="form-control"
+               value="{{.Config.KeepCount}}" min="0" max="1000">
+        <div class="form-hint">{{t "backup.keep_count_help"}}</div>
+      </div>
+
+      <div class="form-group">
+        <label>{{t "backup.schedule"}}</label>
+        <input type="text" name="schedule" class="form-control"
+               value="{{.Config.Schedule}}"
+               placeholder="0 3 * * *">
+        <div class="form-hint">{{t "backup.schedule_help"}}</div>
+      </div>
+
+      <div class="form-group form-check" style="grid-column: 1 / -1">
+        <label>
+          <input type="checkbox" name="enabled" value="1" {{if .Config.Enabled}}checked{{end}}>
+          {{t "backup.enabled"}}
+        </label>
+      </div>
+
+      <div class="form-group form-check" style="grid-column: 1 / -1">
+        <label>
+          <input type="checkbox" name="in_app_enabled" value="1" {{if .Config.InAppEnabled}}checked{{end}}>
+          {{t "backup.in_app_scheduler"}}
+        </label>
+        <div class="form-hint">{{t "backup.in_app_scheduler_help"}}</div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:1rem">
+      <button type="submit" class="btn btn-primary" id="backup-save-config-btn">
+        <i class="fa-solid fa-floppy-disk"></i> {{t "backup.save"}}
+      </button>
+      <button type="submit" formaction="/admin/backup/test" formmethod="POST" class="btn"
+              id="backup-test-btn">
+        <i class="fa-solid fa-plug"></i> {{t "backup.test_connection"}}
+      </button>
+      <button type="submit" formaction="/admin/backup/run" formmethod="POST" class="btn btn-warning"
+              id="backup-run-btn"
+              onclick="return confirm('Run backup now?');">
+        <i class="fa-solid fa-play"></i> {{t "backup.run_now"}}
+      </button>
+    </div>
+  </form>
+
+  <div class="sub" style="margin-top:0.5rem">
+    <i class="fa-solid fa-circle-info"></i> {{t "backup.system_cron_hint"}}
+  </div>
+
+  {{/* Last run status — populated by RunBackup via SetStatus. */}}
+  <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--border, #2a2f3a)">
+    <strong>{{t "backup.last_run"}}:</strong>
+    {{if gt .Config.LastRun 0}}
+      <code>{{datetimeformat .Config.LastRun}}</code>
+      &nbsp;
+      {{if eq .Config.LastStatus "ok"}}
+        <span class="badge badge-success">{{t "backup.last_status_ok"}}</span>
+      {{else if eq .Config.LastStatus "fail"}}
+        <span class="badge badge-danger">{{t "backup.last_status_fail"}}</span>
+      {{else if eq .Config.LastStatus "running"}}
+        <span class="badge badge-info">{{t "backup.last_status_running"}}</span>
+      {{else}}
+        <code>{{.Config.LastStatus}}</code>
+      {{end}}
+      {{if .Config.LastArchive}}
+        &nbsp;<span class="sub">{{t "backup.last_archive"}}: <code>{{.Config.LastArchive}}</code></span>
+      {{end}}
+      {{if and (eq .Config.LastStatus "fail") .Config.LastError}}
+        <div class="alert alert-danger" style="margin-top:0.5rem; font-size:0.85em">
+          {{t "backup.last_error"}}: <code>{{.Config.LastError}}</code>
+        </div>
+      {{end}}
+    {{else}}
+      <span class="sub">{{t "backup.last_status_never"}}</span>
+    {{end}}
+  </div>
+</div>
+
+<script>
+  // 2026-07-14: show/hide protocol-specific fields based on
+  // dropdown selection. The data-show-for attribute is a
+  // space-separated list of protocol values that should
+  // keep the field visible.
+  (function() {
+    var sel = document.getElementById('backup-protocol-select');
+    if (!sel) return;
+    function apply() {
+      var v = sel.value;
+      document.querySelectorAll('[data-show-for]').forEach(function(el) {
+        var list = (el.getAttribute('data-show-for') || '').split(/\s+/);
+        if (list.indexOf(v) >= 0) {
+          el.style.display = '';
+        } else {
+          el.style.display = 'none';
+        }
+      });
+    }
+    sel.addEventListener('change', apply);
+    apply();
+  })();
+</script>
+{{end}}
 
 {{if .Backups}}
 <div class="card" style="margin-top:1.5rem">
