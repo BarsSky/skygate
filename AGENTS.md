@@ -227,22 +227,44 @@ isn't currently needed.
 
 ### 3-state reachability probe
 
-`/admin/telegram` runs a 5s HEAD probe to api.telegram.org on every
-GET. Banner shows one of three states:
+`/admin/telegram` runs a 5s GET probe to api.telegram.org on every
+page load. Banner shows one of three states:
 
-* **ok_direct** — tailscaled not running. Tailscale layer skipped.
-* **ok_relay** — tailscaled running. The path can be either
-  relay-via-subnet-route OR direct-via-eth0 (Tailscale's default
-  route isn't hijacked in this design), depending on whether
-  the relay's subnet routes are accepted.
+* **ok_direct** — kernel route for the resolved IPs goes via
+  eth0 (direct internet, no Tailscale involvement for this
+  destination). Typical for non-RF VPSes.
+* **ok_relay** — kernel route for the resolved IPs goes via
+  tailscale0, which means a relay's subnet route covers the
+  destination. Typical for RF deployments.
 * **unreachable** — 5s timeout, 5xx, or DNS failure. Banner shows
   a troubleshooting bullet list with the resolved IPs.
 
-Implementation: `internal/handlers/handlers_telegram_probe.go` + test
-in `handlers_telegram_probe_test.go` (8 unit tests, all PASS).
+The check is per-IP via `ip route get <ip>` (shell-out with a
+2s timeout safety net). It's more accurate than the v1
+"is tailscaled running" heuristic — tailscaled can be running
+(joining the tailnet for admin / headscale access) without any
+subnet route covering api.telegram.org, in which case the actual
+traffic still goes via eth0. The kernel routing table is the
+source of truth for "would this packet go via Tailscale?".
+
+Implementation: `internal/handlers/handlers_telegram_probe.go` +
+tests in `handlers_telegram_probe_test.go` (17 unit tests, all
+PASS — including `TestProbeDirectEvenWithTailscaled` which is
+the explicit regression guard for the v1 → v2 behavior fix).
 Template: `internal/handlers/templates/admin/telegram.html`
 (`.alert-probe` / `.probe-ok-direct` / `.probe-ok-relay` /
 `.probe-unreachable`).
+
+### Relay failover (2026-07-14, Этап 14 v3)
+
+Both **emilia** and **sharlotta** advertise the same 8 v4 + 4 v6
+Telegram CIDRs; Tailscale picks one based on metric. If emilia
+goes down, the bot automatically starts using sharlotta within
+~60s. Both have a weekly cron (`0 4 * * 1`) running
+`/usr/local/bin/skygate-update-telegram-routes` to refresh the
+routes from DNS. **karolina** is available as a third-tier backup
+(not yet configured). See `docs/telegram-relay.md` for the
+re-deploy recipe after a fresh relay setup.
 
 ### Files for this feature
 
