@@ -227,6 +227,39 @@ func TestHandleCommandAdminOnlyEnvelope(t *testing.T) {
 	}
 }
 
+// TestHandleCommandHelpRUNoEnglishLeak — 2026-07-14:
+// Этап 14 v12. The RU-locale /help output must be free of
+// English substrings left over from the v0.10.x rewrites
+// (the catalog has the per-line strings, but earlier
+// code paths appended English suffixes like "for yourself",
+// "or another user, admin only", "with last-seen"). This
+// test pins the language: any of these substrings in the
+// RU /help output is a regression. The forbidden list is
+// additive — add more as we i18n-ize further strings.
+func TestHandleCommandHelpRUNoEnglishLeak(t *testing.T) {
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envForRU(d), "/help")
+	forbidden := []string{
+		"add an exit-rule",     // /add_rule
+		"for yourself",         // /add_device suffix
+		"or another user",      // /clearrules suffix
+		"with last-seen",       // /exit_nodes
+		"requires /clearrules", // /clearrules suffix
+		"admin only",           // /clearrules (RU has its own)
+		"let a domain",         // /add_rule example key
+	}
+	for _, f := range forbidden {
+		if strings.Contains(strings.ToLower(got), f) {
+			t.Errorf("expected RU-locale /help to be free of %q substring, but found it in:\n%s", f, got)
+		}
+	}
+	// Sanity: the /add_rule line itself must still be present
+	// (we'd notice if i18n-ization accidentally dropped it).
+	if !strings.Contains(got, "/add_rule") {
+		t.Errorf("expected /add_rule in RU /help, got: %q", got)
+	}
+}
+
 func TestHandleCommandHelp(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/help")
@@ -236,6 +269,33 @@ func TestHandleCommandHelp(t *testing.T) {
 	if !strings.Contains(got, "/exit_nodes") {
 		t.Errorf("expected /exit_nodes in /help, got: %q", got)
 	}
+
+	// 2026-07-14: Этап 14 v12 — verify /help in RU-locale
+	// has no English substrings left over from the v0.10.x
+	// rewrites. The catalog has the per-line strings, but
+	// older code paths appended English suffixes ("for
+	// yourself", "or another user, admin only", etc.). This
+	// test pins the language: any English substring in the
+	// RU-locale /help output is a regression.
+	gotRU := HandleCommand(context.Background(), envForRU(d), "/help")
+	forbidden := []string{
+		"add an exit-rule",     // /add_rule (used to be hardcoded EN)
+		"for yourself",         // /add_device suffix
+		"or another user",      // /clearrules suffix
+		"with last-seen",       // /exit_nodes (the EN word, not the prefix)
+		"requires /clearrules", // /clearrules suffix
+		"admin only",           // /clearrules (RU has its own)
+		"let a domain",         // /add_rule example key
+	}
+	for _, f := range forbidden {
+		if strings.Contains(strings.ToLower(gotRU), f) {
+			t.Errorf("expected RU-locale /help to be free of %q substring, but found it in:\n%s", f, gotRU)
+		}
+	}
+	if !strings.Contains(gotRU, "/add_rule") {
+		t.Errorf("expected /add_rule in RU /help, got: %q", gotRU)
+	}
+
 	if !strings.Contains(got, "/ack") {
 		t.Errorf("expected /ack in /help, got: %q", got)
 	}
@@ -479,6 +539,66 @@ func TestFormatAlertRow(t *testing.T) {
 	}
 	if len(got) > 130 {
 		t.Errorf("expected truncation, got len=%d", len(got))
+	}
+}
+
+// TestBuildPlatformPicker_CopyButton — verifies the /add_device
+// picker has a Copy button (Telegram copy_text field) on the
+// first row, followed by the five platform buttons. The copy_text
+// is bound at picker-construction time so the polling loop
+// just ships the JSON verbatim to sendMessage.
+func TestBuildPlatformPicker_CopyButton(t *testing.T) {
+	const preauthKey = "hskey-fake-abcd1234efgh5678ijkl9012mnop3456qrst"
+	picker := buildPlatformPicker(i18n.LangEN, preauthKey)
+	if picker == nil {
+		t.Fatal("expected non-nil picker")
+	}
+	if len(picker.InlineKeyboard) < 3 {
+		t.Fatalf("expected at least 3 rows (copy + linux/windows/macos + ios/android), got %d", len(picker.InlineKeyboard))
+	}
+	// First row: the Copy button.
+	row0 := picker.InlineKeyboard[0]
+	if len(row0) != 1 {
+		t.Fatalf("expected first row to be a single Copy button, got %d buttons", len(row0))
+	}
+	btn := row0[0]
+	if !strings.Contains(btn["text"], "Copy") {
+		t.Errorf("expected Copy text in first button, got %q", btn["text"])
+	}
+	if btn["copy_text"] != preauthKey {
+		t.Errorf("expected copy_text to carry the preauth key, got %q", btn["copy_text"])
+	}
+	// The Copy button MUST NOT have a callback_data — Telegram
+	// would call the bot on tap, but the action is purely
+	// client-side (clipboard).
+	if _, hasCb := btn["callback_data"]; hasCb {
+		t.Errorf("Copy button should not have callback_data (client-only action), got %q", btn["callback_data"])
+	}
+	// Second row: Linux, Windows, macOS.
+	row1 := picker.InlineKeyboard[1]
+	if len(row1) != 3 {
+		t.Errorf("expected 3 platform buttons in row 2, got %d", len(row1))
+	}
+	wantCallbacks := []string{
+		"add_device_platform:linux",
+		"add_device_platform:windows",
+		"add_device_platform:macos",
+	}
+	for i, want := range wantCallbacks {
+		if row1[i]["callback_data"] != want {
+			t.Errorf("row1[%d] callback_data = %q, want %q", i, row1[i]["callback_data"], want)
+		}
+	}
+	// Third row: iOS, Android.
+	row2 := picker.InlineKeyboard[2]
+	if len(row2) != 2 {
+		t.Errorf("expected 2 platform buttons in row 3, got %d", len(row2))
+	}
+	if row2[0]["callback_data"] != "add_device_platform:ios" {
+		t.Errorf("row2[0] callback_data = %q, want add_device_platform:ios", row2[0]["callback_data"])
+	}
+	if row2[1]["callback_data"] != "add_device_platform:android" {
+		t.Errorf("row2[1] callback_data = %q, want add_device_platform:android", row2[1]["callback_data"])
 	}
 }
 
