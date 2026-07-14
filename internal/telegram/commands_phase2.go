@@ -150,15 +150,3 @@ func auditReply(d *sql.DB) string {
 	}
 	return trimForTelegram(sb.String())
 }
-
-// trimForTelegram keeps the body under 3800 chars so the markdown fence
-// RealNotifier wraps around it (```...```) plus headroom stays under
-// the 4096-char Telegram limit.
-func trimForTelegram(s string) string {
-	const maxLen = 3800
-	if len(s) <= maxLen {
-		return s
-	}
-	suffix := "\n... (truncated, see /admin/audit)"
-	return s[:maxLen-len(suffix)] + suffix
-}

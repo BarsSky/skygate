@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -42,7 +44,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE devices (id INTEGER PRIMARY KEY, user_id INTEGER, hostname TEXT NOT NULL DEFAULT '', node_id TEXT DEFAULT '', headscale_node_id TEXT DEFAULT '', ip_addresses TEXT DEFAULT '', os TEXT DEFAULT '', last_seen INTEGER DEFAULT 0, online INTEGER DEFAULT 0, created_at INTEGER DEFAULT 0)`,
 		`CREATE TABLE telegram_alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), acked_at INTEGER NOT NULL DEFAULT 0, acked_by TEXT NOT NULL DEFAULT '')`,
 		// 2026-07-12: Этап 11 — telegram_bindings (chat_id → portal_user).
-		`CREATE TABLE telegram_bindings (chat_id INTEGER PRIMARY KEY, portal_user_id INTEGER NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, bound_at INTEGER NOT NULL DEFAULT 0, bound_by_user_id INTEGER NOT NULL DEFAULT 0)`,
+		// 2026-07-14: Этап 14 v5 — added lang column (default 'en').
+		`CREATE TABLE telegram_bindings (chat_id INTEGER PRIMARY KEY, portal_user_id INTEGER NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, bound_at INTEGER NOT NULL DEFAULT 0, bound_by_user_id INTEGER NOT NULL DEFAULT 0, lang TEXT NOT NULL DEFAULT 'en')`,
 		// 2026-07-12: Этап 11 — preauth_keys (add_device reply needs it).
 		`CREATE TABLE preauth_keys (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, key TEXT NOT NULL DEFAULT '', headscale_preauth_id TEXT NOT NULL DEFAULT '', used INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0)`,
 		// 2026-07-13: Этап 11 part 2a — exit_servers (setexitnode / defaultexitnode).
@@ -116,7 +119,33 @@ func setupTestDB(t *testing.T) *sql.DB {
 // envFor wraps a test DB in a BotEnv with empty limits. The /quota
 // tests construct their own BotEnv directly when they need to
 // exercise the limit math.
-func envFor(d *sql.DB) BotEnv { return BotEnv{DB: d} }
+//
+// 2026-07-14: Этап 14 v5 — envFor now sets Lang to "en" so
+// the i18n catalog (installed by TestMain) returns the
+// English reply strings. Tests that want Russian pass
+// envForRU or build the BotEnv by hand.
+func envFor(d *sql.DB) BotEnv {
+	return BotEnv{DB: d, Lang: i18n.LangEN}
+}
+
+// envForRU is the Russian counterpart of envFor. Used by the
+// few tests that explicitly check the Russian reply.
+func envForRU(d *sql.DB) BotEnv {
+	return BotEnv{DB: d, Lang: i18n.LangRU}
+}
+
+// TestMain installs the i18n catalog before any test in the
+// telegram package runs. Without this, i18n.T() returns the
+// raw key string (e.g. "bot.status.header") and the tests
+// that expect a real "Skygate status" header fail. We
+// deliberately use a single shared catalog across all
+// tests — the catalog is read-only so concurrency is fine,
+// and a fresh per-test catalog would only add startup
+// cost.
+func TestMain(m *testing.M) {
+	i18n.SetGlobal(i18n.New())
+	os.Exit(m.Run())
+}
 
 func TestHandleCommandStatus(t *testing.T) {
 	d := setupTestDB(t)
@@ -297,7 +326,7 @@ func TestHandleCommandQuotaPerUserOverride(t *testing.T) {
 
 func TestHandleCommandQuotaNoLimit(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d} // both UserMaxRules and DefaultMax are zero → "no limit"
+	env := BotEnv{DB: d, Lang: i18n.LangEN} // both UserMaxRules and DefaultMax are zero → "no limit"
 	got := HandleCommand(context.Background(), env, "/quota")
 	if !strings.Contains(got, "no limit") {
 		t.Errorf("expected 'no limit' marker when no caps configured, got: %q", got)
@@ -420,8 +449,12 @@ func TestTrimForTelegram(t *testing.T) {
 	if len(got) > 3800 {
 		t.Errorf("expected trim, got len=%d", len(got))
 	}
-	if !strings.HasSuffix(got, "(truncated, see /admin/audit)") {
-		t.Errorf("expected truncation marker, got tail: %q", got[len(got)-40:])
+	// 2026-07-14: Этап 14 v5 — marker is now from the
+	// i18n catalog (bot.trim.marker), not a hardcoded
+	// English literal. Assert the shape: must contain
+	// "truncated" so the user always sees the warning.
+	if !strings.Contains(got, "truncated") {
+		t.Errorf("expected truncation marker mentioning 'truncated', got tail: %q", got[len(got)-60:])
 	}
 	short := "hello"
 	if trimForTelegram(short) != short {
@@ -626,12 +659,16 @@ func TestHandleCommandHelpDetailed(t *testing.T) {
 
 // userEnv builds a BotEnv pre-populated as a non-admin user "alice"
 // (id=2, the second row seeded by setupTestDB).
+//
+// 2026-07-14: Этап 14 v5 — sets Lang to "en" so the i18n
+// catalog returns the English reply. Tests that need Russian
+// override Lang by building the BotEnv by hand.
 func userEnv(d *sql.DB) BotEnv {
-	return BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false}
+	return BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false, Lang: i18n.LangEN}
 }
 
 func adminEnv(d *sql.DB) BotEnv {
-	return BotEnv{DB: d, ChatID: 999, PortalUserID: 1, Username: "skyadmin", IsAdmin: true}
+	return BotEnv{DB: d, ChatID: 999, PortalUserID: 1, Username: "skyadmin", IsAdmin: true, Lang: i18n.LangEN}
 }
 
 func TestMyStatusReplyUser(t *testing.T) {
@@ -651,7 +688,7 @@ func TestMyStatusReplyUser(t *testing.T) {
 
 func TestMyStatusReplyUnidentified(t *testing.T) {
 	d := setupTestDB(t)
-	got := myStatusReply(BotEnv{DB: d})
+	got := myStatusReply(BotEnv{DB: d, Lang: i18n.LangEN})
 	if !strings.Contains(got, "chat not bound") {
 		t.Errorf("expected 'chat not bound' for unidentified caller, got: %q", got)
 	}
@@ -695,7 +732,7 @@ func TestMyRulesReplyUserFiltersToCaller(t *testing.T) {
 
 func TestMyQuotaReplyUser(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false, UserMaxRules: map[string]int{"alice": 5}, DefaultMax: 200}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: 2, Username: "alice", IsAdmin: false, UserMaxRules: map[string]int{"alice": 5}, DefaultMax: 200}
 	got := myQuotaReply(env)
 	if !strings.Contains(got, "alice") {
 		t.Errorf("expected alice in my_quota, got: %q", got)
@@ -966,13 +1003,13 @@ func fakeHeadscale(t *testing.T) (*httptest.Server, *headscale.Client) {
 
 // userEnvWithHS is userEnv plus a *headscale.Client (for write tests).
 func userEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
-	return BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false, HS: hs}
+	return BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: 2, Username: "alice", IsAdmin: false, HS: hs}
 }
 
 // adminEnvWithHS is the admin-scope variant of userEnvWithHS. Used
 // to test "/add_device <username>" acting on another user.
 func adminEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
-	return BotEnv{DB: d, ChatID: 1, PortalUserID: 1, Username: "skyadmin", IsAdmin: true, HS: hs}
+	return BotEnv{DB: d, ChatID: 1, Lang: i18n.LangEN, PortalUserID: 1, Username: "skyadmin", IsAdmin: true, HS: hs}
 }
 
 func TestAddDeviceReplyRejectsUnbound(t *testing.T) {
@@ -2082,6 +2119,7 @@ func newRecordingNotifier() *recordingNotifier {
 
 func (n *recordingNotifier) SendTelegram(string)              {}
 func (n *recordingNotifier) SendTelegramToChat(string, int64) {}
+func (n *recordingNotifier) BotUsernameCached() string        { return "" }
 
 func (n *recordingNotifier) SendAlert(text string) int64 {
 	n.alerts <- text
@@ -2553,7 +2591,7 @@ func TestMyExitNodesReplyHelpDetail(t *testing.T) {
 // StrictMode=true. Used to exercise the strict-mode gate.
 func strictEnv(d *sql.DB) BotEnv {
 	_, _ = d.Exec(`INSERT INTO global_settings(key, value) VALUES ('telegram.strict_mode', '1')`)
-	return BotEnv{DB: d, ChatID: 99999, PortalUserID: 2, Username: "alice", IsAdmin: false, StrictMode: true}
+	return BotEnv{DB: d, ChatID: 99999, Lang: i18n.LangEN, PortalUserID: 2, Username: "alice", IsAdmin: false, StrictMode: true}
 }
 
 // testLoginToken is a known-shape token (skg-XXXX-XXXX-XXXX
@@ -2580,7 +2618,7 @@ func TestLoginReplyNoArgs(t *testing.T) {
 	d := setupTestDB(t)
 	// Unbound chat in strict mode: should print the hint
 	// (NOT a generic error, NOT a "chat not bound" gate).
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	got := HandleCommand(context.Background(), env, "/login")
 	if !strings.Contains(got, "Generate login key") {
 		t.Errorf("expected hint pointing to /my/telegram, got: %q", got)
@@ -2591,7 +2629,7 @@ func TestLoginReplyValid(t *testing.T) {
 	d := setupTestDB(t)
 	insertValidLoginToken(t, d, testLoginToken, 2, 300) // for alice
 	// Unbound chat in strict mode that pastes the key.
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
 	if !strings.Contains(got, "Logged in as alice") {
 		t.Errorf("expected 'Logged in as alice', got: %q", got)
@@ -2616,7 +2654,7 @@ func TestLoginReplyValid(t *testing.T) {
 
 func TestLoginReplyInvalid(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	// Not in DB.
 	got := HandleCommand(context.Background(), env, "/login skg-ZZZZ-ZZZZ-ZZZZ")
 	if !strings.Contains(got, "invalid or expired key") {
@@ -2633,7 +2671,7 @@ func TestLoginReplyExpired(t *testing.T) {
 	d := setupTestDB(t)
 	// Token whose expires_at is 10s in the past.
 	insertValidLoginToken(t, d, testLoginToken, 2, -10)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
 	if !strings.Contains(got, "invalid or expired key") {
 		t.Errorf("expected 'invalid or expired key' for expired, got: %q", got)
@@ -2643,7 +2681,7 @@ func TestLoginReplyExpired(t *testing.T) {
 func TestLoginReplyAlreadyUsed(t *testing.T) {
 	d := setupTestDB(t)
 	insertValidLoginToken(t, d, testLoginToken, 2, 300)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	// First call consumes the token.
 	_ = HandleCommand(context.Background(), env, "/login "+testLoginToken)
 	// Reset rate-limit so the second call isn't blocked by that.
@@ -2657,7 +2695,7 @@ func TestLoginReplyAlreadyUsed(t *testing.T) {
 
 func TestLoginReplyRateLimit(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	// 5 attempts in <60s (rate limit max). All should fail
 	// (no token seeded), but the rate-limit gate only kicks
 	// in on the 6th.
@@ -2677,7 +2715,7 @@ func TestLoginReplyRateLimit(t *testing.T) {
 func TestStartReplyWithTokenShowsConfirmation(t *testing.T) {
 	d := setupTestDB(t)
 	insertValidLoginToken(t, d, testLoginToken, 2, 300)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	// 2026-07-13: Этап 13 — /start <token> no longer binds
 	// immediately. It shows a confirmation prompt with
 	// inline [Bind] [Cancel] buttons; the actual bind
@@ -2730,7 +2768,7 @@ func TestStartReplyWithTokenShowsConfirmation(t *testing.T) {
 
 func TestStartReplyNoTokenShowsHint(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	got := HandleCommand(context.Background(), env, "/start")
 	if !strings.Contains(got, "Generate login key") {
 		t.Errorf("expected /start (no arg) to show the hint, got: %q", got)
@@ -2741,10 +2779,13 @@ func TestStrictModeRejectsAdminCommandForUnboundChat(t *testing.T) {
 	d := setupTestDB(t)
 	_, _ = d.Exec(`INSERT INTO global_settings(key, value) VALUES ('telegram.strict_mode', '1')`)
 	// Unbound chat (no ChatID — IsIdentified()==false) in strict mode.
-	env := BotEnv{DB: d, StrictMode: true}
+	// 2026-07-14: Этап 14 v5 — env.Lang=EN so the strict-mode
+	// reply is in English (the test asserts on the English
+	// "not bound" wording).
+	env := BotEnv{DB: d, StrictMode: true, Lang: i18n.LangEN}
 	for _, cmd := range []string{"/status", "/nodes", "/rules", "/audit", "/quota", "/exit_nodes"} {
 		got := HandleCommand(context.Background(), env, cmd)
-		if !strings.Contains(got, "chat is not bound") {
+		if !strings.Contains(got, "not bound") {
 			t.Errorf("strict mode should reject %s for unbound chat, got: %q", cmd, got)
 		}
 	}
@@ -2757,7 +2798,7 @@ func TestStrictModeAllowsAuthAndHelp(t *testing.T) {
 	// clears it for unbound non-admin chats; see
 	// RealNotifier.resolveBootstrapAdmin). Mirror that here
 	// so helpReply takes the "strict + unidentified" branch.
-	env := BotEnv{DB: d, ChatID: 0, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 0, Lang: i18n.LangEN, StrictMode: true}
 	// /help and /version MUST work for an unbound chat in
 	// strict mode (otherwise a stranger can't even read the
 	// docs that tell them to /login).
@@ -2778,7 +2819,7 @@ func TestStrictModeOffKeepsLegacyFallback(t *testing.T) {
 	d := setupTestDB(t)
 	// No global_settings row → strict mode defaults to false.
 	// Unbound chat + non-strict = admin (legacy behaviour).
-	env := BotEnv{DB: d}
+	env := BotEnv{DB: d, Lang: i18n.LangEN}
 	if !env.EffectiveAdmin() {
 		t.Errorf("without strict mode, unidentified chat should be admin (legacy)")
 	}
@@ -2793,7 +2834,7 @@ func TestUnbindSelfReplyRemovesBinding(t *testing.T) {
 	d := setupTestDB(t)
 	// Seed a binding for alice (chat 555 → user 2).
 	_, _ = d.Exec(`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id) VALUES (555, 2, 0, 1700000000, 0)`)
-	env := BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: 2, Username: "alice", IsAdmin: false}
 	got := HandleCommand(context.Background(), env, "/unbind_self")
 	if !strings.Contains(got, "no longer bound") {
 		t.Errorf("expected 'no longer bound' in /unbind_self reply, got: %q", got)
@@ -2811,7 +2852,7 @@ func TestUnbindSelfReplyNotBound(t *testing.T) {
 	// In production, an unbound chat has ChatID=0 (the
 	// dispatcher's resolveBootstrapAdmin clears it). We
 	// mirror that here.
-	env := BotEnv{DB: d, ChatID: 0}
+	env := BotEnv{DB: d, ChatID: 0, Lang: i18n.LangEN}
 	got := HandleCommand(context.Background(), env, "/unbind_self")
 	if !strings.Contains(got, "not bound") {
 		t.Errorf("expected 'not bound' for unbound /unbind_self, got: %q", got)
@@ -3025,16 +3066,18 @@ func TestResetTelegramRateLimit(t *testing.T) {
 func TestStartReplyNoTokenShowsHintOrAlreadyLoggedIn(t *testing.T) {
 	d := setupTestDB(t)
 	// Unbound chat in strict mode → hint.
-	env := BotEnv{DB: d, ChatID: 0, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 0, Lang: i18n.LangEN, StrictMode: true}
 	got := HandleCommand(context.Background(), env, "/start")
 	if !strings.Contains(got, "Generate login key") {
 		t.Errorf("expected hint for unbound /start, got: %q", got)
 	}
-	// Bound chat (Username set) → "already logged in" message.
-	env2 := BotEnv{DB: d, ChatID: 555, PortalUserID: 2, Username: "alice", IsAdmin: false}
+	// Bound chat (Username set) → "the gate knows you" message
+	// (Этап 14 v5: replaces the old "Already logged in as X"
+	// text with the butler-gatekeeper voice).
+	env2 := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: 2, Username: "alice", IsAdmin: false}
 	got2 := HandleCommand(context.Background(), env2, "/start")
-	if !strings.Contains(got2, "Already logged in as alice") {
-		t.Errorf("expected 'already logged in' for bound /start, got: %q", got2)
+	if !strings.Contains(got2, "alice") || !strings.Contains(got2, "gate knows you") {
+		t.Errorf("expected 'gate knows you' greeting for bound /start, got: %q", got2)
 	}
 }
 
@@ -3047,7 +3090,7 @@ func TestStartReplyNoTokenShowsHintOrAlreadyLoggedIn(t *testing.T) {
 func TestLoginReplyStillBindsImmediately(t *testing.T) {
 	d := setupTestDB(t)
 	insertValidLoginToken(t, d, testLoginToken, 2, 300)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	got := HandleCommand(context.Background(), env, "/login "+testLoginToken)
 	if !strings.Contains(got, "Logged in as alice") {
 		t.Errorf("expected immediate bind via /login, got: %q", got)
@@ -3070,7 +3113,7 @@ func TestLoginReplyStillBindsImmediately(t *testing.T) {
 // shouldn't burn a chat's quota without consequence).
 func TestStartReplyNoArgsDoesNotConsume(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, ChatID: 0, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 0, Lang: i18n.LangEN, StrictMode: true}
 	// /start with no arg → login hint, no token consume.
 	got := HandleCommand(context.Background(), env, "/start")
 	if strings.Contains(got, "Bind this chat") {
@@ -3084,7 +3127,7 @@ func TestStartReplyNoArgsDoesNotConsume(t *testing.T) {
 // here so /start has the same fast-fail).
 func TestStartReplyInvalidTokenShapeRejected(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, ChatID: 555, StrictMode: true}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, StrictMode: true}
 	got := HandleCommand(context.Background(), env, "/login skg-ABCD") // too short
 	if !strings.Contains(got, "doesn't look like a valid key") {
 		t.Errorf("expected shape-check rejection, got: %q", got)

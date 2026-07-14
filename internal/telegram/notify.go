@@ -34,6 +34,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 )
 
 // Notifier is the interface used by code that wants to emit a message.
@@ -52,13 +53,26 @@ type Notifier interface {
 	// SendAlert posts text as a numbered alert (for /ack). Returns
 	// the alert id, or 0 when the bot is not configured.
 	SendAlert(text string) int64
+	// BotUsernameCached returns the bot's @username, refreshing
+	// from getMe at most once per botUsernameCacheTTL. Returns ""
+	// if the token isn't configured yet. Used by the
+	// loginHint / greetingForNewChat welcome to render a
+	// tap-to-open link to the bot. Added in 2026-07-13
+	// (Этап 13) for Bind-by-QR; the in-flow caller is
+	// loginHint in commands_login.go. NoopNotifier returns "".
+	BotUsernameCached() string
 }
 
 // NoopNotifier discards all messages. Used when no token is configured.
+// SendAlert and SendTelegram* live in alerts.go (the SendAlert
+// impl is owned by the alerts package; keeping it there avoids a
+// package-boundary cycle with the Notifier interface). We only add
+// the new methods here.
 type NoopNotifier struct{}
 
 func (NoopNotifier) SendTelegram(string)              {}
 func (NoopNotifier) SendTelegramToChat(string, int64) {}
+func (NoopNotifier) BotUsernameCached() string        { return "" }
 
 // RealNotifier holds the per-process Telegram configuration. The
 // configured flag is consulted at SendTelegram time so a hot-swap
@@ -281,6 +295,11 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 		MaxRulesPerDevice:  n.maxRulesPerDevice,
 		MaxTotalRules:      n.maxTotalRules,
 		Notifier:           n,
+		// 2026-07-14: Этап 14 v5 — default Lang is "en";
+		// envForMessage() overrides for unbound chats with
+		// LangFromTelegramCode(langCode) and for bound chats
+		// with the binding's stored lang.
+		Lang: i18n.LangEN,
 	}
 	n.mu.Unlock()
 	// Strict mode is read OUTSIDE the n.mu lock so a slow DB
@@ -307,6 +326,13 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	if u, err := lookupPortalUsername(n.db, b.PortalUserID); err == nil {
 		env.Username = u
 	}
+	// 2026-07-14: Этап 14 v5 — pick the language from the
+	// binding so the user's /lang choice sticks across
+	// sessions and across devices (the binding is per-chat,
+	// not per-user, so a phone and a laptop with two chats
+	// each get their own preference; that's intentional —
+	// the language is a UI choice, not an account choice).
+	env.Lang = LangForBinding(b)
 	return env
 }
 
@@ -339,11 +365,29 @@ func lookupPortalUsername(d *sql.DB, userID int64) (string, error) {
 // the bot received the message, dispatched to loginReply,
 // which bailed on "if env.ChatID == 0 { return internal error }".
 //
+// 2026-07-14 (Этап 14 v5): added langCode param. env() reads
+// the binding's lang column; for unbound chats we fall back
+// to LangFromTelegramCode(langCode) so the very first /start
+// (before any /login) greets the user in their Telegram
+// client language. The langCode is also passed to HandleCommand
+// via env.TelegramLangCode so loginReply can seed the
+// binding's lang on first /login (auto-detect). Empty
+// langCode (privacy setting hid the value) falls back to en.
+//
 // Returns the env and the isBootstrapAdmin flag (mostly for
 // tests — production callers can ignore the bool).
-func (n *RealNotifier) envForMessage(chatID int64) (BotEnv, bool) {
+func (n *RealNotifier) envForMessage(chatID int64, langCode string) (BotEnv, bool) {
 	_, isBootstrapAdmin := n.resolveBootstrapAdmin(chatID)
 	env := n.env(chatID)
+	env.TelegramLangCode = langCode
+	// Re-resolve env.Lang: env() always populates it from the
+	// binding (or "en" when no binding), but for the unbound
+	// case the binding path returns "en" — we want to use the
+	// Telegram client language as a better default for the
+	// first /start.
+	if !env.IsIdentified() || env.PortalUserID == 0 {
+		env.Lang = LangFromTelegramCode(langCode)
+	}
 	if isBootstrapAdmin && !env.IsAdmin {
 		env.IsAdmin = true
 	}
@@ -531,6 +575,10 @@ func (n *RealNotifier) Run(ctx context.Context) {
 				continue
 			}
 			updateChatID := u.Message.Chat.ID
+			updateLangCode := ""
+			if u.Message.From != nil {
+				updateLangCode = u.Message.From.LanguageCode
+			}
 			// 2026-07-14 (v0.10.3 fix): envForMessage uses
 			// updateChatID (the actual chat_id of the message
 			// sender) — NOT effectiveChatID. The previous code
@@ -540,7 +588,14 @@ func (n *RealNotifier) Run(ctx context.Context) {
 			// with "login: internal error (chat_id missing)".
 			// The bootstrap-admin fallback is still applied
 			// inside envForMessage.
-			env, _ := n.envForMessage(updateChatID)
+			//
+			// 2026-07-14 (Этап 14 v5): also pass the
+			// Telegram client language_code so the very
+			// first /start (before /login) greets the
+			// user in their client language, and so
+			// loginReply can auto-detect the binding's
+			// lang on first /login.
+			env, _ := n.envForMessage(updateChatID, updateLangCode)
 			pendingReplyForCurrentMessage = nil
 			reply := HandleCommand(ctx, env, text)
 			// Reply goes to the originating chat (not the configured
@@ -711,7 +766,16 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 	// See the v0.10.3 fix in Run(): envForMessage uses the
 	// actual chat_id (the chat that tapped the button), not
 	// the "effective" chat_id from resolveBootstrapAdmin.
-	env, _ := n.envForMessage(chatID)
+	//
+	// 2026-07-14 (Этап 14 v5): callback_query carries
+	// From.LanguageCode on the envelope (same field as
+	// text messages), so we forward it to envForMessage
+	// for the auto-detect pass on /login via [Bind].
+	langCode := ""
+	if cq.From != nil {
+		langCode = cq.From.LanguageCode
+	}
+	env, _ := n.envForMessage(chatID, langCode)
 	pendingReplyForCurrentMessage = nil
 	reply := HandleCommand(context.Background(), env, synthetic)
 	n.sendPlain(token, chatID, reply, pendingReplyForCurrentMessage)
@@ -754,6 +818,15 @@ type update struct {
 		Chat struct {
 			ID int64 `json:"id"`
 		} `json:"chat"`
+		// 2026-07-14: Этап 14 v5 — bot i18n. From.LanguageCode
+		// is the user's Telegram client language (BCP-47). We
+		// forward it to HandleCommand via BotEnv.TelegramLangCode
+		// so the auto-detect path can seed the binding's lang
+		// on first /login. Empty string for users who hid their
+		// language preference in Telegram's privacy settings.
+		From *struct {
+			LanguageCode string `json:"language_code"`
+		} `json:"from"`
 	} `json:"message"`
 }
 
@@ -762,10 +835,25 @@ type update struct {
 // button's "callback_data" string) and the originating
 // message's chat for routing — the inline message ID is
 // optional (we edit it to acknowledge the action).
+//
+// 2026-07-14 (Этап 14 v5): From.LanguageCode is forwarded
+// to envForMessage so the auto-detect works on bind via
+// the [Bind] inline button as well as via /login <key>.
+// (Previously we passed "" here, which forced a /lang
+// after the inline-button bind; the From field is on
+// every callback_query envelope so we can pick it up.)
 type callbackQuery struct {
 	ID      string `json:"id"`
 	Data    string `json:"data"`
 	ChatID  int64  `json:"chat_id"` // populated by some
+	// 2026-07-14 (Этап 14 v5): From is the same shape as
+	// update.Message.From — Telegram sends the originating
+	// user's language_code on every callback_query so the
+	// bot can localise its responses without a separate
+	// getMe call.
+	From *struct {
+		LanguageCode string `json:"language_code"`
+	} `json:"from"`
 	Message *struct {
 		Chat struct {
 			ID int64 `json:"id"`

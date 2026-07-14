@@ -144,7 +144,8 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			portal_user_id INTEGER NOT NULL,
 			is_admin INTEGER NOT NULL DEFAULT 0,
 			bound_at INTEGER NOT NULL DEFAULT 0,
-			bound_by_user_id INTEGER NOT NULL DEFAULT 0
+			bound_by_user_id INTEGER NOT NULL DEFAULT 0,
+			lang TEXT NOT NULL DEFAULT 'en'
 		)`,
 		`CREATE TABLE telegram_login_tokens (
 			token TEXT PRIMARY KEY,

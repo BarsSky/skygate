@@ -847,7 +847,7 @@ func bindReply(env BotEnv, arg string) string {
 	if boundBy == 0 {
 		boundBy = user.ID // self-bind (admin → admin)
 	}
-	if err := db.UpsertTelegramBinding(env.DB, chatID, user.ID, boundBy, user.IsAdmin); err != nil {
+	if err := db.UpsertTelegramBinding(env.DB, chatID, user.ID, boundBy, user.IsAdmin, LangForChat(env.DB, chatID)); err != nil {
 		return fmt.Sprintf("bind: db error: %v", err)
 	}
 	return fmt.Sprintf("bind: chat %d → %s ✓", chatID, user.Username)
