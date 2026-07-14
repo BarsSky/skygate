@@ -161,6 +161,72 @@ func TestHandleCommandStatus(t *testing.T) {
 	}
 }
 
+func TestHandleCommandStatusEnvelope(t *testing.T) {
+	// 2026-07-14: Этап 14 v9 — butler voice v2.
+	// Every command reply now opens with the butler header
+	// (sigil + topic), then the body. This test pins the
+	// envelope on /status (a registry-context reply).
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/status")
+	if !strings.HasPrefix(got, butlerSigil+"  The Registry") {
+		t.Errorf("expected registry header at the top, got: %q", got[:60])
+	}
+	if !strings.Contains(got, "rules: 12") {
+		t.Errorf("expected body content, got: %q", got)
+	}
+	// /status body is >3 lines → verbose → footer present.
+	if !strings.Contains(got, "Yours in service") {
+		t.Errorf("expected verbose footer for multi-line /status, got: %q", got)
+	}
+}
+
+func TestHandleCommandVersionEnvelope(t *testing.T) {
+	// /version → "version" context (The Version Scroll).
+	d := setupTestDB(t)
+	env := BotEnv{DB: d, Version: "v0.10.8-dev", Lang: i18n.LangEN}
+	got := HandleCommand(context.Background(), env, "/version")
+	if !strings.HasPrefix(got, butlerSigil+"  The Version Scroll") {
+		t.Errorf("expected version header at the top, got: %q", got[:80])
+	}
+	if !strings.Contains(got, "v0.10.8-dev") {
+		t.Errorf("expected build label in body, got: %q", got)
+	}
+}
+
+func TestHandleCommandHelpEnvelope(t *testing.T) {
+	// /help → "codex" context (The Codex).
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/help")
+	if !strings.HasPrefix(got, butlerSigil+"  The Codex") {
+		t.Errorf("expected codex header at the top, got: %q", got[:60])
+	}
+}
+
+func TestHandleCommandUnknownEnvelope(t *testing.T) {
+	// Unknown commands still get an envelope (context = "err"
+	// = A Closed Door). The body tells the user what's wrong.
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), envFor(d), "/nonsense_xyz")
+	if !strings.HasPrefix(got, butlerSigil+"  A Closed Door") {
+		t.Errorf("expected err header at the top, got: %q", got[:80])
+	}
+	if !strings.Contains(got, "Unknown command") {
+		t.Errorf("expected unknown-command body, got: %q", got)
+	}
+}
+
+func TestHandleCommandAdminOnlyEnvelope(t *testing.T) {
+	// /status as a non-admin user → rejected with "err" context.
+	d := setupTestDB(t)
+	got := HandleCommand(context.Background(), userEnv(d), "/status")
+	if !strings.HasPrefix(got, butlerSigil+"  A Closed Door") {
+		t.Errorf("expected err header for admin-only rejection, got: %q", got[:80])
+	}
+	if !strings.Contains(got, "admin only") {
+		t.Errorf("expected 'admin only' in body, got: %q", got)
+	}
+}
+
 func TestHandleCommandHelp(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/help")
@@ -636,9 +702,17 @@ func TestHelpDetailUnknown(t *testing.T) {
 func TestHandleCommandHelpDetailed(t *testing.T) {
 	d := setupTestDB(t)
 	// /help ack must return the detailed ack help, not the short list.
+	// 2026-07-14: Этап 14 v9 — the reply is now wrapped in the
+	// butler envelope (header + body + optional footer), so the
+	// full reply no longer starts with the body. Assert on the
+	// envelope header (codex context) and the body substring
+	// ("Idempotent") instead of the old body-prefix check.
 	got := HandleCommand(context.Background(), envFor(d), "/help ack")
-	if !strings.HasPrefix(got, "/ack ") {
-		t.Errorf("expected detailed /ack help, got: %q", got)
+	if !strings.HasPrefix(got, butlerSigil+"  ") {
+		t.Errorf("expected butler envelope header at the top, got: %q", got[:60])
+	}
+	if !strings.Contains(got, "/ack ") {
+		t.Errorf("expected detailed /ack help body, got: %q", got)
 	}
 	if !strings.Contains(got, "Idempotent") {
 		t.Errorf("expected ack-specific detail ('Idempotent'), got: %q", got)

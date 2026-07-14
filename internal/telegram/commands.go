@@ -197,6 +197,89 @@ func (e BotEnv) MaxFor(username string) int {
 	return e.DefaultMax
 }
 
+// 2026-07-14: Этап 14 v9 — butler voice v2 envelope.
+//
+// Every command reply now goes through the butler envelope:
+//   🪶  <header>          ← one-line context tag
+//   <blank>
+//   <body>                ← the actual answer (1..N lines)
+//   <blank>               ← only when verbose
+//   — <sign-off>          ← only when verbose
+//
+// The header is the topic of the reply (registry / codex /
+// version / ack / bind / add / del / err / welcome). The
+// body is unchanged from v1. The footer is added only when
+// the body is long (>3 lines OR >300 runes); short replies
+// stay clean.
+//
+// The mapping from command → header is the
+// `commandContext` table below. Each command picked the
+// context that most naturally names its topic; e.g. /help
+// → "codex" (the help IS the codex), /status → "registry"
+// (a list of counters), /version → "version" (the version
+// scroll), /restart → "err" (the operator warning that
+// precedes a process kill).
+//
+// The v1 greeting helpers (greetingForNewChat /
+// greetingForReturningUser) compose themselves internally
+// for backward-compat with the v1 personality tests. We
+// detect "already composed" bodies by the `butlerSigil +
+// "  "` prefix and skip re-wrapping.
+
+// commandContext is the static mapping from command name to
+// the butler envelope context for that command. Adding a
+// new command = one line here + one i18n catalog key for
+// the header (bot.header.<context>).
+var commandContext = map[string]string{
+	// admin scope
+	"/status":            "registry",
+	"/nodes":             "registry",
+	"/rules":             "registry",
+	"/audit":             "registry",
+	"/exit_nodes":        "registry",
+	"/quota":             "registry",
+	"/ack":               "ack",
+	"/restart":           "err", // operator warning
+	"/bind":              "bind",
+	"/unbind":            "unbind",
+	// user scope
+	"/my_status":         "registry",
+	"/my_nodes":          "registry",
+	"/my_rules":          "registry",
+	"/my_quota":          "registry",
+	"/myexitnodes":       "registry",
+	"/add_device":        "add",
+	"/add_rule":          "add",
+	"/delrule":           "del",
+	"/delete_rule":       "del", // deprecated alias of /delrule
+	"/clearrules":        "del",
+	"/setdefaultdevice":  "add",
+	"/defaultdevice":     "registry",
+	"/setexitnode":       "add",
+	"/defaultexitnode":   "registry",
+	// auth / preferences
+	"/login":             "bind",
+	"/start":             "welcome", // overridden by dispatchCommand for /start with token → "bind"
+	"/lang":              "registry",
+	"/_bind_cancel":      "bind",
+	"/unbind_self":       "unbind",
+	// meta
+	"/version":           "version",
+	"/help":              "codex",
+}
+
+// cmdReply is the internal return shape of dispatchCommand:
+// the rendered body plus the envelope context to wrap it
+// in. skipWrap is true when the body is already run through
+// Compose (the v1 greeting helpers, used by /start and
+// /login no-args) — HandleCommand must not wrap a second
+// time.
+type cmdReply struct {
+	body     string
+	context  string
+	skipWrap bool
+}
+
 // HandleCommand returns the reply text for a command message.
 // It is safe to call from the polling loop in Run().
 //
@@ -231,9 +314,33 @@ func (e BotEnv) MaxFor(username string) int {
 // /help, /version, /login, /start.
 func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 	_ = ctx
+	reply := dispatchCommand(env, raw)
+	if reply.skipWrap {
+		// /start and /login no-args delegate to loginHint which
+		// returns an already-composed body (the v1 greeting
+		// helpers call ComposeDefault internally for v1 test
+		// stability). Re-wrapping would stack two headers.
+		return reply.body
+	}
+	return ComposeDefault(env.Lang, reply.context, reply.body)
+}
+
+// dispatchCommand parses the command name, runs the strict-mode
+// and admin-only gates, and returns the rendered body plus the
+// envelope context. The actual envelope wrapping happens in
+// HandleCommand.
+//
+// Why a separate function: the strict-mode gate and admin-only
+// gate need to run BEFORE we know which command to dispatch to,
+// but the envelope context differs per command (we want /status
+// rejected with an "err" header, but /help accepted with a
+// "codex" header). dispatchCommand evaluates the gates, picks
+// the right helper, and returns the metadata for the wrapper.
+// HandleCommand stays a 4-line orchestrator.
+func dispatchCommand(env BotEnv, raw string) cmdReply {
 	parts := strings.Fields(strings.TrimSpace(raw))
 	if len(parts) == 0 {
-		return "Empty command."
+		return cmdReply{body: i18n.T(env.Lang, "bot.empty_command"), context: "err"}
 	}
 	cmd := strings.ToLower(parts[0])
 	args := parts[1:]
@@ -250,7 +357,7 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 			"/login": true, "/start": true,
 		}
 		if !authCmds[cmd] {
-			return strictModeLockedReply(env.Lang)
+			return cmdReply{body: strictModeLockedReply(env.Lang), context: "err"}
 		}
 	}
 	// Admin-only commands: short-circuit to "admin only" when the
@@ -264,70 +371,70 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		"/bind": true, "/unbind": true,
 	}
 	if adminOnly[cmd] && env.IsIdentified() && !env.IsAdmin {
-		return i18n.Tf(env.Lang, "bot.admin_only_command", cmd)
+		return cmdReply{body: i18n.Tf(env.Lang, "bot.admin_only_command", cmd), context: "err"}
 	}
 	switch cmd {
 	case "/status":
-		return statusReply(env)
+		return cmdReply{body: statusReply(env), context: lookupContext(cmd)}
 	case "/help":
 		if len(args) == 0 {
-			return helpReply(env)
+			return cmdReply{body: helpReply(env), context: lookupContext(cmd)}
 		}
-		return helpDetailReply(args[0], env)
+		return cmdReply{body: helpDetailReply(args[0], env), context: lookupContext(cmd)}
 	case "/version":
-		return versionReply(env)
+		return cmdReply{body: versionReply(env), context: lookupContext(cmd)}
 	// --- admin scope ---
 	case "/nodes":
-		return nodesReply(env.DB)
+		return cmdReply{body: nodesReply(env.DB), context: lookupContext(cmd)}
 	case "/rules":
-		return rulesReply(env.DB)
+		return cmdReply{body: rulesReply(env.DB), context: lookupContext(cmd)}
 	case "/audit":
-		return auditReply(env.DB)
+		return cmdReply{body: auditReply(env.DB), context: lookupContext(cmd)}
 	case "/exit_nodes":
-		return exitNodesReply(env.DB)
+		return cmdReply{body: exitNodesReply(env.DB), context: lookupContext(cmd)}
 	case "/quota":
-		return quotaReply(env.DB, env)
+		return cmdReply{body: quotaReply(env.DB, env), context: lookupContext(cmd)}
 	case "/ack":
-		return ackReply(env.DB, strings.Join(args, " "))
+		return cmdReply{body: ackReply(env.DB, strings.Join(args, " ")), context: lookupContext(cmd)}
 	case "/restart":
-		return restartReply(env, strings.Join(args, " "))
+		return cmdReply{body: restartReply(env, strings.Join(args, " ")), context: lookupContext(cmd)}
 	case "/bind":
-		return bindReply(env, strings.Join(args, " "))
+		return cmdReply{body: bindReply(env, strings.Join(args, " ")), context: lookupContext(cmd)}
 	case "/unbind":
-		return unbindReply(env, strings.TrimSpace(strings.Join(args, " ")))
+		return cmdReply{body: unbindReply(env, strings.TrimSpace(strings.Join(args, " "))), context: lookupContext(cmd)}
 	// --- user scope ---
 	case "/my_status":
-		return myStatusReply(env)
+		return cmdReply{body: myStatusReply(env), context: lookupContext(cmd)}
 	case "/my_nodes":
-		return myNodesReply(env)
+		return cmdReply{body: myNodesReply(env), context: lookupContext(cmd)}
 	case "/my_rules":
-		return myRulesReply(env)
+		return cmdReply{body: myRulesReply(env), context: lookupContext(cmd)}
 	case "/my_quota":
-		return myQuotaReply(env)
+		return cmdReply{body: myQuotaReply(env), context: lookupContext(cmd)}
 	case "/myexitnodes":
-		return myExitNodesReply(env)
+		return cmdReply{body: myExitNodesReply(env), context: lookupContext(cmd)}
 	case "/add_device":
-		return addDeviceReply(env, strings.Join(args, " "))
+		return cmdReply{body: addDeviceReply(env, strings.Join(args, " ")), context: lookupContext(cmd)}
 	case "/add_rule":
-		return addRuleReply(env, args)
+		return cmdReply{body: addRuleReply(env, args), context: lookupContext(cmd)}
 	case "/delrule":
-		return deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " ")))
+		return cmdReply{body: deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " "))), context: lookupContext(cmd)}
 	case "/clearrules":
-		return clearRulesReply(env, strings.TrimSpace(strings.Join(args, " ")))
+		return cmdReply{body: clearRulesReply(env, strings.TrimSpace(strings.Join(args, " "))), context: lookupContext(cmd)}
 	case "/delete_rule":
 		// Deprecated alias of /delrule. Kept for back-compat with
 		// existing /help text + scripts that still call the old name.
 		// Этап 12 (2026-07-13) added /delrule as the new short form.
-		return deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " ")))
+		return cmdReply{body: deleteRuleReply(env, strings.TrimSpace(strings.Join(args, " "))), context: lookupContext(cmd)}
 	// --- Этап 11 part 2a: per-user preferences ---
 	case "/setdefaultdevice":
-		return setDefaultDeviceReply(env, strings.TrimSpace(strings.Join(args, " ")))
+		return cmdReply{body: setDefaultDeviceReply(env, strings.TrimSpace(strings.Join(args, " "))), context: lookupContext(cmd)}
 	case "/defaultdevice":
-		return defaultDeviceReply(env)
+		return cmdReply{body: defaultDeviceReply(env), context: lookupContext(cmd)}
 	case "/setexitnode":
-		return setExitNodeReply(env, strings.TrimSpace(strings.Join(args, " ")))
+		return cmdReply{body: setExitNodeReply(env, strings.TrimSpace(strings.Join(args, " "))), context: lookupContext(cmd)}
 	case "/defaultexitnode":
-		return defaultExitNodeReply(env)
+		return cmdReply{body: defaultExitNodeReply(env), context: lookupContext(cmd)}
 	// --- Этап 12: login-by-key ---
 	// /login and /start are open to any chat (the strict-mode gate
 	// above whitelists them, and when strict mode is off they work
@@ -335,10 +442,24 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 	// is the Telegram UX convention: the first thing every user
 	// sends to a bot is /start, so making it the entry point to
 	// the login flow removes a "I have to remember /login" step.
+	//
+	// 2026-07-14: Этап 14 v9 — the no-args paths of /login and
+	// /start delegate to loginHint() which returns an
+	// already-composed body (greetingForNewChat /
+	// greetingForReturningUser call ComposeDefault internally
+	// for v1 test stability). skipWrap tells HandleCommand
+	// not to wrap a second time. The with-args paths return
+	// raw bodies and DO get wrapped.
 	case "/login":
-		return loginReply(env, args)
+		if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+			return cmdReply{body: loginHint(env), context: "welcome", skipWrap: true}
+		}
+		return cmdReply{body: loginReplyBody(env, args), context: "bind"}
 	case "/start":
-		return startReply(env, args)
+		if len(args) == 0 {
+			return cmdReply{body: loginHint(env), context: "welcome", skipWrap: true}
+		}
+		return cmdReply{body: startReplyBody(env, args), context: "bind"}
 	case "/lang":
 		// 2026-07-14: Этап 14 v5 — per-chat language switch.
 		// With no arg: report the current language.
@@ -346,7 +467,7 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		// telegram_bindings and confirm. The choice survives
 		// across bot restarts (the next HandleCommand reads
 		// the binding row).
-		return langReply(env, args)
+		return cmdReply{body: langReply(env, args), context: lookupContext(cmd)}
 	case "/_bind_cancel":
 		// 2026-07-13: Этап 13 — synthetic command used by the
 		// inline-keyboard "Cancel" button on the /start
@@ -357,16 +478,27 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		// callback dispatcher (notify.go:handleCallback)
 		// reuses HandleCommand's reply rendering by passing
 		// this synthetic command.
-		return i18n.T(env.Lang, "bot.start.cancelled")
+		return cmdReply{body: i18n.T(env.Lang, "bot.start.cancelled"), context: lookupContext(cmd)}
 	case "/unbind_self":
 		// User-self service: drop your own binding without
 		// asking admin. Useful for switching phones or
 		// revoking a lost device. Admin path is still
 		// /unbind <chat_id> (admin-only).
-		return unbindSelfReply(env)
+		return cmdReply{body: unbindSelfReply(env), context: lookupContext(cmd)}
 	default:
-		return i18n.Tf(env.Lang, "bot.unknown_command", cmd)
+		return cmdReply{body: i18n.Tf(env.Lang, "bot.unknown_command", cmd), context: "err"}
 	}
+}
+
+// lookupContext returns the butler envelope context for a
+// command. Falls back to "err" for unknown commands so an
+// unknown-command reply still gets an envelope (we never
+// return a body without one).
+func lookupContext(cmd string) string {
+	if c, ok := commandContext[cmd]; ok {
+		return c
+	}
+	return "err"
 }
 
 // strictModeLockedReply is the message an unidentified chat gets
