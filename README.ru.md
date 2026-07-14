@@ -72,6 +72,11 @@
 - **Интеграция с headscale:** REST API с API-ключом; CLI-fallback через
   `docker exec headscale headscale …` для tag-операций (admin API не
   имеет прав); SSH для синхронизации advertised-routes на exit-node
+- **Headplane (опциональный sidecar):** визуальный ACL-редактор
+  + админ-кабина. Версия пинится через `HEADPLANE_IMAGE` в
+  `.env`, по умолчанию `ghcr.io/tale/headplane:0.6.3`. См.
+  [docs/headplane.md](docs/headplane.md) для интеграционного
+  контракта. `HEADPLANE_ENABLED=false` — отключить sidecar.
 - **i18n:** 270+ ключей каталога EN+RU, per-request locale через
   `atomic.Value` + funcmap `Tr/Trf`
 - **Rate limits:** in-memory token bucket (per-username / per-IP),
