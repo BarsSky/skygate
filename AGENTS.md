@@ -7,18 +7,22 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.10.10 — Headplane as optional pinned module
+* **Current**: v0.10.11 — RU/EN localisation polish + Copy
+  button for /add_device
+  ([release notes](RELEASE-NOTES-v0.10.11.md)). The /help
+  RU-locale output no longer leaks English suffixes ("add an
+  exit-rule", "for yourself", "or another user, admin only",
+  "with last-seen"). The /add_device reply now ships an
+  inline-keyboard `📋 Copy` button (Telegram `copy_text`
+  field) so the preauth key lands in the clipboard on tap.
+* **Previous**: v0.10.10 — Headplane as optional pinned module
   ([release notes](RELEASE-NOTES-v0.10.10.md)). `HEADPLANE_IMAGE`
-  is now pinned to `ghcr.io/tale/headplane:0.6.3` (no more
-  silent `:latest` upgrades), `HEADPLANE_ENABLED=false` skips
-  the sidecar entirely, and the integration contract is
-  documented in [docs/headplane.md](docs/headplane.md).
-* **Previous**: v0.10.9 — full i18n + hostname in node list +
-  /add_device platform picker + MIT license.
-* **What we're working on next (v0.10.11 candidates)**:
+  pinned to `:0.6.3`, `HEADPLANE_ENABLED` opt-out toggle,
+  [docs/headplane.md](docs/headplane.md) integration contract.
+* **What we're working on next (v0.10.12 candidates)**:
   - **`/clearrules` i18n** — body helper still has hardcoded
     English. Catalog has all the keys; just needs the body
-    touched. v0.10.11 follow-up.
+    touched. v0.10.12 follow-up.
   - **Butler voice v3** (deferred until user feedback on v2 lands):
     header carries urgency level (`🪶` / `🪶!` / `🪶!!`), body uses
     subtle inline color marks for status.

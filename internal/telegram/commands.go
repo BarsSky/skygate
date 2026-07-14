@@ -146,9 +146,15 @@ type BotEnv struct {
 var pendingReplyForCurrentMessage *PendingReply
 
 // PendingReply carries the optional inline-keyboard markup
-// for a bot reply. Kept minimal for now — the only consumer
-// is the /start <token> confirmation prompt. 2026-07-13:
-// Этап 13.
+// for a bot reply. 2026-07-13: Этап 13 — added for the
+// /start <token> confirmation prompt. 2026-07-14: Этап 14
+// v12 — each button map may also include a `copy_text`
+// field (Telegram Bot API v7.0+). When set, tapping the
+// button copies that text to the user's clipboard; the
+// bot doesn't need to handle a callback for the action.
+// We use this for the preauth key in /add_device — the
+// key is long enough that "select the code block and copy"
+// is awkward on mobile, so we ship an explicit Copy button.
 type PendingReply struct {
 	// InlineKeyboard is the JSON shape Telegram expects
 	// under reply_markup.inline_keyboard. We build the rows
@@ -581,10 +587,10 @@ func helpReply(env BotEnv) string {
 		i18n.T(lang, "bot.help.user_top_my_rules") + "\n" +
 		i18n.T(lang, "bot.help.user_rest_my_quota") + "\n" +
 		i18n.T(lang, "bot.help.user_rest_myexitnodes") + " with [default] marker\n" +
-		i18n.T(lang, "bot.help.user_rest_add_device") + " for yourself\n" +
-		"/add_rule <target> — add an exit-rule for yourself\n" +
+		i18n.T(lang, "bot.help.user_rest_add_device") + "\n" +
+		i18n.T(lang, "bot.help.user_top_add_rule") + "\n" +
 		i18n.T(lang, "bot.help.user_rest_delrule") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_clearrules") + " (or another user, admin only); requires /clearrules confirm within 30s\n" +
+		i18n.T(lang, "bot.help.user_rest_clearrules") + "\n" +
 		i18n.T(lang, "bot.help.user_rest_setdefaultdevice") + "\n" +
 		i18n.T(lang, "bot.help.user_rest_defaultdevice") + "\n" +
 		i18n.T(lang, "bot.help.user_rest_setexitnode") + "\n" +
