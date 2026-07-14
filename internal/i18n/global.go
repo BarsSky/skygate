@@ -33,3 +33,35 @@ func SetLang(lang string) {
 	}
 	GlobalLang.Store(lang)
 }
+
+// T is a convenience wrapper around (*Catalog).T using the global
+// catalog installed at startup. Callers that don't want to thread
+// the catalog through their call chain (e.g. the Telegram bot's
+// per-reply functions, which are dispatched via HandleCommand with
+// only BotEnv) can call this directly.
+//
+// 2026-07-14: Этап 14 v5 — added for the bot i18n work. The web
+// funcmap still uses GlobalCatalog directly (registered at startup
+// in templates.go) so it sees the freshest possible data; this
+// convenience function is for non-template callers.
+//
+// If GlobalCatalog is nil (e.g. in a test that didn't install it),
+// T returns the key itself — same fallback behavior as
+// (*Catalog).T for a missing key. That keeps tests fail-safe:
+// a missing catalog produces a renderable string (the key) rather
+// than a nil-pointer panic.
+func T(lang, key string) string {
+	if GlobalCatalog == nil {
+		return key
+	}
+	return GlobalCatalog.T(lang, key)
+}
+
+// Tf is the printf-style variant of T. Same nil-catalog fallback
+// as T.
+func Tf(lang, key string, args ...any) string {
+	if GlobalCatalog == nil {
+		return key
+	}
+	return GlobalCatalog.Tf(lang, key, args...)
+}

@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // loginRateLimitWindow and loginRateLimitMax are the rate-limit
@@ -90,7 +91,16 @@ func resetLoginAttempts(d *sql.DB, chatID int64) {
 // RE-BINDS the chat to the key's user (intentional: lets a
 // user move the binding from "my old phone" to "my new phone"
 // without admin intervention).
+//
+// 2026-07-14: Этап 14 v5 — every reply string goes through
+// i18n.Tf(env.Lang, "bot.login.*"). On first bind we ALSO seed
+// the binding's lang from the auto-detected value (the
+// dispatcher's LangFromTelegramCode(TelegramLangCode) — passed
+// to HandleCommand via env.TelegramLangCode). A re-bind does
+// NOT overwrite lang (the qInsertTelegramBinding query
+// deliberately omits lang from the ON CONFLICT UPDATE clause).
 func loginReply(env BotEnv, args []string) string {
+	lang := env.Lang
 	// /login with no args: print the hint. This is also what
 	// /start with no args prints (they're the same UX — tell
 	// the user what to do next).
@@ -101,18 +111,16 @@ func loginReply(env BotEnv, args []string) string {
 		// Defensive: shouldn't happen because the dispatcher
 		// always sets ChatID, but if it does we can't identify
 		// the consuming chat.
-		return "login: internal error (chat_id missing); contact admin"
+		return i18n.T(lang, "bot.login.chat_id_missing")
 	}
 	if !loginAttemptAllowed(env.DB, env.ChatID) {
-		return fmt.Sprintf("login: too many attempts. Wait %ds and try again.",
-			loginRateLimitWindowSeconds)
+		return i18n.Tf(lang, "bot.login.rate_limited", loginRateLimitWindowSeconds)
 	}
 	token := strings.TrimSpace(args[0])
 	// Cheap shape check: a real token is 19 chars (skg-XXXX-XXXX-XXXX).
 	// Reject obvious junk early so we don't burn DB cycles.
 	if !looksLikeLoginToken(token) {
-		return "login: that doesn't look like a valid key. " +
-			"Open /my/telegram and copy the key exactly."
+		return i18n.T(lang, "bot.login.bad_key")
 	}
 	t, err := db.ConsumeTelegramLoginToken(env.DB, token, env.ChatID)
 	if err != nil {
@@ -124,10 +132,9 @@ func loginReply(env BotEnv, args []string) string {
 			// into one reply so an attacker can't tell which
 			// one they hit (timing oracle: all three return in
 			// <1ms because they share the same SELECT path).
-			return "login: invalid or expired key. " +
-				"Generate a new one in /my/telegram."
+			return i18n.T(lang, "bot.login.invalid_key")
 		default:
-			return fmt.Sprintf("login: db error: %v", err)
+			return i18n.Tf(lang, "bot.login.db_error", err)
 		}
 	}
 	// Bind: re-fetch the user to get current is_admin (so a
@@ -136,24 +143,34 @@ func loginReply(env BotEnv, args []string) string {
 	// error: token consumed but binding didn't happen.
 	username, isAdmin, err := lookupPortalUser(env.DB, t.PortalUserID)
 	if err != nil {
-		return fmt.Sprintf("login: token consumed but user lookup failed: %v", err)
+		return i18n.Tf(lang, "bot.login.token_consumed_user_fail", err)
 	}
+	// Auto-detect lang on first bind. We use the
+	// dispatcher-resolved value (env.TelegramLangCode → ru
+	// / en / en); on re-bind this is ignored by the
+	// qInsertTelegramBinding query (which only writes lang on
+	// INSERT, not on UPDATE).
+	initialLang := LangFromTelegramCode(env.TelegramLangCode)
 	// boundByUserID = 0 means "system" (the bot's /login flow).
 	// The audit row in audit_log makes this clear in /admin/audit.
-	if err := db.UpsertTelegramBinding(env.DB, env.ChatID, t.PortalUserID, 0, isAdmin); err != nil {
-		return fmt.Sprintf("login: token consumed but binding failed: %v", err)
+	if err := db.UpsertTelegramBinding(env.DB, env.ChatID, t.PortalUserID, 0, isAdmin, initialLang); err != nil {
+		return i18n.Tf(lang, "bot.login.token_consumed_bind_fail", err)
 	}
 	// Audit: who logged in from which chat, for which user.
 	_ = db.AppendAuditLogNoUser(env.DB, "telegram", "telegram_bound_via_login",
 		fmt.Sprintf("chat_id=%d user=%s token_fp=%s", env.ChatID, username, tokenFingerprint(token)))
-	role := "user"
+	roleKey := "bot.login.role_user"
 	if isAdmin {
-		role = "admin"
+		roleKey = "bot.login.role_admin"
 	}
-	return fmt.Sprintf("✅ Logged in as %s (%s)\n"+
-		"This chat can now use /my_rules, /add_rule, /delrule and the rest of the %s commands.\n"+
-		"To unbind later: /unbind_self.",
-		username, role, role)
+	// Resolve the role label ONCE in the user's language, then
+	// pass the resolved string (not the key) to the ok
+	// template. The ok template takes two %s placeholders:
+	// (username, role_label). Passing the raw key as the
+	// second arg would render the key literal — which is
+	// exactly what the i18n catalog is meant to avoid.
+	roleLabel := i18n.T(lang, roleKey)
+	return i18n.Tf(lang, "bot.login.ok", username, roleLabel)
 }
 
 // startReply is /start. With no args: Telegram-UX welcome that
@@ -169,20 +186,19 @@ func loginReply(env BotEnv, args []string) string {
 // the one-command path for users who already pasted the key
 // from the web page.
 func startReply(env BotEnv, args []string) string {
+	lang := env.Lang
 	if len(args) == 0 {
 		return loginHint(env)
 	}
 	if env.ChatID == 0 {
-		return "start: internal error (chat_id missing); contact admin"
+		return i18n.T(lang, "bot.start.chat_id_missing")
 	}
 	if !loginAttemptAllowed(env.DB, env.ChatID) {
-		return fmt.Sprintf("start: too many attempts. Wait %ds and try again.",
-			loginRateLimitWindowSeconds)
+		return i18n.Tf(lang, "bot.start.rate_limited", loginRateLimitWindowSeconds)
 	}
 	token := strings.TrimSpace(args[0])
 	if !looksLikeLoginToken(token) {
-		return "start: that doesn't look like a valid key. " +
-			"Open /my/telegram and copy the key exactly."
+		return i18n.T(lang, "bot.start.bad_key")
 	}
 	// Peek at the token WITHOUT consuming it. We want the
 	// confirmation prompt to show "Bind to <username>?" — the
@@ -192,8 +208,7 @@ func startReply(env BotEnv, args []string) string {
 	// token would already be spent.
 	t, err := db.PeekTelegramLoginToken(env.DB, token)
 	if err != nil {
-		return "start: invalid or expired key. " +
-			"Generate a new one in /my/telegram."
+		return i18n.T(lang, "bot.start.invalid_key")
 	}
 	// Look up the target user's display name. Failure here
 	// is non-fatal — the prompt just shows the user_id
@@ -209,15 +224,12 @@ func startReply(env BotEnv, args []string) string {
 	// "bind:cancel".
 	rows := [][]map[string]string{
 		{
-			{"text": fmt.Sprintf("✅ Bind to %s", username), "callback_data": "bind:confirm:" + token},
-			{"text": "❌ Cancel", "callback_data": "bind:cancel"},
+			{"text": i18n.Tf(lang, "bot.start.bind_button", username), "callback_data": "bind:confirm:" + token},
+			{"text": i18n.T(lang, "bot.start.cancel_button"), "callback_data": "bind:cancel"},
 		},
 	}
 	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: rows}
-	return fmt.Sprintf(
-		"🔑 Bind this chat to **%s**?\n\n"+
-			"This will let you use /my_rules, /add_rule, /delrule and the rest of the user commands.\n"+
-			"Token expires %s.",
+	return i18n.Tf(lang, "bot.start.confirm_prompt",
 		username, time.Unix(t.ExpiresAt, 0).UTC().Format("15:04:05 MST"))
 }
 
@@ -231,18 +243,28 @@ func startReply(env BotEnv, args []string) string {
 // returning user (already bound) gets the short "logged in as
 // X" message; everyone else gets the welcome + how-to-bind
 // instructions.
+//
+// 2026-07-14: Этап 14 v5 — every visible string now goes
+// through the butler-gatekeeper personality layer
+// (greetingForReturningUser / greetingForNewChat in
+// personality.go). The lang is env.Lang; for an unbound
+// chat the dispatcher populated it from
+// LangFromTelegramCode so the very first /start greets
+// the user in their Telegram client language.
 func loginHint(env BotEnv) string {
 	if env.Username != "" {
-		return fmt.Sprintf("Already logged in as %s. Use /help to see your commands.",
-			env.Username)
+		return greetingForReturningUser(env.Lang, env.Username)
 	}
-	return "👋 This is the Skygate bot.\n\n" +
-		"To bind this chat to your skygate account:\n" +
-		"  1. Open skygate → /my/telegram\n" +
-		"  2. Click 'Generate login key' and copy it\n" +
-		"  3. Send it here:\n" +
-		"     /login <key>\n\n" +
-		"The key expires in 5 minutes and is single-use."
+	// Pass the bot's @username (if discovered) so the
+	// welcome can render a tap-to-open link for mobile
+	// users. Notifier.BotUsername is set by getMe
+	// discovery; empty means "not yet discovered", in
+	// which case the welcome skips the link line.
+	var username string
+	if env.Notifier != nil {
+		username = env.Notifier.BotUsernameCached()
+	}
+	return greetingForNewChat(env.Lang, username)
 }
 
 // unbindAdminReply is kept as a comment-shim to make the file's
@@ -255,16 +277,23 @@ func loginHint(env BotEnv) string {
 // their own binding. Useful when switching phones, revoking
 // access from a lost device, or testing. Admin can use this
 // too (it unbinds the admin's own chat, not anyone else's).
+//
+// 2026-07-14: Этап 14 v5 — every reply string goes through
+// i18n.T(env.Lang, "bot.unbind_self.*"). The lang on the
+// reply is whatever the user had set before the unbind (the
+// dispatcher reads env.Lang from the existing binding row
+// before this handler runs and clears it).
 func unbindSelfReply(env BotEnv) string {
+	lang := env.Lang
 	if !env.IsIdentified() {
-		return "unbind_self: not bound (nothing to do)"
+		return i18n.T(lang, "bot.unbind_self.not_bound")
 	}
 	if err := db.DeleteTelegramBinding(env.DB, env.ChatID); err != nil {
-		return fmt.Sprintf("unbind_self: db error: %v", err)
+		return i18n.Tf(lang, "bot.unbind_self.db_error", err)
 	}
 	_ = db.AppendAuditLogNoUser(env.DB, "telegram", "telegram_unbind_self",
 		fmt.Sprintf("user=%s chat_id=%d", env.Username, env.ChatID))
-	return "✅ This chat is no longer bound. Send /login <key> again to rebind."
+	return i18n.T(lang, "bot.unbind_self.ok")
 }
 
 // lookupPortalUser reads username + is_admin for a user_id in

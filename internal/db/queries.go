@@ -360,11 +360,18 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectTelegramBindingByChatID = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id FROM telegram_bindings WHERE chat_id = ?`
-	qSelectTelegramBindingByUser   = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id FROM telegram_bindings WHERE portal_user_id = ?`
-	qSelectAllTelegramBindings     = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id FROM telegram_bindings ORDER BY bound_at DESC`
-	qInsertTelegramBinding         = `INSERT INTO telegram_bindings (chat_id, portal_user_id, is_admin, bound_by_user_id) VALUES (?, ?, ?, ?)
+	qSelectTelegramBindingByChatID = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings WHERE chat_id = ?`
+	qSelectTelegramBindingByUser   = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings WHERE portal_user_id = ?`
+	qSelectAllTelegramBindings     = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings ORDER BY bound_at DESC`
+	// Этап 14 v5: lang is set ONLY on the INSERT branch of the
+	// upsert. A re-bind (admin /bind rebinds an existing chat
+	// to a different user) must NOT overwrite the lang the
+	// user explicitly chose with /lang. The lang column still
+	// appears in the INSERT for fresh binds (so auto-detect at
+	// /login writes the right value the first time).
+	qInsertTelegramBinding         = `INSERT INTO telegram_bindings (chat_id, portal_user_id, is_admin, bound_by_user_id, lang) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(chat_id) DO UPDATE SET portal_user_id = excluded.portal_user_id, is_admin = excluded.is_admin, bound_at = strftime('%s','now'), bound_by_user_id = excluded.bound_by_user_id`
+	qUpdateTelegramBindingLang     = `UPDATE telegram_bindings SET lang = ? WHERE chat_id = ?`
 	qDeleteTelegramBindingByChat   = `DELETE FROM telegram_bindings WHERE chat_id = ?`
 	qDeleteTelegramBindingsByUser  = `DELETE FROM telegram_bindings WHERE portal_user_id = ?`
 )

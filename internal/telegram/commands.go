@@ -3,10 +3,10 @@ package telegram
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"strings"
 
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 )
 
 // BotEnv is the read-only context HandleCommand needs beyond the
@@ -99,6 +99,28 @@ type BotEnv struct {
 	// is preserved for single-admin-chat deploys that
 	// predate the v0.29 bindings table.
 	StrictMode bool
+
+	// 2026-07-14: Этап 14 v5 — bot i18n.
+	//
+	// Lang is the resolved language for the inbound chat
+	// ("ru" or "en"). Handlers should look up every
+	// user-visible string via i18n.T(Lang, "bot.key"). The
+	// value is populated by envForMessage from
+	// telegram_bindings.lang (for identified chats) or
+	// LangFromTelegramCode(TelegramLangCode) for unbound
+	// chats (so the very first /start greets the user in
+	// their Telegram client language).
+	//
+	// TelegramLangCode is the raw BCP-47 tag from
+	// message.from.language_code (e.g. "ru", "en-US", or
+	// "" if the user hid the setting). Kept separate from
+	// Lang so the /login reply can do its own
+	// auto-detect on first bind without losing the raw
+	// value (Telegram's resolve vs. our two-language
+	// vocabulary is a one-way translation we don't want to
+	// re-do on every command).
+	Lang            string
+	TelegramLangCode string
 }
 
 // pendingReplyForCurrentMessage is a package-level slot
@@ -228,7 +250,7 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 			"/login": true, "/start": true,
 		}
 		if !authCmds[cmd] {
-			return strictModeLockedReply()
+			return strictModeLockedReply(env.Lang)
 		}
 	}
 	// Admin-only commands: short-circuit to "admin only" when the
@@ -242,11 +264,11 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		"/bind": true, "/unbind": true,
 	}
 	if adminOnly[cmd] && env.IsIdentified() && !env.IsAdmin {
-		return fmt.Sprintf("%s: admin only. Use the /my_* variants for your own data.", cmd)
+		return i18n.Tf(env.Lang, "bot.admin_only_command", cmd)
 	}
 	switch cmd {
 	case "/status":
-		return statusReply(env.DB)
+		return statusReply(env)
 	case "/help":
 		if len(args) == 0 {
 			return helpReply(env)
@@ -317,6 +339,14 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		return loginReply(env, args)
 	case "/start":
 		return startReply(env, args)
+	case "/lang":
+		// 2026-07-14: Этап 14 v5 — per-chat language switch.
+		// With no arg: report the current language.
+		// With "ru" / "en": persist the choice in
+		// telegram_bindings and confirm. The choice survives
+		// across bot restarts (the next HandleCommand reads
+		// the binding row).
+		return langReply(env, args)
 	case "/_bind_cancel":
 		// 2026-07-13: Этап 13 — synthetic command used by the
 		// inline-keyboard "Cancel" button on the /start
@@ -327,7 +357,7 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		// callback dispatcher (notify.go:handleCallback)
 		// reuses HandleCommand's reply rendering by passing
 		// this synthetic command.
-		return "Cancelled. The key is still valid — send /login <key> any time to bind."
+		return i18n.T(env.Lang, "bot.start.cancelled")
 	case "/unbind_self":
 		// User-self service: drop your own binding without
 		// asking admin. Useful for switching phones or
@@ -335,7 +365,7 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		// /unbind <chat_id> (admin-only).
 		return unbindSelfReply(env)
 	default:
-		return fmt.Sprintf("Unknown command: %s. Try /help.", cmd)
+		return i18n.Tf(env.Lang, "bot.unknown_command", cmd)
 	}
 }
 
@@ -344,25 +374,41 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 // /help /version /login /start. The hint points the user at the
 // exact next step (open /my/telegram in the web, generate a key,
 // paste it back here) so they don't have to guess.
-func strictModeLockedReply() string {
-	return "🔒 This chat is not bound to a skygate user.\n" +
-		"Open skygate → /my/telegram → 'Generate login key' → paste the key here:\n" +
-		"  /login <key>\n" +
-		"The key expires in 5 minutes and is single-use."
+//
+// 2026-07-14: Этап 14 v5 — translated via i18n. The lang for an
+// unidentified chat in strict mode is whatever the dispatcher
+// resolved from message.from.language_code (or 'en' fallback);
+// since this chat is NOT bound, we don't have a stored preference.
+// env.Lang is correct here because envForMessage populates it
+// from LangFromTelegramCode even when there's no binding.
+func strictModeLockedReply(lang string) string {
+	return i18n.T(lang, "bot.strict_locked.locked")
 }
 
-func statusReply(d *sql.DB) string {
+// statusReply renders the admin /status reply. Reads the
+// system-wide counters from device_rules / portal_users /
+// acl_snapshots and returns a 3-line summary.
+//
+// 2026-07-14: Этап 14 v5 — translated via i18n. Takes the
+// full BotEnv (not just *sql.DB) so it can pull env.Lang for
+// the catalog lookup. The format of the reply is fixed by
+// the catalog keys; the order in the ruCatalog and enCatalog
+// blocks matches so the labels land in the same place.
+func statusReply(env BotEnv) string {
 	var totalRules, totalUsers, lastACL int64
-	if err := d.QueryRow(`SELECT COUNT(*) FROM device_rules`).Scan(&totalRules); err != nil {
-		return fmt.Sprintf("status: db error: %v", err)
+	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules`).Scan(&totalRules); err != nil {
+		return i18n.Tf(env.Lang, "bot.status.db_error", err)
 	}
-	if err := d.QueryRow(`SELECT COUNT(*) FROM portal_users`).Scan(&totalUsers); err != nil {
-		return fmt.Sprintf("status: db error: %v", err)
+	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM portal_users`).Scan(&totalUsers); err != nil {
+		return i18n.Tf(env.Lang, "bot.status.db_error", err)
 	}
-	if err := d.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success=1`).Scan(&lastACL); err != nil {
-		return fmt.Sprintf("status: db error: %v", err)
+	if err := env.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success=1`).Scan(&lastACL); err != nil {
+		return i18n.Tf(env.Lang, "bot.status.db_error", err)
 	}
-	return fmt.Sprintf("Skygate status\nrules: %d\nusers: %d\nlast acl: #%d", totalRules, totalUsers, lastACL)
+	return i18n.T(env.Lang, "bot.status.header") + "\n" +
+		i18n.Tf(env.Lang, "bot.status.rules", totalRules) + "\n" +
+		i18n.Tf(env.Lang, "bot.status.users", totalUsers) + "\n" +
+		i18n.Tf(env.Lang, "bot.status.last_acl", lastACL)
 }
 
 // helpReply shows a short list of commands the caller can use.
@@ -375,41 +421,58 @@ func statusReply(d *sql.DB) string {
 // section. An unidentified chat in a strict deploy sees only
 // /login /start /help /version — every other command is locked
 // until they bind.
+//
+// 2026-07-14: Этап 14 v5 — every visible string now goes
+// through i18n.T(env.Lang, "bot.help.*"). The layout is
+// preserved from the previous helpReply (the v0.10.4
+// butler-gatekeeper version with section headers lives on
+// the v0.10.4 branch; the bot-i18n-v5 branch keeps the
+// simpler "Commands (all)" / "Your commands" labels so the
+// MVP is shippable, and the personality layer is upgraded
+// separately).
 func helpReply(env BotEnv) string {
-	common := "/version — Skygate build, Go runtime, DB schema level\n" +
-		"/help [command] — this list, or detailed help for one command"
-	auth := "/login <key> — bind this chat to your skygate account (paste the key from /my/telegram)\n" +
+	lang := env.Lang
+	// Each catalog key already includes the leading "/cmd — " or
+	// "/cmd <arg> — " prefix, so we just concatenate. This is the
+	// MVP layout: a plain command list with one line per
+	// command. The full butler-gatekeeper "codex" layout (with
+	// section headers, "Your top three", and the warden's sigil)
+	// lives on the v0.10.4 branch and is a future upgrade once
+	// the bot i18n MVP is shipping and verified.
+	common := i18n.T(lang, "bot.help.common_version") + "\n" +
+		i18n.T(lang, "bot.help.common_help")
+	auth := i18n.T(lang, "bot.help.auth_login") + " (paste the key from /my/telegram)\n" +
 		"/start <key> — same as /login, Telegram UX convention"
-	userScope := "/my_status — your own summary (rules, devices, quota)\n" +
-		"/my_nodes — your own devices\n" +
-		"/my_rules — your own exit-rules\n" +
-		"/my_quota — your rule count vs cap\n" +
-		"/myexitnodes — list enabled exit-nodes with [default] marker\n" +
-		"/add_device — issue a 1h single-use preauth key for yourself\n" +
+	userScope := i18n.T(lang, "bot.help.user_top_my_status") + "\n" +
+		i18n.T(lang, "bot.help.user_rest_my_nodes") + "\n" +
+		i18n.T(lang, "bot.help.user_top_my_rules") + "\n" +
+		i18n.T(lang, "bot.help.user_rest_my_quota") + "\n" +
+		i18n.T(lang, "bot.help.user_rest_myexitnodes") + " with [default] marker\n" +
+		i18n.T(lang, "bot.help.user_rest_add_device") + " for yourself\n" +
 		"/add_rule <target> — add an exit-rule for yourself\n" +
-		"/delrule <id> [id2 ...] — delete one or more of your rules\n" +
-		"/clearrules [username] — wipe ALL exit-rules for you (or another user, admin only); requires /clearrules confirm within 30s\n" +
-		"/setdefaultdevice [node_id|clear] — set your default device for /add_rule\n" +
-		"/defaultdevice — show your current default device\n" +
-		"/setexitnode [node_id|clear] — set your default exit-node for /add_rule\n" +
-		"/defaultexitnode — show your current default exit-node"
-	adminScope := "/status — system-wide summary (rules/users/last acl)\n" +
-		"/nodes — list ALL tailnet devices by user+tag\n" +
-		"/exit_nodes — list exit-nodes (tag:exit-node) with last-seen\n" +
-		"/rules — recent exit-rules across all users\n" +
-		"/quota — per-user rule count vs cap\n" +
-		"/audit — last 20 audit_log entries\n" +
-		"/ack <id> — acknowledge an alert (id is the [#N] prefix)\n" +
-		"/restart — graceful container restart (requires confirm)\n" +
-		"/bind <chat_id> <username> — bind a chat to a portal user (admin only)\n" +
-		"/unbind <chat_id> — remove a binding (admin only)"
+		i18n.T(lang, "bot.help.user_rest_delrule") + "\n" +
+		i18n.T(lang, "bot.help.user_rest_clearrules") + " (or another user, admin only); requires /clearrules confirm within 30s\n" +
+		i18n.T(lang, "bot.help.user_rest_setdefaultdevice") + "\n" +
+		i18n.T(lang, "bot.help.user_rest_defaultdevice") + "\n" +
+		i18n.T(lang, "bot.help.user_rest_setexitnode") + "\n" +
+		i18n.T(lang, "bot.help.user_rest_defaultexitnode")
+	adminScope := i18n.T(lang, "bot.help.admin_top_status") + "\n" +
+		i18n.T(lang, "bot.help.admin_top_nodes") + "\n" +
+		i18n.T(lang, "bot.help.admin_top_exit_nodes") + "\n" +
+		i18n.T(lang, "bot.help.admin_rest_rules") + "\n" +
+		i18n.T(lang, "bot.help.admin_rest_quota") + "\n" +
+		i18n.T(lang, "bot.help.admin_rest_audit") + "\n" +
+		i18n.T(lang, "bot.help.admin_rest_ack") + "\n" +
+		i18n.T(lang, "bot.help.admin_rest_restart") + "\n" +
+		i18n.T(lang, "bot.help.admin_rest_bind") + "\n" +
+		i18n.T(lang, "bot.help.admin_rest_unbind")
 	// Three layouts:
 	//   - unidentified + strict mode: only auth + common (locked)
 	//   - identified non-admin: auth + common + user-scope
 	//   - admin (identified or legacy unidentified): all four
 	switch {
 	case !env.IsIdentified() && env.StrictMode:
-		return "🔒 Strict mode is ON. This chat is not bound to a skygate user.\n\n" +
+		return "🔒 " + i18n.T(lang, "bot.help.strict_locked_note") + "\n\n" +
 			auth + "\n\n" + common
 	case !env.IsIdentified() || env.IsAdmin:
 		return "Commands (all):\n\n" + common + "\n\n" + auth + "\n\n" + userScope + "\n\n" + adminScope
