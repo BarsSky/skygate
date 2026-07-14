@@ -153,6 +153,7 @@ var ruCatalog = map[string]string{
 	// deep link, paste). All three resolve to the same /start
 	// <key> or /login <key> on the bot side.
 	"my_telegram.qr_caption":          "Отсканируйте камерой телефона",
+	"my_telegram.qr_link_title":       "Открыть в Telegram",
 	"my_telegram.bind_options_title":  "Три способа привязать чат",
 	"my_telegram.bind_option_qr":      "Отсканируйте QR-код камерой — Telegram откроется с уже заполненным /start.",
 	"my_telegram.bind_option_open":    "Или откройте эту ссылку:",
@@ -709,6 +710,7 @@ var enCatalog = map[string]string{
 	// 2026-07-13: Этап 13 — Bind-by-QR. Keep in lockstep with
 	// the ruCatalog block above.
 	"my_telegram.qr_caption":          "Scan with your phone camera",
+	"my_telegram.qr_link_title":       "Open in Telegram",
 	"my_telegram.bind_options_title":  "Three ways to bind",
 	"my_telegram.bind_option_qr":      "Scan the QR with your phone camera — Telegram opens with /start pre-filled.",
 	"my_telegram.bind_option_open":    "Or open this link:",

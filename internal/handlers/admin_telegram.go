@@ -166,12 +166,74 @@ func (a *App) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *auth
 		a.redirectWithFlash(w, r, "", "Бот не сконфигурирован — Notifier в no-op режиме")
 		return
 	}
-	a.Notifier.SendTelegram(text)
-	// We can't tell from this interface whether the HTTP POST succeeded;
-	// audit as "telegram_test_sent" and let the operator verify in Telegram.
-	// The RealNotifier already logs the Telegram response on failure.
-	a.audit(c.UserID, c.Username, "telegram_test_sent", subject)
-	writeFlashRedirect(w, r, "Сообщение отправлено. Проверьте Telegram.")
+	// 2026-07-14: target-resolution logic.
+	//
+	// SendTelegram (the legacy path) requires BOTH global
+	// telegram.bot_token AND telegram.chat_id to be set; otherwise
+	// it no-ops. But for "Send test" that's the wrong default: an
+	// operator who has just bound their Telegram chat via /start +
+	// [Bind] (which writes a row to telegram_bindings) but hasn't
+	// yet pasted the chat_id into the form should still be able
+	// to verify the bot is reachable.
+	//
+	// Resolution order:
+	//   1. If global telegram.chat_id is set, use it (the legacy
+	//      behaviour — matches what the form shows).
+	//   2. Else, fall back to all rows in telegram_bindings
+	//      (regardless of is_admin — for "Send test" we want
+	//      to reach whoever the operator is chatting from, not
+	//      gate on permission flags).
+	//   3. Else, no targets at all — show a clear instruction
+	//      to send /start to the bot first.
+	_, globalChatID, hasGlobal, err := db.LoadTelegramSendTarget(a.DB)
+	if err != nil {
+		a.redirectWithFlash(w, r, "", "Ошибка чтения chat_id из БД: "+err.Error())
+		return
+	}
+	sentCount := 0
+	sentTargets := []string{}
+	if hasGlobal && globalChatID != "" {
+		a.Notifier.SendTelegram(text)
+		sentCount = 1
+		sentTargets = append(sentTargets, "global chat_id="+globalChatID)
+	} else {
+		// Fall back to bound chats. We don't filter by is_admin
+		// because the test message is purely diagnostic — the
+		// operator wants to verify reachability, not gate on
+		// permissions. (Production notifications via SendTelegram
+		// still go only to the global chat_id, which is admin-only
+		// by definition.)
+		bindings, lerr := db.ListTelegramBindings(a.DB)
+		if lerr != nil {
+			a.redirectWithFlash(w, r, "", "Ошибка чтения bindings: "+lerr.Error())
+			return
+		}
+		if len(bindings) == 0 {
+			a.redirectWithFlash(w, r, "",
+				"Нет адреса для отправки: chat_id в форме пуст и ни один чат не привязан. "+
+					"Откройте Telegram, найдите бота, отправьте /start и нажмите [Bind] — после этого нажмите 'Отправить тест' ещё раз.")
+			return
+		}
+		for _, b := range bindings {
+			a.Notifier.SendTelegramToChat(text, b.ChatID)
+			sentCount++
+			sentTargets = append(sentTargets, fmt.Sprintf("binding chat_id=%d", b.ChatID))
+		}
+	}
+	// Audit. We log the targets so the operator can confirm in the
+	// audit log which chat(s) actually got the test message. The
+	// subject is the human-readable title the user typed in the form.
+	auditDetail := subject
+	if len(sentTargets) > 0 {
+		auditDetail = fmt.Sprintf("%s [%s]", subject, strings.Join(sentTargets, ", "))
+	}
+	a.audit(c.UserID, c.Username, "telegram_test_sent", auditDetail)
+	// We can't tell from this interface whether each HTTP POST
+	// succeeded; the RealNotifier already logs the Telegram
+	// response on failure. The redirect message tells the
+	// operator where to look (which chat(s) the message went to).
+	flash := fmt.Sprintf("Сообщение отправлено (%d шт.). Проверьте Telegram: %s.", sentCount, strings.Join(sentTargets, ", "))
+	writeFlashRedirect(w, r, flash)
 }
 
 func (a *App) handleTelegramRotate(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
