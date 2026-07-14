@@ -148,6 +148,20 @@ func GenerateACL(d *sql.DB) (string, error) {
 	sb.WriteString("      \"src\": [\"tag:private\", \"skyadmin@" + baseDomain + "\"],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
+	sb.WriteString("    },\n")
+	// 2026-07-14: Этап 14 v7 — allow admin to SSH into tag:public
+	// relay nodes (emilia, sharlotta, karolina) so they can be
+	// reconfigured (e.g. enable --advertise-exit-node) without
+	// needing direct public-IP SSH access. src is restricted to
+	// the admin's identity only — no other user (tag:private
+	// or otherwise) gets in. The existing tag:exit-node rule
+	// above is preserved unchanged, so private devices that
+	// happen to be tagged exit-node remain reachable.
+	sb.WriteString("    {\n")
+	sb.WriteString("      \"action\": \"accept\",\n")
+	sb.WriteString("      \"src\": [\"skyadmin@" + baseDomain + "\"],\n")
+	sb.WriteString("      \"dst\": [\"tag:public\"],\n")
+	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    }\n")
 	sb.WriteString("  ]\n")
 
