@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"skygate/internal/auth"
+	"skygate/internal/backup"
 	"skygate/internal/config"
 	"skygate/internal/db"
 	"skygate/internal/handlers"
@@ -40,6 +43,44 @@ var (
 )
 
 func main() {
+	// 2026-07-14: Этап 14 v6 — subcommand routing.
+	// The default (no args) starts the web server.
+	// `skygate backup-run` is the system-cron entry point:
+	// it reads the same config from the DB and runs the
+	// backup. This is what scripts/backup_cron.sh
+	// invokes. We keep the subcommand surface minimal
+	// (only one for now) so we don't have to refactor the
+	// rest of the boot path.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "backup-run":
+			// Use a dedicated flag set so we don't
+			// inherit the web-server flags.
+			fs := flag.NewFlagSet("backup-run", flag.ExitOnError)
+			if err := fs.Parse(os.Args[2:]); err != nil {
+				log.Fatalf("backup-run: %v", err)
+			}
+			if err := runBackupSubcommand(); err != nil {
+				fmt.Fprintf(os.Stderr, "backup-run failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "version", "--version", "-v":
+			fmt.Printf("skygate %s (commit %s, built %s)\n", version, commit, buildTime)
+			return
+		case "help", "--help", "-h":
+			fmt.Println("skygate <command> [args]")
+			fmt.Println("  (no command)        start the web server")
+			fmt.Println("  backup-run          run a backup using the config from the DB")
+			fmt.Println("  version             print build version")
+			fmt.Println("  help                this help")
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %q (try `skygate help`)\n", os.Args[1])
+			os.Exit(2)
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -155,6 +196,16 @@ func main() {
 	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(app.PostAdminBackupSave)))
 	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))
 	mux.Handle("GET /admin/backup/download", authMW(http.HandlerFunc(app.GetAdminBackupDownload)))
+	// 2026-07-14: Этап 14 v6 — destination & schedule config.
+	// /admin/backup itself serves the form; the four action
+	// endpoints accept POSTs from the form buttons. No CSRF
+	// (admin-only; the legacy /admin/backup/save also has
+	// none).
+	mux.Handle("GET /admin/backup/config", authMW(http.HandlerFunc(app.GetAdminBackupConfig)))
+	mux.Handle("POST /admin/backup/config", authMW(http.HandlerFunc(app.PostAdminBackupConfig)))
+	mux.Handle("POST /admin/backup/test", authMW(http.HandlerFunc(app.PostAdminBackupTest)))
+	mux.Handle("POST /admin/backup/run", authMW(http.HandlerFunc(app.PostAdminBackupRun)))
+	mux.Handle("POST /admin/backup/toggle", authMW(http.HandlerFunc(app.PostAdminBackupToggle)))
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(app.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegram)))
 	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegramPost)))
@@ -260,11 +311,66 @@ func main() {
 	// 2026-07-07: issue #6 — start domain auto-updater goroutine
 	go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)
 
+	// 2026-07-14: Этап 14 v6 — in-app backup scheduler. Started
+	// after the DB is wired so Load() can read the config.
+	// Wire the config loader first so Unmount (called by
+	// RunBackup on its way out) can re-read the mountpoint.
+	backup.SetConfigLoader(func() (*backup.Config, error) {
+		return backup.Load(d)
+	})
+	backupSched := &backup.Scheduler{DB: d}
+	backupSched.Start(ctx)
+
 	<-ctx.Done()
 	log.Println("🌐 shutting down")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(shutCtx)
+}
+
+// runBackupSubcommand is the entry point for
+// `skygate backup-run`. It loads the config from the DB
+// (no flags, no env vars — the UI is the source of
+// truth) and calls backup.RunBackup. Exit code is 0 on
+// success, 1 on any error so a system cron will
+// silently swallow the failure (cron emails by default
+// but we want it visible in /var/log/syslog too).
+func runBackupSubcommand() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	d, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("db open: %w", err)
+	}
+	defer d.Close()
+	// Wire the loader (same as the web server does) so
+	// the runner's Unmount path can re-read the
+	// mountpoint.
+	backup.SetConfigLoader(func() (*backup.Config, error) {
+		return backup.Load(d)
+	})
+	bc, err := backup.Load(d)
+	if err != nil {
+		return fmt.Errorf("load backup config: %w", err)
+	}
+	if !bc.Enabled {
+		log.Printf("backup-run: backup.enabled = false in DB; skipping (return 0 so cron doesn't alert)")
+		return nil
+	}
+	log.Printf("backup-run: starting (protocol=%s, destination=%s, keep=%d)", bc.Protocol, bc.Destination, bc.KeepCount)
+	res, err := backup.RunBackup(d, bc)
+	if err != nil {
+		if res != nil {
+			log.Printf("backup-run: status=%s error=%s archive=%s", res.Status, res.Error, res.Archive)
+		} else {
+			log.Printf("backup-run: error: %v", err)
+		}
+		return err
+	}
+	log.Printf("backup-run: ok archive=%s bytes=%d dur=%s", res.Archive, res.Bytes, res.FinishedAt.Sub(res.StartedAt))
+	return nil
 }
 
 // bootstrapAdmin creates the admin user in Skygate DB on first start.
