@@ -41,6 +41,13 @@ import (
 // token is configured).
 type Notifier interface {
 	SendTelegram(text string)
+	// BotUsernameCached is implemented by RealNotifier (via a
+	// cached getMe poll). It's used by the welcome message
+	// (loginHint) to render a tap-to-open @username link for
+	// mobile users. The interface is added in v0.10.4 — older
+	// noop notifiers return "" and the welcome degrades to a
+	// no-link version.
+	BotUsernameCached() string
 	// SendTelegramToChat is the explicit-target variant. Used by
 	// /admin/telegram's "Send test" handler when the operator
 	// hasn't yet set global_settings.telegram.chat_id but HAS
@@ -59,6 +66,7 @@ type NoopNotifier struct{}
 
 func (NoopNotifier) SendTelegram(string)              {}
 func (NoopNotifier) SendTelegramToChat(string, int64) {}
+func (NoopNotifier) BotUsernameCached() string       { return "" }
 
 // RealNotifier holds the per-process Telegram configuration. The
 // configured flag is consulted at SendTelegram time so a hot-swap
