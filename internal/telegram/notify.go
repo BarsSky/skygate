@@ -320,6 +320,36 @@ func lookupPortalUsername(d *sql.DB, userID int64) (string, error) {
 	return u, err
 }
 
+// envForMessage builds the BotEnv for an inbound message and
+// applies the bootstrap-admin fallback. The dispatcher in
+// Run() and handleCallback() call this with the actual
+// chat_id of the message sender (NOT the "effective" chat_id
+// from resolveBootstrapAdmin, which is 0 for unbound chats
+// without a global chat_id match — passing 0 to env() would
+// make every handler see env.ChatID=0 and refuse with
+// "chat_id missing; contact admin"). The bootstrap-admin
+// flag is still applied here independently of env.ChatID.
+//
+// 2026-07-14 (v0.10.3 fix): extracted from Run() /
+// handleCallback() so the dispatch logic is testable in
+// isolation. The previous v0.10.2 inline call passed
+// effectiveChatID (= 0 for unbound non-bootstrap chats) and
+// the bug surfaced when an operator ran /login <token>
+// without having configured global_settings.telegram.chat_id:
+// the bot received the message, dispatched to loginReply,
+// which bailed on "if env.ChatID == 0 { return internal error }".
+//
+// Returns the env and the isBootstrapAdmin flag (mostly for
+// tests — production callers can ignore the bool).
+func (n *RealNotifier) envForMessage(chatID int64) (BotEnv, bool) {
+	_, isBootstrapAdmin := n.resolveBootstrapAdmin(chatID)
+	env := n.env(chatID)
+	if isBootstrapAdmin && !env.IsAdmin {
+		env.IsAdmin = true
+	}
+	return env, isBootstrapAdmin
+}
+
 // SendTelegram posts text to the configured chat_id. Silently no-ops
 // if EITHER the token OR the chat_id is missing (we need both to
 // sendMessage). Errors are logged but not returned, since this is
@@ -501,16 +531,16 @@ func (n *RealNotifier) Run(ctx context.Context) {
 				continue
 			}
 			updateChatID := u.Message.Chat.ID
-			// Apply the bootstrap-admin fallback: if the chat_id
-			// matches the configured admin chat, force IsAdmin
-			// even without a binding row. This keeps the legacy
-			// single-admin deploy (chat_id configured but no
-			// telegram_bindings row) working.
-			effectiveChatID, isBootstrapAdmin := n.resolveBootstrapAdmin(updateChatID)
-			env := n.env(effectiveChatID)
-			if isBootstrapAdmin && !env.IsAdmin {
-				env.IsAdmin = true
-			}
+			// 2026-07-14 (v0.10.3 fix): envForMessage uses
+			// updateChatID (the actual chat_id of the message
+			// sender) — NOT effectiveChatID. The previous code
+			// passed the "effective" chat_id (0 for unbound
+			// chats without a global chat_id match), causing
+			// every handler to see env.ChatID=0 and refuse
+			// with "login: internal error (chat_id missing)".
+			// The bootstrap-admin fallback is still applied
+			// inside envForMessage.
+			env, _ := n.envForMessage(updateChatID)
 			pendingReplyForCurrentMessage = nil
 			reply := HandleCommand(ctx, env, text)
 			// Reply goes to the originating chat (not the configured
@@ -678,11 +708,10 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 		return
 	}
 	// 4. Build the same env the text-message path uses.
-	effectiveChatID, isBootstrapAdmin := n.resolveBootstrapAdmin(chatID)
-	env := n.env(effectiveChatID)
-	if isBootstrapAdmin && !env.IsAdmin {
-		env.IsAdmin = true
-	}
+	// See the v0.10.3 fix in Run(): envForMessage uses the
+	// actual chat_id (the chat that tapped the button), not
+	// the "effective" chat_id from resolveBootstrapAdmin.
+	env, _ := n.envForMessage(chatID)
 	pendingReplyForCurrentMessage = nil
 	reply := HandleCommand(context.Background(), env, synthetic)
 	n.sendPlain(token, chatID, reply, pendingReplyForCurrentMessage)
