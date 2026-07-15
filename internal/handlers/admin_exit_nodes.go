@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -151,6 +152,8 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"HealthyCount": healthyCount,
 		"TotalCount":   len(nodes),
 		"MonitorRunning": a.ExitNodeMonitor != nil,
+		"FlashSuccess": r.URL.Query().Get("ok"),
+		"FlashError":   r.URL.Query().Get("err"),
 	})
 }
 
@@ -186,6 +189,11 @@ func humanizeDuration(d time.Duration) string {
 // the fresh state. The background goroutine is unaffected
 // (it runs on its own ticker, not through CheckNow).
 //
+// We redirect to /admin/exit-nodes directly (not via the
+// shared redirectWithFlash helper, which is hard-coded to
+// /admin/telegram) so a successful run lands the operator
+// back on the page they were just on.
+//
 // If the monitor is disabled
 // (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off) or hasn't been
 // wired (e.g. running unit tests), the handler shows a
@@ -197,15 +205,15 @@ func (a *App) PostAdminExitNodesHealthNow(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if a.ExitNodeMonitor == nil {
-		a.redirectWithFlash(w, r, "", "Exit-node monitor is disabled (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off)")
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("Exit-node monitor is disabled (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off)"), http.StatusSeeOther)
 		return
 	}
 	if err := a.ExitNodeMonitor.CheckNow(r.Context()); err != nil {
-		a.redirectWithFlash(w, r, "", "Health check failed: "+err.Error())
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("Health check failed: "+err.Error()), http.StatusSeeOther)
 		return
 	}
 	a.audit(c.UserID, c.Username, "exit_node_health_now", "")
-	a.redirectWithFlash(w, r, "Health check completed.", "")
+	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("Health check completed."), http.StatusSeeOther)
 }
 
 func (a *App) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) {
