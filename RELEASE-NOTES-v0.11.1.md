@@ -85,6 +85,30 @@ a `docker compose restart headscale`, which the v0.11.1 renderer doesn't
 do (the operator runs `deploy.sh` for those cases; the new code only
 covers the DERP / Headplane use cases explicitly).
 
+### `docker cp`, not `docker exec cat > file`
+
+The headscale 0.29 image is minimal — no shell in `PATH` (no `sh`, no
+`bash`, no `busybox`). The first attempt used
+`docker exec -i headscale sh -c "cat > /etc/headscale/config.yaml"`,
+which fails on the production VM with
+`exec: "sh": executable file not found in $PATH`. v0.11.1 (commit
+`ddb77cc`) switches to `docker cp` — the daemon writes the file via its
+API, no shell inside the target container required. The skygate
+container has `/var/run/docker.sock` mounted, so `docker cp` works
+without any extra plumbing.
+
+### Apply loads the full config, not the form's fields
+
+The first live test on the VM accidentally removed the running
+`headplane` container: the DERP form's `action=apply` path was passing
+the form-derived `*db.IntegrationConfig` (which only had the DERP
+fields populated — `HeadplaneMode` was the zero value `""`) to
+`applyAll`. The `applyHeadplane` branch then matched `mode != "bundled"`
+and ran `docker stop headplane && docker rm headplane`. v0.11.1
+(commit `f05b725`) reloads the full saved config from SQLite before
+applying, so the DERP-only form's apply reflects the current saved
+Headplane state, not the zero values from the form's struct.
+
 ### First-time install still needs `deploy.sh`
 
 `Apply` handles the *toggle* (start / stop / restart / push config), not
