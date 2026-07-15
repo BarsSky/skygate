@@ -36,17 +36,42 @@ func nodesReply(env BotEnv) string {
 	if err != nil {
 		return i18n.Tf(lang, "bot.nodes.db_error", err)
 	}
-	// 2026-07-15: Этап 14 v13 — lazy hostname backfill. Mirrors
-	// the one in myNodesReply: if any visible row has an empty
-	// hostname, call ListAllNodes and update the empty ones in
-	// place. See db.BackfillEmptyHostnames for why we only touch
-	// rows where hostname is currently empty (we never overwrite
-	// a known value).
-	if db.AnyHostnameEmpty(owners) && env.HS != nil {
-		if hnMap := hostnameMapFromHeadscale(env.HS); len(hnMap) > 0 {
-			if n, berr := db.BackfillEmptyHostnames(d, hnMap); berr == nil && n > 0 {
-				if refreshed, rerr := db.ListAllNodeOwners(d); rerr == nil {
-					owners = refreshed
+	// 2026-07-15: Этап 14 v13 — lazy backfill (hostname + tag).
+	// Same pattern as myNodesReply: one headscale round-trip feeds
+	// both backfills. See db.SyncTagsFromHeadscale for why the
+	// tag update closes the v0.10.11 regression (PostAdminNodeTag
+	//'s "tagged-devices" guard skipped the row update for
+	// admin-tagged devices, so the bot's view drifted from the
+	// headscale truth).
+	if env.HS != nil {
+		hsView := listAllNodesForBackfill(env.HS)
+		if len(hsView) > 0 {
+			hnMap := map[string]string{}
+			tagMap := map[string]string{}
+			for _, n := range hsView {
+				hn := n.GivenName
+				if hn == "" {
+					hn = n.Hostname
+				}
+				if hn != "" {
+					hnMap[n.ID] = hn
+				}
+				if len(n.Tags) > 0 {
+					tagMap[n.ID] = n.Tags[0]
+				}
+			}
+			if db.AnyHostnameEmpty(owners) {
+				if n, berr := db.BackfillEmptyHostnames(d, hnMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListAllNodeOwners(d); rerr == nil {
+						owners = refreshed
+					}
+				}
+			}
+			if db.AnyTagStale(owners, tagMap) {
+				if n, berr := db.SyncTagsFromHeadscale(d, tagMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListAllNodeOwners(d); rerr == nil {
+						owners = refreshed
+					}
 				}
 			}
 		}

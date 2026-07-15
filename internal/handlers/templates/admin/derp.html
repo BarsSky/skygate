@@ -1,8 +1,8 @@
-﻿{{define "body-admin-derp"}}
+{{define "body-admin-derp"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-tower-broadcast"></i>{{t "derp.title"}}</h2>
-    <div class="sub">Custom DERP server on agent — backup relay for the tailnet</div>
+    <div class="sub">{{t "derp.subtitle"}}</div>
   </div>
   <div class="btn-row">
     <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i>{{t "common.refresh"}}</a>
@@ -10,106 +10,106 @@
 </div>
 
 {{if .DerpStatus}}
-<div class="section-title"><i class="fa-solid fa-circle-nodes"></i>Service status</div>
+<div class="section-title"><i class="fa-solid fa-circle-nodes"></i>{{t "derp.section_status"}}</div>
 <div class="metric-grid">
   <div class="metric {{if .DerpStatus.Running}}good{{else}}bad{{end}}">
     <div class="icon"><i class="fa-solid fa-power-off"></i></div>
     <div class="body">
-      <div class="label">derper.service</div>
-      <div class="value">{{if .DerpStatus.Running}}active{{else}}stopped{{end}}</div>
+      <div class="label">{{t "derp.label_service"}}</div>
+      <div class="value">{{if .DerpStatus.Running}}{{t "derp.value_active"}}{{else}}{{t "derp.value_stopped"}}{{end}}</div>
       <div class="sub">{{.DerpStatus.UpTime}}</div>
     </div>
   </div>
   <div class="metric {{if .DerpStatus.SocketListening}}good{{else}}bad{{end}}">
     <div class="icon"><i class="fa-solid fa-plug"></i></div>
     <div class="body">
-      <div class="label">DERP socket</div>
+      <div class="label">{{t "derp.label_socket"}}</div>
       <div class="value">:{{.DerpStatus.DERPPort}}</div>
-      <div class="sub">{{if .DerpStatus.SocketListening}}TCP listening{{else}}closed{{end}}</div>
+      <div class="sub">{{if .DerpStatus.SocketListening}}{{t "derp.value_tcp_listening"}}{{else}}{{t "derp.value_closed"}}{{end}}</div>
     </div>
   </div>
   <div class="metric {{if .DerpStatus.STUNListening}}good{{else}}bad{{end}}">
     <div class="icon"><i class="fa-solid fa-satellite-dish"></i></div>
     <div class="body">
-      <div class="label">STUN UDP</div>
+      <div class="label">{{t "derp.label_stun"}}</div>
       <div class="value">:{{.DerpStatus.STUNPort}}</div>
-      <div class="sub">{{if .DerpStatus.STUNListening}}listening{{else}}closed{{end}}</div>
+      <div class="sub">{{if .DerpStatus.STUNListening}}{{t "derp.value_listening"}}{{else}}{{t "derp.value_closed"}}{{end}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-code-branch"></i></div>
     <div class="body">
-      <div class="label">Version</div>
+      <div class="label">{{t "derp.label_version"}}</div>
       <div class="value" style="font-size:14px">v{{.DerpStatus.Version}}</div>
-      <div class="sub">go {{.DerpStatus.GoVersion}}</div>
+      <div class="sub">{{tf "derp.go_version" .DerpStatus.GoVersion}}</div>
     </div>
   </div>
 </div>
 
-<div class="section-title"><i class="fa-solid fa-chart-line"></i>Traffic</div>
+<div class="section-title"><i class="fa-solid fa-chart-line"></i>{{t "derp.section_traffic"}}</div>
 <div class="metric-grid">
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-plug-circle-bolt"></i></div>
     <div class="body">
-      <div class="label">Active connections</div>
+      <div class="label">{{t "derp.label_active_conns"}}</div>
       <div class="value">{{.DerpStatus.Connections}}</div>
-      <div class="sub">total since start: {{.DerpStatus.Accepts}}</div>
+      <div class="sub">{{tf "derp.total_since_start" .DerpStatus.Accepts}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-users"></i></div>
     <div class="body">
-      <div class="label">Tailscale clients</div>
+      <div class="label">{{t "derp.label_clients"}}</div>
       <div class="value">{{.DerpStatus.Clients}}</div>
-      <div class="sub">with this DERP as home</div>
+      <div class="sub">{{t "derp.with_this_derp_as_home"}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-arrow-down"></i></div>
     <div class="body">
-      <div class="label">Bytes IN</div>
+      <div class="label">{{t "derp.label_bytes_in"}}</div>
       <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesIn}}</div>
-      <div class="sub">{{.DerpStatus.PacketsIn}} packets</div>
+      <div class="sub">{{.DerpStatus.PacketsIn}} {{t "derp.packets_suffix"}}</div>
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-arrow-up"></i></div>
     <div class="body">
-      <div class="label">Bytes OUT</div>
+      <div class="label">{{t "derp.label_bytes_out"}}</div>
       <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesOut}}</div>
-      <div class="sub">{{.DerpStatus.PacketsOut}} packets</div>
+      <div class="sub">{{.DerpStatus.PacketsOut}} {{t "derp.packets_suffix"}}</div>
     </div>
   </div>
 </div>
 
 {{if or .DerpStatus.ActiveTCP .DerpStatus.ActiveUDP}}
-<div class="section-title"><i class="fa-solid fa-user-group"></i>Active connections (right now)</div>
+<div class="section-title"><i class="fa-solid fa-user-group"></i>{{t "derp.section_active"}}</div>
 <div class="card">
   {{if .DerpStatus.ConnSummary}}
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;font-size:12px">
     {{$cs := .DerpStatus.ConnSummary}}
     {{$allZero := and (eq $cs.Relay 0) (eq $cs.Admin 0) (eq $cs.LAN 0) (eq $cs.Self 0) (eq $cs.Other 0)}}
     {{if and (not $allZero) (gt $cs.Relay 0)}}
-      <span class="tag tag-success"><i class="fa-solid fa-route"></i> Relay: <b>{{$cs.Relay}}</b></span>
+      <span class="tag tag-success"><i class="fa-solid fa-route"></i> {{t "derp.tag_relay"}}: <b>{{$cs.Relay}}</b></span>
     {{end}}
     {{if and (not $allZero) (gt $cs.Admin 0)}}
-      <span class="tag" title="Nginx Proxy Manager WebSocket pool"><i class="fa-solid fa-gauge-high"></i> NPM admin: <b>{{$cs.Admin}}</b></span>
+      <span class="tag" title="Nginx Proxy Manager WebSocket pool"><i class="fa-solid fa-gauge-high"></i> NPM {{t "derp.tag_admin"}}: <b>{{$cs.Admin}}</b></span>
     {{end}}
     {{if and (not $allZero) (gt $cs.LAN 0)}}
-      <span class="tag"><i class="fa-solid fa-network-wired"></i> LAN: <b>{{$cs.LAN}}</b></span>
+      <span class="tag"><i class="fa-solid fa-network-wired"></i> {{t "derp.tag_lan"}}: <b>{{$cs.LAN}}</b></span>
     {{end}}
     {{if and (not $allZero) (gt $cs.Self 0)}}
-      <span class="tag" title="derper self-monitoring (loopback)"><i class="fa-solid fa-rotate"></i> Self: <b>{{$cs.Self}}</b></span>
+      <span class="tag" title="derper self-monitoring (loopback)"><i class="fa-solid fa-rotate"></i> {{t "derp.tag_self"}}: <b>{{$cs.Self}}</b></span>
     {{end}}
     {{if and (not $allZero) (gt $cs.Other 0)}}
-      <span class="tag"><i class="fa-solid fa-circle-question"></i> Other: <b>{{$cs.Other}}</b></span>
+      <span class="tag"><i class="fa-solid fa-circle-question"></i> {{t "derp.tag_other"}}: <b>{{$cs.Other}}</b></span>
     {{end}}
     {{if $allZero}}
       {{$liveCC := .DerpStatus.Connections}}
       {{if gt $liveCC 0}}
-        <span class="tag tag-warning" title="derper reports {{$liveCC}} current connections but ss snapshot sees 0"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$liveCC}}</b> conn (transient)</span>
+        <span class="tag tag-warning" title="derper reports {{$liveCC}} current connections but ss snapshot sees 0"><i class="fa-solid fa-circle-info"></i> {{tf "derp.cond_tag_warning" $liveCC}}</span>
       {{else}}
-        <span class="tag" title="no active connections in this snapshot"><i class="fa-solid fa-circle"></i> No active</span>
+        <span class="tag" title="no active connections in this snapshot"><i class="fa-solid fa-circle"></i> {{t "derp.tag_no_active"}}</span>
       {{end}}
     {{end}}
   </div>
@@ -117,7 +117,7 @@
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
     <div>
       <h3 style="margin:0 0 8px;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">
-        <i class="fa-solid fa-network-wired"></i> TCP (DERP relay)
+        <i class="fa-solid fa-network-wired"></i> {{t "derp.tcp_relay"}}
       </h3>
       {{if .DerpStatus.ActiveTCP}}
       <table>
@@ -128,10 +128,10 @@
             <td><code>{{.IP}}</code></td>
             <td>{{if .Host}}{{.Host}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
             <td>
-              {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>relay</span>
-              {{else if eq .Kind "ws_admin"}}<span class="tag" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i>admin</span>
-              {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>lan</span>
-              {{else if eq .Kind "self"}}<span class="tag" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i>self</span>
+              {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>{{t "derp.tag_relay"}}</span>
+              {{else if eq .Kind "ws_admin"}}<span class="tag" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i>{{t "derp.tag_admin"}}</span>
+              {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>{{t "derp.tag_lan"}}</span>
+              {{else if eq .Kind "self"}}<span class="tag" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i>{{t "derp.tag_self"}}</span>
               {{else}}<span class="tag"><i class="fa-solid fa-circle-question"></i>?</span>
               {{end}}
             </td>
@@ -140,12 +140,12 @@
         </tbody>
       </table>
       {{else}}
-      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> No active TCP connections</div>
+      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> {{t "derp.no_active_tcp"}}</div>
       {{end}}
     </div>
     <div>
       <h3 style="margin:0 0 8px;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">
-        <i class="fa-solid fa-satellite-dish"></i> UDP (STUN)
+        <i class="fa-solid fa-satellite-dish"></i> {{t "derp.udp_stun"}}
       </h3>
       {{if .DerpStatus.ActiveUDP}}
       <table>
@@ -156,10 +156,10 @@
             <td><code>{{.IP}}</code></td>
             <td>{{if .Host}}{{.Host}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
             <td>
-              {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>relay</span>
-              {{else if eq .Kind "ws_admin"}}<span class="tag"><i class="fa-solid fa-gauge-high"></i>admin</span>
-              {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>lan</span>
-              {{else if eq .Kind "self"}}<span class="tag" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i>self</span>
+              {{if eq .Kind "ws_relay"}}<span class="tag tag-success"><i class="fa-solid fa-route"></i>{{t "derp.tag_relay"}}</span>
+              {{else if eq .Kind "ws_admin"}}<span class="tag" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i>{{t "derp.tag_admin"}}</span>
+              {{else if eq .Kind "lan"}}<span class="tag"><i class="fa-solid fa-network-wired"></i>{{t "derp.tag_lan"}}</span>
+              {{else if eq .Kind "self"}}<span class="tag" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i>{{t "derp.tag_self"}}</span>
               {{else}}<span class="tag"><i class="fa-solid fa-circle-question"></i>?</span>
               {{end}}
             </td>
@@ -168,18 +168,18 @@
         </tbody>
       </table>
       {{else}}
-      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> No active UDP clients</div>
+      <div style="color:var(--text-muted);font-size:13px;padding:8px 0"><i class="fa-solid fa-circle"></i> {{t "derp.no_active_udp"}}</div>
       {{end}}
     </div>
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    <i class="fa-solid fa-circle-info"></i> Source: <code>ss -tn state established sport = :8443</code> + reverse DNS. <b>relay</b> = Tailscale client, <b>admin</b> = WebSocket from Nginx Proxy Manager. Updates every 30 sec.
+    {{t "derp.source_conns" | safeHTML}}
   </p>
 </div>
 {{end}}
 
 {{if .DerpStatus.Snapshot}}
-<div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>Activity log (last 30 sec)</div>
+<div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i>{{t "derp.section_activity"}}</div>
 <div class="card">
   <div style="max-height:340px;overflow-y:auto;font-family:var(--mono);font-size:12px">
     {{range .DerpStatus.Snapshot}}
@@ -187,13 +187,13 @@
       <span style="color:var(--text-muted);min-width:130px">{{.TS}}</span>
       {{if .Summary}}
         <span class="tag" style="font-size:11px">all: <b>{{len .Conns}}</b></span>
-        {{if gt .Summary.Relay 0}}<span class="tag tag-success" style="font-size:11px"><i class="fa-solid fa-route"></i> relay: <b>{{.Summary.Relay}}</b></span>{{end}}
-        {{if gt .Summary.Admin 0}}<span class="tag" style="font-size:11px" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i> admin: <b>{{.Summary.Admin}}</b></span>{{end}}
-        {{if gt .Summary.LAN 0}}<span class="tag" style="font-size:11px"><i class="fa-solid fa-network-wired"></i> lan: <b>{{.Summary.LAN}}</b></span>{{end}}
-        {{if gt .Summary.Self 0}}<span class="tag" style="font-size:11px" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i> self: <b>{{.Summary.Self}}</b></span>{{end}}
+        {{if gt .Summary.Relay 0}}<span class="tag tag-success" style="font-size:11px"><i class="fa-solid fa-route"></i> {{t "derp.tag_relay"}}: <b>{{.Summary.Relay}}</b></span>{{end}}
+        {{if gt .Summary.Admin 0}}<span class="tag" style="font-size:11px" title="NPM WebSocket pool"><i class="fa-solid fa-gauge-high"></i> {{t "derp.tag_admin"}}: <b>{{.Summary.Admin}}</b></span>{{end}}
+        {{if gt .Summary.LAN 0}}<span class="tag" style="font-size:11px"><i class="fa-solid fa-network-wired"></i> {{t "derp.tag_lan"}}: <b>{{.Summary.LAN}}</b></span>{{end}}
+        {{if gt .Summary.Self 0}}<span class="tag" style="font-size:11px" title="derper self-monitoring"><i class="fa-solid fa-rotate"></i> {{t "derp.tag_self"}}: <b>{{.Summary.Self}}</b></span>{{end}}
         {{$cc := .CurrentConns}}
         {{if and (eq (len .Conns) 0) (gt $cc 0)}}
-          <span class="tag tag-warning" style="font-size:11px" title="derper reports {{$cc}} current connections but ss snapshot sees 0"><i class="fa-solid fa-circle-info"></i> derper: <b>{{$cc}}</b> conn (transient)</span>
+          <span class="tag tag-warning" style="font-size:11px" title="derper reports {{$cc}} current connections but ss snapshot sees 0"><i class="fa-solid fa-circle-info"></i> {{tf "derp.cond_tag_warning" $cc}}</span>
         {{end}}
       {{else}}
         <span style="color:var(--accent)">conns: <b>{{len .Conns}}</b></span>
@@ -207,64 +207,63 @@
     {{end}}
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    <i class="fa-solid fa-circle-info"></i> Source: <code>derper-snapshot.timer</code> (every 30 sec) writes <code>/var/log/derper-snapshot.log</code>. <b>relay</b> = Tailscale clients, <b>admin</b> = Nginx Proxy Manager WebSocket pool (not Tailscale traffic).
+    {{t "derp.source_snapshot" | safeHTML}}
   </p>
 </div>
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i>Service</h3>
+  <h3><i class="fa-solid fa-server"></i>{{t "derp.section_service"}}</h3>
   <table>
     <tbody>
-      <tr><td style="width:200px;color:var(--text-muted)">Hostname</td><td><code>{{.DerpStatus.Hostname}}</code></td></tr>
-      <tr><td style="color:var(--text-muted)">Region</td><td><code>{{.DerpStatus.RegionCode}} ({{.DerpStatus.RegionID}})</code> — {{.DerpStatus.RegionName}}</td></tr>
-      <tr><td style="color:var(--text-muted)">WebSocket endpoint</td><td><code>wss://{{.DerpStatus.Hostname}}:{{.DerpStatus.DERPPort}}/derp</code></td></tr>
-      <tr><td style="color:var(--text-muted)">STUN endpoint</td><td><code>{{.DerpStatus.Hostname}}:{{.DerpStatus.STUNPort}}</code> (UDP)</td></tr>
-      <tr><td style="color:var(--text-muted)">Public IP</td><td><code>{{.DerpStatus.WhiteIP}}</code></td></tr>
-      <tr><td style="color:var(--text-muted)">Started</td><td>{{.DerpStatus.StartedAt}}</td></tr>
-      <tr><td style="color:var(--text-muted)">Uptime</td><td>{{.DerpStatus.UpTime}}</td></tr>
-      {{if .DerpStatus.Machine}}<tr><td style="color:var(--text-muted)">Machine</td><td><code>{{.DerpStatus.Machine}}</code></td></tr>{{end}}
-      {{if .DerpStatus.GoVersion}}<tr><td style="color:var(--text-muted)">Go version</td><td><code>{{.DerpStatus.GoVersion}}</code></td></tr>{{end}}
-      {{if .DerpStatus.Memory}}<tr><td style="color:var(--text-muted)">Memory</td><td>{{.DerpStatus.Memory}}</td></tr>{{end}}
-      {{if .DerpStatus.STUNRequests}}<tr><td style="color:var(--text-muted)">STUN requests</td><td>{{.DerpStatus.STUNRequests}} (successful)</td></tr>{{end}}
+      <tr><td style="width:200px;color:var(--text-muted)">{{t "derp.field_hostname"}}</td><td><code>{{.DerpStatus.Hostname}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "derp.field_region"}}</td><td><code>{{.DerpStatus.RegionCode}} ({{.DerpStatus.RegionID}})</code> — {{.DerpStatus.RegionName}}</td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "derp.field_ws_endpoint"}}</td><td><code>wss://{{.DerpStatus.Hostname}}:{{.DerpStatus.DERPPort}}/derp</code></td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "derp.field_stun_endpoint"}}</td><td><code>{{.DerpStatus.Hostname}}:{{.DerpStatus.STUNPort}}</code> (UDP)</td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "derp.field_public_ip"}}</td><td><code>{{.DerpStatus.WhiteIP}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "derp.field_started"}}</td><td>{{.DerpStatus.StartedAt}}</td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "derp.field_uptime"}}</td><td>{{.DerpStatus.UpTime}}</td></tr>
+      {{if .DerpStatus.Machine}}<tr><td style="color:var(--text-muted)">{{t "derp.field_machine"}}</td><td><code>{{.DerpStatus.Machine}}</code></td></tr>{{end}}
+      {{if .DerpStatus.GoVersion}}<tr><td style="color:var(--text-muted)">{{t "derp.field_go_version"}}</td><td><code>{{.DerpStatus.GoVersion}}</code></td></tr>{{end}}
+      {{if .DerpStatus.Memory}}<tr><td style="color:var(--text-muted)">{{t "derp.field_memory"}}</td><td>{{.DerpStatus.Memory}}</td></tr>{{end}}
+      {{if .DerpStatus.STUNRequests}}<tr><td style="color:var(--text-muted)">{{t "derp.field_stun_requests"}}</td><td>{{.DerpStatus.STUNRequests}} (successful)</td></tr>{{end}}
     </tbody>
   </table>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-book"></i>Help</h3>
+  <h3><i class="fa-solid fa-book"></i>{{t "derp.section_help"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
-    <strong>Parameters</strong>:
+    <strong>{{t "derp.help_title"}}</strong>:
     <ul style="margin:6px 0 12px 0;padding-left:20px;font-size:13px;color:var(--text-muted)">
-      <li><b>Accepts</b> — how many times derper accepted a WebSocket upgrade in total</li>
-      <li><b>Current conns</b> — number of WebSocket connections open right now</li>
-      <li><b>Home conns</b> — connections from home clients (whose home DERP = this)</li>
-      <li><b>Clients total</b> — unique clients for whom this DERP = home</li>
-      <li><b>Bytes/Packets</b> — total traffic (no per-client breakdown)</li>
+      <li>{{t "derp.help_accepts" | safeHTML}}</li>
+      <li>{{t "derp.help_current_conns" | safeHTML}}</li>
+      <li>{{t "derp.help_home_conns" | safeHTML}}</li>
+      <li>{{t "derp.help_clients_total" | safeHTML}}</li>
+      <li>{{t "derp.help_bytes" | safeHTML}}</li>
     </ul>
   </p>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
-    <strong>Why a client may not use this DERP</strong>:
-    Tailscale picks the home DERP by minimum UDP-latency. If a public DERP is closer, the client will pick that.
-    To pin our DERP on a device:
+    <strong>{{t "derp.why_title"}}</strong>:
+    {{t "derp.why_body"}}
   </p>
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:var(--mono);font-size:12px;margin:8px 0;line-height:1.7">
-    <div style="color:var(--text-muted);margin-bottom:4px"># Linux/macOS (Tailscale CLI):</div>
+    <div style="color:var(--text-muted);margin-bottom:4px">{{t "derp.pin_cli_label"}}</div>
     <code style="color:var(--accent)">sudo tailscale debug force-prefer-derp 900</code>
-    <span style="color:var(--text-muted)">  (temporary, until restart)</span>
-    <div style="color:var(--text-muted);margin:8px 0 4px"># Permanent (via node-attrs):</div>
+    <span style="color:var(--text-muted)">{{t "derp.pin_cli_temporary"}}</span>
+    <div style="color:var(--text-muted);margin:8px 0 4px">{{t "derp.pin_perm_label"}}</div>
     <code style="color:var(--accent)">sudo tailscale set --netfilter-mode=...</code>
-    <div style="color:var(--text-muted);margin:8px 0 4px"># Android/iOS:</div>
+    <div style="color:var(--text-muted);margin:8px 0 4px">{{t "derp.pin_mobile_label"}}</div>
     <code style="color:var(--accent)">Settings → Connection → Use DERP → Moscow (mow:900)</code>
   </div>
   <p style="color:var(--text-muted);font-size:13px">
-    Full docs: <a href="/help#derp"><i class="fa-solid fa-book"></i> DERP docs</a>
+    {{t "derp.full_docs" | safeHTML}}
   </p>
 </div>
 {{else}}
 <div class="alert alert-danger">
   <i class="fa-solid fa-circle-exclamation"></i>
-  <div>Failed to fetch DERP status. Check that derper is running on the agent.</div>
+  <div>{{t "derp.fetch_failed"}}</div>
 </div>
 {{end}}
 {{end}}
