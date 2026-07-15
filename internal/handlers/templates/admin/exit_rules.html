@@ -1,24 +1,29 @@
 ﻿{{define "body-admin-exit_rules"}}
+{{/* 2026-07-15: v0.12.0.2 — full RU translation of the admin
+     Exit Rules page. Previously only the title/subtitle went
+     through {{t}}; every other label (Node Load, Re-apply ACL
+     button + confirm, System load card, table headers, sync
+     status, rollback confirm, etc.) was hardcoded English. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-route"></i> {{t "exit_rules_admin.title"}}</h2>
     <div class="sub">{{t "exit_rules_admin.subtitle"}} · hierarchical view</div>
   </div>
   <div>
-    <a href="/admin/exit-rules/nodes" class="btn btn-sm"><i class="fa-solid fa-server"></i> Node Load</a>
-    <form method="post" action="/admin/exit-rules/reapply" style="display:inline" onsubmit="return confirm('Re-apply ACL? This regenerates the policy from current DB state and pushes to headscale. Use after changes to GenerateACL().')">
-      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> Re-apply ACL</button>
+    <a href="/admin/exit-rules/nodes" class="btn btn-sm"><i class="fa-solid fa-server"></i> {{t "exit_rules_admin.node_load"}}</a>
+    <form method="post" action="/admin/exit-rules/reapply" style="display:inline" onsubmit="return confirm('{{t "exit_rules_admin.reapply_confirm"}}')">
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> {{t "exit_rules_admin.reapply"}}</button>
     </form>
   </div>
 </div>
 
-{{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL rolled back</div>{{end}}
-{{if .reapplied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> ACL re-applied</div>{{end}}
+{{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.rolled_back"}}</div>{{end}}
+{{if .reapplied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.reapplied"}}</div>{{end}}
 
 {{if .MaxTotalRules}}
 <div class="card">
   <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-    <span><i class="fa-solid fa-chart-pie"></i> System load</span>
+    <span><i class="fa-solid fa-chart-pie"></i> {{t "exit_rules_admin.system_load"}}</span>
     <span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>
   </h3>
   <div style="background:var(--bg-elev);border-radius:6px;height:18px;position:relative;overflow:hidden;border:1px solid var(--border)">
@@ -31,14 +36,14 @@
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-list"></i> All rules ({{.TotalRules}})</h3>
+  <h3><i class="fa-solid fa-list"></i> {{tf "exit_rules_admin.all_rules" .TotalRules}}</h3>
   {{if .Rules}}
     {{range $user, $userData := .GroupedByUser}}
     <details open style="margin-bottom:8px">
       <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
         <i class="fa-solid fa-user"></i>
         <span>{{$user}}</span>
-        <span class="tag">{{$userData.TotalCount}} rules</span>
+        <span class="tag">{{tf "exit_rules_admin.rules_count" $userData.TotalCount}}</span>
         {{if gt $userData.UserLimit 0}}<span class="tag {{if gt $userData.LoadPct 80}}tag-danger{{else if gt $userData.LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{$userData.LoadPct}}% ({{$userData.UserCount}}/{{$userData.UserLimit}})</span>{{end}}
         <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
       </summary>
@@ -48,7 +53,7 @@
         <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$devData.DeviceName}}</span>
-          <span class="tag">{{$devData.Count}} rules</span>
+          <span class="tag">{{tf "exit_rules_admin.rules_count" $devData.Count}}</span>
         </summary>
 
         {{range $exitNode, $rules := $devData.Nodes}}
@@ -56,19 +61,19 @@
           <summary style="cursor:pointer;padding:3px 6px;background:var(--bg);border-radius:3px;display:flex;align-items:center;gap:6px;font-size:12px">
             <i class="fa-solid fa-route"></i>
             <span class="tag tag-info">{{$exitNode}}</span>
-            <span style="color:var(--text-muted)">{{len $rules}} rules</span>
+            <span style="color:var(--text-muted)">{{tf "exit_rules_admin.rules_count" (len $rules)}}</span>
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             <table>
-              <tr><th>Action</th><th>Type</th><th>Resource</th><th>Parent</th><th>Created</th><th></th></tr>
+              <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
               {{range $rules}}<tr>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td><span class="tag">{{.TargetType}}</span></td>
                 <td class="col-target"><code>{{.TargetValue}}</code></td>
-                <td>{{if .ParentDomain}}<span class="tag tag-info" title="Auto-managed"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
                 <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
                 <td class="col-delete">
-                  <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('Delete rule #{{.ID}}?')">
+                  <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" .ID}}')">
                     <input type="hidden" name="id" value="{{.ID}}">
                     <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
                   </form>
@@ -82,72 +87,76 @@
       {{end}}
     </details>
     {{end}}
-  {{else}}<p style="color:var(--text-muted)">No rules</p>{{end}}
+  {{else}}<p style="color:var(--text-muted)">{{t "exit_rules_admin.no_rules"}}</p>{{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-clock-rotate-left"></i> ACL application history</h3>
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> {{t "exit_rules_admin.acl_history"}}</h3>
   {{if .Logs}}
   <table>
-    <tr><th>Time</th><th>Action</th><th>Details</th></tr>
+    <tr><th>{{t "exit_rules_admin.col_time"}}</th><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_details"}}</th></tr>
     {{range .Logs}}<tr>
       <td class="mono">{{.time}}</td>
       <td><span class="tag {{if eq .action "rollback"}}tag-warning{{else}}tag-success{{end}}">{{.action}}</span></td>
       <td>{{.detail}}</td>
     </tr>{{end}}
   </table>
-  {{else}}<p style="color:var(--text-muted)">No records</p>{{end}}
+  {{else}}<p style="color:var(--text-muted)">{{t "exit_rules_admin.no_records"}}</p>{{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-sync"></i> Advertised-routes sync</h3>
-  <p style="margin-bottom:8px">Updates <code>--advertise-routes</code> on all exit-nodes according to the current rules.</p>
+  <h3><i class="fa-solid fa-sync"></i> {{t "exit_rules_admin.sync_section"}}</h3>
+  <p style="margin-bottom:8px">{{t "exit_rules_admin.sync_help"}}</p>
   <p>
     <button class="btn btn-primary" id="btn-sync" onclick="syncRoutes()">
-      <i class="fa-solid fa-sync"></i> Sync
+      <i class="fa-solid fa-sync"></i> {{t "exit_rules_admin.sync"}}
     </button>
     <span id="sync-status" style="margin-left:12px;color:var(--text-muted)"></span>
   </p>
   <pre id="sync-result" style="display:none;margin-top:8px;padding:8px;background:var(--bg);border-radius:4px;max-height:200px;overflow:auto"></pre>
 </div>
 <script>
+// 2026-07-15: v0.12.0.2 — JS strings come from the i18n
+// catalog via {{t | safeJS}}. safeJS casts the string to
+// template.JS so html/template doesn't HTML-escape the
+// Cyrillic / "✓" / "✗" / "…" inside the JS string literal.
 async function syncRoutes() {
   const btn = document.getElementById('btn-sync');
   const status = document.getElementById('sync-status');
   const result = document.getElementById('sync-result');
   btn.disabled = true;
-  status.textContent = 'Syncing...';
+  status.textContent = {{t "exit_rules_admin.sync_running" | safeJS}};
   try {
     const r = await fetch('/admin/exit-rules/sync');
     const data = await r.json();
-    status.textContent = r.ok ? '✓ Done' : '✗ Error';
+    status.textContent = r.ok ? {{t "exit_rules_admin.sync_done" | safeJS}} : {{t "exit_rules_admin.sync_error" | safeJS}};
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
   } catch(err) {
-    status.textContent = 'Error: ' + err;
+    status.textContent = {{t "exit_rules_admin.sync_error" | safeJS}} + ': ' + err;
   }
   btn.disabled = false;
 }
 </script>
 
 <div class="card">
-  <h3><i class="fa-solid fa-rotate-left"></i> ACL rollback</h3>
+  <h3><i class="fa-solid fa-rotate-left"></i> {{t "exit_rules_admin.rollback_section"}}</h3>
   {{if .Snapshots}}
   <table>
-    <tr><th>Version</th><th>By</th><th>Status</th><th>Time</th><th></th></tr>
+    <tr><th>{{t "exit_rules_admin.col_version"}}</th><th>{{t "exit_rules_admin.col_by"}}</th><th>{{t "exit_rules_admin.col_status"}}</th><th>{{t "exit_rules_admin.col_time"}}</th><th></th></tr>
     {{range .Snapshots}}<tr>
       <td>#{{.version}}</td>
       <td>{{.by}}</td>
-      <td>{{if .success}}<span class="tag tag-success">OK</span>{{else}}<span class="tag tag-danger">ERR</span>{{end}}</td>
+      <td>{{if .success}}<span class="tag tag-success">{{t "exit_rules_admin.status_ok"}}</span>{{else}}<span class="tag tag-danger">{{t "exit_rules_admin.status_err"}}</span>{{end}}</td>
       <td>{{.time}}</td>
       <td>
-        <form method="post" action="/admin/exit-rules/rollback" style="display:inline" onsubmit="return confirm('Roll back ACL to version {{.version}}?')">
+        <form method="post" action="/admin/exit-rules/rollback" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.rollback_confirm" .version}}')">
           <input type="hidden" name="version" value="{{.version}}">
-          <button type="submit" class="btn btn-secondary btn-sm">Roll back</button>
+          <button type="submit" class="btn btn-secondary btn-sm">{{t "exit_rules_admin.rollback"}}</button>
         </form>
       </td>
     </tr>{{end}}
   </table>
-  {{else}}<p style="color:var(--text-muted)">No snapshots</p>{{end}}
+  {{else}}<p style="color:var(--text-muted)">{{t "exit_rules_admin.no_snapshots"}}</p>{{end}}
 </div>
 {{end}}

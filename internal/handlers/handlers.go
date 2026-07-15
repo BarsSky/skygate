@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
@@ -52,6 +53,21 @@ type App struct {
 	SecretKeyHex string
 	hsCache   map[string]*headscale.Client
 	hsCacheMu sync.Mutex
+
+	// 2026-07-15: v0.12.0.2 — Telegram probe result cache.
+	// The probe does a real GET to api.telegram.org with a
+	// 5s timeout. On the production VM that host is
+	// unreachable (RF block + no relay advertised for the
+	// resolved IPs), so every page load took the full 5s
+	// timeout. The cache holds the most recent result for
+	// telegramProbeTTL so the page renders instantly on
+	// subsequent loads. Invalidated by the save/rotate/
+	// disable/strict handlers so the operator sees the
+	// fresh result after they take an action.
+	telegramProbeMu      sync.Mutex
+	telegramProbeResult  TelegramProbeResult
+	telegramProbeAt      time.Time
+	telegramProbeTokenFP string
 
 	templates *Templates
 }

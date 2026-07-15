@@ -124,6 +124,10 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 		`"dst": ["bob@tsnet.skynas.ru:*"]`,
 		`"dst": ["tag:public:*"]`,
 		`"dst": ["tag:exit-node:*"]`,
+		// 2026-07-15: v0.12.0.2 — internet egress via
+		// autogroup:internet (NOT a literal "*:*" catch-all,
+		// which would re-introduce the inter-user leak).
+		`"dst": ["autogroup:internet:*"]`,
 		// Этап 14 v7: SSH rules for admin to manage
 		// tag:exit-node (existing) and tag:public relay
 		// nodes (new) as root. Match the multi-line JSON
@@ -148,34 +152,37 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 	}
 }
 
-// TestGenerateACL_LastRuleIsTagExitNode pins that the
-// final rule in the acls[] array is the tag:exit-node
-// accept (not a catch-all). This is the structural
-// guarantee behind the per-user isolation: with
-// tag:exit-node as the last rule, any traffic that
-// didn't match a per-user rule or the tag:public /
-// tag:exit-node rules falls off the end of the array
-// and Tailscale denies it. A future refactor that adds
-// a new "broad" rule (e.g. for the operator's admin
-// tooling) must place it AFTER tag:exit-node, not
-// before — otherwise it would still be a catch-all.
-func TestGenerateACL_LastRuleIsTagExitNode(t *testing.T) {
+// TestGenerateACL_LastRuleIsAutogroupInternet pins that the
+// final rule in the acls[] array is the autogroup:internet
+// internet-egress accept. This is the structural guarantee
+// behind the v0.12.0.2 design:
+//
+//   * The per-user rules (alice → alice:*, bob → bob:*)
+//     cover self-traffic.
+//   * The two tag rules (* → tag:public:*, * → tag:exit-node:*)
+//     cover shared resources.
+//   * The autogroup:internet rule (* → autogroup:internet:*)
+//     allows exit-node internet egress WITHOUT re-opening
+//     inter-user access (autogroup:internet explicitly
+//     excludes the tailnet's 100.64.0.0/10 range).
+//
+// A future refactor that adds a new "broad" rule (e.g.
+// for the operator's admin tooling) must place it AFTER
+// autogroup:internet, not before — otherwise it would
+// still leak inter-user access. The test guards against
+// the obvious regressions:
+//
+//   1. The literal "*:*" catch-all MUST NOT appear (would
+//      allow alice → bob's device via first-match fallback).
+//   2. The last rule MUST reference autogroup:internet
+//      (otherwise exit-node routing on Android breaks).
+func TestGenerateACL_LastRuleIsAutogroupInternet(t *testing.T) {
 	d := openTestDB(t)
 	seedPortalUser(t, d, "alice")
 	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
-	// The acls[] block runs from the opening "[" (right
-	// after `"acls":`) to the matching "]". A naive
-	// strings.Index for "]" might find one inside a
-	// string literal, but the JSON we emit has no
-	// brackets inside strings, so a simple match works.
-	// Use json.Unmarshal to parse the acls[] array. This
-	// is robust to whitespace changes (the production
-	// renderer might shift ",\n    " to ", " or similar
-	// in a future refactor) and gives us the rules as
-	// a typed slice.
 	var doc struct {
 		Acls []map[string]any `json:"acls"`
 	}
@@ -186,20 +193,18 @@ func TestGenerateACL_LastRuleIsTagExitNode(t *testing.T) {
 		t.Fatalf("acls[] is empty: %s", aclStr)
 	}
 	last := doc.Acls[len(doc.Acls)-1]
-	// Marshal the last rule back to a string for the
-	// substring checks below. We use json.Marshal so the
-	// output is canonical (no whitespace surprises).
 	b, _ := json.Marshal(last)
 	lastRule := string(b)
-	if !strings.Contains(lastRule, "tag:exit-node:*") {
-		t.Fatalf("last rule in acls[] does not reference tag:exit-node: %s", lastRule)
-	}
-	// And the last rule must NOT be a catch-all (defence
-	// in depth — the first check above already covers
-	// this, but if both checks fail, the second gives
-	// the operator a clearer error).
+	// (1) Catch-all guard — defence in depth, also
+	// covered by TestGenerateACLValidJSONShape.
 	if strings.Contains(lastRule, `"dst": ["*:*"]`) {
 		t.Fatalf("last rule in acls[] must not be a catch-all: %s", lastRule)
+	}
+	// (2) Internet-egress guard — the last rule must
+	// reference autogroup:internet (the v0.12.0.2 design
+	// choice; any other final rule is a regression).
+	if !strings.Contains(lastRule, "autogroup:internet:*") {
+		t.Fatalf("last rule in acls[] does not reference autogroup:internet: %s", lastRule)
 	}
 }
 

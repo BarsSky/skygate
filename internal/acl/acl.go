@@ -129,21 +129,41 @@ func GenerateACL(d *sql.DB) (string, error) {
 	// Tailscale IP visible to the client, and the ACL
 	// said "yes, you can route to any of them").
 	//
-	// The fix is to drop the catch-all entirely. After the
-	// per-user rules + per-device exit-rules + the two
-	// tag:* rules, the ACL ends. Tailscale's default
-	// semantics ("no rule matches → deny") then close the
-	// door on inter-user traffic. tag:public and
-	// tag:exit-node are still reachable (the explicit
-	// rules above); the operator can still reach the
-	// relay nodes (the ssh[] rules below).
+	// 2026-07-15: v0.12.0.2 — the v0.12.0.1 fix was
+	// over-broad: dropping the catch-all also removed the
+	// internet egress that exit-node routing depends on.
+	// On the operator's Windows box the loss was invisible
+	// (Windows has 240 explicit per-device rules for
+	// direct access to operator IPs), but on Android the
+	// exit-node flow stopped working — Android was relying
+	// on the catch-all as "allow all internet destinations
+	// through whatever exit node the client picked". The
+	// fix is to replace the literal `"*:*"` catch-all with
+	// `autogroup:internet:*` (the Tailscale-recommended
+	// internet-egress primitive). autogroup:internet
+	// matches every IP outside the tailnet's 100.64.0.0/10
+	// range, so:
 	//
-	// The test TestGenerateACLValidJSONShape used to
-	// require `"dst": ["*:*"]` to be present in the
-	// generated ACL — that test was updated to verify
-	// the catch-all is NOT present instead.
+	//   * alice → bob's device  — bob is in 100.64.0.0/10,
+	//     NOT in autogroup:internet. The rule does not
+	//     match. The per-user rule (alice → alice:*) was
+	//     already skipped (dst is not alice's). Falls
+	//     off the end → denied. Security preserved.
+	//
+	//   * alice → 8.8.8.8 via exit node — 8.8.8.8 IS in
+	//     autogroup:internet. The rule matches. Exit node
+	//     routing restored on Android.
+	//
+	// The rule is appended LAST so it doesn't override any
+	// more specific rule (Tailscale first-match). The
+	// structural guarantee: the final rule in acls[] is
+	// now `* → autogroup:internet:*`, NOT `* → *:*`.
+	// TestGenerateACL_LastRuleIsAutogroupInternet pins
+	// this. Help page (help.html) already documents
+	// autogroup:internet as the recommended pattern.
 	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:public:*\"] }")
 	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:exit-node:*\"] }")
+	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"autogroup:internet:*\"] }")
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
