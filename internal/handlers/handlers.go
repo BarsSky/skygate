@@ -9,6 +9,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/monitoring"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
 	"skygate/internal/i18n"
@@ -53,6 +54,15 @@ type App struct {
 	SecretKeyHex string
 	hsCache   map[string]*headscale.Client
 	hsCacheMu sync.Mutex
+
+	// 2026-07-15: v0.13.0 — exit-node health monitor reference.
+	// Set by cmd/skygate/main.go after the monitor's Start()
+	// returns. The "Run health check now" button on
+	// /admin/exit-nodes calls ExitNodeMonitor.CheckNow via
+	// this field. nil if the monitor is disabled
+	// (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off) — handlers must
+	// guard with `if a.ExitNodeMonitor != nil`.
+	ExitNodeMonitor *monitoring.ExitNodeMonitor
 
 	// 2026-07-15: v0.12.0.2 — Telegram probe result cache.
 	// The probe does a real GET to api.telegram.org with a

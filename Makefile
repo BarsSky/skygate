@@ -63,6 +63,19 @@ check-nodes:
 		exit 1; \
 	fi
 
+# 2026-07-15: v0.13.0 — strict variant. Default check-nodes
+# is warn-only (offline exit-nodes produce a WARN line and
+# exit 0); check-nodes-strict hard-fails so CI / automated
+# deploys can enforce "no deploy with an offline exit-node".
+check-nodes-strict:
+	@if [ -x scripts/check_exit_nodes.py ]; then \
+		. ./.env 2>/dev/null && export HEADSCALE_API_KEY && export HEADSCALE_URL=http://localhost:50444 && \
+		python3 scripts/check_exit_nodes.py --strict; \
+	else \
+		echo "scripts/check_exit_nodes.py not found"; \
+		exit 1; \
+	fi
+
 audit-routes:
 	@if [ -f scripts/audit_routes.py ]; then \
 		python3 scripts/audit_routes.py; \

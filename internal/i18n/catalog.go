@@ -462,6 +462,28 @@ var ruCatalog = map[string]string{
 	"exit_nodes.form_desc":            "Описание",
 	"exit_nodes.form_accept_routes":   "Принимать routes",
 	"exit_nodes.delete_confirm":       "Удалить exit node %s?",
+	"exit_nodes.sync_all":             "Sync all",
+	"exit_nodes.syncing":              "Синхронизация…",
+	"exit_nodes.sync_done":            "✓ Готово",
+	"exit_nodes.sync_error":           "✗ Ошибка",
+	// 2026-07-15: v0.13.0 — health monitor UI on
+	// /admin/exit-nodes. Banner fires when 0/N healthy,
+	// columns render the monitor's snapshot. Keep in
+	// lockstep with the EN block below.
+	"exit_nodes.health.banner_zero_healthy":       "Нет рабочих exit-узлов!",
+	"exit_nodes.health.banner_zero_healthy_help":  "Фоновый монитор (v0.13.0) обнаружил 0 здоровых exit-узлов. Проверьте, что выключено / нет сети / нет маршрутов, и нажмите «Run health check now» после исправления.",
+	"exit_nodes.health.run_now":                   "Run health check now",
+	"exit_nodes.health.state":                      "Состояние",
+	"exit_nodes.health.last_seen":                 "Last seen",
+	"exit_nodes.health.ago":                        "назад",
+	"exit_nodes.health.state_online":               "online",
+	"exit_nodes.health.state_offline":              "offline",
+	"exit_nodes.health.state_degraded":             "degraded",
+	"exit_nodes.health.healthy_count":              "здоровых",
+	"exit_nodes.health.healthy_tip":                "healthy: online + tag:exit-node + 0.0.0.0/0 + ::/0",
+	"exit_nodes.health.degraded_tip":               "degraded: online + tag, но маршруты не одобрены",
+	"exit_nodes.health.offline_tip":                "offline: не online или нет tag:exit-node",
+	"exit_nodes.health.no_snapshot_tip":            "no snapshot yet — monitor hasn't ticked for this node",
 
 	// audit
 	"audit.title":                     "Audit log",
@@ -1229,6 +1251,18 @@ var ruCatalog = map[string]string{
 	"bot.exit_nodes.row":                "• %s @%s — %s%s",
 	"bot.exit_nodes.empty":              "exit_nodes: нет узлов с тегом tag:exit-node в node_owner_map —\nпротегируйте узлы из /admin/devices и повторите",
 	"bot.exit_nodes.db_error":           "exit_nodes: ошибка БД: %v",
+	// 2026-07-15: v0.13.0 — /exit_nodes_health command. The
+	// distinct bucket_/row keys feed the grouped-by-state
+	// output (offline first, then degraded, then online).
+	// Keep in lockstep with the EN block below.
+	"bot.exit_nodes_health.header":      "Exit-node health: %d/%d healthy",
+	"bot.exit_nodes_health.all_offline_warning": "⚠️ ALL exit-nodes are offline — clients have no internet egress",
+	"bot.exit_nodes_health.bucket_offline":      "Offline (%d):",
+	"bot.exit_nodes_health.bucket_degraded":     "Degraded (%d):",
+	"bot.exit_nodes_health.bucket_online":       "Online (%d):",
+	"bot.exit_nodes_health.row":                 "• %-16s %-9s last_seen: %-10s last_check: %s",
+	"bot.exit_nodes_health.empty":               "exit_nodes_health: no health snapshot yet — monitor may be disabled or hasn't ticked",
+	"bot.exit_nodes_health.db_error":            "exit_nodes_health: db error: %v",
 	"bot.quota.header":                  "Квоты правил по юзерам (топ по количеству):",
 	"bot.quota.row":                     "• %-16s %4d / %-4s %s %d%%",
 	"bot.quota.total":                   "\nВсего: %d правил",
@@ -1835,6 +1869,26 @@ var enCatalog = map[string]string{
 	"exit_nodes.form_desc":            "Description",
 	"exit_nodes.form_accept_routes":   "Accept routes",
 	"exit_nodes.delete_confirm":       "Delete exit node %s?",
+	"exit_nodes.sync_all":             "Sync all",
+	"exit_nodes.syncing":              "Syncing…",
+	"exit_nodes.sync_done":            "✓ Done",
+	"exit_nodes.sync_error":           "✗ Error",
+	// 2026-07-15: v0.13.0 — keep in lockstep with the
+	// ruCatalog block above.
+	"exit_nodes.health.banner_zero_healthy":       "No healthy exit nodes!",
+	"exit_nodes.health.banner_zero_healthy_help":  "The background monitor (v0.13.0) sees 0 healthy exit nodes. Check what's down / offline / unapproved, and click \"Run health check now\" after fixing.",
+	"exit_nodes.health.run_now":                   "Run health check now",
+	"exit_nodes.health.state":                      "State",
+	"exit_nodes.health.last_seen":                 "Last seen",
+	"exit_nodes.health.ago":                        "ago",
+	"exit_nodes.health.state_online":               "online",
+	"exit_nodes.health.state_offline":              "offline",
+	"exit_nodes.health.state_degraded":             "degraded",
+	"exit_nodes.health.healthy_count":              "healthy",
+	"exit_nodes.health.healthy_tip":                "healthy: online + tag:exit-node + 0.0.0.0/0 + ::/0",
+	"exit_nodes.health.degraded_tip":               "degraded: online + tag, but routes not approved",
+	"exit_nodes.health.offline_tip":                "offline: not online or no tag:exit-node",
+	"exit_nodes.health.no_snapshot_tip":            "no snapshot yet — monitor hasn't ticked for this node",
 
 	// audit
 	"audit.title":                     "Audit log",
@@ -2565,6 +2619,16 @@ var enCatalog = map[string]string{
 	"bot.exit_nodes.row":              "• %s @%s — %s%s",
 	"bot.exit_nodes.empty":            "exit_nodes: (no nodes with tag:exit-node in node_owner_map —\ntag some nodes from /admin/devices, then re-run)",
 	"bot.exit_nodes.db_error":         "exit_nodes: db error: %v",
+	// 2026-07-15: v0.13.0 — keep in lockstep with the
+	// ruCatalog block above.
+	"bot.exit_nodes_health.header":      "Exit-node health: %d/%d healthy",
+	"bot.exit_nodes_health.all_offline_warning": "⚠️ ALL exit-nodes are offline — clients have no internet egress",
+	"bot.exit_nodes_health.bucket_offline":      "Offline (%d):",
+	"bot.exit_nodes_health.bucket_degraded":     "Degraded (%d):",
+	"bot.exit_nodes_health.bucket_online":       "Online (%d):",
+	"bot.exit_nodes_health.row":                 "• %-16s %-9s last_seen: %-10s last_check: %s",
+	"bot.exit_nodes_health.empty":               "exit_nodes_health: no health snapshot yet — monitor may be disabled or hasn't ticked",
+	"bot.exit_nodes_health.db_error":            "exit_nodes_health: db error: %v",
 	"bot.quota.header":                "Per-user rule quota (top users by count):",
 	"bot.quota.row":                   "• %-16s %4d / %-4s %s %d%%",
 	"bot.quota.total":                 "\nTotal: %d rules",
