@@ -878,11 +878,18 @@ func TestMyStatusReplyUser(t *testing.T) {
 	if !strings.Contains(got, "alice") {
 		t.Errorf("expected username in my_status, got: %q", got)
 	}
-	if !strings.Contains(got, "rules: 0") {
-		t.Errorf("expected rules: 0 for alice, got: %q", got)
+	if !strings.Contains(got, "Rules:</b>") {
+		t.Errorf("expected <b>Rules:</b> for alice (v0.15.2 envelope), got: %q", got)
 	}
-	if !strings.Contains(got, "devices: 0") {
-		t.Errorf("expected devices: 0 for alice, got: %q", got)
+	if !strings.Contains(got, "Devices:</b>") {
+		t.Errorf("expected <b>Devices:</b> for alice (v0.15.2 envelope), got: %q", got)
+	}
+	// 2026-07-16: v0.15.2 — butler-voice gate envelope.
+	if !strings.Contains(got, "═══ Skygate ═══") {
+		t.Errorf("expected gate header in /my_status reply, got: %q", got)
+	}
+	if !strings.Contains(got, "═══ — Your butler ═══") {
+		t.Errorf("expected gate footer in /my_status reply, got: %q", got)
 	}
 }
 
