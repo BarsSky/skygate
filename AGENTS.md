@@ -7,7 +7,44 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.12.0 — per-user headscale control plane
+* **Current**: v0.12.0.2 — Android exit-node routing + Telegram
+  tab speed + admin tab RU
+  ([release notes](RELEASE-NOTES-v0.12.0.2.md)). Three
+  operator-visible follow-ups to v0.12.0.1:
+  1. **Android exit-node routing restored** — the v0.12.0.1
+     catch-all removal closed the inter-user security hole but
+     also killed the internet-egress primitive that exit-node
+     routing depends on. The last ACL rule is now
+     `* → autogroup:internet:*` (Tailscale's standard
+     internet-egress group, supported by headscale 0.23+).
+     `autogroup:internet` explicitly excludes the 100.64.0.0/10
+     tailnet range, so inter-user isolation is preserved.
+  2. **`/admin/telegram` no longer blocks for 5 s on every
+     page load** — added a 30 s result cache for the
+     `api.telegram.org` reachability probe, keyed by the
+     bot-token fingerprint. Save / rotate / disable / strict
+     invalidate the cache eagerly. Subsequent GETs within the
+     30 s window render in ~1.5 ms instead of 5 s.
+  3. **Settings + Exit Rules admin tabs fully translated to
+     RU** — 35 new `settings.*` / `exit_rules_admin.*` i18n
+     keys wired through `{{t}}` / `{{tf}}` in the templates
+     (the inline `<script>` for the sync status uses
+     `{{t ... | safeJS}}`). 12/12 packages green, smoke
+     118/118, live headscale policy verified (autogroup:internet
+     present, no `*:*` catch-all).
+* **Previous**: v0.12.0.1 — ACL catch-all security fix +
+  /help Russian translation + login form fixes
+  ([release notes](RELEASE-NOTES-v0.12.0.1.md)). Drops the
+  literal `"*:*"` catch-all from the generated ACL to close
+  the inter-user leak (each portal user could previously
+  reach every other user's `tag:private` device via the
+  catch-all's first-match fallback). The fix breaks exit-node
+  routing on clients without explicit per-device rules;
+  v0.12.0.2 restores it via `autogroup:internet`. Also:
+  full Russian translation of `/help` (92 new `help.*` keys),
+  login form `v0.2` hardcode → `{{.Version}}`, missing NVIDIA
+  theme added to the picker.
+* **Previous**: v0.12.0 — per-user headscale control plane
   ([release notes](RELEASE-NOTES-v0.12.0.md)). Skygate-as-shell
   step 2: each `portal_users` row now carries its own
   `(headscale_url, headscale_api_key)` override, encrypted
