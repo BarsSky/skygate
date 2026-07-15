@@ -1122,10 +1122,22 @@ var ruCatalog = map[string]string{
 	"bot.header.del":                  "Готово — удалено",
 	"bot.header.err":                  "Дверь закрыта",
 	"bot.header.welcome_back":         "С возвращением",
+	// 2026-07-16: v0.15.2 — butler-voice envelope
+	// (gate-style dividers + time-of-day greeting).
+	// Used by butlerEnvelope() in internal/telegram/envelope.go
+	// to render every bot reply. Morning/afternoon/evening/night
+	// are picked from time.Now().Hour() in the caller's locale.
+	"bot.envelope.greeting.morning":   "Доброе утро",
+	"bot.envelope.greeting.afternoon": "Добрый день",
+	"bot.envelope.greeting.evening":   "Добрый вечер",
+	"bot.envelope.greeting.night":     "Доброй ночи",
 	// Sign-off line at the end of long replies
 	// (more than 3 body lines or > 300 runes). Short
 	// confirmations ("Rule added") skip it to keep
-	// the message feeling crisp.
+	// the message feeling crisp. v0.10.12 signoff D —
+	// re-exposed as bot.envelope.signoff for the new
+	// gate-style envelope (was bot.footer.signoff).
+	"bot.envelope.signoff":            "Ваш Дворецкий",
 	"bot.footer.signoff":              "Ваш Дворецкий",
 	"bot.welcome.sealed_intro":         "Чат ещё не привязан. Назовите своё имя — и я запомню вас как хозяина этого чата.",
 	"bot.welcome.bind_title":           "Чтобы привязать этот чат к аккаунту skygate:",
@@ -1394,6 +1406,15 @@ var ruCatalog = map[string]string{
 	"bot.add_device.persist_failed":     "add_device: не удалось сохранить ключ: %v",
 	"bot.add_device.audit_failed":       "add_device: не удалось записать audit: %v",
 	"bot.add_device.ok":                 "add_device: одноразовый ключ на час для %s:\n\n<code>%s</code>\n\nКлюч сгорает через час или после первого использования. Вставьте его в устройство, чтобы зарегистрировать в tailnet. Ниже — кнопка «Скопировать» и инструкции для разных платформ.",
+	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
+	// /add_device. The full reply is composed by butlerEnvelope()
+	// in internal/telegram/envelope.go; these three keys are
+	// the title / subheader / footer-hint that go inside it.
+	// Splitting them out keeps each string ≤30 words so the
+	// total envelope stays under the 80-word mobile budget.
+	"bot.add_device.title":             "Ваш одноразовый ключ на час",
+	"bot.add_device.subheader":          "Вставьте его в устройство, чтобы зарегистрировать его в tailnet.",
+	"bot.add_device.footer":             "Ключ сгорает через час или после первого использования.",
 	"bot.add_device.copy_button":        "Скопировать",
 	"bot.add_rule.not_bound":            "add_rule: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login <ключ>.",
 	"bot.add_rule.usage":                "add_rule: формат — /add_rule <target> [deny]\n       /add_rule <username> <target> [deny]   (только админ)",
@@ -2576,6 +2597,18 @@ var enCatalog = map[string]string{
 	"bot.header.del":                  "Removed",
 	"bot.header.err":                  "A Closed Door",
 	"bot.header.welcome_back":         "Welcome Back",
+	// 2026-07-16: v0.15.2 — butler-voice envelope
+	// (gate-style dividers + time-of-day greeting).
+	// Mirror of the Russian block; see butlerEnvelope()
+	// in internal/telegram/envelope.go.
+	"bot.envelope.greeting.morning":   "Good morning",
+	"bot.envelope.greeting.afternoon": "Good afternoon",
+	"bot.envelope.greeting.evening":   "Good evening",
+	"bot.envelope.greeting.night":     "Good night",
+	// Sign-off at the end of long replies. v0.10.12
+	// signoff D; re-exposed as bot.envelope.signoff
+	// for the gate-style envelope (was bot.footer.signoff).
+	"bot.envelope.signoff":            "Your butler",
 	"bot.footer.signoff":              "Your butler",
 	"bot.welcome.sealed_intro":         "The gate is sealed. Send your name into the embers and the wardens will know you.",
 	"bot.welcome.bind_title":           "To bind this chat to your skygate account:",
@@ -2827,6 +2860,12 @@ var enCatalog = map[string]string{
 	"bot.add_device.persist_failed":   "add_device: persist key failed: %v",
 	"bot.add_device.audit_failed":     "add_device: audit write failed: %v",
 	"bot.add_device.ok":               "add_device: 1h key for %s (single-use):\n\n<code>%s</code>\n\nExpires in 1h. Paste into the device to register it in the tailnet. Below — a \"📋 Copy\" button and instructions for each platform.",
+	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
+	// /add_device (EN). Mirror of the RU block; see
+	// butlerEnvelope() in internal/telegram/envelope.go.
+	"bot.add_device.title":           "Your 1h single-use key",
+	"bot.add_device.subheader":        "Paste it into the device to register it in the tailnet.",
+	"bot.add_device.footer":           "Expires in 1h, or after first use.",
 	"bot.add_device.copy_button":      "Copy",
 	"bot.add_rule.not_bound":          "add_rule: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.add_rule.usage":              "add_rule: usage: /add_rule <target> [deny]\n       /add_rule <username> <target> [deny]   (admin only)",

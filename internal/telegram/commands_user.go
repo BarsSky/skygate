@@ -487,13 +487,21 @@ func addDeviceReply(env BotEnv, arg string) string {
 	// callback handler in notify.go renders the per-platform
 	// install instructions.
 	pendingReplyForCurrentMessage = buildPlatformPicker(lang, key.Key)
-	// 2026-07-15: v0.14.1 — pendingReply ships with
-	// parse_mode=HTML (so the <code>key</code> renders as
-	// monospace on Telegram), so we must HTML-escape the
-	// username before substituting it. The preauth key
-	// is always [A-Za-z0-9_-] and safe without escaping,
-	// but we still let escapeHTML run on it for consistency.
-	return i18n.Tf(lang, "bot.add_device.ok", escapeHTML(target.Username), escapeHTML(key.Key))
+	// 2026-07-16: v0.15.2 — butler-voice gate-style envelope.
+	// The reply is wrapped in "═══ Skygate ═══ … ═══ — Ваш
+	// Дворецкий ═══" with time-of-day greeting, title in
+	// <b>, subheader in <blockquote>, the key in <pre>, and
+	// a next-steps hint in <i>. Parse_mode is HTML (already
+	// set by buildPlatformPicker), and the username / key
+	// are pre-escaped to keep HTML parse from 400ing.
+	return butlerEnvelope(
+		lang, target.Username,
+		i18n.T(lang, "bot.add_device.title"),       // "Ваш одноразовый ключ на час"
+		i18n.T(lang, "bot.add_device.subheader"),    // "Вставьте его в устройство..."
+		"<pre>"+escapeHTML(key.Key)+"</pre>",
+		i18n.T(lang, "bot.add_device.footer"),       // "Ключ сгорает через час..."
+		WithIcon("🔑"),
+	)
 }
 
 // addRuleReply adds a new exit-rule for the caller (or, for admins,
