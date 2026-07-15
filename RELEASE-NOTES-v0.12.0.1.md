@@ -94,6 +94,22 @@ every key in `ruCatalog` also exists in `enCatalog`.
 - `internal/handlers/templates/help.html` — rewrite
   to use `{{t "..."}}` for every text segment.
 
+**Login form:**
+
+- `internal/handlers/handlers_auth.go` — `GetLogin` and
+  `PostLogin` now pass `Version` (the build-time ldflags
+  value) to the template. Falls back to "dev" for
+  `go run` builds.
+- `internal/handlers/templates/login.html` — the
+  brand-ver badge now shows `{{.Version}}` instead of
+  the hard-coded "v0.2". The theme picker now lists all
+  4 themes (Linear / Vercel / Sentry / NVIDIA — the
+  last one was missing entirely from the picker). The
+  inline CSS also gets a matching `[data-theme="nvidia"]`
+  block (sharp corners, NVIDIA green accent) so the
+  NVIDIA theme renders correctly when picked on the
+  login screen.
+
 **No deploy script change.** The security fix is
 pushed to headscale via the existing reapply endpoint
 (`/admin/exit-rules/reapply`). The translation change
