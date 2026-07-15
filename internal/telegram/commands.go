@@ -565,6 +565,9 @@ func statusReply(env BotEnv) string {
 	if err := env.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success=1`).Scan(&lastACL); err != nil {
 		return i18n.Tf(env.Lang, "bot.status.db_error", err)
 	}
+	// 2026-07-16: v0.15.2 — gate envelope is applied by
+	// Compose() in HandleCommand. We just return the body
+	// (4 short data lines) and let the v2 envelope wrap it.
 	return i18n.T(env.Lang, "bot.status.header") + "\n" +
 		i18n.Tf(env.Lang, "bot.status.rules", totalRules) + "\n" +
 		i18n.Tf(env.Lang, "bot.status.users", totalUsers) + "\n" +

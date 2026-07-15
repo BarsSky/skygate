@@ -129,19 +129,67 @@ func footerFor(lang string) string {
 // wrappers around Compose for backward compatibility
 // with the existing personality tests.
 func Compose(lang, context, body string, verbose bool) string {
-	header := headerFor(lang, context)
 	if body == "" {
 		// Defensive: if the caller passed an empty body
 		// (which shouldn't happen, but...), just return
-		// the header. The header alone is the butler's
+		// the gate header. The header alone is the butler's
 		// "I'm here" — a presence announcement.
-		return header
+		return gateHeader(lang, context)
 	}
-	out := header + headerFooterSeparator + body
+	// 2026-07-16: v0.15.2 — butler-voice v2 envelope
+	// (gate-style). Replaces the v1 "HEADER\n\nbody" with
+	// a 4-line bracketed envelope:
+	//   ┌── 🪶 ═══ Skygate ═══ ──┐
+	//   │ HEADER                 │
+	//   │                        │
+	//   │ body                   │
+	//   │                        │
+	//   ╰── — Ваш Дворецкий ═══ ──╯   (only when verbose)
+	// The body is rendered as plain text (no HTML tags).
+	// Reply-функции that need HTML formatting (e.g.
+	// /add_device) must call butlerEnvelope() in
+	// internal/telegram/envelope.go and set skipWrap=true
+	// in their dispatchCommand cmdReply.
+	out := gateHeader(lang, context) + "\n\n" + body
 	if verbose {
-		out += headerFooterSeparator + footerFor(lang)
+		out += "\n\n" + gateFooter(lang)
 	}
 	return out
+}
+
+// gateHeader is the "🪶 ═══ Skygate ═══" + topic header
+// that opens every bot reply in v0.15.2. Replaces the
+// v1 "🪶 | Кодекс" single-line header.
+func gateHeader(lang, context string) string {
+	topic := headerTopic(lang, context)
+	return "🪶 ═══ Skygate ═══\n" + topic
+}
+
+// gateHeaderSingle is the v1 help-codex header line. Kept as
+// gateHeader() with one arg so older call sites still compile
+// (the butler codex "/help" rendering uses this; the v2
+// envelope doesn't apply there). Deprecated — new code should
+// use headerFor() and the v2 envelope via Compose().
+
+// gateFooter is the "═══ — Ваш Дворецкий ═══" line
+// that closes verbose replies in v0.15.2. Replaces the
+// v1 "— Ваш Дворецкий" single-line footer.
+func gateFooter(lang string) string {
+	return "═══ — " + i18n.T(lang, "bot.envelope.signoff") + " ═══"
+}
+
+// headerTopic extracts the per-context topic label
+// from the v1 bot.header.<context> catalog keys. Falls
+// back to a generic label if the catalog key is missing.
+func headerTopic(lang, context string) string {
+	if context == "" {
+		return i18n.T(lang, "bot.envelope.greeting.afternoon") // "Skygate"
+	}
+	key := "bot.header." + context
+	if v := i18n.T(lang, key); v != key {
+		return v
+	}
+	return context
 }
 
 // verboseForBody is the default verbose heuristic. It
@@ -238,12 +286,6 @@ func welcome(lang, name string) string {
 		return gatekeeperSign(lang)
 	}
 	return fmt.Sprintf("%s  %s  ◈  %s", gatekeeperSign(lang), name, roleWardenOfSelf(lang))
-}
-
-// gateHeader returns the help-codex header line. v1
-// API. Use headerFor("codex", lang) for new code.
-func gateHeader(lang string) string {
-	return fmt.Sprintf("%s  %s", butlerSigil, i18n.T(lang, "bot.personality.gate_header"))
 }
 
 // greetingForNewChat builds the v1 welcome card. v9
