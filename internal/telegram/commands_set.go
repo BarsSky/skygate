@@ -189,6 +189,7 @@ var DefaultMyCommandsSpec = MyCommandsSpec{
 // specify a recommended timeout, but the average reply
 // is <300ms.
 func (n *RealNotifier) SetMyCommandsAll(ctx context.Context, spec MyCommandsSpec) error {
+	log.Printf("telegram: SetMyCommandsAll: ENTER apiBase=%q db=%v", n.apiBase, n.db != nil)
 	if n.apiBase == "" || n.db == nil {
 		return fmt.Errorf("SetMyCommandsAll: notifier not configured")
 	}
@@ -196,6 +197,7 @@ func (n *RealNotifier) SetMyCommandsAll(ctx context.Context, spec MyCommandsSpec
 	if err != nil || !ok {
 		return fmt.Errorf("SetMyCommandsAll: token not configured: %v", err)
 	}
+	log.Printf("telegram: SetMyCommandsAll: token loaded, ok=%v", ok)
 	// Register one menu per supported language. The first
 	// entry (no language_code) is the fallback Telegram
 	// uses for clients whose language we don't cover; the
@@ -203,6 +205,7 @@ func (n *RealNotifier) SetMyCommandsAll(ctx context.Context, spec MyCommandsSpec
 	supportedLangs := []string{"", i18n.LangEN, i18n.LangRU}
 	for _, lang := range supportedLangs {
 		cmds := spec.resolve(langOrEN(lang))
+		log.Printf("telegram: SetMyCommandsAll: posting lang=%q cmds=%d", lang, len(cmds))
 		if err := postSetMyCommands(ctx, n, token, "default", lang, cmds); err != nil {
 			// Don't abort the whole registration on one
 			// language's failure — log and continue. The
