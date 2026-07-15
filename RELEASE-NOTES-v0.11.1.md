@@ -176,7 +176,7 @@ Python one-liner are still the source of truth for cold installs.
 
 ## Tests
 
-12/12 packages green, 18 new tests:
+12/12 packages green, 21 new tests:
 
 - `TestRenderHeadscaleConfig_BasicSubstitution` — `${VAR}` expanded
 - `TestRenderHeadscaleConfig_PreservesMissingEnv` — `${VAR}` kept on miss
@@ -185,7 +185,7 @@ Python one-liner are still the source of truth for cold installs.
 - `TestRenderHeadscaleCompose_StripsHeadplaneWhenOff` — off → strip service + volume
 - `TestRenderHeadscaleCompose_StripsHeadplaneWhenExternal` — external → strip
 - `TestStripHeadplaneServiceBlock_NoOpWhenAbsent` — pure helper no-op
-- `TestApplyHeadscale_PushesAndSIGHUPs` — exactly 2 docker calls in order, stdin contains rendered body
+- `TestApplyHeadscale_PushesAndSIGHUPs` — `docker cp` + `docker kill -s HUP` in order
 - `TestApplyBundledDERP_StartsWhenEnabled` — inspect + start
 - `TestApplyBundledDERP_StopsWhenDisabled` — inspect + stop
 - `TestApplyBundledDERP_NoOpWhenStateMatches` — inspect only
