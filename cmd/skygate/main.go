@@ -425,6 +425,14 @@ func main() {
 		CheckEvery:   cfg.ExitNodeCheckInterval,
 		OfflineAfter: cfg.ExitNodeOfflineAfter,
 		OnStartup:    cfg.ExitNodeOnStartup,
+		// v0.14.1: when true, the monitor's per-tick path
+		// also calls db.SyncNodesFromHeadscale so new
+		// exit-nodes appear in /admin/exit-nodes and the
+		// bot's /exit_nodes without an admin button click.
+		// Off by default; the explicit
+		// /admin/devices "Sync from headscale" button is
+		// still the recommended path.
+		AutoSync:     cfg.ExitNodeAutoSync,
 	}
 	exitMon.Start(ctx)
 	// Stash the monitor on the App so handlers can call

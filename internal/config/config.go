@@ -56,6 +56,16 @@ type Config struct {
 	ExitNodeCheckInterval time.Duration
 	ExitNodeOnStartup     bool
 	ExitNodeOfflineAfter  time.Duration
+	// 2026-07-15: v0.14.1 — auto-heal node_owner_map sync.
+	// When true, the monitor's per-tick path also calls
+	// db.SyncNodesFromHeadscale (INSERTs missing rows,
+	// UPDATEs drifted tags) before classifying exit-nodes.
+	// Default false (opt-in) so an operator running a
+	// multi-thousand-node tailnet doesn't pay a full
+	// node_owner_map write per 5-min tick without asking
+	// for it. Set to "true" once you're comfortable with
+	// the per-tick cost.
+	ExitNodeAutoSync bool
 }
 
 func Load() (*Config, error) {
@@ -86,6 +96,16 @@ func Load() (*Config, error) {
 		ExitNodeCheckInterval: getDuration("SKYGATE_EXIT_NODE_CHECK_INTERVAL", 5*time.Minute),
 		ExitNodeOnStartup:     getenv("SKYGATE_EXIT_NODE_CHECK_ON_STARTUP", "true") == "true",
 		ExitNodeOfflineAfter:  getDuration("SKYGATE_EXIT_NODE_OFFLINE_AFTER", 2*time.Minute),
+		// 2026-07-15: v0.14.1 — auto-heal sync (opt-in).
+		// Operators who already use the admin "Sync from
+		// headscale" button can leave this false; the
+		// monitor's job is just the health check, and
+		// /admin/devices is where the explicit sync lives.
+		// Set SKYGATE_EXIT_NODE_AUTO_SYNC=true on a
+		// single-tailnet deployment where the
+		// always-current view matters more than the
+		// per-tick write cost.
+		ExitNodeAutoSync: getenv("SKYGATE_EXIT_NODE_AUTO_SYNC", "false") == "true",
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {

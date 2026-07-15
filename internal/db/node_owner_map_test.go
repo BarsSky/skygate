@@ -44,6 +44,7 @@ func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 			node_id           TEXT PRIMARY KEY,
 			headscale_user_id INTEGER NOT NULL DEFAULT 0,
 			username          TEXT NOT NULL DEFAULT '',
+			user_id           INTEGER NOT NULL DEFAULT 0,
 			tag               TEXT NOT NULL DEFAULT '',
 			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
 			tagged_at         INTEGER NOT NULL DEFAULT 0,

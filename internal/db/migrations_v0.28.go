@@ -35,6 +35,19 @@ func migrateV028(d *sql.DB) error {
 		`ALTER TABLE node_owner_map ADD COLUMN tag TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE node_owner_map ADD COLUMN tagged_by_user_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE node_owner_map ADD COLUMN tag TEXT NOT NULL DEFAULT ''`, // safe no-op if V028 ran twice
+		// 2026-07-15: v0.14.1 — the original V028 ALTER list
+		// forgot tagged_at. Production DBs got the column
+		// out-of-band (commit a8b07f8 added INSERT OR REPLACE
+		// before V028 ran, so a manual ALTER was the only way
+		// for a fresh install to work), but the v0.25
+		// CREATE+ALTER chain + the v0.14.1 test suite
+		// exposed the gap: db.UpsertNodeOwner panics on a
+		// fresh DB with "no column named tagged_at". Adding
+		// the ALTER here closes the gap for new installs;
+		// the _, _ = d.Exec(q) below swallows the "duplicate
+		// column" error so the migration stays idempotent on
+		// existing installs.
+		`ALTER TABLE node_owner_map ADD COLUMN tagged_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE preauth_keys ADD COLUMN headscale_preauth_id TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, q := range stmts {

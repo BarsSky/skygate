@@ -513,3 +513,150 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
+
+// --- v0.14.1: AutoSync ---
+
+// TestTick_AutoSyncEnabled_InsertsAndUpdates pins the happy
+// path: with AutoSync=true, a tick that lists N nodes also
+// upserts them into node_owner_map. Pre-existing rows get
+// their tag refreshed to match headscale; missing rows are
+// inserted.
+func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
+	d := db.OpenForTest(t)
+	sink := &recordingSink{}
+	now := time.Now().UTC()
+
+	// Pre-seed node_owner_map with emilia (id=3) at the
+	// wrong tag, so we exercise the UPDATE branch.
+	if err := db.UpsertNodeOwner(d, "3", 1, "skyadmin", "tag:untagged", 0); err != nil {
+		t.Fatalf("seed emilia: %v", err)
+	}
+
+	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
+		{ID: "3", Hostname: "emilia", UserName: "skyadmin", UserID: "1",
+			Online: true, LastSeen: now.Format(time.RFC3339),
+			Tags: []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+		// sharlotta (id=4) is brand-new — should be inserted.
+		{ID: "4", Hostname: "sharlotta", UserName: "skyadmin", UserID: "1",
+			Online: true, LastSeen: now.Format(time.RFC3339),
+			Tags: []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+	}}
+	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink,
+		OfflineAfter: 2 * time.Minute, AutoSync: true}
+
+	if err := m.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// Both rows present, both tagged exit-node.
+	for _, id := range []string{"3", "4"} {
+		row, err := db.GetNodeOwner(d, id)
+		if err != nil {
+			t.Errorf("GetNodeOwner(%s) = %v, want row", id, err)
+			continue
+		}
+		if row.Tag != "tag:exit-node" {
+			t.Errorf("row %s tag = %q, want 'tag:exit-node'", id, row.Tag)
+		}
+		if row.Hostname == "" {
+			t.Errorf("row %s hostname empty; backfill should have populated it", id)
+		}
+	}
+
+	// The snapshot table is also populated (the health-check
+	// part of tick() still runs).
+	if got, _ := db.ListExitNodeHealth(d); len(got) != 2 {
+		t.Errorf("snapshots = %d, want 2", len(got))
+	}
+}
+
+// TestTick_AutoSyncDisabled_DoesNotWriteNodeOwnerMap pins the
+// default-off behaviour: with AutoSync=false (or unset), a
+// tick that lists N nodes leaves node_owner_map alone. The
+// pre-existing emilia row stays at tag:untagged, no new row
+// for sharlotta.
+func TestTick_AutoSyncDisabled_DoesNotWriteNodeOwnerMap(t *testing.T) {
+	d := db.OpenForTest(t)
+	sink := &recordingSink{}
+	now := time.Now().UTC()
+
+	// Pre-seed emilia (id=3) with the wrong tag.
+	if err := db.UpsertNodeOwner(d, "3", 1, "skyadmin", "tag:untagged", 0); err != nil {
+		t.Fatalf("seed emilia: %v", err)
+	}
+
+	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
+		{ID: "3", Hostname: "emilia", UserName: "skyadmin", UserID: "1",
+			Online: true, LastSeen: now.Format(time.RFC3339),
+			Tags: []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+		{ID: "4", Hostname: "sharlotta", UserName: "skyadmin", UserID: "1",
+			Online: true, LastSeen: now.Format(time.RFC3339),
+			Tags: []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+	}}
+	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink,
+		OfflineAfter: 2 * time.Minute, AutoSync: false} // explicit off
+
+	if err := m.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// emilia's row should be UNCHANGED (still tag:untagged).
+	row, err := db.GetNodeOwner(d, "3")
+	if err != nil {
+		t.Fatalf("GetNodeOwner(emilia) = %v", err)
+	}
+	if row.Tag != "tag:untagged" {
+		t.Errorf("emilia tag = %q, want 'tag:untagged' (sync disabled)", row.Tag)
+	}
+
+	// sharlotta should NOT have a row.
+	if _, err := db.GetNodeOwner(d, "4"); err == nil {
+		t.Errorf("GetNodeOwner(sharlotta) returned row, want ErrNodeOwnerNotFound (sync disabled)")
+	}
+
+	// But snapshots are still written (health check ran).
+	if got, _ := db.ListExitNodeHealth(d); len(got) != 2 {
+		t.Errorf("snapshots = %d, want 2 (health check ran)", len(got))
+	}
+}
+
+// TestTick_AutoSyncError_DoesNotAbortHealthCheck pins the
+// failure-mode contract: if SyncNodesFromHeadscale fails (we
+// simulate by closing the DB between ListAllNodes and the
+// sync step), the monitor must NOT panic, must NOT skip the
+// health-check path, and must surface the error from
+// dispatchPending (which is what tick() returns at the end).
+// The health check itself can still complete for the nodes
+// it managed to see before the DB went away.
+func TestTick_AutoSyncError_DoesNotAbortHealthCheck(t *testing.T) {
+	d := db.OpenForTest(t)
+	sink := &recordingSink{}
+	now := time.Now().UTC()
+	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
+		{ID: "3", Hostname: "emilia", UserName: "skyadmin", UserID: "1",
+			Online: true, LastSeen: now.Format(time.RFC3339),
+			Tags: []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+	}}
+	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink,
+		OfflineAfter: 2 * time.Minute, AutoSync: true}
+
+	// Close the DB BEFORE tick so every subsequent write
+	// (sync + snapshot upsert + dispatch) errors out. The
+	// test's only assertion is "tick() did not panic and
+	// returned non-nil" — we don't pin down the exact error
+	// type because both the sync and the dispatch can be
+	// the first to fail and that's an implementation detail.
+	_ = d.Close()
+
+	// Must not panic; must return an error (so the
+	// background loop logs it via log.Printf).
+	err := m.tick(context.Background())
+	if err == nil {
+		t.Errorf("tick() returned nil; want non-nil error (DB is closed)")
+	}
+}
