@@ -327,7 +327,7 @@ const (
 	qDeleteNodeOwnerByID        = `DELETE FROM node_owner_map WHERE node_id = ? AND username = ?`
 	qDeleteNodeOwnerByNodeTag   = `DELETE FROM node_owner_map WHERE node_id = ? AND tag = ?`
 	qCountNodeOwnerByNodeUser   = `SELECT COUNT(*) FROM node_owner_map WHERE node_id = ? AND username = ?`
-	qInsertOrReplaceNodeOwner   = `INSERT OR REPLACE INTO node_owner_map (node_id, headscale_user_id, username, user_id, tag, tagged_by_user_id, tagged_at) VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now'))`
+	qInsertOrReplaceNodeOwner   = `INSERT OR REPLACE INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at) VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'))`
 	qUpdateNodeOwnerTag         = `UPDATE node_owner_map SET tag = ?, tagged_by_user_id = ?, tagged_at = strftime('%s', 'now') WHERE node_id = ? AND username = ?`
 )
 
