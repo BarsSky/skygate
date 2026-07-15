@@ -43,6 +43,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -106,6 +107,18 @@ type ExitNodeMonitor struct {
 	// sends the "0 healthy" alert on the first tick instead of
 	// waiting up to CheckEvery. Default true.
 	OnStartup bool
+
+	// AutoSync (v0.14.1) — when true, the tick path also
+	// calls db.SyncNodesFromHeadscale before classifying
+	// nodes, so /admin/exit-nodes and the bot's /exit_nodes
+	// always see the latest headscale→portal mapping. The
+	// cost is one SELECT + one INSERT-or-UPDATE per node
+	// per tick; off by default so operators with large
+	// tailnets can opt in deliberately. On a single-tailnet
+	// deployment (the typical Skygate install) the cost is
+	// negligible and the value (no orphan exit-nodes in
+	// the UI) is worth turning it on.
+	AutoSync bool
 
 	mu sync.Mutex // serialises CheckNow → tick(); the goroutine itself is single-threaded
 }
@@ -195,6 +208,46 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 	}
 
 	now := time.Now().UTC()
+
+	// 1.5. Auto-heal node_owner_map (v0.14.1). When the
+	// operator enables AutoSync, every tick upserts the
+	// headscale→portal mapping for the nodes we just
+	// listed, so /admin/exit-nodes and the bot's /exit_nodes
+	// always see the latest view without an admin button
+	// click. A failure here is logged but does NOT abort
+	// the health-check path — the snapshot update is the
+	// monitor's main job, and a transient sync failure
+	// (e.g. SQLITE_BUSY on a write-locked row) shouldn't
+	// suppress an exit-node alert.
+	if m.AutoSync {
+		infos := make([]db.SyncNodeInfo, 0, len(nodes))
+		for _, n := range nodes {
+			tag := ""
+			if len(n.Tags) > 0 {
+				tag = n.Tags[0]
+			}
+			hsUID, _ := strconv.ParseInt(n.UserID, 10, 64)
+			infos = append(infos, db.SyncNodeInfo{
+				ID:       n.ID,
+				Hostname: n.Hostname,
+				Tag:      tag,
+				Username: n.UserName,
+				HSUserID: hsUID,
+				TaggedBy: 0, // system sync (the admin /sync_nodes path also uses 0)
+			})
+		}
+		ins, upd, serr := db.SyncNodesFromHeadscale(m.DB, infos)
+		if serr != nil {
+			log.Printf("exit-node-monitor: auto-sync failed: %v", serr)
+		} else {
+			// Always log, not just on changes: silent
+			// ticks make it hard to confirm the feature is
+			// working. A typical tick is "0 inserted, 0
+			// updated" — the operator wants to see that
+			// line every CheckEvery.
+			log.Printf("exit-node-monitor: auto-sync inserted=%d updated=%d", ins, upd)
+		}
+	}
 
 	// 2 + 3. Update snapshots and detect transitions.
 	liveIDs := make(map[string]struct{}, len(nodes))
