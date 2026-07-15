@@ -181,9 +181,30 @@ func (a *App) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 // operator sees the steps in the green / red flash so
 // they can see exactly what the renderer did (and
 // where it failed, if anything).
+//
+// We reload the full IntegrationConfig from the DB
+// before applying. The DERP form only carries the
+// DERP-related fields; if we passed the form-derived
+// cfg to applyAll, the headplane branch would see
+// empty values and could stop the running headplane
+// container unintentionally. Re-loading ensures the
+// apply reflects the FULL saved config, not just the
+// one form's fields.
 func (a *App) applyAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, w http.ResponseWriter, r *http.Request) {
+	full, err := db.LoadIntegrationsFromOS(a.DB)
+	if err != nil {
+		derpConfigRedirect(w, r, "", "Load full config: "+err.Error())
+		return
+	}
+	// Overwrite the DERP-related fields with what the
+	// form just submitted (Save ran first, so the DB
+	// already has these; this is a belt-and-braces
+	// re-read).
+	full.DERPExternalURLs = cfg.DERPExternalURLs
+	full.BundledDERP = cfg.BundledDERP
+
 	rndr := newRenderer()
-	res := rndr.applyAll(cfg)
+	res := rndr.applyAll(full)
 	lang := a.I18n.LangFromRequest(r)
 	_ = lang
 
@@ -314,7 +335,11 @@ func (a *App) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 	if action == "apply" {
 		// Same pattern as the DERP apply path: re-render
 		// the page with the apply trace inline so the
-		// operator sees what happened.
+		// operator sees what happened. We pass the
+		// full current config (which has the just-saved
+		// Headplane fields + the already-saved DERP
+		// fields) so the renderer doesn't accidentally
+		// affect unrelated state.
 		rndr := newRenderer()
 		res := rndr.applyAll(current)
 		trace := strings.Join(res.Steps, " | ")
