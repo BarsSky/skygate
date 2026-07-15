@@ -243,6 +243,7 @@ var commandContext = map[string]string{
 	"/rules":             "registry",
 	"/audit":             "registry",
 	"/exit_nodes":        "registry",
+	"/exit_nodes_health": "registry",
 	"/quota":             "registry",
 	"/ack":               "ack",
 	"/restart":           "err", // operator warning
@@ -373,7 +374,7 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 	// /help command itself can be called by anyone.
 	adminOnly := map[string]bool{
 		"/status": true, "/nodes": true, "/rules": true, "/audit": true,
-		"/exit_nodes": true, "/quota": true, "/ack": true, "/restart": true,
+		"/exit_nodes": true, "/exit_nodes_health": true, "/quota": true, "/ack": true, "/restart": true,
 		"/bind": true, "/unbind": true,
 	}
 	if adminOnly[cmd] && env.IsIdentified() && !env.IsAdmin {
@@ -398,6 +399,8 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: auditReply(env), context: lookupContext(cmd)}
 	case "/exit_nodes":
 		return cmdReply{body: exitNodesReply(env), context: lookupContext(cmd)}
+	case "/exit_nodes_health":
+		return cmdReply{body: exitNodesHealthReply(env), context: lookupContext(cmd)}
 	case "/quota":
 		return cmdReply{body: quotaReply(env), context: lookupContext(cmd)}
 	case "/ack":

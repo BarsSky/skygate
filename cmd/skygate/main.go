@@ -22,6 +22,7 @@ import (
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
+	"skygate/internal/monitoring"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
 )
@@ -285,6 +286,13 @@ func main() {
 	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(app.PostAdminExitNodesAdd)))
 	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(app.PostAdminExitNodesDelete)))
 	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(app.PostAdminExitNodesSync)))
+	// 2026-07-15: v0.13.0 — "Run health check now" button on
+	// /admin/exit-nodes. Admin-only. Triggers the background
+	// monitor's CheckNow synchronously and redirects back to
+	// the page so the operator sees the fresh state. The
+	// monitor's own internal mutex serialises concurrent
+	// clicks.
+	mux.Handle("POST /admin/exit-nodes/health-now", authMW(http.HandlerFunc(app.PostAdminExitNodesHealthNow)))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -385,6 +393,30 @@ func main() {
 		CheckEvery: 1 * time.Hour,
 	}
 	releaseMon.Start(ctx)
+
+	// 2026-07-15: v0.13.0 — exit-node health monitor.
+	// Background goroutine that polls headscale every
+	// cfg.ExitNodeCheckInterval (default 5 min), updates the
+	// exit_node_health snapshot, and dispatches calm-mode
+	// alerts (online↔offline transitions) via the
+	// Notifier. The "Run health check now" button on
+	// /admin/exit-nodes and the /exit_nodes_health bot
+	// command both read the same DB rows the monitor
+	// writes. cfg.ExitNodeCheckInterval = 0 disables the
+	// monitor (the deploy-time check
+	// scripts/check_exit_nodes.py still runs).
+	exitMon := &monitoring.ExitNodeMonitor{
+		DB:           d,
+		HS:           app.HS,
+		Notifier:     app.Notifier,
+		CheckEvery:   cfg.ExitNodeCheckInterval,
+		OfflineAfter: cfg.ExitNodeOfflineAfter,
+		OnStartup:    cfg.ExitNodeOnStartup,
+	}
+	exitMon.Start(ctx)
+	// Stash the monitor on the App so handlers can call
+	// CheckNow for the manual "Run health check now" button.
+	app.ExitNodeMonitor = exitMon
 
 	<-ctx.Done()
 	log.Println("🌐 shutting down")
