@@ -7,34 +7,44 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.14.0 — bot UX overhaul
+* **Current**: v0.15.0 — HTTPS / TLS via Caddy
+  ([release notes](RELEASE-NOTES-v0.15.0.md)). The
+  "make the tailnet's control plane actually speak
+  HTTPS" release. Adds a Caddy sidecar that terminates
+  TLS for skygate, headscale, and headplane; auto-issues
+  Let's Encrypt certs via the DNS-01 challenge (no
+  port-80 inbound required); per-hostname routing
+  inside a single 30-line Caddyfile. No nginx Proxy
+  Manager, no PHP, no DB. DERP relay already did TLS
+  itself (certmode=letsencrypt).
+  * `docs/https-setup.md` — 17KB operator guide with
+    per-module checklist, full rendered Caddyfile,
+    verification commands, alternatives for tailnet-only
+    / headscale-only / Tailscale TLS deployments.
+  * `scripts/check_https.py` — deploy-time HTTPS check
+    (TLS handshake, cert SAN, cert validity, HTTP→HTTPS
+    redirect, HSTS on /login; --strict hard-fail
+    variant). Wired into `make test`.
+  * Per-module: skygate no change, headscale no change
+    (gRPC stays `grpc_allow_insecure: true` because
+    the hop is on the internal Docker network), headplane
+    one env var (`COOKIE_SECURE=true`), DERP no change.
+  * 8 new `.env` vars under "HTTPS reverse proxy
+    (Caddy, v0.15.0)". DNS-01 API token in a separate
+    0600 file (not in `.env`).
+  * `make check-https` + `make check-https-strict`
+    targets; `make test` now runs `check-https`.
+  * 12/12 packages green, `bash -n deploy.sh` OK.
+* **Previous**: v0.14.0 — bot UX overhaul
   ([release notes](RELEASE-NOTES-v0.14.0.md)). The
   "make the bot usable" release. Five operator-visible
-  problems fixed:
-  1. **`/exit_nodes` was empty** when relays are tagged
-     directly in headscale. New
-     `db.SyncNodesFromHeadscale` (INSERTs missing + UPDATEs
-     drifted rows, preserves portal owner on update).
-     "Sync from headscale" button on `/admin/devices` +
-     `/sync_nodes` bot command.
-  2. **Bot menu had no manual refresh path.** New
-     "Refresh bot menu" button on `/admin/telegram`
-     that calls `SetMyCommandsAll` synchronously.
-  3. **`/help` is free-form text.** Restructured to a
-     sectioned table (🔐 Auth / ✦ Your data / 🛠 Admin)
-     with 12-char command gutter for aligned columns.
-  4. **Bot needs more presentable visuals.** Inline
-     keyboards for `/lang` (RU/EN picker) and
-     `/myexitnodes` (hostname buttons + Clear default).
-  5. **No web UI notification when a newer release is
-     available.** `release.Monitor.Snapshot()` exposes
-     `Latest` + `UpdateAvailable` + `CheckedAt`;
-     `layout.html` renders a banner on every admin page
-     when an update is available.
-  9 new i18n keys × 2 langs. 5 new DB tests
-  (SyncNodesFromHeadscale). 12/12 packages green, smoke
-  118/118. Live on VM: sync inserts 3 exit-nodes, banner
-  renders, /help shows new layout.
+  problems fixed: `/exit_nodes` empty (new
+  `SyncNodesFromHeadscale` + admin button + `/sync_nodes`
+  bot command), bot menu refresh path (`Refresh bot menu`
+  button on `/admin/telegram`), `/help` restructured to a
+  sectioned table (🔐 Auth / ✦ Your data / 🛠 Admin),
+  inline keyboards for `/lang` + `/myexitnodes`, web
+  update banner via `release.Monitor.Snapshot()`.
 * **Previous**: v0.13.0 — exit-node health monitor
   ([release notes](RELEASE-NOTES-v0.13.0.md)). The
   "is my tailnet's egress actually working?" release.
