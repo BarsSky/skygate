@@ -98,6 +98,30 @@ DERP_STUN_PORT="${DERP_STUN_PORT:-3478}"
 DERP_HTTP_PORT="${DERP_HTTP_PORT:-8443}"
 DERP_MAP_PORT="${DERP_MAP_PORT:-8765}"
 
+# 2026-07-15: v0.15.0 — Caddy TLS terminator. Default
+# true (the v0.15.0 release ships Caddy as the
+# recommended HTTPS layer). Set CADDY_ENABLED=false in
+# .env to skip Caddy entirely; the operator takes
+# responsibility for the TLS layer per
+# docs/https-setup.md. CADDY_DNS_PROVIDER is the Caddy
+# DNS-01 module name (cloudflare, route53, gandi,
+# digitalocean, googlecloud, hetzner, ovh, namecheap,
+# porkbun, desec, ...); "http" = HTTP-01 challenge
+# (no DNS API token, port 80 must be reachable).
+CADDY_ENABLED="${CADDY_ENABLED:-true}"
+CADDY_DNS_PROVIDER="${CADDY_DNS_PROVIDER:-cloudflare}"
+CADDY_DNS_API_TOKEN_FILE="${CADDY_DNS_API_TOKEN_FILE:-/var/lib/skygate/secrets/caddy-dns-token}"
+# Default hostnames. The operator overrides these in
+# .env with their actual public DNS names.
+CADDY_HOSTS_HEAD="${CADDY_HOSTS_HEAD:-head.example.com}"
+CADDY_HOSTS_HEADPLANE="${CADDY_HOSTS_HEADPLANE:-headplane.example.com}"
+CADDY_HOSTS_DERP="${CADDY_HOSTS_DERP:-derp.example.com}"
+# HSTS (max-age 6 months + subdomains + preload) is
+# enabled by default. Disable only for testing (the
+# operator is about to bring a real hostname online
+# but the cert isn't issued yet).
+CADDY_HSTS="${CADDY_HSTS:-true}"
+
 # Platform-specific path defaults
 if [ "${SKYGATE_OS}" = "windows" ]; then
     DEPLOY_HEADSCALE_DIR="${DEPLOY_HEADSCALE_DIR:-${_DEFAULT_HOME}/headscale}"
@@ -117,4 +141,6 @@ export HEADSCALE_BASE_DOMAIN HEADSCALE_AUTO_APPROVE_ROUTES HEADSCALE_DERP_URLS
 export DOCKER_NETWORK DOCKER_SUBNET
 export DEPLOY_HEADSCALE_DIR DEPLOY_SKYGATE_DIR DEPLOY_BACKUP_DIR
 export DERP_ENABLED DERP_STUN_PORT DERP_HTTP_PORT DERP_MAP_PORT
+export CADDY_ENABLED CADDY_DNS_PROVIDER CADDY_DNS_API_TOKEN_FILE
+export CADDY_HOSTS_HEAD CADDY_HOSTS_HEADPLANE CADDY_HOSTS_DERP CADDY_HSTS
 export SSH_DIR
