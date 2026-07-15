@@ -7,7 +7,35 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.13.0 — exit-node health monitor
+* **Current**: v0.14.0 — bot UX overhaul
+  ([release notes](RELEASE-NOTES-v0.14.0.md)). The
+  "make the bot usable" release. Five operator-visible
+  problems fixed:
+  1. **`/exit_nodes` was empty** when relays are tagged
+     directly in headscale. New
+     `db.SyncNodesFromHeadscale` (INSERTs missing + UPDATEs
+     drifted rows, preserves portal owner on update).
+     "Sync from headscale" button on `/admin/devices` +
+     `/sync_nodes` bot command.
+  2. **Bot menu had no manual refresh path.** New
+     "Refresh bot menu" button on `/admin/telegram`
+     that calls `SetMyCommandsAll` synchronously.
+  3. **`/help` is free-form text.** Restructured to a
+     sectioned table (🔐 Auth / ✦ Your data / 🛠 Admin)
+     with 12-char command gutter for aligned columns.
+  4. **Bot needs more presentable visuals.** Inline
+     keyboards for `/lang` (RU/EN picker) and
+     `/myexitnodes` (hostname buttons + Clear default).
+  5. **No web UI notification when a newer release is
+     available.** `release.Monitor.Snapshot()` exposes
+     `Latest` + `UpdateAvailable` + `CheckedAt`;
+     `layout.html` renders a banner on every admin page
+     when an update is available.
+  9 new i18n keys × 2 langs. 5 new DB tests
+  (SyncNodesFromHeadscale). 12/12 packages green, smoke
+  118/118. Live on VM: sync inserts 3 exit-nodes, banner
+  renders, /help shows new layout.
+* **Previous**: v0.13.0 — exit-node health monitor
   ([release notes](RELEASE-NOTES-v0.13.0.md)). The
   "is my tailnet's egress actually working?" release.
   A background goroutine polls headscale every 5 min
@@ -19,20 +47,6 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   Notifier. Plus a `--strict` flag on the deploy-time
   `check_exit_nodes.py` so CI / automated deploys can
   hard-fail when an exit-node is offline.
-  * Schema: `exit_node_health` (per-node snapshot) +
-    `exit_node_state_changes` (append-only transition log
-    with `alerted_at` dedup).
-  * "Healthy" rule: `headscale.Online AND last_seen within
-    SKYGATE_EXIT_NODE_OFFLINE_AFTER (2 min) AND tag:exit-node
-    AND 0.0.0.0/0 + ::/0 approved`.
-  * 0-healthy banner on `/admin/exit-nodes` when 0/N are
-    healthy; "Run health check now" button (admin) calls
-    `ExitNodeMonitor.CheckNow` synchronously.
-  * Deploy test: `make check-nodes` (warn-only, default)
-    vs `make check-nodes-strict` (CI variant, hard-fail).
-  * 18 new i18n keys × 2 langs, 10 new monitor unit tests,
-    8 new DB unit tests. 12/12 packages green, smoke
-    118/118. Live on VM: 2/3 healthy, all on the same page.
 * **Previous**: v0.12.0.2 — Android exit-node routing + Telegram
   tab speed + admin tab RU
   ([release notes](RELEASE-NOTES-v0.12.0.2.md)). Three
