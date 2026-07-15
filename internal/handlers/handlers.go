@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strings"
+	"sync"
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
@@ -28,6 +29,7 @@ type App struct {
 	Notifier    telegram.Notifier
 	I18n         *i18n.Catalog
 	DB           *sql.DB
+	hs           *headscale.Client
 	HS           *headscale.Client
 	HeadscaleKey string
 	JWTSecret    string
@@ -47,13 +49,17 @@ type App struct {
 	// sidecar. Empty = use the bundled sidecar at
 	// https://${ControlURL-host}:50445/admin/.
 	HeadplaneExternalURL string
+	SecretKeyHex string
+	hsCache   map[string]*headscale.Client
+	hsCacheMu sync.Mutex
 
 	templates *Templates
 }
 
 func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int, cfg *config.Config) *App {
-	return &App{
+	a := &App{
 		DB:           d,
+		hs:           hs,
 		HS:           hs,
 		HeadscaleKey: headscaleKey,
 		JWTSecret:    secret,
@@ -65,6 +71,8 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		I18n:         i18n.New(),
 		Cfg:          cfg,
 	}
+	a.InitHSForUserState()
+	return a
 }
 
 // render executes a template directly (no layout). Used for self-contained pages.

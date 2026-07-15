@@ -61,6 +61,16 @@ func New(baseURL, k string) *Client {
 	return c
 }
 
+// ApiKeyForCache returns the api key this client was built
+// with. Used by handlers.App.clientFor to detect when an
+// admin has rotated a per-user api_key via /admin/users
+// and the cached client is now stale. The api key itself
+// is treated as a write-capable secret on headscale, so
+// callers should never log it.
+func (c *Client) ApiKeyForCache() string {
+	return c.apiKey
+}
+
 func getenvDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
