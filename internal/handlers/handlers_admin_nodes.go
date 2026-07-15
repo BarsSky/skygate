@@ -63,18 +63,34 @@ func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if origUserID != "" && origUserName != "" && origUserName != "tagged-devices" {
-		// 2026-07-12: Этап 10 part 4 — moved to db.UpsertNodeOwner.
-		// nodeID is int64 here (from headscale.NodeView.ID parsed
-		// via strconv above); UpsertNodeOwner wants the string form
-		// (matches the column type TEXT). origUserID is a string
-		// headscale user id; we best-effort parse it to int64 for
-		// the headscale_user_id column.
+	// 2026-07-15: Этап 14 v13 — v0.10.13 fix. The old guard
+	// "origUserName != \"tagged-devices\"" skipped the node_owner_map
+	// update for nodes whose headscale ownership was reassigned to
+	// the synthetic tagged-devices user (which happens automatically
+	// when any tag is applied to a node in headscale). The result
+	// was that admin-tagged devices kept their old tag:untagged
+	// row in skygate, so the bot's /nodes (which reads from
+	// node_owner_map) showed the wrong tag. The bot now self-heals
+	// on read via db.SyncTagsFromHeadscale, but we also fix the
+	// source here: when the origUserName is "tagged-devices" we
+	// look up the existing row in node_owner_map (by node_id) and
+	// UPDATE only the tag, leaving username + headscale_user_id
+	// alone so a portal-side owner link is preserved.
+	if origUserID != "" && origUserName != "" {
+		nodeIDStr := strconv.FormatInt(nodeID, 10)
 		var hsUID int64
 		if n, err := strconv.ParseInt(origUserID, 10, 64); err == nil {
 			hsUID = n
 		}
-		_ = db.UpsertNodeOwner(a.DB, strconv.FormatInt(nodeID, 10), hsUID, origUserName, tag, c.UserID)
+		if origUserName == "tagged-devices" {
+			// Preserve the existing portal-side owner. The new
+			// tag is the source of truth (admin just set it on
+			// headscale), the username + headscale_user_id stay
+			// as they were.
+			_ = db.UpdateNodeOwnerTag(a.DB, nodeIDStr, tag, c.UserID)
+		} else {
+			_ = db.UpsertNodeOwner(a.DB, nodeIDStr, hsUID, origUserName, tag, c.UserID)
+		}
 	}
 
 	a.HS.InvalidateCache()
