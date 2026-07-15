@@ -52,11 +52,71 @@ services:
       - SYS_ADMIN
     devices:
       - /dev/net/tun
+    # 2026-07-15: v0.15.0 — when the Caddy sidecar handles
+    # TLS, the :8080 listener doesn't need to be on the
+    # host's public interface. We still keep the bind
+    # (Caddy forwards here) but the operator can opt to
+    # remove the ports line below if they only want
+    # Caddy to expose the dashboard. Leaving it bound
+    # is the safer default (allows `curl localhost:8080`
+    # from the host for ad-hoc debugging).
     ports:
       - "8080:8080"
     networks:
       - skygate-net
     restart: unless-stopped
+
+  # 2026-07-15: v0.15.0 — Caddy sidecar.
+  # TLS-terminating reverse proxy for all public-facing
+  # modules. Auto-issues Let's Encrypt certs via DNS-01
+  # (no port-80 inbound required; works on private subnets).
+  # Per-hostname routing in the rendered Caddyfile
+  # (deploy/templates/Caddyfile.tmpl): head.* routes to
+  # skygate+headscale, headplane.* to headplane, derp.* to
+  # the derper container.
+  #
+  # To skip Caddy entirely, set CADDY_ENABLED=false in .env.
+  # The deploy script then omits the Caddyfile render and
+  # this service is left in the compose but is a no-op
+  # (use a different compose override or remove the
+  # service from the file). Caddy uses the same Docker
+  # network as skygate/headscale/headplane so the
+  # reverse_proxy directives can resolve them by name.
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    # :80 is the HTTP-01 challenge port; :443 is the
+    # HTTPS port. Operators behind Cloudflare should
+    # also enable proxy (orange cloud) so Caddy sees
+    # the real client IP.
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Rendered Caddyfile (deploy.sh writes this).
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Cert + ACME account state. Caddy stores certs
+      # under /data by default; persisting this on the
+      # host means the next start doesn't re-issue.
+      - caddy-data:/data
+      # ACME account config (Caddy writes this on first
+      # ACME registration; persisting means the rate
+      # limit on Let's Encrypt isn't hit on every
+      # restart).
+      - caddy-config:/config
+    # 2026-07-15: v0.15.0 — env_file. The deploy
+    # script writes a Caddy-specific .env with the
+    # DNS-01 API token (and only the token — the
+    # operator's main .env, which is often committed
+    # to git, is not touched). The rendered Caddyfile
+    # references the token via env.CADDY_DNS_TOKEN_VALUE.
+    env_file:
+      - ./caddy/caddy.env
+    networks:
+      - skygate-net
+    depends_on:
+      - skygate
 
 networks:
   skygate-net:
@@ -66,6 +126,10 @@ networks:
 volumes:
   skygate-data:
     name: skygate-data
+  caddy-data:
+    name: caddy-data
+  caddy-config:
+    name: caddy-config
 
 secrets:
   ts_authkey:
