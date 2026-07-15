@@ -709,10 +709,33 @@ func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pendin
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("telegram: sendMessage failed: %v", err)
+		log.Printf("telegram: sendMessage HTTP failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
+	// 2026-07-15: was missing — Telegram returns HTTP 200 with
+	// {"ok": false, "description": "..."} when it rejects a
+	// payload (e.g. a malformed reply_markup). Without this
+	// check the rejection was silently swallowed and the
+	// user saw no reply at all. /add_device was the first
+	// visible victim — the platform picker is the only reply
+	// in the bot that carries an inline_keyboard, and a
+	// rejected payload meant the entire reply vanished.
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		log.Printf("telegram: sendMessage HTTP %d body=%s", resp.StatusCode, string(rb))
+		return
+	}
+	// Body is JSON: {"ok": true|false, ...}. We only log on
+	// the failure path; success is the boring case.
+	var ack struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		ErrorCode   int    `json:"error_code"`
+	}
+	if err := json.Unmarshal(rb, &ack); err == nil && !ack.OK {
+		log.Printf("telegram: sendMessage rejected: code=%d %s (text=%q)", ack.ErrorCode, ack.Description, text)
+	}
 }
 
 // handleCallback dispatches a callback_query (an inline
