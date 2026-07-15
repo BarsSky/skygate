@@ -232,7 +232,12 @@ func CountNodeOwnerByNodeUser(d *sql.DB, nodeID, username string) (int, error) {
 // the admin is explicitly telling us "this node now belongs to X
 // with tag Y" — silently keeping the old row would be wrong.
 func UpsertNodeOwner(d dbExec, nodeID string, headscaleUserID int64, username, tag string, taggedByUserID int64) error {
-	_, err := d.Exec(qInsertOrReplaceNodeOwner, nodeID, headscaleUserID, username, tag, taggedByUserID)
+	// user_id in node_owner_map is a NOT NULL legacy column
+	// from v0.25 (no DEFAULT). We back-fill it from
+	// headscale_user_id so a fresh install works; on existing
+	// rows OR REPLACE will just overwrite with the same
+	// value, so this is a no-op for live DBs.
+	_, err := d.Exec(qInsertOrReplaceNodeOwner, nodeID, headscaleUserID, username, headscaleUserID, tag, taggedByUserID)
 	return err
 }
 
@@ -575,19 +580,25 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 		// UPDATE, the existing portal-side owner is preserved
 		// (a node whose headscale ownership was reassigned to
 		// tagged-devices keeps its portal owner).
+		//
+		// user_id is a NOT NULL legacy column from v0.25 with
+		// no DEFAULT. We back-fill it from headscale_user_id so
+		// a fresh install works; on existing rows the INSERT OR
+		// REPLACE just overwrites with the same value.
 		host := n.Hostname
 		if host == "" {
 			host = n.ID
 		}
 		_, err := d.Exec(
 			`INSERT INTO node_owner_map
-				(node_id, hostname, headscale_user_id, username, tag, tagged_by_user_id, tagged_at)
-			VALUES (?, ?, ?, ?, ?, ?, strftime('%s','now'))
+				(node_id, hostname, headscale_user_id, username, user_id, tag, tagged_by_user_id, tagged_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
 			ON CONFLICT(node_id) DO UPDATE SET
 				tag = excluded.tag,
+				hostname = excluded.hostname,
 				tagged_at = strftime('%s','now')
 			WHERE node_owner_map.tag != excluded.tag`,
-			n.ID, host, n.HSUserID, n.Username, n.Tag, n.TaggedBy,
+			n.ID, host, n.HSUserID, n.Username, n.HSUserID, n.Tag, n.TaggedBy,
 		)
 		if err != nil {
 			return inserted, updated, err
