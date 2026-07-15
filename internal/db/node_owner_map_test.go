@@ -381,3 +381,143 @@ func TestAnyHostnameEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateNodeOwnerTag_UpdatesAndPreserves(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "michail", "tag:untagged", 1)
+	_, _ = d.Exec(`UPDATE node_owner_map SET hostname = 'base-laptop' WHERE node_id = 'n1'`)
+	// Update the tag — username and hostname must stay.
+	if err := UpdateNodeOwnerTag(d, "n1", "tag:private", 99); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	n, err := GetNodeOwner(d, "n1")
+	if err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if n.Tag != "tag:private" {
+		t.Errorf("tag: got %q, want tag:private", n.Tag)
+	}
+	if n.Username != "michail" {
+		t.Errorf("username changed: got %q, want michail", n.Username)
+	}
+	if n.Hostname != "base-laptop" {
+		t.Errorf("hostname changed: got %q, want base-laptop", n.Hostname)
+	}
+	if n.TaggedByUserID != 99 {
+		t.Errorf("tagged_by_user_id: got %d, want 99", n.TaggedByUserID)
+	}
+}
+
+func TestUpdateNodeOwnerTag_NotFound(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	err := UpdateNodeOwnerTag(d, "no-such-node", "tag:private", 1)
+	if err != ErrNodeOwnerNotFound {
+		t.Errorf("expected ErrNodeOwnerNotFound, got %v", err)
+	}
+}
+
+// 2026-07-15: Этап 14 v13 — tests for the lazy tag sync helpers
+// (AnyTagStale + SyncTagsFromHeadscale). The bot's /my_nodes and
+// /nodes used to silently show tag:untagged for nodes whose
+// headscale tag was set by an admin (PostAdminNodeTag's
+// origUserName != "tagged-devices" guard skipped the
+// node_owner_map update, leaving the row stale). The v0.10.13
+// fix: when the bot reads the list, if the DB tag disagrees
+// with the live headscale tag, the row is updated in place.
+
+func TestAnyTagStale(t *testing.T) {
+	cases := []struct {
+		name     string
+		owners   []NodeOwner
+		headTag  map[string]string
+		wantStale bool
+	}{
+		{"empty map", nil, map[string]string{"a": "tag:private"}, false},
+		{"matching", []NodeOwner{{NodeID: "a", Tag: "tag:private"}}, map[string]string{"a": "tag:private"}, false},
+		{"untagged matches no-tag (headscale empty)", []NodeOwner{{NodeID: "a", Tag: "tag:untagged"}}, map[string]string{}, false},
+		{"db public + headscale empty = NOT stale (admin override kept)", []NodeOwner{{NodeID: "a", Tag: "tag:public"}}, map[string]string{}, false},
+		{"db private + headscale empty = NOT stale (admin override kept)", []NodeOwner{{NodeID: "a", Tag: "tag:private"}}, map[string]string{}, false},
+		{"db untagged + headscale private = STALE", []NodeOwner{{NodeID: "a", Tag: "tag:untagged"}}, map[string]string{"a": "tag:private"}, true},
+		{"one stale in batch", []NodeOwner{
+			{NodeID: "a", Tag: "tag:private"},
+			{NodeID: "b", Tag: "tag:untagged"},
+		}, map[string]string{"a": "tag:private", "b": "tag:private"}, true},
+		{"headscale untagged sentinel = not stale", []NodeOwner{{NodeID: "a", Tag: "tag:untagged"}}, map[string]string{"a": "tag:untagged"}, false},
+	}
+	for _, c := range cases {
+		got := AnyTagStale(c.owners, c.headTag)
+		if got != c.wantStale {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.wantStale)
+		}
+	}
+}
+
+func TestSyncTagsFromHeadscale_UpdatesMismatch(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n-untagged", 0, "michail", "tag:untagged", 1)
+	_ = UpsertNodeOwner(d, "n-matching", 0, "skyadmin", "tag:private", 1)
+	_ = UpsertNodeOwner(d, "n-mismatch", 0, "alice", "tag:untagged", 1)
+	updated, err := SyncTagsFromHeadscale(d, map[string]string{
+		"n-untagged":   "tag:private", // was untagged → fix
+		"n-matching":   "tag:private", // already matches → no-op
+		"n-mismatch":   "tag:public",  // different tag → fix
+		"n-missing-row": "tag:public", // no row → silently ignored
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if updated != 2 {
+		t.Errorf("expected 2 updates, got %d", updated)
+	}
+	for _, c := range []struct {
+		nodeID, wantTag string
+	}{
+		{"n-untagged", "tag:private"},
+		{"n-matching", "tag:private"},
+		{"n-mismatch", "tag:public"},
+	} {
+		n, _ := GetNodeOwner(d, c.nodeID)
+		if n.Tag != c.wantTag {
+			t.Errorf("%s: tag=%q, want %q", c.nodeID, n.Tag, c.wantTag)
+		}
+	}
+}
+
+func TestSyncTagsFromHeadscale_PreservesAdminOverride(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	// DB has tag:public (admin override). headscale has no tag
+	// (operator removed the tag in headplane). The sync must NOT
+	// clobber the admin override — see AnyTagStale.
+	_ = UpsertNodeOwner(d, "n-public", 0, "skyadmin", "tag:public", 1)
+	_ = UpsertNodeOwner(d, "n-untagged", 0, "michail", "tag:untagged", 1)
+	updated, err := SyncTagsFromHeadscale(d, map[string]string{
+		// both keys absent — headscale has no tag for either
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates (headscale empty = leave portal alone), got %d", updated)
+	}
+	// Both rows preserved as-is.
+	n, _ := GetNodeOwner(d, "n-public")
+	if n.Tag != "tag:public" {
+		t.Errorf("admin override clobbered: tag=%q, want tag:public", n.Tag)
+	}
+	n, _ = GetNodeOwner(d, "n-untagged")
+	if n.Tag != "tag:untagged" {
+		t.Errorf("untagged row changed: tag=%q, want tag:untagged", n.Tag)
+	}
+}
+
+func TestSyncTagsFromHeadscale_EmptyMapIsNoop(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "alice", "tag:private", 1)
+	updated, err := SyncTagsFromHeadscale(d, map[string]string{})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates, got %d", updated)
+	}
+}

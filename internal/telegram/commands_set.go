@@ -140,6 +140,7 @@ var DefaultMyCommandsSpec = MyCommandsSpec{
 	Common: []MenuEntry{
 		{Command: "help", DescriptionKey: "bot.menu.help.description"},
 		{Command: "version", DescriptionKey: "bot.menu.version.description"},
+		{Command: "lang", DescriptionKey: "bot.menu.lang.description"},
 		{Command: "my_status", DescriptionKey: "bot.menu.my_status.description"},
 		{Command: "my_rules", DescriptionKey: "bot.menu.my_rules.description"},
 		{Command: "my_nodes", DescriptionKey: "bot.menu.my_nodes.description"},

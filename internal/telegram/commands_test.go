@@ -1043,6 +1043,65 @@ func TestMyNodesReply_NilHSNoCrash(t *testing.T) {
 	}
 }
 
+// 2026-07-15: Этап 14 v13 — lazy tag backfill in /my_nodes
+// (and /nodes, same code path). The bot's read used to silently
+// show tag:untagged for nodes whose headscale tag was set by
+// an admin after the row was created (PostAdminNodeTag's old
+// "tagged-devices" guard skipped the node_owner_map update).
+// v0.10.13 closes the gap: when the bot reads the list, if
+// any visible row's DB tag disagrees with the headscale tag,
+// SyncTagsFromHeadscale updates them in place.
+
+func TestMyNodesReply_LazyTagBackfillStaleRow(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with tag:untagged in DB. Headscale
+	// reports tag:private. The bot must sync the row and render
+	// with the new tag.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:untagged', 'alice-laptop')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{
+		{ID: "alice-laptop", GivenName: "alice-laptop", Name: "alice-laptop", Tags: []string{"tag:private"}},
+	})
+	env := userEnv(d)
+	env.HS = hs
+	got := myNodesReply(env)
+	// Reply should mention tag:private, not tag:untagged.
+	if !strings.Contains(got, "tag:private") {
+		t.Errorf("expected tag:private in reply after lazy sync, got: %q", got)
+	}
+	if strings.Contains(got, "tag:untagged") {
+		t.Errorf("expected tag:untagged to be gone, got: %q", got)
+	}
+	// DB row must be updated.
+	var tag string
+	if err := d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&tag); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if tag != "tag:private" {
+		t.Errorf("DB tag: got %q, want tag:private", tag)
+	}
+}
+
+func TestMyNodesReply_NoTagBackfillWhenMatching(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with tag:private. Headscale says
+	// tag:private. SyncTagsFromHeadscale must NOT update (the
+	// guard "tag != ?" prevents a no-op write).
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', 'alice-laptop')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{
+		{ID: "alice-laptop", GivenName: "alice-laptop", Name: "alice-laptop", Tags: []string{"tag:private"}},
+	})
+	env := userEnv(d)
+	env.HS = hs
+	_ = myNodesReply(env)
+	var tag string
+	if err := d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&tag); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if tag != "tag:private" {
+		t.Errorf("tag was changed despite matching: got %q, want tag:private", tag)
+	}
+}
+
 func TestMyRulesReplyUserFiltersToCaller(t *testing.T) {
 	d := setupTestDB(t)
 	// Seed: alice has 1 rule, skyadmin has 12 (from setup).

@@ -313,6 +313,42 @@ func DeleteNodeOwnerByNodeTag(d dbExec, nodeID, tag string) error {
 	return err
 }
 
+// UpdateNodeOwnerTag sets a new tag for an existing row, keyed by
+// node_id. The (username, headscale_user_id, hostname) columns
+// are preserved — only tag and tagged_by_user_id are changed.
+//
+// 2026-07-15: Этап 14 v13 (v0.10.13) — fixes the v0.10.11
+// regression where admin-tagged devices kept tag:untagged in
+// node_owner_map (PostAdminNodeTag's old guard skipped the
+// update when origUserName was "tagged-devices"). The bot now
+// self-heals on read via SyncTagsFromHeadscale; this helper is
+// the source-of-truth fix so the row never gets stale in the
+// first place.
+//
+// Returns ErrNodeOwnerNotFound if no row exists for nodeID —
+// the caller (PostAdminNodeTag) is fine to ignore this; the
+// bot-side SyncTagsFromHeadscale will pick up the new tag on
+// the next read.
+func UpdateNodeOwnerTag(d *sql.DB, nodeID, tag string, taggedByUserID int64) error {
+	res, err := d.Exec(
+		`UPDATE node_owner_map
+		    SET tag = ?, tagged_by_user_id = ?, tagged_at = strftime('%s','now')
+		  WHERE node_id = ?`,
+		tag, taggedByUserID, nodeID,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNodeOwnerNotFound
+	}
+	return nil
+}
+
 // DeleteNodeOwnersByUser removes EVERY row whose username matches.
 // Called by the admin user-delete cascade
 // (handlers_admin_users.go:PostAdminUserDelete) so a deleted user
@@ -384,4 +420,81 @@ func AnyHostnameEmpty(owners []NodeOwner) bool {
 		}
 	}
 	return false
+}
+
+// AnyTagStale reports whether any of the given NodeOwners has a
+// tag that disagrees with the headscale-side tag (the headscale
+// map is keyed by node_id; values are the live headscale tag,
+// e.g. "tag:private" or "" if headscale has no tag). A row
+// whose DB tag is "tag:untagged" but whose headscale tag is
+// "tag:private" is stale — the admin tagged the node in
+// headscale but the row didn't get updated (the old
+// PostAdminNodeTag guard skipped it when origUserName was
+// "tagged-devices"). The bot's /my_nodes and /nodes use this
+// to trigger a lazy tag sync.
+//
+// "headscale has no tag" is treated as "don't touch" — the
+// portal-side row is the source of truth in that case (admin
+// override, or a node that's been de-tagged in headscale but
+// kept in skygate). This avoids overwriting legitimate admin
+// state with a headscale-side change that might be transient.
+func AnyTagStale(owners []NodeOwner, headscaleTagByNodeID map[string]string) bool {
+	for _, o := range owners {
+		want := headscaleTagByNodeID[o.NodeID]
+		if want == "" {
+			continue
+		}
+		if want == "tag:untagged" {
+			continue
+		}
+		if o.Tag != want {
+			return true
+		}
+	}
+	return false
+}
+
+// SyncTagsFromHeadscale updates node_owner_map.tag for every row
+// whose DB tag disagrees with the given headscale map. Only the
+// tag is changed; the (username, headscale_user_id) columns are
+// preserved so a node whose headscale ownership link was lost
+// (reassigned to the synthetic "tagged-devices" user after a
+// tag was applied) keeps its original portal owner in skygate.
+//
+// 2026-07-15: Этап 14 v13 (v0.10.13). The bot's /my_nodes and
+// /nodes call this when AnyTagStale reports drift. The first
+// /my_nodes or /nodes after admin tags a device in headscale
+// picks up the new tag; subsequent calls are a fast indexed
+// read.
+//
+// Returns the number of rows updated, for tests + operator
+// visibility. An error from Exec is returned as-is; the caller
+// is expected to log it but not fail the bot reply (the user
+// still gets the read they asked for, just with the old tags
+// until the next sync).
+func SyncTagsFromHeadscale(d *sql.DB, headscaleTagByNodeID map[string]string) (int, error) {
+	if len(headscaleTagByNodeID) == 0 {
+		return 0, nil
+	}
+	var updated int
+	for nodeID, want := range headscaleTagByNodeID {
+		if want == "" || want == "tag:untagged" {
+			// Headscale has no tag → leave the portal-side
+			// state alone. See AnyTagStale for the reasoning.
+			continue
+		}
+		res, err := d.Exec(
+			`UPDATE node_owner_map
+			    SET tag = ?
+			  WHERE node_id = ? AND tag != ?`,
+			want, nodeID, want,
+		)
+		if err != nil {
+			return updated, err
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			updated += int(n)
+		}
+	}
+	return updated, nil
 }

@@ -85,21 +85,47 @@ func myNodesReply(env BotEnv) string {
 	if err != nil {
 		return i18n.Tf(lang, "bot.my_nodes.db_error", err)
 	}
-	// 2026-07-15: Этап 14 v13 — lazy hostname backfill. Migration
-	// v0.34 added the hostname column, but rows are empty until
-	// backfillNodeOwnership visits them (which only happens via
-	// /admin/devices). The bot's read paths used to silently fall
-	// back to the bare node_id; now we self-heal on the first
-	// /my_nodes that sees a missing hostname. Headscale is the
-	// source of truth for the friendly name; if the call fails or
-	// env.HS is nil, we just render with bare node_ids and try
-	// again next time.
-	if db.AnyHostnameEmpty(owners) && env.HS != nil {
-		if hnMap := hostnameMapFromHeadscale(env.HS); len(hnMap) > 0 {
-			if n, berr := db.BackfillEmptyHostnames(env.DB, hnMap); berr == nil && n > 0 {
-				// Re-read so the rendered list reflects the update.
-				if refreshed, rerr := db.ListNodeOwnersByUsername(env.DB, env.Username); rerr == nil {
-					owners = refreshed
+	// 2026-07-15: Этап 14 v13 — lazy backfill pass. We do hostname
+	// + tag in one headscale round-trip (the existing
+	// hostnameMapFromHeadscale already calls ListAllNodes; we
+	// also need the live tag from the same response).
+	if env.HS != nil {
+		hsView := listAllNodesForBackfill(env.HS)
+		if len(hsView) > 0 {
+			hnMap := map[string]string{}
+			tagMap := map[string]string{}
+			for _, n := range hsView {
+				hn := n.GivenName
+				if hn == "" {
+					hn = n.Hostname
+				}
+				if hn != "" {
+					hnMap[n.ID] = hn
+				}
+				// Use the first non-empty forcedTag as the live
+				// tag (headscale returns them as forcedTags; we
+				// treat the first match as authoritative).
+				if len(n.Tags) > 0 {
+					tagMap[n.ID] = n.Tags[0]
+				}
+			}
+			// 2026-07-15: hostname backfill.
+			if db.AnyHostnameEmpty(owners) {
+				if n, berr := db.BackfillEmptyHostnames(env.DB, hnMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListNodeOwnersByUsername(env.DB, env.Username); rerr == nil {
+						owners = refreshed
+					}
+				}
+			}
+			// 2026-07-15: tag backfill. Closes the v0.10.11
+			// regression where admin-tagged devices showed
+			// tag:untagged in the bot (PostAdminNodeTag's
+			// "tagged-devices" guard skipped the row update).
+			if db.AnyTagStale(owners, tagMap) {
+				if n, berr := db.SyncTagsFromHeadscale(env.DB, tagMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListNodeOwnersByUsername(env.DB, env.Username); rerr == nil {
+						owners = refreshed
+					}
 				}
 			}
 		}
@@ -159,6 +185,25 @@ func hostnameMapFromHeadscale(hs *headscale.Client) map[string]string {
 		}
 	}
 	return out
+}
+
+// listAllNodesForBackfill wraps the headscale round-trip used by
+// the bot's lazy backfill (hostname + tag) so the call site can
+// stay readable. nil hs → empty slice. Errors are swallowed
+// because the bot still has to render the reply even when
+// headscale is briefly unreachable; the next /my_nodes retries.
+//
+// 2026-07-15: Этап 14 v13 — extracted from myNodesReply so the
+// same call also powers adminNodesReply's lazy tag sync.
+func listAllNodesForBackfill(hs *headscale.Client) []headscale.NodeView {
+	if hs == nil {
+		return nil
+	}
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return nil
+	}
+	return nodes
 }
 
 // myRulesReply lists the caller's own exit-rules, newest first.
