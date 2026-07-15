@@ -1,13 +1,21 @@
 ﻿{{define "body-admin-telegram"}}
+{{/* 2026-07-15: v0.15.1 - final round of /admin/telegram
+     localization. Every visible string now goes through
+     the t function. The v0.15.0 release translated the
+     labels and headings; this version covers the
+     previously-hardcoded probe-section state labels,
+     status pills, confirm-dialog text, "Where other
+     components look" bullet list, and the test/rotate/
+     disable help paragraphs. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-brands fa-telegram"></i> {{t "telegram.title"}}</h2>
-    <div class="sub">{{t "telegram.subtitle"}}. Token stored in DB <code>global_settings</code>, <code>.env</code> used as fallback at first start.</div>
+    <div class="sub">{{t "telegram.subtitle"}}. {{t "telegram.token_storage_note" | safeHTML}}</div>
   </div>
   {{if .State.Configured}}
-  <span class="pill pill-success" title="Bot configured via DB"><i class="fa-solid fa-circle-check"></i> configured</span>
+  <span class="pill pill-success" title="{{t "telegram.pill_configured_title"}}"><i class="fa-solid fa-circle-check"></i> {{t "telegram.pill_configured"}}</span>
   {{else}}
-  <span class="pill pill-warn"><i class="fa-solid fa-triangle-exclamation"></i> not configured</span>
+  <span class="pill pill-warn"><i class="fa-solid fa-triangle-exclamation"></i> {{t "telegram.pill_not_configured"}}</span>
   {{end}}
 </div>
 
@@ -26,33 +34,42 @@
   The probe only runs when a token is set; otherwise the section
   is omitted entirely (the "configured" pill above already tells
   the operator to save a token first).
+
+  2026-07-15: v0.15.1 — every text in the probe block is now
+  i18n'd. The if/else on State.String picks one of three
+  probe_*_label keys, and the troubleshoot bullets each get
+  their own key. The HTML inside the values (the <code>
+  tags, the <a> link) is preserved by marking the values
+  as safeHTML via the Go template's | safeHTML (the catalog
+  is plain text, not pre-rendered HTML — the | safeHTML
+  filter in the template marks it as "trust this HTML").
 */}}
 {{if .State.Configured}}
 <div class="alert alert-probe probe-{{.State.Probe.State}}">
   <i class="fa-solid {{if eq .State.Probe.State.String "ok_direct"}}fa-globe{{else if eq .State.Probe.State.String "ok_relay"}}fa-route{{else}}fa-triangle-exclamation{{end}}"></i>
   <div>
     <strong>
-      {{if eq .State.Probe.State.String "ok_direct"}}Telegram API: reachable (direct internet){{end}}
-      {{if eq .State.Probe.State.String "ok_relay"}}Telegram API: reachable (Tailscale relay){{end}}
-      {{if eq .State.Probe.State.String "unreachable"}}Telegram API: unreachable{{end}}
+      {{if eq .State.Probe.State.String "ok_direct"}}{{t "telegram.probe_ok_direct_label"}}{{end}}
+      {{if eq .State.Probe.State.String "ok_relay"}}{{t "telegram.probe_ok_relay_label"}}{{end}}
+      {{if eq .State.Probe.State.String "unreachable"}}{{t "telegram.probe_unreachable_label"}}{{end}}
     </strong>
     <div class="sub">
       {{.State.Probe.Message}}
-      {{if .State.Probe.LatencyMS}} · latency {{.State.Probe.LatencyMS}}{{end}}
+      {{if .State.Probe.LatencyMS}}{{tf "telegram.probe_latency" .State.Probe.LatencyMS}}{{end}}
     </div>
     {{if .State.Probe.ResolvedIPs}}
     <div class="sub" style="font-family:monospace;font-size:.85em">
-      Resolved: {{range .State.Probe.ResolvedIPs}}<code>{{.}}</code> {{end}}
+      {{t "telegram.probe_resolved_prefix"}}{{range .State.Probe.ResolvedIPs}}<code>{{.}}</code> {{end}}
     </div>
     {{end}}
     {{if eq .State.Probe.State.String "unreachable"}}
     <div class="sub" style="margin-top:.5rem">
-      <strong>Troubleshooting:</strong>
+      <strong>{{t "telegram.probe_troubleshooting"}}</strong>
       <ul style="margin:.4rem 0 0 1.2rem;line-height:1.5">
-        <li>Check that the relay's <code>tailscale up --advertise-routes</code> covers the IPs above (run <code>tailscale status</code> in the relay container).</li>
-        <li>Check that headscale has approved the relay's subnet routes: <code>docker exec headscale headscale nodes list</code> → look for the relay's <code>advertised-routes</code> vs <code>enabled-routes</code>.</li>
-        <li>Run <code>make tailscale-update-telegram-routes</code> on the relay if Telegram added new IP ranges.</li>
-        <li>See <a href="/docs/telegram-relay.md" target="_blank" rel="noopener">docs/telegram-relay.md</a> for the full setup procedure.</li>
+        <li>{{t "telegram.probe_tip_advertise" | safeHTML}}</li>
+        <li>{{t "telegram.probe_tip_approve" | safeHTML}}</li>
+        <li>{{t "telegram.probe_tip_update" | safeHTML}}</li>
+        <li>{{t "telegram.probe_tip_docs" | safeHTML}}</li>
       </ul>
     </div>
     {{end}}
@@ -68,19 +85,19 @@
       <input type="hidden" name="action" value="save">
       <div class="form-group">
         <label>{{t "telegram.token"}}</label>
-        <input type="password" name="bot_token" class="form-control" placeholder="leave empty to keep current">
+        <input type="password" name="bot_token" class="form-control" placeholder="{{t "telegram.test_keep_current"}}">
         <div class="sub">
           {{if .State.Configured}}
-            Saved: <code>{{.State.TokenFP}}</code> · updated {{.State.UpdatedAt}}
+            {{t "telegram.saved_token"}}: <code>{{.State.TokenFP}}</code> · {{t "telegram.updated"}} {{.State.UpdatedAt}}
           {{else}}
-            Get a token via @BotFather → <code>/newbot</code>. See <code>docs/TELEGRAM.md</code>.
+            {{t "telegram.token_help_botfather" | safeHTML}}
           {{end}}
         </div>
       </div>
       <div class="form-group">
         <label>{{t "telegram.chat_id"}}</label>
-        <input type="text" name="chat_id" value="{{.State.ChatID}}" class="form-control" placeholder="leave empty to keep current">
-        <div class="sub">Where the bot has already started. Find out: <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.</div>
+        <input type="text" name="chat_id" value="{{.State.ChatID}}" class="form-control" placeholder="{{t "telegram.test_keep_current"}}">
+        <div class="sub">{{t "telegram.chat_id_help" | safeHTML}}</div>
       </div>
       <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "common.save"}}</button>
     </form>
@@ -88,21 +105,21 @@
 
   <div class="card">
     <h3><i class="fa-solid fa-paper-plane"></i> {{t "telegram.test"}}</h3>
-    <p class="sub">Sends a message to Telegram using the already-saved token. Without a token the button is disabled.</p>
+    <p class="sub">{{t "telegram.test_help"}}</p>
     <form action="/admin/telegram" method="POST">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="test">
       <div class="form-group">
-        <label>Subject</label>
+        <label>{{t "telegram.test_subject_label"}}</label>
         <input type="text" name="test_subject" class="form-control" placeholder="skygate test" value="skygate test">
       </div>
       <div class="form-group">
-        <label>Body</label>
+        <label>{{t "telegram.test_body_label"}}</label>
         <textarea name="test_body" class="form-control" rows="3">{{t "telegram.test_message"}}</textarea>
       </div>
       <button type="submit" class="btn" {{if not .State.Configured}}disabled{{end}}><i class="fa-solid fa-paper-plane"></i> {{t "telegram.test"}}</button>
       {{if not .State.Configured}}
-      <div class="sub" style="margin-top:.5rem">Save token and chat_id first.</div>
+      <div class="sub" style="margin-top:.5rem">{{t "telegram.test_disabled_hint"}}</div>
       {{end}}
     </form>
   </div>
@@ -119,33 +136,33 @@
 
   <div class="card">
     <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "telegram.rotate"}}</h3>
-    <p class="sub">If the token is compromised (e.g. leaked in logs): delete it and save a new one. All future events (backup/upgrade) will go to ~/.skygate-notify.log until reconfigured.</p>
-    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Delete the current Telegram token? You will need to save a new one.')">
+    <p class="sub">{{t "telegram.rotate_help"}}</p>
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.rotate_confirm"}}')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="rotate">
-      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> I understand a new token will be required</label>
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> {{t "telegram.rotate_check_warn"}}</label>
       <button type="submit" class="btn btn-warn" style="margin-top:1rem"><i class="fa-solid fa-arrows-rotate"></i> {{t "telegram.rotate"}}</button>
     </form>
   </div>
 
   <div class="card">
     <h3><i class="fa-solid fa-power-off"></i> {{t "telegram.disable"}}</h3>
-    <p class="sub">Completely turns off Telegram. <code>scripts/notify.sh</code> will write to a local log.</p>
-    <form action="/admin/telegram" method="POST" onsubmit="return confirm('Disable Telegram? Notifications will stop arriving in the messenger.')">
+    <p class="sub">{{t "telegram.disable_help" | safeHTML}}</p>
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.disable_confirm"}}')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="disable">
-      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> I understand the consequences</label>
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> {{t "telegram.disable_check_warn"}}</label>
       <button type="submit" class="btn btn-danger" style="margin-top:1rem"><i class="fa-solid fa-power-off"></i> {{t "telegram.disable"}}</button>
     </form>
   </div>
 
   <div class="card" style="grid-column:1 / -1">
-    <h3><i class="fa-solid fa-circle-info"></i> Where other components look</h3>
+    <h3><i class="fa-solid fa-circle-info"></i> {{t "telegram.where_heading"}}</h3>
     <ul class="sub" style="line-height:1.7">
-      <li><code>scripts/backup.sh</code> — <code>notify.sh --severity=fail</code> always; <code>--severity=ok</code> when <code>SKYGATE_NOTIFY_ON_OK=1</code>.</li>
-      <li><code>scripts/upgrade.sh</code> — <code>notify.sh --severity=ok|fail</code> after merge &amp; restart.</li>
-      <li>Variables <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> from <code>.env</code> apply only if not set in DB (see <code>cmd/skygate/main.go</code>).</li>
-      <li>Full token procedure: <a href="/docs/TELEGRAM.md" target="_blank" rel="noopener">docs/TELEGRAM.md</a>.</li>
+      <li>{{t "telegram.where_backup" | safeHTML}}</li>
+      <li>{{t "telegram.where_upgrade" | safeHTML}}</li>
+      <li>{{t "telegram.where_env_vars" | safeHTML}}</li>
+      <li>{{t "telegram.where_docs" | safeHTML}}</li>
     </ul>
   </div>
 
