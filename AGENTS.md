@@ -7,7 +7,20 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.10.14 — /clearrules body i18n (закрытие
+* **Current**: v0.11.0 — /admin/integrations: web UI для
+  DERP и Headplane
+  ([release notes](RELEASE-NOTES-v0.11.0.md)). The v0.10.12
+  deploy-time toggles (`DERP_EXTERNAL_URLS`,
+  `HEADPLANE_EXTERNAL_URL`, `HEADPLANE_ENABLED`) are now
+  editable from `/admin/integrations` (landing),
+  `/admin/derp/config` (form), and `/admin/headplane` (form).
+  Storage in `global_settings` with env-var fallback for
+  operators who haven't visited the UI yet — the v0.10.12
+  deploy model keeps working unchanged. 30 new catalog
+  keys, 21 new tests (9 in db/integrations_test.go + 12 in
+  admin_integrations_test.go). Runtime renderer (re-apply
+  headscale config + restart on save) deferred to v0.11.1.
+* **Previous**: v0.10.14 — /clearrules body i18n (закрытие
   RU-долга)
   ([release notes](RELEASE-NOTES-v0.10.14.md)). The last
   hardcoded-English path in the bot — `/clearrules` — now
@@ -19,19 +32,6 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   surface, not user reply). 6 new
   `TestClearRulesReplyRussian*` tests pin the RU reply
   on every major branch.
-* **Previous**: v0.10.13 — /lang в меню + lazy tag backfill +
-  DERP page i18n
-  ([release notes](RELEASE-NOTES-v0.10.13.md)). The bot
-  menu now exposes `/lang` (was in dispatcher but missing
-  from the menu spec). The bot's `/my_nodes` and `/nodes`
-  self-heal stale `node_owner_map.tag` rows on read via
-  the new `db.SyncTagsFromHeadscale` helper — closes the
-  v0.10.11 regression where admin-tagged devices showed
-  `tag:untagged` in the bot. `PostAdminNodeTag` got a
-  source fix to keep the row fresh for future tags. The
-  `/admin/derp` page is now fully localised (40 new
-  `derp.*` keys) with a new `safeHTML` template function
-  for the markup-bearing paragraphs.
 * **What we're working on next (v0.11.0 candidates)**:
   - **Web-UI runtime config for DERP/Headplane** — lift the
     v0.10.12 deploy-time env vars into `global_settings` and
