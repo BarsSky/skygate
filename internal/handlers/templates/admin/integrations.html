@@ -9,6 +9,10 @@
 {{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
 {{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
 
+<div class="card" style="background:var(--bg-muted)">
+  <div style="font-size:13px;line-height:1.6">{{t "integrations.apply_help" | safeHTML}}</div>
+</div>
+
 <div class="card">
   <h3><i class="fa-solid fa-tower-broadcast"></i>{{t "integrations.section_derp"}}</h3>
   <p style="color:var(--text-muted);font-size:13px">{{t "integrations.descr_derp"}}</p>
