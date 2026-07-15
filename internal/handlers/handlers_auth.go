@@ -27,6 +27,7 @@ func (a *App) GetLogin(w http.ResponseWriter, r *http.Request) {
 		"Theme":      theme,
 		"ThemeLabel": db.ThemeLabel(theme),
 		"Lang":       lang,
+		"Version":    a.Version,
 	})
 }
 
@@ -38,6 +39,7 @@ func (a *App) PostLogin(w http.ResponseWriter, r *http.Request) {
 		"Theme":      db.ThemeLinear,
 		"ThemeLabel": db.ThemeLabel(db.ThemeLinear),
 		"Lang":       lang,
+		"Version":    a.Version,
 	}
 	if u == "" || p == "" {
 		baseData["Error"] = a.I18n.T(lang, "login.invalid_credentials")
