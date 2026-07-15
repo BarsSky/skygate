@@ -13,6 +13,45 @@
 {{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
 {{if .FlashInfo}}<div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{.FlashInfo | safeHTML}}</div>{{end}}
 
+{{if .ApplyResult}}
+  <div class="card">
+    <h3><i class="fa-solid fa-bolt"></i> {{t "derp.config_apply_result"}}</h3>
+    {{if .ApplyResult.OK}}
+      <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{t "derp.config_applied"}}</div>
+    {{else}}
+      <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{t "derp.config_apply_failed"}} — {{.ApplyResult.Err}}</div>
+    {{end}}
+    <ul style="font-size:13px;line-height:1.6;font-family:monospace;background:var(--bg-muted);padding:10px 14px;border-radius:6px">
+      {{range .ApplyResult.Steps}}<li>{{.}}</li>{{end}}
+    </ul>
+  </div>
+{{end}}
+
+{{if .TestResults}}
+  <div class="card">
+    <h3><i class="fa-solid fa-stethoscope"></i> {{t "derp.config_test_results"}}</h3>
+    <table style="width:100%;font-size:13px">
+      <thead><tr style="text-align:left">
+        <th style="padding:6px">{{t "derp.config_test_url"}}</th>
+        <th style="padding:6px">{{t "derp.config_test_status"}}</th>
+        <th style="padding:6px">{{t "derp.config_test_latency"}}</th>
+      </tr></thead>
+      <tbody>
+        {{range .TestResults}}
+        <tr>
+          <td style="padding:6px;font-family:monospace;word-break:break-all">{{.URL}}</td>
+          <td style="padding:6px">
+            {{if .OK}}<span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "derp.config_test_ok"}}</span>
+            {{else}}<span class="tag tag-error"><i class="fa-solid fa-circle-exclamation"></i> {{.Err}}</span>{{end}}
+          </td>
+          <td style="padding:6px;font-family:monospace">{{.LatencyMS}} ms</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+{{end}}
+
 <form method="POST" action="/admin/derp/config">
   <div class="card">
     <h3>{{t "derp.config_current"}}</h3>
@@ -35,24 +74,15 @@
       <div class="form-hint">{{t "derp.config_bundled_help"}}</div>
     </div>
 
-    <div class="btn-row" style="margin-top:16px">
-      <button type="submit" name="action" value="save" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "derp.config_save"}}</button>
+    <div class="btn-row" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button type="submit" name="action" value="save" class="btn btn-secondary"><i class="fa-solid fa-floppy-disk"></i> {{t "derp.config_save"}}</button>
+      <button type="submit" name="action" value="test" class="btn btn-secondary"><i class="fa-solid fa-stethoscope"></i> {{t "derp.config_test_all"}}</button>
+      <button type="submit" name="action" value="apply" class="btn btn-primary"><i class="fa-solid fa-bolt"></i> {{t "derp.config_apply"}}</button>
     </div>
   </div>
 </form>
 
-{{if .TestResult}}
 <div class="card">
-  <h3>{{t "derp.config_test"}}</h3>
-  {{if .TestResult.OK}}
-    <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{t "derp.config_test_ok"}}</div>
-  {{else}}
-    <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{tf "derp.config_test_failed" .TestResult.Err}}</div>
-  {{end}}
-</div>
-{{end}}
-
-<div class="card">
-  <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{t "derp.config_apply_required" | safeHTML}}</div>
+  <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{t "derp.config_apply_help" | safeHTML}}</div>
 </div>
 {{end}}

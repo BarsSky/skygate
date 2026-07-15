@@ -7,19 +7,26 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.11.0 — /admin/integrations: web UI для
-  DERP и Headplane
-  ([release notes](RELEASE-NOTES-v0.11.0.md)). The v0.10.12
-  deploy-time toggles (`DERP_EXTERNAL_URLS`,
-  `HEADPLANE_EXTERNAL_URL`, `HEADPLANE_ENABLED`) are now
-  editable from `/admin/integrations` (landing),
-  `/admin/derp/config` (form), and `/admin/headplane` (form).
-  Storage in `global_settings` with env-var fallback for
-  operators who haven't visited the UI yet — the v0.10.12
-  deploy model keeps working unchanged. 30 new catalog
-  keys, 21 new tests (9 in db/integrations_test.go + 12 in
-  admin_integrations_test.go). Runtime renderer (re-apply
-  headscale config + restart on save) deferred to v0.11.1.
+* **Current**: v0.11.1 — runtime renderer: Apply + Test URL
+  ([release notes](RELEASE-NOTES-v0.11.1.md)). The
+  `/admin/derp/config` and `/admin/headplane` forms now have
+  an **Apply** button that re-renders `headscale-config.yaml`
+  / `headscale-compose.yml` in Go (no shell-out to Python),
+  pushes the config to the running headscale container via
+  `docker exec -i headscale sh -c "cat > ..."`, and SIGHUPs
+  the process for a no-downtime config reload. The DERP form
+  also gets a **Test all URLs** button that probes each
+  external URL (5s timeout) and shows per-URL status +
+  latency inline. Bundled derper / headplane toggles now
+  start/stop the actual container via `docker start` /
+  `docker stop` / `docker rm`. First-time install of derper
+  / headplane containers still requires `./deploy/deploy.sh`
+  (the bind-mounted compose file isn't visible inside the
+  skygate container). 18 new tests in
+  `admin_integrations_renderer_test.go`, 20 new catalog
+  keys (`derp.config_apply*`, `derp.config_test_*`,
+  `headplane.config_apply*`, `integrations.apply_help`).
+  12/12 packages green, smoke 118/118.
 * **Previous**: v0.10.14 — /clearrules body i18n (закрытие
   RU-долга)
   ([release notes](RELEASE-NOTES-v0.10.14.md)). The last
@@ -32,16 +39,19 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   surface, not user reply). 6 new
   `TestClearRulesReplyRussian*` tests pin the RU reply
   on every major branch.
-* **What we're working on next (v0.11.0 candidates)**:
-  - **Web-UI runtime config for DERP/Headplane** — lift the
-    v0.10.12 deploy-time env vars into `global_settings` and
-    the existing backup-config-ui pattern. New
-    `/admin/integrations` page lists every pluggable
-    component (DERP, Headplane, Headscale) with current
-    mode + a "Configure" button. v0.11.0 follow-up.
-  - **`/clearrules` i18n** — body helper still has hardcoded
-    English. Catalog has all the keys; just needs the body
-    touched. v0.11.0 follow-up.
+* **What we're working on next (v0.11.1 candidates)**:
+  - **Runtime renderer (DONE in v0.11.1)** — re-apply
+    headscale config + restart on save from the web UI, so
+    the operator doesn't have to run ./deploy/deploy.sh.
+    Done: Go-side template render + `docker exec cat` +
+    SIGHUP. Test URL button also done.
+  - **Pluggable headscale per portal user** (v0.12.0 per
+    `docs/skygate-as-shell.md`) — `portal_users` gets
+    `headscale_url` + `headscale_api_key` columns so each
+    user can talk to a different control plane.
+  - **ACL import/export** (v0.13.0) — load a JSON policy
+    file into the current ACL with a dry-run preview.
+  - **`/clearrules` i18n** (DONE in v0.10.14)
   - **Butler voice v3** (deferred until user feedback on v2 lands):
     header carries urgency level (`🪶` / `🪶!` / `🪶!!`), body uses
     subtle inline color marks for status.

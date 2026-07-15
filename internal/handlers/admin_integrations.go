@@ -38,14 +38,12 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
+	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/i18n"
 )
@@ -95,8 +93,26 @@ func (a *App) GetAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// PostAdminDerpConfig handles the form submit. "save" persists;
-// "test" probes a single URL (deprecated — see below).
+// PostAdminDerpConfig handles the form submit. Three actions:
+//
+//   action=save (default) — persist the form fields to
+//     global_settings. The next GET renders the new state.
+//     No docker / no headscale interaction. This is the
+//     same behaviour as v0.11.0.
+//
+//   action=apply — save AND push the change to headscale
+//     (re-render the config, `docker exec cat`, SIGHUP).
+//     v0.11.1. The apply path also starts/stops the bundled
+//     derper container to match BundledDERP.
+//
+//   action=test — probe each external URL via probeDerpURL
+//     and re-render the page with per-URL test results
+//     inline. The form fields are saved first so the
+//     "Test" button can be used after a quick edit. (If
+//     the operator only wants to test the URL they're
+//     about to type, they can hit Test first; the input
+//     is in the form's POST body so it's available
+//     without a prior Save.)
 func (a *App) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 	c := a.currentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -108,20 +124,108 @@ func (a *App) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := a.I18n.LangFromRequest(r)
+	action := r.FormValue("action")
+	if action == "" {
+		action = "save"
+	}
 
-	// "save" (default). Read the form fields, validate, persist.
 	rawURLs := r.FormValue("external_urls")
 	cfg := &db.IntegrationConfig{
 		DERPExternalURLs: splitAndTrimCSV(rawURLs),
 		BundledDERP:      r.FormValue("bundled_enabled") == "1",
 	}
-	if err := db.SaveIntegrations(a.DB, cfg); err != nil {
-		derpConfigRedirect(w, r, "", "Save failed: "+err.Error())
-		return
+
+	switch action {
+	case "save":
+		// Persist + redirect (the v0.11.0 behaviour).
+		if err := db.SaveIntegrations(a.DB, cfg); err != nil {
+			derpConfigRedirect(w, r, "", "Save failed: "+err.Error())
+			return
+		}
+		a.audit(c.UserID, c.Username, "derp.config.save",
+			fmt.Sprintf("external=%d bundled=%t", len(cfg.DERPExternalURLs), cfg.BundledDERP))
+		derpConfigRedirect(w, r, i18n.T(lang, "derp.config_saved"), "")
+	case "apply":
+		// Persist first (so the DB is current), then
+		// re-render with the apply trace inline. We
+		// don't redirect here because the operator
+		// needs to see the trace; a redirect would
+		// flash the success message but lose the
+		// per-step trace.
+		if err := db.SaveIntegrations(a.DB, cfg); err != nil {
+			derpConfigRedirect(w, r, "", "Save failed: "+err.Error())
+			return
+		}
+		a.audit(c.UserID, c.Username, "derp.config.save",
+			fmt.Sprintf("external=%d bundled=%t", len(cfg.DERPExternalURLs), cfg.BundledDERP))
+		a.applyAndRenderDerp(c, cfg, w, r)
+	case "test":
+		// Save first so the test results persist
+		// with the form data (if the operator
+		// wants to Apply right after testing).
+		if err := db.SaveIntegrations(a.DB, cfg); err != nil {
+			derpConfigRedirect(w, r, "", "Save failed: "+err.Error())
+			return
+		}
+		a.audit(c.UserID, c.Username, "derp.config.save",
+			fmt.Sprintf("external=%d bundled=%t", len(cfg.DERPExternalURLs), cfg.BundledDERP))
+		a.testAndRenderDerp(c, cfg, w, r)
+	default:
+		derpConfigRedirect(w, r, "", "Unknown action: "+action)
 	}
-	a.audit(c.UserID, c.Username, "derp.config.save",
-		fmt.Sprintf("external=%d bundled=%t", len(cfg.DERPExternalURLs), cfg.BundledDERP))
-	derpConfigRedirect(w, r, i18n.T(lang, "derp.config_saved"), "")
+}
+
+// applyAndRenderDerp re-renders the headscale config +
+// starts/stops the bundled derper, then re-renders the
+// DERP config page with the apply trace inline. The
+// operator sees the steps in the green / red flash so
+// they can see exactly what the renderer did (and
+// where it failed, if anything).
+func (a *App) applyAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, w http.ResponseWriter, r *http.Request) {
+	rndr := newRenderer()
+	res := rndr.applyAll(cfg)
+	lang := a.I18n.LangFromRequest(r)
+	_ = lang
+
+	// Audit log: one row per apply, with the trace
+	// attached so the operator can reconstruct the
+	// sequence later from /admin/audit.
+	trace := strings.Join(res.Steps, " | ")
+	a.audit(c.UserID, c.Username, "derp.config.apply",
+		fmt.Sprintf("ok=%t steps=%q err=%q", res.OK, trace, res.Err))
+
+	// Re-render the page with the trace inline.
+	loaded, _ := db.LoadIntegrationsFromOS(a.DB)
+	a.renderWithLayout(w, r, "admin-derp-config", c, map[string]any{
+		"Cfg":              loaded,
+		"ExternalURLsText": strings.Join(loaded.DERPExternalURLs, ","),
+		"TestResults":      nil,
+		"ApplyResult":      &res,
+		"FlashSuccess":     "",
+		"FlashError":       "",
+		"FlashInfo":        "",
+	})
+}
+
+// testAndRenderDerp probes each external DERP URL and
+// re-renders the page with the per-URL results inline.
+// Each row shows "OK (latency)" or "fail: <reason>".
+// The form fields persist so the operator can Apply
+// right after testing.
+func (a *App) testAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, w http.ResponseWriter, r *http.Request) {
+	results := probeAllDerps(cfg.DERPExternalURLs)
+	a.audit(c.UserID, c.Username, "derp.config.test",
+		fmt.Sprintf("tested=%d", len(results)))
+	loaded, _ := db.LoadIntegrationsFromOS(a.DB)
+	a.renderWithLayout(w, r, "admin-derp-config", c, map[string]any{
+		"Cfg":              loaded,
+		"ExternalURLsText": strings.Join(loaded.DERPExternalURLs, ","),
+		"TestResults":      results,
+		"ApplyResult":      nil,
+		"FlashSuccess":     "",
+		"FlashError":       "",
+		"FlashInfo":        "",
+	})
 }
 
 // ---------- /admin/headplane ----------
@@ -146,6 +250,15 @@ func (a *App) GetAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 }
 
 // PostAdminHeadplane persists the Headplane mode + URL.
+// Two actions: "save" (default; v0.11.0 behaviour) and
+// "apply" (v0.11.1; saves then starts/stops the headplane
+// container to match the new mode). The apply path also
+// re-renders the headscale config (headplane mode doesn't
+// affect headscale config directly, but applyAll keeps
+// the two configs in sync — if an operator saved a
+// headplane change earlier and then changed DERP on the
+// /admin/derp/config page, the next Apply on either page
+// picks up the latest state).
 func (a *App) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 	c := a.currentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -157,6 +270,10 @@ func (a *App) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := a.I18n.LangFromRequest(r)
+	action := r.FormValue("action")
+	if action == "" {
+		action = "save"
+	}
 
 	mode := strings.TrimSpace(r.FormValue("mode"))
 	externalURL := strings.TrimSpace(r.FormValue("external_url"))
@@ -193,6 +310,25 @@ func (a *App) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(c.UserID, c.Username, "headplane.config.save",
 		fmt.Sprintf("mode=%s external_url=%q", mode, externalURL))
+
+	if action == "apply" {
+		// Same pattern as the DERP apply path: re-render
+		// the page with the apply trace inline so the
+		// operator sees what happened.
+		rndr := newRenderer()
+		res := rndr.applyAll(current)
+		trace := strings.Join(res.Steps, " | ")
+		a.audit(c.UserID, c.Username, "headplane.config.apply",
+			fmt.Sprintf("ok=%t steps=%q err=%q", res.OK, trace, res.Err))
+		loaded, _ := db.LoadIntegrationsFromOS(a.DB)
+		a.renderWithLayout(w, r, "admin-headplane", c, map[string]any{
+			"Cfg":          loaded,
+			"ApplyResult":  &res,
+			"FlashSuccess": "",
+			"FlashError":   "",
+		})
+		return
+	}
 	headplaneRedirect(w, r, i18n.T(lang, "headplane.config_saved"), "")
 }
 
@@ -225,34 +361,12 @@ func redirectWithFlash(w http.ResponseWriter, r *http.Request, path, okMsg, errM
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
-// probeDerpmapURL fetches the given URL with a 5s timeout and
-// returns (ok, err). A successful response with HTTP 200 is "ok";
-// anything else is an error. Currently unused — the form
-// only has "save" — but kept here for the future "Test URL"
-// button that v0.11.1 will wire in alongside the runtime
-// renderer (the renderer's preview step needs the same probe).
-func probeDerpmapURL(u string, timeout time.Duration) (bool, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return false, "bad URL: " + err.Error()
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false, "fetch: " + err.Error()
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Sprintf("HTTP %d", resp.StatusCode)
-	}
-	buf := make([]byte, 16)
-	n, _ := io.ReadFull(resp.Body, buf)
-	if n == 0 {
-		return false, "empty body"
-	}
-	return true, ""
-}
+// probeDerpmapURL used to live here in v0.11.0; v0.11.1
+// moved the probe into admin_integrations_renderer.go as
+// probeDerpURL (it now returns latency as well as the
+// pass/fail flag, which the inline test-results table
+// shows to the operator). The test action uses
+// probeAllDerps which iterates over the URL list.
 
 // splitAndTrimCSV is the form-side counterpart to db.splitCSV.
 // The form input may have either commas or newlines (the
