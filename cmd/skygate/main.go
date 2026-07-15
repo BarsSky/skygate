@@ -142,7 +142,7 @@ func main() {
 	// honoured). Operators who want multi-control-plane
 	// should generate a 32-byte key (openssl rand -hex 32)
 	// and put it in .env.
-	app.SecretKeyHex = os.Getenv("SKYGATE_SECRET_KEY")
+	app.SecretKeyHex = cfg.SecretKeyHex
 	// 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set,
 	// /admin/acls (and a few other admin pages) link to the
 	// existing Headplane instead of the local sidecar.
@@ -199,6 +199,14 @@ func main() {
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(app.PostAdminUser)))
 	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(app.PostAdminDeleteUser)))
 	mux.Handle("POST /admin/users/{id}/reset-password", authMW(http.HandlerFunc(app.PostAdminUserResetPassword)))
+	// 2026-07-15: v0.12.0 — per-user headscale control plane
+	// (multi-tailnet). /admin/control-planes is the landing;
+	// /admin/users/{id}/plane is the per-user edit form.
+	mux.Handle("GET /admin/control-planes", authMW(http.HandlerFunc(app.GetAdminControlPlanes)))
+	mux.Handle("POST /admin/control-planes/test", authMW(http.HandlerFunc(app.PostAdminControlPlanesTest)))
+	mux.Handle("GET /admin/users/{id}/plane", authMW(http.HandlerFunc(app.GetAdminUserControlPlane)))
+	mux.Handle("POST /admin/users/{id}/plane", authMW(http.HandlerFunc(app.PostAdminUserControlPlane)))
+	mux.Handle("POST /admin/users/{id}/plane/clear", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneClear)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
 	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))

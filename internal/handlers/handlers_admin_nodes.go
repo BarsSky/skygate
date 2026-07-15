@@ -21,8 +21,13 @@ func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	users, _ := a.HS.ListUsers()
-	allNodes, _ := a.HS.ListAllNodes()
+	// 2026-07-15: v0.12.0 — admin pages always use the global
+	// headscale (HSGlobal). Per-user routing on /admin/devices
+	// would be ambiguous ("show devices of which user?"); the
+	// admin view is the operator's-eye view of the primary
+	// control plane.
+	users, _ := a.HSGlobal().ListUsers()
+	allNodes, _ := a.HSGlobal().ListAllNodes()
 	a.renderWithLayout(w, r, "admin/devices.html", c, map[string]any{
 		"Nodes": allNodes,
 		"Users": users,
@@ -48,7 +53,7 @@ func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var origUserID, origUserName string
-	if nodes, err := a.HS.ListAllNodes(); err == nil {
+	if nodes, err := a.HSGlobal().ListAllNodes(); err == nil {
 		for _, n := range nodes {
 			if n.ID == strconv.FormatInt(nodeID, 10) {
 				origUserID = n.UserID
@@ -58,7 +63,7 @@ func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := a.HS.TagNode(nodeID, tag); err != nil {
+	if err := a.HSGlobal().TagNode(nodeID, tag); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -93,7 +98,7 @@ func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.HS.InvalidateCache()
+	a.HSGlobal().InvalidateCache()
 	a.audit(c.UserID, c.Username, "node_tag", fmt.Sprintf("node=%d tag=%s owner=%s", nodeID, tag, origUserName))
 	http.Redirect(w, r, "/admin/devices", http.StatusFound)
 }
@@ -114,14 +119,14 @@ func (a *App) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
 	if tag == "" {
 		tag = headscale.TagPublicTag
 	}
-	if err := a.HS.UntagNode(nodeID, tag); err != nil {
+	if err := a.HSGlobal().UntagNode(nodeID, tag); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	// 2026-07-12: Этап 10 part 4 — moved to db.DeleteNodeOwnerByNodeTag.
 	_ = db.DeleteNodeOwnerByNodeTag(a.DB, strconv.FormatInt(nodeID, 10), tag)
 
-	a.HS.InvalidateCache()
+	a.HSGlobal().InvalidateCache()
 	a.audit(c.UserID, c.Username, "node_untag", fmt.Sprintf("node=%d tag=%s", nodeID, tag))
 	http.Redirect(w, r, "/admin/devices", http.StatusFound)
 }

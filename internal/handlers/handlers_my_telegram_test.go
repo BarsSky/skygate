@@ -137,7 +137,13 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			created_at INTEGER NOT NULL DEFAULT 0,
 			headscale_user_id INTEGER,
 			default_device_node_id TEXT NOT NULL DEFAULT '',
-			default_exit_node_id TEXT NOT NULL DEFAULT ''
+			default_exit_node_id TEXT NOT NULL DEFAULT '',
+			-- 2026-07-15: v0.12.0 — per-user control plane.
+			-- The DEFAULT '' keeps every existing test that
+			-- relies on the "no override" path working without
+			-- having to seed a value.
+			headscale_url TEXT NOT NULL DEFAULT '',
+			headscale_api_key_enc TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE telegram_bindings (
 			chat_id INTEGER PRIMARY KEY,

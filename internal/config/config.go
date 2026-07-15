@@ -35,6 +35,12 @@ type Config struct {
 	// 2026-07-07: per-user rule limits. Map username -> max rules. Default = MaxRulesPerDevice.
 	// Example: "SKYGATE_USER_MAX_RULES=skyadmin:1000,admin:500"
 	UserMaxRules       map[string]int
+	// 2026-07-15: v0.12.0 — per-user headscale control plane
+	// keys are encrypted with this 32-byte hex key. Empty
+	// means "encryption not configured"; the per-user router
+	// falls through to the global client (operators who
+	// haven't enabled per-user planes see no change).
+	SecretKeyHex string
 }
 
 func Load() (*Config, error) {
@@ -57,6 +63,7 @@ func Load() (*Config, error) {
 		StaggerBatchSize:   getInt("SKYGATE_STAGGER_BATCH_SIZE", 20),
 		StaggerInterval:    getDuration("SKYGATE_STAGGER_INTERVAL", 30*time.Second),
 		UserMaxRules:       parseUserLimits(getenv("SKYGATE_USER_MAX_RULES", "")),
+		SecretKeyHex:       os.Getenv("SKYGATE_SECRET_KEY"),
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
