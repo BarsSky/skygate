@@ -7,7 +7,19 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.10.13 — /lang в меню + lazy tag backfill +
+* **Current**: v0.10.14 — /clearrules body i18n (закрытие
+  RU-долга)
+  ([release notes](RELEASE-NOTES-v0.10.14.md)). The last
+  hardcoded-English path in the bot — `/clearrules` — now
+  goes through `i18n.T` / `i18n.Tf` on every visible
+  line. 5 new `bot.clearrules.mint_*` and
+  `bot.clearrules.scan_error` keys (× 2 languages). Audit
+  log details and the `Notifier.SendAlert` body on
+  SetPolicy failure stay in English by design (operator
+  surface, not user reply). 6 new
+  `TestClearRulesReplyRussian*` tests pin the RU reply
+  on every major branch.
+* **Previous**: v0.10.13 — /lang в меню + lazy tag backfill +
   DERP page i18n
   ([release notes](RELEASE-NOTES-v0.10.13.md)). The bot
   menu now exposes `/lang` (was in dispatcher but missing
@@ -20,20 +32,6 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   `/admin/derp` page is now fully localised (40 new
   `derp.*` keys) with a new `safeHTML` template function
   for the markup-bearing paragraphs.
-* **Previous**: v0.10.12 — lazy hostname backfill + i18n
-  bot menu + RU/EN polish + Headplane/DERP external +
-  Skygate-as-shell roadmap
-  ([release notes](RELEASE-NOTES-v0.10.12.md)). /my_nodes
-  and /nodes now self-heal the empty-hostname column on
-  read (the migration v0.34 column had no backfill since
-  deploy). The Telegram bot menu is now per-language via
-  `language_code`, so RU-locale chats see Russian menu
-  items (the v0.10.4 worktree had hardcoded English).
-  `HEADPLANE_EXTERNAL_URL` and `DERP_EXTERNAL_URLS` let
-  operators point at existing modules without starting
-  new sidecars. `docs/skygate-as-shell.md` captures the
-  v0.11.0+ roadmap for pluggable headscale and ACL
-  import.
 * **What we're working on next (v0.11.0 candidates)**:
   - **Web-UI runtime config for DERP/Headplane** — lift the
     v0.10.12 deploy-time env vars into `global_settings` and
