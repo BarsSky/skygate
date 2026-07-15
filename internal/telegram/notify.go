@@ -701,6 +701,9 @@ func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pendin
 		"text":                   text,
 		"disable_web_page_preview": true,
 	}
+	if pending != nil && pending.ParseMode != "" {
+		payload["parse_mode"] = pending.ParseMode
+	}
 	if pending != nil && len(pending.InlineKeyboard) > 0 {
 		payload["reply_markup"] = map[string]any{
 			"inline_keyboard": pending.InlineKeyboard,

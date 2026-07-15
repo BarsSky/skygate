@@ -170,6 +170,13 @@ type PendingReply struct {
 	// silently dropped the entire /add_device reply in
 	// production until the v0.14.1 logging fix.
 	InlineKeyboard [][]map[string]any
+	// ParseMode is "HTML" or "MarkdownV2" if the text uses
+	// Telegram's entity syntax. Empty (the common case) =
+	// plain text. 2026-07-15: v0.14.1 — added so /add_device
+	// can render the preauth key inside <code>...</code>
+	// for easier mobile selection, without making every
+	// other bot reply opt into HTML.
+	ParseMode string
 }
 
 // IsIdentified returns true when the bot knows which Telegram chat
