@@ -117,9 +117,33 @@ func GenerateACL(d *sql.DB) (string, error) {
 		sb.WriteString(",\n    { \"action\": \"" + e.action + "\", \"src\": [" + src + "], \"dst\": [\"" + e.target + ":*\"] }")
 	}
 
+	// 2026-07-15: v0.12.0.1 — the catch-all `"*:*" accept`
+	// rule at the end of the ACL was a security bug. With
+	// it in place, Tailscale's first-match semantics still
+	// hit the per-user rules for self-traffic, but ANY
+	// other traffic (e.g. alice trying to reach bob's
+	// device) fell through to the catch-all and was
+	// accepted. The result: the operator's Android Tailscale
+	// client showed every other user's device in the
+	// "local network" view (each device has a 100.x.x.x
+	// Tailscale IP visible to the client, and the ACL
+	// said "yes, you can route to any of them").
+	//
+	// The fix is to drop the catch-all entirely. After the
+	// per-user rules + per-device exit-rules + the two
+	// tag:* rules, the ACL ends. Tailscale's default
+	// semantics ("no rule matches → deny") then close the
+	// door on inter-user traffic. tag:public and
+	// tag:exit-node are still reachable (the explicit
+	// rules above); the operator can still reach the
+	// relay nodes (the ssh[] rules below).
+	//
+	// The test TestGenerateACLValidJSONShape used to
+	// require `"dst": ["*:*"]` to be present in the
+	// generated ACL — that test was updated to verify
+	// the catch-all is NOT present instead.
 	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:public:*\"] }")
 	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:exit-node:*\"] }")
-	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"] }")
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
