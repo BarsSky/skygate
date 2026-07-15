@@ -108,6 +108,16 @@
   </div>
 
   <div class="card">
+    <h3><i class="fa-solid fa-list"></i> {{t "telegram.refresh_menu_title"}}</h3>
+    <p class="sub">{{t "telegram.refresh_menu_help"}}</p>
+    <form action="/admin/telegram" method="POST">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="refresh_menu">
+      <button type="submit" class="btn" {{if not .State.Configured}}disabled{{end}}><i class="fa-solid fa-arrows-rotate"></i> {{t "telegram.refresh_menu_button"}}</button>
+    </form>
+  </div>
+
+  <div class="card">
     <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "telegram.rotate"}}</h3>
     <p class="sub">If the token is compromised (e.g. leaked in logs): delete it and save a new one. All future events (backup/upgrade) will go to ~/.skygate-notify.log until reconfigured.</p>
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('Delete the current Telegram token? You will need to save a new one.')">

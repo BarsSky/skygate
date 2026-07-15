@@ -939,6 +939,12 @@ var ruCatalog = map[string]string{
 	"telegram.test":                   "Тест",
 	"telegram.test_message":           "✅ Skygate: тестовое сообщение",
 	"telegram.rotate":                 "Сменить token",
+	// 2026-07-15: v0.14.0 — "Refresh bot menu" button on
+	// /admin/telegram. The help string explains the
+	// why (catalog updates + late chat-binding).
+	"telegram.refresh_menu_title":      "Команды в меню Telegram",
+	"telegram.refresh_menu_help":       "Перерегистрирует команды бота в Telegram (en + ru). Используйте после добавления новой команды в каталог или если меню в Telegram отображается некорректно.",
+	"telegram.refresh_menu_button":     "Обновить меню",
 	"telegram.disable":                "Отключить",
 	// 2026-07-13: Этап 12 — strict mode toggle in /admin/telegram.
 	// When ON, unidentified chats are rejected; users must
@@ -1025,6 +1031,18 @@ var ruCatalog = map[string]string{
 	"error.unauthorized":              "Не авторизован",
 	"error.forbidden":                 "Доступ запрещён",
 	"error.try_again":                 "Попробуйте позже или обратитесь к администратору.",
+
+	// 2026-07-15: v0.14.0 — release-monitor banner on admin
+	// pages. The body string interpolates the running
+	// version and the latest GitHub release. The
+	// "checked at" timestamp gives the operator a "is
+	// the monitor still polling?" signal (the default
+	// tick is 1h; if checked > 2h ago the monitor is
+	// stuck and the banner can be safely ignored).
+	"update.banner_title":              "Доступно обновление",
+	"update.banner_body":               "Запущена %s, на GitHub есть %s.",
+	"update.banner_checked":            "проверено: %s",
+	"update.banner_open":               "Открыть релиз",
 
 	// footer
 	"footer.powered_by":               "Tailscale + Headscale",
@@ -1139,7 +1157,17 @@ var ruCatalog = map[string]string{
 	"bot.help.common_version":          "Сборка, рантайм, версия схемы — /version",
 	"bot.help.common_help":             "Полный список команд или подробная справка по одной — /help [команда]",
 	"bot.help.auth_login":              "Привязать чат к аккаунту skygate — /login <ключ>",
-	"bot.help.auth_start":              "То же приветствие, что и для нового чата (алиас /login без аргумента) — /start",
+	// 2026-07-15: v0.14.0 — help layout. Section headers
+	// (🪶/🔐/✦/🛠) + table-row formatter (12-char command
+	// column + description). Keep in lockstep with EN.
+	"bot.help.header":                  "Кодекс (список команд бота)",
+	"bot.help.subtitle":                "🛡️  Команды ниже сгруппированы по секциям. Чтобы получить подробности по одной — /help <команда>.",
+	"bot.help.section_auth":            "Auth — привязка чата",
+	"bot.help.section_common":          "Мои данные — управление своими правилами и устройствами",
+	"bot.help.section_admin":           "Админ — управление tailnet",
+	"bot.help.auth_start":              "Алиас /login (UX-конвенция Telegram)",
+	"bot.help.admin_top_exit_nodes_health": "Здоровье exit-узлов (online/offline, фон-монитор)",
+	"bot.help.admin_top_sync_nodes":    "Перечитать node_owner_map из headscale (если /exit_nodes пустой)",
 	"bot.help.auth_unbind_self":        "Отвязать свой чат без админа — /unbind_self",
 	"bot.help.lang":                    "Показать язык чата — /lang; переключить — /lang ru|en",
 
@@ -1310,6 +1338,11 @@ var ruCatalog = map[string]string{
 	"bot.myexitnodes.cta1":              "\nВыбрать свой: /setexitnode <node_id>\n",
 	"bot.myexitnodes.cta2":              "Сбросить: /setexitnode clear\n",
 	"bot.myexitnodes.cta3":              "Показать текущий: /defaultexitnode",
+	// 2026-07-15: v0.14.0 — the inline-keyboard picker
+	// replaces cta1 + cta2 with one tap-to-set hint.
+	// cta3 stays for users who prefer typed commands.
+	"bot.myexitnodes.cta_tap":           "\n👇 Нажмите кнопку, чтобы выбрать exit-узел по умолчанию.\nИли введите команду: /setexitnode <node_id>, /setexitnode clear.",
+	"bot.myexitnodes.clear_button":       "✕ Сбросить выбор",
 	"bot.myexitnodes.empty":             "myexitnodes: в skygate нет включённых exit-узлов. Попросите админа включить их в /admin/exit-nodes.",
 	"bot.myexitnodes.not_bound":         "myexitnodes: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login <ключ>.",
 	"bot.myexitnodes.db_error":          "myexitnodes: ошибка БД: %v",
@@ -1418,6 +1451,15 @@ var ruCatalog = map[string]string{
 	"bot.empty_command":                 "Пустая команда.",
 	"bot.unknown_command":               "Неизвестная команда: %s. Посмотрите полный список в /help.",
 	"bot.admin_only_command":            "%s — только для админа. Свои данные смотрите через /my_*.",
+	// 2026-07-15: v0.14.0 — /sync_nodes bot command.
+	// The reply string includes the inserted/updated/total
+	// counts so the operator sees the effect of the sync
+	// in one line. The HS error keys reuse the same pattern
+	// as /add_device (the operator-friendly path).
+	"bot.sync_nodes.ok":                 "✅ sync from headscale: %d inserted, %d updated (of %d total).",
+	"bot.sync_nodes.hs_unavailable":     "sync_nodes: skygate runs in read-only mode (HS not wired) — use the 'Sync from headscale' button on /admin/devices instead.",
+	"bot.sync_nodes.hs_failed":          "sync_nodes: headscale list failed: %v",
+	"bot.sync_nodes.db_failed":          "sync_nodes: db upsert failed: %v",
 	"bot.trim.marker":                   "\n…(обрезано — слишком длинный ответ; попросите более узкий кусок)",
 	"bot.__catalog_parity_marker__":     "",
 	"bot.alert.acl_apply_failed_rule":   "❌ Не удалось применить ACL (правило от %s)\n  target: %s %s\n  err: %v",
@@ -2341,6 +2383,11 @@ var enCatalog = map[string]string{
 	"telegram.test":                   "Test",
 	"telegram.test_message":           "✅ Skygate: test message",
 	"telegram.rotate":                 "Rotate token",
+	// 2026-07-15: v0.14.0 — keep in lockstep with the
+	// ruCatalog block above.
+	"telegram.refresh_menu_title":      "Telegram bot menu (commands)",
+	"telegram.refresh_menu_help":       "Re-registers every command with Telegram in EN + RU. Use after adding a new command to the catalog, or if the bot's command menu shows the wrong language.",
+	"telegram.refresh_menu_button":     "Refresh menu",
 	"telegram.disable":                "Disable",
 	// 2026-07-13: Этап 12 — strict mode toggle. Keep in lockstep
 	// with the ruCatalog block above.
@@ -2422,6 +2469,13 @@ var enCatalog = map[string]string{
 	"error.unauthorized":              "Unauthorized",
 	"error.forbidden":                 "Forbidden",
 	"error.try_again":                 "Try again later or contact the administrator.",
+
+	// 2026-07-15: v0.14.0 — keep in lockstep with the
+	// ruCatalog block above.
+	"update.banner_title":              "Update available",
+	"update.banner_body":               "Running %s, GitHub has %s.",
+	"update.banner_checked":            "checked: %s",
+	"update.banner_open":               "Open release",
 
 	// footer
 	"footer.powered_by":               "Tailscale + Headscale",
@@ -2511,6 +2565,15 @@ var enCatalog = map[string]string{
 	"bot.help.common_help":             "`/help [command]` — this list, or detailed help for one",
 	"bot.help.auth_login":              "`/login <key>` — bind this chat to your skygate account",
 	"bot.help.auth_start":              "`/start` — same welcome as a brand-new chat (alias of /login no-arg)",
+	// 2026-07-15: v0.14.0 — keep in lockstep with the
+	// ruCatalog block above.
+	"bot.help.header":                  "Bot codex (command reference)",
+	"bot.help.subtitle":                "🛡️  Commands below are grouped by section. Detailed per-command help: /help <command>.",
+	"bot.help.section_auth":            "Auth — chat binding",
+	"bot.help.section_common":          "Your data — rules, devices, defaults",
+	"bot.help.section_admin":           "Admin — tailnet-wide operations",
+	"bot.help.admin_top_exit_nodes_health": "Exit-node health (online/offline, background monitor)",
+	"bot.help.admin_top_sync_nodes":    "Re-read node_owner_map from headscale (use when /exit_nodes is empty)",
 	"bot.help.auth_unbind_self":        "`/unbind_self` — drop your own binding (no admin needed)",
 	"bot.help.lang":                    "`/lang` — show this chat's current language; `/lang ru|en` — switch to Russian or English",
 
@@ -2676,6 +2739,9 @@ var enCatalog = map[string]string{
 	"bot.myexitnodes.cta1":            "\nPick one as your default: /setexitnode <node_id>\n",
 	"bot.myexitnodes.cta2":            "Clear default: /setexitnode clear\n",
 	"bot.myexitnodes.cta3":            "Show current: /defaultexitnode",
+	// 2026-07-15: v0.14.0 — keep in lockstep with ruCatalog.
+	"bot.myexitnodes.cta_tap":         "\n👇 Tap a button to set the default exit node.\nOr type: /setexitnode <node_id>, /setexitnode clear.",
+	"bot.myexitnodes.clear_button":     "✕ Clear default",
 	"bot.myexitnodes.empty":           "myexitnodes: no enabled exit-nodes in skygate. Ask an admin to enable one in /admin/exit-nodes.",
 	"bot.myexitnodes.not_bound":       "myexitnodes: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.myexitnodes.db_error":        "myexitnodes: db error: %v",
@@ -2784,6 +2850,12 @@ var enCatalog = map[string]string{
 	"bot.empty_command":               "Empty command.",
 	"bot.unknown_command":             "Unknown command: %s. Try /help.",
 	"bot.admin_only_command":          "%s: admin only. Use the /my_* variants for your own data.",
+	// 2026-07-15: v0.14.0 — keep in lockstep with the
+	// ruCatalog block above.
+	"bot.sync_nodes.ok":                 "✅ sync from headscale: %d inserted, %d updated (of %d total).",
+	"bot.sync_nodes.hs_unavailable":     "sync_nodes: skygate is running in read-only mode (HS not wired) — use the 'Sync from headscale' button on /admin/devices instead.",
+	"bot.sync_nodes.hs_failed":          "sync_nodes: headscale list failed: %v",
+	"bot.sync_nodes.db_failed":          "sync_nodes: db upsert failed: %v",
 	"bot.trim.marker":                 "\n…(truncated — too much; ask for a narrower slice)",
 	"bot.__catalog_parity_marker__":   "",
 	"bot.alert.acl_apply_failed_rule": "❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",

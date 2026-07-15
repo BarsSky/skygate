@@ -236,6 +236,16 @@ func helpDetailReply(cmd string, env BotEnv) string {
 			"Output is grouped by state (offline first, then degraded, then online).\n" +
 			"Use this when /exit_nodes shows 'offline' and you want to know if the monitor agrees.\n" +
 			"Example: /exit_nodes_health"
+	case "sync_nodes":
+		// 2026-07-15: v0.14.0 — re-populate node_owner_map
+		// from headscale. Use after tagging a device
+		// directly in headscale (the bot's /exit_nodes
+		// then reports 'no nodes' until this runs).
+		return "/sync_nodes — re-read every node from headscale and rebuild node_owner_map (admin only).\n" +
+			"Inserts missing rows and updates drifted tags. Returns the count.\n" +
+			"Equivalent to the 'Sync from headscale' button on /admin/devices.\n" +
+			"Use this when the bot's /exit_nodes shows fewer nodes than headscale has.\n" +
+			"Example: /sync_nodes"
 	case "rules":
 		return "/rules — show the 25 most recent exit-rules across all users (admin only).\n" +
 			"Each row: id, user, exit-node, target_type/value, action (accept/deny).\n" +
