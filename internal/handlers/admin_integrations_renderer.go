@@ -384,10 +384,18 @@ type ApplyResult struct {
 // restart path. It:
 //   1. Renders headscale-config.yaml.tmpl with the
 //      current IntegrationConfig.
-//   2. Pipes the rendered body into the headscale
-//      container's /etc/headscale/config.yaml via
-//      `docker exec -i headscale sh -c "cat > ..."`.
+//   2. Writes the rendered body to a temp file in
+//      the skygate container, then `docker cp`s it
+//      into the headscale container's
+//      /etc/headscale/config.yaml.
 //   3. SIGHUPs the headscale container to reload.
+//
+// Why docker cp (not docker exec cat > file)? The
+// headscale image is minimal (no shell in PATH), so
+// `docker exec headscale sh -c "..."` fails with
+// "sh: executable file not found in $PATH". docker cp
+// writes the file via the daemon and doesn't need a
+// shell inside the target container.
 //
 // Returns the trace of what happened. Errors from step
 // 2 or step 3 short-circuit the apply (the operator
@@ -402,16 +410,30 @@ func (r *renderer) applyHeadscale(cfg *intConfig) ApplyResult {
 	}
 	res.Steps = append(res.Steps, "ok: render headscale-config.yaml")
 
-	// Push to headscale container. The container's
-	// /etc/headscale is bind-mounted from the host's
-	// ${DEPLOY_HEADSCALE_DIR}/config, so writing here
-	// updates the on-disk file too.
-	out, err := dockerCmdStdin(strings.NewReader(body),
-		"docker", "exec", "-i", "headscale",
-		"sh", "-c", "cat > /etc/headscale/config.yaml")
+	// Write to a temp file in the skygate container
+	// (the file is short — a few KB — so /tmp is fine).
+	// We could use os.CreateTemp, but a fixed name is
+	// easier to debug ("the renderer left a copy at
+	// /tmp/skygate-headscale-config.yaml" is a useful
+	// breadcrumb if a SIGHUP doesn't reload).
+	tmpPath := "/tmp/skygate-headscale-config.yaml"
+	if err := os.WriteFile(tmpPath, []byte(body), 0o644); err != nil {
+		res.Err = "write tmp: " + err.Error()
+		res.Steps = append(res.Steps, "fail: write "+tmpPath+": "+err.Error())
+		return res
+	}
+	defer os.Remove(tmpPath)
+	res.Steps = append(res.Steps, "ok: wrote "+tmpPath)
+
+	// docker cp pushes the file into the headscale
+	// container. /etc/headscale is bind-mounted from
+	// the host, so the on-disk config.yaml is updated
+	// too. The target path is "headscale:/etc/headscale/
+	// config.yaml" (note the container:path separator).
+	out, err := dockerCmd("docker", "cp", tmpPath, "headscale:/etc/headscale/config.yaml")
 	if err != nil {
 		res.Err = "push to headscale: " + err.Error() + ": " + string(out)
-		res.Steps = append(res.Steps, "fail: docker exec: "+string(out))
+		res.Steps = append(res.Steps, "fail: docker cp: "+string(out))
 		return res
 	}
 	res.Steps = append(res.Steps, "ok: pushed config.yaml to headscale container")
