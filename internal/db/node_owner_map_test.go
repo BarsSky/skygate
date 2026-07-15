@@ -23,11 +23,16 @@ import (
 )
 
 // openNodeOwnerMapTestDB opens a fresh in-memory DB with the
-// production-shaped node_owner_map table. The schema is the
-// v0.25 CREATE plus the v0.28 columns (headscale_user_id /
-// username / tag / tagged_by_user_id / tagged_at) merged in
-// — see internal/db/migrations_v0.25.go and v0.28.go for the
+// production-shaped node_owner_map table plus the global_settings
+// table (added in v0.21). The schema is the v0.25 CREATE plus
+// the v0.28 columns (headscale_user_id / username / tag /
+// tagged_by_user_id / tagged_at) merged in — see
+// internal/db/migrations_v0.25.go and v0.28.go for the
 // authoritative version.
+//
+// 2026-07-15: Этап 14 v14 (v0.11.0) — also create global_settings
+// so the integration tests (which reuse this helper) have the
+// table they need without each test creating it.
 func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	d, err := sql.Open("sqlite3", ":memory:")
@@ -43,6 +48,11 @@ func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
 			tagged_at         INTEGER NOT NULL DEFAULT 0,
 			hostname          TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE global_settings (
+			key         TEXT PRIMARY KEY,
+			value       TEXT NOT NULL DEFAULT '',
+			updated_at  INTEGER NOT NULL DEFAULT 0
 		)`,
 	}
 	for _, q := range stmts {
