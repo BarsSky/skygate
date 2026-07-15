@@ -13,16 +13,16 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   an **Apply** button that re-renders `headscale-config.yaml`
   / `headscale-compose.yml` in Go (no shell-out to Python),
   pushes the config to the running headscale container via
-  `docker exec -i headscale sh -c "cat > ..."`, and SIGHUPs
-  the process for a no-downtime config reload. The DERP form
-  also gets a **Test all URLs** button that probes each
-  external URL (5s timeout) and shows per-URL status +
+  `docker cp` (headscale 0.29 has no shell in PATH), and
+  SIGHUPs the process for a no-downtime config reload. The
+  DERP form also gets a **Test all URLs** button that probes
+  each external URL (5s timeout) and shows per-URL status +
   latency inline. Bundled derper / headplane toggles now
   start/stop the actual container via `docker start` /
   `docker stop` / `docker rm`. First-time install of derper
   / headplane containers still requires `./deploy/deploy.sh`
   (the bind-mounted compose file isn't visible inside the
-  skygate container). 18 new tests in
+  skygate container). 21 new tests in
   `admin_integrations_renderer_test.go`, 20 new catalog
   keys (`derp.config_apply*`, `derp.config_test_*`,
   `headplane.config_apply*`, `integrations.apply_help`).
@@ -633,6 +633,25 @@ build step in the container — `entrypoint.sh` does `go build -o /app/skygate
 6. **Tailscale Android visibility lag**: tag changes propagate to Tailscale
    clients in ~60-90 s. To force a refresh: tap the Tailscale icon, swipe
    the toggle off and on.
+7. **Headscale 0.29 image has no shell in PATH** (no `sh`, `bash`, or
+   busybox). `docker exec headscale sh -c "cat > /etc/headscale/..."`
+   fails with `exec: "sh": executable file not found in $PATH`. Use
+   `docker cp <tmpfile> headscale:/etc/headscale/...` instead — the
+   daemon writes the file via its API, no shell inside the target
+   container required. The v0.11.1 runtime renderer uses this pattern.
+8. **Apply paths must load the full config from DB**, not the form's
+   partial struct. The DERP form only has DERP fields, so its cfg
+   has `HeadplaneMode == ""` (zero value), which would match the "off"
+   branch in `applyHeadplane` and accidentally stop the running
+   `headplane` container. The fix: `applyAndRenderDerp` re-reads
+   `db.LoadIntegrationsFromOS` after Save and overlays the form's
+   fields on top, so the apply reflects the FULL saved config.
+9. **`docker compose restart` does NOT rebuild the skygate binary**.
+   The entrypoint only runs on container create, not on restart. To
+   pick up a new build, use `docker compose up -d --force-recreate
+   --no-deps skygate`. After a code change, the version in the
+   `/version` / web footer stays on the old commit until you do this.
+   (Applies to the production VM at `192.168.13.69`.)
 
 ---
 
