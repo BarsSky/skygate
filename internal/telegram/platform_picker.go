@@ -57,17 +57,28 @@ const (
 // handleCallback can route to the per-platform install
 // instructions.
 func buildPlatformPicker(lang, preauthKey string) *PendingReply {
-	mkBtn := func(label, data string) map[string]string {
-		return map[string]string{"text": label, "callback_data": data}
+	mkBtn := func(label, data string) map[string]any {
+		return map[string]any{"text": label, "callback_data": data}
 	}
 	// The Copy button uses copy_text instead of callback_data —
 	// tapping it just copies the preauth key to the clipboard,
 	// no callback handler needed.
-	copyBtn := map[string]string{
+	//
+	// 2026-07-15: v0.14.1 — Telegram Bot API 7.0+ requires
+	// `copy_text` to be an OBJECT {"text": "..."}, not a
+	// bare string. We were sending it as a string and
+	// Telegram rejected the whole sendMessage with HTTP 400
+	// "Field \"copy_text\" must be of type Object" — which
+	// in turn made /add_device silently fail (sendPlain
+	// dropped the response body before the v0.14.1 logging
+	// fix landed). The button rows therefore need to be
+	// [][]map[string]any (not [][]map[string]string) so the
+	// inner copy_text map can be a typed object.
+	copyBtn := map[string]any{
 		"text":      "📋 " + i18n.T(lang, "bot.add_device.copy_button"),
-		"copy_text": preauthKey,
+		"copy_text": map[string]any{"text": preauthKey},
 	}
-	rows := [][]map[string]string{
+	rows := [][]map[string]any{
 		{copyBtn},
 		{
 			mkBtn("🐧 "+i18n.T(lang, "bot.platform.linux"), "add_device_platform:linux"),

@@ -237,7 +237,7 @@ func startReplyBody(env BotEnv, args []string) string {
 	// The callback data follows the convention used by
 	// RealNotifier.handleCallback: "bind:confirm:<token>" or
 	// "bind:cancel".
-	rows := [][]map[string]string{
+	rows := [][]map[string]any{
 		{
 			{"text": i18n.Tf(lang, "bot.start.bind_button", username), "callback_data": "bind:confirm:" + token},
 			{"text": i18n.T(lang, "bot.start.cancel_button"), "callback_data": "bind:cancel"},

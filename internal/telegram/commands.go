@@ -160,7 +160,16 @@ type PendingReply struct {
 	// under reply_markup.inline_keyboard. We build the rows
 	// here (server-side) so the polling loop can include
 	// them verbatim in the sendMessage payload.
-	InlineKeyboard [][]map[string]string
+	//
+	// 2026-07-15: changed from [][]map[string]string to
+	// [][]map[string]any so the inner "copy_text" field
+	// (Telegram Bot API 7.0+) can be a typed object
+	// {"text": "..."} rather than a bare string. A bare
+	// string triggers a 400 from sendMessage with
+	// "Field \"copy_text\" must be of type Object" — which
+	// silently dropped the entire /add_device reply in
+	// production until the v0.14.1 logging fix.
+	InlineKeyboard [][]map[string]any
 }
 
 // IsIdentified returns true when the bot knows which Telegram chat
