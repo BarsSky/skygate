@@ -16,7 +16,12 @@ func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	exits, _ := a.HS.ListExitNodes()
+	// 2026-07-15: v0.12.0 — route to the user's own control plane.
+	// Exit nodes belong to the user's tailnet, so the list
+	// reflects their headscale instance, not the operator's
+	// primary one. (A user on headscale-B sees headscale-B's
+	// exit nodes, not headscale-A's.)
+	exits, _ := a.HSForUser(c.UserID).ListExitNodes()
 	a.renderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
 		"ExitNodes": exits,
 	})

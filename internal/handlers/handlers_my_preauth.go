@@ -25,7 +25,7 @@ func (a *App) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no headscale user linked", 400)
 		return
 	}
-	key, err := a.HS.CreatePreauthKey(hsUserID.Int64, "1h", false)
+	key, err := a.HSForUser(c.UserID).CreatePreauthKey(hsUserID.Int64, "1h", false)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return

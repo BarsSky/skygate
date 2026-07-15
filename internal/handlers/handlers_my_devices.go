@@ -34,8 +34,11 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// Get all nodes (cached). Reuse them for both my-nodes (filter by user)
 	// and public nodes (filter by tag/exit) - one HTTP call to headscale
 	// instead of two.
+	// 2026-07-15: v0.12.0 — route to the user's own control plane.
+	// The device list reflects the user's tailnet, not the
+	// operator's primary one.
 	t0 := time.Now()
-	all, _ := a.HS.ListAllNodes()
+	all, _ := a.HSForUser(c.UserID).ListAllNodes()
 
 	// Lazy-backfill node_owner_map from headscale's preAuthKey history.
 	// When a user creates a preauth key in /my/devices, we save its

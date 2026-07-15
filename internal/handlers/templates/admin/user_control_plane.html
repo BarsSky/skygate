@@ -1,0 +1,58 @@
+{{define "body-admin-user-control-plane"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-tower-observation"></i>{{t "control_planes.user_title"}}</h2>
+    <div class="sub">{{.TargetUsername}} — {{t "control_planes.user_subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/control-planes" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+{{if .FlashInfo}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashInfo}}</div>{{end}}
+
+{{if .SecretMissing}}
+<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+  <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.secret_missing_title"}}</h3>
+  <div style="margin-top:6px">{{t "control_planes.secret_missing_body" | safeHTML}}</div>
+</div>
+{{end}}
+
+{{if .CorruptKey}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{t "control_planes.corrupt_key" | safeHTML}}</div>
+{{end}}
+
+<form method="POST" action="/admin/users/{{.UserID}}/plane">
+  <div class="card">
+    <div class="form-row">
+      <label for="url">{{t "control_planes.url_label"}}</label>
+      <input type="text" id="url" name="url" value="{{.CurrentURL}}" placeholder="https://head-us.example.com">
+      <div class="form-hint">{{t "control_planes.url_help" | safeHTML}}</div>
+    </div>
+
+    <div class="form-row">
+      <label for="api_key">{{t "control_planes.api_key_label"}}</label>
+      <input type="password" id="api_key" name="api_key" value="" placeholder="{{if .HasKey}}{{t "control_planes.api_key_placeholder_keep"}}{{else}}{{t "control_planes.api_key_placeholder_new"}}{{end}}" autocomplete="off">
+      <div class="form-hint">
+        {{if .HasKey}}
+          {{t "control_planes.api_key_help_keep" | safeHTML}}
+        {{else}}
+          {{t "control_planes.api_key_help_new" | safeHTML}}
+        {{end}}
+      </div>
+    </div>
+
+    <div class="btn-row" style="margin-top:16px">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "common.save"}}</button>
+      {{if .CurrentURL}}
+      <button type="submit" formaction="/admin/users/{{.UserID}}/plane/clear" formmethod="POST" class="btn btn-secondary" onclick="return confirm('{{t "control_planes.clear_confirm"}}')"><i class="fa-solid fa-rotate-left"></i> {{t "control_planes.clear"}}</button>
+      {{end}}
+    </div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{t "control_planes.help_body" | safeHTML}}</div>
+</div>
+{{end}}
