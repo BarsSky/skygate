@@ -76,6 +76,32 @@
 </aside>
 <main>
 <div class="shell">
+{{/* 2026-07-15: v0.14.0 — release-monitor banner. Shown
+     on every admin page when the monitor has detected a
+     newer release on GitHub. The "current version" comes
+     from the build-time .Version injected by cmd/skygate,
+     and the "latest" + "checked at" come from the monitor's
+     last successful tick. The link goes to the GitHub
+     release page (or the GitHub releases list if the
+     monitor hasn't seen the specific tag yet — defensive). */}}
+{{if and .IsAdmin .UpdateAvailable}}
+<div class="alert alert-info" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+  <i class="fa-solid fa-circle-up" style="font-size:20px"></i>
+  <div style="flex:1;min-width:0">
+    <strong>{{t "update.banner_title"}}</strong>
+    <div style="color:var(--text-muted);font-size:13px;margin-top:2px">
+      {{t "update.banner_body" .Version .UpdateLatest.TagName}}
+      {{if .UpdateCheckedAt}} · {{t "update.banner_checked" .UpdateCheckedAt}}{{end}}
+    </div>
+  </div>
+  {{if .UpdateLatest.HTMLURL}}
+  <a href="{{.UpdateLatest.HTMLURL}}" target="_blank" rel="noopener" class="btn btn-sm"><i class="fa-solid fa-up-right-from-square"></i> {{t "update.banner_open"}}</a>
+  {{else}}
+  <a href="https://github.com/BarsSky/skygate/releases" target="_blank" rel="noopener" class="btn btn-sm"><i class="fa-solid fa-up-right-from-square"></i> {{t "update.banner_open"}}</a>
+  {{end}}
+</div>
+{{end}}
+
 {{renderBody .BodyTemplate .}}
 </div>
 </main>

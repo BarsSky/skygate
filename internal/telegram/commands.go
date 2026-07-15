@@ -244,6 +244,7 @@ var commandContext = map[string]string{
 	"/audit":             "registry",
 	"/exit_nodes":        "registry",
 	"/exit_nodes_health": "registry",
+	"/sync_nodes":        "registry",
 	"/quota":             "registry",
 	"/ack":               "ack",
 	"/restart":           "err", // operator warning
@@ -374,7 +375,7 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 	// /help command itself can be called by anyone.
 	adminOnly := map[string]bool{
 		"/status": true, "/nodes": true, "/rules": true, "/audit": true,
-		"/exit_nodes": true, "/exit_nodes_health": true, "/quota": true, "/ack": true, "/restart": true,
+		"/exit_nodes": true, "/exit_nodes_health": true, "/sync_nodes": true, "/quota": true, "/ack": true, "/restart": true,
 		"/bind": true, "/unbind": true,
 	}
 	if adminOnly[cmd] && env.IsIdentified() && !env.IsAdmin {
@@ -401,6 +402,8 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: exitNodesReply(env), context: lookupContext(cmd)}
 	case "/exit_nodes_health":
 		return cmdReply{body: exitNodesHealthReply(env), context: lookupContext(cmd)}
+	case "/sync_nodes":
+		return cmdReply{body: syncNodesReply(env), context: lookupContext(cmd)}
 	case "/quota":
 		return cmdReply{body: quotaReply(env), context: lookupContext(cmd)}
 	case "/ack":
@@ -558,67 +561,97 @@ func statusReply(env BotEnv) string {
 // callers (legacy single-chat deploys) see the full list collapsed
 // into one section.
 //
+// 2026-07-15: v0.14.0 — restructured to a real table-like layout:
+// section headers (★/🔐/🛠), aligned command+description columns,
+// and an opening "command-list" header with a Telegram-native
+// code-style hint. The plain-text version uses Unicode alignment
+// (4-space gutter + ≥ 2 spaces between command and description)
+// so it renders as a table in any Telegram client without
+// requiring parse_mode.
+//
+// The previous v0.10.4 "butler-gatekeeper" version (with the
+// warden's sigil + codex-style "Your top three" intro) is the
+// inspiration for the ✦/✧/🪶 glyphs but kept lighter for the
+// MVP: the operator asked for a tabular list, not a personality
+// piece.
+//
 // Этап 12 (2026-07-13): strict mode is reflected in the auth
 // section. An unidentified chat in a strict deploy sees only
 // /login /start /help /version — every other command is locked
 // until they bind.
-//
-// 2026-07-14: Этап 14 v5 — every visible string now goes
-// through i18n.T(env.Lang, "bot.help.*"). The layout is
-// preserved from the previous helpReply (the v0.10.4
-// butler-gatekeeper version with section headers lives on
-// the v0.10.4 branch; the bot-i18n-v5 branch keeps the
-// simpler "Commands (all)" / "Your commands" labels so the
-// MVP is shippable, and the personality layer is upgraded
-// separately).
 func helpReply(env BotEnv) string {
 	lang := env.Lang
-	// Each catalog key already includes the leading "/cmd — " or
-	// "/cmd <arg> — " prefix, so we just concatenate. This is the
-	// MVP layout: a plain command list with one line per
-	// command. The full butler-gatekeeper "codex" layout (with
-	// section headers, "Your top three", and the warden's sigil)
-	// lives on the v0.10.4 branch and is a future upgrade once
-	// the bot i18n MVP is shipping and verified.
-	common := i18n.T(lang, "bot.help.common_version") + "\n" +
-		i18n.T(lang, "bot.help.common_help") + "\n" +
-		i18n.T(lang, "bot.help.lang")
-	auth := i18n.T(lang, "bot.help.auth_login") + " (paste the key from /my/telegram)\n" +
-		"/start <key> — same as /login, Telegram UX convention"
-	userScope := i18n.T(lang, "bot.help.user_top_my_status") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_my_nodes") + "\n" +
-		i18n.T(lang, "bot.help.user_top_my_rules") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_my_quota") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_myexitnodes") + " with [default] marker\n" +
-		i18n.T(lang, "bot.help.user_rest_add_device") + "\n" +
-		i18n.T(lang, "bot.help.user_top_add_rule") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_delrule") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_clearrules") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_setdefaultdevice") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_defaultdevice") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_setexitnode") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_defaultexitnode")
-	adminScope := i18n.T(lang, "bot.help.admin_top_status") + "\n" +
-		i18n.T(lang, "bot.help.admin_top_nodes") + "\n" +
-		i18n.T(lang, "bot.help.admin_top_exit_nodes") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_rules") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_quota") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_audit") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_ack") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_restart") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_bind") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_unbind")
+
+	// 2026-07-15: v0.14.0 — every line is "  /cmd    description"
+	// (4-space gutter + ≥ 4 spaces of padding so the columns
+	// line up in monospace and look acceptable in proportional).
+	// The previous v0.10.5 version prefixed with "  • " which
+	// worked for the bullet-list look but didn't form a real
+	// table.
+	row := func(cmd, desc string) string {
+		// Pad command to 12 chars for alignment. Commands
+		// longer than 12 chars (none today, but future-proof)
+		// just don't pad.
+		if len(cmd) < 12 {
+			cmd = cmd + strings.Repeat(" ", 12-len(cmd))
+		}
+		return "  " + cmd + "  " + desc
+	}
+
+	// Section: Auth (everyone, even unidentified).
+	auth := "🔐 " + i18n.T(lang, "bot.help.section_auth") + "\n" +
+		row("/login <key>", i18n.T(lang, "bot.help.auth_login")) + "\n" +
+		row("/start <key>", i18n.T(lang, "bot.help.auth_start")) + "\n" +
+		row("/lang", i18n.T(lang, "bot.help.lang")) + "\n" +
+		row("/help", i18n.T(lang, "bot.help.common_help")) + "\n" +
+		row("/version", i18n.T(lang, "bot.help.common_version"))
+
+	// Section: Status (everyone, but the named user-scope rows
+	// only show for identified callers).
+	common := "✦ " + i18n.T(lang, "bot.help.section_common") + "\n" +
+		row("/my_status", i18n.T(lang, "bot.help.user_top_my_status")) + "\n" +
+		row("/my_nodes", i18n.T(lang, "bot.help.user_rest_my_nodes")) + "\n" +
+		row("/my_rules", i18n.T(lang, "bot.help.user_top_my_rules")) + "\n" +
+		row("/my_quota", i18n.T(lang, "bot.help.user_rest_my_quota")) + "\n" +
+		row("/myexitnodes", i18n.T(lang, "bot.help.user_rest_myexitnodes")) + "\n" +
+		row("/add_device", i18n.T(lang, "bot.help.user_rest_add_device")) + "\n" +
+		row("/add_rule", i18n.T(lang, "bot.help.user_top_add_rule")) + "\n" +
+		row("/delrule", i18n.T(lang, "bot.help.user_rest_delrule")) + "\n" +
+		row("/clearrules", i18n.T(lang, "bot.help.user_rest_clearrules")) + "\n" +
+		row("/setdefaultdevice", i18n.T(lang, "bot.help.user_rest_setdefaultdevice")) + "\n" +
+		row("/defaultdevice", i18n.T(lang, "bot.help.user_rest_defaultdevice")) + "\n" +
+		row("/setexitnode", i18n.T(lang, "bot.help.user_rest_setexitnode")) + "\n" +
+		row("/defaultexitnode", i18n.T(lang, "bot.help.user_rest_defaultexitnode"))
+
+	// Section: Admin (skyadmin only).
+	admin := "🛠 " + i18n.T(lang, "bot.help.section_admin") + "\n" +
+		row("/status", i18n.T(lang, "bot.help.admin_top_status")) + "\n" +
+		row("/nodes", i18n.T(lang, "bot.help.admin_top_nodes")) + "\n" +
+		row("/exit_nodes", i18n.T(lang, "bot.help.admin_top_exit_nodes")) + "\n" +
+		row("/exit_nodes_health", i18n.T(lang, "bot.help.admin_top_exit_nodes_health")) + "\n" +
+		row("/sync_nodes", i18n.T(lang, "bot.help.admin_top_sync_nodes")) + "\n" +
+		row("/rules", i18n.T(lang, "bot.help.admin_rest_rules")) + "\n" +
+		row("/quota", i18n.T(lang, "bot.help.admin_rest_quota")) + "\n" +
+		row("/audit", i18n.T(lang, "bot.help.admin_rest_audit")) + "\n" +
+		row("/ack", i18n.T(lang, "bot.help.admin_rest_ack")) + "\n" +
+		row("/restart", i18n.T(lang, "bot.help.admin_rest_restart")) + "\n" +
+		row("/bind", i18n.T(lang, "bot.help.admin_rest_bind")) + "\n" +
+		row("/unbind", i18n.T(lang, "bot.help.admin_rest_unbind"))
+
+	// Opening header.
+	header := "🪶 " + i18n.T(lang, "bot.help.header") + "\n" +
+		i18n.T(lang, "bot.help.subtitle") + "\n\n"
+
 	// Three layouts:
-	//   - unidentified + strict mode: only auth + common (locked)
-	//   - identified non-admin: auth + common + user-scope
-	//   - admin (identified or legacy unidentified): all four
+	//   - unidentified + strict mode: only auth (locked)
+	//   - identified non-admin: auth + common
+	//   - admin (identified or legacy unidentified): all three
 	switch {
 	case !env.IsIdentified() && env.StrictMode:
-		return "🔒 " + i18n.T(lang, "bot.help.strict_locked_note") + "\n\n" +
-			auth + "\n\n" + common
+		return header + "🔒 " + i18n.T(lang, "bot.help.strict_locked_note") + "\n\n" + auth
 	case !env.IsIdentified() || env.IsAdmin:
-		return "Commands (all):\n\n" + common + "\n\n" + auth + "\n\n" + userScope + "\n\n" + adminScope
+		return header + auth + "\n\n" + common + "\n\n" + admin
 	default:
-		return "Your commands:\n\n" + common + "\n\n" + auth + "\n\n" + userScope
+		return header + auth + "\n\n" + common
 	}
 }

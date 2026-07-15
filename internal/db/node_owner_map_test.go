@@ -549,3 +549,153 @@ func TestSyncTagsFromHeadscale_EmptyMapIsNoop(t *testing.T) {
 		t.Errorf("expected 0 updates, got %d", updated)
 	}
 }
+
+// --- v0.14.0: SyncNodesFromHeadscale (full upsert) ---
+
+// TestSyncNodesFromHeadscale_InsertsMissingRows covers the
+// primary v0.14.0 fix: nodes that exist in headscale but
+// were tagged via the headscale CLI (not via skygate's
+// PostAdminNodeTag) have no row in node_owner_map. The bot's
+// /exit_nodes reads from this table and reports "no nodes
+// found" because the cache is empty. SyncNodesFromHeadscale
+// is the admin-triggered rebuild that INSERTs these rows so
+// the bot finds them on the next reply.
+func TestSyncNodesFromHeadscale_InsertsMissingRows(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	// Pre-condition: node_owner_map is empty.
+	var pre int
+	d.QueryRow(`SELECT COUNT(*) FROM node_owner_map`).Scan(&pre)
+	if pre != 0 {
+		t.Fatalf("pre: expected 0 rows, got %d", pre)
+	}
+
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "3", Hostname: "emilia", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 2147455555, TaggedBy: 1},
+		{ID: "4", Hostname: "sharlotta", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 2147455555, TaggedBy: 1},
+		{ID: "11", Hostname: "karolina", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 2147455555, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 3 {
+		t.Errorf("inserted = %d, want 3", ins)
+	}
+	if upd != 0 {
+		t.Errorf("updated = %d, want 0", upd)
+	}
+
+	// Post-condition: bot's ListExitNodeOwners now returns 3.
+	rows, err := ListExitNodeOwners(d)
+	if err != nil {
+		t.Fatalf("ListExitNodeOwners: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Errorf("ListExitNodeOwners = %d, want 3", len(rows))
+	}
+}
+
+// TestSyncNodesFromHeadscale_UpdatesDriftedTags covers the
+// case where a node already has a row but the tag in
+// headscale has since changed. The sync should UPDATE the
+// row to the new tag.
+func TestSyncNodesFromHeadscale_UpdatesDriftedTags(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "3", 0, "alice", "tag:private", 1)
+	// Pre: tag is tag:private. Now headscale says tag:public.
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "3", Hostname: "emilia", Tag: "tag:public", Username: "alice", HSUserID: 1, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 {
+		t.Errorf("inserted = %d, want 0", ins)
+	}
+	if upd != 1 {
+		t.Errorf("updated = %d, want 1", upd)
+	}
+	// Verify the new tag.
+	var got string
+	d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = '3'`).Scan(&got)
+	if got != "tag:public" {
+		t.Errorf("tag = %q, want tag:public", got)
+	}
+}
+
+// TestSyncNodesFromHeadscale_PreservesPortalOwnerOnUpdate:
+// when a row already exists and the headscale ownership was
+// reassigned to "tagged-devices" (the synthetic user headscale
+// creates when any tag is applied), the existing portal-side
+// username + headscale_user_id MUST be preserved. Otherwise
+// /my_nodes for the original owner would silently stop
+// showing the device.
+func TestSyncNodesFromHeadscale_PreservesPortalOwnerOnUpdate(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "3", 42, "alice", "tag:private", 1)
+	// Now headscale says it's owned by tagged-devices (the
+	// synthetic user headscale auto-creates when tagging).
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "3", Hostname: "emilia", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 999, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 || upd != 1 {
+		t.Errorf("ins=%d upd=%d, want 0/1", ins, upd)
+	}
+	// Portal-side owner is preserved: still alice, still
+	// headscale_user_id=42.
+	var user string
+	var hsUID int64
+	d.QueryRow(`SELECT username, headscale_user_id FROM node_owner_map WHERE node_id = '3'`).Scan(&user, &hsUID)
+	if user != "alice" {
+		t.Errorf("username = %q, want alice (portal owner preserved)", user)
+	}
+	if hsUID != 42 {
+		t.Errorf("headscale_user_id = %d, want 42 (preserved)", hsUID)
+	}
+	// Tag was updated.
+	var tag string
+	d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = '3'`).Scan(&tag)
+	if tag != "tag:exit-node" {
+		t.Errorf("tag = %q, want tag:exit-node", tag)
+	}
+}
+
+// TestSyncNodesFromHeadscale_SkipsUntaggedNodes: headscale
+// returns an empty Tags slice for nodes that haven't been
+// tagged. The sync must not INSERT those (an untagged row
+// in node_owner_map is meaningless; the device is in
+// headscale but unowned-by-tag in skygate).
+func TestSyncNodesFromHeadscale_SkipsUntaggedNodes(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "5", Hostname: "untagged-relay", Tag: "", Username: "alice", HSUserID: 1, TaggedBy: 1},
+		{ID: "6", Hostname: "also-untagged", Tag: "tag:untagged", Username: "alice", HSUserID: 1, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 || upd != 0 {
+		t.Errorf("ins=%d upd=%d, want 0/0 (untagged nodes skipped)", ins, upd)
+	}
+	var n int
+	d.QueryRow(`SELECT COUNT(*) FROM node_owner_map`).Scan(&n)
+	if n != 0 {
+		t.Errorf("node_owner_map = %d rows, want 0 (untagged must not be inserted)", n)
+	}
+}
+
+// TestSyncNodesFromHeadscale_EmptyListIsNoop: zero nodes in,
+// zero rows touched, no error.
+func TestSyncNodesFromHeadscale_EmptyListIsNoop(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "3", 0, "alice", "tag:private", 1)
+	ins, upd, err := SyncNodesFromHeadscale(d, nil)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 || upd != 0 {
+		t.Errorf("ins=%d upd=%d, want 0/0", ins, upd)
+	}
+}

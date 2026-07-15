@@ -15,6 +15,7 @@ import (
 	"skygate/internal/i18n"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/release"
 )
 
 func init() { i18n.SetGlobal(i18n.New()) }
@@ -63,6 +64,17 @@ type App struct {
 	// (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off) — handlers must
 	// guard with `if a.ExitNodeMonitor != nil`.
 	ExitNodeMonitor *monitoring.ExitNodeMonitor
+
+	// 2026-07-15: v0.14.0 — release-monitor reference. The
+	// /dashboard banner reads ReleaseMonitor.Snapshot() to
+	// surface "newer version available" without waiting for
+	// the operator to read the Telegram alert. Set by
+	// cmd/skygate/main.go after the monitor's Start()
+	// returns. nil if the monitor is disabled (the
+	// operator ran skygate with SKYGATE_RELEASE_MONITOR=off
+	// — not yet a real env var, but the test suite
+	// disables it via this nil field).
+	ReleaseMonitor *release.Monitor
 
 	// 2026-07-15: v0.12.0.2 — Telegram probe result cache.
 	// The probe does a real GET to api.telegram.org with a
@@ -140,6 +152,20 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	data["Theme"] = theme
 	data["ThemeLabel"] = db.ThemeLabel(theme)
 	data["Version"] = a.Version
+
+	// 2026-07-15: v0.14.0 — release-monitor banner. We
+	// only surface the banner to admins (regular users
+	// don't need upgrade prompts). The data shape is
+	// pre-computed here (rather than inside the template)
+	// so the conditional is one line in the layout.
+	if a.ReleaseMonitor != nil {
+		latest, hasUpdate, checkedAt := a.ReleaseMonitor.Snapshot()
+		if hasUpdate {
+			data["UpdateAvailable"] = true
+			data["UpdateLatest"] = latest
+			data["UpdateCheckedAt"] = checkedAt
+		}
+	}
 	wrapper := map[string]any{
 		"Page":         data["Page"],
 		"BodyTemplate": name,

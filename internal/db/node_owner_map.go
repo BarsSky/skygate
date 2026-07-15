@@ -498,3 +498,110 @@ func SyncTagsFromHeadscale(d *sql.DB, headscaleTagByNodeID map[string]string) (i
 	}
 	return updated, nil
 }
+
+// SyncNodeInfo is the input shape for SyncNodesFromHeadscale.
+// We use a plain struct (not headscale.NodeView) to keep the
+// db package free of the headscale import (which would create
+// a cycle: headscale → db is fine, db → headscale is not).
+// The admin handler translates headscale.NodeView to this
+// shape before calling.
+type SyncNodeInfo struct {
+	ID       string
+	Hostname string
+	Tag      string
+	Username string
+	HSUserID int64
+	// TaggedBy is the skygate user_id that initiated the
+	// sync (0 = system sync, used by the v0.14.0 background
+	// path that doesn't have a user context). The v0.14.0
+	// admin button passes the clicker's user id; the bot's
+	// /sync_nodes path also passes 0.
+	TaggedBy int64
+}
+
+// SyncNodesFromHeadscale is a v0.14.0 full sync that INSERTs
+// missing rows (in addition to updating drifted ones). The
+// original SyncTagsFromHeadscale only UPDATEs — that's enough
+// for the common case where the bot's /my_nodes is reading
+// from node_owner_map after the operator tagged a device via
+// /admin/devices (which inserts the row). It is NOT enough
+// for the case where the operator tagged a relay directly via
+// the headscale CLI: in that path, no row is ever written to
+// node_owner_map, and the bot's /exit_nodes (which reads the
+// cache) reports "no exit-nodes found" even though headscale
+// is happy with three relays.
+//
+// SyncNodesFromHeadscale upserts each input row into
+// node_owner_map. It runs as a one-off admin action (the
+// "Sync from headscale" button on /admin/devices) and as the
+// v0.13.0+ background monitor's per-tick complement. Returns
+// the count of rows inserted (new nodes) and updated (drifted
+// tags).
+//
+// 2026-07-15: v0.14.0 — replaces the v0.10.13 SyncTagsFromHeadscale
+// partial sync for the admin-triggered path. The bot's
+// /my_nodes + /nodes auto-heal path (AnyTagStale +
+// SyncTagsFromHeadscale) is kept for cheap read-time
+// reconciliation; this function is the full rebuild.
+//
+// Nodes that exist in node_owner_map but NOT in headscale
+// (the operator deleted them in headscale, or the headscale
+// API returned a transient empty list) are NOT touched —
+// we leave them as-is for the audit log. A future v0.14.x
+// could add a "prune missing nodes" mode behind a flag.
+func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated int, err error) {
+	for _, n := range nodes {
+		if n.Tag == "" || n.Tag == "tag:untagged" {
+			// Headscale has no tag → leave the portal-side
+			// state alone. (Same rule as SyncTagsFromHeadscale.)
+			continue
+		}
+		// Distinguish insert vs update: an explicit EXISTS
+		// check before the upsert. The naive "rowsAffected
+		// = 1 means I changed something" pattern conflates
+		// "row was new" with "tag drifted", and the upsert's
+		// internal timestamp stamp means we can't use
+		// tagged_at to decide afterwards either. A cheap
+		// primary-key lookup is the cleanest fix.
+		var existed int
+		row := d.QueryRow(`SELECT COUNT(*) FROM node_owner_map WHERE node_id = ?`, n.ID)
+		if serr := row.Scan(&existed); serr != nil {
+			return inserted, updated, serr
+		}
+		// Upsert: INSERT if missing, UPDATE only the tag if present.
+		// The username + headscale_user_id from the headscale view
+		// are taken as the source of truth on INSERT (no portal
+		// owner can exist for a row that doesn't exist); on
+		// UPDATE, the existing portal-side owner is preserved
+		// (a node whose headscale ownership was reassigned to
+		// tagged-devices keeps its portal owner).
+		host := n.Hostname
+		if host == "" {
+			host = n.ID
+		}
+		_, err := d.Exec(
+			`INSERT INTO node_owner_map
+				(node_id, hostname, headscale_user_id, username, tag, tagged_by_user_id, tagged_at)
+			VALUES (?, ?, ?, ?, ?, ?, strftime('%s','now'))
+			ON CONFLICT(node_id) DO UPDATE SET
+				tag = excluded.tag,
+				tagged_at = strftime('%s','now')
+			WHERE node_owner_map.tag != excluded.tag`,
+			n.ID, host, n.HSUserID, n.Username, n.Tag, n.TaggedBy,
+		)
+		if err != nil {
+			return inserted, updated, err
+		}
+		// Counters. The existence check above tells us
+		// whether the row was new (existed=0) or pre-existing
+		// (existed=1). The upsert may have been a no-op
+		// (tag was already correct, row unchanged) — we
+		// don't count that case.
+		if existed == 0 {
+			inserted++
+		} else {
+			updated++
+		}
+	}
+	return inserted, updated, nil
+}

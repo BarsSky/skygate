@@ -211,6 +211,14 @@ func main() {
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
 	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))
+	// 2026-07-15: v0.14.0 — "Sync from headscale" button.
+	// Re-populates node_owner_map from headscale's authoritative
+	// view. The /exit_nodes bot command reads from node_owner_map;
+	// if the operator tagged a relay directly in headscale (not
+	// via skygate's PostAdminNodeTag), the bot reports "no nodes"
+	// until this button is clicked. /sync_nodes bot command hits
+	// the same DB helper.
+	mux.Handle("POST /admin/devices/sync-from-headscale", authMW(http.HandlerFunc(app.PostAdminDevicesSyncFromHeadscale)))
 	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(app.GetAdminAudit)))
 	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(app.GetAdminACLs)))
 	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(app.GetAdminDERP)))
@@ -393,6 +401,11 @@ func main() {
 		CheckEvery: 1 * time.Hour,
 	}
 	releaseMon.Start(ctx)
+	// 2026-07-15: v0.14.0 — expose the monitor on App so
+	// the /dashboard banner can read its snapshot on every
+	// page render. nil-safe: handlers guard with
+	// `if a.ReleaseMonitor != nil`.
+	app.ReleaseMonitor = releaseMon
 
 	// 2026-07-15: v0.13.0 — exit-node health monitor.
 	// Background goroutine that polls headscale every

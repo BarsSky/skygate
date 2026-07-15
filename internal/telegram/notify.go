@@ -785,6 +785,48 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 		reply := renderPlatformInstructions(env.Lang, platform, key)
 		n.sendPlain(token, chatID, reply, nil)
 		return
+	case strings.HasPrefix(data, "lang:"):
+		// 2026-07-15: v0.14.0 — /lang picker. The user
+		// tapped one of the RU / EN buttons in the inline
+		// keyboard. We persist the choice (no-op for
+		// unbound chats) and re-render the /lang reply
+		// body in the NEW language so the user sees the
+		// switch take effect.
+		newLang := strings.TrimPrefix(data, "lang:")
+		if newLang != i18n.LangRU && newLang != i18n.LangEN {
+			return
+		}
+		if env.IsIdentified() && env.PortalUserID > 0 {
+			_ = db.SetTelegramBindingLang(env.DB, chatID, newLang)
+		}
+		// Re-render the /lang reply body in the new
+		// language. The PendingReply is regenerated so the
+		// keyboard's checkmark reflects the new active
+		// language. We can't mutate env (it's a value
+		// receiver in this path); the reply body is built
+		// in the new lang directly.
+		body := i18n.Tf(newLang, "bot.lang.set_ok", newLang)
+		pending := buildLangPickerForLang(newLang, newLang)
+		n.sendPlain(token, chatID, body, pending)
+		return
+	case strings.HasPrefix(data, "setexitnode:"):
+		// 2026-07-15: v0.14.0 — /myexitnodes picker. The
+		// user tapped a hostname button to set it as
+		// their default exit-node, or the "Clear default"
+		// button. The callback_data is "setexitnode:<id>"
+		// or "setexitnode:clear". We re-route through
+		// setExitNodeReply so the logic is in one place
+		// (and gets the same audit-log + DB upsert as
+		// the typed /setexitnode path).
+		arg := strings.TrimPrefix(data, "setexitnode:")
+		// /setexitnode needs a bound user.
+		if !env.IsIdentified() {
+			n.sendPlain(token, chatID, i18n.T(env.Lang, "bot.setexitnode.not_bound"), nil)
+			return
+		}
+		body := setExitNodeReply(env, arg)
+		n.sendPlain(token, chatID, body, nil)
+		return
 	default:
 		return
 	}
