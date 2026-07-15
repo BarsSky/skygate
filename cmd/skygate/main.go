@@ -197,6 +197,19 @@ func main() {
 	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(app.GetAdminAudit)))
 	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(app.GetAdminACLs)))
 	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(app.GetAdminDERP)))
+	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
+	// integration config. The /admin/integrations landing page
+	// shows the current state of every pluggable component;
+	// /admin/derp/config and /admin/headplane are the per-component
+	// edit forms. The save handlers persist to global_settings;
+	// v0.11.1 will add a runtime renderer (re-apply headscale
+	// config + restart) so the user doesn't have to run
+	// ./deploy/deploy.sh after a save.
+	mux.Handle("GET /admin/integrations", authMW(http.HandlerFunc(app.GetAdminIntegrations)))
+	mux.Handle("GET /admin/derp/config", authMW(http.HandlerFunc(app.GetAdminDerpConfig)))
+	mux.Handle("POST /admin/derp/config", authMW(http.HandlerFunc(app.PostAdminDerpConfig)))
+	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(app.GetAdminHeadplane)))
+	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(app.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(app.GetAdminBackup)))
 	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(app.PostAdminBackupSave)))
 	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))
