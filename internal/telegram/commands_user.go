@@ -21,6 +21,7 @@ package telegram
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -430,13 +431,16 @@ func myExitNodesReply(env BotEnv) string {
 func addDeviceReply(env BotEnv, arg string) string {
 	lang := env.Lang
 	if !env.IsIdentified() {
+		log.Printf("bot.add_device: chat not bound (ChatID=%d)", env.ChatID)
 		return i18n.T(lang, "bot.add_device.not_bound")
 	}
 	target, isAdminArg, err := resolveTargetUser(env, arg)
 	if err != nil {
+		log.Printf("bot.add_device: resolveTargetUser arg=%q err=%v", arg, err)
 		return i18n.Tf(lang, "bot.add_device.target_err", err)
 	}
 	if isAdminArg && !env.IsAdmin {
+		log.Printf("bot.add_device: non-admin tried to act on %q", target.Username)
 		return i18n.T(lang, "bot.add_device.admin_only")
 	}
 	// 2026-07-13: Этап 11 part 1 — guard read-only deploys. SetHS is
@@ -444,23 +448,35 @@ func addDeviceReply(env BotEnv, arg string) string {
 	// exists so a future operator who restarts skygate without
 	// SetHS sees a clear error rather than a nil-deref panic.
 	if env.HS == nil {
+		log.Printf("bot.add_device: env.HS is nil (read-only deploy?)")
 		return i18n.T(lang, "bot.add_device.read_only")
 	}
 	hsUserID, _, err := db.GetUserHSByID(env.DB, target.ID)
-	if err != nil || !hsUserID.Valid {
+	if err != nil {
+		log.Printf("bot.add_device: GetUserHSByID userID=%d err=%v", target.ID, err)
 		return i18n.Tf(lang, "bot.add_device.no_hs_user", target.Username)
 	}
+	if !hsUserID.Valid {
+		log.Printf("bot.add_device: no headscale_user_id for userID=%d username=%q", target.ID, target.Username)
+		return i18n.Tf(lang, "bot.add_device.no_hs_user", target.Username)
+	}
+	log.Printf("bot.add_device: target=%q hsUserID=%d, calling CreatePreauthKey", target.Username, hsUserID.Int64)
 	key, err := env.HS.CreatePreauthKey(hsUserID.Int64, "1h", false)
 	if err != nil {
+		log.Printf("bot.add_device: CreatePreauthKey userID=%d err=%v", hsUserID.Int64, err)
 		return i18n.Tf(lang, "bot.add_device.hs_failed", err)
 	}
+	log.Printf("bot.add_device: got key from HS, prefix=%q, calling InsertPreauthKey", key.Key[:min(20, len(key.Key))])
 	expiresAt := time.Now().Add(time.Hour).Unix()
 	if _, err := db.InsertPreauthKey(env.DB, target.ID, key.Key, expiresAt, key.ID); err != nil {
+		log.Printf("bot.add_device: InsertPreauthKey userID=%d err=%v", target.ID, err)
 		return i18n.Tf(lang, "bot.add_device.persist_failed", err)
 	}
 	if err := db.AppendAuditLog(env.DB, target.ID, target.Username, "preauth_issued", "1h single-use (via bot)"); err != nil {
+		log.Printf("bot.add_device: AppendAuditLog userID=%d err=%v", target.ID, err)
 		return i18n.Tf(lang, "bot.add_device.audit_failed", err)
 	}
+	log.Printf("bot.add_device: success userID=%d, setting pendingReplyForCurrentMessage", target.ID)
 	// Set the pending reply with platform picker. The polling
 	// loop reads pendingReplyForCurrentMessage after this
 	// returns and attaches the inline keyboard to the
