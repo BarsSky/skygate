@@ -41,6 +41,33 @@ func ThemeLabel(t string) string {
 	}
 }
 
+// OpenForTest opens a fresh in-temp-dir SQLite DB with the full
+// production migration chain applied. Returns a *sql.DB that
+// the test's t.Cleanup will close.
+//
+// Exported so packages outside internal/db (e.g.
+// internal/monitoring) can build a real schema for integration
+// tests without having to re-implement the migration chain.
+// The DB lives on disk in a TempDir (not :memory:) so that
+// concurrent connections in the pool see the same data —
+// ":memory:" is per-connection in Go's database/sql, which
+// causes subtle "missing table" failures in tests that
+// share a *sql.DB across goroutines.
+func OpenForTest(t interface {
+	Helper()
+	TempDir() string
+	Cleanup(func())
+}) *sql.DB {
+	t.Helper()
+	dir := t.TempDir()
+	d, err := Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		panic("db.OpenForTest: " + err.Error())
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
+
 func IsValidTheme(t string) bool {
 	switch t {
 	case ThemeLinear, ThemeVercel, ThemeSentry, ThemeNvidia:
@@ -126,6 +153,8 @@ func migrate(d *sql.DB) error {
 	//          store, replaces in-memory map) — Этап 13
 	//   V033 — ALTER telegram_bindings ADD lang (per-chat
 	//          language preference for bot i18n) — Этап 14 v5
+	//   V036 — CREATE exit_node_health + exit_node_state_changes
+	//          (background exit-node health monitor) — v0.13.0
 	migrateV025(d)
 	if err := migrateV020(d); err != nil {
 		return fmt.Errorf("migrate v0.20: %w", err)
@@ -171,6 +200,9 @@ func migrate(d *sql.DB) error {
 	}
 	if err := migrateV035(d); err != nil {
 		return fmt.Errorf("migrate v0.35: %w", err)
+	}
+	if err := migrateV036(d); err != nil {
+		return fmt.Errorf("migrate v0.36: %w", err)
 	}
 	return nil
 }

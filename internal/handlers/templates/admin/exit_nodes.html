@@ -1,19 +1,69 @@
 ﻿{{define "body-admin-exit_nodes"}}
+{{/* 2026-07-15: v0.13.0 — health monitor banner. The
+     banner fires when 0 of N configured exit-nodes are
+     healthy (state=online). The 0/0 case (no exit-nodes
+     configured at all) is intentionally NOT flagged here —
+     the operator has to deliberately add nodes, and the
+     empty table is a sufficient signal. */}}
+{{if and .TotalCount (eq .HealthyCount 0)}}
+<div class="alert alert-danger" style="margin-bottom:16px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "exit_nodes.health.banner_zero_healthy"}}</strong>
+  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.health.banner_zero_healthy_help"}}</p>
+</div>
+{{end}}
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
 <div class="card" style="margin-bottom:24px">
-  <h3><i class="fa-solid fa-server"></i> {{t "exit_nodes.admin_title"}}</h3>
-  <p style="color:var(--text-muted);margin-bottom:12px">
-    {{t "exit_nodes.admin_subtitle"}}.
-    Formed from headscale (nodes tagged <code>tag:exit-node</code> and approved routes).
-  </p>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-server"></i> {{t "exit_nodes.admin_title"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{t "exit_nodes.admin_subtitle"}}.
+        Formed from headscale (nodes tagged <code>tag:exit-node</code> and approved routes).
+        {{if .TotalCount}}<br><b>{{.HealthyCount}}/{{.TotalCount}}</b> {{t "exit_nodes.health.healthy_count"}}{{end}}
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      {{if .MonitorRunning}}
+      <form method="post" action="/admin/exit-nodes/health-now" style="display:inline">
+        <button type="submit" class="btn btn-sm"><i class="fa-solid fa-heart-pulse"></i> {{t "exit_nodes.health.run_now"}}</button>
+      </form>
+      {{end}}
+      <button class="btn btn-primary btn-sm" onclick="syncExitNodes()"><i class="fa-solid fa-sync"></i> {{t "exit_nodes.sync_all"}}</button>
+      <span id="sync-all-status" style="color:var(--text-muted)"></span>
+    </div>
+  </div>
 
   {{if .Nodes}}
   <table>
     <tr>
-      <th>{{t "exit_nodes.hostname"}}</th><th>{{t "exit_nodes.ip"}}</th><th>SSH</th><th>{{t "exit_nodes.form_accept_routes"}}</th><th>{{t "exit_nodes.routes"}}</th><th>{{t "exit_nodes.status"}}</th><th></th>
+      <th>{{t "exit_nodes.hostname"}}</th>
+      <th>{{t "exit_nodes.ip"}}</th>
+      <th>SSH</th>
+      <th>{{t "exit_nodes.form_accept_routes"}}</th>
+      <th>{{t "exit_nodes.routes"}}</th>
+      <th>{{t "exit_nodes.health.state"}}</th>
+      <th>{{t "exit_nodes.health.last_seen"}}</th>
+      <th>{{t "exit_nodes.status"}}</th>
+      <th></th>
     </tr>
     {{range .Nodes}}
     <tr>
-      <td><b>{{.Hostname}}</b>{{if not .Enabled}} <span class="tag tag-danger">off</span>{{end}}</td>
+      <td>
+        <b>{{.Hostname}}</b>
+        {{if not .Enabled}} <span class="tag tag-danger">off</span>{{end}}
+        {{if .Healthy}}<span class="tag tag-success" title="{{t "exit_nodes.health.healthy_tip"}}">●</span>
+        {{else if eq .State "degraded"}}<span class="tag tag-warning" title="{{t "exit_nodes.health.degraded_tip"}}">◐</span>
+        {{else if .State}}<span class="tag tag-danger" title="{{t "exit_nodes.health.offline_tip"}}">○</span>
+        {{end}}
+      </td>
       <td><code>{{.TailscaleIP}}</code></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{.SSHTarget}}">
         {{if .SSHTarget}}<code>{{.SSHTarget}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}
@@ -27,6 +77,17 @@
         {{if .RouteCount}}
         <span class="tag tag-info">{{.RouteCount}} routes</span>
         {{else}}<span style="color:var(--text-muted)">0</span>{{end}}
+      </td>
+      <td>
+        {{if .State}}
+          {{if .Healthy}}<span class="tag tag-success">{{t "exit_nodes.health.state_online"}}</span>
+          {{else if eq .State "degraded"}}<span class="tag tag-warning">{{t "exit_nodes.health.state_degraded"}}</span>
+          {{else}}<span class="tag tag-danger">{{t "exit_nodes.health.state_offline"}}</span>
+          {{end}}
+        {{else}}<span style="color:var(--text-muted)" title="{{t "exit_nodes.health.no_snapshot_tip"}}">—</span>{{end}}
+      </td>
+      <td style="font-size:12px;color:var(--text-muted)">
+        {{if .LastSeenAgo}}{{.LastSeenAgo}} {{t "exit_nodes.health.ago"}}{{else}}—{{end}}
       </td>
       <td>
         {{if eq .SyncStatus "synced"}}<span class="tag tag-success">✓ synced</span>
@@ -46,10 +107,6 @@
   <p style="color:var(--text-muted)">{{t "exit_nodes.empty"}}. Configure exit-node and add advertised routes.</p>
   {{end}}
 
-  <div style="margin-top:12px;display:flex;gap:8px">
-    <button class="btn btn-primary" onclick="syncExitNodes()"><i class="fa-solid fa-sync"></i> Sync all</button>
-    <span id="sync-all-status" style="color:var(--text-muted);line-height:32px"></span>
-  </div>
   <pre id="sync-all-result" style="display:none;margin-top:8px;padding:8px;background:var(--bg);border-radius:4px;max-height:200px;overflow:auto;font-size:12px"></pre>
 </div>
 
@@ -148,16 +205,16 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
 async function syncExitNodes() {
   const status = document.getElementById('sync-all-status');
   const result = document.getElementById('sync-all-result');
-  status.textContent = 'Syncing...';
+  status.textContent = {{t "exit_nodes.syncing" | safeJS}};
   try {
     const r = await fetch('/admin/exit-nodes/sync', {method:'POST'});
     const data = await r.json();
-    status.textContent = r.ok ? '✓ Done' : '✗ Error';
+    status.textContent = r.ok ? {{t "exit_nodes.sync_done" | safeJS}} : {{t "exit_nodes.sync_error" | safeJS}};
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
     setTimeout(() => location.reload(), 1500);
   } catch(err) {
-    status.textContent = 'Error: ' + err;
+    status.textContent = {{t "exit_nodes.sync_error" | safeJS}} + ': ' + err;
   }
   status.style.color = 'var(--text-muted)';
 }

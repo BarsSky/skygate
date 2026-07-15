@@ -224,6 +224,18 @@ func helpDetailReply(cmd string, env BotEnv) string {
 			"Use this when /nodes is too noisy and you want to check egress health.\n" +
 			"offline = devices.last_seen is null (headscale hasn't reported it recently).\n" +
 			"Example: /exit_nodes"
+	case "exit_nodes_health":
+		// 2026-07-15: v0.13.0 — help for the new
+		// health-monitor command. Distinct from /exit_nodes
+		// (which is per-user device list) and /nodes (which
+		// is every device): this is the background
+		// monitor's view (state = online | offline |
+		// degraded, last_check timestamp).
+		return "/exit_nodes_health — show exit-node health from the background monitor (admin only).\n" +
+			"One row per node: state (online/offline/degraded), last_seen relative, last_check.\n" +
+			"Output is grouped by state (offline first, then degraded, then online).\n" +
+			"Use this when /exit_nodes shows 'offline' and you want to know if the monitor agrees.\n" +
+			"Example: /exit_nodes_health"
 	case "rules":
 		return "/rules — show the 25 most recent exit-rules across all users (admin only).\n" +
 			"Each row: id, user, exit-node, target_type/value, action (accept/deny).\n" +

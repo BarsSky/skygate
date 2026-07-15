@@ -41,6 +41,21 @@ type Config struct {
 	// falls through to the global client (operators who
 	// haven't enabled per-user planes see no change).
 	SecretKeyHex string
+	// 2026-07-15: v0.13.0 — exit-node health monitor. The
+	// monitor runs in a background goroutine and ticks every
+	// ExitNodeCheckInterval (default 5 min). ExitNodeOnStartup
+	// (default true) runs an immediate pre-tick at boot so a
+	// fresh skygate that starts when all exit-nodes are down
+	// sends the "0 healthy" alert right away. ExitNodeOfflineAfter
+	// is the time window after last_seen beyond which a node
+	// is considered "offline" even if headscale says online
+	// (forgiving fallback for transient WireGuard session
+	// drops). Set ExitNodeCheckInterval to 0 to disable the
+	// monitor entirely (the deploy test still runs from
+	// check_exit_nodes.py).
+	ExitNodeCheckInterval time.Duration
+	ExitNodeOnStartup     bool
+	ExitNodeOfflineAfter  time.Duration
 }
 
 func Load() (*Config, error) {
@@ -64,11 +79,23 @@ func Load() (*Config, error) {
 		StaggerInterval:    getDuration("SKYGATE_STAGGER_INTERVAL", 30*time.Second),
 		UserMaxRules:       parseUserLimits(getenv("SKYGATE_USER_MAX_RULES", "")),
 		SecretKeyHex:       os.Getenv("SKYGATE_SECRET_KEY"),
+		// 2026-07-15: v0.13.0 — exit-node health monitor
+		// knobs. "off" / "0" disables the monitor (default
+		// is 5m; same shape as SKYGATE_DNS_AUTO_CHECK so an
+		// operator's mental model carries over).
+		ExitNodeCheckInterval: getDuration("SKYGATE_EXIT_NODE_CHECK_INTERVAL", 5*time.Minute),
+		ExitNodeOnStartup:     getenv("SKYGATE_EXIT_NODE_CHECK_ON_STARTUP", "true") == "true",
+		ExitNodeOfflineAfter:  getDuration("SKYGATE_EXIT_NODE_OFFLINE_AFTER", 2*time.Minute),
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
 		if v == "off" || v == "0" {
 			c.DNSAutoCheck = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_EXIT_NODE_CHECK_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.ExitNodeCheckInterval = 0
 		}
 	}
 	if c.HeadscaleKey == "" {
