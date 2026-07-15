@@ -7,7 +7,33 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.12.0.2 — Android exit-node routing + Telegram
+* **Current**: v0.13.0 — exit-node health monitor
+  ([release notes](RELEASE-NOTES-v0.13.0.md)). The
+  "is my tailnet's egress actually working?" release.
+  A background goroutine polls headscale every 5 min
+  (`SKYGATE_EXIT_NODE_CHECK_INTERVAL`), classifies each
+  configured exit-node as `online` / `degraded` / `offline`,
+  surfaces the result on `/admin/exit-nodes` and the new
+  `/exit_nodes_health` bot command, and dispatches
+  **calm-mode** alerts (online↔offline only) via the existing
+  Notifier. Plus a `--strict` flag on the deploy-time
+  `check_exit_nodes.py` so CI / automated deploys can
+  hard-fail when an exit-node is offline.
+  * Schema: `exit_node_health` (per-node snapshot) +
+    `exit_node_state_changes` (append-only transition log
+    with `alerted_at` dedup).
+  * "Healthy" rule: `headscale.Online AND last_seen within
+    SKYGATE_EXIT_NODE_OFFLINE_AFTER (2 min) AND tag:exit-node
+    AND 0.0.0.0/0 + ::/0 approved`.
+  * 0-healthy banner on `/admin/exit-nodes` when 0/N are
+    healthy; "Run health check now" button (admin) calls
+    `ExitNodeMonitor.CheckNow` synchronously.
+  * Deploy test: `make check-nodes` (warn-only, default)
+    vs `make check-nodes-strict` (CI variant, hard-fail).
+  * 18 new i18n keys × 2 langs, 10 new monitor unit tests,
+    8 new DB unit tests. 12/12 packages green, smoke
+    118/118. Live on VM: 2/3 healthy, all on the same page.
+* **Previous**: v0.12.0.2 — Android exit-node routing + Telegram
   tab speed + admin tab RU
   ([release notes](RELEASE-NOTES-v0.12.0.2.md)). Three
   operator-visible follow-ups to v0.12.0.1:
