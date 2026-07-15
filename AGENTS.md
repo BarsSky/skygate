@@ -7,7 +7,20 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.10.12 — lazy hostname backfill + i18n
+* **Current**: v0.10.13 — /lang в меню + lazy tag backfill +
+  DERP page i18n
+  ([release notes](RELEASE-NOTES-v0.10.13.md)). The bot
+  menu now exposes `/lang` (was in dispatcher but missing
+  from the menu spec). The bot's `/my_nodes` and `/nodes`
+  self-heal stale `node_owner_map.tag` rows on read via
+  the new `db.SyncTagsFromHeadscale` helper — closes the
+  v0.10.11 regression where admin-tagged devices showed
+  `tag:untagged` in the bot. `PostAdminNodeTag` got a
+  source fix to keep the row fresh for future tags. The
+  `/admin/derp` page is now fully localised (40 new
+  `derp.*` keys) with a new `safeHTML` template function
+  for the markup-bearing paragraphs.
+* **Previous**: v0.10.12 — lazy hostname backfill + i18n
   bot menu + RU/EN polish + Headplane/DERP external +
   Skygate-as-shell roadmap
   ([release notes](RELEASE-NOTES-v0.10.12.md)). /my_nodes
@@ -21,14 +34,6 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   new sidecars. `docs/skygate-as-shell.md` captures the
   v0.11.0+ roadmap for pluggable headscale and ACL
   import.
-* **Previous**: v0.10.11 — RU/EN localisation polish + Copy
-  button for /add_device
-  ([release notes](RELEASE-NOTES-v0.10.11.md)). The /help
-  RU-locale output no longer leaks English suffixes ("add an
-  exit-rule", "for yourself", "or another user, admin only",
-  "with last-seen"). The /add_device reply now ships an
-  inline-keyboard `📋 Copy` button (Telegram `copy_text`
-  field) so the preauth key lands in the clipboard on tap.
 * **What we're working on next (v0.11.0 candidates)**:
   - **Web-UI runtime config for DERP/Headplane** — lift the
     v0.10.12 deploy-time env vars into `global_settings` and
