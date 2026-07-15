@@ -43,9 +43,15 @@ type TailnetMetrics struct {
 	MyPreauthKeys PreauthKeyStats
 }
 
-func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMetrics {
+// computeTailnetMetrics takes a *headscale.Client so the
+// caller can route the API call to either the global
+// headscale (admin view) or a per-user headscale (user
+// view). v0.12.0: the dashboard renders the user's own
+// headscale plane rather than always the operator's
+// primary one. See GetDashboard for the routing decision.
+func (a *App) computeTailnetMetrics(myUsername string, myUserID int64, hs *headscale.Client) TailnetMetrics {
 	m := TailnetMetrics{}
-	nodes, _ := a.HS.ListAllNodes()
+	nodes, _ := hs.ListAllNodes()
 	m.TotalNodes = len(nodes)
 	for _, n := range nodes {
 		if n.Online {
@@ -93,7 +99,7 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64) TailnetMe
 			}
 		}
 	}
-	users, _ := a.HS.ListUsers()
+	users, _ := hs.ListUsers()
 	m.UsersCount = len(users)
 	// Preauth split is per-user; admins see zero (their own key history
 	// is admin tooling, not a per-user metric).
@@ -115,12 +121,21 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserNameByID
 	hsUserName, _ := db.GetUserNameByID(a.DB, c.UserID)
 	// Admins see whole-tailnet metrics; users see only their own.
+	// 2026-07-15: v0.12.0 — route the headscale API call to the
+	// user's own control plane when one is configured. Admins
+	// (who have the global view) stay on HSGlobal(). A non-admin
+	// with no per-user override also gets HSGlobal() — same as
+	// v0.11.x behaviour.
+	hs := a.HSGlobal()
+	if !c.IsAdmin {
+		hs = a.HSForUser(c.UserID)
+	}
 	scope := ""
 	if !c.IsAdmin && hsUserName != "" {
 		scope = hsUserName
 	}
 	a.renderWithLayout(w, r, "dashboard.html", c, map[string]any{
-		"TailnetMetrics": a.computeTailnetMetrics(scope, c.UserID),
+		"TailnetMetrics": a.computeTailnetMetrics(scope, c.UserID, hs),
 	})
 }
 
