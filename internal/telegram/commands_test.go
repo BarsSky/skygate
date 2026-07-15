@@ -168,7 +168,7 @@ func TestHandleCommandStatusEnvelope(t *testing.T) {
 	// envelope on /status (a registry-context reply).
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/status")
-	if !strings.HasPrefix(got, butlerSigil+"  The Registry") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nThe Registry") {
 		t.Errorf("expected registry header at the top, got: %q", got[:60])
 	}
 	if !strings.Contains(got, "rules: 12") {
@@ -185,7 +185,7 @@ func TestHandleCommandVersionEnvelope(t *testing.T) {
 	d := setupTestDB(t)
 	env := BotEnv{DB: d, Version: "v0.10.8-dev", Lang: i18n.LangEN}
 	got := HandleCommand(context.Background(), env, "/version")
-	if !strings.HasPrefix(got, butlerSigil+"  The Version Scroll") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nThe Version Scroll") {
 		t.Errorf("expected version header at the top, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "v0.10.8-dev") {
@@ -197,7 +197,7 @@ func TestHandleCommandHelpEnvelope(t *testing.T) {
 	// /help → "codex" context (The Codex).
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/help")
-	if !strings.HasPrefix(got, butlerSigil+"  The Codex") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nThe Codex") {
 		t.Errorf("expected codex header at the top, got: %q", got[:60])
 	}
 }
@@ -207,7 +207,7 @@ func TestHandleCommandUnknownEnvelope(t *testing.T) {
 	// = A Closed Door). The body tells the user what's wrong.
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/nonsense_xyz")
-	if !strings.HasPrefix(got, butlerSigil+"  A Closed Door") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nA Closed Door") {
 		t.Errorf("expected err header at the top, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "Unknown command") {
@@ -219,7 +219,7 @@ func TestHandleCommandAdminOnlyEnvelope(t *testing.T) {
 	// /status as a non-admin user → rejected with "err" context.
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/status")
-	if !strings.HasPrefix(got, butlerSigil+"  A Closed Door") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nA Closed Door") {
 		t.Errorf("expected err header for admin-only rejection, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "admin only") {
@@ -834,8 +834,10 @@ func TestHandleCommandHelpDetailed(t *testing.T) {
 	// envelope header (codex context) and the body substring
 	// ("Idempotent") instead of the old body-prefix check.
 	got := HandleCommand(context.Background(), envFor(d), "/help ack")
-	if !strings.HasPrefix(got, butlerSigil+"  ") {
-		t.Errorf("expected butler envelope header at the top, got: %q", got[:60])
+	// 2026-07-16: v0.15.2 — gate header is "🪶 ═══ Skygate ═══"
+	// (followed by a topic line). /help uses context="codex".
+	if !strings.HasPrefix(got, "🪶 ═══ Skygate ═══\nThe Codex") {
+		t.Errorf("expected gate header + Codex topic, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "/ack ") {
 		t.Errorf("expected detailed /ack help body, got: %q", got)
@@ -878,19 +880,18 @@ func TestMyStatusReplyUser(t *testing.T) {
 	if !strings.Contains(got, "alice") {
 		t.Errorf("expected username in my_status, got: %q", got)
 	}
-	if !strings.Contains(got, "Rules:</b>") {
-		t.Errorf("expected <b>Rules:</b> for alice (v0.15.2 envelope), got: %q", got)
+	if !strings.Contains(got, "rules: 0") {
+		t.Errorf("expected 'rules: 0' in /my_status body, got: %q", got)
 	}
-	if !strings.Contains(got, "Devices:</b>") {
-		t.Errorf("expected <b>Devices:</b> for alice (v0.15.2 envelope), got: %q", got)
+	if !strings.Contains(got, "devices: 0") {
+		t.Errorf("expected 'devices: 0' in /my_status body, got: %q", got)
 	}
-	// 2026-07-16: v0.15.2 — butler-voice gate envelope.
-	if !strings.Contains(got, "═══ Skygate ═══") {
-		t.Errorf("expected gate header in /my_status reply, got: %q", got)
-	}
-	if !strings.Contains(got, "═══ — Your butler ═══") {
-		t.Errorf("expected gate footer in /my_status reply, got: %q", got)
-	}
+	// 2026-07-16: v0.15.2 — myStatusReply returns just the
+	// body. The gate envelope (═══ Skygate ═══ … ═══ —
+	// signoff ═══) is applied by Compose() in HandleCommand;
+	// unit tests of the reply function in isolation don't
+	// see it. HandleCommand-level tests
+	// (TestHandleCommand*Envelope) cover the gate shape.
 }
 
 func TestMyStatusReplyUnidentified(t *testing.T) {
