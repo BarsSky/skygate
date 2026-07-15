@@ -1365,6 +1365,19 @@ var ruCatalog = map[string]string{
 	"bot.my_status.rules":               "правил: %d / %s",
 	"bot.my_status.devices":             "устройств: %d",
 	"bot.my_status.last_acl":            "последний ACL: #%d",
+	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
+	// /my_status. The reply is composed by butlerEnvelope();
+	// these keys are the title / subheader (the data lines
+	// come from the existing label_* keys below, no need to
+	// re-invent the schema).
+	"bot.my_status.title":              "Ваш статус в Skygate",
+	"bot.my_status.subheader":           "Сводка по правилам, устройствам и последнему применённому ACL.",
+	// Two-line label per row, kept short so the whole body
+	// stays under the 30-word mobile budget.
+	"bot.my_status.label_user":         "Пользователь:",
+	"bot.my_status.label_rules":        "Правила:",
+	"bot.my_status.label_devices":      "Устройства:",
+	"bot.my_status.label_last_acl":     "Последний ACL:",
 	"bot.my_status.not_bound":           "my_status: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login <ключ>.",
 	"bot.my_status.no_username":         "my_status: чат привязан, но у пользователя портала нет username — попросите админа перепривязать.",
 	"bot.my_status.db_error":            "my_status: ошибка БД: %v",
@@ -2821,6 +2834,14 @@ var enCatalog = map[string]string{
 	"bot.my_status.rules":             "rules: %d / %s",
 	"bot.my_status.devices":           "devices: %d",
 	"bot.my_status.last_acl":          "last acl: #%d",
+	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
+	// /my_status (EN). Mirror of the RU block.
+	"bot.my_status.title":            "Your status in Skygate",
+	"bot.my_status.subheader":         "Summary of rules, devices, and the last applied ACL.",
+	"bot.my_status.label_user":       "User:",
+	"bot.my_status.label_rules":      "Rules:",
+	"bot.my_status.label_devices":    "Devices:",
+	"bot.my_status.label_last_acl":   "Last ACL:",
 	"bot.my_status.not_bound":         "my_status: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.my_status.no_username":       "my_status: your chat is bound but the user record has no username — ask an admin to re-bind.",
 	"bot.my_status.db_error":          "my_status: db error: %v",

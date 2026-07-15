@@ -65,10 +65,19 @@ func myStatusReply(env BotEnv) string {
 	if cap > 0 {
 		capStr = strconv.Itoa(cap)
 	}
-	return i18n.Tf(lang, "bot.my_status.header", env.Username) + "\n" +
-		i18n.Tf(lang, "bot.my_status.rules", ruleCount, capStr) + "\n" +
-		i18n.Tf(lang, "bot.my_status.devices", deviceCount) + "\n" +
-		i18n.Tf(lang, "bot.my_status.last_acl", lastACL)
+	body := fmt.Sprintf("<b>%s</b> %s\n<b>%s</b> %d / %s\n<b>%s</b> %d\n<b>%s</b> #%d",
+		escapeHTML(i18n.T(lang, "bot.my_status.label_user")),  escapeHTML(env.Username),
+		escapeHTML(i18n.T(lang, "bot.my_status.label_rules")),  ruleCount, capStr,
+		escapeHTML(i18n.T(lang, "bot.my_status.label_devices")), deviceCount,
+		escapeHTML(i18n.T(lang, "bot.my_status.label_last_acl")), lastACL,
+	)
+	return butlerEnvelope(
+		lang, env.Username,
+		i18n.T(lang, "bot.my_status.title"),
+		i18n.T(lang, "bot.my_status.subheader"),
+		body, "",
+		WithIcon("📊"),
+	)
 }
 
 // myNodesReply lists only the caller's own devices from
