@@ -562,11 +562,17 @@ func TestBuildPlatformPicker_CopyButton(t *testing.T) {
 		t.Fatalf("expected first row to be a single Copy button, got %d buttons", len(row0))
 	}
 	btn := row0[0]
-	if !strings.Contains(btn["text"], "Copy") {
+	if text, _ := btn["text"].(string); !strings.Contains(text, "Copy") {
 		t.Errorf("expected Copy text in first button, got %q", btn["text"])
 	}
-	if btn["copy_text"] != preauthKey {
-		t.Errorf("expected copy_text to carry the preauth key, got %q", btn["copy_text"])
+	// 2026-07-15: copy_text is now a typed object {"text": "..."}
+	// per Telegram Bot API 7.0+, not a bare string.
+	ct, ok := btn["copy_text"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected copy_text to be a map[string]any, got %T", btn["copy_text"])
+	}
+	if ct["text"] != preauthKey {
+		t.Errorf("expected copy_text.text to carry the preauth key, got %q", ct["text"])
 	}
 	// The Copy button MUST NOT have a callback_data — Telegram
 	// would call the bot on tap, but the action is purely
@@ -3243,7 +3249,7 @@ func TestStartReplyWithTokenShowsConfirmation(t *testing.T) {
 	}
 	// Bind button carries the token; Cancel button has the
 	// "bind:cancel" sentinel.
-	if !strings.HasPrefix(row[0]["callback_data"], "bind:confirm:") {
+	if cb, _ := row[0]["callback_data"].(string); !strings.HasPrefix(cb, "bind:confirm:") {
 		t.Errorf("expected first button callback_data=bind:confirm:..., got %q", row[0]["callback_data"])
 	}
 	if row[1]["callback_data"] != "bind:cancel" {

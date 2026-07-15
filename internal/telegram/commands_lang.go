@@ -114,8 +114,8 @@ func buildLangPicker(lang, current string) *PendingReply {
 // checkmark is on the new active language). buildLangPicker
 // is a thin wrapper for the langReply no-args path.
 func buildLangPickerForLang(renderLang, current string) *PendingReply {
-	mkBtn := func(label, data string) map[string]string {
-		return map[string]string{"text": label, "callback_data": data}
+	mkBtn := func(label, data string) map[string]any {
+		return map[string]any{"text": label, "callback_data": data}
 	}
 	check := "✓"
 	noCheck := "  "
@@ -127,7 +127,7 @@ func buildLangPickerForLang(renderLang, current string) *PendingReply {
 	if current == i18n.LangEN {
 		enLabel = check + " " + i18n.T(renderLang, "lang.en")
 	}
-	rows := [][]map[string]string{
+	rows := [][]map[string]any{
 		{
 			mkBtn(ruLabel, "lang:ru"),
 			mkBtn(enLabel, "lang:en"),
