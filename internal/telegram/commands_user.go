@@ -346,6 +346,19 @@ func myExitNodesReply(env BotEnv) string {
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.myexitnodes.header", len(enabled)))
+	// 2026-07-15: v0.14.0 — collect inline-keyboard rows in
+	// parallel with the body. Each enabled node becomes a
+	// button with callback_data "setexitnode:<node_id>";
+	// the callback handler in notify.go applies the same
+	// change /setexitnode would. The "Clear default" button
+	// at the bottom resets the user's choice (callback_data
+	// "setexitnode:clear"). Both inline + the text body go
+	// back to the user.
+	type btnRow struct {
+		label string
+		data  string
+	}
+	var btnRows [][]map[string]string
 	for _, s := range enabled {
 		st := devMap[s.NodeID]
 		status := "offline"
@@ -362,10 +375,32 @@ func myExitNodesReply(env BotEnv) string {
 		}
 		fmt.Fprintf(&sb, "%s\n",
 			i18n.Tf(lang, "bot.myexitnodes.row", s.Hostname, s.NodeID, status, seen, marker))
+		// Build the button label with a checkmark for the
+		// current default. Telegram's inline_keyboard limits
+		// the label to 64 bytes — the hostname alone is well
+		// under that, even for long hostnames.
+		btnLabel := fmt.Sprintf("→ %s", s.Hostname)
+		if s.NodeID == defaultNodeID {
+			btnLabel = "✓ " + s.Hostname
+		}
+		btnRows = append(btnRows, []map[string]string{
+			{"text": btnLabel, "callback_data": "setexitnode:" + s.NodeID},
+		})
 	}
-	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta1"))
-	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta2"))
-	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta3"))
+	// "Clear default" button at the bottom. Only show it if
+	// the user has a default set (otherwise the button is a
+	// no-op that confuses the user).
+	if defaultNodeID != "" {
+		btnRows = append(btnRows, []map[string]string{
+			{"text": i18n.T(lang, "bot.myexitnodes.clear_button"),
+				"callback_data": "setexitnode:clear"},
+		})
+	}
+	// CTA text — the inline buttons replace the "type
+	// /setexitnode N" CTA in the v0.13.x version. The hint
+	// becomes "tap to set" instead of "send a message".
+	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta_tap"))
+	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: btnRows}
 	return trimForTelegram(sb.String())
 }
 
