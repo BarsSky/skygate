@@ -169,5 +169,8 @@ func migrate(d *sql.DB) error {
 	if err := migrateV034(d); err != nil {
 		return fmt.Errorf("migrate v0.34: %w", err)
 	}
+	if err := migrateV035(d); err != nil {
+		return fmt.Errorf("migrate v0.35: %w", err)
+	}
 	return nil
 }

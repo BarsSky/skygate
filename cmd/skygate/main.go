@@ -135,6 +135,14 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+	// 2026-07-15: v0.12.0 — wire SKYGATE_SECRET_KEY into the
+	// per-user control plane router. Empty string means
+	// "encryption not configured" — the router falls through
+	// to the global client (no per-user planes are
+	// honoured). Operators who want multi-control-plane
+	// should generate a 32-byte key (openssl rand -hex 32)
+	// and put it in .env.
+	app.SecretKeyHex = os.Getenv("SKYGATE_SECRET_KEY")
 	// 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set,
 	// /admin/acls (and a few other admin pages) link to the
 	// existing Headplane instead of the local sidecar.
