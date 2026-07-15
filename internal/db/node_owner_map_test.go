@@ -54,6 +54,24 @@ func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 			value       TEXT NOT NULL DEFAULT '',
 			updated_at  INTEGER NOT NULL DEFAULT 0
 		)`,
+		// 2026-07-15: v0.12.0 — portal_users also lives in the
+		// shared test DB. The v0.35 migration is what adds the
+		// new columns on a production DB, but tests use a
+		// hand-rolled schema (we don't go through migrate())
+		// so we declare the columns here directly. Mirrors the
+		// production schema in migrations_v0.25.go +
+		// migrations_v0.35.go.
+		`CREATE TABLE portal_users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			is_admin INTEGER NOT NULL DEFAULT 0,
+			headscale_user_id INTEGER,
+			created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+			theme TEXT NOT NULL DEFAULT 'linear',
+			headscale_url TEXT NOT NULL DEFAULT '',
+			headscale_api_key_enc TEXT NOT NULL DEFAULT ''
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {
