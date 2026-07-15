@@ -7,26 +7,25 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.11.1 — runtime renderer: Apply + Test URL
-  ([release notes](RELEASE-NOTES-v0.11.1.md)). The
-  `/admin/derp/config` and `/admin/headplane` forms now have
-  an **Apply** button that re-renders `headscale-config.yaml`
-  / `headscale-compose.yml` in Go (no shell-out to Python),
-  pushes the config to the running headscale container via
-  `docker cp` (headscale 0.29 has no shell in PATH), and
-  SIGHUPs the process for a no-downtime config reload. The
-  DERP form also gets a **Test all URLs** button that probes
-  each external URL (5s timeout) and shows per-URL status +
-  latency inline. Bundled derper / headplane toggles now
-  start/stop the actual container via `docker start` /
-  `docker stop` / `docker rm`. First-time install of derper
-  / headplane containers still requires `./deploy/deploy.sh`
-  (the bind-mounted compose file isn't visible inside the
-  skygate container). 21 new tests in
-  `admin_integrations_renderer_test.go`, 20 new catalog
-  keys (`derp.config_apply*`, `derp.config_test_*`,
-  `headplane.config_apply*`, `integrations.apply_help`).
-  12/12 packages green, smoke 118/118.
+* **Current**: v0.12.0 — per-user headscale control plane
+  ([release notes](RELEASE-NOTES-v0.12.0.md)). Skygate-as-shell
+  step 2: each `portal_users` row now carries its own
+  `(headscale_url, headscale_api_key)` override, encrypted
+  with `SKYGATE_SECRET_KEY` (AES-GCM, 32 bytes hex). The
+  per-user router (`App.HSForUser(userID)`) routes
+  user-scoped requests (`/my/devices`, `/my/preauth`,
+  `/my/keys`, `/my/exit-nodes`, `/dashboard`) to the user's
+  own headscale; cross-user admin pages
+  (`/admin/devices`) use `App.HSGlobal()` explicitly. New
+  pages: `/admin/control-planes` (lists every distinct
+  plane + user counts), `/admin/users/{id}/plane` (per-user
+  edit form with URL + encrypted API key fields).
+  35 new tests, 22 new i18n keys. Bot handlers
+  (`/my_nodes`, `/admin_nodes` in the Telegram bot) still
+  use the global `env.HS` — per-user bot routing is a
+  v0.12.1 follow-up. `GenerateACL()` still writes to the
+  global headscale; per-plane ACL is v0.13.0. 12/12
+  packages green, smoke 118/118.
 * **Previous**: v0.10.14 — /clearrules body i18n (закрытие
   RU-долга)
   ([release notes](RELEASE-NOTES-v0.10.14.md)). The last
@@ -39,16 +38,21 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   surface, not user reply). 6 new
   `TestClearRulesReplyRussian*` tests pin the RU reply
   on every major branch.
-* **What we're working on next (v0.11.1 candidates)**:
-  - **Runtime renderer (DONE in v0.11.1)** — re-apply
-    headscale config + restart on save from the web UI, so
-    the operator doesn't have to run ./deploy/deploy.sh.
-    Done: Go-side template render + `docker exec cat` +
-    SIGHUP. Test URL button also done.
-  - **Pluggable headscale per portal user** (v0.12.0 per
-    `docs/skygate-as-shell.md`) — `portal_users` gets
-    `headscale_url` + `headscale_api_key` columns so each
-    user can talk to a different control plane.
+* **What we're working on next (v0.12.0 candidates)**:
+  - **Pluggable headscale per portal user (DONE in v0.12.0)** —
+    `portal_users` gets `headscale_url` + `headscale_api_key_enc`
+    columns (AES-GCM encrypted via SKYGATE_SECRET_KEY).
+    HSForUser() routes user-scoped requests to the right
+    plane. /admin/control-planes + /admin/users/{id}/plane.
+  - **Per-user bot routing (v0.12.1)** — bot handlers still
+    use the global env.HS; the BotEnv needs a
+    HeadscaleRouter interface and a new dispatcher in
+    notify.go. Small follow-up.
+  - **Per-plane ACL (v0.13.0)** — GenerateACL() is still
+    global. Per the v0.12.0 scope decision, v0.13.0 splits
+    the per-user ACL by control plane (separate policy per
+    plane, with the operator's-eye view of all planes on
+    /admin/acls).
   - **ACL import/export** (v0.13.0) — load a JSON policy
     file into the current ACL with a dry-run preview.
   - **`/clearrules` i18n** (DONE in v0.10.14)
