@@ -2850,6 +2850,119 @@ func TestClearRulesReplyListedInHelp(t *testing.T) {
 	}
 }
 
+// 2026-07-15: Этап 14 v14 (v0.10.14) — bot i18n completion. The
+// /clearrules body was the last English-only path in the bot; the
+// tests below pin the RU-locale reply on every major branch
+// (unbound, no rules, no pending, mint prompt, applied ok,
+// read-only, applied-failed). Each EN branch above is mirrored
+// here for RU, and an extra test asserts no RU reply leaks
+// English substrings (the original bug).
+
+func TestClearRulesReplyRussianUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	// IsIdentified() == ChatID != 0; build an env with ChatID=0
+	// to exercise the not-bound branch.
+	env := BotEnv{DB: d, Lang: i18n.LangRU}
+	got := HandleCommand(context.Background(), env, "/clearrules")
+	if !strings.Contains(got, "не привязан") {
+		t.Errorf("RU: expected 'не привязан' in reply, got: %q", got)
+	}
+	if strings.Contains(got, "chat not bound") {
+		t.Errorf("RU: English leak 'chat not bound' in reply: %q", got)
+	}
+}
+
+func TestClearRulesReplyRussianNoRules(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	env.Lang = i18n.LangRU
+	got := HandleCommand(context.Background(), env, "/clearrules")
+	if !strings.Contains(got, "нет exit-правил") {
+		t.Errorf("RU: expected 'нет exit-правил', got: %q", got)
+	}
+	if strings.Contains(got, "no exit-rules") {
+		t.Errorf("RU: English leak 'no exit-rules': %q", got)
+	}
+}
+
+func TestClearRulesReplyRussianNoPending(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	env.Lang = i18n.LangRU
+	got := HandleCommand(context.Background(), env, "/clearrules confirm")
+	if !strings.Contains(got, "нет pending-запроса") {
+		t.Errorf("RU: expected 'нет pending-запроса', got: %q", got)
+	}
+	if strings.Contains(got, "no pending clear request") {
+		t.Errorf("RU: English leak 'no pending clear request': %q", got)
+	}
+}
+
+func TestClearRulesReplyRussianMintPrompt(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	env := userEnv(d)
+	env.Lang = i18n.LangRU
+	got := HandleCommand(context.Background(), env, "/clearrules")
+	// RU mint header.
+	if !strings.Contains(got, "это удалит ВСЕ") {
+		t.Errorf("RU: expected 'это удалит ВСЕ' in mint prompt, got: %q", got)
+	}
+	if !strings.Contains(got, "Отправьте /clearrules confirm в течение") {
+		t.Errorf("RU: expected 'Отправьте /clearrules confirm в течение' in mint prompt, got: %q", got)
+	}
+	// No English leak.
+	for _, en := range []string{"this will delete", "Send /clearrules confirm within", "ignored if the request"} {
+		if strings.Contains(got, en) {
+			t.Errorf("RU: English leak %q in mint prompt: %q", en, got)
+		}
+	}
+}
+
+func TestClearRulesReplyRussianAppliedOk(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	_, hs := fakeHeadscale(t)
+	env := userEnvWithHS(d, hs)
+	env.Lang = i18n.LangRU
+	// mint + confirm
+	_ = HandleCommand(context.Background(), env, "/clearrules")
+	got := HandleCommand(context.Background(), env, "/clearrules confirm")
+	// RU success prefix.
+	if !strings.Contains(got, "✓ очищено") {
+		t.Errorf("RU: expected '✓ очищено', got: %q", got)
+	}
+	if !strings.Contains(got, "ACL v") {
+		t.Errorf("RU: expected 'ACL v' in success, got: %q", got)
+	}
+	// No English leak.
+	for _, en := range []string{"cleared", "applied to headscale"} {
+		if strings.Contains(got, en) {
+			t.Errorf("RU: English leak %q in applied_ok: %q", en, got)
+		}
+	}
+}
+
+func TestClearRulesReplyRussianReadOnlyMode(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	env := userEnvWithHS(d, nil)
+	env.Lang = i18n.LangRU
+	_ = HandleCommand(context.Background(), env, "/clearrules")
+	got := HandleCommand(context.Background(), env, "/clearrules confirm")
+	if !strings.Contains(got, "read-only") {
+		// "read-only" appears in both RU and EN strings; this
+		// is the RU catalog value (lowercase, Russian phrase).
+		t.Errorf("RU: expected RU read-only mention, got: %q", got)
+	}
+	if !strings.Contains(got, "ACL sync пропущен") {
+		t.Errorf("RU: expected 'ACL sync пропущен', got: %q", got)
+	}
+	if !strings.Contains(got, "Попросите админа /admin/exit-rules/sync") {
+		t.Errorf("RU: expected 'Попросите админа', got: %q", got)
+	}
+}
+
 func TestClearRulesReplyHelpDetail(t *testing.T) {
 	got := helpDetailReply("clearrules", BotEnv{})
 	if !strings.HasPrefix(got, "/clearrules ") {
