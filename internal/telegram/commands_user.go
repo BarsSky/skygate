@@ -359,7 +359,7 @@ func myExitNodesReply(env BotEnv) string {
 		label string
 		data  string
 	}
-	var btnRows [][]map[string]string
+	var btnRows [][]map[string]any
 	for _, s := range enabled {
 		st := devMap[s.NodeID]
 		status := "offline"
@@ -384,7 +384,7 @@ func myExitNodesReply(env BotEnv) string {
 		if s.NodeID == defaultNodeID {
 			btnLabel = "✓ " + s.Hostname
 		}
-		btnRows = append(btnRows, []map[string]string{
+		btnRows = append(btnRows, []map[string]any{
 			{"text": btnLabel, "callback_data": "setexitnode:" + s.NodeID},
 		})
 	}
@@ -392,7 +392,7 @@ func myExitNodesReply(env BotEnv) string {
 	// the user has a default set (otherwise the button is a
 	// no-op that confuses the user).
 	if defaultNodeID != "" {
-		btnRows = append(btnRows, []map[string]string{
+		btnRows = append(btnRows, []map[string]any{
 			{"text": i18n.T(lang, "bot.myexitnodes.clear_button"),
 				"callback_data": "setexitnode:clear"},
 		})
