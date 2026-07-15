@@ -1,0 +1,41 @@
+{{define "body-admin-headplane"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-window-maximize"></i>{{t "headplane.config_title"}}</h2>
+    <div class="sub">{{t "headplane.config_subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/integrations" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+
+<form method="POST" action="/admin/headplane">
+  <div class="card">
+    <div class="form-row">
+      <label>{{t "headplane.config_mode_label"}}</label>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+        <label><input type="radio" name="mode" value="bundled" {{if eq .Cfg.HeadplaneMode "bundled"}}checked{{end}}> {{t "headplane.config_mode_bundled"}}</label>
+        <label><input type="radio" name="mode" value="external" {{if eq .Cfg.HeadplaneMode "external"}}checked{{end}}> {{t "headplane.config_mode_external"}}</label>
+        <label><input type="radio" name="mode" value="off" {{if eq .Cfg.HeadplaneMode "off"}}checked{{end}}> {{t "headplane.config_mode_off"}}</label>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label for="external_url">{{t "headplane.config_external_label"}}</label>
+      <input type="text" id="external_url" name="external_url" value="{{.Cfg.HeadplaneExternalURL}}" placeholder="https://headplane.example.com">
+      <div class="form-hint">{{t "headplane.config_external_help"}}</div>
+    </div>
+
+    <div class="btn-row" style="margin-top:16px">
+      <button type="submit" name="action" value="save" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "headplane.config_save"}}</button>
+    </div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{t "headplane.config_apply_required" | safeHTML}}</div>
+</div>
+{{end}}

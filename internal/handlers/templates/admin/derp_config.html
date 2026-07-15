@@ -1,0 +1,58 @@
+{{define "body-admin-derp-config"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-tower-broadcast"></i>{{t "derp.config_title"}}</h2>
+    <div class="sub">{{t "derp.config_subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/integrations" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+{{if .FlashInfo}}<div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{.FlashInfo | safeHTML}}</div>{{end}}
+
+<form method="POST" action="/admin/derp/config">
+  <div class="card">
+    <h3>{{t "derp.config_current"}}</h3>
+    <div style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+      {{tf "derp.config_external_count" (len .Cfg.DERPExternalURLs)}} ·
+      {{if .Cfg.BundledDERP}}{{t "derp.config_bundled_enabled"}}{{else}}{{t "derp.config_bundled_disabled"}}{{end}}
+    </div>
+
+    <div class="form-row">
+      <label for="external_urls">{{t "derp.config_external_urls_label"}}</label>
+      <textarea id="external_urls" name="external_urls" rows="4" placeholder="https://derp1.example.com,https://derp2.example.com">{{.ExternalURLsText}}</textarea>
+      <div class="form-hint">{{t "derp.config_external_urls_help"}}</div>
+    </div>
+
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="bundled_enabled" value="1" {{if .Cfg.BundledDERP}}checked{{end}}>
+        {{t "derp.config_bundled_label"}}
+      </label>
+      <div class="form-hint">{{t "derp.config_bundled_help"}}</div>
+    </div>
+
+    <div class="btn-row" style="margin-top:16px">
+      <button type="submit" name="action" value="save" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "derp.config_save"}}</button>
+    </div>
+  </div>
+</form>
+
+{{if .TestResult}}
+<div class="card">
+  <h3>{{t "derp.config_test"}}</h3>
+  {{if .TestResult.OK}}
+    <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{t "derp.config_test_ok"}}</div>
+  {{else}}
+    <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{tf "derp.config_test_failed" .TestResult.Err}}</div>
+  {{end}}
+</div>
+{{end}}
+
+<div class="card">
+  <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{t "derp.config_apply_required" | safeHTML}}</div>
+</div>
+{{end}}

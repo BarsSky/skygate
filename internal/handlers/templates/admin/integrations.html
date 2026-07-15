@@ -1,0 +1,61 @@
+{{define "body-admin-integrations"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-puzzle-piece"></i>{{t "integrations.title"}}</h2>
+    <div class="sub">{{t "integrations.subtitle"}}</div>
+  </div>
+</div>
+
+{{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-tower-broadcast"></i>{{t "integrations.section_derp"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "integrations.descr_derp"}}</p>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "integrations.current_value"}}</div>
+      <div style="font-weight:500">
+        {{if .Cfg.DERPExternalURLs}}
+          {{range .Cfg.DERPExternalURLs}}<code style="display:block;margin:2px 0">{{.}}</code>{{end}}
+        {{else}}
+          <span style="color:var(--text-muted)">—</span>
+        {{end}}
+      </div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "derp.config_bundled_label"}}</div>
+      <div style="font-weight:500">
+        {{if .Cfg.BundledDERP}}<span class="tag tag-success">{{t "integrations.status_bundled"}}</span>{{else}}<span class="tag">{{t "integrations.status_off"}}</span>{{end}}
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:16px">
+    <a href="/admin/derp/config" class="btn btn-primary"><i class="fa-solid fa-sliders"></i> {{t "integrations.status_configure"}}</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-window-maximize"></i>{{t "integrations.section_headplane"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "integrations.descr_headplane"}}</p>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headplane.config_mode_label"}}</div>
+      <div style="font-weight:500">
+        {{if eq .Cfg.HeadplaneMode "external"}}<span class="tag tag-success">{{t "integrations.status_external"}}</span>
+        {{else if eq .Cfg.HeadplaneMode "off"}}<span class="tag">{{t "integrations.status_off"}}</span>
+        {{else}}<span class="tag tag-success">{{t "integrations.status_bundled"}}</span>{{end}}
+      </div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headplane.config_external_label"}}</div>
+      <div style="font-weight:500">
+        {{if .Cfg.HeadplaneExternalURL}}<code>{{.Cfg.HeadplaneExternalURL}}</code>{{else}}<span style="color:var(--text-muted)">{{t "integrations.no_url_yet"}}</span>{{end}}
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:16px">
+    <a href="/admin/headplane" class="btn btn-primary"><i class="fa-solid fa-sliders"></i> {{t "integrations.status_configure"}}</a>
+  </div>
+</div>
+{{end}}
