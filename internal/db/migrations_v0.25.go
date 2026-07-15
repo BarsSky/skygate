@@ -61,8 +61,12 @@ func migrateV025(d *sql.DB) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS node_owner_map (
 			node_id TEXT PRIMARY KEY,
-			user_id INTEGER NOT NULL,
-			attributed_at INTEGER DEFAULT (strftime('%s','now'))
+			headscale_user_id INTEGER NOT NULL DEFAULT 0,
+			username TEXT NOT NULL DEFAULT '',
+			tag TEXT NOT NULL DEFAULT '',
+			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
+			tagged_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+			hostname TEXT NOT NULL DEFAULT ''
 		)`,
 	}
 	for _, q := range queries {
