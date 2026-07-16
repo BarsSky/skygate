@@ -487,16 +487,24 @@ func addDeviceReply(env BotEnv, arg string) string {
 	// callback handler in notify.go renders the per-platform
 	// install instructions.
 	pendingReplyForCurrentMessage = buildPlatformPicker(lang, key.Key)
-	// 2026-07-16: v0.15.2 — gate envelope is applied by
-	// Compose() in HandleCommand. We just return the body
-	// (3 short lines: title, key, hint) and let the v2
-	// envelope wrap it. The inline_keyboard set above
-	// carries the parse_mode=HTML (set by
-	// buildPlatformPicker) so the <pre>key</pre> renders
-	// as monospace on Telegram.
-	return i18n.Tf(lang, "bot.add_device.title", target.Username) + "\n" +
-		"<pre>" + escapeHTML(key.Key) + "</pre>\n" +
-		i18n.T(lang, "bot.add_device.footer")
+	// 2026-07-16: v0.15.2 — butler-voice gate envelope with
+	// parse_mode=HTML (the picker sets that on the
+	// inline_keyboard). The reply is wrapped in
+	// "🪶 ═══ Skygate ═══ … ═══ — Ваш Дворецкий ═══"
+	// with time-of-day greeting, title in <b>, subheader
+	// in <blockquote>, the key in <pre>, and a next-steps
+	// hint in <i>. cmdReply{skipWrap: true} in
+	// dispatchCommand tells HandleCommand to skip the v1
+	// Compose() wrapper so we don't get two gate envelopes
+	// stacked.
+	return butlerEnvelope(
+		lang, target.Username,
+		i18n.T(lang, "bot.add_device.title"),
+		i18n.T(lang, "bot.add_device.subheader"),
+		"<pre>"+escapeHTML(key.Key)+"</pre>",
+		i18n.T(lang, "bot.add_device.footer"),
+		WithIcon("🔑"),
+	)
 }
 
 // addRuleReply adds a new exit-rule for the caller (or, for admins,
