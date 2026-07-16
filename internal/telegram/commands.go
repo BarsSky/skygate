@@ -603,35 +603,40 @@ func statusReply(env BotEnv) string {
 // section. An unidentified chat in a strict deploy sees only
 // /login /start /help /version — every other command is locked
 // until they bind.
+//
+// 2026-07-16: v0.15.5 — gutter widened to 18 chars (max command
+// `/exit_nodes_health` is 17 chars) and the duplicate `\`<cmd>\`` in
+// every EN description was dropped. The gutter now carries the
+// command name; the description is the explanation. Inline
+// sub-commands (like `/clearrules confirm`) are still back-ticked
+// for clarity. `/unbind_self` was missing from /help; added under
+// the Auth section since it's a self-service command any identified
+// user can run.
 func helpReply(env BotEnv) string {
 	lang := env.Lang
 
-	// 2026-07-15: v0.14.0 — every line is "  /cmd    description"
-	// (4-space gutter + ≥ 4 spaces of padding so the columns
-	// line up in monospace and look acceptable in proportional).
-	// The previous v0.10.5 version prefixed with "  • " which
-	// worked for the bullet-list look but didn't form a real
-	// table.
+	// Gutter is padded to 18 chars: longest command today is
+	// `/exit_nodes_health` (17 chars), so 18 = 1-char right
+	// margin. Any future longer command will be left-aligned
+	// (no pad) so the column doesn't shift for the others.
+	const gutter = 18
 	row := func(cmd, desc string) string {
-		// Pad command to 12 chars for alignment. Commands
-		// longer than 12 chars (none today, but future-proof)
-		// just don't pad.
-		if len(cmd) < 12 {
-			cmd = cmd + strings.Repeat(" ", 12-len(cmd))
+		if len(cmd) < gutter {
+			cmd = cmd + strings.Repeat(" ", gutter-len(cmd))
 		}
 		return "  " + cmd + "  " + desc
 	}
 
 	// Section: Auth (everyone, even unidentified).
 	auth := "🔐 " + i18n.T(lang, "bot.help.section_auth") + "\n" +
-		row("/login <key>", i18n.T(lang, "bot.help.auth_login")) + "\n" +
-		row("/start <key>", i18n.T(lang, "bot.help.auth_start")) + "\n" +
+		row("/login", i18n.T(lang, "bot.help.auth_login")) + "\n" +
+		row("/start", i18n.T(lang, "bot.help.auth_start")) + "\n" +
 		row("/lang", i18n.T(lang, "bot.help.lang")) + "\n" +
 		row("/help", i18n.T(lang, "bot.help.common_help")) + "\n" +
-		row("/version", i18n.T(lang, "bot.help.common_version"))
+		row("/version", i18n.T(lang, "bot.help.common_version")) + "\n" +
+		row("/unbind_self", i18n.T(lang, "bot.help.auth_unbind_self"))
 
-	// Section: Status (everyone, but the named user-scope rows
-	// only show for identified callers).
+	// Section: User-scope (every identified user).
 	common := "✦ " + i18n.T(lang, "bot.help.section_common") + "\n" +
 		row("/my_status", i18n.T(lang, "bot.help.user_top_my_status")) + "\n" +
 		row("/my_nodes", i18n.T(lang, "bot.help.user_rest_my_nodes")) + "\n" +

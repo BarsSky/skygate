@@ -1,20 +1,27 @@
-# v0.15.5 — admin body butler-voice polish
+# v0.15.5 — admin body butler-voice polish + /help de-duplication
 
 **Date**: 2026-07-16
 **Branch**: `feature/v0.10.12-bot-ux`
 **Build**: post-`7f4fabe` (v0.15.4 per-command icons)
 
-The "make admin replies sound like a butler, not like a log" release. After
-v0.15.4 wired per-command icons into the gate envelope header, the bodies
-underneath still carried log-voice prefixes (`sync_nodes:`, `audit:`,
+The "make admin replies sound like a butler, not like a log" release +
+the "/help column alignment fix" follow-up. After v0.15.4 wired
+per-command icons into the gate envelope header, the bodies underneath
+still carried log-voice prefixes (`sync_nodes:`, `audit:`,
 `exit_nodes_health:`, `restart:`, `add_rule:`, `delrule:`, `clearrules:`)
-that v0.10.8's butler voice was supposed to retire.
+that v0.10.8's butler voice was supposed to retire. And the /help
+listing had a broken command column (12-char gutter that didn't fit
+`/exit_nodes_health` 17 chars), duplicated the command name in every
+description (`` `/login <key>` — bind this chat to your skygate account ``
+when `/login` was already in the gutter), and was missing `/unbind_self`
+from the auth section.
 
-This release finishes the cleanup. Every admin / power-user reply now
-reads as a real sentence — capital first letter, no command-name colon
-prefix — while keeping every ✓ / ⚠ status marker, every technical field
-(`target:`, `rule_ids=`, `ACL v#`), and every test-pinned substring
-the smoke and unit tests depend on.
+This release finishes both cleanups. Every admin / power-user reply
+now reads as a real sentence — capital first letter, no command-name
+colon prefix — while keeping every ✓ / ⚠ status marker, every
+technical field (`target:`, `rule_ids=`, `ACL v#`), and every
+test-pinned substring the smoke and unit tests depend on. /help is
+aligned, de-duplicated, and complete.
 
 ## What's in
 
@@ -104,6 +111,43 @@ butler-voice capitalization. No behaviour change.
 * **No behavior changes** — every command still does exactly what it
   did before. Only the printed message text changed.
 
+### /help de-duplication + alignment (RU + EN)
+
+After v0.14.0 split /help into three sections (🔐 Auth / ✦ Your data /
+🛠 Admin), the table-row formatter had a 12-char gutter that didn't
+fit `/exit_nodes_health` (17 chars) — the row got pushed 5 chars to
+the right and the description column no longer lined up with the
+rest of the section. The EN description column also duplicated the
+command name in every row: `\`<cmd>\` — <explanation>`, even though
+the gutter already carried the command. RU had the same problem in
+em-dash form: "Привязать чат к аккаунту skygate — /login <ключ>".
+
+* **`commands.go` — `helpReply()` row formatter** now pads every
+  command to 18 chars (1 past the longest, `/exit_nodes_health`),
+  so the description column lands on the same offset for every row
+  in every section. The gutter now shows just the command name
+  (`/login`, `/add_rule`, `/clearrules`, ...) — no `<key>` /
+  `<target>` argument list in the gutter itself, because the
+  description carries the args hint.
+* **All 27 `bot.help.*` descriptions rewritten** (RU + EN, 54 catalog
+  keys total). The new format is `<explanation>  [args: <hint>]`
+  with back-ticked sub-commands inline where the explanation
+  references one (e.g. the `/clearrules` description still shows
+  the exact `/clearrules confirm` form the user must type).
+* **`/unbind_self` added** to the Auth section. It was in the
+  command dispatch table since v0.14.0 but never listed in /help.
+  New `bot.help.auth_unbind_self` keys (RU + EN).
+* **`/exit_nodes_health` and `/sync_nodes` descriptions** picked up
+  the same back-tick convention as the rest of /help
+  (`/exit_nodes`, `/node_owner_map`).
+
+New test `TestHelpReplyV0155Layout` pins the contract:
+  * /unbind_self is in the listing
+  * `/exit_nodes_health` is padded to 18 chars
+  * `/status` (a short command) is padded to the same width
+  * No description column contains `` `/status` — ``, the old
+    backticked-duplicate pattern
+
 ## Verification
 
 * 12/12 packages green (`go test -count=1 ./...`)
@@ -111,6 +155,8 @@ butler-voice capitalization. No behaviour change.
   has both RU and EN, both have the same `%s` / `%d` arg counts)
 * All `TestHandleCommand*` + `TestClearRules*` + `TestDelRule*` +
   `TestAddRule*` green after the substring updates
+* `TestHelpReplyAdminShowsAllCategories` + `TestHelpReplyUserHidesAdmin`
+  + new `TestHelpReplyV0155Layout` all green
 * `TestHandleCommandRestartIssuesToken` and `TestHandleCommandRestartConfirmHappy`
   green (the `confirm by sending within 30s` / `SIGTERM in 200ms`
   substrings now use the capital-first-letter butler-voice variants)
