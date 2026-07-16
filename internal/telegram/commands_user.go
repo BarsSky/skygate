@@ -359,9 +359,31 @@ func myRulesReply(env BotEnv) string {
 			rr.act,
 		))
 	}
-	return i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)) + "\n" +
+	// 2026-07-16: v0.16.5 — split into 2 bubbles if
+	// more than 12 rules. /my_rules is the user's own
+	// exit-rules; 12 is a reasonable threshold (most
+	// users have 1-10 rules, but power users with
+	// larger policies can hit 15+). Same pattern as
+	// /audit: first bubble gets the title + section
+	// header + the first half, second bubble gets
+	// the rest. A "(N more — see next)" hint at the
+	// end of the first bubble keeps the user oriented.
+	const myRulesSplitThreshold = 12
+	body := i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)) + "\n" +
 		Section(i18n.T(lang, "bot.my_rules.section_recent")) + "\n" +
 		PreLinesRaw(lines...)
+	if len(rules) <= myRulesSplitThreshold {
+		return body
+	}
+	half := len(rules) / 2
+	firstLines := lines[:2+half] // header (2 lines) + first half
+	secondLines := lines[2+half:]
+	firstBody := i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)) + "\n" +
+		Section(i18n.T(lang, "bot.my_rules.section_recent")) + "\n" +
+		PreLinesRaw(firstLines...) + "\n\n" +
+		"<i>(" + i18n.Tf(lang, "bot.my_rules.split_more", len(rules)-half) + ")</i>"
+	secondBody := PreLinesRaw(secondLines...)
+	return firstBody + splitMessageMarker + secondBody
 }
 
 // myQuotaReply shows the caller's own rule count vs their cap. The

@@ -1440,6 +1440,11 @@ var ruCatalog = map[string]string{
 	"bot.audit.empty":                   "Журнал аудита пуст.",
 	"bot.audit.db_error":                "Не удалось прочитать журнал аудита: %v",
 	"bot.audit.scan_error":              "Ошибка чтения строки журнала: %v",
+	// 2026-07-16: v0.16.5 — split audit log into 2 bubbles if
+	// more than 10 entries; the first bubble ends with this
+	// "more in next message" hint so the operator knows to
+	// scroll for the second bubble.
+	"bot.audit.split_more":              "ещё %d записей — см. следующее сообщение",
 	"bot.exit_nodes.header":             "Exit-узлов: %d",
 	"bot.exit_nodes.row":                "• %s @%s — %s%s",
 	"bot.exit_nodes.empty":              "exit_nodes: нет узлов с тегом tag:exit-node в node_owner_map —\nпротегируйте узлы из /admin/devices и повторите",
@@ -1518,6 +1523,10 @@ var ruCatalog = map[string]string{
 	// colon itself).
 	"bot.my_rules.header":               "exit-правила <b>%s</b> (latest %d):",
 	"bot.my_rules.section_recent":       "rules",
+	// 2026-07-16: v0.16.5 — "more in next message" hint shown
+	// at the end of the first /my_rules bubble when the user
+	// has more than 12 rules (the v0.16.5 split threshold).
+	"bot.my_rules.split_more":           "ещё %d правил — см. следующее сообщение",
 	"bot.my_rules.col_id":               "ID",
 	"bot.my_rules.col_exit":             "EXIT",
 	"bot.my_rules.col_type":             "TYPE",
@@ -3062,6 +3071,13 @@ var enCatalog = map[string]string{
 	"bot.audit.empty":                 "Audit log is empty.",
 	"bot.audit.db_error":              "Could not read the audit log: %v",
 	"bot.audit.scan_error":            "Could not scan audit log row: %v",
+	// 2026-07-16: v0.16.5 — "more in next message" hint
+	// shown at the end of the first audit-log bubble when
+	// the log has more than 10 entries (the v0.16.5 split
+	// threshold). Tells the operator to scroll for the
+	// second bubble so they don't think the listing is
+	// truncated.
+	"bot.audit.split_more":            "%d more entries — see next message",
 	"bot.exit_nodes.header":           "Exit-nodes: %d total",
 	"bot.exit_nodes.row":              "• %s @%s — %s%s",
 	"bot.exit_nodes.empty":            "exit_nodes: (no nodes with tag:exit-node in node_owner_map —\ntag some nodes from /admin/devices, then re-run)",
@@ -3121,6 +3137,10 @@ var enCatalog = map[string]string{
 	// "#%d @%s\n  %s %s → %s" prose format is gone.
 	"bot.my_rules.header":             "exit-rules for <b>%s</b> (latest %d):",
 	"bot.my_rules.section_recent":     "rules",
+	// 2026-07-16: v0.16.5 — "more in next message" hint shown
+	// at the end of the first /my_rules bubble when the user
+	// has more than 12 rules (the v0.16.5 split threshold).
+	"bot.my_rules.split_more":         "%d more rules — see next message",
 	"bot.my_rules.col_id":             "ID",
 	"bot.my_rules.col_exit":           "EXIT",
 	"bot.my_rules.col_type":           "TYPE",

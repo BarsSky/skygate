@@ -169,6 +169,30 @@ type BotEnv struct {
 // 2026-07-13: Этап 13.
 var pendingReplyForCurrentMessage *PendingReply
 
+// splitMessageMarker is the sentinel that a reply function
+// uses to mark where one Telegram message ends and the next
+// begins. The send path (RealNotifier.sendPlain + reply) splits
+// the body on this marker and sends each part as a separate
+// sendMessage call. Used by long replies like /help (which
+// splits into 3 messages: Auth / User-scope / Admin) so each
+// "form" is short and scannable on mobile.
+//
+// 2026-07-16: v0.16.5 — "split long replies" pass. The operator
+// reported that on a phone, /help and other long replies are
+// hard to read because the text is small and packed into one
+// bubble. Telegram doesn't support font-size changes (the only
+// "big" text is the per-message Big Emoji mode), so the cleanest
+// fix is to break long replies into multiple shorter messages.
+// Each section gets its own bubble and is easier to scan at
+// default font size.
+//
+// The marker is a non-printing string with a unique prefix
+// (so it can never collide with real user content), padded with
+// newlines so each part stands on its own. The send path
+// trims the marker itself (it's never visible in Telegram) and
+// any extra blank lines around the split point.
+const splitMessageMarker = "\n\n\x00SPLIT\x00\n\n"
+
 // markHTMLReply sets the next reply's parse_mode to "HTML"
 // so Telegram renders the <b>/<i>/<pre>/<code> tags in
 // the body. Call from any reply function that uses
@@ -737,6 +761,19 @@ func statusReply(env BotEnv) string {
 // is the <b>section name</b> (was a plain "🔐 Auth — ..." line
 // before; same shape, just bold + the table is below it).
 //
+// 2026-07-16: v0.16.5 — split into multiple messages. The
+// operator reported that on a phone, the single-bubble /help
+// is hard to read because Telegram's default font is small
+// and the three sections all share one screen real estate.
+// We now send each section as its own message bubble (Auth
+// in message #1, User-scope in #2, Admin in #3). Telegram
+// doesn't support font-size changes (the only "big" text
+// is the per-message Big Emoji mode), but multiple shorter
+// bubbles are easier to scan at default font size than one
+// long bubble. The splitMessageMarker sentinel marks the
+// boundary; the send path (RealNotifier.reply) splits on
+// it and issues separate sendMessage calls.
+//
 // Rationale: the v0.16.1/v0.16.2 "more HTML" pass left /help
 // in plain text, so the catalog's markdown backticks showed up
 // as raw `\`<id>\`` characters. The v0.16.2 hotfix for
@@ -748,6 +785,8 @@ func statusReply(env BotEnv) string {
 //   2) reply: tabular <pre> blocks per section so the
 //      command column lines up on every Telegram client
 //      (Telegram's <pre> uses a fixed-pitch font).
+//   3) v0.16.5: split into multiple bubbles so each
+//      section gets its own screen on mobile.
 func helpReply(env BotEnv) string {
 	// 2026-07-16: v0.16.3 — mark HTML so the <b>, <i>,
 	// <pre>, <code> in the body render instead of
@@ -836,22 +875,45 @@ func helpReply(env BotEnv) string {
 	}
 	admin := table("🛠 "+i18n.T(lang, "bot.help.section_admin"), adminRows...)
 
-	// Opening header (rendered above the gate envelope by
-	// ComposeDefault). The two header lines are the
-	// title (one line) + the subtitle hint (one line).
-	header := "<b>" + i18n.T(lang, "bot.help.header") + "</b>\n" +
-		"<i>" + i18n.T(lang, "bot.help.subtitle") + "</i>\n\n"
+	// 2026-07-16: v0.16.5 — split into multiple
+	// bubbles. The first bubble carries the title
+	// + subtitle + the Auth section; subsequent
+	// bubbles carry the User-scope and Admin
+	// sections. Strict-mode locked layout: only
+	// the locked note + Auth (single bubble).
+	//
+	// 3-bubble layout (admin):
+	//   #1: <b>title</b> + <i>subtitle</i> + Auth table
+	//   #2: User-scope table
+	//   #3: Admin table
+	//
+	// 2-bubble layout (user):
+	//   #1: <b>title</b> + <i>subtitle</i> + Auth table
+	//   #2: User-scope table
+	//
+	// 1-bubble layout (locked):
+	//   #1: <b>title</b> + <i>subtitle</i> + locked note + Auth
 
-	// Three layouts:
-	//   - unidentified + strict mode: only auth (locked)
-	//   - identified non-admin: auth + common
-	//   - admin (identified or legacy unidentified): all three
+	title := "<b>" + i18n.T(lang, "bot.help.header") + "</b>"
+	subtitle := "<i>" + i18n.T(lang, "bot.help.subtitle") + "</i>"
+
 	switch {
 	case !env.IsIdentified() && env.StrictMode:
-		return header + "🔒 " + i18n.T(lang, "bot.help.strict_locked_note") + "\n\n" + auth
+		// Locked layout: single bubble.
+		return title + "\n" + subtitle + "\n\n" +
+			"🔒 " + i18n.T(lang, "bot.help.strict_locked_note") + "\n\n" + auth
 	case !env.IsIdentified() || env.IsAdmin:
-		return header + auth + "\n\n" + common + "\n\n" + admin
+		// Admin: 3 bubbles (Auth / User-scope / Admin).
+		// The title + subtitle are in the first bubble
+		// (so the user knows which command produced
+		// this burst of messages). The Auth section
+		// follows in the same bubble. The User-scope
+		// and Admin sections each get their own bubble.
+		first := title + "\n" + subtitle + "\n\n" + auth
+		return first + splitMessageMarker + common + splitMessageMarker + admin
 	default:
-		return header + auth + "\n\n" + common
+		// User: 2 bubbles (Auth / User-scope).
+		first := title + "\n" + subtitle + "\n\n" + auth
+		return first + splitMessageMarker + common
 	}
 }
