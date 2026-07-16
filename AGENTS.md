@@ -7,7 +7,25 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.3 — "more HTML" pass for /help
+* **Current**: v0.16.4 — fix HTML-unsafe `<` / `>` in
+  catalog keys
+  ([release notes](RELEASE-NOTES-v0.16.4.md)). Hotfix
+  for v0.16.3 — the v0.16.3 "more HTML" pass for `/help`
+  shipped the reply with `parse_mode=HTML`, but several
+  `bot.*` catalog keys still contained literal
+  `<word>` placeholders (like `<команда>`, `<ключ>`,
+  `<HEADSCALE_URL>`). Telegram's HTML parser rejects
+  the whole `sendMessage` payload with HTTP 400
+  "can't parse entities: Unsupported start tag" when
+  it sees a literal `<word>` that isn't a known HTML
+  tag — so the live `/help` was silently failing. Fix
+  HTML-escapes 11 catalog keys (only the ones whose
+  replies go through `parse_mode=HTML`; plain-text
+  keys keep their literal `<word>`). New test
+  `TestHTMLSafeCatalog` in `i18n_test.go` pins the
+  contract. 12/12 packages green, smoke 118/118, live
+  on VM at build `27ee8e6`.
+* **Previous**: v0.16.3 — "more HTML" pass for /help
   ([release notes](RELEASE-NOTES-v0.16.3.md)). The
   v0.16.1/v0.16.2 "more HTML" pass left `/help` in
   plain text, so the catalog's markdown backticks
