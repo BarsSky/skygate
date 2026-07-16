@@ -44,7 +44,7 @@ func TestPreviewBotReplies(t *testing.T) {
 	env.IsAdmin = true // /audit is admin-only
 	cmds := []string{
 		"/my_status", "/my_rules", "/my_nodes", "/my_quota", "/myexitnodes",
-		"/audit", "/exit_nodes_health", "/version", "/restart",
+		"/audit", "/exit_nodes_health", "/version", "/restart", "/help",
 	}
 	for _, c := range cmds {
 		got := HandleCommand(nil, env, c)
