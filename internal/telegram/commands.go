@@ -442,7 +442,12 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 	case "/myexitnodes":
 		return cmdReply{body: myExitNodesReply(env), context: lookupContext(cmd)}
 	case "/add_device":
-		return cmdReply{body: addDeviceReply(env, strings.Join(args, " ")), context: lookupContext(cmd)}
+		// 2026-07-16: v0.15.2 — addDeviceReply uses
+		// butlerEnvelope() which renders the <pre>key</pre>
+		// as monospace on Telegram. We set skipWrap so
+		// HandleCommand's Compose() doesn't add a second
+		// gate envelope on top of our butler gate.
+		return cmdReply{body: addDeviceReply(env, strings.Join(args, " ")), context: lookupContext(cmd), skipWrap: true}
 	case "/add_rule":
 		return cmdReply{body: addRuleReply(env, args), context: lookupContext(cmd)}
 	case "/delrule":
