@@ -168,6 +168,13 @@ func auditReply(env BotEnv) string {
 	// 2026-07-16: v0.16.2 — mark HTML so the <b>ID DATE
 	// ACTION BY</b> header row + the <i>──────</i>
 	// separator in PreLinesRaw() render.
+	// 2026-07-16: v0.16.5 — split into 2 bubbles if more
+	// than 10 entries. The audit log can list 20 entries
+	// (the LIMIT 20 in the query), which on a phone screen
+	// scrolls past the fold; the operator reported that
+	// /help and other long replies are hard to scan at
+	// default font size. Splitting at 10 entries gives
+	// 2 focused bubbles of 10 each.
 	markHTMLReply()
 	lang := env.Lang
 	rows, err := env.DB.Query(`
@@ -250,7 +257,65 @@ func auditReply(env BotEnv) string {
 		}
 		lines = append(lines, "") // blank row separator
 	}
-	return i18n.T(lang, "bot.audit.header") + "\n\n" +
+	// 2026-07-16: v0.16.5 — split into 2 bubbles if
+	// more than auditSplitThreshold entries. The first
+	// bubble gets the title + section header + first
+	// half; the second gets the rest. Threshold is
+	// 10 because: (a) 20 entries in one bubble is hard
+	// to scan on a phone, (b) 10 entries fits in
+	// ~30 lines of <pre> which is comfortable in one
+	// screen even at default font size, (c) under 10
+	// entries the reply is short enough that splitting
+	// would be visual noise (two short bubbles for a
+	// 5-entry log feels gratuitous).
+	const auditSplitThreshold = 10
+	body := i18n.T(lang, "bot.audit.header") + "\n\n" +
 		Section(i18n.T(lang, "bot.audit.section_recent")) + "\n" +
 		PreLinesRaw(lines...)
+	if len(entries) <= auditSplitThreshold {
+		return body
+	}
+	// Split the rendered lines at the threshold. We
+	// split the <pre> by finding the entry boundary
+	// (a blank line + a row line). Easier: re-render
+	// the two halves.
+	half := len(entries) / 2
+	firstLines := lines[:entryBoundaryIndex(lines, half)]
+	secondLines := lines[entryBoundaryIndex(lines, half):]
+	firstBody := i18n.T(lang, "bot.audit.header") + "\n\n" +
+		Section(i18n.T(lang, "bot.audit.section_recent")) + "\n" +
+		PreLinesRaw(firstLines...) + "\n\n" +
+		"<i>(" + i18n.Tf(lang, "bot.audit.split_more", len(entries)-half) + ")</i>"
+	secondBody := PreLinesRaw(secondLines...)
+	return firstBody + splitMessageMarker + secondBody
+}
+
+// entryBoundaryIndex returns the line index at which to
+// split the audit <pre> block so the second half starts
+// at a row boundary (not in the middle of a row's
+// detail line). We split at the first blank line that
+// follows the (splitAt)th entry's row, so the bubble
+// boundary lands between entries.
+//
+// 2026-07-16: v0.16.5.
+func entryBoundaryIndex(lines []string, splitAt int) int {
+	// Each entry occupies 2 lines (row + detail) + 1
+	// blank line separator. Walk the slice counting
+	// rows and stop at the first blank line AFTER the
+	// (splitAt)th row.
+	rows := 0
+	for i, l := range lines {
+		// Header row + rule line are at the top; skip.
+		if i < 2 {
+			continue
+		}
+		// A blank line marks the end of an entry.
+		if l == "" {
+			rows++
+			if rows >= splitAt {
+				return i + 1
+			}
+		}
+	}
+	return len(lines)
 }

@@ -793,6 +793,44 @@ func (n *RealNotifier) fetch(token string, offset int64) ([]update, error) {
 // editMessageText it instead of posting a new message. Each
 // chat has its own slot (chatID is the discriminator).
 func (n *RealNotifier) reply(token string, chatID int64, text string, pending *PendingReply) {
+	// 2026-07-16: v0.16.5 — split long replies on the
+	// sentinel marker. The reply body may contain
+	// splitMessageMarker to indicate that the body is
+	// actually a sequence of separate messages (e.g.
+	// /help's 3 sections sent as 3 bubbles). We split
+	// here so the inline-keyboard + ParseMode are
+	// applied to the FIRST message only; the rest
+	// inherit them (parse_mode=HTML is sticky for the
+	// whole batch from Telegram's perspective, and a
+	// keyboard on subsequent messages would re-display
+	// it under each bubble, which is not what we want).
+	if parts := splitReplyParts(text); len(parts) > 1 {
+		// Multi-part: only the first part gets the
+		// pending (keyboard + ParseMode). Subsequent
+		// parts are plain HTML messages.
+		first := parts[0]
+		if pending != nil && len(pending.InlineKeyboard) > 0 {
+			if msgID, ok := n.sendPlain(token, chatID, first, pending); ok {
+				n.rememberInlineMessage(chatID, msgID)
+			}
+		} else {
+			// Even when no keyboard, we want the
+			// first part to keep ParseMode=HTML.
+			n.sendPlain(token, chatID, first, pending)
+		}
+		// Subsequent parts: plain HTML (inherits
+		// ParseMode from the batch, but no
+		// keyboard). Use sendPlain with a copy
+		// of pending that has no keyboard so the
+		// subsequent bubbles don't re-render the
+		// keyboard under each one.
+		bare := &PendingReply{ParseMode: "HTML"}
+		for _, p := range parts[1:] {
+			n.sendPlain(token, chatID, p, bare)
+		}
+		return
+	}
+	// Single-message path (the v0.15.3 behavior).
 	if pending != nil && len(pending.InlineKeyboard) > 0 {
 		if msgID, ok := n.sendPlain(token, chatID, text, pending); ok {
 			n.rememberInlineMessage(chatID, msgID)
@@ -800,6 +838,34 @@ func (n *RealNotifier) reply(token string, chatID int64, text string, pending *P
 		return
 	}
 	n.sendPlain(token, chatID, text, pending)
+}
+
+// splitReplyParts splits a reply body on splitMessageMarker.
+// The marker itself is removed (it's a sentinel, not real
+// content). Empty parts (from a leading or trailing marker)
+// are dropped so the caller doesn't send empty messages to
+// Telegram.
+//
+// 2026-07-16: v0.16.5.
+func splitReplyParts(text string) []string {
+	if !strings.Contains(text, splitMessageMarker) {
+		return []string{text}
+	}
+	parts := strings.Split(text, splitMessageMarker)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		// Trim stray newlines left over from the
+		// marker. The marker itself has \n\n
+		// padding, so after Split each side has a
+		// \n\n prefix/suffix we don't want in
+		// the rendered message.
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // sendPlain is the shared POST /sendMessage implementation

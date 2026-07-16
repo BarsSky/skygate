@@ -374,6 +374,60 @@ func TestHandleCommandAudit(t *testing.T) {
 	}
 }
 
+// TestAuditReplySplitLongLog pins the v0.16.5 contract: an
+// audit log with > 10 entries must split into 2 bubbles.
+// Below the threshold, no split. The split point is at the
+// first blank line after the (entries/2)th row.
+func TestAuditReplySplitLongLog(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed 20 audit rows so the LIMIT 20 returns 20.
+	for i := 0; i < 20; i++ {
+		_, _ = d.Exec(
+			`INSERT INTO audit_log(username, action, detail, created_at) VALUES (?, ?, ?, ?)`,
+			fmt.Sprintf("user%d", i),
+			"test_action",
+			fmt.Sprintf("entry #%d", i),
+			int64(1722000000+i),
+		)
+	}
+	got := auditReply(adminEnv(d))
+	// 20 entries → split. Expect 1 split marker in the body.
+	if c := strings.Count(got, splitMessageMarker); c != 1 {
+		t.Errorf("expected 1 split marker (long log), got %d", c)
+	}
+	parts := splitReplyParts(got)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 message parts, got %d: %q", len(parts), parts)
+	}
+	// First part carries the "more in next message" hint
+	// so the operator knows the second bubble is coming.
+	if !strings.Contains(parts[0], "next message") && !strings.Contains(parts[0], "следующ") {
+		t.Errorf("first part should carry 'more in next message' hint, got: %q", parts[0])
+	}
+}
+
+// TestAuditReplyNoSplitShortLog pins the v0.16.5 contract:
+// an audit log with <= 10 entries does NOT split (single
+// bubble). The split threshold is 10.
+func TestAuditReplyNoSplitShortLog(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed 5 audit rows.
+	for i := 0; i < 5; i++ {
+		_, _ = d.Exec(
+			`INSERT INTO audit_log(username, action, detail, created_at) VALUES (?, ?, ?, ?)`,
+			fmt.Sprintf("user%d", i),
+			"test_action",
+			fmt.Sprintf("entry #%d", i),
+			int64(1722000000+i),
+		)
+	}
+	got := auditReply(adminEnv(d))
+	// 5 entries → no split.
+	if c := strings.Count(got, splitMessageMarker); c != 0 {
+		t.Errorf("expected 0 split markers (short log), got %d: %q", c, got)
+	}
+}
+
 // --- Phase 3 tests ---
 
 func TestHandleCommandExitNodes(t *testing.T) {
@@ -1231,8 +1285,43 @@ func TestMyRulesReplyUserFiltersToCaller(t *testing.T) {
 		t.Errorf("expected new tabular <pre> block with bold ID/ACTION header, got: %q", got)
 	}
 	// And the Section() divider for "rules".
+	// 2026-07-16: v0.16.5 — short list (1 rule) does
+	// NOT split. The split threshold is 12; alice's
+	// single rule is below it, so no split marker.
+	if c := strings.Count(got, splitMessageMarker); c != 0 {
+		t.Errorf("expected 0 split markers (1 rule), got %d", c)
+	}
 	if !strings.Contains(got, "rules") {
 		t.Errorf("expected 'rules' section divider, got: %q", got)
+	}
+}
+
+// TestMyRulesReplySplitLongList pins the v0.16.5 contract:
+// /my_rules splits into 2 bubbles if the user has more than
+// 12 rules (the v0.16.5 split threshold). Below the threshold
+// (1 rule) the reply is a single bubble (covered by the test
+// above).
+func TestMyRulesReplySplitLongList(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed 15 rules for alice (above the 12-rule threshold).
+	for i := 0; i < 15; i++ {
+		_, _ = d.Exec(
+			`INSERT INTO device_rules(user_id, target_value) VALUES (?, ?)`,
+			2, fmt.Sprintf("target-%d.example", i),
+		)
+	}
+	got := myRulesReply(userEnv(d))
+	// 15 rules → split. Expect 1 split marker in the body.
+	if c := strings.Count(got, splitMessageMarker); c != 1 {
+		t.Errorf("expected 1 split marker (15 rules), got %d", c)
+	}
+	parts := splitReplyParts(got)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 message parts, got %d: %q", len(parts), parts)
+	}
+	// First part carries the "more in next message" hint.
+	if !strings.Contains(parts[0], "next message") && !strings.Contains(parts[0], "следующ") {
+		t.Errorf("first part should carry 'more in next message' hint, got: %q", parts[0])
 	}
 }
 
@@ -1400,6 +1489,94 @@ func TestHelpReplyV0155Layout(t *testing.T) {
 	// other 8 replies; /help is the 9th).
 	if pendingReplyForCurrentMessage == nil || pendingReplyForCurrentMessage.ParseMode != "HTML" {
 		t.Errorf("expected pending ParseMode=HTML, got %+v", pendingReplyForCurrentMessage)
+	}
+	// 2026-07-16: v0.16.5 — split into multiple bubbles.
+	// Admin layout: Auth + User-scope + Admin = 3 bubbles
+	// (2 split markers in the body). The split marker
+	// is a sentinel that the send path detects and
+	// splits on; the body string itself contains it
+	// twice (between Auth/User-scope and User-scope/Admin).
+	if got := strings.Count(got, splitMessageMarker); got != 2 {
+		t.Errorf("expected 2 split markers (admin: 3 bubbles), got %d", got)
+	}
+	// And the 3 sections must each survive in one of
+	// the parts. Splitting on the marker and trimming
+	// whitespace should give us 3 non-empty messages.
+	parts := splitReplyParts(got)
+	if len(parts) != 3 {
+		t.Errorf("expected 3 message parts after split, got %d: %q", len(parts), parts)
+	}
+	// First part carries the title + subtitle + Auth.
+	if !strings.Contains(parts[0], "Auth — ") {
+		t.Errorf("first part should contain Auth section, got: %q", parts[0])
+	}
+	// Second part carries User-scope.
+	if !strings.Contains(parts[1], "Your data") {
+		t.Errorf("second part should contain User-scope section, got: %q", parts[1])
+	}
+	// Third part carries Admin.
+	if !strings.Contains(parts[2], "Admin — ") {
+		t.Errorf("third part should contain Admin section, got: %q", parts[2])
+	}
+}
+
+// TestHelpReplyUserSplitsIntoTwoBubbles pins the v0.16.5 contract
+// for the user-scope /help: Auth + User-scope = 2 bubbles (1
+// split marker). Admin section must NOT appear in either part.
+func TestHelpReplyUserSplitsIntoTwoBubbles(t *testing.T) {
+	d := setupTestDB(t)
+	got := helpReply(userEnv(d))
+	// 1 split marker → 2 parts.
+	if c := strings.Count(got, splitMessageMarker); c != 1 {
+		t.Errorf("expected 1 split marker (user: 2 bubbles), got %d", c)
+	}
+	parts := splitReplyParts(got)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 message parts, got %d: %q", len(parts), parts)
+	}
+	// Admin section must NOT be in either part (user doesn't
+	// have access to /status, /bind, etc.).
+	for i, p := range parts {
+		if strings.Contains(p, "/status") || strings.Contains(p, "/bind") {
+			t.Errorf("part %d unexpectedly contains admin command: %q", i, p)
+		}
+	}
+	// And the first part should still have the title.
+	if !strings.Contains(parts[0], i18n.T(i18n.LangEN, "bot.help.header")) {
+		t.Errorf("first part should carry the title, got: %q", parts[0])
+	}
+}
+
+// TestSplitReplyParts pins the v0.16.5 split helper directly.
+// 5 sub-cases: no marker, single marker, double marker, leading
+// marker, trailing marker.
+func TestSplitReplyParts(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"no marker", "hello world", []string{"hello world"}},
+		{"single marker", "first" + splitMessageMarker + "second", []string{"first", "second"}},
+		{"double marker", "a" + splitMessageMarker + "b" + splitMessageMarker + "c", []string{"a", "b", "c"}},
+		// Empty parts are dropped.
+		{"leading marker", splitMessageMarker + "content", []string{"content"}},
+		{"trailing marker", "content" + splitMessageMarker, []string{"content"}},
+		// Whitespace around the marker is trimmed.
+		{"whitespace padding", "  one  " + splitMessageMarker + "  two  ", []string{"one", "two"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := splitReplyParts(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d parts, want %d: %q", len(got), len(tc.want), got)
+			}
+			for i, w := range tc.want {
+				if got[i] != w {
+					t.Errorf("part %d = %q, want %q", i, got[i], w)
+				}
+			}
+		})
 	}
 }
 
