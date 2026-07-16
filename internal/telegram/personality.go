@@ -134,7 +134,7 @@ func Compose(lang, context, body string, verbose bool) string {
 		// (which shouldn't happen, but...), just return
 		// the gate header. The header alone is the butler's
 		// "I'm here" — a presence announcement.
-		return gateHeader(lang, context)
+		return GateHeader(lang, context)
 	}
 	// 2026-07-16: v0.15.2 — butler-voice v2 envelope
 	// (gate-style). Replaces the v1 "HEADER\n\nbody" with
@@ -145,51 +145,17 @@ func Compose(lang, context, body string, verbose bool) string {
 	//   │ body                   │
 	//   │                        │
 	//   ╰── — Ваш Дворецкий ═══ ──╯   (only when verbose)
-	// The body is rendered as plain text (no HTML tags).
-	// Reply-функции that need HTML formatting (e.g.
-	// /add_device) must call butlerEnvelope() in
-	// internal/telegram/envelope.go and set skipWrap=true
-	// in their dispatchCommand cmdReply.
-	out := gateHeader(lang, context) + "\n\n" + body
+	//
+	// 2026-07-16: v0.15.3 — gateHeader / gateFooter /
+	// headerTopic moved to envelope.go (the single
+	// source of truth for the gate shape). Both
+	// butlerEnvelope and Compose go through GateHeader
+	// + GateFooter now, so a rebrand is one line.
+	out := GateHeader(lang, context) + "\n\n" + body
 	if verbose {
-		out += "\n\n" + gateFooter(lang)
+		out += "\n\n" + GateFooter(lang)
 	}
 	return out
-}
-
-// gateHeader is the "🪶 ═══ Skygate ═══" + topic header
-// that opens every bot reply in v0.15.2. Replaces the
-// v1 "🪶 | Кодекс" single-line header.
-func gateHeader(lang, context string) string {
-	topic := headerTopic(lang, context)
-	return "🪶 ═══ Skygate ═══\n" + topic
-}
-
-// gateHeaderSingle is the v1 help-codex header line. Kept as
-// gateHeader() with one arg so older call sites still compile
-// (the butler codex "/help" rendering uses this; the v2
-// envelope doesn't apply there). Deprecated — new code should
-// use headerFor() and the v2 envelope via Compose().
-
-// gateFooter is the "═══ — Ваш Дворецкий ═══" line
-// that closes verbose replies in v0.15.2. Replaces the
-// v1 "— Ваш Дворецкий" single-line footer.
-func gateFooter(lang string) string {
-	return "═══ — " + i18n.T(lang, "bot.envelope.signoff") + " ═══"
-}
-
-// headerTopic extracts the per-context topic label
-// from the v1 bot.header.<context> catalog keys. Falls
-// back to a generic label if the catalog key is missing.
-func headerTopic(lang, context string) string {
-	if context == "" {
-		return i18n.T(lang, "bot.envelope.greeting.afternoon") // "Skygate"
-	}
-	key := "bot.header." + context
-	if v := i18n.T(lang, key); v != key {
-		return v
-	}
-	return context
 }
 
 // verboseForBody is the default verbose heuristic. It
