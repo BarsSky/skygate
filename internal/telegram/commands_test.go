@@ -1197,6 +1197,47 @@ func TestHelpReplyUserHidesAdmin(t *testing.T) {
 	}
 }
 
+// 2026-07-16: v0.15.5 — /help must:
+//   - list /unbind_self (self-service, in the Auth section)
+//   - have a 18-char gutter so the description column lines up
+//     across all rows including `/exit_nodes_health` (17 chars)
+//   - not repeat the command name in the description column
+//     (the gutter already carries it)
+func TestHelpReplyV0155Layout(t *testing.T) {
+	d := setupTestDB(t)
+	got := helpReply(adminEnv(d))
+	// /unbind_self must be listed under Auth.
+	if !strings.Contains(got, "/unbind_self") {
+		t.Errorf("admin /help should list /unbind_self, got: %q", got)
+	}
+	// Every description row in the help output must be padded so
+	// the description column lands on the same offset. We check
+	// this by locating `/exit_nodes_health` (the longest command
+	// in /help) and any short command like `/status`, then
+	// verifying the description text starts at the same column.
+	const gutter = 18
+	prefix := "  /exit_nodes_health" // 18 chars, padded
+	if !strings.Contains(got, prefix+"  ") {
+		t.Errorf("expected /exit_nodes_health padded to 18 chars, got: %q", got)
+	}
+	// Short commands must also be padded to the same width.
+	// 2 (leading) + 7 ("/status") + 11 (pad) + 2 (sep) = 22 chars
+	// before the description starts. We check for a 13-space
+	// run between "/status" and the description.
+	if !strings.Contains(got, "/status             ") {
+		t.Errorf("expected /status padded to 18 chars, got: %q", got)
+	}
+	// No description column should still repeat the command
+	// name (the old format was "`/status` — ..." with the
+	// backticked name in the description). Drop the leading
+	// gutter + command and look for the backticked form.
+	for _, dup := range []string{"`/status` — ", "`/nodes` — ", "`/rules` — "} {
+		if strings.Contains(got, dup) {
+			t.Errorf("description still repeats command name %q, got: %q", dup, got)
+		}
+	}
+}
+
 func TestBindReplyAdminHappy(t *testing.T) {
 	d := setupTestDB(t)
 	// /bind 123456789 alice
