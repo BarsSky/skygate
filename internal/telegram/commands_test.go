@@ -357,7 +357,10 @@ func TestHandleCommandRules(t *testing.T) {
 func TestHandleCommandAudit(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/audit")
-	if !strings.Contains(got, "audit_log") {
+	// 2026-07-16: v0.15.5 — butler-voice format. Header
+	// is now "Last 20 audit log entries:" (no log-voice
+	// "audit_log:" prefix).
+	if !strings.Contains(got, "audit log") {
 		t.Errorf("expected header, got: %q", got)
 	}
 	if !strings.Contains(got, "user_create") {
@@ -690,7 +693,8 @@ func TestHandleCommandVersionEmptyFallback(t *testing.T) {
 func TestHandleCommandRestartIssuesToken(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/restart")
-	if !strings.Contains(got, "confirm by sending within 30s") {
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Confirm").
+	if !strings.Contains(got, "Confirm by sending within 30s") {
 		t.Errorf("expected confirmation prompt, got: %q", got)
 	}
 	// Token must be 6 chars from the alphabet — extract and verify.
@@ -1254,7 +1258,8 @@ func TestUnbindReplyAdminHappy(t *testing.T) {
 func TestAddRuleReplyUsageHint(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/add_rule")
-	if !strings.Contains(got, "usage") {
+	// 2026-07-16: v0.15.5 — butler-voice format ("Usage" capital U).
+	if !strings.Contains(got, "Usage") {
 		t.Errorf("expected usage hint for /add_rule with no args, got: %q", got)
 	}
 }
@@ -1998,8 +2003,9 @@ func TestAddRuleReplyRejectsPerUserLimit(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	env.HS = hs
 	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
-	if !strings.Contains(got, "user limit reached") {
-		t.Errorf("expected 'user limit reached', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "User").
+	if !strings.Contains(got, "User limit reached") {
+		t.Errorf("expected 'User limit reached', got: %q", got)
 	}
 	// No new rule row should have been inserted.
 	var n int
@@ -2021,7 +2027,8 @@ func TestAddRuleReplyRejectsPerDeviceLimit(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	env.HS = hs
 	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
-	if !strings.Contains(got, "per-device limit") {
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Per").
+	if !strings.Contains(got, "Per-device limit") {
 		t.Errorf("expected 'per-device limit', got: %q", got)
 	}
 }
@@ -2037,8 +2044,9 @@ func TestAddRuleReplyRejectsTotalLimit(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	env.HS = hs
 	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
-	if !strings.Contains(got, "system-wide limit") {
-		t.Errorf("expected 'system-wide limit', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "System").
+	if !strings.Contains(got, "System-wide limit") {
+		t.Errorf("expected 'System-wide limit', got: %q", got)
 	}
 }
 
@@ -2046,7 +2054,8 @@ func TestAddRuleReplySuccessIP(t *testing.T) {
 	d := setupAddRuleTestDB(t)
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
-	if !strings.Contains(got, "added") || !strings.Contains(got, "1.2.3.4") {
+	// 2026-07-16: v0.15.5 — butler-voice format ("Added" capital A).
+	if !strings.Contains(got, "Added") || !strings.Contains(got, "1.2.3.4") {
 		t.Errorf("expected success message with '1.2.3.4', got: %q", got)
 	}
 	if !strings.Contains(got, "ACL") {
@@ -2094,8 +2103,9 @@ func TestAddRuleReplyAdminForOtherUser(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	// skyadmin (admin) issues /add_rule alice 1.2.3.4.
 	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/add_rule alice 1.2.3.4")
-	if !strings.Contains(got, "added") {
-		t.Errorf("expected 'added' in admin-for-other reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Added" capital A).
+	if !strings.Contains(got, "Added") {
+		t.Errorf("expected 'Added' in admin-for-other reply, got: %q", got)
 	}
 	// Rule row under alice (id=2), NOT skyadmin (id=1).
 	var aliceCnt, adminCnt int
@@ -2119,8 +2129,9 @@ func TestAddRuleReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	d := setupAddRuleTestDB(t)
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule skyadmin 1.2.3.4")
-	if !strings.Contains(got, "extra args") {
-		t.Errorf("expected 'extra args' rejection, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Extra" capital E).
+	if !strings.Contains(got, "Extra args") {
+		t.Errorf("expected 'Extra args' rejection, got: %q", got)
 	}
 	var n int
 	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules`).Scan(&n)
@@ -2206,7 +2217,8 @@ func TestAddRuleReplySetPolicyFailure(t *testing.T) {
 func TestDelRuleReplyUsageHint(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/delrule")
-	if !strings.Contains(got, "usage") {
+	// 2026-07-16: v0.15.5 — butler-voice format ("Usage" capital U).
+	if !strings.Contains(got, "Usage") {
 		t.Errorf("expected usage hint for /delrule with no args, got: %q", got)
 	}
 }
@@ -2222,8 +2234,9 @@ func TestDelRuleReplyRejectsUnbound(t *testing.T) {
 func TestDelRuleReplyRejectsBadArg(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/delrule abc")
-	if !strings.Contains(got, "no valid ids") {
-		t.Errorf("expected 'no valid ids' for non-numeric arg, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("No" capital N).
+	if !strings.Contains(got, "No valid ids") {
+		t.Errorf("expected 'No valid ids' for non-numeric arg, got: %q", got)
 	}
 	if !strings.Contains(got, "not a positive integer") {
 		t.Errorf("expected 'not a positive integer' in skipped list, got: %q", got)
@@ -2233,8 +2246,9 @@ func TestDelRuleReplyRejectsBadArg(t *testing.T) {
 func TestDelRuleReplyRejectsUnknownID(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/delrule 9999")
-	if !strings.Contains(got, "no valid ids") {
-		t.Errorf("expected 'no valid ids' for missing id, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("No" capital N).
+	if !strings.Contains(got, "No valid ids") {
+		t.Errorf("expected 'No valid ids' for missing id, got: %q", got)
 	}
 	if !strings.Contains(got, "not found / not yours") {
 		t.Errorf("expected 'not found / not yours' for missing id, got: %q", got)
@@ -2248,8 +2262,9 @@ func TestDelRuleReplySingleSuccess(t *testing.T) {
 	rid, _ := res.LastInsertId()
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
-	if !strings.Contains(got, "deleted 1 rule") {
-		t.Errorf("expected 'deleted 1 rule' in success reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 1 rule") {
+		t.Errorf("expected 'Deleted 1 rule' in success reply, got: %q", got)
 	}
 	if !strings.Contains(got, "ACL") {
 		t.Errorf("expected 'ACL v#' in reply, got: %q", got)
@@ -2289,8 +2304,9 @@ func TestDelRuleReplyMultiSuccess(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs),
 		fmt.Sprintf("/delrule %d %d 9999 %d", id1, id2, id3))
-	if !strings.Contains(got, "deleted 3 rule") {
-		t.Errorf("expected 'deleted 3 rule' in multi-success reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 3 rule") {
+		t.Errorf("expected 'Deleted 3 rule' in multi-success reply, got: %q", got)
 	}
 	if !strings.Contains(got, "skipped") {
 		t.Errorf("expected 'skipped' in reply for the missing id, got: %q", got)
@@ -2315,8 +2331,9 @@ func TestDelRuleReplyDomainCascade(t *testing.T) {
 	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '9.9.9.9/32', 'accept')`)
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
-	if !strings.Contains(got, "deleted 1 rule") {
-		t.Errorf("expected 'deleted 1 rule' (the original), got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 1 rule") {
+		t.Errorf("expected 'Deleted 1 rule' (the original), got: %q", got)
 	}
 	if !strings.Contains(got, "cascade: 2") {
 		t.Errorf("expected 'cascade: 2' in reply, got: %q", got)
@@ -2343,8 +2360,9 @@ func TestDelRuleReplyAdminForOtherUser(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	// skyadmin (admin) deletes alice's rule.
 	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), fmt.Sprintf("/delrule alice %d", rid))
-	if !strings.Contains(got, "deleted 1 rule") {
-		t.Errorf("expected 'deleted 1 rule' for admin-for-other, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 1 rule") {
+		t.Errorf("expected 'Deleted 1 rule' for admin-for-other, got: %q", got)
 	}
 	if !strings.Contains(got, "for alice") {
 		t.Errorf("expected 'for alice' in reply, got: %q", got)
@@ -2371,8 +2389,9 @@ func TestDelRuleReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	// alice (non-admin) tries /delrule skyadmin <id>.
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule skyadmin %d", rid))
-	if !strings.Contains(got, "extra args") {
-		t.Errorf("expected 'extra args' rejection for non-admin, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Extra").
+	if !strings.Contains(got, "Extra args") {
+		t.Errorf("expected 'Extra args' rejection for non-admin, got: %q", got)
 	}
 	// skyadmin's rule untouched.
 	var n int
@@ -2454,14 +2473,15 @@ func TestDelRuleIsAliasOfDeleteRule(t *testing.T) {
 	// /delrule and /delete_rule must route to the same handler and
 	// produce equivalent results.
 	got1 := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
-	if !strings.Contains(got1, "deleted 1 rule") {
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Deleted").
+	if !strings.Contains(got1, "Deleted 1 rule") {
 		t.Errorf("/delroute expected success, got: %q", got1)
 	}
 	// Re-seed and try the alias.
 	res2, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '5.5.5.5/32', 'accept')`)
 	rid2, _ := res2.LastInsertId()
 	got2 := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delete_rule %d", rid2))
-	if !strings.Contains(got2, "deleted 1 rule") {
+	if !strings.Contains(got2, "Deleted 1 rule") {
 		t.Errorf("/delete_rule alias expected success, got: %q", got2)
 	}
 }
@@ -2651,8 +2671,9 @@ func TestClearRulesReplyRejectsUnbound(t *testing.T) {
 func TestClearRulesReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/clearrules skyadmin")
-	if !strings.Contains(got, "extra args") {
-		t.Errorf("expected 'extra args' for non-admin /clearrules <user>, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Extra").
+	if !strings.Contains(got, "Extra args") {
+		t.Errorf("expected 'Extra args' for non-admin /clearrules <user>, got: %q", got)
 	}
 }
 
@@ -2699,8 +2720,9 @@ func TestClearRulesReplyMintForCallerNoRules(t *testing.T) {
 func TestClearRulesReplyConfirmWithoutPending(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/clearrules confirm")
-	if !strings.Contains(got, "no pending clear request") {
-		t.Errorf("expected 'no pending clear request', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "No").
+	if !strings.Contains(got, "No pending clear request") {
+		t.Errorf("expected 'No pending clear request', got: %q", got)
 	}
 }
 
@@ -2713,8 +2735,9 @@ func TestClearRulesReplyFullMintAndConfirm(t *testing.T) {
 	HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules")
 	// Phase 2: confirm.
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
-	if !strings.Contains(got, "cleared 2 rule") {
-		t.Errorf("expected 'cleared 2 rule' in confirm reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Cleared").
+	if !strings.Contains(got, "Cleared 2 rule") {
+		t.Errorf("expected 'Cleared 2 rule' in confirm reply, got: %q", got)
 	}
 	if !strings.Contains(got, "ACL") {
 		t.Errorf("expected 'ACL v#' in reply, got: %q", got)
@@ -2727,7 +2750,7 @@ func TestClearRulesReplyFullMintAndConfirm(t *testing.T) {
 	}
 	// Second confirm is a no-op.
 	got2 := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
-	if !strings.Contains(got2, "no pending") {
+	if !strings.Contains(got2, "No pending") {
 		t.Errorf("expected second confirm to be a no-op, got: %q", got2)
 	}
 	// audit_log has BOTH rows (request + action).
@@ -2761,8 +2784,9 @@ func TestClearRulesReplyAdminMintAndConfirm(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/clearrules alice")
 	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/clearrules alice confirm")
-	if !strings.Contains(got, "cleared 1 rule") {
-		t.Errorf("expected 'cleared 1 rule' in admin confirm reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Cleared").
+	if !strings.Contains(got, "Cleared 1 rule") {
+		t.Errorf("expected 'Cleared 1 rule' in admin confirm reply, got: %q", got)
 	}
 	if !strings.Contains(got, "for alice") {
 		t.Errorf("expected 'for alice' in reply, got: %q", got)
@@ -2785,8 +2809,9 @@ func TestClearRulesReplyDomainCascade(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules")
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
-	if !strings.Contains(got, "cleared 4 rule") {
-		t.Errorf("expected 'cleared 4 rule' (3 original + 0 extra — cascade counted into the 4), got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Cleared").
+	if !strings.Contains(got, "Cleared 4 rule") {
+		t.Errorf("expected 'Cleared 4 rule' (3 original + 0 extra — cascade counted into the 4), got: %q", got)
 	}
 	if !strings.Contains(got, "cascade: 2") {
 		t.Errorf("expected 'cascade: 2' (the 2 /32 children), got: %q", got)
@@ -2904,8 +2929,9 @@ func TestClearRulesReplyRussianNoPending(t *testing.T) {
 	env := userEnv(d)
 	env.Lang = i18n.LangRU
 	got := HandleCommand(context.Background(), env, "/clearrules confirm")
-	if !strings.Contains(got, "нет pending-запроса") {
-		t.Errorf("RU: expected 'нет pending-запроса', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Нет").
+	if !strings.Contains(got, "Нет pending-запроса") {
+		t.Errorf("RU: expected 'Нет pending-запроса', got: %q", got)
 	}
 	if strings.Contains(got, "no pending clear request") {
 		t.Errorf("RU: English leak 'no pending clear request': %q", got)
@@ -2919,8 +2945,9 @@ func TestClearRulesReplyRussianMintPrompt(t *testing.T) {
 	env.Lang = i18n.LangRU
 	got := HandleCommand(context.Background(), env, "/clearrules")
 	// RU mint header.
-	if !strings.Contains(got, "это удалит ВСЕ") {
-		t.Errorf("RU: expected 'это удалит ВСЕ' in mint prompt, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Это").
+	if !strings.Contains(got, "Это удалит ВСЕ") {
+		t.Errorf("RU: expected 'Это удалит ВСЕ' in mint prompt, got: %q", got)
 	}
 	if !strings.Contains(got, "Отправьте /clearrules confirm в течение") {
 		t.Errorf("RU: expected 'Отправьте /clearrules confirm в течение' in mint prompt, got: %q", got)
@@ -2943,8 +2970,9 @@ func TestClearRulesReplyRussianAppliedOk(t *testing.T) {
 	_ = HandleCommand(context.Background(), env, "/clearrules")
 	got := HandleCommand(context.Background(), env, "/clearrules confirm")
 	// RU success prefix.
-	if !strings.Contains(got, "✓ очищено") {
-		t.Errorf("RU: expected '✓ очищено', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Очищено").
+	if !strings.Contains(got, "✓ Очищено") {
+		t.Errorf("RU: expected '✓ Очищено', got: %q", got)
 	}
 	if !strings.Contains(got, "ACL v") {
 		t.Errorf("RU: expected 'ACL v' in success, got: %q", got)
