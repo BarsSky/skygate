@@ -102,16 +102,20 @@ func setKillProcess(fn func()) {
 // level. The Go version comes from runtime.Version(); the schema
 // level is a constant (see dbSchemaVersion comment for how to
 // maintain it).
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. Uses Field() for
+// aligned key/value display (label bold, value in <code>)
+// so the three lines render as a tabbed block on mobile
+// Telegram.
 func versionReply(env BotEnv) string {
 	v := env.Version
 	if v == "" {
 		v = "v0.0-dev"
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Skygate %s\n", v)
-	fmt.Fprintf(&sb, "Go: %s\n", runtime.Version())
-	fmt.Fprintf(&sb, "DB schema: %s\n", dbSchemaVersion)
-	return strings.TrimRight(sb.String(), "\n")
+	return i18n.T(env.Lang, "bot.version.title") + "\n\n" +
+		Field(i18n.T(env.Lang, "bot.version.label_build"), v) + "\n" +
+		Field(i18n.T(env.Lang, "bot.version.label_go"), runtime.Version()) + "\n" +
+		Field(i18n.T(env.Lang, "bot.version.label_schema"), dbSchemaVersion)
 }
 
 // restartReply handles both phases of /restart:
@@ -303,7 +307,7 @@ func helpDetailReply(cmd string, env BotEnv) string {
 	case "myexitnodes":
 		return "/myexitnodes — list every enabled exit-node you can route through.\n" +
 			"Same data as admin /exit_nodes (hostname, online, last_seen) but\n" +
-			"filtered to enabled=1 and tagged with [default] for the exit-node\n" +
+			"filtered to enabled=1 and tagged with ✓ for the exit-node\n" +
 			"your /setexitnode is currently pointing at.\n" +
 			"Workflow: /myexitnodes -> /setexitnode <node_id> -> /add_rule <target>\n" +
 			"Example: /myexitnodes"
