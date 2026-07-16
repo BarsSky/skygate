@@ -199,7 +199,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
     the per-user ACL by control plane (separate policy per
     plane, with the operator's-eye view of all planes on
     /admin/acls).
-  - **ACL import/export** (v0.13.0) — load a JSON policy
+  - **ACL import/export** (v0.13.0)** — load a JSON policy
     file into the current ACL with a dry-run preview.
   - **`/clearrules` i18n** (DONE in v0.10.14)
   - **Butler voice v3** (deferred until user feedback on v2 lands):
@@ -208,6 +208,143 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   - **Personal API token rotation** (admin override): TTL +
     auto-rotate field, so the bot integration can issue 24h / 7d /
     30d tokens. Currently tokens only have manual revocation.
+  - **Per-user subnets + cross-subnet exit-node sharing
+    (v0.16+ candidate, TBD with operator)** — architectural
+    evolution. Today every portal user lives in the same
+    flat `100.64.0.0/10` headscale, separated only by ACL.
+    The next level is to give each user their own personal
+    subnet (e.g. `10.0.<user_id>.0/24`) routed through a
+    per-user subnet-router node, while keeping the existing
+    `tag:exit-node` and `tag:public` infrastructure globally
+    accessible to all subnets via ACL.
+
+    **Why:** the flat 100.64.0.0/10 design works for the
+    operator's current ~10-user tailnet, but the moment
+    skygate grows to multiple customers (multi-tenant SaaS),
+    per-user subnets become the cleaner primitive. They give:
+    - IP-address predictability per user (user 42's devices
+      are always in `10.0.42.0/24`)
+    - Cleaner user-side firewall rules
+      ("10.0.42.0/24 = my office")
+    - Independent routing decisions per user
+    - Foundation for per-user services (run a web server on
+      `10.0.42.5:8080`, only that user reaches it)
+
+    **Sketch (dependency chain — each release builds on the
+    previous):**
+    1. **v0.16.0 — schema + CIDR allocator**:
+       - `user_subnets` table: `(user_id, cidr, router_node_id,
+         created_at, status)` — per-row lifetime
+       - `portal_users.subnet_cidr TEXT` for quick lookups
+       - CIDR allocator: `10.0.<user_id>.0/24` (one /24 per
+         user, up to 256 users in /16) or `/28` per user
+         (up to 4096 users in /16). Operator chooses.
+       - Admin UI: extend `/admin/control-planes` with a
+         subnet map (which user owns which CIDR)
+    2. **v0.16.1 — per-user subnet router node**:
+       - Auto-create a "subnet router" headscale node per
+         portal user on first login
+       - New tag: `tag:subnet-router` (separate from
+         `tag:private` and `tag:exit-node`)
+       - Advertise routes: the user's personal CIDR +
+         `0.0.0.0/0` + `::/0` (so the user can route through
+         exit-nodes through the personal subnet)
+       - Where the router runs is a TBD — options: (a) on
+         the user's own machine (one-time `tailscale up` with
+         `--advertise-routes`), (b) skygate-managed Docker
+         sidecar per user, (c) shared skygate-side router
+         that terminates all personal subnets. The
+         sub-router-tag ACL allows (a) — the user runs
+         their own Tailscale client with a per-user
+         preauth key.
+    3. **v0.17.0 — ACL for cross-subnet exit-node sharing**:
+       - `GenerateACL()` gains per-user-subnet rules:
+         `{src: ["<user>@tsnet"], dst: ["<user_subnet>:*"]}`
+       - **Keep `tag:exit-node` global** — every user can
+         still reach the exit-nodes regardless of which
+         personal subnet they're in
+         (the `* → tag:exit-node:*` rule already handles this)
+       - Add `tag:subnet-router` to `tagOwners` so the
+         headscale parser doesn't reject the new tag
+       - Verify exit-node egress: the user's Tailscale
+         client `--accept-routes`, then routes `0.0.0.0/0`
+         through the exit-node advertised by the subnet
+         router. End-to-end internet egress survives the
+         subnet split.
+    4. **v0.17.1 — cross-user subnet sharing** (the
+       "share access to existing exit-nodes" angle, extended
+       to personal subnets):
+       - "Share my subnet with user X" button in
+         /my/account or /admin/users/{id}/subnet
+       - ACL: `{src: ["<user_X>@tsnet"], dst: ["<user_Y_subnet>:*"]}`
+       - Bot: `/share_subnet <username>` for power users
+       - **Exit-nodes are still global** — this only
+         governs the per-user personal subnet. The
+         `tag:exit-node` sharing is already in place from
+         v0.12.0.1 and is unaffected by this change.
+    5. **v0.18.0 — MagicDNS for personal subnets**:
+       - `skygate-<username>.tailnet.skynas.ru` resolves to
+         the user's subnet router
+       - Per-device records:
+         `<device>.skygate-<username>.tailnet.skynas.ru`
+       - Per-user records:
+         `exitnode.skygate-<username>.tailnet.skynas.ru` —
+         this is the key one — points to the user's chosen
+         exit-node, but reachable cross-subnet because
+         `tag:exit-node` is in the user's ACL
+    6. **v0.19.0 — per-user services on the personal
+       subnet**:
+       - Port forwarding: user can publish
+         `10.0.42.5:8080 → service.skygate-<username>...`
+       - Headscale "service" records (headscale 0.23+ feature
+         that lets you publish a TCP/UDP service as a
+         named DNS record)
+
+    **The key insight the operator is asking for:** the
+    exit-node layer (`tag:exit-node` + `tag:public`) stays
+    shared across all subnets. The personal subnet adds a
+    layer of IP-address predictability + service isolation
+    on top, without breaking the global exit-node mesh
+    that all the relays depend on. So:
+
+    - User A on `10.0.42.0/24` can route to exit-nodes
+      (emilia, sharlotta, karolina) just like today —
+      the ACL still says `* → tag:exit-node:*`
+    - User A can ALSO have their own personal services
+      on `10.0.42.5` that only they can see
+    - User A can SHARE their personal subnet with
+      User B explicitly, without sharing with User C
+    - All of this is orthogonal to the exit-node mesh,
+      which keeps the relay model intact
+
+    **Migration path:**
+    - Existing users keep their `100.64.0.0/10` Tailscale
+      IPs (no forced migration — that would break every
+      running client)
+    - New users get a personal subnet from day one
+    - Admin can opt-in existing users one-by-one via
+      `/admin/users/{id}/subnet` (creates a subnet router
+      alongside their existing flat-IP device; the user's
+      devices get optional `--advertise-routes` for the
+      personal CIDR)
+    - Once a user has BOTH a flat device AND a subnet
+      router, their ACL has both — the subnet router
+      starts being useful immediately, and the flat device
+      can be phased out by the user at their own pace
+
+    **Open questions for the operator:**
+    - Where does the subnet router run? (user's own
+      machine vs. skygate sidecar vs. shared router) —
+      affects per-user operational cost
+    - Does the bot get a `/mysubnet` command? Probably yes,
+      parallel to `/myexitnodes` and `/mysettings`
+    - CIDR strategy: /24 per user (256 users max in /16)
+      or /28 per user (4096 users max)? Operator's choice
+      based on customer count
+    - Multi-plane (per-user headscale since v0.12.0): each
+      plane is its own headscale, so its own /16 for
+      subnets. The `user_subnets` table needs a
+      `control_plane_url` column
 
 ---
 
