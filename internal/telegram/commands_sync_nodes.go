@@ -32,10 +32,10 @@ func syncNodesReply(env BotEnv) string {
 	if !env.IsAdmin {
 		return i18n.Tf(lang, "bot.admin_only_command", "/sync_nodes")
 	}
-	if env.HS == nil {
+	if env.userHS() == nil {
 		return i18n.T(lang, "bot.sync_nodes.hs_unavailable")
 	}
-	nodes, err := env.HS.ListAllNodes()
+	nodes, err := env.userHS().ListAllNodes()
 	if err != nil {
 		return i18n.Tf(lang, "bot.sync_nodes.hs_failed", err)
 	}

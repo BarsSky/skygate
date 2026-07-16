@@ -7,7 +7,49 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.15.6 — /admin/backup + /admin/exit-nodes
+* **Current**: v0.16.0 — backlog release
+  ([release notes](RELEASE-NOTES-v0.16.0.md)). The
+  "clean up the deferred v0.12 / v0.13 backlog before
+  tackling v0.16" release. Six previously-deferred
+  features ship in one go:
+  1. **v0.12.1 — per-user bot routing**. `BotEnv`
+     carries `HSForPortalUser` and `PortalPlaneURL`
+     closures; every `/add_device`, `/add_rule`,
+     `/delrule` etc. now routes to the right
+     control plane.
+  2. **v0.13.0 — per-plane ACL**.
+     `GenerateACLForPlane(planeURL)` only includes
+     the identities on that plane. `ApplyACLForAllPlanes`
+     iterates every distinct URL and pushes the
+     right policy to each.
+  3. **v0.13.0 — ACL import/export with dry-run
+     preview**. `/admin/acls/export` downloads the
+     current policy; `/admin/acls/import` accepts
+     a JSON file or pasted text, shows a
+     side-by-side dry-run, and only pushes when
+     the operator clicks Apply.
+  4. **Butler voice v3 — urgency marks**.
+     `WithUrgency(level)` appends `!` (warning) or
+     `!!` (critical) to the chosen icon, so `🔑!!`
+     in the chat list reads as "critical preauth reply".
+     Applied to `/add_device`.
+  5. **Personal API token rotation**. `/my/token`
+     now has a TTL dropdown (1h / 1d / 7d / 30d /
+     never) and an auto-rotate checkbox. Expired
+     tokens are rejected by the Bearer-auth path.
+     Background rotation job is v0.16.0+ follow-up
+     (column is in v0.15.5 so the UI can store + read).
+  6. **Documentation**: per-user subnets roadmap
+     entry in AGENTS.md + `docs/v0.16.0-open-questions.md`
+     parking the 8 design decisions for the next
+     major work.
+  * All five backlog items done in one release —
+    the v0.12 / v0.13 backlog is now empty.
+  * 4 new v0.13.0 tests + 1 new v0.12.1 test + 1 new
+    butler v3 test (6 sub-cases) + 1 schema migration
+    test.
+  * 12/12 packages green
+* **Previous**: v0.15.6 — /admin/backup + /admin/exit-nodes
   full localization
   ([release notes](RELEASE-NOTES-v0.15.6.md)). The
   "no hardcoded English left in the admin pages" release.

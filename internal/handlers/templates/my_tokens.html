@@ -13,6 +13,24 @@
       <label>{{t "tokens.name"}}</label>
       <input type="text" name="label" placeholder="{{t "tokens.name_placeholder"}}" required>
     </div>
+    <div class="field">
+      <label>{{t "tokens.ttl_label"}}</label>
+      <select name="ttl" class="form-control">
+        <option value="1h">{{t "tokens.ttl_1h"}}</option>
+        <option value="1d" selected>{{t "tokens.ttl_1d"}}</option>
+        <option value="7d">{{t "tokens.ttl_7d"}}</option>
+        <option value="30d">{{t "tokens.ttl_30d"}}</option>
+        <option value="never">{{t "tokens.ttl_never"}}</option>
+      </select>
+      <div class="form-hint">{{t "tokens.ttl_hint"}}</div>
+    </div>
+    <div class="field form-check">
+      <label>
+        <input type="checkbox" name="auto_rotate" value="1">
+        {{t "tokens.auto_rotate_label"}}
+      </label>
+      <div class="form-hint">{{t "tokens.auto_rotate_hint"}}</div>
+    </div>
     <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "tokens.create"}}</button>
   </form>
 </div>
@@ -20,9 +38,9 @@
 <div class="card">
   <h3><i class="fa-solid fa-list"></i> {{t "tokens.title"}} ({{len .Tokens}})</h3>
   <table>
-    <tr><th>{{t "tokens.name"}}</th><th>{{t "tokens.created"}}</th><th>{{t "tokens.last_used"}}</th><th></th></tr>
+    <tr><th>{{t "tokens.name"}}</th><th>{{t "tokens.created"}}</th><th>{{t "tokens.last_used"}}</th><th>{{t "tokens.expires"}}</th><th></th></tr>
     {{range .Tokens}}<tr>
-      <td><b>{{.Label}}</b></td><td>{{.Created}}</td><td>{{.LastUsed}}</td>
+      <td><b>{{.Label}}</b></td><td>{{.Created}}</td><td>{{.LastUsed}}</td><td>{{.Expires}}</td>
       <td>
         <form method="post" action="/my/token/{{.ID}}/revoke" style="display:inline" onsubmit="return confirm('{{t "tokens.revoke"}}?')">
           <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
