@@ -7,7 +7,29 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.4 — fix HTML-unsafe `<` / `>` in
+* **Current**: v0.16.5 — split long bot replies into
+  multiple bubbles
+  ([release notes](RELEASE-NOTES-v0.16.5.md)). The
+  operator reported that on a phone, long bot replies
+  (`/help`, `/audit`, `/my_rules`) are hard to scan
+  because Telegram's default font is small and the
+  entire reply sits in one bubble. Telegram's HTML
+  subset has no font-size tag, so the cleanest fix is
+  to break long replies into multiple shorter bubbles
+  — each section gets its own screen real estate and
+  the bubble boundary acts as a visual break. Adds
+  `splitMessageMarker` sentinel + `splitReplyParts`
+  helper. `RealNotifier.reply` detects the marker and
+  issues separate `sendMessage` calls. Applied to:
+  - `/help`: 3 bubbles (Auth / User-scope / Admin) for
+    admin, 2 for user, 1 for locked
+  - `/audit`: split if > 10 entries (LIMIT 20 max);
+    first bubble ends with "(N more — see next
+    message)" hint
+  - `/my_rules`: split if > 12 rules; same hint
+  5 new tests. 12/12 packages green, smoke 118/118,
+  live on VM at build `22b97c8`.
+* **Previous**: v0.16.4 — fix HTML-unsafe `<` / `>` in
   catalog keys
   ([release notes](RELEASE-NOTES-v0.16.4.md)). Hotfix
   for v0.16.3 — the v0.16.3 "more HTML" pass for `/help`
