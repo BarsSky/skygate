@@ -192,24 +192,61 @@ func auditReply(env BotEnv) string {
 	if len(entries) == 0 {
 		return i18n.T(lang, "bot.audit.empty")
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.T(lang, "bot.audit.header"))
+
+	// 2026-07-16: v0.16.x — "more HTML" pass. The audit
+	// list is tabular data; we render it as a <pre>
+	// block with column-aligned headers. Telegram's
+	// <pre> uses a fixed-pitch font on all clients, so
+	// the column widths in the format strings
+	// determine the visual alignment.
+	//
+	// Format:
+	//   <pre>
+	//   ID    DATE (UTC)        ACTION            BY
+	//   ────────────────────────────────────────────
+	//   #1234 2026-07-16 13:45  token_create      alice
+	//   #1233 2026-07-16 13:42  user_create      skyadmin
+	//   </pre>
+	//
+	// Detail (long strings) goes below the row, indented.
+	// The header row is a separate <b>line so it doesn't
+	// get lost in the monospace block.
+	const (
+		colID    = "#%-6d"
+		colWhen  = "%-16s"
+		colAct   = "%-18s"
+		colBy    = "%s"
+	)
+	header := fmt.Sprintf(
+		"<b>"+colID+"  "+colWhen+"  "+colAct+"  "+colBy+"</b>",
+		0, "DATE (UTC)", "ACTION", "BY",
+	)
+	rule := strings.Repeat("─", 6+2+16+2+18+2+12)
+	var lines []string
+	lines = append(lines, header, "<i>"+rule+"</i>")
 	for _, e := range entries {
 		when := time.Unix(e.ts, 0).UTC().Format("2006-01-02 15:04")
-		det := e.det
-		if len(det) > 80 {
-			det = det[:77] + "..."
-		}
-		// 2026-07-16: v0.15.5 — butler-voice format. The
-		// catalog key now expects 4 args (id, when,
-		// action, by); the detail is appended as a
-		// second line so long detail strings don't break
-		// the row template.
 		who := e.username
 		if who == "" || who == "?" {
 			who = "—"
 		}
-		fmt.Fprintf(&sb, "%s\n  %s\n\n", i18n.Tf(lang, "bot.audit.row", e.id, when, e.action, who), det)
+		lines = append(lines, fmt.Sprintf(
+			colID+"  "+colWhen+"  "+colAct+"  "+colBy,
+			e.id, when, e.action, who,
+		))
+		// Detail: long strings go below, truncated to
+		// 60 chars (Telegram <pre> is 4096-wide; 60
+		// keeps it under 80 on a phone with the
+		// monospace font).
+		if det := e.det; det != "" {
+			if len(det) > 60 {
+				det = det[:57] + "..."
+			}
+			lines = append(lines, "    "+det)
+		}
+		lines = append(lines, "") // blank row separator
 	}
-	return trimForTelegram(sb.String())
+	return i18n.T(lang, "bot.audit.header") + "\n\n" +
+		Section(i18n.T(lang, "bot.audit.section_recent")) + "\n" +
+		PreLinesRaw(lines...)
 }

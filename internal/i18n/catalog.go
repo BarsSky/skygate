@@ -1401,6 +1401,13 @@ var ruCatalog = map[string]string{
 	"bot.version.header":                "Skygate %s",
 	"bot.version.go_runtime":            "Go-рантайм: %s",
 	"bot.version.db_schema":             "Схема БД: %s",
+	// 2026-07-16: v0.16.x — Field() labels for the
+	// aligned key/value display (just the noun, no
+	// format spec).
+	"bot.version.title":                "Версия Skygate",
+	"bot.version.label_build":          "Билд",
+	"bot.version.label_go":             "Go",
+	"bot.version.label_schema":         "Схема БД",
 	"bot.status.header":                 "Skygate status",
 	"bot.status.rules":                  "правил: %d",
 	"bot.status.users":                  "пользователей: %d",
@@ -1426,6 +1433,9 @@ var ruCatalog = map[string]string{
 	"bot.rules.db_error":                "rules: ошибка БД: %v",
 	"bot.rules.scan_error":              "rules: ошибка чтения: %v",
 	"bot.audit.header":                  "Последние 20 записей в журнале аудита:",
+	// 2026-07-16: v0.16.x — Section() title for the
+	// audit log table.
+	"bot.audit.section_recent":          "Свежие записи",
 	"bot.audit.row":                     "#%d · %s · %s — %s",
 	"bot.audit.empty":                   "Журнал аудита пуст.",
 	"bot.audit.db_error":                "Не удалось прочитать журнал аудита: %v",
@@ -1469,6 +1479,7 @@ var ruCatalog = map[string]string{
 	"bot.my_status.rules":               "правил: %d / %s",
 	"bot.my_status.devices":             "устройств: %d",
 	"bot.my_status.last_acl":            "последний ACL: #%d",
+	// 2026-07-16: v0.16.x — Field() labels for the
 	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
 	// /my_status. The reply is composed by butlerEnvelope();
 	// these keys are the title / subheader (the data lines
@@ -1476,12 +1487,20 @@ var ruCatalog = map[string]string{
 	// re-invent the schema).
 	"bot.my_status.title":              "Ваш статус в Skygate",
 	"bot.my_status.subheader":           "Сводка по правилам, устройствам и последнему применённому ACL.",
-	// Two-line label per row, kept short so the whole body
-	// stays under the 30-word mobile budget.
-	"bot.my_status.label_user":         "Пользователь:",
-	"bot.my_status.label_rules":        "Правила:",
-	"bot.my_status.label_devices":      "Устройства:",
-	"bot.my_status.label_last_acl":     "Последний ACL:",
+	// 2026-07-16: v0.16.x — Field() labels for the
+	// aligned key/value display (just the noun, no
+	// format spec). The prose "rules: 0 / ∞" keys
+	// above stay for the legacy callers; the
+	// Field() path uses these short labels so the
+	// value can sit in <code> after the colon.
+	// (The v0.15.2 planned label_user/rules/etc.
+	// keys with colons were defined but never
+	// used — removed in v0.16.x to avoid the
+	// double-colon "<b>Правила::</b>" render.)
+	"bot.my_status.label_rules":         "правил",
+	"bot.my_status.label_devices":       "устройств",
+	"bot.my_status.label_last_acl":      "последний ACL",
+	"bot.my_status.section_summary":     "Сводка",
 	"bot.my_status.not_bound":           "my_status: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login <ключ>.",
 	"bot.my_status.no_username":         "my_status: чат привязан, но у пользователя портала нет username — попросите админа перепривязать.",
 	"bot.my_status.db_error":            "my_status: ошибка БД: %v",
@@ -1490,19 +1509,49 @@ var ruCatalog = map[string]string{
 	"bot.my_nodes.empty":                "my_nodes (%s): пока нет устройств. Используйте /add_device, чтобы получить одноразовый preauth-ключ на час для нового.",
 	"bot.my_nodes.not_bound":            "my_nodes: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login <ключ>.",
 	"bot.my_nodes.db_error":             "my_nodes: ошибка БД: %v",
-	"bot.my_rules.header":               "Ваши exit-правила (%s, показано 25 из %d):",
-	"bot.my_rules.row":                  "#%d @%s\n  %s %s → %s",
-	"bot.my_rules.empty":                "my_rules (%s): пока нет exit-правил. Используйте /add_rule <target>, чтобы добавить.",
+	// 2026-07-16: v0.16.x — "more HTML" pass. The reply is
+	// now a tabular <pre> block built by the Go code from
+	// these label/title keys; the previous prose "#%d @%s
+	//   %s %s → %s" format is gone in favor of aligned
+	// columns. Label keys are no-colon, just like
+	// bot.my_status.label_rules (Field() appends the
+	// colon itself).
+	"bot.my_rules.header":               "exit-правила <b>%s</b> (latest %d):",
+	"bot.my_rules.section_recent":       "rules",
+	"bot.my_rules.col_id":               "ID",
+	"bot.my_rules.col_exit":             "EXIT",
+	"bot.my_rules.col_type":             "TYPE",
+	"bot.my_rules.col_target":           "TARGET",
+	"bot.my_rules.col_action":           "ACTION",
+	"bot.my_rules.empty":                "my_rules (<b>%s</b>): пока нет exit-правил. Используйте /add_rule <target>, чтобы добавить.",
 	"bot.my_rules.not_bound":            "my_rules: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login <ключ>.",
 	"bot.my_rules.db_error":             "my_rules: ошибка БД: %v",
 	"bot.my_rules.scan_error":           "my_rules: ошибка чтения: %v",
-	"bot.my_quota.header":               "Ваша квота (%s)",
-	"bot.my_quota.row":                  "  %d / %s %s %d%%",
+	// 2026-07-16: v0.16.x — "more HTML" pass. Reply is
+	// now three Field() lines (rules count, fill bar,
+	// cap) under a single Section() divider. Old
+	// "  %d / %s %s %d%%" prose row removed.
+	"bot.my_quota.header":               "квота <b>%s</b>",
+	"bot.my_quota.section_quota":        "quota",
+	"bot.my_quota.label_rules":          "rules",
+	"bot.my_quota.label_fill":           "fill",
+	"bot.my_quota.label_cap":            "cap",
+	"bot.my_quota.label_unlimited":      "∞",
 	"bot.my_quota.not_bound":            "my_quota: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login <ключ>.",
 	"bot.my_quota.db_error":             "my_quota: ошибка БД: %v",
-	"bot.myexitnodes.header":            "Доступные exit-узлы (%d):",
-	"bot.myexitnodes.row":               "  • %s (node %s) — %s%s%s",
-	"bot.myexitnodes.marker":            "  [default]",
+	// 2026-07-16: v0.16.x — "more HTML" pass. Reply is
+	// now a tabular <pre> block (with ✓ for the default
+	// node) preceded by a Section()/Field() header. The
+	// "  • hostname (node N) — status [default]" prose
+	// row is gone in favor of aligned columns.
+	"bot.myexitnodes.header":            "exit-узлы для <b>%s</b> (%d доступно):",
+	"bot.myexitnodes.section_menu":      "menu",
+	"bot.myexitnodes.label_count":       "available",
+	"bot.myexitnodes.col_hostname":      "HOSTNAME",
+	"bot.myexitnodes.col_node":          "NODE",
+	"bot.myexitnodes.col_status":        "STATUS",
+	"bot.myexitnodes.col_default":       "DEFAULT",
+	"bot.myexitnodes.marker":            "✓",
 	"bot.myexitnodes.cta1":              "\nВыбрать свой: /setexitnode <node_id>\n",
 	"bot.myexitnodes.cta2":              "Сбросить: /setexitnode clear\n",
 	"bot.myexitnodes.cta3":              "Показать текущий: /defaultexitnode",
@@ -2976,6 +3025,13 @@ var enCatalog = map[string]string{
 	"bot.version.header":              "Skygate %s",
 	"bot.version.go_runtime":          "Go: %s",
 	"bot.version.db_schema":           "DB schema: %s",
+	// 2026-07-16: v0.16.x — Field() labels for the
+	// aligned key/value display (EN). Mirror of the
+	// RU block.
+	"bot.version.title":              "Skygate version",
+	"bot.version.label_build":        "build",
+	"bot.version.label_go":           "Go",
+	"bot.version.label_schema":       "DB schema",
 	"bot.status.header":               "Skygate status",
 	"bot.status.rules":                "rules: %d",
 	"bot.status.users":                "users: %d",
@@ -2999,6 +3055,9 @@ var enCatalog = map[string]string{
 	"bot.rules.db_error":              "rules: db error: %v",
 	"bot.rules.scan_error":            "rules: scan error: %v",
 	"bot.audit.header":                "Last 20 audit log entries:",
+	// 2026-07-16: v0.16.x — Section() title for the
+	// audit log table.
+	"bot.audit.section_recent":        "Recent entries",
 	"bot.audit.row":                   "#%d · %s · %s by %s",
 	"bot.audit.empty":                 "Audit log is empty.",
 	"bot.audit.db_error":              "Could not read the audit log: %v",
@@ -3040,14 +3099,14 @@ var enCatalog = map[string]string{
 	"bot.my_status.rules":             "rules: %d / %s",
 	"bot.my_status.devices":           "devices: %d",
 	"bot.my_status.last_acl":          "last acl: #%d",
-	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
-	// /my_status (EN). Mirror of the RU block.
+	// 2026-07-16: v0.16.x — Field() labels and Section()
+	// title for the aligned key/value display.
 	"bot.my_status.title":            "Your status in Skygate",
 	"bot.my_status.subheader":         "Summary of rules, devices, and the last applied ACL.",
-	"bot.my_status.label_user":       "User:",
-	"bot.my_status.label_rules":      "Rules:",
-	"bot.my_status.label_devices":    "Devices:",
-	"bot.my_status.label_last_acl":   "Last ACL:",
+	"bot.my_status.label_rules":       "rules",
+	"bot.my_status.label_devices":     "devices",
+	"bot.my_status.label_last_acl":    "last acl",
+	"bot.my_status.section_summary":   "Summary",
 	"bot.my_status.not_bound":         "my_status: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.my_status.no_username":       "my_status: your chat is bound but the user record has no username — ask an admin to re-bind.",
 	"bot.my_status.db_error":          "my_status: db error: %v",
@@ -3056,19 +3115,45 @@ var enCatalog = map[string]string{
 	"bot.my_nodes.empty":              "my_nodes (%s): no devices yet. Use /add_device to issue a 1h preauth key for a new one.",
 	"bot.my_nodes.not_bound":          "my_nodes: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.my_nodes.db_error":           "my_nodes: db error: %v",
-	"bot.my_rules.header":             "Your exit-rules (%s, latest 25 of %d):",
-	"bot.my_rules.row":                "#%d @%s\n  %s %s → %s",
-	"bot.my_rules.empty":              "my_rules (%s): no exit-rules yet. Use /add_rule <target> to add one.",
+	// 2026-07-16: v0.16.x — "more HTML" pass. Mirror of
+	// ruCatalog; reply is a tabular <pre> block built
+	// from these label/title keys. The previous
+	// "#%d @%s\n  %s %s → %s" prose format is gone.
+	"bot.my_rules.header":             "exit-rules for <b>%s</b> (latest %d):",
+	"bot.my_rules.section_recent":     "rules",
+	"bot.my_rules.col_id":             "ID",
+	"bot.my_rules.col_exit":           "EXIT",
+	"bot.my_rules.col_type":           "TYPE",
+	"bot.my_rules.col_target":         "TARGET",
+	"bot.my_rules.col_action":         "ACTION",
+	"bot.my_rules.empty":              "my_rules (<b>%s</b>): no exit-rules yet. Use /add_rule <target> to add one.",
 	"bot.my_rules.not_bound":          "my_rules: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.my_rules.db_error":           "my_rules: db error: %v",
 	"bot.my_rules.scan_error":         "my_rules: scan error: %v",
-	"bot.my_quota.header":             "Your quota (%s)",
-	"bot.my_quota.row":                "  %d / %s %s %d%%",
+	// 2026-07-16: v0.16.x — "more HTML" pass. Mirror of
+	// ruCatalog. Three Field() lines (rules count, fill
+	// bar, cap) under a single Section() divider. The
+	// "  %d / %s %s %d%%" prose row is gone.
+	"bot.my_quota.header":             "quota for <b>%s</b>",
+	"bot.my_quota.section_quota":      "quota",
+	"bot.my_quota.label_rules":        "rules",
+	"bot.my_quota.label_fill":         "fill",
+	"bot.my_quota.label_cap":          "cap",
+	"bot.my_quota.label_unlimited":    "∞",
 	"bot.my_quota.not_bound":          "my_quota: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.my_quota.db_error":           "my_quota: db error: %v",
-	"bot.myexitnodes.header":          "Available exit-nodes (%d):",
-	"bot.myexitnodes.row":             "  • %s (node %s) — %s%s%s",
-	"bot.myexitnodes.marker":          "  [default]",
+	// 2026-07-16: v0.16.x — "more HTML" pass. Mirror of
+	// ruCatalog. Reply is a tabular <pre> block (with
+	// ✓ for the default node) preceded by a
+	// Section()/Field() header.
+	"bot.myexitnodes.header":          "exit-nodes for <b>%s</b> (%d available):",
+	"bot.myexitnodes.section_menu":    "menu",
+	"bot.myexitnodes.label_count":     "available",
+	"bot.myexitnodes.col_hostname":    "HOSTNAME",
+	"bot.myexitnodes.col_node":        "NODE",
+	"bot.myexitnodes.col_status":      "STATUS",
+	"bot.myexitnodes.col_default":     "DEFAULT",
+	"bot.myexitnodes.marker":          "✓",
 	"bot.myexitnodes.cta1":            "\nPick one as your default: /setexitnode <node_id>\n",
 	"bot.myexitnodes.cta2":            "Clear default: /setexitnode clear\n",
 	"bot.myexitnodes.cta3":            "Show current: /defaultexitnode",

@@ -38,6 +38,13 @@ import (
 // ACL snapshot version. If the caller's data is empty (e.g. brand
 // new user, no devices yet), the reply says so explicitly rather
 // than showing zeros that look like a bug.
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses
+// Field() for each metric (label bold, value in <code>) and
+// Section() dividers between groups. The result is a tabbed
+// feel that reads cleanly on mobile Telegram (where the
+// proportional font would otherwise mash the labels and
+// values together).
 func myStatusReply(env BotEnv) string {
 	lang := env.Lang
 	if !env.IsIdentified() {
@@ -65,10 +72,20 @@ func myStatusReply(env BotEnv) string {
 	if cap > 0 {
 		capStr = strconv.Itoa(cap)
 	}
-	return i18n.Tf(lang, "bot.my_status.header", env.Username) + "\n" +
-		i18n.Tf(lang, "bot.my_status.rules", ruleCount, capStr) + "\n" +
-		i18n.Tf(lang, "bot.my_status.devices", deviceCount) + "\n" +
-		i18n.Tf(lang, "bot.my_status.last_acl", lastACL)
+	// 2026-07-16: v0.16.x — Field() helper for aligned
+	// key/value pairs (label bold, value in inline
+	// <code>). The label is the short noun from
+	// bot.my_status.label_* (no format spec); the value
+	// is the count + cap, which sits in <code> so it
+	// looks tabbed against the label.
+	rulesLine := fmt.Sprintf("%d / %s", ruleCount, capStr)
+	lastACLS := fmt.Sprintf("#%d", lastACL)
+	deviceS := fmt.Sprintf("%d", deviceCount)
+	return i18n.Tf(lang, "bot.my_status.header", env.Username) + "\n\n" +
+		Section(i18n.T(lang, "bot.my_status.section_summary")) + "\n" +
+		Field(i18n.T(lang, "bot.my_status.label_rules"), rulesLine) + "\n" +
+		Field(i18n.T(lang, "bot.my_status.label_devices"), deviceS) + "\n" +
+		Field(i18n.T(lang, "bot.my_status.label_last_acl"), lastACLS)
 }
 
 // myNodesReply lists only the caller's own devices from
@@ -143,20 +160,53 @@ func myNodesReply(env BotEnv) string {
 	if len(nodes) == 0 {
 		return i18n.Tf(lang, "bot.my_nodes.empty", env.Username)
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.my_nodes.header", env.Username, len(nodes)))
+	// 2026-07-16: v0.16.x — "more HTML" pass. The device
+	// list is tabular data; render it as a <pre> block
+	// with a header row + aligned columns. Telegram's
+	// <pre> uses a fixed-pitch font so the column
+	// widths in the format strings determine the visual
+	// alignment.
+	//
+	// Format:
+	//   <pre>
+	//   <b>NODE                       TAG</b>
+	//   <i>────────────────────────────</i>
+	//   alice-laptop               tag:private
+	//   alice-phone (alice-2)       tag:private
+	//   </pre>
+	const (
+		colDev = "%-30s"
+		colTag = "%s"
+	)
+	header := fmt.Sprintf(
+		"<b>"+colDev+"  "+colTag+"</b>",
+		"NODE", "TAG",
+	)
+	rule := strings.Repeat("─", 30+2+10)
+	var lines []string
+	lines = append(lines, header, "<i>"+rule+"</i>")
 	for _, n := range nodes {
-		// 2026-07-14: Этап 14 v10 — show hostname when known, fall
-		// back to node_id. Format: "hostname (node_id) [tag]" so
-		// the user can find their device by either the friendly
-		// name or the technical id.
+		// 2026-07-14: Этап 14 v10 — show hostname when known,
+		// fall back to node_id. Format: "hostname (node_id)"
+		// so the user can find their device by either the
+		// friendly name or the technical id.
 		label := n.node
 		if n.hostname != "" {
 			label = n.hostname + " (" + n.node + ")"
 		}
-		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.my_nodes.row", label, n.tag))
+		// Truncate long labels so the columns align on
+		// phones (a 30-char window is enough for any
+		// practical device name + node_id).
+		if len(label) > 30 {
+			label = label[:27] + "..."
+		}
+		lines = append(lines, fmt.Sprintf(
+			colDev+"  "+colTag,
+			label, n.tag,
+		))
 	}
-	return trimForTelegram(sb.String())
+	return i18n.Tf(lang, "bot.my_nodes.header", env.Username, len(nodes)) + "\n\n" +
+		PreLinesRaw(lines...)
 }
 
 // hostnameMapFromHeadscale calls hs.ListAllNodes and returns
@@ -211,6 +261,14 @@ func listAllNodesForBackfill(hs *headscale.Client) []headscale.NodeView {
 // Mirrors /rules but filtered to user_id = env.PortalUserID.
 // Limited to the most recent 25 (same cap as /rules) so the reply
 // stays under Telegram's 4096-char limit.
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses a
+// tabular <pre> block (ID / EXIT / TYPE / TARGET / ACTION) with
+// a bold header row + italic rule line, so the columns line up
+// on phones the same way /audit, /my_nodes do. The previous
+// prose "#%d @%s\n  %s %s → %s" format is gone — too easy to
+// misread when a user has 20+ rules, and the columns couldn't
+// align because Telegram's regular text isn't monospace.
 func myRulesReply(env BotEnv) string {
 	lang := env.Lang
 	if !env.IsIdentified() {
@@ -242,19 +300,68 @@ func myRulesReply(env BotEnv) string {
 	if len(rules) == 0 {
 		return i18n.Tf(lang, "bot.my_rules.empty", env.Username)
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)))
-	for _, rr := range rules {
-		fmt.Fprintf(&sb, "%s\n\n",
-			i18n.Tf(lang, "bot.my_rules.row", rr.id, rr.exitNode, rr.tType, rr.tVal, rr.act))
+	// Column widths chosen so the table fits a phone screen
+	// (60-65 chars wide at Telegram's default font) while
+	// staying wide enough for the longest realistic value in
+	// each column: ID 4 (e.g. "#9999"), EXIT 12 (hostnames
+	// like "sharlotta"), TYPE 6 ("subnet"/"domain"/"ip"),
+	// TARGET 24 (e.g. "91.108.4.0/22" or "github.com/32"),
+	// ACTION 6 ("accept"/"deny"). Truncation falls back to
+	// "..." when a value runs over.
+	const (
+		colID     = "%-4s"
+		colExit   = "%-12s"
+		colType   = "%-6s"
+		colTarget = "%-24s"
+		colAction = "%-6s"
+	)
+	trunc := func(s string, w int) string {
+		if len(s) <= w {
+			return s
+		}
+		if w <= 3 {
+			return s[:w]
+		}
+		return s[:w-3] + "..."
 	}
-	return trimForTelegram(sb.String())
+	header := fmt.Sprintf(
+		"<b>"+colID+"  "+colExit+"  "+colType+"  "+colTarget+"  "+colAction+"</b>",
+		i18n.T(lang, "bot.my_rules.col_id"),
+		i18n.T(lang, "bot.my_rules.col_exit"),
+		i18n.T(lang, "bot.my_rules.col_type"),
+		i18n.T(lang, "bot.my_rules.col_target"),
+		i18n.T(lang, "bot.my_rules.col_action"),
+	)
+	ruleLine := strings.Repeat("─", 4+2+12+2+6+2+24+2+6)
+	var lines []string
+	lines = append(lines, header, "<i>"+ruleLine+"</i>")
+	for _, rr := range rules {
+		lines = append(lines, fmt.Sprintf(
+			colID+"  "+colExit+"  "+colType+"  "+colTarget+"  "+colAction,
+			"#"+strconv.FormatInt(rr.id, 10),
+			trunc(rr.exitNode, 12),
+			rr.tType,
+			trunc(rr.tVal, 24),
+			rr.act,
+		))
+	}
+	return i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)) + "\n" +
+		Section(i18n.T(lang, "bot.my_rules.section_recent")) + "\n" +
+		PreLinesRaw(lines...)
 }
 
 // myQuotaReply shows the caller's own rule count vs their cap. The
 // existing /quota renders the same bar across all users; this is the
 // single-user version so a user can ask "how close am I?" without
 // the admin's /quota having to answer.
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses
+// Field() for each metric (rules count, fill bar, cap) under a
+// single Section() divider, the same way /my_status, /version,
+// and /exit_nodes_health do. The previous "  %d / %s %s %d%%"
+// prose row is gone — it was a single line that mashed three
+// different data points together (count + cap + bar + pct),
+// which the user had to mentally parse.
 func myQuotaReply(env BotEnv) string {
 	lang := env.Lang
 	if !env.IsIdentified() {
@@ -270,18 +377,29 @@ func myQuotaReply(env BotEnv) string {
 		pct = (cnt * 100) / max
 	}
 	bar := quotaBar(pct)
-	maxStr := "∞"
+	capStr := i18n.T(lang, "bot.my_quota.label_unlimited")
 	if max > 0 {
-		maxStr = strconv.Itoa(max)
+		capStr = strconv.Itoa(max)
 	}
+	// "rules" value is "<count> / <cap>" so the user sees
+	// the same shape as a bot.my_status "rules:" line —
+	// one line per field, count + cap in the same <code>.
+	// "fill" is the 10-char bar + percent (telegraph the
+	// "how full am I" at a glance; the bar is redundant
+	// when next to a number, but it's the visual hint the
+	// operator's eye lands on first).
+	fillStr := fmt.Sprintf("%s %d%%", bar, safePct(pct))
 	return i18n.Tf(lang, "bot.my_quota.header", env.Username) + "\n" +
-		i18n.Tf(lang, "bot.my_quota.row", cnt, maxStr, bar, safePct(pct))
+		Section(i18n.T(lang, "bot.my_quota.section_quota")) + "\n" +
+		Field(i18n.T(lang, "bot.my_quota.label_rules"), fmt.Sprintf("%d / %s", cnt, capStr)) + "\n" +
+		Field(i18n.T(lang, "bot.my_quota.label_fill"), fillStr) + "\n" +
+		Field(i18n.T(lang, "bot.my_quota.label_cap"), capStr)
 }
 
 // myExitNodesReply lists every enabled exit-server the user can
 // route through, with online/last-seen status (same data as admin
-// /exit_nodes) plus a "[default]" marker on the user's currently
-// configured default exit-node (set via /setexitnode).
+// /exit_nodes) plus a "✓" marker on the user's currently configured
+// default exit-node (set via /setexitnode).
 //
 // The admin /exit_nodes shows the same data but is restricted to
 // admin callers. This user-scope variant lets a non-admin user
@@ -299,6 +417,14 @@ func myQuotaReply(env BotEnv) string {
 // filters to enabled=1 (the admin variant shows every node with
 // tag:exit-node regardless of enabled state, which is the
 // operator view, not the user view).
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses a
+// tabular <pre> block (HOSTNAME / NODE / STATUS / DEFAULT) with
+// a bold header row + italic rule line, plus a Section()/Field()
+// summary. The previous "  • hostname (node N) — status [default]"
+// prose format is gone — too easy to misread when the list grows,
+// and the "online" / "offline" status used to be a free-floating
+// word the eye had to track to the right column.
 func myExitNodesReply(env BotEnv) string {
 	lang := env.Lang
 	if !env.IsIdentified() {
@@ -341,12 +467,11 @@ func myExitNodesReply(env BotEnv) string {
 		rows.Close()
 	}
 	// Look up the user's current default (if any) to mark the
-	// matching row with [default]. Failures are non-fatal: the
-	// reply still shows the menu, just without the highlight.
+	// matching row with ✓. Failures are non-fatal: the reply
+	// still shows the menu, just without the highlight.
 	defaultNodeID, _ := db.GetDefaultExitNode(env.DB, env.PortalUserID)
+	marker := i18n.T(lang, "bot.myexitnodes.marker")
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.myexitnodes.header", len(enabled)))
 	// 2026-07-15: v0.14.0 — collect inline-keyboard rows in
 	// parallel with the body. Each enabled node becomes a
 	// button with callback_data "setexitnode:<node_id>";
@@ -355,27 +480,56 @@ func myExitNodesReply(env BotEnv) string {
 	// at the bottom resets the user's choice (callback_data
 	// "setexitnode:clear"). Both inline + the text body go
 	// back to the user.
-	type btnRow struct {
-		label string
-		data  string
-	}
 	var btnRows [][]map[string]any
+
+	// Column widths chosen to fit a phone screen
+	// (HOSTNAME 16 / NODE 14 / STATUS 10 / DEFAULT 6).
+	// Realistic exit-node hostnames in the wild are 6-10
+	// chars, node_ids are 3-12, status is 6-7 chars, and
+	// the default marker is just ✓ or empty. Truncation
+	// adds "..." if a value ever overruns.
+	const (
+		colHost   = "%-16s"
+		colNode   = "%-14s"
+		colStatus = "%-10s"
+		colMark   = "%-1s"
+	)
+	trunc := func(s string, w int) string {
+		if len(s) <= w {
+			return s
+		}
+		if w <= 3 {
+			return s[:w]
+		}
+		return s[:w-3] + "..."
+	}
+	header := fmt.Sprintf(
+		"<b>"+colHost+"  "+colNode+"  "+colStatus+"  "+colMark+"</b>",
+		i18n.T(lang, "bot.myexitnodes.col_hostname"),
+		i18n.T(lang, "bot.myexitnodes.col_node"),
+		i18n.T(lang, "bot.myexitnodes.col_status"),
+		i18n.T(lang, "bot.myexitnodes.col_default"),
+	)
+	ruleLine := strings.Repeat("─", 16+2+14+2+10+2+1)
+	var lines []string
+	lines = append(lines, header, "<i>"+ruleLine+"</i>")
 	for _, s := range enabled {
 		st := devMap[s.NodeID]
 		status := "offline"
 		if st.online == 1 {
 			status = "online"
 		}
-		var seen string
-		if st.lastSeen > 0 {
-			seen = fmt.Sprintf(", last_seen %s", unixToShort(st.lastSeen))
-		}
-		marker := ""
+		m := ""
 		if s.NodeID == defaultNodeID {
-			marker = i18n.T(lang, "bot.myexitnodes.marker")
+			m = marker
 		}
-		fmt.Fprintf(&sb, "%s\n",
-			i18n.Tf(lang, "bot.myexitnodes.row", s.Hostname, s.NodeID, status, seen, marker))
+		lines = append(lines, fmt.Sprintf(
+			colHost+"  "+colNode+"  "+colStatus+"  "+colMark,
+			trunc(s.Hostname, 16),
+			trunc(s.NodeID, 14),
+			status,
+			m,
+		))
 		// Build the button label with a checkmark for the
 		// current default. Telegram's inline_keyboard limits
 		// the label to 64 bytes — the hostname alone is well
@@ -397,12 +551,17 @@ func myExitNodesReply(env BotEnv) string {
 				"callback_data": "setexitnode:clear"},
 		})
 	}
-	// CTA text — the inline buttons replace the "type
-	// /setexitnode N" CTA in the v0.13.x version. The hint
-	// becomes "tap to set" instead of "send a message".
-	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta_tap"))
+	// Compose the reply. Section() splits the header from the
+	// table; Field() surfaces the "N available" count next to
+	// the header so the user can see at a glance how many
+	// nodes are in the menu without scanning the table.
+	reply := i18n.Tf(lang, "bot.myexitnodes.header", env.Username, len(enabled)) + "\n" +
+		Section(i18n.T(lang, "bot.myexitnodes.section_menu")) + "\n" +
+		Field(i18n.T(lang, "bot.myexitnodes.label_count"), strconv.Itoa(len(enabled))) + "\n" +
+		PreLinesRaw(lines...) + "\n" +
+		i18n.T(lang, "bot.myexitnodes.cta_tap")
 	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: btnRows}
-	return trimForTelegram(sb.String())
+	return trimForTelegram(reply)
 }
 
 // addDeviceReply issues a 1h single-use preauth key. For a regular

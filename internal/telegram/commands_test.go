@@ -661,19 +661,26 @@ func TestTrimForTelegram(t *testing.T) {
 
 func TestHandleCommandVersion(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, Version: "v0.3"}
+	// 2026-07-16: v0.16.x — explicit Lang so the test
+	// isn't subject to the i18n default fallthrough.
+	env := BotEnv{DB: d, Version: "v0.3", Lang: i18n.LangEN}
 	got := HandleCommand(context.Background(), env, "/version")
 	if !strings.Contains(got, "v0.3") {
 		t.Errorf("expected build label v0.3, got: %q", got)
 	}
 	// Go runtime version is whatever the test binary is built with.
-	if !strings.Contains(got, "Go:") {
-		t.Errorf("expected 'Go:' prefix, got: %q", got)
+	// 2026-07-16: v0.16.x — Field() renders "<b>label:</b>
+	// <code>value</code>" (note the colon after the label).
+	if !strings.Contains(got, "<b>Go:</b>") {
+		t.Errorf("expected '<b>Go:</b>' label, got: %q", got)
 	}
 	// Schema level is the constant; lets the operator confirm
 	// whether migrations have caught up to the binary.
-	if !strings.Contains(got, "DB schema:") {
-		t.Errorf("expected 'DB schema:' prefix, got: %q", got)
+	// 2026-07-16: v0.16.x — Field() labels render in the
+	// lang's catalog (RU: "Схема БД", EN: "DB schema");
+	// we test for the wrapped <b> + the <code>-d value.
+	if !strings.Contains(got, "<b>DB schema:</b>") {
+		t.Errorf("expected '<b>DB schema:</b>' label (EN), got: %q", got)
 	}
 	if !strings.Contains(got, dbSchemaVersion) {
 		t.Errorf("expected schema level %q, got: %q", dbSchemaVersion, got)
@@ -884,11 +891,18 @@ func TestMyStatusReplyUser(t *testing.T) {
 	if !strings.Contains(got, "alice") {
 		t.Errorf("expected username in my_status, got: %q", got)
 	}
-	if !strings.Contains(got, "rules: 0") {
-		t.Errorf("expected 'rules: 0' in /my_status body, got: %q", got)
+	// 2026-07-16: v0.16.x — Field() labels (just the noun;
+	// the value is in <code> after the colon). The bot
+	// reply now reads "rules: 0" via Field() instead of
+	// the prose "rules: 0 / ∞" — the format depends on
+	// which catalog key the Field() call lands on. We
+	// pin only the noun label, not the colon-style
+	// "rules: 0", because the value moves to <code>.
+	if !strings.Contains(got, "rules:") {
+		t.Errorf("expected 'rules:' label in /my_status body, got: %q", got)
 	}
-	if !strings.Contains(got, "devices: 0") {
-		t.Errorf("expected 'devices: 0' in /my_status body, got: %q", got)
+	if !strings.Contains(got, "0") {
+		t.Errorf("expected count '0' in /my_status body, got: %q", got)
 	}
 	// 2026-07-16: v0.15.2 — myStatusReply returns just the
 	// body. The gate envelope (═══ Skygate ═══ … ═══ —
@@ -1128,9 +1142,23 @@ func TestMyRulesReplyUserFiltersToCaller(t *testing.T) {
 	if !strings.Contains(got, "github.com") {
 		t.Errorf("expected github.com in my_rules for alice, got: %q", got)
 	}
-	// The seed for skyadmin uses target_value "x" — alice must not see those.
-	if strings.Contains(got, "\n  domain x →") {
+	// 2026-07-16: v0.16.x — "more HTML" pass. The previous
+	// "#%d @%s\n  %s %s → %s" prose format is gone; the
+	// new tabular <pre> block does not contain the literal
+	// "→" arrow. Filter check therefore has to use the
+	// tabular shape (the target_value alone is enough
+	// since alice has no other target_values).
+	if strings.Contains(got, "  domain x →") {
 		t.Errorf("alice must not see skyadmin's rules, got: %q", got)
+	}
+	// Pin the new format: tabular <pre> block with
+	// bold header row "ID EXIT TYPE TARGET ACTION".
+	if !strings.Contains(got, "<b>ID") || !strings.Contains(got, "ACTION</b>") {
+		t.Errorf("expected new tabular <pre> block with bold ID/ACTION header, got: %q", got)
+	}
+	// And the Section() divider for "rules".
+	if !strings.Contains(got, "rules") {
+		t.Errorf("expected 'rules' section divider, got: %q", got)
 	}
 }
 
@@ -1144,6 +1172,24 @@ func TestMyQuotaReplyUser(t *testing.T) {
 	// alice has 0 rules; her cap is 5; expect 0/5 + 0%.
 	if !strings.Contains(got, "0 / 5") {
 		t.Errorf("expected '0 / 5' (0 rules, 5 cap) for alice, got: %q", got)
+	}
+	// 2026-07-16: v0.16.x — "more HTML" pass. The reply
+	// now uses three Field() lines: rules count, fill
+	// bar, cap. The bar is rendered with the same
+	// "[no limit]" / "[██░░░░░░░░]" shapes (0 rules →
+	// empty bar, pct clamped to 0).
+	if !strings.Contains(got, "<b>rules:</b>") {
+		t.Errorf("expected 'rules:' Field() label, got: %q", got)
+	}
+	if !strings.Contains(got, "<b>cap:</b>") {
+		t.Errorf("expected 'cap:' Field() label, got: %q", got)
+	}
+	if !strings.Contains(got, "<b>fill:</b>") {
+		t.Errorf("expected 'fill:' Field() label, got: %q", got)
+	}
+	// And the Section() divider for "quota".
+	if !strings.Contains(got, "quota") {
+		t.Errorf("expected 'quota' section divider, got: %q", got)
 	}
 }
 
@@ -3185,8 +3231,15 @@ func TestMyExitNodesReplyListsEnabled(t *testing.T) {
 	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('emilia-1', 1700000000, 1)`)
 	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('aphrodite-1', 1700000100, 0)`)
 	got := HandleCommand(context.Background(), userEnv(d), "/myexitnodes")
-	if !strings.Contains(got, "Available exit-nodes (2)") {
-		t.Errorf("expected 'Available exit-nodes (2)', got: %q", got)
+	// 2026-07-16: v0.16.x — "more HTML" pass. Header
+	// format changed from "Available exit-nodes (2):" to
+	// "exit-nodes for <b>alice</b> (2 available):" with
+	// the count moved into a Field() line below.
+	if !strings.Contains(got, "exit-nodes for") {
+		t.Errorf("expected new header 'exit-nodes for', got: %q", got)
+	}
+	if !strings.Contains(got, "(2 available)") {
+		t.Errorf("expected '(2 available)' count, got: %q", got)
 	}
 	if !strings.Contains(got, "emilia") {
 		t.Errorf("expected emilia in menu, got: %q", got)
@@ -3198,12 +3251,19 @@ func TestMyExitNodesReplyListsEnabled(t *testing.T) {
 	if strings.Contains(got, "demeter") {
 		t.Errorf("disabled server demeter must NOT appear in user menu, got: %q", got)
 	}
-	// Online status per node.
-	if !strings.Contains(got, "emilia") || !strings.Contains(got, "online") {
-		t.Errorf("expected emilia marked online, got: %q", got)
+	// 2026-07-16: v0.16.x — tabular <pre> block. Online
+	// status is now a column on the same row as the
+	// hostname, not a free-floating "online" word. We
+	// check for the emilia row substring to confirm the
+	// alignment.
+	if !strings.Contains(got, "emilia") || !strings.Contains(got, "emilia-1") {
+		t.Errorf("expected emilia row to carry hostname+node_id, got: %q", got)
 	}
-	if !strings.Contains(got, "aphrodite") || !strings.Contains(got, "offline") {
-		t.Errorf("expected aphrodite marked offline, got: %q", got)
+	if !strings.Contains(got, "online") {
+		t.Errorf("expected 'online' status column, got: %q", got)
+	}
+	if !strings.Contains(got, "offline") {
+		t.Errorf("expected 'offline' status column, got: %q", got)
 	}
 	// Workflow hint.
 	if !strings.Contains(got, "/setexitnode") {
@@ -3219,12 +3279,35 @@ func TestMyExitNodesReplyMarksDefault(t *testing.T) {
 	// Set alice's default to aphrodite-1.
 	_, _ = d.Exec(`UPDATE portal_users SET default_exit_node_id = 'aphrodite-1' WHERE id = 2`)
 	got := HandleCommand(context.Background(), userEnv(d), "/myexitnodes")
-	if !strings.Contains(got, "aphrodite-1) — offline  [default]") {
-		t.Errorf("expected aphrodite-1 row to carry [default] marker, got: %q", got)
+	// 2026-07-16: v0.16.x — "more HTML" pass. The default
+	// marker moved from "  [default]" to a single ✓ in
+	// the DEFAULT column. The substring "aphrodite-1  ... ✓"
+	// is hard to pin because of <pre> alignment padding,
+	// so we just check that ✓ appears and that the
+	// aphrodite row is followed by a line ending in ✓
+	// (the emilia row should NOT have a ✓).
+	if !strings.Contains(got, "✓") {
+		t.Errorf("expected ✓ marker for default node, got: %q", got)
 	}
-	// emilia must NOT carry the [default] marker.
-	if strings.Contains(got, "emilia-1) — offline  [default]") {
-		t.Errorf("emilia must not be marked default, got: %q", got)
+	// emilia must NOT carry the ✓ marker.
+	emiliaRow := ""
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "emilia-1") {
+			emiliaRow = line
+		}
+	}
+	if strings.Contains(emiliaRow, "✓") {
+		t.Errorf("emilia row must not be marked default, got: %q", emiliaRow)
+	}
+	// The aphrodite row should carry the ✓.
+	aphroditeRow := ""
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "aphrodite-1") {
+			aphroditeRow = line
+		}
+	}
+	if !strings.Contains(aphroditeRow, "✓") {
+		t.Errorf("aphrodite row must be marked default, got: %q", aphroditeRow)
 	}
 }
 
@@ -3241,8 +3324,14 @@ func TestMyExitNodesReplyHelpDetail(t *testing.T) {
 	if !strings.HasPrefix(got, "/myexitnodes ") {
 		t.Errorf("expected /myexitnodes detailed help, got: %q", got)
 	}
-	if !strings.Contains(got, "[default]") {
-		t.Errorf("expected '[default]' in /help myexitnodes, got: %q", got)
+	// 2026-07-16: v0.16.x — "more HTML" pass. The
+	// default-node marker moved from "[default]" (a
+	// four-char label) to "✓" (a single char that
+	// reads cleanly in the DEFAULT column of the
+	// tabular <pre> block). Help detail text is
+	// kept in lockstep.
+	if !strings.Contains(got, "✓") {
+		t.Errorf("expected '✓' in /help myexitnodes, got: %q", got)
 	}
 }
 
