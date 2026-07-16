@@ -7,7 +7,25 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.2 — "more HTML" pass bug fix
+* **Current**: v0.16.3 — "more HTML" pass for /help
+  ([release notes](RELEASE-NOTES-v0.16.3.md)). The
+  v0.16.1/v0.16.2 "more HTML" pass left `/help` in
+  plain text, so the catalog's markdown backticks
+  (`<id>`, `<target>`, etc.) showed up as literal
+  characters. This release:
+  1) converts 37 `bot.help.*` catalog entries from
+     markdown backticks to `<code>` tags (with `&`, `<`,
+     `>` HTML-escaped inside the `<code>`)
+  2) rewrites `helpReply` so each of the three sections
+     (Auth / User-scope / Admin) renders as a tabular
+     `<pre>` block with a 20-char gutter for the
+     command column. `markHTMLReply()` at the top so
+     `parse_mode=HTML` is set.
+  1 test rewrite (`TestHelpReplyV0155Layout`) + 1 test
+  extension (`TestHTMLRepliesMarkParseMode` adds
+  the `/help` sub-case). 12/12 packages green, smoke
+  118/118, live on VM at build `cdbefe5`.
+* **Previous**: v0.16.2 — "more HTML" pass bug fix
   ([release notes](RELEASE-NOTES-v0.16.2.md)). Hotfix
   for v0.16.1 — the v0.16.1 release shipped HTML
   formatting in 8 bot replies but forgot to set
