@@ -7,7 +7,29 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.0 — backlog release
+* **Current**: v0.16.1 — "more HTML" pass
+  ([release notes](RELEASE-NOTES-v0.16.1.md)). The
+  "bot reply formatting should look like a table, not
+  a wall of text" release. `internal/telegram/format.go`
+  adds a small helper layer (`Field()` / `Section()` /
+  `PreLinesRaw()` / `Code()` / `Header()` /
+  `BulletList()` / `HeaderLine()`) and the remaining
+  four read commands that were still in prose format
+  now use the new helpers:
+  * `/my_rules` — tabular `<pre>` (ID / EXIT / TYPE /
+    TARGET / ACTION)
+  * `/my_quota` — three `Field()` lines (rules / fill
+    / cap) under a `Section()` divider
+  * `/myexitnodes` — tabular `<pre>` (HOSTNAME / NODE /
+    STATUS / DEFAULT) with a `Section()`+`Field()`
+    summary, and the default marker is now `✓`
+    (was `[default]`)
+  * `/ack` — already clean (one-line summary), left
+    unchanged
+  * `~50 new catalog keys (RU+EN)`. `12/12 packages
+    green`, smoke `118/118`, live on VM at build
+    `006f3d5`.
+* **Previous**: v0.16.0 — backlog release
   ([release notes](RELEASE-NOTES-v0.16.0.md)). The
   "clean up the deferred v0.12 / v0.13 backlog before
   tackling v0.16" release. Six previously-deferred
