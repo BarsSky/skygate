@@ -68,6 +68,30 @@ type BotEnv struct {
 	// against nil and reply with a clear hint.
 	HS *headscale.Client
 
+	// 2026-07-16: v0.12.1 — per-user headscale client routing.
+	// Populated by RealNotifier.env() from a closure the App
+	// installs at startup. Returns the *headscale.Client to use
+	// for the given portal user id (their per-plane override
+	// from portal_users.headscale_url + headscale_api_key_enc,
+	// or the global default if no override). Bot handlers
+	// should call env.userHS() instead of reading env.HS
+	// directly so a per-user /add_device routes the preauth
+	// key issuance to the right control plane.
+	//
+	// nil is valid and means "no per-user routing" — the bot
+	// then uses env.HS (the global default) for every
+	// command. Backward compatible with v0.12.0 single-plane
+	// deploys that don't call SetHSForUser.
+	HSForPortalUser func(userID int64) *headscale.Client
+	// 2026-07-16: v0.13.0 — per-user plane-URL routing.
+	// Parallel to HSForPortalUser: returns the headscale_url
+	// the given portal user is on ("" = global default).
+	// Used by env.userPlaneURL() so the bot's ACL pipeline
+	// can scope acl.GenerateACLForPlane to the right
+	// identities (headscale rejects unknown identities
+	// in tagOwners). nil falls through to "".
+	PortalPlaneURL func(userID int64) string
+
 	// 2026-07-13: Этап 11 part 2b — per-device and total rule
 	// caps, snapshotted from the App's *config.Config at startup.
 	// /add_rule checks these before inserting (the web form does
@@ -217,6 +241,55 @@ func (e BotEnv) MaxFor(username string) int {
 		return v
 	}
 	return e.DefaultMax
+}
+
+// userHS returns the *headscale.Client to use for the bound
+// portal user. When HSForPortalUser is set AND the chat is
+// bound (PortalUserID > 0), it returns the per-user plane
+// (from portal_users.headscale_url + headscale_api_key_enc,
+// or the global default if the user has no override). When
+// HSForPortalUser is nil (no per-user routing wired) or the
+// chat is unbound, it falls back to env.HS.
+//
+// 2026-07-16: v0.12.1 — every bot handler that previously
+// read env.HS directly should now call env.userHS() so a
+// per-user /add_device issues the preauth key on the
+// right control plane.
+func (e BotEnv) userHS() *headscale.Client {
+	if e.HSForPortalUser != nil && e.PortalUserID > 0 {
+		if c := e.HSForPortalUser(e.PortalUserID); c != nil {
+			return c
+		}
+	}
+	return e.HS
+}
+
+// userPlaneURL returns the headscale_url the bound portal
+// user is on ("" = global default). Used by the bot's
+// ACL pipeline to scope acl.GenerateACLForPlane to the
+// right identities — headscale rejects unknown identities
+// in tagOwners, so a per-user /add_rule must push a
+// policy that only contains the user's own plane's
+// identities.
+//
+// 2026-07-16: v0.13.0.
+func (e BotEnv) userPlaneURL() string {
+	if e.PortalPlaneURL != nil && e.PortalUserID > 0 {
+		return e.PortalPlaneURL(e.PortalUserID)
+	}
+	return ""
+}
+
+// userTargetPlaneURL returns the plane URL for a specific
+// portal user id (used by admin commands that act on
+// another user — e.g. /add_rule alice 1.2.3.4). Falls
+// through to "" (global default) when the per-user
+// routing isn't wired.
+func (e BotEnv) userTargetPlaneURL(userID int64) string {
+	if e.PortalPlaneURL != nil && userID > 0 {
+		return e.PortalPlaneURL(userID)
+	}
+	return ""
 }
 
 // 2026-07-14: Этап 14 v9 — butler voice v2 envelope.

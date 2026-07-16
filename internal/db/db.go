@@ -204,5 +204,10 @@ func migrate(d *sql.DB) error {
 	if err := migrateV036(d); err != nil {
 		return fmt.Errorf("migrate v0.36: %w", err)
 	}
+	// 2026-07-16: v0.15.5 — personal API token TTL. Adds
+	// expires_at + auto_rotate columns to personal_api_tokens.
+	if err := migrateV037(d); err != nil {
+		return fmt.Errorf("migrate v0.37: %w", err)
+	}
 	return nil
 }

@@ -133,7 +133,29 @@ type butlerEnvelopeOpts struct {
 	// exit-node / preauth commands that have a more
 	// specific glyph). The icon precedes the gate line.
 	icon string
+	// urgency is the operator's at-a-glance level of
+	// "how serious is this reply". 0 = normal (default
+	// 🪶), 1 = warning (🪶! or icon!), 2 = critical
+	// (🪶!! or icon!!). The mark is appended to the
+	// icon so the visual signal survives icon override
+	// (e.g. /restart shows 🔑!! not 🪶!!).
+	//
+	// 2026-07-16: v0.15.5 — butler voice v3. The original
+	// v3 plan from the AGENTS.md backlog was to render
+	// 🪶 / 🪶! / 🪶!! in the header. The new design
+	// keeps the rule that the urgency mark attaches to
+	// the chosen icon, not always 🪶.
+	urgency int
 }
+
+// Urgency levels for WithUrgency. The int values are
+// 0/1/2 (low/medium/high) so a config-driven escalation
+// can pass `s.urgency` directly without a switch.
+const (
+	UrgencyNormal   = 0
+	UrgencyWarning  = 1
+	UrgencyCritical = 2
+)
 
 // ButlerOpt returns the option (functional-options pattern).
 // Future: WithIcon("⚙️"), WithNoSignoff(), WithNoGreeting().
@@ -158,6 +180,19 @@ func WithNoGreeting() ButlerOpt {
 // exit-node, 🔑 preauth, 📋 plain copy, etc.).
 func WithIcon(icon string) ButlerOpt {
 	return func(o *butlerEnvelopeOpts) { o.icon = icon }
+}
+
+// WithUrgency returns an option that adds a `!` (warning) or
+// `!!` (critical) mark to the chosen icon. The mark makes
+// the reply's tone visible in the chat list at a glance —
+// the operator can see "🔑!!" in the bot row and know it's
+// a critical reply without opening it. Use sparingly: only
+// for replies where the operator should look at the body
+// even if the rest of the chat is busy.
+//
+// 2026-07-16: v0.15.5 — butler voice v3.
+func WithUrgency(level int) ButlerOpt {
+	return func(o *butlerEnvelopeOpts) { o.urgency = level }
 }
 
 // butlerEnvelope assembles a reply in the Skygate butler
@@ -186,13 +221,23 @@ func butlerEnvelope(lang, envUsername string, title, subheader, body, footer str
 	var sb strings.Builder
 
 	// Header: 🪶 ═══ Skygate ═══
-	// Header: <icon> <gateLine>\n
+	// Header: <icon>[!|!!] <gateLine>\n
 	// 2026-07-16: v0.15.3 — uses the per-command icon
 	// (o.icon) followed by the canonical gateLine from
 	// the same constants Compose() uses. Single source
 	// of truth for the header shape.
+	// 2026-07-16: v0.15.5 — butler voice v3: the urgency
+	// mark (! for warning, !! for critical) is appended
+	// to the chosen icon so a 🔑!! reads "critical preauth
+	// reply" and 🪶!! reads "critical generic reply".
 	if o.icon != "" {
 		sb.WriteString(o.icon)
+		switch o.urgency {
+		case UrgencyCritical:
+			sb.WriteString("!!")
+		case UrgencyWarning:
+			sb.WriteString("!")
+		}
 		sb.WriteByte(' ')
 	}
 	sb.WriteString(gateLine)

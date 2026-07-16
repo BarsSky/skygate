@@ -196,6 +196,66 @@ func GetPortalUsernames(d *sql.DB) ([]string, error) {
 	return out, rows.Err()
 }
 
+// GetPortalUsernamesForPlane returns every portal username on the
+// given control plane. planeURL == "" means "the global default
+// plane" (every user with headscale_url = ''). Used by
+// GenerateACLForPlane to scope the per-plane policy to the
+// identities that actually live on that headscale instance —
+// headscale rejects unknown identities in tagOwners, so we
+// can't list plane A users in plane B's policy.
+//
+// 2026-07-16: v0.13.0 — per-plane ACL.
+func GetPortalUsernamesForPlane(d *sql.DB, planeURL string) ([]string, error) {
+	rows, err := d.Query(qSelectPortalUsernamesForPlane, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ControlPlaneUserCount is one row of ListControlPlanes: a
+// distinct headscale_url (empty = the global default) and
+// the number of portal users on it. Used by the per-plane
+// ACL pipeline (v0.13.0) which only needs (url, count) to
+// iterate planes — it doesn't need per-user api_keys (those
+// are resolved by the caller's hsForPlane closure).
+//
+// 2026-07-16: v0.13.0.
+type ControlPlaneUserCount struct {
+	URL       string
+	UserCount int
+}
+
+// ListControlPlanes returns the distinct (headscale_url,
+// user_count) pairs. Empty URL = the global default. The
+// per-plane ACL pipeline iterates this list to push one
+// policy per plane.
+func ListControlPlanes(d *sql.DB) ([]ControlPlaneUserCount, error) {
+	rows, err := d.Query(qSelectControlPlanes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ControlPlaneUserCount
+	for rows.Next() {
+		var s ControlPlaneUserCount
+		if err := rows.Scan(&s.URL, &s.UserCount); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // GetOtherHSUserIDs returns the headscale_user_id values of every
 // portal user EXCEPT excludeID, skipping NULLs and empty strings.
 // Used by backfillNodeOwnership to build a "is this node already

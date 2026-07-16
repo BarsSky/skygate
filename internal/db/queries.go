@@ -131,6 +131,19 @@ const (
 	qSelectUserIDByName    = `SELECT id FROM portal_users WHERE username = ?`
 	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme FROM portal_users ORDER BY id`
 	qSelectPortalUsernames = `SELECT username FROM portal_users ORDER BY id`
+	// 2026-07-16: v0.13.0 — per-plane ACL. qSelectPortalUsernamesForPlane
+	// returns usernames of every portal user on a given control plane
+	// ("" = the global default, matched against rows with no override).
+	// Used by acl.GenerateACLForPlane to build a policy that only
+	// includes identities on that plane — headscale rejects
+	// unknown identities, so we can't mix plane A and plane B
+	// identities in one policy.
+	qSelectPortalUsernamesForPlane = `SELECT username FROM portal_users WHERE headscale_url = ? OR (headscale_url = '' AND ? = '') ORDER BY id`
+	// v0.13.0 — list every distinct (url, api_key) plane with a user
+	// count. Used by the per-plane ACL pipeline to iterate all
+	// planes and push the right policy to each. Empty
+	// headscale_url = the global default.
+	qSelectControlPlanes = `SELECT headscale_url, COUNT(*) FROM portal_users GROUP BY headscale_url`
 	qSelectUserByID        = `SELECT username, headscale_user_id FROM portal_users WHERE id = ?`
 	qSelectUserNameByID    = `SELECT username FROM portal_users WHERE id = ?`
 	qSelectUserHSByID      = `SELECT headscale_user_id, username FROM portal_users WHERE id = ?`
@@ -342,9 +355,9 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectAllAPITokensForLookup = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
-	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at FROM personal_api_tokens WHERE user_id = ? ORDER BY created_at DESC`
-	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label) VALUES (?, ?, ?)`
+	qSelectAllAPITokensForLookup = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash, pt.expires_at FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
+	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at, expires_at, auto_rotate FROM personal_api_tokens WHERE user_id = ? ORDER BY created_at DESC`
+	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES (?, ?, ?, ?, ?)`
 	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = ? AND user_id = ?`
 	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = ?`
 	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = ?`
