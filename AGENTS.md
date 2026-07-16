@@ -7,7 +7,42 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.15.0 — HTTPS / TLS via Caddy
+* **Current**: v0.15.5 — admin body butler-voice polish +
+  /help alignment + /unbind_self
+  ([release notes](RELEASE-NOTES-v0.15.5.md)). The
+  "admin replies should read like a butler, not a log;
+  /help columns should line up" release. Three fixes:
+  1. Drop log-voice prefixes (`sync_nodes:`, `audit:`,
+     `exit_nodes_health:`, `restart:`, `add_rule:`,
+     `delrule:`, `clearrules:`) from every admin reply
+     and capitalise the first letter; the
+     `target:` / `rule_ids=` / `ACL v#` technical
+     fields stay verbatim, the `✓` / `⚠` status
+     markers stay where they were.
+  2. Widen the /help command gutter from 12 chars to
+     18 (max command today is `/exit_nodes_health`
+     at 17 chars) and drop the duplicate
+     `\`<cmd>\` — <explanation>` from every description
+     — the gutter is the command, the description is
+     the explanation, the args hint lives at the end
+     as `[args: <hint>]`.
+  3. Add `/unbind_self` to the Auth section of /help
+     (was in the dispatch table since v0.14.0 but
+     missing from the listing).
+  * ~80 catalog keys rewritten (RU + EN, ~160 entries)
+  * `commands.go` `helpReply()` — `gutter` const 18,
+    new `TestHelpReplyV0155Layout` pins the contract
+  * 12/12 packages green, smoke 118/118, live on VM
+    at build `7650c5e`
+* **Previous**: v0.15.1 — final /admin/telegram localization
+  ([release notes](RELEASE-NOTES-v0.15.1.md)). The
+  "no hardcoded English left in the Telegram admin
+  page" release. 32 new `telegram.*` keys × 2 langs
+  cover the probe banner (3 states), status pills,
+  the Send Test / Rotate token / Disable bot / Strict
+  mode paths, and the where-to-look hints. i18n
+  parity test green.
+* **Previous**: v0.15.0 — HTTPS / TLS via Caddy
   ([release notes](RELEASE-NOTES-v0.15.0.md)). The
   "make the tailnet's control plane actually speak
   HTTPS" release. Adds a Caddy sidecar that terminates
