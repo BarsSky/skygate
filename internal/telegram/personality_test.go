@@ -225,7 +225,7 @@ func TestGreetingForNewChatShape(t *testing.T) {
 	// `\n\n` between header and body).
 	// 2026-07-16: v0.15.2 — gate header is "🪶 ═══ Skygate ═══"
 	// followed by a topic line ("The Gate" for new-chat).
-	if !strings.HasPrefix(got, "🪶 ═══ Skygate ═══\nThe Gate") {
+	if !strings.HasPrefix(got, "🪶 ═══ Skygate ═══\n🚪 The Gate") {
 		t.Errorf("v15 new-chat welcome should start with gate header + The Gate topic, got: %q", got[:80])
 	}
 }
