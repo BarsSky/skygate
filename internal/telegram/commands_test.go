@@ -168,7 +168,7 @@ func TestHandleCommandStatusEnvelope(t *testing.T) {
 	// envelope on /status (a registry-context reply).
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/status")
-	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nThe Registry") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n📊 The Registry") {
 		t.Errorf("expected registry header at the top, got: %q", got[:60])
 	}
 	if !strings.Contains(got, "rules: 12") {
@@ -185,7 +185,7 @@ func TestHandleCommandVersionEnvelope(t *testing.T) {
 	d := setupTestDB(t)
 	env := BotEnv{DB: d, Version: "v0.10.8-dev", Lang: i18n.LangEN}
 	got := HandleCommand(context.Background(), env, "/version")
-	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nThe Version Scroll") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n📦 The Version Scroll") {
 		t.Errorf("expected version header at the top, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "v0.10.8-dev") {
@@ -197,7 +197,7 @@ func TestHandleCommandHelpEnvelope(t *testing.T) {
 	// /help → "codex" context (The Codex).
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/help")
-	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nThe Codex") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n📖 The Codex") {
 		t.Errorf("expected codex header at the top, got: %q", got[:60])
 	}
 }
@@ -207,7 +207,7 @@ func TestHandleCommandUnknownEnvelope(t *testing.T) {
 	// = A Closed Door). The body tells the user what's wrong.
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/nonsense_xyz")
-	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nA Closed Door") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n⚠️ A Closed Door") {
 		t.Errorf("expected err header at the top, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "Unknown command") {
@@ -219,7 +219,7 @@ func TestHandleCommandAdminOnlyEnvelope(t *testing.T) {
 	// /status as a non-admin user → rejected with "err" context.
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/status")
-	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\nA Closed Door") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n⚠️ A Closed Door") {
 		t.Errorf("expected err header for admin-only rejection, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "admin only") {
@@ -836,7 +836,7 @@ func TestHandleCommandHelpDetailed(t *testing.T) {
 	got := HandleCommand(context.Background(), envFor(d), "/help ack")
 	// 2026-07-16: v0.15.2 — gate header is "🪶 ═══ Skygate ═══"
 	// (followed by a topic line). /help uses context="codex".
-	if !strings.HasPrefix(got, "🪶 ═══ Skygate ═══\nThe Codex") {
+	if !strings.HasPrefix(got, "🪶 ═══ Skygate ═══\n📖 The Codex") {
 		t.Errorf("expected gate header + Codex topic, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "/ack ") {
