@@ -1111,17 +1111,17 @@ var ruCatalog = map[string]string{
 	// butler) in favour of plain Russian labels. The sigil
 	// (⟡) is the same so the eye still recognises "this is
 	// the butler talking".
-	"bot.header.welcome":              "Добро пожаловать",
-	"bot.header.registry":             "Реестр",
-	"bot.header.codex":                "Кодекс",
-	"bot.header.version":              "Версия",
-	"bot.header.ack":                  "Подтверждение",
-	"bot.header.bind":                 "Привязка",
-	"bot.header.unbind":               "Отвязка",
-	"bot.header.add":                  "Готово — добавлено",
-	"bot.header.del":                  "Готово — удалено",
-	"bot.header.err":                  "Дверь закрыта",
-	"bot.header.welcome_back":         "С возвращением",
+	"bot.header.welcome":              "🚪 Добро пожаловать",
+	"bot.header.registry":             "📊 Реестр",
+	"bot.header.codex":                "📖 Кодекс",
+	"bot.header.version":              "📦 Версия",
+	"bot.header.ack":                  "🛡 Подтверждение",
+	"bot.header.bind":                 "🔗 Привязка",
+	"bot.header.unbind":               "🔗 Отвязка",
+	"bot.header.add":                  "✅ Готово — добавлено",
+	"bot.header.del":                  "❌ Готово — удалено",
+	"bot.header.err":                  "⚠️ Дверь закрыта",
+	"bot.header.welcome_back":         "🚪 С возвращением",
 	// 2026-07-16: v0.15.2 — butler-voice envelope
 	// (gate-style dividers + time-of-day greeting).
 	// Used by butlerEnvelope() in internal/telegram/envelope.go
@@ -1311,6 +1311,15 @@ var ruCatalog = map[string]string{
 	"bot.status.users":                  "пользователей: %d",
 	"bot.status.last_acl":               "последний ACL: #%d",
 	"bot.status.db_error":               "status: ошибка БД: %v",
+	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
+	// /status (admin). Mirror of bot.my_status.{title,subheader,
+	//label_*}; the existing header/rules/users/last_acl keys
+	// stay (other tests / web views may still use them).
+	"bot.status.title":                  "Skygate: общая сводка",
+	"bot.status.subheader":               "Правила, пользователи и последний применённый ACL во всём tailnet.",
+	"bot.status.label_rules":            "Правила:",
+	"bot.status.label_users":            "Пользователи:",
+	"bot.status.label_last_acl":         "Последний ACL:",
 	"bot.nodes.header_total":            "Устройств в tailnet: %d",
 	"bot.nodes.tag_breakdown":           "  private: %d  public: %d  exit-node: %d  untagged: %d",
 	"bot.nodes.group_header":            "[%s] %s (%d)",
@@ -2599,17 +2608,17 @@ var enCatalog = map[string]string{
 	"bot.personality.role_warden_of_self": "you are Warden of your own devices",
 	"bot.personality.gate_header":      "The Threshold's Codex",
 	// 2026-07-14: Этап 14 v9 — butler voice v2 (EN).
-	"bot.header.welcome":              "The Gate",
-	"bot.header.registry":             "The Registry",
-	"bot.header.codex":                "The Codex",
-	"bot.header.version":              "The Version Scroll",
-	"bot.header.ack":                  "Acknowledged",
-	"bot.header.bind":                 "Binding",
-	"bot.header.unbind":               "Unbinding",
-	"bot.header.add":                  "Added",
-	"bot.header.del":                  "Removed",
-	"bot.header.err":                  "A Closed Door",
-	"bot.header.welcome_back":         "Welcome Back",
+	"bot.header.welcome":              "🚪 The Gate",
+	"bot.header.registry":             "📊 The Registry",
+	"bot.header.codex":                "📖 The Codex",
+	"bot.header.version":              "📦 The Version Scroll",
+	"bot.header.ack":                  "🛡 Acknowledged",
+	"bot.header.bind":                 "🔗 Binding",
+	"bot.header.unbind":               "🔗 Unbinding",
+	"bot.header.add":                  "✅ Added",
+	"bot.header.del":                  "❌ Removed",
+	"bot.header.err":                  "⚠️ A Closed Door",
+	"bot.header.welcome_back":         "🚪 Welcome Back",
 	// 2026-07-16: v0.15.2 — butler-voice envelope
 	// (gate-style dividers + time-of-day greeting).
 	// Mirror of the Russian block; see butlerEnvelope()
@@ -2782,6 +2791,13 @@ var enCatalog = map[string]string{
 	"bot.status.users":                "users: %d",
 	"bot.status.last_acl":             "last acl: #%d",
 	"bot.status.db_error":             "status: db error: %v",
+	// 2026-07-16: v0.15.2 — butler-voice envelope pieces for
+	// /status (EN, admin). Mirror of the RU block.
+	"bot.status.title":               "Skygate: tailnet overview",
+	"bot.status.subheader":           "Rules, users, and the last applied ACL across the whole tailnet.",
+	"bot.status.label_rules":         "Rules:",
+	"bot.status.label_users":         "Users:",
+	"bot.status.label_last_acl":      "Last ACL:",
 	"bot.nodes.header_total":          "Tailnet nodes: %d total",
 	"bot.nodes.tag_breakdown":         "  private: %d  public: %d  exit-node: %d  untagged: %d",
 	"bot.nodes.group_header":          "[%s] %s (%d)",
