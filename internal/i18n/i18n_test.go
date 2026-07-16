@@ -3,6 +3,7 @@ package i18n
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,88 @@ func TestCatalogsParity(t *testing.T) {
 			t.Errorf("ruCatalog missing key: %q", k)
 		}
 	}
+}
+
+// TestHTMLSafeCatalog — every bot.* key whose reply is sent in
+// parse_mode=HTML must not contain a literal `<` or `>` that isn't
+// part of a known HTML tag. Telegram rejects the whole sendMessage
+// payload with HTTP 400 "can't parse entities: Unsupported start
+// tag" if the message contains a `<word>` (or `</word>`) that isn't
+// a valid HTML entity.
+//
+// 2026-07-16: v0.16.4 — added after the v0.16.3 release shipped
+// HTML formatting for /help and Telegram rejected the /help reply
+// with HTTP 400 because the bot.help.subtitle key had a literal
+// "<команда>" placeholder (Cyrillic word in angle brackets). The
+// fix was to HTML-escape the `<` to `&lt;`; this test pins that
+// for every bot.* key that goes through parse_mode=HTML, so the
+// regression is caught at unit-test time instead of in production.
+//
+// Keys covered (10 prefixes):
+//   bot.help.*, bot.exit_nodes_health.*, bot.audit.*, bot.version.*,
+//   bot.my_status.*, bot.my_nodes.*, bot.my_rules.*, bot.my_quota.*,
+//   bot.myexitnodes.*, bot.add_device.*
+//
+// NOT covered (plain text):
+//   bot.welcome.*, bot.start.*, bot.strict_locked.*, bot.unbind_self.*,
+//   bot.help_detail.*, bot.ack.* (no markHTMLReply())
+func TestHTMLSafeCatalog(t *testing.T) {
+	htmlPrefixes := []string{
+		"bot.help.",
+		"bot.exit_nodes_health.",
+		"bot.audit.",
+		"bot.version.",
+		"bot.my_status.",
+		"bot.my_nodes.",
+		"bot.my_rules.",
+		"bot.my_quota.",
+		"bot.myexitnodes.",
+		"bot.add_device.",
+	}
+	// Tags Telegram accepts in parse_mode=HTML. Every other
+	// `<word>` in the value is a violation (must be escaped
+	// to `&lt;` and `&gt;`).
+	allowedTags := map[string]bool{
+		"b": true, "i": true, "u": true, "s": true,
+		"strike": true, "del": true, "code": true,
+		"pre": true, "a": true, "tg-spoiler": true,
+		"blockquote": true,
+	}
+	// Reject <word> or </word> where word is not in allowedTags.
+	// We use a permissive regex: < (or </) [a-zA-Z][a-zA-Z0-9-]*
+	// — Cyrillic placeholders like <команда> don't match
+	// [a-zA-Z] (so they're not caught by this regex), but
+	// the live deploy already proved they fail HTML parsing
+	// in production. We use a more permissive regex that
+	// catches any Unicode letter so Cyrillic is covered too.
+	badTagRE := regexp.MustCompile(`</?[\p{L}][\p{L}\p{N}-]*`)
+
+	check := func(name string, cat map[string]string) {
+		for k, v := range cat {
+			isHTMLKey := false
+			for _, p := range htmlPrefixes {
+				if strings.HasPrefix(k, p) {
+					isHTMLKey = true
+					break
+				}
+			}
+			if !isHTMLKey {
+				continue
+			}
+			for _, m := range badTagRE.FindAllString(v, -1) {
+				// m is the full match like "<code" or "</b".
+				// Strip leading "<" or "</" to get the tag name.
+				tag := strings.TrimPrefix(m, "</")
+				tag = strings.TrimPrefix(tag, "<")
+				if allowedTags[tag] {
+					continue
+				}
+				t.Errorf("%s: %q has unsafe HTML tag %q — escape to &lt; / &gt;", name, k, m)
+			}
+		}
+	}
+	check("ruCatalog", ruCatalog)
+	check("enCatalog", enCatalog)
 }
 
 // TestPlaceholderOrder — placeholder counts must match between languages
