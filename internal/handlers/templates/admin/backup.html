@@ -16,17 +16,17 @@
 <div class="card-grid">
   <div class="card">
     <h3><i class="fa-solid fa-download"></i> {{t "backup.create"}}</h3>
-    <p>Create full archive of all data: Skygate DB, Headscale DB (nodes, keys, ACL), configs, DERP.</p>
+    <p>{{t "backup.card_create_desc"}}.</p>
     <form action="/admin/backup/save" method="POST" id="backup-save-form">
       <button type="submit" class="btn btn-primary" id="backup-save-btn">
-        <i class="fa-solid fa-floppy-disk"></i> {{t "backup.create"}} &amp; download
+        <i class="fa-solid fa-floppy-disk"></i> {{t "backup.create"}} {{t "backup.create_and_download"}}
       </button>
     </form>
   </div>
 
   <div class="card">
     <h3><i class="fa-solid fa-upload"></i> {{t "backup.restore"}}</h3>
-    <p>Upload previously saved archive (.tar.gz) to restore the state.</p>
+    <p>{{t "backup.card_restore_desc"}}.</p>
     <form action="/admin/backup/restore" method="POST" enctype="multipart/form-data">
       <div class="form-group">
         <input type="file" name="archive" accept=".tar.gz" required class="form-control">
@@ -141,7 +141,7 @@
       </button>
       <button type="submit" formaction="/admin/backup/run" formmethod="POST" class="btn btn-warning"
               id="backup-run-btn"
-              onclick="return confirm('Run backup now?');">
+              onclick="return confirm({{t "backup.confirm_run" | safeJS}});">
         <i class="fa-solid fa-play"></i> {{t "backup.run_now"}}
       </button>
     </div>
@@ -207,13 +207,13 @@
 
 {{if .Backups}}
 <div class="card" style="margin-top:1.5rem">
-  <h3><i class="fa-solid fa-clock-rotate-left"></i> Backup history</h3>
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> {{t "backup.history_title"}}</h3>
   <table>
     <thead>
       <tr>
-        <th>File</th>
-        <th>Size</th>
-        <th>SHA256</th>
+        <th>{{t "backup.col_file"}}</th>
+        <th>{{t "backup.col_size"}}</th>
+        <th>{{t "backup.col_sha256"}}</th>
         <th>{{t "common.actions"}}</th>
       </tr>
     </thead>
@@ -232,26 +232,26 @@
 {{end}}
 
 <div class="card" style="margin-top:1.5rem">
-  <h3><i class="fa-solid fa-circle-info"></i> Migration to another host</h3>
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "backup.migration_title"}}</h3>
   <div class="alert alert-warning">
-    <strong><i class="fa-solid fa-triangle-exclamation"></i> After restore on a new server, make sure to:</strong>
+    <strong><i class="fa-solid fa-triangle-exclamation"></i> {{t "backup.migration_warning_intro"}}</strong>
     <ol style="margin:0.75rem 0 0 1.5rem">
-      <li>Go to <a href="/admin/settings">{{t "settings.title"}}</a> and update Headscale URL/IP and public domain</li>
-      <li>Check that HEADSCALE_URL in .env points to the new headscale address</li>
-      <li>If the headscale API key changed — update it in settings</li>
-      <li>Restart skygate: sudo docker restart skygate</li>
-      <li>Verify the dashboard shows correct data</li>
+      <li>{{t "backup.migration_step1" | safeHTML}}</li>
+      <li>{{t "backup.migration_step2" | safeHTML}}</li>
+      <li>{{t "backup.migration_step3" | safeHTML}}</li>
+      <li>{{t "backup.migration_step4" | safeHTML}}</li>
+      <li>{{t "backup.migration_step5" | safeHTML}}</li>
     </ol>
   </div>
   <div class="sub">
-    <strong>Migration order:</strong>
+    <strong>{{t "backup.migration_order_title"}}</strong>
     <ol>
-      <li>On the old server: create a backup (button above or ./scripts/backup.sh)</li>
-      <li>Copy the archive to the new server</li>
-      <li>On the new server: install Docker, clone the skygate repo</li>
-      <li>Upload the archive via this page or run ./scripts/migrate.sh</li>
-      <li>Go to Settings and update URL/IP</li>
-      <li>Run the test suite — all steps should be green</li>
+      <li>{{t "backup.migration_order_step1"}}</li>
+      <li>{{t "backup.migration_order_step2"}}</li>
+      <li>{{t "backup.migration_order_step3"}}</li>
+      <li>{{t "backup.migration_order_step4"}}</li>
+      <li>{{t "backup.migration_order_step5"}}</li>
+      <li>{{t "backup.migration_order_step6"}}</li>
     </ol>
   </div>
 </div>

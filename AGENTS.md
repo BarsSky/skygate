@@ -7,7 +7,31 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.15.5 — admin body butler-voice polish +
+* **Current**: v0.15.6 — /admin/backup + /admin/exit-nodes
+  full localization
+  ([release notes](RELEASE-NOTES-v0.15.6.md)). The
+  "no hardcoded English left in the admin pages" release.
+  46 new catalog keys (RU + EN) cover the backup history
+  table headers, the migration-to-another-host warning +
+  5-item + 6-item ordered lists (with embedded `<code>`
+  for the docker restart command), the "Run backup now?"
+  JS confirm, the exit-nodes 5-step tutorial narrative
+  (headings, "Run on the exit-node (one-time)" intro, the
+  inline code-explanation paragraphs after the tailscale
+  up command, and the long "for nodes that run other
+  VPN services..." warning), the exit-nodes status pills
+  (off / synced / idle), the accept-routes dropdown
+  options (default / false / true with explanations), and
+  the form label "Headscale Node ID". Code blocks in the
+  tutorial stay verbatim — those are shell commands the
+  operator types. After v0.15.6 every admin sidebar page
+  has a complete Russian translation.
+  * 46 new catalog keys (RU + EN, 92 entries)
+  * `internal/handlers/templates/admin/backup.html`
+  * `internal/handlers/templates/admin/exit_nodes.html`
+  * 12/12 packages green, TestCatalogsParity +
+    TestPlaceholderOrder + TestLoadTemplates all green
+* **Previous**: v0.15.5 — admin body butler-voice polish +
   /help alignment + /unbind_self
   ([release notes](RELEASE-NOTES-v0.15.5.md)). The
   "admin replies should read like a butler, not a log;
