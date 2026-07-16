@@ -952,6 +952,7 @@ func TestHTMLRepliesMarkParseMode(t *testing.T) {
 		{"version", func() { versionReply(env) }},
 		{"audit", func() { auditReply(adminEnv) }},
 		{"exit_nodes_health", func() { exitNodesHealthReply(adminEnv) }},
+		{"help", func() { helpReply(env) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1322,6 +1323,16 @@ func TestHelpReplyUserHidesAdmin(t *testing.T) {
 //     across all rows including `/exit_nodes_health` (17 chars)
 //   - not repeat the command name in the description column
 //     (the gutter already carries it)
+//
+// 2026-07-16: v0.16.3 — /help now uses tabular <pre> blocks per
+// section, with <code>...</code> for placeholders (was
+// markdown backticks). The 18-char gutter moved INSIDE the
+// <pre> block (20 chars now) so the column alignment survives
+// the proportional→monospace switch. Tests updated to match:
+//   - `<pre>...</pre>` wrapping each section's table
+//   - `<code>&lt;...&gt;</code>` for placeholders
+//   - 20-char gutter inside <pre> (was 18 in proportional font)
+//   - no leftover markdown backticks in the body
 func TestHelpReplyV0155Layout(t *testing.T) {
 	d := setupTestDB(t)
 	got := helpReply(adminEnv(d))
@@ -1329,31 +1340,66 @@ func TestHelpReplyV0155Layout(t *testing.T) {
 	if !strings.Contains(got, "/unbind_self") {
 		t.Errorf("admin /help should list /unbind_self, got: %q", got)
 	}
-	// Every description row in the help output must be padded so
-	// the description column lands on the same offset. We check
-	// this by locating `/exit_nodes_health` (the longest command
-	// in /help) and any short command like `/status`, then
-	// verifying the description text starts at the same column.
-	const gutter = 18
-	prefix := "  /exit_nodes_health" // 18 chars, padded
-	if !strings.Contains(got, prefix+"  ") {
-		t.Errorf("expected /exit_nodes_health padded to 18 chars, got: %q", got)
+	// 2026-07-16: v0.16.3 — tabular <pre> blocks. The
+	// 20-char gutter pads the command column inside <pre>
+	// (Telegram's <pre> uses a fixed-pitch font, so the
+	// column alignment survives). /exit_nodes_health is
+	// 18 chars (incl. leading `/`); padded to 20 = 2
+	// spaces of pad, then 2 spaces of separator before
+	// the description starts. Total = 22-char prefix.
+	const preGutter = 20
+	const exitNodesHealth = "/exit_nodes_health" // 18 chars
+	prefix := exitNodesHealth + strings.Repeat(" ", preGutter-len(exitNodesHealth)) + "  "
+	if !strings.Contains(got, prefix) {
+		t.Errorf("expected /exit_nodes_health padded to %d chars in <pre>, got: %q", preGutter, got)
 	}
 	// Short commands must also be padded to the same width.
-	// 2 (leading) + 7 ("/status") + 11 (pad) + 2 (sep) = 22 chars
-	// before the description starts. We check for a 13-space
-	// run between "/status" and the description.
-	if !strings.Contains(got, "/status             ") {
-		t.Errorf("expected /status padded to 18 chars, got: %q", got)
+	// /status is 7 chars; padded to 20 = 13 spaces of pad.
+	shortCmd := "/status" // 7 chars
+	shortPad := shortCmd + strings.Repeat(" ", preGutter-len(shortCmd)) + "  "
+	if !strings.Contains(got, shortPad) {
+		t.Errorf("expected /status padded to %d chars in <pre>, got: %q", preGutter, got)
 	}
-	// No description column should still repeat the command
-	// name (the old format was "`/status` — ..." with the
-	// backticked name in the description). Drop the leading
-	// gutter + command and look for the backticked form.
-	for _, dup := range []string{"`/status` — ", "`/nodes` — ", "`/rules` — "} {
+	// 2026-07-16: v0.16.3 — no leftover markdown backticks.
+	// The catalog was converted to <code>...</code> by the
+	// convert_help_backticks.py script; the body must not
+	// contain a literal backtick inside the table area.
+	// We check a few of the most common commands to make
+	// sure the conversion caught them.
+	for _, cmd := range []string{"/status", "/nodes", "/rules", "/ack", "/bind"} {
+		// The backticked form was "`/status` — ..." etc.
+		// The new form has no backticks around the command
+		// (the gutter carries the command; the description
+		// has no command name in it).
+		dup := "`" + cmd + "`"
 		if strings.Contains(got, dup) {
-			t.Errorf("description still repeats command name %q, got: %q", dup, got)
+			t.Errorf("description still has backticks around %q, got: %q", cmd, got)
 		}
+	}
+	// 2026-07-16: v0.16.3 — the new format has 3 <pre>
+	// blocks (auth + user-scope + admin). Pin that
+	// structural feature.
+	if gotPre := strings.Count(got, "<pre>"); gotPre != 3 {
+		t.Errorf("expected 3 <pre> blocks (auth+user+admin), got %d", gotPre)
+	}
+	// And 3 <b> section headers (one per section). Plus
+	// the title <b> at the top = 4 total.
+	if gotB := strings.Count(got, "<b>"); gotB < 4 {
+		t.Errorf("expected at least 4 <b> tags (title + 3 section headers), got %d", gotB)
+	}
+	// And <code> tags for the placeholders. The catalog has
+	// at least 10 placeholders (e.g. <code>&lt;key&gt;</code>,
+	// <code>&lt;target&gt;</code>, <code>/help ack</code>, etc.).
+	if gotCode := strings.Count(got, "<code>"); gotCode < 10 {
+		t.Errorf("expected at least 10 <code> tags in the body, got %d", gotCode)
+	}
+	// 2026-07-16: v0.16.3 — markHTMLReply() is called so
+	// the pending reply carries ParseMode=HTML. Without it
+	// the <b>/<pre>/<code> would show up as raw text in
+	// the chat (the v0.16.1 bug that v0.16.2 fixed for the
+	// other 8 replies; /help is the 9th).
+	if pendingReplyForCurrentMessage == nil || pendingReplyForCurrentMessage.ParseMode != "HTML" {
+		t.Errorf("expected pending ParseMode=HTML, got %+v", pendingReplyForCurrentMessage)
 	}
 }
 

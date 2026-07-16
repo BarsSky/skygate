@@ -725,64 +725,122 @@ func statusReply(env BotEnv) string {
 // for clarity. `/unbind_self` was missing from /help; added under
 // the Auth section since it's a self-service command any identified
 // user can run.
+//
+// 2026-07-16: v0.16.3 — "more HTML" pass for /help. The reply
+// now renders each section as a tabular <pre> block (command +
+// description in monospace, columns aligned), preceded by a <b>
+// section header. The catalog backticks (`<id>`, `<target>`,
+// etc.) are converted to <code>...</code> (HTML-escaped < >)
+// so they render as monospace too. The 18-char gutter moves
+// INSIDE the <pre> block so alignment survives the
+// proportional→monospace switch. The header before the table
+// is the <b>section name</b> (was a plain "🔐 Auth — ..." line
+// before; same shape, just bold + the table is below it).
+//
+// Rationale: the v0.16.1/v0.16.2 "more HTML" pass left /help
+// in plain text, so the catalog's markdown backticks showed up
+// as raw `\`<id>\`` characters. The v0.16.2 hotfix for
+// /my_rules et al. didn't touch /help because the helper
+// would have rejected the literal `<` from the placeholders
+// in parse_mode=HTML. The fix is two-pronged:
+//   1) catalog: every backtick inside bot.help.* is now
+//      `<code>...</code>` (with &, <, > escaped inside),
+//   2) reply: tabular <pre> blocks per section so the
+//      command column lines up on every Telegram client
+//      (Telegram's <pre> uses a fixed-pitch font).
 func helpReply(env BotEnv) string {
+	// 2026-07-16: v0.16.3 — mark HTML so the <b>, <i>,
+	// <pre>, <code> in the body render instead of
+	// showing as raw source. The "more HTML" pass for
+	// the read commands did this; /help is the last
+	// big plain-text reply and benefits from the same
+	// treatment now that the catalog is HTML-safe.
+	markHTMLReply()
 	lang := env.Lang
 
-	// Gutter is padded to 18 chars: longest command today is
-	// `/exit_nodes_health` (17 chars), so 18 = 1-char right
-	// margin. Any future longer command will be left-aligned
-	// (no pad) so the column doesn't shift for the others.
-	const gutter = 18
-	row := func(cmd, desc string) string {
+	// Gutter for the command column inside <pre> blocks.
+	// 20 chars = max command "/exit_nodes_health" (17) +
+	// 3-char right margin. Any future longer command will
+	// just overflow into the description column; the gutter
+	// only matters for short commands (where the pad keeps
+	// descriptions left-aligned).
+	const gutter = 20
+	padCmd := func(cmd string) string {
 		if len(cmd) < gutter {
-			cmd = cmd + strings.Repeat(" ", gutter-len(cmd))
+			return cmd + strings.Repeat(" ", gutter-len(cmd))
 		}
-		return "  " + cmd + "  " + desc
+		return cmd
+	}
+	// table renders a <pre> block with header + rule line
+	// + data rows. Used for each of the three sections.
+	table := func(header string, rows ...string) string {
+		var lines []string
+		// No header row, no rule line — the section title
+		// above the <pre> already labels the columns
+		// (the eye learns "first column = command" from
+		// the first row). The rule line was nice but it
+		// doubled the visual noise for what is a quick
+		// command reference.
+		for _, r := range rows {
+			lines = append(lines, r)
+		}
+		return "<b>" + header + "</b>\n" + PreLinesRaw(lines...)
+	}
+	row := func(cmd, desc string) string {
+		return padCmd(cmd) + "  " + desc
 	}
 
 	// Section: Auth (everyone, even unidentified).
-	auth := "🔐 " + i18n.T(lang, "bot.help.section_auth") + "\n" +
-		row("/login", i18n.T(lang, "bot.help.auth_login")) + "\n" +
-		row("/start", i18n.T(lang, "bot.help.auth_start")) + "\n" +
-		row("/lang", i18n.T(lang, "bot.help.lang")) + "\n" +
-		row("/help", i18n.T(lang, "bot.help.common_help")) + "\n" +
-		row("/version", i18n.T(lang, "bot.help.common_version")) + "\n" +
-		row("/unbind_self", i18n.T(lang, "bot.help.auth_unbind_self"))
+	authRows := []string{
+		row("/login", i18n.T(lang, "bot.help.auth_login")),
+		row("/start", i18n.T(lang, "bot.help.auth_start")),
+		row("/lang", i18n.T(lang, "bot.help.lang")),
+		row("/help", i18n.T(lang, "bot.help.common_help")),
+		row("/version", i18n.T(lang, "bot.help.common_version")),
+		row("/unbind_self", i18n.T(lang, "bot.help.auth_unbind_self")),
+	}
+	auth := table("🔐 "+i18n.T(lang, "bot.help.section_auth"), authRows...)
 
 	// Section: User-scope (every identified user).
-	common := "✦ " + i18n.T(lang, "bot.help.section_common") + "\n" +
-		row("/my_status", i18n.T(lang, "bot.help.user_top_my_status")) + "\n" +
-		row("/my_nodes", i18n.T(lang, "bot.help.user_rest_my_nodes")) + "\n" +
-		row("/my_rules", i18n.T(lang, "bot.help.user_top_my_rules")) + "\n" +
-		row("/my_quota", i18n.T(lang, "bot.help.user_rest_my_quota")) + "\n" +
-		row("/myexitnodes", i18n.T(lang, "bot.help.user_rest_myexitnodes")) + "\n" +
-		row("/add_device", i18n.T(lang, "bot.help.user_rest_add_device")) + "\n" +
-		row("/add_rule", i18n.T(lang, "bot.help.user_top_add_rule")) + "\n" +
-		row("/delrule", i18n.T(lang, "bot.help.user_rest_delrule")) + "\n" +
-		row("/clearrules", i18n.T(lang, "bot.help.user_rest_clearrules")) + "\n" +
-		row("/setdefaultdevice", i18n.T(lang, "bot.help.user_rest_setdefaultdevice")) + "\n" +
-		row("/defaultdevice", i18n.T(lang, "bot.help.user_rest_defaultdevice")) + "\n" +
-		row("/setexitnode", i18n.T(lang, "bot.help.user_rest_setexitnode")) + "\n" +
-		row("/defaultexitnode", i18n.T(lang, "bot.help.user_rest_defaultexitnode"))
+	commonRows := []string{
+		row("/my_status", i18n.T(lang, "bot.help.user_top_my_status")),
+		row("/my_nodes", i18n.T(lang, "bot.help.user_rest_my_nodes")),
+		row("/my_rules", i18n.T(lang, "bot.help.user_top_my_rules")),
+		row("/my_quota", i18n.T(lang, "bot.help.user_rest_my_quota")),
+		row("/myexitnodes", i18n.T(lang, "bot.help.user_rest_myexitnodes")),
+		row("/add_device", i18n.T(lang, "bot.help.user_rest_add_device")),
+		row("/add_rule", i18n.T(lang, "bot.help.user_top_add_rule")),
+		row("/delrule", i18n.T(lang, "bot.help.user_rest_delrule")),
+		row("/clearrules", i18n.T(lang, "bot.help.user_rest_clearrules")),
+		row("/setdefaultdevice", i18n.T(lang, "bot.help.user_rest_setdefaultdevice")),
+		row("/defaultdevice", i18n.T(lang, "bot.help.user_rest_defaultdevice")),
+		row("/setexitnode", i18n.T(lang, "bot.help.user_rest_setexitnode")),
+		row("/defaultexitnode", i18n.T(lang, "bot.help.user_rest_defaultexitnode")),
+	}
+	common := table("✦ "+i18n.T(lang, "bot.help.section_common"), commonRows...)
 
 	// Section: Admin (skyadmin only).
-	admin := "🛠 " + i18n.T(lang, "bot.help.section_admin") + "\n" +
-		row("/status", i18n.T(lang, "bot.help.admin_top_status")) + "\n" +
-		row("/nodes", i18n.T(lang, "bot.help.admin_top_nodes")) + "\n" +
-		row("/exit_nodes", i18n.T(lang, "bot.help.admin_top_exit_nodes")) + "\n" +
-		row("/exit_nodes_health", i18n.T(lang, "bot.help.admin_top_exit_nodes_health")) + "\n" +
-		row("/sync_nodes", i18n.T(lang, "bot.help.admin_top_sync_nodes")) + "\n" +
-		row("/rules", i18n.T(lang, "bot.help.admin_rest_rules")) + "\n" +
-		row("/quota", i18n.T(lang, "bot.help.admin_rest_quota")) + "\n" +
-		row("/audit", i18n.T(lang, "bot.help.admin_rest_audit")) + "\n" +
-		row("/ack", i18n.T(lang, "bot.help.admin_rest_ack")) + "\n" +
-		row("/restart", i18n.T(lang, "bot.help.admin_rest_restart")) + "\n" +
-		row("/bind", i18n.T(lang, "bot.help.admin_rest_bind")) + "\n" +
-		row("/unbind", i18n.T(lang, "bot.help.admin_rest_unbind"))
+	adminRows := []string{
+		row("/status", i18n.T(lang, "bot.help.admin_top_status")),
+		row("/nodes", i18n.T(lang, "bot.help.admin_top_nodes")),
+		row("/exit_nodes", i18n.T(lang, "bot.help.admin_top_exit_nodes")),
+		row("/exit_nodes_health", i18n.T(lang, "bot.help.admin_top_exit_nodes_health")),
+		row("/sync_nodes", i18n.T(lang, "bot.help.admin_top_sync_nodes")),
+		row("/rules", i18n.T(lang, "bot.help.admin_rest_rules")),
+		row("/quota", i18n.T(lang, "bot.help.admin_rest_quota")),
+		row("/audit", i18n.T(lang, "bot.help.admin_rest_audit")),
+		row("/ack", i18n.T(lang, "bot.help.admin_rest_ack")),
+		row("/restart", i18n.T(lang, "bot.help.admin_rest_restart")),
+		row("/bind", i18n.T(lang, "bot.help.admin_rest_bind")),
+		row("/unbind", i18n.T(lang, "bot.help.admin_rest_unbind")),
+	}
+	admin := table("🛠 "+i18n.T(lang, "bot.help.section_admin"), adminRows...)
 
-	// Opening header.
-	header := "🪶 " + i18n.T(lang, "bot.help.header") + "\n" +
-		i18n.T(lang, "bot.help.subtitle") + "\n\n"
+	// Opening header (rendered above the gate envelope by
+	// ComposeDefault). The two header lines are the
+	// title (one line) + the subtitle hint (one line).
+	header := "<b>" + i18n.T(lang, "bot.help.header") + "</b>\n" +
+		"<i>" + i18n.T(lang, "bot.help.subtitle") + "</i>\n\n"
 
 	// Three layouts:
 	//   - unidentified + strict mode: only auth (locked)
