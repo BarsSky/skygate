@@ -200,7 +200,16 @@ func auditReply(env BotEnv) string {
 		if len(det) > 80 {
 			det = det[:77] + "..."
 		}
-		fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.audit.row", e.id, when, e.action, e.username, det))
+		// 2026-07-16: v0.15.5 — butler-voice format. The
+		// catalog key now expects 4 args (id, when,
+		// action, by); the detail is appended as a
+		// second line so long detail strings don't break
+		// the row template.
+		who := e.username
+		if who == "" || who == "?" {
+			who = "—"
+		}
+		fmt.Fprintf(&sb, "%s\n  %s\n\n", i18n.Tf(lang, "bot.audit.row", e.id, when, e.action, who), det)
 	}
 	return trimForTelegram(sb.String())
 }
