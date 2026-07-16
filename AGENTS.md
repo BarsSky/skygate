@@ -7,7 +7,24 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.1 — "more HTML" pass
+* **Current**: v0.16.2 — "more HTML" pass bug fix
+  ([release notes](RELEASE-NOTES-v0.16.2.md)). Hotfix
+  for v0.16.1 — the v0.16.1 release shipped HTML
+  formatting in 8 bot replies but forgot to set
+  `parse_mode=HTML` on the sendMessage payload, so the
+  `<b>/<i>/<pre>/<code>` tags showed up as raw source
+  text. Adds `markHTMLReply()` helper in
+  `internal/telegram/commands.go` and calls it at the
+  top of: `myStatusReply`, `myNodesReply`,
+  `myRulesReply`, `myQuotaReply`, `myExitNodesReply`,
+  `versionReply`, `auditReply`,
+  `exitNodesHealthReply`. Also fixes a related bug
+  inside `myExitNodesReply` where the inline-keyboard
+  assignment was wiping the `ParseMode` set by
+  `markHTMLReply`. 2 new tests (9 sub-cases total).
+  12/12 packages green, smoke 118/118, live on VM at
+  build `39d6af6`.
+* **Previous**: v0.16.1 — "more HTML" pass
   ([release notes](RELEASE-NOTES-v0.16.1.md)). The
   "bot reply formatting should look like a table, not
   a wall of text" release. `internal/telegram/format.go`
