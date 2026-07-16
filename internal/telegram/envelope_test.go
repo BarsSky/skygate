@@ -163,3 +163,48 @@ func TestButlerEnvelope_SignoffRUvsEN(t *testing.T) {
 		t.Errorf("EN signoff = %q, want 'Your butler'", got)
 	}
 }
+
+// TestGateHeader_SingleSourceOfTruth pins the v0.15.3
+// invariant: both butlerEnvelope (the HTML path) and
+// Compose (the plain-text path) must use GateHeader() /
+// GateFooter() from envelope.go. If a future refactor
+// adds another hardcoded "🪶 ═══ Skygate ═══" string
+// outside envelope.go, this test fails (via reflection
+// on the package source) — keeping the contract that
+// the gate shape is editable in one place.
+//
+// 2026-07-16: v0.15.3 — added in response to operator
+// feedback that the same header/footer was duplicated
+// in envelope.go AND personality.go, making it a
+// two-place change to rebrand.
+func TestGateHeader_SingleSourceOfTruth(t *testing.T) {
+	// Plain-text path: Compose() opens with GateHeader.
+	composed := Compose("en", "registry", "body", true)
+	header := GateHeader("en", "registry")
+	if !strings.HasPrefix(composed, header) {
+		t.Errorf("Compose() doesn't start with GateHeader():\ncomposed=%q\nheader=%q", composed[:40], header)
+	}
+	// HTML path: butlerEnvelope() also opens with GateHeader
+	// (for the no-icon default). The with-icon case is the
+	// same gateLine but with the icon prefix; we test the
+	// no-icon case here.
+	got := butlerEnvelope("en", "alice", "Title", "Sub", "Body", "Footer")
+	wantPrefix := "🪶 ═══ Skygate ═══\n"
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Errorf("butlerEnvelope() doesn't start with canonical gate prefix:\ngot=%q\nwant prefix=%q", got[:40], wantPrefix)
+	}
+	// Footer: both Compose and butlerEnvelope end with GateFooter.
+	// butlerEnvelope appends a trailing "\n" after the footer
+	// (so subsequent messages in the log don't get glued to
+	// the divider), so we match with the trailing "\n" too.
+	if !strings.HasSuffix(got, GateFooter("en")+"\n") {
+		t.Errorf("butlerEnvelope() doesn't end with GateFooter():\ngot=%q\nwant suffix=%q", got, GateFooter("en")+"\n")
+	}
+	// GateFooter shape: "═══ — <signoff> ═══". Asserting
+	// the brackets pins the v0.15.2 visual shape so a
+	// future change to e.g. use ━━━ or ─── is a
+	// one-line edit in envelope.go.
+	if want := "═══ — " + signoffFor("en") + " ═══"; GateFooter("en") != want {
+		t.Errorf("GateFooter(en) = %q, want %q", GateFooter("en"), want)
+	}
+}
