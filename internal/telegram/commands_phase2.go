@@ -165,6 +165,10 @@ func rulesReply(env BotEnv) string {
 // creation/deletion, password reset, telegram save/disable, ACL
 // rollback, etc). Created_at is stored as int64 unix seconds.
 func auditReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>ID DATE
+	// ACTION BY</b> header row + the <i>──────</i>
+	// separator in PreLinesRaw() render.
+	markHTMLReply()
 	lang := env.Lang
 	rows, err := env.DB.Query(`
 		SELECT id, COALESCE(username, '?') AS username, action, detail, created_at

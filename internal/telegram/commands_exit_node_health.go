@@ -34,6 +34,10 @@ import (
 // formatting the existing /exit_nodes command uses
 // (unixToShort + a "Xm ago" relative).
 func exitNodesHealthReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>STATE
+	// NODE LAST SEEN LAST CHECK</b> header row + the
+	// <i>──────</i> separators in PreLinesRaw() render.
+	markHTMLReply()
 	lang := env.Lang
 	d := env.DB
 	rows, err := db.ListExitNodeHealth(d)

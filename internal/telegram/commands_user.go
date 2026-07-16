@@ -46,6 +46,12 @@ import (
 // proportional font would otherwise mash the labels and
 // values together).
 func myStatusReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>label:</b>
+	// and <code>value</code> in Field()/Section() render
+	// instead of showing as literal text. Without this,
+	// Telegram sends the body as plain text and the user
+	// sees the raw source.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_status.not_bound")
@@ -93,6 +99,9 @@ func myStatusReply(env BotEnv) string {
 // (username = env.Username). A user with no devices gets a
 // helpful "no devices yet" hint pointing at /add_device.
 func myNodesReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>NODE</b>
+	// header row in PreLinesRaw() renders.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_nodes.not_bound")
@@ -270,6 +279,11 @@ func listAllNodesForBackfill(hs *headscale.Client) []headscale.NodeView {
 // misread when a user has 20+ rules, and the columns couldn't
 // align because Telegram's regular text isn't monospace.
 func myRulesReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>ID/EXIT/...</b>
+	// header row in PreLinesRaw() renders. Also required for
+	// the <b>username</b> in the header line (bot.my_rules.header
+	// has "<b>%s</b>").
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_rules.not_bound")
@@ -363,6 +377,11 @@ func myRulesReply(env BotEnv) string {
 // different data points together (count + cap + bar + pct),
 // which the user had to mentally parse.
 func myQuotaReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>rules:</b>,
+	// <b>fill:</b>, <b>cap:</b> Field() labels and the
+	// <code>value</code> render instead of showing as raw
+	// source.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_quota.not_bound")
@@ -426,6 +445,12 @@ func myQuotaReply(env BotEnv) string {
 // and the "online" / "offline" status used to be a free-floating
 // word the eye had to track to the right column.
 func myExitNodesReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML. The function also
+	// sets a pending InlineKeyboard for the per-row
+	// "→ hostname" buttons; markHTMLReply() preserves
+	// the existing keyboard and just sets ParseMode=HTML
+	// on it, so we don't lose the tap-to-set UX.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.myexitnodes.not_bound")
@@ -560,7 +585,15 @@ func myExitNodesReply(env BotEnv) string {
 		Field(i18n.T(lang, "bot.myexitnodes.label_count"), strconv.Itoa(len(enabled))) + "\n" +
 		PreLinesRaw(lines...) + "\n" +
 		i18n.T(lang, "bot.myexitnodes.cta_tap")
-	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: btnRows}
+	// 2026-07-16: v0.16.2 — preserve the ParseMode=HTML
+	// that markHTMLReply() set at the top of this function.
+	// The previous `&PendingReply{InlineKeyboard: btnRows}`
+	// created a new struct without copying ParseMode, so
+	// the <pre>/<b> in the body rendered as raw source.
+	// Setting ParseMode=HTML explicitly on the new struct
+	// is the cleanest fix (a "merge" helper would be more
+	// code for a single call site).
+	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: btnRows, ParseMode: "HTML"}
 	return trimForTelegram(reply)
 }
 
