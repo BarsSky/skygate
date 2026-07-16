@@ -1,0 +1,86 @@
+{{define "body-admin-acls_import"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-file-import"></i> {{t "acls.import_title"}}</h2>
+    <div class="sub">{{t "acls.import_subtitle"}}.</div>
+  </div>
+</div>
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-download"></i> {{t "acls.export_title"}}</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "acls.export_help"}}.</p>
+  <a href="/admin/acls/export" class="btn btn-primary">
+    <i class="fa-solid fa-download"></i> {{t "acls.export_btn"}}
+  </a>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-upload"></i> {{t "acls.import_upload_title"}}</h3>
+  <form action="/admin/acls/import" method="POST" enctype="multipart/form-data">
+    <div class="form-group">
+      <label>{{t "acls.import_file_label"}}</label>
+      <input type="file" name="file" accept=".json,application/json" class="form-control">
+      <div class="form-hint">{{t "acls.import_file_hint"}}.</div>
+    </div>
+    <div class="form-group">
+      <label>{{t "acls.import_paste_label"}}</label>
+      <textarea name="policy" rows="6" class="form-control mono"
+                placeholder='{ "acls": [...], "tagOwners": {...}, ... }'></textarea>
+      <div class="form-hint">{{t "acls.import_paste_hint"}}.</div>
+    </div>
+    <button type="submit" class="btn btn-primary">
+      <i class="fa-solid fa-magnifying-glass"></i> {{t "acls.import_dry_run_btn"}}
+    </button>
+  </form>
+</div>
+
+{{if .ImportedPolicy}}
+<div class="card" style="margin-top:1.5rem">
+  <h3><i class="fa-solid fa-magnifying-glass-chart"></i> {{t "acls.import_dry_run_title"}}</h3>
+
+  {{if .SameAsCurrent}}
+  <div class="alert alert-info" style="margin-top:0">
+    <i class="fa-solid fa-circle-info"></i> {{t "acls.import_dry_run_same"}}
+  </div>
+  {{else}}
+  <div class="alert alert-warning" style="margin-top:0">
+    <i class="fa-solid fa-triangle-exclamation"></i> {{t "acls.import_dry_run_diff"}}
+  </div>
+  {{end}}
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem">
+    <div>
+      <h4 style="margin:0 0 8px 0;font-size:13px">
+        <i class="fa-solid fa-file-code"></i> {{t "acls.import_dry_run_current"}}
+        <span class="sub">SHA-256: <code>{{.CurrentHash}}</code></span>
+      </h4>
+      <pre style="max-height:400px;overflow:auto;font-size:11px;background:var(--bg-elev);padding:12px;border-radius:var(--radius)">{{.CurrentPolicy}}</pre>
+    </div>
+    <div>
+      <h4 style="margin:0 0 8px 0;font-size:13px">
+        <i class="fa-solid fa-file-import"></i> {{t "acls.import_dry_run_imported"}}
+        <span class="sub">SHA-256: <code>{{.ImportedHash}}</code></span>
+      </h4>
+      <pre style="max-height:400px;overflow:auto;font-size:11px;background:var(--bg-elev);padding:12px;border-radius:var(--radius)">{{.ImportedPolicy}}</pre>
+    </div>
+  </div>
+
+  <form action="/admin/acls/import/apply" method="POST" style="margin-top:1.5rem"
+        onsubmit="return confirm('{{t "acls.import_apply_confirm" | safeJS}}');">
+    <input type="hidden" name="policy" value="{{.ImportedPolicy}}">
+    <button type="submit" class="btn btn-warning">
+      <i class="fa-solid fa-floppy-disk"></i> {{t "acls.import_apply_btn"}}
+    </button>
+    <span class="sub" style="margin-left:8px">{{t "acls.import_apply_hint"}}</span>
+  </form>
+</div>
+{{end}}
+
+{{end}}

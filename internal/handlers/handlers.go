@@ -280,9 +280,20 @@ func (a *App) currentUser(r *http.Request) *auth.Claims {
 			// token_hash is a bcrypt hash (see auth.GenerateAPIToken),
 			// so we have to CompareHashAndPassword every candidate
 			// — there's no way to do an indexed lookup.
+			// 2026-07-16: v0.15.5 — filter out expired tokens
+			// (TTL = 0 means "never expires" — the pre-v0.15.5
+			// behaviour, preserved for legacy rows).
 			candidates, err := db.ListAPITokenHashesForLookup(a.DB)
 			if err == nil {
+				now := time.Now().Unix()
 				for _, c := range candidates {
+					if c.ExpiresAt > 0 && c.ExpiresAt <= now {
+						// Token has expired. Skip — keep walking
+						// the candidates in case a sibling row
+						// has a matching hash (extremely rare —
+						// token_hash is unique, but be defensive).
+						continue
+					}
 					if auth.CheckAPIToken(c.TokenHash, tok) {
 						_ = db.TouchAPITokenLastUsed(a.DB, c.TokenHash)
 						return &auth.Claims{UserID: c.UserID, Username: c.Username, IsAdmin: c.IsAdmin}

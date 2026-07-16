@@ -110,6 +110,21 @@ type RealNotifier struct {
 	// and return a clear "telegram not wired for writes" hint so the
 	// existing read-only deploys keep working.
 	HS *headscale.Client
+	// 2026-07-16: v0.12.1 — per-user headscale client lookup.
+	// Set by main.go from app.HSForUser (a closure over App so
+	// the cache, fallback to global, and AES-GCM decryption all
+	// live in the handlers package). nil means "no per-user
+	// routing" — the bot falls back to HS for every command,
+	// preserving the v0.12.0 single-plane behaviour.
+	hsForUser func(userID int64) *headscale.Client
+	// 2026-07-16: v0.13.0 — per-user plane-URL lookup. Returns
+	// the headscale_url the user is on ("" = global default
+	// plane). Used by ApplyACLPipelineForPlane in the bot path
+	// to scope the per-plane ACL generation to the right
+	// identities. Set by main.go from app.PlaneURLForUser, a
+	// closure over the same secret-key + portal_users cache.
+	// nil falls through to the global default.
+	planeURLForUser func(userID int64) string
 	// 2026-07-13: Этап 11 part 2b — per-device + total rule caps,
 	// set by main.go from config.Load(). Surfaced in BotEnv so
 	// /add_rule can enforce them (mirrors the web form's
@@ -221,6 +236,39 @@ func (n *RealNotifier) SetHS(hs *headscale.Client) {
 	n.HS = hs
 }
 
+// SetHSForUser installs the per-user headscale-client lookup
+// that env() will copy into BotEnv.HSForPortalUser. The
+// closure is called per inbound message with the chat's
+// portal_user_id (from telegram_bindings) and returns the
+// *headscale.Client to use for that user — typically
+// `app.HSForUser` which reads portal_users.headscale_url
+// + headscale_api_key_enc and falls through to the global
+// default when no override is set.
+//
+// 2026-07-16: v0.12.1. nil disables per-user routing — the
+// bot then uses env.HS (the global default) for every
+// command, which preserves the v0.12.0 single-plane
+// behaviour. main.go calls this after App is constructed.
+func (n *RealNotifier) SetHSForUser(fn func(userID int64) *headscale.Client) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.hsForUser = fn
+}
+
+// SetPlaneURLForUser installs the per-user headscale-url lookup.
+// Returns "" when the user is on the global default plane.
+// Used by the bot to scope acl.ApplyACLPipelineForPlane to
+// the right plane's identities. nil falls through to "" —
+// the global default, which preserves v0.12.0 single-plane
+// behaviour.
+//
+// 2026-07-16: v0.13.0.
+func (n *RealNotifier) SetPlaneURLForUser(fn func(userID int64) string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.planeURLForUser = fn
+}
+
 // SetRuleCaps stores the per-device and total rule caps used by
 // /add_rule. 2026-07-13: Этап 11 part 2b. Called once at
 // startup from cmd/skygate/main.go after config.Load(). Zero
@@ -328,6 +376,13 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
+	// 2026-07-16: v0.12.1 — snapshot the per-user HS lookup
+	// under the lock so the closure isn't replaced mid-call.
+	// nil is preserved (handler falls back to env.HS).
+	hsForUser := n.hsForUser
+	// 2026-07-16: v0.13.0 — same pattern for the plane-URL
+	// lookup. nil falls through to "" (global default).
+	planeURLForUser := n.planeURLForUser
 	env := BotEnv{
 		DB:                 n.db,
 		UserMaxRules:       max,
@@ -335,6 +390,8 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 		Version:            n.version,
 		ChatID:             chatID,
 		HS:                 n.HS,
+		HSForPortalUser:    hsForUser,
+		PortalPlaneURL:     planeURLForUser,
 		MaxRulesPerDevice:  n.maxRulesPerDevice,
 		MaxTotalRules:      n.maxTotalRules,
 		Notifier:           n,

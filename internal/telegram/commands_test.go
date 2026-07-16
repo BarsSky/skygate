@@ -35,7 +35,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 	for _, q := range []string{
 		`CREATE TABLE device_rules (id INTEGER PRIMARY KEY, user_id INTEGER, device_id INTEGER, exit_node_id TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'domain', target_value TEXT, action TEXT DEFAULT 'accept', device_ip TEXT DEFAULT '', parent_domain TEXT DEFAULT '', enabled INTEGER DEFAULT 1)`,
-		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '', headscale_url TEXT NOT NULL DEFAULT '', headscale_api_key_enc TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, config TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', applied_success INTEGER, error_msg TEXT DEFAULT '')`,
 		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0, hostname TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
@@ -1452,6 +1452,26 @@ func userEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
 	return BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: 2, Username: "alice", IsAdmin: false, HS: hs}
 }
 
+// userEnvWithHSForUser builds a BotEnv whose HSForPortalUser
+// returns a per-portal-user *headscale.Client. Used to
+// verify the v0.12.1 per-user bot routing — i.e. /add_device
+// from user 2 hits the plane the router returns for id=2,
+// not env.HS.
+//
+// 2026-07-16: v0.12.1.
+func userEnvWithHSForUser(d *sql.DB, hsByID map[int64]*headscale.Client) BotEnv {
+	return BotEnv{
+		DB:              d,
+		ChatID:          555,
+		Lang:            i18n.LangEN,
+		PortalUserID:    2,
+		Username:        "alice",
+		IsAdmin:         false,
+		HS:              hsByID[0], // fallback for unbound reads
+		HSForPortalUser: func(uid int64) *headscale.Client { return hsByID[uid] },
+	}
+}
+
 // adminEnvWithHS is the admin-scope variant of userEnvWithHS. Used
 // to test "/add_device <username>" acting on another user.
 func adminEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
@@ -1528,6 +1548,73 @@ func TestAddDeviceReplySuccess(t *testing.T) {
 	}
 	if !strings.Contains(detail, "via bot") {
 		t.Errorf("expected 'via bot' in audit detail, got %q", detail)
+	}
+}
+
+// TestAddDeviceReplyV0121_PerUserRouting pins v0.12.1:
+// when HSForPortalUser is wired, /add_device for the bound
+// user routes the CreatePreauthKey call to the plane the
+// router returns for that user's portal_user_id, not the
+// global env.HS.
+//
+// 2026-07-16: v0.12.1. Two fake headscale servers — one
+// returns hskey-fake-plane-a, the other hskey-fake-plane-b —
+// and the BotEnv's HSForPortalUser points to one per user.
+// The preauth_keys row that lands must reflect the user's
+// own plane.
+func TestAddDeviceReplyV0121_PerUserRouting(t *testing.T) {
+	d := setupTestDB(t)
+	// Link alice (id=2) to plane A. Add bob (id=3) and link
+	// him to plane B. setupTestDB only seeds skyadmin and
+	// alice, so we add bob + his headscale_user_id here.
+	if _, err := d.Exec(`INSERT INTO portal_users(id, username, is_admin, headscale_user_id) VALUES (3, 'bob', 0, 8)`); err != nil {
+		t.Fatalf("insert bob: %v", err)
+	}
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 7 WHERE id = 2`); err != nil {
+		t.Fatalf("update alice: %v", err)
+	}
+	_, planeA := fakeHeadscale(t)
+	_, planeB := fakeHeadscale(t)
+	// Each plane answers /api/v1/preauthkey with its own
+	// key prefix. fakeHeadscale already returns
+	// "hskey-fake-<uid>" where <uid> is the headscale_user_id
+	// in the request body, so planeA→"hskey-fake-7" and
+	// planeB→"hskey-fake-8" naturally. We rebind the global
+	// "fallback" to planeA so an unbound /add_device would
+	// still get plane A's response — the regression test
+	// case is "the bound user's plane is actually used".
+	env := userEnvWithHSForUser(d, map[int64]*headscale.Client{
+		0: planeA,
+		2: planeA, // alice → plane A
+		3: planeB, // bob   → plane B
+	})
+	// Sanity: userHS() must return planeA for alice (uid=2),
+	// not planeB or the global.
+	if env.userHS() != planeA {
+		t.Fatalf("userHS() should be planeA for uid=2, got: %p", env.userHS())
+	}
+	// Now /add_device for alice. Must hit planeA, not planeB.
+	got := HandleCommand(context.Background(), env, "/add_device")
+	if !strings.Contains(got, "hskey-fake-7") {
+		t.Errorf("alice's /add_device should hit planeA (key hskey-fake-7), got: %q", got)
+	}
+	// Now switch to bob (uid=3) and re-issue. Must hit planeB.
+	env.PortalUserID = 3
+	env.Username = "bob"
+	got = HandleCommand(context.Background(), env, "/add_device")
+	if !strings.Contains(got, "hskey-fake-8") {
+		t.Errorf("bob's /add_device should hit planeB (key hskey-fake-8), got: %q", got)
+	}
+	// preauth_keys rows: alice got 1 (plane A), bob got 1
+	// (plane B), each on the right user_id.
+	var aliceN, bobN int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id = 2`).Scan(&aliceN)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id = 3`).Scan(&bobN)
+	if aliceN != 1 {
+		t.Errorf("expected 1 preauth_keys row for alice, got %d", aliceN)
+	}
+	if bobN != 1 {
+		t.Errorf("expected 1 preauth_keys row for bob, got %d", bobN)
 	}
 }
 

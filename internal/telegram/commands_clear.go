@@ -313,11 +313,14 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 		deleted++
 	}
 
-	// ACL pipeline. Read-only deploys (HS == nil) skip the
-	// pipeline — the rules are already gone, admin can
+	// ACL pipeline. Read-only deploys (userHS() == nil) skip
+	// the pipeline — the rules are already gone, admin can
 	// /admin/exit-rules/sync to push the updated policy
-	// manually. Same guard as /delrule.
-	if env.HS == nil {
+	// manually. Same guard as /delrule. 2026-07-16: v0.12.1 —
+	// uses env.userHS() so the policy is pushed on the user's
+	// per-plane control plane (or the global one if they have
+	// no override).
+	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: cleared all %d rule(s) for %s (cascade: %d) — ACL sync skipped (read-only mode)",
 			deleted, target.Username, totalCascade)
 		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rules_cleared", auditDetail)
@@ -328,7 +331,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	// convention (visible in /admin/audit).
 	detailForLog := fmt.Sprintf("user %s cleared all %d rule(s) (cascade: %d) for %s via bot",
 		env.Username, deleted, totalCascade, target.Username)
-	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, env.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userPlaneURL(), nil, env.Username, detailForLog)
 
 	// Audit the actual action (separate from the request row
 	// written in the mint phase).

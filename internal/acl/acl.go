@@ -51,20 +51,41 @@ type NoopAlerter struct{}
 // SendAlert is the no-op implementation of Alerter.
 func (NoopAlerter) SendAlert(string) int64 { return 0 }
 
-// GenerateACL builds the per-user headscale 0.29 HuJSON policy.
-// Pure function — only uses the database. Moved out of the
-// (a *App) method to make it accessible from the telegram bot
-// (which has no *App reference) without a cycle through
-// internal/handlers.
+// GenerateACL builds the per-user headscale 0.29 HuJSON policy
+// for the global default plane (every portal user with no
+// headscale_url override). Equivalent to
+// GenerateACLForPlane(d, ""); kept as the v0.12.0 entry
+// point for backward compat — the web form and the bot
+// pipeline still call this when there's no per-plane
+// routing wired (single-plane deploys).
 //
 // 2026-07-11: Этап 9 part 2 — SQL moved to db.GetACLEntries.
-//
-// 2026-07-13: signature widened to take *sql.DB instead of
-// (*App). The body is byte-for-byte identical to the previous
-// App method. baseDomain ("tsnet.skynas.ru") is still hard-coded
-// because it is the only deployment; refactor to read it from
-// config.Config is on the multi-deploy roadmap.
+// 2026-07-13: signature widened to *sql.DB.
+// 2026-07-16: v0.13.0 — wrapper around GenerateACLForPlane
+// so the global-default path uses the same code that
+// per-plane callers use. baseDomain hard-coded because the
+// per-plane multi-deploy DNS refactor is a v0.16.0 follow-up.
 func GenerateACL(d *sql.DB) (string, error) {
+	return GenerateACLForPlane(d, "")
+}
+
+// GenerateACLForPlane builds the per-user headscale 0.29
+// HuJSON policy for ONE control plane. planeURL == "" means
+// "the global default plane" (every portal user with
+// headscale_url = ''). The policy lists only the identities
+// that live on the given plane — headscale rejects unknown
+// identities in tagOwners, so we can't mix plane A and
+// plane B identities in one policy file.
+//
+// All other policy shape (per-user rules, tag:public /
+// tag:exit-node / autogroup:internet fallback, SSH rules,
+// tagOwners) is identical across planes — the only thing
+// that varies per plane is the set of identities.
+//
+// 2026-07-16: v0.13.0 — refactored out of the old
+// single-plane GenerateACL so the per-plane pipeline can
+// build and push one policy per headscale instance.
+func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	aclRows, err := db.GetACLEntries(d)
 	if err != nil {
 		return "", err
@@ -83,7 +104,7 @@ func GenerateACL(d *sql.DB) (string, error) {
 	}
 
 	const baseDomain = "tsnet.skynas.ru"
-	usernames, err := db.GetPortalUsernames(d)
+	usernames, err := db.GetPortalUsernamesForPlane(d, planeURL)
 	if err != nil {
 		return "", err
 	}
@@ -270,7 +291,7 @@ type ApplyResult struct {
 }
 
 // ApplyACLPipeline runs the standard "rules changed, sync to
-// headscale" pipeline:
+// headscale" pipeline for the global default plane:
 //
 //   1. GenerateACL          — build the policy JSON from device_rules
 //   2. SaveACLSnapshot      — persist the snapshot (always, so the
@@ -288,8 +309,25 @@ type ApplyResult struct {
 // are intentionally NOT in this helper: those are caller-specific
 // (the web form does both, the bot does neither for v1) and the
 // caller chains them after this function returns.
+//
+// 2026-07-16: v0.13.0 — kept as a thin wrapper around
+// ApplyACLPipelineForPlane(d, hs, "", alerter, username,
+// detailForLog) so the global-default and per-plane code
+// share a single implementation.
 func ApplyACLPipeline(d *sql.DB, hs *headscale.Client, alerter Alerter, username, detailForLog string) ApplyResult {
-	acl, err := GenerateACL(d)
+	return ApplyACLPipelineForPlane(d, hs, "", alerter, username, detailForLog)
+}
+
+// ApplyACLPipelineForPlane runs the 4-step pipeline for ONE
+// control plane. planeURL == "" means the global default
+// plane. Use this directly when you have a specific
+// *headscale.Client (e.g. App.HSForUser returned a per-user
+// override); the caller is responsible for choosing the
+// right client.
+//
+// 2026-07-16: v0.13.0.
+func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, alerter Alerter, username, detailForLog string) ApplyResult {
+	acl, err := GenerateACLForPlane(d, planeURL)
 	if err != nil {
 		return ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("generate ACL: %w", err)}
 	}
@@ -303,3 +341,79 @@ func ApplyACLPipeline(d *sql.DB, hs *headscale.Client, alerter Alerter, username
 	db.AppendExitRuleLog(d, ver, db.ExitRuleActionApply, detailForLog)
 	return ApplyResult{Version: ver, Applied: true, Err: nil}
 }
+
+// ApplyACLForAllPlanes iterates every distinct control plane
+// (one entry per distinct headscale_url, plus the global
+// default) and runs ApplyACLPipelineForPlane on each, using
+// the per-plane *headscale.Client the closure returns. The
+// single global pipeline that was wired into the web form
+// pre-v0.13.0 is now the union of all per-plane pipelines
+// — same operator-visible behaviour (every plane's policy
+// gets pushed) but scoped to the right headscale instance.
+//
+// 2026-07-16: v0.13.0.
+//
+// hsForPlane is called once per distinct plane; the caller
+// typically binds `a.HSForUser` style logic that reads
+// portal_users.headscale_url + headscale_api_key_enc and
+// returns the cached client (or the global fallback for the
+// "" URL). The alerter is shared across planes so a
+// single "🛡️ ACL #N by <user>" alert covers the run.
+func ApplyACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale.Client, alerter Alerter, username, detailForLog string) []ApplyResult {
+	planes, err := db.ListControlPlanes(d)
+	if err != nil {
+		return []ApplyResult{{Version: 0, Applied: false, Err: fmt.Errorf("list control planes: %w", err)}}
+	}
+	out := make([]ApplyResult, 0, len(planes))
+	for _, p := range planes {
+		hs := hsForPlane(p.URL)
+		if hs == nil {
+			// No client for this plane (e.g. SKYGATE_SECRET_KEY
+			// is missing or the per-plane key is corrupt).
+			// Skip — single-plane deploys never hit this branch.
+			out = append(out, ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("no headscale client for plane %q", p.URL)})
+			continue
+		}
+		r := ApplyACLPipelineForPlane(d, hs, p.URL, alerter, username, detailForLog)
+		out = append(out, r)
+	}
+	return out
+}
+
+// SetACLForAllPlanes pushes a PRE-BUILT policy (e.g. one
+// loaded from disk by /admin/acls/import) to every plane
+// and writes an acl_snapshots row. Skips the GenerateACL
+// step — the caller already has the JSON.
+//
+// 2026-07-16: v0.13.0 — ACL import/export. The dry-run page
+// shows the imported policy next to the current one; when
+// the operator clicks "Apply", this function pushes it to
+// every plane in one go.
+func SetACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale.Client, alerter Alerter, username, detailForLog, policy string) []ApplyResult {
+	planes, err := db.ListControlPlanes(d)
+	if err != nil {
+		return []ApplyResult{{Version: 0, Applied: false, Err: fmt.Errorf("list control planes: %w", err)}}
+	}
+	out := make([]ApplyResult, 0, len(planes))
+	for _, p := range planes {
+		hs := hsForPlane(p.URL)
+		if hs == nil {
+			out = append(out, ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("no headscale client for plane %q", p.URL)})
+			continue
+		}
+		// Save snapshot (always, so the operator can roll
+		// back even on failure).
+		ver := SaveACLSnapshot(d, policy, username, alerter)
+		if setErr := hs.SetPolicy(policy); setErr != nil {
+			db.MarkACLFail(d, ver, setErr.Error())
+			db.AppendExitRuleLog(d, ver, db.ExitRuleActionApplyFail, detailForLog+": "+setErr.Error())
+			out = append(out, ApplyResult{Version: ver, Applied: false, Err: setErr})
+			continue
+		}
+		db.MarkACLApplied(d, ver)
+		db.AppendExitRuleLog(d, ver, db.ExitRuleActionApply, detailForLog)
+		out = append(out, ApplyResult{Version: ver, Applied: true, Err: nil})
+	}
+	return out
+}
+

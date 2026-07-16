@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -32,7 +34,9 @@ CREATE TABLE portal_users (
 	theme TEXT DEFAULT 'linear',
 	created_at INTEGER DEFAULT 0,
 	default_device_node_id TEXT NOT NULL DEFAULT '',
-	default_exit_node_id TEXT NOT NULL DEFAULT ''
+	default_exit_node_id TEXT NOT NULL DEFAULT '',
+	headscale_url TEXT NOT NULL DEFAULT '',
+	headscale_api_key_enc TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE device_rules (
 	id INTEGER PRIMARY KEY,
@@ -84,10 +88,20 @@ func openTestDB(t *testing.T) *sql.DB {
 }
 
 func seedPortalUser(t *testing.T, d *sql.DB, username string) int64 {
+	return seedPortalUserWithPlane(t, d, username, "")
+}
+
+func seedPortalUserWithPlane(t *testing.T, d *sql.DB, username, planeURL string) int64 {
 	t.Helper()
-	res, err := d.Exec(`INSERT INTO portal_users (username) VALUES (?)`, username)
+	// minimalSchema only declares the columns GenerateACL
+	// reads (id, username, headscale_user_id, headscale_url).
+	// The production schema has more; the test schema is
+	// kept in lock-step.
+	res, err := d.Exec(
+		`INSERT INTO portal_users (username, headscale_url) VALUES (?, ?)`,
+		username, planeURL)
 	if err != nil {
-		t.Fatalf("seed user: %v", err)
+		t.Fatalf("seed user %s on plane %s: %v", username, planeURL, err)
 	}
 	id, _ := res.LastInsertId()
 	return id
@@ -301,6 +315,39 @@ func fakeHeadscale(t *testing.T, policyStatus int, policyErr error) (*headscale.
 	return hs, &calls
 }
 
+// fakeHeadscaleWithCapture mirrors fakeHeadscale but also
+// records the last SetPolicy body so tests can inspect
+// what was pushed. Used by v0.13.0 per-plane tests to
+// verify the per-plane policy contains only that plane's
+// identities.
+type capturedPolicy struct {
+	mu     sync.Mutex
+	config string
+}
+
+func fakeHeadscaleWithCapture(t *testing.T, policyStatus int) (*headscale.Client, *capturedPolicy) {
+	t.Helper()
+	cap := &capturedPolicy{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/policy" || r.Method != http.MethodPut {
+			http.Error(w, "unexpected: "+r.Method+" "+r.URL.Path, 404)
+			return
+		}
+		var body struct {
+			Policy string `json:"policy"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cap.mu.Lock()
+		cap.config = body.Policy
+		cap.mu.Unlock()
+		w.WriteHeader(policyStatus)
+		_, _ = w.Write([]byte(`{"policy":"...","updated_at":"x"}`))
+	}))
+	t.Cleanup(srv.Close)
+	hs := headscale.New(srv.URL, "fake-key")
+	return hs, cap
+}
+
 func TestApplyACLPipelineSuccess(t *testing.T) {
 	d := openTestDB(t)
 	seedPortalUser(t, d, "alice")
@@ -423,6 +470,139 @@ func TestApplyACLPipelineNilAlerter(t *testing.T) {
 	res := ApplyACLPipeline(d, hs, nil, "alice", "test")
 	if !res.Applied {
 		t.Errorf("Applied = false; err = %v", res.Err)
+	}
+}
+
+// TestGenerateACLForPlane_ScopesToPlaneUsers pins v0.13.0:
+// GenerateACLForPlane only includes the identities of
+// portal users on the given control plane. Other planes'
+// users are excluded — headscale rejects unknown
+// identities in tagOwners, so the per-plane policy must
+// be scoped.
+func TestGenerateACLForPlane_ScopesToPlaneUsers(t *testing.T) {
+	d := openTestDB(t)
+	// alice on the global default plane; bob and carol on
+	// plane "https://plane-b.example".
+	seedPortalUser(t, d, "alice")
+	seedPortalUserWithPlane(t, d, "bob", "https://plane-b.example")
+	seedPortalUserWithPlane(t, d, "carol", "https://plane-b.example")
+
+	// Global plane (URL="") — must include alice, exclude
+	// bob+carol.
+	got, err := GenerateACLForPlane(d, "")
+	if err != nil {
+		t.Fatalf("GenerateACLForPlane(global): %v", err)
+	}
+	if !strings.Contains(got, "alice@tsnet.skynas.ru") {
+		t.Errorf("global plane should include alice, got: %q", got)
+	}
+	if strings.Contains(got, "bob@tsnet.skynas.ru") {
+		t.Errorf("global plane must NOT include bob (he's on plane B), got: %q", got)
+	}
+	if strings.Contains(got, "carol@tsnet.skynas.ru") {
+		t.Errorf("global plane must NOT include carol (she's on plane B), got: %q", got)
+	}
+
+	// Plane B — must include bob+carol, exclude alice.
+	got, err = GenerateACLForPlane(d, "https://plane-b.example")
+	if err != nil {
+		t.Fatalf("GenerateACLForPlane(plane B): %v", err)
+	}
+	if !strings.Contains(got, "bob@tsnet.skynas.ru") {
+		t.Errorf("plane B should include bob, got: %q", got)
+	}
+	if !strings.Contains(got, "carol@tsnet.skynas.ru") {
+		t.Errorf("plane B should include carol, got: %q", got)
+	}
+	if strings.Contains(got, "alice@tsnet.skynas.ru") {
+		t.Errorf("plane B must NOT include alice (she's on the default plane), got: %q", got)
+	}
+}
+
+// TestApplyACLPipelineForPlane_UsesCorrectClient pins v0.13.0:
+// ApplyACLPipelineForPlane builds the policy scoped to one
+// plane and pushes it to the plane's headscale client.
+// tagOwners etc. must contain only that plane's identities.
+func TestApplyACLPipelineForPlane_UsesCorrectClient(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	seedPortalUserWithPlane(t, d, "bob", "https://plane-b.example")
+	hs, captured := fakeHeadscaleWithCapture(t, http.StatusOK)
+
+	res := ApplyACLPipelineForPlane(d, hs, "", nil, "alice", "test")
+	if !res.Applied {
+		t.Fatalf("Applied = false; err = %v", res.Err)
+	}
+	// The captured SetPolicy body is the global-plane policy.
+	// It should mention alice but NOT bob (bob is on plane B).
+	if !strings.Contains(captured.config, "alice@tsnet.skynas.ru") {
+		t.Errorf("SetPolicy body should contain alice, got: %q", captured.config)
+	}
+	if strings.Contains(captured.config, "bob@tsnet.skynas.ru") {
+		t.Errorf("SetPolicy body must NOT contain bob (plane B), got: %q", captured.config)
+	}
+}
+
+// TestListControlPlanesGroupsByURL pins v0.13.0: ListControlPlanes
+// returns one row per distinct headscale_url (plus "" for
+// the global default), with a user count.
+func TestListControlPlanesGroupsByURL(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice") // default
+	seedPortalUser(t, d, "alice2") // default
+	seedPortalUserWithPlane(t, d, "bob", "https://plane-b.example")
+	seedPortalUserWithPlane(t, d, "carol", "https://plane-c.example")
+
+	planes, err := db.ListControlPlanes(d)
+	if err != nil {
+		t.Fatalf("ListControlPlanes: %v", err)
+	}
+	// Expect 3 distinct planes: default, plane-b, plane-c.
+	counts := map[string]int{}
+	for _, p := range planes {
+		counts[p.URL] = p.UserCount
+	}
+	if counts[""] != 2 {
+		t.Errorf("default plane count: want 2, got %d", counts[""])
+	}
+	if counts["https://plane-b.example"] != 1 {
+		t.Errorf("plane-b count: want 1, got %d", counts["https://plane-b.example"])
+	}
+	if counts["https://plane-c.example"] != 1 {
+		t.Errorf("plane-c count: want 1, got %d", counts["https://plane-c.example"])
+	}
+}
+
+// TestSetACLForAllPlanes_PreBuiltPolicy pins v0.13.0: the
+// ACL import flow. SetACLForAllPlanes pushes a pre-built
+// policy (e.g. one loaded from a JSON file the operator
+// uploaded) to every plane and writes an acl_snapshots
+// row, without re-running GenerateACL.
+func TestSetACLForAllPlanes_PreBuiltPolicy(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	hs, captured := fakeHeadscaleWithCapture(t, http.StatusOK)
+
+	imported := `{"acls":[],"tagOwners":{},"groups":{},"ssh":[]}`
+	results := SetACLForAllPlanes(d,
+		func(planeURL string) *headscale.Client { return hs },
+		nil, "alice", "imported test", imported,
+	)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].Applied {
+		t.Fatalf("Applied = false; err = %v", results[0].Err)
+	}
+	// SetPolicy body must match the imported policy byte-for-byte.
+	if captured.config != imported {
+		t.Errorf("SetPolicy body mismatch:\n  want: %q\n  got:  %q", imported, captured.config)
+	}
+	// An acl_snapshots row must have been written.
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE config = ?`, imported).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected 1 acl_snapshots row with imported config, got %d", n)
 	}
 }
 

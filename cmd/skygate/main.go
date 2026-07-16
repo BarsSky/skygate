@@ -220,7 +220,17 @@ func main() {
 	// the same DB helper.
 	mux.Handle("POST /admin/devices/sync-from-headscale", authMW(http.HandlerFunc(app.PostAdminDevicesSyncFromHeadscale)))
 	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(app.GetAdminAudit)))
+	// 2026-07-16: v0.13.0 — ACL import/export. GET shows
+	// the current policy in a downloadable file; POST
+	// /admin/acls/import is the dry-run; POST
+	// /admin/acls/import/apply actually pushes to every
+	// plane. /admin/acls itself is unchanged (still the
+	// read-only view).
 	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(app.GetAdminACLs)))
+	mux.Handle("GET /admin/acls/export", authMW(http.HandlerFunc(app.GetAdminACLsExport)))
+	mux.Handle("GET /admin/acls/import", authMW(http.HandlerFunc(app.GetAdminACLsImport)))
+	mux.Handle("POST /admin/acls/import", authMW(http.HandlerFunc(app.PostAdminACLsImport)))
+	mux.Handle("POST /admin/acls/import/apply", authMW(http.HandlerFunc(app.PostAdminACLsImportApply)))
 	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(app.GetAdminDERP)))
 	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
 	// integration config. The /admin/integrations landing page
@@ -332,6 +342,23 @@ func main() {
 			// the web handlers use (hs was constructed at line 77)
 			// so both surfaces share one source of truth.
 			rn.SetHS(hs)
+			// 2026-07-16: v0.12.1 — per-user headscale-client
+			// routing. The closure binds app so the bot calls
+			// the same App.HSForUser the web handlers use
+			// (which reads portal_users.headscale_url +
+			// headscale_api_key_enc and falls through to the
+			// global default when no override is set). Single-
+			// plane deploys still work — App.HSForUser returns
+			// app.HS when there's no per-user row.
+			rn.SetHSForUser(app.HSForUser)
+			// 2026-07-16: v0.13.0 — per-user plane-URL routing
+			// (parallel to SetHSForUser). Returns the
+			// headscale_url the user is on so the bot can
+			// scope acl.GenerateACLForPlane to the right
+			// identities. Returns "" for users on the global
+			// default plane, which preserves v0.12.0
+			// behaviour.
+			rn.SetPlaneURLForUser(app.PlaneURLForUser)
 			// 2026-07-13: Этап 11 part 2b — per-device and total
 			// rule caps for /add_rule. Mirrors the web form's
 			// PostMyExitRule checks. Zero = no cap (same convention

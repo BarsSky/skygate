@@ -85,6 +85,27 @@ func (a *App) HSGlobal() *headscale.Client {
 	return a.hs
 }
 
+// PlaneURLForUser returns the headscale_url the given
+// portal user is on ("" = the global default plane).
+// The bot path uses this to scope acl.GenerateACLForPlane
+// to the right identities — headscale rejects unknown
+// identities in tagOwners, so the per-plane ACL
+// generation must know which plane to build for.
+//
+// 2026-07-16: v0.13.0 — paired with HSForUser so the
+// bot can do "issue preauth on the right plane AND push
+// ACL to the right plane" in the same command.
+func (a *App) PlaneURLForUser(userID int64) string {
+	cfg, err := db.GetUserHeadscaleConfig(a.DB, userID, a.SecretKeyHex)
+	if err != nil {
+		// ErrNoUserControlPlane is the common case (most
+		// users don't have an override). Treat as the
+		// global default plane.
+		return ""
+	}
+	return cfg.URL
+}
+
 // clientFor returns a cached or freshly-built headscale
 // client for the given (url, key). The cache is a
 // sync.Mutex-protected map keyed by url. We deliberately

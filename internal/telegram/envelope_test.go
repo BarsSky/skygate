@@ -119,6 +119,45 @@ func TestButlerEnvelope_WithIcon(t *testing.T) {
 	}
 }
 
+// TestButlerEnvelope_WithUrgency pins the v0.15.5 butler
+// voice v3 envelope: the urgency mark (! for warning,
+// !! for critical) is appended to the chosen icon so
+// a 🔑!! in the chat list reads as "critical preauth
+// reply" while a plain 🪶 reads as "normal reply".
+//
+// 2026-07-16: v0.15.5 — butler voice v3.
+func TestButlerEnvelope_WithUrgency(t *testing.T) {
+	cases := []struct {
+		level   int
+		icon    string
+		wantPre string
+	}{
+		{UrgencyNormal, "", "🪶"},               // default icon, no mark
+		{UrgencyNormal, "🔑", "🔑"},             // icon, no mark
+		{UrgencyWarning, "", "🪶!"},              // default icon, warning
+		{UrgencyWarning, "🔑", "🔑!"},            // icon, warning
+		{UrgencyCritical, "", "🪶!!"},            // default icon, critical
+		{UrgencyCritical, "🛡", "🛡!!"},          // icon, critical
+	}
+	for _, c := range cases {
+		var opts []ButlerOpt
+		if c.icon != "" {
+			opts = append(opts, WithIcon(c.icon))
+		}
+		if c.level != UrgencyNormal {
+			opts = append(opts, WithUrgency(c.level))
+		}
+		got := butlerEnvelope("en", "alice", "Title", "", "", "", opts...)
+		// The first line of the gate header is the icon +
+		// (optional) mark + the gateLine. Pin the icon-line.
+		wantLine := c.wantPre + " ═══ Skygate ═══"
+		if !strings.HasPrefix(got, wantLine) {
+			t.Errorf("level=%d icon=%q: want first line %q, got first line %q",
+				c.level, c.icon, wantLine, strings.SplitN(got, "\n", 2)[0])
+		}
+	}
+}
+
 // TestButlerEnvelope_TimeOfDayGreeting pins that the
 // greeting bucket (morning/afternoon/evening/night)
 // follows the hour of the day in the user's locale.

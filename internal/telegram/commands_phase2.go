@@ -43,8 +43,8 @@ func nodesReply(env BotEnv) string {
 	//'s "tagged-devices" guard skipped the row update for
 	// admin-tagged devices, so the bot's view drifted from the
 	// headscale truth).
-	if env.HS != nil {
-		hsView := listAllNodesForBackfill(env.HS)
+	if env.userHS() != nil {
+		hsView := listAllNodesForBackfill(env.userHS())
 		if len(hsView) > 0 {
 			hnMap := map[string]string{}
 			tagMap := map[string]string{}

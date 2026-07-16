@@ -90,8 +90,8 @@ func myNodesReply(env BotEnv) string {
 	// + tag in one headscale round-trip (the existing
 	// hostnameMapFromHeadscale already calls ListAllNodes; we
 	// also need the live tag from the same response).
-	if env.HS != nil {
-		hsView := listAllNodesForBackfill(env.HS)
+	if env.userHS() != nil {
+		hsView := listAllNodesForBackfill(env.userHS())
 		if len(hsView) > 0 {
 			hnMap := map[string]string{}
 			tagMap := map[string]string{}
@@ -447,8 +447,11 @@ func addDeviceReply(env BotEnv, arg string) string {
 	// called from main.go so HS is non-nil in production; the check
 	// exists so a future operator who restarts skygate without
 	// SetHS sees a clear error rather than a nil-deref panic.
-	if env.HS == nil {
-		log.Printf("bot.add_device: env.HS is nil (read-only deploy?)")
+	// 2026-07-16: v0.12.1 — uses env.userHS() so the preauth key
+	// is issued on the bound user's per-plane control plane
+	// (or the global one if they have no override).
+	if env.userHS() == nil {
+		log.Printf("bot.add_device: userHS() is nil (read-only deploy?)")
 		return i18n.T(lang, "bot.add_device.read_only")
 	}
 	hsUserID, _, err := db.GetUserHSByID(env.DB, target.ID)
@@ -460,8 +463,8 @@ func addDeviceReply(env BotEnv, arg string) string {
 		log.Printf("bot.add_device: no headscale_user_id for userID=%d username=%q", target.ID, target.Username)
 		return i18n.Tf(lang, "bot.add_device.no_hs_user", target.Username)
 	}
-	log.Printf("bot.add_device: target=%q hsUserID=%d, calling CreatePreauthKey", target.Username, hsUserID.Int64)
-	key, err := env.HS.CreatePreauthKey(hsUserID.Int64, "1h", false)
+	log.Printf("bot.add_device: target=%q hsUserID=%d, calling CreatePreauthKey on plane", target.Username, hsUserID.Int64)
+	key, err := env.userHS().CreatePreauthKey(hsUserID.Int64, "1h", false)
 	if err != nil {
 		log.Printf("bot.add_device: CreatePreauthKey userID=%d err=%v", hsUserID.Int64, err)
 		return i18n.Tf(lang, "bot.add_device.hs_failed", err)
@@ -504,6 +507,11 @@ func addDeviceReply(env BotEnv, arg string) string {
 		"<pre>"+escapeHTML(key.Key)+"</pre>",
 		i18n.T(lang, "bot.add_device.footer"),
 		WithIcon("🔑"),
+		// 2026-07-16: v0.15.5 — preauth keys are
+		// security-sensitive. Mark the reply warning so
+		// the operator sees 🔑! in the chat list and
+		// knows the body has a credential to act on.
+		WithUrgency(UrgencyWarning),
 	)
 }
 
@@ -608,8 +616,8 @@ func addRuleReply(env BotEnv, args []string) string {
 	// We re-check on every insert so a rule never lands with
 	// a dead device or disabled exit-node.
 	var deviceIP string
-	if env.HS != nil {
-		if nodes, err := env.HS.ListAllNodes(); err == nil {
+	if env.userHS() != nil {
+		if nodes, err := env.userHS().ListAllNodes(); err == nil {
 			for _, n := range nodes {
 				if n.ID == deviceNodeID {
 					if len(n.IPAddresses) > 0 {
@@ -760,7 +768,7 @@ func addRuleReply(env BotEnv, args []string) string {
 	// for writes" guard pattern.
 	detailForLog := fmt.Sprintf("user %s added rule(s) (type=%s target=%s exit=%s) for %s via bot",
 		target.Username, typeToInsert, rawTarget, exitNodeHostname, target.Username)
-	if env.HS == nil {
+	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: %s %s → %s (exit=%s, action=%s, ids=%v) — ACL sync skipped (read-only mode)",
 			typeToInsert, rawTarget, exitNodeHostname, exitNodeHostname, action, insertedIDs)
 		if dnsWarning != "" {
@@ -773,7 +781,7 @@ func addRuleReply(env BotEnv, args []string) string {
 		}
 		return reply
 	}
-	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, target.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog)
 
 	// Audit log (under the target user, so per-user audit
 	// views stay correct). The action is rule_added; the
@@ -951,10 +959,13 @@ func deleteRuleReply(env BotEnv, arg string) string {
 		deletedIDs = append(deletedIDs, j.id)
 	}
 
-	// ACL pipeline. Read-only deploys (HS == nil) skip the
-	// pipeline — the rules are already gone, admin can
-	// /admin/exit-rules/sync to push the updated policy manually.
-	if env.HS == nil {
+	// ACL pipeline. Read-only deploys (userHS() == nil) skip
+	// the pipeline — the rules are already gone, admin can
+	// /admin/exit-rules/sync to push the updated policy
+	// manually. 2026-07-16: v0.12.1 — uses env.userHS() so
+	// the policy is pushed on the user's per-plane control
+	// plane (or the global one if they have no override).
+	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: deleted %d rule(s) for %s (cascade: %d, ids=%v) — ACL sync skipped (read-only mode)",
 			len(deletedIDs), target.Username, totalCascade, deletedIDs)
 		if len(skipped) > 0 {
@@ -966,7 +977,7 @@ func deleteRuleReply(env BotEnv, arg string) string {
 
 	detailForLog := fmt.Sprintf("user %s deleted %d rule(s) (cascade: %d) for %s via bot",
 		target.Username, len(deletedIDs), totalCascade, target.Username)
-	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, target.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog)
 
 	// Audit log under target user. The action is rule_deleted; the
 	// detail captures what was deleted + cascade count + skipped ids
@@ -1228,8 +1239,8 @@ func setDefaultDeviceReply(env BotEnv, arg string) string {
 	// Best-effort: if headscale is unreachable we still print the
 	// node_ids (the user can read them off /my_nodes).
 	hostnameMap := map[string]string{}
-	if env.HS != nil {
-		if nodes, err := env.HS.ListAllNodes(); err == nil {
+	if env.userHS() != nil {
+		if nodes, err := env.userHS().ListAllNodes(); err == nil {
 			for _, n := range nodes {
 				hn := n.GivenName
 				if hn == "" {
@@ -1304,8 +1315,8 @@ func defaultDeviceReply(env BotEnv) string {
 	}
 	// Resolve the hostname best-effort. If headscale is down we
 	// still return the node_id (it's enough to act on).
-	if env.HS != nil {
-		if nodes, err := env.HS.ListAllNodes(); err == nil {
+	if env.userHS() != nil {
+		if nodes, err := env.userHS().ListAllNodes(); err == nil {
 			for _, n := range nodes {
 				if n.ID == nodeID {
 					hn := n.GivenName

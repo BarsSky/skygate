@@ -169,7 +169,12 @@ func TestInsertAPIToken(t *testing.T) {
 	d := openTestDB(t)
 	uid := seedPortalUser(t, d, "alice", "h", false, 100)
 
-	id, err := InsertAPIToken(d, uid, "hash-new", "ci-runner")
+	// 2026-07-16: v0.15.5 — InsertAPIToken now takes
+	// (expiresAt, autoRotate). Pass 0/0 to preserve the
+	// "never expires, no auto-rotate" pre-v0.15.5
+	// behaviour; the rest of the test doesn't depend on
+	// the new fields.
+	id, err := InsertAPIToken(d, uid, "hash-new", "ci-runner", 0, false)
 	if err != nil {
 		t.Fatalf("InsertAPIToken: %v", err)
 	}
