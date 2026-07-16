@@ -920,6 +920,79 @@ func TestMyStatusReplyUnidentified(t *testing.T) {
 	}
 }
 
+// TestHTMLRepliesMarkParseMode pins the v0.16.2 contract: every reply
+// function that uses Field()/Section()/PreLinesRaw() must call
+// markHTMLReply() so the <b>/<i>/<pre>/<code> tags render on
+// Telegram. Without it the user sees raw "<b>...</b> <code>...</code>"
+// source text. Each sub-case checks ParseMode=HTML on the
+// pendingReplyForCurrentMessage side-channel.
+//
+// 2026-07-16: v0.16.2 — added after the v0.16.1 bug where the
+// /version reply (and six other read commands) shipped with HTML
+// formatting but no parse_mode, so the tags showed up as raw
+// text. This test is a regression guard.
+func TestHTMLRepliesMarkParseMode(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	// env needs IsAdmin for the admin-scope commands
+	// (audit, exit_nodes_health, sync_nodes). The user-scope
+	// commands (my_status, my_nodes, my_rules, my_quota,
+	// myexitnodes) work with either.
+	adminEnv := adminEnv(d)
+
+	cases := []struct {
+		name string
+		call func()
+	}{
+		{"my_status", func() { myStatusReply(env) }},
+		{"my_nodes", func() { myNodesReply(env) }},
+		{"my_rules", func() { myRulesReply(env) }},
+		{"my_quota", func() { myQuotaReply(env) }},
+		{"myexitnodes", func() { myExitNodesReply(env) }},
+		{"version", func() { versionReply(env) }},
+		{"audit", func() { auditReply(adminEnv) }},
+		{"exit_nodes_health", func() { exitNodesHealthReply(adminEnv) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Reset between cases so a previous case's
+			// pending doesn't leak into the next one.
+			pendingReplyForCurrentMessage = nil
+			tc.call()
+			if pendingReplyForCurrentMessage == nil {
+				t.Fatalf("expected pendingReplyForCurrentMessage to be set (markHTMLReply was not called), got nil")
+			}
+			if pendingReplyForCurrentMessage.ParseMode != "HTML" {
+				t.Errorf("expected ParseMode=HTML, got %q", pendingReplyForCurrentMessage.ParseMode)
+			}
+		})
+	}
+}
+
+// TestMarkHTMLReplyPreservesKeyboard pins the v0.16.2 contract
+// that markHTMLReply() doesn't wipe an existing inline-keyboard
+// when one is already set. myExitNodesReply sets both the
+// per-row "→ hostname" keyboard AND the HTML parse mode for
+// the tabular <pre> body; the helper must keep the keyboard
+// intact (otherwise the tap-to-set UX would break).
+func TestMarkHTMLReplyPreservesKeyboard(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: one enabled exit-server so myExitNodesReply
+	// populates the keyboard.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	pendingReplyForCurrentMessage = nil
+	_ = myExitNodesReply(userEnv(d))
+	if pendingReplyForCurrentMessage == nil {
+		t.Fatalf("expected pendingReplyForCurrentMessage to be set, got nil")
+	}
+	if len(pendingReplyForCurrentMessage.InlineKeyboard) == 0 {
+		t.Errorf("expected InlineKeyboard to be preserved (per-row '→ hostname' buttons), got 0 rows")
+	}
+	if pendingReplyForCurrentMessage.ParseMode != "HTML" {
+		t.Errorf("expected ParseMode=HTML, got %q", pendingReplyForCurrentMessage.ParseMode)
+	}
+}
+
 func TestMyNodesReplyUserFiltersToCaller(t *testing.T) {
 	d := setupTestDB(t)
 	// Seed: alice has one device.

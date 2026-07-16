@@ -169,6 +169,46 @@ type BotEnv struct {
 // 2026-07-13: Этап 13.
 var pendingReplyForCurrentMessage *PendingReply
 
+// markHTMLReply sets the next reply's parse_mode to "HTML"
+// so Telegram renders the <b>/<i>/<pre>/<code> tags in
+// the body. Call from any reply function that uses
+// Field()/Section()/PreLinesRaw() (the "more HTML" pass
+// helpers in format.go) — without parse_mode=HTML, the
+// tags show up as literal text in the chat and the
+// message reads as raw source code.
+//
+// The function is a no-op if the pending slot is already
+// populated (e.g. /myexitnodes sets an inline-keyboard
+// for the same reply); in that case we just set the
+// ParseMode field on the existing struct, so callers
+// don't have to special-case "do I have a keyboard or
+// not".
+//
+// 2026-07-16: v0.16.2 — "more HTML" pass bug fix. The
+// v0.16.1 release added the HTML formatting helpers but
+// did not set parse_mode on the sendMessage payload, so
+// /my_status, /my_rules, /my_quota, /myexitnodes,
+// /my_nodes, /version, /audit, /exit_nodes_health all
+// rendered their <b> and <code> as literal text. The
+// fix is a single opt-in per reply function (call
+// markHTMLReply() at the top).
+//
+// Why opt-in instead of a global default: many replies
+// (e.g. /help, /bind errors, the welcome card) use
+// literal "<" characters as placeholders in their
+// catalog text (like "<id>" or "<chat_id>"). Telegram
+// rejects messages with unbalanced < or & in
+// parse_mode=HTML — so a global default would break
+// those replies. The opt-in keeps HTML off for
+// literal-text replies and on for the structured ones.
+func markHTMLReply() {
+	if pendingReplyForCurrentMessage == nil {
+		pendingReplyForCurrentMessage = &PendingReply{ParseMode: "HTML"}
+	} else {
+		pendingReplyForCurrentMessage.ParseMode = "HTML"
+	}
+}
+
 // PendingReply carries the optional inline-keyboard markup
 // for a bot reply. 2026-07-13: Этап 13 — added for the
 // /start <token> confirmation prompt. 2026-07-14: Этап 14

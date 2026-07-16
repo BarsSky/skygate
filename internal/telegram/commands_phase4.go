@@ -108,6 +108,11 @@ func setKillProcess(fn func()) {
 // so the three lines render as a tabbed block on mobile
 // Telegram.
 func versionReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>Билд:</b>
+	// / <b>Go:</b> / <b>Схема БД:</b> Field() labels and
+	// the <code>value</code> render. Without this, the
+	// user sees raw "<b>...</b> <code>...</code>" text.
+	markHTMLReply()
 	v := env.Version
 	if v == "" {
 		v = "v0.0-dev"
