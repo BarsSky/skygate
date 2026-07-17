@@ -7,7 +7,24 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.6 — per-user subnets foundation
+* **Current**: v0.16.7 — hotfix: t vs tf arg count
+  in update banner
+  ([release notes](RELEASE-NOTES-v0.16.7.md)). The
+  v0.16.6 release shipped an "update available" banner
+  with `{{t "update.banner_body" .Version
+  .UpdateLatest.TagName}}` — but `t` takes 1 arg, the
+  call had 3. Every admin page rendered with only the
+  banner (the only thing that survives a template
+  panic mid-render) and no body. Operator reported it
+  immediately. Fix: change to `{{tf ...}}` (varargs
+  formatter). Plus `TestTemplateArgsMatchCatalog`
+  regression guard in `templates_test.go` — walks
+  every embedded template, verifies the arg count of
+  every `{{t ...}}` / `{{tf ...}}` call matches the
+  catalog's placeholder count for that key
+  (handles `%%` escapes). 12/12 packages green,
+  smoke 118/118, live on VM at build `19d8981`.
+* **Previous**: v0.16.6 — per-user subnets foundation
   ([release notes](RELEASE-NOTES-v0.16.6.md)). The
   first concrete step of the 6-release per-user
   subnets roadmap (v0.16.6 → v0.19.0) documented in
