@@ -7,27 +7,45 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.10 — chmod+x for check_https.py
-  + /admin/subnets overview
-  ([release notes](RELEASE-NOTES-v0.16.10.md)). Two
-  small follow-ups bundled:
+* **Current**: v0.17.0 — exit-node mesh +
+  tag:subnet-router in ACL
+  ([release notes](RELEASE-NOTES-v0.17.0.md)). Two
+  ACL changes that close the v0.16.0+ subnets
+  roadmap promises:
 
-  1. `scripts/check_https.py` — git mode 100644 →
-     100755. The Makefile's `[ -x scripts/check_https.py ]`
-     guard now passes without manual `chmod +x` on the
-     VM after every `git reset --hard` (was a v0.15.0
-     chore that the operator had to remember).
+  1. **`tag:subnet-router` in `tagOwners`** (owned by
+     every portal user) — headscale now accepts the
+     v0.16.7 sidecar nodes. Without this entry,
+     headscale rejected the policy with "tag not
+     found".
 
-  2. `/admin/subnets` overview — flat list of every
-     `user_subnets` row with status filter chips
-     (All / Pending / Active / Disabled), per-status
-     counts, last-sync timestamp from the v0.16.7
-     sidecar manager, and a 3-step how-it-works
-     explainer. Sidebar link added under "Users".
-     16 new i18n keys (RU+EN), 3 new tests.
+  2. **Per-user dst rule extension**: users with an
+     allocated subnet get
+     `dst: ["<user>:*", "10.0.<uid>.0/24:*"]` so
+     their tailnet devices can route to the sidecar's
+     network. The CIDR is unique per user (first-match
+     semantics handle isolation).
+
+  Plus `TestGenerateACL_ExitNodeMeshStillGlobal`
+  regression guard for the `* → tag:exit-node:*` and
+  `* → tag:public:*` rules (so a future refactor
+  doesn't accidentally scope exit-nodes per-user
+  and break the operator's existing routing).
+
+  Files:
+  - `internal/db/queries.go` + `portal_users.go` —
+    `qSelectUserSubnetsForPlane` + `GetUserSubnetsForPlane`
+  - `internal/acl/acl.go` — per-user CIDR rule +
+    `tag:subnet-router` in tagOwners
+  - `internal/acl/acl_test.go` — 2 new tests
+    (per-user CIDR + exit-node mesh) + test schema
+    (user_subnets table)
+  - `internal/handlers/templates/admin/acls.html` —
+    v0.17.0 info card + link to /admin/subnets
+  - `internal/i18n/catalog.go` — 3 new keys × 2 langs
 
   12/12 packages green, smoke 118/118, live on VM at
-  build `333079b`.
+  build `79c5951`.
 * **Previous**: v0.16.7 — per-user subnet sidecar
   (auto-approver + preauth)
   ([release notes](RELEASE-NOTES-v0.16.7.md)). Real
