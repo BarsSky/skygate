@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -162,7 +163,9 @@ func GetAllPortalUsers(d *sql.DB) ([]User, error) {
 		var hsID sql.NullInt64
 		var createdI int64
 		var theme sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme); err != nil {
+		var subnetStatus sql.NullString
+		var subnetNodeIDStr sql.NullString // TEXT in SQLite, parse to int64 below
+		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme, &u.SubnetCIDR, &subnetStatus, &subnetNodeIDStr); err != nil {
 			return nil, err
 		}
 		u.IsAdmin = adminI == 1
@@ -170,6 +173,14 @@ func GetAllPortalUsers(d *sql.DB) ([]User, error) {
 		u.CreatedAt = time.Unix(createdI, 0)
 		if theme.Valid {
 			u.Theme = theme.String
+		}
+		if subnetStatus.Valid {
+			u.SubnetStatus = subnetStatus.String
+		}
+		if subnetNodeIDStr.Valid && subnetNodeIDStr.String != "" {
+			if n, perr := strconv.ParseInt(subnetNodeIDStr.String, 10, 64); perr == nil {
+				u.SubnetRouterNodeID = n
+			}
 		}
 		out = append(out, u)
 	}

@@ -10,13 +10,16 @@ import (
 )
 
 type User struct {
-	ID              int64
-	Username        string
-	IsAdmin         bool
-	Theme           string
-	PasswordHash    string
-	HeadscaleUserID int64
-	CreatedAt       time.Time
+	ID                 int64
+	Username           string
+	IsAdmin            bool
+	Theme              string
+	PasswordHash       string
+	HeadscaleUserID    int64
+	CreatedAt          time.Time
+	SubnetCIDR         string // denorm: empty if no subnet allocated
+	SubnetStatus       string // denorm: "none" / "pending" / "active" / "disabled"
+	SubnetRouterNodeID int64  // denorm: 0 if no router provisioned (v0.16.7+)
 }
 
 const (
