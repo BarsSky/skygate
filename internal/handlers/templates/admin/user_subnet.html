@@ -44,6 +44,18 @@
     <form method="POST" action="/admin/users/{{.User.ID}}/subnet/provision" style="display:inline">
       <button type="submit" class="btn btn-primary"><i class="fa-solid fa-key"></i> {{t "user_subnet.provision_button"}}</button>
     </form>
+
+    <details style="display:inline;margin-left:6px">
+      <summary class="btn btn-sm"><i class="fa-solid fa-globe"></i> {{t "user_subnet.magicdns_button"}}</summary>
+      <div style="margin-top:8px;padding:12px;background:var(--bg-elev);border-radius:4px;font-size:12px;font-family:var(--mono);max-width:680px">
+        <div><b>{{t "user_subnet.magicdns_sidecar_label"}}</b>: <code>{{.MagicDNS.Sidecar}}</code></div>
+        <div style="margin-top:4px"><b>{{t "user_subnet.magicdns_short_label"}}</b>: <code>{{.MagicDNS.SidecarShort}}</code></div>
+        <div style="margin-top:4px"><b>{{t "user_subnet.magicdns_wildcard_label"}}</b>: <code>{{.MagicDNS.UserWildcard}}</code></div>
+        <div style="margin-top:8px;color:var(--text-muted);font-family:var(--font)">
+          <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.magicdns_note" | safeHTML}}
+        </div>
+      </div>
+    </details>
     <form method="POST" action="/admin/users/{{.User.ID}}/subnet/test" style="display:inline">
       <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-stethoscope"></i> {{t "user_subnet.test_button"}}</button>
     </form>

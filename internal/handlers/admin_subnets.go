@@ -45,7 +45,13 @@ func (a *App) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 		// Look up the portal username for the row.
 		// Left join in SQL would be cleaner; doing it
 		// in Go keeps the manager API surface narrow.
+		// 2026-07-17: v0.18.0 — also compute the
+		// auto-resolving MagicDNS FQDN for the user
+		// (skygate-subnet-<username>.<base-domain>).
 		_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, s.UserID).Scan(&row.Username)
+		if row.Username != "" {
+			row.DNSName = subnet.ComputeMagicDNSNames(row.Username).Sidecar
+		}
 		rows = append(rows, row)
 	}
 	var filtered []overviewRow
@@ -114,10 +120,12 @@ func (a *App) subnetsForOverview() ([]subnet.Subnet, error) {
 // overviewRow is what the admin/subnets.html template
 // iterates over. Wraps a Subnet + the joined
 // portal_users.username (avoids the template having
-// to do its own DB lookup).
+// to do its own DB lookup) + the auto-resolving
+// MagicDNS FQDN (v0.18.0).
 type overviewRow struct {
 	Subnet   subnet.Subnet
 	Username string
+	DNSName  string
 }
 
 // SidecarLastSync returns the last sync time of the
