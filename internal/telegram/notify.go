@@ -35,6 +35,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/sidecar"
 )
 
 // Notifier is the interface used by code that wants to emit a message.
@@ -125,6 +126,7 @@ type RealNotifier struct {
 	// closure over the same secret-key + portal_users cache.
 	// nil falls through to the global default.
 	planeURLForUser func(userID int64) string
+	sidecar *sidecar.Manager
 	// 2026-07-13: Этап 11 part 2b — per-device + total rule caps,
 	// set by main.go from config.Load(). Surfaced in BotEnv so
 	// /add_rule can enforce them (mirrors the web form's
@@ -269,6 +271,22 @@ func (n *RealNotifier) SetPlaneURLForUser(fn func(userID int64) string) {
 	n.planeURLForUser = fn
 }
 
+// SetSidecar installs the per-user subnet sidecar manager.
+// Used by the bot's /mysubnet provision subcommand to
+// issue a per-user preauth key (tag:subnet-router, 1h TTL).
+// The Manager is also run as a background goroutine for
+// auto-approval of routes on tag:subnet-router nodes —
+// but that goroutine is owned by cmd/skygate/main.go, not
+// the notifier; this setter only hands the manager to
+// the bot's BotEnv so the command can call it.
+//
+// 2026-07-17: v0.16.7.
+func (n *RealNotifier) SetSidecar(m *sidecar.Manager) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sidecar = m
+}
+
 // SetRuleCaps stores the per-device and total rule caps used by
 // /add_rule. 2026-07-13: Этап 11 part 2b. Called once at
 // startup from cmd/skygate/main.go after config.Load(). Zero
@@ -383,6 +401,9 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	// 2026-07-16: v0.13.0 — same pattern for the plane-URL
 	// lookup. nil falls through to "" (global default).
 	planeURLForUser := n.planeURLForUser
+	// 2026-07-17: v0.16.7 — same pattern for the sidecar
+	// manager. nil falls through to "ask admin" hint.
+	sidecarMgr := n.sidecar
 	env := BotEnv{
 		DB:                 n.db,
 		UserMaxRules:       max,
@@ -395,6 +416,7 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 		MaxRulesPerDevice:  n.maxRulesPerDevice,
 		MaxTotalRules:      n.maxTotalRules,
 		Notifier:           n,
+		Sidecar:            sidecarMgr,
 		// 2026-07-14: Этап 14 v5 — default Lang is "en";
 		// envForMessage() overrides for unbound chats with
 		// LangFromTelegramCode(langCode) and for bound chats

@@ -66,6 +66,19 @@ type Config struct {
 	// for it. Set to "true" once you're comfortable with
 	// the per-tick cost.
 	ExitNodeAutoSync bool
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar auto-approver
+	// sync period. The Manager goroutine in cmd/skygate/main.go
+	// polls headscale every SidecarSyncPeriod for tag:subnet-router
+	// nodes, approves the user's CIDR when the sidecar
+	// advertises it, and flips user_subnets.status to
+	// active/disabled. Default 30s — long enough that the
+	// headscale API doesn't get hammered, short enough that
+	// the "click Provision → node appears → status flips" loop
+	// feels responsive. Set to 0 to disable the auto-approver
+	// (preauth-key issuance on /admin/users/{id}/subnet still
+	// works, but the sidecar node won't get its route approved
+	// automatically).
+	SidecarSyncPeriod time.Duration
 }
 
 func Load() (*Config, error) {
@@ -106,6 +119,10 @@ func Load() (*Config, error) {
 		// always-current view matters more than the
 		// per-tick write cost.
 		ExitNodeAutoSync: getenv("SKYGATE_EXIT_NODE_AUTO_SYNC", "false") == "true",
+		// 2026-07-17: v0.16.7 — per-user subnet sidecar
+		// auto-approver. Set to 0 to disable (operator-driven
+		// approve-routes only).
+		SidecarSyncPeriod: getDuration("SKYGATE_SIDECAR_SYNC_PERIOD", 30*time.Second),
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {

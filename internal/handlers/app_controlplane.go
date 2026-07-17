@@ -50,6 +50,15 @@ import (
 // operator sees the degraded state in `docker logs skygate`
 // (a corrupt key is operator-fixable, not user-fixable).
 func (a *App) HSForUser(userID int64) *headscale.Client {
+	// 2026-07-17: v0.16.7 — userID == 0 is a sentinel for
+	// "no specific user, use the global default". The
+	// sidecar.Manager passes 0 when it wants the global
+	// plane (no per-user override applies). Without this
+	// short-circuit the DB lookup logs
+	// "portal_user not found" every 30s.
+	if userID == 0 {
+		return a.HSGlobal()
+	}
 	if a.SecretKeyHex == "" {
 		// v0.12.0 wasn't fully wired (SKYGATE_SECRET_KEY
 		// not set) — fall through to the global client.

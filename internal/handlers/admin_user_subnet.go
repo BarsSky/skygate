@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
@@ -180,7 +181,61 @@ func (a *App) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", id), http.StatusSeeOther)
 }
 
-// PostAdminUserSubnetTest runs a quick sanity check
+// PostAdminUserSubnetProvision issues a per-user preauth key
+// (tag:subnet-router, 1h TTL, single-use) so the operator can
+// hand it to the user. The user pastes the key into a tailscale
+// up command on their sidecar host:
+//
+//   sudo tailscale up --authkey=<key> \
+//     --hostname=skygate-subnet-<username> \
+//     --advertise-routes=10.0.<uid>.0/24
+//
+// The auto-approver (internal/sidecar) watches headscale for
+// the new node, approves the route, and flips status to active
+// within ~30s.
+//
+// Idempotency: each click issues a new key. The old key (if
+// unused) is left to expire naturally after 1h.
+func (a *App) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/provision")
+	if err != nil {
+		http.Error(w, "bad id", 400)
+		return
+	}
+	if a.Sidecar == nil {
+		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+			"FlashError": "sidecar manager not configured (check SKYGATE_SIDECAR_SYNC_PERIOD env)",
+		})
+		return
+	}
+	// Look up the username (needed for the suggested --hostname).
+	var username string
+	if err := a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, id).Scan(&username); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "user not found", 404)
+			return
+		}
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	key, exp, err := a.Sidecar.GeneratePreauth(r.Context(), id)
+	if err != nil {
+		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+			"FlashError": fmt.Sprintf("issue preauth: %v", err),
+		})
+		return
+	}
+	info := a.Sidecar.BuildPreauthInfo(id, key, exp, username)
+	a.audit(c.UserID, c.Username, "subnet_provision", fmt.Sprintf("user_id=%d expires=%s", id, exp.Format(time.RFC3339)))
+	renderUserSubnetPage(a, w, r, c, id, map[string]any{
+		"FlashPreauth": &info,
+	})
+}
 // on the user's subnet row + the denorm columns on
 // portal_users. The check verifies:
 //   - user_subnets row exists (else "no subnet" error)

@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"skygate/internal/db"
+	"skygate/internal/headscale"
+	"skygate/internal/sidecar"
 	"skygate/internal/subnet"
 )
 
@@ -298,3 +301,69 @@ func extractExcerpt(haystack, needle string) string {
 	return haystack[start:end]
 }
 var _ = db.User{}.Username
+
+// TestPostAdminUserSubnetProvision_IssuesPreauthAndShows — v0.16.7.
+// Provision handler issues a preauth key via the sidecar
+// manager and renders the page with the key + suggested
+// command in a flash card. We attach a real sidecar.Manager
+// (with a fake headscale API) and assert the key appears
+// in the body along with the hostname + route hint.
+func TestPostAdminUserSubnetProvision_IssuesPreauthAndShows(t *testing.T) {
+	a, d := newTestApp(t, &testNotifier{})
+	defer d.Close()
+	a.withTemplates()
+	uid := adminSubnetSeed(t, a, d, "alice-subnet")
+	if _, err := subnet.Create(d, uid, "", "skygate-subnet-alice"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Wire a sidecar manager with a fake headscale API that
+	// returns a stub preauth key. Also set headscale_user_id
+	// on the seeded user so the preauth issuance can read it.
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 42 WHERE id = ?`, uid); err != nil {
+		t.Fatalf("set hs id: %v", err)
+	}
+	_, hs := fakeSidecarHS(t)
+	a.Sidecar = sidecar.New(d, func(int64) *headscale.Client { return hs }, nil, 0)
+
+	provReq := authedReqForURL(t, a, "POST", "/admin/users/"+itoa(uid)+"/subnet/provision", "skyadmin")
+	provW := httptest.NewRecorder()
+	a.PostAdminUserSubnetProvision(provW, provReq)
+	if provW.Code != http.StatusOK {
+		t.Errorf("Provision: expected 200, got %d", provW.Code)
+	}
+	body := provW.Body.String()
+	if !strings.Contains(body, "hskey-fake") {
+		t.Errorf("expected fake preauth key in body, got excerpt: %q",
+			extractExcerpt(body, "preauth"))
+	}
+	if !strings.Contains(body, "skygate-subnet-alice") {
+		t.Errorf("expected suggested hostname in body, got excerpt: %q",
+			extractExcerpt(body, "preauth"))
+	}
+	if !strings.Contains(body, "--authkey=") {
+		t.Errorf("expected command snippet with --authkey= in body, got excerpt: %q",
+			extractExcerpt(body, "preauth"))
+	}
+}
+
+// fakeSidecarHS returns a headscale httptest server that
+// returns a stub preauth key on POST /api/v1/preauthkey.
+// The sidecar.Manager uses it via the HSResolver.
+func fakeSidecarHS(t *testing.T) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/preauthkey" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(headscale.PreauthKey{
+				ID:     "1",
+				Key:    "hskey-fake",
+				UserID: 1,
+			})
+			return
+		}
+		http.Error(w, "not found", 404)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, headscale.New(srv.URL, "test-key")
+}

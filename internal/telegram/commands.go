@@ -7,6 +7,7 @@ import (
 
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/sidecar"
 )
 
 // BotEnv is the read-only context HandleCommand needs beyond the
@@ -91,6 +92,12 @@ type BotEnv struct {
 	// identities (headscale rejects unknown identities
 	// in tagOwners). nil falls through to "".
 	PortalPlaneURL func(userID int64) string
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar. The
+	// /mysubnet provision subcommand calls this to issue
+	// a per-user preauth key. nil is valid (the bot then
+	// returns a hint to ask the admin to use the web UI
+	// /admin/users/{id}/subnet Provision button).
+	Sidecar *sidecar.Manager
 
 	// 2026-07-13: Этап 11 part 2b — per-device and total rule
 	// caps, snapshotted from the App's *config.Config at startup.
@@ -585,6 +592,12 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		// columns (subnet_cidr / subnet_status /
 		// subnet_router_node_id) so the hot path is one
 		// SELECT, no JOIN on the user_subnets table.
+		// 2026-07-17: v0.16.7 — added the "provision"
+		// subcommand that issues a per-user preauth
+		// key. /mysubnet (no args) = show status.
+		if len(args) > 0 && args[0] == "provision" {
+			return cmdReply{body: mySubnetProvisionReply(env), context: lookupContext(cmd), skipWrap: true}
+		}
 		return cmdReply{body: mySubnetReply(env), context: lookupContext(cmd)}
 	case "/add_device":
 		// 2026-07-16: v0.15.2 — addDeviceReply uses

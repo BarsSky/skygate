@@ -18,6 +18,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/sidecar"
 	"skygate/internal/subnet"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -1427,6 +1428,86 @@ func seedPortalUserForSubnets(t *testing.T, d interface {
 	}
 	id, _ := res.LastInsertId()
 	return id
+}
+
+// TestMySubnetProvisionReply_IssuesPreauth — v0.16.7.
+// /mysubnet provision issues a per-user preauth key
+// (tag:subnet-router, 1h TTL) and replies with the
+// key + the suggested tailscale up command. The fake
+// headscale server returns a stub key; the test
+// asserts both the key and the command snippet
+// appear in the reply body.
+func TestMySubnetProvisionReply_IssuesPreauth(t *testing.T) {
+	d := setupTestDB(t)
+	uid := seedPortalUserForSubnets(t, d)
+	// Provision needs a headscale_user_id on the user.
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 42 WHERE id = ?`, uid); err != nil {
+		t.Fatalf("set hs id: %v", err)
+	}
+	// Create a user_subnets row (the manager errors if missing).
+	if _, err := subnet.Create(d, uid, "", "skygate-subnet-alice-subnet"); err != nil {
+		t.Fatalf("subnet.Create: %v", err)
+	}
+	// Wire a sidecar manager with a fake headscale API
+	// that returns a stub preauth key on POST.
+	_, hs := fakeSidecarPreauthHS(t)
+	mgr := sidecar.New(d, func(int64) *headscale.Client { return hs }, nil, 0)
+
+	env := userEnv(d)
+	env.PortalUserID = uid
+	env.Username = "alice-subnet"
+	env.Sidecar = mgr
+
+	got := mySubnetProvisionReply(env)
+	if !strings.Contains(got, "hskey-fake") {
+		t.Errorf("expected preauth key in body, got: %q", got)
+	}
+	if !strings.Contains(got, "--authkey=") {
+		t.Errorf("expected --authkey= snippet in body, got: %q", got)
+	}
+	if !strings.Contains(got, "skygate-subnet-alice-subnet") {
+		t.Errorf("expected suggested hostname in body, got: %q", got)
+	}
+}
+
+// TestMySubnetProvisionReply_NoManagerReturnsHint — if
+// the sidecar manager isn't wired (e.g. operator hasn't
+// configured SKYGATE_SIDECAR_SYNC_PERIOD), the reply
+// tells the user to ask the admin.
+func TestMySubnetProvisionReply_NoManagerReturnsHint(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	env.PortalUserID = 1
+	env.Sidecar = nil
+	got := mySubnetProvisionReply(env)
+	if !strings.Contains(got, "sidecar manager") &&
+		!strings.Contains(got, "ask an admin") &&
+		!strings.Contains(got, "ask the admin") &&
+		!strings.Contains(got, "попросите админа") {
+		t.Errorf("expected 'ask the admin' hint, got: %q", got)
+	}
+}
+
+// fakeSidecarPreauthHS returns a headscale httptest
+// server that returns a stub preauth key on POST
+// /api/v1/preauthkey. Used by the bot's /mysubnet
+// provision test path.
+func fakeSidecarPreauthHS(t *testing.T) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/preauthkey" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(headscale.PreauthKey{
+				ID:     "1",
+				Key:    "hskey-fake",
+				UserID: 42,
+			})
+			return
+		}
+		http.Error(w, "not found", 404)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, headscale.New(srv.URL, "test-key")
 }
 
 func TestAdminOnlyRejectsUser(t *testing.T) {

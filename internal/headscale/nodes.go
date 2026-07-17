@@ -27,6 +27,14 @@ type HSNode struct {
 	CreatedAt       string        `json:"createdAt"`
 	Tags            []string      `json:"tags"`
 	AvailableRoutes []string      `json:"availableRoutes"`
+	// ApprovedRoutes is what headscale has actually approved for
+	// this node (after `headscale nodes approve-routes` runs).
+	// Distinct from AvailableRoutes (what the node asked for)
+	// because the operator / auto-approver may have only
+	// approved a subset, or none at all. Read by the sidecar
+	// auto-approver (v0.16.7) to decide when to flip
+	// user_subnets.status to active.
+	ApprovedRoutes  []string      `json:"approvedRoutes"`
 	PreAuthKey      *HSPreauthKey `json:"preAuthKey"`
 }
 
@@ -42,6 +50,10 @@ type NodeView struct {
 	IsExitNode      bool
 	Tags            []string
 	AvailableRoutes []string
+	// ApprovedRoutes mirrors HSNode.ApprovedRoutes — see the
+	// comment on HSNode for the distinction. Used by
+	// sidecar.auto_approver.
+	ApprovedRoutes  []string
 	// PreAuthKeyID is the headscale ID of the preauth key this node
 	// registered with, or "" if the node predates our key tracking.
 	PreAuthKeyID string
@@ -80,6 +92,7 @@ func (n HSNode) toView() NodeView {
 		IsExitNode:      hasExitNodeTag(tags, n.Name, n.AvailableRoutes),
 		Tags:            tags,
 		AvailableRoutes: n.AvailableRoutes,
+		ApprovedRoutes:  n.ApprovedRoutes,
 		PreAuthKeyID:    pakID,
 		CreatedAt:       n.CreatedAt,
 	}
