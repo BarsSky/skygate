@@ -220,5 +220,12 @@ func migrate(d *sql.DB) error {
 	if err := migrateV038(d); err != nil {
 		return fmt.Errorf("migrate v0.38: %w", err)
 	}
+	// 2026-07-17: v0.17.1 — cross-user IP-level subnet
+	// sharing. Adds user_subnet_shares (grantor, grantee)
+	// with FKs CASCADE on portal_users.id. See
+	// migrations_v0.39.go for the design rationale.
+	if err := migrationV039(d); err != nil {
+		return fmt.Errorf("migrate v0.39: %w", err)
+	}
 	return nil
 }

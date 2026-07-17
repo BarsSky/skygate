@@ -153,6 +153,30 @@ const (
 		  LEFT JOIN user_subnets s ON s.user_id = p.id
 		 WHERE p.headscale_url = ? OR (p.headscale_url = '' AND ? = '')
 		 ORDER BY p.id`
+	// 2026-07-17: v0.17.1 — for each user on the plane,
+	// return the list of (grantor, cidr) tuples that
+	// the grantee is allowed to access. The ACL builder
+	// in v0.17.0 reads this to extend each user's
+	// per-user dst list with every grantor's CIDR.
+	// Returns one row per (grantee, grantor) pair
+	// (zero rows if the grantee has no shares — the
+	// caller treats that as "no extra dst entries").
+	// LEFT JOIN is NOT needed: a share row only
+	// exists if the grantor has a subnet (Grant
+	// pre-checks this), and we don't want to surface
+	// shares whose grantor has since had their
+	// subnet disabled. So inner join is the right
+	// choice — the acl builder trusts that any
+	// CIDR returned here is currently routable.
+	qSelectSharedSubnetsForPlane = `
+		SELECT p_grantee.username, p_grantor.username, s.cidr
+		  FROM user_subnet_shares sh
+		  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
+		  JOIN portal_users p_grantor ON p_grantor.id = sh.grantor_user_id
+		  JOIN portal_users p_grantee ON p_grantee.id = sh.grantee_user_id
+		 WHERE (p_grantor.headscale_url = ? OR (p_grantor.headscale_url = '' AND ? = ''))
+		   AND (p_grantee.headscale_url = ? OR (p_grantee.headscale_url = '' AND ? = ''))
+		 ORDER BY p_grantee.username, p_grantor.username`
 	// v0.13.0 — list every distinct (url, api_key) plane with a user
 	// count. Used by the per-plane ACL pipeline to iterate all
 	// planes and push the right policy to each. Empty
