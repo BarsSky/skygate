@@ -129,7 +129,7 @@ const (
 const (
 	qSelectUserByName      = `SELECT id, password_hash, is_admin FROM portal_users WHERE username = ?`
 	qSelectUserIDByName    = `SELECT id FROM portal_users WHERE username = ?`
-	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme FROM portal_users ORDER BY id`
+	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme, subnet_cidr, subnet_status, subnet_router_node_id FROM portal_users ORDER BY id`
 	qSelectPortalUsernames = `SELECT username FROM portal_users ORDER BY id`
 	// 2026-07-16: v0.13.0 — per-plane ACL. qSelectPortalUsernamesForPlane
 	// returns usernames of every portal user on a given control plane
