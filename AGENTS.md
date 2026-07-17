@@ -7,7 +7,45 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.5 — split long bot replies into
+* **Current**: v0.16.6 — per-user subnets foundation
+  ([release notes](RELEASE-NOTES-v0.16.6.md)). The
+  first concrete step of the 6-release per-user
+  subnets roadmap (v0.16.6 → v0.19.0) documented in
+  `docs/v0.16.0-open-questions.md` (8 operator
+  decisions confirmed 2026-07-17). v0.16.6 ships the
+  data model + CRUD + admin form + bot `/mysubnet`;
+  the actual sidecar container management is the
+  v0.16.7 follow-up. Adds:
+  - `user_subnets` table (11 columns, UNIQUE on
+    user_id + cidr, FK to portal_users ON DELETE
+    CASCADE) + 3 denormalized columns on
+    `portal_users` (`subnet_cidr`, `subnet_status`,
+    `subnet_router_node_id`) — read by `/mysubnet`
+    and `/admin/users/{id}` without JOIN
+  - `control_plane_url` column on `user_subnets` for
+    multi-plane (per-user headscale since v0.12.0)
+  - `internal/subnet/allocator.go` — pure function
+    `AllocateCIDR(userID) → 10.0.<uid>.0/24` (256
+    users max; `/28` migration reserved as
+    `subnet_bits` column without DB schema change)
+  - `internal/subnet/manager.go` — CRUD layer with
+    pre-check (avoids "FOREIGN KEY constraint
+    failed") + `tx.Rollback` before `Get` (avoids
+    SQLite write-lock deadlock after failed UNIQUE
+    INSERT) + denorm sync on every mutation
+  - `/admin/users/{id}/subnet` — 4 routes
+    (allocate, disable, test, list) with idempotent
+    allocate
+  - Bot `/mysubnet` — reads denormalized columns
+    (no JOIN), shows CIDR + status + router
+    hostname + plane label
+  - 30 new catalog keys (14 `bot.mysubnet.*` + 16
+    `user_subnet.*`) RU+EN, parity test green
+  - 21 new tests (4 allocator + 10 manager + 5
+    admin + 2 bot)
+  - 12/12 packages green, smoke 118/118, live on
+    VM at build `a450fa7`.
+* **Previous**: v0.16.5 — split long bot replies into
   multiple bubbles
   ([release notes](RELEASE-NOTES-v0.16.5.md)). The
   operator reported that on a phone, long bot replies
