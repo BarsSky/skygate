@@ -90,8 +90,8 @@
   <div style="flex:1;min-width:0">
     <strong>{{t "update.banner_title"}}</strong>
     <div style="color:var(--text-muted);font-size:13px;margin-top:2px">
-      {{t "update.banner_body" .Version .UpdateLatest.TagName}}
-      {{if .UpdateCheckedAt}} · {{t "update.banner_checked" .UpdateCheckedAt}}{{end}}
+      {{tf "update.banner_body" .Version .UpdateLatest.TagName}}
+      {{if .UpdateCheckedAt}} · {{tf "update.banner_checked" .UpdateCheckedAt}}{{end}}
     </div>
   </div>
   {{if .UpdateLatest.HTMLURL}}
