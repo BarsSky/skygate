@@ -7,7 +7,41 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.17.1 — cross-user IP-level
+* **Current**: v0.18.0 — MagicDNS for personal
+  subnets
+  ([release notes](RELEASE-NOTES-v0.18.0.md)).
+  Roadmap step 5 of the v0.16.0+ per-user subnets
+  plan. Each user's sidecar now has a stable,
+  auto-resolving FQDN
+  (`skygate-subnet-<username>.tsnet.skynas.ru`)
+  so tailnet clients can reach the user's
+  `10.0.<uid>.0/24` subnet without remembering
+  the sidecar's tailnet IP. New `internal/subnet/magicdns.go`
+  (pure string functions `ComputeMagicDNSNames` +
+  `FormatMagicDNSNames`, no DB). Admin UI:
+  `/admin/users/{id}/subnet` gets a "DNS имена"
+  `<details>` card; `/admin/subnets` gets a new
+  "DNS (MagicDNS)" column. Bot: `/mysubnet` reply
+  appends a "MagicDNS" section. 12 new i18n keys
+  (6 admin + 5 bot + 1 col_dns) RU+EN. 4 new
+  unit tests in `magicdns_test.go` (known
+  usernames, format renderer, base-domain drift
+  guard, sidecar-prefix drift guard).
+  `BaseDomain = "tsnet.skynas.ru"` matches
+  `internal/acl/acl.go`'s `baseDomain` constant.
+  Works automatically when headscale has
+  `dns.magic_dns: true` + `dns.base_domain:
+  tsnet.skynas.ru` (operator config, no headscale
+  code change). The v0.16.7 sidecar's
+  `--hostname=skygate-subnet-<username>` is what
+  triggers the FQDN. The
+  `exitnode.skygate-subnet-<user>` special record
+  is NOT shipped in v0.18.0 (headscale 0.29
+  doesn't support per-user service records);
+  v0.19.0 is the planned home. 12/12 packages
+  green, smoke 118/118, live at build `8d722af`.
+
+* **Previous**: v0.17.1 — cross-user IP-level
   subnet sharing + auto-reapply ACL
   ([release notes](RELEASE-NOTES-v0.17.1.md)). Two
   pieces that close the v0.16.0+ subnets roadmap:
