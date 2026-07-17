@@ -1730,12 +1730,26 @@ func mySubnetReply(env BotEnv) string {
 	// Build the body. The "sharing" sections are empty
 	// in v0.16.0; the v0.17.1 release will fill them
 	// with /share_subnet and /revoke_subnet data.
+	// 2026-07-17: v0.18.0 — append a MagicDNS section
+	// with the sidecar's auto-resolving FQDN. The
+	// user can `tailscale ssh <fqdn>` or just use
+	// the FQDN as a destination from any tailnet
+	// client. Per-device records (the wildcard
+	// pattern) are documented in the note.
+	names := subnet.ComputeMagicDNSNames(env.Username)
+	magicBody := Section(i18n.T(lang, "bot.mysubnet.section_magicdns")) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.magicdns_sidecar_label"),
+			"<code>"+names.Sidecar+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.magicdns_short_label"),
+			"<code>"+names.SidecarShort+"</code>") + "\n" +
+		"<i>" + i18n.T(lang, "bot.mysubnet.magicdns_note") + "</i>"
 	body := i18n.Tf(lang, "bot.mysubnet.header", env.Username) + "\n" +
 		Section(i18n.T(lang, "bot.mysubnet.section_subnet")) + "\n" +
 		Field(i18n.T(lang, "bot.mysubnet.label_cidr"), cidr) + "\n" +
 		Field(i18n.T(lang, "bot.mysubnet.label_status"), status) + "\n" +
 		Field(i18n.T(lang, "bot.mysubnet.label_router"), routerLabel) + "\n" +
 		Field(i18n.T(lang, "bot.mysubnet.label_planes"), planeLabel) + "\n\n" +
+		magicBody + "\n\n" +
 		Section(i18n.T(lang, "bot.mysubnet.section_sharing")) + "\n" +
 		"<i>" + i18n.T(lang, "bot.mysubnet.sharing_v0_17_1") + "</i>"
 	return body
