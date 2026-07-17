@@ -41,6 +41,9 @@
     <tr><th>{{t "user_subnet.updated_at"}}</th><td><code>{{.Subnet.UpdatedAt}}</code></td></tr>
   </table>
   <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/provision" style="display:inline">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-key"></i> {{t "user_subnet.provision_button"}}</button>
+    </form>
     <form method="POST" action="/admin/users/{{.User.ID}}/subnet/test" style="display:inline">
       <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-stethoscope"></i> {{t "user_subnet.test_button"}}</button>
     </form>
@@ -51,6 +54,33 @@
     {{end}}
   </div>
 </div>
+
+{{if .FlashPreauth}}
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-key"></i> {{t "user_subnet.preauth_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "user_subnet.preauth_help" | safeHTML}}
+  </p>
+  <div style="margin-top:10px;display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px">
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_key"}}</span>
+    <code style="user-select:all;font-size:12px;background:var(--bg-elev);padding:4px 6px;border-radius:3px;word-break:break-all">{{.FlashPreauth.Key}}</code>
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_hostname"}}</span>
+    <code style="font-size:12px">{{.FlashPreauth.Hostname}}</code>
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_routes"}}</span>
+    <code style="font-size:12px">{{.FlashPreauth.Routes}}</code>
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_expires"}}</span>
+    <code style="font-size:12px">{{.FlashPreauth.ExpiresAt.Format "2006-01-02 15:04 MST"}}</code>
+  </div>
+  <pre style="margin-top:12px;background:var(--bg);padding:10px 12px;border-radius:4px;font-size:12px;overflow-x:auto;white-space:pre-wrap"><b>Linux / macOS / Docker:</b>
+sudo tailscale up \
+  --authkey={{.FlashPreauth.Key}} \
+  --hostname={{.FlashPreauth.Hostname}} \
+  --advertise-routes={{.FlashPreauth.Routes}}</pre>
+  <p style="color:var(--text-subtle);font-size:12px;margin-top:8px">
+    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.preauth_note" | safeHTML}}
+  </p>
+</div>
+{{end}}
 
 <div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
   <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.v0_16_0_note_title"}}</h3>

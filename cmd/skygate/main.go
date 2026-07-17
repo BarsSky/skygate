@@ -23,6 +23,7 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
 	"skygate/internal/monitoring"
+	"skygate/internal/sidecar"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
 )
@@ -215,6 +216,7 @@ func main() {
 	mux.Handle("POST /admin/users/{id}/subnet/allocate", authMW(http.HandlerFunc(app.PostAdminUserSubnetAllocate)))
 	mux.Handle("POST /admin/users/{id}/subnet/disable", authMW(http.HandlerFunc(app.PostAdminUserSubnetDisable)))
 	mux.Handle("POST /admin/users/{id}/subnet/test", authMW(http.HandlerFunc(app.PostAdminUserSubnetTest)))
+	mux.Handle("POST /admin/users/{id}/subnet/provision", authMW(http.HandlerFunc(app.PostAdminUserSubnetProvision)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
 	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))
@@ -328,6 +330,22 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar
+	// auto-approver. Hoisted before the RealNotifier block
+	// so we can hand the same manager to the bot via
+	// rn.SetSidecar() below.
+	sidecarMgr := sidecar.New(d, app.HSForUser, log.Default(), cfg.SidecarSyncPeriod)
+	app.Sidecar = sidecarMgr
+	// sidecarMgr.Run blocks on a ticker loop; launch it in a
+	// goroutine so the main flow can continue to start the
+	// HTTP server + Telegram notifier. v0.16.7
+	// regression-prevention: the first v0.16.7 deploy had
+	// this as a direct call, which blocked main() before
+	// the HTTP listener could bind, so the process was
+	// up but unreachable (the sidecar goroutine was the
+	// only thing still running).
+	go sidecarMgr.Run(ctx)
+
 		// 2026-07-11: Telegram bot — always arm the RealNotifier so a
 		// hot-swap (admin saving a token at runtime) takes effect without
 		// restart. RealNotifier.SendTelegram no-ops when Configured()==false,
@@ -349,6 +367,13 @@ func main() {
 			// the web handlers use (hs was constructed at line 77)
 			// so both surfaces share one source of truth.
 			rn.SetHS(hs)
+			// 2026-07-17: v0.16.7 — wire the sidecar
+			// manager (created above) so /mysubnet provision
+			// can issue per-user preauth keys in chat. The
+			// manager's own Run() goroutine is the auto-
+			// approver for tag:subnet-router nodes; this
+			// just hands the manager to the bot's env.
+			rn.SetSidecar(sidecarMgr)
 			// 2026-07-16: v0.12.1 — per-user headscale-client
 			// routing. The closure binds app so the bot calls
 			// the same App.HSForUser the web handlers use
@@ -472,6 +497,11 @@ func main() {
 	// Stash the monitor on the App so handlers can call
 	// CheckNow for the manual "Run health check now" button.
 	app.ExitNodeMonitor = exitMon
+
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar
+	// auto-approver moved earlier so the RealNotifier
+	// can pick up the same manager via SetSidecar().
+	// (See "Telegram bot" block above.)
 
 	<-ctx.Done()
 	log.Println("🌐 shutting down")
