@@ -209,5 +209,13 @@ func migrate(d *sql.DB) error {
 	if err := migrateV037(d); err != nil {
 		return fmt.Errorf("migrate v0.37: %w", err)
 	}
+	// 2026-07-17: v0.16.0 — per-user subnets schema. Adds
+	// the user_subnets table + 3 denormalized columns on
+	// portal_users (subnet_cidr / subnet_status /
+	// subnet_router_node_id). See migrations_v0.38.go for
+	// the full rationale.
+	if err := migrateV038(d); err != nil {
+		return fmt.Errorf("migrate v0.38: %w", err)
+	}
 	return nil
 }
