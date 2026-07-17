@@ -995,6 +995,31 @@ var ruCatalog = map[string]string{
 	"backup.toggle_disabled":          "Планировщик выключен",
 	"backup.run_in_flight":            "Другой бэкап уже выполняется. Подождите",
 	"backup.field_required":           "Заполните поле «%s»",
+
+	// 2026-07-17: v0.16.10 — /admin/subnets overview
+	// (all subnets at a glance, with status filter
+	// chips + last-sync timestamp). Complements the
+	// per-user /admin/users/{id}/subnet page.
+	"admin.subnets.title":             "Per-user subnets",
+	"admin.subnets.subtitle":          "все personal subnets, auto-approver status, last sync",
+	"admin.subnets.last_sync":         "последняя синхронизация авто-approver: %s",
+	"admin.subnets.filter_all":        "Все (%d)",
+	"admin.subnets.filter_pending":    "Pending (%d)",
+	"admin.subnets.filter_active":     "Active (%d)",
+	"admin.subnets.filter_disabled":   "Disabled (%d)",
+	"admin.subnets.col_user_id":       "UID",
+	"admin.subnets.col_username":      "Username",
+	"admin.subnets.col_cidr":          "CIDR",
+	"admin.subnets.col_status":        "Status",
+	"admin.subnets.col_router":        "Router",
+	"admin.subnets.col_plane":         "Control plane",
+	"admin.subnets.col_actions":       "Open",
+	"admin.subnets.view":              "Open",
+	"admin.subnets.empty":             "Пока ни одна personal subnet не выделена. Создайте первую на /admin/users/{id}/subnet (кнопка «Выделить subnet»).",
+	"admin.subnets.how_it_works_title": "Как это работает",
+	"admin.subnets.how_it_works_1":   "1. На <a href=\"/admin/users\">/admin/users</a> выберите юзера и нажмите <i>Выделить subnet</i> — будет создан ряд в <code>user_subnets</code> со статусом <code>pending</code>.",
+	"admin.subnets.how_it_works_2":   "2. На странице юзера нажмите <i>Issue preauth key</i> — Skygate выдаст одноразовый ключ с тегом <code>tag:subnet-router</code>. Передайте его пользователю для <code>tailscale up</code> на его sidecar-хосте.",
+	"admin.subnets.how_it_works_3":   "3. Авто-approver каждые 30с проверяет headscale на <code>tag:subnet-router</code> ноды, approve-ит маршрут <code>10.0.&lt;uid&gt;.0/24</code> и переключает статус на <code>active</code>. Если нода исчезла — статус становится <code>disabled</code>.",
 	// 2026-07-16: v0.15.6 — /admin/backup full localization.
 	// Card descriptions, history table headers, migration
 	// instructions (critical — the operator MUST follow them
@@ -2738,6 +2763,28 @@ var enCatalog = map[string]string{
 	"backup.toggle_disabled":          "Scheduler disabled",
 	"backup.run_in_flight":            "Another backup is already running. Please wait",
 	"backup.field_required":           "Please fill in %s",
+
+	// 2026-07-17: v0.16.10 — /admin/subnets overview.
+	"admin.subnets.title":             "Per-user subnets",
+	"admin.subnets.subtitle":          "every personal subnet, auto-approver status, last sync",
+	"admin.subnets.last_sync":         "last auto-approver sync: %s",
+	"admin.subnets.filter_all":        "All (%d)",
+	"admin.subnets.filter_pending":    "Pending (%d)",
+	"admin.subnets.filter_active":     "Active (%d)",
+	"admin.subnets.filter_disabled":   "Disabled (%d)",
+	"admin.subnets.col_user_id":       "UID",
+	"admin.subnets.col_username":      "Username",
+	"admin.subnets.col_cidr":          "CIDR",
+	"admin.subnets.col_status":        "Status",
+	"admin.subnets.col_router":        "Router",
+	"admin.subnets.col_plane":         "Control plane",
+	"admin.subnets.col_actions":       "Open",
+	"admin.subnets.view":              "Open",
+	"admin.subnets.empty":             "No personal subnets yet. Create the first one at /admin/users/{id}/subnet (Allocate subnet button).",
+	"admin.subnets.how_it_works_title": "How it works",
+	"admin.subnets.how_it_works_1":   "1. On <a href=\"/admin/users\">/admin/users</a>, pick a user and click <i>Allocate subnet</i> — a row in <code>user_subnets</code> is created with status <code>pending</code>.",
+	"admin.subnets.how_it_works_2":   "2. On the user page, click <i>Issue preauth key</i> — Skygate issues a single-use preauth tagged <code>tag:subnet-router</code>. Pass it to the user for <code>tailscale up</code> on their sidecar host.",
+	"admin.subnets.how_it_works_3":   "3. The auto-approver polls headscale every 30s for <code>tag:subnet-router</code> nodes, approves the <code>10.0.&lt;uid&gt;.0/24</code> route, and flips status to <code>active</code>. If the node disappears, status flips back to <code>disabled</code>.",
 	// 2026-07-16: v0.15.6 — /admin/backup full localization.
 	// Card descriptions, history table headers, migration
 	// instructions (critical — the operator MUST follow them
