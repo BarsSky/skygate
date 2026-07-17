@@ -233,6 +233,44 @@ func GetPortalUsernamesForPlane(d *sql.DB, planeURL string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// UserSubnet is one row of GetUserSubnetsForPlane: the portal
+// username on the given plane + their per-user subnet CIDR
+// (empty string if no subnet allocated).
+//
+// 2026-07-17: v0.17.0 — used by GenerateACLForPlane to
+// extend the per-user rule with `dst: [..., "10.0.<uid>.0/24:*"]`
+// when the user has a personal subnet. The CIDR is
+// deterministic (allocated by the subnet package) so the
+// policy is stable across rebuilds.
+type UserSubnet struct {
+	Username string
+	CIDR     string
+}
+
+// GetUserSubnetsForPlane returns every (username, cidr) pair
+// on the given control plane. planeURL == "" means the
+// global default plane. Empty cidr means the user has no
+// subnet allocated yet; the ACL builder skips the CIDR for
+// those users.
+//
+// 2026-07-17: v0.17.0.
+func GetUserSubnetsForPlane(d *sql.DB, planeURL string) ([]UserSubnet, error) {
+	rows, err := d.Query(qSelectUserSubnetsForPlane, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserSubnet
+	for rows.Next() {
+		var us UserSubnet
+		if err := rows.Scan(&us.Username, &us.CIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, us)
+	}
+	return out, rows.Err()
+}
+
 // ControlPlaneUserCount is one row of ListControlPlanes: a
 // distinct headscale_url (empty = the global default) and
 // the number of portal users on it. Used by the per-plane
