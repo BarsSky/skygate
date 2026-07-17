@@ -7,7 +7,35 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.8 — UI: Subnet column + button
+* **Current**: v0.16.9 — sidebar username + login
+  remember me
+  ([release notes](RELEASE-NOTES-v0.16.9.md)). Two
+  operator-reported issues from v0.16.8:
+
+  1. `/admin/users/{id}/subnet` rendered with empty
+     username in sidebar and no admin nav. Root
+     cause: v0.16.6's `renderUserSubnetPage` was
+     called with `c=nil` in all 4 handlers
+     (GetAdminUserSubnet + 3 POSTs). Fix: pass the
+     real c (already fetched via currentUser)
+     through. Plus
+     `TestGetAdminUserSubnet_PopulatesSidebarUsername`
+     regression test (pinned against c=nil).
+
+  2. `/login` had `autocomplete="off"` and two dummy
+     hidden inputs that suppressed browser autofill.
+     Removed. username now `autocomplete="username"`
+     so the password manager saves + pre-fills.
+     Added "Remember me" checkbox (default off) that
+     extends the session cookie to 30 days. Added
+     `last_username` cookie (365 days, not HttpOnly,
+     username only — no credential material) that
+     pre-fills the username field even after logout.
+     2 new i18n keys (RU+EN).
+
+  12/12 packages green, smoke 118/118, live on VM at
+  build `e555698`.
+* **Previous**: v0.16.8 — UI: Subnet column + button
   in /admin/users
   ([release notes](RELEASE-NOTES-v0.16.8.md)). The
   v0.16.6 release shipped the
