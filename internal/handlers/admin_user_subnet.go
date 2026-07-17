@@ -103,6 +103,13 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 		"Subnet":       sub, // nil = no subnet allocated
 		"HeadscaleURL": hsLabel,
 		"SubnetBits":   subnet.DefaultSubnetBits,
+		// 2026-07-17: v0.18.0 — auto-resolving MagicDNS
+		// names for the user's sidecar. Computed from
+		// the username + tailnet base domain; no DB
+		// lookup needed. Always populated (even before
+		// the sidecar registers) so the operator knows
+		// the eventual FQDN.
+		"MagicDNS": subnet.ComputeMagicDNSNames(username),
 	}
 	// 2026-07-17: v0.17.1 — pull the share lists so the
 	// "Sharing" section can render. Lookups are best-

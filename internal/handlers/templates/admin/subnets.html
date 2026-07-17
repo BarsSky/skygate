@@ -42,6 +42,7 @@
         <th style="width:140px">{{t "admin.subnets.col_cidr"}}</th>
         <th style="width:120px">{{t "admin.subnets.col_status"}}</th>
         <th style="width:140px">{{t "admin.subnets.col_router"}}</th>
+        <th style="width:240px">{{t "admin.subnets.col_dns"}}</th>
         <th style="width:200px">{{t "admin.subnets.col_plane"}}</th>
         <th style="width:120px">{{t "admin.subnets.col_actions"}}</th>
       </tr>
@@ -59,6 +60,7 @@
           {{else}}<span class="tag" style="font-size:10px"><i class="fa-solid fa-circle-question"></i> {{.Subnet.Status}}</span>{{end}}
         </td>
         <td><code style="font-size:11px">{{if .Subnet.RouterHostname}}{{.Subnet.RouterHostname}}{{else}}—{{end}}</code></td>
+        <td><code style="font-size:11px">{{.DNSName}}</code></td>
         <td><code style="font-size:11px">{{.Subnet.ControlPlaneURL}}</code></td>
         <td>
           <a href="/admin/users/{{.Subnet.UserID}}/subnet" class="btn btn-sm"><i class="fa-solid fa-arrow-right"></i> {{t "admin.subnets.view"}}</a>
