@@ -7,7 +7,24 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.7 — hotfix: t vs tf arg count
+* **Current**: v0.16.8 — UI: Subnet column + button
+  in /admin/users
+  ([release notes](RELEASE-NOTES-v0.16.8.md)). The
+  v0.16.6 release shipped the
+  `/admin/users/{id}/subnet` page (4 routes, full
+  template) but the page was unreachable from the UI
+  — no link from `/admin/users`, no sidebar entry, no
+  "Subnet" column. Operator reported "where are the
+  buttons?". Fix: extend `User` struct with the 3
+  v0.16.6 denorm fields, extend
+  `qSelectAllPortalUsers` from 6 to 9 columns, add a
+  "Subnet" column to `/admin/users` (CIDR + status
+  pill: green active / amber pending / muted disabled
+  / dim "—" none) and a "Subnet" link in the per-user
+  `<details>` menu. 6 new i18n keys (RU+EN). 2 new
+  tests. 12/12 packages green, smoke 118/118, live
+  on VM at build `3fc44a2`.
+* **Previous**: v0.16.7 — hotfix: t vs tf arg count
   in update banner
   ([release notes](RELEASE-NOTES-v0.16.7.md)). The
   v0.16.6 release shipped an "update available" banner
