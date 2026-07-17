@@ -208,6 +208,13 @@ func main() {
 	mux.Handle("GET /admin/users/{id}/plane", authMW(http.HandlerFunc(app.GetAdminUserControlPlane)))
 	mux.Handle("POST /admin/users/{id}/plane", authMW(http.HandlerFunc(app.PostAdminUserControlPlane)))
 	mux.Handle("POST /admin/users/{id}/plane/clear", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneClear)))
+	// 2026-07-17: v0.16.0 — per-user subnets admin page.
+	// GET shows the user's subnet status; POSTs allocate
+	// / disable / run a sanity check.
+	mux.Handle("GET /admin/users/{id}/subnet", authMW(http.HandlerFunc(app.GetAdminUserSubnet)))
+	mux.Handle("POST /admin/users/{id}/subnet/allocate", authMW(http.HandlerFunc(app.PostAdminUserSubnetAllocate)))
+	mux.Handle("POST /admin/users/{id}/subnet/disable", authMW(http.HandlerFunc(app.PostAdminUserSubnetDisable)))
+	mux.Handle("POST /admin/users/{id}/subnet/test", authMW(http.HandlerFunc(app.PostAdminUserSubnetTest)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
 	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))

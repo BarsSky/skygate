@@ -1,0 +1,61 @@
+{{define "body-admin-user-subnet"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-network-wired"></i>{{t "user_subnet.title"}}</h2>
+    <div class="sub">{{.User.Username}} — {{t "user_subnet.subtitle" | safeHTML}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/users" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+
+{{if .FlashTestResult}}
+<div class="card">
+  <h3><i class="fa-solid fa-stethoscope"></i> {{t "user_subnet.test_results"}}</h3>
+  <pre style="white-space:pre-wrap;font-family:ui-monospace,monospace">{{range .FlashTestResult}}{{.}}
+{{end}}</pre>
+</div>
+{{end}}
+
+{{if not .Subnet}}
+<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+  <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "user_subnet.no_subnet_title"}}</h3>
+  <div style="margin-top:6px">{{t "user_subnet.no_subnet_body" | safeHTML}}</div>
+  <form method="POST" action="/admin/users/{{.User.ID}}/subnet/allocate" style="margin-top:12px">
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "user_subnet.allocate_button"}}</button>
+  </form>
+</div>
+{{else}}
+<div class="card">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.status_title"}}</h3>
+  <table class="kv-table" style="margin-top:8px">
+    <tr><th>{{t "user_subnet.cidr"}}</th><td><code>{{.Subnet.CIDR}}</code></td></tr>
+    <tr><th>{{t "user_subnet.status"}}</th><td><code>{{.Subnet.Status}}</code></td></tr>
+    <tr><th>{{t "user_subnet.bits"}}</th><td><code>/{{.SubnetBits}}</code></td></tr>
+    <tr><th>{{t "user_subnet.plane"}}</th><td><code>{{.HeadscaleURL}}</code></td></tr>
+    <tr><th>{{t "user_subnet.router_hostname"}}</th><td><code>{{if .Subnet.RouterHostname}}{{.Subnet.RouterHostname}}{{else}}—{{end}}</code></td></tr>
+    <tr><th>{{t "user_subnet.router_node_id"}}</th><td><code>{{if .Subnet.RouterNodeID}}{{.Subnet.RouterNodeID}}{{else}}—{{end}}</code></td></tr>
+    <tr><th>{{t "user_subnet.created_at"}}</th><td><code>{{.Subnet.CreatedAt}}</code></td></tr>
+    <tr><th>{{t "user_subnet.updated_at"}}</th><td><code>{{.Subnet.UpdatedAt}}</code></td></tr>
+  </table>
+  <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/test" style="display:inline">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-stethoscope"></i> {{t "user_subnet.test_button"}}</button>
+    </form>
+    {{if eq .Subnet.Status "active"}}
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/disable" style="display:inline">
+      <button type="submit" class="btn btn-warning"><i class="fa-solid fa-pause"></i> {{t "user_subnet.disable_button"}}</button>
+    </form>
+    {{end}}
+  </div>
+</div>
+
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.v0_16_0_note_title"}}</h3>
+  <div style="margin-top:6px">{{t "user_subnet.v0_16_0_note_body" | safeHTML}}</div>
+</div>
+{{end}}
+
+{{end}}

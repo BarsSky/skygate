@@ -18,6 +18,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/subnet"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -35,7 +36,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 	for _, q := range []string{
 		`CREATE TABLE device_rules (id INTEGER PRIMARY KEY, user_id INTEGER, device_id INTEGER, exit_node_id TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'domain', target_value TEXT, action TEXT DEFAULT 'accept', device_ip TEXT DEFAULT '', parent_domain TEXT DEFAULT '', enabled INTEGER DEFAULT 1)`,
-		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '', headscale_url TEXT NOT NULL DEFAULT '', headscale_api_key_enc TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '', headscale_url TEXT NOT NULL DEFAULT '', headscale_api_key_enc TEXT NOT NULL DEFAULT '', subnet_cidr TEXT NOT NULL DEFAULT '', subnet_status TEXT NOT NULL DEFAULT 'none', subnet_router_node_id TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, config TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', applied_success INTEGER, error_msg TEXT DEFAULT '')`,
 		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0, hostname TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
@@ -64,6 +65,11 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// in-memory map).
 		`CREATE TABLE telegram_rate_limit (key TEXT NOT NULL, action TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL)`,
 		`CREATE INDEX idx_telegram_rate_limit_lookup ON telegram_rate_limit(key, ts)`,
+		// 2026-07-17: v0.16.0 — per-user subnets schema. The
+		// /mysubnet test reads the denormalized
+		// portal_users.subnet_* columns, so the test
+		// schema must include both tables.
+		`CREATE TABLE user_subnets (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE, cidr TEXT NOT NULL UNIQUE, subnet_bits INTEGER NOT NULL DEFAULT 24, control_plane_url TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', router_node_id TEXT NOT NULL DEFAULT '', router_container_id TEXT NOT NULL DEFAULT '', router_hostname TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
@@ -1003,6 +1009,7 @@ func TestHTMLRepliesMarkParseMode(t *testing.T) {
 		{"my_rules", func() { myRulesReply(env) }},
 		{"my_quota", func() { myQuotaReply(env) }},
 		{"myexitnodes", func() { myExitNodesReply(env) }},
+		{"mysubnet", func() { mySubnetReply(env) }},
 		{"version", func() { versionReply(env) }},
 		{"audit", func() { auditReply(adminEnv) }},
 		{"exit_nodes_health", func() { exitNodesHealthReply(adminEnv) }},
@@ -1354,6 +1361,72 @@ func TestMyQuotaReplyUser(t *testing.T) {
 	if !strings.Contains(got, "quota") {
 		t.Errorf("expected 'quota' section divider, got: %q", got)
 	}
+}
+
+// TestMySubnetReplyEmpty pins the v0.16.0 contract: a user
+// without a personal subnet gets the "empty" hint
+// pointing at /admin/users/{id}/subnet. Reads from the
+// denormalized portal_users columns (no JOIN on
+// user_subnets).
+func TestMySubnetReplyEmpty(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d) // alice, no subnet allocated
+	got := mySubnetReply(env)
+	// "no personal subnet" hint, with the URL the
+	// operator needs to provision one.
+	if !strings.Contains(got, "no personal subnet") {
+		t.Errorf("expected 'no personal subnet' hint, got: %q", got)
+	}
+	if !strings.Contains(got, "/admin/users/") {
+		t.Errorf("expected '/admin/users/' path hint, got: %q", got)
+	}
+}
+
+// TestMySubnetReplyAllocated pins the v0.16.0 contract:
+// once Create(d, userID, ...) has run, /mysubnet shows
+// the CIDR + status + plane label.
+func TestMySubnetReplyAllocated(t *testing.T) {
+	d := setupTestDB(t)
+	uid := seedPortalUserForSubnets(t, d)
+	if _, err := subnet.Create(d, uid, "", "skygate-subnet-alice"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: uid, Username: "alice", IsAdmin: false}
+	got := mySubnetReply(env)
+	// The deterministic 10.0.<uid>.0/24 CIDR.
+	wantCIDR := fmt.Sprintf("10.0.%d.0/24", uid)
+	if !strings.Contains(got, wantCIDR) {
+		t.Errorf("expected CIDR %s, got: %q", wantCIDR, got)
+	}
+	// Status should be "pending" right after Create
+	// (no sidecar yet, v0.16.1 will move it to active).
+	if !strings.Contains(got, "pending") {
+		t.Errorf("expected 'pending' status, got: %q", got)
+	}
+	// Plane label for global plane (controlPlaneURL="").
+	if !strings.Contains(got, "global") {
+		t.Errorf("expected 'global' plane label, got: %q", got)
+	}
+}
+
+// seedPortalUserForSubnets inserts a portal_user and
+// returns the new id. Used by TestMySubnetReplyAllocated
+// (and any future test that needs a known-good user_id
+// for /mysubnet without going through the per-test
+// setupTestDB helper, which only seeds alice).
+func seedPortalUserForSubnets(t *testing.T, d interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}) int64 {
+	t.Helper()
+	res, err := d.Exec(
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?, '', 0)`,
+		"alice-subnet",
+	)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	id, _ := res.LastInsertId()
+	return id
 }
 
 func TestAdminOnlyRejectsUser(t *testing.T) {
