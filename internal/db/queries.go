@@ -139,6 +139,20 @@ const (
 	// unknown identities, so we can't mix plane A and plane B
 	// identities in one policy.
 	qSelectPortalUsernamesForPlane = `SELECT username FROM portal_users WHERE headscale_url = ? OR (headscale_url = '' AND ? = '') ORDER BY id`
+	// 2026-07-17: v0.17.0 — per-user subnet CIDR. Joins
+	// portal_users (for username + plane) with user_subnets
+	// (for the per-user 10.0.<uid>.0/24 CIDR). LEFT JOIN
+	// because most users don't have a subnet allocated
+	// yet — we just want the cidr (NULL/empty if absent).
+	// The ACL builder uses this to extend the per-user
+	// `dst: [user:*]` rule to `dst: [user:*, 10.0.<uid>.0/24:*]`
+	// for users with a subnet.
+	qSelectUserSubnetsForPlane = `
+		SELECT p.username, COALESCE(s.cidr, '')
+		  FROM portal_users p
+		  LEFT JOIN user_subnets s ON s.user_id = p.id
+		 WHERE p.headscale_url = ? OR (p.headscale_url = '' AND ? = '')
+		 ORDER BY p.id`
 	// v0.13.0 — list every distinct (url, api_key) plane with a user
 	// count. Used by the per-plane ACL pipeline to iterate all
 	// planes and push the right policy to each. Empty

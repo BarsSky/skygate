@@ -66,6 +66,19 @@ CREATE TABLE exit_rule_logs (
 	detail TEXT DEFAULT '',
 	created_at INTEGER DEFAULT 0
 );
+CREATE TABLE user_subnets (
+	id INTEGER PRIMARY KEY,
+	user_id INTEGER NOT NULL UNIQUE,
+	cidr TEXT NOT NULL,
+	bits INTEGER NOT NULL DEFAULT 24,
+	status TEXT NOT NULL DEFAULT 'pending',
+	control_plane_url TEXT NOT NULL DEFAULT '',
+	router_node_id TEXT NOT NULL DEFAULT '',
+	router_container_id TEXT NOT NULL DEFAULT '',
+	router_hostname TEXT NOT NULL DEFAULT '',
+	created_at INTEGER DEFAULT 0,
+	updated_at INTEGER DEFAULT 0
+);
 `
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -142,6 +155,13 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 		// autogroup:internet (NOT a literal "*:*" catch-all,
 		// which would re-introduce the inter-user leak).
 		`"dst": ["autogroup:internet:*"]`,
+		// 2026-07-17: v0.17.0 — tag:subnet-router must
+		// be registered in tagOwners so headscale accepts
+		// the v0.16.7 sidecar nodes. Owned by all portal
+		// users (so any of them can host a personal subnet
+		// sidecar). The auto-approver in internal/sidecar
+		// issues preauth keys with this tag.
+		`"tag:subnet-router": [`,
 		// Этап 14 v7: SSH rules for admin to manage
 		// tag:exit-node (existing) and tag:public relay
 		// nodes (new) as root. Match the multi-line JSON
@@ -219,6 +239,109 @@ func TestGenerateACL_LastRuleIsAutogroupInternet(t *testing.T) {
 	// choice; any other final rule is a regression).
 	if !strings.Contains(lastRule, "autogroup:internet:*") {
 		t.Fatalf("last rule in acls[] does not reference autogroup:internet: %s", lastRule)
+	}
+}
+
+// TestGenerateACL_PerUserSubnetCIDR — v0.17.0. Users
+// with an allocated personal subnet get an extended
+// per-user rule:
+//
+//   { "action": "accept",
+//     "src":    ["alice@tsnet.skynas.ru"],
+//     "dst":    ["alice@tsnet.skynas.ru:*",
+//                "10.0.<uid>.0/24:*"] }
+//
+// Users WITHOUT a subnet keep the original
+// `dst: ["alice@tsnet.skynas.ru:*"]` (no CIDR
+// appended). The CIDR is unique per user, so alice
+// can reach 10.0.<alice_uid>.0/24 but not
+// 10.0.<bob_uid>.0/24 — first-match semantics handle
+// the isolation, and the catch-all rules (tag:public,
+// tag:exit-node, autogroup:internet) still apply
+// for everything else.
+func TestGenerateACL_PerUserSubnetCIDR(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	// alice has a personal subnet (10.0.<alice_uid>.0/24).
+	// bob doesn't.
+	aliceCIDR := fmt.Sprintf("10.0.%d.0/24", aliceID)
+	_, err := d.Exec(`INSERT INTO user_subnets
+		(user_id, cidr, status, control_plane_url)
+		VALUES (?, ?, 'active', '')`, aliceID, aliceCIDR)
+	if err != nil {
+		t.Fatalf("seed alice subnet: %v", err)
+	}
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+
+	// alice's per-user rule should include her CIDR.
+	// The renderer writes the rule on a single line, so
+	// the expected substring is a single line too.
+	wantAlice := fmt.Sprintf(
+		`"src": ["alice@tsnet.skynas.ru"], "dst": ["alice@tsnet.skynas.ru:*", "%s:*"]`,
+		aliceCIDR)
+	if !strings.Contains(aclStr, wantAlice) {
+		t.Errorf("alice's per-user rule should include her CIDR; expected %q in ACL, got excerpt: %q",
+			wantAlice, aclStr[max(0, len(aclStr)-1500):])
+	}
+	// bob's per-user rule should NOT include any CIDR
+	// (he has no subnet allocated). The grep for
+	// "bob@tsnet.skynas.ru:*" should appear but NOT
+	// as a multi-CIDR dst (his dst has exactly one entry).
+	wantBob := `"src": ["bob@tsnet.skynas.ru"], "dst": ["bob@tsnet.skynas.ru:*"]`
+	if !strings.Contains(aclStr, wantBob) {
+		t.Errorf("bob's per-user rule should NOT include a CIDR; expected %q in ACL, got excerpt: %q",
+			wantBob, aclStr[max(0, len(aclStr)-1500):])
+	}
+	// Negative: bob's CIDR (10.0.<bob_uid>.0/24) must
+	// NOT appear anywhere — alice's per-user rule must
+	// not include bob's subnet.
+	bobCIDR := fmt.Sprintf("10.0.%d.0/24", bobID)
+	if strings.Contains(aclStr, bobCIDR) {
+		t.Errorf("bob's CIDR %q should not appear in ACL (alice's per-user rule must be isolated to her own CIDR)", bobCIDR)
+	}
+}
+
+// TestGenerateACL_ExitNodeMeshStillGlobal — v0.17.0.
+// The original per-user subnets design decision: exit
+// nodes must remain reachable from EVERY user, not just
+// the user the sidecar belongs to. Otherwise the v0.16.0+
+// subnets would break the operator's existing exit-node
+// routing (emilia, sharlotta, karolina) for users who
+// haven't yet allocated a subnet.
+//
+// The check is structural: the rule
+//   { "action": "accept", "src": ["*"], "dst": ["tag:exit-node:*"] }
+// must be present in the rendered ACL. v0.14.0 v7
+// already added this — v0.17.0 is a regression guard.
+func TestGenerateACL_ExitNodeMeshStillGlobal(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	seedPortalUser(t, d, "bob")
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+
+	// Find the exit-node rule and assert src is "*" (any
+	// identity, not just skyadmin).
+	wantExit := `"src": ["*"], "dst": ["tag:exit-node:*"]`
+	if !strings.Contains(aclStr, wantExit) {
+		t.Errorf("exit-node mesh rule must be `src: [*] → tag:exit-node:*`; expected %q in ACL, got excerpt: %q",
+			wantExit, aclStr[max(0, len(aclStr)-1500):])
+	}
+	// Also: tag:public mesh rule (relay nodes) must be
+	// similarly global. Operators configure Caddy,
+	// DERP, etc. on emilia/sharlotta/karolina.
+	wantPublic := `"src": ["*"], "dst": ["tag:public:*"]`
+	if !strings.Contains(aclStr, wantPublic) {
+		t.Errorf("tag:public mesh rule must be `src: [*] → tag:public:*`; expected %q in ACL, got excerpt: %q",
+			wantPublic, aclStr[max(0, len(aclStr)-1500):])
 	}
 }
 

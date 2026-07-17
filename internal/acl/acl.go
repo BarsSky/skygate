@@ -108,6 +108,21 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// 2026-07-17: v0.17.0 — pull per-user subnet CIDRs in
+	// parallel. Users without an allocated subnet get an
+	// empty cidr (skipped by the rule builder). The CIDR
+	// is deterministic (10.0.<uid>.0/24) so the policy is
+	// stable across rebuilds and audits.
+	userSubnets, err := db.GetUserSubnetsForPlane(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	subByUser := make(map[string]string, len(userSubnets))
+	for _, us := range userSubnets {
+		if us.Username != "" {
+			subByUser[us.Username] = us.CIDR
+		}
+	}
 	var identities []string
 	for _, uname := range usernames {
 		if uname != "" {
@@ -121,12 +136,26 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	var sb strings.Builder
 	sb.WriteString("{\n  \"acls\": [\n")
 
-	// Per-user rule: user can reach their OWN devices only.
+	// Per-user rule: user can reach their OWN devices
+	// only. If they have a personal subnet (v0.17.0+),
+	// extend the dst to include 10.0.<uid>.0/24 so their
+	// tailnet devices can route to the sidecar's network.
+	// The CIDR is unique per user, so alice can reach
+	// 10.0.1.0/24 (her own) but not 10.0.2.0/24 (bob's) —
+	// headscale's first-match semantics handle the isolation.
 	for i, idn := range identities {
 		if i > 0 {
 			sb.WriteString(",\n")
 		}
-		sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [\"" + idn + ":*\"] }")
+		// idn = "alice@tsnet.skynas.ru" — extract the
+		// bare username for the lookup.
+		uname := strings.SplitN(idn, "@", 2)[0]
+		cidr := subByUser[uname]
+		if cidr != "" {
+			sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [\"" + idn + ":*\", \"" + cidr + ":*\"] }")
+		} else {
+			sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [\"" + idn + ":*\"] }")
+		}
 	}
 
 	// Informational/audit per-device exit-rules.
@@ -212,6 +241,20 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	} else {
 		sb.WriteString(",\n    \"tag:private\": [\"" + (identities[0]) + "\"]\n")
 	}
+	// 2026-07-17: v0.17.0 — register tag:subnet-router as
+	// owned by EVERY portal user. Each user's tailscale
+	// sidecar (v0.16.7) registers with tag:subnet-router
+	// via the preauth key issued by Skygate; the
+	// auto-approver (also v0.16.7) approves the
+	// 10.0.<uid>.0/24 route when the sidecar advertises
+	// it. For headscale to accept nodes with this tag,
+	// at least one user must own the tag in tagOwners —
+	// we list every portal user so any of them can host a
+	// sidecar (matching the v0.16.0 design decision that
+	// "every portal user is eligible for a personal
+	// subnet"). Without this entry, headscale rejects the
+	// policy with "tag not found: tag:subnet-router".
+	sb.WriteString(",\n    \"tag:subnet-router\": [" + strings.Join(quoteAll(identities), ",") + "]\n")
 	sb.WriteString("  },\n")
 
 	sb.WriteString("  \"groups\": {\n")

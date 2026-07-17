@@ -574,6 +574,9 @@ var ruCatalog = map[string]string{
 	"acls.import_apply_btn":          "Применить ко всем плоскостям",
 	"acls.import_apply_hint":         "Политика будет отправлена в headscale на каждой плоскости и сохранена в acl_snapshots",
 	"acls.import_apply_confirm":      "Применить импортированную ACL ко всем плоскостям? Это перезапишет текущую политику на каждой headscale.",
+	"acls.import_btn_short":          "Импорт",
+	"acls.v0_17_0_note_title":        "v0.17.0: tag:subnet-router",
+	"acls.v0_17_0_note_body":         "В <code>tagOwners</code> добавлен тег <code>tag:subnet-router</code> (owned by every portal user) — его использует <a href=\"/admin/subnets\">sidecar</a> per-user subnet (v0.16.7+). Также per-user правила для юзеров с подсетью расширены: <code>dst: [\"&lt;user&gt;:*\", \"10.0.&lt;uid&gt;.0/24:*\"]</code>. Exit-node mesh (<code>* → tag:exit-node:*</code>) не сломан — релеи по-прежнему видны всем.",
 	"acls.empty":                      "ACL пуст",
 
 	// derp
@@ -2347,6 +2350,9 @@ var enCatalog = map[string]string{
 	"acls.import_apply_btn":          "Apply to every plane",
 	"acls.import_apply_hint":         "The policy will be sent to headscale on every plane and written to acl_snapshots",
 	"acls.import_apply_confirm":      "Apply the imported ACL to every plane? This will overwrite the current policy on each headscale.",
+	"acls.import_btn_short":          "Import",
+	"acls.v0_17_0_note_title":        "v0.17.0: tag:subnet-router",
+	"acls.v0_17_0_note_body":         "<code>tagOwners</code> now lists <code>tag:subnet-router</code> (owned by every portal user) — used by the <a href=\"/admin/subnets\">per-user sidecar</a> (v0.16.7+). Per-user rules for users with an allocated subnet are also extended: <code>dst: [\"&lt;user&gt;:*\", \"10.0.&lt;uid&gt;.0/24:*\"]</code>. The exit-node mesh (<code>* → tag:exit-node:*</code>) is preserved — relays are still reachable from any user.",
 
 	// derp
 	"derp.title":                      "DERP relay",
