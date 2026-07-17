@@ -16,6 +16,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/release"
+	"skygate/internal/sidecar"
 )
 
 func init() { i18n.SetGlobal(i18n.New()) }
@@ -75,6 +76,13 @@ type App struct {
 	// — not yet a real env var, but the test suite
 	// disables it via this nil field).
 	ReleaseMonitor *release.Monitor
+	// Sidecar is the per-user subnet auto-approver (v0.16.7).
+	// The admin /admin/users/{id}/subnet page uses it to issue
+	// preauth keys; the bot /mysubnet command uses it for the
+	// same; the background goroutine started in cmd/skygate/main.go
+	// calls Run() which periodically approves routes + flips
+	// status active/disabled based on headscale state.
+	Sidecar *sidecar.Manager
 
 	// 2026-07-15: v0.12.0.2 — Telegram probe result cache.
 	// The probe does a real GET to api.telegram.org with a

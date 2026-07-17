@@ -19,6 +19,7 @@
 package telegram
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -1735,5 +1736,53 @@ func mySubnetReply(env BotEnv) string {
 		Field(i18n.T(lang, "bot.mysubnet.label_planes"), planeLabel) + "\n\n" +
 		Section(i18n.T(lang, "bot.mysubnet.section_sharing")) + "\n" +
 		"<i>" + i18n.T(lang, "bot.mysubnet.sharing_v0_17_1") + "</i>"
+	return body
+}
+
+// mySubnetProvisionReply — v0.16.7. /mysubnet provision.
+// Issues a per-user preauth key (tag:subnet-router, 1h
+// TTL, single-use) and replies with the key + the
+// suggested `tailscale up` command. The user runs that
+// command on their sidecar host; the auto-approver in
+// internal/sidecar approves the route within ~30s and
+// flips /mysubnet status to active.
+//
+// `skipWrap: true` in the dispatch means HandleCommand
+// doesn't add a second gate envelope on top of our
+// butler gate — the key + command are already in a
+// <pre> block that the user needs to copy verbatim.
+func mySubnetProvisionReply(env BotEnv) string {
+	markHTMLReply()
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	if env.Sidecar == nil {
+		return i18n.Tf(lang, "bot.mysubnet.provision_no_manager",
+			env.Username)
+	}
+	key, exp, err := env.Sidecar.GeneratePreauth(
+		context.Background(), env.PortalUserID)
+	if err != nil {
+		return i18n.Tf(lang, "bot.mysubnet.provision_error", err)
+	}
+	info := env.Sidecar.BuildPreauthInfo(
+		env.PortalUserID, key, exp, env.Username)
+	body := i18n.Tf(lang, "bot.mysubnet.provision_header",
+		env.Username) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_key_label"),
+			"<code>"+info.Key+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_hostname_label"),
+			"<code>"+info.Hostname+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_routes_label"),
+			"<code>"+info.Routes+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_expires_label"),
+			"<code>"+info.ExpiresAt.Format("2006-01-02 15:04 MST")+"</code>") + "\n\n" +
+		"<i>" + i18n.T(lang, "bot.mysubnet.provision_help") + "</i>\n\n" +
+		"<b>" + i18n.T(lang, "bot.mysubnet.provision_command_label") + "</b>\n" +
+		"<pre>sudo tailscale up \\\n" +
+		"  --authkey=" + info.Key + " \\\n" +
+		"  --hostname=" + info.Hostname + " \\\n" +
+		"  --advertise-routes=" + info.Routes + "</pre>"
 	return body
 }
