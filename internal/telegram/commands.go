@@ -409,6 +409,7 @@ var commandContext = map[string]string{
 	"/my_rules":          "registry",
 	"/my_quota":          "registry",
 	"/myexitnodes":       "registry",
+	"/mysubnet":          "registry",
 	"/add_device":        "add",
 	"/add_rule":          "add",
 	"/delrule":           "del",
@@ -578,6 +579,13 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: myQuotaReply(env), context: lookupContext(cmd)}
 	case "/myexitnodes":
 		return cmdReply{body: myExitNodesReply(env), context: lookupContext(cmd)}
+	case "/mysubnet":
+		// 2026-07-17: v0.16.0 — per-user subnets. The
+		// reply reads the denormalized portal_users
+		// columns (subnet_cidr / subnet_status /
+		// subnet_router_node_id) so the hot path is one
+		// SELECT, no JOIN on the user_subnets table.
+		return cmdReply{body: mySubnetReply(env), context: lookupContext(cmd)}
 	case "/add_device":
 		// 2026-07-16: v0.15.2 — addDeviceReply uses
 		// butlerEnvelope() which renders the <pre>key</pre>
