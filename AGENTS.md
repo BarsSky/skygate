@@ -7,7 +7,28 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.7 — per-user subnet sidecar
+* **Current**: v0.16.10 — chmod+x for check_https.py
+  + /admin/subnets overview
+  ([release notes](RELEASE-NOTES-v0.16.10.md)). Two
+  small follow-ups bundled:
+
+  1. `scripts/check_https.py` — git mode 100644 →
+     100755. The Makefile's `[ -x scripts/check_https.py ]`
+     guard now passes without manual `chmod +x` on the
+     VM after every `git reset --hard` (was a v0.15.0
+     chore that the operator had to remember).
+
+  2. `/admin/subnets` overview — flat list of every
+     `user_subnets` row with status filter chips
+     (All / Pending / Active / Disabled), per-status
+     counts, last-sync timestamp from the v0.16.7
+     sidecar manager, and a 3-step how-it-works
+     explainer. Sidebar link added under "Users".
+     16 new i18n keys (RU+EN), 3 new tests.
+
+  12/12 packages green, smoke 118/118, live on VM at
+  build `333079b`.
+* **Previous**: v0.16.7 — per-user subnet sidecar
   (auto-approver + preauth)
   ([release notes](RELEASE-NOTES-v0.16.7.md)). Real
   sidecar runtime for the v0.16.0+ subnets feature
