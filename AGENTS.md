@@ -7,34 +7,35 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.16.9 — sidebar username + login
-  remember me
-  ([release notes](RELEASE-NOTES-v0.16.9.md)). Two
-  operator-reported issues from v0.16.8:
-
-  1. `/admin/users/{id}/subnet` rendered with empty
-     username in sidebar and no admin nav. Root
-     cause: v0.16.6's `renderUserSubnetPage` was
-     called with `c=nil` in all 4 handlers
-     (GetAdminUserSubnet + 3 POSTs). Fix: pass the
-     real c (already fetched via currentUser)
-     through. Plus
-     `TestGetAdminUserSubnet_PopulatesSidebarUsername`
-     regression test (pinned against c=nil).
-
-  2. `/login` had `autocomplete="off"` and two dummy
-     hidden inputs that suppressed browser autofill.
-     Removed. username now `autocomplete="username"`
-     so the password manager saves + pre-fills.
-     Added "Remember me" checkbox (default off) that
-     extends the session cookie to 30 days. Added
-     `last_username` cookie (365 days, not HttpOnly,
-     username only — no credential material) that
-     pre-fills the username field even after logout.
-     2 new i18n keys (RU+EN).
-
-  12/12 packages green, smoke 118/118, live on VM at
-  build `e555698`.
+* **Current**: v0.16.7 — per-user subnet sidecar
+  (auto-approver + preauth)
+  ([release notes](RELEASE-NOTES-v0.16.7.md)). Real
+  sidecar runtime for the v0.16.0+ subnets feature
+  (the schema shipped in v0.16.6, the UI in v0.16.8,
+  the sidebar fix in v0.16.9). Adds:
+  - `internal/sidecar/` package (~700 lines):
+    Manager with GeneratePreauth (tag:subnet-router,
+    1h TTL, single-use), SyncOnce (auto-approves
+    routes + flips status active/disabled based on
+    headscale state), Run (30s ticker), LastStats
+    for admin UI
+  - Admin UI: `/admin/users/{id}/subnet` "Issue
+    preauth key" button + suggested `tailscale up`
+    command snippet
+  - Bot: `/mysubnet provision` — same preauth in
+    chat reply (butler voice)
+  - headscale API: `CreatePreauthKeyWithTags` for
+    `tag:subnet-router` preauth; `ApprovedRoutes`
+    field on NodeView (was only `AvailableRoutes`)
+  - 11 new sidecar tests + 1 new admin handler test
+    + 2 new bot tests
+  - 2 critical fixes during the first deploy:
+    `go sidecarMgr.Run(ctx)` (was inline, blocked
+    main before HTTP could bind) +
+    `HSForUser(0)` short-circuit (avoids 30s log spam
+    for the global-plane sentinel)
+  - 12/12 packages green, smoke 118/118, live on VM
+    at build `ac73b8c`.
 * **Previous**: v0.16.8 — UI: Subnet column + button
   in /admin/users
   ([release notes](RELEASE-NOTES-v0.16.8.md)). The
