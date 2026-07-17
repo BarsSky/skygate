@@ -7,45 +7,53 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.17.0 — exit-node mesh +
-  tag:subnet-router in ACL
-  ([release notes](RELEASE-NOTES-v0.17.0.md)). Two
-  ACL changes that close the v0.16.0+ subnets
-  roadmap promises:
+* **Current**: v0.17.1 — cross-user IP-level
+  subnet sharing + auto-reapply ACL
+  ([release notes](RELEASE-NOTES-v0.17.1.md)). Two
+  pieces that close the v0.16.0+ subnets roadmap:
 
-  1. **`tag:subnet-router` in `tagOwners`** (owned by
-     every portal user) — headscale now accepts the
-     v0.16.7 sidecar nodes. Without this entry,
-     headscale rejected the policy with "tag not
-     found".
+  1. **Cross-user IP-level sharing** — grantor can
+     share their 10.0.<uid>.0/24 subnet with one or
+     more grantees via
+     `user_subnet_shares (grantor, grantee)` table.
+     The ACL builder picks up the shares and appends
+     the grantor's CIDR to each grantee's per-user
+     dst list. UI on `/admin/users/{id}/subnet`
+     (Share/Revoke forms) + bot
+     `/mysubnet share|revoke <user>`. Sharing is
+     one-directional (grantor → grantee).
 
-  2. **Per-user dst rule extension**: users with an
-     allocated subnet get
-     `dst: ["<user>:*", "10.0.<uid>.0/24:*"]` so
-     their tailnet devices can route to the sidecar's
-     network. The CIDR is unique per user (first-match
-     semantics handle isolation).
-
-  Plus `TestGenerateACL_ExitNodeMeshStillGlobal`
-  regression guard for the `* → tag:exit-node:*` and
-  `* → tag:public:*` rules (so a future refactor
-  doesn't accidentally scope exit-nodes per-user
-  and break the operator's existing routing).
+  2. **Auto-reapply ACL on Allocate/Share/Revoke** —
+     the v0.17.0 caveat ("click Re-apply ACL to push
+     the new rule") is closed. New subnets are
+     routable within ~1s of allocation.
 
   Files:
-  - `internal/db/queries.go` + `portal_users.go` —
-    `qSelectUserSubnetsForPlane` + `GetUserSubnetsForPlane`
-  - `internal/acl/acl.go` — per-user CIDR rule +
-    `tag:subnet-router` in tagOwners
-  - `internal/acl/acl_test.go` — 2 new tests
-    (per-user CIDR + exit-node mesh) + test schema
-    (user_subnets table)
-  - `internal/handlers/templates/admin/acls.html` —
-    v0.17.0 info card + link to /admin/subnets
-  - `internal/i18n/catalog.go` — 3 new keys × 2 langs
+  - `internal/db/migrations_v0.39.go` +
+    `portal_users.go` + `queries.go` —
+    `user_subnet_shares` table, FK CASCADE,
+    `GetSharedSubnetsForPlane` query
+  - `internal/subnet/shares.go` (new) — `Grant`,
+    `Revoke`, `ListSharedBy`, `ListSharedWith`,
+    `ErrSelfShare`, `ErrShareNotFound`
+  - `internal/acl/acl.go` — per-user dst list now
+    includes every grantor's CIDR shared with the
+    user
+  - `internal/handlers/admin_user_subnet.go` —
+    `PostAdminUserSubnetShare` / `Revoke` +
+    auto-reapply on `Allocate`
+  - `internal/handlers/templates/admin/user_subnet.html` —
+    Cross-user sharing card with two columns +
+    share form
+  - `internal/telegram/commands.go` +
+    `commands_user.go` — `/mysubnet share|revoke`
+    subcommands
+  - `internal/i18n/catalog.go` — 23 new keys × 2
+    langs (12 admin + 11 bot)
+  - 8 new tests (6 subnet + 2 ACL)
 
-  12/12 packages green, smoke 118/118, live on VM at
-  build `79c5951`.
+  12/12 packages green, smoke 118/118, live on VM
+  at build `2c8176c`.
 * **Previous**: v0.16.7 — per-user subnet sidecar
   (auto-approver + preauth)
   ([release notes](RELEASE-NOTES-v0.16.7.md)). Real
