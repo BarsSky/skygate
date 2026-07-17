@@ -123,7 +123,7 @@ func (a *App) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", 400)
 		return
 	}
-	renderUserSubnetPage(a, w, r, nil, id, nil)
+	renderUserSubnetPage(a, w, r, c, id, nil)
 }
 
 // PostAdminUserSubnetAllocate allocates a personal
@@ -147,7 +147,7 @@ func (a *App) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request
 	hostname := fmt.Sprintf("skygate-subnet-%s", username)
 	_, err = subnet.Create(a.DB, id, planeURL, hostname)
 	if err != nil && !errors.Is(err, subnet.ErrAlreadyExists) {
-		renderUserSubnetPage(a, w, r, nil, id, map[string]any{
+		renderUserSubnetPage(a, w, r, c, id, map[string]any{
 			"FlashError": err.Error(),
 		})
 		return
@@ -172,7 +172,7 @@ func (a *App) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := subnet.SetStatus(a.DB, id, subnet.StatusDisabled); err != nil {
-		renderUserSubnetPage(a, w, r, nil, id, map[string]any{
+		renderUserSubnetPage(a, w, r, c, id, map[string]any{
 			"FlashError": err.Error(),
 		})
 		return
@@ -206,7 +206,7 @@ func (a *App) PostAdminUserSubnetTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := runSubnetSanityCheck(a.DB, id)
-	renderUserSubnetPage(a, w, r, nil, id, map[string]any{
+	renderUserSubnetPage(a, w, r, c, id, map[string]any{
 		"FlashTestResult": results,
 	})
 }

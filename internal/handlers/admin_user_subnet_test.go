@@ -247,4 +247,54 @@ func itoa(n int64) string {
 // test is later removed. (db.DBTX was a previous
 // type alias; keep the import for the test helpers
 // that use *sql.DB.)
+
+// TestGetAdminUserSubnet_PopulatesSidebarUsername — regression
+// guard for v0.16.8. The renderUserSubnetPage helper used to
+// pass c=nil to renderWithLayout, which meant the sidebar
+// `<span class="user-name">` rendered empty and the admin nav
+// links weren't shown (IsAdmin was unset). The operator
+// reported "стили слетели" because the empty sidebar looked
+// like a layout/CSS failure. Fix: pass the real c (from
+// currentUser) through to renderWithLayout.
+func TestGetAdminUserSubnet_PopulatesSidebarUsername(t *testing.T) {
+	a, d := newTestApp(t, &testNotifier{})
+	defer d.Close()
+	a.withTemplates()
+	uid := adminSubnetSeed(t, a, d, "alice-subnet")
+
+	req := authedReqForURL(t, a, "GET", "/admin/users/"+itoa(uid)+"/subnet", "skyadmin")
+	w := httptest.NewRecorder()
+	a.GetAdminUserSubnet(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `class="user-name">skyadmin`) {
+		t.Errorf("sidebar username empty (c=nil regression) — expected 'skyadmin' inside <span class=\"user-name\">, body excerpt: %q",
+			extractExcerpt(body, `class="user-name"`))
+	}
+	// IsAdmin=true → admin nav links present. The /admin/users link is
+	// always shown when IsAdmin=true (no {{if eq .Page ...}} class on it).
+	if !strings.Contains(body, `href="/admin/users"`) {
+		t.Errorf("admin nav link missing — IsAdmin flag not propagated to layout")
+	}
+}
+
+// extractExcerpt returns a 200-char window around the first
+// occurrence of needle in haystack, for diagnostic output.
+func extractExcerpt(haystack, needle string) string {
+	i := strings.Index(haystack, needle)
+	if i < 0 {
+		return "<needle not found>"
+	}
+	start := i - 50
+	if start < 0 {
+		start = 0
+	}
+	end := i + len(needle) + 150
+	if end > len(haystack) {
+		end = len(haystack)
+	}
+	return haystack[start:end]
+}
 var _ = db.User{}.Username

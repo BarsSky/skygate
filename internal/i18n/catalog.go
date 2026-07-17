@@ -107,6 +107,7 @@ var ruCatalog = map[string]string{
 	"login.username":                  "Username",
 	"login.password":                  "Пароль",
 	"login.submit":                    "Войти",
+	"login.remember_label":            "Запомнить меня (30 дней)",
 	"login.invalid_credentials":       "Неверный логин или пароль",
 	"login.no_account":                "Нет аккаунта? Попросите администратора создать его.",
 
@@ -1839,6 +1840,7 @@ var enCatalog = map[string]string{
 	"login.username":                  "Username",
 	"login.password":                  "Password",
 	"login.submit":                    "Sign in",
+	"login.remember_label":            "Remember me (30 days)",
 	"login.invalid_credentials":       "Invalid username or password",
 	"login.no_account":                "No account? Ask an administrator to create one.",
 
