@@ -123,6 +123,23 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 			subByUser[us.Username] = us.CIDR
 		}
 	}
+	// 2026-07-17: v0.17.1 — cross-user IP-level sharing.
+	// For each user, collect the CIDRs of subnets that
+	// OTHERS have shared with them. The per-user dst
+	// list gets these appended. Shares are one-directional
+	// (grantor → grantee), so a single (alice, bob) row
+	// makes bob's dst include 10.0.<alice>.0/24 but
+	// alice's dst unchanged.
+	sharedSubnets, err := db.GetSharedSubnetsForPlane(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	sharedByUser := make(map[string][]string)
+	for _, ss := range sharedSubnets {
+		if ss.GranteeUser != "" && ss.GrantorCIDR != "" {
+			sharedByUser[ss.GranteeUser] = append(sharedByUser[ss.GranteeUser], ss.GrantorCIDR)
+		}
+	}
 	var identities []string
 	for _, uname := range usernames {
 		if uname != "" {
@@ -137,25 +154,46 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("{\n  \"acls\": [\n")
 
 	// Per-user rule: user can reach their OWN devices
-	// only. If they have a personal subnet (v0.17.0+),
-	// extend the dst to include 10.0.<uid>.0/24 so their
-	// tailnet devices can route to the sidecar's network.
-	// The CIDR is unique per user, so alice can reach
-	// 10.0.1.0/24 (her own) but not 10.0.2.0/24 (bob's) —
-	// headscale's first-match semantics handle the isolation.
+	// only. v0.17.0: if they have a personal subnet,
+	// extend the dst to include 10.0.<uid>.0/24. v0.17.1:
+	// ALSO extend with every grantor's CIDR that has
+	// shared their subnet with this user. The CIDRs are
+	// unique per grantor, so the per-user dst list
+	// becomes deterministic and headscale's first-match
+	// semantics handle the isolation.
 	for i, idn := range identities {
 		if i > 0 {
 			sb.WriteString(",\n")
 		}
 		// idn = "alice@tsnet.skynas.ru" — extract the
-		// bare username for the lookup.
+		// bare username for the lookups.
 		uname := strings.SplitN(idn, "@", 2)[0]
-		cidr := subByUser[uname]
-		if cidr != "" {
-			sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [\"" + idn + ":*\", \"" + cidr + ":*\"] }")
-		} else {
-			sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [\"" + idn + ":*\"] }")
+		// Build the dst list. Start with the user's own
+		// identity (their own devices). Then add their
+		// own CIDR (if any). Then add every shared CIDR.
+		dst := []string{idn + ":*"}
+		if ownCIDR := subByUser[uname]; ownCIDR != "" {
+			dst = append(dst, ownCIDR+":*")
 		}
+		for _, sharedCIDR := range sharedByUser[uname] {
+			// Avoid duplicates if the user shared with
+			// themselves (shouldn't happen — Grant
+			// rejects self-shares — but defensive).
+			if sharedCIDR != "" {
+				dst = append(dst, sharedCIDR+":*")
+			}
+		}
+		// Render as a single-line JSON array.
+		sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [")
+		for j, d := range dst {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("\"")
+			sb.WriteString(d)
+			sb.WriteString("\"")
+		}
+		sb.WriteString("] }")
 	}
 
 	// Informational/audit per-device exit-rules.

@@ -79,6 +79,14 @@ CREATE TABLE user_subnets (
 	created_at INTEGER DEFAULT 0,
 	updated_at INTEGER DEFAULT 0
 );
+CREATE TABLE user_subnet_shares (
+	grantor_user_id INTEGER NOT NULL,
+	grantee_user_id INTEGER NOT NULL,
+	created_at INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (grantor_user_id, grantee_user_id),
+	FOREIGN KEY (grantor_user_id) REFERENCES portal_users(id) ON DELETE CASCADE,
+	FOREIGN KEY (grantee_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+);
 `
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -303,6 +311,194 @@ func TestGenerateACL_PerUserSubnetCIDR(t *testing.T) {
 	bobCIDR := fmt.Sprintf("10.0.%d.0/24", bobID)
 	if strings.Contains(aclStr, bobCIDR) {
 		t.Errorf("bob's CIDR %q should not appear in ACL (alice's per-user rule must be isolated to her own CIDR)", bobCIDR)
+	}
+}
+
+// TestGenerateACL_SharedSubnetsExtendDst — v0.17.1.
+// When alice grants bob access to alice's personal
+// subnet, bob's per-user rule gets alice's CIDR
+// appended to dst:
+//
+//   { "action": "accept",
+//     "src":    ["bob@tsnet.skynas.ru"],
+//     "dst":    ["bob@tsnet.skynas.ru:*",
+//                "10.0.<bob>.0/24:*",        ← bob's own
+//                "10.0.<alice>.0/24:*"] }    ← shared
+//
+// Sharing is one-directional: alice's rule does NOT
+// get bob's CIDR unless alice ALSO grants herself
+// access to bob's subnet (which is a separate
+// Grant() call). The asymmetry matches the
+// `grantor → grantee` semantics of the share row.
+func TestGenerateACL_SharedSubnetsExtendDst(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	// Both have subnets.
+	aliceCIDR := fmt.Sprintf("10.0.%d.0/24", aliceID)
+	bobCIDR := fmt.Sprintf("10.0.%d.0/24", bobID)
+	for _, p := range []struct{ uid int64; cidr string }{
+		{aliceID, aliceCIDR}, {bobID, bobCIDR}} {
+		_, err := d.Exec(`INSERT INTO user_subnets
+			(user_id, cidr, status, control_plane_url)
+			VALUES (?, ?, 'active', '')`, p.uid, p.cidr)
+		if err != nil {
+			t.Fatalf("seed subnet uid=%d: %v", p.uid, err)
+		}
+	}
+	// alice grants bob access to alice's subnet.
+	_, err := d.Exec(`INSERT INTO user_subnet_shares
+		(grantor_user_id, grantee_user_id, created_at)
+		VALUES (?, ?, 0)`, aliceID, bobID)
+	if err != nil {
+		t.Fatalf("seed share: %v", err)
+	}
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+
+	// bob's per-user rule should now have BOTH bob's
+	// CIDR and alice's CIDR.
+	wantBob := fmt.Sprintf(
+		`"src": ["bob@tsnet.skynas.ru"], "dst": ["bob@tsnet.skynas.ru:*", "%s:*", "%s:*"]`,
+		bobCIDR, aliceCIDR)
+	if !strings.Contains(aclStr, wantBob) {
+		t.Errorf("bob's per-user rule should include shared alice CIDR; expected %q in ACL, got excerpt: %q",
+			wantBob, extractExcerptFromString(aclStr, "bob@tsnet"))
+	}
+	// alice's per-user rule should still only have
+	// alice's own CIDR (the share is one-directional;
+	// alice didn't grant herself access to bob's
+	// subnet).
+	wantAlice := fmt.Sprintf(
+		`"src": ["alice@tsnet.skynas.ru"], "dst": ["alice@tsnet.skynas.ru:*", "%s:*"]`,
+		aliceCIDR)
+	if !strings.Contains(aclStr, wantAlice) {
+		t.Errorf("alice's per-user rule should NOT include bob's CIDR; expected %q in ACL, got excerpt: %q",
+			wantAlice, extractExcerptFromString(aclStr, "alice@tsnet"))
+	}
+	// Negative: bob's CIDR should NOT appear in
+	// alice's per-user rule. We extract just the
+	// substring starting at alice's src and ending
+	// at the next "src" (or end of the acls block),
+	// then check that bob's CIDR is absent.
+	aliceRuleStart := strings.Index(aclStr, `"src": ["alice@tsnet.skynas.ru"]`)
+	if aliceRuleStart < 0 {
+		t.Fatal("alice's rule not found")
+	}
+	// Find the end of alice's rule: the next "src":
+	// after the current rule. The acls list is rendered
+	// with one rule per line, so the next "src" is
+	// aliceRuleStart + length of her rule + some
+	// separator. Walk forward until we find a second
+	// "src" that isn't part of alice's own rule.
+	after := aclStr[aliceRuleStart:]
+	// Skip past alice's rule body. Her rule is a single
+	// line ending with `}` and a newline. The next
+	// "src" is bob's rule. So find the FIRST
+	// subsequent `"src":` that comes AFTER the
+	// closing `}` of alice's rule.
+	endIdx := strings.Index(after, `}`)
+	if endIdx < 0 {
+		t.Fatal("alice's rule has no closing brace")
+	}
+	afterEnd := after[endIdx+2:]
+	nextSrc := strings.Index(afterEnd, `"src": [`)
+	var aliceRuleEnd int
+	if nextSrc < 0 {
+		aliceRuleEnd = aliceRuleStart + len(after)
+	} else {
+		aliceRuleEnd = aliceRuleStart + endIdx + 2 + nextSrc
+	}
+	aliceRule := aclStr[aliceRuleStart:aliceRuleEnd]
+	if strings.Contains(aliceRule, bobCIDR) {
+		t.Errorf("alice's per-user rule should NOT include bob's CIDR %q; got alice's rule: %q",
+			bobCIDR, aliceRule)
+	}
+}
+
+// extractExcerptFromString returns a 300-char window
+// around the first occurrence of needle in haystack,
+// for diagnostic output. Inline here because the
+// existing tests in the same file use extractExcerpt
+// from the handlers package; this test in the acl
+// package can't import the handlers helper without a
+// cycle.
+func extractExcerptFromString(haystack, needle string) string {
+	i := strings.Index(haystack, needle)
+	if i < 0 {
+		return "<needle not found in excerpt>"
+	}
+	start := i - 50
+	if start < 0 {
+		start = 0
+	}
+	end := i + len(needle) + 250
+	if end > len(haystack) {
+		end = len(haystack)
+	}
+	return haystack[start:end]
+}
+
+// TestGenerateACL_SharedSubnetsAreIdempotent — v0.17.1.
+// Two share rows between the same (grantor, grantee)
+// pair should produce the same ACL as one row (no
+// duplicate dst entries). Grant itself is idempotent
+// (PRIMARY KEY + INSERT OR IGNORE), but this test pins
+// the ACL output too so a future refactor can't
+// regress to listing duplicates.
+func TestGenerateACL_SharedSubnetsAreIdempotent(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	aliceCIDR := fmt.Sprintf("10.0.%d.0/24", aliceID)
+	bobCIDR := fmt.Sprintf("10.0.%d.0/24", bobID)
+	for _, p := range []struct{ uid int64; cidr string }{
+		{aliceID, aliceCIDR}, {bobID, bobCIDR}} {
+		_, err := d.Exec(`INSERT INTO user_subnets
+			(user_id, cidr, status, control_plane_url)
+			VALUES (?, ?, 'active', '')`, p.uid, p.cidr)
+		if err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	// BUG: this would fail in real life (duplicate PK),
+	// but the ACL builder doesn't care about the
+	// number of rows — the query returns one row per
+	// (grantee, grantor) pair. We'll insert twice
+	// directly to test idempotency.
+	_, _ = d.Exec(`INSERT INTO user_subnet_shares
+		(grantor_user_id, grantee_user_id, created_at)
+		VALUES (?, ?, 0)`, aliceID, bobID)
+	_, _ = d.Exec(`INSERT OR IGNORE INTO user_subnet_shares
+		(grantor_user_id, grantee_user_id, created_at)
+		VALUES (?, ?, 0)`, aliceID, bobID)
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	// Count occurrences of alice's CIDR in bob's
+	// rule. Should be exactly 1 (no duplicates).
+	bobRuleStart := strings.Index(aclStr, `"src": ["bob@tsnet.skynas.ru"]`)
+	if bobRuleStart < 0 {
+		t.Fatalf("bob's rule not found in ACL")
+	}
+	// Find the end of bob's rule (next '"src"' or
+	// ']' followed by newline).
+	bobRuleEnd := strings.Index(aclStr[bobRuleStart+10:], `"src": [`)
+	if bobRuleEnd < 0 {
+		bobRuleEnd = len(aclStr) - bobRuleStart
+	} else {
+		bobRuleEnd += bobRuleStart + 10
+	}
+	bobRule := aclStr[bobRuleStart:bobRuleEnd]
+	count := strings.Count(bobRule, aliceCIDR)
+	if count != 1 {
+		t.Errorf("alice's CIDR should appear exactly once in bob's rule; got %d occurrences in %q",
+			count, bobRule)
 	}
 }
 

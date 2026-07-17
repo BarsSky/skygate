@@ -271,6 +271,48 @@ func GetUserSubnetsForPlane(d *sql.DB, planeURL string) ([]UserSubnet, error) {
 	return out, rows.Err()
 }
 
+// SharedSubnet is one row of GetSharedSubnetsForPlane: a
+// grantor whose subnet is shared with the grantee.
+// CIDR is the grantor's per-user CIDR (routable
+// destination from the grantee's perspective).
+//
+// 2026-07-17: v0.17.1.
+type SharedSubnet struct {
+	GranteeUser   string // username of the user who gets access
+	GrantorUser   string // username of the user whose subnet is shared
+	GrantorCIDR   string // grantor's per-user CIDR (e.g. "10.0.42.0/24")
+}
+
+// GetSharedSubnetsForPlane returns every (grantee, grantor, cidr)
+// triple on the given control plane. planeURL == "" means
+// the global default plane. The ACL builder (v0.17.1) iterates
+// this list to extend each grantee's per-user dst with the
+// grantor's CIDR.
+//
+// The query is INNER JOIN: a share row only appears if the
+// grantor has a user_subnets row (Grant pre-checks this),
+// and we filter out shares whose grantor has since had
+// their subnet deleted (FK CASCADE would have removed
+// the share row already, but defensive filter is cheap).
+//
+// 2026-07-17: v0.17.1.
+func GetSharedSubnetsForPlane(d *sql.DB, planeURL string) ([]SharedSubnet, error) {
+	rows, err := d.Query(qSelectSharedSubnetsForPlane, planeURL, planeURL, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SharedSubnet
+	for rows.Next() {
+		var ss SharedSubnet
+		if err := rows.Scan(&ss.GranteeUser, &ss.GrantorUser, &ss.GrantorCIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, ss)
+	}
+	return out, rows.Err()
+}
+
 // ControlPlaneUserCount is one row of ListControlPlanes: a
 // distinct headscale_url (empty = the global default) and
 // the number of portal users on it. Used by the per-plane

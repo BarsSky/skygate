@@ -55,6 +55,65 @@
   </div>
 </div>
 
+{{if .Subnet}}
+<div class="card">
+  <h3><i class="fa-solid fa-share-nodes"></i> {{t "user_subnet.sharing_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "user_subnet.sharing_help" | safeHTML}}
+  </p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+    <div>
+      <h4 style="font-size:13px;margin-bottom:6px;color:var(--text-muted)">{{t "user_subnet.sharing_i_shared"}}</h4>
+      {{if .SharedBy}}
+      <table>
+        {{range .SharedBy}}
+        <tr>
+          <td><code>{{.GranteeUsername}}</code></td>
+          <td style="font-size:11px;color:var(--text-subtle)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+          <td>
+            <form method="POST" action="/admin/users/{{$.User.ID}}/subnet/revoke" style="display:inline">
+              <input type="hidden" name="grantee_id" value="{{.GranteeID}}">
+              <button type="submit" class="btn btn-sm btn-warning" title="{{t "user_subnet.revoke_button"}}">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </table>
+      {{else}}
+      <div style="color:var(--text-subtle);font-size:12px;font-style:italic">{{t "user_subnet.sharing_none_i"}}</div>
+      {{end}}
+    </div>
+
+    <div>
+      <h4 style="font-size:13px;margin-bottom:6px;color:var(--text-muted)">{{t "user_subnet.sharing_shared_with"}}</h4>
+      {{if .SharedWith}}
+      <table>
+        {{range .SharedWith}}
+        <tr>
+          <td><code>{{.GrantorUsername}}</code></td>
+          <td style="font-size:11px;color:var(--text-subtle)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        </tr>
+        {{end}}
+      </table>
+      {{else}}
+      <div style="color:var(--text-subtle);font-size:12px;font-style:italic">{{t "user_subnet.sharing_none_with"}}</div>
+      {{end}}
+    </div>
+  </div>
+
+  <form method="POST" action="/admin/users/{{.User.ID}}/subnet/share" style="margin-top:14px;display:flex;gap:8px;align-items:flex-end">
+    <label class="ufg-field" style="flex:1;margin:0">
+      <div class="ufg-label"><i class="fa-solid fa-user-plus"></i> {{t "user_subnet.sharing_grantee_label"}}</div>
+      <input type="text" name="grantee_username" required pattern="[a-z0-9_-]+" placeholder="{{t "user_subnet.sharing_grantee_placeholder"}}" class="ufg-input">
+    </label>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-share"></i> {{t "user_subnet.share_button"}}</button>
+  </form>
+</div>
+{{end}}
+
 {{if .FlashPreauth}}
 <div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
   <h3><i class="fa-solid fa-key"></i> {{t "user_subnet.preauth_title"}}</h3>

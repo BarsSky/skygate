@@ -595,8 +595,18 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		// 2026-07-17: v0.16.7 — added the "provision"
 		// subcommand that issues a per-user preauth
 		// key. /mysubnet (no args) = show status.
-		if len(args) > 0 && args[0] == "provision" {
-			return cmdReply{body: mySubnetProvisionReply(env), context: lookupContext(cmd), skipWrap: true}
+		// 2026-07-17: v0.17.1 — added "share <user>"
+		// and "revoke <user>" subcommands for cross-user
+		// IP-level subnet sharing.
+		if len(args) > 0 {
+			switch args[0] {
+			case "provision":
+				return cmdReply{body: mySubnetProvisionReply(env), context: lookupContext(cmd), skipWrap: true}
+			case "share":
+				return cmdReply{body: mySubnetShareReply(env, args[1:]), context: lookupContext(cmd)}
+			case "revoke":
+				return cmdReply{body: mySubnetRevokeReply(env, args[1:]), context: lookupContext(cmd)}
+			}
 		}
 		return cmdReply{body: mySubnetReply(env), context: lookupContext(cmd)}
 	case "/add_device":
