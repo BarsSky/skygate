@@ -217,6 +217,8 @@ func main() {
 	mux.Handle("POST /admin/users/{id}/subnet/disable", authMW(http.HandlerFunc(app.PostAdminUserSubnetDisable)))
 	mux.Handle("POST /admin/users/{id}/subnet/test", authMW(http.HandlerFunc(app.PostAdminUserSubnetTest)))
 	mux.Handle("POST /admin/users/{id}/subnet/provision", authMW(http.HandlerFunc(app.PostAdminUserSubnetProvision)))
+	mux.Handle("POST /admin/users/{id}/subnet/share", authMW(http.HandlerFunc(app.PostAdminUserSubnetShare)))
+	mux.Handle("POST /admin/users/{id}/subnet/revoke", authMW(http.HandlerFunc(app.PostAdminUserSubnetRevoke)))
 	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(app.GetAdminSubnets)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))

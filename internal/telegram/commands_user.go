@@ -21,6 +21,7 @@ package telegram
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -33,6 +34,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/subnet"
 )
 
 // myStatusReply is the user-scope counterpart of /status. It shows
@@ -1785,4 +1787,116 @@ func mySubnetProvisionReply(env BotEnv) string {
 		"  --hostname=" + info.Hostname + " \\\n" +
 		"  --advertise-routes=" + info.Routes + "</pre>"
 	return body
+}
+
+// mySubnetShareReply — v0.17.1. /mysubnet share <username>.
+// Grants the named user access to the caller's
+// personal subnet. The ACL is re-pushed to headscale
+// via the sidecar manager's HSForUser path. Sharing
+// is one-directional: caller → grantee. The grantee
+// does NOT automatically get access to the caller's
+// devices (only to the caller's subnet).
+func mySubnetShareReply(env BotEnv, args []string) string {
+	markHTMLReply()
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	if len(args) == 0 {
+		return i18n.Tf(lang, "bot.mysubnet.share_usage")
+	}
+	granteeName := strings.TrimSpace(args[0])
+	if granteeName == "" {
+		return i18n.Tf(lang, "bot.mysubnet.share_usage")
+	}
+	// Look up the grantee's user_id.
+	var granteeID int64
+	if err := env.DB.QueryRow(
+		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+	).Scan(&granteeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return i18n.Tf(lang, "bot.mysubnet.share_no_user", granteeName)
+		}
+		return i18n.Tf(lang, "bot.mysubnet.share_error", err)
+	}
+	// Grant the share. subnet.Grant is idempotent and
+	// returns ErrSelfShare on self-share.
+	if err := subnet.Grant(env.DB, env.PortalUserID, granteeID); err != nil {
+		if errors.Is(err, subnet.ErrSelfShare) {
+			return i18n.T(lang, "bot.mysubnet.share_self")
+		}
+		if errors.Is(err, subnet.ErrNotFound) {
+			return i18n.T(lang, "bot.mysubnet.share_no_subnet")
+		}
+		return i18n.Tf(lang, "bot.mysubnet.share_error", err)
+	}
+	// Re-apply ACL so the new share row becomes part
+	// of the headscale policy. The push targets the
+	// caller's plane (sharing is per-user, per-plane).
+	// Best-effort: a failure is logged but doesn't
+	// fail the share (the row is in the DB; the
+	// operator can manually re-apply).
+	planeURL := ""
+	if env.PortalPlaneURL != nil {
+		planeURL = env.PortalPlaneURL(env.PortalUserID)
+	}
+	res := acl.ApplyACLPipelineForPlane(
+		env.DB, env.HSForPortalUser(env.PortalUserID),
+		planeURL, nil, env.Username,
+		fmt.Sprintf("subnet_share %s -> %s", env.Username, granteeName))
+	if !res.Applied {
+		log.Printf("subnet_share: ACL reapply failed user=%d -> %d: %v (share is in DB; click 'Re-apply ACL' to push)",
+			env.PortalUserID, granteeID, res.Err)
+	}
+	return i18n.Tf(lang, "bot.mysubnet.share_ok",
+		env.Username, granteeName)
+}
+
+// mySubnetRevokeReply — v0.17.1. /mysubnet revoke <username>.
+// Removes a previously-granted share. The ACL is
+// re-pushed to headscale.
+func mySubnetRevokeReply(env BotEnv, args []string) string {
+	markHTMLReply()
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	if len(args) == 0 {
+		return i18n.Tf(lang, "bot.mysubnet.revoke_usage")
+	}
+	granteeName := strings.TrimSpace(args[0])
+	if granteeName == "" {
+		return i18n.Tf(lang, "bot.mysubnet.revoke_usage")
+	}
+	var granteeID int64
+	if err := env.DB.QueryRow(
+		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+	).Scan(&granteeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return i18n.Tf(lang, "bot.mysubnet.revoke_no_user", granteeName)
+		}
+		return i18n.Tf(lang, "bot.mysubnet.revoke_error", err)
+	}
+	if err := subnet.Revoke(env.DB, env.PortalUserID, granteeID); err != nil {
+		if errors.Is(err, subnet.ErrShareNotFound) {
+			return i18n.Tf(lang, "bot.mysubnet.revoke_not_shared", env.Username, granteeName)
+		}
+		return i18n.Tf(lang, "bot.mysubnet.revoke_error", err)
+	}
+	// Re-apply ACL — symmetric to share. The new
+	// (smaller) dst list is pushed to headscale.
+	planeURL := ""
+	if env.PortalPlaneURL != nil {
+		planeURL = env.PortalPlaneURL(env.PortalUserID)
+	}
+	res := acl.ApplyACLPipelineForPlane(
+		env.DB, env.HSForPortalUser(env.PortalUserID),
+		planeURL, nil, env.Username,
+		fmt.Sprintf("subnet_revoke %s -> %s", env.Username, granteeName))
+	if !res.Applied {
+		log.Printf("subnet_revoke: ACL reapply failed user=%d -> %d: %v (revoke is in DB; click 'Re-apply ACL' to push)",
+			env.PortalUserID, granteeID, res.Err)
+	}
+	return i18n.Tf(lang, "bot.mysubnet.revoke_ok",
+		env.Username, granteeName)
 }
