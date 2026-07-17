@@ -310,6 +310,68 @@ func TestGetAllPortalUsers(t *testing.T) {
 	}
 }
 
+// --- v0.16.6 subnets denorm columns ---
+
+// TestGetAllPortalUsers_PopulatesSubnetDenorm — the GetAllPortalUsers
+// query should populate the new subnet_cidr / subnet_status /
+// subnet_router_node_id denorm columns so /admin/users can show
+// "10.0.42.0/24 · active" without a JOIN. Regression guard for
+// v0.16.6: the GetAllPortalUsers query was extended from 6 to 9
+// columns; a typo in the column list would silently leave the
+// subnet fields empty.
+func TestGetAllPortalUsers_PopulatesSubnetDenorm(t *testing.T) {
+	d := openTestDB(t)
+	id := seedPortalUser(t, d, "alice", "h", false, 0)
+	// Simulate manager denorm sync (what subnet.Create does).
+	_, err := d.Exec(`UPDATE portal_users SET subnet_cidr=?, subnet_status=?, subnet_router_node_id=? WHERE id=?`,
+		"10.0.42.0/24", "active", "11", id)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	users, err := GetAllPortalUsers(d)
+	if err != nil {
+		t.Fatalf("GetAllPortalUsers: %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("got %d users, want 1", len(users))
+	}
+	u := users[0]
+	if u.SubnetCIDR != "10.0.42.0/24" {
+		t.Errorf("SubnetCIDR = %q, want 10.0.42.0/24", u.SubnetCIDR)
+	}
+	if u.SubnetStatus != "active" {
+		t.Errorf("SubnetStatus = %q, want active", u.SubnetStatus)
+	}
+	if u.SubnetRouterNodeID != 11 {
+		t.Errorf("SubnetRouterNodeID = %d, want 11", u.SubnetRouterNodeID)
+	}
+}
+
+// TestGetAllPortalUsers_EmptyDenormDefaults — when no subnet has been
+// allocated, the denorm columns should be empty string / 0, not crash
+// or read garbage.
+func TestGetAllPortalUsers_EmptyDenormDefaults(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "bob", "h", false, 0)
+
+	users, err := GetAllPortalUsers(d)
+	if err != nil {
+		t.Fatalf("GetAllPortalUsers: %v", err)
+	}
+	u := users[0]
+	if u.SubnetCIDR != "" {
+		t.Errorf("SubnetCIDR = %q, want empty", u.SubnetCIDR)
+	}
+	// status is "none" by default in the migration
+	if u.SubnetStatus != "none" && u.SubnetStatus != "" {
+		t.Errorf("SubnetStatus = %q, want none or empty", u.SubnetStatus)
+	}
+	if u.SubnetRouterNodeID != 0 {
+		t.Errorf("SubnetRouterNodeID = %d, want 0", u.SubnetRouterNodeID)
+	}
+}
+
 // --- GetPortalUsernames ---
 
 func TestGetPortalUsernames(t *testing.T) {
