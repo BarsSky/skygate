@@ -7,7 +7,48 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.21.0 — user-to-user subnet
+* **Current**: v0.21.1 — fix headscale-side
+  user delete (typo: `-u` should be `-i`)
+  ([release notes](RELEASE-NOTES-v0.21.1.md)).
+  Pre-existing bug discovered while cleaning up
+  test users after v0.21.0. Every
+  `POST /admin/users/{id}/delete` left a
+  stale "orphan" headscale user behind,
+  surfacing as the "HSOrphans" banner on
+  `/admin/users`. The root cause: a typo in
+  the headscale CLI args — the code used
+  `users delete -u -f <id>` but headscale's
+  `users delete --help` shows the correct
+  flag is `-i, --identifier` (the `--force`
+  global flag has no short alias in 0.29.x).
+  The audit log captured every failed
+  attempt with `Error: unknown shorthand
+  flag: 'u' in -u`. Fix: `-u -f <id>` →
+  `-i <id> --force` in
+  `internal/headscale/users.go`, extracted
+  to a `deleteUserCmd` method for
+  testability. Three new regression tests
+  assert the correct args and reject the
+  pre-fix shape. The 4 existing orphans
+  from v0.21.0 test user cleanup get removed
+  by a post-deploy manual `docker exec ...
+  headscale users delete -i <id> --force`
+  per orphan. After the post-deploy cleanup,
+  `/admin/users` no longer shows the
+  HSOrphans banner. Smoke 126/126 still
+  green.
+
+  **What comes next**: the three "close the
+  backlog" features from the 2026-07-20
+  message are done. v0.19.1 (the re-attempt
+  of the reverted v0.19.0 dns.extra_records
+  feature) is still blocked on headscale
+  0.30+ — the weekly mavis cron
+  (`headscale-milestone-16-check`) checks
+  headscale milestone #16 (DNS Work) every 7
+  days and reports if any progress lands.
+
+* **Previous**: v0.21.0 — user-to-user subnet
   bridge (invite codes + bot /invite + /accept +
   /admin/invites)
   ([release notes](RELEASE-NOTES-v0.21.0.md)).
