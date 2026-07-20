@@ -245,5 +245,15 @@ func migrate(d *sql.DB) error {
 	if err := migrationV042(d); err != nil {
 		return fmt.Errorf("migrate v0.42: %w", err)
 	}
+	// 2026-07-20: v0.22.0 — mesh (shared network).
+	// Adds the meshes + mesh_members tables. The
+	// mesh is a named group of users whose personal
+	// subnets are all mutually visible (N-way
+	// bridge, generalizing the v0.17.1 one-shot
+	// share). See migrations_v0.43.go for the full
+	// rationale + ACL integration.
+	if err := migrationV043(d); err != nil {
+		return fmt.Errorf("migrate v0.43: %w", err)
+	}
 	return nil
 }
