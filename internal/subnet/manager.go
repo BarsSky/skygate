@@ -38,17 +38,47 @@ import (
 
 // Status is the lifecycle state of a user_subnets row.
 //
-// pending   — row created, sidecar not yet up
-// active    — sidecar up, node registered, route approved
-// disabled  — opt-out; row kept for audit but no live sidecar
+// pending       — no devices yet (or no nodes snapshot for the user)
+//                 the row is allocated, but the user has not added
+//                 any Tailscale devices, so there's nothing to
+//                 route into the personal subnet. This is the
+//                 natural state for a freshly-created user.
 //
-// The string values are stored in user_subnets.status
-// and portal_users.subnet_status (the latter is the
-// "none" case for users who never opted in).
+// active        — user has ≥1 device (any tag) in headscale, the
+//                 10.0.<uid>.0/24 CIDR is "active" as a logical
+//                 namespace. Devices can reach it via the per-user
+//                 ACL rule, but the user has NOT set up a
+//                 subnet-router (no machine advertising 10.0.<uid>.0/24
+//                 into the tailnet). This is the v0.22.3 default
+//                 for every user with at least one device.
+//
+// router_active — bonus status: active + a tag:subnet-router node
+//                 is registered in headscale AND has the user's
+//                 CIDR in its approved routes. Means the user has
+//                 actually set up a subnet-router on their home
+//                 network and the 10.0.<uid>.0/24 is a real,
+//                 routable subnet (not just a label).
+//
+// disabled      — opt-out; row kept for audit but no live
+//                 subnet. Manual override via the admin "Disable"
+//                 button. SyncStatus preserves this state across
+//                 re-runs (admin's intent wins over derived state).
+//
+// 2026-07-21: v0.22.3 — added router_active status + reworked
+// pending semantics. Pre-v0.22.3, pending meant "no subnet-router
+// registered" which left every production user in pending even
+// when they had plenty of devices in the tailnet. v0.22.3 flips
+// it: pending = no devices, active = devices exist, router_active
+// = bonus on top.
+//
+// The string values are stored in user_subnets.status and
+// portal_users.subnet_status (the latter is the "none" case for
+// users who never opted in).
 const (
-	StatusPending  = "pending"
-	StatusActive   = "active"
-	StatusDisabled = "disabled"
+	StatusPending      = "pending"
+	StatusActive       = "active"
+	StatusRouterActive = "router_active"
+	StatusDisabled     = "disabled"
 )
 
 // Subnet is the in-memory representation of a
@@ -296,7 +326,7 @@ func ListByStatus(d *sql.DB, status string) ([]*Subnet, error) {
 // "Disable" button (a manual opt-out).
 func SetStatus(d *sql.DB, userID int64, status string) error {
 	switch status {
-	case StatusPending, StatusActive, StatusDisabled:
+	case StatusPending, StatusActive, StatusRouterActive, StatusDisabled:
 		// ok
 	default:
 		return fmt.Errorf("subnet: invalid status %q", status)
@@ -361,4 +391,89 @@ func SetRouter(d *sql.DB, userID int64, routerNodeID, routerContainerID string) 
 		return fmt.Errorf("subnet: update portal_users router: %w", err)
 	}
 	return nil
+}
+
+// SyncStatus computes the desired status for a user's
+// subnet based on the current snapshot of their devices
+// in node_owner_map, and updates user_subnets.status +
+// the portal_users denorm column if the computed value
+// differs from the current.
+//
+// 2026-07-21: v0.22.3 — the new status logic.
+//
+// The status decision matrix:
+//
+//	disabled            → disabled       (manual override wins)
+//	0 devices           → pending        (row allocated, nothing to route)
+//	≥1 device, no router → active        (logical namespace only)
+//	≥1 device, + router → router_active  (real subnet-router up too)
+//
+// hasRouter is supplied by the caller based on a fresh
+// headscale read. The handler code that calls SyncStatus
+// (backfillNodeOwnership in handlers_node_ownership.go)
+// already has the headscale node list, so passing the
+// router presence is essentially free.
+//
+// SyncStatus is idempotent. Calling it twice in a row
+// (with the same hasRouter value) is a no-op on the DB
+// because SetStatus guards the no-op path internally
+// (and the manual disabled case is a constant match).
+//
+// Errors:
+//   - ErrNotFound if the user has no user_subnets row.
+//     Callers (handlers) can detect this and skip the
+//     sync — a user without a row isn't broken, they
+//     just haven't clicked "Allocate subnet" yet.
+//
+// Audit / observability: returns the resulting status so
+// the caller can log a one-liner like "subnet_sync
+// user=42 status=active devices=3 router=false".
+func SyncStatus(d *sql.DB, userID int64, hasRouter bool) (string, error) {
+	sub, err := Get(d, userID)
+	if err != nil {
+		return "", err
+	}
+	if sub == nil {
+		return "", ErrNotFound
+	}
+	// Manual disabled wins over derived state. The admin
+	// clicked "Disable" for a reason; auto-sync must not
+	// resurrect the row.
+	if sub.Status == StatusDisabled {
+		return StatusDisabled, nil
+	}
+	// Count the user's devices in node_owner_map. We
+	// can't trust headscale's live state alone (it's
+	// the source of truth for the tailnet, but
+	// node_owner_map is the source of truth for
+	// "what does skygate consider this user to own"
+	// — which is what the status pill represents).
+	// The backfill that just ran already populated
+	// node_owner_map from headscale, so counting it
+	// here is the right granularity.
+	var username string
+	if err := d.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, userID).Scan(&username); err != nil {
+		return "", fmt.Errorf("subnet: read username for user_id=%d: %w", userID, err)
+	}
+	var deviceCount int
+	if err := d.QueryRow(
+		`SELECT COUNT(*) FROM node_owner_map WHERE username = ?`, username,
+	).Scan(&deviceCount); err != nil {
+		return "", fmt.Errorf("subnet: count devices for user_id=%d: %w", userID, err)
+	}
+	var newStatus string
+	switch {
+	case deviceCount == 0:
+		newStatus = StatusPending
+	case hasRouter:
+		newStatus = StatusRouterActive
+	default:
+		newStatus = StatusActive
+	}
+	if newStatus != sub.Status {
+		if err := SetStatus(d, userID, newStatus); err != nil {
+			return "", err
+		}
+	}
+	return newStatus, nil
 }

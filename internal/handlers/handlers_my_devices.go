@@ -122,9 +122,22 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("DBG GetMyDevices fetch took %v nodes=%d my=%d public=%d", time.Since(t0), len(all), len(myNodesList), len(publicNodes))
 
+	// 2026-07-21: v0.22.3 — read the user's subnet row
+	// (denormalized on portal_users) so the /my/devices page
+	// can show "Your personal subnet: 10.0.<uid>.0/24 (active)"
+	// without an extra JOIN. Backfill above may have just
+	// flipped the status to active (the SyncStatus call in
+	// backfillNodeOwnership), so the value here is fresh.
+	var subnetCIDR, subnetStatus string
+	_ = a.DB.QueryRow(
+		`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, c.UserID,
+	).Scan(&subnetCIDR, &subnetStatus)
+
 	a.renderWithLayout(w, r, "user/devices.html", c, map[string]any{
-		"MyNodes":     myNodesList,
-		"PublicNodes": publicNodes,
-		"HasMyNodes":  len(myNodesList) > 0,
+		"MyNodes":      myNodesList,
+		"PublicNodes":  publicNodes,
+		"HasMyNodes":   len(myNodesList) > 0,
+		"SubnetCIDR":   subnetCIDR,
+		"SubnetStatus": subnetStatus,
 	})
 }
