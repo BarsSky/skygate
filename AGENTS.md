@@ -7,7 +7,49 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.18.0 — MagicDNS for personal
+* **Current**: v0.18.1 — three small fixes
+  ([release notes](RELEASE-NOTES-v0.18.1.md)).
+  Operator-flagged issues from the v0.18.0 deploy,
+  all closed in one small release:
+
+  1. **`check_https.py` HSTS /login 404** — the VM
+     uses openresty (not Caddy as the docs say) and
+     openresty 404s `/login`. `check_hsts` now falls
+     back to `/`, `/api/v1/apikey` in order and
+     accepts HSTS from whichever path returns a real
+     response. 4 new regression tests in
+     `scripts/test_check_https.py`. `make test` is
+     now FULLY green.
+
+  2. **`/admin/exit-nodes` "Tag as exit-node" /
+     "Untag" buttons** — replaces the operator's
+     two manual `docker exec headscale headscale
+     nodes ...` invocations (approve-routes + tag)
+     with a single click. Approves ONLY
+     `0.0.0.0/0` + `::/0` (NOT the full
+     availableRoutes set, to avoid accidentally
+     approving karolina's 200+ subnets). Applies
+     `tag:exit-node`. New headscale API
+     `ApproveRoutesForNodeID`. 4 new handler tests
+     + 6 new i18n keys (RU+EN).
+
+  3. **`ControlURL` auto-injection in
+     `renderWithLayout`** — the `/admin/exit-nodes`
+     Step-2 tutorial and `/my/preauth` result page
+     rendered with an EMPTY `--login-server=`
+     because the handlers didn't pass ControlURL in
+     the data map. `renderWithLayout` now
+     auto-injects `data["ControlURL"] = a.ControlURL`
+     on every page render. The operator's
+     `SKYGATE_CONTROL_URL` env var flows through
+     `New(...)` → `App.ControlURL` → data map →
+     template. 2 new regression tests in
+     `handlers_test.go`.
+
+  12/12 packages green, smoke 118/118, live at
+  build `45d25a9`.
+
+* **Previous**: v0.18.0 — MagicDNS for personal
   subnets
   ([release notes](RELEASE-NOTES-v0.18.0.md)).
   Roadmap step 5 of the v0.16.0+ per-user subnets
@@ -16,46 +58,23 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   (`skygate-subnet-<username>.tsnet.skynas.ru`)
   so tailnet clients can reach the user's
   `10.0.<uid>.0/24` subnet without remembering
-  the sidecar's tailnet IP. New `internal/subnet/magicdns.go`
-  (pure string functions `ComputeMagicDNSNames` +
+  the sidecar's tailnet IP. New
+  `internal/subnet/magicdns.go` (pure string
+  functions `ComputeMagicDNSNames` +
   `FormatMagicDNSNames`, no DB). Admin UI:
   `/admin/users/{id}/subnet` gets a "DNS имена"
   `<details>` card; `/admin/subnets` gets a new
   "DNS (MagicDNS)" column. Bot: `/mysubnet` reply
   appends a "MagicDNS" section. 12 new i18n keys
   (6 admin + 5 bot + 1 col_dns) RU+EN. 4 new
-  unit tests in `magicdns_test.go` (known
-  usernames, format renderer, base-domain drift
-  guard, sidecar-prefix drift guard).
+  unit tests in `magicdns_test.go`.
   `BaseDomain = "tsnet.skynas.ru"` matches
   `internal/acl/acl.go`'s `baseDomain` constant.
-  Works automatically when headscale has
-  `dns.magic_dns: true` + `dns.base_domain:
-  tsnet.skynas.ru` (operator config, no headscale
-  code change). The v0.16.7 sidecar's
-  `--hostname=skygate-subnet-<username>` is what
-  triggers the FQDN. The
-  `exitnode.skygate-subnet-<user>` special record
-  is NOT shipped in v0.18.0 (headscale 0.29
+  The `exitnode.skygate-subnet-<user>` special
+  record is NOT shipped in v0.18.0 (headscale 0.29
   doesn't support per-user service records);
   v0.19.0 is the planned home. 12/12 packages
   green, smoke 118/118, live at build `8d722af`.
-
-* **Previous**: v0.17.1 — cross-user IP-level
-  subnet sharing + auto-reapply ACL
-  ([release notes](RELEASE-NOTES-v0.17.1.md)). Two
-  pieces that close the v0.16.0+ subnets roadmap:
-
-  1. **Cross-user IP-level sharing** — grantor can
-     share their 10.0.<uid>.0/24 subnet with one or
-     more grantees via
-     `user_subnet_shares (grantor, grantee)` table.
-     The ACL builder picks up the shares and appends
-     the grantor's CIDR to each grantee's per-user
-     dst list. UI on `/admin/users/{id}/subnet`
-     (Share/Revoke forms) + bot
-     `/mysubnet share|revoke <user>`. Sharing is
-     one-directional (grantor → grantee).
 
   2. **Auto-reapply ACL on Allocate/Share/Revoke** —
      the v0.17.0 caveat ("click Re-apply ACL to push
