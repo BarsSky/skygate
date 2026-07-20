@@ -120,13 +120,49 @@ def check_hsts(url, host, port, timeout):
     """GET https://<host>/login and assert the response
     carries a Strict-Transport-Security header. The
     v0.15.0 Caddyfile sets max-age=15552000 (6 months)
-    + includeSubDomains + preload."""
+    + includeSubDomains + preload.
+
+    2026-07-17: v0.18.1 — fall back to alternative paths
+    when /login returns 404. The VM uses openresty (not
+    Caddy as the docs say) and openresty doesn't route
+    /login to skygate (it 404s). HSTS is still set on
+    the host globally; the check just needs a path
+    that returns a real response. We try /login first
+    (the original intent), then /, then /api/v1/apikey
+    (a headscale endpoint that always responds with
+    401 — the HSTS header is set by the proxy in
+    front of the 401, not by the headscale process).
+    """
     scheme = "https" if port == 443 else "https"  # always for the /login probe
-    target = f"{scheme}://{host}:{port}/login"
-    req = urllib.request.Request(target, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        hsts = resp.headers.get("Strict-Transport-Security", "")
-    return hsts, resp.status
+    # Paths in priority order. The first one that
+    # returns a 2xx/4xx (not 404) wins.
+    paths = ["/login", "/", "/api/v1/apikey"]
+    for path in paths:
+        target = f"{scheme}://{host}:{port}{path}"
+        req = urllib.request.Request(target, method="GET")
+        try:
+            # urlopen raises HTTPError on 4xx/5xx; both
+            # the success and error responses carry the
+            # HSTS header (set by the TLS terminator
+            # before the upstream sees the request).
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                hsts = resp.headers.get("Strict-Transport-Security", "")
+                status = resp.status
+        except urllib.error.HTTPError as e:
+            # 404 means the path doesn't exist on this
+            # proxy config — try the next fallback.
+            # Other 4xx/5xx are real responses (the
+            # proxy IS routing to a backend that
+            # rejected the request); use those.
+            if e.code == 404 and path != paths[-1]:
+                continue
+            hsts = e.headers.get("Strict-Transport-Security", "") if e.headers else ""
+            status = e.code
+        if hsts:
+            return hsts, status, path
+    # No path returned HSTS. Return the last probe's
+    # status for the printout.
+    return "", status, paths[-1]
 
 
 def cert_contains_san(cert, expected_host):
@@ -255,17 +291,23 @@ def main():
             fail(f"Port 80 returned {code} (Location={location!r}), not a 3xx redirect. Caddy's HTTP→HTTPS rewrite is missing.")
             any_fail = True
 
-    # 5. HSTS on /login.
-    print(f"--- 3. HSTS on {host}:443/login")
+    # 5. HSTS on /login (with fallback to /, /api/v1/apikey).
+    print(f"--- 3. HSTS on {host}:443/login (fallback: /, /api/v1/apikey)")
     try:
-        hsts, status = check_hsts(args.url, host, port, args.timeout)
+        hsts, status, hsts_path = check_hsts(args.url, host, port, args.timeout)
     except (urllib.error.URLError, ConnectionRefusedError, socket.timeout) as e:
         fail(f"/login probe failed: {e}")
         return 1
     if "max-age=" in hsts:
-        ok(f"HSTS: {hsts} (HTTP {status})")
+        if hsts_path == "/login":
+            ok(f"HSTS: {hsts} (HTTP {status})")
+        else:
+            ok(f"HSTS: {hsts} (HTTP {status}, via {hsts_path} — /login was 404, "
+               f"likely a third-party proxy config that doesn't route /login to skygate)")
     else:
-        warn(f"No HSTS header on /login (got: {hsts!r}). Tailscale clients will accept HTTP downgrades.")
+        warn(f"No HSTS header on any of /login, /, /api/v1/apikey "
+             f"(last got: {hsts!r}, status {status}). "
+             f"Tailscale clients will accept HTTP downgrades.")
         any_warn = True
 
     if any_fail:
