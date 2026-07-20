@@ -87,6 +87,21 @@ CREATE TABLE user_subnet_shares (
 	FOREIGN KEY (grantor_user_id) REFERENCES portal_users(id) ON DELETE CASCADE,
 	FOREIGN KEY (grantee_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 );
+CREATE TABLE meshes (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	code TEXT NOT NULL UNIQUE,
+	name TEXT NOT NULL DEFAULT '',
+	creator_user_id INTEGER NOT NULL,
+	status TEXT NOT NULL DEFAULT 'active',
+	created_at INTEGER NOT NULL DEFAULT 0,
+	dissolved_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE mesh_members (
+	mesh_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	joined_at INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (mesh_id, user_id)
+);
 `
 
 func openTestDB(t *testing.T) *sql.DB {

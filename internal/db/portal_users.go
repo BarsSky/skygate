@@ -313,6 +313,60 @@ func GetSharedSubnetsForPlane(d *sql.DB, planeURL string) ([]SharedSubnet, error
 	return out, rows.Err()
 }
 
+// MeshMembership is one row of
+// GetMeshMembershipsForPlane: a pair of users who
+// share an active mesh, plus the CIDR of the
+// "other" user (the one whose subnet becomes
+// visible to the "self" user). The ACL builder
+// iterates this list to extend the per-user dst
+// with every other member's CIDR.
+//
+// 2026-07-20: v0.22.0.
+type MeshMembership struct {
+	SelfUser   string // username of the user who gains visibility
+	OtherUser  string // username of the other mesh member
+	OtherCIDR  string // OtherUser's personal subnet CIDR (empty if not allocated)
+}
+
+// GetMeshMembershipsForPlane returns every
+// (self, other, other_cidr) triple on the given
+// control plane for active meshes. The ACL
+// builder extends each user's per-user dst with
+// the CIDRs of all other members of every mesh
+// they belong to.
+//
+// 2026-07-20: v0.22.0.
+//
+// Semantics:
+//   - self != other (the query filters self-pairs)
+//   - self and other MUST both be on the plane
+//     (multi-plane deploys only bridge within a plane)
+//   - OtherCIDR is empty when the other member has
+//     no subnet allocated (LEFT JOIN on user_subnets)
+//   - the mesh MUST be status='active' (dissolved
+//     meshes are excluded)
+//
+// The query is the same shape as the v0.17.1
+// sharedSubnets query, just with the source
+// being mesh_members + meshes (active filter)
+// instead of user_subnet_shares.
+func GetMeshMembershipsForPlane(d *sql.DB, planeURL string) ([]MeshMembership, error) {
+	rows, err := d.Query(qSelectMeshMembershipsForPlane, planeURL, planeURL, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MeshMembership
+	for rows.Next() {
+		var mm MeshMembership
+		if err := rows.Scan(&mm.SelfUser, &mm.OtherUser, &mm.OtherCIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, mm)
+	}
+	return out, rows.Err()
+}
+
 // ControlPlaneUserCount is one row of ListControlPlanes: a
 // distinct headscale_url (empty = the global default) and
 // the number of portal users on it. Used by the per-plane
