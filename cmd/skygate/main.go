@@ -323,6 +323,24 @@ func main() {
 	// GitHub immediately. Same pattern as
 	// /admin/exit-nodes/health-now.
 	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(app.PostAdminHeadscaleCheckNow)))
+	// 2026-07-20: v0.21.0 — user-to-user invite
+	// overview. Lists every invite_codes row
+	// (grantor / grantee / status / expiry),
+	// supports a "Revoke" action for active
+	// rows. Admin-only — the bot /invites command
+	// is the per-user "show me my own invites"
+	// view.
+	mux.Handle("GET /admin/invites", authMW(http.HandlerFunc(app.GetAdminInvites)))
+	mux.Handle("POST /admin/invites/revoke", authMW(http.HandlerFunc(app.PostAdminInvitesRevoke)))
+	// 2026-07-20: v0.20.0 — headscale-update-monitor
+	// status page. Renders the monitor's snapshot
+	// (pinned vs. latest, history table). Admin-only.
+	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(app.GetAdminHeadscale)))
+	// 2026-07-20: v0.20.0 — "Run check now" button on
+	// /admin/headscale. Forces the monitor to re-poll
+	// GitHub immediately. Same pattern as
+	// /admin/exit-nodes/health-now.
+	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(app.PostAdminHeadscaleCheckNow)))
 	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(app.PostAdminExitNodesAdd)))
 	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(app.PostAdminExitNodesDelete)))
 	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(app.PostAdminExitNodesSync)))

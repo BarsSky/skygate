@@ -442,6 +442,9 @@ var commandContext = map[string]string{
 	"/lang":              "registry",
 	"/_bind_cancel":      "bind",
 	"/unbind_self":       "unbind",
+	"/invite":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/accept":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/invites":           "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
 	// meta
 	"/version":           "version",
 	"/help":              "codex",
@@ -707,6 +710,27 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		// revoking a lost device. Admin path is still
 		// /unbind <chat_id> (admin-only).
 		return cmdReply{body: unbindSelfReply(env), context: lookupContext(cmd)}
+	case "/invite":
+		// 2026-07-20: v0.21.0 — user-to-user subnet
+		// bridge, grantor side. Generates an 8-char
+		// code, prints the code + the grantee
+		// username + the 7d expiry. The grantee
+		// types the code into /accept to auto-bridge
+		// (writes a user_subnet_shares row + triggers
+		// the per-plane ACL re-apply).
+		return cmdReply{body: inviteReply(env, args), context: lookupContext(cmd)}
+	case "/accept":
+		// 2026-07-20: v0.21.0 — user-to-user subnet
+		// bridge, grantee side. Validates the code
+		// (must match the grantee username), atomically
+		// consumes it, and applies the bridge via
+		// invite.ApplyBridge.
+		return cmdReply{body: acceptReply(env, args), context: lookupContext(cmd)}
+	case "/invites":
+		// 2026-07-20: v0.21.0 — list the caller's
+		// outstanding + incoming invites. Capped
+		// at 10 rows per side.
+		return cmdReply{body: invitesListReply(env), context: lookupContext(cmd)}
 	default:
 		return cmdReply{body: i18n.Tf(env.Lang, "bot.unknown_command", cmd), context: "err"}
 	}

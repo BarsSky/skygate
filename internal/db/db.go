@@ -238,5 +238,12 @@ func migrate(d *sql.DB) error {
 	if err := migrationV041(d); err != nil {
 		return fmt.Errorf("migrate v0.41: %w", err)
 	}
+	// 2026-07-20: v0.21.0 — user-to-user subnet
+	// bridge. Adds the invite_codes table (one row
+	// per outstanding / consumed invite). See
+	// migrations_v0.42.go for the full lifecycle.
+	if err := migrationV042(d); err != nil {
+		return fmt.Errorf("migrate v0.42: %w", err)
+	}
 	return nil
 }
