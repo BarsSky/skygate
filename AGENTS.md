@@ -7,7 +7,44 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.22.1 — /my/meshes
+* **Current**: v0.22.2 — fix
+  auto-apply tag:private for
+  tagless nodes (MSI bug)
+  ([release notes](RELEASE-NOTES-v0.22.2.md)).
+  The operator reported on
+  2026-07-20 that MSI (id=15),
+  registered via skygate preauth
+  (id=98), never received
+  tag:private in headscale. Root
+  cause: backfillNodeOwnership's
+  Strategy A branch set
+  matchedTag = firstTagOrFallback(n),
+  which returns "tag:untagged" for
+  tagless nodes. The subsequent
+  branch check `if matchedTag ==
+  "tag:private"` failed, so
+  HS.TagNode(15, "tag:private") was
+  NEVER called. Strategy C had the
+  same bug; it was fixed on
+  2026-07-10 but Strategy A was
+  missed. v0.22.2 fix applies the
+  same override to Strategy A:
+  when the preauth key came from
+  skygate, default matchedTag to
+  "tag:private". firstTagOrFallback
+  is only used when the node ALREADY
+  has tags (e.g. skygate-vm has
+  tag:private in headscale, so the
+  result is unchanged for that
+  case). Two new tests in
+  internal/handlers/handlers_node_ownership_test.go
+  pin the fix. 8/8 live-validation
+  checks PASS on the VM
+  (check_v0.22.2.sh). Smoke 83/83
+  (EN 83 + RU 83), check_exit_nodes
+  3/3, check_https PASS.
+
+* **Previous**: v0.22.1 — /my/meshes
   web UI (was bot-only in v0.22.0)
   ([release notes](RELEASE-NOTES-v0.22.1.md)).
   v0.22.0 shipped the mesh (shared
