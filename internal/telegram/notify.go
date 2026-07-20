@@ -34,6 +34,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
 	"skygate/internal/sidecar"
 )
@@ -127,6 +128,13 @@ type RealNotifier struct {
 	// nil falls through to the global default.
 	planeURLForUser func(userID int64) string
 	sidecar *sidecar.Manager
+	// 2026-07-20: v0.20.0 — headscale-update-monitor
+	// (the same instance main.go runs as a background
+	// goroutine for the /admin/headscale page + the
+	// Telegram alerts). The bot's /headscale command
+	// reads its Snapshot() to render the same status
+	// the admin page does.
+	headscaleUpdateMonitor *headscale_version.Monitor
 	// 2026-07-13: Этап 11 part 2b — per-device + total rule caps,
 	// set by main.go from config.Load(). Surfaced in BotEnv so
 	// /add_rule can enforce them (mirrors the web form's
@@ -287,6 +295,20 @@ func (n *RealNotifier) SetSidecar(m *sidecar.Manager) {
 	n.sidecar = m
 }
 
+// SetHeadscaleUpdateMonitor installs the v0.20.0
+// headscale-update-monitor that the /headscale bot
+// command reads. The monitor itself is run as a
+// background goroutine from main.go (it dispatches
+// Telegram alerts on its own via SendAlert); this
+// setter only hands the monitor to the bot's BotEnv
+// so the /headscale command can read the same
+// snapshot the /admin/headscale page does.
+func (n *RealNotifier) SetHeadscaleUpdateMonitor(m *headscale_version.Monitor) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.headscaleUpdateMonitor = m
+}
+
 // SetRuleCaps stores the per-device and total rule caps used by
 // /add_rule. 2026-07-13: Этап 11 part 2b. Called once at
 // startup from cmd/skygate/main.go after config.Load(). Zero
@@ -404,6 +426,12 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	// 2026-07-17: v0.16.7 — same pattern for the sidecar
 	// manager. nil falls through to "ask admin" hint.
 	sidecarMgr := n.sidecar
+	// 2026-07-20: v0.20.0 — same pattern for the
+	// headscale-update-monitor. The monitor itself
+	// runs as a background goroutine (started in
+	// main.go after this snapshot is taken); the bot
+	// reads its snapshot to render /headscale.
+	hsUpdateMon := n.headscaleUpdateMonitor
 	env := BotEnv{
 		DB:                 n.db,
 		UserMaxRules:       max,
@@ -417,6 +445,7 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 		MaxTotalRules:      n.maxTotalRules,
 		Notifier:           n,
 		Sidecar:            sidecarMgr,
+		HeadscaleUpdateMonitor: hsUpdateMon,
 		// 2026-07-14: Этап 14 v5 — default Lang is "en";
 		// envForMessage() overrides for unbound chats with
 		// LangFromTelegramCode(langCode) and for bound chats

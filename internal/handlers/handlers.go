@@ -15,6 +15,7 @@ import (
 	"skygate/internal/i18n"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/sidecar"
 )
@@ -76,6 +77,14 @@ type App struct {
 	// — not yet a real env var, but the test suite
 	// disables it via this nil field).
 	ReleaseMonitor *release.Monitor
+	// HeadscaleUpdateMonitor (v0.20.0) tracks new
+	// headscale releases. The /admin/headscale page reads
+	// its Snapshot(); the /admin/exit-nodes page reads
+	// UpdateAvailable + BreakingAvailable to render a
+	// banner; the bot /headscale command reads the same
+	// fields. nil-safe: handlers guard with
+	// `if a.HeadscaleUpdateMonitor != nil`.
+	HeadscaleUpdateMonitor *headscale_version.Monitor
 	// Sidecar is the per-user subnet auto-approver (v0.16.7).
 	// The admin /admin/users/{id}/subnet page uses it to issue
 	// preauth keys; the bot /mysubnet command uses it for the

@@ -79,6 +79,42 @@ type Config struct {
 	// works, but the sidecar node won't get its route approved
 	// automatically).
 	SidecarSyncPeriod time.Duration
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// HeadscaleVersionPin is the operator's currently-running
+	// headscale version (e.g. "0.29.2"). The monitor
+	// compares this against the latest GitHub release and
+	// emits a Telegram alert when a newer version is
+	// available. Empty string = monitor is in "observe only"
+	// mode (no alerts, but the /admin/headscale page still
+	// shows the latest known version and history).
+	//
+	// The pin is an env var (not auto-detected) because
+	// skygate doesn't shell into the headscale container.
+	// Auto-detect could come in a v0.21.0+ if we add a
+	// /api/v1/version endpoint to headscale via a wrapper
+	// — for now, the operator updates the env var when
+	// they upgrade headscale.
+	HeadscaleVersionPin string
+	// HeadscalePollInterval is how often the monitor hits
+	// the GitHub Releases API. Default 24h (matches the
+	// headscale release cadence — they ship a minor or
+	// patch every few weeks, not every hour). Set to 0
+	// to disable the monitor entirely (the
+	// /admin/headscale page still works as a manual
+	// look-up; the bot /headscale command still works
+	// against the cached snapshot).
+	HeadscalePollInterval time.Duration
+	// 2026-07-20: v0.20.0 — auto-allocate subnet on
+	// user create. When true, PostAdminUserCreate
+	// automatically calls subnet.Allocate(userID) after
+	// the portal_users row is inserted. Default true
+	// (matches the operator's stated preference: "I
+	// want subnets allocated by default, not via a
+	// separate button click"). Set to false to revert
+	// to v0.16.0-v0.18.1 behaviour where the operator
+	// must visit /admin/users/{id}/subnet and click
+	// "Allocate" manually.
+	AutoAllocateSubnetOnUserCreate bool
 }
 
 func Load() (*Config, error) {
@@ -123,6 +159,19 @@ func Load() (*Config, error) {
 		// auto-approver. Set to 0 to disable (operator-driven
 		// approve-routes only).
 		SidecarSyncPeriod: getDuration("SKYGATE_SIDECAR_SYNC_PERIOD", 30*time.Second),
+		// 2026-07-20: v0.20.0 — headscale-update-monitor.
+		// Default pin is empty (operator must set
+		// SKYGATE_HEADSCALE_VERSION_PIN to enable alerts);
+		// default poll is 24h (one check per day is plenty
+		// for headscale's release cadence). Set the
+		// interval to "off" or "0" to disable.
+		HeadscaleVersionPin:    os.Getenv("SKYGATE_HEADSCALE_VERSION_PIN"),
+		HeadscalePollInterval:  getDuration("SKYGATE_HEADSCALE_POLL_INTERVAL", 24*time.Hour),
+		// 2026-07-20: v0.20.0 — auto-allocate subnet on
+		// user create. Default true. Set to "false" in
+		// .env to revert to v0.16.0-v0.18.1 manual
+		// allocation via /admin/users/{id}/subnet.
+		AutoAllocateSubnetOnUserCreate: getenv("SKYGATE_AUTO_ALLOCATE_SUBNET", "true") == "true",
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
@@ -133,6 +182,11 @@ func Load() (*Config, error) {
 	if v := os.Getenv("SKYGATE_EXIT_NODE_CHECK_INTERVAL"); v != "" {
 		if v == "off" || v == "0" {
 			c.ExitNodeCheckInterval = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_HEADSCALE_POLL_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.HeadscalePollInterval = 0
 		}
 	}
 	if c.HeadscaleKey == "" {
