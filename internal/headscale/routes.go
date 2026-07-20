@@ -46,6 +46,21 @@ func (c *Client) ApproveAllRoutesWithList(nodeHostname string, routes []string) 
 		return 0, fmt.Errorf("node %q not found", nodeHostname)
 	}
 
+	return c.approveRoutesForNodeID(nodeID, routes)
+}
+
+// approveRoutesForNodeID is the inner worker: takes a node ID
+// and a routes list, fetches AvailableRoutes if routes is nil,
+// and shells out to the headscale CLI. 2026-07-17: v0.18.1 —
+// factored out so the v0.18.1 "Tag as exit-node" button
+// can approve just 0.0.0.0/0+::/0 without ApproveAllRoutes'
+// "approve every pending route" behaviour (which would
+// accidentally approve karolina's 200+ subnets).
+func (c *Client) approveRoutesForNodeID(nodeID int, routes []string) (int, error) {
+	if nodeID == 0 {
+		return 0, fmt.Errorf("invalid node id 0")
+	}
+
 	if len(routes) == 0 {
 		var nodeInfo struct {
 			Node struct {
@@ -72,6 +87,22 @@ func (c *Client) ApproveAllRoutesWithList(nodeHostname string, routes []string) 
 		return 0, fmt.Errorf("approve-routes: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return len(routes), nil
+}
+
+// ApproveRoutesForNodeID approves a specific route list on
+// a headscale node identified by numeric ID. 2026-07-17:
+// v0.18.1 — public API for the "Tag as exit-node" button
+// on /admin/exit-nodes. The button approves only the
+// exit-node bases (0.0.0.0/0, ::/0) instead of the full
+// availableRoutes set (karolina has 200+ subnets that the
+// operator does NOT want auto-approved).
+//
+// Routes that are not in the node's AvailableRoutes will
+// fail the headscale CLI with a clear error — callers
+// should first verify the routes are advertised (read the
+// node via API and check AvailableRoutes).
+func (c *Client) ApproveRoutesForNodeID(nodeID int64, routes []string) (int, error) {
+	return c.approveRoutesForNodeID(int(nodeID), routes)
 }
 
 // SetAdvertisedRoutes updates advertised routes on an exit node via SSH.

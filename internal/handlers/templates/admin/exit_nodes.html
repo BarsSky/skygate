@@ -95,6 +95,33 @@
         {{else}}<span class="tag" style="background:var(--bg-hover)">{{t "exit_nodes.idle_status"}}</span>{{end}}
       </td>
       <td>
+        {{/* 2026-07-17: v0.18.1 — "Tag as exit-node" / "Untag" buttons.
+             Replaces the operator's manual `docker exec headscale headscale
+             nodes ...` invocations. The button is shown when:
+                1. The node advertises 0.0.0.0/0 + ::/0 (operator has
+                   run `tailscale set --advertise-exit-node` on the relay)
+                2. The node is NOT already tagged with tag:exit-node
+             When the node IS already tagged, we show the "Untag" button
+             (also opt-in) so the operator can demote a relay back to a
+             regular node without resorting to docker exec. */}}
+        {{if and .AdvertisesV4Default .AdvertisesV6Default}}
+          {{$hasExitTag := false}}
+          {{range .Tags}}{{if eq . "tag:exit-node"}}{{$hasExitTag = true}}{{end}}{{end}}
+          {{if $hasExitTag}}
+            <span class="tag tag-success" style="margin-right:4px" title="{{t "exit_nodes.tagged_exit_pill"}}"><i class="fa-solid fa-route"></i></span>
+            <form method="post" action="/admin/exit-nodes/untag" style="display:inline" title="{{t "exit_nodes.untag_exit_help" | safeHTML}}">
+              <input type="hidden" name="node_id" value="{{.NodeID}}">
+              <button type="submit" class="btn btn-sm" style="background:var(--warning-bg);color:var(--warning)"><i class="fa-solid fa-tag"></i> {{t "exit_nodes.untag_exit_button"}}</button>
+            </form>
+          {{else}}
+            <form method="post" action="/admin/exit-nodes/tag-as-exit" style="display:inline;margin-right:4px" title="{{t "exit_nodes.tag_as_exit_help" | safeHTML}}">
+              <input type="hidden" name="node_id" value="{{.NodeID}}">
+              <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-route"></i> {{t "exit_nodes.tag_as_exit_button"}}</button>
+            </form>
+          {{end}}
+        {{else}}
+          <span class="tag" style="opacity:0.6;font-size:10px" title="{{t "exit_nodes.not_advertising_exit"}}"><i class="fa-solid fa-circle-info"></i></span>
+        {{end}}
         <form method="post" action="/admin/exit-nodes/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_nodes.delete_confirm" .Hostname}}')">
           <input type="hidden" name="node_id" value="{{.NodeID}}">
           <button class="btn btn-sm" style="background:var(--danger-bg);color:var(--danger)"><i class="fa-solid fa-trash"></i></button>

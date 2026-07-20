@@ -324,6 +324,19 @@ func main() {
 	// clicks.
 	mux.Handle("POST /admin/exit-nodes/health-now", authMW(http.HandlerFunc(app.PostAdminExitNodesHealthNow)))
 
+	// 2026-07-17: v0.18.1 — "Tag as exit-node" / "Untag" buttons.
+	// These replace the operator's two manual `docker exec
+	// headscale headscale nodes …` calls with a single click.
+	// The handler approves 0.0.0.0/0 + ::/0 (NOT the full
+	// availableRoutes, to avoid accidentally approving
+	// karolina's 200+ subnets) and applies tag:exit-node.
+	// The existing ACL (`* → tag:exit-node:*`) already allows
+	// the tagged node, so no ACL re-push is required — the
+	// Tailscale clients pick up the new tag on their next
+	// ACL poll (usually <60s).
+	mux.Handle("POST /admin/exit-nodes/tag-as-exit", authMW(http.HandlerFunc(app.PostAdminExitNodeTagAsExitNode)))
+	mux.Handle("POST /admin/exit-nodes/untag", authMW(http.HandlerFunc(app.PostAdminExitNodeUntagAsExitNode)))
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           mux,

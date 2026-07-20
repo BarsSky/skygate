@@ -161,6 +161,21 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	data["ThemeLabel"] = db.ThemeLabel(theme)
 	data["Version"] = a.Version
 
+	// 2026-07-20: v0.18.1 — auto-inject ControlURL so every
+	// page template can reference {{.ControlURL}} without
+	// the handler having to remember to pass it. Previously
+	// `user/preauth_result.html` and `admin/exit_nodes.html`
+	// referenced {{.ControlURL}} but the handlers didn't
+	// pass it, so the rendered HTML showed an empty
+	// `--login-server=`. The fix: renderWithLayout always
+	// populates ControlURL from a.ControlURL (which the
+	// caller set in New from cfg.ControlURL — the human-
+	// facing URL clients should connect to, e.g.
+	// https://head.skynas.ru). Handlers can still override
+	// it by passing their own "ControlURL" in the data map
+	// (the for-loop below preserves caller values).
+	data["ControlURL"] = a.ControlURL
+
 	// 2026-07-15: v0.14.0 — release-monitor banner. We
 	// only surface the banner to admins (regular users
 	// don't need upgrade prompts). The data shape is

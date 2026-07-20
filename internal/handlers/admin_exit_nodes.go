@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 )
 
 type ExitNodeInfo struct {
@@ -37,6 +38,15 @@ type ExitNodeInfo struct {
 	LastCheckAt          time.Time `json:"last_check_at"`
 	HasExitTag           bool      `json:"has_exit_tag"`
 	AdvertisedRoutesOK   bool      `json:"advertised_routes_ok"`
+	// 2026-07-17: v0.18.1 — raw headscale-side state. The
+	// "Tag as exit-node" / "Untag" buttons need to know
+	// whether the node already has tag:exit-node and
+	// whether it advertises 0.0.0.0/0 + ::/0 (the
+	// exit-node bases). Without these the template
+	// can't decide which button to render.
+	Tags                []string `json:"tags"`
+	AdvertisesV4Default bool     `json:"advertises_v4_default"`
+	AdvertisesV6Default bool     `json:"advertises_v6_default"`
 }
 
 func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +93,20 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 					}
 					nodes[i].Routes = hn.AvailableRoutes
 					nodes[i].RouteCount = len(hn.AvailableRoutes)
+					// 2026-07-17: v0.18.1 — surface the
+					// raw headscale tags + exit-node-base
+					// advertising state so the template
+					// can render the "Tag as exit-node"
+					// / "Untag" buttons correctly.
+					nodes[i].Tags = hn.Tags
+					for _, r := range hn.AvailableRoutes {
+						if r == "0.0.0.0/0" {
+							nodes[i].AdvertisesV4Default = true
+						}
+						if r == "::/0" {
+							nodes[i].AdvertisesV6Default = true
+						}
+					}
 					if nodes[i].Hostname == "" {
 						nodes[i].Hostname = hn.GivenName
 					}
@@ -276,6 +300,170 @@ func (a *App) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request) {
 	result := a.SyncAdvertisedRoutes()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// PostAdminExitNodeTagAsExitNode is the v0.18.1 "Tag as
+// exit-node" button on /admin/exit-nodes. It replaces the
+// operator's two manual `docker exec headscale headscale
+// nodes ...` invocations with a single click:
+//
+//  1. Approves the exit-node bases (0.0.0.0/0, ::/0) on
+//     the headscale side via the CLI. We approve ONLY the
+//     two base routes, not the full availableRoutes set
+//     (karolina has 200+ subnets that the operator does
+//     NOT want auto-approved).
+//  2. Tags the node with `tag:exit-node`. The ACL
+//     already includes `* → tag:exit-node:*` so the new
+//     node immediately starts accepting tailnet traffic.
+//
+// Both steps go through the same docker-exec headscale
+// CLI that the operator used to run by hand. The handler
+// refuses to act if:
+//   - the node doesn't have 0.0.0.0/0 AND ::/0 advertised
+//     (operator hasn't run `tailscale set --advertise-exit-node` yet)
+//   - the node is already tagged with `tag:exit-node`
+//     (idempotency: this handler is for the
+//     "tag" half of the workflow, not the "untag")
+//
+// PostAdminExitNodeUntagAsExitNode (below) handles the
+// reverse — removing tag:exit-node from a node.
+func (a *App) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	idStr := r.FormValue("node_id")
+	if idStr == "" {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("node_id required"), http.StatusSeeOther)
+		return
+	}
+	nodeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("bad node id"), http.StatusSeeOther)
+		return
+	}
+
+	// Find the node and verify it has the exit-node
+	// bases advertised. We refuse to tag a node that
+	// hasn't advertised 0.0.0.0/0+::/0 (the operator
+	// must run `tailscale set --advertise-exit-node`
+	// first — that's the "I want this to be an exit-node"
+	// gate). This is also why the button is only rendered
+	// in the template for nodes that have these routes
+	// advertised; the server-side check is defense in
+	// depth in case the operator crafts a POST by hand.
+	allNodes, err := a.HSGlobal().ListAllNodes()
+	if err != nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("list nodes: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	var target *headscale.NodeView
+	for i := range allNodes {
+		if allNodes[i].ID == idStr {
+			target = &allNodes[i]
+			break
+		}
+	}
+	if target == nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("node not found"), http.StatusSeeOther)
+		return
+	}
+	hasV4, hasV6 := false, false
+	for _, r := range target.AvailableRoutes {
+		if r == "0.0.0.0/0" {
+			hasV4 = true
+		}
+		if r == "::/0" {
+			hasV6 = true
+		}
+	}
+	if !hasV4 || !hasV6 {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(
+			"node does not advertise 0.0.0.0/0 + ::/0 yet — run `tailscale set --advertise-exit-node` on the relay first"), http.StatusSeeOther)
+		return
+	}
+
+	// Idempotency: if the node already has tag:exit-node,
+	// skip the TagNode call. The button is hidden in this
+	// case but we re-check here.
+	for _, t := range target.Tags {
+		if t == "tag:exit-node" {
+			http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape(
+				fmt.Sprintf("%s is already tagged as exit-node", target.Hostname)), http.StatusSeeOther)
+			return
+		}
+	}
+
+	// Step 1: approve the exit-node bases. We approve
+	// ONLY 0.0.0.0/0 and ::/0 (not the full availableRoutes)
+	// to avoid accidentally approving karolina's 200+
+	// subnets.
+	approved, err := a.HSGlobal().ApproveRoutesForNodeID(nodeID, []string{"0.0.0.0/0", "::/0"})
+	if err != nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("approve-routes: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	// Step 2: tag with tag:exit-node. The ACL already
+	// allows `* → tag:exit-node:*`, so the node starts
+	// accepting traffic immediately on the next ACL
+	// poll by the Tailscale client (usually <60s).
+	if err := a.HSGlobal().TagNode(nodeID, "tag:exit-node"); err != nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("tag: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	a.HSGlobal().InvalidateCache()
+	a.audit(c.UserID, c.Username, "exit_node_tag",
+		fmt.Sprintf("node=%s id=%d approved_routes=%d tag=tag:exit-node",
+			target.Hostname, nodeID, approved))
+	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape(
+		fmt.Sprintf("%s is now tagged as exit-node (%d routes approved)",
+			target.Hostname, approved)), http.StatusSeeOther)
+}
+
+// PostAdminExitNodeUntagAsExitNode is the v0.18.1
+// "Untag" button on /admin/exit-nodes. Removes
+// `tag:exit-node` from a node. Useful when the
+// operator wants to demote a relay back to a
+// regular node (e.g. the relay is going down for
+// maintenance and they don't want tailnet clients
+// to pick it as an exit-node).
+//
+// The handler does NOT touch the approved routes —
+// those stay as-is. To remove the routes too, the
+// operator has to run `docker exec headscale headscale
+// nodes approve-routes -i <id> -r "" --force` (or
+// similar); we don't expose that from the UI because
+// route removal is rarely wanted.
+func (a *App) PostAdminExitNodeUntagAsExitNode(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	idStr := r.FormValue("node_id")
+	nodeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("bad node id"), http.StatusSeeOther)
+		return
+	}
+
+	// UntagNode preserves the other tags (replaces the
+	// full tag list, leaving the others in place). If
+	// the node was tagged only with tag:exit-node, it
+	// falls back to tag:private so headscale keeps at
+	// least one tag (the headscale CLI rejects empty
+	// tag sets).
+	if err := a.HSGlobal().UntagNode(nodeID, "tag:exit-node"); err != nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("untag: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	a.HSGlobal().InvalidateCache()
+	a.audit(c.UserID, c.Username, "exit_node_untag",
+		fmt.Sprintf("node_id=%d tag=tag:exit-node", nodeID))
+	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("Removed tag:exit-node from node."), http.StatusSeeOther)
 }
 
 func (a *App) ensureExitServers() {

@@ -504,6 +504,18 @@ var ruCatalog = map[string]string{
 	// как есть — это команды, которые оператор набирает).
 	"exit_nodes.admin_subtitle_extra":   "Источник — headscale (ноды с тегом <code>tag:exit-node</code> и одобренными маршрутами).",
 	"exit_nodes.tag_off":                "выкл",
+	// 2026-07-17: v0.18.1 — "Tag as exit-node" + "Untag" buttons
+	// on /admin/exit-nodes. The buttons replace the operator's
+	// manual `docker exec headscale headscale nodes ...` calls
+	// (approve-routes + tag). Approve only the exit-node bases
+	// (0.0.0.0/0 + ::/0) — not the full availableRoutes set, to
+	// avoid accidentally approving karolina's 200+ subnets.
+	"exit_nodes.tag_as_exit_button":    "Tag as exit-node",
+	"exit_nodes.tag_as_exit_help":      "Одобряет <code>0.0.0.0/0</code> + <code>::/0</code> и ставит <code>tag:exit-node</code>. Заменяет два <code>docker exec headscale headscale nodes …</code> вызова.",
+	"exit_nodes.untag_exit_button":     "Untag exit-node",
+	"exit_nodes.untag_exit_help":       "Снимает <code>tag:exit-node</code> с этой ноды. Одобренные маршруты остаются как есть (используйте <code>headscale nodes approve-routes</code> чтобы убрать).",
+	"exit_nodes.tagged_exit_pill":      "tag:exit-node",
+	"exit_nodes.not_advertising_exit":  "не advertise 0.0.0.0/0+::/0",
 	"exit_nodes.form_accept_routes_default":      "default",
 	"exit_nodes.form_accept_routes_default_long": "default (Tailscale сам решает)",
 	"exit_nodes.form_accept_routes_false_long":   "false (нода НЕ принимает маршруты от пиров)",
@@ -2284,6 +2296,15 @@ var enCatalog = map[string]string{
 	"exit_nodes.form_accept_routes":   "Accept routes",
 	"exit_nodes.delete_confirm":       "Delete exit node %s?",
 	"exit_nodes.sync_all":             "Sync all",
+	// 2026-07-17: v0.18.1 — "Tag as exit-node" + "Untag" buttons
+	// on /admin/exit-nodes. Replaces the operator's manual
+	// `docker exec headscale headscale nodes ...` invocations.
+	"exit_nodes.tag_as_exit_button":    "Tag as exit-node",
+	"exit_nodes.tag_as_exit_help":      "Approves <code>0.0.0.0/0</code> + <code>::/0</code> and applies <code>tag:exit-node</code>. Replaces two <code>docker exec headscale headscale nodes …</code> calls.",
+	"exit_nodes.untag_exit_button":     "Untag exit-node",
+	"exit_nodes.untag_exit_help":       "Removes <code>tag:exit-node</code> from this node. Approved routes are left in place — use <code>headscale nodes approve-routes</code> to remove those too.",
+	"exit_nodes.tagged_exit_pill":      "tag:exit-node",
+	"exit_nodes.not_advertising_exit":  "not advertising 0.0.0.0/0+::/0",
 	"exit_nodes.syncing":              "Syncing…",
 	"exit_nodes.sync_done":            "✓ Done",
 	"exit_nodes.sync_error":           "✗ Error",
