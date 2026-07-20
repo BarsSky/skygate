@@ -118,7 +118,8 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 // code (ok=created, err=not_found, ...) into a
 // localized message. The code is the value in
 // the URL; the translated text comes from the
-// i18n catalog (my_meshes.flash_*). Special
+// i18n catalog (my_meshes.flash_* for success,
+// my_meshes.flash_err_* for errors). Special
 // values:
 //
 //   - ok=created&code=<value>  →  the value is
@@ -139,8 +140,19 @@ func translateMeshFlash(a *App, r *http.Request, kind, fallback string) string {
 		return fallback
 	}
 	lang := a.I18n.LangFromRequest(r)
-	// Static success / error keys.
-	key := "my_meshes.flash_" + raw
+	// Build the i18n key. The catalog uses different
+	// prefixes for success (flash_) and error
+	// (flash_err_) so a code like "not_found" in the
+	// err=... query maps to my_meshes.flash_err_not_found
+	// (the convention matches the v0.17.x admin pages,
+	// which use err=<code> → catalog key "common.err.<code>"
+	// or similar — the split keeps the namespace
+	// collision-free between the two sides).
+	key := "my_meshes.flash_"
+	if kind == "err" {
+		key = "my_meshes.flash_err_"
+	}
+	key += raw
 	// Some flash codes carry a positional arg
 	// (the mesh code on create, the name on
 	// join, the error detail on join/create
