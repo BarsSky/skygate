@@ -227,13 +227,5 @@ func migrate(d *sql.DB) error {
 	if err := migrationV039(d); err != nil {
 		return fmt.Errorf("migrate v0.39: %w", err)
 	}
-	// 2026-07-20: v0.19.0 — preferred exit-node per
-	// user_subnet (drives the
-	// `exitnode.skygate-subnet-<user>.<base-domain>`
-	// DNS record published via headscale's
-	// `dns.extra_records`). See migrations_v0.40.go.
-	if err := migrationV040(d); err != nil {
-		return fmt.Errorf("migrate v0.40: %w", err)
-	}
 	return nil
 }
