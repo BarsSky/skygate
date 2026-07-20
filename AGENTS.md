@@ -49,6 +49,28 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   12/12 packages green, smoke 118/118, live at
   build `45d25a9`.
 
+  **Note on the v0.19.0 attempt (reverted)**: a
+  v0.19.0 release was deployed briefly and then
+  reverted (commit `0c394bd`) because the
+  `exitnode.skygate-subnet-<user>.<base-domain>`
+  DNS-record feature relied on headscale's
+  `dns.extra_records` policy field, which
+  headscale 0.29.1 (the operator's version)
+  doesn't support — pushing a policy with the
+  `dns` key returns
+  `unknown field: "dns"` and the policy is rejected.
+  The v0.16.0+ subnets roadmap's "exitnode" record
+  is **blocked on headscale 0.29.x** and will
+  return as v0.19.1 once the operator upgrades
+  headscale to a version that supports
+  `dns.extra_records` (0.30+ based on headscale
+  changelog history). The schema migration
+  (`preferred_exit_node_id` column), helper
+  functions, and the per-user-subnet UI/bot code
+  paths are all in git history (commit `646f8fb`)
+  and can be re-enabled cheaply when the headscale
+  upgrade lands.
+
 * **Previous**: v0.18.0 — MagicDNS for personal
   subnets
   ([release notes](RELEASE-NOTES-v0.18.0.md)).
