@@ -7,7 +7,44 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.21.1 — fix headscale-side
+* **Current**: v0.22.0 — mesh (shared
+  network) + safe user migration design
+  ([release notes](RELEASE-NOTES-v0.22.0.md)).
+  The 3rd primitive in the user-to-user
+  networking stack (after the v0.17.1
+  one-directional share + v0.21.0
+  one-on-one invite bridge). A mesh is
+  a named group of users whose personal
+  subnets are all mutually visible to
+  each other — like radmin VPN's
+  "shared network". N-way bridge,
+  automatic, deduped with v0.17.1 share
+  rows. Migration v0.43 adds
+  `meshes` + `mesh_members` tables.
+  Bot commands `/mesh create|join|leave`
+  + `/meshes` (user-scope) drive the
+  workflow; `/admin/meshes` (admin-only,
+  read-only) is for oversight. The
+  operator's 2026-07-20 backlog message
+  asked for this + 3 concerns about
+  cross-subnet ACL, exit-node global
+  access, and skyadmin migration — all
+  three verified by Phase 1 (12
+  integration tests, all PASS locally)
+  + Phase 1b (7 live-validation checks
+  on real headscale round-trip, all
+  PASS on VM). 18 files, +1932/-8
+  lines, 130/130 smoke + 3/3
+  check_exit_nodes + check_https PASS.
+  Phase 3 (the safe user migration
+  tool) is explicitly DEFERRED to a
+  follow-up release — the operator's
+  "только после проверки и гарантии
+  работы" is honored literally, and
+  the migration tool is a separate,
+  opt-in, audit-tracked operation.
+
+* **Previous**: v0.21.1 — fix headscale-side
   user delete (typo: `-u` should be `-i`)
   ([release notes](RELEASE-NOTES-v0.21.1.md)).
   Pre-existing bug discovered while cleaning up
