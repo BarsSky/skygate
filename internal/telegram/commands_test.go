@@ -72,6 +72,14 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// schema must include both tables.
 		`CREATE TABLE user_subnets (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE, cidr TEXT NOT NULL UNIQUE, subnet_bits INTEGER NOT NULL DEFAULT 24, control_plane_url TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', router_node_id TEXT NOT NULL DEFAULT '', router_container_id TEXT NOT NULL DEFAULT '', router_hostname TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
 		`CREATE TABLE user_subnet_shares (grantor_user_id INTEGER NOT NULL, grantee_user_id INTEGER NOT NULL, created_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (grantor_user_id, grantee_user_id), FOREIGN KEY (grantor_user_id) REFERENCES portal_users(id) ON DELETE CASCADE, FOREIGN KEY (grantee_user_id) REFERENCES portal_users(id) ON DELETE CASCADE)`,
+		// 2026-07-20: v0.22.0 — mesh tables. The
+		// ACL builder reads both on every render
+		// (GetMeshMembershipsForPlane joins
+		// mesh_members + meshes), so the test
+		// schema must declare them even if no
+		// test uses meshes directly.
+		`CREATE TABLE meshes (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '', creator_user_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL DEFAULT 0, dissolved_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE mesh_members (mesh_id INTEGER NOT NULL, user_id INTEGER NOT NULL, joined_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (mesh_id, user_id))`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)

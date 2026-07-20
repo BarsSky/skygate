@@ -445,6 +445,8 @@ var commandContext = map[string]string{
 	"/invite":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
 	"/accept":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
 	"/invites":           "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/mesh":              "registry",  // 2026-07-20: v0.22.0 — shared network mesh
+	"/meshes":            "registry",  // 2026-07-20: v0.22.0 — shared network mesh
 	// meta
 	"/version":           "version",
 	"/help":              "codex",
@@ -731,6 +733,29 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		// outstanding + incoming invites. Capped
 		// at 10 rows per side.
 		return cmdReply{body: invitesListReply(env), context: lookupContext(cmd)}
+	case "/mesh":
+		// 2026-07-20: v0.22.0 — shared network mesh.
+		// Subcommands: create <name>, join <code>,
+		// leave [code]. The mesh is the N-way
+		// generalization of the v0.21.0 invite
+		// bridge; ACL integration lives in
+		// internal/acl/acl.go (mesh_memberships
+		// extend the per-user dst list).
+		if len(args) > 0 {
+			switch args[0] {
+			case "create":
+				return cmdReply{body: meshCreateReply(env, args[1:]), context: lookupContext(cmd)}
+			case "join":
+				return cmdReply{body: meshJoinReply(env, args[1:]), context: lookupContext(cmd)}
+			case "leave":
+				return cmdReply{body: meshLeaveReply(env, args[1:]), context: lookupContext(cmd)}
+			}
+		}
+		return cmdReply{body: i18n.T(env.Lang, "bot.mesh.usage"), context: lookupContext(cmd)}
+	case "/meshes":
+		// 2026-07-20: v0.22.0 — list the caller's
+		// active meshes (newest first, 10 max).
+		return cmdReply{body: meshesListReply(env), context: lookupContext(cmd)}
 	default:
 		return cmdReply{body: i18n.Tf(env.Lang, "bot.unknown_command", cmd), context: "err"}
 	}
@@ -931,6 +956,21 @@ func helpReply(env BotEnv) string {
 		row("/defaultdevice", i18n.T(lang, "bot.help.user_rest_defaultdevice")),
 		row("/setexitnode", i18n.T(lang, "bot.help.user_rest_setexitnode")),
 		row("/defaultexitnode", i18n.T(lang, "bot.help.user_rest_defaultexitnode")),
+		// 2026-07-20: v0.22.0 — mesh (shared network).
+		// create / join / leave are subcommands of
+		// /mesh; /meshes lists the caller's active
+		// meshes. Same pattern as /mysubnet
+		// (status / provision / share / revoke).
+		row("/mesh create", i18n.T(lang, "bot.help.user_rest_mesh_create")),
+		row("/mesh join", i18n.T(lang, "bot.help.user_rest_mesh_join")),
+		row("/mesh leave", i18n.T(lang, "bot.help.user_rest_mesh_leave")),
+		row("/meshes", i18n.T(lang, "bot.help.user_rest_meshes")),
+		// 2026-07-20: v0.21.0 — user-to-user bridge.
+		// Same shape as the v0.17.1 admin share but
+		// the user drives the flow (no admin UI).
+		row("/invite", i18n.T(lang, "bot.help.user_rest_invite")),
+		row("/accept", i18n.T(lang, "bot.help.user_rest_accept")),
+		row("/invites", i18n.T(lang, "bot.help.user_rest_invites")),
 	}
 	common := table("✦ "+i18n.T(lang, "bot.help.section_common"), commonRows...)
 

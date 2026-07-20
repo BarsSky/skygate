@@ -332,6 +332,13 @@ func main() {
 	// view.
 	mux.Handle("GET /admin/invites", authMW(http.HandlerFunc(app.GetAdminInvites)))
 	mux.Handle("POST /admin/invites/revoke", authMW(http.HandlerFunc(app.PostAdminInvitesRevoke)))
+	// 2026-07-20: v0.22.0 — /admin/meshes. Read-only
+	// admin overview of every mesh (active +
+	// dissolved). The user-to-user mesh workflow
+	// (create / join / leave) is bot-driven; the
+	// admin page is for oversight, same UX choice
+	// as /admin/invites.
+	mux.Handle("GET /admin/meshes", authMW(http.HandlerFunc(app.GetAdminMeshes)))
 	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(app.PostAdminExitNodesAdd)))
 	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(app.PostAdminExitNodesDelete)))
 	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(app.PostAdminExitNodesSync)))

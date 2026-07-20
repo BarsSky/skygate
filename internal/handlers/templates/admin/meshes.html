@@ -1,0 +1,68 @@
+{{define "body-admin-meshes"}}
+{{/* 2026-07-20: v0.22.0 — /admin/meshes.
+     Admin overview of all mesh networks. Each
+     row shows the mesh name, code, creator,
+     status, member count, and the member list
+     (one line per member). Read-only — creation
+     / join / leave are bot-driven (per the
+     v0.21.0 invite page convention). */}}
+
+<div class="card" style="margin-bottom:24px">
+  <h3 style="margin:0"><i class="fa-solid fa-circle-nodes"></i> {{t "title.admin_meshes"}}</h3>
+  <p style="color:var(--text-muted);margin:8px 0 0 0">
+    {{tf "admin_meshes.subtitle" .TotalCount}}
+  </p>
+</div>
+
+{{if .Meshes}}
+<table>
+  <tr>
+    <th>{{t "admin_meshes.col_name"}}</th>
+    <th>{{t "admin_meshes.col_code"}}</th>
+    <th>{{t "admin_meshes.col_creator"}}</th>
+    <th>{{t "admin_meshes.col_status"}}</th>
+    <th>{{t "admin_meshes.col_members"}}</th>
+    <th>{{t "admin_meshes.col_created"}}</th>
+    <th>{{t "admin_meshes.col_dissolved"}}</th>
+  </tr>
+  {{range .Meshes}}
+  <tr>
+    <td><b>{{.Mesh.Name}}</b></td>
+    <td><code>{{.Mesh.Code}}</code></td>
+    <td>{{.CreatorName}}</td>
+    <td>
+      {{if eq .Mesh.Status "active"}}
+        <span class="tag tag-success">{{t "admin_meshes.status_active"}}</span>
+      {{else}}
+        <span class="tag tag-muted">{{t "admin_meshes.status_dissolved"}}</span>
+      {{end}}
+    </td>
+    <td>
+      <details>
+        <summary>{{.MemberCount}}</summary>
+        <div style="margin-top:6px">
+          {{t "admin_meshes.members_header" | safeHTML}}
+          {{range .MemberList}}
+          <div>{{tf "admin_meshes.member_row" .Username (.JoinedAt.Format "2006-01-02 15:04") | safeHTML}}</div>
+          {{end}}
+        </div>
+      </details>
+    </td>
+    <td>{{.Mesh.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>
+      {{if .Mesh.DissolvedAt.IsZero}}
+        <span style="color:var(--text-muted)">—</span>
+      {{else}}
+        {{.Mesh.DissolvedAt.Format "2006-01-02 15:04"}}
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+{{else}}
+<div class="card">
+  <p style="color:var(--text-muted);margin:0">{{t "admin_meshes.empty"}}</p>
+</div>
+{{end}}
+
+{{end}}

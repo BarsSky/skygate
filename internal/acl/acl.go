@@ -140,6 +140,26 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 			sharedByUser[ss.GranteeUser] = append(sharedByUser[ss.GranteeUser], ss.GrantorCIDR)
 		}
 	}
+	// 2026-07-20: v0.22.0 — mesh (shared network)
+	// membership. For each user, collect the CIDRs of
+	// all OTHER members of every active mesh the user
+	// belongs to. The per-user dst list gets these
+	// appended alongside the v0.17.1 share rows. The
+	// two sources are merged into a single deduped
+	// dst list per user (a user who is both shared-with
+	// and mesh-mate of the same other user sees the
+	// CIDR exactly once — first-match semantics handle
+	// the deduplication at the headscale level too,
+	// but a clean dedup keeps the policy readable).
+	meshMemberships, err := db.GetMeshMembershipsForPlane(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	for _, mm := range meshMemberships {
+		if mm.SelfUser != "" && mm.OtherCIDR != "" {
+			sharedByUser[mm.SelfUser] = append(sharedByUser[mm.SelfUser], mm.OtherCIDR)
+		}
+	}
 	var identities []string
 	for _, uname := range usernames {
 		if uname != "" {
@@ -170,18 +190,38 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		uname := strings.SplitN(idn, "@", 2)[0]
 		// Build the dst list. Start with the user's own
 		// identity (their own devices). Then add their
-		// own CIDR (if any). Then add every shared CIDR.
+		// own CIDR (if any). Then add every shared CIDR
+		// (v0.17.1 share rows + v0.22.0 mesh membership
+		// rows, deduped — a user who is both shared-with
+		// and mesh-mate of the same other user gets the
+		// CIDR exactly once).
 		dst := []string{idn + ":*"}
 		if ownCIDR := subByUser[uname]; ownCIDR != "" {
 			dst = append(dst, ownCIDR+":*")
 		}
+		// dedupSet tracks the CIDRs already in dst so
+		// duplicate rows in user_subnet_shares +
+		// mesh_members (e.g. alice shares with bob AND
+		// alice and bob are in the same mesh) collapse
+		// to a single dst entry. The dedup is purely
+		// cosmetic — headscale's first-match semantics
+		// handle duplicates correctly — but a clean
+		// policy is easier to audit and diff across
+		// deploys.
+		dedupSet := make(map[string]bool, len(dst))
+		for _, d := range dst {
+			dedupSet[d] = true
+		}
 		for _, sharedCIDR := range sharedByUser[uname] {
-			// Avoid duplicates if the user shared with
-			// themselves (shouldn't happen — Grant
-			// rejects self-shares — but defensive).
-			if sharedCIDR != "" {
-				dst = append(dst, sharedCIDR+":*")
+			if sharedCIDR == "" {
+				continue
 			}
+			entry := sharedCIDR + ":*"
+			if dedupSet[entry] {
+				continue
+			}
+			dedupSet[entry] = true
+			dst = append(dst, entry)
 		}
 		// Render as a single-line JSON array.
 		sb.WriteString("    { \"action\": \"accept\", \"src\": [\"" + idn + "\"], \"dst\": [")

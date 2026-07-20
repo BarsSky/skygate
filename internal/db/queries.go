@@ -177,6 +177,47 @@ const (
 		 WHERE (p_grantor.headscale_url = ? OR (p_grantor.headscale_url = '' AND ? = ''))
 		   AND (p_grantee.headscale_url = ? OR (p_grantee.headscale_url = '' AND ? = ''))
 		 ORDER BY p_grantee.username, p_grantor.username`
+	// v0.22.0 — mesh (shared network) membership
+	// visibility. For every (member, other_member) pair
+	// within an active mesh on the given plane, return
+	// (member_username, other_member_username,
+	// other_member_cidr). The ACL builder reads this
+	// the same way it reads GetSharedSubnetsForPlane:
+	// for each user U on the plane, extend U's
+	// per-user dst list with the CIDR of every other
+	// member of every active mesh U belongs to.
+	//
+	// Self-pairs (U, U, U.cidr) are filtered out
+	// because the per-user rule already includes the
+	// user's own CIDR (v0.17.0). The mesh membership
+	// table has the (mesh_id, user_id) PK; the query
+	// joins mesh_members twice (once for "self" =
+	// the user, once for "other" = the other member)
+	// and the meshes table for the active-status
+	// filter. The s.cidr LEFT JOIN means a user
+	// without an allocated subnet contributes no rows
+	// to the dst extension (we can't grant access to
+	// a CIDR that doesn't exist yet).
+	//
+	// The plane filter applies to BOTH sides of the
+	// pair (both users must be on the same headscale
+	// instance — multi-plane deploys only bridge
+	// within a plane, matching the v0.17.1 share
+	// semantics).
+	qSelectMeshMembershipsForPlane = `
+		SELECT p_self.username, p_other.username, COALESCE(s_other.cidr, '')
+		  FROM mesh_members mm_self
+		  JOIN mesh_members mm_other
+		    ON mm_other.mesh_id = mm_self.mesh_id
+		   AND mm_other.user_id != mm_self.user_id
+		  JOIN meshes m ON m.id = mm_self.mesh_id
+		  JOIN portal_users p_self  ON p_self.id  = mm_self.user_id
+		  JOIN portal_users p_other ON p_other.id = mm_other.user_id
+		  LEFT JOIN user_subnets s_other ON s_other.user_id = mm_other.user_id
+		 WHERE m.status = 'active'
+		   AND (p_self.headscale_url  = ? OR (p_self.headscale_url  = '' AND ? = ''))
+		   AND (p_other.headscale_url = ? OR (p_other.headscale_url = '' AND ? = ''))
+		 ORDER BY p_self.username, p_other.username`
 	// v0.13.0 — list every distinct (url, api_key) plane with a user
 	// count. Used by the per-plane ACL pipeline to iterate all
 	// planes and push the right policy to each. Empty

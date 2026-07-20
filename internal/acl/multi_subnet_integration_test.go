@@ -52,8 +52,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"skygate/internal/invite"
+	"skygate/internal/mesh"
 )
 
 // inviteCodesSchema is the v0.21.0 schema we need for the
@@ -794,4 +796,285 @@ func equalStringSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// seedUserSubnet is a small helper that inserts
+// an active user_subnets row for the given user
+// with the deterministic CIDR `10.0.<uid>.0/24`.
+// Returns the CIDR.
+func seedUserSubnet(t *testing.T, d *sql.DB, uid int64) string {
+	t.Helper()
+	cidr := fmt.Sprintf("10.0.%d.0/24", uid)
+	if _, err := d.Exec(`INSERT INTO user_subnets
+		(user_id, cidr, status, control_plane_url)
+		VALUES (?, ?, 'active', '')`, uid, cidr); err != nil {
+		t.Fatalf("seed subnet uid=%d: %v", uid, err)
+	}
+	return cidr
+}
+
+// createMeshInTest inserts a mesh + adds the
+// given user_ids as members. The mesh starts
+// active; pass an empty `code` to auto-generate.
+// Returns the mesh id.
+func createMeshInTest(t *testing.T, d *sql.DB, code string, memberIDs []int64) int64 {
+	t.Helper()
+	if code == "" {
+		// Re-use the mesh code generator from the
+		// mesh package (same alphabet as invite).
+		// We import it via the package, not via a
+		// duplicate function, so the test exercises
+		// the production code path.
+		var err error
+		code, err = mesh.GenerateCode()
+		if err != nil {
+			t.Fatalf("mesh.GenerateCode: %v", err)
+		}
+	}
+	now := time.Now().Unix()
+	res, err := d.Exec(`INSERT INTO meshes
+		(code, name, creator_user_id, status, created_at)
+		VALUES (?, 'test-mesh', ?, 'active', ?)`,
+		code, memberIDs[0], now)
+	if err != nil {
+		t.Fatalf("seed mesh: %v", err)
+	}
+	meshID, _ := res.LastInsertId()
+	for _, uid := range memberIDs {
+		if _, err := d.Exec(`INSERT INTO mesh_members
+			(mesh_id, user_id, joined_at) VALUES (?, ?, ?)`,
+			meshID, uid, now); err != nil {
+			t.Fatalf("seed mesh_member uid=%d: %v", uid, err)
+		}
+	}
+	return meshID
+}
+
+// TestACLBuilder_MeshThreeWayNWayAccess is the
+// critical-path test for the v0.22.0 mesh feature
+// (the "radmin-like shared network" the operator
+// asked for). Three users (alice, bob, carol) are
+// all in the same mesh. After GenerateACL:
+//
+//   - alice's rule has alice's CIDR + bob's CIDR
+//     + carol's CIDR (not just her own)
+//   - bob's rule has bob's CIDR + alice's CIDR
+//     + carol's CIDR
+//   - carol's rule has carol's CIDR + alice's CIDR
+//     + bob's CIDR
+//
+// The N-way bridge is the whole point: every pair
+// of mesh-mates is mutually visible. This is the
+// v0.17.1 "two share rows" pattern generalized to
+// N members without N*(N-1) Grant() calls.
+func TestACLBuilder_MeshThreeWayNWayAccess(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	carolID := seedPortalUser(t, d, "carol")
+	aliceCIDR := seedUserSubnet(t, d, aliceID)
+	bobCIDR := seedUserSubnet(t, d, bobID)
+	carolCIDR := seedUserSubnet(t, d, carolID)
+	// All three in one mesh.
+	createMeshInTest(t, d, "", []int64{aliceID, bobID, carolID})
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	for _, tc := range []struct {
+		uname       string
+		ownCIDR     string
+		otherCIDRs  []string
+	}{
+		{"alice", aliceCIDR, []string{bobCIDR, carolCIDR}},
+		{"bob", bobCIDR, []string{aliceCIDR, carolCIDR}},
+		{"carol", carolCIDR, []string{aliceCIDR, bobCIDR}},
+	} {
+		rule := ruleFor(t, aclStr, tc.uname)
+		if rule == nil {
+			t.Fatalf("%s's rule not found", tc.uname)
+		}
+		dst := dstList(t, rule)
+		// Own CIDR present.
+		if !containsCIDR(dst, tc.ownCIDR) {
+			t.Errorf("%s's dst missing own CIDR %s; dst=%v",
+				tc.uname, tc.ownCIDR, dst)
+		}
+		// Both other mesh-mate CIDRs present.
+		for _, otherCIDR := range tc.otherCIDRs {
+			if !containsCIDR(dst, otherCIDR) {
+				t.Errorf("%s's dst missing mesh-mate CIDR %s; dst=%v",
+					tc.uname, otherCIDR, dst)
+			}
+		}
+		// dst size: own identity + own CIDR + N-1
+		// mesh-mate CIDRs = 1 + 1 + (3-1) = 4.
+		if len(dst) != 4 {
+			t.Errorf("%s's dst has %d entries, want 4 (own+own_cidr+2 mesh-mates); dst=%v",
+				tc.uname, len(dst), dst)
+		}
+	}
+}
+
+// TestACLBuilder_MeshAndShareAreDeduped pins the
+// dedup property: if alice shares with bob (v0.17.1
+// user_subnet_shares row) AND alice and bob are in
+// the same mesh, bob's dst must list alice's CIDR
+// exactly once (not twice). The dedup is the
+// v0.22.0 dedupSet in the ACL builder.
+func TestACLBuilder_MeshAndShareAreDeduped(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	aliceCIDR := seedUserSubnet(t, d, aliceID)
+	bobCIDR := seedUserSubnet(t, d, bobID)
+	// alice shares with bob (v0.17.1).
+	if _, err := d.Exec(`INSERT INTO user_subnet_shares
+		(grantor_user_id, grantee_user_id, created_at)
+		VALUES (?, ?, 0)`, aliceID, bobID); err != nil {
+		t.Fatalf("seed share: %v", err)
+	}
+	// And they're in the same mesh too.
+	createMeshInTest(t, d, "", []int64{aliceID, bobID})
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	bobRule := ruleFor(t, aclStr, "bob")
+	if bobRule == nil {
+		t.Fatal("bob's rule not found")
+	}
+	bobDst := dstList(t, bobRule)
+	// alice's CIDR should appear exactly once.
+	count := 0
+	for _, d := range bobDst {
+		if d == aliceCIDR {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("alice's CIDR should appear exactly once in bob's dst; got %d in dst=%v",
+			count, bobDst)
+	}
+	// bob's dst should have: own identity + own CIDR
+	// + alice's CIDR (deduped) = 3 entries.
+	if len(bobDst) != 3 {
+		t.Errorf("bob's dst has %d entries, want 3 (own+own_cidr+alice_cidr deduped); dst=%v",
+			len(bobDst), bobDst)
+	}
+	// alice's rule: in a mesh, the relationship is
+	// bidirectional (both directions), so alice's
+	// dst DOES include bob's CIDR (via the mesh
+	// membership, not the v0.17.1 share). The dedup
+	// we test is: alice's CIDR appears in bob's dst
+	// once, not twice (share + mesh collapse to a
+	// single dst entry).
+	aliceRule := ruleFor(t, aclStr, "alice")
+	if aliceRule == nil {
+		t.Fatal("alice's rule not found")
+	}
+	aliceDst := dstList(t, aliceRule)
+	// alice's dst: own + own_cidr + bob's_cidr (mesh) = 3
+	if !containsCIDR(aliceDst, bobCIDR) {
+		t.Errorf("alice's dst missing bob's CIDR (mesh should be bidirectional); dst=%v", aliceDst)
+	}
+	// The "share + mesh" combination does NOT mean
+	// alice sees bob twice — there's only ONE path
+	// (the mesh), so alice's dst has bob's CIDR
+	// exactly once. The test verifies the inverse
+	// direction doesn't accidentally double-count.
+	aliceHasBob := 0
+	for _, d := range aliceDst {
+		if d == bobCIDR {
+			aliceHasBob++
+		}
+	}
+	if aliceHasBob != 1 {
+		t.Errorf("alice's dst should have bob's CIDR exactly once (mesh only, no share back); got %d in dst=%v",
+			aliceHasBob, aliceDst)
+	}
+}
+
+// TestACLBuilder_MeshDissolvedExcluded pins the
+// status='active' filter: a dissolved mesh's
+// members should NOT see each other in the ACL.
+// This is the "dissolve == kick everyone out of
+// the shared network" semantic.
+func TestACLBuilder_MeshDissolvedExcluded(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	aliceCIDR := seedUserSubnet(t, d, aliceID)
+	bobCIDR := seedUserSubnet(t, d, bobID)
+	// Create + dissolve a mesh.
+	meshID := createMeshInTest(t, d, "", []int64{aliceID, bobID})
+	if _, err := d.Exec(`UPDATE meshes SET status='dissolved', dissolved_at=? WHERE id=?`,
+		time.Now().Unix(), meshID); err != nil {
+		t.Fatalf("dissolve: %v", err)
+	}
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	aliceRule := ruleFor(t, aclStr, "alice")
+	if aliceRule == nil {
+		t.Fatal("alice's rule not found")
+	}
+	aliceDst := dstList(t, aliceRule)
+	// alice's dst should NOT contain bob's CIDR
+	// (mesh is dissolved, members are out).
+	if containsCIDR(aliceDst, bobCIDR) {
+		t.Errorf("alice's dst leaks bob's CIDR after mesh dissolve; dst=%v", aliceDst)
+	}
+	// alice's dst should still contain her own CIDR.
+	if !containsCIDR(aliceDst, aliceCIDR) {
+		t.Errorf("alice's dst missing own CIDR after mesh dissolve; dst=%v", aliceDst)
+	}
+}
+
+// TestACLBuilder_MultipleMeshesForOneUser pins
+// the "user in mesh A AND mesh B" case: the user's
+// dst should contain CIDRs of mesh-mates from BOTH
+// meshes. This is the "shared office + shared lab"
+// use case.
+func TestACLBuilder_MultipleMeshesForOneUser(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	carolID := seedPortalUser(t, d, "carol")
+	daniilID := seedPortalUser(t, d, "daniil")
+	bobCIDR := seedUserSubnet(t, d, bobID)
+	carolCIDR := seedUserSubnet(t, d, carolID)
+	daniilCIDR := seedUserSubnet(t, d, daniilID)
+	// Mesh A: alice + bob
+	createMeshInTest(t, d, "", []int64{aliceID, bobID})
+	// Mesh B: alice + carol + daniil
+	createMeshInTest(t, d, "", []int64{aliceID, carolID, daniilID})
+
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	aliceRule := ruleFor(t, aclStr, "alice")
+	if aliceRule == nil {
+		t.Fatal("alice's rule not found")
+	}
+	aliceDst := dstList(t, aliceRule)
+	// alice should see bob (from mesh A), carol (B),
+	// daniil (B). 3 mesh-mate CIDRs.
+	for _, wantCIDR := range []string{bobCIDR, carolCIDR, daniilCIDR} {
+		if !containsCIDR(aliceDst, wantCIDR) {
+			t.Errorf("alice's dst missing mesh-mate CIDR %s; dst=%v", wantCIDR, aliceDst)
+		}
+	}
+	// dst: own identity + own CIDR + 3 mesh-mate
+	// CIDRs = 5. (alice has no subnet allocated in
+	// this test, so no own CIDR; dst = 1 + 3 = 4.)
+	if len(aliceDst) != 4 {
+		t.Errorf("alice's dst has %d entries, want 4 (own + 3 mesh-mates); dst=%v",
+			len(aliceDst), aliceDst)
+	}
 }
