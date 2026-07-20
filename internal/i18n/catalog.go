@@ -958,6 +958,19 @@ var ruCatalog = map[string]string{
 	"user_subnet.magicdns_short_label": "Короткое имя",
 	"user_subnet.magicdns_wildcard_label": "Per-device паттерн",
 	"user_subnet.magicdns_note":         "Работает автоматически когда в headscale включён <code>dns.magic_dns: true</code> и <code>dns.base_domain: tsnet.skynas.ru</code>. Sidecar регистрируется с <code>--hostname=skygate-subnet-&lt;username&gt;</code>, что автоматически даёт FQDN выше. Per-device записи работают если в headscale настроен <code>dns.search_domains</code>.",
+	// 2026-07-20: v0.19.0 — preferred exit-node card on
+	// /admin/users/{id}/subnet. The choice drives the
+	// `exitnode.skygate-subnet-<user>.<base-domain>` DNS
+	// record published via headscale's `dns.extra_records`.
+	"user_subnet.preferred_exit_node_title":   "Preferred exit-node",
+	"user_subnet.preferred_exit_node_help":     "Опубликует <code>exitnode.skygate-subnet-&lt;username&gt;.tsnet.skynas.ru</code> → IP выбранного exit-ноды через headscale <code>dns.extra_records</code>. Только в пределах <code>tag:exit-node</code> ACL, который и так разрешает доступ к exit-нодам.",
+	"user_subnet.preferred_exit_node_label":   "Exit-node",
+	"user_subnet.preferred_exit_node_none":    "(не выбрано)",
+	"user_subnet.preferred_exit_node_set":     "Set",
+	"user_subnet.preferred_exit_node_clear":   "Clear",
+	"user_subnet.preferred_exit_node_clear_help": "Сбросить выбранный exit-node (DNS-запись будет удалена при следующем rebuild ACL)",
+	"user_subnet.preferred_exit_node_active":  "Активная DNS-запись",
+	"user_subnet.preferred_exit_node_no_choices": "Нет сконфигурированных exit-нод. Сначала добавьте их на <a href=\"/admin/exit-nodes\">/admin/exit-nodes</a>.",
 	"user_subnet.v0_16_0_note_title":    "Что в v0.16.0 vs v0.16.1",
 	"user_subnet.v0_16_0_note_body":     "<b>v0.16.0 (этот релиз):</b> schema + CIDR allocator + admin UI + бот <code>/mysubnet</code>. Кнопка <i>«Выделить subnet»</i> создаёт запись в <code>user_subnets</code> со статусом <code>pending</code>.<br><br><b>v0.16.1:</b> реальный sidecar контейнер + headscale preauth + node tagging + route approval. После deploy v0.16.1 кнопка <i>«Sanity check»</i> покажет router node_id, а бот <code>/mysubnet</code> покажет статус <code>active</code> вместо <code>pending</code>.",
 	"user_subnet.column_header":        "Subnet",
@@ -1708,6 +1721,24 @@ var ruCatalog = map[string]string{
 	"bot.mysubnet.revoke_not_shared":   "mysubnet revoke: <b>%s</b> ещё не расшаривал subnet для <b>%s</b>",
 	"bot.mysubnet.revoke_error":        "mysubnet revoke: %v",
 	"bot.mysubnet.revoke_ok":           "mysubnet: <b>%s</b> отозвал доступ к subnet для <b>%s</b>. ACL пере-применён.",
+	// 2026-07-20: v0.19.0 — /mysubnet exit-node
+	// [set <name>|clear] — pick the user's preferred
+	// exit-node. The choice drives the
+	// `exitnode.skygate-subnet-<user>.<base-domain>`
+	// DNS record via headscale's `dns.extra_records`.
+	"bot.mysubnet.exit_node_usage":          "Использование: /mysubnet exit-node [set &lt;имя&gt;|clear]",
+	"bot.mysubnet.exit_node_set_usage":      "Использование: /mysubnet exit-node set &lt;имя&gt; (например: karolina)",
+	"bot.mysubnet.exit_node_no_choices":     "Нет сконфигурированных exit-нод. Попросите оператора добавить их на /admin/exit-nodes.",
+	"bot.mysubnet.exit_node_no_choice_yet":  "Вы ещё не выбрали preferred exit-node.",
+	"bot.mysubnet.exit_node_current":        "Текущий preferred exit-node: <b>%s</b>",
+	"bot.mysubnet.exit_node_available":      "Доступные exit-ноды",
+	"bot.mysubnet.exit_node_list_error":     "mysubnet exit-node: не удалось получить список нод: %v",
+	"bot.mysubnet.exit_node_not_found":      "mysubnet exit-node: <b>%s</b> не найден среди сконфигурированных exit-нод. Проверьте /mysubnet exit-node (без аргументов) для списка.",
+	"bot.mysubnet.exit_node_set_error":      "mysubnet exit-node: ошибка установки: %v",
+	"bot.mysubnet.exit_node_set_ok":         "mysubnet: preferred exit-node = <b>%s</b>. DNS-запись <code>%s</code> опубликована (ACL пере-применён).",
+	"bot.mysubnet.exit_node_no_choice":      "mysubnet: preferred exit-node не установлен — нечего очищать.",
+	"bot.mysubnet.exit_node_clear_error":    "mysubnet exit-node: ошибка очистки: %v",
+	"bot.mysubnet.exit_node_clear_ok":       "mysubnet: preferred exit-node очищен. DNS-запись будет удалена при следующем rebuild ACL.",
 	"bot.add_device.not_bound":          "add_device: чат ещё не привязан к аккаунту skygate. Сгенерируйте ключ в /my/telegram и отправьте /login &lt;ключ&gt;>.",
 	"bot.add_device.target_err":         "add_device: %v",
 	"bot.add_device.admin_only":         "add_device: preauth-ключ для другого юзера может выпустить только админ. Уберите username, чтобы получить ключ для себя.",
@@ -2769,6 +2800,19 @@ var enCatalog = map[string]string{
 	"user_subnet.magicdns_short_label": "Short name",
 	"user_subnet.magicdns_wildcard_label": "Per-device pattern",
 	"user_subnet.magicdns_note":         "Resolves automatically when headscale has <code>dns.magic_dns: true</code> and <code>dns.base_domain: tsnet.skynas.ru</code>. The sidecar registers with <code>--hostname=skygate-subnet-&lt;username&gt;</code> which auto-resolves to the FQDN above. Per-device records work if headscale has <code>dns.search_domains</code> configured.",
+	// 2026-07-20: v0.19.0 — preferred exit-node card on
+	// /admin/users/{id}/subnet. The choice drives the
+	// `exitnode.skygate-subnet-<user>.<base-domain>` DNS
+	// record published via headscale's `dns.extra_records`.
+	"user_subnet.preferred_exit_node_title":   "Preferred exit-node",
+	"user_subnet.preferred_exit_node_help":     "Publishes <code>exitnode.skygate-subnet-&lt;username&gt;.tsnet.skynas.ru</code> → IP of the chosen exit-node via headscale <code>dns.extra_records</code>. Only routable inside <code>tag:exit-node</code> ACL, which already permits exit-node access.",
+	"user_subnet.preferred_exit_node_label":   "Exit-node",
+	"user_subnet.preferred_exit_node_none":    "(none)",
+	"user_subnet.preferred_exit_node_set":     "Set",
+	"user_subnet.preferred_exit_node_clear":   "Clear",
+	"user_subnet.preferred_exit_node_clear_help": "Reset the chosen exit-node (the DNS record will be removed on next ACL rebuild)",
+	"user_subnet.preferred_exit_node_active":  "Active DNS record",
+	"user_subnet.preferred_exit_node_no_choices": "No exit-nodes configured yet. Add them on <a href=\"/admin/exit-nodes\">/admin/exit-nodes</a> first.",
 	"user_subnet.v0_16_0_note_title":    "What v0.16.0 vs v0.16.1",
 	"user_subnet.v0_16_0_note_body":     "<b>v0.16.0 (this release):</b> schema + CIDR allocator + admin UI + bot <code>/mysubnet</code>. The <i>Allocate subnet</i> button creates a row in <code>user_subnets</code> with status <code>pending</code>.<br><br><b>v0.16.1:</b> real sidecar container + headscale preauth + node tagging + route approval. After v0.16.1 ships, the <i>Sanity check</i> will report the router node_id and <code>/mysubnet</code> will show status <code>active</code> instead of <code>pending</code>.",
 	"user_subnet.column_header":        "Subnet",
@@ -3446,6 +3490,24 @@ var enCatalog = map[string]string{
 	"bot.mysubnet.revoke_no_user":    "mysubnet revoke: user <b>%s</b> not found",
 	"bot.mysubnet.revoke_not_shared": "mysubnet revoke: <b>%s</b> hasn't shared a subnet with <b>%s</b>",
 	"bot.mysubnet.revoke_error":      "mysubnet revoke: %v",
+	// 2026-07-20: v0.19.0 — /mysubnet exit-node
+	// [set <name>|clear] — pick the user's preferred
+	// exit-node. The choice drives the
+	// `exitnode.skygate-subnet-<user>.<base-domain>`
+	// DNS record via headscale's `dns.extra_records`.
+	"bot.mysubnet.exit_node_usage":          "Usage: /mysubnet exit-node [set &lt;name&gt;|clear]",
+	"bot.mysubnet.exit_node_set_usage":      "Usage: /mysubnet exit-node set &lt;name&gt; (e.g. karolina)",
+	"bot.mysubnet.exit_node_no_choices":     "No exit-nodes configured. Ask the operator to add them on /admin/exit-nodes.",
+	"bot.mysubnet.exit_node_no_choice_yet":  "You haven't picked a preferred exit-node yet.",
+	"bot.mysubnet.exit_node_current":        "Current preferred exit-node: <b>%s</b>",
+	"bot.mysubnet.exit_node_available":      "Available exit-nodes",
+	"bot.mysubnet.exit_node_list_error":     "mysubnet exit-node: failed to list nodes: %v",
+	"bot.mysubnet.exit_node_not_found":      "mysubnet exit-node: <b>%s</b> not found among configured exit-nodes. Try /mysubnet exit-node (no args) for the list.",
+	"bot.mysubnet.exit_node_set_error":      "mysubnet exit-node: set error: %v",
+	"bot.mysubnet.exit_node_set_ok":         "mysubnet: preferred exit-node = <b>%s</b>. DNS record <code>%s</code> published (ACL re-applied).",
+	"bot.mysubnet.exit_node_no_choice":      "mysubnet: no preferred exit-node set — nothing to clear.",
+	"bot.mysubnet.exit_node_clear_error":    "mysubnet exit-node: clear error: %v",
+	"bot.mysubnet.exit_node_clear_ok":       "mysubnet: preferred exit-node cleared. DNS record will be removed on the next ACL rebuild.",
 	"bot.mysubnet.revoke_ok":         "mysubnet: <b>%s</b> revoked <b>%s</b>'s access to the personal subnet. ACL re-applied.",
 	"bot.add_device.not_bound":        "add_device: chat not bound to a portal user. Ask an admin to /bind your chat_id.",
 	"bot.add_device.target_err":       "add_device: %v",

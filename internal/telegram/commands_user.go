@@ -1914,3 +1914,173 @@ func mySubnetRevokeReply(env BotEnv, args []string) string {
 	return i18n.Tf(lang, "bot.mysubnet.revoke_ok",
 		env.Username, granteeName)
 }
+
+// mySubnetExitNodeReply — v0.19.0. /mysubnet exit-node
+// [set <name>|clear] — pick the user's preferred
+// exit-node. The choice is published as
+//
+//   exitnode.skygate-subnet-<username>.<base-domain>
+//
+// via headscale's `dns.extra_records` in the policy.
+// The ACL is re-pushed on every change (best-effort,
+// same pattern as share/revoke/provision in v0.17.1).
+//
+// Usage:
+//   /mysubnet exit-node            # show current choice
+//   /mysubnet exit-node set <name> # pick an exit-node by
+//                                  # hostname (emilia,
+//                                  # sharlotta, karolina)
+//   /mysubnet exit-node clear      # drop the choice
+//
+// The exit-node must be in the operator's exit_servers
+// table (added via /admin/exit-nodes Add). We match on
+// hostname (case-insensitive) — same match the rest of
+// skygate uses for exit-node lookups.
+func mySubnetExitNodeReply(env BotEnv, args []string) string {
+	lang := env.Lang
+	if env.PortalUserID == 0 {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	// No args: show current choice (and the available
+	// exit-nodes, so the user knows what they can pick).
+	if len(args) == 0 {
+		return mySubnetExitNodeShow(env, lang)
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 {
+			return i18n.T(lang, "bot.mysubnet.exit_node_set_usage")
+		}
+		return mySubnetExitNodeSet(env, lang, args[1])
+	case "clear":
+		return mySubnetExitNodeClear(env, lang)
+	default:
+		return i18n.T(lang, "bot.mysubnet.exit_node_usage")
+	}
+}
+
+// mySubnetExitNodeShow renders the current choice +
+// the list of available exit-nodes. Best-effort: if
+// headscale.ListAllNodes fails, we fall back to the
+// current choice (and a "couldn't list" hint).
+func mySubnetExitNodeShow(env BotEnv, lang string) string {
+	cur, _ := subnet.GetPreferredExitNode(env.DB, env.PortalUserID)
+	hs := env.HSForPortalUser(env.PortalUserID)
+	nodes, _ := hs.ListAllNodes()
+	// Build a hostname → IP map (case-insensitive).
+	type nodeRow struct {
+		Hostname string
+		IP       string
+	}
+	var rows []nodeRow
+	for _, n := range nodes {
+		// Only show nodes that are in the operator's
+		// exit_servers table — the operator's "this
+		// IS an exit-node" declaration. The bot
+		// reads the same table the admin form uses.
+		var exists int
+		_ = env.DB.QueryRow(`SELECT 1 FROM exit_servers WHERE node_id = ? AND enabled = 1`, n.ID).Scan(&exists)
+		if exists == 0 {
+			continue
+		}
+		hostname := n.GivenName
+		if hostname == "" {
+			hostname = n.Hostname
+		}
+		ip := ""
+		if len(n.IPAddresses) > 0 {
+			ip = n.IPAddresses[0]
+		}
+		rows = append(rows, nodeRow{hostname, ip})
+	}
+	if cur == "" && len(rows) == 0 {
+		return i18n.T(lang, "bot.mysubnet.exit_node_no_choices")
+	}
+	var sb strings.Builder
+	if cur == "" {
+		sb.WriteString(i18n.T(lang, "bot.mysubnet.exit_node_no_choice_yet"))
+	} else {
+		sb.WriteString(i18n.Tf(lang, "bot.mysubnet.exit_node_current", cur))
+	}
+	if len(rows) > 0 {
+		sb.WriteString("\n\n")
+		sb.WriteString(i18n.T(lang, "bot.mysubnet.exit_node_available"))
+		sb.WriteString(":\n")
+		for _, r := range rows {
+			line := "  • " + r.Hostname
+			if r.IP != "" {
+				line += " (" + r.IP + ")"
+			}
+			sb.WriteString(line)
+			if r.Hostname == cur {
+				sb.WriteString(" ✓")
+			}
+			sb.WriteString("\n")
+		}
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// mySubnetExitNodeSet looks up the exit-node by
+// hostname (case-insensitive, matches against both
+// GivenName and Hostname), then sets the choice. The
+// ACL is re-pushed to publish the new DNS record.
+func mySubnetExitNodeSet(env BotEnv, lang, hostname string) string {
+	hs := env.HSForPortalUser(env.PortalUserID)
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return i18n.Tf(lang, "bot.mysubnet.exit_node_list_error", err)
+	}
+	var nodeID string
+	for _, n := range nodes {
+		if strings.EqualFold(n.GivenName, hostname) || strings.EqualFold(n.Hostname, hostname) {
+			// Only accept nodes in exit_servers.
+			var exists int
+			_ = env.DB.QueryRow(`SELECT 1 FROM exit_servers WHERE node_id = ? AND enabled = 1`, n.ID).Scan(&exists)
+			if exists == 0 {
+				continue
+			}
+			nodeID = n.ID
+			break
+		}
+	}
+	if nodeID == "" {
+		return i18n.Tf(lang, "bot.mysubnet.exit_node_not_found", hostname)
+	}
+	if err := subnet.SetPreferredExitNode(env.DB, env.PortalUserID, nodeID); err != nil {
+		return i18n.Tf(lang, "bot.mysubnet.exit_node_set_error", err)
+	}
+	// Best-effort ACL re-push (v0.17.1 pattern).
+	planeURL := env.PortalPlaneURL(env.PortalUserID)
+	res := acl.ApplyACLPipelineForPlane(
+		env.DB, env.HSForPortalUser(env.PortalUserID),
+		planeURL, nil, env.Username,
+		fmt.Sprintf("subnet_exit_node_set user=%d node_id=%s", env.PortalUserID, nodeID))
+	if !res.Applied {
+		log.Printf("subnet_exit_node_set: ACL reapply failed user=%d node_id=%s: %v (choice is in DB; click 'Re-apply ACL' to push)",
+			env.PortalUserID, nodeID, res.Err)
+	}
+	return i18n.Tf(lang, "bot.mysubnet.exit_node_set_ok", hostname,
+		"exitnode.skygate-subnet-"+env.Username+"."+subnet.BaseDomain)
+}
+
+// mySubnetExitNodeClear drops the choice. The ACL is
+// re-pushed so the DNS record is removed.
+func mySubnetExitNodeClear(env BotEnv, lang string) string {
+	if err := subnet.ClearPreferredExitNode(env.DB, env.PortalUserID); err != nil {
+		if errors.Is(err, subnet.ErrNotFound) {
+			return i18n.T(lang, "bot.mysubnet.exit_node_no_choice")
+		}
+		return i18n.Tf(lang, "bot.mysubnet.exit_node_clear_error", err)
+	}
+	planeURL := env.PortalPlaneURL(env.PortalUserID)
+	res := acl.ApplyACLPipelineForPlane(
+		env.DB, env.HSForPortalUser(env.PortalUserID),
+		planeURL, nil, env.Username,
+		fmt.Sprintf("subnet_exit_node_cleared user=%d", env.PortalUserID))
+	if !res.Applied {
+		log.Printf("subnet_exit_node_clear: ACL reapply failed user=%d: %v (choice cleared in DB; click 'Re-apply ACL' to push)",
+			env.PortalUserID, res.Err)
+	}
+	return i18n.T(lang, "bot.mysubnet.exit_node_clear_ok")
+}

@@ -52,7 +52,7 @@ func (a *App) GetAdminACLsExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	policy, err := acl.GenerateACL(a.DB)
+	policy, err := acl.GenerateACL(a.DB, a.HSGlobal())
 	if err != nil {
 		http.Error(w, "generate acl: "+err.Error(), 500)
 		return
@@ -76,7 +76,7 @@ func (a *App) GetAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	currentPolicy, _ := acl.GenerateACL(a.DB)
+	currentPolicy, _ := acl.GenerateACL(a.DB, a.HSGlobal())
 	a.renderWithLayout(w, r, "admin/acls_import.html", c, map[string]any{
 		"CurrentPolicy": currentPolicy,
 	})
@@ -120,7 +120,7 @@ func (a *App) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "policy: "+err.Error(), 400)
 		return
 	}
-	currentPolicy, _ := acl.GenerateACL(a.DB)
+	currentPolicy, _ := acl.GenerateACL(a.DB, a.HSGlobal())
 	// SHA-256 of each — for the dry-run page to show "this
 	// is the same as the current policy" without doing a
 	// full JSON compare.

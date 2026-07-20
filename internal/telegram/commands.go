@@ -606,6 +606,13 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 				return cmdReply{body: mySubnetShareReply(env, args[1:]), context: lookupContext(cmd)}
 			case "revoke":
 				return cmdReply{body: mySubnetRevokeReply(env, args[1:]), context: lookupContext(cmd)}
+			case "exit-node", "exit_node":
+				// 2026-07-20: v0.19.0 — pick the user's
+				// preferred exit-node. Drives the
+				// `exitnode.skygate-subnet-<user>`
+				// DNS record via headscale's
+				// `dns.extra_records`.
+				return cmdReply{body: mySubnetExitNodeReply(env, args[1:]), context: lookupContext(cmd)}
 			}
 		}
 		return cmdReply{body: mySubnetReply(env), context: lookupContext(cmd)}

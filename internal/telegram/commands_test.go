@@ -70,7 +70,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// /mysubnet test reads the denormalized
 		// portal_users.subnet_* columns, so the test
 		// schema must include both tables.
-		`CREATE TABLE user_subnets (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE, cidr TEXT NOT NULL UNIQUE, subnet_bits INTEGER NOT NULL DEFAULT 24, control_plane_url TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', router_node_id TEXT NOT NULL DEFAULT '', router_container_id TEXT NOT NULL DEFAULT '', router_hostname TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE user_subnets (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE, cidr TEXT NOT NULL UNIQUE, subnet_bits INTEGER NOT NULL DEFAULT 24, control_plane_url TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', router_node_id TEXT NOT NULL DEFAULT '', router_container_id TEXT NOT NULL DEFAULT '', router_hostname TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, preferred_exit_node_id TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE user_subnet_shares (grantor_user_id INTEGER NOT NULL, grantee_user_id INTEGER NOT NULL, created_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (grantor_user_id, grantee_user_id), FOREIGN KEY (grantor_user_id) REFERENCES portal_users(id) ON DELETE CASCADE, FOREIGN KEY (grantee_user_id) REFERENCES portal_users(id) ON DELETE CASCADE)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
