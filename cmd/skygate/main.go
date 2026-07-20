@@ -196,6 +196,16 @@ func main() {
 	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(app.PostMyPreauth)))
 	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(app.GetMyKeys)))
 	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(app.PostMyKeyExpire)))
+	// 2026-07-20: v0.22.0 — /my/meshes user-scope
+	// page (the WEB entry point for the mesh
+	// workflow). The bot /mesh create|join|leave
+	// commands are the BOT entry point; both
+	// share the same internal/mesh package.
+	// Three POST routes: create, join, leave.
+	mux.Handle("GET /my/meshes", authMW(http.HandlerFunc(app.GetMyMeshes)))
+	mux.Handle("POST /my/meshes/create", authMW(http.HandlerFunc(app.PostMyMeshesCreate)))
+	mux.Handle("POST /my/meshes/join", authMW(http.HandlerFunc(app.PostMyMeshesJoin)))
+	mux.Handle("POST /my/meshes/leave", authMW(http.HandlerFunc(app.PostMyMeshesLeave)))
 
 	// Admin
 	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(app.GetAdminUsers)))

@@ -194,7 +194,7 @@ fi
 
 # Step 3: my/* pages — only HTTP status, language-agnostic
 note "3. /my/* pages"
-for path in /my/devices /my/exit-rules /my/exit-rules/help /my/tokens /my/keys /my/exit-nodes /help; do
+for path in /my/devices /my/exit-rules /my/exit-rules/help /my/tokens /my/keys /my/exit-nodes /my/meshes /help; do
   CODE=$(status "$BASE$path")
   [ "$CODE" = "200" ] && ok "$path 200" || bad "$path $CODE"
 done
