@@ -55,21 +55,111 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   `exitnode.skygate-subnet-<user>.<base-domain>`
   DNS-record feature relied on headscale's
   `dns.extra_records` policy field, which
-  headscale 0.29.1 (the operator's version)
-  doesn't support — pushing a policy with the
-  `dns` key returns
+  headscale 0.29.x (the operator's version —
+  0.29.2 as of 2026-07-20) doesn't support —
+  pushing a policy with the `dns` key returns
   `unknown field: "dns"` and the policy is rejected.
   The v0.16.0+ subnets roadmap's "exitnode" record
   is **blocked on headscale 0.29.x** and will
   return as v0.19.1 once the operator upgrades
   headscale to a version that supports
   `dns.extra_records` (0.30+ based on headscale
-  changelog history). The schema migration
+  changelog history — v0.30.0 was removed from
+  the "unreleased" section of headscale's
+  CHANGELOG in commit 8eea894, which suggests
+  it's close). The schema migration
   (`preferred_exit_node_id` column), helper
   functions, and the per-user-subnet UI/bot code
   paths are all in git history (commit `646f8fb`)
-  and can be re-enabled cheaply when the headscale
-  upgrade lands.
+  and can be re-enabled cheaply via
+  `git revert 0c394bd && git push` once the
+  headscale upgrade lands.
+
+  **Note on the headscale 0.29.2 upgrade (2026-07-20)**:
+  the operator upgraded headscale from
+  `headscale/headscale:0.29.1` to
+  `headscale/headscale:0.29.2` (commit
+  `8eea89488c642f3d5f617fab5493d5f51f6f4ad0`,
+  build 2026-07-01). Three bugfixes ship in
+  0.29.2 (none of which add `dns.extra_records`,
+  so v0.19.0 is still blocked):
+
+  1. **Map-generation serialization fix (#3358)**
+     — fixes a stall on the policy lock that
+     could push clients into `unexpected EOF`
+     retry loops during a mass reconnect on
+     `autogroup:self`, via or relay policies.
+     **Relevant to us**: the policy uses
+     `autogroup:self` (admin→tag:public, admin→
+     tag:exit-node SSH rules) and we have 3
+     relays in the mesh, so a relay hiccup or
+     a mass-reconnect event would have hit
+     this. Now safe.
+  2. **`/ts2021` WebSocket GET fix (#3359)** —
+     previously returned 405 to Tailscale
+     JS/WASM control clients. Verified live:
+     `curl -H 'Connection: Upgrade' -H
+     'Upgrade: websocket' http://localhost:50444/
+     ts2021` now returns `101 Switching Protocols`
+     with a valid `Sec-Websocket-Accept`. (Note:
+     openresty on the VM does NOT yet forward
+     WebSocket Upgrade headers — `https://head.
+     skynas.ru/ts2021` still 500s. Tailscale
+     native clients don't use this path, so
+     the tailnet itself is unaffected; only
+     a future JS/WASM client deployment would
+     need an openresty config change. Out of
+     scope for this upgrade.)
+  3. **Invalid FQDN handling (#3349)** —
+     nodes with empty or too-long FQDNs no
+     longer fail map delivery; the offender
+     is logged at startup with the fix
+     command. Defensive: we don't have any
+     such nodes today, but it's nice to have.
+
+  **Upgrade procedure used** (reproducible for
+  future bumps):
+  1. Backup SQLite DB + config to
+     `/tmp/headscale-backup-<timestamp>/` via
+     a throwaway `alpine:3.20` container
+     `docker run --rm -v
+     headscale_headscale_data:/from:ro -v
+     $BACKUP_DIR:/to alpine:3.20 cp -a /from/.
+     /to/`. The headscale_data volume isn't
+     readable by skyadmin directly, so the
+     throwaway container is the cleanest path.
+     `acl.hujson` (399 B, generated) +
+     `acl_policy.hujson` (11 B, the live
+     config-file policy) + db.sqlite (8.3 MB)
+     + db.sqlite-wal (4 MB) = 12 MB total.
+  2. `sed -i 's|0.29.1|0.29.2|g'`
+     `/home/skyadmin/headscale/docker-compose.yml`
+     (the headscale compose lives outside the
+     skygate repo, in `/home/skyadmin/headscale/`)
+  3. `docker compose stop headscale && docker
+     compose up -d --force-recreate headscale`
+     — came up in 3 s, no policy churn
+     (`updatedAt` unchanged from the v0.17.1
+     deploy at `2026-07-20T09:37:26Z`).
+  4. Verification: 11 nodes (8 online, 3
+     offline, same as before), 256 ACL rules
+     unchanged, 4 tagOwners unchanged (tag:exit-
+     node, tag:private, tag:public,
+     tag:subnet-router), 2 SSH rules unchanged,
+     4 groups unchanged. `make test` 118/118
+     PASS (smoke 59+59 en+ru), `check_exit_nodes
+     .py` 3/3 PASS, `check_https.py` PASS via
+     `/` fallback.
+
+  **Why no skygate release tag for this?**
+  This is a pure ops-level headscale image bump
+  — no skygate code changed, no new i18n keys,
+  no API surface delta. The next skygate release
+  (whatever it ends up being — likely the v0.19.1
+  re-attempt once headscale 0.30+ lands) will
+  have the headscale version in its release
+  notes. For now the v0.19.0 blocker note above
+  is the only consumer-facing reference.
 
 * **Previous**: v0.18.0 — MagicDNS for personal
   subnets
