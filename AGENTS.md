@@ -7,7 +7,63 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.18.1 — three small fixes
+* **Current**: v0.20.0 — headscale-update-monitor +
+  auto-allocate subnet on user create
+  ([release notes](RELEASE-NOTES-v0.20.0.md)).
+  Two operator-side UX cleanups bundled because
+  they're both small and the operator asked for
+  them in the v0.18.1 retro:
+
+  1. **`/admin/headscale` page + monitor goroutine**
+     — polls the juanfont/headscale GitHub
+     Releases API every 24h (configurable via
+     `SKYGATE_HEADSCALE_POLL_INTERVAL`), compares
+     the latest tag against the operator's pinned
+     version (`SKYGATE_HEADSCALE_VERSION_PIN`,
+     e.g. "0.29.2"), and dispatches a Telegram
+     alert + writes a row to `headscale_releases`
+     when a newer version is available. New bot
+     command `/headscale` (admin-only) renders
+     the same status. `/admin/exit-nodes` gets
+     a banner above the table when a newer
+     headscale is known. `headscale_releases`
+     table (migration v0.41) holds the history
+     so the page has a "seen releases" view that
+     survives skygate restarts. Page has a
+     "Check now" button for an immediate re-poll.
+     GitHub rate limit: 60 req/h unauthenticated;
+     24h polling leaves 56/60 unused.
+
+  2. **Auto-allocate subnet on user create** —
+     `PostAdminUser` now calls `subnet.Create(userID)`
+     automatically after the `portal_users` row
+     is inserted, controlled by
+     `SKYGATE_AUTO_ALLOCATE_SUBNET` (default
+     `true`). The operator's stated preference
+     was "by default, not via a separate button
+     click". The manual "Allocate" button on
+     `/admin/users/{id}/subnet` is unchanged
+     (re-issue / disabled→re-allocate flows).
+     `subnet.Create` is idempotent, so the
+     button is safe to click even with auto-
+     allocate enabled. Allocations failures are
+     logged but don't roll back the user
+     (the user is still created; the operator
+     can retry via the manual button). The
+     audit row records both `user_create` and
+     the `subnet_allocate` outcome.
+
+  19 files changed, +1740/-8 lines. Migration
+  v0.41 adds the `headscale_releases` table.
+  Config: `SKYGATE_HEADSCALE_VERSION_PIN`,
+  `SKYGATE_HEADSCALE_POLL_INTERVAL`,
+  `SKYGATE_AUTO_ALLOCATE_SUBNET`. Verified live
+  on VM: smoke 122/122 (EN 61 + RU 61),
+  check_exit_nodes 3/3, check_https PASS, "Check
+  now" button end-to-end works (writes
+  v0.29.2 to headscale_releases with
+  is_breaking=0, notified=0 because it matches
+  the pinned version).
   ([release notes](RELEASE-NOTES-v0.18.1.md)).
   Operator-flagged issues from the v0.18.0 deploy,
   all closed in one small release:
