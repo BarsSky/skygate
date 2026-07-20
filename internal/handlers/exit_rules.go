@@ -139,13 +139,8 @@ func (a *App) getUserDevices(userID int) ([]map[string]any, error) {
 // wrapper around internal/acl.GenerateACL, which is a free
 // function so the telegram bot (which has no *App reference)
 // can reuse the same logic. Body and behaviour are unchanged.
-//
-// 2026-07-20: v0.19.0 — passes a.HSGlobal() so the
-// `exitnode.skygate-subnet-<user>` DNS records are
-// populated (GenerateACLForPlane needs the headscale
-// client to look up exit-node IPs).
 func (a *App) GenerateACL() (string, error) {
-	return acl.GenerateACL(a.DB, a.HSGlobal())
+	return acl.GenerateACL(a.DB)
 }
 
 // saveACLSnapshot persists one acl_snapshots row and returns the
