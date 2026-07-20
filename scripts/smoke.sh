@@ -465,7 +465,18 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]}" -b "$COOKI
 # /my/meshes 200 status (step 3) and the admin page
 # (step 4); this step is the integration test of the
 # create → join → leave workflow.
+#
+# NOTE: this step runs AFTER step 12 (logout) so the
+# admin cookie ($COOKIE) is no longer valid. We re-login
+# the admin at the start of step 13. The admin cookie
+# file is reused; the test user gets a separate cookie.
 note "13. multi-user mesh: create (admin) → join (test user) → leave → cleanup"
+
+# 13.0 — re-login admin (step 12 logged them out).
+CODE=$(curl -s -c "$COOKIE" -o /dev/null -w "%{http_code}" "${ACCEPT_LANG_HDR[@]}" -X POST \
+  --data-urlencode "username=$USER" --data-urlencode "password=$PASS_VAR" \
+  "$BASE/login")
+[ "$CODE" = "302" ] && ok "admin re-login for step 13" || bad "admin re-login: $CODE"
 
 # 13.1 — create a fresh test user (smoke_mesh_<pid>) via the
 # /admin/users endpoint. The auto-allocate path (v0.20.0)
