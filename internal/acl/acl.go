@@ -23,7 +23,6 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
-	"skygate/internal/subnet"
 )
 
 // Alerter is the minimal interface SaveACLSnapshot needs from a
@@ -66,18 +65,8 @@ func (NoopAlerter) SendAlert(string) int64 { return 0 }
 // so the global-default path uses the same code that
 // per-plane callers use. baseDomain hard-coded because the
 // per-plane multi-deploy DNS refactor is a v0.16.0 follow-up.
-//
-// 2026-07-20: v0.19.0 — `hs` is the headscale client used
-// to look up the Tailscale IPs of exit-nodes the user
-// picked as "preferred" (per
-// user_subnets.preferred_exit_node_id). The result is
-// published as a headscale `dns.extra_records` entry so
-// the FQDN `exitnode.skygate-subnet-<user>.<base-domain>`
-// resolves to the chosen exit-node's tailnet IP. `hs` is
-// optional (nil is fine for tests / dry-runs) — when nil
-// the function skips the extra_records section.
-func GenerateACL(d *sql.DB, hs *headscale.Client) (string, error) {
-	return GenerateACLForPlane(d, "", hs)
+func GenerateACL(d *sql.DB) (string, error) {
+	return GenerateACLForPlane(d, "")
 }
 
 // GenerateACLForPlane builds the per-user headscale 0.29
@@ -96,19 +85,7 @@ func GenerateACL(d *sql.DB, hs *headscale.Client) (string, error) {
 // 2026-07-16: v0.13.0 — refactored out of the old
 // single-plane GenerateACL so the per-plane pipeline can
 // build and push one policy per headscale instance.
-//
-// 2026-07-20: v0.19.0 — `hs` parameter is used to look up
-// the Tailscale IPs of exit-nodes the user picked as
-// "preferred" (per user_subnets.preferred_exit_node_id).
-// The result is published as a headscale
-// `dns.extra_records` entry so the FQDN
-//
-//   exitnode.skygate-subnet-<username>.<base-domain>
-//
-// resolves to the chosen exit-node's tailnet IP. `hs` is
-// optional (nil is fine for tests / dry-runs) — when nil
-// the function skips the extra_records section.
-func GenerateACLForPlane(d *sql.DB, planeURL string, hs *headscale.Client) (string, error) {
+func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	aclRows, err := db.GetACLEntries(d)
 	if err != nil {
 		return "", err
@@ -352,136 +329,8 @@ func GenerateACLForPlane(d *sql.DB, planeURL string, hs *headscale.Client) (stri
 	sb.WriteString("    }\n")
 	sb.WriteString("  ]\n")
 
-	// 2026-07-20: v0.19.0 — `exitnode.skygate-subnet-<user>`
-	// DNS record. For each user_subnets row with a
-	// preferred_exit_node_id, look up the headscale node's
-	// Tailscale IP and emit an A (and AAAA when the node
-	// has an IPv6 address) record. The FQDN is
-	// `exitnode.skygate-subnet-<username>.<base-domain>`,
-	// which headscale's built-in DNS (with magic_dns: true
-	// + base_domain: tsnet.skynas.ru, operator-side config)
-	// serves to the user's tailnet clients.
-	//
-	// We append the `dns.extra_records` section AFTER
-	// `ssh:[]` but BEFORE the closing `}`. When there
-	// are no records (no user has set a preference), we
-	// skip the section entirely — headscale treats the
-	// field as optional.
-	if hs != nil {
-		records, err := buildExtraRecords(d, hs, baseDomain)
-		if err != nil {
-			return "", fmt.Errorf("generate ACL: build extra records: %w", err)
-		}
-		if len(records) > 0 {
-			sb.WriteString(",\n  \"dns\": {\n")
-			sb.WriteString("    \"extra_records\": [\n")
-			for i, r := range records {
-				if i > 0 {
-					sb.WriteString(",\n")
-				}
-				sb.WriteString("      {\"name\": \"" + r.name + "\", \"type\": \"" + r.recordType + "\", \"value\": \"" + r.value + "\"}")
-			}
-			sb.WriteString("\n    ]\n")
-			sb.WriteString("  }\n")
-		}
-	}
-
 	sb.WriteString("}")
 	return sb.String(), nil
-}
-
-// extraRecord is one row of headscale's `dns.extra_records`
-// array. We emit an A and (when available) AAAA record per
-// user — the user's tailnet client picks whichever matches
-// the destination family.
-type extraRecord struct {
-	name       string // exitnode.skygate-subnet-<user>.<base-domain>
-	recordType string // "A" or "AAAA"
-	value      string // the node's IPv4 or IPv6 address
-}
-
-// buildExtraRecords looks up every user_subnets row with
-// a preferred_exit_node_id, finds the node's Tailscale
-// IP via the headscale API, and emits A/AAAA records.
-//
-// 2026-07-20: v0.19.0. Companion to GenerateACLForPlane's
-// `dns.extra_records` section.
-//
-// Errors:
-//   - subnet.ListUsersWithPreferredExitNode fails (DB):
-//     returned as-is (operator-side issue, caller's
-//     handler logs + alerts)
-//   - headscale.ListAllNodes fails (network): skipped;
-//     records are best-effort (a failed lookup means no
-//     record for that user, which is recoverable — the
-//     operator can re-apply the ACL after headscale
-//     recovers).
-//
-// We never fail the whole ACL build on a single bad
-// node lookup: the policy is still valid without the
-// missing record, and the operator gets a console
-// warning in the log.
-func buildExtraRecords(d *sql.DB, hs *headscale.Client, baseDomain string) ([]extraRecord, error) {
-	choices, err := subnet.ListUsersWithPreferredExitNode(d)
-	if err != nil {
-		return nil, err
-	}
-	if len(choices) == 0 {
-		return nil, nil
-	}
-	// Cache the headscale node list once. ListAllNodes
-	// is cached internally (TTL ~30s) so this is cheap.
-	nodes, err := hs.ListAllNodes()
-	if err != nil {
-		// Best-effort: if the API is down, return no
-		// records. The rest of the policy is still
-		// valid; the operator can re-apply once
-		// headscale recovers.
-		return nil, nil
-	}
-	// Build a quick lookup map by node ID (string-keyed
-	// because headscale IDs are sometimes returned as
-	// strings by the CLI even when they look like ints).
-	byID := make(map[string]headscale.NodeView, len(nodes))
-	for _, n := range nodes {
-		byID[n.ID] = n
-	}
-	var out []extraRecord
-	for _, ch := range choices {
-		n, ok := byID[ch.NodeID]
-		if !ok {
-			// Node ID is not in headscale. Skip —
-			// the operator probably deleted the
-			// node, and the next ACL rebuild
-			// (after the user clears the choice)
-			// will drop the record.
-			continue
-		}
-		username, err := db.GetUserNameByID(d, ch.UserID)
-		if err != nil || username == "" {
-			// No username = user got deleted.
-			// Skip the record.
-			continue
-		}
-		fqdn := "exitnode.skygate-subnet-" + username + "." + baseDomain
-		// Emit A record for the node's IPv4 address
-		// and AAAA for the IPv6. Most Tailscale
-		// nodes have both (Tailscale assigns both
-		// families by default). The user's tailnet
-		// client picks the right one.
-		for _, ip := range n.IPAddresses {
-			if strings.Contains(ip, ":") {
-				out = append(out, extraRecord{
-					name: fqdn, recordType: "AAAA", value: ip,
-				})
-			} else {
-				out = append(out, extraRecord{
-					name: fqdn, recordType: "A", value: ip,
-				})
-			}
-		}
-	}
-	return out, nil
 }
 
 func quoteAll(ss []string) []string {
@@ -559,10 +408,7 @@ func ApplyACLPipeline(d *sql.DB, hs *headscale.Client, alerter Alerter, username
 //
 // 2026-07-16: v0.13.0.
 func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, alerter Alerter, username, detailForLog string) ApplyResult {
-	// 2026-07-20: v0.19.0 — pass hs to GenerateACLForPlane
-	// so it can look up exit-node IPs for the
-	// `exitnode.skygate-subnet-<user>` DNS records.
-	acl, err := GenerateACLForPlane(d, planeURL, hs)
+	acl, err := GenerateACLForPlane(d, planeURL)
 	if err != nil {
 		return ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("generate ACL: %w", err)}
 	}

@@ -13,7 +13,6 @@ import (
 	"skygate/internal/acl"
 	"skygate/internal/auth"
 	"skygate/internal/db"
-	"skygate/internal/headscale"
 	"skygate/internal/subnet"
 )
 
@@ -111,34 +110,6 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 		// the sidecar registers) so the operator knows
 		// the eventual FQDN.
 		"MagicDNS": subnet.ComputeMagicDNSNames(username),
-	}
-	// 2026-07-20: v0.19.0 — when the user has a
-	// preferred exit-node, expose the FQDN we
-	// publish via headscale's `dns.extra_records`.
-	// Same base domain as the MagicDNS card
-	// (`tsnet.skynas.ru`); the sidecar + per-device
-	// names are in MagicDNS, this is the
-	// "exitnode" record specifically. Computed
-	// even when no choice is set (empty) so the
-	// template's `if .PreferredExitNodeID` guard
-	// is the only branch the template cares about.
-	data["PreferredExitNodeFQDN"] = "exitnode.skygate-subnet-" + username + "." + subnet.BaseDomain
-	// 2026-07-20: v0.19.0 — list every configured exit-node
-	// so the operator can pick one as the user's preferred
-	// exit-node (drives the
-	// `exitnode.skygate-subnet-<user>.<base-domain>` DNS
-	// record). We only include rows that the operator
-	// explicitly added to exit_servers (via the "Add exit
-	// node" form) AND that have a tailnet IP. Nodes without
-	// an IP can't be a destination of a DNS A record, so
-	// the operator picking them would silently break the
-	// record. We also include the user's CURRENT choice
-	// (if any) even if it doesn't match a current
-	// exit_servers row — so the form can show "you picked
-	// karolina, but karolina is no longer in exit_servers"
-	// instead of silently dropping the choice.
-	if exitNodes, _ := a.availableExitNodesForChoice(); exitNodes != nil {
-		data["ExitNodeChoices"] = exitNodes
 	}
 	// 2026-07-17: v0.17.1 — pull the share lists so the
 	// "Sharing" section can render. Lookups are best-
@@ -497,143 +468,6 @@ func runSubnetSanityCheck(d *sql.DB, userID int64) []string {
 		}
 	}
 	return out
-}
-
-// ExitNodeChoice is one row in the "Preferred exit-node"
-// dropdown on /admin/users/{id}/subnet. 2026-07-20:
-// v0.19.0. Mirrors admin/exit-nodes but is enriched with
-// the resolved Tailscale IP (so the operator can verify
-// the choice is meaningful before clicking Set).
-//
-// We deliberately do NOT include every headscale node —
-// only the rows the operator added to exit_servers
-// (via /admin/exit-nodes/add). That table is the
-// operator's "this node IS an exit-node" declaration;
-// listing only it keeps the dropdown to 3-5 items in
-// practice (the operator's relay fleet).
-type ExitNodeChoice struct {
-	NodeID  string
-	Hostname string
-	IP      string
-}
-
-// availableExitNodesForChoice returns the operator's
-// configured exit-nodes (from exit_servers + a Tailscale
-// IP lookup) so the "Preferred exit-node" form has
-// something to populate. Best-effort: headscale API
-// failures are swallowed (empty list, the form just
-// shows "no exit-nodes configured yet").
-//
-// 2026-07-20: v0.19.0.
-func (a *App) availableExitNodesForChoice() ([]ExitNodeChoice, error) {
-	rows, err := a.DB.Query(`
-		SELECT node_id, hostname, tailscale_ip
-		  FROM exit_servers
-		 WHERE enabled = 1
-		 ORDER BY hostname ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	// Cache headscale nodes for the IP lookup (ListAllNodes
-	// is cached internally so the cost is small even if
-	// the form is rendered for many users in a row).
-	hsNodes, _ := a.HSGlobal().ListAllNodes()
-	hsByID := make(map[string]headscale.NodeView, len(hsNodes))
-	for _, n := range hsNodes {
-		hsByID[n.ID] = n
-	}
-	var out []ExitNodeChoice
-	for rows.Next() {
-		var c ExitNodeChoice
-		if err := rows.Scan(&c.NodeID, &c.Hostname, &c.IP); err != nil {
-			return nil, err
-		}
-		// Prefer the freshest IP from headscale over
-		// the cached value in exit_servers. The cached
-		// value can go stale (node re-registered with
-		// a new IP); headscale is authoritative.
-		if n, ok := hsByID[c.NodeID]; ok && len(n.IPAddresses) > 0 {
-			c.IP = n.IPAddresses[0]
-		}
-		if c.Hostname == "" {
-			c.Hostname = c.NodeID
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// PostAdminUserSubnetSetExitNode records the user's
-// preferred exit-node (drives the
-// `exitnode.skygate-subnet-<user>.<base-domain>` DNS
-// record published via headscale's `dns.extra_records`).
-// The ACL is re-pushed so the new record takes effect
-// within ~1 second (best-effort, same as v0.17.1's
-// Share/Revoke).
-//
-// 2026-07-20: v0.19.0.
-func (a *App) PostAdminUserSubnetSetExitNode(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/set-exit-node")
-	if err != nil {
-		http.Error(w, "bad id", 400)
-		return
-	}
-	nodeID := strings.TrimSpace(r.FormValue("node_id"))
-	if nodeID == "" {
-		http.Error(w, "node_id required", 400)
-		return
-	}
-	if err := subnet.SetPreferredExitNode(a.DB, id, nodeID); err != nil {
-		renderUserSubnetPage(a, w, r, c, id, map[string]any{
-			"FlashError": err.Error(),
-		})
-		return
-	}
-	a.audit(c.UserID, c.Username, "subnet_preferred_exit_node_set",
-		fmt.Sprintf("user=%d node_id=%s", id, nodeID))
-	// Best-effort ACL re-push (the v0.17.1 pattern).
-	hs := a.HSForUser(0)
-	_ = acl.ApplyACLPipelineForPlane(a.DB, hs, "", nil, c.Username,
-		fmt.Sprintf("subnet_preferred_exit_node_set user=%d node_id=%s", id, nodeID))
-	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", id), http.StatusSeeOther)
-}
-
-// PostAdminUserSubnetClearExitNode resets the user's
-// preferred exit-node. After this, no
-// `exitnode.skygate-subnet-<user>` DNS record is
-// published for the user. ACL is re-pushed.
-//
-// 2026-07-20: v0.19.0.
-func (a *App) PostAdminUserSubnetClearExitNode(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
-		return
-	}
-	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/clear-exit-node")
-	if err != nil {
-		http.Error(w, "bad id", 400)
-		return
-	}
-	if err := subnet.ClearPreferredExitNode(a.DB, id); err != nil {
-		renderUserSubnetPage(a, w, r, c, id, map[string]any{
-			"FlashError": err.Error(),
-		})
-		return
-	}
-	a.audit(c.UserID, c.Username, "subnet_preferred_exit_node_cleared",
-		fmt.Sprintf("user=%d", id))
-	hs := a.HSForUser(0)
-	_ = acl.ApplyACLPipelineForPlane(a.DB, hs, "", nil, c.Username,
-		fmt.Sprintf("subnet_preferred_exit_node_cleared user=%d", id))
-	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", id), http.StatusSeeOther)
 }
 
 // extractIDFromAdminPath pulls the {id} from

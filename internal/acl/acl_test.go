@@ -77,11 +77,7 @@ CREATE TABLE user_subnets (
 	router_container_id TEXT NOT NULL DEFAULT '',
 	router_hostname TEXT NOT NULL DEFAULT '',
 	created_at INTEGER DEFAULT 0,
-	updated_at INTEGER DEFAULT 0,
-	-- 2026-07-20: v0.19.0 — preferred exit-node (headscale
-	-- node ID) for the exitnode.skygate-subnet-<user>
-	-- DNS record. Default empty = no preference.
-	preferred_exit_node_id TEXT NOT NULL DEFAULT ''
+	updated_at INTEGER DEFAULT 0
 );
 CREATE TABLE user_subnet_shares (
 	grantor_user_id INTEGER NOT NULL,
@@ -151,7 +147,7 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 	seedPortalUser(t, d, "alice")
 	seedPortalUser(t, d, "bob")
 
-	aclStr, err := GenerateACL(d, nil)
+	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
@@ -225,7 +221,7 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 func TestGenerateACL_LastRuleIsAutogroupInternet(t *testing.T) {
 	d := openTestDB(t)
 	seedPortalUser(t, d, "alice")
-	aclStr, err := GenerateACL(d, nil)
+	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
@@ -285,7 +281,7 @@ func TestGenerateACL_PerUserSubnetCIDR(t *testing.T) {
 		t.Fatalf("seed alice subnet: %v", err)
 	}
 
-	aclStr, err := GenerateACL(d, nil)
+	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
@@ -358,7 +354,7 @@ func TestGenerateACL_SharedSubnetsExtendDst(t *testing.T) {
 		t.Fatalf("seed share: %v", err)
 	}
 
-	aclStr, err := GenerateACL(d, nil)
+	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
@@ -480,7 +476,7 @@ func TestGenerateACL_SharedSubnetsAreIdempotent(t *testing.T) {
 		(grantor_user_id, grantee_user_id, created_at)
 		VALUES (?, ?, 0)`, aliceID, bobID)
 
-	aclStr, err := GenerateACL(d, nil)
+	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
@@ -523,7 +519,7 @@ func TestGenerateACL_ExitNodeMeshStillGlobal(t *testing.T) {
 	seedPortalUser(t, d, "alice")
 	seedPortalUser(t, d, "bob")
 
-	aclStr, err := GenerateACL(d, nil)
+	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
@@ -550,7 +546,7 @@ func TestGenerateACLIncludesDeviceRules(t *testing.T) {
 	uid := seedPortalUser(t, d, "alice")
 	_, _ = d.Exec(`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip) VALUES (?, 42, 'emilia', 'ip', '1.2.3.4', 'accept', '100.64.0.5')`, uid)
 
-	aclStr, err := GenerateACL(d, nil)
+	aclStr, err := GenerateACL(d)
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
@@ -646,17 +642,6 @@ func fakeHeadscale(t *testing.T, policyStatus int, policyErr error) (*headscale.
 type capturedPolicy struct {
 	mu     sync.Mutex
 	config string
-}
-
-// set / get are tiny accessors used by the v0.19.0
-// extra_records tests. Kept here (next to the struct
-// definition) so all capturedPolicy access is in one
-// place.
-func (c *capturedPolicy) set(s string) { c.mu.Lock(); defer c.mu.Unlock(); c.config = s }
-func (c *capturedPolicy) get() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.config
 }
 
 func fakeHeadscaleWithCapture(t *testing.T, policyStatus int) (*headscale.Client, *capturedPolicy) {
@@ -823,7 +808,7 @@ func TestGenerateACLForPlane_ScopesToPlaneUsers(t *testing.T) {
 
 	// Global plane (URL="") — must include alice, exclude
 	// bob+carol.
-	got, err := GenerateACLForPlane(d, "", nil)
+	got, err := GenerateACLForPlane(d, "")
 	if err != nil {
 		t.Fatalf("GenerateACLForPlane(global): %v", err)
 	}
@@ -838,7 +823,7 @@ func TestGenerateACLForPlane_ScopesToPlaneUsers(t *testing.T) {
 	}
 
 	// Plane B — must include bob+carol, exclude alice.
-	got, err = GenerateACLForPlane(d, "https://plane-b.example", nil)
+	got, err = GenerateACLForPlane(d, "https://plane-b.example")
 	if err != nil {
 		t.Fatalf("GenerateACLForPlane(plane B): %v", err)
 	}

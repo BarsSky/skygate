@@ -68,54 +68,6 @@
 </div>
 
 {{if .Subnet}}
-{{/* 2026-07-20: v0.19.0 — preferred exit-node for the
-     `exitnode.skygate-subnet-<user>.<base-domain>` DNS
-     record published via headscale's `dns.extra_records`.
-     The operator picks one of the operator-configured
-     exit-nodes (from /admin/exit-nodes) here; the
-     ACL builder then publishes an A/AAAA record for
-     the user's exit-node FQDN. */}}
-<div class="card">
-  <h3><i class="fa-solid fa-route"></i> {{t "user_subnet.preferred_exit_node_title"}}</h3>
-  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
-    {{t "user_subnet.preferred_exit_node_help" | safeHTML}}
-  </p>
-
-  <div style="margin-top:12px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-    {{if .ExitNodeChoices}}
-    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/set-exit-node" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-      <div>
-        <label style="font-size:12px;color:var(--text-muted)">{{t "user_subnet.preferred_exit_node_label"}}</label>
-        <select name="node_id" style="min-width:200px">
-          <option value="">{{t "user_subnet.preferred_exit_node_none"}}</option>
-          {{range .ExitNodeChoices}}
-          <option value="{{.NodeID}}"{{if eq .NodeID $.Subnet.PreferredExitNodeID}} selected{{end}}>
-            {{.Hostname}} ({{.IP}})
-          </option>
-          {{end}}
-        </select>
-      </div>
-      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-route"></i> {{t "user_subnet.preferred_exit_node_set"}}</button>
-    </form>
-    {{if .Subnet.PreferredExitNodeID}}
-    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/clear-exit-node" style="display:inline">
-      <button type="submit" class="btn btn-warning" title="{{t "user_subnet.preferred_exit_node_clear_help"}}">
-        <i class="fa-solid fa-xmark"></i> {{t "user_subnet.preferred_exit_node_clear"}}
-      </button>
-    </form>
-    {{end}}
-    {{else}}
-    <div style="color:var(--text-subtle);font-size:12px;font-style:italic">{{t "user_subnet.preferred_exit_node_no_choices"}}</div>
-    {{end}}
-  </div>
-
-  {{if .Subnet.PreferredExitNodeID}}
-  <div style="margin-top:8px;color:var(--text-muted);font-size:12px;font-family:var(--mono)">
-    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.preferred_exit_node_active"}}: <code>{{.PreferredExitNodeFQDN}}</code>
-  </div>
-  {{end}}
-</div>
-
 <div class="card">
   <h3><i class="fa-solid fa-share-nodes"></i> {{t "user_subnet.sharing_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">

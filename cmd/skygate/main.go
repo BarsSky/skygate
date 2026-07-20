@@ -219,13 +219,6 @@ func main() {
 	mux.Handle("POST /admin/users/{id}/subnet/provision", authMW(http.HandlerFunc(app.PostAdminUserSubnetProvision)))
 	mux.Handle("POST /admin/users/{id}/subnet/share", authMW(http.HandlerFunc(app.PostAdminUserSubnetShare)))
 	mux.Handle("POST /admin/users/{id}/subnet/revoke", authMW(http.HandlerFunc(app.PostAdminUserSubnetRevoke)))
-	// 2026-07-20: v0.19.0 — set / clear the user's preferred
-	// exit-node (drives the
-	// `exitnode.skygate-subnet-<user>.<base-domain>` DNS
-	// record published via headscale's `dns.extra_records`).
-	// The ACL is re-pushed after each state change.
-	mux.Handle("POST /admin/users/{id}/subnet/set-exit-node", authMW(http.HandlerFunc(app.PostAdminUserSubnetSetExitNode)))
-	mux.Handle("POST /admin/users/{id}/subnet/clear-exit-node", authMW(http.HandlerFunc(app.PostAdminUserSubnetClearExitNode)))
 	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(app.GetAdminSubnets)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))

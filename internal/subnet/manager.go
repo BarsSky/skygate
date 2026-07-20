@@ -70,18 +70,6 @@ type Subnet struct {
 	RouterHostname    string
 	CreatedAt         int64
 	UpdatedAt         int64
-	// 2026-07-20: v0.19.0 — preferred exit-node for
-	// this user_subnet. Empty string = no preference
-	// (no `exitnode.skygate-subnet-<user>` DNS record
-	// published). When set, it's the headscale node
-	// ID (e.g. "11" for karolina) and the ACL builder
-	// looks up that node's Tailscale IP and publishes
-	// it as a headscale `dns.extra_records` A record.
-	// Per-user choice because the per-user-subnet
-	// route is per-user; karolina is the operator's
-	// choice for michail, but alice might prefer
-	// emilia (lower latency from her VPS).
-	PreferredExitNodeID string
 }
 
 // ErrAlreadyExists is returned by Create when the user
@@ -215,15 +203,14 @@ func Get(d *sql.DB, userID int64) (*Subnet, error) {
 	row := d.QueryRow(`
 		SELECT id, user_id, cidr, subnet_bits, control_plane_url,
 		       status, router_node_id, router_container_id,
-		       router_hostname, created_at, updated_at,
-		       preferred_exit_node_id
+		       router_hostname, created_at, updated_at
 		  FROM user_subnets
 		 WHERE user_id = ?
 	`, userID)
 	var s Subnet
 	if err := row.Scan(&s.ID, &s.UserID, &s.CIDR, &s.SubnetBits, &s.ControlPlaneURL,
 		&s.Status, &s.RouterNodeID, &s.RouterContainerID, &s.RouterHostname,
-		&s.CreatedAt, &s.UpdatedAt, &s.PreferredExitNodeID); err != nil {
+		&s.CreatedAt, &s.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -240,8 +227,7 @@ func List(d *sql.DB) ([]*Subnet, error) {
 	rows, err := d.Query(`
 		SELECT id, user_id, cidr, subnet_bits, control_plane_url,
 		       status, router_node_id, router_container_id,
-		       router_hostname, created_at, updated_at,
-		       preferred_exit_node_id
+		       router_hostname, created_at, updated_at
 		  FROM user_subnets
 		 ORDER BY user_id ASC
 	`)
@@ -254,7 +240,7 @@ func List(d *sql.DB) ([]*Subnet, error) {
 		var s Subnet
 		if err := rows.Scan(&s.ID, &s.UserID, &s.CIDR, &s.SubnetBits, &s.ControlPlaneURL,
 			&s.Status, &s.RouterNodeID, &s.RouterContainerID, &s.RouterHostname,
-			&s.CreatedAt, &s.UpdatedAt, &s.PreferredExitNodeID); err != nil {
+			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("subnet: list scan: %w", err)
 		}
 		out = append(out, &s)
@@ -273,8 +259,7 @@ func ListByStatus(d *sql.DB, status string) ([]*Subnet, error) {
 	rows, err := d.Query(`
 		SELECT id, user_id, cidr, subnet_bits, control_plane_url,
 		       status, router_node_id, router_container_id,
-		       router_hostname, created_at, updated_at,
-		       preferred_exit_node_id
+		       router_hostname, created_at, updated_at
 		  FROM user_subnets
 		 WHERE status = ?
 		 ORDER BY user_id ASC
@@ -288,7 +273,7 @@ func ListByStatus(d *sql.DB, status string) ([]*Subnet, error) {
 		var s Subnet
 		if err := rows.Scan(&s.ID, &s.UserID, &s.CIDR, &s.SubnetBits, &s.ControlPlaneURL,
 			&s.Status, &s.RouterNodeID, &s.RouterContainerID, &s.RouterHostname,
-			&s.CreatedAt, &s.UpdatedAt, &s.PreferredExitNodeID); err != nil {
+			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("subnet: list by status scan: %w", err)
 		}
 		out = append(out, &s)
