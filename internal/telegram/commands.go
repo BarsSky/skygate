@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"skygate/internal/headscale"
+	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
 	"skygate/internal/sidecar"
 )
@@ -98,6 +99,14 @@ type BotEnv struct {
 	// returns a hint to ask the admin to use the web UI
 	// /admin/users/{id}/subnet Provision button).
 	Sidecar *sidecar.Manager
+
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// The /headscale command reads the monitor's
+	// Snapshot() to render the pinned-vs-latest
+	// summary + history. nil is valid (the bot then
+	// returns a "disabled" hint pointing at the env
+	// vars to set).
+	HeadscaleUpdateMonitor *headscale_version.Monitor
 
 	// 2026-07-13: Этап 11 part 2b — per-device and total rule
 	// caps, snapshotted from the App's *config.Config at startup.
@@ -405,6 +414,7 @@ var commandContext = map[string]string{
 	"/exit_nodes":        "registry",
 	"/exit_nodes_health": "registry",
 	"/sync_nodes":        "registry",
+	"/headscale":         "version", // v0.20.0 — same envelope as /version (build/status info)
 	"/quota":             "registry",
 	"/ack":               "ack",
 	"/restart":           "err", // operator warning
@@ -538,6 +548,10 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		"/status": true, "/nodes": true, "/rules": true, "/audit": true,
 		"/exit_nodes": true, "/exit_nodes_health": true, "/sync_nodes": true, "/quota": true, "/ack": true, "/restart": true,
 		"/bind": true, "/unbind": true,
+		// 2026-07-20: v0.20.0 — headscale-update-monitor
+		// status (admin-only; the headscale update stream
+		// is operator-side metadata).
+		"/headscale": true,
 	}
 	if adminOnly[cmd] && env.IsIdentified() && !env.IsAdmin {
 		return cmdReply{body: i18n.Tf(env.Lang, "bot.admin_only_command", cmd), context: "err"}
@@ -565,6 +579,13 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: exitNodesHealthReply(env), context: lookupContext(cmd)}
 	case "/sync_nodes":
 		return cmdReply{body: syncNodesReply(env), context: lookupContext(cmd)}
+	case "/headscale":
+		// 2026-07-20: v0.20.0 — headscale-update-monitor
+		// status (admin-only). Mirrors the /admin/headscale
+		// page: pinned vs. latest, update + breaking flags,
+		// last 3 seen releases. Useful for the operator
+		// who doesn't have a browser handy.
+		return cmdReply{body: headscaleReply(env), context: lookupContext(cmd)}
 	case "/quota":
 		return cmdReply{body: quotaReply(env), context: lookupContext(cmd)}
 	case "/ack":

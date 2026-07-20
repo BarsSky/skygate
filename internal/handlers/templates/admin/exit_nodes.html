@@ -13,6 +13,27 @@
 </div>
 {{end}}
 
+{{/* 2026-07-20: v0.20.0 — headscale-update-monitor banner.
+     Fires when the monitor has seen a headscale release
+     newer than the operator's pinned version. Breaking
+     changes (major/minor) get the danger style; patches
+     get the warning style. The banner links to the
+     /admin/headscale page for the full history + "Run
+     check now" button. */}}
+{{if .HeadscaleUpdate}}
+<div class="alert {{if .HeadscaleBreaking}}alert-danger{{else}}alert-warning{{end}}" style="margin-bottom:16px">
+  <i class="fa-solid {{if .HeadscaleBreaking}}fa-triangle-exclamation{{else}}fa-circle-arrow-up{{end}}"></i>
+  <strong>
+    {{if .HeadscaleBreaking}}{{t "headscale_banner.breaking_title"}}{{else}}{{t "headscale_banner.update_title"}}{{end}}
+  </strong>
+  <span style="margin-left:8px">
+    {{t "headscale_banner.pinned_label"}}: <code>{{.HeadscalePinned}}</code> →
+    <code>{{.HeadscaleLatest}}</code>
+  </span>
+  <a href="/admin/headscale" style="margin-left:8px;font-size:13px">{{t "headscale_banner.view_details"}} →</a>
+</div>
+{{end}}
+
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}
