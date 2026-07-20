@@ -258,10 +258,25 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 					break
 				}
 			}
+			// 2026-07-20: v0.22.2 debug log — helps trace the
+			// "tag:private disappears after 2nd backfill" symptom
+			// (operator saw tags='' in headscale API right after
+			// the 2nd backfill returned). The log shows the
+			// matchedTag + hasPrivate + whether TagNode was
+			// called. Safe to remove once the root cause is
+			// pinned (suspect: headscale's HS.ListAllNodes
+			// returns a cached snapshot from a different
+			// goroutine, and the 2nd backfill sees stale
+			// n.Tags=[] while headscale's authoritative state
+			// is ['tag:private']).
+			log.Printf("DBG backfill node=%s name=%s matchedTag=%s api_tags=%v hasPrivate=%v",
+				n.ID, n.Hostname, matchedTag, n.Tags, hasPrivate)
 			if !hasPrivate {
 				if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
 					if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
 						log.Printf("warn: auto-tag node %s: %v", n.ID, err)
+					} else {
+						log.Printf("DBG backfill TagNode called for node=%s (set tag:private)", n.ID)
 					}
 				}
 			}
