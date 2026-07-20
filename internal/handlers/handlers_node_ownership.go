@@ -148,7 +148,36 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		if n.PreAuthKeyID != "" {
 			for _, p := range paks {
 				if p.HeadscalePreauthID != "" && p.HeadscalePreauthID == n.PreAuthKeyID {
-					matchedTag = firstTagOrFallback(n)
+					// 2026-07-20: v0.22.2 hotfix — same fix as
+					// Strategy C below. The preauth key came
+					// from skygate (we have its headscale ID
+					// in preauth_keys), so the user explicitly
+					// registered the device via the skygate
+					// /my/preauth flow. The default tag should
+					// be tag:private so the device is scoped to
+					// this user in headscale's tagOwners + the
+					// per-user ACL. Previously firstTagOrFallback(n)
+					// returned "tag:untagged" for headscale-tagless
+					// nodes (like MSI on 2026-07-20) and the
+					// code went to the else branch — InsertIgnoreNodeOwner
+					// was called with tag="tag:untagged" AND
+					// HS.TagNode(15, "tag:private") was NEVER
+					// called, so the node stayed tagless in
+					// headscale forever (the snapshot row
+					// blocked any further tag:private upgrade
+					// because the next backfill would still
+					// hit the else branch). The fix: when we
+					// have a direct preauth match, default to
+					// tag:private. firstTagOrFallback is only
+					// used when the node ALREADY has tags (e.g.
+					// skygate-vm has tag:private in headscale,
+					// so firstTagOrFallback returns "tag:private"
+					// and the result is unchanged).
+					if len(n.Tags) > 0 {
+						matchedTag = firstTagOrFallback(n)
+					} else {
+						matchedTag = "tag:private"
+					}
 					break
 				}
 			}
