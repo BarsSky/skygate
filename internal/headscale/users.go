@@ -114,8 +114,24 @@ func (c *Client) DeleteUser(userID int64) error {
 				}
 			}
 		}
-		// Now delete user via CLI
-		cmd = exec.Command("docker", "exec", c.ExecContainer, "headscale", "users", "delete", "-u", "-f", strconv.FormatInt(userID, 10))
+		// Now delete user via CLI.
+		//
+		// 2026-07-20: v0.21.1 fix — was using "-u
+		// -f <id>" (typo for the identifier flag);
+		// headscale's CLI parser reads "-u" as a
+		// flag with no value and fails with
+		// "unknown shorthand flag: 'u' in -u".
+		// The correct flag is "-i" / "--identifier"
+		// (see `headscale users delete --help` —
+		// "Flags: -i, --identifier int"). The
+		// "--force" global flag has no short
+		// alias in 0.29.x, so we use the long
+		// form. The previous bug left stale
+		// "orphan" headscale users after every
+		// skygate user delete; the audit log
+		// captured every failed attempt with
+		// "Error: unknown shorthand flag: 'u' in -u".
+		cmd = c.deleteUserCmd(userID)
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return nil
@@ -123,4 +139,21 @@ func (c *Client) DeleteUser(userID int64) error {
 		return fmt.Errorf("headscale users delete: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return fmt.Errorf("cannot delete headscale user: ExecContainer not set")
+}
+
+// deleteUserCmd builds the `docker exec ...
+// headscale users delete` command for a given
+// user ID. Extracted as a method so the test
+// can assert the exact args without spinning
+// up a subprocess (Windows PATH + exec.Command
+// is fragile enough that a real subprocess test
+// is more brittle than helpful).
+//
+// 2026-07-20: v0.21.1 — extracted from
+// DeleteUser to make the -i / --force fix
+// regression-testable.
+func (c *Client) deleteUserCmd(userID int64) *exec.Cmd {
+	return exec.Command("docker", "exec", c.ExecContainer, "headscale", "users", "delete",
+		"-i", strconv.FormatInt(userID, 10),
+		"--force")
 }
