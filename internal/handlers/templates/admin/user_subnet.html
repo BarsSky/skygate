@@ -32,7 +32,17 @@
   <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.status_title"}}</h3>
   <table class="kv-table" style="margin-top:8px">
     <tr><th>{{t "user_subnet.cidr"}}</th><td><code>{{.Subnet.CIDR}}</code></td></tr>
-    <tr><th>{{t "user_subnet.status"}}</th><td><code>{{.Subnet.Status}}</code></td></tr>
+    <tr>
+      <th>{{t "user_subnet.status"}}</th>
+      <td>
+        {{if eq .Subnet.Status "router_active"}}<span class="tag tag-success" title="{{t "user_subnet.status_pill_router_active_title"}}"><i class="fa-solid fa-tower-broadcast"></i> {{t "user_subnet.cell_router_active"}}</span>
+        {{else if eq .Subnet.Status "active"}}<span class="tag tag-success" title="{{t "user_subnet.status_pill_active_title"}}"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>
+        {{else if eq .Subnet.Status "pending"}}<span class="tag tag-warning" title="{{t "user_subnet.status_pill_pending_title"}}"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>
+        {{else if eq .Subnet.Status "disabled"}}<span class="tag" style="opacity:0.6" title="{{t "user_subnet.status_pill_disabled_title"}}"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>
+        {{else}}<code>{{.Subnet.Status}}</code>
+        {{end}}
+      </td>
+    </tr>
     <tr><th>{{t "user_subnet.bits"}}</th><td><code>/{{.SubnetBits}}</code></td></tr>
     <tr><th>{{t "user_subnet.plane"}}</th><td><code>{{.HeadscaleURL}}</code></td></tr>
     <tr><th>{{t "user_subnet.router_hostname"}}</th><td><code>{{if .Subnet.RouterHostname}}{{.Subnet.RouterHostname}}{{else}}—{{end}}</code></td></tr>
@@ -59,12 +69,13 @@
     <form method="POST" action="/admin/users/{{.User.ID}}/subnet/test" style="display:inline">
       <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-stethoscope"></i> {{t "user_subnet.test_button"}}</button>
     </form>
-    {{if eq .Subnet.Status "active"}}
+    {{if or (eq .Subnet.Status "active") (eq .Subnet.Status "router_active")}}
     <form method="POST" action="/admin/users/{{.User.ID}}/subnet/disable" style="display:inline">
       <button type="submit" class="btn btn-warning"><i class="fa-solid fa-pause"></i> {{t "user_subnet.disable_button"}}</button>
     </form>
     {{end}}
   </div>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:12px">{{t "user_subnet.status_explainer_v0_22_3" | safeHTML}}</p>
 </div>
 
 {{if .Subnet}}

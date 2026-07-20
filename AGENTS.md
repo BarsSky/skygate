@@ -7,7 +7,44 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.22.2 — fix
+* **Current**: v0.22.3 — subnet
+  status reflects device
+  ownership, not subnet-router
+  ([release notes](RELEASE-NOTES-v0.22.3.md)).
+  The "why is my subnet `pending`?"
+  release. Pre-v0.22.3 the status
+  semantics was `active` ⇔
+  subnet-router up, which left
+  every user in `pending` because
+  nobody deployed a sidecar. v0.22.3
+  flips it: `pending` ⇔ 0 devices
+  in tailnet, `active` ⇔ ≥1 device
+  (logical namespace),
+  `router_active` ⇔ bonus on top
+  (real subnet-router up too).
+  `subnet.SyncStatus(db, uid, hasRouter)`
+  encapsulates the new logic; called
+  from `backfillNodeOwnership` after
+  every `/my/devices` load. UI gets
+  colored pills (green/green/yellow/muted)
+  on `/admin/users/{id}/subnet` +
+  `/admin/users` subnet column, plus
+  a new "Your personal subnet" card
+  on `/my/devices`. 7 new unit tests
+  in `internal/subnet/manager_test.go`
+  (PendingWhenNoDevices / ActiveWhenDevices /
+  RouterActiveWhenHasRouter / DisabledPreserved
+  / NoSubnetRow / Idempotent / SetStatusAcceptsRouterActive).
+  8 files, +405/-18 lines, 7 new tests,
+  smoke 83/83 still green. For the 4
+  production users (skyadmin/michail/
+  guest/daniil) their subnets flip
+  from `pending` to `active` on the
+  next `/my/devices` load — guest
+  (0 devices) stays `pending`, which
+  is the intended behavior.
+
+* **Previous**: v0.22.2 — fix
   auto-apply tag:private for
   tagless nodes (MSI bug)
   ([release notes](RELEASE-NOTES-v0.22.2.md)).

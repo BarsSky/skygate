@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"skygate/internal/headscale"
+	"skygate/internal/subnet"
 
 	dbpkg "skygate/internal/db"
 )
@@ -85,10 +88,24 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 	if portalUserID == 0 || portalUsername == "" {
 		return
 	}
+	// 2026-07-21: v0.22.3 — track whether THIS user has a
+	// subnet-router currently registered in headscale, so
+	// subnet.SyncStatus below can compute the right status
+	// (active vs router_active). Detection mirrors
+	// sidecar.UsernameFromHostname: hostname starts with
+	// "skygate-subnet-" and the rest equals our portal
+	// username.
+	hasRouter := false
+	const subnetRouterPrefix = "skygate-subnet-"
 	// Build a set of currently-live node IDs.
 	live := map[string]bool{}
 	for _, n := range nodes {
 		live[n.ID] = true
+		if !hasRouter && hasRouterTag(n.Tags) && strings.HasPrefix(n.Hostname, subnetRouterPrefix) {
+			if uname := strings.TrimPrefix(n.Hostname, subnetRouterPrefix); uname == portalUsername {
+				hasRouter = true
+			}
+		}
 	}
 	// GC pass: drop snapshot rows for nodes that no longer exist in
 	// headscale. Restricted to rows that this portal user owns, so a
@@ -294,4 +311,30 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 			}
 		}
 	}
+	// 2026-07-21: v0.22.3 — sync the user_subnets.status to
+	// reflect the new state. After every /my/devices load, the
+	// user's node_owner_map is up to date, so SyncStatus can
+	// safely recompute the status. ErrNotFound is benign
+	// (user has no subnet row → not opted in → nothing to
+	// sync); every other error gets a warn log so we can
+	// spot regressions in production.
+	newStatus, syncErr := subnet.SyncStatus(db, portalUserID, hasRouter)
+	if syncErr != nil && !errors.Is(syncErr, subnet.ErrNotFound) {
+		log.Printf("warn: subnet.SyncStatus user=%d hasRouter=%v: %v", portalUserID, hasRouter, syncErr)
+	} else if syncErr == nil {
+		log.Printf("DBG subnet sync user=%d hasRouter=%v status=%s", portalUserID, hasRouter, newStatus)
+	}
+}
+
+// hasRouterTag is a small slice helper used by the v0.22.3
+// subnet status sync logic. Kept private to handlers/ since
+// it's only used by backfillNodeOwnership; the sidecar
+// package has its own copy of the same logic for clarity.
+func hasRouterTag(tags []string) bool {
+	for _, t := range tags {
+		if t == "tag:subnet-router" {
+			return true
+		}
+	}
+	return false
 }

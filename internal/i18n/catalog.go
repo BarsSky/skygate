@@ -972,6 +972,21 @@ var ruCatalog = map[string]string{
 	"user_subnet.cell_active":          "active",
 	"user_subnet.cell_disabled":        "disabled",
 	"user_subnet.open_button":          "Subnet",
+	// 2026-07-21: v0.22.3 — bonus status when the user has
+	// both devices online AND a tag:subnet-router advertising
+	// their 10.0.<uid>.0/24. Green pill (same as active) with
+	// a router icon to distinguish the "real subnet-router up"
+	// case from the "logical namespace only" case.
+	"user_subnet.cell_router_active":   "router active",
+	"user_subnet.status_pill_active_title":   "Subnet активна: у пользователя есть устройства в tailnet",
+	"user_subnet.status_pill_pending_title":  "Subnet не активна: пользователь ещё не добавил ни одного устройства",
+	"user_subnet.status_pill_router_active_title": "Subnet-router поднят: 10.0.<uid>.0/24 реально анонсируется в tailnet через tag:subnet-router",
+	"user_subnet.status_pill_disabled_title": "Subnet отключена администратором",
+	"user_subnet.status_explainer_v0_22_3": "<b>v0.22.3:</b> статус <code>active</code> теперь означает «у пользователя есть устройства в tailnet», а не «subnet-router поднят». <code>router active</code> — бонус-статус, появляется когда пользователь дополнительно поднял subnet-router для маршрутизации своей домашней сети. <code>pending</code> — только для новых пользователей, у которых ещё нет устройств.",
+	"my_devices.subnet_card_title":     "Твой personal subnet",
+	"my_devices.subnet_card_help":      "Логический namespace для твоих устройств. <code>10.0.&lt;uid&gt;.0/24</code> выделяется автоматически при создании аккаунта и становится активным когда ты подключаешь первое устройство.",
+	"my_devices.subnet_card_cidr_label": "CIDR",
+	"my_devices.subnet_card_status_label": "Статус",
 	"derp.peers":                      "Пиров",
 	"derp.traffic":                    "Трафик",
 	"derp.rtt":                        "RTT",
@@ -2990,6 +3005,21 @@ var enCatalog = map[string]string{
 	"user_subnet.cell_active":          "active",
 	"user_subnet.cell_disabled":        "disabled",
 	"user_subnet.open_button":          "Subnet",
+	// 2026-07-21: v0.22.3 — bonus status when the user has
+	// both devices online AND a tag:subnet-router advertising
+	// their 10.0.<uid>.0/24. Green pill (same as active) with
+	// a router icon to distinguish the "real subnet-router up"
+	// case from the "logical namespace only" case.
+	"user_subnet.cell_router_active":   "router active",
+	"user_subnet.status_pill_active_title":   "Subnet active: user has devices in the tailnet",
+	"user_subnet.status_pill_pending_title":  "Subnet pending: user has not added any devices yet",
+	"user_subnet.status_pill_router_active_title": "Subnet-router up: 10.0.<uid>.0/24 is actually being advertised in the tailnet via tag:subnet-router",
+	"user_subnet.status_pill_disabled_title": "Subnet disabled by an admin",
+	"user_subnet.status_explainer_v0_22_3": "<b>v0.22.3:</b> the <code>active</code> status now means \"user has devices in the tailnet\", not \"subnet-router is up\". <code>router active</code> is a bonus status that appears when the user additionally set up a subnet-router to route their home network. <code>pending</code> is only for fresh users who haven't added any devices yet.",
+	"my_devices.subnet_card_title":     "Your personal subnet",
+	"my_devices.subnet_card_help":      "Logical namespace for your devices. <code>10.0.&lt;uid&gt;.0/24</code> is auto-allocated on account creation and becomes active when you connect your first device.",
+	"my_devices.subnet_card_cidr_label": "CIDR",
+	"my_devices.subnet_card_status_label": "Status",
 	"derp.peers":                      "Peers",
 	"derp.traffic":                    "Traffic",
 	"derp.rtt":                        "RTT",
