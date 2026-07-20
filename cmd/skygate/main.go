@@ -17,6 +17,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/backup"
 	"skygate/internal/config"
+	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/db"
 	"skygate/internal/handlers"
@@ -313,6 +314,15 @@ func main() {
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(app.AdminExitNodes)))
+	// 2026-07-20: v0.20.0 — headscale-update-monitor
+	// status page. Renders the monitor's snapshot
+	// (pinned vs. latest, history table). Admin-only.
+	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(app.GetAdminHeadscale)))
+	// 2026-07-20: v0.20.0 — "Run check now" button on
+	// /admin/headscale. Forces the monitor to re-poll
+	// GitHub immediately. Same pattern as
+	// /admin/exit-nodes/health-now.
+	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(app.PostAdminHeadscaleCheckNow)))
 	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(app.PostAdminExitNodesAdd)))
 	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(app.PostAdminExitNodesDelete)))
 	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(app.PostAdminExitNodesSync)))
@@ -367,8 +377,12 @@ func main() {
 		// restart. RealNotifier.SendTelegram no-ops when Configured()==false,
 		// and Run() sleeps-and-rechecks every 5s when the DB has no token.
 		// No more "boot-time gate" on app.Notifier — it's always non-nil.
-		{
-			rn := telegram.NewRealNotifier(d)
+		//
+		// The block was anonymous ({}) in v0.16.x and earlier — it
+		// served no scoping purpose. v0.20.0 makes it a top-level
+		// var so the headscale-update-monitor wiring (later in this
+		// function) can call rn.SetHeadscaleUpdateMonitor(hsMon).
+		rn := telegram.NewRealNotifier(d)
 			// 2026-07-11: Phase 3 (/quota) needs per-user rule limits
 			// to render "user X used N of M" rather than just N. Set
 			// once at boot; the BotEnv snapshot is per-message so a
@@ -390,6 +404,11 @@ func main() {
 			// approver for tag:subnet-router nodes; this
 			// just hands the manager to the bot's env.
 			rn.SetSidecar(sidecarMgr)
+			// 2026-07-20: v0.20.0 — headscale-update-monitor.
+			// Wired below (after the monitor's struct is
+			// created) so the variable is in scope; the
+			// SetHeadscaleUpdateMonitor call lives outside
+			// this block where `hsMon` is reachable.
 			// 2026-07-16: v0.12.1 — per-user headscale-client
 			// routing. The closure binds app so the bot calls
 			// the same App.HSForUser the web handlers use
@@ -439,7 +458,6 @@ func main() {
 					log.Printf("🤖 setMyCommandsAll: %v", err)
 				}
 			}()
-		}
 	defer stop()
 
 	go func() {
@@ -513,6 +531,36 @@ func main() {
 	// Stash the monitor on the App so handlers can call
 	// CheckNow for the manual "Run health check now" button.
 	app.ExitNodeMonitor = exitMon
+
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// Polls the GitHub Releases API for
+	// juanfont/headscale, writes each unique tag to
+	// the headscale_releases table, and dispatches a
+	// Telegram alert when a newer-than-pinned
+	// version is found. The /admin/headscale page
+	// and the bot /headscale command read the
+	// monitor's Snapshot(); the /admin/exit-nodes
+	// page reads UpdateAvailable + BreakingAvailable
+	// to render a banner. cfg.HeadscalePollInterval
+	// = 0 disables the goroutine (the page + bot
+	// still work from the cache).
+	if cfg.HeadscalePollInterval > 0 {
+		hsMon := headscale_version.NewMonitor(d, cfg.HeadscaleVersionPin, app.Notifier)
+		hsMon.CheckEvery = cfg.HeadscalePollInterval
+		hsMon.Start(ctx)
+		app.HeadscaleUpdateMonitor = hsMon
+		// 2026-07-20: v0.20.0 — also wire the
+		// monitor to the bot so /headscale renders
+		// the same status the /admin/headscale
+		// page does. rn was hoisted out of the
+		// Telegram block above so this call is
+		// in scope.
+		rn.SetHeadscaleUpdateMonitor(hsMon)
+		log.Printf("📡 headscale-update-monitor: polling every %s, pinned=%q (set SKYGATE_HEADSCALE_VERSION_PIN to enable alerts)",
+			cfg.HeadscalePollInterval, cfg.HeadscaleVersionPin)
+	} else {
+		log.Printf("📡 headscale-update-monitor: disabled (SKYGATE_HEADSCALE_POLL_INTERVAL=0). /admin/headscale still works as a manual look-up.")
+	}
 
 	// 2026-07-17: v0.16.7 — per-user subnet sidecar
 	// auto-approver moved earlier so the RealNotifier

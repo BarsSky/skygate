@@ -204,7 +204,7 @@ note "4. /admin/* pages"
 for path in /admin/users /admin/devices /admin/audit /admin/acls \
             /admin/exit-rules /admin/exit-rules/cleanup /admin/exit-rules/sync \
             /admin/exit-nodes /admin/derp /admin/backup /admin/settings \
-            /admin/telegram; do
+            /admin/telegram /admin/headscale; do
   CODE=$(status "$BASE$path")
   [ "$CODE" = "200" ] && ok "$path 200" || bad "$path $CODE"
 done
@@ -213,7 +213,7 @@ done
 # {{define "body-{slug}"}}; any mismatch raises "html/template: ... is
 # undefined" written to the response body. We anchor to the leading
 # 'template:' on the first three response lines.
-for path in /admin/users /admin/acls /admin/devices /admin/audit; do
+for path in /admin/users /admin/acls /admin/devices /admin/audit /admin/headscale; do
   HTML=$(html "$BASE$path")
   if echo "$HTML" | head -3 | grep -q "^template:"; then
     bad "$path: template render error ($(echo "$HTML" | head -3 | grep '^template:' | head -1))"

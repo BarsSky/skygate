@@ -227,5 +227,16 @@ func migrate(d *sql.DB) error {
 	if err := migrationV039(d); err != nil {
 		return fmt.Errorf("migrate v0.39: %w", err)
 	}
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// Adds the headscale_releases table (one row per
+	// unique tag the monitor has seen). See
+	// migrations_v0.41.go for the full rationale.
+	// (v0.40 was the v0.19.0 dns.extra_records
+	// migration that was reverted — the slot is
+	// reserved for the future v0.19.1 re-enable when
+	// headscale 0.30+ lands.)
+	if err := migrationV041(d); err != nil {
+		return fmt.Errorf("migrate v0.41: %w", err)
+	}
 	return nil
 }

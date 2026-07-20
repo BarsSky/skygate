@@ -178,7 +178,75 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"MonitorRunning": a.ExitNodeMonitor != nil,
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
+		// 2026-07-20: v0.20.0 — headscale-update-monitor
+		// banner. The template renders a coloured
+		// "newer headscale available" hint above the
+		// exit-node table when a release newer than the
+		// operator's pinned version is known. nil-safe:
+		// the template guards with `if .HeadscaleUpdate`.
+		"HeadscaleUpdate":    headscaleUpdateForBanner(a),
+		"HeadscaleBreaking":  headscaleBreakingForBanner(a),
+		"HeadscaleLatest":    headscaleLatestTag(a),
+		"HeadscalePinned":    headscalePinnedTag(a),
+		"HeadscaleHTMLURL":   headscaleHTMLURL(a),
 	})
+}
+
+// headscaleUpdateForBanner is a small helper that
+// returns the headscale-update-monitor's
+// UpdateAvailable flag (or false if the monitor is
+// not wired). Keeping the helper separate from
+// the data map means the template can use it as a
+// single condition without nil-checks inline.
+//
+// v0.20.0. 2026-07-20.
+func headscaleUpdateForBanner(a *App) bool {
+	if a.HeadscaleUpdateMonitor == nil {
+		return false
+	}
+	_, upd, _, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	return upd
+}
+
+// headscaleBreakingForBanner returns the
+// BreakingAvailable flag (same nil-safe pattern).
+func headscaleBreakingForBanner(a *App) bool {
+	if a.HeadscaleUpdateMonitor == nil {
+		return false
+	}
+	_, _, brk, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	return brk
+}
+
+// headscaleLatestTag returns the latest seen release
+// tag (or "" if the monitor is not wired / hasn't
+// polled yet).
+func headscaleLatestTag(a *App) string {
+	if a.HeadscaleUpdateMonitor == nil {
+		return ""
+	}
+	latest, _, _, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	return latest.TagName
+}
+
+// headscalePinnedTag returns the operator's pinned
+// version (or "").
+func headscalePinnedTag(a *App) string {
+	if a.HeadscaleUpdateMonitor == nil {
+		return ""
+	}
+	_, _, _, _, _, pinned := a.HeadscaleUpdateMonitor.Snapshot()
+	return pinned
+}
+
+// headscaleHTMLURL returns the GitHub release URL
+// for the latest seen release (or "").
+func headscaleHTMLURL(a *App) string {
+	if a.HeadscaleUpdateMonitor == nil {
+		return ""
+	}
+	latest, _, _, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	return latest.HTMLURL
 }
 
 // humanizeDuration formats a time.Duration as a short
