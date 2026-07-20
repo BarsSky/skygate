@@ -656,8 +656,14 @@ MESH_ID=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$BASE/admin/meshes" \
 # The /admin/users/{id}/delete endpoint needs the user's
 # numeric id, which we extract from /admin/users.
 ADMIN_USERS_HTML=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$BASE/admin/users")
+# The /admin/users template renders `<a href="/admin/users/{id}/subnet">`
+# and `<form action="/admin/users/{id}/delete">` for each row. The
+# id is the numeric user_id we want. We grep the row that
+# contains the username, then extract the first id that
+# appears in either form's action / href.
 MESH_USER_ID=$(echo "$ADMIN_USERS_HTML" \
-  | grep -oE "users/${MESH_USER}/[0-9]+|value=\"${MESH_USER}\"" \
+  | grep -A 50 "${MESH_USER}" \
+  | grep -oE "/admin/users/[0-9]+/(subnet|delete|reset-password)" \
   | head -1 | grep -oE "[0-9]+")
 # Fallback: if the row shape changed and we can't
 # extract the id, we accept the leak (the test user
