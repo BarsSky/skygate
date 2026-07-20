@@ -7,7 +7,33 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.22.0 — mesh (shared
+* **Current**: v0.22.1 — /my/meshes
+  web UI (was bot-only in v0.22.0)
+  ([release notes](RELEASE-NOTES-v0.22.1.md)).
+  v0.22.0 shipped the mesh (shared
+  network) feature bot-only
+  (/mesh create|join|leave|meshes).
+  The operator flagged that users have
+  no obvious place in the WEB interface
+  to (1) create a shared network, (2)
+  enter an invite code from another user.
+  v0.22.1 fixes the gap: GET /my/meshes
+  + 3 POST routes (create, join, leave)
+  with the same form-based UX as
+  /my/tokens / /my/devices. Web + bot
+  share the same internal/mesh package
+  state, so a mesh created via the web
+  shows up in the bot's /meshes list (and
+  vice versa). Sidebar entry + 34 new
+  i18n keys (RU+EN, 68 entries). 10/10
+  live-validation checks PASS on the VM
+  (caught a real i18n-key-prefix bug in
+  the first deploy; hotfix on top of
+  the initial v0.22.1 commit). Smoke
+  132/132 (EN 66 + RU 66), check_exit_nodes
+  3/3, check_https PASS.
+
+* **Previous**: v0.22.0 — mesh (shared
   network) + safe user migration design
   ([release notes](RELEASE-NOTES-v0.22.0.md)).
   The 3rd primitive in the user-to-user
