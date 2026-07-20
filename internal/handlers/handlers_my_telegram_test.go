@@ -163,7 +163,11 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			router_container_id TEXT NOT NULL DEFAULT '',
 			router_hostname TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
+			updated_at INTEGER NOT NULL,
+			-- 2026-07-20: v0.19.0 — preferred exit-node
+			-- (headscale node ID) for the
+			-- exitnode.skygate-subnet-<user> DNS record.
+			preferred_exit_node_id TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE telegram_bindings (
 			chat_id INTEGER PRIMARY KEY,
