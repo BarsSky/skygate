@@ -7,7 +7,64 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.20.0 — headscale-update-monitor +
+* **Current**: v0.21.0 — user-to-user subnet
+  bridge (invite codes + bot /invite + /accept +
+  /admin/invites)
+  ([release notes](RELEASE-NOTES-v0.21.0.md)).
+  Closes the third feature the operator asked
+  for in the 2026-07-20 backlog message. The
+  v0.17.1 admin-mediated "share" path is
+  unchanged; v0.21.0 adds the user-mediated
+  path: A generates a code, B types it in the
+  bot, the bridge auto-applies. New
+  `invite_codes` table (migration v0.42) with
+  a 32-char alphabet code (8 chars, ~1.1T
+  possibilities, 7-day TTL). Bot commands:
+  `/invite <username>` (grantor side, generates
+  a code), `/accept <code>` (grantee side,
+  validates + atomically consumes + applies the
+  bridge via `invite.ApplyBridge` which writes
+  a `user_subnet_shares` row + triggers the
+  per-plane ACL re-apply goroutine), `/invites`
+  (list the caller's outstanding + incoming
+  invites, 10 per side). Admin UI:
+  `/admin/invites` (admin-only overview with a
+  Revoke button for active rows). The bot path
+  does NOT require admin; the bridge row is
+  written the same way the admin share would
+  write it. `grantee_username` is TEXT (not an
+  FK) so A can invite "bob" before bob has a
+  skygate account — the consume path resolves
+  the username to a user_id at consume time.
+  16 files, +2348/-2 lines, smoke 126/126
+  (EN 63 + RU 63), check_exit_nodes 3/3,
+  check_https PASS.
+
+  **v0.21.0 hotfix** (commit `cb94b37`,
+  shipped immediately after v0.21.0):
+  `cmd/skygate/main.go` had a duplicate
+  registration of the `/admin/headscale` route
+  (introduced by the v0.21.0 edit pattern that
+  matched the v0.20.0 insertion twice). The
+  first deploy of v0.21.0 panicked on boot
+  with `pattern "GET /admin/headscale"...
+  conflicts with pattern "GET /admin/headscale"`.
+  The hotfix removes the duplicate, leaving
+  the v0.20.0 registration (lines 320+325) as
+  the single source of truth. Build verified
+  live on VM; smoke 126/126 again.
+
+  **What comes next**: the three "close the
+  backlog" features from the 2026-07-20
+  message are done. v0.19.1 (the re-attempt
+  of the reverted v0.19.0 dns.extra_records
+  feature) is still blocked on headscale
+  0.30+ — the weekly mavis cron
+  (`headscale-milestone-16-check`) checks
+  headscale milestone #16 (DNS Work) every 7
+  days and reports if any progress lands.
+
+* **Previous**: v0.20.0 — headscale-update-monitor +
   auto-allocate subnet on user create
   ([release notes](RELEASE-NOTES-v0.20.0.md)).
   Two operator-side UX cleanups bundled because
