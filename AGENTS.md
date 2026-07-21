@@ -7,7 +7,29 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.25.0 — Mesh visibility on /my/devices + operator overview
+* **Current**: v0.25.1 — Closing the loose ends (audit export + DR runbook + cleanup)
+  ([release notes](RELEASE-NOTES-v0.25.1.md)).
+  The "before we add HA, let's clean up the corners"
+  release. Three small items: (1) per-user audit log
+  export (CSV/JSON) via GET /my/account/audit — each
+  user (admin or not) can download their own audit
+  trail, scoped by (user_id, username) OR-fallback so
+  system events on the user's behalf (telegram_restart,
+  etc.) are also included. (2) docs/disaster-recovery.md
+  — full 15-min single-VM recovery runbook (RPO 1h, RTO
+  30m, with quarterly DR drill cadence). (3) cleanup:
+  .gitignore now ignores 22+ root-level scratch scripts
+  (check_*.sh / verify_*.sh / test_*.sh / etc.),
+  scripts/cleanup_orphan_meshes.sh ready to run for the
+  21 v0.22.0-test meshes, per-user bot routing
+  (v0.12.1 followup) closed retroactively (was already
+  done in v0.12.0). 1 unit test (TestListAuditLogForUser)
+  covers the audit export query. 17/17 packages green.
+  No new env vars, no schema migration, no breaking
+  changes. ~760 lines added (5 files new, 1 modified,
+  1 .gitignore update).
+
+* **Previous**: v0.25.0 — Mesh visibility on /my/devices + operator overview
   ([release notes](RELEASE-NOTES-v0.25.0.md)).
   The "mesh view" UI release. Per the operator's spec
   (2026-07-21 22:40), each device on /my/devices now
