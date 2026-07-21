@@ -41,7 +41,30 @@ type Monitor struct {
 	Notifier  NotifierSink      // alert sink
 	CheckEvery time.Duration    // 1h default
 
-	mu     sync.Mutex  // protects Notified
+	mu     sync.Mutex  // protects Notified + Latest + LastCheckedAt
+
+	// 2026-07-15: v0.14.0 — web UI integration. The handler
+	// reads (Latest, UpdateAvailable, CheckedAt) on every
+	// page render to surface a "newer version available"
+	// banner on /dashboard and the admin pages. Latest is
+	// the most recent release returned by GitHub (whatever
+	// the latest tick saw); UpdateAvailable is the
+	// precomputed boolean (Latest.TagName > Current). The
+	// monitor updates these on every tick, so the banner
+	// disappears within an hour of an upgrade.
+	Latest          Release
+	UpdateAvailable bool
+	CheckedAt       time.Time
+}
+
+// Snapshot returns the current state of the monitor in a
+// copy (so callers can read the fields without holding the
+// mutex). Used by App's render path to read the monitor's
+// state on every page render.
+func (m *Monitor) Snapshot() (latest Release, updateAvailable bool, checkedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.Latest, m.UpdateAvailable, m.CheckedAt
 }
 
 // Start launches the background loop. The first tick fires
@@ -87,6 +110,22 @@ func (m *Monitor) tick(ctx context.Context) {
 		}
 		return
 	}
+	// 2026-07-15: v0.14.0 — update the snapshot regardless
+	// of whether the new release is "interesting". The web
+	// banner wants to know "is there ANY newer release out
+	// there?" so the operator can decide when to upgrade;
+	// the dedup path below (which only fires for
+	// semver-greater tags) is separate.
+	m.mu.Lock()
+	m.Latest = *r
+	m.CheckedAt = time.Now()
+	if r.TagName != "" && CompareSemver(r.TagName, m.Current) > 0 {
+		m.UpdateAvailable = true
+	} else {
+		m.UpdateAvailable = false
+	}
+	m.mu.Unlock()
+
 	// Same version running — nothing to do.
 	if r.TagName == m.Current {
 		return
@@ -116,9 +155,13 @@ func (m *Monitor) tick(ctx context.Context) {
 
 // ResetNotified wipes the dedup map. Call after a successful
 // upgrade (the new version is now Current; old notifications
-// don't apply any more).
+// don't apply any more). Also clears UpdateAvailable so the
+// /dashboard banner disappears immediately on upgrade
+// (instead of waiting up to CheckEvery for the next tick
+// to overwrite it).
 func (m *Monitor) ResetNotified() {
 	m.mu.Lock()
 	m.Notified = make(map[string]bool)
+	m.UpdateAvailable = false
 	m.mu.Unlock()
 }

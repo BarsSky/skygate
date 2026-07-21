@@ -1,0 +1,70 @@
+{{define "body-admin-invites"}}
+{{/* 2026-07-20: v0.21.0 — /admin/invites.
+     Admin overview of all invite codes, with
+     a Revoke button for active rows. */}}
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="card" style="margin-bottom:24px">
+  <h3 style="margin:0"><i class="fa-solid fa-ticket"></i> {{t "title.admin_invites"}}</h3>
+  <p style="color:var(--text-muted);margin:8px 0 0 0">
+    {{tf "admin_invites.subtitle" .TotalCount}}
+  </p>
+</div>
+
+{{if .Invites}}
+<table>
+  <tr>
+    <th>{{t "admin_invites.col_code"}}</th>
+    <th>{{t "admin_invites.col_grantor"}}</th>
+    <th>{{t "admin_invites.col_grantee"}}</th>
+    <th>{{t "admin_invites.col_status"}}</th>
+    <th>{{t "admin_invites.col_created"}}</th>
+    <th>{{t "admin_invites.col_expires"}}</th>
+    <th>{{t "admin_invites.col_consumed_by"}}</th>
+    <th></th>
+  </tr>
+  {{range .Invites}}
+  <tr>
+    <td><code>{{.Code}}</code></td>
+    <td>{{.GrantorName}}</td>
+    <td>{{.GranteeUsername}}</td>
+    <td>
+      {{if eq .Status "active"}}
+        <span class="tag tag-success">{{t "admin_invites.status_active"}}</span>
+      {{else if eq .Status "consumed"}}
+        <span class="tag tag-info">{{t "admin_invites.status_consumed"}}</span>
+      {{else if eq .Status "expired"}}
+        <span class="tag tag-warning">{{t "admin_invites.status_expired"}}</span>
+      {{else}}
+        <span class="tag tag-danger">{{t "admin_invites.status_revoked"}}</span>
+      {{end}}
+    </td>
+    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>{{.ExpiresAt.Format "2006-01-02 15:04"}}</td>
+    <td>
+      {{if .ConsumerName}}{{.ConsumerName}}{{else}}<span style="color:var(--text-muted)">—</span>{{end}}
+    </td>
+    <td>
+      {{if eq .Status "active"}}
+        <form method="post" action="/admin/invites/revoke" style="display:inline" onsubmit="return confirm('{{tf "admin_invites.revoke_confirm" .Code}}')">
+          <input type="hidden" name="code" value="{{.Code}}">
+          <button type="submit" class="btn btn-sm" style="background:var(--warning-bg);color:var(--warning)"><i class="fa-solid fa-ban"></i> {{t "admin_invites.revoke"}}</button>
+        </form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+{{else}}
+<div class="card">
+  <p style="color:var(--text-muted);margin:0">{{t "admin_invites.empty"}}</p>
+</div>
+{{end}}
+
+{{end}}

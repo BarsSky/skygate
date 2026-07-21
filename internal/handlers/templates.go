@@ -44,6 +44,7 @@ func LoadTemplates() *Templates {
 			return i18n.GlobalCatalog.Tf(lang, key, args...)
 		},
 		"safeJS": func(s string) template.JS { return template.JS(s) },
+		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		"dividefloat": func(a, b float64) float64 {
 			if b == 0 { return 0 }
 			return a / b

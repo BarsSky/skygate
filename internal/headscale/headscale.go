@@ -34,6 +34,14 @@ type Client struct {
 	http          *http.Client
 	ExecContainer string
 
+	// dockerRunner is the function used to shell out `docker`
+	// commands (ExtendNodeExpiry, fallback paths in
+	// CreatePreauthKeyWithTags, etc.). nil = use the
+	// default (exec.Command("docker", ...)). Tests can
+	// inject a stub that records the call without
+	// touching the system docker.
+	dockerRunner func(args ...string) ([]byte, error)
+
 	// Caches to avoid hammering headscale on every page render. Each cache
 	// entry holds a value + the time it was populated. Reads return the
 	// cached value if it's still fresh, otherwise they fetch and refresh.
@@ -59,6 +67,16 @@ func New(baseURL, k string) *Client {
 	c.ExecContainer = getenvDefault("HEADSCALE_CONTAINER", "headscale")
 	c.cacheTTL = 5 * time.Second
 	return c
+}
+
+// ApiKeyForCache returns the api key this client was built
+// with. Used by handlers.App.clientFor to detect when an
+// admin has rotated a per-user api_key via /admin/users
+// and the cached client is now stale. The api key itself
+// is treated as a write-capable secret on headscale, so
+// callers should never log it.
+func (c *Client) ApiKeyForCache() string {
+	return c.apiKey
 }
 
 func getenvDefault(key, def string) string {
@@ -135,4 +153,12 @@ func (c *Client) InvalidateCache() {
 	c.cacheUsersAt = time.Time{}
 	c.cacheACLAt = time.Time{}
 	c.cacheMu.Unlock()
+}
+
+// SetDockerRunner overrides the function used to shell out
+// `docker` commands. nil = use the default (exec.Command).
+// Used by tests to inject a stub that records the call
+// without touching the system docker.
+func (c *Client) SetDockerRunner(fn func(args ...string) ([]byte, error)) {
+	c.dockerRunner = fn
 }

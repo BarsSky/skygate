@@ -62,16 +62,16 @@ func TestHeaderForEachContext(t *testing.T) {
 		wantEN  string
 		wantRU  string
 	}{
-		{"welcome", "Gate", "Врата"},
+		{"welcome", "Gate", "Добро пожаловать"},
 		{"registry", "Registry", "Реестр"},
 		{"codex", "Codex", "Кодекс"},
-		{"version", "Version", "Свиток"},
+		{"version", "Version", "Версия"},
 		{"ack", "Acknowledged", "Подтверждение"},
 		{"bind", "Binding", "Привязка"},
 		{"unbind", "Unbinding", "Отвязка"},
-		{"add", "Added", "Добавление"},
-		{"del", "Removed", "Удаление"},
-		{"err", "Closed", "Закрытая"},
+		{"add", "Added", "Готово — добавлено"},
+		{"del", "Removed", "Готово — удалено"},
+		{"err", "Closed", "Дверь"},
 		{"welcome_back", "Welcome Back", "С возвращением"},
 	}
 	for _, c := range cases {
@@ -113,60 +113,50 @@ func TestHeaderForFallback(t *testing.T) {
 // languages so a translation drift is caught.
 func TestFooterForBothLanguages(t *testing.T) {
 	en := footerFor(i18n.LangEN)
-	if !strings.Contains(en, "Yours in service") {
-		t.Errorf("EN footer missing 'Yours in service' phrase, got: %q", en)
+	if !strings.Contains(en, "butler") {
+		t.Errorf("EN footer missing 'butler' phrase, got: %q", en)
 	}
 	ru := footerFor(i18n.LangRU)
-	if !strings.Contains(ru, "Искренне Ваш") {
-		t.Errorf("RU footer missing 'Искренне Ваш' phrase, got: %q", ru)
+	if !strings.Contains(ru, "Дворецкий") {
+		t.Errorf("RU footer missing 'Дворецкий' phrase, got: %q", ru)
 	}
 }
 
 // TestComposeEnvelope: the envelope shape. Short body →
 // no footer; long body → footer present; empty body →
 // header alone (defensive, shouldn't happen in practice).
+//
+// 2026-07-16: v0.15.2 — gate-style envelope. The header
+// is "🪶 ═══ Skygate ═══\n<topic>" and the footer is
+// "═══ — Ваш Дворецкий ═══" (EN: "═══ — Your butler ═══").
 func TestComposeEnvelope(t *testing.T) {
 	short := Compose(i18n.LangEN, "add", "Rule added: 1.2.3.4", true)
-	if !strings.HasPrefix(short, butlerSigil+"  Added") {
-		t.Errorf("short reply should start with header, got: %q", short[:40])
+	if !strings.HasPrefix(short, "🪶 ═══ Skygate ═══\n") {
+		t.Errorf("short reply should start with gate header, got: %q", short[:50])
 	}
-	// Even when verbose=true is forced, the envelope
-	// should still match (the caller asked for a footer).
-	// This is for error cases where the butler always
-	// signs off ("regretfully yours").
-	if !strings.Contains(short, "Yours in service") {
-		t.Errorf("forced-verbose reply should still carry the footer, got: %q", short)
+	if !strings.Contains(short, "Your butler") {
+		t.Errorf("forced-verbose reply should still carry the gate footer, got: %q", short)
 	}
 
 	long := Compose(i18n.LangEN, "registry", "lots of rules\n\none per line\n\nmany lines", false)
-	if !strings.HasPrefix(long, butlerSigil+"  The Registry") {
-		t.Errorf("long reply should start with header, got: %q", long[:40])
+	if !strings.HasPrefix(long, "🪶 ═══ Skygate ═══\n") {
+		t.Errorf("long reply should start with gate header, got: %q", long[:50])
 	}
 	if !strings.Contains(long, "many lines") {
 		t.Errorf("long reply should contain body, got: %q", long)
 	}
-	// verbose=false: footer depends on the body
-	// length heuristic. The body has > 3 lines so the
-	// footer SHOULD be present. (Compose() doesn't
-	// look at the verbose flag, it just appends when
-	// asked. With verbose=false we still get the
-	// footer because the body is long.) The point of
-	// this assertion is to confirm the heuristic.
 	_ = long
 
 	// Now: short body, verbose=false → no footer.
 	tiny := Compose(i18n.LangEN, "add", "Done.", false)
-	if strings.Contains(tiny, "Yours in service") {
+	if strings.Contains(tiny, "Your butler") {
 		t.Errorf("short reply (verbose=false) should NOT have a footer, got: %q", tiny)
 	}
 
 	// Empty body → header alone.
 	empty := Compose(i18n.LangEN, "err", "", true)
-	if empty != butlerSigil+"  "+"A Closed Door" && empty != butlerSigil+"  Closed" {
-		// v9 catalog has "A Closed Door" but the catalog
-		// key was changed to "err" with value "A Closed
-		// Door" — accept either form for forward compat.
-		t.Errorf("empty-body reply should be header alone, got: %q", empty)
+	if !strings.HasPrefix(empty, "🪶 ═══ Skygate ═══") {
+		t.Errorf("empty-body reply should start with gate header, got: %q", empty)
 	}
 }
 
@@ -195,11 +185,11 @@ func TestVerboseForBody(t *testing.T) {
 // typing at every call site.
 func TestComposeDefault(t *testing.T) {
 	short := ComposeDefault(i18n.LangEN, "add", "Done.")
-	if strings.Contains(short, "Yours in service") {
+	if strings.Contains(short, "butler") {
 		t.Errorf("ComposeDefault should drop the footer for short bodies, got: %q", short)
 	}
 	long := ComposeDefault(i18n.LangEN, "registry", "rule 1\n\nrule 2\n\nrule 3\n\nrule 4")
-	if !strings.Contains(long, "Yours in service") {
+	if !strings.Contains(long, "butler") {
 		t.Errorf("ComposeDefault should include the footer for long bodies, got: %q", long)
 	}
 }
@@ -233,8 +223,10 @@ func TestGreetingForNewChatShape(t *testing.T) {
 	// least the sigil must be at the top, AND the body
 	// must contain the header (because Compose adds
 	// `\n\n` between header and body).
-	if !strings.HasPrefix(got, butlerSigil+"  ") {
-		t.Errorf("v9 new-chat welcome should start with the butler sigil header, got: %q", got[:60])
+	// 2026-07-16: v0.15.2 — gate header is "🪶 ═══ Skygate ═══"
+	// followed by a topic line ("The Gate" for new-chat).
+	if !strings.HasPrefix(got, "🪶 ═══ Skygate ═══\n🚪 The Gate") {
+		t.Errorf("v15 new-chat welcome should start with gate header + The Gate topic, got: %q", got[:80])
 	}
 }
 
@@ -262,9 +254,11 @@ func TestGreetingForReturningUser(t *testing.T) {
 	if !strings.Contains(got, "gate knows you") {
 		t.Errorf("returning user welcome should include the 'gate knows you' line, got: %q", got)
 	}
-	// Returning-user welcome is short — under 10 lines
-	// even with the new envelope.
-	if strings.Count(got, "\n") > 10 {
+	// Returning-user welcome is short — under 14 lines
+	// (the v0.15.2 gate envelope added 2 more lines for
+	// the "═══ Skygate ═══" header and the gate footer;
+	// before v0.15.2 the limit was 10).
+	if strings.Count(got, "\n") > 14 {
 		t.Errorf("returning user welcome is too long (%d lines), got: %q", strings.Count(got, "\n"), got)
 	}
 	if !strings.Contains(got, "/help") {
@@ -283,8 +277,8 @@ func TestGreetingForNewChatRussian(t *testing.T) {
 	if !strings.Contains(got, "/login") {
 		t.Errorf("Russian new-chat welcome should still mention the /login command: %q", got)
 	}
-	if !strings.Contains(got, "5 минут") {
-		t.Errorf("Russian new-chat welcome should mention 5-минутный TTL: %q", got)
+	if !strings.Contains(got, "пять минут") {
+		t.Errorf("Russian new-chat welcome should mention пятиминутный TTL: %q", got)
 	}
 }
 
@@ -295,8 +289,8 @@ func TestGreetingForReturningUserRussian(t *testing.T) {
 	if !strings.Contains(got, "alice") {
 		t.Errorf("Russian returning user welcome should name the user, got: %q", got)
 	}
-	if !strings.Contains(got, "Врата знают тебя") {
-		t.Errorf("Russian returning user welcome missing the 'Врата знают тебя' line: %q", got)
+	if !strings.Contains(got, "Рад вас видеть снова") {
+		t.Errorf("Russian returning user welcome missing the returning-user line: %q", got)
 	}
 }
 

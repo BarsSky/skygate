@@ -10,13 +10,16 @@ import (
 )
 
 type User struct {
-	ID              int64
-	Username        string
-	IsAdmin         bool
-	Theme           string
-	PasswordHash    string
-	HeadscaleUserID int64
-	CreatedAt       time.Time
+	ID                 int64
+	Username           string
+	IsAdmin            bool
+	Theme              string
+	PasswordHash       string
+	HeadscaleUserID    int64
+	CreatedAt          time.Time
+	SubnetCIDR         string // denorm: empty if no subnet allocated
+	SubnetStatus       string // denorm: "none" / "pending" / "active" / "disabled"
+	SubnetRouterNodeID int64  // denorm: 0 if no router provisioned (v0.16.7+)
 }
 
 const (
@@ -39,6 +42,33 @@ func ThemeLabel(t string) string {
 	default:
 		return "Linear"
 	}
+}
+
+// OpenForTest opens a fresh in-temp-dir SQLite DB with the full
+// production migration chain applied. Returns a *sql.DB that
+// the test's t.Cleanup will close.
+//
+// Exported so packages outside internal/db (e.g.
+// internal/monitoring) can build a real schema for integration
+// tests without having to re-implement the migration chain.
+// The DB lives on disk in a TempDir (not :memory:) so that
+// concurrent connections in the pool see the same data —
+// ":memory:" is per-connection in Go's database/sql, which
+// causes subtle "missing table" failures in tests that
+// share a *sql.DB across goroutines.
+func OpenForTest(t interface {
+	Helper()
+	TempDir() string
+	Cleanup(func())
+}) *sql.DB {
+	t.Helper()
+	dir := t.TempDir()
+	d, err := Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		panic("db.OpenForTest: " + err.Error())
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
 }
 
 func IsValidTheme(t string) bool {
@@ -126,6 +156,8 @@ func migrate(d *sql.DB) error {
 	//          store, replaces in-memory map) — Этап 13
 	//   V033 — ALTER telegram_bindings ADD lang (per-chat
 	//          language preference for bot i18n) — Этап 14 v5
+	//   V036 — CREATE exit_node_health + exit_node_state_changes
+	//          (background exit-node health monitor) — v0.13.0
 	migrateV025(d)
 	if err := migrateV020(d); err != nil {
 		return fmt.Errorf("migrate v0.20: %w", err)
@@ -168,6 +200,60 @@ func migrate(d *sql.DB) error {
 	}
 	if err := migrateV034(d); err != nil {
 		return fmt.Errorf("migrate v0.34: %w", err)
+	}
+	if err := migrateV035(d); err != nil {
+		return fmt.Errorf("migrate v0.35: %w", err)
+	}
+	if err := migrateV036(d); err != nil {
+		return fmt.Errorf("migrate v0.36: %w", err)
+	}
+	// 2026-07-16: v0.15.5 — personal API token TTL. Adds
+	// expires_at + auto_rotate columns to personal_api_tokens.
+	if err := migrateV037(d); err != nil {
+		return fmt.Errorf("migrate v0.37: %w", err)
+	}
+	// 2026-07-17: v0.16.0 — per-user subnets schema. Adds
+	// the user_subnets table + 3 denormalized columns on
+	// portal_users (subnet_cidr / subnet_status /
+	// subnet_router_node_id). See migrations_v0.38.go for
+	// the full rationale.
+	if err := migrateV038(d); err != nil {
+		return fmt.Errorf("migrate v0.38: %w", err)
+	}
+	// 2026-07-17: v0.17.1 — cross-user IP-level subnet
+	// sharing. Adds user_subnet_shares (grantor, grantee)
+	// with FKs CASCADE on portal_users.id. See
+	// migrations_v0.39.go for the design rationale.
+	if err := migrationV039(d); err != nil {
+		return fmt.Errorf("migrate v0.39: %w", err)
+	}
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// Adds the headscale_releases table (one row per
+	// unique tag the monitor has seen). See
+	// migrations_v0.41.go for the full rationale.
+	// (v0.40 was the v0.19.0 dns.extra_records
+	// migration that was reverted — the slot is
+	// reserved for the future v0.19.1 re-enable when
+	// headscale 0.30+ lands.)
+	if err := migrationV041(d); err != nil {
+		return fmt.Errorf("migrate v0.41: %w", err)
+	}
+	// 2026-07-20: v0.21.0 — user-to-user subnet
+	// bridge. Adds the invite_codes table (one row
+	// per outstanding / consumed invite). See
+	// migrations_v0.42.go for the full lifecycle.
+	if err := migrationV042(d); err != nil {
+		return fmt.Errorf("migrate v0.42: %w", err)
+	}
+	// 2026-07-20: v0.22.0 — mesh (shared network).
+	// Adds the meshes + mesh_members tables. The
+	// mesh is a named group of users whose personal
+	// subnets are all mutually visible (N-way
+	// bridge, generalizing the v0.17.1 one-shot
+	// share). See migrations_v0.43.go for the full
+	// rationale + ACL integration.
+	if err := migrationV043(d); err != nil {
+		return fmt.Errorf("migrate v0.43: %w", err)
 	}
 	return nil
 }

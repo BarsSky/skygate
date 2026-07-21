@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -162,7 +163,9 @@ func GetAllPortalUsers(d *sql.DB) ([]User, error) {
 		var hsID sql.NullInt64
 		var createdI int64
 		var theme sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme); err != nil {
+		var subnetStatus sql.NullString
+		var subnetNodeIDStr sql.NullString // TEXT in SQLite, parse to int64 below
+		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme, &u.SubnetCIDR, &subnetStatus, &subnetNodeIDStr); err != nil {
 			return nil, err
 		}
 		u.IsAdmin = adminI == 1
@@ -170,6 +173,14 @@ func GetAllPortalUsers(d *sql.DB) ([]User, error) {
 		u.CreatedAt = time.Unix(createdI, 0)
 		if theme.Valid {
 			u.Theme = theme.String
+		}
+		if subnetStatus.Valid {
+			u.SubnetStatus = subnetStatus.String
+		}
+		if subnetNodeIDStr.Valid && subnetNodeIDStr.String != "" {
+			if n, perr := strconv.ParseInt(subnetNodeIDStr.String, 10, 64); perr == nil {
+				u.SubnetRouterNodeID = n
+			}
 		}
 		out = append(out, u)
 	}
@@ -189,6 +200,200 @@ func GetPortalUsernames(d *sql.DB) ([]string, error) {
 	for rows.Next() {
 		var s string
 		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetPortalUsernamesForPlane returns every portal username on the
+// given control plane. planeURL == "" means "the global default
+// plane" (every user with headscale_url = ''). Used by
+// GenerateACLForPlane to scope the per-plane policy to the
+// identities that actually live on that headscale instance —
+// headscale rejects unknown identities in tagOwners, so we
+// can't list plane A users in plane B's policy.
+//
+// 2026-07-16: v0.13.0 — per-plane ACL.
+func GetPortalUsernamesForPlane(d *sql.DB, planeURL string) ([]string, error) {
+	rows, err := d.Query(qSelectPortalUsernamesForPlane, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// UserSubnet is one row of GetUserSubnetsForPlane: the portal
+// username on the given plane + their per-user subnet CIDR
+// (empty string if no subnet allocated).
+//
+// 2026-07-17: v0.17.0 — used by GenerateACLForPlane to
+// extend the per-user rule with `dst: [..., "10.0.<uid>.0/24:*"]`
+// when the user has a personal subnet. The CIDR is
+// deterministic (allocated by the subnet package) so the
+// policy is stable across rebuilds.
+type UserSubnet struct {
+	Username string
+	CIDR     string
+}
+
+// GetUserSubnetsForPlane returns every (username, cidr) pair
+// on the given control plane. planeURL == "" means the
+// global default plane. Empty cidr means the user has no
+// subnet allocated yet; the ACL builder skips the CIDR for
+// those users.
+//
+// 2026-07-17: v0.17.0.
+func GetUserSubnetsForPlane(d *sql.DB, planeURL string) ([]UserSubnet, error) {
+	rows, err := d.Query(qSelectUserSubnetsForPlane, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserSubnet
+	for rows.Next() {
+		var us UserSubnet
+		if err := rows.Scan(&us.Username, &us.CIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, us)
+	}
+	return out, rows.Err()
+}
+
+// SharedSubnet is one row of GetSharedSubnetsForPlane: a
+// grantor whose subnet is shared with the grantee.
+// CIDR is the grantor's per-user CIDR (routable
+// destination from the grantee's perspective).
+//
+// 2026-07-17: v0.17.1.
+type SharedSubnet struct {
+	GranteeUser   string // username of the user who gets access
+	GrantorUser   string // username of the user whose subnet is shared
+	GrantorCIDR   string // grantor's per-user CIDR (e.g. "10.0.42.0/24")
+}
+
+// GetSharedSubnetsForPlane returns every (grantee, grantor, cidr)
+// triple on the given control plane. planeURL == "" means
+// the global default plane. The ACL builder (v0.17.1) iterates
+// this list to extend each grantee's per-user dst with the
+// grantor's CIDR.
+//
+// The query is INNER JOIN: a share row only appears if the
+// grantor has a user_subnets row (Grant pre-checks this),
+// and we filter out shares whose grantor has since had
+// their subnet deleted (FK CASCADE would have removed
+// the share row already, but defensive filter is cheap).
+//
+// 2026-07-17: v0.17.1.
+func GetSharedSubnetsForPlane(d *sql.DB, planeURL string) ([]SharedSubnet, error) {
+	rows, err := d.Query(qSelectSharedSubnetsForPlane, planeURL, planeURL, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SharedSubnet
+	for rows.Next() {
+		var ss SharedSubnet
+		if err := rows.Scan(&ss.GranteeUser, &ss.GrantorUser, &ss.GrantorCIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, ss)
+	}
+	return out, rows.Err()
+}
+
+// MeshMembership is one row of
+// GetMeshMembershipsForPlane: a pair of users who
+// share an active mesh, plus the CIDR of the
+// "other" user (the one whose subnet becomes
+// visible to the "self" user). The ACL builder
+// iterates this list to extend the per-user dst
+// with every other member's CIDR.
+//
+// 2026-07-20: v0.22.0.
+type MeshMembership struct {
+	SelfUser   string // username of the user who gains visibility
+	OtherUser  string // username of the other mesh member
+	OtherCIDR  string // OtherUser's personal subnet CIDR (empty if not allocated)
+}
+
+// GetMeshMembershipsForPlane returns every
+// (self, other, other_cidr) triple on the given
+// control plane for active meshes. The ACL
+// builder extends each user's per-user dst with
+// the CIDRs of all other members of every mesh
+// they belong to.
+//
+// 2026-07-20: v0.22.0.
+//
+// Semantics:
+//   - self != other (the query filters self-pairs)
+//   - self and other MUST both be on the plane
+//     (multi-plane deploys only bridge within a plane)
+//   - OtherCIDR is empty when the other member has
+//     no subnet allocated (LEFT JOIN on user_subnets)
+//   - the mesh MUST be status='active' (dissolved
+//     meshes are excluded)
+//
+// The query is the same shape as the v0.17.1
+// sharedSubnets query, just with the source
+// being mesh_members + meshes (active filter)
+// instead of user_subnet_shares.
+func GetMeshMembershipsForPlane(d *sql.DB, planeURL string) ([]MeshMembership, error) {
+	rows, err := d.Query(qSelectMeshMembershipsForPlane, planeURL, planeURL, planeURL, planeURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MeshMembership
+	for rows.Next() {
+		var mm MeshMembership
+		if err := rows.Scan(&mm.SelfUser, &mm.OtherUser, &mm.OtherCIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, mm)
+	}
+	return out, rows.Err()
+}
+
+// ControlPlaneUserCount is one row of ListControlPlanes: a
+// distinct headscale_url (empty = the global default) and
+// the number of portal users on it. Used by the per-plane
+// ACL pipeline (v0.13.0) which only needs (url, count) to
+// iterate planes — it doesn't need per-user api_keys (those
+// are resolved by the caller's hsForPlane closure).
+//
+// 2026-07-16: v0.13.0.
+type ControlPlaneUserCount struct {
+	URL       string
+	UserCount int
+}
+
+// ListControlPlanes returns the distinct (headscale_url,
+// user_count) pairs. Empty URL = the global default. The
+// per-plane ACL pipeline iterates this list to push one
+// policy per plane.
+func ListControlPlanes(d *sql.DB) ([]ControlPlaneUserCount, error) {
+	rows, err := d.Query(qSelectControlPlanes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ControlPlaneUserCount
+	for rows.Next() {
+		var s ControlPlaneUserCount
+		if err := rows.Scan(&s.URL, &s.UserCount); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

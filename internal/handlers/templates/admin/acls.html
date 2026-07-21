@@ -33,5 +33,21 @@
     </div>
   </div>
   {{end}}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+    <a href="/admin/acls/export" class="btn btn-sm">
+      <i class="fa-solid fa-download"></i> {{t "acls.export_btn"}}
+    </a>
+    <a href="/admin/acls/import" class="btn btn-sm btn-primary">
+      <i class="fa-solid fa-upload"></i> {{t "acls.import_btn_short"}}
+    </a>
+    <a href="/admin/subnets" class="btn btn-sm">
+      <i class="fa-solid fa-network-wired"></i> {{t "admin.subnets.title"}}
+    </a>
+  </div>
+</div>
+
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "acls.v0_17_0_note_title"}}</h3>
+  <p style="margin-top:6px;font-size:13px;line-height:1.6">{{t "acls.v0_17_0_note_body" | safeHTML}}</p>
 </div>
 {{end}}
