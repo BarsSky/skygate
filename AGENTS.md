@@ -7,10 +7,28 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.23.0 — one-click
-  per-user headscale
-  provisioning (Phase 1)
-  ([release notes](RELEASE-NOTES-v0.23.0.md)).
+* **Current**: v0.23.1 — per-user
+  control plane: compliance
+  tier only
+  ([release notes](RELEASE-NOTES-v0.23.1.md)).
+  The "v0.23.0 is for compliance, not
+  default path" release. v0.23.0 shipped
+  one-click per-user headscale
+  provisioning; v0.23.1 makes explicit
+  the cost (re-auth all devices + lose
+  shared exit-nodes + lose mesh bridges)
+  via a warning card on
+  `/admin/users/{id}/plane`. New
+  `check_cross_subnet_v0.23.1.sh` is an
+  11-step live verification proving that
+  the existing global headscale already
+  delivers per-user subnets + shared
+  exit-nodes + mesh for the 4 prod
+  users — per-user control plane is
+  not needed for the operator's actual
+  goals. Use v0.23.0 only for compliance
+  tier (SOX, multi-tenant SaaS,
+  geographic isolation).
   Closes the v0.12.0 capability
   gap that left per-user control
   planes as a manual ssh + docker
@@ -76,6 +94,46 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   next `/my/devices` load — guest
   (0 devices) stays `pending`, which
   is the intended behavior.
+
+* **Previous**: v0.23.0 — one-click
+  per-user headscale
+  provisioning (Phase 1)
+  ([release notes](RELEASE-NOTES-v0.23.0.md)).
+  Closes the v0.12.0 capability
+  gap that left per-user control
+  planes as a manual ssh + docker
+  + headscale CLI flow. The
+  bootstrap script
+  (`deploy/headscale-users/headscale-bootstrap.sh`)
+  creates a per-user docker
+  container (port 50450+uid%50,
+  base_domain `<username>.tsnet.skynas.ru`),
+  issues a 10-year API key, returns
+  JSON. The handler encrypts the
+  key with SKYGATE_SECRET_KEY
+  and persists to
+  `portal_users.headscale_api_key_enc`.
+  The deprovision script
+  (`headscale-deprovision.sh`)
+  tears down + preserves the
+  per-user data dir for recovery.
+  `internal/headscale/provision.go`
+  is a Go wrapper (8 unit tests,
+  all PASS). Skyadmin pilot
+  verified live: container up +
+  healthy, DB has the URL + encrypted
+  key, /admin/users/1/plane shows
+  the post-provision UI. 11/11
+  check_v0.23.0.sh steps PASS.
+  Smoke 83/83 still green. **v0.23.0
+  is infrastructure only — no data
+  migration. v0.23.1 follows up
+  with the compliance-tier warning
+  + the cross-subnet verification
+  (proves global headscale already
+  gives the operator per-user subnets
+  + shared exit-nodes + mesh without
+  needing per-user control plane).**
 
 * **Previous**: v0.22.3 — subnet
   status reflects device
@@ -1207,6 +1265,98 @@ API:
   cookie). **POST returns `{added, duplicates, errors, ids: [N1, N2, ...]}`
   so clients can clean up.**
 - `POST /my/exit-rules/delete` — delete one (`id=X`) or many (`ids=X&ids=Y&...`)
+
+---
+
+## Per-user control plane: when to use (v0.23.0/v0.23.1)
+
+The v0.23.0 + v0.23.1 releases added a "one-click per-user
+headscale" capability. **This is a compliance tier, not the
+default path.** The architectural decision documented in
+[RELEASE-NOTES-v0.23.1.md](RELEASE-NOTES-v0.23.1.md) is:
+
+> "Per-user control plane (v0.23.0) requires re-auth of all
+>  devices, and the user loses access to shared exit-nodes
+>  (emilia/sharlotta/karolina) and mesh bridges with other
+>  users. For most scenarios, per-user subnet already works
+>  as a logical namespace in the global headscale (v0.16.6+).
+>  Use v0.23.0 provisioning ONLY for compliance tier (SOX,
+>  multi-tenant SaaS, geographic isolation)."
+
+The reason: **Tailscale's protocol is one control server per
+node**. Two headscales cannot share nodes. If user A is in
+`headscale-A` and user B is in `headscale-B`, they cannot
+see each other's devices, even if both are in the same
+physical network. Cross-control-server routing does not
+exist (Tailnet Lock/Sharing is enterprise-only, not in
+headscale 0.29.x).
+
+### When to use per-user control plane (v0.23.0)
+
+Use ONLY when the operator has a real need for:
+- **SOX / compliance**: tenant isolation, audit log separation,
+  per-tenant API keys (compliance audit)
+- **Multi-tenant SaaS**: each "customer" gets their own
+  headscale container (no shared resources)
+- **Geographic isolation**: per-region control plane (e.g.
+  US users on us-east, EU users on eu-west)
+- **Tailnet Key rotation**: per-tenant key with independent
+  noise_private.key
+
+### When NOT to use per-user control plane
+
+The default path. **Don't use v0.23.0 for any of these** —
+they're already solved by the global headscale:
+- "Per-user subnet" — v0.16.6+ gives each user `10.0.<uid>.0/24`
+  as a logical ACL namespace
+- "Shared exit-nodes" — `tag:exit-node` in global ACL makes
+  emilia/sharlotta/karolina accessible from all users
+- "Mesh between users" — v0.22.0 N-way bridge gives
+  cross-user subnet visibility via ACL cross-CIDR
+- "Cross-user share" — v0.17.1 share rows
+- "Tailscale --accept-routes" — works in global
+
+### How to provision (when actually needed)
+
+1. Open `/admin/users/{id}/plane`
+2. Read the warning card carefully (re-auth cost, lost access)
+3. Click "Provision per-user headscale"
+4. Confirm the JS dialog
+5. Wait ~15s for the container to come up
+6. SSH to each of the user's devices, run:
+   ```
+   sudo tailscale logout
+   sudo tailscale up --login-server=https://head.<username>.skynas.ru \
+     --authkey=<preauth from /admin/users/{id}/plane>
+   ```
+7. The user is now on their own control plane. The old
+  device entries in the global headscale become orphaned
+  (delete them via `docker exec headscale headscale nodes
+  delete -i <N>`).
+
+### How to deprovision
+
+1. Open `/admin/users/{id}/plane` (user must be on per-user)
+2. Click "Decommission per-user headscale"
+3. Confirm the JS dialog
+4. The container is stopped, the per-user data dir is
+  preserved at `~/.decommissioned-<ts>` (recoverable for 30
+  days)
+5. The DB override is cleared — `HSForUser(uid)` falls back
+  to `HSGlobal()`. The user's devices (still in the per-user
+  headscale) are now invisible to skygate until they re-auth
+  to the global headscale.
+
+---
+
+## v0.16.0+ per-user subnets (DEFAULT — use this)
+
+For the 4 prod users (skyadmin/michail/guest/daniil), the
+default path is per-user subnets in the global headscale
+(v0.16.6+). Each user has `10.0.<uid>.0/24` as a logical
+ACL namespace. Exit-nodes are shared. Mesh is cross-user.
+No re-auth, no separate control plane. **Use this for 95% of
+scenarios.**
 
 ---
 
