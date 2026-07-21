@@ -52,6 +52,33 @@ func (a *App) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 		if row.Username != "" {
 			row.DNSName = subnet.ComputeMagicDNSNames(row.Username).Sidecar
 		}
+		// v0.25.0 — count the user's devices in
+		// node_owner_map (the per-user / tag:private
+		// snapshot). One query per row; the table is
+		// small (≤ portal users × devices per user,
+		// typically <50 rows total).
+		_ = a.DB.QueryRow(
+			`SELECT COUNT(*) FROM node_owner_map WHERE user_id = ? AND tag = 'tag:private'`,
+			s.UserID,
+		).Scan(&row.DeviceCount)
+		// v0.25.0 — count the user's active meshes.
+		_ = a.DB.QueryRow(`
+			SELECT COUNT(DISTINCT mm.mesh_id)
+			  FROM mesh_members mm
+			  JOIN meshes m ON m.id = mm.mesh_id
+			 WHERE mm.user_id = ? AND m.status = 'active'`, s.UserID,
+		).Scan(&row.MeshCount)
+		// v0.25.0 — count the user's outbound shares
+		// (this user is the grantor; how many
+		// other users can see their /24).
+		_ = a.DB.QueryRow(
+			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = ?`,
+			s.UserID,
+		).Scan(&row.SharesGranted)
+		_ = a.DB.QueryRow(
+			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantee_user_id = ?`,
+			s.UserID,
+		).Scan(&row.SharesReceived)
 		rows = append(rows, row)
 	}
 	var filtered []overviewRow
@@ -78,10 +105,25 @@ func (a *App) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 	for _, r := range rows {
 		counts[r.Subnet.Status]++
 	}
+	// v0.25.0 — global totals (across ALL subnets,
+	// unfiltered) for the footer summary line.
+	totals := map[string]int{
+		"devices":        0,
+		"meshes":         0,
+		"shares_granted": 0,
+		"shares_received": 0,
+	}
+	for _, r := range rows {
+		totals["devices"] += r.DeviceCount
+		totals["meshes"] += r.MeshCount
+		totals["shares_granted"] += r.SharesGranted
+		totals["shares_received"] += r.SharesReceived
+	}
 	a.renderWithLayout(w, r, "admin/subnets.html", c, map[string]any{
 		"Rows":       filtered,
 		"Status":     filter,
 		"Counts":     counts,
+		"Totals":     totals,
 		"LastSync":   a.SidecarLastSync(),
 		"LastStats":  a.SidecarLastStats(),
 	})
@@ -121,11 +163,24 @@ func (a *App) subnetsForOverview() ([]subnet.Subnet, error) {
 // iterates over. Wraps a Subnet + the joined
 // portal_users.username (avoids the template having
 // to do its own DB lookup) + the auto-resolving
-// MagicDNS FQDN (v0.18.0).
+// MagicDNS FQDN (v0.18.0) + mesh/usage counters
+// (v0.25.0).
 type overviewRow struct {
 	Subnet   subnet.Subnet
 	Username string
 	DNSName  string
+	// DeviceCount is the number of tag:private
+	// nodes this user owns (from node_owner_map).
+	DeviceCount int
+	// MeshCount is how many active meshes the
+	// user is in.
+	MeshCount int
+	// SharesGranted is how many OTHER users this
+	// user has shared their /24 with (grantor = me).
+	SharesGranted int
+	// SharesReceived is how many OTHER users have
+	// shared their /24 with this user (grantee = me).
+	SharesReceived int
 }
 
 // SidecarLastSync returns the last sync time of the
