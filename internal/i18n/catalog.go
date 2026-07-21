@@ -923,6 +923,22 @@ var ruCatalog = map[string]string{
 	"control_planes.secret_missing_title": "SKYGATE_SECRET_KEY не задан",
 	"control_planes.secret_missing_body":  "Per-user API key шифруется AES-GCM (32 байта hex). Сгенерируйте <code>openssl rand -hex 32</code>, добавьте в .env как <code>SKYGATE_SECRET_KEY</code>, и перезапустите skygate.",
 	"control_planes.corrupt_key":        "<b>Сохранённый ключ не читается.</b> Скорее всего SKYGATE_SECRET_KEY был сменён после сохранения этого override. Введите ключ заново.",
+	// 2026-07-21: v0.23.0 Phase 1 — one-click provisioning of a
+	// per-user headscale container. The "Provision" button calls
+	// the bootstrap script (creates container + user + API key,
+	// returns JSON) and persists the result. "Decommission"
+	// reverses it (tears down the container, preserves the data
+	// directory for recovery).
+	"control_planes.provision_title":      "Auto-provision per-user headscale",
+	"control_planes.provision_help":       "Нажмите кнопку ниже, чтобы skygate создал отдельный headscale-контейнер для этого пользователя. Скрипт сам сгенерит noise key, заведёт пользователя в headscale, выпустит 10-летний API key, и зашифрует его в <code>portal_users.headscale_api_key_enc</code> через SKYGATE_SECRET_KEY. После этого <code>HSForUser(uid)</code> начнёт роутить API-запросы пользователя в его собственный headscale. Cross-user ACL / exit-nodes / mesh останутся в глобальной плоскости до v0.23.2 (cross-plane coordination).",
+	"control_planes.provision_button":     "Provision per-user headscale",
+	"control_planes.provision_confirm":    "Запустить provisioning? Создастся новый docker-контейнер, откроется порт в диапазоне 50450+.",
+	"control_planes.provisioned":          "Provisioned: контейнер <code>%s</code> слушает на <code>%s</code> (HTTP, порт %s). HSForUser(uid) теперь роутит сюда.",
+	"control_planes.decommission_title":   "Decommission per-user headscale",
+	"control_planes.decommission_help":    "Снести контейнер <code>headscale-&lt;username&gt;</code> и снять override. Скрипт сохраняет данные (DB + config) в соседнюю директорию <code>.decommissioned-&lt;username&gt;-&lt;ts&gt;</code> для возможного восстановления. После этой операции <code>HSForUser(uid)</code> вернётся на глобальную плоскость. Чтобы переиспользовать данные, нужно вручную перенести файлы обратно перед повторным Provision.",
+	"control_planes.decommission_button":  "Decommission",
+	"control_planes.decommission_confirm": "Снести per-user headscale? Контейнер будет остановлен и удалён, override в БД снят. Данные пользователя будут сохранены в backup-директории.",
+	"control_planes.decommissioned":       "Decommissioned: контейнер остановлен, override снят, данные сохранены в <code>~/.decommissioned-&lt;username&gt;-&lt;ts&gt;</code>.",
 	// 2026-07-17: v0.16.0 — per-user subnets admin page (/admin/users/{id}/subnet).
 	"user_subnet.title":                 "Personal subnet",
 	"user_subnet.subtitle":              "выделение personal CIDR + sidecar provisioning",
@@ -2956,6 +2972,22 @@ var enCatalog = map[string]string{
 	"control_planes.secret_missing_title": "SKYGATE_SECRET_KEY is not set",
 	"control_planes.secret_missing_body":  "Per-user API keys are AES-GCM encrypted (32 bytes hex). Generate <code>openssl rand -hex 32</code>, set it in .env as <code>SKYGATE_SECRET_KEY</code>, and restart skygate.",
 	"control_planes.corrupt_key":        "<b>The stored key is unreadable.</b> Most likely SKYGATE_SECRET_KEY was rotated after this override was saved. Re-enter the key.",
+	// 2026-07-21: v0.23.0 Phase 1 — one-click provisioning of a
+	// per-user headscale container. The "Provision" button calls
+	// the bootstrap script (creates container + user + API key,
+	// returns JSON) and persists the result. "Decommission"
+	// reverses it (tears down the container, preserves the data
+	// directory for recovery).
+	"control_planes.provision_title":      "Auto-provision per-user headscale",
+	"control_planes.provision_help":       "Click the button below to have skygate create a dedicated headscale container for this user. The script generates a noise key, creates the headscale user, issues a 10-year API key, and encrypts it into <code>portal_users.headscale_api_key_enc</code> via SKYGATE_SECRET_KEY. After that, <code>HSForUser(uid)</code> starts routing this user's API calls to their own headscale. Cross-user ACL / exit-nodes / mesh stay on the global plane until v0.23.2 (cross-plane coordination).",
+	"control_planes.provision_button":     "Provision per-user headscale",
+	"control_planes.provision_confirm":    "Start provisioning? A new docker container will be created, with a port in the 50450+ range.",
+	"control_planes.provisioned":          "Provisioned: container <code>%s</code> is listening on <code>%s</code> (HTTP, port %s). HSForUser(uid) now routes here.",
+	"control_planes.decommission_title":   "Decommission per-user headscale",
+	"control_planes.decommission_help":    "Tear down the <code>headscale-&lt;username&gt;</code> container and clear the override. The script preserves the data (DB + config) in a sibling <code>.decommissioned-&lt;username&gt;-&lt;ts&gt;</code> directory for possible recovery. After this, <code>HSForUser(uid)</code> falls back to the global plane. To re-use the preserved data, manually move the files back before re-provisioning.",
+	"control_planes.decommission_button":  "Decommission",
+	"control_planes.decommission_confirm": "Tear down the per-user headscale? The container will be stopped and removed, and the DB override cleared. The user's data is preserved in a backup directory.",
+	"control_planes.decommissioned":       "Decommissioned: container stopped, override cleared, data preserved at <code>~/.decommissioned-&lt;username&gt;-&lt;ts&gt;</code>.",
 	// 2026-07-17: v0.16.0 — per-user subnets admin page (/admin/users/{id}/subnet).
 	"user_subnet.title":                 "Personal subnet",
 	"user_subnet.subtitle":              "personal CIDR allocation + sidecar provisioning",

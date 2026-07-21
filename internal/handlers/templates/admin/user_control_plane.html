@@ -52,6 +52,30 @@
   </div>
 </form>
 
+{{if not .CurrentURL}}
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-rocket"></i> {{t "control_planes.provision_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "control_planes.provision_help" | safeHTML}}
+  </p>
+  <form method="POST" action="/admin/users/{{.UserID}}/plane/provision" style="margin-top:12px"
+        onsubmit="return confirm('{{t "control_planes.provision_confirm"}}')">
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-bolt"></i> {{t "control_planes.provision_button"}}</button>
+  </form>
+</div>
+{{else}}
+<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+  <h3><i class="fa-solid fa-trash-can"></i> {{t "control_planes.decommission_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "control_planes.decommission_help" | safeHTML}}
+  </p>
+  <form method="POST" action="/admin/users/{{.UserID}}/plane/decommission" style="margin-top:12px"
+        onsubmit="return confirm('{{t "control_planes.decommission_confirm"}}')">
+    <button type="submit" class="btn btn-warning"><i class="fa-solid fa-trash-can"></i> {{t "control_planes.decommission_button"}}</button>
+  </form>
+</div>
+{{end}}
+
 <div class="card">
   <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{t "control_planes.help_body" | safeHTML}}</div>
 </div>

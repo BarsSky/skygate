@@ -45,6 +45,15 @@ services:
       # talk to tailscaled. Not strictly required (tailscale finds
       # the socket via /var/run/tailscale), but explicit.
       - ./data/ts/run:/var/run/tailscale
+      # 2026-07-21: v0.23.0 Phase 1 — per-user headscale provisioning
+      # scripts. The skygate process runs these via os/exec to
+      # create/teardown per-user headscale containers. The scripts
+      # are pure bash and need docker access (which skygate already
+      # has via the docker.sock mount above) plus write access to
+      # the per-user directory under /home/skyadmin/headscale/users/.
+      - ./deploy/headscale-users/headscale-bootstrap.sh:/usr/local/bin/headscale-bootstrap.sh:ro
+      - ./deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
+      - /home/skyadmin/headscale:/home/skyadmin/headscale
     secrets:
       - ts_authkey
     cap_add:
