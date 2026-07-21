@@ -7,7 +7,36 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.24.1 — /my/devices shows tag:subnet-router + advertised routes
+* **Current**: v0.24.2 — Download bundle for per-user subnet-router
+  ([release notes](RELEASE-NOTES-v0.24.2.md)).
+  The "user-friendly delivery" release. v0.24.0 shipped
+  the setup.sh script and v0.24.1 fixed the /my/devices
+  UI to show what each device does, but the operator
+  still had to manually copy the script + the rendered
+  `tailscale up` command into a chat. v0.24.2 ships
+  `GET /admin/users/{id}/subnet/download` — a one-click
+  flow that issues a fresh preauth, embeds it in a
+  self-contained tar.gz, and returns the bundle as
+  `application/gzip` with `Content-Disposition:
+  attachment`. The bundle contains setup.sh + README.md
+  (chmod +x) + commands.txt (chmod +x, with the preauth
+  key and CIDR already filled in) + CIDR.txt. User
+  scps the bundle to their router, untars, runs
+  `sudo bash commands.txt`, and the rest is the same
+  v0.24.0 5-step flow. New `make sync-bundles` +
+  `make check-bundles` targets keep the embed copies
+  of setup.sh / README.md in
+  `internal/handlers/bundles/` in sync with the
+  canonical `deploy/subnet-router/`. `docs/subnet-router.md`
+  got three new top-level sections: TL;DR (concrete
+  examples of what works after setup), Quick start
+  (3-command path for users who already have
+  tailscaled), What to download (GitHub raw URLs).
+  2 new i18n keys × 2 langs. 17/17 packages green.
+  No env-var changes, no schema migration. Same 4
+  prod users, same subnet allocations.
+
+* **Previous**: v0.24.1 — /my/devices shows tag:subnet-router + advertised routes
   ([release notes](RELEASE-NOTES-v0.24.1.md)).
   The "what does this device actually do" UI fix. v0.24.0
   shipped `deploy/subnet-router/setup.sh` so users could
