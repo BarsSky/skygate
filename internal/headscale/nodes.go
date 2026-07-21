@@ -263,47 +263,60 @@ func (c *Client) DeleteNode(nodeID int64) error {
 // pushes it back out to ~30d within the next sync tick (5m by
 // default).
 //
-// API path: POST /api/v1/node/{id}/expire with body
+// CLI path (only path that works in headscale 0.29.2):
 //
-//	{"expiry": "2026-09-20T12:00:00Z"}
+//	docker exec headscale headscale nodes expire -i <id>
+//	    --expiry <RFC3339>
 //
-// (the headscale REST API ignores `disable_expiry` / `disableExpiry`
-//  keys in v0.29.2 and falls back to a 1-hour default; the only
-//  body shape that actually works is the explicit expiry field).
+// Why not the REST API? In headscale 0.29.2 the
+// `POST /api/v1/node/{id}/expire` endpoint has a bug:
+// it accepts the call with HTTP 200 and the body shape
+// `{"expiry":"2026-08-20T11:29:54Z"}` but silently falls
+// back to `time.Now()` for the actual expiry value. Verified
+// live on 2026-07-21: a POST with a 30-day-future expiry
+// got back an expiry value 5 seconds in the future (the
+// same value the call would have set if you passed an
+// empty body). The gRPC handler source
+// (hscontrol/grpcv1.go ExpireNode) clearly reads
+// `request.GetExpiry().AsTime()` when the field is set,
+// so the bug is in the REST-to-gRPC JSON binding (the
+// wrong field name or no binding at all). Tried 7
+// different body shapes (`expiry` / `Expiry` / camelCase /
+// `expiry_unix` / `valid_until` / `node_expiry` / `expire_at`)
+// — all produce the same 5-second clamped result.
 //
-// CLI fallback: `docker exec headscale headscale nodes expire -i <id>
-// --expiry <RFC3339>` — the admin API key does not include the
-// gRPC scope for ExpireNode in some headscale deployments, so when
-// the POST returns 403/404 we shell out the same way
-// createPreauthViaCLI does. Disable semantics (node never expires)
-// are only reachable via the CLI (`--disable`); the REST API has
-// no equivalent in 0.29.2, but expirewatch never needs that mode
-// because tagged nodes already skip the regReq.Expiry branch in
-// headscale's state.go.
+// The CLI uses the same code path (it calls gRPC internally
+// too, but it sets the `expiry` proto field correctly),
+// so the CLI works. When headscale fixes the REST bug
+// (likely in 0.29.3 or 0.30.x — the field is named
+// `expiry` in the proto), ExtendNodeExpiry can switch
+// back to the API path. For now: CLI only.
+//
+// `dockerRunner` is the function used to shell out the
+// `docker` command. Production wiring uses
+// `exec.Command("docker", args...)`; tests can inject
+// a stub that records the call and exits 0 without
+// touching the system docker. nil dockerRunner =
+// use the default (exec.Command).
 //
 // Cache: invalidates on success so the next ListAllNodes reflects
 // the new expiry within one TTL window.
 func (c *Client) ExtendNodeExpiry(nodeID int64, expiry time.Time) error {
 	idStr := strconv.FormatInt(nodeID, 10)
-	body := map[string]any{
-		"expiry": expiry.UTC().Format(time.RFC3339),
-	}
-	err := c.do("POST", "/api/v1/node/"+idStr+"/expire", body, nil)
-	if err == nil {
-		c.InvalidateCache()
-		return nil
-	}
-	// Fallback: CLI. The admin API key in 0.29.x may lack
-	// permission for the expire endpoint; the CLI always works.
 	if c.ExecContainer == "" {
-		return fmt.Errorf("api: %w; no ExecContainer for CLI fallback", err)
+		return fmt.Errorf("no ExecContainer configured (needed for CLI fallback; REST API path is broken in headscale 0.29.2)")
 	}
 	args := []string{"exec", c.ExecContainer, "headscale", "nodes", "expire",
 		"-i", idStr, "--expiry", expiry.UTC().Format(time.RFC3339)}
-	cmd := exec.Command("docker", args...)
-	out, cerr := cmd.CombinedOutput()
-	if cerr != nil {
-		return fmt.Errorf("api: %v; cli: %v (%s)", err, cerr, strings.TrimSpace(string(out)))
+	var out []byte
+	var err error
+	if c.dockerRunner != nil {
+		out, err = c.dockerRunner(args...)
+	} else {
+		out, err = exec.Command("docker", args...).CombinedOutput()
+	}
+	if err != nil {
+		return fmt.Errorf("cli: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	c.InvalidateCache()
 	return nil
