@@ -7,7 +7,28 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.24.2 — Download bundle for per-user subnet-router
+* **Current**: v0.25.0 — Mesh visibility on /my/devices + operator overview
+  ([release notes](RELEASE-NOTES-v0.25.0.md)).
+  The "mesh view" UI release. Per the operator's spec
+  (2026-07-21 22:40), each device on /my/devices now
+  shows which virtual subnet it belongs to (e.g.
+  "10.0.1.0/24" for tag:private devices, "shared" pill
+  for tag:public/exit-node). The subnet card on
+  /my/devices grows three new rows: "Mesh-сеть" (list
+  of share-to / share-from), "Активные mesh-сети"
+  (count + member list with their CIDRs), and the
+  /admin/subnets page gets 3 new columns (Devices /
+  Mesh / Shares) plus a global totals footer
+  (Total devices / Active meshes / Sharing their /24
+  / Shared with you). 18 new i18n keys × 2 langs (36
+  entries). 17/17 packages green. No schema / env-var
+  / package changes. ~329 lines added (handlers +170,
+  templates +100, catalog +36, 2 × tests unchanged).
+  The "per-user control plane" path (v0.23.0) is
+  unchanged — v0.25.0 is purely UI on top of the
+  default global-headscale path.
+
+* **Previous**: v0.24.2 — Download bundle for per-user subnet-router
   ([release notes](RELEASE-NOTES-v0.24.2.md)).
   The "user-friendly delivery" release. v0.24.0 shipped
   the setup.sh script and v0.24.1 fixed the /my/devices
