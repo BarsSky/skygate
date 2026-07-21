@@ -59,17 +59,40 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// alone. We keep a snapshot of the original owner in node_owner_map
 	// and union both sources to compute "my devices".
 	type myNodeRow struct {
-		ID       string
-		Hostname string
-		IP       string
-		Online   bool
-		LastSeen string
-		UserName string
-		IsPublic bool
-		Source   string
+		ID              string
+		Hostname        string
+		IP              string
+		Online          bool
+		LastSeen        string
+		UserName        string
+		IsPublic        bool
+		Source          string
+		Tags            []string
+		AvailableRoutes []string
+		ApprovedRoutes  []string
+		// IsSubnetRouter is true when this node carries
+		// tag:subnet-router. v0.24.1 — the /my/devices page
+		// shows a dedicated "subnet router" badge for these
+		// nodes (with the per-user CIDR they advertise) so
+		// the user can tell at a glance whether their
+		// LAN-bridge is up. Cheap to compute; cheaper than
+		// the template scanning Tags.
+		IsSubnetRouter bool
+		IsExitNode     bool
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
+	// hasTag returns true if the node carries the given tag.
+	// Inline (not from internal/sidecar) so this file stays
+	// free of cross-package imports for a small helper.
+	hasTag := func(tags []string, want string) bool {
+		for _, t := range tags {
+			if t == want {
+				return true
+			}
+		}
+		return false
+	}
 	for _, n := range all {
 		if hsUserID.Valid && username != "" && n.UserName == username {
 			mySet[n.ID] = true
@@ -80,8 +103,14 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
-				UserName: n.UserName, IsPublic: n.IsPublicView(),
-				Source: "live",
+				UserName:        n.UserName,
+				IsPublic:        n.IsPublicView(),
+				Source:          "live",
+				Tags:            n.Tags,
+				AvailableRoutes: n.AvailableRoutes,
+				ApprovedRoutes:  n.ApprovedRoutes,
+				IsSubnetRouter:  hasTag(n.Tags, "tag:subnet-router"),
+				IsExitNode:      n.IsExitNode,
 			})
 		}
 	}
@@ -107,8 +136,14 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
-				UserName: n.UserName, IsPublic: n.IsPublicView(),
-				Source: "snapshot",
+				UserName:        n.UserName,
+				IsPublic:        n.IsPublicView(),
+				Source:          "snapshot",
+				Tags:            n.Tags,
+				AvailableRoutes: n.AvailableRoutes,
+				ApprovedRoutes:  n.ApprovedRoutes,
+				IsSubnetRouter:  hasTag(n.Tags, "tag:subnet-router"),
+				IsExitNode:      n.IsExitNode,
 			})
 		}
 	}

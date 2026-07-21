@@ -1,4 +1,4 @@
-﻿{{define "body-user-devices"}}
+{{define "body-user-devices"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-laptop"></i>{{t "devices.title"}}</h2>
@@ -72,7 +72,7 @@
   <h3><i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}</h3>
   {{if .HasMyNodes}}
   <table>
-    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th></tr></thead>
+    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th></tr></thead>
     <tbody>
       {{range .MyNodes}}
       <tr>
@@ -87,13 +87,33 @@
         </td>
         <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
         <td>
-          {{if .IsPublic}}
+          {{if .IsSubnetRouter}}
+            <span class="tag" style="background:var(--accent);color:var(--accent-fg)"><i class="fa-solid fa-tower-broadcast"></i>{{t "devices.tag_subnet_router"}}</span>
+          {{else if .IsPublic}}
             <span class="tag tag-success"><i class="fa-solid fa-globe"></i>{{t "devices.tag_public"}}</span>
             {{if eq .Source "snapshot"}}
               <span style="color:var(--text-muted);font-size:11px" title="headscale shows the owner as tagged-devices, original owner is preserved in skygate">via snapshot</span>
             {{end}}
+          {{else if .IsExitNode}}
+            <span class="tag" style="background:var(--warning);color:var(--warning-fg)"><i class="fa-solid fa-door-open"></i>{{t "devices.tag_exit_node"}}</span>
           {{else}}
             <span class="tag"><i class="fa-solid fa-lock"></i>{{t "devices.tag_private"}}</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .AvailableRoutes}}
+            {{range .AvailableRoutes}}
+              <code class="route" style="font-size:11px;padding:1px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:3px;display:inline-block;margin:1px">{{.}}</code>
+            {{end}}
+            {{$approvedCount := len .ApprovedRoutes}}
+            {{$availableCount := len .AvailableRoutes}}
+            {{if not (eq $approvedCount $availableCount)}}
+              <span class="tag" style="background:var(--warning);color:var(--warning-fg);font-size:10px;margin-left:4px" title="{{t "devices.routes_pending_help"}}">
+                <i class="fa-solid fa-hourglass-half"></i>{{t "devices.routes_pending"}}
+              </span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px">—</span>
           {{end}}
         </td>
       </tr>
@@ -102,7 +122,7 @@
   </table>
   <p style="color:var(--text-muted);font-size:12px;margin-top:12px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
-    <span>{{t "devices.tag_hint"}}.</span>
+    <span>{{t "devices.tag_hint_v0_24_1"}}.</span>
   </p>
   {{else}}
   <div class="alert alert-warn" style="margin-top:0">
@@ -117,7 +137,7 @@
   <p style="color:var(--text-muted);margin-bottom:16px">
     {{t "devices.add_hint"}}
     {{t "preauth.warning"}}
-    {{t "devices.tag_hint"}}.
+    {{t "devices.tag_hint_v0_24_1"}}.
   </p>
   <form method="post" action="/my/preauth" id="preauth-form">
     <div class="os-grid">
