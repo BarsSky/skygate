@@ -7,19 +7,53 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.23.3 — node-expiry
+* **Current**: v0.23.4 — expirewatch: skip nil-expiry nodes, not all tagged
+  ([release notes](RELEASE-NOTES-v0.23.4.md)).
+  Hotfix for v0.23.3. The v0.23.3 watcher skipped ANY tagged
+  node — but a user device that registers untagged (and
+  picks up the Tailscale 1.98.x `RegisterRequest.Expiry =
+  now+2-4s`) is then tagged `tag:private` by skygate's
+  backfill on the next `/my/devices` load. Result: a node
+  that's tagged AND has a 2-4s Expiry — which the v0.23.3
+  rule froze in place. Symptom observed in production at
+  16:01 on 2026-07-21: operator's Android (skybars, id=10)
+  expired, watcher logs showed `seen=18 renewed=0
+  skipped=18` every 5m. The v0.23.4 fix: skip only when
+  `n.Expiry == ""` (covers `tag:exit-node`/`tag:public`/
+  `tag:subnet-router` and any node the operator ran
+  `--disable` on). Tagged nodes with a real Expiry
+  (`tag:private` user devices) are now renewed just like
+  untagged ones. The change is a 1-line edit to
+  `SyncOnce` and removal of the `isTagged` helper.
+  `TestExpireWatch_SkipsTagged` →
+  `TestExpireWatch_SkipsOnlyNilExpiry` (4 sub-cases),
+  `TestExpireWatch_HandlesMissingExpiry` removed
+  (the "defensive renew for nil expiry" behaviour is
+  gone — it would override `--disable`). 7/7 expirewatch
+  tests PASS, 17/17 packages green. No env-var changes,
+  no new i18n keys, no schema migration. Same defaults
+  as v0.23.3 (5m / 7d / 30d). Live verification: after
+  deploy, `docker logs skygate | grep expirewatch.tick`
+  should show `seen=18 renewed=5 skipped=13 errors=0`
+  (the 5 renewed are the `tag:private` nodes with
+  near-expiry: skybars, skybars-1, Nothing Phone, Base,
+  desktop-cuo0tfb; the 13 skipped are emilia, sharlotta,
+  karolina + the 7 `agent*` test nodes from v0.23.3
+  verification + skygate-vm which has nil Expiry).
+
+* **Previous**: v0.23.3 — node-expiry
   watcher (the "device
   won't stay connected"
   release)
   ([release notes](RELEASE-NOTES-v0.23.3.md)).
   Background goroutine in
   `internal/expirewatch` ticks
-  every 5m, walks every non-tagged
-  node in headscale, and extends
-  any node whose Expiry is missing
-  or within 7d of "now" out to 30d.
-  Works around a Tailscale 1.98.x
-  client behaviour where
+  every 5m, walks every node in
+  headscale, and extends any node
+  whose Expiry is missing or within
+  7d of "now" out to 30d. Works
+  around a Tailscale 1.98.x client
+  behaviour where
   `RegisterRequest.Expiry` is only
   2-4s in the future and headscale
   0.29.x applies that Expiry verbatim
@@ -41,15 +75,12 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   headscale client (was previously
   missing — required an extra
   `/api/v1/node/{id}` round-trip per
-  node per watcher tick). Tagged
-  nodes (`tag:exit-node` /
-  `tag:public` / `tag:subnet-router` /
-  `tag:client`) are skipped by
-  the watcher because headscale's
-  `state.go` explicitly guards
-  `if !node.IsTagged()` around the
-  `regReq.Expiry` branch. 8 unit
-  tests in
+  node per watcher tick). **v0.23.4
+  fix**: the original "skip any tagged
+  node" rule was wrong (see Current
+  above) and was replaced with "skip
+  only nodes whose Expiry is nil".
+  8 unit tests in
   `internal/expirewatch/manager_test.go`
   (PicksOnlyNearExpiry /
   SkipsTagged / HandlesMissingExpiry /
@@ -58,17 +89,6 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   RecordsAuditOnRenew /
   ParsesRFC3339NanoExpiry /
   HandlesAPIFailure), all PASS.
-  18/18 packages green (acl, auth,
-  backup, config, db, expirewatch,
-  handlers, headscale,
-  headscale_version, i18n, invite,
-  mesh, monitoring, release, sidecar,
-  subnet, telegram). `check_v0.23.3.sh`
-  — 5-step live verification: force a
-  node's expiry to 2s, wait for the
-  watcher to tick, confirm the expiry
-  is now at least 7d out, audit log
-  row written, tagged node untouched.
   The "v0.23.0 is for compliance, not
   default path" release. v0.23.0 shipped
   one-click per-user headscale
@@ -1482,7 +1502,7 @@ idempotent — re-running is a no-op.
 - The user has no devices in headscale (the `pending` status
   is correct — they're not opted in to Tailscale yet).
 
-### Operational note: node-expiry watcher (v0.23.3, the "device won't stay connected" release)
+### Operational note: node-expiry watcher (v0.23.3 + v0.23.4, the "device won't stay connected" release)
 
 **Symptom**: User generates a preauth via `/my/preauth`,
 pastes the key into a Tailscale client, the client
@@ -1490,6 +1510,9 @@ registers successfully, but the device disconnects within
 seconds and never reconnects. The preauth is now `used=true`,
 so the user can't re-register with it either. The Android
 client shows "Sign in" with a key that was never accepted.
+Delayed variant: the device connects and works for ~30
+days, then disconnects. The preauth is `used=true`; the
+device won't come back.
 
 **Root cause** (discovered 2026-07-21 with the operator's
 Android phone / node 10 / skybars): Tailscale 1.98.x's
@@ -1517,13 +1540,29 @@ already `used=true`, so re-registration is impossible.
 
 **Fix** (v0.23.3): a background goroutine in
 `internal/expirewatch` ticks every 5 minutes, walks
-every non-tagged node in headscale, and extends any node
-whose Expiry is missing or within 7 days of "now" out
-to 30 days. Tagged nodes (`tag:exit-node`, `tag:public`,
-`tag:subnet-router`, `tag:client`, …) are skipped because
-headscale's `state.go` explicitly guards
-`if !node.IsTagged()` around the regReq.Expiry branch,
-so they keep their nil/none Expiry naturally.
+every node in headscale, and extends any node whose
+Expiry is within 7 days of "now" out to 30 days.
+
+**v0.23.4 fix** to v0.23.3: the original rule "skip any
+tagged node" was wrong. A user device registers
+UNTAGGED with a skygate-issued preauth, picks up the
+2-4s Expiry, then gets `tag:private` attached by
+skygate's `backfillNodeOwnership` on the next
+`/my/devices` load. The v0.23.3 watcher saw `len(Tags)
+> 0` and skipped it; the Expiry passed; the device
+disconnected 30 days later. The corrected rule is
+"skip only when `n.Expiry == ""`" — this covers
+`tag:exit-node` / `tag:public` / `tag:subnet-router`
+(never had a non-nil Expiry) and any node on which the
+operator ran `headscale nodes expire -i N --disable`.
+Tagged nodes with a real Expiry (`tag:private` user
+devices) are now renewed just like untagged ones.
+
+To verify the v0.23.4 fix is live: after deploy,
+`docker logs skygate | grep expirewatch.tick` should
+show `seen=N renewed>0 skipped<N` — if `renewed=0`
+and `skipped=seen`, the old code is still running
+(roll back or re-deploy).
 
 **Verification**:
 - `bash /tmp/check_v0.23.3.sh` — live test: force a
@@ -1550,15 +1589,15 @@ so they keep their nil/none Expiry naturally.
   expiry when renewing.
 
 **One-shot manual fix** (if you can't immediately
-deploy v0.23.3 or the watcher is disabled):
+deploy v0.23.4 or the watcher is disabled):
 ```bash
 docker exec headscale headscale nodes expire \
   -i <NODE_ID> --expiry "$(date -u -d '+30 days' +'%Y-%m-%dT%H:%M:%SZ')"
 ```
-The CLI `headscale nodes expire -i <id> --disable` also
-works for "node never expires" — used for tagged nodes
-manually, but the watcher skips tagged nodes so this
-shouldn't be needed in normal operation.
+The CLI `headscale nodes expire -i <id> --disable`
+sets `Expiry = nil` and the watcher will then skip the
+node indefinitely (use this on tagged infrastructure
+nodes that you genuinely want to never expire).
 
 **When NOT to look here**:
 - A device that never registered in the first place
