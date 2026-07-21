@@ -53,6 +53,12 @@
 </form>
 
 {{if not .CurrentURL}}
+<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+  <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.provision_warning_title"}}</h3>
+  <div style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "control_planes.provision_warning_body" | safeHTML}}
+  </div>
+</div>
 <div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
   <h3><i class="fa-solid fa-rocket"></i> {{t "control_planes.provision_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
