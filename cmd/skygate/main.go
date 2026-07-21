@@ -220,6 +220,14 @@ func main() {
 	mux.Handle("GET /admin/users/{id}/plane", authMW(http.HandlerFunc(app.GetAdminUserControlPlane)))
 	mux.Handle("POST /admin/users/{id}/plane", authMW(http.HandlerFunc(app.PostAdminUserControlPlane)))
 	mux.Handle("POST /admin/users/{id}/plane/clear", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneClear)))
+	// 2026-07-21: v0.23.0 Phase 1 — one-click provisioning of a
+	// per-user headscale container. The Provision action runs the
+	// bootstrap script (creates container + user + API key, returns
+	// JSON) and persists the result to portal_users. The
+	// Decommission action reverses it: tears down the container and
+	// clears the DB row (data on disk is preserved for recovery).
+	mux.Handle("POST /admin/users/{id}/plane/provision", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneProvision)))
+	mux.Handle("POST /admin/users/{id}/plane/decommission", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneDecommission)))
 	// 2026-07-17: v0.16.0 — per-user subnets admin page.
 	// GET shows the user's subnet status; POSTs allocate
 	// / disable / run a sanity check.
