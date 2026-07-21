@@ -7,7 +7,32 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.23.4 — expirewatch: skip nil-expiry nodes, not all tagged
+* **Current**: v0.24.0 — subnet-router setup tooling
+  ([release notes](RELEASE-NOTES-v0.24.0.md)).
+  The "operator guide for getting a per-user subnet-router
+  running end-to-end" release. Backend
+  (`sidecar.SyncOnce` / `GeneratePreauth` /
+  `BuildPreauthInfo`) has been in place since v0.16.7 but
+  no operator-facing tooling existed. v0.24.0 ships
+  `deploy/subnet-router/setup.sh` (runs on the user's
+  RPi/NAS/mini-PC, takes a preauth from the admin,
+  executes `tailscale up` with the correct flags + prints
+  next-steps), `docs/subnet-router.md` (full user guide:
+  5-step setup, troubleshooting, security notes), and
+  `deploy/subnet-router/allocate-existing-users.sh` (one-off
+  for backfilling users that were created before the
+  v0.20.0 auto-allocate). **No Go code touched**, no new
+  env vars, no schema migration, no new i18n keys, no
+  UI changes. Same 256-user /24-per-user limits, same
+  status semantics (pending ⇔ no router, router_active ⇔
+  tag:subnet-router up). Production state: skyadmin =
+  10.0.1.0/24 active (pilot since v0.16.6), michail =
+  10.0.6.0/24 pending, guest = 10.0.9.0/24 pending, daniil
+  = 10.0.10.0/24 pending. When each user runs
+  `setup.sh`, the sidecar's 30s tick auto-approves the
+  route and flips status to `router_active` within ~30s.
+
+* **Previous**: v0.23.4 — expirewatch: skip nil-expiry nodes, not all tagged
   ([release notes](RELEASE-NOTES-v0.23.4.md)).
   Hotfix for v0.23.3. The v0.23.3 watcher skipped ANY tagged
   node — but a user device that registers untagged (and
@@ -1608,12 +1633,129 @@ nodes that you genuinely want to never expire).
   `headscale policy get` and the
   `/admin/devices/{id}/tag` flow).
 
+### Operational note: subnet-router setup (v0.24.0, the "end-to-end per-user subnet" release)
+
+**Symptom**: User has been allocated a per-user subnet
+(`10.0.<uid>.0/24` — visible on `/admin/users/{id}/subnet`
+as a `pending` status pill with a `Issue preauth key`
+button) but the LAN behind the subnet-router isn't reachable
+from the tailnet.
+
+**End-to-end flow** (the user reads `docs/subnet-router.md`,
+the admin reads this section):
+
+1. **User has a subnet row** in `user_subnets` with status
+   `pending`. The denormalized `portal_users.subnet_cidr`
+   matches (set by `subnet.Create` on user create since
+   v0.20.0 auto-allocate, or by
+   `deploy/subnet-router/allocate-existing-users.sh` for
+   pre-v0.20.0 users).
+
+2. **Admin opens `/admin/users/{id}/subnet`**, clicks
+   `Issue preauth key`. The handler
+   (`PostAdminUserSubnetProvision` in
+   `internal/handlers/admin_user_subnet.go`) calls
+   `sidecar.Manager.GeneratePreauth` (returns a 1-hour
+   TTL single-use preauth tagged `tag:subnet-router`),
+   then `BuildPreauthInfo` (which formats the `tailscale
+   up` command for the admin UI). The handler does NOT
+   push any ACL — the sidecar's auto-approver handles
+   route approval on the next 30s tick.
+
+3. **User runs `deploy/subnet-router/setup.sh`** (or
+   pastes the `tailscale up` command directly) on the
+   host that's at the edge of their LAN. Sanity checks
+   in the script: tailscale CLI present, tailscaled up,
+   env vars (`PREAUTH_KEY`, `SUBNET_CIDR`,
+   `SUBNET_ROUTER_HOSTNAME`) all set.
+
+4. **Node registers in headscale** as
+   `skygate-subnet-<username>` with tag `tag:subnet-router`
+   and a pending route for `10.0.<uid>.0/24`.
+
+5. **`sidecar.Manager.SyncOnce`** (30s tick) lists every
+   `tag:subnet-router` node across all control planes,
+   parses the username from the hostname, looks up the
+   portal user, and calls `ApproveAllRoutesWithList` on
+   the per-user CIDR. Then it flips
+   `user_subnets.status` from `pending` to `active` and
+   sets `router_node_id` + `router_hostname`.
+
+6. **`subnet.SyncStatus`** (called from
+   `backfillNodeOwnership` on every `/my/devices` load)
+   reads `user_subnets.status` and `user_subnets.router_hostname`,
+   then writes the **denormalized**
+   `portal_users.subnet_status = 'router_active'` (the
+   v0.22.3 semantics: `active ⇔ ≥1 device`,
+   `router_active ⇔ + router up`).
+
+7. **ACL re-apply**: not needed. The v0.17.0 ACL already
+   includes `tag:subnet-router` in `tagOwners`, and the
+   per-user rule already permits
+   `tag:subnet-router → user_subnet:*`. No policy churn.
+
+8. **Tailnet clients with `tailscale up --accept-routes`**
+   see the new route within ~60s (the route push interval).
+   `ping skygate-subnet-<username>` works via MagicDNS;
+   `ping 10.0.<uid>.1` works to the gateway IP on the
+   user's LAN (assuming the subnet-router has IP forwarding
+   enabled — see `docs/subnet-router.md` § Optional).
+
+**Verification** (on the skygate host):
+
+```bash
+# 1. status pill should flip
+curl -fsS -u admin:... 'https://gate.skynas.ru/admin/users/6/subnet' \
+  | grep -A2 'subnet-status'
+
+# 2. audit log
+docker exec skygate sqlite3 /data/skygate.db \
+  "SELECT id, created_at, username, action, substr(detail,1,80)
+   FROM audit_log WHERE action LIKE 'subnet%' ORDER BY id DESC LIMIT 5;"
+
+# 3. sidecar logs
+docker logs --since 5m skygate | grep -E 'sidecar.*approved|sidecar.*10.0.6.0/24'
+
+# 4. headscale state
+docker exec headscale headscale nodes list -o json | \
+  python3 -c "import sys,json; \
+    [print(n['givenName'], 'allowed:', n.get('allowedRoutes',[]), 'enabled:', n.get('enabledRoutes',[])) \
+     for n in json.load(sys.stdin) if 'skygate-subnet-michail' in n.get('givenName','')]"
+```
+
+**One-off for backfilling** (run once after this release
+on the operator's VM):
+
+```bash
+ALLOCATE_NO_PROMPT=1 /home/skyadmin/skygate/deploy/subnet-router/allocate-existing-users.sh
+```
+
+Already executed: michail/guest/daniil now have
+`10.0.<uid>.0/24` rows in `user_subnets` with
+`status='pending'` and the corresponding denorm columns on
+`portal_users`.
+
+**When NOT to look here**:
+- A user with `subnet_status='active'` but no
+  `subnet_router_node_id` — that's a user-owned subnet
+  with no live router. Same as the `pending` case
+  symptom-wise; the user just hasn't run `setup.sh` yet
+  (or their router is down — sidecar marks
+  `last_seen > 5 min` as `disabled`).
+- A user with no subnet at all — they need
+  `allocate-existing-users.sh` first, or the admin needs
+  to click `Allocate` on `/admin/users/{id}/subnet`.
+
 ---
 
 ## Code structure (where to look)
 
 ```
 cmd/skygate/main.go                                — entry point, HTTP routes
+deploy/subnet-router/setup.sh                      — v0.24.0: runs on the user's subnet-router host; takes a preauth key + hostname + cidr and runs `tailscale up` (per-user /24 + tag:subnet-router)
+deploy/subnet-router/allocate-existing-users.sh    — v0.24.0: one-off; INSERTs user_subnets rows for pre-v0.20.0 users that auto-allocate missed
+docs/subnet-router.md                              — v0.24.0: full operator/user guide for the subnet-router end-to-end flow
+
 internal/handlers/handlers.go                       — shared infra only: App struct + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser (~257 lines)
 internal/handlers/handlers_dashboard.go             — TailnetMetrics + PreauthKeyStats types + computeTailnetMetrics + GetDashboard + countMyPreauthKeys (~185 lines)
 internal/handlers/handlers_auth.go                  — GetLogin/PostLogin/PostLogout + i18n PostLang cookie (~93 lines)
