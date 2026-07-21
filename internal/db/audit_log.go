@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"time"
 )
 
 // audit_log  —  helpers
@@ -76,6 +77,71 @@ func ListAuditActions(d *sql.DB) ([]string, error) {
 			return nil, err
 		}
 		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// AuditRow is a single row from the audit_log table, exposed to
+// the per-user audit export handler (v0.25.1). Fields are kept
+// as the wire types (string + int64 + time.Time) so the same
+// struct works for both CSV and JSON output.
+type AuditRow struct {
+	ID         int64
+	CreatedAt  time.Time
+	UserID     int64
+	Username   string
+	Action     string
+	Detail     string
+}
+
+// ListAuditLogForUser returns every audit_log row owned by
+// `userID` (or rows where userID=0 but username matches `username`,
+// e.g. /restart events logged by the bot on the user's behalf).
+//
+// v0.25.1 — exposed for the per-user CSV/JSON export. The
+// `since` parameter is a unix timestamp (0 = no lower bound).
+// Returns up to 10000 rows (cap to keep exports manageable;
+// older rows are paginated via the `offset` parameter).
+//
+//   - if since > 0: filter created_at >= since
+//   - if limit > 0: cap to `limit` rows (default 10000, hard max)
+//   - if offset > 0: skip that many rows (pagination)
+//
+// Note: audit_log.created_at is stored as INTEGER (Unix seconds
+// via strftime('%s','now')); we convert to time.Time here so
+// the caller's downstream code can format however it likes
+// (RFC3339 for the JSON export, RFC3339Nano for the CSV).
+func ListAuditLogForUser(d *sql.DB, userID int64, username string, since int64, limit, offset int) ([]AuditRow, error) {
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := `SELECT id, created_at, COALESCE(user_id, 0), username, action, COALESCE(detail, '')
+	        FROM audit_log
+	       WHERE (user_id = ? OR (user_id = 0 AND username = ?))`
+	args := []interface{}{userID, username}
+	if since > 0 {
+		q += ` AND created_at >= ?`
+		args = append(args, since)
+	}
+	q += ` ORDER BY id DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+	rows, err := d.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditRow
+	for rows.Next() {
+		var r AuditRow
+		var createdSec int64
+		if err := rows.Scan(&r.ID, &createdSec, &r.UserID, &r.Username, &r.Action, &r.Detail); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = time.Unix(createdSec, 0).UTC()
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }
