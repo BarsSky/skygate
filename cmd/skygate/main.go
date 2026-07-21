@@ -306,6 +306,12 @@ func main() {
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(app.PostMyTokenRevoke)))
 	mux.Handle("GET /my/account", authMW(http.HandlerFunc(app.GetMyAccount)))
 	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(app.PostMyAccountPassword)))
+	// v0.25.1: per-user audit log export (CSV or JSON).
+	// Gated by the user's session cookie — they get only
+	// their own audit trail. Useful for compliance
+	// reporting without giving the user admin access to
+	// /admin/audit.
+	mux.Handle("GET /my/account/audit", authMW(http.HandlerFunc(app.GetMyAccountAuditExport)))
 	// 2026-07-13: Этап 12 — self-service Telegram binding. Any
 	// portal user (not just admin) can generate a one-time login
 	// key here and paste it into the bot. The /my/telegram page
