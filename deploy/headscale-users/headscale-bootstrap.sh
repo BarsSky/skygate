@@ -4,7 +4,7 @@
 # 2026-07-21: v0.23.0 Phase 1
 #
 # Usage:
-#   headscale-bootstrap.sh <username> <uid>
+#   headscale-bootstrap.sh <username> <portal_uid>
 #
 # Creates:
 #   - /home/skyadmin/headscale/users/<username>/config/config.yaml
@@ -28,10 +28,10 @@
 set -euo pipefail
 
 USERNAME="${1:-}"
-UID="${2:-}"
+PORTAL_UID="${2:-}"
 
-if [ -z "$USERNAME" ] || [ -z "$UID" ]; then
-    echo "usage: headscale-bootstrap.sh <username> <uid>" >&2
+if [ -z "$USERNAME" ] || [ -z "$PORTAL_UID" ]; then
+    echo "usage: headscale-bootstrap.sh <username> <portal_uid>" >&2
     exit 2
 fi
 
@@ -57,7 +57,7 @@ HEADSCALE_IMAGE="${SKYGATE_HEADSCALE_IMAGE:-headscale/headscale:0.29.2}"
 # for skygate's API access, not public client connections (those go
 # through the global plane).
 BASE_PORT=50450
-HTTP_PORT=$((BASE_PORT + (UID % 50)))
+HTTP_PORT=$((BASE_PORT + (PORTAL_UID % 50)))
 GRPC_PORT=$((HTTP_PORT + 1000))
 METRICS_PORT=$((HTTP_PORT + 2000))
 
