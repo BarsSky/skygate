@@ -137,7 +137,33 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			created_at INTEGER NOT NULL DEFAULT 0,
 			headscale_user_id INTEGER,
 			default_device_node_id TEXT NOT NULL DEFAULT '',
-			default_exit_node_id TEXT NOT NULL DEFAULT ''
+			default_exit_node_id TEXT NOT NULL DEFAULT '',
+			-- 2026-07-15: v0.12.0 — per-user control plane.
+			-- The DEFAULT '' keeps every existing test that
+			-- relies on the "no override" path working without
+			-- having to seed a value.
+			headscale_url TEXT NOT NULL DEFAULT '',
+			headscale_api_key_enc TEXT NOT NULL DEFAULT '',
+			-- 2026-07-17: v0.16.0 — per-user subnets.
+			subnet_cidr TEXT NOT NULL DEFAULT '',
+			subnet_status TEXT NOT NULL DEFAULT 'none',
+			subnet_router_node_id TEXT NOT NULL DEFAULT ''
+		)`,
+		// 2026-07-17: v0.16.0 — user_subnets table for per-user
+		// personal subnets. The admin UI /admin/users/{id}/subnet
+		// and the bot /mysubnet read this table.
+		`CREATE TABLE user_subnets (
+			id INTEGER PRIMARY KEY,
+			user_id INTEGER NOT NULL UNIQUE,
+			cidr TEXT NOT NULL UNIQUE,
+			subnet_bits INTEGER NOT NULL DEFAULT 24,
+			control_plane_url TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			router_node_id TEXT NOT NULL DEFAULT '',
+			router_container_id TEXT NOT NULL DEFAULT '',
+			router_hostname TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE TABLE telegram_bindings (
 			chat_id INTEGER PRIMARY KEY,

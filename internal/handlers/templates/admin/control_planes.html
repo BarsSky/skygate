@@ -1,0 +1,85 @@
+{{define "body-admin-control-planes"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-tower-observation"></i>{{t "control_planes.title"}}</h2>
+    <div class="sub">{{t "control_planes.subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/integrations" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+{{if .FlashInfo}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashInfo | safeHTML}}</div>{{end}}
+
+{{if not .HasSecret}}
+<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+  <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.secret_missing_title"}}</h3>
+  <div style="margin-top:6px">{{t "control_planes.secret_missing_body" | safeHTML}}</div>
+</div>
+{{end}}
+
+<div class="card">
+  <h3>{{t "control_planes.list_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "control_planes.list_help" | safeHTML}}</p>
+  <table style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th style="padding:6px">{{t "control_planes.col_url"}}</th>
+        <th style="padding:6px">{{t "control_planes.col_users"}}</th>
+        <th style="padding:6px">{{t "control_planes.col_actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Planes}}
+      <tr>
+        <td style="padding:6px;font-family:monospace;word-break:break-all">
+          {{.URL}}
+          {{if not .URL}}{{t "control_planes.global_default"}}{{end}}
+        </td>
+        <td style="padding:6px">
+          {{range .Users}}<span class="tag" style="margin:2px">{{.}}</span>{{end}}
+        </td>
+        <td style="padding:6px">
+          {{if not .URL}}
+            <form method="POST" action="/admin/control-planes/test" style="display:inline">
+              <input type="hidden" name="plane_url" value="{{$.GlobalURL}}">
+              <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-stethoscope"></i> {{t "control_planes.test"}}</button>
+            </form>
+          {{else}}
+            <span class="tag">{{t "control_planes.per_user_test_note"}}</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>{{t "control_planes.per_user_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "control_planes.per_user_help" | safeHTML}}</p>
+  <table style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th style="padding:6px">{{t "control_planes.col_user"}}</th>
+        <th style="padding:6px">{{t "control_planes.col_url"}}</th>
+        <th style="padding:6px">{{t "control_planes.col_actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td style="padding:6px">{{.Username}}</td>
+        <td style="padding:6px;font-family:monospace;word-break:break-all">
+          {{if .HasOverride}}{{.URL}}{{else}}<span style="color:var(--text-muted)">— {{t "control_planes.uses_default"}}</span>{{end}}
+        </td>
+        <td style="padding:6px">
+          <a href="/admin/users/{{.UserID}}/plane" class="btn btn-secondary"><i class="fa-solid fa-sliders"></i> {{t "control_planes.edit"}}</a>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

@@ -39,7 +39,10 @@ func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 	// Live "used" check: if any headscale node currently has this
 	// key as its preAuthKey, mark used even if our local flag is
 	// behind. Same logic as countMyPreAuthKeys.
-	if hsUsed, hsErr := a.HS.ListAllNodes(); hsErr == nil {
+	// 2026-07-15: v0.12.0 — route to the user's own control plane
+	// (HSForUser); the key is owned by this user, so the relevant
+	// headscale is the one that issued it.
+	if hsUsed, hsErr := a.HSForUser(c.UserID).ListAllNodes(); hsErr == nil {
 		liveByKeyID := map[string]bool{}
 		for _, n := range hsUsed {
 			if n.PreAuthKeyID != "" {
@@ -133,7 +136,7 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// register a device with the key anyway because the underlying
 	// key string is in our DB only, not headscale.)
 	if k.HeadscalePreauthID != "" {
-		if err := a.HS.ExpirePreauthKey(hsUserID.Int64, k.HeadscalePreauthID); err != nil {
+		if err := a.HSForUser(c.UserID).ExpirePreauthKey(hsUserID.Int64, k.HeadscalePreauthID); err != nil {
 			http.Error(w, "headscale expire failed: "+err.Error(), 500)
 			return
 		}

@@ -34,7 +34,9 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
+	"skygate/internal/sidecar"
 )
 
 // Notifier is the interface used by code that wants to emit a message.
@@ -84,6 +86,15 @@ type RealNotifier struct {
 	client   *http.Client
 	pollInt  time.Duration
 	off      bool
+	// 2026-07-16: v0.15.3 — last inline-keyboard message per
+	// chat, used by editMessageText so callback replies
+	// (e.g. /lang button tap) overwrite the original message
+	// instead of posting a new one. Keyed by chatID because
+	// each Telegram chat has its own message stream. A
+	// sync.Mutex is overkill (we never read+write atomically
+	// in a way that needs ordering vs. other notifier state)
+	// so a plain map read under mu is plenty.
+	lastInlineMessage map[int64]int64
 	// 2026-07-11: Phase 3 — per-user rule limits, used by /quota.
 	// Stored on the notifier because main.go already constructs
 	// NewRealNotifier with full config in hand; HandleCommand asks
@@ -101,6 +112,29 @@ type RealNotifier struct {
 	// and return a clear "telegram not wired for writes" hint so the
 	// existing read-only deploys keep working.
 	HS *headscale.Client
+	// 2026-07-16: v0.12.1 — per-user headscale client lookup.
+	// Set by main.go from app.HSForUser (a closure over App so
+	// the cache, fallback to global, and AES-GCM decryption all
+	// live in the handlers package). nil means "no per-user
+	// routing" — the bot falls back to HS for every command,
+	// preserving the v0.12.0 single-plane behaviour.
+	hsForUser func(userID int64) *headscale.Client
+	// 2026-07-16: v0.13.0 — per-user plane-URL lookup. Returns
+	// the headscale_url the user is on ("" = global default
+	// plane). Used by ApplyACLPipelineForPlane in the bot path
+	// to scope the per-plane ACL generation to the right
+	// identities. Set by main.go from app.PlaneURLForUser, a
+	// closure over the same secret-key + portal_users cache.
+	// nil falls through to the global default.
+	planeURLForUser func(userID int64) string
+	sidecar *sidecar.Manager
+	// 2026-07-20: v0.20.0 — headscale-update-monitor
+	// (the same instance main.go runs as a background
+	// goroutine for the /admin/headscale page + the
+	// Telegram alerts). The bot's /headscale command
+	// reads its Snapshot() to render the same status
+	// the admin page does.
+	headscaleUpdateMonitor *headscale_version.Monitor
 	// 2026-07-13: Этап 11 part 2b — per-device + total rule caps,
 	// set by main.go from config.Load(). Surfaced in BotEnv so
 	// /add_rule can enforce them (mirrors the web form's
@@ -136,10 +170,11 @@ func NewRealNotifier(d *sql.DB) *RealNotifier {
 		api = "https://api.telegram.org"
 	}
 	return &RealNotifier{
-		apiBase: api,
-		db:      d,
-		client:  &http.Client{Timeout: 15 * time.Second},
-		pollInt: 2 * time.Second,
+		apiBase:          api,
+		db:               d,
+		client:           &http.Client{Timeout: 15 * time.Second},
+		pollInt:          2 * time.Second,
+		lastInlineMessage: map[int64]int64{},
 	}
 }
 
@@ -163,6 +198,39 @@ func (n *RealNotifier) SetVersion(v string) {
 	n.version = v
 }
 
+// rememberInlineMessage stores messageID as the "last
+// inline-keyboard message" for chatID, so a future callback
+// from this chat can editMessageText it instead of posting
+// a new message. The chatID key avoids cross-chat leakage
+// (a /lang tap in chat 1 doesn't overwrite chat 2's picker).
+//
+// 2026-07-16: v0.15.3.
+func (n *RealNotifier) rememberInlineMessage(chatID, messageID int64) {
+	if chatID == 0 || messageID == 0 {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.lastInlineMessage == nil {
+		n.lastInlineMessage = map[int64]int64{}
+	}
+	n.lastInlineMessage[chatID] = messageID
+}
+
+// lastInlineMessageID returns the message_id of the last
+// inline-keyboard message sent to chatID, or 0 if none.
+// Reads under n.mu; safe to call from the callback path
+// because the polling loop and the callback handler are
+// both single-threaded per (token, chat_id) — but we lock
+// anyway because the cost is one mutex acquire and the
+// bug (silent nil-deref if we ever forget to lock) is
+// nasty.
+func (n *RealNotifier) lastInlineMessageID(chatID int64) int64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.lastInlineMessage[chatID]
+}
+
 // SetHS stores the *headscale.Client used by write-side bot commands
 // (/add_device issues a real preauth key, /add_rule and /delrule
 // trigger ACL sync). Called once at startup from
@@ -176,6 +244,69 @@ func (n *RealNotifier) SetHS(hs *headscale.Client) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.HS = hs
+}
+
+// SetHSForUser installs the per-user headscale-client lookup
+// that env() will copy into BotEnv.HSForPortalUser. The
+// closure is called per inbound message with the chat's
+// portal_user_id (from telegram_bindings) and returns the
+// *headscale.Client to use for that user — typically
+// `app.HSForUser` which reads portal_users.headscale_url
+// + headscale_api_key_enc and falls through to the global
+// default when no override is set.
+//
+// 2026-07-16: v0.12.1. nil disables per-user routing — the
+// bot then uses env.HS (the global default) for every
+// command, which preserves the v0.12.0 single-plane
+// behaviour. main.go calls this after App is constructed.
+func (n *RealNotifier) SetHSForUser(fn func(userID int64) *headscale.Client) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.hsForUser = fn
+}
+
+// SetPlaneURLForUser installs the per-user headscale-url lookup.
+// Returns "" when the user is on the global default plane.
+// Used by the bot to scope acl.ApplyACLPipelineForPlane to
+// the right plane's identities. nil falls through to "" —
+// the global default, which preserves v0.12.0 single-plane
+// behaviour.
+//
+// 2026-07-16: v0.13.0.
+func (n *RealNotifier) SetPlaneURLForUser(fn func(userID int64) string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.planeURLForUser = fn
+}
+
+// SetSidecar installs the per-user subnet sidecar manager.
+// Used by the bot's /mysubnet provision subcommand to
+// issue a per-user preauth key (tag:subnet-router, 1h TTL).
+// The Manager is also run as a background goroutine for
+// auto-approval of routes on tag:subnet-router nodes —
+// but that goroutine is owned by cmd/skygate/main.go, not
+// the notifier; this setter only hands the manager to
+// the bot's BotEnv so the command can call it.
+//
+// 2026-07-17: v0.16.7.
+func (n *RealNotifier) SetSidecar(m *sidecar.Manager) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sidecar = m
+}
+
+// SetHeadscaleUpdateMonitor installs the v0.20.0
+// headscale-update-monitor that the /headscale bot
+// command reads. The monitor itself is run as a
+// background goroutine from main.go (it dispatches
+// Telegram alerts on its own via SendAlert); this
+// setter only hands the monitor to the bot's BotEnv
+// so the /headscale command can read the same
+// snapshot the /admin/headscale page does.
+func (n *RealNotifier) SetHeadscaleUpdateMonitor(m *headscale_version.Monitor) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.headscaleUpdateMonitor = m
 }
 
 // SetRuleCaps stores the per-device and total rule caps used by
@@ -285,6 +416,22 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	for k, v := range n.userMaxRules {
 		max[k] = v
 	}
+	// 2026-07-16: v0.12.1 — snapshot the per-user HS lookup
+	// under the lock so the closure isn't replaced mid-call.
+	// nil is preserved (handler falls back to env.HS).
+	hsForUser := n.hsForUser
+	// 2026-07-16: v0.13.0 — same pattern for the plane-URL
+	// lookup. nil falls through to "" (global default).
+	planeURLForUser := n.planeURLForUser
+	// 2026-07-17: v0.16.7 — same pattern for the sidecar
+	// manager. nil falls through to "ask admin" hint.
+	sidecarMgr := n.sidecar
+	// 2026-07-20: v0.20.0 — same pattern for the
+	// headscale-update-monitor. The monitor itself
+	// runs as a background goroutine (started in
+	// main.go after this snapshot is taken); the bot
+	// reads its snapshot to render /headscale.
+	hsUpdateMon := n.headscaleUpdateMonitor
 	env := BotEnv{
 		DB:                 n.db,
 		UserMaxRules:       max,
@@ -292,9 +439,13 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 		Version:            n.version,
 		ChatID:             chatID,
 		HS:                 n.HS,
+		HSForPortalUser:    hsForUser,
+		PortalPlaneURL:     planeURLForUser,
 		MaxRulesPerDevice:  n.maxRulesPerDevice,
 		MaxTotalRules:      n.maxTotalRules,
 		Notifier:           n,
+		Sidecar:            sidecarMgr,
+		HeadscaleUpdateMonitor: hsUpdateMon,
 		// 2026-07-14: Этап 14 v5 — default Lang is "en";
 		// envForMessage() overrides for unbound chats with
 		// LangFromTelegramCode(langCode) and for bound chats
@@ -685,8 +836,87 @@ func (n *RealNotifier) fetch(token string, offset int64) ([]update, error) {
 // attach an inline-keyboard (or future rich-reply extras) to
 // the message. nil = plain text. Callers that want a keyboard
 // pass env.PendingReply; the rest pass nil.
+//
+// 2026-07-16: v0.15.3 — if pending has an inline_keyboard,
+// the message_id is captured and stored as the "last inline-
+// keyboard message" for this chat, so a subsequent callback
+// (e.g. /lang button tap, /myexitnodes button tap) can
+// editMessageText it instead of posting a new message. Each
+// chat has its own slot (chatID is the discriminator).
 func (n *RealNotifier) reply(token string, chatID int64, text string, pending *PendingReply) {
+	// 2026-07-16: v0.16.5 — split long replies on the
+	// sentinel marker. The reply body may contain
+	// splitMessageMarker to indicate that the body is
+	// actually a sequence of separate messages (e.g.
+	// /help's 3 sections sent as 3 bubbles). We split
+	// here so the inline-keyboard + ParseMode are
+	// applied to the FIRST message only; the rest
+	// inherit them (parse_mode=HTML is sticky for the
+	// whole batch from Telegram's perspective, and a
+	// keyboard on subsequent messages would re-display
+	// it under each bubble, which is not what we want).
+	if parts := splitReplyParts(text); len(parts) > 1 {
+		// Multi-part: only the first part gets the
+		// pending (keyboard + ParseMode). Subsequent
+		// parts are plain HTML messages.
+		first := parts[0]
+		if pending != nil && len(pending.InlineKeyboard) > 0 {
+			if msgID, ok := n.sendPlain(token, chatID, first, pending); ok {
+				n.rememberInlineMessage(chatID, msgID)
+			}
+		} else {
+			// Even when no keyboard, we want the
+			// first part to keep ParseMode=HTML.
+			n.sendPlain(token, chatID, first, pending)
+		}
+		// Subsequent parts: plain HTML (inherits
+		// ParseMode from the batch, but no
+		// keyboard). Use sendPlain with a copy
+		// of pending that has no keyboard so the
+		// subsequent bubbles don't re-render the
+		// keyboard under each one.
+		bare := &PendingReply{ParseMode: "HTML"}
+		for _, p := range parts[1:] {
+			n.sendPlain(token, chatID, p, bare)
+		}
+		return
+	}
+	// Single-message path (the v0.15.3 behavior).
+	if pending != nil && len(pending.InlineKeyboard) > 0 {
+		if msgID, ok := n.sendPlain(token, chatID, text, pending); ok {
+			n.rememberInlineMessage(chatID, msgID)
+		}
+		return
+	}
 	n.sendPlain(token, chatID, text, pending)
+}
+
+// splitReplyParts splits a reply body on splitMessageMarker.
+// The marker itself is removed (it's a sentinel, not real
+// content). Empty parts (from a leading or trailing marker)
+// are dropped so the caller doesn't send empty messages to
+// Telegram.
+//
+// 2026-07-16: v0.16.5.
+func splitReplyParts(text string) []string {
+	if !strings.Contains(text, splitMessageMarker) {
+		return []string{text}
+	}
+	parts := strings.Split(text, splitMessageMarker)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		// Trim stray newlines left over from the
+		// marker. The marker itself has \n\n
+		// padding, so after Split each side has a
+		// \n\n prefix/suffix we don't want in
+		// the rendered message.
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // sendPlain is the shared POST /sendMessage implementation
@@ -694,12 +924,20 @@ func (n *RealNotifier) reply(token string, chatID int64, text string, pending *P
 // callback path. Kept private so callers go through reply()
 // (the only public entry point); handleCallback also calls
 // it directly because it doesn't go through the public reply.
-func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pending *PendingReply) {
+//
+// Returns (message_id, true) on success so reply() can
+// remember the id for editMessageText; (0, false) on any
+// failure. The second return makes "did the message actually
+// land" checkable in one line at the call site.
+func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pending *PendingReply) (int64, bool) {
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendMessage"
 	payload := map[string]any{
 		"chat_id":                chatID,
 		"text":                   text,
 		"disable_web_page_preview": true,
+	}
+	if pending != nil && pending.ParseMode != "" {
+		payload["parse_mode"] = pending.ParseMode
 	}
 	if pending != nil && len(pending.InlineKeyboard) > 0 {
 		payload["reply_markup"] = map[string]any{
@@ -709,10 +947,109 @@ func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pendin
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("telegram: sendMessage failed: %v", err)
-		return
+		log.Printf("telegram: sendMessage HTTP failed: %v", err)
+		return 0, false
 	}
 	defer resp.Body.Close()
+	// 2026-07-15: was missing — Telegram returns HTTP 200 with
+	// {"ok": false, "description": "..."} when it rejects a
+	// payload (e.g. a malformed reply_markup). Without this
+	// check the rejection was silently swallowed and the
+	// user saw no reply at all. /add_device was the first
+	// visible victim — the platform picker is the only reply
+	// in the bot that carries an inline_keyboard, and a
+	// rejected payload meant the entire reply vanished.
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		log.Printf("telegram: sendMessage HTTP %d body=%s", resp.StatusCode, string(rb))
+		return 0, false
+	}
+	// Body is JSON: {"ok": true, "result": {"message_id": N, ...}}.
+	// 2026-07-16: v0.15.3 — also extract message_id so reply()
+	// can remember it for editMessageText. We only log on
+	// the failure path; success is the boring case.
+	var ack struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		ErrorCode   int    `json:"error_code"`
+		Result      struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rb, &ack); err == nil && !ack.OK {
+		log.Printf("telegram: sendMessage rejected: code=%d %s (text=%q)", ack.ErrorCode, ack.Description, text)
+		return 0, false
+	}
+	return ack.Result.MessageID, err == nil
+}
+
+// editMessageText POSTs /editMessageText for an existing
+// message in chatID. messageID is the bot's own message
+// that was the inline-keyboard carrier (recorded by
+// rememberInlineMessage in reply() / sendPlain()). If
+// messageID is 0 (no recorded message for this chat),
+// the call is a no-op + a log line — the caller falls
+// back to sendMessage to keep the user informed.
+//
+// The pending keyboard, if non-nil, replaces the
+// existing reply_markup. nil pending means "keep the
+// current markup" — but Telegram requires an explicit
+// reply_markup to do that, so we send the literal
+// reply_markup the original message had. We don't
+// currently support that path (every /lang and
+// /myexitnodes callback wants to update the keyboard
+// too), so the simple "always pass reply_markup" form
+// is fine.
+//
+// 2026-07-16: v0.15.3 — added so callback replies
+// (e.g. /lang button tap) overwrite the original
+// message instead of stacking a new one in the chat.
+func (n *RealNotifier) editMessageText(token string, chatID, messageID int64, text string, pending *PendingReply) bool {
+	if messageID == 0 {
+		log.Printf("telegram: editMessageText skipped (no recorded message for chatID=%d)", chatID)
+		return false
+	}
+	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/editMessageText"
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"text":       text,
+	}
+	if pending != nil && pending.ParseMode != "" {
+		payload["parse_mode"] = pending.ParseMode
+	}
+	if pending != nil && len(pending.InlineKeyboard) > 0 {
+		payload["reply_markup"] = map[string]any{
+			"inline_keyboard": pending.InlineKeyboard,
+		}
+	}
+	body, _ := json.Marshal(payload)
+	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("telegram: editMessageText HTTP failed: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		rb, _ := io.ReadAll(resp.Body)
+		log.Printf("telegram: editMessageText HTTP %d body=%s", resp.StatusCode, string(rb))
+		return false
+	}
+	// Body is {"ok": true, "result": true} on success;
+	// {"ok": false, "description": "..."} on rejection
+	// (e.g. message not modified). The latter is non-fatal
+	// — the user just sees the old content — so we only
+	// log it.
+	rb, _ := io.ReadAll(resp.Body)
+	var ack struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(rb, &ack); err == nil && !ack.OK {
+		log.Printf("telegram: editMessageText rejected: %s", ack.Description)
+		return false
+	}
+	return true
 }
 
 // handleCallback dispatches a callback_query (an inline
@@ -779,11 +1116,95 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 		platform := strings.TrimPrefix(data, "add_device_platform:")
 		key, lookupErr := db.GetLastPreauthKeyForChatID(env.DB, chatID)
 		if lookupErr != nil || key == "" {
-			n.sendPlain(token, chatID, i18n.T(env.Lang, "bot.add_device.platform.unknown"), nil)
+			// 2026-07-16: v0.15.3 — try to edit the original
+			// picker message in place; fall back to a fresh
+			// message if no message_id was recorded.
+			edited := n.editMessageText(token, chatID, n.lastInlineMessageID(chatID),
+				i18n.T(env.Lang, "bot.add_device.platform.unknown"), nil)
+			if !edited {
+				n.sendPlain(token, chatID, i18n.T(env.Lang, "bot.add_device.platform.unknown"), nil)
+			}
 			return
 		}
 		reply := renderPlatformInstructions(env.Lang, platform, key)
-		n.sendPlain(token, chatID, reply, nil)
+		edited := n.editMessageText(token, chatID, n.lastInlineMessageID(chatID), reply, nil)
+		if !edited {
+			n.sendPlain(token, chatID, reply, nil)
+		}
+		return
+	case strings.HasPrefix(data, "lang:"):
+		// 2026-07-15: v0.14.0 — /lang picker. The user
+		// tapped one of the RU / EN buttons in the inline
+		// keyboard. We persist the choice (no-op for
+		// unbound chats) and re-render the /lang reply
+		// body in the NEW language so the user sees the
+		// switch take effect.
+		newLang := strings.TrimPrefix(data, "lang:")
+		if newLang != i18n.LangRU && newLang != i18n.LangEN {
+			return
+		}
+		if env.IsIdentified() && env.PortalUserID > 0 {
+			_ = db.SetTelegramBindingLang(env.DB, chatID, newLang)
+		}
+		// Re-render the /lang reply body in the new
+		// language. The PendingReply is regenerated so the
+		// keyboard's checkmark reflects the new active
+		// language. We can't mutate env (it's a value
+		// receiver in this path); the reply body is built
+		// in the new lang directly.
+		//
+		// 2026-07-16: v0.15.3 — edit the original /lang
+		// message in place (editMessageText) so the chat
+		// shows ONE /lang picker, not a stack of "Готово!"
+		// follow-ups every time the user taps a button.
+		// Fall back to sendMessage if no message_id was
+		// recorded (e.g. the bot restarted between the
+		// original /lang and the button tap).
+		body := i18n.Tf(newLang, "bot.lang.set_ok", newLang)
+		pending := buildLangPickerForLang(newLang, newLang)
+		edited := n.editMessageText(token, chatID, n.lastInlineMessageID(chatID), body, pending)
+		if !edited {
+			n.sendPlain(token, chatID, body, pending)
+		}
+		return
+	case strings.HasPrefix(data, "setexitnode:"):
+		// 2026-07-15: v0.14.0 — /myexitnodes picker. The
+		// user tapped a hostname button to set it as
+		// their default exit-node, or the "Clear default"
+		// button. The callback_data is "setexitnode:<id>"
+		// or "setexitnode:clear". We re-route through
+		// setExitNodeReply so the logic is in one place
+		// (and gets the same audit-log + DB upsert as
+		// the typed /setexitnode path).
+		//
+		// 2026-07-16: v0.15.3 — edit the original
+		// /myexitnodes message in place. The "Clear
+		// default" button is part of the same picker
+		// so the original message has the same context
+		// — no need to spawn a separate confirmation
+		// message; the user sees the checkmark move.
+		arg := strings.TrimPrefix(data, "setexitnode:")
+		// /setexitnode needs a bound user.
+		if !env.IsIdentified() {
+			edited := n.editMessageText(token, chatID, n.lastInlineMessageID(chatID),
+				i18n.T(env.Lang, "bot.setexitnode.not_bound"), nil)
+			if !edited {
+				n.sendPlain(token, chatID, i18n.T(env.Lang, "bot.setexitnode.not_bound"), nil)
+			}
+			return
+		}
+		body := setExitNodeReply(env, arg)
+		// 2026-07-16: v0.15.3 — pass the regenerated
+		// inline_keyboard so the checkmark updates
+		// when the user picks a new exit-node. Without
+		// this, editMessageText would clear the picker
+		// and the user would have to type /myexitnodes
+		// again to pick another.
+		edited := n.editMessageText(token, chatID, n.lastInlineMessageID(chatID),
+			body, pendingReplyForCurrentMessage)
+		if !edited {
+			n.sendPlain(token, chatID, body, nil)
+		}
 		return
 	default:
 		return

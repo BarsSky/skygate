@@ -63,6 +63,43 @@ check-nodes:
 		exit 1; \
 	fi
 
+# 2026-07-15: v0.13.0 — strict variant. Default check-nodes
+# is warn-only (offline exit-nodes produce a WARN line and
+# exit 0); check-nodes-strict hard-fails so CI / automated
+# deploys can enforce "no deploy with an offline exit-node".
+check-nodes-strict:
+	@if [ -x scripts/check_exit_nodes.py ]; then \
+		. ./.env 2>/dev/null && export HEADSCALE_API_KEY && export HEADSCALE_URL=http://localhost:50444 && \
+		python3 scripts/check_exit_nodes.py --strict; \
+	else \
+		echo "scripts/check_exit_nodes.py not found"; \
+		exit 1; \
+	fi
+
+# 2026-07-15: v0.15.0 — HTTPS health check. Verifies
+# SKYGATE_CONTROL_URL is reachable over HTTPS with a
+# valid cert (SAN matches), HTTP→HTTPS redirect works
+# on port 80, and HSTS is sent on /login. Default is
+# warn-only (matching check-nodes); check-https-strict
+# is the CI variant.
+check-https:
+	@if [ -x scripts/check_https.py ]; then \
+		. ./.env 2>/dev/null && export SKYGATE_CONTROL_URL && \
+		python3 scripts/check_https.py; \
+	else \
+		echo "scripts/check_https.py not found"; \
+		exit 1; \
+	fi
+
+check-https-strict:
+	@if [ -x scripts/check_https.py ]; then \
+		. ./.env 2>/dev/null && export SKYGATE_CONTROL_URL && \
+		python3 scripts/check_https.py --strict; \
+	else \
+		echo "scripts/check_https.py not found"; \
+		exit 1; \
+	fi
+
 audit-routes:
 	@if [ -f scripts/audit_routes.py ]; then \
 		python3 scripts/audit_routes.py; \
@@ -71,7 +108,7 @@ audit-routes:
 		exit 1; \
 	fi
 
-test: go-test audit-routes smoke check-nodes
+test: go-test audit-routes smoke check-nodes check-https
 
 go-test:
 	@if command -v go >/dev/null 2>&1; then 		go test ./... 2>&1; 	else 		echo "go not installed; skipping go test"; 	fi
