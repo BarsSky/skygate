@@ -18,6 +18,7 @@
         <th>{{t "users.username"}}</th>
         <th style="width:100px">{{t "users.headscale_id"}}</th>
         <th style="width:80px">{{t "users.role"}}</th>
+        <th style="width:160px">{{t "user_subnet.column_header"}}</th>
         <th style="width:160px">{{t "users.created"}}</th>
         <th style="width:140px">{{t "common.actions"}}</th>
       </tr>
@@ -29,11 +30,17 @@
         <td><code>{{.Username}}</code></td>
         <td class="mono">{{if .HeadscaleUserID}}{{.HeadscaleUserID}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
         <td>{{if .IsAdmin}}<span class="tag tag-admin"><i class="fa-solid fa-shield-halved"></i>{{t "users.admin_tag"}}</span>{{else}}<span style="color:var(--text-muted);font-size:12px"><i class="fa-solid fa-user"></i> {{t "users.user_tag"}}</span>{{end}}</td>
+        <td>
+          <a href="/admin/users/{{.ID}}/subnet" style="font-family:ui-monospace,monospace;font-size:12px">
+            {{if .SubnetCIDR}}<code>{{.SubnetCIDR}}</code> · {{if eq .SubnetStatus "router_active"}}<span class="tag tag-success" style="font-size:10px" title="{{t "user_subnet.status_pill_router_active_title"}}"><i class="fa-solid fa-tower-broadcast"></i> {{t "user_subnet.cell_router_active"}}</span>{{else if eq .SubnetStatus "active"}}<span class="tag tag-success" style="font-size:10px" title="{{t "user_subnet.status_pill_active_title"}}"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>{{else if eq .SubnetStatus "pending"}}<span class="tag tag-warning" style="font-size:10px" title="{{t "user_subnet.status_pill_pending_title"}}"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>{{else if eq .SubnetStatus "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6" title="{{t "user_subnet.status_pill_disabled_title"}}"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>{{else}}<span style="color:var(--text-subtle)">{{t "user_subnet.cell_none"}}</span>{{end}}{{else}}<span style="color:var(--text-subtle)">{{t "user_subnet.cell_none"}}</span>{{end}}
+          </a>
+        </td>
         <td style="color:var(--text-muted)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
         <td>
           <details class="user-actions">
             <summary class="btn btn-sm"><i class="fa-solid fa-ellipsis-vertical"></i></summary>
             <div class="user-actions-menu">
+              <a href="/admin/users/{{.ID}}/subnet" class="btn btn-sm" style="display:inline-flex;align-items:center;gap:4px"><i class="fa-solid fa-network-wired"></i> {{t "user_subnet.open_button"}}</a>
               <form method="post" action="/admin/users/{{.ID}}/reset-password" class="user-reset-form" onsubmit="return confirm('{{tf "users.reset_confirm" .Username}}')">
                 <input type="password" name="new_password" required minlength="6" placeholder="{{t "users.reset_password_placeholder"}}" class="ufg-input-sm">
                 <button type="submit" class="btn btn-sm" title="{{t "users.reset_password"}}"><i class="fa-solid fa-key"></i> {{t "users.reset_password"}}</button>
@@ -46,7 +53,7 @@
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="6" style="color:var(--text-muted);text-align:center;padding:24px">{{t "users.empty"}}</td></tr>
+      <tr><td colspan="7" style="color:var(--text-muted);text-align:center;padding:24px">{{t "users.empty"}}</td></tr>
       {{end}}
     </tbody>
   </table>

@@ -1,10 +1,15 @@
 package db
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -23,11 +28,115 @@ import (
 // These keys are deliberately NOT seeded by migrations — they must only
 // exist after an administrator has consciously configured them. Tests
 // seed them via helpers.
+//
+// 2026-07-15: v0.12.0 — added envelope-encryption helpers
+// (EncryptForColumn / DecryptForColumn) for the new
+// portal_users.headscale_api_key_enc column. The
+// telegram.bot_token is still plain (no one is asking to encrypt
+// it; v0.13.0+ can retrofit if needed). The encryption key is
+// SKYGATE_SECRET_KEY (32 bytes hex, 64 hex chars); if it's unset
+// the helpers return ErrSecretKeyUnset so the caller can fail
+// loudly instead of silently writing plain text. See
+// internal/db/secret_store.go for the SecretStore type that
+// plumbs the key through App.
 
 const (
 	tgBotTokenKey = "telegram.bot_token"
 	tgChatIDKey   = "telegram.chat_id"
 )
+
+// ErrSecretKeyUnset is returned by EncryptForColumn / DecryptForColumn
+// when SKYGATE_SECRET_KEY is not configured. We fail loudly rather than
+// silently writing plain text — a per-user headscale_api_key written
+// unencrypted would defeat the whole point of the column.
+var ErrSecretKeyUnset = errors.New("db: SKYGATE_SECRET_KEY is not set; per-user secrets cannot be encrypted")
+
+// ErrSecretCiphertextCorrupt is returned when DecryptForColumn cannot
+// parse the stored ciphertext as AES-GCM (truncated, tampered, or
+// written with a different key). The caller should treat this as
+// "the stored value is bad" — the safest response is to clear the
+// column and ask the admin to re-enter.
+var ErrSecretCiphertextCorrupt = errors.New("db: stored secret is corrupt or was encrypted with a different key")
+
+// EncryptForColumn encrypts plaintext with AES-256-GCM keyed by
+// the hex-encoded 32-byte key passed in (i.e. SKYGATE_SECRET_KEY).
+// The output is a single base64 string: 12-byte nonce ‖ ciphertext
+// ‖ 16-byte GCM tag. Suitable for storing in a TEXT column.
+//
+// The function is pure (no I/O) so the caller can wrap it in a
+// transaction or use it from a goroutine. Returns ErrSecretKeyUnset
+// if keyHex is empty.
+func EncryptForColumn(plaintext, keyHex string) (string, error) {
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return "", fmt.Errorf("SKYGATE_SECRET_KEY is not valid hex: %w", err)
+	}
+	if len(key) != 32 {
+		return "", fmt.Errorf("SKYGATE_SECRET_KEY must decode to 32 bytes (got %d)", len(key))
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+	ct := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	return base64.StdEncoding.EncodeToString(ct), nil
+}
+
+// DecryptForColumn reverses EncryptForColumn. Empty ciphertext
+// returns empty plaintext (the canonical "no secret set" path).
+// Returns ErrSecretKeyUnset for empty key, ErrSecretCiphertextCorrupt
+// when the stored value isn't a valid base64 blob of the expected
+// size, when AES-GCM auth fails, or when the key has rotated.
+//
+// We do NOT fall back to "treat the stored value as plain text"
+// — silently returning a stored plain text value as if it were
+// the decrypted secret would be a security regression: a row
+// written before encryption was enabled would suddenly look
+// valid. The migration tooling in v0.12.0 doesn't pre-populate
+// either column, so every existing row stays as empty and
+// the helper is a no-op for them.
+func DecryptForColumn(ciphertext, keyHex string) (string, error) {
+	if ciphertext == "" {
+		return "", nil
+	}
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return "", fmt.Errorf("SKYGATE_SECRET_KEY is not valid hex: %w", err)
+	}
+	if len(key) != 32 {
+		return "", fmt.Errorf("SKYGATE_SECRET_KEY must decode to 32 bytes (got %d)", len(key))
+	}
+	raw, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		return "", ErrSecretCiphertextCorrupt
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) < gcm.NonceSize()+gcm.Overhead() {
+		return "", ErrSecretCiphertextCorrupt
+	}
+	nonce := raw[:gcm.NonceSize()]
+	ct := raw[gcm.NonceSize():]
+	pt, err := gcm.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return "", ErrSecretCiphertextCorrupt
+	}
+	return string(pt), nil
+}
 
 // SaveTelegramToken writes both bot_token and chat_id atomically.
 // Either both succeed or both are rejected, so the system is never in a

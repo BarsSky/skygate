@@ -10,6 +10,35 @@
 </div>
 
 <div class="card">
+  <h3><i class="fa-solid fa-network-wired"></i>{{t "my_devices.subnet_card_title"}}</h3>
+  {{if .SubnetCIDR}}
+  <table>
+    <tr>
+      <th>{{t "my_devices.subnet_card_cidr_label"}}</th>
+      <td><code>{{.SubnetCIDR}}</code></td>
+    </tr>
+    <tr>
+      <th>{{t "my_devices.subnet_card_status_label"}}</th>
+      <td>
+        {{if eq .SubnetStatus "router_active"}}<span class="tag tag-success"><i class="fa-solid fa-tower-broadcast"></i> {{t "user_subnet.cell_router_active"}}</span>
+        {{else if eq .SubnetStatus "active"}}<span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>
+        {{else if eq .SubnetStatus "pending"}}<span class="tag tag-warning"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>
+        {{else if eq .SubnetStatus "disabled"}}<span class="tag" style="opacity:0.6"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>
+        {{else}}<code>{{.SubnetStatus}}</code>
+        {{end}}
+      </td>
+    </tr>
+  </table>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "my_devices.subnet_card_help" | safeHTML}}</p>
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>{{t "user_subnet.no_subnet_title"}}</div>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
   <h3><i class="fa-solid fa-globe"></i>{{t "devices.tag_public"}} ({{t "nav.exit_nodes"}})</h3>
   {{if .PublicNodes}}
   <table>
@@ -34,7 +63,7 @@
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>
-    <div>{{t "exit_nodes.empty"}} — admin can mark devices as public via <a href="https://tsnet.skynas.ru/admin/acls" target="_blank" rel="noopener">Headplane</a>.</div>
+    <div>{{t "exit_nodes.empty"}} — admin can mark devices as public via <a href="{{.HeadplaneURL}}acls" target="_blank" rel="noopener">Headplane</a>.</div>
   </div>
   {{end}}
 </div>

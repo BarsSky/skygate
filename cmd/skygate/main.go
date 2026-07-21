@@ -17,11 +17,15 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/backup"
 	"skygate/internal/config"
+	"skygate/internal/expirewatch"
+	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/db"
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
+	"skygate/internal/monitoring"
+	"skygate/internal/sidecar"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
 )
@@ -135,6 +139,18 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+	// 2026-07-15: v0.12.0 — wire SKYGATE_SECRET_KEY into the
+	// per-user control plane router. Empty string means
+	// "encryption not configured" — the router falls through
+	// to the global client (no per-user planes are
+	// honoured). Operators who want multi-control-plane
+	// should generate a 32-byte key (openssl rand -hex 32)
+	// and put it in .env.
+	app.SecretKeyHex = cfg.SecretKeyHex
+	// 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set,
+	// /admin/acls (and a few other admin pages) link to the
+	// existing Headplane instead of the local sidecar.
+	app.HeadplaneExternalURL = cfg.HeadplaneExternalURL
 
 		// 2026-07-10: rate limiting for /login (per-user + per-IP) and /api endpoints
 		// (per-IP). In-memory token bucket; auto-cleans stale entries.
@@ -181,18 +197,86 @@ func main() {
 	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(app.PostMyPreauth)))
 	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(app.GetMyKeys)))
 	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(app.PostMyKeyExpire)))
+	// 2026-07-20: v0.22.0 — /my/meshes user-scope
+	// page (the WEB entry point for the mesh
+	// workflow). The bot /mesh create|join|leave
+	// commands are the BOT entry point; both
+	// share the same internal/mesh package.
+	// Three POST routes: create, join, leave.
+	mux.Handle("GET /my/meshes", authMW(http.HandlerFunc(app.GetMyMeshes)))
+	mux.Handle("POST /my/meshes/create", authMW(http.HandlerFunc(app.PostMyMeshesCreate)))
+	mux.Handle("POST /my/meshes/join", authMW(http.HandlerFunc(app.PostMyMeshesJoin)))
+	mux.Handle("POST /my/meshes/leave", authMW(http.HandlerFunc(app.PostMyMeshesLeave)))
 
 	// Admin
 	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(app.GetAdminUsers)))
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(app.PostAdminUser)))
 	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(app.PostAdminDeleteUser)))
 	mux.Handle("POST /admin/users/{id}/reset-password", authMW(http.HandlerFunc(app.PostAdminUserResetPassword)))
+	// 2026-07-15: v0.12.0 — per-user headscale control plane
+	// (multi-tailnet). /admin/control-planes is the landing;
+	// /admin/users/{id}/plane is the per-user edit form.
+	mux.Handle("GET /admin/control-planes", authMW(http.HandlerFunc(app.GetAdminControlPlanes)))
+	mux.Handle("POST /admin/control-planes/test", authMW(http.HandlerFunc(app.PostAdminControlPlanesTest)))
+	mux.Handle("GET /admin/users/{id}/plane", authMW(http.HandlerFunc(app.GetAdminUserControlPlane)))
+	mux.Handle("POST /admin/users/{id}/plane", authMW(http.HandlerFunc(app.PostAdminUserControlPlane)))
+	mux.Handle("POST /admin/users/{id}/plane/clear", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneClear)))
+	// 2026-07-21: v0.23.0 Phase 1 — one-click provisioning of a
+	// per-user headscale container. The Provision action runs the
+	// bootstrap script (creates container + user + API key, returns
+	// JSON) and persists the result to portal_users. The
+	// Decommission action reverses it: tears down the container and
+	// clears the DB row (data on disk is preserved for recovery).
+	mux.Handle("POST /admin/users/{id}/plane/provision", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneProvision)))
+	mux.Handle("POST /admin/users/{id}/plane/decommission", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneDecommission)))
+	// 2026-07-17: v0.16.0 — per-user subnets admin page.
+	// GET shows the user's subnet status; POSTs allocate
+	// / disable / run a sanity check.
+	mux.Handle("GET /admin/users/{id}/subnet", authMW(http.HandlerFunc(app.GetAdminUserSubnet)))
+	mux.Handle("POST /admin/users/{id}/subnet/allocate", authMW(http.HandlerFunc(app.PostAdminUserSubnetAllocate)))
+	mux.Handle("POST /admin/users/{id}/subnet/disable", authMW(http.HandlerFunc(app.PostAdminUserSubnetDisable)))
+	mux.Handle("POST /admin/users/{id}/subnet/test", authMW(http.HandlerFunc(app.PostAdminUserSubnetTest)))
+	mux.Handle("POST /admin/users/{id}/subnet/provision", authMW(http.HandlerFunc(app.PostAdminUserSubnetProvision)))
+	mux.Handle("POST /admin/users/{id}/subnet/share", authMW(http.HandlerFunc(app.PostAdminUserSubnetShare)))
+	mux.Handle("POST /admin/users/{id}/subnet/revoke", authMW(http.HandlerFunc(app.PostAdminUserSubnetRevoke)))
+	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(app.GetAdminSubnets)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
 	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))
+	// 2026-07-15: v0.14.0 — "Sync from headscale" button.
+	// Re-populates node_owner_map from headscale's authoritative
+	// view. The /exit_nodes bot command reads from node_owner_map;
+	// if the operator tagged a relay directly in headscale (not
+	// via skygate's PostAdminNodeTag), the bot reports "no nodes"
+	// until this button is clicked. /sync_nodes bot command hits
+	// the same DB helper.
+	mux.Handle("POST /admin/devices/sync-from-headscale", authMW(http.HandlerFunc(app.PostAdminDevicesSyncFromHeadscale)))
 	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(app.GetAdminAudit)))
+	// 2026-07-16: v0.13.0 — ACL import/export. GET shows
+	// the current policy in a downloadable file; POST
+	// /admin/acls/import is the dry-run; POST
+	// /admin/acls/import/apply actually pushes to every
+	// plane. /admin/acls itself is unchanged (still the
+	// read-only view).
 	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(app.GetAdminACLs)))
+	mux.Handle("GET /admin/acls/export", authMW(http.HandlerFunc(app.GetAdminACLsExport)))
+	mux.Handle("GET /admin/acls/import", authMW(http.HandlerFunc(app.GetAdminACLsImport)))
+	mux.Handle("POST /admin/acls/import", authMW(http.HandlerFunc(app.PostAdminACLsImport)))
+	mux.Handle("POST /admin/acls/import/apply", authMW(http.HandlerFunc(app.PostAdminACLsImportApply)))
 	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(app.GetAdminDERP)))
+	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
+	// integration config. The /admin/integrations landing page
+	// shows the current state of every pluggable component;
+	// /admin/derp/config and /admin/headplane are the per-component
+	// edit forms. The save handlers persist to global_settings;
+	// v0.11.1 will add a runtime renderer (re-apply headscale
+	// config + restart) so the user doesn't have to run
+	// ./deploy/deploy.sh after a save.
+	mux.Handle("GET /admin/integrations", authMW(http.HandlerFunc(app.GetAdminIntegrations)))
+	mux.Handle("GET /admin/derp/config", authMW(http.HandlerFunc(app.GetAdminDerpConfig)))
+	mux.Handle("POST /admin/derp/config", authMW(http.HandlerFunc(app.PostAdminDerpConfig)))
+	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(app.GetAdminHeadplane)))
+	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(app.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(app.GetAdminBackup)))
 	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(app.PostAdminBackupSave)))
 	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))
@@ -249,9 +333,54 @@ func main() {
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(app.AdminExitNodes)))
+	// 2026-07-20: v0.20.0 — headscale-update-monitor
+	// status page. Renders the monitor's snapshot
+	// (pinned vs. latest, history table). Admin-only.
+	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(app.GetAdminHeadscale)))
+	// 2026-07-20: v0.20.0 — "Run check now" button on
+	// /admin/headscale. Forces the monitor to re-poll
+	// GitHub immediately. Same pattern as
+	// /admin/exit-nodes/health-now.
+	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(app.PostAdminHeadscaleCheckNow)))
+	// 2026-07-20: v0.21.0 — user-to-user invite
+	// overview. Lists every invite_codes row
+	// (grantor / grantee / status / expiry),
+	// supports a "Revoke" action for active
+	// rows. Admin-only — the bot /invites command
+	// is the per-user "show me my own invites"
+	// view.
+	mux.Handle("GET /admin/invites", authMW(http.HandlerFunc(app.GetAdminInvites)))
+	mux.Handle("POST /admin/invites/revoke", authMW(http.HandlerFunc(app.PostAdminInvitesRevoke)))
+	// 2026-07-20: v0.22.0 — /admin/meshes. Read-only
+	// admin overview of every mesh (active +
+	// dissolved). The user-to-user mesh workflow
+	// (create / join / leave) is bot-driven; the
+	// admin page is for oversight, same UX choice
+	// as /admin/invites.
+	mux.Handle("GET /admin/meshes", authMW(http.HandlerFunc(app.GetAdminMeshes)))
 	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(app.PostAdminExitNodesAdd)))
 	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(app.PostAdminExitNodesDelete)))
 	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(app.PostAdminExitNodesSync)))
+	// 2026-07-15: v0.13.0 — "Run health check now" button on
+	// /admin/exit-nodes. Admin-only. Triggers the background
+	// monitor's CheckNow synchronously and redirects back to
+	// the page so the operator sees the fresh state. The
+	// monitor's own internal mutex serialises concurrent
+	// clicks.
+	mux.Handle("POST /admin/exit-nodes/health-now", authMW(http.HandlerFunc(app.PostAdminExitNodesHealthNow)))
+
+	// 2026-07-17: v0.18.1 — "Tag as exit-node" / "Untag" buttons.
+	// These replace the operator's two manual `docker exec
+	// headscale headscale nodes …` calls with a single click.
+	// The handler approves 0.0.0.0/0 + ::/0 (NOT the full
+	// availableRoutes, to avoid accidentally approving
+	// karolina's 200+ subnets) and applies tag:exit-node.
+	// The existing ACL (`* → tag:exit-node:*`) already allows
+	// the tagged node, so no ACL re-push is required — the
+	// Tailscale clients pick up the new tag on their next
+	// ACL poll (usually <60s).
+	mux.Handle("POST /admin/exit-nodes/tag-as-exit", authMW(http.HandlerFunc(app.PostAdminExitNodeTagAsExitNode)))
+	mux.Handle("POST /admin/exit-nodes/untag", authMW(http.HandlerFunc(app.PostAdminExitNodeUntagAsExitNode)))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -262,13 +391,65 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar
+	// auto-approver. Hoisted before the RealNotifier block
+	// so we can hand the same manager to the bot via
+	// rn.SetSidecar() below.
+	sidecarMgr := sidecar.New(d, app.HSForUser, log.Default(), cfg.SidecarSyncPeriod)
+	app.Sidecar = sidecarMgr
+	// sidecarMgr.Run blocks on a ticker loop; launch it in a
+	// goroutine so the main flow can continue to start the
+	// HTTP server + Telegram notifier. v0.16.7
+	// regression-prevention: the first v0.16.7 deploy had
+	// this as a direct call, which blocked main() before
+	// the HTTP listener could bind, so the process was
+	// up but unreachable (the sidecar goroutine was the
+	// only thing still running).
+	go sidecarMgr.Run(ctx)
+
+	// 2026-07-21: v0.23.3 — node-expiry watcher.
+	// Background goroutine that walks every non-tagged
+	// node in headscale every cfg.ExpireWatchInterval
+	// (default 5m) and extends any node whose expiry is
+	// missing or within cfg.ExpireWatchThreshold
+	// (default 7d) out to cfg.ExpireWatchRenewal
+	// (default 30d). Works around a Tailscale 1.98.x
+	// client behaviour where RegisterRequest.Expiry is
+	// only 2-4 seconds in the future and headscale
+	// 0.29.x applies that verbatim — see
+	// internal/expirewatch/manager.go for the full
+	// background. Tagged nodes (tag:exit-node,
+	// tag:public, tag:subnet-router, tag:client) are
+	// skipped because headscale's state.go explicitly
+	// guards `if !node.IsTagged()` around the
+	// regReq.Expiry branch.
+	//
+	// Set SKYGATE_EXPIREWATCH_ENABLED=false (or
+	// SKYGATE_EXPIREWATCH_INTERVAL=off/0) to disable.
+	// When disabled, the goroutine returns from Run
+	// immediately and no list/extend calls are made.
+	expireWatchMgr := expirewatch.New(d, hs, log.Default(), cfg.ExpireWatchInterval)
+	expireWatchMgr.Threshold = cfg.ExpireWatchThreshold
+	expireWatchMgr.Renewal = cfg.ExpireWatchRenewal
+	expireWatchMgr.SetAppendAudit(db.AppendAuditLog)
+	app.ExpireWatch = expireWatchMgr
+	// Same goroutine-launch pattern as sidecarMgr.Run:
+	// direct call would block main() before the HTTP
+	// listener binds. v0.16.7 caught this for sidecar;
+	// same regression here.
+	go expireWatchMgr.Run(ctx)
+
 		// 2026-07-11: Telegram bot — always arm the RealNotifier so a
 		// hot-swap (admin saving a token at runtime) takes effect without
 		// restart. RealNotifier.SendTelegram no-ops when Configured()==false,
 		// and Run() sleeps-and-rechecks every 5s when the DB has no token.
 		// No more "boot-time gate" on app.Notifier — it's always non-nil.
-		{
-			rn := telegram.NewRealNotifier(d)
+		//
+		// The block was anonymous ({}) in v0.16.x and earlier — it
+		// served no scoping purpose. v0.20.0 makes it a top-level
+		// var so the headscale-update-monitor wiring (later in this
+		// function) can call rn.SetHeadscaleUpdateMonitor(hsMon).
+		rn := telegram.NewRealNotifier(d)
 			// 2026-07-11: Phase 3 (/quota) needs per-user rule limits
 			// to render "user X used N of M" rather than just N. Set
 			// once at boot; the BotEnv snapshot is per-message so a
@@ -283,6 +464,35 @@ func main() {
 			// the web handlers use (hs was constructed at line 77)
 			// so both surfaces share one source of truth.
 			rn.SetHS(hs)
+			// 2026-07-17: v0.16.7 — wire the sidecar
+			// manager (created above) so /mysubnet provision
+			// can issue per-user preauth keys in chat. The
+			// manager's own Run() goroutine is the auto-
+			// approver for tag:subnet-router nodes; this
+			// just hands the manager to the bot's env.
+			rn.SetSidecar(sidecarMgr)
+			// 2026-07-20: v0.20.0 — headscale-update-monitor.
+			// Wired below (after the monitor's struct is
+			// created) so the variable is in scope; the
+			// SetHeadscaleUpdateMonitor call lives outside
+			// this block where `hsMon` is reachable.
+			// 2026-07-16: v0.12.1 — per-user headscale-client
+			// routing. The closure binds app so the bot calls
+			// the same App.HSForUser the web handlers use
+			// (which reads portal_users.headscale_url +
+			// headscale_api_key_enc and falls through to the
+			// global default when no override is set). Single-
+			// plane deploys still work — App.HSForUser returns
+			// app.HS when there's no per-user row.
+			rn.SetHSForUser(app.HSForUser)
+			// 2026-07-16: v0.13.0 — per-user plane-URL routing
+			// (parallel to SetHSForUser). Returns the
+			// headscale_url the user is on so the bot can
+			// scope acl.GenerateACLForPlane to the right
+			// identities. Returns "" for users on the global
+			// default plane, which preserves v0.12.0
+			// behaviour.
+			rn.SetPlaneURLForUser(app.PlaneURLForUser)
 			// 2026-07-13: Этап 11 part 2b — per-device and total
 			// rule caps for /add_rule. Mirrors the web form's
 			// PostMyExitRule checks. Zero = no cap (same convention
@@ -304,7 +514,17 @@ func main() {
 				log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
 			}
 			go rn.Run(ctx)
-		}
+			// 2026-07-15: Этап 14 v13 — register the per-language
+			// command menu. Best-effort: a Telegram-side failure
+			// is logged inside SetMyCommandsAll and the bot
+			// keeps running without a menu. The user can still
+			// type commands from memory; the menu is a
+			// convenience, not a gate.
+			go func() {
+				if err := rn.SetMyCommandsAll(context.Background(), telegram.DefaultMyCommandsSpec); err != nil {
+					log.Printf("🤖 setMyCommandsAll: %v", err)
+				}
+			}()
 	defer stop()
 
 	go func() {
@@ -341,6 +561,78 @@ func main() {
 		CheckEvery: 1 * time.Hour,
 	}
 	releaseMon.Start(ctx)
+	// 2026-07-15: v0.14.0 — expose the monitor on App so
+	// the /dashboard banner can read its snapshot on every
+	// page render. nil-safe: handlers guard with
+	// `if a.ReleaseMonitor != nil`.
+	app.ReleaseMonitor = releaseMon
+
+	// 2026-07-15: v0.13.0 — exit-node health monitor.
+	// Background goroutine that polls headscale every
+	// cfg.ExitNodeCheckInterval (default 5 min), updates the
+	// exit_node_health snapshot, and dispatches calm-mode
+	// alerts (online↔offline transitions) via the
+	// Notifier. The "Run health check now" button on
+	// /admin/exit-nodes and the /exit_nodes_health bot
+	// command both read the same DB rows the monitor
+	// writes. cfg.ExitNodeCheckInterval = 0 disables the
+	// monitor (the deploy-time check
+	// scripts/check_exit_nodes.py still runs).
+	exitMon := &monitoring.ExitNodeMonitor{
+		DB:           d,
+		HS:           app.HS,
+		Notifier:     app.Notifier,
+		CheckEvery:   cfg.ExitNodeCheckInterval,
+		OfflineAfter: cfg.ExitNodeOfflineAfter,
+		OnStartup:    cfg.ExitNodeOnStartup,
+		// v0.14.1: when true, the monitor's per-tick path
+		// also calls db.SyncNodesFromHeadscale so new
+		// exit-nodes appear in /admin/exit-nodes and the
+		// bot's /exit_nodes without an admin button click.
+		// Off by default; the explicit
+		// /admin/devices "Sync from headscale" button is
+		// still the recommended path.
+		AutoSync:     cfg.ExitNodeAutoSync,
+	}
+	exitMon.Start(ctx)
+	// Stash the monitor on the App so handlers can call
+	// CheckNow for the manual "Run health check now" button.
+	app.ExitNodeMonitor = exitMon
+
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// Polls the GitHub Releases API for
+	// juanfont/headscale, writes each unique tag to
+	// the headscale_releases table, and dispatches a
+	// Telegram alert when a newer-than-pinned
+	// version is found. The /admin/headscale page
+	// and the bot /headscale command read the
+	// monitor's Snapshot(); the /admin/exit-nodes
+	// page reads UpdateAvailable + BreakingAvailable
+	// to render a banner. cfg.HeadscalePollInterval
+	// = 0 disables the goroutine (the page + bot
+	// still work from the cache).
+	if cfg.HeadscalePollInterval > 0 {
+		hsMon := headscale_version.NewMonitor(d, cfg.HeadscaleVersionPin, app.Notifier)
+		hsMon.CheckEvery = cfg.HeadscalePollInterval
+		hsMon.Start(ctx)
+		app.HeadscaleUpdateMonitor = hsMon
+		// 2026-07-20: v0.20.0 — also wire the
+		// monitor to the bot so /headscale renders
+		// the same status the /admin/headscale
+		// page does. rn was hoisted out of the
+		// Telegram block above so this call is
+		// in scope.
+		rn.SetHeadscaleUpdateMonitor(hsMon)
+		log.Printf("📡 headscale-update-monitor: polling every %s, pinned=%q (set SKYGATE_HEADSCALE_VERSION_PIN to enable alerts)",
+			cfg.HeadscalePollInterval, cfg.HeadscaleVersionPin)
+	} else {
+		log.Printf("📡 headscale-update-monitor: disabled (SKYGATE_HEADSCALE_POLL_INTERVAL=0). /admin/headscale still works as a manual look-up.")
+	}
+
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar
+	// auto-approver moved earlier so the RealNotifier
+	// can pick up the same manager via SetSidecar().
+	// (See "Telegram bot" block above.)
 
 	<-ctx.Done()
 	log.Println("🌐 shutting down")

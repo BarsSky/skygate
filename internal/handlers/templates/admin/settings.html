@@ -1,4 +1,9 @@
 ﻿{{define "body-admin-settings"}}
+{{/* 2026-07-15: v0.12.0.2 — full RU translation. Every visible
+     string goes through {{t "..."}} / {{tf "..."}}. The previous
+     version mixed Russian and English; the English holdouts were
+     the labels and helper text in the Headscale / Public domain /
+     Security / Exit Node Policy / After-migration cards. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-gear"></i> {{t "settings.title"}}</h2>
@@ -18,62 +23,62 @@
     <div class="card">
       <h3><i class="fa-solid fa-plug"></i> {{t "settings.title"}}</h3>
       <div class="form-group">
-        <label>Headscale URL (internal)</label>
+        <label>{{t "settings.headscale_url"}}</label>
         <input type="text" name="headscale_url" value="{{.HeadscaleURL}}" class="form-control" placeholder="http://headscale:50444">
-        <div class="sub">Internal headscale address on the Docker network. Update when changing host.</div>
+        <div class="sub">{{t "settings.headscale_url_help"}}</div>
       </div>
       <div class="form-group">
         <label>{{t "settings.headscale_key"}}</label>
         <input type="password" name="headscale_api_key" value="{{.HeadscaleAPIKey}}" class="form-control" placeholder="leave empty to keep current">
-        <div class="sub">Generate: <code>docker exec headscale headscale apikeys create</code></div>
+        <div class="sub">{{tf "settings.headscale_key_help" "docker exec headscale headscale apikeys create"}}</div>
       </div>
       <div class="form-group">
-        <label>Public domain/URL</label>
+        <label>{{t "settings.public_domain"}}</label>
         <input type="text" name="public_domain" value="{{.PublicDomain}}" class="form-control" placeholder="skygate.skynas.ru">
-        <div class="sub">Domain for DERP map and links. Update when domain changes.</div>
+        <div class="sub">{{t "settings.public_domain_help"}}</div>
       </div>
     </div>
 
     <div class="card">
-      <h3><i class="fa-solid fa-lock"></i> Security</h3>
+      <h3><i class="fa-solid fa-lock"></i> {{t "settings.section_security"}}</h3>
       <div class="form-group">
-        <label>New admin password</label>
+        <label>{{t "settings.new_admin_password"}}</label>
         <input type="password" name="admin_password" class="form-control" placeholder="leave empty to keep current">
-        <div class="sub">Minimum 8 characters. After change, re-login is required.</div>
+        <div class="sub">{{t "settings.new_admin_password_help"}}</div>
       </div>
       <div class="form-group">
-        <label>JWT Secret</label>
+        <label>{{t "settings.jwt_secret"}}</label>
         <div class="mono" style="padding:0.5rem;background:var(--bg2);border-radius:6px">{{.JWTSecretMask}}</div>
-        <div class="sub">Stored in .env. Don't change unless necessary — all sessions will be invalidated.</div>
+        <div class="sub">{{t "settings.jwt_secret_help"}}</div>
       </div>
     </div>
   </div>
 
   <div class="card" style="margin-top:1.5rem">
-    <h3><i class="fa-solid fa-right-from-bracket"></i> Exit Node Policy</h3>
+    <h3><i class="fa-solid fa-right-from-bracket"></i> {{t "settings.section_exit_policy"}}</h3>
     <div class="form-group">
-      <label>Routing mode</label>
+      <label>{{t "settings.routing_mode"}}</label>
       <select name="exit_policy" class="form-control">
-        <option value="allow_all"{{if eq .ExitPolicy "allow_all"}} selected{{end}}>Allow All (everything allowed, deny rules block)</option>
-        <option value="deny_all"{{if eq .ExitPolicy "deny_all"}} selected{{end}}>Deny All (everything blocked, accept rules allow)</option>
+        <option value="allow_all"{{if eq .ExitPolicy "allow_all"}} selected{{end}}>{{t "settings.exit_policy_allow_all"}}</option>
+        <option value="deny_all"{{if eq .ExitPolicy "deny_all"}} selected{{end}}>{{t "settings.exit_policy_deny_all"}}</option>
       </select>
       <div class="sub">
-        <b>Allow All</b>: all traffic through exit-nodes allowed. Rules act as a deny list.<br>
-        <b>Deny All</b>: traffic through exit-nodes denied. Rules act as an allow list.
+        <b>{{t "settings.exit_policy_allow_all"}}</b>: {{t "settings.exit_policy_allow_all_help"}}<br>
+        <b>{{t "settings.exit_policy_deny_all"}}</b>: {{t "settings.exit_policy_deny_all_help"}}.
       </div>
     </div>
   </div>
 
   <div class="card" style="margin-top:1.5rem">
-    <h3><i class="fa-solid fa-circle-info"></i> After migration</h3>
+    <h3><i class="fa-solid fa-circle-info"></i> {{t "settings.section_after_migration"}}</h3>
     <div class="alert alert-warning">
-      <p>If you restored a backup on a new server:</p>
+      <p>{{t "settings.after_migration_intro"}}</p>
       <ol>
-        <li>Headscale address inside the Docker network (usually <code>headscale</code>) — may differ</li>
-        <li>Public domain will change — update it above</li>
-        <li>The headscale API key must be recreated on the new server: <code>docker exec headscale headscale apikeys create</code></li>
-        <li>After saving settings — <strong>restart skygate</strong></li>
-        <li>Check <a href="/admin/backup">Backups → Tests</a> for verification</li>
+        <li>{{tf "settings.after_migration_step1" "headscale"}}</li>
+        <li>{{t "settings.after_migration_step2"}}</li>
+        <li>{{tf "settings.after_migration_step3" "docker exec headscale headscale apikeys create"}}</li>
+        <li><strong>{{t "settings.after_migration_step4"}}</strong></li>
+        <li>{{tf "settings.after_migration_step5" (t "settings.backups_link")}}</li>
       </ol>
     </div>
     <div style="display:flex;gap:1rem;margin-top:1rem">

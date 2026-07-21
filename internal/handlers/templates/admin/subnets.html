@@ -1,0 +1,89 @@
+{{define "body-admin-subnets"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-network-wired"></i>{{t "admin.subnets.title"}}</h2>
+    <div class="sub">{{t "admin.subnets.subtitle"}}</div>
+  </div>
+  {{if .LastSync}}
+  <div class="sub" style="font-size:12px;color:var(--text-muted)">
+    <i class="fa-solid fa-arrows-rotate"></i> {{tf "admin.subnets.last_sync" .LastSync}}
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    <a href="/admin/subnets" class="btn btn-sm {{if eq .Status ""}}btn-primary{{else}}btn-secondary{{end}}">
+      <i class="fa-solid fa-list"></i> {{tf "admin.subnets.filter_all" .Counts.all}}
+    </a>
+    <a href="/admin/subnets?status=pending" class="btn btn-sm {{if eq .Status "pending"}}btn-primary{{else}}btn-secondary{{end}}">
+      <i class="fa-solid fa-circle-pause"></i> {{tf "admin.subnets.filter_pending" .Counts.pending}}
+    </a>
+    <a href="/admin/subnets?status=active" class="btn btn-sm {{if eq .Status "active"}}btn-primary{{else}}btn-secondary{{end}}">
+      <i class="fa-solid fa-circle-check"></i> {{tf "admin.subnets.filter_active" .Counts.active}}
+    </a>
+    <a href="/admin/subnets?status=disabled" class="btn btn-sm {{if eq .Status "disabled"}}btn-primary{{else}}btn-secondary{{end}}">
+      <i class="fa-solid fa-circle-xmark"></i> {{tf "admin.subnets.filter_disabled" .Counts.disabled}}
+    </a>
+  </div>
+
+  {{if .LastStats}}
+  <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+    <i class="fa-solid fa-chart-bar"></i> {{.LastStats}}
+  </div>
+  {{end}}
+
+  {{if .Rows}}
+  <table>
+    <thead>
+      <tr>
+        <th style="width:60px">{{t "admin.subnets.col_user_id"}}</th>
+        <th>{{t "admin.subnets.col_username"}}</th>
+        <th style="width:140px">{{t "admin.subnets.col_cidr"}}</th>
+        <th style="width:120px">{{t "admin.subnets.col_status"}}</th>
+        <th style="width:140px">{{t "admin.subnets.col_router"}}</th>
+        <th style="width:240px">{{t "admin.subnets.col_dns"}}</th>
+        <th style="width:200px">{{t "admin.subnets.col_plane"}}</th>
+        <th style="width:120px">{{t "admin.subnets.col_actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td>{{.Subnet.UserID}}</td>
+        <td><a href="/admin/users/{{.Subnet.UserID}}/subnet"><code>{{.Username}}</code></a></td>
+        <td><code>{{.Subnet.CIDR}}</code></td>
+        <td>
+          {{if eq .Subnet.Status "active"}}<span class="tag tag-success" style="font-size:10px"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>
+          {{else if eq .Subnet.Status "pending"}}<span class="tag tag-warning" style="font-size:10px"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>
+          {{else if eq .Subnet.Status "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>
+          {{else}}<span class="tag" style="font-size:10px"><i class="fa-solid fa-circle-question"></i> {{.Subnet.Status}}</span>{{end}}
+        </td>
+        <td><code style="font-size:11px">{{if .Subnet.RouterHostname}}{{.Subnet.RouterHostname}}{{else}}—{{end}}</code></td>
+        <td><code style="font-size:11px">{{.DNSName}}</code></td>
+        <td><code style="font-size:11px">{{.Subnet.ControlPlaneURL}}</code></td>
+        <td>
+          <a href="/admin/users/{{.Subnet.UserID}}/subnet" class="btn btn-sm"><i class="fa-solid fa-arrow-right"></i> {{t "admin.subnets.view"}}</a>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    <i class="fa-solid fa-network-wired" style="font-size:32px;opacity:0.3;display:block;margin-bottom:8px"></i>
+    {{t "admin.subnets.empty"}}
+  </div>
+  {{end}}
+</div>
+
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "admin.subnets.how_it_works_title"}}</h3>
+  <ul style="margin-top:6px;font-size:13px;line-height:1.6">
+    <li>{{t "admin.subnets.how_it_works_1" | safeHTML}}</li>
+    <li>{{t "admin.subnets.how_it_works_2" | safeHTML}}</li>
+    <li>{{t "admin.subnets.how_it_works_3" | safeHTML}}</li>
+  </ul>
+</div>
+
+{{end}}

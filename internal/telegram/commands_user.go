@@ -19,16 +19,22 @@
 package telegram
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"skygate/internal/acl"
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/subnet"
 )
 
 // myStatusReply is the user-scope counterpart of /status. It shows
@@ -36,7 +42,20 @@ import (
 // ACL snapshot version. If the caller's data is empty (e.g. brand
 // new user, no devices yet), the reply says so explicitly rather
 // than showing zeros that look like a bug.
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses
+// Field() for each metric (label bold, value in <code>) and
+// Section() dividers between groups. The result is a tabbed
+// feel that reads cleanly on mobile Telegram (where the
+// proportional font would otherwise mash the labels and
+// values together).
 func myStatusReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>label:</b>
+	// and <code>value</code> in Field()/Section() render
+	// instead of showing as literal text. Without this,
+	// Telegram sends the body as plain text and the user
+	// sees the raw source.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_status.not_bound")
@@ -63,10 +82,20 @@ func myStatusReply(env BotEnv) string {
 	if cap > 0 {
 		capStr = strconv.Itoa(cap)
 	}
-	return i18n.Tf(lang, "bot.my_status.header", env.Username) + "\n" +
-		i18n.Tf(lang, "bot.my_status.rules", ruleCount, capStr) + "\n" +
-		i18n.Tf(lang, "bot.my_status.devices", deviceCount) + "\n" +
-		i18n.Tf(lang, "bot.my_status.last_acl", lastACL)
+	// 2026-07-16: v0.16.x — Field() helper for aligned
+	// key/value pairs (label bold, value in inline
+	// <code>). The label is the short noun from
+	// bot.my_status.label_* (no format spec); the value
+	// is the count + cap, which sits in <code> so it
+	// looks tabbed against the label.
+	rulesLine := fmt.Sprintf("%d / %s", ruleCount, capStr)
+	lastACLS := fmt.Sprintf("#%d", lastACL)
+	deviceS := fmt.Sprintf("%d", deviceCount)
+	return i18n.Tf(lang, "bot.my_status.header", env.Username) + "\n\n" +
+		Section(i18n.T(lang, "bot.my_status.section_summary")) + "\n" +
+		Field(i18n.T(lang, "bot.my_status.label_rules"), rulesLine) + "\n" +
+		Field(i18n.T(lang, "bot.my_status.label_devices"), deviceS) + "\n" +
+		Field(i18n.T(lang, "bot.my_status.label_last_acl"), lastACLS)
 }
 
 // myNodesReply lists only the caller's own devices from
@@ -74,6 +103,9 @@ func myStatusReply(env BotEnv) string {
 // (username = env.Username). A user with no devices gets a
 // helpful "no devices yet" hint pointing at /add_device.
 func myNodesReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>NODE</b>
+	// header row in PreLinesRaw() renders.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_nodes.not_bound")
@@ -83,6 +115,51 @@ func myNodesReply(env BotEnv) string {
 	owners, err := db.ListNodeOwnersByUsername(env.DB, env.Username)
 	if err != nil {
 		return i18n.Tf(lang, "bot.my_nodes.db_error", err)
+	}
+	// 2026-07-15: Этап 14 v13 — lazy backfill pass. We do hostname
+	// + tag in one headscale round-trip (the existing
+	// hostnameMapFromHeadscale already calls ListAllNodes; we
+	// also need the live tag from the same response).
+	if env.userHS() != nil {
+		hsView := listAllNodesForBackfill(env.userHS())
+		if len(hsView) > 0 {
+			hnMap := map[string]string{}
+			tagMap := map[string]string{}
+			for _, n := range hsView {
+				hn := n.GivenName
+				if hn == "" {
+					hn = n.Hostname
+				}
+				if hn != "" {
+					hnMap[n.ID] = hn
+				}
+				// Use the first non-empty forcedTag as the live
+				// tag (headscale returns them as forcedTags; we
+				// treat the first match as authoritative).
+				if len(n.Tags) > 0 {
+					tagMap[n.ID] = n.Tags[0]
+				}
+			}
+			// 2026-07-15: hostname backfill.
+			if db.AnyHostnameEmpty(owners) {
+				if n, berr := db.BackfillEmptyHostnames(env.DB, hnMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListNodeOwnersByUsername(env.DB, env.Username); rerr == nil {
+						owners = refreshed
+					}
+				}
+			}
+			// 2026-07-15: tag backfill. Closes the v0.10.11
+			// regression where admin-tagged devices showed
+			// tag:untagged in the bot (PostAdminNodeTag's
+			// "tagged-devices" guard skipped the row update).
+			if db.AnyTagStale(owners, tagMap) {
+				if n, berr := db.SyncTagsFromHeadscale(env.DB, tagMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListNodeOwnersByUsername(env.DB, env.Username); rerr == nil {
+						owners = refreshed
+					}
+				}
+			}
+		}
 	}
 	type row struct{ node, tag, hostname string }
 	var nodes []row
@@ -96,27 +173,121 @@ func myNodesReply(env BotEnv) string {
 	if len(nodes) == 0 {
 		return i18n.Tf(lang, "bot.my_nodes.empty", env.Username)
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.my_nodes.header", env.Username, len(nodes)))
+	// 2026-07-16: v0.16.x — "more HTML" pass. The device
+	// list is tabular data; render it as a <pre> block
+	// with a header row + aligned columns. Telegram's
+	// <pre> uses a fixed-pitch font so the column
+	// widths in the format strings determine the visual
+	// alignment.
+	//
+	// Format:
+	//   <pre>
+	//   <b>NODE                       TAG</b>
+	//   <i>────────────────────────────</i>
+	//   alice-laptop               tag:private
+	//   alice-phone (alice-2)       tag:private
+	//   </pre>
+	const (
+		colDev = "%-30s"
+		colTag = "%s"
+	)
+	header := fmt.Sprintf(
+		"<b>"+colDev+"  "+colTag+"</b>",
+		"NODE", "TAG",
+	)
+	rule := strings.Repeat("─", 30+2+10)
+	var lines []string
+	lines = append(lines, header, "<i>"+rule+"</i>")
 	for _, n := range nodes {
-		// 2026-07-14: Этап 14 v10 — show hostname when known, fall
-		// back to node_id. Format: "hostname (node_id) [tag]" so
-		// the user can find their device by either the friendly
-		// name or the technical id.
+		// 2026-07-14: Этап 14 v10 — show hostname when known,
+		// fall back to node_id. Format: "hostname (node_id)"
+		// so the user can find their device by either the
+		// friendly name or the technical id.
 		label := n.node
 		if n.hostname != "" {
 			label = n.hostname + " (" + n.node + ")"
 		}
-		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.my_nodes.row", label, n.tag))
+		// Truncate long labels so the columns align on
+		// phones (a 30-char window is enough for any
+		// practical device name + node_id).
+		if len(label) > 30 {
+			label = label[:27] + "..."
+		}
+		lines = append(lines, fmt.Sprintf(
+			colDev+"  "+colTag,
+			label, n.tag,
+		))
 	}
-	return trimForTelegram(sb.String())
+	return i18n.Tf(lang, "bot.my_nodes.header", env.Username, len(nodes)) + "\n\n" +
+		PreLinesRaw(lines...)
+}
+
+// hostnameMapFromHeadscale calls hs.ListAllNodes and returns
+// a node_id → friendly-name map. Shared by /my_nodes, /nodes, and
+// the existing /setdefaultdevice / /defaultdevice paths; keeping
+// the choice of "GivenName first, fall back to Hostname" in one
+// place stops the three sites from drifting.
+//
+// 2026-07-15: Этап 14 v13 — extracted for the lazy backfill
+// helper; previously inlined in three places.
+func hostnameMapFromHeadscale(hs *headscale.Client) map[string]string {
+	out := map[string]string{}
+	if hs == nil {
+		return out
+	}
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return out
+	}
+	for _, n := range nodes {
+		hn := n.GivenName
+		if hn == "" {
+			hn = n.Hostname
+		}
+		if hn != "" {
+			out[n.ID] = hn
+		}
+	}
+	return out
+}
+
+// listAllNodesForBackfill wraps the headscale round-trip used by
+// the bot's lazy backfill (hostname + tag) so the call site can
+// stay readable. nil hs → empty slice. Errors are swallowed
+// because the bot still has to render the reply even when
+// headscale is briefly unreachable; the next /my_nodes retries.
+//
+// 2026-07-15: Этап 14 v13 — extracted from myNodesReply so the
+// same call also powers adminNodesReply's lazy tag sync.
+func listAllNodesForBackfill(hs *headscale.Client) []headscale.NodeView {
+	if hs == nil {
+		return nil
+	}
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return nil
+	}
+	return nodes
 }
 
 // myRulesReply lists the caller's own exit-rules, newest first.
 // Mirrors /rules but filtered to user_id = env.PortalUserID.
 // Limited to the most recent 25 (same cap as /rules) so the reply
 // stays under Telegram's 4096-char limit.
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses a
+// tabular <pre> block (ID / EXIT / TYPE / TARGET / ACTION) with
+// a bold header row + italic rule line, so the columns line up
+// on phones the same way /audit, /my_nodes do. The previous
+// prose "#%d @%s\n  %s %s → %s" format is gone — too easy to
+// misread when a user has 20+ rules, and the columns couldn't
+// align because Telegram's regular text isn't monospace.
 func myRulesReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>ID/EXIT/...</b>
+	// header row in PreLinesRaw() renders. Also required for
+	// the <b>username</b> in the header line (bot.my_rules.header
+	// has "<b>%s</b>").
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_rules.not_bound")
@@ -147,20 +318,96 @@ func myRulesReply(env BotEnv) string {
 	if len(rules) == 0 {
 		return i18n.Tf(lang, "bot.my_rules.empty", env.Username)
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)))
-	for _, rr := range rules {
-		fmt.Fprintf(&sb, "%s\n\n",
-			i18n.Tf(lang, "bot.my_rules.row", rr.id, rr.exitNode, rr.tType, rr.tVal, rr.act))
+	// Column widths chosen so the table fits a phone screen
+	// (60-65 chars wide at Telegram's default font) while
+	// staying wide enough for the longest realistic value in
+	// each column: ID 4 (e.g. "#9999"), EXIT 12 (hostnames
+	// like "sharlotta"), TYPE 6 ("subnet"/"domain"/"ip"),
+	// TARGET 24 (e.g. "91.108.4.0/22" or "github.com/32"),
+	// ACTION 6 ("accept"/"deny"). Truncation falls back to
+	// "..." when a value runs over.
+	const (
+		colID     = "%-4s"
+		colExit   = "%-12s"
+		colType   = "%-6s"
+		colTarget = "%-24s"
+		colAction = "%-6s"
+	)
+	trunc := func(s string, w int) string {
+		if len(s) <= w {
+			return s
+		}
+		if w <= 3 {
+			return s[:w]
+		}
+		return s[:w-3] + "..."
 	}
-	return trimForTelegram(sb.String())
+	header := fmt.Sprintf(
+		"<b>"+colID+"  "+colExit+"  "+colType+"  "+colTarget+"  "+colAction+"</b>",
+		i18n.T(lang, "bot.my_rules.col_id"),
+		i18n.T(lang, "bot.my_rules.col_exit"),
+		i18n.T(lang, "bot.my_rules.col_type"),
+		i18n.T(lang, "bot.my_rules.col_target"),
+		i18n.T(lang, "bot.my_rules.col_action"),
+	)
+	ruleLine := strings.Repeat("─", 4+2+12+2+6+2+24+2+6)
+	var lines []string
+	lines = append(lines, header, "<i>"+ruleLine+"</i>")
+	for _, rr := range rules {
+		lines = append(lines, fmt.Sprintf(
+			colID+"  "+colExit+"  "+colType+"  "+colTarget+"  "+colAction,
+			"#"+strconv.FormatInt(rr.id, 10),
+			trunc(rr.exitNode, 12),
+			rr.tType,
+			trunc(rr.tVal, 24),
+			rr.act,
+		))
+	}
+	// 2026-07-16: v0.16.5 — split into 2 bubbles if
+	// more than 12 rules. /my_rules is the user's own
+	// exit-rules; 12 is a reasonable threshold (most
+	// users have 1-10 rules, but power users with
+	// larger policies can hit 15+). Same pattern as
+	// /audit: first bubble gets the title + section
+	// header + the first half, second bubble gets
+	// the rest. A "(N more — see next)" hint at the
+	// end of the first bubble keeps the user oriented.
+	const myRulesSplitThreshold = 12
+	body := i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)) + "\n" +
+		Section(i18n.T(lang, "bot.my_rules.section_recent")) + "\n" +
+		PreLinesRaw(lines...)
+	if len(rules) <= myRulesSplitThreshold {
+		return body
+	}
+	half := len(rules) / 2
+	firstLines := lines[:2+half] // header (2 lines) + first half
+	secondLines := lines[2+half:]
+	firstBody := i18n.Tf(lang, "bot.my_rules.header", env.Username, len(rules)) + "\n" +
+		Section(i18n.T(lang, "bot.my_rules.section_recent")) + "\n" +
+		PreLinesRaw(firstLines...) + "\n\n" +
+		"<i>(" + i18n.Tf(lang, "bot.my_rules.split_more", len(rules)-half) + ")</i>"
+	secondBody := PreLinesRaw(secondLines...)
+	return firstBody + splitMessageMarker + secondBody
 }
 
 // myQuotaReply shows the caller's own rule count vs their cap. The
 // existing /quota renders the same bar across all users; this is the
 // single-user version so a user can ask "how close am I?" without
 // the admin's /quota having to answer.
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses
+// Field() for each metric (rules count, fill bar, cap) under a
+// single Section() divider, the same way /my_status, /version,
+// and /exit_nodes_health do. The previous "  %d / %s %s %d%%"
+// prose row is gone — it was a single line that mashed three
+// different data points together (count + cap + bar + pct),
+// which the user had to mentally parse.
 func myQuotaReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>rules:</b>,
+	// <b>fill:</b>, <b>cap:</b> Field() labels and the
+	// <code>value</code> render instead of showing as raw
+	// source.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.my_quota.not_bound")
@@ -175,18 +422,29 @@ func myQuotaReply(env BotEnv) string {
 		pct = (cnt * 100) / max
 	}
 	bar := quotaBar(pct)
-	maxStr := "∞"
+	capStr := i18n.T(lang, "bot.my_quota.label_unlimited")
 	if max > 0 {
-		maxStr = strconv.Itoa(max)
+		capStr = strconv.Itoa(max)
 	}
+	// "rules" value is "<count> / <cap>" so the user sees
+	// the same shape as a bot.my_status "rules:" line —
+	// one line per field, count + cap in the same <code>.
+	// "fill" is the 10-char bar + percent (telegraph the
+	// "how full am I" at a glance; the bar is redundant
+	// when next to a number, but it's the visual hint the
+	// operator's eye lands on first).
+	fillStr := fmt.Sprintf("%s %d%%", bar, safePct(pct))
 	return i18n.Tf(lang, "bot.my_quota.header", env.Username) + "\n" +
-		i18n.Tf(lang, "bot.my_quota.row", cnt, maxStr, bar, safePct(pct))
+		Section(i18n.T(lang, "bot.my_quota.section_quota")) + "\n" +
+		Field(i18n.T(lang, "bot.my_quota.label_rules"), fmt.Sprintf("%d / %s", cnt, capStr)) + "\n" +
+		Field(i18n.T(lang, "bot.my_quota.label_fill"), fillStr) + "\n" +
+		Field(i18n.T(lang, "bot.my_quota.label_cap"), capStr)
 }
 
 // myExitNodesReply lists every enabled exit-server the user can
 // route through, with online/last-seen status (same data as admin
-// /exit_nodes) plus a "[default]" marker on the user's currently
-// configured default exit-node (set via /setexitnode).
+// /exit_nodes) plus a "✓" marker on the user's currently configured
+// default exit-node (set via /setexitnode).
 //
 // The admin /exit_nodes shows the same data but is restricted to
 // admin callers. This user-scope variant lets a non-admin user
@@ -204,7 +462,21 @@ func myQuotaReply(env BotEnv) string {
 // filters to enabled=1 (the admin variant shows every node with
 // tag:exit-node regardless of enabled state, which is the
 // operator view, not the user view).
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. The reply now uses a
+// tabular <pre> block (HOSTNAME / NODE / STATUS / DEFAULT) with
+// a bold header row + italic rule line, plus a Section()/Field()
+// summary. The previous "  • hostname (node N) — status [default]"
+// prose format is gone — too easy to misread when the list grows,
+// and the "online" / "offline" status used to be a free-floating
+// word the eye had to track to the right column.
 func myExitNodesReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML. The function also
+	// sets a pending InlineKeyboard for the per-row
+	// "→ hostname" buttons; markHTMLReply() preserves
+	// the existing keyboard and just sets ParseMode=HTML
+	// on it, so we don't lose the tap-to-set UX.
+	markHTMLReply()
 	lang := env.Lang
 	if !env.IsIdentified() {
 		return i18n.T(lang, "bot.myexitnodes.not_bound")
@@ -246,33 +518,109 @@ func myExitNodesReply(env BotEnv) string {
 		rows.Close()
 	}
 	// Look up the user's current default (if any) to mark the
-	// matching row with [default]. Failures are non-fatal: the
-	// reply still shows the menu, just without the highlight.
+	// matching row with ✓. Failures are non-fatal: the reply
+	// still shows the menu, just without the highlight.
 	defaultNodeID, _ := db.GetDefaultExitNode(env.DB, env.PortalUserID)
+	marker := i18n.T(lang, "bot.myexitnodes.marker")
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.myexitnodes.header", len(enabled)))
+	// 2026-07-15: v0.14.0 — collect inline-keyboard rows in
+	// parallel with the body. Each enabled node becomes a
+	// button with callback_data "setexitnode:<node_id>";
+	// the callback handler in notify.go applies the same
+	// change /setexitnode would. The "Clear default" button
+	// at the bottom resets the user's choice (callback_data
+	// "setexitnode:clear"). Both inline + the text body go
+	// back to the user.
+	var btnRows [][]map[string]any
+
+	// Column widths chosen to fit a phone screen
+	// (HOSTNAME 16 / NODE 14 / STATUS 10 / DEFAULT 6).
+	// Realistic exit-node hostnames in the wild are 6-10
+	// chars, node_ids are 3-12, status is 6-7 chars, and
+	// the default marker is just ✓ or empty. Truncation
+	// adds "..." if a value ever overruns.
+	const (
+		colHost   = "%-16s"
+		colNode   = "%-14s"
+		colStatus = "%-10s"
+		colMark   = "%-1s"
+	)
+	trunc := func(s string, w int) string {
+		if len(s) <= w {
+			return s
+		}
+		if w <= 3 {
+			return s[:w]
+		}
+		return s[:w-3] + "..."
+	}
+	header := fmt.Sprintf(
+		"<b>"+colHost+"  "+colNode+"  "+colStatus+"  "+colMark+"</b>",
+		i18n.T(lang, "bot.myexitnodes.col_hostname"),
+		i18n.T(lang, "bot.myexitnodes.col_node"),
+		i18n.T(lang, "bot.myexitnodes.col_status"),
+		i18n.T(lang, "bot.myexitnodes.col_default"),
+	)
+	ruleLine := strings.Repeat("─", 16+2+14+2+10+2+1)
+	var lines []string
+	lines = append(lines, header, "<i>"+ruleLine+"</i>")
 	for _, s := range enabled {
 		st := devMap[s.NodeID]
 		status := "offline"
 		if st.online == 1 {
 			status = "online"
 		}
-		var seen string
-		if st.lastSeen > 0 {
-			seen = fmt.Sprintf(", last_seen %s", unixToShort(st.lastSeen))
-		}
-		marker := ""
+		m := ""
 		if s.NodeID == defaultNodeID {
-			marker = i18n.T(lang, "bot.myexitnodes.marker")
+			m = marker
 		}
-		fmt.Fprintf(&sb, "%s\n",
-			i18n.Tf(lang, "bot.myexitnodes.row", s.Hostname, s.NodeID, status, seen, marker))
+		lines = append(lines, fmt.Sprintf(
+			colHost+"  "+colNode+"  "+colStatus+"  "+colMark,
+			trunc(s.Hostname, 16),
+			trunc(s.NodeID, 14),
+			status,
+			m,
+		))
+		// Build the button label with a checkmark for the
+		// current default. Telegram's inline_keyboard limits
+		// the label to 64 bytes — the hostname alone is well
+		// under that, even for long hostnames.
+		btnLabel := fmt.Sprintf("→ %s", s.Hostname)
+		if s.NodeID == defaultNodeID {
+			btnLabel = "✓ " + s.Hostname
+		}
+		btnRows = append(btnRows, []map[string]any{
+			{"text": btnLabel, "callback_data": "setexitnode:" + s.NodeID},
+		})
 	}
-	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta1"))
-	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta2"))
-	sb.WriteString(i18n.T(lang, "bot.myexitnodes.cta3"))
-	return trimForTelegram(sb.String())
+	// "Clear default" button at the bottom. Only show it if
+	// the user has a default set (otherwise the button is a
+	// no-op that confuses the user).
+	if defaultNodeID != "" {
+		btnRows = append(btnRows, []map[string]any{
+			{"text": i18n.T(lang, "bot.myexitnodes.clear_button"),
+				"callback_data": "setexitnode:clear"},
+		})
+	}
+	// Compose the reply. Section() splits the header from the
+	// table; Field() surfaces the "N available" count next to
+	// the header so the user can see at a glance how many
+	// nodes are in the menu without scanning the table.
+	reply := i18n.Tf(lang, "bot.myexitnodes.header", env.Username, len(enabled)) + "\n" +
+		Section(i18n.T(lang, "bot.myexitnodes.section_menu")) + "\n" +
+		Field(i18n.T(lang, "bot.myexitnodes.label_count"), strconv.Itoa(len(enabled))) + "\n" +
+		PreLinesRaw(lines...) + "\n" +
+		i18n.T(lang, "bot.myexitnodes.cta_tap")
+	// 2026-07-16: v0.16.2 — preserve the ParseMode=HTML
+	// that markHTMLReply() set at the top of this function.
+	// The previous `&PendingReply{InlineKeyboard: btnRows}`
+	// created a new struct without copying ParseMode, so
+	// the <pre>/<b> in the body rendered as raw source.
+	// Setting ParseMode=HTML explicitly on the new struct
+	// is the cleanest fix (a "merge" helper would be more
+	// code for a single call site).
+	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: btnRows, ParseMode: "HTML"}
+	return trimForTelegram(reply)
 }
 
 // addDeviceReply issues a 1h single-use preauth key. For a regular
@@ -301,37 +649,55 @@ func myExitNodesReply(env BotEnv) string {
 func addDeviceReply(env BotEnv, arg string) string {
 	lang := env.Lang
 	if !env.IsIdentified() {
+		log.Printf("bot.add_device: chat not bound (ChatID=%d)", env.ChatID)
 		return i18n.T(lang, "bot.add_device.not_bound")
 	}
 	target, isAdminArg, err := resolveTargetUser(env, arg)
 	if err != nil {
+		log.Printf("bot.add_device: resolveTargetUser arg=%q err=%v", arg, err)
 		return i18n.Tf(lang, "bot.add_device.target_err", err)
 	}
 	if isAdminArg && !env.IsAdmin {
+		log.Printf("bot.add_device: non-admin tried to act on %q", target.Username)
 		return i18n.T(lang, "bot.add_device.admin_only")
 	}
 	// 2026-07-13: Этап 11 part 1 — guard read-only deploys. SetHS is
 	// called from main.go so HS is non-nil in production; the check
 	// exists so a future operator who restarts skygate without
 	// SetHS sees a clear error rather than a nil-deref panic.
-	if env.HS == nil {
+	// 2026-07-16: v0.12.1 — uses env.userHS() so the preauth key
+	// is issued on the bound user's per-plane control plane
+	// (or the global one if they have no override).
+	if env.userHS() == nil {
+		log.Printf("bot.add_device: userHS() is nil (read-only deploy?)")
 		return i18n.T(lang, "bot.add_device.read_only")
 	}
 	hsUserID, _, err := db.GetUserHSByID(env.DB, target.ID)
-	if err != nil || !hsUserID.Valid {
+	if err != nil {
+		log.Printf("bot.add_device: GetUserHSByID userID=%d err=%v", target.ID, err)
 		return i18n.Tf(lang, "bot.add_device.no_hs_user", target.Username)
 	}
-	key, err := env.HS.CreatePreauthKey(hsUserID.Int64, "1h", false)
+	if !hsUserID.Valid {
+		log.Printf("bot.add_device: no headscale_user_id for userID=%d username=%q", target.ID, target.Username)
+		return i18n.Tf(lang, "bot.add_device.no_hs_user", target.Username)
+	}
+	log.Printf("bot.add_device: target=%q hsUserID=%d, calling CreatePreauthKey on plane", target.Username, hsUserID.Int64)
+	key, err := env.userHS().CreatePreauthKey(hsUserID.Int64, "1h", false)
 	if err != nil {
+		log.Printf("bot.add_device: CreatePreauthKey userID=%d err=%v", hsUserID.Int64, err)
 		return i18n.Tf(lang, "bot.add_device.hs_failed", err)
 	}
+	log.Printf("bot.add_device: got key from HS, prefix=%q, calling InsertPreauthKey", key.Key[:min(20, len(key.Key))])
 	expiresAt := time.Now().Add(time.Hour).Unix()
 	if _, err := db.InsertPreauthKey(env.DB, target.ID, key.Key, expiresAt, key.ID); err != nil {
+		log.Printf("bot.add_device: InsertPreauthKey userID=%d err=%v", target.ID, err)
 		return i18n.Tf(lang, "bot.add_device.persist_failed", err)
 	}
 	if err := db.AppendAuditLog(env.DB, target.ID, target.Username, "preauth_issued", "1h single-use (via bot)"); err != nil {
+		log.Printf("bot.add_device: AppendAuditLog userID=%d err=%v", target.ID, err)
 		return i18n.Tf(lang, "bot.add_device.audit_failed", err)
 	}
+	log.Printf("bot.add_device: success userID=%d, setting pendingReplyForCurrentMessage", target.ID)
 	// Set the pending reply with platform picker. The polling
 	// loop reads pendingReplyForCurrentMessage after this
 	// returns and attaches the inline keyboard to the
@@ -342,7 +708,29 @@ func addDeviceReply(env BotEnv, arg string) string {
 	// callback handler in notify.go renders the per-platform
 	// install instructions.
 	pendingReplyForCurrentMessage = buildPlatformPicker(lang, key.Key)
-	return i18n.Tf(lang, "bot.add_device.ok", target.Username, key.Key)
+	// 2026-07-16: v0.15.2 — butler-voice gate envelope with
+	// parse_mode=HTML (the picker sets that on the
+	// inline_keyboard). The reply is wrapped in
+	// "🪶 ═══ Skygate ═══ … ═══ — Ваш Дворецкий ═══"
+	// with time-of-day greeting, title in <b>, subheader
+	// in <blockquote>, the key in <pre>, and a next-steps
+	// hint in <i>. cmdReply{skipWrap: true} in
+	// dispatchCommand tells HandleCommand to skip the v1
+	// Compose() wrapper so we don't get two gate envelopes
+	// stacked.
+	return butlerEnvelope(
+		lang, target.Username,
+		i18n.T(lang, "bot.add_device.title"),
+		i18n.T(lang, "bot.add_device.subheader"),
+		"<pre>"+escapeHTML(key.Key)+"</pre>",
+		i18n.T(lang, "bot.add_device.footer"),
+		WithIcon("🔑"),
+		// 2026-07-16: v0.15.5 — preauth keys are
+		// security-sensitive. Mark the reply warning so
+		// the operator sees 🔑! in the chat list and
+		// knows the body has a credential to act on.
+		WithUrgency(UrgencyWarning),
+	)
 }
 
 // addRuleReply adds a new exit-rule for the caller (or, for admins,
@@ -446,8 +834,8 @@ func addRuleReply(env BotEnv, args []string) string {
 	// We re-check on every insert so a rule never lands with
 	// a dead device or disabled exit-node.
 	var deviceIP string
-	if env.HS != nil {
-		if nodes, err := env.HS.ListAllNodes(); err == nil {
+	if env.userHS() != nil {
+		if nodes, err := env.userHS().ListAllNodes(); err == nil {
 			for _, n := range nodes {
 				if n.ID == deviceNodeID {
 					if len(n.IPAddresses) > 0 {
@@ -598,7 +986,7 @@ func addRuleReply(env BotEnv, args []string) string {
 	// for writes" guard pattern.
 	detailForLog := fmt.Sprintf("user %s added rule(s) (type=%s target=%s exit=%s) for %s via bot",
 		target.Username, typeToInsert, rawTarget, exitNodeHostname, target.Username)
-	if env.HS == nil {
+	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: %s %s → %s (exit=%s, action=%s, ids=%v) — ACL sync skipped (read-only mode)",
 			typeToInsert, rawTarget, exitNodeHostname, exitNodeHostname, action, insertedIDs)
 		if dnsWarning != "" {
@@ -611,7 +999,7 @@ func addRuleReply(env BotEnv, args []string) string {
 		}
 		return reply
 	}
-	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, target.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog)
 
 	// Audit log (under the target user, so per-user audit
 	// views stay correct). The action is rule_added; the
@@ -789,10 +1177,13 @@ func deleteRuleReply(env BotEnv, arg string) string {
 		deletedIDs = append(deletedIDs, j.id)
 	}
 
-	// ACL pipeline. Read-only deploys (HS == nil) skip the
-	// pipeline — the rules are already gone, admin can
-	// /admin/exit-rules/sync to push the updated policy manually.
-	if env.HS == nil {
+	// ACL pipeline. Read-only deploys (userHS() == nil) skip
+	// the pipeline — the rules are already gone, admin can
+	// /admin/exit-rules/sync to push the updated policy
+	// manually. 2026-07-16: v0.12.1 — uses env.userHS() so
+	// the policy is pushed on the user's per-plane control
+	// plane (or the global one if they have no override).
+	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: deleted %d rule(s) for %s (cascade: %d, ids=%v) — ACL sync skipped (read-only mode)",
 			len(deletedIDs), target.Username, totalCascade, deletedIDs)
 		if len(skipped) > 0 {
@@ -804,7 +1195,7 @@ func deleteRuleReply(env BotEnv, arg string) string {
 
 	detailForLog := fmt.Sprintf("user %s deleted %d rule(s) (cascade: %d) for %s via bot",
 		target.Username, len(deletedIDs), totalCascade, target.Username)
-	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, target.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog)
 
 	// Audit log under target user. The action is rule_deleted; the
 	// detail captures what was deleted + cascade count + skipped ids
@@ -1066,8 +1457,8 @@ func setDefaultDeviceReply(env BotEnv, arg string) string {
 	// Best-effort: if headscale is unreachable we still print the
 	// node_ids (the user can read them off /my_nodes).
 	hostnameMap := map[string]string{}
-	if env.HS != nil {
-		if nodes, err := env.HS.ListAllNodes(); err == nil {
+	if env.userHS() != nil {
+		if nodes, err := env.userHS().ListAllNodes(); err == nil {
 			for _, n := range nodes {
 				hn := n.GivenName
 				if hn == "" {
@@ -1142,8 +1533,8 @@ func defaultDeviceReply(env BotEnv) string {
 	}
 	// Resolve the hostname best-effort. If headscale is down we
 	// still return the node_id (it's enough to act on).
-	if env.HS != nil {
-		if nodes, err := env.HS.ListAllNodes(); err == nil {
+	if env.userHS() != nil {
+		if nodes, err := env.userHS().ListAllNodes(); err == nil {
 			for _, n := range nodes {
 				if n.ID == nodeID {
 					hn := n.GivenName
@@ -1258,4 +1649,268 @@ func defaultExitNodeReply(env BotEnv) string {
 		return i18n.Tf(lang, "bot.defaultexitnode.row", hostname, nodeID)
 	}
 	return i18n.Tf(lang, "bot.defaultexitnode.lookup_failed", nodeID)
+}
+
+// mySubnetReply shows the user's personal subnet (the v0.16.0
+// per-user subnets feature). Reads from the denormalized
+// portal_users columns (subnet_cidr / subnet_status /
+// subnet_router_node_id) so no JOIN is needed on the hot
+// path. If a future read needs the full user_subnets row
+// (e.g. created_at, control_plane_url), the manager's
+// subnet.Get() helper does the JOIN.
+//
+// 2026-07-17: v0.16.0 — /mysubnet. Parallel to /myexitnodes
+// and /my_status. Shows:
+//   - the user's CIDR (10.0.<uid>.0/24, deterministic)
+//   - status (pending|active|disabled)
+//   - router hostname (or "not yet provisioned" while
+//     pending; v0.16.1 fills this when the sidecar
+//     registers)
+//   - control plane ("" = global plane)
+//   - cross-user sharing (v0.16.0 ships empty lists;
+//     v0.17.1 fills them when sharing lands)
+func mySubnetReply(env BotEnv) string {
+	// 2026-07-16: v0.16.3 — "more HTML" pass. Mark HTML
+	// so the <b>/<code>/<i> in the body render. Same
+	// pattern as the other /my_* replies.
+	markHTMLReply()
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	// Single-row read against the denormalized columns.
+	// subnets are opt-in (not allocated by default), so
+	// most users have empty strings here — we return
+	// the "empty" hint instead of showing zero values.
+	var cidr, status, routerNodeID, controlPlaneURL string
+	if err := env.DB.QueryRow(`
+		SELECT subnet_cidr, subnet_status, subnet_router_node_id, headscale_url
+		  FROM portal_users
+		 WHERE id = ?
+	`, env.PortalUserID).Scan(&cidr, &status, &routerNodeID, &controlPlaneURL); err != nil {
+		return i18n.Tf(lang, "bot.mysubnet.db_error", err)
+	}
+	if cidr == "" {
+		// No subnet allocated. The "empty" hint points
+		// the user at /admin/users/{id}/subnet so the
+		// operator knows where to provision one.
+		return i18n.Tf(lang, "bot.mysubnet.empty", env.Username)
+	}
+	// Router hostname: the v0.16.0 release stores the
+	// headscale node_id but not the friendly hostname
+	// (the v0.16.1 sidecar work fills the hostname
+	// column in user_subnets). For v0.16.0 we show
+	// either the node_id (if registered) or a "not yet
+	// provisioned" hint.
+	var routerLabel string
+	switch {
+	case routerNodeID != "":
+		// node_id is a numeric headscale id; the v0.16.1
+		// work will resolve it to a hostname via
+		// headscale.ListNodes().
+		routerLabel = "node " + routerNodeID
+	default:
+		routerLabel = i18n.T(lang, "bot.mysubnet.label_router") + ": " +
+			// No good "not yet" key in the catalog yet;
+			// reusing a related string.
+			"—"
+	}
+	// Plane label: empty = global plane, otherwise show
+	// the URL (truncated to host for readability).
+	planeLabel := "(global)"
+	if controlPlaneURL != "" {
+		// Truncate to host portion for readability; the
+		// full URL is in /admin/users/{id}/subnet.
+		if u, err := url.Parse(controlPlaneURL); err == nil && u.Host != "" {
+			planeLabel = u.Host
+		} else {
+			planeLabel = controlPlaneURL
+		}
+	}
+	// Build the body. The "sharing" sections are empty
+	// in v0.16.0; the v0.17.1 release will fill them
+	// with /share_subnet and /revoke_subnet data.
+	// 2026-07-17: v0.18.0 — append a MagicDNS section
+	// with the sidecar's auto-resolving FQDN. The
+	// user can `tailscale ssh <fqdn>` or just use
+	// the FQDN as a destination from any tailnet
+	// client. Per-device records (the wildcard
+	// pattern) are documented in the note.
+	names := subnet.ComputeMagicDNSNames(env.Username)
+	magicBody := Section(i18n.T(lang, "bot.mysubnet.section_magicdns")) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.magicdns_sidecar_label"),
+			"<code>"+names.Sidecar+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.magicdns_short_label"),
+			"<code>"+names.SidecarShort+"</code>") + "\n" +
+		"<i>" + i18n.T(lang, "bot.mysubnet.magicdns_note") + "</i>"
+	body := i18n.Tf(lang, "bot.mysubnet.header", env.Username) + "\n" +
+		Section(i18n.T(lang, "bot.mysubnet.section_subnet")) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.label_cidr"), cidr) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.label_status"), status) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.label_router"), routerLabel) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.label_planes"), planeLabel) + "\n\n" +
+		magicBody + "\n\n" +
+		Section(i18n.T(lang, "bot.mysubnet.section_sharing")) + "\n" +
+		"<i>" + i18n.T(lang, "bot.mysubnet.sharing_v0_17_1") + "</i>"
+	return body
+}
+
+// mySubnetProvisionReply — v0.16.7. /mysubnet provision.
+// Issues a per-user preauth key (tag:subnet-router, 1h
+// TTL, single-use) and replies with the key + the
+// suggested `tailscale up` command. The user runs that
+// command on their sidecar host; the auto-approver in
+// internal/sidecar approves the route within ~30s and
+// flips /mysubnet status to active.
+//
+// `skipWrap: true` in the dispatch means HandleCommand
+// doesn't add a second gate envelope on top of our
+// butler gate — the key + command are already in a
+// <pre> block that the user needs to copy verbatim.
+func mySubnetProvisionReply(env BotEnv) string {
+	markHTMLReply()
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	if env.Sidecar == nil {
+		return i18n.Tf(lang, "bot.mysubnet.provision_no_manager",
+			env.Username)
+	}
+	key, exp, err := env.Sidecar.GeneratePreauth(
+		context.Background(), env.PortalUserID)
+	if err != nil {
+		return i18n.Tf(lang, "bot.mysubnet.provision_error", err)
+	}
+	info := env.Sidecar.BuildPreauthInfo(
+		env.PortalUserID, key, exp, env.Username)
+	body := i18n.Tf(lang, "bot.mysubnet.provision_header",
+		env.Username) + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_key_label"),
+			"<code>"+info.Key+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_hostname_label"),
+			"<code>"+info.Hostname+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_routes_label"),
+			"<code>"+info.Routes+"</code>") + "\n" +
+		Field(i18n.T(lang, "bot.mysubnet.provision_expires_label"),
+			"<code>"+info.ExpiresAt.Format("2006-01-02 15:04 MST")+"</code>") + "\n\n" +
+		"<i>" + i18n.T(lang, "bot.mysubnet.provision_help") + "</i>\n\n" +
+		"<b>" + i18n.T(lang, "bot.mysubnet.provision_command_label") + "</b>\n" +
+		"<pre>sudo tailscale up \\\n" +
+		"  --authkey=" + info.Key + " \\\n" +
+		"  --hostname=" + info.Hostname + " \\\n" +
+		"  --advertise-routes=" + info.Routes + "</pre>"
+	return body
+}
+
+// mySubnetShareReply — v0.17.1. /mysubnet share <username>.
+// Grants the named user access to the caller's
+// personal subnet. The ACL is re-pushed to headscale
+// via the sidecar manager's HSForUser path. Sharing
+// is one-directional: caller → grantee. The grantee
+// does NOT automatically get access to the caller's
+// devices (only to the caller's subnet).
+func mySubnetShareReply(env BotEnv, args []string) string {
+	markHTMLReply()
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	if len(args) == 0 {
+		return i18n.Tf(lang, "bot.mysubnet.share_usage")
+	}
+	granteeName := strings.TrimSpace(args[0])
+	if granteeName == "" {
+		return i18n.Tf(lang, "bot.mysubnet.share_usage")
+	}
+	// Look up the grantee's user_id.
+	var granteeID int64
+	if err := env.DB.QueryRow(
+		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+	).Scan(&granteeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return i18n.Tf(lang, "bot.mysubnet.share_no_user", granteeName)
+		}
+		return i18n.Tf(lang, "bot.mysubnet.share_error", err)
+	}
+	// Grant the share. subnet.Grant is idempotent and
+	// returns ErrSelfShare on self-share.
+	if err := subnet.Grant(env.DB, env.PortalUserID, granteeID); err != nil {
+		if errors.Is(err, subnet.ErrSelfShare) {
+			return i18n.T(lang, "bot.mysubnet.share_self")
+		}
+		if errors.Is(err, subnet.ErrNotFound) {
+			return i18n.T(lang, "bot.mysubnet.share_no_subnet")
+		}
+		return i18n.Tf(lang, "bot.mysubnet.share_error", err)
+	}
+	// Re-apply ACL so the new share row becomes part
+	// of the headscale policy. The push targets the
+	// caller's plane (sharing is per-user, per-plane).
+	// Best-effort: a failure is logged but doesn't
+	// fail the share (the row is in the DB; the
+	// operator can manually re-apply).
+	planeURL := ""
+	if env.PortalPlaneURL != nil {
+		planeURL = env.PortalPlaneURL(env.PortalUserID)
+	}
+	res := acl.ApplyACLPipelineForPlane(
+		env.DB, env.HSForPortalUser(env.PortalUserID),
+		planeURL, nil, env.Username,
+		fmt.Sprintf("subnet_share %s -> %s", env.Username, granteeName))
+	if !res.Applied {
+		log.Printf("subnet_share: ACL reapply failed user=%d -> %d: %v (share is in DB; click 'Re-apply ACL' to push)",
+			env.PortalUserID, granteeID, res.Err)
+	}
+	return i18n.Tf(lang, "bot.mysubnet.share_ok",
+		env.Username, granteeName)
+}
+
+// mySubnetRevokeReply — v0.17.1. /mysubnet revoke <username>.
+// Removes a previously-granted share. The ACL is
+// re-pushed to headscale.
+func mySubnetRevokeReply(env BotEnv, args []string) string {
+	markHTMLReply()
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return i18n.T(lang, "bot.mysubnet.not_bound")
+	}
+	if len(args) == 0 {
+		return i18n.Tf(lang, "bot.mysubnet.revoke_usage")
+	}
+	granteeName := strings.TrimSpace(args[0])
+	if granteeName == "" {
+		return i18n.Tf(lang, "bot.mysubnet.revoke_usage")
+	}
+	var granteeID int64
+	if err := env.DB.QueryRow(
+		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+	).Scan(&granteeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return i18n.Tf(lang, "bot.mysubnet.revoke_no_user", granteeName)
+		}
+		return i18n.Tf(lang, "bot.mysubnet.revoke_error", err)
+	}
+	if err := subnet.Revoke(env.DB, env.PortalUserID, granteeID); err != nil {
+		if errors.Is(err, subnet.ErrShareNotFound) {
+			return i18n.Tf(lang, "bot.mysubnet.revoke_not_shared", env.Username, granteeName)
+		}
+		return i18n.Tf(lang, "bot.mysubnet.revoke_error", err)
+	}
+	// Re-apply ACL — symmetric to share. The new
+	// (smaller) dst list is pushed to headscale.
+	planeURL := ""
+	if env.PortalPlaneURL != nil {
+		planeURL = env.PortalPlaneURL(env.PortalUserID)
+	}
+	res := acl.ApplyACLPipelineForPlane(
+		env.DB, env.HSForPortalUser(env.PortalUserID),
+		planeURL, nil, env.Username,
+		fmt.Sprintf("subnet_revoke %s -> %s", env.Username, granteeName))
+	if !res.Applied {
+		log.Printf("subnet_revoke: ACL reapply failed user=%d -> %d: %v (revoke is in DB; click 'Re-apply ACL' to push)",
+			env.PortalUserID, granteeID, res.Err)
+	}
+	return i18n.Tf(lang, "bot.mysubnet.revoke_ok",
+		env.Username, granteeName)
 }

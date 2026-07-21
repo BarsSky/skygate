@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"skygate/internal/headscale"
+	"skygate/internal/subnet"
 
 	dbpkg "skygate/internal/db"
 )
@@ -85,10 +88,24 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 	if portalUserID == 0 || portalUsername == "" {
 		return
 	}
+	// 2026-07-21: v0.22.3 — track whether THIS user has a
+	// subnet-router currently registered in headscale, so
+	// subnet.SyncStatus below can compute the right status
+	// (active vs router_active). Detection mirrors
+	// sidecar.UsernameFromHostname: hostname starts with
+	// "skygate-subnet-" and the rest equals our portal
+	// username.
+	hasRouter := false
+	const subnetRouterPrefix = "skygate-subnet-"
 	// Build a set of currently-live node IDs.
 	live := map[string]bool{}
 	for _, n := range nodes {
 		live[n.ID] = true
+		if !hasRouter && hasRouterTag(n.Tags) && strings.HasPrefix(n.Hostname, subnetRouterPrefix) {
+			if uname := strings.TrimPrefix(n.Hostname, subnetRouterPrefix); uname == portalUsername {
+				hasRouter = true
+			}
+		}
 	}
 	// GC pass: drop snapshot rows for nodes that no longer exist in
 	// headscale. Restricted to rows that this portal user owns, so a
@@ -148,7 +165,36 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		if n.PreAuthKeyID != "" {
 			for _, p := range paks {
 				if p.HeadscalePreauthID != "" && p.HeadscalePreauthID == n.PreAuthKeyID {
-					matchedTag = firstTagOrFallback(n)
+					// 2026-07-20: v0.22.2 hotfix — same fix as
+					// Strategy C below. The preauth key came
+					// from skygate (we have its headscale ID
+					// in preauth_keys), so the user explicitly
+					// registered the device via the skygate
+					// /my/preauth flow. The default tag should
+					// be tag:private so the device is scoped to
+					// this user in headscale's tagOwners + the
+					// per-user ACL. Previously firstTagOrFallback(n)
+					// returned "tag:untagged" for headscale-tagless
+					// nodes (like MSI on 2026-07-20) and the
+					// code went to the else branch — InsertIgnoreNodeOwner
+					// was called with tag="tag:untagged" AND
+					// HS.TagNode(15, "tag:private") was NEVER
+					// called, so the node stayed tagless in
+					// headscale forever (the snapshot row
+					// blocked any further tag:private upgrade
+					// because the next backfill would still
+					// hit the else branch). The fix: when we
+					// have a direct preauth match, default to
+					// tag:private. firstTagOrFallback is only
+					// used when the node ALREADY has tags (e.g.
+					// skygate-vm has tag:private in headscale,
+					// so firstTagOrFallback returns "tag:private"
+					// and the result is unchanged).
+					if len(n.Tags) > 0 {
+						matchedTag = firstTagOrFallback(n)
+					} else {
+						matchedTag = "tag:private"
+					}
 					break
 				}
 			}
@@ -229,10 +275,25 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 					break
 				}
 			}
+			// 2026-07-20: v0.22.2 debug log — helps trace the
+			// "tag:private disappears after 2nd backfill" symptom
+			// (operator saw tags='' in headscale API right after
+			// the 2nd backfill returned). The log shows the
+			// matchedTag + hasPrivate + whether TagNode was
+			// called. Safe to remove once the root cause is
+			// pinned (suspect: headscale's HS.ListAllNodes
+			// returns a cached snapshot from a different
+			// goroutine, and the 2nd backfill sees stale
+			// n.Tags=[] while headscale's authoritative state
+			// is ['tag:private']).
+			log.Printf("DBG backfill node=%s name=%s matchedTag=%s api_tags=%v hasPrivate=%v",
+				n.ID, n.Hostname, matchedTag, n.Tags, hasPrivate)
 			if !hasPrivate {
 				if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
 					if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
 						log.Printf("warn: auto-tag node %s: %v", n.ID, err)
+					} else {
+						log.Printf("DBG backfill TagNode called for node=%s (set tag:private)", n.ID)
 					}
 				}
 			}
@@ -250,4 +311,30 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 			}
 		}
 	}
+	// 2026-07-21: v0.22.3 — sync the user_subnets.status to
+	// reflect the new state. After every /my/devices load, the
+	// user's node_owner_map is up to date, so SyncStatus can
+	// safely recompute the status. ErrNotFound is benign
+	// (user has no subnet row → not opted in → nothing to
+	// sync); every other error gets a warn log so we can
+	// spot regressions in production.
+	newStatus, syncErr := subnet.SyncStatus(db, portalUserID, hasRouter)
+	if syncErr != nil && !errors.Is(syncErr, subnet.ErrNotFound) {
+		log.Printf("warn: subnet.SyncStatus user=%d hasRouter=%v: %v", portalUserID, hasRouter, syncErr)
+	} else if syncErr == nil {
+		log.Printf("DBG subnet sync user=%d hasRouter=%v status=%s", portalUserID, hasRouter, newStatus)
+	}
+}
+
+// hasRouterTag is a small slice helper used by the v0.22.3
+// subnet status sync logic. Kept private to handlers/ since
+// it's only used by backfillNodeOwnership; the sidecar
+// package has its own copy of the same logic for clarity.
+func hasRouterTag(tags []string) bool {
+	for _, t := range tags {
+		if t == "tag:subnet-router" {
+			return true
+		}
+	}
+	return false
 }

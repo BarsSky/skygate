@@ -54,8 +54,17 @@ with open('${dest}.tmp', 'w') as f:
     # Special markers -> YAML list conversion
     local routes_list=""; IFS=',' read -ra ROUTES <<< "${HEADSCALE_AUTO_APPROVE_ROUTES}"
     for r in "${ROUTES[@]}"; do r=$(echo "$r" | xargs); [ -n "$r" ] && routes_list+="     - ${r}\n"; done
+    # 2026-07-15: v0.10.12 — DERP_EXTERNAL_URLS is appended to the
+    # headscale DERP map list (alongside HEADSCALE_DERP_URLS and
+    # the bundled derper, if DERP_ENABLED=true). This lets an
+    # operator point at third-party derpers without touching the
+    # default Tailscale DERP relay list.
     local derp_list=""; IFS=',' read -ra DERPS <<< "${HEADSCALE_DERP_URLS}"
     for d in "${DERPS[@]}"; do d=$(echo "$d" | xargs); [ -n "$d" ] && derp_list+="    - ${d}\n"; done
+    if [ -n "${DERP_EXTERNAL_URLS}" ]; then
+        IFS=',' read -ra EXT_DERPS <<< "${DERP_EXTERNAL_URLS}"
+        for d in "${EXT_DERPS[@]}"; do d=$(echo "$d" | xargs); [ -n "$d" ] && derp_list+="    - ${d}\n"; done
+    fi
     # Use python for sed replacement to avoid BSD/GNU sed differences
     python3 -c "
 import re
@@ -103,14 +112,96 @@ fi
 
 render_template "${PROJECT_DIR}/deploy/templates/headscale-compose.yml.tmpl"     "${DEPLOY_HEADSCALE_DIR}/docker-compose.yml"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 2b: Caddy (v0.15.0) — optional TLS terminator
+# ═══════════════════════════════════════════════════════════════════════════
+# Renders deploy/templates/Caddyfile.tmpl to
+# ${DEPLOY_SKYGATE_DIR}/caddy/Caddyfile. Skipped entirely
+# when CADDY_ENABLED=false. The docker-compose.yml above
+# also references the caddy-data and caddy-config volumes;
+# they exist regardless of CADDY_ENABLED (compose refuses
+# to start a service whose volume isn't declared).
+if [ "${CADDY_ENABLED:-true}" = "true" ]; then
+    mkdir -p "${DEPLOY_SKYGATE_DIR}/caddy"
+    # 2026-07-15: v0.15.0 — the Caddy DNS-01 challenge
+    # needs the API token at RUNTIME (the Caddyfile
+    # references it as `env.CADDY_DNS_TOKEN_VALUE`).
+    # We pass the token to the Caddy container via
+    # `env_file:` (a Caddy-specific .env written to
+    # /var/lib/skygate/caddy/caddy.env, mode 0600). The
+    # operator's main .env (which IS often committed to
+    # git) is not touched.
+    #
+    # If the operator's source token file doesn't exist
+    # yet, we still render the Caddyfile and warn —
+    # Caddy will fail to issue certs until the operator
+    # creates the file, but the deploy itself succeeds
+    # (this is the right behaviour: the operator may be
+    # in the middle of provisioning the DNS provider
+    # account and shouldn't have to wait for deploy).
+    CADDY_ENV_FILE="${DEPLOY_SKYGATE_DIR}/caddy/caddy.env"
+    : > "${CADDY_ENV_FILE}"  # truncate
+    if [ -f "${CADDY_DNS_API_TOKEN_FILE}" ]; then
+        echo "CADDY_DNS_TOKEN_VALUE=$(cat "${CADDY_DNS_API_TOKEN_FILE}")" >> "${CADDY_ENV_FILE}"
+        log "Caddy DNS-01 token read from ${CADDY_DNS_API_TOKEN_FILE}"
+    else
+        warn "CADDY_DNS_API_TOKEN_FILE (${CADDY_DNS_API_TOKEN_FILE}) not found — Caddy will fail to issue certs until the operator creates it. See docs/https-setup.md for the token shape."
+        echo "CADDY_DNS_TOKEN_VALUE=" >> "${CADDY_ENV_FILE}"
+    fi
+    xchmod 600 "${CADDY_ENV_FILE}"
+    # Caddy DNS-01 module selector. "http" = HTTP-01
+    # challenge (no token needed, port 80 must be
+    # reachable). Anything else = the named provider
+    # (token required).
+    if [ "${CADDY_DNS_PROVIDER:-cloudflare}" = "http" ]; then
+        export CADDY_TLS_DIRECTIVES="        # HTTP-01 challenge (port 80 must be reachable from the public Internet).
+        # No DNS API token needed; Caddy writes nothing
+        # to your DNS provider's records."
+    else
+        export CADDY_TLS_DIRECTIVES="        # DNS-01 challenge via ${CADDY_DNS_PROVIDER}.
+        # The token is read from \$CADDY_DNS_TOKEN_VALUE
+        # (loaded from /etc/caddy/caddy.env, mode 0600;
+        # the rendered Caddyfile does not embed the token).
+        dns ${CADDY_DNS_PROVIDER}"
+    fi
+    # DERP upstream. derper-compose.yml.tmpl uses
+    # network_mode: host, so from the Caddy container's
+    # perspective the derper is on the host's loopback.
+    export CADDY_DERP_UPSTREAM="127.0.0.1:443"
+    # Verify the public hostnames resolve before Caddy
+    # tries to issue certs. Failing this check just
+    # warns (the operator might be in the middle of
+    # adding DNS records); Caddy will retry on the next
+    # start.
+    for h in "${CADDY_HOSTS_HEAD}" "${CADDY_HOSTS_HEADPLANE}" "${CADDY_HOSTS_DERP}"; do
+        if [ -n "${h}" ] && ! getent hosts "${h}" >/dev/null 2>&1; then
+            warn "Caddy vhost '${h}' doesn't resolve in this host's DNS. Caddy will fail to issue a cert until '${h}' points at this host's public IP."
+        fi
+    done
+    render_template "${PROJECT_DIR}/deploy/templates/Caddyfile.tmpl"     "${DEPLOY_SKYGATE_DIR}/caddy/Caddyfile"
+    log "Rendered Caddyfile with vhosts: HEAD=${CADDY_HOSTS_HEAD}, HEADPLANE=${CADDY_HOSTS_HEADPLANE}, DERP=${CADDY_HOSTS_DERP}"
+else
+    log "CADDY_ENABLED=false — skipping Caddyfile render (no TLS terminator; operator takes responsibility per docs/https-setup.md)"
+fi
+
 # 2026-07-14: Этап 14 v11 — Headplane is a documented optional
 # module. When HEADPLANE_ENABLED=false, strip the headplane service
 # block + its volume from the rendered compose file so the
 # container is never started. The template still includes the
 # block (so a future flip to true re-creates the container).
 # See docs/headplane.md for the integration contract.
-if [ "${HEADPLANE_ENABLED}" = "false" ]; then
-    log "HEADPLANE_ENABLED=false — stripping Headplane from docker-compose.yml"
+#
+# 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set, also
+# strip the sidecar (we point at the existing one). The two
+# conditions are equivalent for the deploy step; the only
+# difference is the backup manifest records the external URL
+# so a restore on another host can reproduce the wiring.
+if [ "${HEADPLANE_ENABLED}" = "false" ] || [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+    if [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+        log "HEADPLANE_EXTERNAL_URL is set — stripping Headplane sidecar (using existing ${HEADPLANE_EXTERNAL_URL})"
+    else
+        log "HEADPLANE_ENABLED=false — stripping Headplane from docker-compose.yml"
+    fi
     # Delete the headplane service block (from "  headplane:" up
     # to the next top-level key). sed -n with `p` after a `/^  headplane:/,/^[^ ]/!p`
     # doesn't work portably, so use a Python one-liner.
@@ -156,8 +247,12 @@ fi
 ${DOCKER_CMD} compose up -d 2>&1 || warn "docker compose up had warnings"
 wait_for_http "http://localhost:50444/api/v1/node" 200 60
 container_stable headscale 10
-if [ "${HEADPLANE_ENABLED}" = "false" ]; then
-    log "  skipped headplane readiness check (HEADPLANE_ENABLED=false)"
+if [ "${HEADPLANE_ENABLED}" = "false" ] || [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+    if [ -n "${HEADPLANE_EXTERNAL_URL}" ]; then
+        log "  skipped headplane readiness check (using HEADPLANE_EXTERNAL_URL=${HEADPLANE_EXTERNAL_URL})"
+    else
+        log "  skipped headplane readiness check (HEADPLANE_ENABLED=false)"
+    fi
 else
     wait_for_http "http://localhost:50445/admin/" "2xx" 30
     container_stable headplane 5

@@ -37,6 +37,11 @@
 // runs after the wipe. Read-only deploys (env.HS == nil) get the
 // same guard /delrule has: DB delete still runs, ACL pipeline is
 // skipped with a clear "ask admin to /admin/exit-rules/sync" hint.
+//
+// 2026-07-15: Этап 14 v14 (v0.10.14) — bot i18n completion. The
+// user-visible body was the last English-only path in the bot;
+// every reply now goes through i18n.T/Tf. Audit log details stay
+// in English (operator audit convention — see /admin/audit).
 
 package telegram
 
@@ -49,6 +54,7 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // clearTTL is how long a freshly-minted /clearrules confirmation
@@ -92,8 +98,9 @@ var pendingClears sync.Map
 // username. The dispatch is whitespace-tokenized so
 // "/clearrules alice confirm" is parsed as (mint-target, confirm).
 func clearRulesReply(env BotEnv, arg string) string {
+	lang := env.Lang
 	if !env.IsIdentified() {
-		return "clearrules: chat not bound to a portal user. Ask an admin to /bind your chat_id."
+		return i18n.T(lang, "bot.clearrules.not_bound")
 	}
 	parts := strings.Fields(strings.TrimSpace(arg))
 
@@ -115,21 +122,21 @@ func clearRulesReply(env BotEnv, arg string) string {
 			doConfirm = true
 		} else {
 			if !env.IsAdmin {
-				return "clearrules: extra args (admin-only: /clearrules <username>). Drop the username to clear your own rules."
+				return i18n.T(lang, "bot.clearrules.extra_args_admin")
 			}
 			targetName = parts[0]
 		}
 	case 2:
 		if !env.IsAdmin {
-			return "clearrules: extra args (admin-only: /clearrules <username> confirm)"
+			return i18n.T(lang, "bot.clearrules.extra_args_confirm")
 		}
 		if !strings.EqualFold(parts[1], "confirm") {
-			return "clearrules: usage: /clearrules [username] [confirm]"
+			return i18n.T(lang, "bot.clearrules.usage")
 		}
 		doConfirm = true
 		targetName = parts[0]
 	default:
-		return "clearrules: usage: /clearrules [username] [confirm]"
+		return i18n.T(lang, "bot.clearrules.usage")
 	}
 
 	if doConfirm {
@@ -145,21 +152,22 @@ func clearRulesReply(env BotEnv, arg string) string {
 // stored) so a follow-up /clearrules confirm doesn't accidentally
 // wipe rules that the user never confirmed.
 func mintClearRules(env BotEnv, targetName string) string {
+	lang := env.Lang
 	target := db.User{ID: env.PortalUserID, Username: env.Username, IsAdmin: env.IsAdmin}
 	if targetName != "" {
 		u, err := lookupUserByUsername(env.DB, targetName)
 		if err != nil {
-			return fmt.Sprintf("clearrules: %v (admin can target another user with: /clearrules <username>)", err)
+			return i18n.Tf(lang, "bot.clearrules.target_err", err)
 		}
 		target = *u
 	}
 
 	cnt, samples, err := countAndSampleUserRules(env.DB, target.ID)
 	if err != nil {
-		return fmt.Sprintf("clearrules: db error: %v", err)
+		return i18n.Tf(lang, "bot.clearrules.db_error", err)
 	}
 	if cnt == 0 {
-		return fmt.Sprintf("clearrules: %s has no exit-rules. Nothing to clear.", target.Username)
+		return i18n.Tf(lang, "bot.clearrules.empty", target.Username)
 	}
 
 	// Mint pending request. Overwrites any previous pending clear
@@ -173,20 +181,22 @@ func mintClearRules(env BotEnv, targetName string) string {
 	// Audit the REQUEST (not the action; the action gets a
 	// separate row when /clearrules confirm fires). Lets an
 	// operator see "alice tried to clear her rules at T" even if
-	// she didn't follow through.
+	// she didn't follow through. Audit log detail stays in
+	// English — operator audit convention.
 	_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rules_clear_requested",
 		fmt.Sprintf("via bot: %d rule(s) pending confirm from chat %d", cnt, env.ChatID))
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "clearrules: this will delete ALL %d rule(s) for %s:\n", cnt, target.Username)
+	sb.WriteString(i18n.Tf(lang, "bot.clearrules.mint_header", cnt, target.Username) + "\n")
 	for _, s := range samples {
 		sb.WriteString("  • " + s + "\n")
 	}
 	if cnt > len(samples) {
-		fmt.Fprintf(&sb, "  ... (%d more)\n", cnt-len(samples))
+		sb.WriteString(i18n.Tf(lang, "bot.clearrules.mint_more_suffix", cnt-len(samples)) + "\n")
 	}
-	fmt.Fprintf(&sb, "\nSend /clearrules confirm within %s to proceed.\n", clearTTL)
-	sb.WriteString("(ignored if the request is older than the TTL, or the chat mints a new target)")
+	sb.WriteString("\n")
+	sb.WriteString(i18n.Tf(lang, "bot.clearrules.mint_send_confirm", clearTTL) + "\n")
+	sb.WriteString(i18n.T(lang, "bot.clearrules.mint_ignored_note"))
 	return trimForTelegram(sb.String())
 }
 
@@ -204,9 +214,10 @@ func mintClearRules(env BotEnv, targetName string) string {
 // matches; reject if it doesn't, so a chat with a stale pending
 // can't accidentally wipe the wrong user).
 func confirmClearRules(env BotEnv, expectedUsername string) string {
+	lang := env.Lang
 	v, ok := pendingClears.Load(env.ChatID)
 	if !ok {
-		return "clearrules: no pending clear request for this chat. Send /clearrules to mint one."
+		return i18n.T(lang, "bot.clearrules.no_pending")
 	}
 	req, ok := v.(clearRequest)
 	if !ok {
@@ -215,19 +226,18 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 		// "expired" rather than panic. A subsequent mint
 		// will overwrite the bad entry.
 		pendingClears.Delete(env.ChatID)
-		return "clearrules: pending clear store is corrupted; mint a new one with /clearrules"
+		return i18n.T(lang, "bot.clearrules.pending_corrupt")
 	}
 	if time.Now().After(req.expiry) {
 		pendingClears.Delete(env.ChatID)
-		return fmt.Sprintf("clearrules: pending clear expired (>%s old); mint a new one with /clearrules", clearTTL)
+		return i18n.Tf(lang, "bot.clearrules.pending_expired", clearTTL)
 	}
 	// Admin safety check: if the admin typed "/clearrules alice
 	// confirm" and the pending is for "bob", refuse. This stops
 	// a typo or a race (two mints in a row) from wiping the
 	// wrong user.
 	if expectedUsername != "" && !strings.EqualFold(req.username, expectedUsername) {
-		return fmt.Sprintf("clearrules: pending clear is for %q, not %q. Mint a new one with /clearrules %s",
-			req.username, expectedUsername, expectedUsername)
+		return i18n.Tf(lang, "bot.clearrules.pending_user_mismatch", req.username, expectedUsername, expectedUsername)
 	}
 
 	// Resolve the target user from the stored username. If the
@@ -237,7 +247,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	target, err := lookupUserByUsername(env.DB, req.username)
 	if err != nil {
 		pendingClears.Delete(env.ChatID)
-		return fmt.Sprintf("clearrules: target user %q no longer exists; mint a new one with /clearrules", req.username)
+		return i18n.Tf(lang, "bot.clearrules.target_user_gone", req.username)
 	}
 
 	// Fetch every rule (id, target_type, parent_domain) for
@@ -250,7 +260,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 		`SELECT id, target_type, COALESCE(parent_domain, '')
 		   FROM device_rules WHERE user_id = ?`, target.ID)
 	if err != nil {
-		return fmt.Sprintf("clearrules: db error: %v", err)
+		return i18n.Tf(lang, "bot.clearrules.db_error", err)
 	}
 	type ruleInfo struct {
 		id           int
@@ -262,7 +272,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 		var r ruleInfo
 		if err := rows.Scan(&r.id, &r.targetType, &r.parentDomain); err != nil {
 			rows.Close()
-			return fmt.Sprintf("clearrules: scan error: %v", err)
+			return i18n.Tf(lang, "bot.clearrules.scan_error", err)
 		}
 		rules = append(rules, r)
 	}
@@ -283,7 +293,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 		// /delrule fired). No work to do.
 		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rules_cleared",
 			"via bot: no rules to clear (already empty at confirm time)")
-		return "clearrules: nothing to do — rules were already empty at confirm time."
+		return i18n.T(lang, "bot.clearrules.empty_at_confirm")
 	}
 
 	// Delete each rule with cascade for domain rules. Cascade
@@ -303,21 +313,25 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 		deleted++
 	}
 
-	// ACL pipeline. Read-only deploys (HS == nil) skip the
-	// pipeline — the rules are already gone, admin can
+	// ACL pipeline. Read-only deploys (userHS() == nil) skip
+	// the pipeline — the rules are already gone, admin can
 	// /admin/exit-rules/sync to push the updated policy
-	// manually. Same guard as /delrule.
-	if env.HS == nil {
+	// manually. Same guard as /delrule. 2026-07-16: v0.12.1 —
+	// uses env.userHS() so the policy is pushed on the user's
+	// per-plane control plane (or the global one if they have
+	// no override).
+	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: cleared all %d rule(s) for %s (cascade: %d) — ACL sync skipped (read-only mode)",
 			deleted, target.Username, totalCascade)
 		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rules_cleared", auditDetail)
-		return fmt.Sprintf("clearrules: ✓ removed %d rule(s) for %s (cascade: %d). ACL sync skipped (read-only mode) — ask admin to /admin/exit-rules/sync.",
-			deleted, target.Username, totalCascade)
+		return i18n.Tf(lang, "bot.clearrules.read_only_ok", deleted, target.Username, totalCascade)
 	}
 
+	// Internal log details stay in English — operator audit
+	// convention (visible in /admin/audit).
 	detailForLog := fmt.Sprintf("user %s cleared all %d rule(s) (cascade: %d) for %s via bot",
 		env.Username, deleted, totalCascade, target.Username)
-	pipe := acl.ApplyACLPipeline(env.DB, env.HS, nil, env.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userPlaneURL(), nil, env.Username, detailForLog)
 
 	// Audit the actual action (separate from the request row
 	// written in the mint phase).
@@ -332,15 +346,15 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	// operator wakes up even if the user doesn't notice the
 	// warning in the bot reply.
 	if pipe.Applied {
-		return fmt.Sprintf("clearrules: ✓ cleared %d rule(s) for %s (cascade: %d)\n  ACL v%d applied to headscale",
-			deleted, target.Username, totalCascade, pipe.Version)
+		return i18n.Tf(lang, "bot.clearrules.applied_ok", deleted, target.Username, totalCascade, pipe.Version)
 	}
 	if env.Notifier != nil {
+		// Alert text stays in English — it's operator-only
+		// and not part of the user's reply.
 		go env.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (clearrules by %s)\n  cleared=%d (cascade=%d)\n  err: %v",
 			target.Username, deleted, totalCascade, pipe.Err))
 	}
-	return fmt.Sprintf("clearrules: ⚠ all %d rule(s) deleted from DB for %s (cascade: %d) but ACL v%d was NOT applied to headscale: %v\nAsk an admin to /admin/exit-rules/sync.",
-		deleted, target.Username, totalCascade, pipe.Version, pipe.Err)
+	return i18n.Tf(lang, "bot.clearrules.applied_failed", deleted, target.Username, totalCascade, pipe.Version, pipe.Err)
 }
 
 // countAndSampleUserRules returns (total count, top 10 sample

@@ -37,6 +37,17 @@
   --shadow:0 8px 24px rgba(0,0,0,0.3);--shadow-lg:0 24px 48px rgba(22,15,36,0.5);
   --radius:8px;--radius-lg:12px;
 }
+[data-theme="nvidia"]{
+  --bg:#0a0a0a;--bg-card:#131313;--bg-elev:#1c1c1c;
+  --border:#2a2a2a;--border-strong:#444444;
+  --text:#f5f5f5;--text-muted:#a8a8a8;--text-subtle:#707070;
+  --accent:#76b900;--accent-fg:#0a0a0a;--accent-hover:#8ed41e;--accent-soft:rgba(118,185,0,0.14);
+  --danger:#ff5c5c;--danger-bg:rgba(255,92,92,0.1);
+  --shadow:0 8px 24px rgba(0,0,0,0.5);--shadow-lg:0 24px 48px rgba(0,0,0,0.6);
+  --radius:4px;--radius-lg:8px;
+  --font:'Inter',system-ui,-apple-system,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
 *{box-sizing:border-box;margin:0;padding:0}
 body{
   font-family:var(--font);font-size:14px;
@@ -101,25 +112,27 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
     <a href="/login?theme=linear" {{if eq .Theme "linear"}}class="active"{{end}}><i class="fa-solid fa-moon"></i>Linear <small>dark</small></a>
     <a href="/login?theme=vercel" {{if eq .Theme "vercel"}}class="active"{{end}}><i class="fa-solid fa-sun"></i>Vercel <small>light</small></a>
     <a href="/login?theme=sentry" {{if eq .Theme "sentry"}}class="active"{{end}}><i class="fa-solid fa-bolt"></i>Sentry <small>purple</small></a>
+    <a href="/login?theme=nvidia" {{if eq .Theme "nvidia"}}class="active"{{end}}><i class="fa-solid fa-microchip"></i>NVIDIA <small>green</small></a>
   </div>
 </details>
 <div class="login-box">
   <div class="brand">
     <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
     <span class="brand-name">Skygate</span>
-    <span class="brand-ver">v0.2</span>
+    <span class="brand-ver">{{if .Version}}{{.Version}}{{else}}dev{{end}}</span>
   </div>
   <h1><i class="fa-solid fa-right-to-bracket"></i>{{t "login.title"}}</h1>
   <div class="lead"><i class="fa-solid fa-info-circle"></i>{{t "login.subtitle"}}</div>
   {{if .Error}}<div class="alert"><i class="fa-solid fa-circle-exclamation"></i>{{.Error}}</div>{{end}}
   <form method="post" action="/login?theme={{.Theme}}">
-    <!-- Dummy fields to absorb browser autofill (prevents cached credentials leak) -->
-    <input type="text" id="dummy" name="dummy" autocomplete="off" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none" readonly disabled>
-    <input type="password" id="dummy-pass" name="dummy-pass" autocomplete="off" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none" readonly disabled>
     <label for="username"><i class="fa-solid fa-user"></i>{{t "login.username"}}</label>
-    <input type="text" id="username" name="username" required autofocus autocomplete="off" placeholder="admin">
+    <input type="text" id="username" name="username" required autofocus autocomplete="username" placeholder="admin" value="{{.LastUsername}}">
     <label for="password"><i class="fa-solid fa-lock"></i>{{t "login.password"}}</label>
     <input type="password" id="password" name="password" required autocomplete="current-password">
+    <label for="remember" style="display:flex;align-items:center;gap:6px;margin-top:14px;text-transform:none;letter-spacing:normal;font-size:13px;color:var(--text-muted);cursor:pointer">
+      <input type="checkbox" id="remember" name="remember" value="1" style="width:auto;margin:0;accent-color:var(--accent)">
+      <span>{{t "login.remember_label"}}</span>
+    </label>
     <button type="submit"><i class="fa-solid fa-arrow-right"></i>{{t "login.submit"}}</button>
   </form>
   <div class="help"><i class="fa-solid fa-lightbulb"></i>{{t "login.no_account"}}</div>

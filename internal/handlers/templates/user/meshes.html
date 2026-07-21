@@ -1,0 +1,127 @@
+{{define "body-user-meshes"}}
+{{/* 2026-07-20: v0.22.0 — /my/meshes user-scope page.
+     Lists the caller's active meshes, with a
+     form to create a new mesh and a form to
+     join an existing one via 8-char code. The
+     page is the WEB entry point for the mesh
+     workflow (the bot /mesh create|join|leave
+     commands are the BOT entry point; both
+     share the same internal/mesh package). */}}
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-circle-nodes"></i>{{t "my_meshes.title"}}</h2>
+    <div class="sub">{{t "my_meshes.subtitle"}}.</div>
+  </div>
+  <div class="btn-row">
+    <a href="/dashboard" class="btn btn-secondary"><i class="fa-solid fa-house"></i>{{t "nav.dashboard"}}</a>
+  </div>
+</div>
+
+{{/* Create form */}}
+<div class="card">
+  <h3><i class="fa-solid fa-plus-circle"></i>{{t "my_meshes.create_title"}}</h3>
+  <p style="color:var(--text-muted);margin:6px 0 12px 0">{{t "my_meshes.create_subtitle"}}</p>
+  <form method="post" action="/my/meshes/create" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+    <label style="flex:1;min-width:200px">
+      <span style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">{{t "my_meshes.field_name"}}</span>
+      <input type="text" name="name" maxlength="64" required
+             placeholder="{{t "my_meshes.name_placeholder"}}"
+             style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)">
+    </label>
+    <button type="submit" class="btn"><i class="fa-solid fa-circle-nodes"></i>{{t "my_meshes.create_action"}}</button>
+  </form>
+</div>
+
+{{/* Join form */}}
+<div class="card">
+  <h3><i class="fa-solid fa-arrow-right-to-bracket"></i>{{t "my_meshes.join_title"}}</h3>
+  <p style="color:var(--text-muted);margin:6px 0 12px 0">{{t "my_meshes.join_subtitle"}}</p>
+  <form method="post" action="/my/meshes/join" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+    <label style="flex:1;min-width:200px">
+      <span style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">{{t "my_meshes.field_code"}}</span>
+      <input type="text" name="code" maxlength="8" required
+             placeholder="{{t "my_meshes.code_placeholder"}}"
+             style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-transform:uppercase;font-family:monospace">
+    </label>
+    <button type="submit" class="btn"><i class="fa-solid fa-arrow-right-to-bracket"></i>{{t "my_meshes.join_action"}}</button>
+  </form>
+</div>
+
+{{/* Current meshes list */}}
+<div class="card">
+  <h3><i class="fa-solid fa-circle-nodes"></i>{{t "my_meshes.list_title"}}</h3>
+  {{if .Meshes}}
+  <table>
+    <thead>
+      <tr>
+        <th style="width:200px">{{t "my_meshes.col_name"}}</th>
+        <th style="width:120px">{{t "my_meshes.col_code"}}</th>
+        <th style="width:140px">{{t "my_meshes.col_creator"}}</th>
+        <th style="width:120px">{{t "my_meshes.col_members"}}</th>
+        <th style="width:160px">{{t "my_meshes.col_created"}}</th>
+        <th>{{t "common.actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Meshes}}
+      <tr>
+        <td><b>{{.Mesh.Name}}</b></td>
+        <td><code style="font-size:12px">{{.Mesh.Code}}</code></td>
+        <td>{{.CreatorName}}</td>
+        <td>
+          <details>
+            <summary>{{.MemberCount}}</summary>
+            <div style="margin-top:6px">
+              {{range .MemberList}}
+              <div style="font-size:12px;color:var(--text-muted)">  • <code>{{.Username}}</code></div>
+              {{end}}
+            </div>
+          </details>
+        </td>
+        <td style="color:var(--text-muted);font-size:12px">{{.Mesh.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        <td>
+          <form method="post" action="/my/meshes/leave" style="display:inline;margin:0"
+                onsubmit="return confirm('{{tf "my_meshes.leave_confirm" .Mesh.Name}}');">
+            <input type="hidden" name="code" value="{{.Mesh.Code}}">
+            <button type="submit" class="btn btn-secondary" style="padding:3px 10px;font-size:12px">
+              <i class="fa-solid fa-right-from-bracket"></i>{{t "my_meshes.leave_action"}}
+            </button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>
+      {{t "my_meshes.list_empty"}}.
+      <a href="#create">{{t "my_meshes.create_action"}}</a>
+      ·
+      <a href="#join">{{t "my_meshes.join_action"}}</a>
+    </div>
+  </div>
+  {{end}}
+</div>
+
+{{/* How it works */}}
+<div class="card">
+  <h3><i class="fa-solid fa-circle-info"></i>{{t "my_meshes.how_title"}}</h3>
+  <ul class="plain">
+    <li>{{t "my_meshes.how_1" | safeHTML}}</li>
+    <li>{{t "my_meshes.how_2" | safeHTML}}</li>
+    <li>{{t "my_meshes.how_3" | safeHTML}}</li>
+    <li>{{t "my_meshes.how_4" | safeHTML}}</li>
+  </ul>
+</div>
+
+{{end}}

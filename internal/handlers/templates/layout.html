@@ -25,11 +25,13 @@
     <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules"}}</span></a>
     <a href="/my/account" {{if eq .Page "account"}}class="active"{{end}}><i class="fa-solid fa-user-gear"></i><span>{{t "nav.account"}}</span></a>
     <a href="/my/telegram" {{if eq .Page "telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram_my"}}</span></a>
+    <a href="/my/meshes" {{if eq .Page "my/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes"}}</span></a>
 {{if .IsAdmin}}
     <hr class="nav-sep">
     <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
     <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{t "nav.settings"}}</span></a>
     <a href="/admin/users"><i class="fa-solid fa-users"></i><span>{{t "nav.users"}}</span></a>
+    <a href="/admin/subnets" {{if eq .Page "admin/subnets"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "admin.subnets.title"}}</span></a>
     <a href="/admin/devices"><i class="fa-solid fa-server"></i><span>{{t "nav.devices_all"}}</span></a>
     <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.acls"}}</span></a>
     <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.derp"}}</span></a>
@@ -76,6 +78,32 @@
 </aside>
 <main>
 <div class="shell">
+{{/* 2026-07-15: v0.14.0 — release-monitor banner. Shown
+     on every admin page when the monitor has detected a
+     newer release on GitHub. The "current version" comes
+     from the build-time .Version injected by cmd/skygate,
+     and the "latest" + "checked at" come from the monitor's
+     last successful tick. The link goes to the GitHub
+     release page (or the GitHub releases list if the
+     monitor hasn't seen the specific tag yet — defensive). */}}
+{{if and .IsAdmin .UpdateAvailable}}
+<div class="alert alert-info" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+  <i class="fa-solid fa-circle-up" style="font-size:20px"></i>
+  <div style="flex:1;min-width:0">
+    <strong>{{t "update.banner_title"}}</strong>
+    <div style="color:var(--text-muted);font-size:13px;margin-top:2px">
+      {{tf "update.banner_body" .Version .UpdateLatest.TagName}}
+      {{if .UpdateCheckedAt}} · {{tf "update.banner_checked" .UpdateCheckedAt}}{{end}}
+    </div>
+  </div>
+  {{if .UpdateLatest.HTMLURL}}
+  <a href="{{.UpdateLatest.HTMLURL}}" target="_blank" rel="noopener" class="btn btn-sm"><i class="fa-solid fa-up-right-from-square"></i> {{t "update.banner_open"}}</a>
+  {{else}}
+  <a href="https://github.com/BarsSky/skygate/releases" target="_blank" rel="noopener" class="btn btn-sm"><i class="fa-solid fa-up-right-from-square"></i> {{t "update.banner_open"}}</a>
+  {{end}}
+</div>
+{{end}}
+
 {{renderBody .BodyTemplate .}}
 </div>
 </main>

@@ -4,14 +4,21 @@ import (
 	"database/sql"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/expirewatch"
+	"skygate/internal/monitoring"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
 	"skygate/internal/i18n"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/headscale_version"
+	"skygate/internal/release"
+	"skygate/internal/sidecar"
 )
 
 func init() { i18n.SetGlobal(i18n.New()) }
@@ -28,6 +35,7 @@ type App struct {
 	Notifier    telegram.Notifier
 	I18n         *i18n.Catalog
 	DB           *sql.DB
+	hs           *headscale.Client
 	HS           *headscale.Client
 	HeadscaleKey string
 	JWTSecret    string
@@ -41,13 +49,88 @@ type App struct {
 	DerpBaseURL  string // base URL of the local custom DERP server
 	SSHKeyPath   string // SSH key for exit node route sync
 	Cfg         *config.Config // 2026-07-07: issue #12 — limits & stagger sync
+	// 2026-07-15: v0.10.12 — public URL of an existing Headplane
+	// instance (HEADPLANE_EXTERNAL_URL). When set, the admin
+	// ACL page links to this URL instead of the bundled
+	// sidecar. Empty = use the bundled sidecar at
+	// https://${ControlURL-host}:50445/admin/.
+	HeadplaneExternalURL string
+	SecretKeyHex string
+	hsCache   map[string]*headscale.Client
+	hsCacheMu sync.Mutex
+
+	// 2026-07-15: v0.13.0 — exit-node health monitor reference.
+	// Set by cmd/skygate/main.go after the monitor's Start()
+	// returns. The "Run health check now" button on
+	// /admin/exit-nodes calls ExitNodeMonitor.CheckNow via
+	// this field. nil if the monitor is disabled
+	// (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off) — handlers must
+	// guard with `if a.ExitNodeMonitor != nil`.
+	ExitNodeMonitor *monitoring.ExitNodeMonitor
+
+	// 2026-07-15: v0.14.0 — release-monitor reference. The
+	// /dashboard banner reads ReleaseMonitor.Snapshot() to
+	// surface "newer version available" without waiting for
+	// the operator to read the Telegram alert. Set by
+	// cmd/skygate/main.go after the monitor's Start()
+	// returns. nil if the monitor is disabled (the
+	// operator ran skygate with SKYGATE_RELEASE_MONITOR=off
+	// — not yet a real env var, but the test suite
+	// disables it via this nil field).
+	ReleaseMonitor *release.Monitor
+	// HeadscaleUpdateMonitor (v0.20.0) tracks new
+	// headscale releases. The /admin/headscale page reads
+	// its Snapshot(); the /admin/exit-nodes page reads
+	// UpdateAvailable + BreakingAvailable to render a
+	// banner; the bot /headscale command reads the same
+	// fields. nil-safe: handlers guard with
+	// `if a.HeadscaleUpdateMonitor != nil`.
+	HeadscaleUpdateMonitor *headscale_version.Monitor
+	// Sidecar is the per-user subnet auto-approver (v0.16.7).
+	// The admin /admin/users/{id}/subnet page uses it to issue
+	// preauth keys; the bot /mysubnet command uses it for the
+	// same; the background goroutine started in cmd/skygate/main.go
+	// calls Run() which periodically approves routes + flips
+	// status active/disabled based on headscale state.
+	Sidecar *sidecar.Manager
+
+	// 2026-07-21: v0.23.3 — node-expiry watcher. The
+	// background goroutine started in cmd/skygate/main.go
+	// calls Run() which periodically (every
+	// cfg.ExpireWatchInterval, default 5m) walks every
+	// non-tagged node in headscale and extends any whose
+	// Expiry is within cfg.ExpireWatchThreshold
+	// (default 7d) out to cfg.ExpireWatchRenewal
+	// (default 30d). Works around the Tailscale 1.98.x
+	// client behaviour of sending a 2-4-second Expiry
+	// in RegisterRequest — see
+	// internal/expirewatch/manager.go for the full
+	// background. nil if the watcher is disabled
+	// (SKYGATE_EXPIREWATCH_ENABLED=false).
+	ExpireWatch *expirewatch.Manager
+
+	// 2026-07-15: v0.12.0.2 — Telegram probe result cache.
+	// The probe does a real GET to api.telegram.org with a
+	// 5s timeout. On the production VM that host is
+	// unreachable (RF block + no relay advertised for the
+	// resolved IPs), so every page load took the full 5s
+	// timeout. The cache holds the most recent result for
+	// telegramProbeTTL so the page renders instantly on
+	// subsequent loads. Invalidated by the save/rotate/
+	// disable/strict handlers so the operator sees the
+	// fresh result after they take an action.
+	telegramProbeMu      sync.Mutex
+	telegramProbeResult  TelegramProbeResult
+	telegramProbeAt      time.Time
+	telegramProbeTokenFP string
 
 	templates *Templates
 }
 
 func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int, cfg *config.Config) *App {
-	return &App{
+	a := &App{
 		DB:           d,
+		hs:           hs,
 		HS:           hs,
 		HeadscaleKey: headscaleKey,
 		JWTSecret:    secret,
@@ -59,6 +142,8 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		I18n:         i18n.New(),
 		Cfg:          cfg,
 	}
+	a.InitHSForUserState()
+	return a
 }
 
 // render executes a template directly (no layout). Used for self-contained pages.
@@ -100,6 +185,35 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	data["Theme"] = theme
 	data["ThemeLabel"] = db.ThemeLabel(theme)
 	data["Version"] = a.Version
+
+	// 2026-07-20: v0.18.1 — auto-inject ControlURL so every
+	// page template can reference {{.ControlURL}} without
+	// the handler having to remember to pass it. Previously
+	// `user/preauth_result.html` and `admin/exit_nodes.html`
+	// referenced {{.ControlURL}} but the handlers didn't
+	// pass it, so the rendered HTML showed an empty
+	// `--login-server=`. The fix: renderWithLayout always
+	// populates ControlURL from a.ControlURL (which the
+	// caller set in New from cfg.ControlURL — the human-
+	// facing URL clients should connect to, e.g.
+	// https://head.skynas.ru). Handlers can still override
+	// it by passing their own "ControlURL" in the data map
+	// (the for-loop below preserves caller values).
+	data["ControlURL"] = a.ControlURL
+
+	// 2026-07-15: v0.14.0 — release-monitor banner. We
+	// only surface the banner to admins (regular users
+	// don't need upgrade prompts). The data shape is
+	// pre-computed here (rather than inside the template)
+	// so the conditional is one line in the layout.
+	if a.ReleaseMonitor != nil {
+		latest, hasUpdate, checkedAt := a.ReleaseMonitor.Snapshot()
+		if hasUpdate {
+			data["UpdateAvailable"] = true
+			data["UpdateLatest"] = latest
+			data["UpdateCheckedAt"] = checkedAt
+		}
+	}
 	wrapper := map[string]any{
 		"Page":         data["Page"],
 		"BodyTemplate": name,
@@ -214,9 +328,20 @@ func (a *App) currentUser(r *http.Request) *auth.Claims {
 			// token_hash is a bcrypt hash (see auth.GenerateAPIToken),
 			// so we have to CompareHashAndPassword every candidate
 			// — there's no way to do an indexed lookup.
+			// 2026-07-16: v0.15.5 — filter out expired tokens
+			// (TTL = 0 means "never expires" — the pre-v0.15.5
+			// behaviour, preserved for legacy rows).
 			candidates, err := db.ListAPITokenHashesForLookup(a.DB)
 			if err == nil {
+				now := time.Now().Unix()
 				for _, c := range candidates {
+					if c.ExpiresAt > 0 && c.ExpiresAt <= now {
+						// Token has expired. Skip — keep walking
+						// the candidates in case a sibling row
+						// has a matching hash (extremely rare —
+						// token_hash is unique, but be defensive).
+						continue
+					}
 					if auth.CheckAPIToken(c.TokenHash, tok) {
 						_ = db.TouchAPITokenLastUsed(a.DB, c.TokenHash)
 						return &auth.Claims{UserID: c.UserID, Username: c.Username, IsAdmin: c.IsAdmin}

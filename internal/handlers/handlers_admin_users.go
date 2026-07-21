@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -10,7 +11,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
-)
+	"skygate/internal/subnet")
 
 
 // handlers_admin_users.go — extracted from handlers.go.
@@ -101,12 +102,39 @@ func (a *App) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 2026-07-11: Этап 10 part 1 — INSERT moved to db.InsertPortalUser
-	_, err = db.InsertPortalUser(a.DB, username, hash, isAdmin, hsID)
+	newUserID, err := db.InsertPortalUser(a.DB, username, hash, isAdmin, hsID)
 	if err != nil {
 		http.Error(w, "portal insert: "+err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "user_create", fmt.Sprintf("%s hs_id=%d admin=%v", username, hsID, isAdmin))
+	// 2026-07-20: v0.20.0 — auto-allocate subnet on user
+	// create. The operator's stated preference is "by
+	// default" — the manual "Allocate" button on
+	// /admin/users/{id}/subnet is still there for
+	// re-issue / disabled→re-allocate flows, but a
+	// freshly-created user no longer needs a separate
+	// click to get a 10.0.<uid>.0/24. Disable via
+	// SKYGATE_AUTO_ALLOCATE_SUBNET=false to revert
+	// to v0.16.0-v0.18.1 behaviour.
+	//
+	// Best-effort: an allocation failure is logged
+	// but doesn't roll back the user creation
+	// (the user is still created; the operator can
+	// retry via the manual "Allocate" button). The
+	// audit row records both the user_create and
+	// (if applicable) the subnet_allocate outcome
+	// so a future failure is debuggable from the
+	// audit log alone.
+	if a.Cfg != nil && a.Cfg.AutoAllocateSubnetOnUserCreate {
+		if _, allocErr := subnet.Create(a.DB, newUserID, "", ""); allocErr != nil {
+			log.Printf("user_create: auto-allocate subnet for %s (id=%d) failed: %v", username, newUserID, allocErr)
+			a.audit(c.UserID, c.Username, "user_create", fmt.Sprintf("%s hs_id=%d admin=%v auto_allocate=FAIL: %v", username, hsID, isAdmin, allocErr))
+		} else {
+			a.audit(c.UserID, c.Username, "user_create", fmt.Sprintf("%s hs_id=%d admin=%v auto_allocate=ok", username, hsID, isAdmin))
+		}
+	} else {
+		a.audit(c.UserID, c.Username, "user_create", fmt.Sprintf("%s hs_id=%d admin=%v", username, hsID, isAdmin))
+	}
 	http.Redirect(w, r, "/admin/users", http.StatusFound)
 }
 

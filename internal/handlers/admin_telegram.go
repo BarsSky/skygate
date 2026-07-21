@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
@@ -27,15 +28,19 @@ func (a *App) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := a.loadTelegramUIState()
-	// 2026-07-14: Этап 14 v2 — Tailscale reachability probe.
-	// Runs synchronously on every GET so the banner is always
-	// current. 5s timeout via the probe function. We only run it
-	// when the bot is configured (token is set); otherwise the
-	// banner shows "save a token to enable the probe" instead
-	// of attempting an unauthenticated request.
+	// 2026-07-15: v0.12.0.2 — probe is cached for
+	// telegramProbeTTL (30s) so repeated GETs render
+	// instantly. Without the cache, the production VM
+	// (where api.telegram.org is unreachable) spent 5s
+	// blocking on every page load, making the admin tab
+	// feel broken. The cache key is the bot token's
+	// fingerprint so a token rotation invalidates it
+	// automatically; the save/rotate/disable/strict
+	// handlers also call invalidateTelegramProbe()
+	// eagerly.
 	if state.Configured {
 		token, _, _, _ := db.LoadTelegramToken(a.DB)
-		state.Probe = probeTelegramAPI(r.Context(), token)
+		state.Probe = a.cachedTelegramProbe(r.Context(), db.TelegramFingerprint(token))
 	}
 	csrf, err := db.RandomConfirmationToken(8)
 	if err != nil {
@@ -97,6 +102,16 @@ func (a *App) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 		// submits a single checkbox; checked means "enable".
 		// The handler reads the checkbox's presence to decide.
 		a.handleTelegramStrict(w, r, c)
+	case "refresh_menu":
+		// 2026-07-15: v0.14.0 — manually re-register the
+		// per-language command menu with Telegram. Used
+		// after a chat is bound for the first time, or
+		// after a catalog update that adds new commands.
+		// The boot-time goroutine in main.go already calls
+		// SetMyCommandsAll once, but a bot that started
+		// before any chat was bound (so no menu was
+		// observable) needs an explicit refresh.
+		a.handleTelegramRefreshMenu(w, r, c)
 	default:
 		a.redirectWithFlash(w, r, "", "Неизвестное действие: "+action)
 	}
@@ -130,6 +145,7 @@ func (a *App) handleTelegramSave(w http.ResponseWriter, r *http.Request, c *auth
 	}
 	a.audit(c.UserID, c.Username, "telegram_save",
 		fmt.Sprintf("token=%s chat=%s", mask, redactChatID(chatID, token, c)))
+	a.invalidateTelegramProbe()
 	writeFlashRedirect(w, r, fmt.Sprintf("Сохранено. Токен: %s. Проверьте кнопкой «Отправить тест».", mask))
 }
 
@@ -246,6 +262,7 @@ func (a *App) handleTelegramRotate(w http.ResponseWriter, r *http.Request, c *au
 		return
 	}
 	a.audit(c.UserID, c.Username, "telegram_rotate", "")
+	a.invalidateTelegramProbe()
 	writeFlashRedirect(w, r, "Старый токен удалён. Сохраните новый.")
 }
 
@@ -259,6 +276,7 @@ func (a *App) handleTelegramDisable(w http.ResponseWriter, r *http.Request, c *a
 		return
 	}
 	a.audit(c.UserID, c.Username, "telegram_disable", "")
+	a.invalidateTelegramProbe()
 	writeFlashRedirect(w, r, "Telegram отключён. Уведомления будут писаться в ~/.skygate-notify.log")
 }
 
@@ -302,7 +320,54 @@ func (a *App) handleTelegramStrict(w http.ResponseWriter, r *http.Request, c *au
 	}
 	a.audit(c.UserID, c.Username, "telegram_strict_mode_changed",
 		fmt.Sprintf("from=%s to=%s", boolToOnOff(old), state))
+	a.invalidateTelegramProbe()
 	writeFlashRedirect(w, r, fmt.Sprintf("Strict mode %s. Bot will read the new state within 2s.", state))
+}
+
+// handleTelegramRefreshMenu (v0.14.0) is the "Refresh bot
+// menu" button on /admin/telegram. Re-runs the per-language
+// setMyCommands registration that the boot-time goroutine
+// in main.go does once. The button exists because:
+//
+//   1. A bot that started BEFORE any chat was bound (e.g.
+//      receive-only mode) had no observable menu; the
+//      first chat-binding after that point didn't trigger
+//      a refresh.
+//   2. Operators can add a new command to the catalog and
+//      want it to show up in Telegram's command menu
+//      without restarting skygate.
+//
+// We dispatch via the notifier's SetMyCommandsAll method.
+// Today only the RealNotifier implements it; NoopNotifier
+// (used in tests) returns an error, which we surface as a
+// flash. Both behaviours are intentional — we want the
+// operator to see the error rather than silently no-op.
+func (a *App) handleTelegramRefreshMenu(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	notifier, ok := a.Notifier.(setMyCommandsAller)
+	if !ok {
+		// NoopNotifier (or some future test stub) doesn't
+		// implement setMyCommands. Treat as "not configured"
+		// rather than crashing.
+		a.redirectWithFlash(w, r, "", "Bot notifier doesn't support /setMyCommands (no Telegram token configured).")
+		return
+	}
+	if err := notifier.SetMyCommandsAll(r.Context(), telegram.DefaultMyCommandsSpec); err != nil {
+		a.audit(c.UserID, c.Username, "telegram_refresh_menu", "failed: "+err.Error())
+		a.redirectWithFlash(w, r, "", "setMyCommands failed: "+err.Error())
+		return
+	}
+	a.audit(c.UserID, c.Username, "telegram_refresh_menu", "ok")
+	writeFlashRedirect(w, r, "Bot menu refreshed (en + ru).")
+}
+
+// setMyCommandsAller is the subset of the RealNotifier
+// interface that the menu-refresh handler needs. Defined
+// here as an interface so the handler compiles against any
+// future notifier implementation (and so we can write a
+// fake in tests if the menu-refresh path ever needs a
+// unit test).
+type setMyCommandsAller interface {
+	SetMyCommandsAll(ctx context.Context, spec telegram.MyCommandsSpec) error
 }
 
 // boolToOnOff renders a bool as "on" / "off" for the audit row.
@@ -438,4 +503,74 @@ func redactChatID(chatID, token string, c *auth.Claims) string {
 		return "<token-only>"
 	}
 	return chatID
+}
+
+// 2026-07-15: v0.12.0.2 — Telegram probe result cache.
+//
+// Background: the probe does a real GET to api.telegram.org
+// with a 5s timeout. On the production VM that host is
+// unreachable (RF block + no relay subnet route covering
+// Telegram's resolved IPs), so every page load blocked for
+// the full 5s. The cache holds the most recent result for
+// telegramProbeTTL (30s) so the page renders instantly on
+// subsequent loads. Operators who want a fresh result can
+// wait 30s, hard-refresh, or click save/rotate/disable to
+// invalidate the cache eagerly.
+//
+// The cache is keyed by the bot token's fingerprint so a
+// rotation invalidates it automatically. The save / rotate /
+// disable / strict handlers also call
+// invalidateTelegramProbe() eagerly, so the operator sees
+// the fresh result on the redirect that follows.
+//
+// Concurrency: a sync.Mutex guards all four fields. The
+// hot path (cache hit) holds the lock for ~1µs to copy the
+// result struct; the cold path releases the lock before
+// running the 5s probe so concurrent GETs don't pile up.
+const telegramProbeTTL = 30 * time.Second
+
+// cachedTelegramProbe returns the cached probe result if
+// (a) the cache is non-empty, (b) it is younger than
+// telegramProbeTTL, and (c) the bot token hasn't been
+// rotated. Otherwise it runs the probe synchronously,
+// stores the result, and returns it.
+//
+// tokenFP is the bot token's fingerprint (returned by
+// db.TelegramFingerprint). Pass the same value the
+// template renders so a rotation forces a re-probe.
+func (a *App) cachedTelegramProbe(ctx context.Context, tokenFP string) TelegramProbeResult {
+	a.telegramProbeMu.Lock()
+	if !a.telegramProbeAt.IsZero() &&
+		time.Since(a.telegramProbeAt) < telegramProbeTTL &&
+		a.telegramProbeTokenFP == tokenFP {
+		res := a.telegramProbeResult
+		a.telegramProbeMu.Unlock()
+		return res
+	}
+	a.telegramProbeMu.Unlock()
+
+	// Cache miss / stale / token rotated — re-probe.
+	// Load the actual token (we only had the fingerprint).
+	token, _, _, _ := db.LoadTelegramToken(a.DB)
+	res := probeTelegramAPI(ctx, token)
+
+	a.telegramProbeMu.Lock()
+	a.telegramProbeResult = res
+	a.telegramProbeAt = time.Now()
+	a.telegramProbeTokenFP = tokenFP
+	a.telegramProbeMu.Unlock()
+	return res
+}
+
+// invalidateTelegramProbe clears the cache. Called by the
+// save / rotate / disable / strict handlers so the
+// operator sees a fresh result on the next GET (the
+// redirect after the action lands them back on
+// /admin/telegram).
+func (a *App) invalidateTelegramProbe() {
+	a.telegramProbeMu.Lock()
+	a.telegramProbeAt = time.Time{}
+	a.telegramProbeResult = TelegramProbeResult{}
+	a.telegramProbeTokenFP = ""
+	a.telegramProbeMu.Unlock()
 }

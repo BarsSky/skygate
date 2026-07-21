@@ -23,11 +23,16 @@ import (
 )
 
 // openNodeOwnerMapTestDB opens a fresh in-memory DB with the
-// production-shaped node_owner_map table. The schema is the
-// v0.25 CREATE plus the v0.28 columns (headscale_user_id /
-// username / tag / tagged_by_user_id / tagged_at) merged in
-// — see internal/db/migrations_v0.25.go and v0.28.go for the
+// production-shaped node_owner_map table plus the global_settings
+// table (added in v0.21). The schema is the v0.25 CREATE plus
+// the v0.28 columns (headscale_user_id / username / tag /
+// tagged_by_user_id / tagged_at) merged in — see
+// internal/db/migrations_v0.25.go and v0.28.go for the
 // authoritative version.
+//
+// 2026-07-15: Этап 14 v14 (v0.11.0) — also create global_settings
+// so the integration tests (which reuse this helper) have the
+// table they need without each test creating it.
 func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	d, err := sql.Open("sqlite3", ":memory:")
@@ -43,6 +48,29 @@ func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
 			tagged_at         INTEGER NOT NULL DEFAULT 0,
 			hostname          TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE global_settings (
+			key         TEXT PRIMARY KEY,
+			value       TEXT NOT NULL DEFAULT '',
+			updated_at  INTEGER NOT NULL DEFAULT 0
+		)`,
+		// 2026-07-15: v0.12.0 — portal_users also lives in the
+		// shared test DB. The v0.35 migration is what adds the
+		// new columns on a production DB, but tests use a
+		// hand-rolled schema (we don't go through migrate())
+		// so we declare the columns here directly. Mirrors the
+		// production schema in migrations_v0.25.go +
+		// migrations_v0.35.go.
+		`CREATE TABLE portal_users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			is_admin INTEGER NOT NULL DEFAULT 0,
+			headscale_user_id INTEGER,
+			created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+			theme TEXT NOT NULL DEFAULT 'linear',
+			headscale_url TEXT NOT NULL DEFAULT '',
+			headscale_api_key_enc TEXT NOT NULL DEFAULT ''
 		)`,
 	}
 	for _, q := range stmts {
@@ -295,5 +323,379 @@ func TestGetNodeOwner_NotFound(t *testing.T) {
 	_, err := GetNodeOwner(d, "no-such-node")
 	if err != ErrNodeOwnerNotFound {
 		t.Errorf("expected ErrNodeOwnerNotFound, got %v", err)
+	}
+}
+
+// 2026-07-15: Этап 14 v13 — tests for the lazy hostname backfill
+// helpers (BackfillEmptyHostnames + AnyHostnameEmpty). The bot's
+// /my_nodes and /nodes used to silently show bare node_ids when
+// the migration-v0.34 hostname column was empty; these helpers
+// let the read paths self-heal by pulling the friendly name from
+// headscale and updating the rows that need it.
+
+func TestBackfillEmptyHostnames_OnlyUpdatesEmpty(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	// Two rows: one with empty hostname (will be filled), one with
+	// a non-empty hostname (must NOT be touched).
+	_ = UpsertNodeOwner(d, "n-empty", 0, "alice", "tag:private", 1)
+	_ = UpsertNodeOwner(d, "n-known", 0, "alice", "tag:private", 1)
+	if _, err := d.Exec(`UPDATE node_owner_map SET hostname = 'old-name' WHERE node_id = 'n-known'`); err != nil {
+		t.Fatalf("seed hostname: %v", err)
+	}
+	updated, err := BackfillEmptyHostnames(d, map[string]string{
+		"n-empty":  "fresh-name",
+		"n-known":  "would-clobber",
+		"n-missing": "no-such-row", // not in the table; must be silently ignored
+	})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if updated != 1 {
+		t.Errorf("expected 1 row updated, got %d", updated)
+	}
+	got, _ := GetNodeOwner(d, "n-empty")
+	if got.Hostname != "fresh-name" {
+		t.Errorf("n-empty: hostname=%q, want fresh-name", got.Hostname)
+	}
+	got, _ = GetNodeOwner(d, "n-known")
+	if got.Hostname != "old-name" {
+		t.Errorf("n-known: hostname=%q, want old-name (must NOT be overwritten)", got.Hostname)
+	}
+}
+
+func TestBackfillEmptyHostnames_EmptyMapIsNoop(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "alice", "tag:private", 1)
+	updated, err := BackfillEmptyHostnames(d, map[string]string{})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates, got %d", updated)
+	}
+}
+
+func TestBackfillEmptyHostnames_EmptyValueSkipped(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "alice", "tag:private", 1)
+	// Map entry with empty value must be a no-op (we never write "").
+	updated, err := BackfillEmptyHostnames(d, map[string]string{"n1": ""})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates for empty value, got %d", updated)
+	}
+	got, _ := GetNodeOwner(d, "n1")
+	if got.Hostname != "" {
+		t.Errorf("hostname=%q, want \"\" (empty value must not be written)", got.Hostname)
+	}
+}
+
+func TestAnyHostnameEmpty(t *testing.T) {
+	cases := []struct {
+		name   string
+		owners []NodeOwner
+		want   bool
+	}{
+		{"empty slice", nil, false},
+		{"all set", []NodeOwner{{NodeID: "a", Hostname: "x"}}, false},
+		{"one missing", []NodeOwner{{NodeID: "a", Hostname: "x"}, {NodeID: "b", Hostname: ""}}, true},
+		{"all missing", []NodeOwner{{NodeID: "a", Hostname: ""}}, true},
+	}
+	for _, c := range cases {
+		if got := AnyHostnameEmpty(c.owners); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestUpdateNodeOwnerTag_UpdatesAndPreserves(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "michail", "tag:untagged", 1)
+	_, _ = d.Exec(`UPDATE node_owner_map SET hostname = 'base-laptop' WHERE node_id = 'n1'`)
+	// Update the tag — username and hostname must stay.
+	if err := UpdateNodeOwnerTag(d, "n1", "tag:private", 99); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	n, err := GetNodeOwner(d, "n1")
+	if err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if n.Tag != "tag:private" {
+		t.Errorf("tag: got %q, want tag:private", n.Tag)
+	}
+	if n.Username != "michail" {
+		t.Errorf("username changed: got %q, want michail", n.Username)
+	}
+	if n.Hostname != "base-laptop" {
+		t.Errorf("hostname changed: got %q, want base-laptop", n.Hostname)
+	}
+	if n.TaggedByUserID != 99 {
+		t.Errorf("tagged_by_user_id: got %d, want 99", n.TaggedByUserID)
+	}
+}
+
+func TestUpdateNodeOwnerTag_NotFound(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	err := UpdateNodeOwnerTag(d, "no-such-node", "tag:private", 1)
+	if err != ErrNodeOwnerNotFound {
+		t.Errorf("expected ErrNodeOwnerNotFound, got %v", err)
+	}
+}
+
+// 2026-07-15: Этап 14 v13 — tests for the lazy tag sync helpers
+// (AnyTagStale + SyncTagsFromHeadscale). The bot's /my_nodes and
+// /nodes used to silently show tag:untagged for nodes whose
+// headscale tag was set by an admin (PostAdminNodeTag's
+// origUserName != "tagged-devices" guard skipped the
+// node_owner_map update, leaving the row stale). The v0.10.13
+// fix: when the bot reads the list, if the DB tag disagrees
+// with the live headscale tag, the row is updated in place.
+
+func TestAnyTagStale(t *testing.T) {
+	cases := []struct {
+		name     string
+		owners   []NodeOwner
+		headTag  map[string]string
+		wantStale bool
+	}{
+		{"empty map", nil, map[string]string{"a": "tag:private"}, false},
+		{"matching", []NodeOwner{{NodeID: "a", Tag: "tag:private"}}, map[string]string{"a": "tag:private"}, false},
+		{"untagged matches no-tag (headscale empty)", []NodeOwner{{NodeID: "a", Tag: "tag:untagged"}}, map[string]string{}, false},
+		{"db public + headscale empty = NOT stale (admin override kept)", []NodeOwner{{NodeID: "a", Tag: "tag:public"}}, map[string]string{}, false},
+		{"db private + headscale empty = NOT stale (admin override kept)", []NodeOwner{{NodeID: "a", Tag: "tag:private"}}, map[string]string{}, false},
+		{"db untagged + headscale private = STALE", []NodeOwner{{NodeID: "a", Tag: "tag:untagged"}}, map[string]string{"a": "tag:private"}, true},
+		{"one stale in batch", []NodeOwner{
+			{NodeID: "a", Tag: "tag:private"},
+			{NodeID: "b", Tag: "tag:untagged"},
+		}, map[string]string{"a": "tag:private", "b": "tag:private"}, true},
+		{"headscale untagged sentinel = not stale", []NodeOwner{{NodeID: "a", Tag: "tag:untagged"}}, map[string]string{"a": "tag:untagged"}, false},
+	}
+	for _, c := range cases {
+		got := AnyTagStale(c.owners, c.headTag)
+		if got != c.wantStale {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.wantStale)
+		}
+	}
+}
+
+func TestSyncTagsFromHeadscale_UpdatesMismatch(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n-untagged", 0, "michail", "tag:untagged", 1)
+	_ = UpsertNodeOwner(d, "n-matching", 0, "skyadmin", "tag:private", 1)
+	_ = UpsertNodeOwner(d, "n-mismatch", 0, "alice", "tag:untagged", 1)
+	updated, err := SyncTagsFromHeadscale(d, map[string]string{
+		"n-untagged":   "tag:private", // was untagged → fix
+		"n-matching":   "tag:private", // already matches → no-op
+		"n-mismatch":   "tag:public",  // different tag → fix
+		"n-missing-row": "tag:public", // no row → silently ignored
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if updated != 2 {
+		t.Errorf("expected 2 updates, got %d", updated)
+	}
+	for _, c := range []struct {
+		nodeID, wantTag string
+	}{
+		{"n-untagged", "tag:private"},
+		{"n-matching", "tag:private"},
+		{"n-mismatch", "tag:public"},
+	} {
+		n, _ := GetNodeOwner(d, c.nodeID)
+		if n.Tag != c.wantTag {
+			t.Errorf("%s: tag=%q, want %q", c.nodeID, n.Tag, c.wantTag)
+		}
+	}
+}
+
+func TestSyncTagsFromHeadscale_PreservesAdminOverride(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	// DB has tag:public (admin override). headscale has no tag
+	// (operator removed the tag in headplane). The sync must NOT
+	// clobber the admin override — see AnyTagStale.
+	_ = UpsertNodeOwner(d, "n-public", 0, "skyadmin", "tag:public", 1)
+	_ = UpsertNodeOwner(d, "n-untagged", 0, "michail", "tag:untagged", 1)
+	updated, err := SyncTagsFromHeadscale(d, map[string]string{
+		// both keys absent — headscale has no tag for either
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates (headscale empty = leave portal alone), got %d", updated)
+	}
+	// Both rows preserved as-is.
+	n, _ := GetNodeOwner(d, "n-public")
+	if n.Tag != "tag:public" {
+		t.Errorf("admin override clobbered: tag=%q, want tag:public", n.Tag)
+	}
+	n, _ = GetNodeOwner(d, "n-untagged")
+	if n.Tag != "tag:untagged" {
+		t.Errorf("untagged row changed: tag=%q, want tag:untagged", n.Tag)
+	}
+}
+
+func TestSyncTagsFromHeadscale_EmptyMapIsNoop(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "n1", 0, "alice", "tag:private", 1)
+	updated, err := SyncTagsFromHeadscale(d, map[string]string{})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("expected 0 updates, got %d", updated)
+	}
+}
+
+// --- v0.14.0: SyncNodesFromHeadscale (full upsert) ---
+
+// TestSyncNodesFromHeadscale_InsertsMissingRows covers the
+// primary v0.14.0 fix: nodes that exist in headscale but
+// were tagged via the headscale CLI (not via skygate's
+// PostAdminNodeTag) have no row in node_owner_map. The bot's
+// /exit_nodes reads from this table and reports "no nodes
+// found" because the cache is empty. SyncNodesFromHeadscale
+// is the admin-triggered rebuild that INSERTs these rows so
+// the bot finds them on the next reply.
+func TestSyncNodesFromHeadscale_InsertsMissingRows(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	// Pre-condition: node_owner_map is empty.
+	var pre int
+	d.QueryRow(`SELECT COUNT(*) FROM node_owner_map`).Scan(&pre)
+	if pre != 0 {
+		t.Fatalf("pre: expected 0 rows, got %d", pre)
+	}
+
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "3", Hostname: "emilia", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 2147455555, TaggedBy: 1},
+		{ID: "4", Hostname: "sharlotta", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 2147455555, TaggedBy: 1},
+		{ID: "11", Hostname: "karolina", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 2147455555, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 3 {
+		t.Errorf("inserted = %d, want 3", ins)
+	}
+	if upd != 0 {
+		t.Errorf("updated = %d, want 0", upd)
+	}
+
+	// Post-condition: bot's ListExitNodeOwners now returns 3.
+	rows, err := ListExitNodeOwners(d)
+	if err != nil {
+		t.Fatalf("ListExitNodeOwners: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Errorf("ListExitNodeOwners = %d, want 3", len(rows))
+	}
+}
+
+// TestSyncNodesFromHeadscale_UpdatesDriftedTags covers the
+// case where a node already has a row but the tag in
+// headscale has since changed. The sync should UPDATE the
+// row to the new tag.
+func TestSyncNodesFromHeadscale_UpdatesDriftedTags(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "3", 0, "alice", "tag:private", 1)
+	// Pre: tag is tag:private. Now headscale says tag:public.
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "3", Hostname: "emilia", Tag: "tag:public", Username: "alice", HSUserID: 1, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 {
+		t.Errorf("inserted = %d, want 0", ins)
+	}
+	if upd != 1 {
+		t.Errorf("updated = %d, want 1", upd)
+	}
+	// Verify the new tag.
+	var got string
+	d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = '3'`).Scan(&got)
+	if got != "tag:public" {
+		t.Errorf("tag = %q, want tag:public", got)
+	}
+}
+
+// TestSyncNodesFromHeadscale_PreservesPortalOwnerOnUpdate:
+// when a row already exists and the headscale ownership was
+// reassigned to "tagged-devices" (the synthetic user headscale
+// creates when any tag is applied), the existing portal-side
+// username + headscale_user_id MUST be preserved. Otherwise
+// /my_nodes for the original owner would silently stop
+// showing the device.
+func TestSyncNodesFromHeadscale_PreservesPortalOwnerOnUpdate(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "3", 42, "alice", "tag:private", 1)
+	// Now headscale says it's owned by tagged-devices (the
+	// synthetic user headscale auto-creates when tagging).
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "3", Hostname: "emilia", Tag: "tag:exit-node", Username: "tagged-devices", HSUserID: 999, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 || upd != 1 {
+		t.Errorf("ins=%d upd=%d, want 0/1", ins, upd)
+	}
+	// Portal-side owner is preserved: still alice, still
+	// headscale_user_id=42.
+	var user string
+	var hsUID int64
+	d.QueryRow(`SELECT username, headscale_user_id FROM node_owner_map WHERE node_id = '3'`).Scan(&user, &hsUID)
+	if user != "alice" {
+		t.Errorf("username = %q, want alice (portal owner preserved)", user)
+	}
+	if hsUID != 42 {
+		t.Errorf("headscale_user_id = %d, want 42 (preserved)", hsUID)
+	}
+	// Tag was updated.
+	var tag string
+	d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = '3'`).Scan(&tag)
+	if tag != "tag:exit-node" {
+		t.Errorf("tag = %q, want tag:exit-node", tag)
+	}
+}
+
+// TestSyncNodesFromHeadscale_SkipsUntaggedNodes: headscale
+// returns an empty Tags slice for nodes that haven't been
+// tagged. The sync must not INSERT those (an untagged row
+// in node_owner_map is meaningless; the device is in
+// headscale but unowned-by-tag in skygate).
+func TestSyncNodesFromHeadscale_SkipsUntaggedNodes(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	ins, upd, err := SyncNodesFromHeadscale(d, []SyncNodeInfo{
+		{ID: "5", Hostname: "untagged-relay", Tag: "", Username: "alice", HSUserID: 1, TaggedBy: 1},
+		{ID: "6", Hostname: "also-untagged", Tag: "tag:untagged", Username: "alice", HSUserID: 1, TaggedBy: 1},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 || upd != 0 {
+		t.Errorf("ins=%d upd=%d, want 0/0 (untagged nodes skipped)", ins, upd)
+	}
+	var n int
+	d.QueryRow(`SELECT COUNT(*) FROM node_owner_map`).Scan(&n)
+	if n != 0 {
+		t.Errorf("node_owner_map = %d rows, want 0 (untagged must not be inserted)", n)
+	}
+}
+
+// TestSyncNodesFromHeadscale_EmptyListIsNoop: zero nodes in,
+// zero rows touched, no error.
+func TestSyncNodesFromHeadscale_EmptyListIsNoop(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	_ = UpsertNodeOwner(d, "3", 0, "alice", "tag:private", 1)
+	ins, upd, err := SyncNodesFromHeadscale(d, nil)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ins != 0 || upd != 0 {
+		t.Errorf("ins=%d upd=%d, want 0/0", ins, upd)
 	}
 }

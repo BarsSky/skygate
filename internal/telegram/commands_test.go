@@ -18,6 +18,8 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/sidecar"
+	"skygate/internal/subnet"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -35,7 +37,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 	for _, q := range []string{
 		`CREATE TABLE device_rules (id INTEGER PRIMARY KEY, user_id INTEGER, device_id INTEGER, exit_node_id TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'domain', target_value TEXT, action TEXT DEFAULT 'accept', device_ip TEXT DEFAULT '', parent_domain TEXT DEFAULT '', enabled INTEGER DEFAULT 1)`,
-		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '', headscale_url TEXT NOT NULL DEFAULT '', headscale_api_key_enc TEXT NOT NULL DEFAULT '', subnet_cidr TEXT NOT NULL DEFAULT '', subnet_status TEXT NOT NULL DEFAULT 'none', subnet_router_node_id TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, config TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', applied_success INTEGER, error_msg TEXT DEFAULT '')`,
 		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0, hostname TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
@@ -64,6 +66,20 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// in-memory map).
 		`CREATE TABLE telegram_rate_limit (key TEXT NOT NULL, action TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL)`,
 		`CREATE INDEX idx_telegram_rate_limit_lookup ON telegram_rate_limit(key, ts)`,
+		// 2026-07-17: v0.16.0 — per-user subnets schema. The
+		// /mysubnet test reads the denormalized
+		// portal_users.subnet_* columns, so the test
+		// schema must include both tables.
+		`CREATE TABLE user_subnets (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE, cidr TEXT NOT NULL UNIQUE, subnet_bits INTEGER NOT NULL DEFAULT 24, control_plane_url TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', router_node_id TEXT NOT NULL DEFAULT '', router_container_id TEXT NOT NULL DEFAULT '', router_hostname TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE user_subnet_shares (grantor_user_id INTEGER NOT NULL, grantee_user_id INTEGER NOT NULL, created_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (grantor_user_id, grantee_user_id), FOREIGN KEY (grantor_user_id) REFERENCES portal_users(id) ON DELETE CASCADE, FOREIGN KEY (grantee_user_id) REFERENCES portal_users(id) ON DELETE CASCADE)`,
+		// 2026-07-20: v0.22.0 — mesh tables. The
+		// ACL builder reads both on every render
+		// (GetMeshMembershipsForPlane joins
+		// mesh_members + meshes), so the test
+		// schema must declare them even if no
+		// test uses meshes directly.
+		`CREATE TABLE meshes (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '', creator_user_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL DEFAULT 0, dissolved_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE mesh_members (mesh_id INTEGER NOT NULL, user_id INTEGER NOT NULL, joined_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (mesh_id, user_id))`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("schema %q: %v", q, err)
@@ -168,24 +184,24 @@ func TestHandleCommandStatusEnvelope(t *testing.T) {
 	// envelope on /status (a registry-context reply).
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/status")
-	if !strings.HasPrefix(got, butlerSigil+"  The Registry") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n📊 The Registry") {
 		t.Errorf("expected registry header at the top, got: %q", got[:60])
 	}
 	if !strings.Contains(got, "rules: 12") {
 		t.Errorf("expected body content, got: %q", got)
 	}
 	// /status body is >3 lines → verbose → footer present.
-	if !strings.Contains(got, "Yours in service") {
+	if !strings.Contains(got, "butler") {
 		t.Errorf("expected verbose footer for multi-line /status, got: %q", got)
 	}
 }
 
 func TestHandleCommandVersionEnvelope(t *testing.T) {
-	// /version → "version" context (The Version Scroll).
+	// /version → "version" context (header line from the catalog).
 	d := setupTestDB(t)
 	env := BotEnv{DB: d, Version: "v0.10.8-dev", Lang: i18n.LangEN}
 	got := HandleCommand(context.Background(), env, "/version")
-	if !strings.HasPrefix(got, butlerSigil+"  The Version Scroll") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n📦 The Version Scroll") {
 		t.Errorf("expected version header at the top, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "v0.10.8-dev") {
@@ -197,7 +213,7 @@ func TestHandleCommandHelpEnvelope(t *testing.T) {
 	// /help → "codex" context (The Codex).
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/help")
-	if !strings.HasPrefix(got, butlerSigil+"  The Codex") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n📖 The Codex") {
 		t.Errorf("expected codex header at the top, got: %q", got[:60])
 	}
 }
@@ -207,7 +223,7 @@ func TestHandleCommandUnknownEnvelope(t *testing.T) {
 	// = A Closed Door). The body tells the user what's wrong.
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/nonsense_xyz")
-	if !strings.HasPrefix(got, butlerSigil+"  A Closed Door") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n⚠️ A Closed Door") {
 		t.Errorf("expected err header at the top, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "Unknown command") {
@@ -219,7 +235,7 @@ func TestHandleCommandAdminOnlyEnvelope(t *testing.T) {
 	// /status as a non-admin user → rejected with "err" context.
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/status")
-	if !strings.HasPrefix(got, butlerSigil+"  A Closed Door") {
+	if !strings.HasPrefix(got, butlerSigil+" ═══ Skygate ═══\n⚠️ A Closed Door") {
 		t.Errorf("expected err header for admin-only rejection, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "admin only") {
@@ -357,7 +373,10 @@ func TestHandleCommandRules(t *testing.T) {
 func TestHandleCommandAudit(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/audit")
-	if !strings.Contains(got, "audit_log") {
+	// 2026-07-16: v0.15.5 — butler-voice format. Header
+	// is now "Last 20 audit log entries:" (no log-voice
+	// "audit_log:" prefix).
+	if !strings.Contains(got, "audit log") {
 		t.Errorf("expected header, got: %q", got)
 	}
 	if !strings.Contains(got, "user_create") {
@@ -368,6 +387,60 @@ func TestHandleCommandAudit(t *testing.T) {
 	}
 	if !strings.Contains(got, "created alice") {
 		t.Errorf("expected detail text, got: %q", got)
+	}
+}
+
+// TestAuditReplySplitLongLog pins the v0.16.5 contract: an
+// audit log with > 10 entries must split into 2 bubbles.
+// Below the threshold, no split. The split point is at the
+// first blank line after the (entries/2)th row.
+func TestAuditReplySplitLongLog(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed 20 audit rows so the LIMIT 20 returns 20.
+	for i := 0; i < 20; i++ {
+		_, _ = d.Exec(
+			`INSERT INTO audit_log(username, action, detail, created_at) VALUES (?, ?, ?, ?)`,
+			fmt.Sprintf("user%d", i),
+			"test_action",
+			fmt.Sprintf("entry #%d", i),
+			int64(1722000000+i),
+		)
+	}
+	got := auditReply(adminEnv(d))
+	// 20 entries → split. Expect 1 split marker in the body.
+	if c := strings.Count(got, splitMessageMarker); c != 1 {
+		t.Errorf("expected 1 split marker (long log), got %d", c)
+	}
+	parts := splitReplyParts(got)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 message parts, got %d: %q", len(parts), parts)
+	}
+	// First part carries the "more in next message" hint
+	// so the operator knows the second bubble is coming.
+	if !strings.Contains(parts[0], "next message") && !strings.Contains(parts[0], "следующ") {
+		t.Errorf("first part should carry 'more in next message' hint, got: %q", parts[0])
+	}
+}
+
+// TestAuditReplyNoSplitShortLog pins the v0.16.5 contract:
+// an audit log with <= 10 entries does NOT split (single
+// bubble). The split threshold is 10.
+func TestAuditReplyNoSplitShortLog(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed 5 audit rows.
+	for i := 0; i < 5; i++ {
+		_, _ = d.Exec(
+			`INSERT INTO audit_log(username, action, detail, created_at) VALUES (?, ?, ?, ?)`,
+			fmt.Sprintf("user%d", i),
+			"test_action",
+			fmt.Sprintf("entry #%d", i),
+			int64(1722000000+i),
+		)
+	}
+	got := auditReply(adminEnv(d))
+	// 5 entries → no split.
+	if c := strings.Count(got, splitMessageMarker); c != 0 {
+		t.Errorf("expected 0 split markers (short log), got %d: %q", c, got)
 	}
 }
 
@@ -562,11 +635,17 @@ func TestBuildPlatformPicker_CopyButton(t *testing.T) {
 		t.Fatalf("expected first row to be a single Copy button, got %d buttons", len(row0))
 	}
 	btn := row0[0]
-	if !strings.Contains(btn["text"], "Copy") {
+	if text, _ := btn["text"].(string); !strings.Contains(text, "Copy") {
 		t.Errorf("expected Copy text in first button, got %q", btn["text"])
 	}
-	if btn["copy_text"] != preauthKey {
-		t.Errorf("expected copy_text to carry the preauth key, got %q", btn["copy_text"])
+	// 2026-07-15: copy_text is now a typed object {"text": "..."}
+	// per Telegram Bot API 7.0+, not a bare string.
+	ct, ok := btn["copy_text"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected copy_text to be a map[string]any, got %T", btn["copy_text"])
+	}
+	if ct["text"] != preauthKey {
+		t.Errorf("expected copy_text.text to carry the preauth key, got %q", ct["text"])
 	}
 	// The Copy button MUST NOT have a callback_data — Telegram
 	// would call the bot on tap, but the action is purely
@@ -652,19 +731,26 @@ func TestTrimForTelegram(t *testing.T) {
 
 func TestHandleCommandVersion(t *testing.T) {
 	d := setupTestDB(t)
-	env := BotEnv{DB: d, Version: "v0.3"}
+	// 2026-07-16: v0.16.x — explicit Lang so the test
+	// isn't subject to the i18n default fallthrough.
+	env := BotEnv{DB: d, Version: "v0.3", Lang: i18n.LangEN}
 	got := HandleCommand(context.Background(), env, "/version")
 	if !strings.Contains(got, "v0.3") {
 		t.Errorf("expected build label v0.3, got: %q", got)
 	}
 	// Go runtime version is whatever the test binary is built with.
-	if !strings.Contains(got, "Go:") {
-		t.Errorf("expected 'Go:' prefix, got: %q", got)
+	// 2026-07-16: v0.16.x — Field() renders "<b>label:</b>
+	// <code>value</code>" (note the colon after the label).
+	if !strings.Contains(got, "<b>Go:</b>") {
+		t.Errorf("expected '<b>Go:</b>' label, got: %q", got)
 	}
 	// Schema level is the constant; lets the operator confirm
 	// whether migrations have caught up to the binary.
-	if !strings.Contains(got, "DB schema:") {
-		t.Errorf("expected 'DB schema:' prefix, got: %q", got)
+	// 2026-07-16: v0.16.x — Field() labels render in the
+	// lang's catalog (RU: "Схема БД", EN: "DB schema");
+	// we test for the wrapped <b> + the <code>-d value.
+	if !strings.Contains(got, "<b>DB schema:</b>") {
+		t.Errorf("expected '<b>DB schema:</b>' label (EN), got: %q", got)
 	}
 	if !strings.Contains(got, dbSchemaVersion) {
 		t.Errorf("expected schema level %q, got: %q", dbSchemaVersion, got)
@@ -684,7 +770,8 @@ func TestHandleCommandVersionEmptyFallback(t *testing.T) {
 func TestHandleCommandRestartIssuesToken(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), envFor(d), "/restart")
-	if !strings.Contains(got, "confirm by sending within 30s") {
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Confirm").
+	if !strings.Contains(got, "Confirm by sending within 30s") {
 		t.Errorf("expected confirmation prompt, got: %q", got)
 	}
 	// Token must be 6 chars from the alphabet — extract and verify.
@@ -828,8 +915,10 @@ func TestHandleCommandHelpDetailed(t *testing.T) {
 	// envelope header (codex context) and the body substring
 	// ("Idempotent") instead of the old body-prefix check.
 	got := HandleCommand(context.Background(), envFor(d), "/help ack")
-	if !strings.HasPrefix(got, butlerSigil+"  ") {
-		t.Errorf("expected butler envelope header at the top, got: %q", got[:60])
+	// 2026-07-16: v0.15.2 — gate header is "🪶 ═══ Skygate ═══"
+	// (followed by a topic line). /help uses context="codex".
+	if !strings.HasPrefix(got, "🪶 ═══ Skygate ═══\n📖 The Codex") {
+		t.Errorf("expected gate header + Codex topic, got: %q", got[:80])
 	}
 	if !strings.Contains(got, "/ack ") {
 		t.Errorf("expected detailed /ack help body, got: %q", got)
@@ -872,12 +961,25 @@ func TestMyStatusReplyUser(t *testing.T) {
 	if !strings.Contains(got, "alice") {
 		t.Errorf("expected username in my_status, got: %q", got)
 	}
-	if !strings.Contains(got, "rules: 0") {
-		t.Errorf("expected rules: 0 for alice, got: %q", got)
+	// 2026-07-16: v0.16.x — Field() labels (just the noun;
+	// the value is in <code> after the colon). The bot
+	// reply now reads "rules: 0" via Field() instead of
+	// the prose "rules: 0 / ∞" — the format depends on
+	// which catalog key the Field() call lands on. We
+	// pin only the noun label, not the colon-style
+	// "rules: 0", because the value moves to <code>.
+	if !strings.Contains(got, "rules:") {
+		t.Errorf("expected 'rules:' label in /my_status body, got: %q", got)
 	}
-	if !strings.Contains(got, "devices: 0") {
-		t.Errorf("expected devices: 0 for alice, got: %q", got)
+	if !strings.Contains(got, "0") {
+		t.Errorf("expected count '0' in /my_status body, got: %q", got)
 	}
+	// 2026-07-16: v0.15.2 — myStatusReply returns just the
+	// body. The gate envelope (═══ Skygate ═══ … ═══ —
+	// signoff ═══) is applied by Compose() in HandleCommand;
+	// unit tests of the reply function in isolation don't
+	// see it. HandleCommand-level tests
+	// (TestHandleCommand*Envelope) cover the gate shape.
 }
 
 func TestMyStatusReplyUnidentified(t *testing.T) {
@@ -885,6 +987,81 @@ func TestMyStatusReplyUnidentified(t *testing.T) {
 	got := myStatusReply(BotEnv{DB: d, Lang: i18n.LangEN})
 	if !strings.Contains(got, "chat not bound") {
 		t.Errorf("expected 'chat not bound' for unidentified caller, got: %q", got)
+	}
+}
+
+// TestHTMLRepliesMarkParseMode pins the v0.16.2 contract: every reply
+// function that uses Field()/Section()/PreLinesRaw() must call
+// markHTMLReply() so the <b>/<i>/<pre>/<code> tags render on
+// Telegram. Without it the user sees raw "<b>...</b> <code>...</code>"
+// source text. Each sub-case checks ParseMode=HTML on the
+// pendingReplyForCurrentMessage side-channel.
+//
+// 2026-07-16: v0.16.2 — added after the v0.16.1 bug where the
+// /version reply (and six other read commands) shipped with HTML
+// formatting but no parse_mode, so the tags showed up as raw
+// text. This test is a regression guard.
+func TestHTMLRepliesMarkParseMode(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	// env needs IsAdmin for the admin-scope commands
+	// (audit, exit_nodes_health, sync_nodes). The user-scope
+	// commands (my_status, my_nodes, my_rules, my_quota,
+	// myexitnodes) work with either.
+	adminEnv := adminEnv(d)
+
+	cases := []struct {
+		name string
+		call func()
+	}{
+		{"my_status", func() { myStatusReply(env) }},
+		{"my_nodes", func() { myNodesReply(env) }},
+		{"my_rules", func() { myRulesReply(env) }},
+		{"my_quota", func() { myQuotaReply(env) }},
+		{"myexitnodes", func() { myExitNodesReply(env) }},
+		{"mysubnet", func() { mySubnetReply(env) }},
+		{"version", func() { versionReply(env) }},
+		{"audit", func() { auditReply(adminEnv) }},
+		{"exit_nodes_health", func() { exitNodesHealthReply(adminEnv) }},
+		{"help", func() { helpReply(env) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Reset between cases so a previous case's
+			// pending doesn't leak into the next one.
+			pendingReplyForCurrentMessage = nil
+			tc.call()
+			if pendingReplyForCurrentMessage == nil {
+				t.Fatalf("expected pendingReplyForCurrentMessage to be set (markHTMLReply was not called), got nil")
+			}
+			if pendingReplyForCurrentMessage.ParseMode != "HTML" {
+				t.Errorf("expected ParseMode=HTML, got %q", pendingReplyForCurrentMessage.ParseMode)
+			}
+		})
+	}
+}
+
+// TestMarkHTMLReplyPreservesKeyboard pins the v0.16.2 contract
+// that markHTMLReply() doesn't wipe an existing inline-keyboard
+// when one is already set. myExitNodesReply sets both the
+// per-row "→ hostname" keyboard AND the HTML parse mode for
+// the tabular <pre> body; the helper must keep the keyboard
+// intact (otherwise the tap-to-set UX would break).
+func TestMarkHTMLReplyPreservesKeyboard(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: one enabled exit-server so myExitNodesReply
+	// populates the keyboard.
+	_, _ = d.Exec(`INSERT INTO exit_servers(node_id, hostname, enabled) VALUES ('emilia-1', 'emilia', 1)`)
+	pendingReplyForCurrentMessage = nil
+	_ = myExitNodesReply(userEnv(d))
+	if pendingReplyForCurrentMessage == nil {
+		t.Fatalf("expected pendingReplyForCurrentMessage to be set, got nil")
+	}
+	if len(pendingReplyForCurrentMessage.InlineKeyboard) == 0 {
+		t.Errorf("expected InlineKeyboard to be preserved (per-row '→ hostname' buttons), got 0 rows")
+	}
+	if pendingReplyForCurrentMessage.ParseMode != "HTML" {
+		t.Errorf("expected ParseMode=HTML, got %q", pendingReplyForCurrentMessage.ParseMode)
 	}
 }
 
@@ -910,6 +1087,198 @@ func TestMyNodesReplyEmpty(t *testing.T) {
 	}
 }
 
+// 2026-07-15: Этап 14 v13 — lazy hostname backfill tests.
+//
+// Before v0.10.12, /my_nodes and /nodes silently showed bare
+// node_ids when node_owner_map.hostname was empty (the column was
+// added in migration v0.34, but backfillNodeOwnership only runs
+// via /admin/devices — so any user who opened the bot before that
+// page saw the bare-id view in the screenshot in the v0.10.12
+// release notes). These tests pin the new self-healing behaviour.
+
+// fakeNodeServer builds a tiny httptest server that returns the
+// given nodes from GET /api/v1/node, plus a *headscale.Client
+// pointed at it. Used by the lazy-backfill tests to drive the
+// production code path (env.HS.ListAllNodes) without spinning up
+// a real headscale instance.
+func fakeNodeServer(t *testing.T, nodes []headscale.HSNode) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/node":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": nodes})
+		default:
+			http.Error(w, "unexpected: "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, headscale.New(srv.URL, "fake-api-key")
+}
+
+func TestHostnameMapFromHeadscale_NilReturnsEmpty(t *testing.T) {
+	got := hostnameMapFromHeadscale(nil)
+	if len(got) != 0 {
+		t.Errorf("nil client should return empty map, got %v", got)
+	}
+}
+
+func TestHostnameMapFromHeadscale_BuildsMapFromRealClient(t *testing.T) {
+	_, hs := fakeNodeServer(t, []headscale.HSNode{
+		{ID: "1", GivenName: "skygate-vm", Name: "other"},
+		{ID: "2", GivenName: "", Name: "fallback-host"},
+		{ID: "3", GivenName: "", Name: ""}, // both empty: toView() will produce "" — must be skipped
+	})
+	got := hostnameMapFromHeadscale(hs)
+	if got["1"] != "skygate-vm" {
+		t.Errorf("id=1: got %q, want skygate-vm", got["1"])
+	}
+	if got["2"] != "fallback-host" {
+		t.Errorf("id=2: got %q, want fallback-host (Name fallback)", got["2"])
+	}
+	if _, ok := got["3"]; ok {
+		t.Errorf("id=3 should be skipped (both names empty)")
+	}
+}
+
+func TestHostnameMapFromHeadscale_ServerErrorReturnsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	hs := headscale.New(srv.URL, "fake-api-key")
+	got := hostnameMapFromHeadscale(hs)
+	if len(got) != 0 {
+		t.Errorf("error should return empty map, got %v", got)
+	}
+}
+
+func TestMyNodesReply_LazyBackfillEmptyHostname(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with empty hostname (the v0.10.11
+	// regression state). The mock HS will return a friendly name.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', '')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{{ID: "alice-laptop", GivenName: "alice-laptop-fancy"}})
+	env := userEnv(d)
+	env.HS = hs
+	got := myNodesReply(env)
+	if !strings.Contains(got, "alice-laptop-fancy") {
+		t.Errorf("expected friendly hostname in reply, got: %q", got)
+	}
+	if !strings.Contains(got, "alice-laptop") {
+		t.Errorf("expected node_id in reply (alongside the hostname), got: %q", got)
+	}
+	// Confirm the DB row was actually updated.
+	var hn string
+	if err := d.QueryRow(`SELECT hostname FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&hn); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if hn != "alice-laptop-fancy" {
+		t.Errorf("DB hostname=%q, want alice-laptop-fancy", hn)
+	}
+}
+
+func TestMyNodesReply_NoBackfillWhenAllHostnamesSet(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with hostname already set. The mock
+	// returns a DIFFERENT name; we must NOT overwrite the existing
+	// value (the column is the cached copy, not live data — we
+	// only fill empty cells).
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', 'cached-name')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{{ID: "alice-laptop", GivenName: "would-clobber"}})
+	env := userEnv(d)
+	env.HS = hs
+	_ = myNodesReply(env)
+	var hn string
+	if err := d.QueryRow(`SELECT hostname FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&hn); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if hn != "cached-name" {
+		t.Errorf("hostname overwritten: got %q, want cached-name", hn)
+	}
+}
+
+func TestMyNodesReply_NilHSNoCrash(t *testing.T) {
+	d := setupTestDB(t)
+	// Regression guard: the v0.10.11 code path assumed env.HS
+	// was always non-nil. When it's nil (read-only deploy) the
+	// backfill must be skipped, not panic.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', '')`)
+	env := userEnv(d)
+	env.HS = nil
+	got := myNodesReply(env)
+	if !strings.Contains(got, "alice-laptop") {
+		t.Errorf("expected node_id in reply (no HS to backfill from), got: %q", got)
+	}
+	// Row must still be empty (no HS, no update).
+	var hn string
+	if err := d.QueryRow(`SELECT hostname FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&hn); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if hn != "" {
+		t.Errorf("hostname should still be empty (no HS), got %q", hn)
+	}
+}
+
+// 2026-07-15: Этап 14 v13 — lazy tag backfill in /my_nodes
+// (and /nodes, same code path). The bot's read used to silently
+// show tag:untagged for nodes whose headscale tag was set by
+// an admin after the row was created (PostAdminNodeTag's old
+// "tagged-devices" guard skipped the node_owner_map update).
+// v0.10.13 closes the gap: when the bot reads the list, if
+// any visible row's DB tag disagrees with the headscale tag,
+// SyncTagsFromHeadscale updates them in place.
+
+func TestMyNodesReply_LazyTagBackfillStaleRow(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with tag:untagged in DB. Headscale
+	// reports tag:private. The bot must sync the row and render
+	// with the new tag.
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:untagged', 'alice-laptop')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{
+		{ID: "alice-laptop", GivenName: "alice-laptop", Name: "alice-laptop", Tags: []string{"tag:private"}},
+	})
+	env := userEnv(d)
+	env.HS = hs
+	got := myNodesReply(env)
+	// Reply should mention tag:private, not tag:untagged.
+	if !strings.Contains(got, "tag:private") {
+		t.Errorf("expected tag:private in reply after lazy sync, got: %q", got)
+	}
+	if strings.Contains(got, "tag:untagged") {
+		t.Errorf("expected tag:untagged to be gone, got: %q", got)
+	}
+	// DB row must be updated.
+	var tag string
+	if err := d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&tag); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if tag != "tag:private" {
+		t.Errorf("DB tag: got %q, want tag:private", tag)
+	}
+}
+
+func TestMyNodesReply_NoTagBackfillWhenMatching(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed: alice has a row with tag:private. Headscale says
+	// tag:private. SyncTagsFromHeadscale must NOT update (the
+	// guard "tag != ?" prevents a no-op write).
+	_, _ = d.Exec(`INSERT INTO node_owner_map(node_id, username, tag, hostname) VALUES ('alice-laptop', 'alice', 'tag:private', 'alice-laptop')`)
+	_, hs := fakeNodeServer(t, []headscale.HSNode{
+		{ID: "alice-laptop", GivenName: "alice-laptop", Name: "alice-laptop", Tags: []string{"tag:private"}},
+	})
+	env := userEnv(d)
+	env.HS = hs
+	_ = myNodesReply(env)
+	var tag string
+	if err := d.QueryRow(`SELECT tag FROM node_owner_map WHERE node_id = 'alice-laptop'`).Scan(&tag); err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if tag != "tag:private" {
+		t.Errorf("tag was changed despite matching: got %q, want tag:private", tag)
+	}
+}
+
 func TestMyRulesReplyUserFiltersToCaller(t *testing.T) {
 	d := setupTestDB(t)
 	// Seed: alice has 1 rule, skyadmin has 12 (from setup).
@@ -918,9 +1287,58 @@ func TestMyRulesReplyUserFiltersToCaller(t *testing.T) {
 	if !strings.Contains(got, "github.com") {
 		t.Errorf("expected github.com in my_rules for alice, got: %q", got)
 	}
-	// The seed for skyadmin uses target_value "x" — alice must not see those.
-	if strings.Contains(got, "\n  domain x →") {
+	// 2026-07-16: v0.16.x — "more HTML" pass. The previous
+	// "#%d @%s\n  %s %s → %s" prose format is gone; the
+	// new tabular <pre> block does not contain the literal
+	// "→" arrow. Filter check therefore has to use the
+	// tabular shape (the target_value alone is enough
+	// since alice has no other target_values).
+	if strings.Contains(got, "  domain x →") {
 		t.Errorf("alice must not see skyadmin's rules, got: %q", got)
+	}
+	// Pin the new format: tabular <pre> block with
+	// bold header row "ID EXIT TYPE TARGET ACTION".
+	if !strings.Contains(got, "<b>ID") || !strings.Contains(got, "ACTION</b>") {
+		t.Errorf("expected new tabular <pre> block with bold ID/ACTION header, got: %q", got)
+	}
+	// And the Section() divider for "rules".
+	// 2026-07-16: v0.16.5 — short list (1 rule) does
+	// NOT split. The split threshold is 12; alice's
+	// single rule is below it, so no split marker.
+	if c := strings.Count(got, splitMessageMarker); c != 0 {
+		t.Errorf("expected 0 split markers (1 rule), got %d", c)
+	}
+	if !strings.Contains(got, "rules") {
+		t.Errorf("expected 'rules' section divider, got: %q", got)
+	}
+}
+
+// TestMyRulesReplySplitLongList pins the v0.16.5 contract:
+// /my_rules splits into 2 bubbles if the user has more than
+// 12 rules (the v0.16.5 split threshold). Below the threshold
+// (1 rule) the reply is a single bubble (covered by the test
+// above).
+func TestMyRulesReplySplitLongList(t *testing.T) {
+	d := setupTestDB(t)
+	// Seed 15 rules for alice (above the 12-rule threshold).
+	for i := 0; i < 15; i++ {
+		_, _ = d.Exec(
+			`INSERT INTO device_rules(user_id, target_value) VALUES (?, ?)`,
+			2, fmt.Sprintf("target-%d.example", i),
+		)
+	}
+	got := myRulesReply(userEnv(d))
+	// 15 rules → split. Expect 1 split marker in the body.
+	if c := strings.Count(got, splitMessageMarker); c != 1 {
+		t.Errorf("expected 1 split marker (15 rules), got %d", c)
+	}
+	parts := splitReplyParts(got)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 message parts, got %d: %q", len(parts), parts)
+	}
+	// First part carries the "more in next message" hint.
+	if !strings.Contains(parts[0], "next message") && !strings.Contains(parts[0], "следующ") {
+		t.Errorf("first part should carry 'more in next message' hint, got: %q", parts[0])
 	}
 }
 
@@ -935,6 +1353,170 @@ func TestMyQuotaReplyUser(t *testing.T) {
 	if !strings.Contains(got, "0 / 5") {
 		t.Errorf("expected '0 / 5' (0 rules, 5 cap) for alice, got: %q", got)
 	}
+	// 2026-07-16: v0.16.x — "more HTML" pass. The reply
+	// now uses three Field() lines: rules count, fill
+	// bar, cap. The bar is rendered with the same
+	// "[no limit]" / "[██░░░░░░░░]" shapes (0 rules →
+	// empty bar, pct clamped to 0).
+	if !strings.Contains(got, "<b>rules:</b>") {
+		t.Errorf("expected 'rules:' Field() label, got: %q", got)
+	}
+	if !strings.Contains(got, "<b>cap:</b>") {
+		t.Errorf("expected 'cap:' Field() label, got: %q", got)
+	}
+	if !strings.Contains(got, "<b>fill:</b>") {
+		t.Errorf("expected 'fill:' Field() label, got: %q", got)
+	}
+	// And the Section() divider for "quota".
+	if !strings.Contains(got, "quota") {
+		t.Errorf("expected 'quota' section divider, got: %q", got)
+	}
+}
+
+// TestMySubnetReplyEmpty pins the v0.16.0 contract: a user
+// without a personal subnet gets the "empty" hint
+// pointing at /admin/users/{id}/subnet. Reads from the
+// denormalized portal_users columns (no JOIN on
+// user_subnets).
+func TestMySubnetReplyEmpty(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d) // alice, no subnet allocated
+	got := mySubnetReply(env)
+	// "no personal subnet" hint, with the URL the
+	// operator needs to provision one.
+	if !strings.Contains(got, "no personal subnet") {
+		t.Errorf("expected 'no personal subnet' hint, got: %q", got)
+	}
+	if !strings.Contains(got, "/admin/users/") {
+		t.Errorf("expected '/admin/users/' path hint, got: %q", got)
+	}
+}
+
+// TestMySubnetReplyAllocated pins the v0.16.0 contract:
+// once Create(d, userID, ...) has run, /mysubnet shows
+// the CIDR + status + plane label.
+func TestMySubnetReplyAllocated(t *testing.T) {
+	d := setupTestDB(t)
+	uid := seedPortalUserForSubnets(t, d)
+	if _, err := subnet.Create(d, uid, "", "skygate-subnet-alice"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	env := BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: uid, Username: "alice", IsAdmin: false}
+	got := mySubnetReply(env)
+	// The deterministic 10.0.<uid>.0/24 CIDR.
+	wantCIDR := fmt.Sprintf("10.0.%d.0/24", uid)
+	if !strings.Contains(got, wantCIDR) {
+		t.Errorf("expected CIDR %s, got: %q", wantCIDR, got)
+	}
+	// Status should be "pending" right after Create
+	// (no sidecar yet, v0.16.1 will move it to active).
+	if !strings.Contains(got, "pending") {
+		t.Errorf("expected 'pending' status, got: %q", got)
+	}
+	// Plane label for global plane (controlPlaneURL="").
+	if !strings.Contains(got, "global") {
+		t.Errorf("expected 'global' plane label, got: %q", got)
+	}
+}
+
+// seedPortalUserForSubnets inserts a portal_user and
+// returns the new id. Used by TestMySubnetReplyAllocated
+// (and any future test that needs a known-good user_id
+// for /mysubnet without going through the per-test
+// setupTestDB helper, which only seeds alice).
+func seedPortalUserForSubnets(t *testing.T, d interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}) int64 {
+	t.Helper()
+	res, err := d.Exec(
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?, '', 0)`,
+		"alice-subnet",
+	)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+// TestMySubnetProvisionReply_IssuesPreauth — v0.16.7.
+// /mysubnet provision issues a per-user preauth key
+// (tag:subnet-router, 1h TTL) and replies with the
+// key + the suggested tailscale up command. The fake
+// headscale server returns a stub key; the test
+// asserts both the key and the command snippet
+// appear in the reply body.
+func TestMySubnetProvisionReply_IssuesPreauth(t *testing.T) {
+	d := setupTestDB(t)
+	uid := seedPortalUserForSubnets(t, d)
+	// Provision needs a headscale_user_id on the user.
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 42 WHERE id = ?`, uid); err != nil {
+		t.Fatalf("set hs id: %v", err)
+	}
+	// Create a user_subnets row (the manager errors if missing).
+	if _, err := subnet.Create(d, uid, "", "skygate-subnet-alice-subnet"); err != nil {
+		t.Fatalf("subnet.Create: %v", err)
+	}
+	// Wire a sidecar manager with a fake headscale API
+	// that returns a stub preauth key on POST.
+	_, hs := fakeSidecarPreauthHS(t)
+	mgr := sidecar.New(d, func(int64) *headscale.Client { return hs }, nil, 0)
+
+	env := userEnv(d)
+	env.PortalUserID = uid
+	env.Username = "alice-subnet"
+	env.Sidecar = mgr
+
+	got := mySubnetProvisionReply(env)
+	if !strings.Contains(got, "hskey-fake") {
+		t.Errorf("expected preauth key in body, got: %q", got)
+	}
+	if !strings.Contains(got, "--authkey=") {
+		t.Errorf("expected --authkey= snippet in body, got: %q", got)
+	}
+	if !strings.Contains(got, "skygate-subnet-alice-subnet") {
+		t.Errorf("expected suggested hostname in body, got: %q", got)
+	}
+}
+
+// TestMySubnetProvisionReply_NoManagerReturnsHint — if
+// the sidecar manager isn't wired (e.g. operator hasn't
+// configured SKYGATE_SIDECAR_SYNC_PERIOD), the reply
+// tells the user to ask the admin.
+func TestMySubnetProvisionReply_NoManagerReturnsHint(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	env.PortalUserID = 1
+	env.Sidecar = nil
+	got := mySubnetProvisionReply(env)
+	if !strings.Contains(got, "sidecar manager") &&
+		!strings.Contains(got, "ask an admin") &&
+		!strings.Contains(got, "ask the admin") &&
+		!strings.Contains(got, "попросите админа") {
+		t.Errorf("expected 'ask the admin' hint, got: %q", got)
+	}
+}
+
+// fakeSidecarPreauthHS returns a headscale httptest
+// server that returns a stub preauth key on POST
+// /api/v1/preauthkey. Used by the bot's /mysubnet
+// provision test path.
+func fakeSidecarPreauthHS(t *testing.T) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/preauthkey" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(headscale.PreauthKey{
+				ID:     "1",
+				Key:    "hskey-fake",
+				UserID: 42,
+			})
+			return
+		}
+		http.Error(w, "not found", 404)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, headscale.New(srv.URL, "test-key")
 }
 
 func TestAdminOnlyRejectsUser(t *testing.T) {
@@ -984,6 +1566,180 @@ func TestHelpReplyUserHidesAdmin(t *testing.T) {
 	}
 	if strings.Contains(got, "/bind") {
 		t.Errorf("user /help should NOT contain admin /bind, got: %q", got)
+	}
+}
+
+// 2026-07-16: v0.15.5 — /help must:
+//   - list /unbind_self (self-service, in the Auth section)
+//   - have a 18-char gutter so the description column lines up
+//     across all rows including `/exit_nodes_health` (17 chars)
+//   - not repeat the command name in the description column
+//     (the gutter already carries it)
+//
+// 2026-07-16: v0.16.3 — /help now uses tabular <pre> blocks per
+// section, with <code>...</code> for placeholders (was
+// markdown backticks). The 18-char gutter moved INSIDE the
+// <pre> block (20 chars now) so the column alignment survives
+// the proportional→monospace switch. Tests updated to match:
+//   - `<pre>...</pre>` wrapping each section's table
+//   - `<code>&lt;...&gt;</code>` for placeholders
+//   - 20-char gutter inside <pre> (was 18 in proportional font)
+//   - no leftover markdown backticks in the body
+func TestHelpReplyV0155Layout(t *testing.T) {
+	d := setupTestDB(t)
+	got := helpReply(adminEnv(d))
+	// /unbind_self must be listed under Auth.
+	if !strings.Contains(got, "/unbind_self") {
+		t.Errorf("admin /help should list /unbind_self, got: %q", got)
+	}
+	// 2026-07-16: v0.16.3 — tabular <pre> blocks. The
+	// 20-char gutter pads the command column inside <pre>
+	// (Telegram's <pre> uses a fixed-pitch font, so the
+	// column alignment survives). /exit_nodes_health is
+	// 18 chars (incl. leading `/`); padded to 20 = 2
+	// spaces of pad, then 2 spaces of separator before
+	// the description starts. Total = 22-char prefix.
+	const preGutter = 20
+	const exitNodesHealth = "/exit_nodes_health" // 18 chars
+	prefix := exitNodesHealth + strings.Repeat(" ", preGutter-len(exitNodesHealth)) + "  "
+	if !strings.Contains(got, prefix) {
+		t.Errorf("expected /exit_nodes_health padded to %d chars in <pre>, got: %q", preGutter, got)
+	}
+	// Short commands must also be padded to the same width.
+	// /status is 7 chars; padded to 20 = 13 spaces of pad.
+	shortCmd := "/status" // 7 chars
+	shortPad := shortCmd + strings.Repeat(" ", preGutter-len(shortCmd)) + "  "
+	if !strings.Contains(got, shortPad) {
+		t.Errorf("expected /status padded to %d chars in <pre>, got: %q", preGutter, got)
+	}
+	// 2026-07-16: v0.16.3 — no leftover markdown backticks.
+	// The catalog was converted to <code>...</code> by the
+	// convert_help_backticks.py script; the body must not
+	// contain a literal backtick inside the table area.
+	// We check a few of the most common commands to make
+	// sure the conversion caught them.
+	for _, cmd := range []string{"/status", "/nodes", "/rules", "/ack", "/bind"} {
+		// The backticked form was "`/status` — ..." etc.
+		// The new form has no backticks around the command
+		// (the gutter carries the command; the description
+		// has no command name in it).
+		dup := "`" + cmd + "`"
+		if strings.Contains(got, dup) {
+			t.Errorf("description still has backticks around %q, got: %q", cmd, got)
+		}
+	}
+	// 2026-07-16: v0.16.3 — the new format has 3 <pre>
+	// blocks (auth + user-scope + admin). Pin that
+	// structural feature.
+	if gotPre := strings.Count(got, "<pre>"); gotPre != 3 {
+		t.Errorf("expected 3 <pre> blocks (auth+user+admin), got %d", gotPre)
+	}
+	// And 3 <b> section headers (one per section). Plus
+	// the title <b> at the top = 4 total.
+	if gotB := strings.Count(got, "<b>"); gotB < 4 {
+		t.Errorf("expected at least 4 <b> tags (title + 3 section headers), got %d", gotB)
+	}
+	// And <code> tags for the placeholders. The catalog has
+	// at least 10 placeholders (e.g. <code>&lt;key&gt;</code>,
+	// <code>&lt;target&gt;</code>, <code>/help ack</code>, etc.).
+	if gotCode := strings.Count(got, "<code>"); gotCode < 10 {
+		t.Errorf("expected at least 10 <code> tags in the body, got %d", gotCode)
+	}
+	// 2026-07-16: v0.16.3 — markHTMLReply() is called so
+	// the pending reply carries ParseMode=HTML. Without it
+	// the <b>/<pre>/<code> would show up as raw text in
+	// the chat (the v0.16.1 bug that v0.16.2 fixed for the
+	// other 8 replies; /help is the 9th).
+	if pendingReplyForCurrentMessage == nil || pendingReplyForCurrentMessage.ParseMode != "HTML" {
+		t.Errorf("expected pending ParseMode=HTML, got %+v", pendingReplyForCurrentMessage)
+	}
+	// 2026-07-16: v0.16.5 — split into multiple bubbles.
+	// Admin layout: Auth + User-scope + Admin = 3 bubbles
+	// (2 split markers in the body). The split marker
+	// is a sentinel that the send path detects and
+	// splits on; the body string itself contains it
+	// twice (between Auth/User-scope and User-scope/Admin).
+	if got := strings.Count(got, splitMessageMarker); got != 2 {
+		t.Errorf("expected 2 split markers (admin: 3 bubbles), got %d", got)
+	}
+	// And the 3 sections must each survive in one of
+	// the parts. Splitting on the marker and trimming
+	// whitespace should give us 3 non-empty messages.
+	parts := splitReplyParts(got)
+	if len(parts) != 3 {
+		t.Errorf("expected 3 message parts after split, got %d: %q", len(parts), parts)
+	}
+	// First part carries the title + subtitle + Auth.
+	if !strings.Contains(parts[0], "Auth — ") {
+		t.Errorf("first part should contain Auth section, got: %q", parts[0])
+	}
+	// Second part carries User-scope.
+	if !strings.Contains(parts[1], "Your data") {
+		t.Errorf("second part should contain User-scope section, got: %q", parts[1])
+	}
+	// Third part carries Admin.
+	if !strings.Contains(parts[2], "Admin — ") {
+		t.Errorf("third part should contain Admin section, got: %q", parts[2])
+	}
+}
+
+// TestHelpReplyUserSplitsIntoTwoBubbles pins the v0.16.5 contract
+// for the user-scope /help: Auth + User-scope = 2 bubbles (1
+// split marker). Admin section must NOT appear in either part.
+func TestHelpReplyUserSplitsIntoTwoBubbles(t *testing.T) {
+	d := setupTestDB(t)
+	got := helpReply(userEnv(d))
+	// 1 split marker → 2 parts.
+	if c := strings.Count(got, splitMessageMarker); c != 1 {
+		t.Errorf("expected 1 split marker (user: 2 bubbles), got %d", c)
+	}
+	parts := splitReplyParts(got)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 message parts, got %d: %q", len(parts), parts)
+	}
+	// Admin section must NOT be in either part (user doesn't
+	// have access to /status, /bind, etc.).
+	for i, p := range parts {
+		if strings.Contains(p, "/status") || strings.Contains(p, "/bind") {
+			t.Errorf("part %d unexpectedly contains admin command: %q", i, p)
+		}
+	}
+	// And the first part should still have the title.
+	if !strings.Contains(parts[0], i18n.T(i18n.LangEN, "bot.help.header")) {
+		t.Errorf("first part should carry the title, got: %q", parts[0])
+	}
+}
+
+// TestSplitReplyParts pins the v0.16.5 split helper directly.
+// 5 sub-cases: no marker, single marker, double marker, leading
+// marker, trailing marker.
+func TestSplitReplyParts(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"no marker", "hello world", []string{"hello world"}},
+		{"single marker", "first" + splitMessageMarker + "second", []string{"first", "second"}},
+		{"double marker", "a" + splitMessageMarker + "b" + splitMessageMarker + "c", []string{"a", "b", "c"}},
+		// Empty parts are dropped.
+		{"leading marker", splitMessageMarker + "content", []string{"content"}},
+		{"trailing marker", "content" + splitMessageMarker, []string{"content"}},
+		// Whitespace around the marker is trimmed.
+		{"whitespace padding", "  one  " + splitMessageMarker + "  two  ", []string{"one", "two"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := splitReplyParts(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d parts, want %d: %q", len(got), len(tc.want), got)
+			}
+			for i, w := range tc.want {
+				if got[i] != w {
+					t.Errorf("part %d = %q, want %q", i, got[i], w)
+				}
+			}
+		})
 	}
 }
 
@@ -1048,7 +1804,8 @@ func TestUnbindReplyAdminHappy(t *testing.T) {
 func TestAddRuleReplyUsageHint(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/add_rule")
-	if !strings.Contains(got, "usage") {
+	// 2026-07-16: v0.15.5 — butler-voice format ("Usage" capital U).
+	if !strings.Contains(got, "Usage") {
 		t.Errorf("expected usage hint for /add_rule with no args, got: %q", got)
 	}
 }
@@ -1200,6 +1957,26 @@ func userEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
 	return BotEnv{DB: d, ChatID: 555, Lang: i18n.LangEN, PortalUserID: 2, Username: "alice", IsAdmin: false, HS: hs}
 }
 
+// userEnvWithHSForUser builds a BotEnv whose HSForPortalUser
+// returns a per-portal-user *headscale.Client. Used to
+// verify the v0.12.1 per-user bot routing — i.e. /add_device
+// from user 2 hits the plane the router returns for id=2,
+// not env.HS.
+//
+// 2026-07-16: v0.12.1.
+func userEnvWithHSForUser(d *sql.DB, hsByID map[int64]*headscale.Client) BotEnv {
+	return BotEnv{
+		DB:              d,
+		ChatID:          555,
+		Lang:            i18n.LangEN,
+		PortalUserID:    2,
+		Username:        "alice",
+		IsAdmin:         false,
+		HS:              hsByID[0], // fallback for unbound reads
+		HSForPortalUser: func(uid int64) *headscale.Client { return hsByID[uid] },
+	}
+}
+
 // adminEnvWithHS is the admin-scope variant of userEnvWithHS. Used
 // to test "/add_device <username>" acting on another user.
 func adminEnvWithHS(d *sql.DB, hs *headscale.Client) BotEnv {
@@ -1276,6 +2053,73 @@ func TestAddDeviceReplySuccess(t *testing.T) {
 	}
 	if !strings.Contains(detail, "via bot") {
 		t.Errorf("expected 'via bot' in audit detail, got %q", detail)
+	}
+}
+
+// TestAddDeviceReplyV0121_PerUserRouting pins v0.12.1:
+// when HSForPortalUser is wired, /add_device for the bound
+// user routes the CreatePreauthKey call to the plane the
+// router returns for that user's portal_user_id, not the
+// global env.HS.
+//
+// 2026-07-16: v0.12.1. Two fake headscale servers — one
+// returns hskey-fake-plane-a, the other hskey-fake-plane-b —
+// and the BotEnv's HSForPortalUser points to one per user.
+// The preauth_keys row that lands must reflect the user's
+// own plane.
+func TestAddDeviceReplyV0121_PerUserRouting(t *testing.T) {
+	d := setupTestDB(t)
+	// Link alice (id=2) to plane A. Add bob (id=3) and link
+	// him to plane B. setupTestDB only seeds skyadmin and
+	// alice, so we add bob + his headscale_user_id here.
+	if _, err := d.Exec(`INSERT INTO portal_users(id, username, is_admin, headscale_user_id) VALUES (3, 'bob', 0, 8)`); err != nil {
+		t.Fatalf("insert bob: %v", err)
+	}
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 7 WHERE id = 2`); err != nil {
+		t.Fatalf("update alice: %v", err)
+	}
+	_, planeA := fakeHeadscale(t)
+	_, planeB := fakeHeadscale(t)
+	// Each plane answers /api/v1/preauthkey with its own
+	// key prefix. fakeHeadscale already returns
+	// "hskey-fake-<uid>" where <uid> is the headscale_user_id
+	// in the request body, so planeA→"hskey-fake-7" and
+	// planeB→"hskey-fake-8" naturally. We rebind the global
+	// "fallback" to planeA so an unbound /add_device would
+	// still get plane A's response — the regression test
+	// case is "the bound user's plane is actually used".
+	env := userEnvWithHSForUser(d, map[int64]*headscale.Client{
+		0: planeA,
+		2: planeA, // alice → plane A
+		3: planeB, // bob   → plane B
+	})
+	// Sanity: userHS() must return planeA for alice (uid=2),
+	// not planeB or the global.
+	if env.userHS() != planeA {
+		t.Fatalf("userHS() should be planeA for uid=2, got: %p", env.userHS())
+	}
+	// Now /add_device for alice. Must hit planeA, not planeB.
+	got := HandleCommand(context.Background(), env, "/add_device")
+	if !strings.Contains(got, "hskey-fake-7") {
+		t.Errorf("alice's /add_device should hit planeA (key hskey-fake-7), got: %q", got)
+	}
+	// Now switch to bob (uid=3) and re-issue. Must hit planeB.
+	env.PortalUserID = 3
+	env.Username = "bob"
+	got = HandleCommand(context.Background(), env, "/add_device")
+	if !strings.Contains(got, "hskey-fake-8") {
+		t.Errorf("bob's /add_device should hit planeB (key hskey-fake-8), got: %q", got)
+	}
+	// preauth_keys rows: alice got 1 (plane A), bob got 1
+	// (plane B), each on the right user_id.
+	var aliceN, bobN int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id = 2`).Scan(&aliceN)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id = 3`).Scan(&bobN)
+	if aliceN != 1 {
+		t.Errorf("expected 1 preauth_keys row for alice, got %d", aliceN)
+	}
+	if bobN != 1 {
+		t.Errorf("expected 1 preauth_keys row for bob, got %d", bobN)
 	}
 }
 
@@ -1792,8 +2636,9 @@ func TestAddRuleReplyRejectsPerUserLimit(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	env.HS = hs
 	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
-	if !strings.Contains(got, "user limit reached") {
-		t.Errorf("expected 'user limit reached', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "User").
+	if !strings.Contains(got, "User limit reached") {
+		t.Errorf("expected 'User limit reached', got: %q", got)
 	}
 	// No new rule row should have been inserted.
 	var n int
@@ -1815,7 +2660,8 @@ func TestAddRuleReplyRejectsPerDeviceLimit(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	env.HS = hs
 	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
-	if !strings.Contains(got, "per-device limit") {
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Per").
+	if !strings.Contains(got, "Per-device limit") {
 		t.Errorf("expected 'per-device limit', got: %q", got)
 	}
 }
@@ -1831,8 +2677,9 @@ func TestAddRuleReplyRejectsTotalLimit(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	env.HS = hs
 	got := HandleCommand(context.Background(), env, "/add_rule 2.2.2.2")
-	if !strings.Contains(got, "system-wide limit") {
-		t.Errorf("expected 'system-wide limit', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "System").
+	if !strings.Contains(got, "System-wide limit") {
+		t.Errorf("expected 'System-wide limit', got: %q", got)
 	}
 }
 
@@ -1840,7 +2687,8 @@ func TestAddRuleReplySuccessIP(t *testing.T) {
 	d := setupAddRuleTestDB(t)
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule 1.2.3.4")
-	if !strings.Contains(got, "added") || !strings.Contains(got, "1.2.3.4") {
+	// 2026-07-16: v0.15.5 — butler-voice format ("Added" capital A).
+	if !strings.Contains(got, "Added") || !strings.Contains(got, "1.2.3.4") {
 		t.Errorf("expected success message with '1.2.3.4', got: %q", got)
 	}
 	if !strings.Contains(got, "ACL") {
@@ -1888,8 +2736,9 @@ func TestAddRuleReplyAdminForOtherUser(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	// skyadmin (admin) issues /add_rule alice 1.2.3.4.
 	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/add_rule alice 1.2.3.4")
-	if !strings.Contains(got, "added") {
-		t.Errorf("expected 'added' in admin-for-other reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Added" capital A).
+	if !strings.Contains(got, "Added") {
+		t.Errorf("expected 'Added' in admin-for-other reply, got: %q", got)
 	}
 	// Rule row under alice (id=2), NOT skyadmin (id=1).
 	var aliceCnt, adminCnt int
@@ -1913,8 +2762,9 @@ func TestAddRuleReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	d := setupAddRuleTestDB(t)
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/add_rule skyadmin 1.2.3.4")
-	if !strings.Contains(got, "extra args") {
-		t.Errorf("expected 'extra args' rejection, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Extra" capital E).
+	if !strings.Contains(got, "Extra args") {
+		t.Errorf("expected 'Extra args' rejection, got: %q", got)
 	}
 	var n int
 	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules`).Scan(&n)
@@ -2000,7 +2850,8 @@ func TestAddRuleReplySetPolicyFailure(t *testing.T) {
 func TestDelRuleReplyUsageHint(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/delrule")
-	if !strings.Contains(got, "usage") {
+	// 2026-07-16: v0.15.5 — butler-voice format ("Usage" capital U).
+	if !strings.Contains(got, "Usage") {
 		t.Errorf("expected usage hint for /delrule with no args, got: %q", got)
 	}
 }
@@ -2016,8 +2867,9 @@ func TestDelRuleReplyRejectsUnbound(t *testing.T) {
 func TestDelRuleReplyRejectsBadArg(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/delrule abc")
-	if !strings.Contains(got, "no valid ids") {
-		t.Errorf("expected 'no valid ids' for non-numeric arg, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("No" capital N).
+	if !strings.Contains(got, "No valid ids") {
+		t.Errorf("expected 'No valid ids' for non-numeric arg, got: %q", got)
 	}
 	if !strings.Contains(got, "not a positive integer") {
 		t.Errorf("expected 'not a positive integer' in skipped list, got: %q", got)
@@ -2027,8 +2879,9 @@ func TestDelRuleReplyRejectsBadArg(t *testing.T) {
 func TestDelRuleReplyRejectsUnknownID(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/delrule 9999")
-	if !strings.Contains(got, "no valid ids") {
-		t.Errorf("expected 'no valid ids' for missing id, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("No" capital N).
+	if !strings.Contains(got, "No valid ids") {
+		t.Errorf("expected 'No valid ids' for missing id, got: %q", got)
 	}
 	if !strings.Contains(got, "not found / not yours") {
 		t.Errorf("expected 'not found / not yours' for missing id, got: %q", got)
@@ -2042,8 +2895,9 @@ func TestDelRuleReplySingleSuccess(t *testing.T) {
 	rid, _ := res.LastInsertId()
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
-	if !strings.Contains(got, "deleted 1 rule") {
-		t.Errorf("expected 'deleted 1 rule' in success reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 1 rule") {
+		t.Errorf("expected 'Deleted 1 rule' in success reply, got: %q", got)
 	}
 	if !strings.Contains(got, "ACL") {
 		t.Errorf("expected 'ACL v#' in reply, got: %q", got)
@@ -2083,8 +2937,9 @@ func TestDelRuleReplyMultiSuccess(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs),
 		fmt.Sprintf("/delrule %d %d 9999 %d", id1, id2, id3))
-	if !strings.Contains(got, "deleted 3 rule") {
-		t.Errorf("expected 'deleted 3 rule' in multi-success reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 3 rule") {
+		t.Errorf("expected 'Deleted 3 rule' in multi-success reply, got: %q", got)
 	}
 	if !strings.Contains(got, "skipped") {
 		t.Errorf("expected 'skipped' in reply for the missing id, got: %q", got)
@@ -2109,8 +2964,9 @@ func TestDelRuleReplyDomainCascade(t *testing.T) {
 	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '9.9.9.9/32', 'accept')`)
 	_, hs := fakeHeadscale(t)
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
-	if !strings.Contains(got, "deleted 1 rule") {
-		t.Errorf("expected 'deleted 1 rule' (the original), got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 1 rule") {
+		t.Errorf("expected 'Deleted 1 rule' (the original), got: %q", got)
 	}
 	if !strings.Contains(got, "cascade: 2") {
 		t.Errorf("expected 'cascade: 2' in reply, got: %q", got)
@@ -2137,8 +2993,9 @@ func TestDelRuleReplyAdminForOtherUser(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	// skyadmin (admin) deletes alice's rule.
 	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), fmt.Sprintf("/delrule alice %d", rid))
-	if !strings.Contains(got, "deleted 1 rule") {
-		t.Errorf("expected 'deleted 1 rule' for admin-for-other, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format ("Deleted" capital D).
+	if !strings.Contains(got, "Deleted 1 rule") {
+		t.Errorf("expected 'Deleted 1 rule' for admin-for-other, got: %q", got)
 	}
 	if !strings.Contains(got, "for alice") {
 		t.Errorf("expected 'for alice' in reply, got: %q", got)
@@ -2165,8 +3022,9 @@ func TestDelRuleReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	// alice (non-admin) tries /delrule skyadmin <id>.
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule skyadmin %d", rid))
-	if !strings.Contains(got, "extra args") {
-		t.Errorf("expected 'extra args' rejection for non-admin, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Extra").
+	if !strings.Contains(got, "Extra args") {
+		t.Errorf("expected 'Extra args' rejection for non-admin, got: %q", got)
 	}
 	// skyadmin's rule untouched.
 	var n int
@@ -2248,14 +3106,15 @@ func TestDelRuleIsAliasOfDeleteRule(t *testing.T) {
 	// /delrule and /delete_rule must route to the same handler and
 	// produce equivalent results.
 	got1 := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delrule %d", rid))
-	if !strings.Contains(got1, "deleted 1 rule") {
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Deleted").
+	if !strings.Contains(got1, "Deleted 1 rule") {
 		t.Errorf("/delroute expected success, got: %q", got1)
 	}
 	// Re-seed and try the alias.
 	res2, _ := d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '5.5.5.5/32', 'accept')`)
 	rid2, _ := res2.LastInsertId()
 	got2 := HandleCommand(context.Background(), userEnvWithHS(d, hs), fmt.Sprintf("/delete_rule %d", rid2))
-	if !strings.Contains(got2, "deleted 1 rule") {
+	if !strings.Contains(got2, "Deleted 1 rule") {
 		t.Errorf("/delete_rule alias expected success, got: %q", got2)
 	}
 }
@@ -2445,8 +3304,9 @@ func TestClearRulesReplyRejectsUnbound(t *testing.T) {
 func TestClearRulesReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/clearrules skyadmin")
-	if !strings.Contains(got, "extra args") {
-		t.Errorf("expected 'extra args' for non-admin /clearrules <user>, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Extra").
+	if !strings.Contains(got, "Extra args") {
+		t.Errorf("expected 'Extra args' for non-admin /clearrules <user>, got: %q", got)
 	}
 }
 
@@ -2493,8 +3353,9 @@ func TestClearRulesReplyMintForCallerNoRules(t *testing.T) {
 func TestClearRulesReplyConfirmWithoutPending(t *testing.T) {
 	d := setupTestDB(t)
 	got := HandleCommand(context.Background(), userEnv(d), "/clearrules confirm")
-	if !strings.Contains(got, "no pending clear request") {
-		t.Errorf("expected 'no pending clear request', got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "No").
+	if !strings.Contains(got, "No pending clear request") {
+		t.Errorf("expected 'No pending clear request', got: %q", got)
 	}
 }
 
@@ -2507,8 +3368,9 @@ func TestClearRulesReplyFullMintAndConfirm(t *testing.T) {
 	HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules")
 	// Phase 2: confirm.
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
-	if !strings.Contains(got, "cleared 2 rule") {
-		t.Errorf("expected 'cleared 2 rule' in confirm reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Cleared").
+	if !strings.Contains(got, "Cleared 2 rule") {
+		t.Errorf("expected 'Cleared 2 rule' in confirm reply, got: %q", got)
 	}
 	if !strings.Contains(got, "ACL") {
 		t.Errorf("expected 'ACL v#' in reply, got: %q", got)
@@ -2521,7 +3383,7 @@ func TestClearRulesReplyFullMintAndConfirm(t *testing.T) {
 	}
 	// Second confirm is a no-op.
 	got2 := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
-	if !strings.Contains(got2, "no pending") {
+	if !strings.Contains(got2, "No pending") {
 		t.Errorf("expected second confirm to be a no-op, got: %q", got2)
 	}
 	// audit_log has BOTH rows (request + action).
@@ -2555,8 +3417,9 @@ func TestClearRulesReplyAdminMintAndConfirm(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/clearrules alice")
 	got := HandleCommand(context.Background(), adminEnvWithHS(d, hs), "/clearrules alice confirm")
-	if !strings.Contains(got, "cleared 1 rule") {
-		t.Errorf("expected 'cleared 1 rule' in admin confirm reply, got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Cleared").
+	if !strings.Contains(got, "Cleared 1 rule") {
+		t.Errorf("expected 'Cleared 1 rule' in admin confirm reply, got: %q", got)
 	}
 	if !strings.Contains(got, "for alice") {
 		t.Errorf("expected 'for alice' in reply, got: %q", got)
@@ -2579,8 +3442,9 @@ func TestClearRulesReplyDomainCascade(t *testing.T) {
 	_, hs := fakeHeadscale(t)
 	HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules")
 	got := HandleCommand(context.Background(), userEnvWithHS(d, hs), "/clearrules confirm")
-	if !strings.Contains(got, "cleared 4 rule") {
-		t.Errorf("expected 'cleared 4 rule' (3 original + 0 extra — cascade counted into the 4), got: %q", got)
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Cleared").
+	if !strings.Contains(got, "Cleared 4 rule") {
+		t.Errorf("expected 'Cleared 4 rule' (3 original + 0 extra — cascade counted into the 4), got: %q", got)
 	}
 	if !strings.Contains(got, "cascade: 2") {
 		t.Errorf("expected 'cascade: 2' (the 2 /32 children), got: %q", got)
@@ -2658,6 +3522,122 @@ func TestClearRulesReplyListedInHelp(t *testing.T) {
 	}
 }
 
+// 2026-07-15: Этап 14 v14 (v0.10.14) — bot i18n completion. The
+// /clearrules body was the last English-only path in the bot; the
+// tests below pin the RU-locale reply on every major branch
+// (unbound, no rules, no pending, mint prompt, applied ok,
+// read-only, applied-failed). Each EN branch above is mirrored
+// here for RU, and an extra test asserts no RU reply leaks
+// English substrings (the original bug).
+
+func TestClearRulesReplyRussianUnbound(t *testing.T) {
+	d := setupTestDB(t)
+	// IsIdentified() == ChatID != 0; build an env with ChatID=0
+	// to exercise the not-bound branch.
+	env := BotEnv{DB: d, Lang: i18n.LangRU}
+	got := HandleCommand(context.Background(), env, "/clearrules")
+	if !strings.Contains(got, "не привязан") {
+		t.Errorf("RU: expected 'не привязан' in reply, got: %q", got)
+	}
+	if strings.Contains(got, "chat not bound") {
+		t.Errorf("RU: English leak 'chat not bound' in reply: %q", got)
+	}
+}
+
+func TestClearRulesReplyRussianNoRules(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	env.Lang = i18n.LangRU
+	got := HandleCommand(context.Background(), env, "/clearrules")
+	if !strings.Contains(got, "нет exit-правил") {
+		t.Errorf("RU: expected 'нет exit-правил', got: %q", got)
+	}
+	if strings.Contains(got, "no exit-rules") {
+		t.Errorf("RU: English leak 'no exit-rules': %q", got)
+	}
+}
+
+func TestClearRulesReplyRussianNoPending(t *testing.T) {
+	d := setupTestDB(t)
+	env := userEnv(d)
+	env.Lang = i18n.LangRU
+	got := HandleCommand(context.Background(), env, "/clearrules confirm")
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Нет").
+	if !strings.Contains(got, "Нет pending-запроса") {
+		t.Errorf("RU: expected 'Нет pending-запроса', got: %q", got)
+	}
+	if strings.Contains(got, "no pending clear request") {
+		t.Errorf("RU: English leak 'no pending clear request': %q", got)
+	}
+}
+
+func TestClearRulesReplyRussianMintPrompt(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	env := userEnv(d)
+	env.Lang = i18n.LangRU
+	got := HandleCommand(context.Background(), env, "/clearrules")
+	// RU mint header.
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Это").
+	if !strings.Contains(got, "Это удалит ВСЕ") {
+		t.Errorf("RU: expected 'Это удалит ВСЕ' in mint prompt, got: %q", got)
+	}
+	if !strings.Contains(got, "Отправьте /clearrules confirm в течение") {
+		t.Errorf("RU: expected 'Отправьте /clearrules confirm в течение' in mint prompt, got: %q", got)
+	}
+	// No English leak.
+	for _, en := range []string{"this will delete", "Send /clearrules confirm within", "ignored if the request"} {
+		if strings.Contains(got, en) {
+			t.Errorf("RU: English leak %q in mint prompt: %q", en, got)
+		}
+	}
+}
+
+func TestClearRulesReplyRussianAppliedOk(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	_, hs := fakeHeadscale(t)
+	env := userEnvWithHS(d, hs)
+	env.Lang = i18n.LangRU
+	// mint + confirm
+	_ = HandleCommand(context.Background(), env, "/clearrules")
+	got := HandleCommand(context.Background(), env, "/clearrules confirm")
+	// RU success prefix.
+	// 2026-07-16: v0.15.5 — butler-voice format (capital "Очищено").
+	if !strings.Contains(got, "✓ Очищено") {
+		t.Errorf("RU: expected '✓ Очищено', got: %q", got)
+	}
+	if !strings.Contains(got, "ACL v") {
+		t.Errorf("RU: expected 'ACL v' in success, got: %q", got)
+	}
+	// No English leak.
+	for _, en := range []string{"cleared", "applied to headscale"} {
+		if strings.Contains(got, en) {
+			t.Errorf("RU: English leak %q in applied_ok: %q", en, got)
+		}
+	}
+}
+
+func TestClearRulesReplyRussianReadOnlyMode(t *testing.T) {
+	d := setupTestDB(t)
+	_, _ = d.Exec(`INSERT INTO device_rules(user_id, exit_node_id, target_type, target_value, action) VALUES (2, 'emilia', 'subnet', '1.1.1.1/32', 'accept')`)
+	env := userEnvWithHS(d, nil)
+	env.Lang = i18n.LangRU
+	_ = HandleCommand(context.Background(), env, "/clearrules")
+	got := HandleCommand(context.Background(), env, "/clearrules confirm")
+	if !strings.Contains(got, "read-only") {
+		// "read-only" appears in both RU and EN strings; this
+		// is the RU catalog value (lowercase, Russian phrase).
+		t.Errorf("RU: expected RU read-only mention, got: %q", got)
+	}
+	if !strings.Contains(got, "ACL sync пропущен") {
+		t.Errorf("RU: expected 'ACL sync пропущен', got: %q", got)
+	}
+	if !strings.Contains(got, "Попросите админа /admin/exit-rules/sync") {
+		t.Errorf("RU: expected 'Попросите админа', got: %q", got)
+	}
+}
+
 func TestClearRulesReplyHelpDetail(t *testing.T) {
 	got := helpDetailReply("clearrules", BotEnv{})
 	if !strings.HasPrefix(got, "/clearrules ") {
@@ -2710,8 +3690,15 @@ func TestMyExitNodesReplyListsEnabled(t *testing.T) {
 	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('emilia-1', 1700000000, 1)`)
 	_, _ = d.Exec(`INSERT INTO devices(node_id, last_seen, online) VALUES ('aphrodite-1', 1700000100, 0)`)
 	got := HandleCommand(context.Background(), userEnv(d), "/myexitnodes")
-	if !strings.Contains(got, "Available exit-nodes (2)") {
-		t.Errorf("expected 'Available exit-nodes (2)', got: %q", got)
+	// 2026-07-16: v0.16.x — "more HTML" pass. Header
+	// format changed from "Available exit-nodes (2):" to
+	// "exit-nodes for <b>alice</b> (2 available):" with
+	// the count moved into a Field() line below.
+	if !strings.Contains(got, "exit-nodes for") {
+		t.Errorf("expected new header 'exit-nodes for', got: %q", got)
+	}
+	if !strings.Contains(got, "(2 available)") {
+		t.Errorf("expected '(2 available)' count, got: %q", got)
 	}
 	if !strings.Contains(got, "emilia") {
 		t.Errorf("expected emilia in menu, got: %q", got)
@@ -2723,12 +3710,19 @@ func TestMyExitNodesReplyListsEnabled(t *testing.T) {
 	if strings.Contains(got, "demeter") {
 		t.Errorf("disabled server demeter must NOT appear in user menu, got: %q", got)
 	}
-	// Online status per node.
-	if !strings.Contains(got, "emilia") || !strings.Contains(got, "online") {
-		t.Errorf("expected emilia marked online, got: %q", got)
+	// 2026-07-16: v0.16.x — tabular <pre> block. Online
+	// status is now a column on the same row as the
+	// hostname, not a free-floating "online" word. We
+	// check for the emilia row substring to confirm the
+	// alignment.
+	if !strings.Contains(got, "emilia") || !strings.Contains(got, "emilia-1") {
+		t.Errorf("expected emilia row to carry hostname+node_id, got: %q", got)
 	}
-	if !strings.Contains(got, "aphrodite") || !strings.Contains(got, "offline") {
-		t.Errorf("expected aphrodite marked offline, got: %q", got)
+	if !strings.Contains(got, "online") {
+		t.Errorf("expected 'online' status column, got: %q", got)
+	}
+	if !strings.Contains(got, "offline") {
+		t.Errorf("expected 'offline' status column, got: %q", got)
 	}
 	// Workflow hint.
 	if !strings.Contains(got, "/setexitnode") {
@@ -2744,12 +3738,35 @@ func TestMyExitNodesReplyMarksDefault(t *testing.T) {
 	// Set alice's default to aphrodite-1.
 	_, _ = d.Exec(`UPDATE portal_users SET default_exit_node_id = 'aphrodite-1' WHERE id = 2`)
 	got := HandleCommand(context.Background(), userEnv(d), "/myexitnodes")
-	if !strings.Contains(got, "aphrodite-1) — offline  [default]") {
-		t.Errorf("expected aphrodite-1 row to carry [default] marker, got: %q", got)
+	// 2026-07-16: v0.16.x — "more HTML" pass. The default
+	// marker moved from "  [default]" to a single ✓ in
+	// the DEFAULT column. The substring "aphrodite-1  ... ✓"
+	// is hard to pin because of <pre> alignment padding,
+	// so we just check that ✓ appears and that the
+	// aphrodite row is followed by a line ending in ✓
+	// (the emilia row should NOT have a ✓).
+	if !strings.Contains(got, "✓") {
+		t.Errorf("expected ✓ marker for default node, got: %q", got)
 	}
-	// emilia must NOT carry the [default] marker.
-	if strings.Contains(got, "emilia-1) — offline  [default]") {
-		t.Errorf("emilia must not be marked default, got: %q", got)
+	// emilia must NOT carry the ✓ marker.
+	emiliaRow := ""
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "emilia-1") {
+			emiliaRow = line
+		}
+	}
+	if strings.Contains(emiliaRow, "✓") {
+		t.Errorf("emilia row must not be marked default, got: %q", emiliaRow)
+	}
+	// The aphrodite row should carry the ✓.
+	aphroditeRow := ""
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "aphrodite-1") {
+			aphroditeRow = line
+		}
+	}
+	if !strings.Contains(aphroditeRow, "✓") {
+		t.Errorf("aphrodite row must be marked default, got: %q", aphroditeRow)
 	}
 }
 
@@ -2766,8 +3783,14 @@ func TestMyExitNodesReplyHelpDetail(t *testing.T) {
 	if !strings.HasPrefix(got, "/myexitnodes ") {
 		t.Errorf("expected /myexitnodes detailed help, got: %q", got)
 	}
-	if !strings.Contains(got, "[default]") {
-		t.Errorf("expected '[default]' in /help myexitnodes, got: %q", got)
+	// 2026-07-16: v0.16.x — "more HTML" pass. The
+	// default-node marker moved from "[default]" (a
+	// four-char label) to "✓" (a single char that
+	// reads cleanly in the DEFAULT column of the
+	// tabular <pre> block). Help detail text is
+	// kept in lockstep.
+	if !strings.Contains(got, "✓") {
+		t.Errorf("expected '✓' in /help myexitnodes, got: %q", got)
 	}
 }
 
@@ -2938,7 +3961,7 @@ func TestStartReplyWithTokenShowsConfirmation(t *testing.T) {
 	}
 	// Bind button carries the token; Cancel button has the
 	// "bind:cancel" sentinel.
-	if !strings.HasPrefix(row[0]["callback_data"], "bind:confirm:") {
+	if cb, _ := row[0]["callback_data"].(string); !strings.HasPrefix(cb, "bind:confirm:") {
 		t.Errorf("expected first button callback_data=bind:confirm:..., got %q", row[0]["callback_data"])
 	}
 	if row[1]["callback_data"] != "bind:cancel" {

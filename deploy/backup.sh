@@ -96,7 +96,9 @@ for _key in skygate_sync skygate_sync.pub; do
 log "Saving Docker images..."
 ${DOCKER_CMD} save skygate-skygate:latest -o "${BACKUP_PATH}/skygate-image.tar" 2>/dev/null && log "  skygate-image.tar" || warn "  skygate image save failed"
 ${DOCKER_CMD} save headscale/headscale:0.29.1 -o "${BACKUP_PATH}/headscale-image.tar" 2>/dev/null && log "  headscale-image.tar" || warn "  headscale image save failed"
-${DOCKER_CMD} save "${HEADPLANE_IMAGE}" -o "${BACKUP_PATH}/headplane-image.tar" 2>/dev/null && log "  headplane-image.tar" || warn "  headplane image save failed"
+if [ "${HEADPLANE_ENABLED}" != "false" ] && [ -z "${HEADPLANE_EXTERNAL_URL}" ]; then
+    ${DOCKER_CMD} save "${HEADPLANE_IMAGE}" -o "${BACKUP_PATH}/headplane-image.tar" 2>/dev/null && log "  headplane-image.tar" || warn "  headplane image save failed"
+fi
 
 # ── 12. Inventory ──
 cat > "${BACKUP_PATH}/inventory.txt" << INVEOF
@@ -107,6 +109,9 @@ Skygate Full Backup — ${DATE_TAG} (OS: ${SKYGATE_OS})
   ssh/ . skygate-image.tar . headscale-image.tar . headplane-image.tar
 HEADPLANE_ENABLED=${HEADPLANE_ENABLED:-true}
 HEADPLANE_IMAGE=${HEADPLANE_IMAGE:-ghcr.io/tale/headplane:0.6.3}
+HEADPLANE_EXTERNAL_URL=${HEADPLANE_EXTERNAL_URL:-}
+DERP_ENABLED=${DERP_ENABLED:-false}
+DERP_EXTERNAL_URLS=${DERP_EXTERNAL_URLS:-}
 SKYGATE_IMAGE=skygate-skygate:latest  # set by the running container; the actual tag is in .git describe
 Restore: ./deploy/deploy.sh --from-path <this-directory>
 INVEOF

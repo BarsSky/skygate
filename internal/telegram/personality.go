@@ -16,7 +16,7 @@ package telegram
 //   │ body text                                                  │  ← body (1..N lines)
 //   │ …                                                          │
 //   │                                                            │
-//   │ ─ Искренне Ваш, Хранитель Порога                          │  ← footer (1 line, only when body > 3 lines)
+//   │ ─ Ваш Дворецкий                                           │  ← footer (1 line, only when body > 3 lines)
 //   └────────────────────────────────────────────────────────────┘
 //
 // The header tells you the topic at a glance (the registry, the
@@ -129,17 +129,31 @@ func footerFor(lang string) string {
 // wrappers around Compose for backward compatibility
 // with the existing personality tests.
 func Compose(lang, context, body string, verbose bool) string {
-	header := headerFor(lang, context)
 	if body == "" {
 		// Defensive: if the caller passed an empty body
 		// (which shouldn't happen, but...), just return
-		// the header. The header alone is the butler's
+		// the gate header. The header alone is the butler's
 		// "I'm here" — a presence announcement.
-		return header
+		return GateHeader(lang, context)
 	}
-	out := header + headerFooterSeparator + body
+	// 2026-07-16: v0.15.2 — butler-voice v2 envelope
+	// (gate-style). Replaces the v1 "HEADER\n\nbody" with
+	// a 4-line bracketed envelope:
+	//   ┌── 🪶 ═══ Skygate ═══ ──┐
+	//   │ HEADER                 │
+	//   │                        │
+	//   │ body                   │
+	//   │                        │
+	//   ╰── — Ваш Дворецкий ═══ ──╯   (only when verbose)
+	//
+	// 2026-07-16: v0.15.3 — gateHeader / gateFooter /
+	// headerTopic moved to envelope.go (the single
+	// source of truth for the gate shape). Both
+	// butlerEnvelope and Compose go through GateHeader
+	// + GateFooter now, so a rebrand is one line.
+	out := GateHeader(lang, context) + "\n\n" + body
 	if verbose {
-		out += headerFooterSeparator + footerFor(lang)
+		out += "\n\n" + GateFooter(lang)
 	}
 	return out
 }
@@ -238,12 +252,6 @@ func welcome(lang, name string) string {
 		return gatekeeperSign(lang)
 	}
 	return fmt.Sprintf("%s  %s  ◈  %s", gatekeeperSign(lang), name, roleWardenOfSelf(lang))
-}
-
-// gateHeader returns the help-codex header line. v1
-// API. Use headerFor("codex", lang) for new code.
-func gateHeader(lang string) string {
-	return fmt.Sprintf("%s  %s", butlerSigil, i18n.T(lang, "bot.personality.gate_header"))
 }
 
 // greetingForNewChat builds the v1 welcome card. v9

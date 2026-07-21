@@ -102,16 +102,25 @@ func setKillProcess(fn func()) {
 // level. The Go version comes from runtime.Version(); the schema
 // level is a constant (see dbSchemaVersion comment for how to
 // maintain it).
+//
+// 2026-07-16: v0.16.x — "more HTML" pass. Uses Field() for
+// aligned key/value display (label bold, value in <code>)
+// so the three lines render as a tabbed block on mobile
+// Telegram.
 func versionReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>Билд:</b>
+	// / <b>Go:</b> / <b>Схема БД:</b> Field() labels and
+	// the <code>value</code> render. Without this, the
+	// user sees raw "<b>...</b> <code>...</code>" text.
+	markHTMLReply()
 	v := env.Version
 	if v == "" {
 		v = "v0.0-dev"
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Skygate %s\n", v)
-	fmt.Fprintf(&sb, "Go: %s\n", runtime.Version())
-	fmt.Fprintf(&sb, "DB schema: %s\n", dbSchemaVersion)
-	return strings.TrimRight(sb.String(), "\n")
+	return i18n.T(env.Lang, "bot.version.title") + "\n\n" +
+		Field(i18n.T(env.Lang, "bot.version.label_build"), v) + "\n" +
+		Field(i18n.T(env.Lang, "bot.version.label_go"), runtime.Version()) + "\n" +
+		Field(i18n.T(env.Lang, "bot.version.label_schema"), dbSchemaVersion)
 }
 
 // restartReply handles both phases of /restart:
@@ -224,6 +233,28 @@ func helpDetailReply(cmd string, env BotEnv) string {
 			"Use this when /nodes is too noisy and you want to check egress health.\n" +
 			"offline = devices.last_seen is null (headscale hasn't reported it recently).\n" +
 			"Example: /exit_nodes"
+	case "exit_nodes_health":
+		// 2026-07-15: v0.13.0 — help for the new
+		// health-monitor command. Distinct from /exit_nodes
+		// (which is per-user device list) and /nodes (which
+		// is every device): this is the background
+		// monitor's view (state = online | offline |
+		// degraded, last_check timestamp).
+		return "/exit_nodes_health — show exit-node health from the background monitor (admin only).\n" +
+			"One row per node: state (online/offline/degraded), last_seen relative, last_check.\n" +
+			"Output is grouped by state (offline first, then degraded, then online).\n" +
+			"Use this when /exit_nodes shows 'offline' and you want to know if the monitor agrees.\n" +
+			"Example: /exit_nodes_health"
+	case "sync_nodes":
+		// 2026-07-15: v0.14.0 — re-populate node_owner_map
+		// from headscale. Use after tagging a device
+		// directly in headscale (the bot's /exit_nodes
+		// then reports 'no nodes' until this runs).
+		return "/sync_nodes — re-read every node from headscale and rebuild node_owner_map (admin only).\n" +
+			"Inserts missing rows and updates drifted tags. Returns the count.\n" +
+			"Equivalent to the 'Sync from headscale' button on /admin/devices.\n" +
+			"Use this when the bot's /exit_nodes shows fewer nodes than headscale has.\n" +
+			"Example: /sync_nodes"
 	case "rules":
 		return "/rules — show the 25 most recent exit-rules across all users (admin only).\n" +
 			"Each row: id, user, exit-node, target_type/value, action (accept/deny).\n" +
@@ -281,7 +312,7 @@ func helpDetailReply(cmd string, env BotEnv) string {
 	case "myexitnodes":
 		return "/myexitnodes — list every enabled exit-node you can route through.\n" +
 			"Same data as admin /exit_nodes (hostname, online, last_seen) but\n" +
-			"filtered to enabled=1 and tagged with [default] for the exit-node\n" +
+			"filtered to enabled=1 and tagged with ✓ for the exit-node\n" +
 			"your /setexitnode is currently pointing at.\n" +
 			"Workflow: /myexitnodes -> /setexitnode <node_id> -> /add_rule <target>\n" +
 			"Example: /myexitnodes"

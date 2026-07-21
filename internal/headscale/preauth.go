@@ -77,6 +77,18 @@ func durationFlag(d time.Duration) string {
 // --output json is set) to extract the key ID for the temporal
 // backfill match in handlers_node_ownership.go.
 func (c *Client) CreatePreauthKey(userID int64, expiration string, reusable bool) (*PreauthKey, error) {
+	return c.CreatePreauthKeyWithTags(userID, expiration, reusable, nil)
+}
+
+// CreatePreauthKeyWithTags is like CreatePreauthKey but also tags
+// the key with the given set of headscale tags (e.g. "tag:subnet-router").
+//
+// 2026-07-17: v0.16.7 — per-user subnet sidecar. The preauth key
+// generated for the user's tailscale sidecar MUST be tagged
+// `tag:subnet-router` so headscale's ACL recognises the resulting
+// node as eligible to advertise `10.0.<uid>.0/24`. The auto-approver
+// in internal/sidecar watches for nodes with this exact tag.
+func (c *Client) CreatePreauthKeyWithTags(userID int64, expiration string, reusable bool, tags []string) (*PreauthKey, error) {
 	dur, err := parseDuration(expiration)
 	if err != nil {
 		return nil, err
@@ -88,6 +100,9 @@ func (c *Client) CreatePreauthKey(userID int64, expiration string, reusable bool
 		"ephemeral":  false,
 		"expiration": exp,
 	}
+	if len(tags) > 0 {
+		body["tags"] = tags
+	}
 	var p PreauthKey
 	apiErr := c.do("POST", "/api/v1/preauthkey", body, &p)
 	if apiErr == nil && p.Key != "" {
@@ -96,7 +111,7 @@ func (c *Client) CreatePreauthKey(userID int64, expiration string, reusable bool
 	if c.ExecContainer == "" {
 		return nil, fmt.Errorf("api failed (%v) and no ExecContainer configured", apiErr)
 	}
-	key, cliErr := c.createPreauthViaCLI(userID, dur, reusable)
+	key, cliErr := c.createPreauthViaCLIWithTags(userID, dur, reusable, tags)
 	if cliErr != nil {
 		return nil, fmt.Errorf("api: %v; cli: %v", apiErr, cliErr)
 	}
@@ -108,6 +123,13 @@ func (c *Client) CreatePreauthKey(userID int64, expiration string, reusable bool
 // CLI is the only place that returns the plaintext key reliably) and
 // best-effort parses the JSON --output block to extract the key ID.
 func (c *Client) createPreauthViaCLI(userID int64, dur time.Duration, reusable bool) (*PreauthKey, error) {
+	return c.createPreauthViaCLIWithTags(userID, dur, reusable, nil)
+}
+
+// createPreauthViaCLIWithTags is like createPreauthViaCLI but appends
+// `--tags tag1,tag2` to the headscale CLI invocation. headscale 0.23+
+// requires the tags flag for tag-restricted preauth keys.
+func (c *Client) createPreauthViaCLIWithTags(userID int64, dur time.Duration, reusable bool, tags []string) (*PreauthKey, error) {
 	exp := durationFlag(dur)
 	args := []string{"exec", c.ExecContainer, "headscale", "preauthkeys", "create",
 		"-u", strconv.FormatInt(userID, 10), "--expiration", exp, "--output", "json"}
@@ -115,6 +137,9 @@ func (c *Client) createPreauthViaCLI(userID int64, dur time.Duration, reusable b
 		args = append(args, "--reusable")
 	} else {
 		args = append(args, "--reusable=false")
+	}
+	for _, t := range tags {
+		args = append(args, "--tags", t)
 	}
 	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()

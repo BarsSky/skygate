@@ -1,8 +1,27 @@
 ﻿{{define "body-admin-devices"}}
+{{/* 2026-07-15: v0.14.0 — flash banners + "Sync from headscale"
+     button. The button re-populates node_owner_map from
+     headscale's authoritative view; the bot's /exit_nodes
+     reads from node_owner_map, so this is the operator's
+     escape hatch when they tagged a relay directly via
+     the headscale CLI and the bot is now reporting "no
+     nodes found". */}}
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-server"></i>{{t "devices.title_all"}}</h2>
     <div class="sub">{{t "devices.subtitle"}}. {{t "devices.tag_hint"}}.</div>
+  </div>
+  <div>
+    <form method="post" action="/admin/devices/sync-from-headscale" style="display:inline" title="Re-read every node from headscale and upsert into node_owner_map. Use after tagging a device directly via the headscale CLI so the bot's /exit_nodes sees it.">
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-arrows-rotate"></i> Sync from headscale</button>
+    </form>
   </div>
 </div>
 
@@ -50,7 +69,7 @@
           {{if .Online}}
             <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{t "devices.online"}}</span>
           {{else}}
-            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{t "devices.offline"}}</span>
+            <span style="color:var(--text-muted);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{t "devices.offline"}}</span>
           {{end}}
         </td>
         <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>

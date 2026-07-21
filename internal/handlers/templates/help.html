@@ -1,13 +1,9 @@
-﻿{{define "body-help"}}
+{{define "body-help"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-circle-question"></i>{{t "title.help"}}</h2>
     <div class="sub">
-      {{if .IsAdmin}}
-        Full documentation: tailnet, exit nodes, DERP relay, ACL, diagnostics
-      {{else}}
-        How to use Tailscale, exit nodes, and what to do if something doesn't work
-      {{end}}
+      {{if .IsAdmin}}{{t "help.admin_subtitle"}}{{else}}{{t "help.user_subtitle"}}{{end}}
     </div>
   </div>
 </div>
@@ -22,164 +18,163 @@
 
 {{define "body-help-user"}}
 <div class="tabs">
-  <a href="#start" class="active"><i class="fa-solid fa-rocket"></i>Getting started</a>
-  <a href="#exit"><i class="fa-solid fa-route"></i>Exit node</a>
-  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>DERP relay</a>
-  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Troubleshooting</a>
-  <a href="#glossary"><i class="fa-solid fa-book"></i>Glossary</a>
+  <a href="#start" class="active"><i class="fa-solid fa-rocket"></i>{{t "help.tabs.start"}}</a>
+  <a href="#exit"><i class="fa-solid fa-route"></i>{{t "help.tabs.exit"}}</a>
+  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>{{t "help.tabs.derp"}}</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>{{t "help.tabs.troubleshoot"}}</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</a>
 </div>
 
 <div id="start" class="doc-card">
-  <h3><i class="fa-solid fa-rocket"></i>Getting started</h3>
-  <p>Skygate is a web interface for managing your own Tailscale server, <strong>headscale</strong>. Through it you add your devices to a shared tailnet and manage them.</p>
+  <h3><i class="fa-solid fa-rocket"></i>{{t "help.tabs.start"}}</h3>
+  <p>{{t "help.user.intro" | safeHTML}}</p>
 
-  <h4>Step 1. Install Tailscale</h4>
+  <h4>{{t "help.user.step1"}}</h4>
   <ul>
-    <li><strong>Android</strong>: Google Play → "Tailscale" → Install</li>
-    <li><strong>iOS</strong>: App Store → "Tailscale" → Install</li>
-    <li><strong>Windows</strong>: <a href="https://tailscale.com/download/windows">tailscale.com/download/windows</a></li>
-    <li><strong>macOS</strong>: App Store → "Tailscale"</li>
-    <li><strong>Linux</strong>: <code>curl -fsSL https://tailscale.com/install.sh | sh</code></li>
+    <li>{{t "help.user.install_android" | safeHTML}}</li>
+    <li>{{t "help.user.install_ios" | safeHTML}}</li>
+    <li>{{t "help.user.install_windows" | safeHTML}}</li>
+    <li>{{t "help.user.install_macos" | safeHTML}}</li>
+    <li>{{t "help.user.install_linux" | safeHTML}}</li>
   </ul>
 
-  <h4>Step 2. Sign in to your account</h4>
-  <p>On the first launch Tailscale will ask you to sign in. Use:</p>
+  <h4>{{t "help.user.step2"}}</h4>
+  <p>{{t "help.user.signin_intro"}}</p>
   <ul>
-    <li>Server: <code>headscale.example.com</code></li>
-    <li>Login: the username your admin gave you (e.g. <code>user1</code>)</li>
+    <li>{{t "help.user.signin_server" | safeHTML}}</li>
+    <li>{{t "help.user.signin_login" | safeHTML}}</li>
   </ul>
-  <p>Tailscale opens a browser → enter login/password → the device appears in the tailnet.</p>
+  <p>{{t "help.user.signin_done"}}</p>
 
-  <h4>Step 3. Find your devices</h4>
-  <p>Go to <a href="/my/devices">My devices</a> — you'll see all your nodes with statuses (online/offline, IP, tags).</p>
+  <h4>{{t "help.user.step3"}}</h4>
+  <p>{{t "help.user.step3_body" | safeHTML}}</p>
 
-  <h4>Step 4. Add more devices</h4>
-  <p>On the <a href="/my/devices">My devices</a> page click <strong>"Add device"</strong>:</p>
+  <h4>{{t "help.user.step4"}}</h4>
+  <p>{{t "help.user.step4_intro" | safeHTML}}</p>
   <ul>
-    <li>Enter a name (e.g. <code>my-laptop</code>, <code>my-phone</code>)</li>
-    <li>Click <strong>Create</strong> — a preauth key appears</li>
-    <li>Copy the command <code>tailscale up --login-server=https://headscale.example.com --authkey=hskey-auth-XXXX</code></li>
-    <li>Paste it into a terminal on the new device</li>
+    <li>{{t "help.user.step4_name" | safeHTML}}</li>
+    <li>{{t "help.user.step4_create" | safeHTML}}</li>
+    <li>{{t "help.user.step4_copy" | safeHTML}}</li>
+    <li>{{t "help.user.step4_paste" | safeHTML}}</li>
   </ul>
-  <p>Done — the device appears in the list.</p>
+  <p>{{t "help.user.step4_done"}}</p>
 
   <div class="note">
-    <i class="fa-solid fa-circle-info"></i> By default your devices get the <code>tag:private</code> tag — visible only to you.
+    <i class="fa-solid fa-circle-info"></i> {{t "help.user.tag_note" | safeHTML}}
   </div>
 </div>
 
 <div id="exit" class="doc-card">
-  <h3><i class="fa-solid fa-route"></i>Exit node (routing internet through another node)</h3>
-  <p><strong>Exit node</strong> is a server in the tailnet through which all your internet traffic goes. Useful for:</p>
+  <h3><i class="fa-solid fa-route"></i>{{t "help.user.exit_title" | safeHTML}}</h3>
+  <p>{{t "help.user.exit_intro" | safeHTML}}</p>
   <ul>
-    <li>🌍 <strong>Routing</strong> — IP different from your own</li>
-    <li>🇷🇺 <strong>Routing</strong> — services reachable through the exit node</li>
-    <li>🛡️ <strong>Privacy</strong> — your ISP doesn't see which sites you visit</li>
-    <li>📡 <strong>Public WiFi safety</strong></li>
+    <li>{{t "help.user.exit_reason1" | safeHTML}}</li>
+    <li>{{t "help.user.exit_reason2" | safeHTML}}</li>
+    <li>{{t "help.user.exit_reason3" | safeHTML}}</li>
+    <li>{{t "help.user.exit_reason4" | safeHTML}}</li>
   </ul>
 
-  <h4>Which exit nodes are available</h4>
-  <p>See the list of available exit nodes on the <a href="/my/exit-nodes">Exit nodes</a> page. The tailnet administrator manages the set.</p>
+  <h4>{{t "help.user.exit_avail" | safeHTML}}</h4>
 
-  <h4>How to enable an exit node</h4>
+  <h4>{{t "help.user.exit_how"}}</h4>
   <ol>
-    <li>Open <strong>Tailscale app</strong> on your device</li>
-    <li>☰ Menu → <strong>Use exit node</strong> → pick the node you need</li>
-    <li>Done — all traffic goes through the chosen server</li>
+    <li>{{t "help.user.exit_how1" | safeHTML}}</li>
+    <li>{{t "help.user.exit_how2" | safeHTML}}</li>
+    <li>{{t "help.user.exit_how3" | safeHTML}}</li>
   </ol>
 
-  <h4>How to verify it works</h4>
-  <p>Open any IP-check service — it should show the IP of the exit node's country.</p>
+  <h4>{{t "help.user.exit_verify"}}</h4>
+  <p>{{t "help.user.exit_verify_body"}}</p>
 
-  <h4>How to disable</h4>
-  <p>Tailscale app → ☰ → <strong>None</strong> (Use exit node) → traffic flows direct again.</p>
+  <h4>{{t "help.user.exit_disable"}}</h4>
+  <p>{{t "help.user.exit_disable_body" | safeHTML}}</p>
 
   <div class="note">
-    <i class="fa-solid fa-triangle-exclamation"></i> <strong>Note</strong>: with an exit node enabled, your speed is capped by the link to the exit node.
+    <i class="fa-solid fa-triangle-exclamation"></i> <strong>Note</strong>: {{t "help.user.exit_warning"}}
   </div>
 </div>
 
 <div id="derp" class="doc-card">
-  <h3><i class="fa-solid fa-tower-broadcast"></i>What DERP relay is</h3>
-  <p>When two Tailscale clients can't connect directly (CGNAT, firewall, NAT), traffic flows through a <strong>DERP relay</strong> — an intermediate server.</p>
+  <h3><i class="fa-solid fa-tower-broadcast"></i>{{t "help.user.derp_title"}}</h3>
+  <p>{{t "help.user.derp_intro" | safeHTML}}</p>
 
-  <h4>What this means for you</h4>
+  <h4>{{t "help.user.derp_meaning"}}</h4>
   <ul>
-    <li>🟢 <strong>Direct</strong> — devices connected directly. Fast, low ping.</li>
-    <li>🟡 <strong>Through DERP</strong> — traffic goes via a relay. Slower (+50-200ms), but always works.</li>
+    <li>{{t "help.user.derp_direct" | safeHTML}}</li>
+    <li>{{t "help.user.derp_relay" | safeHTML}}</li>
   </ul>
 
-  <h4>Our DERP relay</h4>
-  <p>The tailnet admin can run a custom DERP server for minimum ping within the region. Address and status — on the <a href="/admin/derp">DERP</a> page.</p>
+  <h4>{{t "help.user.derp_ours" | safeHTML}}</h4>
+  <p>{{t "help.user.derp_ours_body" | safeHTML}}</p>
 
-  <h4>Useful links</h4>
+  <h4>{{t "help.user.derp_links"}}</h4>
   <ul>
-    <li><a href="https://tailscale.com/kb/1232/derp-servers" target="_blank">Tailscale docs: DERP servers</a></li>
-    <li><a href="https://tailscale.com/kb/1073/magicdns" target="_blank">MagicDNS — addressing nodes by name</a></li>
+    <li>{{t "help.user.derp_link1" | safeHTML}}</li>
+    <li>{{t "help.user.derp_link2" | safeHTML}}</li>
   </ul>
 </div>
 
 <div id="troubleshoot" class="doc-card">
-  <h3><i class="fa-solid fa-wrench"></i>Common problems</h3>
+  <h3><i class="fa-solid fa-wrench"></i>{{t "help.tabs.troubleshoot"}}</h3>
 
-  <h4>🔴 "Can't sign in to Tailscale" / "Invalid login server"</h4>
+  <h4>{{t "help.user.ts_login_title" | safeHTML}}</h4>
   <ol>
-    <li>Check that you entered the correct login server (ask the admin)</li>
-    <li>Verify your internet connection</li>
-    <li>Try opening headscale in your browser</li>
-    <li>Contact the admin — your account may be deactivated</li>
+    <li>{{t "help.user.ts_login"}}</li>
+    <li>{{t "help.user.ts_login2"}}</li>
+    <li>{{t "help.user.ts_login3"}}</li>
+    <li>{{t "help.user.ts_login4"}}</li>
   </ol>
 
-  <h4>🔴 "Exit node selected, but no internet"</h4>
+  <h4>{{t "help.user.exit_no_inet_title" | safeHTML}}</h4>
   <ol>
-    <li>Check that the exit node is <strong>online</strong> (see <a href="/my/devices">My devices</a>)</li>
-    <li>Try a different exit node</li>
-    <li>Restart Tailscale on the device</li>
-    <li>If nothing helps — notify the admin</li>
+    <li>{{t "help.user.exit_no_inet" | safeHTML}}</li>
+    <li>{{t "help.user.exit_no_inet2"}}</li>
+    <li>{{t "help.user.exit_no_inet3"}}</li>
+    <li>{{t "help.user.exit_no_inet4"}}</li>
   </ol>
 
-  <h4>🔴 "MagicDNS doesn't work" / names don't resolve</h4>
-  <p>On Android 4G it sometimes breaks. Fix:</p>
+  <h4>{{t "help.user.magicdns_title" | safeHTML}}</h4>
+  <p>{{t "help.user.magicdns_intro"}}</p>
   <ol>
-    <li>Tailscale app → Settings → <strong>Tailscale DNS → OFF</strong></li>
-    <li>Use the IP directly: <code>100.64.0.X</code> (visible on the devices page)</li>
+    <li>{{t "help.user.magicdns1" | safeHTML}}</li>
+    <li>{{t "help.user.magicdns2" | safeHTML}}</li>
   </ol>
 
-  <h4>🔴 "Device shows online, but doesn't ping"</h4>
+  <h4>{{t "help.user.no_ping_title" | safeHTML}}</h4>
   <ul>
-    <li>Check that Tailscale is running on that device</li>
-    <li>Device may be in sleep mode — Tailscale sleeps with it</li>
-    <li>On Android: open the Tailscale app — the connection will resume</li>
+    <li>{{t "help.user.no_ping1"}}</li>
+    <li>{{t "help.user.no_ping2"}}</li>
+    <li>{{t "help.user.no_ping3"}}</li>
   </ul>
 
-  <h4>🟡 "Internet through exit node is slow"</h4>
+  <h4>{{t "help.user.slow_title" | safeHTML}}</h4>
   <ul>
-    <li>Try the nearest exit node</li>
-    <li>Check the ping — if &gt; 200ms, traffic likely goes through DERP</li>
-    <li>Restart Tailscale</li>
+    <li>{{t "help.user.slow1"}}</li>
+    <li>{{t "help.user.slow2" | safeHTML}}</li>
+    <li>{{t "help.user.slow3"}}</li>
   </ul>
 
   <div class="card" style="background:var(--card-elevated);text-align:center;color:var(--text-muted);font-size:13px">
-    <i class="fa-solid fa-life-ring"></i> Didn't find a solution? Message the tailnet admin.
+    <i class="fa-solid fa-life-ring"></i> {{t "help.user.no_solution"}}
   </div>
 </div>
 
 <div id="glossary" class="doc-card">
-  <h3><i class="fa-solid fa-book"></i>Glossary</h3>
+  <h3><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</h3>
   <table>
     <thead><tr><th>Term</th><th>What it is</th></tr></thead>
     <tbody>
-      <tr><td><strong>Tailnet</strong></td><td>Tailscale mesh network (all your devices see each other)</td></tr>
-      <tr><td><strong>Node</strong></td><td>One device in the tailnet (phone, laptop, server)</td></tr>
-      <tr><td><strong>MagicDNS</strong></td><td>Built-in DNS: address by node name instead of IP</td></tr>
-      <tr><td><strong>DERP</strong></td><td>Relay server (when direct doesn't work)</td></tr>
-      <tr><td><strong>Exit node</strong></td><td>Device through which you go to the internet</td></tr>
-      <tr><td><strong>Preauth key</strong></td><td>Key to add a new device without interactive login</td></tr>
-      <tr><td><strong>tag:private</strong></td><td>"Personal device" label (visible only to you)</td></tr>
-      <tr><td><strong>tag:public</strong></td><td>"Shared device" label (exit node)</td></tr>
-      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — mobile operator hides you behind a shared IP</td></tr>
-      <tr><td><strong>ACL</strong></td><td>Access rules (who can connect to whom)</td></tr>
-      <tr><td><strong>Headscale</strong></td><td>Self-hosted Tailscale server (instead of cloud Tailscale)</td></tr>
+      <tr><td><strong>Tailnet</strong></td><td>{{t "help.user.glossary_tailnet"}}</td></tr>
+      <tr><td><strong>Node</strong></td><td>{{t "help.user.glossary_node"}}</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>{{t "help.user.glossary_magicdns"}}</td></tr>
+      <tr><td><strong>DERP</strong></td><td>{{t "help.user.glossary_derp"}}</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>{{t "help.user.glossary_exit"}}</td></tr>
+      <tr><td><strong>Preauth key</strong></td><td>{{t "help.user.glossary_preauth"}}</td></tr>
+      <tr><td><strong>tag:private</strong></td><td>{{t "help.user.glossary_tag_private" | safeHTML}}</td></tr>
+      <tr><td><strong>tag:public</strong></td><td>{{t "help.user.glossary_tag_public" | safeHTML}}</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>{{t "help.user.glossary_cgnat"}}</td></tr>
+      <tr><td><strong>ACL</strong></td><td>{{t "help.user.glossary_acl"}}</td></tr>
+      <tr><td><strong>Headscale</strong></td><td>{{t "help.user.glossary_headscale"}}</td></tr>
     </tbody>
   </table>
 </div>
@@ -187,42 +182,42 @@
 
 {{define "body-help-admin"}}
 <div class="tabs">
-  <a href="#overview" class="active"><i class="fa-solid fa-diagram-project"></i>Overview</a>
-  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>DERP</a>
-  <a href="#exit"><i class="fa-solid fa-route"></i>Exit node</a>
-  <a href="#acl"><i class="fa-solid fa-shield-halved"></i>ACL</a>
-  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>Diagnostics</a>
-  <a href="#glossary"><i class="fa-solid fa-book"></i>Glossary</a>
+  <a href="#overview" class="active"><i class="fa-solid fa-diagram-project"></i>{{t "help.tabs.overview"}}</a>
+  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>{{t "help.tabs.derp"}}</a>
+  <a href="#exit"><i class="fa-solid fa-route"></i>{{t "help.tabs.exit"}}</a>
+  <a href="#acl"><i class="fa-solid fa-shield-halved"></i>{{t "help.tabs.acl"}}</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>{{t "help.tabs.diagnostics"}}</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</a>
 </div>
 
 <div id="overview" class="doc-card">
-  <h3><i class="fa-solid fa-diagram-project"></i>What tailnet is</h3>
-  <p>Tailnet is a mesh network built on Tailscale. Devices in the tailnet get IPs in the <code>100.64.0.0/10</code> range and see each other at those addresses regardless of where they physically are.</p>
+  <h3><i class="fa-solid fa-diagram-project"></i>{{t "help.admin.what_title"}}</h3>
+  <p>{{t "help.admin.what_body" | safeHTML}}</p>
 
-  <h4>Data flow</h4>
+  <h4>{{t "help.admin.flow_title"}}</h4>
   <div class="flow">
-    <span class="node you">my-phone<br><small>100.64.0.5</small></span>
+    <span class="node you">{{t "help.admin.flow_node_you" | safeHTML}}</span>
     <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
-    <span class="node">exit-vps<br><small>100.64.0.3 (exit)</small></span>
+    <span class="node">{{t "help.admin.flow_node_exit" | safeHTML}}</span>
     <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
-    <span class="node">internet<br><small>8.8.8.8</small></span>
+    <span class="node">{{t "help.admin.flow_node_internet" | safeHTML}}</span>
   </div>
-  <div class="note">When my-phone uses exit-vps as an exit node, all of its internet traffic goes through the exit-vps VPS.</div>
+  <div class="note">{{t "help.admin.flow_note"}}</div>
 
-  <h4>Management</h4>
+  <h4>{{t "help.admin.management"}}</h4>
   <ul>
-    <li><a href="/admin/devices">All devices</a> — full list, tags, delete</li>
-    <li><a href="/admin/users">Users</a> — create, ACL, password resets</li>
-    <li><a href="/admin/derp">DERP relay</a> — status, load</li>
-    <li><a href="/admin/audit">Audit log</a> — who did what</li>
+    <li>{{t "help.admin.management_devices" | safeHTML}}</li>
+    <li>{{t "help.admin.management_users" | safeHTML}}</li>
+    <li>{{t "help.admin.management_derp" | safeHTML}}</li>
+    <li>{{t "help.admin.management_audit" | safeHTML}}</li>
   </ul>
 </div>
 
 <div id="derp" class="doc-card">
-  <h3><i class="fa-solid fa-tower-broadcast"></i>How DERP works</h3>
-  <p><strong>DERP (Designated Encrypted Relay for Packets)</strong> is a relay server through which traffic flows when a direct connection between two Tailscale clients is impossible (CGNAT, firewall, NAT).</p>
+  <h3><i class="fa-solid fa-tower-broadcast"></i>{{t "help.admin.derp_how"}}</h3>
+  <p>{{t "help.admin.derp_what" | safeHTML}}</p>
 
-  <h4>Architecture</h4>
+  <h4>{{t "help.admin.derp_architecture"}}</h4>
   <pre>┌──────────┐    WireGuard-over-WS    ┌─────────┐    WebSocket    ┌──────────┐
 │ my-phone │ ────TLS 1.3 + WSS────────▶│  DERP   │─────────────────▶│ exit-vps │
 │ 4G CGNAT │   TCP 443 (like HTTPS)   │  relay  │  TCP 443        │  VPS EU  │
@@ -234,124 +229,110 @@
                                   • NOT contents
                                   (TLS 1.3 + WireGuard)</pre>
 
-  <h4>When DERP kicks in</h4>
+  <h4>{{t "help.admin.derp_when"}}</h4>
   <ul>
-    <li>🟢 <strong>Direct</strong> — clients can connect directly. <strong>Best speed</strong>.</li>
-    <li>🟡 <strong>DERP relay</strong> — direct not possible. Tailscale automatically picks the nearest DERP. <strong>Slower</strong>, but always works.</li>
+    <li>{{t "help.admin.derp_direct" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_relay" | safeHTML}}</li>
   </ul>
 
-  <h4>DERP protocol details</h4>
+  <h4>{{t "help.admin.derp_proto"}}</h4>
   <ul>
-    <li><strong>TLS 1.3</strong> — DPI cannot see inside (only "client ↔ HTTPS server")</li>
-    <li><strong>TCP 443</strong> — standard HTTPS port, ubiquitous</li>
-    <li><strong>WebSocket</strong> — looks like a normal HTTPS connection</li>
-    <li><strong>IP rotation</strong> — Tailscale has many DERP servers worldwide</li>
-    <li><strong>Custom DERP</strong> — you can run your own relay on a white IP</li>
+    <li>{{t "help.admin.derp_tls" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_port" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_ws" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_rotation" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_custom" | safeHTML}}</li>
   </ul>
 
-  <h4>Weak points</h4>
+  <h4>{{t "help.admin.derp_weak"}}</h4>
   <ul>
-    <li>⚠️ <strong>Throttling</strong> — ISP may slow down HTTPS to Tailscale IPs</li>
-    <li>⚠️ <strong>IP filtering</strong> — public DERP servers may be unreachable from some networks</li>
-    <li>⚠️ <strong>Latency</strong> — DERP adds +100-300ms to round-trip</li>
+    <li>{{t "help.admin.derp_throttle" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_filter" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_latency" | safeHTML}}</li>
   </ul>
 
-  <h4>Your own DERP relay</h4>
-  <p>Run on a server with a public IP. Status and metrics: <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i> DERP</a></p>
+  <h4>{{t "help.admin.derp_own" | safeHTML}}</h4>
+  <p>{{t "help.admin.derp_own_body" | safeHTML}}</p>
 </div>
 
 <div id="exit" class="doc-card">
-  <h3><i class="fa-solid fa-route"></i>Exit node</h3>
-  <p>Exit node is a device in the tailnet through which other clients go to the internet.</p>
+  <h3><i class="fa-solid fa-route"></i>{{t "help.admin.exit_title"}}</h3>
+  <p>{{t "help.admin.exit_intro"}}</p>
 
-  <h4>Why it's needed</h4>
+  <h4>{{t "help.admin.exit_why"}}</h4>
   <ul>
-    <li>🌍 <strong>Routing</strong> — go to the internet with the exit-node's IP</li>
-    <li>🛡️ <strong>Privacy</strong> — ISP only sees encrypted traffic to Tailscale</li>
-    <li>📡 <strong>Security</strong> — public WiFi can't see your traffic</li>
-    <li>🇷🇺 <strong>Routing</strong> — services reachable through the exit node</li>
+    <li>{{t "help.admin.exit_why1" | safeHTML}}</li>
+    <li>{{t "help.admin.exit_why2" | safeHTML}}</li>
+    <li>{{t "help.admin.exit_why3" | safeHTML}}</li>
+    <li>{{t "help.admin.exit_why4" | safeHTML}}</li>
   </ul>
 
-  <h4>How to enable</h4>
+  <h4>{{t "help.admin.exit_how"}}</h4>
   <ol>
-    <li>Open the Tailscale app on your device</li>
-    <li>☰ Menu → Use exit node → pick a node</li>
-    <li>Done — traffic flows through the chosen exit node</li>
+    <li>{{t "help.admin.exit_how1"}}</li>
+    <li>{{t "help.admin.exit_how2"}}</li>
+    <li>{{t "help.admin.exit_how3"}}</li>
   </ol>
 
-  <h4>What's needed on the server</h4>
+  <h4>{{t "help.admin.exit_iptables" | safeHTML}}</h4>
   <pre>iptables -t nat -A POSTROUTING -s 100.64.0.0/10 -o $EXT_IF -j MASQUERADE
 iptables -A FORWARD -i tailscale0 -o $EXT_IF -j ACCEPT
 iptables -A FORWARD -i $EXT_IF -o tailscale0 -m state --state RELATED,ESTABLISHED -j ACCEPT</pre>
 </div>
 
 <div id="acl" class="doc-card">
-  <h3><i class="fa-solid fa-shield-halved"></i>ACL (Access Control List)</h3>
-  <p>ACL controls who can connect to whom in the tailnet. Edit in Skygate or directly in headscale.</p>
+  <h3><i class="fa-solid fa-shield-halved"></i>{{t "help.admin.acl_title"}}</h3>
+  <p>{{t "help.admin.acl_intro"}}</p>
 
-  <h4>Allow exit node</h4>
-  <pre>{
-  "action": "accept",
-  "src": ["*"],
-  "dst": ["autogroup:internet:*"]
-}</pre>
-  <p>Without this rule the exit node is <strong>invisible</strong> to clients (Tailscale 1.50+ requires explicit allow).</p>
+  <h4>{{t "help.admin.acl_allow_exit" | safeHTML}}</h4>
+  <pre>{ "action": "accept", "src": ["*"], "dst": ["autogroup:internet:*"] }</pre>
+  <p>{{t "help.admin.acl_allow_exit_warn" | safeHTML}}</p>
 
-  <h4>Isolate users</h4>
-  <pre>{
-  "action": "accept",
-  "src": ["admin"],
-  "dst": ["*:*"]
-},
-{
-  "action": "accept",
-  "src": ["user1"],
-  "dst": ["user1:*", "tag:public:*"]
-}</pre>
-  <p>user1 sees only their own devices + exit node.</p>
+  <h4>{{t "help.admin.acl_isolate" | safeHTML}}</h4>
+  <pre>{ "action": "accept", "src": ["admin"], "dst": ["*:*"] },
+{ "action": "accept", "src": ["user1"], "dst": ["user1:*", "tag:public:*"] }</pre>
+  <p>{{t "help.admin.acl_isolate_body" | safeHTML}}</p>
 </div>
 
 <div id="troubleshoot" class="doc-card">
-  <h3><i class="fa-solid fa-wrench"></i>Diagnostics</h3>
+  <h3><i class="fa-solid fa-wrench"></i>{{t "help.admin.diag_title"}}</h3>
 
-  <h4>On an exit node</h4>
-  <pre># Check that the exit node is visible to clients
-sudo journalctl -u tailscaled --since 5m | grep "suggested exit"
-# If "suggested exit node: ()" — ACL is blocking
-
-# Traffic counters through exit node
+  <h4>{{t "help.admin.diag_exit_title" | safeHTML}}</h4>
+  <pre>sudo journalctl -u tailscaled --since 5m | grep "suggested exit"
 iptables -t nat -L POSTROUTING -n -v | grep "100.64.0.0/10"
 iptables -L FORWARD -n -v | grep "tailscale0"
+tailscale status</pre>
+  <pre>{{t "help.admin.diag_exit1"}}
+{{t "help.admin.diag_exit2"}}
+{{t "help.admin.diag_exit3"}}
+{{t "help.admin.diag_exit4"}}
+{{t "help.admin.diag_exit5"}}
+{{t "help.admin.diag_exit6"}}</pre>
 
-# Direct vs relay
-tailscale status
-# active; direct 203.0.113.1:41641   ← good
-# active; relay "fra"                  ← through DERP</pre>
+  <h4>{{t "help.admin.diag_problems"}}</h4>
 
-  <h4>Common problems</h4>
+  <h4>{{t "help.admin.diag_no_inet" | safeHTML}}</h4>
+  <p>{{t "help.admin.diag_no_inet_body" | safeHTML}}</p>
 
-  <h4>🔴 Exit node selected, no internet</h4>
-  <p>The exit node is missing iptables rules. Check <code>iptables -t nat -L POSTROUTING</code> and <code>iptables -L FORWARD</code>.</p>
-
-  <h4>🔴 "DNS Unavailable" on Android</h4>
-  <p>Tailscale DNS on Android 4G frequently breaks. Fix: Tailscale app → Settings → <strong>Tailscale DNS → OFF</strong>.</p>
+  <h4>{{t "help.admin.diag_no_dns" | safeHTML}}</h4>
+  <p>{{t "help.admin.diag_no_dns_body" | safeHTML}}</p>
 </div>
 
 <div id="glossary" class="doc-card">
-  <h3><i class="fa-solid fa-book"></i>Glossary</h3>
+  <h3><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</h3>
   <table>
     <thead><tr><th>Term</th><th>Definition</th></tr></thead>
     <tbody>
-      <tr><td><strong>Tailnet</strong></td><td>Tailscale mesh network (mesh = every node with every other)</td></tr>
-      <tr><td><strong>MagicDNS</strong></td><td>Built-in DNS in <code>hostname.domain</code> format</td></tr>
-      <tr><td><strong>DERP</strong></td><td>Designated Encrypted Relay for Packets — relay for traffic</td></tr>
-      <tr><td><strong>Exit node</strong></td><td>Device through which others go to the internet</td></tr>
-      <tr><td><strong>ACL</strong></td><td>Access Control List — who can connect to whom</td></tr>
-      <tr><td><strong>Headscale</strong></td><td>Open-source Tailscale control server</td></tr>
-      <tr><td><strong>STUN</strong></td><td>Session Traversal Utilities for NAT — helps NAT traversal</td></tr>
-      <tr><td><strong>CGNAT</strong></td><td>Carrier-Grade NAT — operator hides thousands of subscribers behind 1 IP</td></tr>
-      <tr><td><strong>WireGuard</strong></td><td>Fast VPN protocol used by Tailscale</td></tr>
-      <tr><td><strong>tag:public / tag:private</strong></td><td>Labels in headscale for multi-tenant isolation</td></tr>
+      <tr><td><strong>Tailnet</strong></td><td>{{t "help.admin.glossary_tailnet"}}</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>{{t "help.admin.glossary_magicdns" | safeHTML}}</td></tr>
+      <tr><td><strong>DERP</strong></td><td>{{t "help.admin.glossary_derp" | safeHTML}}</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>{{t "help.admin.glossary_exit"}}</td></tr>
+      <tr><td><strong>ACL</strong></td><td>{{t "help.admin.glossary_acl"}}</td></tr>
+      <tr><td><strong>Headscale</strong></td><td>{{t "help.admin.glossary_headscale"}}</td></tr>
+      <tr><td><strong>STUN</strong></td><td>{{t "help.admin.glossary_stun"}}</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>{{t "help.admin.glossary_cgnat"}}</td></tr>
+      <tr><td><strong>WireGuard</strong></td><td>{{t "help.admin.glossary_wireguard"}}</td></tr>
+      <tr><td><strong>tag:public / tag:private</strong></td><td>{{t "help.admin.glossary_tags" | safeHTML}}</td></tr>
     </tbody>
   </table>
 </div>

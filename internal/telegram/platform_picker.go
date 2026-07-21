@@ -23,7 +23,21 @@ package telegram
 // /start <token> confirmation prompt uses (see commands.go
 // for the rationale).
 
-import "skygate/internal/i18n"
+import (
+	"html"
+
+	"skygate/internal/i18n"
+)
+
+// escapeHTML wraps html.EscapeString so reply helpers don't
+// have to import "html" directly. Needed because the bot's
+// /add_device reply now ships with parse_mode=HTML
+// (see buildPlatformPicker), and the substituted username
+// can legally contain <, >, & in a future release — HTML
+// parse_mode would then 400 with "can't parse entities".
+// The preauth key is always [A-Za-z0-9_-] so escaping is
+// belt-and-braces, not load-bearing.
+func escapeHTML(s string) string { return html.EscapeString(s) }
 
 // platformKey is the internal code for each supported install
 // platform. Stored in the callback_data ("add_device_platform:<key>")
@@ -57,17 +71,28 @@ const (
 // handleCallback can route to the per-platform install
 // instructions.
 func buildPlatformPicker(lang, preauthKey string) *PendingReply {
-	mkBtn := func(label, data string) map[string]string {
-		return map[string]string{"text": label, "callback_data": data}
+	mkBtn := func(label, data string) map[string]any {
+		return map[string]any{"text": label, "callback_data": data}
 	}
 	// The Copy button uses copy_text instead of callback_data —
 	// tapping it just copies the preauth key to the clipboard,
 	// no callback handler needed.
-	copyBtn := map[string]string{
+	//
+	// 2026-07-15: v0.14.1 — Telegram Bot API 7.0+ requires
+	// `copy_text` to be an OBJECT {"text": "..."}, not a
+	// bare string. We were sending it as a string and
+	// Telegram rejected the whole sendMessage with HTTP 400
+	// "Field \"copy_text\" must be of type Object" — which
+	// in turn made /add_device silently fail (sendPlain
+	// dropped the response body before the v0.14.1 logging
+	// fix landed). The button rows therefore need to be
+	// [][]map[string]any (not [][]map[string]string) so the
+	// inner copy_text map can be a typed object.
+	copyBtn := map[string]any{
 		"text":      "📋 " + i18n.T(lang, "bot.add_device.copy_button"),
-		"copy_text": preauthKey,
+		"copy_text": map[string]any{"text": preauthKey},
 	}
-	rows := [][]map[string]string{
+	rows := [][]map[string]any{
 		{copyBtn},
 		{
 			mkBtn("🐧 "+i18n.T(lang, "bot.platform.linux"), "add_device_platform:linux"),
@@ -79,7 +104,10 @@ func buildPlatformPicker(lang, preauthKey string) *PendingReply {
 			mkBtn("🤖 "+i18n.T(lang, "bot.platform.android"), "add_device_platform:android"),
 		},
 	}
-	return &PendingReply{InlineKeyboard: rows}
+	// ParseMode=HTML so the <code>key</code> in the bot.add_device.ok
+	// string is rendered as a monospace block (Telegram draws
+	// it that way) and is easy to long-press on mobile.
+	return &PendingReply{InlineKeyboard: rows, ParseMode: "HTML"}
 }
 
 // renderPlatformInstructions returns the per-platform install

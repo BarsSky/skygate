@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"skygate/internal/headscale"
+	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
+	"skygate/internal/sidecar"
 )
 
 // BotEnv is the read-only context HandleCommand needs beyond the
@@ -67,6 +69,44 @@ type BotEnv struct {
 	// status/nodes/rules/audit without writes. Write commands guard
 	// against nil and reply with a clear hint.
 	HS *headscale.Client
+
+	// 2026-07-16: v0.12.1 — per-user headscale client routing.
+	// Populated by RealNotifier.env() from a closure the App
+	// installs at startup. Returns the *headscale.Client to use
+	// for the given portal user id (their per-plane override
+	// from portal_users.headscale_url + headscale_api_key_enc,
+	// or the global default if no override). Bot handlers
+	// should call env.userHS() instead of reading env.HS
+	// directly so a per-user /add_device routes the preauth
+	// key issuance to the right control plane.
+	//
+	// nil is valid and means "no per-user routing" — the bot
+	// then uses env.HS (the global default) for every
+	// command. Backward compatible with v0.12.0 single-plane
+	// deploys that don't call SetHSForUser.
+	HSForPortalUser func(userID int64) *headscale.Client
+	// 2026-07-16: v0.13.0 — per-user plane-URL routing.
+	// Parallel to HSForPortalUser: returns the headscale_url
+	// the given portal user is on ("" = global default).
+	// Used by env.userPlaneURL() so the bot's ACL pipeline
+	// can scope acl.GenerateACLForPlane to the right
+	// identities (headscale rejects unknown identities
+	// in tagOwners). nil falls through to "".
+	PortalPlaneURL func(userID int64) string
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar. The
+	// /mysubnet provision subcommand calls this to issue
+	// a per-user preauth key. nil is valid (the bot then
+	// returns a hint to ask the admin to use the web UI
+	// /admin/users/{id}/subnet Provision button).
+	Sidecar *sidecar.Manager
+
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// The /headscale command reads the monitor's
+	// Snapshot() to render the pinned-vs-latest
+	// summary + history. nil is valid (the bot then
+	// returns a "disabled" hint pointing at the env
+	// vars to set).
+	HeadscaleUpdateMonitor *headscale_version.Monitor
 
 	// 2026-07-13: Этап 11 part 2b — per-device and total rule
 	// caps, snapshotted from the App's *config.Config at startup.
@@ -145,6 +185,70 @@ type BotEnv struct {
 // 2026-07-13: Этап 13.
 var pendingReplyForCurrentMessage *PendingReply
 
+// splitMessageMarker is the sentinel that a reply function
+// uses to mark where one Telegram message ends and the next
+// begins. The send path (RealNotifier.sendPlain + reply) splits
+// the body on this marker and sends each part as a separate
+// sendMessage call. Used by long replies like /help (which
+// splits into 3 messages: Auth / User-scope / Admin) so each
+// "form" is short and scannable on mobile.
+//
+// 2026-07-16: v0.16.5 — "split long replies" pass. The operator
+// reported that on a phone, /help and other long replies are
+// hard to read because the text is small and packed into one
+// bubble. Telegram doesn't support font-size changes (the only
+// "big" text is the per-message Big Emoji mode), so the cleanest
+// fix is to break long replies into multiple shorter messages.
+// Each section gets its own bubble and is easier to scan at
+// default font size.
+//
+// The marker is a non-printing string with a unique prefix
+// (so it can never collide with real user content), padded with
+// newlines so each part stands on its own. The send path
+// trims the marker itself (it's never visible in Telegram) and
+// any extra blank lines around the split point.
+const splitMessageMarker = "\n\n\x00SPLIT\x00\n\n"
+
+// markHTMLReply sets the next reply's parse_mode to "HTML"
+// so Telegram renders the <b>/<i>/<pre>/<code> tags in
+// the body. Call from any reply function that uses
+// Field()/Section()/PreLinesRaw() (the "more HTML" pass
+// helpers in format.go) — without parse_mode=HTML, the
+// tags show up as literal text in the chat and the
+// message reads as raw source code.
+//
+// The function is a no-op if the pending slot is already
+// populated (e.g. /myexitnodes sets an inline-keyboard
+// for the same reply); in that case we just set the
+// ParseMode field on the existing struct, so callers
+// don't have to special-case "do I have a keyboard or
+// not".
+//
+// 2026-07-16: v0.16.2 — "more HTML" pass bug fix. The
+// v0.16.1 release added the HTML formatting helpers but
+// did not set parse_mode on the sendMessage payload, so
+// /my_status, /my_rules, /my_quota, /myexitnodes,
+// /my_nodes, /version, /audit, /exit_nodes_health all
+// rendered their <b> and <code> as literal text. The
+// fix is a single opt-in per reply function (call
+// markHTMLReply() at the top).
+//
+// Why opt-in instead of a global default: many replies
+// (e.g. /help, /bind errors, the welcome card) use
+// literal "<" characters as placeholders in their
+// catalog text (like "<id>" or "<chat_id>"). Telegram
+// rejects messages with unbalanced < or & in
+// parse_mode=HTML — so a global default would break
+// those replies. The opt-in keeps HTML off for
+// literal-text replies and on for the structured ones.
+func markHTMLReply() {
+	if pendingReplyForCurrentMessage == nil {
+		pendingReplyForCurrentMessage = &PendingReply{ParseMode: "HTML"}
+	} else {
+		pendingReplyForCurrentMessage.ParseMode = "HTML"
+	}
+}
+
 // PendingReply carries the optional inline-keyboard markup
 // for a bot reply. 2026-07-13: Этап 13 — added for the
 // /start <token> confirmation prompt. 2026-07-14: Этап 14
@@ -160,7 +264,23 @@ type PendingReply struct {
 	// under reply_markup.inline_keyboard. We build the rows
 	// here (server-side) so the polling loop can include
 	// them verbatim in the sendMessage payload.
-	InlineKeyboard [][]map[string]string
+	//
+	// 2026-07-15: changed from [][]map[string]string to
+	// [][]map[string]any so the inner "copy_text" field
+	// (Telegram Bot API 7.0+) can be a typed object
+	// {"text": "..."} rather than a bare string. A bare
+	// string triggers a 400 from sendMessage with
+	// "Field \"copy_text\" must be of type Object" — which
+	// silently dropped the entire /add_device reply in
+	// production until the v0.14.1 logging fix.
+	InlineKeyboard [][]map[string]any
+	// ParseMode is "HTML" or "MarkdownV2" if the text uses
+	// Telegram's entity syntax. Empty (the common case) =
+	// plain text. 2026-07-15: v0.14.1 — added so /add_device
+	// can render the preauth key inside <code>...</code>
+	// for easier mobile selection, without making every
+	// other bot reply opt into HTML.
+	ParseMode string
 }
 
 // IsIdentified returns true when the bot knows which Telegram chat
@@ -203,6 +323,55 @@ func (e BotEnv) MaxFor(username string) int {
 	return e.DefaultMax
 }
 
+// userHS returns the *headscale.Client to use for the bound
+// portal user. When HSForPortalUser is set AND the chat is
+// bound (PortalUserID > 0), it returns the per-user plane
+// (from portal_users.headscale_url + headscale_api_key_enc,
+// or the global default if the user has no override). When
+// HSForPortalUser is nil (no per-user routing wired) or the
+// chat is unbound, it falls back to env.HS.
+//
+// 2026-07-16: v0.12.1 — every bot handler that previously
+// read env.HS directly should now call env.userHS() so a
+// per-user /add_device issues the preauth key on the
+// right control plane.
+func (e BotEnv) userHS() *headscale.Client {
+	if e.HSForPortalUser != nil && e.PortalUserID > 0 {
+		if c := e.HSForPortalUser(e.PortalUserID); c != nil {
+			return c
+		}
+	}
+	return e.HS
+}
+
+// userPlaneURL returns the headscale_url the bound portal
+// user is on ("" = global default). Used by the bot's
+// ACL pipeline to scope acl.GenerateACLForPlane to the
+// right identities — headscale rejects unknown identities
+// in tagOwners, so a per-user /add_rule must push a
+// policy that only contains the user's own plane's
+// identities.
+//
+// 2026-07-16: v0.13.0.
+func (e BotEnv) userPlaneURL() string {
+	if e.PortalPlaneURL != nil && e.PortalUserID > 0 {
+		return e.PortalPlaneURL(e.PortalUserID)
+	}
+	return ""
+}
+
+// userTargetPlaneURL returns the plane URL for a specific
+// portal user id (used by admin commands that act on
+// another user — e.g. /add_rule alice 1.2.3.4). Falls
+// through to "" (global default) when the per-user
+// routing isn't wired.
+func (e BotEnv) userTargetPlaneURL(userID int64) string {
+	if e.PortalPlaneURL != nil && userID > 0 {
+		return e.PortalPlaneURL(userID)
+	}
+	return ""
+}
+
 // 2026-07-14: Этап 14 v9 — butler voice v2 envelope.
 //
 // Every command reply now goes through the butler envelope:
@@ -243,6 +412,9 @@ var commandContext = map[string]string{
 	"/rules":             "registry",
 	"/audit":             "registry",
 	"/exit_nodes":        "registry",
+	"/exit_nodes_health": "registry",
+	"/sync_nodes":        "registry",
+	"/headscale":         "version", // v0.20.0 — same envelope as /version (build/status info)
 	"/quota":             "registry",
 	"/ack":               "ack",
 	"/restart":           "err", // operator warning
@@ -254,6 +426,7 @@ var commandContext = map[string]string{
 	"/my_rules":          "registry",
 	"/my_quota":          "registry",
 	"/myexitnodes":       "registry",
+	"/mysubnet":          "registry",
 	"/add_device":        "add",
 	"/add_rule":          "add",
 	"/delrule":           "del",
@@ -269,6 +442,11 @@ var commandContext = map[string]string{
 	"/lang":              "registry",
 	"/_bind_cancel":      "bind",
 	"/unbind_self":       "unbind",
+	"/invite":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/accept":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/invites":           "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/mesh":              "registry",  // 2026-07-20: v0.22.0 — shared network mesh
+	"/meshes":            "registry",  // 2026-07-20: v0.22.0 — shared network mesh
 	// meta
 	"/version":           "version",
 	"/help":              "codex",
@@ -373,8 +551,12 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 	// /help command itself can be called by anyone.
 	adminOnly := map[string]bool{
 		"/status": true, "/nodes": true, "/rules": true, "/audit": true,
-		"/exit_nodes": true, "/quota": true, "/ack": true, "/restart": true,
+		"/exit_nodes": true, "/exit_nodes_health": true, "/sync_nodes": true, "/quota": true, "/ack": true, "/restart": true,
 		"/bind": true, "/unbind": true,
+		// 2026-07-20: v0.20.0 — headscale-update-monitor
+		// status (admin-only; the headscale update stream
+		// is operator-side metadata).
+		"/headscale": true,
 	}
 	if adminOnly[cmd] && env.IsIdentified() && !env.IsAdmin {
 		return cmdReply{body: i18n.Tf(env.Lang, "bot.admin_only_command", cmd), context: "err"}
@@ -398,6 +580,17 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: auditReply(env), context: lookupContext(cmd)}
 	case "/exit_nodes":
 		return cmdReply{body: exitNodesReply(env), context: lookupContext(cmd)}
+	case "/exit_nodes_health":
+		return cmdReply{body: exitNodesHealthReply(env), context: lookupContext(cmd)}
+	case "/sync_nodes":
+		return cmdReply{body: syncNodesReply(env), context: lookupContext(cmd)}
+	case "/headscale":
+		// 2026-07-20: v0.20.0 — headscale-update-monitor
+		// status (admin-only). Mirrors the /admin/headscale
+		// page: pinned vs. latest, update + breaking flags,
+		// last 3 seen releases. Useful for the operator
+		// who doesn't have a browser handy.
+		return cmdReply{body: headscaleReply(env), context: lookupContext(cmd)}
 	case "/quota":
 		return cmdReply{body: quotaReply(env), context: lookupContext(cmd)}
 	case "/ack":
@@ -419,8 +612,36 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: myQuotaReply(env), context: lookupContext(cmd)}
 	case "/myexitnodes":
 		return cmdReply{body: myExitNodesReply(env), context: lookupContext(cmd)}
+	case "/mysubnet":
+		// 2026-07-17: v0.16.0 — per-user subnets. The
+		// reply reads the denormalized portal_users
+		// columns (subnet_cidr / subnet_status /
+		// subnet_router_node_id) so the hot path is one
+		// SELECT, no JOIN on the user_subnets table.
+		// 2026-07-17: v0.16.7 — added the "provision"
+		// subcommand that issues a per-user preauth
+		// key. /mysubnet (no args) = show status.
+		// 2026-07-17: v0.17.1 — added "share <user>"
+		// and "revoke <user>" subcommands for cross-user
+		// IP-level subnet sharing.
+		if len(args) > 0 {
+			switch args[0] {
+			case "provision":
+				return cmdReply{body: mySubnetProvisionReply(env), context: lookupContext(cmd), skipWrap: true}
+			case "share":
+				return cmdReply{body: mySubnetShareReply(env, args[1:]), context: lookupContext(cmd)}
+			case "revoke":
+				return cmdReply{body: mySubnetRevokeReply(env, args[1:]), context: lookupContext(cmd)}
+			}
+		}
+		return cmdReply{body: mySubnetReply(env), context: lookupContext(cmd)}
 	case "/add_device":
-		return cmdReply{body: addDeviceReply(env, strings.Join(args, " ")), context: lookupContext(cmd)}
+		// 2026-07-16: v0.15.2 — addDeviceReply uses
+		// butlerEnvelope() which renders the <pre>key</pre>
+		// as monospace on Telegram. We set skipWrap so
+		// HandleCommand's Compose() doesn't add a second
+		// gate envelope on top of our butler gate.
+		return cmdReply{body: addDeviceReply(env, strings.Join(args, " ")), context: lookupContext(cmd), skipWrap: true}
 	case "/add_rule":
 		return cmdReply{body: addRuleReply(env, args), context: lookupContext(cmd)}
 	case "/delrule":
@@ -491,6 +712,50 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		// revoking a lost device. Admin path is still
 		// /unbind <chat_id> (admin-only).
 		return cmdReply{body: unbindSelfReply(env), context: lookupContext(cmd)}
+	case "/invite":
+		// 2026-07-20: v0.21.0 — user-to-user subnet
+		// bridge, grantor side. Generates an 8-char
+		// code, prints the code + the grantee
+		// username + the 7d expiry. The grantee
+		// types the code into /accept to auto-bridge
+		// (writes a user_subnet_shares row + triggers
+		// the per-plane ACL re-apply).
+		return cmdReply{body: inviteReply(env, args), context: lookupContext(cmd)}
+	case "/accept":
+		// 2026-07-20: v0.21.0 — user-to-user subnet
+		// bridge, grantee side. Validates the code
+		// (must match the grantee username), atomically
+		// consumes it, and applies the bridge via
+		// invite.ApplyBridge.
+		return cmdReply{body: acceptReply(env, args), context: lookupContext(cmd)}
+	case "/invites":
+		// 2026-07-20: v0.21.0 — list the caller's
+		// outstanding + incoming invites. Capped
+		// at 10 rows per side.
+		return cmdReply{body: invitesListReply(env), context: lookupContext(cmd)}
+	case "/mesh":
+		// 2026-07-20: v0.22.0 — shared network mesh.
+		// Subcommands: create <name>, join <code>,
+		// leave [code]. The mesh is the N-way
+		// generalization of the v0.21.0 invite
+		// bridge; ACL integration lives in
+		// internal/acl/acl.go (mesh_memberships
+		// extend the per-user dst list).
+		if len(args) > 0 {
+			switch args[0] {
+			case "create":
+				return cmdReply{body: meshCreateReply(env, args[1:]), context: lookupContext(cmd)}
+			case "join":
+				return cmdReply{body: meshJoinReply(env, args[1:]), context: lookupContext(cmd)}
+			case "leave":
+				return cmdReply{body: meshLeaveReply(env, args[1:]), context: lookupContext(cmd)}
+			}
+		}
+		return cmdReply{body: i18n.T(env.Lang, "bot.mesh.usage"), context: lookupContext(cmd)}
+	case "/meshes":
+		// 2026-07-20: v0.22.0 — list the caller's
+		// active meshes (newest first, 10 max).
+		return cmdReply{body: meshesListReply(env), context: lookupContext(cmd)}
 	default:
 		return cmdReply{body: i18n.Tf(env.Lang, "bot.unknown_command", cmd), context: "err"}
 	}
@@ -543,6 +808,9 @@ func statusReply(env BotEnv) string {
 	if err := env.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success=1`).Scan(&lastACL); err != nil {
 		return i18n.Tf(env.Lang, "bot.status.db_error", err)
 	}
+	// 2026-07-16: v0.15.2 — gate envelope is applied by
+	// Compose() in HandleCommand. We just return the body
+	// (4 short data lines) and let the v2 envelope wrap it.
 	return i18n.T(env.Lang, "bot.status.header") + "\n" +
 		i18n.Tf(env.Lang, "bot.status.rules", totalRules) + "\n" +
 		i18n.Tf(env.Lang, "bot.status.users", totalUsers) + "\n" +
@@ -555,67 +823,213 @@ func statusReply(env BotEnv) string {
 // callers (legacy single-chat deploys) see the full list collapsed
 // into one section.
 //
+// 2026-07-15: v0.14.0 — restructured to a real table-like layout:
+// section headers (★/🔐/🛠), aligned command+description columns,
+// and an opening "command-list" header with a Telegram-native
+// code-style hint. The plain-text version uses Unicode alignment
+// (4-space gutter + ≥ 2 spaces between command and description)
+// so it renders as a table in any Telegram client without
+// requiring parse_mode.
+//
+// The previous v0.10.4 "butler-gatekeeper" version (with the
+// warden's sigil + codex-style "Your top three" intro) is the
+// inspiration for the ✦/✧/🪶 glyphs but kept lighter for the
+// MVP: the operator asked for a tabular list, not a personality
+// piece.
+//
 // Этап 12 (2026-07-13): strict mode is reflected in the auth
 // section. An unidentified chat in a strict deploy sees only
 // /login /start /help /version — every other command is locked
 // until they bind.
 //
-// 2026-07-14: Этап 14 v5 — every visible string now goes
-// through i18n.T(env.Lang, "bot.help.*"). The layout is
-// preserved from the previous helpReply (the v0.10.4
-// butler-gatekeeper version with section headers lives on
-// the v0.10.4 branch; the bot-i18n-v5 branch keeps the
-// simpler "Commands (all)" / "Your commands" labels so the
-// MVP is shippable, and the personality layer is upgraded
-// separately).
+// 2026-07-16: v0.15.5 — gutter widened to 18 chars (max command
+// `/exit_nodes_health` is 17 chars) and the duplicate `\`<cmd>\`` in
+// every EN description was dropped. The gutter now carries the
+// command name; the description is the explanation. Inline
+// sub-commands (like `/clearrules confirm`) are still back-ticked
+// for clarity. `/unbind_self` was missing from /help; added under
+// the Auth section since it's a self-service command any identified
+// user can run.
+//
+// 2026-07-16: v0.16.3 — "more HTML" pass for /help. The reply
+// now renders each section as a tabular <pre> block (command +
+// description in monospace, columns aligned), preceded by a <b>
+// section header. The catalog backticks (`<id>`, `<target>`,
+// etc.) are converted to <code>...</code> (HTML-escaped < >)
+// so they render as monospace too. The 18-char gutter moves
+// INSIDE the <pre> block so alignment survives the
+// proportional→monospace switch. The header before the table
+// is the <b>section name</b> (was a plain "🔐 Auth — ..." line
+// before; same shape, just bold + the table is below it).
+//
+// 2026-07-16: v0.16.5 — split into multiple messages. The
+// operator reported that on a phone, the single-bubble /help
+// is hard to read because Telegram's default font is small
+// and the three sections all share one screen real estate.
+// We now send each section as its own message bubble (Auth
+// in message #1, User-scope in #2, Admin in #3). Telegram
+// doesn't support font-size changes (the only "big" text
+// is the per-message Big Emoji mode), but multiple shorter
+// bubbles are easier to scan at default font size than one
+// long bubble. The splitMessageMarker sentinel marks the
+// boundary; the send path (RealNotifier.reply) splits on
+// it and issues separate sendMessage calls.
+//
+// Rationale: the v0.16.1/v0.16.2 "more HTML" pass left /help
+// in plain text, so the catalog's markdown backticks showed up
+// as raw `\`<id>\`` characters. The v0.16.2 hotfix for
+// /my_rules et al. didn't touch /help because the helper
+// would have rejected the literal `<` from the placeholders
+// in parse_mode=HTML. The fix is two-pronged:
+//   1) catalog: every backtick inside bot.help.* is now
+//      `<code>...</code>` (with &, <, > escaped inside),
+//   2) reply: tabular <pre> blocks per section so the
+//      command column lines up on every Telegram client
+//      (Telegram's <pre> uses a fixed-pitch font).
+//   3) v0.16.5: split into multiple bubbles so each
+//      section gets its own screen on mobile.
 func helpReply(env BotEnv) string {
+	// 2026-07-16: v0.16.3 — mark HTML so the <b>, <i>,
+	// <pre>, <code> in the body render instead of
+	// showing as raw source. The "more HTML" pass for
+	// the read commands did this; /help is the last
+	// big plain-text reply and benefits from the same
+	// treatment now that the catalog is HTML-safe.
+	markHTMLReply()
 	lang := env.Lang
-	// Each catalog key already includes the leading "/cmd — " or
-	// "/cmd <arg> — " prefix, so we just concatenate. This is the
-	// MVP layout: a plain command list with one line per
-	// command. The full butler-gatekeeper "codex" layout (with
-	// section headers, "Your top three", and the warden's sigil)
-	// lives on the v0.10.4 branch and is a future upgrade once
-	// the bot i18n MVP is shipping and verified.
-	common := i18n.T(lang, "bot.help.common_version") + "\n" +
-		i18n.T(lang, "bot.help.common_help") + "\n" +
-		i18n.T(lang, "bot.help.lang")
-	auth := i18n.T(lang, "bot.help.auth_login") + " (paste the key from /my/telegram)\n" +
-		"/start <key> — same as /login, Telegram UX convention"
-	userScope := i18n.T(lang, "bot.help.user_top_my_status") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_my_nodes") + "\n" +
-		i18n.T(lang, "bot.help.user_top_my_rules") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_my_quota") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_myexitnodes") + " with [default] marker\n" +
-		i18n.T(lang, "bot.help.user_rest_add_device") + "\n" +
-		i18n.T(lang, "bot.help.user_top_add_rule") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_delrule") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_clearrules") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_setdefaultdevice") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_defaultdevice") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_setexitnode") + "\n" +
-		i18n.T(lang, "bot.help.user_rest_defaultexitnode")
-	adminScope := i18n.T(lang, "bot.help.admin_top_status") + "\n" +
-		i18n.T(lang, "bot.help.admin_top_nodes") + "\n" +
-		i18n.T(lang, "bot.help.admin_top_exit_nodes") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_rules") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_quota") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_audit") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_ack") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_restart") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_bind") + "\n" +
-		i18n.T(lang, "bot.help.admin_rest_unbind")
-	// Three layouts:
-	//   - unidentified + strict mode: only auth + common (locked)
-	//   - identified non-admin: auth + common + user-scope
-	//   - admin (identified or legacy unidentified): all four
+
+	// Gutter for the command column inside <pre> blocks.
+	// 20 chars = max command "/exit_nodes_health" (17) +
+	// 3-char right margin. Any future longer command will
+	// just overflow into the description column; the gutter
+	// only matters for short commands (where the pad keeps
+	// descriptions left-aligned).
+	const gutter = 20
+	padCmd := func(cmd string) string {
+		if len(cmd) < gutter {
+			return cmd + strings.Repeat(" ", gutter-len(cmd))
+		}
+		return cmd
+	}
+	// table renders a <pre> block with header + rule line
+	// + data rows. Used for each of the three sections.
+	table := func(header string, rows ...string) string {
+		var lines []string
+		// No header row, no rule line — the section title
+		// above the <pre> already labels the columns
+		// (the eye learns "first column = command" from
+		// the first row). The rule line was nice but it
+		// doubled the visual noise for what is a quick
+		// command reference.
+		for _, r := range rows {
+			lines = append(lines, r)
+		}
+		return "<b>" + header + "</b>\n" + PreLinesRaw(lines...)
+	}
+	row := func(cmd, desc string) string {
+		return padCmd(cmd) + "  " + desc
+	}
+
+	// Section: Auth (everyone, even unidentified).
+	authRows := []string{
+		row("/login", i18n.T(lang, "bot.help.auth_login")),
+		row("/start", i18n.T(lang, "bot.help.auth_start")),
+		row("/lang", i18n.T(lang, "bot.help.lang")),
+		row("/help", i18n.T(lang, "bot.help.common_help")),
+		row("/version", i18n.T(lang, "bot.help.common_version")),
+		row("/unbind_self", i18n.T(lang, "bot.help.auth_unbind_self")),
+	}
+	auth := table("🔐 "+i18n.T(lang, "bot.help.section_auth"), authRows...)
+
+	// Section: User-scope (every identified user).
+	commonRows := []string{
+		row("/my_status", i18n.T(lang, "bot.help.user_top_my_status")),
+		row("/my_nodes", i18n.T(lang, "bot.help.user_rest_my_nodes")),
+		row("/my_rules", i18n.T(lang, "bot.help.user_top_my_rules")),
+		row("/my_quota", i18n.T(lang, "bot.help.user_rest_my_quota")),
+		row("/myexitnodes", i18n.T(lang, "bot.help.user_rest_myexitnodes")),
+		row("/add_device", i18n.T(lang, "bot.help.user_rest_add_device")),
+		row("/add_rule", i18n.T(lang, "bot.help.user_top_add_rule")),
+		row("/delrule", i18n.T(lang, "bot.help.user_rest_delrule")),
+		row("/clearrules", i18n.T(lang, "bot.help.user_rest_clearrules")),
+		row("/setdefaultdevice", i18n.T(lang, "bot.help.user_rest_setdefaultdevice")),
+		row("/defaultdevice", i18n.T(lang, "bot.help.user_rest_defaultdevice")),
+		row("/setexitnode", i18n.T(lang, "bot.help.user_rest_setexitnode")),
+		row("/defaultexitnode", i18n.T(lang, "bot.help.user_rest_defaultexitnode")),
+		// 2026-07-20: v0.22.0 — mesh (shared network).
+		// create / join / leave are subcommands of
+		// /mesh; /meshes lists the caller's active
+		// meshes. Same pattern as /mysubnet
+		// (status / provision / share / revoke).
+		row("/mesh create", i18n.T(lang, "bot.help.user_rest_mesh_create")),
+		row("/mesh join", i18n.T(lang, "bot.help.user_rest_mesh_join")),
+		row("/mesh leave", i18n.T(lang, "bot.help.user_rest_mesh_leave")),
+		row("/meshes", i18n.T(lang, "bot.help.user_rest_meshes")),
+		// 2026-07-20: v0.21.0 — user-to-user bridge.
+		// Same shape as the v0.17.1 admin share but
+		// the user drives the flow (no admin UI).
+		row("/invite", i18n.T(lang, "bot.help.user_rest_invite")),
+		row("/accept", i18n.T(lang, "bot.help.user_rest_accept")),
+		row("/invites", i18n.T(lang, "bot.help.user_rest_invites")),
+	}
+	common := table("✦ "+i18n.T(lang, "bot.help.section_common"), commonRows...)
+
+	// Section: Admin (skyadmin only).
+	adminRows := []string{
+		row("/status", i18n.T(lang, "bot.help.admin_top_status")),
+		row("/nodes", i18n.T(lang, "bot.help.admin_top_nodes")),
+		row("/exit_nodes", i18n.T(lang, "bot.help.admin_top_exit_nodes")),
+		row("/exit_nodes_health", i18n.T(lang, "bot.help.admin_top_exit_nodes_health")),
+		row("/sync_nodes", i18n.T(lang, "bot.help.admin_top_sync_nodes")),
+		row("/rules", i18n.T(lang, "bot.help.admin_rest_rules")),
+		row("/quota", i18n.T(lang, "bot.help.admin_rest_quota")),
+		row("/audit", i18n.T(lang, "bot.help.admin_rest_audit")),
+		row("/ack", i18n.T(lang, "bot.help.admin_rest_ack")),
+		row("/restart", i18n.T(lang, "bot.help.admin_rest_restart")),
+		row("/bind", i18n.T(lang, "bot.help.admin_rest_bind")),
+		row("/unbind", i18n.T(lang, "bot.help.admin_rest_unbind")),
+	}
+	admin := table("🛠 "+i18n.T(lang, "bot.help.section_admin"), adminRows...)
+
+	// 2026-07-16: v0.16.5 — split into multiple
+	// bubbles. The first bubble carries the title
+	// + subtitle + the Auth section; subsequent
+	// bubbles carry the User-scope and Admin
+	// sections. Strict-mode locked layout: only
+	// the locked note + Auth (single bubble).
+	//
+	// 3-bubble layout (admin):
+	//   #1: <b>title</b> + <i>subtitle</i> + Auth table
+	//   #2: User-scope table
+	//   #3: Admin table
+	//
+	// 2-bubble layout (user):
+	//   #1: <b>title</b> + <i>subtitle</i> + Auth table
+	//   #2: User-scope table
+	//
+	// 1-bubble layout (locked):
+	//   #1: <b>title</b> + <i>subtitle</i> + locked note + Auth
+
+	title := "<b>" + i18n.T(lang, "bot.help.header") + "</b>"
+	subtitle := "<i>" + i18n.T(lang, "bot.help.subtitle") + "</i>"
+
 	switch {
 	case !env.IsIdentified() && env.StrictMode:
-		return "🔒 " + i18n.T(lang, "bot.help.strict_locked_note") + "\n\n" +
-			auth + "\n\n" + common
+		// Locked layout: single bubble.
+		return title + "\n" + subtitle + "\n\n" +
+			"🔒 " + i18n.T(lang, "bot.help.strict_locked_note") + "\n\n" + auth
 	case !env.IsIdentified() || env.IsAdmin:
-		return "Commands (all):\n\n" + common + "\n\n" + auth + "\n\n" + userScope + "\n\n" + adminScope
+		// Admin: 3 bubbles (Auth / User-scope / Admin).
+		// The title + subtitle are in the first bubble
+		// (so the user knows which command produced
+		// this burst of messages). The Auth section
+		// follows in the same bubble. The User-scope
+		// and Admin sections each get their own bubble.
+		first := title + "\n" + subtitle + "\n\n" + auth
+		return first + splitMessageMarker + common + splitMessageMarker + admin
 	default:
-		return "Your commands:\n\n" + common + "\n\n" + auth + "\n\n" + userScope
+		// User: 2 bubbles (Auth / User-scope).
+		first := title + "\n" + subtitle + "\n\n" + auth
+		return first + splitMessageMarker + common
 	}
 }

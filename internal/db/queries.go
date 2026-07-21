@@ -129,8 +129,100 @@ const (
 const (
 	qSelectUserByName      = `SELECT id, password_hash, is_admin FROM portal_users WHERE username = ?`
 	qSelectUserIDByName    = `SELECT id FROM portal_users WHERE username = ?`
-	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme FROM portal_users ORDER BY id`
+	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme, subnet_cidr, subnet_status, subnet_router_node_id FROM portal_users ORDER BY id`
 	qSelectPortalUsernames = `SELECT username FROM portal_users ORDER BY id`
+	// 2026-07-16: v0.13.0 — per-plane ACL. qSelectPortalUsernamesForPlane
+	// returns usernames of every portal user on a given control plane
+	// ("" = the global default, matched against rows with no override).
+	// Used by acl.GenerateACLForPlane to build a policy that only
+	// includes identities on that plane — headscale rejects
+	// unknown identities, so we can't mix plane A and plane B
+	// identities in one policy.
+	qSelectPortalUsernamesForPlane = `SELECT username FROM portal_users WHERE headscale_url = ? OR (headscale_url = '' AND ? = '') ORDER BY id`
+	// 2026-07-17: v0.17.0 — per-user subnet CIDR. Joins
+	// portal_users (for username + plane) with user_subnets
+	// (for the per-user 10.0.<uid>.0/24 CIDR). LEFT JOIN
+	// because most users don't have a subnet allocated
+	// yet — we just want the cidr (NULL/empty if absent).
+	// The ACL builder uses this to extend the per-user
+	// `dst: [user:*]` rule to `dst: [user:*, 10.0.<uid>.0/24:*]`
+	// for users with a subnet.
+	qSelectUserSubnetsForPlane = `
+		SELECT p.username, COALESCE(s.cidr, '')
+		  FROM portal_users p
+		  LEFT JOIN user_subnets s ON s.user_id = p.id
+		 WHERE p.headscale_url = ? OR (p.headscale_url = '' AND ? = '')
+		 ORDER BY p.id`
+	// 2026-07-17: v0.17.1 — for each user on the plane,
+	// return the list of (grantor, cidr) tuples that
+	// the grantee is allowed to access. The ACL builder
+	// in v0.17.0 reads this to extend each user's
+	// per-user dst list with every grantor's CIDR.
+	// Returns one row per (grantee, grantor) pair
+	// (zero rows if the grantee has no shares — the
+	// caller treats that as "no extra dst entries").
+	// LEFT JOIN is NOT needed: a share row only
+	// exists if the grantor has a subnet (Grant
+	// pre-checks this), and we don't want to surface
+	// shares whose grantor has since had their
+	// subnet disabled. So inner join is the right
+	// choice — the acl builder trusts that any
+	// CIDR returned here is currently routable.
+	qSelectSharedSubnetsForPlane = `
+		SELECT p_grantee.username, p_grantor.username, s.cidr
+		  FROM user_subnet_shares sh
+		  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
+		  JOIN portal_users p_grantor ON p_grantor.id = sh.grantor_user_id
+		  JOIN portal_users p_grantee ON p_grantee.id = sh.grantee_user_id
+		 WHERE (p_grantor.headscale_url = ? OR (p_grantor.headscale_url = '' AND ? = ''))
+		   AND (p_grantee.headscale_url = ? OR (p_grantee.headscale_url = '' AND ? = ''))
+		 ORDER BY p_grantee.username, p_grantor.username`
+	// v0.22.0 — mesh (shared network) membership
+	// visibility. For every (member, other_member) pair
+	// within an active mesh on the given plane, return
+	// (member_username, other_member_username,
+	// other_member_cidr). The ACL builder reads this
+	// the same way it reads GetSharedSubnetsForPlane:
+	// for each user U on the plane, extend U's
+	// per-user dst list with the CIDR of every other
+	// member of every active mesh U belongs to.
+	//
+	// Self-pairs (U, U, U.cidr) are filtered out
+	// because the per-user rule already includes the
+	// user's own CIDR (v0.17.0). The mesh membership
+	// table has the (mesh_id, user_id) PK; the query
+	// joins mesh_members twice (once for "self" =
+	// the user, once for "other" = the other member)
+	// and the meshes table for the active-status
+	// filter. The s.cidr LEFT JOIN means a user
+	// without an allocated subnet contributes no rows
+	// to the dst extension (we can't grant access to
+	// a CIDR that doesn't exist yet).
+	//
+	// The plane filter applies to BOTH sides of the
+	// pair (both users must be on the same headscale
+	// instance — multi-plane deploys only bridge
+	// within a plane, matching the v0.17.1 share
+	// semantics).
+	qSelectMeshMembershipsForPlane = `
+		SELECT p_self.username, p_other.username, COALESCE(s_other.cidr, '')
+		  FROM mesh_members mm_self
+		  JOIN mesh_members mm_other
+		    ON mm_other.mesh_id = mm_self.mesh_id
+		   AND mm_other.user_id != mm_self.user_id
+		  JOIN meshes m ON m.id = mm_self.mesh_id
+		  JOIN portal_users p_self  ON p_self.id  = mm_self.user_id
+		  JOIN portal_users p_other ON p_other.id = mm_other.user_id
+		  LEFT JOIN user_subnets s_other ON s_other.user_id = mm_other.user_id
+		 WHERE m.status = 'active'
+		   AND (p_self.headscale_url  = ? OR (p_self.headscale_url  = '' AND ? = ''))
+		   AND (p_other.headscale_url = ? OR (p_other.headscale_url = '' AND ? = ''))
+		 ORDER BY p_self.username, p_other.username`
+	// v0.13.0 — list every distinct (url, api_key) plane with a user
+	// count. Used by the per-plane ACL pipeline to iterate all
+	// planes and push the right policy to each. Empty
+	// headscale_url = the global default.
+	qSelectControlPlanes = `SELECT headscale_url, COUNT(*) FROM portal_users GROUP BY headscale_url`
 	qSelectUserByID        = `SELECT username, headscale_user_id FROM portal_users WHERE id = ?`
 	qSelectUserNameByID    = `SELECT username FROM portal_users WHERE id = ?`
 	qSelectUserHSByID      = `SELECT headscale_user_id, username FROM portal_users WHERE id = ?`
@@ -342,9 +434,9 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectAllAPITokensForLookup = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
-	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at FROM personal_api_tokens WHERE user_id = ? ORDER BY created_at DESC`
-	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label) VALUES (?, ?, ?)`
+	qSelectAllAPITokensForLookup = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash, pt.expires_at FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
+	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at, expires_at, auto_rotate FROM personal_api_tokens WHERE user_id = ? ORDER BY created_at DESC`
+	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES (?, ?, ?, ?, ?)`
 	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = ? AND user_id = ?`
 	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = ?`
 	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = ?`

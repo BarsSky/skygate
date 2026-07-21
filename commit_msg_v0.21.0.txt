@@ -1,0 +1,158 @@
+v0.21.0 — user-to-user subnet bridge (invite codes + bot /invite + /accept + /admin/invites)
+
+Closes the third feature the operator asked for
+in the 2026-07-20 backlog message (alongside the
+v0.20.0 headscale-update-monitor + auto-allocate
+subnet). The v0.17.1 admin-mediated "share" path
+is unchanged; v0.21.0 adds the user-mediated
+path: A generates a code, B types it in the bot,
+the bridge auto-applies.
+
+## Flow
+
+1. A (any identified user) runs `/invite <username>`.
+   skygate creates an `invite_codes` row with
+   grantor=A, grantee=<username>, status=active,
+   expires_at=now+7d, and an 8-char random code
+   (32-char alphabet, ~1.1T possibilities).
+
+2. A tells B the code (Telegram DM, in person,
+   smoke signals — out of band).
+
+3. B runs `/accept <code>`. skygate validates
+   the code (active + not expired + grantee_username
+   == B.username), atomically consumes it, and
+   calls `invite.ApplyBridge`:
+   a. INSERT OR IGNORE into `user_subnet_shares`
+      (grantor=A.id, grantee=B.id) — same shape
+      as the v0.17.1 admin share, so the ACL
+      builder picks it up on the next pipeline
+      run.
+   b. ACL re-apply for every distinct
+      `headscale_url` (per-plane).
+   c. Audit log entry (`invite_bridge` action).
+
+4. The ACL now contains a per-user rule letting
+   B's tag:private devices reach A's
+   10.0.<A>.0/24. Tailscale clients pick it up
+   on their next ACL poll (usually <60s).
+
+## New surfaces
+
+- Bot `/invite <username>` — generate a code,
+  reply shows code + grantee + expiry.
+- Bot `/accept <code>` — consume a code, reply
+  shows the bridge result.
+- Bot `/invites` — list the caller's outstanding
+  + incoming invites (10 per side).
+- Page `/admin/invites` (admin-only) —
+  unfiltered "show me everything" view with a
+  "Revoke" button for active rows. Audit log
+  entry on revoke (`invite_revoke` action).
+- Sidebar entry on `/dashboard`.
+
+## Schema (migration v0.42)
+
+```sql
+CREATE TABLE invite_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,             -- 8-char alphanumeric
+  grantor_user_id INTEGER NOT NULL,      -- FK portal_users
+  grantee_username TEXT NOT NULL,       -- target user (by name)
+  status TEXT NOT NULL DEFAULT 'active', -- active|consumed|expired|revoked
+  created_at INTEGER NOT NULL DEFAULT 0,
+  expires_at INTEGER NOT NULL DEFAULT 0,
+  consumed_at INTEGER NOT NULL DEFAULT 0,
+  consumed_by_user_id INTEGER NOT NULL DEFAULT 0,
+  audit_message TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_invite_codes_grantor
+  ON invite_codes (grantor_user_id);
+CREATE INDEX idx_invite_codes_status_expires
+  ON invite_codes (status, expires_at);
+CREATE INDEX idx_invite_codes_grantee
+  ON invite_codes (grantee_username);
+```
+
+`grantee_username` is TEXT (not an FK to
+`portal_users.id`) so the grantor can invite
+"bob" before bob has a skygate account. The
+`/accept` path resolves the username to a
+user_id at consume time.
+
+`INSERT OR IGNORE` on the `code` UNIQUE
+constraint means a (vanishingly rare)
+code-collision retry is automatic.
+
+## Files
+
+New:
+- internal/db/migrations_v0.42.go
+- internal/invite/invite.go (~370 lines) —
+  GenerateCode, CreateInvite, LookupByCode,
+  ValidateCode, ConsumeCode, RevokeInvite,
+  ListByGrantor, ListByGrantee, ListAll,
+  SweepExpired, ResolveGranteeID,
+  DistinctHeadscaleURLs.
+- internal/invite/bridge.go (~210 lines) —
+  ApplyBridge (writes user_subnet_shares +
+  triggers ACL re-apply + audit + alert).
+- internal/invite/invite_test.go — 11 unit
+  tests: code shape, uniqueness, full lifecycle,
+  self-invite, not-for-you, expired, atomic
+  consume, revoke, list, sweep, resolve.
+- internal/invite/bridge_test.go — 5 unit
+  tests: write share row, idempotent,
+  reject self-bridge, audit, notify.
+- internal/handlers/admin_invites.go —
+  GetAdminInvites + PostAdminInvitesRevoke.
+- internal/handlers/templates/admin/invites.html.
+- internal/telegram/commands_invite.go —
+  inviteReply, acceptReply, invitesListReply.
+
+Modified:
+- internal/db/db.go — migration v0.42
+  registered.
+- internal/telegram/commands.go — `/invite`,
+  `/accept`, `/invites` in the dispatch table
+  + `commandContext` map.
+- internal/handlers/templates/dashboard.html —
+  sidebar entry.
+- internal/i18n/catalog.go — 32 new keys
+  (RU+EN), catalog parity test green.
+- scripts/smoke.sh — `/admin/invites` added
+  to the admin pages loop and HTML render
+  check loop.
+
+## Tests
+
+* `go test ./...` — all packages PASS
+  (invite, i18n catalog parity, handlers,
+  telegram, etc).
+* `internal/invite/invite_test.go` — 11 tests
+  cover the full lifecycle.
+* `internal/invite/bridge_test.go` — 5 tests
+  cover the share-row + audit + notify + ACL
+  scope paths.
+
+## Verification plan
+
+- `go build ./...` clean.
+- `go test ./...` PASS (12 packages).
+- `make test` on VM: smoke 124/124 (EN 62 +
+  RU 62) once `/admin/invites` is added to
+  the smoke script.
+- Live: create a test user `v0210test_*`,
+  generate `/invite v0210test_*` as skyadmin,
+  run `/accept <code>` as the test user,
+  verify `user_subnet_shares` has the new row,
+  verify `/admin/invites` shows the consumed
+  row.
+
+Refs: operator's 2026-07-20 message ("также
+раз пользователи будут в разных подлсетях
+необходим также мехнаизм что позволит
+пользователям объединять свои устройства в
+локальную подсеть по ключу или коду а также
+иметь возможность найти друг друга зная
+пользовательское имя или имея приглашение").

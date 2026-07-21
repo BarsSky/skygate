@@ -36,6 +36,46 @@ func nodesReply(env BotEnv) string {
 	if err != nil {
 		return i18n.Tf(lang, "bot.nodes.db_error", err)
 	}
+	// 2026-07-15: Этап 14 v13 — lazy backfill (hostname + tag).
+	// Same pattern as myNodesReply: one headscale round-trip feeds
+	// both backfills. See db.SyncTagsFromHeadscale for why the
+	// tag update closes the v0.10.11 regression (PostAdminNodeTag
+	//'s "tagged-devices" guard skipped the row update for
+	// admin-tagged devices, so the bot's view drifted from the
+	// headscale truth).
+	if env.userHS() != nil {
+		hsView := listAllNodesForBackfill(env.userHS())
+		if len(hsView) > 0 {
+			hnMap := map[string]string{}
+			tagMap := map[string]string{}
+			for _, n := range hsView {
+				hn := n.GivenName
+				if hn == "" {
+					hn = n.Hostname
+				}
+				if hn != "" {
+					hnMap[n.ID] = hn
+				}
+				if len(n.Tags) > 0 {
+					tagMap[n.ID] = n.Tags[0]
+				}
+			}
+			if db.AnyHostnameEmpty(owners) {
+				if n, berr := db.BackfillEmptyHostnames(d, hnMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListAllNodeOwners(d); rerr == nil {
+						owners = refreshed
+					}
+				}
+			}
+			if db.AnyTagStale(owners, tagMap) {
+				if n, berr := db.SyncTagsFromHeadscale(d, tagMap); berr == nil && n > 0 {
+					if refreshed, rerr := db.ListAllNodeOwners(d); rerr == nil {
+						owners = refreshed
+					}
+				}
+			}
+		}
+	}
 	type key struct{ user, tag string }
 	byGroup := map[key][]string{}
 	order := []key{}
@@ -125,6 +165,17 @@ func rulesReply(env BotEnv) string {
 // creation/deletion, password reset, telegram save/disable, ACL
 // rollback, etc). Created_at is stored as int64 unix seconds.
 func auditReply(env BotEnv) string {
+	// 2026-07-16: v0.16.2 — mark HTML so the <b>ID DATE
+	// ACTION BY</b> header row + the <i>──────</i>
+	// separator in PreLinesRaw() render.
+	// 2026-07-16: v0.16.5 — split into 2 bubbles if more
+	// than 10 entries. The audit log can list 20 entries
+	// (the LIMIT 20 in the query), which on a phone screen
+	// scrolls past the fold; the operator reported that
+	// /help and other long replies are hard to scan at
+	// default font size. Splitting at 10 entries gives
+	// 2 focused bubbles of 10 each.
+	markHTMLReply()
 	lang := env.Lang
 	rows, err := env.DB.Query(`
 		SELECT id, COALESCE(username, '?') AS username, action, detail, created_at
@@ -152,15 +203,119 @@ func auditReply(env BotEnv) string {
 	if len(entries) == 0 {
 		return i18n.T(lang, "bot.audit.empty")
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", i18n.T(lang, "bot.audit.header"))
+
+	// 2026-07-16: v0.16.x — "more HTML" pass. The audit
+	// list is tabular data; we render it as a <pre>
+	// block with column-aligned headers. Telegram's
+	// <pre> uses a fixed-pitch font on all clients, so
+	// the column widths in the format strings
+	// determine the visual alignment.
+	//
+	// Format:
+	//   <pre>
+	//   ID    DATE (UTC)        ACTION            BY
+	//   ────────────────────────────────────────────
+	//   #1234 2026-07-16 13:45  token_create      alice
+	//   #1233 2026-07-16 13:42  user_create      skyadmin
+	//   </pre>
+	//
+	// Detail (long strings) goes below the row, indented.
+	// The header row is a separate <b>line so it doesn't
+	// get lost in the monospace block.
+	const (
+		colID    = "#%-6d"
+		colWhen  = "%-16s"
+		colAct   = "%-18s"
+		colBy    = "%s"
+	)
+	header := fmt.Sprintf(
+		"<b>"+colID+"  "+colWhen+"  "+colAct+"  "+colBy+"</b>",
+		0, "DATE (UTC)", "ACTION", "BY",
+	)
+	rule := strings.Repeat("─", 6+2+16+2+18+2+12)
+	var lines []string
+	lines = append(lines, header, "<i>"+rule+"</i>")
 	for _, e := range entries {
 		when := time.Unix(e.ts, 0).UTC().Format("2006-01-02 15:04")
-		det := e.det
-		if len(det) > 80 {
-			det = det[:77] + "..."
+		who := e.username
+		if who == "" || who == "?" {
+			who = "—"
 		}
-		fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.audit.row", e.id, when, e.action, e.username, det))
+		lines = append(lines, fmt.Sprintf(
+			colID+"  "+colWhen+"  "+colAct+"  "+colBy,
+			e.id, when, e.action, who,
+		))
+		// Detail: long strings go below, truncated to
+		// 60 chars (Telegram <pre> is 4096-wide; 60
+		// keeps it under 80 on a phone with the
+		// monospace font).
+		if det := e.det; det != "" {
+			if len(det) > 60 {
+				det = det[:57] + "..."
+			}
+			lines = append(lines, "    "+det)
+		}
+		lines = append(lines, "") // blank row separator
 	}
-	return trimForTelegram(sb.String())
+	// 2026-07-16: v0.16.5 — split into 2 bubbles if
+	// more than auditSplitThreshold entries. The first
+	// bubble gets the title + section header + first
+	// half; the second gets the rest. Threshold is
+	// 10 because: (a) 20 entries in one bubble is hard
+	// to scan on a phone, (b) 10 entries fits in
+	// ~30 lines of <pre> which is comfortable in one
+	// screen even at default font size, (c) under 10
+	// entries the reply is short enough that splitting
+	// would be visual noise (two short bubbles for a
+	// 5-entry log feels gratuitous).
+	const auditSplitThreshold = 10
+	body := i18n.T(lang, "bot.audit.header") + "\n\n" +
+		Section(i18n.T(lang, "bot.audit.section_recent")) + "\n" +
+		PreLinesRaw(lines...)
+	if len(entries) <= auditSplitThreshold {
+		return body
+	}
+	// Split the rendered lines at the threshold. We
+	// split the <pre> by finding the entry boundary
+	// (a blank line + a row line). Easier: re-render
+	// the two halves.
+	half := len(entries) / 2
+	firstLines := lines[:entryBoundaryIndex(lines, half)]
+	secondLines := lines[entryBoundaryIndex(lines, half):]
+	firstBody := i18n.T(lang, "bot.audit.header") + "\n\n" +
+		Section(i18n.T(lang, "bot.audit.section_recent")) + "\n" +
+		PreLinesRaw(firstLines...) + "\n\n" +
+		"<i>(" + i18n.Tf(lang, "bot.audit.split_more", len(entries)-half) + ")</i>"
+	secondBody := PreLinesRaw(secondLines...)
+	return firstBody + splitMessageMarker + secondBody
+}
+
+// entryBoundaryIndex returns the line index at which to
+// split the audit <pre> block so the second half starts
+// at a row boundary (not in the middle of a row's
+// detail line). We split at the first blank line that
+// follows the (splitAt)th entry's row, so the bubble
+// boundary lands between entries.
+//
+// 2026-07-16: v0.16.5.
+func entryBoundaryIndex(lines []string, splitAt int) int {
+	// Each entry occupies 2 lines (row + detail) + 1
+	// blank line separator. Walk the slice counting
+	// rows and stop at the first blank line AFTER the
+	// (splitAt)th row.
+	rows := 0
+	for i, l := range lines {
+		// Header row + rule line are at the top; skip.
+		if i < 2 {
+			continue
+		}
+		// A blank line marks the end of an entry.
+		if l == "" {
+			rows++
+			if rows >= splitAt {
+				return i + 1
+			}
+		}
+	}
+	return len(lines)
 }
