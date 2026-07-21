@@ -9,6 +9,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/expirewatch"
 	"skygate/internal/monitoring"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
@@ -92,6 +93,21 @@ type App struct {
 	// calls Run() which periodically approves routes + flips
 	// status active/disabled based on headscale state.
 	Sidecar *sidecar.Manager
+
+	// 2026-07-21: v0.23.3 — node-expiry watcher. The
+	// background goroutine started in cmd/skygate/main.go
+	// calls Run() which periodically (every
+	// cfg.ExpireWatchInterval, default 5m) walks every
+	// non-tagged node in headscale and extends any whose
+	// Expiry is within cfg.ExpireWatchThreshold
+	// (default 7d) out to cfg.ExpireWatchRenewal
+	// (default 30d). Works around the Tailscale 1.98.x
+	// client behaviour of sending a 2-4-second Expiry
+	// in RegisterRequest — see
+	// internal/expirewatch/manager.go for the full
+	// background. nil if the watcher is disabled
+	// (SKYGATE_EXPIREWATCH_ENABLED=false).
+	ExpireWatch *expirewatch.Manager
 
 	// 2026-07-15: v0.12.0.2 — Telegram probe result cache.
 	// The probe does a real GET to api.telegram.org with a
