@@ -33,6 +33,15 @@
   </div>
   {{end}}
 
+  {{if .Totals}}
+  <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap">
+    <span><i class="fa-solid fa-laptop"></i> {{tf "admin.subnets.total_devices" .Totals.devices}}</span>
+    <span><i class="fa-solid fa-circle-nodes"></i> {{tf "admin.subnets.total_meshes" .Totals.meshes}}</span>
+    <span><i class="fa-solid fa-share"></i> {{tf "admin.subnets.total_shares_granted" .Totals.shares_granted}}</span>
+    <span><i class="fa-solid fa-share-from-square"></i> {{tf "admin.subnets.total_shares_received" .Totals.shares_received}}</span>
+  </div>
+  {{end}}
+
   {{if .Rows}}
   <table>
     <thead>
@@ -40,11 +49,13 @@
         <th style="width:60px">{{t "admin.subnets.col_user_id"}}</th>
         <th>{{t "admin.subnets.col_username"}}</th>
         <th style="width:140px">{{t "admin.subnets.col_cidr"}}</th>
-        <th style="width:120px">{{t "admin.subnets.col_status"}}</th>
+        <th style="width:90px">{{t "admin.subnets.col_status"}}</th>
         <th style="width:140px">{{t "admin.subnets.col_router"}}</th>
-        <th style="width:240px">{{t "admin.subnets.col_dns"}}</th>
-        <th style="width:200px">{{t "admin.subnets.col_plane"}}</th>
-        <th style="width:120px">{{t "admin.subnets.col_actions"}}</th>
+        <th style="width:60px">{{t "admin.subnets.col_devices"}}</th>
+        <th style="width:60px">{{t "admin.subnets.col_meshes"}}</th>
+        <th style="width:60px">{{t "admin.subnets.col_shares"}}</th>
+        <th style="width:200px">{{t "admin.subnets.col_dns"}}</th>
+        <th style="width:100px">{{t "admin.subnets.col_actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -56,12 +67,20 @@
         <td>
           {{if eq .Subnet.Status "active"}}<span class="tag tag-success" style="font-size:10px"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>
           {{else if eq .Subnet.Status "pending"}}<span class="tag tag-warning" style="font-size:10px"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>
-          {{else if eq .Subnet.Status "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>
+          {{else if eq .Subnet.Status "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6"><i class="fa-solid fa-circle-xmark"></i> {{t "user.subnet.cell_disabled"}}</span>
           {{else}}<span class="tag" style="font-size:10px"><i class="fa-solid fa-circle-question"></i> {{.Subnet.Status}}</span>{{end}}
         </td>
         <td><code style="font-size:11px">{{if .Subnet.RouterHostname}}{{.Subnet.RouterHostname}}{{else}}—{{end}}</code></td>
+        <td style="text-align:center;font-weight:500">{{.DeviceCount}}</td>
+        <td style="text-align:center">
+          {{if .MeshCount}}<span class="tag" style="font-size:10px;background:var(--accent);color:var(--accent-fg)">{{.MeshCount}}</span>{{else}}<span style="color:var(--text-subtle)">0</span>{{end}}
+        </td>
+        <td style="text-align:center;font-size:11px">
+          {{if .SharesGranted}}<i class="fa-solid fa-share" title="shares granted"></i>{{.SharesGranted}} {{end}}
+          {{if .SharesReceived}}<i class="fa-solid fa-share-from-square" title="shares received"></i>{{.SharesReceived}}{{end}}
+          {{if and (not .SharesGranted) (not .SharesReceived)}}<span style="color:var(--text-subtle)">—</span>{{end}}
+        </td>
         <td><code style="font-size:11px">{{.DNSName}}</code></td>
-        <td><code style="font-size:11px">{{.Subnet.ControlPlaneURL}}</code></td>
         <td>
           <a href="/admin/users/{{.Subnet.UserID}}/subnet" class="btn btn-sm"><i class="fa-solid fa-arrow-right"></i> {{t "admin.subnets.view"}}</a>
         </td>
