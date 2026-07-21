@@ -7,7 +7,77 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.22.3 — subnet
+* **Current**: v0.23.0 — one-click
+  per-user headscale
+  provisioning (Phase 1)
+  ([release notes](RELEASE-NOTES-v0.23.0.md)).
+  Closes the v0.12.0 capability
+  gap that left per-user control
+  planes as a manual ssh + docker
+  + headscale CLI flow. The
+  bootstrap script
+  (`deploy/headscale-users/headscale-bootstrap.sh`)
+  creates a per-user docker
+  container (port 50450+uid%50,
+  base_domain `<username>.tsnet.skynas.ru`),
+  issues a 10-year API key, returns
+  JSON. The handler encrypts the
+  key with SKYGATE_SECRET_KEY
+  and persists to
+  `portal_users.headscale_api_key_enc`.
+  The deprovision script
+  (`headscale-deprovision.sh`)
+  tears down + preserves the
+  per-user data dir for recovery.
+  `internal/headscale/provision.go`
+  is a Go wrapper (8 unit tests,
+  all PASS). Skyadmin pilot
+  verified live: container up +
+  healthy, DB has the URL + encrypted
+  key, /admin/users/1/plane shows
+  the post-provision UI. 11/11
+  check_v0.23.0.sh steps PASS.
+  Smoke 83/83 still green. **Phase 1
+  is infrastructure only — no data
+  migration yet.** skyadmin still
+  uses the global headscale for
+  all node operations. Phase 2
+  (v0.23.1) is the data migration
+  step.
+  The "why is my subnet `pending`?"
+  release. Pre-v0.22.3 the status
+  semantics was `active` ⇔
+  subnet-router up, which left
+  every user in `pending` because
+  nobody deployed a sidecar. v0.22.3
+  flips it: `pending` ⇔ 0 devices
+  in tailnet, `active` ⇔ ≥1 device
+  (logical namespace),
+  `router_active` ⇔ bonus on top
+  (real subnet-router up too).
+  `subnet.SyncStatus(db, uid, hasRouter)`
+  encapsulates the new logic; called
+  from `backfillNodeOwnership` after
+  every `/my/devices` load. UI gets
+  colored pills (green/green/yellow/muted)
+  on `/admin/users/{id}/subnet` +
+  `/admin/users` subnet column, plus
+  a new "Your personal subnet" card
+  on `/my/devices`. 7 new unit tests
+  in `internal/subnet/manager_test.go`
+  (PendingWhenNoDevices / ActiveWhenDevices /
+  RouterActiveWhenHasRouter / DisabledPreserved
+  / NoSubnetRow / Idempotent / SetStatusAcceptsRouterActive).
+  8 files, +405/-18 lines, 7 new tests,
+  smoke 83/83 still green. For the 4
+  production users (skyadmin/michail/
+  guest/daniil) their subnets flip
+  from `pending` to `active` on the
+  next `/my/devices` load — guest
+  (0 devices) stays `pending`, which
+  is the intended behavior.
+
+* **Previous**: v0.22.3 — subnet
   status reflects device
   ownership, not subnet-router
   ([release notes](RELEASE-NOTES-v0.22.3.md)).
