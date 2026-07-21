@@ -8,42 +8,62 @@
 // future. headscale 0.29.x's HandleNodeFromAuthPath (see
 // hscontrol/state.go) applies that Expiry verbatim:
 //
-//	if !regReq.Expiry.IsZero() {
-//	    node.Expiry = &regReq.Expiry
+//	if !node.IsTagged() {
+//	    if !regReq.Expiry.IsZero() {
+//	        node.Expiry = &regReq.Expiry
+//	    }
 //	}
 //
-// The result is a node with a 2-4 second expiry. Within a few
-// seconds the next netmap push to the client reports
-// `Expired: true, MachineAuthorized: false`, the Tailscale client
-// interprets this as "your key was rejected, log out", and the
-// device goes back to NeedsLogin. The original preauth key is
-// already used (`used=true`), so re-registration is impossible.
-// The user-facing symptom is "I generated a new key, the device
-// registered, then immediately disconnected and won't come back".
+// The result is a non-tagged node with a 2-4 second expiry.
+// Within a few seconds the next netmap push to the client
+// reports `Expired: true, MachineAuthorized: false`, the
+// Tailscale client interprets this as "your key was rejected,
+// log out", and the device goes back to NeedsLogin. The
+// original preauth key is already used (`used=true`), so
+// re-registration is impossible. The user-facing symptom is
+// "I generated a new key, the device registered, then
+// immediately disconnected and won't come back".
 //
 // This was first observed on 2026-07-21 with the operator's
 // Android phone (node id=10 / SkyBars): a fresh preauth (id=108)
 // registered the node, but the 2-4s expiry dropped the device
 // before the user could even see the connection.
 //
+// The v0.23.4 fix — "skip only nil-expiry nodes"
+// ------------------------------------------------
+// The original v0.23.3 release skipped any tagged node
+// (`len(n.Tags) > 0`). That was wrong: a node can be tagged
+// at *registration* and end up with nil Expiry (tag:exit-node,
+// tag:public, tag:subnet-router). But a node that registers
+// WITHOUT a tag — the common case for user devices — gets the
+// 2-4s Expiry applied, and is *later* tagged by skygate's
+// backfill (`tag:private` once the user logs in). The result:
+// the node has both a tag AND an Expiry. v0.23.3's
+// "tagged = skip" rule then froze the Expiry, the Expiry
+// passed, the client disconnected.
+//
+// The corrected rule (v0.23.4) is simpler and correct:
+//   - if n.Expiry == "" (nil), skip — there's nothing to
+//     renew, and headscale's state.go never wrote one in
+//     the first place. This covers tag:exit-node, tag:public,
+//     tag:subnet-router, and any node on which the operator
+//     ran `headscale nodes expire -i N --disable`.
+//   - otherwise (Expiry present), apply the threshold check:
+//     if Expiry is within Threshold (default 7d), renew it to
+//     now + Renewal (default 30d); otherwise leave it alone.
+//
+// The tag set is no longer part of the skip rule. Tagged
+// nodes with a real Expiry (e.g. skybars, skybars-1,
+// Nothing Phone, Base — all `tag:private`) get renewed
+// just like untagged ones.
+//
 // The watcher
 // -----------
 // Every TickInterval (default 5m), the goroutine lists every
 // node in headscale and checks the Expiry field. For any
-// non-tagged node whose Expiry is either missing or within
-// Threshold (default 7d), it calls headscale.ExtendNodeExpiry
-// to push the expiry out to now + Renewal (default 30d).
-//
-// Tagged nodes (tag:exit-node, tag:public, tag:subnet-router,
-// tag:client) are skipped because headscale's state.go only
-// applies regReq.Expiry for non-tagged nodes:
-//
-//	if !node.IsTagged() {
-//	    if !regReq.Expiry.IsZero() { ... }
-//	}
-//
-// So tagged nodes have nil Expiry out of the box and the
-// watcher has nothing to do for them.
+// node whose Expiry is present and within Threshold (default
+// 7d), it calls headscale.ExtendNodeExpiry to push the
+// expiry out to now + Renewal (default 30d).
 //
 // The audit_log table records every renewal:
 //
@@ -197,13 +217,22 @@ func (m *Manager) Run(ctx context.Context) {
 // SyncOnce performs one full sweep. Steps:
 //
 //  1. List every node in headscale.
-//  2. For each non-tagged node, parse the Expiry field
-//     carried in NodeView (added in v0.23.3 — previously
-//     this required an extra /api/v1/node/{id} round
-//     trip per node per tick).
-//  3. If Expiry is missing or within Threshold, call
-//     ExtendNodeExpiry(now + Renewal) and append an
-//     audit row.
+//  2. For each node, parse the Expiry field carried in
+//     NodeView (added in v0.23.3 — previously this required
+//     an extra /api/v1/node/{id} round trip per node per
+//     tick).
+//  3. If Expiry is missing, skip — nothing to renew
+//     (covers tag:exit-node, tag:public, tag:subnet-router,
+//     and operator-issued --disable).
+//  4. If Expiry is within Threshold, call
+//     ExtendNodeExpiry(now + Renewal) and append an audit
+//     row.
+//
+// The tag set is intentionally NOT part of the skip rule
+// (see package doc — v0.23.4 fix). Tagged nodes like
+// tag:private (skybars, skybars-1, Nothing Phone, Base)
+// carry a real Expiry from registration and are renewed
+// just like untagged ones.
 //
 // Returns TickStats; also stores it on the Manager (under
 // mu) for LastStats() to read.
@@ -224,29 +253,29 @@ func (m *Manager) SyncOnce(ctx context.Context) error {
 	cutoff := now.Add(m.Threshold)
 
 	for _, n := range nodes {
-		// Skip tagged nodes — headscale's state.go
-		// doesn't apply regReq.Expiry to them, so
-		// their expiry is naturally nil/long-lived.
-		if isTagged(n) {
-			stats.Skipped++
-			continue
-		}
 		// Parse the node's current expiry. Headscale
 		// returns "" for nil expiry, RFC3339Nano
 		// otherwise (verified live on 2026-07-21:
 		// "2026-07-21T10:34:46.386161411Z").
 		expStr, expTime, hasExpiry := nodeExpiryFromCache(n)
-		if hasExpiry && expTime.After(cutoff) {
+		if !hasExpiry {
+			// Expiry is intentionally nil (tagged at
+			// registration, or operator ran --disable).
+			// Nothing to renew; the watcher leaves
+			// the node alone.
+			stats.Skipped++
+			continue
+		}
+		if expTime.After(cutoff) {
 			// Expiry is comfortably in the future —
 			// nothing to do.
 			stats.Skipped++
 			continue
 		}
-		// Expiring soon (or already expired, or no
-		// expiry set at all). Renew. The counters are
-		// updated AFTER the renew succeeds so a
-		// mid-flight API/CLI failure shows up as an
-		// error, not as a successful renewal.
+		// Expiring soon (or already expired). Renew.
+		// The counters are updated AFTER the renew
+		// succeeds so a mid-flight CLI failure shows
+		// up as an error, not as a successful renewal.
 		if err := m.renewOne(ctx, n, expStr, renewTo); err != nil {
 			stats.Errors++
 			stats.LastErrMsg = err.Error()
@@ -281,15 +310,11 @@ func (m *Manager) renewOne(ctx context.Context, n headscale.NodeView, oldExpiry 
 	return nil
 }
 
-// isTagged reports whether the node carries any tag at all.
-// Tagged nodes are skipped by the watcher because headscale
-// does not apply regReq.Expiry to them (see package doc).
-// We treat tag:exit-node / tag:public / tag:subnet-router /
-// tag:client the same: any tag means "this node's expiry
-// is governed by tagOwners, not by the preauth".
-func isTagged(n headscale.NodeView) bool {
-	return len(n.Tags) > 0
-}
+// isTagged was removed in v0.23.4. The old rule ("tagged
+// = skip") froze the Expiry on nodes that were registered
+// untagged (e.g. a fresh user device) and later tagged by
+// skygate's backfill. The new rule is "skip only nil-expiry
+// nodes" — see the package doc for the full story.
 
 // nodeExpiryFromCache returns the current Expiry as a string
 // (for audit) and as time.Time (for the cutoff comparison),

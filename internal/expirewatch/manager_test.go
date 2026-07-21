@@ -175,18 +175,36 @@ func TestExpireWatch_PicksOnlyNearExpiry(t *testing.T) {
 	}
 }
 
-// --- TestExpireWatch_SkipsTagged ---
+// --- TestExpireWatch_SkipsOnlyNilExpiry (v0.23.4) ---
 
-func TestExpireWatch_SkipsTagged(t *testing.T) {
+// v0.23.3 used to skip any tagged node — wrong, because a
+// node can register untagged (and pick up the Tailscale
+// 1.98.x 2-4s Expiry) and only be tagged later by skygate's
+// backfill. v0.23.4 changed the rule to "skip only when
+// Expiry is nil" so tag:private nodes like skybars /
+// skybars-1 / Nothing Phone / Base get renewed.
+//
+// The 4 sub-cases:
+//
+//  1. tagged + nil Expiry       → skip  (emilia, sharlotta)
+//  2. tagged + real Expiry      → renew (skybars-style bug)
+//  3. untagged + nil Expiry     → skip  (operator --disable)
+//  4. untagged + far Expiry     → skip  (already 30d out)
+func TestExpireWatch_SkipsOnlyNilExpiry(t *testing.T) {
 	now := time.Now()
 	nodes := []headscale.HSNode{
-		// Tagged node with 2-second expiry. Must NOT be
-		// renewed (headscale's state.go skips tagged
-		// nodes for regReq.Expiry, so their natural
-		// expiry is nil — a 2s value here is an
-		// inconsistency that the watcher does not try
-		// to "fix").
-		makeNode("11", "emilia", []string{"tag:exit-node", "tag:public"}, now.Add(2*time.Second)),
+		// (1) tagged + nil — emilia-style exit-node.
+		makeNode("11", "emilia", []string{"tag:exit-node", "tag:public"}, time.Time{}),
+		// (2) tagged + 2s — skybars-style: tag:private
+		// device that registered without a tag and
+		// picked up the 2-4s client bug. Must renew.
+		makeNode("10", "skybars", []string{"tag:private"}, now.Add(2*time.Second)),
+		// (3) untagged + nil — operator ran --disable.
+		// Must NOT renew (would override operator intent).
+		makeNode("12", "disabled", nil, time.Time{}),
+		// (4) untagged + 30d — already 30 days out.
+		// Must NOT renew.
+		makeNode("13", "fresh-30d", nil, now.Add(30*24*time.Hour)),
 	}
 	f := newFakeHS(t, nodes)
 	mgr := New(openTestDB(t), f.c, nil, time.Hour)
@@ -196,29 +214,12 @@ func TestExpireWatch_SkipsTagged(t *testing.T) {
 	if err := mgr.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce: %v", err)
 	}
-	if got := f.Renewed(); len(got) != 0 {
-		t.Errorf("renewed = %v, want 0 entries (tagged node should be skipped)", got)
+	got := f.Renewed()
+	if len(got) != 1 {
+		t.Fatalf("renewed = %v, want 1 entry (only node 10, skybars-style)", got)
 	}
-}
-
-// --- TestExpireWatch_HandlesMissingExpiry ---
-
-func TestExpireWatch_HandlesMissingExpiry(t *testing.T) {
-	// Node with no expiry at all (empty string from headscale
-	// API). The watcher renews defensively.
-	nodes := []headscale.HSNode{
-		makeNode("20", "no-expiry-node", nil, time.Time{}),
-	}
-	f := newFakeHS(t, nodes)
-	mgr := New(openTestDB(t), f.c, nil, time.Hour)
-	mgr.Threshold = 7 * 24 * time.Hour
-	mgr.Renewal = 30 * 24 * time.Hour
-
-	if err := mgr.SyncOnce(context.Background()); err != nil {
-		t.Fatalf("SyncOnce: %v", err)
-	}
-	if got := f.Renewed(); len(got) != 1 || got[0] != 20 {
-		t.Errorf("renewed = %v, want [20] (defensive renewal for missing expiry)", got)
+	if got[0] != 10 {
+		t.Errorf("renewed = %v, want [10] (tag:private with near expiry must be renewed)", got)
 	}
 }
 
