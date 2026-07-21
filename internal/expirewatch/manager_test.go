@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,14 +32,17 @@ func openTestDB(t *testing.T) *sql.DB {
 
 // fakeHSServer returns a headscale-API stub that:
 //   - on GET /api/v1/node returns the given list of nodes
-//   - on POST /api/v1/node/{id}/expire records the call in `renewed` and returns 200
-// The test can read renewed after SyncOnce to confirm the
-// watcher called the right IDs.
+//   - on POST /api/v1/node/{id}/expire returns 200 (the real API
+//     is broken in headscale 0.29.2 — the watcher's
+//     ExtendNodeExpiry goes straight to the CLI path)
+//   - on `docker exec headscale headscale nodes expire -i N --expiry E`
+//     records N in `renewed` and exits 0 (the actual production path
+//     in headscale 0.29.2 — see ExtendNodeExpiry doc)
 type fakeHS struct {
 	srv     *httptest.Server
 	c       *headscale.Client
 	mu      sync.Mutex
-	renewed []int64 // node IDs that received a renew
+	renewed []int64
 }
 
 func newFakeHS(t *testing.T, nodes []headscale.HSNode) *fakeHS {
@@ -48,27 +51,42 @@ func newFakeHS(t *testing.T, nodes []headscale.HSNode) *fakeHS {
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/node" && r.Method == "GET":
-			f.mu.Lock()
-			defer f.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": nodes})
 		case strings.HasPrefix(r.URL.Path, "/api/v1/node/") &&
 			strings.HasSuffix(r.URL.Path, "/expire") &&
 			r.Method == "POST":
-			// parse ID from path
-			idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/node/")
-			idStr = strings.TrimSuffix(idStr, "/expire")
-			f.mu.Lock()
-			// atomic counter via int64 slice append
-			// (sync.Mutex protects the slice header)
-			f.renewed = append(f.renewed, parseInt64(idStr))
-			f.mu.Unlock()
+			// The watcher should NOT hit this path in
+			// headscale 0.29.2 (REST API has a bug — see
+			// ExtendNodeExpiry doc). We still return 200
+			// so tests that DO hit the API path can verify
+			// the watcher's behavior.
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "not found", 404)
 		}
 	}))
 	f.c = headscale.New(f.srv.URL, "test-key")
+	// Inject a stub dockerRunner that records the node ID
+	// from `docker exec headscale headscale nodes expire -i N ...`.
+	// (The real ExtendNodeExpiry uses this path; see
+	// internal/headscale/nodes.go for why.)
+	f.c.SetDockerRunner(func(args ...string) ([]byte, error) {
+		// args shape: ["exec", "headscale", "headscale", "nodes", "expire", "-i", "N", "--expiry", "T"]
+		var id int64
+		for i, a := range args {
+			if a == "-i" && i+1 < len(args) {
+				id = parseInt64(args[i+1])
+				break
+			}
+		}
+		if id > 0 {
+			f.mu.Lock()
+			f.renewed = append(f.renewed, id)
+			f.mu.Unlock()
+		}
+		return []byte("Node expiration updated\n"), nil
+	})
 	t.Cleanup(f.srv.Close)
 	return f
 }
@@ -326,39 +344,40 @@ func TestExpireWatch_ParsesRFC3339NanoExpiry(t *testing.T) {
 	}
 }
 
-// --- TestExpireWatch_HandlesAPIFailure ---
+// --- TestExpireWatch_HandlesCLIFailure ---
 
-func TestExpireWatch_HandlesAPIFailure(t *testing.T) {
+func TestExpireWatch_HandlesCLIFailure(t *testing.T) {
 	now := time.Now()
 	nodes := []headscale.HSNode{
 		makeNode("50", "will-fail", nil, now.Add(2*time.Second)),
 	}
-	// Use a fake that returns 500 for the expire endpoint.
+	// Fake HS that returns the node list but where the
+	// dockerRunner always fails (simulates a headscale
+	// container that's down or unreachable).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/node" && r.Method == "GET":
+		if r.URL.Path == "/api/v1/node" && r.Method == "GET" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": nodes})
-		case strings.HasSuffix(r.URL.Path, "/expire"):
-			http.Error(w, "server error", 500)
-		default:
-			http.Error(w, "not found", 404)
+			return
 		}
+		http.Error(w, "not found", 404)
 	}))
 	t.Cleanup(srv.Close)
 	c := headscale.New(srv.URL, "test-key")
-	// No CLI fallback (ExecContainer = ""), so any HTTP
-	// failure surfaces as an error from SyncOnce.
+	c.SetDockerRunner(func(args ...string) ([]byte, error) {
+		return []byte("Error: no such container"), fmt.Errorf("exit status 1")
+	})
+
 	mgr := New(openTestDB(t), c, nil, time.Hour)
 	mgr.Threshold = 7 * 24 * time.Hour
 	mgr.Renewal = 30 * 24 * time.Hour
 	mgr.SetAppendAudit(db.AppendAuditLog)
 
-	// SyncOnce currently continues past per-node errors
-	// (per design: one bad node shouldn't block the rest
-	// from being renewed). The contract is that the
-	// tick's stats reflect the failure, not that the
-	// overall SyncOnce returns an error.
+	// SyncOnce continues past per-node errors (per design:
+	// one bad node shouldn't block the rest from being
+	// renewed). The contract is that the tick's stats
+	// reflect the failure, not that the overall SyncOnce
+	// returns an error.
 	_ = mgr.SyncOnce(context.Background())
 	stats := mgr.LastStats()
 	if stats.Errors == 0 {
@@ -367,9 +386,4 @@ func TestExpireWatch_HandlesAPIFailure(t *testing.T) {
 	if stats.Renewed != 0 {
 		t.Errorf("stats.Renewed = %d, want 0 (failed renewal should not count as success)", stats.Renewed)
 	}
-	// Race-detector friendly: confirm the goroutines
-	// didn't panic by reading an atomic counter (none
-	// used here, but the test reaching this point
-	// without a panic is itself the assertion).
-	_ = atomic.LoadInt32
 }

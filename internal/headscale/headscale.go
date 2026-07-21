@@ -34,6 +34,14 @@ type Client struct {
 	http          *http.Client
 	ExecContainer string
 
+	// dockerRunner is the function used to shell out `docker`
+	// commands (ExtendNodeExpiry, fallback paths in
+	// CreatePreauthKeyWithTags, etc.). nil = use the
+	// default (exec.Command("docker", ...)). Tests can
+	// inject a stub that records the call without
+	// touching the system docker.
+	dockerRunner func(args ...string) ([]byte, error)
+
 	// Caches to avoid hammering headscale on every page render. Each cache
 	// entry holds a value + the time it was populated. Reads return the
 	// cached value if it's still fresh, otherwise they fetch and refresh.
@@ -145,4 +153,12 @@ func (c *Client) InvalidateCache() {
 	c.cacheUsersAt = time.Time{}
 	c.cacheACLAt = time.Time{}
 	c.cacheMu.Unlock()
+}
+
+// SetDockerRunner overrides the function used to shell out
+// `docker` commands. nil = use the default (exec.Command).
+// Used by tests to inject a stub that records the call
+// without touching the system docker.
+func (c *Client) SetDockerRunner(fn func(args ...string) ([]byte, error)) {
+	c.dockerRunner = fn
 }
