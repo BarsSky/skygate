@@ -137,6 +137,17 @@ dns:
     global:
       - 1.1.1.1
       - 8.8.8.8
+# DERP map. Required since headscale 0.23+: at least one entry
+# (the bundled Tailscale global DERP relay list). We pin a stable
+# snapshot from the Tailscale DERP map so the per-user instance
+# doesn't have to fetch the live list on every start. The auto-
+# update below re-fetches every 24h to pick up Tailscale's
+# region additions / moves.
+derp:
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  auto_update_enabled: true
+  update_frequency: 24h
 database:
   type: sqlite
   sqlite:
