@@ -17,6 +17,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/backup"
 	"skygate/internal/config"
+	"skygate/internal/expirewatch"
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/db"
@@ -405,6 +406,38 @@ func main() {
 	// up but unreachable (the sidecar goroutine was the
 	// only thing still running).
 	go sidecarMgr.Run(ctx)
+
+	// 2026-07-21: v0.23.3 — node-expiry watcher.
+	// Background goroutine that walks every non-tagged
+	// node in headscale every cfg.ExpireWatchInterval
+	// (default 5m) and extends any node whose expiry is
+	// missing or within cfg.ExpireWatchThreshold
+	// (default 7d) out to cfg.ExpireWatchRenewal
+	// (default 30d). Works around a Tailscale 1.98.x
+	// client behaviour where RegisterRequest.Expiry is
+	// only 2-4 seconds in the future and headscale
+	// 0.29.x applies that verbatim — see
+	// internal/expirewatch/manager.go for the full
+	// background. Tagged nodes (tag:exit-node,
+	// tag:public, tag:subnet-router, tag:client) are
+	// skipped because headscale's state.go explicitly
+	// guards `if !node.IsTagged()` around the
+	// regReq.Expiry branch.
+	//
+	// Set SKYGATE_EXPIREWATCH_ENABLED=false (or
+	// SKYGATE_EXPIREWATCH_INTERVAL=off/0) to disable.
+	// When disabled, the goroutine returns from Run
+	// immediately and no list/extend calls are made.
+	expireWatchMgr := expirewatch.New(d, hs, log.Default(), cfg.ExpireWatchInterval)
+	expireWatchMgr.Threshold = cfg.ExpireWatchThreshold
+	expireWatchMgr.Renewal = cfg.ExpireWatchRenewal
+	expireWatchMgr.SetAppendAudit(db.AppendAuditLog)
+	app.ExpireWatch = expireWatchMgr
+	// Same goroutine-launch pattern as sidecarMgr.Run:
+	// direct call would block main() before the HTTP
+	// listener binds. v0.16.7 caught this for sidecar;
+	// same regression here.
+	go expireWatchMgr.Run(ctx)
 
 		// 2026-07-11: Telegram bot — always arm the RealNotifier so a
 		// hot-swap (admin saving a token at runtime) takes effect without

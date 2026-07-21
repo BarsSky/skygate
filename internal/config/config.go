@@ -115,6 +115,30 @@ type Config struct {
 	// must visit /admin/users/{id}/subnet and click
 	// "Allocate" manually.
 	AutoAllocateSubnetOnUserCreate bool
+	// 2026-07-21: v0.23.3 — node-expiry watcher.
+	// The Tailscale 1.98.x clients ship a RegisterRequest
+	// whose Expiry is only a few seconds in the future,
+	// and headscale 0.29.x applies that Expiry verbatim
+	// (see hscontrol/state.go). The watcher is a
+	// background goroutine that ticks every
+	// ExpireWatchInterval (default 5m), lists every
+	// non-tagged node, and for any node whose Expiry is
+	// missing or within ExpireWatchThreshold (default
+	// 7d) it calls headscale.ExtendNodeExpiry to push
+	// the expiry out to now + ExpireWatchRenewal
+	// (default 30d). This keeps user devices online
+	// even though headscale's per-node state is
+	// initially set to a 2-4-second window. Set
+	// ExpireWatchInterval to "off"/"0" to disable.
+	// Tagged nodes (tag:exit-node, tag:public) are
+	// skipped — headscale's state.go explicitly guards
+	// `if !node.IsTagged()` around the regReq.Expiry
+	// branch, so they keep their nil/none expiry and
+	// never need the watcher.
+	ExpireWatchEnabled   bool
+	ExpireWatchInterval  time.Duration
+	ExpireWatchThreshold time.Duration
+	ExpireWatchRenewal   time.Duration
 }
 
 func Load() (*Config, error) {
@@ -172,6 +196,15 @@ func Load() (*Config, error) {
 		// .env to revert to v0.16.0-v0.18.1 manual
 		// allocation via /admin/users/{id}/subnet.
 		AutoAllocateSubnetOnUserCreate: getenv("SKYGATE_AUTO_ALLOCATE_SUBNET", "true") == "true",
+		// 2026-07-21: v0.23.3 — node-expiry watcher.
+		// Default: 5m tick, renew nodes with <7d remaining
+		// out to 30d. SKYGATE_EXPIREWATCH_ENABLED=false
+		// disables the goroutine; SKYGATE_EXPIREWATCH_INTERVAL
+		// = "off" / "0" has the same effect.
+		ExpireWatchEnabled:   getenv("SKYGATE_EXPIREWATCH_ENABLED", "true") == "true",
+		ExpireWatchInterval:  getDuration("SKYGATE_EXPIREWATCH_INTERVAL", 5*time.Minute),
+		ExpireWatchThreshold: getDuration("SKYGATE_EXPIREWATCH_THRESHOLD", 7*24*time.Hour),
+		ExpireWatchRenewal:   getDuration("SKYGATE_EXPIREWATCH_RENEWAL", 30*24*time.Hour),
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
@@ -187,6 +220,11 @@ func Load() (*Config, error) {
 	if v := os.Getenv("SKYGATE_HEADSCALE_POLL_INTERVAL"); v != "" {
 		if v == "off" || v == "0" {
 			c.HeadscalePollInterval = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_EXPIREWATCH_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.ExpireWatchInterval = 0
 		}
 	}
 	if c.HeadscaleKey == "" {

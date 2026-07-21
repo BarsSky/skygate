@@ -8,6 +8,7 @@ package headscale
 
 import (
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,17 @@ type HSNode struct {
 	Online          bool          `json:"online"`
 	LastSeen        string        `json:"lastSeen"`
 	CreatedAt       string        `json:"createdAt"`
+	// Expiry is the headscale-side node.expiry field as a
+	// RFC3339Nano string. Empty when the node has no
+	// expiry (the typical state for tagged nodes; see
+	// expirewatch package doc for the background).
+	// 2026-07-21: v0.23.3 — added so the expirewatch
+	// goroutine can decide whether to renew a node
+	// without making an extra /api/v1/node/{id} round
+	// trip per node per tick. headscale's /api/v1/node
+	// endpoint always populates this when the field is
+	// non-null in the DB.
+	Expiry          string        `json:"expiry"`
 	Tags            []string      `json:"tags"`
 	AvailableRoutes []string      `json:"availableRoutes"`
 	// ApprovedRoutes is what headscale has actually approved for
@@ -65,6 +77,16 @@ type NodeView struct {
 	// match by "node created after this preauth key" with a safety
 	// margin to avoid stealing another user's recent node.
 	CreatedAt string
+	// Expiry is the RFC3339Nano string from headscale for the
+	// node's expiry. Empty when the node has no expiry (the
+	// typical state for tagged nodes; see expirewatch package
+	// doc). 2026-07-21: v0.23.3 — added so the expirewatch
+	// goroutine can decide whether to renew a node without
+	// making an extra /api/v1/node/{id} round trip per node
+	// per tick. The expirewatch path does time.Parse on this
+	// with RFC3339Nano; an unparseable string is treated as
+	// "no expiry" and the node is renewed defensively.
+	Expiry string
 }
 
 // toView flattens an HSNode into a NodeView. The conversion copies
@@ -95,6 +117,14 @@ func (n HSNode) toView() NodeView {
 		ApprovedRoutes:  n.ApprovedRoutes,
 		PreAuthKeyID:    pakID,
 		CreatedAt:       n.CreatedAt,
+		// 2026-07-21: v0.23.3 — Expiry plumbed through
+		// to NodeView so expirewatch doesn't have to do
+		// an extra /api/v1/node/{id} call per node. The
+		// headscale API always returns the field when
+		// it's non-null in the DB; empty string = nil
+		// expiry (tagged nodes, pre-v0.23.3 installs
+		// that predate the regReq.Expiry path).
+		Expiry:          n.Expiry,
 	}
 }
 
@@ -215,6 +245,68 @@ func (c *Client) DeleteNode(nodeID int64) error {
 		c.InvalidateCache()
 	}
 	return err
+}
+
+// ExtendNodeExpiry sets node.Expiry to the given future time. This
+// works around a Tailscale 1.98.x client behaviour where RegisterRequest
+// includes an Expiry that is only a few seconds in the future, and
+// headscale 0.29.x blindly applies that Expiry to the node — see
+// hscontrol/state.go's HandleNodeFromAuthPath: `if !regReq.Expiry.IsZero()
+// { node.Expiry = &regReq.Expiry }`. Within ~4 seconds of registration
+// the client receives a netmap with `Expired: true, MachineAuthorized:
+// false` and gets force-logged-out, which manifested on 2026-07-21
+// as the Android device (skybars / node 10) being unable to stay
+// connected after a fresh preauth. The expirewatch goroutine
+// (internal/expirewatch) calls this method on every node whose
+// expiry is within the renewal threshold (default 7d), so even if
+// headscale wrote a 4-second expiry at registration the watcher
+// pushes it back out to ~30d within the next sync tick (5m by
+// default).
+//
+// API path: POST /api/v1/node/{id}/expire with body
+//
+//	{"expiry": "2026-09-20T12:00:00Z"}
+//
+// (the headscale REST API ignores `disable_expiry` / `disableExpiry`
+//  keys in v0.29.2 and falls back to a 1-hour default; the only
+//  body shape that actually works is the explicit expiry field).
+//
+// CLI fallback: `docker exec headscale headscale nodes expire -i <id>
+// --expiry <RFC3339>` — the admin API key does not include the
+// gRPC scope for ExpireNode in some headscale deployments, so when
+// the POST returns 403/404 we shell out the same way
+// createPreauthViaCLI does. Disable semantics (node never expires)
+// are only reachable via the CLI (`--disable`); the REST API has
+// no equivalent in 0.29.2, but expirewatch never needs that mode
+// because tagged nodes already skip the regReq.Expiry branch in
+// headscale's state.go.
+//
+// Cache: invalidates on success so the next ListAllNodes reflects
+// the new expiry within one TTL window.
+func (c *Client) ExtendNodeExpiry(nodeID int64, expiry time.Time) error {
+	idStr := strconv.FormatInt(nodeID, 10)
+	body := map[string]any{
+		"expiry": expiry.UTC().Format(time.RFC3339),
+	}
+	err := c.do("POST", "/api/v1/node/"+idStr+"/expire", body, nil)
+	if err == nil {
+		c.InvalidateCache()
+		return nil
+	}
+	// Fallback: CLI. The admin API key in 0.29.x may lack
+	// permission for the expire endpoint; the CLI always works.
+	if c.ExecContainer == "" {
+		return fmt.Errorf("api: %w; no ExecContainer for CLI fallback", err)
+	}
+	args := []string{"exec", c.ExecContainer, "headscale", "nodes", "expire",
+		"-i", idStr, "--expiry", expiry.UTC().Format(time.RFC3339)}
+	cmd := exec.Command("docker", args...)
+	out, cerr := cmd.CombinedOutput()
+	if cerr != nil {
+		return fmt.Errorf("api: %v; cli: %v (%s)", err, cerr, strings.TrimSpace(string(out)))
+	}
+	c.InvalidateCache()
+	return nil
 }
 
 // NodeList returns every node in the tailnet as a generic []map[string]any

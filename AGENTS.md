@@ -7,10 +7,68 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.23.1 — per-user
-  control plane: compliance
-  tier only
-  ([release notes](RELEASE-NOTES-v0.23.1.md)).
+* **Current**: v0.23.3 — node-expiry
+  watcher (the "device
+  won't stay connected"
+  release)
+  ([release notes](RELEASE-NOTES-v0.23.3.md)).
+  Background goroutine in
+  `internal/expirewatch` ticks
+  every 5m, walks every non-tagged
+  node in headscale, and extends
+  any node whose Expiry is missing
+  or within 7d of "now" out to 30d.
+  Works around a Tailscale 1.98.x
+  client behaviour where
+  `RegisterRequest.Expiry` is only
+  2-4s in the future and headscale
+  0.29.x applies that Expiry verbatim
+  — without the watcher, every fresh
+  preauth-registered device gets
+  force-logged-out within seconds.
+  Discovered 2026-07-21 with the
+  operator's Android phone (node 10 /
+  skybars): manual `headscale nodes
+  expire -i 10 --expiry +30d` was
+  the one-shot fix; v0.23.3 makes it
+  automatic. 4 new env vars
+  (`SKYGATE_EXPIREWATCH_ENABLED` /
+  `_INTERVAL` / `_THRESHOLD` /
+  `_RENEWAL`, defaults `true` / `5m` /
+  `168h` / `720h`); no `/admin/*`
+  knobs (defaults are sensible).
+  `NodeView.Expiry` added to the
+  headscale client (was previously
+  missing — required an extra
+  `/api/v1/node/{id}` round-trip per
+  node per watcher tick). Tagged
+  nodes (`tag:exit-node` /
+  `tag:public` / `tag:subnet-router` /
+  `tag:client`) are skipped by
+  the watcher because headscale's
+  `state.go` explicitly guards
+  `if !node.IsTagged()` around the
+  `regReq.Expiry` branch. 8 unit
+  tests in
+  `internal/expirewatch/manager_test.go`
+  (PicksOnlyNearExpiry /
+  SkipsTagged / HandlesMissingExpiry /
+  RespectsIntervalZero /
+  RunStopsOnContextCancel /
+  RecordsAuditOnRenew /
+  ParsesRFC3339NanoExpiry /
+  HandlesAPIFailure), all PASS.
+  18/18 packages green (acl, auth,
+  backup, config, db, expirewatch,
+  handlers, headscale,
+  headscale_version, i18n, invite,
+  mesh, monitoring, release, sidecar,
+  subnet, telegram). `check_v0.23.3.sh`
+  — 5-step live verification: force a
+  node's expiry to 2s, wait for the
+  watcher to tick, confirm the expiry
+  is now at least 7d out, audit log
+  row written, tagged node untouched.
   The "v0.23.0 is for compliance, not
   default path" release. v0.23.0 shipped
   one-click per-user headscale
@@ -1423,6 +1481,93 @@ idempotent — re-running is a no-op.
   automatically. No manual fix needed.
 - The user has no devices in headscale (the `pending` status
   is correct — they're not opted in to Tailscale yet).
+
+### Operational note: node-expiry watcher (v0.23.3, the "device won't stay connected" release)
+
+**Symptom**: User generates a preauth via `/my/preauth`,
+pastes the key into a Tailscale client, the client
+registers successfully, but the device disconnects within
+seconds and never reconnects. The preauth is now `used=true`,
+so the user can't re-register with it either. The Android
+client shows "Sign in" with a key that was never accepted.
+
+**Root cause** (discovered 2026-07-21 with the operator's
+Android phone / node 10 / skybars): Tailscale 1.98.x's
+`RegisterRequest.Expiry` field is only 2-4 seconds in
+the future. headscale 0.29.x's `HandleNodeFromAuthPath`
+(in `hscontrol/state.go`) applies that Expiry verbatim:
+
+```go
+if !node.IsTagged() {
+    if !regReq.Expiry.IsZero() {
+        node.Expiry = &regReq.Expiry
+    } else if s.cfg.Node.Expiry > 0 {
+        // ...
+    } else {
+        node.Expiry = nil
+    }
+}
+```
+
+The next netmap push to the client reports
+`Expired: true, MachineAuthorized: false`, the client
+interprets this as "your key was rejected, log out", and
+the device goes back to `NeedsLogin`. The preauth is
+already `used=true`, so re-registration is impossible.
+
+**Fix** (v0.23.3): a background goroutine in
+`internal/expirewatch` ticks every 5 minutes, walks
+every non-tagged node in headscale, and extends any node
+whose Expiry is missing or within 7 days of "now" out
+to 30 days. Tagged nodes (`tag:exit-node`, `tag:public`,
+`tag:subnet-router`, `tag:client`, …) are skipped because
+headscale's `state.go` explicitly guards
+`if !node.IsTagged()` around the regReq.Expiry branch,
+so they keep their nil/none Expiry naturally.
+
+**Verification**:
+- `bash /tmp/check_v0.23.3.sh` — live test: force a
+  node's expiry to 2s, wait for the watcher to tick,
+  confirm the expiry is now at least 7d out and an
+  `audit_log` row with `username=expirewatch,
+  action=renewed, detail=node_id=<N> old_expiry=<...>
+  new_expiry=<...>` was written.
+- `docker logs skygate | grep expirewatch.tick` — every
+  tick logs `seen=N renewed=N skipped=N errors=N`.
+- The audit log table itself — every renewal is one
+  row, queryable via `/admin/audit?action=renewed` (or
+  `?username=expirewatch`).
+
+**Tuning** (env vars, all optional, defaults are fine):
+- `SKYGATE_EXPIREWATCH_ENABLED=true` — `false` disables
+  the goroutine entirely.
+- `SKYGATE_EXPIREWATCH_INTERVAL=5m` — tick frequency.
+  `off` / `0` disables. Set to `1m` for faster recovery
+  in exchange for more API calls.
+- `SKYGATE_EXPIREWATCH_THRESHOLD=168h` (7d) — nodes
+  within this window get renewed.
+- `SKYGATE_EXPIREWATCH_RENEWAL=720h` (30d) — new
+  expiry when renewing.
+
+**One-shot manual fix** (if you can't immediately
+deploy v0.23.3 or the watcher is disabled):
+```bash
+docker exec headscale headscale nodes expire \
+  -i <NODE_ID> --expiry "$(date -u -d '+30 days' +'%Y-%m-%dT%H:%M:%SZ')"
+```
+The CLI `headscale nodes expire -i <id> --disable` also
+works for "node never expires" — used for tagged nodes
+manually, but the watcher skips tagged nodes so this
+shouldn't be needed in normal operation.
+
+**When NOT to look here**:
+- A device that never registered in the first place
+  (the issue is the preauth issuance path, not expiry
+  — check `preauth_issued` audit events).
+- A device that registered but immediately got the
+  wrong ACL (issue is the policy, not expiry — check
+  `headscale policy get` and the
+  `/admin/devices/{id}/tag` flow).
 
 ---
 
