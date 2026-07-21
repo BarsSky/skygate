@@ -28,6 +28,34 @@ skygate.db
 
 # ---- Dump/experimental scripts ----
 .sg_*.ps1
+# One-off investigation / verify / debug / cleanup scripts
+# (created during live ops, never intended to be committed).
+# They live in the working tree so `ls` and `grep` find them,
+# but `git add -A` and `git status` ignore them. If a script
+# graduates to "kept" status (used by smoke / docs / release
+# tooling), move it to scripts/ or deploy/ and re-add to
+# git explicitly.
+check_*.sh
+verify_*.sh
+test_*.sh
+copy_*.sh
+debug_*.sh
+reset_*.sh
+fix_*.sh
+cleanup_*.sh
+deploy_*.sh
+run_*.sh
+wait_*.sh
+check_*.py
+check_*.ps1
+verify_*.py
+verify_*.ps1
+test_*.py
+test_*.ps1
+# Anything explicitly named "test_*" lives under scripts/ in the
+# repo (e.g. scripts/test_check_https.py); root-level test_*.py
+# is debugging scratch. The "scripts/test_*" allowance is via
+# the explicit `git add` for those.
 sg_*.ps1
 sg_*.sh
 /sg_*.html
