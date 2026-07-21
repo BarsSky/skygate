@@ -7,7 +7,29 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.24.0 — subnet-router setup tooling
+* **Current**: v0.24.1 — /my/devices shows tag:subnet-router + advertised routes
+  ([release notes](RELEASE-NOTES-v0.24.1.md)).
+  The "what does this device actually do" UI fix. v0.24.0
+  shipped `deploy/subnet-router/setup.sh` so users could
+  *register* a subnet-router, but the /my/devices page
+  showed every node with the same `tag:private` badge and
+  the same `100.64.0.X` IP — no way for the user to see
+  which device was their LAN bridge, or which routes it
+  was advertising. v0.24.1 adds a "Subnets" column
+  (shows every node's `AvailableRoutes` as small badges,
+  with a "pending" pill if any route is waiting for admin
+  approval) and a 4-state tag column
+  (subnet-router → blue / exit-node → amber / public →
+  green / private → grey). 5 new i18n keys × 2 langs
+  (10 entries). 17/17 packages green. No Go schema /
+  env-var / package changes. No Go code outside
+  `handlers_my_devices.go` (+22 lines) and the template
+  (+24 lines). Release also includes the "what is still
+  left for full migration to per-user subnets + mesh"
+  answer the operator asked for (4 legs: 1 mechanical, 2
+  code-done-not-used, 1 external-blocked-on-headscale-0.30+).
+
+* **Previous**: v0.24.0 — subnet-router setup tooling
   ([release notes](RELEASE-NOTES-v0.24.0.md)).
   The "operator guide for getting a per-user subnet-router
   running end-to-end" release. Backend
