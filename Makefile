@@ -108,10 +108,27 @@ audit-routes:
 		exit 1; \
 	fi
 
-test: go-test audit-routes smoke check-nodes check-https
+test: go-test audit-routes smoke check-nodes check-https check-bundles
 
 go-test:
 	@if command -v go >/dev/null 2>&1; then 		go test ./... 2>&1; 	else 		echo "go not installed; skipping go test"; 	fi
+
+# v0.24.2: keep the embed copies of setup.sh and
+# README.md in internal/handlers/bundles/ in sync with
+# the canonical sources in deploy/subnet-router/. The
+# check is a fast `cmp` — fails the make target if the
+# copies drift. Run `make sync-bundles` to refresh.
+sync-bundles:
+	cp deploy/subnet-router/setup.sh internal/handlers/bundles/setup.sh
+	cp deploy/subnet-router/README.md internal/handlers/bundles/README.md
+	@echo "synced."
+
+check-bundles:
+	@git diff --no-index --quiet deploy/subnet-router/setup.sh internal/handlers/bundles/setup.sh || \
+		(echo "FAIL: internal/handlers/bundles/setup.sh is out of sync with deploy/subnet-router/setup.sh — run 'make sync-bundles'" && exit 1)
+	@git diff --no-index --quiet deploy/subnet-router/README.md internal/handlers/bundles/README.md || \
+		(echo "FAIL: internal/handlers/bundles/README.md is out of sync with deploy/subnet-router/README.md — run 'make sync-bundles'" && exit 1)
+	@echo "bundles in sync."
 
 clean:
 	rm -f $(BINARY)

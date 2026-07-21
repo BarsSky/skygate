@@ -237,6 +237,13 @@ func main() {
 	mux.Handle("POST /admin/users/{id}/subnet/disable", authMW(http.HandlerFunc(app.PostAdminUserSubnetDisable)))
 	mux.Handle("POST /admin/users/{id}/subnet/test", authMW(http.HandlerFunc(app.PostAdminUserSubnetTest)))
 	mux.Handle("POST /admin/users/{id}/subnet/provision", authMW(http.HandlerFunc(app.PostAdminUserSubnetProvision)))
+	// v0.24.2: download a self-contained tar.gz bundle
+	// (setup.sh + README.md + commands.txt with the
+	// preauth key + CIDR.txt) for the user to scp to
+	// their router host and untar. Issues a fresh
+	// preauth on each call (same as the "Issue preauth
+	// key" button).
+	mux.Handle("GET /admin/users/{id}/subnet/download", authMW(http.HandlerFunc(app.GetAdminUserSubnetDownload)))
 	mux.Handle("POST /admin/users/{id}/subnet/share", authMW(http.HandlerFunc(app.PostAdminUserSubnetShare)))
 	mux.Handle("POST /admin/users/{id}/subnet/revoke", authMW(http.HandlerFunc(app.PostAdminUserSubnetRevoke)))
 	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(app.GetAdminSubnets)))
