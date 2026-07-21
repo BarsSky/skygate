@@ -28,6 +28,45 @@
         {{end}}
       </td>
     </tr>
+    <tr>
+      <th>{{t "my_devices.subnet_card_mesh_label"}}</th>
+      <td>
+        {{if .MySharesTo}}
+          <div style="font-size:12px;margin-bottom:4px">
+            <i class="fa-solid fa-share-from-square"></i> {{t "my_devices.subnet_card_shared_with"}}
+            {{range .MySharesTo}}<code class="route">{{.CIDR}}</code> <span style="color:var(--text-muted)">→ {{.Username}}</span> {{end}}
+          </div>
+        {{end}}
+        {{if .SharesToMe}}
+          <div style="font-size:12px">
+            <i class="fa-solid fa-share-to-square"></i> {{t "my_devices.subnet_card_shared_from"}}
+            {{range .SharesToMe}}<code class="route">{{.CIDR}}</code> <span style="color:var(--text-muted)">← {{.Username}}</span> {{end}}
+          </div>
+        {{end}}
+        {{if not .MySharesTo}}{{if not .SharesToMe}}
+          <span style="color:var(--text-subtle);font-size:12px">{{t "my_devices.subnet_card_no_shares"}}</span>
+        {{end}}{{end}}
+      </td>
+    </tr>
+    <tr>
+      <th>{{t "my_devices.subnet_card_mesh_count_label"}}</th>
+      <td>
+        {{if .MeshCount}}
+          <span class="tag" style="background:var(--accent);color:var(--accent-fg)">
+            <i class="fa-solid fa-circle-nodes"></i> {{.MeshCount}}
+            {{if eq (printf "%d" .MeshCount) "1"}}{{t "my_devices.mesh_count_one"}}{{else}}{{t "my_devices.mesh_count_many"}}{{end}}
+          </span>
+          {{if .MyMeshMembers}}
+            <span style="color:var(--text-muted);font-size:12px;margin-left:6px">
+              {{t "my_devices.subnet_card_members"}}:
+              {{range $i, $m := .MyMeshMembers}}{{if $i}}, {{end}}<code>{{.Username}}</code>{{if .CIDR}} ({{.CIDR}}){{end}}{{end}}
+            </span>
+          {{end}}
+        {{else}}
+          <span style="color:var(--text-subtle);font-size:12px">{{t "my_devices.subnet_card_no_mesh"}}</span>
+        {{end}}
+      </td>
+    </tr>
   </table>
   <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "my_devices.subnet_card_help" | safeHTML}}</p>
   {{else}}
@@ -72,7 +111,7 @@
   <h3><i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}</h3>
   {{if .HasMyNodes}}
   <table>
-    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th></tr></thead>
+    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th><th>{{t "devices.mesh_subnet"}}</th></tr></thead>
     <tbody>
       {{range .MyNodes}}
       <tr>
@@ -112,6 +151,15 @@
                 <i class="fa-solid fa-hourglass-half"></i>{{t "devices.routes_pending"}}
               </span>
             {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .IsShared}}
+            <span class="tag" style="font-size:10px"><i class="fa-solid fa-share"></i>{{t "devices.mesh_subnet_shared"}}</span>
+          {{else if .MeshSubnet}}
+            <code style="font-size:11px;padding:1px 4px;background:var(--bg-elev);border-radius:3px">{{.MeshSubnet}}</code>
           {{else}}
             <span style="color:var(--text-subtle);font-size:11px">—</span>
           {{end}}
