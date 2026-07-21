@@ -81,7 +81,7 @@
             <summary>{{.MemberCount}}</summary>
             <div style="margin-top:6px">
               {{range .MemberList}}
-              <div style="font-size:12px;color:var(--text-muted)">  • <code>{{.Username}}</code></div>
+              <div style="font-size:12px;color:var(--text-muted)">  • <code>{{.Username}}</code>{{with index $.MemberCIDRs .UserID}} (<code class="route">{{.}}</code>){{end}}</div>
               {{end}}
             </div>
           </details>

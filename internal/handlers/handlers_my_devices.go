@@ -31,6 +31,19 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
 	hsUserID, username, _ = db.GetUserHSByID(a.DB, c.UserID)
 
+	// 2026-07-21: v0.22.3 — read the user's subnet row
+	// (denormalized on portal_users) so the /my/devices page
+	// can show "Your personal subnet: 10.0.<uid>.0/24 (active)"
+	// without an extra JOIN. Backfill above may have just
+	// flipped the status to active (the SyncStatus call in
+	// backfillNodeOwnership), so the value here is fresh.
+	// v0.25.0 — read it HERE (not later) so we can fill
+	// the new "Mesh subnet" column in the device rows.
+	var subnetCIDR, subnetStatus string
+	_ = a.DB.QueryRow(
+		`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, c.UserID,
+	).Scan(&subnetCIDR, &subnetStatus)
+
 	// Get all nodes (cached). Reuse them for both my-nodes (filter by user)
 	// and public nodes (filter by tag/exit) - one HTTP call to headscale
 	// instead of two.
@@ -79,6 +92,20 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// the template scanning Tags.
 		IsSubnetRouter bool
 		IsExitNode     bool
+		// MeshSubnet is the per-user virtual subnet the
+		// device "belongs to" for mesh-share purposes
+		// (e.g. "10.0.1.0/24 (skyadmin)"). Empty for
+		// shared infrastructure nodes (tag:public /
+		// tag:exit-node) — those are shared, not per-user.
+		// v0.25.0.
+		MeshSubnet string
+		// IsShared is true when the node is a shared
+		// infrastructure node (tag:public, tag:exit-node)
+		// rather than the user's own tag:private device.
+		// Used by the template to render a "shared" pill
+		// instead of the per-user CIDR in the new "Mesh
+		// subnet" column. v0.25.0.
+		IsShared bool
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
@@ -111,6 +138,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				ApprovedRoutes:  n.ApprovedRoutes,
 				IsSubnetRouter:  hasTag(n.Tags, "tag:subnet-router"),
 				IsExitNode:      n.IsExitNode,
+				MeshSubnet:      subnetCIDR,
+				IsShared:         n.IsPublicView() || n.IsExitNode,
 			})
 		}
 	}
@@ -144,6 +173,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				ApprovedRoutes:  n.ApprovedRoutes,
 				IsSubnetRouter:  hasTag(n.Tags, "tag:subnet-router"),
 				IsExitNode:      n.IsExitNode,
+				MeshSubnet:      subnetCIDR,
+				IsShared:         n.IsPublicView() || n.IsExitNode,
 			})
 		}
 	}
@@ -157,22 +188,103 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("DBG GetMyDevices fetch took %v nodes=%d my=%d public=%d", time.Since(t0), len(all), len(myNodesList), len(publicNodes))
 
-	// 2026-07-21: v0.22.3 — read the user's subnet row
-	// (denormalized on portal_users) so the /my/devices page
-	// can show "Your personal subnet: 10.0.<uid>.0/24 (active)"
-	// without an extra JOIN. Backfill above may have just
-	// flipped the status to active (the SyncStatus call in
-	// backfillNodeOwnership), so the value here is fresh.
-	var subnetCIDR, subnetStatus string
-	_ = a.DB.QueryRow(
-		`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, c.UserID,
-	).Scan(&subnetCIDR, &subnetStatus)
+	// v0.25.0 — mesh visibility for the /my/devices
+	// subnet card. We compute:
+	//   1. mySharesTo     — who I've shared my /24 with
+	//                         (grantee = them, grantor = me)
+	//   2. sharesToMe      — who has shared their /24 with
+	//                         me (grantor = them, grantee = me)
+	//   3. myMeshMembers   — every user in any active mesh
+	//                         I belong to (with their /24)
+	//   4. meshCount       — how many active meshes I'm in
+	// The UI uses (1) and (2) in the subnet card to show
+	// "you've shared with X" / "Y is sharing with you",
+	// and (3) in the mesh preview block.
+	type shareInfo struct {
+		Username string
+		CIDR     string
+	}
+	var mySharesTo, sharesToMe, myMeshMembers []shareInfo
+
+	if subnetCIDR != "" {
+		// (1) mySharesTo: I (grantor) shared with someone (grantee).
+		rows, err := a.DB.Query(`
+			SELECT p.username, s.cidr
+			  FROM user_subnet_shares sh
+			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
+			  JOIN portal_users p ON p.id = sh.grantee_user_id
+			 WHERE sh.grantor_user_id = ? AND s.status != 'disabled'
+			 ORDER BY p.username`, c.UserID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var s shareInfo
+				if rows.Scan(&s.Username, &s.CIDR) == nil {
+					mySharesTo = append(mySharesTo, s)
+				}
+			}
+		}
+		// (2) sharesToMe: someone (grantor) shared with me (grantee).
+		rows2, err := a.DB.Query(`
+			SELECT p.username, s.cidr
+			  FROM user_subnet_shares sh
+			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
+			  JOIN portal_users p ON p.id = sh.grantor_user_id
+			 WHERE sh.grantee_user_id = ? AND s.status != 'disabled'
+			 ORDER BY p.username`, c.UserID)
+		if err == nil {
+			defer rows2.Close()
+			for rows2.Next() {
+				var s shareInfo
+				if rows2.Scan(&s.Username, &s.CIDR) == nil {
+					sharesToMe = append(sharesToMe, s)
+				}
+			}
+		}
+	}
+	// (3) myMeshMembers: every other user in any active
+	// mesh I belong to (and their /24). The query is
+	// symmetric in mesh_id, so we deduplicate by username
+	// server-side via the (mesh_id, user_id) PK.
+	rows3, err := a.DB.Query(`
+		SELECT p.username, COALESCE(s.cidr, '')
+		  FROM mesh_members mm_self
+		  JOIN mesh_members mm_other ON mm_other.mesh_id = mm_self.mesh_id
+		  JOIN portal_users p ON p.id = mm_other.user_id
+		  LEFT JOIN user_subnets s ON s.user_id = p.id AND s.status != 'disabled'
+		 WHERE mm_self.user_id = ? AND p.id != ?
+		   AND EXISTS (SELECT 1 FROM meshes m WHERE m.id = mm_self.mesh_id AND m.status = 'active')
+		 ORDER BY p.username`, c.UserID, c.UserID)
+	if err == nil {
+		defer rows3.Close()
+		seen := map[string]bool{}
+		for rows3.Next() {
+			var s shareInfo
+			if rows3.Scan(&s.Username, &s.CIDR) == nil {
+				if !seen[s.Username] {
+					seen[s.Username] = true
+					myMeshMembers = append(myMeshMembers, s)
+				}
+			}
+		}
+	}
+	// (4) meshCount: how many active meshes I'm in.
+	meshCount := 0
+	_ = a.DB.QueryRow(`
+		SELECT COUNT(DISTINCT mm.mesh_id)
+		  FROM mesh_members mm
+		  JOIN meshes m ON m.id = mm.mesh_id
+		 WHERE mm.user_id = ? AND m.status = 'active'`, c.UserID).Scan(&meshCount)
 
 	a.renderWithLayout(w, r, "user/devices.html", c, map[string]any{
-		"MyNodes":      myNodesList,
-		"PublicNodes":  publicNodes,
-		"HasMyNodes":   len(myNodesList) > 0,
-		"SubnetCIDR":   subnetCIDR,
-		"SubnetStatus": subnetStatus,
+		"MyNodes":        myNodesList,
+		"PublicNodes":    publicNodes,
+		"HasMyNodes":     len(myNodesList) > 0,
+		"SubnetCIDR":     subnetCIDR,
+		"SubnetStatus":   subnetStatus,
+		"MySharesTo":     mySharesTo,
+		"SharesToMe":     sharesToMe,
+		"MyMeshMembers":  myMeshMembers,
+		"MeshCount":      meshCount,
 	})
 }

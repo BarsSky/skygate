@@ -105,6 +105,32 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 		members, _ := mesh.ListMembers(a.DB, m.ID)
 		row.MemberCount = len(members)
 		row.MemberList = members
+		// v0.25.0 — fetch each member's per-user /24
+		// for the "what you'll see in this mesh"
+		// preview. Single JOIN, one query per mesh
+		// (the typical mesh has 2-5 members, so the
+		// cost is negligible).
+		row.MemberCIDRs = map[int64]string{}
+		if len(members) > 0 {
+			ids := make([]interface{}, 0, len(members))
+			for _, mem := range members {
+				ids = append(ids, mem.UserID)
+			}
+			q := "SELECT user_id, cidr FROM user_subnets WHERE user_id IN (?" +
+				strings.Repeat(",?", len(ids)-1) +
+				") AND status != 'disabled'"
+			cidrRows, err := a.DB.Query(q, ids...)
+			if err == nil {
+				for cidrRows.Next() {
+					var uid int64
+					var cidr string
+					if cidrRows.Scan(&uid, &cidr) == nil {
+						row.MemberCIDRs[uid] = cidr
+					}
+				}
+				cidrRows.Close()
+			}
+		}
 		rows = append(rows, row)
 	}
 	a.renderWithLayout(w, r, "user/meshes.html", c, map[string]any{
@@ -392,6 +418,13 @@ type myMeshRow struct {
 	CreatorName string
 	MemberCount int
 	MemberList  []mesh.Member
+	// MemberCIDRs maps each member user_id to their
+	// per-user /24 (e.g. "10.0.6.0/24" for michail).
+	// Used by the template to render the v0.25.0
+	// "what you'll see in this mesh" preview.
+	// Empty string for members without an
+	// allocated subnet (or whose subnet is disabled).
+	MemberCIDRs map[int64]string
 }
 
 // isMeshMember returns true when the user is in the
