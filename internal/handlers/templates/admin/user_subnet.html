@@ -54,6 +54,9 @@
     <form method="POST" action="/admin/users/{{.User.ID}}/subnet/provision" style="display:inline">
       <button type="submit" class="btn btn-primary"><i class="fa-solid fa-key"></i> {{t "user_subnet.provision_button"}}</button>
     </form>
+    <a href="/admin/users/{{.User.ID}}/subnet/download" class="btn btn-secondary" title="{{t "user_subnet.download_button_help"}}">
+      <i class="fa-solid fa-download"></i> {{t "user_subnet.download_button"}}
+    </a>
 
     <details style="display:inline;margin-left:6px">
       <summary class="btn btn-sm"><i class="fa-solid fa-globe"></i> {{t "user_subnet.magicdns_button"}}</summary>

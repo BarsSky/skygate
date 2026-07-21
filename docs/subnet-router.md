@@ -18,6 +18,78 @@ between Tailscale and your LAN.
 
 ---
 
+## TL;DR — what does this actually do for me?
+
+After your subnet-router is up and approved, the following
+**magically works** for any other tailnet member (your
+phone, your laptop, another user's device) that has
+`tailscale up --accept-dns --accept-routes`:
+
+- `ping skygate-subnet-<your-username>` — pings the
+  subnet-router's Tailscale IP (always `100.64.X.Y`).
+- `ping 10.0.<your-uid>.1` — pings the gateway of your LAN
+  (whatever the subnet-router has as its default route
+  on the LAN side).
+- `ping 10.0.<your-uid>.5` — pings a specific device on
+  your LAN, e.g. your NAS at 10.0.<uid>.5. The packet
+  goes: client → headscale → skygate-subnet-<user> (over
+  Tailscale's encrypted WireGuard tunnel) → your LAN
+  switch → 10.0.<uid>.5.
+- `ping <device-name>.local` (if your LAN has mDNS) —
+  Tailscale passes mDNS between tailnet members by
+  default if the subnet-router has it enabled.
+- `http://<your-nas>:5000` from your phone, on the road,
+  over 4G — works because the phone thinks it's on your
+  LAN.
+
+This is **not** a special feature of Tailscale. It's just
+plain routing: the subnet-router advertises "I know how to
+reach 10.0.<uid>.0/24", and headscale pushes that route
+to every tailnet client with `--accept-routes`. Once a
+client has the route in its routing table, packets to
+10.0.<uid>.X just work.
+
+**Without a subnet-router**, none of this works — your LAN
+is invisible to the tailnet, regardless of what skygate's
+web UI says about your `subnet_status = active`. That
+status only means "skygate has allocated 10.0.<uid>.0/24
+to you in its database" — the actual reachability
+requires a live router in your LAN.
+
+---
+
+## Quick start (5 minutes if you already have tailscaled)
+
+If the admin has already issued a preauth key for you
+(it looks like `tskey-auth-aBcDeF...`) and you know your
+CIDR (`10.0.<uid>.0/24`), the whole thing is three
+commands on the host that will be your router:
+
+```bash
+# 1. Get the script
+curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/subnet-router/setup.sh -o /tmp/setup.sh
+chmod +x /tmp/setup.sh
+
+# 2. Run it (replace the values with what the admin gave you)
+PREAUTH_KEY=tskey-auth-aBcDeF \
+SUBNET_ROUTER_HOSTNAME=skygate-subnet-<username> \
+SUBNET_CIDR=10.0.<uid>.0/24 \
+sudo -E /tmp/setup.sh
+
+# 3. Wait ~30s and verify from your laptop
+ping skygate-subnet-<username>          # should resolve and respond
+ping 10.0.<uid>.1                       # your LAN's gateway IP
+```
+
+If `ping` works, you're done. If it doesn't, see
+[Troubleshooting](#troubleshooting) below.
+
+The rest of this document is the long-form explanation
+of what those three commands actually do, plus all the
+edge cases the quick start doesn't cover.
+
+---
+
 ## When you need this
 
 You have one or more devices on your local network that **do
@@ -29,9 +101,52 @@ If all your devices already run Tailscale, you don't need a
 subnet-router — just log them in normally. They show up in
 the tailnet as regular nodes.
 
+If you only need to reach the tailnet from your LAN (and
+not the other way around) — i.e. you want to SSH into a
+Tailscale peer from a host that doesn't run Tailscale
+itself — install Tailscale on that host too, no
+subnet-router needed.
+
 ---
 
-## What you need
+## What to download
+
+You'll need exactly two files from this repo. Both are
+checked in and `git pull`-safe — no build step, no
+dependencies beyond `bash` and `curl`.
+
+1. **`deploy/subnet-router/setup.sh`** — the
+   one-shot script that does the actual Tailscale login
+   and route advertisement. Download directly:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/subnet-router/setup.sh -o setup.sh
+   chmod +x setup.sh
+   ```
+   Or use the one-line `curl | bash` form (after you've
+   read the script and trust it):
+   ```
+   curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/subnet-router/setup.sh | bash -s --
+   ```
+   **Always read the script before piping it to bash** —
+   it `tailscale up`s with the preauth key you provide,
+   so anyone who can replace that file at the URL can
+   steal your preauth.
+
+2. **This very document** — `docs/subnet-router.md`. If
+   you got here from the admin's email, you already
+   have it. Otherwise:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/docs/subnet-router.md
+   ```
+   It's also bundled into skygate's `/admin/users/<id>/subnet`
+   page (see "Download bundle" button at the bottom of
+   the page — v0.24.2+).
+
+That's it. No other tooling required.
+
+---
+
+## What you need (besides the files)
 
 1. **A host that runs 24/7** in your local network (Raspberry
    Pi, mini-PC, home server, NAS with SSH, VM that doesn't
