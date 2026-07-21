@@ -1358,6 +1358,72 @@ ACL namespace. Exit-nodes are shared. Mesh is cross-user.
 No re-auth, no separate control plane. **Use this for 95% of
 scenarios.**
 
+### Operational note: fixing `node_owner_map` attribution for tag-bearing devices
+
+**Symptom**: A user has 5+ devices in headscale (all with
+`tag:private`), but their `/my/devices` page shows 0 devices.
+`portal_users.subnet_status` stays `pending` even though the
+user clearly has devices. Querying `node_owner_map` shows
+all the user's rows with `username=tagged-devices` instead
+of the user's actual username.
+
+**Root cause** (v0.3.9 + v0.22.2 limitation): When headscale
+applies a tag to a node, it reassigns ownership to a
+synthetic `tagged-devices` user. The `backfillNodeOwnership`
+function tries to recover the original owner via two
+strategies:
+
+- **Strategy A**: match `node.PreAuthKeyID` against a
+  stored preauth (`preauth_keys.headscale_preauth_id`).
+  Requires the preauth to have been issued through skygate
+  AND have its headscale_id captured.
+- **Strategy C**: temporal fallback — node created within
+  1 hour of a preauth. Only works for very fresh devices.
+
+For devices registered before v0.12.0 (when
+`headscale_preauth_id` capture was added), Strategy A
+cannot match. Strategy C doesn't work for old devices. The
+manual recovery path is needed.
+
+**Fix** (one-off, applied 2026-07-21 for skyadmin): update
+`node_owner_map` to attribute the known devices to the
+right user:
+
+```sql
+UPDATE node_owner_map
+   SET username = 'skyadmin', tag = 'tag:private', tagged_by_user_id = 1
+ WHERE hostname IN ('skyworker','skybars','skybars-1',
+                     'skygate-vm','desktop-cuo0tfb','msi');
+```
+
+After the UPDATE, the next `/my/devices` load (which fires
+`backfillNodeOwnership` → `subnet.SyncStatus`) flips the
+status from `pending` to `active`. The `backfillNodeOwnership`
+GC pass doesn't undo the manual fix (it only removes rows
+for nodes that no longer exist in headscale, not for nodes
+that exist with the wrong username).
+
+The `fix_skyadmin_attribution.sh` script in the repo root
+does this end-to-end (UPDATE → trigger → verify). It's
+idempotent — re-running is a no-op.
+
+**When to use**:
+- A user has devices in headscale but `node_owner_map` has
+  them as `tagged-devices` (look for the symptom above).
+- The operator can enumerate the user's devices (by host
+  or by checking `headscale nodes list -o json | jq` for
+  `user.name == "tagged-devices"` and matching the device
+  by preauth or registration time).
+- The preauth was issued before v0.12.0, so
+  `headscale_preauth_id` is NULL.
+
+**When NOT to use**:
+- New devices (post-v0.12.0) have `headscale_preauth_id`
+  captured at issue time, so the backfill attributes them
+  automatically. No manual fix needed.
+- The user has no devices in headscale (the `pending` status
+  is correct — they're not opted in to Tailscale yet).
+
 ---
 
 ## Code structure (where to look)
