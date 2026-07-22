@@ -39,14 +39,14 @@ package db
 // ---------------------------------------------------------------
 
 const (
-	qInsertExitRuleLog = `INSERT INTO exit_rule_logs (version, action, detail) VALUES (?, ?, ?)`
+	qInsertExitRuleLog = `INSERT INTO exit_rule_logs (version, action, detail) VALUES ($1, $2, $3)`
 )
 
 // qSelectLastSyncForExitNode returns the most recent sync log line that
-// mentions `?` (an exit_node name) in its detail. Used by the admin node
+// mentions `$1` (an exit_node name) in its detail. Used by the admin node
 // load dashboard to show "last sync" per exit-node. The detail column is
 // free-form text so we LIKE-match.
-const qSelectLastSyncForExitNode = `SELECT COALESCE(MAX(created_at), 0) FROM exit_rule_logs WHERE action = 'sync' AND detail LIKE ?`
+const qSelectLastSyncForExitNode = `SELECT COALESCE(MAX(created_at), 0) FROM exit_rule_logs WHERE action = 'sync' AND detail LIKE $1`
 
 // qSelectRecentExitRuleLogs powers the admin /admin/exit-rules page top
 // panel (latest 20 log lines, newest first).
@@ -71,18 +71,18 @@ const (
 	// qInsertACLSnapshot stores a brand-new snapshot. The version is
 	// supplied by the caller (typically NextACLVersion(db)+1) so multiple
 	// writers in the same process don't collide on the auto-increment id.
-	qInsertACLSnapshot = `INSERT INTO acl_snapshots (version, config, created_by, applied_success) VALUES (?, ?, ?, 1)`
+	qInsertACLSnapshot = `INSERT INTO acl_snapshots (version, config, created_by, applied_success) VALUES ($1, $2, $3, 1)`
 
 	// qMarkACLApplied is fired after headscale has accepted the policy.
-	qMarkACLApplied = `UPDATE acl_snapshots SET applied_success = 1 WHERE version = ?`
+	qMarkACLApplied = `UPDATE acl_snapshots SET applied_success = 1 WHERE version = $1`
 
 	// qMarkACLFail records a failure reason. error_msg must be non-NULL
 	// (the column allows TEXT but headscale error strings can be long).
-	qMarkACLFail = `UPDATE acl_snapshots SET applied_success = 0, error_msg = ? WHERE version = ?`
+	qMarkACLFail = `UPDATE acl_snapshots SET applied_success = 0, error_msg = $1 WHERE version = $2`
 
 	// qSelectACLConfig reads the HuJSON policy BLOB for a given version.
 	// Rollback handlers feed this back into headscale.
-	qSelectACLConfig = `SELECT config FROM acl_snapshots WHERE version = ?`
+	qSelectACLConfig = `SELECT config FROM acl_snapshots WHERE version = $1`
 
 	// qLastAppliedACLVersion powers the telegram /status command.
 	qLastAppliedACLVersion = `SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success = 1`
@@ -108,7 +108,7 @@ const (
 const (
 	// qInsertAuditLog — used by handlers.audit and the telegram /ack
 	// /restart helpers.
-	qInsertAuditLog = `INSERT INTO audit_log (user_id, username, action, detail) VALUES (?, ?, ?, ?)`
+	qInsertAuditLog = `INSERT INTO audit_log (user_id, username, action, detail) VALUES ($1, $2, $3, $4)`
 
 	// qSelectAuditActions returns the distinct action values present in
 	// audit_log. Used by the admin /admin/audit filter dropdown.
@@ -127,8 +127,8 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectUserByName      = `SELECT id, password_hash, is_admin FROM portal_users WHERE username = ?`
-	qSelectUserIDByName    = `SELECT id FROM portal_users WHERE username = ?`
+	qSelectUserByName      = `SELECT id, password_hash, is_admin FROM portal_users WHERE username = $1`
+	qSelectUserIDByName    = `SELECT id FROM portal_users WHERE username = $1`
 	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme, subnet_cidr, subnet_status, subnet_router_node_id FROM portal_users ORDER BY id`
 	qSelectPortalUsernames = `SELECT username FROM portal_users ORDER BY id`
 	// 2026-07-16: v0.13.0 — per-plane ACL. qSelectPortalUsernamesForPlane
@@ -138,7 +138,7 @@ const (
 	// includes identities on that plane — headscale rejects
 	// unknown identities, so we can't mix plane A and plane B
 	// identities in one policy.
-	qSelectPortalUsernamesForPlane = `SELECT username FROM portal_users WHERE headscale_url = ? OR (headscale_url = '' AND ? = '') ORDER BY id`
+	qSelectPortalUsernamesForPlane = `SELECT username FROM portal_users WHERE headscale_url = $1 OR (headscale_url = '' AND $2 = '') ORDER BY id`
 	// 2026-07-17: v0.17.0 — per-user subnet CIDR. Joins
 	// portal_users (for username + plane) with user_subnets
 	// (for the per-user 10.0.<uid>.0/24 CIDR). LEFT JOIN
@@ -151,7 +151,7 @@ const (
 		SELECT p.username, COALESCE(s.cidr, '')
 		  FROM portal_users p
 		  LEFT JOIN user_subnets s ON s.user_id = p.id
-		 WHERE p.headscale_url = ? OR (p.headscale_url = '' AND ? = '')
+		 WHERE p.headscale_url = $1 OR (p.headscale_url = '' AND $2 = '')
 		 ORDER BY p.id`
 	// 2026-07-17: v0.17.1 — for each user on the plane,
 	// return the list of (grantor, cidr) tuples that
@@ -174,8 +174,8 @@ const (
 		  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
 		  JOIN portal_users p_grantor ON p_grantor.id = sh.grantor_user_id
 		  JOIN portal_users p_grantee ON p_grantee.id = sh.grantee_user_id
-		 WHERE (p_grantor.headscale_url = ? OR (p_grantor.headscale_url = '' AND ? = ''))
-		   AND (p_grantee.headscale_url = ? OR (p_grantee.headscale_url = '' AND ? = ''))
+		 WHERE (p_grantor.headscale_url = $1 OR (p_grantor.headscale_url = '' AND $2 = ''))
+		   AND (p_grantee.headscale_url = $3 OR (p_grantee.headscale_url = '' AND $4 = ''))
 		 ORDER BY p_grantee.username, p_grantor.username`
 	// v0.22.0 — mesh (shared network) membership
 	// visibility. For every (member, other_member) pair
@@ -215,29 +215,29 @@ const (
 		  JOIN portal_users p_other ON p_other.id = mm_other.user_id
 		  LEFT JOIN user_subnets s_other ON s_other.user_id = mm_other.user_id
 		 WHERE m.status = 'active'
-		   AND (p_self.headscale_url  = ? OR (p_self.headscale_url  = '' AND ? = ''))
-		   AND (p_other.headscale_url = ? OR (p_other.headscale_url = '' AND ? = ''))
+		   AND (p_self.headscale_url  = $1 OR (p_self.headscale_url  = '' AND $2 = ''))
+		   AND (p_other.headscale_url = $3 OR (p_other.headscale_url = '' AND $4 = ''))
 		 ORDER BY p_self.username, p_other.username`
 	// v0.13.0 — list every distinct (url, api_key) plane with a user
 	// count. Used by the per-plane ACL pipeline to iterate all
 	// planes and push the right policy to each. Empty
 	// headscale_url = the global default.
 	qSelectControlPlanes = `SELECT headscale_url, COUNT(*) FROM portal_users GROUP BY headscale_url`
-	qSelectUserByID        = `SELECT username, headscale_user_id FROM portal_users WHERE id = ?`
-	qSelectUserNameByID    = `SELECT username FROM portal_users WHERE id = ?`
-	qSelectUserHSByID      = `SELECT headscale_user_id, username FROM portal_users WHERE id = ?`
-	qSelectPasswordHash    = `SELECT password_hash FROM portal_users WHERE id = ?`
-	qSelectHSIDByID        = `SELECT headscale_user_id FROM portal_users WHERE id = ?`
-	qInsertPortalUser      = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES (?, ?, ?, ?)`
-	qUpdatePasswordHash    = `UPDATE portal_users SET password_hash = ? WHERE id = ?`
-	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = ?`
+	qSelectUserByID        = `SELECT username, headscale_user_id FROM portal_users WHERE id = $1`
+	qSelectUserNameByID    = `SELECT username FROM portal_users WHERE id = $1`
+	qSelectUserHSByID      = `SELECT headscale_user_id, username FROM portal_users WHERE id = $1`
+	qSelectPasswordHash    = `SELECT password_hash FROM portal_users WHERE id = $1`
+	qSelectHSIDByID        = `SELECT headscale_user_id FROM portal_users WHERE id = $1`
+	qInsertPortalUser      = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4)`
+	qUpdatePasswordHash    = `UPDATE portal_users SET password_hash = $1 WHERE id = $2`
+	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = $1`
 )
 
 // qSelectOtherHSUserIDs returns the headscale_user_id values of every
-// portal user EXCEPT the one whose id matches `?`. Used by
+// portal user EXCEPT the one whose id matches `$1`. Used by
 // backfillNodeOwnership's Strategy A to short-circuit a node already
 // claimed by a different portal user.
-const qSelectOtherHSUserIDs = `SELECT headscale_user_id FROM portal_users WHERE id != ? AND headscale_user_id IS NOT NULL AND headscale_user_id != ''`
+const qSelectOtherHSUserIDs = `SELECT headscale_user_id FROM portal_users WHERE id != $1 AND headscale_user_id IS NOT NULL AND headscale_user_id != ''`
 
 // ---------------------------------------------------------------
 // devices  —  v0.25 migration
@@ -259,7 +259,7 @@ const (
 	// when they need the underlying *sql.Rows for App-level
 	// enrichment (e.g. fall back to headscale.NodeList when the
 	// devices table is empty).
-	QSelectUserDevices = `SELECT id, hostname, last_seen FROM devices WHERE user_id = ? ORDER BY hostname`
+	QSelectUserDevices = `SELECT id, hostname, last_seen FROM devices WHERE user_id = $1 ORDER BY hostname`
 )
 
 // ---------------------------------------------------------------
@@ -279,10 +279,10 @@ const (
 
 const (
 	qCountAllEnabledRules     = `SELECT COUNT(*) FROM device_rules WHERE enabled = 1`
-	qCountDeviceEnabledRules  = `SELECT COUNT(*) FROM device_rules WHERE device_id = ? AND enabled = 1`
+	qCountDeviceEnabledRules  = `SELECT COUNT(*) FROM device_rules WHERE device_id = $1 AND enabled = 1`
 	qDistinctEnabledExitNodes = `SELECT DISTINCT exit_node_id FROM device_rules WHERE enabled = 1 AND exit_node_id != ''`
 	qCountRulesByExitNode     = `SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled = 1 AND exit_node_id != '' GROUP BY exit_node_id`
-	qCountRulesForExitNode    = `SELECT COUNT(*) FROM device_rules WHERE enabled = 1 AND exit_node_id = ?`
+	qCountRulesForExitNode    = `SELECT COUNT(*) FROM device_rules WHERE enabled = 1 AND exit_node_id = $1`
 )
 
 // qSelectEnabledACLEntries is used by GenerateACL to walk every rule and
@@ -299,53 +299,53 @@ const qSelectEnabledSubnetIPRules = `SELECT DISTINCT exit_node_id, target_value 
 
 // qSelectSubnetRoutesForExitNode is used by the route-setup script
 // generator to enumerate per-exit-node subnets and IPs.
-const qSelectSubnetRoutesForExitNode = `SELECT target_value FROM device_rules WHERE enabled = 1 AND exit_node_id = ? AND target_type IN ('subnet', 'ip')`
+const qSelectSubnetRoutesForExitNode = `SELECT target_value FROM device_rules WHERE enabled = 1 AND exit_node_id = $1 AND target_type IN ('subnet', 'ip')`
 
 // qDeleteRuleByID removes a single rule. Cascading to derived /32 entries
 // is the caller's job (see exit_rules_form_my.go PostDeleteExitRule).
-const qDeleteRuleByID = `DELETE FROM device_rules WHERE id = ?`
+const qDeleteRuleByID = `DELETE FROM device_rules WHERE id = $1`
 
 // qDeleteRulesByIDOrParentDomain is the cascade used by the delete flow
 // when deleting a domain rule: also drop any /32 entries that have
 // parent_domain = ?.
-const qDeleteRulesByIDOrParentDomain = `DELETE FROM device_rules WHERE user_id = ? AND (id = ? OR (target_type = 'subnet' AND parent_domain = ?))`
+const qDeleteRulesByIDOrParentDomain = `DELETE FROM device_rules WHERE user_id = $1 AND (id = $2 OR (target_type = 'subnet' AND parent_domain = $3))`
 
 // qDeleteRulesByIDAndUser is the safe-by-ownership single delete.
-const qDeleteRulesByIDAndUser = `DELETE FROM device_rules WHERE id = ? AND user_id = ?`
+const qDeleteRulesByIDAndUser = `DELETE FROM device_rules WHERE id = $1 AND user_id = $2`
 
 // qCountEnabledUserRulesNonSubnet is used by the per-user quota panel
 // (counts the "logical" rules, treating parent_domain IS NOT NULL /32
 // rules as already-counted under their parent domain).
-const qCountEnabledUserRulesNonSubnet = `SELECT COUNT(*) FROM device_rules WHERE user_id = ? AND enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '')`
+const qCountEnabledUserRulesNonSubnet = `SELECT COUNT(*) FROM device_rules WHERE user_id = $1 AND enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '')`
 
 // qCountUserRulesWithExistingDomain is used by insertRuleUnique to check
 // whether a duplicate (user, device, exit_node, domain) already exists.
-const qSelectRuleByComposite = `SELECT id FROM device_rules WHERE user_id = ? AND device_id = ? AND exit_node_id = ? AND target_type = ? AND target_value = ? LIMIT 1`
+const qSelectRuleByComposite = `SELECT id FROM device_rules WHERE user_id = $1 AND device_id = $2 AND exit_node_id = $3 AND target_type = $4 AND target_value = $5 LIMIT 1`
 
 // qSelectExistingDomainForUpdate reads parent_domain from a row before
 // update (used by the insert form to decide whether to insert or upsert).
-const qSelectParentDomainByID = `SELECT COALESCE(parent_domain, '') FROM device_rules WHERE id = ?`
+const qSelectParentDomainByID = `SELECT COALESCE(parent_domain, '') FROM device_rules WHERE id = $1`
 
 // qSelectDomainRuleForInsertDedup checks for an existing domain rule at
 // (user, device, exit_node, domain) before a new insert.
-const qSelectDomainRuleForInsertDedup = `SELECT id FROM device_rules WHERE user_id = ? AND device_id = ? AND exit_node_id = ? AND target_type = 'domain' AND target_value = ? LIMIT 1`
+const qSelectDomainRuleForInsertDedup = `SELECT id FROM device_rules WHERE user_id = $1 AND device_id = $2 AND exit_node_id = $3 AND target_type = 'domain' AND target_value = $4 LIMIT 1`
 
 // qSelectSubnet32ForDomain finds existing /32 rows derived from a domain
 // (used by both the delete cascade and the autoupdater).
-const qSelectSubnet32ForDomain = `SELECT id, target_value FROM device_rules WHERE user_id = ? AND device_id = ? AND exit_node_id = ? AND target_type = 'subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain, '') = ?`
+const qSelectSubnet32ForDomain = `SELECT id, target_value FROM device_rules WHERE user_id = $1 AND device_id = $2 AND exit_node_id = $3 AND target_type = 'subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain, '') = $4`
 
 // qSelectSubnet32NoParentDomain is the pre-cascade variant: /32 entries
 // without a parent_domain, but for the same (user, device, exit_node) tuple.
-const qSelectSubnet32NoParentDomain = `SELECT id, target_value FROM device_rules WHERE user_id = ? AND device_id = ? AND exit_node_id = ? AND target_type = 'subnet' AND target_value LIKE '%/32'`
+const qSelectSubnet32NoParentDomain = `SELECT id, target_value FROM device_rules WHERE user_id = $1 AND device_id = $2 AND exit_node_id = $3 AND target_type = 'subnet' AND target_value LIKE '%/32'`
 
 // qInsertDeviceRule is the canonical INSERT for a new rule. Action and
 // parent_domain are caller-supplied (caller picks 'accept'/'deny' and
 // whether to record a parent_domain link).
-const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 // qSelectUserRulesForView is used by /my/exit-rules: every enabled rule
 // for a user, ordered for stable display.
-const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain FROM device_rules d WHERE d.user_id = ? ORDER BY d.id`
+const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id`
 
 // qSelectAllRulesForAdmin is the cross-user admin view; LEFT JOIN onto
 // portal_users so the row carries username even if the user was deleted.
@@ -354,15 +354,15 @@ const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_nod
 // qSelectTargetTypeByIDForDelete reads (target_type, parent_domain) of a
 // single rule; the delete handler uses it to decide between single-row
 // delete and cascade.
-const qSelectTargetTypeByIDForDelete = `SELECT target_type, COALESCE(parent_domain, '') FROM device_rules WHERE id = ? AND user_id = ?`
+const qSelectTargetTypeByIDForDelete = `SELECT target_type, COALESCE(parent_domain, '') FROM device_rules WHERE id = $1 AND user_id = $2`
 
 // qCountRulesByUserDeviceEnabled is the "this user has too many rules on
 // this device" guard used by insertRuleUnique.
-const qCountRulesByUserDeviceEnabled = `SELECT COUNT(*) FROM device_rules WHERE user_id = ? AND device_id = ? AND enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '')`
+const qCountRulesByUserDeviceEnabled = `SELECT COUNT(*) FROM device_rules WHERE user_id = $1 AND device_id = $2 AND enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '')`
 
 // qCountRulesByDeviceGrouped is the per-device count used by the
 // /my/exit-rules usage panel (one row per device).
-const qCountRulesByDeviceGrouped = `SELECT device_id, COUNT(*) FROM device_rules WHERE user_id = ? AND enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '') GROUP BY device_id`
+const qCountRulesByDeviceGrouped = `SELECT device_id, COUNT(*) FROM device_rules WHERE user_id = $1 AND enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '') GROUP BY device_id`
 
 // ---------------------------------------------------------------
 // preauth_keys  —  v0.25 migration
@@ -377,9 +377,9 @@ const qCountRulesByDeviceGrouped = `SELECT device_id, COUNT(*) FROM device_rules
 // ---------------------------------------------------------------
 
 const (
-	qSelectPreauthByUser         = `SELECT id, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0) FROM preauth_keys WHERE user_id = ?`
-	qSelectPreauthByUserDetailed = `SELECT id, key, used, COALESCE(expires_at, 0), created_at, COALESCE(headscale_preauth_id, '') FROM preauth_keys WHERE user_id = ? ORDER BY created_at DESC`
-	qSelectPreauthByID           = `SELECT used, COALESCE(expires_at, 0), COALESCE(headscale_preauth_id, '') FROM preauth_keys WHERE id = ? AND user_id = ?`
+	qSelectPreauthByUser         = `SELECT id, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0) FROM preauth_keys WHERE user_id = $1`
+	qSelectPreauthByUserDetailed = `SELECT id, key, used, COALESCE(expires_at, 0), created_at, COALESCE(headscale_preauth_id, '') FROM preauth_keys WHERE user_id = $1 ORDER BY created_at DESC`
+	qSelectPreauthByID           = `SELECT used, COALESCE(expires_at, 0), COALESCE(headscale_preauth_id, '') FROM preauth_keys WHERE id = $1 AND user_id = $2`
 	// qSelectPreauthFullByID returns every column for a single row
 	// scoped to (id, user_id). Used by GetPreauthKeyByID for the
 	// /my/keys/{id}/expire flow which needs headscale_preauth_id
@@ -394,11 +394,11 @@ const (
 	// nullable; COALESCE normalizes NULL → '' / 0 and lets the
 	// single helper serve both fresh DBs (NOT NULL DEFAULT) and
 	// the live install.
-	qSelectPreauthFullByID       = `SELECT id, user_id, key, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0), created_at FROM preauth_keys WHERE id = ? AND user_id = ?`
-	qInsertPreauthKey            = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES (?, ?, ?, ?)`
-	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = ? WHERE id = ? AND user_id = ?`
-	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = ? AND used = 0`
-	qDeletePreauthByUser         = `DELETE FROM preauth_keys WHERE user_id = ?`
+	qSelectPreauthFullByID       = `SELECT id, user_id, key, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0), created_at FROM preauth_keys WHERE id = $1 AND user_id = $2`
+	qInsertPreauthKey            = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES ($1, $2, $3, $4)`
+	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
+	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
+	qDeletePreauthByUser         = `DELETE FROM preauth_keys WHERE user_id = $1`
 )
 
 // ---------------------------------------------------------------
@@ -414,13 +414,13 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectNodeOwnerByUsername  = `SELECT node_id FROM node_owner_map WHERE username = ?`
-	qSelectNodeOwnerByNodeID    = `SELECT node_id FROM node_owner_map WHERE node_id = ? AND username = ?`
-	qDeleteNodeOwnerByID        = `DELETE FROM node_owner_map WHERE node_id = ? AND username = ?`
-	qDeleteNodeOwnerByNodeTag   = `DELETE FROM node_owner_map WHERE node_id = ? AND tag = ?`
-	qCountNodeOwnerByNodeUser   = `SELECT COUNT(*) FROM node_owner_map WHERE node_id = ? AND username = ?`
-	qInsertOrReplaceNodeOwner   = `INSERT OR REPLACE INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at) VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'))`
-	qUpdateNodeOwnerTag         = `UPDATE node_owner_map SET tag = ?, tagged_by_user_id = ?, tagged_at = strftime('%s', 'now') WHERE node_id = ? AND username = ?`
+	qSelectNodeOwnerByUsername  = `SELECT node_id FROM node_owner_map WHERE username = $1`
+	qSelectNodeOwnerByNodeID    = `SELECT node_id FROM node_owner_map WHERE node_id = $1 AND username = $2`
+	qDeleteNodeOwnerByID        = `DELETE FROM node_owner_map WHERE node_id = $1 AND username = $2`
+	qDeleteNodeOwnerByNodeTag   = `DELETE FROM node_owner_map WHERE node_id = $1 AND tag = $2`
+	qCountNodeOwnerByNodeUser   = `SELECT COUNT(*) FROM node_owner_map WHERE node_id = $1 AND username = $2`
+	qInsertOrReplaceNodeOwner   = `INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at) VALUES ($1, $2, $3, $4, $5, strftime('%s', 'now')) ON CONFLICT (node_id) DO UPDATE SET headscale_user_id = EXCLUDED.headscale_user_id, username = EXCLUDED.username, tag = EXCLUDED.tag, tagged_by_user_id = EXCLUDED.tagged_by_user_id, tagged_at = EXCLUDED.tagged_at`
+	qUpdateNodeOwnerTag         = `UPDATE node_owner_map SET tag = $1, tagged_by_user_id = $2, tagged_at = strftime('%s', 'now') WHERE node_id = $3 AND username = $4`
 )
 
 // ---------------------------------------------------------------
@@ -435,11 +435,11 @@ const (
 
 const (
 	qSelectAllAPITokensForLookup = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash, pt.expires_at FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
-	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at, expires_at, auto_rotate FROM personal_api_tokens WHERE user_id = ? ORDER BY created_at DESC`
-	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES (?, ?, ?, ?, ?)`
-	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = ? AND user_id = ?`
-	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = ?`
-	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = ?`
+	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at, expires_at, auto_rotate FROM personal_api_tokens WHERE user_id = $1 ORDER BY created_at DESC`
+	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES ($1, $2, $3, $4, $5)`
+	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = $1 AND user_id = $2`
+	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = $1`
+	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = $1`
 )
 
 // ---------------------------------------------------------------
@@ -452,8 +452,8 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectTelegramBindingByChatID = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings WHERE chat_id = ?`
-	qSelectTelegramBindingByUser   = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings WHERE portal_user_id = ?`
+	qSelectTelegramBindingByChatID = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings WHERE chat_id = $1`
+	qSelectTelegramBindingByUser   = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings WHERE portal_user_id = $1`
 	qSelectAllTelegramBindings     = `SELECT chat_id, portal_user_id, is_admin, bound_at, bound_by_user_id, lang FROM telegram_bindings ORDER BY bound_at DESC`
 	// Этап 14 v5: lang is set ONLY on the INSERT branch of the
 	// upsert. A re-bind (admin /bind rebinds an existing chat
@@ -461,11 +461,11 @@ const (
 	// user explicitly chose with /lang. The lang column still
 	// appears in the INSERT for fresh binds (so auto-detect at
 	// /login writes the right value the first time).
-	qInsertTelegramBinding         = `INSERT INTO telegram_bindings (chat_id, portal_user_id, is_admin, bound_by_user_id, lang) VALUES (?, ?, ?, ?, ?)
+	qInsertTelegramBinding         = `INSERT INTO telegram_bindings (chat_id, portal_user_id, is_admin, bound_by_user_id, lang) VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT(chat_id) DO UPDATE SET portal_user_id = excluded.portal_user_id, is_admin = excluded.is_admin, bound_at = strftime('%s','now'), bound_by_user_id = excluded.bound_by_user_id`
-	qUpdateTelegramBindingLang     = `UPDATE telegram_bindings SET lang = ? WHERE chat_id = ?`
-	qDeleteTelegramBindingByChat   = `DELETE FROM telegram_bindings WHERE chat_id = ?`
-	qDeleteTelegramBindingsByUser  = `DELETE FROM telegram_bindings WHERE portal_user_id = ?`
+	qUpdateTelegramBindingLang     = `UPDATE telegram_bindings SET lang = $1 WHERE chat_id = $2`
+	qDeleteTelegramBindingByChat   = `DELETE FROM telegram_bindings WHERE chat_id = $1`
+	qDeleteTelegramBindingsByUser  = `DELETE FROM telegram_bindings WHERE portal_user_id = $1`
 )
 
 // ---------------------------------------------------------------
@@ -488,21 +488,21 @@ const (
 const (
 	qInsertTelegramLoginToken = `INSERT INTO telegram_login_tokens
 		(token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip)
-		VALUES (?, ?, strftime('%s','now'), ?, 0, 0, ?)`
+		VALUES ($1, $2, strftime('%s','now'), $3, 0, 0, $4)`
 	qSelectTelegramLoginToken = `SELECT token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip
-		FROM telegram_login_tokens WHERE token = ?`
+		FROM telegram_login_tokens WHERE token = $1`
 	qConsumeTelegramLoginToken = `UPDATE telegram_login_tokens
 		SET used_at = strftime('%s','now'),
-		    used_by_chat_id = ?
-		WHERE token = ? AND used_at = 0`
-	qDeleteTelegramLoginToken         = `DELETE FROM telegram_login_tokens WHERE token = ?`
-	qDeleteExpiredTelegramLoginTokens = `DELETE FROM telegram_login_tokens WHERE expires_at < ?`
-	qDeleteTelegramLoginTokensByUser  = `DELETE FROM telegram_login_tokens WHERE portal_user_id = ?`
+		    used_by_chat_id = $1
+		WHERE token = $2 AND used_at = 0`
+	qDeleteTelegramLoginToken         = `DELETE FROM telegram_login_tokens WHERE token = $1`
+	qDeleteExpiredTelegramLoginTokens = `DELETE FROM telegram_login_tokens WHERE expires_at < $1`
+	qDeleteTelegramLoginTokensByUser  = `DELETE FROM telegram_login_tokens WHERE portal_user_id = $1`
 	qCountActiveTelegramLoginTokensByUser = `SELECT COUNT(*) FROM telegram_login_tokens
-		WHERE portal_user_id = ? AND used_at = 0 AND expires_at > strftime('%s','now')`
+		WHERE portal_user_id = $1 AND used_at = 0 AND expires_at > strftime('%s','now')`
 	qListTelegramLoginTokensByUser = `SELECT token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip
-		FROM telegram_login_tokens WHERE portal_user_id = ?
-		ORDER BY created_at DESC LIMIT ?`
+		FROM telegram_login_tokens WHERE portal_user_id = $1
+		ORDER BY created_at DESC LIMIT $2`
 )
 
 // ---------------------------------------------------------------
@@ -519,10 +519,10 @@ const (
 
 const (
 	qInsertTelegramRateLimit = `INSERT INTO telegram_rate_limit(key, action, ts)
-		VALUES (?, ?, ?)`
+		VALUES ($1, $2, $3)`
 	qCountTelegramRateLimitInWindow = `SELECT COUNT(*) FROM telegram_rate_limit
-		WHERE key = ? AND ts >= ?`
-	qDeleteTelegramRateLimitOlderThan = `DELETE FROM telegram_rate_limit WHERE ts < ?`
+		WHERE key = $1 AND ts >= $2`
+	qDeleteTelegramRateLimitOlderThan = `DELETE FROM telegram_rate_limit WHERE ts < $1`
 )
 
 // ---------------------------------------------------------------
@@ -548,13 +548,13 @@ const (
 	// the exit_servers hostnames come from db.ListEnabledExitServerHostnames.
 	qSelectEnabledExitServerNames = `SELECT DISTINCT exit_node_id FROM device_rules WHERE enabled = 1 AND exit_node_id != ''`
 	// qSelectAcceptRoutesByHost powers db.LookupExitServerAcceptRoutes.
-	qSelectAcceptRoutesByHost     = `SELECT accept_routes FROM exit_servers WHERE hostname = ? LIMIT 1`
+	qSelectAcceptRoutesByHost     = `SELECT accept_routes FROM exit_servers WHERE hostname = $1 LIMIT 1`
 	// qInsertOrReplaceExitServer powers db.UpsertExitServer.
-	qInsertOrReplaceExitServer    = `INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, accept_routes) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(node_id) DO UPDATE SET hostname = excluded.hostname, ssh_target = excluded.ssh_target, ssh_key_path = excluded.ssh_key_path, description = excluded.description, accept_routes = excluded.accept_routes`
+	qInsertOrReplaceExitServer    = `INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, accept_routes) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(node_id) DO UPDATE SET hostname = excluded.hostname, ssh_target = excluded.ssh_target, ssh_key_path = excluded.ssh_key_path, description = excluded.description, accept_routes = excluded.accept_routes`
 	// qDeleteExitServerByNodeID powers db.DeleteExitServerByNodeID.
-	qDeleteExitServerByNodeID     = `DELETE FROM exit_servers WHERE node_id = ?`
+	qDeleteExitServerByNodeID     = `DELETE FROM exit_servers WHERE node_id = $1`
 	// qInsertExitServerOnDiscovery powers db.InsertIgnoreExitServerOnDiscovery.
-	qInsertExitServerOnDiscovery  = `INSERT OR IGNORE INTO exit_servers (node_id, hostname, tailscale_ip) VALUES (?, ?, ?)`
+	qInsertExitServerOnDiscovery  = `INSERT INTO exit_servers (node_id, hostname, tailscale_ip) VALUES ($1, $2, $3) ON CONFLICT (node_id) DO NOTHING`
 )
 
 // ---------------------------------------------------------------
@@ -566,6 +566,6 @@ const (
 
 const (
 	qSelectExitPolicy       = `SELECT value FROM global_settings WHERE key = 'exit_policy'`
-	qUpsertExitPolicy       = `INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', ?)`
-	qMaxTelegramSettingTime = `SELECT MAX(updated_at) FROM global_settings WHERE key IN (?, ?)`
+	qUpsertExitPolicy       = `INSERT INTO global_settings (key, value) VALUES ('exit_policy', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`
+	qMaxTelegramSettingTime = `SELECT MAX(updated_at) FROM global_settings WHERE key IN ($1, $2)`
 )

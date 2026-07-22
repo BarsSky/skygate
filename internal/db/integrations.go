@@ -56,6 +56,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // IntegrationConfig is the runtime-editable view of the pluggable
@@ -180,13 +181,18 @@ func SaveIntegrations(d *sql.DB, cfg *IntegrationConfig) error {
 		{"headplane.external_url", cfg.HeadplaneExternalURL},
 	}
 	for _, s := range stmts {
+		// v0.27.0: compute the timestamp in Go instead of via
+		// SQLite's strftime('%s','now'). Portable across SQLite
+		// and PG (both schemas store created_at/updated_at as
+		// BIGINT epoch seconds).
+		now := time.Now().Unix()
 		if _, err := d.Exec(
 			`INSERT INTO global_settings(key, value, updated_at)
-			 VALUES (?, ?, strftime('%s','now'))
+			 VALUES ($1, $2, $3)
 			 ON CONFLICT(key) DO UPDATE SET
 			   value = excluded.value,
 			   updated_at = excluded.updated_at`,
-			s.key, s.value,
+			s.key, s.value, now,
 		); err != nil {
 			return fmt.Errorf("save %s: %w", s.key, err)
 		}
@@ -200,7 +206,7 @@ func SaveIntegrations(d *sql.DB, cfg *IntegrationConfig) error {
 // value" — both are "use the default").
 func loadGlobalSetting(d *sql.DB, key string) string {
 	var v string
-	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, key).Scan(&v)
+	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = $1`, key).Scan(&v)
 	if err != nil {
 		return ""
 	}

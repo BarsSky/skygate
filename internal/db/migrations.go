@@ -57,7 +57,7 @@ func migrateV021(d *sql.DB) error {
 			value TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER DEFAULT (strftime('%s','now'))
 		)`,
-		`INSERT OR IGNORE INTO global_settings (key, value) VALUES ('exit_policy', 'allow_all')`,
+		`INSERT INTO global_settings (key, value) VALUES ('exit_policy', 'allow_all') ON CONFLICT (key) DO NOTHING`,
 	}
 	for _, q := range queries {
 		if _, err := d.Exec(q); err != nil {

@@ -305,7 +305,7 @@ func seedControlplaneUser(t *testing.T, d interface {
 }, username string) int64 {
 	t.Helper()
 	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?, ?, 0)`,
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES ($1, $2, 0)`,
 		username, "hash:"+username,
 	)
 	if err != nil {

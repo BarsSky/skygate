@@ -61,16 +61,20 @@ func migrateV031(d *sql.DB) error {
 		// Default strict_mode = 0 (off) so the migration doesn't
 		// surprise existing single-admin-chat deploys. New deploys
 		// that want strict mode flip it via /admin/telegram.
-		// We use INSERT OR IGNORE so re-running the migration is a
-		// no-op (the row already exists from a previous run).
-		`INSERT OR IGNORE INTO global_settings(key, value, updated_at)
-			VALUES ('telegram.strict_mode', '0', strftime('%s','now'))`,
+		// We use INSERT ... ON CONFLICT DO NOTHING so re-running
+		// the migration is a no-op (the row already exists from
+		// a previous run). v0.27.0: switched from SQLite's
+		// INSERT OR IGNORE to PG-compatible ON CONFLICT.
+		`INSERT INTO global_settings(key, value, updated_at)
+			VALUES ('telegram.strict_mode', '0', strftime('%s','now'))
+			ON CONFLICT (key) DO NOTHING`,
 		// Default token TTL = 300s (5 min). Operators can tune via
 		// /admin/telegram UI or by editing the global_settings row
 		// directly. Stored as a string to keep the schema uniform
 		// (all global_settings values are TEXT).
-		`INSERT OR IGNORE INTO global_settings(key, value, updated_at)
-			VALUES ('telegram.login_token_ttl_seconds', '300', strftime('%s','now'))`,
+		`INSERT INTO global_settings(key, value, updated_at)
+			VALUES ('telegram.login_token_ttl_seconds', '300', strftime('%s','now'))
+			ON CONFLICT (key) DO NOTHING`,
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {

@@ -72,7 +72,7 @@ func TestOpenAndMigrate(t *testing.T) {
 func TestGetSetUserTheme(t *testing.T) {
 	d := openTestDB(t)
 	// seed user
-	res, err := d.Exec(`INSERT INTO portal_users (username, password_hash, is_admin, theme) VALUES ('utester', 'x', 0, ?)`, ThemeVercel)
+	res, err := d.Exec(`INSERT INTO portal_users (username, password_hash, is_admin, theme) VALUES ('utester', 'x', 0, $1)`, ThemeVercel)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}

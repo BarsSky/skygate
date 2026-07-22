@@ -131,11 +131,12 @@ func TestListAuditActionsDistinct(t *testing.T) {
 // bootstrapAdmin, but the test DB starts empty.
 func insertRule(t *testing.T, d *sql.DB, userID, deviceID int, exitNode, tt, tv, action, ip, parent string) int64 {
 	t.Helper()
-	// Ensure the FK target exists. Use INSERT OR IGNORE so re-runs
+	// Ensure the FK target exists. Use ON CONFLICT DO NOTHING so re-runs
 	// (and tests that use the same user_id twice) don't trip on
-	// UNIQUE(username).
+	// UNIQUE(username). v0.27.0: switched from SQLite's INSERT OR
+	// IGNORE to PG-compatible ON CONFLICT.
 	if _, err := d.Exec(
-		`INSERT OR IGNORE INTO portal_users (id, username, password_hash, is_admin) VALUES (?, ?, 'x', 0)`,
+		`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES ($1, $2, 'x', 0) ON CONFLICT (id) DO NOTHING`,
 		userID, "user"+string(rune('0'+userID)),
 	); err != nil {
 		t.Fatalf("seed portal_users: %v", err)

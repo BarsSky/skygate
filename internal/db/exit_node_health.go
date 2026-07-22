@@ -73,11 +73,22 @@ type ExitNodeStateChange struct {
 // same tick via GetExitNodeHealth before calling this.
 func UpsertExitNodeHealth(d dbExec, h ExitNodeHealth) error {
 	_, err := d.Exec(
-		`INSERT OR REPLACE INTO exit_node_health (
+		`INSERT INTO exit_node_health (
 			node_id, hostname, online, last_seen, advertised_routes_ok,
 			has_exit_tag, state, healthy, last_check_at,
 			last_state_change_at, consecutive_failures
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (node_id) DO UPDATE SET
+			hostname = EXCLUDED.hostname,
+			online = EXCLUDED.online,
+			last_seen = EXCLUDED.last_seen,
+			advertised_routes_ok = EXCLUDED.advertised_routes_ok,
+			has_exit_tag = EXCLUDED.has_exit_tag,
+			state = EXCLUDED.state,
+			healthy = EXCLUDED.healthy,
+			last_check_at = EXCLUDED.last_check_at,
+			last_state_change_at = EXCLUDED.last_state_change_at,
+			consecutive_failures = EXCLUDED.consecutive_failures`,
 		h.NodeID, h.Hostname, boolToInt(h.Online), h.LastSeen,
 		boolToInt(h.AdvertisedRoutesOK), boolToInt(h.HasExitTag),
 		h.State, boolToInt(h.Healthy),
@@ -97,7 +108,7 @@ func GetExitNodeHealth(d *sql.DB, nodeID string) (ExitNodeHealth, error) {
 		`SELECT node_id, hostname, online, last_seen, advertised_routes_ok,
 			has_exit_tag, state, healthy, last_check_at,
 			last_state_change_at, consecutive_failures
-		 FROM exit_node_health WHERE node_id = ?`,
+		 FROM exit_node_health WHERE node_id = $1`,
 		nodeID,
 	)
 	var h ExitNodeHealth
@@ -202,7 +213,7 @@ func RecordExitNodeStateChange(d dbExec, sc ExitNodeStateChange) (int64, error) 
 	res, err := d.Exec(
 		`INSERT INTO exit_node_state_changes
 			(node_id, hostname, from_state, to_state, detected_at, note)
-			VALUES (?, ?, ?, ?, ?, ?)`,
+			VALUES ($1, $2, $3, $4, $5, $6)`,
 		sc.NodeID, sc.Hostname, sc.FromState, sc.ToState,
 		unixOrZero(sc.DetectedAt), sc.Note,
 	)
@@ -230,7 +241,7 @@ func ListPendingExitNodeStateChanges(d *sql.DB, limit int) ([]ExitNodeStateChang
 		 FROM exit_node_state_changes
 		 WHERE alerted_at = 0
 		 ORDER BY detected_at ASC
-		 LIMIT ?`,
+		 LIMIT $1`,
 		limit,
 	)
 	if err != nil {
@@ -258,7 +269,7 @@ func ListPendingExitNodeStateChanges(d *sql.DB, limit int) ([]ExitNodeStateChang
 // by the dispatch loop after Notifier.SendAlert returns.
 func MarkExitNodeStateChangeAlerted(d dbExec, id int64) error {
 	_, err := d.Exec(
-		`UPDATE exit_node_state_changes SET alerted_at = ? WHERE id = ? AND alerted_at = 0`,
+		`UPDATE exit_node_state_changes SET alerted_at = $1 WHERE id = $2 AND alerted_at = 0`,
 		time.Now().Unix(), id,
 	)
 	return err
@@ -268,7 +279,7 @@ func MarkExitNodeStateChangeAlerted(d dbExec, id int64) error {
 // node disappears from headscale (admin deleted it) so the
 // /admin/exit-nodes list stays in sync. Idempotent.
 func DeleteExitNodeHealth(d dbExec, nodeID string) error {
-	_, err := d.Exec(`DELETE FROM exit_node_health WHERE node_id = ?`, nodeID)
+	_, err := d.Exec(`DELETE FROM exit_node_health WHERE node_id = $1`, nodeID)
 	return err
 }
 
@@ -282,7 +293,7 @@ func LatestExitNodeState(d *sql.DB, nodeID string) (string, string, error) {
 	var fromState, toState string
 	err := d.QueryRow(
 		`SELECT from_state, to_state FROM exit_node_state_changes
-		 WHERE node_id = ? ORDER BY detected_at DESC, id DESC LIMIT 1`,
+		 WHERE node_id = $1 ORDER BY detected_at DESC, id DESC LIMIT 1`,
 		nodeID,
 	).Scan(&fromState, &toState)
 	return fromState, toState, err

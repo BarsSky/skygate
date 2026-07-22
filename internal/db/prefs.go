@@ -35,7 +35,7 @@ import "database/sql"
 func GetDefaultDevice(d *sql.DB, userID int64) (string, error) {
 	var s string
 	err := d.QueryRow(
-		`SELECT COALESCE(default_device_node_id, '') FROM portal_users WHERE id = ?`,
+		`SELECT COALESCE(default_device_node_id, '') FROM portal_users WHERE id = $1`,
 		userID,
 	).Scan(&s)
 	if err == sql.ErrNoRows {
@@ -50,7 +50,7 @@ func GetDefaultDevice(d *sql.DB, userID int64) (string, error) {
 // auth and update — caller's choice whether to surface that).
 func SetDefaultDevice(d *sql.DB, userID int64, nodeID string) (int64, error) {
 	res, err := d.Exec(
-		`UPDATE portal_users SET default_device_node_id = ? WHERE id = ?`,
+		`UPDATE portal_users SET default_device_node_id = $1 WHERE id = $2`,
 		nodeID, userID,
 	)
 	if err != nil {
@@ -65,7 +65,7 @@ func SetDefaultDevice(d *sql.DB, userID int64, nodeID string) (int64, error) {
 func GetDefaultExitNode(d *sql.DB, userID int64) (string, error) {
 	var s string
 	err := d.QueryRow(
-		`SELECT COALESCE(default_exit_node_id, '') FROM portal_users WHERE id = ?`,
+		`SELECT COALESCE(default_exit_node_id, '') FROM portal_users WHERE id = $1`,
 		userID,
 	).Scan(&s)
 	if err == sql.ErrNoRows {
@@ -78,7 +78,7 @@ func GetDefaultExitNode(d *sql.DB, userID int64) (string, error) {
 // Symmetric with SetDefaultDevice.
 func SetDefaultExitNode(d *sql.DB, userID int64, nodeID string) (int64, error) {
 	res, err := d.Exec(
-		`UPDATE portal_users SET default_exit_node_id = ? WHERE id = ?`,
+		`UPDATE portal_users SET default_exit_node_id = $1 WHERE id = $2`,
 		nodeID, userID,
 	)
 	if err != nil {

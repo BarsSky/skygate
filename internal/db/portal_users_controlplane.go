@@ -62,7 +62,7 @@ func (c UserControlPlane) HasOverride() bool { return c.URL != "" }
 func GetUserHeadscaleConfig(d *sql.DB, userID int64, keyHex string) (UserControlPlane, error) {
 	var url, keyEnc string
 	err := d.QueryRow(
-		`SELECT headscale_url, headscale_api_key_enc FROM portal_users WHERE id = ?`,
+		`SELECT headscale_url, headscale_api_key_enc FROM portal_users WHERE id = $1`,
 		userID,
 	).Scan(&url, &keyEnc)
 	if err == sql.ErrNoRows {
@@ -101,7 +101,7 @@ func SetUserHeadscaleConfig(d *sql.DB, userID int64, url, apiKey, keyHex string)
 		// column default '' is the "use global" sentinel,
 		// so writing the empty string is equivalent).
 		_, err := d.Exec(
-			`UPDATE portal_users SET headscale_url = '', headscale_api_key_enc = '' WHERE id = ?`,
+			`UPDATE portal_users SET headscale_url = '', headscale_api_key_enc = '' WHERE id = $1`,
 			userID,
 		)
 		return err
@@ -114,7 +114,7 @@ func SetUserHeadscaleConfig(d *sql.DB, userID int64, url, apiKey, keyHex string)
 		return err
 	}
 	_, err = d.Exec(
-		`UPDATE portal_users SET headscale_url = ?, headscale_api_key_enc = ? WHERE id = ?`,
+		`UPDATE portal_users SET headscale_url = $1, headscale_api_key_enc = $2 WHERE id = $3`,
 		url, enc, userID,
 	)
 	return err
@@ -125,7 +125,7 @@ func SetUserHeadscaleConfig(d *sql.DB, userID int64, url, apiKey, keyHex string)
 // that was already on the global default is a no-op.
 func ClearUserHeadscaleConfig(d *sql.DB, userID int64) error {
 	_, err := d.Exec(
-		`UPDATE portal_users SET headscale_url = '', headscale_api_key_enc = '' WHERE id = ?`,
+		`UPDATE portal_users SET headscale_url = '', headscale_api_key_enc = '' WHERE id = $1`,
 		userID,
 	)
 	return err

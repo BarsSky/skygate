@@ -23,12 +23,12 @@ const (
 	// commands (/ack, /restart) where there is no portal user_id.
 	// Kept private to this file because no handler outside this file
 	// needs it; AppendAuditLogNoUser is the typed wrapper.
-	qInsertAuditLogNoUser = `INSERT INTO audit_log (username, action, detail) VALUES (?, ?, ?)`
+	qInsertAuditLogNoUser = `INSERT INTO audit_log (username, action, detail) VALUES ($1, $2, $3)`
 
 	// qDeleteAuditLogByUserID purges a user's audit history when the
 	// portal user is deleted. Kept private to this file for the same
 	// reason.
-	qDeleteAuditLogByUserID = `DELETE FROM audit_log WHERE user_id = ?`
+	qDeleteAuditLogByUserID = `DELETE FROM audit_log WHERE user_id = $1`
 )
 
 // AppendAuditLog writes one row to audit_log. userID is typically a
@@ -120,13 +120,13 @@ func ListAuditLogForUser(d *sql.DB, userID int64, username string, since int64, 
 	}
 	q := `SELECT id, created_at, COALESCE(user_id, 0), username, action, COALESCE(detail, '')
 	        FROM audit_log
-	       WHERE (user_id = ? OR (user_id = 0 AND username = ?))`
+	       WHERE (user_id = $1 OR (user_id = 0 AND username = $2))`
 	args := []interface{}{userID, username}
 	if since > 0 {
-		q += ` AND created_at >= ?`
+		q += ` AND created_at >= $3`
 		args = append(args, since)
 	}
-	q += ` ORDER BY id DESC LIMIT ? OFFSET ?`
+	q += ` ORDER BY id DESC LIMIT $4 OFFSET $5`
 	args = append(args, limit, offset)
 	rows, err := d.Query(q, args...)
 	if err != nil {
