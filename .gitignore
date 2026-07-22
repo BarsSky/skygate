@@ -73,3 +73,8 @@ backup/
 
 # Hermes agent backup directories (do not commit)
 .hermes-*/
+
+# Tailscale authkey (read at runtime by entrypoint.sh if TS_AUTHKEY_FILE=...)
+# Created by `docker secret create` during local bring-up; never commit.
+secrets/
+/secrets/
