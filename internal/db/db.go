@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
 	"time"
 	// 2026-07-22: v0.27.0 — driver abstraction. Both backends
 	// are registered via blank import; the active one is chosen
@@ -183,12 +186,73 @@ func migrate(d *sql.DB) error {
 }
 
 // migratePostgres is the v0.27.0 PostgreSQL migration chain.
-// Implemented in migrations_pg.go as each version is ported from
-// SQLite. Currently a stub that runs V025 only (portal_users +
-// friends) as a proof-of-concept; full parity with the SQLite
-// chain is the work of Phase 1.3.
+// Implemented in migrations_pg.go (auto-generated from the SQLite
+// sources in migrations_v0.XX.go via port_migrations_pg.py). The
+// chain is the same set of versions as the SQLite chain so a
+// fresh PG DB ends up schema-equivalent to a fresh SQLite DB.
 func migratePostgres(d *sql.DB) error {
-	return migrateV025PG(d)
+	// Order MUST match the SQLite chain in migrateSQLite (above).
+	// Schema dependencies:
+	//   V025 (portal_users) is the FK target for everything else.
+	//   V020 (device_rules + friends) depends on V025.
+	//   V021/V022 ALTER device_rules (additive, depend on V020).
+	//   V023 (personal_api_tokens) depends on V025.
+	//   V024 ALTER exit_servers (depends on V020).
+	//   V026 ALTER exit_servers ADD accept_routes (depends on V024).
+	//   V027 (telegram_alerts) is independent.
+	//   V028 ALTER node_owner_map (additive, depends on V025).
+	//   V029 (telegram_bindings) depends on V025.
+	//   V030 ALTER portal_users (depends on V025).
+	//   V031 (telegram_login_tokens + global_settings rows)
+	//     depends on V025 + V020 (global_settings created in V021).
+	//   V032 (telegram_rate_limit) is independent.
+	//   V033 ALTER telegram_bindings (depends on V029).
+	//   V034-v0.43: each new table or column depends on V025
+	//     (FK target) and is otherwise additive.
+	//
+	// The chain below runs all PG versions in dependency order.
+	// V025 (portal_users) is FIRST because V020+ all FK to it.
+	for _, fn := range []func(*sql.DB) error{
+		migrateV025PG, // CREATE portal_users (FK target for everything)
+		migrateV020PG, // CREATE device_rules + friends (FK to portal_users)
+		migrateV021PG, // ALTER device_rules ADD action + global_settings
+		migrateV022PG, // ALTER device_rules ADD device_ip
+		migrateV023PG, // CREATE personal_api_tokens (FK to portal_users)
+		migrateV024PG, // ALTER exit_servers (ssh_target, ssh_key_path)
+		migrateV026PG, // ALTER exit_servers ADD accept_routes
+		migrateV027PG, // CREATE telegram_alerts
+		migrateV028PG, // ALTER node_owner_map (tag columns)
+		migrateV029PG, // CREATE telegram_bindings (FK to portal_users)
+		migrateV030PG, // ALTER portal_users (default_device_node_id, default_exit_node_id)
+		migrateV031PG, // CREATE telegram_login_tokens + global_settings rows
+		migrateV032PG, // CREATE telegram_rate_limit
+		migrateV033PG, // ALTER telegram_bindings ADD lang
+		migrateV034PG, // ALTER node_owner_map ADD hostname
+		migrateV035PG, // ALTER portal_users (headscale_user_id, headscale_api_key_enc)
+		migrateV036PG, // CREATE exit_node_health + exit_node_state_changes
+		migrateV037PG, // ALTER personal_api_tokens (expires_at, auto_rotate)
+		migrateV038PG, // CREATE user_subnets + denorm on portal_users
+		migrateV039PG, // CREATE user_subnet_shares
+		migrateV041PG, // CREATE headscale_releases
+		migrateV042PG, // CREATE invite_codes
+		migrateV043PG, // CREATE meshes + mesh_members
+	} {
+		if err := fn(d); err != nil {
+			return fmt.Errorf("migrate v%sPG: %w", funcName(fn), err)
+		}
+	}
+	return nil
+}
+
+// funcName returns the function name for error messages.
+func funcName(fn func(*sql.DB) error) string {
+	name := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+	// Strip package prefix (e.g. "skygate/internal/db.migrateV020PG"
+	// -> "migrateV020PG").
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return name
 }
 
 // migrateSQLite is the legacy SQLite migration chain. All
