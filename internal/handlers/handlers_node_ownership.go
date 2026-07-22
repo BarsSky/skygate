@@ -232,7 +232,27 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 					// headscale-tagless nodes — UI showed tag:private locally but
 					// headscale had no tag. Admins can still set tag:public manually
 					// via /admin/devices/taged (PostAdminNodeTag).
-					matchedTag = "tag:private"
+					//
+					// 2026-07-22: v0.26.0 — if the node already carries a
+					// non-`tag:private` tag (e.g. tag:subnet-router from the
+					// preauth key), DON'T override it with tag:private. The
+					// subnet-router flow NEEDS tag:subnet-router to stay on
+					// the node so the v0.17.0 ACL rule (user → tag:subnet-router →
+					// user_subnet:*) keeps working. Mirrors the Strategy A
+					// branch above. Caught by the e2e subnet-router pilot
+					// on 2026-07-22: skygate-subnet-skyadmin (id=25)
+					// registered with tag:subnet-router, the backfill
+					// clobbered it to [tag:private] via the destructive
+					// TagNode call below. AddTag (also v0.26.0) is the
+					// second half of the fix — the call now uses
+					// AddTag so even if Strategy C fires, the existing
+					// tag:subnet-router is preserved (we append
+					// tag:private, don't replace).
+					if len(n.Tags) > 0 {
+						matchedTag = firstTagOrFallback(n)
+					} else {
+						matchedTag = "tag:private"
+					}
 				}
 			}
 		}
@@ -290,10 +310,18 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 				n.ID, n.Hostname, matchedTag, n.Tags, hasPrivate)
 			if !hasPrivate {
 				if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
-					if err := a.HS.TagNode(nodeIDInt, "tag:private"); err != nil {
+					// 2026-07-22: v0.26.0 — was a.HS.TagNode(..., "tag:private")
+					// which is destructive (headscale 0.29's `nodes tag
+					// --force` REPLACES the entire tag set). If the node
+					// already carries a meaningful tag (e.g. tag:subnet-router
+					// from the preauth, or tag:exit-node / tag:public set
+					// by an admin), that tag was silently wiped. AddTag
+					// reads the current tag set first and writes the
+					// union, preserving everything else.
+					if err := a.HS.AddTag(nodeIDInt, "tag:private"); err != nil {
 						log.Printf("warn: auto-tag node %s: %v", n.ID, err)
 					} else {
-						log.Printf("DBG backfill TagNode called for node=%s (set tag:private)", n.ID)
+						log.Printf("DBG backfill AddTag called for node=%s (ensure tag:private)", n.ID)
 					}
 				}
 			}
