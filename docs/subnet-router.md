@@ -18,6 +18,115 @@ between Tailscale and your LAN.
 
 ---
 
+## When do you actually want this? (use cases)
+
+A subnet-router is the right tool when you have **a bunch of
+services or devices on a network that don't (or can't) run
+Tailscale themselves**, and you want them reachable from
+your tailnet. Concrete scenarios from the operator's tailnet
+and the original v0.16.0+ design notes:
+
+### 1. Home NAS / media server
+
+Your Synology / TrueNAS / Unraid / DIY box has Plex,
+Jellyfin, the family photo library, paperless-ngx, a
+Calibre web UI, the backup endpoint, etc. Most of those
+expose web UIs you want to hit from your phone when
+you're out, but you don't want them on the public
+internet.
+
+With a subnet-router: install Tailscale once on the NAS
+itself (or on a Raspberry Pi glued to the NAS with an
+ethernet cable), advertise `192.168.1.0/24`, and every
+tailnet device can hit `http://192.168.1.50:32400` (Plex)
+or `http://nas.local:5000` as if it were on the home
+WiFi — even when you're on hotel WiFi in another country.
+
+### 2. Smart home / IoT hub
+
+Home Assistant, Mosquitto MQTT broker, Zigbee2MQTT,
+Shelly devices, TP-Link Kasa plugs, security cameras with
+NVR, an ESPHome-managed greenhouse, etc. None of them
+should be on the public internet. None of them run
+Tailscale themselves (or only the hub does, with a
+Zigbee/Z-Wave stick that needs to stay on the host).
+
+The subnet-router sits on the same LAN as the hub.
+`http://homeassistant.local:8123` is reachable from your
+phone via the tailnet. MQTT clients can subscribe to
+`mqtt://192.168.1.20:1883` over Tailscale. Cameras keep
+their RTSP streams on the LAN, only the NVR UI is exposed
+to the tailnet (and you can re-share that with a mesh if
+you want family access).
+
+### 3. Small office / home-office server room
+
+A Proxmox cluster with the operator GUI on
+`10.0.10.1:8006`, a UniFi controller, a Synology, a
+printer that nobody has a driver for anymore, a dev board
+flashing ESP32s over USB-IP, etc. The team needs access
+from home / the road, but the public-internet rule is
+"nothing in this room is reachable from the WAN".
+
+The subnet-router runs on a low-power box at the room's
+edge. The whole `/24` becomes a tailnet destination. The
+office firewall stays untouched. IT doesn't need to learn
+about Tailscale to make it work — the subnet-router is
+just "another thing on the LAN".
+
+### 4. Family sharing
+
+Mom and Dad have a NAS with the family photos. Kids want
+to watch the photos on their tablets. Setting up Tailscale
+on the parents' NAS is one thing, but you don't want the
+kids to also have admin on the NAS itself.
+
+The subnet-router approach: parents run the subnet-router,
+kids join the tailnet (or get a read-only share of the
+NAS subnet via the v0.17.1 cross-user share / v0.22.0
+mesh). Kids can hit `http://192.168.1.50:5000/photos/`
+without ever seeing the NAS's admin UI or other LAN
+services. The ACL in skygate can restrict which kids see
+which CIDRs (`/admin/users/{id}/subnet` → "Share with
+user X" button).
+
+### 5. Lab / dev environment
+
+A homelab with VMs, Docker containers, test databases, an
+MQTT broker, a Grafana instance, a portainer, all on
+`10.0.42.0/24`. You want to hit `http://grafana.lab`
+from your laptop without exposing any of it to the
+internet. The subnet-router is the only thing in the lab
+that runs Tailscale — every other service stays in its
+container or VM, untouched, no extra Tailscale state on
+each host.
+
+This is also the cleanest way to give a contractor /
+freelancer / collaborator access to one specific service
+on your LAN without VPN'ing them into your whole home
+network.
+
+### 6. Cross-site backup / replication
+
+Two physical sites (e.g. home + parents' house) with their
+own LANs. Each runs a subnet-router. The tailnet
+auto-discovers both `/24`s. You can `rsync` from one to
+the other over Tailscale, mount one NAS over the tailnet
+to back up the other, replicate a database, etc. — all
+encrypted, no port-forwarding, no static IPs, no DDNS.
+
+### When NOT to use a subnet-router
+
+If you only have **one or two devices** that need
+tailnet access, just install Tailscale on each of them
+directly. The subnet-router is the right tool when
+**installing Tailscale per-device would be 5+ installs**
+or **some of the devices can't run Tailscale at all**
+(an ESP32, a printer, an old NAS that doesn't have
+glibc).
+
+---
+
 ## TL;DR — what does this actually do for me?
 
 After your subnet-router is up and approved, the following
@@ -143,6 +252,72 @@ dependencies beyond `bash` and `curl`.
    the page — v0.24.2+).
 
 That's it. No other tooling required.
+
+---
+
+## End-to-end verification (operator-side)
+
+The flow was tested live on 2026-07-22 against the
+operator's VM (`skyadmin` pilot). Re-run the e2e
+script to reproduce or to verify a new deployment:
+
+```bash
+# On the skygate host (must be able to reach headscale + skygate + the docker CLI):
+scp C:/Projects/skygate/e2e_pilot.sh skyadmin@<VM>:/tmp/
+ssh skyadmin@<VM> "bash /tmp/e2e_pilot.sh"
+```
+
+The script:
+1. Logs in as `skyadmin`, downloads the bundle from
+   `/admin/users/1/subnet/download` (HTTP 200, ~4.5KB tar.gz).
+2. Extracts the preauth key from `commands.txt`.
+3. Pulls `tailscale/tailscale:latest` and starts a
+   sidecar container with `--cap-add=NET_ADMIN
+   --device /dev/net/tun --network=host`, env vars
+   `TS_AUTHKEY`, `TS_LOGIN_SERVER=https://head.skynas.ru`,
+   `TS_HOSTNAME=skygate-subnet-skyadmin`.
+4. Waits for the new node to register in headscale
+   (typically 5-10s).
+5. Inspects the node: `tags: [tag:subnet-router]`,
+   `available_routes: [10.0.1.0/24]`, `subnet_routes:
+   [10.0.1.0/24]`, `online: true`.
+6. Waits up to 60s for `sidecar.SyncOnce` to auto-approve
+   the route.
+7. Confirms the sidecar log line
+   `sidecar: approved 10.0.1.0/24 on node skygate-subnet-skyadmin (user=1)`.
+8. Triggers `/my/devices` and confirms the DB flips
+   `user_subnets.status` from `active` → `router_active`
+   (and the denorm `portal_users.subnet_status` matches).
+
+**Verified live results (2026-07-22, skyadmin pilot):**
+
+- node id=26 registered in headscale with
+  `tags: ['tag:subnet-router']`, `ip_addresses:
+  ['100.64.0.21', 'fd7a:115c:a1e0::15']`
+- `sidecar` log line: `sidecar: approved 10.0.1.0/24 on
+  node skygate-subnet-skyadmin (user=1)` (within 21s of
+  registration)
+- `user_subnets.status` flipped to `router_active` after
+  `/my/devices` load
+- `portal_users.subnet_status` denorm column matches
+- `user_subnets.router_node_id = 26` filled in
+- Status pill stable across multiple `SyncOnce` ticks
+  (verified: `T+0` and `T+35s` both report `router_active`)
+
+**Health check (operator-side, post-deploy):**
+
+```bash
+# Run on the skygate host. Reports the state of the
+# user's subnet-router end-to-end (DB, headscale, denorm,
+# UI status pill, recent audit events).
+bash scripts/check_subnet_router.sh skyadmin
+# or
+bash scripts/check_subnet_router.sh 1
+```
+
+Exits 0 on `[OK]`, prints `[WARN]` for known-soft
+failures, `[FAIL]` for hard ones. Use this in cron
++ alerting to catch a dead subnet-router within 30s.
 
 ---
 
@@ -351,6 +526,22 @@ click around to trigger a load, or wait — the sidecar's
 30-second tick writes to `user_subnets.status` directly,
 but the **denormalized** `portal_users.subnet_status`
 column is updated only when `/my/devices` is hit.
+
+### "subnet status flickers between 'active' and 'router_active' every 30 seconds"
+
+Pre-v0.26.0 bug (fixed in commit `894495d`). The sidecar's
+`SyncOnce` was setting `status='active'` on every tick when
+the route was approved, clobbering the `router_active` that
+`backfillNodeOwnership` had just set on the latest
+`/my/devices` load. The pill would flip `router_active` →
+`active` → `router_active` → `active` on a 30s cycle.
+
+Verify the fix is deployed: the sidecar's logs should
+contain `sidecar: approved <CIDR> on node <HOSTNAME>` and
+the next `sync.Reload status=router_active` (if you set
+`SKYGATE_DEBUG=1`) — never `status=active` from the
+sidecar. If you see `sidecar: ... status=active`, roll
+back to the v0.25.1 build or upgrade to v0.26.0+.
 
 ### "MagicDNS doesn't resolve skygate-subnet-michail"
 
