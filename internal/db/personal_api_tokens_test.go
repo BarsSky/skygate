@@ -18,7 +18,7 @@ import (
 func seedAPIToken(t *testing.T, d *sql.DB, userID int64, tokenHash, label string, lastUsedI int64) int64 {
 	t.Helper()
 	res, err := d.Exec(
-		`INSERT INTO personal_api_tokens (user_id, token_hash, label, last_used_at) VALUES (?,?,?,?)`,
+		`INSERT INTO personal_api_tokens (user_id, token_hash, label, last_used_at) VALUES ($1,$2,$3,$4)`,
 		userID, tokenHash, label, lastUsedI)
 	if err != nil {
 		t.Fatalf("seedAPIToken(hash=%q): %v", tokenHash, err)
@@ -184,7 +184,7 @@ func TestInsertAPIToken(t *testing.T) {
 
 	// Verify the row round-trips
 	var label, hash string
-	if err := d.QueryRow(`SELECT label, token_hash FROM personal_api_tokens WHERE id = ?`, id).Scan(&label, &hash); err != nil {
+	if err := d.QueryRow(`SELECT label, token_hash FROM personal_api_tokens WHERE id = $1`, id).Scan(&label, &hash); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 	if label != "ci-runner" || hash != "hash-new" {
@@ -212,11 +212,11 @@ func TestDeleteAPITokenByUser(t *testing.T) {
 
 	// Verify the row is gone, but bob's row survives
 	var count int
-	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE id = ?`, idA).Scan(&count)
+	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE id = $1`, idA).Scan(&count)
 	if count != 0 {
 		t.Errorf("alice token still present, want gone")
 	}
-	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE id = ?`, idB).Scan(&count)
+	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE id = $1`, idB).Scan(&count)
 	if count != 1 {
 		t.Errorf("bob token was deleted, want untouched (cross-user check failed)")
 	}
@@ -230,7 +230,7 @@ func TestDeleteAPITokenByUser(t *testing.T) {
 		t.Errorf("cross-user rows affected = %d, want 0 (the WHERE user_id=? guard must hold)", n)
 	}
 	// Bob's row still there
-	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE id = ?`, idB).Scan(&count)
+	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE id = $1`, idB).Scan(&count)
 	if count != 1 {
 		t.Errorf("bob token deleted by alice, want untouched")
 	}
@@ -245,7 +245,7 @@ func TestTouchAPITokenLastUsed(t *testing.T) {
 
 	// Before: last_used_at = 0
 	var lu int64
-	d.QueryRow(`SELECT last_used_at FROM personal_api_tokens WHERE id = ?`, id).Scan(&lu)
+	d.QueryRow(`SELECT last_used_at FROM personal_api_tokens WHERE id = $1`, id).Scan(&lu)
 	if lu != 0 {
 		t.Errorf("before touch: last_used_at = %d, want 0", lu)
 	}
@@ -256,7 +256,7 @@ func TestTouchAPITokenLastUsed(t *testing.T) {
 	}
 
 	// After: last_used_at ≈ now (allow a 2-second window for clock skew / sql lag)
-	d.QueryRow(`SELECT last_used_at FROM personal_api_tokens WHERE id = ?`, id).Scan(&lu)
+	d.QueryRow(`SELECT last_used_at FROM personal_api_tokens WHERE id = $1`, id).Scan(&lu)
 	now := time.Now().Unix()
 	if lu == 0 {
 		t.Errorf("after touch: last_used_at still 0")
@@ -293,8 +293,8 @@ func TestDeleteAPITokensByUserID(t *testing.T) {
 
 	// alice has 0, bob has 1
 	var aliceCount, bobCount int
-	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE user_id = ?`, u1).Scan(&aliceCount)
-	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE user_id = ?`, u2).Scan(&bobCount)
+	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE user_id = $1`, u1).Scan(&aliceCount)
+	d.QueryRow(`SELECT COUNT(*) FROM personal_api_tokens WHERE user_id = $1`, u2).Scan(&bobCount)
 	if aliceCount != 0 {
 		t.Errorf("alice tokens left = %d, want 0", aliceCount)
 	}

@@ -153,7 +153,7 @@ func GetLastPreauthKeyForChatID(d *sql.DB, chatID int64) (string, error) {
 		`SELECT pk.key
 		   FROM preauth_keys pk
 		   JOIN telegram_bindings tb ON tb.portal_user_id = pk.user_id
-		  WHERE tb.chat_id = ? AND pk.used = 0
+		  WHERE tb.chat_id = $1 AND pk.used = 0
 		  ORDER BY pk.id DESC
 		  LIMIT 1`, chatID,
 	).Scan(&k)

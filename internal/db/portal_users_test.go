@@ -34,7 +34,7 @@ func seedPortalUser(t *testing.T, d *sql.DB, username, hash string, isAdmin bool
 		adminI = 1
 	}
 	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES (?,?,?,?)`,
+		`INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1,$2,$3,$4)`,
 		username, hash, adminI, hsID)
 	if err != nil {
 		t.Fatalf("seedPortalUser(%q): %v", username, err)
@@ -60,7 +60,7 @@ func seedPortalUserNoHS(t *testing.T, d *sql.DB, username, hash string, isAdmin 
 		adminI = 1
 	}
 	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?,?,?)`,
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES ($1,$2,$3)`,
 		username, hash, adminI)
 	if err != nil {
 		t.Fatalf("seedPortalUserNoHS(%q): %v", username, err)
@@ -323,7 +323,7 @@ func TestGetAllPortalUsers_PopulatesSubnetDenorm(t *testing.T) {
 	d := openTestDB(t)
 	id := seedPortalUser(t, d, "alice", "h", false, 0)
 	// Simulate manager denorm sync (what subnet.Create does).
-	_, err := d.Exec(`UPDATE portal_users SET subnet_cidr=?, subnet_status=?, subnet_router_node_id=? WHERE id=?`,
+	_, err := d.Exec(`UPDATE portal_users SET subnet_cidr=$1, subnet_status=$2, subnet_router_node_id=$3 WHERE id=$4`,
 		"10.0.42.0/24", "active", "11", id)
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -440,7 +440,7 @@ func TestInsertPortalUser(t *testing.T) {
 	// Read back to verify
 	var username, hash string
 	var adminI, hsID int64
-	if err := d.QueryRow(`SELECT username, password_hash, is_admin, headscale_user_id FROM portal_users WHERE id = ?`, id).
+	if err := d.QueryRow(`SELECT username, password_hash, is_admin, headscale_user_id FROM portal_users WHERE id = $1`, id).
 		Scan(&username, &hash, &adminI, &hsID); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestInsertPortalUser(t *testing.T) {
 		t.Fatalf("InsertPortalUser non-admin: %v", err)
 	}
 	var nonAdminI int
-	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id2).Scan(&nonAdminI); err != nil {
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = $1`, id2).Scan(&nonAdminI); err != nil {
 		t.Fatalf("read admin flag: %v", err)
 	}
 	if nonAdminI != 0 {

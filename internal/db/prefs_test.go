@@ -19,7 +19,7 @@ import (
 func seedUser(t *testing.T, d *sql.DB, username string) int64 {
 	t.Helper()
 	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?, 'x', 0)`,
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES ($1, 'x', 0)`,
 		username,
 	)
 	if err != nil {

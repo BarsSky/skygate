@@ -254,7 +254,7 @@ func SaveTelegramStrictMode(d *sql.DB, enabled bool) error {
 		v = "1"
 	}
 	_, err := d.Exec(`INSERT INTO global_settings(key, value, updated_at)
-		VALUES ('telegram.strict_mode', ?, strftime('%s','now'))
+		VALUES ('telegram.strict_mode', $1, strftime('%s','now'))
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`, v)
 	return err
 }

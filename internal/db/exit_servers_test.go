@@ -28,7 +28,7 @@ func seedExitServer(t *testing.T, d *sql.DB, nodeID, hostname, tailscaleIP, sshT
 	if _, err := d.Exec(
 		`INSERT INTO exit_servers
 			(node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, description, enabled, accept_routes)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		nodeID, hostname, tailscaleIP, sshTarget, sshKeyPath, description, enabled, acceptRoutes,
 	); err != nil {
 		t.Fatalf("seedExitServer(%q): %v", nodeID, err)
