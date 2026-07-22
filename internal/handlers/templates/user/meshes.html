@@ -71,26 +71,26 @@
       </tr>
     </thead>
     <tbody>
-      {{range .Meshes}}
+      {{range $row := .Meshes}}
       <tr>
-        <td><b>{{.Mesh.Name}}</b></td>
-        <td><code style="font-size:12px">{{.Mesh.Code}}</code></td>
-        <td>{{.CreatorName}}</td>
+        <td><b>{{$row.Mesh.Name}}</b></td>
+        <td><code style="font-size:12px">{{$row.Mesh.Code}}</code></td>
+        <td>{{$row.CreatorName}}</td>
         <td>
           <details>
-            <summary>{{.MemberCount}}</summary>
+            <summary>{{$row.MemberCount}}</summary>
             <div style="margin-top:6px">
               {{range .MemberList}}
-              <div style="font-size:12px;color:var(--text-muted)">  • <code>{{.Username}}</code>{{with index $.MemberCIDRs .UserID}} (<code class="route">{{.}}</code>){{end}}</div>
+              <div style="font-size:12px;color:var(--text-muted)">  • <code>{{.Username}}</code>{{with index $row.MemberCIDRs .UserID}} (<code class="route">{{.}}</code>){{end}}</div>
               {{end}}
             </div>
           </details>
         </td>
-        <td style="color:var(--text-muted);font-size:12px">{{.Mesh.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        <td style="color:var(--text-muted);font-size:12px">{{$row.Mesh.CreatedAt.Format "2006-01-02 15:04"}}</td>
         <td>
           <form method="post" action="/my/meshes/leave" style="display:inline;margin:0"
-                onsubmit="return confirm('{{tf "my_meshes.leave_confirm" .Mesh.Name}}');">
-            <input type="hidden" name="code" value="{{.Mesh.Code}}">
+                onsubmit="return confirm('{{tf "my_meshes.leave_confirm" $row.Mesh.Name}}');">
+            <input type="hidden" name="code" value="{{$row.Mesh.Code}}">
             <button type="submit" class="btn btn-secondary" style="padding:3px 10px;font-size:12px">
               <i class="fa-solid fa-right-from-bracket"></i>{{t "my_meshes.leave_action"}}
             </button>
