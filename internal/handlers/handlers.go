@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,14 @@ func init() { i18n.SetGlobal(i18n.New()) }
 
 type App struct {
 	Version string
+	// v0.26.0 — process-wide liveness/readiness fields.
+	// Set once at boot, read by the /healthz and /readyz
+	// handlers. Carried in the App so the handlers can
+	// render them without reaching into the global
+	// state.
+	InstanceID  string        // SKYGATE_INSTANCE_ID env, "unconfigured" if empty
+	BuildVersion string        // "v0.26.0" + commit SHA (set by main.go at boot)
+	StartedAt   time.Time     // wall-clock when main() returned from setup
 	RateLimiter *ratelimit.Limiter
 	Notifier    telegram.Notifier
 	I18n         *i18n.Catalog
@@ -138,12 +147,34 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		SessionHours: sessionH,
 		DerpBaseURL:  "http://192.168.13.69:8766",
 		templates:    LoadTemplates(),
-	Notifier:    telegram.NoopNotifier{},
+		Notifier:    telegram.NoopNotifier{},
 		I18n:         i18n.New(),
 		Cfg:          cfg,
+		// v0.26.0 — process-wide liveness/readiness fields.
+		// InstanceID comes from SKYGATE_INSTANCE_ID env
+		// (so multi-VM operators can tell which instance
+		// answered a probe). BuildVersion is set later
+		// by main.go (after the build hash is known).
+		// StartedAt is set below.
+		InstanceID: getenvOr("SKYGATE_INSTANCE_ID", "unconfigured"),
+		StartedAt:  time.Now().UTC(),
 	}
 	a.InitHSForUserState()
 	return a
+}
+
+// getenvOr is a tiny helper for New()'s inline env
+// lookups. Not exported — the production env-reader is
+// config.Load, but the New() function is the wrong place
+// to depend on a fully-loaded config (it would create a
+// circular init at boot). The env var we want is so
+// simple (a single identifier) that a one-liner is fine.
+func getenvOr(key, fallback string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 // render executes a template directly (no layout). Used for self-contained pages.
