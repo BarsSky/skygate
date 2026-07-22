@@ -119,8 +119,8 @@ go-test:
 # check is a fast `cmp` — fails the make target if the
 # copies drift. Run `make sync-bundles` to refresh.
 sync-bundles:
-	cp deploy/subnet-router/setup.sh internal/handlers/bundles/setup.sh
-	cp deploy/subnet-router/README.md internal/handlers/bundles/README.md
+	cp -p deploy/subnet-router/setup.sh internal/handlers/bundles/setup.sh
+	cp -p deploy/subnet-router/README.md internal/handlers/bundles/README.md
 	@echo "synced."
 
 check-bundles:
