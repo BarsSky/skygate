@@ -413,7 +413,7 @@ func (a *App) loadTelegramUIState() telegramUIState {
 	state.TokenFP = db.TelegramFingerprint(token)
 	state.ChatID = chatID
 	var ts int64
-	row := a.DB.QueryRow(`SELECT MAX(updated_at) FROM global_settings WHERE key IN (?, ?)`,
+	row := a.DB.QueryRow(`SELECT MAX(updated_at) FROM global_settings WHERE key IN ($1, $2)`,
 		"telegram.bot_token", "telegram.chat_id")
 	if err := row.Scan(&ts); err == nil && ts > 0 {
 		state.UpdatedAt = time.Unix(ts, 0).UTC().Format("2006-01-02 15:04:05 UTC")

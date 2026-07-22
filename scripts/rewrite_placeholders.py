@@ -33,22 +33,28 @@ SQL_KEYWORDS = (
 )
 
 # Regex to find a string literal that looks like SQL.
-# Matches double-quoted or backtick raw strings.
-# Captures the opener/closer + content.
+# Matches double-quoted or backtick raw strings. Newlines are
+# excluded from the quoted-string body so a `"` on one line
+# doesn't match a `"` on a later line (a real bug we hit when
+# the script tried to process cmd/skygate/main.go and saw
+# `QueryRow("SELECT ...", ...)` followed by `d.Exec(\`...\`)`,
+# collapsing the two into one giant string).
 STRING_PATTERN = re.compile(
-    r'((?P<raw>`[^`]*`)|(?P<quoted>"(?:[^"\\]|\\.)*"))',
-    re.MULTILINE,
+    r'((?P<raw>`[^`]*`)|(?P<quoted>"(?:[^"\\\n]|\\.)*"))',
 )
 
 
 def looks_like_sql(s):
     """Return True if the string (without its quotes) looks like SQL.
 
-    Heuristic: either starts with a SQL keyword OR contains a
-    placeholder. We can't be 100% precise here (a log message like
-    `"logged in user: $N"` would be mis-classified as SQL) but in
-    practice the only placeholders `?` appear in Go code at the
-    database layer is in SQL strings, so `?` is a strong signal.
+    Strict heuristic: the string MUST contain a SQL keyword. The
+    presence of `?` alone is NOT enough because `?` is also used
+    in HTTP URL query strings (`/admin/foo?status=active`), in URL
+    fragments (`#section?key=val`), in printf-style format hints
+    (`%s?`), and in URL-encoding contexts. A previous version of
+    this function used `?` as a strong signal and produced
+    hundreds of false positives like `$1status=active` rewriting
+    `/admin/subnets?status=active`.
     """
     if s.startswith('"') and s.endswith('"'):
         inner = s[1:-1]
@@ -56,10 +62,8 @@ def looks_like_sql(s):
         inner = s[1:-1]
     else:
         return False
-    # Strong signal: contains a placeholder.
-    if '?' in inner:
-        return True
-    # Weak signal: starts with a SQL keyword.
+    # Must contain a SQL keyword AND look like a query (not just
+    # contain the word "select" as part of a regular string).
     return bool(re.search(SQL_KEYWORDS, inner, re.IGNORECASE))
 
 
@@ -171,29 +175,46 @@ def process_file(path, dry_run=False):
 
 
 def rewrite_sql_with_counter(s, start_at=0):
-    """Like rewrite_sql, but starting counter at start_at instead of 0."""
-    out = []
+    """Replace `?` placeholders in a Go string literal with $N.
+
+    The input `s` is a Go string literal (either backtick-delimited
+    or double-quoted). We treat the *outer* quotes as content
+    delimiters, and within the inner content we only skip `?`
+    chars that are inside SQL single-quoted strings (e.g. `'now'`
+    or `'literal value'`). Double-quotes inside the inner content
+    don't matter (PG doesn't use them for string literals).
+    """
+    # Strip the outer Go string quotes.
+    if s.startswith('`') and s.endswith('`'):
+        inner = s[1:-1]
+        out_quote = '`'
+    elif s.startswith('"') and s.endswith('"'):
+        inner = s[1:-1]
+        out_quote = '"'
+    else:
+        return s  # not a Go string literal; leave alone
+
+    new_inner = []
     counter = start_at
-    in_single_quote = False
-    in_double_quote = False
+    in_sql_single_quote = False
     i = 0
-    while i < len(s):
-        ch = s[i]
-        if ch == "\\" and i + 1 < len(s):
-            out.append(s[i:i+2])
+    while i < len(inner):
+        ch = inner[i]
+        if ch == "\\" and i + 1 < len(inner):
+            # Escape sequence — keep both chars verbatim.
+            new_inner.append(inner[i:i+2])
             i += 2
             continue
-        if not in_double_quote and ch == "'":
-            in_single_quote = not in_single_quote
-        elif not in_single_quote and ch == '"':
-            in_double_quote = not in_double_quote
-        if not in_single_quote and not in_double_quote and ch == '?':
+        if ch == "'":
+            in_sql_single_quote = not in_sql_single_quote
+            new_inner.append(ch)
+        elif not in_sql_single_quote and ch == '?':
             counter += 1
-            out.append(f'${counter}')
+            new_inner.append(f'${counter}')
         else:
-            out.append(ch)
+            new_inner.append(ch)
         i += 1
-    return ''.join(out)
+    return out_quote + ''.join(new_inner) + out_quote
 
 
 def main():

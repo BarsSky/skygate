@@ -171,14 +171,14 @@ func ackReply(env BotEnv, arg string) string {
 	}
 	// 1. Look up the row first so we can echo the body.
 	var body string
-	if err := d.QueryRow(`SELECT body FROM telegram_alerts WHERE id = ?`, id).Scan(&body); err != nil {
+	if err := d.QueryRow(`SELECT body FROM telegram_alerts WHERE id = $1`, id).Scan(&body); err != nil {
 		return i18n.Tf(lang, "bot.ack.not_found", id)
 	}
 	// 2. Idempotent UPDATE — only flips rows that are still open.
 	res, err := d.Exec(`UPDATE telegram_alerts
 	                       SET acked_at = strftime('%s','now'),
 	                           acked_by = 'telegram'
-	                     WHERE id = ? AND acked_at = 0`, id)
+	                     WHERE id = $1 AND acked_at = 0`, id)
 	if err != nil {
 		return i18n.Tf(lang, "bot.ack.db_error", err)
 	}

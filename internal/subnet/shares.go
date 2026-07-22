@@ -94,7 +94,7 @@ func Grant(d *sql.DB, grantorUserID, granteeUserID int64) error {
 	_, err = d.Exec(`
 		INSERT OR IGNORE INTO user_subnet_shares
 			(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, ?)
+		VALUES ($1, $2, $3)
 	`, grantorUserID, granteeUserID, now)
 	if err != nil {
 		return fmt.Errorf("subnet: grant share: %w", err)
@@ -119,7 +119,7 @@ func Revoke(d *sql.DB, grantorUserID, granteeUserID int64) error {
 	}
 	res, err := d.Exec(`
 		DELETE FROM user_subnet_shares
-		 WHERE grantor_user_id = ? AND grantee_user_id = ?
+		 WHERE grantor_user_id = $1 AND grantee_user_id = $2
 	`, grantorUserID, granteeUserID)
 	if err != nil {
 		return fmt.Errorf("subnet: revoke share: %w", err)
@@ -142,7 +142,7 @@ func ListSharedBy(d *sql.DB, userID int64) ([]Share, error) {
 	rows, err := d.Query(`
 		SELECT grantor_user_id, grantee_user_id, created_at
 		  FROM user_subnet_shares
-		 WHERE grantor_user_id = ?
+		 WHERE grantor_user_id = $1
 		 ORDER BY created_at
 	`, userID)
 	if err != nil {
@@ -163,7 +163,7 @@ func ListSharedWith(d *sql.DB, userID int64) ([]Share, error) {
 	rows, err := d.Query(`
 		SELECT grantor_user_id, grantee_user_id, created_at
 		  FROM user_subnet_shares
-		 WHERE grantee_user_id = ?
+		 WHERE grantee_user_id = $1
 		 ORDER BY created_at
 	`, userID)
 	if err != nil {

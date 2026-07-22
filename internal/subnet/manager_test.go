@@ -42,7 +42,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 func seedPortalUser(t *testing.T, d *sql.DB, username string) int64 {
 	t.Helper()
 	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?, '', 0)`,
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES ($1, '', 0)`,
 		username,
 	)
 	if err != nil {
@@ -83,7 +83,7 @@ func TestCreateAndGet(t *testing.T) {
 	}
 	// Denormalized columns on portal_users must match.
 	var dCIDR, dStatus string
-	if err := d.QueryRow(`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, uid).Scan(&dCIDR, &dStatus); err != nil {
+	if err := d.QueryRow(`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = $1`, uid).Scan(&dCIDR, &dStatus); err != nil {
 		t.Fatalf("read denorm: %v", err)
 	}
 	if dCIDR != s.CIDR {
@@ -141,7 +141,7 @@ func TestCreateDuplicateReturnsExisting(t *testing.T) {
 	}
 	// Only one row in user_subnets (not two).
 	var n int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnets WHERE user_id = ?`, uid).Scan(&n); err != nil {
+	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnets WHERE user_id = $1`, uid).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {
@@ -221,7 +221,7 @@ func TestSetStatusLifecycle(t *testing.T) {
 	}
 	// Denorm check.
 	var dStatus string
-	d.QueryRow(`SELECT subnet_status FROM portal_users WHERE id = ?`, uid).Scan(&dStatus)
+	d.QueryRow(`SELECT subnet_status FROM portal_users WHERE id = $1`, uid).Scan(&dStatus)
 	if dStatus != StatusActive {
 		t.Errorf("portal_users.subnet_status = %q, want %q", dStatus, StatusActive)
 	}
@@ -322,7 +322,7 @@ func TestSetRouter(t *testing.T) {
 	}
 	// Denorm on portal_users.
 	var dNodeID string
-	d.QueryRow(`SELECT subnet_router_node_id FROM portal_users WHERE id = ?`, uid).Scan(&dNodeID)
+	d.QueryRow(`SELECT subnet_router_node_id FROM portal_users WHERE id = $1`, uid).Scan(&dNodeID)
 	if dNodeID != "42" {
 		t.Errorf("portal_users.subnet_router_node_id = %q, want 42 (denorm out of sync)", dNodeID)
 	}
@@ -356,7 +356,7 @@ func seedNodeOwnerMap(t *testing.T, d *sql.DB, nodeID, username, tag string) {
 	_, err := d.Exec(
 		`INSERT OR REPLACE INTO node_owner_map
 			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, 0, ?, ?, 1)`,
+			VALUES ($1, 0, $2, $3, 1)`,
 		nodeID, username, tag,
 	)
 	if err != nil {
@@ -545,7 +545,7 @@ func TestSetStatusAcceptsRouterActive(t *testing.T) {
 func mustReadUpdatedAt(t *testing.T, d *sql.DB, uid int64) int64 {
 	t.Helper()
 	var ts int64
-	if err := d.QueryRow(`SELECT updated_at FROM user_subnets WHERE user_id = ?`, uid).Scan(&ts); err != nil {
+	if err := d.QueryRow(`SELECT updated_at FROM user_subnets WHERE user_id = $1`, uid).Scan(&ts); err != nil {
 		t.Fatalf("read updated_at: %v", err)
 	}
 	return ts

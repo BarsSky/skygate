@@ -263,7 +263,7 @@ func saveHeadscaleRelease(d *sql.DB, rec HeadscaleReleaseRecord) error {
 	_, err := d.Exec(`
 		INSERT OR IGNORE INTO headscale_releases
 			(version, published_at, first_seen_at, html_url, name, body, is_breaking, notified)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, rec.Version, rec.PublishedAt.Unix(), rec.FirstSeenAt.Unix(),
 		rec.HTMLURL, rec.Name, rec.Body, boolToInt(rec.IsBreaking), boolToInt(rec.Notified))
 	return err
@@ -277,7 +277,7 @@ func listHeadscaleReleases(d *sql.DB, limit int) ([]HeadscaleReleaseRecord, erro
 		SELECT version, published_at, first_seen_at, html_url, name, body, is_breaking, notified
 		FROM headscale_releases
 		ORDER BY published_at DESC, first_seen_at DESC
-		LIMIT ?
+		LIMIT $1
 	`, limit)
 	if err != nil {
 		return nil, err

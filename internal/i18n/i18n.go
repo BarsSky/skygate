@@ -74,7 +74,7 @@ func (c *Catalog) T(lang, key string) string {
 }
 
 // Tf is T with printf-style argument substitution. Use when a translation
-// contains placeholders like "Delete %s?".
+// contains placeholders like "Delete %s$1".
 func (c *Catalog) Tf(lang, key string, args ...any) string {
 	return fmt.Sprintf(c.T(lang, key), args...)
 }

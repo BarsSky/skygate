@@ -68,7 +68,7 @@ func (a *App) PostAdminACLReapply(w http.ResponseWriter, r *http.Request) {
 			// (one key per plane URL, not per user),
 			// this closure will need a separate
 			// plane-key cache.
-			rows, err := a.DB.Query("SELECT id FROM portal_users WHERE headscale_url = ? LIMIT 1", planeURL)
+			rows, err := a.DB.Query("SELECT id FROM portal_users WHERE headscale_url = $1 LIMIT 1", planeURL)
 			if err != nil {
 				return a.HSGlobal()
 			}

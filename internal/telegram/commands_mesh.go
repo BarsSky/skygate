@@ -228,7 +228,7 @@ func meshesListReply(env BotEnv) string {
 func isMeshMember(d *sql.DB, meshID, userID int64) (bool, error) {
 	var n int
 	if err := d.QueryRow(`SELECT COUNT(*) FROM mesh_members
-		WHERE mesh_id = ? AND user_id = ?`, meshID, userID).Scan(&n); err != nil {
+		WHERE mesh_id = $1 AND user_id = $2`, meshID, userID).Scan(&n); err != nil {
 		return false, err
 	}
 	return n > 0, nil

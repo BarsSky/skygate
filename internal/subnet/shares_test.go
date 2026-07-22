@@ -33,12 +33,12 @@ func seedPortalUserWithHS(t *testing.T, d *sql.DB, username string, hsID int64) 
 	t.Helper()
 	_, err := d.Exec(`INSERT INTO portal_users
 		(username, password_hash, is_admin, headscale_user_id, created_at)
-		VALUES (?, '', 0, ?, 0)`, username, hsID)
+		VALUES ($1, '', 0, $2, 0)`, username, hsID)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	var id int64
-	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = ?`, username).Scan(&id); err != nil {
+	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = $1`, username).Scan(&id); err != nil {
 		t.Fatalf("get id: %v", err)
 	}
 	return id
@@ -162,7 +162,7 @@ func TestRevoke_CascadeOnUserDelete(t *testing.T) {
 	}
 	// Delete bob. The FK CASCADE should drop the
 	// share row.
-	if _, err := d.Exec(`DELETE FROM portal_users WHERE id = ?`, grantee); err != nil {
+	if _, err := d.Exec(`DELETE FROM portal_users WHERE id = $1`, grantee); err != nil {
 		t.Fatalf("delete grantee: %v", err)
 	}
 	// alice's "I shared" list is now empty.

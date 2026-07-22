@@ -131,7 +131,7 @@ func (a *App) staggeredSync() {
 		totalRules, len(nodes), interval)
 	go func() {
 		for _, n := range nodes {
-			rules, _ := a.DB.Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=? AND target_type IN ('subnet', 'ip')", n.name)
+			rules, _ := a.DB.Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip')", n.name)
 			if rules == nil { continue }
 			var routeList []string
 			for rules.Next() {
@@ -227,7 +227,7 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 
 		// Get existing /32 rules for this domain
 		existing := map[string]int{} // IP -> rule id
-		rows2, eerr := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32'",
+		rows2, eerr := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value LIKE '%/32'",
 			d.userID, d.deviceID, d.exitNode)
 		if eerr != nil {
 			continue
@@ -249,7 +249,7 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 		// User-added /32 rules (manual) get deleted if we don't track — TOO DANGEROUS.
 		// Better: introduce column `parent_domain` (NULL = manual).
 		all32 := map[string]int{}
-		rows3, _ := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain,'')=?",
+		rows3, _ := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain,'')=$4",
 			d.userID, d.deviceID, d.exitNode, d.domain)
 		if rows3 != nil {
 			for rows3.Next() {
@@ -272,11 +272,11 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 			// Не дублируем — autoupdater другого домена уже покрыл.
 			var existingSharedID int
 			_ = a.DB.QueryRow(
-				"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value=? LIMIT 1",
+				"SELECT id FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value=$4 LIMIT 1",
 				d.userID, d.deviceID, d.exitNode, ip+"/32").Scan(&existingSharedID)
 			if existingSharedID > 0 { continue }
 			if _, ierr := a.DB.Exec(
-				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
+				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)",
 				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain); ierr == nil {
 				added++
 			}
@@ -284,7 +284,7 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 		// Remove old IPs
 		for ip, rid := range all32 {
 			if currentIPs[ip] { continue }
-			if _, derr := a.DB.Exec("DELETE FROM device_rules WHERE id=?", rid); derr == nil {
+			if _, derr := a.DB.Exec("DELETE FROM device_rules WHERE id=$1", rid); derr == nil {
 				removed++
 			}
 		}

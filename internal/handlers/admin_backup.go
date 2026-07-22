@@ -214,7 +214,7 @@ func (a *App) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
 	cmd.Stdin = strings.NewReader("8\n")
 	cmd.CombinedOutput()
 
-	http.Redirect(w, r, "/admin/backup?success=restore+complete!+Check+/admin/settings+to+update+URLs", http.StatusFound)
+	http.Redirect(w, r, "/admin/backup$1success=restore+complete!+Check+/admin/settings+to+update+URLs", http.StatusFound)
 }
 
 func (a *App) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
@@ -260,7 +260,7 @@ func (a *App) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
 	}
 		r.ParseForm()
 	if ep := r.FormValue("exit_policy"); ep == "allow_all" || ep == "deny_all" {
-		a.DB.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', ?)", ep)
+		a.DB.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', $1)", ep)
 	}
 	_ = r.FormValue("headscale_url")
 	_ = r.FormValue("headscale_api_key")

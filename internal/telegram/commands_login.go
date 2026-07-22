@@ -318,7 +318,7 @@ func unbindSelfReply(env BotEnv) string {
 func lookupPortalUser(d *sql.DB, userID int64) (string, bool, error) {
 	var username string
 	var isAdmin int
-	err := d.QueryRow(`SELECT username, is_admin FROM portal_users WHERE id = ?`, userID).Scan(&username, &isAdmin)
+	err := d.QueryRow(`SELECT username, is_admin FROM portal_users WHERE id = $1`, userID).Scan(&username, &isAdmin)
 	if err != nil {
 		return "", false, err
 	}

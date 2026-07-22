@@ -456,7 +456,7 @@ func (m *Manager) GeneratePreauth(ctx context.Context, userID int64) (string, ti
 	// Look up the headscale user_id for this portal user.
 	var hsUserID int64
 	if err := m.DB.QueryRow(
-		`SELECT headscale_user_id FROM portal_users WHERE id = ?`, userID,
+		`SELECT headscale_user_id FROM portal_users WHERE id = $1`, userID,
 	).Scan(&hsUserID); err != nil {
 		return "", time.Time{}, fmt.Errorf("lookup portal user %d: %w", userID, err)
 	}
@@ -570,7 +570,7 @@ func CIDRForUser(userID int64) (string, error) {
 func (m *Manager) UserIDFromUsername(ctx context.Context, username string) (int64, error) {
 	var id int64
 	err := m.DB.QueryRowContext(ctx,
-		`SELECT id FROM portal_users WHERE username = ?`, username,
+		`SELECT id FROM portal_users WHERE username = $1`, username,
 	).Scan(&id)
 	return id, err
 }
@@ -579,7 +579,7 @@ func (m *Manager) UserIDFromUsername(ctx context.Context, username string) (int6
 func (m *Manager) HeadscaleUserID(ctx context.Context, userID int64) (int64, error) {
 	var id int64
 	err := m.DB.QueryRowContext(ctx,
-		`SELECT headscale_user_id FROM portal_users WHERE id = ?`, userID,
+		`SELECT headscale_user_id FROM portal_users WHERE id = $1`, userID,
 	).Scan(&id)
 	return id, err
 }
