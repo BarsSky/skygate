@@ -166,6 +166,12 @@ func main() {
 
 
 	app.Version = version
+	// v0.26.0 — set the BuildVersion once at boot, so
+	// /healthz and /readyz can surface it. The format
+	// mirrors what RELEASE-NOTES-vX.Y.Z.md use, so a
+	// probe response like "v0.26.0+4eed3a4" is
+	// self-explanatory.
+	app.BuildVersion = version + "+" + commit
 	log.Printf("🌐 Skygate %s (commit %s, built %s)", version, commit, buildTime)
 
 	mux := http.NewServeMux()
@@ -176,6 +182,13 @@ func main() {
 	mux.Handle("POST /login", loginMW(http.HandlerFunc(app.PostLogin)))
 	mux.HandleFunc("POST /logout", app.PostLogout)
 	mux.HandleFunc("/favicon.ico", app.FaviconHandler)
+	// v0.26.0 — liveness + readiness probes (HA-ready).
+	// Both are UNAUTHENTICATED. /healthz is always 200
+	// if the process is alive (K8s livenessProbe pattern).
+	// /readyz pings the DB and headscale, returns 503
+	// if either is down (K8s readinessProbe pattern).
+	mux.HandleFunc("GET /healthz", app.GetHealthz)
+	mux.HandleFunc("GET /readyz", app.GetReadyz)
 	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
 	mux.HandleFunc("/static/", app.StaticHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
