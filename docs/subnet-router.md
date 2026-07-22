@@ -172,7 +172,7 @@ clicks **"Issue preauth key"**, and copies the rendered
 `tailscale up` command. It looks like:
 
 ```
-sudo tailscale up --accept-routes --netfiltermode=off \
+sudo tailscale up --accept-routes --netfilter-mode=off \
   --login-server=https://head.skynas.ru \
   --hostname=skygate-subnet-michail \
   --advertise-routes=10.0.6.0/24 \

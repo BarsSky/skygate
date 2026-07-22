@@ -39,7 +39,7 @@ local network.
    # Preauth key expires: 2026-07-21T20:00:00Z
    sudo tailscale up \
      --accept-routes \
-     --netfiltermode=off \
+     --netfilter-mode=off \
      --login-server=https://head.skynas.ru \
      --hostname=skygate-subnet-<username> \
      --advertise-routes=10.0.<uid>.0/24 \

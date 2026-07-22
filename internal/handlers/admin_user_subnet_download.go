@@ -163,7 +163,7 @@ func renderBundleCommandsTxt(username, cidr, preauth string, exp time.Time) stri
 # on /admin/users/{id}/subnet. Either source is fine.
 sudo tailscale up \
   --accept-routes \
-  --netfiltermode=off \
+  --netfilter-mode=off \
   --login-server=https://head.skynas.ru \
   --hostname=%s \
   --advertise-routes=%s \

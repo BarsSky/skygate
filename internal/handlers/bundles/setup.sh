@@ -80,7 +80,7 @@ echo ""
 # can reach skyadmin's 10.0.1.0/24 if shared). It does NOT
 # affect our own routes (we advertise, not accept).
 #
-# `--netfiltermode=off` keeps iptables untouched (the host
+# `--netfilter-mode=off` keeps iptables untouched (the host
 # shouldn't get a Tailscale-managed firewall unless the user
 # explicitly wants one). The per-user CIDR is forwarded by the
 # kernel via `tailscale set --accept-routes` + the routes
@@ -91,10 +91,10 @@ echo ""
 # cannot be reused. If the key was already consumed (rare
 # because we check for an existing login below), re-issue from
 # the admin UI.
-echo "Running: tailscale up --accept-routes --netfiltermode=off --hostname=... --advertise-routes=..."
+echo "Running: tailscale up --accept-routes --netfilter-mode=off --hostname=... --advertise-routes=..."
 tailscale up \
     --accept-routes \
-    --netfiltermode=off \
+    --netfilter-mode=off \
     --login-server="$LOGIN_SERVER" \
     --hostname="$SUBNET_ROUTER_HOSTNAME" \
     --advertise-routes="$SUBNET_CIDR" \
