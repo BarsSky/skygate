@@ -69,6 +69,39 @@
     </tr>
   </table>
   <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "my_devices.subnet_card_help" | safeHTML}}</p>
+
+  {{if .SubnetCIDR}}
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">
+      <i class="fa-solid fa-circle-question"></i> {{t "my_devices.subnet_use_cases_title"}}
+    </summary>
+    <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.5">
+      {{t "my_devices.subnet_use_cases_body" | safeHTML}}
+    </div>
+  </details>
+
+  <details style="margin-top:8px" open>
+    <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">
+      <i class="fa-solid fa-list-check"></i> {{t "my_devices.subnet_howto_title"}}
+    </summary>
+    <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.55">
+      {{if eq .SubnetStatus "router_active"}}
+        {{t "my_devices.subnet_howto_body_router_active" | safeHTML}}
+      {{else if eq .SubnetStatus "active"}}
+        {{t "my_devices.subnet_howto_body_active" | safeHTML}}
+      {{else}}
+        {{t "my_devices.subnet_howto_body_pending" | safeHTML}}
+      {{end}}
+      <p style="margin:10px 0 0 0;font-size:12px;color:var(--text-muted)">
+        <i class="fa-solid fa-book"></i>
+        <a href="https://github.com/BarsSky/skygate/blob/main/docs/subnet-router.md" target="_blank" rel="noopener">
+          {{t "my_devices.subnet_docs_link_text"}} <i class="fa-solid fa-up-right-from-square" style="font-size:10px"></i>
+        </a>
+      </p>
+    </div>
+  </details>
+  {{end}}
+
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>

@@ -171,6 +171,31 @@ sudo tailscale up \
   <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.v0_16_0_note_title"}}</h3>
   <div style="margin-top:6px">{{t "user_subnet.v0_16_0_note_body" | safeHTML}}</div>
 </div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-question"></i> {{t "user_subnet.use_cases_title"}}</h3>
+  <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.55">
+    {{t "user_subnet.use_cases_body" | safeHTML}}
+  </div>
+  <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">
+    <i class="fa-solid fa-book"></i>
+    <a href="https://github.com/BarsSky/skygate/blob/main/docs/subnet-router.md" target="_blank" rel="noopener">
+      {{t "user_subnet.docs_link_text"}} <i class="fa-solid fa-up-right-from-square" style="font-size:10px"></i>
+    </a>
+  </p>
+</div>
+
+{{if .Subnet}}
+<div class="card">
+  <h3><i class="fa-solid fa-list-check"></i> {{t "user_subnet.onboard_title"}}</h3>
+  <ol style="margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.55">
+    <li style="margin-bottom:6px">{{t "user_subnet.onboard_step1" | safeHTML}}</li>
+    <li style="margin-bottom:6px">{{t "user_subnet.onboard_step2" | safeHTML}}</li>
+    <li style="margin-bottom:0">{{t "user_subnet.onboard_step3" | safeHTML}}</li>
+  </ol>
+</div>
+{{end}}
+
 {{end}}
 
 {{end}}
