@@ -312,18 +312,31 @@ func (m *Manager) activateIfRoutesApproved(ctx context.Context, userID int64, no
 		m.Logger.Printf("sidecar: approved %s on node %s (user=%d)", sub.CIDR, node.Hostname, userID)
 	}
 	// If the node already has the per-user CIDR in its
-	// approved routes, flip status to active. This branch
-	// runs in the SAME sync cycle as the approval above
-	// because headscale's approve-routes call updates the
-	// in-memory HSNode (returned by the call), but our
+	// approved routes, flip status to router_active. This
+	// branch runs in the SAME sync cycle as the approval
+	// above because headscale's approve-routes call updates
+	// the in-memory HSNode (returned by the call), but our
 	// local `node` variable was loaded BEFORE the approval
 	// — so the live state is now ahead of the local state.
 	// For correctness we just check whether the approval
 	// call succeeded and flip accordingly; the next sync
 	// cycle (30s later) re-reads the live state.
+	//
+	// 2026-07-22: v0.26.0 — was `subnet.StatusActive` here,
+	// which was correct under the pre-v0.22.3 binary
+	// status (active ⇔ route approved). v0.22.3 split this
+	// into active (no router) vs router_active (router up).
+	// Since this code path only runs when there's a live
+	// `tag:subnet-router` node that just got the route
+	// approved, the right status is router_active. The
+	// previous value was clobbering the v0.22.3
+	// router_active that the backfill had just set, causing
+	// the status pill to flicker back to "active" every
+	// 30s (between SyncOnce ticks and /my/devices loads).
+	// Also respects the manual disabled override.
 	if containsCIDR(node.ApprovedRoutes, sub.CIDR) {
-		if sub.Status != subnet.StatusActive {
-			if err := subnet.SetStatus(m.DB, userID, subnet.StatusActive); err != nil {
+		if sub.Status != subnet.StatusRouterActive && sub.Status != subnet.StatusDisabled {
+			if err := subnet.SetStatus(m.DB, userID, subnet.StatusRouterActive); err != nil {
 				return err
 			}
 		}
