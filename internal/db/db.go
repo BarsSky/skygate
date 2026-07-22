@@ -6,7 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-	_ "github.com/mattn/go-sqlite3"
+	// 2026-07-22: v0.27.0 — driver abstraction. Both backends
+	// are registered via blank import; the active one is chosen
+	// at Open() time by DetectBackend(dsn).
+	_ "github.com/jackc/pgx/v5/stdlib" // pgx (PostgreSQL)
+	_ "github.com/mattn/go-sqlite3"     // sqlite3 (default)
 )
 
 type User struct {
@@ -94,7 +98,21 @@ func SetUserTheme(d *sql.DB, userID int64, theme string) error {
 }
 
 func Open(dataDir string) (*sql.DB, error) {
-	dbPath := dataDir
+	// 2026-07-22: v0.27.0 — driver abstraction. If dataDir looks
+	// like a postgres DSN, use the pgx driver; otherwise treat it
+	// as a SQLite file path (legacy behavior, unchanged).
+	switch DetectBackend(dataDir) {
+	case BackendPostgres:
+		return openPostgres(dataDir)
+	default:
+		return openSQLite(dataDir)
+	}
+}
+
+// openSQLite is the legacy SQLite-only Open path. Kept as a
+// separate function so Open() reads as a clean dispatcher and
+// unit tests can call it directly.
+func openSQLite(dbPath string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
@@ -103,22 +121,82 @@ func Open(dataDir string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open: %w", err)
 	}
 	if err := conn.Ping(); err != nil {
+		conn.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
+	registerBackend(conn, BackendSQLite)
 	// 2026-07-09: refactor v0.6.0 — Open() now bootstraps schema. Migrations
 	// are idempotent (CREATE TABLE IF NOT EXISTS + ALTER with duplicate-column
 	// guards) so calling migrate() on every Open is safe and matches what
 	// fresh deployments + unit tests expect.
-	if err := migrate(conn); err != nil {
+	if err := migrateSQLite(conn); err != nil {
 		conn.Close()
+		unregisterBackend(conn)
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return conn, nil
 }
 
+// openPostgres is the new v0.27.0 PostgreSQL path. The dsn is
+// expected to be a full libpq-style URL, e.g.
+//
+//	postgres://skygate:secret@127.0.0.1:5432/skygate?sslmode=disable
+//
+// Pool sizing is the production-recommended default for a small
+// Go HTTP service: 10 open / 5 idle. Tuning for specific workloads
+// is left to the operator via the DSN's `pool_max_conns` parameter
+// (pgx supports it natively).
+func openPostgres(dsn string) (*sql.DB, error) {
+	conn, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("pgx open: %w", err)
+	}
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("pgx ping: %w", err)
+	}
+	conn.SetMaxOpenConns(10)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(30 * time.Minute)
+	registerBackend(conn, BackendPostgres)
+	if err := migratePostgres(conn); err != nil {
+		conn.Close()
+		unregisterBackend(conn)
+		return nil, fmt.Errorf("pgx migrate: %w", err)
+	}
+	return conn, nil
+}
+
+// migrate is the dispatcher. It picks the right per-backend
+// migration chain based on BackendOf(d). New callers should use
+// this; legacy code that referenced the old "migrate()" name was
+// updated to migrateSQLite() in v0.27.0.
 func migrate(d *sql.DB) error {
+	switch BackendOf(d) {
+	case BackendPostgres:
+		return migratePostgres(d)
+	default:
+		return migrateSQLite(d)
+	}
+}
+
+// migratePostgres is the v0.27.0 PostgreSQL migration chain.
+// Implemented in migrations_pg.go as each version is ported from
+// SQLite. Currently a stub that runs V025 only (portal_users +
+// friends) as a proof-of-concept; full parity with the SQLite
+// chain is the work of Phase 1.3.
+func migratePostgres(d *sql.DB) error {
+	return migrateV025PG(d)
+}
+
+// migrateSQLite is the legacy SQLite migration chain. All
+// existing migration files (migrations_v0.XX.go) are called
+// from here. Unchanged from the pre-v0.27.0 implementation
+// except for being wrapped in a function so the dispatcher
+// in migrate() can route by backend.
+func migrateSQLite(d *sql.DB) error {
 	queries := []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA foreign_keys=ON",
