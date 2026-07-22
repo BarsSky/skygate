@@ -7,7 +7,58 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.25.1 — Closing the loose ends (audit export + DR runbook + cleanup)
+* **Current**: v0.26.0 — end-to-end subnet-router pilot + HA-ready
+  probes ([release notes](RELEASE-NOTES-v0.26.0.md)).
+  The "real proof that the per-user subnet-router flow
+  works end-to-end" release. 5 things in one:
+  1. `e2e_pilot.sh` (root) automates the full
+     bundle-download → tailscale-register →
+     sidecar-auto-approve → status-pill-router_active
+     pipeline. Live-verified on skygate-vm 2026-07-22
+     (skyadmin pilot, node id=26, route approved in 21s,
+     status stable across multiple SyncOnce ticks).
+  2. `headscale.AddTag` + Strategy C tag-respect
+     fix — the backfill was silently clobbering
+     `tag:subnet-router` → `tag:private` on every
+     `/my/devices` load (headscale 0.29's `nodes tag
+     --force` REPLACES tags, not appends). Two-line
+     fix in `tags.go` + `handlers_node_ownership.go`.
+  3. Sidecar `SyncOnce` now sets `status='router_active'`
+     (not `'active'`) when the route is approved —
+     pre-v0.22.3 binary value, v0.22.3 split it but the
+     sidecar was never updated, so the status pill
+     flickered every 30s. The unit test was renamed
+     + updated to assert `StatusRouterActive`.
+  4. `GET /healthz` + `GET /readyz` probes (1s cache,
+     DB+headscale ping, 200 or 503). `SKYGATE_INSTANCE_ID`
+     env. No actual HA infrastructure yet — the
+     probes are the wiring for a future Tier 1 (1-2 day
+     follow-up). `App.InstanceID/BuildVersion/StartedAt`
+     fields, `BuildVersion = version + "+" + commit`.
+  5. `scripts/check_subnet_router.sh <user>` — operator-side
+     health check (DB + headscale + denorm + UI status +
+     recent audit, exits 0/1/2 with [OK]/[WARN]/[FAIL]).
+     Companion `scripts/_check_subnet_nodes.py` is the
+     Python helper that `check_subnet_router.sh` shells
+     out to. Plus docs/subnet-router.md rewritten with
+     6 concrete use cases (home NAS, smart home, SOHO
+     server room, family sharing, lab/dev, cross-site
+     backup) and the e2e verification output.
+  ([release notes](RELEASE-NOTES-v0.26.0.md)).
+  5 files new (e2e_pilot.sh, handlers_healthz.go,
+  headscale/healthz.go, scripts/check_subnet_router.sh,
+  scripts/_check_subnet_nodes.py), 10 files modified
+  (backfill, tags, sidecar, handlers.go, main.go,
+  bundle scripts, Makefile, docs/subnet-router.md),
+  1 test renamed/updated. 17/17 packages green.
+  check-bundles / check-nodes / check-https green.
+  Smoke 79+79 pass, 4 fail in step 13 (multi-user
+  mesh, pre-existing in v0.25.1, unrelated to v0.26.0,
+  filed as v0.26.1 follow-up). No env-var changes,
+  no schema migration, no breaking changes.
+  ~830 lines added (5 files new, 11 modified, 1 test).
+
+* **Previous**: v0.25.1 — Closing the loose ends (audit export + DR runbook + cleanup)
   ([release notes](RELEASE-NOTES-v0.25.1.md)).
   The "before we add HA, let's clean up the corners"
   release. Three small items: (1) per-user audit log
