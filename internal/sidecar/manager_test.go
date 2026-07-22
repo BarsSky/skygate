@@ -39,12 +39,12 @@ func seedPortalUser(t *testing.T, d *sql.DB, username string, hsID int64) int64 
 	t.Helper()
 	_, err := d.Exec(`INSERT INTO portal_users
 		(username, password_hash, is_admin, headscale_user_id, created_at)
-		VALUES (?, '', 0, ?, ?)`, username, hsID, time.Now().Unix())
+		VALUES ($1, '', 0, $2, $3)`, username, hsID, time.Now().Unix())
 	if err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	var id int64
-	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = ?`, username).Scan(&id); err != nil {
+	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = $1`, username).Scan(&id); err != nil {
 		t.Fatalf("get id: %v", err)
 	}
 	return id
@@ -427,7 +427,7 @@ func TestDistinctPlaneURLs(t *testing.T) {
 	_, _ = subnet.Create(d, uid1, "http://plane1:50444", "h1")
 	_, _ = subnet.Create(d, uid2, "http://plane2:50444", "h2")
 	// Add a duplicate (uid1 again, different plane — distinct should dedup)
-	_, _ = d.Exec(`UPDATE user_subnets SET control_plane_url='http://plane1:50444' WHERE user_id=?`, uid1)
+	_, _ = d.Exec(`UPDATE user_subnets SET control_plane_url='http://plane1:50444' WHERE user_id=$1`, uid1)
 
 	_, hs := fakeNodeServer(t, nil)
 	mgr := New(d, func(_ int64) *headscale.Client { return hs }, nil, 0)

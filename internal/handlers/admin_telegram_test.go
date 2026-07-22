@@ -111,7 +111,7 @@ func TestSendTestFallbackToBoundChats(t *testing.T) {
 	}
 	// Seed a binding for skyadmin (chat_id=12345).
 	if _, err := d.Exec(
-		`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES ($1, $2, $3, $4)`,
 		12345, 1, 1, 1700000000,
 	); err != nil {
 		t.Fatalf("seed binding: %v", err)
@@ -154,7 +154,7 @@ func TestSendTestFallbackToMultipleBoundChats(t *testing.T) {
 	}
 	for _, chatID := range []int64{111, 222, 333} {
 		if _, err := d.Exec(
-			`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES (?, ?, ?, ?)`,
+			`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES ($1, $2, $3, $4)`,
 			chatID, 1, 1, 1700000000,
 		); err != nil {
 			t.Fatalf("seed binding %d: %v", chatID, err)
@@ -229,7 +229,7 @@ func TestSendTestGlobalPreferredOverBindings(t *testing.T) {
 		t.Fatalf("SaveTelegramToken: %v", err)
 	}
 	if _, err := d.Exec(
-		`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES ($1, $2, $3, $4)`,
 		12345, 1, 1, 1700000000,
 	); err != nil {
 		t.Fatalf("seed binding: %v", err)
@@ -265,7 +265,7 @@ func TestSendTestAuditIncludesTargets(t *testing.T) {
 	}
 	for _, chatID := range []int64{42, 99} {
 		if _, err := d.Exec(
-			`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES (?, ?, ?, ?)`,
+			`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES ($1, $2, $3, $4)`,
 			chatID, 1, 1, 1700000000,
 		); err != nil {
 			t.Fatalf("seed binding %d: %v", chatID, err)

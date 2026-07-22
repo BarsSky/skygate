@@ -166,7 +166,7 @@ func Create(d *sql.DB, userID int64, controlPlaneURL, routerHostname string) (*S
 	// extra query for a clearer error message is
 	// worth it.
 	var exists int
-	if err := tx.QueryRow(`SELECT 1 FROM portal_users WHERE id = ?`, userID).Scan(&exists); err != nil {
+	if err := tx.QueryRow(`SELECT 1 FROM portal_users WHERE id = $1`, userID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("subnet: user_id=%d not found in portal_users", userID)
 		}
@@ -176,7 +176,7 @@ func Create(d *sql.DB, userID int64, controlPlaneURL, routerHostname string) (*S
 		INSERT INTO user_subnets
 			(user_id, cidr, subnet_bits, control_plane_url,
 			 status, router_hostname, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, userID, cidr, bits, controlPlaneURL, StatusPending, routerHostname, now, now)
 	if err != nil {
 		// UNIQUE violation on user_id. Rollback
@@ -194,10 +194,10 @@ func Create(d *sql.DB, userID int64, controlPlaneURL, routerHostname string) (*S
 	// Update the denormalized columns on portal_users.
 	res, err = tx.Exec(`
 		UPDATE portal_users
-		   SET subnet_cidr = ?,
-		       subnet_status = ?,
+		   SET subnet_cidr = $1,
+		       subnet_status = $2,
 		       subnet_router_node_id = ''
-		 WHERE id = ?
+		 WHERE id = $3
 	`, cidr, StatusPending, userID)
 	if err != nil {
 		return nil, fmt.Errorf("subnet: update portal_users: %w", err)
@@ -235,7 +235,7 @@ func Get(d *sql.DB, userID int64) (*Subnet, error) {
 		       status, router_node_id, router_container_id,
 		       router_hostname, created_at, updated_at
 		  FROM user_subnets
-		 WHERE user_id = ?
+		 WHERE user_id = $1
 	`, userID)
 	var s Subnet
 	if err := row.Scan(&s.ID, &s.UserID, &s.CIDR, &s.SubnetBits, &s.ControlPlaneURL,
@@ -291,7 +291,7 @@ func ListByStatus(d *sql.DB, status string) ([]*Subnet, error) {
 		       status, router_node_id, router_container_id,
 		       router_hostname, created_at, updated_at
 		  FROM user_subnets
-		 WHERE status = ?
+		 WHERE status = $1
 		 ORDER BY user_id ASC
 	`, status)
 	if err != nil {
@@ -339,8 +339,8 @@ func SetStatus(d *sql.DB, userID int64, status string) error {
 	defer tx.Rollback() //nolint:errcheck
 	res, err := tx.Exec(`
 		UPDATE user_subnets
-		   SET status = ?, updated_at = ?
-		 WHERE user_id = ?
+		   SET status = $1, updated_at = $2
+		 WHERE user_id = $3
 	`, status, now, userID)
 	if err != nil {
 		return fmt.Errorf("subnet: update status: %w", err)
@@ -351,8 +351,8 @@ func SetStatus(d *sql.DB, userID int64, status string) error {
 	}
 	if _, err := tx.Exec(`
 		UPDATE portal_users
-		   SET subnet_status = ?
-		 WHERE id = ?
+		   SET subnet_status = $1
+		 WHERE id = $2
 	`, status, userID); err != nil {
 		return fmt.Errorf("subnet: update portal_users: %w", err)
 	}
@@ -371,10 +371,10 @@ func SetRouter(d *sql.DB, userID int64, routerNodeID, routerContainerID string) 
 	now := time.Now().Unix()
 	res, err := d.Exec(`
 		UPDATE user_subnets
-		   SET router_node_id = ?,
-		       router_container_id = ?,
-		       updated_at = ?
-		 WHERE user_id = ?
+		   SET router_node_id = $1,
+		       router_container_id = $2,
+		       updated_at = $3
+		 WHERE user_id = $4
 	`, routerNodeID, routerContainerID, now, userID)
 	if err != nil {
 		return fmt.Errorf("subnet: set router: %w", err)
@@ -385,8 +385,8 @@ func SetRouter(d *sql.DB, userID int64, routerNodeID, routerContainerID string) 
 	}
 	if _, err := d.Exec(`
 		UPDATE portal_users
-		   SET subnet_router_node_id = ?
-		 WHERE id = ?
+		   SET subnet_router_node_id = $1
+		 WHERE id = $2
 	`, routerNodeID, userID); err != nil {
 		return fmt.Errorf("subnet: update portal_users router: %w", err)
 	}
@@ -452,12 +452,12 @@ func SyncStatus(d *sql.DB, userID int64, hasRouter bool) (string, error) {
 	// node_owner_map from headscale, so counting it
 	// here is the right granularity.
 	var username string
-	if err := d.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, userID).Scan(&username); err != nil {
+	if err := d.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, userID).Scan(&username); err != nil {
 		return "", fmt.Errorf("subnet: read username for user_id=%d: %w", userID, err)
 	}
 	var deviceCount int
 	if err := d.QueryRow(
-		`SELECT COUNT(*) FROM node_owner_map WHERE username = ?`, username,
+		`SELECT COUNT(*) FROM node_owner_map WHERE username = $1`, username,
 	).Scan(&deviceCount); err != nil {
 		return "", fmt.Errorf("subnet: count devices for user_id=%d: %w", userID, err)
 	}

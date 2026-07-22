@@ -285,7 +285,7 @@ func (a *App) CleanupRulesApply() (*CleanupPlan, error) {
 			args = append(args, did)
 			ph[i] = "?"
 		}
-		q := "UPDATE device_rules SET device_ip = ? WHERE (device_ip = '' OR device_ip IS NULL) AND device_id IN (" + strings.Join(ph, ",") + ")"
+		q := "UPDATE device_rules SET device_ip = $1 WHERE (device_ip = '' OR device_ip IS NULL) AND device_id IN (" + strings.Join(ph, ",") + ")"
 		if _, err := tx.Exec(q, args...); err != nil {
 			return nil, fmt.Errorf("backfill device_ip for host=%s: %w", hn, err)
 		}
@@ -315,7 +315,7 @@ func (a *App) CleanupRulesApply() (*CleanupPlan, error) {
 			args = append(args, did)
 			ph[i] = "?"
 		}
-		q := "UPDATE device_rules SET device_id = ? WHERE device_id IN (" + strings.Join(ph, ",") + ")"
+		q := "UPDATE device_rules SET device_id = $1 WHERE device_id IN (" + strings.Join(ph, ",") + ")"
 		if _, err := tx.Exec(q, args...); err != nil {
 			return nil, fmt.Errorf("merge device_ids to %d: %w", g.Canonical, err)
 		}

@@ -92,7 +92,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	_, _ = d.Exec(`INSERT INTO portal_users(id, username, is_admin) VALUES (1, 'skyadmin', 1)`)
 	_, _ = d.Exec(`INSERT INTO portal_users(id, username, is_admin) VALUES (2, 'alice', 0)`)
 	for i := 0; i < 12; i++ {
-		_, _ = d.Exec(`INSERT INTO device_rules(user_id, target_value) VALUES (1, ?)`, "x")
+		_, _ = d.Exec(`INSERT INTO device_rules(user_id, target_value) VALUES (1, $1)`, "x")
 	}
 	_, _ = d.Exec(`INSERT INTO acl_snapshots(version, applied_success) VALUES (5, 1)`)
 	// Seed nodes + audit_log for phase-2 commands.
@@ -399,7 +399,7 @@ func TestAuditReplySplitLongLog(t *testing.T) {
 	// Seed 20 audit rows so the LIMIT 20 returns 20.
 	for i := 0; i < 20; i++ {
 		_, _ = d.Exec(
-			`INSERT INTO audit_log(username, action, detail, created_at) VALUES (?, ?, ?, ?)`,
+			`INSERT INTO audit_log(username, action, detail, created_at) VALUES ($1, $2, $3, $4)`,
 			fmt.Sprintf("user%d", i),
 			"test_action",
 			fmt.Sprintf("entry #%d", i),
@@ -430,7 +430,7 @@ func TestAuditReplyNoSplitShortLog(t *testing.T) {
 	// Seed 5 audit rows.
 	for i := 0; i < 5; i++ {
 		_, _ = d.Exec(
-			`INSERT INTO audit_log(username, action, detail, created_at) VALUES (?, ?, ?, ?)`,
+			`INSERT INTO audit_log(username, action, detail, created_at) VALUES ($1, $2, $3, $4)`,
 			fmt.Sprintf("user%d", i),
 			"test_action",
 			fmt.Sprintf("entry #%d", i),
@@ -1323,7 +1323,7 @@ func TestMyRulesReplySplitLongList(t *testing.T) {
 	// Seed 15 rules for alice (above the 12-rule threshold).
 	for i := 0; i < 15; i++ {
 		_, _ = d.Exec(
-			`INSERT INTO device_rules(user_id, target_value) VALUES (?, ?)`,
+			`INSERT INTO device_rules(user_id, target_value) VALUES ($1, $2)`,
 			2, fmt.Sprintf("target-%d.example", i),
 		)
 	}
@@ -1429,7 +1429,7 @@ func seedPortalUserForSubnets(t *testing.T, d interface {
 }) int64 {
 	t.Helper()
 	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?, '', 0)`,
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES ($1, '', 0)`,
 		"alice-subnet",
 	)
 	if err != nil {
@@ -1450,7 +1450,7 @@ func TestMySubnetProvisionReply_IssuesPreauth(t *testing.T) {
 	d := setupTestDB(t)
 	uid := seedPortalUserForSubnets(t, d)
 	// Provision needs a headscale_user_id on the user.
-	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 42 WHERE id = ?`, uid); err != nil {
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 42 WHERE id = $1`, uid); err != nil {
 		t.Fatalf("set hs id: %v", err)
 	}
 	// Create a user_subnets row (the manager errors if missing).
@@ -1825,7 +1825,7 @@ func TestDeleteRuleReplyRejectsCrossUser(t *testing.T) {
 	}
 	// Skyadmin's rule must still be there.
 	var n int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = $1`, rid).Scan(&n)
 	if n != 1 {
 		t.Errorf("expected skyadmin's rule to be preserved, got %d rows", n)
 	}
@@ -2904,7 +2904,7 @@ func TestDelRuleReplySingleSuccess(t *testing.T) {
 	}
 	// device_rules row gone.
 	var n int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = $1`, rid).Scan(&n)
 	if n != 0 {
 		t.Errorf("expected rule row to be deleted, got %d rows", n)
 	}
@@ -3002,7 +3002,7 @@ func TestDelRuleReplyAdminForOtherUser(t *testing.T) {
 	}
 	// Row gone.
 	var n int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = $1`, rid).Scan(&n)
 	if n != 0 {
 		t.Errorf("expected alice's rule to be deleted by admin, got %d rows", n)
 	}
@@ -3028,7 +3028,7 @@ func TestDelRuleReplyRejectsNonAdminForOtherUser(t *testing.T) {
 	}
 	// skyadmin's rule untouched.
 	var n int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = $1`, rid).Scan(&n)
 	if n != 1 {
 		t.Errorf("expected skyadmin's rule untouched, got %d rows", n)
 	}
@@ -3045,7 +3045,7 @@ func TestDelRuleReplySetPolicyFailure(t *testing.T) {
 	}
 	// Rule row IS deleted (the failure is downstream of the DELETE).
 	var n int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = $1`, rid).Scan(&n)
 	if n != 0 {
 		t.Errorf("expected rule row to be deleted even on SetPolicy failure, got %d rows", n)
 	}
@@ -3078,7 +3078,7 @@ func TestDelRuleReplyReadOnlyMode(t *testing.T) {
 	// Rule row IS deleted (DB delete is local; the read-only guard
 	// only skips the headscale.SetPolicy call).
 	var n int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = ?`, rid).Scan(&n)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE id = $1`, rid).Scan(&n)
 	if n != 0 {
 		t.Errorf("expected rule row to be deleted in read-only mode, got %d rows", n)
 	}
@@ -3826,7 +3826,7 @@ func insertValidLoginToken(t *testing.T, d *sql.DB, token string, userID int64, 
 	t.Helper()
 	now := time.Now().Unix()
 	if _, err := d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip)
-		VALUES (?, ?, ?, ?, 0, 0, '127.0.0.1')`, token, userID, now, now+int64(ttlSeconds)); err != nil {
+		VALUES ($1, $2, $3, $4, 0, 0, '127.0.0.1')`, token, userID, now, now+int64(ttlSeconds)); err != nil {
 		t.Fatalf("insertValidLoginToken: %v", err)
 	}
 }
@@ -3853,7 +3853,7 @@ func TestLoginReplyValid(t *testing.T) {
 	}
 	// The token is now consumed.
 	var usedAt int64
-	if err := d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = ?`, testLoginToken).Scan(&usedAt); err != nil {
+	if err := d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = $1`, testLoginToken).Scan(&usedAt); err != nil {
 		t.Fatalf("read used_at: %v", err)
 	}
 	if usedAt == 0 {
@@ -3971,7 +3971,7 @@ func TestStartReplyWithTokenShowsConfirmation(t *testing.T) {
 	// what consumes it. This is the whole point of the
 	// confirmation step.
 	var usedAt int64
-	_ = d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = ?`, testLoginToken).Scan(&usedAt)
+	_ = d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = $1`, testLoginToken).Scan(&usedAt)
 	if usedAt != 0 {
 		t.Errorf("token should not be consumed on /start (only on Bind tap), got used_at=%d", usedAt)
 	}
@@ -4182,7 +4182,7 @@ func TestPeekTelegramLoginTokenDoesNotConsume(t *testing.T) {
 	}
 	// Row still unused.
 	var usedAt int64
-	_ = d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = ?`, testLoginToken).Scan(&usedAt)
+	_ = d.QueryRow(`SELECT used_at FROM telegram_login_tokens WHERE token = $1`, testLoginToken).Scan(&usedAt)
 	if usedAt != 0 {
 		t.Errorf("row should still be unused after 2 peeks, got used_at=%d", usedAt)
 	}

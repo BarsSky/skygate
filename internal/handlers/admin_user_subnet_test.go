@@ -36,7 +36,7 @@ import (
 func adminSubnetSeed(t *testing.T, a *App, d *sql.DB, username string) int64 {
 	t.Helper()
 	res, err := d.Exec(
-		`INSERT INTO portal_users(username, password_hash, is_admin) VALUES (?, '', 0)`,
+		`INSERT INTO portal_users(username, password_hash, is_admin) VALUES ($1, '', 0)`,
 		username,
 	)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestPostAdminUserSubnetAllocateAndDisable(t *testing.T) {
 	}
 	// Still only one row in user_subnets.
 	var n int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnets WHERE user_id = ?`, uid).Scan(&n); err != nil {
+	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnets WHERE user_id = $1`, uid).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {
@@ -206,7 +206,7 @@ func TestPostAdminUserSubnetTestCatchesDenormOutOfSync(t *testing.T) {
 	}
 	// Force a denorm mismatch: write a wrong CIDR to
 	// portal_users.subnet_cidr.
-	if _, err := d.Exec(`UPDATE portal_users SET subnet_cidr = '10.0.99.0/24' WHERE id = ?`, uid); err != nil {
+	if _, err := d.Exec(`UPDATE portal_users SET subnet_cidr = '10.0.99.0/24' WHERE id = $1`, uid); err != nil {
 		t.Fatalf("force mismatch: %v", err)
 	}
 	testReq := authedReqForURL(t, a, "POST", "/admin/users/"+itoa(uid)+"/subnet/test", "skyadmin")
@@ -320,7 +320,7 @@ func TestPostAdminUserSubnetProvision_IssuesPreauthAndShows(t *testing.T) {
 	// Wire a sidecar manager with a fake headscale API that
 	// returns a stub preauth key. Also set headscale_user_id
 	// on the seeded user so the preauth issuance can read it.
-	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 42 WHERE id = ?`, uid); err != nil {
+	if _, err := d.Exec(`UPDATE portal_users SET headscale_user_id = 42 WHERE id = $1`, uid); err != nil {
 		t.Fatalf("set hs id: %v", err)
 	}
 	_, hs := fakeSidecarHS(t)

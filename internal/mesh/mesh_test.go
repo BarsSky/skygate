@@ -93,7 +93,7 @@ func openTestDB(t *testing.T) *sql.DB {
 
 func seedUser(t *testing.T, d *sql.DB, name string) int64 {
 	t.Helper()
-	res, err := d.Exec(`INSERT INTO portal_users (username) VALUES (?)`, name)
+	res, err := d.Exec(`INSERT INTO portal_users (username) VALUES ($1)`, name)
 	if err != nil {
 		t.Fatalf("seed user %s: %v", name, err)
 	}

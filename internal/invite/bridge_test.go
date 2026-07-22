@@ -65,7 +65,7 @@ func TestApplyBridgeWritesShareRow(t *testing.T) {
 
 	// Verify the share row was written
 	var grantor, grantee int64
-	if err := d.QueryRow(`SELECT grantor_user_id, grantee_user_id FROM user_subnet_shares WHERE grantor_user_id = ?`, aliceID).Scan(&grantor, &grantee); err != nil {
+	if err := d.QueryRow(`SELECT grantor_user_id, grantee_user_id FROM user_subnet_shares WHERE grantor_user_id = $1`, aliceID).Scan(&grantor, &grantee); err != nil {
 		t.Fatalf("read share: %v", err)
 	}
 	if grantor != aliceID || grantee != bobID {
@@ -93,7 +93,7 @@ func TestApplyBridgeIdempotent(t *testing.T) {
 	}
 	// Should still be exactly 1 share row
 	var n int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = ? AND grantee_user_id = ?`, aliceID, bobID).Scan(&n); err != nil {
+	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = $1 AND grantee_user_id = $2`, aliceID, bobID).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {

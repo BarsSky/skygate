@@ -181,7 +181,7 @@ func TestACLBuilder_MultiUserSubnets_PinIsolation(t *testing.T) {
 	} {
 		if _, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr); err != nil {
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr); err != nil {
 			t.Fatalf("seed subnet uid=%d: %v", p.uid, err)
 		}
 	}
@@ -255,7 +255,7 @@ func TestACLBuilder_ExitNodeGlobalAcrossSubnets(t *testing.T) {
 	} {
 		if _, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr); err != nil {
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
@@ -354,7 +354,7 @@ func TestACLBuilder_SkyadminMigrationIsolated(t *testing.T) {
 	} {
 		if _, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr); err != nil {
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr); err != nil {
 			t.Fatalf("seed %d: %v", p.uid, err)
 		}
 	}
@@ -445,7 +445,7 @@ func TestACLBuilder_MultipleSharesToOneGrantee(t *testing.T) {
 	} {
 		if _, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr); err != nil {
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
@@ -456,7 +456,7 @@ func TestACLBuilder_MultipleSharesToOneGrantee(t *testing.T) {
 	for _, grantorID := range []int64{aliceID, carolID, daniilID} {
 		if _, err := d.Exec(`INSERT INTO user_subnet_shares
 			(grantor_user_id, grantee_user_id, created_at)
-			VALUES (?, ?, 0)`, grantorID, bobID); err != nil {
+			VALUES ($1, $2, 0)`, grantorID, bobID); err != nil {
 			t.Fatalf("seed share grantor=%d: %v", grantorID, err)
 		}
 	}
@@ -513,14 +513,14 @@ func TestACLBuilder_BidirectionalShares(t *testing.T) {
 	} {
 		if _, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr); err != nil {
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
 	// Both directions: alice→bob AND bob→alice.
 	if _, err := d.Exec(`INSERT INTO user_subnet_shares
 		(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, 0), (?, ?, 0)`,
+		VALUES ($1, $2, 0), ($3, $4, 0)`,
 		aliceID, bobID, bobID, aliceID); err != nil {
 		t.Fatalf("seed bidirectional shares: %v", err)
 	}
@@ -582,7 +582,7 @@ func TestACLBuilder_InviteConsumeBridgeEndToEnd(t *testing.T) {
 	} {
 		if _, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr); err != nil {
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
@@ -807,7 +807,7 @@ func seedUserSubnet(t *testing.T, d *sql.DB, uid int64) string {
 	cidr := fmt.Sprintf("10.0.%d.0/24", uid)
 	if _, err := d.Exec(`INSERT INTO user_subnets
 		(user_id, cidr, status, control_plane_url)
-		VALUES (?, ?, 'active', '')`, uid, cidr); err != nil {
+		VALUES ($1, $2, 'active', '')`, uid, cidr); err != nil {
 		t.Fatalf("seed subnet uid=%d: %v", uid, err)
 	}
 	return cidr
@@ -834,7 +834,7 @@ func createMeshInTest(t *testing.T, d *sql.DB, code string, memberIDs []int64) i
 	now := time.Now().Unix()
 	res, err := d.Exec(`INSERT INTO meshes
 		(code, name, creator_user_id, status, created_at)
-		VALUES (?, 'test-mesh', ?, 'active', ?)`,
+		VALUES ($1, 'test-mesh', $2, 'active', $3)`,
 		code, memberIDs[0], now)
 	if err != nil {
 		t.Fatalf("seed mesh: %v", err)
@@ -842,7 +842,7 @@ func createMeshInTest(t *testing.T, d *sql.DB, code string, memberIDs []int64) i
 	meshID, _ := res.LastInsertId()
 	for _, uid := range memberIDs {
 		if _, err := d.Exec(`INSERT INTO mesh_members
-			(mesh_id, user_id, joined_at) VALUES (?, ?, ?)`,
+			(mesh_id, user_id, joined_at) VALUES ($1, $2, $3)`,
 			meshID, uid, now); err != nil {
 			t.Fatalf("seed mesh_member uid=%d: %v", uid, err)
 		}
@@ -932,7 +932,7 @@ func TestACLBuilder_MeshAndShareAreDeduped(t *testing.T) {
 	// alice shares with bob (v0.17.1).
 	if _, err := d.Exec(`INSERT INTO user_subnet_shares
 		(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, 0)`, aliceID, bobID); err != nil {
+		VALUES ($1, $2, 0)`, aliceID, bobID); err != nil {
 		t.Fatalf("seed share: %v", err)
 	}
 	// And they're in the same mesh too.
@@ -1010,7 +1010,7 @@ func TestACLBuilder_MeshDissolvedExcluded(t *testing.T) {
 	bobCIDR := seedUserSubnet(t, d, bobID)
 	// Create + dissolve a mesh.
 	meshID := createMeshInTest(t, d, "", []int64{aliceID, bobID})
-	if _, err := d.Exec(`UPDATE meshes SET status='dissolved', dissolved_at=? WHERE id=?`,
+	if _, err := d.Exec(`UPDATE meshes SET status='dissolved', dissolved_at=$1 WHERE id=$2`,
 		time.Now().Unix(), meshID); err != nil {
 		t.Fatalf("dissolve: %v", err)
 	}

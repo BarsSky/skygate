@@ -41,7 +41,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// the new "Mesh subnet" column in the device rows.
 	var subnetCIDR, subnetStatus string
 	_ = a.DB.QueryRow(
-		`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, c.UserID,
+		`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = $1`, c.UserID,
 	).Scan(&subnetCIDR, &subnetStatus)
 
 	// Get all nodes (cached). Reuse them for both my-nodes (filter by user)
@@ -213,7 +213,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			  FROM user_subnet_shares sh
 			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
 			  JOIN portal_users p ON p.id = sh.grantee_user_id
-			 WHERE sh.grantor_user_id = ? AND s.status != 'disabled'
+			 WHERE sh.grantor_user_id = $1 AND s.status != 'disabled'
 			 ORDER BY p.username`, c.UserID)
 		if err == nil {
 			defer rows.Close()
@@ -230,7 +230,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			  FROM user_subnet_shares sh
 			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
 			  JOIN portal_users p ON p.id = sh.grantor_user_id
-			 WHERE sh.grantee_user_id = ? AND s.status != 'disabled'
+			 WHERE sh.grantee_user_id = $1 AND s.status != 'disabled'
 			 ORDER BY p.username`, c.UserID)
 		if err == nil {
 			defer rows2.Close()
@@ -252,7 +252,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		  JOIN mesh_members mm_other ON mm_other.mesh_id = mm_self.mesh_id
 		  JOIN portal_users p ON p.id = mm_other.user_id
 		  LEFT JOIN user_subnets s ON s.user_id = p.id AND s.status != 'disabled'
-		 WHERE mm_self.user_id = ? AND p.id != ?
+		 WHERE mm_self.user_id = $1 AND p.id != $2
 		   AND EXISTS (SELECT 1 FROM meshes m WHERE m.id = mm_self.mesh_id AND m.status = 'active')
 		 ORDER BY p.username`, c.UserID, c.UserID)
 	if err == nil {
@@ -274,7 +274,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		SELECT COUNT(DISTINCT mm.mesh_id)
 		  FROM mesh_members mm
 		  JOIN meshes m ON m.id = mm.mesh_id
-		 WHERE mm.user_id = ? AND m.status = 'active'`, c.UserID).Scan(&meshCount)
+		 WHERE mm.user_id = $1 AND m.status = 'active'`, c.UserID).Scan(&meshCount)
 
 	a.renderWithLayout(w, r, "user/devices.html", c, map[string]any{
 		"MyNodes":        myNodesList,

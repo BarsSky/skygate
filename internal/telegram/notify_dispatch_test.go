@@ -78,7 +78,7 @@ func TestEnvForMessageStillTriggersBindingLookup(t *testing.T) {
 	// Bind chat 555 to user 2 (alice, is_admin=0 in the seed
 	// — we override to 1 below for clarity of the assertion).
 	if _, err := d.Exec(
-		`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO telegram_bindings(chat_id, portal_user_id, is_admin, bound_at) VALUES ($1, $2, $3, $4)`,
 		555, 2, 1, 1700000000,
 	); err != nil {
 		t.Fatalf("seed binding: %v", err)
@@ -174,7 +174,7 @@ func TestEnvForMessageLoginHandler(t *testing.T) {
 	}
 	// And the binding is now in the DB.
 	var bound int64
-	if err := d.QueryRow(`SELECT chat_id FROM telegram_bindings WHERE chat_id = ?`, 555).Scan(&bound); err != nil {
+	if err := d.QueryRow(`SELECT chat_id FROM telegram_bindings WHERE chat_id = $1`, 555).Scan(&bound); err != nil {
 		if err == sql.ErrNoRows {
 			t.Fatalf("binding was not created (loginReply reported success but the DB has no row for chat 555)")
 		}

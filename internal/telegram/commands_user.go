@@ -64,7 +64,7 @@ func myStatusReply(env BotEnv) string {
 		return i18n.T(lang, "bot.my_status.no_username")
 	}
 	var ruleCount, deviceCount int64
-	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = ?`, env.PortalUserID).Scan(&ruleCount); err != nil {
+	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = $1`, env.PortalUserID).Scan(&ruleCount); err != nil {
 		return i18n.Tf(lang, "bot.my_status.db_error", err)
 	}
 	// 2026-07-12: Этап 10 part 4 — count of owned devices derived
@@ -296,7 +296,7 @@ func myRulesReply(env BotEnv) string {
 		SELECT r.id, r.exit_node_id, r.target_type, r.target_value,
 		       COALESCE(r.action, 'accept') AS action
 		  FROM device_rules r
-		 WHERE r.user_id = ?
+		 WHERE r.user_id = $1
 		 ORDER BY r.id DESC
 		 LIMIT 25`, env.PortalUserID)
 	if err != nil {
@@ -413,7 +413,7 @@ func myQuotaReply(env BotEnv) string {
 		return i18n.T(lang, "bot.my_quota.not_bound")
 	}
 	var cnt int
-	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = ?`, env.PortalUserID).Scan(&cnt); err != nil {
+	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = $1`, env.PortalUserID).Scan(&cnt); err != nil {
 		return i18n.Tf(lang, "bot.my_quota.db_error", err)
 	}
 	max := env.MaxFor(env.Username)
@@ -870,7 +870,7 @@ func addRuleReply(env BotEnv, args []string) string {
 	var exitNodeEnabled int
 	err = env.DB.QueryRow(
 		`SELECT COALESCE(hostname, ''), COALESCE(enabled, 0)
-		   FROM exit_servers WHERE node_id = ?`,
+		   FROM exit_servers WHERE node_id = $1`,
 		exitNodeNodeID,
 	).Scan(&exitNodeHostname, &exitNodeEnabled)
 	if err != nil || exitNodeHostname == "" {
@@ -1368,7 +1368,7 @@ func lookupUserByUsername(d *sql.DB, username string) (*db.User, error) {
 	var isAdmin int
 	var headscaleID sql.NullInt64
 	err := d.QueryRow(
-		`SELECT id, username, is_admin, headscale_user_id FROM portal_users WHERE username = ?`,
+		`SELECT id, username, is_admin, headscale_user_id FROM portal_users WHERE username = $1`,
 		username,
 	).Scan(&u.ID, &u.Username, &isAdmin, &headscaleID)
 	if err != nil {
@@ -1686,7 +1686,7 @@ func mySubnetReply(env BotEnv) string {
 	if err := env.DB.QueryRow(`
 		SELECT subnet_cidr, subnet_status, subnet_router_node_id, headscale_url
 		  FROM portal_users
-		 WHERE id = ?
+		 WHERE id = $1
 	`, env.PortalUserID).Scan(&cidr, &status, &routerNodeID, &controlPlaneURL); err != nil {
 		return i18n.Tf(lang, "bot.mysubnet.db_error", err)
 	}
@@ -1826,7 +1826,7 @@ func mySubnetShareReply(env BotEnv, args []string) string {
 	// Look up the grantee's user_id.
 	var granteeID int64
 	if err := env.DB.QueryRow(
-		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+		`SELECT id FROM portal_users WHERE username = $1`, granteeName,
 	).Scan(&granteeID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return i18n.Tf(lang, "bot.mysubnet.share_no_user", granteeName)
@@ -1884,7 +1884,7 @@ func mySubnetRevokeReply(env BotEnv, args []string) string {
 	}
 	var granteeID int64
 	if err := env.DB.QueryRow(
-		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+		`SELECT id FROM portal_users WHERE username = $1`, granteeName,
 	).Scan(&granteeID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return i18n.Tf(lang, "bot.mysubnet.revoke_no_user", granteeName)

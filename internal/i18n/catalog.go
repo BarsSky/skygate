@@ -2212,7 +2212,7 @@ var enCatalog = map[string]string{
 	"login.submit":                    "Sign in",
 	"login.remember_label":            "Remember me (30 days)",
 	"login.invalid_credentials":       "Invalid username or password",
-	"login.no_account":                "No account? Ask an administrator to create one.",
+	"login.no_account":                "No account$1 Ask an administrator to create one.",
 
 	// account / password change
 	"account.title":                   "Account",
@@ -2306,7 +2306,7 @@ var enCatalog = map[string]string{
 	"users.make_admin":                "Make administrator",
 	"users.reset_password":            "Reset",
 	"users.reset_password_placeholder": "New password (>=6)",
-	"users.delete_confirm":            "Delete %s? This also removes them from headscale and all their nodes",
+	"users.delete_confirm":            "Delete %s$1 This also removes them from headscale and all their nodes",
 	"users.reset_confirm":             "Reset password for %s? The current password stops working immediately.",
 	"users.empty":                     "No users",
 	"users.active_count":              "Active (%d)",
@@ -2522,8 +2522,8 @@ var enCatalog = map[string]string{
 	"exit_rules.search_ph":            "Search by IP/domain...",
 	"exit_rules.cascade_hint":         "Domain → cascade /32",
 	"exit_rules.cascade_hint_title":   "Deleting a domain cascades to all related /32",
-	"exit_rules.confirm_multi_delete": "Delete the selected rules? For domains, all related /32 created by autoupdater will also be removed.",
-	"exit_rules.confirm_single_delete": "Delete this rule?",
+	"exit_rules.confirm_multi_delete": "Delete the selected rules$1 For domains, all related /32 created by autoupdater will also be removed.",
+	"exit_rules.confirm_single_delete": "Delete this rule$1",
 	"exit_rules.reset_filters":        "Reset filters",
 	"exit_rules.delete_selected":      "Delete selected",
 	"exit_rules.user_facing":          "My rules: %d/%d",
@@ -2588,7 +2588,7 @@ var enCatalog = map[string]string{
 	"exit_nodes.form_ssh_key":         "SSH key path",
 	"exit_nodes.form_desc":            "Description",
 	"exit_nodes.form_accept_routes":   "Accept routes",
-	"exit_nodes.delete_confirm":       "Delete exit node %s?",
+	"exit_nodes.delete_confirm":       "Delete exit node %s$1",
 	"exit_nodes.sync_all":             "Sync all",
 	// 2026-07-17: v0.18.1 — "Tag as exit-node" + "Untag" buttons
 	// on /admin/exit-nodes. Replaces the operator's manual
@@ -3335,7 +3335,7 @@ var enCatalog = map[string]string{
 	"telegram.test_disabled_hint":     "Save token and chat_id first.",
 	"telegram.test_keep_current":      "leave empty to keep current",
 	"telegram.rotate_help":            "If the token is compromised (e.g. leaked in logs): delete it and save a new one. All future events (backup/upgrade) will go to ~/.skygate-notify.log until reconfigured.",
-	"telegram.rotate_confirm":         "Delete the current Telegram token? You will need to save a new one.",
+	"telegram.rotate_confirm":         "Delete the current Telegram token$1 You will need to save a new one.",
 	"telegram.rotate_check_warn":      "I understand a new token will be required",
 	"telegram.disable_help":           "Completely turns off Telegram. <code>scripts/notify.sh</code> will write to a local log.",
 	"telegram.disable_confirm":        "Disable Telegram? Notifications will stop arriving in the messenger.",
@@ -3369,7 +3369,7 @@ var enCatalog = map[string]string{
 	"exit_rules_admin.col_parent":     "Parent",
 	"exit_rules_admin.col_created":    "Created",
 	"exit_rules_admin.auto_managed":   "Auto-managed",
-	"exit_rules_admin.delete_confirm": "Delete rule #%d?",
+	"exit_rules_admin.delete_confirm": "Delete rule #%d$1",
 	"exit_rules_admin.acl_history":    "ACL application history",
 	"exit_rules_admin.col_time":       "Time",
 	"exit_rules_admin.col_details":    "Details",
@@ -3398,7 +3398,7 @@ var enCatalog = map[string]string{
 	"cleanup.merge":                   "Merge",
 	"cleanup.merge_confirm":           "Merge %d duplicates?",
 	"cleanup.delete_orphans":          "Delete orphans",
-	"cleanup.delete_orphans_confirm":  "Delete %d orphan rules?",
+	"cleanup.delete_orphans_confirm":  "Delete %d orphan rules$1",
 
 	// exit rules nodes (sync)
 	"exit_rules_nodes.title":          "Exit nodes (sync)",

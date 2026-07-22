@@ -181,7 +181,7 @@ func CreateInvite(d *sql.DB, grantorUserID int64, granteeUsername string, ttl ti
 			INSERT INTO invite_codes
 				(code, grantor_user_id, grantee_username, status,
 				 created_at, expires_at, audit_message)
-			VALUES (?, ?, ?, 'active', ?, ?, ?)
+			VALUES ($1, $2, $3, 'active', $4, $5, $6)
 		`, code, grantorUserID, granteeUsername,
 			now.Unix(), expires.Unix(), message)
 		if err != nil {
@@ -221,7 +221,7 @@ func LookupByCode(d *sql.DB, code string) (*Invite, error) {
 		SELECT id, code, grantor_user_id, grantee_username, status,
 		       created_at, expires_at, consumed_at, consumed_by_user_id, audit_message
 		FROM invite_codes
-		WHERE code = ?
+		WHERE code = $1
 	`, code)
 	var inv Invite
 	var createdUnix, expiresUnix, consumedUnix int64
@@ -303,9 +303,9 @@ func ConsumeCode(d *sql.DB, code string, consumerUserID int64) (*Invite, error) 
 	res, err := d.Exec(`
 		UPDATE invite_codes
 		SET status = 'consumed',
-		    consumed_at = ?,
-		    consumed_by_user_id = ?
-		WHERE code = ? AND status = 'active'
+		    consumed_at = $1,
+		    consumed_by_user_id = $2
+		WHERE code = $3 AND status = 'active'
 	`, now.Unix(), consumerUserID, code)
 	if err != nil {
 		return nil, fmt.Errorf("invite: consume: %w", err)
@@ -334,7 +334,7 @@ func RevokeInvite(d *sql.DB, code string) error {
 	_, err := d.Exec(`
 		UPDATE invite_codes
 		SET status = 'revoked'
-		WHERE code = ? AND status = 'active'
+		WHERE code = $1 AND status = 'active'
 	`, code)
 	return err
 }
@@ -375,7 +375,7 @@ func SweepExpired(d *sql.DB) (int64, error) {
 	res, err := d.Exec(`
 		UPDATE invite_codes
 		SET status = 'expired'
-		WHERE status = 'active' AND expires_at < ?
+		WHERE status = 'active' AND expires_at < $1
 	`, time.Now().Unix())
 	if err != nil {
 		return 0, err

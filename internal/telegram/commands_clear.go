@@ -253,12 +253,12 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	// Fetch every rule (id, target_type, parent_domain) for
 	// the target user. We do this BEFORE the delete so the
 	// cascade logic (domain → /32 siblings) can run per-row.
-	// A simpler "DELETE FROM device_rules WHERE user_id = ?"
+	// A simpler "DELETE FROM device_rules WHERE user_id = $1"
 	// would skip the cascade and leave orphan /32 rows around
 	// for domain rules.
 	rows, err := env.DB.Query(
 		`SELECT id, target_type, COALESCE(parent_domain, '')
-		   FROM device_rules WHERE user_id = ?`, target.ID)
+		   FROM device_rules WHERE user_id = $1`, target.ID)
 	if err != nil {
 		return i18n.Tf(lang, "bot.clearrules.db_error", err)
 	}
@@ -368,14 +368,14 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 // enough to drive the reply).
 func countAndSampleUserRules(d *sql.DB, userID int64) (int, []string, error) {
 	var cnt int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = ?`, userID).Scan(&cnt); err != nil {
+	if err := d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = $1`, userID).Scan(&cnt); err != nil {
 		return 0, nil, err
 	}
 	if cnt == 0 {
 		return 0, nil, nil
 	}
 	rows, err := d.Query(
-		`SELECT id, target_value FROM device_rules WHERE user_id = ? ORDER BY id DESC LIMIT 10`, userID)
+		`SELECT id, target_value FROM device_rules WHERE user_id = $1 ORDER BY id DESC LIMIT 10`, userID)
 	if err != nil {
 		return cnt, nil, nil // count is fine; sample is best-effort
 	}

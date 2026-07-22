@@ -137,7 +137,7 @@ func ApplyBridge(
 	if _, err := d.Exec(`
 		INSERT OR IGNORE INTO user_subnet_shares
 			(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, ?)
+		VALUES ($1, $2, $3)
 	`, grantorID, granteeID, time.Now().Unix()); err != nil {
 		return fmt.Errorf("invite: write share: %w", err)
 	}
@@ -195,7 +195,7 @@ func ApplyBridge(
 // "user hasn't signed up yet" hint).
 func ResolveGranteeID(d *sql.DB, username string) (int64, error) {
 	var id int64
-	err := d.QueryRow(`SELECT id FROM portal_users WHERE username = ?`, username).Scan(&id)
+	err := d.QueryRow(`SELECT id FROM portal_users WHERE username = $1`, username).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil

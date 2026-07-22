@@ -291,7 +291,7 @@ func Save(d *sql.DB, c *Config) error {
 	defer tx.Rollback()
 	for k, v := range pairs {
 		if _, err := tx.Exec(
-			`INSERT INTO global_settings (key, value) VALUES (?, ?)
+			`INSERT INTO global_settings (key, value) VALUES ($1, $2)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`,
 			k, v,
 		); err != nil {
@@ -321,7 +321,7 @@ func SetStatus(d *sql.DB, status, errMsg, archive string, runAt time.Time) error
 	defer tx.Rollback()
 	for k, v := range pairs {
 		if _, err := tx.Exec(
-			`INSERT INTO global_settings (key, value) VALUES (?, ?)
+			`INSERT INTO global_settings (key, value) VALUES ($1, $2)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`,
 			k, v,
 		); err != nil {

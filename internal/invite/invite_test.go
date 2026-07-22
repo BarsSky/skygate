@@ -65,7 +65,7 @@ func TestCreateAndLookup(t *testing.T) {
 	d := setupDB(t)
 
 	// Need a grantor in portal_users (FK).
-	res, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES(?, ?, 0)`, "alice", "x")
+	res, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES($1, $2, 0)`, "alice", "x")
 	if err != nil {
 		t.Fatalf("insert alice: %v", err)
 	}
@@ -271,7 +271,7 @@ func insertAlice(t *testing.T, d *sql.DB) {
 
 func insertUser(t *testing.T, d *sql.DB, name string) {
 	t.Helper()
-	_, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES(?, ?, 0)`, name, "x")
+	_, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES($1, $2, 0)`, name, "x")
 	if err != nil {
 		t.Fatalf("insert %s: %v", name, err)
 	}
@@ -280,7 +280,7 @@ func insertUser(t *testing.T, d *sql.DB, name string) {
 func userIDByName(t *testing.T, d *sql.DB, name string) int64 {
 	t.Helper()
 	var id int64
-	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = ?`, name).Scan(&id); err != nil {
+	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = $1`, name).Scan(&id); err != nil {
 		t.Fatalf("userIDByName(%s): %v", name, err)
 	}
 	return id

@@ -116,7 +116,7 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 			for _, mem := range members {
 				ids = append(ids, mem.UserID)
 			}
-			q := "SELECT user_id, cidr FROM user_subnets WHERE user_id IN (?" +
+			q := "SELECT user_id, cidr FROM user_subnets WHERE user_id IN ($1" +
 				strings.Repeat(",?", len(ids)-1) +
 				") AND status != 'disabled'"
 			cidrRows, err := a.DB.Query(q, ids...)
@@ -435,7 +435,7 @@ func isMeshMember(d *sql.DB, meshID, userID int64) (bool, error) {
 	var n int
 	if err := d.QueryRow(`
 		SELECT COUNT(*) FROM mesh_members
-		 WHERE mesh_id = ? AND user_id = ?`,
+		 WHERE mesh_id = $1 AND user_id = $2`,
 		meshID, userID).Scan(&n); err != nil {
 		return false, err
 	}
@@ -450,7 +450,7 @@ func isMeshMember(d *sql.DB, meshID, userID int64) (bool, error) {
 // "use the user#N fallback" in the template.
 func getUserNameByID(d *sql.DB, id int64) (string, error) {
 	var name string
-	err := d.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, id).Scan(&name)
+	err := d.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, id).Scan(&name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil

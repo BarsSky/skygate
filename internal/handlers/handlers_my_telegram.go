@@ -283,7 +283,7 @@ func (a *App) PostMyTelegramRevoke(w http.ResponseWriter, r *http.Request) {
 	// user revokes a token they just inspected.
 	var ownerID int64
 	ownerFound := false
-	if err := a.DB.QueryRow(`SELECT portal_user_id FROM telegram_login_tokens WHERE token = ?`, token).Scan(&ownerID); err == nil {
+	if err := a.DB.QueryRow(`SELECT portal_user_id FROM telegram_login_tokens WHERE token = $1`, token).Scan(&ownerID); err == nil {
 		ownerFound = true
 	} else if err != sql.ErrNoRows {
 		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)

@@ -134,7 +134,7 @@ func seedPortalUserWithPlane(t *testing.T, d *sql.DB, username, planeURL string)
 	// The production schema has more; the test schema is
 	// kept in lock-step.
 	res, err := d.Exec(
-		`INSERT INTO portal_users (username, headscale_url) VALUES (?, ?)`,
+		`INSERT INTO portal_users (username, headscale_url) VALUES ($1, $2)`,
 		username, planeURL)
 	if err != nil {
 		t.Fatalf("seed user %s on plane %s: %v", username, planeURL, err)
@@ -291,7 +291,7 @@ func TestGenerateACL_PerUserSubnetCIDR(t *testing.T) {
 	aliceCIDR := fmt.Sprintf("10.0.%d.0/24", aliceID)
 	_, err := d.Exec(`INSERT INTO user_subnets
 		(user_id, cidr, status, control_plane_url)
-		VALUES (?, ?, 'active', '')`, aliceID, aliceCIDR)
+		VALUES ($1, $2, 'active', '')`, aliceID, aliceCIDR)
 	if err != nil {
 		t.Fatalf("seed alice subnet: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestGenerateACL_SharedSubnetsExtendDst(t *testing.T) {
 		{aliceID, aliceCIDR}, {bobID, bobCIDR}} {
 		_, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr)
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr)
 		if err != nil {
 			t.Fatalf("seed subnet uid=%d: %v", p.uid, err)
 		}
@@ -364,7 +364,7 @@ func TestGenerateACL_SharedSubnetsExtendDst(t *testing.T) {
 	// alice grants bob access to alice's subnet.
 	_, err := d.Exec(`INSERT INTO user_subnet_shares
 		(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, 0)`, aliceID, bobID)
+		VALUES ($1, $2, 0)`, aliceID, bobID)
 	if err != nil {
 		t.Fatalf("seed share: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestGenerateACL_SharedSubnetsAreIdempotent(t *testing.T) {
 		{aliceID, aliceCIDR}, {bobID, bobCIDR}} {
 		_, err := d.Exec(`INSERT INTO user_subnets
 			(user_id, cidr, status, control_plane_url)
-			VALUES (?, ?, 'active', '')`, p.uid, p.cidr)
+			VALUES ($1, $2, 'active', '')`, p.uid, p.cidr)
 		if err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -486,10 +486,10 @@ func TestGenerateACL_SharedSubnetsAreIdempotent(t *testing.T) {
 	// directly to test idempotency.
 	_, _ = d.Exec(`INSERT INTO user_subnet_shares
 		(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, 0)`, aliceID, bobID)
+		VALUES ($1, $2, 0)`, aliceID, bobID)
 	_, _ = d.Exec(`INSERT OR IGNORE INTO user_subnet_shares
 		(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, 0)`, aliceID, bobID)
+		VALUES ($1, $2, 0)`, aliceID, bobID)
 
 	aclStr, err := GenerateACL(d)
 	if err != nil {
@@ -559,7 +559,7 @@ func TestGenerateACL_ExitNodeMeshStillGlobal(t *testing.T) {
 func TestGenerateACLIncludesDeviceRules(t *testing.T) {
 	d := openTestDB(t)
 	uid := seedPortalUser(t, d, "alice")
-	_, _ = d.Exec(`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip) VALUES (?, 42, 'emilia', 'ip', '1.2.3.4', 'accept', '100.64.0.5')`, uid)
+	_, _ = d.Exec(`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip) VALUES ($1, 42, 'emilia', 'ip', '1.2.3.4', 'accept', '100.64.0.5')`, uid)
 
 	aclStr, err := GenerateACL(d)
 	if err != nil {
@@ -704,14 +704,14 @@ func TestApplyACLPipelineSuccess(t *testing.T) {
 
 	// acl_snapshots row marked applied.
 	var applied sql.NullInt64
-	_ = d.QueryRow(`SELECT applied_success FROM acl_snapshots WHERE version = ?`, res.Version).Scan(&applied)
+	_ = d.QueryRow(`SELECT applied_success FROM acl_snapshots WHERE version = $1`, res.Version).Scan(&applied)
 	if !applied.Valid || applied.Int64 != 1 {
 		t.Errorf("applied_success = %v, want 1", applied)
 	}
 
 	// exit_rule_logs has one row for the apply.
 	var logAction, logDetail string
-	_ = d.QueryRow(`SELECT action, detail FROM exit_rule_logs WHERE version = ? ORDER BY id DESC LIMIT 1`, res.Version).Scan(&logAction, &logDetail)
+	_ = d.QueryRow(`SELECT action, detail FROM exit_rule_logs WHERE version = $1 ORDER BY id DESC LIMIT 1`, res.Version).Scan(&logAction, &logDetail)
 	if logAction != "apply" {
 		t.Errorf("log action = %q, want %q", logAction, "apply")
 	}
@@ -742,8 +742,8 @@ func TestApplyACLPipelineSetPolicyError(t *testing.T) {
 
 	// acl_snapshots row exists but is NOT marked applied.
 	var nApplied, nFailed int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE version = ? AND applied_success = 1`, res.Version).Scan(&nApplied)
-	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE version = ? AND applied_success = 0`, res.Version).Scan(&nFailed)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE version = $1 AND applied_success = 1`, res.Version).Scan(&nApplied)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE version = $1 AND applied_success = 0`, res.Version).Scan(&nFailed)
 	if nApplied != 0 {
 		t.Errorf("expected 0 applied rows on failure, got %d", nApplied)
 	}
@@ -753,14 +753,14 @@ func TestApplyACLPipelineSetPolicyError(t *testing.T) {
 
 	// error_msg captures the headscale error.
 	var errMsg string
-	_ = d.QueryRow(`SELECT error_msg FROM acl_snapshots WHERE version = ?`, res.Version).Scan(&errMsg)
+	_ = d.QueryRow(`SELECT error_msg FROM acl_snapshots WHERE version = $1`, res.Version).Scan(&errMsg)
 	if !strings.Contains(errMsg, "policy boom") {
 		t.Errorf("error_msg = %q, want to contain 'policy boom'", errMsg)
 	}
 
 	// exit_rule_logs has the failure row.
 	var logAction, logDetail string
-	_ = d.QueryRow(`SELECT action, detail FROM exit_rule_logs WHERE version = ? ORDER BY id DESC LIMIT 1`, res.Version).Scan(&logAction, &logDetail)
+	_ = d.QueryRow(`SELECT action, detail FROM exit_rule_logs WHERE version = $1 ORDER BY id DESC LIMIT 1`, res.Version).Scan(&logAction, &logDetail)
 	if logAction != "apply_fail" {
 		t.Errorf("log action = %q, want %q", logAction, "apply_fail")
 	}
@@ -934,7 +934,7 @@ func TestSetACLForAllPlanes_PreBuiltPolicy(t *testing.T) {
 	}
 	// An acl_snapshots row must have been written.
 	var n int
-	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE config = ?`, imported).Scan(&n)
+	_ = d.QueryRow(`SELECT COUNT(*) FROM acl_snapshots WHERE config = $1`, imported).Scan(&n)
 	if n != 1 {
 		t.Errorf("expected 1 acl_snapshots row with imported config, got %d", n)
 	}

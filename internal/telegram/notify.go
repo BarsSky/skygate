@@ -493,7 +493,7 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 // user-scope commands check Username == "" explicitly.
 func lookupPortalUsername(d *sql.DB, userID int64) (string, error) {
 	var u string
-	err := d.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, userID).Scan(&u)
+	err := d.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, userID).Scan(&u)
 	return u, err
 }
 

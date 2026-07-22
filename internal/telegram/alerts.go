@@ -64,7 +64,7 @@ func (n *RealNotifier) SendAlert(text string) int64 {
 func (NoopNotifier) SendAlert(string) int64 { return 0 }
 
 func insertAlert(d *sql.DB, body string) (int64, error) {
-	res, err := d.Exec(`INSERT INTO telegram_alerts(body) VALUES (?)`, body)
+	res, err := d.Exec(`INSERT INTO telegram_alerts(body) VALUES ($1)`, body)
 	if err != nil {
 		return 0, err
 	}
@@ -83,7 +83,7 @@ func pruneAlerts(d *sql.DB, maxRows int) {
 		 WHERE id NOT IN (
 			SELECT id FROM telegram_alerts
 			 ORDER BY id DESC
-			 LIMIT ?
+			 LIMIT $1
 		 )`, maxRows)
 }
 

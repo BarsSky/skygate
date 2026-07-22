@@ -74,7 +74,7 @@ func readUserForSubnetPage(a *App, id int64) (username, headscaleURL string, err
 	// headscale_url is a denormalized column on
 	// portal_users (v0.12.0 multi-plane). Empty
 	// string = global plane.
-	row := a.DB.QueryRow(`SELECT headscale_url FROM portal_users WHERE id = ?`, id)
+	row := a.DB.QueryRow(`SELECT headscale_url FROM portal_users WHERE id = $1`, id)
 	if err := row.Scan(&headscaleURL); err != nil {
 		return "", "", fmt.Errorf("get headscale_url: %w", err)
 	}
@@ -126,7 +126,7 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 			rows := make([]shareRow, 0, len(sharedBy))
 			for _, s := range sharedBy {
 				var uname string
-				_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, s.GranteeUserID).Scan(&uname)
+				_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, s.GranteeUserID).Scan(&uname)
 				rows = append(rows, shareRow{s.GranteeUserID, uname, s.CreatedAt})
 			}
 			data["SharedBy"] = rows
@@ -140,7 +140,7 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 			rows := make([]incomingRow, 0, len(sharedWith))
 			for _, s := range sharedWith {
 				var uname string
-				_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, s.GrantorUserID).Scan(&uname)
+				_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, s.GrantorUserID).Scan(&uname)
 				rows = append(rows, incomingRow{s.GrantorUserID, uname, s.CreatedAt})
 			}
 			data["SharedWith"] = rows
@@ -255,7 +255,7 @@ func (a *App) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Request) {
 	}
 	var granteeID int64
 	if err := a.DB.QueryRow(
-		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+		`SELECT id FROM portal_users WHERE username = $1`, granteeName,
 	).Scan(&granteeID); err != nil {
 		renderUserSubnetPage(a, w, r, c, grantorID, map[string]any{
 			"FlashError": fmt.Sprintf("user %q not found", granteeName),
@@ -383,7 +383,7 @@ func (a *App) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Reques
 	}
 	// Look up the username (needed for the suggested --hostname).
 	var username string
-	if err := a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, id).Scan(&username); err != nil {
+	if err := a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, id).Scan(&username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "user not found", 404)
 			return
@@ -453,7 +453,7 @@ func runSubnetSanityCheck(d *sql.DB, userID int64) []string {
 	}
 	// Denorm check.
 	var dCIDR, dStatus string
-	if err := d.QueryRow(`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, userID).Scan(&dCIDR, &dStatus); err != nil {
+	if err := d.QueryRow(`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = $1`, userID).Scan(&dCIDR, &dStatus); err != nil {
 		out = append(out, fmt.Sprintf("✗ read denorm: %v", err))
 	} else {
 		if dCIDR == sub.CIDR {

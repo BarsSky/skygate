@@ -48,7 +48,7 @@ func (a *App) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 		// 2026-07-17: v0.18.0 — also compute the
 		// auto-resolving MagicDNS FQDN for the user
 		// (skygate-subnet-<username>.<base-domain>).
-		_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, s.UserID).Scan(&row.Username)
+		_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, s.UserID).Scan(&row.Username)
 		if row.Username != "" {
 			row.DNSName = subnet.ComputeMagicDNSNames(row.Username).Sidecar
 		}
@@ -58,7 +58,7 @@ func (a *App) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 		// small (≤ portal users × devices per user,
 		// typically <50 rows total).
 		_ = a.DB.QueryRow(
-			`SELECT COUNT(*) FROM node_owner_map WHERE user_id = ? AND tag = 'tag:private'`,
+			`SELECT COUNT(*) FROM node_owner_map WHERE user_id = $1 AND tag = 'tag:private'`,
 			s.UserID,
 		).Scan(&row.DeviceCount)
 		// v0.25.0 — count the user's active meshes.
@@ -66,17 +66,17 @@ func (a *App) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 			SELECT COUNT(DISTINCT mm.mesh_id)
 			  FROM mesh_members mm
 			  JOIN meshes m ON m.id = mm.mesh_id
-			 WHERE mm.user_id = ? AND m.status = 'active'`, s.UserID,
+			 WHERE mm.user_id = $1 AND m.status = 'active'`, s.UserID,
 		).Scan(&row.MeshCount)
 		// v0.25.0 — count the user's outbound shares
 		// (this user is the grantor; how many
 		// other users can see their /24).
 		_ = a.DB.QueryRow(
-			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = ?`,
+			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = $1`,
 			s.UserID,
 		).Scan(&row.SharesGranted)
 		_ = a.DB.QueryRow(
-			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantee_user_id = ?`,
+			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantee_user_id = $1`,
 			s.UserID,
 		).Scan(&row.SharesReceived)
 		rows = append(rows, row)

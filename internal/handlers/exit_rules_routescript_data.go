@@ -24,7 +24,7 @@ type routeEntry struct {
 // the user has no such rules (the orchestrator turns that into a
 // friendly "no rules configured" comment in the generated script).
 func (a *App) loadRoutesForScript(userID int, deviceID int) ([]routeEntry, error) {
-	query := "SELECT target_type, target_value, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND user_id = ?"
+	query := "SELECT target_type, target_value, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND user_id = $1"
 	args := []any{userID}
 	if deviceID > 0 {
 		query += " AND device_id = ?"

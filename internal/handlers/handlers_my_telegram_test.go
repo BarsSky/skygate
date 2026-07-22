@@ -401,7 +401,7 @@ func TestPostMyTelegramGenerateEnforcesCap(t *testing.T) {
 	// in created_at/used_at/used_by_chat_id/request_ip.
 	now := time.Now().Unix()
 	for _, t1 := range []string{"skg-AAAA-AAAA-AAAA", "skg-BBBB-BBBB-BBBB", "skg-CCCC-CCCC-CCCC"} {
-		_, _ = d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, expires_at) VALUES (?, 2, ?)`,
+		_, _ = d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, expires_at) VALUES ($1, 2, $2)`,
 			t1, now+300)
 	}
 	w := do(t, app, "POST", "/my/telegram/generate",
@@ -472,7 +472,7 @@ func TestPostMyTelegramRevokeOwnsOwnership(t *testing.T) {
 	// expires_at must be in the future for revoke to make sense
 	// (we don't gate on expiry, but using time.Now keeps the
 	// test robust if a future refactor adds that gate).
-	_, _ = d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, expires_at) VALUES ('skg-DDDD-DDDD-DDDD', 2, ?)`, time.Now().Unix()+300)
+	_, _ = d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, expires_at) VALUES ('skg-DDDD-DDDD-DDDD', 2, $1)`, time.Now().Unix()+300)
 	// Sanity: did the seed insert?
 	var preN int
 	_ = d.QueryRow(`SELECT COUNT(*) FROM telegram_login_tokens WHERE token = 'skg-DDDD-DDDD-DDDD'`).Scan(&preN)
@@ -501,7 +501,7 @@ func TestPostMyTelegramRevokeOwnsOwnership(t *testing.T) {
 func TestPostMyTelegramRevokeRejectsOthersToken(t *testing.T) {
 	app, d := newTestApp(t, &testNotifier{})
 	// Token belongs to user 1 (skyadmin), not user 2 (alice).
-	_, _ = d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, expires_at) VALUES ('skg-EEEE-EEEE-EEEE', 1, ?)`, time.Now().Unix()+300)
+	_, _ = d.Exec(`INSERT INTO telegram_login_tokens(token, portal_user_id, expires_at) VALUES ('skg-EEEE-EEEE-EEEE', 1, $1)`, time.Now().Unix()+300)
 	w := do(t, app, "POST", "/my/telegram/revoke",
 		[]*http.Cookie{
 			sessionCookieFor(t, app, 2, "alice", false),
