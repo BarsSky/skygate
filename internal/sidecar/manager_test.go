@@ -194,9 +194,9 @@ func TestSyncOnce_AutoApprovesRoute(t *testing.T) {
 	}
 }
 
-// --- SyncOnce — status flips to active when ApprovedRoutes contains CIDR ---
+// --- SyncOnce — status flips to router_active when ApprovedRoutes contains CIDR ---
 
-func TestSyncOnce_FlipsToActiveWhenRouteApproved(t *testing.T) {
+func TestSyncOnce_FlipsToRouterActiveWhenRouteApproved(t *testing.T) {
 	d := openTestDB(t)
 	uid := seedPortalUser(t, d, "alice", 100)
 	_, err := subnet.Create(d, uid, "", "skygate-subnet-alice")
@@ -207,6 +207,21 @@ func TestSyncOnce_FlipsToActiveWhenRouteApproved(t *testing.T) {
 
 	// Node already has the per-user CIDR approved (covers the
 	// case where the operator pre-approved routes manually).
+	// The sidecar's SyncOnce must see this and flip status to
+	// router_active (per v0.22.3 semantics: a tag:subnet-router
+	// node with an approved route IS a live subnet-router).
+	//
+	// 2026-07-22: v0.26.0 — was StatusActive in the pre-v0.22.3
+	// semantics. v0.22.3 split that into active (no router)
+	// vs router_active (router up). Since the sidecar code path
+	// only runs when there's a live tag:subnet-router node that
+	// just had its route approved, the right status is
+	// router_active. The pre-fix test name and assertion
+	// encoded the v0.16.7 binary status and silently passed
+	// for over a year (since v0.22.3 the value has been
+	// clobbered on every SyncOnce tick from router_active
+	// back to active in production — only the e2e subnet-router
+	// pilot on 2026-07-22 caught it).
 	nodes := []headscale.HSNode{
 		{
 			ID:              "7",
@@ -225,8 +240,8 @@ func TestSyncOnce_FlipsToActiveWhenRouteApproved(t *testing.T) {
 		t.Fatalf("SyncOnce: %v", err)
 	}
 	got, _ := subnet.Get(d, uid)
-	if got.Status != subnet.StatusActive {
-		t.Errorf("status = %q, want active (route pre-approved)", got.Status)
+	if got.Status != subnet.StatusRouterActive {
+		t.Errorf("status = %q, want router_active (route pre-approved on tag:subnet-router node)", got.Status)
 	}
 	if got.RouterNodeID != "7" {
 		t.Errorf("RouterNodeID = %q, want 7", got.RouterNodeID)
