@@ -299,6 +299,65 @@ overkill — the DR drill from v0.25.1
 (`docs/disaster-recovery.md`, RTO 30 min, RPO 1h)
 is the right cost/benefit point.
 
+### 7. UI: "why would I want this?" + "how to set this up"
+
+Operator feedback (2026-07-22) was that the
+per-user subnet card on `/my/devices` only said
+"logical namespace for your devices" — no
+explanation of what a subnet-router is for, no
+onboarding steps. Same for `/admin/users/{id}/subnet`:
+a status pill and 4 buttons, but no copy explaining
+why a user would want a subnet-router or how the
+operator onboards them.
+
+v0.26.0 adds two new collapsible sections on each page.
+
+**`/my/devices` — inside the "Your personal subnet" card:**
+
+- "What does this give me?" — 5 concrete use cases
+  (home NAS / media server, smart home / IoT, office
+  server room, family sharing, lab / dev environment)
+  + a "when NOT to use" sidebar (1-2 devices →
+  install Tailscale per-device, no subnet-router).
+- "How to set this up" — 3 status-aware variants
+  (`pending` / `active` / `router_active`) so the
+  user sees the right next step for their state.
+  The `pending` variant includes a direct
+  [tailscale.com/download](https://tailscale.com/download)
+  link + a step-by-step of "ask admin → run
+  `sudo bash commands.txt` → status flips".
+- Inline link to the full `docs/subnet-router.md`
+  guide (so the user can read the use-cases +
+  troubleshooting without searching).
+
+**`/admin/users/{id}/subnet` — at the bottom:**
+
+- "Why would a user want this?" — 6 use cases (the
+  above + cross-site backup) + the "when NOT to
+  use" sidebar. Helps the operator justify the
+  feature when talking to a new user who asks
+  "what's this for?".
+- "How to onboard a user" — 3-step ordered list
+  with the exact button names ("Allocate subnet" →
+  "Download bundle" or "Issue preauth key" → wait
+  for auto-approve). Operator can copy-paste this
+  verbatim into a message to the user.
+- Inline link to the full `docs/subnet-router.md`
+  guide.
+
+14 new i18n keys × 2 langs = 28 new catalog entries
+(see `internal/i18n/catalog.go` for the exact
+wording). Both pages tested live with `Accept-Language:
+ru` and `Accept-Language: en` — the use-cases body
+in Russian reads "Домашний NAS / медиа-сервер —
+Plex, Jellyfin, Synology, TrueNAS, фотобиблиотека,
+paperless — доступ с телефона в дороге без
+публичного интернета.", in English the same
+block reads "Home NAS / media server — Plex,
+Jellyfin, Synology, TrueNAS, family photo library,
+paperless — reachable from your phone on the road,
+with no public-internet exposure."
+
 ## Files
 
 New (5):
