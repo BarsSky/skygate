@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -282,6 +283,36 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		} else {
 			_ = dbpkg.InsertIgnoreNodeOwnerWithHostname(db, n.ID, portalUserID, portalUsername, matchedTag, n.Hostname, portalUserID)
 		}
+		// 2026-07-24: v0.28.0 — auto-apply the per-device tag
+		// (tag:dev-<user>-<device>) to headscale. The ACL
+		// builder uses this tag as src for per-device exit
+		// rules (see internal/acl/acl.go); without the tag
+		// being actually applied to the device, headscale
+		// rejects the policy with "tag not found" on the
+		// next ACL re-apply. Idempotent — AddTag is a no-op
+		// if the tag is already present. The hostname is the
+		// canonical Tailscale GivenName (already on n).
+		if a != nil && a.HS != nil && n.Hostname != "" {
+			devTag := fmt.Sprintf("tag:dev-%s-%s", portalUsername, n.Hostname)
+			if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
+				if err := a.HS.AddTag(nodeIDInt, devTag); err != nil {
+					// Non-fatal: the rule fallback to device_ip
+					// src keeps the policy live; the next
+					// /my/devices load will retry the tag.
+					log.Printf("warn: auto-apply dev tag %q to node %s: %v", devTag, n.ID, err)
+				}
+			}
+		}
+		// 2026-07-24: v0.28.0 — backfill device_hostname on
+		// every device_rule row for this device. The
+		// migration v0.44 left device_hostname empty for
+		// pre-v0.28.0 rules; this UPDATE flips the ACL
+		// src from device_ip to tag:dev-<user>-<device>
+		// for any rule whose node we just snapshotted.
+		// Idempotent — only writes when hostname is empty
+		// or stale. Triggered once per /my/devices load,
+		// so the next ACL re-apply picks up the tag.
+		_ = dbpkg.UpdateDeviceRuleHostnameForNode(db, n.ID, n.Hostname)
 		// Push tag:private to headscale if matched. Safe for empty/untagged rows.
 		// Idempotent: skip if the node already carries tag:private — otherwise every
 		// /my/devices load would do an HTTP roundtrip to headscale per device,

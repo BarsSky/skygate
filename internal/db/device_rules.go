@@ -118,6 +118,35 @@ func AppendDeviceRule(d *sql.DB, userID int64, deviceID int, exitNode, targetTyp
 	return res.LastInsertId()
 }
 
+// UpdateDeviceRuleHostnameForNode sets device_hostname on
+// every device_rules row whose device_id points at the
+// given node's hsID and whose device_hostname is empty
+// OR differs from the new hostname. Called from
+// backfillNodeOwnership on every /my/devices load so
+// pre-v0.28.0 rules (and rules added before the device
+// had a hostname) get backfilled, then the next ACL
+// re-apply picks up the tag-based src.
+//
+// 2026-07-24: v0.28.0.
+//
+// Why "OR differs": a device that reconnects under a
+// different headscale node (rare but possible during
+// re-registration) needs the hostname to follow the
+// new snapshot. The COALESCE/IFNULL handles the case
+// where the column was empty before the migration.
+func UpdateDeviceRuleHostnameForNode(d *sql.DB, hsID, hostname string) error {
+	if hostname == "" {
+		return nil
+	}
+	_, err := d.Exec(`
+		UPDATE device_rules
+		   SET device_hostname = ?
+		 WHERE device_id = CAST(? AS INTEGER)
+		   AND (device_hostname = '' OR device_hostname != ?)`,
+		hostname, hsID, hostname)
+	return err
+}
+
 // FindDeviceRuleID returns the id of an existing rule matching the
 // full (user, device, exit_node, target_type, target_value) tuple, or
 // ErrNotFound. This is the dedup check that insertRuleUnique performs
