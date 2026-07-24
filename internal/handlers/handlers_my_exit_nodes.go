@@ -6,6 +6,10 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
+
+	"skygate/internal/acl"
+	"skygate/internal/db"
 )
 
 // GetExitNodes lists exit nodes advertised in the tailnet. Visible to all
@@ -22,7 +26,88 @@ func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 	// primary one. (A user on headscale-B sees headscale-B's
 	// exit nodes, not headscale-A's.)
 	exits, _ := a.HSForUser(c.UserID).ListExitNodes()
+	// 2026-07-24: v0.28.1 — also pass the user's current
+	// preferred exit-node tag so the template can render
+	// "Set as my preferred" / "Currently preferred" buttons
+	// per exit-node row. Empty string = no preference set.
+	var prefTag string
+	if pref, err := db.GetUserExitNodePref(a.DB, c.UserID); err == nil {
+		prefTag = pref.ExitNodeTag
+	}
 	a.renderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
-		"ExitNodes": exits,
+		"ExitNodes":           exits,
+		"PreferredExitNodeTag": prefTag,
+		"FlashSuccess":        r.URL.Query().Get("ok"),
+		"FlashError":          r.URL.Query().Get("err"),
 	})
+}
+
+// PostMyExitNodePreferred sets (or clears) the caller's
+// preferred exit-node. Form field `tag` carries the
+// derived headscale tag (e.g. "tag:exit-emilia"); an
+// empty value clears the preference. After the DB
+// write, an ACL re-apply pushes the new `via` to
+// headscale so the next /my/devices load sees the
+// effective policy.
+//
+// 2026-07-24: v0.28.1. Visible to all authenticated
+// users (self-service). Admin path is
+// /admin/users/{id}/subnet/preferred-exit.
+func (a *App) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", 400)
+		return
+	}
+	tag := strings.TrimSpace(r.FormValue("tag"))
+	if err := db.SetUserExitNodePref(a.DB, c.UserID, tag, c.UserID); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	a.audit(c.UserID, c.Username, "my_preferred_exit_set",
+		"tag="+tag)
+	// Re-apply ACL. The user's planeURL is "" for the
+	// global-default single-plane deploy (the only path
+	// the bot / web form support today). v0.12.0
+	// per-plane dispatch is on the call site — we use
+	// HSForUser(c.UserID) so the push lands on the
+	// user's own headscale.
+	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(c.UserID), "", nil, c.Username,
+		"my_preferred_exit_set tag="+tag, a.Cfg.ACLWithViaEnabled)
+	if !res.Applied {
+		// The preference is in the DB regardless — the
+		// next /my/devices load will retry the policy
+		// build. We redirect with a flash so the user
+		// sees the error.
+		http.Redirect(w, r, "/my/exit-nodes?err="+errToQuery(res.Err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/my/exit-nodes?ok=1", http.StatusSeeOther)
+}
+
+func errToQuery(s string) string {
+	// URL-encode just enough to keep query params valid.
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ':
+			out = append(out, '+')
+		case c == '\n':
+			out = append(out, '%', '0', 'A')
+		case (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '~':
+			out = append(out, c)
+		default:
+			// %XX (uppercase hex).
+			out = append(out, '%')
+			out = append(out, "0123456789ABCDEF"[c>>4])
+			out = append(out, "0123456789ABCDEF"[c&0xF])
+		}
+	}
+	return string(out)
 }

@@ -1007,7 +1007,7 @@ rowID, err := db.AppendDeviceRule(env.DB, target.ID, devID, exitNodeHostname, ty
 		}
 		return reply
 	}
-	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog, false)
 
 	// Audit log (under the target user, so per-user audit
 	// views stay correct). The action is rule_added; the
@@ -1203,7 +1203,7 @@ func deleteRuleReply(env BotEnv, arg string) string {
 
 	detailForLog := fmt.Sprintf("user %s deleted %d rule(s) (cascade: %d) for %s via bot",
 		target.Username, len(deletedIDs), totalCascade, target.Username)
-	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userTargetPlaneURL(target.ID), nil, target.Username, detailForLog, false)
 
 	// Audit log under target user. The action is rule_deleted; the
 	// detail captures what was deleted + cascade count + skipped ids
@@ -1865,7 +1865,7 @@ func mySubnetShareReply(env BotEnv, args []string) string {
 	res := acl.ApplyACLPipelineForPlane(
 		env.DB, env.HSForPortalUser(env.PortalUserID),
 		planeURL, nil, env.Username,
-		fmt.Sprintf("subnet_share %s -> %s", env.Username, granteeName))
+		fmt.Sprintf("subnet_share %s -> %s", env.Username, granteeName), false)
 	if !res.Applied {
 		log.Printf("subnet_share: ACL reapply failed user=%d -> %d: %v (share is in DB; click 'Re-apply ACL' to push)",
 			env.PortalUserID, granteeID, res.Err)
@@ -1914,7 +1914,7 @@ func mySubnetRevokeReply(env BotEnv, args []string) string {
 	res := acl.ApplyACLPipelineForPlane(
 		env.DB, env.HSForPortalUser(env.PortalUserID),
 		planeURL, nil, env.Username,
-		fmt.Sprintf("subnet_revoke %s -> %s", env.Username, granteeName))
+		fmt.Sprintf("subnet_revoke %s -> %s", env.Username, granteeName), false)
 	if !res.Applied {
 		log.Printf("subnet_revoke: ACL reapply failed user=%d -> %d: %v (revoke is in DB; click 'Re-apply ACL' to push)",
 			env.PortalUserID, granteeID, res.Err)

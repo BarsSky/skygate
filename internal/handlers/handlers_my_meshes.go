@@ -522,7 +522,7 @@ func webMeshACLReapply(
 		go func(plane string) {
 			_ = acl.ApplyACLPipelineForPlane(d, hs, plane, nil,
 				"web:"+detailForLog,
-				"web re-apply on mesh membership change")
+				"web re-apply on mesh membership change", false)
 		}(p.URL)
 	}
 }
