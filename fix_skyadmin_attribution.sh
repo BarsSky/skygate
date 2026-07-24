@@ -31,7 +31,7 @@
 #      Reason: per v0.23.1, per-user control plane is compliance
 #      tier only — skyadmin is a default-path user. The v0.23.0
 #      pilot set up the per-user headscale but no nodes were
-#      migrated (see RELEASE-NOTES-v0.23.1.md). Without this
+#      migrated (see tag v0.23.1 + commit history). Without this
 #      clear, /my/devices for skyadmin returns 0 devices (the
 #      per-user headscale is empty), even with the node_owner_map
 #      fix below.

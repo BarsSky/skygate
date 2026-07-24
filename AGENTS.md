@@ -8,7 +8,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 ## Release status
 
 * **Current**: v0.26.0 — end-to-end subnet-router pilot + HA-ready
-  probes ([release notes](RELEASE-NOTES-v0.26.0.md)).
+  probes ([tag v0.26.0](https://github.com/BarsSky/skygate/releases/tag/v0.26.0)).
   The "real proof that the per-user subnet-router flow
   works end-to-end" release. 5 things in one:
   1. `e2e_pilot.sh` (root) automates the full
@@ -44,7 +44,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
      6 concrete use cases (home NAS, smart home, SOHO
      server room, family sharing, lab/dev, cross-site
      backup) and the e2e verification output.
-  ([release notes](RELEASE-NOTES-v0.26.0.md)).
+  ([tag v0.26.0](https://github.com/BarsSky/skygate/releases/tag/v0.26.0)).
   5 files new (e2e_pilot.sh, handlers_healthz.go,
   headscale/healthz.go, scripts/check_subnet_router.sh,
   scripts/_check_subnet_nodes.py), 10 files modified
@@ -59,7 +59,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   ~830 lines added (5 files new, 11 modified, 1 test).
 
 * **Previous**: v0.25.1 — Closing the loose ends (audit export + DR runbook + cleanup)
-  ([release notes](RELEASE-NOTES-v0.25.1.md)).
+  ([tag v0.25.1](https://github.com/BarsSky/skygate/releases/tag/v0.25.1)).
   The "before we add HA, let's clean up the corners"
   release. Three small items: (1) per-user audit log
   export (CSV/JSON) via GET /my/account/audit — each
@@ -81,7 +81,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   1 .gitignore update).
 
 * **Previous**: v0.25.0 — Mesh visibility on /my/devices + operator overview
-  ([release notes](RELEASE-NOTES-v0.25.0.md)).
+  ([tag v0.25.0](https://github.com/BarsSky/skygate/releases/tag/v0.25.0)).
   The "mesh view" UI release. Per the operator's spec
   (2026-07-21 22:40), each device on /my/devices now
   shows which virtual subnet it belongs to (e.g.
@@ -102,7 +102,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   default global-headscale path.
 
 * **Previous**: v0.24.2 — Download bundle for per-user subnet-router
-  ([release notes](RELEASE-NOTES-v0.24.2.md)).
+  ([tag v0.24.2](https://github.com/BarsSky/skygate/releases/tag/v0.24.2)).
   The "user-friendly delivery" release. v0.24.0 shipped
   the setup.sh script and v0.24.1 fixed the /my/devices
   UI to show what each device does, but the operator
@@ -131,7 +131,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   prod users, same subnet allocations.
 
 * **Previous**: v0.24.1 — /my/devices shows tag:subnet-router + advertised routes
-  ([release notes](RELEASE-NOTES-v0.24.1.md)).
+  ([tag v0.24.1](https://github.com/BarsSky/skygate/releases/tag/v0.24.1)).
   The "what does this device actually do" UI fix. v0.24.0
   shipped `deploy/subnet-router/setup.sh` so users could
   *register* a subnet-router, but the /my/devices page
@@ -153,7 +153,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   code-done-not-used, 1 external-blocked-on-headscale-0.30+).
 
 * **Previous**: v0.24.0 — subnet-router setup tooling
-  ([release notes](RELEASE-NOTES-v0.24.0.md)).
+  ([tag v0.24.0](https://github.com/BarsSky/skygate/releases/tag/v0.24.0)).
   The "operator guide for getting a per-user subnet-router
   running end-to-end" release. Backend
   (`sidecar.SyncOnce` / `GeneratePreauth` /
@@ -178,7 +178,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   route and flips status to `router_active` within ~30s.
 
 * **Previous**: v0.23.4 — expirewatch: skip nil-expiry nodes, not all tagged
-  ([release notes](RELEASE-NOTES-v0.23.4.md)).
+  ([tag v0.23.4](https://github.com/BarsSky/skygate/releases/tag/v0.23.4)).
   Hotfix for v0.23.3. The v0.23.3 watcher skipped ANY tagged
   node — but a user device that registers untagged (and
   picks up the Tailscale 1.98.x `RegisterRequest.Expiry =
@@ -215,7 +215,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   watcher (the "device
   won't stay connected"
   release)
-  ([release notes](RELEASE-NOTES-v0.23.3.md)).
+  ([tag v0.23.3](https://github.com/BarsSky/skygate/releases/tag/v0.23.3)).
   Background goroutine in
   `internal/expirewatch` ticks
   every 5m, walks every node in
@@ -346,7 +346,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 * **Previous**: v0.23.0 — one-click
   per-user headscale
   provisioning (Phase 1)
-  ([release notes](RELEASE-NOTES-v0.23.0.md)).
+  ([tag v0.23.0](https://github.com/BarsSky/skygate/releases/tag/v0.23.0)).
   Closes the v0.12.0 capability
   gap that left per-user control
   planes as a manual ssh + docker
@@ -386,7 +386,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 * **Previous**: v0.22.3 — subnet
   status reflects device
   ownership, not subnet-router
-  ([release notes](RELEASE-NOTES-v0.22.3.md)).
+  ([tag v0.22.3](https://github.com/BarsSky/skygate/releases/tag/v0.22.3)).
   The "why is my subnet `pending`?"
   release. Pre-v0.22.3 the status
   semantics was `active` ⇔
@@ -423,7 +423,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 * **Previous**: v0.22.2 — fix
   auto-apply tag:private for
   tagless nodes (MSI bug)
-  ([release notes](RELEASE-NOTES-v0.22.2.md)).
+  ([tag v0.22.2](https://github.com/BarsSky/skygate/releases/tag/v0.22.2)).
   The operator reported on
   2026-07-20 that MSI (id=15),
   registered via skygate preauth
@@ -459,7 +459,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 * **Previous**: v0.22.1 — /my/meshes
   web UI (was bot-only in v0.22.0)
-  ([release notes](RELEASE-NOTES-v0.22.1.md)).
+  ([tag v0.22.1](https://github.com/BarsSky/skygate/releases/tag/v0.22.1)).
   v0.22.0 shipped the mesh (shared
   network) feature bot-only
   (/mesh create|join|leave|meshes).
@@ -485,7 +485,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 * **Previous**: v0.22.0 — mesh (shared
   network) + safe user migration design
-  ([release notes](RELEASE-NOTES-v0.22.0.md)).
+  ([tag v0.22.0](https://github.com/BarsSky/skygate/releases/tag/v0.22.0)).
   The 3rd primitive in the user-to-user
   networking stack (after the v0.17.1
   one-directional share + v0.21.0
@@ -522,7 +522,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 * **Previous**: v0.21.1 — fix headscale-side
   user delete (typo: `-u` should be `-i`)
-  ([release notes](RELEASE-NOTES-v0.21.1.md)).
+  ([tag v0.21.1](https://github.com/BarsSky/skygate/releases/tag/v0.21.1)).
   Pre-existing bug discovered while cleaning up
   test users after v0.21.0. Every
   `POST /admin/users/{id}/delete` left a
@@ -564,7 +564,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 * **Previous**: v0.21.0 — user-to-user subnet
   bridge (invite codes + bot /invite + /accept +
   /admin/invites)
-  ([release notes](RELEASE-NOTES-v0.21.0.md)).
+  ([tag v0.21.0](https://github.com/BarsSky/skygate/releases/tag/v0.21.0)).
   Closes the third feature the operator asked
   for in the 2026-07-20 backlog message. The
   v0.17.1 admin-mediated "share" path is
@@ -620,7 +620,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 * **Previous**: v0.20.0 — headscale-update-monitor +
   auto-allocate subnet on user create
-  ([release notes](RELEASE-NOTES-v0.20.0.md)).
+  ([tag v0.20.0](https://github.com/BarsSky/skygate/releases/tag/v0.20.0)).
   Two operator-side UX cleanups bundled because
   they're both small and the operator asked for
   them in the v0.18.1 retro:
@@ -675,7 +675,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   v0.29.2 to headscale_releases with
   is_breaking=0, notified=0 because it matches
   the pinned version).
-  ([release notes](RELEASE-NOTES-v0.18.1.md)).
+  ([tag v0.18.1](https://github.com/BarsSky/skygate/releases/tag/v0.18.1)).
   Operator-flagged issues from the v0.18.0 deploy,
   all closed in one small release:
 
@@ -830,7 +830,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 * **Previous**: v0.18.0 — MagicDNS for personal
   subnets
-  ([release notes](RELEASE-NOTES-v0.18.0.md)).
+  ([tag v0.18.0](https://github.com/BarsSky/skygate/releases/tag/v0.18.0)).
   Roadmap step 5 of the v0.16.0+ per-user subnets
   plan. Each user's sidecar now has a stable,
   auto-resolving FQDN
@@ -888,7 +888,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   at build `2c8176c`.
 * **Previous**: v0.16.7 — per-user subnet sidecar
   (auto-approver + preauth)
-  ([release notes](RELEASE-NOTES-v0.16.7.md)). Real
+  ([tag v0.16.7](https://github.com/BarsSky/skygate/releases/tag/v0.16.7)). Real
   sidecar runtime for the v0.16.0+ subnets feature
   (the schema shipped in v0.16.6, the UI in v0.16.8,
   the sidebar fix in v0.16.9). Adds:
@@ -917,7 +917,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
     at build `ac73b8c`.
 * **Previous**: v0.16.8 — UI: Subnet column + button
   in /admin/users
-  ([release notes](RELEASE-NOTES-v0.16.8.md)). The
+  ([tag v0.16.8](https://github.com/BarsSky/skygate/releases/tag/v0.16.8)). The
   v0.16.6 release shipped the
   `/admin/users/{id}/subnet` page (4 routes, full
   template) but the page was unreachable from the UI
@@ -934,7 +934,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   on VM at build `3fc44a2`.
 * **Previous**: v0.16.7 — hotfix: t vs tf arg count
   in update banner
-  ([release notes](RELEASE-NOTES-v0.16.7.md)). The
+  ([tag v0.16.7](https://github.com/BarsSky/skygate/releases/tag/v0.16.7)). The
   v0.16.6 release shipped an "update available" banner
   with `{{t "update.banner_body" .Version
   .UpdateLatest.TagName}}` — but `t` takes 1 arg, the
@@ -950,7 +950,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   (handles `%%` escapes). 12/12 packages green,
   smoke 118/118, live on VM at build `19d8981`.
 * **Previous**: v0.16.6 — per-user subnets foundation
-  ([release notes](RELEASE-NOTES-v0.16.6.md)). The
+  ([tag v0.16.6](https://github.com/BarsSky/skygate/releases/tag/v0.16.6)). The
   first concrete step of the 6-release per-user
   subnets roadmap (v0.16.6 → v0.19.0) documented in
   `docs/v0.16.0-open-questions.md` (8 operator
@@ -989,7 +989,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
     VM at build `a450fa7`.
 * **Previous**: v0.16.5 — split long bot replies into
   multiple bubbles
-  ([release notes](RELEASE-NOTES-v0.16.5.md)). The
+  ([tag v0.16.5](https://github.com/BarsSky/skygate/releases/tag/v0.16.5)). The
   operator reported that on a phone, long bot replies
   (`/help`, `/audit`, `/my_rules`) are hard to scan
   because Telegram's default font is small and the
@@ -1011,7 +1011,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   live on VM at build `22b97c8`.
 * **Previous**: v0.16.4 — fix HTML-unsafe `<` / `>` in
   catalog keys
-  ([release notes](RELEASE-NOTES-v0.16.4.md)). Hotfix
+  ([tag v0.16.4](https://github.com/BarsSky/skygate/releases/tag/v0.16.4)). Hotfix
   for v0.16.3 — the v0.16.3 "more HTML" pass for `/help`
   shipped the reply with `parse_mode=HTML`, but several
   `bot.*` catalog keys still contained literal
@@ -1028,7 +1028,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   contract. 12/12 packages green, smoke 118/118, live
   on VM at build `27ee8e6`.
 * **Previous**: v0.16.3 — "more HTML" pass for /help
-  ([release notes](RELEASE-NOTES-v0.16.3.md)). The
+  ([tag v0.16.3](https://github.com/BarsSky/skygate/releases/tag/v0.16.3)). The
   v0.16.1/v0.16.2 "more HTML" pass left `/help` in
   plain text, so the catalog's markdown backticks
   (`<id>`, `<target>`, etc.) showed up as literal
@@ -1046,7 +1046,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   the `/help` sub-case). 12/12 packages green, smoke
   118/118, live on VM at build `cdbefe5`.
 * **Previous**: v0.16.2 — "more HTML" pass bug fix
-  ([release notes](RELEASE-NOTES-v0.16.2.md)). Hotfix
+  ([tag v0.16.2](https://github.com/BarsSky/skygate/releases/tag/v0.16.2)). Hotfix
   for v0.16.1 — the v0.16.1 release shipped HTML
   formatting in 8 bot replies but forgot to set
   `parse_mode=HTML` on the sendMessage payload, so the
@@ -1063,7 +1063,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   12/12 packages green, smoke 118/118, live on VM at
   build `39d6af6`.
 * **Previous**: v0.16.1 — "more HTML" pass
-  ([release notes](RELEASE-NOTES-v0.16.1.md)). The
+  ([tag v0.16.1](https://github.com/BarsSky/skygate/releases/tag/v0.16.1)). The
   "bot reply formatting should look like a table, not
   a wall of text" release. `internal/telegram/format.go`
   adds a small helper layer (`Field()` / `Section()` /
@@ -1085,7 +1085,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
     green`, smoke `118/118`, live on VM at build
     `006f3d5`.
 * **Previous**: v0.16.0 — backlog release
-  ([release notes](RELEASE-NOTES-v0.16.0.md)). The
+  ([tag v0.16.0](https://github.com/BarsSky/skygate/releases/tag/v0.16.0)). The
   "clean up the deferred v0.12 / v0.13 backlog before
   tackling v0.16" release. Six previously-deferred
   features ship in one go:
@@ -1128,7 +1128,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   * 12/12 packages green
 * **Previous**: v0.15.6 — /admin/backup + /admin/exit-nodes
   full localization
-  ([release notes](RELEASE-NOTES-v0.15.6.md)). The
+  ([tag v0.15.6](https://github.com/BarsSky/skygate/releases/tag/v0.15.6)). The
   "no hardcoded English left in the admin pages" release.
   46 new catalog keys (RU + EN) cover the backup history
   table headers, the migration-to-another-host warning +
@@ -1152,7 +1152,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
     TestPlaceholderOrder + TestLoadTemplates all green
 * **Previous**: v0.15.5 — admin body butler-voice polish +
   /help alignment + /unbind_self
-  ([release notes](RELEASE-NOTES-v0.15.5.md)). The
+  ([tag v0.15.5](https://github.com/BarsSky/skygate/releases/tag/v0.15.5)). The
   "admin replies should read like a butler, not a log;
   /help columns should line up" release. Three fixes:
   1. Drop log-voice prefixes (`sync_nodes:`, `audit:`,
@@ -1178,7 +1178,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   * 12/12 packages green, smoke 118/118, live on VM
     at build `7650c5e`
 * **Previous**: v0.15.1 — final /admin/telegram localization
-  ([release notes](RELEASE-NOTES-v0.15.1.md)). The
+  ([tag v0.15.1](https://github.com/BarsSky/skygate/releases/tag/v0.15.1)). The
   "no hardcoded English left in the Telegram admin
   page" release. 32 new `telegram.*` keys × 2 langs
   cover the probe banner (3 states), status pills,
@@ -1186,7 +1186,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   mode paths, and the where-to-look hints. i18n
   parity test green.
 * **Previous**: v0.15.0 — HTTPS / TLS via Caddy
-  ([release notes](RELEASE-NOTES-v0.15.0.md)). The
+  ([tag v0.15.0](https://github.com/BarsSky/skygate/releases/tag/v0.15.0)). The
   "make the tailnet's control plane actually speak
   HTTPS" release. Adds a Caddy sidecar that terminates
   TLS for skygate, headscale, and headplane; auto-issues
@@ -1214,7 +1214,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
     targets; `make test` now runs `check-https`.
   * 12/12 packages green, `bash -n deploy.sh` OK.
 * **Previous**: v0.14.0 — bot UX overhaul
-  ([release notes](RELEASE-NOTES-v0.14.0.md)). The
+  ([tag v0.14.0](https://github.com/BarsSky/skygate/releases/tag/v0.14.0)). The
   "make the bot usable" release. Five operator-visible
   problems fixed: `/exit_nodes` empty (new
   `SyncNodesFromHeadscale` + admin button + `/sync_nodes`
@@ -1224,7 +1224,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   inline keyboards for `/lang` + `/myexitnodes`, web
   update banner via `release.Monitor.Snapshot()`.
 * **Previous**: v0.13.0 — exit-node health monitor
-  ([release notes](RELEASE-NOTES-v0.13.0.md)). The
+  ([tag v0.13.0](https://github.com/BarsSky/skygate/releases/tag/v0.13.0)). The
   "is my tailnet's egress actually working?" release.
   A background goroutine polls headscale every 5 min
   (`SKYGATE_EXIT_NODE_CHECK_INTERVAL`), classifies each
@@ -1273,7 +1273,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   login form `v0.2` hardcode → `{{.Version}}`, missing NVIDIA
   theme added to the picker.
 * **Previous**: v0.12.0 — per-user headscale control plane
-  ([release notes](RELEASE-NOTES-v0.12.0.md)). Skygate-as-shell
+  ([tag v0.12.0](https://github.com/BarsSky/skygate/releases/tag/v0.12.0)). Skygate-as-shell
   step 2: each `portal_users` row now carries its own
   `(headscale_url, headscale_api_key)` override, encrypted
   with `SKYGATE_SECRET_KEY` (AES-GCM, 32 bytes hex). The
@@ -1293,7 +1293,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   packages green, smoke 118/118.
 * **Previous**: v0.10.14 — /clearrules body i18n (закрытие
   RU-долга)
-  ([release notes](RELEASE-NOTES-v0.10.14.md)). The last
+  ([tag v0.10.14](https://github.com/BarsSky/skygate/releases/tag/v0.10.14)). The last
   hardcoded-English path in the bot — `/clearrules` — now
   goes through `i18n.T` / `i18n.Tf` on every visible
   line. 5 new `bot.clearrules.mint_*` and
