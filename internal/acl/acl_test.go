@@ -958,3 +958,158 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+
+// TestGenerateACL_PerDeviceTagInSrc: v0.28.0 — the per-device
+// exit-rule uses tag:dev-<user>-<device> as src, NOT the
+// device_ip. This is the core fix for "rules spread to other
+// devices" — a rule for skyworker uses a tag that only
+// skyworker carries, so msi (which has a different tag) is
+// not in scope.
+func TestGenerateACL_PerDeviceTagInSrc(t *testing.T) {
+	d := openTestDB(t)
+	skyadminID := seedPortalUser(t, d, "skyadmin")
+	_ = seedPortalUser(t, d, "michail")
+	// Two devices on node_owner_map for skyadmin
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('1', 'skyworker', 'skyadmin', 'tag:private')`); err != nil {
+		t.Fatalf("seed skyworker: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('2', 'msi', 'skyadmin', 'tag:private')`); err != nil {
+		t.Fatalf("seed msi: %v", err)
+	}
+	// One rule per device (same user, different device)
+	if _, err := d.Exec(`INSERT INTO device_rules
+		(user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname, enabled)
+		VALUES (?, 1, 'karolina', 'subnet', '91.108.4.0/22', 'accept', '100.64.0.1', '', 'skyadmin', 'skyworker', 1)`,
+		skyadminID); err != nil {
+		t.Fatalf("seed rule 1: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO device_rules
+		(user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname, enabled)
+		VALUES (?, 2, 'karolina', 'subnet', '8.8.8.0/24', 'accept', '100.64.0.11', '', 'skyadmin', 'msi', 1)`,
+		skyadminID); err != nil {
+		t.Fatalf("seed rule 2: %v", err)
+	}
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	// Verify the per-device rules use the per-device tag in src
+	wantSkyworker := `"src": ["tag:dev-skyadmin-skyworker"]`
+	wantMsi := `"src": ["tag:dev-skyadmin-msi"]`
+	if !strings.Contains(aclStr, wantSkyworker) {
+		t.Errorf("expected rule with src=tag:dev-skyadmin-skyworker in ACL; not found.\nACL:\n%s", aclStr)
+	}
+	if !strings.Contains(aclStr, wantMsi) {
+		t.Errorf("expected rule with src=tag:dev-skyadmin-msi in ACL; not found.\nACL:\n%s", aclStr)
+	}
+	// And they have different dsts (Telegram vs Google)
+	wantTelegram := `"dst": ["91.108.4.0/22:*"]`
+	wantGoogle := `"dst": ["8.8.8.0/24:*"]`
+	if !strings.Contains(aclStr, wantTelegram) {
+		t.Errorf("expected 91.108.4.0/22 rule; not found")
+	}
+	if !strings.Contains(aclStr, wantGoogle) {
+		t.Errorf("expected 8.8.8.0/24 rule; not found")
+	}
+}
+
+// TestGenerateACL_PerDeviceTagInTagOwners: v0.28.0 — the
+// tagOwners block must include one entry per user covering
+// all their per-device tags. Without these entries, the
+// headscale parser rejects the policy with "tag not found".
+func TestGenerateACL_PerDeviceTagInTagOwners(t *testing.T) {
+	d := openTestDB(t)
+	_ = seedPortalUser(t, d, "skyadmin")
+	_ = seedPortalUser(t, d, "michail")
+	// skyadmin has 2 devices, michail has 1
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('1', 'skyworker', 'skyadmin', 'tag:private')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('2', 'msi', 'skyadmin', 'tag:private')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('3', 'nothing-phone-2', 'michail', 'tag:private')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	// skyadmin owns 2 per-device tags
+	wantSky := `"tag:dev-skyadmin-skyworker": ["skyadmin@tsnet.skynas.ru"]`
+	wantMsi := `"tag:dev-skyadmin-msi": ["skyadmin@tsnet.skynas.ru"]`
+	wantMichail := `"tag:dev-michail-nothing-phone-2": ["michail@tsnet.skynas.ru"]`
+	for _, w := range []string{wantSky, wantMsi, wantMichail} {
+		if !strings.Contains(aclStr, w) {
+			t.Errorf("expected tagOwners entry %q; not found.\nACL:\n%s", w, aclStr)
+		}
+	}
+}
+
+// TestGenerateACL_LegacyDeviceIpFallback: v0.28.0 — pre-v0.28.0
+// rules (where user_name + device_hostname are empty) fall
+// back to device_ip src. The rule is live immediately after
+// the migration lands, then switches to tag-based src on the
+// first /my/devices load that backfills the hostname.
+func TestGenerateACL_LegacyDeviceIpFallback(t *testing.T) {
+	d := openTestDB(t)
+	skyadminID := seedPortalUser(t, d, "skyadmin")
+	// Rule with empty user_name + empty device_hostname
+	// (pre-v0.28.0 rows). device_ip is set.
+	if _, err := d.Exec(`INSERT INTO device_rules
+		(user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname, enabled)
+		VALUES (?, 1, 'karolina', 'subnet', '149.154.160.0/20', 'accept', '100.64.0.1', '', '', '', 1)`,
+		skyadminID); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	// Should use device_ip as src, NOT "*" and NOT the tag
+	wantLegacy := `"src": ["100.64.0.1"]`
+	if !strings.Contains(aclStr, wantLegacy) {
+		t.Errorf("expected legacy fallback to device_ip; not found.\nACL:\n%s", aclStr)
+	}
+	// And NOT a tag-based src
+	wantNotTag := `"src": ["tag:dev-skyadmin-`
+	if strings.Contains(aclStr, wantNotTag) {
+		t.Errorf("legacy rule should NOT use tag-based src; ACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACL_PerDeviceTagDoesNotCrossUsers: the
+// critical security invariant — a rule for skyadmin's
+// device does NOT apply to michail's device. We verify this
+// by checking that skyadmin's device tag is owned by
+// skyadmin@tsnet, NOT by michail@tsnet, in tagOwners.
+func TestGenerateACL_PerDeviceTagDoesNotCrossUsers(t *testing.T) {
+	d := openTestDB(t)
+	skyadminID := seedPortalUser(t, d, "skyadmin")
+	michailID := seedPortalUser(t, d, "michail")
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('1', 'skyworker', 'skyadmin', 'tag:private')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO device_rules
+		(user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname, enabled)
+		VALUES (?, 1, 'karolina', 'subnet', '91.108.4.0/22', 'accept', '100.64.0.1', '', 'skyadmin', 'skyworker', 1)`,
+		skyadminID); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// michail has no devices, no rules
+	_ = michailID
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	// The per-device tag should be owned by skyadmin, NOT michail
+	want := `"tag:dev-skyadmin-skyworker": ["skyadmin@tsnet.skynas.ru"]`
+	wantWrong := `"tag:dev-skyadmin-skyworker": ["michail@tsnet.skynas.ru"]`
+	if !strings.Contains(aclStr, want) {
+		t.Errorf("expected skyadmin owns the per-device tag; not found.\nACL:\n%s", aclStr)
+	}
+	if strings.Contains(aclStr, wantWrong) {
+		t.Errorf("michail should NOT own skyadmin's device tag; found.\nACL:\n%s", aclStr)
+	}
+}
