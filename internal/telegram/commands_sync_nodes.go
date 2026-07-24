@@ -54,11 +54,30 @@ func syncNodesReply(env BotEnv) string {
 				hsUID = v
 			}
 		}
+		// 2026-07-24: v0.27.0 emergency-rollback — recover the
+		// portal owner for tagged nodes. headscale reports these
+		// as user.name="tagged-devices" (synthetic), which would
+		// clobber a previously-correct skyadmin/<user> binding
+		// on a fresh INSERT. The preauth was issued by skygate
+		// when the user provisioned the device, so headscale_preauth_id
+		// is the durable link back to portal_users.username.
+		// If recovery fails, leave Username empty so SyncNodesFromHeadscale
+		// writes a row without a synthetic owner (backfillNodeOwnership
+		// will recover the binding on the next /my/devices load via
+		// Strategy A/C temporal correlation).
+		username := n.UserName
+		if username == "tagged-devices" && n.PreAuthKeyID != "" {
+			if recovered, rerr := db.RecoverOwnerUsernameFromPreauth(env.DB, n.PreAuthKeyID); rerr == nil && recovered != "" {
+				username = recovered
+			} else {
+				username = ""
+			}
+		}
 		syncInfos = append(syncInfos, db.SyncNodeInfo{
 			ID:       n.ID,
 			Hostname: n.Hostname,
 			Tag:      tag,
-			Username: n.UserName,
+			Username: username,
 			HSUserID: hsUID,
 			// TaggedBy=0: the bot path doesn't have a
 			// skygate user context. The admin button

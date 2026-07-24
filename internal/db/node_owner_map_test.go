@@ -72,6 +72,19 @@ func openNodeOwnerMapTestDB(t *testing.T) *sql.DB {
 			headscale_url TEXT NOT NULL DEFAULT '',
 			headscale_api_key_enc TEXT NOT NULL DEFAULT ''
 		)`,
+		// 2026-07-24: v0.27.0 — preauth_keys needed for
+		// RecoverOwnerUsernameFromPreauth helper test.
+		`CREATE TABLE preauth_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			key TEXT NOT NULL UNIQUE,
+			headscale_preauth_id TEXT DEFAULT '',
+			reusable INTEGER NOT NULL DEFAULT 0,
+			used INTEGER NOT NULL DEFAULT 0,
+			expires_at INTEGER DEFAULT 0,
+			created_at INTEGER DEFAULT (strftime('%s','now')),
+			FOREIGN KEY (user_id) REFERENCES portal_users(id)
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {
@@ -697,5 +710,52 @@ func TestSyncNodesFromHeadscale_EmptyListIsNoop(t *testing.T) {
 	}
 	if ins != 0 || upd != 0 {
 		t.Errorf("ins=%d upd=%d, want 0/0", ins, upd)
+	}
+}
+
+
+// TestRecoverOwnerUsernameFromPreauth covers the helper that
+// /sync_nodes uses to recover the real portal owner for tagged
+// nodes (headscale reports their user.name as the synthetic
+// "tagged-devices" user, which would clobber a correct portal
+// binding on a fresh INSERT).
+func TestRecoverOwnerUsernameFromPreauth(t *testing.T) {
+	d := openNodeOwnerMapTestDB(t)
+	if _, err := d.Exec(`INSERT INTO portal_users (username, password_hash) VALUES ('skyadmin', 'x')`); err != nil {
+		t.Fatalf("insert portal_user: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO preauth_keys (user_id, key, headscale_preauth_id) VALUES (1, 'key1', 'hspreauth-abc123')`); err != nil {
+		t.Fatalf("insert preauth: %v", err)
+	}
+	got, err := RecoverOwnerUsernameFromPreauth(d, "hspreauth-abc123")
+	if err != nil {
+		t.Fatalf("happy path: %v", err)
+	}
+	if got != "skyadmin" {
+		t.Errorf("happy path: got %q, want skyadmin", got)
+	}
+	got, err = RecoverOwnerUsernameFromPreauth(d, "")
+	if err != nil {
+		t.Errorf("empty preauth: %v", err)
+	}
+	if got != "" {
+		t.Errorf("empty preauth: got %q, want empty", got)
+	}
+	got, err = RecoverOwnerUsernameFromPreauth(d, "hspreauth-doesnotexist")
+	if err != nil {
+		t.Errorf("unknown preauth: %v", err)
+	}
+	if got != "" {
+		t.Errorf("unknown preauth: got %q, want empty", got)
+	}
+	if _, err := d.Exec(`INSERT INTO preauth_keys (user_id, key, headscale_preauth_id) VALUES (1, 'key2', '')`); err != nil {
+		t.Fatalf("insert legacy preauth: %v", err)
+	}
+	got, err = RecoverOwnerUsernameFromPreauth(d, "")
+	if err != nil {
+		t.Errorf("empty preauth 2: %v", err)
+	}
+	if got != "" {
+		t.Errorf("empty preauth 2: got %q, want empty", got)
 	}
 }
