@@ -144,7 +144,7 @@
   <h3><i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}</h3>
   {{if .HasMyNodes}}
   <table>
-    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th><th>{{t "devices.mesh_subnet"}}</th></tr></thead>
+    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th><th>{{t "devices.mesh_subnet"}}</th><th>{{t "devices.dev_tag_label"}}</th></tr></thead>
     <tbody>
       {{range .MyNodes}}
       <tr>
@@ -203,6 +203,17 @@
             <span style="color:var(--text-subtle);font-size:11px">—</span>
           {{end}}
         </td>
+        <td>
+          {{if .DevTag}}
+            {{if .DevTagApplied}}
+              <span class="tag tag-success" title="{{t "devices.dev_tag_applied_help"}}"><i class="fa-solid fa-circle-check"></i><code style="font-size:10px;background:transparent">{{.DevTag}}</code></span>
+            {{else}}
+              <span class="tag tag-warning" title="{{t "devices.dev_tag_pending_help"}}"><i class="fa-solid fa-hourglass-half"></i><code style="font-size:10px;background:transparent">{{.DevTag}}</code></span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
+          {{end}}
+        </td>
       </tr>
       {{end}}
     </tbody>
@@ -210,6 +221,10 @@
   <p style="color:var(--text-muted);font-size:12px;margin-top:12px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
     <span>{{t "devices.tag_hint_v0_24_1"}}.</span>
+  </p>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:4px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-circle-info" style="margin-top:2px"></i>
+    <span>{{t "devices.dev_tag_hint_v0_28_0" | safeHTML}}.</span>
   </p>
   {{else}}
   <div class="alert alert-warn" style="margin-top:0">
