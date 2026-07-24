@@ -49,7 +49,11 @@ func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType,
 	if targetType == "domain" {
 		parentDomain = targetValue
 	}
-	newID, err := db.AppendDeviceRule(a.DB, userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain)
+	newID, err := // v0.28.0: pass userName (from userID via portal_users) and
+// deviceHostname (from deviceID via node_owner_map). Empty
+// strings are accepted — the migration backfill + /my/devices
+// load will fill them in later.
+db.AppendDeviceRule(a.DB, userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, "", "")
 	if err != nil {
 		return false, 0
 	}

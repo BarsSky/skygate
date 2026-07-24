@@ -286,8 +286,12 @@ const (
 )
 
 // qSelectEnabledACLEntries is used by GenerateACL to walk every rule and
-// build the per-device HuJSON entries.
-const qSelectEnabledACLEntries = `SELECT target_type, target_value, action, COALESCE(device_ip, '') AS device_ip FROM device_rules WHERE enabled = 1`
+// build the per-device HuJSON entries. v0.28.0: also returns
+// user_name + device_hostname so the ACL builder can render
+// src as tag:dev-<user>-<device> (preferred) instead of
+// src = device_ip (fallback for pre-v0.28.0 rows where the
+// backfill left the new columns empty).
+const qSelectEnabledACLEntries = `SELECT target_type, target_value, action, COALESCE(device_ip, '') AS device_ip, COALESCE(user_name, '') AS user_name, COALESCE(device_hostname, '') AS device_hostname FROM device_rules WHERE enabled = 1`
 
 // qSelectEnabledDomainRules is used by the autoupdater (resolves DNS → /32
 // and inserts derived rules).
@@ -341,7 +345,7 @@ const qSelectSubnet32NoParentDomain = `SELECT id, target_value FROM device_rules
 // qInsertDeviceRule is the canonical INSERT for a new rule. Action and
 // parent_domain are caller-supplied (caller picks 'accept'/'deny' and
 // whether to record a parent_domain link).
-const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // qSelectUserRulesForView is used by /my/exit-rules: every enabled rule
 // for a user, ordered for stable display.
@@ -569,3 +573,24 @@ const (
 	qUpsertExitPolicy       = `INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', ?)`
 	qMaxTelegramSettingTime = `SELECT MAX(updated_at) FROM global_settings WHERE key IN (?, ?)`
 )
+
+
+// ---------------------------------------------------------------
+// node_owner_map JOIN portal_users  —  v0.28.0 per-device ACL tag
+//   tag         TEXT  format: "tag:dev-<username>-<hostname>"
+// ---------------------------------------------------------------
+
+// v0.28.0: query returns the per-device ACL tag for every
+// row in node_owner_map joined with portal_users. planeURL
+// filter on the user side is a TODO for the per-plane
+// refactor (currently every device lives in the global
+// headscale, so the filter is a no-op for production).
+// Argument list: 4 × planeURL (one for the per-user subquery,
+// one for shared/mesh — kept for parity with the other
+// per-plane helpers; not used yet).
+const qSelectPerUserDeviceTags = `SELECT pu.username, nom.hostname, 'tag:dev-' || pu.username || '-' || nom.hostname AS tag
+  FROM node_owner_map nom
+  JOIN portal_users pu ON nom.username = pu.username
+ WHERE nom.hostname != ''
+   AND nom.username != ''
+ ORDER BY pu.username, nom.hostname`

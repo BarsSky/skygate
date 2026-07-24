@@ -255,5 +255,14 @@ func migrate(d *sql.DB) error {
 	if err := migrationV043(d); err != nil {
 		return fmt.Errorf("migrate v0.43: %w", err)
 	}
+	// 2026-07-24: v0.28.0 — per-device ACL via
+	// tag:dev-<user>-<device>. Adds user_name +
+	// device_hostname columns to device_rules and
+	// backfills them from portal_users.username +
+	// node_owner_map.hostname (joined via device_ip).
+	// See migrations_v0.44.go for the full design.
+	if err := migrateV044(d); err != nil {
+		return fmt.Errorf("migrate v0.44: %w", err)
+	}
 	return nil
 }
