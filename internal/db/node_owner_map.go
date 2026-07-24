@@ -531,6 +531,40 @@ type SyncNodeInfo struct {
 	TaggedBy int64
 }
 
+// RecoverOwnerUsernameFromPreauth looks up the portal_users.username
+// for the headscale preauth key. Used by callers that need to
+// re-attribute a node whose headscale ownership was reassigned
+// to the synthetic "tagged-devices" user (headscale moves tagged
+// nodes to this user automatically — the real owner is lost from
+// the live API but still recoverable via the persisted preauth).
+//
+// Returns "" + nil if preauthID is empty, no matching preauth
+// row exists, or the row has no linked portal user. Non-fatal
+// error for the caller; the typical fallback is to skip the
+// insert (SyncNodesFromHeadscale then sees an empty username
+// and refuses the row, leaving the snapshot for backfillNodeOwnership
+// to fill in via temporal correlation).
+func RecoverOwnerUsernameFromPreauth(d *sql.DB, headscalePreauthID string) (string, error) {
+	if headscalePreauthID == "" {
+		return "", nil
+	}
+	var username string
+	err := d.QueryRow(
+		`SELECT pu.username
+		   FROM preauth_keys pk
+		   JOIN portal_users pu ON pk.user_id = pu.id
+		  WHERE pk.headscale_preauth_id = ?
+		  LIMIT 1`, headscalePreauthID,
+	).Scan(&username)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return username, nil
+}
+
 // SyncNodesFromHeadscale is a v0.14.0 full sync that INSERTs
 // missing rows (in addition to updating drifted ones). The
 // original SyncTagsFromHeadscale only UPDATEs — that's enough
