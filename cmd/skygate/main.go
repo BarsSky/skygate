@@ -168,7 +168,7 @@ func main() {
 	app.Version = version
 	// v0.26.0 — set the BuildVersion once at boot, so
 	// /healthz and /readyz can surface it. The format
-	// mirrors what RELEASE-NOTES-vX.Y.Z.md use, so a
+	// mirrors what git tags + GitHub releases use, so a
 	// probe response like "v0.26.0+4eed3a4" is
 	// self-explanatory.
 	app.BuildVersion = version + "+" + commit
