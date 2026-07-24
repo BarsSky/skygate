@@ -48,7 +48,9 @@ CREATE TABLE device_rules (
 	action TEXT DEFAULT 'accept',
 	device_ip TEXT DEFAULT '',
 	parent_domain TEXT DEFAULT '',
-	enabled INTEGER DEFAULT 1
+	enabled INTEGER DEFAULT 1,
+	user_name        TEXT NOT NULL DEFAULT '',
+	device_hostname  TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE acl_snapshots (
 	id INTEGER PRIMARY KEY,
@@ -79,6 +81,16 @@ CREATE TABLE user_subnets (
 	created_at INTEGER DEFAULT 0,
 	updated_at INTEGER DEFAULT 0
 );
+CREATE TABLE node_owner_map (
+	node_id TEXT PRIMARY KEY,
+	headscale_user_id INTEGER NOT NULL DEFAULT 0,
+	username TEXT NOT NULL DEFAULT '',
+	tag TEXT NOT NULL DEFAULT '',
+	tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
+	tagged_at INTEGER NOT NULL DEFAULT 0,
+	hostname TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE user_subnet_shares (
 	grantor_user_id INTEGER NOT NULL,
 	grantee_user_id INTEGER NOT NULL,

@@ -963,7 +963,15 @@ func addRuleReply(env BotEnv, args []string) string {
 	// via /admin/exit-rules/cleanup). One insert per IP.
 	var insertedIDs []int64
 	for _, ip := range ipsToInsert {
-		rowID, err := db.AppendDeviceRule(env.DB, target.ID, devID, exitNodeHostname, typeToInsert, ip, action, deviceIP, parentDomain)
+		// v0.28.0: pass target.Username as userName. deviceHostname is
+// empty here — the bot only has the deviceIP at this point —
+// and is backfilled by the next /my/devices load (which now
+// writes hostname into device_rules via a follow-up UPDATE).
+// The ACL builder handles empty hostname by falling back to
+// src=device_ip for that one rule, so the rule is live
+// immediately and switches to the tag-based src after the
+// backfill lands.
+rowID, err := db.AppendDeviceRule(env.DB, target.ID, devID, exitNodeHostname, typeToInsert, ip, action, deviceIP, parentDomain, target.Username, "")
 		if err != nil {
 			return i18n.Tf(lang, "bot.add_rule.db_error", err)
 		}

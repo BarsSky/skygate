@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"sort"
 	"strings"
 
 	"skygate/internal/db"
@@ -92,14 +93,22 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 
 	type ruleEntry struct {
-		deviceIP string
-		target   string
-		action   string
+		deviceIP       string
+		userName       string // v0.28.0: for tag:dev-<user>-<device> src
+		deviceHostname string // v0.28.0: for tag:dev-<user>-<device> src
+		target         string
+		action         string
 	}
 	var entries []ruleEntry
 	for _, e := range aclRows {
 		if e.TargetType == "subnet" || e.TargetType == "ip" {
-			entries = append(entries, ruleEntry{deviceIP: e.DeviceIP, target: e.TargetValue, action: e.Action})
+			entries = append(entries, ruleEntry{
+				deviceIP:       e.DeviceIP,
+				userName:       e.UserName,
+				deviceHostname: e.DeviceHostname,
+				target:         e.TargetValue,
+				action:         e.Action,
+			})
 		}
 	}
 
@@ -160,6 +169,25 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 			sharedByUser[mm.SelfUser] = append(sharedByUser[mm.SelfUser], mm.OtherCIDR)
 		}
 	}
+
+	// 2026-07-24: v0.28.0 — per-user-per-device tags for
+	// the per-device ACL src. We need every (username,
+	// tag) pair so the policy can register each tag
+	// in tagOwners (without that, the headscale parser
+	// rejects the policy with "tag not found"). One
+	// query per GenerateACL call; the result is small
+	// (one row per device on the plane).
+	devTags, err := db.GetPerUserDeviceTags(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	// Group tags by username so we can emit one
+	// tagOwners entry per user with all their tags.
+	tagsByUser := make(map[string][]string, len(devTags))
+	for _, dt := range devTags {
+		tagsByUser[dt.Username] = append(tagsByUser[dt.Username], dt.Tag)
+	}
+
 	var identities []string
 	for _, uname := range usernames {
 		if uname != "" {
@@ -236,10 +264,23 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		sb.WriteString("] }")
 	}
 
-	// Informational/audit per-device exit-rules.
+	// Per-device exit-rules. v0.28.0: src prefers
+	// tag:dev-<user>-<device> (set by the v0.28.0
+	// backfillNodeOwnership auto-tag, survives IP changes)
+	// over device_ip (legacy, set at rule INSERT time,
+	// breaks if the device reconnects with a new Tailscale
+	// IP). Falls back to device_ip for pre-v0.28.0 rows
+	// where the backfill hasn't run yet, then to "*" for
+	// rules that have neither.
 	for _, e := range entries {
 		src := "\"*\""
-		if e.deviceIP != "" {
+		switch {
+		case e.userName != "" && e.deviceHostname != "":
+			// tag:dev-<user>-<device> — preferred, robust
+			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.userName, e.deviceHostname)
+		case e.deviceIP != "":
+			// legacy device_ip src — works for the current
+			// session, breaks on Tailscale IP change
 			src = fmt.Sprintf("\"%s\"", e.deviceIP)
 		}
 		sb.WriteString(",\n    { \"action\": \"" + e.action + "\", \"src\": [" + src + "], \"dst\": [\"" + e.target + ":*\"] }")
@@ -333,6 +374,26 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// subnet"). Without this entry, headscale rejects the
 	// policy with "tag not found: tag:subnet-router".
 	sb.WriteString(",\n    \"tag:subnet-router\": [" + strings.Join(quoteAll(identities), ",") + "]\n")
+	// 2026-07-24: v0.28.0 — per-user-per-device tags.
+	// Each user gets a tagOwners entry covering every
+	// tag:dev-<user>-<device> the user owns (every
+	// device in node_owner_map for that user). Without
+	// these entries, the headscale parser rejects the
+	// policy with "tag not found" when it hits the
+	// per-device ACL rules above.
+	// The output is sorted by username for stable diffs
+	// across deploys (important for the operator's
+	// policy audit).
+	var usersWithDevTags []string
+	for uname := range tagsByUser {
+		usersWithDevTags = append(usersWithDevTags, uname)
+	}
+	sort.Strings(usersWithDevTags)
+	for _, uname := range usersWithDevTags {
+		tags := tagsByUser[uname]
+		sort.Strings(tags) // stable order within user
+		sb.WriteString(",\n    \"" + strings.Join(tags, "\",\"") + "\": [\"" + uname + "@" + baseDomain + "\"]\n")
+	}
 	sb.WriteString("  },\n")
 
 	sb.WriteString("  \"groups\": {\n")

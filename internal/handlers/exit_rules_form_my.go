@@ -480,7 +480,15 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		// 2026-07-11: Этап 9 part 2 — moved to db.FindDomainRuleID + db.AppendDeviceRule
 		existingDomainID, _ := db.FindDomainRuleID(a.DB, c.UserID, devID, exitNode, targetValue)
 		if existingDomainID == 0 {
-			_, _ = db.AppendDeviceRule(a.DB, c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue)
+			// v0.28.0: pass userName (from c.UserID via portal_users)
+		// lookup) and deviceHostname. The form path doesn't
+		// have the user's name in scope at this callsite,
+		// so we pass "" and let the migration backfill +
+		// /my/devices load fill it. The ACL builder falls
+		// back to src=device_ip for rules with empty
+		// userName/deviceHostname, so the rule is live
+		// immediately after this insert.
+		_, _ = db.AppendDeviceRule(a.DB, c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, "", "")
 		}
 	}
 
