@@ -60,11 +60,51 @@ import (
 )
 
 func migrateV044(d *sql.DB) error {
-	if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`); err != nil {
-		return fmt.Errorf("v0.44 add user_name: %w", err)
+	// SQLite 3.35+ supports ADD COLUMN IF NOT EXISTS, but
+	// the Alpine image we ship on runs an older SQLite.
+	// We instead check PRAGMA table_info to make the ALTER
+	// idempotent — important for the live deploy path
+	// where an operator may have already pre-applied the
+	// columns manually (the v0.27.0 live-deploy ran into
+	// exactly this race: the migration would re-apply the
+	// ADD COLUMN, hit "duplicate column", and crash the
+	// container in a restart loop).
+	hasColumn := func(table, col string) bool {
+		// PRAGMA table_info(<table>) returns one row per
+		// column. Column 1 (cid), column 2 (name), etc.
+		// We use the ? placeholder for the table name
+		// (PRAGMAs don't support ?, but table names are
+		// hard-coded here so no injection risk). The
+		// .(table) approach used in the draft was wrong
+		// — the PRAGMA is just `table_info`, regardless
+		// of the table argument.
+		rows, err := d.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+		if err != nil {
+			return false
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull, dfltValue, pk interface{}
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+				continue
+			}
+			if name == col {
+				return true
+			}
+		}
+		return false
 	}
-	if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN device_hostname TEXT NOT NULL DEFAULT ''`); err != nil {
-		return fmt.Errorf("v0.44 add device_hostname: %w", err)
+	if !hasColumn("device_rules", "user_name") {
+		if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("v0.44 add user_name: %w", err)
+		}
+	}
+	if !hasColumn("device_rules", "device_hostname") {
+		if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN device_hostname TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("v0.44 add device_hostname: %w", err)
+		}
 	}
 	// Backfill user_name from portal_users. Every
 	// device_rules row has a non-zero user_id (the FK
