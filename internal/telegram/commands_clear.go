@@ -331,7 +331,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	// convention (visible in /admin/audit).
 	detailForLog := fmt.Sprintf("user %s cleared all %d rule(s) (cascade: %d) for %s via bot",
 		env.Username, deleted, totalCascade, target.Username)
-	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userPlaneURL(), nil, env.Username, detailForLog)
+	pipe := acl.ApplyACLPipelineForPlane(env.DB, env.userHS(), env.userPlaneURL(), nil, env.Username, detailForLog, false)
 
 	// Audit the actual action (separate from the request row
 	// written in the mint phase).

@@ -83,6 +83,40 @@
 
 {{if .Subnet}}
 <div class="card">
+  <h3><i class="fa-solid fa-route"></i> {{t "user_subnet.preferred_exit_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "user_subnet.preferred_exit_help" | safeHTML}}
+  </p>
+  {{if .AvailableExitNodes}}
+  <form method="POST" action="/admin/users/{{.User.ID}}/subnet/preferred-exit" style="margin-top:10px;display:flex;gap:8px;align-items:flex-end">
+    <label class="ufg-field" style="flex:1;margin:0">
+      <div class="ufg-label"><i class="fa-solid fa-server"></i> {{t "user_subnet.preferred_exit_label"}}</div>
+      <select name="tag" class="ufg-input">
+        <option value="" {{if eq .PreferredExitNodeTag ""}}selected{{end}}>— {{t "user_subnet.preferred_exit_none"}} —</option>
+        {{range .AvailableExitNodes}}
+        <option value="{{.Tag}}" {{if eq $.PreferredExitNodeTag .Tag}}selected{{end}}>{{.Hostname}} ({{.IP}}) — {{.Tag}}</option>
+        {{end}}
+      </select>
+    </label>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> {{t "user_subnet.preferred_exit_button"}}</button>
+  </form>
+  {{if .PreferredExitNodeTag}}
+  <p style="color:var(--success);font-size:12px;margin-top:8px">
+    <i class="fa-solid fa-circle-check"></i> {{t "user_subnet.preferred_exit_currently"}}: <code>{{.PreferredExitNodeTag}}</code>
+  </p>
+  {{else}}
+  <p style="color:var(--text-subtle);font-size:12px;margin-top:8px;font-style:italic">
+    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.preferred_exit_default_help"}}
+  </p>
+  {{end}}
+  {{else}}
+  <p style="color:var(--text-subtle);font-size:12px;margin-top:8px;font-style:italic">
+    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.no_exit_nodes"}}
+  </p>
+  {{end}}
+</div>
+
+<div class="card">
   <h3><i class="fa-solid fa-share-nodes"></i> {{t "user_subnet.sharing_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
     {{t "user_subnet.sharing_help" | safeHTML}}

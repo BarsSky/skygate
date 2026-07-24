@@ -115,6 +115,20 @@ type Config struct {
 	// must visit /admin/users/{id}/subnet and click
 	// "Allocate" manually.
 	AutoAllocateSubnetOnUserCreate bool
+	// 2026-07-24: v0.28.1 — grants-with-via ACL
+	// builder. When true, GenerateACLWithVia runs
+	// (renders grants[] with `via: ["<user's preferred
+	// exit-node>"]`); when false, the legacy
+	// GenerateACL runs (renders acls[] with no `via`).
+	// Default: false on day 1 of v0.28.1 — the
+	// operator flips to true once the per-exit-node
+	// tagOwners entries are in place and the first
+	// /admin/exit-rules/reapply returns clean. The
+	// flag is a safety belt: if a headscale 0.29.x
+	// regression ever rejects the grants shape, the
+	// operator can flip back to false and the legacy
+	// acls[] policy is still functional.
+	ACLWithViaEnabled bool
 	// 2026-07-21: v0.23.3 — node-expiry watcher.
 	// The Tailscale 1.98.x clients ship a RegisterRequest
 	// whose Expiry is only a few seconds in the future,
@@ -196,6 +210,15 @@ func Load() (*Config, error) {
 		// .env to revert to v0.16.0-v0.18.1 manual
 		// allocation via /admin/users/{id}/subnet.
 		AutoAllocateSubnetOnUserCreate: getenv("SKYGATE_AUTO_ALLOCATE_SUBNET", "true") == "true",
+		// 2026-07-24: v0.28.1 — SKYGATE_ACL_VIA_ENABLED.
+		// Default false. Set true to switch the ACL
+		// builder to the grants-with-via path. The
+		// admin /admin/exit-rules/reapply is the
+		// canonical "try it" — SetPolicy returns the
+		// headscale error verbatim, and the rollback
+		// button restores the previous (a working
+		// acls[]) snapshot.
+		ACLWithViaEnabled: getenv("SKYGATE_ACL_VIA_ENABLED", "false") == "true",
 		// 2026-07-21: v0.23.3 — node-expiry watcher.
 		// Default: 5m tick, renew nodes with <7d remaining
 		// out to 30d. SKYGATE_EXPIREWATCH_ENABLED=false

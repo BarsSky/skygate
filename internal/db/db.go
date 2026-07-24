@@ -264,5 +264,14 @@ func migrate(d *sql.DB) error {
 	if err := migrateV044(d); err != nil {
 		return fmt.Errorf("migrate v0.44: %w", err)
 	}
+	// 2026-07-24: v0.28.1 — user_exit_node_prefs
+	// table. One row per user; holds the user's
+	// preferred exit-node tag (e.g. "tag:exit-relay-1")
+	// that GenerateACLWithVia uses as `via` in
+	// grants[]. See migrations_v0.45.go for the full
+	// design + forward path to per-device prefs.
+	if err := migrateV045(d); err != nil {
+		return fmt.Errorf("migrate v0.45: %w", err)
+	}
 	return nil
 }

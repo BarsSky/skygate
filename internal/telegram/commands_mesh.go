@@ -286,7 +286,7 @@ func applyMeshACLReapply(env BotEnv, m *mesh.Mesh) {
 		go func(plane string) {
 			_ = acl.ApplyACLPipelineForPlane(env.DB, hs, plane, nil,
 				fmt.Sprintf("mesh:%s:%d", m.Code, m.ID),
-				"auto-reapply on mesh membership change")
+				"auto-reapply on mesh membership change", false)
 		}(planeURL)
 	}
 }

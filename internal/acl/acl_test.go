@@ -52,6 +52,12 @@ CREATE TABLE device_rules (
 	user_name        TEXT NOT NULL DEFAULT '',
 	device_hostname  TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE user_exit_node_prefs (
+	user_id INTEGER NOT NULL PRIMARY KEY,
+	exit_node_tag TEXT NOT NULL,
+	set_by_user_id INTEGER NOT NULL DEFAULT 0,
+	updated_at INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE acl_snapshots (
 	id INTEGER PRIMARY KEY,
 	version INTEGER NOT NULL,
@@ -153,6 +159,20 @@ func seedPortalUserWithPlane(t *testing.T, d *sql.DB, username, planeURL string)
 	}
 	id, _ := res.LastInsertId()
 	return id
+}
+
+// seedUserExitNodePref inserts a row in user_exit_node_prefs
+// for the given user. setByUser=0 is the implicit self-set
+// (a real user picks their own preferred exit-node; tests
+// don't care about who set it).
+func seedUserExitNodePref(t *testing.T, d *sql.DB, userID int64, tag string) {
+	t.Helper()
+	_, err := d.Exec(
+		`INSERT INTO user_exit_node_prefs (user_id, exit_node_tag, set_by_user_id) VALUES (?, ?, 0)`,
+		userID, tag)
+	if err != nil {
+		t.Fatalf("seed user_exit_node_prefs user=%d tag=%s: %v", userID, tag, err)
+	}
 }
 
 // recordingAlerter captures SendAlert calls. The count is
@@ -700,7 +720,7 @@ func TestApplyACLPipelineSuccess(t *testing.T) {
 	hs, hsCalls := fakeHeadscale(t, http.StatusOK, nil)
 	rec := &recordingAlerter{}
 
-	res := ApplyACLPipeline(d, hs, rec, "alice", "user alice added rule test")
+	res := ApplyACLPipeline(d, hs, rec, "alice", "user alice added rule test", false)
 	if !res.Applied {
 		t.Errorf("Applied = false, want true; err = %v", res.Err)
 	}
@@ -738,7 +758,7 @@ func TestApplyACLPipelineSetPolicyError(t *testing.T) {
 	hs, hsCalls := fakeHeadscale(t, http.StatusInternalServerError, fmt.Errorf("policy boom"))
 	rec := &recordingAlerter{}
 
-	res := ApplyACLPipeline(d, hs, rec, "alice", "user alice added rule test")
+	res := ApplyACLPipeline(d, hs, rec, "alice", "user alice added rule test", false)
 	if res.Applied {
 		t.Error("Applied = true, want false on SetPolicy failure")
 	}
@@ -791,7 +811,7 @@ func TestApplyACLPipelineGenerateACLError(t *testing.T) {
 	_ = d.Close()
 	hs, hsCalls := fakeHeadscale(t, http.StatusOK, nil)
 
-	res := ApplyACLPipeline(d, hs, nil, "alice", "test")
+	res := ApplyACLPipeline(d, hs, nil, "alice", "test", false)
 	if res.Err == nil {
 		t.Error("expected Err on closed DB")
 	}
@@ -813,7 +833,7 @@ func TestApplyACLPipelineNilAlerter(t *testing.T) {
 	seedPortalUser(t, d, "alice")
 	hs, _ := fakeHeadscale(t, http.StatusOK, nil)
 
-	res := ApplyACLPipeline(d, hs, nil, "alice", "test")
+	res := ApplyACLPipeline(d, hs, nil, "alice", "test", false)
 	if !res.Applied {
 		t.Errorf("Applied = false; err = %v", res.Err)
 	}
@@ -875,7 +895,7 @@ func TestApplyACLPipelineForPlane_UsesCorrectClient(t *testing.T) {
 	seedPortalUserWithPlane(t, d, "bob", "https://plane-b.example")
 	hs, captured := fakeHeadscaleWithCapture(t, http.StatusOK)
 
-	res := ApplyACLPipelineForPlane(d, hs, "", nil, "alice", "test")
+	res := ApplyACLPipelineForPlane(d, hs, "", nil, "alice", "test", false)
 	if !res.Applied {
 		t.Fatalf("Applied = false; err = %v", res.Err)
 	}
@@ -1111,5 +1131,122 @@ func TestGenerateACL_PerDeviceTagDoesNotCrossUsers(t *testing.T) {
 	}
 	if strings.Contains(aclStr, wantWrong) {
 		t.Errorf("user1 should NOT own admin's device tag; found.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_OutputUsesGrants pins v0.28.1: the
+// grants-with-via builder emits `grants[]` (the headscale
+// 0.29.0-beta.4+ replacement for `acls[]`) instead of the
+// legacy `acls[]` shape. This is the foundation: every
+// downstream test in this file pins a different invariant
+// of the grants shape.
+func TestGenerateACLWithVia_OutputUsesGrants(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	if !strings.Contains(aclStr, `"grants":`) {
+		t.Errorf("output should contain a 'grants' key.\nACL:\n%s", aclStr)
+	}
+	// We also explicitly do NOT want acls[] in the same
+	// output — the via path is pure-grants (mixing acls
+	// + grants in the same file is supported in
+	// headscale 0.29+ but the per-grant `via` semantics
+	// are cleaner without acls noise).
+	if strings.Contains(aclStr, `"acls":`) {
+		t.Errorf("grants-with-via output should NOT contain 'acls'.\nACL:\n%s", aclStr)
+	}
+	// Per-user grant must include the required `ip: ["*"]`
+	// field — without it headscale's parser drops the
+	// grant as "no traffic allowed".
+	if !strings.Contains(aclStr, `"ip": ["*"]`) {
+		t.Errorf("per-user grant must include 'ip: [\"*\"]'.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_NoPreferencesWhenNoneSet pins the
+// day-1 case: with no rows in user_exit_node_prefs, the
+// per-user grants MUST NOT include a `via` field (the
+// `via: ["<tag>"]` is what headscale uses to restrict the
+// user's exit-node choice; without a preference the user
+// can use any of the available exit-nodes, which is the
+// legacy catch-all semantics).
+func TestGenerateACLWithVia_NoPreferencesWhenNoneSet(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	if strings.Contains(aclStr, `"via":`) {
+		t.Errorf("no per-user prefs set — output must NOT contain 'via'.\nACL:\n%s", aclStr)
+	}
+	// Catch-all grants in autogroup:internet must still be
+	// present (the legacy fallback so users without a
+	// preference can still get exit-node access).
+	if !strings.Contains(aclStr, `"autogroup:internet"`) {
+		t.Errorf("output must still contain the autogroup:internet catch-all.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_UserPrefTriggersViaAndTagOwners
+// pins the core v0.28.1 invariant: a row in
+// user_exit_node_prefs causes the user's per-user grant
+// to include `via: ["<tag>"]`, AND the tagOwners block
+// registers that tag with admin as owner (so headscale's
+// parser accepts the policy).
+func TestGenerateACLWithVia_UserPrefTriggersViaAndTagOwners(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	seedUserExitNodePref(t, d, aliceID, "tag:exit-relay-1")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Per-user grant must include via: ["tag:exit-relay-1"]
+	want := `"via": ["tag:exit-relay-1"]`
+	if !strings.Contains(aclStr, want) {
+		t.Errorf("per-user grant should include %s.\nACL:\n%s", want, aclStr)
+	}
+	// tagOwners must include the per-exit-node tag with
+	// admin as the owner.
+	wantOwner := `"tag:exit-relay-1": ["admin@tsnet.example.com"]`
+	if !strings.Contains(aclStr, wantOwner) {
+		t.Errorf("tagOwners should include %s.\nACL:\n%s", wantOwner, aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_PerExitNodeTagOwnersAreDistinct
+// pins the de-dup invariant: if two users share the same
+// preferred exit-node, the tagOwners block emits ONE
+// entry (not two). This is the same invariant the v0.28.0
+// per-device tagOwners test pins, applied to the
+// per-exit-node layer.
+func TestGenerateACLWithVia_PerExitNodeTagOwnersAreDistinct(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	bobID := seedPortalUser(t, d, "bob")
+	seedUserExitNodePref(t, d, aliceID, "tag:exit-relay-1")
+	seedUserExitNodePref(t, d, bobID, "tag:exit-relay-1")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Count occurrences of the tagOwners entry.
+	needle := `"tag:exit-relay-1": ["admin@tsnet.example.com"]`
+	count := strings.Count(aclStr, needle)
+	if count != 1 {
+		t.Errorf("expected exactly 1 tagOwners entry for tag:exit-relay-1, got %d.\nACL:\n%s",
+			count, aclStr)
+	}
+	// Both per-user grants must still have via (one
+	// entry each — the user-level via is per-user, the
+	// tagOwners entry is de-duped at the tag level).
+	viaCount := strings.Count(aclStr, `"via": ["tag:exit-relay-1"]`)
+	if viaCount != 2 {
+		t.Errorf("expected 2 'via: [tag:exit-relay-1]' entries (one per user), got %d.\nACL:\n%s",
+			viaCount, aclStr)
 	}
 }

@@ -6,8 +6,30 @@
   </div>
 </div>
 
+{{if .FlashSuccess}}
+<div class="alert alert-success" style="margin-bottom:12px">
+  <i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.preferred_set_ok"}}
+</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger" style="margin-bottom:12px">
+  <i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-server"></i>{{t "exit_nodes.title"}}</h3>
+  {{if .PreferredExitNodeTag}}
+  <p style="color:var(--success);font-size:12px;margin-top:6px">
+    <i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.preferred_currently_set"}}: <code>{{.PreferredExitNodeTag}}</code>
+    <form method="POST" action="/my/exit-nodes/preferred" style="display:inline;margin-left:8px">
+      <input type="hidden" name="tag" value="">
+      <button type="submit" class="btn btn-sm btn-secondary" title="{{t "exit_nodes.preferred_clear_help"}}">
+        <i class="fa-solid fa-xmark"></i> {{t "exit_nodes.preferred_clear_button"}}
+      </button>
+    </form>
+  </p>
+  {{end}}
   {{if .ExitNodes}}
   <table>
     <thead>
@@ -16,6 +38,7 @@
         <th>{{t "exit_nodes.ip"}}</th>
         <th>Owner</th>
         <th style="width:100px">{{t "exit_nodes.status"}}</th>
+        <th style="width:240px">{{t "exit_nodes.preferred_column"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -29,6 +52,21 @@
             <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{t "exit_nodes.online"}}</span>
           {{else}}
             <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{t "exit_nodes.offline"}}</span>
+          {{end}}
+        </td>
+        <td>
+          {{$derivedTag := printf "tag:exit-%s" .Hostname}}
+          {{if eq $.PreferredExitNodeTag $derivedTag}}
+            <span class="tag tag-success" title="{{t "exit_nodes.preferred_currently_help"}}">
+              <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_currently"}}
+            </span>
+          {{else}}
+            <form method="POST" action="/my/exit-nodes/preferred" style="display:inline">
+              <input type="hidden" name="tag" value="{{$derivedTag}}">
+              <button type="submit" class="btn btn-sm">
+                <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_set_button"}}
+              </button>
+            </form>
           {{end}}
         </td>
       </tr>
