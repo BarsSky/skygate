@@ -207,6 +207,9 @@ func main() {
 	// User self-service
 	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(app.GetMyDevices)))
 	mux.Handle("GET /my/exit-nodes", authMW(http.HandlerFunc(app.GetExitNodes)))
+	// 2026-07-24: v0.28.1 — per-user preferred exit-node.
+	// Visible to all authenticated users (self-service).
+	mux.Handle("POST /my/exit-nodes/preferred", authMW(http.HandlerFunc(app.PostMyExitNodePreferred)))
 	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(app.PostMyPreauth)))
 	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(app.GetMyKeys)))
 	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(app.PostMyKeyExpire)))
@@ -259,6 +262,10 @@ func main() {
 	mux.Handle("GET /admin/users/{id}/subnet/download", authMW(http.HandlerFunc(app.GetAdminUserSubnetDownload)))
 	mux.Handle("POST /admin/users/{id}/subnet/share", authMW(http.HandlerFunc(app.PostAdminUserSubnetShare)))
 	mux.Handle("POST /admin/users/{id}/subnet/revoke", authMW(http.HandlerFunc(app.PostAdminUserSubnetRevoke)))
+	// 2026-07-24: v0.28.1 — admin override for the
+	// user's preferred exit-node (operator-driven
+	// exit-node assignment).
+	mux.Handle("POST /admin/users/{id}/subnet/preferred-exit", authMW(http.HandlerFunc(app.PostAdminUserSubnetPreferredExit)))
 	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(app.GetAdminSubnets)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))

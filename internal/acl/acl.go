@@ -70,6 +70,33 @@ func GenerateACL(d *sql.DB) (string, error) {
 	return GenerateACLForPlane(d, "")
 }
 
+// GenerateACLWithVia builds the headscale policy that uses
+// `grants[]` (the v0.29.0-beta.4+ replacement for `acls[]`)
+// with the `via` field for per-user preferred exit-nodes.
+//
+// Why this exists: pre-v0.28.1, the policy's catch-all
+// `* → autogroup:internet:*` rule (in `acls[]`) lets any
+// device in the tailnet use ANY of the available exit-nodes
+// (relay-1, relay-2, relay-3). The user could pick
+// whichever one they wanted via the Tailscale GUI. That's
+// fine for casual use but undesirable for the per-user
+// isolation model — alice's laptop choosing relay-3
+// instead of relay-1 means her traffic exits through a
+// different country.
+//
+// The fix: each user can have a "preferred exit-node" stored
+// in `user_exit_node_prefs`. The ACL is rendered with one
+// per-user grant that includes `via: ["tag:exit-<hostname>"]`,
+// restricting the user's exit-node choice to their preferred
+// node. headscale enforces the `via` constraint at the
+// packet-filter level — alice's laptop CAN'T pick relay-3
+// even if the user clicks it in the Tailscale GUI.
+//
+// 2026-07-24: v0.28.1.
+func GenerateACLWithVia(d *sql.DB) (string, error) {
+	return GenerateACLWithViaForPlane(d, "")
+}
+
 // GenerateACLForPlane builds the per-user headscale 0.29
 // HuJSON policy for ONE control plane. planeURL == "" means
 // "the global default plane" (every portal user with
@@ -502,8 +529,8 @@ type ApplyResult struct {
 // ApplyACLPipelineForPlane(d, hs, "", alerter, username,
 // detailForLog) so the global-default and per-plane code
 // share a single implementation.
-func ApplyACLPipeline(d *sql.DB, hs *headscale.Client, alerter Alerter, username, detailForLog string) ApplyResult {
-	return ApplyACLPipelineForPlane(d, hs, "", alerter, username, detailForLog)
+func ApplyACLPipeline(d *sql.DB, hs *headscale.Client, alerter Alerter, username, detailForLog string, useVia bool) ApplyResult {
+	return ApplyACLPipelineForPlane(d, hs, "", alerter, username, detailForLog, useVia)
 }
 
 // ApplyACLPipelineForPlane runs the 4-step pipeline for ONE
@@ -514,8 +541,14 @@ func ApplyACLPipeline(d *sql.DB, hs *headscale.Client, alerter Alerter, username
 // right client.
 //
 // 2026-07-16: v0.13.0.
-func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, alerter Alerter, username, detailForLog string) ApplyResult {
-	acl, err := GenerateACLForPlane(d, planeURL)
+func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, alerter Alerter, username, detailForLog string, useVia bool) ApplyResult {
+	var acl string
+	var err error
+	if useVia {
+		acl, err = GenerateACLWithViaForPlane(d, planeURL)
+	} else {
+		acl, err = GenerateACLForPlane(d, planeURL)
+	}
 	if err != nil {
 		return ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("generate ACL: %w", err)}
 	}
@@ -547,7 +580,7 @@ func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, 
 // returns the cached client (or the global fallback for the
 // "" URL). The alerter is shared across planes so a
 // single "🛡️ ACL #N by <user>" alert covers the run.
-func ApplyACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale.Client, alerter Alerter, username, detailForLog string) []ApplyResult {
+func ApplyACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale.Client, alerter Alerter, username, detailForLog string, useVia bool) []ApplyResult {
 	planes, err := db.ListControlPlanes(d)
 	if err != nil {
 		return []ApplyResult{{Version: 0, Applied: false, Err: fmt.Errorf("list control planes: %w", err)}}
@@ -562,10 +595,228 @@ func ApplyACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale
 			out = append(out, ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("no headscale client for plane %q", p.URL)})
 			continue
 		}
-		r := ApplyACLPipelineForPlane(d, hs, p.URL, alerter, username, detailForLog)
+		r := ApplyACLPipelineForPlane(d, hs, p.URL, alerter, username, detailForLog, useVia)
 		out = append(out, r)
 	}
 	return out
+}
+
+// GenerateACLWithViaForPlane builds the grants-based policy
+// for ONE control plane. planeURL == "" means the global
+// default plane.
+//
+// 2026-07-24: v0.28.1.
+func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
+	aclRows, err := db.GetACLEntries(d)
+	if err != nil {
+		return "", err
+	}
+
+	const baseDomain = "tsnet.example.com"
+
+	usernames, err := db.GetPortalUsernamesForPlane(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+
+	userSubnets, err := db.GetUserSubnetsForPlane(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	subByUser := make(map[string]string, len(userSubnets))
+	for _, us := range userSubnets {
+		if us.Username != "" {
+			subByUser[us.Username] = us.CIDR
+		}
+	}
+
+	sharedSubnets, err := db.GetSharedSubnetsForPlane(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	sharedByUser := make(map[string][]string)
+	for _, ss := range sharedSubnets {
+		if ss.GranteeUser != "" && ss.GrantorCIDR != "" {
+			sharedByUser[ss.GranteeUser] = append(sharedByUser[ss.GranteeUser], ss.GrantorCIDR)
+		}
+	}
+
+	meshMemberships, err := db.GetMeshMembershipsForPlane(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	for _, mm := range meshMemberships {
+		if mm.SelfUser != "" && mm.OtherCIDR != "" {
+			sharedByUser[mm.SelfUser] = append(sharedByUser[mm.SelfUser], mm.OtherCIDR)
+		}
+	}
+
+	exitPrefs, err := db.ListAllUserExitNodePrefs(d)
+	if err != nil {
+		return "", err
+	}
+	viaByUser := make(map[string]string, len(exitPrefs))
+	for _, ep := range exitPrefs {
+		if ep.Username != "" && ep.ExitNodeTag != "" {
+			viaByUser[ep.Username] = ep.ExitNodeTag
+		}
+	}
+
+	devTags, err := db.GetPerUserDeviceTags(d, planeURL)
+	if err != nil {
+		return "", err
+	}
+	tagsByUser := make(map[string][]string, len(devTags))
+	for _, dt := range devTags {
+		tagsByUser[dt.Username] = append(tagsByUser[dt.Username], dt.Tag)
+	}
+
+	var identities []string
+	for _, uname := range usernames {
+		if uname != "" {
+			identities = append(identities, uname+"@"+baseDomain)
+		}
+	}
+	if identities == nil {
+		identities = []string{}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("{\n  \"grants\": [\n")
+
+	for i, idn := range identities {
+		if i > 0 {
+			sb.WriteString(",\n")
+		}
+		uname := strings.SplitN(idn, "@", 2)[0]
+		dst := []string{idn + ":*"}
+		if ownCIDR := subByUser[uname]; ownCIDR != "" {
+			dst = append(dst, ownCIDR+":*")
+		}
+		dedupSet := make(map[string]bool, len(dst))
+		for _, d := range dst {
+			dedupSet[d] = true
+		}
+		for _, sharedCIDR := range sharedByUser[uname] {
+			if sharedCIDR == "" {
+				continue
+			}
+			entry := sharedCIDR + ":*"
+			if dedupSet[entry] {
+				continue
+			}
+			dedupSet[entry] = true
+			dst = append(dst, entry)
+		}
+		sb.WriteString("    { \"src\": [\"" + idn + "\"], \"dst\": [")
+		for j, d := range dst {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("\"")
+			sb.WriteString(d)
+			sb.WriteString("\"")
+		}
+		sb.WriteString("], \"ip\": [\"*\"]")
+		if via := viaByUser[uname]; via != "" {
+			sb.WriteString(", \"via\": [\"" + via + "\"]")
+		}
+		sb.WriteString(" }")
+	}
+
+	for _, e := range aclRows {
+		if e.TargetType != "subnet" && e.TargetType != "ip" {
+			continue
+		}
+		if e.Action != "accept" {
+			continue
+		}
+		src := "\"*\""
+		switch {
+		case e.UserName != "" && e.DeviceHostname != "":
+			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.UserName, e.DeviceHostname)
+		case e.DeviceIP != "":
+			src = fmt.Sprintf("\"%s\"", e.DeviceIP)
+		}
+		sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + e.TargetValue + ":*\"], \"ip\": [\"*\"] }")
+	}
+
+	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:public:*\"], \"ip\": [\"*\"] }")
+	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:exit-node:*\"], \"ip\": [\"*\"] }")
+	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
+	sb.WriteString("\n  ],\n")
+
+	sb.WriteString("  \"tagOwners\": {\n")
+	sb.WriteString("    \"tag:public\": [\"admin@" + baseDomain + "\"]")
+	sb.WriteString(",\n    \"tag:exit-node\": [\"admin@" + baseDomain + "\"]")
+	if len(identities) > 1 {
+		sb.WriteString(",\n    \"tag:private\": [" + strings.Join(quoteAll(identities), ",") + "]")
+	} else {
+		sb.WriteString(",\n    \"tag:private\": [\"" + identities[0] + "\"]")
+	}
+	sb.WriteString(",\n    \"tag:subnet-router\": [" + strings.Join(quoteAll(identities), ",") + "]")
+
+	distinctVias := make(map[string]bool, len(viaByUser))
+	for _, via := range viaByUser {
+		distinctVias[via] = true
+	}
+	var exitNodeTags []string
+	for tag := range distinctVias {
+		exitNodeTags = append(exitNodeTags, tag)
+	}
+	sort.Strings(exitNodeTags)
+	for _, tag := range exitNodeTags {
+		sb.WriteString(",\n    \"" + tag + "\": [\"admin@" + baseDomain + "\"]")
+	}
+
+	type perDevTagOwner struct {
+		tag, owner string
+	}
+	var perDevTagOwners []perDevTagOwner
+	for uname, tags := range tagsByUser {
+		for _, tag := range tags {
+			perDevTagOwners = append(perDevTagOwners, perDevTagOwner{tag: tag, owner: uname + "@" + baseDomain})
+		}
+	}
+	sort.Slice(perDevTagOwners, func(i, j int) bool {
+		if perDevTagOwners[i].tag != perDevTagOwners[j].tag {
+			return perDevTagOwners[i].tag < perDevTagOwners[j].tag
+		}
+		return perDevTagOwners[i].owner < perDevTagOwners[j].owner
+	})
+	for _, to := range perDevTagOwners {
+		sb.WriteString(",\n    \"" + to.tag + "\": [\"" + to.owner + "\"]")
+	}
+	sb.WriteString("\n  },\n")
+
+	sb.WriteString("  \"groups\": {\n")
+	for i, idn := range identities {
+		if i > 0 {
+			sb.WriteString(",\n")
+		}
+		parts := strings.SplitN(idn, "@", 2)
+		groupName := "group:" + parts[0]
+		sb.WriteString("    \"" + groupName + "\": [\"" + idn + "\"]")
+	}
+	sb.WriteString("\n  },\n")
+
+	sb.WriteString("  \"ssh\": [\n")
+	sb.WriteString("    {\n")
+	sb.WriteString("      \"action\": \"accept\",\n")
+	sb.WriteString("      \"src\": [\"tag:private\", \"admin@" + baseDomain + "\"],\n")
+	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
+	sb.WriteString("      \"users\": [\"root\"]\n")
+	sb.WriteString("    },\n")
+	sb.WriteString("    {\n")
+	sb.WriteString("      \"action\": \"accept\",\n")
+	sb.WriteString("      \"src\": [\"admin@" + baseDomain + "\"],\n")
+	sb.WriteString("      \"dst\": [\"tag:public\"],\n")
+	sb.WriteString("      \"users\": [\"root\"]\n")
+	sb.WriteString("    }\n")
+	sb.WriteString("  ]\n")
+
+	sb.WriteString("}")
+	return sb.String(), nil
 }
 
 // SetACLForAllPlanes pushes a PRE-BUILT policy (e.g. one

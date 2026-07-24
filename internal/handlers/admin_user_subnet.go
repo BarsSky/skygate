@@ -111,6 +111,51 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 		// the eventual FQDN.
 		"MagicDNS": subnet.ComputeMagicDNSNames(username),
 	}
+	// 2026-07-24: v0.28.1 — fetch the current preferred
+	// exit-node tag for this user (empty string if no
+	// preference set). The dropdown on the page highlights
+	// the current selection and the per-exit-node tag
+	// (e.g. "tag:exit-relay-1") maps 1:1 to the headscale
+	// tag. The exit-nodes list is read from the global
+	// headscale view (admin path, not per-plane — exit
+	// nodes are shared infra; the per-user plane routing
+	// in v0.12.0 doesn't apply to them).
+	if pref, err := db.GetUserExitNodePref(a.DB, id); err == nil {
+		data["PreferredExitNodeTag"] = pref.ExitNodeTag
+	}
+	// Build the list of available exit-nodes. We use
+	// the headscale client's ListAllNodes and filter to
+	// nodes that carry tag:exit-node (the canonical
+	// exit-node signature). Each entry gets a derived
+	// tag:exit-<hostname> so the dropdown's <option>
+	// value is the headscale-friendly tag. The HS
+	// check is defensive — the test harness (and a
+	// possible single-tenant deploy without headscale)
+	// can render the page with an empty list.
+	if hs := a.HSGlobal(); hs != nil {
+		allNodes, _ := hs.ListAllNodes()
+		type exitNodeOpt struct {
+			Hostname string
+			Tag      string
+			IP       string
+		}
+		var exitOpts []exitNodeOpt
+		for _, n := range allNodes {
+			if !n.IsExitNode {
+				continue
+			}
+			ip := ""
+			if len(n.IPAddresses) > 0 {
+				ip = n.IPAddresses[0]
+			}
+			exitOpts = append(exitOpts, exitNodeOpt{
+				Hostname: n.Hostname,
+				Tag:      "tag:exit-" + n.Hostname,
+				IP:       ip,
+			})
+		}
+		data["AvailableExitNodes"] = exitOpts
+	}
 	// 2026-07-17: v0.17.1 — pull the share lists so the
 	// "Sharing" section can render. Lookups are best-
 	// effort (no error returned to the page) so a
@@ -218,7 +263,7 @@ func (a *App) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request
 	// fail the Allocate (the row is in the DB; the
 	// operator can manually re-apply if needed).
 	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(0), planeURL, nil, c.Username,
-		fmt.Sprintf("subnet_allocate user=%d", id))
+		fmt.Sprintf("subnet_allocate user=%d", id), false)
 	if !res.Applied {
 		log.Printf("subnet_allocate: ACL reapply failed for user=%d: %v (row is allocated; click 'Re-apply ACL' to push)",
 			id, res.Err)
@@ -281,7 +326,7 @@ func (a *App) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Request) {
 	}
 	hs := a.HSForUser(0)
 	_ = acl.ApplyACLPipelineForPlane(a.DB, hs, "", nil, c.Username,
-		fmt.Sprintf("subnet_share_granted grantor=%d grantee=%d", grantorID, granteeID))
+		fmt.Sprintf("subnet_share_granted grantor=%d grantee=%d", grantorID, granteeID), false)
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", grantorID), http.StatusSeeOther)
 }
 
@@ -320,7 +365,7 @@ func (a *App) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Request) 
 		fmt.Sprintf("grantor=%d grantee=%d", grantorID, granteeID))
 	hs := a.HSForUser(0)
 	_ = acl.ApplyACLPipelineForPlane(a.DB, hs, "", nil, c.Username,
-		fmt.Sprintf("subnet_share_revoked grantor=%d grantee=%d", grantorID, granteeID))
+		fmt.Sprintf("subnet_share_revoked grantor=%d grantee=%d", grantorID, granteeID), false)
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", grantorID), http.StatusSeeOther)
 }
 
@@ -345,6 +390,51 @@ func (a *App) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request)
 			"FlashError": err.Error(),
 		})
 		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", id), http.StatusSeeOther)
+}
+
+// PostAdminUserSubnetPreferredExit sets (or clears) the
+// user's preferred exit-node. Form field `tag` carries
+// the headscale tag (e.g. "tag:exit-relay-1"); an empty
+// tag clears the preference. The handler also runs an
+// ACL re-apply so the new `via: ["<tag>"]` (or its
+// removal) takes effect on the next /my/devices load.
+//
+// 2026-07-24: v0.28.1 — per-user preferred exit-node.
+// Visible to admin only; the user can self-set via
+// /my/exit-nodes (PostMyExitNodePreferred).
+func (a *App) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *http.Request) {
+	c := a.currentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/preferred-exit")
+	if err != nil {
+		http.Error(w, "bad id", 400)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", 400)
+		return
+	}
+	tag := strings.TrimSpace(r.FormValue("tag"))
+	if err := db.SetUserExitNodePref(a.DB, id, tag, c.UserID); err != nil {
+		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+			"FlashError": fmt.Sprintf("set preferred exit: %v", err),
+		})
+		return
+	}
+	a.audit(c.UserID, c.Username, "preferred_exit_set",
+		fmt.Sprintf("user_id=%d tag=%q", id, tag))
+	// Re-apply ACL so the via field (or its absence)
+	// takes effect on the next device load.
+	_, planeURL, _ := readUserForSubnetPage(a, id)
+	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(0), planeURL, nil, c.Username,
+		fmt.Sprintf("preferred_exit_set user=%d tag=%q", id, tag), a.Cfg.ACLWithViaEnabled)
+	if !res.Applied {
+		log.Printf("preferred_exit_set: ACL reapply failed for user=%d: %v", id, res.Err)
 	}
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", id), http.StatusSeeOther)
 }
