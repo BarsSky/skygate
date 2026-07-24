@@ -8,6 +8,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -106,6 +107,21 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// instead of the per-user CIDR in the new "Mesh
 		// subnet" column. v0.25.0.
 		IsShared bool
+		// DevTag is the per-device ACL tag
+		// ("tag:dev-<user>-<hostname>") that the v0.28.0
+		// per-device rules use as src in the headscale
+		// ACL. Empty when the node has no hostname (rare;
+		// headscale still uses the IP-based fallback for
+		// such nodes). The /my/devices page surfaces it
+		// so the user can verify the auto-applied tag is
+		// present. 2026-07-24.
+		DevTag string
+		// DevTagApplied is true when DevTag appears in
+		// the node's headscale tag list. The template
+		// shows a green pill when applied, yellow when
+		// pending (the next /my/devices load retries the
+		// auto-apply). 2026-07-24.
+		DevTagApplied bool
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
@@ -127,6 +143,19 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			if len(n.IPAddresses) > 0 {
 				ip = n.IPAddresses[0]
 			}
+			// 2026-07-24: v0.28.0 — build the per-device
+			// ACL tag and check whether headscale has
+			// actually applied it (the backfill above
+			// issues the AddTag call; on a fresh deploy
+			// the first /my/devices load may not have
+			// landed yet, so the user might briefly see
+			// "pending").
+			devTag := ""
+			devTagApplied := false
+			if username != "" && n.Hostname != "" {
+				devTag = fmt.Sprintf("tag:dev-%s-%s", username, n.Hostname)
+				devTagApplied = hasTag(n.Tags, devTag)
+			}
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
@@ -140,6 +169,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				IsExitNode:      n.IsExitNode,
 				MeshSubnet:      subnetCIDR,
 				IsShared:         n.IsPublicView() || n.IsExitNode,
+				DevTag:           devTag,
+				DevTagApplied:    devTagApplied,
 			})
 		}
 	}
@@ -162,6 +193,20 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			if len(n.IPAddresses) > 0 {
 				ip = n.IPAddresses[0]
 			}
+			// 2026-07-24: v0.28.0 — same devTag
+			// computation as the live branch. Snapshot
+			// rows cover nodes that headscale has
+			// reassigned to "tagged-devices" because of
+			// tag:private; the per-device tag was
+			// applied at snapshot time (see
+			// backfillNodeOwnership → AddTag) so the
+			// applied flag is the source of truth.
+			devTag := ""
+			devTagApplied := false
+			if username != "" && n.Hostname != "" {
+				devTag = fmt.Sprintf("tag:dev-%s-%s", username, n.Hostname)
+				devTagApplied = hasTag(n.Tags, devTag)
+			}
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
@@ -175,6 +220,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				IsExitNode:      n.IsExitNode,
 				MeshSubnet:      subnetCIDR,
 				IsShared:         n.IsPublicView() || n.IsExitNode,
+				DevTag:           devTag,
+				DevTagApplied:    devTagApplied,
 			})
 		}
 	}

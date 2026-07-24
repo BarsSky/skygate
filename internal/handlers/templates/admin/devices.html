@@ -35,6 +35,7 @@
         <th><i class="fa-solid fa-network-wired"></i> {{t "devices.ip"}}</th>
         <th><i class="fa-solid fa-circle-nodes"></i> Type</th>
         <th><i class="fa-solid fa-eye"></i> {{t "devices.tag"}}</th>
+        <th><i class="fa-solid fa-fingerprint"></i> {{t "devices.dev_tag_label"}}</th>
         <th><i class="fa-solid fa-signal"></i> {{t "devices.status"}}</th>
         <th><i class="fa-solid fa-clock"></i> {{t "devices.last_seen"}}</th>
         <th><i class="fa-solid fa-gear"></i> {{t "common.actions"}}</th>
@@ -63,6 +64,24 @@
             <span class="tag" title="default private — user-owned device"><i class="fa-solid fa-lock"></i>{{t "devices.tag_private"}}</span>
           {{else}}
             <span class="tag tag-warning" title="no headscale tag assigned"><i class="fa-solid fa-circle-exclamation"></i>{{t "devices.tag_untagged"}}</span>
+          {{end}}
+        </td>
+        <td>
+          {{$devTag := index $.DevTagMap .Hostname}}
+          {{if $devTag}}
+            {{/* Compute applied on the fly by scanning Tags; cheap
+                 because the slice is tiny (a node typically has
+                 1-3 tags). Admin view is read-only — no green/yellow
+                 pill, just the tag value as a small code chip. */}}
+            {{$applied := false}}
+            {{range .Tags}}{{if eq . $devTag}}{{$applied = true}}{{end}}{{end}}
+            {{if $applied}}
+              <span class="tag tag-success" title="{{t "devices.dev_tag_applied_help"}}"><i class="fa-solid fa-circle-check"></i><code style="font-size:10px;background:transparent">{{$devTag}}</code></span>
+            {{else}}
+              <span class="tag tag-warning" title="{{t "devices.dev_tag_pending_help"}}"><i class="fa-solid fa-hourglass-half"></i><code style="font-size:10px;background:transparent">{{$devTag}}</code></span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
           {{end}}
         </td>
         <td>

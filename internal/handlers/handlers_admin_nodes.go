@@ -29,11 +29,27 @@ func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	// control plane.
 	users, _ := a.HSGlobal().ListUsers()
 	allNodes, _ := a.HSGlobal().ListAllNodes()
+	// 2026-07-24: v0.28.0 — admin page surfaces the
+	// per-device ACL tag (tag:dev-<user>-<hostname>) for
+	// every node in node_owner_map. The list is small
+	// (one row per device, currently ~13), and a flat list
+	// keeps the template lookup O(1) via a map.
+	devTags, _ := db.GetPerUserDeviceTags(a.DB, "")
+	devTagMap := make(map[string]string, len(devTags))
+	for _, t := range devTags {
+		// Key by hostname — admin/devices.html iterates
+		// Nodes (headscale view) and looks up
+		// DevTagMap[.Hostname]. Hostname is unique across
+		// the tailnet (Tailscale rejects duplicates), so
+		// the map is 1:1.
+		devTagMap[t.Hostname] = t.Tag
+	}
 	a.renderWithLayout(w, r, "admin/devices.html", c, map[string]any{
 		"Nodes":        allNodes,
 		"Users":        users,
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
+		"DevTagMap":    devTagMap,
 	})
 }
 
