@@ -173,7 +173,13 @@
           {{end}}
         </td>
         <td>
-          {{if .AvailableRoutes}}
+          {{if .IsShared}}
+            {{/* exit-nodes и public ноды — shared infrastructure. Их AvailableRoutes
+                 (Telegram CIDRs, 0.0.0.0/0, karolina 148+ маршрутов) — это НЕ personal subnets
+                 пользователя. Показываем прочерк, реальный смысл — в колонке Mesh subnet
+                 через pill "shared". */}}
+            <span style="color:var(--text-subtle);font-size:11px" title="shared infrastructure — см. колонку Mesh subnet">—</span>
+          {{else if .AvailableRoutes}}
             {{range .AvailableRoutes}}
               <code class="route" style="font-size:11px;padding:1px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:3px;display:inline-block;margin:1px">{{.}}</code>
             {{end}}
