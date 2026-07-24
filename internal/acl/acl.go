@@ -375,24 +375,30 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// policy with "tag not found: tag:subnet-router".
 	sb.WriteString(",\n    \"tag:subnet-router\": [" + strings.Join(quoteAll(identities), ",") + "]\n")
 	// 2026-07-24: v0.28.0 — per-user-per-device tags.
-	// Each user gets a tagOwners entry covering every
-	// tag:dev-<user>-<device> the user owns (every
-	// device in node_owner_map for that user). Without
-	// these entries, the headscale parser rejects the
-	// policy with "tag not found" when it hits the
-	// per-device ACL rules above.
-	// The output is sorted by username for stable diffs
-	// across deploys (important for the operator's
-	// policy audit).
-	var usersWithDevTags []string
-	for uname := range tagsByUser {
-		usersWithDevTags = append(usersWithDevTags, uname)
+	// One tagOwners entry per (user, device) — headscale
+	// expects each tag to have its own line. Without
+	// these entries, the parser rejects the policy with
+	// "tag not found" when it hits the per-device ACL
+	// rules above. The output is sorted by (username,
+	// tag) for stable diffs across deploys (important
+	// for the operator's policy audit).
+	type tagOwner struct {
+		tag, owner string
 	}
-	sort.Strings(usersWithDevTags)
-	for _, uname := range usersWithDevTags {
-		tags := tagsByUser[uname]
-		sort.Strings(tags) // stable order within user
-		sb.WriteString(",\n    \"" + strings.Join(tags, "\",\"") + "\": [\"" + uname + "@" + baseDomain + "\"]\n")
+	var tagOwners []tagOwner
+	for uname, tags := range tagsByUser {
+		for _, tag := range tags {
+			tagOwners = append(tagOwners, tagOwner{tag: tag, owner: uname + "@" + baseDomain})
+		}
+	}
+	sort.Slice(tagOwners, func(i, j int) bool {
+		if tagOwners[i].tag != tagOwners[j].tag {
+			return tagOwners[i].tag < tagOwners[j].tag
+		}
+		return tagOwners[i].owner < tagOwners[j].owner
+	})
+	for _, to := range tagOwners {
+		sb.WriteString(",\n    \"" + to.tag + "\": [\"" + to.owner + "\"]\n")
 	}
 	sb.WriteString("  },\n")
 
