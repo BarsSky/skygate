@@ -78,3 +78,8 @@ backup/
 # Created by `docker secret create` during local bring-up; never commit.
 secrets/
 /secrets/
+
+# v0.27.0: go-sqlite3 fallback когда SKYGATE_DB=postgres:// —
+# binary без pq driver создаёт фейковую SQLite с этим именем.
+# Если увидишь postgres:/ в git status — обнови бинарник (Phase 1.1)
+postgres:/
