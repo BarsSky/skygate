@@ -271,6 +271,52 @@ func GetUserSubnetsForPlane(d *sql.DB, planeURL string) ([]UserSubnet, error) {
 	return out, rows.Err()
 }
 
+// PerUserDeviceTag is one (username, tag) pair returned by
+// GetPerUserDeviceTags. The tag is "tag:dev-<username>-<hostname>"
+// — the v0.28.0 per-device ACL tag.
+//
+// 2026-07-24: v0.28.0.
+type PerUserDeviceTag struct {
+	Username string
+	Hostname string
+	Tag      string
+}
+
+// GetPerUserDeviceTags returns every (username, hostname, tag)
+// triple on the given control plane. Used by GenerateACL to
+// register each per-device tag in tagOwners (so the headscale
+// parser accepts the policy) and to build the per-device
+// rule src list.
+//
+// planeURL == "" means the global default plane. The query
+// filters out rows with empty hostname (a deleted or
+// never-registered device would have hostname=""), since
+// the ACL builder can't reference a tag without a hostname.
+//
+// Tags are produced in deterministic order (sorted by
+// username then hostname) so the rendered policy is stable
+// across rebuilds — important for diffing audits.
+//
+// 2026-07-24: v0.28.0.
+func GetPerUserDeviceTags(d *sql.DB, planeURL string) ([]PerUserDeviceTag, error) {
+	_ = planeURL // TODO: filter by user.headscale_url when per-plane is wired up
+	rows, err := d.Query(qSelectPerUserDeviceTags)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PerUserDeviceTag
+	for rows.Next() {
+		var t PerUserDeviceTag
+		if err := rows.Scan(&t.Username, &t.Hostname, &t.Tag); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+
 // SharedSubnet is one row of GetSharedSubnetsForPlane: a
 // grantor whose subnet is shared with the grantee.
 // CIDR is the grantor's per-user CIDR (routable
