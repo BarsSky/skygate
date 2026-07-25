@@ -2545,6 +2545,60 @@ speed; VM `make test` green = ship.
 Quick rule: before any `git push`, ssh to the VM, pull, and run
 `make test`. Only push if `FINAL_EXIT=0`.
 
+### Updating the VM (canonical procedure)
+
+The skygate container is managed by `docker compose` — never use
+`docker run` manually. The compose file has all the right mounts,
+env, secrets, and capabilities; manual `docker run` skips them and
+the container fails to build skygate (no source mount).
+
+```bash
+ssh admin@192.0.2.1
+cd /home/admin/skygate
+
+# 1. Pull latest main
+git fetch origin && git merge --ff-only origin/main
+
+# 2. Fix root-owned tailscale dirs (container tailscaled runs as
+#    root; the bind-mounted state dir gets re-owned). Without
+#    this, `go test ./...` on the VM fails with
+#    "permission denied" on data/ts/profile-data/*.
+sudo chown -R admin:admin data/ts/
+
+# 3. Build the new image (compose uses the local Dockerfile +
+#    the bind-mounted source)
+docker compose build skygate
+
+# 4. Recreate the container with the new image
+docker compose up -d skygate
+
+# 5. Wait for /healthz (first build can take 3-5 min)
+until curl -fsS http://localhost:8080/healthz >/dev/null; do
+  sleep 5
+done
+
+# 6. Verify the new build label
+curl -s http://localhost:8080/healthz | python3 -c \
+  "import sys,json; print('build:', json.load(sys.stdin)['build'])"
+
+# 7. Run verify-post from the OPERATOR'S machine (Windows/Linux/Mac)
+#    — the script SSHes into the VM and runs the 25-check catalog.
+#    Cannot run on the VM itself (it would SSH into itself).
+# On the operator's workstation:
+make verify-post
+# Expected: 26 PASS, 0 FAIL
+```
+
+If `docker compose up -d` fails with "container name /skygate is
+already in use", the previous attempt left a dangling container.
+Fix:
+
+```bash
+docker stop skygate
+docker rm skygate
+docker compose up -d skygate
+```
+
 ---
 
 ## Smoke testing (make test)
