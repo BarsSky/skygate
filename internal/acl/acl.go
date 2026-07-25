@@ -691,9 +691,9 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// subnets + shared + mesh) and emit one host entry
 	// per unique pair BEFORE the grants block.
 	//
-	// Naming convention: "h:user-<uname>-subnet" for
-	// personal subnets, "h:shared-<sanitized-cidr>" for
-	// shared / mesh entries. The "h:" prefix is unique
+	// Naming convention: "h-user-<uname>-subnet" for
+	// personal subnets, "h-shared-<sanitized-cidr>" for
+	// shared / mesh entries. The "h-" prefix is unique
 	// enough to never collide with a username, group,
 	// tag, or autogroup (which all use their own
 	// reserved prefixes per headscale's parseAlias).
@@ -719,7 +719,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			continue
 		}
 		if ownCIDR := subByUser[uname]; ownCIDR != "" {
-			addHost("h:user-"+uname+"-subnet", ownCIDR)
+			addHost("h-user-"+uname+"-subnet", ownCIDR)
 		}
 	}
 	// Shared / mesh CIDRs (deduplicated by the addHost
@@ -736,7 +736,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			// alias name: "." and "/" → "-", ":" (IPv6)
 			// → "_". The result is unique per
 			// CIDR (dedup via seenHost).
-			name := "h:shared-" + strings.NewReplacer(
+			name := "h-shared-" + strings.NewReplacer(
 				".", "-", "/", "-", ":", "_").Replace(cidr)
 			addHost(name, cidr)
 		}
@@ -786,7 +786,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		// policy parser accepts a host alias in
 		// dst but not a CIDR+port.
 		if ownCIDR := subByUser[uname]; ownCIDR != "" {
-			dst = append(dst, "h:user-"+uname+"-subnet:*")
+			dst = append(dst, "h-user-"+uname+"-subnet:*")
 		}
 		dedupSet := make(map[string]bool, len(dst))
 		for _, d := range dst {
@@ -799,7 +799,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			// Same sanitization as the hosts
 			// pre-pass above so the alias names
 			// match exactly.
-			hostName := "h:shared-" + strings.NewReplacer(
+			hostName := "h-shared-" + strings.NewReplacer(
 				".", "-", "/", "-", ":", "_").Replace(sharedCIDR)
 			entry := hostName + ":*"
 			if dedupSet[entry] {
