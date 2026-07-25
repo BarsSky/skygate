@@ -7,8 +7,21 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.26.0 — end-to-end subnet-router pilot + HA-ready
-  probes ([tag v0.26.0](https://github.com/BarsSky/skygate/releases/tag/v0.26.0)).
+* **Current**: v0.28.3 — close exit-node bypass
+  ([tag v0.28.3](https://github.com/BarsSky/skygate/releases/tag/v0.28.3)).
+  The "msi без правил имеет доступ к сайтам и подсетям что только для
+  skyworker" fix. Catch-all `* → autogroup:internet` was the bypass:
+  any device could use any exit-node for arbitrary internet
+  destinations, including karolina's 148 PrimaryRoutes. Fix has two
+  parts: (1) per-user grant dst now includes `autogroup:internet`
+  (every user can reach the internet through their own grant, and the
+  via constraint pins them to their preferred exit-node if set);
+  (2) catch-all src is changed from `*` to `tag:public` — only relay
+  nodes can use `autogroup:internet` themselves (i.e. FORWARD
+  exit-node traffic to the internet). 3 NEW tests + 5 UPDATED.
+  `go test ./internal/acl/...` PASS. Smoke RU+EN 83/83. Live policy:
+  4 per-user grants with `autogroup:internet` in dst, 3 with `via`,
+  catch-all `tag:public → autogroup:internet` for relay forwarding.
   The "real proof that the per-user subnet-router flow
   works end-to-end" release. 5 things in one:
   1. `e2e_pilot.sh` (root) automates the full
@@ -57,6 +70,37 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   filed as v0.26.1 follow-up). No env-var changes,
   no schema migration, no breaking changes.
   ~830 lines added (5 files new, 11 modified, 1 test).
+
+* **Previous**: v0.28.2 — `hosts:` block workaround for headscale 0.29.2
+  grants parser ([tag v0.28.2](https://github.com/BarsSky/skygate/releases/tag/v0.28.2)).
+  Workaround for headscale 0.29.2's grants parser (parseAlias does NOT
+  split alias:port). Pre-collect all CIDRs referenced by a grant as
+  host aliases in `hosts:` block, reference bare alias (no `:*`) in
+  dst. `h-` prefix (headscale hostname validation rejects `:`). 6
+  fix commits required to pass all 6 headscale errors. Final state:
+  249 grants, 212 hosts, 3 per-exit-node tagOwners entries, via
+  enforced for skyadmin/michail/daniil.
+
+* **Previous**: v0.28.1 — per-user preferred exit-node (UI + data model)
+  ([tag v0.28.1](https://github.com/BarsSky/skygate/releases/tag/v0.28.1)).
+  The "v0.28.1 data model" release. Migration v0.45:
+  `user_exit_node_prefs` table. `GenerateACLWithViaForPlane` emits
+  per-user grants with `via: ["<tag>"]`. `SKYGATE_ACL_VIA_ENABLED`
+  config (default `false`). UI: `/admin/users/{id}/subnet` dropdown +
+  `/my/exit-nodes` "Set as my preferred" button. 4 unit tests + 16
+  i18n keys × 2 langs. **Known limitation**: headscale 0.29.2 grants
+  parser rejects CIDR+port in dst (HTTP 500). Fix is v0.28.2.
+
+* **Previous**: v0.28.0 — per-device ACL via `tag:dev-<user>-<device>`
+  ([tag v0.28.0](https://github.com/BarsSky/skygate/releases/tag/v0.28.0)).
+  The "rules for skyworker should not propagate to msi" release. The
+  v0.27-and-earlier `device_ip` src was vulnerable to (a) Tailscale IP
+  changes on reconnect, (b) any device acquiring the same IP
+  inheriting the rule. v0.28.0: every device carries a unique
+  per-user-per-device tag (e.g. `tag:dev-skyadmin-skyworker`); ACL
+  references the tag as src. Tags survive IP changes, deterministic,
+  headscale's tagOwners scopes per-user. Migration v0.44: `user_name`
+  + `device_hostname` columns. 5 new tests + 8 i18n keys × 2 langs.
 
 * **Previous**: v0.25.1 — Closing the loose ends (audit export + DR runbook + cleanup)
   ([tag v0.25.1](https://github.com/BarsSky/skygate/releases/tag/v0.25.1)).
