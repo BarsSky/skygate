@@ -741,6 +741,25 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			addHost(name, cidr)
 		}
 	}
+	// 2026-07-25: v0.28.2 — per-device rule targets
+	// (Telegram CIDRs, custom IPs) ALSO need host
+	// aliases. Pre-collect them here so the hosts
+	// block (emitted below) contains every alias
+	// referenced in the grants block.
+	for _, e := range aclRows {
+		if e.TargetType != "subnet" && e.TargetType != "ip" {
+			continue
+		}
+		if e.Action != "accept" {
+			continue
+		}
+		if e.TargetValue == "" {
+			continue
+		}
+		ruleAlias := "h-rule-" + strings.NewReplacer(
+			".", "-", "/", "-", ":", "_").Replace(e.TargetValue)
+		addHost(ruleAlias, e.TargetValue)
+	}
 
 	var sb strings.Builder
 	sb.WriteString("{\n  \"hosts\": {\n")
@@ -851,22 +870,22 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			src = fmt.Sprintf("\"%s\"", e.DeviceIP)
 		}
 		// 2026-07-25: v0.28.2 — per-device rules
-		// reference CIDR targets (Telegram IP
-		// blocks, custom IPs). Same headscale
-		// v2 parser constraint: dst with
-		// CIDR+port is rejected. Workaround:
-		// emit each unique target as a host
-		// alias in the hosts block, then
-		// reference the bare alias here (no
-		// :*, ip: ["*"] covers any port).
+		// reference the host alias (pre-collected
+		// above). Bare alias in dst (no :*) — the
+		// v2 parser doesn't split alias:port.
 		ruleAlias := "h-rule-" + strings.NewReplacer(
 			".", "-", "/", "-", ":", "_").Replace(e.TargetValue)
-		addHost(ruleAlias, e.TargetValue)
 		sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"] }")
 	}
 
-	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:public:*\"], \"ip\": [\"*\"] }")
-	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:exit-node:*\"], \"ip\": [\"*\"] }")
+	// 2026-07-25: v0.28.2 — catch-all dst references
+	// dropped the :* suffix too. The "tag:public" /
+	// "tag:exit-node" / "autogroup:internet" aliases
+	// are accepted by parseAlias (isTag / isAutogroup),
+	// but the trailing :* breaks the v2 parser. With
+	// ip: ["*"] the dst is "any port" anyway.
+	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:public\"], \"ip\": [\"*\"] }")
+	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:exit-node\"], \"ip\": [\"*\"] }")
 	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
 	sb.WriteString("\n  ],\n")
 
