@@ -786,7 +786,17 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		// policy parser accepts a host alias in
 		// dst but not a CIDR+port.
 		if ownCIDR := subByUser[uname]; ownCIDR != "" {
-			dst = append(dst, "h-user-"+uname+"-subnet:*")
+			// 2026-07-25: v0.28.2 — headscale 0.29.2's
+			// parseAlias does NOT split the alias and
+			// the port. The dst string "h-user-X:*"
+			// gets passed to parseAlias whole, and
+			// isHost("h-user-X:*") returns false
+			// because the host is defined without
+			// the :* suffix. The fix: drop the :*
+			// from dst; the `ip: ["*"]` below
+			// already means "any port", so the dst
+			// can be the bare alias.
+			dst = append(dst, "h-user-"+uname+"-subnet")
 		}
 		dedupSet := make(map[string]bool, len(dst))
 		for _, d := range dst {
@@ -801,12 +811,14 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			// match exactly.
 			hostName := "h-shared-" + strings.NewReplacer(
 				".", "-", "/", "-", ":", "_").Replace(sharedCIDR)
-			entry := hostName + ":*"
-			if dedupSet[entry] {
+			// 2026-07-25: v0.28.2 — same as
+			// above: drop the :* (ip: ["*"] covers
+			// any port).
+			if dedupSet[hostName] {
 				continue
 			}
-			dedupSet[entry] = true
-			dst = append(dst, entry)
+			dedupSet[hostName] = true
+			dst = append(dst, hostName)
 		}
 		sb.WriteString("    { \"src\": [\"" + idn + "\"], \"dst\": [")
 		for j, d := range dst {

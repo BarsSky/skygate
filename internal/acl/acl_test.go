@@ -1324,7 +1324,10 @@ func TestGenerateACLWithVia_GrantsReferenceHostAliases(t *testing.T) {
 		t.Fatalf("GenerateACLWithVia: %v", err)
 	}
 	// Per-user grant's dst must include the host alias.
-	wantAlias := `"h-user-alice-subnet:*"`
+	// We use the bare alias (no :*) because headscale's
+	// parseAlias does NOT split alias:port. The `ip: ["*"]`
+	// in the same grant already means "any port".
+	wantAlias := `"h-user-alice-subnet"`
 	if !strings.Contains(aclStr, wantAlias) {
 		t.Errorf("per-user grant must reference %s.\nACL:\n%s", wantAlias, aclStr)
 	}
