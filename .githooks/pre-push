@@ -1,0 +1,62 @@
+#!/bin/bash
+# .githooks/pre-push — local gate for `git push`.
+#
+# Runs the v0.28.5 guarantee catalog (B1-B10) before allowing
+# the push. If any check fails, the push is aborted.
+#
+# Enable:
+#   git config core.hooksPath .githooks
+#
+# Disable for one push (e.g. you have a reason):
+#   git push --no-verify
+#
+# Cross-platform: pure bash. Works on Linux, macOS, and Windows
+# (Git Bash / WSL2). Looks for `go` in the same places the
+# verify_pre_deploy.sh script does, so this hook and the script
+# can never disagree about the toolchain.
+#
+# 2026-07-25: v0.28.6 — first cut.
+
+set -u
+
+# 1. Locate go (mirror the search in scripts/verify_pre_deploy.sh)
+GO=""
+if command -v go >/dev/null 2>&1; then
+  GO="go"
+else
+  for cand in \
+    "/c/Program Files/Go/bin/go.exe" \
+    "/mnt/c/Program Files/Go/bin/go.exe" \
+    "/usr/local/go/bin/go" \
+    "/usr/lib/go/bin/go" \
+    "/opt/go/bin/go"; do
+    if [ -x "$cand" ]; then GO="$cand"; break; fi
+  done
+fi
+if [ -z "$GO" ]; then
+  echo "pre-push: go not found — install Go or set PATH" >&2
+  echo "pre-push: skipping guarantee catalog (push will proceed)" >&2
+  exit 0
+fi
+
+# 2. Find repo root (parent of .githooks/). The hook script lives
+# in .githooks/pre-push; its parent is the repo root.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+echo "pre-push: running v0.28.5 guarantee catalog (B1-B10)..."
+echo
+
+# 3. Run the catalog. Don't use `make` because make on Windows
+# defaults to cmd.exe — call the script directly.
+if bash scripts/verify_pre_deploy.sh; then
+  echo
+  echo "pre-push: catalog green — push allowed"
+  exit 0
+else
+  echo
+  echo "pre-push: catalog RED — push ABORTED" >&2
+  echo "pre-push: fix the failing guarantee and re-push." >&2
+  echo "pre-push: bypass with 'git push --no-verify' (NOT recommended)." >&2
+  exit 1
+fi
