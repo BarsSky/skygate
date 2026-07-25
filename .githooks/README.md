@@ -37,6 +37,49 @@ the script uses. If `go` can't be found, the hook skips the
 catalog and lets the push proceed (with a warning) — this
 avoids breaking `git push` on a fresh clone without Go installed.
 
+#### Auto-detection: SKYGATE_BASH_MOUNT_ROOT
+
+The Windows test in `internal/headscale` (`TestProvisionUser_*`)
+needs to translate Windows paths (`C:\foo\bar`) to bash-style
+(`/mnt/c/foo/bar` on WSL2 or `/c/foo/bar` on Git Bash). The
+hook auto-detects which mount point exists and sets
+`SKYGATE_BASH_MOUNT_ROOT` accordingly:
+
+- `/mnt/c` exists → `SKYGATE_BASH_MOUNT_ROOT=/mnt` (WSL2)
+- `/c` exists → `SKYGATE_BASH_MOUNT_ROOT=/` (Git Bash)
+
+This is set ONLY for the hook's child process (export, not
+written to your shell). To use the same in your own `go test`
+invocations, run:
+
+```bash
+# WSL2 (auto-detected, usually no need to set)
+go test ./...
+
+# Git Bash on Windows
+SKYGATE_BASH_MOUNT_ROOT=/ go test ./...
+```
+
+#### Known limitation: Git Bash + internal/headscale tests
+
+On **Git Bash** (Windows), the
+`internal/headscale/provision_test.go` tests still fail with
+`exit 127 (No such file or directory)`. Root cause: Go on
+Windows is a Windows binary; it can't detect at runtime which
+bash shell will be invoked. The test setup writes the bootstrap
+script to a Windows temp path, then `runScript` translates the
+path and exec's bash. On WSL2, bash finds the file at
+`/mnt/c/...`. On Git Bash, the path is `/c/...` but the exec
+somehow resolves it relative to `C:\Program Files\Git\`
+(causing the spurious `C:/Program Files/Git//c/...` prefix in
+the error message).
+
+**Workaround**: use WSL2 (the operator's actual setup, per
+`AGENTS.md`), or run `git push --no-verify` from Git Bash and
+rely on the Linux CI to catch any real regressions. The CI
+runs on `ubuntu-24.04` and is unaffected by this Windows-only
+path-translation issue.
+
 ## How to enable
 
 ```bash
