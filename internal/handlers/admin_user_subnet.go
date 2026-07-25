@@ -120,8 +120,11 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 	// headscale view (admin path, not per-plane — exit
 	// nodes are shared infra; the per-user plane routing
 	// in v0.12.0 doesn't apply to them).
+	// 2026-07-25: v0.28.5 — also surface ViaEnabled for
+	// the "Strict pinning" checkbox.
 	if pref, err := db.GetUserExitNodePref(a.DB, id); err == nil {
 		data["PreferredExitNodeTag"] = pref.ExitNodeTag
+		data["ViaEnabled"] = pref.ViaEnabled
 	}
 	// Build the list of available exit-nodes. We use
 	// the headscale client's ListAllNodes and filter to
@@ -420,14 +423,20 @@ func (a *App) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *http.Re
 		return
 	}
 	tag := strings.TrimSpace(r.FormValue("tag"))
-	if err := db.SetUserExitNodePref(a.DB, id, tag, c.UserID); err != nil {
+	// 2026-07-25: v0.28.5 — strict pinning is opt-in.
+	// Default OFF for Android compatibility. Admin can
+	// explicitly flip the flag to pin a specific user
+	// to a specific exit-node (e.g. msi → karolina
+	// for a Windows box that supports via).
+	viaEnabled := r.FormValue("via") == "1"
+	if err := db.SetUserExitNodePref(a.DB, id, tag, c.UserID, viaEnabled); err != nil {
 		renderUserSubnetPage(a, w, r, c, id, map[string]any{
 			"FlashError": fmt.Sprintf("set preferred exit: %v", err),
 		})
 		return
 	}
 	a.audit(c.UserID, c.Username, "preferred_exit_set",
-		fmt.Sprintf("user_id=%d tag=%q", id, tag))
+		fmt.Sprintf("user_id=%d tag=%q via=%v", id, tag, viaEnabled))
 	// Re-apply ACL so the via field (or its absence)
 	// takes effect on the next device load.
 	_, planeURL, _ := readUserForSubnetPage(a, id)

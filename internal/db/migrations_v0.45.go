@@ -59,12 +59,20 @@ import (
 // the preference, the user / admin UPDATEs the row.
 //
 // 2026-07-24: v0.28.1.
+// 2026-07-25: v0.28.5 — added ViaEnabled. When true,
+// the ACL builder emits `via=[]` in the per-user grant,
+// pinning the user to ExitNodeTag. When false, the
+// per-user grant has dst=autogroup:internet with NO via
+// (the user can use any exit-node — needed for older
+// Tailscale clients like Android that reject via in
+// the policy).
 type ExitNodePref struct {
 	UserID       int64
 	Username     string
 	ExitNodeTag  string
 	UpdatedAt    int64
 	SetByUserID  int64
+	ViaEnabled   bool
 }
 
 // GetUserExitNodePref returns the user's preferred exit-node
@@ -74,16 +82,22 @@ type ExitNodePref struct {
 // extra round-trip.
 //
 // 2026-07-24: v0.28.1.
+// 2026-07-25: v0.28.5 — also returns ViaEnabled so the
+// caller can show the strict-pinning state in the UI.
 func GetUserExitNodePref(d *sql.DB, userID int64) (ExitNodePref, error) {
 	var p ExitNodePref
+	var viaEnabled int
 	err := d.QueryRow(`
-		SELECT p.user_id, pu.username, p.exit_node_tag, p.updated_at, p.set_by_user_id
+		SELECT p.user_id, pu.username, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM user_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 WHERE p.user_id = ?`, userID,
-	).Scan(&p.UserID, &p.Username, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID)
+	).Scan(&p.UserID, &p.Username, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled)
 	if err == sql.ErrNoRows {
 		return p, nil
+	}
+	if err == nil {
+		p.ViaEnabled = viaEnabled != 0
 	}
 	return p, err
 }
@@ -97,20 +111,31 @@ func GetUserExitNodePref(d *sql.DB, userID int64) (ExitNodePref, error) {
 // "alice set this herself" vs. "admin set this for alice"
 // on /admin/users/{id}/subnet.
 //
-// 2026-07-24: v0.28.1.
-func SetUserExitNodePref(d *sql.DB, userID int64, exitNodeTag string, setByUserID int64) error {
+// 2026-07-25: v0.28.5 — added viaEnabled param. When true,
+// the ACL builder emits via=[] in the per-user grant. When
+// false (the new default for fresh rows), the per-user
+// grant has dst=autogroup:internet with no via (Android-
+// friendly). Existing rows are migrated to via_enabled=1
+// (backwards compat with v0.28.1-v0.28.4 — the operator
+// has to explicitly flip to 0 to un-pin).
+func SetUserExitNodePref(d *sql.DB, userID int64, exitNodeTag string, setByUserID int64, viaEnabled bool) error {
 	if exitNodeTag == "" {
 		_, err := d.Exec(`DELETE FROM user_exit_node_prefs WHERE user_id = ?`, userID)
 		return err
 	}
+	viaInt := 0
+	if viaEnabled {
+		viaInt = 1
+	}
 	_, err := d.Exec(`
-		INSERT INTO user_exit_node_prefs (user_id, exit_node_tag, set_by_user_id, updated_at)
-		VALUES (?, ?, ?, strftime('%s','now'))
+		INSERT INTO user_exit_node_prefs (user_id, exit_node_tag, set_by_user_id, updated_at, via_enabled)
+		VALUES (?, ?, ?, strftime('%s','now'), ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			exit_node_tag = excluded.exit_node_tag,
 			set_by_user_id = excluded.set_by_user_id,
-			updated_at = excluded.updated_at`,
-		userID, exitNodeTag, setByUserID)
+			updated_at = excluded.updated_at,
+			via_enabled = excluded.via_enabled`,
+		userID, exitNodeTag, setByUserID, viaInt)
 	return err
 }
 
@@ -120,10 +145,14 @@ func SetUserExitNodePref(d *sql.DB, userID int64, exitNodeTag string, setByUserI
 // is small (4-10 rows in production) so we don't worry
 // about pagination.
 //
-// 2026-07-24: v0.28.1.
+// 2026-07-25: v0.28.5 — also returns ViaEnabled. The ACL
+// builder uses this to decide whether to emit via=[] in
+// the per-user grant (via_enabled=true) or skip the via
+// (via_enabled=false — the user has a "default" exit-node
+// for the UI but no policy-level pinning).
 func ListAllUserExitNodePrefs(d *sql.DB) ([]ExitNodePref, error) {
 	rows, err := d.Query(`
-		SELECT p.user_id, pu.username, p.exit_node_tag, p.updated_at, p.set_by_user_id
+		SELECT p.user_id, pu.username, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM user_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 ORDER BY pu.username`)
@@ -134,9 +163,11 @@ func ListAllUserExitNodePrefs(d *sql.DB) ([]ExitNodePref, error) {
 	var out []ExitNodePref
 	for rows.Next() {
 		var p ExitNodePref
-		if err := rows.Scan(&p.UserID, &p.Username, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID); err != nil {
+		var viaEnabled int
+		if err := rows.Scan(&p.UserID, &p.Username, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled); err != nil {
 			return nil, err
 		}
+		p.ViaEnabled = viaEnabled != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()

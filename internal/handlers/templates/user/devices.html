@@ -217,14 +217,33 @@
         <td>
           {{if .DeviceExitPref}}
             <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{.DeviceExitPref}}</code></span>
-            <form method="post" action="/my/devices/preferred-exit" style="display:inline-block;margin-left:6px" onsubmit="return confirm('{{t "devices.device_exit_pref_clear_confirm"}}')">
+            {{if .DeviceExitViaEnabled}}
+              <span class="tag tag-warning" style="font-size:9px;margin-left:2px" title="{{t "devices.device_exit_via_enabled_help"}}"><i class="fa-solid fa-lock"></i> {{t "devices.device_exit_via_strict"}}</span>
+            {{else}}
+              <span class="tag" style="font-size:9px;margin-left:2px;background:var(--text-subtle);color:var(--bg-card)" title="{{t "devices.device_exit_via_disabled_help"}}"><i class="fa-solid fa-unlock"></i> {{t "devices.device_exit_via_any"}}</span>
+            {{end}}
+            <form method="post" action="/my/devices/preferred-exit" style="display:inline-block;margin-left:4px" onsubmit="return confirm('{{t "devices.device_exit_pref_clear_confirm"}}')">
               <input type="hidden" name="hostname" value="{{.Hostname}}">
               <input type="hidden" name="tag" value="">
+              <input type="hidden" name="via" value="{{if .DeviceExitViaEnabled}}1{{else}}0{{end}}">
               <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 6px" title="{{t "devices.device_exit_pref_clear_help"}}"><i class="fa-solid fa-xmark"></i></button>
+            </form>
+            {{/* v0.28.5: per-device via opt-in toggle. Click
+                 the lock icon to flip the flag; the form
+                 submits the current pref tag + the flipped
+                 via value. */}}
+            <form method="post" action="/my/devices/preferred-exit" style="display:inline-block;margin-left:4px">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="{{.DeviceExitPref}}">
+              <input type="hidden" name="via" value="{{if .DeviceExitViaEnabled}}0{{else}}1{{end}}">
+              <button type="submit" class="btn btn-ghost" style="font-size:9px;padding:2px 5px" title="{{if .DeviceExitViaEnabled}}{{t "devices.device_exit_via_disable_help"}}{{else}}{{t "devices.device_exit_via_enable_help"}}{{end}}">
+                <i class="fa-solid fa-{{if .DeviceExitViaEnabled}}unlock{{else}}lock{{end}}"></i>
+              </button>
             </form>
           {{else}}
             <form method="post" action="/my/devices/preferred-exit" style="display:inline-flex;gap:4px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
               <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="via" value="0">
               <select name="tag" style="font-size:11px;padding:2px 4px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
                 {{range $.AvailableExitNodes}}
                   {{$tag := printf "tag:exit-%s" (printf "%s" .Hostname | tolower)}}

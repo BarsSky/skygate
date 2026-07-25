@@ -261,6 +261,15 @@ var ruCatalog = map[string]string{
 	"devices.device_exit_pref_set_button_help": "привязать устройство к выбранному exit-node",
 	"devices.device_exit_pref_clear_help":    "снять per-device привязку — устройство вернётся к per-user default",
 	"devices.device_exit_pref_clear_confirm": "Снять per-device привязку к exit-node? Устройство вернётся к per-user default.",
+	// 2026-07-25: v0.28.5 — per-device via opt-in labels
+	// (default OFF for Android; the lock icon shows
+	// when strict mode is enabled).
+	"devices.device_exit_via_enabled_help":   "per-device strict mode ON — этот device pinned к этому exit-node (перебивает per-user default). Старые Tailscale клиенты (Android) могут отвергнуть такую policy.",
+	"devices.device_exit_via_disabled_help":  "per-device strict mode OFF — это устройство может использовать любой exit-node (Android-friendly).",
+	"devices.device_exit_via_strict":         "strict",
+	"devices.device_exit_via_any":            "any",
+	"devices.device_exit_via_disable_help":   "выключить strict mode (Android-friendly)",
+	"devices.device_exit_via_enable_help":    "включить strict mode (pin к этому exit-node)",
 	"devices.no_devices":              "Нет устройств",
 	"devices.name":                    "Имя",
 	"devices.expires_in":              "Истекает через",
@@ -502,6 +511,20 @@ var ruCatalog = map[string]string{
 	"exit_nodes.preferred_clear_button": "Clear",
 	"exit_nodes.preferred_clear_help":  "Remove the preferred exit-node. Traffic will route through any available exit-node.",
 	"exit_nodes.preferred_set_ok":      "Preferred exit-node updated. The new policy is live (headscale `via` enforcement).",
+	// 2026-07-25: v0.28.5 — explicit opt-in for the
+	// per-user `via` constraint. Default OFF (Android-
+	// friendly); turn ON to pin the user to the
+	// preferred exit-node (older Tailscale clients
+	// like Android reject policies with `via` they
+	// don't understand, blocking all exit-node access).
+	"exit_nodes.via_title":                  "Strict pinning (via)",
+	"exit_nodes.via_intro":                  "When ON, the headscale ACL pins your traffic to the preferred exit-node. When OFF, you can use any of the available exit-nodes (Android-friendly — older Tailscale clients reject policies with `via` and lose all exit-node access when it's enabled).",
+	"exit_nodes.via_checkbox_label":         "Pin me to the preferred exit-node (strict mode)",
+	"exit_nodes.via_checkbox_help":          "uncheck for any-exit-node, check for strict pinning",
+	"exit_nodes.via_enabled_label":          "strict",
+	"exit_nodes.via_enabled_help":           "headscale packet-filter pins your traffic to the preferred exit-node. Older Tailscale clients (Android) may reject this policy.",
+	"exit_nodes.via_disabled_label":         "any exit-node",
+	"exit_nodes.via_disabled_help":          "You can pick any of the available exit-nodes in the Tailscale GUI. No `via` constraint is emitted.",
 	"exit_nodes.admin_subtitle":       "Зарегистрированные exit-ноды и их advertised-routes",
 	"exit_nodes.add":                  "Добавить exit node",
 	"exit_nodes.add_form":             "Новый exit node",
@@ -1021,6 +1044,10 @@ var ruCatalog = map[string]string{
 	"user_subnet.preferred_exit_button":   "Сохранить",
 	"user_subnet.preferred_exit_currently": "Сейчас активно",
 	"user_subnet.preferred_exit_default_help": "Не выбрано — вы можете ходить через любую доступную exit-ноду (emilia, sharlotta, karolina). Чтобы закрепить трафик за конкретной нодой, выберите её в выпадающем списке и нажмите Сохранить.",
+	// 2026-07-25: v0.28.5 — strict pinning (via) opt-in
+	// для per-user pref. По умолчанию ВЫКЛ (Android-friendly).
+	"user_subnet.preferred_exit_via_label":  "Strict (via)",
+	"user_subnet.preferred_exit_via_help":   "когда ВКЛ, headscale ACL пинит трафик пользователя к этой exit-ноде. Старые Tailscale клиенты (Android) могут отвергнуть такую policy.",
 	"user_subnet.no_exit_nodes":           "Нет ни одной exit-ноды в headscale. Сначала добавьте ноду с <code>tag:exit-node</code> через /admin/exit-nodes.",
 	"user_subnet.v0_16_0_note_title":    "Что в v0.16.0 vs v0.16.1",
 	"user_subnet.v0_16_0_note_body":     "<b>v0.16.0 (этот релиз):</b> schema + CIDR allocator + admin UI + бот <code>/mysubnet</code>. Кнопка <i>«Выделить subnet»</i> создаёт запись в <code>user_subnets</code> со статусом <code>pending</code>.<br><br><b>v0.16.1:</b> реальный sidecar контейнер + headscale preauth + node tagging + route approval. После deploy v0.16.1 кнопка <i>«Sanity check»</i> покажет router node_id, а бот <code>/mysubnet</code> покажет статус <code>active</code> вместо <code>pending</code>.",
@@ -2389,6 +2416,13 @@ var enCatalog = map[string]string{
 	"devices.device_exit_pref_set_button_help": "pin this device to the selected exit-node",
 	"devices.device_exit_pref_clear_help":    "clear the per-device pin — device falls back to the per-user default",
 	"devices.device_exit_pref_clear_confirm": "Clear the per-device exit-node pin? The device will fall back to the per-user default.",
+	// 2026-07-25: v0.28.5 — per-device via opt-in labels.
+	"devices.device_exit_via_enabled_help":   "per-device strict mode ON — this device is pinned to this exit-node (overrides the per-user default). Older Tailscale clients (Android) may reject this policy.",
+	"devices.device_exit_via_disabled_help":  "per-device strict mode OFF — this device can use any exit-node (Android-friendly).",
+	"devices.device_exit_via_strict":         "strict",
+	"devices.device_exit_via_any":            "any",
+	"devices.device_exit_via_disable_help":   "disable strict mode (Android-friendly)",
+	"devices.device_exit_via_enable_help":    "enable strict mode (pin to this exit-node)",
 	"devices.no_devices":              "No devices",
 	"devices.name":                    "Name",
 	"devices.expires_in":              "Expires in",
@@ -2630,6 +2664,15 @@ var enCatalog = map[string]string{
 	"exit_nodes.preferred_clear_button": "Clear",
 	"exit_nodes.preferred_clear_help":  "Remove the preferred exit-node. Traffic will route through any available exit-node.",
 	"exit_nodes.preferred_set_ok":      "Preferred exit-node updated. The new policy is live (headscale `via` enforcement).",
+	// 2026-07-25: v0.28.5 — RU перевод для opt-in via.
+	"exit_nodes.via_title":                  "Strict pinning (via)",
+	"exit_nodes.via_intro":                  "Когда ВКЛ, headscale ACL пинит ваш трафик к preferred exit-node. Когда ВЫКЛ — можно использовать любой доступный exit-node (Android-friendly: старые Tailscale клиенты отвергают policy с `via` и теряют весь exit-node доступ).",
+	"exit_nodes.via_checkbox_label":         "Привязать меня к preferred exit-node (strict mode)",
+	"exit_nodes.via_checkbox_help":          "снимите для any-exit-node, поставьте для strict pinning",
+	"exit_nodes.via_enabled_label":          "strict",
+	"exit_nodes.via_enabled_help":           "headscale packet-filter пинит ваш трафик к preferred exit-node. Старые Tailscale клиенты (Android) могут отвергнуть такую policy.",
+	"exit_nodes.via_disabled_label":         "any exit-node",
+	"exit_nodes.via_disabled_help":          "Можно выбрать любой доступный exit-node в Tailscale GUI. `via` constraint не эмитится.",
 	"exit_nodes.admin_subtitle":       "Registered exit nodes and their advertised routes",
 	"exit_nodes.add":                  "Add exit node",
 	"exit_nodes.add_form":             "New exit node",
@@ -3140,6 +3183,9 @@ var enCatalog = map[string]string{
 	"user_subnet.preferred_exit_button":   "Save",
 	"user_subnet.preferred_exit_currently": "Currently active",
 	"user_subnet.preferred_exit_default_help": "No preference set — your traffic may exit through any available exit-node (emilia, sharlotta, karolina). Pick one in the dropdown to pin your traffic.",
+	// 2026-07-25: v0.28.5 — strict pinning (via) opt-in.
+	"user_subnet.preferred_exit_via_label":  "Strict (via)",
+	"user_subnet.preferred_exit_via_help":   "when ON, headscale ACL pins this user's traffic to the chosen exit-node. Older Tailscale clients (Android) may reject this policy.",
 	"user_subnet.no_exit_nodes":           "No exit-nodes in headscale yet. Add a node with <code>tag:exit-node</code> via /admin/exit-nodes first.",
 	"user_subnet.v0_16_0_note_title":    "What v0.16.0 vs v0.16.1",
 	"user_subnet.v0_16_0_note_body":     "<b>v0.16.0 (this release):</b> schema + CIDR allocator + admin UI + bot <code>/mysubnet</code>. The <i>Allocate subnet</i> button creates a row in <code>user_subnets</code> with status <code>pending</code>.<br><br><b>v0.16.1:</b> real sidecar container + headscale preauth + node tagging + route approval. After v0.16.1 ships, the <i>Sanity check</i> will report the router node_id and <code>/mysubnet</code> will show status <code>active</code> instead of <code>pending</code>.",

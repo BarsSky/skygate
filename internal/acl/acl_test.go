@@ -56,7 +56,8 @@ CREATE TABLE user_exit_node_prefs (
 	user_id INTEGER NOT NULL PRIMARY KEY,
 	exit_node_tag TEXT NOT NULL,
 	set_by_user_id INTEGER NOT NULL DEFAULT 0,
-	updated_at INTEGER NOT NULL DEFAULT 0
+	updated_at INTEGER NOT NULL DEFAULT 0,
+	via_enabled INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE device_exit_node_prefs (
 	user_id INTEGER NOT NULL,
@@ -64,6 +65,7 @@ CREATE TABLE device_exit_node_prefs (
 	exit_node_tag TEXT NOT NULL,
 	set_by_user_id INTEGER NOT NULL DEFAULT 0,
 	updated_at INTEGER NOT NULL DEFAULT 0,
+	via_enabled INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (user_id, device_hostname)
 );
 CREATE TABLE acl_snapshots (
@@ -174,12 +176,31 @@ func seedPortalUserWithPlane(t *testing.T, d *sql.DB, username, planeURL string)
 // (a real user picks their own preferred exit-node; tests
 // don't care about who set it).
 func seedUserExitNodePref(t *testing.T, d *sql.DB, userID int64, tag string) {
+	// 2026-07-25: v0.28.5 — default to via_enabled=1
+	// to preserve the v0.28.1-v0.28.4 test behavior
+	// (existing tests want the via constraint to be
+	// emitted). New tests use seedUserExitNodePrefWithVia
+	// to override the flag.
+	seedUserExitNodePrefWithVia(t, d, userID, tag, true)
+}
+
+// seedUserExitNodePrefWithVia is the v0.28.5
+// version of seedUserExitNodePref that takes the
+// via_enabled flag explicitly. Used by the new
+// opt-in tests.
+//
+// 2026-07-25: v0.28.5.
+func seedUserExitNodePrefWithVia(t *testing.T, d *sql.DB, userID int64, tag string, viaEnabled bool) {
 	t.Helper()
+	viaInt := 0
+	if viaEnabled {
+		viaInt = 1
+	}
 	_, err := d.Exec(
-		`INSERT INTO user_exit_node_prefs (user_id, exit_node_tag, set_by_user_id) VALUES (?, ?, 0)`,
-		userID, tag)
+		`INSERT INTO user_exit_node_prefs (user_id, exit_node_tag, set_by_user_id, via_enabled) VALUES (?, ?, 0, ?)`,
+		userID, tag, viaInt)
 	if err != nil {
-		t.Fatalf("seed user_exit_node_prefs user=%d tag=%s: %v", userID, tag, err)
+		t.Fatalf("seed user_exit_node_prefs user=%d tag=%s via=%v: %v", userID, tag, viaEnabled, err)
 	}
 }
 
@@ -189,14 +210,29 @@ func seedUserExitNodePref(t *testing.T, d *sql.DB, userID int64, tag string) {
 // emission.
 //
 // 2026-07-25: v0.28.4.
+// 2026-07-25: v0.28.5 — default to via_enabled=1
+// (preserves v0.28.4 test behavior). New tests use
+// seedDeviceExitNodePrefWithVia to override the flag.
 func seedDeviceExitNodePref(t *testing.T, d *sql.DB, userID int64, deviceHostname, tag string) {
+	seedDeviceExitNodePrefWithVia(t, d, userID, deviceHostname, tag, true)
+}
+
+// seedDeviceExitNodePrefWithVia is the v0.28.5
+// version that takes via_enabled explicitly.
+//
+// 2026-07-25: v0.28.5.
+func seedDeviceExitNodePrefWithVia(t *testing.T, d *sql.DB, userID int64, deviceHostname, tag string, viaEnabled bool) {
 	t.Helper()
+	viaInt := 0
+	if viaEnabled {
+		viaInt = 1
+	}
 	_, err := d.Exec(
-		`INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id) VALUES (?, ?, ?, 0)`,
-		userID, deviceHostname, tag)
+		`INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, via_enabled) VALUES (?, ?, ?, 0, ?)`,
+		userID, deviceHostname, tag, viaInt)
 	if err != nil {
-		t.Fatalf("seed device_exit_node_prefs user=%d device=%s tag=%s: %v",
-			userID, deviceHostname, tag, err)
+		t.Fatalf("seed device_exit_node_prefs user=%d device=%s tag=%s via=%v: %v",
+			userID, deviceHostname, tag, viaEnabled, err)
 	}
 }
 
@@ -1703,5 +1739,141 @@ func TestGenerateACLWithVia_NoPerDeviceGrantWhenNoPrefsSet(t *testing.T) {
 	// must still be present.
 	if !strings.Contains(aclStr, `"src": ["tag:public"], "dst": ["autogroup:internet"]`) {
 		t.Errorf("v0.28.3 catch-all missing.\nACL:\n%s", aclStr)
+	}
+}
+
+// 2026-07-25: v0.28.5 — explicit opt-in for the
+// per-user / per-device `via` constraint. The default
+// (via_enabled=0) is "no via" — the per-user grant
+// still has dst=autogroup:internet, but no `via` is
+// emitted, so the user can use any exit-node (no
+// headscale packet-filter pinning). This is the
+// Android-friendly path: older Tailscale clients
+// (notably Android) reject policies with `via` they
+// don't understand, blocking all exit-node access.
+//
+// The 3 tests below pin each layer of the v0.28.5
+// opt-in design.
+
+// TestGenerateACLWithVia_PerUserViaSkippedWhenOptOut pins
+// the v0.28.5 invariant that a per-user pref with
+// via_enabled=0 produces a per-user grant with NO via.
+// The dst list still contains autogroup:internet (the
+// user CAN reach the internet), but the headscale
+// packet-filter pinning is NOT emitted. The user can
+// pick any of the available exit-nodes in the Tailscale
+// GUI without being blocked by a via constraint that
+// their client doesn't understand.
+func TestGenerateACLWithVia_PerUserViaSkippedWhenOptOut(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	// via_enabled=0 — the opt-out default.
+	seedUserExitNodePrefWithVia(t, d, aliceID, "tag:exit-emilia", false)
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Per-user grant for alice must exist (with
+	// dst=autogroup:internet) but MUST NOT have via.
+	perUserNeedle := `"src": ["alice@tsnet.skynas.ru"], "dst": [` +
+		`"alice@tsnet.skynas.ru:*"` +
+		`, "autogroup:internet"` +
+		`]`
+	if !strings.Contains(aclStr, perUserNeedle) {
+		t.Errorf("per-user grant for alice missing.\nACL:\n%s", aclStr)
+	}
+	// The OLD bypass shape (no `via` at all) is what
+	// we want for via_enabled=0 — the per-user grant
+	// ends with `] }` (no `, "via": [...]`).
+	//
+	// We check the ABSENCE of `via` in the per-user
+	// grant specifically. Other grants (per-device,
+	// catch-all) may or may not have `via` — what
+	// matters is the per-user grant for alice has none.
+	//
+	// Build the substring that would appear IF the
+	// per-user grant had via. The presence of this
+	// substring means the test FAILED.
+	perUserWithVia := `"src": ["alice@tsnet.skynas.ru"]` +
+		`, "dst": [` +
+		`"alice@tsnet.skynas.ru:*", "autogroup:internet"` +
+		`], "ip": ["*"], "via": ["tag:exit-emilia"] }`
+	if strings.Contains(aclStr, perUserWithVia) {
+		t.Errorf("v0.28.5: per-user grant for alice must NOT have via (via_enabled=0).\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_PerDeviceGrantSkippedWhenOptOut
+// pins the v0.28.5 invariant that a per-device pref
+// with via_enabled=0 produces NO per-device grant.
+// The device falls back to the per-user grant (or no
+// grant at all if the user has no pref). This is the
+// same opt-in model as the per-user prefs.
+func TestGenerateACLWithVia_PerDeviceGrantSkippedWhenOptOut(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	seedUserExitNodePrefWithVia(t, d, aliceID, "tag:exit-emilia", true)
+	// msi has a per-device pref but via_enabled=0.
+	seedDeviceExitNodePrefWithVia(t, d, aliceID, "msi", "tag:exit-karolina", false)
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// The per-device grant for msi MUST NOT appear
+	// (via_enabled=0 means the per-device grant is
+	// skipped entirely).
+	perDeviceGrant := `{ "src": ["tag:dev-alice-msi"], "dst": ["autogroup:internet"], "ip": ["*"], "via": ["tag:exit-karolina"] }`
+	if strings.Contains(aclStr, perDeviceGrant) {
+		t.Errorf("v0.28.5: per-device grant must NOT be emitted when via_enabled=0.\nACL:\n%s", aclStr)
+	}
+	// Any per-device grant for tag:dev-alice-msi (even
+	// without via) must also NOT appear — the opt-out
+	// means the device falls back to the per-user
+	// grant's coverage.
+	anyPerDeviceForMSI := `"src": ["tag:dev-alice-msi"]`
+	if strings.Contains(aclStr, anyPerDeviceForMSI) {
+		t.Errorf("v0.28.5: no per-device grant for msi when via_enabled=0.\nACL:\n%s", aclStr)
+	}
+	// The per-user grant for alice must still be
+	// present (with via=tag:exit-emilia — her per-user
+	// pref has via_enabled=1).
+	perUserWithVia := `"src": ["alice@tsnet.skynas.ru"]` +
+		`, "dst": [` +
+		`"alice@tsnet.skynas.ru:*", "autogroup:internet"` +
+		`], "ip": ["*"], "via": ["tag:exit-emilia"] }`
+	if !strings.Contains(aclStr, perUserWithVia) {
+		t.Errorf("per-user grant for alice (via_enabled=1) must still have via=emilia.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_BackwardsCompat_PerUserViaEnabled
+// pins the v0.28.5 backwards-compat behavior: an
+// existing per-user pref (created under v0.28.1) with
+// via_enabled=1 continues to pin the user to the
+// exit-node. This is the operator's CURRENT state
+// (skyadmin → emilia, michail → sharlotta, daniil
+// → karolina all have via_enabled=1 after the
+// migration). The migration is a no-op on a fresh
+// install, but on a live deploy it preserves the
+// existing pinning until the operator explicitly
+// flips the flag to 0.
+func TestGenerateACLWithVia_BackwardsCompat_PerUserViaEnabled(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	// via_enabled=true (the v0.28.1 / v0.28.4 default
+	// for existing rows after the migration).
+	seedUserExitNodePrefWithVia(t, d, aliceID, "tag:exit-emilia", true)
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Per-user grant for alice must have via=tag:exit-emilia
+	// (the existing pinning is preserved).
+	want := `"src": ["alice@tsnet.skynas.ru"]` +
+		`, "dst": [` +
+		`"alice@tsnet.skynas.ru:*", "autogroup:internet"` +
+		`], "ip": ["*"], "via": ["tag:exit-emilia"] }`
+	if !strings.Contains(aclStr, want) {
+		t.Errorf("v0.28.5 backwards compat: via_enabled=1 (existing rows) must emit via.\nACL:\n%s", aclStr)
 	}
 }

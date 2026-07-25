@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"skygate/internal/acl"
@@ -30,13 +31,18 @@ func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 	// preferred exit-node tag so the template can render
 	// "Set as my preferred" / "Currently preferred" buttons
 	// per exit-node row. Empty string = no preference set.
+	// 2026-07-25: v0.28.5 — also pass ViaEnabled for the
+	// "Strict pinning" checkbox state.
 	var prefTag string
+	var viaEnabled bool
 	if pref, err := db.GetUserExitNodePref(a.DB, c.UserID); err == nil {
 		prefTag = pref.ExitNodeTag
+		viaEnabled = pref.ViaEnabled
 	}
 	a.renderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
 		"ExitNodes":           exits,
 		"PreferredExitNodeTag": prefTag,
+		"ViaEnabled":          viaEnabled,
 		"FlashSuccess":        r.URL.Query().Get("ok"),
 		"FlashError":          r.URL.Query().Get("err"),
 	})
@@ -64,12 +70,19 @@ func (a *App) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tag := strings.TrimSpace(r.FormValue("tag"))
-	if err := db.SetUserExitNodePref(a.DB, c.UserID, tag, c.UserID); err != nil {
+	// 2026-07-25: v0.28.5 — strict pinning is opt-in.
+	// The form posts a `via` field ("1" to enable the
+	// headscale packet-filter pinning, anything else
+	// for the safe default). Older Tailscale clients
+	// (notably Android) reject policies with via they
+	// don't understand, so the default is OFF.
+	viaEnabled := r.FormValue("via") == "1"
+	if err := db.SetUserExitNodePref(a.DB, c.UserID, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	a.audit(c.UserID, c.Username, "my_preferred_exit_set",
-		"tag="+tag)
+		"tag="+tag+" via="+strconv.FormatBool(viaEnabled))
 	// Re-apply ACL. The user's planeURL is "" for the
 	// global-default single-plane deploy (the only path
 	// the bot / web form support today). v0.12.0
