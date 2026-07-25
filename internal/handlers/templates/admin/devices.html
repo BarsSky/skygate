@@ -100,18 +100,36 @@
           {{$skygateUID := index $.SkygateUserByHost $lowerHost}}
           {{$prefKey := printf "%d:%s" $skygateUID $lowerHost}}
           {{$pref := index $.DeviceExitPrefMap $prefKey}}
+          {{$viaEnabled := index $.DeviceExitViaMap $prefKey}}
           {{if $pref}}
             <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{$pref}}</code></span>
+            {{if $viaEnabled}}
+              <span class="tag tag-warning" style="font-size:9px;margin-left:2px" title="{{t "devices.device_exit_via_enabled_help"}}"><i class="fa-solid fa-lock"></i></span>
+            {{else}}
+              <span class="tag" style="font-size:9px;margin-left:2px;background:var(--text-subtle);color:var(--bg-card)" title="{{t "devices.device_exit_via_disabled_help"}}"><i class="fa-solid fa-unlock"></i></span>
+            {{end}}
             <form method="post" action="/admin/devices/preferred-exit" style="display:inline-block;margin-left:4px" onsubmit="return confirm('{{t "devices.device_exit_pref_clear_confirm"}}')">
               <input type="hidden" name="user_id" value="{{$skygateUID}}">
               <input type="hidden" name="hostname" value="{{.Hostname}}">
               <input type="hidden" name="tag" value="">
+              <input type="hidden" name="via" value="{{if $viaEnabled}}1{{else}}0{{end}}">
               <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.device_exit_pref_clear_help"}}"><i class="fa-solid fa-xmark"></i></button>
+            </form>
+            {{/* v0.28.5: per-device via opt-in toggle. */}}
+            <form method="post" action="/admin/devices/preferred-exit" style="display:inline-block;margin-left:4px">
+              <input type="hidden" name="user_id" value="{{$skygateUID}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="{{$pref}}">
+              <input type="hidden" name="via" value="{{if $viaEnabled}}0{{else}}1{{end}}">
+              <button type="submit" class="btn btn-ghost" style="font-size:9px;padding:2px 4px" title="{{if $viaEnabled}}{{t "devices.device_exit_via_disable_help"}}{{else}}{{t "devices.device_exit_via_enable_help"}}{{end}}">
+                <i class="fa-solid fa-{{if $viaEnabled}}unlock{{else}}lock{{end}}"></i>
+              </button>
             </form>
           {{else if and $skygateUID (gt $skygateUID 0)}}
             <form method="post" action="/admin/devices/preferred-exit" style="display:inline-flex;gap:3px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
               <input type="hidden" name="user_id" value="{{$skygateUID}}">
               <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="via" value="0">
               <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
                 {{range $.AvailableExits}}
                   {{$tag := printf "tag:exit-%s" (tolower .Hostname)}}

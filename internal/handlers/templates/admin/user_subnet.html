@@ -98,6 +98,14 @@
         {{end}}
       </select>
     </label>
+    {{/* 2026-07-25: v0.28.5 — strict-mode opt-in checkbox.
+         The default (newly-set) is OFF for Android compat.
+         The form preserves the existing tag selection; the
+         via field is the only thing that changes. */}}
+    <label class="ufg-field" style="flex:0 0 auto;margin:0;display:flex;align-items:center;gap:6px;height:36px">
+      <input type="checkbox" name="via" value="1" {{if .ViaEnabled}}checked{{end}}>
+      <span style="font-size:13px;white-space:nowrap" title="{{t "user_subnet.preferred_exit_via_help"}}">{{t "user_subnet.preferred_exit_via_label"}}</span>
+    </label>
     <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> {{t "user_subnet.preferred_exit_button"}}</button>
   </form>
   {{if .PreferredExitNodeTag}}

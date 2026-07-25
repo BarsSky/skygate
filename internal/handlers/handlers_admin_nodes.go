@@ -71,6 +71,7 @@ func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	// parse the username out of the dev tag.
 	deviceExitPrefs, _ := db.ListAllDeviceExitNodePrefs(a.DB)
 	deviceExitPrefMap := make(map[string]string, len(deviceExitPrefs))
+	deviceExitViaMap := make(map[string]bool, len(deviceExitPrefs))
 	skygateUserByName := make(map[string]int64, len(users))
 	for _, u := range users {
 		if u.Name != "" {
@@ -119,6 +120,7 @@ func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		}
 		key := strconv.FormatInt(dp.UserID, 10) + ":" + strings.ToLower(dp.DeviceHostname)
 		deviceExitPrefMap[key] = dp.ExitNodeTag
+		deviceExitViaMap[key] = dp.ViaEnabled
 	}
 	// The admin can also set per-device prefs; we need
 	// the list of available exit-nodes for the dropdown
@@ -139,6 +141,7 @@ func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		"FlashError":        r.URL.Query().Get("err"),
 		"DevTagMap":         devTagMap,
 		"DeviceExitPrefMap": deviceExitPrefMap,
+		"DeviceExitViaMap":  deviceExitViaMap,
 		"AvailableExits":    exits,
 		"UserExitPrefMap":   userExitPrefMap,
 		"SkygateUserByName": skygateUserByName,

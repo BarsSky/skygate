@@ -281,5 +281,18 @@ func migrate(d *sql.DB) error {
 	if err := migrateV046(d); err != nil {
 		return fmt.Errorf("migrate v0.46: %w", err)
 	}
+	// v0.28.5: explicit opt-in for the per-user /
+	// per-device `via` constraint. The v0.28.3 design
+	// unconditionally emitted `via=[]` for users with
+	// a per-user pref, which broke older Tailscale
+	// clients (Android in particular) that reject
+	// policies with `via` they don't understand. The
+	// fix is a per-row `via_enabled` flag — the
+	// operator flips it on when they want strict
+	// pinning, leaves it off (the new default) for
+	// Android-friendly behavior. See migrations_v0.47.go.
+	if err := migrateV047(d); err != nil {
+		return fmt.Errorf("migrate v0.47: %w", err)
+	}
 	return nil
 }

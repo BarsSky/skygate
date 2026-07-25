@@ -22,6 +22,11 @@
   {{if .PreferredExitNodeTag}}
   <p style="color:var(--success);font-size:12px;margin-top:6px">
     <i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.preferred_currently_set"}}: <code>{{.PreferredExitNodeTag}}</code>
+    {{if .ViaEnabled}}
+      <span class="tag tag-warning" style="margin-left:6px" title="{{t "exit_nodes.via_enabled_help"}}"><i class="fa-solid fa-lock"></i> {{t "exit_nodes.via_enabled_label"}}</span>
+    {{else}}
+      <span class="tag" style="margin-left:6px;background:var(--text-subtle);color:var(--bg-card)" title="{{t "exit_nodes.via_disabled_help"}}"><i class="fa-solid fa-unlock"></i> {{t "exit_nodes.via_disabled_label"}}</span>
+    {{end}}
     <form method="POST" action="/my/exit-nodes/preferred" style="display:inline;margin-left:8px">
       <input type="hidden" name="tag" value="">
       <button type="submit" class="btn btn-sm btn-secondary" title="{{t "exit_nodes.preferred_clear_help"}}">
@@ -63,6 +68,7 @@
           {{else}}
             <form method="POST" action="/my/exit-nodes/preferred" style="display:inline">
               <input type="hidden" name="tag" value="{{$derivedTag}}">
+              <input type="hidden" name="via" value="{{if $.ViaEnabled}}1{{else}}0{{end}}">
               <button type="submit" class="btn btn-sm">
                 <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_set_button"}}
               </button>
@@ -84,6 +90,21 @@
   </p>
   {{end}}
 </div>
+
+{{if .PreferredExitNodeTag}}
+<div class="card">
+  <h3><i class="fa-solid fa-shield-halved"></i>{{t "exit_nodes.via_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "exit_nodes.via_intro"}}</p>
+  <form method="POST" action="/my/exit-nodes/preferred" style="display:flex;align-items:center;gap:8px">
+    <input type="hidden" name="tag" value="{{.PreferredExitNodeTag}}">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" name="via" value="1" {{if .ViaEnabled}}checked{{end}} onchange="this.form.submit()">
+      <span>{{t "exit_nodes.via_checkbox_label"}}</span>
+    </label>
+    <span style="color:var(--text-muted);font-size:12px">({{t "exit_nodes.via_checkbox_help"}})</span>
+  </form>
+</div>
+{{end}}
 
 {{if .ExitNodes}}
 <div class="card">

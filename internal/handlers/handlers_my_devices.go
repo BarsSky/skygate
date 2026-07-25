@@ -137,6 +137,13 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// template doesn't need a custom func. 2026-07-25:
 		// v0.28.4.
 		DeviceExitPref string
+		// DeviceExitViaEnabled mirrors the via_enabled
+		// flag from device_exit_node_prefs. When true,
+		// the per-device grant is emitted with via=[].
+		// When false (the safe default for Android), the
+		// per-device grant is skipped. 2026-07-25:
+		// v0.28.5.
+		DeviceExitViaEnabled bool
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
@@ -148,10 +155,12 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// here (not lazily) so the per-row myNodeRow builder
 	// can look it up in O(1).
 	devicePrefByHost := map[string]string{}
+	deviceViaEnabledByHost := map[string]bool{}
 	devicePrefs, _ := db.ListDeviceExitNodePrefsForUser(a.DB, c.UserID)
 	for _, dp := range devicePrefs {
 		if dp.DeviceHostname != "" {
 			devicePrefByHost[strings.ToLower(dp.DeviceHostname)] = dp.ExitNodeTag
+			deviceViaEnabledByHost[strings.ToLower(dp.DeviceHostname)] = dp.ViaEnabled
 		}
 	}
 	// hasTag returns true if the node carries the given tag.
@@ -201,7 +210,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				DevTag:           devTag,
 				DevTagApplied:    devTagApplied,
 				HostnameLower:    strings.ToLower(n.Hostname),
-				DeviceExitPref:   devicePrefByHost[strings.ToLower(n.Hostname)],
+				DeviceExitPref:      devicePrefByHost[strings.ToLower(n.Hostname)],
+				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
 			})
 		}
 	}
@@ -254,7 +264,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				DevTag:           devTag,
 				DevTagApplied:    devTagApplied,
 				HostnameLower:    strings.ToLower(n.Hostname),
-				DeviceExitPref:   devicePrefByHost[strings.ToLower(n.Hostname)],
+				DeviceExitPref:      devicePrefByHost[strings.ToLower(n.Hostname)],
+				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
 			})
 		}
 	}

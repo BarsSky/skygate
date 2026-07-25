@@ -52,6 +52,14 @@ import (
 // user has no pref).
 //
 // 2026-07-25: v0.28.4.
+// 2026-07-25: v0.28.5 — added ViaEnabled. When true, the
+// ACL builder emits a per-device grant with via=[].
+// When false, the per-device grant is SKIPPED entirely
+// (the device falls back to the per-user grant's via,
+// or no via if the user has no via_enabled pref).
+// This opt-in is necessary for older Tailscale clients
+// (Android) that reject policies with via they don't
+// understand.
 type DeviceExitNodePref struct {
 	UserID          int64
 	Username        string
@@ -59,6 +67,7 @@ type DeviceExitNodePref struct {
 	ExitNodeTag     string
 	UpdatedAt       int64
 	SetByUserID     int64
+	ViaEnabled      bool
 }
 
 // GetDeviceExitNodePref returns the device's preferred
@@ -68,17 +77,22 @@ type DeviceExitNodePref struct {
 // exit-node: <tag>" without an extra round-trip.
 //
 // 2026-07-25: v0.28.4.
+// 2026-07-25: v0.28.5 — also returns ViaEnabled.
 func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (DeviceExitNodePref, error) {
 	var p DeviceExitNodePref
+	var viaEnabled int
 	err := d.QueryRow(`
-		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id
+		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 WHERE p.user_id = ? AND p.device_hostname = ?`,
 		userID, deviceHostname,
-	).Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID)
+	).Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled)
 	if err == sql.ErrNoRows {
 		return p, nil
+	}
+	if err == nil {
+		p.ViaEnabled = viaEnabled != 0
 	}
 	return p, err
 }
@@ -93,21 +107,32 @@ func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (Devi
 // "alice set this for her own device" vs. "admin set
 // this for alice's device" on /admin/devices.
 //
-// 2026-07-25: v0.28.4.
-func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag string, setByUserID int64) error {
+// 2026-07-25: v0.28.5 — added viaEnabled param. When true,
+// the ACL builder emits a per-device grant with via=[].
+// When false (the new default for fresh rows), the
+// per-device grant is SKIPPED — the device falls back
+// to the per-user grant's via (or no via if the user has
+// no via_enabled pref). The "preferred exit-node" is still
+// stored and shown in the UI; it's just not enforced.
+func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag string, setByUserID int64, viaEnabled bool) error {
 	if exitNodeTag == "" {
 		_, err := d.Exec(`DELETE FROM device_exit_node_prefs WHERE user_id = ? AND device_hostname = ?`,
 			userID, deviceHostname)
 		return err
 	}
+	viaInt := 0
+	if viaEnabled {
+		viaInt = 1
+	}
 	_, err := d.Exec(`
-		INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, updated_at)
-		VALUES (?, ?, ?, ?, strftime('%s','now'))
+		INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, updated_at, via_enabled)
+		VALUES (?, ?, ?, ?, strftime('%s','now'), ?)
 		ON CONFLICT(user_id, device_hostname) DO UPDATE SET
 			exit_node_tag = excluded.exit_node_tag,
 			set_by_user_id = excluded.set_by_user_id,
-			updated_at = excluded.updated_at`,
-		userID, deviceHostname, exitNodeTag, setByUserID)
+			updated_at = excluded.updated_at,
+			via_enabled = excluded.via_enabled`,
+		userID, deviceHostname, exitNodeTag, setByUserID, viaInt)
 	return err
 }
 
@@ -118,10 +143,14 @@ func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag 
 // digit rows in production; only devices the user has
 // explicitly pinned) so we don't worry about pagination.
 //
-// 2026-07-25: v0.28.4.
+// 2026-07-25: v0.28.5 — also returns ViaEnabled. The ACL
+// builder uses this to decide whether to emit the
+// per-device grant (via_enabled=true) or skip it
+// (via_enabled=false — the device has a "preferred"
+// exit-node for the UI but no policy-level pinning).
 func ListAllDeviceExitNodePrefs(d *sql.DB) ([]DeviceExitNodePref, error) {
 	rows, err := d.Query(`
-		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id
+		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 ORDER BY pu.username, p.device_hostname`)
@@ -132,9 +161,11 @@ func ListAllDeviceExitNodePrefs(d *sql.DB) ([]DeviceExitNodePref, error) {
 	var out []DeviceExitNodePref
 	for rows.Next() {
 		var p DeviceExitNodePref
-		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID); err != nil {
+		var viaEnabled int
+		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled); err != nil {
 			return nil, err
 		}
+		p.ViaEnabled = viaEnabled != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -146,9 +177,10 @@ func ListAllDeviceExitNodePrefs(d *sql.DB) ([]DeviceExitNodePref, error) {
 // the user has no per-device prefs.
 //
 // 2026-07-25: v0.28.4.
+// 2026-07-25: v0.28.5 — also returns ViaEnabled.
 func ListDeviceExitNodePrefsForUser(d *sql.DB, userID int64) ([]DeviceExitNodePref, error) {
 	rows, err := d.Query(`
-		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id
+		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 WHERE p.user_id = ?
@@ -160,9 +192,11 @@ func ListDeviceExitNodePrefsForUser(d *sql.DB, userID int64) ([]DeviceExitNodePr
 	var out []DeviceExitNodePref
 	for rows.Next() {
 		var p DeviceExitNodePref
-		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID); err != nil {
+		var viaEnabled int
+		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled); err != nil {
 			return nil, err
 		}
+		p.ViaEnabled = viaEnabled != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()
