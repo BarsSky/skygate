@@ -1280,7 +1280,7 @@ func TestGenerateACLWithVia_PerExitNodeTagOwnersAreDistinct(t *testing.T) {
 // invariant: the output starts with a `hosts:` block
 // BEFORE the `grants:` block, with one entry per
 // per-user subnet (using the canonical
-// "h:user-<uname>-subnet" alias name). Without
+// "h-user-<uname>-subnet" alias name). Without
 // per-user subnets, the block still has the
 // `_placeholder` entry so headscale's JSON parser
 // doesn't reject the file.
@@ -1302,9 +1302,9 @@ func TestGenerateACLWithVia_EmitsHostsBlock(t *testing.T) {
 	}
 	// The personal subnet for alice must appear as a
 	// host alias — this is the only way headscale's
-	// grants parser can resolve "h:user-alice-subnet:*"
+	// grants parser can resolve "h-user-alice-subnet:*"
 	// in the grant's dst to 10.0.1.0/24.
-	wantHost := `"h:user-alice-subnet": "10.0.1.0/24"`
+	wantHost := `"h-user-alice-subnet": "10.0.1.0/24"`
 	if !strings.Contains(aclStr, wantHost) {
 		t.Errorf("hosts block must contain %s.\nACL:\n%s", wantHost, aclStr)
 	}
@@ -1324,7 +1324,7 @@ func TestGenerateACLWithVia_GrantsReferenceHostAliases(t *testing.T) {
 		t.Fatalf("GenerateACLWithVia: %v", err)
 	}
 	// Per-user grant's dst must include the host alias.
-	wantAlias := `"h:user-alice-subnet:*"`
+	wantAlias := `"h-user-alice-subnet:*"`
 	if !strings.Contains(aclStr, wantAlias) {
 		t.Errorf("per-user grant must reference %s.\nACL:\n%s", wantAlias, aclStr)
 	}
