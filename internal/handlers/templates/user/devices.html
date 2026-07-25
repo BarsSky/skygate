@@ -144,7 +144,7 @@
   <h3><i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}</h3>
   {{if .HasMyNodes}}
   <table>
-    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th><th>{{t "devices.mesh_subnet"}}</th><th>{{t "devices.dev_tag_label"}}</th></tr></thead>
+    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th><th>{{t "devices.mesh_subnet"}}</th><th>{{t "devices.dev_tag_label"}}</th><th>{{t "devices.device_exit_pref"}}</th></tr></thead>
     <tbody>
       {{range .MyNodes}}
       <tr>
@@ -212,6 +212,27 @@
             {{end}}
           {{else}}
             <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .DeviceExitPref}}
+            <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{.DeviceExitPref}}</code></span>
+            <form method="post" action="/my/devices/preferred-exit" style="display:inline-block;margin-left:6px" onsubmit="return confirm('{{t "devices.device_exit_pref_clear_confirm"}}')">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="">
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 6px" title="{{t "devices.device_exit_pref_clear_help"}}"><i class="fa-solid fa-xmark"></i></button>
+            </form>
+          {{else}}
+            <form method="post" action="/my/devices/preferred-exit" style="display:inline-flex;gap:4px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <select name="tag" style="font-size:11px;padding:2px 4px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                {{range $.AvailableExitNodes}}
+                  {{$tag := printf "tag:exit-%s" (printf "%s" .Hostname | tolower)}}
+                  <option value="{{$tag}}">{{.Hostname}}</option>
+                {{end}}
+              </select>
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 6px" title="{{t "devices.device_exit_pref_set_button_help"}}"><i class="fa-solid fa-bullseye"></i></button>
+            </form>
           {{end}}
         </td>
       </tr>

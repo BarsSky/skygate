@@ -58,6 +58,14 @@ CREATE TABLE user_exit_node_prefs (
 	set_by_user_id INTEGER NOT NULL DEFAULT 0,
 	updated_at INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE device_exit_node_prefs (
+	user_id INTEGER NOT NULL,
+	device_hostname TEXT NOT NULL,
+	exit_node_tag TEXT NOT NULL,
+	set_by_user_id INTEGER NOT NULL DEFAULT 0,
+	updated_at INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (user_id, device_hostname)
+);
 CREATE TABLE acl_snapshots (
 	id INTEGER PRIMARY KEY,
 	version INTEGER NOT NULL,
@@ -172,6 +180,23 @@ func seedUserExitNodePref(t *testing.T, d *sql.DB, userID int64, tag string) {
 		userID, tag)
 	if err != nil {
 		t.Fatalf("seed user_exit_node_prefs user=%d tag=%s: %v", userID, tag, err)
+	}
+}
+
+// seedDeviceExitNodePref inserts a row in
+// device_exit_node_prefs for the given (user, device).
+// Used by v0.28.4 tests to verify the per-device grant
+// emission.
+//
+// 2026-07-25: v0.28.4.
+func seedDeviceExitNodePref(t *testing.T, d *sql.DB, userID int64, deviceHostname, tag string) {
+	t.Helper()
+	_, err := d.Exec(
+		`INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id) VALUES (?, ?, ?, 0)`,
+		userID, deviceHostname, tag)
+	if err != nil {
+		t.Fatalf("seed device_exit_node_prefs user=%d device=%s tag=%s: %v",
+			userID, deviceHostname, tag, err)
 	}
 }
 
@@ -1541,5 +1566,142 @@ func TestGenerateACL_LegacyPerUserGrantHasAutogroupInternet(t *testing.T) {
 	want := `"src": ["tag:public"], "dst": ["autogroup:internet:*"]`
 	if !strings.Contains(aclStr, want) {
 		t.Errorf("legacy autogroup:internet catch-all must be src=tag:public.\nACL:\n%s", aclStr)
+	}
+}
+
+// 2026-07-25: v0.28.4 — per-device preferred exit-node.
+// The ACL builder reads device_exit_node_prefs and emits
+// a per-device grant BEFORE the per-user grant (Tailscale
+// first-match). The per-device grant has src=tag:dev-<user>-
+// <device> and via=[<device-pref>], so a device with a
+// per-device override uses its own exit-node even when the
+// user has a different default.
+//
+// The 3 tests below pin each layer of the v0.28.4 design.
+
+// TestGenerateACLWithVia_PerDeviceGrantEmittedBeforePerUser
+// pins the v0.28.4 ordering invariant: a per-device grant
+// (when present) appears in the grants[] list BEFORE the
+// per-user grant. Tailscale's first-match semantics make
+// the per-device via override the per-user via for the
+// matching device.
+//
+// Test setup:
+//   * admin (id=1) has per-user pref → relay-1
+//   * workstation-3 (admin's device) has per-device pref → relay-3
+//   * The per-device grant for workstation-3 must be the FIRST
+//     entry in grants[] (or at least, before the per-user
+//     grant for admin@tsnet).
+func TestGenerateACLWithVia_PerDeviceGrantEmittedBeforePerUser(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	seedUserExitNodePref(t, d, aliceID, "tag:exit-relay-1")
+	seedDeviceExitNodePref(t, d, aliceID, "workstation-3", "tag:exit-relay-3")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Per-device grant for workstation-3 must reference the device
+	// tag AND the per-device via (not the per-user via).
+	wantPerDevice := `{ "src": ["tag:dev-alice-workstation-3"], "dst": ["autogroup:internet"], "ip": ["*"], "via": ["tag:exit-relay-3"] }`
+	if !strings.Contains(aclStr, wantPerDevice) {
+		t.Errorf("per-device grant for workstation-3 missing or wrong.\nACL:\n%s", aclStr)
+	}
+	// The per-device grant must appear BEFORE the
+	// per-user grant for alice@tsnet (Tailscale
+	// first-match ordering). Find the position of each
+	// grant and compare.
+	perDevicePos := strings.Index(aclStr, wantPerDevice)
+	perUserMarker := `"src": ["alice@tsnet.example.com"]`
+	perUserPos := strings.Index(aclStr, perUserMarker)
+	if perDevicePos < 0 || perUserPos < 0 {
+		t.Fatalf("could not find both grants in ACL.\nACL:\n%s", aclStr)
+	}
+	if perDevicePos >= perUserPos {
+		t.Errorf("per-device grant must be emitted BEFORE the per-user grant (Tailscale first-match).\n"+
+			"  per-device at byte %d, per-user at byte %d\nACL:\n%s",
+			perDevicePos, perUserPos, aclStr)
+	}
+	// The per-user grant must still have via=tag:exit-relay-1
+	// (alice's per-user pref). The per-device override
+	// doesn't change the per-user grant — it adds a
+	// separate, more-specific rule.
+	wantPerUser := `"via": ["tag:exit-relay-1"]`
+	if !strings.Contains(aclStr, wantPerUser) {
+		t.Errorf("per-user grant for alice must still have via=tag:exit-relay-1.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_PerDeviceGrantOnlyCoversAutogroupInternet
+// pins the v0.28.4 invariant that the per-device grant
+// ONLY covers autogroup:internet. The user's own stuff
+// (own devices, own subnet) is covered by the per-user
+// grant below — duplicating those in the per-device grant
+// would bloat the policy without adding reach (the
+// per-user grant already covers them).
+//
+// Why this matters: the per-device grant is the
+// via-OVERRIDE. It exists so the device's exit-node
+// choice is independent of the user's choice. For
+// everything else (own stuff, shared/mesh), the
+// per-user grant's dst is the source of truth.
+func TestGenerateACLWithVia_PerDeviceGrantOnlyCoversAutogroupInternet(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	seedUserExitNodePref(t, d, aliceID, "tag:exit-relay-1")
+	seedDeviceExitNodePref(t, d, aliceID, "workstation-3", "tag:exit-relay-3")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// The per-device grant (substring) must contain
+	// ONLY "autogroup:internet" in its dst list — not
+	// the user's own identity, own subnet, etc.
+	wantPerDevice := `{ "src": ["tag:dev-alice-workstation-3"], "dst": ["autogroup:internet"], "ip": ["*"], "via": ["tag:exit-relay-3"] }`
+	// Find the per-device grant and check its dst list.
+	startIdx := strings.Index(aclStr, wantPerDevice)
+	if startIdx < 0 {
+		t.Fatalf("per-device grant not found.\nACL:\n%s", aclStr)
+	}
+	// The per-device grant is a single line ending with `}`.
+	// Extract the dst portion of the grant.
+	endIdx := strings.Index(aclStr[startIdx:], " }")
+	if endIdx < 0 {
+		t.Fatalf("per-device grant not terminated.\nACL:\n%s", aclStr)
+	}
+	grantStr := aclStr[startIdx : startIdx+endIdx]
+	// dst must be exactly ["autogroup:internet"] — nothing else.
+	if !strings.Contains(grantStr, `"dst": ["autogroup:internet"]`) {
+		t.Errorf("per-device grant dst must be exactly [\"autogroup:internet\"].\ngrant: %s", grantStr)
+	}
+	if strings.Contains(grantStr, `"dst": ["autogroup:internet",`) ||
+		strings.Contains(grantStr, `"dst": [ "autogroup:internet",`) {
+		t.Errorf("per-device grant dst must be ONLY autogroup:internet (no own-identity, own-subnet, etc).\ngrant: %s", grantStr)
+	}
+}
+
+// TestGenerateACLWithVia_NoPerDeviceGrantWhenNoPrefsSet pins
+// the v0.28.4 invariant that with no rows in
+// device_exit_node_prefs, the per-device grant block is
+// empty (and the per-user grants look exactly like
+// v0.28.3). This guards against the v0.28.4 refactor
+// accidentally injecting per-device grants for every
+// device.
+func TestGenerateACLWithVia_NoPerDeviceGrantWhenNoPrefsSet(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// No per-device grant means no "tag:dev-alice-..."
+	// src. The string `"src": ["tag:dev-` must NOT appear.
+	if strings.Contains(aclStr, `"src": ["tag:dev-`) {
+		t.Errorf("no per-device prefs set — per-device grants MUST NOT appear.\nACL:\n%s", aclStr)
+	}
+	// The v0.28.3 catch-all (tag:public → autogroup:internet)
+	// must still be present.
+	if !strings.Contains(aclStr, `"src": ["tag:public"], "dst": ["autogroup:internet"]`) {
+		t.Errorf("v0.28.3 catch-all missing.\nACL:\n%s", aclStr)
 	}
 }
