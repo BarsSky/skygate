@@ -850,7 +850,19 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		case e.DeviceIP != "":
 			src = fmt.Sprintf("\"%s\"", e.DeviceIP)
 		}
-		sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + e.TargetValue + ":*\"], \"ip\": [\"*\"] }")
+		// 2026-07-25: v0.28.2 — per-device rules
+		// reference CIDR targets (Telegram IP
+		// blocks, custom IPs). Same headscale
+		// v2 parser constraint: dst with
+		// CIDR+port is rejected. Workaround:
+		// emit each unique target as a host
+		// alias in the hosts block, then
+		// reference the bare alias here (no
+		// :*, ip: ["*"] covers any port).
+		ruleAlias := "h-rule-" + strings.NewReplacer(
+			".", "-", "/", "-", ":", "_").Replace(e.TargetValue)
+		addHost(ruleAlias, e.TargetValue)
+		sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"] }")
 	}
 
 	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:public:*\"], \"ip\": [\"*\"] }")
