@@ -39,6 +39,7 @@ package headscale
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -98,11 +99,32 @@ func runScript(path string, args ...string) ([]byte, error) {
 	path = filepath.ToSlash(path)
 	if runtime.GOOS == "windows" && len(path) >= 2 && path[1] == ':' {
 		// C:/foo/bar → /mnt/c/foo/bar
-		// (pre-existing WSL2 assumption; Git Bash users on
-		// Windows hit exit 127 for TestProvisionUser_*, the
-		// catalog correctly flags this as B1 FAIL — see
-		// internal/headscale/provision.go for the TODO)
-		path = "/mnt/" + strings.ToLower(string(path[0])) + path[2:]
+		//
+		// WSL2 mount point. We always use /mnt/<drive> because:
+		//   - The tests run on a Windows host invoked from WSL2's
+		//     bash (the operator's setup). WSL2's bash understands
+		//     /mnt/c/... paths.
+		//   - Go on Windows can't distinguish WSL2 from Git Bash
+		//     at runtime — `os.Stat("/mnt/c/...")` uses the Windows
+		//     API and never sees WSL2's mount. /proc/version is
+		//     only readable by a Linux binary, not the cross-
+		//     compiled Windows .exe we run here.
+		//   - The first matched bash on PATH (whether WSL2's
+		//     /usr/bin/bash or Git Bash's /usr/bin/bash) finds
+		//     /mnt/c/... correctly only on WSL2; on Git Bash it
+		//     returns exit 127 "No such file" (the v0.28.6 catalog
+		//     correctly flags this as B1 FAIL — see AGENTS.md
+		//     "B1: test failure on Git Bash" for the operator
+		//     workflow).
+		//
+		// The env var SKYGATE_BASH_MOUNT_ROOT overrides this for
+		// Git Bash users (set to "/" to use /c/... style). All
+		// other call sites should leave the default.
+		root := os.Getenv("SKYGATE_BASH_MOUNT_ROOT")
+		if root == "" {
+			root = "/mnt"
+		}
+		path = root + "/" + strings.ToLower(string(path[0])) + path[2:]
 	}
 	return exec.Command("bash", append([]string{path}, args...)...).Output()
 }
