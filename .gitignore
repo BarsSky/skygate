@@ -35,8 +35,14 @@ skygate.db
 # graduates to "kept" status (used by smoke / docs / release
 # tooling), move it to scripts/ or deploy/ and re-add to
 # git explicitly.
+#
+# NOTE: scripts/verify_*.sh are the v0.28.5 guarantee catalog
+# (B1-B10 + R1-R25) and ARE committed — they're referenced by
+# `make verify-pre` / `make verify-post` in the Makefile. The
+# ignore patterns below deliberately only cover the ROOT-level
+# verify_* / check_* / etc. (created during debugging), not the
+# production ones under scripts/.
 check_*.sh
-verify_*.sh
 test_*.sh
 copy_*.sh
 debug_*.sh

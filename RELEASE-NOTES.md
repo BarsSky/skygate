@@ -56,6 +56,12 @@ lost; everything is still in `git log` + the GitHub UI.
 | `RELEASE-NOTES-v0.25.0.md` | [`v0.25.0`](https://github.com/BarsSky/skygate/releases/tag/v0.25.0) | What did NOT change |
 | `RELEASE-NOTES-v0.25.1.md` | [`v0.25.1`](https://github.com/BarsSky/skygate/releases/tag/v0.25.1) | 1. Per-user audit log export (CSV/JSON) |
 | `RELEASE-NOTES-v0.26.0.md` | [`v0.26.0`](https://github.com/BarsSky/skygate/releases/tag/v0.26.0) |  |
+| `RELEASE-NOTES-v0.28.0.md` | [`v0.28.0`](https://github.com/BarsSky/skygate/releases/tag/v0.28.0) | per-device ACL via `tag:dev-<user>-<device>` |
+| `RELEASE-NOTES-v0.28.1.md` | [`v0.28.1`](https://github.com/BarsSky/skygate/releases/tag/v0.28.1) | per-user preferred exit-node (UI + data model) |
+| `RELEASE-NOTES-v0.28.2.md` | [`v0.28.2`](https://github.com/BarsSky/skygate/releases/tag/v0.28.2) | `hosts:` block workaround for headscale 0.29.2 grants parser |
+| `RELEASE-NOTES-v0.28.3.md` | [`v0.28.3`](https://github.com/BarsSky/skygate/releases/tag/v0.28.3) | close exit-node bypass: per-user dst has autogroup:internet; catch-all src=tag:public |
+| `RELEASE-NOTES-v0.28.4.md` | [`v0.28.4`](https://github.com/BarsSky/skygate/releases/tag/v0.28.4) | per-device preferred exit-node (msi → karolina etc.) |
+| `RELEASE-NOTES-v0.28.5.md` | [`v0.28.5`](https://github.com/BarsSky/skygate/releases/tag/v0.28.5) | via opt-in (Android-friendly) + migration v0.47 idempotency + tagged-device exit-node fix + entrypoint always clears stale Tailscale exit-node |
 
 ## How a release is cut
 

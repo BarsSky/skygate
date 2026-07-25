@@ -5,9 +5,111 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ---
 
+## v0.28.5 guarantee catalog (B1-B10 build-time + R1-R25 runtime)
+
+**Why this exists.** The v0.28.5 incident revealed that
+`make test` + `make smoke` is not enough. Three independent bugs
+shipped through both:
+- **B5/R20** Migration v0.47 was not idempotent: every skygate
+  restart re-backfilled `via_enabled=1`, undoing the operator's
+  un-pin via the UI.
+- **B6/R11** v0.28.0 removed the catch-all `*` from grants, but
+  the per-user grant kept `src=user@` which in Tailscale v2
+  policy does NOT match tagged devices — every device without
+  a per-device pref had no grant for `autogroup:internet` and
+  was silently denied exit-node access.
+- **R6/R21** The Tailscale state file persisted `--exit-node`
+  prefs across restarts, so a leftover `tailscale set --exit-node=
+  emilia` (from a debug session) kept routing ALL skygate-vm
+  traffic through emilia — including the Docker bridge
+  172.18.0.0/16 — which broke the openresty → skygate-vm:8080
+  path with a 504.
+
+To prevent the next incident, every change to skygate must
+pass `make verify-pre` (build-time) and every deploy must
+pass `make verify-post` (runtime). The catalogs below are the
+contract. If a check fails, the build/deploy is broken — do not
+push or roll forward until it's fixed or the check is updated
+to reflect a deliberate design change.
+
+### Build-time (B1-B10) — run `make verify-pre` before `git push`
+
+| # | Guarantee | How |
+|---|-----------|-----|
+| B1 | `go test ./...` exits 0 | `go test ./...` |
+| B2 | `go vet ./...` exits 0 | `go vet ./...` |
+| B3 | `go build ./cmd/skygate` produces a binary | `go build -o /tmp/x ./cmd/skygate` |
+| B4 | i18n: ru and en key sets match | `go test ./internal/i18n/ -run TestCatalogsParity` |
+| B5 | migration v0.47 idempotent (3 tests) | `go test ./internal/db/ -run TestMigrateV047` |
+| B6 | ACL: per-device grant ordering + via opt-in + tagged-device loose | `go test ./internal/acl/...` |
+| B7 | templates: all embed.FS templates parse | `go test ./internal/handlers/ -run TestLoadTemplates` |
+| B8 | smoke RU+EN 83/83 each (VM only) | `make test` on VM; skipped on Windows |
+| B9 | `RELEASE-NOTES.md` has an entry for the new version | `grep vX.Y.Z RELEASE-NOTES.md` |
+| B10 | no `.env` / `*.key` / `*.pem` in git tracked paths | `git ls-files` filtered |
+
+### Runtime (R1-R25) — run `make verify-post` after `docker compose up -d skygate`
+
+| # | Guarantee | What it catches |
+|---|-----------|-----------------|
+| R1 | `/healthz` 200, `status:ok` | Process dead |
+| R2 | `/readyz` 200 (DB + headscale OK) | Dependency down |
+| R3 | skygate build label = HEAD commit | Wrong binary deployed |
+| R4 | `tailscaled` running inside skygate-vm | TUN missing |
+| R5 | skygate-vm tailnet IP = 100.64.0.10 | Node not registered |
+| R6 | skygate-vm does NOT use an exit-node (status line shows `linux  -`) | Stale exit-node in state → Docker bridge unreachable |
+| R7 | Docker bridge 172.18.0.0/16 reachable from skygate-vm | Network namespace broken |
+| R8 | headscale `/api/v1/policy` returns non-empty policy | Auth/connectivity broken |
+| R9 | Live policy `updatedAt` ≈ last applied snapshot (`acl_snapshots.applied_success=1`) | Reapply needed |
+| R10 | 4 per-user grants, `src=user@`, `dst` includes `autogroup:internet` | v0.28.3 minimum shape |
+| R11 | ≥5 per-device loose grants (`src=tag:dev-*`, `dst=autogroup:internet`, NO `via`) | v0.28.5b tagged-device fix |
+| R12 | No catch-all `src=*` → `autogroup:internet` | v0.28.3 bypass fix regression |
+| R13 | `*` → `tag:public` AND `*` → `tag:exit-node` catch-alls present | SSH reachability to relays |
+| R14 | `tagOwners` contains `tag:public`, `tag:exit-node`, `tag:private`, `tag:subnet-router` | Parser accepts policy |
+| R15 | No per-device grant has `via` for `via_enabled=0` row | Migration re-backfill regression |
+| R16 | Per-user grant `via` matches `user_exit_node_prefs.via_enabled` | Same regression |
+| R17 | emilia, sharlotta, karolina online in headscale | Relay outage |
+| R18 | Each exit-node advertises `0.0.0.0/0` | Real exit-node, not stub |
+| R19 | DB: all per-user `via_enabled` match live policy | Cross-check |
+| R20 | Migration v0.47 idempotent at runtime | (Same as B5; covered by build test) |
+| R21 | `tailscaled.state` on disk has no stale `ExitNodeID` | Won't re-trigger the 504 path |
+| R22 | `https://skygate.skynas.ru/healthz` → 200 | HTTPS path works end-to-end |
+| R23 | TLS cert is Let's Encrypt, > 7 days valid | Cert renewal gap |
+| R24 | openresty upstream (`localhost:8080`) returns 200 | Not 504 |
+| R25 | skygate-vm pings `8.8.8.8` with 0% loss | Direct internet works |
+
+### How to extend the catalog
+
+If you add a new invariant (e.g. a new migration, a new exit-node,
+a new TLS SAN, a new required i18n key), add the check to
+`scripts/verify_pre_deploy.sh` (build-time) and/or
+`scripts/verify_post_deploy.sh` (runtime) **in the same PR** as
+the change. The catalog is the test — code that ships without
+a check is code that will silently regress.
+
+If a check legitimately needs to be removed (e.g. a feature
+being deprecated), remove the check in the same PR as the
+feature removal and add a one-line note in the commit message
+explaining why.
+
+---
+
 ## Release status
 
-* **Current**: v0.28.4 — per-device preferred exit-node
+* **Current**: v0.28.5 — explicit opt-in for `via` constraint
+  (Android-friendly) + tagged-device exit-node fix + idempotent
+  migration + entrypoint always clears stale Tailscale exit-node
+  ([tag v0.28.5](https://github.com/BarsSky/skygate/releases/tag/v0.28.5)).
+  Four patches: v0.28.5 (commit `206d26b`, the original
+  Android-friendly opt-in), v0.28.5a (`1346f7d`, migration
+  v0.47 idempotency), v0.28.5b (`1872f06`, loose per-device
+  grant for tagged devices), v0.28.5c (`6e4000e`, entrypoint
+  always passes `--exit-node=` to `tailscale up` to clear
+  stale state). See the [guarantee catalog](#v0285-guarantee-catalog-b1-b10-build-time--r1-r25-runtime)
+  for the full B1-B10 + R1-R25 contract; `make verify-pre`
+  before push, `make verify-post` after deploy. Release notes
+  in `RELEASE-NOTES-v0.28.5.md`.
+
+* **Previous**: v0.28.4 — per-device preferred exit-node
   ([tag v0.28.4](https://github.com/BarsSky/skygate/releases/tag/v0.28.4)).
   The "msi → karolina override" release. v0.28.3 closed the
   exit-node bypass but pinned all of skyadmin's devices to
