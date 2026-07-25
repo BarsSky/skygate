@@ -221,13 +221,22 @@ func TestGenerateACLValidJSONShape(t *testing.T) {
 		t.Fatalf("ACL JSON should start with '{', got %q...", aclStr[:min(10, len(aclStr))])
 	}
 	for _, want := range []string{
-		`"dst": ["alice@tsnet.skynas.ru:*"]`,
-		`"dst": ["bob@tsnet.skynas.ru:*"]`,
+		// 2026-07-25: v0.28.3 — per-user rule now ends
+		// with autogroup:internet:* so the user can reach
+		// the public internet through their own grant
+		// (instead of the catch-all that any device used
+		// to be able to piggyback on).
+		`"dst": ["alice@tsnet.skynas.ru:*", "autogroup:internet:*"]`,
+		`"dst": ["bob@tsnet.skynas.ru:*", "autogroup:internet:*"]`,
 		`"dst": ["tag:public:*"]`,
 		`"dst": ["tag:exit-node:*"]`,
 		// 2026-07-15: v0.12.0.2 — internet egress via
 		// autogroup:internet (NOT a literal "*:*" catch-all,
 		// which would re-introduce the inter-user leak).
+		// 2026-07-25: v0.28.3 — the catch-all is now
+		// src=tag:public (relay nodes only), not src=* (any
+		// device). End-user devices get autogroup:internet
+		// via their per-user rule (see above).
 		`"dst": ["autogroup:internet:*"]`,
 		// 2026-07-17: v0.17.0 — tag:subnet-router must
 		// be registered in tagOwners so headscale accepts
@@ -311,8 +320,27 @@ func TestGenerateACL_LastRuleIsAutogroupInternet(t *testing.T) {
 	// (2) Internet-egress guard — the last rule must
 	// reference autogroup:internet (the v0.12.0.2 design
 	// choice; any other final rule is a regression).
+	//
+	// 2026-07-25: v0.28.3 — the catch-all is now
+	// `src: ["tag:public"]` (NOT src: ["*"]) so only
+	// relay nodes can use autogroup:internet themselves.
+	// End-user devices get autogroup:internet via their
+	// per-user grant, not the catch-all. The "last rule"
+	// check still holds because the autogroup:internet
+	// dst is the catch-all — only the src changed.
 	if !strings.Contains(lastRule, "autogroup:internet:*") {
 		t.Fatalf("last rule in acls[] does not reference autogroup:internet: %s", lastRule)
+	}
+	// (3) v0.28.3: the catch-all src MUST be tag:public
+	// (not "*"). With src=* any device can use any
+	// exit-node for arbitrary internet destinations,
+	// including karolina's 148 PrimaryRoutes — this is
+	// the bypass the user reported. The fix is to scope
+	// the catch-all to tag:public (relay nodes) so only
+	// they can use autogroup:internet themselves (i.e.
+	// FORWARD exit-node traffic to the internet).
+	if strings.Contains(aclStr, `"src": ["*"], "dst": ["autogroup:internet:*"]`) {
+		t.Fatalf("v0.28.3 fix: the autogroup:internet catch-all must be src=tag:public, not src=*. Found the bypass shape: %s", aclStr)
 	}
 }
 
@@ -355,18 +383,20 @@ func TestGenerateACL_PerUserSubnetCIDR(t *testing.T) {
 	// alice's per-user rule should include her CIDR.
 	// The renderer writes the rule on a single line, so
 	// the expected substring is a single line too.
+	// 2026-07-25: v0.28.3 — per-user dst also ends with
+	// "autogroup:internet:*" so the user can reach the
+	// public internet through their own grant.
 	wantAlice := fmt.Sprintf(
-		`"src": ["alice@tsnet.skynas.ru"], "dst": ["alice@tsnet.skynas.ru:*", "%s:*"]`,
+		`"src": ["alice@tsnet.skynas.ru"], "dst": ["alice@tsnet.skynas.ru:*", "%s:*", "autogroup:internet:*"]`,
 		aliceCIDR)
 	if !strings.Contains(aclStr, wantAlice) {
 		t.Errorf("alice's per-user rule should include her CIDR; expected %q in ACL, got excerpt: %q",
 			wantAlice, aclStr[max(0, len(aclStr)-1500):])
 	}
 	// bob's per-user rule should NOT include any CIDR
-	// (he has no subnet allocated). The grep for
-	// "bob@tsnet.skynas.ru:*" should appear but NOT
-	// as a multi-CIDR dst (his dst has exactly one entry).
-	wantBob := `"src": ["bob@tsnet.skynas.ru"], "dst": ["bob@tsnet.skynas.ru:*"]`
+	// (he has no subnet allocated) but DOES include
+	// autogroup:internet:* (v0.28.3).
+	wantBob := `"src": ["bob@tsnet.skynas.ru"], "dst": ["bob@tsnet.skynas.ru:*", "autogroup:internet:*"]`
 	if !strings.Contains(aclStr, wantBob) {
 		t.Errorf("bob's per-user rule should NOT include a CIDR; expected %q in ACL, got excerpt: %q",
 			wantBob, aclStr[max(0, len(aclStr)-1500):])
@@ -426,9 +456,12 @@ func TestGenerateACL_SharedSubnetsExtendDst(t *testing.T) {
 	}
 
 	// bob's per-user rule should now have BOTH bob's
-	// CIDR and alice's CIDR.
+	// CIDR and alice's CIDR. 2026-07-25: v0.28.3 — the
+	// dst list now ends with "autogroup:internet:*" so
+	// the user can reach the public internet through
+	// their own grant.
 	wantBob := fmt.Sprintf(
-		`"src": ["bob@tsnet.skynas.ru"], "dst": ["bob@tsnet.skynas.ru:*", "%s:*", "%s:*"]`,
+		`"src": ["bob@tsnet.skynas.ru"], "dst": ["bob@tsnet.skynas.ru:*", "%s:*", "%s:*", "autogroup:internet:*"]`,
 		bobCIDR, aliceCIDR)
 	if !strings.Contains(aclStr, wantBob) {
 		t.Errorf("bob's per-user rule should include shared alice CIDR; expected %q in ACL, got excerpt: %q",
@@ -437,9 +470,10 @@ func TestGenerateACL_SharedSubnetsExtendDst(t *testing.T) {
 	// alice's per-user rule should still only have
 	// alice's own CIDR (the share is one-directional;
 	// alice didn't grant herself access to bob's
-	// subnet).
+	// subnet). 2026-07-25: v0.28.3 — ends with
+	// "autogroup:internet:*".
 	wantAlice := fmt.Sprintf(
-		`"src": ["alice@tsnet.skynas.ru"], "dst": ["alice@tsnet.skynas.ru:*", "%s:*"]`,
+		`"src": ["alice@tsnet.skynas.ru"], "dst": ["alice@tsnet.skynas.ru:*", "%s:*", "autogroup:internet:*"]`,
 		aliceCIDR)
 	if !strings.Contains(aclStr, wantAlice) {
 		t.Errorf("alice's per-user rule should NOT include bob's CIDR; expected %q in ACL, got excerpt: %q",
@@ -1203,10 +1237,22 @@ func TestGenerateACLWithVia_NoPreferencesWhenNoneSet(t *testing.T) {
 		t.Errorf("no per-user prefs set — output must NOT contain 'via'.\nACL:\n%s", aclStr)
 	}
 	// Catch-all grants in autogroup:internet must still be
-	// present (the legacy fallback so users without a
-	// preference can still get exit-node access).
+	// present (so tag:public relay nodes can FORWARD exit-node
+	// traffic to the internet). 2026-07-25: v0.28.3 — the
+	// catch-all is now src=tag:public (not src=*), so only
+	// relays match. End-user devices get autogroup:internet
+	// via the per-user grant (which always includes it,
+	// regardless of whether the user has a preference set).
 	if !strings.Contains(aclStr, `"autogroup:internet"`) {
-		t.Errorf("output must still contain the autogroup:internet catch-all.\nACL:\n%s", aclStr)
+		t.Errorf("output must still contain the autogroup:internet reference.\nACL:\n%s", aclStr)
+	}
+	// v0.28.3: the catch-all src must be tag:public, not "*".
+	// Without this, msi (or any other end-user device) could
+	// piggyback on the catch-all to use any exit-node for
+	// arbitrary internet destinations — the bypass the user
+	// reported on 2026-07-25.
+	if strings.Contains(aclStr, `"src": ["*"], "dst": ["autogroup:internet"]`) {
+		t.Errorf("v0.28.3: autogroup:internet catch-all must be src=tag:public, not src=*.\nACL:\n%s", aclStr)
 	}
 }
 
@@ -1366,5 +1412,134 @@ func TestGenerateACLWithVia_HostsBlockIsRequiredEvenWhenEmpty(t *testing.T) {
 	// The placeholder is the only entry.
 	if !strings.Contains(aclStr, `"_placeholder": "0.0.0.0/32"`) {
 		t.Errorf("empty hosts block must contain the _placeholder entry.\nACL:\n%s", aclStr)
+	}
+}
+
+// 2026-07-25: v0.28.3 — exit-node bypass fix. The
+// catch-all `* → autogroup:internet:*` (in acls[]) and
+// `* → autogroup:internet` (in grants[]) was the bypass
+// that let msi (tag:dev-skyadmin-msi → skyadmin@...) and
+// any other end-user device reach karolina's 148
+// PrimaryRoutes through the exit-node path. The fix has
+// two parts:
+//
+//   1. The per-user grant now includes "autogroup:internet"
+//      in its dst list. Combined with the via=[] field
+//      (which may be empty for users without a
+//      preference), this gives every user internet
+//      egress as themselves (a per-user grant always
+//      matches the user's own packets because every
+//      portal user's device resolves to their
+//      <username>@tsnet.skynas.ru identity via the
+//      tagOwners block).
+//
+//   2. The catch-all's src is changed from "*" to
+//      "tag:public" — only relay nodes can use
+//      autogroup:internet themselves (i.e. FORWARD
+//      exit-node traffic to the internet). End-user
+//      devices no longer match this catch-all.
+//
+// The two-part design keeps the exit-node function
+// working (relays still forward) while closing the
+// bypass (end-user devices can't piggyback on the
+// catch-all to pick whichever exit-node they want).
+// The following 3 tests pin each part of the fix.
+
+// TestGenerateACLWithVia_PerUserGrantHasAutogroupInternet
+// pins the v0.28.3 invariant that the per-user grant's
+// dst list ALWAYS includes "autogroup:internet" (as
+// the LAST entry, after the user's own identity and
+// subnet). The grant already has `ip: ["*"]` so the
+// autogroup:internet dst resolves to "any IP in
+// autogroup:internet, any port".
+func TestGenerateACLWithVia_PerUserGrantHasAutogroupInternet(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Find alice's per-user grant (the one whose src is
+	// alice@tsnet.skynas.ru) and verify its dst contains
+	// "autogroup:internet".
+	wantNeedle := `"src": ["alice@tsnet.skynas.ru"], "dst": [` +
+		`"alice@tsnet.skynas.ru:*"` +
+		// 2026-07-25: v0.28.3 — autogroup:internet
+		// appended at the end.
+		`, "autogroup:internet"` +
+		`]`
+	if !strings.Contains(aclStr, wantNeedle) {
+		t.Errorf("per-user grant for alice must include autogroup:internet in dst.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_CatchAllIsTagPublicNotStar pins
+// the v0.28.3 invariant that the autogroup:internet
+// catch-all has src=tag:public, NOT src=*. This is the
+// fix for the bypass: with src=*, any device could use
+// any exit-node for arbitrary internet destinations;
+// with src=tag:public, only relay nodes (emilia,
+// sharlotta, karolina, etc.) can use autogroup:internet
+// themselves.
+func TestGenerateACLWithVia_CatchAllIsTagPublicNotStar(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// The catch-all must be src=tag:public, dst=autogroup:internet.
+	// The exact needle we want:
+	want := `"src": ["tag:public"], "dst": ["autogroup:internet"]`
+	if !strings.Contains(aclStr, want) {
+		t.Errorf("autogroup:internet catch-all must be src=tag:public.\nACL:\n%s", aclStr)
+	}
+	// The OLD bypass shape MUST NOT be present:
+	// src=* dst=autogroup:internet. The user reported this
+	// as the bypass: msi (a skyadmin device) used karolina
+	// for internet destinations it shouldn't have been able
+	// to reach.
+	banned := `"src": ["*"], "dst": ["autogroup:internet"]`
+	if strings.Contains(aclStr, banned) {
+		t.Errorf("v0.28.3: src=* dst=autogroup:internet is the bypass — must be src=tag:public.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACL_LegacyPerUserGrantHasAutogroupInternet
+// pins the v0.28.3 invariant for the LEGACY acls[]
+// path (used when SKYGATE_ACL_VIA_ENABLED=false).
+// Same fix as the grants[] path: per-user rule
+// includes autogroup:internet:* in dst, catch-all
+// is src=tag:public. Legacy mode doesn't have via,
+// so devices without per-user-rule coverage fall
+// through to the catch-all (which is now restricted
+// to tag:public — they don't match).
+func TestGenerateACL_LegacyPerUserGrantHasAutogroupInternet(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	// Per-user rule for alice must include autogroup:internet:*.
+	// In the legacy acls[] path the dst format keeps the :*
+	// suffix (parseAlias accepts "*:*" for autogroup
+	// because the autogroup is a reserved alias and the
+	// port is part of the standard acls[] shape).
+	wantNeedle := `"dst": ["alice@tsnet.skynas.ru:*", "autogroup:internet:*"]`
+	if !strings.Contains(aclStr, wantNeedle) {
+		t.Errorf("legacy per-user rule for alice must include autogroup:internet:* in dst.\nACL:\n%s", aclStr)
+	}
+	// The OLD bypass shape MUST NOT be present:
+	// src=* dst=autogroup:internet:*. (Same fix as the
+	// grants[] path.)
+	banned := `"src": ["*"], "dst": ["autogroup:internet:*"]`
+	if strings.Contains(aclStr, banned) {
+		t.Errorf("v0.28.3 legacy: src=* dst=autogroup:internet:* is the bypass — must be src=tag:public.\nACL:\n%s", aclStr)
+	}
+	// The fix: src=tag:public, dst=autogroup:internet:*.
+	want := `"src": ["tag:public"], "dst": ["autogroup:internet:*"]`
+	if !strings.Contains(aclStr, want) {
+		t.Errorf("legacy autogroup:internet catch-all must be src=tag:public.\nACL:\n%s", aclStr)
 	}
 }

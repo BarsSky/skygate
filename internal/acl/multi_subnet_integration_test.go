@@ -373,6 +373,12 @@ func TestACLBuilder_SkyadminMigrationIsolated(t *testing.T) {
 	wantSkyadminDst := []string{
 		"skyadmin@tsnet.skynas.ru",
 		"10.0.1.0/24",
+		// 2026-07-25: v0.28.3 — autogroup:internet
+		// appended at the end of every per-user rule so
+		// the user can reach the public internet through
+		// their own grant. dstList strips the :* suffix,
+		// so the entry is bare here.
+		"autogroup:internet",
 	}
 	if !equalStringSlice(skyadminDst, wantSkyadminDst) {
 		t.Errorf("skyadmin's dst = %v, want %v", skyadminDst, wantSkyadminDst)
@@ -479,6 +485,10 @@ func TestACLBuilder_MultipleSharesToOneGrantee(t *testing.T) {
 		aliceCIDR:             true,
 		carolCIDR:             true,
 		daniilCIDR:            true,
+		// 2026-07-25: v0.28.3 — autogroup:internet
+		// (bare, dstList strips :*) is now appended to
+		// every per-user rule.
+		"autogroup:internet": true,
 	}
 	if len(bobDst) != len(wantBobDst) {
 		t.Errorf("bob's dst has %d entries, want %d; dst=%v",
@@ -909,9 +919,10 @@ func TestACLBuilder_MeshThreeWayNWayAccess(t *testing.T) {
 			}
 		}
 		// dst size: own identity + own CIDR + N-1
-		// mesh-mate CIDRs = 1 + 1 + (3-1) = 4.
-		if len(dst) != 4 {
-			t.Errorf("%s's dst has %d entries, want 4 (own+own_cidr+2 mesh-mates); dst=%v",
+		// mesh-mate CIDRs + autogroup:internet (v0.28.3)
+		// = 1 + 1 + (3-1) + 1 = 5.
+		if len(dst) != 5 {
+			t.Errorf("%s's dst has %d entries, want 5 (own+own_cidr+2 mesh-mates+autogroup:internet); dst=%v",
 				tc.uname, len(dst), dst)
 		}
 	}
@@ -959,9 +970,10 @@ func TestACLBuilder_MeshAndShareAreDeduped(t *testing.T) {
 			count, bobDst)
 	}
 	// bob's dst should have: own identity + own CIDR
-	// + alice's CIDR (deduped) = 3 entries.
-	if len(bobDst) != 3 {
-		t.Errorf("bob's dst has %d entries, want 3 (own+own_cidr+alice_cidr deduped); dst=%v",
+	// + alice's CIDR (deduped) + autogroup:internet:*
+	// (v0.28.3) = 4 entries.
+	if len(bobDst) != 4 {
+		t.Errorf("bob's dst has %d entries, want 4 (own+own_cidr+alice_cidr deduped+autogroup:internet); dst=%v",
 			len(bobDst), bobDst)
 	}
 	// alice's rule: in a mesh, the relationship is
@@ -1071,10 +1083,11 @@ func TestACLBuilder_MultipleMeshesForOneUser(t *testing.T) {
 		}
 	}
 	// dst: own identity + own CIDR + 3 mesh-mate
-	// CIDRs = 5. (alice has no subnet allocated in
-	// this test, so no own CIDR; dst = 1 + 3 = 4.)
-	if len(aliceDst) != 4 {
-		t.Errorf("alice's dst has %d entries, want 4 (own + 3 mesh-mates); dst=%v",
+	// CIDRs + autogroup:internet:* (v0.28.3).
+	// alice has no subnet allocated in this test, so
+	// no own CIDR; dst = 1 + 3 + 1 = 5.
+	if len(aliceDst) != 5 {
+		t.Errorf("alice's dst has %d entries, want 5 (own + 3 mesh-mates + autogroup:internet); dst=%v",
 			len(aliceDst), aliceDst)
 	}
 }

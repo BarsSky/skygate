@@ -289,6 +289,18 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 			sb.WriteString(d)
 			sb.WriteString("\"")
 		}
+		// 2026-07-25: v0.28.3 — add autogroup:internet to
+		// the per-user dst list. Combined with the catch-all
+		// change below (src=tag:public, not src=*), this is
+		// the exit-node bypass fix: the only way a device
+		// can reach autogroup:internet (and thus USE an
+		// exit-node for internet) is via a per-user grant
+		// or the tag:public relay path. Devices that match
+		// no per-user grant (rare — every portal user's
+		// device resolves to a user identity via
+		// tagOwners) cannot piggyback on the catch-all to
+		// pick whichever exit-node they want.
+		sb.WriteString(", \"autogroup:internet:*\"")
 		sb.WriteString("] }")
 	}
 
@@ -360,7 +372,44 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// autogroup:internet as the recommended pattern.
 	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:public:*\"] }")
 	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"tag:exit-node:*\"] }")
-	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"autogroup:internet:*\"] }")
+	// 2026-07-25: v0.28.3 — change the autogroup:internet
+	// catch-all from src=* to src=tag:public. With src=*,
+	// ANY device in the tailnet could use ANY exit-node
+	// (emilia, sharlotta, karolina) for arbitrary internet
+	// destinations — including karolina's 148 PrimaryRoutes
+	// (Telegram/Google/Cloudflare/etc.). The user reported
+	// this as "msi без правил имеет доступ к сайтам и
+	// подсетям что только для skyworker": msi (tag:dev-
+	// skyadmin-msi → skyadmin@...) has no per-device rules,
+	// but the src=* catch-all let it reach karolina's
+	// PrimaryRoutes through the exit-node path.
+	//
+	// The fix has two parts:
+	//   1. The per-user grant (above) now includes
+	//      "autogroup:internet:*" in its dst — so each
+	//      user CAN reach the public internet through
+	//      the tag:public relay network, but only via
+	//      their own grant (which the headscale policy
+	//      engine checks first).
+	//   2. The catch-all here is restricted to
+	//      src=tag:public — only relay nodes (emilia,
+	//      sharlotta, karolina, plus any future
+	//      tag:public infrastructure) can use
+	//      autogroup:internet themselves (i.e. exit
+	//      FORWARD traffic to the internet). End-user
+	//      devices no longer match this catch-all.
+	//
+	// Net effect: msi (and every other end-user device)
+	// still has internet egress (via the per-user grant
+	// in the user's row), but only as that specific
+	// user — and in the via=true path, that user's
+	// grant has via=[<preferred exit-node>], so msi is
+	// pinned to a specific relay, not free to pick.
+	// tag:public and tag:exit-node catch-alls above are
+	// unchanged — those are for tag:public SSH
+	// reachability (admin SSH into relays) and don't
+	// enable exit-node forwarding.
+	sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"tag:public\"], \"dst\": [\"autogroup:internet:*\"] }")
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
@@ -870,6 +919,27 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			sb.WriteString(d)
 			sb.WriteString("\"")
 		}
+		// 2026-07-25: v0.28.3 — add autogroup:internet
+		// to the per-user grant dst. Combined with the
+		// catch-all change below (src=tag:public, not
+		// src=*), this closes the catch-all bypass
+		// where any device could use any exit-node
+		// (emilia/sharlotta/karolina) for arbitrary
+		// internet destinations — including karolina's
+		// 148 PrimaryRoutes. msi (tag:dev-skyadmin-msi
+		// → skyadmin@...) was the example: without
+		// per-device rules, msi could reach skyworker's
+		// internet resources through karolina's
+		// subnet-route + exit-node path.
+		//
+		// The per-user grant now matches msi's packets
+		// (src resolves to skyadmin@... via tagOwners),
+		// and via=[tag:exit-emilia] pins the exit-node
+		// choice. msi CAN still reach autogroup:internet
+		// (via the per-user grant), but ONLY through
+		// emilia — karolina is locked out by the via
+		// constraint at the headscale packet filter.
+		sb.WriteString(", \"autogroup:internet\"")
 		sb.WriteString("], \"ip\": [\"*\"]")
 		if via := viaByUser[uname]; via != "" {
 			sb.WriteString(", \"via\": [\"" + via + "\"]")
@@ -908,7 +978,24 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// ip: ["*"] the dst is "any port" anyway.
 	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:public\"], \"ip\": [\"*\"] }")
 	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"tag:exit-node\"], \"ip\": [\"*\"] }")
-	sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
+	// 2026-07-25: v0.28.3 — autogroup:internet catch-all
+	// restricted to src=tag:public. The legacy src=*
+	// catch-all let any device use any exit-node for
+	// arbitrary internet destinations, including
+	// karolina's 148 PrimaryRoutes (Telegram/Google/
+	// Cloudflare/etc.). With the per-user grant above
+	// now including autogroup:internet, every end-user
+	// device already has its own grant that covers
+	// public internet egress (and in the via=true path,
+	// that grant has via=[<preferred>], pinning the
+	// exit-node). The catch-all below exists only so
+	// tag:public relay nodes can FORWARD their own
+	// exit-node traffic to the actual internet — the
+	// per-user grants above don't cover src=tag:public,
+	// so without this the relays couldn't forward.
+	// See GenerateACLForPlane comment for the full
+	// bypass analysis.
+	sb.WriteString(",\n    { \"src\": [\"tag:public\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
