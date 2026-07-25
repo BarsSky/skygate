@@ -681,8 +681,96 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		identities = []string{}
 	}
 
+	// 2026-07-25: v0.28.2 — headscale 0.29.2 grants
+	// parser (policy v2 / AliasEnc) does NOT accept
+	// CIDR:port in dst. Workaround: emit each CIDR
+	// referenced by a grant as a host alias in the
+	// `hosts:` block, then reference the alias in
+	// the grant's dst. Pre-collect all (name, cidr)
+	// pairs we need across the whole policy (per-user
+	// subnets + shared + mesh) and emit one host entry
+	// per unique pair BEFORE the grants block.
+	//
+	// Naming convention: "h:user-<uname>-subnet" for
+	// personal subnets, "h:shared-<sanitized-cidr>" for
+	// shared / mesh entries. The "h:" prefix is unique
+	// enough to never collide with a username, group,
+	// tag, or autogroup (which all use their own
+	// reserved prefixes per headscale's parseAlias).
+	type hostEntry struct {
+		name string
+		cidr string
+	}
+	seenHost := make(map[string]bool)
+	var hosts []hostEntry
+	addHost := func(name, cidr string) {
+		if name == "" || cidr == "" {
+			return
+		}
+		key := name + "|" + cidr
+		if seenHost[key] {
+			return
+		}
+		seenHost[key] = true
+		hosts = append(hosts, hostEntry{name: name, cidr: cidr})
+	}
+	for _, uname := range usernames {
+		if uname == "" {
+			continue
+		}
+		if ownCIDR := subByUser[uname]; ownCIDR != "" {
+			addHost("h:user-"+uname+"-subnet", ownCIDR)
+		}
+	}
+	// Shared / mesh CIDRs (deduplicated by the addHost
+	// closure). Iterate every user's sharedByUser to
+	// catch both v0.17.1 share rows and v0.22.0 mesh
+	// memberships (both feed into sharedByUser in
+	// the pre-pass above).
+	for _, cidrs := range sharedByUser {
+		for _, cidr := range cidrs {
+			if cidr == "" {
+				continue
+			}
+			// Sanitize the CIDR for use as a host
+			// alias name: "." and "/" → "-", ":" (IPv6)
+			// → "_". The result is unique per
+			// CIDR (dedup via seenHost).
+			name := "h:shared-" + strings.NewReplacer(
+				".", "-", "/", "-", ":", "_").Replace(cidr)
+			addHost(name, cidr)
+		}
+	}
+
 	var sb strings.Builder
-	sb.WriteString("{\n  \"grants\": [\n")
+	sb.WriteString("{\n  \"hosts\": {\n")
+	// Emit the hosts block. headscale accepts an
+	// empty {} object but the v2 parser is strict
+	// about the JSON shape — for safety we always
+	// emit at least one entry. When no per-user /
+	// shared / mesh CIDRs exist, we emit a single
+	// placeholder entry pointing at an RFC 5737
+	// documentation range (TEST-NET-1, 192.0.2.0/24)
+	// so headscale doesn't reject the policy for
+	// being malformed. The placeholder never appears
+	// in any grant's dst — it's purely a syntactic
+	// anchor.
+	first := true
+	if len(hosts) == 0 {
+		sb.WriteString("    \"_placeholder\": \"0.0.0.0/32\"")
+		first = false
+	}
+	for _, h := range hosts {
+		if first {
+			sb.WriteString("    \"" + h.name + "\": \"" + h.cidr + "\"")
+			first = false
+		} else {
+			sb.WriteString(",\n    \"" + h.name + "\": \"" + h.cidr + "\"")
+		}
+	}
+	sb.WriteString("\n  },\n")
+
+	sb.WriteString("  \"grants\": [\n")
 
 	for i, idn := range identities {
 		if i > 0 {
@@ -690,8 +778,15 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		}
 		uname := strings.SplitN(idn, "@", 2)[0]
 		dst := []string{idn + ":*"}
+		// 2026-07-25: v0.28.2 — reference the
+		// pre-collected host alias instead of the
+		// raw CIDR. The alias resolves to the
+		// same IP range at headscale load time;
+		// the only difference is that the v2
+		// policy parser accepts a host alias in
+		// dst but not a CIDR+port.
 		if ownCIDR := subByUser[uname]; ownCIDR != "" {
-			dst = append(dst, ownCIDR+":*")
+			dst = append(dst, "h:user-"+uname+"-subnet:*")
 		}
 		dedupSet := make(map[string]bool, len(dst))
 		for _, d := range dst {
@@ -701,7 +796,12 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			if sharedCIDR == "" {
 				continue
 			}
-			entry := sharedCIDR + ":*"
+			// Same sanitization as the hosts
+			// pre-pass above so the alias names
+			// match exactly.
+			hostName := "h:shared-" + strings.NewReplacer(
+				".", "-", "/", "-", ":", "_").Replace(sharedCIDR)
+			entry := hostName + ":*"
 			if dedupSet[entry] {
 				continue
 			}
