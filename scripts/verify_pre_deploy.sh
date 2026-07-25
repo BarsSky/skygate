@@ -159,11 +159,11 @@ fi
 
 # --- B9: release notes ---
 run_check "B9" "RELEASE-NOTES.md has entries for v0.28.x" \
-  bash -c "grep -q 'v0.28.5' RELEASE-NOTES.md 2>&1"
+  "grep -q 'v0.28.5' RELEASE-NOTES.md"
 
 # --- B10: no committed secrets ---
 run_check "B10" "no .env / secret file in git tracked paths" \
-  bash -c "! git ls-files | grep -E '\\.(env|key|pem)$|^secrets/' 2>&1"
+  "! git ls-files | grep -E '\\.(env|key|pem)$|^secrets/'"
 
 echo
 echo "=== summary ==="
