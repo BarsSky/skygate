@@ -44,10 +44,24 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# 3. Auto-detect the bash mount root for the Windows tests that
+# need to translate C:/foo/bar → /<drive>/foo/bar. WSL2 uses
+# /mnt/<drive>/, Git Bash uses /<drive>/. Pick whichever exists;
+# the `internal/headscale` tests use SKYGATE_BASH_MOUNT_ROOT to
+# know which style to use. See provision.go runScript comment.
+if [ -z "${SKYGATE_BASH_MOUNT_ROOT:-}" ] && [ "$(uname -s 2>/dev/null)" = "MSYS_NT-10.0" ]; then
+  # Git Bash on Windows (uname returns MSYS_NT-*)
+  export SKYGATE_BASH_MOUNT_ROOT="/"
+elif [ -z "${SKYGATE_BASH_MOUNT_ROOT:-}" ] && [ -d /mnt/c ]; then
+  # WSL2 (has /mnt/c mount)
+  export SKYGATE_BASH_MOUNT_ROOT="/mnt"
+fi
+
 echo "pre-push: running v0.28.5 guarantee catalog (B1-B10)..."
+echo "  bash-mount-root: ${SKYGATE_BASH_MOUNT_ROOT:-<unset>}"
 echo
 
-# 3. Run the catalog. Don't use `make` because make on Windows
+# 4. Run the catalog. Don't use `make` because make on Windows
 # defaults to cmd.exe — call the script directly.
 if bash scripts/verify_pre_deploy.sh; then
   echo
