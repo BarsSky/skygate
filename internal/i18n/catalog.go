@@ -252,6 +252,15 @@ var ruCatalog = map[string]string{
 	"devices.dev_tag_pending_help":    "тег ещё не применён в headscale — следующий /my/devices повторит попытку",
 	"devices.dev_tag_empty_help":      "устройство без hostname — используется legacy device_ip правилами",
 	"devices.dev_tag_hint_v0_28_0":    "<b>Per-device ACL</b> — каждый узел имеет уникальный тег <code>tag:dev-&lt;user&gt;-&lt;device&gt;</code>, и skygate использует его в ACL вместо IP. Правило для <code>workstation-1</code> действует <b>только</b> на <code>workstation-1</code>, а не на <code>workstation-3</code> или <code>desktop</code>",
+	// 2026-07-25: v0.28.4 — per-device preferred exit-node
+	// (a specific device can be pinned to a different
+	// exit-node than the user's default).
+	"devices.device_exit_pref":               "Exit node",
+	"devices.device_exit_pref_pinned_help":  "это устройство pinned к этому exit-node — перебивает per-user default",
+	"devices.device_exit_pref_set_help":      "выберите exit-node — это устройство будет использовать его вместо per-user default",
+	"devices.device_exit_pref_set_button_help": "привязать устройство к выбранному exit-node",
+	"devices.device_exit_pref_clear_help":    "снять per-device привязку — устройство вернётся к per-user default",
+	"devices.device_exit_pref_clear_confirm": "Снять per-device привязку к exit-node? Устройство вернётся к per-user default.",
 	"devices.no_devices":              "Нет устройств",
 	"devices.name":                    "Имя",
 	"devices.expires_in":              "Истекает через",
@@ -2373,6 +2382,13 @@ var enCatalog = map[string]string{
 	"devices.dev_tag_pending_help":    "tag not yet applied in headscale — next /my/devices retries",
 	"devices.dev_tag_empty_help":      "no hostname — falls back to legacy device_ip rules",
 	"devices.dev_tag_hint_v0_28_0":    "<b>Per-device ACL</b> — every device has a unique <code>tag:dev-&lt;user&gt;-&lt;device&gt;</code> and skygate uses it in ACL instead of IP. A rule for <code>workstation-1</code> applies <b>only</b> to <code>workstation-1</code>, not to <code>workstation-3</code> or <code>desktop</code>",
+	// 2026-07-25: v0.28.4 — per-device preferred exit-node.
+	"devices.device_exit_pref":               "Exit node",
+	"devices.device_exit_pref_pinned_help":  "this device is pinned to this exit-node — overrides the per-user default",
+	"devices.device_exit_pref_set_help":      "select an exit-node — this device will use it instead of the per-user default",
+	"devices.device_exit_pref_set_button_help": "pin this device to the selected exit-node",
+	"devices.device_exit_pref_clear_help":    "clear the per-device pin — device falls back to the per-user default",
+	"devices.device_exit_pref_clear_confirm": "Clear the per-device exit-node pin? The device will fall back to the per-user default.",
 	"devices.no_devices":              "No devices",
 	"devices.name":                    "Name",
 	"devices.expires_in":              "Expires in",

@@ -210,6 +210,13 @@ func main() {
 	// 2026-07-24: v0.28.1 — per-user preferred exit-node.
 	// Visible to all authenticated users (self-service).
 	mux.Handle("POST /my/exit-nodes/preferred", authMW(http.HandlerFunc(app.PostMyExitNodePreferred)))
+	// 2026-07-25: v0.28.4 — per-device preferred exit-node.
+	// The user can pin a specific device (e.g. their
+	// Android phone) to a different exit-node than the
+	// per-user default. The form posts hostname + tag;
+	// the handler resolves the hostname to the user's
+	// device and stores the pref in device_exit_node_prefs.
+	mux.Handle("POST /my/devices/preferred-exit", authMW(http.HandlerFunc(app.PostMyDevicePreferredExit)))
 	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(app.PostMyPreauth)))
 	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(app.GetMyKeys)))
 	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(app.PostMyKeyExpire)))
@@ -266,6 +273,14 @@ func main() {
 	// user's preferred exit-node (operator-driven
 	// exit-node assignment).
 	mux.Handle("POST /admin/users/{id}/subnet/preferred-exit", authMW(http.HandlerFunc(app.PostAdminUserSubnetPreferredExit)))
+	// 2026-07-25: v0.28.4 — admin override for a
+	// specific DEVICE's preferred exit-node. The
+	// admin can pin any device to any exit-node
+	// (e.g. set workstation-3 → relay-3 for the operator).
+	// The form posts user_id + device_hostname +
+	// tag; the handler stores the pref in
+	// device_exit_node_prefs.
+	mux.Handle("POST /admin/devices/preferred-exit", authMW(http.HandlerFunc(app.PostAdminDevicePreferredExit)))
 	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(app.GetAdminSubnets)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))

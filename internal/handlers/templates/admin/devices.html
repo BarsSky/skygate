@@ -36,6 +36,7 @@
         <th><i class="fa-solid fa-circle-nodes"></i> Type</th>
         <th><i class="fa-solid fa-eye"></i> {{t "devices.tag"}}</th>
         <th><i class="fa-solid fa-fingerprint"></i> {{t "devices.dev_tag_label"}}</th>
+        <th><i class="fa-solid fa-bullseye"></i> {{t "devices.device_exit_pref"}}</th>
         <th><i class="fa-solid fa-signal"></i> {{t "devices.status"}}</th>
         <th><i class="fa-solid fa-clock"></i> {{t "devices.last_seen"}}</th>
         <th><i class="fa-solid fa-gear"></i> {{t "common.actions"}}</th>
@@ -80,6 +81,41 @@
             {{else}}
               <span class="tag tag-warning" title="{{t "devices.dev_tag_pending_help"}}"><i class="fa-solid fa-hourglass-half"></i><code style="font-size:10px;background:transparent">{{$devTag}}</code></span>
             {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{/* v0.28.4: per-device exit-node pref. Keyed by
+               "<skygate_user_id>:<lowercased hostname>". The
+               skygate user_id comes from the SkygateUserByName
+               map (headscale username → skygate user_id). The
+               form below lets the admin set/clear the pref
+               without going through the /my/devices page. */}}
+          {{$skygateUID := index $.SkygateUserByName .UserName}}
+          {{$lowerHost := tolower .Hostname}}
+          {{$prefKey := printf "%d:%s" $skygateUID $lowerHost}}
+          {{$pref := index $.DeviceExitPrefMap $prefKey}}
+          {{if $pref}}
+            <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{$pref}}</code></span>
+            <form method="post" action="/admin/devices/preferred-exit" style="display:inline-block;margin-left:4px" onsubmit="return confirm('{{t "devices.device_exit_pref_clear_confirm"}}')">
+              <input type="hidden" name="user_id" value="{{$skygateUID}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="">
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.device_exit_pref_clear_help"}}"><i class="fa-solid fa-xmark"></i></button>
+            </form>
+          {{else if $skygateUID}}
+            <form method="post" action="/admin/devices/preferred-exit" style="display:inline-flex;gap:3px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
+              <input type="hidden" name="user_id" value="{{$skygateUID}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                {{range $.AvailableExits}}
+                  {{$tag := printf "tag:exit-%s" (tolower .Hostname)}}
+                  <option value="{{$tag}}">{{.Hostname}}</option>
+                {{end}}
+              </select>
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.device_exit_pref_set_button_help"}}"><i class="fa-solid fa-bullseye"></i></button>
+            </form>
           {{else}}
             <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
           {{end}}
