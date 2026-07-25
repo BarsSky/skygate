@@ -86,12 +86,33 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     # tailscaled doesn't share netns, so the responder works
     # — we just need to stop tailscaled from replacing
     # /etc/resolv.conf.
+    #
+    # 2026-07-25: v0.28.5c — explicitly add --exit-node= (empty)
+    # to the `tailscale up` invocation. Reason: Tailscale
+    # persists ALL prefs in tailscaled.state (bind-mounted from
+    # the host). If the operator ever ran `tailscale set
+    # --exit-node=emilia` on the container (even once, for
+    # testing), the state remembers it. The next `tailscale up`
+    # then errors with "requires mentioning all non-default
+    # flags" because the new invocation doesn't list the
+    # previously-set --exit-node. The entrypoint prints a
+    # warning and continues — but the OLD exit-node is still
+    # active. Symptom: skygate-vm routes ALL traffic (including
+    # 172.18.0.0/16 Docker bridge) through the exit-node, which
+    # breaks connectivity to the openresty/Caddy upstream
+    # (504 Gateway Time-out on https://skygate.skynas.ru).
+    # Adding --exit-node= to the entrypoint ensures the exit-node
+    # is cleared on every skygate restart. If the operator wants
+    # the skygate container to be an exit-node itself, they can
+    # explicitly set it AFTER the entrypoint runs (`docker exec
+    # skygate tailscale set --exit-node=<tag>`).
     if ! tailscale up \
         --login-server="$LOGIN_SERVER" \
         --authkey="$AUTHKEY" \
         --hostname="$HOSTNAME" \
         --accept-routes \
-        --accept-dns=false 2>&1; then
+        --accept-dns=false \
+        --exit-node= 2>&1; then
         echo "[init] WARNING: tailscale up failed; continuing without Tailscale"
     fi
 
