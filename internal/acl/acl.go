@@ -728,7 +728,13 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 	viaByUser := make(map[string]string, len(exitPrefs))
 	for _, ep := range exitPrefs {
-		if ep.Username != "" && ep.ExitNodeTag != "" {
+		// 2026-07-25: v0.28.5 — only emit via for users
+		// that have via_enabled=1. The opt-out default
+		// (via_enabled=0) is the Android-friendly path:
+		// the per-user grant has dst=autogroup:internet
+		// with NO via, so the user can use any exit-node
+		// (no headscale packet-filter pinning).
+		if ep.Username != "" && ep.ExitNodeTag != "" && ep.ViaEnabled {
 			viaByUser[ep.Username] = ep.ExitNodeTag
 		}
 	}
@@ -751,7 +757,14 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// builder can look up the via in O(1).
 	viaByDevice := make(map[string]string, len(devicePrefs))
 	for _, dp := range devicePrefs {
-		if dp.Username == "" || dp.DeviceHostname == "" || dp.ExitNodeTag == "" {
+		// 2026-07-25: v0.28.5 — only emit per-device
+		// grants for devices that have via_enabled=1.
+		// The opt-out default (via_enabled=0) means
+		// the device falls back to the per-user grant
+		// (which itself may or may not have via, per
+		// its own via_enabled flag). This is the same
+		// opt-in model as the per-user prefs.
+		if dp.Username == "" || dp.DeviceHostname == "" || dp.ExitNodeTag == "" || !dp.ViaEnabled {
 			continue
 		}
 		// The tag is "tag:dev-<user>-<device-lowercased>".

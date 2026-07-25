@@ -18,6 +18,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"skygate/internal/acl"
@@ -58,6 +59,10 @@ func (a *App) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "hostname required", 400)
 		return
 	}
+	// 2026-07-25: v0.28.5 — strict pinning is opt-in
+	// (same model as the per-user pref). Default OFF
+	// for Android compatibility.
+	viaEnabled := r.FormValue("via") == "1"
 	// Validate the caller owns this device. The
 	// node_owner_map hostname column is populated by the
 	// v0.28.0 backfill at /my/devices load time. If
@@ -67,12 +72,12 @@ func (a *App) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "device not found or not owned by you", 403)
 		return
 	}
-	if err := db.SetDeviceExitNodePref(a.DB, c.UserID, hostname, tag, c.UserID); err != nil {
+	if err := db.SetDeviceExitNodePref(a.DB, c.UserID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	a.audit(c.UserID, c.Username, "my_device_preferred_exit_set",
-		"hostname="+hostname+" tag="+tag)
+		"hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled))
 	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(c.UserID), "", nil, c.Username,
 		"my_device_preferred_exit_set hostname="+hostname+" tag="+tag, a.Cfg.ACLWithViaEnabled)
 	if !res.Applied {
@@ -123,16 +128,17 @@ func (a *App) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Reques
 	}
 	hostname := strings.ToLower(strings.TrimSpace(r.FormValue("hostname")))
 	tag := strings.TrimSpace(r.FormValue("tag"))
+	viaEnabled := r.FormValue("via") == "1"
 	if userID == 0 || hostname == "" {
 		http.Error(w, "user_id and hostname required", 400)
 		return
 	}
-	if err := db.SetDeviceExitNodePref(a.DB, userID, hostname, tag, c.UserID); err != nil {
+	if err := db.SetDeviceExitNodePref(a.DB, userID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	a.audit(c.UserID, c.Username, "admin_device_preferred_exit_set",
-		"target_user_id="+itoa64(userID)+" hostname="+hostname+" tag="+tag)
+		"target_user_id="+itoa64(userID)+" hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled))
 	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(userID), "", nil, c.Username,
 		"admin_device_preferred_exit_set target_user_id="+itoa64(userID)+" hostname="+hostname+" tag="+tag, a.Cfg.ACLWithViaEnabled)
 	if !res.Applied {
