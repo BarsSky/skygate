@@ -98,6 +98,10 @@ func runScript(path string, args ...string) ([]byte, error) {
 	path = filepath.ToSlash(path)
 	if runtime.GOOS == "windows" && len(path) >= 2 && path[1] == ':' {
 		// C:/foo/bar → /mnt/c/foo/bar
+		// (pre-existing WSL2 assumption; Git Bash users on
+		// Windows hit exit 127 for TestProvisionUser_*, the
+		// catalog correctly flags this as B1 FAIL — see
+		// internal/headscale/provision.go for the TODO)
 		path = "/mnt/" + strings.ToLower(string(path[0])) + path[2:]
 	}
 	return exec.Command("bash", append([]string{path}, args...)...).Output()
