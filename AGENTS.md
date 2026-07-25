@@ -7,8 +7,28 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ## Release status
 
-* **Current**: v0.28.3 — close exit-node bypass
-  ([tag v0.28.3](https://github.com/BarsSky/skygate/releases/tag/v0.28.3)).
+* **Current**: v0.28.4 — per-device preferred exit-node
+  ([tag v0.28.4](https://github.com/BarsSky/skygate/releases/tag/v0.28.4)).
+  The "msi → karolina override" release. v0.28.3 closed the
+  exit-node bypass but pinned all of skyadmin's devices to
+  emilia (skyadmin's per-user pref). v0.28.4 adds per-device
+  prefs so a specific device can be pinned to a different
+  exit-node than the user's default. Migration v0.46:
+  `device_exit_node_prefs(user_id, device_hostname, exit_node_tag)`
+  table. `GenerateACLWithViaForPlane` emits per-device grants
+  BEFORE per-user grants (Tailscale first-match). The
+  per-device grant covers ONLY autogroup:internet (the via
+  override target); user's own stuff stays on the per-user
+  grant. UI: `/my/devices` (self-service) + `/admin/devices`
+  (operator override) — dropdown of available exit-nodes +
+  pin/clear buttons. Endpoints: `POST /my/devices/preferred-exit`
+  (caller-owns-device check via `node_owner_map`),
+  `POST /admin/devices/preferred-exit`. 3 NEW ACL tests +
+  1 UI hotfix (derive skygate user from dev tag, not
+  `n.UserName` which is "tagged-devices" after headscale's
+  tag-driven reassignment). All 17 packages green.
+  Smoke RU+EN 83/83. Live: msi pinned to karolina
+  (per-device grant index 0; per-user grants at index 1+).
   The "msi без правил имеет доступ к сайтам и подсетям что только для
   skyworker" fix. Catch-all `* → autogroup:internet` was the bypass:
   any device could use any exit-node for arbitrary internet
@@ -70,6 +90,22 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
   filed as v0.26.1 follow-up). No env-var changes,
   no schema migration, no breaking changes.
   ~830 lines added (5 files new, 11 modified, 1 test).
+
+* **Previous**: v0.28.3 — close exit-node bypass
+  ([tag v0.28.3](https://github.com/BarsSky/skygate/releases/tag/v0.28.3)).
+  The "msi без правил имеет доступ к сайтам и подсетям что только для
+  skyworker" fix. Catch-all `* → autogroup:internet` was the bypass:
+  any device could use any exit-node for arbitrary internet
+  destinations, including karolina's 148 PrimaryRoutes. Fix has two
+  parts: (1) per-user grant dst now includes `autogroup:internet`
+  (every user can reach the internet through their own grant, and the
+  via constraint pins them to their preferred exit-node if set);
+  (2) catch-all src is changed from `*` to `tag:public` — only relay
+  nodes can use `autogroup:internet` themselves (i.e. FORWARD
+  exit-node traffic to the internet). 3 NEW tests + 5 UPDATED.
+  `go test ./internal/acl/...` PASS. Smoke RU+EN 83/83. Live policy:
+  4 per-user grants with `autogroup:internet` in dst, 3 with `via`,
+  catch-all `tag:public → autogroup:internet` for relay forwarding.
 
 * **Previous**: v0.28.2 — `hosts:` block workaround for headscale 0.29.2
   grants parser ([tag v0.28.2](https://github.com/BarsSky/skygate/releases/tag/v0.28.2)).
