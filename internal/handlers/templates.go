@@ -49,6 +49,15 @@ func LoadTemplates() *Templates {
 			if b == 0 { return 0 }
 			return a / b
 		},
+		// 2026-07-25: v0.28.4 — `tolower` for the
+		// per-device exit-node form, which renders
+		// `tag:exit-<hostname-lowercased>` as the
+		// option value. The hostname in headscale is
+		// the case-preserved givenName; the v0.28.0
+		// tag convention is lowercase.
+		"tolower": func(s string) string {
+			return strings.ToLower(s)
+		},
 		"add": func(a, b int) int { return a + b },
 		"usageLevel": func(count, max int) string {
 			// Returns tag class for usage display: "danger" >75%, "warn" >50%, else "success".

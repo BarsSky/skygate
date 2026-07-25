@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"skygate/internal/db"
@@ -122,9 +123,37 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// pending (the next /my/devices load retries the
 		// auto-apply). 2026-07-24.
 		DevTagApplied bool
+		// HostnameLower is the lowercased hostname, used
+		// by the v0.28.4 template to look up the
+		// per-device exit-node pref (the pref table is
+		// keyed on lowercased hostname to match the
+		// v0.28.0 tag:dev-<user>-<device> convention).
+		// 2026-07-25: v0.28.4.
+		HostnameLower string
+		// DeviceExitPref is the device's preferred exit-node
+		// tag (e.g. "tag:exit-karolina"), or "" if no
+		// per-device pref is set. Pre-resolved by the
+		// handler from the devicePrefByHost map so the
+		// template doesn't need a custom func. 2026-07-25:
+		// v0.28.4.
+		DeviceExitPref string
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
+
+	// 2026-07-25: v0.28.4 — per-device preferred exit-node
+	// map. Keyed by lowercased hostname. The /my/devices
+	// template uses this to render the "Currently pinned"
+	// badge per device and the set/clear form. Pre-fetched
+	// here (not lazily) so the per-row myNodeRow builder
+	// can look it up in O(1).
+	devicePrefByHost := map[string]string{}
+	devicePrefs, _ := db.ListDeviceExitNodePrefsForUser(a.DB, c.UserID)
+	for _, dp := range devicePrefs {
+		if dp.DeviceHostname != "" {
+			devicePrefByHost[strings.ToLower(dp.DeviceHostname)] = dp.ExitNodeTag
+		}
+	}
 	// hasTag returns true if the node carries the given tag.
 	// Inline (not from internal/sidecar) so this file stays
 	// free of cross-package imports for a small helper.
@@ -171,6 +200,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				IsShared:         n.IsPublicView() || n.IsExitNode,
 				DevTag:           devTag,
 				DevTagApplied:    devTagApplied,
+				HostnameLower:    strings.ToLower(n.Hostname),
+				DeviceExitPref:   devicePrefByHost[strings.ToLower(n.Hostname)],
 			})
 		}
 	}
@@ -222,6 +253,8 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				IsShared:         n.IsPublicView() || n.IsExitNode,
 				DevTag:           devTag,
 				DevTagApplied:    devTagApplied,
+				HostnameLower:    strings.ToLower(n.Hostname),
+				DeviceExitPref:   devicePrefByHost[strings.ToLower(n.Hostname)],
 			})
 		}
 	}
@@ -333,5 +366,10 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		"SharesToMe":     sharesToMe,
 		"MyMeshMembers":  myMeshMembers,
 		"MeshCount":      meshCount,
+		// v0.28.4: per-device exit-node prefs.
+		"DeviceExitPrefs":     devicePrefByHost,
+		"AvailableExitNodes":  publicNodes, // for the per-device dropdown
+		"FlashSuccess":        r.URL.Query().Get("ok"),
+		"FlashError":          r.URL.Query().Get("err"),
 	})
 }

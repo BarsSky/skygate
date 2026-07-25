@@ -273,5 +273,13 @@ func migrate(d *sql.DB) error {
 	if err := migrateV045(d); err != nil {
 		return fmt.Errorf("migrate v0.45: %w", err)
 	}
+	// v0.28.4: per-device preferred exit-node. Lets the
+	// operator pin a specific device to a different
+	// exit-node than the user's default (e.g. msi →
+	// karolina while skyadmin's default stays emilia).
+	// See migrations_v0.46.go for the design.
+	if err := migrateV046(d); err != nil {
+		return fmt.Errorf("migrate v0.46: %w", err)
+	}
 	return nil
 }

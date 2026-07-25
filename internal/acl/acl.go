@@ -733,6 +733,35 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		}
 	}
 
+	// 2026-07-25: v0.28.4 — per-device preferred exit-node.
+	// A row in device_exit_node_prefs means a specific device
+	// has its own via override, independent of the user's
+	// per-user pref. The ACL builder emits a per-device grant
+	// BEFORE the per-user grant (Tailscale first-match wins),
+	// with src=tag:dev-<user>-<device> and via=[<device-pref>].
+	// The per-device grant covers autogroup:internet only —
+	// the user's own stuff (own devices, own subnet) is still
+	// covered by the per-user grant below.
+	devicePrefs, err := db.ListAllDeviceExitNodePrefs(d)
+	if err != nil {
+		return "", err
+	}
+	// viaByDevice is keyed on the device tag (e.g.
+	// "tag:dev-skyadmin-msi") so the per-device grant
+	// builder can look up the via in O(1).
+	viaByDevice := make(map[string]string, len(devicePrefs))
+	for _, dp := range devicePrefs {
+		if dp.Username == "" || dp.DeviceHostname == "" || dp.ExitNodeTag == "" {
+			continue
+		}
+		// The tag is "tag:dev-<user>-<device-lowercased>".
+		// v0.28.0 backfill lowercases the hostname when
+		// emitting the tag — we do the same here so the
+		// lookup matches the per-device ACL src exactly.
+		devTag := "tag:dev-" + dp.Username + "-" + strings.ToLower(dp.DeviceHostname)
+		viaByDevice[devTag] = dp.ExitNodeTag
+	}
+
 	devTags, err := db.GetPerUserDeviceTags(d, planeURL)
 	if err != nil {
 		return "", err
@@ -862,8 +891,59 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 
 	sb.WriteString("  \"grants\": [\n")
 
+	// 2026-07-25: v0.28.4 — per-device preferred exit-node
+	// grants. Emitted FIRST so Tailscale's first-match
+	// semantics pick the per-device via over the per-user
+	// via. The per-device grant is narrower (src is the
+	// exact device tag, not the user identity) AND has
+	// higher priority by virtue of position in the list.
+	//
+	// Per-device grant shape:
+	//   { "src": ["tag:dev-<user>-<device>"],
+	//     "dst": ["autogroup:internet"],
+	//     "ip":  ["*"],
+	//     "via": ["<device-pref>"] }
+	//
+	// dst is JUST autogroup:internet — the per-user grant
+	// below covers the user's own stuff (own devices, own
+	// subnet, shared/mesh CIDRs). The per-device grant
+	// exists ONLY to override the via for autogroup:internet
+	// (exit-node routing).
+	//
+	// Why emit per-device grants before per-user grants:
+	// Tailscale ACL is order-sensitive (first match wins).
+	// msi (tag:dev-skyadmin-msi) has a per-device via for
+	// karolina. With per-device grant first, msi's packets
+	// to autogroup:internet match the per-device grant
+	// (src=tag:dev-skyadmin-msi, dst=autogroup:internet,
+	// via=tag:exit-karolina) and use karolina. Without the
+	// per-device grant (or with it AFTER the per-user
+	// grant), msi would fall through to the per-user grant
+	// (src=skyadmin@..., via=tag:exit-emilia) and be
+	// pinned to emilia.
+	//
+	// Devices WITHOUT a per-device pref don't get a
+	// per-device grant — they fall through to the per-user
+	// grant (and inherit the user's via, if any).
+	perDeviceGrantEmitted := false
+	for devTag, via := range viaByDevice {
+		if perDeviceGrantEmitted {
+			sb.WriteString(",\n")
+		}
+		sb.WriteString("    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"], \"via\": [\"" + via + "\"] }")
+		perDeviceGrantEmitted = true
+	}
+
 	for i, idn := range identities {
 		if i > 0 {
+			sb.WriteString(",\n")
+		} else if perDeviceGrantEmitted {
+			// The per-device block above wrote its last
+			// entry WITHOUT a trailing comma (the loop
+			// pattern is "leading separator" — comma
+			// before every entry except the first).
+			// The first per-user grant needs a leading
+			// separator to keep the JSON list valid.
 			sb.WriteString(",\n")
 		}
 		uname := strings.SplitN(idn, "@", 2)[0]
