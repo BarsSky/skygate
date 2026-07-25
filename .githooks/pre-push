@@ -49,12 +49,14 @@ cd "$REPO_ROOT"
 # /mnt/<drive>/, Git Bash uses /<drive>/. Pick whichever exists;
 # the `internal/headscale` tests use SKYGATE_BASH_MOUNT_ROOT to
 # know which style to use. See provision.go runScript comment.
-if [ -z "${SKYGATE_BASH_MOUNT_ROOT:-}" ] && [ "$(uname -s 2>/dev/null)" = "MSYS_NT-10.0" ]; then
-  # Git Bash on Windows (uname returns MSYS_NT-*)
-  export SKYGATE_BASH_MOUNT_ROOT="/"
-elif [ -z "${SKYGATE_BASH_MOUNT_ROOT:-}" ] && [ -d /mnt/c ]; then
-  # WSL2 (has /mnt/c mount)
-  export SKYGATE_BASH_MOUNT_ROOT="/mnt"
+if [ -z "${SKYGATE_BASH_MOUNT_ROOT:-}" ]; then
+  if [ -d /mnt/c ]; then
+    # WSL2 (has /mnt/c mount)
+    export SKYGATE_BASH_MOUNT_ROOT="/mnt"
+  elif [ -d /c ]; then
+    # Git Bash on Windows (uses /c/... directly)
+    export SKYGATE_BASH_MOUNT_ROOT="/"
+  fi
 fi
 
 echo "pre-push: running v0.28.5 guarantee catalog (B1-B10)..."
