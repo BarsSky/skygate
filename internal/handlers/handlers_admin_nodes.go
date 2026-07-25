@@ -55,26 +55,62 @@ func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	//
 	// We map headscale username → skygate user_id because
 	// NodeView exposes the headscale username (n.UserName),
-	// not the skygate user_id. The skygate username
-	// typically matches the headscale username (the
-	// provisioning flow enforces this), so the lookup
-	// is a simple index.
+	// not the skygate user_id. BUT — and this is critical —
+	// after headscale applies tag:private to a node, it
+	// REASSIGNS ownership to the synthetic "tagged-devices"
+	// user. So n.UserName is "tagged-devices" for most
+	// user-owned devices, and a direct username→user_id
+	// map won't work.
+	//
+	// The fix: derive the skygate user from the
+	// per-device ACL tag (tag:dev-<user>-<device>) which
+	// skygate's backfillNodeOwnership sets. The dev tag
+	// is the authoritative owner link — it survives
+	// headscale's tag-driven ownership reassignment.
+	// For each (hostname) we already have in devTagMap,
+	// parse the username out of the dev tag.
 	deviceExitPrefs, _ := db.ListAllDeviceExitNodePrefs(a.DB)
 	deviceExitPrefMap := make(map[string]string, len(deviceExitPrefs))
 	skygateUserByName := make(map[string]int64, len(users))
 	for _, u := range users {
 		if u.Name != "" {
-			skygateUserByName[u.Name] = 0 // placeholder, filled below
+			skygateUserByName[u.Name] = 0
 		}
 	}
-	// Resolve skygate user_id for each headscale username
-	// (separate query per user is fine — the list is small).
 	for name := range skygateUserByName {
 		var id int64
 		if err := a.DB.QueryRow(
 			`SELECT id FROM portal_users WHERE username = ?`, name,
 		).Scan(&id); err == nil {
 			skygateUserByName[name] = id
+		}
+	}
+	// skygateUserByHost is keyed on lowercased hostname.
+	// The template uses it directly — no string parsing
+	// in Go templates. The value is the skygate user_id
+	// derived from the per-device ACL tag (tag:dev-<user>-
+	// <device>), which is the authoritative owner link
+	// post-headscale-reassignment.
+	skygateUserByHost := make(map[string]int64, len(devTags))
+	for _, dt := range devTags {
+		// dt.Tag is "tag:dev-<user>-<device-lowercased>".
+		// Strip the "tag:dev-" prefix and the device
+		// suffix to get the username.
+		const prefix = "tag:dev-"
+		if !strings.HasPrefix(dt.Tag, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(dt.Tag, prefix)
+		// rest is "<user>-<device>" — split on the LAST
+		// "-" so usernames containing "-" (rare but
+		// possible) still resolve correctly.
+		idx := strings.LastIndex(rest, "-")
+		if idx < 0 {
+			continue
+		}
+		userName := rest[:idx]
+		if uid, ok := skygateUserByName[userName]; ok && uid > 0 {
+			skygateUserByHost[strings.ToLower(dt.Hostname)] = uid
 		}
 	}
 	for _, dp := range deviceExitPrefs {
@@ -106,6 +142,11 @@ func (a *App) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		"AvailableExits":    exits,
 		"UserExitPrefMap":   userExitPrefMap,
 		"SkygateUserByName": skygateUserByName,
+		// 2026-07-25: v0.28.4 — keyed on lowercased
+		// hostname. The template uses it directly to
+		// look up the per-device pref and to render
+		// the user_id form field.
+		"SkygateUserByHost": skygateUserByHost,
 	})
 }
 
