@@ -95,7 +95,22 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.28.5 — explicit opt-in for `via` constraint
+* **Current**: v0.28.6 — guarantee catalog
+  ([tag v0.28.6](https://github.com/skygate-operator/skygate/releases/tag/v0.28.6)).
+  After-action of the v0.28.5 incident: three independent bugs
+  (migration re-backfill, tagged-device ACL gap, stale Tailscale
+  exit-node state) shipped through `make test` + `make smoke`.
+  The guarantee catalog is the contract — every build must pass
+  `make verify-pre` (10 build-time checks) and every deploy must
+  pass `make verify-post` (25 runtime checks via SSH to the VM).
+  The catalog is in the
+  [v0.28.5 guarantee catalog section](#v0285-guarantee-catalog-b1-b10-build-time--r1-r25-runtime)
+  (named for the incident that motivated it; applies to all
+  future releases). `make verify-pre` before push, `make
+  verify-post` after deploy. Release notes in
+  `RELEASE-NOTES-v0.28.6.md`.
+
+* **Previous**: v0.28.5 — explicit opt-in for `via` constraint
   (Android-friendly) + tagged-device exit-node fix + idempotent
   migration + entrypoint always clears stale Tailscale exit-node
   ([tag v0.28.5](https://github.com/skygate-operator/skygate/releases/tag/v0.28.5)).
@@ -104,10 +119,9 @@ explaining why.
   v0.47 idempotency), v0.28.5b (`1872f06`, loose per-device
   grant for tagged devices), v0.28.5c (`6e4000e`, entrypoint
   always passes `--exit-node=` to `tailscale up` to clear
-  stale state). See the [guarantee catalog](#v0285-guarantee-catalog-b1-b10-build-time--r1-r25-runtime)
-  for the full B1-B10 + R1-R25 contract; `make verify-pre`
-  before push, `make verify-post` after deploy. Release notes
-  in `RELEASE-NOTES-v0.28.5.md`.
+  stale state). The motivation for the v0.28.6 guarantee
+  catalog; without it, these three bugs passed `make test`
+  and `make smoke`. Release notes in `RELEASE-NOTES-v0.28.5.md`.
 
 * **Previous**: v0.28.4 — per-device preferred exit-node
   ([tag v0.28.4](https://github.com/skygate-operator/skygate/releases/tag/v0.28.4)).
