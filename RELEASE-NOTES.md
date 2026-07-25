@@ -62,6 +62,7 @@ lost; everything is still in `git log` + the GitHub UI.
 | `RELEASE-NOTES-v0.28.3.md` | [`v0.28.3`](https://github.com/BarsSky/skygate/releases/tag/v0.28.3) | close exit-node bypass: per-user dst has autogroup:internet; catch-all src=tag:public |
 | `RELEASE-NOTES-v0.28.4.md` | [`v0.28.4`](https://github.com/BarsSky/skygate/releases/tag/v0.28.4) | per-device preferred exit-node (msi → karolina etc.) |
 | `RELEASE-NOTES-v0.28.5.md` | [`v0.28.5`](https://github.com/BarsSky/skygate/releases/tag/v0.28.5) | via opt-in (Android-friendly) + migration v0.47 idempotency + tagged-device exit-node fix + entrypoint always clears stale Tailscale exit-node |
+| `RELEASE-NOTES-v0.28.6.md` | [`v0.28.6`](https://github.com/BarsSky/skygate/releases/tag/v0.28.6) | guarantee catalog (B1-B10 build + R1-R25 runtime) — `make verify-pre` / `make verify-post` are the contract |
 
 ## How a release is cut
 
