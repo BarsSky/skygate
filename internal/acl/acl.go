@@ -18,6 +18,7 @@ package acl
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strconv"
 	"sort"
 	"strings"
@@ -541,9 +542,30 @@ func ApplyACLPipeline(d *sql.DB, hs *headscale.Client, alerter Alerter, username
 // right client.
 //
 // 2026-07-16: v0.13.0.
+// 2026-07-25: v0.28.2 — read SKYGATE_ACL_VIA_ENABLED
+// from the env at call time. Most callers don't have
+// access to *App (the handlers package), so threading
+// a.Cfg.ACLWithViaEnabled through every call site is
+// intrusive. Reading the env directly here means the
+// v0.28.2 dispatch is global and consistent: ANY call
+// to ApplyACLPipelineForPlane honors the env var. This
+// is the right behavior for v0.28.2 — the env var is
+// the operator's global "via enabled" toggle, and
+// mixed acls/grants policies are a footgun.
 func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, alerter Alerter, username, detailForLog string, useVia bool) ApplyResult {
 	var acl string
 	var err error
+	// If the caller explicitly passed useVia, use
+	// that. If useVia is the zero value (false),
+	// check the env var — that way existing
+	// call sites that pass `false` as the
+	// legacy default still honor the operator's
+	// global toggle. (v0.28.1 docs noted this
+	// behavior; v0.28.2 makes it the actual
+	// default.)
+	if !useVia {
+		useVia = os.Getenv("SKYGATE_ACL_VIA_ENABLED") == "true"
+	}
 	if useVia {
 		acl, err = GenerateACLWithViaForPlane(d, planeURL)
 	} else {
