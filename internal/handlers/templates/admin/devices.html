@@ -87,13 +87,17 @@
         </td>
         <td>
           {{/* v0.28.4: per-device exit-node pref. Keyed by
-               "<skygate_user_id>:<lowercased hostname>". The
-               skygate user_id comes from the SkygateUserByName
-               map (headscale username → skygate user_id). The
-               form below lets the admin set/clear the pref
-               without going through the /my/devices page. */}}
-          {{$skygateUID := index $.SkygateUserByName .UserName}}
+               "<skygate_user_id>:<lowercased hostname>".
+
+               skygateUserByHost is pre-built by the handler
+               from the per-device ACL tag (tag:dev-<user>-
+               <device>) so we don't have to parse the tag
+               in Go templates. The tag-derived owner
+               survives headscale's "tagged-devices"
+               reassignment, which is why we don't use
+               n.UserName directly. */}}
           {{$lowerHost := tolower .Hostname}}
+          {{$skygateUID := index $.SkygateUserByHost $lowerHost}}
           {{$prefKey := printf "%d:%s" $skygateUID $lowerHost}}
           {{$pref := index $.DeviceExitPrefMap $prefKey}}
           {{if $pref}}
@@ -104,7 +108,7 @@
               <input type="hidden" name="tag" value="">
               <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.device_exit_pref_clear_help"}}"><i class="fa-solid fa-xmark"></i></button>
             </form>
-          {{else if $skygateUID}}
+          {{else if and $skygateUID (gt $skygateUID 0)}}
             <form method="post" action="/admin/devices/preferred-exit" style="display:inline-flex;gap:3px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
               <input type="hidden" name="user_id" value="{{$skygateUID}}">
               <input type="hidden" name="hostname" value="{{.Hostname}}">
