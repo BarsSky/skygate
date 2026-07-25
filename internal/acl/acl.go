@@ -1063,6 +1063,57 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"] }")
 	}
 
+	// 2026-07-25: v0.28.5b — loose per-device grants.
+	//
+	// WHY: Tailscale v2 policy uses first-match semantics
+	// on `src`. For a TAGGED device (every device since
+	// v0.28.0 carries tag:dev-<user>-<device>), the source
+	// must be the device's tag (or a tag the user owns via
+	// tagOwners). The per-user grant above uses src=user@,
+	// which in v2 does NOT match tagged devices. The
+	// per-device rule loop above is for specific targets
+	// (Telegram IPs etc.), NOT for autogroup:internet.
+	//
+	// The v0.28.4 per-device grant loop only emitted when
+	// the device had a per-device pref AND via_enabled=1.
+	// For all other devices (e.g. skygate-vm — the skygate
+	// container's own tailnet client — which never had a
+	// per-device pref), no grant covers autogroup:internet
+	// and exit-node routing is silently REJECTED by the
+	// client. Symptom: 100% packet loss on skygate-vm
+	// after v0.28.3 deploy, even with the per-user grant
+	// dst including autogroup:internet.
+	//
+	// FIX: for every device tag the user owns (one row per
+	// device in devTags), emit a grant with src=tag:dev-...,
+	// dst=autogroup:internet, NO via. This is the loose
+	// default — every device can reach the public internet
+	// through whatever exit-node the user picks in the
+	// Tailscale client. The per-device pref grant above
+	// (when via_enabled=1) is the more specific override
+	// that pins the device to a specific exit-node.
+	//
+	// Order: emitted AFTER per-device rules (which are
+	// for specific dst like h-rule-91-108-12-0-22) and
+	// AFTER the per-user grant. This way:
+	//   1. Per-device rules (most specific dst) win for
+	//      their exact targets.
+	//   2. Per-device pref grant (with via) wins for
+	//      autogroup:internet when set.
+	//   3. Per-user grant (with via) wins for the user's
+	//      other (un-tagged) devices and own dst.
+	//   4. This loose per-device grant is the fallback for
+	//      tagged devices WITHOUT a per-device pref.
+	//   5. Catch-alls last.
+	for _, uname := range usernames {
+		if uname == "" {
+			continue
+		}
+		for _, devTag := range tagsByUser[uname] {
+			sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
+		}
+	}
+
 	// 2026-07-25: v0.28.2 — catch-all dst references
 	// dropped the :* suffix too. The "tag:public" /
 	// "tag:exit-node" / "autogroup:internet" aliases
