@@ -175,6 +175,25 @@ func seedUserExitNodePref(t *testing.T, d *sql.DB, userID int64, tag string) {
 	}
 }
 
+// seedUserSubnet inserts a row in user_subnets for the given
+// user. The cidr is the personal subnet (typically
+// 10.0.<uid>.0/24 but the helper is cidr-agnostic for
+// test flexibility). status defaults to 'pending' — the
+// v0.28.2 grants parser doesn't care about the status
+// column. The signature differs from the helper in
+// multi_subnet_integration_test.go (which has no cidr
+// param — it computes 10.0.<uid>.0/24); we use a
+// different name to avoid the collision.
+func seedUserSubnetWithCIDR(t *testing.T, d *sql.DB, userID int64, cidr string) {
+	t.Helper()
+	_, err := d.Exec(
+		`INSERT OR REPLACE INTO user_subnets (user_id, cidr, status) VALUES (?, ?, 'active')`,
+		userID, cidr)
+	if err != nil {
+		t.Fatalf("seed user_subnets user=%d cidr=%s: %v", userID, cidr, err)
+	}
+}
+
 // recordingAlerter captures SendAlert calls. The count is
 // atomic so the async SendAlert goroutine in SaveACLSnapshot
 // doesn't race with the test goroutine.
@@ -1248,5 +1267,101 @@ func TestGenerateACLWithVia_PerExitNodeTagOwnersAreDistinct(t *testing.T) {
 	if viaCount != 2 {
 		t.Errorf("expected 2 'via: [tag:exit-relay-1]' entries (one per user), got %d.\nACL:\n%s",
 			viaCount, aclStr)
+	}
+}
+
+// 2026-07-25: v0.28.2 — headscale 0.29.2's grants
+// parser doesn't accept CIDR:port in dst. The
+// workaround is to emit each CIDR as a host alias in
+// the `hosts:` block and reference the alias in the
+// grant. The following 3 tests pin that invariant.
+
+// TestGenerateACLWithVia_EmitsHostsBlock pins the v0.28.2
+// invariant: the output starts with a `hosts:` block
+// BEFORE the `grants:` block, with one entry per
+// per-user subnet (using the canonical
+// "h:user-<uname>-subnet" alias name). Without
+// per-user subnets, the block still has the
+// `_placeholder` entry so headscale's JSON parser
+// doesn't reject the file.
+func TestGenerateACLWithVia_EmitsHostsBlock(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	seedUserSubnetWithCIDR(t, d, aliceID, "10.0.1.0/24")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Output must start with `"hosts":` (not `"grants":`).
+	// The hosts block is the FIRST key in the policy
+	// object — headscale's v2 parser is strict about
+	// shape but accepts any key order; the source-code
+	// order matches the docs example.
+	if !strings.Contains(aclStr, `"hosts":`) {
+		t.Errorf("output must contain 'hosts:' key.\nACL:\n%s", aclStr)
+	}
+	// The personal subnet for alice must appear as a
+	// host alias — this is the only way headscale's
+	// grants parser can resolve "h:user-alice-subnet:*"
+	// in the grant's dst to 10.0.1.0/24.
+	wantHost := `"h:user-alice-subnet": "10.0.1.0/24"`
+	if !strings.Contains(aclStr, wantHost) {
+		t.Errorf("hosts block must contain %s.\nACL:\n%s", wantHost, aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_GrantsReferenceHostAliases pins
+// the v0.28.2 invariant: per-user grant's dst
+// references the host alias, NOT the raw CIDR+port
+// (which headscale 0.29.2 rejects). The "h:user-<uname>-
+// subnet:*" form is what the grants parser accepts.
+func TestGenerateACLWithVia_GrantsReferenceHostAliases(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	seedUserSubnetWithCIDR(t, d, aliceID, "10.0.1.0/24")
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// Per-user grant's dst must include the host alias.
+	wantAlias := `"h:user-alice-subnet:*"`
+	if !strings.Contains(aclStr, wantAlias) {
+		t.Errorf("per-user grant must reference %s.\nACL:\n%s", wantAlias, aclStr)
+	}
+	// The raw CIDR+port form must NOT appear as a dst
+	// (otherwise headscale 0.29.2 rejects with
+	// "invalid alias format"). The CIDR may still
+	// appear in the `hosts:` block — that's the WHOLE
+	// POINT of the workaround — but never as
+	// "10.0.1.0/24:*" directly in a grant's dst.
+	banned := `"dst": ["10.0.1.0/24:*"]`
+	if strings.Contains(aclStr, banned) {
+		t.Errorf("raw CIDR+port in grant dst is forbidden on headscale 0.29.2.\nACL:\n%s", aclStr)
+	}
+}
+
+// TestGenerateACLWithVia_HostsBlockIsRequiredEvenWhenEmpty
+// pins the edge case: with no per-user subnets and no
+// shared CIDRs, the `hosts:` block still has the
+// `_placeholder` entry. Without it, the resulting JSON
+// is `{ "grants": [...] }` with no hosts key — headscale
+// MAY accept that, but the v2 parser tests show
+// inconsistent behavior across patch versions. The
+// placeholder keeps us safe.
+func TestGenerateACLWithVia_HostsBlockIsRequiredEvenWhenEmpty(t *testing.T) {
+	d := openTestDB(t)
+	seedPortalUser(t, d, "alice")
+	// No user_subnets, no shared subnets, no mesh.
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// `hosts:` key MUST be present even when empty.
+	if !strings.Contains(aclStr, `"hosts":`) {
+		t.Errorf("output must contain 'hosts:' key (with placeholder) even when no per-user subnets exist.\nACL:\n%s", aclStr)
+	}
+	// The placeholder is the only entry.
+	if !strings.Contains(aclStr, `"_placeholder": "0.0.0.0/32"`) {
+		t.Errorf("empty hosts block must contain the _placeholder entry.\nACL:\n%s", aclStr)
 	}
 }
