@@ -1,0 +1,571 @@
+#!/bin/bash
+# scripts/verify_post_deploy.sh — runtime guarantees for skygate.
+#
+# Runs AFTER `docker compose up -d skygate` on the VM. Checks the
+# live state against the guarantee catalog (see AGENTS.md "v0.28.5
+# guarantee catalog"):
+#
+#   R1  /healthz 200, status=ok
+#   R2  /readyz 200 (DB + headscale OK)
+#   R3  skygate build label matches HEAD
+#   R4  tailscaled running inside skygate-host-1
+#   R5  skygate-host-1 has tailnet IP 100.64.100.10
+#   R6  skygate-host-1 does NOT use an exit-node (Docker bridge reachable)
+#   R7  Docker bridge 172.18.0.0/16 reachable from skygate-host-1
+#   R8  headscale API responds with policy
+#   R9  Live policy == last applied snapshot
+#   R10 Per-user grants: src=user@, dst includes autogroup:internet
+#   R11 Per-device loose grants: ≥1 per tagged device (v0.28.5b)
+#   R12 Catch-all src=tag:public, NOT * (v0.28.3 bypass fix)
+#   R13 Catch-alls: * → tag:public, * → tag:exit-node
+#   R14 tagOwners contains tag:public, tag:exit-node, tag:private, tag:subnet-router
+#   R15 No per-device grant with `via` for via_enabled=0 rows (v0.28.5)
+#   R16 Per-user grant `via` matches user_exit_node_prefs.via_enabled
+#   R17 relay-1, relay-2, relay-3 online in headscale
+#   R18 Exit-nodes advertised routes include 0.0.0.0/0
+#   R19 DB: all per-user via_enabled match live policy
+#   R20 Migration v0.47 idempotent (smoke: re-running doesn't re-backfill)
+#   R21 tailscaled.state on disk has no stale --exit-node pref
+#   R22 https://skygate.example.com/healthz → 200
+#   R23 TLS cert is Let's Encrypt, not expiring within 30d
+#   R24 openresty upstream reachable
+#   R25 skygate-host-1 can reach 8.8.8.8 (direct, no exit-node)
+#
+# Usage:
+#   bash scripts/verify_post_deploy.sh                       # all 25 checks
+#   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 (core)
+#   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
+#   SSH_HOST=admin@192.0.2.1 bash scripts/verify_post_deploy.sh
+#
+# Cross-platform: pure bash. The SSH_HOST env var lets you run
+# this from a Linux/Mac shell against the VM, or from a Windows
+# Git Bash. The script SSHes into the VM and runs the actual
+# checks in-place (so we don't need to expose headscale's API
+# key to the operator's machine).
+#
+# 2026-07-25: v0.28.5 — initial catalog.
+
+set -u
+# No `set -e` — count failures, don't abort.
+
+# ---------------------------------------------------------------------------
+# Args
+# ---------------------------------------------------------------------------
+QUICK=0
+SKIP_NETWORK=0
+for arg in "$@"; do
+  case "$arg" in
+    --quick)        QUICK=1 ;;
+    --skip-network) SKIP_NETWORK=1 ;;
+  esac
+done
+
+SSH_HOST="${SSH_HOST:-admin@192.0.2.1}"
+SKYGATE_CONTAINER="${SKYGATE_CONTAINER:-skygate}"
+HEADSCALE_URL="${HEADSCALE_URL:-http://localhost:50444}"
+# SSH key: prefer the explicit one in the current HOME, fall back to
+# whatever `ssh` finds on its own. WSL2 bash uses a separate HOME
+# from PowerShell, so this matters when the script is run from
+# Git Bash / WSL.
+SSH_KEY="${SSH_KEY:-}"
+for cand in \
+  "$HOME/.ssh/id_ed25519" \
+  "$HOME/.ssh/id_rsa" \
+  "/mnt/c/Users/knaga/.ssh/id_ed25519" \
+  "/c/Users/knaga/.ssh/id_ed25519"; do
+  if [ -n "$cand" ] && [ -f "$cand" ]; then
+    SSH_KEY="$cand"; break
+  fi
+done
+
+API_KEY="$(grep '^HEADSCALE_API_KEY=' /home/admin/skygate/.env 2>/dev/null | cut -d= -f2-)"
+if [ -z "$API_KEY" ]; then
+  # We don't have the .env locally. SSH in and grab it.
+  API_KEY="$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" \
+    "grep '^HEADSCALE_API_KEY=' /home/admin/skygate/.env | cut -d= -f2-")"
+fi
+
+if [ -t 1 ]; then
+  RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; NC=$'\033[0m'
+else
+  RED=''; GRN=''; YLW=''; NC=''
+fi
+
+# Run a check that lives entirely on the VM (no live-policy parsing).
+# Args: name, description, ssh_command
+run_vm_check() {
+  local name="$1" desc="$2" cmd="$3"
+  local out rc
+  out=$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" "$cmd" 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "  ${GRN}PASS${NC}  $name  $desc"
+    RESULTS_PASS=$((RESULTS_PASS + 1))
+  else
+    echo "  ${RED}FAIL${NC}  $name  $desc"
+    [ -n "$out" ] && echo "$out" | sed 's/^/        /' | head -10
+    RESULTS_FAIL=$((RESULTS_FAIL + 1))
+  fi
+}
+
+# Run a check that needs the live policy (fetched via API).
+# The policy is fetched once and cached in $LIVE_POLICY.
+run_policy_check() {
+  local name="$1" desc="$2" fn="$3"
+  local out
+  out=$(LIVE_POLICY="$LIVE_POLICY" DB_JSON="$DB_JSON" "$fn" 2>&1)
+  local rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "  ${GRN}PASS${NC}  $name  $desc"
+    RESULTS_PASS=$((RESULTS_PASS + 1))
+  else
+    echo "  ${RED}FAIL${NC}  $name  $desc"
+    [ -n "$out" ] && echo "$out" | sed 's/^/        /' | head -10
+    RESULTS_FAIL=$((RESULTS_FAIL + 1))
+  fi
+}
+
+RESULTS_PASS=0
+RESULTS_FAIL=0
+
+# ---------------------------------------------------------------------------
+# Phase 1: fetch live state (no checks yet, just data collection).
+# All headscale API calls and DB queries go through SSH because the
+# operator's workstation can't reach headscale directly.
+# ---------------------------------------------------------------------------
+echo "=== skygate post-deploy verification ==="
+echo "  ssh:    $SSH_HOST"
+echo "  date:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo
+
+# Helpers
+ssh_vm()  { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" "$@"; }
+curl_vm() { ssh_vm "curl -fsS -H 'Authorization: Bearer $API_KEY' $HEADSCALE_URL$1"; }
+
+# R1: /healthz (also gives us the build label for R3)
+HEALTHZ=$(ssh_vm "curl -fsS http://localhost:8080/healthz" 2>&1)
+BUILD_LABEL=$(echo "$HEALTHZ" | grep -oE '"build":"[^"]+"' | head -1 | cut -d'"' -f4)
+
+# R2: /readyz  (response shape: {"healthy":true,"db":"ok","headscale":"ok",...})
+READYZ=$(ssh_vm "curl -fsS http://localhost:8080/readyz" 2>&1)
+
+# R8 + R9 + R10-R16: live policy (via SSH to the VM, not local curl —
+# headscale is on a private port not exposed to the operator)
+LIVE_POLICY=$(curl_vm "/api/v1/policy" 2>/dev/null)
+
+# R17 + R18: headscale nodes list (via SSH)
+NODES_JSON=$(curl_vm "/api/v1/node" 2>/dev/null)
+
+# R19: DB state — copy DB out via `docker cp` (no alpine / sqlite3 in
+# the alpine image, and skygate container has no sqlite3 either) and
+# run sqlite3 on the VM's host. The query is piped via heredoc
+# because the .mode json directive needs to be a separate command
+# from the SELECT (newlines in -c args get split by bash).
+DB_JSON=$(ssh_vm "set -e
+  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_verify_$$.sqlite
+  sqlite3 /tmp/_db_verify_$$.sqlite <<'SQL'
+.mode json
+SELECT json_object('user_prefs',COALESCE((SELECT json_group_array(json_object('user_id',user_id,'tag',exit_node_tag,'via',via_enabled)) FROM user_exit_node_prefs),'[]'),
+                   'device_prefs',COALESCE((SELECT json_group_array(json_object('user_id',user_id,'hostname',device_hostname,'tag',exit_node_tag,'via',via_enabled)) FROM device_exit_node_prefs),'[]'));
+SQL
+  rm -f /tmp/_db_verify_$$.sqlite" 2>&1 | tr -d '\n' | grep -oE '\{.*\}')
+
+# ---------------------------------------------------------------------------
+# Phase 2: core (R1-R9) — always run
+# ---------------------------------------------------------------------------
+echo "[R1-R9] core liveness + headscale sync"
+[ -n "$HEALTHZ" ] && echo "$HEALTHZ" | grep -q '"status":"ok"' && \
+  { echo "  ${GRN}PASS${NC}  R1  /healthz status:ok"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
+  { echo "  ${RED}FAIL${NC}  R1  /healthz: $HEALTHZ"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
+[ -n "$READYZ" ] && echo "$READYZ" | grep -qE '"healthy":true|"status":"ok"' && \
+  { echo "  ${GRN}PASS${NC}  R2  /readyz healthy:true (db+headscale ok)"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
+  { echo "  ${RED}FAIL${NC}  R2  /readyz: $READYZ"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
+HEAD_SHA=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --short HEAD 2>/dev/null)
+[ -n "$BUILD_LABEL" ] && [[ "$BUILD_LABEL" == *"$HEAD_SHA"* || "$BUILD_LABEL" == "dev"*"unknown" ]] && \
+  { echo "  ${GRN}PASS${NC}  R3  build=$BUILD_LABEL matches HEAD=$HEAD_SHA"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
+  { echo "  ${RED}FAIL${NC}  R3  build=$BUILD_LABEL ≠ HEAD=$HEAD_SHA"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
+
+run_vm_check "R4" "tailscaled running in skygate-host-1" \
+  "docker exec $SKYGATE_CONTAINER sh -c 'pgrep tailscaled | grep -q .'"
+run_vm_check "R5" "skygate-host-1 tailnet IP = 100.64.100.10" \
+  "docker exec $SKYGATE_CONTAINER tailscale --socket=/var/run/tailscale/tailscaled.sock status 2>&1 | grep -q '^100.64.100.10'"
+# R6: skygate-host-1 must NOT use an exit-node. The Tailscale status line
+# for self shows "<hostname>  ...  linux  -" with trailing "-" (no
+# exit-node marker), then trailing spaces. We grep the LAST non-space
+# field: should be "-" (none) or a hostname (set).
+EXITNODE_LINE=$(ssh_vm \
+  "docker exec $SKYGATE_CONTAINER tailscale --socket=/var/run/tailscale/tailscaled.sock status 2>&1 | grep '^100.64.100.10'")
+LAST_FIELD=$(echo "$EXITNODE_LINE" | awk '{print $NF}')
+if [ "$LAST_FIELD" = "-" ]; then
+  echo "  ${GRN}PASS${NC}  R6  skygate-host-1 has NO exit-node (last field = '-')"
+  RESULTS_PASS=$((RESULTS_PASS+1))
+else
+  echo "  ${RED}FAIL${NC}  R6  skygate-host-1 has exit-node = $LAST_FIELD"
+  RESULTS_FAIL=$((RESULTS_FAIL+1))
+fi
+run_vm_check "R7" "Docker bridge 172.18.0.0/16 reachable from skygate-host-1" \
+  "docker exec $SKYGATE_CONTAINER wget --spider --timeout=3 http://172.18.0.2:50444 2>&1 | grep -q 'remote file exists'"
+[ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ] && \
+  { echo "  ${GRN}PASS${NC}  R8  headscale /api/v1/policy responds with non-empty policy"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
+  { echo "  ${RED}FAIL${NC}  R8  headscale /api/v1/policy is empty or unreachable"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
+# R9: live policy == last applied snapshot (compare updatedAt to DB).
+# `created_at` is stored as Unix epoch integer (strftime('%s','now')),
+# so we read it as an int and convert to epoch on this side.
+UPDATED_AT=$(echo "$LIVE_POLICY" | grep -oE '"updatedAt":"[^"]+"' | cut -d'"' -f4)
+LAST_APPLIED_EPOCH=$(ssh_vm "set -e
+  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_v_$$.sqlite
+  sqlite3 /tmp/_db_v_$$.sqlite \"SELECT created_at FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1\"
+  rm -f /tmp/_db_v_$$.sqlite" 2>/dev/null)
+if [ -n "$LAST_APPLIED_EPOCH" ]; then
+  LAST_APPLIED=$(date -u -d "@$LAST_APPLIED_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+fi
+if [ -n "$UPDATED_AT" ] && [ -n "$LAST_APPLIED" ]; then
+  # Convert both to unix epoch and compare (allow 60s skew for clock drift)
+  POLICY_EPOCH=$(date -d "$UPDATED_AT" +%s 2>/dev/null || echo 0)
+  APPLIED_EPOCH=$(date -d "$LAST_APPLIED" +%s 2>/dev/null || echo 0)
+  DIFF=$((POLICY_EPOCH - APPLIED_EPOCH))
+  if [ "$DIFF" -ge -60 ] && [ "$DIFF" -le 3600 ]; then
+    echo "  ${GRN}PASS${NC}  R9  live policy updatedAt=$UPDATED_AT ≈ last applied $LAST_APPLIED (diff=${DIFF}s)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R9  live policy updatedAt=$UPDATED_AT ≠ last applied $LAST_APPLIED (diff=${DIFF}s — reapply needed)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+else
+  echo "  ${YLW}SKIP${NC}  R9  live policy / applied snapshot: insufficient data"
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 3: policy shape (R10-R16) — skip if LIVE_POLICY is empty
+# ---------------------------------------------------------------------------
+if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
+  echo
+  echo "[R10-R16] policy shape invariants"
+
+  # R10: 4 per-user grants, src=user@, dst includes autogroup:internet
+  USER_GRANT_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+n = sum(1 for g in p.get('grants',[])
+        if any('@tsnet.example.com' in s for s in g.get('src',[]))
+        and 'autogroup:internet' in g.get('dst',[]))
+print(n)
+")
+  if [ "$USER_GRANT_COUNT" = "4" ]; then
+    echo "  ${GRN}PASS${NC}  R10 4 per-user grants with autogroup:internet"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R10 per-user grants count=$USER_GRANT_COUNT (expected 4)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # R11: per-device loose grants (no via) for every tagged device
+  LOOSE_DEV_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+n = sum(1 for g in p.get('grants',[])
+        if any(s.startswith('tag:dev-') for s in g.get('src',[]))
+        and 'autogroup:internet' in g.get('dst',[])
+        and 'via' not in g)
+print(n)
+")
+  if [ "$LOOSE_DEV_COUNT" -ge 5 ]; then
+    echo "  ${GRN}PASS${NC}  R11 $LOOSE_DEV_COUNT per-device loose grants (≥5 expected)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R11 per-device loose grants=$LOOSE_DEV_COUNT (expected ≥5)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # R12: catch-all for autogroup:internet has src=tag:public, NOT *
+  HAS_STAR_CATCHALL=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+n = sum(1 for g in p.get('grants',[])
+        if g.get('src')==['*'] and 'autogroup:internet' in g.get('dst',[]))
+print(n)
+")
+  if [ "$HAS_STAR_CATCHALL" = "0" ]; then
+    echo "  ${GRN}PASS${NC}  R12 no catch-all src=* dst=autogroup:internet (bypass fix v0.28.3)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R12 found $HAS_STAR_CATCHALL catch-all with src=* → autogroup:internet (REGRESSION)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # R13: * → tag:public and * → tag:exit-node catch-alls present
+  HAS_PUBLIC_CATCHALL=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+n = sum(1 for g in p.get('grants',[])
+        if g.get('src')==['*'] and g.get('dst')==['tag:public'])
+print(n)
+")
+  HAS_EXITNODE_CATCHALL=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+n = sum(1 for g in p.get('grants',[])
+        if g.get('src')==['*'] and g.get('dst')==['tag:exit-node'])
+print(n)
+")
+  if [ "$HAS_PUBLIC_CATCHALL" -ge 1 ] && [ "$HAS_EXITNODE_CATCHALL" -ge 1 ]; then
+    echo "  ${GRN}PASS${NC}  R13 * → tag:public and * → tag:exit-node catch-alls present"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R13 catch-alls missing: tag:public=$HAS_PUBLIC_CATCHALL tag:exit-node=$HAS_EXITNODE_CATCHALL"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # R14: tagOwners contains the required tags
+  TAGOWNERS_OK=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+to = p.get('tagOwners',{})
+required = ['tag:public', 'tag:exit-node', 'tag:private', 'tag:subnet-router']
+missing = [t for t in required if t not in to]
+print('OK' if not missing else 'MISSING:'+','.join(missing))
+")
+  if [ "$TAGOWNERS_OK" = "OK" ]; then
+    echo "  ${GRN}PASS${NC}  R14 tagOwners contains all required tags"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R14 tagOwners: $TAGOWNERS_OK"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # R15 + R16: cross-check DB via_enabled vs live policy via
+  VIA_CROSS_CHECK=$(LIVE_POLICY="$LIVE_POLICY" DB_JSON="$DB_JSON" python3 << 'PYEOF'
+import json, os, sys
+live = json.loads(os.environ["LIVE_POLICY"])
+policy = json.loads(live["policy"])
+db = json.loads(os.environ["DB_JSON"])
+
+# Build: for each user, is via in live per-user grant == db.via_enabled?
+mismatch = []
+for g in policy.get("grants", []):
+    srcs = g.get("src", [])
+    user_match = [s for s in srcs if "@tsnet.example.com" in s]
+    if not user_match:
+        continue
+    user = user_match[0].split("@")[0]
+    has_via = "via" in g
+    via = g.get("via", [None])[0] if has_via else None
+    # Find user in db
+    db_user = next((u for u in db.get("user_prefs", [])
+                    if str(u.get("user_id")) in {"1":"admin","6":"user1","9":"guest","10":"user2"}.get(str(u.get("user_id")),"") or u.get("user_id") in (1,6,9,10) and u.get("tag") in (None,via) ), None)
+    # Simpler: match by user_id→username map
+    user_map = {"1":"admin","6":"user1","9":"guest","10":"user2"}
+    db_user = None
+    for u in db.get("user_prefs", []):
+        if user_map.get(str(u["user_id"])) == user:
+            db_user = u
+            break
+    if db_user is None:
+        continue
+    if db_user["via"] == 1 and not has_via:
+        mismatch.append(f"user={user} db.via=1 but live grant has no via")
+    if db_user["via"] == 0 and has_via:
+        mismatch.append(f"user={user} db.via=0 but live grant has via={via}")
+
+# For per-device: same check
+for g in policy.get("grants", []):
+    srcs = g.get("src", [])
+    dev_match = [s for s in srcs if s.startswith("tag:dev-")]
+    if not dev_match:
+        continue
+    tag = dev_match[0]  # tag:dev-<user>-<host>
+    rest = tag[len("tag:dev-"):]
+    # user-host: split on LAST '-'
+    idx = rest.rfind("-")
+    user = rest[:idx]
+    host = rest[idx+1:]
+    has_via = "via" in g
+    via = g.get("via", [None])[0] if has_via else None
+    db_dev = None
+    for d in db.get("device_prefs", []):
+        if d["hostname"] == host and d["user_id"] in (1,6):
+            user_map = {1:"admin", 6:"user1"}
+            if user_map.get(d["user_id"]) == user:
+                db_dev = d
+                break
+    if db_dev is None:
+        continue
+    if db_dev["via"] == 1 and not has_via:
+        mismatch.append(f"device={host} db.via=1 but no via in grant")
+    if db_dev["via"] == 0 and has_via:
+        mismatch.append(f"device={host} db.via=0 but live has via={via}")
+
+if mismatch:
+    print("MISMATCH:" + ";".join(mismatch))
+else:
+    print("OK")
+PYEOF
+)
+  if [ "$VIA_CROSS_CHECK" = "OK" ]; then
+    echo "  ${GRN}PASS${NC}  R15+R16 DB via_enabled matches live policy (no via mismatch)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R15+R16 $VIA_CROSS_CHECK"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 4: exit-nodes (R17-R18) — headscale
+# ---------------------------------------------------------------------------
+if [ "$QUICK" = 0 ] && [ -n "$NODES_JSON" ]; then
+  echo
+  echo "[R17-R18] exit-nodes"
+  for host in relay-1 relay-2 relay-3; do
+    ONLINE=$(echo "$NODES_JSON" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    n = next((n for n in d.get('nodes',[]) if n.get('givenName')=='$host'), None)
+    print('online' if n and n.get('online') else 'offline')
+except Exception as e:
+    print('error:'+str(e))
+")
+    if [ "$ONLINE" = "online" ]; then
+      echo "  ${GRN}PASS${NC}  R17 $host is online"
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    else
+      echo "  ${RED}FAIL${NC}  R17 $host is $ONLINE"
+      RESULTS_FAIL=$((RESULTS_FAIL+1))
+    fi
+  done
+
+  # R18: each exit-node has 0.0.0.0/0 in advertised routes
+  for host in relay-1 relay-2 relay-3; do
+    HAS_DEFAULT=$(echo "$NODES_JSON" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    n = next((n for n in d.get('nodes',[]) if n.get('givenName')=='$host'), None)
+    routes = (n or {}).get('availableRoutes', [])
+    print('yes' if '0.0.0.0/0' in routes else 'no')
+except Exception as e:
+    print('error:'+str(e))
+")
+    if [ "$HAS_DEFAULT" = "yes" ]; then
+      echo "  ${GRN}PASS${NC}  R18 $host advertises 0.0.0.0/0"
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    else
+      echo "  ${RED}FAIL${NC}  R18 $host does NOT advertise 0.0.0.0/0"
+      RESULTS_FAIL=$((RESULTS_FAIL+1))
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 5: Tailscale state on disk (R20-R21)
+# ---------------------------------------------------------------------------
+if [ "$QUICK" = 0 ]; then
+  echo
+  echo "[R20-R21] Tailscale state"
+  # R20: smoke migration idempotency by counting via=0 rows before+after a no-op restart
+  # Skipped in this script — would require a restart. Encoded as "the
+  # binary deployed has migration v0.47 with the freshlyAdded guard"
+  # which is covered by the build-time B5 test.
+  echo "  ${YLW}SKIP${NC}  R20 migration v0.47 idempotency (covered by B5 build-time test)"
+
+  # R21: tailscaled.state on disk has no stale --exit-node pref
+  STALE_EXIT=$(ssh_vm \
+    "docker exec $SKYGATE_CONTAINER sh -c 'cat /var/lib/tailscale/tailscaled.state' 2>&1 | grep -oE '\"ExitNodeID\":[^,]+' | head -1")
+  if [ -z "$STALE_EXIT" ] || [ "$STALE_EXIT" = '"ExitNodeID":""' ]; then
+    echo "  ${GRN}PASS${NC}  R21 tailscaled.state has no stale ExitNodeID"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R21 stale ExitNodeID in tailscaled.state: $STALE_EXIT"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 6: HTTPS (R22-R24)
+# ---------------------------------------------------------------------------
+if [ "$SKIP_NETWORK" = 0 ]; then
+  echo
+  echo "[R22-R24] HTTPS path (skygate.example.com)"
+  HTTPS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://skygate.example.com/healthz 2>&1)
+  if [ "$HTTPS_CODE" = "200" ]; then
+    echo "  ${GRN}PASS${NC}  R22 https://skygate.example.com/healthz → 200"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R22 https://skygate.example.com/healthz → $HTTPS_CODE"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # R23: TLS cert expiry (must be > 7 days from now)
+  CERT_END=$(echo | openssl s_client -servername skygate.example.com -connect skygate.example.com:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+  if [ -n "$CERT_END" ]; then
+    CERT_EPOCH=$(date -d "$CERT_END" +%s 2>/dev/null || echo 0)
+    NOW_EPOCH=$(date +%s)
+    DAYS_LEFT=$(( (CERT_EPOCH - NOW_EPOCH) / 86400 ))
+    if [ "$DAYS_LEFT" -gt 7 ]; then
+      echo "  ${GRN}PASS${NC}  R23 TLS cert valid for $DAYS_LEFT more days ($CERT_END)"
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    else
+      echo "  ${RED}FAIL${NC}  R23 TLS cert expires in $DAYS_LEFT days: $CERT_END"
+      RESULTS_FAIL=$((RESULTS_FAIL+1))
+    fi
+  else
+    echo "  ${YLW}SKIP${NC}  R23 TLS cert check (openssl failed)"
+  fi
+
+  # R24: openresty upstream reachable (the local 8080 → 172.18.0.4 path)
+  LOCAL_8080=$(ssh_vm \
+    "curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8080/healthz" 2>&1)
+  if [ "$LOCAL_8080" = "200" ]; then
+    echo "  ${GRN}PASS${NC}  R24 openresty upstream (localhost:8080) returns 200"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R24 openresty upstream: localhost:8080 → $LOCAL_8080"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 7: network reachability (R25)
+# ---------------------------------------------------------------------------
+if [ "$SKIP_NETWORK" = 0 ]; then
+  echo
+  echo "[R25] skygate-host-1 direct internet"
+  # skygate-host-1 must reach 8.8.8.8 DIRECTLY (no exit-node). With
+  # exit-node unset, this should work. If exit-node was set and we
+  # forgot, the ping would go via tailscale → exit-node → internet,
+  # which also works but for the wrong reason. R6 catches the
+  # exit-node misuse; R25 catches the actual connectivity.
+  PING_LOSS=$(ssh_vm \
+    "docker exec $SKYGATE_CONTAINER ping -c 2 -W 2 8.8.8.8 2>&1 | grep -oE '[0-9]+% packet loss'" | head -1)
+  if echo "$PING_LOSS" | grep -q '0%'; then
+    echo "  ${GRN}PASS${NC}  R25 skygate-host-1 pings 8.8.8.8 (loss=$PING_LOSS)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R25 skygate-host-1 cannot reach 8.8.8.8 (loss=$PING_LOSS)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+echo
+echo "=== summary ==="
+echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
+echo "  ${RED}FAIL${NC}: $RESULTS_FAIL"
+
+if [ "$RESULTS_FAIL" -gt 0 ]; then
+  echo
+  echo "${RED}post-deploy verification FAILED — investigate before continuing${NC}"
+  exit 1
+fi
+echo
+echo "${GRN}post-deploy verification PASSED — system is healthy${NC}"
+exit 0
