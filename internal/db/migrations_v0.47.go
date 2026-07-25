@@ -75,24 +75,49 @@ func migrateV047(d *sql.DB) error {
 	// is supported. The pragma_query_only fallback
 	// (try/catch) keeps the migration idempotent
 	// even on older SQLite versions.
+	//
+	// CRITICAL: the backfill UPDATE only runs if the
+	// ALTER actually created the column in THIS run
+	// (i.e., this is the very first time the migration
+	// runs on a deploy that previously didn't have
+	// the column). Otherwise, every skygate restart
+	// would clobber operator-set via_enabled=0 back
+	// to 1. The "freshlyAdded" flag tracks whether
+	// THIS run was the one that created the column.
+	freshlyAdded := true
 	if _, err := d.Exec(addViaEnabledUserPrefSQL); err != nil {
 		// "duplicate column name: via_enabled" — already
-		// migrated. Skip silently.
+		// migrated in a previous run. Don't backfill.
 		if !isSQLiteDuplicateColumnError(err) {
 			return err
 		}
+		freshlyAdded = false
 	}
 	if _, err := d.Exec(addViaEnabledDevicePrefSQL); err != nil {
 		if !isSQLiteDuplicateColumnError(err) {
 			return err
 		}
+		// Both columns added in this run? Set false.
+		// If user ALTER was the duplicate and device
+		// ALTER also was duplicate, both columns
+		// pre-existed.
+		if freshlyAdded {
+			freshlyAdded = false
+		}
+	}
+	// Backfill ONLY on the first-time migration. On
+	// every subsequent startup, skip the UPDATE so
+	// the operator's via_enabled=0 (un-pinned) is
+	// preserved across restarts.
+	if !freshlyAdded {
+		return nil
 	}
 	// Backfill existing rows: every row that was
 	// created under v0.28.1 / v0.28.4 had the
 	// pinning enforced. Preserve that behavior on
 	// upgrade (the operator has to explicitly flip
 	// the flag to un-pin). The UPDATE is a no-op on
-	// a fresh install.
+	// a fresh install (column defaults to 0).
 	if _, err := d.Exec(`UPDATE user_exit_node_prefs SET via_enabled = 1 WHERE via_enabled = 0`); err != nil {
 		return err
 	}
