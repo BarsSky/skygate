@@ -85,7 +85,7 @@ func (a *App) PostAdminACLReapply(w http.ResponseWriter, r *http.Request) {
 		alerter,
 		c.Username,
 		fmt.Sprintf("reapply by %s (per-plane)", c.Username),
-		true, // DEBUG: force useVia=true to test v0.29.0 fix
+		a.Cfg.ACLWithViaEnabled,
 	)
 	// v0.13.0 — single-plane deploys see one result, multi-
 	// plane deploys see one per plane. Surface the first

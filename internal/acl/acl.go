@@ -304,45 +304,39 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		sb.WriteString("] }")
 	}
 
-	// 2026-07-27: v0.29.0 — per-user grant for TAGGED
-	// devices. The grant above uses src=user@ which in
-	// Tailscale v2 policy does NOT match tagged devices
-	// (every device since v0.28.0 carries
+	// 2026-07-27: v0.29.0 — per-DEVICE grant for TAGGED
+	// devices. The per-user grant above uses src=user@
+	// which in Tailscale v2 policy does NOT match tagged
+	// devices (every device since v0.28.0 carries
 	// tag:dev-<user>-<device>; the device's source
 	// identity in ACL is the TAG, not the user). Symptom
 	// observed in production (operator, 2026-07-27):
 	// workstation-2 (Android, tag:dev-admin-workstation-2) could
 	// not reach workstation-1 (Windows, tag:dev-admin-
 	// workstation-1) over Tailscale for Moonlight, because
-	// no rule had src=tag:dev-admin-* and dst=tag:dev-
-	// admin-*. The per-user grant was a no-op for
-	// every device in the tailnet.
+	// no rule had src=tag:dev-admin-workstation-2 and
+	// dst=tag:dev-admin-workstation-1.
 	//
-	// FIX: emit a SECOND per-user grant per user, this
-	// one with src=tag:dev-<user>-* (matches all of the
-	// user's tagged devices) and dst starting with
-	// tag:dev-<user>-*:* (lets them talk to each other)
-	// plus the same own-CIDR / shared-CIDR / autogroup
-	// addenda as the per-user grant above.
+	// Earlier design (reverted) tried src=tag:dev-<user>-*
+	// (wildcard). headscale 0.29.2 rejects wildcards in
+	// tagOwners with "src=tag not found". v0.29.0 uses
+	// CONCRETE per-device tags (which headscale accepts
+	// because they were registered by the v0.28.0
+	// backfillNodeOwnership auto-tag) and emits one
+	// per-DEVICE grant with dst=list of all OTHER devices
+	// of the same user.
 	//
-	// This is the v0.28.0 design INTENT made real: the
-	// v0.28.0 tag-per-device design was supposed to give
-	// us stable per-device ACL while preserving the
-	// "user can reach their own devices" semantic. The
-	// v0.28.0 code shipped the tagging but forgot to
-	// update the per-user grant's src/dst. v0.28.5b
-	// fixed it for autogroup:internet (loose per-device
-	// grant). v0.29.0 fixes it for the per-user dst
-	// (this grant).
+	// 7 grants for admin (one per device). 2 grants
+	// for user1. O(n) per user, not O(n²).
 	//
 	// Order: emitted AFTER the per-user grant (which
 	// is for SSH and untagged identities) and BEFORE
 	// per-device rules. This way:
 	//   1. Per-device rules (most specific dst) win
 	//   2. Per-user grant (user@) wins for SSH/untagged
-	//   3. THIS per-user grant (tag:dev-*) is the
-	//      fallback for tagged devices talking to
-	//      tagged devices of the SAME user
+	//   3. THIS per-DEVICE grant is the fallback for
+	//      tagged devices talking to other tagged
+	//      devices of the SAME user
 	//   4. Per-device pref grant (with via) when set
 	//   5. Loose per-device grant (autogroup:internet)
 	//   6. Catch-alls last
@@ -350,46 +344,41 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		if uname == "" {
 			continue
 		}
-		// Build the dst list. The base is the tag
-		// pattern (tag:dev-<user>-*:*), then the
-		// user's own CIDR, then shared CIDRs, then
-		// autogroup:internet. Same structure as the
-		// per-user grant above but starting from the
-		// tag pattern instead of the user@ identity.
-		dst := []string{"tag:dev-" + uname + "-*:*"}
-		if ownCIDR := subByUser[uname]; ownCIDR != "" {
-			dst = append(dst, ownCIDR+":*")
+		userTags := tagsByUser[uname]
+		if len(userTags) < 2 {
+			// Need at least 2 devices for inter-device
+			// traffic. With 0 or 1, there's nothing to
+			// allow (no dst set). Skip.
+			continue
 		}
-		dedupSet := make(map[string]bool, len(dst))
-		for _, d := range dst {
-			dedupSet[d] = true
-		}
-		for _, sharedCIDR := range sharedByUser[uname] {
-			if sharedCIDR == "" {
-				continue
+		// For each device, emit one grant with dst =
+		// all OTHER devices of the same user.
+		for i, srcTag := range userTags {
+			if i > 0 {
+				sb.WriteString(",\n")
 			}
-			entry := sharedCIDR + ":*"
-			if !dedupSet[entry] {
-				dst = append(dst, entry)
-				dedupSet[entry] = true
+			// Build dst = all OTHER tags of the same user
+			dstTags := make([]string, 0, len(userTags)-1)
+			for _, otherTag := range userTags {
+				if otherTag != srcTag {
+					dstTags = append(dstTags, otherTag)
+				}
 			}
-		}
-		// Same as the per-user grant: autogroup:internet
-		// is added unconditionally so the user's devices
-		// can reach the public internet through whatever
-		// exit-node they pick. v0.28.3 added this.
-		dst = append(dst, "autogroup:internet:*")
-		// Render
-		sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"tag:dev-" + uname + "-*\"], \"dst\": [")
-		for j, d := range dst {
-			if j > 0 {
-				sb.WriteString(", ")
+			sb.WriteString("    { \"src\": [\"" + srcTag + "\"], \"dst\": [")
+			for j, t := range dstTags {
+				if j > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString("\"")
+				sb.WriteString(t)
+				sb.WriteString("\"")
 			}
-			sb.WriteString("\"")
-			sb.WriteString(d)
-			sb.WriteString("\"")
+			// `ip: ["*"]` is required by headscale 0.29.2
+			// (otherwise it returns "ip and app can not
+			// both be empty"). The bare tag in dst
+			// (no :* suffix) means "this tag, any port".
+			sb.WriteString("], \"ip\": [\"*\"] }")
 		}
-		sb.WriteString("] }")
 	}
 
 	// Per-device exit-rules. v0.28.0: src prefers
@@ -1142,81 +1131,57 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// admin-*. The per-user grant was a no-op for
 	// every device in the tailnet.
 	//
-	// FIX: emit a SECOND per-user grant per user, this
-	// one with src=tag:dev-<user>-* (matches all of the
-	// user's tagged devices) and dst starting with
-	// tag:dev-<user>-*:* (lets them talk to each other)
-	// plus the same own-CIDR / shared-CIDR / autogroup
-	// addenda as the per-user grant above.
+	// FIX: emit a per-DEVICE grant per user. Earlier
+	// design (reverted) tried src=tag:dev-<user>-*
+	// (wildcard). headscale 0.29.2 rejects wildcards
+	// in tagOwners with "src=tag not found". v0.29.0
+	// uses CONCRETE per-device tags (which headscale
+	// accepts because they were registered by the
+	// v0.28.0 backfillNodeOwnership auto-tag) and
+	// emits one per-DEVICE grant with dst = list of
+	// all OTHER devices of the same user.
 	//
-	// This is the v0.28.0 design INTENT made real: the
-	// v0.28.0 tag-per-device design was supposed to give
-	// us stable per-device ACL while preserving the
-	// "user can reach their own devices" semantic. The
-	// v0.28.0 code shipped the tagging but forgot to
-	// update the per-user grant's src/dst. v0.28.5b
-	// fixed it for autogroup:internet (loose per-device
-	// grant). v0.29.0 fixes it for the per-user dst
-	// (this grant).
-	//
-	// Same as in GenerateACLForPlane: the v0.29.0
-	// logic is duplicated in both functions because
-	// the per-user grant is emitted from each, and
-	// the per-user tagged grant must be emitted from
-	// the SAME function (or the call site). Refactoring
-	// to a shared helper is a v0.30.0 task (see
-	// docs/plans/refactor-v0.30.md).
+	// 7 grants for admin (one per device). 2 grants
+	// for user1. O(n) per user, not O(n²).
 	for _, uname := range usernames {
 		if uname == "" {
 			continue
 		}
-		// Build the dst list. The base is the tag
-		// pattern (tag:dev-<user>-*:*), then the
-		// user's own CIDR (as a host alias per the
-		// v0.28.2 workaround), then shared CIDRs
-		// (as host aliases), then autogroup:internet.
-		dst := []string{"tag:dev-" + uname + "-*:*"}
-		if ownCIDR := subByUser[uname]; ownCIDR != "" {
-			dst = append(dst, "h-user-"+uname+"-subnet")
+		userTags := tagsByUser[uname]
+		if len(userTags) < 2 {
+			// Need at least 2 devices for inter-device
+			// traffic. With 0 or 1, there's nothing to
+			// allow (no dst set). Skip.
+			continue
 		}
-		dedupSet := make(map[string]bool, len(dst))
-		for _, d := range dst {
-			dedupSet[d] = true
-		}
-		for _, sharedCIDR := range sharedByUser[uname] {
-			if sharedCIDR == "" {
-				continue
+		// For each device, emit one grant with dst =
+		// all OTHER devices of the same user.
+		for i, srcTag := range userTags {
+			if i > 0 {
+				sb.WriteString(",\n")
 			}
-			// Same name as the per-user grant above so
-			// the v0.28.2 host-alias dedup catches them.
-			hostName := "h-shared-" + strings.NewReplacer(
-				".", "-", "/", "-", ":", "_").Replace(sharedCIDR)
-			if dedupSet[hostName] {
-				continue
+			// Build dst = all OTHER tags of the same user
+			dstTags := make([]string, 0, len(userTags)-1)
+			for _, otherTag := range userTags {
+				if otherTag != srcTag {
+					dstTags = append(dstTags, otherTag)
+				}
 			}
-			dedupSet[hostName] = true
-			dst = append(dst, hostName)
-		}
-		// Same as the per-user grant: autogroup:internet
-		// is added unconditionally so the user's devices
-		// can reach the public internet through whatever
-		// exit-node they pick. v0.28.3 added this.
-		dst = append(dst, "autogroup:internet")
-		// Render — leading separator because the previous
-		// per-user grant was emitted without a trailing
-		// comma (its for-loop pattern is "leading
-		// separator" — comma before every entry except
-		// the first).
-		sb.WriteString(",\n    { \"src\": [\"tag:dev-" + uname + "-*\"], \"dst\": [")
-		for j, d := range dst {
-			if j > 0 {
-				sb.WriteString(", ")
+			sb.WriteString("    { \"src\": [\"" + srcTag + "\"], \"dst\": [")
+			for j, t := range dstTags {
+				if j > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString("\"")
+				sb.WriteString(t)
+				sb.WriteString("\"")
 			}
-			sb.WriteString("\"")
-			sb.WriteString(d)
-			sb.WriteString("\"")
+			// `ip: ["*"]` is required by headscale 0.29.2
+			// (otherwise it returns "ip and app can not
+			// both be empty"). The bare tag in dst
+			// (no :* suffix) means "this tag, any port".
+			sb.WriteString("], \"ip\": [\"*\"] }")
 		}
-		sb.WriteString("] }")
 	}
 
 	for _, e := range aclRows {
