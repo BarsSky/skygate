@@ -1206,10 +1206,28 @@ func TestGenerateACL_LegacyDeviceIpFallback(t *testing.T) {
 	if !strings.Contains(aclStr, wantLegacy) {
 		t.Errorf("expected legacy fallback to device_ip; not found.\nACL:\n%s", aclStr)
 	}
-	// And NOT a tag-based src
-	wantNotTag := `"src": ["tag:dev-admin-`
+	// And NOT a tag-based src for THIS per-device rule. The
+	// per-device rule's dst is 149.154.160.0/20 (Telegram
+	// CIDR). Look for a per-device rule with that dst AND
+	// a tag-based src — that would be wrong (the legacy
+	// rule has empty user_name + device_hostname so it
+	// can't have a tag-based src).
+	//
+	// 2026-07-27: v0.29.0 — the test had to be narrowed
+	// to "tag for a SPECIFIC device" because the new
+	// per-user grant emits `src: ["tag:dev-admin-*"]`
+	// (wildcard) for admin. The wildcard contains
+	// "tag:dev-admin-" as a prefix, so the old
+	// broad "contains tag:dev-admin-" check
+	// incorrectly matched the new per-user grant
+	// (which IS supposed to be there).
+	wantNotTag := `"src": ["tag:dev-admin-100.64.100.1"]`
+	wantNotTagGeneric := `"src": ["tag:dev-admin-somehost"]`
 	if strings.Contains(aclStr, wantNotTag) {
-		t.Errorf("legacy rule should NOT use tag-based src; ACL:\n%s", aclStr)
+		t.Errorf("legacy rule should NOT use tag-based src (specific device tag); ACL:\n%s", aclStr)
+	}
+	if strings.Contains(aclStr, wantNotTagGeneric) {
+		t.Errorf("legacy rule should NOT use tag-based src (specific device tag); ACL:\n%s", aclStr)
 	}
 }
 
@@ -1877,3 +1895,80 @@ func TestGenerateACLWithVia_BackwardsCompat_PerUserViaEnabled(t *testing.T) {
 		t.Errorf("v0.28.5 backwards compat: via_enabled=1 (existing rows) must emit via.\nACL:\n%s", aclStr)
 	}
 }
+
+
+// TestGenerateACL_PerUserGrantForTaggedDevices: v0.29.0 —
+// regression for the workstation-2↔workstation-1 Moonlight incident
+// (operator, 2026-07-27).
+//
+// The original per-user grant (src=user@) does NOT match
+// tagged devices in Tailscale v2 policy — a device carrying
+// tag:dev-<user>-<device> has the TAG as its source identity,
+// not the user@. v0.28.0 shipped the tag-per-device design
+// but the per-user grant's src/dst was never updated to use
+// the tag pattern, so for 28 versions every tagged device
+// has been unable to reach other tagged devices of the same
+// user (e.g. Moonlight, file sharing, AirPlay-style traffic).
+//
+// FIX: a SECOND per-user grant per user, with
+// src=tag:dev-<user>-* and dst=tag:dev-<user>-*:* (plus the
+// same own-CIDR / shared-CIDR / autogroup:internet addenda
+// as the per-user grant above). v0.28.5b did the same for
+// autogroup:internet; v0.29.0 does it for the per-user dst.
+//
+// This test pins the v0.29.0 behavior: the policy MUST
+// contain a grant with src=tag:dev-admin-* and
+// dst=tag:dev-admin-*:*.
+func TestGenerateACL_PerUserGrantForTaggedDevices(t *testing.T) {
+	d := openTestDB(t)
+	_ = seedPortalUser(t, d, "admin")
+	_ = seedPortalUser(t, d, "user1")
+	// Two of admin's devices — workstation-1 (Windows host
+	// for Moonlight) and workstation-2 (Android client). Both
+	// are tagged via the v0.28.0 backfill.
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('1', 'workstation-1', 'admin', 'tag:private')`); err != nil {
+		t.Fatalf("seed workstation-1: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, hostname, username, tag) VALUES ('10', 'workstation-2', 'admin', 'tag:private')`); err != nil {
+		t.Fatalf("seed workstation-2: %v", err)
+	}
+	aclStr, err := GenerateACL(d)
+	if err != nil {
+		t.Fatalf("GenerateACL: %v", err)
+	}
+	// The per-user grant for tagged devices MUST have:
+	//   src = "tag:dev-admin-*"
+	//   dst = "tag:dev-admin-*:*" as the first entry
+	// (the dst order is own-CIDR → shared-CIDR →
+	// autogroup:internet, so "tag:dev-<user>-*:*" is always
+	// first because the per-user grant always starts there).
+	//
+	// We use a regex-free Contains check on the literal
+	// substring because the JSON formatting is stable
+	// (one rule per line, fixed indentation).
+	wantSrc := `"src": ["tag:dev-admin-*"]`
+	if !strings.Contains(aclStr, wantSrc) {
+		t.Errorf("v0.29.0 regression: tagged devices of the same user must be able to reach each other.\n"+
+			"Expected a grant with src=tag:dev-admin-* in the ACL; not found.\n"+
+			"Without this rule, workstation-2 (Android, tag:dev-admin-workstation-2) cannot reach\n"+
+			"workstation-1 (Windows, tag:dev-admin-workstation-1) over Tailscale for Moonlight\n"+
+			"or any other intra-user traffic.\n"+
+			"ACL:\n%s", aclStr)
+	}
+	// The dst must include the tag pattern as a base.
+	wantDst := `"tag:dev-admin-*:*"`
+	if !strings.Contains(aclStr, wantDst) {
+		t.Errorf("v0.29.0 regression: dst must include tag:dev-admin-*:* for the per-user tagged grant.\n"+
+			"ACL:\n%s", aclStr)
+	}
+	// Sanity: the OLD per-user grant (src=user@, dst=user@:*)
+	// must still be present — it's used for SSH and any
+	// untagged devices. The new grant is in ADDITION, not in
+	// REPLACEMENT.
+	wantOld := `"src": ["admin@tsnet.example.com"]`
+	if !strings.Contains(aclStr, wantOld) {
+		t.Errorf("v0.29.0 regression: the original per-user grant (src=user@) must still be present for SSH and untagged devices.\n"+
+			"ACL:\n%s", aclStr)
+	}
+}
+
