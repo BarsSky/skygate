@@ -29,6 +29,19 @@ services:
       - TS_AUTHKEY_FILE=/run/secrets/ts_authkey
       - TS_LOGIN_SERVER=https://head.example.com
       - TS_HOSTNAME=skygate-host-1
+      # 2026-07-27: v0.29.0 — pin the docker compose project name
+      # so the auto-updater (which runs `docker compose` from inside
+      # the container, where the bind-mount of the source dir is
+      # at /app) uses the same project name as the host's host-side
+      # compose (which sees the source dir as /home/admin/skygate).
+      # Without this, basename(/app) = "app" while
+      # basename(/home/admin/skygate) = "skygate", and the
+      # named volume `skygate-data` is labelled with the original
+      # project name on first creation — so the in-container
+      # `docker compose up` would refuse to use it ("volume
+      # skygate-data already exists but was created for project
+      # skygate (expected app). Use external: true").
+      - COMPOSE_PROJECT_NAME=skygate
     volumes:
       # Bind-mount source code - any change is picked up on container restart
       - ./:/app
