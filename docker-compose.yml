@@ -177,6 +177,9 @@ volumes:
   caddy-config:
     name: caddy-config
 
-secrets:
-  ts_authkey:
-    file: ./secrets/ts_authkey
+# secrets: defined inline at the skygate service level (long form)
+# so we can use ${SKYGATE_HOST_REPO_PATH:-...} for the file path.
+# The top-level `secrets:` block was removed because defining
+# `ts_authkey` in two places (top-level + service-level) was a
+# duplicate that the compose v2.27+ parser rejects with
+# "services.skygate.secrets must be a array".
