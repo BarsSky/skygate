@@ -1,9 +1,7 @@
 {{define "body-admin-update"}}
 {{/* 2026-07-27: v0.29.0 — self-update page.
-     Shows: current version, latest GitHub release (with banner
-     if newer), detected install kind, copy-pasteable manual
-     update steps for the install kind, release notes, and
-     rollback steps. */}}
+     Phase 1: detection + manual steps.
+     Phase 2: apply button + status panel + auto-refresh + rollback. */}}
 
 {{if .Flash}}
 <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{.Flash}}</div>
@@ -12,6 +10,67 @@
 <div class="alert alert-warning"><i class="fa-solid fa-circle-exclamation"></i>
   {{t "update.error_prefix"}}: {{.Error}}
 </div>
+{{end}}
+
+{{if .UpdateState}}
+  {{$st := .UpdateState}}
+  {{$borderColor := "var(--info)"}}
+  {{if eq $st.Phase "done"}}{{$borderColor = "var(--success)"}}{{end}}
+  {{if eq $st.Phase "failed"}}{{$borderColor = "var(--danger)"}}{{end}}
+  {{if eq $st.Phase "rolled_back"}}{{$borderColor = "var(--warning)"}}{{end}}
+  <div class="card" style="margin-bottom:24px;border-left:4px solid {{$borderColor}}">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <div>
+        <h3 data-update-phase="{{$st.Phase}}" style="margin:0">
+          {{if eq $st.Phase "done"}}<i class="fa-solid fa-circle-check"></i>{{end}}
+          {{if eq $st.Phase "failed"}}<i class="fa-solid fa-circle-xmark"></i>{{end}}
+          {{if eq $st.Phase "rolled_back"}}<i class="fa-solid fa-rotate-left"></i>{{end}}
+          {{if eq $st.Phase "pending"}}<i class="fa-solid fa-hourglass-start"></i>{{end}}
+          {{if and (ne $st.Phase "done") (ne $st.Phase "failed") (ne $st.Phase "rolled_back") (ne $st.Phase "pending")}}<i class="fa-solid fa-circle-notch fa-spin"></i>{{end}}
+          {{t "update.status_title"}}: <code>{{$st.Phase}}</code>
+        </h3>
+        <p style="color:var(--text-muted);margin:8px 0 0 0">
+          {{t "update.status_job"}}: <code>{{$st.JobID}}</code> ·
+          {{$st.FromVersion}} → {{$st.ToVersion}} ·
+          {{$st.InstallKind}}
+        </p>
+      </div>
+      <form method="post" action="/admin/update/dismiss" style="display:inline">
+        <button type="submit" class="btn btn-sm">
+          <i class="fa-solid fa-xmark"></i> {{t "update.dismiss"}}
+        </button>
+      </form>
+    </div>
+
+    {{if $st.Error}}
+    <div class="alert alert-danger" style="margin-top:12px">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <strong>{{t "update.failure"}}</strong>: {{$st.Error}}
+    </div>
+    {{end}}
+
+    {{if $st.ManualFallback}}
+    <div class="alert alert-warning" style="margin-top:12px">
+      <i class="fa-solid fa-hand"></i>
+      {{t "update.manual_fallback_hint"}}
+      <a href="#manual" style="color:inherit;text-decoration:underline">
+        {{t "update.banner_jump_to_steps"}}
+      </a>
+    </div>
+    {{end}}
+
+    {{if $st.Log}}
+    <details {{if ne $st.Phase "done"}}open{{end}} style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)">
+        <i class="fa-solid fa-list-ul"></i>
+        {{t "update.log_entries"}}: {{len $st.Log}}
+        {{if ne $st.Phase "done"}}<i class="fa-solid fa-circle-notch fa-spin" style="margin-left:6px"></i>{{end}}
+      </summary>
+      <pre id="update-log" style="white-space:pre-wrap;font-family:monospace;font-size:11px;line-height:1.4;margin:8px 0 0;max-height:400px;overflow:auto;background:var(--bg-secondary);padding:8px;border-radius:4px">{{range $st.Log}}{{$lineColor := "var(--text-muted)"}}{{if eq .Level "error"}}{{$lineColor = "var(--danger)"}}{{end}}{{if eq .Level "warn"}}{{$lineColor = "var(--warning)"}}{{end}}<span style="color:{{$lineColor}}">{{.At.Format "15:04:05"}} [{{.Level}}] {{.Msg}}</span>
+{{end}}</pre>
+    </details>
+    {{end}}
+  </div>
 {{end}}
 
 {{if .IsNewer}}
@@ -31,11 +90,21 @@
         {{t "update.subtitle"}}
       </p>
     </div>
-    <form method="post" action="/admin/update/check-now" style="display:inline">
-      <button type="submit" class="btn btn-sm">
-        <i class="fa-solid fa-arrows-rotate"></i> {{t "update.check_now"}}
-      </button>
-    </form>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <form method="post" action="/admin/update/check-now" style="display:inline">
+        <button type="submit" class="btn btn-sm">
+          <i class="fa-solid fa-arrows-rotate"></i> {{t "update.check_now"}}
+        </button>
+      </form>
+      {{if .IsNewer}}
+      <form method="post" action="/admin/update/apply" style="display:inline" onsubmit="return confirm('{{t "update.apply_confirm"}}')">
+        <input type="hidden" name="target" value="{{.Latest}}">
+        <button type="submit" class="btn btn-primary">
+          <i class="fa-solid fa-rocket"></i> {{t "update.apply"}} → {{.Latest}}
+        </button>
+      </form>
+      {{end}}
+    </div>
   </div>
 
   <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">
@@ -124,7 +193,6 @@ function copyManualSteps() {
   if (!steps) return;
   var text = steps.innerText;
   navigator.clipboard.writeText(text).then(function() {
-    // brief visual feedback
     var btn = document.querySelector('button[onclick="copyManualSteps()"]');
     if (btn) {
       var orig = btn.innerHTML;
@@ -133,5 +201,13 @@ function copyManualSteps() {
     }
   });
 }
+(function() {
+  var phaseEl = document.querySelector('[data-update-phase]');
+  if (!phaseEl) return;
+  var phase = phaseEl.getAttribute('data-update-phase');
+  var done = ['done', 'failed', 'rolled_back', 'pending'];
+  if (done.indexOf(phase) !== -1) return;
+  setTimeout(function() { location.reload(); }, 5000);
+})();
 </script>
 {{end}}

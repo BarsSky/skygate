@@ -139,6 +139,14 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+	// 2026-07-27: v0.29.0 — initialize the auto-update
+	// state store. Loads any persisted state from the
+	// status file so a restart renders the most recent
+	// in-flight / completed job (the operator can pick
+	// up where they left off). The store is bound to
+	// the bind-mounted /data volume so the file
+	// survives a container recreate.
+	handlers.InitUpdateStateStore(cfg.UpdateStatePath)
 	// 2026-07-15: v0.12.0 — wire SKYGATE_SECRET_KEY into the
 	// per-user control plane router. Empty string means
 	// "encryption not configured" — the router falls through
@@ -392,6 +400,17 @@ func main() {
 	// poll (bypasses the 6h success / 15m failure cache).
 	mux.Handle("GET /admin/update", authMW(http.HandlerFunc(app.GetAdminUpdate)))
 	mux.Handle("POST /admin/update/check-now", authMW(http.HandlerFunc(app.PostAdminUpdateCheck)))
+	// 2026-07-27: v0.29.0 — auto-update apply/rollback/dismiss.
+	// The "Apply" button kicks off a background updater
+	// goroutine that runs git pull + docker compose build +
+	// container recreate + healthz poll, with automatic
+	// rollback on any failure. "Rollback now" is the
+	// operator-initiated escape hatch. "Dismiss" clears
+	// the persisted status file when the operator has
+	// read the success/failure banner.
+	mux.Handle("POST /admin/update/apply", authMW(http.HandlerFunc(app.PostAdminUpdateApply)))
+	mux.Handle("POST /admin/update/rollback", authMW(http.HandlerFunc(app.PostAdminUpdateRollback)))
+	mux.Handle("POST /admin/update/dismiss", authMW(http.HandlerFunc(app.PostAdminUpdateDismiss)))
 	// 2026-07-20: v0.20.0 — "Run check now" button on
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as

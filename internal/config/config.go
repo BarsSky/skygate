@@ -173,6 +173,18 @@ type Config struct {
 	UpdateCheckInterval time.Duration
 	UpdateChannel       string
 	GitHubToken         string
+	// RepoPath is the path to the skygate source repo on
+	// the host (used by the auto-updater to run git + docker
+	// compose). Default "/home/skyadmin/skygate" (the
+	// operator's standard layout). Override via
+	// SKYGATE_REPO_PATH.
+	RepoPath string
+	// UpdateStatePath is the path to the auto-update
+	// status file. Default "/data/skygate-update-status.json"
+	// (bind-mounted into the container, so the file
+	// survives a container recreate). Override via
+	// SKYGATE_UPDATE_STATE_PATH.
+	UpdateStatePath string
 }
 
 func Load() (*Config, error) {
@@ -260,6 +272,13 @@ func Load() (*Config, error) {
 		UpdateCheckInterval: getDuration("SKYGATE_UPDATE_CHECK_INTERVAL", 24*time.Hour),
 		UpdateChannel:       getenv("SKYGATE_UPDATE_CHANNEL", "stable"),
 		GitHubToken:         os.Getenv("SKYGATE_GITHUB_TOKEN"),
+		// v0.29.0: auto-updater paths. The default
+		// /home/skyadmin/skygate matches the operator's
+		// VM; the /data state file matches the
+		// bind-mounted volume (so it survives a container
+		// recreate).
+		RepoPath:        getenv("SKYGATE_REPO_PATH", "/home/skyadmin/skygate"),
+		UpdateStatePath: getenv("SKYGATE_UPDATE_STATE_PATH", "/data/skygate-update-status.json"),
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
