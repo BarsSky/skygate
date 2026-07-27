@@ -2610,6 +2610,74 @@ docker rm skygate
 docker compose up -d skygate
 ```
 
+### Self-update orchestrator (v0.29.0+, `/admin/update`)
+
+The `/admin/update` page has a `Apply update` button that runs an
+in-container orchestrator: it `git checkout`s the target tag,
+rebuilds the image, recreates the container, polls `/healthz` for
+60s, and auto-rollbacks on any failure.
+
+**How the orchestrator finds the source tree (RepoPath)**:
+`SKYGATE_REPO_PATH` is the in-container path of the source
+bind-mount, which is **always `/app`** for the standard
+docker-compose layout (`./:/app`). The host path
+`/home/skyadmin/skygate` is NOT visible from inside the container
+— only the bind-mount is. The config auto-detects container mode
+via `/.dockerenv` (Docker) or `/run/.containerenv` (Podman/CRI-O)
+and falls back to `/home/skyadmin/skygate` on a bare/systemd host.
+Override via `SKYGATE_REPO_PATH` for non-standard layouts.
+
+**How the orchestrator restores host file ownership**: every `git`
+mutation runs as root inside the container, which would re-own all
+files in the bind-mount to `root:root` and break the operator's
+`git pull` / `make test` from the host shell. The orchestrator
+captures the host owner (`stat -c '%u:%g' .git/HEAD` once, at
+the start of the job) and runs `chown -R <uid>:<gid> /app` after
+the build phase. Override via `SKYGATE_HOST_OWNER="1000:1000"` for
+non-standard UIDs (e.g. rootless Docker, custom operator user).
+
+**State file**: `/data/skygate-update-status.json` (bind-mounted
+from the host's `/home/skyadmin/skygate/data/`, so it survives
+container recreate). The page reads this on every load and
+auto-refreshes every 5s while a job is in flight. Format: see
+`internal/update/state.go`.
+
+**When to use `/admin/update` apply vs the manual procedure
+above**:
+- **Apply** (in-app): when updating to a tag that's already
+  pushed to origin AND the changes are confined to Go code,
+  templates, JS, or static assets. The orchestrator handles
+  chown + container recreate + healthz polling. Failure →
+  automatic rollback to the previous tag (state file shows
+  `phase: rolled_back`).
+- **Manual** (the procedure above): when the update touches
+  `docker-compose.yml` itself, env vars, secrets, or
+  bind-mounts. The orchestrator does NOT manage those — a
+  compose-shape change requires a `docker compose down` +
+  `up` cycle on the host, which only the operator can do.
+
+**If `/admin/update` apply gets stuck at "PhaseFailed" with
+"chdir ...: no such file or directory"**: the orchestrator
+can't see the source dir. Verify
+`SKYGATE_REPO_PATH=/app` (or your custom path) is set
+correctly AND the bind-mount `./:/app` is in
+`docker-compose.yml`. The error appears in the status file
+under `error: "..."`.
+
+**If the auto-rollback itself fails**: the status file shows
+`phase: failed` and the `manual_fallback: true` flag, with
+the failed command logged. The operator clears it by:
+```bash
+ssh skyadmin@192.168.13.69
+cd /home/skyadmin/skygate
+git status                # see which tag/commit is checked out
+git log --oneline -3      # see the backup tag (skygate-pre-update-XXXXXXXX)
+git checkout skygate-pre-update-XXXXXXXX
+sudo chown -R skyadmin:skyadmin data/ts/
+docker compose build skygate
+docker compose up -d --force-recreate --no-deps skygate
+```
+
 ---
 
 ## Smoke testing (make test)

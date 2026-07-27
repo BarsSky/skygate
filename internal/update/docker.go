@@ -39,17 +39,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
 
 // DockerUpgrader runs the Docker install kind update.
 type DockerUpgrader struct {
-	// RepoPath is the path to the skygate source repo on
-	// the host (e.g. "/home/skyadmin/skygate"). The
-	// orchestrator runs `git` and `docker compose` from
-	// this directory.
+	// RepoPath is the path to the skygate source repo.
+	//
+	// When running inside the skygate container (the
+	// orchestrator IS a goroutine inside the skygate HTTP
+	// server, started by the container's entrypoint),
+	// RepoPath is the IN-CONTAINER path of the bind-mount
+	// of the source dir — typically /app (per
+	// docker-compose.yml's `./:/app`). The host's
+	// /home/skyadmin/skygate is unreachable from inside
+	// the container; passing that path would make
+	// `cmd.Dir` fail with "no such file or directory".
+	//
+	// On a bare/systemd host (orchestrator running as
+	// skygate's system service), RepoPath is the host
+	// path — typically /home/skyadmin/skygate.
 	RepoPath string
 	// ComposeCmd is the docker compose invocation. Defaults
 	// to "docker compose". Operators with podman-compose
@@ -63,6 +76,22 @@ type DockerUpgrader struct {
 	// orchestrator uses it for the "starting from" line
 	// and the audit log.
 	CurrentVersion string
+	// hostOwner is the uid:gid of files on the host
+	// (e.g. "1000:1000" for skyadmin on a standard
+	// Ubuntu VM). The orchestrator captures it once
+	// at job start, then uses it to chown the bind-mount
+	// back to the host owner after every `git` mutation.
+	// Without this, files written by the orchestrator
+	// (running as root inside the container) end up
+	// root:root on the host, breaking the operator's
+	// `git pull` + `make test` from the host shell.
+	//
+	// Set via SKYGATE_HOST_OWNER env var, or auto-
+	// detected on the first chown call via
+	// `stat -c '%u:%g' <RepoPath>/.git/HEAD` (a file
+	// the host's git created, so its owner is the
+	// host owner).
+	hostOwner string
 }
 
 // NewDockerUpgrader returns a DockerUpgrader with sensible
@@ -87,6 +116,24 @@ func NewDockerUpgrader(repoPath string, state *StateStore, currentVersion string
 func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	u.State.Log(LogInfo, fmt.Sprintf("starting update %s → %s", u.CurrentVersion, target))
 
+	// Capture the host owner BEFORE any git mutation.
+	// Once `git` runs as root inside the container, every
+	// file in the bind-mount (including .git/HEAD) becomes
+	// root:root, so we can no longer recover the original
+	// host owner via stat. The captured value is used by
+	// chownToHostOwner() to restore ownership at the end of
+	// the build phase (so the operator's next `git pull` /
+	// `make test` from the host shell still works).
+	if _, err := u.detectHostOwner(ctx); err != nil {
+		// Non-fatal: the build will still work, the
+		// orchestrator just won't be able to chown the
+		// host files back. Log a warning and continue.
+		u.State.Log(LogWarn, "host owner detection failed: "+err.Error()+
+			" — files on the host may end up root:root after the update")
+	} else {
+		u.State.Log(LogDebug, fmt.Sprintf("host owner captured: %s", u.hostOwner))
+	}
+
 	// Phase 1: backup. Tag the current commit so the
 	// rollback can checkout it later. Cheap, fast.
 	u.State.SetPhase(PhaseBackup, "tagging current commit as skygate-pre-update")
@@ -99,10 +146,6 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 
 	// Phase 2: pull + build. `git fetch --tags` + `git
 	// checkout <target>` + `docker compose build skygate`.
-	// The `chown` step is critical: tailscaled in the
-	// container runs as root, so the bind-mounted
-	// data/ts/ subdirs get re-owned to root on every
-	// container restart.
 	u.State.SetPhase(PhasePullBuild, "fetching target and rebuilding image")
 	if err := u.runGit(ctx, "fetch", "--tags", "--prune"); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("git fetch: %w", err), backupTag)
@@ -115,14 +158,33 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	// Chown the data/ts/ directory before the build. The
 	// build step copies the source into the image; the
 	// container will then write its own tailscale state
-	// into the bind-mounted dir on first start.
-	if err := u.runShell(ctx, "sudo", "chown", "-R", "skyadmin:skyadmin", u.RepoPath+"/data/ts/"); err != nil {
+	// into the bind-mounted dir on first start. The
+	// chownToHostOwner helper uses the captured host
+	// owner (see top of Run) — it works whether we're
+	// inside the skygate container (chown directly) or
+	// on a bare host (the captured uid:gid is still
+	// valid; chown doesn't need sudo as root).
+	if err := u.chownToHostOwner(ctx, u.RepoPath+"/data/ts"); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("chown data/ts: %w", err), backupTag)
 		return
 	}
 	if out, err := u.runCompose(ctx, "build", "skygate"); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("docker compose build: %w (output: %s)", err, truncateOutput(out, 200)), backupTag)
 		return
+	}
+	// After the build, restore the source tree to the
+	// host owner. `docker compose build` reads /app as
+	// root (we are root inside the container); it doesn't
+	// modify source files, but a parallel `git checkout`
+	// earlier in the phase did — those files are now
+	// root:root on the host bind-mount. Without this
+	// chown, the operator's next `git pull` from the host
+	// shell would fail with "Permission denied".
+	if u.hostOwner != "" {
+		if err := u.chownToHostOwner(ctx, u.RepoPath); err != nil {
+			u.State.Log(LogWarn, "chown repo back to host owner failed: "+err.Error()+
+				" — host user may need to run 'sudo chown -R $USER $REPO'")
+		}
 	}
 	u.State.Log(LogInfo, "image rebuilt")
 
@@ -190,7 +252,9 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 	// Rebuild + recreate. Same pattern as the upgrade
 	// itself; the previous build was just tagged, so
 	// `docker compose build` produces the old image.
-	if err := u.runShell(ctx, "sudo", "chown", "-R", "skyadmin:skyadmin", u.RepoPath+"/data/ts/"); err != nil {
+	// Use chownToHostOwner (no sudo) — see the comment
+	// at the top of Run for why.
+	if err := u.chownToHostOwner(ctx, u.RepoPath+"/data/ts"); err != nil {
 		u.State.Log(LogError, "rollback chown failed: "+err.Error())
 		return
 	}
@@ -198,6 +262,11 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 		u.State.Log(LogError, "rollback build failed: "+err.Error()+
 			" (output: "+truncateOutput(out, 200)+")")
 		return
+	}
+	if u.hostOwner != "" {
+		if err := u.chownToHostOwner(ctx, u.RepoPath); err != nil {
+			u.State.Log(LogWarn, "rollback chown repo back to host owner failed: "+err.Error())
+		}
 	}
 	if out, err := u.runCompose(ctx, "up", "-d", "--force-recreate", "--no-deps", "skygate"); err != nil {
 		u.State.Log(LogError, "rollback up failed: "+err.Error()+
@@ -342,6 +411,87 @@ func shortSHA(buildLabel string) string {
 		hash = hash[:8]
 	}
 	return hash
+}
+
+// ownerPattern validates a "uid:gid" string. We accept
+// only digits + colon, e.g. "1000:1000". Anything else
+// (typos, "skyadmin:skyadmin" by name, etc.) is rejected
+// so a misconfigured SKYGATE_HOST_OWNER env doesn't cause
+// chown to fail with a confusing error.
+var ownerPattern = regexp.MustCompile(`^[0-9]+:[0-9]+$`)
+
+// detectHostOwner captures the host-side uid:gid for the
+// source tree. Used by chownToHostOwner to restore file
+// ownership after the orchestrator's git mutations.
+//
+// Resolution order:
+//  1. Already-cached value (idempotent — first call wins).
+//  2. SKYGATE_HOST_OWNER env var (e.g. "1000:1000"). This
+//     is the operator's escape hatch for non-standard
+//     layouts (different UID for skyadmin, rootless
+//     Docker with a different host user, etc.).
+//  3. `stat -c '%u:%g' <RepoPath>/.git/HEAD` — that file
+//     was created by the host's `git init` / `git clone`
+//     so its owner is the host owner. (We capture this
+//     BEFORE any git mutation; after that .git/HEAD is
+//     also root:root, so the call site must invoke
+//     detectHostOwner at the top of Run, before any
+//     runGit call.)
+//  4. Fallback "1000:1000" — the standard Ubuntu first
+//     user UID, which is skyadmin on the operator's VM.
+//     For the 99% case this is correct; operators with a
+//     non-standard layout use the env override.
+func (u *DockerUpgrader) detectHostOwner(ctx context.Context) (string, error) {
+	if u.hostOwner != "" {
+		return u.hostOwner, nil
+	}
+	if v := os.Getenv("SKYGATE_HOST_OWNER"); v != "" {
+		if !ownerPattern.MatchString(v) {
+			return "", fmt.Errorf("SKYGATE_HOST_OWNER=%q is not a valid uid:gid", v)
+		}
+		u.hostOwner = v
+		return u.hostOwner, nil
+	}
+	// Auto-detect via stat. The marker file is .git/HEAD
+	// — present in any working git checkout, owned by the
+	// host user (not by us, even inside the container,
+	// UNTIL the first git mutation runs).
+	marker := u.RepoPath + "/.git/HEAD"
+	out, err := u.runShellCapture(ctx, "stat", "-c", "%u:%g", marker)
+	if err == nil {
+		owner := strings.TrimSpace(out)
+		if ownerPattern.MatchString(owner) {
+			u.hostOwner = owner
+			return u.hostOwner, nil
+		}
+	}
+	// Fallback: standard first user.
+	u.hostOwner = "1000:1000"
+	return u.hostOwner, nil
+}
+
+// chownToHostOwner runs `chown -R <host-owner> <paths...>`.
+// Used after every git mutation phase to keep the bind-
+// mount's file ownership in sync with the host user —
+// otherwise the operator's next `git pull` from the host
+// shell fails with "Permission denied".
+//
+// Why no sudo: inside the skygate container we run as
+// root (the entrypoint does `chmod 777 /app`), so chown
+// works directly. On a bare/systemd host the orchestrator
+// runs as root too (the systemd unit's User=root or the
+// skyadmin user; either way, chown to a different uid
+// requires CAP_FOWNER which root has). The previous
+// version of this code prefixed `sudo`, which broke in
+// the Alpine container (no sudo binary).
+func (u *DockerUpgrader) chownToHostOwner(ctx context.Context, paths ...string) error {
+	owner, err := u.detectHostOwner(ctx)
+	if err != nil {
+		return err
+	}
+	args := []string{"-R", owner}
+	args = append(args, paths...)
+	return u.runShell(ctx, "chown", args...)
 }
 
 // truncateOutput limits a captured stdout/stderr to max
