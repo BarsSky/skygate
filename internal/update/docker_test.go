@@ -295,12 +295,16 @@ func TestTruncateOutput(t *testing.T) {
 // guards against a future refactor that forgets the
 // init).
 func TestNewDockerUpgrader_Defaults(t *testing.T) {
+	t.Setenv("SKYGATE_COMPOSE_PROJECT", "")
 	u := NewDockerUpgrader("/app", nil, "v0.28.6+caf6fb8")
 	if u.RepoPath != "/app" {
 		t.Errorf("RepoPath = %q, want %q", u.RepoPath, "/app")
 	}
 	if u.ComposeCmd != "docker compose" {
 		t.Errorf("ComposeCmd = %q, want %q", u.ComposeCmd, "docker compose")
+	}
+	if u.ComposeProject != "skygate" {
+		t.Errorf("ComposeProject default = %q, want %q", u.ComposeProject, "skygate")
 	}
 	if u.hostOwner != "" {
 		t.Errorf("hostOwner should be empty at construction, got %q", u.hostOwner)
@@ -309,5 +313,22 @@ func TestNewDockerUpgrader_Defaults(t *testing.T) {
 	// cleanly. If this breaks, the backup tag is wrong.
 	if tag := "skygate-pre-update-" + shortSHA(u.CurrentVersion); !strings.HasPrefix(tag, "skygate-pre-update-") {
 		t.Errorf("backup tag prefix wrong: %q", tag)
+	}
+}
+
+// TestNewDockerUpgrader_ProjectOverride pins the
+// SKYGATE_COMPOSE_PROJECT env override (operators who
+// renamed the project, e.g. "sky" or moved the source
+// dir).
+func TestNewDockerUpgrader_ProjectOverride(t *testing.T) {
+	cases := []string{"sky", "skynet", "production", "myproject"}
+	for _, want := range cases {
+		t.Run(want, func(t *testing.T) {
+			t.Setenv("SKYGATE_COMPOSE_PROJECT", want)
+			u := NewDockerUpgrader("/app", nil, "v0.28.6+caf6fb8")
+			if u.ComposeProject != want {
+				t.Errorf("ComposeProject = %q, want %q", u.ComposeProject, want)
+			}
+		})
 	}
 }
