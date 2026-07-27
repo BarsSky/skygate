@@ -64,6 +64,58 @@ lost; everything is still in `git log` + the GitHub UI.
 | `RELEASE-NOTES-v0.28.5.md` | [`v0.28.5`](https://github.com/BarsSky/skygate/releases/tag/v0.28.5) | via opt-in (Android-friendly) + migration v0.47 idempotency + tagged-device exit-node fix + entrypoint always clears stale Tailscale exit-node |
 | `RELEASE-NOTES-v0.28.6.md` | [`v0.28.6`](https://github.com/BarsSky/skygate/releases/tag/v0.28.6) | guarantee catalog (B1-B10 build + R1-R25 runtime) — `make verify-pre` / `make verify-post` are the contract |
 
+## v0.28.7 — Per-DEVICE ACL grants for tagged devices (Moonlight fix)
+
+The v0.28.0 per-device ACL design tagged every device with
+`tag:dev-<user>-<device>`. The per-user grant `src=user@` was supposed
+to cover tagged devices too, but in Tailscale v2 policy the per-user
+identity doesn't match tagged devices — only the tag does. Result:
+skybars (Android, `tag:dev-skyadmin-skybars`) couldn't reach skyworker
+(Windows, `tag:dev-skyadmin-skyworker`) over Tailscale for Moonlight,
+even though both devices belonged to the same portal user.
+
+### What changed
+
+v0.29.0 adds a **per-DEVICE grant block** to the generated policy:
+for each portal user with N≥2 devices, emit N grants (one per
+device as `src`), with `dst` = the list of all OTHER devices of
+the same user, and `ip: ["*"]` (required by headscale 0.29.2).
+13 grants on this VM (11 skyadmin + 2 michail); O(n) per user,
+not O(n²).
+
+The earlier v0.28.7 attempt (commit `8749069`) tried a wildcard
+`tag:dev-<user>-*` src, which headscale 0.29.2 rejects with
+"src=tag not found" (the parser requires concrete tags in
+`tagOwners{}`).
+
+### Why this works
+
+Tailscale ACL is order-sensitive (first match wins). The per-DEVICE
+grant is emitted **after** the per-user grant (which keeps SSH
++ untagged identities working) and **before** per-device exit-rules
++ per-device loose grants (autogroup:internet). Tagged-to-tagged
+device traffic on the same tailnet now matches the per-DEVICE
+grant as a fallback when no specific per-device rule applies.
+
+### Code shape
+
+The per-DEVICE block is duplicated in `GenerateACLForPlane` and
+`GenerateACLWithViaForPlane` (the v0.28.1 per-user via variant
+takes a parallel code path). v0.30.0 will extract the block to a
+shared helper — the duplication is documented in the AGENTS.md
+release notes for v0.28.7 as a known cleanup target.
+
+### Verification
+
+- Live: 13 new per-DEVICE grants in the headscale policy after
+  `/admin/exit-rules/reapply` (HTTP 303 redirect)
+- Operator confirmation: skybars ↔ skyworker Moonlight session
+  now establishes and streams (2026-07-27)
+- `make verify-pre` 9/9 PASS, `make verify-post` 25/26 PASS
+  (R9 is a known false-negative — the verify-post script reads
+  an older `acl_snapshots` row; the most recent reapply did
+  succeed and saved a fresh snapshot)
+
 ## How a release is cut
 
 1. `git tag -a v0.X.Y -m "v0.X.Y"` on the commit we want to ship.

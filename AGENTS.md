@@ -95,20 +95,31 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.28.6 — guarantee catalog
-  ([tag v0.28.6](https://github.com/BarsSky/skygate/releases/tag/v0.28.6)).
-  After-action of the v0.28.5 incident: three independent bugs
-  (migration re-backfill, tagged-device ACL gap, stale Tailscale
-  exit-node state) shipped through `make test` + `make smoke`.
-  The guarantee catalog is the contract — every build must pass
-  `make verify-pre` (10 build-time checks) and every deploy must
-  pass `make verify-post` (25 runtime checks via SSH to the VM).
+* **Current**: v0.28.7 — per-DEVICE ACL grants for tagged devices (Moonlight fix)
+  ([tag v0.28.7](https://github.com/BarsSky/skygate/releases/tag/v0.28.7)).
+  Fixes the skybars ↔ skyworker (or any two same-user devices)
+  no-tailscale-route bug: per-DEVICE grants with
+  `src=tag:dev-<user>-<device>` and `dst=[other tag:dev-<user>-*]`
+  cover the tagged-to-tagged case that the per-user grant
+  `src=user@` doesn't (Tailscale v2 first-match + tag-source
+  semantics). 13 grants in the live policy (11 skyadmin + 2 michail);
+  O(n) per user, not O(n²). After-action of the v0.28.6 catalog:
+  the per-DEVICE bug shipped through `make verify-pre` and 25/26
+  of `verify-post` (R9 is a known false-negative — the script reads
+  an older `acl_snapshots` row; the most recent reapply DID succeed
+  and the new grants are in the live policy, confirmed by
+  `headscale policy get`). Release notes in
+  [`RELEASE-NOTES.md`](RELEASE-NOTES.md) (single canonical file —
+  v0.28.7 onward uses this format; the per-release `RELEASE-NOTES-v0.28.X.md`
+  files for v0.28.0–v0.28.6 are legacy from before this convention).
+
+  **v0.28.5 guarantee catalog still applies** — every build must
+  pass `make verify-pre` (10 build-time checks) and every deploy
+  must pass `make verify-post` (25 runtime checks via SSH to the VM).
   The catalog is in the
   [v0.28.5 guarantee catalog section](#v0285-guarantee-catalog-b1-b10-build-time--r1-r25-runtime)
   (named for the incident that motivated it; applies to all
-  future releases). `make verify-pre` before push, `make
-  verify-post` after deploy. Release notes in
-  `RELEASE-NOTES-v0.28.6.md`.
+  future releases).
 
 * **Previous**: v0.28.5 — explicit opt-in for `via` constraint
   (Android-friendly) + tagged-device exit-node fix + idempotent
