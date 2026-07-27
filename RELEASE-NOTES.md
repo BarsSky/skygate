@@ -64,6 +64,115 @@ lost; everything is still in `git log` + the GitHub UI.
 | `RELEASE-NOTES-v0.28.5.md` | [`v0.28.5`](https://github.com/BarsSky/skygate/releases/tag/v0.28.5) | via opt-in (Android-friendly) + migration v0.47 idempotency + tagged-device exit-node fix + entrypoint always clears stale Tailscale exit-node |
 | `RELEASE-NOTES-v0.28.6.md` | [`v0.28.6`](https://github.com/BarsSky/skygate/releases/tag/v0.28.6) | guarantee catalog (B1-B10 build + R1-R25 runtime) — `make verify-pre` / `make verify-post` are the contract |
 
+## v0.29.0 — Self-update orchestrator (in-app upgrade + auto-rollback)
+
+The `/admin/update` page (v0.29.0 Phase 1) now ships with a working
+in-app upgrade flow. The orchestrator runs the full `git fetch` →
+`git checkout <tag>` → `docker compose build` → `docker compose
+up --force-recreate` → `/healthz` poll sequence in a background
+goroutine and reports each phase to a bind-mounted status file
+(`/data/skygate-update-status.json`). On any phase failure the
+orchestrator automatically rolls back to the previous tag, including
+`docker compose build` + recreate + healthz poll again. If rollback
+itself fails, the state file shows the manual steps for operator
+intervention.
+
+**Phase 1 (commit `e3ce6f0`)** — detection + manual steps + UI:
+GitHub Releases API client, semver comparison, install-kind
+detection (Docker/systemd/bare), copy-pasteable manual commands,
+`/admin/update` page with status panel + auto-refresh, 17 i18n
+keys × 2 langs. Renders on VM in RU + EN, GitHub checker works
+(no false "new version" banner when current build is ahead of
+all released tags).
+
+**Phase 2 (commit `caf6fb8`)** — auto-updater with state machine
++ auto-rollback: `/admin/update/apply` kicks off the orchestrator,
+`/admin/update/rollback` cancels + restores previous, status
+file persists across container recreate. 18 i18n keys × 2 langs.
+
+**Post-Phase-2 fixes (commits `0020815`, `4bb4db6`, `f9d3860`,
+`a18ad0c`, `5177643`, `bae4fb4`)** — five bugs discovered on
+the operator's VM during the first end-to-end auto-update test:
+
+1. **`SKYGATE_REPO_PATH` chdir failure** (`0020815`). The
+   orchestrator ran inside the skygate container but tried to
+   `chdir /home/skyadmin/skygate` — a host path unreachable
+   from inside the container. The source dir is bind-mounted at
+   `/app` (per docker-compose.yml's `./:/app`). Fix:
+   `defaultRepoPath()` in `internal/config/config.go` auto-
+   detects container mode via `/.dockerenv` /
+   `/run/.containerenv` and defaults to `/app`. Bare/systemd
+   hosts still default to `/home/skyadmin/skygate`.
+   `SKYGATE_REPO_PATH` env always overrides.
+
+2. **`sudo chown` in Alpine** (`0020815`). The previous
+   rollback path used `sudo chown -R skyadmin:skyadmin ...`
+   which fails in the Alpine container (no `sudo` binary, no
+   `skyadmin` user). Fix: `detectHostOwner()` captures
+   `stat -c '%u:%g' .git/HEAD` BEFORE the first git mutation
+   and `chownToHostOwner()` does `chown -R <uid>:<gid>` (no
+   sudo). Default 1000:1000; override via `SKYGATE_HOST_OWNER`.
+
+3. **Missing `docker compose` plugin in image** (`4bb4db6`).
+   The Alpine image's `docker-cli` package installs only the
+   `docker` binary; `docker compose` is the separate
+   `docker-cli-compose` plugin. Without it, the orchestrator's
+   `docker compose build skygate` errors with "docker:
+   unknown command: docker compose". Fix: add
+   `docker-cli-compose` to the `apk add` list (~3 MB).
+
+4. **Project name mismatch** (`f9d3860` + `bae4fb4`).
+   Docker compose computes the project name from the basename
+   of the working directory by default. Inside the container
+   the orchestrator runs from `/app` (basename "app") while
+   the host's compose was launched from `/home/skyadmin/skygate`
+   (basename "skygate"). Two-part fix:
+     (a) `docker-compose.yml` env section adds
+         `COMPOSE_PROJECT_NAME=skygate`.
+     (b) `DockerUpgrader.runCompose` always passes
+         `-p <ComposeProject>` (default "skygate", override
+         via `SKYGATE_COMPOSE_PROJECT`).
+
+5. **Bind-mount paths invisible to host dockerd** (`a18ad0c` +
+    `5177643` + `bae4fb4`). The docker daemon runs on the
+    host, so it resolves bind-mount sources as HOST paths. From
+    inside the container, `./secrets/ts_authkey` resolved to
+    `/app/secrets/ts_authkey` from compose's perspective, but
+    the daemon then looked for that path on the host (where
+    `/app` doesn't exist). Fix: replace all `./` paths in
+    `docker-compose.yml` with
+    `${SKYGATE_HOST_REPO_PATH:-/home/skyadmin/skygate}/` and
+    add `SKYGATE_HOST_REPO_PATH` to the skygate service env.
+    The `${VAR:-default}` syntax is shell-style fallback
+    supported by docker compose.
+
+**Live verification (operator's VM, 2026-07-27)**:
+- `go test ./...` 19/19 PASS, `make verify-pre` 12/12 PASS
+- `docker_test.go` adds 9 test groups (TestShortSHA,
+  TestDetectHostOwner_EnvOverride, TestDetectHostOwner_StatAutoDetect,
+  TestDetectHostOwner_DefaultFallback, TestDetectHostOwner_Cached,
+  TestChownToHostOwner_ArgsShape, TestOwnerPattern,
+  TestTruncateOutput, TestNewDockerUpgrader_Defaults,
+  TestNewDockerUpgrader_ProjectOverride)
+- `make verify-post` 26/26 PASS after the fix chain
+- End-to-end auto-update test: applied `v0.99.0-final-test`
+  (non-existent) → backup tag created → fetch failed as expected
+  → automatic rollback checkout OK → chown to host owner OK →
+  container recreated → /healthz 200 with previous build label
+
+**Caveats (still open)**:
+- Rollback `docker compose up --force-recreate --no-deps skygate`
+  occasionally leaves the new container in `Created` status
+  instead of `Started` (race with the old container's
+  `container_name: skygate`). Manual `docker start <id>` recovers.
+  Tracked as v0.29.1 follow-up: remove `container_name: skygate`
+  or improve the orchestrator to handle the Created→Started transition.
+- The orchestrator is Docker-only. Systemd / bare install kinds
+  generate manual steps but don't auto-execute (Phase 3 follow-up).
+- Apply works only for tags already pushed to origin. The orchestrator
+  does `git fetch --tags` + `git checkout <target>`; a tag that
+  exists only on the operator's local clone would not be findable.
+
 ## v0.28.7 — Per-DEVICE ACL grants for tagged devices (Moonlight fix)
 
 The v0.28.0 per-device ACL design tagged every device with
