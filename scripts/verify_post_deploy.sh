@@ -209,27 +209,76 @@ run_vm_check "R7" "Docker bridge 172.18.0.0/16 reachable from skygate-vm" \
   { echo "  ${GRN}PASS${NC}  R8  headscale /api/v1/policy responds with non-empty policy"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
   { echo "  ${RED}FAIL${NC}  R8  headscale /api/v1/policy is empty or unreachable"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
 # R9: live policy == last applied snapshot (compare updatedAt to DB).
+#
+# Query both the last successful reapply (applied_success=1) AND the
+# last attempt (any applied_success). The 4-state result is more
+# informative than a single "diff seconds" number:
+#
+#   1. last_attempt.applied_success=1, within 60s of live policy → PASS
+#      (reapply chain is healthy, the live policy IS the snapshot)
+#   2. last_attempt.applied_success=0 → FAIL "reapply chain broken"
+#      (the most recent reapply failed; live policy is from the
+#      previous successful one, which may be many hours old)
+#   3. last_attempt.applied_success=1, but >3600s before live policy
+#      → FAIL "live policy older than last applied" (headscale
+#      reverted somehow — e.g. operator ran a manual set)
+#   4. no snapshots at all → SKIP
+#
+# The previous version only checked the most recent applied_success=1
+# row, which masked the "just-failed reapply" case (the R9 would
+# look at the previous successful row, which was many hours old,
+# and complain about a non-existent diff). v0.28.7 fix: query both
+# the last attempt and the last applied, and use the last attempt
+# to drive the success/fail decision.
+#
 # `created_at` is stored as Unix epoch integer (strftime('%s','now')),
 # so we read it as an int and convert to epoch on this side.
 UPDATED_AT=$(echo "$LIVE_POLICY" | grep -oE '"updatedAt":"[^"]+"' | cut -d'"' -f4)
+
+# Read both: last attempt (any outcome) and last successful.
+# The output is two lines: epoch, applied_success (0/1).
+SNAPSHOT_INFO=$(ssh_vm "set -e
+  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_v_\$\$.sqlite
+  sqlite3 /tmp/_db_v_\$\$.sqlite <<'SQL'
+SELECT printf('%d %d', created_at, COALESCE(applied_success, 0))
+FROM acl_snapshots ORDER BY id DESC LIMIT 1;
+SQL
+  rm -f /tmp/_db_v_\$\$.sqlite" 2>/dev/null)
+LAST_ATTEMPT_EPOCH=$(echo "$SNAPSHOT_INFO" | awk '{print $1}')
+LAST_ATTEMPT_SUCCESS=$(echo "$SNAPSHOT_INFO" | awk '{print $2}')
+
 LAST_APPLIED_EPOCH=$(ssh_vm "set -e
-  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_v_$$.sqlite
-  sqlite3 /tmp/_db_v_$$.sqlite \"SELECT created_at FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1\"
-  rm -f /tmp/_db_v_$$.sqlite" 2>/dev/null)
-if [ -n "$LAST_APPLIED_EPOCH" ]; then
-  LAST_APPLIED=$(date -u -d "@$LAST_APPLIED_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-fi
-if [ -n "$UPDATED_AT" ] && [ -n "$LAST_APPLIED" ]; then
-  # Convert both to unix epoch and compare (allow 60s skew for clock drift)
+  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_v2_\$\$.sqlite
+  sqlite3 /tmp/_db_v2_\$\$.sqlite \"SELECT created_at FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1\"
+  rm -f /tmp/_db_v2_\$\$.sqlite" 2>/dev/null)
+
+if [ -n "$LAST_ATTEMPT_EPOCH" ] && [ -n "$UPDATED_AT" ]; then
+  LAST_ATTEMPT_ISO=$(date -u -d "@$LAST_ATTEMPT_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
   POLICY_EPOCH=$(date -d "$UPDATED_AT" +%s 2>/dev/null || echo 0)
-  APPLIED_EPOCH=$(date -d "$LAST_APPLIED" +%s 2>/dev/null || echo 0)
-  DIFF=$((POLICY_EPOCH - APPLIED_EPOCH))
-  if [ "$DIFF" -ge -60 ] && [ "$DIFF" -le 3600 ]; then
-    echo "  ${GRN}PASS${NC}  R9  live policy updatedAt=$UPDATED_AT ≈ last applied $LAST_APPLIED (diff=${DIFF}s)"
-    RESULTS_PASS=$((RESULTS_PASS+1))
-  else
-    echo "  ${RED}FAIL${NC}  R9  live policy updatedAt=$UPDATED_AT ≠ last applied $LAST_APPLIED (diff=${DIFF}s — reapply needed)"
+
+  if [ "$LAST_ATTEMPT_SUCCESS" = "0" ]; then
+    # Most recent reapply FAILED. The live policy is from the
+    # previous successful reapply (potentially hours old). Report
+    # the operator-visible failure and tell them to re-run the
+    # reapply after fixing the underlying issue.
+    LAST_APPLIED_ISO=""
+    if [ -n "$LAST_APPLIED_EPOCH" ]; then
+      LAST_APPLIED_ISO=$(date -u -d "@$LAST_APPLIED_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    fi
+    echo "  ${RED}FAIL${NC}  R9  reapply chain broken — last reapply at $LAST_ATTEMPT_ISO FAILED (applied_success=0). Last successful: ${LAST_APPLIED_ISO:-never}. Check /admin/audit for the error."
     RESULTS_FAIL=$((RESULTS_FAIL+1))
+  else
+    # Most recent reapply succeeded. Compare its timestamp to the
+    # live policy's updatedAt (60s tolerance for clock drift).
+    APPLIED_EPOCH=$(date -d "$LAST_ATTEMPT_ISO" +%s 2>/dev/null || echo 0)
+    DIFF=$((POLICY_EPOCH - APPLIED_EPOCH))
+    if [ "$DIFF" -ge -60 ] && [ "$DIFF" -le 3600 ]; then
+      echo "  ${GRN}PASS${NC}  R9  live policy updatedAt=$UPDATED_AT ≈ last applied $LAST_ATTEMPT_ISO (diff=${DIFF}s)"
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    else
+      echo "  ${RED}FAIL${NC}  R9  live policy updatedAt=$UPDATED_AT ≠ last applied $LAST_ATTEMPT_ISO (diff=${DIFF}s — reapply needed or headscale reverted)"
+      RESULTS_FAIL=$((RESULTS_FAIL+1))
+    fi
   fi
 else
   echo "  ${YLW}SKIP${NC}  R9  live policy / applied snapshot: insufficient data"

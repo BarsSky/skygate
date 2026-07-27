@@ -7,14 +7,48 @@ package headscale
 // tested live on the VM; the Go side is responsible for
 // shell-out + JSON parse, which is pure I/O we can exercise
 // in-process by swapping the script path with a tiny shim).
+//
+// 2026-07-27: v0.28.7 — SKIP these tests on Windows + Git Bash.
+// MSYS2's auto path-conversion treats `/c/Users/...` as a
+// RELATIVE path under `C:\Program Files\Git\`, so the bash
+// subprocess can't find the temp script. Production Linux
+// paths work fine; WSL2 paths work fine (no MSYS2 layer).
+// Only the "Git Bash on Windows invoking Go which then invokes
+// bash" stack has the issue. We detect at test time.
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// skipOnWindowsGitBash returns true if the test should be
+// skipped because the runtime is Windows + the bash subprocess
+// (called by runScript) can't find the test script due to
+// MSYS2 path-conversion. Returns false for WSL2 (which has a
+// real Linux /bin/bash and doesn't apply MSYS2 conversion to
+// Go-spawned subprocesses), and false for non-Windows platforms.
+func skipOnWindowsGitBash(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return
+	}
+	// Detect Git Bash by checking the parent process's bash
+	// binary. If the Go process was launched from MSYS bash,
+	// `os.Getenv("MSYSTEM")` is set to "MINGW64" (or similar).
+	// If launched from WSL2, MSYSTEM is unset.
+	if os.Getenv("MSYSTEM") == "" {
+		// WSL2 or PowerShell-launched bash; no MSYS2 path
+		// translation for Go-spawned bash subprocesses.
+		return
+	}
+	// MSYS2 path-translation is active. Skip.
+	t.Skipf("skipping: Git Bash on Windows converts /c/... to a relative path under %s, so the bash subprocess can't find the test script. Run on WSL2 or Linux. (v0.28.7 catalog R2 / B1 design choice — see AGENTS.md.)",
+		`C:\Program Files\Git`)
+}
 
 // writeScript drops a small shell script at <dir>/<name> that
 // prints the given JSON (or error) to stdout / stderr. Used
@@ -60,6 +94,7 @@ func withScriptPaths(t *testing.T, bootstrap, deprovision string) func() {
 // fields populated. No docker round-trip, no actual headscale
 // container — the Go side is the boundary under test.
 func TestProvisionUser_ParsesValidJSON(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	dir := t.TempDir()
 	bootstrap := writeScript(t, dir, "headscale-bootstrap.sh",
 		`{"username":"skyadmin","container":"headscale-skyadmin","url":"http://headscale-skyadmin:50450","api_key":"hskey-api-abc123","http_port":50450,"grpc_port":51450,"metrics_port":52450,"base_domain":"skyadmin.tsnet.skynas.ru","headscale_user_id":42}`,
@@ -95,6 +130,7 @@ func TestProvisionUser_ParsesValidJSON(t *testing.T) {
 // final JSON. ProvisionUser must find the FIRST '{' in the
 // output and parse from there, ignoring the docker noise.
 func TestProvisionUser_StripsPreJSONOutput(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	dir := t.TempDir()
 	bootstrap := writeScript(t, dir, "headscale-bootstrap.sh",
 		`Pulling headscale-skyadmin ... done
@@ -117,6 +153,7 @@ Container headscale-skyadmin  Started
 // ProvisionUser must surface the exit code + stderr in the
 // error message so the admin UI can show it verbatim.
 func TestProvisionUser_ScriptFails(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	dir := t.TempDir()
 	bootstrap := writeScript(t, dir, "headscale-bootstrap.sh",
 		"", "container headscale-skyadmin already exists", "1")
@@ -142,6 +179,7 @@ func TestProvisionUser_ScriptFails(t *testing.T) {
 // must fail with a clear "no JSON found" error rather than
 // silently returning a zero ProvisionResult.
 func TestProvisionUser_MalformedJSON(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	dir := t.TempDir()
 	bootstrap := writeScript(t, dir, "headscale-bootstrap.sh",
 		"no json here, just plain text", "", "0")
@@ -162,6 +200,7 @@ func TestProvisionUser_MalformedJSON(t *testing.T) {
 // override and the user's HSForUser call would 404 on the
 // empty URL).
 func TestProvisionUser_MissingRequiredFields(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	dir := t.TempDir()
 	bootstrap := writeScript(t, dir, "headscale-bootstrap.sh",
 		`{"username":"skyadmin","http_port":50450}`,
@@ -181,6 +220,7 @@ func TestProvisionUser_MissingRequiredFields(t *testing.T) {
 // must reject empty usernames (which would otherwise produce
 // a script call with empty args and a confusing shell error).
 func TestProvisionUser_EmptyUsername(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	_, err := ProvisionUser("", 1)
 	if err == nil {
 		t.Fatal("ProvisionUser(empty): want error, got nil")
@@ -193,6 +233,7 @@ func TestProvisionUser_EmptyUsername(t *testing.T) {
 // TestProvisionUser_InvalidUID — defensive: uid <= 0 is
 // rejected without invoking the script.
 func TestProvisionUser_InvalidUID(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	_, err := ProvisionUser("skyadmin", 0)
 	if err == nil {
 		t.Fatal("ProvisionUser(uid=0): want error, got nil")
@@ -204,6 +245,7 @@ func TestProvisionUser_InvalidUID(t *testing.T) {
 
 // TestDecommissionUser_HappyPath — script exits 0, no error.
 func TestDecommissionUser_HappyPath(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	dir := t.TempDir()
 	deprovision := writeScript(t, dir, "headscale-deprovision.sh",
 		"OK: deprovisioned skyadmin", "", "0")
@@ -218,6 +260,7 @@ func TestDecommissionUser_HappyPath(t *testing.T) {
 // (e.g. container not found). DecommissionUser returns the
 // wrapped error verbatim so the admin can see why.
 func TestDecommissionUser_ScriptFails(t *testing.T) {
+	skipOnWindowsGitBash(t)
 	dir := t.TempDir()
 	deprovision := writeScript(t, dir, "headscale-deprovision.sh",
 		"", "no such container", "1")
