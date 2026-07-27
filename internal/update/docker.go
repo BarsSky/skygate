@@ -68,6 +68,29 @@ type DockerUpgrader struct {
 	// to "docker compose". Operators with podman-compose
 	// or docker-compose v1 can override.
 	ComposeCmd string
+	// ComposeProject is the project name passed to
+	// `docker compose -p <name>`. Defaults to "skygate"
+	// (the operator's standard). Must match the project
+	// name the named volumes were created under —
+	// otherwise `docker compose up` refuses to use them
+	// with "volume X already exists but was created
+	// for project Y (expected Z)".
+	//
+	// Why this matters: docker compose computes the
+	// project name from the basename of the working
+	// directory by default. Inside the container the
+	// orchestrator runs from /app (basename "app") while
+	// the host's compose runs from /home/skyadmin/skygate
+	// (basename "skygate"). The named volume
+	// `skygate-data` was created with project label
+	// "skygate" the first time the host started the
+	// stack, and the in-container `docker compose up`
+	// looks for it under "app" — mismatch → refuse.
+	//
+	// Override via SKYGATE_COMPOSE_PROJECT env var
+	// (e.g. for an operator who renamed their project
+	// to "sky" or moved the source dir to /opt/sky).
+	ComposeProject string
 	// State is the shared state store. The orchestrator
 	// updates phase + log on every transition; the page
 	// reads the latest state on every reload.
@@ -97,9 +120,14 @@ type DockerUpgrader struct {
 // NewDockerUpgrader returns a DockerUpgrader with sensible
 // defaults for the operator's VM shape.
 func NewDockerUpgrader(repoPath string, state *StateStore, currentVersion string) *DockerUpgrader {
+	project := os.Getenv("SKYGATE_COMPOSE_PROJECT")
+	if project == "" {
+		project = "skygate"
+	}
 	return &DockerUpgrader{
 		RepoPath:        repoPath,
 		ComposeCmd:      "docker compose",
+		ComposeProject:  project,
 		State:           state,
 		CurrentVersion:  currentVersion,
 	}
@@ -301,13 +329,23 @@ func (u *DockerUpgrader) runGit(ctx context.Context, args ...string) error {
 	return u.runShell(ctx, "git", args...)
 }
 
-// runCompose runs `<ComposeCmd> <args>`. The compose command
-// reads docker-compose.yml from RepoPath, which is the CWD
-// for the operator's install.
+// runCompose runs `<ComposeCmd> -p <project> <args>`. The
+// compose command reads docker-compose.yml from RepoPath
+// (the cmd.Dir set by runShellCapture). The explicit
+// -p <project> overrides the basename-based default —
+// critical when the orchestrator runs from inside the
+// container (where RepoPath is /app, basename "app") and
+// the host's compose was launched from
+// /home/skyadmin/skygate (basename "skygate"). Without
+// the override, named volumes created on first host-side
+// startup (under project "skygate") are rejected by
+// the in-container `docker compose up` because the
+// volume's stored project label doesn't match.
 func (u *DockerUpgrader) runCompose(ctx context.Context, args ...string) (string, error) {
-	cmd := append([]string{}, strings.Split(u.ComposeCmd, " ")...)
-	cmd = append(cmd, args...)
-	return u.runShellCapture(ctx, cmd[0], cmd[1:]...)
+	prefix := append([]string{}, strings.Split(u.ComposeCmd, " ")...)
+	prefix = append(prefix, "-p", u.ComposeProject)
+	prefix = append(prefix, args...)
+	return u.runShellCapture(ctx, prefix[0], prefix[1:]...)
 }
 
 // runShell runs a command via exec.CommandContext. No output
