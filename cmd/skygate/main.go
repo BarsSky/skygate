@@ -385,6 +385,13 @@ func main() {
 	// status page. Renders the monitor's snapshot
 	// (pinned vs. latest, history table). Admin-only.
 	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(app.GetAdminHeadscale)))
+	// 2026-07-27: v0.29.0 — self-update page. Shows
+	// current vs latest GitHub release + copy-pasteable
+	// manual steps for the detected install kind. The
+	// "Check now" button forces an immediate GitHub
+	// poll (bypasses the 6h success / 15m failure cache).
+	mux.Handle("GET /admin/update", authMW(http.HandlerFunc(app.GetAdminUpdate)))
+	mux.Handle("POST /admin/update/check-now", authMW(http.HandlerFunc(app.PostAdminUpdateCheck)))
 	// 2026-07-20: v0.20.0 — "Run check now" button on
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as
