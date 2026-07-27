@@ -1919,27 +1919,18 @@ func TestGenerateACLWithVia_BackwardsCompat_PerUserViaEnabled(t *testing.T) {
 
 
 // TestGenerateACL_PerUserGrantForTaggedDevices: v0.29.0 —
-// regression for the skybars↔skyworker Moonlight incident
-// (operator, 2026-07-27).
+// per-DEVICE grants let skyadmin's devices talk to each
+// other. Earlier v0.28.x only had per-user grants with
+// src=user@, which don't match tagged devices in Tailscale
+// v2 policy. Result: skybars (Android, tag:dev-skyadmin-
+// skybars) couldn't reach skyworker (Windows, tag:dev-
+// skyadmin-skyworker) over Tailscale for Moonlight.
 //
-// The original per-user grant (src=user@) does NOT match
-// tagged devices in Tailscale v2 policy — a device carrying
-// tag:dev-<user>-<device> has the TAG as its source identity,
-// not the user@. v0.28.0 shipped the tag-per-device design
-// but the per-user grant's src/dst was never updated to use
-// the tag pattern, so for 28 versions every tagged device
-// has been unable to reach other tagged devices of the same
-// user (e.g. Moonlight, file sharing, AirPlay-style traffic).
-//
-// FIX: a SECOND per-user grant per user, with
-// src=tag:dev-<user>-* and dst=tag:dev-<user>-*:* (plus the
-// same own-CIDR / shared-CIDR / autogroup:internet addenda
-// as the per-user grant above). v0.28.5b did the same for
-// autogroup:internet; v0.29.0 does it for the per-user dst.
-//
-// This test pins the v0.29.0 behavior: the policy MUST
-// contain a grant with src=tag:dev-skyadmin-* and
-// dst=tag:dev-skyadmin-*:*.
+// v0.29.0 fix: emit one per-DEVICE grant per user, with
+// src=tag:dev-<user>-<device> and dst=list of all OTHER
+// devices of the same user. headscale 0.29.2 rejects the
+// earlier wildcard design (src=tag:dev-<user>-*) because
+// wildcard tags aren't valid in tagOwners.
 func TestGenerateACL_PerUserGrantForTaggedDevices(t *testing.T) {
 	d := openTestDB(t)
 	_ = seedPortalUser(t, d, "skyadmin")
@@ -1957,38 +1948,40 @@ func TestGenerateACL_PerUserGrantForTaggedDevices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateACL: %v", err)
 	}
-	// The per-user grant for tagged devices MUST have:
-	//   src = "tag:dev-skyadmin-*"
-	//   dst = "tag:dev-skyadmin-*:*" as the first entry
-	// (the dst order is own-CIDR → shared-CIDR →
-	// autogroup:internet, so "tag:dev-<user>-*:*" is always
-	// first because the per-user grant always starts there).
-	//
-	// We use a regex-free Contains check on the literal
-	// substring because the JSON formatting is stable
-	// (one rule per line, fixed indentation).
-	wantSrc := `"src": ["tag:dev-skyadmin-*"]`
-	if !strings.Contains(aclStr, wantSrc) {
-		t.Errorf("v0.29.0 regression: tagged devices of the same user must be able to reach each other.\n"+
-			"Expected a grant with src=tag:dev-skyadmin-* in the ACL; not found.\n"+
+	// v0.29.0 per-DEVICE grant: src=tag:dev-skyadmin-skyworker
+	// has dst=tag:dev-skyadmin-skybars (so skyworker can
+	// reach skybars). And src=tag:dev-skyadmin-skybars has
+	// dst=tag:dev-skyadmin-skyworker (so skybars can reach
+	// skyworker — the Moonlight case).
+	wantSkyworkerToSkybars := `"src": ["tag:dev-skyadmin-skyworker"], "dst": ["tag:dev-skyadmin-skybars"], "ip": ["*"]`
+	if !strings.Contains(aclStr, wantSkyworkerToSkybars) {
+		t.Errorf("v0.29.0 regression: skyworker must be able to reach skybars.\n"+
+			"Expected a grant %s in the ACL; not found.\n"+
 			"Without this rule, skybars (Android, tag:dev-skyadmin-skybars) cannot reach\n"+
 			"skyworker (Windows, tag:dev-skyadmin-skyworker) over Tailscale for Moonlight\n"+
 			"or any other intra-user traffic.\n"+
-			"ACL:\n%s", aclStr)
+			"ACL:\n%s", wantSkyworkerToSkybars, aclStr)
 	}
-	// The dst must include the tag pattern as a base.
-	wantDst := `"tag:dev-skyadmin-*:*"`
-	if !strings.Contains(aclStr, wantDst) {
-		t.Errorf("v0.29.0 regression: dst must include tag:dev-skyadmin-*:* for the per-user tagged grant.\n"+
-			"ACL:\n%s", aclStr)
+	wantSkybarsToSkyworker := `"src": ["tag:dev-skyadmin-skybars"], "dst": ["tag:dev-skyadmin-skyworker"], "ip": ["*"]`
+	if !strings.Contains(aclStr, wantSkybarsToSkyworker) {
+		t.Errorf("v0.29.0 regression: skybars must be able to reach skyworker.\n"+
+			"Expected a grant %s in the ACL; not found.\n"+
+			"Without this rule, Moonlight (skybars -> skyworker) doesn't work.\n"+
+			"ACL:\n%s", wantSkybarsToSkyworker, aclStr)
 	}
-	// Sanity: the OLD per-user grant (src=user@, dst=user@:*)
-	// must still be present — it's used for SSH and any
-	// untagged devices. The new grant is in ADDITION, not in
-	// REPLACEMENT.
+	// Sanity: the OLD per-user grant (src=user@) must
+	// still be present — it's used for SSH and any
+	// untagged devices. The new grant is in ADDITION.
 	wantOld := `"src": ["skyadmin@tsnet.skynas.ru"]`
 	if !strings.Contains(aclStr, wantOld) {
 		t.Errorf("v0.29.0 regression: the original per-user grant (src=user@) must still be present for SSH and untagged devices.\n"+
+			"ACL:\n%s", aclStr)
+	}
+	// The grant must have ip:["*"] (headscale 0.29.2
+	// requirement: at least one of ip or app must be set).
+	if !strings.Contains(aclStr, `"ip": ["*"]`) {
+		t.Errorf("v0.29.0 regression: per-DEVICE grant must have ip:[\"*\"] for headscale 0.29.2.\n"+
+			"Without it, headscale returns 'ip and app can not both be empty'.\n"+
 			"ACL:\n%s", aclStr)
 	}
 }
