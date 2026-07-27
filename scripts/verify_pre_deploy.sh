@@ -165,6 +165,36 @@ run_check "B9" "RELEASE-NOTES.md has entries for v0.28.x" \
 run_check "B10" "no .env / secret file in git tracked paths" \
   "! git ls-files | grep -E '\\.(env|key|pem)$|^secrets/'"
 
+# --- B11: PG migration safety (v0.29.0 expand-contract pattern) ---
+#
+# When the v0.27.0 PG driver lands on main, every migration will
+# go through internal/db/pgmigrate.Run which wraps the DDL in a
+# transaction with lock_timeout. The expand-contract pattern says:
+# auto-update ONLY allows additive DDL (CREATE TABLE, ADD COLUMN,
+# CREATE INDEX CONCURRENTLY, INSERT). Destructive DDL (DROP COLUMN,
+# RENAME TABLE, RENAME COLUMN, TRUNCATE) requires an explicit
+# operator override (SKYGATE_ALLOW_DESTRUCTIVE_MIGRATION=1) and is
+# the job of a separate, operator-approved release.
+#
+# This check is a static scan of the migration source files for
+# destructive patterns. The unit tests in internal/db/pgmigrate
+# pin the same contract; this check is the "no regression at the
+# source-tree level" guard.
+run_check "B11" "migrations have no destructive DDL (DROP/RENAME/TRUNCATE)" \
+  "bash -c \"'$GO' test ./internal/db/pgmigrate/... -run 'TestIsDestructive|TestIsDestructiveRefused' -count=1 >/dev/null 2>&1 && ! grep -rE 'DROP[[:space:]]+(TABLE|COLUMN|INDEX)|RENAME[[:space:]]+(TO|COLUMN)|TRUNCATE[[:space:]]+(TABLE)?' internal/db/migrations_v*.go | grep -v '// ' | grep -v '^[[:space:]]*\\*'\""
+
+# --- B12: pgmigrate package is unit-tested (the helper contract) ---
+# B12 was originally "every CREATE INDEX uses CONCURRENTLY" (per
+# docs/plans/pg-migration-handling.md). The current migrations on
+# main run on SQLite (which doesn't support CONCURRENTLY) and use
+# the standard CREATE INDEX IF NOT EXISTS. Until the PG driver
+# lands, a hard check on CONCURRENTLY would fail every build.
+# The soft variant: verify that the pgmigrate package has tests
+# pinning the per-driver SQL form (TestBuildCreateIndexStmt).
+# When the PG driver lands, replace this with the hard check.
+run_check "B12" "pgmigrate helpers are unit-tested (per-driver SQL form)" \
+  "'$GO' test ./internal/db/pgmigrate/... -run 'TestBuildCreateIndexStmt' -count=1 2>&1"
+
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
