@@ -30,9 +30,23 @@ FROM golang:1.23-alpine
 # (netfilter-mode=on); without ip6tables tailscaled refuses to start
 # on Alpine. libcap, ca-certificates, sqlite-libs round out the
 # tailscale/Go runtime needs.
+#
+# 2026-07-27: v0.29.0 — docker-cli-compose is the v0.29.0 self-update
+# orchestrator's only way to run `docker compose` from inside the
+# skygate container. docker-cli (the base package) installs only the
+# `docker` binary; `docker compose` is a separate plugin package
+# (`docker-cli-compose` in Alpine). Without it the auto-updater's
+# `docker compose build skygate` step errors with
+# "docker: unknown command: docker compose" — discovered 2026-07-27
+# on the operator's VM during the first end-to-end auto-update test.
+# The fix is one extra package (~3 MB); the orchestrator already
+# mounts the host's docker.sock so the plugin can talk to the
+# host's dockerd and run `docker compose up` on the host's compose
+# files (it cd's into /app, the bind-mount of the source dir).
 RUN apk add --no-cache \
         ca-certificates \
         docker-cli \
+        docker-cli-compose \
         gcc \
         iptables \
         ip6tables \
