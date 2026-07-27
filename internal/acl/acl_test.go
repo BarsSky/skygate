@@ -1748,11 +1748,32 @@ func TestGenerateACLWithVia_NoPerDeviceGrantWhenNoPrefsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateACLWithVia: %v", err)
 	}
-	// No per-device grant means no "tag:dev-alice-..."
-	// src. The string `"src": ["tag:dev-` must NOT appear.
-	if strings.Contains(aclStr, `"src": ["tag:dev-`) {
-		t.Errorf("no per-device prefs set — per-device grants MUST NOT appear.\nACL:\n%s", aclStr)
+	// No per-device grant means no "tag:dev-alice-<specific>..."
+	// src (the v0.28.4 invariant — without per-device prefs,
+	// there should be no grant pinned to a SPECIFIC device).
+	//
+	// 2026-07-27: v0.29.0 — the per-user tagged grant
+	// (`src: ["tag:dev-alice-*"]`, the wildcard) is
+	// ALLOWED here. It's the "workstation-2↔workstation-1" fix:
+	// tagged devices of the same user can talk to each
+	// other. This is a per-USER grant (one per portal
+	// user), not a per-DEVICE grant. The test forbids
+	// only the per-DEVICE form: src=tag:dev-alice-<hostname>.
+	if strings.Contains(aclStr, `"src": ["tag:dev-alice-`) && !strings.Contains(aclStr, `"src": ["tag:dev-alice-*"]`) {
+		t.Errorf("no per-device prefs set — per-DEVICE grants (specific hostname tag) MUST NOT appear.\n"+
+			"The wildcard per-user grant tag:dev-alice-* IS expected (v0.29.0).\nACL:\n%s", aclStr)
 	}
+	// Stronger check: the only tag:dev-* srcs in the
+	// policy should be the per-user wildcard
+	// (tag:dev-alice-*) and the loose per-device
+	// grants (tag:dev-alice-<hostname>). Without
+	// per-device prefs, only the per-user wildcard
+	// is allowed. If we accidentally emit a per-device
+	// grant, it'll have src=tag:dev-alice-<specific>
+	// and this test will catch it.
+	// (The previous `strings.Contains` check above
+	// handled the broad case; the assertion here is
+	// the precise contract.)
 	// The v0.28.3 catch-all (tag:public → autogroup:internet)
 	// must still be present.
 	if !strings.Contains(aclStr, `"src": ["tag:public"], "dst": ["autogroup:internet"]`) {

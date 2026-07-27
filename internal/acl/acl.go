@@ -350,8 +350,6 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		if uname == "" {
 			continue
 		}
-		// v0.29.0 DEBUG: prove this code runs in production
-		fmt.Fprintf(os.Stderr, "[v0.29.0] emitting tag-grant for user=%q\n", uname)
 		// Build the dst list. The base is the tag
 		// pattern (tag:dev-<user>-*:*), then the
 		// user's own CIDR, then shared CIDRs, then
@@ -1128,6 +1126,97 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			sb.WriteString(", \"via\": [\"" + via + "\"]")
 		}
 		sb.WriteString(" }")
+	}
+
+	// 2026-07-27: v0.29.0 — per-user grant for TAGGED
+	// devices. The grant above uses src=user@ which in
+	// Tailscale v2 policy does NOT match tagged devices
+	// (every device since v0.28.0 carries
+	// tag:dev-<user>-<device>; the device's source
+	// identity in ACL is the TAG, not the user). Symptom
+	// observed in production (operator, 2026-07-27):
+	// workstation-2 (Android, tag:dev-admin-workstation-2) could
+	// not reach workstation-1 (Windows, tag:dev-admin-
+	// workstation-1) over Tailscale for Moonlight, because
+	// no rule had src=tag:dev-admin-* and dst=tag:dev-
+	// admin-*. The per-user grant was a no-op for
+	// every device in the tailnet.
+	//
+	// FIX: emit a SECOND per-user grant per user, this
+	// one with src=tag:dev-<user>-* (matches all of the
+	// user's tagged devices) and dst starting with
+	// tag:dev-<user>-*:* (lets them talk to each other)
+	// plus the same own-CIDR / shared-CIDR / autogroup
+	// addenda as the per-user grant above.
+	//
+	// This is the v0.28.0 design INTENT made real: the
+	// v0.28.0 tag-per-device design was supposed to give
+	// us stable per-device ACL while preserving the
+	// "user can reach their own devices" semantic. The
+	// v0.28.0 code shipped the tagging but forgot to
+	// update the per-user grant's src/dst. v0.28.5b
+	// fixed it for autogroup:internet (loose per-device
+	// grant). v0.29.0 fixes it for the per-user dst
+	// (this grant).
+	//
+	// Same as in GenerateACLForPlane: the v0.29.0
+	// logic is duplicated in both functions because
+	// the per-user grant is emitted from each, and
+	// the per-user tagged grant must be emitted from
+	// the SAME function (or the call site). Refactoring
+	// to a shared helper is a v0.30.0 task (see
+	// docs/plans/refactor-v0.30.md).
+	for _, uname := range usernames {
+		if uname == "" {
+			continue
+		}
+		// Build the dst list. The base is the tag
+		// pattern (tag:dev-<user>-*:*), then the
+		// user's own CIDR (as a host alias per the
+		// v0.28.2 workaround), then shared CIDRs
+		// (as host aliases), then autogroup:internet.
+		dst := []string{"tag:dev-" + uname + "-*:*"}
+		if ownCIDR := subByUser[uname]; ownCIDR != "" {
+			dst = append(dst, "h-user-"+uname+"-subnet")
+		}
+		dedupSet := make(map[string]bool, len(dst))
+		for _, d := range dst {
+			dedupSet[d] = true
+		}
+		for _, sharedCIDR := range sharedByUser[uname] {
+			if sharedCIDR == "" {
+				continue
+			}
+			// Same name as the per-user grant above so
+			// the v0.28.2 host-alias dedup catches them.
+			hostName := "h-shared-" + strings.NewReplacer(
+				".", "-", "/", "-", ":", "_").Replace(sharedCIDR)
+			if dedupSet[hostName] {
+				continue
+			}
+			dedupSet[hostName] = true
+			dst = append(dst, hostName)
+		}
+		// Same as the per-user grant: autogroup:internet
+		// is added unconditionally so the user's devices
+		// can reach the public internet through whatever
+		// exit-node they pick. v0.28.3 added this.
+		dst = append(dst, "autogroup:internet")
+		// Render — leading separator because the previous
+		// per-user grant was emitted without a trailing
+		// comma (its for-loop pattern is "leading
+		// separator" — comma before every entry except
+		// the first).
+		sb.WriteString(",\n    { \"src\": [\"tag:dev-" + uname + "-*\"], \"dst\": [")
+		for j, d := range dst {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("\"")
+			sb.WriteString(d)
+			sb.WriteString("\"")
+		}
+		sb.WriteString("] }")
 	}
 
 	for _, e := range aclRows {
