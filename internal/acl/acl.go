@@ -340,53 +340,13 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	//   4. Per-device pref grant (with via) when set
 	//   5. Loose per-device grant (autogroup:internet)
 	//   6. Catch-alls last
-	for _, uname := range usernames {
-		if uname == "" {
-			continue
-		}
-		userTags := tagsByUser[uname]
-		if len(userTags) < 2 {
-			// Need at least 2 devices for inter-device
-			// traffic. With 0 or 1, there's nothing to
-			// allow (no dst set). Skip.
-			continue
-		}
-		// For each device, emit one grant with dst =
-		// all OTHER devices of the same user.
-		//
-		// Separator pattern: ALWAYS write ",\n" before
-		// each grant (including the first). The previous
-		// block (per-user grant) ends with "] }" without
-		// a trailing comma, so the first per-DEVICE grant
-		// needs its own leading separator. Without this,
-		// headscale's HuJSON parser returns "invalid
-		// character '{' after array value" (500 from
-		// /admin/exit-rules/reapply).
-		for _, srcTag := range userTags {
-			sb.WriteString(",\n")
-			// Build dst = all OTHER tags of the same user
-			dstTags := make([]string, 0, len(userTags)-1)
-			for _, otherTag := range userTags {
-				if otherTag != srcTag {
-					dstTags = append(dstTags, otherTag)
-				}
-			}
-			sb.WriteString("    { \"src\": [\"" + srcTag + "\"], \"dst\": [")
-			for j, t := range dstTags {
-				if j > 0 {
-					sb.WriteString(", ")
-				}
-				sb.WriteString("\"")
-				sb.WriteString(t)
-				sb.WriteString("\"")
-			}
-			// `ip: ["*"]` is required by headscale 0.29.2
-			// (otherwise it returns "ip and app can not
-			// both be empty"). The bare tag in dst
-			// (no :* suffix) means "this tag, any port".
-			sb.WriteString("], \"ip\": [\"*\"] }")
-		}
-	}
+	//
+	// Implementation: writePerDeviceGrants is the shared
+	// helper (v0.30.0 refactor) — same code shape, no
+	// duplication. The function comment there is the
+	// canonical reference for the format requirements
+	// (separator pattern, `ip: ["*"]`, dst=tag-only).
+	writePerDeviceGrants(&sb, usernames, tagsByUser)
 
 	// Per-device exit-rules. v0.28.0: src prefers
 	// tag:dev-<user>-<device> (set by the v0.28.0
@@ -1150,53 +1110,12 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	//
 	// 7 grants for skyadmin (one per device). 2 grants
 	// for michail. O(n) per user, not O(n²).
-	for _, uname := range usernames {
-		if uname == "" {
-			continue
-		}
-		userTags := tagsByUser[uname]
-		if len(userTags) < 2 {
-			// Need at least 2 devices for inter-device
-			// traffic. With 0 or 1, there's nothing to
-			// allow (no dst set). Skip.
-			continue
-		}
-		// For each device, emit one grant with dst =
-		// all OTHER devices of the same user.
-		//
-		// Separator pattern: ALWAYS write ",\n" before
-		// each grant (including the first). The previous
-		// block (per-user grant) ends with "] }" without
-		// a trailing comma, so the first per-DEVICE grant
-		// needs its own leading separator. Without this,
-		// headscale's HuJSON parser returns "invalid
-		// character '{' after array value" (500 from
-		// /admin/exit-rules/reapply).
-		for _, srcTag := range userTags {
-			sb.WriteString(",\n")
-			// Build dst = all OTHER tags of the same user
-			dstTags := make([]string, 0, len(userTags)-1)
-			for _, otherTag := range userTags {
-				if otherTag != srcTag {
-					dstTags = append(dstTags, otherTag)
-				}
-			}
-			sb.WriteString("    { \"src\": [\"" + srcTag + "\"], \"dst\": [")
-			for j, t := range dstTags {
-				if j > 0 {
-					sb.WriteString(", ")
-				}
-				sb.WriteString("\"")
-				sb.WriteString(t)
-				sb.WriteString("\"")
-			}
-			// `ip: ["*"]` is required by headscale 0.29.2
-			// (otherwise it returns "ip and app can not
-			// both be empty"). The bare tag in dst
-			// (no :* suffix) means "this tag, any port".
-			sb.WriteString("], \"ip\": [\"*\"] }")
-		}
-	}
+	//
+	// Implementation: see writePerDeviceGrants for the
+	// shared helper (v0.30.0 refactor). Same code
+	// shape as GenerateACLForPlane; the duplication
+	// introduced by the v0.28.7 fix is now consolidated.
+	writePerDeviceGrants(&sb, usernames, tagsByUser)
 
 	for _, e := range aclRows {
 		if e.TargetType != "subnet" && e.TargetType != "ip" {
