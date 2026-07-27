@@ -350,6 +350,8 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		if uname == "" {
 			continue
 		}
+		// v0.29.0 DEBUG: prove this code runs in production
+		fmt.Fprintf(os.Stderr, "[v0.29.0] emitting tag-grant for user=%q\n", uname)
 		// Build the dst list. The base is the tag
 		// pattern (tag:dev-<user>-*:*), then the
 		// user's own CIDR, then shared CIDRs, then
