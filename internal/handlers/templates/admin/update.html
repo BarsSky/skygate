@@ -1,0 +1,137 @@
+{{define "body-admin-update"}}
+{{/* 2026-07-27: v0.29.0 — self-update page.
+     Shows: current version, latest GitHub release (with banner
+     if newer), detected install kind, copy-pasteable manual
+     update steps for the install kind, release notes, and
+     rollback steps. */}}
+
+{{if .Flash}}
+<div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{.Flash}}</div>
+{{end}}
+{{if .Error}}
+<div class="alert alert-warning"><i class="fa-solid fa-circle-exclamation"></i>
+  {{t "update.error_prefix"}}: {{.Error}}
+</div>
+{{end}}
+
+{{if .IsNewer}}
+<div class="alert alert-success" style="margin-bottom:16px">
+  <i class="fa-solid fa-circle-arrow-up"></i>
+  <strong>{{t "update.banner_new_version"}}</strong>
+  {{.Current}} → {{.Latest}}.
+  <a href="#manual" style="color:inherit;text-decoration:underline">{{t "update.banner_jump_to_steps"}}</a>
+</div>
+{{end}}
+
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-cloud-arrow-down"></i> {{t "title.admin_update"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{t "update.subtitle"}}
+      </p>
+    </div>
+    <form method="post" action="/admin/update/check-now" style="display:inline">
+      <button type="submit" class="btn btn-sm">
+        <i class="fa-solid fa-arrows-rotate"></i> {{t "update.check_now"}}
+      </button>
+    </form>
+  </div>
+
+  <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "update.current_label"}}</div>
+      <div style="font-size:18px;font-weight:600"><code>{{.Current}}</code></div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "update.latest_label"}}</div>
+      <div style="font-size:18px;font-weight:600">
+        {{if .Latest}}
+          <code>{{.Latest}}</code>
+          {{if .ReleaseURL}}
+            <a href="{{.ReleaseURL}}" target="_blank" rel="noopener" style="font-size:12px;margin-left:6px">
+              <i class="fa-solid fa-up-right-from-square"></i>
+            </a>
+          {{end}}
+        {{else}}
+          <span style="color:var(--text-muted)">—</span>
+        {{end}}
+      </div>
+      {{if .CheckedAt}}
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{t "update.checked_at"}}: {{.CheckedAt.Format "2006-01-02 15:04:05 MST"}}
+      </div>
+      {{end}}
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "update.install_label"}}</div>
+      <div style="font-size:18px;font-weight:600">{{.InstallLabel}}</div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{t "update.channel"}}: <code>{{.Channel}}</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .Body}}
+<div class="card" style="margin-bottom:24px">
+  <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-file-lines"></i> {{t "update.release_notes"}}</h4>
+  <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.5;margin:0;max-height:400px;overflow:auto;background:var(--bg-secondary);padding:12px;border-radius:6px">{{.Body}}</pre>
+  {{if .ReleaseURL}}
+  <div style="margin-top:8px;font-size:12px">
+    <a href="{{.ReleaseURL}}" target="_blank" rel="noopener">{{t "update.view_on_github"}} →</a>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+<div class="card" id="manual" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <h4 style="margin:0"><i class="fa-solid fa-terminal"></i> {{t "update.manual_steps_title"}}</h4>
+    <button type="button" class="btn btn-sm" onclick="copyManualSteps()">
+      <i class="fa-solid fa-copy"></i> {{t "update.copy_to_clipboard"}}
+    </button>
+  </div>
+  <p style="color:var(--text-muted);font-size:12px;margin:8px 0">
+    {{t "update.manual_steps_subtitle"}}: <code>{{.Current}}</code> → <code>{{.Target}}</code>
+    ({{.InstallLabel}})
+  </p>
+  <pre id="manual-steps" style="white-space:pre-wrap;font-family:monospace;font-size:12px;line-height:1.4;margin:0;max-height:500px;overflow:auto;background:var(--bg-secondary);padding:12px;border-radius:6px">{{range .ManualSteps}}{{.}}
+{{end}}</pre>
+  <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">
+    <i class="fa-solid fa-circle-check"></i> {{t "update.verify_after"}}: <code>{{.VerifyAfter}}</code>
+  </div>
+</div>
+
+{{if .Rollback}}
+<div class="card" style="margin-bottom:24px">
+  <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-undo"></i> {{t "update.rollback_title"}}</h4>
+  <p style="color:var(--text-muted);font-size:12px;margin:8px 0">{{t "update.rollback_subtitle"}}</p>
+  <pre id="rollback-steps" style="white-space:pre-wrap;font-family:monospace;font-size:12px;line-height:1.4;margin:0;max-height:300px;overflow:auto;background:var(--bg-secondary);padding:12px;border-radius:6px">{{range .Rollback}}{{.}}
+{{end}}</pre>
+</div>
+{{end}}
+
+{{if not .CheckEnabled}}
+<div class="alert alert-warning" style="margin-top:16px">
+  <i class="fa-solid fa-circle-exclamation"></i> {{t "update.disabled"}}
+</div>
+{{end}}
+
+<script>
+function copyManualSteps() {
+  var steps = document.getElementById('manual-steps');
+  if (!steps) return;
+  var text = steps.innerText;
+  navigator.clipboard.writeText(text).then(function() {
+    // brief visual feedback
+    var btn = document.querySelector('button[onclick="copyManualSteps()"]');
+    if (btn) {
+      var orig = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-check"></i> copied';
+      setTimeout(function() { btn.innerHTML = orig; }, 1500);
+    }
+  });
+}
+</script>
+{{end}}

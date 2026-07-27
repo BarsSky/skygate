@@ -153,6 +153,26 @@ type Config struct {
 	ExpireWatchInterval  time.Duration
 	ExpireWatchThreshold time.Duration
 	ExpireWatchRenewal   time.Duration
+	// 2026-07-27: v0.29.0 — self-update checker.
+	// UpdateCheckEnabled gates the GitHub Releases API
+	// polling. Default true. Set to false for air-gapped
+	// deploys (the /admin/update page still shows
+	// "channel disabled" so the operator doesn't think
+	// the page is broken).
+	//
+	// UpdateCheckInterval is the polling period. Default
+	// 24h. GitHub unauthenticated rate limit is 60 req/h;
+	// one check per day leaves 59 unused. Operators with
+	// large fleets (which would hit the limit) can set
+	// SKYGATE_GITHUB_TOKEN to bump to 5000 req/h.
+	//
+	// UpdateChannel is "stable" (only non-prerelease
+	// tags) or "all" (any tag, including v0.30.0-rc.1).
+	// Default "stable".
+	UpdateCheckEnabled  bool
+	UpdateCheckInterval time.Duration
+	UpdateChannel       string
+	GitHubToken         string
 }
 
 func Load() (*Config, error) {
@@ -228,6 +248,18 @@ func Load() (*Config, error) {
 		ExpireWatchInterval:  getDuration("SKYGATE_EXPIREWATCH_INTERVAL", 5*time.Minute),
 		ExpireWatchThreshold: getDuration("SKYGATE_EXPIREWATCH_THRESHOLD", 7*24*time.Hour),
 		ExpireWatchRenewal:   getDuration("SKYGATE_EXPIREWATCH_RENEWAL", 30*24*time.Hour),
+		// 2026-07-27: v0.29.0 — self-update checker.
+		// UpdateCheckEnabled defaults to true; SKYGATE_UPDATE_CHECK=false
+		// disables polling (air-gapped deploys).
+		// UpdateCheckInterval defaults to 24h. SKYGATE_UPDATE_CHECK_INTERVAL
+		// = "off" / "0" disables.
+		// UpdateChannel defaults to "stable". "all" includes prereleases.
+		// GitHubToken is optional (Basic auth bumps rate limit from
+		// 60/h to 5000/h).
+		UpdateCheckEnabled:  getenv("SKYGATE_UPDATE_CHECK", "true") == "true",
+		UpdateCheckInterval: getDuration("SKYGATE_UPDATE_CHECK_INTERVAL", 24*time.Hour),
+		UpdateChannel:       getenv("SKYGATE_UPDATE_CHANNEL", "stable"),
+		GitHubToken:         os.Getenv("SKYGATE_GITHUB_TOKEN"),
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
@@ -248,6 +280,11 @@ func Load() (*Config, error) {
 	if v := os.Getenv("SKYGATE_EXPIREWATCH_INTERVAL"); v != "" {
 		if v == "off" || v == "0" {
 			c.ExpireWatchInterval = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_UPDATE_CHECK_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.UpdateCheckInterval = 0
 		}
 	}
 	if c.HeadscaleKey == "" {
