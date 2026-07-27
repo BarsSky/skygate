@@ -87,12 +87,10 @@ services:
       - ${SKYGATE_HOST_REPO_PATH:-/home/skyadmin/skygate}/deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
       - /home/skyadmin/headscale:/home/skyadmin/headscale
     secrets:
-      # Same rationale as the bind-mounts above: must be a host path
-      # the docker daemon can read, not an in-container path. The
-      # file must exist on the host at
-      # ${SKYGATE_HOST_REPO_PATH}/secrets/ts_authkey.
-      ts_authkey:
-        file: ${SKYGATE_HOST_REPO_PATH:-/home/skyadmin/skygate}/secrets/ts_authkey
+      # short form — just reference the top-level definition below.
+      # The `file:` path is configured at top-level so we can use
+      # ${SKYGATE_HOST_REPO_PATH:-...} for the host-side path.
+      - ts_authkey
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
@@ -177,9 +175,14 @@ volumes:
   caddy-config:
     name: caddy-config
 
-# secrets: defined inline at the skygate service level (long form)
-# so we can use ${SKYGATE_HOST_REPO_PATH:-...} for the file path.
-# The top-level `secrets:` block was removed because defining
-# `ts_authkey` in two places (top-level + service-level) was a
-# duplicate that the compose v2.27+ parser rejects with
-# "services.skygate.secrets must be a array".
+secrets:
+  # Top-level secret definition. The `file:` is a HOST path
+  # the docker daemon will read when injecting the secret
+  # into the skygate container. Using ${SKYGATE_HOST_REPO_PATH:-...}
+  # ensures the in-container orchestrator's `docker compose` calls
+  # (which inherit this path through COMPOSE_PROJECT_NAME + the
+  # ${VAR:-default} substitution) resolve to a path the host
+  # daemon can actually open. Default /home/skyadmin/skygate
+  # matches the operator's standard layout.
+  ts_authkey:
+    file: ${SKYGATE_HOST_REPO_PATH:-/home/skyadmin/skygate}/secrets/ts_authkey
