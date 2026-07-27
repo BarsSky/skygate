@@ -353,10 +353,17 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		}
 		// For each device, emit one grant with dst =
 		// all OTHER devices of the same user.
-		for i, srcTag := range userTags {
-			if i > 0 {
-				sb.WriteString(",\n")
-			}
+		//
+		// Separator pattern: ALWAYS write ",\n" before
+		// each grant (including the first). The previous
+		// block (per-user grant) ends with "] }" without
+		// a trailing comma, so the first per-DEVICE grant
+		// needs its own leading separator. Without this,
+		// headscale's HuJSON parser returns "invalid
+		// character '{' after array value" (500 from
+		// /admin/exit-rules/reapply).
+		for _, srcTag := range userTags {
+			sb.WriteString(",\n")
 			// Build dst = all OTHER tags of the same user
 			dstTags := make([]string, 0, len(userTags)-1)
 			for _, otherTag := range userTags {
@@ -1156,10 +1163,17 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		}
 		// For each device, emit one grant with dst =
 		// all OTHER devices of the same user.
-		for i, srcTag := range userTags {
-			if i > 0 {
-				sb.WriteString(",\n")
-			}
+		//
+		// Separator pattern: ALWAYS write ",\n" before
+		// each grant (including the first). The previous
+		// block (per-user grant) ends with "] }" without
+		// a trailing comma, so the first per-DEVICE grant
+		// needs its own leading separator. Without this,
+		// headscale's HuJSON parser returns "invalid
+		// character '{' after array value" (500 from
+		// /admin/exit-rules/reapply).
+		for _, srcTag := range userTags {
+			sb.WriteString(",\n")
 			// Build dst = all OTHER tags of the same user
 			dstTags := make([]string, 0, len(userTags)-1)
 			for _, otherTag := range userTags {
