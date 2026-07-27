@@ -173,11 +173,24 @@ type Config struct {
 	UpdateCheckInterval time.Duration
 	UpdateChannel       string
 	GitHubToken         string
-	// RepoPath is the path to the skygate source repo on
-	// the host (used by the auto-updater to run git + docker
-	// compose). Default "/home/admin/skygate" (the
-	// operator's standard layout). Override via
-	// SKYGATE_REPO_PATH.
+	// RepoPath is the path to the skygate source repo used
+	// by the auto-updater to run `git` and `docker compose`.
+	//
+	// Default: inside a container, "/app" (the bind-mount
+	// point for the source dir per docker-compose.yml —
+	// `./:/app`). On a bare/systemd host, the operator's
+	// standard layout "/home/admin/skygate".
+	//
+	// Why auto-detect: the orchestrator runs INSIDE the
+	// skygate container (it's a Go process started by the
+	// container's entrypoint), so the host path is
+	// unreachable — `chdir /home/admin/skygate` fails
+	// with "no such file or directory". The bind-mount
+	// exposes the same tree at /app inside the container,
+	// which is what git + docker compose operate on.
+	//
+	// Override via SKYGATE_REPO_PATH if your layout differs
+	// (e.g. custom bind-mount path, separate data partition).
 	RepoPath string
 	// UpdateStatePath is the path to the auto-update
 	// status file. Default "/data/skygate-update-status.json"
@@ -277,7 +290,14 @@ func Load() (*Config, error) {
 		// VM; the /data state file matches the
 		// bind-mounted volume (so it survives a container
 		// recreate).
-		RepoPath:        getenv("SKYGATE_REPO_PATH", "/home/admin/skygate"),
+		//
+		// RepoPath auto-detects: if we're inside a
+		// container (/.dockerenv or /run/.containerenv
+		// exist), default to /app — the bind-mount point
+		// for the source dir in docker-compose.yml.
+		// Otherwise default to /home/admin/skygate.
+		// SKYGATE_REPO_PATH always overrides.
+		RepoPath:        getenv("SKYGATE_REPO_PATH", defaultRepoPath()),
 		UpdateStatePath: getenv("SKYGATE_UPDATE_STATE_PATH", "/data/skygate-update-status.json"),
 	}
 
@@ -383,4 +403,45 @@ func parseUserLimits(s string) map[string]int {
 		m[name] = n
 	}
 	return m
+}
+
+// defaultRepoPath returns the default RepoPath for the
+// auto-updater, choosing based on whether the process is
+// running inside a container.
+//
+// Inside a container: "/app" — that's the bind-mount point
+// of the source dir per docker-compose.yml (`./:/app`). The
+// host's /home/admin/skygate is NOT visible from inside
+// the container (only the bind-mounts are), so the orchestrator
+// MUST use the in-container path. chdir /home/admin/skygate
+// would fail with "no such file or directory" because the
+// process has no view of the host's filesystem root.
+//
+// On a bare/systemd host: "/home/admin/skygate" — the
+// operator's standard layout.
+//
+// SKYGATE_REPO_PATH env always wins (handled at the
+// getenv() call site).
+func defaultRepoPath() string {
+	if runningInContainer() {
+		return "/app"
+	}
+	return "/home/admin/skygate"
+}
+
+// runningInContainer returns true if the process is running
+// inside a container. Checks for Docker's /.dockerenv marker
+// (Docker Engine, Docker Desktop, rootless Docker) and the
+// OCI-standard /run/.containerenv marker (Podman, CRI-O,
+// containerd, Kubernetes). The function is best-effort: a
+// false negative falls back to the bare-host default, which
+// is harmless (the operator can override via env).
+func runningInContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+	return false
 }
