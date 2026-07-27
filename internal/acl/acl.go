@@ -304,6 +304,94 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		sb.WriteString("] }")
 	}
 
+	// 2026-07-27: v0.29.0 — per-user grant for TAGGED
+	// devices. The grant above uses src=user@ which in
+	// Tailscale v2 policy does NOT match tagged devices
+	// (every device since v0.28.0 carries
+	// tag:dev-<user>-<device>; the device's source
+	// identity in ACL is the TAG, not the user). Symptom
+	// observed in production (operator, 2026-07-27):
+	// skybars (Android, tag:dev-skyadmin-skybars) could
+	// not reach skyworker (Windows, tag:dev-skyadmin-
+	// skyworker) over Tailscale for Moonlight, because
+	// no rule had src=tag:dev-skyadmin-* and dst=tag:dev-
+	// skyadmin-*. The per-user grant was a no-op for
+	// every device in the tailnet.
+	//
+	// FIX: emit a SECOND per-user grant per user, this
+	// one with src=tag:dev-<user>-* (matches all of the
+	// user's tagged devices) and dst starting with
+	// tag:dev-<user>-*:* (lets them talk to each other)
+	// plus the same own-CIDR / shared-CIDR / autogroup
+	// addenda as the per-user grant above.
+	//
+	// This is the v0.28.0 design INTENT made real: the
+	// v0.28.0 tag-per-device design was supposed to give
+	// us stable per-device ACL while preserving the
+	// "user can reach their own devices" semantic. The
+	// v0.28.0 code shipped the tagging but forgot to
+	// update the per-user grant's src/dst. v0.28.5b
+	// fixed it for autogroup:internet (loose per-device
+	// grant). v0.29.0 fixes it for the per-user dst
+	// (this grant).
+	//
+	// Order: emitted AFTER the per-user grant (which
+	// is for SSH and untagged identities) and BEFORE
+	// per-device rules. This way:
+	//   1. Per-device rules (most specific dst) win
+	//   2. Per-user grant (user@) wins for SSH/untagged
+	//   3. THIS per-user grant (tag:dev-*) is the
+	//      fallback for tagged devices talking to
+	//      tagged devices of the SAME user
+	//   4. Per-device pref grant (with via) when set
+	//   5. Loose per-device grant (autogroup:internet)
+	//   6. Catch-alls last
+	for _, uname := range usernames {
+		if uname == "" {
+			continue
+		}
+		// Build the dst list. The base is the tag
+		// pattern (tag:dev-<user>-*:*), then the
+		// user's own CIDR, then shared CIDRs, then
+		// autogroup:internet. Same structure as the
+		// per-user grant above but starting from the
+		// tag pattern instead of the user@ identity.
+		dst := []string{"tag:dev-" + uname + "-*:*"}
+		if ownCIDR := subByUser[uname]; ownCIDR != "" {
+			dst = append(dst, ownCIDR+":*")
+		}
+		dedupSet := make(map[string]bool, len(dst))
+		for _, d := range dst {
+			dedupSet[d] = true
+		}
+		for _, sharedCIDR := range sharedByUser[uname] {
+			if sharedCIDR == "" {
+				continue
+			}
+			entry := sharedCIDR + ":*"
+			if !dedupSet[entry] {
+				dst = append(dst, entry)
+				dedupSet[entry] = true
+			}
+		}
+		// Same as the per-user grant: autogroup:internet
+		// is added unconditionally so the user's devices
+		// can reach the public internet through whatever
+		// exit-node they pick. v0.28.3 added this.
+		dst = append(dst, "autogroup:internet:*")
+		// Render
+		sb.WriteString(",\n    { \"action\": \"accept\", \"src\": [\"tag:dev-" + uname + "-*\"], \"dst\": [")
+		for j, d := range dst {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("\"")
+			sb.WriteString(d)
+			sb.WriteString("\"")
+		}
+		sb.WriteString("] }")
+	}
+
 	// Per-device exit-rules. v0.28.0: src prefers
 	// tag:dev-<user>-<device> (set by the v0.28.0
 	// backfillNodeOwnership auto-tag, survives IP changes)
