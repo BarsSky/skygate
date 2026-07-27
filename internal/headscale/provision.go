@@ -124,6 +124,13 @@ func runScript(path string, args ...string) ([]byte, error) {
 		if root == "" {
 			root = "/mnt"
 		}
+		// Strip the trailing slash on root (for Git Bash style "/" or
+		// WSL2 "/mnt/") so the join doesn't produce a double slash.
+		// Without this fix, SKYGATE_BASH_MOUNT_ROOT="/" on Git Bash
+		// turns C:/foo into //c/foo, which bash interprets as a
+		// different (non-existent) path and returns 127. v0.28.6
+		// catalog flags the resulting test failure as B1 FAIL.
+		root = strings.TrimRight(root, "/")
 		path = root + "/" + strings.ToLower(string(path[0])) + path[2:]
 	}
 	return exec.Command("bash", append([]string{path}, args...)...).Output()
