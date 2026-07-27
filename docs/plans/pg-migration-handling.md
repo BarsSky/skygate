@@ -1,7 +1,10 @@
 # DB migration handling for PostgreSQL — design plan
 
 **Author:** Mavis (2026-07-25)
-**Status:** Plan, not yet implemented
+**Status:** Phase 1 partially implemented (2026-07-27) — B11/B12 catalog
+  checks landed, helper scaffolding in `internal/db/pgmigrate`. R26 (runtime
+  lock_timeout check) and testcontainers-go in CI deferred until the
+  v0.27.0 PG driver lands on main.
 **Target version:** v0.29.0 (bundled with self-update) and v0.30.0 follow-ups
 **Scope:** PG-specific concerns around online migrations, locking, backups, and
   the `expand-contract` pattern. SQLite is out of scope (already battle-tested
@@ -360,6 +363,42 @@ the same idea, simpler mechanism.
 
 **Total: 4 days.** Bundles naturally with the self-update plan
 (4-day core + 1-day Docker path overlap = 5 days total for v0.29.0).
+
+---
+
+## Implementation status (v0.28.7+, 2026-07-27)
+
+Phase 1 of this plan is partially implemented on main:
+
+- ✅ `internal/db/pgmigrate/expand.go` — `Run` (transaction wrapper with
+  `lock_timeout`), `AddColumnIfNotExists`, `CreateIndexConcurrently`,
+  `IsDestructive` / `IsDestructiveRefused`. 9 unit tests pass
+  (TestIsDestructive_RejectsDropColumn with 20 sub-cases, plus
+  TestBuildCreateIndexStmt covering postgres/pgx/sqlite3).
+- ✅ Catalog B11 (verify_pre_deploy.sh): no DROP / RENAME / TRUNCATE
+  in `migrations_v*.go`. Grep-based static check; no raw `*sql.DB.Exec`
+  in a future migration can sneak in a destructive statement past
+  the build.
+- ✅ Catalog B12 (verify_pre_deploy.sh): `pgmigrate` package has the
+  per-driver SQL form unit-tested. When the PG driver lands, the
+  B12 soft-check can be tightened to a hard check on CONCURRENTLY.
+- ⏳ Catalog B13 (hard "CREATE INDEX uses CONCURRENTLY"): deferred
+  until the PG driver lands. Current migrations on main run on
+  SQLite which doesn't support `CONCURRENTLY`; a hard check would
+  fail every build right now.
+- ⏳ R26 (runtime `lock_timeout` check on live PG): deferred. No
+  live PG to test against; testcontainers-go in CI is a separate
+  change that pulls in Docker as a test dependency.
+- ⏳ testcontainers-go in CI: deferred. Requires Docker-in-CI setup
+  and a `go.mod` update to add the testcontainers-go dependency.
+  Tracked as a follow-up after the v0.27.0 PG driver lands on main.
+
+The `feat/postgres-migration` branch (24 commits, includes Phase 1-2.5
+of v0.27.0) is intentionally NOT merged. The operator decided the
+pq driver should be on main before the merge; until then, this
+package is the forward-looking scaffolding that makes the future
+merge straightforward (no in-place code change to existing
+migrations, just call `pgmigrate.Run(...)` instead of `d.Exec(...)`).
 
 ---
 
