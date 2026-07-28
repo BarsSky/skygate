@@ -219,6 +219,68 @@ run_check "B13" "pre-push hook uses MSYSTEM for Git Bash detection" \
 run_check "B14" "skygate host-side wrapper exists + syntax-valid + uses correct label" \
   "bash -c 'test -f deploy/skygate-cli.sh && bash -n deploy/skygate-cli.sh && grep -q \"com.docker.compose.service=skygate\" deploy/skygate-cli.sh'"
 
+# --- B15: parent_domain regression tests for DNS-resolved /32 ---
+# v0.30.x: the form's DNS-resolve path inserts /32 rules for each
+# IP the domain resolves to, but pre-fix the rules had EMPTY
+# parent_domain. The autoupdater (DomainAutoUpdater) then
+# couldn't see those /32 rules as "its" — it looked for them
+# via `parent_domain = d.domain` and missed them, creating
+# duplicates every tick. Live-verified on the VM: the
+# artstation.com case churned `added=18 removed=17` every 5
+# minutes with net ~0, and the user's traffic hit IPs
+# karolina had never advertised.
+#
+# The fix: insertRuleUnique takes parentDomain explicitly;
+# the form passes the original domain after DNS resolution.
+# These tests pin the contract so a future refactor can't
+# silently regress to the pre-fix behavior.
+#
+# Check verifies (a) the test file exists, (b) all 6 specific
+# regression test functions are present (guards against
+# accidental removal), (c) the test suite still passes.
+run_check "B15" "exit-rules parent_domain regression tests (form/autoupdater chain)" \
+  "bash -c '
+    test -f internal/handlers/exit_rules_form_parent_domain_test.go &&
+    grep -q TestInsertRuleUnique_ParentDomainFromDNSResolve internal/handlers/exit_rules_form_parent_domain_test.go &&
+    grep -q TestDomainAutoUpdater_NoChurnForStableDomain internal/handlers/exit_rules_form_parent_domain_test.go &&
+    grep -q TestDomainAutoUpdater_UpdatesOnIPRotation internal/handlers/exit_rules_form_parent_domain_test.go &&
+    grep -q TestDomainAutoUpdater_SharedIPAcrossDomains internal/handlers/exit_rules_form_parent_domain_test.go &&
+    '\''$GO'\'' test ./internal/handlers/ -run '\''TestInsertRuleUnique_ParentDomainFromDNSResolve|TestDomainAutoUpdater_NoChurnForStableDomain|TestDomainAutoUpdater_UpdatesOnIPRotation|TestDomainAutoUpdater_SharedIPAcrossDomains'\'' -count=1 2>&1
+  '"
+
+# --- B16: CDN detection regression tests (Cloudflare churn) ---
+# v0.30.x: the autoupdater's per-IP /32 approach was churning
+# forever for Cloudflare-served sites (artstation, github,
+# docker) because Cloudflare anycast returns different IPs at
+# each DNS query. detectCDN matches all resolved IPs against
+# a known CDN's published ranges; if matched, the autoupdate
+# inserts the CDN's CIDR ranges (stable forever) instead of
+# the churning per-IP /32 rules.
+#
+# These tests pin the contract:
+#   - Cloudflare/Fastly/Google/Akamai match
+#   - Partial match is rejected (no false positives)
+#   - Marker format is stable (regression guard)
+#   - Short-circuit is per-DOMAIN, not per-(user, device, exit_node)
+#     (the v0.30.x bug where auth.docker.io's CDN marker
+#     short-circuited artstation.com — same tuple, different
+#     domain)
+#
+# Check verifies (a) the test file exists, (b) the key regression
+# test functions are present, (c) the test suite still passes.
+# Also verifies exit_rules_cdn.go (the helper) is present.
+run_check "B16" "exit-rules CDN detection regression tests (Cloudflare/Fastly/Google/Akamai)" \
+  "bash -c '
+    test -f internal/handlers/exit_rules_cdn.go &&
+    test -f internal/handlers/exit_rules_cdn_test.go &&
+    grep -q TestDetectCDN_CloudflareIPsMatch internal/handlers/exit_rules_cdn_test.go &&
+    grep -q TestDetectCDN_PartialMatchRejects internal/handlers/exit_rules_cdn_test.go &&
+    grep -q TestDomainAutoUpdater_ShortCircuitIsPerDomain internal/handlers/exit_rules_cdn_test.go &&
+    grep -q TestDomainAutoUpdater_CloudflareDomainUsesRange internal/handlers/exit_rules_cdn_test.go &&
+    grep -q TestCDNParentMarker_ParseStable internal/handlers/exit_rules_cdn_test.go &&
+    '\''$GO'\'' test ./internal/handlers/ -run '\''TestDetectCDN|TestCDNParentMarker|TestCDNRange|TestDomainAutoUpdater_CloudflareDomainUsesRange|TestDomainAutoUpdater_NonCDNStaysPerIP|TestCDNParentMarkerGuess|TestDomainAutoUpdater_ShortCircuitIsPerDomain'\'' -count=1 2>&1
+  '"
+
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
