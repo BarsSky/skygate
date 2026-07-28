@@ -85,7 +85,6 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 	store := GetUpdateStateStore()
 	if store == nil {
 		store = update.NewStateStore("/data/skygate-update-status.json")
-		_ = store.LoadFromDisk()
 	}
 	{
 		st := store.Get()
