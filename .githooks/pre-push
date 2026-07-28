@@ -49,12 +49,26 @@ cd "$REPO_ROOT"
 # /mnt/<drive>/, Git Bash uses /<drive>/. Pick whichever exists;
 # the `internal/headscale` tests use SKYGATE_BASH_MOUNT_ROOT to
 # know which style to use. See provision.go runScript comment.
+#
+# 2026-07-28: v0.29.1 — fixed the detection for hybrid systems
+# (Git Bash inside WSL2 or a Windows host where both /c and
+# /mnt/c happen to exist). MSYSTEM is the Git Bash-only env
+# var (set to MINGW64, MINGW32, MSYS, or CYGWIN by Git for
+# Windows) and is the most reliable signal. We also fall back
+# to OSTYPE for MSYS/Cygwin, then to a directory probe.
 if [ -z "${SKYGATE_BASH_MOUNT_ROOT:-}" ]; then
-  if [ -d /mnt/c ]; then
-    # WSL2 (has /mnt/c mount)
+  if [ -n "${MSYSTEM:-}" ]; then
+    # Git Bash on Windows (any MSYSTEM variant)
+    export SKYGATE_BASH_MOUNT_ROOT="/"
+  elif [ "${OSTYPE:-}" = "msys" ] || [ "${OSTYPE:-}" = "cygwin" ]; then
+    # Older Git Bash / Cygwin without MSYSTEM
+    export SKYGATE_BASH_MOUNT_ROOT="/"
+  elif [ -d /mnt/c ]; then
+    # WSL2 (has /mnt/c mount, no MSYSTEM)
     export SKYGATE_BASH_MOUNT_ROOT="/mnt"
   elif [ -d /c ]; then
-    # Git Bash on Windows (uses /c/... directly)
+    # Last resort: Git Bash without MSYSTEM (very old Git for
+    # Windows or a custom MSYS env). Use /c/... style.
     export SKYGATE_BASH_MOUNT_ROOT="/"
   fi
 fi
