@@ -64,6 +64,73 @@ lost; everything is still in `git log` + the GitHub UI.
 | `RELEASE-NOTES-v0.28.5.md` | [`v0.28.5`](https://github.com/skygate-operator/skygate/releases/tag/v0.28.5) | via opt-in (Android-friendly) + migration v0.47 idempotency + tagged-device exit-node fix + entrypoint always clears stale Tailscale exit-node |
 | `RELEASE-NOTES-v0.28.6.md` | [`v0.28.6`](https://github.com/skygate-operator/skygate/releases/tag/v0.28.6) | guarantee catalog (B1-B10 build + R1-R25 runtime) — `make verify-pre` / `make verify-post` are the contract |
 
+## v0.29.2 — Remove `container_name: skygate`, add `skygate` host-side wrapper
+
+v0.29.1 worked around the `docker compose up --force-recreate`
+race by stopping the orchestrator at "image rebuilt" (manual
+swap). The race still affected the host-side deployment flow:
+the operator's manual `docker compose up -d --force-recreate
+--no-deps skygate` occasionally left the new container in
+`Created` state because the old `container_name: skygate`
+wasn't always released before compose tried to create the
+new one.
+
+**Fix**: remove `container_name: skygate` from
+`docker-compose.yml`. Compose auto-names the container
+(`skygate-skygate-1` etc.) and the race goes away. Same for
+`container_name: caddy` (caddy is in the same compose file,
+a stale `caddy` would also block recreate). Did NOT touch
+`container_name: headscale-$USERNAME` or `container_name:
+derper` — those are managed by separate compose files
+(`deploy/headscale-users/`, `deploy/templates/derper-compose.yml.tmpl`)
+and aren't affected.
+
+**To avoid breaking the ~20 scripts/docs that use
+`docker exec skygate ...`**, added a host-side shell wrapper
+`deploy/skygate-cli.sh` that does a label-based lookup
+(`com.docker.compose.service=skygate`) and forwards to
+`docker exec <real-id> ...`. Installed on the host by
+`deploy.sh` as `/usr/local/bin/skygate`. Every existing caller
+works without edits. `verify_post_deploy.sh` also resolves
+`SKYGATE_CONTAINER` from the same label by default
+(override via env var still works for ad-hoc checks).
+
+**Files**:
+- `deploy/skygate-cli.sh` (NEW, 80 lines): the wrapper itself.
+  Includes `--id` mode (print just the container ID) for
+  scripts that want to do their own `docker exec "$CID" ...`
+  in hot loops.
+- `deploy/deploy.sh`: installs `/usr/local/bin/skygate` at
+  the end of the deploy (idempotent).
+- `docker-compose.yml`: removed `container_name: skygate` and
+  `container_name: caddy`. New containers are `skygate-skygate-1`,
+  `caddy-caddy-1` etc.
+- `scripts/verify_post_deploy.sh`: resolves `SKYGATE_CONTAINER`
+  via label lookup. Banner shows the resolved ID.
+- `scripts/verify_pre_deploy.sh`: new B14 catalog check
+  (wrapper exists + syntax valid + uses correct label).
+- `AGENTS.md`: new "The `skygate` host-side wrapper" section.
+
+**Live verification (operator's VM, 2026-07-28)**:
+- `go test ./...` 19/19 PASS, `make verify-pre` 14/14 PASS
+- `make verify-post` 26/26 PASS (auto-resolved container ID
+  `37562e3b7332` via label)
+- Two consecutive `docker compose up -d --force-recreate
+  --no-deps skygate` invocations both started the new
+  container cleanly (no `Created` stall). The v0.29.0 /
+  v0.29.1 race that affected ~1 in 3 invocations is gone.
+
+**Caveats (still open)**:
+- The auto-generated container name (`skygate-skygate-1`)
+  may increment on every recreate (`skygate-skygate-2`,
+  `-3`, ...). The label-based lookup is robust to this, but
+  operators who grep `docker ps` for the name will see it
+  change. AGENTS.md documents the wrapper.
+- v0.29.2 still leaves the orchestrator's auto-swap out
+  of scope. A sidecar-based orchestrator (v0.29.3 follow-up)
+  is the only way to get a fully automatic
+  `git push → build → swap` flow without manual intervention.
+
 ## v0.29.1 — Orchestrator stops at "image rebuilt", manual swap required
 
 The v0.29.0 auto-updater's first end-to-end test on the
