@@ -868,11 +868,13 @@ log "using helper image: $IMAGE"
 
 # The orchestrator passes SKYGATE_HOST_REPO_PATH (the
 # host path the skygate service is bind-mounted from)
-# via env. We need it to run 'docker compose' against
-# the source dir (the helper has no /app bind-mount
-# other than the read-only $HELPER_HOST_REPO:/host_repo).
-HELPER_HOST_REPO="${SKYGATE_HOST_REPO_PATH:-/home/skyadmin/skygate}"
-log "helper host repo path: $HELPER_HOST_REPO"
+# via env. Inside the helper container, that path is
+# bind-mounted at /host_repo (read-only). The helper
+# uses the in-container mountpoint, NOT the host path,
+# because the host path doesn't exist in the helper's
+# filesystem.
+HELPER_HOST_REPO="/host_repo"
+log "helper repo mountpoint: $HELPER_HOST_REPO"
 
 log "running: docker compose -p $COMPOSE_PROJECT -f $HELPER_HOST_REPO/docker-compose.yml up -d --force-recreate --no-deps $SERVICE"
 # (single-quoted in this comment; the shell doesn't care,
