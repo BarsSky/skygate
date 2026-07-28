@@ -856,15 +856,22 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] HELPER $*" >> "$LOG"; }
 log "helper container started (pid=$$), waiting 3s for orchestrator to flush"
 sleep 3
 
-# Pick an alpine image. Prefer specific tag, fall back to latest.
-IMAGE="alpine:3.20"
-if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
-  IMAGE="alpine:latest"
+# Install docker CLI in the alpine helper. The base
+# alpine image has no docker binary; we need docker
+# + docker compose (subcommand) to drive the swap.
+# 'apk add --no-cache' requires network access to
+# the alpine package repo. This adds ~5s to the
+# swap total but is a clean fix; alternative is to
+# bake a custom image (skygate-swap-helper:VERSION)
+# with docker pre-installed, but that's more
+# infrastructure to maintain.
+log "installing docker-cli + docker-cli-compose in helper"
+apk add --no-cache docker-cli docker-cli-compose 2>&1 | tail -3 >> "$LOG"
+if ! command -v docker > /dev/null; then
+  log "FATAL: docker not found after apk add"
+  exit 1
 fi
-if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
-  IMAGE="docker.io/library/alpine:latest"
-fi
-log "using helper image: $IMAGE"
+log "docker $(docker --version) installed"
 
 # The orchestrator passes SKYGATE_HOST_REPO_PATH (the
 # host path the skygate service is bind-mounted from)
