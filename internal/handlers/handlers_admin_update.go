@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -475,20 +476,29 @@ func GetUpdateStateStore() *update.StateStore {
 // confirmPendingSwap is the v0.29.3 hook called by
 // renderUpdatePage on the NEW orchestrator's first page
 // load after a swap. The state file is left at
-// phase=build_done by the old orchestrator's spawn;
-// the swap subprocess (in the old container's PID
-// namespace) is killed when the old container is removed
-// and has no time to do healthz polling or update the
-// state file. So the new orchestrator takes over here:
+// phase=build_done (success path) or phase=rolled_back
+// (rollback path) by the old orchestrator's spawn; the
+// swap subprocess (in the old container's PID namespace)
+// is killed when the old container is removed and has no
+// time to do healthz polling or update the state file.
+// So the new orchestrator takes over here:
 //
-//  1. Polls /healthz (the new container is bound to
+//  1. The new skygate container is recreated by the
+//     subprocess. Sometimes compose's recreate leaves the
+//     new container in `Created` (not `Started`) — the
+//     v0.29.2 race that `container_name: skygate` removal
+//     only mostly fixed. The new orchestrator can see the
+//     new container via the docker.sock bind-mount and
+//     start it if it's stuck. We do this BEFORE the
+//     healthz poll.
+//  2. Polls /healthz (the new container is bound to
 //     :8080) for up to 30s, with a 2s per-request
 //     timeout. The new skygate's entrypoint runs `go
 //     build` before serving, so this can take 5-30s on
 //     first boot.
-//  2. On 200 response: store.Complete() — phase=build_done
-//     → phase=done.
-//  3. On timeout: leave at phase=build_done. The next
+//  3. On 200 response: store.Complete() — phase=build_done
+//     or rolled_back → phase=done.
+//  4. On timeout: leave at the current phase. The next
 //     page load (5s auto-refresh) will retry.
 //
 // The poll is bounded — 30s is the worst case for the
@@ -500,10 +510,23 @@ func (a *App) confirmPendingSwap(parentCtx context.Context, st *update.State, st
 	if st == nil || store == nil {
 		return
 	}
-	bgCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	bgCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	_ = parentCtx // intentionally ignored — the poll runs in the background
 
+	// Step 1: ensure the new container is running. The
+	// skygate container has /var/run/docker.sock bind-
+	// mounted, so the new orchestrator can introspect and
+	// start containers on the host. We look up the
+	// skygate service container by its compose label
+	// (same label the v0.29.1 ensureComposeServiceRunning
+	// helper used).
+	a.startStuckSkygateContainer(bgCtx, store)
+
+	// Step 2: poll /healthz on the new container (which
+	// is US — we're in it). The new entrypoint runs
+	// `go build` first, so this can take 5-30s on first
+	// boot.
 	healthURL := "http://localhost:8080/healthz"
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(30 * time.Second)
@@ -521,27 +544,83 @@ func (a *App) confirmPendingSwap(parentCtx context.Context, st *update.State, st
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode == 200 && bytes.Contains(body, []byte(`"status":"ok"`)) {
-				// Success — promote phase=build_done → phase=done.
-				// Use Complete() which sets phase=done and
-				// finished_at. We do NOT use Fail() — the
-				// swap was successful, we just couldn't
-				// confirm it in time from the old
-				// orchestrator.
+				// Success — promote phase → done.
 				store.Log(update.LogInfo, fmt.Sprintf("new orchestrator confirmed swap via /healthz (attempt %d)", attempt))
 				store.Complete()
 				return
 			}
 		}
-		// Wait before retry. The new skygate's entrypoint
-		// may take 5-30s to start, so 2s sleep is a
-		// good middle ground.
 		select {
 		case <-bgCtx.Done():
 			return
 		case <-time.After(2 * time.Second):
 		}
 	}
-	// Timeout — leave at build_done. Operator can
+	// Timeout — leave at current phase. Operator can
 	// dismiss the page or refresh later.
-	store.Log(update.LogWarn, fmt.Sprintf("confirmPendingSwap timed out after %d attempts; phase stays at build_done (operator may need to dismiss)", attempt))
+	store.Log(update.LogWarn, fmt.Sprintf("confirmPendingSwap timed out after %d attempts; phase stays at %s (operator may need to dismiss)", attempt, st.Phase))
+}
+
+// startStuckSkygateContainer is the v0.29.3 final-mile
+// helper called by confirmPendingSwap on the new
+// orchestrator's first page load. It looks up the
+// skygate service container by label and, if the
+// container is in `Created` (compose's recreate race
+// left it stuck), calls `docker start` to unstick it.
+//
+// Why this is needed: the v0.29.2 fix
+// (container_name removal) only MOSTLY eliminated the
+// race — `docker compose up --force-recreate` still
+// occasionally leaves the new container in `Created`
+// when the old container's PID 1 (skygate) and the new
+// container race for the same compose-hash name. The
+// new orchestrator can see the stuck container via
+// /var/run/docker.sock and start it.
+//
+// Idempotent: if the container is already `running`, no
+// action. If no skygate container is found, no action.
+func (a *App) startStuckSkygateContainer(ctx context.Context, store *update.StateStore) {
+	// We invoke docker inspect via exec.CommandContext. The
+	// skygate container has /var/run/docker.sock bind-mounted
+	// (docker-compose.yml), so this works from inside.
+	// We use a 3s per-call timeout to keep the page load
+	// responsive even if the docker daemon is slow.
+	inspectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(inspectCtx, "docker", "ps", "-a",
+		"--filter", "label=com.docker.compose.service=skygate",
+		"--filter", "label=com.docker.compose.project=skygate",
+		"--format", "{{.ID}} {{.State.Status}}")
+	out, err := cmd.Output()
+	if err != nil {
+		store.Log(update.LogDebug, "docker ps failed: "+err.Error())
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		id, status := parts[0], parts[1]
+		if status == "created" {
+			store.Log(update.LogInfo, fmt.Sprintf("found stuck skygate container %s in Created state, starting it", id))
+			startCtx, cancelStart := context.WithTimeout(ctx, 5*time.Second)
+			defer cancelStart()
+			startCmd := exec.CommandContext(startCtx, "docker", "start", id)
+			if err := startCmd.Run(); err != nil {
+				store.Log(update.LogWarn, fmt.Sprintf("docker start %s failed: %s", id, err))
+			} else {
+				store.Log(update.LogInfo, fmt.Sprintf("started stuck skygate container %s", id))
+			}
+		} else if status == "running" {
+			store.Log(update.LogDebug, fmt.Sprintf("skygate container %s is running, no action needed", id))
+		} else {
+			store.Log(update.LogDebug, fmt.Sprintf("skygate container %s status=%s", id, status))
+		}
+	}
 }
