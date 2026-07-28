@@ -238,3 +238,22 @@ func cdnFromMarker(parentDomain string) string {
 	}
 	return rest[:idx]
 }
+
+// cdnParentMarkerGuess returns a SQL LIKE pattern for
+// looking up an existing CDN rule for a specific domain.
+// The "%" in the middle matches any CDN name
+// (cloudflare/fastly/google/akamai), so the autoupdate
+// doesn't have to know the CDN in advance.
+//
+// Format: "cdn:%:<domain>". The caller MUST use this as a
+// SQL LIKE pattern, not as an equality value.
+//
+// Why "guess" not "marker": the autoupdate's short-circuit
+// check runs BEFORE DNS resolution and CDN detection —
+// we don't know the CDN name yet. The "%" lets the lookup
+// match any CDN. If a CDN rule for this domain exists
+// (regardless of which CDN), the lookup returns it and the
+// autoupdate skips DNS entirely.
+func cdnParentMarkerGuess(domain string) string {
+	return "cdn:%:" + domain
+}

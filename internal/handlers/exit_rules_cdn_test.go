@@ -434,6 +434,102 @@ func TestCDNParentMarker_ParseStable(t *testing.T) {
 	}
 }
 
+// TestCDNParentMarkerGuess_FormatStable — the
+// cdnParentMarkerGuess helper returns a string with a
+// literal "%" in the middle (the CDN-name slot). It is
+// used for the autoupdate's short-circuit check to look
+// for an existing CDN rule for a SPECIFIC domain.
+//
+// This test pins the format: "cdn:%:<domain>". If a
+// maintainer changes it, the autoupdate's per-domain
+// short-circuit breaks (and all domains in a (user,
+// device, exit_node) tuple get short-circuited when
+// ANY one of them has a CDN marker — the bug that
+// commit ebaa44e fixed).
+func TestCDNParentMarkerGuess_FormatStable(t *testing.T) {
+	cases := []struct {
+		domain string
+		want   string
+	}{
+		{"artstation.com", "cdn:%:artstation.com"},
+		{"www.artstation.com", "cdn:%:www.artstation.com"},
+		{"github.com", "cdn:%:github.com"},
+	}
+	for _, c := range cases {
+		got := cdnParentMarkerGuess(c.domain)
+		if got != c.want {
+			t.Errorf("cdnParentMarkerGuess(%q) = %q, want %q", c.domain, got, c.want)
+		}
+	}
+}
+
+// TestDomainAutoUpdater_ShortCircuitIsPerDomain — the
+// regression test for the v0.30.x bug where the
+// existingMarker check was per-(user, device, exit_node).
+// After auth.docker.io got a CDN marker, artstation.com
+// (same tuple) was incorrectly short-circuited and never
+// processed.
+//
+// The fix: existingMarker query is per-domain (uses
+// cdnParentMarkerGuess as the parent_domain value, not a
+// LIKE 'cdn:%:%' wildcard). One domain's CDN marker does
+// NOT short-circuit other domains.
+func TestDomainAutoUpdater_ShortCircuitIsPerDomain(t *testing.T) {
+	a, d := newAppForExitRulesTest(t)
+	defer d.Close()
+
+	const userID, deviceID = 1, 9
+	const exitNode = "karolina"
+
+	// Insert domain rules for two different CDN-hosted
+	// domains. Same (user, device, exit_node) tuple.
+	domains := []string{"auth.docker.io", "artstation.com"}
+	for _, domain := range domains {
+		if ok, _ := a.insertRuleUnique(userID, deviceID, exitNode,
+			"domain", domain, "accept", "100.64.0.9", domain); !ok {
+			t.Fatalf("insert domain rule for %s", domain)
+		}
+	}
+
+	// Simulate the autoupdate: insert a CDN marker for
+	// auth.docker.io (this is what the production
+	// DomainAutoUpdater does when CDN detection fires).
+	authMarker := cdnParentMarker("cloudflare", "auth.docker.io")
+	if _, err := d.Exec(
+		`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled, created_at, parent_domain)
+		 VALUES (?, ?, ?, 'subnet', ?, 'accept', 1, strftime('%s','now'), ?)`,
+		userID, deviceID, exitNode, "104.16.0.0/12", authMarker); err != nil {
+		t.Fatalf("insert CDN marker for auth.docker.io: %v", err)
+	}
+
+	// Verify the per-domain short-circuit check.
+	// For artstation.com, the check should NOT find a
+	// CDN marker (because the existing one is for a
+	// different domain), so the autoupdate proceeds.
+	for _, domain := range domains {
+		var marker string
+		err := d.QueryRow(
+			`SELECT parent_domain FROM device_rules
+			 WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND parent_domain LIKE ?`,
+			userID, deviceID, exitNode, cdnParentMarkerGuess(domain),
+		).Scan(&marker)
+		switch domain {
+		case "auth.docker.io":
+			// Should find the marker.
+			if err != nil || !isCDNMarker(marker) {
+				t.Errorf("auth.docker.io: expected CDN marker, got marker=%q err=%v", marker, err)
+			}
+		case "artstation.com":
+			// Should NOT find a marker (the existing
+			// one is for auth.docker.io, not artstation.com).
+			if err == nil {
+				t.Errorf("artstation.com: short-circuit falsely matched auth.docker.io's marker %q — per-domain check is broken",
+					marker)
+			}
+		}
+	}
+}
+
 // TestDetectCDN_RealWorldDomains — live DNS lookup against
 // real CDN-served domains. Skipped on Windows (no DNS in
 // the Go test runtime the same way) AND when net.LookupHost
