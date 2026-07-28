@@ -72,14 +72,19 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 	// polling or update the state file. The new
 	// orchestrator (us, in the new container) takes over
 	// here: if the state file shows phase=build_done
-	// (left by the old orchestrator's spawn), we poll
-	// /healthz and promote to phase=done on success.
-	// The 5s auto-refresh on /admin/update will pick up
-	// the new phase without a manual reload.
+	// (left by the old orchestrator's spawn after a
+	// SUCCESSFUL apply — the apply path stops at build_done
+	// and lets the swap subprocess do the actual swap) OR
+	// phase=rolled_back (left by failWithRollback — same
+	// pattern, the rollback spawns its own subprocess to
+	// do `docker compose up` and has no time to confirm),
+	// we poll /healthz and promote to phase=done on
+	// success. The 5s auto-refresh on /admin/update will
+	// pick up the new phase without a manual reload.
 	store := GetUpdateStateStore()
 	if store != nil {
 		st := store.Get()
-		if st != nil && st.Phase == update.PhaseBuildDone {
+		if st != nil && (st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack) {
 			a.confirmPendingSwap(ctx, st, store)
 		}
 	}
