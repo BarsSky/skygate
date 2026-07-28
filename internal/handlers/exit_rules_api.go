@@ -150,7 +150,16 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 			rl.Action = "accept"
 		}
 		deviceIP := nodeIPs[rl.DeviceID]
-		ok, newID := a.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP)
+		// 2026-07-28: API doesn't do DNS resolution, so domain
+		// rules land with parent_domain=rl.TargetValue (for the
+		// autoupdater to find them). Subnet/IP rules pass "" —
+		// the user typed them manually and the autoupdater
+		// should not touch them.
+		apiParent := ""
+		if rl.TargetType == "domain" {
+			apiParent = rl.TargetValue
+		}
+		ok, newID := a.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP, apiParent)
 		if !ok {
 			errors = append(errors, fmt.Sprintf("rule[%d]: db error", i))
 			continue
