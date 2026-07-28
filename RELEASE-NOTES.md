@@ -131,6 +131,169 @@ works without edits. `verify_post_deploy.sh` also resolves
   is the only way to get a fully automatic
   `git push → build → swap` flow without manual intervention.
 
+## v0.29.3 / v0.29.3.1 — Auto-swap via helper container in host PID namespace
+
+The v0.29.0 / v0.29.1 / v0.29.2 orchestrator chain
+handles the "git push → build → swap" lifecycle, but
+v0.29.2 still requires a manual `docker compose up`
+on the host. v0.29.3 closes the loop: the orchestrator
+itself does the swap, end-to-end, with auto-rollback on
+any failure.
+
+### The PID-namespace death race (v0.29.3 problem)
+
+The v0.29.3 first version spawned a Setsid-detached
+subprocess from inside the OLD skygate container to
+run `docker compose up --force-recreate`. The subprocess
+escaped the OLD container's process group (Setsid) but
+was STILL in the OLD container's PID namespace. When
+compose sent SIGTERM to PID 1 of the OLD container
+(skygate itself), the signal propagated to all
+processes in the same namespace, killing the swap
+subprocess mid-way through `docker compose up`. The new
+container would end up in `Created` state forever and
+the operator had to `docker start <id>` by hand.
+
+Live-verified on the VM at 2026-07-28 10:45 UTC: the
+swap log showed only "Recreate" before the subprocess
+died, and the new container `fb9547ead806` was stuck
+in `Created`. A subsequent attempt with `unshare -fp`
+inside the helper failed with "unshare: Operation not
+permitted" (the skygate container's CapAdd doesn't
+include CAP_SYS_ADMIN, which `CLONE_NEWPID` requires).
+
+### v0.29.3.1 fix: helper container in HOST PID namespace
+
+Instead of running the swap from inside the OLD skygate
+container, the orchestrator spawns a HELPER CONTAINER
+via `docker run --rm --pid=host --net=host
+-v /var/run/docker.sock:/var/run/docker.sock
+-v skygate-data:/data
+-v $SKYGATE_HOST_REPO_PATH:/host_repo:ro`. The helper
+uses the HOST's PID namespace, so its processes are
+not in any skygate container's namespace and survive
+the OLD container's removal cleanly.
+
+The helper does the full swap:
+  1. sleep 3s (orchestrator flush)
+  2. `apk add --no-cache docker-cli docker-cli-compose`
+     (alpine base image has no docker binary)
+  3. `cd /host_repo && docker compose -p skygate -f
+     /host_repo/docker-compose.yml up -d
+     --force-recreate --no-deps skygate`
+  4. poll up to 60s for the new container; if it's
+     stuck in Created, call `docker start <id>`
+     (handles the rare compose race where Created
+     happened but Start didn't)
+  5. final healthz check via
+     `docker exec $NEW_ID wget -qO- http://localhost:8080/healthz`
+     (helper has --net=host so localhost:8080 IS the
+     new container's port)
+  6. exit (`--rm` self-removes the container)
+
+The OLD orchestrator's swap script now just spawns
+the helper container in the background and exits
+immediately. Helper self-removes via `--rm`.
+
+### Defense in depth: confirmPendingSwap
+
+The new orchestrator (in the new container) also has a
+helper of its own: `confirmPendingSwap` (called from
+`renderUpdatePage` on the first /admin/update page
+load after the swap). It detects
+`phase=build_done` / `phase=rolled_back`, calls
+`startStuckSkygateContainer` (the v0.29.3.1 fix for
+the `{{.State.Status}}` → `{{.Status}}` format-string
+regression in the `docker ps` call), polls
+`/healthz` on the new container for up to 30s, and
+on 200 calls `store.Complete()` to promote the phase
+to `done`. This is the final-arbitration step: even
+if the helper container crashes before it can finish
+its work, the next /admin/update page load completes
+the swap.
+
+### What changed (commits `49b67ce` ... `ebaa44e`)
+
+- `internal/update/docker.go`:
+  - `runShellDetached` helper (Setsid, fire-and-forget)
+  - `swapSubprocessScript` rewritten to spawn the helper
+  - `swapHelperScript` extracted as a separate Go constant
+    (shared between success and rollback paths)
+  - `writeSwapHelperScript()` Go helper for the success
+    path to write the helper file at job start
+  - `startStuckSkygateContainer` (v0.29.3.1) in
+    `handlers_admin_update.go` — uses the now-correct
+    `{{.Status}}` (was `{{.State.Status}}` which is
+    `docker inspect` only) to find the new container
+  - `confirmPendingSwap` (v0.29.3) in
+    `handlers_admin_update.go` — /healthz poll + phase
+    promotion on first /admin/update page load after
+    a `build_done` or `rolled_back` phase
+  - Critical bug fix: `StateStore.Load()` was parsing
+    the state file but NOT storing in `s.state` (silent
+    no-op for `Log()` and nil return from `Get()`).
+    Fixed in commit `9fbc588`.
+- `internal/handlers/handlers_admin_update_test.go`
+  (NEW) — regression test for the
+  `{{.Status}}` vs `{{.State.Status}}` format string
+  (TestStartStuckSkygateFormatStringIsDockerPsValid)
+
+### Live verification (2026-07-28, on the VM)
+
+End-to-end test on `admin@192.0.2.1`:
+  1. Applied `v0.99.0-nonexistent` via
+     `POST /admin/update/apply` (target=v0.99.0-nonexistent)
+  2. Orchestrator: backup tag created
+     (`skygate-pre-update-ebaa44e`), `git fetch` failed
+     (expected — the tag doesn't exist), `failWithRollback`
+     spawned the detached subprocess
+  3. Subprocess wrote `/data/skygate-swap-helper.sh`
+     and ran `docker run --rm --pid=host --net=host ...`
+     (the helper container)
+  4. Helper installed docker-cli via apk, ran
+     `docker compose up --force-recreate --no-deps skygate`,
+     polled for the new container (status=running on
+     attempt 1, no Created→Started race this time)
+  5. Helper did a final healthz check via
+     `docker exec $NEW_ID wget -qO- http://localhost:8080/healthz`
+     and exited
+  6. Operator loaded `/admin/update` →
+     `confirmPendingSwap` detected `phase=rolled_back`,
+     called `startStuckSkygateContainer` (no-op, container
+     already Up), polled `/healthz` (200 on attempt 1),
+     promoted phase to `done`
+  7. State file log:
+     ```
+     renderUpdatePage: store=true phase=rolled_back (debug probe)
+     renderUpdatePage: phase=rolled_back detected, calling confirmPendingSwap
+     skygate container 359dec4c92f9 status=Up
+     new orchestrator confirmed swap via /healthz (attempt 1)
+     update completed successfully
+     ```
+
+`make verify-pre` 13/13 PASS, `make verify-post` 26/26 PASS.
+`go test ./...` 19/19 packages green.
+
+### Caveats
+
+- The helper adds ~10s to the swap total (5s apk add
+  for docker-cli + 3s orchestrator flush + ~2s compose
+  up). Acceptable for an end-to-end upgrade.
+- The helper requires network access from the
+  `skygate-swap-helper` container to the alpine
+  package repo (dl-cdn.alpinelinux.org) for the
+  `apk add docker-cli` step. If the network is
+  restricted, the swap will fail with
+  "docker: not found". A pre-baked
+  `skygate-swap-helper:VERSION` image with docker
+  pre-installed would avoid this (future v0.29.4+
+  work).
+- The `ensureComposeServiceRunning` helper from
+  v0.29.1 is still in place (unused since v0.29.2
+  removed `container_name: skygate`) but is now
+  redundant with `startStuckSkygateContainer`.
+  v0.29.4 cleanup can remove it.
+
 ## v0.29.1 — Orchestrator stops at "image rebuilt", manual swap required
 
 The v0.29.0 auto-updater's first end-to-end test on the
