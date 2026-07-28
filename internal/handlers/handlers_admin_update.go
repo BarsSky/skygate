@@ -599,10 +599,16 @@ func (a *App) startStuckSkygateContainer(ctx context.Context, store *update.Stat
 	// responsive even if the docker daemon is slow.
 	inspectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	// `{{.Status}}` is the docker-ps column; `{{.State.Status}}` is
+	// only valid in `docker inspect` output. The previous
+	// implementation used `.State.Status` and silently failed
+	// (exit 1, "can't evaluate field Status in type string"),
+	// so stuck Created containers were never started. Fixed in
+	// v0.29.3.1.
 	cmd := exec.CommandContext(inspectCtx, "docker", "ps", "-a",
 		"--filter", "label=com.docker.compose.service=skygate",
 		"--filter", "label=com.docker.compose.project=skygate",
-		"--format", "{{.ID}} {{.State.Status}}")
+		"--format", "{{.ID}} {{.Status}}")
 	out, err := cmd.Output()
 	if err != nil {
 		store.Log(update.LogDebug, "docker ps failed: "+err.Error())
