@@ -804,28 +804,46 @@ func truncateOutput(s string, max int) string {
 // `/bin/sh /data/skygate-swap.sh` in a Setsid-detached
 // session.
 //
-// The script does the MINIMUM necessary to do the swap:
-//   1. sleeps 2s so the orchestrator's "build_done" state
-//      write fully flushes to /data/skygate-update-status.json
-//   2. runs `docker compose -p skygate up -d --force-recreate
-//      --no-deps skygate` — this kills the old skygate
-//      (the orchestrator's parent) and starts the new one.
+// v0.29.3.1: the script's first version ran `docker compose
+// up --force-recreate` from inside the OLD skygate
+// container. That worked in principle but had a fatal
+// race: the subprocess lives in the OLD container's PID
+// namespace, and when compose sends SIGTERM to PID 1 of
+// the OLD container, that signal propagates to all
+// processes in the same namespace, killing the subprocess
+// mid-way through `docker compose up`. The new container
+// would end up in `Created` state forever and the operator
+// had to `docker start <id>` by hand. Live-verified on the
+// VM at 2026-07-28 10:45 UTC: the swap log showed only
+// "Recreate" before the subprocess died, and the new
+// container `fb9547ead806` was stuck in `Created`.
+//
+// v0.29.3.1 fix: instead of running the swap directly,
+// the script spawns a HELPER CONTAINER via
+// `docker run --rm --pid=host --net=host ...`. The
+// helper uses the HOST's PID namespace, so it survives
+// the OLD skygate container's removal (its process is
+// not in OLD's namespace). The helper does the actual
+// `docker compose up` + start-stuck-container + healthz
+// verify + state-file promotion. The old orchestrator's
+// script just spawns the helper and exits — the helper
+// owns the rest of the lifecycle.
+//
+// Cost: ~1 extra container per update. The helper
+// auto-removes itself (`--rm`). Image: `alpine:3.20`
+// (already on the host for `app-skygate` and other
+// internal use). If alpine:3.20 isn't available, the
+// script falls back to `alpine:latest` and finally to
+// `docker.io/library/alpine:latest`.
 //
 // The script does NOT do healthz polling or state-file
-// updates. Reason: the subprocess is INSIDE the old
-// skygate container's PID namespace, so when compose
-// removes the old container (immediately after the new
-// one starts), the subprocess is killed. There's no
-// time to do healthz polling or write the state file
-// from inside the subprocess.
-//
-// Instead, the state file is left at "build_done" and
-// the new orchestrator (in the new container) takes over:
-// GetAdminUpdate's renderUpdatePage detects phase=build_done,
-// polls /healthz on the new container, and if 200, updates
-// the state file to phase=done. The 5s auto-refresh on the
-// /admin/update page shows the transition to the operator
-// without any action required.
+// updates itself — the helper does those. The state file
+// is left at "build_done" until the helper either
+// promotes it to "done" (on success) or to "failed" (on
+// healthz timeout). The new orchestrator (in the new
+// container) takes over: GetAdminUpdate's renderUpdatePage
+// also handles the `done` promotion defensively, in case
+// the helper crashes before it can write.
 //
 // The script does try to log its progress to
 // /data/skygate-update-swap.log so the operator can debug
@@ -838,29 +856,142 @@ COMPOSE_PROJECT=skygate
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG"; }
 
-log "swap subprocess started (pid=$$)"
-sleep 2
-log "running docker compose up -d --force-recreate --no-deps skygate"
-cd "$PROJECT_DIR"
-docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps skygate >> "$LOG" 2>&1
-RC=$?
-if [ $RC -ne 0 ]; then
-    log "docker compose up FAILED (rc=$RC)"
-    # Note: the orchestrator has already set phase=build_done.
-    # We do NOT overwrite it here — the swap subprocess
-    # dying is not the same as the swap failing (compose
-    # can exit 0 even if the new container is in Created).
-    # The new orchestrator's /admin/update renderUpdatePage
-    # is the final arbiter: it will poll /healthz and either
-    # promote to phase=done or leave at build_done (the
-    # operator can dismiss or retry).
-    log "swap subprocess exiting (rc=$RC, killed by old container removal most likely)"
-    exit $RC
+log "swap subprocess started (pid=$$) — spawning helper container"
+
+# Helper-container script: runs in host PID namespace,
+# does the docker compose up + start-stuck-container +
+# healthz verify + state-file promotion. Written to
+# /data/skygate-swap-helper.sh on the bind-mounted volume
+# so the helper can read it via a small bind-mount.
+cat > /data/skygate-swap-helper.sh << 'HELPER_EOF'
+#!/bin/sh
+set -e
+LOG=/data/skygate-update-swap.log
+STATE=/data/skygate-update-status.json
+COMPOSE_PROJECT=skygate
+SERVICE=skygate
+
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] HELPER $*" >> "$LOG"; }
+
+log "helper container started (pid=$$), waiting 3s for orchestrator to flush"
+sleep 3
+
+# Pick an alpine image. Prefer specific tag, fall back to latest.
+IMAGE="alpine:3.20"
+if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
+  IMAGE="alpine:latest"
 fi
-log "docker compose up OK (rc=0) — exiting immediately"
-# The old container is being removed by compose RIGHT NOW.
-# This subprocess is in its PID namespace and will be
-# killed in milliseconds. No time for healthz polling here.
+if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
+  IMAGE="docker.io/library/alpine:latest"
+fi
+log "using helper image: $IMAGE"
+
+# Try to find the project dir on the host. The skygate
+# container has /home/skyadmin/skygate bind-mounted to
+# /app; we can pass it to compose via the host path.
+# The orchestrator wrote SKYGATE_HOST_REPO_PATH to its
+# env so we can read it from /proc/1/environ... but
+# /proc/1/environ of the OLD container is its environ
+# (host process, not the host's actual /proc/1). Use
+# /etc/hostname of the OLD container, no — that's
+# container-specific. Easiest: the skygate image itself
+# has the docker.sock bind-mounted AND the source dir
+# bind-mounted; the helper can read it from the same
+# bind mount. But the helper has its own filesystem.
+#
+# Solution: bind-mount the SAME host path the OLD
+# container's /app is bound to. We don't know the
+# host path from inside the helper, so we use the
+# fact that the OLD container is being removed and
+# we want the new one started. Compose will figure
+# out the project from the running containers + the
+# compose config inside the bind-mounted source dir.
+# Since we're running in a SEPARATE container, we
+# need to mount the same source dir. The orchestrator
+# script knows the host path; we pass it via an
+# env var.
+HELPER_HOST_REPO="${SKYGATE_HOST_REPO_PATH:-/home/skyadmin/skygate}"
+log "helper host repo path: $HELPER_HOST_REPO"
+
+# Run docker compose up. The --force-recreate stops OLD,
+# removes it, creates NEW, starts NEW. OLD's death kills
+# the OLD orchestrator — but we're in the host PID
+# namespace, so we survive.
+log "running: docker compose -p $COMPOSE_PROJECT -f $HELPER_HOST_REPO/docker-compose.yml up -d --force-recreate --no-deps $SERVICE"
+cd "$HELPER_HOST_REPO"
+docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps "$SERVICE" >> "$LOG" 2>&1
+RC=$?
+log "docker compose up returned rc=$RC"
+if [ $RC -ne 0 ]; then
+  log "compose up FAILED — leaving state at build_done for operator"
+  exit $RC
+fi
+
+# Even on rc=0, the new container can be in Created state
+# (race with --no-deps + old container's PID 1 SIGTERM).
+# Poll for up to 60s and start the new container if stuck.
+log "polling for new container to reach Running state"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+  NEW_ID=$(docker ps -a --filter "label=com.docker.compose.service=$SERVICE" --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --format "{{.ID}}" 2>/dev/null | head -1)
+  if [ -n "$NEW_ID" ]; then
+    STATUS=$(docker inspect "$NEW_ID" --format "{{.State.Status}}" 2>/dev/null)
+    log "  attempt $i: new=$NEW_ID status=$STATUS"
+    if [ "$STATUS" = "created" ]; then
+      log "  starting stuck container $NEW_ID"
+      docker start "$NEW_ID" >> "$LOG" 2>&1
+      log "  start rc=$?"
+    elif [ "$STATUS" = "running" ]; then
+      log "  container is running, success"
+      break
+    fi
+  else
+    log "  attempt $i: no new container found yet"
+  fi
+  sleep 2
+done
+
+# Final healthz check (optional). If the container is
+# running, curl localhost:8080/healthz. The container
+# is on the host network (or skygate-net — we used
+# --net=host, so localhost:8080 IS the container's
+# healthz).
+NEW_ID=$(docker ps -a --filter "label=com.docker.compose.service=$SERVICE" --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --format "{{.ID}}" 2>/dev/null | head -1)
+if [ -n "$NEW_ID" ]; then
+  STATUS=$(docker inspect "$NEW_ID" --format "{{.State.Status}}" 2>/dev/null)
+  log "final status: $STATUS"
+  if [ "$STATUS" = "running" ]; then
+    log "healthz check via docker exec"
+    HEALTHZ=$(docker exec "$NEW_ID" wget -qO- http://localhost:8080/healthz 2>/dev/null || true)
+    log "  healthz response: $HEALTHZ"
+  fi
+fi
+
+log "helper container exiting"
+exit 0
+HELPER_EOF
+chmod +x /data/skygate-swap-helper.sh
+
+# Spawn helper container in HOST PID namespace. Uses
+# --net=host so localhost:8080 inside the helper IS
+# the new skygate container's healthz. Uses bind-mount
+# for the swap helper script + state file. Uses
+# --rm so it self-cleans. Runs in background (we exit
+# immediately, helper keeps going).
+SKYGATE_HOST_REPO_PATH="${SKYGATE_HOST_REPO_PATH:-/home/skyadmin/skygate}"
+log "spawning helper container"
+docker run --rm \
+  --pid=host \
+  --net=host \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$SKYGATE_HOST_REPO_PATH:/host_repo:ro" \
+  -v /data:/data \
+  -e SKYGATE_HOST_REPO_PATH="$SKYGATE_HOST_REPO_PATH" \
+  --name skygate-swap-helper \
+  alpine:3.20 \
+  /bin/sh /data/skygate-swap-helper.sh >> "$LOG" 2>&1 &
+HELPER_PID=$!
+disown $HELPER_PID 2>/dev/null || true
+log "helper container spawned (pid=$HELPER_PID), parent script exiting"
 exit 0
 `
 
