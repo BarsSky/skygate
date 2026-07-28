@@ -206,6 +206,19 @@ run_check "B12" "pgmigrate helpers are unit-tested (per-driver SQL form)" \
 run_check "B13" "pre-push hook uses MSYSTEM for Git Bash detection" \
   "grep -q 'MSYSTEM' .githooks/pre-push"
 
+# --- B14: skygate host-side wrapper (v0.29.2) ---
+# v0.29.2 removed `container_name: skygate` from docker-compose.yml
+# (the explicit name caused a race with `docker compose up
+# --force-recreate` leaving the new container in `Created`
+# state). The new `deploy/skygate-cli.sh` wrapper does a
+# label-based lookup so the ~20 existing scripts that use
+# `docker exec skygate ...` keep working without edits.
+# This check verifies (a) the file exists, (b) the bash syntax
+# parses, (c) the label it looks for matches what compose
+# actually emits (com.docker.compose.service=skygate).
+run_check "B14" "skygate host-side wrapper exists + syntax-valid + uses correct label" \
+  "bash -c 'test -f deploy/skygate-cli.sh && bash -n deploy/skygate-cli.sh && grep -q \"com.docker.compose.service=skygate\" deploy/skygate-cli.sh'"
+
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"

@@ -61,7 +61,18 @@ for arg in "$@"; do
 done
 
 SSH_HOST="${SSH_HOST:-skyadmin@192.168.13.69}"
-SKYGATE_CONTAINER="${SKYGATE_CONTAINER:-skygate}"
+# v0.29.2: SKYGATE_CONTAINER is resolved at runtime via the
+# `com.docker.compose.service=skygate` label (set by docker compose
+# automatically). The "skygate" literal used to work because
+# docker-compose.yml had `container_name: skygate`; that was
+# removed in v0.29.2 to avoid a race with `docker compose up
+# --force-recreate` leaving the new container in `Created` state
+# (see deploy/skygate-cli.sh for details). The wrapper script
+# `skygate` on the host gives a stable CLI; the lookup below
+# gives the same stability for the verify catalog. If you need
+# to override (e.g. for an ad-hoc check on a different
+# deployment), set SKYGATE_CONTAINER=<id> in the env.
+SKYGATE_CONTAINER="${SKYGATE_CONTAINER:-}"
 HEADSCALE_URL="${HEADSCALE_URL:-http://localhost:50444}"
 # SSH key: prefer the explicit one in the current HOME, fall back to
 # whatever `ssh` finds on its own. WSL2 bash uses a separate HOME
@@ -77,6 +88,22 @@ for cand in \
     SSH_KEY="$cand"; break
   fi
 done
+
+# v0.29.2: resolve SKYGATE_CONTAINER by label. If the env var was
+# already set, leave it alone (the operator may have overridden
+# to a specific id for a one-off check). Otherwise, find the
+# container with the skygate compose service label.
+if [ -z "$SKYGATE_CONTAINER" ]; then
+  SKYGATE_CONTAINER="$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" \
+    "docker ps -a --filter 'label=com.docker.compose.service=skygate' --format '{{.ID}}' | head -1")"
+  if [ -z "$SKYGATE_CONTAINER" ]; then
+    echo "verify_post_deploy: cannot find skygate container (label=com.docker.compose.service=skygate not found)" >&2
+    echo "                         — is the skygate service running? try: docker compose ps" >&2
+    exit 2
+  fi
+  # Echo the resolved ID so the operator can see it in the
+  # banner (helpful when debugging "wait, which container is it?").
+fi
 
 API_KEY="$(grep '^HEADSCALE_API_KEY=' /home/skyadmin/skygate/.env 2>/dev/null | cut -d= -f2-)"
 if [ -z "$API_KEY" ]; then
@@ -135,6 +162,7 @@ RESULTS_FAIL=0
 # ---------------------------------------------------------------------------
 echo "=== skygate post-deploy verification ==="
 echo "  ssh:    $SSH_HOST"
+echo "  container: $SKYGATE_CONTAINER"
 echo "  date:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo
 
