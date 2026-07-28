@@ -5,7 +5,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 ---
 
-## v0.28.5 guarantee catalog (B1-B10 build-time + R1-R25 runtime)
+## v0.28.5 guarantee catalog (B1-B16 build-time + R1-R25 runtime)
 
 **Why this exists.** The v0.28.5 incident revealed that
 `make test` + `make smoke` is not enough. Three independent bugs
@@ -32,7 +32,7 @@ contract. If a check fails, the build/deploy is broken — do not
 push or roll forward until it's fixed or the check is updated
 to reflect a deliberate design change.
 
-### Build-time (B1-B10) — run `make verify-pre` before `git push`
+### Build-time (B1-B16) — run `make verify-pre` before `git push`
 
 | # | Guarantee | How |
 |---|-----------|-----|
@@ -46,6 +46,12 @@ to reflect a deliberate design change.
 | B8 | smoke RU+EN 83/83 each (VM only) | `make test` on VM; skipped on Windows |
 | B9 | `RELEASE-NOTES.md` has an entry for the new version | `grep vX.Y.Z RELEASE-NOTES.md` |
 | B10 | no `.env` / `*.key` / `*.pem` in git tracked paths | `git ls-files` filtered |
+| B11 | migrations have no destructive DDL (DROP/RENAME/TRUNCATE) | grep + pgmigrate test |
+| B12 | pgmigrate helpers are unit-tested (per-driver SQL form) | `go test ./internal/db/pgmigrate/ -run TestBuildCreateIndexStmt` |
+| B13 | pre-push hook uses MSYSTEM for Git Bash detection | `grep -q MSYSTEM .githooks/pre-push` |
+| B14 | skygate host-side wrapper exists + syntax-valid + uses correct label | `bash -n` + grep `com.docker.compose.service=skygate` |
+| B15 | exit-rules `parent_domain` regression tests for DNS-resolved /32 | v0.30.x form/autoupdater chain (`internal/handlers/exit_rules_form_parent_domain_test.go`) |
+| B16 | exit-rules CDN detection regression tests (Cloudflare/Fastly/Google/Akamai) | v0.30.x Cloudflare anycast churn fix (`internal/handlers/exit_rules_cdn.go` + `_test.go`) |
 
 ### Runtime (R1-R25) — run `make verify-post` after `docker compose up -d skygate`
 
