@@ -212,17 +212,33 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 
 	for _, d := range domains {
 		// 2026-07-28: CDN detection — short-circuit before DNS if
-		// we already have a CDN range rule for this domain. The
-		// marker format is "cdn:<name>:<domain>". The ranges
-		// don't churn (stable network allocations), so the
-		// autoupdater has nothing to do for these.
+		// we already have a CDN range rule for THIS SPECIFIC
+		// domain. The marker format is "cdn:<name>:<domain>".
+		// The ranges don't churn (stable network allocations),
+		// so the autoupdater has nothing to do for these.
+		//
+		// The check is per-domain, NOT per-(user, device,
+		// exit_node): once auth.docker.io got its CDN marker,
+		// a naive (user, device, exit_node) check would also
+		// short-circuit artstation.com (because both share the
+		// same user=1/device=9/exit_node=relay-3 tuple), even
+		// though artstation doesn't yet have a CDN marker. The
+		// autoupdate would never process artstation again.
+		//
+		// We use LIKE 'cdn:%:<domain>' so the CDN-name slot
+		// matches any CDN (cloudflare/fastly/google/akamai)
+		// without us having to know the CDN name in advance.
+		// A future autoupdate tick that runs AFTER CDN detection
+		// has inserted the marker will match here and short-
+		// circuit; the per-tick no-op.
 		existingMarker := ""
 		_ = a.DB.QueryRow(
-			"SELECT parent_domain FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND parent_domain LIKE 'cdn:%:%' LIMIT 1",
-			d.userID, d.deviceID, d.exitNode,
+			"SELECT parent_domain FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND parent_domain LIKE ? LIMIT 1",
+			d.userID, d.deviceID, d.exitNode, cdnParentMarkerGuess(d.domain),
 		).Scan(&existingMarker)
 		if isCDNMarker(existingMarker) {
-			// Already have a CDN range rule. Nothing to do.
+			// Already have a CDN range rule for this domain.
+			// Nothing to do.
 			continue
 		}
 
