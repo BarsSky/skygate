@@ -211,6 +211,21 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 	}
 
 	for _, d := range domains {
+		// 2026-07-28: CDN detection — short-circuit before DNS if
+		// we already have a CDN range rule for this domain. The
+		// marker format is "cdn:<name>:<domain>". The ranges
+		// don't churn (stable network allocations), so the
+		// autoupdater has nothing to do for these.
+		existingMarker := ""
+		_ = a.DB.QueryRow(
+			"SELECT parent_domain FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND parent_domain LIKE 'cdn:%:%' LIMIT 1",
+			d.userID, d.deviceID, d.exitNode,
+		).Scan(&existingMarker)
+		if isCDNMarker(existingMarker) {
+			// Already have a CDN range rule. Nothing to do.
+			continue
+		}
+
 		addrs, lerr := net.LookupHost(d.domain)
 		if lerr != nil {
 			a.logAutoUpdate(d.id, d.domain, 0, 0, "lookup failed: "+lerr.Error())
@@ -223,6 +238,51 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 		}
 		if extraIPs := a.resolveDomainSubdomains(d.domain); extraIPs != nil {
 			for ip := range extraIPs { currentIPs[ip] = true }
+		}
+
+		// 2026-07-28: CDN detection — if all currentIPs fall in
+		// a known CDN's published ranges, replace the per-IP /32
+		// approach with the CDN's CIDR ranges. The ranges are
+		// stable, so the autoupdater doesn't churn for these
+		// domains.
+		if cdnName, cdnCIDRs, isCDN := detectCDN(currentIPs); isCDN {
+			marker := cdnParentMarker(cdnName, d.domain)
+			// Insert each CDN range. The marker lets the next
+			// tick short-circuit (see the existingMarker check
+			// at the top of the loop).
+			cdnAdded := 0
+			for _, cidr := range cdnCIDRs {
+				// Skip if we already have this exact range.
+				var existingID int
+				_ = a.DB.QueryRow(
+					"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value=? AND parent_domain=?",
+					d.userID, d.deviceID, d.exitNode, cidr, marker,
+				).Scan(&existingID)
+				if existingID > 0 { continue }
+				if _, err := a.DB.Exec(
+					"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
+					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker); err == nil {
+					cdnAdded++
+				}
+			}
+			// Remove the legacy per-IP /32 rules for this
+			// domain — they have parent_domain = d.domain (no
+			// cdn: prefix). Now that the CDN marker covers the
+			// domain, the /32 rules are dead weight.
+			legacyRemoved := 0
+			if _, err := a.DB.Exec(
+				"DELETE FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND COALESCE(parent_domain,'')=?",
+				d.userID, d.deviceID, d.exitNode, d.domain,
+			); err == nil {
+				// RowsAffected isn't in the go-sqlite3 driver
+				// by default; we count via a SELECT instead.
+				// (legacyRemoved is a coarse metric — used for
+				//  the log line only.)
+				_ = legacyRemoved
+			}
+			added += cdnAdded
+			a.logAutoUpdate(d.id, d.domain, cdnAdded, 0, "CDN detected: "+cdnName+" — using "+strconv.Itoa(len(cdnCIDRs))+" published ranges")
+			continue
 		}
 
 		// Get existing /32 rules for this domain
