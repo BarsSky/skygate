@@ -337,4 +337,19 @@ echo "  Skygate:        http://localhost:${SKYGATE_PORT}/login"
 echo ""
 echo "Next: ./deploy/validate.sh"
 
+# v0.29.2: install the `skygate` host-side wrapper. Without it,
+# scripts that use `docker exec skygate ...` would break because
+# the container is now auto-named (skygate-skygate-1 etc.).
+# Idempotent — overwrites the existing copy.
+if [ -f "${SCRIPT_DIR}/skygate-cli.sh" ]; then
+    xchmod +x "${SCRIPT_DIR}/skygate-cli.sh" 2>/dev/null || true
+    if [ "${SKYGATE_OS}" != "windows" ]; then
+        cp "${SCRIPT_DIR}/skygate-cli.sh" /usr/local/bin/skygate
+        chmod +x /usr/local/bin/skygate
+        log "Installed /usr/local/bin/skygate wrapper (label-based container lookup)"
+    else
+        log "Skipped /usr/local/bin/skygate install (Windows OS)"
+    fi
+fi
+
 [ -x "${SCRIPT_DIR}/validate.sh" ] && { echo "Running validation..."; bash "${SCRIPT_DIR}/validate.sh"; }

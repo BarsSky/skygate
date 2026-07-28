@@ -2061,7 +2061,7 @@ curl -fsS -u admin:... 'https://gate.example.com/admin/users/6/subnet' \
   | grep -A2 'subnet-status'
 
 # 2. audit log
-docker exec skygate sqlite3 /data/skygate.db \
+skygate sqlite3 /data/skygate.db \
   "SELECT id, created_at, username, action, substr(detail,1,80)
    FROM audit_log WHERE action LIKE 'subnet%' ORDER BY id DESC LIMIT 5;"
 
@@ -2555,6 +2555,44 @@ speed; VM `make test` green = ship.
 
 Quick rule: before any `git push`, ssh to the VM, pull, and run
 `make test`. Only push if `FINAL_EXIT=0`.
+
+### The `skygate` host-side wrapper (v0.29.2+)
+
+The skygate container is auto-named by compose (e.g.
+`skygate-skygate-1`). For host-side commands that need to
+address the container (`docker exec ...`, `docker logs ...`,
+`docker stop ...`), use the `skygate` shell wrapper which
+does a label-based lookup:
+
+```bash
+# Install once after every docker-compose.yml change that
+# affects the skygate service:
+ssh admin@192.0.2.1 'sudo cp /home/admin/skygate/deploy/skygate-cli.sh /usr/local/bin/skygate && sudo chmod +x /usr/local/bin/skygate'
+
+# Then everywhere, instead of `docker exec skygate ...`:
+skygate sqlite3 /data/skygate.db ".tables"
+skygate tailscale status
+skygate ps
+```
+
+The wrapper takes any docker exec args. It looks up the
+container by `com.docker.compose.service=skygate` label, so
+it works regardless of the auto-generated name (and even
+across recreates — same label, new name, same `skygate`
+command). All existing scripts (`e2e_pilot.sh`,
+`deploy/subnet-router/allocate-existing-users.sh`,
+`docs/...`) keep using `docker exec skygate` (the literal
+token) because the wrapper accepts that and translates to
+`docker exec <real-id>`.
+
+To find the real ID yourself (e.g. for `docker logs --tail
+100` or `docker inspect`):
+
+```bash
+skygate --id                # prints just the container ID
+# or
+docker ps --filter "label=com.docker.compose.service=skygate"
+```
 
 ### Updating the VM (canonical procedure)
 

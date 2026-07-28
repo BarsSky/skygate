@@ -19,7 +19,17 @@ services:
   # skygate will use direct internet.
   skygate:
     build: .
-    container_name: skygate
+    # v0.29.2: no `container_name: skygate` — let compose auto-name
+    # the container (`skygate-skygate-1` etc.). The previous
+    # explicit name caused a race with `docker compose up
+    # --force-recreate` (the old container's name wasn't
+    # always released before compose tried to create the new
+    # one, leaving it in `Created` state). Scripts that need
+    # to address the container (docker exec / docker logs /
+    # docker stop) use the `skygate` wrapper from
+    # `deploy/skygate-cli.sh` (installed on the host as
+    # /usr/local/bin/skygate) which does a label-based
+    # lookup and never sees the auto-generated name.
     env_file:
       - .env
     environment:
@@ -128,7 +138,10 @@ services:
   # reverse_proxy directives can resolve them by name.
   caddy:
     image: caddy:2-alpine
-    container_name: caddy
+    # v0.29.2: no `container_name: caddy` (same race avoidance
+    # as the skygate service above; `caddy` is in the same
+    # compose file so a stale `caddy` would also block
+    # recreate).
     restart: unless-stopped
     # :80 is the HTTP-01 challenge port; :443 is the
     # HTTPS port. Operators behind Cloudflare should
