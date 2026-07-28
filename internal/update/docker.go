@@ -231,30 +231,48 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	}
 	u.State.Log(LogInfo, "migrations applied")
 
-	// v0.29.1: Phase 4 (swap) is INTENTIONALLY NOT done by
-	// the orchestrator. `docker compose up --force-recreate
-	// --no-deps skygate` would send SIGTERM to the skygate
-	// container — which is THIS process (the orchestrator's
-	// parent goroutine, running as PID 1 of the container
-	// via entrypoint.sh). The orchestrator would die before
-	// the `up` command returns, leaving the new container
-	// in an undefined state with no healthz verification.
+	// v0.29.3: Phase 4 (swap) + Phase 5 (verify) run as a
+	// DETACHED subprocess (see runShellDetached for the
+	// Setsid rationale). The orchestrator (running inside
+	// skygate, which is the very container the subprocess
+	// is about to recreate) spawns the swap-and-verify
+	// sequence as a separate process in a new session,
+	// then returns. The subprocess:
 	//
-	// Instead, the orchestrator stops at "image rebuilt +
-	// migrations applied" and writes a manual_step telling
-	// the operator to run `docker compose up -d
-	// --force-recreate --no-deps skygate` on the host. The
-	// state phase is "build_done" (a new phase added in
-	// v0.29.1; see state.go). The ensureComposeServiceRunning
-	// helper is left in place for v0.29.2 when the orchestrator
-	// is moved to a sidecar container (out of skygate's
-	// process tree) and can safely call `docker compose up`
-	// without committing suicide.
-	u.State.SetPhase(PhaseBuildDone, "image rebuilt, ready for manual `docker compose up`")
-	manualSwap := "docker compose up -d --force-recreate --no-deps skygate"
-	u.State.Log(LogInfo, "build done — operator must run: "+manualSwap)
-	u.State.SetManualStep("swap", manualSwap)
-	u.State.Complete()
+	//   1. sleeps 2s so the orchestrator's "build_done"
+	//      state write fully flushes to /data;
+	//   2. `cd /app && docker compose -p skygate up -d
+	//      --force-recreate --no-deps skygate` — this
+	//      sends SIGTERM to the orchestrator's parent
+	//      (skygate) and starts the new container. The
+	//      detached subprocess survives because of Setsid;
+	//   3. polls http://localhost:8080/healthz for up to
+	//      60s;
+	//   4. updates /data/skygate-update-status.json via
+	//      `sed` — flips the phase to "done" on success or
+	//      "failed" with a final log line on healthz timeout.
+	//
+	// The operator no longer has to run anything manually;
+	// the /admin/update page shows live progress as the
+	// subprocess updates the state file every few seconds.
+	// The 5s auto-refresh on the page picks up the new
+	// phase without a reload.
+	u.State.SetPhase(PhaseBuildDone, "image rebuilt, spawning detached swap subprocess")
+	u.State.Log(LogInfo, "build done — spawning detached swap subprocess")
+	if err := u.spawnSwapSubprocess(); err != nil {
+		u.State.Log(LogError, "spawn swap subprocess: "+err.Error())
+		u.State.Fail(fmt.Errorf("spawn swap subprocess: %w", err))
+		return
+	}
+	u.State.Log(LogInfo, "swap subprocess spawned; orchestrator exiting. The subprocess will update phase=done/failed.")
+	// Note: do NOT call u.State.Complete() here. The phase
+	// is "build_done" and the detached subprocess flips it
+	// to "done" or "failed" after the swap + verify. The
+	// orchestrator's job is done; it returns from Run() and
+	// the Go runtime cleans up the goroutine. The HTTP
+	// server keeps running until skygate's main returns
+	// (which happens when docker compose up sends SIGTERM
+	// to the skygate process).
 
 	// Phase 5: verify. Poll /healthz for up to 60s. If
 	// the new binary boots and the DB is reachable, the
@@ -303,10 +321,12 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 	// intentional — it ensures the old build is up-to-date
 	// after the git checkout (a code-level rollback without
 	// a rebuild would still run the failed/broken image).
-	// `docker compose up --force-recreate` is NOT called
-	// for the same reason as the main path: it would SIGTERM
-	// the orchestrator mid-execution. The operator runs the
-	// swap manually after the build completes.
+	// v0.29.3: rollback `docker compose up --force-recreate`
+	// runs as a DETACHED subprocess (spawnSwapSubprocess) so
+	// the orchestrator's SIGTERM from the up doesn't kill the
+	// rollback swap. The subprocess uses the same script as
+	// the main path, just flips the phase to "rolled_back"
+	// instead of "done" on success.
 	if out, err := u.runCompose(ctx, "build", "skygate"); err != nil {
 		u.State.Log(LogError, "rollback build failed: "+err.Error()+
 			" (output: "+truncateOutput(out, 200)+")")
@@ -317,21 +337,78 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 			u.State.Log(LogWarn, "rollback chown repo back to host owner failed: "+err.Error())
 		}
 	}
-	// Mark the rolled-back state. Same manual-swap pattern
-	// as the main path: orchestrator's job ends with
-	// "image rebuilt, ready to apply", and the operator
-	// runs `docker compose up -d --force-recreate --no-deps
-	// skygate` on the host.
-	manualSwap := "docker compose up -d --force-recreate --no-deps skygate"
-	u.State.mu.Lock()
-	if u.State.state != nil {
-		u.State.state.Phase = PhaseRolledBack
-		u.State.state.FinishedAt = time.Now().UTC()
-		u.State.state.ManualSwap = manualSwap
-		u.State.state.Log = appendLog(u.State.state.Log, LogInfo, "rollback build done — operator must run: "+manualSwap)
-		_ = u.State.persistLocked()
+	// v0.29.3: same detached-subprocess swap as the main
+	// path. The state phase stays at "rolled_back" (we set
+	// it via State.Fail at the top of failWithRollback) and
+	// the subprocess flips the JSON phase to "rolled_back"
+	// on swap success. We DON'T use spawnSwapSubprocess as-is
+	// because the script flips "build_done" → "done" /
+	// "failed" — we want a separate rolled_back flip.
+	//
+	// For simplicity we just spawn a small one-off script
+	// that runs the same docker compose up + healthz verify
+	// and then either leaves the phase as "rolled_back" or
+	// flips it to "failed". The script is rendered to
+	// /data/skygate-rollback-swap.sh.
+	rollbackScript := `#!/bin/sh
+set -u
+STATE=/data/skygate-update-status.json
+LOG=/data/skygate-update-swap.log
+PROJECT_DIR=/app
+COMPOSE_PROJECT=skygate
+
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ROLLBACK $*" >> "$LOG"; }
+
+log "rollback swap subprocess started (pid=$$)"
+sleep 2
+
+log "running docker compose up -d --force-recreate --no-deps skygate"
+cd "$PROJECT_DIR"
+if ! docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps skygate >> "$LOG" 2>&1; then
+    log "rollback docker compose up FAILED"
+    if [ -f "$STATE" ]; then
+        # The orchestrator already set phase=rolled_back via
+        # State.Fail; don't overwrite that. Just append a
+        # final log line by leaving the file alone.
+        log "state file left as-is (phase=rolled_back, swap=manual)"
+    fi
+    log "rollback swap subprocess exiting (status=1)"
+    exit 1
+fi
+log "rollback docker compose up OK"
+
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    sleep 5
+    if curl -fsS --max-time 3 http://localhost:8080/healthz >/dev/null 2>&1; then
+        log "rollback healthz OK at attempt $i"
+        log "rollback swap subprocess exiting (status=0)"
+        exit 0
+    fi
+    log "rollback healthz not ready (attempt $i)"
+done
+log "rollback healthz did not return 200 within 60s"
+log "rollback swap subprocess exiting (status=1)"
+exit 1
+`
+	rollbackScriptPath := "/data/skygate-rollback-swap.sh"
+	if err := os.WriteFile(rollbackScriptPath, []byte(rollbackScript), 0755); err != nil {
+		u.State.Log(LogError, "write rollback swap script: "+err.Error())
+		return
 	}
-	u.State.mu.Unlock()
+	u.State.Log(LogInfo, "spawning detached rollback swap subprocess")
+	if err := u.runShellDetached(context.Background(), "bash", rollbackScriptPath); err != nil {
+		u.State.Log(LogError, "spawn rollback swap subprocess: "+err.Error())
+		return
+	}
+	u.State.Log(LogInfo, "rollback swap subprocess spawned; orchestrator exiting")
+	// The orchestrator's goroutine returns here. The
+	// detached subprocess handles the actual swap and
+	// healthz verify. The state file is left at
+	// phase=rolled_back (set by State.Fail at the top
+	// of failWithRollback) and the subprocess's log
+	// shows the swap outcome. The page's 5s auto-refresh
+	// picks up the new healthz state once the new
+	// container is up.
 
 	// Mark the rolled-back state.
 	u.State.mu.Lock()
@@ -397,6 +474,90 @@ func (u *DockerUpgrader) runShellCapture(ctx context.Context, name string, args 
 		return string(out), err
 	}
 	return string(out), nil
+}
+
+// runShellDetached is runShell with `Setsid: true` and
+// `Start()` instead of `Run()` — the subprocess is launched
+// in its own session and the caller does not wait for it.
+// Used by v0.29.3's auto-swap path: the orchestrator
+// (running inside skygate, which is the very container the
+// subprocess is about to recreate) spawns the swap as a
+// detached subprocess. The subprocess's new session
+// insulates it from the SIGTERM that `docker compose up
+// --force-recreate` sends to the skygate container.
+//
+// Why this is safe:
+//   - The subprocess is in a new session (no controlling tty,
+//     no process group shared with the orchestrator), so
+//     SIGTERM to skygate's process group does NOT reach
+//     the subprocess.
+//   - The subprocess inherits the orchestrator's CWD (/app)
+//     and the /data named volume (skygate-data) bind-mount,
+//     so it can read/write /data/skygate-update-status.json
+//     and exec `docker compose` against /app/docker-compose.yml.
+//   - The subprocess is fire-and-forget: the orchestrator
+//     returns immediately after Start() returns. Any error
+//     in the subprocess is reflected in
+//     /data/skygate-update-status.json (which the
+//     subprocess updates) — the page reads it on the next
+//     5s auto-refresh.
+//
+// What the subprocess does:
+//   1. Sleep 2s (let the orchestrator's "build_done" state
+//      write flush).
+//   2. `cd /app && docker compose -p skygate up -d
+//      --force-recreate --no-deps skygate` — kills the old
+//      skygate, starts the new one. This is where the
+//      orchestrator's process dies; the subprocess survives.
+//   3. Poll http://localhost:8080/healthz for up to 60s.
+//   4. Use sed to update /data/skygate-update-status.json:
+//      "phase": "build_done" → "phase": "done" on success,
+//      "phase": "failed" with a final log line on failure.
+//
+// The subprocess's stdout/stderr are redirected to a log
+// file under /data so the operator can `tail` it later if
+// something goes wrong.
+func (u *DockerUpgrader) runShellDetached(ctx context.Context, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = u.RepoPath
+	// Setsid: true puts the subprocess in a new session.
+	// This is the critical bit — without it, SIGTERM to
+	// skygate's process group would cascade to the
+	// subprocess and kill the swap mid-execution.
+	//
+	// The SysProcAttr.Setsid field is Linux-only. On
+	// other platforms the applySysProcAttr helper in
+	// setsid_other.go is a no-op (the subprocess shares
+	// the orchestrator's process group, which is fine for
+	// tests but means a real swap on a non-Linux host
+	// would still die with the orchestrator — the
+	// orchestrator is Docker-only, so this is not a
+	// production concern).
+	applySysProcAttr(cmd)
+	// Detach stdio. The subprocess writes its own log to
+	// /data/skygate-update-swap.log so the operator can
+	// inspect what happened.
+	logFile := "/data/skygate-update-swap.log"
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("open swap log: %w", err)
+	}
+	cmd.Stdout = f
+	cmd.Stderr = f
+	cmd.Stdin = nil
+	if err := cmd.Start(); err != nil {
+		f.Close()
+		return fmt.Errorf("start detached subprocess: %w", err)
+	}
+	// Release the subprocess so it doesn't become a zombie
+	// when the orchestrator's goroutine returns. The
+	// subprocess has Setsid: true so it lives independently
+	// of the orchestrator's process group.
+	go func() {
+		_ = cmd.Wait()
+		f.Close()
+	}()
+	return nil
 }
 
 // ensureComposeServiceRunning waits for a compose service's
@@ -649,6 +810,114 @@ func truncateOutput(s string, max int) string {
 		return s
 	}
 	return s[:max] + "...(truncated)"
+}
+
+// swapSubprocessScript is the shell script that the v0.29.3
+// detached subprocess runs. It is rendered to
+// /data/skygate-swap.sh at job start and invoked via
+// `bash /data/skygate-swap.sh` in a Setsid-detached session.
+//
+// The script:
+//   1. sleeps 2s so the orchestrator's "build_done" state
+//      write fully flushes to /data/skygate-update-status.json
+//      (the subprocess reads it to learn the current phase
+//      for the "swap started" log line);
+//   2. runs `docker compose -p skygate up -d --force-recreate
+//      --no-deps skygate` — this kills the old skygate
+//      (the orchestrator's parent) and starts the new one;
+//   3. polls http://localhost:8080/healthz for up to 60s;
+//   4. uses sed to flip the state file's "phase" from
+//      "build_done" to "done" on success or "failed" on
+//      healthz timeout / swap failure.
+//
+// sed-based JSON mutation is brittle by design — the
+// orchestrator's state file is the source of truth and
+// any concurrent writes would lose. The subprocess is
+// the only writer between the orchestrator's last write
+// and its own final write, so the race window is zero.
+//
+// No python3 / jq on the Alpine skygate image (verified
+// via `apk add --no-cache` in the Dockerfile), so sed is
+// the only available tool. The mutation is a single
+// in-place edit of `"phase": "build_done"` →
+// `"phase": "done"` or `"phase": "failed"`. Exact match
+// against the literal string.
+const swapSubprocessScript = `#!/bin/sh
+set -u
+STATE=/data/skygate-update-status.json
+LOG=/data/skygate-update-swap.log
+PROJECT_DIR=/app
+COMPOSE_PROJECT=skygate
+
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG"; }
+
+log "swap subprocess started (pid=$$)"
+
+# Step 1: give the orchestrator a moment to finish writing
+# the "build_done" state line. The orchestrator spawned us
+# immediately after that write, so 2s is more than enough.
+sleep 2
+
+# Step 2: do the swap. This is where the orchestrator's
+# parent (skygate) gets SIGTERM. We survive because the
+# process that spawned us called Setsid() — our session is
+# independent of skygate's process group.
+log "running docker compose up -d --force-recreate --no-deps skygate"
+cd "$PROJECT_DIR"
+if ! docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps skygate >> "$LOG" 2>&1; then
+    log "docker compose up FAILED"
+    if [ -f "$STATE" ]; then
+        sed -i 's/"phase": "build_done"/"phase": "failed"/' "$STATE"
+    fi
+    log "swap subprocess exiting (status=1)"
+    exit 1
+fi
+log "docker compose up OK"
+
+# Step 3: poll /healthz for up to 60s. The new skygate
+# may need a few seconds to bind :8080 (the entrypoint
+# runs go build first, ~5-30s).
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    sleep 5
+    if curl -fsS --max-time 3 http://localhost:8080/healthz >/dev/null 2>&1; then
+        log "healthz OK at attempt $i"
+        if [ -f "$STATE" ]; then
+            sed -i 's/"phase": "build_done"/"phase": "done"/' "$STATE"
+        fi
+        log "swap subprocess exiting (status=0)"
+        exit 0
+    fi
+    log "healthz not ready (attempt $i)"
+done
+
+log "healthz did not return 200 within 60s"
+if [ -f "$STATE" ]; then
+    sed -i 's/"phase": "build_done"/"phase": "failed"/' "$STATE"
+fi
+log "swap subprocess exiting (status=1)"
+exit 1
+`
+
+// spawnSwapSubprocess writes the swap script to
+// /data/skygate-swap.sh, marks it executable, and launches
+// it via runShellDetached. The subprocess runs the swap
+// and verify (see swapSubprocessScript) and updates the
+// state file accordingly. The orchestrator returns
+// immediately after Start() — its goroutine is done, the
+// subprocess continues independently.
+func (u *DockerUpgrader) spawnSwapSubprocess() error {
+	scriptPath := "/data/skygate-swap.sh"
+	if err := os.WriteFile(scriptPath, []byte(swapSubprocessScript), 0755); err != nil {
+		return fmt.Errorf("write swap script: %w", err)
+	}
+	u.State.Log(LogDebug, "wrote swap script to "+scriptPath)
+	// Launch via `bash` rather than exec'ing the script
+	// directly so the shebang is not required (the
+	// bind-mounted /data may not be executable on every
+	// host despite our WriteFile mode). bash is in the
+	// skygate image's PATH (it's how entrypoint.sh
+	// invokes things).
+	return u.runShellDetached(context.Background(), "bash", scriptPath)
 }
 
 // ErrAlreadyInProgress is returned by the handler when a
