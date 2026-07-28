@@ -385,7 +385,7 @@ docker run --rm \
   --net=host \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$SKYGATE_HOST_REPO_PATH:/host_repo:ro" \
-  -v /data:/data \
+  -v skygate-data:/data \
   -e SKYGATE_HOST_REPO_PATH="$SKYGATE_HOST_REPO_PATH" \
   --name skygate-rollback-helper \
   alpine:3.20 \
@@ -1006,6 +1006,15 @@ chmod +x /data/skygate-swap-helper.sh
 # for the swap helper script + state file. Uses
 # --rm so it self-cleans. Runs in background (we exit
 # immediately, helper keeps going).
+#
+# v0.29.3.1.1: mount the *named volume* 'skygate-data'
+# (NOT the host path /data — the host /data is empty,
+# the real volume mountpoint is
+# /var/lib/docker/volumes/skygate-data/_data). The
+# OLD skygate container mounts the same named volume
+# to /data, so the helper sees the same files the
+# swap script just wrote (helper script + state file
+# + log).
 SKYGATE_HOST_REPO_PATH="${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}"
 log "spawning helper container"
 docker run --rm \
@@ -1013,7 +1022,7 @@ docker run --rm \
   --net=host \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$SKYGATE_HOST_REPO_PATH:/host_repo:ro" \
-  -v /data:/data \
+  -v skygate-data:/data \
   -e SKYGATE_HOST_REPO_PATH="$SKYGATE_HOST_REPO_PATH" \
   --name skygate-swap-helper \
   alpine:3.20 \
