@@ -346,12 +346,12 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 	// "failed" — we want a separate rolled_back flip.
 	//
 	// For simplicity we just spawn a small one-off script
-	// that runs the same docker compose up + healthz verify
-	// and then either leaves the phase as "rolled_back" or
-	// flips it to "failed". The script is rendered to
-	// /data/skygate-rollback-swap.sh.
+	// that runs the same docker compose up. The state
+	// phase stays at "rolled_back" (set by State.Fail at
+	// the top of failWithRollback); the new orchestrator's
+	// /admin/update renderUpdatePage is the final arbiter.
+	// The script is rendered to /data/skygate-rollback-swap.sh.
 	rollbackScript := `#!/bin/sh
-set -u
 STATE=/data/skygate-update-status.json
 LOG=/data/skygate-update-swap.log
 PROJECT_DIR=/app
@@ -361,34 +361,20 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ROLLBACK $*" >> "$LOG"; }
 
 log "rollback swap subprocess started (pid=$$)"
 sleep 2
-
 log "running docker compose up -d --force-recreate --no-deps skygate"
 cd "$PROJECT_DIR"
-if ! docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps skygate >> "$LOG" 2>&1; then
-    log "rollback docker compose up FAILED"
-    if [ -f "$STATE" ]; then
-        # The orchestrator already set phase=rolled_back via
-        # State.Fail; don't overwrite that. Just append a
-        # final log line by leaving the file alone.
-        log "state file left as-is (phase=rolled_back, swap=manual)"
-    fi
-    log "rollback swap subprocess exiting (status=1)"
-    exit 1
+docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps skygate >> "$LOG" 2>&1
+RC=$?
+if [ $RC -ne 0 ]; then
+    log "rollback docker compose up FAILED (rc=$RC)"
+    log "rollback swap subprocess exiting"
+    exit $RC
 fi
-log "rollback docker compose up OK"
-
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    sleep 5
-    if curl -fsS --max-time 3 http://localhost:8080/healthz >/dev/null 2>&1; then
-        log "rollback healthz OK at attempt $i"
-        log "rollback swap subprocess exiting (status=0)"
-        exit 0
-    fi
-    log "rollback healthz not ready (attempt $i)"
-done
-log "rollback healthz did not return 200 within 60s"
-log "rollback swap subprocess exiting (status=1)"
-exit 1
+log "rollback docker compose up OK (rc=0) — exiting immediately"
+# The old container is being removed RIGHT NOW. The
+# subprocess is in its PID namespace and will be killed
+# in milliseconds. No time for healthz polling here.
+exit 0
 `
 	rollbackScriptPath := "/data/skygate-rollback-swap.sh"
 	if err := os.WriteFile(rollbackScriptPath, []byte(rollbackScript), 0755); err != nil {
@@ -815,35 +801,36 @@ func truncateOutput(s string, max int) string {
 // swapSubprocessScript is the shell script that the v0.29.3
 // detached subprocess runs. It is rendered to
 // /data/skygate-swap.sh at job start and invoked via
-// `bash /data/skygate-swap.sh` in a Setsid-detached session.
+// `/bin/sh /data/skygate-swap.sh` in a Setsid-detached
+// session.
 //
-// The script:
+// The script does the MINIMUM necessary to do the swap:
 //   1. sleeps 2s so the orchestrator's "build_done" state
 //      write fully flushes to /data/skygate-update-status.json
-//      (the subprocess reads it to learn the current phase
-//      for the "swap started" log line);
 //   2. runs `docker compose -p skygate up -d --force-recreate
 //      --no-deps skygate` — this kills the old skygate
-//      (the orchestrator's parent) and starts the new one;
-//   3. polls http://localhost:8080/healthz for up to 60s;
-//   4. uses sed to flip the state file's "phase" from
-//      "build_done" to "done" on success or "failed" on
-//      healthz timeout / swap failure.
+//      (the orchestrator's parent) and starts the new one.
 //
-// sed-based JSON mutation is brittle by design — the
-// orchestrator's state file is the source of truth and
-// any concurrent writes would lose. The subprocess is
-// the only writer between the orchestrator's last write
-// and its own final write, so the race window is zero.
+// The script does NOT do healthz polling or state-file
+// updates. Reason: the subprocess is INSIDE the old
+// skygate container's PID namespace, so when compose
+// removes the old container (immediately after the new
+// one starts), the subprocess is killed. There's no
+// time to do healthz polling or write the state file
+// from inside the subprocess.
 //
-// No python3 / jq on the Alpine skygate image (verified
-// via `apk add --no-cache` in the Dockerfile), so sed is
-// the only available tool. The mutation is a single
-// in-place edit of `"phase": "build_done"` →
-// `"phase": "done"` or `"phase": "failed"`. Exact match
-// against the literal string.
+// Instead, the state file is left at "build_done" and
+// the new orchestrator (in the new container) takes over:
+// GetAdminUpdate's renderUpdatePage detects phase=build_done,
+// polls /healthz on the new container, and if 200, updates
+// the state file to phase=done. The 5s auto-refresh on the
+// /admin/update page shows the transition to the operator
+// without any action required.
+//
+// The script does try to log its progress to
+// /data/skygate-update-swap.log so the operator can debug
+// a stuck swap post-hoc.
 const swapSubprocessScript = `#!/bin/sh
-set -u
 STATE=/data/skygate-update-status.json
 LOG=/data/skygate-update-swap.log
 PROJECT_DIR=/app
@@ -852,50 +839,29 @@ COMPOSE_PROJECT=skygate
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG"; }
 
 log "swap subprocess started (pid=$$)"
-
-# Step 1: give the orchestrator a moment to finish writing
-# the "build_done" state line. The orchestrator spawned us
-# immediately after that write, so 2s is more than enough.
 sleep 2
-
-# Step 2: do the swap. This is where the orchestrator's
-# parent (skygate) gets SIGTERM. We survive because the
-# process that spawned us called Setsid() — our session is
-# independent of skygate's process group.
 log "running docker compose up -d --force-recreate --no-deps skygate"
 cd "$PROJECT_DIR"
-if ! docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps skygate >> "$LOG" 2>&1; then
-    log "docker compose up FAILED"
-    if [ -f "$STATE" ]; then
-        sed -i 's/"phase": "build_done"/"phase": "failed"/' "$STATE"
-    fi
-    log "swap subprocess exiting (status=1)"
-    exit 1
+docker compose -p "$COMPOSE_PROJECT" up -d --force-recreate --no-deps skygate >> "$LOG" 2>&1
+RC=$?
+if [ $RC -ne 0 ]; then
+    log "docker compose up FAILED (rc=$RC)"
+    # Note: the orchestrator has already set phase=build_done.
+    # We do NOT overwrite it here — the swap subprocess
+    # dying is not the same as the swap failing (compose
+    # can exit 0 even if the new container is in Created).
+    # The new orchestrator's /admin/update renderUpdatePage
+    # is the final arbiter: it will poll /healthz and either
+    # promote to phase=done or leave at build_done (the
+    # operator can dismiss or retry).
+    log "swap subprocess exiting (rc=$RC, killed by old container removal most likely)"
+    exit $RC
 fi
-log "docker compose up OK"
-
-# Step 3: poll /healthz for up to 60s. The new skygate
-# may need a few seconds to bind :8080 (the entrypoint
-# runs go build first, ~5-30s).
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    sleep 5
-    if curl -fsS --max-time 3 http://localhost:8080/healthz >/dev/null 2>&1; then
-        log "healthz OK at attempt $i"
-        if [ -f "$STATE" ]; then
-            sed -i 's/"phase": "build_done"/"phase": "done"/' "$STATE"
-        fi
-        log "swap subprocess exiting (status=0)"
-        exit 0
-    fi
-    log "healthz not ready (attempt $i)"
-done
-
-log "healthz did not return 200 within 60s"
-if [ -f "$STATE" ]; then
-    sed -i 's/"phase": "build_done"/"phase": "failed"/' "$STATE"
-fi
-log "swap subprocess exiting (status=1)"
-exit 1
+log "docker compose up OK (rc=0) — exiting immediately"
+# The old container is being removed by compose RIGHT NOW.
+# This subprocess is in its PID namespace and will be
+# killed in milliseconds. No time for healthz polling here.
+exit 0
 `
 
 // spawnSwapSubprocess writes the swap script to

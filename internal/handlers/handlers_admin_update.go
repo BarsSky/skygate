@@ -19,8 +19,10 @@ package handlers
 //                  Phase 2: auto-update with state machine + rollback.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -64,6 +66,23 @@ func (a *App) PostAdminUpdateCheck(w http.ResponseWriter, r *http.Request) {
 func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.Claims, flash string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
+
+	// v0.29.3: the swap subprocess is killed (along with
+	// the old skygate container) before it can do healthz
+	// polling or update the state file. The new
+	// orchestrator (us, in the new container) takes over
+	// here: if the state file shows phase=build_done
+	// (left by the old orchestrator's spawn), we poll
+	// /healthz and promote to phase=done on success.
+	// The 5s auto-refresh on /admin/update will pick up
+	// the new phase without a manual reload.
+	store := GetUpdateStateStore()
+	if store != nil {
+		st := store.Get()
+		if st != nil && st.Phase == update.PhaseBuildDone {
+			a.confirmPendingSwap(ctx, st, store)
+		}
+	}
 
 	// Build the checker. Defaults are pinned to the operator's
 	// repo (skygate-operator/skygate). An SKYGATE_GITHUB_REPO env var
@@ -446,4 +465,78 @@ func InitUpdateStateStore(path string) *update.StateStore {
 // renderUpdatePage) to read the current state for the UI.
 func GetUpdateStateStore() *update.StateStore {
 	return updateStateStore
+}
+
+// confirmPendingSwap is the v0.29.3 hook called by
+// renderUpdatePage on the NEW orchestrator's first page
+// load after a swap. The state file is left at
+// phase=build_done by the old orchestrator's spawn;
+// the swap subprocess (in the old container's PID
+// namespace) is killed when the old container is removed
+// and has no time to do healthz polling or update the
+// state file. So the new orchestrator takes over here:
+//
+//  1. Polls /healthz (the new container is bound to
+//     :8080) for up to 30s, with a 2s per-request
+//     timeout. The new skygate's entrypoint runs `go
+//     build` before serving, so this can take 5-30s on
+//     first boot.
+//  2. On 200 response: store.Complete() — phase=build_done
+//     → phase=done.
+//  3. On timeout: leave at phase=build_done. The next
+//     page load (5s auto-refresh) will retry.
+//
+// The poll is bounded — 30s is the worst case for the
+// entrypoint's `go build` (typically <10s on a clean cache
+// with a recent commit). 60s would be too long for a page
+// load; the page is already inside the request's 8s
+// timeout, so we use a separate background context.
+func (a *App) confirmPendingSwap(parentCtx context.Context, st *update.State, store *update.StateStore) {
+	if st == nil || store == nil {
+		return
+	}
+	bgCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	_ = parentCtx // intentionally ignored — the poll runs in the background
+
+	healthURL := "http://localhost:8080/healthz"
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(30 * time.Second)
+	attempt := 0
+	for time.Now().Before(deadline) {
+		attempt++
+		select {
+		case <-bgCtx.Done():
+			return
+		default:
+		}
+		req, _ := http.NewRequestWithContext(bgCtx, "GET", healthURL, nil)
+		resp, err := client.Do(req)
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == 200 && bytes.Contains(body, []byte(`"status":"ok"`)) {
+				// Success — promote phase=build_done → phase=done.
+				// Use Complete() which sets phase=done and
+				// finished_at. We do NOT use Fail() — the
+				// swap was successful, we just couldn't
+				// confirm it in time from the old
+				// orchestrator.
+				store.Log(update.LogInfo, fmt.Sprintf("new orchestrator confirmed swap via /healthz (attempt %d)", attempt))
+				store.Complete()
+				return
+			}
+		}
+		// Wait before retry. The new skygate's entrypoint
+		// may take 5-30s to start, so 2s sleep is a
+		// good middle ground.
+		select {
+		case <-bgCtx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+	// Timeout — leave at build_done. Operator can
+	// dismiss the page or refresh later.
+	store.Log(update.LogWarn, fmt.Sprintf("confirmPendingSwap timed out after %d attempts; phase stays at build_done (operator may need to dismiss)", attempt))
 }
