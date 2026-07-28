@@ -396,7 +396,7 @@ exit 1
 		return
 	}
 	u.State.Log(LogInfo, "spawning detached rollback swap subprocess")
-	if err := u.runShellDetached(context.Background(), "bash", rollbackScriptPath); err != nil {
+	if err := u.runShellDetached(context.Background(), "/bin/sh", rollbackScriptPath); err != nil {
 		u.State.Log(LogError, "spawn rollback swap subprocess: "+err.Error())
 		return
 	}
@@ -911,13 +911,15 @@ func (u *DockerUpgrader) spawnSwapSubprocess() error {
 		return fmt.Errorf("write swap script: %w", err)
 	}
 	u.State.Log(LogDebug, "wrote swap script to "+scriptPath)
-	// Launch via `bash` rather than exec'ing the script
-	// directly so the shebang is not required (the
-	// bind-mounted /data may not be executable on every
-	// host despite our WriteFile mode). bash is in the
-	// skygate image's PATH (it's how entrypoint.sh
-	// invokes things).
-	return u.runShellDetached(context.Background(), "bash", scriptPath)
+	// Launch via `/bin/sh` (Alpine's default ash) rather
+	// than exec'ing the script directly so the shebang
+	// is not required (the bind-mounted /data may not
+	// be executable on every host despite our WriteFile
+	// mode). /bin/sh is the standard shell on every Unix
+	// — it's in every skygate image variant (alpine,
+	// debian-slim, distroless) and is the same shell the
+	// skygate entrypoint.sh uses.
+	return u.runShellDetached(context.Background(), "/bin/sh", scriptPath)
 }
 
 // ErrAlreadyInProgress is returned by the handler when a
