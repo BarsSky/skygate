@@ -64,6 +64,70 @@ lost; everything is still in `git log` + the GitHub UI.
 | `RELEASE-NOTES-v0.28.5.md` | [`v0.28.5`](https://github.com/skygate-operator/skygate/releases/tag/v0.28.5) | via opt-in (Android-friendly) + migration v0.47 idempotency + tagged-device exit-node fix + entrypoint always clears stale Tailscale exit-node |
 | `RELEASE-NOTES-v0.28.6.md` | [`v0.28.6`](https://github.com/skygate-operator/skygate/releases/tag/v0.28.6) | guarantee catalog (B1-B10 build + R1-R25 runtime) — `make verify-pre` / `make verify-post` are the contract |
 
+## v0.29.1 — Orchestrator stops at "image rebuilt", manual swap required
+
+The v0.29.0 auto-updater's first end-to-end test on the
+operator's VM surfaced a deeper architectural issue than the
+five post-Phase-2 bugfixes had addressed: `docker compose up
+--force-recreate --no-deps skygate` sends SIGTERM to the
+skygate container — which IS the orchestrator's parent
+process (skygate is PID 1 of the container, the orchestrator
+is a goroutine inside skygate's HTTP server). The orchestrator
+died mid-`up` before the swap completed, leaving the new
+container in an undefined state with no healthz verification.
+The previously-suspected "Created→Started race" was a
+misdiagnosis of this: the race fix (`ensureComposeServiceRunning`)
+was the right defensive measure but never got to run because
+the orchestrator was already dead.
+
+**Fix**: the orchestrator no longer calls `docker compose up`.
+It stops at "image rebuilt + migrations applied" and writes a
+one-line `manual_swap` ("docker compose up -d --force-recreate
+--no-deps skygate") for the operator to run on the host. The
+swap is the only step that has to be on the host — the rest
+of the upgrade (backup tag, fetch, checkout, build, rollback
+on failure) runs entirely inside the orchestrator.
+
+**Changes**:
+- New `PhaseBuildDone` state phase (replaces `swap` + `verify`
+  in the success path). `failed` / `rolled_back` are still
+  used for error paths.
+- New `ManualSwap` field in the state JSON for the single
+  command. `SetManualStep(kind, cmd)` helper to add it.
+- `ensureComposeServiceRunning` is left in place (untested
+  but compile-checked) for v0.29.2 when the orchestrator
+  moves to a sidecar container.
+- Pre-push hook now uses `MSYSTEM` (set by Git for Windows)
+  as the primary Git Bash detection signal, ahead of the
+  directory-probe fallback that was unreliable on hybrid
+  WSL2+Git Bash systems. **No more `--no-verify` workaround**
+  for normal pushes from Git Bash.
+- New B13 catalog check: pre-push hook contains `MSYSTEM`.
+
+**Live verification (operator's VM, 2026-07-28)**:
+- `go test ./...` 19/19 PASS, `make verify-pre` 13/13 PASS
+- `make verify-post` 26/26 PASS
+- End-to-end auto-update test: applied `v0.29.0` (real
+  existing tag, but with local changes so `git fetch`
+  fails — exercises the rollback path) → backup tag
+  created → fetch failed as expected → automatic rollback
+  `git checkout` OK → chown OK → rollback `docker compose
+  build` OK → state at `rolled_back` with `manual_swap`
+  populated. Orchestrator survived all the way to the end.
+  Container still on the previous build (29b4564).
+
+**Caveats (still open)**:
+- The orchestrator can do everything up to `docker compose
+  build`. The final `docker compose up` must be done by the
+  operator on the host. v0.29.2 follow-up: move the
+  orchestrator to a sidecar container that's outside
+  skygate's process tree, so the SIGTERM from `up` doesn't
+  kill the orchestrator.
+- The same `container_name: skygate` race still affects
+  host-side `docker compose up` (rare but observed once in
+  the v0.29.1 verification). Manual `docker start <id>`
+  recovers.
+
 ## v0.29.0 — Self-update orchestrator (in-app upgrade + auto-rollback)
 
 The `/admin/update` page (v0.29.0 Phase 1) now ships with a working
