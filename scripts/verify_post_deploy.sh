@@ -30,10 +30,11 @@
 #   R23 TLS cert is Let's Encrypt, not expiring within 30d
 #   R24 openresty upstream reachable
 #   R25 skygate-vm can reach 8.8.8.8 (direct, no exit-node)
+#   R26 no per-user device carries an exit-node tag (v0.30.1 base fix)
 #
 # Usage:
-#   bash scripts/verify_post_deploy.sh                       # all 25 checks
-#   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 (core)
+#   bash scripts/verify_post_deploy.sh                       # all 26 checks
+#   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 + R26 (core)
 #   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
 #   SSH_HOST=skyadmin@192.168.13.69 bash scripts/verify_post_deploy.sh
 #
@@ -44,6 +45,7 @@
 # key to the operator's machine).
 #
 # 2026-07-25: v0.28.5 — initial catalog.
+# 2026-07-28: v0.30.1 — added R26.
 
 set -u
 # No `set -e` — count failures, don't abort.
@@ -626,6 +628,70 @@ if [ "$SKIP_NETWORK" = 0 ]; then
     RESULTS_PASS=$((RESULTS_PASS+1))
   else
     echo "  ${RED}FAIL${NC}  R25 skygate-vm cannot reach 8.8.8.8 (loss=$PING_LOSS)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 8: per-user device integrity (R26)
+# ---------------------------------------------------------------------------
+# 2026-07-28: v0.30.1. Catches the "base" bug shape on the live
+# system: a per-user device (tag:dev-<user>-<device>) must NOT
+# also carry an exit-node-like tag. If it does, Tailscale
+# auto-failover may pick the user device as the exit-node
+# (0ms self-loop = lowest metric) and the user's internet
+# goes to /dev/null. The v0.30.1 build-time guard (B17 +
+# PostAdminNodeTag) blocks the skygate UI path; this R26 check
+# blocks the direct headscale CLI path (which the original
+# bug exploited).
+#
+# Failure modes this catches:
+#   - tag:exit-node AND tag:dev-* on the same node (the base bug)
+#   - tag:exit-emilia / sharlotta / karolina AND tag:dev-* on
+#     the same node (a per-user device masquerading as a
+#     specific relay)
+#   - "no one fixed it after direct headscale CLI" — operator
+#     did the same manual bypass again
+#
+# Allowed: tag:exit-node alone, tag:exit-emilia alone, etc.
+# (a real relay). Allowed: tag:dev-* alone (a per-user device).
+# Forbidden: tag:exit-* AND tag:dev-* on the same node.
+if [ "$QUICK" = 0 ]; then
+  echo
+  echo "[R26] no per-user device carries an exit-node tag"
+  # headscale nodes list outputs a table; we filter rows that
+  # have BOTH a tag:dev-* tag AND a tag:exit-* tag. Format:
+  #   ID | Hostname | Name | MachineKey | NodeKey | User | Tags | IP | Ephemeral | Last seen | ...
+  # A node's tags are spread across multiple lines (one tag per
+  # line continuation in the "Tags" column). The pattern we
+  # match is: a line with "tag:dev-..." and a line with
+  # "tag:exit-..." for the same ID. We use awk to walk the
+  # table and accumulate tags per node.
+  CONFLICTS=$(ssh_vm "docker exec $HEADSCALE_CONTAINER headscale nodes list 2>&1" 2>&1 \
+    | awk -F'|' '
+        /^[ ]*[0-9]+[ ]+\|/ {
+          if (current_id != "" && has_dev && has_exit) {
+            print current_id, current_name
+          }
+          current_id = ""; current_name = ""; has_dev = 0; has_exit = 0
+          split($0, parts, "|")
+          current_id = parts[1]; gsub(/^[ \t]+|[ \t]+$/, "", current_id)
+          current_name = parts[2]; gsub(/^[ \t]+|[ \t]+$/, "", current_name)
+        }
+        /tag:dev-/  { has_dev  = 1 }
+        /tag:exit/  { has_exit = 1 }
+        END {
+          if (current_id != "" && has_dev && has_exit) {
+            print current_id, current_name
+          }
+        }
+      ')
+  if [ -z "$CONFLICTS" ]; then
+    echo "  ${GRN}PASS${NC}  R26 no node has both tag:dev-* and tag:exit-*"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R26 user-device-with-exit-tag found:"
+    echo "$CONFLICTS" | sed 's/^/        /'
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 fi

@@ -281,6 +281,37 @@ run_check "B16" "exit-rules CDN detection regression tests (Cloudflare/Fastly/Go
     '\''$GO'\'' test ./internal/handlers/ -run '\''TestDetectCDN|TestCDNParentMarker|TestCDNRange|TestDomainAutoUpdater_CloudflareDomainUsesRange|TestDomainAutoUpdater_NonCDNStaysPerIP|TestCDNParentMarkerGuess|TestDomainAutoUpdater_ShortCircuitIsPerDomain'\'' -count=1 2>&1
   '"
 
+# --- B17: per-user device can't be tagged as exit-node (v0.30.1) ---
+# 2026-07-28: the "base" bug. michail's Windows box "base"
+# (headscale id=7, tag:dev-michail-base) was found carrying
+# tag:exit-node in headscale — set via direct headscale CLI,
+# no skygate audit row. Tailscale auto-failover then picked
+# "Base" as exit-node (0ms self-loop = lowest metric), and
+# all of base's internet traffic went to /dev/null. User
+# reported "пропал доступ в сеть" + "exit node не выбирается
+# корректно".
+#
+# v0.30.1 fix: PostAdminNodeTag refuses to add an exit-node-like
+# tag (tag:exit-node, tag:exit-emilia, tag:exit-sharlotta,
+# tag:exit-karolina, anything matching tag:exit-*) on a node
+# that ALREADY has a per-user device tag (tag:dev-*). The
+# check verifies:
+#   (a) the test file exists + has the key regression tests
+#       (guards against accidental removal at git push time)
+#   (b) the guard function is wired into PostAdminNodeTag
+#       (a static-grep on the handler)
+#   (c) the test suite still passes
+run_check "B17" "per-user device can't be tagged as exit-node (v0.30.1 base fix)" \
+  "bash -c '
+    test -f internal/handlers/handlers_admin_nodes_test.go &&
+    grep -q TestNodeTagRefused_ExitNodeOnUserDevice internal/handlers/handlers_admin_nodes_test.go &&
+    grep -q TestNodeTagRefused_PerRelayExitTag internal/handlers/handlers_admin_nodes_test.go &&
+    grep -q TestNodeTagAllowed_ExitNodeOnRelay internal/handlers/handlers_admin_nodes_test.go &&
+    grep -q TestNodeTagAllowed_PrivateOnUserDevice internal/handlers/handlers_admin_nodes_test.go &&
+    grep -q nodeTagRefusedForUserDevice internal/handlers/handlers_admin_nodes.go &&
+    '\''$GO'\'' test ./internal/handlers/ -run '\''TestNodeTagRefused|TestNodeTagAllowed'\'' -count=1 2>&1
+  '"
+
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
