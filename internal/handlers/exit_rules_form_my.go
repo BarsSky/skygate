@@ -495,8 +495,23 @@ func (a *App) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	dupCount := 0
 	dupIDs := []int{}
 	insertedCount := 0
+	// 2026-07-28: when DNS resolved successfully, each /32 rule
+	// should remember its origin domain as parentDomain, so the
+	// autoupdater can update the row in place on the next tick
+	// instead of churning through create/delete cycles when
+	// Cloudflare anycast rotates IPs.
+	//
+	// Before this fix, the form's /32 rows had parent_domain=''
+	// (because insertRuleUnique only set it when targetType was
+	// "domain"; after DNS resolve typeToInsert="subnet" so the
+	// implicit assignment didn't fire). The autoupdater then
+	// couldn't see the form's rows and created duplicates on top.
+	subnetParent := ""
+	if targetType == "domain" && typeToInsert == "subnet" {
+		subnetParent = targetValue
+	}
 	for _, ip := range ipsToInsert {
-		ok, existingID := a.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP)
+		ok, existingID := a.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
 		if !ok {
 			http.Error(w, "db error", 500)
 			return

@@ -34,8 +34,21 @@ type DeviceRule = db.DeviceRule
 //
 // 2026-07-11: Этап 9 part 2 — the SELECT-then-INSERT pattern is now
 // composed of db.FindDeviceRuleID + db.AppendDeviceRule so the SQL
-// strings live in queries.go. Behaviour is unchanged.
-func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP string) (bool, int) {
+// strings live in queries.go.
+//
+// 2026-07-28: parentDomain is now an explicit parameter. The form
+// passes the ORIGINAL DOMAIN when inserting /32 rules derived from
+// DNS resolution, so the autoupdater can find them on the next
+// tick and update them in place. Without this, the form's /32
+// rows had parent_domain='' and the autoupdater couldn't see them
+// as "its" — it created its own /32 rows on top, and Cloudflare
+// anycast IP rotation caused constant add=18/remove=17 churn with
+// net ~0. The user's traffic hit IPs relay-3 never advertised.
+// See internal/handlers/exit_rules_form_parent_domain_test.go for
+// the regression guard.
+//
+// For manual subnet/IP rules (no DNS-resolve parent), pass "".
+func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain string) (bool, int) {
 	existingID, err := db.FindDeviceRuleID(a.DB, userID, deviceID, exitNode, targetType, targetValue)
 	if err == nil {
 		return true, existingID
@@ -43,12 +56,8 @@ func (a *App) insertRuleUnique(userID int64, deviceID int, exitNode, targetType,
 	if !errors.Is(err, db.ErrNotFound) {
 		return false, 0
 	}
-	// not found → insert. Set parent_domain = target_value for domain rules so
-	// autoupdater can track them and UI can show "auto" badge.
-	parentDomain := ""
-	if targetType == "domain" {
-		parentDomain = targetValue
-	}
+	// not found → insert. parentDomain is caller-supplied; the
+	// form passes the original domain for DNS-resolved /32 rules.
 	newID, err := // v0.28.0: pass userName (from userID via portal_users) and
 // deviceHostname (from deviceID via node_owner_map). Empty
 // strings are accepted — the migration backfill + /my/devices
