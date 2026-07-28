@@ -250,14 +250,30 @@ func (a *App) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var origUserID, origUserName string
+	var nodeTags []string
 	if nodes, err := a.HSGlobal().ListAllNodes(); err == nil {
 		for _, n := range nodes {
 			if n.ID == strconv.FormatInt(nodeID, 10) {
 				origUserID = n.UserID
 				origUserName = n.UserName
+				nodeTags = n.Tags
 				break
 			}
 		}
+	}
+
+	// 2026-07-28: v0.30.1 — refuse to put an exit-node-like tag
+	// on a per-user device. See nodeTagRefusedForUserDevice for
+	// the full rationale; the short version: a user device
+	// accidentally promoted to "exit-node" appears in every
+	// Tailscale client's exit-node menu, and auto-failover
+	// (lowest metric = self, 0ms) sends all traffic to /dev/null.
+	if refused, msg, hadTag := nodeTagRefusedForUserDevice(nodeID, tag, nodeTags); refused {
+		a.audit(c.UserID, c.Username, "node_tag_refused",
+			fmt.Sprintf("node=%d attempted_tag=%s reason=user_device node_had=%s",
+				nodeID, tag, hadTag))
+		http.Error(w, msg, http.StatusBadRequest)
+		return
 	}
 
 	if err := a.HSGlobal().TagNode(nodeID, tag); err != nil {
@@ -326,4 +342,61 @@ func (a *App) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
 	a.HSGlobal().InvalidateCache()
 	a.audit(c.UserID, c.Username, "node_untag", fmt.Sprintf("node=%d tag=%s", nodeID, tag))
 	http.Redirect(w, r, "/admin/devices", http.StatusFound)
+}
+
+// nodeTagRefusedForUserDevice is the v0.30.1 guard extracted as
+// a pure function so it can be unit-tested without spinning up
+// HTTP/headscale/dockerexec.
+//
+// Returns (true, msg, existingDevTag) when the request MUST be
+// rejected: admin asked to add an exit-node-like tag to a node
+// that already carries a per-user device tag (tag:dev-<user>-
+// <device>). Returns (false, "", "") when the request is safe
+// to apply.
+//
+// Why the guard exists: on 2026-07-28, user1's Windows box
+// "base" (headscale id=7, tag:dev-user1-base) was found
+// carrying tag:exit-node in headscale — set via direct headscale
+// CLI, NOT through skygate (audit_log has no node=7 entries).
+// The Tailscale Windows client on base then auto-selected
+// "Base" as the exit-node (0ms self-loop = lowest metric), and
+// all of base's internet traffic went to /dev/null. User
+// reported: "пропал доступ в сеть" + "exit node не выбирается
+// корректно".
+//
+// This guard prevents the SAME shape of mistake from being
+// introduced through the skygate admin UI (the operator's
+// most common accidental path: clicking "Tag as exit-node" on
+// the wrong row in /admin/devices). It does NOT block direct
+// headscale CLI manipulation — that path bypasses skygate
+// entirely and is an operator-only decision.
+//
+// To make the same node a relay later: first untag the
+// per-user tag via PostAdminNodeUntag, then re-tag as
+// tag:exit-node.
+func nodeTagRefusedForUserDevice(nodeID int64, requestedTag string, currentTags []string) (refused bool, message string, existingDevTag string) {
+	// Only exit-node-like tags trigger the guard. Other tags
+	// (tag:public, tag:private, tag:subnet-router) are fine to
+	// apply to per-user devices — they're ACL primitives, not
+	// exit-node candidates.
+	if !strings.HasPrefix(requestedTag, "tag:exit") {
+		return false, "", ""
+	}
+	// Find any per-user device tag in the node's current tag
+	// set. tag:dev-<user>-<device> is the authoritative
+	// per-user device marker (v0.28.0+). tag:dev- prefix is
+	// stable; we don't try to parse the user/device out of it
+	// here — just check the prefix.
+	for _, t := range currentTags {
+		if strings.HasPrefix(t, "tag:dev-") {
+			msg := fmt.Sprintf(
+				"refuse: node %d already has per-user device tag %q — "+
+					"cannot add exit-node tag %q. Per-user devices (tag:dev-*) "+
+					"must never be exit-node candidates. To make this node a "+
+					"relay, first untag the per-user tag (PostAdminNodeUntag).",
+				nodeID, t, requestedTag)
+			return true, msg, t
+		}
+	}
+	return false, "", ""
 }
