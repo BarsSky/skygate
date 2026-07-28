@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # scripts/verify_pre_deploy.sh — build-time guarantees for skygate.
 #
 # Runs BEFORE `docker build` / `git push` / `docker compose up -d`.
@@ -194,6 +194,17 @@ run_check "B11" "migrations have no destructive DDL (DROP/RENAME/TRUNCATE)" \
 # When the PG driver lands, replace this with the hard check.
 run_check "B12" "pgmigrate helpers are unit-tested (per-driver SQL form)" \
   "'$GO' test ./internal/db/pgmigrate/... -run 'TestBuildCreateIndexStmt' -count=1 2>&1"
+
+# --- B13: pre-push hook uses MSYSTEM for Git Bash detection ---
+# v0.29.1 fixed the .githooks/pre-push bash-mount-root detection
+# to use MSYSTEM (set by Git for Windows) as the primary signal
+# for Git Bash, ahead of the directory-probe fallback that was
+# unreliable on hybrid WSL2+Git Bash systems. The check verifies
+# the hook doesn't rely solely on the /c/ vs /mnt/c/ directory
+# probe (which produced wrong values on a subset of Windows
+# hosts where both directories exist).
+run_check "B13" "pre-push hook uses MSYSTEM for Git Bash detection" \
+  "grep -q 'MSYSTEM' .githooks/pre-push"
 
 echo
 echo "=== summary ==="

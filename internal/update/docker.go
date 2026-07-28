@@ -241,6 +241,17 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 		u.failWithRollback(ctx, fmt.Errorf("docker compose up: %w (output: %s)", err, truncateOutput(out, 200)), backupTag)
 		return
 	}
+	// v0.29.1: docker compose v2 occasionally leaves the
+	// new container in `Created` state instead of `Started`
+	// (race with the old container's `container_name: skygate`
+	// that compose couldn't fully remove before creating the
+	// new one). Without this guard, Phase 5's healthz poll
+	// would time out and trigger a spurious rollback. Start
+	// the container explicitly if it's stuck in Created.
+	if err := u.ensureComposeServiceRunning(ctx, "skygate", 30*time.Second); err != nil {
+		u.failWithRollback(ctx, fmt.Errorf("ensure container running: %w", err), backupTag)
+		return
+	}
 	u.State.Log(LogInfo, "container recreated")
 
 	// Phase 5: verify. Poll /healthz for up to 60s. If
@@ -299,6 +310,12 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 	if out, err := u.runCompose(ctx, "up", "-d", "--force-recreate", "--no-deps", "skygate"); err != nil {
 		u.State.Log(LogError, "rollback up failed: "+err.Error()+
 			" (output: "+truncateOutput(out, 200)+")")
+		return
+	}
+	// v0.29.1: same Created→Started guard as the main path
+	// above — the race happens on rollback too.
+	if err := u.ensureComposeServiceRunning(ctx, "skygate", 30*time.Second); err != nil {
+		u.State.Log(LogError, "rollback ensure running: "+err.Error())
 		return
 	}
 
@@ -378,7 +395,94 @@ func (u *DockerUpgrader) runShellCapture(ctx context.Context, name string, args 
 	return string(out), nil
 }
 
-// pollHealthz loops GET http://localhost:8080/healthz until
+// ensureComposeServiceRunning waits for a compose service's
+// container to reach the `running` state. The v0.29.0
+// orchestrator's first end-to-end test discovered that
+// `docker compose up -d --force-recreate --no-deps skygate`
+// sometimes leaves the new container in `Created` status
+// (not `Started`) — a race with the old container's
+// `container_name: skygate` that compose couldn't fully
+// remove before creating the new one. Without this guard,
+// Phase 5's /healthz poll would time out and trigger a
+// spurious rollback.
+//
+// The check uses the compose-managed label
+// `com.docker.compose.service=<name>` rather than the
+// container name directly, so the lookup works regardless
+// of whether compose used the explicit `container_name:`
+// (creating `skygate`) or fell back to the project-hash
+// default (creating `skygate-skygate-N`).
+//
+// Returns nil on the first observation of `running`.
+// Returns an error if the timeout fires before the container
+// reaches `running`. On `created` it issues an explicit
+// `docker start <id>` to unstick the container. On
+// `exited` / `dead` / `restarting` it retries (the entrypoint
+// may take a few seconds to fully come up after Start).
+func (u *DockerUpgrader) ensureComposeServiceRunning(ctx context.Context, service string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	attempt := 0
+	var lastObserved string
+	for {
+		attempt++
+		if time.Now().After(deadline) {
+			return fmt.Errorf("compose service %q not running within %s (last observed status: %q, %d attempts)",
+				service, timeout, lastObserved, attempt-1)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// docker ps -a --filter label=com.docker.compose.service=<svc>
+		//   --format "{{.ID}} {{.State.Status}}"
+		// We pick the most-recently-created container with this
+		// label (sort by .CreatedAt desc implicitly via -a + tail).
+		// For our single-service case there's at most one match.
+		psOut, err := u.runShellCapture(ctx, "docker", "ps", "-a",
+			"--filter", "label=com.docker.compose.service="+service,
+			"--format", "{{.ID}} {{.State.Status}}")
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(psOut), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				parts := strings.Fields(line)
+				if len(parts) < 2 {
+					continue
+				}
+				id := parts[0]
+				status := parts[1]
+				lastObserved = status
+				switch status {
+				case "running":
+					u.State.Log(LogInfo, fmt.Sprintf("container %s is running (id=%s, attempt %d)", service, id, attempt))
+					return nil
+				case "created":
+					// Stuck — start it explicitly.
+					u.State.Log(LogInfo, fmt.Sprintf("container %s is in Created state, starting it (id=%s, attempt %d)", service, id, attempt))
+					if _, startErr := u.runShellCapture(ctx, "docker", "start", id); startErr != nil {
+						u.State.Log(LogDebug, fmt.Sprintf("docker start %s: %s", id, startErr))
+					}
+				case "exited", "dead", "restarting":
+					// Let it try; the entrypoint may still be coming up.
+					u.State.Log(LogDebug, fmt.Sprintf("container %s status=%s (id=%s, attempt %d) — waiting",
+						service, status, id, attempt))
+				default:
+					u.State.Log(LogDebug, fmt.Sprintf("container %s status=%s (id=%s, attempt %d)",
+						service, status, id, attempt))
+				}
+			}
+		} else {
+			u.State.Log(LogDebug, fmt.Sprintf("docker ps failed (attempt %d): %s", attempt, err))
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
 // it returns 200 (or the timeout fires). The "build" field
 // in the response should match the new build label — the
 // caller passes that as `expectedBuild` to assert it's not
