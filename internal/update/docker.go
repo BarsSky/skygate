@@ -231,28 +231,30 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	}
 	u.State.Log(LogInfo, "migrations applied")
 
-	// Phase 4: swap. Recreate the skygate container with
-	// the new image. Docker's --force-recreate tears down
-	// the old container and starts the new one. The
-	// healthz probe is implicitly satisfied by the
-	// compose's depends_on + healthcheck blocks.
-	u.State.SetPhase(PhaseSwap, "recreating skygate container with new image")
-	if out, err := u.runCompose(ctx, "up", "-d", "--force-recreate", "--no-deps", "skygate"); err != nil {
-		u.failWithRollback(ctx, fmt.Errorf("docker compose up: %w (output: %s)", err, truncateOutput(out, 200)), backupTag)
-		return
-	}
-	// v0.29.1: docker compose v2 occasionally leaves the
-	// new container in `Created` state instead of `Started`
-	// (race with the old container's `container_name: skygate`
-	// that compose couldn't fully remove before creating the
-	// new one). Without this guard, Phase 5's healthz poll
-	// would time out and trigger a spurious rollback. Start
-	// the container explicitly if it's stuck in Created.
-	if err := u.ensureComposeServiceRunning(ctx, "skygate", 30*time.Second); err != nil {
-		u.failWithRollback(ctx, fmt.Errorf("ensure container running: %w", err), backupTag)
-		return
-	}
-	u.State.Log(LogInfo, "container recreated")
+	// v0.29.1: Phase 4 (swap) is INTENTIONALLY NOT done by
+	// the orchestrator. `docker compose up --force-recreate
+	// --no-deps skygate` would send SIGTERM to the skygate
+	// container — which is THIS process (the orchestrator's
+	// parent goroutine, running as PID 1 of the container
+	// via entrypoint.sh). The orchestrator would die before
+	// the `up` command returns, leaving the new container
+	// in an undefined state with no healthz verification.
+	//
+	// Instead, the orchestrator stops at "image rebuilt +
+	// migrations applied" and writes a manual_step telling
+	// the operator to run `docker compose up -d
+	// --force-recreate --no-deps skygate` on the host. The
+	// state phase is "build_done" (a new phase added in
+	// v0.29.1; see state.go). The ensureComposeServiceRunning
+	// helper is left in place for v0.29.2 when the orchestrator
+	// is moved to a sidecar container (out of skygate's
+	// process tree) and can safely call `docker compose up`
+	// without committing suicide.
+	u.State.SetPhase(PhaseBuildDone, "image rebuilt, ready for manual `docker compose up`")
+	manualSwap := "docker compose up -d --force-recreate --no-deps skygate"
+	u.State.Log(LogInfo, "build done — operator must run: "+manualSwap)
+	u.State.SetManualStep("swap", manualSwap)
+	u.State.Complete()
 
 	// Phase 5: verify. Poll /healthz for up to 60s. If
 	// the new binary boots and the DB is reachable, the
@@ -297,6 +299,14 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 		u.State.Log(LogError, "rollback chown failed: "+err.Error())
 		return
 	}
+	// v0.29.1: rollback's `docker compose build` is
+	// intentional — it ensures the old build is up-to-date
+	// after the git checkout (a code-level rollback without
+	// a rebuild would still run the failed/broken image).
+	// `docker compose up --force-recreate` is NOT called
+	// for the same reason as the main path: it would SIGTERM
+	// the orchestrator mid-execution. The operator runs the
+	// swap manually after the build completes.
 	if out, err := u.runCompose(ctx, "build", "skygate"); err != nil {
 		u.State.Log(LogError, "rollback build failed: "+err.Error()+
 			" (output: "+truncateOutput(out, 200)+")")
@@ -307,27 +317,21 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 			u.State.Log(LogWarn, "rollback chown repo back to host owner failed: "+err.Error())
 		}
 	}
-	if out, err := u.runCompose(ctx, "up", "-d", "--force-recreate", "--no-deps", "skygate"); err != nil {
-		u.State.Log(LogError, "rollback up failed: "+err.Error()+
-			" (output: "+truncateOutput(out, 200)+")")
-		return
+	// Mark the rolled-back state. Same manual-swap pattern
+	// as the main path: orchestrator's job ends with
+	// "image rebuilt, ready to apply", and the operator
+	// runs `docker compose up -d --force-recreate --no-deps
+	// skygate` on the host.
+	manualSwap := "docker compose up -d --force-recreate --no-deps skygate"
+	u.State.mu.Lock()
+	if u.State.state != nil {
+		u.State.state.Phase = PhaseRolledBack
+		u.State.state.FinishedAt = time.Now().UTC()
+		u.State.state.ManualSwap = manualSwap
+		u.State.state.Log = appendLog(u.State.state.Log, LogInfo, "rollback build done — operator must run: "+manualSwap)
+		_ = u.State.persistLocked()
 	}
-	// v0.29.1: same Created→Started guard as the main path
-	// above — the race happens on rollback too.
-	if err := u.ensureComposeServiceRunning(ctx, "skygate", 30*time.Second); err != nil {
-		u.State.Log(LogError, "rollback ensure running: "+err.Error())
-		return
-	}
-
-	// Wait for the rolled-back healthz. We give it the
-	// same 60s window. If the rollback itself is broken
-	// (e.g. the previous tag itself doesn't build), we
-	// surface that distinctly.
-	if err := u.pollHealthz(ctx, 60*time.Second); err != nil {
-		u.State.Log(LogError, "rolled-back healthz did not return 200: "+err.Error()+
-			" — manual intervention required")
-		return
-	}
+	u.State.mu.Unlock()
 
 	// Mark the rolled-back state.
 	u.State.mu.Lock()

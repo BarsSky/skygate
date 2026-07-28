@@ -54,8 +54,21 @@ const (
 	PhaseMigrate    Phase = "migrate"
 	PhaseSwap       Phase = "swap"
 	PhaseVerify     Phase = "verify"
-	PhaseDone       Phase = "done"
-	PhaseFailed     Phase = "failed"
+	// PhaseBuildDone is the new terminal phase added in
+	// v0.29.1: the orchestrator stops at "image rebuilt +
+	// migrations applied" and writes a manual_step telling
+	// the operator to run `docker compose up -d
+	// --force-recreate --no-deps skygate` on the host.
+	// The orchestrator used to do the up itself in Phase
+	// 4, but that would send SIGTERM to the skygate
+	// container (the orchestrator's own process tree)
+	// mid-execution, leaving the new container in an
+	// undefined state with no healthz verification. The
+	// sidecar-based orchestrator (v0.29.2 follow-up) will
+	// restore the full auto-swap.
+	PhaseBuildDone Phase = "build_done"
+	PhaseDone      Phase = "done"
+	PhaseFailed    Phase = "failed"
 	PhaseRolledBack Phase = "rolled_back"
 )
 
@@ -123,6 +136,16 @@ type State struct {
 	// path can show them inline.
 	ManualSteps []string `json:"manual_steps,omitempty"`
 	Rollback    []string `json:"rollback,omitempty"`
+
+	// ManualSwap (v0.29.1) is set when the orchestrator
+	// stops at PhaseBuildDone. The page surfaces it as a
+	// single copy-pasteable command (typically
+	// `docker compose up -d --force-recreate --no-deps skygate`)
+	// that the operator runs on the host to apply the
+	// built image. Distinct from ManualSteps (the full
+	// fallback procedure for a failed job) and Rollback
+	// (the steps to undo a successful-but-wrong upgrade).
+	ManualSwap string `json:"manual_swap,omitempty"`
 
 	// VerifyAfter is the post-success sanity check.
 	VerifyAfter string `json:"verify_after,omitempty"`
@@ -270,6 +293,23 @@ func (s *StateStore) Complete() {
 	s.state.Phase = PhaseDone
 	s.state.FinishedAt = time.Now().UTC()
 	s.state.Log = appendLog(s.state.Log, LogInfo, "update completed successfully")
+	_ = s.persistLocked()
+}
+
+// SetManualStep stores a one-line operator action in the
+// state and adds a log line. Used by the v0.29.1 orchestrator
+// when it stops at PhaseBuildDone and needs to tell the
+// operator to run `docker compose up -d --force-recreate
+// --no-deps skygate` on the host. Idempotent: safe to call
+// multiple times.
+func (s *StateStore) SetManualStep(kind, cmd string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return
+	}
+	s.state.ManualSwap = cmd
+	s.state.Log = appendLog(s.state.Log, LogInfo, "manual step ("+kind+"): "+cmd)
 	_ = s.persistLocked()
 }
 
