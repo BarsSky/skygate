@@ -1,5 +1,96 @@
 # Skygate release notes
 
+## v0.30.1 — Per-user device can't be tagged as exit-node (the "base" fix)
+
+**Date:** 2026-07-28
+**Tag:** [v0.30.1](https://github.com/BarsSky/skygate/releases/tag/v0.30.1)
+**Scope:** Bug fix + catalog extension (B17 + R26)
+**Build:** `verify-pre` 16/16 PASS, `verify-post` 26/26 PASS
+
+### The bug
+
+michail reported on 2026-07-28 that his Windows box "base"
+(headscale id=7) had "пропал доступ в сеть" (network access gone)
+and "exit node не выбирается корректно" (exit node not selected
+correctly). Investigation found base — a per-user device carrying
+`tag:dev-michail-base` — was also carrying `tag:exit-node` in
+headscale. **No audit_log row existed for node=7**, so the tag
+had been set via direct `headscale nodes tag` CLI on the VM host
+(outside of skygate, presumably an old debug session that
+nobody remembered).
+
+The Tailscale Windows client on base then auto-selected "Base"
+as the exit-node (0 ms self-loop = lowest metric), and all of
+base's internet traffic went to /dev/null. base's advertised
+routes don't include `0.0.0.0/0`, so the Tailscale "fall through
+to direct" path also fails.
+
+### The fix (build-time, B17)
+
+`PostAdminNodeTag` in `internal/handlers/handlers_admin_nodes.go`
+now refuses to add an exit-node-like tag (`tag:exit-node`,
+`tag:exit-emilia`, `tag:exit-sharlotta`, `tag:exit-karolina`,
+anything matching `tag:exit-*`) on a node that ALREADY carries a
+per-user device tag (`tag:dev-*`). Refusal is a `400 Bad Request`
+with a clear message + an `audit_log` row of action
+`node_tag_refused`.
+
+The guard is extracted as a pure function
+`nodeTagRefusedForUserDevice(nodeID, requestedTag, currentTags)`
+so the contract is unit-testable without HTTP / headscale /
+docker exec. Tests live in
+`internal/handlers/handlers_admin_nodes_test.go` (8 tests):
+
+- `TestNodeTagRefused_ExitNodeOnUserDevice` — the primary regression
+- `TestNodeTagRefused_PerRelayExitTag` — also refuses `tag:exit-emilia` etc.
+- `TestNodeTagRefused_ExitNodeOnMultipleDevTags` — multi-tag case
+- `TestNodeTagAllowed_ExitNodeOnRelay` — POSITIVE: legitimate relay
+- `TestNodeTagAllowed_PrivateOnUserDevice` — POSITIVE: normal flow
+- `TestNodeTagAllowed_PublicOnUserDevice` — POSITIVE: tag:public is fine
+- `TestNodeTagAllowed_SubnetRouterOnUserDevice` — POSITIVE: role tag
+- `TestNodeTagAllowed_ExitNodeOnEmptyNode` — POSITIVE: fresh VPS promotion
+
+### The fix (runtime, R26)
+
+`scripts/verify_post_deploy.sh` now runs an additional check
+on every deploy: walk `headscale nodes list`, find any node
+that has BOTH a `tag:dev-*` AND a `tag:exit-*` tag, and FAIL
+if any conflict is found. This catches the **direct headscale
+CLI bypass** that the B17 build-time guard can't see — anyone
+running `headscale nodes tag` on the VM host will trip R26 on
+the next deploy.
+
+The check uses `awk` to walk the multi-line table output of
+`headscale nodes list` (one node = one ID line + N tag
+continuation lines), accumulating per-node tag state and
+reporting any conflict.
+
+### What still needs the operator
+
+The original bug bypassed skygate entirely (direct headscale
+CLI). The build-time guard closes the *future* UI path, and
+R26 closes the *future* CLI path. The **historical**
+michail/base case (which is the only one observed so far) was
+fixed by hand on 2026-07-28:
+
+```bash
+docker exec headscale headscale nodes tag -i 7 \
+  -t 'tag:dev-michail-base,tag:private' --force
+```
+
+(base had been carrying `tag:dev-michail-base,tag:private,tag:exit-node`;
+the third tag was dropped, the first two were re-applied
+because headscale's `tag` command REPLACES, not appends.)
+
+### Files
+
+- `internal/handlers/handlers_admin_nodes.go` — guard + extract
+- `internal/handlers/handlers_admin_nodes_test.go` — 8 tests (NEW)
+- `scripts/verify_pre_deploy.sh` — B17 added
+- `scripts/verify_post_deploy.sh` — R26 added
+- `AGENTS.md` — catalog B1-B16 → B1-B17, R1-R25 → R1-R26
+- `RELEASE-NOTES.md` — this section
+
 ## Where to look for releases
 
 **This file is an index. The authoritative source for any release is
