@@ -86,7 +86,11 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 	if store != nil {
 		st := store.Get()
 		if st != nil && (st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack) {
+			store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s detected, calling confirmPendingSwap", st.Phase))
 			a.confirmPendingSwap(ctx, st, store)
+			// Re-fetch state after confirmPendingSwap may
+			// have promoted it to phase=done.
+			st = store.Get()
 		}
 	}
 
