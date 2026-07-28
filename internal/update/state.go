@@ -183,9 +183,17 @@ func NewStateStore(path string) *StateStore {
 	return &StateStore{path: path}
 }
 
-// Load reads the persisted state from disk. Returns nil if
-// the file doesn't exist or is unreadable (e.g. first run
-// on a fresh install).
+// Load reads the persisted state from disk and stores it
+// in the receiver. Returns the loaded state, or nil if the
+// file doesn't exist or is unreadable (e.g. first run on
+// a fresh install).
+//
+// v0.29.3: prior versions parsed the file but discarded
+// the result, so s.state stayed nil after Load() — every
+// subsequent Get() returned nil, every Log() was a silent
+// no-op (s.state == nil short-circuit), and confirmPendingSwap
+// in renderUpdatePage never saw a real state to act on.
+// The fix: store the parsed state in s.state.
 func (s *StateStore) Load() (*State, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
@@ -198,6 +206,9 @@ func (s *StateStore) Load() (*State, error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return nil, fmt.Errorf("parse state file: %w", err)
 	}
+	s.mu.Lock()
+	s.state = &st
+	s.mu.Unlock()
 	return &st, nil
 }
 
