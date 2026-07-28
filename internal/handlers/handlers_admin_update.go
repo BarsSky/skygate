@@ -83,8 +83,17 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 	// success. The 5s auto-refresh on /admin/update will
 	// pick up the new phase without a manual reload.
 	store := GetUpdateStateStore()
-	if store != nil {
+	if store == nil {
+		store = update.NewStateStore("/data/skygate-update-status.json")
+		_ = store.LoadFromDisk()
+	}
+	{
 		st := store.Get()
+		phaseStr := "<nil>"
+		if st != nil {
+			phaseStr = string(st.Phase)
+		}
+		store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: store=%v phase=%s (debug probe)", store != nil, phaseStr))
 		if st != nil && (st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack) {
 			store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s detected, calling confirmPendingSwap", st.Phase))
 			a.confirmPendingSwap(ctx, st, store)
