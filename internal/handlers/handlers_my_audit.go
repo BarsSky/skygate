@@ -79,7 +79,7 @@ func (a *App) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request) {
 	_ = db.AppendAuditLog(a.DB, c.UserID, c.Username, "audit_export",
 		fmt.Sprintf("format=%s since=%d limit=%d rows=%d", format, since, limit, len(rows)))
 	// Filename: skygate-audit-<username>-<ts>.<ext>
-	safeUser := sanitizeFilename(c.Username)
+	safeUser := SanitizeFilename(c.Username)
 	stamp := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("skygate-audit-%s-%s.%s", safeUser, stamp, format)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filename))

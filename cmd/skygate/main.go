@@ -344,24 +344,24 @@ func main() {
 	// 2026-07-17: v0.16.0 — per-user subnets admin page.
 	// GET shows the user's subnet status; POSTs allocate
 	// / disable / run a sanity check.
-	mux.Handle("GET /admin/users/{id}/subnet", authMW(http.HandlerFunc(app.GetAdminUserSubnet)))
-	mux.Handle("POST /admin/users/{id}/subnet/allocate", authMW(http.HandlerFunc(app.PostAdminUserSubnetAllocate)))
-	mux.Handle("POST /admin/users/{id}/subnet/disable", authMW(http.HandlerFunc(app.PostAdminUserSubnetDisable)))
-	mux.Handle("POST /admin/users/{id}/subnet/test", authMW(http.HandlerFunc(app.PostAdminUserSubnetTest)))
-	mux.Handle("POST /admin/users/{id}/subnet/provision", authMW(http.HandlerFunc(app.PostAdminUserSubnetProvision)))
+	mux.Handle("GET /admin/users/{id}/subnet", authMW(http.HandlerFunc(adminSvc.GetAdminUserSubnet)))
+	mux.Handle("POST /admin/users/{id}/subnet/allocate", authMW(http.HandlerFunc(adminSvc.PostAdminUserSubnetAllocate)))
+	mux.Handle("POST /admin/users/{id}/subnet/disable", authMW(http.HandlerFunc(adminSvc.PostAdminUserSubnetDisable)))
+	mux.Handle("POST /admin/users/{id}/subnet/test", authMW(http.HandlerFunc(adminSvc.PostAdminUserSubnetTest)))
+	mux.Handle("POST /admin/users/{id}/subnet/provision", authMW(http.HandlerFunc(adminSvc.PostAdminUserSubnetProvision)))
 	// v0.24.2: download a self-contained tar.gz bundle
 	// (setup.sh + README.md + commands.txt with the
 	// preauth key + CIDR.txt) for the user to scp to
 	// their router host and untar. Issues a fresh
 	// preauth on each call (same as the "Issue preauth
 	// key" button).
-	mux.Handle("GET /admin/users/{id}/subnet/download", authMW(http.HandlerFunc(app.GetAdminUserSubnetDownload)))
-	mux.Handle("POST /admin/users/{id}/subnet/share", authMW(http.HandlerFunc(app.PostAdminUserSubnetShare)))
-	mux.Handle("POST /admin/users/{id}/subnet/revoke", authMW(http.HandlerFunc(app.PostAdminUserSubnetRevoke)))
+	mux.Handle("GET /admin/users/{id}/subnet/download", authMW(http.HandlerFunc(adminSvc.GetAdminUserSubnetDownload)))
+	mux.Handle("POST /admin/users/{id}/subnet/share", authMW(http.HandlerFunc(adminSvc.PostAdminUserSubnetShare)))
+	mux.Handle("POST /admin/users/{id}/subnet/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminUserSubnetRevoke)))
 	// 2026-07-24: v0.28.1 — admin override for the
 	// user's preferred exit-node (operator-driven
 	// exit-node assignment).
-	mux.Handle("POST /admin/users/{id}/subnet/preferred-exit", authMW(http.HandlerFunc(app.PostAdminUserSubnetPreferredExit)))
+	mux.Handle("POST /admin/users/{id}/subnet/preferred-exit", authMW(http.HandlerFunc(adminSvc.PostAdminUserSubnetPreferredExit)))
 	// 2026-07-25: v0.28.4 — admin override for a
 	// specific DEVICE's preferred exit-node. The
 	// admin can pin any device to any exit-node

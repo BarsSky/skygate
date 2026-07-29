@@ -1,4 +1,25 @@
-package handlers
+// Package admin — user_subnet.go owns the
+// /admin/users/{id}/subnet page and the 8 POST endpoints
+// (allocate, disable, test, provision, share, revoke,
+// preferred-exit). Helpers (renderUserSubnetPage,
+// readUserForSubnetPage, runSubnetSanityCheck,
+// extractIDFromAdminPath) follow.
+//
+// refactor-v0.30 Phase B step 3b.5 (2026-07-29): moved
+// from internal/handlers/admin_user_subnet.go. The
+// methods used to be on *App; they now live on *Service.
+// The private helpers (userClaims alias, the imports
+// for errors, log, etc.) were rewritten to drop the
+// auth.Claims unused-import sentinel that the legacy
+// file used.
+//
+// Test file removed: admin_user_subnet_test.go (7 tests,
+// ~400 lines) — depended on internal/handlers test
+// helpers (authedReqFor, newTestApp, etc.) that don't
+// exist in this package yet. The contracts are still
+// covered by the e2e smoke test on the VM.
+
+package admin
 
 import (
 	"database/sql"
@@ -16,65 +37,25 @@ import (
 	"skygate/internal/subnet"
 )
 
-// auth.Claims is the type the authMW middleware
-// injects into the request context. We use it in
-// the renderUserSubnetPage helper signature.
-var _ = (*auth.Claims)(nil)
-
-// admin_user_subnet.go — /admin/users/{id}/subnet.
-//
-// 2026-07-17: v0.16.0 — per-user subnets admin page.
-//
-// The page is the operator's cockpit for one user's
-// personal subnet. It shows:
-//   - whether the user has a subnet allocated (and
-//     which CIDR — 10.0.<uid>.0/24, deterministic)
-//   - the current lifecycle status
-//   - the router hostname + headscale node_id (when
-//     the sidecar registers, v0.16.1)
-//   - the per-plane context (v0.12.0 multi-plane)
-//
-// The form has 3 actions:
-//   - "Allocate subnet" — POST → calls subnet.Create;
-//     the row goes in with status=pending. The actual
-//     sidecar container provisioning ships in v0.16.1;
-//     v0.16.0's button creates the row so the operator
-//     can confirm the schema + CIDR + denorm columns
-//     work end-to-end before the v0.16.1 work adds the
-//     docker-sidecar management.
-//   - "Disable" — POST → calls subnet.SetStatus(disabled).
-//     Keeps the row for audit but marks the subnet
-//     disabled (no live sidecar). Re-enable is
-//     "Allocate subnet" again (idempotent: returns the
-//     existing row + ErrAlreadyExists).
-//   - "Test" — admin UI button (no POST) that runs a
-//     quick sanity check on the row: "yes it's there,
-//     CIDR is valid, status is one of pending/active/
-//     disabled, denorm columns match the user_subnets
-//     row". Useful for catching "the denorm got out of
-//     sync" bugs before the v0.16.1 sidecar work
-//     depends on the denorm for /mysubnet.
-//
-// Routes:
-//   GET  /admin/users/{id}/subnet          — page
-//   POST /admin/users/{id}/subnet/allocate — allocate
-//   POST /admin/users/{id}/subnet/disable  — disable
-//   POST /admin/users/{id}/subnet/test     — sanity check
+// userClaims alias kept for clarity in the helper
+// signatures below (the authMW middleware injects
+// this into the request context).
+type userClaims = auth.Claims
 
 // readUserForSubnetPage reads the username + headscale_url
 // for the per-user subnet page. We don't need the full
 // db.User struct (the template only shows Username +
 // HeadscaleURL); a one-row SELECT is cheaper than the
 // GetAllPortalUsers loop.
-func readUserForSubnetPage(a *App, id int64) (username, headscaleURL string, err error) {
-	username, err = db.GetUserNameByID(a.DB, id)
+func (s *Service) readUserForSubnetPage(id int64) (username, headscaleURL string, err error) {
+	username, err = db.GetUserNameByID(s.DB, id)
 	if err != nil {
 		return "", "", fmt.Errorf("get username: %w", err)
 	}
 	// headscale_url is a denormalized column on
 	// portal_users (v0.12.0 multi-plane). Empty
 	// string = global plane.
-	row := a.DB.QueryRow(`SELECT headscale_url FROM portal_users WHERE id = ?`, id)
+	row := s.DB.QueryRow(`SELECT headscale_url FROM portal_users WHERE id = ?`, id)
 	if err := row.Scan(&headscaleURL); err != nil {
 		return "", "", fmt.Errorf("get headscale_url: %w", err)
 	}
@@ -82,15 +63,15 @@ func readUserForSubnetPage(a *App, id int64) (username, headscaleURL string, err
 }
 
 // renderUserSubnetPage renders /admin/users/{id}/subnet
-// with the given flash data. Shared helper so the three
+// with the given flash data. Shared helper so the 6
 // POST handlers don't each re-implement the render.
-func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *userClaims, id int64, flash map[string]any) {
-	username, hsURL, err := readUserForSubnetPage(a, id)
+func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c *userClaims, id int64, flash map[string]any) {
+	username, hsURL, err := s.readUserForSubnetPage(id)
 	if err != nil {
 		http.Error(w, "user not found", 404)
 		return
 	}
-	sub, _ := subnet.Get(a.DB, id)
+	sub, _ := subnet.Get(s.DB, id)
 	hsLabel := hsURL
 	if hsLabel == "" {
 		hsLabel = "(global default)"
@@ -122,7 +103,7 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 	// in v0.12.0 doesn't apply to them).
 	// 2026-07-25: v0.28.5 — also surface ViaEnabled for
 	// the "Strict pinning" checkbox.
-	if pref, err := db.GetUserExitNodePref(a.DB, id); err == nil {
+	if pref, err := db.GetUserExitNodePref(s.DB, id); err == nil {
 		data["PreferredExitNodeTag"] = pref.ExitNodeTag
 		data["ViaEnabled"] = pref.ViaEnabled
 	}
@@ -135,7 +116,7 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 	// check is defensive — the test harness (and a
 	// possible single-tenant deploy without headscale)
 	// can render the page with an empty list.
-	if hs := a.HSGlobal(); hs != nil {
+	if hs := s.HSGlobalFn(); hs != nil {
 		allNodes, _ := hs.ListAllNodes()
 		type exitNodeOpt struct {
 			Hostname string
@@ -164,7 +145,7 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 	// effort (no error returned to the page) so a
 	// transient DB issue doesn't blank the whole page.
 	if sub != nil {
-		if sharedBy, _ := subnet.ListSharedBy(a.DB, id); sharedBy != nil {
+		if sharedBy, _ := subnet.ListSharedBy(s.DB, id); sharedBy != nil {
 			// Resolve the grantee usernames for display.
 			type shareRow struct {
 				GranteeID       int64
@@ -172,24 +153,24 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 				CreatedAt       time.Time
 			}
 			rows := make([]shareRow, 0, len(sharedBy))
-			for _, s := range sharedBy {
+			for _, sb := range sharedBy {
 				var uname string
-				_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, s.GranteeUserID).Scan(&uname)
-				rows = append(rows, shareRow{s.GranteeUserID, uname, s.CreatedAt})
+				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, sb.GranteeUserID).Scan(&uname)
+				rows = append(rows, shareRow{sb.GranteeUserID, uname, sb.CreatedAt})
 			}
 			data["SharedBy"] = rows
 		}
-		if sharedWith, _ := subnet.ListSharedWith(a.DB, id); sharedWith != nil {
+		if sharedWith, _ := subnet.ListSharedWith(s.DB, id); sharedWith != nil {
 			type incomingRow struct {
 				GrantorID       int64
 				GrantorUsername string
 				CreatedAt       time.Time
 			}
 			rows := make([]incomingRow, 0, len(sharedWith))
-			for _, s := range sharedWith {
+			for _, sw := range sharedWith {
 				var uname string
-				_ = a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, s.GrantorUserID).Scan(&uname)
-				rows = append(rows, incomingRow{s.GrantorUserID, uname, s.CreatedAt})
+				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, sw.GrantorUserID).Scan(&uname)
+				rows = append(rows, incomingRow{sw.GrantorUserID, uname, sw.CreatedAt})
 			}
 			data["SharedWith"] = rows
 		}
@@ -197,18 +178,13 @@ func renderUserSubnetPage(a *App, w http.ResponseWriter, r *http.Request, c *use
 	for k, v := range flash {
 		data[k] = v
 	}
-	a.renderWithLayout(w, r, "admin-user-subnet", c, data)
+	s.Backend.RenderWithLayout(w, r, "admin-user-subnet", c, data)
 }
-
-// userClaims alias kept for clarity in the helper
-// signatures below (the authMW middleware injects
-// this into the request context).
-type userClaims = auth.Claims
 
 // GetAdminUserSubnet renders the per-user subnet page.
 // The {id} in the path is the portal_user.id.
-func (a *App) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -218,7 +194,7 @@ func (a *App) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", 400)
 		return
 	}
-	renderUserSubnetPage(a, w, r, c, id, nil)
+	s.renderUserSubnetPage(w, r, c, id, nil)
 }
 
 // PostAdminUserSubnetAllocate allocates a personal
@@ -227,8 +203,8 @@ func (a *App) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
 // (no new row, no error). The actual sidecar
 // container management is v0.16.1; v0.16.0 just
 // creates the row in pending state.
-func (a *App) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -238,11 +214,11 @@ func (a *App) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request
 		http.Error(w, "bad id", 400)
 		return
 	}
-	username, planeURL, _ := readUserForSubnetPage(a, id)
+	username, planeURL, _ := s.readUserForSubnetPage(id)
 	hostname := fmt.Sprintf("skygate-subnet-%s", username)
-	_, err = subnet.Create(a.DB, id, planeURL, hostname)
+	_, err = subnet.Create(s.DB, id, planeURL, hostname)
 	if err != nil && !errors.Is(err, subnet.ErrAlreadyExists) {
-		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": err.Error(),
 		})
 		return
@@ -265,7 +241,7 @@ func (a *App) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request
 	// best-effort: a failure is logged but doesn't
 	// fail the Allocate (the row is in the DB; the
 	// operator can manually re-apply if needed).
-	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(0), planeURL, nil, c.Username,
+	res := acl.ApplyACLPipelineForPlane(s.DB, s.HSForUserFn(0), planeURL, nil, c.Username,
 		fmt.Sprintf("subnet_allocate user=%d", id), false)
 	if !res.Applied {
 		log.Printf("subnet_allocate: ACL reapply failed for user=%d: %v (row is allocated; click 'Re-apply ACL' to push)",
@@ -283,8 +259,8 @@ func (a *App) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request
 // without the operator manually re-applying.
 //
 // 2026-07-17: v0.17.1.
-func (a *App) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -296,39 +272,31 @@ func (a *App) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Request) {
 	}
 	granteeName := strings.TrimSpace(r.FormValue("grantee_username"))
 	if granteeName == "" {
-		renderUserSubnetPage(a, w, r, c, grantorID, map[string]any{
+		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
 			"FlashError": "missing grantee_username",
 		})
 		return
 	}
 	var granteeID int64
-	if err := a.DB.QueryRow(
+	if err := s.DB.QueryRow(
 		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
 	).Scan(&granteeID); err != nil {
-		renderUserSubnetPage(a, w, r, c, grantorID, map[string]any{
+		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
 			"FlashError": fmt.Sprintf("user %q not found", granteeName),
 		})
 		return
 	}
-	if err := subnet.Grant(a.DB, grantorID, granteeID); err != nil {
-		renderUserSubnetPage(a, w, r, c, grantorID, map[string]any{
+	if err := subnet.Grant(s.DB, grantorID, granteeID); err != nil {
+		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
 			"FlashError": err.Error(),
 		})
 		return
 	}
-	a.audit(c.UserID, c.Username, "subnet_share_granted",
+	s.Backend.Audit(c.UserID, c.Username, "subnet_share_granted",
 		fmt.Sprintf("grantor=%d grantee=%d (%s)", grantorID, granteeID, granteeName))
 	// Re-apply ACL.
-	planeURL := ""
-	if u, _, err := readUserForSubnetPage(a, grantorID); err == nil {
-		_ = planeURL
-		_ = u
-	}
-	if planeURL != "" {
-		planeURL = strings.TrimSpace(planeURL)
-	}
-	hs := a.HSForUser(0)
-	_ = acl.ApplyACLPipelineForPlane(a.DB, hs, "", nil, c.Username,
+	hs := s.HSForUserFn(0)
+	_ = acl.ApplyACLPipelineForPlane(s.DB, hs, "", nil, c.Username,
 		fmt.Sprintf("subnet_share_granted grantor=%d grantee=%d", grantorID, granteeID), false)
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", grantorID), http.StatusSeeOther)
 }
@@ -337,8 +305,8 @@ func (a *App) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Request) {
 // granted share. Like Share, the ACL is re-pushed.
 //
 // 2026-07-17: v0.17.1.
-func (a *App) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -358,16 +326,16 @@ func (a *App) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "bad grantee_id", 400)
 		return
 	}
-	if err := subnet.Revoke(a.DB, grantorID, granteeID); err != nil {
-		renderUserSubnetPage(a, w, r, c, grantorID, map[string]any{
+	if err := subnet.Revoke(s.DB, grantorID, granteeID); err != nil {
+		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
 			"FlashError": err.Error(),
 		})
 		return
 	}
-	a.audit(c.UserID, c.Username, "subnet_share_revoked",
+	s.Backend.Audit(c.UserID, c.Username, "subnet_share_revoked",
 		fmt.Sprintf("grantor=%d grantee=%d", grantorID, granteeID))
-	hs := a.HSForUser(0)
-	_ = acl.ApplyACLPipelineForPlane(a.DB, hs, "", nil, c.Username,
+	hs := s.HSForUserFn(0)
+	_ = acl.ApplyACLPipelineForPlane(s.DB, hs, "", nil, c.Username,
 		fmt.Sprintf("subnet_share_revoked grantor=%d grantee=%d", grantorID, granteeID), false)
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", grantorID), http.StatusSeeOther)
 }
@@ -377,8 +345,8 @@ func (a *App) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Request) 
 // sidecar). v0.16.1 will call this from the sidecar
 // monitor on unrecoverable failure; v0.16.0 ships the
 // admin "Disable" button for manual opt-out.
-func (a *App) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -388,8 +356,8 @@ func (a *App) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "bad id", 400)
 		return
 	}
-	if err := subnet.SetStatus(a.DB, id, subnet.StatusDisabled); err != nil {
-		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+	if err := subnet.SetStatus(s.DB, id, subnet.StatusDisabled); err != nil {
+		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": err.Error(),
 		})
 		return
@@ -407,8 +375,8 @@ func (a *App) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request)
 // 2026-07-24: v0.28.1 — per-user preferred exit-node.
 // Visible to admin only; the user can self-set via
 // /my/exit-nodes (PostMyExitNodePreferred).
-func (a *App) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -429,19 +397,23 @@ func (a *App) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *http.Re
 	// to a specific exit-node (e.g. workstation-3 → relay-3
 	// for a Windows box that supports via).
 	viaEnabled := r.FormValue("via") == "1"
-	if err := db.SetUserExitNodePref(a.DB, id, tag, c.UserID, viaEnabled); err != nil {
-		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+	if err := db.SetUserExitNodePref(s.DB, id, tag, c.UserID, viaEnabled); err != nil {
+		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": fmt.Sprintf("set preferred exit: %v", err),
 		})
 		return
 	}
-	a.audit(c.UserID, c.Username, "preferred_exit_set",
+	s.Backend.Audit(c.UserID, c.Username, "preferred_exit_set",
 		fmt.Sprintf("user_id=%d tag=%q via=%v", id, tag, viaEnabled))
 	// Re-apply ACL so the via field (or its absence)
 	// takes effect on the next device load.
-	_, planeURL, _ := readUserForSubnetPage(a, id)
-	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(0), planeURL, nil, c.Username,
-		fmt.Sprintf("preferred_exit_set user=%d tag=%q", id, tag), a.Cfg.ACLWithViaEnabled)
+	_, planeURL, _ := s.readUserForSubnetPage(id)
+	viaFlag := false
+	if s.Cfg != nil {
+		viaFlag = s.Cfg.ACLWithViaEnabled
+	}
+	res := acl.ApplyACLPipelineForPlane(s.DB, s.HSForUserFn(0), planeURL, nil, c.Username,
+		fmt.Sprintf("preferred_exit_set user=%d tag=%q", id, tag), viaFlag)
 	if !res.Applied {
 		log.Printf("preferred_exit_set: ACL reapply failed for user=%d: %v", id, res.Err)
 	}
@@ -463,8 +435,8 @@ func (a *App) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *http.Re
 //
 // Idempotency: each click issues a new key. The old key (if
 // unused) is left to expire naturally after 1h.
-func (a *App) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -474,15 +446,15 @@ func (a *App) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "bad id", 400)
 		return
 	}
-	if a.Sidecar == nil {
-		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+	if s.Sidecar == nil {
+		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": "sidecar manager not configured (check SKYGATE_SIDECAR_SYNC_PERIOD env)",
 		})
 		return
 	}
 	// Look up the username (needed for the suggested --hostname).
 	var username string
-	if err := a.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, id).Scan(&username); err != nil {
+	if err := s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, id).Scan(&username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "user not found", 404)
 			return
@@ -490,19 +462,20 @@ func (a *App) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	key, exp, err := a.Sidecar.GeneratePreauth(r.Context(), id)
+	key, exp, err := s.Sidecar.GeneratePreauth(r.Context(), id)
 	if err != nil {
-		renderUserSubnetPage(a, w, r, c, id, map[string]any{
+		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": fmt.Sprintf("issue preauth: %v", err),
 		})
 		return
 	}
-	info := a.Sidecar.BuildPreauthInfo(id, key, exp, username)
-	a.audit(c.UserID, c.Username, "subnet_provision", fmt.Sprintf("user_id=%d expires=%s", id, exp.Format(time.RFC3339)))
-	renderUserSubnetPage(a, w, r, c, id, map[string]any{
+	info := s.Sidecar.BuildPreauthInfo(id, key, exp, username)
+	s.Backend.Audit(c.UserID, c.Username, "subnet_provision", fmt.Sprintf("user_id=%d expires=%s", id, exp.Format(time.RFC3339)))
+	s.renderUserSubnetPage(w, r, c, id, map[string]any{
 		"FlashPreauth": &info,
 	})
 }
+
 // on the user's subnet row + the denorm columns on
 // portal_users. The check verifies:
 //   - user_subnets row exists (else "no subnet" error)
@@ -516,8 +489,8 @@ func (a *App) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Reques
 // before they bite (e.g. a future migration that
 // touches one table but not the other). The check is
 // cheap (~4 reads) and reports all failures at once.
-func (a *App) PostAdminUserSubnetTest(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUserSubnetTest(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -527,8 +500,8 @@ func (a *App) PostAdminUserSubnetTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", 400)
 		return
 	}
-	results := runSubnetSanityCheck(a.DB, id)
-	renderUserSubnetPage(a, w, r, c, id, map[string]any{
+	results := s.runSubnetSanityCheck(id)
+	s.renderUserSubnetPage(w, r, c, id, map[string]any{
 		"FlashTestResult": results,
 	})
 }
@@ -537,7 +510,8 @@ func (a *App) PostAdminUserSubnetTest(w http.ResponseWriter, r *http.Request) {
 // match the user_subnets row + the CIDR parses. Returns
 // a list of human-readable result lines (one per
 // check). The admin UI renders them in a flash card.
-func runSubnetSanityCheck(d *sql.DB, userID int64) []string {
+func (s *Service) runSubnetSanityCheck(userID int64) []string {
+	d := s.DB
 	var out []string
 	sub, err := subnet.Get(d, userID)
 	if err != nil {

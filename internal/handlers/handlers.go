@@ -439,6 +439,49 @@ func (a *App) audit(userID int64, username, action, detail string) {
 	_ = db.AppendAuditLog(a.DB, userID, username, action, detail)
 }
 
+// SanitizeFilename strips anything that's not safe in a
+// Content-Disposition filename — ASCII alphanumerics,
+// dash, underscore, dot. Used by the audit-export
+// download (handlers_my_audit.go) to build the
+// attachment filename so a caller can't trick a
+// browser into saving into a parent directory.
+//
+// refactor-v0.30 Phase B step 3b.5 (2026-07-29): the
+// helper was previously private to admin_user_subnet_download.go.
+// When that file moved to feature/admin/ the helper
+// followed, but handlers_my_audit.go kept using it.
+// Re-homed here as an exported symbol so both call
+// sites can share one implementation without a
+// feature/admin → handlers import (which would have
+// been a real but harmless cycle).
+func SanitizeFilename(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "user"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "user"
+	}
+	// Cap at 32 chars to keep the filename short.
+	if len(out) > 32 {
+		out = out[:32]
+	}
+	return out
+}
+
 // ---------- FILE INDEX ----------
 //
 // handlers.go owns only shared infra: App struct, render helpers,
