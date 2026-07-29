@@ -1612,7 +1612,9 @@ per-user headscale, compliance tier). The next big things:
 
 - **`refactor-v0.30` — feature module decomposition**
   ([plan](docs/plans/refactor-v0.30.md), 2026-07-25, ~8 days
-  work). The `internal/handlers/` package is 69 files / ~14k
+  work). The `internal/handlers/` package is **75 .go files** / ~19k lines
+  (76 files / 19208 lines counted 2026-07-29), not 69 as the original plan
+  said — the v0.30.x feature growth was faster than the refactor estimate.
   lines; biggest single files are 500-770 lines mixing HTTP
   handlers, form parsing, business logic, DB queries,
   template data assembly, audit logging, and i18n lookups.
@@ -2097,75 +2099,55 @@ Already executed: user1/guest/user2 now have
 
 ## Code structure (where to look)
 
-```
-cmd/skygate/main.go                                — entry point, HTTP routes
-deploy/subnet-router/setup.sh                      — v0.24.0: runs on the user's subnet-router host; takes a preauth key + hostname + cidr and runs `tailscale up` (per-user /24 + tag:subnet-router)
-deploy/subnet-router/allocate-existing-users.sh    — v0.24.0: one-off; INSERTs user_subnets rows for pre-v0.20.0 users that auto-allocate missed
-docs/subnet-router.md                              — v0.24.0: full operator/user guide for the subnet-router end-to-end flow
+**Entry point:** `cmd/skygate/main.go` — HTTP routes, app init, lifecycle.
 
-internal/handlers/handlers.go                       — shared infra only: App struct + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser (~257 lines)
-internal/handlers/handlers_dashboard.go             — TailnetMetrics + PreauthKeyStats types + computeTailnetMetrics + GetDashboard + countMyPreauthKeys (~185 lines)
-internal/handlers/handlers_auth.go                  — GetLogin/PostLogin/PostLogout + i18n PostLang cookie (~93 lines)
-internal/handlers/handlers_node_ownership.go        — backfillNodeOwnership + firstTagOrFallback helper (Strategy C temporal preauth->tag:private match) (~248 lines)
-internal/handlers/handlers_my_account.go            — self-service password change at /my/account (~84 lines)
-internal/handlers/handlers_api_tokens.go            — personal API tokens (Bearer auth) at /my/tokens (~52 lines)
-internal/handlers/handlers_admin_pages.go           — admin read-only views: /admin/audit, /admin/acls (~58 lines)
-internal/handlers/handlers_derp.go                  — /admin/derp handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot types (~115 lines)
-internal/handlers/handlers_derp_collect.go          — collectDerpStatus + httpGet + parseDerper{DebugHTML,Vars} (fetch & parse derper debug endpoints) (~245 lines)
-internal/handlers/handlers_derp_classify.go         — classifyDerpPeer(s) + summarizeDerpPeers + derpLAN/derpTailscale/derpPeerNPM constants (~80 lines)
-internal/handlers/handlers_admin_users.go           — admin user CRUD (~209 lines)
-internal/handlers/handlers_admin_nodes.go           — admin device/tag handlers (~91 lines)
-internal/handlers/exit_rules.go                     — DeviceRule struct + DB helpers (insertRuleUnique, getDeviceRules, getUserDevices) + GenerateACL() + ACL helpers (~359 lines)
-internal/handlers/exit_rules_form_my.go             — /my/exit-rules: GetMyExitRules (incl. ?script= download), PostMyExitRule (DNS resolve + dedup), PostDeleteExitRule (multi-delete with cascade); owns countUserFacing closure (~625 lines)
-internal/handlers/exit_rules_form_admin.go          — /admin/exit-rules: AdminExitRules (cross-user hierarchical view) (~165 lines)
-internal/handlers/exit_rules_form_rollback.go       — /admin/exit-rules/rollback: PostAdminRollbackACL (~40 lines)
-internal/handlers/exit_rules_form_reapply.go        — /admin/exit-rules/reapply: PostAdminACLReapply (Этап 14 v7, push current GenerateACL output to headscale without needing exit-rule churn) (~57 lines)
-internal/acl/acl.go                                 — Free function GenerateACL(db) (per-user policy + ssh rules + tagOwners). Was inside exit_rules.go before v7 (~190 lines)
-internal/acl/acl_test.go                            — TestGenerateACLValidJSONShape + TestGenerateACLIncludesDeviceRules + per-identity tests (~210 lines)
-internal/handlers/exit_rules_api.go                 — public REST API (~159 lines)
-internal/handlers/exit_rules_sync.go                — ACL sync, staggeredSync, autoupdater (~387 lines)
-internal/handlers/exit_rules_routescript.go              — route-setup script orchestrator: GenerateRouteSetupScript (~42 lines)
-internal/handlers/exit_rules_routescript_data.go         — DB query (loadRoutesForScript) + HS exit-node IP lookup (resolveExitNodeIPForScript) + routeEntry struct (~67 lines)
-internal/handlers/exit_rules_routescript_windows_body.go — buildWindowsRouteScript + writeWindows{Setup,Restore}Script helpers — pure .cmd builder, no I/O (~185 lines)
-internal/handlers/exit_rules_routescript_linux_body.go   — buildLinuxRouteScript + writeLinux{Setup,Restore}Script helpers — pure .sh builder for Linux + macOS, no I/O (~147 lines)
-internal/handlers/exit_rules_cleanup.go              — admin cleanup + orphan /32 cleanup (~357 lines)
-internal/handlers/admin_backup.go                   — admin backup/restore ACL (~247 lines)
-internal/handlers/admin_telegram.go                 — admin telegram UI + save/test/rotate/disable (~303 lines)
-internal/handlers/admin_exit_nodes.go               — admin exit nodes (~164 lines)
-internal/telegram/notify.go                         — Notifier interface + RealNotifier (hot-swap, getUpdates loop) + reply/send HTTP (~245 lines)
-internal/telegram/commands.go                       — `BotEnv` + `HandleCommand` dispatch + /status + /help (~96 lines)
-internal/telegram/commands_phase2.go                — /nodes + /rules + /audit (DB queries, trimForTelegram) (~166 lines)
-internal/telegram/commands_phase3.go                — /exit_nodes + /quota + /ack + unixToShort (~222 lines)
-internal/telegram/commands_phase4.go                — /version + /restart (token confirm, SIGTERM) + /help <command> (~205 lines)
-internal/telegram/alerts.go                         — `SendAlert` on Notifier + telegram_alerts ring buffer (cap 500) (~85 lines)
-internal/handlers/templates.go                      — `//go:embed` for all HTML (~117 lines)
-internal/handlers/static.go                         — empty stub (file is unused placeholder)
-internal/handlers/templates/exit_rules.html         — /my/exit-rules UI (filter, search, multi-delete)
-internal/handlers/templates/exit_rules_help.html    — /my/exit-rules/help page
-internal/handlers/templates/admin/                  — admin templates
-internal/handlers/templates/user/                   — user-facing templates (/my/devices, account, exit_nodes, tokens, etc.)
-internal/config/config.go                           — env-based config
-internal/db/secrets.go                              — telegram/bot credentials (encrypted at rest)
-internal/headscale/                                 — headscale API client (incl. CLI fallback for tag/untag). Split:
-  - headscale.go (3.5 KB) — Client struct, New, HTTP do() helper, InvalidateCache + cache fields
-  - users.go (3.8 KB)     — HSUser, ListUsers, CreateUser, DeleteUser
-  - preauth.go (6.8 KB)   — PreauthKey, CreatePreauthKey, ExpirePreauthKey (API + docker exec CLI fallback)
-  - nodes.go (8.1 KB)     — HSNode, NodeView, ListAllNodes, ListNodesByUser, ListExitNodes, DeleteNode, NodeList, NodeInfo + hasExitNodeTag
-  - tags.go (3.5 KB)      — TagPublicTag, TagPrivateTag, TagNode, UntagNode + IsPublic/IsPublicView/IsPrivateView
-  - acl.go (3.7 KB)       — ACLPolicy, GetACL (cached), SetPolicy (API + file-mode fallback)
-  - routes.go (4.3 KB)    — ApproveAllRoutes* (headscale CLI) + SetAdvertisedRoutes (SSH)
-  - route_args.go (3.3 KB) — pure helpers for `tailscale set` command (BuildTailscaleSetRoutes, AcceptRoutesFlag)
-  - headscale_test.go + route_args_test.go — unit tests (parseDuration, durationFlag, hasExitNodeTag, IsPublic*)
-internal/db/                                        — SQLite layer
-internal/auth/                                      — JWT session + API tokens
-internal/handlers/templates/themes.css              — CSS embedded from static/css/themes.css
-deploy/{deploy,backup,validate}.sh                  — deployment scripts
-scripts/smoke.sh                                    — 56-step HTTP smoke test (uses make test)
-scripts/check_exit_nodes.py                         — verifies all exit-nodes advertise 0.0.0.0/0 + ::/0
-scripts/audit_routes.py                             — static main.go vs handlers route-vs-handler audit
-Makefile                                            — build / run / test / smoke / audit targets
-AGENTS.md                                           — this file
-```
+**Package layout** (75 .go files in `internal/handlers/` + 21 other
+packages; counted 2026-07-29 — run `find internal -name '*.go' | wc -l`
+for current state). Refactor in progress — see
+[Decomposition status](#decomposition-status) below and
+[refactor-v0.30 plan](docs/plans/refactor-v0.30.md).
+
+| Package | Files | Lines | Purpose |
+|---|---:|---:|---|
+| `internal/handlers/` | 76 | ~19k | **The legacy monolith** — HTTP handlers, form parsing, business logic, DB queries, template data assembly, audit, i18n. Will be split into `internal/feature/*/` packages. **largest 5 files** (500-700 lines each): `exit_rules_form_my.go`, `admin_integrations_renderer.go`, `admin_telegram.go`, `admin_user_subnet.go`, `handlers_my_telegram_test.go`, `admin_integrations_renderer_test.go` |
+| `internal/feature/` | 7 | 63 | **Refactor target.** Phase A scaffolding (this commit) — empty placeholder packages for the future split: `exit_rules/`, `subnet/`, `admin/`, `auth/`, `my/`, `healthz/`. No production code yet; Phase B step 1 (`healthz`) is next. |
+| `internal/acl/` | 4 | ~4.3k | GenerateACL + ACL helpers. Was inside `exit_rules.go` before v7; extracted to its own package so the telegram bot can call it without `*App`. |
+| `internal/db/` | 64 | ~13k | SQLite layer + 47 migrations. Includes `pgmigrate/` (PG safety helpers) and `driver_postgres.go` (build tag `postgres`, v0.31.0). |
+| `internal/telegram/` | 28 | ~13.5k | Bot dispatch + per-command handlers + i18n + formatting. Refactor target after `internal/handlers/`. |
+| `internal/headscale/` | 14 | ~2.8k | headscale API client (split by resource: users, preauth, nodes, tags, acl, routes) + CLI fallback for tag/untag. |
+| `internal/update/` | 12 | ~3k | v0.29.0 self-update orchestrator (already separate package, not affected by refactor). |
+| `internal/headscale_version/` | 3 | ~0.8k | headscale-release-version monitoring (`/admin/headscale` page + `/headscale` bot command, v0.20.0). |
+| `internal/i18n/` | 4 | ~4.5k | RU + EN catalog, `T()`/`Tf()` helpers, `TestCatalogsParity` (B4). Per-feature refactor in Phase C. |
+| `internal/backup/` | 6 | ~1.6k | ACL backup/restore (CLI in `admin_backup.go`, config in `admin_backup_config.go`). |
+| `internal/invite/` | 4 | ~1k | v0.21.0 user-to-user invite bridge (bot `/invite` + `/accept` + `/admin/invites`). |
+| `internal/mesh/` | 2 | ~0.7k | v0.22.0 N-way mesh between users. |
+| `internal/sidecar/` | 2 | ~1k | v0.16.7 per-user subnet-router sidecar (auto-approve + status sync). |
+| `internal/subnet/` | 8 | ~1.8k | v0.16.6 per-user subnet allocator + manager + shares. Data layer; the feature package (`internal/feature/subnet/`) reuses this. |
+| `internal/expirewatch/` | 2 | ~0.7k | v0.23.3 node-expiry watcher (5m tick, 7d threshold, 30d renewal). |
+| `internal/monitoring/` | 2 | ~1.1k | /healthz + /readyz probes (R1, R2 in catalog). Will move to `internal/feature/healthz/` in Phase B step 1. |
+| `internal/release/` | 3 | ~0.5k | GitHub Releases monitor for /admin/update banner. |
+| `internal/auth/`, `internal/config/`, `internal/middleware/`, `internal/ratelimit/`, `internal/db/pgmigrate/` | small | — | Platform primitives — not affected by refactor. |
+
+**Templates** (//go:embed from `internal/handlers/templates/`):
+- `exit_rules.html`, `exit_rules_help.html` — /my/exit-rules + /my/exit-rules/help
+- `admin/*` — /admin/* pages (per-page)
+- `user/*` — /my/* pages
+- `themes.css` — CSS embedded from `static/css/themes.css`
+
+**Deploy / scripts:**
+- `deploy/skygate-cli.sh` — host-side `skygate` wrapper (v0.29.2, B14)
+- `deploy/{deploy,backup,validate}.sh`, `deploy/{subnet-router,tailscale-relay,headscale-users}/` — operator tooling
+- `scripts/smoke.sh` (bilingual 83+83=166 HTTP-level checks, B8)
+- `scripts/check_exit_nodes.py`, `scripts/check_https.py`, `scripts/audit_routes.py`
+- `Makefile` — `build / run / test / smoke / verify-pre / verify-post / audit` targets
+- `docs/plans/` — refactor-v0.30.md, pg-migration-handling.md, self-update-v0.29.md, refactor-v0.6.0.md (history)
+- `AGENTS.md` — this file
+
+**When adding a new feature** (post-refactor): drop a new directory
+`internal/feature/foo/` with `handler.go + service.go + store.go +
+types.go + template.html + i18n_keys.go + bot.go + tests`, add 5-10
+lines to `cmd/skygate/main.go` for the route, add 1-2 lines to
+`internal/telegram/dispatch.go` for the bot command. Done.
 
 ---
 
