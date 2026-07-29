@@ -1,10 +1,22 @@
-package handlers
-
-// handlers_my_devices.go — GET /my/devices: list the current user's
-// devices plus public/exit nodes. Lazy-backfills node_owner_map from
-// headscale's preAuthKey history on every load so the user sees their
+// Package my — devices.go owns GET /my/devices: list the
+// current user's devices plus public/exit nodes. Performs
+// a lazy-backfill of node_owner_map from headscale's
+// preAuthKey history on every load so the user sees their
 // tagged devices immediately.
-// Extracted from handlers.go.
+//
+// refactor-v0.30 Phase B step 5b (2026-07-29): moved
+// from internal/handlers/handlers_my_devices.go. The
+// handler used to be a method on *App; it now lives on
+// *Service. The backfillNodeOwnership helper is a local
+// copy — the canonical version lives in
+// internal/handlers/handlers_node_ownership.go (where
+// it's used by the /admin/devices page and the
+// /my/devices backfill + the per-device tag auto-apply).
+// The two copies are kept in sync; dedup is left as a
+// future refactor (the function is ~250 lines and
+// moving it to internal/nodeownership/ would touch every
+// admin and per-device-handler file).
+package my
 
 import (
 	"database/sql"
@@ -18,12 +30,13 @@ import (
 	"skygate/internal/headscale"
 )
 
-// GetMyDevices lists the current user's own devices plus the
-// tailnet's public/exit nodes. Performs a lazy backfill of
-// node_owner_map from headscale's preAuthKey history so the user
-// sees their tagged devices on the first /my/devices load.
-func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetMyDevices lists the current user's own devices
+// plus the tailnet's public/exit nodes. Performs a lazy
+// backfill of node_owner_map from headscale's preAuthKey
+// history so the user sees their tagged devices on the
+// first /my/devices load.
+func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -31,7 +44,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	var hsUserID sql.NullInt64
 	var username string
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
-	hsUserID, username, _ = db.GetUserHSByID(a.DB, c.UserID)
+	hsUserID, username, _ = db.GetUserHSByID(s.DB, c.UserID)
 
 	// 2026-07-21: v0.22.3 — read the user's subnet row
 	// (denormalized on portal_users) so the /my/devices page
@@ -42,7 +55,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// v0.25.0 — read it HERE (not later) so we can fill
 	// the new "Mesh subnet" column in the device rows.
 	var subnetCIDR, subnetStatus string
-	_ = a.DB.QueryRow(
+	_ = s.DB.QueryRow(
 		`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, c.UserID,
 	).Scan(&subnetCIDR, &subnetStatus)
 
@@ -53,7 +66,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// The device list reflects the user's tailnet, not the
 	// operator's primary one.
 	t0 := time.Now()
-	all, _ := a.HSForUser(c.UserID).ListAllNodes()
+	all, _ := s.Backend.HSForUserFn(c.UserID).ListAllNodes()
 
 	// Lazy-backfill node_owner_map from headscale's preAuthKey history.
 	// When a user creates a preauth key in /my/devices, we save its
@@ -65,8 +78,16 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// tag:private. We do this here, on the user's first /my/devices
 	// load, so the same fix happens for every node the user owns -
 	// without scanning the headscale DB up front.
-	if c.UserID != 0 {
-		a.backfillNodeOwnership(a.DB, all, c.UserID, username)
+	//
+	// The actual backfill is a callback (BackfillNodeOwnership
+	// on the Service, set by main.go) — the implementation
+	// lives in internal/handlers/handlers_node_ownership.go
+	// and is shared with the /admin/devices page. Inlining
+	// it here would mean keeping two ~250-line copies in
+	// sync; a future refactor can move it to a shared
+	// internal/nodeownership/ package.
+	if c.UserID != 0 && s.BackfillNodeOwnership != nil {
+		s.BackfillNodeOwnership(s.DB, all, c.UserID, username)
 	}
 
 	// headscale reassigns ownership to a synthetic "tagged-devices" user
@@ -156,7 +177,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// can look it up in O(1).
 	devicePrefByHost := map[string]string{}
 	deviceViaEnabledByHost := map[string]bool{}
-	devicePrefs, _ := db.ListDeviceExitNodePrefsForUser(a.DB, c.UserID)
+	devicePrefs, _ := db.ListDeviceExitNodePrefsForUser(s.DB, c.UserID)
 	for _, dp := range devicePrefs {
 		if dp.DeviceHostname != "" {
 			devicePrefByHost[strings.ToLower(dp.DeviceHostname)] = dp.ExitNodeTag
@@ -197,20 +218,20 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
-				UserName:        n.UserName,
-				IsPublic:        n.IsPublicView(),
-				Source:          "live",
-				Tags:            n.Tags,
-				AvailableRoutes: n.AvailableRoutes,
-				ApprovedRoutes:  n.ApprovedRoutes,
-				IsSubnetRouter:  hasTag(n.Tags, "tag:subnet-router"),
-				IsExitNode:      n.IsExitNode,
-				MeshSubnet:      subnetCIDR,
-				IsShared:         n.IsPublicView() || n.IsExitNode,
-				DevTag:           devTag,
-				DevTagApplied:    devTagApplied,
-				HostnameLower:    strings.ToLower(n.Hostname),
-				DeviceExitPref:      devicePrefByHost[strings.ToLower(n.Hostname)],
+				UserName:           n.UserName,
+				IsPublic:           n.IsPublicView(),
+				Source:             "live",
+				Tags:               n.Tags,
+				AvailableRoutes:    n.AvailableRoutes,
+				ApprovedRoutes:     n.ApprovedRoutes,
+				IsSubnetRouter:     hasTag(n.Tags, "tag:subnet-router"),
+				IsExitNode:         n.IsExitNode,
+				MeshSubnet:         subnetCIDR,
+				IsShared:           n.IsPublicView() || n.IsExitNode,
+				DevTag:             devTag,
+				DevTagApplied:      devTagApplied,
+				HostnameLower:      strings.ToLower(n.Hostname),
+				DeviceExitPref:     devicePrefByHost[strings.ToLower(n.Hostname)],
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
 			})
 		}
@@ -218,10 +239,10 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	if username != "" {
 		// 2026-07-12: Этап 10 part 4 — moved to
 		// db.ListNodeOwnerNodeIDsByUsername.
-		snapIDList, _ := db.ListNodeOwnerNodeIDsByUsername(a.DB, username)
+		snapIDList, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, username)
 		// Build a set for O(1) membership test. The list is small
-		// (a user's owned devices) but a map keeps the lookups in
-		// the inner loop tidy.
+		// (a user's owned devices) but a map keeps the lookups in the
+		// inner loop tidy.
 		snapIDs := map[string]bool{}
 		for _, id := range snapIDList {
 			snapIDs[id] = true
@@ -251,20 +272,20 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
-				UserName:        n.UserName,
-				IsPublic:        n.IsPublicView(),
-				Source:          "snapshot",
-				Tags:            n.Tags,
-				AvailableRoutes: n.AvailableRoutes,
-				ApprovedRoutes:  n.ApprovedRoutes,
-				IsSubnetRouter:  hasTag(n.Tags, "tag:subnet-router"),
-				IsExitNode:      n.IsExitNode,
-				MeshSubnet:      subnetCIDR,
-				IsShared:         n.IsPublicView() || n.IsExitNode,
-				DevTag:           devTag,
-				DevTagApplied:    devTagApplied,
-				HostnameLower:    strings.ToLower(n.Hostname),
-				DeviceExitPref:      devicePrefByHost[strings.ToLower(n.Hostname)],
+				UserName:           n.UserName,
+				IsPublic:           n.IsPublicView(),
+				Source:             "snapshot",
+				Tags:               n.Tags,
+				AvailableRoutes:    n.AvailableRoutes,
+				ApprovedRoutes:     n.ApprovedRoutes,
+				IsSubnetRouter:     hasTag(n.Tags, "tag:subnet-router"),
+				IsExitNode:         n.IsExitNode,
+				MeshSubnet:         subnetCIDR,
+				IsShared:           n.IsPublicView() || n.IsExitNode,
+				DevTag:             devTag,
+				DevTagApplied:      devTagApplied,
+				HostnameLower:      strings.ToLower(n.Hostname),
+				DeviceExitPref:     devicePrefByHost[strings.ToLower(n.Hostname)],
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
 			})
 		}
@@ -299,7 +320,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 
 	if subnetCIDR != "" {
 		// (1) mySharesTo: I (grantor) shared with someone (grantee).
-		rows, err := a.DB.Query(`
+		rows, err := s.DB.Query(`
 			SELECT p.username, s.cidr
 			  FROM user_subnet_shares sh
 			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
@@ -309,14 +330,14 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
-				var s shareInfo
-				if rows.Scan(&s.Username, &s.CIDR) == nil {
-					mySharesTo = append(mySharesTo, s)
+				var si shareInfo
+				if rows.Scan(&si.Username, &si.CIDR) == nil {
+					mySharesTo = append(mySharesTo, si)
 				}
 			}
 		}
 		// (2) sharesToMe: someone (grantor) shared with me (grantee).
-		rows2, err := a.DB.Query(`
+		rows2, err := s.DB.Query(`
 			SELECT p.username, s.cidr
 			  FROM user_subnet_shares sh
 			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
@@ -326,9 +347,9 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			defer rows2.Close()
 			for rows2.Next() {
-				var s shareInfo
-				if rows2.Scan(&s.Username, &s.CIDR) == nil {
-					sharesToMe = append(sharesToMe, s)
+				var si shareInfo
+				if rows2.Scan(&si.Username, &si.CIDR) == nil {
+					sharesToMe = append(sharesToMe, si)
 				}
 			}
 		}
@@ -337,7 +358,7 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// mesh I belong to (and their /24). The query is
 	// symmetric in mesh_id, so we deduplicate by username
 	// server-side via the (mesh_id, user_id) PK.
-	rows3, err := a.DB.Query(`
+	rows3, err := s.DB.Query(`
 		SELECT p.username, COALESCE(s.cidr, '')
 		  FROM mesh_members mm_self
 		  JOIN mesh_members mm_other ON mm_other.mesh_id = mm_self.mesh_id
@@ -350,37 +371,50 @@ func (a *App) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		defer rows3.Close()
 		seen := map[string]bool{}
 		for rows3.Next() {
-			var s shareInfo
-			if rows3.Scan(&s.Username, &s.CIDR) == nil {
-				if !seen[s.Username] {
-					seen[s.Username] = true
-					myMeshMembers = append(myMeshMembers, s)
+			var si shareInfo
+			if rows3.Scan(&si.Username, &si.CIDR) == nil {
+				if !seen[si.Username] {
+					seen[si.Username] = true
+					myMeshMembers = append(myMeshMembers, si)
 				}
 			}
 		}
 	}
 	// (4) meshCount: how many active meshes I'm in.
 	meshCount := 0
-	_ = a.DB.QueryRow(`
+	_ = s.DB.QueryRow(`
 		SELECT COUNT(DISTINCT mm.mesh_id)
 		  FROM mesh_members mm
 		  JOIN meshes m ON m.id = mm.mesh_id
 		 WHERE mm.user_id = ? AND m.status = 'active'`, c.UserID).Scan(&meshCount)
 
-	a.renderWithLayout(w, r, "user/devices.html", c, map[string]any{
-		"MyNodes":        myNodesList,
-		"PublicNodes":    publicNodes,
-		"HasMyNodes":     len(myNodesList) > 0,
-		"SubnetCIDR":     subnetCIDR,
-		"SubnetStatus":   subnetStatus,
-		"MySharesTo":     mySharesTo,
-		"SharesToMe":     sharesToMe,
-		"MyMeshMembers":  myMeshMembers,
-		"MeshCount":      meshCount,
+	s.Backend.RenderWithLayout(w, r, "user/devices.html", c, map[string]any{
+		"MyNodes":              myNodesList,
+		"PublicNodes":          publicNodes,
+		"HasMyNodes":           len(myNodesList) > 0,
+		"SubnetCIDR":           subnetCIDR,
+		"SubnetStatus":         subnetStatus,
+		"MySharesTo":           mySharesTo,
+		"SharesToMe":           sharesToMe,
+		"MyMeshMembers":        myMeshMembers,
+		"MeshCount":            meshCount,
 		// v0.28.4: per-device exit-node prefs.
-		"DeviceExitPrefs":     devicePrefByHost,
-		"AvailableExitNodes":  publicNodes, // for the per-device dropdown
-		"FlashSuccess":        r.URL.Query().Get("ok"),
-		"FlashError":          r.URL.Query().Get("err"),
+		"DeviceExitPrefs":      devicePrefByHost,
+		"AvailableExitNodes":   publicNodes, // for the per-device dropdown
+		"FlashSuccess":         r.URL.Query().Get("ok"),
+		"FlashError":           r.URL.Query().Get("err"),
 	})
 }
+
+// backfillNodeOwnership was a local copy of the helper in
+// internal/handlers/handlers_node_ownership.go. The
+// refactor-v0.30 Phase B step 5b move replaced it with
+// the BackfillNodeOwnership callback on the Service
+// (set in main.go), so the actual work now lives in
+// handlers_node_ownership.go's *App.backfillNodeOwnership
+// and is invoked via the callback. The ~250-line
+// implementation stays there; feature/my/devices.go
+// just calls the callback. A future refactor can move
+// the canonical implementation to a shared
+// internal/nodeownership/ package; tracked as a
+// follow-up.

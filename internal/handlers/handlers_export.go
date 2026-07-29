@@ -29,6 +29,7 @@ package handlers
 // refactor surface.
 
 import (
+	"database/sql"
 	"net/http"
 
 	"skygate/internal/auth"
@@ -86,4 +87,13 @@ func (a *App) HSGlobalFn() *headscale.Client {
 // doesn't need a method on *App.
 func (a *App) HSForUserFn(userID int64) *headscale.Client {
 	return a.HSForUser(userID)
+}
+
+// BackfillNodeOwnershipFn — public wrapper around
+// backfillNodeOwnership so feature/my can call the
+// 250-line helper as a callback (instead of carrying
+// a copy of the function in feature/my/devices.go).
+// 2026-07-29: refactor-v0.30 Phase B step 5b.
+func (a *App) BackfillNodeOwnershipFn(d *sql.DB, nodes []headscale.NodeView, userID int64, username string) {
+	a.backfillNodeOwnership(d, nodes, userID, username)
 }

@@ -256,7 +256,9 @@ func main() {
 	mux.Handle("GET /help", authMW(http.HandlerFunc(app.GetHelp)))
 
 	// User self-service
-	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(app.GetMyDevices)))
+	// (the rest of /my/* routes are below, after mySvc
+	// is constructed — /my/devices + /my/exit-nodes +
+	// /my/preauth + /my/keys all route through mySvc)
 	// 2026-07-25: v0.28.4 — per-device preferred exit-node.
 	// The user can pin a specific device (e.g. their
 	// Android phone) to a different exit-node than the
@@ -376,6 +378,8 @@ func main() {
 	// Service, but this removes the indirect call).
 	adminSvc.SyncRoutes = exitRulesSvc.SyncAdvertisedRoutes
 	app.SetExitRulesService(exitRulesSvc)
+
+	// refactor-v0.30 Phase B step 5 (2026-07-29):
 	// /my/* feature service. The /my/account, /my/tokens
 	// and /my/telegram routes already live in feature/auth
 	// (step 2); this Service owns the remaining
@@ -395,7 +399,29 @@ func main() {
 		// upcoming 5b/5c/5d handlers that do (the
 		// device-pref + per-plane-ACL flow).
 		Notifier: app.Notifier,
+		// refactor-v0.30 Phase B step 5b — the
+		// /my/devices backfill is a 250-line helper
+		// that lives in handlers_node_ownership.go
+		// and is also used by /admin/devices. Wire
+		// it as a callback so the feature package
+		// doesn't carry a copy.
+		BackfillNodeOwnership: app.BackfillNodeOwnershipFn,
 	}
+	// 2026-07-29: refactor-v0.30 Phase B step 5a —
+	// /my/exit-nodes, /my/preauth, /my/keys live in
+	// feature/my now.
+	mux.Handle("GET /my/exit-nodes", authMW(http.HandlerFunc(mySvc.GetExitNodes)))
+	// 2026-07-24: v0.28.1 — per-user preferred exit-node.
+	// Visible to all authenticated users (self-service).
+	mux.Handle("POST /my/exit-nodes/preferred", authMW(http.HandlerFunc(mySvc.PostMyExitNodePreferred)))
+	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(mySvc.PostMyPreauth)))
+	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(mySvc.GetMyKeys)))
+	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(mySvc.PostMyKeyExpire)))
+	// 2026-07-29: refactor-v0.30 Phase B step 5b —
+	// /my/devices moved to feature/my.
+	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(mySvc.GetMyDevices)))
+
+	// Admin
 	// 2026-07-29: refactor-v0.30 Phase B step 5a —
 	// /my/exit-nodes, /my/preauth, /my/keys live in
 	// feature/my now.

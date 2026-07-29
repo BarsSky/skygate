@@ -91,11 +91,19 @@ type Backend interface {
 //   - Notifier: for the operator-channel alerts on
 //     admin / user actions (the /my/* surface emits
 //     few of these — mostly the device-pref handlers).
+//   - BackfillNodeOwnership: callback to the legacy
+//     App.backfillNodeOwnership helper. The full
+//     implementation lives in
+//     internal/handlers/handlers_node_ownership.go
+//     (~250 lines; would be a 1:1 copy if inlined in
+//     feature/my/devices.go). Modeled as a callback
+//     instead of duplicated. Set by main.go at boot.
 type Service struct {
-	Backend  Backend
-	DB       *sql.DB
-	HS       *headscale.Client
-	Cfg      *config.Config
-	I18n     *i18n.Catalog
-	Notifier telegram.Notifier
+	Backend                Backend
+	DB                     *sql.DB
+	HS                     *headscale.Client
+	Cfg                    *config.Config
+	I18n                   *i18n.Catalog
+	Notifier                telegram.Notifier
+	BackfillNodeOwnership  func(d *sql.DB, nodes []headscale.NodeView, userID int64, username string)
 }
