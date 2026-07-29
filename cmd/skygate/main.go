@@ -264,7 +264,6 @@ func main() {
 
 	// Authenticated
 	authMW := middleware.RequireAuth(cfg.JWTSecret)
-	mux.Handle("GET /dashboard", authMW(http.HandlerFunc(app.GetDashboard)))
 	mux.Handle("GET /help", authMW(http.HandlerFunc(app.GetHelp)))
 
 	// User self-service
@@ -446,6 +445,12 @@ func main() {
 		// doesn't carry a copy.
 		BackfillNodeOwnership: app.BackfillNodeOwnershipFn,
 	}
+	// 2026-07-29: refactor-v0.30 Phase B step 6d —
+	// /dashboard is a user-facing page, lives in feature/my
+	// next to the other /my/* routes. Registered here
+	// (after mySvc construction) so the closure can reference
+	// the mySvc variable.
+	mux.Handle("GET /dashboard", authMW(http.HandlerFunc(mySvc.GetDashboard)))
 	// 2026-07-29: refactor-v0.30 Phase B step 5a —
 	// /my/exit-nodes, /my/preauth, /my/keys live in
 	// feature/my now.
