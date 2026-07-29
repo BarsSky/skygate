@@ -21,6 +21,7 @@ import (
 	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
 	exitrules "skygate/internal/feature/exit_rules"
+	mysvc "skygate/internal/feature/my"
 	"skygate/internal/feature/healthz"
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
@@ -256,10 +257,6 @@ func main() {
 
 	// User self-service
 	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(app.GetMyDevices)))
-	mux.Handle("GET /my/exit-nodes", authMW(http.HandlerFunc(app.GetExitNodes)))
-	// 2026-07-24: v0.28.1 — per-user preferred exit-node.
-	// Visible to all authenticated users (self-service).
-	mux.Handle("POST /my/exit-nodes/preferred", authMW(http.HandlerFunc(app.PostMyExitNodePreferred)))
 	// 2026-07-25: v0.28.4 — per-device preferred exit-node.
 	// The user can pin a specific device (e.g. their
 	// Android phone) to a different exit-node than the
@@ -267,9 +264,6 @@ func main() {
 	// the handler resolves the hostname to the user's
 	// device and stores the pref in device_exit_node_prefs.
 	mux.Handle("POST /my/devices/preferred-exit", authMW(http.HandlerFunc(app.PostMyDevicePreferredExit)))
-	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(app.PostMyPreauth)))
-	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(app.GetMyKeys)))
-	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(app.PostMyKeyExpire)))
 	// 2026-07-20: v0.22.0 — /my/meshes user-scope
 	// page (the WEB entry point for the mesh
 	// workflow). The bot /mesh create|join|leave
@@ -382,6 +376,36 @@ func main() {
 	// Service, but this removes the indirect call).
 	adminSvc.SyncRoutes = exitRulesSvc.SyncAdvertisedRoutes
 	app.SetExitRulesService(exitRulesSvc)
+	// /my/* feature service. The /my/account, /my/tokens
+	// and /my/telegram routes already live in feature/auth
+	// (step 2); this Service owns the remaining
+	// self-service pages (devices, exit-nodes, preauth,
+	// keys, audit, per-device exit pref). Step 5a wires
+	// preauth + exit-nodes + keys; step 5b/5c/5d follow
+	// with devices / meshes / audit / device_exit_pref.
+	mySvc := &mysvc.Service{
+		Backend: app,
+		DB:      app.DB,
+		HS:      app.HS,
+		Cfg:     app.Config(),
+		I18n:    app.I18n,
+		// refactor-v0.30 Phase B step 5 — Notifier not
+		// used by the 3 handlers in 5a (none of them
+		// sends an operator alert). Wired for the
+		// upcoming 5b/5c/5d handlers that do (the
+		// device-pref + per-plane-ACL flow).
+		Notifier: app.Notifier,
+	}
+	// 2026-07-29: refactor-v0.30 Phase B step 5a —
+	// /my/exit-nodes, /my/preauth, /my/keys live in
+	// feature/my now.
+	mux.Handle("GET /my/exit-nodes", authMW(http.HandlerFunc(mySvc.GetExitNodes)))
+	// 2026-07-24: v0.28.1 — per-user preferred exit-node.
+	// Visible to all authenticated users (self-service).
+	mux.Handle("POST /my/exit-nodes/preferred", authMW(http.HandlerFunc(mySvc.PostMyExitNodePreferred)))
+	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(mySvc.PostMyPreauth)))
+	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(mySvc.GetMyKeys)))
+	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(mySvc.PostMyKeyExpire)))
 	// Admin
 	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(adminSvc.GetAdminUsers)))
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(adminSvc.PostAdminUser)))

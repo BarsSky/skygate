@@ -33,6 +33,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/headscale"
 )
 
 // Render — public wrapper around unexported a.render. Lets
@@ -63,4 +64,26 @@ func (a *App) Audit(userID int64, username, action, detail string) {
 // whether to auto-allocate a subnet on user create).
 func (a *App) Config() *config.Config {
 	return a.Cfg
+}
+
+// HSGlobalFn — wrapper exposing the private HSGlobal()
+// method as a function value, so feature/* packages
+// can hold it as a Service field (matching the
+// feature/admin pattern). The "Fn" suffix is what
+// avoids the name clash with the existing
+// HSGlobal() method — a method named HSGlobalFn
+// returning *headscale.Client and called like
+// `a.HSGlobalFn()` satisfies a Backend interface
+// that declares `HSGlobalFn() *headscale.Client`.
+// 2026-07-29: refactor-v0.30 Phase B step 5.
+func (a *App) HSGlobalFn() *headscale.Client {
+	return a.HSGlobal()
+}
+
+// HSForUserFn — same trick for HSForUser. feature/my
+// holds the per-user control plane routing via this
+// callback so the per-handler self-service code
+// doesn't need a method on *App.
+func (a *App) HSForUserFn(userID int64) *headscale.Client {
+	return a.HSForUser(userID)
 }

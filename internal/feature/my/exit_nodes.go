@@ -1,8 +1,13 @@
-package handlers
-
-// handlers_my_exit_nodes.go — GET /my/exit-nodes: list exit nodes the
-// user can route through. Visible to all authenticated users.
-// Extracted from handlers.go.
+// Package my — exit_nodes.go owns the /my/exit-nodes
+// self-service page (list exit nodes the user can route
+// through + set/clear preferred exit-node).
+//
+// refactor-v0.30 Phase B step 5a (2026-07-29): moved from
+// internal/handlers/handlers_my_exit_nodes.go. The two
+// handlers (GetExitNodes + PostMyExitNodePreferred) + the
+// errToQuery helper used to be methods on *App; they now
+// live on *Service.
+package my
 
 import (
 	"net/http"
@@ -13,38 +18,42 @@ import (
 	"skygate/internal/db"
 )
 
-// GetExitNodes lists exit nodes advertised in the tailnet. Visible to all
-// authenticated users so they can pick one to route through.
-func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetExitNodes lists exit nodes advertised in the tailnet.
+// Visible to all authenticated users so they can pick
+// one to route through.
+//
+// 2026-07-15: v0.12.0 — route to the user's own control
+// plane. Exit nodes belong to the user's tailnet, so the
+// list reflects their headscale instance, not the
+// operator's primary one. (A user on headscale-B sees
+// headscale-B's exit nodes, not headscale-A's.)
+//
+// 2026-07-24: v0.28.1 — also pass the user's current
+// preferred exit-node tag so the template can render
+// "Set as my preferred" / "Currently preferred" buttons
+// per exit-node row.
+//
+// 2026-07-25: v0.28.5 — also pass ViaEnabled for the
+// "Strict pinning" checkbox state.
+func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	// 2026-07-15: v0.12.0 — route to the user's own control plane.
-	// Exit nodes belong to the user's tailnet, so the list
-	// reflects their headscale instance, not the operator's
-	// primary one. (A user on headscale-B sees headscale-B's
-	// exit nodes, not headscale-A's.)
-	exits, _ := a.HSForUser(c.UserID).ListExitNodes()
-	// 2026-07-24: v0.28.1 — also pass the user's current
-	// preferred exit-node tag so the template can render
-	// "Set as my preferred" / "Currently preferred" buttons
-	// per exit-node row. Empty string = no preference set.
-	// 2026-07-25: v0.28.5 — also pass ViaEnabled for the
-	// "Strict pinning" checkbox state.
+	exits, _ := s.Backend.HSForUserFn(c.UserID).ListExitNodes()
 	var prefTag string
 	var viaEnabled bool
-	if pref, err := db.GetUserExitNodePref(a.DB, c.UserID); err == nil {
+	if pref, err := db.GetUserExitNodePref(s.DB, c.UserID); err == nil {
 		prefTag = pref.ExitNodeTag
 		viaEnabled = pref.ViaEnabled
 	}
-	a.renderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
-		"ExitNodes":           exits,
+	s.Backend.RenderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
+		"ExitNodes":            exits,
 		"PreferredExitNodeTag": prefTag,
-		"ViaEnabled":          viaEnabled,
-		"FlashSuccess":        r.URL.Query().Get("ok"),
-		"FlashError":          r.URL.Query().Get("err"),
+		"ViaEnabled":           viaEnabled,
+		"FlashSuccess":         r.URL.Query().Get("ok"),
+		"FlashError":           r.URL.Query().Get("err"),
 	})
 }
 
@@ -58,9 +67,10 @@ func (a *App) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 //
 // 2026-07-24: v0.28.1. Visible to all authenticated
 // users (self-service). Admin path is
-// /admin/users/{id}/subnet/preferred-exit.
-func (a *App) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// /admin/users/{id}/subnet/preferred-exit (lives in
+// feature/admin — see admin/user_subnet.go).
+func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -77,11 +87,11 @@ func (a *App) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request) {
 	// (notably Android) reject policies with via they
 	// don't understand, so the default is OFF.
 	viaEnabled := r.FormValue("via") == "1"
-	if err := db.SetUserExitNodePref(a.DB, c.UserID, tag, c.UserID, viaEnabled); err != nil {
+	if err := db.SetUserExitNodePref(s.DB, c.UserID, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "my_preferred_exit_set",
+	s.Backend.Audit(c.UserID, c.Username, "my_preferred_exit_set",
 		"tag="+tag+" via="+strconv.FormatBool(viaEnabled))
 	// Re-apply ACL. The user's planeURL is "" for the
 	// global-default single-plane deploy (the only path
@@ -89,8 +99,12 @@ func (a *App) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request) {
 	// per-plane dispatch is on the call site — we use
 	// HSForUser(c.UserID) so the push lands on the
 	// user's own headscale.
-	res := acl.ApplyACLPipelineForPlane(a.DB, a.HSForUser(c.UserID), "", nil, c.Username,
-		"my_preferred_exit_set tag="+tag, a.Cfg.ACLWithViaEnabled)
+	viaFlag := false
+	if s.Cfg != nil {
+		viaFlag = s.Cfg.ACLWithViaEnabled
+	}
+	res := acl.ApplyACLPipelineForPlane(s.DB, s.Backend.HSForUserFn(c.UserID), "", nil, c.Username,
+		"my_preferred_exit_set tag="+tag, viaFlag)
 	if !res.Applied {
 		// The preference is in the DB regardless — the
 		// next /my/devices load will retry the policy
@@ -102,8 +116,13 @@ func (a *App) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/my/exit-nodes?ok=1", http.StatusSeeOther)
 }
 
+// errToQuery URL-encodes a string for use in a redirect
+// query parameter. Spaces become '+' (matching the
+// application/x-www-form-urlencoded form), common
+// safe-chars pass through, everything else becomes
+// %XX (uppercase hex). Used by the preferred-exit
+// handlers when redirecting with a flash error.
 func errToQuery(s string) string {
-	// URL-encode just enough to keep query params valid.
 	out := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {
 		c := s[i]
