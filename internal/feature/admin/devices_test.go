@@ -1,7 +1,8 @@
 package admin
 
 // devices_test.go — regression tests for the v0.30.1
-// user-device-can't-be-exit-node guard (nodeTagRefusedForUserDevice).
+// user-device-can't-be-exit-node guard (nodeTagRefusedForUserDevice)
+// AND for the v0.31.x PostAdminDeviceMeta manual override form.
 //
 // The bug: on 2026-07-28, michail's Windows box "base"
 // (headscale id=7, tag:dev-michail-base) was found carrying
@@ -22,10 +23,29 @@ package admin
 // refactor-v0.30 Phase B step 3a: tests moved here from
 // internal/handlers/handlers_admin_nodes_test.go (the
 // function-under-test moved with them).
+//
+// 2026-07-29: PostAdminDeviceMeta added — manual override for
+// the per-device OS + device_type columns added in v0.31.x.
+// The auto-detect (internal/devicemeta.Detect) handles ~80%
+// of hostnames correctly. The remaining 20% (custom hostnames
+// like "A71", "laptop", etc.) need an admin override via
+// POST /admin/devices/{id}/meta. The test below covers the
+// "happy path" of the handler — invalid OS / device_type are
+// rejected, the row is updated, the audit is written.
 
 import (
+	"database/sql"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"skygate/internal/auth"
+	"skygate/internal/db"
+	"skygate/internal/devicemeta"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // TestNodeTagRefused_ExitNodeOnUserDevice — the primary
@@ -143,5 +163,252 @@ func TestNodeTagRefused_ExitNodeOnMultipleDevTags(t *testing.T) {
 	// iterates in order. But it must be one of them.
 	if !strings.HasPrefix(hadTag, "tag:dev-skyadmin-") {
 		t.Errorf("hadTag should be a skyadmin dev tag, got %q", hadTag)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 2026-07-29: v0.31.x PostAdminDeviceMeta manual override tests.
+//
+// The handler is the admin-only manual override for the per-device
+// OS + device_type columns added in v0.31.x. The auto-detect
+// (internal/devicemeta.Detect) handles ~80% of hostnames correctly;
+// the remaining 20% (custom names like "A71", "laptop") need an
+// admin-set value via the form on /admin/devices.
+//
+// The tests below use a real SQLite (in-memory) + a stub Backend
+// that records Audit calls. The DB row update is asserted by
+// reading the row back via db.GetNodeOwner. The audit call is
+// asserted by inspecting the recorded calls on the stub.
+//
+// We do NOT spin up headscale (the handler doesn't call it for
+// the meta path — meta is purely a node_owner_map write).
+// ---------------------------------------------------------------------------
+
+// stubBackend is the minimum surface PostAdminDeviceMeta needs
+// from the Backend interface. Other methods (Render, RenderWithLayout)
+// return errors if called, so an accidental call to them in
+// the meta path is caught by the test.
+type stubBackend struct {
+	user     *auth.Claims
+	auditLog []string
+}
+
+func (s *stubBackend) Render(http.ResponseWriter, *http.Request, string, any) {
+	// not used by PostAdminDeviceMeta
+}
+func (s *stubBackend) RenderWithLayout(http.ResponseWriter, *http.Request, string, *auth.Claims, map[string]any) {
+	// not used by PostAdminDeviceMeta
+}
+func (s *stubBackend) CurrentUser(*http.Request) *auth.Claims {
+	return s.user
+}
+func (s *stubBackend) Audit(_ int64, username, action, detail string) {
+	s.auditLog = append(s.auditLog, username+"|"+action+"|"+detail)
+}
+
+// openDeviceMetaTestDB seeds the minimum schema (node_owner_map
+// with the v0.48 os + device_type columns) so PostAdminDeviceMeta
+// can UPDATE the row. Mirrors the v0.48 schema in migrations_v0.48.go
+// — the migration test in internal/db uses the same hand-rolled
+// CREATE TABLE pattern (no migrate() loop).
+func openDeviceMetaTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	d, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if _, err := d.Exec(`
+		CREATE TABLE node_owner_map (
+			node_id           TEXT PRIMARY KEY,
+			headscale_user_id INTEGER NOT NULL DEFAULT 0,
+			username          TEXT NOT NULL DEFAULT '',
+			tag               TEXT NOT NULL DEFAULT '',
+			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
+			tagged_at         INTEGER NOT NULL DEFAULT 0,
+			hostname          TEXT NOT NULL DEFAULT '',
+			os                TEXT NOT NULL DEFAULT 'unknown',
+			device_type       TEXT NOT NULL DEFAULT 'unknown'
+		)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return d
+}
+
+// TestPostAdminDeviceMeta_HappyPath — admin posts a valid
+// os + device_type override for an existing node_owner_map row.
+// Verifies:
+//   - HTTP 303 (See Other) to /admin/devices?ok=device_meta
+//   - The row's os + device_type columns are updated
+//   - The Audit call records the right action + detail
+func TestPostAdminDeviceMeta_HappyPath(t *testing.T) {
+	d := openDeviceMetaTestDB(t)
+	if err := db.UpsertNodeOwner(d, "123", 1, "skyadmin", "tag:private", 1); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Override the hostname too so the audit log is informative
+	// (the handler doesn't use hostname, but the row is what
+	// an admin would see in /admin/devices).
+	if _, err := d.Exec(
+		`UPDATE node_owner_map SET hostname = ? WHERE node_id = ?`,
+		"A71", "123",
+	); err != nil {
+		t.Fatalf("seed hostname: %v", err)
+	}
+
+	be := &stubBackend{user: &auth.Claims{UserID: 1, Username: "skyadmin", IsAdmin: true}}
+	svc := &Service{Backend: be, DB: d}
+
+	form := url.Values{}
+	form.Set("node_id", "123")
+	form.Set("os", "android")
+	form.Set("device_type", "phone")
+	req := httptest.NewRequest("POST", "/admin/devices/123/meta", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	svc.PostAdminDeviceMeta(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d body=%q", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if loc != "/admin/devices?ok=device_meta" {
+		t.Errorf("expected redirect to /admin/devices?ok=device_meta, got %q", loc)
+	}
+
+	// Row must be updated.
+	n, err := db.GetNodeOwner(d, "123")
+	if err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if n.OS != "android" {
+		t.Errorf("expected os=android, got %q", n.OS)
+	}
+	if n.DeviceType != "phone" {
+		t.Errorf("expected device_type=phone, got %q", n.DeviceType)
+	}
+
+	// Audit must record the action.
+	if len(be.auditLog) != 1 {
+		t.Fatalf("expected 1 audit call, got %d: %v", len(be.auditLog), be.auditLog)
+	}
+	if !strings.Contains(be.auditLog[0], "device_meta_set") {
+		t.Errorf("expected audit action=device_meta_set, got %q", be.auditLog[0])
+	}
+	if !strings.Contains(be.auditLog[0], "os=android") || !strings.Contains(be.auditLog[0], "device_type=phone") {
+		t.Errorf("audit detail should include os + device_type, got %q", be.auditLog[0])
+	}
+}
+
+// TestPostAdminDeviceMeta_EmptyDefaultsToUnknown — the form sends
+// an empty <select> when the admin picks the "auto" option. The
+// handler must treat that as "unknown" (re-enables auto-detect
+// on the next /my/devices load). This is the key UX promise.
+func TestPostAdminDeviceMeta_EmptyDefaultsToUnknown(t *testing.T) {
+	d := openDeviceMetaTestDB(t)
+	if err := db.UpsertNodeOwner(d, "123", 1, "skyadmin", "tag:private", 1); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Pre-set known values so we can verify the override-to-unknown works.
+	if _, err := d.Exec(
+		`UPDATE node_owner_map SET os = 'android', device_type = 'phone' WHERE node_id = ?`,
+		"123",
+	); err != nil {
+		t.Fatalf("seed values: %v", err)
+	}
+
+	be := &stubBackend{user: &auth.Claims{UserID: 1, Username: "skyadmin", IsAdmin: true}}
+	svc := &Service{Backend: be, DB: d}
+
+	form := url.Values{}
+	form.Set("node_id", "123")
+	// os + device_type are empty (admin picked "auto")
+	req := httptest.NewRequest("POST", "/admin/devices/123/meta", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	svc.PostAdminDeviceMeta(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d body=%q", w.Code, w.Body.String())
+	}
+	n, err := db.GetNodeOwner(d, "123")
+	if err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if n.OS != devicemeta.OSUnknown {
+		t.Errorf("expected os=%q (re-enable auto-detect), got %q", devicemeta.OSUnknown, n.OS)
+	}
+	if n.DeviceType != devicemeta.TypeUnknown {
+		t.Errorf("expected device_type=%q (re-enable auto-detect), got %q", devicemeta.TypeUnknown, n.DeviceType)
+	}
+}
+
+// TestPostAdminDeviceMeta_RejectsInvalidOS — the handler must
+// reject unknown OS tokens (defense-in-depth; the <select>
+// only offers valid options, but a forged request could send
+// anything). 400 status, no DB write, no audit.
+func TestPostAdminDeviceMeta_RejectsInvalidOS(t *testing.T) {
+	d := openDeviceMetaTestDB(t)
+	if err := db.UpsertNodeOwner(d, "123", 1, "skyadmin", "tag:private", 1); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	be := &stubBackend{user: &auth.Claims{UserID: 1, Username: "skyadmin", IsAdmin: true}}
+	svc := &Service{Backend: be, DB: d}
+
+	form := url.Values{}
+	form.Set("node_id", "123")
+	form.Set("os", "plan9") // not a valid token
+	form.Set("device_type", "client")
+	req := httptest.NewRequest("POST", "/admin/devices/123/meta", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	svc.PostAdminDeviceMeta(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	n, err := db.GetNodeOwner(d, "123")
+	if err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if n.OS != "unknown" {
+		t.Errorf("invalid os must NOT touch the row, but os=%q", n.OS)
+	}
+	if len(be.auditLog) != 0 {
+		t.Errorf("invalid request must NOT audit, got %v", be.auditLog)
+	}
+}
+
+// TestPostAdminDeviceMeta_RejectsNonAdmin — non-admin users
+// cannot override device metadata (it's an admin-only
+// debugging tool). 403 status, no DB write.
+func TestPostAdminDeviceMeta_RejectsNonAdmin(t *testing.T) {
+	d := openDeviceMetaTestDB(t)
+	if err := db.UpsertNodeOwner(d, "123", 1, "skyadmin", "tag:private", 1); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	be := &stubBackend{user: &auth.Claims{UserID: 2, Username: "michail", IsAdmin: false}}
+	svc := &Service{Backend: be, DB: d}
+
+	form := url.Values{}
+	form.Set("node_id", "123")
+	form.Set("os", "windows")
+	form.Set("device_type", "client")
+	req := httptest.NewRequest("POST", "/admin/devices/123/meta", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	svc.PostAdminDeviceMeta(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+	n, err := db.GetNodeOwner(d, "123")
+	if err != nil {
+		t.Fatalf("readback: %v", err)
+	}
+	if n.OS != "unknown" {
+		t.Errorf("non-admin must NOT touch the row, but os=%q", n.OS)
 	}
 }
