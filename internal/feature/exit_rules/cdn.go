@@ -1,6 +1,10 @@
-package handlers
-
-// exit_rules_cdn.go — CDN detection for the exit-rules autoupdater.
+// Package exit_rules — cdn.go owns the CDN detection logic
+// for the autoupdater.
+//
+// refactor-v0.30 Phase B step 4a (2026-07-29): moved from
+// internal/handlers/exit_rules_cdn.go. The file is pure
+// functions (no App / DB / headscale dependencies), so the
+// move is just a package rename + import-set fixup.
 //
 // 2026-07-28: Cloudflare, Fastly, Akamai, and other large CDNs use
 // anycast networks that return DIFFERENT IPs to each DNS query
@@ -29,6 +33,8 @@ package handlers
 //
 // The lists are hard-coded rather than fetched at runtime so
 // the autoupdater works offline. Update quarterly or so.
+
+package exit_rules
 
 import (
 	"fmt"

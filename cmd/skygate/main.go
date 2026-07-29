@@ -20,6 +20,7 @@ import (
 	"skygate/internal/expirewatch"
 	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
+	exitrules "skygate/internal/feature/exit_rules"
 	"skygate/internal/feature/healthz"
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
@@ -330,6 +331,30 @@ func main() {
 	// it. The wrappers exist for the test surface only — new
 	// routes go directly to adminSvc via mux.HandleFunc below.
 	app.SetAdminService(adminSvc)
+
+	// refactor-v0.30 Phase B step 4 (2026-07-29): exit_rules
+	// feature service. Owns /my/exit-rules + the /admin/exit-rules
+	// sub-actions, the REST API, the advertised-routes sync,
+	// the DNS autoupdater, and the route-setup script generator.
+	// The Service holds the shared headscale client + DB + cfg
+	// + i18n; the *App.SyncAdvertisedRoutes / RunDomainAutoUpdater
+	// wrappers route through it via exitRulesRunner (see
+	// handlers.go SetExitRulesService).
+	exitRulesSvc := &exitrules.Service{
+		Backend:  app,
+		DB:       app.DB,
+		HS:       app.HS,
+		Cfg:      app.Config(),
+		I18n:     app.I18n,
+		Notifier: app.Notifier,
+	}
+	// adminSvc.SyncRoutes is the "Sync now" button on
+	// /admin/exit-nodes. Re-point it to the new Service
+	// implementation (was: app.SyncAdvertisedRoutes; same
+	// behaviour because app.SyncAdvertisedRoutes wraps the
+	// Service, but this removes the indirect call).
+	adminSvc.SyncRoutes = exitRulesSvc.SyncAdvertisedRoutes
+	app.SetExitRulesService(exitRulesSvc)
 	// Admin
 	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(adminSvc.GetAdminUsers)))
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(adminSvc.PostAdminUser)))
@@ -473,7 +498,7 @@ func main() {
 	// changed (e.g. new SSH rule) but no exit-rule
 	// add/delete has fired SetPolicy yet.
 	mux.Handle("POST /admin/exit-rules/reapply", authMW(http.HandlerFunc(app.PostAdminACLReapply)))
-	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(app.SyncAdvertisedRoutesHandler)))
+	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(exitRulesSvc.PostSyncAdvertisedRoutes)))
 	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(app.GetAdminNodesLoad)))
 	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(app.AdminCleanupRules)))
 	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(app.AdminCleanupRulesApply)))
