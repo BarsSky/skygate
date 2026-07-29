@@ -3,8 +3,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"log"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -13,15 +13,16 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
-	"skygate/internal/expirewatch"
-	"skygate/internal/ratelimit"
-	"skygate/internal/telegram"
-	"skygate/internal/i18n"
 	"skygate/internal/db"
+	"skygate/internal/expirewatch"
 	"skygate/internal/headscale"
 	"skygate/internal/headscale_version"
+	"skygate/internal/httputil"
+	"skygate/internal/i18n"
+	"skygate/internal/ratelimit"
 	"skygate/internal/release"
 	"skygate/internal/sidecar"
+	"skygate/internal/telegram"
 )
 
 func init() { i18n.SetGlobal(i18n.New()) }
@@ -546,47 +547,18 @@ func (a *App) audit(userID int64, username, action, detail string) {
 	_ = db.AppendAuditLog(a.DB, userID, username, action, detail)
 }
 
-// SanitizeFilename strips anything that's not safe in a
-// Content-Disposition filename — ASCII alphanumerics,
-// dash, underscore, dot. Used by the audit-export
-// download (handlers_my_audit.go) to build the
-// attachment filename so a caller can't trick a
-// browser into saving into a parent directory.
+// SanitizeFilename is a thin re-export of httputil.SanitizeFilename
+// kept for backward compatibility — it was the original home of
+// the helper (Phase B step 3b.5, 2026-07-29) and several
+// non-feature-package files still import handlers.SanitizeFilename.
+// The single source of truth now lives in internal/httputil/.
 //
-// refactor-v0.30 Phase B step 3b.5 (2026-07-29): the
-// helper was previously private to admin_user_subnet_download.go.
-// When that file moved to feature/admin/ the helper
-// followed, but handlers_my_audit.go kept using it.
-// Re-homed here as an exported symbol so both call
-// sites can share one implementation without a
-// feature/admin → handlers import (which would have
-// been a real but harmless cycle).
+// refactor-v0.30 Phase D1 (2026-07-29): the implementation
+// moved to internal/httputil/sanitize.go (eliminating 3
+// near-identical copies in handlers.go + feature/admin +
+// feature/my). This function delegates to it.
 func SanitizeFilename(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "user"
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= 'A' && r <= 'Z',
-			r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		return "user"
-	}
-	// Cap at 32 chars to keep the filename short.
-	if len(out) > 32 {
-		out = out[:32]
-	}
-	return out
+	return httputil.SanitizeFilename(s)
 }
 
 // ---------- FILE INDEX ----------
