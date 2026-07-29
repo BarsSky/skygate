@@ -313,6 +313,16 @@ func main() {
 		// created (it doesn't exist yet at this point).
 		SSHKeyPath: app.SSHKeyPath,
 		SyncRoutes: app.SyncAdvertisedRoutes,
+		// refactor-v0.30 Phase B step 3b.6 (2026-07-29):
+		// /admin/settings renders ControlURL (URL field
+		// + PublicDomain) + masked JWTSecret and
+		// HeadscaleKey. Settings stays in feature/admin
+		// because it's a single admin page; moving it
+		// out would just create a per-feature dependency
+		// for a one-file use site.
+		ControlURL:   app.ControlURL,
+		JWTSecret:    app.JWTSecret,
+		HeadscaleKey: app.HeadscaleKey,
 	}
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers
@@ -408,21 +418,21 @@ func main() {
 	mux.Handle("POST /admin/derp/config", authMW(http.HandlerFunc(adminSvc.PostAdminDerpConfig)))
 	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
 	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
-	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(app.GetAdminBackup)))
-	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(app.PostAdminBackupSave)))
-	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))
-	mux.Handle("GET /admin/backup/download", authMW(http.HandlerFunc(app.GetAdminBackupDownload)))
+	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(adminSvc.GetAdminBackup)))
+	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(adminSvc.PostAdminBackupSave)))
+	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(adminSvc.PostAdminBackupRestore)))
+	mux.Handle("GET /admin/backup/download", authMW(http.HandlerFunc(adminSvc.GetAdminBackupDownload)))
 	// 2026-07-14: Этап 14 v6 — destination & schedule config.
 	// /admin/backup itself serves the form; the four action
 	// endpoints accept POSTs from the form buttons. No CSRF
 	// (admin-only; the legacy /admin/backup/save also has
 	// none).
-	mux.Handle("GET /admin/backup/config", authMW(http.HandlerFunc(app.GetAdminBackupConfig)))
-	mux.Handle("POST /admin/backup/config", authMW(http.HandlerFunc(app.PostAdminBackupConfig)))
-	mux.Handle("POST /admin/backup/test", authMW(http.HandlerFunc(app.PostAdminBackupTest)))
-	mux.Handle("POST /admin/backup/run", authMW(http.HandlerFunc(app.PostAdminBackupRun)))
-	mux.Handle("POST /admin/backup/toggle", authMW(http.HandlerFunc(app.PostAdminBackupToggle)))
-	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(app.GetAdminSettings)))
+	mux.Handle("GET /admin/backup/config", authMW(http.HandlerFunc(adminSvc.GetAdminBackupConfig)))
+	mux.Handle("POST /admin/backup/config", authMW(http.HandlerFunc(adminSvc.PostAdminBackupConfig)))
+	mux.Handle("POST /admin/backup/test", authMW(http.HandlerFunc(adminSvc.PostAdminBackupTest)))
+	mux.Handle("POST /admin/backup/run", authMW(http.HandlerFunc(adminSvc.PostAdminBackupRun)))
+	mux.Handle("POST /admin/backup/toggle", authMW(http.HandlerFunc(adminSvc.PostAdminBackupToggle)))
+	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(adminSvc.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegram)))
 	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegramPost)))
 	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(authSvc.GetMyTokens)))
@@ -467,7 +477,7 @@ func main() {
 	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(app.GetAdminNodesLoad)))
 	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(app.AdminCleanupRules)))
 	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(app.AdminCleanupRulesApply)))
-	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
+	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(adminSvc.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(adminSvc.AdminExitNodes)))
 	// 2026-07-20: v0.20.0 — headscale-update-monitor
