@@ -624,15 +624,19 @@ func main() {
 	// key here and paste it into the bot. The /my/telegram page
 	// also lets a user unbind their own chat (mirror of the
 	// bot's /unbind_self) and revoke unused keys.
-	mux.Handle("GET /my/telegram", authMW(http.HandlerFunc(app.GetMyTelegram)))
-	mux.Handle("POST /my/telegram/generate", authMW(http.HandlerFunc(app.PostMyTelegramGenerate)))
-	mux.Handle("POST /my/telegram/unbind", authMW(http.HandlerFunc(app.PostMyTelegramUnbind)))
-	mux.Handle("POST /my/telegram/revoke", authMW(http.HandlerFunc(app.PostMyTelegramRevoke)))
+	//
+	// 2026-07-29: refactor-v0.30 Phase B step 6f —
+	// /my/telegram moved to feature/my/telegram.go
+	// (mySvc.GetMyTelegram + 4 POST siblings).
+	mux.Handle("GET /my/telegram", authMW(http.HandlerFunc(mySvc.GetMyTelegram)))
+	mux.Handle("POST /my/telegram/generate", authMW(http.HandlerFunc(mySvc.PostMyTelegramGenerate)))
+	mux.Handle("POST /my/telegram/unbind", authMW(http.HandlerFunc(mySvc.PostMyTelegramUnbind)))
+	mux.Handle("POST /my/telegram/revoke", authMW(http.HandlerFunc(mySvc.PostMyTelegramRevoke)))
 	// 2026-07-13: Этап 13 — Bind-by-QR. The QR PNG is served from
 	// the same /my/telegram path tree (cookie-authenticated like
 	// the rest of the page) so anonymous users can't spam the
 	// generator with arbitrary tokens.
-	mux.Handle("GET /my/telegram/qr", authMW(http.HandlerFunc(app.GetMyTelegramQR)))
+	mux.Handle("GET /my/telegram/qr", authMW(http.HandlerFunc(mySvc.GetMyTelegramQR)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.GetMyExitRules)))
 	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostMyExitRule))))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostDeleteExitRule)))
