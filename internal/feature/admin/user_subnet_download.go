@@ -1,26 +1,17 @@
-package handlers
+// Package admin — user_subnet_download.go owns
+// GET /admin/users/{id}/subnet/download.
+//
+// refactor-v0.30 Phase B step 3b.5 (2026-07-29):
+// moved from internal/handlers/admin_user_subnet_download.go.
+// The handler is a method on *Service now. The
+// sanitizeFilename helper was copied here (rather
+// than imported from internal/handlers) to avoid
+// a feature/admin → handlers import — the same
+// helper also lives in handlers_my_audit.go (audit
+// export) and the two paths don't need to share
+// their implementation.
 
-// admin_user_subnet_download.go — GET /admin/users/{id}/subnet/download.
-//
-// Returns a self-contained tar.gz bundle the user can scp
-// to their router host and untar. The bundle contains:
-//   - setup.sh         (the one-shot script)
-//   - README.md        (the bundle-local quick start)
-//   - commands.txt     (the rendered tailscale up command,
-//                       with their preauth key + CIDR filled in)
-//   - CIDR.txt         (just the per-user CIDR)
-//
-// The bundle is generated on demand: each click issues a
-// fresh preauth key (1h TTL, single-use) and embeds it in
-// commands.txt. This is the same key shape as the
-// "Issue preauth key" button on the same page, just
-// delivered as a downloadable artifact instead of inline
-// text.
-//
-// Why a tar.gz and not a zip: tar.gz is the native format
-// on every Linux/macOS host, and `tar xzf` is one command.
-// Windows users can use 7-Zip or the built-in
-// "Extract All" — both handle tar.gz natively.
+package admin
 
 import (
 	"archive/tar"
@@ -40,8 +31,8 @@ import (
 // PostAdminUserSubnetProvision) and embeds it in
 // commands.txt so the user can scp the bundle to their
 // router host and run `sudo bash commands.txt`.
-func (a *App) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -51,7 +42,7 @@ func (a *App) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "bad id", 400)
 		return
 	}
-	if a.Sidecar == nil {
+	if s.Sidecar == nil {
 		http.Error(w, "sidecar manager not configured (check SKYGATE_SIDECAR_SYNC_PERIOD env)", 500)
 		return
 	}
@@ -61,7 +52,7 @@ func (a *App) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Request)
 		username string
 		cidr     string
 	)
-	if err := a.DB.QueryRow(
+	if err := s.DB.QueryRow(
 		`SELECT username, COALESCE(subnet_cidr, '') FROM portal_users WHERE id = ?`, id,
 	).Scan(&username, &cidr); err != nil {
 		http.Error(w, fmt.Sprintf("user not found: %v", err), 404)
@@ -74,19 +65,19 @@ func (a *App) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Request)
 
 	// Issue a fresh preauth key. Same TTL / shape as
 	// PostAdminUserSubnetProvision.
-	key, exp, err := a.Sidecar.GeneratePreauth(r.Context(), id)
+	key, exp, err := s.Sidecar.GeneratePreauth(r.Context(), id)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("issue preauth: %v", err), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "subnet_download",
+	s.Backend.Audit(c.UserID, c.Username, "subnet_download",
 		fmt.Sprintf("user_id=%d expires=%s bundle=tar.gz", id, exp.Format(time.RFC3339)))
 
 	// Build the commands.txt content. We use the same
 	// template as the admin UI's "Issue preauth key"
 	// page, so the bundle is interchangeable with the
 	// page-rendered command.
-	commandsTxt := renderBundleCommandsTxt(username, cidr, key, exp)
+	commandsTxt := s.renderBundleCommandsTxt(username, cidr, key, exp)
 
 	// Build the tar.gz in memory. Each file is a
 	// tar.Header + body. Order matters only for the
@@ -140,7 +131,7 @@ func (a *App) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Request)
 // script: that's a one-time sysctl that belongs in the
 // host's own provisioning (Ansible, cloud-init, etc.),
 // not in the per-user bundle.
-func renderBundleCommandsTxt(username, cidr, preauth string, exp time.Time) string {
+func (s *Service) renderBundleCommandsTxt(username, cidr, preauth string, exp time.Time) string {
 	// hostname must match what the sidecar expects:
 	// "skygate-subnet-<username>".
 	hostname := "skygate-subnet-" + username
@@ -184,6 +175,14 @@ sudo tailscale up \
 // dash, underscore, dot. Used for the bundle's
 // attachment filename so an operator can't trick a
 // browser into saving into a parent directory.
+//
+// Note: a near-identical helper lives in
+// internal/handlers/handlers_my_audit.go (audit export
+// download). Kept separate on purpose — both call sites
+// are stable, neither needs to grow new behaviour, and
+// the audit-export path is going to be folded into
+// feature/my/ in Phase B step 5 (where the two helpers
+// can be deduplicated cleanly).
 func sanitizeFilename(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
