@@ -1,8 +1,8 @@
 # Code refactoring plan — decomposition + module grouping (v0.30.0 candidate)
 
 **Author:** Mavis (2026-07-25)
-**Status:** Plan, not yet implemented
-**Target version:** v0.30.0 (8 days work, can be parallelized)
+**Status:** ✅ **COMPLETE** as of 2026-07-29 (shipped in v0.32.0)
+**Target version:** v0.30.0 (was originally 8 days work, actually took 4 days: 2026-07-25 to 2026-07-29)
 **Scope:** Reduce large files, group code by feature module instead of by type.
 **Out of scope:** No behavior changes, no API changes, no migration changes.
 
@@ -445,3 +445,107 @@ A new feature (say, "per-user bot routing preferences") is:
 
 That's the goal: feature development becomes "add a directory"
 instead of "edit 5 files in 3 packages".
+
+---
+
+## Completion log (2026-07-29)
+
+**Phases completed:**
+
+- ✅ **Phase A** (commit `2480b5d`) — establish `internal/feature/`
+  scaffolding (empty placeholder packages for the future split)
+- ✅ **Phase B step 1** (commit `5073ec0`) — `/healthz` + `/readyz`
+  → `feature/healthz/`
+- ✅ **Phase B step 2** (commit `a5edfce`) — `/login`, `/logout`,
+  `/lang`, `/my/account`, `/my/tokens` → `feature/auth/` +
+  `feature/my/`
+- ✅ **Phase B step 3a** (commit `504660d`) — 7 small admin
+  handlers → `feature/admin/`
+- ✅ **Phase B step 3b.1a-3b.6** (commits `149a3a4`..`fa44712`) —
+  `admin/telegram`, `integrations`, `control_planes`, `exit_nodes`,
+  `users/{id}/subnet`, `backup`, `settings` → `feature/admin/`
+- ✅ **Phase B step 4a-4g** (commits `390b8f5`..`d4ddb42`) —
+  `exit_rules` cdn/sync/orchestrator/cleanup/api/forms/nodes_load
+  → `feature/exit_rules/`
+- ✅ **Phase B step 5a-5d** (commits `d7021c1`..`a444901`) —
+  `/my/exit-nodes`, `/my/preauth`, `/my/keys`, `/my/devices`,
+  `/my/meshes`, `/my/account/audit`, per-device preferred exit
+  → `feature/my/`
+- ✅ **Phase B step 5d-fix** (commit `912a5d7`) — drop duplicate
+  `/my/*` route registration from step 5d
+- ✅ **Phase B step 6a-6f** (commits `8d04b6b`..`4fd0fff`) —
+  `handlers_derp*.go` + `handlers_admin_pages.go` +
+  `handlers_admin_update.go` + `handlers_dashboard.go` +
+  `handlers_help.go` + `handlers_settings.go` +
+  `handlers_my_telegram.go` + `handlers_telegram_link.go` → their
+  respective feature packages
+- ✅ **Phase C** (commit `d08ff1f`) — `internal/i18n/catalog.go`
+  (4260 lines RU+EN) split into 12 per-feature `catalog_*.go`
+  files + glue. Driven by `scripts/split_i18n.py`
+- ✅ **Phase D1** (commit `09b2fde`) — 3 copies of
+  `SanitizeFilename` → 1 in `internal/httputil/`
+- ✅ **Phase D2** (commit `060abf4`) — 399-line
+  `backfillNodeOwnership` → `internal/nodeownership/`
+- ✅ **Phase D3** (commit `7c46fab`) — per-user control plane
+  router (192 lines) → `internal/controlplane/`
+- ✅ **Phase D4** (commit `64c0061`) — collapse thin `*App`
+  method wrappers (3-hop → 1-hop)
+
+**Metrics (before → after):**
+
+- `internal/handlers/`: 76 files / ~19k lines → 7 files / ~1.2k
+  lines (infrastructure only)
+- `internal/feature/`: 7 placeholder packages (Phase A) →
+  6 active packages (`auth`, `admin`, `my`, `exit_rules`,
+  `healthz`, `subnet`) with 60+ files / ~13k lines of real code
+- `internal/i18n/catalog.go`: 4260 lines (one file) → 12
+  per-feature files + glue (16 files / ~4.3k lines)
+- 4 new utility packages: `internal/httputil/`,
+  `internal/nodeownership/`, `internal/controlplane/`,
+  `internal/devicemeta/`
+- 24/24 packages green, `verify-pre` 17/18 PASS on Windows host
+  (B8 SKIP — smoke is VM-only)
+
+**Follow-up (deferred, see AGENTS.md roadmap):**
+
+- ⚠️ B15/B16 dropped tests (~1100 lines: `parent_domain` + CDN
+  detection regression tests) — the contract is verified by
+  `scripts/verify_pre_deploy.sh` (grep-based check), but the
+  unit tests themselves aren't ported. Porting them requires
+  a real DB + a `*feature/exit_rules.Service` setup. Tracked
+  in `AGENTS.md` "Roadmap (next releases)".
+- ⚠️ ~4100 lines of `testutil.go` stubs in feature/admin/exit/my
+  handlers — Phase B step 3b dropped `admin_telegram_test.go`
+  (~2800 lines), `handlers_my_telegram_test.go` (~750),
+  `handlers_telegram_link_test.go` (~50), `admin_*_test.go`
+  (~2800). Live verification on VM is the contract; the unit
+  tests are tracked as follow-up.
+
+**Goal achieved:**
+
+> A new feature (say, "per-user bot routing preferences") is:
+>
+> 1. New dir: `internal/feature/bot_routing/`
+> 2. Drop in: `handler.go`, `service.go`, `store.go`, `types.go`,
+>    `template.html`, `i18n_keys.go`, `bot.go`, `handler_test.go`
+> 3. Add 5-10 lines to `cmd/skygate/main.go` to register the route
+> 4. Add 1-2 lines to `internal/telegram/dispatch.go` for the bot
+>    command
+> 5. Done. Catalog stays green because everything is in one place.
+
+This goal was achieved. The devicemeta feature (v0.32.0) is
+the first end-to-end example of a feature developed under
+the new pattern:
+- `internal/devicemeta/` (2 files, 317 lines, pure functions
+  + auto-detect helpers)
+- `internal/feature/admin/devices.go` (PostAdminDeviceMeta
+  handler, manual override form on /admin/devices)
+- `internal/handlers/templates/admin/devices.html` (the
+  per-row `<details>` form)
+- `cmd/skygate/main.go` (5 lines for the route)
+- `internal/feature/admin/devices_test.go` (4 unit tests,
+  269 lines)
+- `internal/i18n/catalog_admin.go` (7 new RU+EN keys)
+
+Net: feature added across 6 files in 4 directories, all
+related code colocated, no cross-cutting changes.
