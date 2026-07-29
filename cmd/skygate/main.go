@@ -18,6 +18,7 @@ import (
 	"skygate/internal/backup"
 	"skygate/internal/config"
 	"skygate/internal/expirewatch"
+	"skygate/internal/feature/healthz"
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/db"
@@ -195,8 +196,31 @@ func main() {
 	// if the process is alive (K8s livenessProbe pattern).
 	// /readyz pings the DB and headscale, returns 503
 	// if either is down (K8s readinessProbe pattern).
-	mux.HandleFunc("GET /healthz", app.GetHealthz)
-	mux.HandleFunc("GET /readyz", app.GetReadyz)
+	//
+	// refactor-v0.30 Phase B step 1 (2026-07-29): handlers
+	// moved from internal/handlers/handlers_healthz.go to
+	// internal/feature/healthz/. The Service takes its
+	// dependencies as plain fields (DB, HeadscaleFn, etc.)
+	// instead of methods on *App, so this package has no
+	// import dependency on internal/handlers/.
+	//
+	// HeadscaleFn is a func() headscale.Pingable, not
+	// func() *headscale.Client — we re-read the active
+	// client on every probe so a v0.12.0+ per-user headscale
+	// swap doesn't leave the readiness probe stuck on a
+	// stale client. The closure below adapts the
+	// method-value app.HSGlobal to the Pingable signature.
+	healthzSvc := &healthz.Service{
+		DB: app.DB,
+		HeadscaleFn: func() headscale.Pingable {
+			return app.HSGlobal() // *headscale.Client satisfies Pingable
+		},
+		InstanceID:   app.InstanceID,
+		BuildVersion: app.BuildVersion,
+		StartedAt:    app.StartedAt,
+	}
+	mux.HandleFunc("GET /healthz", healthzSvc.GetHealthz)
+	mux.HandleFunc("GET /readyz", healthzSvc.GetReadyz)
 	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
 	mux.HandleFunc("/static/", app.StaticHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
