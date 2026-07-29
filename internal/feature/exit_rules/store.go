@@ -151,10 +151,36 @@ func (s *Service) getUserDevices(userID int) ([]map[string]any, error) {
 	return dd, nil
 }
 
-// generateACL is a thin wrapper around acl.GenerateACL
-// (a free function in internal/acl). Returns the policy
-// JSON to push to headscale.
+// generateACL is a thin wrapper around the acl policy
+// builder. Returns the policy JSON to push to headscale.
+//
+// 2026-07-29: bug fix — honour SKYGATE_ACL_VIA_ENABLED
+// the same way ApplyACLPipelineForPlane does. Pre-fix,
+// the form_my / form_admin / api.go paths always called
+// acl.GenerateACL (no via) regardless of the env var, so
+// an operator who set SKYGATE_ACL_VIA_ENABLED=true saw the
+// `via` field silently dropped the moment a user touched
+// /my/exit-rules (the per-device-pref path uses
+// ApplyACLPipelineForPlane which DOES honour the env var,
+// so via would be set — then the next /my/exit-rules click
+// would overwrite headscale with the no-via version).
+// Symptom: skygate DB had `via:` in snapshot 1024, but
+// headscale's current policy had 0 `via:` entries (the
+// /my/exit-rules click after the per-device-pref change
+// overwrote the with-via policy). Live verification: see
+// the AGENTS.md "via: sync bug" note.
+//
+// Fix: read the env var and dispatch to the right
+// generator. The with-via path produces an extra
+// `via: ["<tag>"]` on each per-user + per-device grant
+// (Tailscale's packet filter uses this to pin the device
+// to the operator-chosen exit-node). When the env var is
+// false (default), the behaviour is identical to
+// pre-fix (the legacy no-via path).
 func (s *Service) generateACL() (string, error) {
+	if os.Getenv("SKYGATE_ACL_VIA_ENABLED") == "true" {
+		return acl.GenerateACLWithVia(s.DB)
+	}
 	return acl.GenerateACL(s.DB)
 }
 
