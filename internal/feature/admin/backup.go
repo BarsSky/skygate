@@ -1,4 +1,18 @@
-package handlers
+// Package admin — backup.go owns the legacy /admin/backup
+// page (create / restore / list / download) and the
+// /admin/settings admin page (URL + API key + exit policy
+// + .env editor).
+//
+// refactor-v0.30 Phase B step 3b.6 (2026-07-29): moved
+// from internal/handlers/admin_backup.go. The /admin/backup
+// config half (Destination & schedule card) lives in
+// backup_config.go in the same package. The settings page
+// was bundled into this file historically; it's moved
+// here too because it shares the same admin surface
+// (and the same ControlURL/JWTSecret/HeadscaleKey
+// dependencies).
+
+package admin
 
 import (
 	"crypto/sha256"
@@ -8,16 +22,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"strconv"
+	"strings"
 
 	"skygate/internal/backup"
 )
 
 const backupDir = "/tmp/skygate-backup"
 
-func (a *App) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetAdminBackup serves /admin/backup. Admin-only.
+//
+// The page has two halves:
+//
+//   - Legacy: "Create / Restore / List / Download". Lives
+//     in this file. Backups are produced by the
+//     scripts/backup.sh script and stored under
+//     backupDir (/tmp/skygate-backup).
+//
+//   - Config (Этап 14 v6): "Destination & schedule".
+//     Lives in backup_config.go. Form values are
+//     persisted via backup.Config and a "Run now"
+//     button calls backup.RunBackup. The two halves
+//     share the same admin/backup.html template; this
+//     handler populates the legacy fields + delegates
+//     the config card to backup.Load.
+func (s *Service) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -41,7 +71,7 @@ func (a *App) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	// template). We do this here so the legacy
 	// /admin/backup URL keeps working — admins can
 	// bookmark either.
-	if cfg, err := backup.Load(a.DB); err == nil {
+	if cfg, err := backup.Load(s.DB); err == nil {
 		data["Config"] = cfg
 		data["Protocols"] = backup.AllProtocols
 	}
@@ -72,9 +102,12 @@ func (a *App) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Backups"] = backups
 
-	a.renderWithLayout(w, r, "admin-backup", c, data)
+	s.Backend.RenderWithLayout(w, r, "admin-backup", c, data)
 }
 
+// formatSize converts a byte count to a short human
+// string ("1.5 MB", "300 KB", etc.). Used by the
+// /admin/backup page to render the size column.
 func formatSize(b int64) string {
 	switch {
 	case b > 1024*1024*1024:
@@ -88,8 +121,11 @@ func formatSize(b int64) string {
 	}
 }
 
-func (a *App) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// PostAdminBackupSave fires scripts/backup.sh and
+// either downloads the produced archive (success) or
+// redirects back with the captured error.
+func (s *Service) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -114,7 +150,16 @@ func (a *App) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("bash", backupScript, backupDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		http.Redirect(w, r, "/admin/backup?error=backup+failed:"+urlSafe(string(output[:200])), http.StatusFound)
+		// Cap the error preview at 200 bytes so a giant
+		// log doesn't blow the URL length. The legacy
+		// redirect also had this cap (the slice used to
+		// be `output[:200]` unconditionally — that
+		// would panic on short outputs, so we use min).
+		preview := string(output)
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		http.Redirect(w, r, "/admin/backup?error=backup+failed:"+urlSafe(preview), http.StatusFound)
 		return
 	}
 
@@ -150,8 +195,11 @@ func (a *App) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/backup?success=backup+created", http.StatusFound)
 }
 
-func (a *App) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetAdminBackupDownload serves an existing archive by
+// name. The name is sanitized to prevent path traversal
+// (we reject any name with `..`, `/`, or `\`).
+func (s *Service) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -171,8 +219,12 @@ func (a *App) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-func (a *App) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// PostAdminBackupRestore accepts a multipart upload of
+// an archive and runs scripts/restore.sh against it.
+// Feeds "8\n" on stdin (the auto-confirm answer for
+// restore.sh's interactive prompt).
+func (s *Service) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -217,50 +269,61 @@ func (a *App) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/backup?success=restore+complete!+Check+/admin/settings+to+update+URLs", http.StatusFound)
 }
 
-func (a *App) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetAdminSettings serves /admin/settings. Admin-only.
+// Renders the URL / API key / password / migration form.
+// The form action is /admin/settings (POST).
+//
+// The page also reads the global exit_policy and renders
+// it in a dropdown. The .env editor accepts changes but
+// only some of them actually take effect (exit_policy
+// is the only one we round-trip to the DB; the rest are
+// a UX placeholder so the admin doesn't have to ssh in
+// to update the file).
+func (s *Service) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 
-		var exitPolicy string
-	a.DB.QueryRow("SELECT value FROM global_settings WHERE key = 'exit_policy'").Scan(&exitPolicy)
-	if exitPolicy == "" { exitPolicy = "allow_all" }
+	var exitPolicy string
+	s.DB.QueryRow("SELECT value FROM global_settings WHERE key = 'exit_policy'").Scan(&exitPolicy)
+	if exitPolicy == "" {
+		exitPolicy = "allow_all"
+	}
 
 	data := map[string]any{
-		"HeadscaleURL":   a.ControlURL,
-		"ExitPolicy":     exitPolicy,
-		"PublicDomain":   a.ControlURL,
-		"JWTSecretMask":  maskSecret(a.JWTSecret),
-		"HeadscaleAPIKey": maskSecret(a.HeadscaleKey),
+		"HeadscaleURL":    s.ControlURL,
+		"ExitPolicy":      exitPolicy,
+		"PublicDomain":    s.ControlURL,
+		"JWTSecretMask":   maskSecret(s.JWTSecret),
+		"HeadscaleAPIKey": maskSecret(s.HeadscaleKey),
 	}
-	if s := r.URL.Query().Get("success"); s != "" {
-		data["FlashSuccess"] = s
+	if succ := r.URL.Query().Get("success"); succ != "" {
+		data["FlashSuccess"] = succ
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
 		data["FlashError"] = e
 	}
 
-	a.renderWithLayout(w, r, "admin-settings", c, data)
+	s.Backend.RenderWithLayout(w, r, "admin-settings", c, data)
 }
 
-func maskSecret(s string) string {
-	if len(s) <= 8 {
-		return "••••••••"
-	}
-	return "••••••••" + s[len(s)-4:]
-}
-
-func (a *App) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// PostAdminSettings persists the exit_policy into
+// global_settings. The .env-touching code path is a
+// no-op kept as a UX placeholder (the file is read +
+// written back unchanged — operators who want to
+// actually change settings should ssh + edit + docker
+// restart).
+func (s *Service) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-		r.ParseForm()
+	r.ParseForm()
 	if ep := r.FormValue("exit_policy"); ep == "allow_all" || ep == "deny_all" {
-		a.DB.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', ?)", ep)
+		s.DB.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', ?)", ep)
 	}
 	_ = r.FormValue("headscale_url")
 	_ = r.FormValue("headscale_api_key")
@@ -287,6 +350,23 @@ func (a *App) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/settings?success=Saved!+Restart+skygate:+docker+restart+skygate", http.StatusFound)
 }
 
+// maskSecret returns a redacted form of a secret
+// ("••••••••abcd") so the admin can confirm a value
+// is set without exposing it. Strings of 8 chars or
+// fewer are fully masked.
+func maskSecret(s string) string {
+	if len(s) <= 8 {
+		return "••••••••"
+	}
+	return "••••••••" + s[len(s)-4:]
+}
+
+// urlSafe escapes a string for use in a redirect
+// query parameter. Spaces become '+' (matching the
+// application/x-www-form-urlencoded form). The legacy
+// /admin/backup?error=… messages use this encoding
+// because the template reads r.URL.Query().Get("error")
+// which expects URL-encoded values.
 func urlSafe(s string) string {
 	return strings.ReplaceAll(s, " ", "+")
 }

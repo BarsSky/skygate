@@ -109,6 +109,16 @@ type Service struct {
 	// once at boot from app.SSHKeyPath.
 	SSHKeyPath string
 
+	// refactor-v0.30 Phase B step 3b.6 (2026-07-29): moved
+	// from *App. The /admin/settings page renders the
+	// ControlURL field, the JWTSecret (redacted via
+	// maskSecret), and the HeadscaleKey (also redacted).
+	// Wired once at boot from app.{ControlURL,JWTSecret,
+	// HeadscaleKey}.
+	ControlURL   string
+	JWTSecret    string
+	HeadscaleKey string
+
 	// refactor-v0.30 Phase B step 3b.3 (2026-07-29): moved
 	// from *App. The "Run health check now" button on
 	// /admin/exit-nodes calls ExitNodeMonitor.CheckNow via
