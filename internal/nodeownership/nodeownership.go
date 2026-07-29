@@ -1,4 +1,34 @@
-package handlers
+// Package nodeownership owns the per-/my/devices backfill
+// helper — the 250-line function that, on every page load,
+// walks the user's headscale nodes, looks for nodes that
+// were registered with a skygate-issued preauth key, and
+// inserts the corresponding rows in node_owner_map so the
+// user sees their own devices in /my/devices.
+//
+// refactor-v0.30 Phase D2 (2026-07-29): the function
+// previously lived in internal/handlers/handlers_node_ownership.go
+// as a method on *App. After Phase B step 5b (which moved
+// the /my/devices handler into feature/my/devices.go and
+// had it call the helper via a BackfillNodeOwnership
+// callback on *Service), the handler/feature split was
+// the only consumer of the helper. Phase D2 moves the
+// helper to its own package so:
+//
+//   - feature/my can `import "skygate/internal/nodeownership"`
+//     and call nodeownership.Backfill(...) directly,
+//     instead of going through the App callback indirection.
+//   - future consumers (e.g. a sidecar-mode backfill that
+//     runs from a Tailscale hook script) don't need a
+//     *App reference.
+//
+// The migration is mechanical:
+//
+//   handlers.BackfillNodeOwnershipFn (used by feature/my
+//   via the Service.BackfillNodeOwnership field) is now a
+//   thin wrapper that calls nodeownership.Backfill(d, hs,
+//   nodes, userID, username). The function signature is
+//   unchanged from the *App method.
+package nodeownership
 
 import (
 	"database/sql"
@@ -15,24 +45,17 @@ import (
 	dbpkg "skygate/internal/db"
 )
 
-// firstTagOrFallback returns the node's first tag, or "tag:untagged"
-// if the node has no tags. Used to populate node_owner_map.tag for
-// rows that come from strategies that don't otherwise carry a tag
-// (specifically the temporal fallback in C, which fires for both
-// tagged and untagged nodes).
-//
-// Moved from handlers_derp.go during Этап 8 — only used by
-// backfillNodeOwnership, so it lives here.
-func firstTagOrFallback(n headscale.NodeView) string {
-	if len(n.Tags) > 0 {
-		return n.Tags[0]
-	}
-	return "tag:untagged"
-}
+// subnetRouterPrefix matches the hostname pattern set by
+// the v0.16.7 per-user subnet-router sidecar. A node
+// whose hostname starts with this prefix AND the rest
+// equals the portal username is THIS user's subnet-router
+// (used by hasRouter detection below).
+const subnetRouterPrefix = "skygate-subnet-"
 
-// backfillNodeOwnership walks all nodes, and for any node whose headscale
-// preAuthKey matches one of this portal user's preauth_keys, inserts a row
-// in node_owner_map (idempotent via INSERT OR IGNORE).
+// Backfill walks the live headscale nodes, and for any
+// node whose headscale preAuthKey matches one of this
+// portal user's preauth_keys, inserts a row in
+// node_owner_map (idempotent via INSERT OR IGNORE).
 //
 // Why this exists:
 //   - When a user issues a preauth key via /my/devices, we save the
@@ -85,7 +108,28 @@ func firstTagOrFallback(n headscale.NodeView) string {
 // (user != "tagged-devices") keep their live link. We only insert
 // snapshot rows for nodes that headscale has effectively orphaned
 // OR for nodes that the user plausibly owns via temporal correlation.
-func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, portalUserID int64, portalUsername string) {
+//
+// Parameters:
+//   db             — open *sql.DB
+//   hs             — headscale client (for AddTag calls). May be nil
+//                    (the function is a no-op for the AddTag side
+//                    effects; the DB writes still happen).
+//   nodes          — live headscale nodes (ListAllNodes result).
+//   portalUserID   — the user_id from portal_users.
+//   portalUsername — the username from portal_users (used to
+//                    match snapshot rows + build dev tags).
+//
+// Pre-D2 callers (still working via the *App wrapper
+// `BackfillNodeOwnershipFn` in internal/handlers/handlers_export.go):
+//   - feature/my/devices.go (via the Service.BackfillNodeOwnership
+//     callback, set in cmd/skygate/main.go).
+func Backfill(
+	db *sql.DB,
+	hs *headscale.Client,
+	nodes []headscale.NodeView,
+	portalUserID int64,
+	portalUsername string,
+) {
 	if portalUserID == 0 || portalUsername == "" {
 		return
 	}
@@ -97,7 +141,6 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 	// "skygate-subnet-" and the rest equals our portal
 	// username.
 	hasRouter := false
-	const subnetRouterPrefix = "skygate-subnet-"
 	// Build a set of currently-live node IDs.
 	live := map[string]bool{}
 	for _, n := range nodes {
@@ -135,11 +178,9 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 	// namespace" and refuse to steal it. A node whose n.UserID maps
 	// to a different portal user is theirs, not ours.
 	otherOwners := map[string]bool{}
-	if portalUserID != 0 {
-		// 2026-07-11: Этап 10 part 1 — moved to db.GetOtherHSUserIDs
-		// (uses a.DB because `db` here is the local *sql.DB param
-		// and shadows the db package import)
-		ids, _ := dbpkg.GetOtherHSUserIDs(a.DB, portalUserID)
+	{
+		// 2026-07-11: Этап 10 part 1 — moved to db.GetOtherHSUserIDs.
+		ids, _ := dbpkg.GetOtherHSUserIDs(db, portalUserID)
 		for _, hid := range ids {
 			if hid != "" {
 				otherOwners[hid] = true
@@ -292,10 +333,10 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		// next ACL re-apply. Idempotent — AddTag is a no-op
 		// if the tag is already present. The hostname is the
 		// canonical Tailscale GivenName (already on n).
-		if a != nil && a.HS != nil && n.Hostname != "" {
+		if hs != nil && n.Hostname != "" {
 			devTag := fmt.Sprintf("tag:dev-%s-%s", portalUsername, n.Hostname)
 			if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
-				if err := a.HS.AddTag(nodeIDInt, devTag); err != nil {
+				if err := hs.AddTag(nodeIDInt, devTag); err != nil {
 					// Non-fatal: the rule fallback to device_ip
 					// src keeps the policy live; the next
 					// /my/devices load will retry the tag.
@@ -318,7 +359,7 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 		// /my/devices load would do an HTTP roundtrip to headscale per device,
 		// AND call InvalidateCache() which forces the next /my/devices load to
 		// re-fetch everything (the bug that was making the page take ~2s).
-		if matchedTag == "tag:private" && a != nil && a.HS != nil {
+		if matchedTag == "tag:private" && hs != nil {
 			hasPrivate := false
 			for _, t := range n.Tags {
 				if t == "tag:private" {
@@ -349,7 +390,7 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 					// by an admin), that tag was silently wiped. AddTag
 					// reads the current tag set first and writes the
 					// union, preserving everything else.
-					if err := a.HS.AddTag(nodeIDInt, "tag:private"); err != nil {
+					if err := hs.AddTag(nodeIDInt, "tag:private"); err != nil {
 						log.Printf("warn: auto-tag node %s: %v", n.ID, err)
 					} else {
 						log.Printf("DBG backfill AddTag called for node=%s (ensure tag:private)", n.ID)
@@ -385,10 +426,22 @@ func (a *App) backfillNodeOwnership(db *sql.DB, nodes []headscale.NodeView, port
 	}
 }
 
+// firstTagOrFallback returns the node's first tag, or "tag:untagged"
+// if the node has no tags. Used to populate node_owner_map.tag for
+// rows that come from strategies that don't otherwise carry a tag
+// (specifically the temporal fallback in C, which fires for both
+// tagged and untagged nodes).
+func firstTagOrFallback(n headscale.NodeView) string {
+	if len(n.Tags) > 0 {
+		return n.Tags[0]
+	}
+	return "tag:untagged"
+}
+
 // hasRouterTag is a small slice helper used by the v0.22.3
-// subnet status sync logic. Kept private to handlers/ since
-// it's only used by backfillNodeOwnership; the sidecar
-// package has its own copy of the same logic for clarity.
+// subnet status sync logic. Kept private to nodeownership
+// since it's only used by Backfill; the sidecar package
+// has its own copy of the same logic for clarity.
 func hasRouterTag(tags []string) bool {
 	for _, t := range tags {
 		if t == "tag:subnet-router" {

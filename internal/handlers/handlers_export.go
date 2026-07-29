@@ -35,6 +35,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/config"
 	"skygate/internal/headscale"
+	"skygate/internal/nodeownership"
 )
 
 // Render — public wrapper around unexported a.render. Lets
@@ -90,10 +91,20 @@ func (a *App) HSForUserFn(userID int64) *headscale.Client {
 }
 
 // BackfillNodeOwnershipFn — public wrapper around
-// backfillNodeOwnership so feature/my can call the
-// 250-line helper as a callback (instead of carrying
-// a copy of the function in feature/my/devices.go).
-// 2026-07-29: refactor-v0.30 Phase B step 5b.
+// nodeownership.Backfill so feature/my can call the
+// helper as a callback (instead of carrying a copy of
+// the 250-line function in feature/my/devices.go).
+//
+// refactor-v0.30 Phase B step 5b (2026-07-29): the
+// helper was previously a method on *App, so feature/my
+// could only reach it via this indirection.
+//
+// refactor-v0.30 Phase D2 (2026-07-29): the function
+// moved to its own package (internal/nodeownership/).
+// This wrapper is now a 1-line delegate; the indirection
+// stays so feature/my's Service struct doesn't need to
+// know about nodeownership directly. Future cleanup
+// (Phase D4) can collapse this to a direct call.
 func (a *App) BackfillNodeOwnershipFn(d *sql.DB, nodes []headscale.NodeView, userID int64, username string) {
-	a.backfillNodeOwnership(d, nodes, userID, username)
+	nodeownership.Backfill(d, a.HS, nodes, userID, username)
 }

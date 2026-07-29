@@ -577,10 +577,15 @@ func SanitizeFilename(s string) string {
 //   - handlers_auth.go              — login / logout / lang
 //   - handlers_my_account.go        — /my/account (password change)
 //   - handlers_api_tokens.go        — /my/tokens (API tokens)
-//   - handlers_node_ownership.go    — backfillNodeOwnership helper
 //   - handlers_admin_users.go       — /admin/users
 //   - handlers_admin_nodes.go       — /admin/devices (tag/untag)
 //   - handlers_admin_pages.go       — /admin/audit, /admin/acls
 //   - handlers_derp.go              — /admin/derp + DERP types
+//
+// Node-ownership backfill now lives in internal/nodeownership/
+// (Phase D2, 2026-07-29). The thin App wrapper
+// `BackfillNodeOwnershipFn` in handlers_export.go is the
+// only remaining bridge — feature/my uses it via the
+// Service.BackfillNodeOwnership callback.
 //
 // See AGENTS.md "Sister files" for current line counts.
