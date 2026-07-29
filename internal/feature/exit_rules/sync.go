@@ -1,7 +1,25 @@
-package handlers
+// Package exit_rules — sync.go owns the advertised-routes
+// sync logic, the DNS autoupdater (background goroutine),
+// and the /admin/exit-rules/sync HTTP endpoint.
+//
+// refactor-v0.30 Phase B step 4 (2026-07-29): moved from
+// internal/handlers/exit_rules_sync.go. The handlers used
+// to be methods on *App; they now live on *Service. The
+// HTTP handler (PostSyncAdvertisedRoutes) is exposed for
+// the /admin/exit-rules/sync route — it just calls
+// SyncAdvertisedRoutes and returns JSON.
+//
+// RunDomainAutoUpdater stays on *App (see
+// internal/handlers/exit_rules_sync.go for the boot-time
+// wrapper that main.go calls) — the long-lived context +
+// ticker lifecycle are managed there. The wrapper
+// delegates to the Service's DomainAutoUpdater +
+// staggeredSync methods via the exitRulesRunner interface
+// (see internal/handlers/handlers.go).
+package exit_rules
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -11,24 +29,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"encoding/json"
 
 	"skygate/internal/db"
 )
 
-
-// exit_rules_sync.go — extracted from exit_rules.go.
-// Contains: SyncAdvertisedRoutes, staggeredSync, SyncAdvertisedRoutesHandler,
-// DomainAutoUpdater, resolveDomainSubdomains, logAutoUpdate,
-// RunDomainAutoUpdater, lookupAcceptRoutes.
-// Pure data-plane (advertised-routes sync + DNS autoupdater). The HTTP handler
-// (SyncAdvertisedRoutesHandler) is here too because it just calls
-// SyncAdvertisedRoutes() and returns JSON.
+// knownSubdomains maps a main domain to its known subdomain hosts for static assets.
+// 2026-07-07: issue #9 — Cloudflare-routed sites have static on different subdomains.
+var knownSubdomains = map[string][]string{
+	"rutracker.org": {"static.rutracker.cc"},
+	"rutracker.cc":  {"static.rutracker.cc"},
+}
 
 // SyncAdvertisedRoutes collects all enabled IP/subnet rules and pushes to exit nodes.
-func (a *App) SyncAdvertisedRoutes() map[string]string {
+// Pure data-plane (advertised-routes sync). Returns a per-node status map
+// (the HTTP handler marshals it as JSON).
+func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	result := map[string]string{}
-	rows, err := a.DB.Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY exit_node_id")
+	rows, err := s.DB.Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY exit_node_id")
 	if err != nil {
 		result["error"] = err.Error()
 		return result
@@ -55,7 +72,7 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 				approveRoutes = append(approveRoutes, r)
 			}
 		}
-		msg, err := a.HS.SetAdvertisedRoutes(node, approveRoutes, a.lookupAcceptRoutes(node))
+		msg, err := s.HS.SetAdvertisedRoutes(node, approveRoutes, s.lookupAcceptRoutes(node))
 		if err != nil {
 			result[node] = "ssh: " + err.Error()
 		} else {
@@ -66,7 +83,7 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 		// node via headscale CLI (docker exec).
 		// 2026-07-08: pass full list (base + per-rule) so the node keeps
 		// its exit-node capability (default route advertised AND approved).
-		if approved, approveErr := a.HS.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
+		if approved, approveErr := s.HS.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
 			result[node+"_approve_err"] = approveErr.Error()
 			result[node] = "ssh:ok approve:err=" + approveErr.Error()
 		} else if approved > 0 {
@@ -95,32 +112,38 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 //
 // `interval` is still applied between NODES (not between batches within a
 // node) so headscale isn't hammered when many exit-nodes sync at once.
-func (a *App) staggeredSync() {
-	if a.Cfg == nil || !a.Cfg.StaggerSync {
-		a.SyncAdvertisedRoutes()
+func (s *Service) StaggeredSync() {
+	if s.Cfg == nil || !s.Cfg.StaggerSync {
+		s.SyncAdvertisedRoutes()
 		return
 	}
-	interval := a.Cfg.StaggerInterval
-	if interval <= 0 { interval = 30 * time.Second }
+	interval := s.Cfg.StaggerInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
 	// Collect exit_nodes with their rule counts
-	rows, _ := a.DB.Query("SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id != '' GROUP BY exit_node_id")
+	rows, _ := s.DB.Query("SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id != '' GROUP BY exit_node_id")
 	if rows == nil {
-		a.SyncAdvertisedRoutes()
+		s.SyncAdvertisedRoutes()
 		return
 	}
 	defer rows.Close()
-	type nodeRules struct { name string; count int }
+	type nodeRules struct {
+		name  string
+		count int
+	}
 	var nodes []nodeRules
 	totalRules := 0
 	for rows.Next() {
-		var n string; var c int
+		var n string
+		var c int
 		if rows.Scan(&n, &c) == nil {
 			nodes = append(nodes, nodeRules{n, c})
 			totalRules += c
 		}
 	}
 	if len(nodes) == 0 {
-		a.SyncAdvertisedRoutes()
+		s.SyncAdvertisedRoutes()
 		return
 	}
 	// Old behaviour fell through to SyncAdvertisedRoutes when totalRules <= batchSize.
@@ -131,30 +154,37 @@ func (a *App) staggeredSync() {
 		totalRules, len(nodes), interval)
 	go func() {
 		for _, n := range nodes {
-			rules, _ := a.DB.Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=? AND target_type IN ('subnet', 'ip')", n.name)
-			if rules == nil { continue }
+			rules, _ := s.DB.Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=? AND target_type IN ('subnet', 'ip')", n.name)
+			if rules == nil {
+				continue
+			}
 			var routeList []string
 			for rules.Next() {
 				var v string
-				if rules.Scan(&v) == nil { routeList = append(routeList, v) }
+				if rules.Scan(&v) == nil {
+					routeList = append(routeList, v)
+				}
 			}
 			rules.Close()
 			// Always include base exit-node routes.
 			batch := []string{"0.0.0.0/0", "::/0"}
 			seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
 			for _, r := range routeList {
-				if !seen[r] { seen[r] = true; batch = append(batch, r) }
+				if !seen[r] {
+					seen[r] = true
+					batch = append(batch, r)
+				}
 			}
 			log.Printf("staggeredSync(aggregated): %s advertising %d unique routes (was: per-batch, lost all but last batch)",
 				n.name, len(batch))
-			msg, _ := a.HS.SetAdvertisedRoutes(n.name, batch, a.lookupAcceptRoutes(n.name))
+			msg, _ := s.HS.SetAdvertisedRoutes(n.name, batch, s.lookupAcceptRoutes(n.name))
 			// 2026-07-11: `tailscale set` on unix exits 0 with empty stdout, so
 			// `msg` is often "". Render an "ok" marker instead of a dangling colon.
 			if strings.TrimSpace(msg) == "" {
 				msg = "ok"
 			}
 			log.Printf("staggeredSync(aggregated): %s advertised: %s", n.name, msg)
-			if _, err := a.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
+			if _, err := s.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
 				log.Printf("staggeredSync(aggregated): %s approve err: %v", n.name, err)
 			}
 			time.Sleep(interval)
@@ -163,30 +193,25 @@ func (a *App) staggeredSync() {
 	}()
 }
 
-// SyncAdvertisedRoutesHandler triggers route sync (admin only).
-func (a *App) SyncAdvertisedRoutesHandler(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// PostSyncAdvertisedRoutes triggers route sync (admin only).
+// HTTP entry point for the /admin/exit-rules/sync button.
+// Just calls SyncAdvertisedRoutes and returns JSON.
+func (s *Service) PostSyncAdvertisedRoutes(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, `{"error":"forbidden"}`, 403)
 		return
 	}
-	result := a.SyncAdvertisedRoutes()
+	result := s.SyncAdvertisedRoutes()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
-}
-
-// knownSubdomains maps a main domain to its known subdomain hosts for static assets.
-// 2026-07-07: issue #9 — Cloudflare-routed sites have static on different subdomains.
-var knownSubdomains = map[string][]string{
-	"rutracker.org": {"static.rutracker.cc"},
-	"rutracker.cc":  {"static.rutracker.cc"},
 }
 
 // 2026-07-07: issue #6 — DomainAutoUpdater
 // Background job: resolves all domain rules every interval, reconciles with /32 IP rules.
 // Returns count of changes (added + removed) and writes log entries.
-func (a *App) DomainAutoUpdater() (added, removed int, err error) {
-	rows, qerr := a.DB.Query("SELECT id, user_id, device_id, exit_node_id, target_value, action, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND target_type = 'domain'")
+func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
+	rows, qerr := s.DB.Query("SELECT id, user_id, device_id, exit_node_id, target_value, action, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND target_type = 'domain'")
 	if qerr != nil {
 		return 0, 0, qerr
 	}
@@ -232,7 +257,7 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 		// has inserted the marker will match here and short-
 		// circuit; the per-tick no-op.
 		existingMarker := ""
-		_ = a.DB.QueryRow(
+		_ = s.DB.QueryRow(
 			"SELECT parent_domain FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND parent_domain LIKE ? LIMIT 1",
 			d.userID, d.deviceID, d.exitNode, cdnParentMarkerGuess(d.domain),
 		).Scan(&existingMarker)
@@ -244,16 +269,20 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 
 		addrs, lerr := net.LookupHost(d.domain)
 		if lerr != nil {
-			a.logAutoUpdate(d.id, d.domain, 0, 0, "lookup failed: "+lerr.Error())
+			s.logAutoUpdate(d.id, d.domain, 0, 0, "lookup failed: "+lerr.Error())
 			continue
 		}
 		currentIPs := map[string]bool{}
-		for _, a := range addrs {
-			if strings.Contains(a, ":") { continue } // skip IPv6
-			currentIPs[a] = true
+		for _, addr := range addrs {
+			if strings.Contains(addr, ":") {
+				continue // skip IPv6
+			}
+			currentIPs[addr] = true
 		}
-		if extraIPs := a.resolveDomainSubdomains(d.domain); extraIPs != nil {
-			for ip := range extraIPs { currentIPs[ip] = true }
+		if extraIPs := s.resolveDomainSubdomains(d.domain); extraIPs != nil {
+			for ip := range extraIPs {
+				currentIPs[ip] = true
+			}
 		}
 
 		// 2026-07-28: CDN detection — if all currentIPs fall in
@@ -270,12 +299,14 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 			for _, cidr := range cdnCIDRs {
 				// Skip if we already have this exact range.
 				var existingID int
-				_ = a.DB.QueryRow(
+				_ = s.DB.QueryRow(
 					"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value=? AND parent_domain=?",
 					d.userID, d.deviceID, d.exitNode, cidr, marker,
 				).Scan(&existingID)
-				if existingID > 0 { continue }
-				if _, err := a.DB.Exec(
+				if existingID > 0 {
+					continue
+				}
+				if _, err := s.DB.Exec(
 					"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
 					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker); err == nil {
 					cdnAdded++
@@ -286,7 +317,7 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 			// cdn: prefix). Now that the CDN marker covers the
 			// domain, the /32 rules are dead weight.
 			legacyRemoved := 0
-			if _, err := a.DB.Exec(
+			if _, err := s.DB.Exec(
 				"DELETE FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND COALESCE(parent_domain,'')=?",
 				d.userID, d.deviceID, d.exitNode, d.domain,
 			); err == nil {
@@ -297,13 +328,13 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 				_ = legacyRemoved
 			}
 			added += cdnAdded
-			a.logAutoUpdate(d.id, d.domain, cdnAdded, 0, "CDN detected: "+cdnName+" — using "+strconv.Itoa(len(cdnCIDRs))+" published ranges")
+			s.logAutoUpdate(d.id, d.domain, cdnAdded, 0, "CDN detected: "+cdnName+" — using "+strconv.Itoa(len(cdnCIDRs))+" published ranges")
 			continue
 		}
 
 		// Get existing /32 rules for this domain
 		existing := map[string]int{} // IP -> rule id
-		rows2, eerr := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32'",
+		rows2, eerr := s.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32'",
 			d.userID, d.deviceID, d.exitNode)
 		if eerr != nil {
 			continue
@@ -325,7 +356,7 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 		// User-added /32 rules (manual) get deleted if we don't track — TOO DANGEROUS.
 		// Better: introduce column `parent_domain` (NULL = manual).
 		all32 := map[string]int{}
-		rows3, _ := a.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain,'')=?",
+		rows3, _ := s.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain,'')=?",
 			d.userID, d.deviceID, d.exitNode, d.domain)
 		if rows3 != nil {
 			for rows3.Next() {
@@ -342,16 +373,20 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 
 		// Add new IPs
 		for ip := range currentIPs {
-			if _, exists := all32[ip]; exists { continue }
+			if _, exists := all32[ip]; exists {
+				continue
+			}
 			// 2026-07-09: проверяем, нет ли уже /32 с этим target_value
 			// (под другим parent_domain — shared IP между доменами).
 			// Не дублируем — autoupdater другого домена уже покрыл.
 			var existingSharedID int
-			_ = a.DB.QueryRow(
+			_ = s.DB.QueryRow(
 				"SELECT id FROM device_rules WHERE user_id=? AND device_id=? AND exit_node_id=? AND target_type='subnet' AND target_value=? LIMIT 1",
 				d.userID, d.deviceID, d.exitNode, ip+"/32").Scan(&existingSharedID)
-			if existingSharedID > 0 { continue }
-			if _, ierr := a.DB.Exec(
+			if existingSharedID > 0 {
+				continue
+			}
+			if _, ierr := s.DB.Exec(
 				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES (?, ?, ?, 'subnet', ?, ?, ?, ?)",
 				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain); ierr == nil {
 				added++
@@ -359,25 +394,26 @@ func (a *App) DomainAutoUpdater() (added, removed int, err error) {
 		}
 		// Remove old IPs
 		for ip, rid := range all32 {
-			if currentIPs[ip] { continue }
-			if _, derr := a.DB.Exec("DELETE FROM device_rules WHERE id=?", rid); derr == nil {
+			if currentIPs[ip] {
+				continue
+			}
+			if _, derr := s.DB.Exec("DELETE FROM device_rules WHERE id=?", rid); derr == nil {
 				removed++
 			}
 		}
 
 		if len(currentIPs) > 0 || len(all32) > 0 {
-			a.logAutoUpdate(d.id, d.domain, added, removed, "")
+			s.logAutoUpdate(d.id, d.domain, added, removed, "")
 		}
 	}
 
 	return added, removed, nil
 }
 
-
 // resolveDomainSubdomains resolves known subdomains and (optionally) fetches
 // the main page to discover subdomains from href/src attributes. Returns a set
 // of IPv4 addresses to add to the rule list.
-func (a *App) resolveDomainSubdomains(domain string) map[string]bool {
+func (s *Service) resolveDomainSubdomains(domain string) map[string]bool {
 	httpClient := &http.Client{Timeout: 8 * time.Second}
 	var body []byte
 
@@ -386,18 +422,22 @@ func (a *App) resolveDomainSubdomains(domain string) map[string]bool {
 	for _, sd := range knownSubdomains[domain] {
 		if addrs, err := net.LookupHost(sd); err == nil {
 			for _, ip := range addrs {
-				if !strings.Contains(ip, ":") { ips[ip] = true }
+				if !strings.Contains(ip, ":") {
+					ips[ip] = true
+				}
 			}
 		}
 	}
 	if len(ips) > 0 {
-		a.logAutoUpdate(0, domain, len(ips), 0, "known subdomains resolved: "+strconv.Itoa(len(knownSubdomains[domain])))
+		s.logAutoUpdate(0, domain, len(ips), 0, "known subdomains resolved: "+strconv.Itoa(len(knownSubdomains[domain])))
 		return ips
 	}
 
 	for _, scheme := range []string{"https", "http"} {
 		resp, err := httpClient.Get(scheme + "://" + domain + "/")
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		b, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 		resp.Body.Close()
 		if err == nil {
@@ -405,70 +445,41 @@ func (a *App) resolveDomainSubdomains(domain string) map[string]bool {
 			break
 		}
 	}
-	if len(body) == 0 { return nil }
+	if len(body) == 0 {
+		return nil
+	}
 
 	subdomains := map[string]bool{}
-	hostRe := regexp.MustCompile(`(?:href|src)=["\']https?://([^/\s"\']+)`)
+	hostRe := regexp.MustCompile(`(?:href|src)=["']https?://([^/\s"']+)`)
 	for _, m := range hostRe.FindAllStringSubmatch(string(body), -1) {
 		host := m[1]
 		// Skip self and subdomains of self
-		if host == domain || strings.HasSuffix(host, "."+domain) { continue }
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			continue
+		}
 		subdomains[host] = true
 	}
 	for host := range subdomains {
 		if addrs, err := net.LookupHost(host); err == nil {
 			for _, ip := range addrs {
-				if !strings.Contains(ip, ":") { ips[ip] = true }
+				if !strings.Contains(ip, ":") {
+					ips[ip] = true
+				}
 			}
 		}
 	}
 	if len(ips) > 0 {
-		a.logAutoUpdate(0, domain, len(ips), 0, "subdomains resolved: "+strconv.Itoa(len(subdomains)))
+		s.logAutoUpdate(0, domain, len(ips), 0, "subdomains resolved: "+strconv.Itoa(len(subdomains)))
 	}
 	return ips
 }
 
-func (a *App) logAutoUpdate(ruleID int, domain string, added, removed int, errMsg string) {
+func (s *Service) logAutoUpdate(ruleID int, domain string, added, removed int, errMsg string) {
 	detail := fmt.Sprintf("domain=%s added=%d removed=%d", domain, added, removed)
 	if errMsg != "" {
 		detail += " err=" + errMsg
 	}
-	_ = db.AppendExitRuleLog(a.DB, db.ExitRuleLogNoVersion, db.ExitRuleActionAutoupdate, detail)
-}
-
-func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		log.Printf("autoupdater: disabled (interval=0)")
-		return
-	}
-	log.Printf("autoupdater: starting (interval=%s)", interval)
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	// Run once immediately, then on tick
-	added, removed, err := a.DomainAutoUpdater()
-	if err != nil {
-		log.Printf("autoupdater: initial: %v", err)
-	} else if added > 0 || removed > 0 {
-		log.Printf("autoupdater: initial: added=%d removed=%d", added, removed)
-		a.staggeredSync() // 2026-07-07: issue #12 — staggered
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("autoupdater: stopping")
-			return
-		case <-t.C:
-			added, removed, err := a.DomainAutoUpdater()
-			if err != nil {
-				log.Printf("autoupdater: %v", err)
-				continue
-			}
-			if added > 0 || removed > 0 {
-				log.Printf("autoupdater: added=%d removed=%d, syncing exit-nodes", added, removed)
-				a.staggeredSync() // 2026-07-07: issue #12
-			}
-		}
-	}
+	_ = db.AppendExitRuleLog(s.DB, db.ExitRuleLogNoVersion, db.ExitRuleActionAutoupdate, detail)
 }
 
 // lookupAcceptRoutes returns the per-exit-node Tailscale AcceptRoutes
@@ -482,10 +493,10 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 //
 // 2026-07-12: Этап 10 part 5 — moved the SELECT to db.LookupExitServerAcceptRoutes
 // (which centralises the column name + the no-row fallback to 0).
-func (a *App) lookupAcceptRoutes(nodeHostname string) int {
-	if a == nil || a.DB == nil || nodeHostname == "" {
+func (s *Service) lookupAcceptRoutes(nodeHostname string) int {
+	if s == nil || s.DB == nil || nodeHostname == "" {
 		return 0
 	}
-	accept, _ := db.LookupExitServerAcceptRoutes(a.DB, nodeHostname)
+	accept, _ := db.LookupExitServerAcceptRoutes(s.DB, nodeHostname)
 	return accept
 }

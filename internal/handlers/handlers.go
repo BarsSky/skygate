@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -137,6 +139,17 @@ type App struct {
 	// adminSvc directly via the route registration in
 	// cmd/skygate/main.go.
 	adminSvc adminSvcHandle
+
+	// refactor-v0.30 Phase B step 4 (2026-07-29): the
+	// exit_rules feature service. Set by main.go after
+	// New() and after exitRulesSvc is constructed. The
+	// *App.SyncAdvertisedRoutes and *App.RunDomainAutoUpdater
+	// wrappers below route through this field so the
+	// /admin/exit-nodes/sync button (called via app.SyncAdvertisedRoutes)
+	// and the boot-time autoupdater goroutine
+	// (go app.RunDomainAutoUpdater(ctx, ...)) work without
+	// duplicating the implementation in handlers/.
+	exitRulesSvc exitRulesRunner
 }
 
 // adminSvcHandle is an interface so handlers.go doesn't import
@@ -153,12 +166,90 @@ type adminSvcHandle interface {
 	AdminTelegramPost(w http.ResponseWriter, r *http.Request)
 }
 
+// exitRulesRunner is the surface the legacy *App needs from
+// the exit_rules feature service. The concrete
+// *exitrules.Service satisfies it. Set via SetExitRulesService
+// in main.go.
+//
+// refactor-v0.30 Phase B step 4 (2026-07-29): previously
+// these methods lived directly on *App (in exit_rules_sync.go).
+// The Service now owns the implementation; *App keeps
+// thin wrappers so admin/exit_nodes/sync + the boot-time
+// autoupdater goroutine can call into them without holding
+// a *Service reference.
+type exitRulesRunner interface {
+	SyncAdvertisedRoutes() map[string]string
+	DomainAutoUpdater() (added, removed int, err error)
+	StaggeredSync()
+}
+
 // SetAdminService wires the admin feature service into the
 // legacy *App so the thin wrapper methods (and any future
 // test-time helpers) can route through it. Called once
 // from main.go after New() and after adminSvc is constructed.
 func (a *App) SetAdminService(s adminSvcHandle) {
 	a.adminSvc = s
+}
+
+// SetExitRulesService wires the exit_rules feature service
+// into the legacy *App so the SyncAdvertisedRoutes +
+// RunDomainAutoUpdater wrappers can route through it.
+// Called once from main.go after New() and after
+// exitRulesSvc is constructed.
+func (a *App) SetExitRulesService(s exitRulesRunner) {
+	a.exitRulesSvc = s
+}
+
+// SyncAdvertisedRoutes is the legacy *App entry point used
+// by the /admin/exit-nodes/sync button and the bot. With
+// Phase B step 4 it became a thin wrapper that routes
+// through the exit_rules feature service.
+func (a *App) SyncAdvertisedRoutes() map[string]string {
+	if a.exitRulesSvc != nil {
+		return a.exitRulesSvc.SyncAdvertisedRoutes()
+	}
+	return map[string]string{"error": "exit_rules service not wired"}
+}
+
+// RunDomainAutoUpdater is the boot-time goroutine entry
+// point. main.go calls `go app.RunDomainAutoUpdater(ctx,
+// cfg.DNSAutoCheck)` once at startup; the wrapper routes
+// through the exit_rules feature service.
+func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) {
+	if a.exitRulesSvc == nil {
+		return
+	}
+	if interval <= 0 {
+		return
+	}
+	log.Printf("autoupdater: starting (interval=%s)", interval)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	// Run once immediately, then on tick.
+	added, removed, err := a.exitRulesSvc.DomainAutoUpdater()
+	if err != nil {
+		log.Printf("autoupdater: initial: %v", err)
+	} else if added > 0 || removed > 0 {
+		log.Printf("autoupdater: initial: added=%d removed=%d", added, removed)
+		a.exitRulesSvc.StaggeredSync() // 2026-07-07: issue #12 — staggered
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("autoupdater: stopping")
+			return
+		case <-t.C:
+			added, removed, err := a.exitRulesSvc.DomainAutoUpdater()
+			if err != nil {
+				log.Printf("autoupdater: %v", err)
+				continue
+			}
+			if added > 0 || removed > 0 {
+				log.Printf("autoupdater: added=%d removed=%d, syncing exit-nodes", added, removed)
+				a.exitRulesSvc.StaggeredSync() // 2026-07-07: issue #12
+			}
+		}
+	}
 }
 
 // AdminTelegram is a thin wrapper preserved for the existing
