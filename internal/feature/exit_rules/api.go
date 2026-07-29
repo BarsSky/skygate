@@ -1,9 +1,15 @@
-// exit_rules_api.go — extracted from exit_rules.go.
-// Contains: GetExitRulesAPI, PostExitRulesAPI, GetExitRulesAPIHelp.
-// REST/JSON API for AI assistants and external scripts. The /help page
-// documents the API endpoints for users.
-
-package handlers
+// Package exit_rules — api.go owns the public REST API
+// for the exit-rules feature.
+//
+// refactor-v0.30 Phase B step 4e (2026-07-29): moved
+// from internal/handlers/exit_rules_api.go. The
+// handlers used to be methods on *App; they now live
+// on *Service. The /help page is still a Go template
+// (exit_rules_help.html) and renders via the Backend.
+//
+// REST/JSON API for AI assistants and external scripts.
+// The /help page documents the API endpoints for users.
+package exit_rules
 
 import (
 	"encoding/json"
@@ -14,16 +20,15 @@ import (
 	"skygate/internal/db"
 )
 
-
 // GetExitRulesAPI returns all rules for the current user as JSON.
 // GET /my/exit-rules/api
-func (a *App) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Error(w, `{"error":"unauthorized"}`, 401)
 		return
 	}
-	rules, err := a.getDeviceRules(c.UserID)
+	rules, err := s.getDeviceRules(c.UserID)
 	if err != nil {
 		http.Error(w, `{"error":"db error"}`, 500)
 		return
@@ -51,8 +56,8 @@ func (a *App) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 // PostExitRulesAPI creates one or more rules from JSON body.
 // POST /my/exit-rules/api
 // Body: {"rules": [{"device_id":2,"exit_node":"karolina","target_type":"ip","target_value":"8.8.8.8","action":"accept"}, ...]}
-func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Error(w, `{"error":"unauthorized"}`, 401)
 		return
@@ -70,7 +75,7 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve device IPs + exit-node set from headscale.
-	nodes, _ := a.HS.ListAllNodes()
+	nodes, _ := s.HS.ListAllNodes()
 	nodeIPs := map[int]string{}
 	exitNodeSet := map[int]bool{}
 	if nodes != nil {
@@ -92,7 +97,7 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-12: Этап 10 part 4 — moved to
 	// db.ListNodeOwnerNodeIDsByUsername.
 	ownedByUser := map[int]bool{}
-	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(a.DB, c.Username)
+	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
 	for _, nid := range snapIDs {
 		if n, err := strconv.Atoi(nid); err == nil {
 			ownedByUser[n] = true
@@ -104,10 +109,13 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	dupCount := 0
 	errors := []string{}
 	// 2026-07-07: issue #12 — pre-check total limit before processing
-	maxTotal := a.Cfg.MaxTotalRules
+	maxTotal := 0
+	if s.Cfg != nil {
+		maxTotal = s.Cfg.MaxTotalRules
+	}
 	if maxTotal > 0 {
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRules
-		currentTotal, _ := db.CountEnabledRules(a.DB)
+		currentTotal, _ := db.CountEnabledRules(s.DB)
 		if currentTotal+len(req.Rules) > maxTotal {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(403)
@@ -122,10 +130,13 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	for i, rl := range req.Rules {
 		// 2026-07-07: per-device limit
-		maxPerDevice := a.Cfg.MaxRulesPerDevice
+		maxPerDevice := 0
+		if s.Cfg != nil {
+			maxPerDevice = s.Cfg.MaxRulesPerDevice
+		}
 		if maxPerDevice > 0 {
 			// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRulesForDevice
-			deviceRuleCount, _ := db.CountEnabledRulesForDevice(a.DB, rl.DeviceID)
+			deviceRuleCount, _ := db.CountEnabledRulesForDevice(s.DB, rl.DeviceID)
 			if deviceRuleCount >= maxPerDevice {
 				errors = append(errors, fmt.Sprintf("rule[%d]: device limit exceeded (%d/%d)", i, deviceRuleCount, maxPerDevice))
 				continue
@@ -159,7 +170,7 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		if rl.TargetType == "domain" {
 			apiParent = rl.TargetValue
 		}
-		ok, newID := a.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP, apiParent)
+		ok, newID := s.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP, apiParent)
 		if !ok {
 			errors = append(errors, fmt.Sprintf("rule[%d]: db error", i))
 			continue
@@ -174,21 +185,25 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 
 	// Apply ACL if anything was added
 	if added > 0 {
-		if acl, err := a.GenerateACL(); err == nil {
-			ver := a.saveACLSnapshot(acl, c.Username)
-			if err := a.HS.SetPolicy(acl); err == nil {
-				db.MarkACLApplied(a.DB, ver)
-				db.AppendExitRuleLog(a.DB, ver, db.ExitRuleActionAPIBulk,
+		if acl, err := s.generateACL(); err == nil {
+			ver := s.saveACLSnapshot(acl, c.Username)
+			if err := s.HS.SetPolicy(acl); err == nil {
+				db.MarkACLApplied(s.DB, ver)
+				db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionAPIBulk,
 					fmt.Sprintf("user %s added %d rules via API", c.Username, added))
 				// 2026-07-11: same operator-channel as the form path.
-				if a.Notifier != nil {
-					go a.Notifier.SendAlert(fmt.Sprintf("📥 Bulk add by %s: %d rules (api)", c.Username, added))
+				if s.Notifier != nil {
+					go s.Notifier.SendAlert(fmt.Sprintf("📥 Bulk add by %s: %d rules (api)", c.Username, added))
 				}
-				_ = a.SyncAdvertisedRoutes()
+				// Trigger a sync of advertised-routes to all
+				// exit-nodes (same as the form path).
+				if s.SyncRoutes != nil {
+					_ = s.SyncRoutes()
+				}
 			} else {
-				db.MarkACLFail(a.DB, ver, err.Error())
-				if a.Notifier != nil {
-					go a.Notifier.SendAlert(fmt.Sprintf("❌ ACL bulk-apply failed (by %s, %d rules)\n  err: %v",
+				db.MarkACLFail(s.DB, ver, err.Error())
+				if s.Notifier != nil {
+					go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL bulk-apply failed (by %s, %d rules)\n  err: %v",
 						c.Username, added, err))
 				}
 			}
@@ -206,15 +221,14 @@ func (a *App) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 
 // GetExitRulesAPIHelp renders the API documentation page.
 // GET /my/exit-rules/help
-func (a *App) GetExitRulesAPIHelp(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) GetExitRulesAPIHelp(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	a.renderWithLayout(w, r, "exit_rules_help.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "exit_rules_help.html", c, map[string]any{
 		"Page":  "exit-rules",
 		"Title": "Exit Rules API Help",
 	})
 }
-

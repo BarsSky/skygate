@@ -612,12 +612,3 @@ func SanitizeFilename(s string) string {
 //   - handlers_derp.go              — /admin/derp + DERP types
 //
 // See AGENTS.md "Sister files" for current line counts.
-
-// 2026-07-07: getMaxRulesForUser returns per-user rule limit or default.
-func (a *App) getMaxRulesForUser(username string) int {
-	if a.Cfg == nil { return 0 }
-	if v, ok := a.Cfg.UserMaxRules[username]; ok {
-		return v
-	}
-	return a.Cfg.MaxRulesPerDevice
-}
