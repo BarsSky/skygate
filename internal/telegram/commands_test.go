@@ -1,4 +1,4 @@
-package telegram
+﻿package telegram
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE device_rules (id INTEGER PRIMARY KEY, user_id INTEGER, device_id INTEGER, exit_node_id TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'domain', target_value TEXT, action TEXT DEFAULT 'accept', device_ip TEXT DEFAULT '', parent_domain TEXT DEFAULT '', enabled INTEGER DEFAULT 1, user_name TEXT NOT NULL DEFAULT '', device_hostname TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE portal_users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER DEFAULT 0, headscale_user_id INTEGER, password_hash TEXT DEFAULT '', theme TEXT DEFAULT 'linear', created_at INTEGER DEFAULT 0, default_device_node_id TEXT NOT NULL DEFAULT '', default_exit_node_id TEXT NOT NULL DEFAULT '', headscale_url TEXT NOT NULL DEFAULT '', headscale_api_key_enc TEXT NOT NULL DEFAULT '', subnet_cidr TEXT NOT NULL DEFAULT '', subnet_status TEXT NOT NULL DEFAULT 'none', subnet_router_node_id TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE acl_snapshots (id INTEGER PRIMARY KEY, version INTEGER, config TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', applied_success INTEGER, error_msg TEXT DEFAULT '')`,
-		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0, hostname TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0, hostname TEXT NOT NULL DEFAULT '', os TEXT NOT NULL DEFAULT 'unknown', device_type TEXT NOT NULL DEFAULT 'unknown')`,
 		`CREATE TABLE audit_log (id INTEGER PRIMARY KEY, user_id INTEGER, username TEXT, action TEXT, detail TEXT DEFAULT '', created_at INTEGER DEFAULT 0)`,
 		// 2026-07-11: Phase 3 — devices (joined to node_owner_map for
 		// last_seen) and telegram_alerts (/ack round-trip).
@@ -471,7 +471,7 @@ func TestHandleCommandExitNodesEmpty(t *testing.T) {
 	}
 	defer d.Close()
 	for _, q := range []string{
-		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0, hostname TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE node_owner_map (node_id TEXT PRIMARY KEY, username TEXT DEFAULT '', tag TEXT DEFAULT 'tag:untagged', headscale_user_id INTEGER NOT NULL DEFAULT 0, tagged_by_user_id INTEGER NOT NULL DEFAULT 0, tagged_at INTEGER NOT NULL DEFAULT 0, hostname TEXT NOT NULL DEFAULT '', os TEXT NOT NULL DEFAULT 'unknown', device_type TEXT NOT NULL DEFAULT 'unknown')`,
 		`CREATE TABLE devices (id INTEGER PRIMARY KEY, node_id TEXT DEFAULT '', last_seen INTEGER DEFAULT 0, online INTEGER DEFAULT 0)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
@@ -4376,3 +4376,4 @@ func TestBotUsernameCacheEmptyWithoutToken(t *testing.T) {
 		t.Errorf("expected no token row, got value=%q err=%v", v, err)
 	}
 }
+

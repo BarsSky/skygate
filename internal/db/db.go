@@ -301,5 +301,13 @@ func migrate(d *sql.DB) error {
 	if err := migrateV047(d); err != nil {
 		return fmt.Errorf("migrate v0.47: %w", err)
 	}
+	// 2026-07-29: per-device OS + device_type columns
+	// on node_owner_map. See migrations_v0.48.go for
+	// the design. The migration is idempotent (catches
+	// the duplicate-column error on re-runs, same
+	// pattern as v0.47).
+	if err := migrateV048(d); err != nil {
+		return fmt.Errorf("migrate v0.48: %w", err)
+	}
 	return nil
 }

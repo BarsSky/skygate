@@ -104,7 +104,9 @@ CREATE TABLE node_owner_map (
 	tag TEXT NOT NULL DEFAULT '',
 	tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
 	tagged_at INTEGER NOT NULL DEFAULT 0,
-	hostname TEXT NOT NULL DEFAULT ''
+	hostname TEXT NOT NULL DEFAULT '',
+	os TEXT NOT NULL DEFAULT 'unknown',
+	device_type TEXT NOT NULL DEFAULT 'unknown'
 );
 
 CREATE TABLE user_subnet_shares (

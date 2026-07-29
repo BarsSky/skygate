@@ -46,7 +46,22 @@
       {{range .Nodes}}
       <tr>
         <td class="mono">{{.ID}}</td>
-        <td><code>{{.Hostname}}</code></td>
+        <td>
+          <code>{{.Hostname}}</code>
+          {{/* 2026-07-29: per-device OS + device_type
+               badges. The /admin/devices page reads
+               the same os/device_type columns as
+               /my/devices (the auto-detect pass runs
+               in the backfill path). */}}
+          {{if or (ne .OS "unknown") (ne .DeviceType "unknown")}}
+            {{if ne .OS "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:4px" title="OS: {{.OS}}"><i class="fa-brands {{if eq .OS "windows"}}fa-windows{{else if eq .OS "macos"}}fa-apple{{else if eq .OS "linux"}}fa-linux{{else if eq .OS "android"}}fa-android{{else if eq .OS "ios"}}fa-apple{{else}}fa-circle-question{{end}}"></i></span>
+            {{end}}
+            {{if ne .DeviceType "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:2px" title="Тип: {{.DeviceType}}"><i class="fa-solid {{if eq .DeviceType "exit-node"}}fa-globe{{else if eq .DeviceType "subnet-router"}}fa-route{{else if eq .DeviceType "phone"}}fa-mobile-screen{{else if eq .DeviceType "server"}}fa-server{{else}}fa-desktop{{end}}"></i></span>
+            {{end}}
+          {{end}}
+        </td>
         <td>{{.UserName}}</td>
         <td class="mono">{{index .IPAddresses 0}}</td>
         <td>

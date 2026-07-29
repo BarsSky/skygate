@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"skygate/internal/db"
+	"skygate/internal/devicemeta"
 	"skygate/internal/headscale"
 )
 
@@ -87,8 +88,56 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	for _, ep := range userExitPrefs {
 		userExitPrefMap[strconv.FormatInt(ep.UserID, 10)] = ep.ExitNodeTag
 	}
+
+	// 2026-07-29: per-device OS + device_type lookup
+	// by node_id (the row keyed on headscale node id).
+	// We pre-fetch all rows once and index by node_id
+	// so the inner loop is O(1). The auto-detect pass
+	// itself runs in /my/devices; the admin page just
+	// reads the result.
+	osByNodeID := make(map[string]string)
+	typeByNodeID := make(map[string]string)
+	owners, _ := db.ListNodeOwnersByUsername(s.DB, "") // empty username = all rows
+	for _, o := range owners {
+		if o.NodeID != "" {
+			osByNodeID[o.NodeID] = o.OS
+			typeByNodeID[o.NodeID] = o.DeviceType
+		}
+	}
+
+	// Build the view-model slice the template renders.
+	// headscale.NodeView has no OS/DeviceType fields, so
+	// we wrap each row with the metadata the /admin/devices
+	// template needs. Same approach as feature/my/devices.go.
+	type adminDeviceRow struct {
+		headscale.NodeView
+		OS         string
+		DeviceType string
+	}
+	deviceRows := make([]adminDeviceRow, 0, len(allNodes))
+	for _, n := range allNodes {
+		os, typ := osByNodeID[n.ID], typeByNodeID[n.ID]
+		// If the row is still 'unknown' / '', try the
+		// auto-detect on the fly so the admin page
+		// always shows a value (the /my/devices backfill
+		// is the canonical write path, but the admin
+		// shouldn't have to load /my/devices to see
+		// icons on /admin/devices). The DB write is
+		// best-effort — admin can re-run /my/devices to
+		// persist.
+		if (os == "" || os == devicemeta.OSUnknown) &&
+			(typ == "" || typ == devicemeta.TypeUnknown) {
+			detectedOS := devicemeta.DetectOS(n.Hostname)
+			detectedType := devicemeta.DetectType(n.Tags, n.ApprovedRoutes, n.AvailableRoutes, detectedOS)
+			_ = db.UpdateDeviceMetaAutoDetect(s.DB, n.ID, detectedOS, detectedType)
+			os, typ = detectedOS, detectedType
+		}
+		deviceRows = append(deviceRows, adminDeviceRow{
+			NodeView: n, OS: os, DeviceType: typ,
+		})
+	}
 	s.Backend.RenderWithLayout(w, r, "admin/devices.html", c, map[string]any{
-		"Nodes":             allNodes,
+		"Nodes":             deviceRows,
 		"Users":             users,
 		"FlashSuccess":      r.URL.Query().Get("ok"),
 		"FlashError":        r.URL.Query().Get("err"),

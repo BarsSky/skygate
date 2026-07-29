@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/devicemeta"
 	"skygate/internal/headscale"
 )
 
@@ -165,6 +166,18 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// per-device grant is skipped. 2026-07-25:
 		// v0.28.5.
 		DeviceExitViaEnabled bool
+		// OS is the device's operating system marker
+		// ("windows" / "android" / "linux" / ...), shown
+		// in /my/devices next to the hostname so the
+		// operator can debug at a glance
+		// ("base = Windows, check the Tailscale client
+		// version"). Sourced from the auto-detect on the
+		// first /my/devices load and editable by the
+		// admin via /admin/devices/{id}/meta. 2026-07-29.
+		OS string
+		// DeviceType is "client" / "exit-node" / "subnet-router"
+		// / "phone" — same origin as OS. 2026-07-29.
+		DeviceType string
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
@@ -182,6 +195,20 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		if dp.DeviceHostname != "" {
 			devicePrefByHost[strings.ToLower(dp.DeviceHostname)] = dp.ExitNodeTag
 			deviceViaEnabledByHost[strings.ToLower(dp.DeviceHostname)] = dp.ViaEnabled
+		}
+	}
+	// 2026-07-29: per-device OS + device_type prefetch.
+	// Keyed on lowercased hostname (same convention as
+	// the per-device exit-node pref above). The
+	// auto-detect pass below populates the rows that
+	// are still 'unknown' on the first /my/devices load.
+	osByHost := map[string]string{}
+	typeByHost := map[string]string{}
+	deviceMeta, _ := db.ListNodeOwnersByUsername(s.DB, username)
+	for _, dn := range deviceMeta {
+		if dn.Hostname != "" {
+			osByHost[strings.ToLower(dn.Hostname)] = dn.OS
+			typeByHost[strings.ToLower(dn.Hostname)] = dn.DeviceType
 		}
 	}
 	// hasTag returns true if the node carries the given tag.
@@ -233,6 +260,8 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				HostnameLower:      strings.ToLower(n.Hostname),
 				DeviceExitPref:     devicePrefByHost[strings.ToLower(n.Hostname)],
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
+				OS:                 osByHost[strings.ToLower(n.Hostname)],
+				DeviceType:         typeByHost[strings.ToLower(n.Hostname)],
 			})
 		}
 	}
@@ -287,6 +316,8 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				HostnameLower:      strings.ToLower(n.Hostname),
 				DeviceExitPref:     devicePrefByHost[strings.ToLower(n.Hostname)],
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
+				OS:                 osByHost[strings.ToLower(n.Hostname)],
+				DeviceType:         typeByHost[strings.ToLower(n.Hostname)],
 			})
 		}
 	}
@@ -299,6 +330,54 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("DBG GetMyDevices fetch took %v nodes=%d my=%d public=%d", time.Since(t0), len(all), len(myNodesList), len(publicNodes))
+
+	// 2026-07-29: per-device OS + device_type
+	// auto-detect. Runs once per /my/devices load.
+	// For every node in myNodesList whose os OR
+	// device_type is still 'unknown' / '', we run
+	// devicemeta.Detect with the headscale tag + route
+	// hints and persist via
+	// db.UpdateDeviceMetaAutoDetect (which only writes
+	// if BOTH columns are still in the default state,
+	// so an admin-set value is never clobbered).
+	//
+	// The in-memory `n.OS` / `n.DeviceType` for the
+	// current response uses the freshly-detected value
+	// even if the DB write was a no-op (the row was
+	// already up to date).
+	for _, mr := range myNodesList {
+		if mr.OS != "" && mr.OS != devicemeta.OSUnknown {
+			continue
+		}
+		if mr.DeviceType != "" && mr.DeviceType != devicemeta.TypeUnknown {
+			continue
+		}
+		// Find the matching headscale node for tag +
+		// route hints.
+		var node headscale.NodeView
+		var found bool
+		for _, n := range all {
+			if n.ID == mr.ID {
+				node = n
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		detectedOS := devicemeta.DetectOS(mr.HostnameLower)
+		detectedType := devicemeta.DetectType(node.Tags, node.ApprovedRoutes, node.AvailableRoutes, detectedOS)
+		// Persist (no-op if the admin has manually set
+		// the row). Errors are non-fatal — the next
+		// /my/devices load will retry.
+		_ = db.UpdateDeviceMetaAutoDetect(s.DB, mr.ID, detectedOS, detectedType)
+		// Always update the in-memory view, so the
+		// current page reflects the detected value
+		// even if the DB write was a no-op.
+		mr.OS = detectedOS
+		mr.DeviceType = detectedType
+	}
 
 	// v0.25.0 — mesh visibility for the /my/devices
 	// subnet card. We compute:
