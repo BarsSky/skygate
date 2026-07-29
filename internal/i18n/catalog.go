@@ -270,6 +270,15 @@ var ruCatalog = map[string]string{
 	"devices.device_exit_via_any":            "any",
 	"devices.device_exit_via_disable_help":   "выключить strict mode (Android-friendly)",
 	"devices.device_exit_via_enable_help":    "включить strict mode (pin к этому exit-node)",
+	// 2026-07-29: per-device OS + device_type
+	// manual override form (POST /admin/devices/{id}/meta).
+	"devices.meta_os_label":            "OS",
+	"devices.meta_type_label":          "Тип",
+	"devices.meta_save":                "Сохранить",
+	"devices.meta_saved_ok":            "OS / тип устройства сохранены",
+	"devices.meta_unknown_help":        "unknown = авто-детект при следующей загрузке /my/devices",
+	"devices.meta_os_unknown":          "авто",
+	"devices.meta_type_unknown":        "авто",
 	"devices.no_devices":              "Нет устройств",
 	"devices.name":                    "Имя",
 	"devices.expires_in":              "Истекает через",
@@ -2466,6 +2475,15 @@ var enCatalog = map[string]string{
 	"devices.device_exit_via_any":            "any",
 	"devices.device_exit_via_disable_help":   "disable strict mode (Android-friendly)",
 	"devices.device_exit_via_enable_help":    "enable strict mode (pin to this exit-node)",
+	// 2026-07-29: per-device OS + device_type
+	// manual override form (POST /admin/devices/{id}/meta).
+	"devices.meta_os_label":            "OS",
+	"devices.meta_type_label":          "Type",
+	"devices.meta_save":                "Save",
+	"devices.meta_saved_ok":            "OS / device type saved",
+	"devices.meta_unknown_help":        "unknown = re-run auto-detect on next /my/devices load",
+	"devices.meta_os_unknown":          "auto",
+	"devices.meta_type_unknown":        "auto",
 	"devices.no_devices":              "No devices",
 	"devices.name":                    "Name",
 	"devices.expires_in":              "Expires in",

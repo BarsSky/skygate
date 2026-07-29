@@ -348,3 +348,65 @@ func nodeTagRefusedForUserDevice(nodeID int64, requestedTag string, currentTags 
 	}
 	return false, "", ""
 }
+
+// PostAdminDeviceMeta is the v0.31.x manual-override form
+// for the per-device OS + device_type markers. Admin-only.
+//
+// The auto-detect (internal/devicemeta.Detect) handles ~80%
+// of hostnames correctly (DESKTOP-*, MSI*, iPhone, MacBook,
+// raspberrypi, skygate-host-1, ...). The remaining 20% —
+// Samsung model numbers like "A71", custom hostnames like
+// "laptop", etc. — fall back to "unknown" and need an
+// admin-set value. The auto-detect pass (which runs every
+// /my/devices load) deliberately skips rows where either
+// column has a non-default value, so the manual override
+// is sticky across reloads.
+//
+// To re-enable the auto-detect for a node (e.g. after a
+// hostname rename), the admin can set BOTH columns to
+// "unknown" via this form — the next /my/devices load will
+// re-run Detect() and persist the new guess.
+//
+// 2026-07-29.
+func (s *Service) PostAdminDeviceMeta(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form: "+err.Error(), 400)
+		return
+	}
+	idStr := r.FormValue("node_id")
+	nodeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad node id", 400)
+		return
+	}
+	os := strings.TrimSpace(r.FormValue("os"))
+	typeIn := strings.TrimSpace(r.FormValue("device_type"))
+	if !devicemeta.IsOSValid(os) {
+		http.Error(w, "invalid os: "+os, 400)
+		return
+	}
+	if !devicemeta.IsTypeValid(typeIn) {
+		http.Error(w, "invalid device_type: "+typeIn, 400)
+		return
+	}
+	// Default the empty form value to "unknown" so the
+	// auto-detect re-runs on the next /my/devices load.
+	if os == "" {
+		os = devicemeta.OSUnknown
+	}
+	if typeIn == "" {
+		typeIn = devicemeta.TypeUnknown
+	}
+	if err := db.SetDeviceMetaNodeOwner(s.DB, strconv.FormatInt(nodeID, 10), os, typeIn); err != nil {
+		http.Error(w, "db write failed: "+err.Error(), 500)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "device_meta_set",
+		fmt.Sprintf("node=%d os=%s device_type=%s", nodeID, os, typeIn))
+	http.Redirect(w, r, "/admin/devices?ok=device_meta", http.StatusFound)
+}

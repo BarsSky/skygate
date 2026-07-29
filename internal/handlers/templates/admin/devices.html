@@ -7,7 +7,7 @@
      the headscale CLI and the bot is now reporting "no
      nodes found". */}}
 {{if .FlashSuccess}}
-<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{if eq .FlashSuccess "device_meta"}}{{t "devices.meta_saved_ok"}}{{else}}{{.FlashSuccess}}{{end}}</div>
 {{end}}
 {{if .FlashError}}
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
@@ -34,6 +34,7 @@
         <th><i class="fa-solid fa-user"></i> {{t "devices.user"}}</th>
         <th><i class="fa-solid fa-network-wired"></i> {{t "devices.ip"}}</th>
         <th><i class="fa-solid fa-circle-nodes"></i> Type</th>
+        <th><i class="fa-brands fa-windows"></i> OS / {{t "devices.meta_type_label"}}</th>
         <th><i class="fa-solid fa-eye"></i> {{t "devices.tag"}}</th>
         <th><i class="fa-solid fa-fingerprint"></i> {{t "devices.dev_tag_label"}}</th>
         <th><i class="fa-solid fa-bullseye"></i> {{t "devices.device_exit_pref"}}</th>
@@ -66,6 +67,54 @@
         <td class="mono">{{index .IPAddresses 0}}</td>
         <td>
           {{if .IsExitNode}}<span class="tag tag-admin"><i class="fa-solid fa-route"></i>exit</span>{{else}}<span class="tag">node</span>{{end}}
+        </td>
+        <td>
+          {{/* 2026-07-29: per-device OS + device_type
+               manual override form. The summary shows
+               the current values; clicking the caret
+               expands the inline form (POST to
+               /admin/devices/{id}/meta). The form is
+               hidden by default to keep the table
+               compact — the auto-detect (~80% correct)
+               rarely needs manual intervention. Set
+               BOTH to "unknown" to re-enable auto-detect
+               on the next /my/devices load. */}}
+          <details>
+            <summary style="cursor:pointer;list-style:none;display:inline-flex;gap:4px;align-items:center" title="{{t "devices.meta_unknown_help"}}">
+              {{if eq .OS "unknown"}}<span class="tag" style="font-size:10px;background:var(--text-subtle);color:var(--bg-card)"><i class="fa-solid fa-circle-question"></i> {{t "devices.meta_os_unknown"}}</span>
+              {{else}}<span class="tag" style="font-size:10px" title="OS: {{.OS}}"><i class="fa-brands {{if eq .OS "windows"}}fa-windows{{else if eq .OS "macos"}}fa-apple{{else if eq .OS "linux"}}fa-linux{{else if eq .OS "android"}}fa-android{{else if eq .OS "ios"}}fa-apple{{else if eq .OS "freebsd"}}fa-server{{else}}fa-circle-question{{end}}"></i> {{.OS}}</span>{{end}}
+              {{if eq .DeviceType "unknown"}}<span class="tag" style="font-size:10px;background:var(--text-subtle);color:var(--bg-card)"><i class="fa-solid fa-circle-question"></i> {{t "devices.meta_type_unknown"}}</span>
+              {{else}}<span class="tag" style="font-size:10px" title="Type: {{.DeviceType}}"><i class="fa-solid {{if eq .DeviceType "exit-node"}}fa-globe{{else if eq .DeviceType "subnet-router"}}fa-route{{else if eq .DeviceType "phone"}}fa-mobile-screen{{else if eq .DeviceType "server"}}fa-server{{else if eq .DeviceType "client"}}fa-desktop{{else}}fa-circle-question{{end}}"></i> {{.DeviceType}}</span>{{end}}
+              <i class="fa-solid fa-pen" style="font-size:10px;color:var(--text-subtle)"></i>
+            </summary>
+            <form method="post" action="/admin/devices/{{.ID}}/meta" style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;font-size:11px" title="{{t "devices.meta_unknown_help"}}">
+              <input type="hidden" name="node_id" value="{{.ID}}">
+              <label style="display:flex;gap:3px;align-items:center">
+                {{t "devices.meta_os_label"}}:
+                <select name="os" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                  <option value="unknown" {{if eq .OS "unknown"}}selected{{end}}>{{t "devices.meta_os_unknown"}}</option>
+                  <option value="windows" {{if eq .OS "windows"}}selected{{end}}>Windows</option>
+                  <option value="macos"   {{if eq .OS "macos"}}selected{{end}}>macOS</option>
+                  <option value="linux"   {{if eq .OS "linux"}}selected{{end}}>Linux</option>
+                  <option value="android" {{if eq .OS "android"}}selected{{end}}>Android</option>
+                  <option value="ios"     {{if eq .OS "ios"}}selected{{end}}>iOS</option>
+                  <option value="freebsd" {{if eq .OS "freebsd"}}selected{{end}}>FreeBSD</option>
+                </select>
+              </label>
+              <label style="display:flex;gap:3px;align-items:center">
+                {{t "devices.meta_type_label"}}:
+                <select name="device_type" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                  <option value="unknown"       {{if eq .DeviceType "unknown"}}selected{{end}}>{{t "devices.meta_type_unknown"}}</option>
+                  <option value="client"        {{if eq .DeviceType "client"}}selected{{end}}>client</option>
+                  <option value="exit-node"     {{if eq .DeviceType "exit-node"}}selected{{end}}>exit-node</option>
+                  <option value="subnet-router" {{if eq .DeviceType "subnet-router"}}selected{{end}}>subnet-router</option>
+                  <option value="phone"         {{if eq .DeviceType "phone"}}selected{{end}}>phone</option>
+                  <option value="server"        {{if eq .DeviceType "server"}}selected{{end}}>server</option>
+                </select>
+              </label>
+              <button type="submit" class="btn btn-sm" style="font-size:11px;padding:2px 8px"><i class="fa-solid fa-floppy-disk"></i> {{t "devices.meta_save"}}</button>
+            </form>
+          </details>
         </td>
         <td>
           {{if .IsPublicView}}

@@ -554,6 +554,12 @@ func main() {
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(adminSvc.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(adminSvc.PostAdminNodeTag)))
 	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(adminSvc.PostAdminNodeUntag)))
+	// 2026-07-29: v0.31.x — per-device OS + device_type
+	// manual override. The form (rendered in
+	// admin/devices.html) POSTs {node_id, os, device_type}
+	// here. "unknown" re-enables auto-detect on the next
+	// /my/devices load.
+	mux.Handle("POST /admin/devices/{id}/meta", authMW(http.HandlerFunc(adminSvc.PostAdminDeviceMeta)))
 	// 2026-07-15: v0.14.0 — "Sync from headscale" button.
 	// Re-populates node_owner_map from headscale's authoritative
 	// view. The /exit_nodes bot command reads from node_owner_map;
