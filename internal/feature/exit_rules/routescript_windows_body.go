@@ -1,18 +1,16 @@
-package handlers
-
-// exit_rules_routescript_windows_body.go — generates the Windows .cmd
-// script for split-tunnel exit-node routing.
+// Package exit_rules — routescript_windows_body.go generates
+// the Windows .cmd script for split-tunnel exit-node routing.
 //
-// Pure function: takes the resolved route list + exit node IP, emits
-// the .cmd body. No I/O, no headscale, no DB. Kept separate from
-// the orchestrator (exit_rules_routescript.go) and the Linux/macOS
-// builder (exit_rules_routescript_linux_body.go) so each OS body is
-// readable on its own.
+// refactor-v0.30 Phase B step 4c (2026-07-29): moved from
+// internal/handlers/exit_rules_routescript_windows_body.go.
+// Pure function: takes the resolved route list + exit node
+// IP, emits the .cmd body. No I/O, no headscale, no DB.
 //
-// Filename avoids the `_windows.go` GOOS build tag — the Go code
-// that builds a Windows .cmd is identical on any host platform
-// (the script is just a string), so we want this file compiled on
-// Linux/macOS too. Same for the linux_body file.
+// Filename avoids the `_windows.go` GOOS build tag — the
+// Go code that builds a Windows .cmd is identical on any
+// host platform (the script is just a string), so we want
+// this file compiled on Linux/macOS too.
+package exit_rules
 
 import (
 	"fmt"
@@ -156,7 +154,7 @@ func writeWindowsSetupScript(sb *strings.Builder, routes []routeEntry, exitNodeI
 	// Add DNS route for MagicDNS
 	sb.WriteString("echo Adding DNS route (100.100.100.100)...\n")
 	sb.WriteString("route add 100.100.100.100 mask 255.255.255.255 " + exitNodeIP + " 2>nul\n")
-	sb.WriteString("if %errorlevel% equ 0 (echo   Done.) else (echo   Already exists.)\n")
+	sb.WriteString("if %errorlevel! equ 0 (echo   Done.) else (echo   Already exists.)\n")
 	sb.WriteString("\n")
 
 	sb.WriteString("echo Adding specific routes via Tailscale...\n")
