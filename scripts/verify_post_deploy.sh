@@ -697,6 +697,52 @@ if [ "$QUICK" = 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Phase 9: PG foundation live check (R27) — v0.31.0
+# ---------------------------------------------------------------------------
+# 2026-07-28: v0.31.0. Runs the 4 PG verification tests on the
+# PG-staging VM (when SKYGATE_TEST_PG_DSN is configured on the
+# staging host). Tests:
+#   - TestPGRoundtripSchema: schema equivalence (SQLite ↔ PG)
+#   - TestPGMigrationIdempotency: run MigratePostgres twice
+#   - TestPGLockTimeout: concurrent migrations don't deadlock
+#   - TestPGDataMigrationFromSQLite: dump_sqlite.py output applies
+#
+# Default behavior: skip if no DSN is set. Live PG validation
+# requires operator to provision a PG instance, then set
+# SKYGATE_TEST_PG_DSN in the operator-side env (e.g. ~/.skygate-pg).
+# When set, the 4 tests run and R27 reports pass/fail per-test.
+#
+# If SKYGATE_TEST_PG_DSN is unset (default for the main VM, which
+# is SQLite-only), R27 reports SKIP. The build-time B18 check is
+# the always-on foundation guarantee.
+if [ "$QUICK" = 0 ]; then
+  echo
+  echo "[R27] PG foundation live check (4 verification tests, v0.31.0)"
+  if [ -z "${SKYGATE_TEST_PG_DSN:-}" ]; then
+    echo "  ${YLW}SKIP${NC}  R27 SKYGATE_TEST_PG_DSN not set (PG-staging not provisioned; B18 covers foundation)"
+  else
+    # Run the 4 PG tests on the operator workstation (where the
+    # DSN is reachable). The default verify-post runs from the
+    # operator's machine, so this is direct (not via SSH).
+    PG_TEST_OUT=$(SKYGATE_TEST_PG_DSN="$SKYGATE_TEST_PG_DSN" \
+      "$GO" test -tags postgres -count=1 -timeout 120s -v \
+        -run "TestPGRoundtripSchema|TestPGMigrationIdempotency|TestPGLockTimeout|TestPGDataMigrationFromSQLite" \
+        ./internal/db/ 2>&1)
+    PG_RC=$?
+    PG_TESTS_PASS=$(echo "$PG_TEST_OUT" | grep -cE '^--- PASS:' || true)
+    PG_TESTS_FAIL=$(echo "$PG_TEST_OUT" | grep -cE '^--- FAIL:' || true)
+    if [ "$PG_RC" -eq 0 ] && [ "$PG_TESTS_FAIL" -eq 0 ] && [ "$PG_TESTS_PASS" -ge 4 ]; then
+      echo "  ${GRN}PASS${NC}  R27 4 PG verification tests passed ($PG_TESTS_PASS PASS, $PG_TESTS_FAIL FAIL)"
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    else
+      echo "  ${RED}FAIL${NC}  R27 PG verification tests: $PG_TESTS_PASS PASS, $PG_TESTS_FAIL FAIL (rc=$PG_RC)"
+      echo "$PG_TEST_OUT" | grep -E '^(--- PASS|--- FAIL|    .+\.go:[0-9]+:)' | head -20 | sed 's/^/        /'
+      RESULTS_FAIL=$((RESULTS_FAIL+1))
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
