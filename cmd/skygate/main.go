@@ -304,6 +304,15 @@ func main() {
 		// secret + invalidates the per-URL HSForUser cache.
 		SecretKeyHex:           app.SecretKeyHex,
 		InvalidateHSCacheFn:    app.InvalidateHSCache,
+		// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
+		// /admin/exit-nodes needs the default SSH key path
+		// (shown as the "ssh_key_path" form default) + a
+		// callback to the legacy SyncAdvertisedRoutes
+		// (the "Sync now" button). The exit-node health
+		// monitor is wired further below once exitMon is
+		// created (it doesn't exist yet at this point).
+		SSHKeyPath: app.SSHKeyPath,
+		SyncRoutes: app.SyncAdvertisedRoutes,
 	}
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers
@@ -460,7 +469,7 @@ func main() {
 	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(app.AdminCleanupRulesApply)))
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(app.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
-	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(app.AdminExitNodes)))
+	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(adminSvc.AdminExitNodes)))
 	// 2026-07-20: v0.20.0 — headscale-update-monitor
 	// status page. Renders the monitor's snapshot
 	// (pinned vs. latest, history table). Admin-only.
@@ -504,16 +513,16 @@ func main() {
 	// admin page is for oversight, same UX choice
 	// as /admin/invites.
 	mux.Handle("GET /admin/meshes", authMW(http.HandlerFunc(adminSvc.GetAdminMeshes)))
-	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(app.PostAdminExitNodesAdd)))
-	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(app.PostAdminExitNodesDelete)))
-	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(app.PostAdminExitNodesSync)))
+	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodesAdd)))
+	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodesDelete)))
+	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodesSync)))
 	// 2026-07-15: v0.13.0 — "Run health check now" button on
 	// /admin/exit-nodes. Admin-only. Triggers the background
 	// monitor's CheckNow synchronously and redirects back to
 	// the page so the operator sees the fresh state. The
 	// monitor's own internal mutex serialises concurrent
 	// clicks.
-	mux.Handle("POST /admin/exit-nodes/health-now", authMW(http.HandlerFunc(app.PostAdminExitNodesHealthNow)))
+	mux.Handle("POST /admin/exit-nodes/health-now", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodesHealthNow)))
 
 	// 2026-07-17: v0.18.1 — "Tag as exit-node" / "Untag" buttons.
 	// These replace the operator's two manual `docker exec
@@ -525,8 +534,8 @@ func main() {
 	// the tagged node, so no ACL re-push is required — the
 	// Tailscale clients pick up the new tag on their next
 	// ACL poll (usually <60s).
-	mux.Handle("POST /admin/exit-nodes/tag-as-exit", authMW(http.HandlerFunc(app.PostAdminExitNodeTagAsExitNode)))
-	mux.Handle("POST /admin/exit-nodes/untag", authMW(http.HandlerFunc(app.PostAdminExitNodeUntagAsExitNode)))
+	mux.Handle("POST /admin/exit-nodes/tag-as-exit", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeTagAsExitNode)))
+	mux.Handle("POST /admin/exit-nodes/untag", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeUntagAsExitNode)))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -741,9 +750,11 @@ func main() {
 		AutoSync:     cfg.ExitNodeAutoSync,
 	}
 	exitMon.Start(ctx)
-	// Stash the monitor on the App so handlers can call
-	// CheckNow for the manual "Run health check now" button.
-	app.ExitNodeMonitor = exitMon
+	// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
+	// exit-nodes admin handlers moved to feature/admin;
+	// the monitor is wired there now. The App field is
+	// removed once admin_exit_nodes.go is deleted.
+	adminSvc.ExitNodeMonitor = exitMon
 
 	// 2026-07-20: v0.20.0 — headscale-update-monitor.
 	// Polls the GitHub Releases API for

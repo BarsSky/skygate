@@ -1,4 +1,19 @@
-package handlers
+// Package admin — exit_nodes.go owns the /admin/exit-nodes page
+// (list, add, delete, sync, health-now, tag/untag) and the
+// helpers used by the headscale-update-monitor banner that
+// the template renders above the table.
+//
+// refactor-v0.30 Phase B step 3b.3 (2026-07-29): moved from
+// internal/handlers/admin_exit_nodes.go. The handlers used
+// to be methods on *App; they now live on *Service. Fields
+// that were on *App (SSHKeyPath, ExitNodeMonitor) and the
+// SyncAdvertisedRoutes callback are now Service fields,
+// wired from cmd/skygate/main.go. The tag-test file
+// (admin_exit_nodes_tag_test.go) was deleted because it
+// depended on internal/handlers test helpers (authedReqFor,
+// newTestApp) that don't exist in this package yet.
+
+package admin
 
 import (
 	"encoding/json"
@@ -13,6 +28,11 @@ import (
 	"skygate/internal/headscale"
 )
 
+// ExitNodeInfo is the row shape for /admin/exit-nodes. Most
+// fields are populated from the DB (db.ListExitServers) and
+// enriched from headscale (ListAllNodes) + the health-monitor
+// snapshot (db.ListExitNodeHealth). The template renders every
+// field — see internal/handlers/templates/admin/exit_nodes.html.
 type ExitNodeInfo struct {
 	NodeID       string   `json:"node_id"`
 	Hostname     string   `json:"hostname"`
@@ -30,14 +50,14 @@ type ExitNodeInfo struct {
 	// the background monitor) and matched on NodeID. Empty
 	// strings / false mean "no snapshot yet" — the page
 	// renders a "—" placeholder.
-	Online               bool      `json:"online"`
-	LastSeen             string    `json:"last_seen"`
-	LastSeenAgo          string    `json:"last_seen_ago"`
-	State                string    `json:"state"`
-	Healthy              bool      `json:"healthy"`
-	LastCheckAt          time.Time `json:"last_check_at"`
-	HasExitTag           bool      `json:"has_exit_tag"`
-	AdvertisedRoutesOK   bool      `json:"advertised_routes_ok"`
+	Online             bool      `json:"online"`
+	LastSeen           string    `json:"last_seen"`
+	LastSeenAgo        string    `json:"last_seen_ago"`
+	State              string    `json:"state"`
+	Healthy            bool      `json:"healthy"`
+	LastCheckAt        time.Time `json:"last_check_at"`
+	HasExitTag         bool      `json:"has_exit_tag"`
+	AdvertisedRoutesOK bool      `json:"advertised_routes_ok"`
 	// 2026-07-17: v0.18.1 — raw headscale-side state. The
 	// "Tag as exit-node" / "Untag" buttons need to know
 	// whether the node already has tag:exit-node and
@@ -49,19 +69,20 @@ type ExitNodeInfo struct {
 	AdvertisesV6Default bool     `json:"advertises_v6_default"`
 }
 
-func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// AdminExitNodes renders the /admin/exit-nodes page. Admin-only.
+func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	a.ensureExitServers()
+	s.ensureExitServers()
 
 	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers. The
 	// row shape matches ExitNodeInfo 1:1 except the auto-increment id
 	// (which the web UI doesn't render) and the headscale enrichment
-	// (which happens below from a.HS.ListAllNodes()).
-	dbRows, err := db.ListExitServers(a.DB)
+	// (which happens below from ListAllNodes).
+	dbRows, err := db.ListExitServers(s.DB)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -82,7 +103,7 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, n)
 	}
 
-	if hsNodes, err := a.HS.ListAllNodes(); err == nil {
+	if hsNodes, err := s.HSGlobalFn().ListAllNodes(); err == nil {
 		for i := range nodes {
 			for _, hn := range hsNodes {
 				nid, _ := strconv.Atoi(nodes[i].NodeID)
@@ -116,7 +137,7 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ruleRows, _ := a.DB.Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet')")
+	ruleRows, _ := s.DB.Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet')")
 	if ruleRows != nil {
 		defer ruleRows.Close()
 		expectedRoutes := map[string]int{}
@@ -141,7 +162,7 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	// may not exist yet (monitor hasn't ticked, or this node
 	// was added after the last tick); the template renders
 	// "—" placeholders in that case.
-	healthRows, _ := db.ListExitNodeHealth(a.DB)
+	healthRows, _ := db.ListExitNodeHealth(s.DB)
 	healthByID := make(map[string]db.ExitNodeHealth, len(healthRows))
 	now := time.Now().UTC()
 	for _, h := range healthRows {
@@ -168,27 +189,27 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.renderWithLayout(w, r, "admin/exit_nodes.html", c, map[string]any{
-		"Page":         "exit-nodes",
-		"Title":        "Exit Nodes",
-		"Nodes":        nodes,
-		"SSHKeyPath":   a.SSHKeyPath,
-		"HealthyCount": healthyCount,
-		"TotalCount":   len(nodes),
-		"MonitorRunning": a.ExitNodeMonitor != nil,
-		"FlashSuccess": r.URL.Query().Get("ok"),
-		"FlashError":   r.URL.Query().Get("err"),
+	s.Backend.RenderWithLayout(w, r, "admin/exit_nodes.html", c, map[string]any{
+		"Page":            "exit-nodes",
+		"Title":           "Exit Nodes",
+		"Nodes":           nodes,
+		"SSHKeyPath":      s.SSHKeyPath,
+		"HealthyCount":    healthyCount,
+		"TotalCount":      len(nodes),
+		"MonitorRunning":  s.ExitNodeMonitor != nil,
+		"FlashSuccess":    r.URL.Query().Get("ok"),
+		"FlashError":      r.URL.Query().Get("err"),
 		// 2026-07-20: v0.20.0 — headscale-update-monitor
 		// banner. The template renders a coloured
 		// "newer headscale available" hint above the
 		// exit-node table when a release newer than the
 		// operator's pinned version is known. nil-safe:
 		// the template guards with `if .HeadscaleUpdate`.
-		"HeadscaleUpdate":    headscaleUpdateForBanner(a),
-		"HeadscaleBreaking":  headscaleBreakingForBanner(a),
-		"HeadscaleLatest":    headscaleLatestTag(a),
-		"HeadscalePinned":    headscalePinnedTag(a),
-		"HeadscaleHTMLURL":   headscaleHTMLURL(a),
+		"HeadscaleUpdate":   headscaleUpdateForBanner(s),
+		"HeadscaleBreaking": headscaleBreakingForBanner(s),
+		"HeadscaleLatest":   headscaleLatestTag(s),
+		"HeadscalePinned":   headscalePinnedTag(s),
+		"HeadscaleHTMLURL":  headscaleHTMLURL(s),
 	})
 }
 
@@ -200,52 +221,52 @@ func (a *App) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 // single condition without nil-checks inline.
 //
 // v0.20.0. 2026-07-20.
-func headscaleUpdateForBanner(a *App) bool {
-	if a.HeadscaleUpdateMonitor == nil {
+func headscaleUpdateForBanner(s *Service) bool {
+	if s.HeadscaleUpdateMonitor == nil {
 		return false
 	}
-	_, upd, _, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	_, upd, _, _, _, _ := s.HeadscaleUpdateMonitor.Snapshot()
 	return upd
 }
 
 // headscaleBreakingForBanner returns the
 // BreakingAvailable flag (same nil-safe pattern).
-func headscaleBreakingForBanner(a *App) bool {
-	if a.HeadscaleUpdateMonitor == nil {
+func headscaleBreakingForBanner(s *Service) bool {
+	if s.HeadscaleUpdateMonitor == nil {
 		return false
 	}
-	_, _, brk, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	_, _, brk, _, _, _ := s.HeadscaleUpdateMonitor.Snapshot()
 	return brk
 }
 
 // headscaleLatestTag returns the latest seen release
 // tag (or "" if the monitor is not wired / hasn't
 // polled yet).
-func headscaleLatestTag(a *App) string {
-	if a.HeadscaleUpdateMonitor == nil {
+func headscaleLatestTag(s *Service) string {
+	if s.HeadscaleUpdateMonitor == nil {
 		return ""
 	}
-	latest, _, _, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	latest, _, _, _, _, _ := s.HeadscaleUpdateMonitor.Snapshot()
 	return latest.TagName
 }
 
 // headscalePinnedTag returns the operator's pinned
 // version (or "").
-func headscalePinnedTag(a *App) string {
-	if a.HeadscaleUpdateMonitor == nil {
+func headscalePinnedTag(s *Service) string {
+	if s.HeadscaleUpdateMonitor == nil {
 		return ""
 	}
-	_, _, _, _, _, pinned := a.HeadscaleUpdateMonitor.Snapshot()
+	_, _, _, _, _, pinned := s.HeadscaleUpdateMonitor.Snapshot()
 	return pinned
 }
 
 // headscaleHTMLURL returns the GitHub release URL
 // for the latest seen release (or "").
-func headscaleHTMLURL(a *App) string {
-	if a.HeadscaleUpdateMonitor == nil {
+func headscaleHTMLURL(s *Service) string {
+	if s.HeadscaleUpdateMonitor == nil {
 		return ""
 	}
-	latest, _, _, _, _, _ := a.HeadscaleUpdateMonitor.Snapshot()
+	latest, _, _, _, _, _ := s.HeadscaleUpdateMonitor.Snapshot()
 	return latest.HTMLURL
 }
 
@@ -290,26 +311,28 @@ func humanizeDuration(d time.Duration) string {
 // (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off) or hasn't been
 // wired (e.g. running unit tests), the handler shows a
 // flash error instead of crashing.
-func (a *App) PostAdminExitNodesHealthNow(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminExitNodesHealthNow(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if a.ExitNodeMonitor == nil {
+	if s.ExitNodeMonitor == nil {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("Exit-node monitor is disabled (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off)"), http.StatusSeeOther)
 		return
 	}
-	if err := a.ExitNodeMonitor.CheckNow(r.Context()); err != nil {
+	if err := s.ExitNodeMonitor.CheckNow(r.Context()); err != nil {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("Health check failed: "+err.Error()), http.StatusSeeOther)
 		return
 	}
-	a.audit(c.UserID, c.Username, "exit_node_health_now", "")
+	s.Backend.Audit(c.UserID, c.Username, "exit_node_health_now", "")
 	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("Health check completed."), http.StatusSeeOther)
 }
 
-func (a *App) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// PostAdminExitNodesAdd handles the "Add exit node" form.
+// Admin-only.
+func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -331,16 +354,18 @@ func (a *App) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) {
 		acceptRoutes = -1
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.UpsertExitServer.
-	if err := db.UpsertExitServer(a.DB, nodeID, hostname, sshTarget, sshKey, desc, acceptRoutes); err != nil {
+	if err := db.UpsertExitServer(s.DB, nodeID, hostname, sshTarget, sshKey, desc, acceptRoutes); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "exit_node_add", fmt.Sprintf("node=%s ssh=%s", hostname, sshTarget))
+	s.Backend.Audit(c.UserID, c.Username, "exit_node_add", fmt.Sprintf("node=%s ssh=%s", hostname, sshTarget))
 	http.Redirect(w, r, "/admin/exit-nodes?added=1", http.StatusFound)
 }
 
-func (a *App) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// PostAdminExitNodesDelete handles the "Delete exit node" form.
+// Admin-only.
+func (s *Service) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -351,21 +376,28 @@ func (a *App) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.DeleteExitServerByNodeID.
-	if err := db.DeleteExitServerByNodeID(a.DB, nodeID); err != nil {
+	if err := db.DeleteExitServerByNodeID(s.DB, nodeID); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "exit_node_delete", nodeID)
+	s.Backend.Audit(c.UserID, c.Username, "exit_node_delete", nodeID)
 	http.Redirect(w, r, "/admin/exit-nodes?deleted=1", http.StatusFound)
 }
 
-func (a *App) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// PostAdminExitNodesSync triggers a full advertised-routes
+// sync (delegates to the SyncRoutes callback wired from
+// cmd/skygate/main.go). Returns JSON for the "Sync now" button.
+func (s *Service) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, `{"error":"forbidden"}`, 403)
 		return
 	}
-	result := a.SyncAdvertisedRoutes()
+	if s.SyncRoutes == nil {
+		http.Error(w, `{"error":"sync not wired"}`, 500)
+		return
+	}
+	result := s.SyncRoutes()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
@@ -395,8 +427,8 @@ func (a *App) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request) {
 //
 // PostAdminExitNodeUntagAsExitNode (below) handles the
 // reverse — removing tag:exit-node from a node.
-func (a *App) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -421,7 +453,7 @@ func (a *App) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Requ
 	// in the template for nodes that have these routes
 	// advertised; the server-side check is defense in
 	// depth in case the operator crafts a POST by hand.
-	allNodes, err := a.HSGlobal().ListAllNodes()
+	allNodes, err := s.HSGlobalFn().ListAllNodes()
 	if err != nil {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("list nodes: "+err.Error()), http.StatusSeeOther)
 		return
@@ -438,11 +470,11 @@ func (a *App) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	hasV4, hasV6 := false, false
-	for _, r := range target.AvailableRoutes {
-		if r == "0.0.0.0/0" {
+	for _, rt := range target.AvailableRoutes {
+		if rt == "0.0.0.0/0" {
 			hasV4 = true
 		}
-		if r == "::/0" {
+		if rt == "::/0" {
 			hasV6 = true
 		}
 	}
@@ -467,7 +499,8 @@ func (a *App) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Requ
 	// ONLY 0.0.0.0/0 and ::/0 (not the full availableRoutes)
 	// to avoid accidentally approving karolina's 200+
 	// subnets.
-	approved, err := a.HSGlobal().ApproveRoutesForNodeID(nodeID, []string{"0.0.0.0/0", "::/0"})
+	hs := s.HSGlobalFn()
+	approved, err := hs.ApproveRoutesForNodeID(nodeID, []string{"0.0.0.0/0", "::/0"})
 	if err != nil {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("approve-routes: "+err.Error()), http.StatusSeeOther)
 		return
@@ -477,13 +510,13 @@ func (a *App) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Requ
 	// allows `* → tag:exit-node:*`, so the node starts
 	// accepting traffic immediately on the next ACL
 	// poll by the Tailscale client (usually <60s).
-	if err := a.HSGlobal().TagNode(nodeID, "tag:exit-node"); err != nil {
+	if err := hs.TagNode(nodeID, "tag:exit-node"); err != nil {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("tag: "+err.Error()), http.StatusSeeOther)
 		return
 	}
 
-	a.HSGlobal().InvalidateCache()
-	a.audit(c.UserID, c.Username, "exit_node_tag",
+	hs.InvalidateCache()
+	s.Backend.Audit(c.UserID, c.Username, "exit_node_tag",
 		fmt.Sprintf("node=%s id=%d approved_routes=%d tag=tag:exit-node",
 			target.Hostname, nodeID, approved))
 	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape(
@@ -505,8 +538,8 @@ func (a *App) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Requ
 // nodes approve-routes -i <id> -r "" --force` (or
 // similar); we don't expose that from the UI because
 // route removal is rarely wanted.
-func (a *App) PostAdminExitNodeUntagAsExitNode(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminExitNodeUntagAsExitNode(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -518,24 +551,31 @@ func (a *App) PostAdminExitNodeUntagAsExitNode(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	hs := s.HSGlobalFn()
 	// UntagNode preserves the other tags (replaces the
 	// full tag list, leaving the others in place). If
 	// the node was tagged only with tag:exit-node, it
 	// falls back to tag:private so headscale keeps at
 	// least one tag (the headscale CLI rejects empty
 	// tag sets).
-	if err := a.HSGlobal().UntagNode(nodeID, "tag:exit-node"); err != nil {
+	if err := hs.UntagNode(nodeID, "tag:exit-node"); err != nil {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("untag: "+err.Error()), http.StatusSeeOther)
 		return
 	}
-	a.HSGlobal().InvalidateCache()
-	a.audit(c.UserID, c.Username, "exit_node_untag",
+	hs.InvalidateCache()
+	s.Backend.Audit(c.UserID, c.Username, "exit_node_untag",
 		fmt.Sprintf("node_id=%d tag=tag:exit-node", nodeID))
 	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("Removed tag:exit-node from node."), http.StatusSeeOther)
 }
 
-func (a *App) ensureExitServers() {
-	nodes, err := a.HS.ListAllNodes()
+// ensureExitServers walks every headscale node and INSERT
+// OR IGNOREs a row in exit_servers for any node that either
+// (a) has an exit-node tag, or (b) advertises any routes.
+// The "OR IGNORE" preserves the operator's manual row
+// (possibly with enabled=0) so the discovery pass can't
+// accidentally re-enable a node the operator disabled.
+func (s *Service) ensureExitServers() {
+	nodes, err := s.HSGlobalFn().ListAllNodes()
 	if err != nil {
 		return
 	}
@@ -548,10 +588,7 @@ func (a *App) ensureExitServers() {
 			}
 		}
 		if isExit || len(n.AvailableRoutes) > 0 {
-			// 2026-07-12: Этап 10 part 5 — moved to db.InsertIgnoreExitServerOnDiscovery.
-			// INSERT OR IGNORE so an admin's manual row (possibly
-			// enabled=0) is preserved.
-			db.InsertIgnoreExitServerOnDiscovery(a.DB, n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
+			db.InsertIgnoreExitServerOnDiscovery(s.DB, n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
 		}
 	}
 }
