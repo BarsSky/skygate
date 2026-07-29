@@ -26,6 +26,7 @@ import (
 	"skygate/internal/monitoring"
 	"skygate/internal/sidecar"
 	"skygate/internal/telegram"
+	"skygate/internal/update"
 )
 
 // Backend is the minimum surface the admin handlers need from the
@@ -150,6 +151,23 @@ type Service struct {
 	// Empty = use the bundled sidecar. Wired once at boot
 	// from app.HeadplaneExternalURL.
 	HeadplaneExternalURL string
+
+	// refactor-v0.30 Phase B step 6c (2026-07-29): moved
+	// from *App + from the package-level singleton in
+	// internal/handlers/handlers_admin_update.go. The
+	// self-update admin page reads/writes this state store
+	// on every page load + the orchestrator goroutine
+	// started by PostAdminUpdateApply holds a long-lived
+	// reference. Wired once at boot from
+	// update.NewStateStore(cfg.UpdateStatePath).
+	UpdateState *update.StateStore
+
+	// refactor-v0.30 Phase B step 6c (2026-07-29): moved
+	// from *App. /admin/update renders the current build
+	// version (e.g. "v0.28.6+abcdef") in the page header
+	// and uses it as the Checker's CurrentVersion. Wired
+	// once at boot from app.BuildVersion.
+	BuildVersion string
 
 	telegramProbeCache serviceProbeCache
 }

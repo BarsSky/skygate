@@ -1,7 +1,7 @@
-package handlers
+package admin
 
-// handlers_admin_update_test.go — regression tests for the
-// v0.29.3 auto-update admin page.
+// update_test.go — regression tests for the v0.29.3 auto-update admin
+// page (moved from internal/handlers/handlers_admin_update_test.go).
 //
 // The most expensive bug we want to guard against is the
 // `{{.State.Status}}` format-string regression in
