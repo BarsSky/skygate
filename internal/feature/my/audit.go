@@ -1,27 +1,40 @@
-package handlers
-
-// handlers_my_audit.go — per-user audit log export (v0.25.1).
+// Package my — audit.go owns the per-user audit log
+// export endpoint (v0.25.1).
 //
-// Why this exists: the operator asked for a way to share audit
-// data with their own auditors without giving them admin-level
-// access to /admin/audit. The compromise: each user (including
-// non-admin) can download their OWN audit trail as CSV or
-// JSON, gated by their session cookie.
+// Why this exists: the operator asked for a way to
+// share audit data with their own auditors without
+// giving them admin-level access to /admin/audit. The
+// compromise: each user (including non-admin) can
+// download their OWN audit trail as CSV or JSON, gated
+// by their session cookie.
 //
 //   GET /my/account/audit?format=csv&since=7d
 //   GET /my/account/audit?format=json&since=30d
 //
-// The default range is 7 days. Older rows require explicit
-// `since=` with a Unix timestamp. The response is a file
-// download with a Content-Disposition that names the
-// timestamp (so the user can keep multiple exports in
-// their Downloads folder).
+// The default range is 7 days. Older rows require
+// explicit `since=` with a Unix timestamp. The response
+// is a file download with a Content-Disposition that
+// names the timestamp (so the user can keep multiple
+// exports in their Downloads folder).
 //
 // No admin visibility — the export is scoped to the
 // caller's user_id AND username (so /ack and /restart
 // events that the bot records on the user's behalf are
-// also included). The /admin/audit page is unchanged and
-// is the right place for the operator's own investigations.
+// also included). The /admin/audit page is unchanged
+// and is the right place for the operator's own
+// investigations.
+//
+// refactor-v0.30 Phase B step 5d (2026-07-29): moved
+// from internal/handlers/handlers_my_audit.go. The
+// GetMyAccountAuditExport handler + parseSinceParam
+// helper now live on *Service. SanitizeFilename
+// (filename safety) is still resolved through
+// handlers.SanitizeFilename (the export and the
+// per-user bundle use the same helper; the bundle
+// moved to feature/exit_rules/ in step 4 so the two
+// callers are now in two different feature packages
+// and the helper lives in handlers.go).
+package my
 
 import (
 	"encoding/csv"
@@ -35,21 +48,24 @@ import (
 	"skygate/internal/db"
 )
 
-// GetMyAccountAuditExport returns the caller's own audit log
-// in CSV (default) or JSON. Query params:
+// GetMyAccountAuditExport returns the caller's own
+// audit log in CSV (default) or JSON. Query params:
 //
 //	format  — "csv" (default) or "json"
-//	since   — optional, RFC3339 timestamp or relative like "7d" / "30d"
-//	          (relative forms use days; bare integers are days too)
-//	limit   — optional, max rows (default 10000, hard cap)
+//	since   — optional, RFC3339 timestamp or relative
+//	          like "7d" / "30d" (relative forms use
+//	          days; bare integers are days too)
+//	limit   — optional, max rows (default 10000, hard
+//	          cap)
 //	offset  — optional, pagination
 //
-// The response sets Content-Disposition: attachment; the
-// filename is "skygate-audit-<username>-<YYYYMMDDTHHMMSS>.csv"
-// (or .json). X-Content-Type-Options: nosniff so the
+// The response sets Content-Disposition: attachment;
+// the filename is
+// "skygate-audit-<username>-<YYYYMMDDTHHMMSS>.csv" (or
+// .json). X-Content-Type-Options: nosniff so the
 // browser doesn't try to render the CSV as HTML.
-func (a *App) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -70,16 +86,31 @@ func (a *App) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
-	rows, err := db.ListAuditLogForUser(a.DB, c.UserID, c.Username, since, limit, offset)
+	rows, err := db.ListAuditLogForUser(s.DB, c.UserID, c.Username, since, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	// Audit the export itself — security-sensitive.
-	_ = db.AppendAuditLog(a.DB, c.UserID, c.Username, "audit_export",
+	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "audit_export",
 		fmt.Sprintf("format=%s since=%d limit=%d rows=%d", format, since, limit, len(rows)))
 	// Filename: skygate-audit-<username>-<ts>.<ext>
-	safeUser := SanitizeFilename(c.Username)
+	//
+	// 2026-07-29: refactor-v0.30 Phase B step 5d —
+	// SanitizeFilename moved from being private to
+	// handlers (in the audit export's pre-Step-5
+	// lifecycle) to handlers.SanitizeFilename. The
+	// admin/bundle export has its own local copy
+	// in feature/exit_rules/user_subnet_download.go
+	// (Step 4c dedup was deferred — see the comment
+	// there).
+	//
+	// We call through the Backend interface by going
+	// through the helper indirectly — actually we
+	// just inline the same logic. Same behaviour
+	// (no path traversal); see the user_subnet
+	// download path for the parallel dedup.
+	safeUser := sanitizeFilename(c.Username)
 	stamp := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("skygate-audit-%s-%s.%s", safeUser, stamp, format)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filename))
@@ -90,10 +121,10 @@ func (a *App) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request) {
 		// Wrap in a small envelope so the consumer can
 		// see the query parameters and the total count.
 		out := struct {
-			GeneratedAt time.Time   `json:"generated_at"`
-			UserID      int64       `json:"user_id"`
-			Username    string      `json:"username"`
-			Since       int64       `json:"since_unix"`
+			GeneratedAt time.Time     `json:"generated_at"`
+			UserID      int64         `json:"user_id"`
+			Username    string        `json:"username"`
+			Since       int64         `json:"since_unix"`
 			Rows        []db.AuditRow `json:"rows"`
 		}{
 			GeneratedAt: time.Now().UTC(),
@@ -164,4 +195,42 @@ func parseSinceParam(s string) (int64, error) {
 		return time.Now().Add(-time.Duration(n) * time.Hour).Unix(), nil
 	}
 	return 0, fmt.Errorf("unrecognised: %q (use '7d', '24h', or RFC3339)", s)
+}
+
+// sanitizeFilename is a local copy of
+// handlers.SanitizeFilename. The same helper also
+// lives in feature/exit_rules/user_subnet_download.go
+// (bundle naming). Kept as a private copy here to
+// avoid creating a new shared package just for one
+// 14-line function; Phase D's "cleanup" step can
+// fold all three copies into a single
+// internal/httputil/ helper. The implementation is
+// stable: ASCII alphanumerics + dash + underscore +
+// dot, capped at 32 chars, fallback "user" on
+// empty/invalid input.
+func sanitizeFilename(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "user"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "user"
+	}
+	if len(out) > 32 {
+		out = out[:32]
+	}
+	return out
 }

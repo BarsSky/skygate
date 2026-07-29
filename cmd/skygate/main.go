@@ -258,14 +258,19 @@ func main() {
 	// User self-service
 	// (the rest of /my/* routes are below, after mySvc
 	// is constructed — /my/devices + /my/exit-nodes +
-	// /my/preauth + /my/keys all route through mySvc)
+	// /my/preauth + /my/keys + /my/meshes + per-device
+	// preferred-exit + /my/account/audit all route
+	// through mySvc)
 	// 2026-07-25: v0.28.4 — per-device preferred exit-node.
 	// The user can pin a specific device (e.g. their
 	// Android phone) to a different exit-node than the
 	// per-user default. The form posts hostname + tag;
 	// the handler resolves the hostname to the user's
 	// device and stores the pref in device_exit_node_prefs.
-	mux.Handle("POST /my/devices/preferred-exit", authMW(http.HandlerFunc(app.PostMyDevicePreferredExit)))
+	// 2026-07-29: refactor-v0.30 Phase B step 5d — moved
+	// to feature/my (route registered after mySvc
+	// construction, see below).
+	// mux.Handle("POST /my/devices/preferred-exit", ...) — see below
 	// 2026-07-29: refactor-v0.30 Phase B step 5c —
 	// /my/meshes + 3 POST endpoints moved to feature/my.
 	// (Routes re-pointed after mySvc construction, see
@@ -428,6 +433,15 @@ func main() {
 	mux.Handle("POST /my/meshes/create", authMW(http.HandlerFunc(mySvc.PostMyMeshesCreate)))
 	mux.Handle("POST /my/meshes/join", authMW(http.HandlerFunc(mySvc.PostMyMeshesJoin)))
 	mux.Handle("POST /my/meshes/leave", authMW(http.HandlerFunc(mySvc.PostMyMeshesLeave)))
+	// 2026-07-29: refactor-v0.30 Phase B step 5d —
+	// per-device preferred exit-node (self-service
+	// + admin override) moved to feature/my.
+	mux.Handle("POST /my/devices/preferred-exit", authMW(http.HandlerFunc(mySvc.PostMyDevicePreferredExit)))
+	mux.Handle("POST /admin/devices/preferred-exit", authMW(http.HandlerFunc(mySvc.PostAdminDevicePreferredExit)))
+	// 2026-07-29: refactor-v0.30 Phase B step 5d —
+	// /my/account/audit (CSV/JSON export) moved to
+	// feature/my.
+	mux.Handle("GET /my/account/audit", authMW(http.HandlerFunc(mySvc.GetMyAccountAuditExport)))
 
 	// Admin
 	// 2026-07-29: refactor-v0.30 Phase B step 5a —
@@ -489,7 +503,10 @@ func main() {
 	// The form posts user_id + device_hostname +
 	// tag; the handler stores the pref in
 	// device_exit_node_prefs.
-	mux.Handle("POST /admin/devices/preferred-exit", authMW(http.HandlerFunc(app.PostAdminDevicePreferredExit)))
+	// 2026-07-29: refactor-v0.30 Phase B step 5d — moved
+	// to feature/my (route registered after mySvc
+	// construction, see below).
+	// mux.Handle("POST /admin/devices/preferred-exit", ...) — see below
 	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(adminSvc.GetAdminSubnets)))
 	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(adminSvc.GetAdminDevices)))
 	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(adminSvc.PostAdminNodeTag)))
@@ -555,7 +572,10 @@ func main() {
 	// their own audit trail. Useful for compliance
 	// reporting without giving the user admin access to
 	// /admin/audit.
-	mux.Handle("GET /my/account/audit", authMW(http.HandlerFunc(app.GetMyAccountAuditExport)))
+	// 2026-07-29: refactor-v0.30 Phase B step 5d — moved
+	// to feature/my (route registered after mySvc
+	// construction, see below).
+	// mux.Handle("GET /my/account/audit", ...) — see below
 	// 2026-07-13: Этап 12 — self-service Telegram binding. Any
 	// portal user (not just admin) can generate a one-time login
 	// key here and paste it into the bot. The /my/telegram page
