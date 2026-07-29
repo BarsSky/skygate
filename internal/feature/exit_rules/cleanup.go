@@ -1,4 +1,18 @@
-package handlers
+// Package exit_rules — cleanup.go owns the admin
+// cleanup / merge-duplicate-device-ids machinery.
+//
+// refactor-v0.30 Phase B step 4d (2026-07-29): moved from
+// internal/handlers/exit_rules_cleanup.go. The 4 admin
+// handlers (CleanupRulesAnalyze, CleanupRulesApply,
+// AdminCleanupRules, AdminCleanupRulesApply) and the
+// CleanupPlan / CleanupHostnameGroup types + the
+// firstNonEmptyIP helper now live on *Service. The
+// types stay exported (lowercase CleanupPlan /
+// CleanupHostnameGroup → they're package-internal
+// because the template uses them, and the
+// internal/handlers/ package no longer references
+// them after step 4d).
+package exit_rules
 
 import (
 	"fmt"
@@ -11,11 +25,11 @@ import (
 // CleanupPlan summarises what CleanupRulesAnalyze found and what would
 // change if CleanupRulesApply were run.
 type CleanupPlan struct {
-	TotalRules     int      // rows in device_rules
-	DistinctDevIDs int      // unique device_id values before cleanup
-	DistinctHosts  int      // unique hostname groups after analysis
-	ResolvedIPs    int      // rules whose device_ip would be backfilled
-	MergedIDs      int      // rules whose device_id would be reassigned
+	TotalRules     int // rows in device_rules
+	DistinctDevIDs int // unique device_id values before cleanup
+	DistinctHosts  int // unique hostname groups after analysis
+	ResolvedIPs    int // rules whose device_ip would be backfilled
+	MergedIDs      int // rules whose device_id would be reassigned
 	Groups         []CleanupHostnameGroup
 	StaleDevIDs    []int // device_ids absent from headscale
 	DeviceIDToHost map[int]string
@@ -31,15 +45,15 @@ type CleanupHostnameGroup struct {
 
 // CleanupRulesAnalyze runs the analysis without mutating DB. Safe to
 // call repeatedly.
-func (a *App) CleanupRulesAnalyze() (*CleanupPlan, error) {
-	if a.DB == nil {
+func (s *Service) CleanupRulesAnalyze() (*CleanupPlan, error) {
+	if s.DB == nil {
 		return nil, fmt.Errorf("db not initialised")
 	}
-	if a.HS == nil {
+	if s.HS == nil {
 		return nil, fmt.Errorf("headscale client not initialised")
 	}
 
-	nodes, err := a.HS.ListAllNodes()
+	nodes, err := s.HS.ListAllNodes()
 	if err != nil {
 		return nil, fmt.Errorf("ListAllNodes: %w", err)
 	}
@@ -68,7 +82,7 @@ func (a *App) CleanupRulesAnalyze() (*CleanupPlan, error) {
 	}
 
 	// Read all rules.
-	rows, err := a.DB.Query(`
+	rows, err := s.DB.Query(`
 		SELECT id, user_id, device_id, COALESCE(device_ip,''), exit_node_id
 		FROM device_rules`)
 	if err != nil {
@@ -234,8 +248,8 @@ func (a *App) CleanupRulesAnalyze() (*CleanupPlan, error) {
 
 // CleanupRulesApply performs the merge in a single transaction.
 // Idempotent: a second run produces 0 changes.
-func (a *App) CleanupRulesApply() (*CleanupPlan, error) {
-	plan, err := a.CleanupRulesAnalyze()
+func (s *Service) CleanupRulesApply() (*CleanupPlan, error) {
+	plan, err := s.CleanupRulesAnalyze()
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +257,7 @@ func (a *App) CleanupRulesApply() (*CleanupPlan, error) {
 		return plan, nil
 	}
 
-	nodes, err := a.HS.ListAllNodes()
+	nodes, err := s.HS.ListAllNodes()
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +275,7 @@ func (a *App) CleanupRulesApply() (*CleanupPlan, error) {
 		}
 	}
 
-	tx, err := a.DB.Begin()
+	tx, err := s.DB.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
 	}
@@ -326,22 +340,23 @@ func (a *App) CleanupRulesApply() (*CleanupPlan, error) {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 
-	return a.CleanupRulesAnalyze()
+	return s.CleanupRulesAnalyze()
 }
 
 // AdminCleanupRules GET renders the analysis page (no mutation).
-func (a *App) AdminCleanupRules(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// /admin/exit-rules/cleanup
+func (s *Service) AdminCleanupRules(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	plan, err := a.CleanupRulesAnalyze()
+	plan, err := s.CleanupRulesAnalyze()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	a.renderWithLayout(w, r, "admin/exit_rules_cleanup.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/exit_rules_cleanup.html", c, map[string]any{
 		"Page":      "admin/exit-rules-cleanup",
 		"Title":     "Cleanup exit rules",
 		"Plan":      plan,
@@ -350,20 +365,21 @@ func (a *App) AdminCleanupRules(w http.ResponseWriter, r *http.Request) {
 }
 
 // AdminCleanupRulesApply POST applies the cleanup.
-func (a *App) AdminCleanupRulesApply(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// /admin/exit-rules/cleanup/apply
+func (s *Service) AdminCleanupRulesApply(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	plan, err := a.CleanupRulesApply()
+	plan, err := s.CleanupRulesApply()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "exit_rules_cleanup",
+	s.Backend.Audit(c.UserID, c.Username, "exit_rules_cleanup",
 		fmt.Sprintf("merged=%d resolved_ips=%d", plan.MergedIDs, plan.ResolvedIPs))
-	a.renderWithLayout(w, r, "admin/exit_rules_cleanup.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/exit_rules_cleanup.html", c, map[string]any{
 		"Page":      "admin/exit-rules-cleanup",
 		"Title":     "Cleanup exit rules",
 		"Plan":      plan,
