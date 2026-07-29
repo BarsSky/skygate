@@ -3,13 +3,12 @@
 //
 // refactor-v0.30 Phase B step 3b.5 (2026-07-29):
 // moved from internal/handlers/admin_user_subnet_download.go.
-// The handler is a method on *Service now. The
-// sanitizeFilename helper was copied here (rather
-// than imported from internal/handlers) to avoid
-// a feature/admin → handlers import — the same
-// helper also lives in handlers_my_audit.go (audit
-// export) and the two paths don't need to share
-// their implementation.
+// The handler is a method on *Service now.
+//
+// refactor-v0.30 Phase D1 (2026-07-29): the local
+// sanitizeFilename helper was removed — it now lives in
+// internal/httputil/SanitizeFilename and is shared with
+// feature/my/audit.go and the (now re-export) handlers.SanitizeFilename.
 
 package admin
 
@@ -19,10 +18,10 @@ import (
 	"compress/gzip"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"skygate/internal/handlers/bundles"
+	"skygate/internal/httputil"
 )
 
 // GetAdminUserSubnetDownload returns a tar.gz bundle
@@ -107,11 +106,14 @@ func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Requ
 	// The username is sanitized to ASCII alphanumerics
 	// + dashes (no path traversal if some operator
 	// picks a weird name).
-	safeUser := sanitizeFilename(username)
+	safeUser := httputil.SanitizeFilename(username)
 	filename := fmt.Sprintf("skygate-subnet-router-bundle-%s-%s.tar.gz",
 		safeUser, time.Now().UTC().Format("20060102-150405"))
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filename))
+
+	// (Phase D1: the local sanitizeFilename helper was
+	// removed — it now lives in internal/httputil/.)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf.Bytes())
@@ -168,45 +170,4 @@ sudo tailscale up \
 		cidr,
 		preauth,
 	)
-}
-
-// sanitizeFilename strips anything that's not safe in a
-// Content-Disposition filename — ASCII alphanumerics,
-// dash, underscore, dot. Used for the bundle's
-// attachment filename so an operator can't trick a
-// browser into saving into a parent directory.
-//
-// Note: a near-identical helper lives in
-// internal/handlers/handlers_my_audit.go (audit export
-// download). Kept separate on purpose — both call sites
-// are stable, neither needs to grow new behaviour, and
-// the audit-export path is going to be folded into
-// feature/my/ in Phase B step 5 (where the two helpers
-// can be deduplicated cleanly).
-func sanitizeFilename(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "user"
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= 'A' && r <= 'Z',
-			r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		return "user"
-	}
-	// Cap at 32 chars to keep the filename short.
-	if len(out) > 32 {
-		out = out[:32]
-	}
-	return out
 }

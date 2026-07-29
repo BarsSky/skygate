@@ -27,13 +27,13 @@
 // refactor-v0.30 Phase B step 5d (2026-07-29): moved
 // from internal/handlers/handlers_my_audit.go. The
 // GetMyAccountAuditExport handler + parseSinceParam
-// helper now live on *Service. SanitizeFilename
-// (filename safety) is still resolved through
-// handlers.SanitizeFilename (the export and the
-// per-user bundle use the same helper; the bundle
-// moved to feature/exit_rules/ in step 4 so the two
-// callers are now in two different feature packages
-// and the helper lives in handlers.go).
+// helper now live on *Service.
+//
+// refactor-v0.30 Phase D1 (2026-07-29): the local
+// sanitizeFilename helper was removed — it now lives
+// in internal/httputil/SanitizeFilename (single source
+// of truth, shared with feature/admin/user_subnet_download.go
+// and the re-export handlers.SanitizeFilename).
 package my
 
 import (
@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/httputil"
 )
 
 // GetMyAccountAuditExport returns the caller's own
@@ -110,7 +111,7 @@ func (s *Service) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request
 	// just inline the same logic. Same behaviour
 	// (no path traversal); see the user_subnet
 	// download path for the parallel dedup.
-	safeUser := sanitizeFilename(c.Username)
+	safeUser := httputil.SanitizeFilename(c.Username)
 	stamp := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("skygate-audit-%s-%s.%s", safeUser, stamp, format)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filename))
@@ -197,40 +198,8 @@ func parseSinceParam(s string) (int64, error) {
 	return 0, fmt.Errorf("unrecognised: %q (use '7d', '24h', or RFC3339)", s)
 }
 
-// sanitizeFilename is a local copy of
-// handlers.SanitizeFilename. The same helper also
-// lives in feature/exit_rules/user_subnet_download.go
-// (bundle naming). Kept as a private copy here to
-// avoid creating a new shared package just for one
-// 14-line function; Phase D's "cleanup" step can
-// fold all three copies into a single
-// internal/httputil/ helper. The implementation is
-// stable: ASCII alphanumerics + dash + underscore +
-// dot, capped at 32 chars, fallback "user" on
-// empty/invalid input.
-func sanitizeFilename(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "user"
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= 'A' && r <= 'Z',
-			r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		return "user"
-	}
-	if len(out) > 32 {
-		out = out[:32]
-	}
-	return out
-}
+// (Phase D1: the local sanitizeFilename helper was
+// removed — it now lives in internal/httputil/. The
+// caller above (GetMyAccountAuditExport) routes through
+// httputil.SanitizeFilename.)
+
