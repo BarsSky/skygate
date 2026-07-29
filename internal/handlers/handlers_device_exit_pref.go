@@ -199,3 +199,28 @@ func itoa64(n int64) string {
 	}
 	return string(buf[i:])
 }
+
+// errToQuery is a local copy of feature/my/exit_nodes.go's
+// helper. Will be dedup'd when handlers_device_exit_pref.go
+// moves to feature/my in step 5d. Kept as a private copy
+// here so the build stays green between 5a and 5d.
+func errToQuery(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ':
+			out = append(out, '+')
+		case c == '\n':
+			out = append(out, '%', '0', 'A')
+		case (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '~':
+			out = append(out, c)
+		default:
+			out = append(out, '%')
+			out = append(out, "0123456789ABCDEF"[c>>4])
+			out = append(out, "0123456789ABCDEF"[c&0xF])
+		}
+	}
+	return string(out)
+}

@@ -1,8 +1,12 @@
-package handlers
-
-// handlers_my_keys.go — /my/keys self-service: list preauth keys the
-// user has been issued, and expire unused ones.
-// Extracted from handlers.go.
+// Package my — keys.go owns the /my/keys self-service
+// page (list preauth keys the user has been issued +
+// expire unused ones).
+//
+// refactor-v0.30 Phase B step 5a (2026-07-29): moved from
+// internal/handlers/handlers_my_keys.go. The two
+// handlers (GetMyKeys + PostMyKeyExpire) used to be
+// methods on *App; they now live on *Service.
+package my
 
 import (
 	"errors"
@@ -14,24 +18,23 @@ import (
 	"skygate/internal/db"
 )
 
-// GetMyKeys lists every preauth key the current user has been issued,
-// with its lifecycle state. Lets a user see what's outstanding and
-// revoke keys that are no longer needed (e.g. they generated a key
-// for a one-off install, did the install, and don't want the unused
-// key to sit around).
-func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetMyKeys lists every preauth key the current user has
+// been issued, with its lifecycle state. Lets a user
+// see what's outstanding and revoke keys that are no
+// longer needed (e.g. they generated a key for a
+// one-off install, did the install, and don't want the
+// unused key to sit around).
+func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.ListPreauthKeysByUser
+	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.ListPreauthKeysByUser.
 	// Returns []db.PreauthKey, which the template iterates over the
 	// same fields the old local keyRow did (ID, Key, Used, ExpiresAt,
-	// CreatedAt, HeadscalePreauthID). We rebind the slice into a
-	// []any for the template rather than introducing a template-
-	// specific wrapper struct.
-	rows, err := db.ListPreauthKeysByUser(a.DB, c.UserID)
+	// CreatedAt, HeadscalePreauthID).
+	rows, err := db.ListPreauthKeysByUser(s.DB, c.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -42,7 +45,7 @@ func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-15: v0.12.0 — route to the user's own control plane
 	// (HSForUser); the key is owned by this user, so the relevant
 	// headscale is the one that issued it.
-	if hsUsed, hsErr := a.HSForUser(c.UserID).ListAllNodes(); hsErr == nil {
+	if hsUsed, hsErr := s.Backend.HSForUserFn(c.UserID).ListAllNodes(); hsErr == nil {
 		liveByKeyID := map[string]bool{}
 		for _, n := range hsUsed {
 			if n.PreAuthKeyID != "" {
@@ -56,31 +59,33 @@ func (a *App) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now().Unix()
-	a.renderWithLayout(w, r, "user/keys.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "user/keys.html", c, map[string]any{
 		"Keys":    rows,
 		"HasKeys": len(rows) > 0,
 		"Now":     now,
 	})
 }
 
-// PostMyKeyExpire revokes a preauth key by ID. The key must belong
-// to the current user (we filter on user_id in the SELECT/UPDATE
-// chain). Used keys cannot be expired - the action is a no-op for
-// them and we redirect back to the list with no error. Already-
+// PostMyKeyExpire revokes a preauth key by ID. The key
+// must belong to the current user (we filter on user_id
+// in the SELECT/UPDATE chain). Used keys cannot be
+// expired — the action is a no-op for them and we
+// redirect back to the list with no error. Already-
 // expired keys are also no-ops, idempotently.
 //
 // Workflow:
 //  1. Look up the key by id, scoped to current user.
 //  2. If used or already expired: redirect to /my/keys.
 //  3. Call headscale.ExpirePreauthKey(userID, keyID).
-//  4. On success, mark the local preauth_keys row as expired by
-//     setting expires_at to the current time. We do NOT delete
-//     the row - it's audit history.
+//  4. On success, mark the local preauth_keys row as
+//     expired by setting expires_at to the current time.
+//     We do NOT delete the row — it's audit history.
 //
-// On error from headscale we return 500 with the message; the user
-// can retry. We do NOT mutate the local row in that case.
-func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// On error from headscale we return 500 with the
+// message; the user can retry. We do NOT mutate the
+// local row in that case.
+func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -98,7 +103,7 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	}
 	// Look up the key, scoped to current user.
 	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.GetPreauthKeyByID
-	k, err := db.GetPreauthKeyByID(a.DB, id, c.UserID)
+	k, err := db.GetPreauthKeyByID(s.DB, id, c.UserID)
 	if errors.Is(err, db.ErrPreauthKeyNotFound) {
 		http.Error(w, "key not found", 404)
 		return
@@ -110,19 +115,18 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// No-ops for used or already-expired keys.
 	now := time.Now().Unix()
 	if k.Used {
-		a.audit(c.UserID, c.Username, "preauth_expire_noop", fmt.Sprintf("key_id=%d already used", id))
+		s.Backend.Audit(c.UserID, c.Username, "preauth_expire_noop", fmt.Sprintf("key_id=%d already used", id))
 		http.Redirect(w, r, "/my/keys", http.StatusFound)
 		return
 	}
 	if k.ExpiresAt > 0 && k.ExpiresAt <= now {
-		a.audit(c.UserID, c.Username, "preauth_expire_noop", fmt.Sprintf("key_id=%d already expired", id))
+		s.Backend.Audit(c.UserID, c.Username, "preauth_expire_noop", fmt.Sprintf("key_id=%d already expired", id))
 		http.Redirect(w, r, "/my/keys", http.StatusFound)
 		return
 	}
-	// Resolve the headscale user ID for this portal user. We need
-	// it for the headscale API/CLI call.
+	// Resolve the headscale user ID for this portal user.
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetHSIDByID
-	hsUserID, err := db.GetHSIDByID(a.DB, c.UserID)
+	hsUserID, err := db.GetHSIDByID(s.DB, c.UserID)
 	if err != nil || !hsUserID.Valid {
 		http.Error(w, "no headscale user linked", 400)
 		return
@@ -136,7 +140,7 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// register a device with the key anyway because the underlying
 	// key string is in our DB only, not headscale.)
 	if k.HeadscalePreauthID != "" {
-		if err := a.HSForUser(c.UserID).ExpirePreauthKey(hsUserID.Int64, k.HeadscalePreauthID); err != nil {
+		if err := s.Backend.HSForUserFn(c.UserID).ExpirePreauthKey(hsUserID.Int64, k.HeadscalePreauthID); err != nil {
 			http.Error(w, "headscale expire failed: "+err.Error(), 500)
 			return
 		}
@@ -146,10 +150,10 @@ func (a *App) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// on next render (no separate 'expired' column; we reuse the
 	// expires_at timestamp convention used for TTL-based expiry).
 	// 2026-07-11: Этап 10 part 3 — UPDATE moved to db.ExpirePreauthKey
-	if err := db.ExpirePreauthKey(a.DB, id, c.UserID, now); err != nil {
+	if err := db.ExpirePreauthKey(s.DB, id, c.UserID, now); err != nil {
 		http.Error(w, "local update failed: "+err.Error(), 500)
 		return
 	}
-	a.audit(c.UserID, c.Username, "preauth_expired", fmt.Sprintf("key_id=%d", id))
+	s.Backend.Audit(c.UserID, c.Username, "preauth_expired", fmt.Sprintf("key_id=%d", id))
 	http.Redirect(w, r, "/my/keys", http.StatusFound)
 }
