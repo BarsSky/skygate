@@ -244,8 +244,11 @@ func main() {
 	healthzSvc := &healthz.Service{
 		DB: app.DB,
 		HeadscaleFn: func() headscale.Pingable {
-			return app.HSGlobal() // *headscale.Client satisfies Pingable
+			return app.HSGlobalFn() // *headscale.Client satisfies Pingable
 		},
+		// (Phase D4, 2026-07-29: was app.HSGlobal() — the
+		// *App.HSGlobal method was deleted; the wrapper
+		// HSGlobalFn now routes directly to a.Router.Global().)
 		InstanceID:   app.InstanceID,
 		BuildVersion: app.BuildVersion,
 		StartedAt:    app.StartedAt,
@@ -312,8 +315,8 @@ func main() {
 	adminSvc := &adminsvc.Service{
 		Backend:                app,
 		DB:                     app.DB,
-		HSGlobalFn:             app.HSGlobal,
-		HSForUserFn:            app.HSForUser,
+		HSGlobalFn:             app.HSGlobalFn,
+		HSForUserFn:            app.HSForUserFn,
 		Cfg:                    app.Config(),
 		Notifier:               app.Notifier,
 		HeadscaleUpdateMonitor: app.HeadscaleUpdateMonitor,
@@ -399,21 +402,25 @@ func main() {
 		// any DB error.
 		ResolveHSForPlane: func(planeURL string) *headscale.Client {
 			if planeURL == "" {
-				return app.HSGlobal()
+				return app.HSGlobalFn()
 			}
 			rows, err := app.DB.Query("SELECT id FROM portal_users WHERE headscale_url = ? LIMIT 1", planeURL)
 			if err != nil {
-				return app.HSGlobal()
+				return app.HSGlobalFn()
 			}
 			defer rows.Close()
 			if !rows.Next() {
-				return app.HSGlobal()
+				return app.HSGlobalFn()
 			}
 			var uid int64
 			if err := rows.Scan(&uid); err != nil {
-				return app.HSGlobal()
+				return app.HSGlobalFn()
 			}
-			return app.HSForUser(uid)
+			return app.HSForUserFn(uid)
+			// (Phase D4, 2026-07-29: was app.HSGlobal() /
+			// app.HSForUser(uid) — the *App methods were
+			// deleted; the wrapper Fn methods now route
+			// directly to a.Router.Global() / .ForUser(uid).)
 		},
 	}
 	// adminSvc.SyncRoutes is the "Sync now" button on
@@ -743,7 +750,7 @@ func main() {
 	// auto-approver. Hoisted before the RealNotifier block
 	// so we can hand the same manager to the bot via
 	// rn.SetSidecar() below.
-	sidecarMgr := sidecar.New(d, app.HSForUser, log.Default(), cfg.SidecarSyncPeriod)
+	sidecarMgr := sidecar.New(d, app.HSForUserFn, log.Default(), cfg.SidecarSyncPeriod)
 	app.Sidecar = sidecarMgr
 	// sidecarMgr.Run blocks on a ticker loop; launch it in a
 	// goroutine so the main flow can continue to start the
@@ -832,7 +839,7 @@ func main() {
 			// global default when no override is set). Single-
 			// plane deploys still work — App.HSForUser returns
 			// app.HS when there's no per-user row.
-			rn.SetHSForUser(app.HSForUser)
+			rn.SetHSForUser(app.HSForUserFn)
 			// 2026-07-16: v0.13.0 — per-user plane-URL routing
 			// (parallel to SetHSForUser). Returns the
 			// headscale_url the user is on so the bot can
