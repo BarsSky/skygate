@@ -115,6 +115,13 @@ func Open(dataDir string) (*sql.DB, error) {
 		conn.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// 2026-07-28: v0.31.0 — register the backend in the driver
+	// abstraction so BackendOf(conn) returns BackendSQLite. Without
+	// this, code that dispatches on backend type (the future PG path
+	// in queries.go) cannot tell what engine it's talking to. The
+	// Open() signature still takes a file path, so this is purely
+	// additive — no caller changes.
+	registerBackend(conn, BackendSQLite)
 	return conn, nil
 }
 
