@@ -30,10 +30,21 @@ type Catalog struct {
 }
 
 // New constructs a Catalog with the bundled RU and EN strings.
+// The keys are split across 12 per-feature files
+// (catalog_common.go, catalog_my.go, catalog_admin.go, ...);
+// this function merges them all into the per-language tables
+// the T() / Tf() helpers look up.
+//
+// refactor-v0.30 Phase C (2026-07-29): the previous
+// implementation did `c.translations[LangRU] = ruCatalog` —
+// the keys lived in two big package-level maps. Phase C
+// split the keys into per-feature maps; New() now merges
+// them. The translation contract (T(lang, key) → string)
+// is unchanged.
 func New() *Catalog {
 	c := &Catalog{translations: make(map[string]map[string]string)}
-	c.translations[LangRU] = ruCatalog
-	c.translations[LangEN] = enCatalog
+	c.translations[LangRU] = mergeMaps(perFeatureRU...)
+	c.translations[LangEN] = mergeMaps(perFeatureEN...)
 	return c
 }
 
