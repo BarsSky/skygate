@@ -105,31 +105,99 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.28.7 — per-DEVICE ACL grants for tagged devices (Moonlight fix)
-  ([tag v0.28.7](https://github.com/skygate-operator/skygate/releases/tag/v0.28.7)).
-  Fixes the workstation-2 ↔ workstation-1 (or any two same-user devices)
-  no-tailscale-route bug: per-DEVICE grants with
-  `src=tag:dev-<user>-<device>` and `dst=[other tag:dev-<user>-*]`
-  cover the tagged-to-tagged case that the per-user grant
-  `src=user@` doesn't (Tailscale v2 first-match + tag-source
-  semantics). 13 grants in the live policy (11 admin + 2 user1);
-  O(n) per user, not O(n²). After-action of the v0.28.6 catalog:
-  the per-DEVICE bug shipped through `make verify-pre` and 25/26
-  of `verify-post` (R9 is a known false-negative — the script reads
-  an older `acl_snapshots` row; the most recent reapply DID succeed
-  and the new grants are in the live policy, confirmed by
-  `headscale policy get`). Release notes in
-  [`RELEASE-NOTES.md`](RELEASE-NOTES.md) (single canonical file —
-  v0.28.7 onward uses this format; the per-release `RELEASE-NOTES-v0.28.X.md`
-  files for v0.28.0–v0.28.6 are legacy from before this convention).
+* **Current**: v0.31.0 — PostgreSQL foundation (driver abstraction + 4 verification tests)
+  ([tag v0.31.0](https://github.com/skygate-operator/skygate/releases/tag/v0.31.0)).
+  No live PG deploy yet — the operator's PG-staging is not yet
+  provisioned. What's added: `Backend` enum + `DetectBackend` +
+  `BackendOf` + `registerBackend` (wires SQLite into the
+  abstraction); `OpenPostgres(dsn)` + `MigratePostgres(d)`
+  under `//go:build postgres` (uses pgx v5, runs all 27 PG
+  migrations in order with `lock_timeout = '5s'`); auto-generated
+  PG migration functions (`migrateV020PG`..`migrateV047PG`); 4
+  verification tests (`TestPGRoundtripSchema`,
+  `TestPGMigrationIdempotency`, `TestPGLockTimeout`,
+  `TestPGDataMigrationFromSQLite`); helper scripts
+  (`port_migrations_pg.py`, `rewrite_placeholders.py`,
+  `dump_sqlite.py`). Catalog extended with B18 (PG foundation
+  builds + 4 tests exist) and R27 (live PG validation — SKIPs
+  without `SKYGATE_TEST_PG_DSN`). `?` → `$N` placeholder
+  rewrite in `internal/db/queries.go` is **deferred to v0.32.0**
+  (no live PG to validate against). Full notes in
+  [`RELEASE-NOTES.md`](RELEASE-NOTES.md).
 
-  **v0.28.5 guarantee catalog still applies** — every build must
-  pass `make verify-pre` (10 build-time checks) and every deploy
-  must pass `make verify-post` (25 runtime checks via SSH to the VM).
-  The catalog is in the
-  [v0.28.5 guarantee catalog section](#v0285-guarantee-catalog-b1-b10-build-time--r1-r25-runtime)
-  (named for the incident that motivated it; applies to all
-  future releases).
+  **v0.28.5 guarantee catalog (extended through v0.31.0) applies**
+  — every build must pass `make verify-pre` (18 build-time
+  checks: B1-B18) and every deploy must pass `make verify-post`
+  (27 runtime checks via SSH to the VM: R1-R27). The catalog
+  is in the [v0.28.5 guarantee catalog section](#v0285-guarantee-catalog-b1-b18-build-time--r1-r27-runtime)
+  (named for the incident that motivated it; extended
+  incrementally through subsequent releases).
+
+* **Previous**: v0.30.1 — per-user device can't be tagged as exit-node
+  ([tag v0.30.1](https://github.com/skygate-operator/skygate/releases/tag/v0.30.1)).
+  The "base" fix. user1's Windows box "base" had silently
+  acquired `tag:exit-node` (probably from an old debug-session
+  `headscale nodes tag` on the VM host) and self-routed all
+  traffic to /dev/null. `PostAdminNodeTag` now refuses exit-node-like
+  tags on per-user devices (extractable pure function
+  `nodeTagRefusedForUserDevice`); 8 unit tests. R26 added:
+  `verify_post_deploy.sh` walks `headscale nodes list` and
+  fails if any node has both `tag:dev-*` and `tag:exit-*`
+  (catches the direct-CLI bypass the B17 build-time guard
+  can't see). B17 + R26 in catalog.
+
+* **Previous**: v0.29.3 / v0.29.3.1 — Auto-swap via helper container
+  in host PID namespace
+  ([tag v0.29.3](https://github.com/skygate-operator/skygate/releases/tag/v0.29.3)).
+  Closes the orchestrator loop: `git push → build → swap` end-to-end
+  with auto-rollback. v0.29.3 first tried `Setsid` from inside the
+  old container; the SIGTERM that compose sent to skygate (PID 1
+  of the old container) propagated to the swap subprocess via the
+  shared PID namespace and killed it mid-swap. v0.29.3.1 fix: a
+  HELPER CONTAINER spawned via `docker run --rm --pid=host
+  --net=host -v /var/run/docker.sock:... -v $SKYGATE_HOST_REPO_PATH:/host_repo:ro`
+  — helper uses the HOST's PID namespace, installs docker-cli via
+  apk, runs the full swap, polls /healthz on the new container
+  for up to 60s, self-removes. `confirmPendingSwap` (called from
+  `renderUpdatePage` on the first /admin/update load after the
+  swap) does final-arbitration: detects `phase=build_done` or
+  `phase=rolled_back`, calls `startStuckSkygateContainer` (with
+  the `{{.Status}}` format-string fix for the v0.29.3 regression),
+  promotes phase to `done` on /healthz 200. B13 (pre-push hook
+  uses MSYSTEM for Git Bash detection) added.
+
+* **Previous**: v0.29.2 — `skygate` host-side wrapper
+  ([tag v0.29.2](https://github.com/skygate-operator/skygate/releases/tag/v0.29.2)).
+  Removes `container_name: skygate` (and `caddy`) from
+  docker-compose.yml to fix the `--force-recreate` race that
+  occasionally left new containers in `Created` state. The
+  auto-generated name (`skygate-skygate-1`, etc.) increments
+  on every recreate, so the ~20 existing `docker exec skygate`
+  callers (scripts, docs, verify_post_deploy.sh) all break
+  unless we abstract. Solution: `deploy/skygate-cli.sh` — a
+  host-side shell wrapper that does a label-based lookup
+  (`com.docker.compose.service=skygate`) and forwards to
+  `docker exec <real-id> ...`. Installed on the host by
+  `deploy.sh` as `/usr/local/bin/skygate`. `verify_post_deploy.sh`
+  also resolves `SKYGATE_CONTAINER` from the same label.
+  B14 catalog check (wrapper exists + syntax-valid + uses
+  correct label).
+
+* **Previous**: v0.29.0 — Self-update orchestrator (in-app upgrade + auto-rollback)
+  ([tag v0.29.0](https://github.com/skygate-operator/skygate/releases/tag/v0.29.0)).
+  `/admin/update` page now has an "Apply update" button that
+  runs an in-container orchestrator: backup tag, `git fetch`,
+  `git checkout` target, rebuild image, recreate container,
+  poll `/healthz` for 60s, auto-rollback on any failure.
+  `SKYGATE_REPO_PATH` env (auto-detects container mode via
+  `/.dockerenv` / `/run/.containerenv`); `SKYGATE_HOST_OWNER`
+  override for non-standard UIDs (the orchestrator captures
+  the host owner at job start so `git` mutations don't re-own
+  bind-mounts to `root:root` and break the operator's `git
+  pull` from the host shell). State file:
+  `/data/skygate-update-status.json` (bind-mounted from host
+  /home/admin/skygate/data/). 5 post-Phase-2 bugfixes
+  shipped in v0.29.0+v0.29.1+v0.29.2+v0.29.3+v0.29.3.1.
 
 * **Previous**: v0.28.5 — explicit opt-in for `via` constraint
   (Android-friendly) + tagged-device exit-node fix + idempotent
@@ -142,7 +210,7 @@ explaining why.
   always passes `--exit-node=` to `tailscale up` to clear
   stale state). The motivation for the v0.28.6 guarantee
   catalog; without it, these three bugs passed `make test`
-  and `make smoke`. Release notes in `RELEASE-NOTES-v0.28.5.md`.
+  and `make smoke`. Release notes in [`RELEASE-NOTES.md`](RELEASE-NOTES.md).
 
 * **Previous**: v0.28.4 — per-device preferred exit-node
   ([tag v0.28.4](https://github.com/skygate-operator/skygate/releases/tag/v0.28.4)).
@@ -1454,7 +1522,7 @@ explaining why.
   hard-fail when an exit-node is offline.
 * **Previous**: v0.12.0.2 — Android exit-node routing + Telegram
   tab speed + admin tab RU
-  ([release notes](RELEASE-NOTES-v0.12.0.2.md)). Three
+  ([release notes](RELEASE-NOTES.md#v01202)). Three
   operator-visible follow-ups to v0.12.0.1:
   1. **Android exit-node routing restored** — the v0.12.0.1
      catch-all removal closed the inter-user security hole but
@@ -1479,7 +1547,7 @@ explaining why.
      present, no `*:*` catch-all).
 * **Previous**: v0.12.0.1 — ACL catch-all security fix +
   /help Russian translation + login form fixes
-  ([release notes](RELEASE-NOTES-v0.12.0.1.md)). Drops the
+  ([release notes](RELEASE-NOTES.md#v01201)). Drops the
   literal `"*:*"` catch-all from the generated ACL to close
   the inter-user leak (each portal user could previously
   reach every other user's `tag:private` device via the
@@ -1520,167 +1588,84 @@ explaining why.
   surface, not user reply). 6 new
   `TestClearRulesReplyRussian*` tests pin the RU reply
   on every major branch.
-* **What we're working on next (v0.12.0 candidates)**:
-  - **Pluggable headscale per portal user (DONE in v0.12.0)** —
-    `portal_users` gets `headscale_url` + `headscale_api_key_enc`
-    columns (AES-GCM encrypted via SKYGATE_SECRET_KEY).
-    HSForUser() routes user-scoped requests to the right
-    plane. /admin/control-planes + /admin/users/{id}/plane.
-  - **Per-user bot routing (v0.12.1)** — bot handlers still
-    use the global env.HS; the BotEnv needs a
-    HeadscaleRouter interface and a new dispatcher in
-    notify.go. Small follow-up.
-  - **Per-plane ACL (v0.13.0)** — GenerateACL() is still
-    global. Per the v0.12.0 scope decision, v0.13.0 splits
-    the per-user ACL by control plane (separate policy per
-    plane, with the operator's-eye view of all planes on
-    /admin/acls).
-  - **ACL import/export** (v0.13.0)** — load a JSON policy
-    file into the current ACL with a dry-run preview.
-  - **`/clearrules` i18n** (DONE in v0.10.14)
-  - **Butler voice v3** (deferred until user feedback on v2 lands):
-    header carries urgency level (`🪶` / `🪶!` / `🪶!!`), body uses
-    subtle inline color marks for status.
-  - **Personal API token rotation** (admin override): TTL +
-    auto-rotate field, so the bot integration can issue 24h / 7d /
-    30d tokens. Currently tokens only have manual revocation.
-  - **Per-user subnets + cross-subnet exit-node sharing
-    (v0.16+ candidate, TBD with operator)** — architectural
-    evolution. Today every portal user lives in the same
-    flat `100.64.100.0/10` headscale, separated only by ACL.
-    The next level is to give each user their own personal
-    subnet (e.g. `10.0.<user_id>.0/24`) routed through a
-    per-user subnet-router node, while keeping the existing
-    `tag:exit-node` and `tag:public` infrastructure globally
-    accessible to all subnets via ACL.
+## Roadmap (next releases)
 
-    **Why:** the flat 100.64.100.0/10 design works for the
-    operator's current ~10-user tailnet, but the moment
-    skygate grows to multiple customers (multi-tenant SaaS),
-    per-user subnets become the cleaner primitive. They give:
-    - IP-address predictability per user (user 42's devices
-      are always in `10.0.42.0/24`)
-    - Cleaner user-side firewall rules
-      ("10.0.42.0/24 = my office")
-    - Independent routing decisions per user
-    - Foundation for per-user services (run a web server on
-      `10.0.42.5:8080`, only that user reaches it)
+The v0.16.0+ per-user subnets roadmap (below the "Per-user control
+plane: when to use" section) is **done** — shipped incrementally
+through v0.16.6 (foundation) → v0.22.0 (mesh) → v0.23.0 (one-click
+per-user headscale, compliance tier). The next big things:
 
-    **Sketch (dependency chain — each release builds on the
-    previous):**
-    1. **v0.16.0 — schema + CIDR allocator**:
-       - `user_subnets` table: `(user_id, cidr, router_node_id,
-         created_at, status)` — per-row lifetime
-       - `portal_users.subnet_cidr TEXT` for quick lookups
-       - CIDR allocator: `10.0.<user_id>.0/24` (one /24 per
-         user, up to 256 users in /16) or `/28` per user
-         (up to 4096 users in /16). Operator chooses.
-       - Admin UI: extend `/admin/control-planes` with a
-         subnet map (which user owns which CIDR)
-    2. **v0.16.1 — per-user subnet router node**:
-       - Auto-create a "subnet router" headscale node per
-         portal user on first login
-       - New tag: `tag:subnet-router` (separate from
-         `tag:private` and `tag:exit-node`)
-       - Advertise routes: the user's personal CIDR +
-         `0.0.0.0/0` + `::/0` (so the user can route through
-         exit-nodes through the personal subnet)
-       - Where the router runs is a TBD — options: (a) on
-         the user's own machine (one-time `tailscale up` with
-         `--advertise-routes`), (b) skygate-managed Docker
-         sidecar per user, (c) shared skygate-side router
-         that terminates all personal subnets. The
-         sub-router-tag ACL allows (a) — the user runs
-         their own Tailscale client with a per-user
-         preauth key.
-    3. **v0.17.0 — ACL for cross-subnet exit-node sharing**:
-       - `GenerateACL()` gains per-user-subnet rules:
-         `{src: ["<user>@tsnet"], dst: ["<user_subnet>:*"]}`
-       - **Keep `tag:exit-node` global** — every user can
-         still reach the exit-nodes regardless of which
-         personal subnet they're in
-         (the `* → tag:exit-node:*` rule already handles this)
-       - Add `tag:subnet-router` to `tagOwners` so the
-         headscale parser doesn't reject the new tag
-       - Verify exit-node egress: the user's Tailscale
-         client `--accept-routes`, then routes `0.0.0.0/0`
-         through the exit-node advertised by the subnet
-         router. End-to-end internet egress survives the
-         subnet split.
-    4. **v0.17.1 — cross-user subnet sharing** (the
-       "share access to existing exit-nodes" angle, extended
-       to personal subnets):
-       - "Share my subnet with user X" button in
-         /my/account or /admin/users/{id}/subnet
-       - ACL: `{src: ["<user_X>@tsnet"], dst: ["<user_Y_subnet>:*"]}`
-       - Bot: `/share_subnet <username>` for power users
-       - **Exit-nodes are still global** — this only
-         governs the per-user personal subnet. The
-         `tag:exit-node` sharing is already in place from
-         v0.12.0.1 and is unaffected by this change.
-    5. **v0.18.0 — MagicDNS for personal subnets**:
-       - `skygate-<username>.tailnet.example.com` resolves to
-         the user's subnet router
-       - Per-device records:
-         `<device>.skygate-<username>.tailnet.example.com`
-       - Per-user records:
-         `exitnode.skygate-<username>.tailnet.example.com` —
-         this is the key one — points to the user's chosen
-         exit-node, but reachable cross-subnet because
-         `tag:exit-node` is in the user's ACL
-    6. **v0.19.0 — per-user services on the personal
-       subnet**:
-       - Port forwarding: user can publish
-         `10.0.42.5:8080 → service.skygate-<username>...`
-       - Headscale "service" records (headscale 0.23+ feature
-         that lets you publish a TCP/UDP service as a
-         named DNS record)
+- **`v0.32.0` — live PG cutover** (the natural next step from
+  v0.31.0 foundation). What's done: driver abstraction, 27 PG
+  migrations, 4 verification tests, helper scripts
+  (`port_migrations_pg.py`, `rewrite_placeholders.py`,
+  `dump_sqlite.py`). What's left: (1) `?` → `$N` placeholder
+  rewrite in `internal/db/queries.go` (script exists; needs
+  careful diff + live PG to validate), (2) PG-staging VM
+  provisioning + `SKYGATE_TEST_PG_DSN` setup, (3) R27 goes
+  from SKIP to PASS (roundtrip + idempotency + lock_timeout +
+  data_mig), (4) manual maintenance window: skygate in
+  read-only mode → `dump_sqlite.py` → apply to fresh PG →
+  flip `SKYGATE_DB_DSN` → restart. Estimate: 2-3 days once
+  PG-staging is up. **Blocked on** the operator's PG-staging
+  VM (not yet provisioned per v0.31.0 release notes).
 
-    **The key insight the operator is asking for:** the
-    exit-node layer (`tag:exit-node` + `tag:public`) stays
-    shared across all subnets. The personal subnet adds a
-    layer of IP-address predictability + service isolation
-    on top, without breaking the global exit-node mesh
-    that all the relays depend on. So:
+- **`refactor-v0.30` — feature module decomposition**
+  ([plan](docs/plans/refactor-v0.30.md), 2026-07-25, ~8 days
+  work). The `internal/handlers/` package is 69 files / ~14k
+  lines; biggest single files are 500-770 lines mixing HTTP
+  handlers, form parsing, business logic, DB queries,
+  template data assembly, audit logging, and i18n lookups.
+  Pain points: (1) "the 500-line file" — when hunting a bug
+  you scroll through 5-6 unrelated concerns, (2) no module
+  boundaries — a single feature (e.g. "per-user subnet")
+  lives across 4+ files in 2+ packages; adding it requires
+  touching 5 places. The refactor moves from
+  "package = file type" to "package = feature module". Each
+  feature module owns its handlers, DB queries, templates,
+  i18n, and tests. **No behavior changes, no API changes, no
+  migration changes.** Dribble in as a series of small PRs
+  (one module at a time) so it doesn't block releases.
 
-    - User A on `10.0.42.0/24` can route to exit-nodes
-      (relay-1, relay-2, relay-3) just like today —
-      the ACL still says `* → tag:exit-node:*`
-    - User A can ALSO have their own personal services
-      on `10.0.42.5` that only they can see
-    - User A can SHARE their personal subnet with
-      User B explicitly, without sharing with User C
-    - All of this is orthogonal to the exit-node mesh,
-      which keeps the relay model intact
+- **`v0.19.1` — `exitnode.skygate-subnet-<user>.<base-domain>`
+  DNS records** (re-attempt of the reverted v0.19.0). Per-user
+  `tag:subnet-router` already exposes a stable IP per
+  personal subnet (v0.18.0 MagicDNS). The next step is a
+  named DNS record that points to the user's **chosen
+  exit-node** (not the subnet router), so tailnet clients can
+  reach the user's exit-node via DNS without remembering
+  which one they picked. **Blocked on headscale 0.30+** —
+  v0.19.0 was reverted because headscale 0.29.x (the
+  operator's current version, 0.29.2) rejects
+  `dns.extra_records` in the policy with "unknown field: dns".
+  Need to check the headscale changelog for 0.30 release
+  status. If 0.30+ is out: re-implement against the new
+  API. If still pending: defer.
 
-    **Migration path:**
-    - Existing users keep their `100.64.100.0/10` Tailscale
-      IPs (no forced migration — that would break every
-      running client)
-    - New users get a personal subnet from day one
-    - Admin can opt-in existing users one-by-one via
-      `/admin/users/{id}/subnet` (creates a subnet router
-      alongside their existing flat-IP device; the user's
-      devices get optional `--advertise-routes` for the
-      personal CIDR)
-    - Once a user has BOTH a flat device AND a subnet
-      router, their ACL has both — the subnet router
-      starts being useful immediately, and the flat device
-      can be phased out by the user at their own pace
+- **`v0.23.1` Phase 2 — safe user migration** (compliance tier
+  only, opt-in). v0.23.0 shipped per-user headscale
+  provisioning (infrastructure only, no data migration).
+  Phase 2 is the data-migration step: take a user off the
+  global headscale, move their nodes + ACL to the per-user
+  plane, flip the DB override. This requires read-only mode
+  on the global headscale during the cutover and is
+  intentionally **deferred until an operator needs it**
+  (the per-user subnet + global-headscale path covers 95% of
+  use cases; only SOX / multi-tenant SaaS / geographic
+  isolation actually need this).
 
-    **Open questions for the operator:**
-    - Where does the subnet router run? (user's own
-      machine vs. skygate sidecar vs. shared router) —
-      affects per-user operational cost
-    - Does the bot get a `/mysubnet` command? Probably yes,
-      parallel to `/myexitnodes` and `/mysettings`
-    - CIDR strategy: /24 per user (256 users max in /16)
-      or /28 per user (4096 users max)? Operator's choice
-      based on customer count
-    - Multi-plane (per-user headscale since v0.12.0): each
-      plane is its own headscale, so its own /16 for
-      subnets. The `user_subnets` table needs a
-      `control_plane_url` column
+- **Unmerged branches** (`feature/backup-config-ui`,
+  `feature/bot-i18n-v5`, `feature/butler-voice-v2`) are from
+  the v0.10.x "Этап 14" series. Not mergeable as-is onto
+  main. **Delete** to keep the branch list clean; revisit
+  only if a specific feature is still needed.
+
+- **Other long-lived items** (not blocking, listed for
+  context): butler voice v3 (urgency marks; deferred until
+  user feedback on v2 lands), personal API token rotation
+  (TTL + auto-rotate, column already exists from v0.15.5),
+  `headscale` milestones #16 (DNS Work) — weekly mavis cron
+  checks for progress.
 
 ---
 
@@ -1738,7 +1723,7 @@ API:
 The v0.23.0 + v0.23.1 releases added a "one-click per-user
 headscale" capability. **This is a compliance tier, not the
 default path.** The architectural decision documented in
-[RELEASE-NOTES-v0.23.1.md](RELEASE-NOTES-v0.23.1.md) is:
+[`RELEASE-NOTES.md`](RELEASE-NOTES.md#v0231) is:
 
 > "Per-user control plane (v0.23.0) requires re-auth of all
 >  devices, and the user loses access to shared exit-nodes
