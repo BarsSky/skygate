@@ -18,6 +18,7 @@ import (
 	"skygate/internal/backup"
 	"skygate/internal/config"
 	"skygate/internal/expirewatch"
+	authsvc "skygate/internal/feature/auth"
 	"skygate/internal/feature/healthz"
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
@@ -186,10 +187,25 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Public
-	mux.HandleFunc("GET /login", app.GetLogin)
-	mux.HandleFunc("POST /lang", app.PostLang)
-	mux.Handle("POST /login", loginMW(http.HandlerFunc(app.PostLogin)))
-	mux.HandleFunc("POST /logout", app.PostLogout)
+	//
+	// refactor-v0.30 Phase B step 2 (2026-07-29): /login, /logout,
+	// and /lang moved from internal/handlers/handlers_auth.go to
+	// internal/feature/auth/. The Service takes its dependencies
+	// (DB, I18n, JWTSecret, SessionHours, Version) as plain fields
+	// + a Backend interface that *App satisfies via the capital-letter
+	// wrappers in internal/handlers/handlers_export.go.
+	authSvc := &authsvc.Service{
+		Backend:      app,
+		DB:           app.DB,
+		I18n:         app.I18n,
+		JWTSecret:    app.JWTSecret,
+		SessionHours: app.SessionHours,
+		Version:      app.Version,
+	}
+	mux.HandleFunc("GET /login", authSvc.GetLogin)
+	mux.HandleFunc("POST /lang", authSvc.PostLang)
+	mux.Handle("POST /login", loginMW(http.HandlerFunc(authSvc.PostLogin)))
+	mux.HandleFunc("POST /logout", authSvc.PostLogout)
 	mux.HandleFunc("/favicon.ico", app.FaviconHandler)
 	// v0.26.0 — liveness + readiness probes (HA-ready).
 	// Both are UNAUTHENTICATED. /healthz is always 200
@@ -368,11 +384,11 @@ func main() {
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(app.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegram)))
 	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegramPost)))
-	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(app.GetMyTokens)))
-	mux.Handle("POST /my/token", authMW(http.HandlerFunc(app.PostMyToken)))
-	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(app.PostMyTokenRevoke)))
-	mux.Handle("GET /my/account", authMW(http.HandlerFunc(app.GetMyAccount)))
-	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(app.PostMyAccountPassword)))
+	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(authSvc.GetMyTokens)))
+	mux.Handle("POST /my/token", authMW(http.HandlerFunc(authSvc.PostMyToken)))
+	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(authSvc.PostMyTokenRevoke)))
+	mux.Handle("GET /my/account", authMW(http.HandlerFunc(authSvc.GetMyAccount)))
+	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(authSvc.PostMyAccountPassword)))
 	// v0.25.1: per-user audit log export (CSV or JSON).
 	// Gated by the user's session cookie — they get only
 	// their own audit trail. Useful for compliance
