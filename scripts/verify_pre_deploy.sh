@@ -312,6 +312,43 @@ run_check "B17" "per-user device can't be tagged as exit-node (v0.30.1 base fix)
     '\''$GO'\'' test ./internal/handlers/ -run '\''TestNodeTagRefused|TestNodeTagAllowed'\'' -count=1 2>&1
   '"
 
+# --- B18: PG foundation builds (v0.31.0) ---
+# 2026-07-28: v0.31.0 adds the PG driver abstraction. The PG
+# code is gated by the `postgres` build tag so the default
+# production binary (SQLite-only) is unchanged. The check:
+#   (a) the PG migration file exists + was generated for
+#       every current SQLite migration version
+#   (b) the PG driver file exists with the `postgres` build tag
+#   (c) `go build -tags postgres ./internal/db/...` succeeds
+#       (the pgx dependency is reachable, no broken imports)
+#   (d) `go vet -tags postgres ./internal/db/...` is clean
+#   (e) the test file with 4 verification tests (roundtrip +
+#       idempotency + lock_timeout + data_mig) exists and
+#       has the `postgres` build tag
+#
+# The tests themselves skip without SKYGATE_TEST_PG_DSN — the
+# point of B18 is "the foundation compiles", not "live PG passes".
+# Live PG validation is R27 (verify-post on a PG-staging VM).
+run_check "B18" "PG foundation builds (v0.31.0 driver + migrations + tests)" \
+  "bash -c '
+    test -f internal/db/driver.go &&
+    test -f internal/db/driver_test.go &&
+    test -f internal/db/migrations_pg.go &&
+    grep -qE \"^func migrateV04[0-9]PG\" internal/db/migrations_pg.go &&
+    grep -qE \"^func migrateV047PG\" internal/db/migrations_pg.go &&
+    test -f internal/db/driver_postgres.go &&
+    head -1 internal/db/driver_postgres.go | grep -q \"//go:build postgres\" &&
+    grep -q jackc/pgx/v5/stdlib internal/db/driver_postgres.go &&
+    test -f internal/db/test_pg_migrations_test.go &&
+    head -1 internal/db/test_pg_migrations_test.go | grep -q \"//go:build postgres\" &&
+    grep -q TestPGRoundtripSchema internal/db/test_pg_migrations_test.go &&
+    grep -q TestPGMigrationIdempotency internal/db/test_pg_migrations_test.go &&
+    grep -q TestPGLockTimeout internal/db/test_pg_migrations_test.go &&
+    grep -q TestPGDataMigrationFromSQLite internal/db/test_pg_migrations_test.go &&
+    '\''$GO'\'' build -tags postgres -o /tmp/skygate_verify_postgres ./cmd/skygate && rm -f /tmp/skygate_verify_postgres &&
+    '\''$GO'\'' vet -tags postgres ./internal/db/... 2>&1
+  '"
+
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
