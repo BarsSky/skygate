@@ -332,6 +332,10 @@ func main() {
 		// fallback when empty). Wired once at boot from
 		// app.DerpBaseURL.
 		DerpBaseURL: app.DerpBaseURL,
+		// refactor-v0.30 Phase B step 6b (2026-07-29):
+		// /admin/acls links to this URL (when non-empty)
+		// instead of the bundled Headplane sidecar.
+		HeadplaneExternalURL: app.HeadplaneExternalURL,
 	}
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers
@@ -514,14 +518,14 @@ func main() {
 	// until this button is clicked. /sync_nodes bot command hits
 	// the same DB helper.
 	mux.Handle("POST /admin/devices/sync-from-headscale", authMW(http.HandlerFunc(adminSvc.PostAdminDevicesSyncFromHeadscale)))
-	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(app.GetAdminAudit)))
+	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(adminSvc.GetAdminAudit)))
 	// 2026-07-16: v0.13.0 — ACL import/export. GET shows
 	// the current policy in a downloadable file; POST
 	// /admin/acls/import is the dry-run; POST
 	// /admin/acls/import/apply actually pushes to every
 	// plane. /admin/acls itself is unchanged (still the
 	// read-only view).
-	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(app.GetAdminACLs)))
+	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(adminSvc.GetAdminACLs)))
 	mux.Handle("GET /admin/acls/export", authMW(http.HandlerFunc(adminSvc.GetAdminACLsExport)))
 	mux.Handle("GET /admin/acls/import", authMW(http.HandlerFunc(adminSvc.GetAdminACLsImport)))
 	mux.Handle("POST /admin/acls/import", authMW(http.HandlerFunc(adminSvc.PostAdminACLsImport)))

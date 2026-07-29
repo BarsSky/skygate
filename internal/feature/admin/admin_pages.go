@@ -1,10 +1,14 @@
-package handlers
+package admin
 
-// handlers_admin_pages.go — extracted from handlers.go.
-// Admin pages that are read-only views:
-// - GetAdminAudit (/admin/audit — audit_log view, paginated DESC, with
-//   optional ?action= and ?user= filters added 2026-07-11)
-// - GetAdminACLs  (/admin/acls — current headscale ACL policy view)
+// admin_pages.go — read-only admin pages that were in
+// internal/handlers/handlers_admin_pages.go.
+//
+//   - GetAdminAudit (/admin/audit — audit_log view, paginated DESC, with
+//     optional ?action= and ?user= filters added 2026-07-11)
+//   - GetAdminACLs  (/admin/acls — current headscale ACL policy view)
+//
+// refactor-v0.30 Phase B step 6b (2026-07-29): moved from
+// internal/handlers/handlers_admin_pages.go (122 lines).
 
 import (
 	"net/http"
@@ -14,9 +18,10 @@ import (
 	"skygate/internal/db"
 )
 
-
-func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetAdminAudit renders the audit_log view (paginated DESC, 200 rows).
+// Filters: ?action= (exact) and ?user= (substring match on username).
+func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
@@ -54,14 +59,14 @@ func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	// the operator needs it to pick a filter, and it's cheap
 	// (a few dozen rows at most).
 	// 2026-07-11: Этап 9 part 2 — moved to db.ListAuditActions
-	actions, err := db.ListAuditActions(a.DB)
+	actions, err := db.ListAuditActions(s.DB)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 
 	// Main query — apply the WHERE we built above.
-	rows, err := a.DB.Query(`
+	rows, err := s.DB.Query(`
 		SELECT id, user_id, username, action, detail, created_at
 		  FROM audit_log `+where+`
 		 ORDER BY id DESC
@@ -86,22 +91,28 @@ func (a *App) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		e.Time = time.Unix(t, 0).Format("2006-01-02 15:04:05")
 		entries = append(entries, e)
 	}
-	a.renderWithLayout(w, r, "admin/audit.html", c, map[string]any{
-		"Entries":       entries,
-		"Actions":       actions,
-		"ActionFilter":  actionFilter,
-		"UserFilter":    userFilter,
-		"FilterActive":  actionFilter != "" || userFilter != "",
+	s.Backend.RenderWithLayout(w, r, "admin/audit.html", c, map[string]any{
+		"Entries":      entries,
+		"Actions":      actions,
+		"ActionFilter": actionFilter,
+		"UserFilter":   userFilter,
+		"FilterActive": actionFilter != "" || userFilter != "",
 	})
 }
 
-func (a *App) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetAdminACLs renders the current headscale ACL policy view.
+// When HEADPLANE_EXTERNAL_URL is set, link to the existing Headplane
+// instead of the local sidecar (v0.10.12). The APIKey (redacted via
+// the template's {{maskSecret}}) is passed so the operator can copy
+// it into the headplane admin.
+func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	policy, policyErr := a.HS.GetACL()
+	hs := s.HSGlobalFn()
+	policy, policyErr := hs.GetACL()
 	errStr := ""
 	if policyErr != nil {
 		errStr = policyErr.Error()
@@ -109,14 +120,14 @@ func (a *App) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set,
 	// link to the existing Headplane instead of the local sidecar.
 	// The local sidecar URL remains the default for backward compat.
-	headplaneURL := a.HeadplaneExternalURL
+	headplaneURL := s.HeadplaneExternalURL
 	if headplaneURL == "" {
 		headplaneURL = "https://tsnet.skynas.ru/admin/"
 	}
-	a.renderWithLayout(w, r, "admin/acls.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/acls.html", c, map[string]any{
 		"Policy":       policy,
 		"Error":        errStr,
 		"HeadplaneURL": headplaneURL,
-		"APIKey":       a.HeadscaleKey,
+		"APIKey":       s.HeadscaleKey,
 	})
 }

@@ -144,5 +144,12 @@ type Service struct {
 	// once at boot from app.DerpBaseURL.
 	DerpBaseURL string
 
+	// refactor-v0.30 Phase B step 6b (2026-07-29): moved
+	// from *App. /admin/acls links to this URL (when
+	// non-empty) instead of the bundled Headplane sidecar.
+	// Empty = use the bundled sidecar. Wired once at boot
+	// from app.HeadplaneExternalURL.
+	HeadplaneExternalURL string
+
 	telegramProbeCache serviceProbeCache
 }
