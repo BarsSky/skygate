@@ -19,16 +19,99 @@ package handlers
 // This test pins the contract: any future handler that
 // calls renderWithLayout must get ControlURL populated
 // without having to remember to add it to the data map.
+//
+// refactor-v0.30 Phase B step 6f (2026-07-29): the
+// newTestApp helper used to live in handlers_my_telegram_test.go
+// (now moved to feature/my). This file has its own minimal
+// version that wires only the deps the renderWithLayout
+// test needs (DB + AdminService).
 
 import (
+	"database/sql"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
+
 	"skygate/internal/auth"
+	"skygate/internal/i18n"
 )
+
+// memDBCounter6f increments per-test so each in-memory
+// SQLite DB is isolated (see internal/handlers/handlers_my_telegram_test.go
+// for the long-form explanation of why shared-cache mode is
+// used here). Counter name is step-6f-specific to avoid
+// collisions if a future step adds a new memDBCounter.
+var memDBCounter6f int64
+
+func newMemoryDB6f(t *testing.T) *sql.DB {
+	t.Helper()
+	n := atomic.AddInt64(&memDBCounter6f, 1)
+	dsn := "file:skygate-test-render-6f-" + itoa(n) + "?mode=memory&cache=shared"
+	d, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatalf("open %s: %v", dsn, err)
+	}
+	// Minimal schema: just enough for App.DB to be non-nil.
+	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS portal_users (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatalf("create portal_users: %v", err)
+	}
+	return d
+}
+
+func itoa(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
+
+// newTestApp builds a minimal App for the renderWithLayout
+// regression tests. The renderWithLayout path doesn't touch
+// the headscale client or the bot, so we only need a DB +
+// an AdminService wire (the wire is required so feature/admin
+// thin-wrappers don't 500 — renderWithLayout isn't one of
+// those, but the constructor sets a no-op wire in the
+// absence of one).
+func newTestApp(t *testing.T, notifier interface{}) (*App, *sql.DB) {
+	t.Helper()
+	d := newMemoryDB6f(t)
+	a := &App{
+		DB:       d,
+		I18n:     i18n.New(),
+		Notifier: nil, // notifier arg is intentionally ignored; the test doesn't trigger telegram code paths
+	}
+	// renderWithLayout reads the templates off a.templates,
+	// so the test sets that explicitly via makeSyntheticTemplates.
+	// No AdminService wire — renderWithLayout doesn't route
+	// through any of the feature/admin methods.
+	return a, d
+}
+
+// testNotifier is a minimal Notifier stub that satisfies
+// the Notifier interface. The renderWithLayout tests
+// don't trigger any telegram code path, but the
+// `notifier interface{}` argument to newTestApp keeps
+// the original test signature alive (call sites pass
+// &testNotifier{} to make the intent explicit).
+type testNotifier struct{}
+
+// SendTelegram is unused by renderWithLayout. Stub.
+func (testNotifier) SendTelegram(_ int64, _ string) error { return nil }
+
+// SendAlert is unused by renderWithLayout. Stub.
+func (testNotifier) SendAlert(_ string) error { return nil }
 
 // makeSyntheticTemplates builds a minimal *Templates
 // with a layout + a "login.html" body fragment that
