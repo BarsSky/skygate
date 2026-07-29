@@ -137,5 +137,12 @@ type Service struct {
 	// cmd/skygate/main.go.
 	SyncRoutes func() map[string]string
 
+	// refactor-v0.30 Phase B step 6a (2026-07-29): moved
+	// from *App. /admin/derp's collectDerpStatus seeds
+	// its initial DerpStatus struct with this URL (defaults
+	// to http://192.0.2.1:8766 when empty). Wired
+	// once at boot from app.DerpBaseURL.
+	DerpBaseURL string
+
 	telegramProbeCache serviceProbeCache
 }
