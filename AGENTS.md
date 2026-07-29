@@ -1658,9 +1658,14 @@ per-user headscale, compliance tier). The next big things:
 
 - **Unmerged branches** (`feature/backup-config-ui`,
   `feature/bot-i18n-v5`, `feature/butler-voice-v2`) are from
-  the v0.10.x "Этап 14" series. Not mergeable as-is onto
-  main. **Delete** to keep the branch list clean; revisit
-  only if a specific feature is still needed.
+  the v0.10.x "Этап 14" series. **All three were already merged**
+  into main (in v0.10.7, v0.15.x, and v0.16.x respectively)
+  and the local branches were never cleaned up. **Deleted in
+  this session (2026-07-29)** to keep `git branch` clean. The
+  other 20+ `feature/*` branches from the v0.10.x–v0.26.0 era
+  (e.g. `feature/v0.24.0-subnet-router-setup`, `feature/v0.26.0-ha-ready`)
+  are also likely already merged but were left for a manual
+  audit (deferred — none of them are blocking any work).
 
 - **Other long-lived items** (not blocking, listed for
   context): butler voice v3 (urgency marks; deferred until
