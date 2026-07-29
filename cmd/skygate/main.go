@@ -326,6 +326,12 @@ func main() {
 		ControlURL:   app.ControlURL,
 		JWTSecret:    app.JWTSecret,
 		HeadscaleKey: app.HeadscaleKey,
+		// refactor-v0.30 Phase B step 6a (2026-07-29):
+		// /admin/derp's collectDerpStatus seeds its initial
+		// DerpStatus with this URL (defaults to the hardcoded
+		// fallback when empty). Wired once at boot from
+		// app.DerpBaseURL.
+		DerpBaseURL: app.DerpBaseURL,
 	}
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers
@@ -520,7 +526,7 @@ func main() {
 	mux.Handle("GET /admin/acls/import", authMW(http.HandlerFunc(adminSvc.GetAdminACLsImport)))
 	mux.Handle("POST /admin/acls/import", authMW(http.HandlerFunc(adminSvc.PostAdminACLsImport)))
 	mux.Handle("POST /admin/acls/import/apply", authMW(http.HandlerFunc(adminSvc.PostAdminACLsImportApply)))
-	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(app.GetAdminDERP)))
+	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(adminSvc.GetAdminDERP)))
 	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
 	// integration config. The /admin/integrations landing page
 	// shows the current state of every pluggable component;
@@ -597,7 +603,7 @@ func main() {
 	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(exitRulesSvc.AdminCleanupRules)))
 	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(exitRulesSvc.AdminCleanupRulesApply)))
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(adminSvc.PostAdminSettings)))
-	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(app.GetAdminDERPRefresh)))
+	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(adminSvc.GetAdminDERPRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(adminSvc.AdminExitNodes)))
 	// 2026-07-20: v0.20.0 — headscale-update-monitor
 	// status page. Renders the monitor's snapshot
