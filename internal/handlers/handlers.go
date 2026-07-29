@@ -128,12 +128,68 @@ type App struct {
 	// subsequent loads. Invalidated by the save/rotate/
 	// disable/strict handlers so the operator sees the
 	// fresh result after they take an action.
-	telegramProbeMu      sync.Mutex
-	telegramProbeResult  TelegramProbeResult
-	telegramProbeAt      time.Time
-	telegramProbeTokenFP string
+	//
+	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): the
+	// telegram probe cache state (telegramProbeMu,
+	// telegramProbeResult, telegramProbeAt,
+	// telegramProbeTokenFP) was moved to the Service in
+	// internal/feature/admin/. The cache is owned by the
+	// feature that uses it now.
 
 	templates *Templates
+
+	// adminSvc is set by main.go after New(). It owns the
+	// admin routes that were moved to internal/feature/admin/
+	// in refactor-v0.30 Phase B step 3. The thin wrapper
+	// methods below (AdminTelegram, AdminTelegramPost) keep
+	// the existing /admin/telegram routes working without
+	// touching every test caller. New code should call
+	// adminSvc directly via the route registration in
+	// cmd/skygate/main.go.
+	adminSvc adminSvcHandle
+}
+
+// adminSvcHandle is an interface so handlers.go doesn't import
+// internal/feature/admin (which would create a cyclic dep —
+// feature/admin imports handlers via Backend). The concrete
+// *adminsvc.Service satisfies it. Set via SetAdminService in
+// main.go.
+//
+// Only the methods that existing tests still call through
+// *App live here. New routes go directly to adminSvc in
+// main.go.
+type adminSvcHandle interface {
+	AdminTelegram(w http.ResponseWriter, r *http.Request)
+	AdminTelegramPost(w http.ResponseWriter, r *http.Request)
+}
+
+// SetAdminService wires the admin feature service into the
+// legacy *App so the thin wrapper methods (and any future
+// test-time helpers) can route through it. Called once
+// from main.go after New() and after adminSvc is constructed.
+func (a *App) SetAdminService(s adminSvcHandle) {
+	a.adminSvc = s
+}
+
+// AdminTelegram is a thin wrapper preserved for the existing
+// test surface (handlers_my_telegram_test.go calls
+// app.AdminTelegram directly). Production routes go through
+// adminSvc via the registration in cmd/skygate/main.go.
+func (a *App) AdminTelegram(w http.ResponseWriter, r *http.Request) {
+	if a.adminSvc != nil {
+		a.adminSvc.AdminTelegram(w, r)
+		return
+	}
+	http.Error(w, "admin service not wired", http.StatusInternalServerError)
+}
+
+// AdminTelegramPost is the POST counterpart of AdminTelegram.
+func (a *App) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
+	if a.adminSvc != nil {
+		a.adminSvc.AdminTelegramPost(w, r)
+		return
+	}
+	http.Error(w, "admin service not wired", http.StatusInternalServerError)
 }
 
 func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int, cfg *config.Config) *App {
