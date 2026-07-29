@@ -17,17 +17,22 @@ package handlers
 //   CurrentUser       (r) *auth.Claims — JWT cookie → claims
 //   Audit             (userID, username, action, detail) —
 //                       write one row to audit_log
+//   Config            () *config.Config — read-only view of
+//                       the *App's private Cfg field (used by
+//                       handlers that need config flags like
+//                       AutoAllocateSubnetOnUserCreate)
 //
 // Why we don't just rename the lowercase methods to capital:
 // 70+ handlers/*.go files call them as a.render, a.audit, etc.
 // Renaming would be a 70-file diff for no behavior change. The
-// wrappers add 4 trivial lines in exchange for a focused
+// wrappers add a few trivial lines in exchange for a focused
 // refactor surface.
 
 import (
 	"net/http"
 
 	"skygate/internal/auth"
+	"skygate/internal/config"
 )
 
 // Render — public wrapper around unexported a.render. Lets
@@ -50,4 +55,12 @@ func (a *App) CurrentUser(r *http.Request) *auth.Claims {
 // Audit — public wrapper around a.audit.
 func (a *App) Audit(userID int64, username, action, detail string) {
 	a.audit(userID, username, action, detail)
+}
+
+// Config — public accessor for the private Cfg field. Used
+// by handlers that need config flags (e.g. the admin/users
+// handler reads AutoAllocateSubnetOnUserCreate to decide
+// whether to auto-allocate a subnet on user create).
+func (a *App) Config() *config.Config {
+	return a.Cfg
 }

@@ -18,6 +18,7 @@ import (
 	"skygate/internal/backup"
 	"skygate/internal/config"
 	"skygate/internal/expirewatch"
+	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
 	"skygate/internal/feature/healthz"
 	"skygate/internal/headscale_version"
@@ -279,11 +280,30 @@ func main() {
 	mux.Handle("POST /my/meshes/join", authMW(http.HandlerFunc(app.PostMyMeshesJoin)))
 	mux.Handle("POST /my/meshes/leave", authMW(http.HandlerFunc(app.PostMyMeshesLeave)))
 
+	// Admin — small handlers (users, devices, subnets, invites,
+	// meshes, headscale-update-monitor, acls import/export) moved
+	// from internal/handlers/handlers_admin_*.go + admin_*.go
+	// into internal/feature/admin/ in refactor-v0.30 Phase B
+	// step 3a (2026-07-29). Larger admin handlers (control
+	// planes, user_subnet, telegram, integrations, exit-nodes,
+	// backup, headplane, derp, settings, update) are still in
+	// internal/handlers/ and will be moved in Phase B step 3b.
+	adminSvc := &adminsvc.Service{
+		Backend:                app,
+		DB:                     app.DB,
+		HSGlobalFn:             app.HSGlobal,
+		HSForUserFn:            app.HSForUser,
+		Cfg:                    app.Config(),
+		Notifier:               app.Notifier,
+		HeadscaleUpdateMonitor: app.HeadscaleUpdateMonitor,
+		Sidecar:                app.Sidecar,
+		I18n:                   app.I18n,
+	}
 	// Admin
-	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(app.GetAdminUsers)))
-	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(app.PostAdminUser)))
-	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(app.PostAdminDeleteUser)))
-	mux.Handle("POST /admin/users/{id}/reset-password", authMW(http.HandlerFunc(app.PostAdminUserResetPassword)))
+	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(adminSvc.GetAdminUsers)))
+	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(adminSvc.PostAdminUser)))
+	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDeleteUser)))
+	mux.Handle("POST /admin/users/{id}/reset-password", authMW(http.HandlerFunc(adminSvc.PostAdminUserResetPassword)))
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// (multi-tailnet). /admin/control-planes is the landing;
 	// /admin/users/{id}/plane is the per-user edit form.
@@ -329,10 +349,10 @@ func main() {
 	// tag; the handler stores the pref in
 	// device_exit_node_prefs.
 	mux.Handle("POST /admin/devices/preferred-exit", authMW(http.HandlerFunc(app.PostAdminDevicePreferredExit)))
-	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(app.GetAdminSubnets)))
-	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(app.GetAdminDevices)))
-	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(app.PostAdminNodeTag)))
-	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(app.PostAdminNodeUntag)))
+	mux.Handle("GET /admin/subnets", authMW(http.HandlerFunc(adminSvc.GetAdminSubnets)))
+	mux.Handle("GET /admin/devices", authMW(http.HandlerFunc(adminSvc.GetAdminDevices)))
+	mux.Handle("POST /admin/nodes/{id}/tag", authMW(http.HandlerFunc(adminSvc.PostAdminNodeTag)))
+	mux.Handle("POST /admin/nodes/{id}/untag", authMW(http.HandlerFunc(adminSvc.PostAdminNodeUntag)))
 	// 2026-07-15: v0.14.0 — "Sync from headscale" button.
 	// Re-populates node_owner_map from headscale's authoritative
 	// view. The /exit_nodes bot command reads from node_owner_map;
@@ -340,7 +360,7 @@ func main() {
 	// via skygate's PostAdminNodeTag), the bot reports "no nodes"
 	// until this button is clicked. /sync_nodes bot command hits
 	// the same DB helper.
-	mux.Handle("POST /admin/devices/sync-from-headscale", authMW(http.HandlerFunc(app.PostAdminDevicesSyncFromHeadscale)))
+	mux.Handle("POST /admin/devices/sync-from-headscale", authMW(http.HandlerFunc(adminSvc.PostAdminDevicesSyncFromHeadscale)))
 	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(app.GetAdminAudit)))
 	// 2026-07-16: v0.13.0 — ACL import/export. GET shows
 	// the current policy in a downloadable file; POST
@@ -349,10 +369,10 @@ func main() {
 	// plane. /admin/acls itself is unchanged (still the
 	// read-only view).
 	mux.Handle("GET /admin/acls", authMW(http.HandlerFunc(app.GetAdminACLs)))
-	mux.Handle("GET /admin/acls/export", authMW(http.HandlerFunc(app.GetAdminACLsExport)))
-	mux.Handle("GET /admin/acls/import", authMW(http.HandlerFunc(app.GetAdminACLsImport)))
-	mux.Handle("POST /admin/acls/import", authMW(http.HandlerFunc(app.PostAdminACLsImport)))
-	mux.Handle("POST /admin/acls/import/apply", authMW(http.HandlerFunc(app.PostAdminACLsImportApply)))
+	mux.Handle("GET /admin/acls/export", authMW(http.HandlerFunc(adminSvc.GetAdminACLsExport)))
+	mux.Handle("GET /admin/acls/import", authMW(http.HandlerFunc(adminSvc.GetAdminACLsImport)))
+	mux.Handle("POST /admin/acls/import", authMW(http.HandlerFunc(adminSvc.PostAdminACLsImport)))
+	mux.Handle("POST /admin/acls/import/apply", authMW(http.HandlerFunc(adminSvc.PostAdminACLsImportApply)))
 	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(app.GetAdminDERP)))
 	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
 	// integration config. The /admin/integrations landing page
@@ -432,7 +452,7 @@ func main() {
 	// 2026-07-20: v0.20.0 — headscale-update-monitor
 	// status page. Renders the monitor's snapshot
 	// (pinned vs. latest, history table). Admin-only.
-	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(app.GetAdminHeadscale)))
+	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(adminSvc.GetAdminHeadscale)))
 	// 2026-07-27: v0.29.0 — self-update page. Shows
 	// current vs latest GitHub release + copy-pasteable
 	// manual steps for the detected install kind. The
@@ -455,7 +475,7 @@ func main() {
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as
 	// /admin/exit-nodes/health-now.
-	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(app.PostAdminHeadscaleCheckNow)))
+	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleCheckNow)))
 	// 2026-07-20: v0.21.0 — user-to-user invite
 	// overview. Lists every invite_codes row
 	// (grantor / grantee / status / expiry),
@@ -463,15 +483,15 @@ func main() {
 	// rows. Admin-only — the bot /invites command
 	// is the per-user "show me my own invites"
 	// view.
-	mux.Handle("GET /admin/invites", authMW(http.HandlerFunc(app.GetAdminInvites)))
-	mux.Handle("POST /admin/invites/revoke", authMW(http.HandlerFunc(app.PostAdminInvitesRevoke)))
+	mux.Handle("GET /admin/invites", authMW(http.HandlerFunc(adminSvc.GetAdminInvites)))
+	mux.Handle("POST /admin/invites/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminInvitesRevoke)))
 	// 2026-07-20: v0.22.0 — /admin/meshes. Read-only
 	// admin overview of every mesh (active +
 	// dissolved). The user-to-user mesh workflow
 	// (create / join / leave) is bot-driven; the
 	// admin page is for oversight, same UX choice
 	// as /admin/invites.
-	mux.Handle("GET /admin/meshes", authMW(http.HandlerFunc(app.GetAdminMeshes)))
+	mux.Handle("GET /admin/meshes", authMW(http.HandlerFunc(adminSvc.GetAdminMeshes)))
 	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(app.PostAdminExitNodesAdd)))
 	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(app.PostAdminExitNodesDelete)))
 	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(app.PostAdminExitNodesSync)))
