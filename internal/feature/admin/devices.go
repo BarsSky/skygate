@@ -1,0 +1,301 @@
+package admin
+
+// devices.go — admin devices page (/admin/devices) + tag/untag/sync.
+//
+// refactor-v0.30 Phase B step 3a: moved from
+// internal/handlers/handlers_admin_nodes.go.
+//
+// Handlers: GetAdminDevices, PostAdminDevicesSyncFromHeadscale,
+// PostAdminNodeTag, PostAdminNodeUntag. Helper: nodeTagRefusedForUserDevice
+// (pure function, unit-tested in the original handlers).
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"skygate/internal/db"
+	"skygate/internal/headscale"
+)
+
+// GetAdminDevices renders the /admin/devices page — all headscale
+// nodes across the tailnet, with per-device ACL tags and the
+// available-exit-node list for the per-device preferred-exit
+// dropdown. Admin-only.
+func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	users, _ := s.HSGlobalFn().ListUsers()
+	allNodes, _ := s.HSGlobalFn().ListAllNodes()
+
+	devTags, _ := db.GetPerUserDeviceTags(s.DB, "")
+	devTagMap := make(map[string]string, len(devTags))
+	for _, t := range devTags {
+		devTagMap[t.Hostname] = t.Tag
+	}
+
+	deviceExitPrefs, _ := db.ListAllDeviceExitNodePrefs(s.DB)
+	deviceExitPrefMap := make(map[string]string, len(deviceExitPrefs))
+	deviceExitViaMap := make(map[string]bool, len(deviceExitPrefs))
+	skygateUserByName := make(map[string]int64, len(users))
+	for _, u := range users {
+		if u.Name != "" {
+			skygateUserByName[u.Name] = 0
+		}
+	}
+	for name := range skygateUserByName {
+		var id int64
+		if err := s.DB.QueryRow(
+			`SELECT id FROM portal_users WHERE username = ?`, name,
+		).Scan(&id); err == nil {
+			skygateUserByName[name] = id
+		}
+	}
+	skygateUserByHost := make(map[string]int64, len(devTags))
+	for _, dt := range devTags {
+		const prefix = "tag:dev-"
+		if !strings.HasPrefix(dt.Tag, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(dt.Tag, prefix)
+		idx := strings.LastIndex(rest, "-")
+		if idx < 0 {
+			continue
+		}
+		userName := rest[:idx]
+		if uid, ok := skygateUserByName[userName]; ok && uid > 0 {
+			skygateUserByHost[strings.ToLower(dt.Hostname)] = uid
+		}
+	}
+	for _, dp := range deviceExitPrefs {
+		if dp.DeviceHostname == "" {
+			continue
+		}
+		key := strconv.FormatInt(dp.UserID, 10) + ":" + strings.ToLower(dp.DeviceHostname)
+		deviceExitPrefMap[key] = dp.ExitNodeTag
+		deviceExitViaMap[key] = dp.ViaEnabled
+	}
+	exits, _ := s.HSGlobalFn().ListExitNodes()
+
+	userExitPrefs, _ := db.ListAllUserExitNodePrefs(s.DB)
+	userExitPrefMap := make(map[string]string, len(userExitPrefs))
+	for _, ep := range userExitPrefs {
+		userExitPrefMap[strconv.FormatInt(ep.UserID, 10)] = ep.ExitNodeTag
+	}
+	s.Backend.RenderWithLayout(w, r, "admin/devices.html", c, map[string]any{
+		"Nodes":             allNodes,
+		"Users":             users,
+		"FlashSuccess":      r.URL.Query().Get("ok"),
+		"FlashError":        r.URL.Query().Get("err"),
+		"DevTagMap":         devTagMap,
+		"DeviceExitPrefMap": deviceExitPrefMap,
+		"DeviceExitViaMap":  deviceExitViaMap,
+		"AvailableExits":    exits,
+		"UserExitPrefMap":   userExitPrefMap,
+		"SkygateUserByName": skygateUserByName,
+		"SkygateUserByHost": skygateUserByHost,
+	})
+}
+
+// PostAdminDevicesSyncFromHeadscale is the v0.14.0 "Sync from
+// headscale" button. INSERTs any missing rows in node_owner_map
+// + UPDATEs drifted tags. Admin-only.
+func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	nodes, err := s.HSGlobalFn().ListAllNodes()
+	if err != nil {
+		http.Error(w, "headscale list failed: "+err.Error(), 500)
+		return
+	}
+	var syncInfos []db.SyncNodeInfo
+	for _, n := range nodes {
+		tag := ""
+		for _, t := range n.Tags {
+			if t == headscale.TagPublicTag || t == headscale.TagPrivateTag {
+				continue
+			}
+			tag = t
+			break
+		}
+		if tag == "" {
+			for _, t := range n.Tags {
+				if t != "" {
+					tag = t
+					break
+				}
+			}
+		}
+		var hsUID int64
+		if n.UserID != "" {
+			if v, perr := strconv.ParseInt(n.UserID, 10, 64); perr == nil {
+				hsUID = v
+			}
+		}
+		syncInfos = append(syncInfos, db.SyncNodeInfo{
+			ID:       n.ID,
+			Hostname: n.Hostname,
+			Tag:      tag,
+			Username: n.UserName,
+			HSUserID: hsUID,
+			TaggedBy: c.UserID,
+		})
+	}
+	ins, upd, err := db.SyncNodesFromHeadscale(s.DB, syncInfos)
+	if err != nil {
+		http.Error(w, "sync failed: "+err.Error(), 500)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "node_sync_from_headscale",
+		fmt.Sprintf("inserted=%d updated=%d", ins, upd))
+	http.Redirect(w, r, fmt.Sprintf(
+		"/admin/devices?ok=%s", url.QueryEscape(
+			fmt.Sprintf("Sync from headscale: %d inserted, %d updated", ins, upd))), http.StatusSeeOther)
+}
+
+// PostAdminNodeTag adds a headscale tag to a node. The
+// v0.30.1 guard (nodeTagRefusedForUserDevice) refuses exit-node
+// tags on per-user devices. Admin-only.
+func (s *Service) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	idStr := extractIDFromPath(r.URL.Path)
+	nodeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad node id", 400)
+		return
+	}
+	tag := r.FormValue("tag")
+	if tag == "" {
+		tag = headscale.TagPublicTag
+	}
+
+	var origUserID, origUserName string
+	var nodeTags []string
+	hs := s.HSGlobalFn()
+	if nodes, err := hs.ListAllNodes(); err == nil {
+		for _, n := range nodes {
+			if n.ID == strconv.FormatInt(nodeID, 10) {
+				origUserID = n.UserID
+				origUserName = n.UserName
+				nodeTags = n.Tags
+				break
+			}
+		}
+	}
+
+	if refused, msg, hadTag := nodeTagRefusedForUserDevice(nodeID, tag, nodeTags); refused {
+		s.Backend.Audit(c.UserID, c.Username, "node_tag_refused",
+			fmt.Sprintf("node=%d attempted_tag=%s reason=user_device node_had=%s",
+				nodeID, tag, hadTag))
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+
+	if err := hs.TagNode(nodeID, tag); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	if origUserID != "" && origUserName != "" {
+		nodeIDStr := strconv.FormatInt(nodeID, 10)
+		var hsUID int64
+		if n, err := strconv.ParseInt(origUserID, 10, 64); err == nil {
+			hsUID = n
+		}
+		if origUserName == "tagged-devices" {
+			_ = db.UpdateNodeOwnerTag(s.DB, nodeIDStr, tag, c.UserID)
+		} else {
+			_ = db.UpsertNodeOwner(s.DB, nodeIDStr, hsUID, origUserName, tag, c.UserID)
+		}
+	}
+
+	hs.InvalidateCache()
+	s.Backend.Audit(c.UserID, c.Username, "node_tag", fmt.Sprintf("node=%d tag=%s owner=%s", nodeID, tag, origUserName))
+	http.Redirect(w, r, "/admin/devices", http.StatusFound)
+}
+
+// PostAdminNodeUntag removes a headscale tag from a node and
+// cleans up the corresponding node_owner_map row. Admin-only.
+func (s *Service) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	idStr := extractIDFromPath(r.URL.Path)
+	nodeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad node id", 400)
+		return
+	}
+	tag := r.FormValue("tag")
+	if tag == "" {
+		tag = headscale.TagPublicTag
+	}
+	hs := s.HSGlobalFn()
+	if err := hs.UntagNode(nodeID, tag); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	_ = db.DeleteNodeOwnerByNodeTag(s.DB, strconv.FormatInt(nodeID, 10), tag)
+
+	hs.InvalidateCache()
+	s.Backend.Audit(c.UserID, c.Username, "node_untag", fmt.Sprintf("node=%d tag=%s", nodeID, tag))
+	http.Redirect(w, r, "/admin/devices", http.StatusFound)
+}
+
+// nodeTagRefusedForUserDevice is the v0.30.1 guard extracted as
+// a pure function so it can be unit-tested without spinning up
+// HTTP/headscale/dockerexec.
+//
+// Returns (true, msg, existingDevTag) when the request MUST be
+// rejected: admin asked to add an exit-node-like tag to a node
+// that already carries a per-user device tag (tag:dev-<user>-
+// <device>). Returns (false, "", "") when the request is safe
+// to apply.
+//
+// Why the guard exists: on 2026-07-28, user1's Windows box
+// "base" (headscale id=7, tag:dev-user1-base) was found
+// carrying tag:exit-node in headscale — set via direct headscale
+// CLI, NOT through skygate (audit_log has no node=7 entries).
+// The Tailscale Windows client on base then auto-selected
+// "Base" as the exit-node (0ms self-loop = lowest metric), and
+// all of base's internet traffic went to /dev/null. User
+// reported: "пропал доступ в сеть" + "exit node не выбирается
+// корректно".
+//
+// This guard prevents the SAME shape of mistake from being
+// introduced through the skygate admin UI (the operator's
+// most common accidental path: clicking "Tag as exit-node" on
+// the wrong row in /admin/devices). It does NOT block direct
+// headscale CLI manipulation — that path bypasses skygate
+// entirely and is an operator-only decision.
+func nodeTagRefusedForUserDevice(nodeID int64, requestedTag string, currentTags []string) (refused bool, message string, existingDevTag string) {
+	if !strings.HasPrefix(requestedTag, "tag:exit") {
+		return false, "", ""
+	}
+	for _, t := range currentTags {
+		if strings.HasPrefix(t, "tag:dev-") {
+			msg := fmt.Sprintf(
+				"refuse: node %d already has per-user device tag %q — "+
+					"cannot add exit-node tag %q. Per-user devices (tag:dev-*) "+
+					"must never be exit-node candidates. To make this node a "+
+					"relay, first untag the per-user tag (PostAdminNodeUntag).",
+				nodeID, t, requestedTag)
+			return true, msg, t
+		}
+	}
+	return false, "", ""
+}

@@ -1,7 +1,7 @@
-package handlers
+package admin
 
-// handlers_admin_nodes_test.go — regression tests for the
-// v0.30.1 user-device-can't-be-exit-node guard.
+// devices_test.go — regression tests for the v0.30.1
+// user-device-can't-be-exit-node guard (nodeTagRefusedForUserDevice).
 //
 // The bug: on 2026-07-28, user1's Windows box "base"
 // (headscale id=7, tag:dev-user1-base) was found carrying
@@ -19,8 +19,9 @@ package handlers
 // admin UI (the most common accidental path: admin clicks
 // "Tag as exit-node" on the wrong row in /admin/devices).
 //
-// These tests pin the guard's behavior so a future refactor
-// can't silently regress to the pre-fix shape.
+// refactor-v0.30 Phase B step 3a: tests moved here from
+// internal/handlers/handlers_admin_nodes_test.go (the
+// function-under-test moved with them).
 
 import (
 	"strings"
