@@ -31,6 +31,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"skygate/internal/auth"
+	adminsvc "skygate/internal/feature/admin"
 	"skygate/internal/i18n"
 	"skygate/internal/telegram"
 )
@@ -85,6 +86,23 @@ func newTestApp(t *testing.T, notifier telegram.Notifier) (*App, *sql.DB) {
 		// — which is desirable in production but unfriendly in
 		// tests that only exercise the validation branches).
 	}
+	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
+	// the admin feature service so the legacy thin wrappers
+	// (app.AdminTelegram, app.AdminTelegramPost) route through
+	// it. Without this, the wrapper falls back to a 500
+	// "admin service not wired".
+	//
+	// We pass nil for the headscale-side deps (HSGlobalFn,
+	// HSForUserFn, HeadscaleUpdateMonitor, Sidecar) because
+	// these tests don't exercise any /admin/telegram code
+	// path that touches headscale; if a future test needs
+	// those, set them on app first.
+	app.SetAdminService(&adminsvc.Service{
+		Backend:  app,
+		DB:       d,
+		Notifier: notifier,
+		I18n:     i18n.New(),
+	})
 	return app, d
 }
 

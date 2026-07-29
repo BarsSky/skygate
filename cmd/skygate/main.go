@@ -299,6 +299,12 @@ func main() {
 		Sidecar:                app.Sidecar,
 		I18n:                   app.I18n,
 	}
+	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
+	// the adminSvc into *App so the existing thin wrappers
+	// (app.AdminTelegram, app.AdminTelegramPost) route through
+	// it. The wrappers exist for the test surface only — new
+	// routes go directly to adminSvc via mux.HandleFunc below.
+	app.SetAdminService(adminSvc)
 	// Admin
 	mux.Handle("GET /admin/users", authMW(http.HandlerFunc(adminSvc.GetAdminUsers)))
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(adminSvc.PostAdminUser)))
@@ -402,8 +408,8 @@ func main() {
 	mux.Handle("POST /admin/backup/run", authMW(http.HandlerFunc(app.PostAdminBackupRun)))
 	mux.Handle("POST /admin/backup/toggle", authMW(http.HandlerFunc(app.PostAdminBackupToggle)))
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(app.GetAdminSettings)))
-	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegram)))
-	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(app.AdminTelegramPost)))
+	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegram)))
+	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegramPost)))
 	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(authSvc.GetMyTokens)))
 	mux.Handle("POST /my/token", authMW(http.HandlerFunc(authSvc.PostMyToken)))
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(authSvc.PostMyTokenRevoke)))

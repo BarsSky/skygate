@@ -69,6 +69,14 @@ type Backend interface {
 //                          LastStats). Nil-safe.
 //   - I18n:                 i18n catalog (for translated status pills
 //                          on the /admin/headscale page).
+//
+// Refactor-v0.30 Phase B step 3b.1a (2026-07-29): the
+// telegramProbeCache field is state that was previously on
+// *App (the Mutex, the at-time, the cached result, the
+// token fingerprint that the cache is keyed on). It moved
+// to the Service so the cache is owned by the feature
+// that uses it. Mutex-guarded (a probe request can run
+// concurrently with a save/rotate/disable invalidate).
 type Service struct {
 	Backend                Backend
 	DB                     *sql.DB
@@ -79,4 +87,5 @@ type Service struct {
 	HeadscaleUpdateMonitor *headscale_version.Monitor
 	Sidecar                *sidecar.Manager
 	I18n                   *i18n.Catalog
+	telegramProbeCache     serviceProbeCache
 }
