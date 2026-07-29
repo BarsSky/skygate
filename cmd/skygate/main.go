@@ -258,13 +258,20 @@ func main() {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	})
 
-	// Settings (theme switcher) - accessible to all
-	mux.HandleFunc("GET /settings/theme", app.PostSettingsTheme)
-	mux.HandleFunc("POST /settings/theme", app.PostSettingsTheme)
+	// Settings (theme switcher) - accessible to all.
+	// The actual handler is wired below (after mySvc is
+	// declared) — refactor-v0.30 Phase B step 6e
+	// (2026-07-29) moved the handler to
+	// internal/feature/my/settings.go.
+	// mux.HandleFunc("GET /settings/theme", mySvc.PostSettingsTheme)
+	// mux.HandleFunc("POST /settings/theme", mySvc.PostSettingsTheme)
 
 	// Authenticated
 	authMW := middleware.RequireAuth(cfg.JWTSecret)
-	mux.Handle("GET /help", authMW(http.HandlerFunc(app.GetHelp)))
+	// refactor-v0.30 Phase B step 6e (2026-07-29):
+	// /help moved to feature/auth/help.go
+	// (authSvc.GetHelp).
+	mux.Handle("GET /help", authMW(http.HandlerFunc(authSvc.GetHelp)))
 
 	// User self-service
 	// (the rest of /my/* routes are below, after mySvc
@@ -451,6 +458,15 @@ func main() {
 	// (after mySvc construction) so the closure can reference
 	// the mySvc variable.
 	mux.Handle("GET /dashboard", authMW(http.HandlerFunc(mySvc.GetDashboard)))
+	// refactor-v0.30 Phase B step 6e (2026-07-29):
+	// /settings/theme moved to feature/my/settings.go
+	// (mySvc.PostSettingsTheme). Same handler for GET
+	// and POST (the picker is a GET form; the form
+	// submission is a POST). Registered without authMW
+	// so the unauth theme-preview path can still
+	// redirect to /login?theme=...
+	mux.HandleFunc("GET /settings/theme", mySvc.PostSettingsTheme)
+	mux.HandleFunc("POST /settings/theme", mySvc.PostSettingsTheme)
 	// 2026-07-29: refactor-v0.30 Phase B step 5a —
 	// /my/exit-nodes, /my/preauth, /my/keys live in
 	// feature/my now.
