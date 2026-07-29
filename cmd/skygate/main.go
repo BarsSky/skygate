@@ -298,6 +298,12 @@ func main() {
 		HeadscaleUpdateMonitor: app.HeadscaleUpdateMonitor,
 		Sidecar:                app.Sidecar,
 		I18n:                   app.I18n,
+		// refactor-v0.30 Phase B step 3b.4 (2026-07-29):
+		// per-user control plane admin (set/clear/provision/
+		// decommission) encrypts the API key with this
+		// secret + invalidates the per-URL HSForUser cache.
+		SecretKeyHex:           app.SecretKeyHex,
+		InvalidateHSCacheFn:    app.InvalidateHSCache,
 	}
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers
@@ -313,19 +319,19 @@ func main() {
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// (multi-tailnet). /admin/control-planes is the landing;
 	// /admin/users/{id}/plane is the per-user edit form.
-	mux.Handle("GET /admin/control-planes", authMW(http.HandlerFunc(app.GetAdminControlPlanes)))
-	mux.Handle("POST /admin/control-planes/test", authMW(http.HandlerFunc(app.PostAdminControlPlanesTest)))
-	mux.Handle("GET /admin/users/{id}/plane", authMW(http.HandlerFunc(app.GetAdminUserControlPlane)))
-	mux.Handle("POST /admin/users/{id}/plane", authMW(http.HandlerFunc(app.PostAdminUserControlPlane)))
-	mux.Handle("POST /admin/users/{id}/plane/clear", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneClear)))
+	mux.Handle("GET /admin/control-planes", authMW(http.HandlerFunc(adminSvc.GetAdminControlPlanes)))
+	mux.Handle("POST /admin/control-planes/test", authMW(http.HandlerFunc(adminSvc.PostAdminControlPlanesTest)))
+	mux.Handle("GET /admin/users/{id}/plane", authMW(http.HandlerFunc(adminSvc.GetAdminUserControlPlane)))
+	mux.Handle("POST /admin/users/{id}/plane", authMW(http.HandlerFunc(adminSvc.PostAdminUserControlPlane)))
+	mux.Handle("POST /admin/users/{id}/plane/clear", authMW(http.HandlerFunc(adminSvc.PostAdminUserControlPlaneClear)))
 	// 2026-07-21: v0.23.0 Phase 1 — one-click provisioning of a
 	// per-user headscale container. The Provision action runs the
 	// bootstrap script (creates container + user + API key, returns
 	// JSON) and persists the result to portal_users. The
 	// Decommission action reverses it: tears down the container and
 	// clears the DB row (data on disk is preserved for recovery).
-	mux.Handle("POST /admin/users/{id}/plane/provision", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneProvision)))
-	mux.Handle("POST /admin/users/{id}/plane/decommission", authMW(http.HandlerFunc(app.PostAdminUserControlPlaneDecommission)))
+	mux.Handle("POST /admin/users/{id}/plane/provision", authMW(http.HandlerFunc(adminSvc.PostAdminUserControlPlaneProvision)))
+	mux.Handle("POST /admin/users/{id}/plane/decommission", authMW(http.HandlerFunc(adminSvc.PostAdminUserControlPlaneDecommission)))
 	// 2026-07-17: v0.16.0 — per-user subnets admin page.
 	// GET shows the user's subnet status; POSTs allocate
 	// / disable / run a sanity check.
@@ -388,11 +394,11 @@ func main() {
 	// v0.11.1 will add a runtime renderer (re-apply headscale
 	// config + restart) so the user doesn't have to run
 	// ./deploy/deploy.sh after a save.
-	mux.Handle("GET /admin/integrations", authMW(http.HandlerFunc(app.GetAdminIntegrations)))
-	mux.Handle("GET /admin/derp/config", authMW(http.HandlerFunc(app.GetAdminDerpConfig)))
-	mux.Handle("POST /admin/derp/config", authMW(http.HandlerFunc(app.PostAdminDerpConfig)))
-	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(app.GetAdminHeadplane)))
-	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(app.PostAdminHeadplane)))
+	mux.Handle("GET /admin/integrations", authMW(http.HandlerFunc(adminSvc.GetAdminIntegrations)))
+	mux.Handle("GET /admin/derp/config", authMW(http.HandlerFunc(adminSvc.GetAdminDerpConfig)))
+	mux.Handle("POST /admin/derp/config", authMW(http.HandlerFunc(adminSvc.PostAdminDerpConfig)))
+	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
+	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(app.GetAdminBackup)))
 	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(app.PostAdminBackupSave)))
 	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(app.PostAdminBackupRestore)))

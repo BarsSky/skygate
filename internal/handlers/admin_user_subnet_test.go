@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -226,6 +227,40 @@ func TestPostAdminUserSubnetTestCatchesDenormOutOfSync(t *testing.T) {
 func authedReqForURL(t *testing.T, a *App, method, url, username string) *http.Request {
 	t.Helper()
 	return authedReqFor(t, a, method, url, nil, username)
+}
+
+// authedReqFor builds an *http.Request with the right session
+// cookie for the named user. The caller is responsible for
+// calling the handler method (Get/Post) and inspecting the
+// recorder.
+//
+// refactor-v0.30 Phase B step 3b.2: this used to live in
+// internal/handlers/admin_integrations_test.go (deleted
+// in 3b.2). Re-homed here because admin_user_subnet_test.go
+// + admin_exit_nodes_tag_test.go both use it. Both test
+// files still live in handlers/ because the production
+// code (admin_user_subnet, admin_exit_nodes) is still
+// there (pending Phase B steps 3b.5 and 3b.3).
+func authedReqFor(t *testing.T, a *App, method, path string, form url.Values, username string) *http.Request {
+	t.Helper()
+	var cookie *http.Cookie
+	switch username {
+	case "skyadmin":
+		cookie = sessionCookieFor(t, a, 1, username, true)
+	case "alice":
+		cookie = sessionCookieFor(t, a, 2, username, false)
+	default:
+		t.Fatalf("unknown username %q (only skyadmin + alice are pre-seeded)", username)
+	}
+	var req *http.Request
+	if form != nil {
+		req = httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	req.AddCookie(cookie)
+	return req
 }
 
 // itoa converts int64 to decimal string. Used to build
