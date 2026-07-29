@@ -87,5 +87,18 @@ type Service struct {
 	HeadscaleUpdateMonitor *headscale_version.Monitor
 	Sidecar                *sidecar.Manager
 	I18n                   *i18n.Catalog
-	telegramProbeCache     serviceProbeCache
+
+	// SecretKeyHex is the SKYGATE_SECRET_KEY hex value used
+	// to encrypt per-user control-plane API keys at rest.
+	// Phase B step 3b.4 (2026-07-29): added for
+	// /admin/users/{id}/plane (post/clear/provision/decommission).
+	SecretKeyHex string
+
+	// InvalidateHSCacheFn drops the per-URL cached headscale
+	// client (used after the per-user override changes so
+	// the next HSForUser call returns a fresh client with
+	// the new credentials).
+	InvalidateHSCacheFn func(url string)
+
+	telegramProbeCache serviceProbeCache
 }
