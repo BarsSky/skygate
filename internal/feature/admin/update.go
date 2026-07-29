@@ -1,6 +1,7 @@
-package handlers
+package admin
 
-// handlers_admin_update.go — v0.29.0 self-update admin page.
+// update.go — v0.29.0 self-update admin page (handlers moved from
+// internal/handlers/handlers_admin_update.go).
 //
 // Two GET handlers and three POST handlers:
 //
@@ -15,8 +16,10 @@ package handlers
 // and the failure page surfaces the manual steps so the
 // operator can intervene if the rollback itself fails.
 //
-// 2026-07-27: v0.29.0 — initial cut (Phase 1: detection + manual).
-//                  Phase 2: auto-update with state machine + rollback.
+// refactor-v0.30 Phase B step 6c (2026-07-29): moved from
+// internal/handlers/handlers_admin_update.go (644 lines). The
+// package-level state store + mutex + inFlight tracker moved
+// onto the admin Service as fields (no more global singleton).
 
 import (
 	"bytes"
@@ -33,38 +36,46 @@ import (
 	"skygate/internal/update"
 )
 
+// runningUpdater tracks an in-flight auto-update job. Set by
+// PostAdminUpdateApply, cleared when the goroutine exits.
+type runningUpdater struct {
+	cancel  context.CancelFunc
+	jobID   string
+	started time.Time
+}
+
 // GetAdminUpdate renders the /admin/update page. Admin-only.
 //
 // The page is safe to render even if GitHub is unreachable:
 // Result.Error carries the failure reason and the page shows
 // "no new version" + a "Check now" button for the operator
 // to retry manually.
-func (a *App) GetAdminUpdate(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) GetAdminUpdate(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	a.renderUpdatePage(w, r, c, "")
+	s.renderUpdatePage(w, r, c, "")
 }
 
 // PostAdminUpdateCheck forces an immediate GitHub check (bypasses
 // the 6h success / 15m failure cache). Wired to the "Check now"
 // button on /admin/update. Returns the operator to the same
 // page with the fresh Result inline.
-func (a *App) PostAdminUpdateCheck(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	a.renderUpdatePage(w, r, c, "")
+	s.renderUpdatePage(w, r, c, "")
 }
 
 // renderUpdatePage is the shared page-rendering path for both
 // GET and POST. The flash string is non-empty after a "Check
 // now" click (informational: "checked at HH:MM:SS").
-func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.Claims, flash string) {
+func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.Claims, flash string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
@@ -82,23 +93,15 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 	// we poll /healthz and promote to phase=done on
 	// success. The 5s auto-refresh on /admin/update will
 	// pick up the new phase without a manual reload.
-	store := GetUpdateStateStore()
-	if store == nil {
-		store = update.NewStateStore("/data/skygate-update-status.json")
-	}
-	{
-		st := store.Get()
-		phaseStr := "<nil>"
-		if st != nil {
-			phaseStr = string(st.Phase)
-		}
-		store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: store=%v phase=%s (debug probe)", store != nil, phaseStr))
-		if st != nil && (st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack) {
+	store := s.UpdateState
+	if st := store.Get(); st != nil {
+		phaseStr := string(st.Phase)
+		store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s", phaseStr))
+		if st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack {
 			store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s detected, calling confirmPendingSwap", st.Phase))
-			a.confirmPendingSwap(ctx, st, store)
+			s.confirmPendingSwap(ctx, st, store)
 			// Re-fetch state after confirmPendingSwap may
 			// have promoted it to phase=done.
-			st = store.Get()
 		}
 	}
 
@@ -108,9 +111,9 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 	checker := &update.Checker{
 		Owner:          "BarsSky",
 		Repo:           "skygate",
-		Channel:        defaultStr(a.Cfg.UpdateChannel, "stable"),
-		GitHubToken:    a.Cfg.GitHubToken,
-		CurrentVersion: a.BuildVersion,
+		Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
+		GitHubToken:    s.Cfg.GitHubToken,
+		CurrentVersion: s.BuildVersion,
 	}
 	// Use a sane default HTTP client. The checker has its own
 	// per-request context; we don't need a custom client here
@@ -129,7 +132,7 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 	// the page still has steps for "upgrading to the same
 	// version" — useful for re-applying a known-good release
 	// after a botched deployment).
-	current := a.BuildVersion
+	current := s.BuildVersion
 	target := current
 	if result != nil && result.Latest != "" {
 		target = result.Latest
@@ -144,12 +147,12 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 
 	// Audit: page load is the only operation here. The "Check
 	// now" button is also a page load (no DB write).
-	a.audit(c.UserID, c.Username, "update_page_view", "version="+a.BuildVersion)
+	s.Backend.Audit(c.UserID, c.Username, "update_page_view", "version="+s.BuildVersion)
 
 	// Strip "v" from the user-visible labels (the page shows
 	// "v0.28.6" everywhere anyway; the BuildVersion is the
 	// canonical "vX.Y.Z+commit" form).
-	a.renderWithLayout(w, r, "admin/update.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/update.html", c, map[string]any{
 		"Page":         "admin/update",
 		"Title":        "title.admin_update",
 		"Current":      current,
@@ -168,21 +171,21 @@ func (a *App) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *auth.C
 		"VerifyAfter":  manualSteps.VerifyAfter,
 		"Target":       target,
 		"Flash":        flash,
-		"CheckEnabled": a.Cfg.UpdateCheckEnabled,
-		"Channel":      a.Cfg.UpdateChannel,
+		"CheckEnabled": s.Cfg.UpdateCheckEnabled,
+		"Channel":      s.Cfg.UpdateChannel,
 		// 2026-07-27: dashboard banner — same data
 		// shape as the release-monitor banner so the
 		// layout template renders the same way.
 		"UpdateAvailable": result.IsNewer,
-		"UpdateLatest":     result.Latest,
-		"UpdateCheckedAt":  result.CheckedAt,
+		"UpdateLatest":    result.Latest,
+		"UpdateCheckedAt": result.CheckedAt,
 		// 2026-07-27: v0.29.0 Phase 2 — in-flight / most
 		// recent auto-update job. The template's status
 		// card shows the phase, log buffer, and (if failed)
 		// the manual-fallback hint. The phase is also
 		// exposed via data-update-phase so the auto-refresh
 		// JS knows when to reload.
-		"UpdateState": updateStateStore.Get(),
+		"UpdateState": store.Get(),
 	})
 }
 
@@ -215,28 +218,16 @@ func defaultStr(s, def string) string {
 	return s
 }
 
-// updateStateStore is the per-process state store for the
-// auto-updater. Initialized once at boot (cmd/skygate/main.go)
-// and shared by the handlers. The status file path comes
-// from cfg.UpdateStatePath (default /data/skygate-update-status.json).
-var updateStateStore *update.StateStore
-
-// updateStateStoreMu serializes the Start() calls so a
+// stateStoreMu serializes the Start() calls so a
 // double-click on "Update now" doesn't kick off two parallel
 // jobs. The actual state file write is already locked inside
 // the store; this mutex is only for the "in-flight job" check.
-var updateStateStoreMu sync.Mutex
+var stateStoreMu sync.Mutex
 
 // inFlightUpdater is the running updater goroutine, if any.
 // nil between jobs. Set by PostAdminUpdateApply, cleared
 // when the goroutine exits (via defer).
 var inFlightUpdater *runningUpdater
-
-type runningUpdater struct {
-	cancel  context.CancelFunc
-	jobID   string
-	started time.Time
-}
 
 // PostAdminUpdateApply kicks off the auto-updater in a
 // background goroutine and returns 303 to the page. The
@@ -254,13 +245,13 @@ type runningUpdater struct {
 // 409 Conflict is returned when a previous job is still
 // running. The page handles this by waiting for the
 // in-flight job to complete.
-func (a *App) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	if !a.Cfg.UpdateCheckEnabled {
+	if !s.Cfg.UpdateCheckEnabled {
 		http.Error(w, "update checker disabled (SKYGATE_UPDATE_CHECK=false)", 400)
 		return
 	}
@@ -278,9 +269,9 @@ func (a *App) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		checker := &update.Checker{
 			Owner:          "BarsSky",
 			Repo:           "skygate",
-			Channel:        defaultStr(a.Cfg.UpdateChannel, "stable"),
-			GitHubToken:    a.Cfg.GitHubToken,
-			CurrentVersion: a.BuildVersion,
+			Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
+			GitHubToken:    s.Cfg.GitHubToken,
+			CurrentVersion: s.BuildVersion,
 		}
 		result, _ := checker.Check(ctx)
 		if result != nil && result.Latest != "" {
@@ -304,29 +295,30 @@ func (a *App) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Refuse to run if a job is already in progress.
-	updateStateStoreMu.Lock()
+	store := s.UpdateState
+	stateStoreMu.Lock()
 	if inFlightUpdater != nil {
-		updateStateStoreMu.Unlock()
+		stateStoreMu.Unlock()
 		http.Error(w, "another update job is already in progress ("+inFlightUpdater.jobID+"); wait for it to finish or click 'Rollback now' to cancel", http.StatusConflict)
 		return
 	}
-	updateStateStoreMu.Unlock()
+	stateStoreMu.Unlock()
 
 	// Generate the manual steps (re-used as the failure
 	// fallback if rollback fails).
-	manualSteps := update.GenerateManualSteps(installKind, "v"+strings.TrimPrefix(a.BuildVersion, "v"), target)
+	manualSteps := update.GenerateManualSteps(installKind, "v"+strings.TrimPrefix(s.BuildVersion, "v"), target)
 
 	// Initialize the state. This writes the status file
 	// synchronously so the next page reload sees the
 	// "pending" state.
-	current := "v" + strings.TrimPrefix(a.BuildVersion, "v")
+	current := "v" + strings.TrimPrefix(s.BuildVersion, "v")
 	jobID := update.GenerateJobID()
-	_ = updateStateStore.Start(jobID, installKind.String(), current, target,
+	_ = store.Start(jobID, installKind.String(), current, target,
 		manualSteps.Steps, manualSteps.Rollback, manualSteps.VerifyAfter)
 
 	// Audit the start. The phase transitions are audited
 	// inside the orchestrator.
-	a.audit(c.UserID, c.Username, "update_apply", fmt.Sprintf("job=%s target=%s install=%s", jobID, target, installKind))
+	s.Backend.Audit(c.UserID, c.Username, "update_apply", fmt.Sprintf("job=%s target=%s install=%s", jobID, target, installKind))
 
 	// Spawn the orchestrator goroutine. The context is
 	// the request's, but we use a longer timeout (10
@@ -334,42 +326,42 @@ func (a *App) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 	// and the operator can navigate to the page without
 	// cancelling the job.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	updateStateStoreMu.Lock()
+	stateStoreMu.Lock()
 	inFlightUpdater = &runningUpdater{cancel: cancel, jobID: jobID, started: time.Now()}
-	updateStateStoreMu.Unlock()
+	stateStoreMu.Unlock()
 
 	go func() {
 		defer func() {
-			updateStateStoreMu.Lock()
+			stateStoreMu.Lock()
 			inFlightUpdater = nil
-			updateStateStoreMu.Unlock()
+			stateStoreMu.Unlock()
 		}()
 		defer cancel()
 
 		switch installKind {
 		case update.InstallDocker:
-			u := update.NewDockerUpgrader(a.Cfg.RepoPath, updateStateStore, current)
+			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
 			u.Run(ctx, target)
 		default:
 			// Systemd / bare: not yet implemented. The
 			// failure path is "PhaseFailed with manual
 			// fallback" so the operator can run the
 			// generated steps by hand.
-			updateStateStore.Log(update.LogError, "auto-updater for "+installKind.String()+" not yet implemented; see manual steps below")
-			updateStateStore.Fail(fmt.Errorf("auto-updater for %s not yet implemented (v0.29.0 Phase 2 covers Docker only)", installKind))
+			store.Log(update.LogError, "auto-updater for "+installKind.String()+" not yet implemented; see manual steps below")
+			store.Fail(fmt.Errorf("auto-updater for %s not yet implemented (v0.29.0 Phase 2 covers Docker only)", installKind))
 		}
 
 		// Send a Telegram alert on success/failure so the
 		// operator knows the result without watching the
 		// page. Failures are MUST-alert; successes are nice-
 		// to-have.
-		finalState := updateStateStore.Get()
-		if a.Notifier != nil && finalState != nil {
+		finalState := store.Get()
+		if s.Notifier != nil && finalState != nil {
 			if finalState.Phase == update.PhaseDone {
-				a.Notifier.SendAlert(fmt.Sprintf("✅ skygate update %s → %s succeeded (job %s, took %s)",
+				s.Notifier.SendAlert(fmt.Sprintf("✅ skygate update %s → %s succeeded (job %s, took %s)",
 					current, target, finalState.JobID, time.Since(finalState.StartedAt).Round(time.Second)))
 			} else if finalState.Phase == update.PhaseFailed {
-				a.Notifier.SendAlert(fmt.Sprintf("❌ skygate update %s → %s FAILED at %s (job %s): %s\nManual steps: see /admin/update",
+				s.Notifier.SendAlert(fmt.Sprintf("❌ skygate update %s → %s FAILED at %s (job %s): %s\nManual steps: see /admin/update",
 					current, target, finalState.Phase, finalState.JobID, finalState.Error))
 			}
 		}
@@ -387,15 +379,16 @@ func (a *App) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 // This is the "operator saw the in-flight job was going
 // wrong and wants to abort it" escape hatch. The page
 // exposes it as a "Rollback now" button.
-func (a *App) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	updateStateStoreMu.Lock()
+	store := s.UpdateState
+	stateStoreMu.Lock()
 	ru := inFlightUpdater
-	updateStateStoreMu.Unlock()
+	stateStoreMu.Unlock()
 	if ru != nil {
 		ru.cancel()
 	}
@@ -403,14 +396,14 @@ func (a *App) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request) {
 	// response can return immediately). The state
 	// transitions to "rolled_back" when done.
 	installKind := update.DetectInstallKind()
-	current := "v" + strings.TrimPrefix(a.BuildVersion, "v")
+	current := "v" + strings.TrimPrefix(s.BuildVersion, "v")
 	go func() {
 		switch installKind {
 		case update.InstallDocker:
-			u := update.NewDockerUpgrader(a.Cfg.RepoPath, updateStateStore, current)
+			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
 			// Use the State's backup tag if available; otherwise
 			// fall back to "skygate-pre-update-<short>".
-			st := updateStateStore.Get()
+			st := store.Get()
 			tag := "skygate-pre-update-rollback"
 			if st != nil && st.InstallKind == "docker" {
 				// The state has the FromVersion but not
@@ -429,7 +422,7 @@ func (a *App) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request) {
 			u.State.Log(update.LogInfo, "for a full rollback, run the manual steps on /admin/update (or click 'Apply' to retry the same target)")
 		}
 	}()
-	a.audit(c.UserID, c.Username, "update_rollback", "operator-initiated rollback")
+	s.Backend.Audit(c.UserID, c.Username, "update_rollback", "operator-initiated rollback")
 	http.Redirect(w, r, "/admin/update?rolled_back=1", http.StatusSeeOther)
 }
 
@@ -437,52 +430,15 @@ func (a *App) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request) {
 // Called by the "Dismiss" button when the operator has
 // read the success / failure banner and wants the page
 // to return to the "no in-flight job" state.
-func (a *App) PostAdminUpdateDismiss(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostAdminUpdateDismiss(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	updateStateStore.Clear()
-	a.audit(c.UserID, c.Username, "update_dismiss", "")
+	s.UpdateState.Clear()
+	s.Backend.Audit(c.UserID, c.Username, "update_dismiss", "")
 	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
-}
-
-// initUpdateStateStore is called by cmd/skygate/main.go at
-// boot. Loads the persisted state file (if any) so the
-// page renders the most recent in-flight / completed job
-// even after a skygate restart.
-func initUpdateStateStore(path string) *update.StateStore {
-	store := update.NewStateStore(path)
-	updateStateStoreMu.Lock()
-	updateStateStore = store
-	updateStateStoreMu.Unlock()
-	// Load on a best-effort basis. A load error or a
-	// missing file is OK — the page just shows "no
-	// recent update job" and the operator can click
-	// "Apply" to start one.
-	if _, err := store.Load(); err != nil {
-		// Log to stdout (the package can't import
-		// the standard logger without a cycle).
-		// The error is recoverable: the next
-		// PostAdminUpdateApply will overwrite the
-		// file with a fresh state.
-		_ = err
-	}
-	return store
-}
-
-// InitUpdateStateStore is the exported version of
-// initUpdateStateStore, called by cmd/skygate/main.go.
-func InitUpdateStateStore(path string) *update.StateStore {
-	return initUpdateStateStore(path)
-}
-
-// GetUpdateStateStore returns the package-level state store.
-// Used by the main render path (handlers_admin_update.go's
-// renderUpdatePage) to read the current state for the UI.
-func GetUpdateStateStore() *update.StateStore {
-	return updateStateStore
 }
 
 // confirmPendingSwap is the v0.29.3 hook called by
@@ -518,7 +474,7 @@ func GetUpdateStateStore() *update.StateStore {
 // with a recent commit). 60s would be too long for a page
 // load; the page is already inside the request's 8s
 // timeout, so we use a separate background context.
-func (a *App) confirmPendingSwap(parentCtx context.Context, st *update.State, store *update.StateStore) {
+func (s *Service) confirmPendingSwap(parentCtx context.Context, st *update.State, store *update.StateStore) {
 	if st == nil || store == nil {
 		return
 	}
@@ -533,7 +489,7 @@ func (a *App) confirmPendingSwap(parentCtx context.Context, st *update.State, st
 	// skygate service container by its compose label
 	// (same label the v0.29.1 ensureComposeServiceRunning
 	// helper used).
-	a.startStuckSkygateContainer(bgCtx, store)
+	s.startStuckSkygateContainer(bgCtx, store)
 
 	// Step 2: poll /healthz on the new container (which
 	// is US — we're in it). The new entrypoint runs
@@ -591,7 +547,7 @@ func (a *App) confirmPendingSwap(parentCtx context.Context, st *update.State, st
 //
 // Idempotent: if the container is already `running`, no
 // action. If no skygate container is found, no action.
-func (a *App) startStuckSkygateContainer(ctx context.Context, store *update.StateStore) {
+func (s *Service) startStuckSkygateContainer(ctx context.Context, store *update.StateStore) {
 	// We invoke docker inspect via exec.CommandContext. The
 	// skygate container has /var/run/docker.sock bind-mounted
 	// (docker-compose.yml), so this works from inside.

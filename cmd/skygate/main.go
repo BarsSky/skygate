@@ -33,6 +33,7 @@ import (
 	"skygate/internal/sidecar"
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
+	"skygate/internal/update"
 )
 
 // Build-time variables, overridden via -ldflags by entrypoint.sh:
@@ -151,7 +152,18 @@ func main() {
 	// up where they left off). The store is bound to
 	// the bind-mounted /data volume so the file
 	// survives a container recreate.
-	handlers.InitUpdateStateStore(cfg.UpdateStatePath)
+	//
+	// refactor-v0.30 Phase B step 6c (2026-07-29):
+	// the state store moved out of internal/handlers
+	// (was a package-level singleton + InitUpdateStateStore
+	// exported func). It's now constructed inline here
+	// and wired into adminSvc.UpdateState below.
+	updateStore := update.NewStateStore(cfg.UpdateStatePath)
+	if _, err := updateStore.Load(); err != nil {
+		// Load failure is non-fatal: the next apply
+		// will overwrite the file with a fresh state.
+		_ = err
+	}
 	// 2026-07-15: v0.12.0 — wire SKYGATE_SECRET_KEY into the
 	// per-user control plane router. Empty string means
 	// "encryption not configured" — the router falls through
@@ -336,6 +348,17 @@ func main() {
 		// /admin/acls links to this URL (when non-empty)
 		// instead of the bundled Headplane sidecar.
 		HeadplaneExternalURL: app.HeadplaneExternalURL,
+		// refactor-v0.30 Phase B step 6c (2026-07-29):
+		// the self-update admin page + orchestrator
+		// goroutine both hold a long-lived reference to
+		// the state store. Constructed above (was a
+		// package-level singleton in internal/handlers).
+		UpdateState: updateStore,
+		// refactor-v0.30 Phase B step 6c (2026-07-29):
+		// /admin/update renders the current build
+		// version in the page header and uses it as
+		// the Checker's CurrentVersion.
+		BuildVersion: app.BuildVersion,
 	}
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers
@@ -618,8 +641,8 @@ func main() {
 	// manual steps for the detected install kind. The
 	// "Check now" button forces an immediate GitHub
 	// poll (bypasses the 6h success / 15m failure cache).
-	mux.Handle("GET /admin/update", authMW(http.HandlerFunc(app.GetAdminUpdate)))
-	mux.Handle("POST /admin/update/check-now", authMW(http.HandlerFunc(app.PostAdminUpdateCheck)))
+	mux.Handle("GET /admin/update", authMW(http.HandlerFunc(adminSvc.GetAdminUpdate)))
+	mux.Handle("POST /admin/update/check-now", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateCheck)))
 	// 2026-07-27: v0.29.0 — auto-update apply/rollback/dismiss.
 	// The "Apply" button kicks off a background updater
 	// goroutine that runs git pull + docker compose build +
@@ -628,9 +651,9 @@ func main() {
 	// operator-initiated escape hatch. "Dismiss" clears
 	// the persisted status file when the operator has
 	// read the success/failure banner.
-	mux.Handle("POST /admin/update/apply", authMW(http.HandlerFunc(app.PostAdminUpdateApply)))
-	mux.Handle("POST /admin/update/rollback", authMW(http.HandlerFunc(app.PostAdminUpdateRollback)))
-	mux.Handle("POST /admin/update/dismiss", authMW(http.HandlerFunc(app.PostAdminUpdateDismiss)))
+	mux.Handle("POST /admin/update/apply", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateApply)))
+	mux.Handle("POST /admin/update/rollback", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateRollback)))
+	mux.Handle("POST /admin/update/dismiss", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateDismiss)))
 	// 2026-07-20: v0.20.0 — "Run check now" button on
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as
