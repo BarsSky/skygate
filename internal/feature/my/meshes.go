@@ -1,40 +1,22 @@
-// 2026-07-20: v0.22.0 — /my/meshes user-scope page.
+// Package my — meshes.go owns the /my/meshes user-scope
+// page (current meshes + create / join / leave forms).
 //
-// The v0.22.0 mesh feature was bot-only at first (/mesh
-// create|join|leave|meshes). The operator flagged that
-// users have no obvious place in the WEB UI to create
-// or join a shared network — the bot is convenient for
-// power users but every identified user (including
-// non-Telegram ones) needs a web entry point.
+// 2026-07-20: v0.22.0 — the v0.22.0 mesh feature was
+// bot-only at first (/mesh create|join|leave|meshes).
+// The operator flagged that users have no obvious place
+// in the WEB UI to create or join a shared network —
+// the bot is convenient for power users but every
+// identified user (including non-Telegram ones) needs
+// a web entry point. This file adds that entry point
+// (4 routes) and is the canonical mesh user-scope page.
 //
-// This file adds the four HTTP routes:
-//
-//   GET  /my/meshes                 — render the page
-//                                     (current meshes +
-//                                      create form +
-//                                      join form)
-//   POST /my/meshes/create          — create a new mesh
-//                                     (you become the
-//                                     first member +
-//                                     creator)
-//   POST /my/meshes/join            — join an existing
-//                                     mesh by 8-char code
-//   POST /my/meshes/leave           — leave a mesh
-//                                     (by code) or all
-//                                     (no code)
-//
-// All three POST routes follow the v0.17.0 admin-pattern:
-//   - validate input
-//   - call into the mesh package
-//   - write an audit_log row
-//   - redirect to /my/meshes?ok=... or ?err=...
-//
-// The page reuses the same flash-success / flash-error
-// pattern as /admin/invites and /admin/users: the GET
-// handler reads `r.URL.Query().Get("ok")` /
-// `r.URL.Query().Get("err")` and renders the banner
-// accordingly. No JavaScript needed; the page works
-// on every browser + phone.
+// refactor-v0.30 Phase B step 5c (2026-07-29): moved
+// from internal/handlers/handlers_my_meshes.go. The
+// four handlers (GetMyMeshes + PostMyMeshesCreate +
+// PostMyMeshesJoin + PostMyMeshesLeave) + the
+// translateMeshFlash helper + the myMeshRow type +
+// isMeshMember + getUserNameByID + webMeshACLReapply
+// all live on *Service now.
 //
 // The bot path is unchanged — /mesh create|join|leave
 // dispatch the same internal/mesh functions. Web +
@@ -49,7 +31,7 @@
 // the ACL re-apply runs in the background and the
 // operator can monitor the headscale policy in
 // /admin/exit-rules.
-package handlers
+package my
 
 import (
 	"database/sql"
@@ -78,13 +60,13 @@ import (
 // is data-scoped to the caller (the bot /meshes
 // command filters to env.PortalUserID; this page
 // does the same via c.UserID).
-func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	meshes, err := mesh.ListMeshesForUser(a.DB, c.UserID)
+	meshes, err := mesh.ListMeshesForUser(s.DB, c.UserID)
 	if err != nil {
 		log.Printf("web.my.meshes: ListMeshesForUser userID=%d err=%v", c.UserID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -97,12 +79,12 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 	rows := make([]myMeshRow, 0, len(meshes))
 	for _, m := range meshes {
 		row := myMeshRow{Mesh: m}
-		if name, _ := getUserNameByID(a.DB, m.CreatorUserID); name != "" {
+		if name, _ := getUserNameByID(s.DB, m.CreatorUserID); name != "" {
 			row.CreatorName = name
 		} else {
 			row.CreatorName = fmt.Sprintf("user#%d", m.CreatorUserID)
 		}
-		members, _ := mesh.ListMembers(a.DB, m.ID)
+		members, _ := mesh.ListMembers(s.DB, m.ID)
 		row.MemberCount = len(members)
 		row.MemberList = members
 		// v0.25.0 — fetch each member's per-user /24
@@ -119,7 +101,7 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 			q := "SELECT user_id, cidr FROM user_subnets WHERE user_id IN (?" +
 				strings.Repeat(",?", len(ids)-1) +
 				") AND status != 'disabled'"
-			cidrRows, err := a.DB.Query(q, ids...)
+			cidrRows, err := s.DB.Query(q, ids...)
 			if err == nil {
 				for cidrRows.Next() {
 					var uid int64
@@ -133,10 +115,10 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row)
 	}
-	a.renderWithLayout(w, r, "user/meshes.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "user/meshes.html", c, map[string]any{
 		"Meshes":       rows,
-		"FlashSuccess": translateMeshFlash(a, r, "ok", ""),
-		"FlashError":   translateMeshFlash(a, r, "err", ""),
+		"FlashSuccess": s.translateMeshFlash(r, "ok", ""),
+		"FlashError":   s.translateMeshFlash(r, "err", ""),
 	})
 }
 
@@ -145,8 +127,7 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 // localized message. The code is the value in
 // the URL; the translated text comes from the
 // i18n catalog (my_meshes.flash_* for success,
-// my_meshes.flash_err_* for errors). Special
-// values:
+// my_meshes.flash_err_* for errors). Special values:
 //
 //   - ok=created&code=<value>  →  the value is
 //     passed as a positional arg to the catalog
@@ -155,17 +136,16 @@ func (a *App) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 //     the mesh name (HTML-escaped in the template)
 //   - err=join_failed:&detail= →  the detail is
 //     appended to the translated error
-//
-// The queryArgs map carries the dynamic values
-// (code, name, detail). The code prefix is the
-// URL's ?ok= / ?err= value.
-func translateMeshFlash(a *App, r *http.Request, kind, fallback string) string {
+func (s *Service) translateMeshFlash(r *http.Request, kind, fallback string) string {
 	q := r.URL.Query()
 	raw := q.Get(kind)
 	if raw == "" {
 		return fallback
 	}
-	lang := a.I18n.LangFromRequest(r)
+	lang := ""
+	if s.I18n != nil {
+		lang = s.I18n.LangFromRequest(r)
+	}
 	// Build the i18n key. The catalog uses different
 	// prefixes for success (flash_) and error
 	// (flash_err_) so a code like "not_found" in the
@@ -179,28 +159,20 @@ func translateMeshFlash(a *App, r *http.Request, kind, fallback string) string {
 		key = "my_meshes.flash_err_"
 	}
 	key += raw
-	// Some flash codes carry a positional arg
-	// (the mesh code on create, the name on
-	// join, the error detail on join/create
-	// failure). We pull the arg from the same
-	// query string.
 	switch raw {
 	case "created":
-		// ok=created&code=<8-char>
 		code := q.Get("code")
 		if code == "" {
 			return i18n.T(lang, key)
 		}
 		return i18n.Tf(lang, key, code)
 	case "joined":
-		// ok=joined&name=<mesh-name>
 		name := q.Get("name")
 		if name == "" {
 			return i18n.T(lang, key)
 		}
 		return i18n.Tf(lang, key, name)
 	case "join_failed", "create_failed", "lookup_failed", "leave_failed", "list_failed":
-		// err=<code>&detail=<error message>
 		detail := q.Get("detail")
 		if detail == "" {
 			return i18n.T(lang, key)
@@ -214,8 +186,8 @@ func translateMeshFlash(a *App, r *http.Request, kind, fallback string) string {
 // PostMyMeshesCreate handles POST /my/meshes/create.
 // Form fields: name (string, required, max 64 chars).
 // The caller becomes the creator + first member.
-func (a *App) PostMyMeshesCreate(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostMyMeshesCreate(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -233,7 +205,7 @@ func (a *App) PostMyMeshesCreate(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/my/meshes?err=name_too_long", http.StatusFound)
 		return
 	}
-	m, err := mesh.CreateMesh(a.DB, c.UserID, name)
+	m, err := mesh.CreateMesh(s.DB, c.UserID, name)
 	if err != nil {
 		log.Printf("web.my.meshes: CreateMesh userID=%d err=%v", c.UserID, err)
 		http.Redirect(w, r,
@@ -241,7 +213,7 @@ func (a *App) PostMyMeshesCreate(w http.ResponseWriter, r *http.Request) {
 			http.StatusFound)
 		return
 	}
-	a.audit(c.UserID, c.Username, "mesh_create",
+	s.Backend.Audit(c.UserID, c.Username, "mesh_create",
 		fmt.Sprintf("mesh_id=%d name=%q code=%s", m.ID, m.Name, m.Code))
 	http.Redirect(w, r,
 		fmt.Sprintf("/my/meshes?ok=created&code=%s", m.Code),
@@ -253,8 +225,8 @@ func (a *App) PostMyMeshesCreate(w http.ResponseWriter, r *http.Request) {
 // upper-case + trimmed). On success: caller is added
 // to the mesh + per-plane ACL re-apply fires (same
 // path as the bot /mesh join handler).
-func (a *App) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -268,9 +240,7 @@ func (a *App) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/my/meshes?err=missing_code", http.StatusFound)
 		return
 	}
-	// Pre-lookup so the error messages are precise
-	// (ErrNotFound vs ErrDissolved vs success).
-	m, err := mesh.LookupByCode(a.DB, code)
+	m, err := mesh.LookupByCode(s.DB, code)
 	if err != nil {
 		if errors.Is(err, mesh.ErrNotFound) {
 			http.Redirect(w, r, "/my/meshes?err=not_found", http.StatusFound)
@@ -291,8 +261,8 @@ func (a *App) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
 	// re-apply is skipped too — wasted work). The
 	// surface error is "already_member" so the user
 	// knows they didn't change anything.
-	alreadyMember, _ := isMeshMember(a.DB, m.ID, c.UserID)
-	if err := mesh.JoinMesh(a.DB, code, c.UserID); err != nil {
+	alreadyMember, _ := isMeshMember(s.DB, m.ID, c.UserID)
+	if err := mesh.JoinMesh(s.DB, code, c.UserID); err != nil {
 		log.Printf("web.my.meshes: JoinMesh userID=%d code=%s err=%v",
 			c.UserID, code, err)
 		http.Redirect(w, r,
@@ -303,21 +273,21 @@ func (a *App) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
 	// Per-plane ACL re-apply (best-effort, async). The
 	// same pattern as the bot /mesh join handler in
 	// internal/telegram/commands_mesh.go. We use a
-	// closure that resolves a plane URL to a *headscale.Client
-	// (per the v0.13.0 per-plane pipeline): per-user
-	// override if the user is on a non-default plane,
-	// else the global default.
+	// closure that resolves a plane URL to a
+	// *headscale.Client (per the v0.13.0 per-plane
+	// pipeline): per-user override if the user is on
+	// a non-default plane, else the global default.
 	if !alreadyMember {
 		hsForPlane := func(planeURL string) *headscale.Client {
 			if planeURL == "" {
-				return a.HSGlobal()
+				return s.Backend.HSGlobalFn()
 			}
-			return a.HSForUser(c.UserID)
+			return s.Backend.HSForUserFn(c.UserID)
 		}
-		go webMeshACLReapply(a.DB, hsForPlane, c.UserID,
+		go s.webMeshACLReapply(hsForPlane, c.UserID,
 			fmt.Sprintf("mesh:%s:%d", m.Code, m.ID))
 	}
-	a.audit(c.UserID, c.Username, "mesh_join",
+	s.Backend.Audit(c.UserID, c.Username, "mesh_join",
 		fmt.Sprintf("mesh_id=%d name=%q code=%s", m.ID, m.Name, m.Code))
 	http.Redirect(w, r,
 		fmt.Sprintf("/my/meshes?ok=joined&name=%s", url.QueryEscape(m.Name)),
@@ -329,8 +299,8 @@ func (a *App) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
 // every active mesh the caller is in. With a code:
 // leave just that one mesh. The re-apply fires only
 // when at least one leave actually happened.
-func (a *App) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+func (s *Service) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -342,8 +312,7 @@ func (a *App) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(r.FormValue("code"))
 	var left int
 	if code == "" {
-		// Leave all active meshes.
-		meshes, err := mesh.ListMeshesForUser(a.DB, c.UserID)
+		meshes, err := mesh.ListMeshesForUser(s.DB, c.UserID)
 		if err != nil {
 			log.Printf("web.my.meshes: ListMeshesForUser userID=%d err=%v",
 				c.UserID, err)
@@ -353,7 +322,7 @@ func (a *App) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, m := range meshes {
-			if err := mesh.LeaveMesh(a.DB, m.Code, c.UserID); err != nil &&
+			if err := mesh.LeaveMesh(s.DB, m.Code, c.UserID); err != nil &&
 				!errors.Is(err, mesh.ErrNotMember) {
 				log.Printf("web.my.meshes: LeaveMesh userID=%d code=%s err=%v",
 					c.UserID, m.Code, err)
@@ -369,7 +338,7 @@ func (a *App) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		m, err := mesh.LookupByCode(a.DB, code)
+		m, err := mesh.LookupByCode(s.DB, code)
 		if err != nil {
 			if errors.Is(err, mesh.ErrNotFound) {
 				http.Redirect(w, r, "/my/meshes?err=not_found", http.StatusFound)
@@ -380,7 +349,7 @@ func (a *App) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 				http.StatusFound)
 			return
 		}
-		if err := mesh.LeaveMesh(a.DB, code, c.UserID); err != nil {
+		if err := mesh.LeaveMesh(s.DB, code, c.UserID); err != nil {
 			if errors.Is(err, mesh.ErrNotMember) {
 				http.Redirect(w, r, "/my/meshes?err=leave_not_member", http.StatusFound)
 				return
@@ -397,14 +366,14 @@ func (a *App) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 		// the mesh-mate CIDRs.
 		hsForPlane := func(planeURL string) *headscale.Client {
 			if planeURL == "" {
-				return a.HSGlobal()
+				return s.Backend.HSGlobalFn()
 			}
-			return a.HSForUser(c.UserID)
+			return s.Backend.HSForUserFn(c.UserID)
 		}
-		go webMeshACLReapply(a.DB, hsForPlane, c.UserID,
+		go s.webMeshACLReapply(hsForPlane, c.UserID,
 			fmt.Sprintf("mesh-leave:%s:%d", m.Code, m.ID))
 	}
-	a.audit(c.UserID, c.Username, "mesh_leave",
+	s.Backend.Audit(c.UserID, c.Username, "mesh_leave",
 		fmt.Sprintf("count=%d", left))
 	http.Redirect(w, r, "/my/meshes?ok=left", http.StatusFound)
 }
@@ -475,8 +444,7 @@ func getUserNameByID(d *sql.DB, id int64) (string, error) {
 // membership is durable; the operator can
 // retry the re-apply via the web UI
 // /admin/exit-rules/reapply.
-func webMeshACLReapply(
-	d *sql.DB,
+func (s *Service) webMeshACLReapply(
 	hsForPlane func(planeURL string) *headscale.Client,
 	callerUserID int64,
 	detailForLog string,
@@ -487,7 +455,7 @@ func webMeshACLReapply(
 	// same one ApplyACLForAllPlanes uses; the
 	// per-plane iteration mirrors the v0.13.0
 	// per-plane ACL pipeline.
-	planes, err := db.ListControlPlanes(d)
+	planes, err := db.ListControlPlanes(s.DB)
 	if err != nil {
 		log.Printf("web.my.meshes: ListControlPlanes err=%v", err)
 		return
@@ -498,6 +466,7 @@ func webMeshACLReapply(
 		// against "" (the global default's URL).
 		planes = []db.ControlPlaneUserCount{{URL: ""}}
 	}
+	_ = callerUserID
 	for _, p := range planes {
 		hs := hsForPlane(p.URL)
 		if hs == nil {
@@ -511,8 +480,6 @@ func webMeshACLReapply(
 		// already sent. The pipeline writes an
 		// acl_snapshots row + an exit_rule_log
 		// row; failures are logged in the pipeline.
-		_ = callerUserID
-		_ = p
 		// The call is per-plane; we use the global
 		// user-id=0 sentinel for HSForUser (the
 		// per-plane client lookup doesn't need a
@@ -520,7 +487,7 @@ func webMeshACLReapply(
 		// policy from the DB state, not the caller's
 		// identity.
 		go func(plane string) {
-			_ = acl.ApplyACLPipelineForPlane(d, hs, plane, nil,
+			_ = acl.ApplyACLPipelineForPlane(s.DB, hs, plane, nil,
 				"web:"+detailForLog,
 				"web re-apply on mesh membership change", false)
 		}(p.URL)

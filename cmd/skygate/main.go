@@ -266,16 +266,17 @@ func main() {
 	// the handler resolves the hostname to the user's
 	// device and stores the pref in device_exit_node_prefs.
 	mux.Handle("POST /my/devices/preferred-exit", authMW(http.HandlerFunc(app.PostMyDevicePreferredExit)))
-	// 2026-07-20: v0.22.0 — /my/meshes user-scope
-	// page (the WEB entry point for the mesh
+	// 2026-07-29: refactor-v0.30 Phase B step 5c —
+	// /my/meshes + 3 POST endpoints moved to feature/my.
+	// (Routes re-pointed after mySvc construction, see
+	// the block immediately above the Admin section.)
 	// workflow). The bot /mesh create|join|leave
 	// commands are the BOT entry point; both
 	// share the same internal/mesh package.
-	// Three POST routes: create, join, leave.
-	mux.Handle("GET /my/meshes", authMW(http.HandlerFunc(app.GetMyMeshes)))
-	mux.Handle("POST /my/meshes/create", authMW(http.HandlerFunc(app.PostMyMeshesCreate)))
-	mux.Handle("POST /my/meshes/join", authMW(http.HandlerFunc(app.PostMyMeshesJoin)))
-	mux.Handle("POST /my/meshes/leave", authMW(http.HandlerFunc(app.PostMyMeshesLeave)))
+	// Three POST routes: create, join, leave —
+	// refactor-v0.30 Phase B step 5c: now via mySvc
+	// (routes registered after mySvc construction, see
+	// below the /my/devices entry).
 
 	// Admin — small handlers (users, devices, subnets, invites,
 	// meshes, headscale-update-monitor, acls import/export) moved
@@ -420,6 +421,13 @@ func main() {
 	// 2026-07-29: refactor-v0.30 Phase B step 5b —
 	// /my/devices moved to feature/my.
 	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(mySvc.GetMyDevices)))
+	// 2026-07-29: refactor-v0.30 Phase B step 5c —
+	// /my/meshes + 3 POST endpoints (create / join /
+	// leave) moved to feature/my.
+	mux.Handle("GET /my/meshes", authMW(http.HandlerFunc(mySvc.GetMyMeshes)))
+	mux.Handle("POST /my/meshes/create", authMW(http.HandlerFunc(mySvc.PostMyMeshesCreate)))
+	mux.Handle("POST /my/meshes/join", authMW(http.HandlerFunc(mySvc.PostMyMeshesJoin)))
+	mux.Handle("POST /my/meshes/leave", authMW(http.HandlerFunc(mySvc.PostMyMeshesLeave)))
 
 	// Admin
 	// 2026-07-29: refactor-v0.30 Phase B step 5a —
