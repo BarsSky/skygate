@@ -148,7 +148,24 @@
     <tbody>
       {{range .MyNodes}}
       <tr>
-        <td><code>{{.Hostname}}</code></td>
+        <td>
+          <code>{{.Hostname}}</code>
+          {{/* 2026-07-29: per-device OS + device_type
+               badges inline next to the hostname. Skip
+               both badges when the auto-detect returned
+               "unknown" for both — i.e. the row hasn't
+               been auto-detected yet. The auto-detect
+               pass runs every /my/devices load, so a
+               both-unknown pair is transient. */}}
+          {{if or (ne .OS "unknown") (ne .DeviceType "unknown")}}
+            {{if ne .OS "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:4px" title="OS: {{.OS}}"><i class="fa-brands {{if eq .OS "windows"}}fa-windows{{else if eq .OS "macos"}}fa-apple{{else if eq .OS "linux"}}fa-linux{{else if eq .OS "android"}}fa-android{{else if eq .OS "ios"}}fa-apple{{else}}fa-circle-question{{end}}"></i></span>
+            {{end}}
+            {{if ne .DeviceType "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:2px" title="Тип: {{.DeviceType}}"><i class="fa-solid {{if eq .DeviceType "exit-node"}}fa-globe{{else if eq .DeviceType "subnet-router"}}fa-route{{else if eq .DeviceType "phone"}}fa-mobile-screen{{else if eq .DeviceType "server"}}fa-server{{else}}fa-desktop{{end}}"></i></span>
+            {{end}}
+          {{end}}
+        </td>
         <td class="mono">{{.IP}}</td>
         <td>
           {{if .Online}}

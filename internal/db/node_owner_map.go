@@ -1,4 +1,4 @@
-// Package db — node_owner_map helpers.
+﻿// Package db — node_owner_map helpers.
 //
 // Этап 10 part 4 (2026-07-12): moves the 17 raw SQL strings spread
 // across internal/handlers/*.go, internal/telegram/commands_*.go,
@@ -59,6 +59,18 @@ type NodeOwner struct {
 	TaggedByUserID  int64
 	TaggedAt        int64
 	Hostname        string
+	// OS + DeviceType are the per-device platform markers
+	// (e.g. "windows" / "android" / "client" / "exit-node").
+	// Filled by the auto-detect on the first /my/devices
+	// load after v0.31.x and editable by the admin via
+	// /admin/devices/{id}/meta. Empty string means
+	// "auto-detect has not run yet" (the value will be
+	// 'unknown' once it has, even if the detection found
+	// nothing).
+	//
+	// 2026-07-29: v0.31.x per-device OS + device_type.
+	OS         string
+	DeviceType string
 }
 
 // dbExec is the small subset of *sql.DB / *sql.Tx that every
@@ -83,10 +95,10 @@ func GetNodeOwner(d *sql.DB, nodeID string) (*NodeOwner, error) {
 	err := d.QueryRow(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
 		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
-		        COALESCE(hostname, '')
+		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
 		   FROM node_owner_map
 		  WHERE node_id = ?`, nodeID,
-	).Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname)
+	).Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname, &n.OS, &n.DeviceType)
 	if err == sql.ErrNoRows {
 		return nil, ErrNodeOwnerNotFound
 	}
@@ -132,7 +144,7 @@ func ListNodeOwnersByUsername(d *sql.DB, username string) ([]NodeOwner, error) {
 	rows, err := d.Query(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
 		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
-		        COALESCE(hostname, '')
+		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
 		   FROM node_owner_map
 		  WHERE username = ?
 		  ORDER BY tag, node_id`, username,
@@ -144,7 +156,7 @@ func ListNodeOwnersByUsername(d *sql.DB, username string) ([]NodeOwner, error) {
 	out := []NodeOwner{}
 	for rows.Next() {
 		var n NodeOwner
-		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname); err != nil {
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname, &n.OS, &n.DeviceType); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -160,7 +172,7 @@ func ListAllNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	rows, err := d.Query(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
 		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
-		        COALESCE(hostname, '')
+		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
 		   FROM node_owner_map
 		  ORDER BY COALESCE(tag, ''), COALESCE(username, ''), node_id`,
 	)
@@ -171,7 +183,7 @@ func ListAllNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	out := []NodeOwner{}
 	for rows.Next() {
 		var n NodeOwner
-		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname); err != nil {
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname, &n.OS, &n.DeviceType); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -188,7 +200,7 @@ func ListExitNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	rows, err := d.Query(
 		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
 		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
-		        COALESCE(hostname, '')
+		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
 		   FROM node_owner_map
 		  WHERE tag = 'tag:exit-node'
 		  ORDER BY COALESCE(username, ''), node_id`,
@@ -200,7 +212,7 @@ func ListExitNodeOwners(d *sql.DB) ([]NodeOwner, error) {
 	out := []NodeOwner{}
 	for rows.Next() {
 		var n NodeOwner
-		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname); err != nil {
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname, &n.OS, &n.DeviceType); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -659,3 +671,106 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 	}
 	return inserted, updated, nil
 }
+
+// SetDeviceMetaNodeOwner updates the os + device_type columns on
+// the row keyed by nodeID. If the row does not exist, this is
+// a no-op (the lazy backfill in handlers_node_ownership.go is
+// the canonical path to create the row first). The os +
+// device_type values are NOT validated here — callers pass
+// tokens from internal/devicemeta/ which has the canonical
+// vocabulary, and the schema accepts any TEXT.
+//
+// 2026-07-29: v0.31.x per-device OS + device_type metadata.
+// See migrations_v0.48.go for the schema addition and
+// internal/devicemeta/ for the auto-detect helpers.
+func SetDeviceMetaNodeOwner(d *sql.DB, nodeID, os, deviceType string) error {
+	_, err := d.Exec(
+		`UPDATE node_owner_map SET os = ?, device_type = ? WHERE node_id = ?`,
+		os, deviceType, nodeID,
+	)
+	return err
+}
+
+// SetDeviceMetaByHostname updates os + device_type for the row
+// matched by (headscale_user_id, hostname). Used by the admin
+// /admin/devices/{id}/meta handler when the admin edits a
+// device that has not yet been auto-detected (the nodeID may
+// not be a node_owner_map key for new devices, so we match
+// on the more stable username+hostname pair).
+//
+// Returns ErrNodeOwnerNotFound when no row matches.
+func SetDeviceMetaByHostname(d *sql.DB, headscaleUserID int64, hostname, os, deviceType string) error {
+	res, err := d.Exec(
+		`UPDATE node_owner_map SET os = ?, device_type = ?
+		   WHERE headscale_user_id = ? AND hostname = ?`,
+		os, deviceType, headscaleUserID, hostname,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNodeOwnerNotFound
+	}
+	return nil
+}
+
+// ListDeviceMetaMissing returns the (node_id, hostname) pairs
+// whose os OR device_type is still 'unknown' (i.e. the
+// auto-detect has not yet run, or it ran but returned
+// 'unknown' for both). Used by the /my/devices auto-detect
+// path: for each row in the result, call Detect() with the
+// headscale node tags + approved routes and write the result
+// back via SetDeviceMetaNodeOwner.
+//
+// 2026-07-29: v0.31.x.
+func ListDeviceMetaMissing(d *sql.DB) ([]NodeOwner, error) {
+	rows, err := d.Query(
+		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
+		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
+		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
+		   FROM node_owner_map
+		  WHERE (os = '' OR os = 'unknown')
+		     OR (device_type = '' OR device_type = 'unknown')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeOwner
+	for rows.Next() {
+		var n NodeOwner
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname, &n.OS, &n.DeviceType); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// UpdateDeviceMetaAutoDetect writes the auto-detected os +
+// device_type for a node, but ONLY if both columns are still
+// 'unknown' or empty. This is the "first auto-detect wins" rule:
+// once the admin has set a value (even to 'unknown' explicitly),
+// the auto-detect does not clobber it.
+//
+// 2026-07-29: v0.31.x.
+func UpdateDeviceMetaAutoDetect(d *sql.DB, nodeID, os, deviceType string) error {
+	// The WHERE clause: only update if os is unset AND
+	// device_type is unset. The admin can re-enable the
+	// auto-detect by setting both columns to 'unknown'
+	// via the admin override form, then waiting for the
+	// next /my/devices load to re-run Detect().
+	_, err := d.Exec(
+		`UPDATE node_owner_map
+		    SET os = ?, device_type = ?
+		  WHERE node_id = ?
+		    AND (os = '' OR os = 'unknown')
+		    AND (device_type = '' OR device_type = 'unknown')`,
+		os, deviceType, nodeID,
+	)
+	return err
+}
+
