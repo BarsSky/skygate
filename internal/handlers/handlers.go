@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/controlplane"
 	"skygate/internal/db"
 	"skygate/internal/expirewatch"
 	"skygate/internal/headscale"
@@ -68,8 +68,14 @@ type App struct {
 	// https://${ControlURL-host}:50445/admin/.
 	HeadplaneExternalURL string
 	SecretKeyHex string
-	hsCache   map[string]*headscale.Client
-	hsCacheMu sync.Mutex
+	// refactor-v0.30 Phase D3 (2026-07-29): the
+	// per-user control plane routing (HSForUser,
+	// HSGlobal, PlaneURLForUser, InvalidateHSCache)
+	// moved to internal/controlplane/router.go. The
+	// App still owns a *Router for the per-request
+	// routing; the cache + mutex moved into the
+	// Router type itself.
+	Router *controlplane.Router
 
 	// 2026-07-15: v0.14.0 — release-monitor reference. The
 	// /dashboard banner reads ReleaseMonitor.Snapshot() to
@@ -312,8 +318,20 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		// StartedAt is set below.
 		InstanceID: getenvOr("SKYGATE_INSTANCE_ID", "unconfigured"),
 		StartedAt:  time.Now().UTC(),
+		// refactor-v0.30 Phase D3 (2026-07-29): the
+		// per-user control plane routing is now a
+		// separate *controlplane.Router owned by the
+		// App. The old hsCache + hsCacheMu fields +
+		// the *App.HSForUser / HSGlobal / PlaneURLForUser
+		// / InvalidateHSCache / InitHSForUserState
+		// methods have all moved to that type. The
+		// App keeps thin delegate methods (see
+		// app_controlplane.go) so existing callers
+		// (handlers_export.go, app_controlplane_test.go)
+		// keep working.
+		Router: controlplane.New(d, secret, hs),
 	}
-	a.InitHSForUserState()
+	a.Router.Init()
 	return a
 }
 
