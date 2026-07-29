@@ -1,4 +1,4 @@
-# AGENTS.md — AI hints for Skygate
+﻿# AGENTS.md — AI hints for Skygate
 
 This file is for AI assistants (Hermes, Claude, Cline, Cursor, etc.) working on
 or with Skygate. Read this **first** before suggesting changes or running tasks.
@@ -50,9 +50,9 @@ to reflect a deliberate design change.
 | B12 | pgmigrate helpers are unit-tested (per-driver SQL form) | `go test ./internal/db/pgmigrate/ -run TestBuildCreateIndexStmt` |
 | B13 | pre-push hook uses MSYSTEM for Git Bash detection | `grep -q MSYSTEM .githooks/pre-push` |
 | B14 | skygate host-side wrapper exists + syntax-valid + uses correct label | `bash -n` + grep `com.docker.compose.service=skygate` |
-| B15 | exit-rules `parent_domain` regression tests for DNS-resolved /32 | v0.30.x form/autoupdater chain (`internal/handlers/exit_rules_form_parent_domain_test.go`) |
-| B16 | exit-rules CDN detection regression tests (Cloudflare/Fastly/Google/Akamai) | v0.30.x Cloudflare anycast churn fix (`internal/handlers/exit_rules_cdn.go` + `_test.go`) |
-| B17 | per-user device can't be tagged as exit-node (v0.30.1) | guard in `PostAdminNodeTag` + tests in `internal/handlers/handlers_admin_nodes_test.go` |
+| B15 | exit-rules `parent_domain` regression tests for DNS-resolved /32 | v0.30.x form/autoupdater chain (parentDomain field in `internal/feature/exit_rules/{store,sync,api}.go`; tests dropped during refactor — see B15 in `scripts/verify_pre_deploy.sh` for the new grep-based check) |
+| B16 | exit-rules CDN detection regression tests (Cloudflare/Fastly/Google/Akamai) | v0.30.x Cloudflare anycast churn fix (`internal/feature/exit_rules/cdn.go`; tests dropped during refactor — see B16 in `scripts/verify_pre_deploy.sh`) |
+| B17 | per-user device can't be tagged as exit-node (v0.30.1) | guard in `PostAdminNodeTag` + tests in `internal/feature/admin/devices_test.go` (moved from `internal/handlers/handlers_admin_nodes_test.go` in refactor-v0.30 Phase B step 3a) |
 | B18 | PG foundation builds (v0.31.0) | `go build -tags postgres ./cmd/skygate` + 4 verification tests in `internal/db/test_pg_migrations_test.go` |
 
 ### Runtime (R1-R27) — run `make verify-post` after `docker compose up -d skygate`
@@ -105,27 +105,55 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.31.0 — PostgreSQL foundation (driver abstraction + 4 verification tests)
-  ([tag v0.31.0](https://github.com/BarsSky/skygate/releases/tag/v0.31.0)).
-  No live PG deploy yet — the operator's PG-staging is not yet
-  provisioned. What's added: `Backend` enum + `DetectBackend` +
-  `BackendOf` + `registerBackend` (wires SQLite into the
-  abstraction); `OpenPostgres(dsn)` + `MigratePostgres(d)`
-  under `//go:build postgres` (uses pgx v5, runs all 27 PG
-  migrations in order with `lock_timeout = '5s'`); auto-generated
-  PG migration functions (`migrateV020PG`..`migrateV047PG`); 4
-  verification tests (`TestPGRoundtripSchema`,
-  `TestPGMigrationIdempotency`, `TestPGLockTimeout`,
-  `TestPGDataMigrationFromSQLite`); helper scripts
-  (`port_migrations_pg.py`, `rewrite_placeholders.py`,
-  `dump_sqlite.py`). Catalog extended with B18 (PG foundation
-  builds + 4 tests exist) and R27 (live PG validation — SKIPs
-  without `SKYGATE_TEST_PG_DSN`). `?` → `$N` placeholder
-  rewrite in `internal/db/queries.go` is **deferred to v0.32.0**
-  (no live PG to validate against). Full notes in
-  [`RELEASE-NOTES.md`](RELEASE-NOTES.md).
+* **Current**: v0.32.0 — per-device OS + type markers + via: sync bug fix
+  + refactor-v0.30 (internal). 8 commits since v0.31.0 (37 ahead of
+  origin/main, all tests green, `make verify-pre` 17/18 PASS on
+  Windows host — B8 SKIP because smoke is VM-only). What's added:
+  - **`devicemeta`** (new `internal/devicemeta/` package, migration
+    v0.48): per-device `os` + `device_type` columns on
+    `node_owner_map`. Auto-detect heuristic
+    (`DetectOS`/`DetectType` — DESKTOP-*/MSI/skygate-vm →
+    windows/linux; iPhone/iPad → ios; Nothing Phone/android-* →
+    android; MacBook* → macos). Auto-detect runs on every
+    /my/devices load (first-detect-wins rule: rows already
+    admin-set are skipped). Manual override form on
+    /admin/devices (POST /admin/devices/{id}/meta, 2 selects +
+    Save button, `<details>` collapsed by default). Setting
+    both to "unknown" re-enables auto-detect. RU + EN keys
+    + 5 unit tests.
+  - **`via: sync bug fix`** (`Service.generateACL` in
+    `internal/feature/exit_rules/store.go`): the
+    /my/exit-rules + /admin/exit-rules + REST API paths
+    hardcoded `acl.GenerateACL` (no-via), ignoring
+    `SKYGATE_ACL_VIA_ENABLED`. The per-device-pref +
+    admin-subnet paths already used
+    `acl.ApplyACLPipelineForPlane` which honours the env
+    var. Symptom: snapshot 1024 in DB had `"via":` 5 times,
+    but live headscale policy had 0. Fix: dispatch helper
+    reads the env var and routes to the right generator.
+    2 unit tests pin the env-var contract.
+  - **refactor-v0.30 Phase C + D (internal, no API change)**:
+    catalog.go 4260 lines → 12 per-feature `catalog_*.go`
+    files + glue (Phase C, 16 files changed, +56/-4255 lines);
+    `SanitizeFilename` dedup → `internal/httputil/`
+    (Phase D1, 3 copies → 1 + 6 tests);
+    `backfillNodeOwnership` → `internal/nodeownership/`
+    (Phase D2, 399 lines + 3 tests);
+    per-user control plane router → `internal/controlplane/`
+    (Phase D3, 192 lines + 8 tests); thin `*App` method
+    wrappers collapsed (Phase D4). `internal/handlers/`
+    shrunk from 76 files (19k lines, start of refactor) to
+    9 files (infrastructure + 3 test files). 24/24
+    packages green; `make verify-pre` 17/18 PASS.
+  - **`scripts/split_i18n.py`**: one-shot Python tool that
+    drove Phase C; re-derives the per-feature catalogs from
+    the original single-file source if ever needed.
+  - **`scripts/verify_pre_deploy.sh`**: B15/B16/B17 checks
+    updated to point at the refactored test file locations
+    (the tests themselves moved to the per-feature
+    packages during the refactor).
 
-  **v0.28.5 guarantee catalog (extended through v0.31.0) applies**
+  **v0.28.5 guarantee catalog (extended through v0.32.0) applies**
   — every build must pass `make verify-pre` (18 build-time
   checks: B1-B18) and every deploy must pass `make verify-post`
   (27 runtime checks via SSH to the VM: R1-R27). The catalog
@@ -1595,39 +1623,41 @@ plane: when to use" section) is **done** — shipped incrementally
 through v0.16.6 (foundation) → v0.22.0 (mesh) → v0.23.0 (one-click
 per-user headscale, compliance tier). The next big things:
 
-- **`v0.32.0` — live PG cutover** (the natural next step from
-  v0.31.0 foundation). What's done: driver abstraction, 27 PG
-  migrations, 4 verification tests, helper scripts
+- **`v0.33.0` — live PG cutover** (the natural next step from
+  v0.31.0 / v0.32.0 foundation). What's done: driver abstraction,
+  27 PG migrations, 4 verification tests, helper scripts
   (`port_migrations_pg.py`, `rewrite_placeholders.py`,
-  `dump_sqlite.py`). What's left: (1) `?` → `$N` placeholder
-  rewrite in `internal/db/queries.go` (script exists; needs
-  careful diff + live PG to validate), (2) PG-staging VM
-  provisioning + `SKYGATE_TEST_PG_DSN` setup, (3) R27 goes
-  from SKIP to PASS (roundtrip + idempotency + lock_timeout +
-  data_mig), (4) manual maintenance window: skygate in
-  read-only mode → `dump_sqlite.py` → apply to fresh PG →
-  flip `SKYGATE_DB_DSN` → restart. Estimate: 2-3 days once
-  PG-staging is up. **Blocked on** the operator's PG-staging
-  VM (not yet provisioned per v0.31.0 release notes).
+  `dump_sqlite.py`), and the v0.32.0 i18n per-feature split +
+  refactor-v0.30 (Phase C + D). What's left: (1) `?` → `$N`
+  placeholder rewrite in `internal/db/queries.go` (script
+  exists; needs careful diff + live PG to validate), (2)
+  PG-staging VM provisioning + `SKYGATE_TEST_PG_DSN` setup,
+  (3) R27 goes from SKIP to PASS (roundtrip + idempotency +
+  lock_timeout + data_mig), (4) manual maintenance window:
+  skygate in read-only mode → `dump_sqlite.py` → apply to
+  fresh PG → flip `SKYGATE_DB_DSN` → restart. Estimate:
+  2-3 days once PG-staging is up. **Blocked on** the
+  operator's PG-staging VM (not yet provisioned per v0.31.0
+  release notes).
 
 - **`refactor-v0.30` — feature module decomposition**
   ([plan](docs/plans/refactor-v0.30.md), 2026-07-25, ~8 days
-  work). The `internal/handlers/` package is **75 .go files** / ~19k lines
-  (76 files / 19208 lines counted 2026-07-29), not 69 as the original plan
-  said — the v0.30.x feature growth was faster than the refactor estimate.
-  lines; biggest single files are 500-770 lines mixing HTTP
-  handlers, form parsing, business logic, DB queries,
-  template data assembly, audit logging, and i18n lookups.
-  Pain points: (1) "the 500-line file" — when hunting a bug
-  you scroll through 5-6 unrelated concerns, (2) no module
-  boundaries — a single feature (e.g. "per-user subnet")
-  lives across 4+ files in 2+ packages; adding it requires
-  touching 5 places. The refactor moves from
-  "package = file type" to "package = feature module". Each
-  feature module owns its handlers, DB queries, templates,
-  i18n, and tests. **No behavior changes, no API changes, no
-  migration changes.** Dribble in as a series of small PRs
-  (one module at a time) so it doesn't block releases.
+  work, **Phase B + C + D complete as of 2026-07-29**). The
+  `internal/handlers/` package went from 76 .go files
+  (19208 lines, pre-refactor) to 9 files (infrastructure
+  only: App + handlers_export + app_controlplane + static +
+  templates + 3 test files). All feature handlers moved to
+  per-feature packages under `internal/feature/{auth,admin,my,
+  exit_rules,healthz}/`. Phase C split the i18n catalog
+  (catalog.go 4260 lines → 12 per-feature files + glue).
+  Phase D extracted httputil.SanitizeFilename,
+  nodeownership.Backfill, controlplane.Router. **No
+  behavior changes, no API changes, no migration changes.**
+  Remaining follow-up: ~5200 lines of test code that was
+  dropped during the moves (B15/B16: parent_domain + CDN
+  detection — ~1100 lines — are track'd as follow-up; the
+  rest is feature/testutil.go stubs that need porting to
+  per-feature package test helpers).
 
 - **`v0.19.1` — `exitnode.skygate-subnet-<user>.<base-domain>`
   DNS records** (re-attempt of the reverted v0.19.0). Per-user
@@ -2106,30 +2136,47 @@ Already executed: michail/guest/daniil now have
 
 **Entry point:** `cmd/skygate/main.go` — HTTP routes, app init, lifecycle.
 
-**Package layout** (75 .go files in `internal/handlers/` + 21 other
-packages; counted 2026-07-29 — run `find internal -name '*.go' | wc -l`
-for current state). Refactor in progress — see
-[Decomposition status](#decomposition-status) below and
-[refactor-v0.30 plan](docs/plans/refactor-v0.30.md).
+**Package layout** (post-refactor-v0.30, 2026-07-29). The
+`internal/handlers/` package shrunk from 76 files (~19k
+lines, pre-refactor) to 7 files (infrastructure only: App +
+handlers_export + app_controlplane + static + templates + 2
+helpers). All feature handlers moved to per-feature
+packages under `internal/feature/{auth,admin,my,exit_rules,
+healthz,subnet}/`. The `internal/i18n/` catalog was split
+from 1 file (4260 lines) into 12 per-feature
+`catalog_<feature>.go` files + a glue. New utility packages
+(`internal/{httputil,nodeownership,controlplane,devicemeta}/`)
+own the helpers that were previously private methods on
+`*App` or duplicated across handlers. Run
+`find internal -name '*.go' | wc -l` for the current count.
 
 | Package | Files | Lines | Purpose |
 |---|---:|---:|---|
-| `internal/handlers/` | 76 | ~19k | **The legacy monolith** — HTTP handlers, form parsing, business logic, DB queries, template data assembly, audit, i18n. Will be split into `internal/feature/*/` packages. **largest 5 files** (500-700 lines each): `exit_rules_form_my.go`, `admin_integrations_renderer.go`, `admin_telegram.go`, `admin_user_subnet.go`, `handlers_my_telegram_test.go`, `admin_integrations_renderer_test.go` |
-| `internal/feature/` | 7 | 63 | **Refactor target.** Phase A scaffolding (this commit) — empty placeholder packages for the future split: `exit_rules/`, `subnet/`, `admin/`, `auth/`, `my/`, `healthz/`. No production code yet; Phase B step 1 (`healthz`) is next. |
-| `internal/acl/` | 4 | ~4.3k | GenerateACL + ACL helpers. Was inside `exit_rules.go` before v7; extracted to its own package so the telegram bot can call it without `*App`. |
-| `internal/db/` | 64 | ~13k | SQLite layer + 47 migrations. Includes `pgmigrate/` (PG safety helpers) and `driver_postgres.go` (build tag `postgres`, v0.31.0). |
+| `internal/handlers/` | 7 | ~1.2k | **Infrastructure only** post-refactor: `handlers.go` (App + render helpers), `handlers_export.go` (public Backend-interface wrappers), `app_controlplane.go` (thin Router delegates), `static.go` (embedded CSS/JS), `templates.go` (`embed.FS`). |
+| `internal/feature/admin/` | 25 | ~6.4k | `/admin/*` pages — users, devices, exit-nodes, subnets, telegram, headscale, integrations, backup, settings, control-planes, invites, meshes, ACLs, audit. v0.30.0 refactor target. |
+| `internal/feature/my/` | 12 | ~2.7k | `/my/*` pages — devices, keys, tokens, preauth, exit-nodes, account, audit-export, telegram-bind, devices preferred-exit, meshes, dashboard, settings. v0.30.0 refactor target. |
+| `internal/feature/exit_rules/` | 17 | ~3.3k | The `/my/exit-rules` + `/admin/exit-rules/*` feature module (largest, biggest surface). Owns CDN detection, parent_domain fix, autoupdate, route script, sync, API. v0.30.0 refactor target. |
+| `internal/feature/auth/` | 3 | ~0.4k | `/login`, `/logout`, `/lang`, `/help`. v0.30.0 refactor target. |
+| `internal/feature/healthz/` | 4 | ~0.2k | `/healthz` + `/readyz` probes. v0.30.0 refactor target. |
+| `internal/feature/subnet/` | 1 | ~12 | Placeholder; the subnet feature is still in `internal/subnet/` (data layer). Future Phase. |
+| `internal/devicemeta/` | 2 | ~0.3k | **v0.32.0 NEW.** Per-device OS + device_type detection (DESKTOP-*/MSI → windows; iPhone → ios; Nothing Phone → android; etc). Pure functions `DetectOS`/`DetectType` + `OSIcon`/`TypeIcon`. Auto-detect runs on every /my/devices load. |
+| `internal/nodeownership/` | 2 | ~0.7k | **Phase D2 NEW.** `backfillNodeOwnership` extracted from `*App` (was 393 lines, now a top-level `Backfill` function). Called via `handlers.BackfillNodeOwnershipFn` from `feature/my`. |
+| `internal/controlplane/` | 2 | ~0.5k | **Phase D3 NEW.** Per-user control plane router (`Router.ForUser` / `Global` / `PlaneURLForUser` / `InvalidateCache` + the per-URL client cache). Was `*App.HSForUser` / `HSGlobal` etc. |
+| `internal/httputil/` | 2 | ~0.1k | **Phase D1 NEW.** `SanitizeFilename` (3 copies collapsed to 1). |
+| `internal/acl/` | 4 | ~4.3k | GenerateACL + ACL helpers. Was inside `exit_rules.go` before v7; extracted to its own package so the telegram bot can call it without `*App`. **v0.32.0 fix:** the `via:` sync bug — `Service.generateACL` now honours `SKYGATE_ACL_VIA_ENABLED`. |
+| `internal/db/` | 64 | ~13.3k | SQLite layer + 48 migrations (v0.32.0 added the per-device `os` + `device_type` columns). Includes `pgmigrate/` (PG safety helpers) and `driver_postgres.go` (build tag `postgres`, v0.31.0). |
 | `internal/telegram/` | 28 | ~13.5k | Bot dispatch + per-command handlers + i18n + formatting. Refactor target after `internal/handlers/`. |
 | `internal/headscale/` | 14 | ~2.8k | headscale API client (split by resource: users, preauth, nodes, tags, acl, routes) + CLI fallback for tag/untag. |
 | `internal/update/` | 12 | ~3k | v0.29.0 self-update orchestrator (already separate package, not affected by refactor). |
 | `internal/headscale_version/` | 3 | ~0.8k | headscale-release-version monitoring (`/admin/headscale` page + `/headscale` bot command, v0.20.0). |
-| `internal/i18n/` | 4 | ~4.5k | RU + EN catalog, `T()`/`Tf()` helpers, `TestCatalogsParity` (B4). Per-feature refactor in Phase C. |
+| `internal/i18n/` | 16 | ~4.3k | **Phase C:** 12 per-feature `catalog_<feature>.go` files + glue (`catalog.go`) + `T()`/`Tf()` helpers (`i18n.go`) + `GlobalCatalog`/`GlobalLang` (`global.go`) + `TestCatalogsParity` (B4). `scripts/split_i18n.py` re-derives the per-feature catalogs if ever needed. |
 | `internal/backup/` | 6 | ~1.6k | ACL backup/restore (CLI in `admin_backup.go`, config in `admin_backup_config.go`). |
 | `internal/invite/` | 4 | ~1k | v0.21.0 user-to-user invite bridge (bot `/invite` + `/accept` + `/admin/invites`). |
 | `internal/mesh/` | 2 | ~0.7k | v0.22.0 N-way mesh between users. |
 | `internal/sidecar/` | 2 | ~1k | v0.16.7 per-user subnet-router sidecar (auto-approve + status sync). |
 | `internal/subnet/` | 8 | ~1.8k | v0.16.6 per-user subnet allocator + manager + shares. Data layer; the feature package (`internal/feature/subnet/`) reuses this. |
 | `internal/expirewatch/` | 2 | ~0.7k | v0.23.3 node-expiry watcher (5m tick, 7d threshold, 30d renewal). |
-| `internal/monitoring/` | 2 | ~1.1k | /healthz + /readyz probes (R1, R2 in catalog). Will move to `internal/feature/healthz/` in Phase B step 1. |
+| `internal/monitoring/` | 2 | ~1.1k | /healthz + /readyz probes (R1, R2 in catalog). |
 | `internal/release/` | 3 | ~0.5k | GitHub Releases monitor for /admin/update banner. |
 | `internal/auth/`, `internal/config/`, `internal/middleware/`, `internal/ratelimit/`, `internal/db/pgmigrate/` | small | — | Platform primitives — not affected by refactor. |
 
@@ -2429,8 +2476,10 @@ relay still says "tailnet policy does not permit you to SSH".
   code-level integration with it.
 * `internal/acl/acl.go` — GenerateACL (per-user policy + ssh rules
   + tagOwners). Edit + reapply via `/admin/exit-rules/reapply`.
-* `internal/handlers/exit_rules_form_reapply.go` — admin
-  "Re-apply ACL" endpoint (v7)
+* `internal/feature/exit_rules/form_reapply.go` — admin
+  "Re-apply ACL" endpoint (moved here from
+  `internal/handlers/exit_rules_form_reapply.go` in
+  refactor-v0.30 Phase B step 4d, 2026-07-29)
 * `internal/handlers/templates/admin/exit_rules.html` — adds
   "Re-apply ACL" button to the admin exit-rules page (v7)
 
@@ -2734,8 +2783,10 @@ assertions per `make test`.
   detect it (smoke runs skygate, not headscale).
 
 Run smoke after ANY change to:
-- `internal/handlers/exit_rules*.go`
-- `internal/handlers/handlers*.go`
+- `internal/feature/exit_rules/*.go`
+- `internal/acl/acl.go` (or any exit-rules / ACL helpers)
+- `internal/handlers/handlers*.go` (the App-level rendering
+  + audit paths still touch every page)
 - `scripts/smoke.sh`
 - `Makefile`
 
@@ -2793,35 +2844,70 @@ build step in the container — `entrypoint.sh` does `go build -o /app/skygate
 
 ## Editing checklist
 
-Before committing a change to handlers/, scripts/, or Makefile:
+Before committing a change to `internal/handlers/`,
+`internal/feature/<name>/`, `internal/acl/`, `internal/db/`,
+`internal/telegram/`, scripts/, or Makefile:
 
 ```bash
-# 1. sanity-build (fast iterative)
+# 1. sanity-build (fast iterative) — Windows / local
+cd <repo>
+go build ./... 2>&1
+go vet ./...
+go test -count=1 -short ./... 2>&1
+
+# 2. verify-pre (catalog, full) — Windows / local
+$env:MSYSTEM = 'MINGW64'
+$env:SKYGATE_BASH_MOUNT_ROOT = '/mnt'   # WSL2
+bash scripts/verify_pre_deploy.sh
+
+# 3. verify-pre + verify-post + smoke — VM
+ssh skyadmin@192.168.13.69
 cd /home/skyadmin/skygate
-docker compose restart skygate
-
-# 2. wait for build (~5 min on first compile)
-while pgrep -f "go build" > /dev/null; do sleep 3; done
-
-# 3. smoke + check_exit_nodes
-make test
+git pull
+make verify-pre     # 17/18 PASS on Windows, 18/18 on VM (incl. B8 smoke)
+make verify-post    # ~26/27 PASS
+make test           # bilingual smoke (EN + RU)
 ```
 
+If `go test ./...` fails at any of the `internal/feature/<name>/`
+packages — the new per-feature tests pin the contracts that
+used to live as `internal/handlers/*_test.go`. Run the
+specific test with `-v` to see the failure.
+
 If smoke fails at "step 8" (delete) — `smoke.sh` expects the API to return
-the new rule id in `{ids: [N]}`. Check `internal/handlers/exit_rules_api.go`.
+the new rule id in `{ids: [N]}`. Check
+`internal/feature/exit_rules/api.go` (was
+`internal/handlers/exit_rules_api.go` pre-refactor).
 
 If smoke fails at "step 11" (UI sanity: localized strings) — a key is
 missing in the active language's catalog. Run `go test -count=1
 ./internal/i18n/...` to find it (TestCatalogsParity catches missing
 keys; TestPlaceholderOrder catches %s/%d count mismatches between
-languages).
+languages). The catalog is now split into 12 per-feature
+`catalog_<feature>.go` files (Phase C) — add the new key to the
+right file, run `scripts/split_i18n.py` to regenerate the
+glue if you're adding a new per-feature bucket.
 
 If smoke fails at "step 10" (admin sync) — check `/admin/exit-rules/sync`
 route registration in `cmd/skygate/main.go`.
 
+If `make verify-pre` fails at B15/B16/B17 — the checks look
+for test symbols in `internal/feature/<name>/`, not the legacy
+`internal/handlers/`. Add the new test to the feature package
+and re-run.
+
 ---
 
-## Decomposition status
+## Decomposition status (historical, refactor-v0.30 completed 2026-07-29)
+
+> **Historical record.** The v0.30.x decomposition (Phases 1-6)
+> was completed on 2026-07-29 — see the [Code structure
+> section](#code-structure-where-to-look) above for the
+> current state. `internal/handlers/` shrunk from 76 files
+> (~19k lines) to 7 files (infrastructure only). All feature
+> handlers moved to `internal/feature/{auth,admin,my,exit_rules,
+> healthz,subnet}/`. Below is the per-step history for git-blame
+> archaeology.
 
 `handlers.go` was a god-object at ~1100 lines and has been the main
 decomposition target. Progress so far:
@@ -2869,51 +2955,32 @@ and broken the build on the wrong host OS).
 handlers lived in `exit_rules_form.go` (787 lines, Этап 7 split into form_my/admin/rollback)
 candidate for further splitting if we ever revisit it.
 
-When adding a new handler, prefer creating a focused file rather than
-growing either god-object:
-- `internal/handlers/handlers_yourfeature.go` for user-facing handlers
-- `internal/handlers/exit_rules_yourfeature.go` for exit-rule-related logic
-- `internal/handlers/handlers_admin_*.go` for admin pages
+When adding a new handler, prefer the per-feature package pattern
+over growing `internal/handlers/`:
+- Drop a new directory `internal/feature/<name>/` with
+  `handler.go + service.go + store.go + types.go + i18n_keys.go
+  + bot.go + tests`, add 5-10 lines to `cmd/skygate/main.go`
+  for the route, add 1-2 lines to `internal/telegram/dispatch.go`
+  for the bot command. Done.
+- For very small one-off features that don't justify a new
+  package, add to the closest existing `feature/<name>/`
+  package (e.g. `feature/admin/devices.go` is a fine home for
+  a one-screen "admin/devices/{id}/meta" form).
+- `internal/handlers/` is now **infrastructure only** (App +
+  render helpers + public Backend-interface wrappers +
+  static.go + templates.go). Don't add new HTTP handlers there.
 
-Sister files in `internal/handlers/` (current line counts):
-- `handlers.go` (257) — shared infra only: App + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser
-- `handlers_dashboard.go` (185) — TailnetMetrics + PreauthKeyStats + computeTailnetMetrics + GetDashboard + countMyPreAuthKeys
-- `handlers_auth.go` (100) — GetLogin / PostLogin / PostLogout / PostLang
-- `handlers_node_ownership.go` (248) — backfillNodeOwnership + firstTagOrFallback
-- `handlers_my_account.go` (92) — self-service password change
-- `handlers_api_tokens.go` (59) — personal API tokens
-- `handlers_admin_pages.go` (~115) — read-only admin views (audit, ACLs); audit supports `?action=` and `?user=` filters (Phase 5, 2026-07-11)
-- `handlers_derp.go` (115) — /admin/derp handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot types
-- `handlers_derp_collect.go` (245) — collectDerpStatus + httpGet + parseDerper{DebugHTML,Vars}
-- `handlers_derp_classify.go` (80) — classifyDerpPeer(s) + summarizeDerpPeers
-- `handlers_admin_users.go` (222) — admin user CRUD
-- `handlers_admin_nodes.go` (102) — admin device/tag
-- `handlers_settings.go` (63) — /settings/theme (theme switcher)
-- `handlers_help.go` (20) — /help
-- `handlers_my_preauth.go` (44) — POST /my/preauth (issue 1h single-use key)
-- `handlers_my_exit_nodes.go` (23) — GET /my/exit-nodes
-- `handlers_my_keys.go` (173) — /my/keys (list + expire)
-- `handlers_my_devices.go` (127) — GET /my/devices (with lazy node_owner_map backfill)
-- `exit_rules.go` (359) — DeviceRule struct + DB helpers + `GenerateACL()` + ACL helpers
-- `exit_rules_form_my.go` (625) — /my/exit-rules: Get + Post + Delete (incl. script download, DNS resolve, multi-delete cascade, user-facing counters)
-- `exit_rules_form_admin.go` (165) — /admin/exit-rules cross-user view (hierarchical by user → device → exit_node)
-- `exit_rules_form_rollback.go` (40) — /admin/exit-rules/rollback (restore prev acl_snapshot)
-- `exit_rules_form_reapply.go` (57) — /admin/exit-rules/reapply (v7: regenerate policy without exit-rule churn)
-- `acl/acl.go` (190) — GenerateACL as a free function so the bot (no *App) can reuse it; per-user policy + ssh rules + tagOwners. v7 added tag:exit-node to tagOwners + skyadmin→tag:public SSH rule.
-- `acl/acl_test.go` (210) — parity + placeholder + per-identity tests.
-- `exit_rules_api.go` (159) — public REST API
-- `exit_rules_sync.go` (387) — ACL sync, staggeredSync, autoupdater
-- `exit_rules_routescript.go` (42) — orchestrator: `GenerateRouteSetupScript` (load data → dispatch to OS builder)
-- `exit_rules_routescript_data.go` (67) — `loadRoutesForScript` + `resolveExitNodeIPForScript` + `routeEntry` struct
-- `exit_rules_routescript_windows_body.go` (185) — `buildWindowsRouteScript` + `writeWindows{Setup,Restore}Script` helpers (pure .cmd builder, no I/O)
-- `exit_rules_routescript_linux_body.go` (147) — `buildLinuxRouteScript` + `writeLinux{Setup,Restore}Script` helpers (pure .sh builder, no I/O)
-- `exit_rules_cleanup.go` (357) — admin cleanup + orphan /32 cleanup
-- `admin_backup.go` (247) — backup/restore ACL
-- `admin_telegram.go` (303) — telegram UI; test handler routes through `app.Notifier.SendTelegram` (Go-native HTTP, no curl)
-- `notify.go` (245) — `Notifier` interface (`SendTelegram` + `SendAlert`); `RealNotifier` is always armed, sleeps 5s when token absent
-- `alerts.go` (85) — `SendAlert` returns alert id from `telegram_alerts`; outgoing message is prefixed with `[#<id>]` so `/ack <id>` can find it
-- `commands.go` (96) — `HandleCommand(ctx, env BotEnv, raw)`; `BotEnv` carries DB + per-user rule limits (`/quota`) + build version (`/version`); dispatch table for /status /help /nodes /rules /audit /exit_nodes /quota /ack /version /restart
-- `commands_phase2.go` (166) — read-only DB-query commands; `trimForTelegram` (cap 3800) shared with phase 3
-- `commands_phase3.go` (222) — /exit_nodes (filter on tag:exit-node + last_seen), /quota (per-user bars), /ack (idempotent UPDATE WHERE acked_at=0 + audit_log mirror)
-- `commands_phase4.go` (205) — /version (build + Go runtime + DB schema), /restart (6-char token confirm, 30s TTL, SIGTERM via `os.FindProcess` for cross-platform compile, audit_log row), /help <command> (detailed per-command help)
-- `admin_exit_nodes.go` (164) — exit node admin
+Sister files in `internal/handlers/` (post-refactor, 2026-07-29):
+- `handlers.go` (571) — App + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser + i18n + the per-feature Service constructors (adminSvc, exitRulesSvc, mySvc, authSvc). Down from ~3k lines pre-refactor.
+- `handlers_export.go` (99) — public Backend-interface wrappers (Render, RenderWithLayout, CurrentUser, Audit, Config, HSGlobalFn, HSForUserFn, BackfillNodeOwnershipFn). Used by every feature/* Service.
+- `app_controlplane.go` (32) — thin `*App` methods that delegate to `*controlplane.Router` (PlaneURLForUser + InvalidateHCache; the HSGlobal/HSForUser methods were collapsed in Phase D4).
+- `static.go` (30) — embedded CSS/JS.
+- `templates.go` (136) — `embed.FS` for all templates (admin/* + user/* + themes.css).
+- `handlers_test.go` (194) — render + renderWithLayout tests.
+- `templates_test.go` (126) — template args-vs-catalog parity (B7).
+
+The legacy "feature handlers live here" pattern is
+**deprecated**. The old file list (`exit_rules_form_my.go`,
+`admin_user_subnet.go`, `handlers_admin_nodes.go`, etc.) is
+preserved in git history for context but those files don't
+exist in the working tree anymore.

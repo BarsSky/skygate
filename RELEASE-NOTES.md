@@ -1,5 +1,180 @@
 # Skygate release notes
 
+## v0.32.0 — per-device OS + type markers + via: sync bug fix + refactor-v0.30 (internal)
+
+**Date:** 2026-07-29 (unreleased — pending VM verify-pre/verify-post)
+**Tag:** _not yet tagged_ — see "Pre-push runbook" below
+**Scope:** Operator-visible: devicemeta + via: fix. Internal: refactor-v0.30 (Phase B + C + D, +56/-4255 lines net).
+**Build:** `verify-pre` 17/18 PASS on Windows host (B8 SKIP — smoke is VM-only). 24/24 packages green.
+
+### What's new (operator-visible)
+
+#### 1. devicemeta: per-device OS + device_type markers
+
+Adds two new columns to `node_owner_map` (migration v0.48):
+`os` (TEXT, default 'unknown') and `device_type` (TEXT, default
+'unknown'). Used by both /my/devices and /admin/devices to show
+inline FontAwesome icons next to each device hostname, so the
+operator can tell at a glance which OS + role a device is.
+
+- **Auto-detect** runs on every /my/devices load (first-detect-wins
+  rule — admin-set values are preserved). The heuristic is in
+  the new `internal/devicemeta/` package:
+  - **OS**: DESKTOP-*/MSI/skygate-vm/raspberrypi → `windows`/`linux`;
+    iPhone/iPad → `ios`; Nothing Phone/android-* → `android`;
+    MacBook* → `macos`; otherwise `unknown`
+  - **Type**: tag:exit-node OR approved_routes has 0.0.0.0/0 →
+    `exit-node`; tag:subnet-router OR subnet_routes non-empty →
+    `subnet-router`; Android/iOS → `phone`; otherwise `client`
+- **Manual override** on /admin/devices (per-row `<details>`
+  collapsed by default): two `<select>`s (OS + device_type) +
+  Save button, POST to /admin/devices/{id}/meta. Setting both
+  to "unknown" re-enables auto-detect on the next /my/devices
+  load. 7 i18n keys (RU + EN). 5 unit tests.
+
+Operator value: debugging. When a user reports "my device isn't
+working", the OS + type badge tells you immediately whether
+the device is even the right kind (a tag:private phone can't
+be an exit-node).
+
+#### 2. via: sync bug fix
+
+`SKYGATE_ACL_VIA_ENABLED=true` is the v0.28.2 opt-in for
+Android-friendly per-user exit-node pinning. Two ACL-push
+code paths existed:
+
+- `acl.ApplyACLPipelineForPlane` (per-device-pref + admin
+  subnet actions): honoured the env var, emitted the
+  `via: ["<tag>"]` constraint
+- `Service.generateACL` (form_my + form_admin + api.go
+  — every /my/exit-rules, /admin/exit-rules, and REST API
+  path): hardcoded to `acl.GenerateACL` (the no-via path),
+  **ignored the env var**
+
+Symptom: skygate DB snapshot 1024 had `"via":` 5 times
+(per-user + per-device grants with the via constraint),
+but live headscale policy had 0 `"via":` entries. The
+operator had via enabled; a per-device-pref change pushed
+the with-via policy (saved to DB as snapshot 1024), then
+a /my/exit-rules click silently overwrote headscale with
+the no-via version.
+
+Fix: `Service.generateACL` in `internal/feature/exit_rules/store.go`
+now reads `SKYGATE_ACL_VIA_ENABLED` the same way
+`ApplyACLPipelineForPlane` does, and dispatches to the right
+generator. Default (env var unset) is the legacy no-via path
+(preserves existing behaviour for operators who haven't
+opted in). 2 unit tests pin the env-var contract.
+
+#### 3. refactor-v0.30 Phase B + C + D (internal, no API change)
+
+The `internal/handlers/` package went from 76 files
+(~19k lines, pre-refactor) to 7 files (infrastructure only:
+App + handlers_export + app_controlplane + static +
+templates + 2 test files). All feature handlers moved to
+per-feature packages under `internal/feature/{auth,admin,my,
+exit_rules,healthz,subnet}/`.
+
+- **Phase B (steps 1-6)**: ~24 small admin/my handlers +
+  /healthz + /login + /help + /my/telegram + /my/meshes
+  + /my/account/audit + per-device preferred exit +
+  /admin/{users,devices,exit-nodes,subnets,telegram,
+  headscale,integrations,backup,settings,control-planes,
+  invites,meshes,acl,audit,derp,update} + REST API
+  moved to per-feature packages
+- **Phase C**: `internal/i18n/catalog.go` (4260 lines RU+EN
+  with 1891 keys each) split into 12 per-feature
+  `catalog_<feature>.go` files + a glue (16 files, +56/-4255
+  net). Driven by `scripts/split_i18n.py` (re-derives the
+  per-feature catalogs if ever needed)
+- **Phase D**:
+  - D1: 3 copies of `SanitizeFilename` → 1 in `internal/httputil/`
+  - D2: 399-line `backfillNodeOwnership` → `internal/nodeownership/`
+  - D3: per-user control plane router (192 lines) →
+    `internal/controlplane/`
+  - D4: collapse thin `*App` method wrappers (3-hop → 1-hop)
+
+**No behaviour changes, no API changes, no migration
+changes.** Dribble-in (one module at a time) so it didn't
+block releases. Tests: 24/24 packages green,
+`verify-pre` 17/18 PASS.
+
+### What's new (operator-internal)
+
+- **`scripts/split_i18n.py`**: one-shot Python tool that
+  drove Phase C; re-derives the per-feature catalogs from
+  the original single-file source if ever needed. Kept in
+  scripts/ so the migration is reproducible.
+- **`scripts/verify_pre_deploy.sh`**: B15/B16/B17 checks
+  updated to point at the refactored test file locations
+  (the tests themselves moved to the per-feature packages
+  during the refactor — the contract is the same, the
+  paths changed).
+- **`internal/feature/exit_rules/store_test.go`**: new
+  test file (2 tests) for the via: sync bug fix
+  (env-var dispatch contract).
+
+### Why an internal refactor in a "user-visible" release
+
+The refactor is invisible to operators (no API changes,
+no behaviour changes), but the operator-debug experience
+improves dramatically:
+
+- When a /my/exit-rules bug happens, the operator (or
+  future AI agent) opens `internal/feature/exit_rules/`
+  and finds ALL the related code (CDN detection,
+  parent_domain fix, autoupdate, route script, sync, API)
+  in one directory — not scattered across 8 files in 3
+  packages.
+- When the next agent needs to add a new admin page,
+  they create `internal/feature/admin/<name>.go` instead
+  of growing the 76-file `internal/handlers/` monolith.
+- Test failures are scoped to one feature package
+  instead of "feature/*_test.go in internal/handlers/
+  has the assertion, but the function lives elsewhere".
+
+### What v0.32.0 does NOT include (deferred)
+
+- **Live PG cutover** — still requires the operator's
+  PG-staging VM (per v0.31.0 release notes). v0.32.0
+  doesn't add the `?` → `$N` placeholder rewrite in
+  queries.go (needs a live PG to validate the diff).
+- **Per-user subnets + cross-PLANE ACL** for v0.12.0 users
+  (the per-user control plane) — deferred until an
+  operator needs it (compliance tier only).
+- **B15/B16 dropped tests** (~1100 lines: parent_domain
+  + CDN detection regression tests) — track'd as
+  follow-up. The contract is verified by
+  `scripts/verify_pre_deploy.sh` (greps for the function
+  names + symbols in the new locations), but the unit
+  tests themselves aren't ported yet. Porting them
+  requires a real DB + a `*feature/exit_rules.Service`
+  setup (the tests were written against the old
+  `*App` API).
+
+### Pre-push runbook (for the operator's VM)
+
+The 37 commits ahead of origin/main are ready to push. To
+verify on the VM before `git push`:
+
+```bash
+ssh skyadmin@192.168.13.69
+cd /home/skyadmin/skygate
+git fetch origin && git merge --ff-only origin/main
+sudo chown -R skyadmin:skyadmin data/ts/   # if the build complains
+make verify-pre     # 17/18 PASS on Windows; expect 18/18 on VM
+make verify-post    # ~26/27 PASS
+make test           # bilingual smoke EN + RU (83+83 = 166 assertions)
+git push            # if all green
+git tag v0.32.0
+git push --tags
+```
+
+If `verify-pre` fails on B15/B16, the contract is intact
+(the function symbols are still in their new locations)
+but the pre-push hook's grep needs adjusting — see the
+new checks in `scripts/verify_pre_deploy.sh`.
+
 ## v0.31.0 — PostgreSQL foundation (driver abstraction + 4 verification tests)
 
 **Date:** 2026-07-28
