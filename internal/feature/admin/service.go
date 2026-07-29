@@ -23,6 +23,7 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
+	"skygate/internal/monitoring"
 	"skygate/internal/sidecar"
 	"skygate/internal/telegram"
 )
@@ -99,6 +100,32 @@ type Service struct {
 	// the next HSForUser call returns a fresh client with
 	// the new credentials).
 	InvalidateHSCacheFn func(url string)
+
+	// refactor-v0.30 Phase B step 3b.3 (2026-07-29): moved
+	// from *App. SSHKeyPath is the default path shown in
+	// the /admin/exit-nodes "ssh_key_path" form field
+	// (the template renders it as the default). Also used
+	// by /admin/backup/config (Phase B step 3b.6) — wired
+	// once at boot from app.SSHKeyPath.
+	SSHKeyPath string
+
+	// refactor-v0.30 Phase B step 3b.3 (2026-07-29): moved
+	// from *App. The "Run health check now" button on
+	// /admin/exit-nodes calls ExitNodeMonitor.CheckNow via
+	// this field. nil if the monitor is disabled
+	// (SKYGATE_EXIT_NODE_CHECK_INTERVAL=off) — handlers
+	// guard with `if s.ExitNodeMonitor != nil`.
+	ExitNodeMonitor *monitoring.ExitNodeMonitor
+
+	// refactor-v0.30 Phase B step 3b.3 (2026-07-29): moved
+	// from *App. The "Sync advertised routes" button on
+	// /admin/exit-nodes calls this callback. Modeled as a
+	// function (not a method on *App) so the Service
+	// stays decoupled from exit_rules_sync.go. The
+	// concrete implementation lives on *App
+	// (SyncAdvertisedRoutes) and is wired from
+	// cmd/skygate/main.go.
+	SyncRoutes func() map[string]string
 
 	telegramProbeCache serviceProbeCache
 }
