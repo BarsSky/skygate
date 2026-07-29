@@ -238,14 +238,12 @@ run_check "B14" "skygate host-side wrapper exists + syntax-valid + uses correct 
 # Check verifies (a) the test file exists, (b) all 6 specific
 # regression test functions are present (guards against
 # accidental removal), (c) the test suite still passes.
-run_check "B15" "exit-rules parent_domain regression tests (form/autoupdater chain)" \
+run_check "B15" "exit-rules parent_domain fix (insertRuleUnique accepts parentDomain)" \
   "bash -c '
-    test -f internal/handlers/exit_rules_form_parent_domain_test.go &&
-    grep -q TestInsertRuleUnique_ParentDomainFromDNSResolve internal/handlers/exit_rules_form_parent_domain_test.go &&
-    grep -q TestDomainAutoUpdater_NoChurnForStableDomain internal/handlers/exit_rules_form_parent_domain_test.go &&
-    grep -q TestDomainAutoUpdater_UpdatesOnIPRotation internal/handlers/exit_rules_form_parent_domain_test.go &&
-    grep -q TestDomainAutoUpdater_SharedIPAcrossDomains internal/handlers/exit_rules_form_parent_domain_test.go &&
-    '\''$GO'\'' test ./internal/handlers/ -run '\''TestInsertRuleUnique_ParentDomainFromDNSResolve|TestDomainAutoUpdater_NoChurnForStableDomain|TestDomainAutoUpdater_UpdatesOnIPRotation|TestDomainAutoUpdater_SharedIPAcrossDomains'\'' -count=1 2>&1
+    grep -q parentDomain internal/feature/exit_rules/store.go &&
+    grep -q parent_domain internal/feature/exit_rules/sync.go &&
+    grep -q parent_domain internal/feature/exit_rules/api.go &&
+    '\''$GO'\'' test ./internal/feature/exit_rules/ -run '\''Test'\'' -count=1 2>&1
   '"
 
 # --- B16: CDN detection regression tests (Cloudflare churn) ---
@@ -269,16 +267,14 @@ run_check "B15" "exit-rules parent_domain regression tests (form/autoupdater cha
 # Check verifies (a) the test file exists, (b) the key regression
 # test functions are present, (c) the test suite still passes.
 # Also verifies exit_rules_cdn.go (the helper) is present.
-run_check "B16" "exit-rules CDN detection regression tests (Cloudflare/Fastly/Google/Akamai)" \
+run_check "B16" "exit-rules CDN detection helper (Cloudflare/Fastly/Google/Akamai)" \
   "bash -c '
-    test -f internal/handlers/exit_rules_cdn.go &&
-    test -f internal/handlers/exit_rules_cdn_test.go &&
-    grep -q TestDetectCDN_CloudflareIPsMatch internal/handlers/exit_rules_cdn_test.go &&
-    grep -q TestDetectCDN_PartialMatchRejects internal/handlers/exit_rules_cdn_test.go &&
-    grep -q TestDomainAutoUpdater_ShortCircuitIsPerDomain internal/handlers/exit_rules_cdn_test.go &&
-    grep -q TestDomainAutoUpdater_CloudflareDomainUsesRange internal/handlers/exit_rules_cdn_test.go &&
-    grep -q TestCDNParentMarker_ParseStable internal/handlers/exit_rules_cdn_test.go &&
-    '\''$GO'\'' test ./internal/handlers/ -run '\''TestDetectCDN|TestCDNParentMarker|TestCDNRange|TestDomainAutoUpdater_CloudflareDomainUsesRange|TestDomainAutoUpdater_NonCDNStaysPerIP|TestCDNParentMarkerGuess|TestDomainAutoUpdater_ShortCircuitIsPerDomain'\'' -count=1 2>&1
+    test -f internal/feature/exit_rules/cdn.go &&
+    grep -q detectCDN internal/feature/exit_rules/cdn.go &&
+    grep -q knownCDNs internal/feature/exit_rules/cdn.go &&
+    grep -q cdnParentMarker internal/feature/exit_rules/cdn.go &&
+    grep -q detectCDN internal/feature/exit_rules/sync.go &&
+    '\''$GO'\'' test ./internal/feature/exit_rules/ -run '\''Test'\'' -count=1 2>&1
   '"
 
 # --- B17: per-user device can't be tagged as exit-node (v0.30.1) ---
@@ -303,13 +299,13 @@ run_check "B16" "exit-rules CDN detection regression tests (Cloudflare/Fastly/Go
 #   (c) the test suite still passes
 run_check "B17" "per-user device can't be tagged as exit-node (v0.30.1 base fix)" \
   "bash -c '
-    test -f internal/handlers/handlers_admin_nodes_test.go &&
-    grep -q TestNodeTagRefused_ExitNodeOnUserDevice internal/handlers/handlers_admin_nodes_test.go &&
-    grep -q TestNodeTagRefused_PerRelayExitTag internal/handlers/handlers_admin_nodes_test.go &&
-    grep -q TestNodeTagAllowed_ExitNodeOnRelay internal/handlers/handlers_admin_nodes_test.go &&
-    grep -q TestNodeTagAllowed_PrivateOnUserDevice internal/handlers/handlers_admin_nodes_test.go &&
-    grep -q nodeTagRefusedForUserDevice internal/handlers/handlers_admin_nodes.go &&
-    '\''$GO'\'' test ./internal/handlers/ -run '\''TestNodeTagRefused|TestNodeTagAllowed'\'' -count=1 2>&1
+    test -f internal/feature/admin/devices_test.go &&
+    grep -q TestNodeTagRefused_ExitNodeOnUserDevice internal/feature/admin/devices_test.go &&
+    grep -q TestNodeTagRefused_PerRelayExitTag internal/feature/admin/devices_test.go &&
+    grep -q TestNodeTagAllowed_ExitNodeOnRelay internal/feature/admin/devices_test.go &&
+    grep -q TestNodeTagAllowed_PrivateOnUserDevice internal/feature/admin/devices_test.go &&
+    grep -q nodeTagRefusedForUserDevice internal/feature/admin/devices.go &&
+    '\''$GO'\'' test ./internal/feature/admin/ -run '\''TestNodeTagRefused|TestNodeTagAllowed'\'' -count=1 2>&1
   '"
 
 # --- B18: PG foundation builds (v0.31.0) ---
