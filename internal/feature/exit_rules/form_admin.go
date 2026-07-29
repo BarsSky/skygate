@@ -1,12 +1,14 @@
-package handlers
-
-// exit_rules_form_admin.go — admin view of all users' exit rules.
-// - AdminExitRules (GET /admin/exit-rules)
+// Package exit_rules — form_admin.go owns the admin
+// cross-user view of all users' exit rules.
 //
-// Renders admin/exit_rules.html with cross-user hierarchical view
-// (grouped by user -> device -> exit_node), recent logs, and ACL
-// snapshot history. Local types (AdminRule, devNodeGroup, userGroup)
+// refactor-v0.30 Phase B step 4e (2026-07-29): moved
+// from internal/handlers/exit_rules_form_admin.go.
+// Renders admin/exit_rules.html with cross-user
+// hierarchical view (grouped by user -> device ->
+// exit_node), recent logs, and ACL snapshot history.
+// Local types (AdminRule, devNodeGroup, userGroup)
 // are defined inline where used.
+package exit_rules
 
 import (
 	"net/http"
@@ -15,34 +17,34 @@ import (
 	"skygate/internal/db"
 )
 
-
-
-func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// AdminExitRules renders the admin cross-user view.
+// GET /admin/exit-rules
+func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
 	// 2026-07-11: Этап 9 part 2 — SQL moved to db.GetAllRulesForAdmin
-	dbRules, err := db.GetAllRulesForAdmin(a.DB)
+	dbRules, err := db.GetAllRulesForAdmin(s.DB)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 
 	type AdminRule struct {
-		ID          int
-		UserID      int
-		UserName    string
-		DeviceID    int
-		DeviceName  string
-		DeviceIP    string
-		ExitNode    string
-		TargetType  string
-		TargetValue string
-		Action      string
+		ID           int
+		UserID       int
+		UserName     string
+		DeviceID     int
+		DeviceName   string
+		DeviceIP     string
+		ExitNode     string
+		TargetType   string
+		TargetValue  string
+		Action       string
 		ParentDomain string
-		CreatedAt   string
+		CreatedAt    string
 	}
 	var rr []AdminRule
 	for _, r := range dbRules {
@@ -62,7 +64,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve device hostnames from headscale API — match by Tailscale IP
-	if nodes, e := a.HS.ListAllNodes(); e == nil {
+	if nodes, e := s.HS.ListAllNodes(); e == nil {
 		for i := range rr {
 			if rr[i].DeviceIP == "" {
 				rr[i].DeviceName = "?"
@@ -92,7 +94,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logs := []map[string]any{}
-	if recent, err := db.RecentExitRuleLogs(a.DB); err == nil {
+	if recent, err := db.RecentExitRuleLogs(s.DB); err == nil {
 		for _, l := range recent {
 			logs = append(logs, map[string]any{
 				"version": l.Version,
@@ -104,7 +106,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snaps := []map[string]any{}
-	if recent, err := db.RecentACLSnapshots(a.DB); err == nil {
+	if recent, err := db.RecentACLSnapshots(s.DB); err == nil {
 		for _, s := range recent {
 			success := false
 			if s.AppliedSuccess.Valid && s.AppliedSuccess.Int64 == 1 {
@@ -136,13 +138,17 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	groupedByUser := map[string]userGroup{}
 	totalRules := len(rr)
 	totalPct := 0
-	if a.Cfg != nil && a.Cfg.MaxTotalRules > 0 {
-		totalPct = totalRules * 100 / a.Cfg.MaxTotalRules
+	maxTotal := 0
+	if s.Cfg != nil {
+		maxTotal = s.Cfg.MaxTotalRules
+	}
+	if maxTotal > 0 {
+		totalPct = totalRules * 100 / maxTotal
 	}
 	for _, rule := range rr {
 		ug, ok := groupedByUser[rule.UserName]
 		if !ok {
-			ug = userGroup{Devices: map[int]devNodeGroup{}, UserLimit: a.getMaxRulesForUser(rule.UserName)}
+			ug = userGroup{Devices: map[int]devNodeGroup{}, UserLimit: s.getMaxRulesForUser(rule.UserName)}
 		}
 		dg, ok := ug.Devices[rule.DeviceID]
 		if !ok {
@@ -160,7 +166,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = totalPct
 
-	a.renderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
 		"Page":          "exit-rules",
 		"Title":         "Exit Rules",
 		"Rules":         rr,
@@ -168,7 +174,7 @@ func (a *App) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"Snapshots":     snaps,
 		"GroupedByUser": groupedByUser,
 		"TotalRules":    totalRules,
-		"MaxTotalRules": a.Cfg.MaxTotalRules,
+		"MaxTotalRules": maxTotal,
 		"LoadPct":       totalPct,
 	})
 }

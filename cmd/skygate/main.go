@@ -347,6 +347,33 @@ func main() {
 		Cfg:      app.Config(),
 		I18n:     app.I18n,
 		Notifier: app.Notifier,
+		// refactor-v0.30 Phase B step 4e (2026-07-29):
+		// per-plane ACL reapply handler needs a
+		// per-plane headscale client resolver. The
+		// default behaviour (mirrors the legacy
+		// App-method closure in form_reapply.go) is:
+		// empty planeURL → app.HSGlobal(); non-empty
+		// → first user_id with that headscale_url →
+		// app.HSForUser(uid); fallback HSGlobal() on
+		// any DB error.
+		ResolveHSForPlane: func(planeURL string) *headscale.Client {
+			if planeURL == "" {
+				return app.HSGlobal()
+			}
+			rows, err := app.DB.Query("SELECT id FROM portal_users WHERE headscale_url = ? LIMIT 1", planeURL)
+			if err != nil {
+				return app.HSGlobal()
+			}
+			defer rows.Close()
+			if !rows.Next() {
+				return app.HSGlobal()
+			}
+			var uid int64
+			if err := rows.Scan(&uid); err != nil {
+				return app.HSGlobal()
+			}
+			return app.HSForUser(uid)
+		},
 	}
 	// adminSvc.SyncRoutes is the "Sync now" button on
 	// /admin/exit-nodes. Re-point it to the new Service
@@ -485,20 +512,25 @@ func main() {
 	// the rest of the page) so anonymous users can't spam the
 	// generator with arbitrary tokens.
 	mux.Handle("GET /my/telegram/qr", authMW(http.HandlerFunc(app.GetMyTelegramQR)))
-	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(app.GetMyExitRules)))
-	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(app.PostMyExitRule))))
-	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(app.PostDeleteExitRule)))
-	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(app.GetExitRulesAPI))))
-	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(app.PostExitRulesAPI))))
-	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(app.GetExitRulesAPIHelp)))
-	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(app.AdminExitRules)))
-	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(app.PostAdminRollbackACL)))
+	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.GetMyExitRules)))
+	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostMyExitRule))))
+	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostDeleteExitRule)))
+	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPI))))
+	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostExitRulesAPI))))
+	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPIHelp)))
+	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.AdminExitRules)))
+	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRollbackACL)))
 	// 2026-07-14: Этап 14 v7 — re-apply ACL without
 	// touching rules. Use when GenerateACL() output
 	// changed (e.g. new SSH rule) but no exit-rule
 	// add/delete has fired SetPolicy yet.
-	mux.Handle("POST /admin/exit-rules/reapply", authMW(http.HandlerFunc(app.PostAdminACLReapply)))
+	mux.Handle("POST /admin/exit-rules/reapply", authMW(http.HandlerFunc(exitRulesSvc.PostAdminACLReapply)))
 	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(exitRulesSvc.PostSyncAdvertisedRoutes)))
+	// 2026-07-29: refactor-v0.30 Phase B step 4f —
+	// GetAdminNodesLoad is the admin "Node Load" page
+	// (per-exit-node rule counts + load %). Still on
+	// *App; moves to feature/exit_rules/nodes_load.go
+	// in step 4f.
 	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(app.GetAdminNodesLoad)))
 	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(exitRulesSvc.AdminCleanupRules)))
 	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(exitRulesSvc.AdminCleanupRulesApply)))

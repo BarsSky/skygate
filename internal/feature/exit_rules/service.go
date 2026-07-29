@@ -42,6 +42,15 @@ import (
 // pattern as feature/auth + feature/admin — the interface
 // keeps the feature package decoupled from internal/handlers
 // while still letting handlers call into it.
+//
+// HSGlobal / HSForUser are NOT on the Backend interface
+// because the per-plane ACL reapply handler (form_reapply.go)
+// needs a dynamic per-plane resolution. We model that as
+// the ResolveHSForPlane callback on the Service itself
+// (set from cmd/skygate/main.go), keeping the per-plane
+// resolution logic in the same place the rest of the
+// headscale-client cache lives (the *App.hsCache +
+// HSGlobal / HSForUser methods).
 type Backend interface {
 	Render(w http.ResponseWriter, r *http.Request, name string, data any)
 	RenderWithLayout(w http.ResponseWriter, r *http.Request, name string, c *auth.Claims, data map[string]any)
@@ -80,12 +89,20 @@ type Backend interface {
 //     exit_rules_sync.go (which still owns the
 //     implementation on *App — needed for the
 //     /admin/exit-nodes/sync button).
+//   - ResolveHSForPlane: callback that resolves a
+//     headplane_url to a *headscale.Client. Used by
+//     the per-plane ACL reapply handler. The default
+//     behaviour (set in main.go) is: empty URL →
+//     HSGlobal(), non-empty URL → first user_id with
+//     that headscale_url → HSForUser(uid), fallback
+//     to HSGlobal() on any error.
 type Service struct {
-	Backend    Backend
-	DB         *sql.DB
-	HS         *headscale.Client
-	Cfg        *config.Config
-	I18n       *i18n.Catalog
-	Notifier   telegram.Notifier
-	SyncRoutes func() map[string]string
+	Backend           Backend
+	DB                *sql.DB
+	HS                *headscale.Client
+	Cfg               *config.Config
+	I18n              *i18n.Catalog
+	Notifier          telegram.Notifier
+	SyncRoutes        func() map[string]string
+	ResolveHSForPlane func(planeURL string) *headscale.Client
 }
