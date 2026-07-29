@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -181,6 +182,7 @@ type exitRulesRunner interface {
 	SyncAdvertisedRoutes() map[string]string
 	DomainAutoUpdater() (added, removed int, err error)
 	StaggeredSync()
+	GenerateRouteSetupScript(userID int, deviceID int, os string, restore bool) (string, error)
 }
 
 // SetAdminService wires the admin feature service into the
@@ -209,6 +211,20 @@ func (a *App) SyncAdvertisedRoutes() map[string]string {
 		return a.exitRulesSvc.SyncAdvertisedRoutes()
 	}
 	return map[string]string{"error": "exit_rules service not wired"}
+}
+
+// GenerateRouteSetupScript is the legacy *App entry point
+// used by /my/exit-rules (the ?script= download). With
+// Phase B step 4c it became a thin wrapper that routes
+// through the exit_rules feature service. The form_my.go
+// handler still lives in handlers/ (it moves to feature/
+// exit_rules/ in step 4e) so the wrapper is preserved
+// until then.
+func (a *App) GenerateRouteSetupScript(userID int, deviceID int, os string, restore bool) (string, error) {
+	if a.exitRulesSvc != nil {
+		return a.exitRulesSvc.GenerateRouteSetupScript(userID, deviceID, os, restore)
+	}
+	return "", fmt.Errorf("exit_rules service not wired")
 }
 
 // RunDomainAutoUpdater is the boot-time goroutine entry

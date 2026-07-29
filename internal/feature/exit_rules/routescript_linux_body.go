@@ -1,28 +1,33 @@
-package handlers
-
-// exit_rules_routescript_linux_body.go — generates the bash script for
-// split-tunnel exit-node routing on Linux and macOS.
+// Package exit_rules — routescript_linux_body.go generates
+// the bash script for split-tunnel exit-node routing on
+// Linux and macOS.
 //
-// Pure function: takes the resolved route list + exit node IP, emits
-// the .sh body. No I/O, no headscale, no DB. Kept separate from the
-// orchestrator (exit_rules_routescript.go) and the Windows builder
-// (exit_rules_routescript_windows_body.go) so each OS body is readable
-// on its own.
+// refactor-v0.30 Phase B step 4c (2026-07-29): moved from
+// internal/handlers/exit_rules_routescript_linux_body.go.
+// Pure functions: take the resolved route list + exit node
+// IP, emit the .sh body. No I/O, no headscale, no DB.
 //
-// macOS uses the same script body (with `route` swapped in would
-// be a future improvement — for now users on macOS edit the
-// generated .sh to use `route add` instead of `ip route add`).
+// macOS uses the same script body (with `route` swapped in
+// would be a future improvement — for now users on macOS
+// edit the generated .sh to use `route add` instead of
+// `ip route add`).
 //
-// Filename avoids the `_linux.go` GOOS build tag — the Go code that
-// builds a Linux bash script is identical on any host platform
-// (the script is just a string), so we want this file compiled on
-// Windows/macOS too. Same for the windows_body file.
+// Filename avoids the `_linux.go` GOOS build tag — the Go
+// code that builds a Linux bash script is identical on any
+// host platform (the script is just a string), so we want
+// this file compiled on Windows/macOS too. Same for the
+// windows_body file.
+package exit_rules
 
 import (
 	"fmt"
 	"strings"
 )
 
+// buildLinuxRouteScript returns the .sh body that sets up
+// (or rolls back, when restore=true) the per-IP /32 +
+// per-subnet routes pointing at the exit node on Linux
+// and macOS. Pure function.
 func buildLinuxRouteScript(routes []routeEntry, exitNodeIP string, restore bool) string {
 	var sb strings.Builder
 
@@ -57,7 +62,7 @@ func writeLinuxRestoreScript(sb *strings.Builder, routes []routeEntry, exitNodeI
 	// Check if any split-tunnel routes exist
 	sb.WriteString("# Check if split-tunnel routes are applied\n")
 	sb.WriteString("if ! ip route show | grep -q \"$TS_IFACE.*" + exitNodeIP + "\"; then\n")
-	sb.WriteString("    echo \"WARNING: No split-tunnel routes detected for " + exitNodeIP + ".\"\n")
+	sb.WriteString("    echo \"WARNING: No split-tunnel routes detected for " + exitNodeIP + "\".\"\n")
 	sb.WriteString("    echo \"The exit node default route may already be active.\"\n")
 	sb.WriteString("    echo \"If you just ran tailscale up --exit-node, no restore is needed.\"\n")
 	sb.WriteString("    ip route show | grep \"$TS_IFACE\" || true\n")
