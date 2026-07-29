@@ -8,16 +8,33 @@ import (
 	"testing"
 )
 
-// TestCatalogsParity — every key in ruCatalog must exist in enCatalog
-// and vice versa, otherwise pages show mixed-language strings.
+// mergedCatalog is the New()-built catalog that holds the
+// union of every per-feature map. Built once via the package
+// init below and reused by every test (cheap, but avoids
+// re-allocating the map 4×).
+//
+// refactor-v0.30 Phase C (2026-07-29): the previous tests
+// read ruCatalog / enCatalog directly (package-level vars).
+// Phase C moved the keys into per-feature files + a
+// perFeatureRU / perFeatureEN slice; New() merges them. The
+// tests now read the merged result via New() — same
+// contract, different source-of-truth.
+var (
+	mergedRU = mergeMaps(perFeatureRU...)
+	mergedEN = mergeMaps(perFeatureEN...)
+)
+
+// TestCatalogsParity — every key in the merged RU catalog
+// must exist in the merged EN catalog and vice versa,
+// otherwise pages show mixed-language strings.
 func TestCatalogsParity(t *testing.T) {
-	for k := range ruCatalog {
-		if _, ok := enCatalog[k]; !ok {
+	for k := range mergedRU {
+		if _, ok := mergedEN[k]; !ok {
 			t.Errorf("enCatalog missing key: %q", k)
 		}
 	}
-	for k := range enCatalog {
-		if _, ok := ruCatalog[k]; !ok {
+	for k := range mergedEN {
+		if _, ok := mergedRU[k]; !ok {
 			t.Errorf("ruCatalog missing key: %q", k)
 		}
 	}
@@ -101,15 +118,15 @@ func TestHTMLSafeCatalog(t *testing.T) {
 			}
 		}
 	}
-	check("ruCatalog", ruCatalog)
-	check("enCatalog", enCatalog)
+	check("ruCatalog", mergedRU)
+	check("enCatalog", mergedEN)
 }
 
 // TestPlaceholderOrder — placeholder counts must match between languages
 // (printf would fail or substitute wrongly otherwise).
 func TestPlaceholderOrder(t *testing.T) {
-	for k, ruVal := range ruCatalog {
-		enVal, ok := enCatalog[k]
+	for k, ruVal := range mergedRU {
+		enVal, ok := mergedEN[k]
 		if !ok {
 			continue
 		}
