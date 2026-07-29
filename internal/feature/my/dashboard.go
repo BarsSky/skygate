@@ -1,4 +1,16 @@
-package handlers
+package my
+
+// dashboard.go — /dashboard route (handlers moved from
+// internal/handlers/handlers_dashboard.go).
+//
+// The dashboard is the user-facing landing page. It renders
+// a small summary of the tailnet: total nodes, online nodes,
+// exit-node count, users count, and (for non-admins) the
+// user's own node counts + a 3-way preauth-key split
+// (used / active / expired).
+//
+// refactor-v0.30 Phase B step 6d (2026-07-29): moved from
+// internal/handlers/handlers_dashboard.go (198 lines).
 
 import (
 	"net/http"
@@ -8,16 +20,12 @@ import (
 	"skygate/internal/headscale"
 )
 
-// ---------- DASHBOARD ----------
+// ---------- DASHBOARD TYPES ----------
 
 // PreauthKeyStats breaks down a user's preauth keys by lifecycle state.
 // Total == Used + Active + Expired. Active means "still usable right now":
 // unused AND expiration (if set) is in the future. Expired means unused
 // but past its expiration. Used means a headscale node consumed it.
-//
-// Moved from handlers_derp.go during Этап 8 — this type is dashboard-
-// specific (used by TailnetMetrics.MyPreauthKeys) and doesn't belong
-// in the DERP file.
 type PreauthKeyStats struct {
 	Total   int
 	Used    int
@@ -49,7 +57,7 @@ type TailnetMetrics struct {
 // view). v0.12.0: the dashboard renders the user's own
 // headscale plane rather than always the operator's
 // primary one. See GetDashboard for the routing decision.
-func (a *App) computeTailnetMetrics(myUsername string, myUserID int64, hs *headscale.Client) TailnetMetrics {
+func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *headscale.Client) TailnetMetrics {
 	m := TailnetMetrics{}
 	nodes, _ := hs.ListAllNodes()
 	m.TotalNodes = len(nodes)
@@ -68,7 +76,7 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64, hs *heads
 	// /my/devices also fires from here, so the dashboard sees the same
 	// set the moment the user lands on the page.
 	if myUserID != 0 {
-		a.backfillNodeOwnership(a.DB, nodes, myUserID, myUsername)
+		s.BackfillNodeOwnership(s.DB, nodes, myUserID, myUsername)
 	}
 	if myUsername != "" {
 		// Use a set of node IDs the user owns, sourced from
@@ -76,7 +84,7 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64, hs *heads
 		// 2026-07-12: Этап 10 part 4 — moved to
 		// db.ListNodeOwnerNodeIDsByUsername.
 		owned := map[string]bool{}
-		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(a.DB, myUsername)
+		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, myUsername)
 		for _, nid := range snapIDs {
 			owned[nid] = true
 		}
@@ -104,14 +112,17 @@ func (a *App) computeTailnetMetrics(myUsername string, myUserID int64, hs *heads
 	// Preauth split is per-user; admins see zero (their own key history
 	// is admin tooling, not a per-user metric).
 	if myUserID != 0 {
-		m.MyPreauthKeys = a.countMyPreAuthKeys(myUserID, nodes)
+		m.MyPreauthKeys = s.countMyPreAuthKeys(myUserID, nodes)
 	}
 	m.ActiveDERP = "waw" // could be parsed from netcheck but kept simple here
 	return m
 }
 
-func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
-	c := a.currentUser(r)
+// GetDashboard renders the /dashboard page. Admin sees whole-tailnet
+// metrics; non-admin sees their own subset (nodes + preauth split)
+// routed through the per-user headscale plane.
+func (s *Service) GetDashboard(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -119,23 +130,23 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	// Look up the headscale username for this portal user (may be empty for
 	// brand-new users who haven't registered a device yet).
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserNameByID
-	hsUserName, _ := db.GetUserNameByID(a.DB, c.UserID)
+	hsUserName, _ := db.GetUserNameByID(s.DB, c.UserID)
 	// Admins see whole-tailnet metrics; users see only their own.
 	// 2026-07-15: v0.12.0 — route the headscale API call to the
 	// user's own control plane when one is configured. Admins
 	// (who have the global view) stay on HSGlobal(). A non-admin
 	// with no per-user override also gets HSGlobal() — same as
 	// v0.11.x behaviour.
-	hs := a.HSGlobal()
+	hs := s.Backend.HSGlobalFn()
 	if !c.IsAdmin {
-		hs = a.HSForUser(c.UserID)
+		hs = s.Backend.HSForUserFn(c.UserID)
 	}
 	scope := ""
 	if !c.IsAdmin && hsUserName != "" {
 		scope = hsUserName
 	}
-	a.renderWithLayout(w, r, "dashboard.html", c, map[string]any{
-		"TailnetMetrics": a.computeTailnetMetrics(scope, c.UserID, hs),
+	s.Backend.RenderWithLayout(w, r, "dashboard.html", c, map[string]any{
+		"TailnetMetrics": s.computeTailnetMetrics(scope, c.UserID, hs),
 	})
 }
 
@@ -151,10 +162,10 @@ func (a *App) GetDashboard(w http.ResponseWriter, r *http.Request) {
 // - if the node is gone (deleted, expired server-side) but our
 // local row was never flipped, we flip it here. This keeps the
 // counter honest without a separate garbage-collection job.
-func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) PreauthKeyStats {
-	var s PreauthKeyStats
+func (s *Service) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) PreauthKeyStats {
+	var st PreauthKeyStats
 	if myUserID == 0 {
-		return s
+		return st
 	}
 	// Collect headscale preAuthKey IDs currently attached to any node.
 	// These are authoritative "used" keys.
@@ -169,12 +180,12 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 	// The full row (including Key, CreatedAt) is loaded but only
 	// HeadscalePreauthID, Used, ExpiresAt are used here. The extra
 	// columns are tiny; having one read function is worth it.
-	rows, err := db.ListPreauthKeysByUser(a.DB, myUserID)
+	rows, err := db.ListPreauthKeysByUser(s.DB, myUserID)
 	if err != nil {
-		return s
+		return st
 	}
 	for _, k := range rows {
-		s.Total++
+		st.Total++
 		// Determine the authoritative used state. Prefer the live
 		// headscale signal (node.preAuthKey.id) over the local flag,
 		// so a missing local flip doesn't keep a key listed as active
@@ -187,12 +198,12 @@ func (a *App) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView) Pre
 		}
 		switch {
 		case isUsed:
-			s.Used++
+			st.Used++
 		case k.ExpiresAt > 0 && k.ExpiresAt <= now:
-			s.Expired++
+			st.Expired++
 		default:
-			s.Active++
+			st.Active++
 		}
 	}
-	return s
+	return st
 }
