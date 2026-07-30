@@ -1661,9 +1661,26 @@ per-user headscale, compliance tier). The next big things:
   1 helper for CDN; 6 tests + 1 helper for parent_domain).
   Both `feature/exit_rules/` test files run in <2s on
   Windows (`go test -count=1 -short` PASS).
-  Remaining follow-up: ~4100 lines of test code still
+  **Этап 14 v2 telegram probe tests ported 2026-07-30**
+  (commit 33ffbb9): all 20 unit tests moved from
+  `internal/handlers/handlers_telegram_probe_test.go`
+  (484 lines) to
+  `internal/feature/admin/telegram_probe_test.go`
+  (529 lines). The port handles the App → Service
+  field/method rename for the cache state
+  (now `s.telegramProbeCache.{at,result,tokenFP,mu}`
+  rather than 4 separate `app.telegramProbe*` fields)
+  and provides a minimal `newTestService` helper
+  (open :memory: DB → return `&Service{DB: d}`).
+  20 PASS, 0 FAIL on Windows.
+  Remaining follow-up: ~3600 lines of test code still
   tracked in the dropped-test backlog (see "Test debt" in
-  the deferred-items audit).
+  the deferred-items audit). The 4 admin/{subnets,
+  exit_nodes_tag, backup_config, user_subnet, control_planes,
+  integrations*}_test.go files need a templates FS
+  (`makeSyntheticTemplates` from handlers_test.go is the
+  reference pattern) and the user_subnet tests need
+  `fakeSidecarHS` (httptest.Server for the headscale API).
 
 - **`v0.19.1` — `exitnode.skygate-subnet-<user>.<base-domain>`
   DNS records** (re-attempt of the reverted v0.19.0). Per-user
