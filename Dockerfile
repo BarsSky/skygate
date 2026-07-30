@@ -23,8 +23,8 @@
 # Stage 1: extract tailscale + tailscaled from the official image.
 FROM tailscale/tailscale:latest AS tailscale
 
-# Stage 2: skygate runtime — Go 1.23 alpine + tailscale binaries.
-FROM golang:1.23-alpine
+# Stage 2: skygate runtime — Go 1.25 alpine + tailscale binaries.
+FROM golang:1.25-alpine
 
 # Network tools + Go build deps. tailscaled wants iptables on Linux
 # (netfilter-mode=on); without ip6tables tailscaled refuses to start
