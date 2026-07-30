@@ -654,12 +654,15 @@ func setupProductionTemplatesDir(t *testing.T) {
 		t.Skipf("cannot create %s: %v (probably running on Windows where /app doesn't exist)", dir, err)
 		return
 	}
-	// Copy from the real repo location.
+	// Copy from the real repo location. The original test
+	// was in internal/handlers/ where `../../deploy/templates`
+	// resolved correctly. The test moved to internal/feature/admin/
+	// in refactor-v0.30 so we need to go up 3 levels now.
 	for _, name := range []string{
 		"headscale-config.yaml.tmpl",
 		"headscale-compose.yml.tmpl",
 	} {
-		src, err := os.ReadFile(filepath.Join("..", "..", "deploy", "templates", name))
+		src, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "templates", name))
 		if err != nil {
 			t.Skipf("cannot read %s: %v", name, err)
 			return
