@@ -2926,62 +2926,15 @@ and re-run.
 
 ---
 
-## Decomposition status (historical, refactor-v0.30 completed 2026-07-29)
+## Decomposition status
 
-> **Historical record.** The v0.30.x decomposition (Phases 1-6)
-> was completed on 2026-07-29 — see the [Code structure
-> section](#code-structure-where-to-look) above for the
-> current state. `internal/handlers/` shrunk from 76 files
-> (~19k lines) to 7 files (infrastructure only). All feature
-> handlers moved to `internal/feature/{auth,admin,my,exit_rules,
-> healthz,subnet}/`. Below is the per-step history for git-blame
-> archaeology.
+> **Refactor-v0.30 is complete** (Phases A, B-steps-1-to-6, C, D-steps-1-to-4
+> landed 2026-07-28 to 2026-07-30). The full per-step history,
+> metrics, what-worked/what-didn't, and lessons-for-next-refactor
+> are in [`docs/refactor-v0.30-postmortem.md`](docs/refactor-v0.30-postmortem.md).
+> This section keeps the **actionable guidance** for future work.
 
-`handlers.go` was a god-object at ~1100 lines and has been the main
-decomposition target. Progress so far:
-- `handlers_node_ownership.go` (248) — `backfillNodeOwnership` + `firstTagOrFallback` extracted.
-- `handlers_dashboard.go` (185) — `TailnetMetrics` + `PreauthKeyStats` + `computeTailnetMetrics`
-  + `GetDashboard` + `countMyPreAuthKeys` extracted.
-- `handlers_auth.go` (100) — `GetLogin` / `PostLogin` / `PostLogout` /
-  `PostLang` extracted.
-- `handlers_my_account.go` (92) — self-service password change extracted.
-- `handlers_api_tokens.go` (59) — personal API tokens extracted.
-- `handlers_admin_pages.go` (63) — read-only admin views extracted.
-- `handlers_admin_users.go` (222) — admin user CRUD extracted.
-- `handlers_admin_nodes.go` (102) — admin device/tag extracted.
-- `handlers_derp.go` (115) — /admin/derp handlers + DerpStatus/DerpPeer/ConnSummary/DerpSnapshot types.
-- `handlers_derp_collect.go` (245) — `collectDerpStatus` + `httpGet` + `parseDerperDebugHTML` + `parseDerperVars` (fetch & parse derper debug endpoints).
-- `handlers_derp_classify.go` (80) — `classifyDerpPeer(s)` + `summarizeDerpPeers` + IP-net constants.
-- `handlers_settings.go` (63) — theme switcher extracted.
-- `handlers_help.go` (20) — /help page extracted.
-- `handlers_my_preauth.go` (44) — POST /my/preauth extracted.
-- `handlers_my_exit_nodes.go` (23) — GET /my/exit-nodes extracted.
-- `handlers_my_keys.go` (173) — /my/keys list+expire extracted.
-- `handlers_my_devices.go` (127) — GET /my/devices extracted.
-- `exit_rules_routescript_data.go` (67) — `loadRoutesForScript` + `resolveExitNodeIPForScript` + `routeEntry` struct.
-- `exit_rules_routescript_windows_body.go` (185) — `buildWindowsRouteScript` + `writeWindows{Setup,Restore}Script` helpers (pure .cmd builder).
-- `exit_rules_routescript_linux_body.go` (147) — `buildLinuxRouteScript` + `writeLinux{Setup,Restore}Script` helpers (pure .sh builder).
-- `exit_rules_form_my.go` (576) — /my/exit-rules: Get + Post + Delete (script download, DNS resolve, multi-delete cascade).
-- `exit_rules_form_admin.go` (150) — /admin/exit-rules cross-user view.
-- `exit_rules_form_rollback.go` (37) — /admin/exit-rules/rollback restore.
-
-`handlers.go` is now **~236 lines** — pure shared infrastructure
-(App struct, render helpers, currentUser, audit, getMaxRulesForUser).
-Nothing left to extract; the file is no longer a god-object.
-
-`exit_rules_routescript.go` was a ~300-line generator dominated by
-inline shell script literals. After Этап 6 it is a 42-line
-orchestrator: `load data → dispatch to OS builder`. The OS-specific
-bodies (Windows .cmd / Linux bash) are pure functions in
-`exit_rules_routescript_{windows,linux}_body.go` (note the `_body`
-suffix — the Go code that builds a Windows .cmd script or Linux
-bash is platform-independent, so the original `_windows.go` /
-`_linux.go` filenames would have triggered GOOS build constraints
-and broken the build on the wrong host OS).
-
-`exit_rules.go` (1146 → 359) was already largely decomposed; the form
-handlers lived in `exit_rules_form.go` (787 lines, Этап 7 split into form_my/admin/rollback)
-candidate for further splitting if we ever revisit it.
+### Per-feature package pattern (mandatory for new handlers)
 
 When adding a new handler, prefer the per-feature package pattern
 over growing `internal/handlers/`:
@@ -2998,14 +2951,32 @@ over growing `internal/handlers/`:
   render helpers + public Backend-interface wrappers +
   static.go + templates.go). Don't add new HTTP handlers there.
 
-Sister files in `internal/handlers/` (post-refactor, 2026-07-29):
-- `handlers.go` (571) — App + New + render/renderWithLayout + pageFromName/pageTitle/dataValue + currentUser/audit + getMaxRulesForUser + i18n + the per-feature Service constructors (adminSvc, exitRulesSvc, mySvc, authSvc). Down from ~3k lines pre-refactor.
-- `handlers_export.go` (99) — public Backend-interface wrappers (Render, RenderWithLayout, CurrentUser, Audit, Config, HSGlobalFn, HSForUserFn, BackfillNodeOwnershipFn). Used by every feature/* Service.
-- `app_controlplane.go` (32) — thin `*App` methods that delegate to `*controlplane.Router` (PlaneURLForUser + InvalidateHCache; the HSGlobal/HSForUser methods were collapsed in Phase D4).
-- `static.go` (30) — embedded CSS/JS.
-- `templates.go` (136) — `embed.FS` for all templates (admin/* + user/* + themes.css).
-- `handlers_test.go` (194) — render + renderWithLayout tests.
-- `templates_test.go` (126) — template args-vs-catalog parity (B7).
+### `internal/handlers/` (current state — 9 files, ~1.3k lines)
+
+The package is shrunk to shared infrastructure. Per-file:
+- `handlers.go` (~570) — App + New + render/renderWithLayout +
+  pageFromName/pageTitle/dataValue + currentUser/audit +
+  getMaxRulesForUser + i18n + the per-feature Service
+  constructors (adminSvc, exitRulesSvc, mySvc, authSvc).
+- `handlers_export.go` (~100) — public Backend-interface
+  wrappers (Render, RenderWithLayout, CurrentUser, Audit,
+  Config, HSGlobalFn, HSForUserFn, BackfillNodeOwnershipFn).
+  Used by every `feature/*` Service.
+- `app_controlplane.go` (~30) — thin `*App` methods that
+  delegate to `*controlplane.Router` (PlaneURLForUser +
+  InvalidateHCache; the HSGlobal/HSForUser methods were
+  collapsed in Phase D4).
+- `static.go` (~30) — embedded CSS/JS.
+- `templates.go` (~140) — `embed.FS` for all templates
+  (admin/* + user/* + themes.css).
+- `handlers_node_ownership.go` (~400) — `backfillNodeOwnership`
+  helper (still in handlers because it's used by both
+  `feature/my/devices.go` and `feature/admin/devices.go` via
+  the Backend.BackfillNodeOwnership callback; future
+  cleanup moves it to `internal/nodeownership/` permanently).
+- `handlers_test.go` (~200) — render + renderWithLayout tests.
+- `templates_test.go` (~130) — template args-vs-catalog parity (B7).
+- `app_controlplane_test.go` (~150) — control plane router tests.
 
 The legacy "feature handlers live here" pattern is
 **deprecated**. The old file list (`exit_rules_form_my.go`,
