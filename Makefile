@@ -133,7 +133,7 @@ audit-routes:
 test: go-test audit-routes smoke check-nodes check-https check-bundles
 
 go-test:
-	@if command -v go >/dev/null 2>&1; then 		go test ./... 2>&1; 	else 		echo "go not installed; skipping go test"; 	fi
+	@if command -v go >/dev/null 2>&1; then 		go test -count=1 ./... 2>&1; 	else 		echo "go not installed; skipping go test"; 	fi
 
 # 2026-07-25: v0.28.5 — pre-deploy guarantee verification. Runs
 # before `git push` / `docker build` / `docker compose up -d`. The
