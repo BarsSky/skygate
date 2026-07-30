@@ -82,6 +82,20 @@
 </div>
 {{end}}
 
+{{/* 2026-07-30: v0.32.3 — auto-update mode banner.
+     Tells the operator whether the SKYGATE_AUTO_UPDATE_ENABLED
+     flag is on (one-click Apply on newer release) or off
+     (manual Push only). The banner always shows so the
+     operator doesn't have to guess. */}}
+<div class="alert {{if .AutoUpdateEnabled}}alert-info{{else}}alert-warning{{end}}" style="margin-bottom:16px">
+  <i class="fa-solid {{if .AutoUpdateEnabled}}fa-circle-check{{else}}fa-circle-pause{{end}}"></i>
+  {{if .AutoUpdateEnabled}}
+    {{t "update.auto_enabled_banner"}}
+  {{else}}
+    {{t "update.auto_disabled_banner"}}
+  {{end}}
+</div>
+
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
@@ -96,7 +110,11 @@
           <i class="fa-solid fa-arrows-rotate"></i> {{t "update.check_now"}}
         </button>
       </form>
-      {{if .IsNewer}}
+      {{if and .IsNewer .AutoUpdateEnabled}}
+      {{/* 2026-07-30: v0.32.3 — Apply button is gated by
+           SKYGATE_AUTO_UPDATE_ENABLED. When the flag is
+           false (default), the operator uses the Push
+           button below to manually trigger the orchestrator. */}}
       <form method="post" action="/admin/update/apply" style="display:inline" onsubmit="return confirm('{{t "update.apply_confirm"}}')">
         <input type="hidden" name="target" value="{{.Latest}}">
         <button type="submit" class="btn btn-primary">
@@ -104,6 +122,18 @@
         </button>
       </form>
       {{end}}
+      {{/* 2026-07-30: v0.32.3 — Push update button.
+           Always visible, ALWAYS works (independent of
+           the auto-update flag). For when the operator
+           wants to force a rebuild + restart of the
+           current state, e.g. after a failed auto-apply
+           or to re-apply without waiting for a newer
+           release to be detected. */}}
+      <form method="post" action="/admin/update/push" style="display:inline" onsubmit="return confirm('{{t "update.push_confirm"}}')">
+        <button type="submit" class="btn" title="{{t "update.push_help"}}">
+          <i class="fa-solid fa-cloud-arrow-up"></i> {{t "update.push"}}
+        </button>
+      </form>
     </div>
   </div>
 

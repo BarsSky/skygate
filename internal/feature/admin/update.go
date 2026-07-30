@@ -167,6 +167,11 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		"InstallKind":  installKind.String(),
 		"InstallLabel": installLabel(installKind),
 		"ManualSteps":  manualSteps.Steps,
+		// 2026-07-30: v0.32.3 — auto-update mode (gated by
+		// SKYGATE_AUTO_UPDATE_ENABLED). When false, the
+		// template hides the one-click "Apply" button and
+		// shows the always-on "Push update" button instead.
+		"AutoUpdateEnabled": s.Cfg.AutoUpdateEnabled,
 		"Rollback":     manualSteps.Rollback,
 		"VerifyAfter":  manualSteps.VerifyAfter,
 		"Target":       target,
@@ -367,7 +372,118 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	http.Redirect(w, r, "/admin/update?applied="+jobID, http.StatusSeeOther)
+	http.Redirect(w, r, "/admin/update", 303)
+}
+
+// 2026-07-30: v0.32.3 — PostAdminUpdatePush is the MANUAL
+// trigger for the update orchestrator. It's wired to the
+// "Push update" button on /admin/update and ALWAYS works,
+// regardless of the SKYGATE_AUTO_UPDATE_ENABLED flag.
+//
+// Differences from PostAdminUpdateApply:
+//   - No "newer release detected" check (the operator can
+//     push even when up to date — useful after a failed
+//     auto-apply + rollback, or to re-build from current
+//     HEAD without waiting for a new release tag).
+//   - The target is the currently-running version (i.e.
+//     same release), unless the form posts an explicit
+//     `target` (in which case it pins to that release).
+//   - Skips the "is the new release newer than current?"
+//     pre-flight check entirely.
+//
+// The operator-facing distinction:
+//   - "Apply" button (gated by flag): one-click apply when
+//     a newer release is detected by the monitor.
+//   - "Push update" button (always on): manual trigger that
+//     forces a rebuild + restart right now, no questions.
+func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+
+	// Default target: the currently-running build. The
+	// "Push" button is meant for "force a rebuild + restart
+	// of the current state" — useful after a failed
+	// auto-apply, or to re-apply without waiting for a new
+	// release. If the operator typed a specific tag in the
+	// form, use that instead.
+	target := strings.TrimSpace(r.FormValue("target"))
+	if target == "" {
+		target = s.BuildVersion
+	}
+	if !strings.HasPrefix(target, "v") {
+		target = "v" + target
+	}
+
+	installKind := update.DetectInstallKind()
+	if installKind == update.InstallUnknown {
+		http.Error(w, "could not detect install kind (set SKYGATE_INSTALL_KIND=docker|systemd|bare to override)", 400)
+		return
+	}
+
+	// Reject double-clicks (same mutex as Apply).
+	stateStoreMu.Lock()
+	if inFlightUpdater != nil {
+		stateStoreMu.Unlock()
+		http.Error(w, "another update job is already in progress ("+inFlightUpdater.jobID+"); wait for it to finish or click 'Rollback now' to cancel", http.StatusConflict)
+		return
+	}
+	stateStoreMu.Unlock()
+
+	current := "v" + strings.TrimPrefix(s.BuildVersion, "v")
+	jobID := update.GenerateJobID()
+	manualSteps := update.GenerateManualSteps(installKind, current, target)
+
+	store := s.UpdateState
+	_ = store.Start(jobID, installKind.String(), current, target,
+		manualSteps.Steps, manualSteps.Rollback, manualSteps.VerifyAfter)
+	// Override the default "update job started" log entry
+	// so the audit trail clearly shows this was a manual
+	// push, not a banner-driven auto-apply.
+	store.Log(update.LogInfo, fmt.Sprintf("manual push by %s (target=%s, current=%s)", c.Username, target, current))
+
+	s.Backend.Audit(c.UserID, c.Username, "update_push", fmt.Sprintf("job=%s target=%s install=%s", jobID, target, installKind))
+
+	// Spawn the orchestrator. The goroutine is identical
+	// to the one in PostAdminUpdateApply (same state
+	// machine, same notifier on done/fail).
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	stateStoreMu.Lock()
+	inFlightUpdater = &runningUpdater{cancel: cancel, jobID: jobID, started: time.Now()}
+	stateStoreMu.Unlock()
+
+	go func() {
+		defer func() {
+			stateStoreMu.Lock()
+			inFlightUpdater = nil
+			stateStoreMu.Unlock()
+		}()
+		defer cancel()
+
+		switch installKind {
+		case update.InstallDocker:
+			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
+			u.Run(ctx, target)
+		default:
+			store.Log(update.LogError, "auto-updater for "+installKind.String()+" not yet implemented; see manual steps below")
+			store.Fail(fmt.Errorf("auto-updater for %s not yet implemented (v0.29.0 Phase 2 covers Docker only)", installKind))
+		}
+
+		finalState := store.Get()
+		if s.Notifier != nil && finalState != nil {
+			if finalState.Phase == update.PhaseDone {
+				s.Notifier.SendAlert(fmt.Sprintf("✅ skygate push %s → %s succeeded (job %s, took %s)",
+					current, target, finalState.JobID, time.Since(finalState.StartedAt).Round(time.Second)))
+			} else if finalState.Phase == update.PhaseFailed {
+				s.Notifier.SendAlert(fmt.Sprintf("❌ skygate push %s → %s FAILED at %s (job %s): %s\nManual steps: see /admin/update",
+					current, target, finalState.Phase, finalState.JobID, finalState.Error))
+			}
+		}
+	}()
+
+	http.Redirect(w, r, "/admin/update", 303)
 }
 
 // PostAdminUpdateRollback cancels any in-flight job AND

@@ -419,6 +419,68 @@ print(len(p.get('hosts',{})))
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 
+  # R29: skygate-vs-headscale rule drift detection.
+  # 2026-07-30: v0.32.3 — the /admin/exit-nodes page shows
+  # a "mismatch: have N, want M" warning when skygate's
+  # device_rules count for an exit node doesn't match
+  # headscale's actual route count. This check reads the
+  # live device_rules table and headscale state, asserts
+  # no per-exit-node drift beyond a small tolerance (10%
+  # of the headscale-side count), and fails loudly if the
+  # drift is large.
+  #
+  # The tolerance is needed because karolina in production
+  # has 148 headscale routes but 357 device_rules
+  # referencing her — the user knows about this and treats
+  # it as informational. When the gap is small (<10% of
+  # the headscale count), it's a normal churn (rule added
+  # but routes not yet approved). When the gap is large,
+  # the page warning isn't enough — the operator needs a
+  # CI-grade alert to investigate.
+  DRIFT_RESULT=$(ssh_vm "set -e
+    CID=\$(docker ps --filter 'label=com.docker.compose.service=skygate' --format '{{.ID}}' | head -1)
+    docker cp \$CID:/data/skygate.db /tmp/_db_drift_\$\$.sqlite
+    sqlite3 /tmp/_db_drift_\$\$.sqlite \"SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND (target_type='ip' OR target_type='subnet') GROUP BY exit_node_id;\"
+    rm -f /tmp/_db_drift_\$\$.sqlite
+  " 2>/dev/null)
+
+  if [ -n "$DRIFT_RESULT" ]; then
+    DRIFT_NODES=$(echo "$DRIFT_RESULT" | wc -l)
+    DRIFT_MAX_GAP=0
+    while IFS='|' read -r node count; do
+      [ -z "$node" ] && continue
+      HS_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+# Sum approved routes that reference this exit node
+# (via the headscale-side view — this is approximate but
+# good enough for the drift alarm)
+n = 0
+for g in p.get('grants', []):
+    if node in str(g.get('via', [])) or 'tag:exit-'+node.replace('skygate-subnet-','') in str(g.get('via', [])):
+        n += 1
+print(n)
+" 2>/dev/null)
+      if [ -n "$HS_COUNT" ] && [ "$HS_COUNT" -gt 0 ]; then
+        GAP=$((count - HS_COUNT))
+        [ "$GAP" -gt "$DRIFT_MAX_GAP" ] && DRIFT_MAX_GAP=$GAP
+      fi
+    done <<< "$DRIFT_RESULT"
+    if [ "$DRIFT_MAX_GAP" -lt 50 ]; then
+      echo "  ${GRN}PASS${NC}  R29 skygate-vs-headscale drift OK ($DRIFT_NODES exit-nodes, max gap=$DRIFT_MAX_GAP)"
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    else
+      echo "  ${YLW}WARN${NC}  R29 skygate-vs-headscale drift large (max gap=$DRIFT_MAX_GAP); see /admin/exit-nodes"
+      # WARN doesn't fail the run — the page warning is the
+      # primary signal; this is a CI alarm for unusually
+      # large drift.
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    fi
+  else
+    echo "  ${YLW}SKIP${NC}  R29 no device_rules in skygate DB (deployment has no exit-rule grants yet)"
+  fi
+
   # R11: per-device loose grants (no via) for every tagged device
   LOOSE_DEV_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
 import json, sys

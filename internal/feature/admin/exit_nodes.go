@@ -147,13 +147,13 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 				expectedRoutes[node]++
 			}
 		}
+		// 2026-07-30: extracted the SyncStatus calculation
+		// into computeSyncStatus() so it can be unit-tested
+		// without spinning up a headscale mock. The function
+		// is the SAME logic as the inline check that was here
+		// before — just hoisted out for testability.
 		for i := range nodes {
-			expected := expectedRoutes[nodes[i].Hostname]
-			if expected > 0 && nodes[i].RouteCount != expected {
-				nodes[i].SyncStatus = fmt.Sprintf("mismatch: have %d, want %d", nodes[i].RouteCount, expected)
-			} else if expected > 0 {
-				nodes[i].SyncStatus = "synced"
-			}
+			nodes[i].SyncStatus = computeSyncStatus(nodes[i].Hostname, nodes[i].RouteCount, expectedRoutes)
 		}
 	}
 
@@ -211,6 +211,44 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"HeadscalePinned":   headscalePinnedTag(s),
 		"HeadscaleHTMLURL":  headscaleHTMLURL(s),
 	})
+}
+
+// computeSyncStatus is the pure helper that decides
+// whether an exit node's advertised-routes count from
+// headscale matches the count of device_rules in skygate
+// that target that node.
+//
+// 2026-07-30: v0.32.3 — extracted from the inline loop
+// in AdminExitNodes so the contract is unit-testable
+// (see exit_nodes_test.go). The function is small and
+// has no side effects; the integration between
+// computeSyncStatus + the headscale-fetching code path
+// is covered by the live verify-post checks.
+//
+// Returns one of:
+//   ""                            — no rules target this node, no status
+//   "synced"                      — skygate rules count == headscale routes
+//   "mismatch: have N, want M"    — drift detected
+//
+// "have N" is the headscale-side count (len(AvailableRoutes))
+// and "want M" is the skygate-side count (device_rules
+// with exit_node_id == hostname). When "want M" is 0 the
+// status stays empty (the node is not in use from skygate's
+// view; headscale may still have routes from the operator's
+// manual setup, and that's fine).
+//
+// The "mismatch" wording is preserved verbatim — the
+// /admin/exit-nodes page renders this string in the
+// "СТАТУС" column and operators have come to expect it.
+func computeSyncStatus(hostname string, routeCount int, expectedRoutes map[string]int) string {
+	expected := expectedRoutes[hostname]
+	if expected > 0 && routeCount != expected {
+		return fmt.Sprintf("mismatch: have %d, want %d", routeCount, expected)
+	}
+	if expected > 0 {
+		return "synced"
+	}
+	return ""
 }
 
 // headscaleUpdateForBanner is a small helper that

@@ -172,6 +172,21 @@ type Config struct {
 	UpdateCheckEnabled  bool
 	UpdateCheckInterval time.Duration
 	UpdateChannel       string
+	// 2026-07-30: v0.32.3 — AutoUpdateEnabled gates the
+	// banner-driven "Apply" button on /admin/update. When
+	// false (the default), the page shows a separate manual
+	// "Push update" button instead — the operator must
+	// explicitly click to apply any update, even if a
+	// newer release is detected. Set to true to enable
+	// the auto-apply flow (banner shows the new release
+	// + the one-click Apply button).
+	//
+	// Separate from UpdateCheckEnabled (which gates the
+	// GitHub polling itself). It's possible to have
+	// UpdateCheckEnabled=true + AutoUpdateEnabled=false:
+	// the page shows "newer release detected" but the
+	// operator must click "Push update" to apply.
+	AutoUpdateEnabled bool
 	GitHubToken         string
 	// RepoPath is the path to the skygate source repo used
 	// by the auto-updater to run `git` and `docker compose`.
@@ -285,6 +300,13 @@ func Load() (*Config, error) {
 		UpdateCheckInterval: getDuration("SKYGATE_UPDATE_CHECK_INTERVAL", 24*time.Hour),
 		UpdateChannel:       getenv("SKYGATE_UPDATE_CHANNEL", "stable"),
 		GitHubToken:         os.Getenv("SKYGATE_GITHUB_TOKEN"),
+		// v0.32.3: auto-update flag. Default false.
+		// SKYGATE_AUTO_UPDATE_ENABLED=true enables the
+		// banner + "Apply" button. When false, the operator
+		// must use the separate "Push update" button to
+		// trigger an apply — the system never auto-updates
+		// without an explicit click.
+		AutoUpdateEnabled: getenv("SKYGATE_AUTO_UPDATE_ENABLED", "false") == "true",
 		// v0.29.0: auto-updater paths. The default
 		// /home/skyadmin/skygate matches the operator's
 		// VM; the /data state file matches the

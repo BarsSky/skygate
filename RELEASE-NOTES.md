@@ -1,5 +1,90 @@
 # Skygate release notes
 
+## v0.32.3 — Auto-update opt-in + manual Push button + skygate-vs-headscale drift tests
+
+**Date:** 2026-07-30
+**Tag:** _not yet tagged_ — pending VM verify
+**Scope:** New env var `SKYGATE_AUTO_UPDATE_ENABLED` (default
+`false`) gates the banner-driven "Apply" button on
+/admin/update. New "Push update" button is always
+visible and ALWAYS works (manual trigger). 6 unit tests
+for the existing /admin/exit-nodes drift detection. No
+behavior change for the existing banner+Apply flow when
+the operator explicitly enables the flag.
+
+### What's new (operator-visible)
+
+- **`SKYGATE_AUTO_UPDATE_ENABLED` env var (default `false`)**:
+  when `true`, the page shows the banner + one-click
+  "Apply" button on a newer release. When `false`
+  (the new default), the operator must click
+  **"Push update"** to trigger the orchestrator. The
+  system never auto-updates without an explicit click.
+- **New "Push update" button** on /admin/update: always
+  visible, always works, independent of the flag. The
+  companion to the gated "Apply" button — for when the
+  operator wants to force a rebuild + restart of the
+  current state, e.g. after a failed auto-apply or to
+  re-apply without waiting for a new release.
+- **Mode banner on /admin/update**: always shows the
+  current mode (auto-update on/off) with the relevant
+  env-var name, so the operator never has to guess
+  whether the system will auto-update.
+
+### What's new (operator-internal)
+
+- **`internal/config/config.go`**: new `AutoUpdateEnabled`
+  field (default `false`).
+- **`internal/feature/admin/update.go`**: new
+  `PostAdminUpdatePush` handler (`POST /admin/update/push`).
+  Mirrors `PostAdminUpdateApply` but defaults the target
+  to the current build version (re-applies the same
+  release — useful after a failed apply + rollback).
+  Same in-flight mutex as Apply (409 on double-click).
+- **`internal/handlers/templates/admin/update.html`**:
+  "Push update" button + auto-update-mode banner.
+- **5 new i18n keys** (`update.push`, `update.push_help`,
+  `update.push_confirm`, `update.auto_disabled_banner`,
+  `update.auto_enabled_banner`) × 2 languages = 10 entries.
+- **`internal/feature/admin/exit_nodes.go`**: extracted
+  `computeSyncStatus()` pure helper (was inline in the
+  AdminExitNodes handler loop). Same behavior, now
+  unit-testable.
+- **`internal/feature/admin/exit_nodes_test.go`** (NEW,
+  6.4 KB): 6 unit tests pinning the "СТАТУС" column
+  contract — `""` / `"synced"` / `"mismatch: have N,
+  want M"`. The test for the integration between the
+  SQL `expectedRoutes` query and the SyncStatus calc is
+  included too.
+- **`scripts/verify_post_deploy.sh`**: new R29 check
+  measures skygate-vs-headscale rule drift per exit
+  node. Tolerance is intentionally loose (50 rules)
+  because the prod system has real drift (karolina:
+  148 headscale routes vs 357 skygate device_rules).
+  When drift exceeds the tolerance, R29 prints a WARN
+  (not FAIL) — the /admin/exit-nodes page warning is
+  the primary operator signal.
+
+### Why this release
+
+Operator correction on 2026-07-30: "автообновление только
+если администротор выставил соответствующий флаг, но
+по умолчанию false. Также добавить отдельную кнопку
+для прожатия обновления". The "Push" button + the
+opt-in flag are the implementation. Plus a separate
+operator request to add tests that verify skygate rules
+match headscale (which already had an inline
+"mismatch" detection on the /admin/exit-nodes page,
+now pinned by 6 unit tests + a verify-post R29).
+
+### Verified
+
+- `go build ./...` clean
+- `go test -count=1 -run 'TestComputeSyncStatus|TestSeedNodeRulesAndReadExpected' ./internal/feature/admin/` 6/6 PASS
+- All other test packages still PASS (no regressions)
+
+---
+
 ## v0.32.2 — ACL perf + route correctness tests (regression guards for exit-node routing)
 
 **Date:** 2026-07-30

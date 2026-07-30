@@ -692,6 +692,12 @@ func main() {
 	mux.Handle("POST /admin/update/apply", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateApply)))
 	mux.Handle("POST /admin/update/rollback", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateRollback)))
 	mux.Handle("POST /admin/update/dismiss", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateDismiss)))
+	// 2026-07-30: v0.32.3 — manual "Push update" trigger
+	// that works regardless of SKYGATE_AUTO_UPDATE_ENABLED.
+	// For when the operator wants to force a rebuild +
+	// restart right now, without waiting for a newer
+	// release to be detected.
+	mux.Handle("POST /admin/update/push", authMW(http.HandlerFunc(adminSvc.PostAdminUpdatePush)))
 	// 2026-07-20: v0.20.0 — "Run check now" button on
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as
