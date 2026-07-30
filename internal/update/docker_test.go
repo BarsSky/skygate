@@ -355,7 +355,7 @@ func TestRunShellDetached_FireAndForget(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
-	u := &DockerUpgrader{RepoPath: dir}
+	u := &DockerUpgrader{RepoPath: dir, SwapLogPath: filepath.Join(dir, "swap.log")}
 	start := time.Now()
 	if err := u.runShellDetached(context.Background(), "sh", scriptPath); err != nil {
 		t.Fatalf("runShellDetached: %v", err)

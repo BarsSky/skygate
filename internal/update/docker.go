@@ -48,6 +48,11 @@ import (
 
 // DockerUpgrader runs the Docker install kind update.
 type DockerUpgrader struct {
+	// SwapLogPath is the path to the swap subprocess log
+	// file. Defaults to /data/skygate-update-swap.log (the
+	// in-container /data bind-mount target). Tests override
+	// it to a temp dir.
+	SwapLogPath string
 	// RepoPath is the path to the skygate source repo.
 	//
 	// When running inside the skygate container (the
@@ -541,8 +546,12 @@ func (u *DockerUpgrader) runShellDetached(ctx context.Context, name string, args
 	applySysProcAttr(cmd)
 	// Detach stdio. The subprocess writes its own log to
 	// /data/skygate-update-swap.log so the operator can
-	// inspect what happened.
-	logFile := "/data/skygate-update-swap.log"
+	// inspect what happened. Tests override SwapLogPath
+	// to a temp dir.
+	logFile := u.SwapLogPath
+	if logFile == "" {
+		logFile = "/data/skygate-update-swap.log"
+	}
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("open swap log: %w", err)
