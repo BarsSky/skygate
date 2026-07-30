@@ -3,6 +3,11 @@
 This file is for AI assistants (Hermes, Claude, Cline, Cursor, etc.) working on
 or with Skygate. Read this **first** before suggesting changes or running tasks.
 
+**Before proposing work, also read [`docs/BACKLOG.md`](docs/BACKLOG.md)** —
+it tracks abandoned / blocked / in-progress features (HA skygate-host-2,
+PG cutover, backup polish, perf regression tests, etc.) so you don't
+re-litigate old decisions or propose work that's already in flight.
+
 ---
 
 ## v0.28.5 guarantee catalog (B1-B18 build-time + R1-R27 runtime)
