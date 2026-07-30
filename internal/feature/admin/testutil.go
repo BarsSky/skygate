@@ -91,6 +91,20 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS global_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER DEFAULT (strftime('%s','now'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS audit_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER DEFAULT 0,
+			username TEXT DEFAULT '',
+			action TEXT NOT NULL,
+			detail TEXT DEFAULT '',
+			ip_address TEXT DEFAULT '',
+			created_at INTEGER DEFAULT (strftime('%s','now'))
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {
@@ -111,15 +125,24 @@ func newMemoryDB(t *testing.T) *sql.DB {
 // or s.Backend.RenderWithLayout, and writes to the response.
 // The shim is a no-op renderer that doesn't depend on real
 // templates.
+//
+// Also installs s.I18n as the i18n.GlobalCatalog for the
+// duration of the test (handlers use the package-level
+// i18n.Tf/T which fall back to GlobalCatalog). t.Cleanup
+// restores the previous value.
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 	d := newMemoryDB(t)
 	t.Cleanup(func() { d.Close() })
-	b := newTestBackend()
+	b := newTestBackend(d)
+	c := i18n.New()
+	prev := i18n.GlobalCatalog
+	i18n.GlobalCatalog = c
+	t.Cleanup(func() { i18n.GlobalCatalog = prev })
 	return &Service{
 		Backend: b,
 		DB:      d,
-		I18n:    i18n.New(),
+		I18n:    c,
 	}
 }
 
@@ -128,6 +151,7 @@ func newTestService(t *testing.T) *Service {
 // (see internal/handlers/handlers_export.go for the public
 // wrappers) without depending on a real *App.
 type testBackend struct {
+	db        *sql.DB
 	auditRows []testAuditRow
 }
 
@@ -139,8 +163,8 @@ type testAuditRow struct {
 	When     time.Time
 }
 
-func newTestBackend() *testBackend {
-	return &testBackend{}
+func newTestBackend(d *sql.DB) *testBackend {
+	return &testBackend{db: d}
 }
 
 func (b *testBackend) CurrentUser(r *http.Request) *auth.Claims {
@@ -204,6 +228,13 @@ func (b *testBackend) Audit(userID int64, username, action, detail string) {
 		UserID: userID, Username: username,
 		Action: action, Detail: detail, When: time.Now(),
 	})
+	// Also write to the DB so tests can query audit_log via SQL.
+	if b.db != nil {
+		_, _ = b.db.Exec(
+			`INSERT INTO audit_log(user_id, username, action, detail) VALUES (?, ?, ?, ?)`,
+			userID, username, action, detail,
+		)
+	}
 }
 
 func (b *testBackend) Config() interface{} { return nil }
@@ -292,10 +323,10 @@ func extractExcerpt(haystack, needle string) string {
 // the field set.
 type testNotifier struct{}
 
-func (testNotifier) SendTelegram(_ string)                       {}
-func (testNotifier) SendTelegramToChat(_ string, _ int64)       {}
-func (testNotifier) SendAlert(_ string) int64                   { return 0 }
-func (testNotifier) BotUsernameCached() string                  { return "" }
+func (testNotifier) SendTelegram(_ string)                {}
+func (testNotifier) SendTelegramToChat(_ string, _ int64) {}
+func (testNotifier) SendAlert(_ string) int64             { return 0 }
+func (testNotifier) BotUsernameCached() string            { return "" }
 
 // Compile-time check: testNotifier satisfies telegram.Notifier.
 var _ telegram.Notifier = testNotifier{}
