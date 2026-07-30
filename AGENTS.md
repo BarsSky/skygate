@@ -1673,7 +1673,7 @@ per-user headscale, compliance tier). The next big things:
   and provides a minimal `newTestService` helper
   (open :memory: DB → return `&Service{DB: d}`).
   20 PASS, 0 FAIL on Windows.
-  Remaining follow-up: ~3600 lines of test code still
+  Remaining follow-up: ~2850 lines of test code still
   tracked in the dropped-test backlog (see "Test debt" in
   the deferred-items audit). The 4 admin/{subnets,
   exit_nodes_tag, backup_config, user_subnet, control_planes,
@@ -1681,6 +1681,11 @@ per-user headscale, compliance tier). The next big things:
   (`makeSyntheticTemplates` from handlers_test.go is the
   reference pattern) and the user_subnet tests need
   `fakeSidecarHS` (httptest.Server for the headscale API).
+  2026-07-30: handlers_my_telegram_test.go (753 lines,
+  19 tests) ported to internal/feature/my/telegram_test.go
+  (15 tests) + internal/feature/admin/telegram_strict_test.go
+  (4 tests). Brought the feature/ test count from 117 to 136
+  (+19). Test debt now ~2850 lines (was ~3600).
 
 - **`v0.19.1` — `exitnode.skygate-subnet-<user>.<base-domain>`
   DNS records** (re-attempt of the reverted v0.19.0). Per-user
