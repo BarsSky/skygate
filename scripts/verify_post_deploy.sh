@@ -38,14 +38,30 @@
 #   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
 #   SSH_HOST=skyadmin@192.168.13.69 bash scripts/verify_post_deploy.sh
 #
-# Cross-platform: pure bash. The SSH_HOST env var lets you run
-# this from a Linux/Mac shell against the VM, or from a Windows
-# Git Bash. The script SSHes into the VM and runs the actual
-# checks in-place (so we don't need to expose headscale's API
-# key to the operator's machine).
+# Cross-platform: pure bash. Runs from the OPERATOR'S machine
+# (Linux/Mac shell or Windows Git Bash) — SSHes into the VM and
+# runs the actual checks in-place. The VM is the source of
+# truth for the live state; the operator's machine just needs
+# (a) a working `ssh` to the VM and (b) the SSH key in one of
+# the standard locations:
+#
+#   ~/.ssh/id_ed25519
+#   ~/.ssh/id_rsa
+#   /mnt/c/Users/<user>/.ssh/id_ed25519   (WSL2 from Windows)
+#   /c/Users/<user>/.ssh/id_ed25519      (Git Bash from Windows)
+#
+# For the WSL2/Git-Bash + Windows case, the script auto-detects
+# `C:\Users\<user>\.ssh\id_ed25519` and uses it. If the key is
+# password-protected, run `ssh-add <key>` once per shell session
+# (the script does NOT auto-add — that would require unlocking
+# the keychain in a non-interactive way, which the operator
+# should do explicitly so the password isn't in script args).
 #
 # 2026-07-25: v0.28.5 — initial catalog.
 # 2026-07-28: v0.30.1 — added R26.
+# 2026-07-30: R10 made dynamic (was hardcoded to "4" — broke
+# when the system grew past the 4 baseline users; now reads
+# COUNT(*) FROM portal_users via ssh-into-vm sqlite3).
 
 set -u
 # No `set -e` — count failures, don't abort.
@@ -321,7 +337,22 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
   echo
   echo "[R10-R16] policy shape invariants"
 
-  # R10: 4 per-user grants, src=user@, dst includes autogroup:internet
+  # R10: per-user grants (one per portal_users row), src=user@,
+  # dst includes autogroup:internet. The expected count is DYNAMIC
+  # — it should match the number of portal_users rows in the DB.
+  # (Was hardcoded to "4" for the 4 known prod users
+  # skyadmin/michail/guest/daniil; the system can grow beyond
+  # that and the script must follow.) R15/R16 below do the
+  # via-flag cross-check; R10 just checks the count + presence
+  # of the per-user shape.
+  #
+  # Authoritative count: SELECT COUNT(*) FROM portal_users via
+  # ssh-into-vm sqlite3 (the .db file is bind-mounted from the
+  # host, so we have to docker cp it out for sqlite to read).
+  USER_COUNT_DB=$(ssh_vm "set -e
+    docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_ucnt_\$\$.sqlite
+    sqlite3 /tmp/_db_ucnt_\$\$.sqlite 'SELECT COUNT(*) FROM portal_users;'
+    rm -f /tmp/_db_ucnt_\$\$.sqlite" 2>/dev/null | tr -d ' \n')
   USER_GRANT_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -331,11 +362,11 @@ n = sum(1 for g in p.get('grants',[])
         and 'autogroup:internet' in g.get('dst',[]))
 print(n)
 ")
-  if [ "$USER_GRANT_COUNT" = "4" ]; then
-    echo "  ${GRN}PASS${NC}  R10 4 per-user grants with autogroup:internet"
+  if [ -n "$USER_COUNT_DB" ] && [ "$USER_GRANT_COUNT" = "$USER_COUNT_DB" ]; then
+    echo "  ${GRN}PASS${NC}  R10 $USER_GRANT_COUNT per-user grants (matches portal_users=$USER_COUNT_DB, all with autogroup:internet)"
     RESULTS_PASS=$((RESULTS_PASS+1))
   else
-    echo "  ${RED}FAIL${NC}  R10 per-user grants count=$USER_GRANT_COUNT (expected 4)"
+    echo "  ${RED}FAIL${NC}  R10 per-user grants count=$USER_GRANT_COUNT (expected $USER_COUNT_DB from portal_users)"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 
