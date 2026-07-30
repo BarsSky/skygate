@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"skygate/internal/auth"
+	"skygate/internal/headscale"
 	"skygate/internal/i18n"
 	"skygate/internal/telegram"
 )
@@ -147,6 +148,8 @@ func newTestService(t *testing.T) *Service {
 		// real headscale client (control_planes, exit_nodes)
 		// should call s.HSGlobalFn = func() *headscale.Client
 		// { return <client> } after the constructor.
+		HSGlobalFn:  func() *headscale.Client { return nil },
+		HSForUserFn: func(userID int64) *headscale.Client { return nil },
 	}
 }
 
