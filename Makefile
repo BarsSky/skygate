@@ -48,7 +48,7 @@ PKG      ?= ./cmd/skygate
 # this time".
 SHELL    ?= bash
 
-.PHONY: build run smoke check-nodes audit-routes test clean deploy backup restart logs tailscale-update-telegram-routes verify-pre verify-post verify rebuild-deploy reconcile-snapshots help
+.PHONY: build run smoke check-nodes audit-routes test clean deploy backup restart logs tailscale-update-telegram-routes verify-pre verify-post verify rebuild-deploy reconcile-snapshots recover-db monitor-disk help
 
 help:
 	@echo "Targets:"
@@ -203,6 +203,29 @@ reconcile-snapshots:
 		bash scripts/reconcile_snapshots.sh; \
 	else \
 		echo "scripts/reconcile_snapshots.sh not found or not executable"; \
+		exit 1; \
+	fi
+
+# 2026-07-30: v0.32.5 — recover from DB corruption (R30 FAIL).
+# Uses sqlite3 .recover to salvage data from the corrupted DB
+# and rebuild a clean one. Run when R30 fails in verify-post.
+# See docs/BACKLOG.md Priority 8 for the full root-cause writeup.
+recover-db:
+	@if [ -x scripts/recover_db_corruption.sh ]; then \
+		bash scripts/recover_db_corruption.sh; \
+	else \
+		echo "scripts/recover_db_corruption.sh not found or not executable"; \
+		exit 1; \
+	fi
+
+# 2026-07-30: v0.32.5 — disk space monitor (one-shot, for
+# debugging or for testing the cron). Installed as
+# /usr/local/bin/skygate-monitor-disk on the VM by deploy.sh.
+monitor-disk:
+	@if [ -x scripts/monitor_disk.sh ]; then \
+		bash scripts/monitor_disk.sh; \
+	else \
+		echo "scripts/monitor_disk.sh not found or not executable"; \
 		exit 1; \
 	fi
 

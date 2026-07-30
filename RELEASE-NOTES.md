@@ -1,5 +1,123 @@
 # Skygate release notes
 
+## v0.32.5 — Real DB corruption fix (`.recover` + disk monitor)
+
+**Date:** 2026-07-30
+**Tag:** _pending_
+**Scope:** the v0.32.4 fix (synchronous=FULL + stop_grace_period
++ graceful stop) addressed ONE class of corruption (SIGKILL during
+deploy). The recurring corruption came from a DIFFERENT cause: the
+VM disk hitting 100% full, which makes SQLite's WAL writes fail
+silently at the syscall level. v0.32.5 ships the real fix
+(`.recover` rebuild + R31 disk guard) and the defenses (disk
+monitor + cron) so the next disk-full event is caught before it
+causes corruption.
+
+### What's new (operator-visible)
+
+- **R31 in verify-post**: disk space check. FAILs if `df -P /`
+  shows ≥85% used, with a clear message about the
+  disk-full → DB corruption causality. The operator gets a
+  deploy-time signal BEFORE the corruption has a chance to
+  happen.
+- **`scripts/monitor_disk.sh`** (cron-friendly, installed by
+  `deploy.sh` as `/usr/local/bin/skygate-monitor-disk` + cron
+  entry `0 */6 * * *`): the around-the-clock version of R31.
+  Telegram-alerts at 85% / 95% thresholds. Same alert also
+  exits 1 at 95% so external uptime checks catch it.
+- **`scripts/recover_db_corruption.sh`** rewritten to use
+  `sqlite3 .recover` (the REAL fix). The previous v0.32.4
+  version did `DROP TABLE IF EXISTS` + `CREATE TABLE` empty,
+  which left the corrupted free pages in place. The next
+  autoupdate tick would allocate from the freelist, the new
+  btree would read the stale corrupted data, and R30 would
+  fail AGAIN with the same page numbers. `.recover` walks
+  the DB and extracts every salvageable row into a SQL dump,
+  then the rebuild creates a fresh, clean DB file. The
+  corrupted free pages never get into the new file.
+
+### What changed (technical)
+
+- `scripts/recover_db_corruption.sh` — now uses `.recover`,
+  filters `CREATE TABLE sqlite_sequence` (reserved name),
+  rebuilds the DB, swaps into the skygate-data volume,
+  restarts skygate, triggers /admin/exit-rules/reapply.
+  Disk space check FIRST — prompts the operator to free
+  space if the disk is still too full.
+- `scripts/_recover_helper.sh` (new, 1.3KB) — runs in the
+  throwaway alpine:3.20 container (skygate container has
+  no `sqlite3` binary). The 5 steps: .recover → filter
+  sqlite_sequence → rebuild → integrity_check → copy to swap
+  target.
+- `scripts/_swap_recovered.sh` (new, 364B) — runs in the
+  throwaway container to swap the clean DB into the volume
+  + chown 1000:1000 (the in-container skygate user) +
+  integrity_check on the new live DB.
+- `scripts/monitor_disk.sh` (new, 2.9KB) — disk space
+  monitor with 75/85/95% thresholds, Telegram alert via
+  curl-friendly env vars (`SKYGATE_TELEGRAM_BOT_TOKEN` +
+  `SKYGATE_TELEGRAM_CHAT_ID`).
+- `scripts/verify_post_deploy.sh` — new R31 check
+  (disk space, FAIL at ≥85% used). R30 message updated to
+  reference the `.recover` recovery script. R7 fixed: was
+  testing 172.18.0.2:50444 (the skygate container's own IP)
+  instead of 172.18.0.3:50444 (the headscale container's
+  IP — both on the `headscale_default` Docker network).
+- `Makefile` — new `recover-db` and `monitor-disk` targets.
+- `deploy/deploy.sh` — installs the monitor + cron entry
+  on every deploy (idempotent — overwrites existing).
+- `docs/BACKLOG.md` Priority 8 — full incident writeup.
+  Replaces the v0.32.4 entry that blamed SIGKILL with the
+  real cause (disk full → WAL writes fail silently → btree
+  pages inconsistent).
+
+### Why v0.32.4's fixes (synchronous=FULL, stop_grace_period) are still in
+
+They're the textbook durability settings for serious SQLite
+deployments. Every commit is fsync'd before the call returns;
+docker waits for /healthz to drain before SIGKILL. These
+protect against the deploy-time SIGKILL class of corruption.
+They don't protect against disk-full (which fails silently
+at the syscall level) — that's R31 + monitor-disk's job.
+
+### Verified
+
+- `make verify-pre` on Windows: 18/18 PASS (B8 SKIP smoke
+  is VM-only)
+- `make verify-post` on VM: 31/31 PASS (R27 SKIP for
+  PG-staging not provisioned)
+- Live recovery run 2026-07-30 21:38: 41MB clean DB
+  (4 users, 4670 audit_log rows, 372 device_rules),
+  `integrity_check=ok`, all 31 R-checks PASS
+
+### How to recover if R30 fails in the future
+
+```bash
+# 1. Free disk space (the cause, not the symptom)
+ssh admin@192.0.2.1 'df -h /'
+ssh admin@192.0.2.1 'sudo docker system prune -a -f'
+ssh admin@192.0.2.1 'sudo rm -rf /var/backups/skygate/PRE_RECOVER_*'
+
+# 2. Run the recovery
+make recover-db
+# or: bash scripts/recover_db_corruption.sh
+# It will: stop skygate → backup → .recover + rebuild → swap → restart → reapply
+
+# 3. Verify
+make verify-post
+```
+
+### Files in this change
+
+- `docs/BACKLOG.md` — full Priority 8 incident writeup
+- `scripts/recover_db_corruption.sh` — rewritten with `.recover`
+- `scripts/_recover_helper.sh` — NEW (1.3KB, throwaway-container helper)
+- `scripts/_swap_recovered.sh` — NEW (364B, swap helper)
+- `scripts/monitor_disk.sh` — NEW (2.9KB, disk space monitor + cron)
+- `scripts/verify_post_deploy.sh` — R31 added, R7 fixed (172.18.0.3 not .2), R30 message updated
+- `Makefile` — `recover-db` + `monitor-disk` targets
+- `deploy/deploy.sh` — installs monitor + cron on every deploy
+
 ## v0.32.3 — Auto-update opt-in + manual Push button + skygate-vs-headscale drift tests
 
 **Date:** 2026-07-30

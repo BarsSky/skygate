@@ -352,4 +352,32 @@ if [ -f "${SCRIPT_DIR}/skygate-cli.sh" ]; then
     fi
 fi
 
+# 2026-07-30: v0.32.5 — install the disk-space monitor and a cron
+# entry. The monitor detects disk-full BEFORE it causes DB
+# corruption (SQLite's WAL writes fail silently at the syscall
+# level when /var has no free space, leaving btree pages in an
+# inconsistent state — see docs/BACKLOG.md Priority 8). The
+# monitor runs every 6h and dispatches a Telegram alert at
+# 85% / 95% thresholds (matches R31 in verify-post).
+if [ -f "${SCRIPT_DIR}/../scripts/monitor_disk.sh" ]; then
+    if [ "${SKYGATE_OS}" != "windows" ]; then
+        cp "${SCRIPT_DIR}/../scripts/monitor_disk.sh" /usr/local/bin/skygate-monitor-disk
+        chmod +x /usr/local/bin/skygate-monitor-disk
+        log "Installed /usr/local/bin/skygate-monitor-disk"
+        # Cron: every 6h. Idempotent — overwrites any existing entry.
+        if command -v crontab >/dev/null 2>&1; then
+            TMP_CRON=$(mktemp)
+            crontab -l 2>/dev/null | grep -v 'skygate-monitor-disk' > "$TMP_CRON" || true
+            echo "0 */6 * * * /usr/local/bin/skygate-monitor-disk >> /var/log/skygate-disk-monitor.log 2>&1" >> "$TMP_CRON"
+            crontab "$TMP_CRON"
+            rm -f "$TMP_CRON"
+            log "Installed cron: 0 */6 * * * /usr/local/bin/skygate-monitor-disk"
+        else
+            log "WARN: crontab not found, monitor installed but not scheduled. Add the cron entry manually."
+        fi
+    else
+        log "Skipped /usr/local/bin/skygate-monitor-disk install (Windows OS)"
+    fi
+fi
+
 [ -x "${SCRIPT_DIR}/validate.sh" ] && { echo "Running validation..."; bash "${SCRIPT_DIR}/validate.sh"; }
