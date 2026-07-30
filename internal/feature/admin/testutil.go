@@ -143,6 +143,10 @@ func newTestService(t *testing.T) *Service {
 		Backend: b,
 		DB:      d,
 		I18n:    c,
+		// HSGlobalFn default: returns nil. Tests that need a
+		// real headscale client (control_planes, exit_nodes)
+		// should call s.HSGlobalFn = func() *headscale.Client
+		// { return <client> } after the constructor.
 	}
 }
 
@@ -275,6 +279,14 @@ func authedReqForURL(t *testing.T, method, path, username string, isAdmin bool) 
 // username and returns the new id. Tests that need a user
 // to allocate a subnet to call this first.
 func adminSubnetSeed(t *testing.T, d *sql.DB, username string, isAdmin bool) int64 {
+	t.Helper()
+	return seedPortalUser(t, d, username, isAdmin)
+}
+
+// seedPortalUser is the lower-level helper that adminSubnetSeed
+// wraps. The control_planes tests need a portal_users row to
+// set per-user headscale config on.
+func seedPortalUser(t *testing.T, d *sql.DB, username string, isAdmin bool) int64 {
 	t.Helper()
 	adminVal := 0
 	if isAdmin {
