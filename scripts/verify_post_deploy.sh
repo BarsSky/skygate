@@ -370,6 +370,55 @@ print(n)
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 
+  # R28: live policy size + grant count — exit-node route
+  # correctness guard (v0.32.2).
+  # 2026-07-30: the operator reported "exit-node routing
+  # started working slower" after a series of small
+  # refactors. The most likely cause for a perf regression
+  # in Tailscale client map updates is a ballooning policy
+  # (every device downloads the whole file on every map
+  # update). This check pins:
+  #   (a) the deployed policy is < 100KB (Tailscale clients
+  #       on slow links start to feel this around 100KB;
+  #       production is ~5KB so 100KB is 20x headroom)
+  #   (b) the number of grants is < 500 (each grant is
+  #       matched per packet; 500 is the per-device rule
+  #       cap, so the total should be roughly N_users *
+  #       N_devices — well under 500 for the current
+  #       4-user deploy)
+  #   (c) the number of hosts is < 2000 (each /32 DNS rule
+  #       adds a host entry; large host blocks are a common
+  #       source of policy bloat)
+  #
+  # All three are informational/early-warning: a slow
+  # growth is fine, a sudden spike (R10 PASS yesterday,
+  # R28 FAIL today) is the signal to investigate.
+  POLICY_BYTES=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+print(len(d['policy']))
+")
+  POLICY_GRANT_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+print(len(p.get('grants',[])))
+")
+  POLICY_HOST_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+p = json.loads(d['policy'])
+print(len(p.get('hosts',{})))
+")
+  if [ "$POLICY_BYTES" -lt 102400 ] && [ "$POLICY_GRANT_COUNT" -lt 500 ] && [ "$POLICY_HOST_COUNT" -lt 2000 ]; then
+    echo "  ${GRN}PASS${NC}  R28 policy size=${POLICY_BYTES}B grants=${POLICY_GRANT_COUNT} hosts=${POLICY_HOST_COUNT} (bounds 102400/500/2000)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R28 policy perf: size=${POLICY_BYTES}B grants=${POLICY_GRANT_COUNT} hosts=${POLICY_HOST_COUNT} (bounds 102400/500/2000)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
   # R11: per-device loose grants (no via) for every tagged device
   LOOSE_DEV_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
 import json, sys

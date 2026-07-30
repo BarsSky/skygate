@@ -345,6 +345,42 @@ run_check "B18" "PG foundation builds (v0.31.0 driver + migrations + tests)" \
     '\''$GO'\'' vet -tags postgres ./internal/db/... 2>&1
   '"
 
+# --- B19: ACL perf + route correctness (v0.32.2) ---
+# 2026-07-30: operator reported "exit-node routing started
+# working slower" after a series of small refactors. The
+# actual cause was likely the v0.32.0 via: sync bug (already
+# fixed in commit 63cd0ed), but the operator wanted
+# permanent regression guards. This check pins:
+#   (a) the 6 functional perf tests in internal/acl/perf_test.go
+#       pass (size, no duplicate hosts, first-match ordering,
+#       via honored when enabled, via omitted when disabled,
+#       all tags in tagOwners)
+#   (b) the 4 benchmark functions exist (so a future
+#       refactor can `go test -bench` to compare)
+#   (c) GenerateACL still completes in < 1s for 1000 rules
+#       (loose guard — the 100-rule production policy should
+#       be sub-millisecond; this catches accidental O(n²)
+#       regressions)
+#
+# The benchmarks are NOT run by verify-pre (they take seconds);
+# run them manually with:
+#   go test -bench=BenchmarkGenerateACL -run=^$ ./internal/acl/
+run_check "B19" "ACL perf + route correctness (v0.32.2 perf tests)" \
+  "bash -c '
+    test -f internal/acl/perf_test.go &&
+    grep -q TestGenerateACL_SizeWithinBound internal/acl/perf_test.go &&
+    grep -q TestGenerateACL_NoDuplicateHosts internal/acl/perf_test.go &&
+    grep -q TestGenerateACL_FirstMatchOrdering internal/acl/perf_test.go &&
+    grep -q TestGenerateACL_ViaHonoredWhenEnabled internal/acl/perf_test.go &&
+    grep -q TestGenerateACL_ViaOmittedWhenDisabled internal/acl/perf_test.go &&
+    grep -q TestGenerateACL_AllTagsInTagOwners internal/acl/perf_test.go &&
+    grep -q BenchmarkGenerateACL_Small internal/acl/perf_test.go &&
+    grep -q BenchmarkGenerateACL_Medium internal/acl/perf_test.go &&
+    grep -q BenchmarkGenerateACL_Large internal/acl/perf_test.go &&
+    grep -q BenchmarkGenerateACL_ViaEnabled internal/acl/perf_test.go &&
+    '\''$GO'\'' test -count=1 -run '\''TestGenerateACL_SizeWithinBound|TestGenerateACL_NoDuplicateHosts|TestGenerateACL_FirstMatchOrdering|TestGenerateACL_ViaHonoredWhenEnabled|TestGenerateACL_ViaOmittedWhenDisabled|TestGenerateACL_AllTagsInTagOwners'\'' ./internal/acl/ 2>&1
+  '"
+
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
