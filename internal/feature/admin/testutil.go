@@ -107,6 +107,27 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			ip_address TEXT DEFAULT '',
 			created_at INTEGER DEFAULT (strftime('%s','now'))
 		)`,
+		// telegram_bindings + telegram_login_tokens — needed by
+		// the SendTest handler (admin_telegram_test.go: it queries
+		// bindings when global chat_id is empty, and the bot login
+		// flow uses the tokens table for the /my/telegram test).
+		`CREATE TABLE IF NOT EXISTS telegram_bindings (
+			chat_id INTEGER PRIMARY KEY,
+			portal_user_id INTEGER NOT NULL,
+			is_admin INTEGER NOT NULL DEFAULT 0,
+			bound_at INTEGER NOT NULL DEFAULT 0,
+			bound_by_user_id INTEGER NOT NULL DEFAULT 0,
+			lang TEXT NOT NULL DEFAULT 'en'
+		)`,
+		`CREATE TABLE IF NOT EXISTS telegram_login_tokens (
+			token TEXT PRIMARY KEY,
+			portal_user_id INTEGER NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			expires_at INTEGER NOT NULL,
+			used_at INTEGER NOT NULL DEFAULT 0,
+			used_by_chat_id INTEGER NOT NULL DEFAULT 0,
+			request_ip TEXT NOT NULL DEFAULT ''
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {
@@ -134,6 +155,20 @@ func newMemoryDB(t *testing.T) *sql.DB {
 // restores the previous value.
 func newTestService(t *testing.T) *Service {
 	t.Helper()
+	return newTestServiceWithNotifier(t, nil)
+}
+
+// newTestServiceWithNotifier is the variant where the caller
+// supplies a custom Notifier. Pass nil to use the no-op
+// testNotifier (most tests don't care). Tests that exercise
+// the SendTest / strict-mode no-op paths use the
+// recordingTestNotifier below to assert on SendTelegram /
+// SendTelegramToChat / SendAlert calls.
+func newTestServiceWithNotifier(t *testing.T, n telegram.Notifier) *Service {
+	t.Helper()
+	if n == nil {
+		n = testNotifier{}
+	}
 	d := newMemoryDB(t)
 	t.Cleanup(func() { d.Close() })
 	b := newTestBackend(d)
@@ -145,6 +180,7 @@ func newTestService(t *testing.T) *Service {
 		Backend: b,
 		DB:      d,
 		I18n:    c,
+		Notifier: n,
 		// HSGlobalFn default: returns nil. Tests that need a
 		// real headscale client (control_planes, exit_nodes)
 		// should call s.HSGlobalFn = func() *headscale.Client
