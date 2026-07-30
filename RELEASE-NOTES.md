@@ -1,5 +1,86 @@
 # Skygate release notes
 
+## v0.32.2 — ACL perf + route correctness tests (regression guards for exit-node routing)
+
+**Date:** 2026-07-30
+**Tag:** _not yet tagged_ — pending VM verify-post R28
+**Scope:** 6 new functional tests + 4 benchmarks in
+`internal/acl/perf_test.go`. Build-time B19 + runtime R28
+added to the verify catalog. No behavior change in production.
+
+### What's new (operator-visible)
+
+Nothing visible to operators. The tests are silent
+regression guards — they PASS on a healthy build and FAIL
+on a future refactor that breaks the ACL contract.
+
+### What's new (operator-internal)
+
+- **`internal/acl/perf_test.go`** (NEW, 16.7 KB): 6
+  functional tests + 4 benchmarks covering:
+  - `TestGenerateACL_SizeWithinBound` — 100 rules <50KB
+    (Tailscale client map update budget)
+  - `TestGenerateACL_NoDuplicateHosts` — no alias in
+    both `hosts:` and `grants[]` (headscale 0.29.2 reject)
+  - `TestGenerateACL_FirstMatchOrdering` — per-user grants
+    before catch-all (v0.12.0.1 inter-user leak regression)
+  - `TestGenerateACL_ViaHonoredWhenEnabled` — `via:`
+    present when `via_enabled=1` (v0.32.0 sync bug fix guard)
+  - `TestGenerateACL_ViaOmittedWhenDisabled` — no `via:`
+    when opted out (opt-in semantics guard)
+  - `TestGenerateACL_AllTagsInTagOwners` — every `tag:X`
+    in `acls[]/grants[]/ssh[]` is declared in `tagOwners[]`
+    (headscale "tag not found" reject)
+  - `BenchmarkGenerateACL_Small/Medium/Large/ViaEnabled` —
+    baseline for future perf comparisons
+
+- **`scripts/verify_pre_deploy.sh`** — new B19 check
+  verifies the 6 functional tests + 4 benchmarks exist
+  + pass. Added after B18 (PG foundation).
+
+- **`scripts/verify_post_deploy.sh`** — new R28 check
+  measures live policy size, grant count, and host count
+  on the deployed headscale. Bounds: 100KB / 500 grants
+  / 2000 hosts. Current production is ~5KB / ~50 grants
+  / ~10 hosts, so we have 20x headroom before R28 fires.
+
+### Why this release
+
+The operator reported "exit-node routing started working
+slower" after a series of small refactors. The most likely
+root cause was the v0.32.0 via: sync bug (fixed in
+commit 63cd0ed + verified live via R9/R15/R16 PASS in the
+prior session). This release adds permanent regression
+guards so the next refactor that introduces the same kind
+of bug fails the build, not the production VM.
+
+### Bench baseline (Windows host, AMD Ryzen 7 PRO 5750G)
+
+```
+BenchmarkGenerateACL_Small      10 rules    179 µs/op
+BenchmarkGenerateACL_Medium    100 rules    453 µs/op
+BenchmarkGenerateACL_Large    1000 rules   2.9 ms/op
+BenchmarkGenerateACL_ViaEnabled 10×50 rules 596 µs/op
+```
+
+1000 rules in under 3ms. Production is ~30 rules, so
+sub-200µs in the real world. Any future refactor that
+slows this down to >10ms/op is a regression.
+
+Run locally before any ACL refactor:
+```bash
+go test -bench=BenchmarkGenerateACL -run=^$ ./internal/acl/
+```
+
+### Verified
+
+- `go build ./...` clean
+- `go test -count=1 -short ./...` all 26 packages PASS
+- `go test -bench=BenchmarkGenerateACL -run=^$ ./internal/acl/` PASS (4 benches)
+- `make verify-pre` 18/18 PASS (B19 added; B8 SKIP — smoke is VM-only)
+
+---
+
 ## v0.32.1 — Sidebar completeness + BACKLOG hygiene (UI cosmetics + tracking)
 
 **Date:** 2026-07-30

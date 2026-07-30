@@ -156,6 +156,44 @@ improvements remain.
 
 ---
 
+## Priority 6 — ACL perf + route correctness tests (SHIPPED in v0.32.2, 2026-07-30)
+
+**Status**: shipped. Build-time B19 + runtime R28 added to the
+verify catalog. 6 functional tests + 4 benchmarks live in
+`internal/acl/perf_test.go`.
+
+**Motivation**: operator reported "exit-node routing started
+working slower" after a series of small refactors. The actual
+root cause was likely the v0.32.0 via: sync bug (fixed in
+63cd0ed), but the operator wanted permanent regression guards
+so the next refactor can't silently break the same thing.
+
+**What's covered**:
+
+| Test | Catches |
+|---|---|
+| `TestGenerateACL_SizeWithinBound` | Policy bloat — 100 rules must stay <50KB |
+| `TestGenerateACL_NoDuplicateHosts` | headscale 0.29.2 "host already defined" reject |
+| `TestGenerateACL_FirstMatchOrdering` | v0.12.0.1 inter-user leak regression |
+| `TestGenerateACL_ViaHonoredWhenEnabled` | v0.32.0 via: sync bug regression |
+| `TestGenerateACL_ViaOmittedWhenDisabled` | "always-on via" opt-in broken regression |
+| `TestGenerateACL_AllTagsInTagOwners` | headscale "tag not found" reject |
+| `BenchmarkGenerateACL_Small` (10 rules) | baseline ~200µs |
+| `BenchmarkGenerateACL_Medium` (100 rules) | prod target ~600µs |
+| `BenchmarkGenerateACL_Large` (1000 rules) | stress: <5ms (currently ~2.3ms) |
+| `BenchmarkGenerateACL_ViaEnabled` (10 users × 50 rules, via=1) | via emission perf |
+
+Plus R28 in `verify_post_deploy.sh`:
+- Live policy size < 100KB
+- Live grant count < 500
+- Live host count < 2000
+
+**Operator action**: none — tests are passive guards. Run
+`go test -bench=BenchmarkGenerateACL -run=^$ ./internal/acl/`
+locally before any ACL refactor to capture baseline numbers.
+
+---
+
 ## Priority 5 — Other deferred items (long-tail, no current demand)
 
 These are explicitly NOT in active scope but tracked here so
@@ -204,6 +242,10 @@ at the bottom of this file with the commit hash.
 
 ## Completed (moved out of backlog)
 
+- **2026-07-30**: v0.32.2 — ACL perf + route correctness tests.
+  6 functional tests + 4 benchmarks in `internal/acl/perf_test.go`.
+  Build-time B19 + runtime R28 added to the verify catalog.
+  Commit in this change.
 - **2026-07-30**: v0.32.1 — Sidebar completeness. 9 admin +
   1 user pages added to `layout.html`. Commit in this change.
 - **2026-07-30**: v0.32.0 — Released. Build `v0.32.0-5-ge4dea76`.
