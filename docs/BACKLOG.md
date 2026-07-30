@@ -156,6 +156,92 @@ improvements remain.
 
 ---
 
+## Priority 8 — DB corruption incident + recovery (2026-07-30)
+
+**Status**: recovered via `scripts/recover_db_corruption.sh`.
+R30 added to verify_post_deploy.sh to catch future
+corruption early. Root cause: SIGKILL-on-recreate not
+giving SQLite a chance to flush its WAL.
+
+**What happened**:
+After a series of deploys (v0.32.0 → v0.32.0 rebuild →
+v0.32.2 → v0.32.3), the live skygate.db had two tables
+with corrupted btree pages:
+- `acl_snapshots` — every policy snapshot
+- `exit_rule_logs` — every /my/exit-rules operation
+
+`PRAGMA integrity_check` returned "database disk image
+is malformed (11)" with multiple page-level errors
+(invalid page numbers, rowid out of order, btree init
+errors). REINDEX failed, VACUUM produced an empty file
+(the tables were so broken the rows couldn't be read),
+no backup existed at `/var/backups/skygate/`.
+
+**Root cause (suspected)**: `docker compose up -d
+--force-recreate --no-deps skygate` sends SIGKILL by
+default (no `stop_grace_period` set in docker-compose.yml).
+With WAL-mode SQLite, a SIGKILL during a write can leave
+the WAL in an inconsistent state. SQLite is supposed to
+recover on next open, but a corner case during a large
+transaction (the policy write is large: ~50KB) can produce
+page-level btree damage that doesn't auto-repair.
+
+**What was lost** (unavoidable, no backup existed):
+- The full `acl_snapshots` history (the "last successful
+  reapply" record that R9 checks against the live policy)
+- The full `exit_rule_logs` history (audit trail of every
+  /my/exit-rules action — adds, deletes, syncs)
+
+**What was preserved**:
+- `audit_log` (4662 rows) — all the page-view / apply /
+  restart events, just not the granular per-rule edits
+- `device_rules` (376 rows) — the current rule set
+- `portal_users` (4 rows) — user accounts
+- All other tables — intact
+- The headscale policy itself — still served correctly
+  (R10/R11/R28 all PASS against the live policy)
+
+**Recovery** (`scripts/recover_db_corruption.sh`):
+1. Stop the skygate container (releases SQLite lock + WAL flush)
+2. Backup the corrupted DB to `/var/backups/skygate/PRE_RECOVERY_<TS>/skygate.db`
+3. DROP + CREATE `acl_snapshots` and `exit_rule_logs` empty
+4. Restart the container
+5. `/healthz` healthy after 2x5s
+6. **Operator must click "Re-apply ACL" on /admin/exit-rules**
+   to repopulate `acl_snapshots` with the current live
+   policy. R9 starts passing again after this.
+
+**Defensive measures added**:
+- **R30 in verify_post_deploy.sh**: runs `PRAGMA
+  integrity_check` on a fresh copy of the live DB. Catches
+  page-level btree damage at deploy time so the operator
+  finds out BEFORE the next deploy makes it worse.
+
+**Follow-up (NOT done in this session, tracked here)**:
+- Add `stop_grace_period: 30s` to skygate service in
+  docker-compose.yml so the container has time to flush
+  WAL on `docker compose stop`. Trivial change, would
+  prevent the next corruption.
+- Update `scripts/rebuild_deploy.sh` to do `docker compose
+  stop skygate` before `--force-recreate` (graceful
+  shutdown + WAL flush). Currently uses --force-recreate
+  which is the equivalent of `docker kill` on the old
+  container.
+- Set up automated daily SQLite backup to
+  `/var/backups/skygate/` so the next corruption can be
+  restored instead of dropped. (Existing `deploy/backup.sh`
+  is for the skygate+headscale+skygate-vm data, not the
+  SQLite specifically — needs a separate dedicated script.)
+
+**How to recover if this happens again**:
+```bash
+bash scripts/recover_db_corruption.sh
+# Then click "Re-apply ACL" on /admin/exit-rules to
+# repopulate acl_snapshots.
+```
+
+---
+
 ## Priority 7 — Auto-update opt-in + manual Push button (SHIPPED in v0.32.3, 2026-07-30)
 
 **Status**: shipped. `SKYGATE_AUTO_UPDATE_ENABLED` env var

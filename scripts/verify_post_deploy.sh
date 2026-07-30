@@ -481,6 +481,44 @@ print(n)
     echo "  ${YLW}SKIP${NC}  R29 no device_rules in skygate DB (deployment has no exit-rule grants yet)"
   fi
 
+  # R30: skygate DB integrity check.
+  # 2026-07-30: v0.32.3 — discovered acl_snapshots and
+  # exit_rule_logs corrupted (page-level btree damage) after
+  # a series of --force-recreate deploys. The root cause was
+  # SIGKILL-on-recreate not giving SQLite a chance to flush
+  # its WAL — the corruption was discovered when R9 started
+  # SKIPping because the SELECT on acl_snapshots returned
+  # "database disk image is malformed (11)".
+  #
+  # This check runs a fresh `PRAGMA integrity_check` on a
+  # copy of the live DB. The check is non-destructive (we
+  # copy the file, run the check on the copy, throw the
+  # copy away). The check is FAST (<1s on the production
+  # 34MB DB).
+  #
+  # PASS: integrity_check returns "ok"
+  # FAIL: integrity_check returns anything else (page damage,
+  #       rowid out of order, btree init errors, etc.)
+  # SKIP: skygate container is down (can't copy the DB)
+  INTEGRITY=$(ssh_vm "set -e
+    CID=\$(sudo docker ps --filter 'label=com.docker.compose.service=skygate' --format '{{.ID}}' | head -1)
+    if [ -z \"\$CID\" ]; then echo SKIP_NO_CONTAINER; exit 0; fi
+    sudo docker cp \$CID:/data/skygate.db /tmp/_integ_\$\$.sqlite
+    sqlite3 /tmp/_integ_\$\$.sqlite 'PRAGMA integrity_check;' 2>&1 | head -1
+    rm -f /tmp/_integ_\$\$.sqlite
+  " 2>/dev/null)
+  if [ "$INTEGRITY" = "SKIP_NO_CONTAINER" ]; then
+    echo "  ${YLW}SKIP${NC}  R30 skygate container down — can't check DB integrity"
+  elif [ "$INTEGRITY" = "ok" ]; then
+    echo "  ${GRN}PASS${NC}  R30 skygate.db integrity_check=ok"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R30 skygate.db integrity_check FAILED: $INTEGRITY"
+    echo "        This is the same corruption that triggered the R9 SKIP on 2026-07-30."
+    echo "        Run scripts/recover_db_corruption.sh to drop+recreate the broken tables."
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
   # R11: per-device loose grants (no via) for every tagged device
   LOOSE_DEV_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
 import json, sys
