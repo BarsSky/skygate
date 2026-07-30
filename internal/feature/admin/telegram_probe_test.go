@@ -46,7 +46,6 @@ package admin
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -56,20 +55,11 @@ import (
 	"time"
 )
 
-// newTestService is the minimal *Service constructor used by the
-// 3 cache-state tests at the bottom of this file. The cache tests
-// only need a non-nil DB (s.telegramProbeCache is the field under
-// test; cachedTelegramProbe calls db.LoadTelegramToken(s.DB) only
-// on cache miss, which these tests trigger deliberately).
-func newTestService(t *testing.T) *Service {
-	t.Helper()
-	d, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open mem db: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return &Service{DB: d}
-}
+// newTestService for the 3 cache-state tests at the bottom
+// of this file is now defined in testutil.go (the shared
+// helper). The cache tests only need a non-nil DB; the
+// shared helper opens a :memory: db and returns
+// &Service{DB: d, Backend: newTestBackend(), I18n: i18n.New()}.
 
 // withRouteViaTailscale replaces the package-level
 // routeViaTailscaleFn with a function that returns `via` for
