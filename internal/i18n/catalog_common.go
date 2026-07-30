@@ -8,7 +8,7 @@
 
 package i18n
 
-// common feature — 94 ru keys, 94 en keys.
+// common feature — 102 ru keys, 102 en keys.
 // Top-level prefixes: app, title, nav, common, lang, login, error
 
 var ruCommon = map[string]string{
@@ -57,6 +57,13 @@ var ruCommon = map[string]string{
 	"nav.telegram_my"                : "Telegram bot",
 	"nav.exit_rules_all"             : "Exit Rules",
 	"nav.exit_nodes_admin"           : "Exit nodes",
+	"nav.update"                     : "Обновления",
+	"nav.control_planes"             : "Control planes",
+	"nav.headscale"                  : "Headscale",
+	"nav.headplane"                  : "Headplane",
+	"nav.integrations"               : "Интеграции",
+	"nav.invites"                    : "Инвайт-коды",
+	"nav.meshes_admin"               : "Mesh-сети (все)",
 	"common.save"                    : "Сохранить",
 	"common.cancel"                  : "Отмена",
 	"common.delete"                  : "Удалить",
@@ -154,6 +161,13 @@ var enCommon = map[string]string{
 	"nav.telegram_my"                : "Telegram bot",
 	"nav.exit_rules_all"             : "Exit rules",
 	"nav.exit_nodes_admin"           : "Exit nodes",
+	"nav.update"                     : "Updates",
+	"nav.control_planes"             : "Control planes",
+	"nav.headscale"                  : "Headscale",
+	"nav.headplane"                  : "Headplane",
+	"nav.integrations"               : "Integrations",
+	"nav.invites"                    : "Invite codes",
+	"nav.meshes_admin"               : "Meshes (all)",
 	"common.save"                    : "Save",
 	"common.cancel"                  : "Cancel",
 	"common.delete"                  : "Delete",

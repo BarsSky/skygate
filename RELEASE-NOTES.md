@@ -1,5 +1,88 @@
 # Skygate release notes
 
+## v0.32.1 — Sidebar completeness + BACKLOG hygiene (UI cosmetics + tracking)
+
+**Date:** 2026-07-30
+**Tag:** _not yet tagged_ — pending perf test work + VM verify
+**Scope:** All admin + user pages now reachable from the sidebar.
+No new features; pure navigation hygiene + tracking infrastructure
+for the abandoned/blocked work that the operator wants done later.
+
+### What's new (operator-visible)
+
+- **9 admin + 1 user sidebar entries** added. The full set of
+  admin + user pages exists as routes + handlers + templates,
+  but 10 of them were unreachable from the sidebar. Now linked:
+
+  | Page | i18n key | Icon |
+  |---|---|---|
+  | /admin/control-planes | nav.control_planes | fa-server-stack |
+  | /admin/exit-nodes | nav.exit_nodes_admin | fa-route |
+  | /admin/headscale | nav.headscale | fa-cube |
+  | /admin/headplane | nav.headplane | fa-window-maximize |
+  | /admin/integrations | nav.integrations | fa-puzzle-piece |
+  | /admin/invites | nav.invites | fa-envelope-open-text |
+  | /admin/meshes | nav.meshes_admin | fa-circle-nodes |
+  | /admin/update | nav.update | fa-cloud-arrow-down |
+  | /my/keys | nav.preauth | fa-key |
+
+  The auto-update page (/admin/update) was the biggest gap — the
+  whole "Apply update" feature from v0.29.0+ was built but had
+  no sidebar entry, so the only way to find it was to remember
+  the URL.
+
+- **8 new i18n keys** added to `catalog_common.go` (RU + EN,
+  16 entries total). 102 ru + 102 en common keys (was 94 + 94).
+  `TestCatalogsParity` still PASS.
+
+### What's new (operator-internal)
+
+- **`docs/BACKLOG.md`** (NEW, 8.4 KB): central tracking of
+  abandoned / blocked / in-progress features. Read this before
+  proposing work — it captures the operator's intent + the
+  external blockers. Currently tracks:
+  - **Priority 2**: PG cutover (blocked on operator's
+    PG-staging VM)
+  - **Priority 3**: HA svyatoslava (blocked on 2nd VM + S3 +
+    etcd quorum)
+  - **Priority 4**: Backup polish (S3 destination + auto-verify)
+  - **Priority 5**: v0.19.1 dns.extra_records, v0.23.1 Phase 2,
+    testutil stubs, unmerged branches
+
+- **`docs/v0.27.0-postgres-ha.md`** (moved from dead
+  `feat/postgres-migration` branch). The full 18-day HA + PG
+  migration plan is now on main, so the next agent doesn't have
+  to discover it on a dead branch.
+
+- **`docs/ha-architecture.md`** (NEW, 7.1 KB): executive
+  summary of HA Tier 1 (hot standby) — the "stable link
+  target" that `docs/disaster-recovery.md` references but
+  didn't have. Tier 0 (current single-VM) and Tier 1 (target
+  hot standby) are compared side-by-side; the full design is
+  in v0.27.0-postgres-ha.md.
+
+- **`AGENTS.md`**: added a one-line pointer to `docs/BACKLOG.md`
+  at the top so the next AI assistant reads it first.
+
+### Why "v0.32.1" and not "v0.32.0.x"
+
+Sidebar completeness is a real operator-visible improvement
+(was a real complaint), but it's a "consume the existing
+features" change, not a "new feature" change. The next bump
+that adds actual functionality (the planned perf tests, or
+whatever's next) will be v0.32.2 or v0.33.0.
+
+### Verified
+
+- `go build ./...` clean
+- `go test -count=1 -short ./internal/...` PASS (all 24 packages)
+- i18n parity test green
+- Layout template still parses (visual verification pending on
+  VM, but the `if` conditions match the page names returned by
+  `pageFromName()`)
+
+---
+
 ## v0.32.0 — per-device OS + type markers + via: sync bug fix + refactor-v0.30 (internal)
 
 **Date:** 2026-07-29 (unreleased — pending VM verify-pre/verify-post)
