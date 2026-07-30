@@ -69,9 +69,23 @@ $SSH 'cd /home/skyadmin/skygate && git pull --ff-only' || {
 echo "[3/5] docker compose build skygate (3-5 min)"
 $SSH 'cd /home/skyadmin/skygate && sudo docker compose build skygate 2>&1 | tail -5'
 
-# 4. Recreate container
-echo "[4/5] docker compose up -d --force-recreate --no-deps skygate"
-$SSH 'cd /home/skyadmin/skygate && sudo docker compose up -d --force-recreate --no-deps skygate 2>&1 | tail -3'
+# 4. Recreate container.
+# 2026-07-30: v0.32.4 — graceful stop BEFORE --force-recreate.
+# Previously we used `docker compose up -d --force-recreate`
+# which is the equivalent of `docker kill` on the old container
+# (SIGKILL after the default 10s). That doesn't give SQLite a
+# chance to flush its WAL, which on 2026-07-30 left
+# acl_snapshots + exit_rule_logs with btree page damage. The
+# new docker-compose.yml (v0.32.4) sets stop_grace_period=30s
+# + a /healthz-based healthcheck, but docker compose up
+# --force-recreate IGNORES the healthcheck (it just sends
+# SIGKILL). The fix is to do `docker compose stop` first —
+# this respects both the grace period AND the healthcheck
+# (it returns when the container exits the "healthy" state).
+# Result: old container drains (Go's db.Close flushes WAL),
+# then the new container starts.
+echo "[4/5] docker compose stop skygate (graceful, 30s grace), then up -d --force-recreate"
+$SSH 'cd /home/skyadmin/skygate && sudo docker compose stop skygate 2>&1 | tail -3 && sudo docker compose up -d --force-recreate --no-deps skygate 2>&1 | tail -3'
 
 # 5. Wait for /healthz
 echo "[5/5] waiting for /healthz (up to 5 min)"

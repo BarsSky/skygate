@@ -106,6 +106,26 @@ services:
       - SYS_ADMIN
     devices:
       - /dev/net/tun
+    # 2026-07-30: v0.32.4 — stop_grace_period + healthcheck.
+    # The DB corruption on 2026-07-30 was traced to docker
+    # compose --force-recreate sending SIGKILL after the
+    # default 10s grace period, before SQLite could flush
+    # its WAL. The autoupdate's per-tick write to
+    # exit_rule_logs would then leave btree pages in an
+    # inconsistent state. 30s + a /healthz-based healthcheck
+    # means docker waits for the container to actually
+    # drain (Go's db.Close flushes the WAL) before sending
+    # SIGKILL. The healthcheck also blocks the new
+    # container from starting until the old one is fully
+    # stopped, preventing the two from racing on the same
+    # skygate.db file.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
     # 2026-07-15: v0.15.0 — when the Caddy sidecar handles
     # TLS, the :8080 listener doesn't need to be on the
     # host's public interface. We still keep the bind

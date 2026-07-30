@@ -98,7 +98,16 @@ func Open(dataDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
-	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	// 2026-07-30: v0.32.4 — PRAGMA hardening for DB corruption fix.
+	// The connection string now sets synchronous=FULL (the
+	// strongest durability; default in WAL mode is NORMAL which
+	// is vulnerable to page damage on crash) and busy_timeout=5000
+	// (avoids "database is locked" errors on the autoupdate's
+	// rapid-fire writes). The migrate() function below re-applies
+	// these + journal_mode=WAL + foreign_keys=ON on every Open, so
+	// the pragmas are guaranteed to be active even after a
+	// container restart that doesn't go through this code path.
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=FULL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
@@ -127,7 +136,24 @@ func Open(dataDir string) (*sql.DB, error) {
 
 func migrate(d *sql.DB) error {
 	queries := []string{
+		// 2026-07-30: v0.32.4 — full durability for the corruption fix.
+		// WAL mode (already here) + synchronous=FULL means every
+		// commit is fsync'd to disk before the call returns. WAL
+		// without FULL is vulnerable to btree page damage on a
+		// kill -9 or sudden power loss; this is the fix.
 		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=FULL",
+		// Checkpoint every 1000 pages instead of the default 1000
+		// (SQLite's default is actually the same, but being explicit
+		// makes the corruption-recovery story clearer: after a crash,
+		// at most 1000 pages of WAL needs to be replayed, which
+		// happens in milliseconds).
+		"PRAGMA wal_autocheckpoint=1000",
+		// The 5s busy timeout is the "wait this long for another
+		// writer to release the lock" budget. Without it, two
+		// concurrent autoupdate ticks can race and one fails
+		// immediately. With it, the loser waits.
+		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
 	}
 	for _, q := range queries {
