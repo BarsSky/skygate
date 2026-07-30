@@ -459,6 +459,23 @@ type myTelegramState struct {
 	StrictMode   bool
 }
 
+// String renders the state for log lines and for the test
+// data-dump renderer (testBackend.RenderWithLayout). Without
+// this, a *db.TelegramBinding in the Binding field prints as
+// a raw pointer address ("0xc0000123") which makes the unit
+// tests' substring assertions on chat_id brittle. With this
+// method, fmt.Sprintf("%v", state) prints
+// "myTelegramState{binding=chat:555 user:2, recent=0, ttl=300, strict=false}"
+// which is both human-readable and easy to grep.
+func (s myTelegramState) String() string {
+	bindingStr := "<nil>"
+	if s.Binding != nil {
+		bindingStr = fmt.Sprintf("chat:%d user:%d", s.Binding.ChatID, s.Binding.PortalUserID)
+	}
+	return fmt.Sprintf("myTelegramState{binding=%s, recent=%d, ttl=%d, strict=%t}",
+		bindingStr, len(s.RecentTokens), s.TTLSeconds, s.StrictMode)
+}
+
 // myTelegramTokenView wraps a TelegramLoginToken with a
 // pre-computed Status string ("active" / "used" / "expired")
 // so the template doesn't have to re-derive it.

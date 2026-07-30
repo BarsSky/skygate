@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -345,6 +346,60 @@ func (testNotifier) BotUsernameCached() string            { return "" }
 
 // Compile-time check: testNotifier satisfies telegram.Notifier.
 var _ telegram.Notifier = testNotifier{}
+
+// recordingTestNotifier is the variant that records every
+// SendTelegram / SendTelegramToChat / SendAlert call. Tests
+// that need to assert "this handler did NOT fire a notification"
+// (e.g. the /admin/telegram strict-mode no-op toggle) use this
+// instead of the no-op testNotifier. The botUsername field lets
+// the same stub play the role of a "configured bot" (returning
+// a real username) without a separate type.
+//
+// Goroutine-safe via the embedded mutex; in practice the
+// admin handler tests run single-threaded but a future test
+// might call two handlers concurrently and the cost is trivial.
+type recordingTestNotifier struct {
+	mu sync.Mutex
+
+	botUsername string
+
+	sendTelegramCalls       []string
+	sendTelegramToChatCalls []sendToChatCall
+	sendAlertCalls          []string
+}
+
+type sendToChatCall struct {
+	Text   string
+	ChatID int64
+}
+
+func (n *recordingTestNotifier) SendTelegram(text string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sendTelegramCalls = append(n.sendTelegramCalls, text)
+}
+
+func (n *recordingTestNotifier) SendTelegramToChat(text string, chatID int64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sendTelegramToChatCalls = append(n.sendTelegramToChatCalls, sendToChatCall{Text: text, ChatID: chatID})
+}
+
+func (n *recordingTestNotifier) SendAlert(text string) int64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sendAlertCalls = append(n.sendAlertCalls, text)
+	return int64(len(n.sendAlertCalls))
+}
+
+func (n *recordingTestNotifier) BotUsernameCached() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.botUsername
+}
+
+// Compile-time check: recordingTestNotifier satisfies telegram.Notifier.
+var _ telegram.Notifier = (*recordingTestNotifier)(nil)
 
 // silence unused imports on builds that don't pull every helper
 var _ = context.Background
