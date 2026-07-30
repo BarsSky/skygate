@@ -10,6 +10,9 @@
 #   make verify-pre  — scripts/verify_pre_deploy.sh (build-time guarantees B1-B10)
 #   make verify-post — scripts/verify_post_deploy.sh (runtime guarantees R1-R25, on VM)
 #   make verify      — verify-pre + verify-post
+#   make rebuild-deploy     — git pull + docker compose build + recreate + wait /healthz on the VM
+#   make reconcile-snapshots — write an acl_snapshots row matching the live headscale policy
+#                             (one-off reconciliation; fixes R9 after a direct headscale edit)
 #   make clean       — remove built binary
 #   make deploy      — run deploy/deploy.sh
 #   make backup      — run deploy/backup.sh
@@ -45,7 +48,7 @@ PKG      ?= ./cmd/skygate
 # this time".
 SHELL    ?= bash
 
-.PHONY: build run smoke check-nodes audit-routes test clean deploy backup restart logs tailscale-update-telegram-routes verify-pre verify-post verify help
+.PHONY: build run smoke check-nodes audit-routes test clean deploy backup restart logs tailscale-update-telegram-routes verify-pre verify-post verify rebuild-deploy reconcile-snapshots help
 
 help:
 	@echo "Targets:"
@@ -58,6 +61,8 @@ help:
 	@echo "  verify-pre   - scripts/verify_pre_deploy.sh (build-time guarantees B1-B10)"
 	@echo "  verify-post  - scripts/verify_post_deploy.sh (runtime guarantees R1-R25)"
 	@echo "  verify       - verify-pre + verify-post"
+	@echo "  rebuild-deploy    - scripts/rebuild_deploy.sh (git pull + build + recreate + wait healthz on VM)"
+	@echo "  reconcile-snapshots - scripts/reconcile_snapshots.sh (one-off R9 fix after direct headscale edit)"
 	@echo "  restart      - docker compose restart skygate"
 	@echo "  logs         - tail skygate container logs"
 	@echo "  clean        - remove built binary"
@@ -157,6 +162,49 @@ verify-post:
 # runs (so the operator can see what state the VM is in) but
 # the overall target fails.
 verify: verify-pre verify-post
+
+# 2026-07-30 — rebuild skygate container on the production VM.
+# Wraps the 6-step canonical procedure in scripts/rebuild_deploy.sh:
+#   1. chown data/ts/ (fix root-owned tailscale dirs)
+#   2. git pull --ff-only
+#   3. docker compose build skygate (3-5 min)
+#   4. docker compose up -d --force-recreate --no-deps skygate
+#   5. wait for /healthz (up to 5 min)
+#   6. print new build label
+#
+# Runs on the operator workstation (not the VM). SSHes to
+# SSH_HOST (default skyadmin@192.168.13.69) with the
+# auto-detected key from ~/.ssh/id_ed25519 (or override with
+# SSH_KEY). Replaces the manual 6-step procedure that was
+# previously 4 separate bash invocations.
+#
+# After this runs, the operator should follow up with
+# 'make verify-post' to confirm all 27 R-checks pass.
+rebuild-deploy:
+	@if [ -x scripts/rebuild_deploy.sh ]; then \
+		bash scripts/rebuild_deploy.sh; \
+	else \
+		echo "scripts/rebuild_deploy.sh not found or not executable"; \
+		exit 1; \
+	fi
+
+# 2026-07-30 — write an acl_snapshots row matching the live
+# headscale policy's updatedAt. One-off R9 fix used when
+# the live policy was edited outside skygate's normal flow
+# (operator manual headscale PUT, crash mid-reapply, etc.).
+#
+# Normal flow: /my/exit-rules write triggers SetPolicy + writes
+# the snapshot in one transaction. R9 stays aligned. This
+# target is for the abnormal case where the two have diverged.
+#
+# After this runs, 'make verify-post' will pass R9.
+reconcile-snapshots:
+	@if [ -x scripts/reconcile_snapshots.sh ]; then \
+		bash scripts/reconcile_snapshots.sh; \
+	else \
+		echo "scripts/reconcile_snapshots.sh not found or not executable"; \
+		exit 1; \
+	fi
 
 # v0.24.2: keep the embed copies of setup.sh and
 # README.md in internal/handlers/bundles/ in sync with
