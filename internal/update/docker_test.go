@@ -409,10 +409,25 @@ func TestSpawnSwapSubprocess_WritesScript(t *testing.T) {
 		// without updating the test. (Negative test.)
 		t.Log("note: swapSubprocessScript does not mention Setsid in its body — that's expected, it's a plain shell script")
 	}
-	if !strings.Contains(swapSubprocessScript, "phase\": \"build_done\"") {
-		t.Error("swap script missing the build_done -> done/failed sed pattern")
+	// v0.29.3.1: the outer script no longer does the
+	// build_done -> done/failed sed pattern itself — it
+	// spawns a HELPER CONTAINER (via `docker run`) and
+	// exits. The helper does the actual swap + healthz
+	// verify + state file update. So the new contract
+	// for the outer script is: spawns a helper container
+	// + has the helper script embedded (via swapHelperScript).
+	if !strings.Contains(swapSubprocessScript, "docker run") {
+		t.Error("swap script missing 'docker run' for the helper container spawn")
 	}
-	if !strings.Contains(swapSubprocessScript, "poll /healthz") && !strings.Contains(swapSubprocessScript, "healthz") {
-		t.Error("swap script missing healthz poll")
+	if !strings.Contains(swapSubprocessScript, "skygate-swap-helper") {
+		t.Error("swap script missing the helper script path")
+	}
+	if !strings.Contains(swapSubprocessScript, "--pid=host") {
+		t.Error("swap script missing '--pid=host' (the helper must use the host's PID namespace)")
+	}
+	// The helper script is embedded via `cat > /data/.../helper.sh << HELPER_EOF` +
+	// swapHelperScript + HELPER_EOF. Verify the heredoc is intact.
+	if !strings.Contains(swapSubprocessScript, "HELPER_EOF") {
+		t.Error("swap script missing HELPER_EOF heredoc terminator")
 	}
 }
