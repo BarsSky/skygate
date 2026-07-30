@@ -249,8 +249,8 @@ else
   echo "  ${RED}FAIL${NC}  R6  skygate-vm has exit-node = $LAST_FIELD"
   RESULTS_FAIL=$((RESULTS_FAIL+1))
 fi
-run_vm_check "R7" "Docker bridge 172.18.0.0/16 reachable from skygate-vm" \
-  "docker exec $SKYGATE_CONTAINER wget --spider --timeout=3 http://172.18.0.2:50444 2>&1 | grep -q 'remote file exists'"
+run_vm_check "R7" "headscale API reachable from skygate-vm (172.18.0.3:50444)" \
+  "docker exec $SKYGATE_CONTAINER wget --spider --timeout=3 http://172.18.0.3:50444 2>&1 | grep -q 'remote file exists'"
 [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ] && \
   { echo "  ${GRN}PASS${NC}  R8  headscale /api/v1/policy responds with non-empty policy"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
   { echo "  ${RED}FAIL${NC}  R8  headscale /api/v1/policy is empty or unreachable"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
@@ -514,9 +514,48 @@ print(n)
     RESULTS_PASS=$((RESULTS_PASS+1))
   else
     echo "  ${RED}FAIL${NC}  R30 skygate.db integrity_check FAILED: $INTEGRITY"
-    echo "        This is the same corruption that triggered the R9 SKIP on 2026-07-30."
-    echo "        Run scripts/recover_db_corruption.sh to drop+recreate the broken tables."
+    echo "        This is the corruption that triggered the R9 SKIP on 2026-07-30."
+    echo "        Run scripts/recover_db_corruption.sh (the .recover-based recovery)"
+    echo "        to extract the data and rebuild a clean DB."
     RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # ---------------------------------------------------------------------------
+  # Phase 8b: disk space check (R31)
+  # ---------------------------------------------------------------------------
+  # 2026-07-30: v0.32.5. The recurring DB corruption was traced to
+  # the disk hitting 100% full. SQLite's WAL writes fail silently
+  # when the disk is full, leaving btree pages in an inconsistent
+  # state. The skygate process keeps running (the writes "succeed"
+  # at the SQLite level — SQLite returns SQLITE_OK to the caller
+  # but the actual bytes don't make it to disk), so the corruption
+  # is invisible until a subsequent SELECT triggers integrity_check.
+  #
+  # This check is a guard rail: if the VM disk is >85% full, FAIL
+  # with a clear message about the disk-full → DB corruption
+  # causality. The operator can either:
+  #   (a) docker system prune -a to reclaim image/build cache
+  #   (b) sudo rm -rf /var/backups/skygate/OLD_* to clean stale
+  #       recovery backups (each PRE_VACUUM_* is 40MB+)
+  #   (c) investigate what's actually filling the disk
+  #       (sudo du -sh /var/* | sort -hr)
+  #
+  # PASS: <85% used
+  # FAIL: ≥85% used
+  DF_OUTPUT=$(ssh_vm "df -P / | tail -1" 2>/dev/null)
+  DF_PCT=$(echo "$DF_OUTPUT" | awk '{print $5}' | tr -d '%')
+  if [ -z "$DF_PCT" ]; then
+    echo "  ${YLW}SKIP${NC}  R31 could not read df output"
+  elif [ "$DF_PCT" -ge 85 ]; then
+    echo "  ${RED}FAIL${NC}  R31 disk is ${DF_PCT}% full (threshold=85%)"
+    echo "        Disk-full is the root cause of R30 (SQLite WAL writes"
+    echo "        fail silently when /var has no free space)."
+    echo "        Run: sudo docker system prune -a -f"
+    echo "        And:  sudo du -sh /var/* | sort -hr | head -10"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  else
+    echo "  ${GRN}PASS${NC}  R31 disk is ${DF_PCT}% full (<85% threshold)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
   fi
 
   # R11: per-device loose grants (no via) for every tagged device
