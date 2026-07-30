@@ -647,9 +647,12 @@ func setupProductionTemplatesDir(t *testing.T) {
 		return
 	}
 	dir := "/app/deploy/templates"
-	if _, err := os.Stat(dir); err == nil {
-		return
-	}
+	// Ensure the dir exists. Don't return early if it
+	// does — a previous test run may have left it empty
+	// (the cleanup removes /app/deploy entirely, but if
+	// a test crashes between MkdirAll and Cleanup, the
+	// dir can be left behind with no contents). The
+	// renderer needs the actual .tmpl files inside.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Skipf("cannot create %s: %v (probably running on Windows where /app doesn't exist)", dir, err)
 		return
@@ -662,12 +665,19 @@ func setupProductionTemplatesDir(t *testing.T) {
 		"headscale-config.yaml.tmpl",
 		"headscale-compose.yml.tmpl",
 	} {
+		dst := filepath.Join(dir, name)
+		if _, err := os.Stat(dst); err == nil {
+			// Template already present (previous test run
+			// didn't crash between write and cleanup). Skip
+			// the write to preserve mtime.
+			continue
+		}
 		src, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "templates", name))
 		if err != nil {
 			t.Skipf("cannot read %s: %v", name, err)
 			return
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+		if err := os.WriteFile(dst, src, 0o644); err != nil {
 			t.Skipf("cannot write %s: %v", name, err)
 			return
 		}
