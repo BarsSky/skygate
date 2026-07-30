@@ -1642,7 +1642,8 @@ per-user headscale, compliance tier). The next big things:
 
 - **`refactor-v0.30` — feature module decomposition**
   ([plan](docs/plans/refactor-v0.30.md), 2026-07-25, ~8 days
-  work, **Phase B + C + D complete as of 2026-07-29**). The
+  work, **Phase B + C + D complete as of 2026-07-29**, B15 +
+  B16 follow-up ports complete 2026-07-30). The
   `internal/handlers/` package went from 76 .go files
   (19208 lines, pre-refactor) to 9 files (infrastructure
   only: App + handlers_export + app_controlplane + static +
@@ -1653,11 +1654,16 @@ per-user headscale, compliance tier). The next big things:
   Phase D extracted httputil.SanitizeFilename,
   nodeownership.Backfill, controlplane.Router. **No
   behavior changes, no API changes, no migration changes.**
-  Remaining follow-up: ~5200 lines of test code that was
-  dropped during the moves (B15/B16: parent_domain + CDN
-  detection — ~1100 lines — are track'd as follow-up; the
-  rest is feature/testutil.go stubs that need porting to
-  per-feature package test helpers).
+  **B15 + B16 ports done 2026-07-30** (commits 68aa0d6 +
+  3a52015): `parent_domain` regression tests + CDN detection
+  tests moved from `internal/handlers/` to
+  `internal/feature/exit_rules/` (13 pure-function tests +
+  1 helper for CDN; 6 tests + 1 helper for parent_domain).
+  Both `feature/exit_rules/` test files run in <2s on
+  Windows (`go test -count=1 -short` PASS).
+  Remaining follow-up: ~4100 lines of test code still
+  tracked in the dropped-test backlog (see "Test debt" in
+  the deferred-items audit).
 
 - **`v0.19.1` — `exitnode.skygate-subnet-<user>.<base-domain>`
   DNS records** (re-attempt of the reverted v0.19.0). Per-user
