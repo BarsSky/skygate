@@ -647,14 +647,14 @@ func setupProductionTemplatesDir(t *testing.T) {
 		return
 	}
 	dir := "/app/deploy/templates"
-	// Ensure the dir exists. Don't return early if it
-	// does — a previous test run may have left it empty
-	// (the cleanup removes /app/deploy entirely, but if
-	// a test crashes between MkdirAll and Cleanup, the
-	// dir can be left behind with no contents). The
-	// renderer needs the actual .tmpl files inside.
+	// Probe /app writeability first. The renderer hardcodes
+	// the path /app/deploy/templates (the production
+	// in-container mount). On a CI host that doesn't have
+	// that mount, the test must skip — otherwise the
+	// MkdirAll would fail with permission denied (the
+	// /app dir is owned by root in a non-skyadmin context).
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Skipf("cannot create %s: %v (probably running on Windows where /app doesn't exist)", dir, err)
+		t.Skipf("cannot create %s: %v (skipping — host does not have /app mount)", dir, err)
 		return
 	}
 	// Copy from the real repo location. The original test
