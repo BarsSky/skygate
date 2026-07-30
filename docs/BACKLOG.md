@@ -156,6 +156,47 @@ improvements remain.
 
 ---
 
+## Priority 7 — Auto-update opt-in + manual Push button (SHIPPED in v0.32.3, 2026-07-30)
+
+**Status**: shipped. `SKYGATE_AUTO_UPDATE_ENABLED` env var
+(default `false`) gates the banner-driven "Apply" button
+on /admin/update. New "Push update" button is always
+visible and ALWAYS works (manual trigger). Plus 6 unit
+tests for the skygate-vs-headscale drift detection
+(computeSyncStatus).
+
+**What's done**:
+- `internal/config/config.go` — new `AutoUpdateEnabled`
+  field, `SKYGATE_AUTO_UPDATE_ENABLED` env var, default
+  `false`
+- `internal/feature/admin/update.go` — new
+  `PostAdminUpdatePush` handler + i18n keys
+  `update.push` / `update.push_help` / `update.push_confirm`
+  / `update.auto_disabled_banner` / `update.auto_enabled_banner`
+- `internal/handlers/templates/admin/update.html` — new
+  "Push update" button (always visible, separated from the
+  gated "Apply" button) + a banner that shows the current
+  mode (auto-update on/off)
+- `cmd/skygate/main.go` — new route
+  `POST /admin/update/push`
+- `internal/feature/admin/exit_nodes.go` — extracted
+  `computeSyncStatus()` pure function (was inline in the
+  handler loop)
+- `internal/feature/admin/exit_nodes_test.go` — 6 unit
+  tests: TestComputeSyncStatus_EmptyExpected /
+  _Synced / _Mismatch / _MismatchReversed /
+  _OtherNodesIgnored + TestSeedNodeRulesAndReadExpected
+- `scripts/verify_post_deploy.sh` — new R29 check for
+  skygate-vs-headscale drift (currently WARN, not FAIL —
+  the page warning is the primary signal)
+
+**Motivation**: operator's correction — auto-update
+should be opt-in, not opt-out. The "Apply" button
+(banner-driven) is gated by the flag; the "Push" button
+(manual) always works.
+
+---
+
 ## Priority 6 — ACL perf + route correctness tests (SHIPPED in v0.32.2, 2026-07-30)
 
 **Status**: shipped. Build-time B19 + runtime R28 added to the
