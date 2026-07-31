@@ -468,6 +468,51 @@ run_check "B22" "Dockerfile builds skygate at image-build time (v0.32.8)" \
     ! grep -q \"^FROM golang:\" Dockerfile | tail -1 | grep -q \"alpine\"
   '"
 
+# --- B23: CI Go version matches go.mod (v0.32.9) ---
+# 2026-07-31: the last 5 CI runs (v0.32.6 .. v0.32.8) all FAILED on
+# `go mod download` because .github/workflows/ci.yml installed
+# Go 1.23 while go.mod required go 1.25.0. The toolchain
+# directive auto-downloads 1.25 in CI runners that have network
+# access, but pinning both sides explicitly is safer (the runner
+# may have network restrictions, the go directive's required-
+# version check is more strict than the toolchain's auto-fetch).
+#
+# B23 pins the contract:
+#   (a) .github/workflows/ci.yml uses go-version: '1.25' (matches
+#       the go directive in go.mod)
+#   (b) go.mod has both `go 1.25.0` (minimum required) AND
+#       `toolchain go1.25.0` (pinned, defensive)
+#   (c) ci.yml has 2 Setup Go steps (test job + verify-pre job)
+#       and BOTH use Go 1.25 — a future refactor that bumps one
+#       but not the other fails the check
+run_check "B23" "CI Go version matches go.mod (v0.32.9)" \
+  "bash -c '
+    grep -q \"^go 1.25\" go.mod &&
+    grep -q \"^toolchain go1\" go.mod &&
+    grep -qF \"go-version: '\\''1.25'\\''\" .github/workflows/ci.yml &&
+    [ \"\$(grep -cF \"go-version: '\\''1.25'\\''\" .github/workflows/ci.yml)\" = 2 ]
+  '"
+
+# --- B24: no dead per-version wrapper files at root (v0.32.9) ---
+# 2026-07-31: the v0.32.8 cleanup deleted `check_v0.*.sh` and
+# `RELEASE-NOTES-v0.28.*.md` but missed the `run_check_v0.*.sh`
+# wrapper family (which call the deleted /tmp/check_v0.*.sh scripts)
+# and the `commit_msg_v0.21.*.txt` drafts (operator's commit-message
+# scratch files). B24 ensures the next cleanup pass can'\''t regress.
+#
+# B24 pins the contract:
+#   (a) No `run_check_v0.*.sh` or `run_fix_*_attribution.sh` at root
+#   (b) No `commit_msg_v0.*.txt` at root
+#   (c) The single RELEASE-NOTES.md is the only release-notes file
+#       at root (no per-version files like RELEASE-NOTES-v0.X.Y.md)
+run_check "B24" "no dead per-version wrapper scripts at root (v0.32.9)" \
+  "bash -c '
+    [ -z \"\$(ls run_check_v0.*.sh run_check_cross_subnet_v0.*.sh run_fix_*_attribution.sh 2>/dev/null)\" ] &&
+    [ -z \"\$(ls commit_msg_v0.*.txt 2>/dev/null)\" ] &&
+    [ -z \"\$(ls RELEASE-NOTES-v0.*.md 2>/dev/null)\" ] &&
+    [ -f RELEASE-NOTES.md ]
+  '"
+
 echo
 echo "=== summary ==="
 

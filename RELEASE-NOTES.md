@@ -1,6 +1,119 @@
 # Skygate release notes
 
+## v0.32.9 — CI Go version bump + complete root cleanup
+
+**Date:** 2026-07-31
+**Tag:** _pending_
+**Scope:** closes two operator-flagged issues from 2026-07-30 that
+the v0.32.8 cleanup missed:
+
+1. **CI failure on the last 5 runs (v0.32.6..v0.32.8)** — the
+   `go mod download` step in `.github/workflows/ci.yml` failed
+   because the workflow pinned `go-version: '1.23'` while
+   `go.mod` requires `go 1.25.0`. CI was running every push
+   but red on every push, so the operator couldn't see at a
+   glance whether a real regression had landed.
+2. **Dead per-version files at root** — the v0.32.8 cleanup
+   deleted `check_v0.*.sh` (the inner scripts) but missed the
+   matching `run_check_v0.*.sh` wrappers (which `exec` the
+   deleted `/tmp/check_v0.*.sh` and would always fail) plus
+   `commit_msg_v0.21.0.txt` + `commit_msg_v0.21.1.txt`
+   (operator's commit-message drafts) and
+   `run_fix_admin_attribution.sh` (wrapper for a deleted
+   one-shot fix script). 7 files total.
+
+### The CI Go version fix
+
+`go.mod` has `go 1.25.0` and the local dev env runs Go 1.25.4.
+CI was installing Go 1.23 (probably the version the workflow
+file was originally written for, before go.mod was bumped).
+The toolchain directive in go.mod (`toolchain go1.25.4`) makes
+`go mod download` ask for a newer Go, but in the CI runner the
+auto-fetch can be flaky / restricted, so the explicit
+`go-version: '1.25'` in the workflow is the safer primary path.
+
+- Both `Setup Go` steps in `.github/workflows/ci.yml` (the
+  `test` job + the `verify-pre` job) are now `go-version: '1.25'`.
+- B23 in `scripts/verify_pre_deploy.sh` pins the contract:
+  - `go.mod` has both `^go 1.25` and `^toolchain go1` directives
+  - `ci.yml` has `go-version: '1.25'` (fixed string, both jobs)
+  - A future refactor that bumps one but not the other fails B23
+
+Note: `go mod tidy` on Go 1.25.4 will REMOVE the `toolchain`
+directive from go.mod (because the running Go is the same
+version as the directive). The pre-commit `verify-pre` catches
+this regression via B23 — if the directive goes missing, B23
+fails before the push.
+
+### Root file cleanup
+
+7 dead files deleted:
+
+| File | What it was | Why deleted |
+|---|---|---|
+| `run_check_v0.22.3.sh` | 10-line wrapper that `exec bash /tmp/check_v0.22.3.sh` | The inner script was deleted in v0.32.8; the wrapper now 100% fails. |
+| `run_check_v0.23.0.sh` | Same pattern, v0.23.0 | Same |
+| `run_check_v0.23.3.sh` | Same pattern, v0.23.3 | Same |
+| `run_check_cross_subnet_v0.23.1.sh` | Same pattern, v0.23.1 | Same |
+| `run_fix_admin_attribution.sh` | 10-line wrapper for the deleted /tmp/fix_admin_attribution.sh | One-shot fix script, already used + no longer needed (operator's note in BACKLOG.md) |
+| `commit_msg_v0.21.0.txt` | 5.6 KB commit-message draft from the v0.21.0 release | Scratch text; the real commit message is in git history. |
+| `commit_msg_v0.21.1.txt` | 3.3 KB commit-message draft from the v0.21.1 hotfix | Same |
+
+B24 in `scripts/verify_pre_deploy.sh` pins the contract: no
+`run_check_v0.*.sh`, `run_check_cross_subnet_v0.*.sh`,
+`run_fix_*_attribution.sh`, or `commit_msg_v0.*.txt` at root,
+and `RELEASE-NOTES.md` is the only release-notes file at
+root. A future operator who adds per-version wrapper scripts
+will fail B24 before the push.
+
+### About the operator's "should these be at root" question
+
+The LIVE verification scripts (`scripts/verify_pre_deploy.sh`,
+`scripts/verify_post_deploy.sh`, `scripts/rebuild_deploy.sh`,
+`scripts/recover_db_corruption.sh`) STAY in `scripts/`. The
+Go project convention is: top-level for Go code + top-level
+configs (`Dockerfile`, `docker-compose.yml`, `Makefile`,
+`go.mod`, `go.sum`), `scripts/` for shell. The Makefile
+already exposes `make verify-pre` / `make verify-post` /
+`make rebuild-deploy` / `make reconcile-snapshots` so the
+operator doesn't need to remember a `scripts/` path.
+
+The DEAD per-version files at root were a different problem:
+they were left over from the v0.22/v0.23 era when each
+release had a one-off `check_v0.X.Y.sh` script. The current
+model is ONE live catalog (`scripts/verify_pre_deploy.sh` +
+`scripts/verify_post_deploy.sh`) that doesn't change name per
+version. The root-level wrapper family had no reason to exist
+once the inner scripts were deleted.
+
+### Files in this change
+
+- **DELETED (7):** `run_check_v0.{22.3,23.0,23.3}.sh`,
+  `run_check_cross_subnet_v0.23.1.sh`,
+  `run_fix_admin_attribution.sh`,
+  `commit_msg_v0.21.{0,1}.txt`
+- **MODIFIED `.github/workflows/ci.yml`** — both `Setup Go` steps
+  bumped from `1.23` to `1.25`
+- **MODIFIED `go.mod`** — added `toolchain go1.25.4` directive
+  (defensive; auto-removed by `go mod tidy` if the local Go
+  matches, B23 catches that regression)
+- **MODIFIED `scripts/verify_pre_deploy.sh`** — added **B23**
+  (CI Go version matches go.mod) and **B24** (no dead
+  per-version wrapper scripts at root)
+- **MODIFIED `RELEASE-NOTES.md`** — this entry
+
+### Verification
+
+- `bash scripts/verify_pre_deploy.sh` locally: **23/23 PASS**
+  (B8 SKIP smoke is VM-only; B23/B24 added)
+- The next CI push will trigger all 3 jobs (`test`, `verify-pre`,
+  `audit`) on Go 1.25 — expected green
+
 ## v0.32.8 — Dockerfile builds at image-build time (100s → 5s startup)
+
+**Date:** 2026-07-31
+**Tag:** `v0.32.8` (commit 2d2d91f, force-pushed from 86a406c)
+**Scope:** the operator reported three issues:
 
 **Date:** 2026-07-31
 **Tag:** _pending_

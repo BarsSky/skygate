@@ -27,10 +27,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Go 1.23
+      - name: Setup Go 1.25
         uses: actions/setup-go@v6
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache: true
 
       - name: go mod download
@@ -61,10 +61,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Go 1.23
+      - name: Setup Go 1.25
         uses: actions/setup-go@v6
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache: true
 
       - name: Run verify_pre_deploy.sh
