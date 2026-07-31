@@ -63,7 +63,24 @@ func New(baseURL, k string) *Client {
 	c := &Client{}
 	c.BaseURL = baseURL
 	c.apiKey = v
-	c.http = &http.Client{Timeout: 10 * time.Second}
+	// 2026-07-31: v0.32.12 — set Transport with DisableKeepAlives=true
+	// to avoid hanging connections in the CGO+musl runtime. The
+	// pre-fix default `&http.Client{Timeout: 10 * time.Second}` left
+	// HTTP/1.1 keep-alive enabled, which can deadlock when the
+	// headscale-side TCP socket is reused across rapid concurrent
+	// ListAllNodes() calls (one handler holds the cacheMu.Lock while
+	// its `c.http.Do` waits on a keep-alive connection that the
+	// headscale side has half-closed). Disabling keep-alives forces
+	// a fresh TCP connection per request — slower (~5ms per
+	// connection) but never deadlocks. The internal cacheTTL (5s)
+	// still absorbs the per-page-render cost; only the actual API
+	// call path is affected.
+	c.http = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+		},
+	}
 	c.ExecContainer = getenvDefault("HEADSCALE_CONTAINER", "headscale")
 	c.cacheTTL = 5 * time.Second
 	return c
