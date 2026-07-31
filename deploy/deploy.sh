@@ -365,13 +365,18 @@ if [ -f "${SCRIPT_DIR}/../scripts/monitor_disk.sh" ]; then
         chmod +x /usr/local/bin/skygate-monitor-disk
         log "Installed /usr/local/bin/skygate-monitor-disk"
         # Cron: every 6h. Idempotent — overwrites any existing entry.
+        # Log path: /home/admin/skygate-disk-monitor.log
+        # (writable by the admin user that crontab -e operates as;
+        # /var/log is root:syslog 0755 and admin is not in syslog,
+        # so the v0.32.5 default of /var/log/skygate-disk-monitor.log
+        # failed silently every 6h for the first deploy window).
         if command -v crontab >/dev/null 2>&1; then
             TMP_CRON=$(mktemp)
             crontab -l 2>/dev/null | grep -v 'skygate-monitor-disk' > "$TMP_CRON" || true
-            echo "0 */6 * * * /usr/local/bin/skygate-monitor-disk >> /var/log/skygate-disk-monitor.log 2>&1" >> "$TMP_CRON"
+            echo "0 */6 * * * /usr/local/bin/skygate-monitor-disk >> /home/admin/skygate-disk-monitor.log 2>&1" >> "$TMP_CRON"
             crontab "$TMP_CRON"
             rm -f "$TMP_CRON"
-            log "Installed cron: 0 */6 * * * /usr/local/bin/skygate-monitor-disk"
+            log "Installed cron: 0 */6 * * * /usr/local/bin/skygate-monitor-disk (log: /home/admin/skygate-disk-monitor.log)"
         else
             log "WARN: crontab not found, monitor installed but not scheduled. Add the cron entry manually."
         fi
