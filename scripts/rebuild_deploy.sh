@@ -66,8 +66,19 @@ $SSH 'cd /home/admin/skygate && git pull --ff-only' || {
 }
 
 # 3. Build new image
-echo "[3/5] docker compose build skygate (3-5 min)"
-$SSH 'cd /home/admin/skygate && sudo docker compose build skygate 2>&1 | tail -5'
+# 2026-07-31: v0.32.8 — pass version info to the Dockerfile so the
+# prebuilt binary carries the right GIT_VER / GIT_COMMIT / BUILD_TIME.
+# The build is now done in the Dockerfile (multi-stage, 5-30s with
+# cache hit) instead of in the entrypoint (was 100s on first run).
+echo "[3/5] docker compose build skygate (5-30s, was 3-5 min pre-v0.32.8)"
+GIT_VER=$(git describe --tags --always 2>/dev/null || echo dev)
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+$SSH "cd /home/admin/skygate && \
+    SKYGATE_GIT_VER='$GIT_VER' \
+    SKYGATE_GIT_COMMIT='$GIT_COMMIT' \
+    SKYGATE_BUILD_TIME='$BUILD_TIME' \
+    sudo -E docker compose build skygate 2>&1 | tail -5"
 
 # 4. Recreate container.
 # 2026-07-30: v0.32.4 — graceful stop BEFORE --force-recreate.
