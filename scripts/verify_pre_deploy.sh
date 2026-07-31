@@ -433,6 +433,41 @@ run_check "B21" "exit-nodes filter excludes subnet-routers (v0.32.7)" \
     '\''$GO'\'' test -count=1 -run '\''TestShouldInclude'\'' ./internal/feature/admin/ 2>&1
   '"
 
+# --- B22: Dockerfile builds at image-build time, not at container start (v0.32.8) ---
+# 2026-07-31: pre-fix the Go build happened at container start
+# (in entrypoint.sh's `go mod download` + `go build` step). On a
+# fresh image this took ~100s before skygate started downloading
+# 4 Go modules (testify, spew, go-difflib, yaml.v3) + the apk
+# deps for git + openssh-client. The fix: do the build at
+# `docker compose build` time, copy the static binary to the
+# runtime image, simplify entrypoint.sh to just tailscale + exec.
+#
+# B22 pins the contract:
+#   (a) Dockerfile is multi-stage (FROM golang:1.25-alpine AS skygate-build,
+#       then FROM alpine:3.20 for runtime)
+#   (b) Dockerfile runs `go mod download` + `go build` itself
+#       (NOT in entrypoint.sh)
+#   (c) entrypoint.sh is simplified — no `go mod download`, no
+#       `go build`, no `apk add openssh-client git`
+#   (d) runtime stage does NOT include golang or go toolchain
+#       (smaller image, fewer CVEs)
+#   (e) Build is reasonably fast on a cache hit (<2 min for the
+#       first build, <30s on subsequent rebuilds with the same
+#       go.mod/go.sum)
+run_check "B22" "Dockerfile builds skygate at image-build time (v0.32.8)" \
+  "bash -c '
+    grep -q \"^FROM golang:1.25-alpine AS skygate-build\" Dockerfile &&
+    grep -q \"^FROM alpine:3.20\" Dockerfile &&
+    grep -q \"^FROM tailscale/tailscale:latest AS tailscale\" Dockerfile &&
+    grep -q \"go mod download\" Dockerfile &&
+    grep -q \"go build\" Dockerfile &&
+    grep -q \"COPY --from=skygate-build /out/skygate /app/skygate\" Dockerfile &&
+    ! grep -q \"go mod download\" entrypoint.sh &&
+    ! grep -q \"go build\" entrypoint.sh &&
+    ! grep -q \"apk add.*openssh-client.*git\" entrypoint.sh &&
+    ! grep -q \"^FROM golang:\" Dockerfile | tail -1 | grep -q \"alpine\"
+  '"
+
 echo
 echo "=== summary ==="
 

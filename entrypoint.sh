@@ -1,18 +1,17 @@
 #!/bin/sh
-# 2026-07-14: Этап 14 v2 — Tailscale in-image.
+# 2026-07-31: v0.32.8 — simplified entrypoint. The Go build is now
+# done at `docker compose build` time (see Dockerfile), so the
+# entrypoint just sets up Tailscale and execs the prebuilt binary.
+# Container startup is now <5s instead of ~100s.
 #
-# This entrypoint does three things in order:
+# What the entrypoint does (in order):
 #
 #   1. (optional) Start tailscaled and bring up the Tailscale client
 #      with `--accept-routes`. Skipped entirely when TS_AUTHKEY_FILE
 #      is not set, so a non-RF deployment can run the same image
 #      without joining a tailnet at all.
 #
-#   2. Build skygate from the bind-mounted source (the original
-#      entrypoint flow: go mod download, go mod tidy, git for build
-#      labels, go build with LDFLAGS).
-#
-#   3. exec /app/skygate so it becomes PID 1 of the container and
+#   2. exec /app/skygate so it becomes PID 1 of the container and
 #      receives signals directly from docker.
 #
 # We intentionally do NOT call `tailscale set --exit-node=...` here.
@@ -72,21 +71,6 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     # "headscale" (the headscale API endpoint configured via
     # HEADSCALE_URL=http://headscale:50444).
     #
-    # Disabling accept-dns means the container keeps using
-    # Docker's DNS. The downside is that tailnet names (e.g.
-    # `emilia.tailnet`) won't resolve from inside the
-    # container — but skygate doesn't currently need to
-    # resolve tailnet names; it only talks to the Docker
-    # service named "headscale" and to api.telegram.org (an
-    # IP literal, after the resolver at probe time).
-    #
-    # The previous "sidecar + network_mode: service:tailscale"
-    # setup hit the same DNS problem differently: the shared
-    # netns broke Docker's embedded DNS responder. In-image
-    # tailscaled doesn't share netns, so the responder works
-    # — we just need to stop tailscaled from replacing
-    # /etc/resolv.conf.
-    #
     # 2026-07-25: v0.28.5c — explicitly add --exit-node= (empty)
     # to the `tailscale up` invocation. Reason: Tailscale
     # persists ALL prefs in tailscaled.state (bind-mounted from
@@ -95,17 +79,9 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     # testing), the state remembers it. The next `tailscale up`
     # then errors with "requires mentioning all non-default
     # flags" because the new invocation doesn't list the
-    # previously-set --exit-node. The entrypoint prints a
-    # warning and continues — but the OLD exit-node is still
-    # active. Symptom: skygate-vm routes ALL traffic (including
-    # 172.18.0.0/16 Docker bridge) through the exit-node, which
-    # breaks connectivity to the openresty/Caddy upstream
-    # (504 Gateway Time-out on https://skygate.skynas.ru).
-    # Adding --exit-node= to the entrypoint ensures the exit-node
-    # is cleared on every skygate restart. If the operator wants
-    # the skygate container to be an exit-node itself, they can
-    # explicitly set it AFTER the entrypoint runs (`docker exec
-    # skygate tailscale set --exit-node=<tag>`).
+    # previously-set --exit-node. Adding --exit-node= to the
+    # entrypoint ensures the exit-node is cleared on every
+    # skygate restart.
     if ! tailscale up \
         --login-server="$LOGIN_SERVER" \
         --authkey="$AUTHKEY" \
@@ -122,36 +98,9 @@ else
     echo "[init] TS_AUTHKEY_FILE not set — Tailscale skipped (non-RF mode)"
 fi
 
-# 2. Build skygate (existing flow, preserved verbatim from the
-# pre-Tailscale entrypoint).
-cd /app
-echo "Downloading Go modules..."
-go mod download || true
-go mod tidy || true
-apk add --no-cache openssh-client git 2>/dev/null
-echo "Building Skygate..."
-# 2026-07-11: inject build label from git so the web footer + telegram
-# /version reflect the real tag/commit. .git is bind-mounted via
-# docker-compose (`./:/app`); if it's missing (e.g. CI build from a
-# tarball), fall back to "dev". The alpine base image does NOT include
-# git, so we install it via apk above.
-# git 2.35+ refuses to operate on a repo whose owner doesn't match
-# the current uid ("dubious ownership"). The host bind-mounts .git
-# as uid 1000 while we run as root, so mark /app as safe explicitly.
-git config --global --add safe.directory /app
-GIT_VER=$(git describe --tags --always 2>/dev/null || echo "dev")
-GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-if [ "${GIT_VER}" = "dev" ] || [ "${GIT_COMMIT}" = "unknown" ]; then
-    echo "  WARN: build label not resolved (GIT_VER=${GIT_VER} GIT_COMMIT=${GIT_COMMIT})" >&2
-fi
-BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS="-X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}"
-echo "  version=${GIT_VER} commit=${GIT_COMMIT} built=${BUILD_TIME}"
-go build -buildvcs=false -ldflags "${LDFLAGS}" -o /app/skygate ./cmd/skygate || { echo "BUILD FAILED"; exit 1; }
-chmod +x /app/skygate
 echo "Skygate ready, starting..."
 
-# 3. Exec skygate as PID 1. tailscaled (if running) is orphaned to
+# 2. Exec skygate as PID 1. tailscaled (if running) is orphaned to
 # PID 1 (= skygate now) and continues serving; when the container
 # exits docker sends SIGTERM to PID 1 and SIGKILL to the rest after
 # the grace period, so tailscaled doesn't leak.

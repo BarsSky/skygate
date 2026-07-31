@@ -1,79 +1,121 @@
-# Multi-stage: pull tailscale binaries, then build the skygate image.
+# Multi-stage Dockerfile for skygate.
 #
-# 2026-07-14: Этап 14 v2 — Tailscale in-image (replaces the sidecar
-# pattern from the previous commit). The sidecar approach had two
-# failure modes:
+# Stage 1: build the Go binary from the bind-mountable source dir
+#          (or, when run via `docker build -f - . < tarball`, from
+#          whatever is in the build context). Uses `golang:1.25-alpine`
+#          for the Go toolchain.
 #
-#   (a) `network_mode: service:tailscale` broke docker's embedded DNS
-#       (127.0.0.11:53 refused UDP), so the bot's getUpdates polling
-#       timed out on every attempt.
-#   (b) The sidecar's entrypoint.sh called `tailscale up --state=...`
-#       with a flag that `tailscale up` doesn't accept. tailscale up
-#       printed the help text and exited 2, the sidecar died, and
-#       skygate lost its network namespace and got SIGKILL'd (exit
-#       137).
+# Stage 2: minimal runtime image. Just tailscale binaries + the
+#          prebuilt skygate binary + the entrypoint script. NO
+#          Go toolchain, NO git, NO openssh-client (we don't need
+#          to re-build at container start anymore — see
+#          entrypoint.sh for the simplified flow).
 #
-# In-image is simpler: skygate is a normal container, runs tailscaled
-# itself, and joins the tailnet via `tailscale up --accept-routes`. No
-# `--exit-node` is ever set on skygate — the relay (a different node)
-# advertises the Telegram IP ranges as subnet routes, and skygate
-# accepts them, so api.telegram.org traffic flows through the relay
-# and other traffic (headscale, etc.) stays direct.
+# 2026-07-31: v0.32.8 — speed fix. Previously the build happened
+# at container start (in entrypoint.sh's `go mod download` + `go
+# build` step). On a fresh image this downloaded 4 Go modules
+# (testify, spew, go-difflib, yaml.v3) + the apk deps for git
+# + openssh-client, taking ~100s before skygate even started.
+# The fix: do the build at `docker compose build` time, copy
+# the static binary to the runtime image. Container start is
+# now <5s (just tailscaled init + skygate exec).
+#
+# Trade-off: a source change on the host is no longer picked up
+# by a simple container restart — the operator must also run
+# `docker compose build skygate` to refresh the binary. This is
+# already the case for `make rebuild-deploy` (v0.29.0+) and the
+# /admin/update orchestrator, so it's not a new constraint.
 
-# Stage 1: extract tailscale + tailscaled from the official image.
+# Stage 1: pull tailscale binaries (re-used in stage 2).
 FROM tailscale/tailscale:latest AS tailscale
 
-# Stage 2: skygate runtime — Go 1.25 alpine + tailscale binaries.
-FROM golang:1.25-alpine
+# Stage 1.5: build the skygate binary.
+# We copy the source at build time. .git is copied too so
+# `git describe --tags --always` can inject the version label
+# (matches what the old entrypoint.sh did at runtime).
+FROM golang:1.25-alpine AS skygate-build
 
-# Network tools + Go build deps. tailscaled wants iptables on Linux
-# (netfilter-mode=on); without ip6tables tailscaled refuses to start
-# on Alpine. libcap, ca-certificates, sqlite-libs round out the
-# tailscale/Go runtime needs.
-#
-# 2026-07-27: v0.29.0 — docker-cli-compose is the v0.29.0 self-update
-# orchestrator's only way to run `docker compose` from inside the
-# skygate container. docker-cli (the base package) installs only the
-# `docker` binary; `docker compose` is a separate plugin package
-# (`docker-cli-compose` in Alpine). Without it the auto-updater's
-# `docker compose build skygate` step errors with
-# "docker: unknown command: docker compose" — discovered 2026-07-27
-# on the operator's VM during the first end-to-end auto-update test.
-# The fix is one extra package (~3 MB); the orchestrator already
-# mounts the host's docker.sock so the plugin can talk to the
-# host's dockerd and run `docker compose up` on the host's compose
-# files (it cd's into /app, the bind-mount of the source dir).
-RUN apk add --no-cache \
-        ca-certificates \
-        docker-cli \
-        docker-cli-compose \
-        gcc \
-        iptables \
-        ip6tables \
-        libcap \
-        musl-dev \
-        sqlite-libs
+# Build deps. tailscale isn't needed at build time, only git is
+# (for the version label). We strip these out of the runtime image
+# in stage 2.
+RUN apk add --no-cache git
 
-# Copy the official tailscale binaries from stage 1. The official image
-# puts both at /usr/local/bin/; we re-chmod to be safe.
+WORKDIR /src
+
+# Copy go.mod / go.sum first so the module download layer is cached
+# separately from the source. The bind-mount workflow still works
+# (operator's `make rebuild-deploy` runs `docker compose build` which
+# re-uses the cache when go.mod/go.sum haven't changed).
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Now copy the source. The .dockerignore file excludes the bind-mount
+# noise (`data/`, `data/ts/`, etc.) so the build context is small.
+COPY . .
+
+# 2026-07-31: v0.32.8 — fail loud on missing .git (the bind-mount
+# workflow always has .git; the CI build from a tarball doesn't
+# and falls back to "dev").
+RUN git config --global --add safe.directory /src
+ARG GIT_VER=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+# -buildvcs=false skips the embed of VCS info (we set our own via
+# -ldflags). -trimpath strips absolute paths from the binary (cleaner
+# stack traces + reproducible builds). CGO_ENABLED=0 + -ldflags
+# '-s -w' = fully static binary, no glibc dependency.
+ENV CGO_ENABLED=0
+RUN go build -buildvcs=false -trimpath \
+    -ldflags "-s -w -X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}" \
+    -o /out/skygate ./cmd/skygate
+
+# Stage 2: minimal runtime image.
+FROM alpine:3.20
+
+# Tailscale binaries from stage 1.
 COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscale
 COPY --from=tailscale /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 RUN chmod +x /usr/local/bin/tailscale /usr/local/bin/tailscaled
 
-# Create workdir owned by non-root user so we can build without root.
-# tailscaled itself runs as root (it needs CAP_NET_ADMIN to manipulate
-# the tun device and iptables); the Go build is also done as root in
-# this single-stage-for-runtime setup.
-RUN mkdir -p /app && chmod 777 /app
-# Tailscale state directory. tailscaled writes tailscaled.state here
-# and exposes the control socket at /var/run/tailscale/tailscaled.sock.
-# Both directories are bind-mounted from the host in docker-compose.yml
-# so the state survives container restarts.
+# Runtime deps: iptables (tailscaled needs it on Linux), libcap,
+# ca-certificates, sqlite-libs. tailscale pulls iptables as a hard
+# dep on Linux (netfilter-mode=on); without ip6tables tailscaled
+# refuses to start on Alpine. libcap is the capability lib tailscale
+# uses to drop privileges after creating the tun device.
+# 2026-07-27: v0.29.0 — docker-cli-compose is the v0.29.0 self-update
+# orchestrator's only way to run `docker compose` from inside the
+# skygate container. Without it the orchestrator's
+# `docker compose build skygate` step errors with
+# "docker: unknown command: docker compose".
+RUN apk add --no-cache \
+    ca-certificates \
+    docker-cli \
+    docker-cli-compose \
+    iptables \
+    ip6tables \
+    libcap \
+    sqlite-libs \
+    tzdata
+
+# Tailscale state + control socket paths. Bind-mounted from the
+# host in docker-compose.yml so the state survives container
+# restarts.
 RUN mkdir -p /var/lib/tailscale /var/run/tailscale && \
     chmod 700 /var/lib/tailscale /var/run/tailscale
+
+# Workdir for the bind-mount of the source tree. The runtime image
+# doesn't actually USE the source (the binary is prebuilt), but
+# the v0.29.0 self-update orchestrator needs the source visible
+# at /app for `git checkout` + rebuilds.
 WORKDIR /app
 
-# Build happens at container start via entrypoint.
+# Prebuilt binary from stage 1.5.
+COPY --from=skygate-build /out/skygate /app/skygate
+RUN chmod +x /app/skygate
+
+# Entrypoint simplified: just tailscale setup + exec the prebuilt
+# binary. No more `go mod download` / `go build` at startup.
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

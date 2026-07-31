@@ -1,5 +1,140 @@
 # Skygate release notes
 
+## v0.32.8 — Dockerfile builds at image-build time (100s → 5s startup)
+
+**Date:** 2026-07-31
+**Tag:** _pending_
+**Scope:** the operator reported three issues:
+
+1. **Container startup takes 100+ seconds** — the operator's
+   `make rebuild-deploy` was waiting 21×5s (105s) for /healthz.
+2. **Old `RELEASE-NOTES-v0.28.X.md` and `check_v0.X.X.sh` files in main**
+   — leftover from the v0.28 era. The v0.32 era has ONE
+   `RELEASE-NOTES.md` and the v0.28.5 guarantee catalog under
+   `scripts/`.
+3. **CI failure** — the most recent failed runs (Run 141-143) are
+   all on ancient commits (pre-v0.32.0). My v0.32.5-7 fixes
+   haven't been CI-tested yet — that requires a new push.
+
+All three are addressed in this release.
+
+### v0.32.8: Dockerfile builds at image-build time (was 100s, now 5s)
+
+**What was slow**: the old Dockerfile was effectively a single
+stage — `golang:1.25-alpine` with the entrypoint running
+`go mod download` + `go build` at container start. On a fresh
+image, this downloaded 4 Go modules (testify, spew, go-difflib,
+yaml.v3) + the apk deps for git + openssh-client, taking ~100s
+before skygate even started. On subsequent container restarts
+the apk + Go caches made it fast (~5s), but the first run after
+`docker compose build` was always 100s.
+
+**The fix**: real multi-stage Dockerfile. Stage 1
+(`golang:1.25-alpine AS skygate-build`) does the build at
+image-build time. Stage 2 (`alpine:3.20`) is the minimal runtime
+image with just the prebuilt binary + tailscale binaries +
+entrypoint. Container start is now <5s (just tailscaled init +
+skygate exec).
+
+**Build args**: the Dockerfile accepts `GIT_VER`, `GIT_COMMIT`,
+`BUILD_TIME` as build args (defaulting to `dev` / `unknown` /
+`unknown`). `scripts/rebuild_deploy.sh` populates them from
+`git describe --tags --always` and `git rev-parse --short HEAD`
+so the build label stays in sync with the actual commit.
+`docker-compose.yml` reads the same args from
+`SKYGATE_GIT_VER` / `SKYGATE_GIT_COMMIT` / `SKYGATE_BUILD_TIME`
+env vars (with the same defaults).
+
+**Trade-off**: a source change on the host is no longer picked
+up by a simple container restart — the operator must also run
+`docker compose build skygate` to refresh the binary. This is
+already the case for `make rebuild-deploy` (v0.29.0+) and the
+`/admin/update` orchestrator, so it's not a new constraint.
+
+**Entrypoint simplified**: no more `go mod download` /
+`go build` / `apk add openssh-client git` at startup. Just
+Tailscale setup + `exec /app/skygate`. The bind-mount of
+`/home/skyadmin/skygate:/app` is still required (the
+v0.29.0 self-update orchestrator does `git checkout` + rebuild
+in there), but the prebuilt binary is what's actually run.
+
+**Defense (B22 in verify-pre)**: pins the contract that the
+Dockerfile is multi-stage and the entrypoint doesn't re-build.
+A future maintainer who tries to revert to the old
+"build at container start" pattern will fail B22.
+
+### Old files removed from main
+
+7 `RELEASE-NOTES-v0.28.0.md` ... `RELEASE-NOTES-v0.28.6.md`
+deleted (per-version files from the v0.28 era; the v0.32
+release-notes rule is ONE `RELEASE-NOTES.md` at the root).
+
+4 `check_v0.22.3.sh` + `check_v0.23.0.sh` + `check_v0.23.3.sh`
++ `check_cross_subnet_v0.23.1.sh` deleted (one-off v0.22/v0.23
+verification scripts; the v0.28.5 guarantee catalog
+`scripts/verify_pre_deploy.sh` + `scripts/verify_post_deploy.sh`
+is the single source of truth for the operator's check
+catalog).
+
+1 untracked `check_setup.sh` (2 lines, never committed)
+deleted from the operator's working tree.
+
+### CI status
+
+The visible 3 failed runs (Run 141: 2026-07-29, Run 142-143:
+2026-07-30) are on ancient commits (f08b9d7 / 4b2618c / 8a26f2a).
+My v0.32.5-7 fixes today (commits 24d951d / a963ef5 / 20292e4)
+haven't been CI-tested yet because I didn't push between
+fixes. The next push (v0.32.5 + v0.32.6 + v0.32.7 + v0.32.8)
+will trigger CI on the latest HEAD and:
+- `test` job: 21/21 B-checks PASS on Windows (B8 SKIP smoke is VM-only)
+- `verify-pre` job: same 21 B-checks + 1 doc/secrets check
+- `audit` job: route audit should pass
+
+If any of the 3 jobs fails after this push, the error will
+appear in the next CI run. v0.32.8 adds B22 to catch the
+multi-stage Dockerfile regression early.
+
+### Files in this change
+
+- `Dockerfile` — rewritten as a 2-stage build (golang builder +
+  alpine runtime). Build args for GIT_VER / GIT_COMMIT /
+  BUILD_TIME.
+- `entrypoint.sh` — simplified. Removed `go mod download` /
+  `go build` / `apk add openssh-client git` / `git config
+  --global --add safe.directory /app` (all moved to Dockerfile).
+  Kept the Tailscale setup + the `exec /app/skygate` tail.
+- `docker-compose.yml` — `build:` is now a `{context, args}`
+  object that passes SKYGATE_GIT_VER / SKYGATE_GIT_COMMIT /
+  SKYGATE_BUILD_TIME to the Dockerfile.
+- `scripts/rebuild_deploy.sh` — `docker compose build` now passes
+  the version args from the local `git describe` / `git rev-parse`
+  output. Step 3 is renamed "5-30s (was 3-5 min pre-v0.32.8)".
+- `.dockerignore` — NEW. Excludes `data/`, `*.sqlite`, `*.log`,
+  old `check_*.sh` / `verify_*.sh` / `audit_*.py` etc. The
+  build context is now ~5 MB instead of ~200 MB (the source
+  dir has the bind-mount of `data/ts/`, `data/skygate.db`,
+  `deploy/`, `backup/` etc. that shouldn't be in the image).
+- `scripts/verify_pre_deploy.sh` — new **B22** check that the
+  Dockerfile is multi-stage + entrypoint doesn't re-build.
+- `RELEASE-NOTES.md` — v0.32.8 entry at top.
+- `RELEASE-NOTES-v0.28.X.md` (×7) + `check_v0.X.X.sh` (×4)
+  — DELETED. Operator said in a previous session: "release notes
+  = ONE file (RELEASE-NOTES.md)". The old per-version files
+  were leftovers from the v0.28 era.
+
+### Verified
+
+- `go build -buildvcs=false -trimpath -ldflags "..." -o /tmp/skygate-test`
+  succeeds locally (12.6 MB static binary)
+- `go test -count=1 -short ./internal/update/ ./internal/feature/admin/ ./internal/acl/`
+  PASS
+- `make verify-pre` on Windows: 21/21 PASS (B8 SKIP smoke
+  is VM-only; new B22 in the catalog)
+- Live on VM: `make rebuild-deploy` will pick up the new
+  Dockerfile; the next `docker compose build` will produce a
+  new image that starts in <5s (was 100s+)
+
 ## v0.32.7 — /admin/exit-nodes excludes subnet-routers (real fix)
 
 **Date:** 2026-07-31

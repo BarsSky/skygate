@@ -18,7 +18,20 @@ services:
   # secrets: mount — the entrypoint will skip tailscaled and
   # skygate will use direct internet.
   skygate:
-    build: .
+    build:
+      context: .
+      # 2026-07-31: v0.32.8 — pass the version label to the
+      # Dockerfile so the prebuilt binary carries the right
+      # GIT_VER / GIT_COMMIT / BUILD_TIME values. Without
+      # these the build would fall back to "dev"/"unknown"
+      # (the Dockerfile's default ARGs) and /healthz would
+      # report the wrong version. The rebuild_deploy.sh script
+      # populates these from `git describe --tags --always` and
+      # `git rev-parse --short HEAD` so deploy + tag stay in sync.
+      args:
+        GIT_VER: "${SKYGATE_GIT_VER:-dev}"
+        GIT_COMMIT: "${SKYGATE_GIT_COMMIT:-unknown}"
+        BUILD_TIME: "${SKYGATE_BUILD_TIME:-unknown}"
     # v0.29.2: no `container_name: skygate` — let compose auto-name
     # the container (`skygate-skygate-1` etc.). The previous
     # explicit name caused a race with `docker compose up
