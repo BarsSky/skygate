@@ -381,6 +381,32 @@ run_check "B19" "ACL perf + route correctness (v0.32.2 perf tests)" \
     '\''$GO'\'' test -count=1 -run '\''TestGenerateACL_SizeWithinBound|TestGenerateACL_NoDuplicateHosts|TestGenerateACL_FirstMatchOrdering|TestGenerateACL_ViaHonoredWhenEnabled|TestGenerateACL_ViaOmittedWhenDisabled|TestGenerateACL_AllTagsInTagOwners'\'' ./internal/acl/ 2>&1
   '"
 
+# --- B20: autoupdate git fetch uses --force (v0.32.6) ---
+# 2026-07-30: the v0.32.5 autoupdate orchestrator ran
+#   git fetch --tags --prune
+# and got "would clobber existing tag" rejects for 3 stale
+# local tags (v0.16.1, v0.16.7, v0.24.0) whose local SHAs
+# diverged from origin. Exit status 1 → orchestrator treated
+# it as a hard failure → automatic rollback → repeat on every
+# apply. The 2026-07-28 ROLLBACK storm in
+# /data/skygate-update-swap.log is the result.
+#
+# Fix: add --force to the fetch (only affects remote-tracking
+# refs and tags with the same NAME as remote, NOT local
+# branches). B20 pins the contract: the orchestrator's git
+# fetch must use --force, so a future refactor can't silently
+# regress to the broken shape.
+run_check "B20" "autoupdate git fetch uses --force (v0.32.6 stale-tag fix)" \
+  "bash -c '
+    grep -A1 '\''PhasePullBuild'\'' internal/update/docker.go | grep -q '\''runGit(ctx, \"fetch\", \"--tags\", \"--prune\", \"--force\")'\'' &&
+    grep -q \"git fetch --tags --prune --force\" internal/update/manual.go &&
+    grep -q \"would clobber existing tag\" internal/update/docker.go &&
+    '\''$GO'\'' build ./internal/update/ 2>&1
+  '"
+
+echo
+echo "=== summary ==="
+
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
