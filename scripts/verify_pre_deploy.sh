@@ -404,6 +404,35 @@ run_check "B20" "autoupdate git fetch uses --force (v0.32.6 stale-tag fix)" \
     '\''$GO'\'' build ./internal/update/ 2>&1
   '"
 
+# --- B21: /admin/exit-nodes excludes subnet-routers (v0.32.7) ---
+# 2026-07-31: pre-fix `ensureExitServers` matched any node that
+# advertised any routes, which incorrectly included per-user
+# subnet-routers (e.g. skygate-subnet-skyadmin with
+# tag:subnet-router advertising 10.0.1.0/24). The subnet-router
+# is a LAN bridge, not an exit-node — it doesn't route
+# traffic to the internet, doesn't have the tag:exit-* role,
+# and shouldn't appear on /admin/exit-nodes.
+#
+# The fix: extracted `shouldIncludeAsExitServer(tags, routes)`
+# pure function that excludes tag:subnet-router and
+# tag:dev-<user>-<device>. B21 pins the contract:
+#   (a) the function exists in the right file
+#   (b) the exclusion rules are documented in the source
+#       (so a future refactor can't silently re-introduce
+#       the bug)
+#   (c) the 6 unit tests still PASS
+#   (d) the cleanup pass in ensureExitServers is present
+#       (deletes stale subnet-router rows that were inserted
+#       before the v0.32.7 fix)
+run_check "B21" "exit-nodes filter excludes subnet-routers (v0.32.7)" \
+  "bash -c '
+    grep -q \"func shouldIncludeAsExitServer\" internal/feature/admin/exit_nodes.go &&
+    grep -q \"tag:subnet-router\" internal/feature/admin/exit_nodes.go &&
+    grep -q \"tag:dev-\" internal/feature/admin/exit_nodes.go &&
+    grep -q \"DELETE FROM exit_servers\" internal/feature/admin/exit_nodes.go &&
+    '\''$GO'\'' test -count=1 -run '\''TestShouldInclude'\'' ./internal/feature/admin/ 2>&1
+  '"
+
 echo
 echo "=== summary ==="
 

@@ -152,3 +152,95 @@ func TestSeedNodeRulesAndReadExpected(t *testing.T) {
 		t.Errorf("new_node: expected empty status, got %q", got)
 	}
 }
+
+// --- v0.32.7: shouldIncludeAsExitServer filter tests ---
+//
+// The filter is what `ensureExitServers` uses to decide which
+// headscale nodes to insert into the exit_servers table
+// (which is what /admin/exit-nodes renders). Before v0.32.7
+// the filter matched ANY node that advertised routes — which
+// incorrectly included per-user subnet-routers (e.g.
+// skygate-subnet-skyadmin with tag:subnet-router advertising
+// 10.0.1.0/24). The fix: exclude tag:subnet-router and the
+// per-user device marker tag:dev-*. These 6 tests pin the
+// contract.
+
+// TestShouldInclude_ExitNode: a tagged exit-node is included
+// even if it has no available routes (e.g. before the relay
+// has run `tailscale set --advertise-exit-node`).
+func TestShouldInclude_ExitNode(t *testing.T) {
+	if !shouldIncludeAsExitServer([]string{"tag:exit-node", "tag:public"}, 0) {
+		t.Errorf("tagged exit-node with 0 routes should be included (operator may tag before advertising)")
+	}
+}
+
+// TestShouldInclude_SubnetRouter_Excluded: a subnet-router
+// (tag:subnet-router) is EXCLUDED even if it advertises
+// routes. This is the v0.32.7 fix — the operator shouldn't
+// see their LAN bridge in the exit-nodes list.
+func TestShouldInclude_SubnetRouter_Excluded(t *testing.T) {
+	if shouldIncludeAsExitServer([]string{"tag:subnet-router"}, 1) {
+		t.Errorf("subnet-router should be EXCLUDED from /admin/exit-nodes even with advertised routes")
+	}
+	if shouldIncludeAsExitServer([]string{"tag:subnet-router", "tag:dev-skyadmin-rpi"}, 1) {
+		t.Errorf("subnet-router+dev-* should still be EXCLUDED")
+	}
+}
+
+// TestShouldInclude_PerUserDevice_Excluded: a per-user device
+// (tag:dev-<user>-<device>, the v0.28.0 marker) is EXCLUDED.
+// These nodes sometimes have route entries (e.g. a Windows
+// client with a tailscale subnet route for a VPN adapter) but
+// they're user devices, not relays.
+func TestShouldInclude_PerUserDevice_Excluded(t *testing.T) {
+	if shouldIncludeAsExitServer([]string{"tag:dev-skyadmin-msi", "tag:private"}, 0) {
+		t.Errorf("per-user device (tag:dev-*) should be EXCLUDED from /admin/exit-nodes")
+	}
+}
+
+// TestShouldInclude_AdvertisedRoutes: a node with no exit-node
+// tag but with advertised routes is INCLUDED (so the operator
+// can see unexpected route-advertising nodes and decide
+// whether to tag them). This is the original "OR" behavior.
+func TestShouldInclude_AdvertisedRoutes(t *testing.T) {
+	if !shouldIncludeAsExitServer([]string{"tag:public"}, 5) {
+		t.Errorf("tag:public node with 5 routes should be included (catches unexpected route-advertising nodes)")
+	}
+	if !shouldIncludeAsExitServer([]string{}, 1) {
+		t.Errorf("untagged node with 1 route should be included (catches misconfigured relays)")
+	}
+}
+
+// TestShouldInclude_NoTagsNoRoutes: a node with no tags and
+// no routes is EXCLUDED. This is the common case for fresh
+// Tailscale clients that have just registered.
+func TestShouldInclude_NoTagsNoRoutes(t *testing.T) {
+	if shouldIncludeAsExitServer([]string{}, 0) {
+		t.Errorf("untagged node with 0 routes should be EXCLUDED (it's a regular client)")
+	}
+}
+
+// TestShouldInclude_RealWorld: the actual node shapes from
+// the production tailnet (2026-07-30). emilia/sharlotta/karolina
+// are included; skygate-subnet-skyadmin is excluded.
+func TestShouldInclude_RealWorld(t *testing.T) {
+	cases := []struct {
+		name  string
+		tags  []string
+		rts   int
+		want  bool
+	}{
+		{"emilia", []string{"tag:exit-emilia", "tag:exit-node", "tag:public"}, 14, true},
+		{"sharlotta", []string{"tag:exit-sharlotta", "tag:exit-node", "tag:public"}, 10, true},
+		{"karolina", []string{"tag:exit-karolina", "tag:exit-node", "tag:public"}, 148, true},
+		{"skygate-subnet-skyadmin", []string{"tag:dev-skyadmin-skygate-subnet-skyadmin", "tag:subnet-router"}, 1, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldIncludeAsExitServer(tc.tags, tc.rts); got != tc.want {
+				t.Errorf("%s: shouldIncludeAsExitServer(%v, %d) = %v, want %v",
+					tc.name, tc.tags, tc.rts, got, tc.want)
+			}
+		})
+	}
+}

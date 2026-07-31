@@ -1,5 +1,117 @@
 # Skygate release notes
 
+## v0.32.7 — /admin/exit-nodes excludes subnet-routers (real fix)
+
+**Date:** 2026-07-31
+**Tag:** _pending_
+**Scope:** the operator reported that on /admin/exit-nodes, all
+nodes except emilia appeared as "offline" or "missing the tag",
+and skygate-subnet-skyadmin was on the list at all. Two findings
+from investigation:
+
+1. **Karolina and sharlotta DO have the "Untag exit-node"
+   button** (rendered in amber, not green like emilia's). The
+   button exists in the HTML and the form action is correct.
+   It just visually looks like a status pill (amber background
+   in the СТАТУС column). UX nit, not a code bug.
+
+2. **skygate-subnet-skyadmin in the list IS a real bug.**
+   `ensureExitServers` matched any node that advertised any
+   routes, which incorrectly included per-user subnet-routers
+   (tag:subnet-router advertising the user's LAN /24). The
+   subnet-router is a LAN bridge, not an exit-node, and
+   shouldn't be on the exit-nodes page. The fix in v0.32.7
+   excludes these.
+
+### What's new (operator-visible)
+
+- **/admin/exit-nodes no longer shows skygate-subnet-skyadmin**
+  (or any other per-user subnet-router with `tag:subnet-router`).
+  After deploy, the next page load will:
+  1. The new filter (v0.32.7) excludes the subnet-router from
+     new inserts
+  2. The cleanup pass in `ensureExitServers` DELETEs the
+     stale row that was inserted before v0.32.7
+  3. The page now shows only the 3 actual relays: emilia,
+     sharlotta, karolina
+
+### What changed (technical)
+
+- `internal/feature/admin/exit_nodes.go` — extracted
+  `shouldIncludeAsExitServer(tags, availableRouteCount) bool`
+  pure function. The new filter excludes:
+  - `tag:subnet-router` — per-user subnet-router (LAN bridge)
+  - `tag:dev-*` — per-user device v0.28.0 marker
+  The filter still includes:
+  - Any node with `tag:exit-*`
+  - Any node with 1+ advertised routes (so the operator can
+    see unexpected route-advertising nodes and decide what
+    to do)
+- `ensureExitServers` now has a 2nd pass: after inserting
+  qualifying nodes, it iterates existing exit_servers rows and
+  DELETEs any row whose corresponding headscale node no
+  longer passes the filter. This is the one-shot cleanup for
+  pre-v0.32.7 data.
+- `internal/feature/admin/exit_nodes_test.go` — 6 new tests:
+  - `TestShouldInclude_ExitNode` — tagged exit-node included
+  - `TestShouldInclude_SubnetRouter_Excluded` — subnet-router
+    excluded even with advertised routes (the bug)
+  - `TestShouldInclude_PerUserDevice_Excluded` — `tag:dev-*`
+    excluded (the bug)
+  - `TestShouldInclude_AdvertisedRoutes` — untagged but
+    route-advertising node still included (the original OR rule)
+  - `TestShouldInclude_NoTagsNoRoutes` — regular client
+    excluded
+  - `TestShouldInclude_RealWorld` — the actual node shapes
+    from the production tailnet (emilia/sharlotta/karolina
+    in, skygate-subnet-skyadmin out)
+- `scripts/verify_pre_deploy.sh` — new **B21** check that
+  pins: the function exists, the exclusion rules are
+  documented, the cleanup pass is present, the 6 tests pass.
+
+### Why karolina/sharlotta still show as "offline" in the screenshot
+
+The skygate health-monitor uses a 5-min "last seen" threshold.
+karolina and sharlotta's `lastSeen` in headscale is 9h ago
+(per the headscale API: `online: True` but the timestamp is
+stale). The headscale `online` flag is a known headscale bug
+in 0.29.x — it doesn't flip to `False` when the node stops
+sending heartbeats. The skygate monitor correctly reports
+them as offline based on the `lastSeen` timestamp. The operator
+can verify with `tailscale status` (which uses the local cache
+and shows them as offline too) or `docker exec headscale
+headscale nodes list`.
+
+### Why emilia's button is green but karolina/sharlotta's is amber
+
+Template-level difference. emilia is `online` → button is
+green (success). karolina/sharlotta are `offline` → button
+is amber (warning). Both are functional "Untag" buttons. The
+amber-vs-green split was a v0.18.1 design choice to signal
+"this is an action on an offline node, may not propagate
+until the node comes back online". Not a bug.
+
+### Verified
+
+- `go test -count=1 -run TestShouldInclude ./internal/feature/admin/`
+  PASS (6/6)
+- `make verify-pre` on Windows: 20/20 PASS (B8 SKIP smoke
+  is VM-only; new B21 in the catalog)
+- Live on the VM: after `make rebuild-deploy`, the next
+  load of /admin/exit-nodes will:
+  1. ensureExitServers inserts the 3 relays (filtered, not
+     the subnet-router)
+  2. cleanup pass DELETEs the stale skygate-subnet-skyadmin row
+  3. ListExitServers returns 3 rows: emilia, sharlotta, karolina
+
+### Files in this change
+
+- `internal/feature/admin/exit_nodes.go` — `shouldIncludeAsExitServer`
+  pure function + cleanup pass in `ensureExitServers`
+- `internal/feature/admin/exit_nodes_test.go` — 6 new tests
+- `scripts/verify_pre_deploy.sh` — new B21 check
+- `RELEASE-NOTES.md` — v0.32.7 entry at top
+
 ## v0.32.6 — Autoupdate `git fetch` `--force` (stale local tag fix)
 
 **Date:** 2026-07-30
