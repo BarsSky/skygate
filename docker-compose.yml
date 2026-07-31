@@ -170,7 +170,19 @@ services:
   # network as skygate/headscale/headplane so the
   # reverse_proxy directives can resolve them by name.
   caddy:
-    image: caddy:2-alpine
+    # 2026-07-31: v0.32.10 — switch from `image: caddy:2-alpine`
+    # to a custom build (Dockerfile.caddy) that bakes in the
+    # caddy-dns-cloudflare plugin. The standard caddy:2-alpine
+    # image doesn't include the cloudflare DNS provider
+    # (`module not registered: dns.providers.cloudflare`), so
+    # the v0.15.0 Caddyfile's `tls { dns cloudflare }` block
+    # caused caddy to crash-loop on start. Operators who
+    # switch back to `CADDY_DNS_PROVIDER=http` can revert
+    # this to `image: caddy:2-alpine` (HTTP-01 needs no DNS
+    # plugin).
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
     # v0.29.2: no `container_name: caddy` (same race avoidance
     # as the skygate service above; `caddy` is in the same
     # compose file so a stale `caddy` would also block
