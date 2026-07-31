@@ -781,7 +781,18 @@ func main() {
 	// the HTTP listener could bind, so the process was
 	// up but unreachable (the sidecar goroutine was the
 	// only thing still running).
-	go sidecarMgr.Run(ctx)
+	// 2026-07-31: v0.32.13 — gate on cfg.SidecarSyncPeriod
+	// (env SKYGATE_SIDECAR_SYNC_PERIOD, default 30s;
+	// set to 0 / off to disable). Pre-fix the goroutine
+	// launched unconditionally and its initial SyncOnce
+	// at startup did a full headscale ListAllNodes + per-
+	// node route approval, holding the WAL write lock
+	// for several seconds at a critical point in startup.
+	if cfg.SidecarSyncPeriod > 0 {
+		go sidecarMgr.Run(ctx)
+	} else {
+		log.Printf("sidecar: SKYGATE_SIDECAR_SYNC_PERIOD=0, skipping startup goroutine")
+	}
 
 	// 2026-07-21: v0.23.3 — node-expiry watcher.
 	// Background goroutine that walks every non-tagged
@@ -813,7 +824,21 @@ func main() {
 	// direct call would block main() before the HTTP
 	// listener binds. v0.16.7 caught this for sidecar;
 	// same regression here.
-	go expireWatchMgr.Run(ctx)
+	// 2026-07-31: v0.32.13 — gate on cfg.ExpireWatchEnabled.
+	// Pre-fix only the Interval check happened inside Run();
+	// setting ExpireWatchEnabled=false didn't actually
+	// disable the goroutine — it still ran the initial
+	// SyncOnce which lists every node in headscale and
+	// potentially extends expirations, holding the WAL
+	// write lock for a few seconds. On the live VM with
+	// concurrent admin traffic that initial SyncOnce
+	// coincided with the first /admin/exit-nodes request
+	// and wedged the DB.
+	if cfg.ExpireWatchEnabled {
+		go expireWatchMgr.Run(ctx)
+	} else {
+		log.Printf("expirewatch: SKYGATE_EXPIREWATCH_ENABLED=false, skipping startup goroutine")
+	}
 
 		// 2026-07-11: Telegram bot — always arm the RealNotifier so a
 		// hot-swap (admin saving a token at runtime) takes effect without

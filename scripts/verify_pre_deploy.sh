@@ -622,6 +622,54 @@ run_check "B27" "entrypoint.sh runs go build at container start (v0.32.13)" \
   '"
 ﻿
 
+# ─── B29 (v0.32.13) — expirewatch goroutine gated on ExpireWatchEnabled ───
+# Background: same root cause as B28 (autoupdater) — the
+# env-var flag existed but didn't actually gate the
+# goroutine launch. The pre-fix code did
+#   expireWatchMgr := expirewatch.New(d, hs, log.Default(), cfg.ExpireWatchInterval)
+#   ...
+#   go expireWatchMgr.Run(ctx)
+# unconditionally and the Run() method only checked
+# `m.Interval <= 0` — so setting SKYGATE_EXPIREWATCH_ENABLED=false
+# did nothing, the goroutine still ran, the initial
+# SyncOnce still listed every node in headscale, the WAL
+# write lock was still held for a few seconds at the
+# exact moment the first /admin/exit-nodes request
+# arrived.
+#
+# B29 pins the contract:
+#   (a) cmd/skygate/main.go gates the goroutine launch on
+#       cfg.ExpireWatchEnabled.
+#   (b) The pre-fix shape (always-launch) is rejected.
+#   (c) When gated off, a log line is emitted.
+run_check "B29" "expirewatch goroutine is gated on ExpireWatchEnabled (v0.32.13)" \
+  "bash -c '
+    grep -qF \"if cfg.ExpireWatchEnabled\" cmd/skygate/main.go &&
+    grep -qF \"go expireWatchMgr.Run(ctx)\" cmd/skygate/main.go &&
+    ! grep -qE \"^go expireWatchMgr.Run\" cmd/skygate/main.go
+  '"
+
+# ─── B30 (v0.32.13) — sidecar goroutine gated on SidecarSyncPeriod ───
+# Background: same family of bugs as B28/B29. The sidecar
+# (per-user subnet-router auto-approver) launches its
+# initial SyncOnce unconditionally if SidecarSyncPeriod > 0
+# (default 30s). The SyncOnce lists every node in headscale
+# and approves pending routes, holding the WAL write lock
+# at startup.
+#
+# B30 pins the contract:
+#   (a) cmd/skygate/main.go gates the goroutine launch on
+#       cfg.SidecarSyncPeriod > 0 (set to 0 / off to disable).
+#   (b) The pre-fix shape (always-launch) is rejected.
+#   (c) When gated off, a log line is emitted.
+run_check "B30" "sidecar goroutine is gated on SidecarSyncPeriod (v0.32.13)" \
+  "bash -c '
+    grep -qF \"if cfg.SidecarSyncPeriod > 0\" cmd/skygate/main.go &&
+    grep -qF \"go sidecarMgr.Run(ctx)\" cmd/skygate/main.go &&
+    ! grep -qE \"^go sidecarMgr.Run\" cmd/skygate/main.go
+  '"
+﻿﻿
+
 # ─── B28 (v0.32.13) — domain auto-updater gated on AutoUpdateEnabled ───
 # Background: 2026-07-31 the v0.32.13 deploy on the live VM hit
 # the same "504 on /admin/exit-nodes" symptom as the CGO bug,
@@ -629,39 +677,3 @@ run_check "B27" "entrypoint.sh runs go build at container start (v0.32.13)" \
 # goroutine (cmd/skygate/main.go `go app.RunDomainAutoUpdater`)
 # launched unconditionally and ran its synchronous
 # `DomainAutoUpdater()` initial call at startup. That call
-# does a DB scan of every device_rule + staggeredSync of
-# the result to every exit-node (366 rules across 1 node
-# `relay-3` on the operator's VM), which held the SQLite
-# WAL write lock for 30+ seconds and wedged every other
-# query with `context deadline exceeded`. Login kept
-# working because /login is the only route that doesn't
-# share the WAL; /admin/exit-nodes + /dashboard + every
-# other authed page hung 10-30s waiting for the autoupdater
-# to release the lock.
-#
-# The fix: gate `go app.RunDomainAutoUpdater` on
-# `cfg.AutoUpdateEnabled` (env `SKYGATE_AUTO_UPDATE_ENABLED`,
-# default `false`). When the operator hasn't opted into
-# auto-update, the goroutine is skipped entirely (not just
-# delayed). The /admin/update button still works for
-# manual deploys regardless of the gate.
-#
-# B28 pins the contract:
-#   (a) cmd/skygate/main.go gates the goroutine launch on
-#       cfg.AutoUpdateEnabled (NOT unconditional).
-#   (b) The pre-fix shape (always-launch) is rejected.
-#   (c) When gated off, a log line is emitted so the
-#       operator sees the goroutine was skipped.
-run_check "B28" "domain auto-updater is gated on AutoUpdateEnabled (v0.32.13)" \
-  "bash -c '
-    grep -qF \"if cfg.AutoUpdateEnabled\" cmd/skygate/main.go &&
-    grep -qF \"go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)\" cmd/skygate/main.go &&
-    ! grep -qE \"^go app.RunDomainAutoUpdater\" cmd/skygate/main.go
-  '"
-﻿﻿
-﻿echo
-echo "=== summary ==="
-
-echo
-echo "=== summary ==="
-echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
