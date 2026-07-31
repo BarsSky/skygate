@@ -162,14 +162,27 @@ services:
   # skygate+headscale, headplane.* to headplane, derp.* to
   # the derper container.
   #
-  # To skip Caddy entirely, set CADDY_ENABLED=false in .env.
-  # The deploy script then omits the Caddyfile render and
-  # this service is left in the compose but is a no-op
-  # (use a different compose override or remove the
-  # service from the file). Caddy uses the same Docker
-  # network as skygate/headscale/headplane so the
-  # reverse_proxy directives can resolve them by name.
+  # 2026-07-31: v0.32.11 — Caddy is OFF by default. The
+  # service is gated behind `profiles: ["caddy"]` so a
+  # plain `docker compose up -d` does NOT start it. The
+  # operator opts in by setting `CADDY_ENABLED=true` in
+  # .env, which makes deploy.sh call
+  #   docker compose --profile caddy up -d
+  # Why off by default: most operators run an external
+  # TLS terminator (NPM, Cloudflare Tunnel, Caddy on a
+  # separate VM, Tailscale TLS, …) and the in-container
+  # caddy on 80/443 then races for those ports and
+  # silently breaks the public site when its placeholder
+  # Caddyfile can't issue certs (see the 2026-07-31
+  # skygate.example.com incident). To run caddy, also set
+  # CADDY_HOSTS_HEAD=your.domain and either
+  # CADDY_DNS_PROVIDER=cloudflare (with
+  # CADDY_DNS_API_TOKEN_FILE pointing at a real token) or
+  # CADDY_DNS_PROVIDER=http (port 80 must be reachable).
+  # See docs/https-setup.md § "Caddy is off by default"
+  # for the full migration / opt-in procedure.
   caddy:
+    profiles: ["caddy"]
     # 2026-07-31: v0.32.10 — switch from `image: caddy:2-alpine`
     # to a custom build (Dockerfile.caddy) that bakes in the
     # caddy-dns-cloudflare plugin. The standard caddy:2-alpine

@@ -1,5 +1,124 @@
 # Skygate release notes
 
+## v0.32.11 — Caddy is OFF by default (silent-outage fix)
+
+**Date:** 2026-07-31
+**Tag:** _pending_
+**Scope:** closes the "ci green but skygate.example.com
+unreachable" report from 2026-07-31. Root cause: the
+in-container Caddy sidecar was on by default, was binding
+0.0.0.0:80 + 0.0.0.0:443, and was returning `SSL alert 80
+internal_error` because the placeholder Caddyfile
+(`head.example.com` / `headplane.example.com` /
+`derp.example.com` — template defaults, not the
+operator's real domain) couldn't issue certs. The
+operator's external TLS terminator (Nginx Proxy Manager
+at 192.0.2.67) was forwarding to this host's :443 and
+hitting the broken caddy. CI didn't catch it (CI checks
+Go code, not Caddyfile validity or ACME issuance). The
+fix flips the default across three coordinated layers so
+the in-container caddy never starts unless the operator
+explicitly opts in.
+
+What changed:
+
+1. **`deploy/deploy.sh:124`** — `CADDY_ENABLED` default
+   flipped from `true` to `false`. A one-liner at deploy
+   time logs the choice so the operator can see at a
+   glance whether caddy will start.
+2. **`docker-compose.yml`** — the `caddy` service moved
+   under `profiles: ["caddy"]`. A plain
+   `docker compose up -d` no longer starts it. The deploy
+   script appends `--profile caddy` to the `up -d`
+   invocation only when `CADDY_ENABLED=true`. Net effect:
+   the new default = no caddy container = ports 80/443
+   stay free for whatever external terminator the
+   operator already runs.
+3. **`.env.example`** — `CADDY_ENABLED=false` is now the
+   documented default with a copy-pasteable opt-in
+   procedure (DNS-01 vs HTTP-01, real hostnames, token
+   file paths).
+4. **`docs/https-setup.md`** — new top-level section
+   "Caddy is off by default" with the full rationale,
+   the operator-side `docker ps` / `ss -tlnp` check, and
+   the opt-in / opt-out procedure. The architecture
+   diagram is also rewritten to show "TLS terminator" as
+   a generic box (Caddy if opted in, NPM / Cloudflare /
+   Tailscale TLS if not) instead of hardcoded caddy.
+5. **`scripts/verify_pre_deploy.sh`** — new **B25** pin:
+   `deploy.sh`'s default branch is `:-false`, the
+   `.env.example` ships `CADDY_ENABLED=false`, and the
+   `caddy` service in `docker-compose.yml` is under
+   `profiles: ["caddy"]`. If any of those regresses, the
+   silent-outage footgun comes back.
+
+What didn't change:
+
+* `deploy/templates/Caddyfile.tmpl` — same template,
+  same vhost structure, same DNS-01 / HTTP-01 config.
+* `Dockerfile.caddy` — same two-stage caddy build with
+  the `caddy-dns-cloudflare` plugin baked in.
+* The caddy-data / caddy-config volumes — same names,
+  same persistence, just not auto-started.
+* The TLS-termination layer for operators who DO want
+  caddy — opt-in gets exactly the same setup as before
+  v0.32.11, just with `CADDY_ENABLED=true` in `.env`.
+
+Live incident timeline:
+
+* 2026-07-30 ~12:00 MSK — `docker system prune -a -f`
+  re-pulled `caddy:2-alpine` fresh, losing the previous
+  custom build. caddy started crash-looping on
+  `module not registered: dns.providers.cloudflare`.
+  The deployed `skygate-caddy` custom image was lost.
+* 2026-07-30 ~13:00 MSK — v0.32.10 shipped
+  `Dockerfile.caddy` (two-stage build with the cloudflare
+  DNS provider baked in). caddy started successfully
+  and accepted HTTP connections.
+* 2026-07-31 ~09:00 MSK — operator reports "ci github
+  собрался но сайт skygate не открывается". CI for
+  v0.32.9 was green (3/3 jobs pass, Go 1.25 fix worked).
+* 2026-07-31 ~12:00 MSK — investigation finds caddy
+  running, ports 80/443 bound, `SSL alert 80
+  internal_error` because the placeholder
+  `head.example.com` Caddyfile can't issue certs
+  (ACME `rejectedIdentifier` error). Operator then
+  explained that this VM is fronted by an external NPM
+  at 192.0.2.67 — caddy is irrelevant on this host.
+* 2026-07-31 ~13:00 MSK — fix: stop caddy container,
+  set `CADDY_ENABLED=false` in `.env`, document the new
+  default + the opt-in procedure.
+* 2026-07-31 ~13:30 MSK — v0.32.11 source changes
+  landed (deploy.sh default flip + docker-compose
+  profile + .env.example + docs + B25).
+* 2026-07-31 ~13:35 MSK — `make verify-pre` 24/24 PASS
+  (B8 SKIP smoke VM-only; B25 new).
+
+Files in v0.32.11:
+
+* `deploy/deploy.sh` — `:-true` → `:-false` at line 124;
+  new comment block explaining the flip; `compose up -d`
+  at the skygate step now appends `--profile caddy` when
+  `CADDY_ENABLED=true`.
+* `docker-compose.yml` — `caddy:` service gained
+  `profiles: ["caddy"]`; the comment block above
+  rewritten to explain the opt-in procedure.
+* `.env.example` — `CADDY_ENABLED=true` → `false`; new
+  comment block listing both modes with copy-pasteable
+  steps.
+* `docs/https-setup.md` — new TL;DR section at the top
+  + a full "Caddy is off by default — the why and the
+  opt-in" section (~150 lines) + the architecture
+  diagram rewritten to make the TLS terminator a
+  generic box.
+* `scripts/verify_pre_deploy.sh` — new B25.
+* `scripts/verify_pre_deploy.sh` — UTF-8 BOM stripped
+  (the Edit tool re-introduced it on the last save;
+  bash shebang lines must start with literal `#!/bin/bash`).
+* `RELEASE-NOTES.md` — this entry.
+
+---
+
 ## v0.32.9 — CI Go version bump + complete root cleanup
 
 **Date:** 2026-07-31

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # scripts/verify_pre_deploy.sh — build-time guarantees for skygate.
 #
 # Runs BEFORE `docker build` / `git push` / `docker compose up -d`.
@@ -511,6 +511,36 @@ run_check "B24" "no dead per-version wrapper scripts at root (v0.32.9)" \
     [ -z \"\$(ls commit_msg_v0.*.txt 2>/dev/null)\" ] &&
     [ -z \"\$(ls RELEASE-NOTES-v0.*.md 2>/dev/null)\" ] &&
     [ -f RELEASE-NOTES.md ]
+  '"
+
+# ─── B25 (v0.32.11) — Caddy is OFF by default ──────────────────────────
+# Background: 2026-07-31 the operator hit "ci green but
+# skygate.example.com unreachable" because the in-container
+# caddy was sitting on :80/:443 with a placeholder
+# `head.example.com` Caddyfile that couldn't issue certs.
+# The fix: flip the default to false in BOTH the deploy
+# script's shell test AND the .env.example, and gate the
+# caddy service in docker-compose.yml behind a Docker
+# profile so a plain `up -d` doesn't start it. B25 pins
+# the three contracts:
+#   (a) deploy.sh's CADDY_ENABLED default branch is
+#       `false` (the `:false` after `:-` in the test).
+#   (b) .env.example ships `CADDY_ENABLED=false` as the
+#       documented default (no `CADDY_ENABLED=true` line
+#       uncommented).
+#   (c) docker-compose.yml caddy service declares
+#       `profiles: ["caddy"]` so a plain `up -d` skips
+#       it. The profile name is the literal string `caddy`
+#       so deploy.sh's `--profile caddy` flag continues
+#       to start it when the operator opts in.
+# If any of these regresses, the silent-outage footgun
+# comes back.
+run_check "B25" "Caddy is OFF by default (v0.32.11)" \
+  "bash -c '
+    grep -qF \"CADDY_ENABLED:-false\" deploy/deploy.sh &&
+    grep -qF \"CADDY_ENABLED=false\" .env.example &&
+    ! grep -qF \"^CADDY_ENABLED=true\" .env.example &&
+    grep -qF \"profiles: [\\\"caddy\\\"]\" docker-compose.yml
   '"
 
 echo

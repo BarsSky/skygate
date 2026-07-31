@@ -117,11 +117,33 @@ render_template "${PROJECT_DIR}/deploy/templates/headscale-compose.yml.tmpl"    
 # ═══════════════════════════════════════════════════════════════════════════
 # Renders deploy/templates/Caddyfile.tmpl to
 # ${DEPLOY_SKYGATE_DIR}/caddy/Caddyfile. Skipped entirely
-# when CADDY_ENABLED=false. The docker-compose.yml above
-# also references the caddy-data and caddy-config volumes;
-# they exist regardless of CADDY_ENABLED (compose refuses
-# to start a service whose volume isn't declared).
-if [ "${CADDY_ENABLED:-true}" = "true" ]; then
+# when CADDY_ENABLED=false.
+#
+# 2026-07-31: v0.32.11 — default flipped from `true` to `false`.
+# Reason: most operators run an external TLS terminator
+# (NPM, Caddy on a separate VM, Cloudflare Tunnel, Tailscale
+# TLS, …) and the in-container caddy on 80/443 then races
+# for those ports and silently breaks the public site when
+# its placeholder Caddyfile can't issue certs (see the
+# 2026-07-31 incident: skygate.example.com unreachable while
+# caddy was running with the default `head.example.com`
+# placeholder hostnames). The previous `true` default
+# assumed the operator wanted caddy to be the TLS layer,
+# which is now the minority case. Set `CADDY_ENABLED=true`
+# explicitly in .env to opt back in. See docs/https-setup.md
+# § "Caddy is off by default" for the full rationale and
+# migration steps.
+#
+# The docker-compose.yml above declares the caddy service
+# under `profiles: ["caddy"]`, so it stays in the file but
+# is NOT started by a plain `docker compose up -d`. To run
+# caddy, set CADDY_ENABLED=true in .env AND the deploy
+# script's `docker compose --profile caddy up -d` step
+# pulls it in. This way, leaving the env flag at its new
+# default (false) gives an empty `up -d` for caddy and
+# frees 80/443 for whatever external terminator the
+# operator actually uses.
+if [ "${CADDY_ENABLED:-false}" = "true" ]; then
     mkdir -p "${DEPLOY_SKYGATE_DIR}/caddy"
     # 2026-07-15: v0.15.0 — the Caddy DNS-01 challenge
     # needs the API token at RUNTIME (the Caddyfile
@@ -292,7 +314,19 @@ if [ "${MODE}" = "restore" ]; then
 fi
 
 ${DOCKER_CMD} compose build 2>&1 | tail -3 || warn "docker compose build had warnings"
-${DOCKER_CMD} compose up -d 2>&1 || warn "docker compose up had warnings"
+# 2026-07-31: v0.32.11 — only start caddy when the operator opted
+# in. The caddy service is under `profiles: ["caddy"]`, so a plain
+# `up -d` skips it. When CADDY_ENABLED=true, we add `--profile caddy`
+# so the container actually starts. When false, ports 80/443 stay
+# free for whatever external TLS terminator the operator runs
+# (NPM, Cloudflare Tunnel, Tailscale TLS, …).
+if [ "${CADDY_ENABLED:-false}" = "true" ]; then
+    log "CADDY_ENABLED=true — starting caddy with --profile caddy"
+    ${DOCKER_CMD} compose --profile caddy up -d 2>&1 || warn "docker compose up had warnings"
+else
+    log "CADDY_ENABLED=false — skipping caddy (ports 80/443 left free for external TLS terminator; see docs/https-setup.md)"
+    ${DOCKER_CMD} compose up -d 2>&1 || warn "docker compose up had warnings"
+fi
 wait_for_http "http://localhost:${SKYGATE_PORT}/login" 200 120
 container_stable skygate 20
 
