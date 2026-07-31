@@ -431,3 +431,40 @@ func TestSpawnSwapSubprocess_WritesScript(t *testing.T) {
 		t.Error("swap script missing HELPER_EOF heredoc terminator")
 	}
 }
+
+// TestRunGitArgsShape_UpdateFetchHasForce pins the contract that
+// the autoupdate orchestrator's `git fetch` invocation uses
+// `--force`. This is the v0.32.6 fix for the 2026-07-28
+// ROLLBACK storm — without `--force`, a local tag whose SHA
+// diverges from the remote's tag with the same name causes
+// `git fetch --tags` to return exit status 1, which the
+// orchestrator treats as a hard failure and triggers an
+// automatic rollback (see /data/skygate-update-swap.log).
+//
+// We can't run the real orchestrator (it requires a live git
+// repo + network + docker compose), so we test the ARG SHAPE
+// the orchestrator would pass. The check is a static
+// source-code grep on internal/update/docker.go: the
+// PhasePullBuild phase must call runGit with the exact
+// arguments we expect.
+func TestRunGitArgsShape_UpdateFetchHasForce(t *testing.T) {
+	src, err := os.ReadFile("docker.go")
+	if err != nil {
+		t.Fatalf("read docker.go: %v", err)
+	}
+	body := string(src)
+	// The orchestrator's git fetch call must:
+	//   1. Be inside the PhasePullBuild block (the only fetch
+	//      in the orchestrator's happy path)
+	//   2. Use `--force` so a stale local tag pointing at an
+	//      orphaned commit doesn't break the fetch
+	wantCall := `runGit(ctx, "fetch", "--tags", "--prune", "--force")`
+	if !strings.Contains(body, wantCall) {
+		t.Errorf("docker.go missing %q — without --force, stale local tags cause the 2026-07-28 ROLLBACK storm", wantCall)
+	}
+	// The stale-tag failure mode must be documented in the
+	// comment so future maintainers know WHY --force is there.
+	if !strings.Contains(body, "would clobber existing tag") {
+		t.Errorf("docker.go missing the 'would clobber existing tag' explanation comment — see 2026-07-28 ROLLBACK storm in /data/skygate-update-swap.log")
+	}
+}

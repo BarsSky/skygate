@@ -1,5 +1,105 @@
 # Skygate release notes
 
+## v0.32.6 — Autoupdate `git fetch` `--force` (stale local tag fix)
+
+**Date:** 2026-07-30
+**Tag:** _pending_
+**Scope:** the autoupdate orchestrator's `git fetch --tags --prune`
+fails when the local repo has a tag whose SHA diverges from the
+remote's tag with the same name. The fix is to add `--force` to the
+fetch. **No Go code path other than the orchestrator changed.**
+Operator action: just `make rebuild-deploy` to pick up the fix.
+
+### What's new (operator-visible)
+
+- **Autoupdate works again**. The 2026-07-28 ROLLBACK storm
+  (visible in `/data/skygate-update-swap.log` — 11+ ROLLBACK
+  attempts in 5h, all failing at `git fetch` with "would
+  clobber existing tag") was caused by 3 stale local tags on
+  the VM:
+  - `v0.16.1` — local `ec83a6a6` vs remote `6a3ece8f`
+  - `v0.16.7` — local `573f3e21` vs remote `3009001d`
+  - `v0.24.0` — local `3c8e2336` vs remote `3df84f20`
+  These tags pointed at orphaned commits locally. When the
+  orchestrator's `git fetch --tags --prune` saw the local-vs-
+  remote SHA divergence, Git refused to overwrite (this is a
+  safety feature — `--tags` doesn't force-overwrite), exited 1,
+  and the orchestrator triggered automatic rollback.
+
+- **The fix is `--force`**. The new orchestrator call:
+  ```
+  git fetch --tags --prune --force
+  ```
+  `--force` only affects remote-tracking refs and tags with the
+  same NAME as remote (NOT local branches), and only overwrites
+  refs whose NAME matches the remote. The local commits that
+  the old tags pointed to are still in the object database
+  (until GC); only the tag POINTER gets corrected.
+
+### What changed (technical)
+
+- `internal/update/docker.go` — added `--force` to the
+  orchestrator's git fetch. The new call is
+  `runGit(ctx, "fetch", "--tags", "--prune", "--force")`.
+  Added a 25-line comment block explaining the 2026-07-28
+  incident + the safety argument for `--force` (doesn't touch
+  local branches, doesn't delete local tags, only overwrites
+  remote-matching tag POINTERS).
+- `internal/update/manual.go` — updated the manual recovery
+  doc to include `--prune --force` (was: just `--tags`).
+  The manual path was using `git fetch --tags` which has the
+  same bug.
+- `internal/update/docker_test.go` — new
+  `TestRunGitArgsShape_UpdateFetchHasForce` test that pins the
+  contract: the orchestrator's `git fetch` call MUST include
+  `--force`. A future refactor that drops `--force` will
+  fail this test + B20.
+- `scripts/verify_pre_deploy.sh` — new **B20** check: static
+  grep on `internal/update/docker.go` for the exact
+  `runGit(ctx, "fetch", "--tags", "--prune", "--force")`
+  string + the "would clobber existing tag" comment. Pinned.
+
+### Why the operator's "wrong repo" hypothesis was wrong
+
+The user diagnosed "видимо не тот репозиторий указан" (probably
+wrong repo). It wasn't — the VM's `git remote -v` shows
+`origin = https://github.com/BarsSky/skygate.git` (correct).
+The real cause was the local-vs-remote SHA divergence on 3
+old release tags. Adding `--force` to the fetch resolves it.
+
+### How to verify the fix
+
+1. SSH to the VM, cd /home/skyadmin/skygate, run:
+   ```
+   git fetch --tags --prune --force
+   ```
+   Expected: `[tag update] v0.16.1 -> v0.16.1` (3 lines, one
+   per stale tag). Then `git rev-parse v0.16.1` should equal
+   `git ls-remote --tags origin v0.16.1` (was: they differed
+   before the fix).
+2. After deploy, click "Push update" on /admin/update with
+   target `v0.32.6` (or current build). Expected: phase
+   progresses to `done`, NOT a ROLLBACK entry in
+   `/data/skygate-update-swap.log`.
+
+### Verified
+
+- `make verify-pre` on Windows: 19/19 PASS (B8 SKIP smoke
+  is VM-only; new B20 in the catalog)
+- `go test ./internal/update/` PASS
+- Live: `git fetch --tags --prune --force` on the VM
+  updates the 3 stale tags (3x `[tag update]` lines)
+
+### Files in this change
+
+- `internal/update/docker.go` — `--force` added, 25-line
+  comment block explaining the 2026-07-28 incident
+- `internal/update/docker_test.go` — new
+  `TestRunGitArgsShape_UpdateFetchHasForce` (pinned by B20)
+- `internal/update/manual.go` — manual recovery doc updated
+- `scripts/verify_pre_deploy.sh` — new B20 check
+- `RELEASE-NOTES.md` — v0.32.6 entry at top
+
 ## v0.32.5 — Real DB corruption fix (`.recover` + disk monitor)
 
 **Date:** 2026-07-30

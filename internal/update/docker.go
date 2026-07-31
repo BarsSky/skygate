@@ -177,10 +177,32 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	}
 	u.State.Log(LogInfo, "backup tag created: "+backupTag)
 
-	// Phase 2: pull + build. `git fetch --tags` + `git
-	// checkout <target>` + `docker compose build skygate`.
+	// Phase 2: pull + build. `git fetch --tags --prune --force`
+	// + `git checkout <target>` + `docker compose build skygate`.
+	//
+	// 2026-07-30: v0.32.6 — added `--force` to the fetch.
+	// Without it, `git fetch --tags` refuses to overwrite a
+	// local tag whose SHA diverges from the remote's tag with
+	// the same name (the "would clobber existing tag" reject).
+	// This happens whenever:
+	//   - the operator's local VM has a stale tag (e.g. from
+	//     a `git fetch` before the tag was force-pushed on
+	//     origin to point at a different commit)
+	//   - the orchestrator runs in a freshly-cloned repo that
+	//     had different local SHAs at clone time
+	// The result was a hard exit-status-1, the orchestrator
+	// treated it as a fetch failure, and triggered an automatic
+	// rollback (see /data/skygate-update-swap.log for the
+	// 2026-07-28 ROLLBACK storm).
+	//
+	// `--force` only affects remote-tracking refs and tags
+	// (NOT local branches), and only overwrites refs whose
+	// NAME matches the remote — it's the standard fix for
+	// stale local tags pointing at orphaned commits. The
+	// local commits are still in the object database (until
+	// GC); only the tag POINTER gets corrected.
 	u.State.SetPhase(PhasePullBuild, "fetching target and rebuilding image")
-	if err := u.runGit(ctx, "fetch", "--tags", "--prune"); err != nil {
+	if err := u.runGit(ctx, "fetch", "--tags", "--prune", "--force"); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("git fetch: %w", err), backupTag)
 		return
 	}
