@@ -103,6 +103,36 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-done:
 		log.Printf("[exit-nodes] step=ensureExitServers dur=%v", time.Since(t1))
+	t2 := time.Now()
+	// 2026-07-31: v0.32.13 — list exitservers is a DB
+	// SELECT. If the SQLite WAL write lock is held by
+	// another goroutine (which can happen transiently
+	// during the first 30-60s after container start),
+	// this SELECT blocks for the full
+	// `busy_timeout` (5s). To keep the page rendering
+	// responsive we wrap the SELECT in a 2s timeout
+	// and render an empty nodes slice on timeout —
+	// the page will show "no exit nodes" rather than
+	// hang for 30s, which is a strictly better failure
+	// mode for the operator.
+	listDone := make(chan struct{})
+	var dbRows []db.ExitServer
+	var listErr error
+	go func() {
+		dbRows, listErr = db.ListExitServers(s.DB)
+		close(listDone)
+	}()
+	select {
+	case <-listDone:
+	case <-time.After(2 * time.Second):
+		log.Printf("[exit-nodes] db.ListExitServers TIMEOUT after 2s, rendering empty")
+		listErr = fmt.Errorf("timeout")
+	}
+	if listErr != nil {
+		http.Error(w, listErr.Error(), 500)
+		return
+	}
+	log.Printf("[exit-nodes] step=ListExitServers dur=%v rows=%d", time.Since(t2), len(dbRows))
 	case <-time.After(2 * time.Second):
 		log.Printf("[exit-nodes] step=ensureExitServers TIMEOUT after %v (continuing without discovery)", time.Since(t1))
 	}
