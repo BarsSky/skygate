@@ -16,6 +16,7 @@ package headscale
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -137,6 +138,17 @@ func (c *Client) do(method, path string, body any, out any) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	// 2026-07-31: v0.32.12 — also enforce a 5s deadline via
+	// context. The c.http.Timeout above is the hard ceiling
+	// but on the CGO+musl runtime a hung connection can
+	// sometimes still wedge the goroutine past the deadline
+	// (the connection sits in CLOSE_WAIT for 30+s waiting
+	// for the peer to ack the FIN). ctx with a 5s timeout
+	// guarantees client.Do returns within 5s even if the
+	// underlying socket is stuck.
+	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
