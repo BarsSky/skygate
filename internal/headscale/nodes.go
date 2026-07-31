@@ -184,10 +184,38 @@ func (c *Client) ListAllNodes() ([]NodeView, error) {
 		return c.cacheAll, nil
 	}
 
+	// 2026-07-31: v0.32.12 — wrap the HTTP call in a goroutine
+	// + select with a 4s hard timeout. The http.Client.Timeout
+	// + ctx cancel in do() is supposed to handle this, but on
+	// the CGO+musl runtime the cancellation isn't always
+	// honoured (the goroutine can sit in a stuck syscall
+	// forever, holding cacheMu and blocking every other
+	// ListAllNodes() call). A separate goroutine with a select
+	// gives us a forced release: if the HTTP call doesn't
+	// return within 4s, we return an error, the deferred
+	// c.cacheMu.Unlock() fires, and the next call gets a fresh
+	// shot. The leaked goroutine is the cost of working around
+	// the CGO+musl bug — at most one per cache miss, and the
+	// 4s timeout bounds the memory leak.
+	type result struct {
+		raw hsNodeList
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		var raw hsNodeList
+		err := c.do("GET", "/api/v1/node", nil, &raw)
+		ch <- result{raw, err}
+	}()
 	var raw hsNodeList
-	err := c.do("GET", "/api/v1/node", nil, &raw)
-	if err != nil {
-		return nil, err
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil, r.err
+		}
+		raw = r.raw
+	case <-time.After(4 * time.Second):
+		return nil, fmt.Errorf("headscale list nodes: timeout after 4s (CGO+musl socket hang workaround)")
 	}
 	out := make([]NodeView, 0, len(raw.Nodes))
 	for _, n := range raw.Nodes {

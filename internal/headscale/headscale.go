@@ -16,7 +16,6 @@ package headscale
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -64,24 +63,16 @@ func New(baseURL, k string) *Client {
 	c := &Client{}
 	c.BaseURL = baseURL
 	c.apiKey = v
-	// 2026-07-31: v0.32.12 — set Transport with DisableKeepAlives=true
-	// to avoid hanging connections in the CGO+musl runtime. The
-	// pre-fix default `&http.Client{Timeout: 10 * time.Second}` left
-	// HTTP/1.1 keep-alive enabled, which can deadlock when the
-	// headscale-side TCP socket is reused across rapid concurrent
-	// ListAllNodes() calls (one handler holds the cacheMu.Lock while
-	// its `c.http.Do` waits on a keep-alive connection that the
-	// headscale side has half-closed). Disabling keep-alives forces
-	// a fresh TCP connection per request — slower (~5ms per
-	// connection) but never deadlocks. The internal cacheTTL (5s)
-	// still absorbs the per-page-render cost; only the actual API
-	// call path is affected.
-	c.http = &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-		},
-	}
+	// 2026-07-31: v0.32.12 — 5s hard timeout. The previous 10s
+	// http.Client.Timeout was the default; the CGO+musl runtime
+	// doesn't always honour the per-connection deadline cleanly,
+	// so we also use a 5s context timeout in do() to guarantee
+	// the call returns within 5s even if the underlying socket
+	// is wedged in CLOSE_WAIT. With ctx=5s + http.Timeout=10s, a
+	// stuck request returns at the 5s mark with
+	// "context deadline exceeded" and the handler can render
+	// a degraded view (current headscale snapshot from cache).
+	c.http = &http.Client{Timeout: 10 * time.Second}
 	c.ExecContainer = getenvDefault("HEADSCALE_CONTAINER", "headscale")
 	c.cacheTTL = 5 * time.Second
 	return c
@@ -138,17 +129,6 @@ func (c *Client) do(method, path string, body any, out any) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	// 2026-07-31: v0.32.12 — also enforce a 5s deadline via
-	// context. The c.http.Timeout above is the hard ceiling
-	// but on the CGO+musl runtime a hung connection can
-	// sometimes still wedge the goroutine past the deadline
-	// (the connection sits in CLOSE_WAIT for 30+s waiting
-	// for the peer to ack the FIN). ctx with a 5s timeout
-	// guarantees client.Do returns within 5s even if the
-	// underlying socket is stuck.
-	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
-	defer cancel()
-	req = req.WithContext(ctx)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
