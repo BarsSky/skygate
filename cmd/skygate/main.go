@@ -164,6 +164,21 @@ func main() {
 		// will overwrite the file with a fresh state.
 		_ = err
 	}
+	// 2026-07-31: v0.32.13 — gate the DNS auto-updater goroutine
+	// on AutoUpdateEnabled. Pre-fix the goroutine launched
+	// unconditionally if cfg.DNSAutoCheck > 0, which fired
+	// `DomainAutoUpdater()` synchronously at startup. That call
+	// does a DB scan of all device_rules + staggeredSync of the
+	// result to every exit node (366 rules across 1 node
+	// `relay-3` in this VM's case), which on the live VM with
+	// concurrent admin requests held the SQLite WAL write
+	// lock for 30+ seconds and wedged every other query with
+	// `context deadline exceeded`. The opt-in gate matches the
+	// existing semantics: AutoUpdateEnabled is the operator's
+	// switch for ALL background auto-update behaviour
+	// (orchestrator, DNS check, everything), not just the
+	// /admin/update button.
+	_ = cfg.AutoUpdateEnabled // see below
 	// 2026-07-15: v0.12.0 — wire SKYGATE_SECRET_KEY into the
 	// per-user control plane router. Empty string means
 	// "encryption not configured" — the router falls through
@@ -895,8 +910,21 @@ func main() {
 		}
 	}()
 
-	// 2026-07-07: issue #6 — start domain auto-updater goroutine
-	go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)
+	// 2026-07-07: issue #6 — start domain auto-updater goroutine.
+	// 2026-07-31: v0.32.13 — gated on cfg.AutoUpdateEnabled
+	// (env SKYGATE_AUTO_UPDATE_ENABLED). Pre-fix the goroutine
+	// launched unconditionally and its synchronous initial
+	// `DomainAutoUpdater()` call held the SQLite WAL write
+	// lock for 30+ seconds, which wedged every other query
+	// with `context deadline exceeded` (the same root cause
+	// as the 504-on-https postmortem — see RELEASE-NOTES.md
+	// v0.32.13). The /admin/update button still works for
+	// manual deploys regardless of this gate.
+	if cfg.AutoUpdateEnabled {
+		go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)
+	} else {
+		log.Printf("autoupdater: SKYGATE_AUTO_UPDATE_ENABLED=false, skipping startup goroutine")
+	}
 
 	// 2026-07-14: Этап 14 v6 — in-app backup scheduler. Started
 	// after the DB is wired so Load() can read the config.

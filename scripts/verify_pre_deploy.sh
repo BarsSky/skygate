@@ -621,6 +621,44 @@ run_check "B27" "entrypoint.sh runs go build at container start (v0.32.13)" \
     ! grep -qF \"exec /usr/local/bin/skygate\" entrypoint.sh
   '"
 ﻿
+
+# ─── B28 (v0.32.13) — domain auto-updater gated on AutoUpdateEnabled ───
+# Background: 2026-07-31 the v0.32.13 deploy on the live VM hit
+# the same "504 on /admin/exit-nodes" symptom as the CGO bug,
+# but with a different root cause: the DNS auto-updater
+# goroutine (cmd/skygate/main.go `go app.RunDomainAutoUpdater`)
+# launched unconditionally and ran its synchronous
+# `DomainAutoUpdater()` initial call at startup. That call
+# does a DB scan of every device_rule + staggeredSync of
+# the result to every exit-node (366 rules across 1 node
+# `relay-3` on the operator's VM), which held the SQLite
+# WAL write lock for 30+ seconds and wedged every other
+# query with `context deadline exceeded`. Login kept
+# working because /login is the only route that doesn't
+# share the WAL; /admin/exit-nodes + /dashboard + every
+# other authed page hung 10-30s waiting for the autoupdater
+# to release the lock.
+#
+# The fix: gate `go app.RunDomainAutoUpdater` on
+# `cfg.AutoUpdateEnabled` (env `SKYGATE_AUTO_UPDATE_ENABLED`,
+# default `false`). When the operator hasn't opted into
+# auto-update, the goroutine is skipped entirely (not just
+# delayed). The /admin/update button still works for
+# manual deploys regardless of the gate.
+#
+# B28 pins the contract:
+#   (a) cmd/skygate/main.go gates the goroutine launch on
+#       cfg.AutoUpdateEnabled (NOT unconditional).
+#   (b) The pre-fix shape (always-launch) is rejected.
+#   (c) When gated off, a log line is emitted so the
+#       operator sees the goroutine was skipped.
+run_check "B28" "domain auto-updater is gated on AutoUpdateEnabled (v0.32.13)" \
+  "bash -c '
+    grep -qF \"if cfg.AutoUpdateEnabled\" cmd/skygate/main.go &&
+    grep -qF \"go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)\" cmd/skygate/main.go &&
+    ! grep -qE \"^go app.RunDomainAutoUpdater\" cmd/skygate/main.go
+  '"
+﻿﻿
 ﻿echo
 echo "=== summary ==="
 

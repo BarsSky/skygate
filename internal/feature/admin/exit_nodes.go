@@ -18,6 +18,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -71,12 +72,16 @@ type ExitNodeInfo struct {
 
 // AdminExitNodes renders the /admin/exit-nodes page. Admin-only.
 func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
+	t0 := time.Now()
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
+	log.Printf("[exit-nodes] step=currentUser dur=%v", time.Since(t0))
+	t1 := time.Now()
 	s.ensureExitServers()
+	log.Printf("[exit-nodes] step=ensureExitServers dur=%v", time.Since(t1))
 
 	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers. The
 	// row shape matches ExitNodeInfo 1:1 except the auto-increment id
