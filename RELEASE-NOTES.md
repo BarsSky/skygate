@@ -103,6 +103,25 @@ broke.
   added `gcc musl-dev sqlite-dev` to the build stage's
   apk add list, expanded the comment block (24 → 41 lines
   with the regression rationale + 2026-07-31 timeline).
+  **Also**: install the binary to BOTH `/usr/local/bin/skygate`
+  (the actual entrypoint path) AND `/app/skygate` (for
+  back-compat with the v0.29.0 self-update orchestrator's
+  `docker run --rm --volumes-from skygate
+  skygate-skygate:latest /app/skygate --migrate-only`
+  command). The `/app/skygate` path is shadowed by the
+  source bind-mount at runtime, but the autoupdate helper
+  container doesn't have the bind-mount so the image's
+  `/app/skygate` is visible there.
+- `entrypoint.sh` — `exec /app/skygate` → `exec
+  /usr/local/bin/skygate`. The runtime image's `/app` is
+  the bind-mount target for the host source tree (see
+  `docker-compose.yml`); a bind-mount REPLACES the
+  directory contents, so the host's `/app/skygate` (if
+  present, e.g. a stale v0.32.5-era binary) would shadow
+  the freshly built image binary. `/usr/local/bin` is
+  outside the bind-mount so the image's binary always
+  wins. This is the v0.32.5 → v0.32.8 silent-outage
+  root cause that B27 pins.
 - `scripts/verify_pre_deploy.sh` — new **B26** check that
   pins the CGO contract: `! grep -qF "ENV CGO_ENABLED=0"`,
   `grep -qF "ENV CGO_ENABLED=1"`, build stage has
@@ -110,6 +129,9 @@ broke.
   `sqlite-libs`. A future maintainer who tries to
   re-enable `CGO_ENABLED=0` for size will fail B26
   with a one-line explanation pointing at this section.
+  New **B27** check that pins the entrypoint-binary
+  path: `exec /usr/local/bin/skygate` (not
+  `exec /app/skygate` — the v0.32.8 bug shape).
 - `RELEASE-NOTES.md` — this entry.
 
 ### Verified

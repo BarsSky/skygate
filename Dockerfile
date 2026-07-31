@@ -145,6 +145,36 @@ RUN mkdir -p /var/lib/tailscale /var/run/tailscale && \
 WORKDIR /app
 
 # Prebuilt binary from stage 1.5.
+#
+# 2026-07-31: v0.32.12 — install to BOTH /usr/local/bin/skygate
+# (the actual entrypoint path) AND /app/skygate (preserved for
+# back-compat with the v0.29.0 self-update orchestrator).
+#
+# Why two paths? The runtime image's /app directory is the
+# bind-mount target for the source code (see docker-compose.yml's
+# `${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/:/app`).
+# A bind-mount REPLACES the directory contents: anything that
+# Dockerfile COPYs into /app at build time is hidden by the
+# host's source tree when the container starts. If we COPYed
+# the binary only to /app/skygate, the running container would
+# fall back to whatever is on the host's /app/skygate path —
+# which is either a stale v0.32.5-era binary (the old
+# entrypoint.sh wrote it there) or nothing.
+#
+# The v0.32.5 → v0.32.8 deploy was a silent outage because of
+# exactly this: the v0.32.8 build put a fresh binary at
+# /app/skygate in the image, but the host's bind-mount had
+# a v0.32.5 binary at /home/admin/skygate/skygate, and
+# that won. The new binary was never executed.
+#
+# The fix: install to /usr/local/bin/skygate (not bind-mounted)
+# for the entrypoint, and ALSO install to /app/skygate for
+# back-compat with the autoupdate orchestrator's
+# `docker run --rm --volumes-from skygate skygate-skygate:latest
+# /app/skygate --migrate-only` command (which runs WITHOUT the
+# source bind-mount, so the image's /app/skygate IS visible).
+COPY --from=skygate-build /out/skygate /usr/local/bin/skygate
+RUN chmod +x /usr/local/bin/skygate
 COPY --from=skygate-build /out/skygate /app/skygate
 RUN chmod +x /app/skygate
 

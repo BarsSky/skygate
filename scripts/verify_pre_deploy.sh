@@ -589,6 +589,39 @@ run_check "B26" "Dockerfile uses CGO_ENABLED=1 for go-sqlite3 (v0.32.12)" \
     grep -qF \"sqlite-libs\" Dockerfile
   '"
 
+# ─── B27 (v0.32.12) — entrypoint uses /usr/local/bin/skygate ───
+# Background: 2026-07-31 the v0.32.8 multi-stage Dockerfile put
+# the binary at /app/skygate inside the image, but docker-compose.yml
+# bind-mounts the source tree to /app (${SKYGATE_HOST_REPO_PATH}/:/app).
+# A bind-mount REPLACES the directory contents, so the host's
+# /app/skygate (a stale v0.32.5-era binary) shadowed the freshly
+# built image binary. The v0.32.8 container booted with a v0.32.5
+# binary in memory but presented a v0.32.8 build label (because
+# the host's binary had older ldflags), making the regression
+# invisible from the outside.
+#
+# The fix: install the binary to /usr/local/bin/skygate (outside
+# any bind-mount) for the entrypoint, and ALSO to /app/skygate
+# for back-compat with the autoupdate orchestrator's
+# `docker run --rm --volumes-from skygate skygate-skygate:latest
+# /app/skygate --migrate-only` command (which runs WITHOUT the
+# source bind-mount, so the image's /app/skygate IS visible).
+#
+# B27 pins the contract:
+#   (a) Dockerfile installs the binary to /usr/local/bin/skygate
+#   (b) entrypoint.sh execs /usr/local/bin/skygate (not /app/skygate)
+#   (c) entrypoint.sh does NOT exec /app/skygate as the primary
+#       process (the v0.32.8 bug shape)
+#   (d) Dockerfile ALSO copies the binary to /app/skygate (for
+#       the autoupdate --migrate-only path to keep working)
+run_check "B27" "entrypoint uses /usr/local/bin/skygate, not /app/skygate (v0.32.12)" \
+  "bash -c '
+    grep -qF \"COPY --from=skygate-build /out/skygate /usr/local/bin/skygate\" Dockerfile &&
+    grep -qF \"exec /usr/local/bin/skygate\" entrypoint.sh &&
+    ! grep -qE \"^[[:space:]]*exec /app/skygate\" entrypoint.sh &&
+    grep -qF \"COPY --from=skygate-build /out/skygate /app/skygate\" Dockerfile
+  '"
+
 echo
 echo "=== summary ==="
 

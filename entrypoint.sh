@@ -104,4 +104,13 @@ echo "Skygate ready, starting..."
 # PID 1 (= skygate now) and continues serving; when the container
 # exits docker sends SIGTERM to PID 1 and SIGKILL to the rest after
 # the grace period, so tailscaled doesn't leak.
-exec /app/skygate
+#
+# 2026-07-31: v0.32.12 — exec from /usr/local/bin/skygate instead
+# of /app/skygate. The runtime image's /app is the bind-mount
+# target for the host source tree (see docker-compose.yml), and a
+# bind-mount REPLACES the image's /app contents. If we exec'd
+# /app/skygate, the running binary would be whatever is on the
+# HOST (a stale v0.32.5-era binary or nothing), not the freshly
+# built one in the image. /usr/local/bin is outside the bind-mount
+# so the image's binary always wins.
+exec /usr/local/bin/skygate
