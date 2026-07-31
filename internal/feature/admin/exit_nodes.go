@@ -98,13 +98,28 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[exit-nodes] ensureExitServers TIMEOUT after 2s, continuing without discovery")
 	}
 
-	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers. The
-	// row shape matches ExitNodeInfo 1:1 except the auto-increment id
-	// (which the web UI doesn't render) and the headscale enrichment
-	// (which happens below from ListAllNodes).
-	dbRows, err := db.ListExitServers(s.DB)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
+	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers.
+	// 2026-07-31: v0.32.13 — wrap in 2s timeout. Even
+	// after the ensureExitServers timeout, the followup
+	// db.ListExitServers SELECT can still hang on the WAL
+	// write lock (busy_timeout=5s × 2 = up to 10s). We
+	// render an empty nodes slice on timeout rather than
+	// hang the page.
+	listDone := make(chan struct{})
+	var dbRows []db.ExitServer
+	var listErr error
+	go func() {
+		dbRows, listErr = db.ListExitServers(s.DB)
+		close(listDone)
+	}()
+	select {
+	case <-listDone:
+	case <-time.After(2 * time.Second):
+		log.Printf("[exit-nodes] db.ListExitServers TIMEOUT after 2s, rendering empty")
+		listErr = fmt.Errorf("timeout")
+	}
+	if listErr != nil {
+		http.Error(w, listErr.Error(), 500)
 		return
 	}
 
