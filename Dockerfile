@@ -35,10 +35,28 @@ FROM tailscale/tailscale:latest AS tailscale
 # (matches what the old entrypoint.sh did at runtime).
 FROM golang:1.25-alpine AS skygate-build
 
-# Build deps. tailscale isn't needed at build time, only git is
-# (for the version label). We strip these out of the runtime image
-# in stage 2.
-RUN apk add --no-cache git
+# Build deps. tailscale isn't needed at build time. We need:
+#   - git: for the version label (git describe --tags --always)
+#   - gcc, musl-dev: C toolchain for go-sqlite3 (cgo dependency).
+#     go-sqlite3 is a pure-CGO driver; without cgo it returns
+#     "Binary was compiled with 'CGO_ENABLED=0', go-sqlite3
+#     requires cgo to work. This is a stub" on every DB call
+#     and the binary crashes on startup with a "db: ping" error.
+#     This was the v0.32.8 CGO regression (see RELEASE-NOTES.md
+#     v0.32.12 entry for the full incident timeline).
+#   - sqlite-dev: sqlite3.h headers + link stubs for go-sqlite3's
+#     cgo bridge. Without this the build fails with
+#     "fatal error: sqlite3.h: No such file or directory".
+#
+# We strip all of these out of the runtime image in stage 2;
+# the only runtime artifact that survives is the prebuilt
+# /app/skygate binary, dynamically linked against musl +
+# sqlite-libs (which is in the runtime image).
+RUN apk add --no-cache \
+        gcc \
+        git \
+        musl-dev \
+        sqlite-dev
 
 WORKDIR /src
 
@@ -63,9 +81,25 @@ ARG BUILD_TIME=unknown
 
 # -buildvcs=false skips the embed of VCS info (we set our own via
 # -ldflags). -trimpath strips absolute paths from the binary (cleaner
-# stack traces + reproducible builds). CGO_ENABLED=0 + -ldflags
-# '-s -w' = fully static binary, no glibc dependency.
-ENV CGO_ENABLED=0
+# stack traces + reproducible builds). -ldflags '-s -w' strips the
+# symbol table + DWARF debug info (~30% smaller binary).
+#
+# 2026-07-31: v0.32.12 — REVERT CGO_ENABLED=0 → CGO_ENABLED=1.
+# go-sqlite3 (the only DB driver in this project) is a pure-CGO
+# driver. CGO_ENABLED=0 makes the import resolve to a stub that
+# returns "Binary was compiled with 'CGO_ENABLED=0', go-sqlite3
+# requires cgo to work. This is a stub" on every call. The
+# v0.32.8 CGO regression is documented in RELEASE-NOTES.md v0.32.12
+# — the build produced a 41MB binary that looked healthy but
+# crashed on db.Ping() at startup, leaving port 8080 unbound
+# and serving 504s from the upstream proxy (NPM/Caddy/openresty).
+#
+# With CGO_ENABLED=1 the binary is dynamically linked against
+# musl (alpine's libc) + sqlite-libs (already in the runtime
+# image). The 6MB glibc-free alpine-3.20 runtime image is still
+# the deploy surface — we don't need glibc to be a 1:1 match
+# because musl IS alpine's libc.
+ENV CGO_ENABLED=1
 RUN go build -buildvcs=false -trimpath \
     -ldflags "-s -w -X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}" \
     -o /out/skygate ./cmd/skygate

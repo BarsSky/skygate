@@ -543,6 +543,52 @@ run_check "B25" "Caddy is OFF by default (v0.32.11)" \
     grep -qF \"profiles: [\\\"caddy\\\"]\" docker-compose.yml
   '"
 
+# ─── B26 (v0.32.12) — Dockerfile uses CGO_ENABLED=1 (go-sqlite3 cgo) ───
+# Background: 2026-07-31 the v0.32.8 multi-stage Dockerfile set
+# `ENV CGO_ENABLED=0` to get a fully static binary, but go-sqlite3
+# is a pure-CGO driver. With CGO disabled the import resolves
+# to a stub that returns "Binary was compiled with 'CGO_ENABLED=0',
+# go-sqlite3 requires cgo to work. This is a stub" on every
+# DB call. The v0.32.8 binary booted, printed "Skygate ready,
+# starting..." and "🌐 Skygate starting on :8080", then crashed
+# on db.Ping() at startup — port 8080 never bound, the upstream
+# proxy (NPM 2.x on this VM) returned 504 to every request,
+# and `docker ps` didn't show the skygate container (it had
+# already exited 1).
+#
+# The fix: CGO_ENABLED=1 in the build stage + gcc + musl-dev
+# + sqlite-dev (C toolchain) so go-sqlite3 compiles in. The
+# resulting binary is dynamically linked against musl (alpine's
+# libc, already in the runtime image) + sqlite-libs (already
+# in the runtime image's apk add list). 6MB glibc-free alpine
+# runtime is unchanged. B26 pins the contract:
+#   (a) Dockerfile's skygate-build stage sets CGO_ENABLED=1
+#       (or omits CGO_ENABLED entirely; default is 1).
+#   (b) Dockerfile's skygate-build stage installs gcc + musl-dev
+#       + sqlite-dev (the cgo toolchain). Without these the
+#       build fails with "fatal error: sqlite3.h: No such file
+#       or directory" or "gcc: command not found".
+#   (c) Dockerfile does NOT set CGO_ENABLED=0 anywhere
+#       (the regression shape).
+#   (d) Runtime stage has sqlite-libs (the libsqlite3.so that
+#       the dynamically-linked go-sqlite3 binary needs at
+#       runtime; without it the binary would fail with
+#       "error while loading shared libraries: libsqlite3.so.0").
+run_check "B26" "Dockerfile uses CGO_ENABLED=1 for go-sqlite3 (v0.32.12)" \
+  "bash -c '
+    ! grep -qF \"ENV CGO_ENABLED=0\" Dockerfile &&
+    ( grep -qF \"ENV CGO_ENABLED=1\" Dockerfile || ! grep -qE \"^ENV CGO_ENABLED\" Dockerfile ) &&
+    grep -qE \"^FROM golang:1\\.25-alpine AS skygate-build\" Dockerfile &&
+    # The C toolchain packages can be on multiple lines (the RUN
+    # apk add line uses \\ continuation) so check the whole file
+    # for the cgo toolchain (gcc + musl-dev + sqlite-dev) and
+    # for sqlite-libs in the runtime image.
+    grep -qE \"(^|[^a-z])gcc([^a-z]|$)\" Dockerfile &&
+    grep -qF \"musl-dev\" Dockerfile &&
+    grep -qF \"sqlite-dev\" Dockerfile &&
+    grep -qF \"sqlite-libs\" Dockerfile
+  '"
+
 echo
 echo "=== summary ==="
 

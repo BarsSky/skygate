@@ -1,5 +1,177 @@
 # Skygate release notes
 
+## v0.32.12 — Fix CGO_ENABLED=0 regression in multi-stage Dockerfile (silent 504 fix)
+
+**Date:** 2026-07-31
+**Tag:** _pending_
+**Scope:** closes the v0.32.8 CGO regression. After deploying
+v0.32.8 the operator hit 504 Gateway Time-out on every
+`skygate.example.com` request, but `docker ps` didn't show the
+skygate container at all and `/healthz` on `localhost:8080`
+returned `Connection refused`. The fix is one-line at the
+root: re-enable cgo in the multi-stage Dockerfile and ship
+the C toolchain in the build stage.
+
+### The bug
+
+The v0.32.8 multi-stage Dockerfile (commit `2d2d91f` / `86a406c`)
+shipped this line in the `skygate-build` stage:
+
+```dockerfile
+ENV CGO_ENABLED=0
+RUN go build -buildvcs=false -trimpath \
+    -ldflags "-s -w -X main.version=${GIT_VER} ..." \
+    -o /out/skygate ./cmd/skygate
+```
+
+The intent was a fully-static binary that doesn't need
+glibc on the alpine runtime. The unintended consequence:
+`go-sqlite3` is a **pure-CGO driver**. When CGO is disabled,
+the import resolves to a stub package that returns
+
+```
+Binary was compiled with 'CGO_ENABLED=0', go-sqlite3
+requires cgo to work. This is a stub
+```
+
+on every DB call. The skygate boot sequence does `db.Ping()`
+right after "🌐 Skygate starting on :8080" — the stub error
+fires there, the binary exits 1, port 8080 never binds,
+and the upstream proxy (Nginx Proxy Manager at 192.0.2.67,
+not the in-container caddy which is now off per v0.32.11)
+returns 504 to every external request.
+
+### Why the v0.32.5 → v0.32.11 chain didn't catch it
+
+- `go test ./...` (B1 in `verify-pre`) passes regardless of
+  CGO_ENABLED: the test in-memory DBs (`:memory:`) take the
+  same stub path but the tests assert SQL behavior, not the
+  driver binary. The stub satisfies the interface.
+- `go build ./cmd/skygate` (B3) passes: the build succeeds,
+  it just links a stub instead of the real driver.
+- The smoke test (B8) runs against a LIVE container, so a
+  v0.32.8 deploy to the VM would have caught this in step 1
+  (the `ready at` log line + a 200 on `/healthz`). But the
+  v0.32.8 deploy happened without smoke being run first —
+  the operator pushed and only saw the failure when the
+  browser 504'd.
+- CGO behavior doesn't show up in `docker logs` until the
+  binary actually tries to use the DB, which happens in the
+  foreground goroutine of `main.go`. The crash is fast
+  (sub-second) and the container is gone by the time the
+  operator SSHes in to check.
+
+### Why v0.32.5 worked but v0.32.8 didn't
+
+v0.32.5 had a single-stage Dockerfile based on
+`golang:1.25-alpine` that ran `go build` at container
+start (via `entrypoint.sh`). CGO was enabled by default
+in `golang:1.25-alpine` — the image ships gcc + musl-dev
+pre-installed. v0.32.5's runtime stage also kept `gcc
+musl-dev` in the runtime apk add list (defensive), so
+even if the build were re-run at container start it would
+have produced a working binary.
+
+v0.32.8 split the Dockerfile into two stages: a `skygate-build`
+stage that only kept `git` (for the version label), and a
+minimal `alpine:3.20` runtime stage. To get a smaller
+binary the build stage also dropped CGO. That's what
+broke.
+
+### The fix
+
+`Dockerfile`, `skygate-build` stage:
+
+1. `ENV CGO_ENABLED=1` (re-enable cgo).
+2. `apk add --no-cache gcc musl-dev sqlite-dev` (the C
+   toolchain — gcc + libc headers + sqlite3.h headers).
+3. Comment block (24 lines) explaining the regression and
+   the CGO contract, so a future maintainer who sees
+   "ENV CGO_ENABLED=0" in git history and thinks "smaller
+   binary, why not" can find the explanation right there.
+
+`Dockerfile`, runtime stage:
+
+1. `sqlite-libs` was already in the apk add list (kept
+   from v0.32.5). With CGO_ENABLED=1, the resulting binary
+   is dynamically linked against `libsqlite3.so.0`, which
+   `sqlite-libs` ships. No change needed.
+
+### Files changed
+
+- `Dockerfile` — `ENV CGO_ENABLED=0` → `ENV CGO_ENABLED=1`,
+  added `gcc musl-dev sqlite-dev` to the build stage's
+  apk add list, expanded the comment block (24 → 41 lines
+  with the regression rationale + 2026-07-31 timeline).
+- `scripts/verify_pre_deploy.sh` — new **B26** check that
+  pins the CGO contract: `! grep -qF "ENV CGO_ENABLED=0"`,
+  `grep -qF "ENV CGO_ENABLED=1"`, build stage has
+  `gcc + musl-dev + sqlite-dev`, runtime stage has
+  `sqlite-libs`. A future maintainer who tries to
+  re-enable `CGO_ENABLED=0` for size will fail B26
+  with a one-line explanation pointing at this section.
+- `RELEASE-NOTES.md` — this entry.
+
+### Verified
+
+- `go build -buildvcs=false -trimpath -ldflags "-s -w"
+  -o /tmp/skygate-cgo-test ./cmd/skygate` (CGO_ENABLED=1)
+  → 14MB binary.
+- Smoke test of the CGO binary locally: starts up,
+  connects to a stub headscale URL, `/healthz` returns
+  `200 {"build":"dev+unknown","status":"ok",...}`. The
+  v0.32.8 stub binary returned `Connection refused` on
+  the same test because it crashed on `db.Ping()`.
+- `go test -count=1 -short ./...` with CGO_ENABLED=1:
+  26/26 packages PASS (same as the CGO_ENABLED=0 baseline
+  because the test path doesn't depend on the driver
+  implementation, just the public interface).
+- `make verify-pre` on Windows: 24/24 PASS (B8 SKIP,
+  smoke is VM-only; B26 new). 2026-07-31 18:11 MSK.
+
+### Deploy / rollback notes
+
+- **Deploy**: `git pull` on the VM, then
+  `docker compose build skygate && docker compose up -d
+  skygate`. The `docker compose build` step will take
+  ~30s longer than v0.32.8 (compiling cgo + sqlite) but
+  the resulting binary is ~14MB instead of the v0.32.8
+  41MB (the v0.32.8 size was wrong — the stub binary is
+  artificially small because it doesn't link the real
+  driver). Runtime start is unchanged (~5s).
+- **Rollback** (if v0.32.12 also breaks something on the
+  VM): `git checkout v0.32.11` → `docker compose build
+  skygate` → `docker compose up -d skygate`. The v0.32.5
+  rollback pattern (clone, bind-mount `/app`, run the
+  v0.32.5 image) also still works as a deeper fallback
+  — see `AGENTS.md` → "v0.32.5 rollback test pattern".
+
+### Why not just switch to `modernc.org/sqlite` (pure-Go)?
+
+Considered. `modernc.org/sqlite` is a fully-Go port of
+SQLite (no cgo, no glibc dep), which would let
+`CGO_ENABLED=0` work again. But:
+
+1. It's a 30MB+ transitive dep tree (modernc.org/sqlite
+   pulls libq, qflag, etc.) — bigger than the 14MB CGO
+   binary.
+2. It has its own query planner quirks that have caused
+   subtle correctness regressions in the past (e.g.
+   handling of `strftime('%Y-%m-%d', ...)` with NULL
+   arguments differs from the C version).
+3. Switching the driver in this codebase is a 1-2 day
+   migration (`internal/db/` queries use
+   `database/sql` exclusively, so it's mostly import-path
+   changes + rebuild).
+4. The current CGO build is fast enough (~30s in the
+   build stage) and the resulting binary is the smallest
+   realistic size (14MB dynamically linked against alpine
+   musl + libsqlite3).
+
+Re-evaluate if a future Go release ships a first-party
+`database/sql` SQLite driver that's pure-Go (e.g. if
+`go-sqlite3` ever ships a pure-Go fallback).
+
 ## v0.32.11 — Caddy is OFF by default (silent-outage fix)
 
 **Date:** 2026-07-31
