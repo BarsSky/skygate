@@ -1008,7 +1008,27 @@ func main() {
 		// still the recommended path.
 		AutoSync:     cfg.ExitNodeAutoSync,
 	}
-	exitMon.Start(ctx)
+	// 2026-07-31: v0.32.13 — gate exitMon.Start on
+	// cfg.ExitNodeCheckInterval > 0. Pre-fix the monitor
+	// was always started; its Start() does an immediate
+	// pre-tick (cfg.ExitNodeOnStartup defaults to true)
+	// that calls m.tick() which lists every node in
+	// headscale and writes rows to exit_node_health,
+	// holding the SQLite WAL write lock for several
+	// seconds at the worst possible time (right when the
+	// first /admin/exit-nodes request arrived). The "off"
+	// / "0" sentinel for SKYGATE_EXIT_NODE_CHECK_INTERVAL
+	// didn't actually disable anything because Start()
+	// re-defaults CheckEvery to 5min when it's 0. The
+	// fix: skip Start() entirely when the operator has
+	// set ExitNodeCheckInterval to a non-positive value
+	// (0 / off). The /admin/exit-nodes page still works
+	// from the DB; the monitor is just disabled.
+	if cfg.ExitNodeCheckInterval > 0 {
+		exitMon.Start(ctx)
+	} else {
+		log.Printf("exit-node-monitor: SKYGATE_EXIT_NODE_CHECK_INTERVAL=0/off, skipping startup")
+	}
 	// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
 	// exit-nodes admin handlers moved to feature/admin;
 	// the monitor is wired there now. The App field is
