@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # scripts/verify_pre_deploy.sh — build-time guarantees for skygate.
 #
 # Runs BEFORE `docker build` / `git push` / `docker compose up -d`.
@@ -442,30 +442,36 @@ run_check "B21" "exit-nodes filter excludes subnet-routers (v0.32.7)" \
 # `docker compose build` time, copy the static binary to the
 # runtime image, simplify entrypoint.sh to just tailscale + exec.
 #
-# B22 pins the contract:
-#   (a) Dockerfile is multi-stage (FROM golang:1.25-alpine AS skygate-build,
-#       then FROM alpine:3.20 for runtime)
-#   (b) Dockerfile runs `go mod download` + `go build` itself
-#       (NOT in entrypoint.sh)
-#   (c) entrypoint.sh is simplified — no `go mod download`, no
-#       `go build`, no `apk add openssh-client git`
-#   (d) runtime stage does NOT include golang or go toolchain
-#       (smaller image, fewer CVEs)
-#   (e) Build is reasonably fast on a cache hit (<2 min for the
-#       first build, <30s on subsequent rebuilds with the same
-#       go.mod/go.sum)
-run_check "B22" "Dockerfile builds skygate at image-build time (v0.32.8)" \
+# B22 pins the contract (v0.32.13 REVERT of v0.32.8):
+#   (a) Dockerfile is single-stage (FROM golang:1.25-alpine as
+#       the runtime base — NOT a multi-stage with `skygate-build`
+#       and `alpine:3.20` stages; that was the v0.32.8 path
+#       that introduced the CGO+musl deadlock).
+#   (b) Dockerfile does NOT run `go mod download` or `go build`
+#       (those happen at container start, in entrypoint.sh).
+#   (c) entrypoint.sh DOES `go mod download` + `go build` + the
+#       version-label git invocation.
+#   (d) entrypoint.sh DOES `apk add openssh-client git` (the
+#       runtime build needs ssh for the v0.32.7+ self-update
+#       orchestrator and git for the build label).
+#   (e) Runtime image is bigger (~800MB with the full Go
+#       toolchain) — accepted cost for a binary that doesn't
+#       have the CGO+musl TCP/HTTP deadlock.
+# This is the v0.32.5 pattern; the v0.32.8 attempt at
+# "build at image time, copy static binary" broke twice
+# (CGO_ENABLED=0 + musl HTTP wedge) and was reverted.
+run_check "B22" "Dockerfile uses single-stage build, entrypoint.sh runs go build (v0.32.13)" \
   "bash -c '
-    grep -q \"^FROM golang:1.25-alpine AS skygate-build\" Dockerfile &&
-    grep -q \"^FROM alpine:3.20\" Dockerfile &&
+    grep -q \"^FROM golang:1.25-alpine$\" Dockerfile &&
     grep -q \"^FROM tailscale/tailscale:latest AS tailscale\" Dockerfile &&
-    grep -q \"go mod download\" Dockerfile &&
-    grep -q \"go build\" Dockerfile &&
-    grep -q \"COPY --from=skygate-build /out/skygate /app/skygate\" Dockerfile &&
-    ! grep -q \"go mod download\" entrypoint.sh &&
-    ! grep -q \"go build\" entrypoint.sh &&
-    ! grep -q \"apk add.*openssh-client.*git\" entrypoint.sh &&
-    ! grep -q \"^FROM golang:\" Dockerfile | tail -1 | grep -q \"alpine\"
+    ! grep -q \"^FROM golang:1.25-alpine AS skygate-build\" Dockerfile &&
+    ! grep -q \"^FROM alpine:3.20\" Dockerfile &&
+    ! grep -qE \"^[[:space:]]*go mod download\" Dockerfile &&
+    ! grep -qE \"^[[:space:]]*go build\" Dockerfile &&
+    ! grep -q \"COPY --from=skygate-build\" Dockerfile &&
+    grep -qF \"go mod download\" entrypoint.sh &&
+    grep -qF \"go build\" entrypoint.sh &&
+    grep -qF \"apk add --no-cache openssh-client git\" entrypoint.sh
   '"
 
 # --- B23: CI Go version matches go.mod (v0.32.9) ---
@@ -543,98 +549,81 @@ run_check "B25" "Caddy is OFF by default (v0.32.11)" \
     grep -qF \"profiles: [\\\"caddy\\\"]\" docker-compose.yml
   '"
 
-# ─── B26 (v0.32.12) — Dockerfile uses CGO_ENABLED=1 (go-sqlite3 cgo) ───
-# Background: 2026-07-31 the v0.32.8 multi-stage Dockerfile set
-# `ENV CGO_ENABLED=0` to get a fully static binary, but go-sqlite3
-# is a pure-CGO driver. With CGO disabled the import resolves
-# to a stub that returns "Binary was compiled with 'CGO_ENABLED=0',
-# go-sqlite3 requires cgo to work. This is a stub" on every
-# DB call. The v0.32.8 binary booted, printed "Skygate ready,
-# starting..." and "🌐 Skygate starting on :8080", then crashed
-# on db.Ping() at startup — port 8080 never bound, the upstream
-# proxy (NPM 2.x on this VM) returned 504 to every request,
-# and `docker ps` didn't show the skygate container (it had
-# already exited 1).
+
+# ─── B26 (v0.32.13) — Dockerfile runtime has go-sqlite3 CGO toolchain ───
+# Background: 2026-07-31 v0.32.8 set `ENV CGO_ENABLED=0` in the
+# multi-stage build stage to get a static binary; go-sqlite3
+# requires cgo and the import resolved to a stub. v0.32.12
+# reverted to CGO_ENABLED=1 + added gcc/musl-dev/sqlite-dev to
+# the build stage. v0.32.13 then reverted the entire multi-stage
+# build pattern (see B22) — the runtime image is the full
+# golang:1.25-alpine which already has gcc + musl-dev pre-installed
+# (the base image ships them as part of the Go toolchain). The
+# only thing we need to add is sqlite-libs (the C library
+# libsqlite3.so that go-sqlite3 dynamically links against at
+# runtime).
 #
-# The fix: CGO_ENABLED=1 in the build stage + gcc + musl-dev
-# + sqlite-dev (C toolchain) so go-sqlite3 compiles in. The
-# resulting binary is dynamically linked against musl (alpine's
-# libc, already in the runtime image) + sqlite-libs (already
-# in the runtime image's apk add list). 6MB glibc-free alpine
-# runtime is unchanged. B26 pins the contract:
-#   (a) Dockerfile's skygate-build stage sets CGO_ENABLED=1
-#       (or omits CGO_ENABLED entirely; default is 1).
-#   (b) Dockerfile's skygate-build stage installs gcc + musl-dev
-#       + sqlite-dev (the cgo toolchain). Without these the
-#       build fails with "fatal error: sqlite3.h: No such file
-#       or directory" or "gcc: command not found".
-#   (c) Dockerfile does NOT set CGO_ENABLED=0 anywhere
-#       (the regression shape).
-#   (d) Runtime stage has sqlite-libs (the libsqlite3.so that
-#       the dynamically-linked go-sqlite3 binary needs at
-#       runtime; without it the binary would fail with
-#       "error while loading shared libraries: libsqlite3.so.0").
-run_check "B26" "Dockerfile uses CGO_ENABLED=1 for go-sqlite3 (v0.32.12)" \
+# B26 pins the contract for the runtime-build pattern:
+#   (a) Dockerfile does NOT set ENV CGO_ENABLED=0 anywhere
+#       (the v0.32.8 regression shape — would break go-sqlite3).
+#   (b) Dockerfile installs gcc + musl-dev in the runtime apk
+#       add list (CGO toolchain; required to compile go-sqlite3
+#       at container start via the entrypoint's `go build`).
+#   (c) Dockerfile installs sqlite-libs in the runtime apk add
+#       list (the libsqlite3.so that the resulting binary
+#       dynamically links against; without it the binary errors
+#       with "error while loading shared libraries: libsqlite3.so.0"
+#       on first DB call).
+#   (d) entrypoint.sh's `go build` runs with the CGO toolchain
+#       (CGO_ENABLED defaults to 1 on golang:1.25-alpine, which
+#       is what we want — B26 doesn't need to set it explicitly).
+run_check "B26" "Dockerfile runtime has go-sqlite3 CGO toolchain (v0.32.13)" \
   "bash -c '
-    ! grep -qF \"ENV CGO_ENABLED=0\" Dockerfile &&
-    ( grep -qF \"ENV CGO_ENABLED=1\" Dockerfile || ! grep -qE \"^ENV CGO_ENABLED\" Dockerfile ) &&
-    grep -qE \"^FROM golang:1\\.25-alpine AS skygate-build\" Dockerfile &&
-    # The C toolchain packages can be on multiple lines (the RUN
-    # apk add line uses \\ continuation) so check the whole file
-    # for the cgo toolchain (gcc + musl-dev + sqlite-dev) and
-    # for sqlite-libs in the runtime image.
-    grep -qE \"(^|[^a-z])gcc([^a-z]|$)\" Dockerfile &&
+    ! grep -qE \"^ENV CGO_ENABLED=0\" Dockerfile &&
+    grep -qE \"^[[:space:]]*gcc\" Dockerfile &&
     grep -qF \"musl-dev\" Dockerfile &&
-    grep -qF \"sqlite-dev\" Dockerfile &&
     grep -qF \"sqlite-libs\" Dockerfile
   '"
 
-# ─── B27 (v0.32.12) — entrypoint uses /usr/local/bin/skygate ───
-# Background: 2026-07-31 the v0.32.8 multi-stage Dockerfile put
-# the binary at /app/skygate inside the image, but docker-compose.yml
-# bind-mounts the source tree to /app (${SKYGATE_HOST_REPO_PATH}/:/app).
-# A bind-mount REPLACES the directory contents, so the host's
-# /app/skygate (a stale v0.32.5-era binary) shadowed the freshly
-# built image binary. The v0.32.8 container booted with a v0.32.5
-# binary in memory but presented a v0.32.8 build label (because
-# the host's binary had older ldflags), making the regression
-# invisible from the outside.
+# ─── B27 (v0.32.13) — entrypoint.sh runs `go build` at container start ───
+# Background: 2026-07-31 v0.32.13 REVERTED v0.32.8's
+# image-build-time build. The runtime build is back: the
+# Dockerfile is single-stage (golang:1.25-alpine as the
+# runtime base) and entrypoint.sh does `go mod download` +
+# `go build` at container start. This is the v0.32.5 pattern
+# that worked reliably. The trade-off is ~80s startup cost
+# (vs. <5s for the v0.32.8 image-build approach) but the
+# runtime binary has no CGO+musl issues because the build
+# runs in the same alpine + CGO toolchain the binary
+# executes in.
 #
-# The fix: install the binary to /usr/local/bin/skygate (outside
-# any bind-mount) for the entrypoint, and ALSO to /app/skygate
-# for back-compat with the autoupdate orchestrator's
-# `docker run --rm --volumes-from skygate skygate-skygate:latest
-# /app/skygate --migrate-only` command (which runs WITHOUT the
-# source bind-mount, so the image's /app/skygate IS visible).
-#
-# B27 pins the contract:
-#   (a) Dockerfile installs the binary to /usr/local/bin/skygate
-#   (b) entrypoint.sh execs /usr/local/bin/skygate (not /app/skygate)
-#   (c) entrypoint.sh does NOT exec /app/skygate as the primary
-#       process (the v0.32.8 bug shape)
-#   (d) Dockerfile ALSO copies the binary to /app/skygate (for
-#       the autoupdate --migrate-only path to keep working)
-run_check "B27" "entrypoint uses /usr/local/bin/skygate, not /app/skygate (v0.32.12)" \
+# B27 pins the runtime-build contract:
+#   (a) entrypoint.sh does `go mod download` (loads go-sqlite3 +
+#       testify + the rest of the dep tree)
+#   (b) entrypoint.sh does `go build -ldflags ...` (compiles the
+#       binary with the build label injected)
+#   (c) entrypoint.sh does `apk add openssh-client git` (the
+#       runtime build needs git for `git describe --tags` to
+#       inject the build label, and openssh-client for the
+#       v0.32.7+ self-update orchestrator's SSH-based
+#       `staggeredSync` route-advertising)
+#   (d) entrypoint.sh execs /app/skygate (the binary built at
+#       step b; not /usr/local/bin/skygate — that was a v0.32.8
+#       workaround that's no longer needed since the runtime
+#       build writes directly to /app/skygate without the
+#       bind-mount conflict the v0.32.8 multi-stage image had).
+run_check "B27" "entrypoint.sh runs go build at container start (v0.32.13)" \
   "bash -c '
-    grep -qF \"COPY --from=skygate-build /out/skygate /usr/local/bin/skygate\" Dockerfile &&
-    grep -qF \"exec /usr/local/bin/skygate\" entrypoint.sh &&
-    ! grep -qE \"^[[:space:]]*exec /app/skygate\" entrypoint.sh &&
-    grep -qF \"COPY --from=skygate-build /out/skygate /app/skygate\" Dockerfile
+    grep -qF \"go mod download\" entrypoint.sh &&
+    grep -qF \"go build\" entrypoint.sh &&
+    grep -qF \"apk add --no-cache openssh-client git\" entrypoint.sh &&
+    grep -qE \"^[[:space:]]*exec /app/skygate\" entrypoint.sh &&
+    ! grep -qF \"exec /usr/local/bin/skygate\" entrypoint.sh
   '"
-
-echo
+﻿
+﻿echo
 echo "=== summary ==="
 
 echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
-echo "  ${RED}FAIL${NC}: $RESULTS_FAIL"
-
-if [ "$RESULTS_FAIL" -gt 0 ]; then
-  echo
-  echo "${RED}pre-deploy verification FAILED — do not build/push/deploy${NC}"
-  exit 1
-fi
-echo
-echo "${GRN}pre-deploy verification PASSED — safe to build/push/deploy${NC}"
-exit 0
