@@ -612,21 +612,117 @@ func (s *Service) PostAdminExitNodeUntagAsExitNode(w http.ResponseWriter, r *htt
 // The "OR IGNORE" preserves the operator's manual row
 // (possibly with enabled=0) so the discovery pass can't
 // accidentally re-enable a node the operator disabled.
+//
+// 2026-07-31: v0.32.7 — exclude subnet-routers. Pre-fix
+// `ensureExitServers` also matched any node that advertises
+// any routes (condition b), which incorrectly included
+// per-user subnet-routers (e.g. skygate-subnet-admin with
+// tag:subnet-router advertising 10.0.1.0/24). The subnet-router
+// is a LAN bridge for the tailnet, not an exit-node — it
+// doesn't route traffic to the internet, doesn't have the
+// tag:exit-* role, and shouldn't appear on /admin/exit-nodes.
+// The fix: also skip nodes whose tags contain
+// `tag:subnet-router` (and the `tag:dev-*` family which is
+// the per-device v0.28.0 marker for user devices — those
+// don't belong on an exit-node admin page either). A
+// `tag:public`-only node with subnet routes is still
+// included (public-tagged nodes are the relays that may
+// legitimately advertise both 0.0.0.0/0 and a /32 set).
+// shouldIncludeAsExitServer is the pure filter extracted from
+// ensureExitServers (v0.32.7). Returns true if a node with
+// the given tags + available-route count should appear on
+// /admin/exit-nodes.
+//
+// Exclusion rules (added 2026-07-31, v0.32.7):
+//   - tag:subnet-router → false (it's a LAN bridge, not an exit)
+//   - tag:dev-*        → false (per-user device v0.28.0 marker)
+//
+// Inclusion rules:
+//   - any tag:exit-* tag → true
+//   - has 1+ advertised route → true
+//
+// 2026-07-31: extracted from ensureExitServers so the filter
+// logic is unit-testable without a live headscale.
+func shouldIncludeAsExitServer(tags []string, availableRouteCount int) bool {
+	hasExitTag := false
+	isSubnetRouter := false
+	isPerUserDevice := false
+	for _, t := range tags {
+		if strings.Contains(t, "exit-node") {
+			hasExitTag = true
+		}
+		if t == "tag:subnet-router" {
+			isSubnetRouter = true
+		}
+		if strings.HasPrefix(t, "tag:dev-") {
+			isPerUserDevice = true
+		}
+	}
+	if isSubnetRouter || isPerUserDevice {
+		return false
+	}
+	return hasExitTag || availableRouteCount > 0
+}
+
 func (s *Service) ensureExitServers() {
 	nodes, err := s.HSGlobalFn().ListAllNodes()
 	if err != nil {
 		return
 	}
+	// Index nodes by ID for the cleanup pass below.
+	nodeByID := make(map[string]headscale.NodeView, len(nodes))
 	for _, n := range nodes {
-		isExit := false
-		for _, t := range n.Tags {
-			if strings.Contains(t, "exit-node") {
-				isExit = true
-				break
-			}
-		}
-		if isExit || len(n.AvailableRoutes) > 0 {
+		nodeByID[n.ID] = n
+	}
+	// Step 1: insert any node that should be in
+	// exit_servers. The "OR IGNORE" preserves the
+	// operator's manual row (possibly with enabled=0) so
+	// the discovery pass can't accidentally re-enable a
+	// node the operator disabled.
+	for _, n := range nodes {
+		if shouldIncludeAsExitServer(n.Tags, len(n.AvailableRoutes)) {
 			db.InsertIgnoreExitServerOnDiscovery(s.DB, n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
+		}
+	}
+	// Step 2 (v0.32.7): clean up rows that the pre-fix
+	// filter would have included but the new one excludes
+	// (e.g. skygate-subnet-admin with tag:subnet-router
+	// that was inserted into exit_servers before the
+	// v0.32.7 fix tightened the filter). Without this,
+	// the stale row would keep showing up on
+	// /admin/exit-nodes even after the new code excludes
+	// it from inserts.
+	//
+	// We only delete rows whose headscale node still exists
+	// (node_id is in our current node list) and now fails
+	// the filter. Rows for nodes that disappeared from
+	// headscale are operator artifacts (e.g. the user
+	// deleted the node from the tailnet) — leave those
+	// alone; the operator can `kill` them via the
+	// /admin/exit-nodes page or directly in the DB.
+	rows, _ := s.DB.Query("SELECT id, node_id FROM exit_servers")
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id int
+			var nid string
+			if err := rows.Scan(&id, &nid); err != nil {
+				continue
+			}
+			n, ok := nodeByID[nid]
+			if !ok {
+				continue // node gone from headscale — leave row
+			}
+			if shouldIncludeAsExitServer(n.Tags, len(n.AvailableRoutes)) {
+				continue // still qualifies — keep row
+			}
+			// Node no longer qualifies — delete the row.
+			// Best-effort: errors are logged but not fatal
+			// (the next page load will retry).
+			if _, err := s.DB.Exec("DELETE FROM exit_servers WHERE id = ?", id); err != nil {
+				s.Backend.Audit(0, "skygate", "exit_server_cleanup_failed",
+					fmt.Sprintf("node_id=%s id=%d: %v", nid, id, err))
+			}
 		}
 	}
 }
