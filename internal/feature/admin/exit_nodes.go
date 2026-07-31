@@ -80,8 +80,32 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[exit-nodes] step=currentUser dur=%v", time.Since(t0))
 	t1 := time.Now()
-	s.ensureExitServers()
-	log.Printf("[exit-nodes] step=ensureExitServers dur=%v", time.Since(t1))
+	// 2026-07-31: v0.32.13 — wrap ensureExitServers in a
+	// goroutine + select with a 2s hard timeout. On the live
+	// VM, ensureExitServers() (which calls
+	// s.HSGlobalFn().ListAllNodes() as its first action)
+	// hangs for 10+ seconds on the first call after
+	// container start. The cacheMu goroutine+select inside
+	// ListAllNodes has a 4s timeout but the wait is happening
+	// OUTSIDE the goroutine — at the call site
+	// (s.HSGlobalFn() returns the singleton client OK but
+	// the first c.cacheMu.RLock() blocks for 10+s). Wrapping
+	// the whole ensureExitServers() call in a 2s timeout
+	// means: if the discovery sync fails fast, we render
+	// the page from the existing DB rows; if it hangs, we
+	// log a warning and render from cache (the page is
+	// still useful — the discovery just enriches it).
+	done := make(chan struct{})
+	go func() {
+		s.ensureExitServers()
+		close(done)
+	}()
+	select {
+	case <-done:
+		log.Printf("[exit-nodes] step=ensureExitServers dur=%v", time.Since(t1))
+	case <-time.After(2 * time.Second):
+		log.Printf("[exit-nodes] step=ensureExitServers TIMEOUT after %v (continuing without discovery)", time.Since(t1))
+	}
 
 	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers. The
 	// row shape matches ExitNodeInfo 1:1 except the auto-increment id
@@ -108,7 +132,26 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, n)
 	}
 
-	if hsNodes, err := s.HSGlobalFn().ListAllNodes(); err == nil {
+	// 2026-07-31: v0.32.13 — same 2s timeout on the second
+	// ListAllNodes() call. The first call (in
+	// ensureExitServers) is wrapped above; this one too
+	// because the cacheTTL is 5s and the second call may
+	// be a cache miss (e.g. the first hung and didn't
+	// populate the cache).
+	hsDone := make(chan struct{})
+	var hsNodes []headscale.NodeView
+	var hsErr error
+	go func() {
+		hsNodes, hsErr = s.HSGlobalFn().ListAllNodes()
+		close(hsDone)
+	}()
+	select {
+	case <-hsDone:
+	case <-time.After(2 * time.Second):
+		log.Printf("[exit-nodes] ListAllNodes (enrich) TIMEOUT after 2s, rendering without headscale enrichment")
+		hsErr = fmt.Errorf("timeout")
+	}
+	if hsErr == nil && hsNodes != nil {
 		for i := range nodes {
 			for _, hn := range hsNodes {
 				nid, _ := strconv.Atoi(nodes[i].NodeID)
@@ -670,10 +713,13 @@ func shouldIncludeAsExitServer(tags []string, availableRouteCount int) bool {
 }
 
 func (s *Service) ensureExitServers() {
+	t0 := time.Now()
 	nodes, err := s.HSGlobalFn().ListAllNodes()
 	if err != nil {
+		log.Printf("[ensureExitServers] ListAllNodes err=%v dur=%v", err, time.Since(t0))
 		return
 	}
+	log.Printf("[ensureExitServers] ListAllNodes OK dur=%v nodes=%d", time.Since(t0), len(nodes))
 	// Index nodes by ID for the cleanup pass below.
 	nodeByID := make(map[string]headscale.NodeView, len(nodes))
 	for _, n := range nodes {
@@ -684,11 +730,15 @@ func (s *Service) ensureExitServers() {
 	// operator's manual row (possibly with enabled=0) so
 	// the discovery pass can't accidentally re-enable a
 	// node the operator disabled.
+	t1 := time.Now()
+	insCount := 0
 	for _, n := range nodes {
 		if shouldIncludeAsExitServer(n.Tags, len(n.AvailableRoutes)) {
 			db.InsertIgnoreExitServerOnDiscovery(s.DB, n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
+			insCount++
 		}
 	}
+	log.Printf("[ensureExitServers] insert loop dur=%v insCount=%d", time.Since(t1), insCount)
 	// Step 2 (v0.32.7): clean up rows that the pre-fix
 	// filter would have included but the new one excludes
 	// (e.g. skygate-subnet-admin with tag:subnet-router
@@ -706,6 +756,9 @@ func (s *Service) ensureExitServers() {
 	// alone; the operator can `kill` them via the
 	// /admin/exit-nodes page or directly in the DB.
 	rows, _ := s.DB.Query("SELECT id, node_id FROM exit_servers")
+	t2 := time.Now()
+	rowCount := 0
+	delCount := 0
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -714,6 +767,7 @@ func (s *Service) ensureExitServers() {
 			if err := rows.Scan(&id, &nid); err != nil {
 				continue
 			}
+			rowCount++
 			n, ok := nodeByID[nid]
 			if !ok {
 				continue // node gone from headscale — leave row
@@ -728,6 +782,8 @@ func (s *Service) ensureExitServers() {
 				s.Backend.Audit(0, "skygate", "exit_server_cleanup_failed",
 					fmt.Sprintf("node_id=%s id=%d: %v", nid, id, err))
 			}
+			delCount++
 		}
 	}
+	log.Printf("[ensureExitServers] cleanup pass dur=%v rows=%d del=%d total=%v", time.Since(t2), rowCount, delCount, time.Since(t0))
 }
