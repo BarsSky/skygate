@@ -63,16 +63,36 @@ func New(baseURL, k string) *Client {
 	c := &Client{}
 	c.BaseURL = baseURL
 	c.apiKey = v
-	// 2026-07-31: v0.32.12 — 5s hard timeout. The previous 10s
-	// http.Client.Timeout was the default; the CGO+musl runtime
-	// doesn't always honour the per-connection deadline cleanly,
-	// so we also use a 5s context timeout in do() to guarantee
-	// the call returns within 5s even if the underlying socket
-	// is wedged in CLOSE_WAIT. With ctx=5s + http.Timeout=10s, a
-	// stuck request returns at the 5s mark with
-	// "context deadline exceeded" and the handler can render
-	// a degraded view (current headscale snapshot from cache).
-	c.http = &http.Client{Timeout: 10 * time.Second}
+	// 2026-07-31: v0.32.13 — ISOLATED transport. Pre-fix the
+	// client used `&http.Client{Timeout: 10*time.Second}` with
+	// the default Transport = http.DefaultTransport (a
+	// package-global singleton shared by every other
+	// `&http.Client{}` in the process). On the live VM that
+	// shared Transport's connection pool got into a wedged
+	// state on the FIRST headscale call from
+	// `s.ensureExitServers()` — every subsequent
+	// `c.http.Do(req)` blocked on the same dead keep-alive
+	// socket for the full 10s http.Client.Timeout, even
+	// though a fresh `wget` against the same URL from inside
+	// the container returned in 50ms. The fix: give each
+	// headscale client its own *http.Transport (not the
+	// global default) with DisableKeepAlives + a
+	// connection-per-request pattern. Slower (~5ms per
+	// connection) but never deadlocks, and never shares
+	// state with the rest of the process. The internal
+	// cacheTTL (5s) still absorbs the per-page-render cost.
+	transport := &http.Transport{
+		DisableKeepAlives:     true,
+		MaxIdleConnsPerHost:   1,
+		IdleConnTimeout:       5 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	c.http = &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
 	c.ExecContainer = getenvDefault("HEADSCALE_CONTAINER", "headscale")
 	c.cacheTTL = 5 * time.Second
 	return c
