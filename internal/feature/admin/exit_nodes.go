@@ -18,6 +18,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -76,7 +77,9 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
+	log.Printf("[exit-nodes] BEFORE ensureExitServers")
 	s.ensureExitServers()
+	log.Printf("[exit-nodes] AFTER ensureExitServers")
 
 	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers. The
 	// row shape matches ExitNodeInfo 1:1 except the auto-increment id
@@ -87,6 +90,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	log.Printf("[exit-nodes] AFTER ListExitServers (rows=%d)", len(dbRows))
 
 	var nodes []ExitNodeInfo
 	for _, e := range dbRows {
@@ -103,7 +107,10 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, n)
 	}
 
-	if hsNodes, err := s.HSGlobalFn().ListAllNodes(); err == nil {
+	log.Printf("[exit-nodes] BEFORE ListAllNodes (headscale API call)")
+	hsNodes, err := s.HSGlobalFn().ListAllNodes()
+	log.Printf("[exit-nodes] AFTER ListAllNodes (err=%v nodes=%d)", err, len(hsNodes))
+	if err == nil {
 		for i := range nodes {
 			for _, hn := range hsNodes {
 				nid, _ := strconv.Atoi(nodes[i].NodeID)
