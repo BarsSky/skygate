@@ -228,7 +228,7 @@ const (
 	qSelectUserHSByID      = `SELECT headscale_user_id, username FROM portal_users WHERE id = $1`
 	qSelectPasswordHash    = `SELECT password_hash FROM portal_users WHERE id = $1`
 	qSelectHSIDByID        = `SELECT headscale_user_id FROM portal_users WHERE id = $1`
-	qInsertPortalUser      = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4)`
+	qInsertPortalUser      = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4) RETURNING id`
 	qUpdatePasswordHash    = `UPDATE portal_users SET password_hash = $1 WHERE id = $2`
 	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = $1`
 )
@@ -345,7 +345,7 @@ const qSelectSubnet32NoParentDomain = `SELECT id, target_value FROM device_rules
 // qInsertDeviceRule is the canonical INSERT for a new rule. Action and
 // parent_domain are caller-supplied (caller picks 'accept'/'deny' and
 // whether to record a parent_domain link).
-const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
 
 // qSelectUserRulesForView is used by /my/exit-rules: every enabled rule
 // for a user, ordered for stable display.
@@ -399,7 +399,7 @@ const (
 	// single helper serve both fresh DBs (NOT NULL DEFAULT) and
 	// the live install.
 	qSelectPreauthFullByID       = `SELECT id, user_id, key, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0), created_at FROM preauth_keys WHERE id = $1 AND user_id = $2`
-	qInsertPreauthKey            = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES ($1, $2, $3, $4)`
+	qInsertPreauthKey            = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES ($1, $2, $3, $4) RETURNING id`
 	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
 	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
 	qDeletePreauthByUser         = `DELETE FROM preauth_keys WHERE user_id = $1`
@@ -440,7 +440,7 @@ const (
 const (
 	qSelectAllAPITokensForLookup = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash, pt.expires_at FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
 	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at, expires_at, auto_rotate FROM personal_api_tokens WHERE user_id = $1 ORDER BY created_at DESC`
-	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES ($1, $2, $3, $4, $5)`
+	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES ($1, $2, $3, $4, $5) RETURNING id`
 	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = $1 AND user_id = $2`
 	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = $1`
 	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = $1`

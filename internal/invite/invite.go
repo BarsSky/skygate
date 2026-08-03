@@ -177,13 +177,16 @@ func CreateInvite(d *sql.DB, grantorUserID int64, granteeUsername string, ttl ti
 		if err != nil {
 			return nil, err
 		}
-		res, err := d.Exec(`
+		// v0.32.27: RETURNING id (works on both SQLite 3.35+ and PG).
+		var id int64
+		err = d.QueryRow(`
 			INSERT INTO invite_codes
 				(code, grantor_user_id, grantee_username, status,
 				 created_at, expires_at, audit_message)
-			VALUES (?, ?, ?, 'active', ?, ?, ?)
+			VALUES ($1, $2, $3, 'active', $4, $5, $6)
+			RETURNING id
 		`, code, grantorUserID, granteeUsername,
-			now.Unix(), expires.Unix(), message)
+			now.Unix(), expires.Unix(), message).Scan(&id)
 		if err != nil {
 			// 0x13 / "constraint failed" =
 			// UNIQUE collision on code. Retry
@@ -194,7 +197,6 @@ func CreateInvite(d *sql.DB, grantorUserID int64, granteeUsername string, ttl ti
 			}
 			return nil, fmt.Errorf("invite: insert: %w", err)
 		}
-		id, _ := res.LastInsertId()
 		return &Invite{
 			ID:              id,
 			Code:            code,

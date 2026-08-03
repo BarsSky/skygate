@@ -82,8 +82,14 @@ type NodeOwner struct {
 // Read helpers take *sql.DB directly because no caller currently
 // needs a read in a transaction; if that ever changes they can be
 // widened the same way.
+// dbExec is the small interface that the runtime write helpers
+// (RecordExitNodeStateChange, UpsertNodeOwner, UpsertExitServer)
+// accept. *sql.DB and *sql.Tx both satisfy it. v0.32.27: added
+// QueryRow so the v0.32.27 RETURNING id rewrite doesn't have
+// to special-case the call sites.
 type dbExec interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // GetNodeOwner returns the single row for nodeID, or

@@ -126,12 +126,17 @@ func GetPreauthKeyByID(d *sql.DB, id, userID int64) (PreauthKey, error) {
 // pre-API-key-id releases — old rows in the DB look like that).
 //
 // Returns the new row's id (mostly for tests; the handler ignores it).
+// InsertPreauthKey writes a new preauth_keys row. Called by
+// PostMyPreauth after a.HS.CreatePreauthKey produces the key. The
+// caller passes the headscale preauth id (which may be empty for
+// pre-API-key-id releases — old rows in the DB look like that).
+//
+// Returns the new row's id (mostly for tests; the handler ignores it).
+// v0.32.27: uses RETURNING id (works for both SQLite 3.35+ and PG).
 func InsertPreauthKey(d *sql.DB, userID int64, key string, expiresAt int64, headscaleID string) (int64, error) {
-	res, err := d.Exec(qInsertPreauthKey, userID, key, expiresAt, headscaleID)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := d.QueryRow(qInsertPreauthKey, userID, key, expiresAt, headscaleID).Scan(&id)
+	return id, err
 }
 
 // GetLastPreauthKeyForChatID returns the most-recently-created

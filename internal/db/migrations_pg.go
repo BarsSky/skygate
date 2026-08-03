@@ -897,3 +897,68 @@ func migrateV047PG(d *sql.DB) error {
 		}
 		return nil
 }
+
+// migrateV048PG is the v0.32.0 PostgreSQL port of the SQLite migration.
+// v0.32.0 devicemeta: per-device OS + device_type on node_owner_map.
+// Idempotent via PG's native ADD COLUMN IF NOT EXISTS (PG 9.6+).
+func migrateV048PG(d *sql.DB) error {
+	stmts := []string{
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS os TEXT NOT NULL DEFAULT 'unknown'`,
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS device_type TEXT NOT NULL DEFAULT 'unknown'`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.48: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV049PG is the v0.32.19 PostgreSQL port of the SQLite migration.
+// v0.32.19 migration integrity tracking: applied_migrations table.
+// Idempotent via CREATE TABLE IF NOT EXISTS.
+func migrateV049PG(d *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS applied_migrations (
+			version     INTEGER PRIMARY KEY,
+			sha256      TEXT    NOT NULL,
+			source_file TEXT    NOT NULL DEFAULT '',
+			applied_at  BIGINT  NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+			first_seen  TEXT    NOT NULL DEFAULT ''
+		)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.49: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV050PG — v0.32.27 — define strftime() PG function so the
+// existing SQLite-style SQL (strftime('%s','now')) works unchanged
+// on PostgreSQL. The function ignores the format arg (always '%s'
+// in skygate's queries) and just returns Unix-epoch seconds via
+// EXTRACT(EPOCH FROM now()).
+//
+// Why not rewrite every query? Because strftime appears inline in
+// 12+ SQL strings across internal/db/{queries,node_owner_map,
+// secrets,telegram_login_tokens,integrations}.go. Defining the
+// function once is 1 migration instead of 12 line edits. And
+// SQLite 3.38+ also has strftime (and SQLite < 3.38 will continue
+// to work since strftime is its native form), so the function
+// doesn't break the SQLite path either — it just never gets called
+// there (different SQL backend).
+func migrateV050PG(d *sql.DB) error {
+	stmts := []string{
+		`CREATE OR REPLACE FUNCTION strftime(format text, ts text) RETURNS bigint AS $$
+			SELECT EXTRACT(EPOCH FROM now())::bigint
+		$$ LANGUAGE SQL IMMUTABLE`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.50: %w", err)
+		}
+	}
+	return nil
+}

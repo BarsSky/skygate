@@ -157,12 +157,17 @@ func CreateMesh(d *sql.DB, creatorUserID int64, name string) (*Mesh, error) {
 		if err != nil {
 			return nil, err
 		}
-		res, err := tx.Exec(`
+		// v0.32.27: RETURNING id (works on both SQLite 3.35+ and PG).
+		// pgx doesn't support Result.LastInsertId() and the lib/pq
+		// approach is fragile across drivers.
+		var meshID int64
+		err = tx.QueryRow(`
 			INSERT INTO meshes
 				(code, name, creator_user_id, status,
 				 created_at, dissolved_at)
-			VALUES (?, ?, ?, 'active', ?, 0)
-		`, code, strings.TrimSpace(name), creatorUserID, now.Unix())
+			VALUES ($1, $2, $3, 'active', $4, 0)
+			RETURNING id
+		`, code, strings.TrimSpace(name), creatorUserID, now.Unix()).Scan(&meshID)
 		if err != nil {
 			_ = tx.Rollback()
 			// UNIQUE collision on code → retry.
@@ -172,12 +177,11 @@ func CreateMesh(d *sql.DB, creatorUserID int64, name string) (*Mesh, error) {
 			}
 			return nil, fmt.Errorf("mesh: insert: %w", err)
 		}
-		meshID, _ := res.LastInsertId()
 		// Add the creator as the first member.
 		_, err = tx.Exec(`
 			INSERT INTO mesh_members
 				(mesh_id, user_id, joined_at)
-			VALUES (?, ?, ?)
+			VALUES ($1, $2, $3)
 		`, meshID, creatorUserID, now.Unix())
 		if err != nil {
 			_ = tx.Rollback()

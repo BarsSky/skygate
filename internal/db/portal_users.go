@@ -473,16 +473,15 @@ func GetOtherHSUserIDs(d *sql.DB, excludeID int64) ([]string, error) {
 // row's id. Used by PostAdminUser after a successful headscale user
 // create. The (is_admin bool → int) and (hsID int64 → 0 is fine) are
 // the two bits of conversion the SQL doesn't have to know about.
+// v0.32.27: uses RETURNING id (works for both SQLite 3.35+ and PG).
 func InsertPortalUser(d *sql.DB, username, passwordHash string, isAdmin bool, hsID int64) (int64, error) {
 	adminI := 0
 	if isAdmin {
 		adminI = 1
 	}
-	res, err := d.Exec(qInsertPortalUser, username, passwordHash, adminI, hsID)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := d.QueryRow(qInsertPortalUser, username, passwordHash, adminI, hsID).Scan(&id)
+	return id, err
 }
 
 // UpdatePasswordHash sets a new password_hash for a user. Used by

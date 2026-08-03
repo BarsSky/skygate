@@ -172,12 +172,15 @@ func Create(d *sql.DB, userID int64, controlPlaneURL, routerHostname string) (*S
 		}
 		return nil, fmt.Errorf("subnet: pre-check portal_users: %w", err)
 	}
-	res, err := tx.Exec(`
+	// v0.32.27: RETURNING id (works on both SQLite 3.35+ and PG).
+	var newID int64
+	err = tx.QueryRow(`
 		INSERT INTO user_subnets
 			(user_id, cidr, subnet_bits, control_plane_url,
 			 status, router_hostname, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, userID, cidr, bits, controlPlaneURL, StatusPending, routerHostname, now, now)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id
+	`, userID, cidr, bits, controlPlaneURL, StatusPending, routerHostname, now, now).Scan(&newID)
 	if err != nil {
 		// UNIQUE violation on user_id. Rollback
 		// FIRST (so SQLite's per-connection write
@@ -190,14 +193,13 @@ func Create(d *sql.DB, userID int64, controlPlaneURL, routerHostname string) (*S
 		}
 		return nil, fmt.Errorf("subnet: insert: %w", err)
 	}
-	newID, _ := res.LastInsertId()
 	// Update the denormalized columns on portal_users.
-	res, err = tx.Exec(`
+	res, err := tx.Exec(`
 		UPDATE portal_users
-		   SET subnet_cidr = ?,
-		       subnet_status = ?,
+		   SET subnet_cidr = $1,
+		       subnet_status = $2,
 		       subnet_router_node_id = ''
-		 WHERE id = ?
+		 WHERE id = $3
 	`, cidr, StatusPending, userID)
 	if err != nil {
 		return nil, fmt.Errorf("subnet: update portal_users: %w", err)

@@ -148,16 +148,16 @@ func ListAPITokenHashesForLookup(d *sql.DB) ([]APITokenLookup, error) {
 // autoRotate is the operator's "rotate this before expiry"
 // flag; the actual rotation job is a v0.16.0 follow-up but
 // the column is in v0.15.5 so the UI can store + read it.
+// InsertAPIToken creates a new personal_api_tokens row.
+// v0.32.27: uses RETURNING id (works for both SQLite 3.35+ and PG).
 func InsertAPIToken(d *sql.DB, userID int64, tokenHash, label string, expiresAt int64, autoRotate bool) (int64, error) {
 	autoR := 0
 	if autoRotate {
 		autoR = 1
 	}
-	res, err := d.Exec(qInsertAPIToken, userID, tokenHash, label, expiresAt, autoR)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := d.QueryRow(qInsertAPIToken, userID, tokenHash, label, expiresAt, autoR).Scan(&id)
+	return id, err
 }
 
 // DeleteAPITokenByUser removes the token with the given id IF it

@@ -63,12 +63,12 @@ func (n *RealNotifier) SendAlert(text string) int64 {
 // written because there is no configured bot to see it.
 func (NoopNotifier) SendAlert(string) int64 { return 0 }
 
+// insertAlert writes a new row to telegram_alerts. v0.32.27:
+// uses RETURNING id (works for both SQLite 3.35+ and PG).
 func insertAlert(d *sql.DB, body string) (int64, error) {
-	res, err := d.Exec(`INSERT INTO telegram_alerts(body) VALUES (?)`, body)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := d.QueryRow(`INSERT INTO telegram_alerts(body) VALUES ($1) RETURNING id`, body).Scan(&id)
+	return id, err
 }
 
 // pruneAlerts keeps at most maxRows in telegram_alerts. We delete

@@ -109,13 +109,20 @@ var ErrNotFound = errors.New("db: device_rule not found")
 // the per-device tag in headscale ACL (tag:dev-<user>-<device>).
 // Empty strings are accepted for back-compat but the ACL
 // builder will fall back to device_ip src for those rows.
+// AppendDeviceRule inserts one row into device_rules. The new row's
+// id is returned. parent_domain is typically set to target_value for
+// domain rules (so the autoupdater can track them) and "" otherwise.
+// Callers wanting dedup should call FindDeviceRuleID first.
+// v0.28.0: userName + deviceHostname are required for
+// the per-device tag in headscale ACL (tag:dev-<user>-<device>).
+// Empty strings are accepted for back-compat but the ACL
+// builder will fall back to device_ip src for those rows.
+// v0.32.27: uses RETURNING id (works for both SQLite 3.35+ and PG).
 func AppendDeviceRule(d *sql.DB, userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain, userName, deviceHostname string) (int64, error) {
-	res, err := d.Exec(qInsertDeviceRule,
-		userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, userName, deviceHostname)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := d.QueryRow(qInsertDeviceRule,
+		userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, userName, deviceHostname).Scan(&id)
+	return id, err
 }
 
 // UpdateDeviceRuleHostnameForNode sets device_hostname on

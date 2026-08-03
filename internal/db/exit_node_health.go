@@ -210,17 +210,20 @@ func CountHealthyExitNodes(d *sql.DB) (int, error) {
 // The new row has alerted_at = 0; the dispatch loop will update
 // it to a unix timestamp once the alert has been queued.
 func RecordExitNodeStateChange(d dbExec, sc ExitNodeStateChange) (int64, error) {
-	res, err := d.Exec(
+	// v0.32.27: use RETURNING id (works for both SQLite 3.35+ and PG).
+	// pgx doesn't support Result.LastInsertId() — without this fix
+	// the exit-node-monitor would log "LastInsertId is not supported
+	// by this driver" on every state change.
+	var id int64
+	err := d.QueryRow(
 		`INSERT INTO exit_node_state_changes
 			(node_id, hostname, from_state, to_state, detected_at, note)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id`,
 		sc.NodeID, sc.Hostname, sc.FromState, sc.ToState,
 		unixOrZero(sc.DetectedAt), sc.Note,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	).Scan(&id)
+	return id, err
 }
 
 // ListPendingExitNodeStateChanges returns the rows in
