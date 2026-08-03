@@ -1,5 +1,75 @@
 # Skygate release notes
 
+## v0.32.16 — Headplane distroless healthcheck fix + docker build cache hygiene
+
+**Date:** 2026-08-03
+**Tag:** _pending_
+**Scope:** template + verify-pre. No Go code changed.
+
+### What's in this release
+
+1. **Headplane healthcheck override** in
+   `deploy/templates/headscale-compose.yml.tmpl`. The distroless
+   `ghcr.io/tale/headplane:0.6.3` image ships `/bin/hp_healthcheck`
+   that probes `http://localhost:3000/admin/healthz`, but
+   `HEADPLANE_SERVER__PORT` is 50445 by default. The upstream
+   healthcheck always failed with
+   `dial tcp [::1]:3000: connect: connection refused`, leaving
+   headplane in `(unhealthy)` for 60+ failing-streak iterations
+   even though the service was fine (port 50445 returns 200 in
+   15ms via direct probe). The override uses Node.js (the only
+   runtime in the distroless image, at `/nodejs/bin/node` — not
+   in PATH for the healthcheck process) to probe
+   `http://127.0.0.1:${HEADPLANE_SERVER__PORT}/admin/healthz`.
+   `127.0.0.1` is used (not `localhost`) because IPv6 may resolve
+   to `[::1]` and headplane binds `0.0.0.0`, not `::`.
+
+2. **`docker builder prune -a -f` as a documented recovery step.**
+   Multi-stage Dockerfiles leave a build cache entry per
+   `docker compose build` invocation, even if the resulting image
+   is identical. Five deploys over five days left 7.36 GB of
+   build cache on the live VM; 5.75 GB was reclaimable. The fix
+   is operational (run the prune) but the template-side change
+   is also part of this release: B33 pins the healthcheck contract
+   so future deploys don't regress to the broken upstream check.
+
+3. **B33 verify-pre check** that pins the headplane healthcheck
+   contract:
+   - The template has a `healthcheck:` block under headplane
+   - The test command uses `/nodejs/bin/node`
+   - The probe URL uses `${HEADPLANE_SERVER__PORT}` (not hardcoded)
+   - The probe URL is `127.0.0.1` (not `localhost`)
+   - No `wget` in the test (the distroless image has no wget)
+
+### Files
+
+- `deploy/templates/headscale-compose.yml.tmpl` — added `healthcheck:`
+  block with node probe
+- `scripts/verify_pre_deploy.sh` — B33 check
+
+### Backlog debt
+
+v0.32.13, v0.32.14, and v0.32.15 don't have release-notes entries
+yet (only v0.32.12 made it into this file before the 5-layer bug
+war took over). Tracked in `docs/BACKLOG.md`; will be backfilled
+in v0.32.17 or later.
+
+### Operational notes
+
+After deploying v0.32.16, the live headplane container was
+recreated with the new healthcheck. `docker inspect headplane`
+now shows `Up X seconds (healthy)` (was `Up X hours (unhealthy)`
+for ~24h before the fix). The new healthcheck takes effect on
+the next `deploy.sh` run; no manual action needed.
+
+The disk cleanup is NOT a code change — it's a one-shot operator
+action (`docker builder prune -a -f && rm -rf /var/backups/skygate/PRE_*`).
+Reclaimable on the live VM at 2026-08-03: ~6 GB (5.75 GB build
+cache + 317 MB old recovery dirs). Disk went from 74% → 58% in
+30 seconds.
+
+---
+
 ## v0.32.12 — Fix CGO_ENABLED=0 regression in multi-stage Dockerfile (silent 504 fix)
 
 **Date:** 2026-07-31

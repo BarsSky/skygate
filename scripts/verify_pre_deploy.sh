@@ -771,3 +771,46 @@ run_check "B32" "Tailscale disabled by default in compose (v0.32.15)" \
 # goroutine (cmd/skygate/main.go `go app.RunDomainAutoUpdater`)
 # launched unconditionally and ran its synchronous
 # `DomainAutoUpdater()` initial call at startup. That call
+#
+# (Note: the B28 `run_check` block was never added in v0.32.13 —
+# only the comment. Tracked in BACKLOG.md. B33 below was added in
+# v0.32.16 to fill the slot.)
+
+
+# ─── B33 (v0.32.16) — headplane healthcheck override in compose template ───
+# Background: 2026-08-03 the headplane container (`ghcr.io/tale/headplane`)
+# was stuck in `(unhealthy)` for 60+ failing-streak iterations. The
+# distroless image ships `/bin/hp_healthcheck` that probes port 3000,
+# but `HEADPLANE_SERVER__PORT` is 50445 by default — so the
+# upstream healthcheck always failed with "dial tcp [::1]:3000:
+# connect: connection refused" even though the service was fine
+# (port 50445 returns 200 in 15ms via direct probe).
+#
+# The fix: the deploy template
+# `deploy/templates/headscale-compose.yml.tmpl` now adds an
+# explicit `healthcheck:` block that probes
+#   http://127.0.0.1:${HEADPLANE_SERVER__PORT}/admin/healthz
+# using Node.js (the distroless image's only runtime binary, at
+# `/nodejs/bin/node` — NOT in PATH for the healthcheck process,
+# so it must be called by absolute path).
+#
+# B33 pins the contract:
+#   (a) The template has a `healthcheck:` block under the
+#       headplane service (overrides the image's healthcheck).
+#   (b) The test command uses `/nodejs/bin/node` (the only
+#       runtime in the distroless image; NOT wget/curl which
+#       are absent).
+#   (c) The probe URL uses `${HEADPLANE_SERVER__PORT}` (not
+#       hardcoded 50445) so a custom port is respected.
+#   (d) The probe URL is `127.0.0.1` (not `localhost`) to avoid
+#       IPv6 → [::1] → connection-refused on systems where
+#       headplane binds 0.0.0.0 only.
+run_check "B33" "headplane healthcheck override in compose template (v0.32.16)" \
+  "bash -c '
+    grep -qF \"healthcheck:\" deploy/templates/headscale-compose.yml.tmpl &&
+    grep -qF \"/nodejs/bin/node\" deploy/templates/headscale-compose.yml.tmpl &&
+    grep -qF \"127.0.0.1:\" deploy/templates/headscale-compose.yml.tmpl &&
+    grep -qF \"HEADPLANE_SERVER__PORT\" deploy/templates/headscale-compose.yml.tmpl &&
+    grep -qF \"/admin/healthz\" deploy/templates/headscale-compose.yml.tmpl &&
+    ! grep -qE \"^[[:space:]]*wget\" deploy/templates/headscale-compose.yml.tmpl
+  '"

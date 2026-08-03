@@ -46,6 +46,31 @@ services:
       - HEADPLANE_SERVER__PORT=${HEADPLANE_SERVER__PORT}
       - HEADPLANE_SERVER__COOKIE_SECURE=${HEADPLANE_SERVER__COOKIE_SECURE}
       - HEADPLANE_SERVER__COOKIE_SECRET=${HEADPLANE_SERVER__COOKIE_SECRET}
+    # 2026-08-03: v0.32.16 — override the upstream image's healthcheck.
+    #
+    # The distroless headplane image (ghcr.io/tale/headplane:0.6.3) ships
+    # /bin/hp_healthcheck that probes http://localhost:3000/admin/healthz.
+    # But HEADPLANE_SERVER__PORT is 50445 by default, so the upstream
+    # healthcheck always fails with "dial tcp [::1]:3000: connect:
+    # connection refused" — Docker reports `(unhealthy)` with a 60+
+    # failing streak even though the service is fine.
+    #
+    # Fix: probe http://127.0.0.1:${HEADPLANE_SERVER__PORT}/admin/healthz
+    # using Node.js. The distroless image's only runtime binary is
+    # /nodejs/bin/node (not in PATH for the healthcheck process), so
+    # we must call it by absolute path. fetch() would also work on
+    # Node 22+, but the lower-level require('http') avoids the
+    # experimental-fetch warning that some deploy environments print.
+    #
+    # Why 127.0.0.1 (not localhost): IPv6 may resolve to [::1] and
+    # headplane binds 0.0.0.0, not ::, so 127.0.0.1 is the only
+    # loopback that consistently works in the distroless image.
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:${HEADPLANE_SERVER__PORT}/admin/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - headscale_default
 
