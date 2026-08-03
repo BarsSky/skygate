@@ -11,6 +11,13 @@ import (
 type Config struct {
 	Port               string
 	DBPath             string
+	// DBDSN is the optional PostgreSQL connection string. If set
+	// (e.g. "postgres://skygate:pass@host:5432/skygate?sslmode=disable"),
+	// skygate connects to PG instead of SQLite. Set via SKYGATE_DB_DSN
+	// env var. Phase 4.1 of the v0.33.0 PG cutover (no live change
+	// in production unless this is set). See
+	// `docs/v0.33.0-pg-cutover-runbook.md` for the cutover sequence.
+	DBDSN              string
 	HeadscaleURL       string
 	HeadscaleKey       string
 	// HeadplaneExternalURL is the public URL of an existing
@@ -219,6 +226,7 @@ func Load() (*Config, error) {
 	c := &Config{
 		Port:               getenv("SKYGATE_PORT", "8080"),
 		DBPath:             getenv("SKYGATE_DB", "/var/lib/skygate/skygate.db"),
+		DBDSN:              os.Getenv("SKYGATE_DB_DSN"),
 		HeadscaleURL:       getenv("HEADSCALE_URL", "http://headscale:50444"),
 		HeadscaleKey:       os.Getenv("HEADSCALE_API_KEY"),
 		HeadplaneExternalURL: os.Getenv("HEADPLANE_EXTERNAL_URL"),

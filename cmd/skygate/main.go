@@ -53,6 +53,32 @@ var (
 	buildTime = "unknown"
 )
 
+// redactPGPassword replaces the password in a postgres:// DSN
+// with "***" for safe log output. Used by the startup banner
+// when SKYGATE_DB_DSN is set (Phase 4.1, v0.32.22). The DSN
+// format is "postgres://user:pass@host:port/db?params" — we
+// only redact the user:pass segment.
+func redactPGPassword(dsn string) string {
+	const prefix = "://"
+	prefixIdx := strings.Index(dsn, prefix)
+	if prefixIdx < 0 {
+		return dsn
+	}
+	rest := dsn[prefixIdx+len(prefix):]
+	atIdx := strings.Index(rest, "@")
+	if atIdx < 0 {
+		return dsn // no user:pass@host segment
+	}
+	scheme := dsn[:prefixIdx+len(prefix)]
+	creds := rest[:atIdx]
+	host := rest[atIdx+1:]
+	colonIdx := strings.Index(creds, ":")
+	if colonIdx < 0 {
+		return dsn // no password (e.g. trust auth)
+	}
+	return scheme + creds[:colonIdx+1] + "***@" + host
+}
+
 func main() {
 	// 2026-07-14: Этап 14 v6 — subcommand routing.
 	// The default (no args) starts the web server.
@@ -98,10 +124,23 @@ func main() {
 	}
 
 	log.Printf("🌐 Skygate starting on :%s", cfg.Port)
-	log.Printf("   DB:            %s", cfg.DBPath)
 	log.Printf("   Headscale URL: %s", cfg.HeadscaleURL)
 
-	d, err := db.Open(cfg.DBPath)
+	// 2026-08-03: v0.32.22 (Phase 4.1) — DB backend
+	// selection. If SKYGATE_DB_DSN is set, OpenDSN picks
+	// SQLite (default) or PostgreSQL based on the DSN
+	// prefix. If DSN is empty, falls back to Open(DBPath)
+	// for the historical SQLite-only path. Phase 4.2+
+	// (HA setup on skygate-host-2) is when the PG path
+	// becomes the default.
+	var d *sql.DB
+	if cfg.DBDSN != "" {
+		log.Printf("   DB backend:    postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
+		d, err = db.OpenDSN(cfg.DBDSN)
+	} else {
+		log.Printf("   DB backend:    sqlite (%s)", cfg.DBPath)
+		d, err = db.Open(cfg.DBPath)
+	}
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}

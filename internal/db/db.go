@@ -154,6 +154,27 @@ func Open(dataDir string) (*sql.DB, error) {
 	return conn, nil
 }
 
+// OpenDSN opens a database connection based on the DSN prefix.
+// This is the Phase 4.1 (v0.32.22) entry point for the v0.33.0
+// PG cutover: cmd/skygate/main.go calls OpenDSN when
+// Config.DBDSN is set (env SKYGATE_DB_DSN), else falls back
+// to Open(dataDir) for SQLite.
+//
+// Behavior:
+//   - dsn starts with "postgres://" or "postgresql://" → openPostgres(dsn)
+//   - otherwise → treat as a SQLite file path, delegate to Open(dsn)
+//
+// The decision lives in one place so the rest of skygate can
+// stay backend-agnostic. Migrations are dispatched per-backend
+// via migrate() which checks BackendOf(d).
+func OpenDSN(dsn string) (*sql.DB, error) {
+	if DetectBackend(dsn) == BackendPostgres {
+		return openPostgres(dsn)
+	}
+	// SQLite fallback (the pre-Phase-4.1 default).
+	return Open(dsn)
+}
+
 func migrate(d *sql.DB) error {
 	queries := []string{
 		// 2026-08-03: v0.32.14 — WAL mode (good for read
