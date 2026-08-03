@@ -68,9 +68,9 @@ services:
       #      `headscale preauthkeys create`)
       #   2. Write it to secrets/ts_authkey on the host
       #   3. Re-add the env var + secrets: mount here
-      - SKYGATE_TS_AUTHKEY_FILE=
-      - SKYGATE_TS_LOGIN_SERVER=
-      - SKYGATE_TS_HOSTNAME=
+      - TS_AUTHKEY_FILE=/run/secrets/ts_authkey
+      - SKYGATE_TS_LOGIN_SERVER=https://head.example.com
+      - SKYGATE_TS_HOSTNAME=skygate-host-1
       # 2026-07-27: v0.29.0 — pin the docker compose project name
       # so the auto-updater (which runs `docker compose` from inside
       # the container, where the bind-mount of the source dir is

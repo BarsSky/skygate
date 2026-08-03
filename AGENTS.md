@@ -3069,3 +3069,62 @@ The legacy "feature handlers live here" pattern is
 `admin_user_subnet.go`, `handlers_admin_nodes.go`, etc.) is
 preserved in git history for context but those files don't
 exist in the working tree anymore.
+
+---
+
+## "No hardcoded personal data in code" policy (v0.32.29, 2026-08-03)
+
+**The github repo is a public artifact.** Any operator-specific
+information in source files (DNS, public IPs, Tailscale IPs,
+machine hostnames, real personal names) is exposed the moment
+the commit is pushed. The 2026-07-29 cleanup went wide but
+left operator-specific values in source constants and
+test fixtures; the v0.32.29 pass moved them all to env.
+
+**For future work**, any new code MUST follow these rules:
+
+1. **Source-level defaults are placeholders only.** When a
+   value is deployment-specific (DNS, IP, hostname, operator
+   username, path under /home), the source default MUST be
+   either:
+   - A `tsnet.example.com` / `192.0.2.x` / `198.51.100.x` /
+     `example.com` placeholder (RFC 5737 docs IPs + reserved
+     example domains).
+   - A generic term (`admin`, `workstation-1`, `relay-1`,
+     `skygate-host-1`, `user1`, `/home/operator/...`).
+   - Empty string with a documented `os.Getenv` fallback.
+2. **The operator's real value lives in `.env`** on the
+   deployment VM (NEVER in code, NEVER in `.env.example`
+   defaults, NEVER in a test fixture unless the test is
+   specifically about reading the real value).
+3. **Test fixtures use the same placeholder defaults as
+   the source.** A test that hardcodes `admin@tsnet.example.com`
+   violates the policy — the right shape is
+   `admin@tsnet.example.com` and the assertion checks for
+   the placeholder, not the real value.
+4. **Comments don't leak either.** "the operator's NPM at
+   192.0.2.67" is the same kind of leak as
+   `const npm = "192.0.2.67"`. Either generalize
+   ("the operator's NPM host") or move the value to env.
+5. **What is NOT personal data**:
+   - The 100.64.100.0/10 Tailscale IP range (it's a
+     public standard documented at tailscale.com).
+   - RFC 1918 / RFC 5737 placeholder IPs and the
+     example.com domain (these are reserved FOR
+     documentation use).
+   - Generic protocol/standard terms ("Tailscale
+     client", "subnet-router", "exit-node") when used
+     to describe the protocol, not a specific device.
+6. **Audit checklist for new PRs**:
+   - `git grep -nE '192\.168\.[0-9]+\.[0-9]+|45\.[0-9]+\.[0-9]+\.[0-9]+|skynas\.ru|admin|user1|user2|skygate-host-2|relay-1|relay-2|relay-3|skygate-host-1|workstation-1|workstation-2|nothing-phone|workstation-3' <new-files>`
+     returns 0 hits.
+   - `git grep -nE '100\.64\.0\.[0-9]+' <new-files>` returns
+     only references to the `100.64.100.0/10` range, never a
+     specific device IP.
+   - If a new env var is added, `.env.example` documents it
+     and the in-source default is a placeholder.
+
+**When in doubt**: put it in env, leave the source default
+as a placeholder, and add a comment pointing at the env var.
+The operator can override at deploy time without touching
+code.
