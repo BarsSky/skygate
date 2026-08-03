@@ -77,7 +77,21 @@
       <button type="submit" class="btn btn-warning"><i class="fa-solid fa-pause"></i> {{t "user_subnet.disable_button"}}</button>
     </form>
     {{end}}
+    {{if eq .Subnet.Status "router_active"}}
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/remove" style="display:inline"
+          onsubmit="return confirm('{{t "user_subnet.remove_confirm" | safeJS}}')">
+      <button type="submit" class="btn btn-danger" title="{{t "user_subnet.remove_button_help"}}">
+        <i class="fa-solid fa-trash"></i> {{t "user_subnet.remove_button"}}
+      </button>
+    </form>
+    {{end}}
   </div>
+
+  {{if .FlashMessage}}
+  <div class="flash flash-success" style="margin:12px 0;padding:10px 14px;border-radius:6px;background:#0d3320;border:1px solid #1c6b3f;color:#7ee2a8">
+    <i class="fa-solid fa-check-circle"></i> {{t .FlashMessage}}
+  </div>
+  {{end}}
   <p style="color:var(--text-muted);font-size:12px;margin-top:12px">{{t "user_subnet.status_explainer_v0_22_3" | safeHTML}}</p>
 </div>
 

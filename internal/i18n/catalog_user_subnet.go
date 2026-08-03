@@ -85,6 +85,21 @@ var ruUserSubnet = map[string]string{
 	"user_subnet.status_pill_router_active_title" : "Subnet-router поднят: 10.0.<uid>.0/24 реально анонсируется в tailnet через tag:subnet-router",
 	"user_subnet.status_pill_disabled_title"      : "Subnet отключена администратором",
 	"user_subnet.status_explainer_v0_22_3"        : "<b>v0.22.3:</b> статус <code>active</code> теперь означает «у пользователя есть устройства в tailnet», а не «subnet-router поднят». <code>router active</code> — бонус-статус, появляется когда пользователь дополнительно поднял subnet-router для маршрутизации своей домашней сети. <code>pending</code> — только для новых пользователей, у которых ещё нет устройств.",
+	// 2026-08-03: v0.32.18 — flash messages для нового Remove
+	// handler (admin-only полная очистка subnet-router) и
+	// для существующих post-action сообщений, у которых
+	// раньше не было выделенного i18n-ключа. Ключи
+	// соответствуют `?flash=<key>` query-параметру, который
+	// парсит GetAdminUserSubnet.
+	"user_subnet.remove_button"                    : "Удалить subnet-router",
+	"user_subnet.remove_button_help"               : "Полная очистка: удаляет ноду в headscale, очищает user_subnets и denorm-поля в portal_users. Для повторной активации потребуется новый preauth.",
+	"user_subnet.remove_confirm"                   : "Удалить subnet-router для этого пользователя? Это необратимо — нода в headscale будет удалена, статус сбросится в pending.",
+	"user_subnet.flash_removed"                    : "Subnet-router удалён. Headscale нода очищена, статус сброшен в pending.",
+	"user_subnet.flash_headscale_failed"           : "DB очищена, но headscale delete не удался. Проверьте headscale ноду вручную и удалите её оттуда (audit log содержит node_id).",
+	"user_subnet.flash_allocated"                  : "Subnet выделен, ACL обновлён.",
+	"user_subnet.flash_disabled"                   : "Subnet отключён.",
+	"user_subnet.flash_shared"                     : "Subnet расшарен.",
+	"user_subnet.flash_revoked"                    : "Шара отозвана.",
 }
 
 var enUserSubnet = map[string]string{
@@ -161,4 +176,18 @@ var enUserSubnet = map[string]string{
 	"user_subnet.status_pill_router_active_title" : "Subnet-router up: 10.0.<uid>.0/24 is actually being advertised in the tailnet via tag:subnet-router",
 	"user_subnet.status_pill_disabled_title"      : "Subnet disabled by an admin",
 	"user_subnet.status_explainer_v0_22_3"        : "<b>v0.22.3:</b> the <code>active</code> status now means \"user has devices in the tailnet\", not \"subnet-router is up\". <code>router active</code> is a bonus status that appears when the user additionally set up a subnet-router to route their home network. <code>pending</code> is only for fresh users who haven't added any devices yet.",
+	// 2026-08-03: v0.32.18 — flash messages for the new Remove
+	// handler (admin-only full subnet-router cleanup) and
+	// existing post-action messages that previously had no
+	// dedicated i18n key. The keys match the `?flash=<key>`
+	// query parameter parsed by GetAdminUserSubnet.
+	"user_subnet.remove_button"                    : "Remove subnet-router",
+	"user_subnet.remove_button_help"               : "Full cleanup: deletes the headscale node, clears user_subnets and the denorm fields on portal_users. Re-provisioning requires a new preauth.",
+	"user_subnet.remove_confirm"                   : "Remove the subnet-router for this user? This is irreversible — the headscale node will be deleted and the status will reset to pending.",
+	"user_subnet.flash_removed"                    : "Subnet-router removed. Headscale node cleaned up, status reset to pending.",
+	"user_subnet.flash_headscale_failed"           : "DB cleaned up, but the headscale delete failed. Check the headscale node manually and delete it from there (the audit log entry contains the node_id).",
+	"user_subnet.flash_allocated"                  : "Subnet allocated, ACL re-applied.",
+	"user_subnet.flash_disabled"                   : "Subnet disabled.",
+	"user_subnet.flash_shared"                     : "Subnet shared.",
+	"user_subnet.flash_revoked"                    : "Share revoked.",
 }

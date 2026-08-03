@@ -183,6 +183,12 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 
 // GetAdminUserSubnet renders the per-user subnet page.
 // The {id} in the path is the portal_user.id.
+//
+// v0.32.18: supports `?flash=<key>` query parameter for
+// post-action success messages from the Remove (and future)
+// handlers. The map of flash keys → i18n keys lives in
+// flashMessageKeyToI18n below; unknown keys are silently
+// ignored (the page renders normally with no banner).
 func (s *Service) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -194,7 +200,26 @@ func (s *Service) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", 400)
 		return
 	}
-	s.renderUserSubnetPage(w, r, c, id, nil)
+	flash := map[string]any{}
+	if key := r.URL.Query().Get("flash"); key != "" {
+		if i18nKey, ok := subnetFlashMessages[key]; ok {
+			flash["FlashMessage"] = i18nKey
+		}
+	}
+	s.renderUserSubnetPage(w, r, c, id, flash)
+}
+
+// subnetFlashMessages maps the `?flash=<key>` query value to
+// the i18n catalog key for the success message. Keep the keys
+// short and stable (they appear in URLs and in the audit log).
+// Add new entries when introducing new post-action flashes.
+var subnetFlashMessages = map[string]string{
+	"removed":          "user_subnet.flash_removed",
+	"headscale_failed": "user_subnet.flash_headscale_failed",
+	"allocated":        "user_subnet.flash_allocated",
+	"disabled":         "user_subnet.flash_disabled",
+	"shared":           "user_subnet.flash_shared",
+	"revoked":          "user_subnet.flash_revoked",
 }
 
 // PostAdminUserSubnetAllocate allocates a personal

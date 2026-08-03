@@ -863,3 +863,24 @@ run_check "B34" "device_rules table has no duplicate (device, exit_node) pairs (
     fi
     [ \"\$DUPES\" = \"0\" ]
   '"
+
+
+# ─── B35 (v0.32.18) — subnet-router Remove handler is registered in main.go ───
+# Background: the subnet-router lifecycle is Provision → Remove.
+# Provision existed since v0.16.7 but Remove (full cleanup that
+# deletes the headscale node + clears DB + re-applies ACL) was
+# added in v0.32.18. If a future refactor drops the route
+# registration in cmd/skygate/main.go, the admin UI's "Remove"
+# button would 404 and the operator would have no way to clean
+# up a dead router.
+#
+# B35 pins the contract: the POST /admin/users/{id}/subnet/remove
+# route is wired to adminSvc.PostAdminUserSubnetRemove. The
+# handler itself is unit-tested in
+# internal/feature/admin/user_subnet_test.go (3 tests), so this
+# B-check is only the route wiring.
+run_check "B35" "POST /admin/users/{id}/subnet/remove wired to adminSvc.PostAdminUserSubnetRemove (v0.32.18)" \
+  "bash -c '
+    grep -qE \"subnet/remove[^a-z]\" cmd/skygate/main.go &&
+    grep -qF \"adminSvc.PostAdminUserSubnetRemove\" cmd/skygate/main.go
+  '"

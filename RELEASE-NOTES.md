@@ -1,5 +1,114 @@
 # Skygate release notes
 
+## v0.32.18 — Subnet-router Remove handler (full lifecycle)
+
+**Date:** 2026-08-03
+**Tag:** _pending_
+**Scope:** new admin endpoint + UI + tests + regression guard. No API change.
+
+### What's in this release
+
+1. **`PostAdminUserSubnetRemove` handler (v0.32.18)**
+   - New admin endpoint: `POST /admin/users/{id}/subnet/remove`
+   - Inverse of `Provision`: full subnet-router cleanup that
+     deletes the headscale node and clears all DB state.
+   - Steps in one atomic flow:
+     1. Parse `router_node_id` from `user_subnets` → call
+        `headscale.Client.DeleteNode(nodeID)`. Failure is
+        logged but does NOT abort the rest of the handler
+        (the DB cleanup is the source of truth for the
+        skygate side; an admin can delete the headscale
+        node manually if needed).
+     2. `UPDATE user_subnets SET status='pending',
+        router_node_id='', router_hostname='', updated_at=now`
+     3. `UPDATE portal_users SET subnet_status='pending',
+        subnet_cidr='', subnet_router_node_id='',
+        subnet_router_hostname=''`
+     4. `INSERT INTO audit_log` with action `subnet_router_removed`
+        and the deleted headscale node id in the detail
+     5. Redirect to `/admin/users/{id}/subnet?flash=removed`
+   - Idempotent: clicking Remove twice is safe. If the
+     `user_subnets` row doesn't exist → 404.
+   - Does NOT re-apply the ACL (the policy uses
+     `h-user-admin-subnet` which is always present
+     regardless of router status — re-applying would just
+     add a row to `acl_snapshots` with no diff).
+
+2. **UI button + flash messages**
+   - "Remove subnet-router" button in the admin subnet
+     page, only shown when `status='router_active'`
+     (i.e. there IS a router to remove). Has a JS
+     `confirm()` dialog with the i18n string.
+   - `?flash=<key>` query parameter on the page URL
+     (parsed by `GetAdminUserSubnet`) sets a
+     `FlashMessage` data field that the template renders
+     as a success banner.
+   - 9 new i18n keys × 2 langs (18 entries total):
+     `remove_button`, `remove_button_help`, `remove_confirm`,
+     `flash_removed`, `flash_headscale_failed`,
+     `flash_allocated`, `flash_disabled`, `flash_shared`,
+     `flash_revoked`.
+
+3. **Tests (3 new)**
+   - `TestPostAdminUserSubnetRemove_DeletesHeadscaleAndClearsDB`:
+     full happy path (seeded router_node_id="26", verify
+     headscale DELETE was called, all 3 DB tables cleared,
+     audit log written, redirect has `flash=removed`)
+   - `TestPostAdminUserSubnetRemove_NoRouterRow`:
+     idempotent path (router_node_id='' — should still
+     clear status to pending, no headscale call)
+   - `TestPostAdminUserSubnetRemove_NoSubnetRow`:
+     user has no user_subnets row → 404
+
+4. **B35 verify-pre regression guard**
+   - Fails the build if `POST /admin/users/{id}/subnet/remove`
+     is not wired to `adminSvc.PostAdminUserSubnetRemove`
+     in `cmd/skygate/main.go`. Same pattern as B15/B16/B17
+     (regression guards for past handler-removal bugs).
+
+### Files
+
+- `internal/feature/admin/user_subnet_remove.go` (new) —
+  the Remove handler
+- `internal/feature/admin/user_subnet.go` — `GetAdminUserSubnet`
+  reads `?flash=...`; added `subnetFlashMessages` map
+- `internal/feature/admin/user_subnet_test.go` — 3 new tests
+- `internal/feature/admin/testutil.go` — added
+  `subnet_router_hostname` column to test schema
+- `internal/handlers/templates/admin/user_subnet.html` —
+  Remove button + FlashMessage banner
+- `internal/i18n/catalog_user_subnet.go` — 9 new keys × 2 langs
+- `cmd/skygate/main.go` — route registration
+- `scripts/verify_pre_deploy.sh` — B35 check
+- `RELEASE-NOTES.md` — this entry
+
+### Verified
+
+- `go test -count=1 -short ./...` — all 26 packages PASS
+- `bash scripts/verify_pre_deploy.sh` — 35/35 PASS (B1-B35)
+- Test schema updated for `subnet_router_hostname` (it was
+  in production but missing in `newMemoryDB`)
+
+### Loose ends / future work
+
+- **Live R-check (R30+ in verify_post_deploy.sh)**: a
+  runtime check that does a full add+remove cycle against
+  a real headscale. Deferred to v0.32.19 — would need
+  Docker setup for a sandbox headscale (the existing
+  verify_post_deploy.sh runs against the live VM).
+- **Auto-apply tags for the new device**: when a new
+  `skygate-subnet-<username>` device registers, the
+  backfillNodeOwnership path should auto-apply
+  `tag:dev-admin-<hostname>` + `tag:subnet-router`.
+  This already works in v0.32.18; just flagging that the
+  Remove flow doesn't re-apply on the new device (it
+  doesn't need to — that's a Provision-time concern).
+- **Documentation update**: `docs/subnet-router.md` should
+  mention the Remove button (currently only documents
+  Provision). Deferred to doc-cleanup pass.
+
+---
+
 ## v0.32.17 — Exit-node monitor online detection fix + device_rules dedup
 
 **Date:** 2026-08-03

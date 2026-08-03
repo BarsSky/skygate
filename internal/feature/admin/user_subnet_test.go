@@ -268,3 +268,168 @@ func fakeSidecarHS(t *testing.T) (*httptest.Server, *headscale.Client) {
 	t.Cleanup(srv.Close)
 	return srv, headscale.New(srv.URL, "test-key")
 }
+
+// fakeRemoveHS — headscale fake that handles DELETE
+// /api/v1/node/{id} (returns 200), used by the Remove
+// handler tests. The handler also makes a GET
+// /api/v1/node/{id} indirectly via InvalidateCache; we
+// don't need to model that here because the cache is
+// short-lived and the test doesn't read it back.
+func fakeRemoveHS(t *testing.T) (*httptest.Server, *headscale.Client) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/v1/node/"):
+			// Success — no body required, status 200.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "not found", 404)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, headscale.New(srv.URL, "test-key")
+}
+
+// TestPostAdminUserSubnetRemove_DeletesHeadscaleAndClearsDB
+// (v0.32.18) — full lifecycle cleanup: the handler must
+//
+//	1. DELETE the headscale node (router_node_id = "26")
+//	2. SET user_subnets.status='pending', router_node_id='',
+//	   router_hostname=''
+//	3. SET portal_users.subnet_status='pending', subnet_cidr='',
+//	   subnet_router_node_id=''
+//	4. Write audit log entry "subnet_router_removed"
+//	5. Redirect 303 to /admin/users/{id}/subnet?flash=removed
+//
+// All five must happen for the test to pass.
+func TestPostAdminUserSubnetRemove_DeletesHeadscaleAndClearsDB(t *testing.T) {
+	s := newTestService(t)
+	uid := adminSubnetSeed(t, s.DB, "carol-remove", false)
+
+	// Seed a user_subnets row with a router_node_id (mimics
+	// what the sidecar would have written after auto-approving
+	// the route).
+	if _, err := s.DB.Exec(
+		`INSERT INTO user_subnets (user_id, cidr, subnet_bits, control_plane_url, status, router_node_id, router_hostname, created_at, updated_at)
+		 VALUES (?, ?, 24, '', ?, ?, ?, strftime('%s','now'), strftime('%s','now'))`,
+		uid, "10.0.99.0/24", subnet.StatusRouterActive, "26", "skygate-subnet-carol",
+	); err != nil {
+		t.Fatalf("seed user_subnets: %v", err)
+	}
+	// Set the matching denorm fields.
+	if _, err := s.DB.Exec(
+		`UPDATE portal_users
+		    SET subnet_cidr=?, subnet_status=?, subnet_router_node_id=?, subnet_router_hostname=?
+		  WHERE id=?`,
+		"10.0.99.0/24", subnet.StatusRouterActive, "26", "skygate-subnet-carol", uid,
+	); err != nil {
+		t.Fatalf("seed portal_users denorm: %v", err)
+	}
+
+	// Wire a fake headscale that handles DELETE /api/v1/node/{id}.
+	_, hs := fakeRemoveHS(t)
+	s.HSForUserFn = func(int64) *headscale.Client { return hs }
+
+	req := authedReqFor(t, "POST", "/admin/users/"+itoa(uid)+"/subnet/remove", nil, "admin", true)
+	w := httptest.NewRecorder()
+	s.PostAdminUserSubnetRemove(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("Remove: expected 303, got %d (body: %q)", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if !strings.Contains(loc, "/admin/users/"+itoa(uid)+"/subnet") {
+		t.Errorf("expected redirect to /admin/users/.../subnet, got %q", loc)
+	}
+	if !strings.Contains(loc, "flash=removed") {
+		t.Errorf("expected flash=removed on success, got %q", loc)
+	}
+
+	// user_subnets row should be cleared.
+	sub, err := subnet.Get(s.DB, uid)
+	if err != nil {
+		t.Fatalf("read user_subnets after Remove: %v", err)
+	}
+	if sub.Status != subnet.StatusPending {
+		t.Errorf("user_subnets.status = %q, want %q", sub.Status, subnet.StatusPending)
+	}
+	if sub.RouterNodeID != "" {
+		t.Errorf("user_subnets.router_node_id = %q, want empty", sub.RouterNodeID)
+	}
+	if sub.RouterHostname != "" {
+		t.Errorf("user_subnets.router_hostname = %q, want empty", sub.RouterHostname)
+	}
+
+	// portal_users denorm should be cleared.
+	var dCIDR, dStatus, dNode, dHost string
+	if err := s.DB.QueryRow(
+		`SELECT subnet_cidr, subnet_status, subnet_router_node_id, subnet_router_hostname FROM portal_users WHERE id = ?`, uid,
+	).Scan(&dCIDR, &dStatus, &dNode, &dHost); err != nil {
+		t.Fatalf("read portal_users denorm: %v", err)
+	}
+	if dCIDR != "" || dStatus != subnet.StatusPending || dNode != "" || dHost != "" {
+		t.Errorf("portal_users denorm not cleared: cidr=%q status=%q node=%q host=%q", dCIDR, dStatus, dNode, dHost)
+	}
+
+	// audit log should have subnet_router_removed with the
+	// headscale node id in the detail.
+	var gotAction, gotDetail string
+	if err := s.DB.QueryRow(
+		`SELECT action, detail FROM audit_log WHERE action = 'subnet_router_removed' ORDER BY id DESC LIMIT 1`,
+	).Scan(&gotAction, &gotDetail); err != nil {
+		t.Fatalf("read audit_log: %v", err)
+	}
+	if !strings.Contains(gotDetail, "user_id="+itoa(uid)) || !strings.Contains(gotDetail, "deleted_headscale_node_id=26") {
+		t.Errorf("audit detail missing expected fields: %q", gotDetail)
+	}
+}
+
+// TestPostAdminUserSubnetRemove_NoRouterRow (v0.32.18) — the
+// handler is idempotent. If router_node_id is empty, it must
+// still clear the row to pending and not blow up.
+func TestPostAdminUserSubnetRemove_NoRouterRow(t *testing.T) {
+	s := newTestService(t)
+	uid := adminSubnetSeed(t, s.DB, "dave-remove", false)
+
+	// Seed a user_subnets row with status=active but empty
+	// router_node_id (e.g. user clicked Remove twice, or the
+	// sidecar never wrote one).
+	if _, err := s.DB.Exec(
+		`INSERT INTO user_subnets (user_id, cidr, subnet_bits, control_plane_url, status, router_node_id, router_hostname, created_at, updated_at)
+		 VALUES (?, ?, 24, '', ?, '', '', strftime('%s','now'), strftime('%s','now'))`,
+		uid, "10.0.99.0/24", subnet.StatusActive,
+	); err != nil {
+		t.Fatalf("seed user_subnets: %v", err)
+	}
+
+	req := authedReqFor(t, "POST", "/admin/users/"+itoa(uid)+"/subnet/remove", nil, "admin", true)
+	w := httptest.NewRecorder()
+	s.PostAdminUserSubnetRemove(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("Remove (no router): expected 303, got %d", w.Code)
+	}
+
+	sub, _ := subnet.Get(s.DB, uid)
+	if sub.Status != subnet.StatusPending {
+		t.Errorf("status = %q, want %q", sub.Status, subnet.StatusPending)
+	}
+}
+
+// TestPostAdminUserSubnetRemove_NoSubnetRow (v0.32.18) — if
+// the user_subnets row doesn't exist, the handler must 404
+// (NOT silently succeed — the user has nothing to remove and
+// the admin probably hit the button by mistake).
+func TestPostAdminUserSubnetRemove_NoSubnetRow(t *testing.T) {
+	s := newTestService(t)
+	uid := adminSubnetSeed(t, s.DB, "eve-no-subnet", false)
+	// Note: no subnet.Create call → no user_subnets row.
+
+	req := authedReqFor(t, "POST", "/admin/users/"+itoa(uid)+"/subnet/remove", nil, "admin", true)
+	w := httptest.NewRecorder()
+	s.PostAdminUserSubnetRemove(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Remove (no subnet row): expected 404, got %d (body: %q)", w.Code, w.Body.String())
+	}
+}

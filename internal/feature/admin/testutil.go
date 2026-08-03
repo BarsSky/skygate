@@ -66,7 +66,8 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			headscale_api_key_enc TEXT NOT NULL DEFAULT '',
 			subnet_cidr TEXT NOT NULL DEFAULT '',
 			subnet_status TEXT NOT NULL DEFAULT 'none',
-			subnet_router_node_id TEXT NOT NULL DEFAULT ''
+			subnet_router_node_id TEXT NOT NULL DEFAULT '',
+			subnet_router_hostname TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS user_subnets (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
