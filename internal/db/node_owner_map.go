@@ -97,7 +97,7 @@ func GetNodeOwner(d *sql.DB, nodeID string) (*NodeOwner, error) {
 		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
 		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
 		   FROM node_owner_map
-		  WHERE node_id = ?`, nodeID,
+		  WHERE node_id = $1`, nodeID,
 	).Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname, &n.OS, &n.DeviceType)
 	if err == sql.ErrNoRows {
 		return nil, ErrNodeOwnerNotFound
@@ -146,7 +146,7 @@ func ListNodeOwnersByUsername(d *sql.DB, username string) ([]NodeOwner, error) {
 		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
 		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
 		   FROM node_owner_map
-		  WHERE username = ?
+		  WHERE username = $1
 		  ORDER BY tag, node_id`, username,
 	)
 	if err != nil {
@@ -268,9 +268,10 @@ func UpsertNodeOwner(d dbExec, nodeID string, headscaleUserID int64, username, t
 // existing row (preserves admin intent).
 func InsertIgnoreNodeOwner(d dbExec, nodeID string, headscaleUserID int64, username, tag string, taggedByUserID int64) error {
 	_, err := d.Exec(
-		`INSERT OR IGNORE INTO node_owner_map
+		`INSERT INTO node_owner_map
 			(node_id, headscale_user_id, username, tag, tagged_by_user_id)
-			VALUES (?, ?, ?, ?, ?)`,
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT(node_id) DO NOTHING`,
 		nodeID, headscaleUserID, username, tag, taggedByUserID,
 	)
 	return err
@@ -285,9 +286,10 @@ func InsertIgnoreNodeOwner(d dbExec, nodeID string, headscaleUserID int64, usern
 // 2026-07-14: Этап 14 v10.
 func InsertIgnoreNodeOwnerWithHostname(d dbExec, nodeID string, headscaleUserID int64, username, tag, hostname string, taggedByUserID int64) error {
 	_, err := d.Exec(
-		`INSERT OR IGNORE INTO node_owner_map
+		`INSERT INTO node_owner_map
 			(node_id, headscale_user_id, username, tag, tagged_by_user_id, hostname)
-			VALUES (?, ?, ?, ?, ?, ?)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT(node_id) DO NOTHING`,
 		nodeID, headscaleUserID, username, tag, taggedByUserID, hostname,
 	)
 	return err
@@ -307,8 +309,8 @@ func InsertIgnoreNodeOwnerWithHostname(d dbExec, nodeID string, headscaleUserID 
 func UpgradeStaleNodeOwnerToPrivate(d dbExec, nodeID, newTag string, taggedByUserID int64) error {
 	_, err := d.Exec(
 		`UPDATE node_owner_map
-		    SET tag = ?, tagged_by_user_id = ?, tagged_at = strftime('%s','now')
-		  WHERE node_id = ? AND (tag = '' OR tag = 'tag:untagged')`,
+		    SET tag = $1, tagged_by_user_id = $2, tagged_at = strftime('%s','now')
+		  WHERE node_id = $3 AND (tag = '' OR tag = 'tag:untagged')`,
 		newTag, taggedByUserID, nodeID,
 	)
 	return err
@@ -356,8 +358,8 @@ func DeleteNodeOwnerByNodeTag(d dbExec, nodeID, tag string) error {
 func UpdateNodeOwnerTag(d *sql.DB, nodeID, tag string, taggedByUserID int64) error {
 	res, err := d.Exec(
 		`UPDATE node_owner_map
-		    SET tag = ?, tagged_by_user_id = ?, tagged_at = strftime('%s','now')
-		  WHERE node_id = ?`,
+		    SET tag = $1, tagged_by_user_id = $2, tagged_at = strftime('%s','now')
+		  WHERE node_id = $3`,
 		tag, taggedByUserID, nodeID,
 	)
 	if err != nil {
@@ -379,7 +381,7 @@ func UpdateNodeOwnerTag(d *sql.DB, nodeID, tag string, taggedByUserID int64) err
 // doesn't leave orphan rows that future /my/devices backfills
 // would resurrect via the temporal fallback.
 func DeleteNodeOwnersByUser(d dbExec, username string) error {
-	_, err := d.Exec(`DELETE FROM node_owner_map WHERE username = ?`, username)
+	_, err := d.Exec(`DELETE FROM node_owner_map WHERE username = $1`, username)
 	return err
 }
 
@@ -417,8 +419,8 @@ func BackfillEmptyHostnames(d *sql.DB, hostnameByNodeID map[string]string) (int,
 		}
 		res, err := d.Exec(
 			`UPDATE node_owner_map
-			    SET hostname = ?
-			  WHERE node_id = ? AND (hostname = '' OR hostname IS NULL)`,
+			    SET hostname = $1
+			  WHERE node_id = $2 AND (hostname = '' OR hostname IS NULL)`,
 			hn, nodeID,
 		)
 		if err != nil {
@@ -509,8 +511,8 @@ func SyncTagsFromHeadscale(d *sql.DB, headscaleTagByNodeID map[string]string) (i
 		}
 		res, err := d.Exec(
 			`UPDATE node_owner_map
-			    SET tag = ?
-			  WHERE node_id = ? AND tag != ?`,
+			    SET tag = $1
+			  WHERE node_id = $2 AND tag != $3`,
 			want, nodeID, want,
 		)
 		if err != nil {
@@ -565,7 +567,7 @@ func RecoverOwnerUsernameFromPreauth(d *sql.DB, headscalePreauthID string) (stri
 		`SELECT pu.username
 		   FROM preauth_keys pk
 		   JOIN portal_users pu ON pk.user_id = pu.id
-		  WHERE pk.headscale_preauth_id = ?
+		  WHERE pk.headscale_preauth_id = $1
 		  LIMIT 1`, headscalePreauthID,
 	).Scan(&username)
 	if err == sql.ErrNoRows {
@@ -622,7 +624,7 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 		// tagged_at to decide afterwards either. A cheap
 		// primary-key lookup is the cleanest fix.
 		var existed int
-		row := d.QueryRow(`SELECT COUNT(*) FROM node_owner_map WHERE node_id = ?`, n.ID)
+		row := d.QueryRow(`SELECT COUNT(*) FROM node_owner_map WHERE node_id = $1`, n.ID)
 		if serr := row.Scan(&existed); serr != nil {
 			return inserted, updated, serr
 		}
@@ -647,7 +649,7 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 		_, err := d.Exec(
 			`INSERT INTO node_owner_map
 				(node_id, hostname, headscale_user_id, username, tag, tagged_by_user_id, tagged_at)
-			VALUES (?, ?, ?, ?, ?, ?, strftime('%s','now'))
+			VALUES ($1, $2, $3, $4, $5, $6, strftime('%s','now'))
 			ON CONFLICT(node_id) DO UPDATE SET
 				tag = excluded.tag,
 				hostname = excluded.hostname,
@@ -685,7 +687,7 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 // internal/devicemeta/ for the auto-detect helpers.
 func SetDeviceMetaNodeOwner(d *sql.DB, nodeID, os, deviceType string) error {
 	_, err := d.Exec(
-		`UPDATE node_owner_map SET os = ?, device_type = ? WHERE node_id = ?`,
+		`UPDATE node_owner_map SET os = $1, device_type = $2 WHERE node_id = $3`,
 		os, deviceType, nodeID,
 	)
 	return err
@@ -701,8 +703,8 @@ func SetDeviceMetaNodeOwner(d *sql.DB, nodeID, os, deviceType string) error {
 // Returns ErrNodeOwnerNotFound when no row matches.
 func SetDeviceMetaByHostname(d *sql.DB, headscaleUserID int64, hostname, os, deviceType string) error {
 	res, err := d.Exec(
-		`UPDATE node_owner_map SET os = ?, device_type = ?
-		   WHERE headscale_user_id = ? AND hostname = ?`,
+		`UPDATE node_owner_map SET os = $1, device_type = $2
+		   WHERE headscale_user_id = $3 AND hostname = $4`,
 		os, deviceType, headscaleUserID, hostname,
 	)
 	if err != nil {
@@ -765,8 +767,8 @@ func UpdateDeviceMetaAutoDetect(d *sql.DB, nodeID, os, deviceType string) error 
 	// next /my/devices load to re-run Detect().
 	_, err := d.Exec(
 		`UPDATE node_owner_map
-		    SET os = ?, device_type = ?
-		  WHERE node_id = ?
+		    SET os = $1, device_type = $2
+		  WHERE node_id = $3
 		    AND (os = '' OR os = 'unknown')
 		    AND (device_type = '' OR device_type = 'unknown')`,
 		os, deviceType, nodeID,

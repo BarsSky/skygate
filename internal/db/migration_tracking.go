@@ -111,8 +111,9 @@ func normalizeMigrationSQL(s string) string {
 // of the (possibly new) row.
 func RecordMigrationApplied(d *sql.DB, version int, sha256Hex, sourceFile, firstSeenVersion string) error {
 	_, err := d.Exec(`
-		INSERT OR IGNORE INTO applied_migrations (version, sha256, source_file, first_seen)
+		INSERT INTO applied_migrations (version, sha256, source_file, first_seen)
 		VALUES (?, ?, ?, ?)
+		ON CONFLICT(version) DO NOTHING
 	`, version, sha256Hex, sourceFile, firstSeenVersion)
 	if err != nil {
 		return fmt.Errorf("record migration v%d: %w", version, err)

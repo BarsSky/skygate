@@ -85,7 +85,7 @@ func PeekTelegramRateLimit(d *sql.DB, key string, windowSeconds int) (int, error
 // path in the future). Cheap because the lookup index covers
 // the WHERE clause.
 func ResetTelegramRateLimit(d *sql.DB, key string) (int64, error) {
-	res, err := d.Exec(`DELETE FROM telegram_rate_limit WHERE key = ?`, key)
+	res, err := d.Exec(`DELETE FROM telegram_rate_limit WHERE key = $1`, key)
 	if err != nil {
 		return 0, err
 	}

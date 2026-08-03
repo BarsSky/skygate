@@ -182,7 +182,7 @@ func SaveIntegrations(d *sql.DB, cfg *IntegrationConfig) error {
 	for _, s := range stmts {
 		if _, err := d.Exec(
 			`INSERT INTO global_settings(key, value, updated_at)
-			 VALUES (?, ?, strftime('%s','now'))
+			 VALUES ($1, $2, strftime('%s','now'))
 			 ON CONFLICT(key) DO UPDATE SET
 			   value = excluded.value,
 			   updated_at = excluded.updated_at`,
@@ -200,7 +200,7 @@ func SaveIntegrations(d *sql.DB, cfg *IntegrationConfig) error {
 // value" — both are "use the default").
 func loadGlobalSetting(d *sql.DB, key string) string {
 	var v string
-	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, key).Scan(&v)
+	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = $1`, key).Scan(&v)
 	if err != nil {
 		return ""
 	}

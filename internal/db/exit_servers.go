@@ -140,7 +140,7 @@ func ListEnabledExitServerHostnames(d *sql.DB) ([]string, error) {
 func LookupExitServerHostname(d *sql.DB, nodeID string) (string, error) {
 	var h string
 	err := d.QueryRow(
-		`SELECT COALESCE(hostname, '') FROM exit_servers WHERE node_id = ?`,
+		`SELECT COALESCE(hostname, '') FROM exit_servers WHERE node_id = $1`,
 		nodeID,
 	).Scan(&h)
 	if err == sql.ErrNoRows {
