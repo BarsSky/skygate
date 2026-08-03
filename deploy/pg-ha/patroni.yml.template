@@ -1,0 +1,94 @@
+# Patroni config template (v0.32.21).
+#
+# This file has ${VAR} placeholders that envsubst fills from
+# .env. The result is written to patroni.yml (no placeholders).
+# The init scripts do this substitution.
+#
+# Required env vars (in .env):
+#   SKYGATE_PG_NODE_NAME  - node name in the cluster
+#   SKYGATE_PG_NODE_IP    - this node's public IP
+#   SKYGATE_ETCD_HOST     - etcd endpoint (skygate-host-2's IP)
+#   SKYGATE_PG_ADMIN_PASSWORD      - PG admin user password
+#   SKYGATE_PG_REPLICATOR_PASSWORD - PG replicator user password
+#   SKYGATE_PG_SUPERUSER_PASSWORD  - PG superuser (postgres) password
+#
+# Reference: https://patroni.readthedocs.io/en/latest/
+
+scope: skygate-pg
+namespace: /skygate/
+name: ${SKYGATE_PG_NODE_NAME}
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: ${SKYGATE_PG_NODE_IP}:8008
+
+etcd:
+  hosts: ${SKYGATE_ETCD_HOST}:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_log_hints: "on"
+        logging_collector: "on"
+        log_directory: pg_log
+        log_filename: "postgresql-%Y-%m-%d.log"
+        log_rotation_age: "1d"
+        log_rotation_size: "100MB"
+        log_min_duration_statement: 1000
+        wal_compression: "on"
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - local   all           all                          trust
+    - host    all           all       127.0.0.1/32        md5
+    - host    all           all       192.168.0.0/16      md5
+    - host    replication   replicator 192.168.0.0/16    md5
+
+  users:
+    admin:
+      password: ${SKYGATE_PG_ADMIN_PASSWORD}
+      options:
+        - createrole
+        - createdb
+    replicator:
+      password: ${SKYGATE_PG_REPLICATOR_PASSWORD}
+      options:
+        - replication
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: ${SKYGATE_PG_NODE_IP}:5432
+  data_dir: /var/lib/postgresql/data
+  bin_dir: /usr/lib/postgresql/16/bin
+  pgpass: /tmp/pgpass0
+  authentication:
+    superuser:
+      username: postgres
+      password: ${SKYGATE_PG_SUPERUSER_PASSWORD}
+    replication:
+      username: replicator
+      password: ${SKYGATE_PG_REPLICATOR_PASSWORD}
+    rewind:
+      username: postgres
+      password: ${SKYGATE_PG_SUPERUSER_PASSWORD}
+  parameters:
+    unix_socket_directories: '/var/run/postgresql'
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

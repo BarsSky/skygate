@@ -1,0 +1,56 @@
+# etcd single-node docker-compose for skygate PG HA.
+#
+# Per the operator's choice (2026-08-03), etcd is single-node,
+# on SVYATOSLAVA (not skygate-host-1). Rationale: when skygate-host-1
+# dies, the etcd on skygate-host-2 is still up, so Patroni on
+# skygate-host-2 can elect itself as new primary.
+#
+# Single-node etcd = 1/1 quorum (minimum Patroni accepts).
+# Trade-off: if skygate-host-2 dies, the etcd dies too — but
+# skygate-host-1 (already primary) doesn't need to re-elect.
+#
+# Future enhancement: 3-node etcd (etcd1 on skygate-host-1,
+# etcd2 on skygate-host-2, etcd3 on a separate small VM).
+# Tracked in docs/ha-architecture.md.
+
+version: "3.8"
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.13
+    container_name: skygate-etcd
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=skygate-etcd-skygate-host-2
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://${SKYGATE_ETCD_HOST}:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://${SKYGATE_ETCD_HOST}:2380
+      - --initial-cluster=skygate-etcd-skygate-host-2=http://${SKYGATE_ETCD_HOST}:2380
+      - --initial-cluster-token=skygate-etcd-cluster
+      - --initial-cluster-state=new
+      # Snapshot + compaction for long-running clusters.
+      - --auto-compaction-mode=periodic
+      - --auto-compaction-retention=24h
+    environment:
+      ETCD_UNSUPPORTED_ARCH: amd64
+    volumes:
+      - etcd-data:/etcd-data
+    ports:
+      - "2379:2379"  # client
+      - "2380:2380"  # peer (unused in single-node, kept for future 3-node)
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  etcd-data:
+    name: skygate-etcd-data
+
+networks:
+  default:
+    name: skygate-etcd-net

@@ -1,0 +1,66 @@
+# MinIO docker-compose for skygate PG HA.
+#
+# Self-hosted S3-compatible storage for:
+#   - wal-g WAL archive (PG streaming replication's safety net)
+#   - Litestream backup (existing v0.32.5 backup mechanism)
+#
+# Per the operator's choice (2026-08-03), MinIO is single-node,
+# on skygate-host-1. HA for the WAL archive is a future enhancement
+# (would require MinIO on skygate-host-2 with erasure coding).
+#
+# Single-node MinIO = single point of failure for the WAL
+# archive. Mitigation: nightly pg_dump + rsync to skygate-host-2
+# as the off-site backup. Recovery procedure is in
+# docs/runbooks/pg-failover.md (TODO in v0.34.0).
+
+version: "3.8"
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2024-08-29T01-40-52Z
+    container_name: skygate-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      # Read from .env (set up via init script).
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    ports:
+      # S3 API.
+      - "9000:9000"
+      # Web console.
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # mc (MinIO client) for the healthcheck + bucket init.
+  mc:
+    image: minio/mc:RELEASE.2024-08-26T15-33-02Z
+    container_name: skygate-minio-mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+        mc mb --ignore-existing local/skygate-wal-archive;
+        mc anonymous set download local/skygate-wal-archive;
+        mc mb --ignore-existing local/skygate-litestream;
+        echo 'MinIO ready: skygate-wal-archive + skygate-litestream buckets';
+        exit 0;
+      "
+    restart: "no"
+
+volumes:
+  minio-data:
+    name: skygate-minio-data
+
+networks:
+  default:
+    name: skygate-minio-net
