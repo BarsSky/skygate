@@ -1,3 +1,5 @@
+//go:build postgres
+
 // apply_pg_migrations — v0.32.24 one-shot binary that runs
 // the v0.32.24 PG migrations on the production PG.
 //

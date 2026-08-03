@@ -216,7 +216,7 @@ func LookupByCode(d *sql.DB, code string) (*Mesh, error) {
 		SELECT id, code, name, creator_user_id, status,
 		       created_at, dissolved_at
 		  FROM meshes
-		 WHERE code = ?
+		 WHERE code = $1
 	`, code)
 	var m Mesh
 	var createdUnix, dissolvedUnix int64
@@ -259,7 +259,7 @@ func JoinMesh(d *sql.DB, code string, userID int64) error {
 	_, err = d.Exec(`
 		INSERT OR IGNORE INTO mesh_members
 			(mesh_id, user_id, joined_at)
-		VALUES (?, ?, ?)
+		VALUES ($1, $2, $3)
 	`, m.ID, userID, time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("mesh: join: %w", err)
@@ -274,7 +274,7 @@ func JoinMesh(d *sql.DB, code string, userID int64) error {
 	var n int
 	if err := d.QueryRow(`
 		SELECT COUNT(*) FROM mesh_members
-		 WHERE mesh_id = ? AND user_id = ?
+		 WHERE mesh_id = $1 AND user_id = $2
 	`, m.ID, userID).Scan(&n); err != nil {
 		return err
 	}
@@ -307,7 +307,7 @@ func LeaveMesh(d *sql.DB, code string, userID int64) error {
 	}
 	res, err := d.Exec(`
 		DELETE FROM mesh_members
-		 WHERE mesh_id = ? AND user_id = ?
+		 WHERE mesh_id = $1 AND user_id = $2
 	`, m.ID, userID)
 	if err != nil {
 		return fmt.Errorf("mesh: leave: %w", err)
@@ -345,8 +345,8 @@ func DissolveMesh(d *sql.DB, code string, callerUserID int64) error {
 	_, err = d.Exec(`
 		UPDATE meshes
 		   SET status = 'dissolved',
-		       dissolved_at = ?
-		 WHERE id = ? AND status = 'active'
+		       dissolved_at = $1
+		 WHERE id = $2 AND status = 'active'
 	`, now, m.ID)
 	if err != nil {
 		return fmt.Errorf("mesh: dissolve: %w", err)
@@ -364,7 +364,7 @@ func ListMeshesForUser(d *sql.DB, userID int64) ([]*Mesh, error) {
 		       m.created_at, m.dissolved_at
 		  FROM meshes m
 		  JOIN mesh_members mm ON mm.mesh_id = m.id
-		 WHERE mm.user_id = ? AND m.status = 'active'
+		 WHERE mm.user_id = $1 AND m.status = 'active'
 		 ORDER BY m.created_at DESC
 		 LIMIT 50
 	`, userID)
@@ -400,7 +400,7 @@ func ListMembers(d *sql.DB, meshID int64) ([]Member, error) {
 		SELECT mm.mesh_id, mm.user_id, p.username, mm.joined_at
 		  FROM mesh_members mm
 		  JOIN portal_users p ON p.id = mm.user_id
-		 WHERE mm.mesh_id = ?
+		 WHERE mm.mesh_id = $1
 		 ORDER BY mm.joined_at
 	`, meshID)
 	if err != nil {

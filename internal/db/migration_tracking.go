@@ -112,7 +112,7 @@ func normalizeMigrationSQL(s string) string {
 func RecordMigrationApplied(d *sql.DB, version int, sha256Hex, sourceFile, firstSeenVersion string) error {
 	_, err := d.Exec(`
 		INSERT INTO applied_migrations (version, sha256, source_file, first_seen)
-		VALUES (?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT(version) DO NOTHING
 	`, version, sha256Hex, sourceFile, firstSeenVersion)
 	if err != nil {
@@ -127,7 +127,7 @@ func RecordMigrationApplied(d *sql.DB, version int, sha256Hex, sourceFile, first
 // is needed).
 func GetRecordedMigrationChecksum(d *sql.DB, version int) (sha256Hex, firstSeen string, err error) {
 	row := d.QueryRow(`
-		SELECT sha256, first_seen FROM applied_migrations WHERE version = ?
+		SELECT sha256, first_seen FROM applied_migrations WHERE version = $1
 	`, version)
 	if err := row.Scan(&sha256Hex, &firstSeen); err != nil {
 		if err == sql.ErrNoRows {

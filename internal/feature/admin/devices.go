@@ -52,7 +52,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	for name := range skygateUserByName {
 		var id int64
 		if err := s.DB.QueryRow(
-			`SELECT id FROM portal_users WHERE username = ?`, name,
+			`SELECT id FROM portal_users WHERE username = $1`, name,
 		).Scan(&id); err == nil {
 			skygateUserByName[name] = id
 		}

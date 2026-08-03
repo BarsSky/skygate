@@ -108,9 +108,9 @@ func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Reque
 	//    new device registers, sidecar re-approves).
 	if _, err := s.DB.Exec(
 		`UPDATE user_subnets
-		   SET status = ?, router_node_id = '', router_hostname = '',
+		   SET status = $1, router_node_id = '', router_hostname = '',
 		       updated_at = strftime('%s','now')
-		 WHERE user_id = ?`,
+		 WHERE user_id = $2`,
 		subnet.StatusPending, id,
 	); err != nil {
 		http.Error(w, fmt.Sprintf("update user_subnets: %v", err), 500)
@@ -124,9 +124,9 @@ func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Reque
 	//    constraint contract.
 	if _, err := s.DB.Exec(
 		`UPDATE portal_users
-		   SET subnet_status = ?, subnet_cidr = '',
+		   SET subnet_status = $1, subnet_cidr = '',
 		       subnet_router_node_id = '', subnet_router_hostname = ''
-		 WHERE id = ?`,
+		 WHERE id = $2`,
 		subnet.StatusPending, id,
 	); err != nil {
 		http.Error(w, fmt.Sprintf("update portal_users: %v", err), 500)

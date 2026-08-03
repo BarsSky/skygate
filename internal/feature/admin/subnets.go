@@ -40,26 +40,26 @@ func (s *Service) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 	rows := make([]overviewRow, 0, len(all))
 	for _, sub := range all {
 		row := overviewRow{Subnet: sub}
-		_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, sub.UserID).Scan(&row.Username)
+		_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, sub.UserID).Scan(&row.Username)
 		if row.Username != "" {
 			row.DNSName = subnet.ComputeMagicDNSNames(row.Username).Sidecar
 		}
 		_ = s.DB.QueryRow(
-			`SELECT COUNT(*) FROM node_owner_map WHERE user_id = ? AND tag = 'tag:private'`,
+			`SELECT COUNT(*) FROM node_owner_map WHERE user_id = $1 AND tag = 'tag:private'`,
 			sub.UserID,
 		).Scan(&row.DeviceCount)
 		_ = s.DB.QueryRow(`
 			SELECT COUNT(DISTINCT mm.mesh_id)
 			  FROM mesh_members mm
 			  JOIN meshes m ON m.id = mm.mesh_id
-			 WHERE mm.user_id = ? AND m.status = 'active'`, sub.UserID,
+			 WHERE mm.user_id = $1 AND m.status = 'active'`, sub.UserID,
 		).Scan(&row.MeshCount)
 		_ = s.DB.QueryRow(
-			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = ?`,
+			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = $1`,
 			sub.UserID,
 		).Scan(&row.SharesGranted)
 		_ = s.DB.QueryRow(
-			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantee_user_id = ?`,
+			`SELECT COUNT(*) FROM user_subnet_shares WHERE grantee_user_id = $1`,
 			sub.UserID,
 		).Scan(&row.SharesReceived)
 		rows = append(rows, row)

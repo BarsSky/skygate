@@ -81,7 +81,7 @@ func IsValidTheme(t string) bool {
 
 func GetUserTheme(d *sql.DB, userID int64) string {
 	var theme string
-	err := d.QueryRow("SELECT COALESCE(theme, 'dark') FROM portal_users WHERE id = ?", userID).Scan(&theme)
+	err := d.QueryRow("SELECT COALESCE(theme, 'dark') FROM portal_users WHERE id = $1", userID).Scan(&theme)
 	if err != nil || !IsValidTheme(theme) {
 		return ThemeLinear
 	}
@@ -89,7 +89,7 @@ func GetUserTheme(d *sql.DB, userID int64) string {
 }
 
 func SetUserTheme(d *sql.DB, userID int64, theme string) error {
-	_, err := d.Exec("UPDATE portal_users SET theme = ? WHERE id = ?", theme, userID)
+	_, err := d.Exec("UPDATE portal_users SET theme = $1 WHERE id = $2", theme, userID)
 	return err
 }
 
