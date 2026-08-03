@@ -119,6 +119,46 @@ Default admin: `admin` + the password you set in `SKYGATE_ADMIN_PASS`.
 For the full cross-platform install (Windows, restore from backup, DERP
 relay, headplane sidecar) see [docs/deploy.md](docs/deploy.md).
 
+## Tailscale: OFF by default (v0.32.15+)
+
+The skygate container can optionally run `tailscaled` and join the
+tailnet (lets you reach `https://skygate.example.com` from a Tailscale
+client without opening the VM's port 443 to the internet). This was
+the default in v0.29.x but is now **disabled by default** because
+of two incidents in v0.32.8 / v0.32.11:
+
+- `secrets/ts_authkey` was a 0-byte file (Tailscale preauth never
+  provisioned). `tailscale up --authkey=` waits for stdin
+  forever — entrypoint hangs, container never reports healthy.
+- The `TS_AUTHKEY_FILE` env var in `docker-compose.yml` is a
+  literal string that `.env` overrides do NOT replace.
+
+If your VM is already behind Nginx Proxy Manager (NPM) and you
+have a public DNS record (e.g. `skygate.example.com`), **you don't
+need the in-container Tailscale at all** — the recommended setup
+is `NPM → 127.0.0.1:8080`, no Tailscale in the skygate container.
+Tailscale is only useful for tailnet-only deployments where you
+want zero public attack surface.
+
+**Re-enable Tailscale (3 manual steps)**:
+
+1. Provision a real preauth key:
+   ```bash
+   docker exec headscale headscale preauthkeys create \
+     --user admin --reusable --expiration 24h
+   ```
+2. Write it to `secrets/ts_authkey` on the host
+   (the file is bind-mounted into the container at
+   `/run/secrets/ts_authkey`).
+3. In `docker-compose.yml`, **un-gate** the `secrets:` block and
+   set `SKYGATE_TS_AUTHKEY_FILE=/run/secrets/ts_authkey` in the
+   skygate `environment:`. Then `docker compose up -d --force-
+   recreate skygate`.
+
+See [AGENTS.md](AGENTS.md) "Common gotchas" #9 for the compose
+restart caveat (always use `up -d --force-recreate`, not
+`restart`).
+
 ## Using a remote / alternative headscale server
 
 Skygate talks to headscale over HTTP. Point `HEADSCALE_URL` at **any**

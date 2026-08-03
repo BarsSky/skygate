@@ -1,5 +1,143 @@
 # Skygate release notes
 
+## v0.32.19 — Documentation wave 2 + migration integrity + HA design proposal
+
+**Date:** 2026-08-03
+**Tag:** _pending_
+**Scope:** docs + 1 new Go feature (migration integrity
+tracking, soft mode). No API change, no schema change at the
+user-data level (one new system table `applied_migrations`
+for migration bookkeeping).
+
+### What's in this release
+
+1. **Migration integrity tracking (soft mode, v0.32.19)**
+   - New `internal/db/migration_tracking.go` — SHA-256
+     checksum helpers for migration bodies. Detects when an
+     OLD migration's SQL body is modified after being applied
+     (a latent bug class that the previous idempotent-migration
+     design silently absorbed).
+   - New `internal/db/migrations_v0.49.go` — creates the
+     `applied_migrations(version, sha256, source_file,
+     applied_at, first_seen)` system table.
+   - `internal/db/db.go` — calls `ensureMigrationTrackingTable`
+     before running other migrations. Recording of each
+     migration's checksum is the v0.32.20 follow-up (requires
+     a refactor of `db.go` to extract migration SQL bodies
+     into a map for SHA computation).
+   - Soft mode: a mismatch produces a `WARNING` log line but
+     does NOT prevent skygate from starting. The mode flips to
+     HARD in v0.32.20 after one release cycle of observation.
+     Opt-in to HARD earlier via `SKYGATE_MIGRATION_INTEGRITY=hard`.
+   - 8 unit tests in
+     `internal/db/migration_tracking_test.go` covering:
+     deterministic checksum, semantic changes detected,
+     tracking table idempotent, record + get roundtrip,
+     first-run / match / soft-mismatch / hard-mismatch /
+     audit listing / mode introspection.
+   - B36 catalog check in `verify_pre_deploy.sh` pins the
+     contract (helpers exist, V049 registered, ensure
+     function called, test file present).
+
+2. **Wave 2 documentation cleanup**
+   - `AGENTS.md` "Common gotchas" extended with 6 new entries
+     (10-15): CASCADE-LOCK on SQLite WAL, distroless
+     healthcheck pattern, NPM-blocks-iptables, exit-node
+     online detection (trust headscale, not `last_seen`),
+     per-user subnet phantom-route caveat, subnet-router
+     Remove handler lifecycle.
+   - `docs/BACKLOG.md` updated — 6 completed entries added
+     (v0.32.13, v0.32.14, v0.32.15, v0.32.16, v0.32.17,
+     v0.32.18). Last-updated stamp → 2026-08-03.
+   - `docs/subnet-router.md` — new "Removing a subnet-router
+     (admin-only, v0.32.18+)" section with the full inverse
+     flow of the v0.16.7 Provision, idempotency notes, what
+     NOT to use Remove for, and verify-after-Remove SQL.
+   - `README.md` — new "Tailscale: OFF by default (v0.32.15+)"
+     section documenting the 3-step manual re-enable procedure
+     and the v0.32.8 / v0.32.11 incidents that motivated the
+     default-OFF flip.
+   - `docs/plans/pg-migration-handling.md` — updated
+     "Implementation status" with the v0.32.0+ state
+     (driver + 27 PG migrations + 4 verification tests on
+     main, scope of the runtime `?` → `$N` rewrite).
+
+3. **PG cutover runbook (the actual v0.33.0 plan)**
+   - New `docs/v0.33.0-pg-cutover-runbook.md` — the 4-step
+     operator runbook for the live cutover (pre-cutover verify,
+     runtime rewrite as a separate PR, 15-min maintenance
+     window, post-cutover verify). Includes the known issues
+     (strftime, INSERT OR REPLACE, RETURNING, PRAGMA), the
+     rollback procedure, and the operator's decision points.
+   - Blocked on the operator provisioning a PG-staging VM.
+
+4. **HA active-router design proposal (the operator's
+   2026-08-03 ask)**
+   - New `docs/ha-active-router.md` — 3 architectures
+     (A: PG active-passive / B: single-writer role / C:
+     multi-writer eventual consistency) with pros/cons
+     comparison, RTO/RPO, complexity, and a clear
+     recommendation: **Architecture B** for the current
+     deployment (1-2 day implementation, no PG required,
+     RTO 5-15 min via manual role flip + DNS swap).
+   - `docs/ha-architecture.md` — added "Tier 0.5" entry to
+     the tier table, with the rationale for choosing it over
+     Tier 1 today and the upgrade path to Tier 1 once the
+     PG cutover ships.
+   - Implementation outline for Architecture B included
+     (env var, route gating, Litestream config, manual
+     failover drill, optional auto-promotion as v0.34.0
+     follow-up).
+   - 4 open questions for the operator (RTO acceptance,
+     auto-promotion vs manual, budget, second-VM identity).
+
+### Files
+
+```
+AGENTS.md                                          | +80
+README.md                                          | +40
+docs/BACKLOG.md                                    | +48
+docs/ha-architecture.md                            | +32
+docs/ha-active-router.md                           | NEW (15.6 KB)
+docs/plans/pg-migration-handling.md                | +124/-32
+docs/subnet-router.md                              | +77
+docs/v0.33.0-pg-cutover-runbook.md                 | NEW (10.9 KB)
+internal/db/db.go                                  | +13
+internal/db/migration_tracking.go                  | NEW (8.3 KB)
+internal/db/migration_tracking_test.go             | NEW (7.2 KB)
+internal/db/migrations_v0.49.go                    | NEW (1.7 KB)
+scripts/verify_pre_deploy.sh                       | +27
+```
+
+### Verification
+
+- `go build ./...` — clean
+- `go test -count=1 -short ./internal/db/` — 9.4s PASS
+  (includes the 8 new migration_tracking tests)
+- `bash scripts/verify_pre_deploy.sh` — 35 PASS + 1 SKIP
+  (B8 = smoke, runs on VM only)
+- B36 (new): migration integrity helpers + V049 + tests
+
+### Loose ends (deferred)
+
+- **Recording of old migrations (V020-V048)**: v0.32.20
+  follow-up. Requires extracting migration SQL bodies from
+  the per-version `migrateV0NN` functions into a `map[int]string`
+  in `internal/db/migration_bodies.go` so `migrate()` can
+  call `VerifyMigrationChecksum` per migration.
+- **HARD mode default**: v0.32.20 after one release cycle of
+  soft-mode observation.
+- **HA Architecture B implementation**: blocked on operator
+  feedback to the 4 open questions in
+  `docs/ha-active-router.md` § "Open questions for the
+  operator".
+- **Live VM still on v0.32.15 build label**: v0.32.16/17/18/19
+  are committed + pushed but not redeployed. Manual
+  `docker compose up -d --force-recreate skygate` on the VM
+  to pick up all 5 releases.
+
+---
+
 ## v0.32.18 — Subnet-router Remove handler (full lifecycle)
 
 **Date:** 2026-08-03

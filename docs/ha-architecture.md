@@ -15,11 +15,43 @@ link to a stable target.
 | Tier | Topology | RPO | RTO | Cost | Doc |
 |---|---|---|---|---|---|
 | **0** | Single VM, daily backups | 1h | 15-30 min | $0 | [`disaster-recovery.md`](disaster-recovery.md) |
+| **0.5** | Multi-instance, single-writer active-router, Litestream | 0 | 5-15 min | ~$0.10/mo (S3) | [`ha-active-router.md`](ha-active-router.md) (Architecture B) |
 | **1** | Active-passive, PG streaming replication, Patroni auto-failover | 0 | <1 min | ~$0.50/mo (S3) | this file + `v0.27.0-postgres-ha.md` |
 
 Anything beyond Tier 1 (Tier 2: active-active, multi-region,
 CDN in front) is out of scope for the current operator
 deployment (household tailnet, ~4-20 users).
+
+### Tier 0.5 — the lightweight active-router (Architecture B)
+
+**What it adds on top of Tier 0**: a second skygate on a
+second VM, with explicit `SKYGATE_HA_ROLE` config. The
+second instance is read-only (serves GETs from a
+Litestream-replicated SQLite copy), the first instance is
+the writer. On primary VM failure, the operator flips the
+env var on the second VM and updates DNS — total RTO is
+5-15 min (limited by DNS TTL).
+
+**Why not just Tier 1?** The PG-based Tier 1 is the right
+choice for compliance / scale-out / RTO < 1 min, but it
+requires the v0.33.0 PG cutover (a separate 2-3 week
+project) plus a 2nd VM + S3 + etcd. Tier 0.5 works on the
+**current SQLite + Litestream** stack and ships in 1-2 days.
+
+**Why not active-active (Tier 2)?** The headscale API is
+not designed for concurrent writers from multiple skygate
+clients. The shared work-table pattern (Architecture C in
+[`ha-active-router.md`](ha-active-router.md)) adds
+operational complexity without a practical benefit for a
+household tailnet (1-4 concurrent users). The active-router
+semantics (one writer at a time) is the right primitive for
+this deployment.
+
+**Recommended for this deployment today**. The PG cutover
+(v0.33.0) is still on the roadmap — when it ships, the
+`SKYGATE_HA_ROLE` env var can be re-purposed as
+"this VM is the PG primary" and the upgrade to Tier 1 is
+mostly the same code.
 
 ---
 

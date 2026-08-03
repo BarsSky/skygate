@@ -356,5 +356,18 @@ func migrate(d *sql.DB) error {
 	if err := migrateV048(d); err != nil {
 		return fmt.Errorf("migrate v0.48: %w", err)
 	}
+	// 2026-08-03: v0.32.19 — migration integrity tracking.
+	// Creates the applied_migrations table. See
+	// migrations_v0.49.go for the rationale + soft/hard
+	// mode semantics. Recording of older migrations
+	// (V020-V048) is a v0.32.20 follow-up (requires
+	// refactoring db.go to extract migration SQL bodies
+	// into a map for sha256 computation).
+	if err := ensureMigrationTrackingTable(d); err != nil {
+		return fmt.Errorf("ensure migration tracking: %w", err)
+	}
+	if err := migrateV049(d); err != nil {
+		return fmt.Errorf("migrate v0.49: %w", err)
+	}
 	return nil
 }

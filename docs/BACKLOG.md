@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-07-30
+**Last updated**: 2026-08-03
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -435,6 +435,52 @@ at the bottom of this file with the commit hash.
 
 ## Completed (moved out of backlog)
 
+- **2026-08-03**: v0.32.18 — Subnet-router Remove handler
+  (`POST /admin/users/{id}/subnet/remove`). Full lifecycle
+  inverse of the v0.16.7 Provision flow. Idempotent, headscale
+  delete failure tolerated (DB is source of truth), ACL NOT
+  re-applied. 3 new tests + 9 i18n keys × 2 langs. B35 regression
+  guard. Commit `3817e44`.
+- **2026-08-03**: v0.32.17 — Exit-node monitor online detection
+  bug fix. Was overriding `n.Online=true` to false on stale
+  `last_seen`. Now trusts headscale's `n.Online` as primary
+  signal; `last_seen` only as forgiving fallback when headscale
+  says offline. Plus device_rules dedup: 365 duplicate rows in
+  prod DB removed (was inflating `computeSyncStatus` mismatch).
+  B34 regression guard. Commit `0b05a89`.
+- **2026-08-03**: v0.32.16 — Headplane distroless healthcheck
+  fix. `ghcr.io/tale/headplane:0.6.3` has no shell/wget/curl.
+  `test: wget` healthcheck always failed. Switched to
+  `/nodejs/bin/node -e "require('http').get(...)"` with
+  `${HEADPLANE_SERVER__PORT}`. B33 regression guard. Commit
+  `4e123f4`.
+- **2026-08-03**: v0.32.15 — Tailscale OFF by default. v0.32.8's
+  hung-entrypoint bug (empty `secrets/ts_authkey` file → `tailscale
+  up --authkey=` waits for stdin forever) and v0.32.11's
+  bind-mount shadowing bug were fixed in one go by gating
+  tailscaled on `SKYGATE_TS_AUTHKEY_FILE` non-empty AND removing
+  the literal `TS_AUTHKEY_FILE` env var from compose. The
+  `secrets:` mount is also gated to not appear in compose unless
+  the file is non-empty. Re-enabling Tailscale requires 3 manual
+  steps (provision preauth, write file, un-gate env+mount).
+  Commit `0f03c3a`.
+- **2026-08-03**: v0.32.14 — CASCADE-LOCK fix. `SetMaxOpenConns(1)`
+  + `synchronous=FULL` was causing /admin/exit-nodes to hang under
+  concurrent load. Changed to `MaxOpenConns(15)`, `MaxIdleConns(5)`,
+  `synchronous=NORMAL`, `busy_timeout=2s`. The original v0.32.4
+  corruption was caused by disk-full, not by missing FULL sync;
+  the FULL setting was a red herring that also killed throughput.
+  The v0.32.8/11 background-job shutdowns and the v0.32.13
+  `goroutine+select+2s` timeouts are the layering on top of this
+  root fix. Commit `0705a34`.
+- **2026-08-03**: v0.32.13 — Exit-nodes 504 timeout fix
+  (5 layered bugs). B28 env-var-gates-goroutine pattern for
+  exit-node-monitor. B29 ListAllNodes 2s timeout. B30
+  ensureExitServers 2s timeout. v0.32.13 wrapped
+  `db.ListExitServers` in 2s timeout. B31 cascade-lock
+  (the v0.32.14 fix above). B32 hung-entrypoint
+  (the v0.32.15 fix above). Commits `3d066ba`, `a91fdd7`,
+  `10be5b9`, `6514e65`, `a5fffb2`.
 - **2026-07-30**: v0.32.2 — ACL perf + route correctness tests.
   6 functional tests + 4 benchmarks in `internal/acl/perf_test.go`.
   Build-time B19 + runtime R28 added to the verify catalog.

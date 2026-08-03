@@ -585,6 +585,83 @@ policy).
 
 ---
 
+## Removing a subnet-router (admin-only, v0.32.18+)
+
+The full subnet-router lifecycle is now:
+
+```
+Provision (v0.16.7) → user runs setup.sh → sidecar auto-approves
+   → router_active    ←── idle / routes flow through tailnet
+Remove (v0.32.18) ← clean teardown when the router goes away
+```
+
+`POST /admin/users/{id}/subnet/remove` is the **inverse** of the
+provision flow. It's the right tool when:
+
+- The router host died / was decommissioned and you want a clean
+  slate (vs. the row sitting in `disabled` forever).
+- The CIDR was wrong (e.g. the user has no real `10.0.<uid>.x`
+  devices — the route is "phantom" and just drops packets).
+- The user wants to switch to a different router host.
+
+**What the Remove handler does (atomically):**
+
+1. Reads `user_subnets.router_node_id` (the headscale node ID
+   of the `skygate-subnet-<user>` tailscaled node).
+2. Calls `headscale.Client.DeleteNode(nodeID)`. **Failure is
+   logged, not fatal** — the DB cleanup below is the source
+   of truth, and an orphaned headscale node can be cleaned up
+   manually later.
+3. `UPDATE user_subnets SET status='pending', router_node_id='',
+   router_hostname=''`
+4. `UPDATE portal_users SET subnet_status='pending', subnet_cidr='',
+   subnet_router_node_id='', subnet_router_hostname=''`
+5. Writes an `audit_log` row with
+   `action='subnet_router_removed'` and the deleted node id.
+6. Redirects to `/admin/users/{id}/subnet?flash=removed` (the
+   success banner uses the same `?flash=<key>` pattern as the
+   other admin subnet actions).
+
+**Idempotent**: clicking Remove twice is safe. No
+`user_subnets` row → 404 with a clear error.
+
+**ACL is NOT re-applied**: the per-user grant
+`h-user-<user>-subnet → 10.0.<uid>.0/24` is always present
+in the policy regardless of router status. Re-applying would
+add an `acl_snapshots` row with no diff.
+
+**When NOT to use Remove**:
+
+- The user just wants to pause routing without losing the
+  preauth / setup progress → use `POST /admin/users/{id}/subnet/disable`
+  instead (preserves the row, sets `status='disabled'`).
+- The user is migrating from one router host to another of
+  the same type (same CIDR) → don't Remove, just issue a new
+  preauth. The new `skygate-subnet-<user>` node will
+  register, the old one will be GC'd by the sidecar's
+  `syncOnce` (old nodes with the same hostname get a
+  `headscale nodes delete` call).
+
+**Verify after Remove**:
+
+```bash
+# 1. headscale node is gone
+docker exec headscale headscale nodes list -o json | \
+  python3 -c "import sys,json; print([n['id'] for n in json.load(sys.stdin) if 'skygate-subnet-<user>' in n.get('givenName','')])"
+# Expected: []
+
+# 2. user_subnets row is back to pending
+sqlite3 /var/lib/docker/volumes/skygate-data/_data/skygate.db \
+  "SELECT id, status, router_node_id, router_hostname FROM user_subnets WHERE user_id=<uid>;"
+# Expected: id | pending | |
+
+# 3. audit log
+sqlite3 /var/lib/docker/volumes/skygate-data/_data/skygate.db \
+  "SELECT id, created_at, username, action, substr(detail,1,80) FROM audit_log WHERE action='subnet_router_removed' ORDER BY id DESC LIMIT 5;"
+```
+
+---
+
 ## See also
 
 - [`docs/v0.16.0-open-questions.md`](v0.16.0-open-questions.md)

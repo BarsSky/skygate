@@ -884,3 +884,30 @@ run_check "B35" "POST /admin/users/{id}/subnet/remove wired to adminSvc.PostAdmi
     grep -qE \"subnet/remove[^a-z]\" cmd/skygate/main.go &&
     grep -qF \"adminSvc.PostAdminUserSubnetRemove\" cmd/skygate/main.go
   '"
+
+
+# ─── B36 (v0.32.19) — migration integrity tracking (checksum helpers + V049 + tests) ───
+# Background: skygate's migrations are idempotent SQL functions
+# (migrateV0NN). If a developer changes the body of an OLD
+# migration (typo fix, column type change), the change is silently
+# absorbed — the DB has the pre-fix schema, the new code never
+# re-runs, no signal. v0.32.19 adds an `applied_migrations` table
+# + SHA-256 helpers so the mismatch is detectable.
+#
+# B36 pins 3 contracts:
+# 1. The tracking helpers exist (ComputeMigrationChecksum,
+#    VerifyMigrationChecksum, RecordMigrationApplied).
+# 2. The V049 migration that creates the table is registered
+#    in db.go.
+# 3. Unit tests cover the helpers (soft + hard mode mismatch,
+#    first-run, idempotent recording).
+run_check "B36" "migration integrity: applied_migrations table + checksum helpers + V049 registered (v0.32.19)" \
+  "bash -c '
+    grep -qF \"func ComputeMigrationChecksum\" internal/db/migration_tracking.go &&
+    grep -qF \"func VerifyMigrationChecksum\" internal/db/migration_tracking.go &&
+    grep -qF \"func RecordMigrationApplied\" internal/db/migration_tracking.go &&
+    grep -qF \"applied_migrations\" internal/db/migrations_v0.49.go &&
+    grep -qF \"migrateV049\" internal/db/db.go &&
+    grep -qF \"ensureMigrationTrackingTable\" internal/db/db.go &&
+    grep -qF \"TestVerifyMigrationChecksum_Mismatch_HardMode\" internal/db/migration_tracking_test.go
+  '"

@@ -2872,6 +2872,86 @@ build step in the container — `entrypoint.sh` does `go build -o /app/skygate
    --no-deps skygate`. After a code change, the version in the
    `/version` / web footer stays on the old commit until you do this.
    (Applies to the production VM at `192.0.2.1`.)
+10. **CASCADE-LOCK on SQLite WAL** (v0.32.14, the exit-nodes 504 fix):
+    `db.SetMaxOpenConns(1)` + `synchronous=FULL` is catastrophic under
+    concurrent load. Single conn = every concurrent request waits the
+    full `busy_timeout` (2-5s) for the writer to commit. With WAL +
+    NORMAL sync, you get the same durability guarantee (WAL file +
+    checkpoint) at 10-30x the throughput. Defaults in v0.32.5+:
+    `MaxOpenConns(15)`, `MaxIdleConns(5)`, `synchronous=NORMAL`,
+    `busy_timeout=2s`, `journal_mode=WAL`. The v0.32.4 corruption was
+    caused by **disk-full** (R31 catches it), not by missing FULL
+    sync. Never re-introduce `MaxOpenConns(1)` — it breaks
+    `/admin/exit-nodes` and `/admin/users` under any real load.
+11. **Distroless healthcheck pattern** (v0.32.16, the headplane fix):
+    Distroless images (ghcr.io/tale/headplane:0.6.3, anything
+    `cgr.dev/chainguard/*` or `gcr.io/distroless/*`) have NO shell,
+    no `wget`/`curl`, no `/bin` utilities. A `healthcheck: test: wget
+    http://127.0.0.1:PORT/healthz` fails with "executable file not
+    found". The fix: use the runtime binary at a non-PATH absolute
+    path with `-e` / `-c` inline. For Node: `["CMD", "/nodejs/bin/node",
+    "-e", "require('http').get('http://127.0.0.1:PORT/healthz', r =>
+    process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () =>
+    process.exit(1))"]`. For Python: `["CMD", "/usr/local/bin/python",
+    "-c", "import urllib.request,sys; sys.exit(0 if
+    urllib.request.urlopen('http://127.0.0.1:PORT/healthz').status ==
+    200 else 1)"]`. **Use `127.0.0.1`, not `localhost`** — IPv6 may
+    resolve `localhost` to `[::1]` and the service binds `0.0.0.0`,
+    not `::`. **Always use `${SERVICE_PORT}` env var in the URL** —
+    hardcoding 5000 breaks when the operator changes the env.
+12. **NPM (Nginx Proxy Manager) blocks iptables NAT** (v0.32.17, the
+    synya.example.com investigation): if traffic routes through NPM
+    (the common case for `skygate.example.com`, `synya.example.com`,
+    etc. on the operator's VM), NPM terminates the TCP connection
+    at its own port (80/443) and proxies to the backend. Adding
+    VM-level iptables DNAT/SNAT rules for the same ports is **dead
+    code** — packets never reach the iptables chains. Diagnostic:
+    `tail -f /data/logs/fallback_access_log.log` in the NPM container
+    shows the actual proxy hop. If you see `upstream timed out (110:
+    Connection timed out)`, the issue is the skygate app
+    (slow/hung), not the network. If you see `connect() failed (111:
+    Connection refused)`, the skygate process is dead. If you see
+    `SSL_do_handshake() failed (wrong version number)`, NPM is
+    talking HTTPS to an HTTP backend (scheme mismatch in NPM's
+    proxy host config). Never assume iptables will fix routing
+    problems on this VM without first checking if NPM is in the path.
+13. **Exit-node online detection: trust headscale, not `last_seen`**
+    (v0.32.17, the /admin/exit-nodes "1/3 healthy" fix): the
+    monitor in `internal/monitoring/exit_node_monitor.go` was
+    overriding `n.Online=true` to `false` whenever `last_seen` was
+    older than `OfflineAfter`. Idle VPS exit-nodes (no peer traffic
+    for hours) have stale `last_seen` but headscale still considers
+    them online. Correct rule: trust headscale's `n.Online` as
+    primary signal. `OfflineAfter` is only consulted when headscale
+    says offline (forgiving fallback for transient headscale-side
+    booleans). `SKYGATE_EXIT_NODE_OFFLINE_AFTER=10m` is the v0.32.17
+    default; setting it to 0/empty disables the fallback entirely.
+14. **Per-user subnet requires a REAL subnet-router on a REAL LAN**
+    (v0.32.17, the 10.0.1.0/24 phantom route fix): `10.0.<uid>.0/24`
+    is a **logical namespace** in headscale's ACL — it's not magic.
+    For a user's `10.0.<uid>.0/24` to actually deliver packets to
+    devices, a tailscaled node must (a) run on a network that
+    physically has `10.0.<uid>.x` devices, (b) advertise the route
+    to headscale, (c) have it auto-approved by the sidecar
+    (`tag:subnet-router`), and (d) have `ip_forward=1`. The route
+    is "phantom" if the subnet-router is on a network like
+    `192.168.13.0/24` (the operator's VM LAN) — headscale accepts
+    the route, other clients install it in their routing table, but
+    the kernel at the subnet-router drops the packet because there's
+    no actual `10.0.<uid>.x` device behind it. The
+    `POST /admin/users/{id}/subnet/remove` handler (v0.32.18)
+    cleans up phantom routers; use it instead of just `disable`-ing.
+15. **Subnet-router Remove handler is idempotent** (v0.32.18): the
+    full lifecycle is `provision` (v0.16.7) → user runs
+    `setup.sh` → sidecar auto-approves → `router_active`. The
+    inverse is `POST /admin/users/{id}/subnet/remove` (admin
+    only). It (1) reads `user_subnets.router_node_id`, (2) calls
+    `headscale.Client.DeleteNode(nodeID)` (failure logged, doesn't
+    abort), (3) clears the `user_subnets` and `portal_users`
+    denorm columns, (4) writes an audit row. ACL is NOT re-applied
+    because `h-user-<user>-subnet` is always in the per-user grant
+    regardless of router status. Clicking Remove twice is safe
+    (no `user_subnets` row → 404).
 
 ---
 
