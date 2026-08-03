@@ -47,11 +47,30 @@ services:
       - .env
     environment:
       - SKYGATE_DB=/data/skygate.db
-      # Tailscale config. All three are optional; if TS_AUTHKEY_FILE
-      # is unset the entrypoint skips tailscaled entirely.
-      - TS_AUTHKEY_FILE=/run/secrets/ts_authkey
-      - TS_LOGIN_SERVER=https://head.example.com
-      - TS_HOSTNAME=skygate-host-1
+      # 2026-08-03: v0.32.15 — Tailscale is OPTIONAL and
+      # disabled by default. To re-enable: set
+      # TS_AUTHKEY_FILE=/run/secrets/ts_authkey + add the
+      # secrets: mount back in. Pre-v0.32.15 the entrypoint
+      # would HANG indefinitely on a 0-byte authkey file
+      # (secrets/ts_authkey was committed empty in 2021 and
+      # never updated). The hung entrypoint kept the
+      # container in "Starting" state, port 8080 never
+      # bound, /healthz 000 forever, no log of the hang
+      # (entrypoint was buffering stdout to TTY). The fix:
+      # omit the env var + omit the secret mount. The
+      # entrypoint's existing `[ -n "$TS_AUTHKEY_FILE" ]
+      # && [ -f ... ]` check now correctly short-circuits
+      # to "Tailscale skipped (non-RF mode)" and the runtime
+      # build proceeds to exec /app/skygate immediately.
+      # If the operator later wants Tailscale back, they
+      # need to:
+      #   1. Provision a real authkey (e.g. via headscale
+      #      `headscale preauthkeys create`)
+      #   2. Write it to secrets/ts_authkey on the host
+      #   3. Re-add the env var + secrets: mount here
+      - SKYGATE_TS_AUTHKEY_FILE=
+      - SKYGATE_TS_LOGIN_SERVER=
+      - SKYGATE_TS_HOSTNAME=
       # 2026-07-27: v0.29.0 — pin the docker compose project name
       # so the auto-updater (which runs `docker compose` from inside
       # the container, where the bind-mount of the source dir is

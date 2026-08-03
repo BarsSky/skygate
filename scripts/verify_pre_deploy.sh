@@ -715,6 +715,54 @@ run_check "B31" "DB connection pool: 15 conns, NORMAL sync, 2s busy (v0.32.14)" 
     grep -qF \"busy_timeout=2000\" internal/db/db.go
   '"
 
+# ─── B32 (v0.32.15) — Tailscale disabled by default in compose (no hung entrypoint) ───
+# Background: 2026-08-03 the live VM was hung on entrypoint
+# because the docker-compose.yml still mounted
+# secrets/ts_authkey (a 0-byte file committed in 2021
+# and never updated). The entrypoint's
+#   if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
+#       AUTHKEY=$(cat "$TS_AUTHKEY_FILE")
+#       tailscale up --authkey="$AUTHKEY" --accept-routes ...
+# check passed (file exists, even if empty), so
+# `tailscale up --authkey=` (empty) ran. Tailscale with
+# an empty authkey hangs forever waiting for interactive
+# input, the entrypoint never proceeded, port 8080
+# never bound, /healthz 000 forever. The hung entrypoint
+# was discovered the hard way on 2026-08-03 when the
+# docker daemon got restarted and a fresh skygate
+# container couldn't come back up.
+#
+# The fix (v0.32.15): in docker-compose.yml, replace
+# the literal `TS_AUTHKEY_FILE=/run/secrets/ts_authkey`
+# env var with `SKYGATE_TS_AUTHKEY_FILE=` (empty, plus
+# the LOGIN_SERVER and HOSTNAME siblings). The
+# `SKYGATE_` prefix is intentional — the entrypoint
+# already checks `${SKYGATE_TS_AUTHKEY_FILE:-...}` to
+# avoid clobbering the operator's own Tailscale env on
+# the host. With the prefix, the entrypoint's
+# `TS_AUTHKEY_FILE` resolves to empty (not set in the
+# container's environment), the `[ -n "$TS_AUTHKEY_FILE" ]`
+# check is false, Tailscale is skipped, the runtime
+# build proceeds to `exec /app/skygate`.
+#
+# B32 pins the contract:
+#   (a) docker-compose.yml does NOT have a line that
+#       mounts a ts_authkey secret (no `secrets:` block
+#       for the skygate service that references ts_authkey).
+#   (b) docker-compose.yml has `SKYGATE_TS_AUTHKEY_FILE=`
+#       (empty, SKYGATE_-prefixed) as the env var.
+#   (c) docker-compose.yml has `SKYGATE_TS_LOGIN_SERVER=`
+#       and `SKYGATE_TS_HOSTNAME=` (also empty).
+#   (d) The pre-fix shape (literal `TS_AUTHKEY_FILE=...`
+#       in compose env) is rejected.
+run_check "B32" "Tailscale disabled by default in compose (v0.32.15)" \
+  "bash -c '
+    ! grep -qE \"^[[:space:]]+-[[:space:]]+TS_AUTHKEY_FILE=\" docker-compose.yml &&
+    grep -qE \"^[[:space:]]+-[[:space:]]+SKYGATE_TS_AUTHKEY_FILE=\" docker-compose.yml &&
+    grep -qE \"^[[:space:]]+-[[:space:]]+SKYGATE_TS_LOGIN_SERVER=\" docker-compose.yml &&
+    grep -qE \"^[[:space:]]+-[[:space:]]+SKYGATE_TS_HOSTNAME=\" docker-compose.yml
+  '"
+
 
 # ─── B28 (v0.32.13) — domain auto-updater gated on AutoUpdateEnabled ───
 # Background: 2026-07-31 the v0.32.13 deploy on the live VM hit
