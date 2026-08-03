@@ -75,9 +75,9 @@ services:
       # so the auto-updater (which runs `docker compose` from inside
       # the container, where the bind-mount of the source dir is
       # at /app) uses the same project name as the host's host-side
-      # compose (which sees the source dir as /home/admin/skygate).
+      # compose (which sees the source dir as /home/operator/skygate).
       # Without this, basename(/app) = "app" while
-      # basename(/home/admin/skygate) = "skygate", and the
+      # basename(/home/operator/skygate) = "skygate", and the
       # named volume `skygate-data` is labelled with the original
       # project name on first creation — so the in-container
       # `docker compose up` would refuse to use it ("volume
@@ -92,20 +92,20 @@ services:
       # the container's perspective becomes `/app/...` from the
       # daemon's perspective too, and `/app` doesn't exist on the
       # host. Setting this env var to the host-side path
-      # (default /home/admin/skygate) lets the `${VAR:-...}`
+      # (default /home/operator/skygate) lets the `${VAR:-...}`
       # substitutions in the volumes + secrets sections below
       # resolve to a path the daemon can actually mount.
       # Override via the operator's .env file or the host shell
       # for non-standard layouts.
-      - SKYGATE_HOST_REPO_PATH=/home/admin/skygate
+      - SKYGATE_HOST_REPO_PATH=/home/operator/skygate
     volumes:
       # Bind-mount source code - any change is picked up on container restart.
-      # Uses ${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate} (NOT `./`)
+      # Uses ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate} (NOT `./`)
       # so the in-container orchestrator's `docker compose` resolves
       # to a path the host docker daemon can actually mount.
       # See the SKYGATE_HOST_REPO_PATH env var above for the full
       # rationale.
-      - ${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/:/app
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/:/app
       # Named volume for DB only
       - skygate-data:/data
       # docker.sock to call headscale CLI for preauth keys
@@ -114,19 +114,19 @@ services:
       # don't re-auth on every `docker compose restart`. The
       # tailscaled.state file holds the node key; losing it forces
       # a re-auth (and a new preauth key from headscale).
-      - ${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/data/ts:/var/lib/tailscale
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ts:/var/lib/tailscale
       # Bind-mount the control socket path so tailscale CLI can
       # talk to tailscaled. Not strictly required (tailscale finds
       # the socket via /var/run/tailscale), but explicit.
-      - ${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/data/ts/run:/var/run/tailscale
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ts/run:/var/run/tailscale
       # 2026-07-21: v0.23.0 Phase 1 — per-user headscale provisioning
       # scripts. The skygate process runs these via os/exec to
       # create/teardown per-user headscale containers. The scripts
       # are pure bash and need docker access (which skygate already
       # has via the docker.sock mount above) plus write access to
       # the per-user directory under /home/admin/headscale/users/.
-      - ${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/deploy/headscale-users/headscale-bootstrap.sh:/usr/local/bin/headscale-bootstrap.sh:ro
-      - ${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-bootstrap.sh:/usr/local/bin/headscale-bootstrap.sh:ro
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
       - /home/admin/headscale:/home/admin/headscale
     secrets:
       # short form — just reference the top-level definition below.
@@ -272,7 +272,8 @@ secrets:
   # ensures the in-container orchestrator's `docker compose` calls
   # (which inherit this path through COMPOSE_PROJECT_NAME + the
   # ${VAR:-default} substitution) resolve to a path the host
-  # daemon can actually open. Default /home/admin/skygate
-  # matches the operator's standard layout.
+  # daemon can actually open. Default /home/operator/skygate
+  # is a generic placeholder — operators set
+  # SKYGATE_HOST_REPO_PATH in .env to their real layout.
   ts_authkey:
-    file: ${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/secrets/ts_authkey
+    file: ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/secrets/ts_authkey
