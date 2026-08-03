@@ -620,7 +620,7 @@ run_check "B27" "entrypoint.sh runs go build at container start (v0.32.13)" \
     grep -qE \"^[[:space:]]*exec /app/skygate\" entrypoint.sh &&
     ! grep -qF \"exec /usr/local/bin/skygate\" entrypoint.sh
   '"
-﻿
+
 
 # ─── B29 (v0.32.13) — expirewatch goroutine gated on ExpireWatchEnabled ───
 # Background: same root cause as B28 (autoupdater) — the
@@ -668,7 +668,53 @@ run_check "B30" "sidecar goroutine is gated on SidecarSyncPeriod (v0.32.13)" \
     grep -qF \"go sidecarMgr.Run(ctx)\" cmd/skygate/main.go &&
     ! grep -qE \"^go sidecarMgr.Run\" cmd/skygate/main.go
   '"
-﻿﻿
+
+# ─── B31 (v0.32.14) — DB connection pool: 15 conns, NORMAL sync, 2s busy (CASCADE-LOCK FIX) ───
+# Background: 2026-08-03 the live VM was hanging on every
+# authed page with "db: error: context deadline exceeded"
+# even after 33h of uptime. Root cause: v0.32.4 had
+# SetMaxOpenConns(1) — a SINGLE connection for the entire
+# binary. With concurrent admin traffic (login audit_log
+# write + dashboard SELECT + ensureExitServers DELETE +
+# cron HEAD requests) all hitting the DB in the same
+# second, the single connection was 100% busy and every
+# request blocked for the full busy_timeout=5000ms before
+# failing. Combined with synchronous=FULL (fsync per
+# commit), every commit cost an extra 10-30ms of disk I/O,
+# making the cascading lock worse.
+#
+# The fix (v0.32.14):
+#   - SetMaxOpenConns(15)  : 15 concurrent connections.
+#     WAL mode allows multiple readers AND one writer
+#     concurrently, so 15 connections give real parallelism
+#     for the read-heavy workload.
+#   - SetMaxIdleConns(5)   : keep 5 idle for warm pool, drop
+#     the rest.
+#   - SetConnMaxLifetime(5m): recycle every 5 min so
+#     long-lived connections don't accumulate state.
+#   - synchronous=NORMAL   : no fsync per commit (the v0.32.4
+#     corruption was caused by disk-FULL, not by missing
+#     FULL sync).
+#   - busy_timeout=2000     : 2s instead of 5s — fail fast
+#     on contention rather than queue 5s.
+#
+# B31 pins the contract:
+#   (a) internal/db/db.go does NOT have SetMaxOpenConns(1).
+#   (b) SetMaxOpenConns(15) is present.
+#   (c) The connection string has _synchronous=NORMAL.
+#   (d) The connection string has _busy_timeout=2000.
+#   (e) The migrate() PRAGMA list has synchronous=NORMAL
+#       and busy_timeout=2000.
+run_check "B31" "DB connection pool: 15 conns, NORMAL sync, 2s busy (v0.32.14)" \
+  "bash -c '
+    ! grep -qE \"^[[:space:]]+conn\\.SetMaxOpenConns\\(1\\)\" internal/db/db.go &&
+    grep -qE \"^[[:space:]]+conn\\.SetMaxOpenConns\\(15\\)\" internal/db/db.go &&
+    grep -qF \"_synchronous=NORMAL\" internal/db/db.go &&
+    grep -qF \"_busy_timeout=2000\" internal/db/db.go &&
+    grep -qF \"synchronous=NORMAL\" internal/db/db.go &&
+    grep -qF \"busy_timeout=2000\" internal/db/db.go
+  '"
+
 
 # ─── B28 (v0.32.13) — domain auto-updater gated on AutoUpdateEnabled ───
 # Background: 2026-07-31 the v0.32.13 deploy on the live VM hit

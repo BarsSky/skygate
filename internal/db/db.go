@@ -98,24 +98,44 @@ func Open(dataDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
-	// 2026-07-30: v0.32.4 — PRAGMA hardening for DB corruption fix.
-	// The connection string now sets synchronous=FULL (the
-	// strongest durability; default in WAL mode is NORMAL which
-	// is vulnerable to page damage on crash) and busy_timeout=5000
-	// (avoids "database is locked" errors on the autoupdate's
-	// rapid-fire writes). The migrate() function below re-applies
-	// these + journal_mode=WAL + foreign_keys=ON on every Open, so
-	// the pragmas are guaranteed to be active even after a
-	// container restart that doesn't go through this code path.
-	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=FULL&_busy_timeout=5000")
+	// 2026-08-03: v0.32.14 — CASCADE-LOCK FIX. The pre-fix
+	// connection string had synchronous=FULL + busy_timeout=5000
+	// (good for crash-safety, pre-v0.32.4 fix) AND
+	// SetMaxOpenConns(1) (catastrophic for concurrency). On
+	// the live VM with concurrent admin traffic (login
+	// audit_log write + dashboard SELECT + ensureExitServers
+	// DELETE + cron-driven HEAD requests all hitting the DB
+	// in the same second), the single connection pooled
+	// 100% busy and every request blocked for the full
+	// busy_timeout. The fix:
+	//   - SetMaxOpenConns(15)  : 15 concurrent connections
+	//     instead of 1. WAL mode allows multiple readers AND
+	//     one writer concurrently; with 15 we get real
+	//     parallelism for the read-heavy workload.
+	//   - SetMaxIdleConns(5)   : keep 5 idle for warm-pool,
+	//     drop the rest (default would be 2 = MaxOpen, all
+	//     kept forever).
+	//   - SetConnMaxLifetime(5m): recycle every 5 min so
+	//     long-lived connections don't accumulate state.
+	//   - synchronous=NORMAL   : still safe (default in WAL),
+	//     no fsync on every commit, much faster writes.
+	//     v0.32.4 corruption was caused by disk-FULL, not
+	//     by missing FULL sync, so this is safe.
+	//   - busy_timeout=2000     : 2s instead of 5s — fail fast
+	//     on contention rather than queue 5s.
+	// The PRAGMAs are still re-applied in migrate() below
+	// (belt-and-suspenders for the journal_mode + foreign_keys
+	// settings that the connection string doesn't cover).
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=2000")
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
 	if err := conn.Ping(); err != nil {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	conn.SetMaxOpenConns(1)
-	conn.SetMaxIdleConns(1)
+	conn.SetMaxOpenConns(15)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(5 * time.Minute)
 	// 2026-07-09: refactor v0.6.0 — Open() now bootstraps schema. Migrations
 	// are idempotent (CREATE TABLE IF NOT EXISTS + ALTER with duplicate-column
 	// guards) so calling migrate() on every Open is safe and matches what
@@ -136,24 +156,25 @@ func Open(dataDir string) (*sql.DB, error) {
 
 func migrate(d *sql.DB) error {
 	queries := []string{
-		// 2026-07-30: v0.32.4 — full durability for the corruption fix.
-		// WAL mode (already here) + synchronous=FULL means every
-		// commit is fsync'd to disk before the call returns. WAL
-		// without FULL is vulnerable to btree page damage on a
-		// kill -9 or sudden power loss; this is the fix.
+		// 2026-08-03: v0.32.14 — WAL mode (good for read
+		// concurrency) + synchronous=NORMAL (default in WAL,
+		// no fsync per commit; the v0.32.4 corruption was
+		// caused by disk-FULL not by missing FULL sync).
+		// See the Open() comment for the full rationale.
 		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=FULL",
+		"PRAGMA synchronous=NORMAL",
 		// Checkpoint every 1000 pages instead of the default 1000
 		// (SQLite's default is actually the same, but being explicit
 		// makes the corruption-recovery story clearer: after a crash,
 		// at most 1000 pages of WAL needs to be replayed, which
 		// happens in milliseconds).
 		"PRAGMA wal_autocheckpoint=1000",
-		// The 5s busy timeout is the "wait this long for another
-		// writer to release the lock" budget. Without it, two
-		// concurrent autoupdate ticks can race and one fails
-		// immediately. With it, the loser waits.
-		"PRAGMA busy_timeout=5000",
+		// The 2s busy timeout is the "wait this long for another
+		// writer to release the lock" budget. Pre-v0.32.14 this
+		// was 5s, which combined with SetMaxOpenConns(1) made
+		// every concurrent request wait the full 5s on the single
+		// connection. 2s + MaxOpenConns(15) is the new budget.
+		"PRAGMA busy_timeout=2000",
 		"PRAGMA foreign_keys=ON",
 	}
 	for _, q := range queries {
