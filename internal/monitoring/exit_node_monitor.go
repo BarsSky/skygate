@@ -89,14 +89,21 @@ type ExitNodeMonitor struct {
 	HS         HeadscaleClient
 	Notifier   NotifierSink
 	CheckEvery time.Duration
-	// OfflineAfter is the time window after last_seen beyond
-	// which a node is considered "offline" even if headscale
-	// says it's online. The forgiving fallback exists because
-	// headscale's Online field flips to false the instant the
-	// WireGuard session closes — which can be a long-lived
-	// laptop briefly losing WiFi as much as a relay that's
-	// actually down. last_seen within OfflineAfter keeps the
-	// state "online" through transient blips.
+	// OfflineAfter (v0.32.16 — semantics changed) is the time
+	// window for the FORGIVING fallback only. It is no longer
+	// a "stale last_seen → mark offline" threshold.
+	//
+	// Old (buggy) logic: headscale says online + last_seen
+	// older than OfflineAfter → mark offline. This produced
+	// false-negatives for idle exit-nodes (no peer activity
+	// in 2 min) which headscale still considers online.
+	//
+	// New logic: headscale says online → trust it (always).
+	// The OfflineAfter window is only consulted when headscale
+	// says OFFLINE: if we just saw the node within OfflineAfter
+	// we still call it online (catches transient headscale
+	// booleans that flip false while the node is still
+	// reachable). Outside the window + offline → mark offline.
 	//
 	// Zero value = 2 min (sane default; can be overridden via
 	// SKYGATE_EXIT_NODE_OFFLINE_AFTER).
@@ -369,28 +376,36 @@ func (m *ExitNodeMonitor) computeSnapshot(n headscale.NodeView, now time.Time) d
 	}
 	routesOK = hasV4 && hasV6
 
-	// Online detection: headscale says online AND last_seen
-	// is recent. last_seen is the union field — if headscale
-	// says online and last_seen is empty, we trust it
-	// (a node that just registered may not have a
-	// last_seen yet). If headscale says offline but
-	// last_seen is recent, the node is treated as online
-	// (e.g. a brief headscale-side hiccup).
+	// Online detection (v0.32.16 — fixed): trust headscale's
+	// `n.Online` field as the primary signal. The previous
+	// version of this code OVERRODE n.Online=true to false
+	// whenever last_seen was older than OfflineAfter, which
+	// produced false-negatives for idle exit-nodes (no peer
+	// traffic in the last 2 min) — headscale's boolean still
+	// said online=true, but the monitor marked them offline.
+	//
+	// The right semantic:
+	//   - headscale says online → trust it (idle nodes are
+	//     healthy nodes without peer activity)
+	//   - headscale says offline + last_seen recent (within
+	//     OfflineAfter) → forgiving fallback: mark online
+	//     (catches transient headscale-side blips where the
+	//     boolean flipped to false but we just saw the node)
+	//   - headscale says offline + last_seen old → mark offline
+	//
+	// headscale's LastSeen is RFC3339Nano. time.Parse handles
+	// both. We don't fail the snapshot on a parse error —
+	// fall through to the boolean fallback (which may itself
+	// be wrong, but it's the best we can do).
 	online := n.Online
-	if n.LastSeen != "" {
-		// headscale's LastSeen is RFC3339Nano. time.Parse
-		// handles both. We don't fail the snapshot on a
-		// parse error — fall through to the boolean
-		// fallback (which may itself be wrong, but it's
-		// the best we can do).
-		if t, perr := time.Parse(time.RFC3339Nano, n.LastSeen); perr == nil {
-			if now.Sub(t) > m.OfflineAfter {
-				online = false
-			}
-		} else if t, perr := time.Parse(time.RFC3339, n.LastSeen); perr == nil {
-			if now.Sub(t) > m.OfflineAfter {
-				online = false
-			}
+	if !online && n.LastSeen != "" {
+		var t time.Time
+		var perr error
+		if t, perr = time.Parse(time.RFC3339Nano, n.LastSeen); perr != nil {
+			t, perr = time.Parse(time.RFC3339, n.LastSeen)
+		}
+		if perr == nil && now.Sub(t) <= m.OfflineAfter {
+			online = true
 		}
 	}
 

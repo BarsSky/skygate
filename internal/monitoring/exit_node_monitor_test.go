@@ -165,7 +165,18 @@ func TestComputeSnapshot_OfflineWhenTagMissing(t *testing.T) {
 	}
 }
 
-func TestComputeSnapshot_OfflineWhenLastSeenOld(t *testing.T) {
+// TestComputeSnapshot_HeadscaleOnlineTrustsLastSeenOld (v0.32.16).
+//
+// Regression guard for the v0.32.16 fix: idle exit-nodes
+// have stale `last_seen` (no peer traffic in 10 min) but
+// headscale's `Online=true` is still authoritative. The
+// monitor must NOT mark them offline based on stale
+// last_seen alone.
+//
+// Old (buggy) behaviour: last_seen > OfflineAfter AND
+// n.Online=true → mark offline. This produced false
+// negatives on /admin/exit-nodes for every idle VPS exit-node.
+func TestComputeSnapshot_HeadscaleOnlineTrustsLastSeenOld(t *testing.T) {
 	hs := &fakeHeadscaleClient{}
 	m, _ := newMonitor(t, hs, nil)
 	now := time.Now().UTC()
@@ -173,34 +184,70 @@ func TestComputeSnapshot_OfflineWhenLastSeenOld(t *testing.T) {
 	old := now.Add(-10 * time.Minute)
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
-		Online:      true, // headscale says online but…
+		Online:      true, // headscale says online (authoritative)
 		LastSeen:    old.Format(time.RFC3339),
 		Tags:        []string{"tag:exit-node"},
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
 	}
 	got := m.computeSnapshot(n, now)
-	if got.Online {
-		t.Errorf("Online = true, want false (last_seen is older than OfflineAfter)")
+	if !got.Online {
+		t.Errorf("Online = false, want true (headscale n.Online=true is authoritative; last_seen age is a hint, not a fallback)")
 	}
-	if got.State != "offline" {
-		t.Errorf("State = %q, want 'offline'", got.State)
+	if got.State != "online" {
+		t.Errorf("State = %q, want 'online'", got.State)
 	}
 }
 
-func TestComputeSnapshot_OfflineWhenHeadscaleSaysOffline(t *testing.T) {
+// TestComputeSnapshot_ForgivingFallback (v0.32.16).
+//
+// When headscale says offline but we just saw the node
+// recently (last_seen within OfflineAfter), treat the
+// node as online. This catches transient headscale-side
+// booleans (e.g. WireGuard session briefly dropped, headscale
+// reports offline=true) when the node is actually reachable.
+func TestComputeSnapshot_ForgivingFallback(t *testing.T) {
+	hs := &fakeHeadscaleClient{}
+	m, _ := newMonitor(t, hs, nil)
+	now := time.Now().UTC()
+	// last_seen 30 seconds ago — well within OfflineAfter (2 min).
+	recent := now.Add(-30 * time.Second)
+	n := headscale.NodeView{
+		ID: "3", Hostname: "relay-1",
+		Online:      false, // headscale says offline but…
+		LastSeen:    recent.Format(time.RFC3339),
+		Tags:        []string{"tag:exit-node"},
+		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+	}
+	got := m.computeSnapshot(n, now)
+	if !got.Online {
+		t.Errorf("Online = false, want true (forgiving fallback: last_seen within OfflineAfter overrides offline)")
+	}
+	if got.State != "online" {
+		t.Errorf("State = %q, want 'online'", got.State)
+	}
+}
+
+// TestComputeSnapshot_OfflineWhenHeadscaleAndLastSeenBothOld (v0.32.16).
+//
+// Both signals agree: headscale says offline AND last_seen
+// is past OfflineAfter. The monitor must mark the node
+// offline. (Updated from the pre-v0.32.16 test which used
+// a recent last_seen — that case is now the forgiving
+// fallback and is covered by TestComputeSnapshot_ForgivingFallback.)
+func TestComputeSnapshot_OfflineWhenHeadscaleAndLastSeenBothOld(t *testing.T) {
 	hs := &fakeHeadscaleClient{}
 	m, _ := newMonitor(t, hs, nil)
 	now := time.Now().UTC()
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
 		Online:      false,
-		LastSeen:    now.Add(-time.Minute).Format(time.RFC3339),
+		LastSeen:    now.Add(-10 * time.Minute).Format(time.RFC3339), // past OfflineAfter (2 min)
 		Tags:        []string{"tag:exit-node"},
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
 	}
 	got := m.computeSnapshot(n, now)
 	if got.Online {
-		t.Errorf("Online = true, want false (headscale reports offline)")
+		t.Errorf("Online = true, want false (headscale offline + last_seen past OfflineAfter)")
 	}
 	if got.State != "offline" {
 		t.Errorf("State = %q, want 'offline'", got.State)

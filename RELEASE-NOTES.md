@@ -1,5 +1,68 @@
 # Skygate release notes
 
+## v0.32.17 — Exit-node monitor online detection fix + device_rules dedup
+
+**Date:** 2026-08-03
+**Tag:** _pending_
+**Scope:** fix (logic + data) + verify-pre B34. No API change.
+
+### What's in this release
+
+1. **Exit-node monitor online detection (logic fix)**
+   - **Old behaviour**: headscale says `online=true` but `last_seen` is older than
+     `OfflineAfter` (default 2 min, recently bumped to 10 min via env) → monitor
+     marks the node offline. Produced false-negatives for every idle VPS exit-node
+     (no peer activity in 10 min = "offline" even though headscale still considers
+     it online).
+   - **New behaviour**: trust headscale's `n.Online` as the primary signal. The
+     `OfflineAfter` window is only consulted when headscale says OFFLINE: if we
+     just saw the node within `OfflineAfter`, treat it as online (catches transient
+     headscale-side booleans). Outside the window + offline → mark offline.
+   - **Affected file**: `internal/monitoring/exit_node_monitor.go` (lines 372-405).
+   - **Tests**: `TestComputeSnapshot_OfflineWhenLastSeenOld` (old, asserted the bug)
+     renamed to `TestComputeSnapshot_HeadscaleOnlineTrustsLastSeenOld` and flipped
+     to assert the correct behaviour. New `TestComputeSnapshot_ForgivingFallback`
+     covers the offline-but-recent case.
+
+2. **device_rules duplicates cleanup (data fix)**
+   - Found 365 duplicate `device_rules` rows in the production DB on 2026-08-03.
+     186 rows for `(workstation-1, relay-3)` and 179 rows with empty
+     `device_hostname`, all with the same `created_at` (a stale batch script
+     that forgot to dedup).
+   - Inflated the `/admin/exit-nodes` "mismatch" computation: `computeSyncStatus`
+     counts ALL device_rules targeting the exit_node, not the unique device count.
+     relay-3 showed `mismatch: have 148, want 365` instead of the real drift
+     (the operator never had 365 rules; the duplicates were the inflation).
+   - **Cleanup**: `DELETE FROM device_rules WHERE id NOT IN (SELECT MIN(id) FROM
+     device_rules GROUP BY exit_node_id, device_hostname)` — 363 rows removed,
+     now down to 2 unique `(device, exit_node)` pairs.
+   - The remaining "mismatch: have 148, want 2" is a real-but-different drift
+     (skygate has 2 rules for relay-3, headscale has 148 routes) that
+     warrants its own investigation — not a duplicates issue.
+
+3. **Verify-pre B34 (regression guard)**
+   - New check that fails the build if `device_rules` has any duplicate
+     `(device_hostname, exit_node_id)` group. Runs `sqlite3` on the production
+     DB; skips gracefully on Windows / fresh VM (no DB).
+   - Matches the pattern of B15/B16/B17/B22 (regression guards for past bugs).
+   - Comment in the script explains the 2026-08-03 incident and the cleanup
+     SQL so future maintainers know the context.
+
+### Files
+
+- `internal/monitoring/exit_node_monitor.go` — new online-detection logic
+- `internal/monitoring/exit_node_monitor_test.go` — updated + 1 new test
+- `scripts/verify_pre_deploy.sh` — B34 check
+- `RELEASE-NOTES.md` — this entry
+
+### Verified
+
+- `go test -count=1 -short ./...` — all packages PASS
+- `bash scripts/verify_pre_deploy.sh` — 34/34 PASS (B1-B34)
+- Live VM: cleanup done via `sudo sqlite3`; audit log entry recorded.
+
+---
+
 ## v0.32.16 — Headplane distroless healthcheck fix + docker build cache hygiene
 
 **Date:** 2026-08-03

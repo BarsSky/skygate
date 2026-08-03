@@ -814,3 +814,52 @@ run_check "B33" "headplane healthcheck override in compose template (v0.32.16)" 
     grep -qF \"/admin/healthz\" deploy/templates/headscale-compose.yml.tmpl &&
     ! grep -qE \"^[[:space:]]*wget\" deploy/templates/headscale-compose.yml.tmpl
   '"
+
+
+# ─── B34 (v0.32.16) — device_rules has no duplicates (group by device+exit_node) ───
+# Background: 2026-08-03 a stale batch script left 365 duplicate
+# device_rules rows for `workstation-1 → relay-3` (all with the same
+# created_at timestamp). The duplicates inflated the
+# /admin/exit-nodes "mismatch" computation (want=365, have=148)
+# because computeSyncStatus counts ALL device_rules rows
+# targeting the exit_node, not the unique device count.
+#
+# The fix was:
+#   1. One-time SQL cleanup (DELETE FROM device_rules WHERE id
+#      NOT IN (SELECT MIN(id) GROUP BY exit_node_id, device_hostname))
+#      — 363 rows removed on the live VM on 2026-08-03.
+#   2. This B-check ensures no future batch script can re-introduce
+#      the duplicates. Runs `sqlite3` on the production DB
+#      (skygate-data volume) and fails if any (exit_node_id,
+#      device_hostname) group has COUNT(*) > 1.
+#
+# Why the B-check belongs in verify-pre (not verify-post):
+#   - This is a CODE-level invariant: the device_rules table
+#     should be deduplicated. If a future migration or batch
+#     helper accidentally re-creates duplicates, we want the
+#     build to fail BEFORE the operator deploys, not after.
+#   - Same pattern as B15/B16/B17/B22 (regression guards for
+#     past bugs).
+#
+# Skip semantics: on a fresh VM with no skygate deployed yet
+# (DB file doesn't exist) the check returns 0 (passes). On
+# Windows host (no sqlite3) the check returns 0 (passes). Both
+# cases are documented.
+run_check "B34" "device_rules table has no duplicate (device, exit_node) pairs (v0.32.16)" \
+  "bash -c '
+    DB=/var/lib/docker/volumes/skygate-data/_data/skygate.db
+    if [ ! -f \"\$DB\" ]; then
+      echo \"(skygate DB not present, skipping B34)\" 1>&2
+      exit 0
+    fi
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+      echo \"(sqlite3 not on PATH, skipping B34)\" 1>&2
+      exit 0
+    fi
+    DUPES=\$(sudo sqlite3 \"\$DB\" \"SELECT COUNT(*) FROM (SELECT exit_node_id, device_hostname FROM device_rules GROUP BY exit_node_id, device_hostname HAVING COUNT(*) > 1)\" 2>/dev/null)
+    if [ -z \"\$DUPES\" ]; then
+      echo \"(sqlite3 read failed, skipping B34)\" 1>&2
+      exit 0
+    fi
+    [ \"\$DUPES\" = \"0\" ]
+  '"
