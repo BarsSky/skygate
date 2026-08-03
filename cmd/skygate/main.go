@@ -458,7 +458,7 @@ func main() {
 			if planeURL == "" {
 				return app.HSGlobalFn()
 			}
-			rows, err := app.DB.Query("SELECT id FROM portal_users WHERE headscale_url = ? LIMIT 1", planeURL)
+			rows, err := app.DB.Query("SELECT id FROM portal_users WHERE headscale_url = $1 LIMIT 1", planeURL)
 			if err != nil {
 				return app.HSGlobalFn()
 			}
@@ -1177,7 +1177,7 @@ func runBackupSubcommand() error {
 // bootstrapAdmin creates the admin user in Skygate DB on first start.
 func bootstrapAdmin(d *sql.DB, username, password string) error {
 	var n int
-	if err := d.QueryRow("SELECT COUNT(*) FROM portal_users WHERE username=?", username).Scan(&n); err != nil {
+	if err := d.QueryRow("SELECT COUNT(*) FROM portal_users WHERE username=$1", username).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
@@ -1188,7 +1188,7 @@ func bootstrapAdmin(d *sql.DB, username, password string) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES(?,?,?)`,
+	_, err = d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES($1,$2,$3)`,
 		username, hash, 1)
 	if err != nil {
 		return err
@@ -1204,7 +1204,7 @@ func backfillNodeOwners(d *sql.DB, hs *headscale.Client, adminName string) error
 	}
 	var adminID sql.NullInt64
 	var adminHSID sql.NullInt64
-	if err := d.QueryRow(`SELECT id, headscale_user_id FROM portal_users WHERE username=? AND is_admin=1`, adminName).
+	if err := d.QueryRow(`SELECT id, headscale_user_id FROM portal_users WHERE username=$1 AND is_admin=1`, adminName).
 		Scan(&adminID, &adminHSID); err != nil {
 		return err
 	}
@@ -1241,7 +1241,7 @@ func backfillNodeOwners(d *sql.DB, hs *headscale.Client, adminName string) error
 
 func ensureHeadscaleUser(d *sql.DB, hs *headscale.Client, username string) error {
 	var n int
-	if err := d.QueryRow("SELECT COUNT(*) FROM portal_users WHERE username=? AND headscale_user_id IS NOT NULL", username).Scan(&n); err != nil {
+	if err := d.QueryRow("SELECT COUNT(*) FROM portal_users WHERE username=$1 AND headscale_user_id IS NOT NULL", username).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
@@ -1250,7 +1250,7 @@ func ensureHeadscaleUser(d *sql.DB, hs *headscale.Client, username string) error
 	existing, _ := hs.ListUsers()
 	for _, u := range existing {
 		if u.Name == username {
-			_, err := d.Exec("UPDATE portal_users SET headscale_user_id=? WHERE username=?", u.ID, username)
+			_, err := d.Exec("UPDATE portal_users SET headscale_user_id=$1 WHERE username=$2", u.ID, username)
 			return err
 		}
 	}
@@ -1258,7 +1258,7 @@ func ensureHeadscaleUser(d *sql.DB, hs *headscale.Client, username string) error
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec("UPDATE portal_users SET headscale_user_id=? WHERE username=?", created.ID, username)
+	_, err = d.Exec("UPDATE portal_users SET headscale_user_id=$1 WHERE username=$2", created.ID, username)
 	return err
 }
 

@@ -22,8 +22,13 @@ restapi:
   listen: 0.0.0.0:8008
   connect_address: ${SKYGATE_PG_NODE_IP}:8008
 
-etcd:
-  hosts: ${SKYGATE_ETCD_HOST}:2379
+etcd3:
+  hosts:
+    - ${SKYGATE_ETCD_HOST}:2379
+  protocol: http
+  cacert: null
+  cert: null
+  key: null
 
 bootstrap:
   dcs:
@@ -55,7 +60,9 @@ bootstrap:
     - local   all           all                          trust
     - host    all           all       127.0.0.1/32        md5
     - host    all           all       192.168.0.0/16      md5
+    - host    all           all       0.0.0.0/0            md5
     - host    replication   replicator 192.168.0.0/16    md5
+    - host    replication   replicator 0.0.0.0/0         md5
 
   users:
     admin:
@@ -72,7 +79,7 @@ postgresql:
   listen: 0.0.0.0:5432
   connect_address: ${SKYGATE_PG_NODE_IP}:5432
   data_dir: /var/lib/postgresql/data
-  bin_dir: /usr/lib/postgresql/16/bin
+  bin_dir: /usr/lib/postgresql/18/bin
   pgpass: /tmp/pgpass0
   authentication:
     superuser:
