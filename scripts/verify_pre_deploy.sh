@@ -911,3 +911,28 @@ run_check "B36" "migration integrity: applied_migrations table + checksum helper
     grep -qF \"ensureMigrationTrackingTable\" internal/db/db.go &&
     grep -qF \"TestVerifyMigrationChecksum_Mismatch_HardMode\" internal/db/migration_tracking_test.go
   '"
+
+
+# ─── B37 (v0.32.20) — auto-update UI toggle is wired ───
+# Background: v0.32.20 replaces the env-var-only
+# SKYGATE_AUTO_UPDATE_ENABLED with a UI checkbox on
+# /admin/update. The toggle persists in global_settings
+# (key='auto_update_enabled') via POST /admin/update/auto-toggle.
+#
+# B37 pins 3 contracts:
+# 1. The handler exists in the admin feature package.
+# 2. The route is registered in cmd/skygate/main.go.
+# 3. The template renders the toggle form.
+# 4. The DB read uses the global_settings helper (not raw SQL).
+# 5. The toggle persists to global_settings (verified by the
+#    unit test in update_settings_test.go).
+run_check "B37" "auto-update UI toggle: handler + route + template + global_settings helper (v0.32.20)" \
+  "bash -c '
+    grep -qF \"func (s *Service) PostAdminUpdateAutoToggle\" internal/feature/admin/update_settings.go &&
+    grep -qF \"PostAdminUpdateAutoToggle\" cmd/skygate/main.go &&
+    grep -qF \"/admin/update/auto-toggle\" internal/handlers/templates/admin/update.html &&
+    grep -qF \"GetGlobalSettingBool\" internal/feature/admin/update.go &&
+    grep -qF \"auto_update_enabled\" internal/feature/admin/update_settings.go &&
+    grep -qF \"TestPostAdminUpdateAutoToggle_EnablePersists\" internal/feature/admin/update_settings_test.go &&
+    grep -qF \"func SetGlobalSettingBool\" internal/db/globalsettings.go
+  '"

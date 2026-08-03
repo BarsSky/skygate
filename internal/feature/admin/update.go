@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"skygate/internal/auth"
+	"skygate/internal/db"
 	"skygate/internal/update"
 )
 
@@ -171,7 +172,7 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// SKYGATE_AUTO_UPDATE_ENABLED). When false, the
 		// template hides the one-click "Apply" button and
 		// shows the always-on "Push update" button instead.
-		"AutoUpdateEnabled": s.Cfg.AutoUpdateEnabled,
+		"AutoUpdateEnabled": db.GetGlobalSettingBool(s.DB, "auto_update_enabled", s.Cfg.AutoUpdateEnabled),
 		"Rollback":     manualSteps.Rollback,
 		"VerifyAfter":  manualSteps.VerifyAfter,
 		"Target":       target,

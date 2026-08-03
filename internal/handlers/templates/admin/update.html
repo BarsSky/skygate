@@ -94,6 +94,20 @@
   {{else}}
     {{t "update.auto_disabled_banner"}}
   {{end}}
+  {{/* 2026-08-03: v0.32.20 — UI-controlled toggle.
+       The auto-update mode is now controlled by a checkbox
+       on this page (persisted in global_settings). The
+       env var SKYGATE_AUTO_UPDATE_ENABLED is only the
+       DEFAULT at first start (when the global_settings row
+       doesn't exist yet). The toggle takes effect on the
+       next 5s tick of the orchestrator — no restart. */}}
+  <form method="post" action="/admin/update/auto-toggle" style="margin-top:8px;display:inline-block">
+    <input type="hidden" name="enabled" value="{{if .AutoUpdateEnabled}}0{{else}}1{{end}}">
+    <button type="submit" class="btn btn-sm">
+      <i class="fa-solid fa-toggle-{{if .AutoUpdateEnabled}}on{{else}}off{{end}}"></i>
+      {{if .AutoUpdateEnabled}}{{t "update.auto_toggle_off"}}{{else}}{{t "update.auto_toggle_on"}}{{end}}
+    </button>
+  </form>
 </div>
 
 <div class="card" style="margin-bottom:24px">

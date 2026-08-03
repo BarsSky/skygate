@@ -719,6 +719,13 @@ func main() {
 	// restart right now, without waiting for a newer
 	// release to be detected.
 	mux.Handle("POST /admin/update/push", authMW(http.HandlerFunc(adminSvc.PostAdminUpdatePush)))
+	// 2026-08-03: v0.32.20 — UI toggle for auto-update. The
+	// operator flips the auto-update mode on /admin/update
+	// without editing .env or restarting skygate. Persisted in
+	// global_settings (key='auto_update_enabled'). The
+	// orchestrator below reads this same DB value at every
+	// tick (5s), so the change takes effect without a restart.
+	mux.Handle("POST /admin/update/auto-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateAutoToggle)))
 	// 2026-07-20: v0.20.0 — "Run check now" button on
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as
