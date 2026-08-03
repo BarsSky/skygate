@@ -31,26 +31,24 @@ func GetGlobalSetting(d *sql.DB, key, defaultValue string) (string, error) {
 }
 
 // SetGlobalSetting writes the value for the given key. Uses
-// INSERT OR REPLACE so it's idempotent (matches the
-// qUpsertExitPolicy pattern). Updates updated_at to now.
+// ON CONFLICT(key) DO UPDATE so it's idempotent. Works on
+// both SQLite (3.24+) and PostgreSQL. updated_at is set to
+// "now" via strftime on SQLite and EXTRACT(EPOCH) on PG;
+// the v0.32.22 rewrite picks the right one per-backend via
+// the `now_unix` helper. The `strftime` form is used as the
+// default for SQLite (the production backend today); the PG
+// form kicks in when running under -tags postgres where the
+// driver returns PG's UNIX_EPOCH equivalent.
 func SetGlobalSetting(d *sql.DB, key, value string) error {
 	_, err := d.Exec(`
 		INSERT INTO global_settings (key, value, updated_at)
-		VALUES (?, ?, strftime('%s', 'now'))
+		VALUES (?, ?, `+nowUnixSQL()+`)
 		ON CONFLICT(key) DO UPDATE SET
 			value = excluded.value,
-			updated_at = strftime('%s', 'now')
+			updated_at = `+nowUnixSQL()+`
 	`, key, value)
 	if err != nil {
-		// ON CONFLICT may not exist in older SQLite — fall back
-		// to the INSERT OR REPLACE pattern.
-		_, err2 := d.Exec(`
-			INSERT OR REPLACE INTO global_settings (key, value, updated_at)
-			VALUES (?, ?, strftime('%s', 'now'))
-		`, key, value)
-		if err2 != nil {
-			return fmt.Errorf("set global_setting %q: %w (fallback err: %v)", key, err, err2)
-		}
+		return fmt.Errorf("set global_setting %q: %w", key, err)
 	}
 	return nil
 }

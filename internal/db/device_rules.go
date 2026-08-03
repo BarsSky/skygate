@@ -140,9 +140,9 @@ func UpdateDeviceRuleHostnameForNode(d *sql.DB, hsID, hostname string) error {
 	}
 	_, err := d.Exec(`
 		UPDATE device_rules
-		   SET device_hostname = ?
-		 WHERE device_id = CAST(? AS INTEGER)
-		   AND (device_hostname = '' OR device_hostname != ?)`,
+		   SET device_hostname = $1
+		 WHERE device_id = CAST($2 AS INTEGER)
+		   AND (device_hostname = '' OR device_hostname != $3)`,
 		hostname, hsID, hostname)
 	return err
 }
@@ -411,7 +411,7 @@ func GetSubnetRoutesForExitNode(d *sql.DB, exitNode string) ([]string, error) {
 // user_id filter scopes to a single portal user.
 func GetUserRulesForScript(d *sql.DB, userID int64) ([]ACLEntry, error) {
 	rows, err := d.Query(
-		"SELECT target_type, target_value, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND user_id = ?",
+		"SELECT target_type, target_value, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND user_id = $1",
 		userID)
 	if err != nil {
 		return nil, err
@@ -561,7 +561,7 @@ func BulkUpdateDeviceIP(d *sql.DB, deviceIP string, deviceIDs []int) error {
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	q := "UPDATE device_rules SET device_ip = ? WHERE (device_ip = '' OR device_ip IS NULL) AND device_id IN (" + strings.Join(placeholders, ",") + ")"
+	q := "UPDATE device_rules SET device_ip = $1 WHERE (device_ip = '' OR device_ip IS NULL) AND device_id IN (" + strings.Join(placeholders, ",") + ")"
 	_, err := d.Exec(q, args...)
 	return err
 }
@@ -581,7 +581,7 @@ func BulkReassignDeviceID(d *sql.DB, newID int, oldIDs []int) error {
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	q := "UPDATE device_rules SET device_id = ? WHERE device_id IN (" + strings.Join(placeholders, ",") + ")"
+	q := "UPDATE device_rules SET device_id = $1 WHERE device_id IN (" + strings.Join(placeholders, ",") + ")"
 	_, err := d.Exec(q, args...)
 	return err
 }

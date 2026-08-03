@@ -155,7 +155,7 @@ func SaveTelegramToken(d *sql.DB, token, chatID string) error {
 	defer tx.Rollback()
 	if token != "" {
 		if _, err := tx.Exec(
-			`INSERT INTO global_settings (key, value) VALUES (?, ?)
+			`INSERT INTO global_settings (key, value) VALUES ($1, $2)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`,
 			tgBotTokenKey, token,
 		); err != nil {
@@ -164,7 +164,7 @@ func SaveTelegramToken(d *sql.DB, token, chatID string) error {
 	}
 	if chatID != "" {
 		if _, err := tx.Exec(
-			`INSERT INTO global_settings (key, value) VALUES (?, ?)
+			`INSERT INTO global_settings (key, value) VALUES ($1, $2)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`,
 			tgChatIDKey, chatID,
 		); err != nil {
@@ -193,12 +193,12 @@ func SaveTelegramToken(d *sql.DB, token, chatID string) error {
 // LoadTelegramSendTarget which returns ok only when chat_id is
 // also set.
 func LoadTelegramToken(d *sql.DB) (token, chatID string, ok bool, err error) {
-	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, tgBotTokenKey).Scan(&token); err == sql.ErrNoRows {
+	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = $1`, tgBotTokenKey).Scan(&token); err == sql.ErrNoRows {
 		token, err = "", nil
 	} else if err != nil {
 		return "", "", false, err
 	}
-	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, tgChatIDKey).Scan(&chatID); err == sql.ErrNoRows {
+	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = $1`, tgChatIDKey).Scan(&chatID); err == sql.ErrNoRows {
 		chatID, err = "", nil
 	} else if err != nil {
 		return "", "", false, err
@@ -212,12 +212,12 @@ func LoadTelegramToken(d *sql.DB) (token, chatID string, ok bool, err error) {
 // only when BOTH are set, so callers that need to sendMessage can
 // short-circuit with a clear "no chat_id configured" path.
 func LoadTelegramSendTarget(d *sql.DB) (token, chatID string, ok bool, err error) {
-	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, tgBotTokenKey).Scan(&token); err == sql.ErrNoRows {
+	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = $1`, tgBotTokenKey).Scan(&token); err == sql.ErrNoRows {
 		token, err = "", nil
 	} else if err != nil {
 		return "", "", false, err
 	}
-	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, tgChatIDKey).Scan(&chatID); err == sql.ErrNoRows {
+	if err = d.QueryRow(`SELECT value FROM global_settings WHERE key = $1`, tgChatIDKey).Scan(&chatID); err == sql.ErrNoRows {
 		chatID, err = "", nil
 	} else if err != nil {
 		return "", "", false, err
@@ -227,7 +227,7 @@ func LoadTelegramSendTarget(d *sql.DB) (token, chatID string, ok bool, err error
 
 // DeleteTelegramToken removes both keys. Idempotent.
 func DeleteTelegramToken(d *sql.DB) error {
-	if _, err := d.Exec(`DELETE FROM global_settings WHERE key IN (?, ?)`, tgBotTokenKey, tgChatIDKey); err != nil {
+	if _, err := d.Exec(`DELETE FROM global_settings WHERE key IN ($1, $2)`, tgBotTokenKey, tgChatIDKey); err != nil {
 		return err
 	}
 	return nil

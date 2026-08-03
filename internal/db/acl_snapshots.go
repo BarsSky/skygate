@@ -11,10 +11,10 @@ import (
 // repeated in 4 files:
 //
 //	a.DB.QueryRow("SELECT COALESCE(MAX(version),0) FROM acl_snapshots").Scan(&maxVer)
-//	a.DB.Exec("INSERT INTO acl_snapshots (version, config, ...) VALUES (?, ?, ?, 1)", ver, ...)
-//	a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=?", ver)
-//	a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=? WHERE version=?", err, ver)
-//	a.DB.QueryRow("SELECT config FROM acl_snapshots WHERE version = ?", ver).Scan(&config)
+//	a.DB.Exec("INSERT INTO acl_snapshots (version, config, ...) VALUES ($1, $2, $3, 1)", ver, ...)
+//	a.DB.Exec("UPDATE acl_snapshots SET applied_success=1 WHERE version=$1", ver)
+//	a.DB.Exec("UPDATE acl_snapshots SET applied_success=0, error_msg=$1 WHERE version=$2", err, ver)
+//	a.DB.QueryRow("SELECT config FROM acl_snapshots WHERE version = $1", ver).Scan(&config)
 //
 // This file replaces all 5 patterns with typed helpers. The intent is
 // not to invent a new ACL abstraction (headscale owns the schema) —
