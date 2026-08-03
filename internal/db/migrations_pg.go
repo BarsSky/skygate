@@ -64,13 +64,13 @@ func migrateV020PG(d *sql.DB) error {
 func migrateV021PG(d *sql.DB) error {
 
 		queries := []string{
-			`ALTER TABLE device_rules ADD COLUMN action TEXT NOT NULL DEFAULT 'accept'`,
+			`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'accept'`,
 			`CREATE TABLE IF NOT EXISTS global_settings (
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL DEFAULT '',
 				updated_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 			)`,
-			`INSERT INTO global_settings (key, value) -- TODO v0.27.0: add ON CONFLICT target VALUES ('exit_policy', 'allow_all')`,
+			`INSERT INTO global_settings (key, value) VALUES ('exit_policy', 'allow_all') ON CONFLICT (key) DO NOTHING`,
 		}
 		for _, q := range queries {
 			if _, err := d.Exec(q); err != nil {
@@ -89,7 +89,7 @@ func migrateV022PG(d *sql.DB) error {
 		// `DEFAULT ` with no value, which is a syntax error. The function
 		// ignored the error so the migration silently no-op'd, leaving
 		// device_rules without device_ip on fresh DBs. Fixed.
-		_, err := d.Exec("ALTER TABLE device_rules ADD COLUMN device_ip TEXT NOT NULL DEFAULT ''")
+		_, err := d.Exec("ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS device_ip TEXT NOT NULL DEFAULT ''")
 		if err != nil { return nil } // column exists
 		return nil
 }
@@ -123,8 +123,8 @@ func migrateV023PG(d *sql.DB) error {
 func migrateV024PG(d *sql.DB) error {
 
 		queries := []string{
-			"ALTER TABLE exit_servers ADD COLUMN ssh_target TEXT NOT NULL DEFAULT ''",
-			"ALTER TABLE exit_servers ADD COLUMN ssh_key_path TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_target TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_key_path TEXT NOT NULL DEFAULT ''",
 		}
 		for _, q := range queries {
 			d.Exec(q) // ignore errors (column may exist)
@@ -202,7 +202,7 @@ func migrateV025PG(d *sql.DB) error {
 func migrateV026PG(d *sql.DB) error {
 
 		stmts := []string{
-			"ALTER TABLE exit_servers ADD COLUMN accept_routes INTEGER NOT NULL DEFAULT 0",
+			"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS accept_routes INTEGER NOT NULL DEFAULT 0",
 		}
 		for _, q := range stmts {
 			if _, err := d.Exec(q); err != nil {
@@ -241,12 +241,12 @@ func migrateV027PG(d *sql.DB) error {
 func migrateV028PG(d *sql.DB) error {
 
 		stmts := []string{
-			`ALTER TABLE device_rules ADD COLUMN parent_domain TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE node_owner_map ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE node_owner_map ADD COLUMN headscale_user_id INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE node_owner_map ADD COLUMN tag TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE node_owner_map ADD COLUMN tagged_by_user_id INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE node_owner_map ADD COLUMN tag TEXT NOT NULL DEFAULT ''`, // safe no-op if V028 ran twice
+			`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS parent_domain TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS username TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS headscale_user_id INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tag TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tagged_by_user_id INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tag TEXT NOT NULL DEFAULT ''`, // safe no-op if V028 ran twice
 			// 2026-07-15: v0.14.1 — the original V028 ALTER list
 			// forgot tagged_at. Production DBs got the column
 			// out-of-band (commit a8b07f8 added INSERT OR REPLACE
@@ -259,8 +259,8 @@ func migrateV028PG(d *sql.DB) error {
 			// the _, _ = d.Exec(q) below swallows the "duplicate
 			// column" error so the migration stays idempotent on
 			// existing installs.
-			`ALTER TABLE node_owner_map ADD COLUMN tagged_at INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE preauth_keys ADD COLUMN headscale_preauth_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tagged_at INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE preauth_keys ADD COLUMN IF NOT EXISTS headscale_preauth_id TEXT NOT NULL DEFAULT ''`,
 		}
 		for _, q := range stmts {
 			// SQLite ALTER TABLE ADD COLUMN fails if the column already
@@ -300,8 +300,8 @@ func migrateV029PG(d *sql.DB) error {
 func migrateV030PG(d *sql.DB) error {
 
 		stmts := []string{
-			`ALTER TABLE portal_users ADD COLUMN default_device_node_id TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE portal_users ADD COLUMN default_exit_node_id    TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS default_device_node_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS default_exit_node_id    TEXT NOT NULL DEFAULT ''`,
 		}
 		for _, q := range stmts {
 			// ALTER TABLE ADD COLUMN returns an error if the column
@@ -335,14 +335,16 @@ func migrateV031PG(d *sql.DB) error {
 			// that want strict mode flip it via /admin/telegram.
 			// We use INSERT OR IGNORE so re-running the migration is a
 			// no-op (the row already exists from a previous run).
-			`INSERT INTO global_settings (key, value, updated_at) -- TODO v0.27.0: add ON CONFLICT target
-				VALUES ('telegram.strict_mode', '0', EXTRACT(EPOCH FROM now())::bigint)`,
+			`INSERT INTO global_settings (key, value, updated_at)
+				VALUES ('telegram.strict_mode', '0', EXTRACT(EPOCH FROM now())::bigint)
+				ON CONFLICT (key) DO NOTHING`,
 			// Default token TTL = 300s (5 min). Operators can tune via
 			// /admin/telegram UI or by editing the global_settings row
 			// directly. Stored as a string to keep the schema uniform
 			// (all global_settings values are TEXT).
-			`INSERT INTO global_settings (key, value, updated_at) -- TODO v0.27.0: add ON CONFLICT target
-				VALUES ('telegram.login_token_ttl_seconds', '300', EXTRACT(EPOCH FROM now())::bigint)`,
+			`INSERT INTO global_settings (key, value, updated_at)
+				VALUES ('telegram.login_token_ttl_seconds', '300', EXTRACT(EPOCH FROM now())::bigint)
+				ON CONFLICT (key) DO NOTHING`,
 		}
 		for _, q := range stmts {
 			if _, err := d.Exec(q); err != nil {
@@ -380,7 +382,7 @@ func migrateV032PG(d *sql.DB) error {
 func migrateV033PG(d *sql.DB) error {
 
 		stmts := []string{
-			`ALTER TABLE telegram_bindings ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'`,
+			`ALTER TABLE telegram_bindings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'en'`,
 		}
 		for _, q := range stmts {
 			// ALTER TABLE ADD COLUMN with a DEFAULT is idempotent
@@ -403,7 +405,7 @@ func migrateV033PG(d *sql.DB) error {
 func migrateV034PG(d *sql.DB) error {
 
 		stmts := []string{
-			`ALTER TABLE node_owner_map ADD COLUMN hostname TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS hostname TEXT NOT NULL DEFAULT ''`,
 			`CREATE INDEX IF NOT EXISTS idx_node_owner_map_hostname ON node_owner_map (hostname) WHERE hostname != ''`,
 		}
 		for _, q := range stmts {
@@ -421,8 +423,8 @@ func migrateV034PG(d *sql.DB) error {
 func migrateV035PG(d *sql.DB) error {
 
 		stmts := []string{
-			`ALTER TABLE portal_users ADD COLUMN headscale_url TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE portal_users ADD COLUMN headscale_api_key_enc TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS headscale_url TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS headscale_api_key_enc TEXT NOT NULL DEFAULT ''`,
 			`CREATE INDEX IF NOT EXISTS idx_portal_users_hs_url ON portal_users (headscale_url) WHERE headscale_url != ''`,
 		}
 		for _, q := range stmts {
@@ -499,8 +501,8 @@ func migrateV036PG(d *sql.DB) error {
 func migrateV037PG(d *sql.DB) error {
 
 		stmts := []string{
-			`ALTER TABLE personal_api_tokens ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE personal_api_tokens ADD COLUMN auto_rotate INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE personal_api_tokens ADD COLUMN IF NOT EXISTS expires_at INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE personal_api_tokens ADD COLUMN IF NOT EXISTS auto_rotate INTEGER NOT NULL DEFAULT 0`,
 			`CREATE INDEX IF NOT EXISTS idx_personal_api_tokens_expires
 				ON personal_api_tokens (expires_at)`,
 		}
@@ -564,9 +566,9 @@ func migrateV038PG(d *sql.DB) error {
 			// hot path. The user_subnets table is the source
 			// of truth; the portal_users columns are kept in
 			// sync by the manager (internal/subnet/manager.go).
-			`ALTER TABLE portal_users ADD COLUMN subnet_cidr TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE portal_users ADD COLUMN subnet_status TEXT NOT NULL DEFAULT 'none'`,
-			`ALTER TABLE portal_users ADD COLUMN subnet_router_node_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_cidr TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_status TEXT NOT NULL DEFAULT 'none'`,
+			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_router_node_id TEXT NOT NULL DEFAULT ''`,
 			`CREATE INDEX IF NOT EXISTS idx_portal_users_subnet_status
 				ON portal_users (subnet_status)`,
 		}
@@ -736,51 +738,16 @@ func migrateV043PG(d *sql.DB) error {
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV044PG(d *sql.DB) error {
 
-		// SQLite 3.35+ supports ADD COLUMN IF NOT EXISTS, but
-		// the Alpine image we ship on runs an older SQLite.
-		// We instead check PRAGMA table_info to make the ALTER
-		// idempotent — important for the live deploy path
-		// where an operator may have already pre-applied the
-		// columns manually (the v0.27.0 live-deploy ran into
-		// exactly this race: the migration would re-apply the
-		// ADD COLUMN, hit "duplicate column", and crash the
-		// container in a restart loop).
-		hasColumn := func(table, col string) bool {
-			// PRAGMA table_info(<table>) returns one row per
-			// column. Column 1 (cid), column 2 (name), etc.
-			// We use the ? placeholder for the table name
-			// (PRAGMAs don't support ?, but table names are
-			// hard-coded here so no injection risk). The
-			// .(table) approach used in the draft was wrong
-			// — the PRAGMA is just `table_info`, regardless
-			// of the table argument.
-			rows, err := d.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
-			if err != nil {
-				return false
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var cid int
-				var name, ctype string
-				var notnull, dfltValue, pk interface{}
-				if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
-					continue
-				}
-				if name == col {
-					return true
-				}
-			}
-			return false
+		// PG 9.6+ supports ADD COLUMN IF NOT EXISTS natively,
+		// which is the atomic way to make this idempotent. The
+		// pre-v0.32.24 code used a PRAGMA table_info-based
+		// `hasColumn` check (a SQLite idiom that didn't work on
+		// PG); v0.32.24 replaces it with IF NOT EXISTS.
+		if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("v0.44 add user_name: %w", err)
 		}
-		if !hasColumn("device_rules", "user_name") {
-			if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`); err != nil {
-				return fmt.Errorf("v0.44 add user_name: %w", err)
-			}
-		}
-		if !hasColumn("device_rules", "device_hostname") {
-			if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN device_hostname TEXT NOT NULL DEFAULT ''`); err != nil {
-				return fmt.Errorf("v0.44 add device_hostname: %w", err)
-			}
+		if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS device_hostname TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("v0.44 add device_hostname: %w", err)
 		}
 		// Backfill user_name from portal_users. Every
 		// device_rules row has a non-zero user_id (the FK
@@ -871,43 +838,43 @@ func migrateV046PG(d *sql.DB) error {
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV047PG(d *sql.DB) error {
 
-		// ALTER TABLE — IF NOT EXISTS for the column would
-		// require a more elaborate SQLite pragma (the
-		// IF NOT EXISTS clause for ADD COLUMN was added
-		// in SQLite 3.35.0). headscale 0.29's docker
-		// image ships with SQLite 3.45+, so the clause
-		// is supported. The pragma_query_only fallback
-		// (try/catch) keeps the migration idempotent
-		// even on older SQLite versions.
+		// v0.32.24: on PG, ALTER TABLE ADD COLUMN IF NOT EXISTS
+		// is the atomic way to add a column idempotently.
+		// The pre-fix code used the SQLite-style "try ALTER
+		// and catch the duplicate-column error" pattern
+		// via the shared `addViaEnabledUserPrefSQL` const
+		// (in migrations_v0.47.go) + `isSQLiteDuplicateColumnError`
+		// helper — both SQLite-isms that don't work on PG
+		// (PG returns SQLSTATE 42701 not a string message).
+		// We inline the IF NOT EXISTS form here so the
+		// freshlyAdded heuristic isn't needed.
 		//
-		// CRITICAL: the backfill UPDATE only runs if the
-		// ALTER actually created the column in THIS run
-		// (i.e., this is the very first time the migration
-		// runs on a deploy that previously didn't have
-		// the column). Otherwise, every skygate restart
-		// would clobber operator-set via_enabled=0 back
-		// to 1. The "freshlyAdded" flag tracks whether
-		// THIS run was the one that created the column.
-		freshlyAdded := true
-		if _, err := d.Exec(addViaEnabledUserPrefSQL); err != nil {
-			// "duplicate column name: via_enabled" — already
-			// migrated in a previous run. Don't backfill.
-			if !isSQLiteDuplicateColumnError(err) {
-				return err
+		// For the backfill logic: if the column already exists
+		// (IF NOT EXISTS makes the ALTER a no-op), we still
+		// run the backfill ONLY on the first deploy — see
+		// the freshlyAdded check below. We detect "already
+		// existed" via information_schema instead of error
+		// matching.
+		colExists := func(table, col string) bool {
+			var n int
+			row := d.QueryRow(`
+				SELECT COUNT(*) FROM information_schema.columns
+				WHERE table_name = $1 AND column_name = $2`,
+				table, col)
+			if err := row.Scan(&n); err != nil {
+				return false
 			}
-			freshlyAdded = false
+			return n > 0
 		}
-		if _, err := d.Exec(addViaEnabledDevicePrefSQL); err != nil {
-			if !isSQLiteDuplicateColumnError(err) {
-				return err
-			}
-			// Both columns added in this run? Set false.
-			// If user ALTER was the duplicate and device
-			// ALTER also was duplicate, both columns
-			// pre-existed.
-			if freshlyAdded {
-				freshlyAdded = false
-			}
+		freshlyAdded := !colExists("user_exit_node_prefs", "via_enabled")
+		if _, err := d.Exec(`ALTER TABLE user_exit_node_prefs ADD COLUMN IF NOT EXISTS via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if !colExists("device_exit_node_prefs", "via_enabled") && freshlyAdded {
+			freshlyAdded = true
+		}
+		if _, err := d.Exec(`ALTER TABLE device_exit_node_prefs ADD COLUMN IF NOT EXISTS via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
 		}
 		// Backfill ONLY on the first-time migration. On
 		// every subsequent startup, skip the UPDATE so
