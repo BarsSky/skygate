@@ -297,6 +297,10 @@ func (a *App) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int, cfg *config.Config) *App {
+	derpURL := "http://derp.example.com:8766"
+	if cfg != nil && cfg.DerpBaseURL != "" {
+		derpURL = cfg.DerpBaseURL
+	}
 	a := &App{
 		DB:           d,
 		hs:           hs,
@@ -305,7 +309,7 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		JWTSecret:    secret,
 		ControlURL:   controlURL,
 		SessionHours: sessionH,
-		DerpBaseURL:  "http://192.0.2.1:8766",
+		DerpBaseURL:  derpURL,
 		templates:    LoadTemplates(),
 		Notifier:    telegram.NoopNotifier{},
 		I18n:         i18n.New(),

@@ -53,7 +53,7 @@ print("users:", user_emails)
 # With explicit per-user src we let Tailscale filter the node list
 # according to each user.
 #
-# Trade-off: tag:private is shared between all users, so user1/guest/
+# Trade-off: tag:private is shared between all users, so user1/user3/
 # user2 can see other users' private devices in their Tailscale UI.
 # The proper fix is per-user-private tags (tag:admin, tag:user1, ...)
 # which would require re-tagging every node. For now the simpler model

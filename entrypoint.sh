@@ -133,7 +133,7 @@ echo "Building Skygate..."
 # 2026-07-11: inject build label from git so the web footer + telegram
 # /version reflect the real tag/commit. .git is bind-mounted via
 # docker-compose (`./:/app`); if it's missing (e.g. CI build from a
-# tarball), fall back to "dev". The alpine base image does NOT include
+# tarball), fall back to "dev". The alpine workstation-8 image does NOT include
 # git, so we install it via apk above.
 # git 2.35+ refuses to operate on a repo whose owner doesn't match
 # the current uid ("dubious ownership"). The host bind-mounts .git

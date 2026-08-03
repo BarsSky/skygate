@@ -10,7 +10,7 @@
 # Reads SKYGATE_ADMIN_USER / SKYGATE_ADMIN_PASS from .env automatically.
 #
 # When SMOKE_LANG is unset, this script re-invokes itself once per
-# language (ru, then en) and prints a combined SUMMARY. The base URL
+# language (ru, then en) and prints a combined SUMMARY. The workstation-8 URL
 # is forwarded so a caller can do `make test BASE=...`.
 set -u
 PASS=0

@@ -89,7 +89,7 @@ to reflect a deliberate design change.
 | R23 | TLS cert is Let's Encrypt, > 7 days valid | Cert renewal gap |
 | R24 | openresty upstream (`localhost:8080`) returns 200 | Not 504 |
 | R25 | skygate-host-1 pings `8.8.8.8` with 0% loss | Direct internet works |
-| R26 | No headscale node has BOTH `tag:dev-*` AND `tag:exit-*` | v0.30.1 base-bug regression: per-user device as exit-node |
+| R26 | No headscale node has BOTH `tag:dev-*` AND `tag:exit-*` | v0.30.1 workstation-8-bug regression: per-user device as exit-node |
 | R27 | PG-staging VM: live migration lock_timeout + 4 verification tests pass (v0.31.0) | `SKYGATE_TEST_PG_DSN` set; roundtrip + idempotency + lock_timeout + data_mig PASS |
 
 ### How to extend the catalog
@@ -168,7 +168,7 @@ explaining why.
 
 * **Previous**: v0.30.1 — per-user device can't be tagged as exit-node
   ([tag v0.30.1](https://github.com/skygate-operator/skygate/releases/tag/v0.30.1)).
-  The "base" fix. user1's Windows box "base" had silently
+  The "workstation-8" fix. user1's Windows box "workstation-8" had silently
   acquired `tag:exit-node` (probably from an old debug-session
   `headscale nodes tag` on the VM host) and self-routed all
   traffic to /dev/null. `PostAdminNodeTag` now refuses exit-node-like
@@ -490,7 +490,7 @@ explaining why.
   status semantics (pending ⇔ no router, router_active ⇔
   tag:subnet-router up). Production state: admin =
   10.0.1.0/24 active (pilot since v0.16.6), user1 =
-  10.0.6.0/24 pending, guest = 10.0.9.0/24 pending, user2
+  10.0.6.0/24 pending, user3 = 10.0.9.0/24 pending, user2
   = 10.0.10.0/24 pending. When each user runs
   `setup.sh`, the sidecar's 30s tick auto-approves the
   route and flips status to `router_active` within ~30s.
@@ -524,7 +524,7 @@ explaining why.
   deploy, `docker logs skygate | grep expirewatch.tick`
   should show `seen=18 renewed=5 skipped=13 errors=0`
   (the 5 renewed are the `tag:private` nodes with
-  near-expiry: workstation-2, workstation-2-1, Nothing Phone, Base,
+  near-expiry: workstation-2, workstation-2-old, Nothing Phone, Base,
   workstation-4; the 13 skipped are relay-1, relay-2,
   relay-3 + the 7 `agent*` test nodes from v0.23.3
   verification + skygate-host-1 which has nil Expiry).
@@ -655,9 +655,9 @@ explaining why.
   8 files, +405/-18 lines, 7 new tests,
   smoke 83/83 still green. For the 4
   production users (admin/user1/
-  guest/user2) their subnets flip
+  user3/user2) their subnets flip
   from `pending` to `active` on the
-  next `/my/devices` load — guest
+  next `/my/devices` load — user3
   (0 devices) stays `pending`, which
   is the intended behavior.
 
@@ -732,9 +732,9 @@ explaining why.
   8 files, +405/-18 lines, 7 new tests,
   smoke 83/83 still green. For the 4
   production users (admin/user1/
-  guest/user2) their subnets flip
+  user3/user2) their subnets flip
   from `pending` to `active` on the
-  next `/my/devices` load — guest
+  next `/my/devices` load — user3
   (0 devices) stays `pending`, which
   is the intended behavior.
 
@@ -1037,7 +1037,7 @@ explaining why.
   **Note on the v0.19.0 attempt (reverted)**: a
   v0.19.0 release was deployed briefly and then
   reverted (commit `0c394bd`) because the
-  `exitnode.skygate-subnet-<user>.<base-domain>`
+  `exitnode.skygate-subnet-<user>.<workstation-8-domain>`
   DNS-record feature relied on headscale's
   `dns.extra_records` policy field, which
   headscale 0.29.x (the operator's version —
@@ -1692,7 +1692,7 @@ per-user headscale, compliance tier). The next big things:
   (4 tests). Brought the feature/ test count from 117 to 136
   (+19). Test debt now ~2850 lines (was ~3600).
 
-- **`v0.19.1` — `exitnode.skygate-subnet-<user>.<base-domain>`
+- **`v0.19.1` — `exitnode.skygate-subnet-<user>.<workstation-8-domain>`
   DNS records** (re-attempt of the reverted v0.19.0). Per-user
   `tag:subnet-router` already exposes a stable IP per
   personal subnet (v0.18.0 MagicDNS). The next step is a
@@ -1871,7 +1871,7 @@ they're already solved by the global headscale:
 
 ## v0.16.0+ per-user subnets (DEFAULT — use this)
 
-For the 4 prod users (admin/user1/guest/user2), the
+For the 4 prod users (admin/user1/user3/user2), the
 default path is per-user subnets in the global headscale
 (v0.16.6+). Each user has `10.0.<uid>.0/24` as a logical
 ACL namespace. Exit-nodes are shared. Mesh is cross-user.
@@ -1912,7 +1912,7 @@ right user:
 ```sql
 UPDATE node_owner_map
    SET username = 'admin', tag = 'tag:private', tagged_by_user_id = 1
- WHERE hostname IN ('workstation-1','workstation-2','workstation-2-1',
+ WHERE hostname IN ('workstation-1','workstation-2','workstation-2-old',
                      'skygate-host-1','workstation-4','workstation-3');
 ```
 
@@ -2147,7 +2147,7 @@ on the operator's VM):
 ALLOCATE_NO_PROMPT=1 /home/admin/skygate/deploy/subnet-router/allocate-existing-users.sh
 ```
 
-Already executed: user1/guest/user2 now have
+Already executed: user1/user3/user2 now have
 `10.0.<uid>.0/24` rows in `user_subnets` with
 `status='pending'` and the corresponding denorm columns on
 `portal_users`.
@@ -2275,7 +2275,7 @@ must remain LAST, after per-user and tag rules. Also remember that every
 `tagOwners{}` (the v7 fix that broke reapply otherwise — see
 "Admin SSH into tag:public relays" above for the full story).
 
-The headscale base domain is hard-coded as `tsnet.example.com` for now — it
+The headscale workstation-8 domain is hard-coded as `tsnet.example.com` for now — it
 is the only deployment. If you add another deployment, refactor to read it
 from `config.Config`.
 
@@ -2564,12 +2564,12 @@ approximate — they shift on node re-create.
 * `workstation-1` (100.64.100.1, id=9) — operator's Windows machine.
   Has `tailscale up --accept-routes` and may pick any relay as
   exit-node from the Tailscale GUI.
-* `base` (100.64.100.7, id=7) — older Windows box, currently
+* `workstation-8` (100.64.100.7, id=7) — older Windows box, currently
   `offline` since 2026-07-13. Tagged `tag:private` but not in
   active use.
 * `workstation-2` (100.64.100.5, id=10) — Android phone, `active; relay
   "mow"` (uses DERP for direct, not direct endpoint).
-* `workstation-2-1` (100.64.100.8, id=8) — older phone, `offline` since
+* `workstation-2-old` (100.64.100.8, id=8) — older phone, `offline` since
   2026-07-14 morning.
 * `workstation-5` (100.64.100.6, id=6) — Android phone, `active`
   via DERP relay.
@@ -2935,7 +2935,8 @@ build step in the container — `entrypoint.sh` does `go build -o /app/skygate
     to headscale, (c) have it auto-approved by the sidecar
     (`tag:subnet-router`), and (d) have `ip_forward=1`. The route
     is "phantom" if the subnet-router is on a network like
-    `192.168.13.0/24` (the operator's VM LAN) — headscale accepts
+    `192.0.2.0/24` (a private LAN that doesn't actually contain
+    the user's `10.0.<uid>.x` devices) — headscale accepts
     the route, other clients install it in their routing table, but
     the kernel at the subnet-router drops the packet because there's
     no actual `10.0.<uid>.x` device behind it. The

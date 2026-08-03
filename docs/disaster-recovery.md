@@ -140,7 +140,7 @@ the backup is not also corrupt** before relying on it:
 ```bash
 sqlite3 /var/backups/skygate/latest/skygate.db \
     "SELECT COUNT(*) FROM portal_users;"
-# expected: ~4 (admin, user1, guest, user2)
+# expected: ~4 (admin, user1, user3, user2)
 sqlite3 /var/backups/headscale/latest/db.sqlite \
     "SELECT COUNT(*) FROM nodes;"
 # expected: ~11 (after v0.25.0; check current prod count)

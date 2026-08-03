@@ -278,12 +278,12 @@ run_check "B16" "exit-rules CDN detection helper (Cloudflare/Fastly/Google/Akama
   '"
 
 # --- B17: per-user device can't be tagged as exit-node (v0.30.1) ---
-# 2026-07-28: the "base" bug. user1's Windows box "base"
-# (headscale id=7, tag:dev-user1-base) was found carrying
+# 2026-07-28: the "workstation-8" bug. user1's Windows box "workstation-8"
+# (headscale id=7, tag:dev-user1-workstation-8) was found carrying
 # tag:exit-node in headscale — set via direct headscale CLI,
 # no skygate audit row. Tailscale auto-failover then picked
 # "Base" as exit-node (0ms self-loop = lowest metric), and
-# all of base's internet traffic went to /dev/null. User
+# all of workstation-8's internet traffic went to /dev/null. User
 # reported "пропал доступ в сеть" + "exit node не выбирается
 # корректно".
 #
@@ -297,7 +297,7 @@ run_check "B16" "exit-rules CDN detection helper (Cloudflare/Fastly/Google/Akama
 #   (b) the guard function is wired into PostAdminNodeTag
 #       (a static-grep on the handler)
 #   (c) the test suite still passes
-run_check "B17" "per-user device can't be tagged as exit-node (v0.30.1 base fix)" \
+run_check "B17" "per-user device can't be tagged as exit-node (v0.30.1 workstation-8 fix)" \
   "bash -c '
     test -f internal/feature/admin/devices_test.go &&
     grep -q TestNodeTagRefused_ExitNodeOnUserDevice internal/feature/admin/devices_test.go &&
@@ -444,7 +444,7 @@ run_check "B21" "exit-nodes filter excludes subnet-routers (v0.32.7)" \
 #
 # B22 pins the contract (v0.32.13 REVERT of v0.32.8):
 #   (a) Dockerfile is single-stage (FROM golang:1.25-alpine as
-#       the runtime base — NOT a multi-stage with `skygate-build`
+#       the runtime workstation-8 — NOT a multi-stage with `skygate-build`
 #       and `alpine:3.20` stages; that was the v0.32.8 path
 #       that introduced the CGO+musl deadlock).
 #   (b) Dockerfile does NOT run `go mod download` or `go build`
@@ -558,7 +558,7 @@ run_check "B25" "Caddy is OFF by default (v0.32.11)" \
 # the build stage. v0.32.13 then reverted the entire multi-stage
 # build pattern (see B22) — the runtime image is the full
 # golang:1.25-alpine which already has gcc + musl-dev pre-installed
-# (the base image ships them as part of the Go toolchain). The
+# (the workstation-8 image ships them as part of the Go toolchain). The
 # only thing we need to add is sqlite-libs (the C library
 # libsqlite3.so that go-sqlite3 dynamically links against at
 # runtime).
@@ -589,7 +589,7 @@ run_check "B26" "Dockerfile runtime has go-sqlite3 CGO toolchain (v0.32.13)" \
 # Background: 2026-07-31 v0.32.13 REVERTED v0.32.8's
 # image-build-time build. The runtime build is back: the
 # Dockerfile is single-stage (golang:1.25-alpine as the
-# runtime base) and entrypoint.sh does `go mod download` +
+# runtime workstation-8) and entrypoint.sh does `go mod download` +
 # `go build` at container start. This is the v0.32.5 pattern
 # that worked reliably. The trade-off is ~80s startup cost
 # (vs. <5s for the v0.32.8 image-build approach) but the

@@ -137,11 +137,11 @@ def main():
         print("ERROR: HEADSCALE_API_KEY not set in env (or pass --api-key)")
         return 2
 
-    base = args.headscale_url.rstrip("/")
+    workstation-8 = args.headscale_url.rstrip("/")
     api_key = args.api_key
 
     # 1. Fetch list of nodes.
-    url = base + "/api/v1/node"
+    url = workstation-8 + "/api/v1/node"
     req = urllib.request.Request(url, headers={"Authorization": "Bearer " + api_key})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:

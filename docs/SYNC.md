@@ -1,9 +1,9 @@
-# Skygate Sync — между agent (192.0.2.1) и knaga (192.0.2.20)
+# Skygate Sync — between agent and knaga
 
 ## Текущая конфигурация
-- **agent** (192.0.2.1) — Linux, skygate работает в Docker, bind-mount `/home/admin/skygate`
-- **knaga** (192.0.2.20) — Windows, Tailscale client, MagicDNS
-- **bare repo** на Synology: `\\192.0.2.13\docker\git\skygate.git` (или `/mnt/synya/git/skygate.git`)
+- **agent** — Linux, skygate работает в Docker, bind-mount to /app
+- **knaga** — Windows, Tailscale client, MagicDNS
+- **bare repo** на Synology: `\\<synology-ip>\docker\git\skygate.git` (или `/mnt/synya/git/skygate.git`)
 
 ## Workflow
 

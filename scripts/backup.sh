@@ -224,8 +224,8 @@ ROT_REMOVED=0
 # All skygate-full-*.tar.gz except the just-created one
 mapfile -t OLD < <(find "${BACKUP_DIR}" -maxdepth 1 -name 'skygate-full-*.tar.gz' ! -name "skygate-full-${DATE_TAG}.tar.gz" -type f | sort)
 for f in "${OLD[@]}"; do
-  base=$(basename "$f" .tar.gz)
-  d="${base##*skygate-full-}"
+  workstation-8=$(basename "$f" .tar.gz)
+  d="${workstation-8##*skygate-full-}"
   # d=YYYYMMDD_HHMMSS — extract date part only
   date_part="${d%_*}"
   # Day of week of the date — mark Sundays as weekly keepers

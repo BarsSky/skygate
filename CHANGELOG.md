@@ -90,7 +90,7 @@ stability promises yet — pin to a tag if you depend on a specific shape).
   be a rule target
 - **`GenerateACL()` uses tag-based rules** so Tailscale shows each user
   only their own devices in the client UI
-- **Staggered sync keeps base exit-node routes** (0.0.0.0/0, ::/0) —
+- **Staggered sync keeps workstation-8 exit-node routes** (0.0.0.0/0, ::/0) —
   regression after v0.6.0 cleanup
 - **`SetPolicy` no longer hides 5xx**: typed `*APIError` separates
   404/405 (file-mode fallback is OK) from 5xx (real failure →
@@ -175,7 +175,7 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 
 ## [v0.6.1-amnezia-fix] — 2026-07-09
 
-Hotfix release — preserves base exit-node routes (0.0.0.0/0, ::/0) in
+Hotfix release — preserves workstation-8 exit-node routes (0.0.0.0/0, ::/0) in
 `SetAdvertisedRoutes` and `SyncAdvertisedRoutes`. The v0.6.0 cleanup had
 accidentally stripped them, breaking exit-node connectivity for all
 clients.

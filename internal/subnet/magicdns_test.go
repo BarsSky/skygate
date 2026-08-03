@@ -12,7 +12,7 @@ func TestComputeMagicDNSNames_KnownUsernames(t *testing.T) {
 	}{
 		{"alice", "skygate-subnet-alice.tsnet.example.com"},
 		{"user1_42", "skygate-subnet-user1_42.tsnet.example.com"},
-		{"guest", "skygate-subnet-guest.tsnet.example.com"},
+		{"user3", "skygate-subnet-user3.tsnet.example.com"},
 	}
 	for _, c := range cases {
 		got := ComputeMagicDNSNames(c.username)

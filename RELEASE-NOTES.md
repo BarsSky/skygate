@@ -417,7 +417,7 @@ requires cgo to work. This is a stub
 on every DB call. The skygate boot sequence does `db.Ping()`
 right after "🌐 Skygate starting on :8080" — the stub error
 fires there, the binary exits 1, port 8080 never binds,
-and the upstream proxy (Nginx Proxy Manager at 192.0.2.67,
+and the upstream proxy (Nginx Proxy Manager at the operator's NPM host,
 not the in-container caddy which is now off per v0.32.11)
 returns 504 to every external request.
 
@@ -587,7 +587,7 @@ internal_error` because the placeholder Caddyfile
 `derp.example.com` — template defaults, not the
 operator's real domain) couldn't issue certs. The
 operator's external TLS terminator (Nginx Proxy Manager
-at 192.0.2.67) was forwarding to this host's :443 and
+at the operator's NPM host) was forwarding to this host's :443 and
 hitting the broken caddy. CI didn't catch it (CI checks
 Go code, not Caddyfile validity or ACME issuance). The
 fix flips the default across three coordinated layers so
@@ -658,7 +658,7 @@ Live incident timeline:
   `head.example.com` Caddyfile can't issue certs
   (ACME `rejectedIdentifier` error). Operator then
   explained that this VM is fronted by an external NPM
-  at 192.0.2.67 — caddy is irrelevant on this host.
+  at the operator's NPM host — caddy is irrelevant on this host.
 * 2026-07-31 ~13:00 MSK — fix: stop caddy container,
   set `CADDY_ENABLED=false` in `.env`, document the new
   default + the opt-in procedure.
@@ -1852,7 +1852,7 @@ Expected: 4 PASS, 0 FAIL.
 - `AGENTS.md` — catalog B1-B17 → B1-B18, R1-R26 → R1-R27
 - `RELEASE-NOTES.md` — this section
 
-## v0.30.1 — Per-user device can't be tagged as exit-node (the "base" fix)
+## v0.30.1 — Per-user device can't be tagged as exit-node (the "workstation-8" fix)
 
 **Date:** 2026-07-28
 **Tag:** [v0.30.1](https://github.com/skygate-operator/skygate/releases/tag/v0.30.1)
@@ -1861,19 +1861,19 @@ Expected: 4 PASS, 0 FAIL.
 
 ### The bug
 
-user1 reported on 2026-07-28 that his Windows box "base"
+user1 reported on 2026-07-28 that his Windows box "workstation-8"
 (headscale id=7) had "пропал доступ в сеть" (network access gone)
 and "exit node не выбирается корректно" (exit node not selected
-correctly). Investigation found base — a per-user device carrying
-`tag:dev-user1-base` — was also carrying `tag:exit-node` in
+correctly). Investigation found workstation-8 — a per-user device carrying
+`tag:dev-user1-workstation-8` — was also carrying `tag:exit-node` in
 headscale. **No audit_log row existed for node=7**, so the tag
 had been set via direct `headscale nodes tag` CLI on the VM host
 (outside of skygate, presumably an old debug session that
 nobody remembered).
 
-The Tailscale Windows client on base then auto-selected "Base"
+The Tailscale Windows client on workstation-8 then auto-selected "Base"
 as the exit-node (0 ms self-loop = lowest metric), and all of
-base's internet traffic went to /dev/null. base's advertised
+workstation-8's internet traffic went to /dev/null. workstation-8's advertised
 routes don't include `0.0.0.0/0`, so the Tailscale "fall through
 to direct" path also fails.
 
@@ -1922,15 +1922,15 @@ reporting any conflict.
 The original bug bypassed skygate entirely (direct headscale
 CLI). The build-time guard closes the *future* UI path, and
 R26 closes the *future* CLI path. The **historical**
-user1/base case (which is the only one observed so far) was
+user1/workstation-8 case (which is the only one observed so far) was
 fixed by hand on 2026-07-28:
 
 ```bash
 docker exec headscale headscale nodes tag -i 7 \
-  -t 'tag:dev-user1-base,tag:private' --force
+  -t 'tag:dev-user1-workstation-8,tag:private' --force
 ```
 
-(base had been carrying `tag:dev-user1-base,tag:private,tag:exit-node`;
+(workstation-8 had been carrying `tag:dev-user1-workstation-8,tag:private,tag:exit-node`;
 the third tag was dropped, the first two were re-applied
 because headscale's `tag` command REPLACES, not appends.)
 
@@ -2120,7 +2120,7 @@ the OLD container's removal cleanly.
 The helper does the full swap:
   1. sleep 3s (orchestrator flush)
   2. `apk add --no-cache docker-cli docker-cli-compose`
-     (alpine base image has no docker binary)
+     (alpine workstation-8 image has no docker binary)
   3. `cd /host_repo && docker compose -p skygate -f
      /host_repo/docker-compose.yml up -d
      --force-recreate --no-deps skygate`

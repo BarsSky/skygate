@@ -6,7 +6,7 @@
 # 2026-07-21: v0.23.2 (one-off, not a feature release).
 #
 # Background:
-#   admin's 6 tag:private devices (workstation-1, workstation-2, workstation-2-1,
+#   admin's 6 tag:private devices (workstation-1, workstation-2, workstation-2-old,
 #   skygate-host-1, workstation-4, workstation-3) are all owned by "tagged-devices"
 #   in node_owner_map. The v0.3.9 backfill (and v0.22.2 fix) can't
 #   recover them because the preauth used to register them didn't have
@@ -47,10 +47,10 @@
 # (or is empty), so re-running is safe. If the rows already have
 # username='admin', the UPDATE affects 0 rows.
 #
-# Scope: ONE user (admin, uid=1). For other users (user1/guest/
+# Scope: ONE user (admin, uid=1). For other users (user1/user3/
 # user2) the same pattern can be applied if their devices are
 # similarly misattributed — but as of v0.23.2, user1's devices
-# (workstation-5, base) are correctly attributed, and guest/user2
+# (workstation-5, workstation-8) are correctly attributed, and user3/user2
 # have no devices at all.
 #
 # Safety: this script only writes to skygate's local SQLite
@@ -78,7 +78,7 @@ fi
 SKYADMIN_DEVICES=(
     "workstation-1"
     "workstation-2"
-    "workstation-2-1"
+    "workstation-2-old"
     "skygate-host-1"
     "workstation-4"
     "workstation-3"
@@ -86,7 +86,7 @@ SKYADMIN_DEVICES=(
 
 CK=/tmp/fix_attribution.ck
 rm -f "$CK"
-base="http://localhost:8080"
+workstation-8="http://localhost:8080"
 
 echo "=== fix_admin_attribution.sh ==="
 echo "(one-off SQL fix for admin's node_owner_map rows)"
@@ -96,7 +96,7 @@ echo
 echo "--- 1. login as $USER"
 code=$(curl -s -o /dev/null -w "%{http_code}" -c "$CK" -b "$CK" \
     --data-urlencode "username=$USER" --data-urlencode "password=$PASS" \
-    "$base/login")
+    "$workstation-8/login")
 if [ "$code" = "302" ]; then
     echo "PASS: login returned 302"
 else
@@ -156,7 +156,7 @@ echo "    (should show username=tagged-devices for all 6 before fix)"
 cat > /tmp/check_pre.sql <<'SQL'
 SELECT hostname, username, tag
   FROM node_owner_map
- WHERE hostname IN ('workstation-1','workstation-2','workstation-2-1','skygate-host-1','workstation-4','workstation-3')
+ WHERE hostname IN ('workstation-1','workstation-2','workstation-2-old','skygate-host-1','workstation-4','workstation-3')
  ORDER BY hostname;
 SQL
 pre_state=$(cat /tmp/check_pre.sql | docker exec -i skygate sqlite3 /data/skygate.db)
@@ -205,7 +205,7 @@ echo "    (should now show username=admin for all 6)"
 cat > /tmp/check_post.sql <<'SQL'
 SELECT hostname, username, tag
   FROM node_owner_map
- WHERE hostname IN ('workstation-1','workstation-2','workstation-2-1','skygate-host-1','workstation-4','workstation-3')
+ WHERE hostname IN ('workstation-1','workstation-2','workstation-2-old','skygate-host-1','workstation-4','workstation-3')
  ORDER BY hostname;
 SQL
 post_state=$(cat /tmp/check_post.sql | docker exec -i skygate sqlite3 /data/skygate.db)
@@ -224,7 +224,7 @@ fi
 #    'active' since nodeCount is now 6).
 echo
 echo "--- 5. trigger /my/devices load (fires subnet.SyncStatus)"
-curl -s -b "$CK" -c "$CK" "$base/my/devices" >/dev/null
+curl -s -b "$CK" -c "$CK" "$workstation-8/my/devices" >/dev/null
 # Give the backfill a moment to run (it's synchronous, but the
 # page render takes a moment).
 sleep 1
@@ -245,7 +245,7 @@ fi
 # 7. verify: /my/devices page renders the 6 devices
 echo
 echo "--- 7. verify: /my/devices page renders the 6 devices"
-out=$(curl -sL -b "$CK" -c "$CK" "$base/my/devices")
+out=$(curl -sL -b "$CK" -c "$CK" "$workstation-8/my/devices")
 device_count=0
 for h in "${SKYADMIN_DEVICES[@]}"; do
     # /my/devices renders each device as a <code>hostname</code>
@@ -269,7 +269,7 @@ echo
 echo "--- 8. verify: /admin/users/1/subnet shows the new 'active' status"
 uid=$(echo "SELECT id FROM portal_users WHERE username = 'admin';" \
     | docker exec -i skygate sqlite3 /data/skygate.db)
-out=$(curl -sL -b "$CK" -c "$CK" "$base/admin/users/$uid/subnet")
+out=$(curl -sL -b "$CK" -c "$CK" "$workstation-8/admin/users/$uid/subnet")
 # The v0.22.3 status pill renders one of: router_active, active,
 # pending, disabled. We expect 'active' (no subnet-router in
 # this prod setup).
@@ -283,7 +283,7 @@ fi
 # 9. verify: /admin/users subnet column shows the active pill
 echo
 echo "--- 9. verify: /admin/users subnet column shows 'active' for admin"
-out=$(curl -sL -b "$CK" -c "$CK" "$base/admin/users")
+out=$(curl -sL -b "$CK" -c "$CK" "$workstation-8/admin/users")
 if echo "$out" | grep -E "<code>workstation-1|<code>workstation-2" >/dev/null; then
     # The subnet column pill is just after the username code block.
     # We look for the active class within the row.
@@ -306,7 +306,7 @@ echo
 echo "=== fix_admin_attribution.sh: ALL CHECKS PASSED ==="
 echo
 echo "Summary:"
-echo "  - 6 admin devices (workstation-1, workstation-2, workstation-2-1,"
+echo "  - 6 admin devices (workstation-1, workstation-2, workstation-2-old,"
 echo "    skygate-host-1, workstation-4, workstation-3) are now attributed to"
 echo "    username='admin' in node_owner_map."
 echo "  - /my/devices page renders them (≥4 visible, exact count"

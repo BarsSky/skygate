@@ -30,7 +30,7 @@
 #   R23 TLS cert is Let's Encrypt, not expiring within 30d
 #   R24 openresty upstream reachable
 #   R25 skygate-host-1 can reach 8.8.8.8 (direct, no exit-node)
-#   R26 no per-user device carries an exit-node tag (v0.30.1 base fix)
+#   R26 no per-user device carries an exit-node tag (v0.30.1 workstation-8 fix)
 #
 # Usage:
 #   bash scripts/verify_post_deploy.sh                       # all 26 checks
@@ -341,7 +341,7 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
   # dst includes autogroup:internet. The expected count is DYNAMIC
   # — it should match the number of portal_users rows in the DB.
   # (Was hardcoded to "4" for the 4 known prod users
-  # admin/user1/guest/user2; the system can grow beyond
+  # admin/user1/user3/user2; the system can grow beyond
   # that and the script must follow.) R15/R16 below do the
   # via-flag cross-check; R10 just checks the count + presence
   # of the per-user shape.
@@ -656,9 +656,9 @@ for g in policy.get("grants", []):
     via = g.get("via", [None])[0] if has_via else None
     # Find user in db
     db_user = next((u for u in db.get("user_prefs", [])
-                    if str(u.get("user_id")) in {"1":"admin","6":"user1","9":"guest","10":"user2"}.get(str(u.get("user_id")),"") or u.get("user_id") in (1,6,9,10) and u.get("tag") in (None,via) ), None)
+                    if str(u.get("user_id")) in {"1":"admin","6":"user1","9":"user3","10":"user2"}.get(str(u.get("user_id")),"") or u.get("user_id") in (1,6,9,10) and u.get("tag") in (None,via) ), None)
     # Simpler: match by user_id→username map
-    user_map = {"1":"admin","6":"user1","9":"guest","10":"user2"}
+    user_map = {"1":"admin","6":"user1","9":"user3","10":"user2"}
     db_user = None
     for u in db.get("user_prefs", []):
         if user_map.get(str(u["user_id"])) == user:
@@ -854,7 +854,7 @@ fi
 # ---------------------------------------------------------------------------
 # Phase 8: per-user device integrity (R26)
 # ---------------------------------------------------------------------------
-# 2026-07-28: v0.30.1. Catches the "base" bug shape on the live
+# 2026-07-28: v0.30.1. Catches the "workstation-8" bug shape on the live
 # system: a per-user device (tag:dev-<user>-<device>) must NOT
 # also carry an exit-node-like tag. If it does, Tailscale
 # auto-failover may pick the user device as the exit-node
@@ -865,7 +865,7 @@ fi
 # bug exploited).
 #
 # Failure modes this catches:
-#   - tag:exit-node AND tag:dev-* on the same node (the base bug)
+#   - tag:exit-node AND tag:dev-* on the same node (the workstation-8 bug)
 #   - tag:exit-relay-1 / relay-2 / relay-3 AND tag:dev-* on
 #     the same node (a per-user device masquerading as a
 #     specific relay)

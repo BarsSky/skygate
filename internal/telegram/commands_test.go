@@ -3749,14 +3749,14 @@ func TestMyExitNodesReplyMarksDefault(t *testing.T) {
 		t.Errorf("expected ✓ marker for default node, got: %q", got)
 	}
 	// relay-1 must NOT carry the ✓ marker.
-	relay-1Row := ""
+	relay1Row := ""
 	for _, line := range strings.Split(got, "\n") {
 		if strings.Contains(line, "relay-1-1") {
-			relay-1Row = line
+			relay1Row = line
 		}
 	}
-	if strings.Contains(relay-1Row, "✓") {
-		t.Errorf("relay-1 row must not be marked default, got: %q", relay-1Row)
+	if strings.Contains(relay1Row, "✓") {
+		t.Errorf("relay-1 row must not be marked default, got: %q", relay1Row)
 	}
 	// The aphrodite row should carry the ✓.
 	aphroditeRow := ""

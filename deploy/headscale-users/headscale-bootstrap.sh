@@ -81,10 +81,10 @@ if [ -f "$COMPOSE_OVERRIDE" ]; then
     exit 1
 fi
 
-# Per-user MagicDNS base domain. Different from the global
+# Per-user MagicDNS workstation-8 domain. Different from the global
 # `tsnet.example.com` so per-user subnets don't collide with global ones
 # in Tailscale's MagicDNS. The per-user headscale is only used by
-# skygate (no public client registration in Phase 1), so the base
+# skygate (no public client registration in Phase 1), so the workstation-8
 # domain is mostly cosmetic for now.
 BASE_DOMAIN="${USERNAME}.tsnet.example.com"
 
@@ -160,7 +160,7 @@ policy:
   mode: database
 YAML
 
-# Per-user docker-compose override. The base `docker-compose.yml`
+# Per-user docker-compose override. The workstation-8 `docker-compose.yml`
 # (in $GLOBAL_HEADSCALE_DIR) is the global one; this override adds
 # the per-user service. Both files are combined with `docker compose
 # -f docker-compose.yml -f docker-compose.user-<username>.yml up -d`.

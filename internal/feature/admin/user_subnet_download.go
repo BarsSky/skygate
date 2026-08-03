@@ -76,7 +76,7 @@ func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Requ
 	// template as the admin UI's "Issue preauth key"
 	// page, so the bundle is interchangeable with the
 	// page-rendered command.
-	commandsTxt := s.renderBundleCommandsTxt(username, cidr, key, exp)
+	commandsTxt := s.renderBundleCommandsTxt(username, cidr, key, exp, s.Cfg.HeadscaleURL)
 
 	// Build the tar.gz in memory. Each file is a
 	// tar.Header + body. Order matters only for the
@@ -133,10 +133,13 @@ func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Requ
 // script: that's a one-time sysctl that belongs in the
 // host's own provisioning (Ansible, cloud-init, etc.),
 // not in the per-user bundle.
-func (s *Service) renderBundleCommandsTxt(username, cidr, preauth string, exp time.Time) string {
+func (s *Service) renderBundleCommandsTxt(username, cidr, preauth string, exp time.Time, headscaleURL string) string {
 	// hostname must match what the sidecar expects:
 	// "skygate-subnet-<username>".
 	hostname := "skygate-subnet-" + username
+	if headscaleURL == "" {
+		headscaleURL = "https://head.example.com"
+	}
 	return fmt.Sprintf(`#!/bin/bash
 # Skygate subnet-router setup for %s
 # Generated: %s
@@ -157,7 +160,8 @@ func (s *Service) renderBundleCommandsTxt(username, cidr, preauth string, exp ti
 sudo tailscale up \
   --accept-routes \
   --netfilter-mode=off \
-  --login-server=https://head.example.com \
+  --login-server=%s \
+
   --hostname=%s \
   --advertise-routes=%s \
   --authkey=%s
@@ -166,6 +170,7 @@ sudo tailscale up \
 		time.Now().UTC().Format(time.RFC3339),
 		cidr,
 		exp.UTC().Format(time.RFC3339),
+		headscaleURL,
 		hostname,
 		cidr,
 		preauth,

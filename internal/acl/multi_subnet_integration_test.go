@@ -334,11 +334,11 @@ func TestACLBuilder_SkyadminMigrationIsolated(t *testing.T) {
 	d := openTestDB(t)
 	adminID := seedPortalUser(t, d, "admin")
 	user1ID := seedPortalUser(t, d, "user1")
-	guestID := seedPortalUser(t, d, "guest")
+	user3ID := seedPortalUser(t, d, "user3")
 	user2ID := seedPortalUser(t, d, "user2")
 
 	// Live state: admin is in 10.0.1.0/24, user1
-	// is in 10.0.8.0/24, guest in 10.0.11.0/24, user2
+	// is in 10.0.8.0/24, user3 in 10.0.11.0/24, user2
 	// in 10.0.12.0/24. Other users (none here in test
 	// data) might or might not have subnets — doesn't
 	// matter for this assertion.
@@ -349,7 +349,7 @@ func TestACLBuilder_SkyadminMigrationIsolated(t *testing.T) {
 	for _, p := range []userSubnet{
 		{adminID, "10.0.1.0/24"},
 		{user1ID, "10.0.8.0/24"},
-		{guestID, "10.0.11.0/24"},
+		{user3ID, "10.0.11.0/24"},
 		{user2ID, "10.0.12.0/24"},
 	} {
 		if _, err := d.Exec(`INSERT INTO user_subnets
@@ -370,7 +370,7 @@ func TestACLBuilder_SkyadminMigrationIsolated(t *testing.T) {
 		t.Fatal("admin's rule not found")
 	}
 	adminDst := dstList(t, adminRule)
-	wantSkyadminDst := []string{
+	wantAdminDst := []string{
 		"admin@tsnet.example.com",
 		"10.0.1.0/24",
 		// 2026-07-25: v0.28.3 — autogroup:internet
@@ -380,8 +380,8 @@ func TestACLBuilder_SkyadminMigrationIsolated(t *testing.T) {
 		// so the entry is bare here.
 		"autogroup:internet",
 	}
-	if !equalStringSlice(adminDst, wantSkyadminDst) {
-		t.Errorf("admin's dst = %v, want %v", adminDst, wantSkyadminDst)
+	if !equalStringSlice(adminDst, wantAdminDst) {
+		t.Errorf("admin's dst = %v, want %v", adminDst, wantAdminDst)
 	}
 
 	// user1's rule should have own identity + own CIDR.
@@ -398,12 +398,12 @@ func TestACLBuilder_SkyadminMigrationIsolated(t *testing.T) {
 		t.Errorf("user1's dst missing own CIDR 10.0.8.0/24; dst=%v", user1Dst)
 	}
 
-	// guest + user2 — no leaks either.
+	// user3 + user2 — no leaks either.
 	for _, tc := range []struct {
 		uname string
 		own   string
 	}{
-		{"guest", "10.0.11.0/24"},
+		{"user3", "10.0.11.0/24"},
 		{"user2", "10.0.12.0/24"},
 	} {
 		rule := ruleFor(t, aclStr, tc.uname)

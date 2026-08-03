@@ -123,6 +123,13 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	// 2026-08-03: v0.32.29 — DERP classifier now reads
+	// NPM address + LAN CIDR from config (was hardcoded
+	// to a specific private LAN).
+	if err := adminsvc.InitDerpClassifier(cfg.DerpPeerNPM, cfg.DerpLANNet); err != nil {
+		log.Fatalf("derp classifier: %v", err)
+	}
+
 	log.Printf("🌐 Skygate starting on :%s", cfg.Port)
 	log.Printf("   Headscale URL: %s", cfg.HeadscaleURL)
 

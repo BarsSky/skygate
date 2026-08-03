@@ -157,7 +157,7 @@ func TestListExitNodeHealth_OrderedByHostname(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d rows, want 3", len(got))
 	}
-	wantOrder := []string{"relay-1", "relay-3", "relay-2"}
+	wantOrder := []string{"relay-1", "relay-2", "relay-3"}
 	for i, h := range got {
 		if h.Hostname != wantOrder[i] {
 			t.Errorf("row %d: hostname = %q, want %q", i, h.Hostname, wantOrder[i])

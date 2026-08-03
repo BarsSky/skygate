@@ -26,7 +26,40 @@ type Config struct {
 	// See docs/headplane.md "Use an existing Headplane" for
 	// the full contract.
 	HeadplaneExternalURL string
-	ControlURL           string // human-facing URL clients connect to (e.g. https://head.example.com)
+	ControlURL           string // human-facing URL clients connect to
+	// BaseDomain is the headscale tailnet domain used to
+	// build per-user ACL identities (e.g. "alice@<BaseDomain>").
+	// Default "tsnet.example.com" (placeholder — operators MUST
+	// set SKYGATE_BASE_DOMAIN in their .env to the real domain
+	// their headscale serves, e.g. "tsnet.example.com" or
+	// "tailnet.example.com"). The placeholder default keeps
+	// the public github repo free of any operator-specific
+	// domain names.
+	BaseDomain string
+	// AdminIdentity is the headscale user that owns the
+	// privileged tags (tag:public, tag:exit-node) and is
+	// referenced in the SSH rules. Default "admin"
+	// (placeholder). Operators with a different admin
+	// username set SKYGATE_ADMIN_IDENTITY in .env. Keep this
+	// in sync with BootstrapAdminUser below.
+	AdminIdentity string
+	// DerpBaseURL is the URL the DERP map fetcher polls.
+	// Default "http://derp.example.com:8766" (placeholder).
+	// Operators set SKYGATE_DERP_BASE_URL in .env.
+	DerpBaseURL string
+	// DerpPeerNPM is the IP of the operator's Nginx Proxy
+	// Manager that maintains persistent WebSocket
+	// connections to the derper for /admin/derp. Default
+	// "192.0.2.67" (RFC 5737 documentation IP). Operators
+	// set SKYGATE_DERP_PEER_NPM in .env to the real NPM
+	// address on their LAN.
+	DerpPeerNPM string
+	// DerpLANNet is the operator's LAN CIDR (used to
+	// classify DERP peer connections as "lan" vs "ws_admin"
+	// vs "ws_relay"). Default "192.0.2.0/24" (RFC 5737).
+	// Operators set SKYGATE_DERP_LAN_NET in .env to their
+	// real LAN CIDR (e.g. "192.168.1.0/24").
+	DerpLANNet string
 	JWTSecret          string
 	SessionHours       int
 	BootstrapAdminUser string
@@ -40,7 +73,7 @@ type Config struct {
 	StaggerBatchSize  int           // rules per batch (default 20)
 	StaggerInterval   time.Duration // delay between batches (default 30s)
 	// 2026-07-07: per-user rule limits. Map username -> max rules. Default = MaxRulesPerDevice.
-	// Example: "SKYGATE_USER_MAX_RULES=admin:1000,admin:500"
+	// Example: "SKYGATE_USER_MAX_RULES=admin:1000,user1:500"
 	UserMaxRules       map[string]int
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// keys are encrypted with this 32-byte hex key. Empty
@@ -200,14 +233,14 @@ type Config struct {
 	//
 	// Default: inside a container, "/app" (the bind-mount
 	// point for the source dir per docker-compose.yml —
-	// `./:/app`). On a bare/systemd host, the operator's
-	// standard layout "/home/admin/skygate".
+	// `./:/app`). On a bare/systemd host, the generic
+	// placeholder "/home/operator/skygate".
 	//
 	// Why auto-detect: the orchestrator runs INSIDE the
 	// skygate container (it's a Go process started by the
 	// container's entrypoint), so the host path is
-	// unreachable — `chdir /home/admin/skygate` fails
-	// with "no such file or directory". The bind-mount
+	// unreachable — `chdir /home/operator/skygate` would
+	// fail on hosts with a different layout. The bind-mount
 	// exposes the same tree at /app inside the container,
 	// which is what git + docker compose operate on.
 	//
@@ -235,7 +268,18 @@ func Load() (*Config, error) {
 		SessionHours:       24,
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "admin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
-		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/home/admin/.ssh/skygate_sync"),
+		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/home/operator/.ssh/skygate_sync"),
+		// 2026-08-03: v0.32.29 — moved from source-level
+		// constants to env-driven config so the public
+		// github repo carries no operator-specific DNS,
+		// IPs, hostnames, or usernames. Live deployments
+		// MUST set SKYGATE_BASE_DOMAIN, SKYGATE_ADMIN_IDENTITY,
+		// SKYGATE_DERP_BASE_URL in .env to their real values.
+		BaseDomain:    getenv("SKYGATE_BASE_DOMAIN", "tsnet.example.com"),
+		AdminIdentity: getenv("SKYGATE_ADMIN_IDENTITY", "admin"),
+		DerpBaseURL:   getenv("SKYGATE_DERP_BASE_URL", "http://derp.example.com:8766"),
+		DerpPeerNPM:   getenv("SKYGATE_DERP_PEER_NPM", "192.0.2.67"),
+		DerpLANNet:    getenv("SKYGATE_DERP_LAN_NET", "192.0.2.0/24"),
 		DNSAutoCheck:       getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
 		MaxRulesPerDevice:  getInt("SKYGATE_MAX_RULES_PER_DEVICE", 200),
 		MaxTotalRules:      getInt("SKYGATE_MAX_TOTAL_RULES", 10000),
@@ -315,18 +359,15 @@ func Load() (*Config, error) {
 		// trigger an apply — the system never auto-updates
 		// without an explicit click.
 		AutoUpdateEnabled: getenv("SKYGATE_AUTO_UPDATE_ENABLED", "false") == "true",
-		// v0.29.0: auto-updater paths. The default
-		// /home/admin/skygate matches the operator's
-		// VM; the /data state file matches the
-		// bind-mounted volume (so it survives a container
-		// recreate).
-		//
-		// RepoPath auto-detects: if we're inside a
-		// container (/.dockerenv or /run/.containerenv
-		// exist), default to /app — the bind-mount point
-		// for the source dir in docker-compose.yml.
-		// Otherwise default to /home/admin/skygate.
-		// SKYGATE_REPO_PATH always overrides.
+		// v0.29.0: auto-updater paths. RepoPath
+		// auto-detects: inside a container, default to /app
+		// (the bind-mount point in docker-compose.yml).
+		// On a bare/systemd host, default to
+		// /home/operator/skygate (generic placeholder —
+		// operators with a non-standard layout should set
+		// SKYGATE_REPO_PATH). The /data state file matches
+		// the bind-mounted volume (so it survives a
+		// container recreate).
 		RepoPath:        getenv("SKYGATE_REPO_PATH", defaultRepoPath()),
 		UpdateStatePath: getenv("SKYGATE_UPDATE_STATE_PATH", "/data/skygate-update-status.json"),
 	}
@@ -441,14 +482,15 @@ func parseUserLimits(s string) map[string]int {
 //
 // Inside a container: "/app" — that's the bind-mount point
 // of the source dir per docker-compose.yml (`./:/app`). The
-// host's /home/admin/skygate is NOT visible from inside
-// the container (only the bind-mounts are), so the orchestrator
-// MUST use the in-container path. chdir /home/admin/skygate
-// would fail with "no such file or directory" because the
-// process has no view of the host's filesystem root.
+// host's actual repo path is NOT visible from inside the
+// container (only the bind-mounts are), so the orchestrator
+// MUST use the in-container path. chdir <host-path> would
+// fail with "no such file or directory" because the process
+// has no view of the host's filesystem root.
 //
-// On a bare/systemd host: "/home/admin/skygate" — the
-// operator's standard layout.
+// On a bare/systemd host: "/home/operator/skygate" — a
+// generic placeholder. Operators with a different layout
+// should set SKYGATE_REPO_PATH.
 //
 // SKYGATE_REPO_PATH env always wins (handled at the
 // getenv() call site).
@@ -456,7 +498,9 @@ func defaultRepoPath() string {
 	if runningInContainer() {
 		return "/app"
 	}
-	return "/home/admin/skygate"
+	// Generic bare-host default. Operators who need a
+	// non-standard path should set SKYGATE_REPO_PATH.
+	return "/home/operator/skygate"
 }
 
 // runningInContainer returns true if the process is running

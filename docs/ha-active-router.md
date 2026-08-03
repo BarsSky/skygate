@@ -8,7 +8,7 @@
 
 ## Detailed comparison (per-architecture breakdown)
 
-The base file at the top is the executive summary. This section
+The workstation-8 file at the top is the executive summary. This section
 goes deeper on each of the 3 architectures: what code changes,
 what infra is required, what breaks during the cutover, the
 operational cost after the cutover, and the failure modes.

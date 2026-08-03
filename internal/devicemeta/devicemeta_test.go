@@ -13,11 +13,11 @@ func TestDetectOS(t *testing.T) {
 		want string
 	}{
 		// Windows
-		{"DESKTOP-CUO0TFB", OSWindows},
-		{"LAPTOP-CONST", OSWindows},
-		{"MSI-NEW", OSWindows},
-		{"MSI", OSWindows},
-		{"MY-WIN10", OSUnknown}, // no "MSI" or "DESKTOP" prefix — admin can override
+		{"DESKTOP-WIN10", OSWindows},
+		{"LAPTOP-OFFICE", OSWindows},
+		{"WORKSTATION-3-NEW", OSWindows},
+		{"WORKSTATION-3", OSWindows},
+		{"MY-WIN10", OSUnknown}, // no "workstation-3" or "DESKTOP" prefix — admin can override
 		// macOS
 		{"MacBook-Pro-Константина", OSMacOS},
 		{"iMac-2024", OSMacOS},

@@ -27,6 +27,27 @@ import (
 	"skygate/internal/headscale"
 )
 
+// 2026-08-03: v0.32.29 — moved the headscale tailnet
+// domain and admin identity out of source-level constants
+// and into env-driven config. The defaults are placeholders
+// so the public github repo carries no operator-specific DNS
+// or usernames; live deployments set SKYGATE_BASE_DOMAIN
+// and SKYGATE_ADMIN_IDENTITY in their .env to the real
+// values.
+func envBaseDomain() string {
+	if d := os.Getenv("SKYGATE_BASE_DOMAIN"); d != "" {
+		return d
+	}
+	return "tsnet.example.com"
+}
+
+func envAdminIdentity() string {
+	if a := os.Getenv("SKYGATE_ADMIN_IDENTITY"); a != "" {
+		return a
+	}
+	return "admin"
+}
+
 // Alerter is the minimal interface SaveACLSnapshot needs from a
 // notifier. The full telegram.Notifier (which has SendTelegram +
 // SendAlert) satisfies this implicitly — Go interfaces are
@@ -140,7 +161,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		}
 	}
 
-	const baseDomain = "tsnet.example.com"
+	baseDomain := envBaseDomain()
 	usernames, err := db.GetPortalUsernamesForPlane(d, planeURL)
 	if err != nil {
 		return "", err
@@ -424,7 +445,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// (Telegram/Google/Cloudflare/etc.). The user reported
 	// this as "workstation-3 без правил имеет доступ к сайтам и
 	// подсетям что только для workstation-1": workstation-3 (tag:dev-
-	// admin-workstation-3 → admin@...) has no per-device rules,
+	// user-workstation-3 → admin@<baseDomain>) has no per-device rules,
 	// but the src=* catch-all let it reach relay-3's
 	// PrimaryRoutes through the exit-node path.
 	//
@@ -457,7 +478,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
-	sb.WriteString("    \"tag:public\": [\"admin@" + baseDomain + "\"]\n")
+	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]\n")
 	// 2026-07-14: Этап 14 v7 — register tag:exit-node as
 	// owned by admin so the headscale parser accepts the
 	// policy. The SSH rule (and the per-user ACL) references
@@ -475,7 +496,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// a Headplane admin task — see docs/headplane.md), but
 	// headscale still requires the owner entry to be
 	// present in the policy file.
-	sb.WriteString(",\n    \"tag:exit-node\": [\"admin@" + baseDomain + "\"]\n")
+	sb.WriteString(",\n    \"tag:exit-node\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]\n")
 	if len(identities) > 1 {
 		sb.WriteString(",\n    \"tag:private\": [" + strings.Join(quoteAll(identities), ",") + "]\n")
 	} else {
@@ -537,7 +558,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("  \"ssh\": [\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
-	sb.WriteString("      \"src\": [\"tag:private\", \"admin@" + baseDomain + "\"],\n")
+	sb.WriteString("      \"src\": [\"tag:private\", \"" + envAdminIdentity() + "@" + baseDomain + "\"],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    },\n")
@@ -551,7 +572,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// happen to be tagged exit-node remain reachable.
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
-	sb.WriteString("      \"src\": [\"admin@" + baseDomain + "\"],\n")
+	sb.WriteString("      \"src\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"],\n")
 	sb.WriteString("      \"dst\": [\"tag:public\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    }\n")
@@ -727,7 +748,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		return "", err
 	}
 
-	const baseDomain = "tsnet.example.com"
+	baseDomain := envBaseDomain()
 
 	usernames, err := db.GetPortalUsernamesForPlane(d, planeURL)
 	if err != nil {
@@ -976,7 +997,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// via=tag:exit-relay-3) and use relay-3. Without the
 	// per-device grant (or with it AFTER the per-user
 	// grant), workstation-3 would fall through to the per-user grant
-	// (src=admin@..., via=tag:exit-relay-1) and be
+	// (src=admin@<baseDomain>, via=tag:exit-relay-1) and be
 	// pinned to relay-1.
 	//
 	// Devices WITHOUT a per-device pref don't get a
@@ -1063,14 +1084,14 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		// where any device could use any exit-node
 		// (relay-1/relay-2/relay-3) for arbitrary
 		// internet destinations — including relay-3's
-		// 148 PrimaryRoutes. workstation-3 (tag:dev-admin-workstation-3
-		// → admin@...) was the example: without
-		// per-device rules, workstation-3 could reach workstation-1's
+		// 148 PrimaryRoutes. workstation-1 (tag:dev-admin-workstation-1
+		// → admin@<baseDomain>) was the example: without
+		// per-device rules, workstation-1 could reach workstation-2's
 		// internet resources through relay-3's
 		// subnet-route + exit-node path.
 		//
-		// The per-user grant now matches workstation-3's packets
-		// (src resolves to admin@... via tagOwners),
+		// The per-user grant now matches workstation-1's packets
+		// (src resolves to admin@<baseDomain> via tagOwners),
 		// and via=[tag:exit-relay-1] pins the exit-node
 		// choice. workstation-3 CAN still reach autogroup:internet
 		// (via the per-user grant), but ONLY through
@@ -1220,8 +1241,8 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
-	sb.WriteString("    \"tag:public\": [\"admin@" + baseDomain + "\"]")
-	sb.WriteString(",\n    \"tag:exit-node\": [\"admin@" + baseDomain + "\"]")
+	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
+	sb.WriteString(",\n    \"tag:exit-node\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
 	if len(identities) > 1 {
 		sb.WriteString(",\n    \"tag:private\": [" + strings.Join(quoteAll(identities), ",") + "]")
 	} else {
@@ -1239,7 +1260,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 	sort.Strings(exitNodeTags)
 	for _, tag := range exitNodeTags {
-		sb.WriteString(",\n    \"" + tag + "\": [\"admin@" + baseDomain + "\"]")
+		sb.WriteString(",\n    \"" + tag + "\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
 	}
 
 	type perDevTagOwner struct {
@@ -1276,13 +1297,13 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("  \"ssh\": [\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
-	sb.WriteString("      \"src\": [\"tag:private\", \"admin@" + baseDomain + "\"],\n")
+	sb.WriteString("      \"src\": [\"tag:private\", \"" + envAdminIdentity() + "@" + baseDomain + "\"],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    },\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
-	sb.WriteString("      \"src\": [\"admin@" + baseDomain + "\"],\n")
+	sb.WriteString("      \"src\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"],\n")
 	sb.WriteString("      \"dst\": [\"tag:public\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    }\n")

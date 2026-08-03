@@ -119,10 +119,11 @@ func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	}
 	// 2026-07-15: v0.10.12 — when HEADPLANE_EXTERNAL_URL is set,
 	// link to the existing Headplane instead of the local sidecar.
-	// The local sidecar URL remains the default for backward compat.
+	// The local sidecar URL is derived from ControlURL when no
+	// external Headplane is configured.
 	headplaneURL := s.HeadplaneExternalURL
-	if headplaneURL == "" {
-		headplaneURL = "https://tsnet.example.com/admin/"
+	if headplaneURL == "" && s.ControlURL != "" {
+		headplaneURL = s.ControlURL + "/admin/"
 	}
 	s.Backend.RenderWithLayout(w, r, "admin/acls.html", c, map[string]any{
 		"Policy":       policy,

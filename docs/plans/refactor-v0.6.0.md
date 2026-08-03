@@ -163,7 +163,7 @@ internal/routescript/
 **Целевая структура:**
 ```
 internal/headscale/
-├── client.go      // struct Client, New(), do() — base HTTP
+├── client.go      // struct Client, New(), do() — workstation-8 HTTP
 ├── api_users.go   // ListUsers, CreateUser, DeleteUser
 ├── api_keys.go    // CreatePreauthKey, ExpirePreauthKey
 ├── api_nodes.go   // ListAllNodes, ListExitNodes, TagNode, UntagNode, DeleteNode

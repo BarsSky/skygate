@@ -63,7 +63,7 @@ FROM golang:1.25-alpine
 # on Alpine. libcap, ca-certificates, sqlite-libs round out the
 # tailscale/Go runtime needs. gcc + musl-dev are required for
 # go-sqlite3 (pure-CGO driver) — CGO_ENABLED defaults to 1 on the
-# golang:1.25-alpine base image so this is the only place that
+# golang:1.25-alpine workstation-8 image so this is the only place that
 # matters for the CGO contract.
 #
 # 2026-07-27: v0.29.0 — docker-cli-compose is the v0.29.0 self-update
