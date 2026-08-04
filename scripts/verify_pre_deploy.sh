@@ -1049,6 +1049,7 @@ run_check "B43" "headscale.SetAdvertisedRoutes: per-node SSH config (v0.33.1)" \
     grep -qF \"func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int, sshTarget, sshKeyPath string)\" internal/headscale/routes.go &&
     grep -qF \"\\\"-i\\\", keyPath\" internal/headscale/routes.go &&
     grep -qF \"BatchMode=yes\" internal/headscale/routes.go &&
+    grep -qF \"func splitSSHTarget\" internal/headscale/routes.go &&
     grep -qF \"func LookupExitServerSSH\" internal/db/exit_servers.go &&
     grep -qF \"qSelectExitServerSSH\" internal/db/queries.go &&
     grep -qF \"db.LookupExitServerSSH\" internal/feature/exit_rules/sync.go &&

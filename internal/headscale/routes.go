@@ -95,6 +95,39 @@ func (c *Client) approveRoutesForNodeID(nodeID int, routes []string) (int, error
 	return len(routes), nil
 }
 
+// splitSSHTarget parses an `user@host:port` SSH target into the
+// (host, port) pair that `ssh` expects on the command line.
+// Returns the original target as `host` when there's no port
+// suffix. Strips the `user@` prefix so the host can be passed
+// directly to `ssh` together with a `-p port` flag (the
+// `user@host:port` shorthand is ssh_config-only — `ssh` on
+// the command line interprets `:` as part of the hostname
+// and tries to resolve it via DNS, which is why a target like
+// `root@193.233.130.178:18022` used to fail with "Could not
+// resolve hostname 193.233.130.178:18022").
+//
+// Examples:
+//
+//	splitSSHTarget("root@193.233.130.178:18022")
+//	  -> "root@193.233.130.178", "18022"
+//	splitSSHTarget("root@karolina")
+//	  -> "root@karolina", ""
+//	splitSSHTarget("karolina")
+//	  -> "karolina", ""
+//	splitSSHTarget("root@[2001:db8::1]:2222")
+//	  -> "root@[2001:db8::1]", "2222"
+func splitSSHTarget(target string) (host, port string) {
+	host = target
+	if i := strings.LastIndex(target, ":"); i >= 0 {
+		candidate := target[i+1:]
+		if _, err := strconv.Atoi(candidate); err == nil {
+			port = candidate
+			host = target[:i]
+		}
+	}
+	return host, port
+}
+
 // ApproveRoutesForNodeID approves a specific route list on
 // a headscale node identified by numeric ID. 2026-07-17:
 // v0.18.1 — public API for the "Tag as exit-node" button
@@ -186,12 +219,27 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	// per-call latency so a dead relay doesn't block the whole
 	// sync (the operator sees "ssh=err=..." instead of a hung
 	// request).
-	sshCmd := exec.Command("ssh",
+	//
+	// sshTarget supports the `user@host:port` shorthand (the
+	// natural shape when reading exit_servers.ssh_target from
+	// the operator-side /admin/exit-nodes form). `ssh` itself
+	// does NOT understand the `host:port` part on the command
+	// line (that's an ssh_config-only syntax), so we split the
+	// target into (user@host, port) and use `-p port` explicitly.
+	// When the target has no `:port` suffix, port stays "" and
+	// ssh uses 22.
+	sshArgs := []string{
 		"-i", keyPath,
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",
-		target, cmd)
+	}
+	host, port := splitSSHTarget(target)
+	if port != "" {
+		sshArgs = append(sshArgs, "-p", port)
+	}
+	sshArgs = append(sshArgs, host, cmd)
+	sshCmd := exec.Command("ssh", sshArgs...)
 	out, err := sshCmd.CombinedOutput()
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
