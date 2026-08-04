@@ -110,10 +110,10 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.32.0 — per-device OS + type markers + via: sync bug fix
-  + refactor-v0.30 (internal). 8 commits since v0.31.0 (37 ahead of
-  origin/main, all tests green, `make verify-pre` 17/18 PASS on
-  Windows host — B8 SKIP because smoke is VM-only). What's added:
+* **Current**: v0.33.0 — Network Access Manager + Admin Test Page.
+  15 commits since v0.32.0 (1 ahead of origin/main after the
+  v0.33.0 push). All tests green (`go test ./... -count=1 -short`
+  27/27 PASS). What's added:
   - **`devicemeta`** (new `internal/devicemeta/` package, migration
     v0.48): per-device `os` + `device_type` columns on
     `node_owner_map`. Auto-detect heuristic
@@ -158,10 +158,53 @@ explaining why.
     (the tests themselves moved to the per-feature
     packages during the refactor).
 
-  **v0.28.5 guarantee catalog (extended through v0.32.0) applies**
-  — every build must pass `make verify-pre` (18 build-time
-  checks: B1-B18) and every deploy must pass `make verify-post`
-  (27 runtime checks via SSH to the VM: R1-R27). The catalog
+  - **`Network Access Manager`** (new `internal/feature/admin/headscale_acl.go`,
+    migration v0.50): `/admin/headscale/acl` UI for adding/removing
+    skygate-managed headscale ACL rules. Critical invariant:
+    read-modify-write of the live policy preserves every
+    other field (ssh, groups, tagOwners, hosts) — only
+    acls[] is mutated. Idempotent on rule fingerprint
+    (re-adding the same rule returns the existing ID).
+    Solves the 2026-08-04 incident where svyatoslava-1
+    joined the headscale but couldn't reach skygate-vm
+    because the policy had 0 acls (default deny).
+  - **`Admin Test Page`** (new `internal/feature/admin/system_tests.go`,
+    migration v0.51): `/admin/system_tests` runs an
+    in-process test suite (6 tests across network/db/headscale
+    categories) and stores results in `system_tests_runs`.
+    Includes the `headscale.acl_admin_present` check that
+    would have caught the svyatoslava-1 incident at the
+    "is admin rule present?" level. 5s per-test timeout,
+    history strip shows the last 20 runs.
+  - **Catalog extended to B42 / R32**: B38-B42 (build-time
+    code presence for the new feature) + R31, R32 (live
+    page renders).
+
+  **Roadmap (next features, recorded 2026-08-04)**:
+
+  - **v0.34.0 — skygate duplicate auto-deploy**: admin enters
+    a target VM's IP + SSH key on `/admin/deploy`; skygate
+    clones itself (repo, env, headscale/etcd/PG/wal-g setup);
+    the new skygate registers as a "site" in the original;
+    cross-site sync via headscale replication + PG streaming
+    + (optional) wal-g base restore. For failure-tolerance
+    + DR. Estimated 1-2 weeks of work; the deployment
+    infrastructure is mostly already in place
+    (`deploy/skygate-cli.sh`, `deploy/deploy.sh`,
+    `internal/update/orchestrator.go`).
+  - **v0.35.0 — S3 storage connection from web UI**:
+    `/admin/storage` page lets the operator set the MinIO
+    endpoint + creds via the web UI (no more editing
+    `secrets/ts_authkey` or `.env`). Includes a "Test
+    connection" button (boto3 `list_buckets`) and persists
+    to the new `global_settings` table. Used by v0.34.0's
+    auto-deploy to find the operator's preferred MinIO
+    without env-file editing. Estimated 2-3 days.
+
+  **v0.28.5 guarantee catalog (extended through v0.33.0) applies**
+  — every build must pass `make verify-pre` (42 build-time
+  checks: B1-B42) and every deploy must pass `make verify-post`
+  (32 runtime checks via SSH to the VM: R1-R32). The catalog
   is in the [v0.28.5 guarantee catalog section](#v0285-guarantee-catalog-b1-b18-build-time--r1-r27-runtime)
   (named for the incident that motivated it; extended
   incrementally through subsequent releases).
