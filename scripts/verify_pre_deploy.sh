@@ -1203,7 +1203,7 @@ run_check "B49" "templates: no hardcoded OLD `tailscale up --accept-routes` shor
   "bash -c '
     hits=$(grep -nE \"tailscale up --accept-routes[^a-zA-Z_=]\" internal/handlers/templates/exit_rules.html internal/handlers/templates/exit_rules_help.html 2>/dev/null | grep -vE \"tailscale up --accept-routes --accept-dns=false\" | grep -vE \"client_win_cmd\" | grep -vE \"tailscale up&quot;\")
     if [[ -n \"$hits\" ]]; then
-      echo \"FAIL: hardcoded old `tailscale up --accept-routes` (without --authkey) found:\"
+      echo FAIL: hardcoded old tailscale up --accept-routes without authkey found:
       echo \"$hits\"
       exit 1
     fi
