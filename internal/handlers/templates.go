@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -90,6 +91,22 @@ func LoadTemplates() *Templates {
 		},
 		"renderBody": func(name string, data any) (template.HTML, error) {
 			return template.HTML("<!-- placeholder -->"), nil
+		},
+		// 2026-08-04 v0.33.1: safeJSON wraps a Go string in a JS
+		// string literal (with proper escaping for quotes,
+		// newlines, and Cyrillic). Use this instead of safeJS
+		// for catalog values that need to land in a JS context
+		// — safeJS casts to template.JS which doesn't add
+		// quotes, so `{{t "..." | safeJS}}` produced invalid
+		// JS like `status.textContent = Синхронизация…;` (a
+		// ReferenceError, not a string assignment). safeJSON
+		// emits `"Синхронизация…"` — a valid JS string literal.
+		// Internally just json.Marshal + cast, so all the
+		// corner cases (quotes, newlines, backslashes, UTF-8)
+		// are handled by the stdlib.
+		"safeJSON": func(s string) template.JS {
+			b, _ := json.Marshal(s)
+			return template.JS(b)
 		},
 	})
 

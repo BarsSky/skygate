@@ -268,7 +268,18 @@ func Load() (*Config, error) {
 		SessionHours:       24,
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "admin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
-		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/home/operator/.ssh/skygate_sync"),
+		// 2026-08-04 v0.33.1: default path points at the
+		// in-container /ssh-sync mount defined in
+		// docker-compose.yml (the operator's ~/.ssh is bind-mounted
+		// at /ssh-sync so the in-container SetAdvertisedRoutes
+		// SSH call finds the key). The /home/operator/.ssh/
+		// default was correct for the legacy non-docker install
+		// but the dockerised skygate has no /home/operator/
+		// at all — the old default was the same hard-coded
+		// mistake that bit /admin/exit-rules/sync pre-v0.33.1.
+		// Operators can still override per-call by setting
+		// SKYGATE_EXIT_SSH_KEY=… in .env.
+		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/ssh-sync/id_ed25519"),
 		// 2026-08-03: v0.32.29 — moved from source-level
 		// constants to env-driven config so the public
 		// github repo carries no operator-specific DNS,

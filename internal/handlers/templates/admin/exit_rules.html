@@ -126,15 +126,15 @@ async function syncRoutes() {
   const status = document.getElementById('sync-status');
   const result = document.getElementById('sync-result');
   btn.disabled = true;
-  status.textContent = {{t "exit_rules_admin.sync_running" | safeJS}};
+  status.textContent = {{t "exit_rules_admin.sync_running" | safeJSON}};
   try {
     const r = await fetch('/admin/exit-rules/sync');
     const data = await r.json();
-    status.textContent = r.ok ? {{t "exit_rules_admin.sync_done" | safeJS}} : {{t "exit_rules_admin.sync_error" | safeJS}};
+    status.textContent = r.ok ? {{t "exit_rules_admin.sync_done" | safeJSON}} : {{t "exit_rules_admin.sync_error" | safeJSON}};
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
   } catch(err) {
-    status.textContent = {{t "exit_rules_admin.sync_error" | safeJS}} + ': ' + err;
+    status.textContent = {{t "exit_rules_admin.sync_error" | safeJSON}} + ': ' + err;
   }
   btn.disabled = false;
 }

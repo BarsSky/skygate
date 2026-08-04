@@ -171,6 +171,46 @@ func LookupExitServerAcceptRoutes(d *sql.DB, hostname string) (int, error) {
 	return accept, nil
 }
 
+// ExitServerSSH is the per-exit-node SSH target + key path, sourced
+// from exit_servers.ssh_target / ssh_key_path. 2026-08-04 v0.33.1:
+// the previous sync code used a hard-coded `/home/admin/.ssh/config`
+// (the legacy /home/admin operator layout) which silently failed in
+// the dockerised skygate where no /home/admin/ exists — the
+// headscale approve-routes step still succeeded, so the operator
+// saw "ok approved=N" while the actual tailscaled on the relay was
+// never re-configured. The fix reads the per-row config from the DB
+// (with a Config-level default key path as the fallback) and routes
+// the SSH target through the explicit `user@host:port` value.
+type ExitServerSSH struct {
+	// Target is the SSH target in `user@host[:port]` form (the value
+	// from exit_servers.ssh_target). Empty when the row is missing or
+	// the operator hasn't customised it; callers fall back to the
+	// node's headscale hostname.
+	Target string
+	// KeyPath is the absolute path to the private key inside the
+	// skygate container (the value from exit_servers.ssh_key_path).
+	// Empty when the row is missing; callers fall back to the
+	// Config.SSHKeyPath / SKYGATE_EXIT_SSH_KEY default.
+	KeyPath string
+}
+
+// LookupExitServerSSH returns the per-exit-node SSH target + key path.
+// Both fields are returned as "" (the "unset" fallback) when no row
+// matches — the caller decides the global default for the empty case.
+// Errors are returned for actual DB failures; sql.ErrNoRows is folded
+// to ("", "") to keep the call site a one-liner.
+func LookupExitServerSSH(d *sql.DB, hostname string) (ExitServerSSH, error) {
+	var out ExitServerSSH
+	err := d.QueryRow(qSelectExitServerSSH, hostname).Scan(&out.Target, &out.KeyPath)
+	if err == sql.ErrNoRows {
+		return ExitServerSSH{}, nil
+	}
+	if err != nil {
+		return ExitServerSSH{}, err
+	}
+	return out, nil
+}
+
 // UpsertExitServer inserts a new row or replaces the existing one
 // for nodeID. Used by /admin/exit-nodes add/edit form. The
 // INSERT ... ON CONFLICT(node_id) DO UPDATE pattern means a re-add

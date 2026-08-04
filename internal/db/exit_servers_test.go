@@ -171,6 +171,60 @@ func TestLookupExitServerAcceptRoutes_NotFoundReturnsZero(t *testing.T) {
 	}
 }
 
+// --- LookupExitServerSSH (v0.33.1) ---
+
+// TestLookupExitServerSSH_Found pins the happy path: a row with
+// both ssh_target and ssh_key_path populated returns both values
+// verbatim. karolina is the real-world case (port 18022, custom
+// key path); if the SQL doesn't read these columns the operator's
+// `ssh karolina` call from the dockerised skygate would fail with
+// "port 22: connection refused" (the legacy hard-coded fallback).
+func TestLookupExitServerSSH_Found(t *testing.T) {
+	d := openTestDB(t)
+	seedExitServer(t, d, "n1", "karolina", "100.64.0.2", "root@karolina.example.com:18022", "/ssh-sync/id_ed25519", "v0.33.1", 1, -1)
+	seedExitServer(t, d, "n2", "emilia", "100.64.0.3", "", "", "no SSH override", 1, 0)
+
+	got, err := LookupExitServerSSH(d, "karolina")
+	if err != nil {
+		t.Fatalf("LookupExitServerSSH(karolina): %v", err)
+	}
+	if got.Target != "root@karolina.example.com:18022" {
+		t.Errorf("Target: got %q want %q", got.Target, "root@karolina.example.com:18022")
+	}
+	if got.KeyPath != "/ssh-sync/id_ed25519" {
+		t.Errorf("KeyPath: got %q want %q", got.KeyPath, "/ssh-sync/id_ed25519")
+	}
+
+	// emilia has no per-row override — both should be empty,
+	// letting the caller fall back to Config.SSHKeyPath.
+	got, err = LookupExitServerSSH(d, "emilia")
+	if err != nil {
+		t.Fatalf("LookupExitServerSSH(emilia): %v", err)
+	}
+	if got.Target != "" || got.KeyPath != "" {
+		t.Errorf("emilia should have no overrides, got (%q, %q)", got.Target, got.KeyPath)
+	}
+}
+
+// TestLookupExitServerSSH_NotFoundReturnsEmpty pins the
+// ("", "")-on-miss contract. SyncAdvertisedRoutes relies on
+// this to fall back to the per-Cfg SSHKeyPath / SKYGATE_EXIT_SSH_KEY
+// default without special-casing sql.ErrNoRows at every call
+// site. A future refactor that returns the sql error here
+// would force every caller to add a `if errors.Is(err, sql.ErrNoRows)`
+// branch — that's the same shape bug as the v0.32.x
+// LookupExitServerAcceptRoutes had pre-fix.
+func TestLookupExitServerSSH_NotFoundReturnsEmpty(t *testing.T) {
+	d := openTestDB(t)
+	got, err := LookupExitServerSSH(d, "no-such-host")
+	if err != nil {
+		t.Errorf("expected nil err on no-match, got %v", err)
+	}
+	if got.Target != "" || got.KeyPath != "" {
+		t.Errorf("expected ('', '') fallback, got (%q, %q)", got.Target, got.KeyPath)
+	}
+}
+
 // --- UpsertExitServer ---
 
 func TestUpsertExitServer_InsertsNew(t *testing.T) {

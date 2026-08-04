@@ -553,6 +553,12 @@ const (
 	qSelectEnabledExitServerNames = `SELECT DISTINCT exit_node_id FROM device_rules WHERE enabled = 1 AND exit_node_id != ''`
 	// qSelectAcceptRoutesByHost powers db.LookupExitServerAcceptRoutes.
 	qSelectAcceptRoutesByHost     = `SELECT accept_routes FROM exit_servers WHERE hostname = $1 LIMIT 1`
+	// qSelectExitServerSSH powers db.LookupExitServerSSH. Returns the
+	// per-row ssh_target + ssh_key_path so the v0.33.1 SetAdvertisedRoutes
+	// call can SSH to the right host:port as the right user with the right
+	// key (the previous hard-coded `-F /home/admin/.ssh/config` only worked
+	// for one operator on one machine).
+	qSelectExitServerSSH         = `SELECT COALESCE(ssh_target, ''), COALESCE(ssh_key_path, '') FROM exit_servers WHERE hostname = $1 LIMIT 1`
 	// qInsertOrReplaceExitServer powers db.UpsertExitServer.
 	qInsertOrReplaceExitServer    = `INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, accept_routes) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(node_id) DO UPDATE SET hostname = excluded.hostname, ssh_target = excluded.ssh_target, ssh_key_path = excluded.ssh_key_path, description = excluded.description, accept_routes = excluded.accept_routes`
 	// qDeleteExitServerByNodeID powers db.DeleteExitServerByNodeID.

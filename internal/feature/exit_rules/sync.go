@@ -43,6 +43,35 @@ var knownSubdomains = map[string][]string{
 // SyncAdvertisedRoutes collects all enabled IP/subnet rules and pushes to exit nodes.
 // Pure data-plane (advertised-routes sync). Returns a per-node status map
 // (the HTTP handler marshals it as JSON).
+//
+// 2026-08-04 v0.33.1: per-node SSH config + combined result reporting.
+// Two pre-v0.33.1 bugs were silently hiding failures from the operator:
+//
+//  1. SetAdvertisedRoutes was called with a hard-coded
+//     /home/admin/.ssh/config which doesn't exist inside the
+//     dockerised skygate — the SSH call always failed with
+//     "Can't open user config file". The headscale approve-routes
+//     step (run right after, unconditionally) succeeded, so
+//     `result[node]` was overwritten to "ok approved=N" and the
+//     operator thought the sync worked. The actual tailscaled
+//     on the relay was never re-configured.
+//
+//  2. `ssh: <err>` was the value stored in result[node] when SSH
+//     failed, but the unconditional approve step's success then
+//     OVERWROTE that to "ok approved=N". Result: SSH failure
+//     was invisible from the UI.
+//
+// Fix: read the per-exit-node SSH target + key path from
+// exit_servers.ssh_target / ssh_key_path (with the
+// Config.SSHKeyPath / SKYGATE_EXIT_SSH_KEY default as the
+// global fallback), pass them to SetAdvertisedRoutes, and
+// combine the SSH result with the approve result into a single
+// string so neither side's failure can be hidden:
+//
+//	ssh=ok approved=214
+//	ssh=err=<msg> approved=0
+//	ssh=ok approve=err=<msg>
+//	ssh=err=<msg> approve=err=<msg>
 func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	result := map[string]string{}
 	rows, err := s.DB.Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY exit_node_id")
@@ -59,6 +88,14 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 		}
 		exitRoutes[node] = append(exitRoutes[node], target)
 	}
+	// Default SSH key path comes from Config (set from
+	// SKYGATE_EXIT_SSH_KEY, default /home/operator/.ssh/skygate_sync).
+	// The operator can override per-exit-node via
+	// exit_servers.ssh_key_path in the /admin/exit-nodes form.
+	var defaultKeyPath string
+	if s.Cfg != nil {
+		defaultKeyPath = s.Cfg.SSHKeyPath
+	}
 	for node, routes := range exitRoutes {
 		// 2026-07-08: prepend base exit-node routes (0.0.0.0/0, ::/0) so the
 		// node stays an exit node after sync. SetAdvertisedRoutes already
@@ -72,23 +109,39 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 				approveRoutes = append(approveRoutes, r)
 			}
 		}
-		msg, err := s.HS.SetAdvertisedRoutes(node, approveRoutes, s.lookupAcceptRoutes(node))
-		if err != nil {
-			result[node] = "ssh: " + err.Error()
-		} else {
-			result[node] = "ok"
-			_ = msg
+		// Resolve per-exit-node SSH config. The empty-row fallback
+		// (no row for this hostname) is fine — SetAdvertisedRoutes
+		// will use nodeHostname as the target and defaultKeyPath as
+		// the key. The v0.33.1 signature refuses to run when both
+		// per-row and default key are empty (so the operator sees
+		// a clear "no ssh_key_path" error instead of a silent
+		// "config file not found" from ssh).
+		sshRow, _ := db.LookupExitServerSSH(s.DB, node)
+		sshTarget, sshKeyPath := sshRow.Target, sshRow.KeyPath
+		if sshKeyPath == "" {
+			sshKeyPath = defaultKeyPath
+		}
+		// SSH first. On error, we STILL try the headscale approve
+		// step below — the operator may have already approved these
+		// routes some other way (e.g. directly via the headscale
+		// CLI) and the SSH failure should be visible but not block
+		// the approval side.
+		sshLabel := "ok"
+		_, sshErr := s.HS.SetAdvertisedRoutes(node, approveRoutes, s.lookupAcceptRoutes(node), sshTarget, sshKeyPath)
+		if sshErr != nil {
+			sshLabel = "err=" + sshErr.Error()
 		}
 		// Approve all routes (including base 0.0.0.0/0, ::/0) for this exit
 		// node via headscale CLI (docker exec).
 		// 2026-07-08: pass full list (base + per-rule) so the node keeps
 		// its exit-node capability (default route advertised AND approved).
+		approveLabel := "approved=0"
 		if approved, approveErr := s.HS.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
-			result[node+"_approve_err"] = approveErr.Error()
-			result[node] = "ssh:ok approve:err=" + approveErr.Error()
+			approveLabel = "approve=err=" + approveErr.Error()
 		} else if approved > 0 {
-			result[node] = fmt.Sprintf("ok approved=%d", approved)
+			approveLabel = fmt.Sprintf("approved=%d", approved)
 		}
+		result[node] = "ssh=" + sshLabel + " " + approveLabel
 	}
 	if len(exitRoutes) == 0 {
 		result["info"] = "no IP/subnet rules configured"
@@ -177,13 +230,25 @@ func (s *Service) StaggeredSync() {
 			}
 			log.Printf("staggeredSync(aggregated): %s advertising %d unique routes (was: per-batch, lost all but last batch)",
 				n.name, len(batch))
-			msg, _ := s.HS.SetAdvertisedRoutes(n.name, batch, s.lookupAcceptRoutes(n.name))
+			// 2026-08-04 v0.33.1: per-node SSH config (was hard-coded
+			// /home/admin/.ssh/config + nodeHostname, both of which
+			// broke in the dockerised skygate).
+			sshRow, _ := db.LookupExitServerSSH(s.DB, n.name)
+			sshTarget, sshKeyPath := sshRow.Target, sshRow.KeyPath
+			if sshKeyPath == "" && s.Cfg != nil {
+				sshKeyPath = s.Cfg.SSHKeyPath
+			}
+			msg, sshErr := s.HS.SetAdvertisedRoutes(n.name, batch, s.lookupAcceptRoutes(n.name), sshTarget, sshKeyPath)
 			// 2026-07-11: `tailscale set` on unix exits 0 with empty stdout, so
 			// `msg` is often "". Render an "ok" marker instead of a dangling colon.
-			if strings.TrimSpace(msg) == "" {
+			if strings.TrimSpace(msg) == "" && sshErr == nil {
 				msg = "ok"
 			}
-			log.Printf("staggeredSync(aggregated): %s advertised: %s", n.name, msg)
+			if sshErr != nil {
+				log.Printf("staggeredSync(aggregated): %s SSH err: %v", n.name, sshErr)
+			} else {
+				log.Printf("staggeredSync(aggregated): %s advertised: %s", n.name, msg)
+			}
 			if _, err := s.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
 				log.Printf("staggeredSync(aggregated): %s approve err: %v", n.name, err)
 			}
@@ -196,6 +261,15 @@ func (s *Service) StaggeredSync() {
 // PostSyncAdvertisedRoutes triggers route sync (admin only).
 // HTTP entry point for the /admin/exit-rules/sync button.
 // Just calls SyncAdvertisedRoutes and returns JSON.
+//
+// 2026-08-04 v0.33.1: writes an audit_log row with action
+// `sync_advertised_routes` and a per-node result summary. The
+// audit row is the operator's source of truth when the UI's
+// `result` map isn't visible (e.g. triggered by the periodic
+// autoupdater rather than the manual button). Without this
+// row, the v0.32.x "ok approved=N with broken SSH" bug
+// stayed invisible for weeks — the audit_log is the
+// dashboard the operator grep's when something looks off.
 func (s *Service) PostSyncAdvertisedRoutes(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -203,6 +277,33 @@ func (s *Service) PostSyncAdvertisedRoutes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	result := s.SyncAdvertisedRoutes()
+	// Compose a compact detail string: "nodes=2 ssh_ok=1
+	// ssh_err=1 approve_err=0 karolina=ssh=ok approved=214
+	// emilia=ssh=err=... approved=0". The per-node breakdown
+	// is the diagnostic gold when the operator greps
+	// /admin/audit for the failure mode.
+	detailParts := []string{}
+	sshOK, sshErr, approveErr := 0, 0, 0
+	for _, v := range result {
+		switch {
+		case strings.HasPrefix(v, "ssh=ok "):
+			sshOK++
+		case strings.HasPrefix(v, "ssh=err="):
+			sshErr++
+		}
+		if strings.Contains(v, "approve=err=") {
+			approveErr++
+		}
+	}
+	detailParts = append(detailParts,
+		fmt.Sprintf("nodes=%d ssh_ok=%d ssh_err=%d approve_err=%d",
+			len(result), sshOK, sshErr, approveErr))
+	for node, v := range result {
+		detailParts = append(detailParts, fmt.Sprintf("%s=%s", node, v))
+	}
+	if s.Backend != nil && c != nil {
+		s.Backend.Audit(c.UserID, c.Username, "sync_advertised_routes", strings.Join(detailParts, " "))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }

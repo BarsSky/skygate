@@ -3,7 +3,13 @@
 //
 // ApproveAllRoutes* runs on the headscale host (so `docker exec
 // headscale` is fine). SetAdvertisedRoutes runs on the exit-node
-// host, so it shells out over SSH using /home/admin/.ssh/config.
+// host, so it shells out over SSH using an explicit `-i <key>` +
+// `BatchMode=yes` (never prompt for a password) — the previous
+// hard-coded `-F /home/admin/.ssh/config` only worked in the legacy
+// /home/admin operator layout; the dockerised skygate container
+// has no /home/admin/ at all, so the SSH step silently failed and
+// the headscale approve-routes step made the UI look successful
+// even though tailscaled on the relay was never re-configured.
 //
 // The base-route prepending, dedup logic, and AcceptRoutes flag
 // fragment live in route_args.go (pure helpers, no I/O, unit-tested
@@ -119,9 +125,47 @@ func (c *Client) ApproveRoutesForNodeID(nodeID int64, routes []string) (int, err
 //	      that do not opt in via exit_servers.accept_routes)
 //	 1 -> --accept-routes=true  (full legacy behaviour, OK for pure
 //	                             exit-nodes that share no other VPN)
-func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int) (string, error) {
+//
+// sshTarget is the SSH target in `user@host[:port]` form (typically the
+// value of exit_servers.ssh_target). When empty, the function falls back
+// to `nodeHostname` — the historical behaviour, which only works for
+// hosts whose Tailscale name resolves directly in DNS / /etc/hosts.
+//
+// sshKeyPath is the absolute path to the private key INSIDE the
+// skygate container (typically the value of exit_servers.ssh_key_path,
+// or the Config.SSHKeyPath / SKYGATE_EXIT_SSH_KEY default). When
+// empty, the function refuses to run and returns a clear error
+// rather than falling back to the legacy /home/admin/.ssh/config
+// path (which doesn't exist in the container) — silently falling
+// back to a non-existent path is what bit us pre-v0.33.1.
+//
+// 2026-08-04 v0.33.1: signature changed. The previous single-arg
+// `SetAdvertisedRoutes(node, routes, acceptRoutes)` hard-coded
+// `/home/admin/.ssh/config` and always SSH'd to `nodeHostname`.
+// The hard-coded config file doesn't exist in the dockerised
+// skygate; the per-exit-node `ssh_target` (which encodes the
+// non-default `Port 18022` karolina uses) was being ignored.
+// Callers MUST pass both sshTarget and sshKeyPath now.
+func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int, sshTarget, sshKeyPath string) (string, error) {
 	if len(routes) == 0 {
 		return "", fmt.Errorf("empty routes list")
+	}
+	// Build the SSH target. The exit_servers.ssh_target column was
+	// added in v0.24 precisely so each relay can live on a non-default
+	// port + have its own user (root / a dedicated deploy user); using
+	// nodeHostname as the SSH target is a fallback for nodes that
+	// haven't been customised through the /admin/exit-nodes form.
+	target := strings.TrimSpace(sshTarget)
+	if target == "" {
+		target = nodeHostname
+	}
+	// Refuse to run with an empty key path. The legacy fallback
+	// (`/home/admin/.ssh/config`) silently failed in the dockerised
+	// skygate, and a missing-key error is more honest than a
+	// "config file not found" coming out of `ssh` two minutes later.
+	keyPath := strings.TrimSpace(sshKeyPath)
+	if keyPath == "" {
+		return "", fmt.Errorf("SetAdvertisedRoutes(%s): no ssh_key_path provided; set exit_servers.ssh_key_path or SKYGATE_EXIT_SSH_KEY", nodeHostname)
 	}
 	// Always keep 0.0.0.0/0 and ::/0 advertised so the node stays a usable
 	// exit node. `tailscale set --advertise-routes=` replaces the list, so
@@ -132,13 +176,25 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	// focused on actually placing the command. Any future change to the
 	// tailscale flag set belongs in the helper, not here.
 	cmd := BuildTailscaleSetCommand(routes, acceptRoutes)
-	sshCmd := exec.Command("ssh", "-F", "/home/admin/.ssh/config",
+	// BatchMode=yes: never prompt for a password / passphrase. The
+	// skygate process runs headless in a container — an interactive
+	// prompt would hang the entire sync goroutine until docker
+	// times it out. StrictHostKeyChecking=accept-new: pin the
+	// host key on first connect (so a re-deploy to a different
+	// relay IP doesn't get silently MITM'd), but don't fail
+	// when the host key is new. ConnectTimeout=10: bound the
+	// per-call latency so a dead relay doesn't block the whole
+	// sync (the operator sees "ssh=err=..." instead of a hung
+	// request).
+	sshCmd := exec.Command("ssh",
+		"-i", keyPath,
+		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",
-		nodeHostname, cmd)
+		target, cmd)
 	out, err := sshCmd.CombinedOutput()
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
 	}
-	return "", fmt.Errorf("run manually on %s: %s", nodeHostname, cmd)
+	return "", fmt.Errorf("ssh %s (key %s): %s", target, keyPath, strings.TrimSpace(string(out)))
 }

@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # scripts/verify_pre_deploy.sh — build-time guarantees for skygate.
 #
 # Runs BEFORE `docker build` / `git push` / `docker compose up -d`.
@@ -972,7 +972,7 @@ run_check "B39" "headscale_acl routes: /admin/headscale/acl + /add + /remove (v0
     grep -qF \"GetAdminHeadscaleACL\" cmd/skygate/main.go &&
     grep -qF \"PostAdminHeadscaleACLAdd\" cmd/skygate/main.go &&
     grep -qF \"PostAdminHeadscaleACLRemove\" cmd/skygate/main.go &&
-    grep -qF \"title.admin_headscale_acl\" internal/handlers/templates/layout.html &&
+    grep -qF \"title.admin_headscale_acl\" internal/handlers/templates/admin/headscale_acl.html &&
     grep -qF \"nav.headscale_acl\" internal/handlers/templates/layout.html
   '"
 
@@ -1003,7 +1003,7 @@ run_check "B41" "system_tests routes: /admin/system_tests + /run + layout link (
     grep -qF \"/admin/system_tests/run\" cmd/skygate/main.go &&
     grep -qF \"GetAdminSystemTests\" cmd/skygate/main.go &&
     grep -qF \"PostAdminSystemTestsRun\" cmd/skygate/main.go &&
-    grep -qF \"title.admin_system_tests\" internal/handlers/templates/layout.html &&
+    grep -qF \"title.admin_system_tests\" internal/handlers/templates/admin/system_tests.html &&
     grep -qF \"nav.system_tests\" internal/handlers/templates/layout.html &&
     grep -qF \"SetTestService\" cmd/skygate/main.go
   '"
@@ -1020,4 +1020,40 @@ run_check "B42" "db.Open: migrateV050 + migrateV051 called (v0.33.0)" \
     grep -qF \"migrateV051\" internal/db/db.go &&
     grep -qF \"migrate v0.50\" internal/db/db.go &&
     grep -qF \"migrate v0.51\" internal/db/db.go
+  '"
+
+# ─── B43 (v0.33.1) — SSH config wiring (the /admin/exit-rules/sync
+# silent-fail fix) ───
+# Pre-v0.33.1: SetAdvertisedRoutes hard-coded
+#   -F /home/admin/.ssh/config
+# which doesn't exist in the dockerised skygate. The SSH
+# step always failed with "Can't open user config file" but
+# the headscale approve-routes step (right after, no SSH)
+# succeeded, so result[node] was overwritten to
+# "ok approved=N" — the operator saw green while tailscaled
+# on the relay was never re-configured.
+#
+# v0.33.1: SetAdvertisedRoutes takes sshTarget + sshKeyPath
+# as parameters and uses `-i <key> + BatchMode=yes`. The
+# per-exit-node config is read from exit_servers.ssh_target
+# / ssh_key_path (helper: db.LookupExitServerSSH). The
+# combined result is "ssh=<label> <approve_label>" so
+# neither side's failure can be hidden.
+#
+# This check pins the contract so a refactor that reverts
+# to the hard-coded path (or drops the per-row lookup) is
+# caught at PR time, not at the next deploy when the
+# operator's routes go missing again.
+run_check "B43" "headscale.SetAdvertisedRoutes: per-node SSH config (v0.33.1)" \
+  "bash -c '
+    grep -qF \"func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int, sshTarget, sshKeyPath string)\" internal/headscale/routes.go &&
+    grep -qF \"\\\"-i\\\", keyPath\" internal/headscale/routes.go &&
+    grep -qF \"BatchMode=yes\" internal/headscale/routes.go &&
+    grep -qF \"func LookupExitServerSSH\" internal/db/exit_servers.go &&
+    grep -qF \"qSelectExitServerSSH\" internal/db/queries.go &&
+    grep -qF \"db.LookupExitServerSSH\" internal/feature/exit_rules/sync.go &&
+    grep -qF \"sync_advertised_routes\" internal/feature/exit_rules/sync.go &&
+    grep -qF \"safeJSON\" internal/handlers/templates.go &&
+    grep -qF \"safeJSON\" internal/handlers/templates/admin/exit_rules.html &&
+    grep -qF \"/ssh-sync\" docker-compose.yml
   '"

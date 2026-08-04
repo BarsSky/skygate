@@ -128,6 +128,17 @@ services:
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-bootstrap.sh:/usr/local/bin/headscale-bootstrap.sh:ro
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
       - /home/admin/headscale:/home/admin/headscale
+      # 2026-08-04 v0.33.1: SSH key for the `tailscale set --advertise-routes=`
+      # step in SyncAdvertisedRoutes. The pre-v0.33.1 code hard-coded
+      # `-F /home/admin/.ssh/config` (the legacy operator's home) which
+      # doesn't exist in the dockerised skygate — the SSH call silently
+      # failed and the operator saw "ok approved=N" while the actual
+      # tailscaled on the relay was never re-configured. Mounting the
+      # SSH dir at /ssh-sync (read-only) gives the process a stable,
+      # inspectable path; per-exit-node overrides in exit_servers.ssh_key_path
+      # still win when set. The path is configurable via
+      # SKYGATE_EXIT_SSH_KEY (already wired into Config.SSHKeyPath).
+      - ${SKYGATE_SSH_DIR:-${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ssh-sync}:/ssh-sync:ro
     secrets:
       # short form — just reference the top-level definition below.
       # The `file:` path is configured at top-level so we can use
