@@ -31,9 +31,13 @@
 #   R24 openresty upstream reachable
 #   R25 skygate-host-1 can reach 8.8.8.8 (direct, no exit-node)
 #   R26 no per-user device carries an exit-node tag (v0.30.1 workstation-8 fix)
+#   R26 no per-user device carries an exit-node tag (v0.30.1 workstation-8 fix)
+#   R27 PG-staging VM: 4 verification tests pass (v0.31.0)
+#   R28 wal-g installed + can list MinIO bucket (v0.32.30 HA backup foundation)
+#   R29 HAProxy backends: skygate-pg-primary:5000 + skygate-pg-replica:5001 (v0.32.30)
 #
 # Usage:
-#   bash scripts/verify_post_deploy.sh                       # all 26 checks
+#   bash scripts/verify_post_deploy.sh                       # all 29 checks
 #   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 + R26 (core)
 #   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
 #   SSH_HOST=admin@192.0.2.1 bash scripts/verify_post_deploy.sh
@@ -958,6 +962,81 @@ if [ "$QUICK" = 0 ]; then
       echo "$PG_TEST_OUT" | grep -E '^(--- PASS|--- FAIL|    .+\.go:[0-9]+:)' | head -20 | sed 's/^/        /'
       RESULTS_FAIL=$((RESULTS_FAIL+1))
     fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 10: HA backup foundation (R28 + R29) — v0.32.30
+# ---------------------------------------------------------------------------
+# v0.32.30 closes the v0.32.26 PG cutover's "no backups" hole. Two new
+# guarantees:
+#
+#   R28 wal-g installed + can list MinIO bucket
+#       wal-g v3.0.8 at /usr/local/bin/wal-g
+#       /etc/wal-g/env readable, WALG_S3_PREFIX + AWS_ENDPOINT set
+#       `wal-g backup-list` runs without auth errors
+#       (may legitimately show "No backups found" — that's PASS,
+#       it just means no base backup taken yet)
+#
+#   R29 HAProxy backends reachable
+#       :5000 → svyatoslava primary (port 5432 via Patroni check 8008)
+#       :5001 → skygate-vm replica (port 5432 via Patroni check 8008)
+#       Both bind on 0.0.0.0 (so docker containers can reach via
+#       host bridge 172.17.0.1)
+#
+# Both checks run from the VM (where wal-g + haproxy live). The
+# skygate container reaches the PG via HAProxy :5000 (DBSN) so
+# any restart of haproxy breaks /readyz. R29 catches the silent
+# case where haproxy is running but a backend is down.
+if [ "$QUICK" = 0 ]; then
+  echo
+  echo "[R28] wal-g installed + can list MinIO bucket"
+  WALG_OUT=$(ssh_vm "set -e
+    if [ ! -x /usr/local/bin/wal-g ]; then
+      echo 'NO_BINARY'
+      exit 0
+    fi
+    if [ ! -r /etc/wal-g/env ]; then
+      echo 'NO_ENV'
+      exit 0
+    fi
+    sudo -u postgres bash -c '. /etc/wal-g/env && wal-g backup-list' 2>&1 | tail -5
+  " 2>&1)
+  if echo "$WALG_OUT" | grep -q '^NO_BINARY'; then
+    echo "  ${RED}FAIL${NC}  R28 wal-g binary not installed at /usr/local/bin/wal-g (run deploy/pg-ha/wal-g/install_wal_g.sh)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  elif echo "$WALG_OUT" | grep -q '^NO_ENV'; then
+    echo "  ${RED}FAIL${NC}  R28 /etc/wal-g/env missing or unreadable (run deploy/pg-ha/wal-g/install_wal_g.sh)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  elif echo "$WALG_OUT" | grep -qE 'InvalidAccessKeyId|SignatureDoesNotMatch|NoSuchBucket|Failed to find any configured storage'; then
+    echo "  ${RED}FAIL${NC}  R28 wal-g auth/config error:"
+    echo "$WALG_OUT" | sed 's/^/        /'
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  elif echo "$WALG_OUT" | grep -qE 'No backups found|backup_list|base_'; then
+    # SEGMENTS COUNT is column 7 in the wal-show table; awk's split counts
+    # delimiters and gives us the 7th cell of the data row. Use the
+    # data row (the one starting with "| 1 |" since TLI=1).
+    SEGMENT_COUNT=$(ssh_vm "sudo -u postgres bash -c '. /etc/wal-g/env && wal-g wal-show' 2>&1 | grep -E '^\| *[0-9]+ *\|' | head -1 | awk -F'|' '{print \$7}' | tr -d ' '")
+    if [ -z "$SEGMENT_COUNT" ]; then SEGMENT_COUNT=0; fi
+    echo "  ${GRN}PASS${NC}  R28 wal-g installed at $(ssh_vm 'which wal-g'), bucket listable, $SEGMENT_COUNT WAL segments visible"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R28 wal-g returned unexpected output:"
+    echo "$WALG_OUT" | sed 's/^/        /'
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  echo
+  echo "[R29] HAProxy backends: :5000 primary, :5001 replica"
+  PRIMARY_OK=$(ssh_vm "echo 'SELECT 1' | PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5000 -U admin -d skygate_staging -tA 2>&1 | head -1" 2>&1)
+  REPLICA_OK=$(ssh_vm "echo 'SELECT pg_is_in_recovery()' | PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5001 -U admin -d skygate_staging -tA 2>&1 | head -1" 2>&1)
+  if [ "$PRIMARY_OK" = "1" ] && [ "$REPLICA_OK" = "t" ]; then
+    echo "  ${GRN}PASS${NC}  R29 HAProxy :5000 (primary) + :5001 (replica) both reachable and returning expected pg_is_in_recovery"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R29 HAProxy: :5000=$PRIMARY_OK (want 1), :5001=$REPLICA_OK (want t)"
+    echo "        If one is empty, haproxy backend is down — check 'systemctl status haproxy'"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 fi
 
