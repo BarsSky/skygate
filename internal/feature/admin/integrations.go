@@ -56,7 +56,7 @@ func (s *Service) GetAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.Backend.RenderWithLayout(w, r, "admin-derp-config", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/derp_config.html", c, map[string]any{
 		"Cfg":              cfg,
 		"ExternalURLsText": strings.Join(cfg.DERPExternalURLs, ","),
 		"TestResult":       nil,
@@ -147,7 +147,7 @@ func (s *Service) applyAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, 
 		fmt.Sprintf("ok=%t steps=%q err=%q", res.OK, trace, res.Err))
 
 	loaded, _ := db.LoadIntegrationsFromOS(s.DB)
-	s.Backend.RenderWithLayout(w, r, "admin-derp-config", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/derp_config.html", c, map[string]any{
 		"Cfg":              loaded,
 		"ExternalURLsText": strings.Join(loaded.DERPExternalURLs, ","),
 		"TestResults":      nil,
@@ -163,7 +163,7 @@ func (s *Service) testAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, w
 	s.Backend.Audit(c.UserID, c.Username, "derp.config.test",
 		fmt.Sprintf("tested=%d", len(results)))
 	loaded, _ := db.LoadIntegrationsFromOS(s.DB)
-	s.Backend.RenderWithLayout(w, r, "admin-derp-config", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/derp_config.html", c, map[string]any{
 		"Cfg":              loaded,
 		"ExternalURLsText": strings.Join(loaded.DERPExternalURLs, ","),
 		"TestResults":      results,

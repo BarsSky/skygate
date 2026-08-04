@@ -178,7 +178,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 	for k, v := range flash {
 		data[k] = v
 	}
-	s.Backend.RenderWithLayout(w, r, "admin-user-subnet", c, data)
+	s.Backend.RenderWithLayout(w, r, "admin/user_subnet.html", c, data)
 }
 
 // GetAdminUserSubnet renders the per-user subnet page.

@@ -49,7 +49,7 @@ func (s *Service) GetAdminControlPlanes(w http.ResponseWriter, r *http.Request) 
 		globalURL = s.HSGlobalFn().BaseURL
 	}
 	planes := db.SummariseControlPlanes(rows, globalURL)
-	s.Backend.RenderWithLayout(w, r, "admin-control-planes", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/control_planes.html", c, map[string]any{
 		"Planes":     planes,
 		"GlobalURL":  globalURL,
 		"Rows":       rows,
@@ -124,7 +124,7 @@ func (s *Service) GetAdminUserControlPlane(w http.ResponseWriter, r *http.Reques
 		// A corrupt ciphertext shows up as a flash on the
 		// edit form rather than 500ing the page.
 	}
-	s.Backend.RenderWithLayout(w, r, "admin-user-control-plane", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/user_control_plane.html", c, map[string]any{
 		"UserID":         id,
 		"TargetUsername": username,
 		"CurrentURL":     currentURL,

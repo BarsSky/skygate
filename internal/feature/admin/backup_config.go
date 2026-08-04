@@ -72,7 +72,7 @@ func (s *Service) GetAdminBackupConfig(w http.ResponseWriter, r *http.Request) {
 	// Reuse the same page template. The destination &
 	// schedule card is rendered conditionally on
 	// {{ if .Config }}.
-	s.Backend.RenderWithLayout(w, r, "admin-backup", c, data)
+	s.Backend.RenderWithLayout(w, r, "admin/backup.html", c, data)
 }
 
 // PostAdminBackupConfig saves the persistent form

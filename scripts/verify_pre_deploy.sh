@@ -1159,3 +1159,28 @@ run_check "B47" "system_tests.html: \$.LiveResults used inside {{range .Tests}} 
   "bash -c '
     grep -cF \"{{if \$\\.LiveResults}}\" internal/handlers/templates/admin/system_tests.html | grep -qE \"^[1-9]\"
   '"
+# ─── B48 (v0.33.1.3) — admin handlers: every RenderWithLayout
+# call resolves to a defined body template ───
+# Background: 2026-08-04 the user reported "/admin/control-planes
+# and /admin/derp forms do not open". Pre-v0.33.1.3 six admin
+# handlers passed hyphenated names to RenderWithLayout
+# ("admin-control-planes", "admin-derp-config",
+# "admin-user-subnet", "admin-user-control-plane",
+# "admin-backup"). The renderBody funcmap in templates.go
+# transforms the name by replacing "/" with "-" and stripping
+# ".html" — but hyphens are NOT replaced with underscores. So
+# the resolved body name was "body-admin-control-planes" (with
+# hyphens) while the template defines "body-admin-control_planes"
+# (with underscores). The body was never found, the page
+# rendered 200 + empty body (silent fail).
+#
+# The fix: every RenderWithLayout call uses the file-path form
+# "admin/<template>.html". The new test
+# TestRenderWithLayout_BodyNamesResolve in
+# internal/handlers/render_body_consistency_test.go walks the
+# admin handler source files via the Go AST, extracts every
+# RenderWithLayout call's name argument, runs the transform,
+# and asserts the result matches a {{define "body-..."}} in
+# some admin template. B48 runs that test.
+run_check "B48" "admin handlers: RenderWithLayout names resolve to defined bodies (v0.33.1.3)" \
+  "'$GO' test -count=1 -short -run TestRenderWithLayout_BodyNamesResolve ./internal/handlers/ 2>&1"
