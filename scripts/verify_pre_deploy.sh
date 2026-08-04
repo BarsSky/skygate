@@ -1058,3 +1058,30 @@ run_check "B43" "headscale.SetAdvertisedRoutes: per-node SSH config (v0.33.1)" \
     grep -qF \"safeJSON\" internal/handlers/templates/admin/exit_rules.html &&
     grep -qF \"/ssh-sync\" docker-compose.yml
   '"
+
+# ─── B44 (v0.33.1) — PG migration auto-run on Open (the
+# /admin/headscale/acl 500 fix) ───
+# Pre-v0.33.1: OpenPostgres opened a bare *sql.DB without running
+# MigratePostgres, so the v0.33.0 tables (headscale_acl_rules +
+# system_tests_runs) were only created when the operator manually
+# ran cmd/apply_pg_migrations. Live VM had no v0.50/v0.51 tables →
+# /admin/headscale/acl returned 500 ("relation
+# headscale_acl_rules does not exist"). Pre-v0.33.1 also: the
+# generated migrateV050PG only defined the strftime() function
+# (it never created the headscale_acl_rules table), and
+# migrateV051PG didn't exist at all.
+#
+# v0.33.1: OpenPostgres calls MigratePostgres (symmetric with
+# the SQLite Open() → migrate(conn) path), and the generated
+# PG migrations for v0.50 and v0.51 are now full ports that
+# create the actual tables + indexes. New operators don't have
+# to know about apply_pg_migrations.
+run_check "B44" "db.OpenPostgres: auto-MigratePostgres + v0.50/v0.51 tables (v0.33.1)" \
+  "bash -c '
+    grep -qF \"if err := MigratePostgres(conn); err != nil\" internal/db/driver_postgres.go &&
+    grep -qF \"func migrateV050PG\" internal/db/migrations_pg.go &&
+    grep -qF \"func migrateV051PG\" internal/db/migrations_pg.go &&
+    grep -qF \"CREATE TABLE IF NOT EXISTS headscale_acl_rules\" internal/db/migrations_pg.go &&
+    grep -qF \"CREATE TABLE IF NOT EXISTS system_tests_runs\" internal/db/migrations_pg.go &&
+    grep -qF \"migrateV050PG, migrateV051PG\" internal/db/driver_postgres.go
+  '"

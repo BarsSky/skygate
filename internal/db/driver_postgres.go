@@ -46,6 +46,21 @@ import (
 // Pool sizing follows the small-Go-HTTP-service defaults: 10 open /
 // 5 idle. Operators tune via the DSN's `pool_max_conns` parameter
 // (pgx-native).
+//
+// 2026-08-04: v0.33.1 — auto-migrate on open. Pre-fix, OpenPostgres
+// returned a bare *sql.DB without running MigratePostgres, so the
+// v0.33.0 tables (headscale_acl_rules + system_tests_runs) were
+// only created when the operator manually ran
+// `cmd/apply_pg_migrations`. On the live VM the cutover happened
+// before v0.33.0 was deployed, so the manual apply picked up
+// everything up to v0.49 (no v0.50, no v0.51) — and the
+// /admin/headscale/acl page returned 500 "relation
+// headscale_acl_rules does not exist" until the operator
+// triggered a deploy. Calling MigratePostgres() here makes
+// the PG path symmetric with the SQLite Open() → migrate(conn)
+// path: every container start re-applies the idempotent
+// migration chain. New operators don't have to know about
+// the standalone `apply_pg_migrations` tool.
 func OpenPostgres(dsn string) (*sql.DB, error) {
 	conn, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -57,6 +72,10 @@ func OpenPostgres(dsn string) (*sql.DB, error) {
 	}
 	conn.SetMaxOpenConns(10)
 	conn.SetMaxIdleConns(5)
+	if err := MigratePostgres(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("pgx migrate: %w", err)
+	}
 	registerBackend(conn, BackendPostgres)
 	return conn, nil
 }
@@ -83,7 +102,7 @@ func MigratePostgres(d *sql.DB) error {
 		migrateV036PG, migrateV037PG, migrateV038PG, migrateV039PG,
 		migrateV041PG, migrateV042PG, migrateV043PG, migrateV044PG,
 		migrateV045PG, migrateV046PG, migrateV047PG,
-		migrateV048PG, migrateV049PG, migrateV050PG,
+		migrateV048PG, migrateV049PG, migrateV050PG, migrateV051PG,
 	} {
 		if err := fn(d); err != nil {
 			return fmt.Errorf("migration: %w", err)
