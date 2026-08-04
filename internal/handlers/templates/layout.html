@@ -38,6 +38,8 @@
     <a href="/admin/devices"><i class="fa-solid fa-server"></i><span>{{t "nav.devices_all"}}</span></a>
     <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.acls"}}</span></a>
     <a href="/admin/headscale" {{if eq .Page "admin/headscale"}}class="active"{{end}}><i class="fa-solid fa-cube"></i><span>{{t "nav.headscale"}}</span></a>
+    <a href="/admin/headscale/acl" {{if eq .Page "admin/headscale_acl"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "nav.headscale_acl"}}</span></a>
+    <a href="/admin/system_tests" {{if eq .Page "admin/system_tests"}}class="active"{{end}}><i class="fa-solid fa-vial"></i><span>{{t "nav.system_tests"}}</span></a>
     <a href="/admin/headplane" {{if eq .Page "admin/headplane"}}class="active"{{end}}><i class="fa-solid fa-window-maximize"></i><span>{{t "nav.headplane"}}</span></a>
     <a href="/admin/integrations" {{if eq .Page "admin/integrations"}}class="active"{{end}}><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.integrations"}}</span></a>
     <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.derp"}}</span></a>

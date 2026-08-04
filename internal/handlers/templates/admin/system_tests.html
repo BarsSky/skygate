@@ -1,0 +1,130 @@
+{{define "body-admin-system-tests"}}
+{{/* 2026-08-04: v0.33.0 — Admin Test Page.
+
+     Renders the TestRegistry as a grid + last 20 runs
+     from system_tests_runs as a history strip. Clicking
+     "Run all" re-runs the suite, persists the result, and
+     updates the page with live + history data.
+
+     Tests are in-process Go functions (5s timeout each).
+     The /admin/system_tests page is the operator's
+     single-pane "is everything OK?" view.
+*/}}
+
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-vial"></i> {{t "title.admin_system_tests"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{len .Tests}} test(s). Each runs in-process, ≤ 5s timeout. Failures do not block other tests.
+      </p>
+    </div>
+    <form method="post" action="/admin/system_tests/run" style="display:inline">
+      <button type="submit" class="btn btn-primary">
+        <i class="fa-solid fa-play"></i> Run all
+      </button>
+    </form>
+  </div>
+
+  {{if .LiveResults}}
+  <h4 style="margin-top:24px">Live result ({{.LiveSummary.Pass}} pass, {{.LiveSummary.Fail}} fail, {{.LiveSummary.Skip}} skip · {{.LiveSummary.Duration}})</h4>
+  {{else}}
+  <h4 style="margin-top:24px">Tests</h4>
+  {{end}}
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th style="width:60px"></th>
+        <th>Test</th>
+        <th>Category</th>
+        <th>Description</th>
+        <th>Output</th>
+        <th style="width:100px">Duration</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Tests}}
+      <tr>
+        <td>
+          {{if .LiveResults}}
+            {{$res := index $.LiveResults 0}}
+            {{range $.LiveResults}}
+              {{if eq .Name $.Name}}
+                {{if eq .Status "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754"></i>
+                {{else if eq .Status "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545"></i>
+                {{else}}<i class="fa-solid fa-circle-minus" style="color:#6c757d"></i>{{end}}
+                {{$res = .}}
+              {{end}}
+            {{end}}
+          {{else}}
+            <i class="fa-solid fa-circle" style="color:#6c757d"></i>
+          {{end}}
+        </td>
+        <td><code>{{.Name}}</code></td>
+        <td><span class="badge badge-category">{{.Category}}</span></td>
+        <td>{{.Description}}</td>
+        <td>
+          {{if .LiveResults}}
+            {{range $.LiveResults}}
+              {{if eq .Name $.Name}}
+                <small><code>{{.Output}}</code></small>
+              {{end}}
+            {{end}}
+          {{end}}
+        </td>
+        <td>
+          {{if .LiveResults}}
+            {{range $.LiveResults}}
+              {{if eq .Name $.Name}}
+                <small>{{.Duration}}</small>
+              {{end}}
+            {{end}}
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+{{if .RecentRuns}}
+<div class="card">
+  <h4 style="margin-top:0"><i class="fa-solid fa-clock-rotate-left"></i> Recent runs (last 20)</h4>
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th>Started</th>
+        <th>Duration</th>
+        <th>Pass</th>
+        <th>Fail</th>
+        <th>Skip</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .RecentRuns}}
+      <tr>
+        <td><small>{{.StartedAt.Format "2006-01-02 15:04:05"}} UTC</small></td>
+        <td><small>{{.Duration}}</small></td>
+        <td><span class="badge-pass">{{.Pass}}</span></td>
+        <td>{{if gt .Fail 0}}<span class="badge-fail">{{.Fail}}</span>{{else}}<span class="badge-pass">0</span>{{end}}</td>
+        <td><small>{{.Skip}}</small></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+<style>
+  .badge-pass { background: #198754; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
+  .badge-fail { background: #dc3545; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
+  .badge-category { background: var(--bg-secondary); color: var(--text); padding: 2px 8px; border-radius: 3px; font-size: 0.75em; }
+</style>
+{{end}}

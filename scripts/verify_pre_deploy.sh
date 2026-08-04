@@ -936,3 +936,88 @@ run_check "B37" "auto-update UI toggle: handler + route + template + global_sett
     grep -qF \"TestPostAdminUpdateAutoToggle_EnablePersists\" internal/feature/admin/update_settings_test.go &&
     grep -qF \"func SetGlobalSettingBool\" internal/db/globalsettings.go
   '"
+
+# ─── B38 (v0.33.0) — Network Access Manager: headscale_acl.go exists ───
+# Background: 2026-08-04 the v0.33.0 release added
+# /admin/headscale/acl (UI + handlers) so the operator can
+# add/remove skygate-managed headscale ACL rules without
+# touching the operator's manual edits. The contract is:
+# 1. The Service has ListACL, AddACL, RemoveACL, PreviewACL.
+# 2. fingerprintACL is order-invariant (idempotency contract).
+# 3. The DB persists skygate-owned rules in headscale_acl_rules.
+# 4. writePolicy preserves all non-acls fields (ssh, groups,
+#    tagOwners, hosts, autoApprovers) — the only mutation is
+#    append/remove from acls[].
+run_check "B38" "headscale_acl.go: ListACL + AddACL + RemoveACL + fingerprint order-invariant (v0.33.0)" \
+  "bash -c '
+    grep -qF \"func (s *Service) ListACL\" internal/feature/admin/headscale_acl.go &&
+    grep -qF \"func (s *Service) AddACL\" internal/feature/admin/headscale_acl.go &&
+    grep -qF \"func (s *Service) RemoveACL\" internal/feature/admin/headscale_acl.go &&
+    grep -qF \"func (s *Service) PreviewACL\" internal/feature/admin/headscale_acl.go &&
+    grep -qF \"sort.Strings(srcSorted)\" internal/feature/admin/headscale_acl.go &&
+    grep -qF \"TestFingerprintACL_OrderInvariant\" internal/feature/admin/headscale_acl_test.go &&
+    grep -qF \"TestValidateACLRule\" internal/feature/admin/headscale_acl_test.go &&
+    grep -qF \"headscale_acl_rules\" internal/db/migrations_v0.50.go
+  '"
+
+# ─── B39 (v0.33.0) — Network Access Manager: routes registered ───
+# The /admin/headscale/acl/* routes are wired in main.go.
+# The /admin/headscale/acl/{add,remove} are POST forms;
+# /admin/headscale/acl is the GET render.
+run_check "B39" "headscale_acl routes: /admin/headscale/acl + /add + /remove (v0.33.0)" \
+  "bash -c '
+    grep -qF \"/admin/headscale/acl\" cmd/skygate/main.go &&
+    grep -qF \"/admin/headscale/acl/add\" cmd/skygate/main.go &&
+    grep -qF \"/admin/headscale/acl/remove\" cmd/skygate/main.go &&
+    grep -qF \"GetAdminHeadscaleACL\" cmd/skygate/main.go &&
+    grep -qF \"PostAdminHeadscaleACLAdd\" cmd/skygate/main.go &&
+    grep -qF \"PostAdminHeadscaleACLRemove\" cmd/skygate/main.go &&
+    grep -qF \"title.admin_headscale_acl\" internal/handlers/templates/layout.html &&
+    grep -qF \"nav.headscale_acl\" internal/handlers/templates/layout.html
+  '"
+
+# ─── B40 (v0.33.0) — Admin Test Page: TestRegistry has ≥6 entries ───
+# Background: 2026-08-04 the v0.33.0 release added
+# /admin/system_tests — an in-process test suite the operator
+# can run from the web UI. The contract is that the registry
+# has at least 6 distinct tests (the bar for "is this useful?")
+# covering multiple categories. Categories must include
+# network, db, and headscale (the three foundational axes).
+run_check "B40" "system_tests.go: TestRegistry has ≥6 tests across network/db/headscale (v0.33.0)" \
+  "bash -c '
+    grep -qE \"Name:\\s*\\\"net\\\\.\" internal/feature/admin/system_tests.go &&
+    grep -qE \"Name:\\s*\\\"db\\\\.\" internal/feature/admin/system_tests.go &&
+    grep -qE \"Name:\\s*\\\"headscale\\\\.\" internal/feature/admin/system_tests.go &&
+    grep -cE \"^\\s*Name:\\s*\\\"\" internal/feature/admin/system_tests.go | grep -qE \"^[6-9]|[1-9][0-9]\" &&
+    grep -qF \"func (s *Service) RunAllTests\" internal/feature/admin/system_tests.go &&
+    grep -qF \"func (s *Service) PersistRun\" internal/feature/admin/system_tests.go &&
+    grep -qF \"system_tests_runs\" internal/db/migrations_v0.51.go
+  '"
+
+# ─── B41 (v0.33.0) — Admin Test Page: routes registered ───
+# The /admin/system_tests + /admin/system_tests/run are wired
+# in main.go, and the layout has a link to the page.
+run_check "B41" "system_tests routes: /admin/system_tests + /run + layout link (v0.33.0)" \
+  "bash -c '
+    grep -qF \"/admin/system_tests\" cmd/skygate/main.go &&
+    grep -qF \"/admin/system_tests/run\" cmd/skygate/main.go &&
+    grep -qF \"GetAdminSystemTests\" cmd/skygate/main.go &&
+    grep -qF \"PostAdminSystemTestsRun\" cmd/skygate/main.go &&
+    grep -qF \"title.admin_system_tests\" internal/handlers/templates/layout.html &&
+    grep -qF \"nav.system_tests\" internal/handlers/templates/layout.html &&
+    grep -qF \"SetTestService\" cmd/skygate/main.go
+  '"
+
+# ─── B42 (v0.33.0) — Migration integrity: V050 + V051 registered ───
+# Migration v0.50 (headscale_acl_rules) and v0.51
+# (system_tests_runs) are called from internal/db/db.go in
+# order. Without the explicit call, a fresh DB Open() would
+# not create the new tables and the v0.33.0 features would
+# fail with "no such table" at first use.
+run_check "B42" "db.Open: migrateV050 + migrateV051 called (v0.33.0)" \
+  "bash -c '
+    grep -qF \"migrateV050\" internal/db/db.go &&
+    grep -qF \"migrateV051\" internal/db/db.go &&
+    grep -qF \"migrate v0.50\" internal/db/db.go &&
+    grep -qF \"migrate v0.51\" internal/db/db.go
+  '"

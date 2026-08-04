@@ -491,6 +491,12 @@ func main() {
 	// Service, but this removes the indirect call).
 	adminSvc.SyncRoutes = exitRulesSvc.SyncAdvertisedRoutes
 	app.SetExitRulesService(exitRulesSvc)
+	// 2026-08-04: v0.33.0 — wire the runtime admin Service
+	// into the TestRegistry closures so the /admin/system_tests
+	// page can run in-process checks (db integrity, headscale
+	// reachability, ACL classification) without re-opening the
+	// DB or rebuilding the headscale client.
+	adminsvc.SetTestService(adminSvc)
 
 	// refactor-v0.30 Phase B step 5 (2026-07-29):
 	// /my/* feature service. The /my/account, /my/tokens
@@ -741,6 +747,18 @@ func main() {
 	// status page. Renders the monitor's snapshot
 	// (pinned vs. latest, history table). Admin-only.
 	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(adminSvc.GetAdminHeadscale)))
+	// 2026-08-04: v0.33.0 — Network Access Manager. Add /
+	// remove skygate-managed headscale ACL rules without
+	// touching operator-added ones. Idempotent on rule
+	// fingerprint. See internal/feature/admin/headscale_acl.go.
+	mux.Handle("GET /admin/headscale/acl", authMW(http.HandlerFunc(adminSvc.GetAdminHeadscaleACL)))
+	mux.Handle("POST /admin/headscale/acl/add", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleACLAdd)))
+	mux.Handle("POST /admin/headscale/acl/remove", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleACLRemove)))
+	// 2026-08-04: v0.33.0 — Admin Test Page. Run the
+	// TestRegistry (network/db/headscale checks) and see
+	// the result inline. History in system_tests_runs.
+	mux.Handle("GET /admin/system_tests", authMW(http.HandlerFunc(adminSvc.GetAdminSystemTests)))
+	mux.Handle("POST /admin/system_tests/run", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsRun)))
 	// 2026-07-27: v0.29.0 — self-update page. Shows
 	// current vs latest GitHub release + copy-pasteable
 	// manual steps for the detected install kind. The

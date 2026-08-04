@@ -390,5 +390,17 @@ func migrate(d *sql.DB) error {
 	if err := migrateV049(d); err != nil {
 		return fmt.Errorf("migrate v0.49: %w", err)
 	}
+	// 2026-08-04: v0.33.0 — Network Access Manager + Admin
+	// Test Page. Two new tables: headscale_acl_rules stores
+	// skygate-added headscale policy rules (so we can update
+	// or remove only OUR rules and never clobber operator-
+	// added ones); system_tests_runs stores the history of
+	// admin test page runs.
+	if err := migrateV050(d); err != nil {
+		return fmt.Errorf("migrate v0.50: %w", err)
+	}
+	if err := migrateV051(d); err != nil {
+		return fmt.Errorf("migrate v0.51: %w", err)
+	}
 	return nil
 }

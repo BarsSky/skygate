@@ -36,9 +36,11 @@
 #   R28 wal-g installed + can list MinIO bucket (v0.32.30 HA backup foundation)
 #   R29 HAProxy backends: skygate-pg-primary:5000 + skygate-pg-replica:5001 (v0.32.30)
 #   R30 primary archive_command: archive_mode=on + wal-g archiving WAL (v0.32.31)
+#   R31 /admin/headscale/acl page renders (v0.33.0 Network Access Manager)
+#   R32 /admin/system_tests page renders (v0.33.0 Admin Test Page)
 #
 # Usage:
-#   bash scripts/verify_post_deploy.sh                       # all 30 checks
+#   bash scripts/verify_post_deploy.sh                       # all 32 checks
 #   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 + R26 (core)
 #   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
 #   SSH_HOST=admin@192.0.2.1 bash scripts/verify_post_deploy.sh
@@ -1061,6 +1063,44 @@ if [ "$QUICK" = 0 ]; then
   else
     echo "  ${RED}FAIL${NC}  R30 archive not active: mode=$ARCHIVE_MODE cmd='$ARCHIVE_CMD' archived=$ARCHIVED_COUNT"
     echo "        If mode=off, run deploy/pg-ha/wal-g/README.md 'Primary-only setup' steps on svyatoslava"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  echo
+  echo "[R31] /admin/headscale/acl renders + skygate ACL table exists"
+  # v0.33.0: the Network Access Manager page. Curl as
+  # admin to verify the page renders (200) and the
+  # headscale_acl_rules table is reachable (HTTP 200 on
+  # the page means the migration applied and the DB query
+  # succeeded).
+  ACL_PAGE=$(curl -fsS -c /tmp/_r31_ck.txt -b /tmp/_r31_ck.txt \
+    -o /dev/null -w "%{http_code}" \
+    -u "admin:${SKYGATE_ADMIN_PASSWORD:-skygate_admin_pass}" \
+    "http://127.0.0.1:8080/admin/headscale/acl" 2>&1)
+  rm -f /tmp/_r31_ck.txt
+  if [ "$ACL_PAGE" = "200" ]; then
+    echo "  ${GRN}PASS${NC}  R31 /admin/headscale/acl renders 200 (Network Access Manager live)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R31 /admin/headscale/acl returned $ACL_PAGE (expected 200)"
+    echo "        Check that the v0.33.0 binary is running and headscale_acl_rules table exists"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  echo
+  echo "[R32] /admin/system_tests renders + TestRegistry accessible"
+  # v0.33.0: the Admin Test Page. Same auth pattern as R31.
+  ST_PAGE=$(curl -fsS -c /tmp/_r32_ck.txt -b /tmp/_r32_ck.txt \
+    -o /dev/null -w "%{http_code}" \
+    -u "admin:${SKYGATE_ADMIN_PASSWORD:-skygate_admin_pass}" \
+    "http://127.0.0.1:8080/admin/system_tests" 2>&1)
+  rm -f /tmp/_r32_ck.txt
+  if [ "$ST_PAGE" = "200" ]; then
+    echo "  ${GRN}PASS${NC}  R32 /admin/system_tests renders 200 (Admin Test Page live)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R32 /admin/system_tests returned $ST_PAGE (expected 200)"
+    echo "        Check that the v0.33.0 binary is running and system_tests_runs table exists"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 fi
