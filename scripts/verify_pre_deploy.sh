@@ -1157,7 +1157,7 @@ run_check "B46" "system_tests template: render-panic regression test exists (v0.
 # future refactor that reverts any of the 3 fixes fails at PR time.
 run_check "B47" "system_tests.html: \$.LiveResults used inside {{range .Tests}} (v0.33.1.2 fix)" \
   "bash -c '
-    grep -cF \"{{if \$\\.LiveResults}}\" internal/handlers/templates/admin/system_tests.html | grep -qE \"^[1-9]\"
+    grep -cF "{{if $.LiveResults}}" internal/handlers/templates/admin/system_tests.html | grep -qE "^[1-9]"
   '"
 # ─── B48 (v0.33.1.3) — admin handlers: every RenderWithLayout
 # call resolves to a defined body template ───
