@@ -1,4 +1,4 @@
-﻿// Package db — node_owner_map helpers.
+// Package db — node_owner_map helpers.
 //
 // Этап 10 part 4 (2026-07-12): moves the 17 raw SQL strings spread
 // across internal/handlers/*.go, internal/telegram/commands_*.go,

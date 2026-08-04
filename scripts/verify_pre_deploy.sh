@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # scripts/verify_pre_deploy.sh — build-time guarantees for skygate.
 #
 # Runs BEFORE `docker build` / `git push` / `docker compose up -d`.

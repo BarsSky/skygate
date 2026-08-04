@@ -1,4 +1,4 @@
-﻿# AGENTS.md — AI hints for Skygate
+# AGENTS.md — AI hints for Skygate
 
 This file is for AI assistants (Hermes, Claude, Cline, Cursor, etc.) working on
 or with Skygate. Read this **first** before suggesting changes or running tasks.

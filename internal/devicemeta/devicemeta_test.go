@@ -1,4 +1,4 @@
-﻿package devicemeta
+package devicemeta
 
 import "testing"
 

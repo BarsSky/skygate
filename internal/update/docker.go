@@ -1,4 +1,4 @@
-﻿package update
+package update
 
 // docker.go — v0.29.0 self-update orchestrator for the Docker
 // install kind. This is the path the operator's VM uses.
