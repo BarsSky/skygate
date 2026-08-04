@@ -1156,9 +1156,7 @@ run_check "B46" "system_tests template: render-panic regression test exists (v0.
 # B47 pins the count of `{{if $.LiveResults}}` (must be >= 1) so a
 # future refactor that reverts any of the 3 fixes fails at PR time.
 run_check "B47" "system_tests.html: \$.LiveResults used inside {{range .Tests}} (v0.33.1.2 fix)" \
-  "bash -c '
-    grep -cF "{{if $.LiveResults}}" internal/handlers/templates/admin/system_tests.html | grep -qE "^[1-9]"
-  '"
+  'grep -cF "{{if $.LiveResults}}" internal/handlers/templates/admin/system_tests.html | grep -qE "^[1-9]"'
 # ─── B48 (v0.33.1.3) — admin handlers: every RenderWithLayout
 # call resolves to a defined body template ───
 # Background: 2026-08-04 the user reported "/admin/control-planes
@@ -1199,12 +1197,5 @@ run_check "B48" "admin handlers: RenderWithLayout names resolve to defined bodie
 # (in the OLD short form, with no auth) fail at PR time. The full
 # command `tailscale up --login-server=... --authkey=...` is
 # allowed in the help page because that is the reference doc.
-run_check "B49" "templates: no hardcoded OLD `tailscale up --accept-routes` short form (v0.33.1.4)" \
-  "bash -c '
-    hits=$(grep -nE \"tailscale up --accept-routes[^a-zA-Z_=]\" internal/handlers/templates/exit_rules.html internal/handlers/templates/exit_rules_help.html 2>/dev/null | grep -vE \"tailscale up --accept-routes --accept-dns=false\" | grep -vE \"client_win_cmd\" | grep -vE \"tailscale up&quot;\")
-    if [[ -n \"$hits\" ]]; then
-      echo FAIL: hardcoded old tailscale up --accept-routes without authkey found:
-      echo \"$hits\"
-      exit 1
-    fi
-  \""
+run_check "B49" "templates: no hardcoded OLD tailscale up --accept-routes short form (v0.33.1.4)" \
+  'grep -nP "tailscale up --accept-routes(?! --accept-dns=false)" internal/handlers/templates/exit_rules.html internal/handlers/templates/exit_rules_help.html 2>/dev/null | head -5 | grep -q . && exit 1 || true'
