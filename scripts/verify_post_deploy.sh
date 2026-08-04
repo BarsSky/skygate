@@ -35,9 +35,10 @@
 #   R27 PG-staging VM: 4 verification tests pass (v0.31.0)
 #   R28 wal-g installed + can list MinIO bucket (v0.32.30 HA backup foundation)
 #   R29 HAProxy backends: skygate-pg-primary:5000 + skygate-pg-replica:5001 (v0.32.30)
+#   R30 primary archive_command: archive_mode=on + wal-g archiving WAL (v0.32.31)
 #
 # Usage:
-#   bash scripts/verify_post_deploy.sh                       # all 29 checks
+#   bash scripts/verify_post_deploy.sh                       # all 30 checks
 #   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 + R26 (core)
 #   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
 #   SSH_HOST=admin@192.0.2.1 bash scripts/verify_post_deploy.sh
@@ -1036,6 +1037,30 @@ if [ "$QUICK" = 0 ]; then
   else
     echo "  ${RED}FAIL${NC}  R29 HAProxy: :5000=$PRIMARY_OK (want 1), :5001=$REPLICA_OK (want t)"
     echo "        If one is empty, haproxy backend is down — check 'systemctl status haproxy'"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  echo
+  echo "[R30] primary archive_command: archive_mode + wal-g streaming"
+  # Walks HAProxy :5000 (primary) and checks archive_mode + archive_command.
+  # If archive_mode is on AND archive_command contains "wal-g", AND
+  # pg_stat_archiver.archived_count > 0 → PASS. The svyatoslava primary
+  # is at 45.152.198.217 behind HAProxy :5000 on skygate-vm.
+  R30_OUT=$(ssh_vm "PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5000 -U admin -d skygate_staging -tA -c \"
+    SELECT
+      (SELECT setting FROM pg_settings WHERE name='archive_mode') || '|' ||
+      (SELECT setting FROM pg_settings WHERE name='archive_command') || '|' ||
+      COALESCE((SELECT archived_count FROM pg_stat_archiver), 0)::text;
+  \"" 2>&1)
+  ARCHIVE_MODE=$(echo "$R30_OUT" | grep -oE '^[a-z]+' | head -1)
+  ARCHIVE_CMD=$(echo "$R30_OUT" | sed -E 's/^[a-z]+\|//' | sed -E 's/\|[0-9]+$//')
+  ARCHIVED_COUNT=$(echo "$R30_OUT" | grep -oE '[0-9]+$' | head -1)
+  if [ "$ARCHIVE_MODE" = "on" ] && echo "$ARCHIVE_CMD" | grep -q "wal-g" && [ "${ARCHIVED_COUNT:-0}" -gt 0 ]; then
+    echo "  ${GRN}PASS${NC}  R30 archive_mode=on, archive_command uses wal-g, $ARCHIVED_COUNT WAL segments archived"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R30 archive not active: mode=$ARCHIVE_MODE cmd='$ARCHIVE_CMD' archived=$ARCHIVED_COUNT"
+    echo "        If mode=off, run deploy/pg-ha/wal-g/README.md 'Primary-only setup' steps on svyatoslava"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 fi

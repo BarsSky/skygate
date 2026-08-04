@@ -1,16 +1,15 @@
 #!/bin/bash
 # Step 3-4: install wal-g on a skygate-pg node + configure for MinIO
 # Works on both primary (svyatoslava) and replica (skygate-vm).
-# On the REPLICA: backup-list, wal-show, backup-fetch work; backup-push fails
-# (replica can't do base backup — that's normal).
-# On the PRIMARY: all commands work, including backup-push and the
-# `archive_command` for continuous WAL archiving.
+# On the REPLICA: backup-list, wal-show, backup-fetch work; backup-push
+# requires data_dir and only does a remote (slow) backup.
+# On the PRIMARY: archive_command writes WAL on every commit; backup-push
+# with data_dir does fast local base backups (recommended).
 #
-# Verified 2026-08-04 on skygate-vm (replica):
-#   - wal-g v3.0.8 installed at /usr/local/bin/wal-g
-#   - /etc/wal-g/env written with operator creds (mode 600)
-#   - wal-g backup-list: "No backups found" (correct — no base backups yet)
-#   - wal-g wal-show: 49 WAL segments in wal_005/ (TLI 1, 0x0D-0x3D)
+# Verified 2026-08-04 on BOTH nodes:
+#   - skygate-vm: backup-list PASS, 49 WAL segments visible (pre-existing)
+#   - svyatoslava: archive_command writes 22+ WAL segments in 12 min,
+#     first base backup (12MB full + 40KB delta) in MinIO
 #
 # CRITICAL v3.0.8 env var naming (verified 2026-08-04):
 #   - WALG_S3_PREFIX  → bucket (e.g. s3://skygate-pg-wal)
@@ -18,6 +17,16 @@
 #   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY → auth
 #   - AWS_S3_FORCE_PATH_STYLE=true → for MinIO (hosted/virtual-style buckets fail)
 #   - Every var must be `export`ed so the wal-g subprocess sees it
+#
+# MinIO endpoint choice depends on the node's network:
+#   - skygate-vm (192.168.13.69) is on the home LAN → use http://192.168.13.13:9000
+#   - svyatoslava (45.152.198.217) is on a public VPS → use https://minio.skynas.ru
+#     (resolves to 95.165.170.190, reverse-proxied to home MinIO)
+# Pass the right endpoint via SKYGATE_MINIO_ENDPOINT env var.
+#
+# archive_command gotcha: daemontools' `envdir` expects a DIRECTORY of
+# single-var files, not a single file. We use `. /etc/wal-g/env && wal-g ...`
+# instead — works in /bin/sh -c which is what PG's archive_command runs in.
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
@@ -25,8 +34,6 @@ WALG_VERSION=v3.0.8
 ASSET_NAME="wal-g-pg-22.04-amd64"
 
 # Operator's MinIO creds — read from .env if present, else fall back to placeholder
-# Override at runtime: SKYGATE_MINIO_ACCESS_KEY=... SKYGATE_MINIO_SECRET_KEY=... \
-#   SKYGATE_MINIO_BUCKET=... SKYGATE_MINIO_ENDPOINT=... bash install_wal_g.sh
 MINIO_ACCESS_KEY="${SKYGATE_MINIO_ACCESS_KEY:-skyadmin}"
 MINIO_SECRET_KEY="${SKYGATE_MINIO_SECRET_KEY:-REPLACE_ME}"
 MINIO_BUCKET="${SKYGATE_MINIO_BUCKET:-skygate-pg-wal}"
@@ -59,7 +66,7 @@ fi
 wal-g --version 2>&1 | head -3
 echo
 
-echo "=== Step 3: write /etc/wal-g/env (mode 600) ==="
+echo "=== Step 3: write /etc/wal-g/env (root:postgres 0640) ==="
 sudo mkdir -p /etc/wal-g
 sudo tee /etc/wal-g/env > /dev/null <<WALG_ENV_EOF
 # wal-g configuration for skygate-pg
@@ -93,7 +100,7 @@ export PGDATABASE=postgres
 WALG_ENV_EOF
 sudo chown root:postgres /etc/wal-g/env
 sudo chmod 640 /etc/wal-g/env
-echo "  /etc/wal-g/env written (root:postgres mode 640 — readable by postgres user for archive_command)"
+echo "  /etc/wal-g/env written (root:postgres mode 640 — readable by postgres for archive_command)"
 echo
 
 echo "=== Step 4: verify wal-g can talk to MinIO ==="
@@ -109,13 +116,21 @@ ROLE=$(sudo -u postgres psql -t -c "SELECT pg_is_in_recovery();" 2>&1 | tr -d ' 
 echo "  pg_is_in_recovery = $ROLE  (false = primary, true = replica)"
 echo
 if [ "$ROLE" = "f" ]; then
-    echo "--- This is the PRIMARY: attempting backup-push ---"
+    echo "--- This is the PRIMARY: attempting backup-push (with data_dir for local mode) ---"
     set +e
-    wal-g backup-push 2>&1 | tail -10
+    sudo -u postgres bash -c '. /etc/wal-g/env && wal-g backup-push /var/lib/postgresql/data' 2>&1 | tail -10
     set -e
+    echo
+    echo "--- archive_command setup (REQUIRED for continuous WAL archiving) ---"
+    echo "  Add to /etc/patroni/patroni.yml postgresql.parameters:"
+    echo "    archive_mode: on"
+    echo "    archive_command: '. /etc/wal-g/env && wal-g wal-push %p'"
+    echo "    archive_timeout: 60"
+    echo "  Then: curl -X POST http://127.0.0.1:8008/reload"
+    echo "        yes | patronictl -c /etc/patroni/patroni.yml restart skygate-pg svyatoslava --force"
+    echo "  (restart causes a brief failover, then svyatoslava rejoins as primary)"
 else
     echo "--- This is a REPLICA: backup-push skipped (replica can't base-backup) ---"
-    echo "    Run install_wal_g.sh on svyatoslava (primary) to set up backup-push"
 fi
 echo
 echo "=== Done ==="
