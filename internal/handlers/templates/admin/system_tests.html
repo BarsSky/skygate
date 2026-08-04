@@ -53,7 +53,7 @@
       {{range .Tests}}
       <tr>
         <td>
-          {{if .LiveResults}}
+          {{if $.LiveResults}}
             {{$res := index $.LiveResults 0}}
             {{range $.LiveResults}}
               {{if eq .Name $.Name}}
@@ -71,7 +71,7 @@
         <td><span class="badge badge-category">{{.Category}}</span></td>
         <td>{{.Description}}</td>
         <td>
-          {{if .LiveResults}}
+          {{if $.LiveResults}}
             {{range $.LiveResults}}
               {{if eq .Name $.Name}}
                 <small><code>{{.Output}}</code></small>
@@ -80,7 +80,7 @@
           {{end}}
         </td>
         <td>
-          {{if .LiveResults}}
+          {{if $.LiveResults}}
             {{range $.LiveResults}}
               {{if eq .Name $.Name}}
                 <small>{{.Duration}}</small>

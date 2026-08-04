@@ -1124,3 +1124,38 @@ run_check "B45" "templates: body- names match renderBody convention (v0.33.1)" \
     ! grep -qF \"{{define \\\"body-admin-system-tests\\\"}}\" internal/handlers/templates/admin/system_tests.html &&
     ! grep -qF \"{{define \\\"body-admin-headscale-acl\\\"}}\" internal/handlers/templates/admin/headscale_acl.html
   '"
+
+# ─── B46 (v0.33.1.2) — system_tests template renders without panic ───
+# Background: 2026-08-04 the v0.33.1.1 fix renamed body-admin-system_tests
+# to follow the renderBody convention. That revealed a pre-existing
+# panic in the template: `{{if .LiveResults}}` was inside a
+# `{{range .Tests}}` block where `.` is a SystemTestDef (no LiveResults
+# field). The panic surfaced as 500 with
+#   "template: system_tests.html:56:15: executing \"body-admin-system_tests\"
+#    at <.LiveResults>: can't evaluate field LiveResults in type
+#    admin.SystemTestDef".
+# The fix: change all 3 occurrences of `.LiveResults` inside the
+# `{{range .Tests}}` block to `$.LiveResults`. The page-level
+# `{{if .LiveResults}}` (outside the range) is fine.
+# B46 pins the regression test in internal/handlers/system_tests_render_test.go
+# so a future template change that re-introduces the same shape of bug
+# fails at `go test` time (NOT at deploy time on the live VM).
+run_check "B46" "system_tests template: render-panic regression test exists (v0.33.1.2)" \
+  "bash -c '
+    test -f internal/handlers/system_tests_render_test.go &&
+    grep -qE \"func TestSystemTestsRendersWithoutPanic\" internal/handlers/system_tests_render_test.go &&
+    grep -qE \"func TestSystemTestsRendersWithLiveResults\" internal/handlers/system_tests_render_test.go &&
+    grep -qE \"body-admin-system_tests\" internal/handlers/system_tests_render_test.go
+  '"
+
+# ─── B47 (v0.33.1.2) — system_tests.html uses \$.LiveResults (not .LiveResults) inside the range ───
+# Background: see B46. The fix changed 3 occurrences of `.LiveResults`
+# inside `{{range .Tests}}` to `$.LiveResults`. The page-level
+# `{{if .LiveResults}}` (outside the range) is correct as-is — it
+# checks the page-level data map.
+# B47 pins the count of `{{if $.LiveResults}}` (must be >= 1) so a
+# future refactor that reverts any of the 3 fixes fails at PR time.
+run_check "B47" "system_tests.html: \$.LiveResults used inside {{range .Tests}} (v0.33.1.2 fix)" \
+  "bash -c '
+    grep -cF \"{{if \$\\.LiveResults}}\" internal/handlers/templates/admin/system_tests.html | grep -qE \"^[1-9]\"
+  '"
