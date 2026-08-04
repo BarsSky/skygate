@@ -1085,3 +1085,42 @@ run_check "B44" "db.OpenPostgres: auto-MigratePostgres + v0.50/v0.51 tables (v0.
     grep -qF \"CREATE TABLE IF NOT EXISTS system_tests_runs\" internal/db/migrations_pg.go &&
     grep -qF \"migrateV050PG, migrateV051PG\" internal/db/driver_postgres.go
   '"
+
+# ─── B45 (v0.33.1) — Template body- names match the
+# renderBody convention (the "body-admin-* not undefined" fix) ───
+# Pre-v0.33.1: four template files (control_planes, derp_config,
+# user_control_plane, user_subnet) defined `body-admin-<file-with-DASH>`
+# while the renderBody convention in handlers/templates.go:127-129
+# maps filename with underscores (`admin/user_subnet.html` →
+# `body-admin-user_subnet`). The 4 files all used `-` in the
+# body name instead of `_`, so renderBody silently failed
+# with "body-admin-... is undefined" — the page rendered
+# the sidebar + header but the body block was an empty
+# string.
+#
+# system_tests.html had the inverse bug: defined
+# `body-admin-system-tests` (with `-`) while the convention
+# says `_`. Same renderBody failure.
+#
+# The 4+1 bugs were discovered by the user's report
+# "/admin/headscale/acl и /admin/system_tests не
+# отображаются" on 2026-08-04. v0.33.1 fixes all 5
+# template files to follow the convention; B45 pins the
+# fix so a refactor that re-introduces a dash in any
+# template's `{{define ...}}` line gets caught at PR
+# time.
+run_check "B45" "templates: body- names match renderBody convention (v0.33.1)" \
+  "bash -c '
+    grep -qF \"{{define \\\"body-admin-control_planes\\\"}}\" internal/handlers/templates/admin/control_planes.html &&
+    grep -qF \"{{define \\\"body-admin-derp_config\\\"}}\" internal/handlers/templates/admin/derp_config.html &&
+    grep -qF \"{{define \\\"body-admin-user_control_plane\\\"}}\" internal/handlers/templates/admin/user_control_plane.html &&
+    grep -qF \"{{define \\\"body-admin-user_subnet\\\"}}\" internal/handlers/templates/admin/user_subnet.html &&
+    grep -qF \"{{define \\\"body-admin-system_tests\\\"}}\" internal/handlers/templates/admin/system_tests.html &&
+    grep -qF \"{{define \\\"body-admin-headscale_acl\\\"}}\" internal/handlers/templates/admin/headscale_acl.html &&
+    ! grep -qF \"{{define \\\"body-admin-control-planes\\\"}}\" internal/handlers/templates/admin/control_planes.html &&
+    ! grep -qF \"{{define \\\"body-admin-derp-config\\\"}}\" internal/handlers/templates/admin/derp_config.html &&
+    ! grep -qF \"{{define \\\"body-admin-user-control-plane\\\"}}\" internal/handlers/templates/admin/user_control_plane.html &&
+    ! grep -qF \"{{define \\\"body-admin-user-subnet\\\"}}\" internal/handlers/templates/admin/user_subnet.html &&
+    ! grep -qF \"{{define \\\"body-admin-system-tests\\\"}}\" internal/handlers/templates/admin/system_tests.html &&
+    ! grep -qF \"{{define \\\"body-admin-headscale-acl\\\"}}\" internal/handlers/templates/admin/headscale_acl.html
+  '"
