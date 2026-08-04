@@ -28,7 +28,38 @@ import (
 	"skygate/internal/backup"
 )
 
-const backupDir = "/tmp/skygate-backup"
+// resolveBackupDir picks the legacy on-disk backup directory.
+//
+// 2026-08-04 (v0.33.1.7): the original constant was hardcoded
+// to /tmp/skygate-backup (a path inside the skygate container
+// that's gone after restart). The .env on the operator's VM
+// defines DEPLOY_BACKUP_DIR=/home/skyadmin/skygate/backup (a
+// path on the host, surviving restarts), and the operator
+// expected the env var to take effect — but the code never
+// read it. Result: /admin/backup "Run now" silently wrote
+// archives that disappeared, and the host backup dir stayed
+// empty. The fix:
+//
+//   1. SKYGATE_BACKUP_DIR wins (preferred; matches the prefix
+//      convention of every other SKYGATE_* env var).
+//   2. DEPLOY_BACKUP_DIR (legacy alias from the deploy scripts).
+//   3. /tmp/skygate-backup (the pre-v0.33.1.7 in-container path,
+//      kept as a final fallback so an operator who never set any
+//      env var still has a working backup target — even if the
+//      result disappears on container restart).
+//
+// The path is resolved lazily on every call so a config change
+// via /admin/backup/config (which re-reads the DB) doesn't need
+// a process restart.
+func resolveBackupDir() string {
+	if v := os.Getenv("SKYGATE_BACKUP_DIR"); v != "" {
+		return v
+	}
+	if v := os.Getenv("DEPLOY_BACKUP_DIR"); v != "" {
+		return v
+	}
+	return "/tmp/skygate-backup"
+}
 
 // GetAdminBackup serves /admin/backup. Admin-only.
 //
@@ -77,6 +108,8 @@ func (s *Service) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// List existing backups
+	backupDir := resolveBackupDir()
+	data["BackupDir"] = backupDir
 	os.MkdirAll(backupDir, 0755)
 	entries, _ := os.ReadDir(backupDir)
 	var backups []map[string]string
@@ -130,6 +163,7 @@ func (s *Service) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
+	backupDir := resolveBackupDir()
 	os.MkdirAll(backupDir, 0755)
 
 	backupScript := ""
@@ -204,6 +238,7 @@ func (s *Service) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "forbidden", 403)
 		return
 	}
+	backupDir := resolveBackupDir()
 	name := r.URL.Query().Get("name")
 	if name == "" || strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		http.Error(w, "invalid name", http.StatusBadRequest)
@@ -237,6 +272,7 @@ func (s *Service) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request)
 	}
 	defer file.Close()
 
+	backupDir := resolveBackupDir()
 	os.MkdirAll(backupDir, 0755)
 	dest := filepath.Join(backupDir, "uploaded-restore.tar.gz")
 	dst, err := os.Create(dest)

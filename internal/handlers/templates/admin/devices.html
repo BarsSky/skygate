@@ -26,6 +26,15 @@
 </div>
 
 <div class="card">
+  {{/* 2026-08-04: v0.33.1.7 — wrap the wide table in .table-wrap
+       so on narrow screens the row scrolls horizontally instead
+       of spilling out of the card. The 12 columns (ID / hostname
+       / user / IP / type / OS+device_type-with-inline-form / tag /
+       dev tag / per-device exit pref-with-2-forms / status /
+       last seen / actions) easily exceed 1280px on a full row,
+       and the inline OS/device_type `<details>` form doubles the
+       effective column width. Scroll keeps the layout stable. */}}
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -235,5 +244,6 @@
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
     <span><strong>{{t "devices.tag_public"}}</strong> — visible to all tailnet users via ACL. <strong>{{t "devices.tag_private"}}</strong> — only owner and admins.</span>
   </p>
+  </div>
 </div>
 {{end}}

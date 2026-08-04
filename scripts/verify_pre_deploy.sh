@@ -1199,3 +1199,49 @@ run_check "B48" "admin handlers: RenderWithLayout names resolve to defined bodie
 # allowed in the help page because that is the reference doc.
 run_check "B49" "templates: no hardcoded OLD tailscale up --accept-routes short form (v0.33.1.4)" \
   'grep -nP "tailscale up --accept-routes(?! --accept-dns=false)" internal/handlers/templates/exit_rules.html internal/handlers/templates/exit_rules_help.html 2>/dev/null | head -5 | grep -q . && exit 1 || true'
+
+# ─── B50 (v0.33.1.7) — /admin/devices table overflow ───
+# Background: 2026-08-04 the user reported that the 12-column
+# /admin/devices table was overflowing the card boundary on
+# narrow viewports. The OS+device_type column has an inline
+# `<details>` form (2 selects + button), the per-device exit
+# pref column has 2 forms, the actions column has 2 forms —
+# total row width easily exceeds 1280px. v0.33.1.7 wraps the
+# <table> in <div class="table-wrap"> so on narrow screens the
+# row scrolls horizontally inside the card instead of spilling
+# out. The CSS class .table-wrap (defined in static/css/themes.css)
+# already has `overflow-x: auto; margin: 0 -4px`; we just need
+# the template to use it.
+run_check "B50" "/admin/devices table wrapped in .table-wrap for horizontal scroll (v0.33.1.7)" \
+  'grep -n "<div class=\"table-wrap\">" internal/handlers/templates/admin/devices.html | head -1 | grep -q .'
+
+# ─── B51 (v0.33.1.7) — backup path respects SKYGATE_BACKUP_DIR / DEPLOY_BACKUP_DIR ───
+# Background: 2026-08-04 the user asked "why are backups
+# failing?". The hardcoded constant `const backupDir =
+# "/tmp/skygate-backup"` in internal/feature/admin/backup.go
+# ignored the operator's .env (DEPLOY_BACKUP_DIR=...) and wrote
+# to a container-internal path that disappears on restart.
+# v0.33.1.7 introduced resolveBackupDir() which reads
+# SKYGATE_BACKUP_DIR (preferred) → DEPLOY_BACKUP_DIR (legacy
+# alias) → /tmp/skygate-backup (final fallback). B51 pins the
+# shape of the fallback chain and the absence of the const.
+run_check "B51" "backup path resolved from SKYGATE_BACKUP_DIR/DEPLOY_BACKUP_DIR, not hardcoded (v0.33.1.7)" \
+  "grep -nE 'SKYGATE_BACKUP_DIR|DEPLOY_BACKUP_DIR' internal/feature/admin/backup.go | head -3 | grep -q . && ! grep -q 'const backupDir = ' internal/feature/admin/backup.go"
+
+# ─── B52 (v0.33.1.7) — /admin/update template has no inline-style CSS interpolation ───
+# Background: 2026-08-04 the user asked "why is the update tab
+# showing errors?". The /admin/update template had two patterns
+# that Go's html/template refuses to interpolate into a CSS
+# context:
+#   1. style="border-left:4px solid {{$borderColor}}" with
+#      values like "var(--success)" / "var(--danger)" — renders
+#      as the literal "ZgotmplZ" placeholder.
+#   2. style="color:{{$lineColor}}" in the log lines — same
+#      problem.
+# v0.33.1.7 replaced both with static CSS classes
+# (card-update-{phase} / log-line-{level}) so the values are
+# static strings Go can render without sanitization. B52 pins
+# the absence of any {{...}} inside a style="..." attribute
+# in admin/update.html.
+run_check "B52" "/admin/update template has no template-var-in-CSS (v0.33.1.7)" \
+  '! grep -nE "style=\"[^\"]*[{][{]" internal/handlers/templates/admin/update.html | grep -vE "^[0-9]+:.*[{][{]\\*/" | grep -vE "^[0-9]+:[[:space:]]*[{][{]/" | head -5 | grep -q .'

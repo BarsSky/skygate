@@ -171,6 +171,23 @@ tbody tr{transition:background .1s}
 tbody tr:hover{background:var(--bg-hover)}
 td.mono,code,pre{font-family:var(--mono);font-size:12px}
 
+/* 2026-08-04 (v0.33.1.7): /admin/update phase border.
+   Used to be inline style="border-left:4px solid {{$borderColor}}"
+   with $borderColor = "var(--success)" etc. — Go's html/template
+   refuses to interpolate that into a CSS context and renders
+   the literal "ZgotmplZ" placeholder. Static classes per phase
+   sidestep the context-aware CSS sanitizer entirely. */
+.card-update-info         { border-left: 4px solid var(--info) }
+.card-update-done         { border-left: 4px solid var(--success) }
+.card-update-failed       { border-left: 4px solid var(--danger) }
+.card-update-rolled-back  { border-left: 4px solid var(--warning) }
+
+/* 2026-08-04 (v0.33.1.7): /admin/update log-line colours.
+   Replaces inline style="color:{{$lineColor}}". */
+.log-line-info  { color: var(--text-muted) }
+.log-line-warn  { color: var(--warning) }
+.log-line-error { color: var(--danger) }
+
 /* FORMS */
 fieldset{border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:0 0 12px}
 legend{padding:0 8px;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em}

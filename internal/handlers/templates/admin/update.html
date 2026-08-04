@@ -14,11 +14,19 @@
 
 {{if .UpdateState}}
   {{$st := .UpdateState}}
-  {{$borderColor := "var(--info)"}}
-  {{if eq $st.Phase "done"}}{{$borderColor = "var(--success)"}}{{end}}
-  {{if eq $st.Phase "failed"}}{{$borderColor = "var(--danger)"}}{{end}}
-  {{if eq $st.Phase "rolled_back"}}{{$borderColor = "var(--warning)"}}{{end}}
-  <div class="card" style="margin-bottom:24px;border-left:4px solid {{$borderColor}}">
+  {{/* 2026-08-04 (v0.33.1.7): Go's html/template package
+       refuses to put an arbitrary string into a CSS context —
+       it prints the literal "ZgotmplZ" placeholder. The
+       pre-v0.33.1.7 template interpolated var(--success) /
+       var(--danger) into a `border-left:4px solid` CSS context,
+       which Go treats as untrusted CSS and replaces with
+       ZgotmplZ. Fix: use a static class per phase and let
+       the static stylesheet pick the colour. */}}
+  {{$phaseClass := "card-update-info"}}
+  {{if eq $st.Phase "done"}}{{$phaseClass = "card-update-done"}}{{end}}
+  {{if eq $st.Phase "failed"}}{{$phaseClass = "card-update-failed"}}{{end}}
+  {{if eq $st.Phase "rolled_back"}}{{$phaseClass = "card-update-rolled-back"}}{{end}}
+  <div class="card {{$phaseClass}}" style="margin-bottom:24px">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
       <div>
         <h3 data-update-phase="{{$st.Phase}}" style="margin:0">
@@ -66,7 +74,9 @@
         {{t "update.log_entries"}}: {{len $st.Log}}
         {{if ne $st.Phase "done"}}<i class="fa-solid fa-circle-notch fa-spin" style="margin-left:6px"></i>{{end}}
       </summary>
-      <pre id="update-log" style="white-space:pre-wrap;font-family:monospace;font-size:11px;line-height:1.4;margin:8px 0 0;max-height:400px;overflow:auto;background:var(--bg-secondary);padding:8px;border-radius:4px">{{range $st.Log}}{{$lineColor := "var(--text-muted)"}}{{if eq .Level "error"}}{{$lineColor = "var(--danger)"}}{{end}}{{if eq .Level "warn"}}{{$lineColor = "var(--warning)"}}{{end}}<span style="color:{{$lineColor}}">{{.At.Format "15:04:05"}} [{{.Level}}] {{.Msg}}</span>
+      <pre id="update-log" style="white-space:pre-wrap;font-family:monospace;font-size:11px;line-height:1.4;margin:8px 0 0;max-height:400px;overflow:auto;background:var(--bg-secondary);padding:8px;border-radius:4px">{{range $st.Log}}{{/* 2026-08-04 (v0.33.1.7): replace inline color interpolation with a static class
+           (log-line-{level}) — Go's html/template refuses to interpolate
+           var(--xxx) into CSS context and prints "ZgotmplZ". */}}{{$lineClass := "log-line-info"}}{{if eq .Level "error"}}{{$lineClass = "log-line-error"}}{{end}}{{if eq .Level "warn"}}{{$lineClass = "log-line-warn"}}{{end}}<span class="{{$lineClass}}">{{.At.Format "15:04:05"}} [{{.Level}}] {{.Msg}}</span>
 {{end}}</pre>
     </details>
     {{end}}

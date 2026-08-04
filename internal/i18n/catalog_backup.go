@@ -14,6 +14,8 @@ package i18n
 var ruBackup = map[string]string{
 	"backup.title"                   : "Backup",
 	"backup.subtitle"                : "Бэкап и восстановление ACL и настроек",
+	"backup.legacy_dir_label"        : "Путь к бэкапам (legacy)",
+	"backup.legacy_dir_help"         : "Сюда пишутся архивы при нажатии «Создать бэкап». Задаётся через SKYGATE_BACKUP_DIR (или DEPLOY_BACKUP_DIR). По умолчанию /tmp/skygate-backup — папка внутри контейнера, которая исчезает при рестарте.",
 	"backup.create"                  : "Создать бэкап",
 	"backup.download"                : "Скачать",
 	"backup.restore"                 : "Восстановить",
@@ -93,6 +95,8 @@ var enBackup = map[string]string{
 	"backup.create"                  : "Create backup",
 	"backup.download"                : "Download",
 	"backup.restore"                 : "Restore",
+	"backup.legacy_dir_label"        : "Backup destination (legacy)",
+	"backup.legacy_dir_help"         : "Where archives land when you press 'Create backup'. Set via SKYGATE_BACKUP_DIR (or DEPLOY_BACKUP_DIR). Default /tmp/skygate-backup is in-container and lost on restart.",
 	"backup.restore_confirm"         : "Restore from %s? Current data will be replaced.",
 	"backup.upload"                  : "Upload file",
 	"backup.empty"                   : "No backups",

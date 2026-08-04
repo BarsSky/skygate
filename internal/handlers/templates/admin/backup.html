@@ -6,6 +6,17 @@
   </div>
 </div>
 
+{{/* 2026-08-04 (v0.33.1.7): show the resolved backup dir
+     so the operator can see where archives actually land.
+     Resolved by backup.go's resolveBackupDir() from
+     SKYGATE_BACKUP_DIR → DEPLOY_BACKUP_DIR → /tmp/skygate-backup. */}}
+{{if .BackupDir}}
+<div class="alert" style="font-size:12px">
+  <i class="fa-solid fa-folder-open"></i>
+  <strong>{{t "backup.legacy_dir_label"}}:</strong> <code>{{.BackupDir}}</code>
+</div>
+{{end}}
+
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}
