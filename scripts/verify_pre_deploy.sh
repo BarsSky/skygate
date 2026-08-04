@@ -1184,3 +1184,41 @@ run_check "B47" "system_tests.html: \$.LiveResults used inside {{range .Tests}} 
 # some admin template. B48 runs that test.
 run_check "B48" "admin handlers: RenderWithLayout names resolve to defined bodies (v0.33.1.3)" \
   "'$GO' test -count=1 -short -run TestRenderWithLayout_BodyNamesResolve ./internal/handlers/ 2>&1"
+
+run_check "B49" "templates: no hardcoded `tailscale up --accept-routes` (the OLD short form, v0.33.1.4)" \
+  "bash -c '`
+    # The full command with --login-server --authkey is OK; only the OLD
+    # short form `tailscale up --accept-routes` (no auth, no login-server)
+    # is forbidden. The new i18n key exit_rules.client_win_cmd carries
+    # the full command in the catalog.
+    hits=$(grep -nE 'tailscale up --accept-routes[^a-zA-Z_]' internal/handlers/templates/exit_rules.html internal/handlers/templates/exit_rules_help.html 2>/dev/null | grep -vE 'tailscale up --accept-routes --accept-dns=false' | grep -vE 'client_win_cmd' | grep -vE 'tailscale up&quot;')
+    if [[ -n "$hits" ]]; then
+      echo "FAIL: hardcoded old `tailscale up --accept-routes` (without --authkey) found:"
+      echo "$hits"
+      exit 1
+    fi
+  '"
+
+# ─── B49 (v0.33.1.4) — templates: no hardcoded OLD `tailscale up --accept-routes`
+# short form (no --authkey / no --login-server) ───
+# Background: 2026-08-04 the user asked "как правильно прописать
+# tailscale up --accept-routes на Windows". The /my/exit-rules and
+# /my/exit-rules/help templates had hardcoded `tailscale up` strings
+# (with no auth key, no login-server) that gave the operator a
+# wrong / incomplete command. v0.33.1.4 moved all tailscale-up
+# references into the i18n catalog (client_win_cmd /
+# client_win_cmd_after) and added docs/windows-client.md as the
+# canonical reference. B49 pins the convention: future template
+# changes that re-introduce a hardcoded `tailscale up --accept-routes`
+# (in the OLD short form, with no auth) fail at PR time. The full
+# command `tailscale up --login-server=... --authkey=...` is
+# allowed in the help page because that is the reference doc.
+run_check "B49" "templates: no hardcoded OLD `tailscale up --accept-routes` short form (v0.33.1.4)" \
+  "bash -c '
+    hits=$(grep -nE \"tailscale up --accept-routes[^a-zA-Z_=]\" internal/handlers/templates/exit_rules.html internal/handlers/templates/exit_rules_help.html 2>/dev/null | grep -vE \"tailscale up --accept-routes --accept-dns=false\" | grep -vE \"client_win_cmd\" | grep -vE \"tailscale up&quot;\")
+    if [[ -n \"$hits\" ]]; then
+      echo \"FAIL: hardcoded old `tailscale up --accept-routes` (without --authkey) found:\"
+      echo \"$hits\"
+      exit 1
+    fi
+  \""

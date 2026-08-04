@@ -20,7 +20,7 @@
       </ul>
     </li>
     <li>Click <b>"Add"</b>. The rule is applied immediately.</li>
-    <li>On the device: <code>tailscale up --accept-routes</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS).</li>
+    <li>On the device: <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=false</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS). See <a href="/docs/windows-client.md" target="_blank" rel="noopener">Windows client guide</a>.</li>
   </ol>
 </div>
 
@@ -81,8 +81,8 @@ curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
     <li><b>Headscale</b> (control plane) approves and distributes routes to clients <b>per ACL</b> — each device gets only its own subnets.</li>
     <li><b>Clients:</b>
       <ul>
-        <li><b>Windows/Linux:</b> <code>tailscale up --accept-routes</code> — split-tunnel (only whitelist → exit-node)</li>
-        <li><b>Android/iOS:</b> <code>tailscale up --exit-node=X</code> — full tunnel</li>
+        <li><b>Windows/Linux:</b> <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=false</code> — split-tunnel (only whitelist → exit-node, exit-node picked in Tailscale menu)</li>
+        <li><b>Android/iOS:</b> <code>tailscale up --exit-node=X</code> — full tunnel (mobile does not support split-tunnel)</li>
       </ul>
     </li>
     <li>When rules change Skygate auto-updates advertised-routes on all exit-nodes + <b>autoupdater</b> watches domains.</li>

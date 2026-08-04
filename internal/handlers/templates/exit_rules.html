@@ -54,6 +54,7 @@
     <span class="tag tag-info" title="{{t "exit_rules.dns_autoupdate_title"}}">
       <i class="fa-solid fa-arrows-rotate"></i> {{t "exit_rules.dns_autoupdate"}}
     </span>
+    <a href="/docs/windows-client.md" target="_blank" rel="noopener" class="btn btn-sm" title="{{t "exit_rules.client_win_guide_title"}}"><i class="fa-solid fa-laptop"></i> {{t "exit_rules.client_win_guide"}}</a>
     <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> {{t "exit_rules.api_help_btn"}}</a>
   </div>
 </div>
@@ -308,11 +309,12 @@
     <div class="help-card">
       <h4><i class="fa-solid fa-laptop"></i> {{t "exit_rules.client_title"}}</h4>
       <p><b>{{t "exit_rules.client_win_linux"}}</b></p>
-      <p><code>tailscale up --accept-routes</code></p>
-      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_split_hint"}}</p>
-      <p style="margin-top:8px"><b>{{t "exit_rules.client_mobile"}}</b></p>
-      <p><code>tailscale up --exit-node=exit-node-name</code></p>
-      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_full_hint"}}</p>
+      <p style="font-size:12px"><code>{{t "exit_rules.client_win_cmd"}}</code></p>
+      <p style="font-size:11px"><code>{{t "exit_rules.client_win_cmd_after"}}</code></p>
+      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_win_hint" | safeHTML}}</p>
+      <p style="margin-top:10px"><b>{{t "exit_rules.client_mobile"}}</b></p>
+      <p><code>tailscale up --exit-node=&lt;name&gt;</code></p>
+      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_full_hint" | safeHTML}}</p>
     </div>
 
     <div class="help-card">
