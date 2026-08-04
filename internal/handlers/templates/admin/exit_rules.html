@@ -91,6 +91,29 @@
 </div>
 
 <div class="card">
+  <h3><i class="fa-solid fa-info-circle"></i> {{t "exit_rules.how_title"}}</h3>
+  <ol style="padding-left:20px;margin:0">
+    <li>{{t "exit_rules.how_li1" | safeHTML}}</li>
+    <li>{{t "exit_rules.how_li2" | safeHTML}}</li>
+    <li>{{t "exit_rules.how_li3" | safeHTML}}</li>
+    <li>{{t "exit_rules.how_li4" | safeHTML}}</li>
+    <li>{{t "exit_rules.how_li5" | safeHTML}}</li>
+  </ol>
+
+  <div style="margin-top:16px;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev)">
+    <h4 style="margin:0 0 8px 0;font-size:13px"><i class="fa-brands fa-windows"></i> {{t "exit_rules.win_flow_title"}}</h4>
+    <ol style="margin:0;padding-left:20px">
+      <li style="font-size:12px;line-height:1.5">{{t "exit_rules.win_flow_li1" | safeHTML}}</li>
+      <li style="font-size:12px;line-height:1.5">{{t "exit_rules.win_flow_li2" | safeHTML}}</li>
+      <li style="font-size:12px;line-height:1.5">{{t "exit_rules.win_flow_li3" | safeHTML}}</li>
+    </ol>
+    <p style="font-size:11px;color:var(--text-muted);margin:8px 0 0 0">
+      <i class="fa-solid fa-circle-info"></i> {{t "exit_rules.win_flow_no_scripts" | safeHTML}}
+    </p>
+  </div>
+</div>
+
+<div class="card">
   <h3><i class="fa-solid fa-clock-rotate-left"></i> {{t "exit_rules_admin.acl_history"}}</h3>
   {{if .Logs}}
   <table>
