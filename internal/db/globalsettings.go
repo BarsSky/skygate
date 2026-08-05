@@ -39,10 +39,19 @@ func GetGlobalSetting(d *sql.DB, key, defaultValue string) (string, error) {
 // default for SQLite (the production backend today); the PG
 // form kicks in when running under -tags postgres where the
 // driver returns PG's UNIX_EPOCH equivalent.
+//
+// v0.33.1.8 — the placeholder syntax was previously "?" for
+// both backends, which works on SQLite but PostgreSQL's pgx
+// stdlib does NOT auto-convert "?" to "$N" (it would just
+// pass the "?" through to PostgreSQL, which rejects it with
+// "syntax error at or near ','"). The placeholdersList(n)
+// helper returns "$1,$2,..." under -tags postgres and "?,?,..."
+// otherwise. The ?,$1,etc split is the same pattern that the
+// other DB helpers use (see nowUnixSQL).
 func SetGlobalSetting(d *sql.DB, key, value string) error {
 	_, err := d.Exec(`
 		INSERT INTO global_settings (key, value, updated_at)
-		VALUES (?, ?, `+nowUnixSQL()+`)
+		VALUES (`+placeholdersList(2)+`, `+nowUnixSQL()+`)
 		ON CONFLICT(key) DO UPDATE SET
 			value = excluded.value,
 			updated_at = `+nowUnixSQL()+`

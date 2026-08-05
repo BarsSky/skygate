@@ -1275,3 +1275,27 @@ run_check "B53" "Telegram egress relay admin-UI selector wired (v0.33.1.8)" \
    grep -q "telegram.egress_clear" internal/handlers/templates/admin/telegram.html && \
    grep -q "\"telegram.egress_title\"" internal/i18n/catalog_telegram.go && \
    grep -q "TelegramCIDRs" internal/feature/admin/telegram.go'
+
+# ─── B54 (v0.33.1.8) — SetGlobalSetting uses per-backend placeholders ───
+# Background: 2026-08-05 the operator triggered the
+# /admin/telegram "Clear egress" button and the DB write
+# failed with "ERROR: syntax error at or near ',' (SQLSTATE
+# 42601)". Root cause: SetGlobalSetting was hard-coded to
+# use the "?" placeholder for both SQLite and PostgreSQL.
+# SQLite's go-sqlite3 driver accepts "?"; PostgreSQL's pgx
+# stdlib does NOT auto-convert "?" to "$N" (lib/pq used to,
+# but the pgx stdlib doesn't), so the literal "?" reached
+# PostgreSQL and got parsed as a syntax error next to the
+# "," between values. v0.33.1.8 introduces a per-backend
+# placeholdersList(n) helper (placeholders_sqlite.go for the
+# "?,?" form, placeholders_postgres.go for the "$1,$2,..."
+# form, selected via -tags postgres) and SetGlobalSetting
+# now uses it. B54 pins the absence of any hard-coded "?"
+# inside the SetGlobalSetting query template + the presence
+# of the new helper files.
+run_check "B54" "SetGlobalSetting uses per-backend placeholders, not hardcoded '?' (v0.33.1.8)" \
+  'grep -q "placeholdersList(2)" internal/db/globalsettings.go && \
+   ! grep -qE "VALUES \(\?, \?" internal/db/globalsettings.go && \
+   test -f internal/db/placeholders.go && \
+   test -f internal/db/placeholders_sqlite.go && \
+   test -f internal/db/placeholders_postgres.go'
