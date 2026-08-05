@@ -25,7 +25,7 @@ func TestInstallKind_String(t *testing.T) {
 }
 
 func TestGenerateDockerSteps(t *testing.T) {
-	steps := GenerateDockerSteps("v0.28.6", "v0.29.0")
+	steps := GenerateDockerSteps("v0.28.6", "v0.29.0", "skygate-operator", "skygate")
 	if steps.Kind != InstallDocker {
 		t.Errorf("Kind = %v, want InstallDocker", steps.Kind)
 	}
@@ -47,7 +47,7 @@ func TestGenerateDockerSteps(t *testing.T) {
 }
 
 func TestGenerateBareSteps(t *testing.T) {
-	steps := GenerateBareSteps("v0.28.6", "v0.29.0")
+	steps := GenerateBareSteps("v0.28.6", "v0.29.0", "skygate-operator", "skygate")
 	if steps.Kind != InstallBare {
 		t.Errorf("Kind = %v, want InstallBare", steps.Kind)
 	}
@@ -58,10 +58,16 @@ func TestGenerateBareSteps(t *testing.T) {
 		// Bare steps should NOT mention git (no source clone)
 		t.Error("Bare steps should NOT mention git")
 	}
+	// 2026-08-05 v0.33.1.10: the GitHub owner/repo from
+	// the call must be reflected in the download URL.
+	joined := strings.Join(steps.Steps, "\n")
+	if !strings.Contains(joined, "github.com/skygate-operator/skygate/releases/download/v0.29.0/skygate-linux-amd64") {
+		t.Errorf("Bare steps should reference the configured GitHub owner/repo in the download URL; got: %s", joined)
+	}
 }
 
 func TestGenerateSystemdSteps(t *testing.T) {
-	steps := GenerateSystemdSteps("v0.28.6", "v0.29.0")
+	steps := GenerateSystemdSteps("v0.28.6", "v0.29.0", "skygate-operator", "skygate")
 	if steps.Kind != InstallSystemd {
 		t.Errorf("Kind = %v, want InstallSystemd", steps.Kind)
 	}
@@ -73,9 +79,23 @@ func TestGenerateSystemdSteps(t *testing.T) {
 func TestGenerateManualSteps_DefaultsToDocker(t *testing.T) {
 	// Unknown install kind should fall back to Docker (the
 	// most common skygate deployment shape).
-	steps := GenerateManualSteps(InstallUnknown, "v0.28.6", "v0.29.0")
+	steps := GenerateManualSteps(InstallUnknown, "v0.28.6", "v0.29.0", "skygate-operator", "skygate")
 	if steps.Kind != InstallDocker {
 		t.Errorf("GenerateManualSteps(Unknown) = %v, want InstallDocker (default)", steps.Kind)
+	}
+}
+
+// 2026-08-05 v0.33.1.10: when the caller passes empty
+// owner/repo, the steps must still render a valid GitHub
+// download URL (the "BarsSky/skygate" fallback). Without
+// this guard, an unconfigured /admin/update page (no
+// env, no config override) would render a literal
+// "https://github.com//releases/..." URL.
+func TestGenerateManualSteps_FallbackOwnerRepo(t *testing.T) {
+	steps := GenerateManualSteps(InstallBare, "v0.28.6", "v0.29.0", "", "")
+	joined := strings.Join(steps.Steps, "\n")
+	if !strings.Contains(joined, "github.com/BarsSky/skygate/releases/download/") {
+		t.Errorf("empty owner/repo should fall back to 'BarsSky/skygate'; got: %s", joined)
 	}
 }
 

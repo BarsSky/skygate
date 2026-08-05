@@ -1329,3 +1329,45 @@ run_check "B55" "Tailscale web-UI management wired (v0.33.1.9)" \
    grep -q "tailscale.start" internal/handlers/templates/admin/tailscale.html && \
    grep -q "tailscale.title" internal/i18n/catalog_tailscale.go && \
    grep -q "SKYGATE_TS_AUTHKEY_FILE:-}" entrypoint.sh'
+
+# ─── B56 (v0.33.1.10) — GitHub repo coordinates via env ───
+# Background: 2026-08-05 the operator reported that
+# /admin/update hung on "GitHub недоступен" with a 404.
+# Root cause: the release-monitor + update-checker Go code
+# hardcoded "skygate-operator/skygate" as the GitHub repo,
+# but the operator's actual repo on github.com is
+# "BarsSky/skygate" (verified: api.github.com/repos/
+# skygate-operator/skygate/releases/latest -> HTTP 404,
+# vs .../BarsSky/skygate/releases/latest -> HTTP 200).
+# v0.33.1.10 adds SKYGATE_GITHUB_REPO_OWNER / _NAME env
+# vars (config.Config.GitHubOwner / GitHubRepo, default
+# "BarsSky" / "skygate") and wires them through every
+# callsite that previously hardcoded the URL.
+run_check "B56" "GitHub repo coordinates via env (v0.33.1.10)" \
+  'grep -q "GitHubOwner" internal/config/config.go && \
+   grep -q "GitHubRepo" internal/config/config.go && \
+   grep -q "SKYGATE_GITHUB_REPO_OWNER" internal/config/config.go && \
+   grep -q "SKYGATE_GITHUB_REPO_NAME" internal/config/config.go && \
+   grep -q "m.Owner" internal/release/monitor_runner.go && \
+   grep -q "m.Repo" internal/release/monitor_runner.go && \
+   grep -q "s.Cfg.GitHubOwner" internal/feature/admin/update.go && \
+   grep -q "s.Cfg.GitHubRepo" internal/feature/admin/update.go && \
+   grep -q "defaultOwnerRepo" internal/update/manual.go && \
+   grep -q "func GenerateManualSteps(kind InstallKind, current, target, owner, repo string)" internal/update/manual.go && \
+   ! grep -nE "Owner:.*skygate-operator|Repo:.*skygate-operator|\"skygate-operator\"," internal/release/monitor.go internal/release/monitor_runner.go internal/feature/admin/update.go internal/update/checker.go internal/update/manual.go && \
+   ! grep -q "skygate-operator/skygate" internal/release/monitor.go internal/release/monitor_runner.go internal/feature/admin/update.go internal/update/checker.go internal/update/manual.go'
+
+# ─── B57 (v0.33.1.10) — DERP config apply help text no longer says SQLite ───
+# Background: 2026-08-05 the operator reported that
+# /admin/derp/config showed "writes the config to SQLite"
+# in the help card, which is stale since v0.33.1.7 moved
+# the production DB to PostgreSQL. v0.33.1.10 also drops
+# the inaccurate "via docker exec" wording (the actual
+# code uses docker cp + docker kill -s HUP).
+# The check is a negative grep for the legacy SQLite
+# string in both languages + a positive check that the
+# new text mentions docker cp + БД / database.
+run_check "B57" "DERP apply help no longer says SQLite (v0.33.1.10)" \
+  '! grep -q "writes the config to SQLite" internal/i18n/catalog_derp.go && \
+   ! grep -q "записывает конфиг в SQLite" internal/i18n/catalog_derp.go && \
+   grep -q "docker cp" internal/i18n/catalog_derp.go'

@@ -14,11 +14,11 @@
 //
 // API contract:
 //
-//   GET https://api.github.com/repos/skygate-operator/skygate/releases/latest
+//   GET https://api.github.com/repos/{owner}/{repo}/releases/latest
 //   {
 //     "tag_name": "v0.10.7",
 //     "name": "Skygate v0.10.7 — first official release",
-//     "html_url": "https://github.com/skygate-operator/skygate/releases/tag/v0.10.7",
+//     "html_url": "https://github.com/{owner}/{repo}/releases/tag/v0.10.7",
 //     "published_at": "2026-07-14T16:15:15Z",
 //     "body": "...markdown..."
 //   }
@@ -27,6 +27,14 @@
 // We poll at most once per hour (configurable) and never
 // authenticate, which leaves the headroom untouched even
 // if the operator is on a shared NAT.
+//
+// 2026-08-05 v0.33.1.10: the owner/repo are no longer
+// hardcoded. They're supplied by the caller (cmd/skygate
+// reads Cfg.GitHubOwner / Cfg.GitHubRepo, defaults to
+// the operator's actual repo on github.com). The
+// previous hardcoded value 404'd at runtime (the
+// real repo name was different from the assumed
+// placeholder).
 
 package release
 
@@ -37,14 +45,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-)
-
-// Owner / repo for the API URL. Hard-coded for now —
-// skygate is single-tenant at the moment. If a second
-// deployment ever needs its own release feed, refactor to
-// pass (owner, repo) via Config.
-const (
-	apiBase = "https://api.github.com/repos/skygate-operator/skygate"
 )
 
 // Release mirrors the JSON shape we need. We don't decode
@@ -61,17 +61,26 @@ type Release struct {
 // concurrent use because http.Client and the last-tag field
 // are guarded by a mutex-less convention (only the scheduler
 // goroutine calls Latest).
+//
+// 2026-08-05 v0.33.1.10: Owner / Repo replace the old
+// single "Repo" string. The caller (cmd/skygate) wires
+// these from Cfg.GitHubOwner / Cfg.GitHubRepo so a fork
+// or staging deploy can point the monitor at a different
+// repo via SKYGATE_GITHUB_REPO_OWNER / _NAME.
 type Client struct {
-	HTTP   *http.Client
-	Repo   string // "owner/repo" — defaults to skygate-operator/skygate
-	Last   string // last seen tag (so the scheduler can dedup)
+	HTTP  *http.Client
+	Owner string // GitHub owner (user or org); defaults to "BarsSky" via Config
+	Repo  string // GitHub repo name; defaults to "skygate" via Config
+	Last  string // last seen tag (so the scheduler can dedup)
 }
 
-// NewClient returns a Client with sensible timeouts.
+// NewClient returns a Client with sensible timeouts. Owner
+// and Repo are left empty — the caller (cmd/skygate) is
+// expected to set them from Config so the defaults stay
+// in one place. Tests can set them directly.
 func NewClient() *Client {
 	return &Client{
 		HTTP: &http.Client{Timeout: 10 * time.Second},
-		Repo: "skygate-operator/skygate",
 	}
 }
 
@@ -79,7 +88,15 @@ func NewClient() *Client {
 // caller is expected to compare TagName against cfg.Last and
 // only emit an alert when they differ.
 func (c *Client) Latest(ctx context.Context) (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", c.Repo)
+	owner := c.Owner
+	if owner == "" {
+		owner = "BarsSky"
+	}
+	repo := c.Repo
+	if repo == "" {
+		repo = "skygate"
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err

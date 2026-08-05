@@ -34,12 +34,20 @@ type NotifierSink interface {
 
 // Monitor holds the runtime state of the release-monitor
 // goroutine. One instance per process.
+//
+// 2026-08-05 v0.33.1.10: Owner / Repo (GitHub coordinates)
+// moved onto the Monitor itself; the scheduler tick reads
+// them when building a Client, so a single Monitor can
+// serve a fork / staging deploy pointed at a different
+// repo via SKYGATE_GITHUB_REPO_OWNER / _NAME env vars.
 type Monitor struct {
 	HTTP      *http.Client
 	Current   string            // running version (set at build time, e.g. "v0.10.7")
 	Notified  map[string]bool   // dedup: tags we've already sent an alert for
 	Notifier  NotifierSink      // alert sink
 	CheckEvery time.Duration    // 1h default
+	Owner     string            // GitHub owner (user or org) for the Releases API
+	Repo      string            // GitHub repo name for the Releases API
 
 	mu     sync.Mutex  // protects Notified + Latest + LastCheckedAt
 
@@ -98,8 +106,14 @@ func (m *Monitor) Start(ctx context.Context) {
 // tick is one pass of the monitor. Public for testability
 // (tests call tick directly with a mock HTTP server and a
 // no-op NotifierSink).
+//
+// 2026-08-05 v0.33.1.10: builds the Client with m.Owner
+// and m.Repo (set at Monitor construction in cmd/skygate
+// from Cfg.GitHubOwner / Cfg.GitHubRepo). The previous
+// hardcoded value 404'd because the operator's actual
+// repo name differed from the assumed placeholder.
 func (m *Monitor) tick(ctx context.Context) {
-	c := &Client{HTTP: m.HTTP, Repo: "skygate-operator/skygate"}
+	c := &Client{HTTP: m.HTTP, Owner: m.Owner, Repo: m.Repo}
 	r, err := c.Latest(ctx)
 	if err != nil {
 		// Rate-limited: stay quiet, retry next tick.

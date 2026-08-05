@@ -228,6 +228,15 @@ type Config struct {
 	// operator must click "Push update" to apply.
 	AutoUpdateEnabled bool
 	GitHubToken         string
+	// 2026-08-05 v0.33.1.10 — GitHub repo coordinates for
+	// the release monitor + update checker + manual
+	// download URL. Default "BarsSky/skygate" (the
+	// operator's actual repo on github.com — previously
+	// hardcoded as "skygate-operator/skygate" which 404s).
+	// Override via SKYGATE_GITHUB_REPO_OWNER / _NAME env
+	// vars for staging / forks / mirror deployments.
+	GitHubOwner string
+	GitHubRepo  string
 	// RepoPath is the path to the skygate source repo used
 	// by the auto-updater to run `git` and `docker compose`.
 	//
@@ -370,6 +379,14 @@ func Load() (*Config, error) {
 		// trigger an apply — the system never auto-updates
 		// without an explicit click.
 		AutoUpdateEnabled: getenv("SKYGATE_AUTO_UPDATE_ENABLED", "false") == "true",
+		// 2026-08-05 v0.33.1.10: GitHub repo coordinates.
+		// The "BarsSky/skygate" default matches the
+		// operator's actual github.com repo (the previous
+		// hardcoded "skygate-operator/skygate" 404s).
+		// Operators with their own fork can set
+		// SKYGATE_GITHUB_REPO_OWNER / _NAME.
+		GitHubOwner: getenv("SKYGATE_GITHUB_REPO_OWNER", "BarsSky"),
+		GitHubRepo:  getenv("SKYGATE_GITHUB_REPO_NAME", "skygate"),
 		// v0.29.0: auto-updater paths. RepoPath
 		// auto-detects: inside a container, default to /app
 		// (the bind-mount point in docker-compose.yml).

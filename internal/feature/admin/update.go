@@ -106,12 +106,14 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		}
 	}
 
-	// Build the checker. Defaults are pinned to the operator's
-	// repo (skygate-operator/skygate). An SKYGATE_GITHUB_REPO env var
-	// overrides — useful for staging / forks.
+	// Build the checker. Owner / Repo come from Cfg
+	// (defaults: "BarsSky" / "skygate" — the operator's
+	// actual GitHub repo). Override via
+	// SKYGATE_GITHUB_REPO_OWNER / _NAME env vars for
+	// staging or fork deploys.
 	checker := &update.Checker{
-		Owner:          "skygate-operator",
-		Repo:           "skygate",
+		Owner:          s.Cfg.GitHubOwner,
+		Repo:           s.Cfg.GitHubRepo,
 		Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
 		GitHubToken:    s.Cfg.GitHubToken,
 		CurrentVersion: s.BuildVersion,
@@ -144,7 +146,7 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	if !strings.HasPrefix(target, "v") {
 		target = "v" + target
 	}
-	manualSteps := update.GenerateManualSteps(installKind, current, target)
+	manualSteps := update.GenerateManualSteps(installKind, current, target, s.Cfg.GitHubOwner, s.Cfg.GitHubRepo)
 
 	// Audit: page load is the only operation here. The "Check
 	// now" button is also a page load (no DB write).
@@ -213,10 +215,11 @@ func installLabel(k update.InstallKind) string {
 }
 
 // defaultStr returns s if non-empty, else def. Used for
-// GitHub repo / channel fallback in the checker config — the
-// skygate deployment is always skygate-operator/skygate today, but
-// the env override (SKYGATE_GITHUB_REPO_OWNER / _NAME) is
-// there for forks and staging.
+// the UpdateChannel fallback in the checker config — the
+// GitHub owner/repo themselves come from Cfg (which has
+// "BarsSky" / "skygate" defaults; override via
+// SKYGATE_GITHUB_REPO_OWNER / _NAME env vars for forks and
+// staging).
 func defaultStr(s, def string) string {
 	if s == "" {
 		return def
@@ -273,8 +276,8 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 		checker := &update.Checker{
-			Owner:          "skygate-operator",
-			Repo:           "skygate",
+			Owner:          s.Cfg.GitHubOwner,
+			Repo:           s.Cfg.GitHubRepo,
 			Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
 			GitHubToken:    s.Cfg.GitHubToken,
 			CurrentVersion: s.BuildVersion,
@@ -312,7 +315,7 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 
 	// Generate the manual steps (re-used as the failure
 	// fallback if rollback fails).
-	manualSteps := update.GenerateManualSteps(installKind, "v"+strings.TrimPrefix(s.BuildVersion, "v"), target)
+	manualSteps := update.GenerateManualSteps(installKind, "v"+strings.TrimPrefix(s.BuildVersion, "v"), target, s.Cfg.GitHubOwner, s.Cfg.GitHubRepo)
 
 	// Initialize the state. This writes the status file
 	// synchronously so the next page reload sees the
@@ -435,7 +438,7 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 
 	current := "v" + strings.TrimPrefix(s.BuildVersion, "v")
 	jobID := update.GenerateJobID()
-	manualSteps := update.GenerateManualSteps(installKind, current, target)
+	manualSteps := update.GenerateManualSteps(installKind, current, target, s.Cfg.GitHubOwner, s.Cfg.GitHubRepo)
 
 	store := s.UpdateState
 	_ = store.Start(jobID, installKind.String(), current, target,

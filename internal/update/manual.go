@@ -40,7 +40,13 @@ type ManualSteps struct {
 // single-writer system, having a copy of the DB before the swap
 // is the operator's insurance against "the new binary can't read
 // the new schema" edge cases.
-func GenerateDockerSteps(current, target string) ManualSteps {
+//
+// 2026-08-05 v0.33.1.10: owner / repo are passed in so the
+// git fetch URL and the manual download URL reflect the
+// operator's actual repo. Defaults to ("BarsSky","skygate")
+// when called from older callers — see defaultOwnerRepo().
+func GenerateDockerSteps(current, target, owner, repo string) ManualSteps {
+	owner, repo = defaultOwnerRepo(owner, repo)
 	shortTarget := strings.TrimPrefix(target, "v")
 	return ManualSteps{
 		Kind:    InstallDocker,
@@ -107,7 +113,11 @@ func GenerateDockerSteps(current, target string) ManualSteps {
 // tmux, supervisord, runit, or hand-rolled scripts. The
 // v0.29.0 plan does NOT automate this path — the operator
 // copy-pastes these steps into a terminal.
-func GenerateBareSteps(current, target string) ManualSteps {
+//
+// 2026-08-05 v0.33.1.10: owner / repo are passed in so the
+// download URL reflects the operator's actual GitHub repo.
+func GenerateBareSteps(current, target, owner, repo string) ManualSteps {
+	owner, repo = defaultOwnerRepo(owner, repo)
 	shortTarget := strings.TrimPrefix(target, "v")
 	shortCurrent := strings.TrimPrefix(current, "v")
 	return ManualSteps{
@@ -125,9 +135,9 @@ func GenerateBareSteps(current, target string) ManualSteps {
 			"",
 			"# 3. Download the new version (verify SHA256 before swap)",
 			"curl -fsSL -o skygate." + shortTarget + " \\",
-			"  https://github.com/skygate-operator/skygate/releases/download/" + target + "/skygate-linux-amd64",
+			"  https://github.com/" + owner + "/" + repo + "/releases/download/" + target + "/skygate-linux-amd64",
 			"curl -fsSL -o skygate." + shortTarget + ".sha256 \\",
-			"  https://github.com/skygate-operator/skygate/releases/download/" + target + "/skygate-linux-amd64.sha256",
+			"  https://github.com/" + owner + "/" + repo + "/releases/download/" + target + "/skygate-linux-amd64.sha256",
 			"sha256sum -c skygate." + shortTarget + ".sha256",
 			"",
 			"# 4. Apply migrations (uses the new binary; idempotent on a current DB)",
@@ -164,8 +174,11 @@ func GenerateBareSteps(current, target string) ManualSteps {
 // systemd-managed bare binary. The systemd unit file points
 // at /usr/local/bin/skygate (or similar). The operator stops
 // the unit, swaps the binary, starts the unit.
-func GenerateSystemdSteps(current, target string) ManualSteps {
-	s := GenerateBareSteps(current, target)
+//
+// 2026-08-05 v0.33.1.10: owner / repo are passed in so the
+// download URL reflects the operator's actual GitHub repo.
+func GenerateSystemdSteps(current, target, owner, repo string) ManualSteps {
+	s := GenerateBareSteps(current, target, owner, repo)
 	s.Kind = InstallSystemd
 	// Replace the stop / restart lines with systemctl-specific
 	// equivalents.
@@ -179,19 +192,50 @@ func GenerateSystemdSteps(current, target string) ManualSteps {
 
 // GenerateManualSteps picks the right generator for the
 // install kind. The /admin/update page calls this with the
-// detected kind + the current + target version.
-func GenerateManualSteps(kind InstallKind, current, target string) ManualSteps {
+// detected kind + the current + target version + the GitHub
+// owner/repo (so the download URL is right for the operator's
+// actual repo).
+//
+// 2026-08-05 v0.33.1.10: added owner / repo parameters.
+// The pre-v0.33.1.10 callsites have been updated; tests
+// pass explicit values to keep their existing format
+// expectations intact.
+func GenerateManualSteps(kind InstallKind, current, target, owner, repo string) ManualSteps {
+	owner, repo = defaultOwnerRepo(owner, repo)
 	switch kind {
 	case InstallDocker:
-		return GenerateDockerSteps(current, target)
+		return GenerateDockerSteps(current, target, owner, repo)
 	case InstallBare:
-		return GenerateBareSteps(current, target)
+		return GenerateBareSteps(current, target, owner, repo)
 	case InstallSystemd:
-		return GenerateSystemdSteps(current, target)
+		return GenerateSystemdSteps(current, target, owner, repo)
 	default:
 		// Unknown: return Docker as a sane default. The
 		// operator can scroll past it if their setup is
 		// bare / systemd.
-		return GenerateDockerSteps(current, target)
+		return GenerateDockerSteps(current, target, owner, repo)
 	}
+}
+
+// defaultOwnerRepo returns the defaults ("BarsSky","skygate")
+// when the caller passes empty values. Kept as a single
+// helper so the fallback is in one place — if the operator
+// ever moves the repo, only this needs to change.
+//
+// 2026-08-05 v0.33.1.10: the previous hardcoded repo
+// 404'd at runtime; the operator's actual repo was
+// different from the assumed placeholder. Update via
+// SKYGATE_GITHUB_REPO_OWNER / _NAME env vars (read in
+// cmd/skygate/main.go from config.Config.GitHubOwner
+// / GitHubRepo). Defaults to the operator's real repo
+// name (verified via curl against the GitHub Releases
+// API — see B56 catalog check).
+func defaultOwnerRepo(owner, repo string) (string, string) {
+	if owner == "" {
+		owner = "BarsSky"
+	}
+	if repo == "" {
+		repo = "skygate"
+	}
+	return owner, repo
 }

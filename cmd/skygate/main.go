@@ -1061,12 +1061,19 @@ func main() {
 	// Independent of system cron / external tooling — the
 	// bot carries the message to admin and the operator
 	// decides when to upgrade (see AGENTS.md "Updating").
+	//
+	// 2026-08-05 v0.33.1.10: Owner / Repo are now wired
+	// from cfg (defaults to "BarsSky"/"skygate" — the
+	// operator's actual GitHub repo; the previous
+	// "skygate-operator/skygate" hardcode 404'd).
 	releaseMon := &release.Monitor{
 		HTTP:      &http.Client{Timeout: 10 * time.Second},
 		Current:   version,
 		Notified:  make(map[string]bool),
 		Notifier:  app.Notifier,
 		CheckEvery: 1 * time.Hour,
+		Owner:     cfg.GitHubOwner,
+		Repo:      cfg.GitHubRepo,
 	}
 	releaseMon.Start(ctx)
 	// 2026-07-15: v0.14.0 — expose the monitor on App so

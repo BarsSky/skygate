@@ -47,8 +47,10 @@ type Checker struct {
 	// Exposed for tests (httptest.NewServer).
 	HTTPClient *http.Client
 	// Owner / Repo are the GitHub coordinates. Defaults to
-	// "skygate-operator/skygate" (the operator's repo). Exposed for
-	// tests (a private repo or a fork).
+	// the operator's actual repo (set at the call site via
+	// config.Config.GitHubOwner / GitHubRepo, fallback
+	// "BarsSky"/"skygate"). Exposed for tests (a private
+	// repo or a fork).
 	Owner string
 	Repo  string
 	// Channel: "stable" = only non-prerelease tags; "all" =
@@ -82,7 +84,7 @@ type Result struct {
 	// IsNewer is true when LatestVersion > CurrentVersion.
 	IsNewer bool
 	// ReleaseURL is the GitHub release page URL, e.g.
-	// "https://github.com/skygate-operator/skygate/releases/tag/v0.29.0".
+	// "https://github.com/<owner>/<repo>/releases/tag/v0.29.0".
 	ReleaseURL string
 	// Body is the release notes (markdown). Truncated to
 	// MaxBodyLen characters (default 4000) so the
