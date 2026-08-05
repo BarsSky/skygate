@@ -107,14 +107,25 @@ const tailscaleStateTTL = 5 * time.Second
 // loadTailscaleState reads the current state from the
 // container. Cached for 5s to avoid hammering `tailscale status`
 // on every page render.
+//
+// Lock discipline: the cache check + cache write both
+// happen under tailscaleStateMu. The slow `readTailscaleState`
+// call (which may exec `tailscale status` and block for ~1s
+// over a slow TUN) runs WITHOUT the lock — otherwise a
+// slow probe would block every concurrent page render and
+// the deferred Unlock on the cache-write path would Unlock
+// an already-unlocked mutex (the v0.33.1.9 first cut did
+// exactly that and immediately panicked on the first GET).
 func (s *Service) loadTailscaleState() TailscaleState {
 	tailscaleStateMu.Lock()
-	defer tailscaleStateMu.Unlock()
 	if !tailscaleStateAt.IsZero() && time.Since(tailscaleStateAt) < tailscaleStateTTL {
-		return tailscaleStateVal
+		st := tailscaleStateVal
+		tailscaleStateMu.Unlock()
+		return st
 	}
 	tailscaleStateMu.Unlock()
 
+	// Cache miss / stale — re-probe without holding the lock.
 	st := s.readTailscaleState()
 
 	tailscaleStateMu.Lock()
