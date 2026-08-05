@@ -3,10 +3,18 @@
   v0.33.1.9: /admin/tailscale — web-UI management of the
   in-container tailscaled. Status section (binary available?
   process running? tailnet IP? accepted routes?) + auth-key
-  paste form (writes to /data/ts/authkey, persistent) +
-  Start/Stop buttons. Pairs with the v0.33.1.8 egress relay
-  card on /admin/telegram — the user pastes a preauth key
-  here, starts Tailscale, then picks the egress relay.
+  paste form (writes to a persistent file inside the
+  container, mode 0600) + Start/Stop buttons. Pairs with the
+  v0.33.1.8 egress relay card on /admin/telegram — the user
+  pastes a preauth key here, starts Tailscale, then picks
+  the egress relay.
+
+  v0.33.1.10 — path-cleanup: removed all host paths /
+  file names / env-var names / config-file names from
+  the public-facing strings. The internal AuthKeyPath
+  field is still populated (for the Service), but is
+  NOT rendered in the HTML. The operator only needs to
+  know "is the key set" — not where it's stored.
 
   The page is admin-only (the handlers enforce IsAdmin). All
   visible strings are i18n'd (catalog_tailscale.go).
@@ -76,7 +84,7 @@
       {{else}}
         <strong>{{t "tailscale.auth_status_unset"}}</strong>
       {{end}}
-      · {{t "tailscale.auth_path_label"}}: <code>{{.State.AuthKeyPath}}</code>
+      <span class="muted"> · {{t "tailscale.auth_path_label"}}: in-container file (mode 0600)</span>
     </p>
     <p class="sub">{{tf "tailscale.auth_help" .State.Hostname | safeHTML}}</p>
     <form action="/admin/tailscale" method="POST" autocomplete="off">
@@ -113,7 +121,7 @@
 
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-circle-question"></i> {{t "tailscale.help_heading"}}</h3>
-    <p class="sub">{{tf "tailscale.help_body" .State.AuthKeyPath | safeHTML}}</p>
+    <p class="sub">{{t "tailscale.help_body" | safeHTML}}</p>
     <p class="sub" style="font-style:italic;margin-top:.5rem">{{t "tailscale.legacy_docker_secret" | safeHTML}}</p>
   </div>
 </div>
