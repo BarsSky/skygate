@@ -1245,3 +1245,33 @@ run_check "B51" "backup path resolved from SKYGATE_BACKUP_DIR/DEPLOY_BACKUP_DIR,
 # in admin/update.html.
 run_check "B52" "/admin/update template has no template-var-in-CSS (v0.33.1.7)" \
   '! grep -nE "style=\"[^\"]*[{][{]" internal/handlers/templates/admin/update.html | grep -vE "^[0-9]+:.*[{][{]\\*/" | grep -vE "^[0-9]+:[[:space:]]*[{][{]/" | head -5 | grep -q .'
+
+# ─── B53 (v0.33.1.8) — Telegram egress relay admin-UI selector ───
+# Background: 2026-08-04 the user asked for a way to set
+# which relay terminates api.telegram.org traffic "from the
+# web interface, without touching the CLI". The previous
+# flow was: edit deploy/tailscale-relay/update-routes.sh
+# output, SSH to the chosen relay, run the script manually,
+# pray headscale picked the right metric. v0.33.1.8 adds
+# the "Egress relay" card to /admin/telegram — admin picks
+# a relay from the enabled exit_servers list, skygate SSHes
+# to it and runs the canonical Telegram-CIDR via the
+# existing headscale.Client.SetAdvertisedRoutes helper.
+# B53 pins the four code-presence invariants:
+#   1. handler func exists in feature/admin/telegram.go
+#   2. switch dispatch wired for "set_egress" + "clear_egress"
+#   3. template renders the selector + apply/clear buttons
+#   4. i18n keys for the new card exist in both languages
+# Plus it confirms the canonical Telegram-CIDR constant is
+# declared (so the regression for "constant gets moved into
+# a test file" can't silently break the production path).
+run_check "B53" "Telegram egress relay admin-UI selector wired (v0.33.1.8)" \
+  'grep -q "func (s \*Service) handleTelegramSetEgress" internal/feature/admin/telegram.go && \
+   grep -q "func (s \*Service) handleTelegramClearEgress" internal/feature/admin/telegram.go && \
+   grep -q "case \"set_egress\":" internal/feature/admin/telegram.go && \
+   grep -q "case \"clear_egress\":" internal/feature/admin/telegram.go && \
+   grep -q "telegram.egress_title" internal/handlers/templates/admin/telegram.html && \
+   grep -q "telegram.egress_apply" internal/handlers/templates/admin/telegram.html && \
+   grep -q "telegram.egress_clear" internal/handlers/templates/admin/telegram.html && \
+   grep -q "\"telegram.egress_title\"" internal/i18n/catalog_telegram.go && \
+   grep -q "TelegramCIDRs" internal/feature/admin/telegram.go'

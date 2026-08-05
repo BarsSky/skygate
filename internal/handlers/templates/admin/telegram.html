@@ -184,6 +184,40 @@
       </button>
     </form>
   </div>
+
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-route"></i> {{t "telegram.egress_title"}}</h3>
+    <p class="sub">{{t "telegram.egress_subtitle" | safeHTML}}</p>
+    <p class="sub">{{t "telegram.egress_help"}}</p>
+    <p class="sub">
+      <strong>{{t "telegram.egress_current_label"}}:</strong>
+      {{if .State.Egress.SelectedHostname}}<code>{{.State.Egress.SelectedHostname}}</code> <span class="muted">({{.State.Egress.SelectedNodeID}})</span>{{else}}<em>{{t "telegram.egress_current_none"}}</em>{{end}}
+    </p>
+    {{if .State.Egress.Available}}
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.egress_apply_confirm"}}')">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="set_egress">
+      <div class="form-group">
+        <label>{{t "telegram.egress_select_label"}}</label>
+        <select name="node_id" class="form-control">
+          {{range .State.Egress.Available}}
+          <option value="{{.NodeID}}" {{if eq .NodeID $.State.Egress.SelectedNodeID}}selected{{end}}>{{.Hostname}}{{if .TailscaleIP}} ({{.TailscaleIP}}){{end}}{{if .Description}} — {{.Description}}{{end}}</option>
+          {{end}}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> {{t "telegram.egress_apply"}}</button>
+    </form>
+    {{if .State.Egress.SelectedNodeID}}
+    <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.egress_clear"}}?')" style="margin-top:.5rem">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="clear_egress">
+      <button type="submit" class="btn btn-warn"><i class="fa-solid fa-xmark"></i> {{t "telegram.egress_clear"}}</button>
+    </form>
+    {{end}}
+    {{else}}
+    <div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i> {{t "telegram.egress_no_relays" | safeHTML}}</div>
+    {{end}}
+  </div>
 </div>
 
 <script>

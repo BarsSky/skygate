@@ -8,7 +8,7 @@
 
 package i18n
 
-// telegram feature — 54 ru keys, 54 en keys.
+// telegram feature — 68 ru keys, 68 en keys (v0.33.1.8: +14 egress_*).
 // Top-level prefixes: telegram
 
 var ruTelegram = map[string]string{
@@ -66,6 +66,21 @@ var ruTelegram = map[string]string{
 	"telegram.where_upgrade"            : "<code>scripts/upgrade.sh</code> — <code>notify.sh --severity=ok|fail</code> после merge и restart.",
 	"telegram.where_env_vars"           : "Переменные <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> из <code>.env</code> применяются только если не заданы в БД (см. <code>cmd/skygate/main.go</code>).",
 	"telegram.where_docs"               : "Полная процедура получения токена: <a href=\"/docs/TELEGRAM.md\" target=\"_blank\" rel=\"noopener\">docs/TELEGRAM.md</a>.",
+	"telegram.egress_title"             : "Egress relay",
+	"telegram.egress_subtitle"          : "Какой relay прогоняет Telegram-CIDR через себя (skygate использует <code>--accept-routes</code>, не <code>--exit-node</code>; см. <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a>).",
+	"telegram.egress_help"              : "Если api.telegram.org недоступен напрямую, выберите relay, на котором работает <code>tailscale set --advertise-routes</code> с каноничным Telegram-CIDR. Skymate сам подключится по SSH и применит маршруты. Снимите выбор — Tailscale сам выберет лучший relay по метрике.",
+	"telegram.egress_current_label"     : "Сейчас выбран",
+	"telegram.egress_current_none"      : "не выбран (Tailscale auto-pick по метрике)",
+	"telegram.egress_select_label"      : "Выберите relay",
+	"telegram.egress_apply"             : "Применить",
+	"telegram.egress_clear"             : "Сбросить",
+	"telegram.egress_apply_ok"          : "Telegram-CIDR применён на relay %s. Проверьте <code>tailscale status</code> через ~30s.",
+	"telegram.egress_apply_fail"        : "Не удалось применить маршруты: %s",
+	"telegram.egress_clear_ok"          : "Egress relay сброшен. Tailscale выберет лучший relay автоматически.",
+	"telegram.egress_apply_confirm"     : "Применить каноничный Telegram-CIDR на выбранный relay?",
+	"telegram.egress_no_relays"         : "Нет enabled exit-nodes. Сначала добавьте relay через <a href=\"/admin/exit-nodes\" target=\"_blank\" rel=\"noopener\">/admin/exit-nodes</a>.",
+	"telegram.egress_node_required"     : "Выберите relay",
+	"telegram.egress_audit"             : "relay=%s routes=%d ssh=%s",
 }
 
 var enTelegram = map[string]string{
@@ -123,4 +138,19 @@ var enTelegram = map[string]string{
 	"telegram.where_upgrade"            : "<code>scripts/upgrade.sh</code> — <code>notify.sh --severity=ok|fail</code> after merge & restart.",
 	"telegram.where_env_vars"           : "Variables <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> from <code>.env</code> apply only if not set in DB (see <code>cmd/skygate/main.go</code>).",
 	"telegram.where_docs"               : "Full token procedure: <a href=\"/docs/TELEGRAM.md\" target=\"_blank\" rel=\"noopener\">docs/TELEGRAM.md</a>.",
+	"telegram.egress_title"             : "Egress relay",
+	"telegram.egress_subtitle"          : "Which relay terminates Telegram-CIDR traffic (skygate uses <code>--accept-routes</code>, not <code>--exit-node</code>; see <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a>).",
+	"telegram.egress_help"              : "If api.telegram.org is unreachable directly, pick the relay that runs <code>tailscale set --advertise-routes</code> with the canonical Telegram-CIDR. Skygate SSHes in and applies the routes itself. Clear the selection to fall back to Tailscale's metric-based auto-pick.",
+	"telegram.egress_current_label"     : "Currently selected",
+	"telegram.egress_current_none"      : "none (Tailscale auto-pick by metric)",
+	"telegram.egress_select_label"      : "Pick a relay",
+	"telegram.egress_apply"             : "Apply",
+	"telegram.egress_clear"             : "Clear",
+	"telegram.egress_apply_ok"          : "Telegram-CIDR applied on relay %s. Verify with <code>tailscale status</code> in ~30s.",
+	"telegram.egress_apply_fail"        : "Failed to apply routes: %s",
+	"telegram.egress_clear_ok"          : "Egress relay cleared. Tailscale will pick the best relay automatically.",
+	"telegram.egress_apply_confirm"     : "Apply the canonical Telegram-CIDR to the selected relay?",
+	"telegram.egress_no_relays"         : "No enabled exit-nodes. Add one first via <a href=\"/admin/exit-nodes\" target=\"_blank\" rel=\"noopener\">/admin/exit-nodes</a>.",
+	"telegram.egress_node_required"     : "Pick a relay",
+	"telegram.egress_audit"             : "relay=%s routes=%d ssh=%s",
 }

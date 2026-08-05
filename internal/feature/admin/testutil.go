@@ -129,6 +129,26 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			used_by_chat_id INTEGER NOT NULL DEFAULT 0,
 			request_ip TEXT NOT NULL DEFAULT ''
 		)`,
+		// exit_servers — v0.33.1.8 (Telegram egress selector) +
+		// the existing /admin/exit-nodes tests need the schema.
+		// Mirrors the production CREATE TABLE in migrations_v0.24
+		// (id PK + node_id UNIQUE + hostname + tailscale_ip +
+		// ssh_target + ssh_key_path + description + enabled +
+		// accept_routes). The INTEGER columns for description
+		// and the optional "headscale_url" / "ssh_port" are
+		// COALESCE'd in the queries, so omitting them here is
+		// safe for the egress selector's read path.
+		`CREATE TABLE IF NOT EXISTS exit_servers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			node_id TEXT NOT NULL UNIQUE,
+			hostname TEXT NOT NULL,
+			tailscale_ip TEXT NOT NULL DEFAULT '',
+			ssh_target TEXT NOT NULL DEFAULT '',
+			ssh_key_path TEXT NOT NULL DEFAULT '',
+			description TEXT DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			accept_routes INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {

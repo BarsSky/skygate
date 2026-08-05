@@ -110,7 +110,53 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.33.0 — Network Access Manager + Admin Test Page.
+* **Current**: v0.33.1.8 — Telegram egress relay admin-UI selector.
+  Single commit on top of v0.33.1.7 (which itself shipped 4
+  user-reported bugfixes: skyworker/skygate-vm attribution,
+  /admin/devices table overflow, backup path env, /admin/update
+  ZgotmplZ). v0.33.1.8 closes the "I don't want to SSH to a relay
+  to fix Telegram" request from 2026-08-05. All tests green
+  (`go test ./... -count=1 -short` 27/27 PASS); `make verify-pre`
+  51/51 PASS (B1-B53, B8 smoke is VM-only). What's added:
+  - **`/admin/telegram` "Egress relay" card** (v0.33.1.8): the
+    operator can now pick which enabled exit-node runs the
+    canonical Telegram-CIDR list **from the web UI** — no
+    hand-crafted SSH. The card lists every `enabled=1` row
+    in `exit_servers` (the same list `/admin/exit-nodes`
+    manages); admin picks one, clicks Apply, and skygate
+    SSHes to that relay via the per-row `ssh_target` +
+    `ssh_key_path` (v0.33.1+) and runs
+    `tailscale set --advertise-routes=<Telegram-CIDR>` via
+    the existing `headscale.Client.SetAdvertisedRoutes` helper
+    (which always prepends `0.0.0.0/0 + ::/0` to keep the
+    node's exit-node capability). Selection persists in
+    `global_settings.telegram.egress_node_id`; "Clear" button
+    drops the row so Tailscale falls back to its metric-based
+    auto-pick (pre-v0.33.1.8 default behaviour).
+  - Files: `internal/feature/admin/telegram.go` (EgressState +
+    `handleTelegramSetEgress` + `handleTelegramClearEgress` +
+    `findEnabledExitServer` + `TelegramCIDRs` const);
+    `internal/handlers/templates/admin/telegram.html` (new
+    card with i18n); `internal/i18n/catalog_telegram.go`
+    (14 new `telegram.egress_*` keys, RU+EN);
+    `internal/feature/admin/testutil.go` (added `exit_servers`
+    to the in-memory test schema);
+    `internal/feature/admin/admin_telegram_egress_test.go`
+    (4 new tests: clear/idempotent + set/unknown-node +
+    set/disabled-row + loadUIState/Egress);
+    `scripts/verify_pre_deploy.sh` (B53);
+    `docs/telegram-relay.md` (new "Admin UI egress selector"
+    section + 3 new troubleshooting rows).
+
+* **Previous**: v0.33.1.7 — 4 user-reported bugfixes. Same catalog
+  as v0.33.1.6 (R1-R32, B1-B52) + B50 (devices table-wrap) +
+  B51 (backup path env) + B52 (no template-var-in-CSS).
+  v0.33.1.7 itself shipped as a single commit
+  (skyworker/skygate-vm attribution + /admin/devices table
+  overflow + backup `const backupDir` → `resolveBackupDir()`
+  + /admin/update ZgotmplZ fix). 51/51 verify-pre PASS.
+
+* **Previous**: v0.33.0 — Network Access Manager + Admin Test Page.
   15 commits since v0.32.0 (1 ahead of origin/main after the
   v0.33.0 push). All tests green (`go test ./... -count=1 -short`
   27/27 PASS). What's added:
