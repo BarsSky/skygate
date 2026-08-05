@@ -24,7 +24,6 @@ package my
 
 import (
 	"database/sql"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,22 +71,7 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	// (same model as the per-user pref). Default OFF
 	// for Android compatibility.
 	viaEnabled := r.FormValue("via") == "1"
-	owns := s.callerOwnsDevice(s.DB, c.UserID, hostname)
-	// v0.33.1.14 DEBUG: also try the query inline to find out
-	// whether callerOwnsDevice itself is wrong, or whether
-	// the DB the handler is using is the wrong DB.
-	var nInline int
-	_ = s.DB.QueryRow(
-		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = $1 AND LOWER(hostname) = $2`,
-		c.UserID, hostname,
-	).Scan(&nInline)
-	var n2 int
-	_ = s.DB.QueryRow(
-		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = 1 AND LOWER(hostname) = 'cyborg'`,
-	).Scan(&n2)
-	log.Printf("DBG PostMyDevicePreferredExit user_id=%d username=%s hostname=%q owns=%t inline_n=%d hardcoded_n=%d",
-		c.UserID, c.Username, hostname, owns, nInline, n2)
-	if !owns {
+	if !s.callerOwnsDevice(s.DB, c.UserID, hostname) {
 		http.Error(w, "device not found or not owned by you", 403)
 		return
 	}
@@ -199,9 +183,21 @@ func (s *Service) callerOwnsDevice(d *sql.DB, userID int64, lowerHostname string
 	// headscale givenName (e.g. "MSI" for the MSI
 	// device). The v0.28.0 tag is the lowercased
 	// form. We do a case-insensitive match here.
+	//
+	// v0.33.1.14 fix: was
+	//   `... WHERE tagged_by_user_id = `+db.PlaceholdersList(1)+` AND LOWER(hostname) = `+db.PlaceholdersList(1)
+	// which on PG produced "$1 AND LOWER(hostname) = $1" —
+	// TWO references to the SAME positional parameter, with
+	// TWO args passed (userID, lowerHostname). PG rejected
+	// the query (ambiguous param ref to $1 + no $2 declared)
+	// and the function returned false for EVERY device, blocking
+	// the per-device preferred-exit feature on PG. The fix:
+	// one call to PlaceholdersList(2) → "$1, $2", then split
+	// to splice the two unique placeholders at their respective
+	// positions via db.PlaceholderAt(2, 0/1).
 	var n int
 	err := d.QueryRow(
-		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = `+db.PlaceholdersList(1)+` AND LOWER(hostname) = `+db.PlaceholdersList(1),
+		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = `+db.PlaceholderAt(2, 0)+` AND LOWER(hostname) = `+db.PlaceholderAt(2, 1),
 		userID, lowerHostname,
 	).Scan(&n)
 	if err != nil {

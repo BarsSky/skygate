@@ -1,5 +1,117 @@
 # Skygate release notes
 
+## v0.33.1.14 — `placeholdersList(1)+placeholdersList(1)` 2-arg PG-unsafe query fix (the "cyborg device not found" fix)
+
+**Date:** 2026-08-05
+**Tag:** _pending_
+**Scope:** 1-line Go bug fix in 3 production sites + new
+helper `db.PlaceholderAt(n, i)` + 4 regression tests + B63
+verify-pre check. No API change, no schema change, no
+i18n change.
+
+### The bug
+
+The v0.33.1.12 sweep (B60) fixed hardcoded `?` placeholders
+across the codebase by replacing them with
+`db.PlaceholdersList(n)`. The replacement pattern used for
+2-arg queries was:
+
+```go
+`... WHERE a = `+db.PlaceholdersList(1)+` AND b = `+db.PlaceholdersList(1)
+```
+
+This compiled and ran fine on SQLite (the `?` placeholder
+just gets bound twice). But on PostgreSQL it produced:
+
+```sql
+... WHERE a = $1 AND b = $1
+```
+
+— two references to the SAME positional parameter while
+TWO args are passed. PostgreSQL rejected the query (or
+silently bound the wrong value) and the function returned
+zero/false for every row.
+
+### The user-facing symptom
+
+When the operator logged into `/my/devices` and tried to set
+a per-device preferred exit-node for `cyborg`
+(`POST /my/devices/preferred-exit`), `callerOwnsDevice`
+returned `false` for **every device**, so the handler
+responded with 403 "device not found or not owned by you" —
+even though `cyborg` was clearly listed in the
+`/my/devices` table and tagged by the same user.
+
+A downstream consequence: with no per-device pref writable,
+no per-device ACL grant was emitted for `cyborg`, so
+`cyborg` traffic to the rules under emilia wasn't pinned
+via the `via:` constraint. The exit-rules page rendered
+the rules but the device was free to route through any
+exit-node.
+
+### The fix
+
+New helper `db.PlaceholderAt(n, i)` returns the i-th (0-indexed)
+placeholder from a `PlaceholdersList(n)` string, so a 2-arg
+query splices two UNIQUE placeholders (`$1`, `$2`) at its
+two positions:
+
+```go
+// Before (PG-unsafe):
+`... WHERE a = `+db.PlaceholdersList(1)+` AND b = `+db.PlaceholdersList(1)
+// After:
+`... WHERE a = `+db.PlaceholderAt(2, 0)+` AND b = `+db.PlaceholderAt(2, 1)
+```
+
+Same pattern as `db.NowUnixSQL` / `db.OnConflictDoNothing` /
+`db.PlaceholdersList`: a public mirror of the internal
+helper for use outside the `db` package. Out-of-range `i`
+returns `""` so a caller bug produces a malformed SQL
+string (visible at Exec time) instead of a silent bind
+mismatch.
+
+### Files changed
+
+- `internal/db/placeholders.go` — added `PlaceholderAt(n, i)`
+  (5 lines + doc comment).
+- `internal/feature/my/device_exit_pref.go:200` — `callerOwnsDevice`
+  query. (v0.33.1.12 had the same bug here.)
+- `internal/db/migrations_v0.46.go:94` — `GetDeviceExitNodePref`
+  query. (v0.33.1.12 had the same bug here.)
+- `internal/db/migrations_v0.46.go:129` — `SetDeviceExitNodePref`
+  DELETE branch. (v0.33.1.12 had the same bug here.)
+- `internal/feature/my/testutil.go` — added `node_owner_map` +
+  `device_exit_node_prefs` tables to the in-memory test schema
+  (the per-device-pref feature wasn't covered by tests before).
+- `internal/feature/my/device_exit_pref_test.go` (new) —
+  4 tests: `TestCallerOwnsDevice_2ArgDispatch` (5 sub-cases
+  including mixed-case + non-owner), `TestCallerOwnsDevice_WrongOwner`
+  (user=2 impersonation rejected), `TestSetDeviceExitNodePref_RoundTrip`
+  (set + get + clear), `TestPlaceholderAt_Dispatch` (helper
+  bounds check).
+- `scripts/verify_pre_deploy.sh` — B63 added.
+
+### Live verify (post-deploy)
+
+1. `POST /my/devices/preferred-exit` for `cyborg` (logged in
+   as `skyadmin`): was 403, now 302 to `/my/devices?ok=1`.
+2. `SELECT exit_node_tag FROM device_exit_node_prefs WHERE
+   user_id=1 AND device_hostname='cyborg'` — returns the
+   chosen tag (e.g. `tag:exit-emilia`).
+3. `/my/exit-rules` page (rendered through the per-device
+   `via:` grant) — rules under cyborg now route through emilia.
+4. `headscale policy get` — the per-device grant for
+   `tag:dev-skyadmin-cyborg → autogroup:internet` carries
+   `via: ["tag:exit-emilia"]` (was missing the via before
+   because the pref write silently failed).
+
+### Test results
+
+- `go test -count=1 -short ./...` — 27/27 packages PASS
+  (new device_exit_pref tests all green).
+- `make verify-pre` — 61/61 PASS (B1-B63, B8 smoke is
+  VM-only as usual).
+
 ## v0.32.19 — Documentation wave 2 + migration integrity + HA design proposal
 
 **Date:** 2026-08-03

@@ -81,11 +81,17 @@ type DeviceExitNodePref struct {
 func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (DeviceExitNodePref, error) {
 	var p DeviceExitNodePref
 	var viaEnabled int
+	// v0.33.1.14 fix: was placeholdersList(1)+placeholdersList(1)
+	// which on PG produced "$1 AND p.device_hostname = $1" (two
+	// refs to the same param). Use PlaceholderAt(2, i) which
+	// internally calls PlaceholdersList(2) and indexes into it,
+	// so PG gets "$1 AND p.device_hostname = $2" (the correct,
+	// unique placeholders).
 	err := d.QueryRow(`
 		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
-		 WHERE p.user_id = `+placeholdersList(1)+` AND p.device_hostname = `+placeholdersList(1),
+		 WHERE p.user_id = `+PlaceholderAt(2, 0)+` AND p.device_hostname = `+PlaceholderAt(2, 1),
 		userID, deviceHostname,
 	).Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled)
 	if err == sql.ErrNoRows {
@@ -116,7 +122,11 @@ func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (Devi
 // stored and shown in the UI; it's just not enforced.
 func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag string, setByUserID int64, viaEnabled bool) error {
 	if exitNodeTag == "" {
-		_, err := d.Exec(`DELETE FROM device_exit_node_prefs WHERE user_id = `+placeholdersList(1)+` AND device_hostname = `+placeholdersList(1),
+		// v0.33.1.14 fix: was placeholdersList(1)+placeholdersList(1)
+		// which on PG produced "$1 AND device_hostname = $1" (two
+		// refs to the same param). Same PlaceholderAt(2, i) fix
+		// as GetDeviceExitNodePref above.
+		_, err := d.Exec(`DELETE FROM device_exit_node_prefs WHERE user_id = `+PlaceholderAt(2, 0)+` AND device_hostname = `+PlaceholderAt(2, 1),
 			userID, deviceHostname)
 		return err
 	}

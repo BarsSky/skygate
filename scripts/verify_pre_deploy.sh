@@ -1474,3 +1474,32 @@ run_check "B61" "verify_post_deploy.sh accepts SSH_HOST as positional \$1 (v0.33
 #   - the i18n keys are present in both RU + EN
 #   - the template renders the form with the new field
 run_check "B62" "SKYGATE_TS_LOGIN_SERVER editable from /admin/tailscale + DB-persisted (v0.33.1.13)" 'f=/tmp/b62.sh; printf "%s" "grep -q tailscaleLoginServerDBKey internal/feature/admin/tailscale.go && grep -q \"tailscale.login_server\" internal/feature/admin/tailscale.go && grep -q tailscaleLoginServerSource internal/feature/admin/tailscale.go && grep -q save_login_server internal/feature/admin/tailscale.go && grep -q login_server_placeholder internal/i18n/catalog_tailscale.go && grep -q login_server_source_db internal/i18n/catalog_tailscale.go && grep -q login_server_saved internal/i18n/catalog_tailscale.go && grep -q login_server_heading internal/handlers/templates/admin/tailscale.html && grep -q name=\"login_server\" internal/handlers/templates/admin/tailscale.html && grep -q TailscaleLoginServerSource internal/feature/admin/tailscale.go && grep -q SetGlobalSettingForTest internal/feature/admin/tailscale.go && grep -q placeholdersList.1. internal/db/globalsettings.go && grep -q TestGetGlobalSetting internal/db/globalsettings_test.go" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B63 (v0.33.1.14) — placeholdersList(1)+placeholdersList(1) 2-arg bug fix ───
+# The v0.33.1.12 sweep (B60) fixed "?" placeholders in production
+# code, but the fix used the pattern
+#   `... WHERE a = `+db.PlaceholdersList(1)+` AND b = `+db.PlaceholdersList(1)
+# for 2-arg queries. On PG this produces
+#   `... WHERE a = $1 AND b = $1`
+# i.e. two refs to the SAME positional parameter while passing
+# TWO args. PG rejected the query, so callerOwnsDevice returned
+# false for EVERY device, blocking the per-device preferred-exit
+# flow on PG (operator reported it: "устройства нет или оно мне
+# не принадлежит" on cyborg). Three sites were affected:
+#   - internal/feature/my/device_exit_pref.go:200 (callerOwnsDevice)
+#   - internal/db/migrations_v0.46.go:94  (GetDeviceExitNodePref)
+#   - internal/db/migrations_v0.46.go:129 (SetDeviceExitNodePref DELETE branch)
+#
+# The fix: new helper db.PlaceholderAt(n, i) returns the i-th
+# placeholder from a PlaceholdersList(n) string, so a 2-arg
+# query splices two UNIQUE placeholders ($1, $2) at its two
+# positions. Same pattern as db.NowUnixSQL / db.PlaceholdersList.
+#
+# B63 pins:
+#   - db.PlaceholderAt exists in internal/db/placeholders.go
+#   - all 3 fixed sites use db.PlaceholderAt(2, ...) (not the
+#     old placeholdersList(1)+placeholdersList(1) pattern)
+#   - the new test file exists and pins the 2-arg dispatch case
+#   - the v0.33.1.12 pattern is GONE from migrations_v0.46.go
+#     (the file that produced the live operator bug)
+run_check "B63" "placeholdersList(1)+placeholdersList(1) 2-arg fix via db.PlaceholderAt (v0.33.1.14)" 'f=/tmp/b63.sh; printf "%s" "grep -q \"^func PlaceholderAt\" internal/db/placeholders.go && grep -q db.PlaceholderAt.2, 0. internal/feature/my/device_exit_pref.go && grep -q db.PlaceholderAt.2, 1. internal/feature/my/device_exit_pref.go && grep -q PlaceholderAt.2, 0. internal/db/migrations_v0.46.go && grep -q PlaceholderAt.2, 1. internal/db/migrations_v0.46.go && grep -q TestCallerOwnsDevice_2ArgDispatch internal/feature/my/device_exit_pref_test.go && grep -q TestSetDeviceExitNodePref_RoundTrip internal/feature/my/device_exit_pref_test.go && grep -q TestPlaceholderAt_Dispatch internal/feature/my/device_exit_pref_test.go && ! grep -q placeholdersList.1.+placeholdersList.1. internal/db/migrations_v0.46.go && ! grep -q placeholdersList.1.+placeholdersList.1. internal/feature/my/device_exit_pref.go" > "$f" && bash "$f"; rm -f "$f"'

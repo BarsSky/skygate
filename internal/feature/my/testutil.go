@@ -107,6 +107,28 @@ func newMemoryDB(t *testing.T) *sql.DB {
 			value TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER DEFAULT (strftime('%s','now'))
 		)`,
+		// v0.33.1.14 — added for the per-device preferred-exit
+		// regression tests. The handler is a 4-line bridge:
+		// callerOwnsDevice (reads node_owner_map) → SetDeviceExitNodePref
+		// (writes device_exit_node_prefs) → ACL re-apply.
+		`CREATE TABLE node_owner_map (
+			node_id TEXT PRIMARY KEY,
+			hostname TEXT NOT NULL DEFAULT '',
+			username TEXT NOT NULL DEFAULT '',
+			headscale_user_id INTEGER NOT NULL DEFAULT 0,
+			tag TEXT NOT NULL DEFAULT '',
+			tagged_by_user_id INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE device_exit_node_prefs (
+			user_id INTEGER NOT NULL,
+			device_hostname TEXT NOT NULL,
+			exit_node_tag TEXT NOT NULL,
+			via_enabled INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL DEFAULT 0,
+			set_by_user_id INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (user_id, device_hostname)
+		)`,
 		`CREATE TABLE audit_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER DEFAULT 0,

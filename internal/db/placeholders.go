@@ -13,6 +13,8 @@
 //   - placeholders_postgres.go (`//go:build postgres`)
 package db
 
+import "strings"
+
 func placeholdersList(n int) string {
 	return placeholders(n)
 }
@@ -24,3 +26,31 @@ func placeholdersList(n int) string {
 // forking the caller). Same pattern as
 // db.nowUnixSQL / db.SetGlobalSetting.
 func PlaceholdersList(n int) string { return placeholdersList(n) }
+
+// PlaceholderAt returns the i-th (0-indexed) placeholder from
+// a PlaceholdersList(n) string. Useful when a query needs the
+// placeholders distributed across multiple positions:
+//
+//	ph := strings.Split(db.PlaceholdersList(2), ",")
+//	err := d.QueryRow(
+//	    `... WHERE a = `+ph[0]+` AND b = `+ph[1]+` `,
+//	    valA, valB,
+//	)
+//
+// v0.33.1.14 — added because the v0.33.1.12 sweep wrote
+// "placeholdersList(1)+placeholdersList(1)" for 2-arg
+// queries, which on PG produced "$1 AND ... = $1" (two refs
+// to the same param) and silently returned 0 rows. The proper
+// way is to call PlaceholdersList(2) ONCE (giving "$1, $2")
+// and split it. Same as db.NowUnixSQL() for the literal-now
+// cases.
+//
+// The 0-indexed i is the desired position. Returns "" if i is
+// out of range (caller bug).
+func PlaceholderAt(n, i int) string {
+	if i < 0 || i >= n {
+		return ""
+	}
+	parts := strings.Split(PlaceholdersList(n), ",")
+	return parts[i]
+}
