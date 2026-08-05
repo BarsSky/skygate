@@ -129,7 +129,7 @@ func SetUserExitNodePref(d *sql.DB, userID int64, exitNodeTag string, setByUserI
 	}
 	_, err := d.Exec(`
 		INSERT INTO user_exit_node_prefs (user_id, exit_node_tag, set_by_user_id, updated_at, via_enabled)
-		VALUES (`+placeholdersList(4)+`, `+nowUnixSQL()+`, `+placeholdersList(1)+`)
+		VALUES (`+placeholdersList(4)+`, `+nowUnixSQL()+`)
 		ON CONFLICT(user_id) DO UPDATE SET
 			exit_node_tag = excluded.exit_node_tag,
 			set_by_user_id = excluded.set_by_user_id,

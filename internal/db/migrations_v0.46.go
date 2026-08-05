@@ -126,7 +126,7 @@ func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag 
 	}
 	_, err := d.Exec(`
 		INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, updated_at, via_enabled)
-		VALUES (`+placeholdersList(4)+`, `+nowUnixSQL()+`, `+placeholdersList(1)+`)
+		VALUES (`+placeholdersList(5)+`, `+nowUnixSQL()+`)
 		ON CONFLICT(user_id, device_hostname) DO UPDATE SET
 			exit_node_tag = excluded.exit_node_tag,
 			set_by_user_id = excluded.set_by_user_id,
