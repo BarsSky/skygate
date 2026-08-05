@@ -26,10 +26,31 @@ set -e
 
 # 1. Tailscale setup.
 #
-# We guard on TS_AUTHKEY_FILE (a docker secret path) being present
-# AND readable. A non-RF deployment that doesn't need Tailscale at
-# all can simply not mount the secret; the entrypoint then skips
-# tailscaled and skygate starts with direct internet access.
+# We guard on the authkey file path (a docker secret path, or
+# /data/ts/authkey written by the /admin/tailscale web UI) being
+# present AND readable. A non-RF deployment that doesn't need
+# Tailscale at all can simply not set the env var + not mount the
+# secret; the entrypoint then skips tailscaled and skygate starts
+# with direct internet access.
+#
+# v0.33.1.9: accept BOTH the legacy TS_AUTHKEY_FILE and the newer
+# SKYGATE_TS_AUTHKEY_FILE (set in docker-compose.yml). The two names
+# were a long-standing mismatch — docker-compose sets
+# SKYGATE_TS_AUTHKEY_FILE=/run/secrets/ts_authkey, but the entrypoint
+# only checked TS_AUTHKEY_FILE, so the auth key was being silently
+# ignored. Picking the first non-empty of the two in order (legacy
+# first, so any operator who manually set the old name still wins)
+# keeps the change additive and backwards-compatible.
+TS_AUTHKEY_FILE="${TS_AUTHKEY_FILE:-${SKYGATE_TS_AUTHKEY_FILE:-}}"
+# v0.33.1.9: also pick up /data/ts/authkey (the file the
+# /admin/tailscale web UI writes to). Lowest priority so the
+# explicit env vars still win on a fresh boot; the web UI
+# key is the per-deploy override that survives container
+# restarts (the /data dir is bind-mounted from the host).
+if [ -z "$TS_AUTHKEY_FILE" ] && [ -f /data/ts/authkey ]; then
+    TS_AUTHKEY_FILE="/data/ts/authkey"
+fi
+export TS_AUTHKEY_FILE
 if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     echo "[init] starting tailscaled"
     # tailscaled writes tailscaled.state into --statedir; the control

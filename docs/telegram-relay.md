@@ -288,8 +288,83 @@ skygate sqlite3 /data/skygate.db \
 
 * `Dockerfile` — installs tailscale + tailscaled in the skygate image
 * `entrypoint.sh` — starts tailscaled, runs `tailscale up --accept-routes`
+  (v0.33.1.9 also picks up `/data/ts/authkey` as a 3rd-priority
+  source so the web UI can manage the auth key without restarting
+  the container)
 * `docker-compose.yml` — wires up the docker secret + tun device + caps
 * `internal/handlers/handlers_telegram_probe.go` — the probe implementation
 * `internal/feature/admin/telegram.go` — the egress-selector handlers
   (v0.33.1.8; `handleTelegramSetEgress` + `handleTelegramClearEgress`)
+* `internal/feature/admin/tailscale.go` — the Tailscale web-UI
+  handlers (v0.33.1.9; `GetAdminTailscale` + `PostAdminTailscale`)
 * `Makefile` — has a `tailscale-update-telegram-routes` target
+
+## Tailscale in the skygate container (v0.33.1.9+)
+
+`/admin/tailscale` is a one-stop page for enabling Tailscale
+in the skygate container without SSH. Flow:
+
+1. **Generate a preauth key** — easiest is from the
+   `skygate-host-1` user in headscale:
+   ```bash
+   docker exec headscale headscale preauthkeys create \
+     --user skygate-host-1 --reusable --ephemeral
+   ```
+   Returns a `tskey-auth-...` token (single use unless
+   `--reusable`, single-node unless `--ephemeral` is dropped).
+
+2. **Open `/admin/tailscale`** in skygate, paste the key into
+   the "Auth key" textarea, click **Save**. The handler
+   writes the key to `/data/ts/authkey` (bind-mounted from
+   the host's `data/ts/` dir, mode 0600). The audit log gets
+   a `tailscale_save_key` row with the **fingerprint only**
+   (first 4 + last 4 chars) — the full key is never written
+   to disk outside `/data/ts/authkey`.
+
+3. **Click Start** on `/admin/tailscale`. The handler:
+   - spawns `tailscaled --statedir=/var/lib/tailscale` as a
+     background process (via `setsid nohup`, so it survives
+     skygate's process-group teardown on a future restart)
+   - waits up to 15s for the unix socket to come up
+   - runs `tailscale up --accept-routes --accept-dns=false
+     --login-server=https://head.example.com --hostname=
+     skygate-host-1 --authkey=<key>`
+
+4. **Refresh the page** after ~10-30s. The "Tailnet IP" line
+   goes from "not assigned" to a `100.64.x.y` address, and
+   "Accepted subnet routes" lists every CIDR the relays are
+   advertising (after headscale approved them).
+
+5. **Pick the egress relay** on `/admin/telegram` (the
+   v0.33.1.8 card). Skygate now reaches api.telegram.org
+   through the chosen relay's subnet route.
+
+6. **Click Stop** to disable Tailscale. tailscaled is killed,
+   the unix socket removed. The auth key remains on disk
+   (so a future Start picks it up again).
+
+**Why this exists**: pre-v0.33.1.9, enabling Tailscale
+required the operator to (a) provision a preauth key in
+headscale, (b) SSH to the VM, (c) write the key to a
+docker secret path, (d) restart the skygate container.
+This closed the loop entirely inside the admin UI. The
+"another region / another machine" case (operator runs
+skygate in a different jurisdiction to dodge the
+Telegram block) is exactly what this page was built for.
+
+**Persistence**: the auth key file is bind-mounted to
+`/home/skyadmin/skygate/data/ts/authkey` on the host (the
+`/data` mount in `docker-compose.yml`). A skygate
+container restart re-reads it from `entrypoint.sh`'s
+3rd-priority fallback (after the explicit env vars).
+The `/var/lib/tailscale` state dir is also bind-mounted,
+so the tailnet node identity + auth state survive restarts.
+
+**No-secret audit**: every action writes to `audit_log`:
+- `tailscale_save_key` with `fp=<first4>...<last4>`
+- `tailscale_start` with `out=<truncated>` (success) or
+  `err=<reason>` (failure)
+- `tailscale_stop` with `out=<pkill output>`
+
+The full auth key is never written to the audit log
+or anywhere else outside `/data/ts/authkey`.

@@ -169,5 +169,31 @@ type Service struct {
 	// once at boot from app.BuildVersion.
 	BuildVersion string
 
+	// v0.33.1.9 — Tailscale web-UI management (/admin/tailscale).
+	// All three fields are wired from cmd/skygate/main.go at
+	// boot, defaulting to the same values entrypoint.sh
+	// hard-codes (so a setup that works from the entrypoint
+	// keeps working when the web UI takes over).
+	//
+	//   - TailscaleAuthKeyPath: where the /admin/tailscale
+	//     SaveTailscaleAuthKey handler writes the pasted key
+	//     (default /data/ts/authkey, bind-mounted from the
+	//     host's data/ dir so it survives container restarts).
+	//     entrypoint.sh also checks this path on every container
+	//     start (lowest-priority, after TS_AUTHKEY_FILE and
+	//     SKYGATE_TS_AUTHKEY_FILE), so a key saved via the
+	//     web UI auto-loads on the next restart.
+	//
+	//   - TailscaleLoginServer: the headscale URL passed to
+	//     `tailscale up --login-server=`. Default matches the
+	//     entrypoint's `${TS_LOGIN_SERVER:-https://head.example.com}`.
+	//
+	//   - TailscaleHostname: the name this skygate instance
+	//     gets in the tailnet. Default `skygate-host-1` (the
+	//     legacy name from pre-v0.33.0 deployments).
+	TailscaleAuthKeyPath string
+	TailscaleLoginServer  string
+	TailscaleHostname     string
+
 	telegramProbeCache serviceProbeCache
 }

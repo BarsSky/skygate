@@ -47,6 +47,7 @@
     <a href="/admin/invites" {{if eq .Page "admin/invites"}}class="active"{{end}}><i class="fa-solid fa-envelope-open-text"></i><span>{{t "nav.invites"}}</span></a>
     <a href="/admin/meshes" {{if eq .Page "admin/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes_admin"}}</span></a>
     <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram"}}</span></a>
+    <a href="/admin/tailscale" {{if eq .Page "admin/tailscale"}}class="active"{{end}}><i class="fa-solid fa-link"></i><span>{{t "tailscale.title"}}</span></a>
     <a href="/admin/exit-rules"><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules_all"}}</span></a>
     <a href="/admin/update" {{if eq .Page "admin/update"}}class="active"{{end}}><i class="fa-solid fa-cloud-arrow-down"></i><span>{{t "nav.update"}}</span></a>
 {{end}}

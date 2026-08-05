@@ -414,6 +414,16 @@ func main() {
 		// fallback when empty). Wired once at boot from
 		// app.DerpBaseURL.
 		DerpBaseURL: app.DerpBaseURL,
+		// v0.33.1.9: Tailscale web-UI management. The path +
+		// login server + hostname default to the same values
+		// entrypoint.sh hard-codes (so a setup that works
+		// from the entrypoint keeps working when the web UI
+		// takes over). The /admin/tailscale handler
+		// (feature/admin/tailscale.go) uses these for the
+		// Save/Start/Stop buttons.
+		TailscaleAuthKeyPath: tailscaleEnvOr("SKYGATE_TS_AUTHKEY_PATH", "/data/ts/authkey"),
+		TailscaleLoginServer:  tailscaleEnvOr("SKYGATE_TS_LOGIN_SERVER", "https://head.example.com"),
+		TailscaleHostname:     tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host-1"),
 		// refactor-v0.30 Phase B step 6b (2026-07-29):
 		// /admin/acls links to this URL (when non-empty)
 		// instead of the bundled Headplane sidecar.
@@ -691,6 +701,13 @@ func main() {
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(adminSvc.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegram)))
 	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegramPost)))
+	// v0.33.1.9: Tailscale web-UI management (status + auth key
+	// paste + start/stop). Pairs with the /admin/telegram
+	// egress-relay card (v0.33.1.8) — the user pastes a
+	// preauth key here, starts Tailscale, then picks the
+	// egress relay on /admin/telegram to make the bot work.
+	mux.Handle("GET /admin/tailscale", authMW(http.HandlerFunc(adminSvc.GetAdminTailscale)))
+	mux.Handle("POST /admin/tailscale", authMW(http.HandlerFunc(adminSvc.PostAdminTailscale)))
 	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(authSvc.GetMyTokens)))
 	mux.Handle("POST /my/token", authMW(http.HandlerFunc(authSvc.PostMyToken)))
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(authSvc.PostMyTokenRevoke)))
@@ -1305,4 +1322,16 @@ func bootstrapTelegramFromEnv(d *sql.DB) error {
 		return nil
 	}
 	return db.SaveTelegramToken(d, token, chat)
+}
+
+// tailscaleEnvOr is a tiny "env var with default" helper used
+// when wiring the v0.33.1.9 /admin/tailscale Service fields.
+// Distinct from app.Config() (which reads from a single
+// merged struct) because these three env vars are read once
+// at boot — no need to re-read on every request.
+func tailscaleEnvOr(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return fallback
 }

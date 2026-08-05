@@ -1,0 +1,128 @@
+{{define "body-admin-tailscale"}}
+{{/*
+  v0.33.1.9: /admin/tailscale — web-UI management of the
+  in-container tailscaled. Status section (binary available?
+  process running? tailnet IP? accepted routes?) + auth-key
+  paste form (writes to /data/ts/authkey, persistent) +
+  Start/Stop buttons. Pairs with the v0.33.1.8 egress relay
+  card on /admin/telegram — the user pastes a preauth key
+  here, starts Tailscale, then picks the egress relay.
+
+  The page is admin-only (the handlers enforce IsAdmin). All
+  visible strings are i18n'd (catalog_tailscale.go).
+*/}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-link"></i> {{t "tailscale.title"}}</h2>
+    <div class="sub">{{t "tailscale.subtitle"}}</div>
+  </div>
+  {{if .State.Running}}
+  <span class="pill pill-success" title="{{t "tailscale.status_running"}}"><i class="fa-solid fa-circle-check"></i> {{t "tailscale.status_running"}}</span>
+  {{else if .State.Available}}
+  <span class="pill pill-warn" title="{{t "tailscale.status_stopped"}}"><i class="fa-solid fa-circle-pause"></i> {{t "tailscale.status_stopped"}}</span>
+  {{else}}
+  <span class="pill pill-danger" title="{{t "tailscale.status_unavailable"}}"><i class="fa-solid fa-triangle-exclamation"></i> {{t "tailscale.status_unavailable"}}</span>
+  {{end}}
+</div>
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="card-grid">
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-info-circle"></i> {{t "tailscale.status_heading"}}</h3>
+    <table class="kv">
+      <tr>
+        <th>{{t "tailscale.status_available"}}</th>
+        <td>{{if .State.Available}}<span class="pill pill-success"><i class="fa-solid fa-check"></i> OK</span>{{else}}<span class="pill pill-danger"><i class="fa-solid fa-xmark"></i> missing</span>{{end}}</td>
+      </tr>
+      <tr>
+        <th>{{t "tailscale.status_running"}}</th>
+        <td>{{if .State.Running}}<span class="pill pill-success"><i class="fa-solid fa-circle-check"></i> running</span>{{else}}<span class="pill pill-muted"><i class="fa-solid fa-circle-pause"></i> stopped</span>{{end}}</td>
+      </tr>
+      <tr>
+        <th>{{t "tailscale.status_ip"}}</th>
+        <td>{{if .State.TailnetIP}}<code>{{.State.TailnetIP}}</code>{{else}}<em>{{t "tailscale.status_ip_empty"}}</em>{{end}}</td>
+      </tr>
+      {{if .State.BackendState}}
+      <tr>
+        <th>{{t "tailscale.status_backend"}}</th>
+        <td><code>{{.State.BackendState}}</code></td>
+      </tr>
+      {{end}}
+    </table>
+
+    {{if .State.Running}}
+    <h4 style="margin-top:1rem">{{t "tailscale.status_routes_heading"}}</h4>
+    {{if .State.AcceptedRoutes}}
+    <ul style="margin:.4rem 0 0 1.2rem;line-height:1.7;font-family:monospace;font-size:.85em">
+      {{range .State.AcceptedRoutes}}<li><code>{{.}}</code></li>{{end}}
+    </ul>
+    {{else}}
+    <p class="sub" style="font-style:italic">{{t "tailscale.status_routes_empty"}}</p>
+    {{end}}
+    {{end}}
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-key"></i> {{t "tailscale.auth_heading"}}</h3>
+    <p class="sub">
+      {{if .State.AuthKeySet}}
+        <strong>{{tf "tailscale.auth_status_set" .State.AuthKeyFP}}</strong>
+      {{else}}
+        <strong>{{t "tailscale.auth_status_unset"}}</strong>
+      {{end}}
+      · {{t "tailscale.auth_path_label"}}: <code>{{.State.AuthKeyPath}}</code>
+    </p>
+    <p class="sub">{{tf "tailscale.auth_help" .State.Hostname | safeHTML}}</p>
+    <form action="/admin/tailscale" method="POST" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="save_key">
+      <div class="form-group">
+        <label>{{t "tailscale.auth_textarea_label"}}</label>
+        <textarea name="auth_key" class="form-control" rows="2" placeholder="{{t "tailscale.auth_textarea_placeholder"}}"></textarea>
+        <div class="sub" style="margin-top:.3rem">{{t "tailscale.token_storage_note"}}</div>
+      </div>
+      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.save"}}</button>
+    </form>
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-power-off"></i> Start / Stop</h3>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <form action="/admin/tailscale" method="POST" style="display:inline">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="action" value="start">
+        <button type="submit" class="btn btn-primary" {{if not .State.Available}}disabled{{end}}><i class="fa-solid fa-play"></i> {{t "tailscale.start"}}</button>
+      </form>
+      <form action="/admin/tailscale" method="POST" style="display:inline">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="action" value="stop">
+        <button type="submit" class="btn btn-warn" {{if not .State.Running}}disabled{{end}}><i class="fa-solid fa-stop"></i> {{t "tailscale.stop"}}</button>
+      </form>
+    </div>
+    {{if eq .State.BackendState "NeedsLogin"}}
+    <p class="sub" style="margin-top:.5rem;color:var(--warn)"><i class="fa-solid fa-triangle-exclamation"></i> {{t "tailscale.status_needslogin"}}</p>
+    {{end}}
+    <p class="sub" style="margin-top:.5rem">{{t "tailscale.help_after_start"}}</p>
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-circle-question"></i> {{t "tailscale.help_heading"}}</h3>
+    <p class="sub">{{tf "tailscale.help_body" .State.AuthKeyPath | safeHTML}}</p>
+    <p class="sub" style="font-style:italic;margin-top:.5rem">{{t "tailscale.legacy_docker_secret" | safeHTML}}</p>
+  </div>
+</div>
+
+<script>
+  if (window.history && window.history.replaceState) {
+    var u = new URL(window.location.href);
+    u.searchParams.delete('ok'); u.searchParams.delete('err');
+    window.history.replaceState({}, '', u);
+  }
+</script>
+{{end}}

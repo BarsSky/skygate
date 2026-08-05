@@ -1299,3 +1299,33 @@ run_check "B54" "SetGlobalSetting uses per-backend placeholders, not hardcoded '
    test -f internal/db/placeholders.go && \
    test -f internal/db/placeholders_sqlite.go && \
    test -f internal/db/placeholders_postgres.go'
+
+# ─── B55 (v0.33.1.9) — Tailscale web-UI management ───
+# Background: 2026-08-05 the operator reported that
+# "веб-интерфейс не позволяет настроить Tailscale для
+# обхода блокировки Telegram". The previous architecture
+# required SSH + manual file edits + entrypoint restart to
+# get tailscaled running inside the skygate container, which
+# is what makes api.telegram.org reachable from an RF VPS
+# (skygate uses --accept-routes, the relay advertises
+# Telegram-CIDR as subnet routes). v0.33.1.9 adds a
+# /admin/tailscale page with status + auth key paste +
+# Start/Stop buttons. B55 pins the four code-presence
+# invariants:
+#   1. handlers exist in feature/admin/tailscale.go
+#   2. switch dispatch wired for "save_key" + "start" + "stop"
+#   3. template renders the new page
+#   4. i18n keys for the new page exist in both languages
+# Plus it pins the entrypoint.sh fix (TS_AUTHKEY_FILE /
+# SKYGATE_TS_AUTHKEY_FILE fallback) so the previous
+# env-var-name mismatch can't regress.
+run_check "B55" "Tailscale web-UI management wired (v0.33.1.9)" \
+  'grep -q "func (s \*Service) GetAdminTailscale" internal/feature/admin/tailscale.go && \
+   grep -q "func (s \*Service) PostAdminTailscale" internal/feature/admin/tailscale.go && \
+   grep -q "case \"save_key\":" internal/feature/admin/tailscale.go && \
+   grep -q "case \"start\":" internal/feature/admin/tailscale.go && \
+   grep -q "case \"stop\":" internal/feature/admin/tailscale.go && \
+   grep -q "tailscale.title" internal/handlers/templates/admin/tailscale.html && \
+   grep -q "tailscale.start" internal/handlers/templates/admin/tailscale.html && \
+   grep -q "tailscale.title" internal/i18n/catalog_tailscale.go && \
+   grep -q "SKYGATE_TS_AUTHKEY_FILE:-}" entrypoint.sh'
