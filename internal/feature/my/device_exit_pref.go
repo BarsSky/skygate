@@ -72,13 +72,21 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	// (same model as the per-user pref). Default OFF
 	// for Android compatibility.
 	viaEnabled := r.FormValue("via") == "1"
-	// Validate the caller owns this device. The
-	// node_owner_map hostname column is populated by
-	// the v0.28.0 backfill at /my/devices load time.
-	// If the device isn't in the map, the caller's
-	// claim fails (no device-by-hostname impersonation).
 	owns := s.callerOwnsDevice(s.DB, c.UserID, hostname)
-	log.Printf("DBG PostMyDevicePreferredExit user_id=%d username=%s hostname=%q owns=%t", c.UserID, c.Username, hostname, owns)
+	// v0.33.1.14 DEBUG: also try the query inline to find out
+	// whether callerOwnsDevice itself is wrong, or whether
+	// the DB the handler is using is the wrong DB.
+	var nInline int
+	_ = s.DB.QueryRow(
+		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = $1 AND LOWER(hostname) = $2`,
+		c.UserID, hostname,
+	).Scan(&nInline)
+	var n2 int
+	_ = s.DB.QueryRow(
+		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = 1 AND LOWER(hostname) = 'cyborg'`,
+	).Scan(&n2)
+	log.Printf("DBG PostMyDevicePreferredExit user_id=%d username=%s hostname=%q owns=%t inline_n=%d hardcoded_n=%d",
+		c.UserID, c.Username, hostname, owns, nInline, n2)
 	if !owns {
 		http.Error(w, "device not found or not owned by you", 403)
 		return
