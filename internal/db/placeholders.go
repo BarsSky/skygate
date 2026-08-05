@@ -16,3 +16,11 @@ package db
 func placeholdersList(n int) string {
 	return placeholders(n)
 }
+
+// PlaceholdersList is the public mirror of placeholdersList,
+// used by callers outside the db package (e.g. system_tests.go's
+// PersistRun + ListRecentRuns which need to dispatch the
+// INSERT/LIMIT ? placeholder between SQLite and PG without
+// forking the caller). Same pattern as
+// db.nowUnixSQL / db.SetGlobalSetting.
+func PlaceholdersList(n int) string { return placeholdersList(n) }

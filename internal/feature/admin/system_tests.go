@@ -709,6 +709,16 @@ func (s *Service) RunAllTests(ctx context.Context) ([]SystemTestResult, *SystemR
 
 // PersistRun stores the result + summary in system_tests_runs.
 // Called from the page after RunAllTests returns.
+//
+// 2026-08-05 v0.33.1.11 — replaced the hardcoded "?" placeholders
+// (8 of them) with `placeholdersList(8)` so the same code
+// works on both SQLite ("?,?,?") and PG ("$1,$2,...$8"). The
+// pgx stdlib does NOT auto-convert "?" to "$N" (unlike lib/pq
+// which did), so without this fix the prod PG backend rejects
+// the INSERT with "syntax error at or near ','" and the
+// /admin/system_tests page shows the error flash on every
+// "Run all" click. The dispatch uses the same build-tag
+// pattern as db.SetGlobalSetting + db.nowUnixSQL.
 func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, summary *SystemRunSummary, userID int64) (int64, error) {
 	if s == nil || s.DB == nil {
 		return 0, errors.New("DB not available")
@@ -718,11 +728,12 @@ func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, su
 		return 0, err
 	}
 	durationMs := summary.FinishedAt.Sub(summary.StartedAt).Milliseconds()
+	ph := db.PlaceholdersList(8)
 	res, err := s.DB.ExecContext(ctx, `
 		INSERT INTO system_tests_runs
 			(started_at, finished_at, duration_ms, results_json,
 			 pass_count, fail_count, skip_count, triggered_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (`+ph+`)
 	`, summary.StartedAt.Unix(), summary.FinishedAt.Unix(), durationMs,
 		string(resultsJSON), summary.Pass, summary.Fail, summary.Skip, userID)
 	if err != nil {
@@ -734,6 +745,10 @@ func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, su
 
 // ListRecentRuns returns the last N runs (default 20) for
 // the history strip on /admin/system_tests.
+//
+// 2026-08-05 v0.33.1.11 — LIMIT ? replaced with
+// placeholdersList(1) for the same PG/SQLite dispatch
+// reason as PersistRun (see comment there).
 func (s *Service) ListRecentRuns(ctx context.Context, limit int) ([]SystemRunSummary, error) {
 	if limit <= 0 {
 		limit = 20
@@ -742,7 +757,7 @@ func (s *Service) ListRecentRuns(ctx context.Context, limit int) ([]SystemRunSum
 		SELECT id, started_at, finished_at, duration_ms,
 		       pass_count, fail_count, skip_count
 		FROM system_tests_runs
-		ORDER BY id DESC LIMIT ?
+		ORDER BY id DESC LIMIT `+db.PlaceholdersList(1)+`
 	`, limit)
 	if err != nil {
 		return nil, err
