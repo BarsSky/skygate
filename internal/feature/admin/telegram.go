@@ -451,17 +451,17 @@ type setMyCommandsAller interface {
 func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
 	nodeID := strings.TrimSpace(r.FormValue("node_id"))
 	if nodeID == "" {
-		s.redirectWithFlash(w, r, "", "node_id обязателен")
+		writeErrRedirect(w, r, "node_id обязателен")
 		return
 	}
 	// Verify the node is in exit_servers and enabled.
 	relay, err := findEnabledExitServer(s.DB, nodeID)
 	if err != nil {
-		s.redirectWithFlash(w, r, "", "Не удалось найти relay: "+err.Error())
+		writeErrRedirect(w, r, "Не удалось найти relay: "+err.Error())
 		return
 	}
 	if relay == nil {
-		s.redirectWithFlash(w, r, "", "node_id "+nodeID+" не зарегистрирован как enabled exit-node")
+		writeErrRedirect(w, r, "node_id "+nodeID+" не зарегистрирован как enabled exit-node")
 		return
 	}
 	// Resolve the SSH target + key path from exit_servers.
@@ -484,7 +484,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 	// "Sync" button behaviour).
 	hs := s.HSGlobalFn()
 	if hs == nil {
-		s.redirectWithFlash(w, r, "", "headscale client не инициализирован")
+		writeErrRedirect(w, r, "headscale client не инициализирован")
 		return
 	}
 	out, sshErr := hs.SetAdvertisedRoutes(
@@ -497,7 +497,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 		s.Backend.Audit(c.UserID, c.Username, "telegram_egress_set",
 			fmt.Sprintf("relay=%s host=%s ssh=err ip=%s",
 				relay.Hostname, sshTarget, r.RemoteAddr))
-		s.redirectWithFlash(w, r, "",
+		writeErrRedirect(w, r,
 			fmt.Sprintf("SSH на %s не удался: %s", sshTarget, sshErr.Error()))
 		return
 	}
@@ -506,7 +506,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 	if err := db.SetGlobalSetting(s.DB, "telegram.egress_node_id", relay.NodeID); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "telegram_egress_set",
 			fmt.Sprintf("relay=%s ssh=ok save_err=%q", relay.Hostname, err.Error()))
-		s.redirectWithFlash(w, r, "",
+		writeErrRedirect(w, r,
 			fmt.Sprintf("Маршруты применены, но не удалось сохранить выбор: %s", err.Error()))
 		return
 	}
@@ -516,11 +516,11 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 		// Some `tailscale set` calls print "Success" — surface
 		// it in the flash so the operator can see the relay
 		// accepted the routes.
-		s.redirectWithFlash(w, r, "",
+		writeFlashRedirect(w, r,
 			fmt.Sprintf("Telegram-CIDR применён на relay %s. Output: %s", relay.Hostname, out))
 		return
 	}
-	s.redirectWithFlash(w, r, "",
+	writeFlashRedirect(w, r,
 		fmt.Sprintf("Telegram-CIDR применён на relay %s. Проверьте tailscale status через ~30s.", relay.Hostname))
 }
 
@@ -536,7 +536,7 @@ func (s *Service) handleTelegramClearEgress(w http.ResponseWriter, r *http.Reque
 	if err := db.SetGlobalSetting(s.DB, "telegram.egress_node_id", ""); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "telegram_egress_clear",
 			fmt.Sprintf("err=%q", err.Error()))
-		s.redirectWithFlash(w, r, "", "Не удалось очистить: "+err.Error())
+		writeErrRedirect(w, r, "Не удалось очистить: "+err.Error())
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "telegram_egress_clear", "ok")
