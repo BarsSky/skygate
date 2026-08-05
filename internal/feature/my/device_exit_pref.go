@@ -24,6 +24,7 @@ package my
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,7 +77,9 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	// the v0.28.0 backfill at /my/devices load time.
 	// If the device isn't in the map, the caller's
 	// claim fails (no device-by-hostname impersonation).
-	if !s.callerOwnsDevice(s.DB, c.UserID, hostname) {
+	owns := s.callerOwnsDevice(s.DB, c.UserID, hostname)
+	log.Printf("DBG PostMyDevicePreferredExit user_id=%d username=%s hostname=%q owns=%t", c.UserID, c.Username, hostname, owns)
+	if !owns {
 		http.Error(w, "device not found or not owned by you", 403)
 		return
 	}
