@@ -127,14 +127,22 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     # the skygate container to be an exit-node itself, they can
     # explicitly set it AFTER the entrypoint runs (`docker exec
     # skygate tailscale set --exit-node=<tag>`).
-    if ! tailscale up \
+    if ! timeout 30 tailscale up \
         --login-server="$LOGIN_SERVER" \
         --authkey="$AUTHKEY" \
         --hostname="$HOSTNAME" \
         --accept-routes \
         --accept-dns=false \
         --exit-node= 2>&1; then
-        echo "[init] WARNING: tailscale up failed; continuing without Tailscale"
+        # timeout exits 124, tailscale up itself exits non-zero
+        # on auth failure. Either way: log and move on. v0.33.1.9
+        # entry-point fix — without the timeout, `tailscale up`
+        # blocks forever when tailscaled didn't come up (e.g.
+        # because the headscale login-server was unreachable),
+        # which hung the entrypoint and prevented skygate from
+        # ever reaching /healthz. The 30s ceiling matches the
+        # tailscaled-readiness wait above.
+        echo "[init] WARNING: tailscale up failed or timed out; continuing without Tailscale"
     fi
 
     echo "[init] tailscale status:"
