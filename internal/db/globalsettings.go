@@ -16,16 +16,37 @@ import (
 )
 
 // GetGlobalSetting returns the string value for the given key, or
-// (defaultValue, nil) if the key is not set. Errors are returned
-// only for actual DB failures, not for "row not found".
+// (defaultValue, nil) if the key is not set OR the stored value
+// is the empty string. Errors are returned only for actual DB
+// failures, not for "row not found" or "empty value".
+//
+// v0.33.1.13 — same v0.33.1.12 fix as SetGlobalSetting:
+// the SELECT used a hardcoded "?" placeholder, which works on
+// SQLite but fails on PG with "syntax error at or near ','"
+// (pgx stdlib does NOT auto-convert "?" to "$N"). The new
+// placeholdersList(1) helper returns "?" on SQLite and
+// "$1" on PG, matching the dispatcher pattern.
 func GetGlobalSetting(d *sql.DB, key, defaultValue string) (string, error) {
 	var v string
-	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = ?`, key).Scan(&v)
+	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = `+placeholdersList(1), key).Scan(&v)
 	if err == sql.ErrNoRows {
 		return defaultValue, nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("get global_setting %q: %w", key, err)
+	}
+	// v0.33.1.13 — also fall back to default when the row
+	// exists but the value is the empty string. The Tailscale
+	// login-server path relies on this: a "Save URL" click
+	// with the input cleared (operator wants the env-var
+	// fallback to re-take) writes "" to the DB, and the
+	// next read should return the env var (i.e. the default),
+	// not an empty string. The SetGlobalSetting path uses an
+	// UPSERT, so "delete the row" and "set value=''" both
+	// result in a row with value='' — this guard makes both
+	// paths equivalent.
+	if v == "" {
+		return defaultValue, nil
 	}
 	return v, nil
 }
