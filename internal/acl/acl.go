@@ -1254,6 +1254,19 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	for _, via := range viaByUser {
 		distinctVias[via] = true
 	}
+	// 2026-08-05 v0.33.1.15 — also include via tags from
+	// per-device prefs. The per-device grant loop above
+	// emits a grant with via:[<device-pref>] for every
+	// row in device_exit_node_prefs. headscale requires
+	// every tag referenced (in grants[].src, grants[].dst,
+	// AND grants[].via) to be present in tagOwners,
+	// otherwise the policy parser rejects with "tag not
+	// found". Pre-v0.33.1.15 the distinctVias block only
+	// covered the per-user prefs (viaByUser), so a fresh
+	// per-device pref would silently break the apply.
+	for _, via := range viaByDevice {
+		distinctVias[via] = true
+	}
 	var exitNodeTags []string
 	for tag := range distinctVias {
 		exitNodeTags = append(exitNodeTags, tag)
@@ -1266,8 +1279,50 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	type perDevTagOwner struct {
 		tag, owner string
 	}
+	// 2026-08-05 v0.33.1.15 — the per-device-pref device
+	// tags (from viaByDevice) need to be in tagOwners too.
+	// Pre-v0.33.1.15 the perDevTagOwners block was built
+	// ONLY from GetPerUserDeviceTags (a JOIN on
+	// node_owner_map), so devices that had a per-device
+	// pref but were missing from node_owner_map (e.g. the
+	// skygate-host-1 host node before it gets backfilled)
+	// would produce a per-device grant with src=tag:dev-
+	// <user>-<device> that the parser couldn't find in
+	// tagOwners. Symptom: every ACL apply for the last
+	// 22+ hours has been failing with "headscale PUT
+	// /api/v1/policy: 500 src=tag not found:
+	// tag:dev-skyadmin-skygate-host-1". The fix: also
+	// include every per-device-pref's tag in tagOwners.
+	augmentedTagsByUser := make(map[string][]string, len(tagsByUser))
+	for k, v := range tagsByUser {
+		augmentedTagsByUser[k] = append([]string(nil), v...)
+	}
+	for devTag := range viaByDevice {
+		// parse username from "tag:dev-<user>-<device>"
+		const prefix = "tag:dev-"
+		if !strings.HasPrefix(devTag, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(devTag, prefix)
+		idx := strings.Index(rest, "-")
+		if idx < 0 {
+			continue
+		}
+		uname := rest[:idx]
+		// dedupe
+		already := false
+		for _, t := range augmentedTagsByUser[uname] {
+			if t == devTag {
+				already = true
+				break
+			}
+		}
+		if !already {
+			augmentedTagsByUser[uname] = append(augmentedTagsByUser[uname], devTag)
+		}
+	}
 	var perDevTagOwners []perDevTagOwner
-	for uname, tags := range tagsByUser {
+	for uname, tags := range augmentedTagsByUser {
 		for _, tag := range tags {
 			perDevTagOwners = append(perDevTagOwners, perDevTagOwner{tag: tag, owner: uname + "@" + baseDomain})
 		}

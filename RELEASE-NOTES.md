@@ -1,5 +1,100 @@
 # Skygate release notes
 
+## v0.33.1.15 — per-device-pref device tag in tagOwners (the "cyborg exit rules not visible" fix)
+
+**Date:** 2026-08-05
+**Tag:** _pending_
+**Scope:** 2-line Go fix in `internal/acl/acl.go` (per-device
+grant tagOwners + via tagOwners blocks) + 1 regression test
++ B64 verify-pre check. No API change, no schema change,
+no i18n change.
+
+### The bug
+
+A second symptom of the same v0.33.1.12-era pattern that
+v0.33.1.14 fixed (callerOwnsDevice was broken, so the
+operator couldn't even set cyborg's per-device pref). After
+v0.33.1.14, the per-device pref is now writable — but a
+Deeper root cause was exposed: every ACL apply for the
+last 22+ hours has been silently failing.
+
+The `GenerateACLWithViaForPlane` policy builder emits
+per-device ACL grants with `src=tag:dev-<user>-<device>`
+and `via:[<device-pref>]` for every row in
+`device_exit_node_prefs`. But the `tagOwners` block was
+built ONLY from `GetPerUserDeviceTags` (a JOIN on
+`node_owner_map`). When a device had a per-device pref
+but was missing from `node_owner_map` — e.g. the
+`skygate-host-1` host node (its own per-user tag, not yet
+backfilled because it joins the tailnet after the portal
+admin sets the pref) — the headscale policy parser
+rejected the policy with:
+
+> `setting policy: parsing policy: src=tag not found:
+>   "tag:dev-skyadmin-skygate-host-1"`
+
+`SetPolicy` returned 500, the snapshot was marked
+`applied_success=0`, and the user's preferred exit-node
+never took effect. The exit_rule_logs table has 6
+consecutive `apply_fail` rows for this exact error from
+2026-08-04 22:46 UTC onward.
+
+### The fix
+
+Two additions to `GenerateACLWithViaForPlane`'s
+`tagOwners` block:
+
+1. **Include via tags from per-device prefs** (in
+   `distinctVias`). Pre-v0.33.1.15 the block only
+   covered per-user prefs (`viaByUser`), so a fresh
+   per-device pref's via tag (e.g. `tag:exit-emilia`)
+   was referenced in `via:[]` but not registered in
+   `tagOwners`.
+
+2. **Include per-device-pref device tags** (in
+   `perDevTagOwners`). The pre-v0.33.1.15 block was
+   built from `tagsByUser` which only contains devices
+   in `node_owner_map`. Now augmented with every tag
+   from `viaByDevice` (the per-device-pref tags) so a
+   device with a pref that's not yet in `node_owner_map`
+   still gets its tag registered.
+
+### Files changed
+
+- `internal/acl/acl.go` — 2 small blocks added inside
+  the `tagOwners` builder in
+  `GenerateACLWithViaForPlane` (~30 lines).
+- `internal/acl/acl_test.go` — new test
+  `TestGenerateACLWithVia_PerDeviceTagOwners` (60
+  lines, 3 assertions: per-device grant emitted +
+  device tag in tagOwners + via tag in tagOwners).
+- `scripts/verify_pre_deploy.sh` — B64 added.
+
+### Live verify (post-deploy)
+
+1. `POST /my/devices/preferred-exit` for cyborg →
+   emilia: was 302 (after v0.33.1.14) but policy push
+   failed; now policy push SUCCEEDS (headscale accepts
+   the policy, no more 500 from PUT /api/v1/policy).
+2. `headscale policy get` — the `via` field is now
+   present on cyborg's grant:
+   `{ "src": ["tag:dev-skyadmin-cyborg"], "dst":
+   ["autogroup:internet"], "ip": ["*"], "via":
+   ["tag:exit-emilia"] }`
+3. `acl_snapshots.applied_success` flips from 0 to 1
+   for new applies. Re-apply on the existing failed
+   snapshots: `POST /admin/exit-rules/reapply` (admin
+   only) or any per-device POST regenerates the policy
+   and pushes it.
+4. exit_rule_logs: no more `apply_fail` entries.
+
+### Test results
+
+- `go test -count=1 -short ./...` — 27/27 packages
+  PASS (new `TestGenerateACLWithVia_PerDeviceTagOwners`
+  test green).
+- `make verify-pre` — 64/64 PASS (B1-B64).
+
 ## v0.33.1.14 — `placeholdersList(1)+placeholdersList(1)` 2-arg PG-unsafe query fix (the "cyborg device not found" fix)
 
 **Date:** 2026-08-05

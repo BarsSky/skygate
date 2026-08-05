@@ -1988,3 +1988,57 @@ func TestGenerateACL_PerUserGrantForTaggedDevices(t *testing.T) {
 	}
 }
 
+// TestGenerateACLWithVia_PerDeviceTagOwners — v0.33.1.15.
+// Pre-v0.33.1.15, a per-device exit_node_pref (e.g. alice
+// pinning workstation-3 → relay-3) caused the ACL builder
+// to emit a per-device grant with src=tag:dev-alice-
+// workstation-3, but the tagOwners block was built ONLY
+// from GetPerUserDeviceTags (a JOIN on node_owner_map).
+// If the device had a per-device pref but was missing
+// from node_owner_map (e.g. the skygate-host-1 host node
+// before it gets backfilled), the parser rejected the
+// policy with "src=tag not found: tag:dev-..." and the
+// SetPolicy call returned 500. The fix: include every
+// per-device-pref's tag in the tagOwners block, so the
+// parser accepts the policy.
+//
+// This test pins the contract: a per-device pref causes
+// both (a) the per-device grant to be emitted AND (b) the
+// per-device device tag to appear in tagOwners.
+func TestGenerateACLWithVia_PerDeviceTagOwners(t *testing.T) {
+	d := openTestDB(t)
+	aliceID := seedPortalUser(t, d, "alice")
+	// alice has workstation-3 with a per-device pref for
+	// relay-3 (via_enabled=1). Note: workstation-3 is NOT
+	// in node_owner_map — the test deliberately reproduces
+	// the live "skygate-host-1 is missing from
+	// node_owner_map" scenario that produced the v0.33.1.15
+	// bug.
+	if err := db.SetDeviceExitNodePref(d, aliceID, "workstation-3", "tag:exit-relay-3", aliceID, true); err != nil {
+		t.Fatalf("seed device pref: %v", err)
+	}
+	aclStr, err := GenerateACLWithVia(d)
+	if err != nil {
+		t.Fatalf("GenerateACLWithVia: %v", err)
+	}
+	// (a) per-device grant is emitted
+	wantGrant := `{ "src": ["tag:dev-alice-workstation-3"], "dst": ["autogroup:internet"], "ip": ["*"], "via": ["tag:exit-relay-3"] }`
+	if !strings.Contains(aclStr, wantGrant) {
+		t.Errorf("v0.33.1.15: per-device grant for workstation-3 must be emitted.\nACL:\n%s", aclStr)
+	}
+	// (b) the per-device device tag IS in tagOwners
+	// (with alice as the owner), even though workstation-3
+	// is not in node_owner_map.
+	wantTagOwner := `"tag:dev-alice-workstation-3": ["alice@tsnet.example.com"]`
+	if !strings.Contains(aclStr, wantTagOwner) {
+		t.Errorf("v0.33.1.15: tagOwners must include %q (per-device-pref tag should be registered even when device is missing from node_owner_map).\nACL:\n%s", wantTagOwner, aclStr)
+	}
+	// (c) the exit-node tag (relay-3) is in tagOwners too
+	// (because via:[tag:exit-relay-3] references it and
+	// headscale requires every via: tag to be owned).
+	wantExitTag := `"tag:exit-relay-3": ["admin@tsnet.example.com"]`
+	if !strings.Contains(aclStr, wantExitTag) {
+		t.Errorf("v0.33.1.15: tagOwners must include %q (per-device-pref via tag).\nACL:\n%s", wantExitTag, aclStr)
+	}
+}
+

@@ -1503,3 +1503,34 @@ run_check "B62" "SKYGATE_TS_LOGIN_SERVER editable from /admin/tailscale + DB-per
 #   - the v0.33.1.12 pattern is GONE from migrations_v0.46.go
 #     (the file that produced the live operator bug)
 run_check "B63" "placeholdersList(1)+placeholdersList(1) 2-arg fix via db.PlaceholderAt (v0.33.1.14)" 'f=/tmp/b63.sh; printf "%s" "grep -q \"^func PlaceholderAt\" internal/db/placeholders.go && grep -q db.PlaceholderAt.2, 0. internal/feature/my/device_exit_pref.go && grep -q db.PlaceholderAt.2, 1. internal/feature/my/device_exit_pref.go && grep -q PlaceholderAt.2, 0. internal/db/migrations_v0.46.go && grep -q PlaceholderAt.2, 1. internal/db/migrations_v0.46.go && grep -q TestCallerOwnsDevice_2ArgDispatch internal/feature/my/device_exit_pref_test.go && grep -q TestSetDeviceExitNodePref_RoundTrip internal/feature/my/device_exit_pref_test.go && grep -q TestPlaceholderAt_Dispatch internal/feature/my/device_exit_pref_test.go && ! grep -q placeholdersList.1.+placeholdersList.1. internal/db/migrations_v0.46.go && ! grep -q placeholdersList.1.+placeholdersList.1. internal/feature/my/device_exit_pref.go" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B64 (v0.33.1.15) — per-device exit_node_pref device tag in tagOwners ───
+# The user reported (2026-08-05) that after setting a
+# per-device preferred exit-node for cyborg + emilia, the
+# per-device ACL grant (src=tag:dev-skyadmin-cyborg →
+# autogroup:internet with via:tag:exit-emilia) wasn't being
+# applied. Investigation showed every ACL apply for the
+# last 22+ hours had been silently failing with
+# "headscale PUT /api/v1/policy: 500 ... src=tag not
+# found: tag:dev-skyadmin-skygate-host-1".
+#
+# Root cause: the per-device grant loop emits a grant
+# with src=tag:dev-<user>-<device> for every row in
+# device_exit_node_prefs. Pre-v0.33.1.15, the tagOwners
+# block was built ONLY from GetPerUserDeviceTags (a JOIN on
+# node_owner_map). When a device had a per-device pref
+# but was missing from node_owner_map (e.g. the
+# skygate-host-1 host node before it gets backfilled), the
+# parser rejected the policy. Same for the via:[] tag
+# (e.g. tag:exit-emilia) which is referenced by the
+# per-device grant's via field.
+#
+# B64 pins:
+#   - GenerateACLWithViaForPlane's tagOwners block now
+#     includes via tags from viaByDevice (per-device prefs)
+#   - AND includes the per-device-pref device tags in
+#     perDevTagOwners (so a device with a pref that's not
+#     yet in node_owner_map still gets its tag registered)
+#   - test TestGenerateACLWithVia_PerDeviceTagOwners
+#     exists and verifies the (a)+(b)+(c) contract
+run_check "B64" "per-device exit_node_pref device tag in tagOwners (v0.33.1.15)" 'f=/tmp/b64.sh; printf "%s" "grep -q \"also include via tags from per-device prefs\" internal/acl/acl.go && grep -q \"per-device-pref device tags in tagOwners\" internal/acl/acl.go && grep -q \"augmentedTagsByUser\" internal/acl/acl.go && grep -q TestGenerateACLWithVia_PerDeviceTagOwners internal/acl/acl_test.go" > "$f" && bash "$f"; rm -f "$f"'
