@@ -97,6 +97,17 @@
       </div>
       <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.save"}}</button>
     </form>
+    <details style="margin-top:.8rem">
+      <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> {{t "tailscale.generate_btn"}}
+      </summary>
+      <form action="/admin/tailscale" method="POST" style="margin-top:.6rem">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="action" value="generate_key">
+        <p class="sub" style="margin-bottom:.4rem">{{tf "tailscale.generate_help" .State.Hostname | safeHTML}}</p>
+        <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-bolt"></i> {{t "tailscale.generate_btn"}}</button>
+      </form>
+    </details>
   </div>
 
   <div class="card" style="grid-column:1 / -1">

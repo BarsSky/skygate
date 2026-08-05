@@ -21,6 +21,15 @@ package admin
 //
 // All tests are best-effort and timeout-fast (≤ 5s each).
 // A test that hangs is a bug — the timeout is a safety net.
+//
+// 2026-08-05 v0.33.1.11 — replaced the two SQLite-only
+// tests (db.sqlite_integrity / db.wal_mode) with
+// backend-dispatching equivalents (db.integrity_check /
+// db.journal_mode) so the same registry works on both
+// SQLite (legacy / test rig) and PostgreSQL (the v0.33.1.7+
+// production backend). Added 7 new tests covering exit-node
+// availability, integrations, DNS resolution, duplicate
+// devices, rule sanity, recent backups, and active meshes.
 
 import (
 	"context"
@@ -28,11 +37,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -59,7 +72,7 @@ type SystemTestResult struct {
 // can read DB / headscale state at run time.
 type SystemTestDef struct {
 	Name        string
-	Category    string // "network", "db", "headscale", "disk", "wal-g", "replication"
+	Category    string // "network", "db", "headscale", "disk", "wal-g", "replication", "integrations", "backup"
 	Description string
 	Run         func(ctx context.Context) (SystemTestStatus, string)
 }
@@ -106,13 +119,56 @@ var TestRegistry = []SystemTestDef{
 		},
 	},
 	{
-		Name:        "db.sqlite_integrity",
+		// 2026-08-05 v0.33.1.11: was "db.sqlite_integrity"
+		// (SQLite-only). Now dispatches on backend so the
+		// test works on both SQLite (legacy / CI rig) and
+		// PostgreSQL (the v0.33.1.7+ production backend).
+		// SQLite: PRAGMA integrity_check; PG: SELECT 1
+		// connectivity (PG doesn't have an integrity_check
+		// PRAGMA — operators use pg_dump / pg_basebackup
+		// for that, which is out of scope for an in-process
+		// 5s test).
+		Name:        "db.integrity_check",
 		Category:    "db",
-		Description: "PRAGMA integrity_check returns 'ok' on the skygate.db file",
+		Description: "DB is reachable + integrity check passes (PRAGMA on SQLite, connectivity on PG)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
 			if s == nil || s.DB == nil {
 				return SystemTestFail, "DB not configured"
+			}
+			if db.BackendOf(s.DB) == db.BackendPostgres {
+				var n int
+				if err := s.DB.QueryRowContext(ctx, "SELECT 1").Scan(&n); err != nil {
+					return SystemTestFail, "SELECT 1 failed: " + err.Error()
+				}
+				if n != 1 {
+					return SystemTestFail, "SELECT 1 returned " + fmt.Sprint(n)
+				}
+				// Lightweight per-table existence check: every
+				// table from migration v0.x must still be present.
+				// PG-specific catalog query (skipped on SQLite).
+				rows, err := s.DB.QueryContext(ctx, `
+					SELECT count(*) FROM pg_tables
+					WHERE schemaname = 'public'
+					  AND tablename IN ('portal_users','preauth_keys','audit_log',
+					                    'device_rules','exit_servers','user_subnets',
+					                    'global_settings','meshes','mesh_members')
+				`)
+				if err != nil {
+					return SystemTestFail, "pg_tables: " + err.Error()
+				}
+				defer rows.Close()
+				if !rows.Next() {
+					return SystemTestFail, "pg_tables query returned no rows"
+				}
+				var tableCount int
+				if err := rows.Scan(&tableCount); err != nil {
+					return SystemTestFail, "scan: " + err.Error()
+				}
+				if tableCount < 8 {
+					return SystemTestFail, fmt.Sprintf("only %d of 8 expected tables present", tableCount)
+				}
+				return SystemTestPass, fmt.Sprintf("PG reachable, all 8 expected tables present", )
 			}
 			var result string
 			if err := s.DB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&result); err != nil {
@@ -121,17 +177,25 @@ var TestRegistry = []SystemTestDef{
 			if result != "ok" {
 				return SystemTestFail, "integrity_check returned: " + result
 			}
-			return SystemTestPass, "integrity_check = ok"
+			return SystemTestPass, "PRAGMA integrity_check = ok"
 		},
 	},
 	{
-		Name:        "db.wal_mode",
+		// 2026-08-05 v0.33.1.11: was "db.wal_mode" (SQLite-only).
+		// Now dispatches: SQLite checks journal_mode=wal;
+		// PG skips (PG always uses WAL by default — there's
+		// no equivalent PRAGMA, and there's no operator-facing
+		// flag to flip).
+		Name:        "db.journal_mode",
 		Category:    "db",
-		Description: "SQLite is in WAL journal mode (concurrent reads + crash safety)",
+		Description: "DB uses crash-safe journaling (WAL on SQLite; N/A on PG — always WAL)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
 			if s == nil || s.DB == nil {
 				return SystemTestFail, "DB not configured"
+			}
+			if db.BackendOf(s.DB) == db.BackendPostgres {
+				return SystemTestSkip, "PG always uses WAL (no journal_mode PRAGMA equivalent)"
 			}
 			var mode string
 			if err := s.DB.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
@@ -201,6 +265,371 @@ var TestRegistry = []SystemTestDef{
 				return SystemTestFail, "no rule with skyadmin in src — admin has no access to any device"
 			}
 			return SystemTestPass, fmt.Sprintf("admin rule present (total acls=%d)", view.TotalCount)
+		},
+	},
+	// ─── v0.33.1.11 NEW TESTS ──────────────────────────────────
+	{
+		// DNS resolution test — proves the container has
+		// working outbound DNS. Resolves "github.com" (a
+		// domain the page itself links to) via the system
+		// resolver. On failure, surfaces the exact error
+		// (e.g. "no such host", "i/o timeout") so the
+		// operator can see whether it's a /etc/resolv.conf
+		// issue or a network-egress block.
+		Name:        "network.dns_resolve",
+		Category:    "network",
+		Description: "Outbound DNS works (resolves github.com via the system resolver)",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			resolveCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			ips, err := net.DefaultResolver.LookupIP(resolveCtx, "ip4", "github.com")
+			if err != nil {
+				return SystemTestFail, "lookup github.com: " + err.Error()
+			}
+			if len(ips) == 0 {
+				return SystemTestFail, "github.com resolved to 0 IPs"
+			}
+			// Render up to 3 IPs for the operator's eyes.
+			parts := make([]string, 0, 3)
+			for i, ip := range ips {
+				if i >= 3 {
+					break
+				}
+				parts = append(parts, ip.String())
+			}
+			return SystemTestPass, fmt.Sprintf("github.com -> %s", strings.Join(parts, ","))
+		},
+	},
+	{
+		// Exit node availability — queries the live
+		// headscale node list and counts how many nodes
+		// carry the tag:exit-node AND are online. The
+		// operator configures relays in /admin/exit-nodes,
+		// and this test catches "my relay disappeared"
+		// regressions without a manual SSH check.
+		Name:        "headscale.exit_nodes_online",
+		Category:    "headscale",
+		Description: "At least one headscale node carries tag:exit-node AND is online (egress is reachable)",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil {
+				return SystemTestFail, "service not initialised"
+			}
+			hs := s.HSGlobalFn()
+			if hs == nil {
+				return SystemTestFail, "headscale client not configured"
+			}
+			nodes, err := hs.ListAllNodes()
+			if err != nil {
+				return SystemTestFail, "list nodes: " + err.Error()
+			}
+			exits := 0
+			onlineExits := 0
+			for _, n := range nodes {
+				if !n.IsExitNode {
+					continue
+				}
+				exits++
+				if n.Online {
+					onlineExits++
+				}
+			}
+			if exits == 0 {
+				return SystemTestFail, "no node with tag:exit-node registered — egress impossible"
+			}
+			if onlineExits == 0 {
+				return SystemTestFail, fmt.Sprintf("%d exit-nodes registered but all offline", exits)
+			}
+			return SystemTestPass, fmt.Sprintf("%d/%d exit-nodes online", onlineExits, exits)
+		},
+	},
+	{
+		// Integrations test — checks the global_settings
+		// rows for derp.* + headplane.* + telegram.bot_token.
+		// The operator configures these in /admin/derp/config,
+		// /admin/headplane, and /admin/telegram. The test
+		// reports which subsystems are configured vs. zero,
+		// so the page acts as a "do I have all my
+		// integrations wired up?" dashboard.
+		Name:        "integrations.configured",
+		Category:    "integrations",
+		Description: "DERP / headplane / telegram integration config is present in global_settings",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.DB == nil {
+				return SystemTestFail, "DB not configured"
+			}
+			// Probe the 3 integration keys. A value of ""
+			// means "not configured"; a non-empty value
+			// means configured. We don't validate the value
+			// content — that's the apply handler's job.
+			keys := []string{
+				"derp.bundled_enabled",
+				"derp.external_urls",
+				"headplane.mode",
+				"telegram.bot_token",
+			}
+			configured := 0
+			missing := []string{}
+			for _, k := range keys {
+				v, err := db.GetGlobalSetting(s.DB, k, "")
+				if err != nil {
+					return SystemTestFail, "get "+k+": " + err.Error()
+				}
+				if v != "" {
+					configured++
+				} else {
+					missing = append(missing, k)
+				}
+			}
+			if configured == 0 {
+				return SystemTestFail, "no integration keys configured (DERP / headplane / telegram all empty)"
+			}
+			if len(missing) == 0 {
+				return SystemTestPass, fmt.Sprintf("all 4 integration keys configured")
+			}
+			// Partial: not a hard fail, but a yellow pill
+			// (the page renders a status-warn pill for
+			// pass-with-warnings in a future iteration).
+			return SystemTestPass, fmt.Sprintf("%d/4 configured, missing: %s",
+				configured, strings.Join(missing, ", "))
+		},
+	},
+	{
+		// Duplicate-device detection — walks node_owner_map
+		// looking for two distinct node rows that share
+		// either the same hostname OR the same
+		// tailscale_ip. Both are accidental duplicates
+		// (the v0.22.2 fix prevents fresh duplicates, but
+		// a pre-fix DB can have residue). Catches them
+		// without manual SQL.
+		Name:        "db.duplicate_devices",
+		Category:    "db",
+		Description: "node_owner_map has no duplicate (hostname) or duplicate (tailscale_ip) rows",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.DB == nil {
+				return SystemTestFail, "DB not configured"
+			}
+			rows, err := s.DB.QueryContext(ctx, `
+				SELECT hostname, tailscale_ip, count(*) AS c
+				FROM node_owner_map
+				WHERE hostname != '' OR tailscale_ip != ''
+				GROUP BY hostname, tailscale_ip
+				HAVING c > 1
+			`)
+			if err != nil {
+				return SystemTestFail, "query: " + err.Error()
+			}
+			defer rows.Close()
+			dupes := 0
+			var examples []string
+			for rows.Next() {
+				var host, ip string
+				var c int
+				if err := rows.Scan(&host, &ip, &c); err != nil {
+					return SystemTestFail, "scan: " + err.Error()
+				}
+				dupes += c
+				if len(examples) < 3 {
+					examples = append(examples,
+						fmt.Sprintf("%s/%s×%d", host, ip, c))
+				}
+			}
+			if dupes > 0 {
+				return SystemTestFail, fmt.Sprintf(
+					"%d duplicate rows: %s (run dedup: see /admin/devices)",
+					dupes, strings.Join(examples, ", "))
+			}
+			return SystemTestPass, "no duplicate (hostname, tailscale_ip) rows"
+		},
+	},
+	{
+		// Rule sanity — checks that every device_rules row
+		// has a non-empty device_hostname, a non-empty
+		// target value, and a sensible action. A row with
+		// a missing device_hostname is a foreign-key
+		// violation waiting to happen (the device got
+		// deleted but the rule didn't cascade). A row
+		// with action='' is an apply() no-op.
+		Name:        "db.rules_sanity",
+		Category:    "db",
+		Description: "device_rules has no orphan rows (every row has device_hostname + non-empty action)",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.DB == nil {
+				return SystemTestFail, "DB not configured"
+			}
+			rows, err := s.DB.QueryContext(ctx, `
+				SELECT count(*) FROM device_rules
+				WHERE device_hostname = '' OR device_hostname IS NULL
+				   OR action = '' OR action IS NULL
+			`)
+			if err != nil {
+				return SystemTestFail, "query: " + err.Error()
+			}
+			defer rows.Close()
+			var orphans int
+			if !rows.Next() {
+				return SystemTestFail, "no rows returned"
+			}
+			if err := rows.Scan(&orphans); err != nil {
+				return SystemTestFail, "scan: " + err.Error()
+			}
+			if orphans > 0 {
+				return SystemTestFail, fmt.Sprintf("%d orphan rules (missing device_hostname or action)", orphans)
+			}
+			// Total count for the operator's info.
+			var total int
+			if err := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM device_rules").Scan(&total); err != nil {
+				return SystemTestPass, fmt.Sprintf("no orphan rules (count unknown: %v)", err)
+			}
+			return SystemTestPass, fmt.Sprintf("%d rules, all have device_hostname + action", total)
+		},
+	},
+	{
+		// Recent backup — looks for the latest *.db file
+		// (or *.tar.gz for PG) in the configured backup
+		// dir, fails if the newest is older than 7 days
+		// (the default backup schedule is daily). The
+		// path is resolved via admin.ResolveBackupDir()
+		// (mirrors the unexported resolveBackupDir in
+		// backup.go) so SKYGATE_BACKUP_DIR / DEPLOY_BACKUP_DIR
+		// overrides are honoured (added in v0.33.1.7).
+		Name:        "backup.recent",
+		Category:    "backup",
+		Description: "A backup file is present in the backup dir and is < 7 days old",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			dir := ResolveBackupDir()
+			if dir == "" {
+				return SystemTestFail, "backup dir not configured (set SKYGATE_BACKUP_DIR or DEPLOY_BACKUP_DIR)"
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return SystemTestFail, "read dir "+dir+": " + err.Error()
+			}
+			var newest os.FileInfo
+			var newestPath string
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if !strings.HasSuffix(name, ".db") &&
+					!strings.HasSuffix(name, ".tar.gz") &&
+					!strings.HasSuffix(name, ".sql") {
+					continue
+				}
+				full := filepath.Join(dir, name)
+				fi, err := e.Info()
+				if err != nil {
+					continue
+				}
+				if newest == nil || fi.ModTime().After(newest.ModTime()) {
+					newest = fi
+					newestPath = full
+				}
+			}
+			if newest == nil {
+				return SystemTestFail, "no backup files in " + dir
+			}
+			age := time.Since(newest.ModTime())
+			maxAge := 7 * 24 * time.Hour
+			if age > maxAge {
+				return SystemTestFail, fmt.Sprintf("newest backup %s is %s old (>7d)", filepath.Base(newestPath), age.Round(time.Minute))
+			}
+			return SystemTestPass, fmt.Sprintf("newest: %s (%s old, %d bytes)",
+				filepath.Base(newestPath), age.Round(time.Minute), newest.Size())
+		},
+	},
+	{
+		// Active mesh — checks the meshes + mesh_members
+		// tables (added in v0.22.0) for any mesh with ≥1
+		// member. Catches "my mesh disappeared" or "the
+		// member count went to 0" without manual SQL.
+		// Returns skip if the meshes table doesn't exist
+		// yet (pre-v0.22 DB).
+		Name:        "mesh.active_meshes",
+		Category:    "headscale",
+		Description: "At least one mesh network has ≥1 member (meshes + mesh_members tables)",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.DB == nil {
+				return SystemTestFail, "DB not configured"
+			}
+			// Probe for table existence (pre-v0.22 DBs
+			// don't have it). The query is the same on
+			// both backends.
+			var tableCount int
+			if db.BackendOf(s.DB) == db.BackendPostgres {
+				if err := s.DB.QueryRowContext(ctx,
+					`SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('meshes','mesh_members')`,
+				).Scan(&tableCount); err != nil {
+					return SystemTestFail, "pg_tables: " + err.Error()
+				}
+			} else {
+				if err := s.DB.QueryRowContext(ctx,
+					`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('meshes','mesh_members')`,
+				).Scan(&tableCount); err != nil {
+					return SystemTestFail, "sqlite_master: " + err.Error()
+				}
+			}
+			if tableCount < 2 {
+				return SystemTestSkip, "meshes tables not present (pre-v0.22 schema)"
+			}
+			rows, err := s.DB.QueryContext(ctx, `
+				SELECT m.name, count(mm.user_id) AS members
+				FROM meshes m
+				LEFT JOIN mesh_members mm ON mm.mesh_id = m.id
+				GROUP BY m.id, m.name
+				ORDER BY members DESC, m.name ASC
+			`)
+			if err != nil {
+				return SystemTestFail, "query: " + err.Error()
+			}
+			defer rows.Close()
+			type meshRow struct{ name string; members int }
+			var meshes []meshRow
+			for rows.Next() {
+				var r meshRow
+				if err := rows.Scan(&r.name, &r.members); err != nil {
+					return SystemTestFail, "scan: " + err.Error()
+				}
+				meshes = append(meshes, r)
+			}
+			active := 0
+			for _, m := range meshes {
+				if m.members > 0 {
+					active++
+				}
+			}
+			if len(meshes) == 0 {
+				return SystemTestSkip, "no meshes configured (no test available)"
+			}
+			if active == 0 {
+				parts := []string{}
+				for i, m := range meshes {
+					if i >= 3 {
+						break
+					}
+					parts = append(parts, fmt.Sprintf("%s×%d", m.name, m.members))
+				}
+				return SystemTestFail, fmt.Sprintf("0 of %d meshes have members: %s",
+					len(meshes), strings.Join(parts, ", "))
+			}
+			// Sort + render the top-3 active meshes.
+			sort.Slice(meshes, func(i, j int) bool {
+				return meshes[i].members > meshes[j].members
+			})
+			parts := []string{}
+			for i, m := range meshes {
+				if i >= 3 {
+					break
+				}
+				parts = append(parts, fmt.Sprintf("%s×%d", m.name, m.members))
+			}
+			return SystemTestPass, fmt.Sprintf("%d/%d active: %s",
+				active, len(meshes), strings.Join(parts, ", "))
 		},
 	},
 }

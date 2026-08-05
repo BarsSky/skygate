@@ -19,16 +19,48 @@ func TestRegistry_HasMinimumCoverage(t *testing.T) {
 	// they must cover at least the 3 foundational categories
 	// (network, db, headscale). If you add a 4th category,
 	// extend the assertion below.
-	if len(TestRegistry) < 6 {
-		t.Errorf("TestRegistry has %d entries, want >= 6", len(TestRegistry))
+	//
+	// 2026-08-05 v0.33.1.11 — extended the floor from 6 to
+	// 13 tests to match the post-expansion registry
+	// (the 2 SQLite-only tests were replaced by the
+	// backend-dispatching db.integrity_check + db.journal_mode
+	// + 7 new tests = +9 net). The new categories
+	// ("integrations", "backup") are also covered.
+	if len(TestRegistry) < 13 {
+		t.Errorf("TestRegistry has %d entries, want >= 13 (v0.33.1.11 expansion)", len(TestRegistry))
 	}
 	cats := map[string]bool{}
 	for _, td := range TestRegistry {
 		cats[td.Category] = true
 	}
-	for _, required := range []string{"network", "db", "headscale"} {
+	for _, required := range []string{"network", "db", "headscale", "integrations", "backup"} {
 		if !cats[required] {
 			t.Errorf("TestRegistry missing required category %q (have %v)", required, cats)
+		}
+	}
+}
+
+// TestRegistry_NoSQLiteOnlyNames pins the v0.33.1.11 fix: the
+// two pre-v0.33.1.11 SQLite-only test names (db.sqlite_integrity
+// / db.wal_mode) must not regress. The backend-dispatching
+// replacements are db.integrity_check / db.journal_mode and
+// work on both SQLite and PG.
+func TestRegistry_NoSQLiteOnlyNames(t *testing.T) {
+	for _, td := range TestRegistry {
+		switch td.Name {
+		case "db.sqlite_integrity", "db.wal_mode":
+			t.Errorf("test %q is SQLite-only; v0.33.1.11 renamed to db.integrity_check / db.journal_mode with backend dispatch", td.Name)
+		}
+	}
+}
+
+// TestRegistry_AllHaveNonEmptyFields is a sanity-net for the
+// v0.33.1.11 expansion: every registry entry must have
+// non-empty Name + Category + Description + Run.
+func TestRegistry_AllHaveNonEmptyFields(t *testing.T) {
+	for _, td := range TestRegistry {
+		if td.Name == "" || td.Category == "" || td.Description == "" || td.Run == nil {
+			t.Errorf("test has empty field(s): %+v", td)
 		}
 	}
 }

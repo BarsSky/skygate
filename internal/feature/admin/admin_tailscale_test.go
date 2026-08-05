@@ -21,8 +21,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"skygate/internal/headscale"
 )
 
 // TestReadTailscaleAuthKey: read a key from a temp file and
@@ -267,3 +270,198 @@ func TestTailscaleStateFingerprintNotInAudit(t *testing.T) {
 
 // ensure unused imports
 var _ = url.Values{}
+
+// 2026-08-05 v0.33.1.11 — auto-generate preauth key tests.
+//
+// Two tests pin the contract of handleTailscaleGenerateKey:
+//
+//  1. happy path: skygate has a registered node with the
+//     configured hostname; the headscale preauthkey endpoint
+//     returns a key; the handler writes it to
+//     /data/ts/authkey (mode 0600), redirects 303, and
+//     writes an audit row with the FP only.
+//  2. node-not-found: when no headscale node matches the
+//     configured hostname, the handler short-circuits with
+//     a clear error (no SSH attempt, no DB write).
+//
+// The "full key never logged" contract is also re-verified
+// for the generate path (the existing TestTailscaleStateFin-
+// gerprintNotInAudit covers the same contract for the
+// manual save_key path).
+
+// TestHandleTailscaleGenerateKey_HappyPath: end-to-end of the
+// "Generate automatically" button. Wires a fake headscale
+// HTTP server (backing ListAllNodes + CreatePreauthKey),
+// posts generate_key, asserts:
+//   - HTTP 303 redirect
+//   - The configured TailscaleAuthKeyPath now has the
+//     returned key (mode 0600)
+//   - The audit row mentions user_id + hostname + FP, but
+//     not the full key
+func TestHandleTailscaleGenerateKey_HappyPath(t *testing.T) {
+	s := newTestService(t)
+	tmp := t.TempDir()
+	s.TailscaleAuthKeyPath = filepath.Join(tmp, "authkey")
+	s.TailscaleHostname = "skygate-host-1"
+	// Pre-create a node row in the fake headscale so
+	// findUserForHostname resolves user_id=7.
+	const fakeUserID int64 = 7
+	const fakeUserName = "skygate-host-1"
+	const fakeKey = "tskey-auto-generated-12345678-zzzz"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/node":
+			_, _ = w.Write([]byte(`{"nodes":[{"id":"1","givenName":"skygate-host-1","user":{"id":"7","name":"skygate-host-1"},"online":true,"ipAddresses":["100.64.100.10"]}]}`))
+		case "/api/v1/preauthkey":
+			_, _ = w.Write([]byte(`{"id":"42","key":"` + fakeKey + `","user_id":7,"reusable":true,"expiration":"2026-08-05T16:00:00Z"}`))
+		default:
+			http.Error(w, "unexpected path: "+r.URL.Path, 404)
+		}
+	}))
+	defer srv.Close()
+	s.HSGlobalFn = func() *headscale.Client {
+		return headscale.New(srv.URL, "fake-token")
+	}
+
+	csrfCookie, csrf := issueTailscaleCSRF(t)
+	form := "csrf=" + csrf + "&action=generate_key"
+	req := httptest.NewRequest("POST", "/admin/tailscale", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-Test-User", "admin")
+	req.Header.Set("X-Test-IsAdmin", "1")
+	w := httptest.NewRecorder()
+	s.PostAdminTailscale(w, req)
+
+	// 303 redirect with ok flash
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Location"), "ok=") {
+		t.Errorf("Location = %q, want ok= flash", w.Header().Get("Location"))
+	}
+
+	// Key was written to disk
+	data, err := os.ReadFile(s.TailscaleAuthKeyPath)
+	if err != nil {
+		t.Fatalf("read authkey: %v", err)
+	}
+	if !strings.Contains(string(data), fakeKey) {
+		t.Errorf("authkey file does not contain the generated key; got: %q", string(data))
+	}
+	// Mode 0600 is enforced on Linux/macOS. On Windows the OS
+	// doesn't model Unix mode bits, so the stat is 0666 there —
+	// the production container is Linux so the real mode is
+	// still 0600 (the os.WriteFile call passes 0600 verbatim).
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(s.TailscaleAuthKeyPath)
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if perm := info.Mode().Perm(); perm != 0600 {
+			t.Errorf("authkey mode = %o, want 0600", perm)
+		}
+	}
+
+	// Audit row: FP only, no full key, with user_id + hostname
+	rows, err := s.DB.Query(
+		"SELECT detail FROM audit_log WHERE action='tailscale_generate_key' ORDER BY id DESC LIMIT 1",
+	)
+	if err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatalf("no audit row for tailscale_generate_key")
+	}
+	var detail string
+	if err := rows.Scan(&detail); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if strings.Contains(detail, fakeKey) {
+		t.Errorf("audit leaked the full key: %q", detail)
+	}
+	if !strings.Contains(detail, "user_id=7") {
+		t.Errorf("audit missing user_id=7: %q", detail)
+	}
+	if !strings.Contains(detail, "hostname=\"skygate-host-1\"") {
+		t.Errorf("audit missing hostname=\"skygate-host-1\": %q", detail)
+	}
+	if !strings.Contains(detail, "fp=tske") {
+		t.Errorf("audit missing fp= marker: %q", detail)
+	}
+
+	_ = fakeUserName // referenced in fakeHeadscale response
+}
+
+// TestHandleTailscaleGenerateKey_NoNode: when no headscale
+// node has the configured hostname (e.g. fresh install
+// where the user has never registered), the handler must
+// short-circuit with a clear error — no SSH, no DB write.
+func TestHandleTailscaleGenerateKey_NoNode(t *testing.T) {
+	s := newTestService(t)
+	tmp := t.TempDir()
+	s.TailscaleAuthKeyPath = filepath.Join(tmp, "authkey")
+	s.TailscaleHostname = "skygate-host-1"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Empty node list — no skygate-host-1 anywhere.
+		_, _ = w.Write([]byte(`{"nodes":[]}`))
+	}))
+	defer srv.Close()
+	s.HSGlobalFn = func() *headscale.Client {
+		return headscale.New(srv.URL, "fake-token")
+	}
+
+	csrfCookie, csrf := issueTailscaleCSRF(t)
+	form := "csrf=" + csrf + "&action=generate_key"
+	req := httptest.NewRequest("POST", "/admin/tailscale", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-Test-User", "admin")
+	req.Header.Set("X-Test-IsAdmin", "1")
+	w := httptest.NewRecorder()
+	s.PostAdminTailscale(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Location"), "err=") {
+		t.Errorf("Location = %q, want err= flash", w.Header().Get("Location"))
+	}
+	// File should NOT have been created
+	if _, err := os.Stat(s.TailscaleAuthKeyPath); err == nil {
+		t.Errorf("authkey file was created even though preauth failed")
+	}
+}
+
+// TestHandleTailscaleGenerateKey_NilHS: when no headscale
+// client is configured (HSGlobalFn returns nil), the handler
+// must surface a clear error.
+func TestHandleTailscaleGenerateKey_NilHS(t *testing.T) {
+	s := newTestService(t)
+	tmp := t.TempDir()
+	s.TailscaleAuthKeyPath = filepath.Join(tmp, "authkey")
+	s.HSGlobalFn = func() *headscale.Client { return nil }
+
+	csrfCookie, csrf := issueTailscaleCSRF(t)
+	form := "csrf=" + csrf + "&action=generate_key"
+	req := httptest.NewRequest("POST", "/admin/tailscale", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-Test-User", "admin")
+	req.Header.Set("X-Test-IsAdmin", "1")
+	w := httptest.NewRecorder()
+	s.PostAdminTailscale(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	// The flash message starts with "Headscale клиент не сконфигурирован".
+	// After URL-escaping it becomes "Headscale+%D0%BA%D0%BB...". We
+	// accept either form (case-insensitive) so the test doesn't
+	// depend on the exact Russian transliteration.
+	if !strings.Contains(strings.ToLower(loc), "headscale") {
+		t.Errorf("Location = %q, want mention of headscale client", loc)
+	}
+}

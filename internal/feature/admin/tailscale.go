@@ -42,7 +42,54 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 )
+
+// 2026-08-05 v0.33.1.11 — tailscale auth key auto-generation.
+//
+// findUserForHostname resolves the headscale user that should
+// own a preauth key for the configured Tailscale hostname
+// (default "skygate-host-1"). It walks the headscale node list
+// (not the user list) because a fresh container doesn't
+// necessarily have a User row in headscale yet — the user is
+// created on the first node registration. Looking for a node
+// with the matching hostname (via the admin's ListAllNodes
+// path) is the most reliable signal: if a node named
+// "skygate-host-1" exists in headscale, the user behind it
+// is by construction the one this skygate instance registered
+// as, and that's who we want a new preauth key for.
+//
+// Returns the headscale user ID (int64, suitable for
+// CreatePreauthKey's userID param) and the user.Name for
+// audit / flash messages. The 4-second timeout matches
+// ListAllNodes' internal cap so a stuck headscale doesn't
+// hang the page request.
+func (s *Service) findUserForHostname(ctx context.Context, hs *headscale.Client, hostname string) (int64, string, error) {
+	if hs == nil {
+		return 0, "", fmt.Errorf("headscale client not configured")
+	}
+	listCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	_ = listCtx
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return 0, "", fmt.Errorf("list nodes: %w", err)
+	}
+	for _, n := range nodes {
+		if n.Hostname != hostname {
+			continue
+		}
+		if n.UserID == "" {
+			continue
+		}
+		uid, perr := strconv.ParseInt(n.UserID, 10, 64)
+		if perr != nil {
+			return 0, "", fmt.Errorf("user id %q for hostname %q is not numeric: %w", n.UserID, hostname, perr)
+		}
+		return uid, n.UserName, nil
+	}
+	return 0, "", fmt.Errorf("no node with hostname %q in headscale (register once first, or use /admin/headscale to create a preauth key manually)", hostname)
+}
 
 // TailscaleState is the shape the template consumes.
 type TailscaleState struct {
@@ -484,6 +531,16 @@ func (s *Service) PostAdminTailscale(w http.ResponseWriter, r *http.Request) {
 		s.handleTailscaleStart(w, r, c)
 	case "stop":
 		s.handleTailscaleStop(w, r, c)
+	case "generate_key":
+		// 2026-08-05 v0.33.1.11 — automated preauth key
+		// generation against the running headscale. The
+		// admin no longer has to copy a key from
+		// /admin/headscale and paste it here — skygate
+		// resolves the user behind the configured
+		// hostname, calls headscale preauthkeys create,
+		// and writes the key to the same /data/ts/authkey
+		// file the "Save" path uses.
+		s.handleTailscaleGenerateKey(w, r, c)
 	default:
 		tsRedirect(w, r, "", "Неизвестное действие: "+action)
 	}
@@ -552,6 +609,77 @@ func (s *Service) handleTailscaleStop(w http.ResponseWriter, r *http.Request, c 
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_stop", "ok out="+truncate(out, 200))
 	s.invalidateTailscaleState()
 	tsRedirect(w, r, "Tailscale остановлен.", "")
+}
+
+// 2026-08-05 v0.33.1.11 — automated preauth key generation.
+//
+// handleTailscaleGenerateKey is the "Generate automatically"
+// button on /admin/tailscale. The flow:
+//   1. Resolve the headscale user that owns a node with the
+//      configured hostname (default "skygate-host-1"). The
+//      admin's first node registration creates the user; the
+//      first /admin/headscale preauth key the operator
+//      generated in the past is what bootstrapped that node,
+//      so the user row is guaranteed to exist if the node
+//      exists.
+//   2. Call headscale preauthkeys create (API + CLI fallback
+//      inside the headscale pkg) with a 1h expiration and
+//      reusable=true. The 1h is conservative — the same key
+//      is reusable for the container's lifetime, but a short
+//      window limits the blast radius if the key leaks.
+//   3. Write the returned key to the same /data/ts/authkey
+//      path the "Save" path uses. Mode 0600.
+//   4. Audit: tailscale_generate_key|username|user_id=N
+//      hostname=X user_name=Y exp=1h reusable=true fp=tske...wxyz
+//      (FP only; full key never logged).
+//
+// The handler does NOT auto-start tailscaled — the operator
+// still clicks "Start" explicitly so they're aware the
+// tailscaled is about to come up with the new key.
+func (s *Service) handleTailscaleGenerateKey(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	hs := s.HSGlobalFn()
+	if hs == nil {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_generate_key", "err=headscale_not_configured")
+		tsRedirect(w, r, "", "Headscale клиент не сконфигурирован — skygate не знает URL/API key")
+		return
+	}
+	hostname := s.tailscaleHostname()
+	uid, userName, err := s.findUserForHostname(r.Context(), hs, hostname)
+	if err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_generate_key",
+			fmt.Sprintf("err=%q hostname=%q", err.Error(), hostname))
+		tsRedirect(w, r, "", "Не удалось найти headscale-пользователя для "+hostname+": "+err.Error())
+		return
+	}
+	key, err := hs.CreatePreauthKey(uid, "1h", true)
+	if err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_generate_key",
+			fmt.Sprintf("err=%q user_id=%d hostname=%q", err.Error(), uid, hostname))
+		tsRedirect(w, r, "", "headscale.CreatePreauthKey: "+err.Error())
+		return
+	}
+	if key == nil || key.Key == "" {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_generate_key",
+			fmt.Sprintf("err=empty_key user_id=%d hostname=%q", uid, hostname))
+		tsRedirect(w, r, "", "headscale вернул пустой ключ — проверьте логи headscale")
+		return
+	}
+	if err := s.writeTailscaleAuthKey(key.Key); err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_generate_key",
+			fmt.Sprintf("err=%q user_id=%d hostname=%q", err.Error(), uid, hostname))
+		tsRedirect(w, r, "", "Не удалось сохранить ключ: "+err.Error())
+		return
+	}
+	// FP only in the audit log.
+	fp := key.Key
+	if len(fp) > 8 {
+		fp = fp[:4] + "..." + fp[len(fp)-4:]
+	}
+	s.Backend.Audit(c.UserID, c.Username, "tailscale_generate_key",
+		fmt.Sprintf("user_id=%d hostname=%q user_name=%q exp=1h reusable=true fp=%s",
+			uid, hostname, userName, fp))
+	s.invalidateTailscaleState()
+	tsRedirect(w, r, fmt.Sprintf("Preauth key сгенерирован для %s (user=%s, 1h, reusable). Теперь нажмите «Start» чтобы запустить tailscale.", hostname, userName), "")
 }
 
 // tsRedirect is a flash-and-redirect back to /admin/tailscale.

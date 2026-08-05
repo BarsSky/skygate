@@ -61,6 +61,18 @@ func resolveBackupDir() string {
 	return "/tmp/skygate-backup"
 }
 
+// ResolveBackupDir is the public mirror of resolveBackupDir.
+// Kept in sync verbatim (no logic divergence) so callers
+// outside the backup flow (e.g. system_tests.go's
+// "backup.recent" test, the in-app backup-history page) read
+// the exact same path the backup handlers write to.
+//
+// 2026-08-05 v0.33.1.11 — added so the system_tests runner
+// can verify "is the latest backup < 7d old?" against the
+// real on-disk config (no more "test passed but the actual
+// backup target is /tmp/skygate-backup" surprises).
+func ResolveBackupDir() string { return resolveBackupDir() }
+
 // GetAdminBackup serves /admin/backup. Admin-only.
 //
 // The page has two halves:

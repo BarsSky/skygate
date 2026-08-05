@@ -43,6 +43,8 @@ var ruTailscale = map[string]string{
 	"tailscale.help_after_start"         : "После Start подождите ~10-30s и обновите страницу — увидите tailnet IP и routes от релеев.",
 	"tailscale.token_storage_note"       : "Auth key хранится в файле (mode 0600), доступном только процессу skygate. Никогда не пишется в audit (только fingerprint).",
 	"tailscale.legacy_docker_secret"     : "Примечание: если в этом деплое ранее был настроен Tailscale через docker-secret, он имеет приоритет над web-UI ключом. Чтобы переключиться на web-UI — обратитесь к администратору сервера.",
+	"tailscale.generate_btn"              : "Сгенерировать автоматически",
+	"tailscale.generate_help"             : "Запросит preauth key у headscale для пользователя <code>%s</code> (1 час, reusable). Используйте, если skygate уже зарегистрирован в headscale — копировать ключ вручную из /admin/headscale больше не нужно.",
 }
 
 var enTailscale = map[string]string{
@@ -74,4 +76,6 @@ var enTailscale = map[string]string{
 	"tailscale.help_after_start"         : "After Start wait ~10-30s and refresh the page — you'll see a tailnet IP and routes from the relays.",
 	"tailscale.token_storage_note"       : "Auth key is stored in a file (mode 0600), only accessible to the skygate process. Never logged in audit (only fingerprint).",
 	"tailscale.legacy_docker_secret"     : "Note: if this deployment was previously configured with a docker-secret for Tailscale, it has higher priority than the web-UI key. To switch — contact the server administrator.",
+	"tailscale.generate_btn"              : "Generate automatically",
+	"tailscale.generate_help"             : "Requests a preauth key from headscale for user <code>%s</code> (1h, reusable). Use this if skygate is already registered in headscale — no more copying the key from /admin/headscale by hand.",
 }

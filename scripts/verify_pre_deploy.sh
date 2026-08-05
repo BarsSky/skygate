@@ -1371,3 +1371,49 @@ run_check "B57" "DERP apply help no longer says SQLite (v0.33.1.10)" \
   '! grep -q "writes the config to SQLite" internal/i18n/catalog_derp.go && \
    ! grep -q "записывает конфиг в SQLite" internal/i18n/catalog_derp.go && \
    grep -q "docker cp" internal/i18n/catalog_derp.go'
+
+# ─── B58 (v0.33.1.11) — Tailscale auto-generate preauth key ───
+# Background: 2026-08-05 the operator asked "can we
+# automate the key request? skygate runs over headscale
+# and has direct access anyway". The previous flow was
+# manual: open /admin/headscale in another tab, generate
+# a key, copy it, paste into /admin/tailscale, click
+# Save. v0.33.1.11 adds a "Сгенерировать автоматически"
+# button on /admin/tailscale that:
+#   1. Resolves the headscale user behind the configured
+#      hostname (default "skygate-host-1") via
+#      hs.ListAllNodes().
+#   2. Calls hs.CreatePreauthKey(uid, "1h", reusable=true)
+#      (API + CLI fallback inside the headscale pkg).
+#   3. Writes the returned key to the same /data/ts/authkey
+#      file the manual Save path uses (mode 0600).
+#   4. Audit: tailscale_generate_key|username|user_id=N
+#      hostname=X exp=1h reusable=true fp=tske...wxyz
+#      (FP only — full key never logged).
+# B58 pins the 5 code-presence invariants:
+#   1. handler in feature/admin/tailscale.go
+#   2. dispatch wired for "generate_key" action
+#   3. helper that resolves the user via headscale list
+#   4. template renders the new button (i18n key)
+#   5. audit row written with FP only (no full key in
+#      the audit_log detail column).
+run_check "B58" "Tailscale auto-generate preauth key (v0.33.1.11)" 'grep -q handleTailscaleGenerateKey internal/feature/admin/tailscale.go && grep -q generate_key internal/feature/admin/tailscale.go && grep -q findUserForHostname internal/feature/admin/tailscale.go && grep -q hs.CreatePreauthKey internal/feature/admin/tailscale.go && grep -q tailscale.generate_btn internal/i18n/catalog_tailscale.go && grep -q tailscale.generate_help internal/i18n/catalog_tailscale.go && grep -q value=.generate_key internal/handlers/templates/admin/tailscale.html'
+
+# ─── B59 (v0.33.1.11) — system_tests works on both backends ───
+# Background: 2026-08-05 the operator flagged that the
+# /admin/system_tests page had two SQLite-specific
+# tests (db.sqlite_integrity + db.wal_mode) which
+# silently failed on PostgreSQL (the v0.33.1.7+
+# production backend). v0.33.1.11:
+#   1. Renames both to db.integrity_check + db.journal_mode.
+#   2. Dispatches per backend: SQLite uses PRAGMA
+#      integrity_check + journal_mode; PG runs SELECT 1
+#      + a pg_tables presence check (8 of 8 expected
+#      tables must exist).
+#   3. Expands the registry from 6 to 13+ tests with
+#      new categories "integrations" and "backup".
+# B59 pins:
+#   - no SQLite-only test names remain in the registry
+#   - the new backend-dispatching names are present
+#   - the new category strings (integrations, backup) exist
+run_check "B59" "system_tests works on both backends (v0.33.1.11)" 'f=/tmp/b59.sh; printf "%s" "! grep -q db.sqlite_integrity internal/feature/admin/system_tests.go && ! grep -q db.wal_mode internal/feature/admin/system_tests.go && grep -q db.integrity_check internal/feature/admin/system_tests.go && grep -q db.journal_mode internal/feature/admin/system_tests.go && grep -q BackendPostgres internal/feature/admin/system_tests.go && grep -q integrations.configured internal/feature/admin/system_tests.go && grep -q backup.recent internal/feature/admin/system_tests.go && grep -q network.dns_resolve internal/feature/admin/system_tests.go && grep -q headscale.exit_nodes_online internal/feature/admin/system_tests.go && grep -q db.duplicate_devices internal/feature/admin/system_tests.go && grep -q db.rules_sanity internal/feature/admin/system_tests.go && grep -q mesh.active_meshes internal/feature/admin/system_tests.go" > "$f" && bash "$f"; rm -f "$f"'
