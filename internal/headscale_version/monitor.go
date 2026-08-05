@@ -39,6 +39,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // NotifierSink is the subset of the telegram.Notifier
@@ -261,9 +263,9 @@ func (m *Monitor) ResetNotified() {
 // failure is logged, not fatal.
 func saveHeadscaleRelease(d *sql.DB, rec HeadscaleReleaseRecord) error {
 	_, err := d.Exec(`
-		INSERT OR IGNORE INTO headscale_releases
+		`+db.InsertIgnorePrefix()+` INTO headscale_releases
 			(version, published_at, first_seen_at, html_url, name, body, is_breaking, notified)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (`+db.PlaceholdersList(8)+`)`+db.OnConflictDoNothing("version")+`
 	`, rec.Version, rec.PublishedAt.Unix(), rec.FirstSeenAt.Unix(),
 		rec.HTMLURL, rec.Name, rec.Body, boolToInt(rec.IsBreaking), boolToInt(rec.Notified))
 	return err

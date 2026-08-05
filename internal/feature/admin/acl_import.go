@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"skygate/internal/acl"
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -126,7 +127,12 @@ func (s *Service) PostAdminACLsImportApply(w http.ResponseWriter, r *http.Reques
 			if planeURL == "" {
 				return s.HSGlobalFn()
 			}
-			rows, err := s.DB.Query("SELECT id FROM portal_users WHERE headscale_url = ? LIMIT 1", planeURL)
+			// 2026-08-05 v0.33.1.12: db.PlaceholdersList(1) so
+			// the "?" dispatches to "$1" on PG. Without this
+			// the /admin/acls "Apply" import-Apply (which calls
+			// this resolver for every distinct plane URL) fails
+			// on PG with "syntax error at or near ','".
+			rows, err := s.DB.Query("SELECT id FROM portal_users WHERE headscale_url = "+db.PlaceholdersList(1)+" LIMIT 1", planeURL)
 			if err != nil {
 				return s.HSGlobalFn()
 			}

@@ -43,6 +43,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // NotifierSink is the subset of the
@@ -135,9 +137,9 @@ func ApplyBridge(
 	// case is normal (idempotent retry), not an
 	// error.
 	if _, err := d.Exec(`
-		INSERT OR IGNORE INTO user_subnet_shares
+		`+db.InsertIgnorePrefix()+` INTO user_subnet_shares
 			(grantor_user_id, grantee_user_id, created_at)
-		VALUES (?, ?, ?)
+		VALUES (`+db.PlaceholdersList(3)+`)`+db.OnConflictDoNothing("grantor_user_id, grantee_user_id")+`
 	`, grantorID, granteeID, time.Now().Unix()); err != nil {
 		return fmt.Errorf("invite: write share: %w", err)
 	}

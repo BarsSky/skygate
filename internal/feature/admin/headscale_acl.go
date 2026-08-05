@@ -72,6 +72,7 @@ import (
 	"strings"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/i18n"
 )
 
@@ -202,10 +203,16 @@ func (s *Service) AddACL(ctx context.Context, rule ACLRule, label string, userID
 	// 4. Persist the DB row.
 	id := newSkygateACLID()
 	now := time.Now().UTC()
+	// 2026-08-05 v0.33.1.12: db.PlaceholdersList(6) dispatches
+	// the 6 "?" placeholders to "$1..$6" on PG (pgx stdlib
+	// does NOT auto-convert "?" to "$N"). Without this the
+	// /admin/headscale/acl "Add rule" + "Apply" buttons fail
+	// with "syntax error at or near ','" on the prod PG
+	// backend.
 	if _, err := s.DB.ExecContext(ctx, `
 		INSERT INTO headscale_acl_rules
 			(id, rule_json, fingerprint, label, created_at, created_by_user_id, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, 1)
+		VALUES (`+db.PlaceholdersList(6)+`, 1)
 	`, id, mustJSON(rule), fp, label, now.Unix(), userID); err != nil {
 		return "", fmt.Errorf("persist rule: %w", err)
 	}
@@ -227,9 +234,11 @@ func (s *Service) RemoveACL(ctx context.Context, id string) error {
 	var ruleJSON string
 	var fingerprint string
 	var label string
+	// 2026-08-05 v0.33.1.12: same PG-placeholder fix as
+	// AddACL — "?" -> "$1" on PG.
 	err := s.DB.QueryRowContext(ctx, `
 		SELECT rule_json, fingerprint, label
-		FROM headscale_acl_rules WHERE id=? AND enabled=1
+		FROM headscale_acl_rules WHERE id=`+db.PlaceholdersList(1)+` AND enabled=1
 	`, id).Scan(&ruleJSON, &fingerprint, &label)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("rule %q not found or already removed", id)
@@ -258,8 +267,10 @@ func (s *Service) RemoveACL(ctx context.Context, id string) error {
 		return err
 	}
 	// Soft-delete in DB (preserve audit trail).
+	// 2026-08-05 v0.33.1.12: same PG-placeholder fix as
+	// AddACL — "?" -> "$1" on PG.
 	if _, err := s.DB.ExecContext(ctx, `
-		UPDATE headscale_acl_rules SET enabled=0 WHERE id=?
+		UPDATE headscale_acl_rules SET enabled=0 WHERE id=`+db.PlaceholdersList(1)+`
 	`, id); err != nil {
 		return fmt.Errorf("soft-delete: %w", err)
 	}
@@ -350,8 +361,10 @@ func (s *Service) loadSkygateACLMap(ctx context.Context) (map[string]skygateACLR
 
 func (s *Service) lookupByFingerprint(ctx context.Context, fp string) (string, error) {
 	var id string
+	// 2026-08-05 v0.33.1.12: same PG-placeholder fix as
+	// AddACL — "?" -> "$1" on PG.
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT id FROM headscale_acl_rules WHERE fingerprint=? AND enabled=1 LIMIT 1
+		SELECT id FROM headscale_acl_rules WHERE fingerprint=`+db.PlaceholdersList(1)+` AND enabled=1 LIMIT 1
 	`, fp).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

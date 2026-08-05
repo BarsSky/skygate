@@ -1417,3 +1417,23 @@ run_check "B58" "Tailscale auto-generate preauth key (v0.33.1.11)" 'grep -q hand
 #   - the new backend-dispatching names are present
 #   - the new category strings (integrations, backup) exist
 run_check "B59" "system_tests works on both backends (v0.33.1.11)" 'f=/tmp/b59.sh; printf "%s" "! grep -q db.sqlite_integrity internal/feature/admin/system_tests.go && ! grep -q db.wal_mode internal/feature/admin/system_tests.go && grep -q db.integrity_check internal/feature/admin/system_tests.go && grep -q db.journal_mode internal/feature/admin/system_tests.go && grep -q BackendPostgres internal/feature/admin/system_tests.go && grep -q integrations.configured internal/feature/admin/system_tests.go && grep -q backup.recent internal/feature/admin/system_tests.go && grep -q network.dns_resolve internal/feature/admin/system_tests.go && grep -q headscale.exit_nodes_online internal/feature/admin/system_tests.go && grep -q db.duplicate_devices internal/feature/admin/system_tests.go && grep -q db.rules_sanity internal/feature/admin/system_tests.go && grep -q mesh.active_meshes internal/feature/admin/system_tests.go && grep -q db.PlaceholdersList internal/db/placeholders.go && grep -q db.PlaceholdersList internal/feature/admin/system_tests.go" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B60 (v0.33.1.12) — comprehensive `?` placeholder PG-unsafe sweep ───
+# The v0.33.1.8 fix (B54) only covered SetGlobalSetting. Many more
+# production queries still hardcoded `?` placeholders that crash
+# PG with "syntax error at or near ','" because pgx stdlib does
+# NOT auto-convert `?` to `$N` (unlike lib/pq which DID via
+# NamedArg). The v0.33.1.12 sweep covers 10 files (headscale_acl,
+# backup, exit_nodes, acl_import, user_subnet, user_subnet_download,
+# routescript_data, sidecar/manager, telegram/commands_clear,
+# device_exit_pref, headscale_version/monitor, invite/bridge,
+# telegram/alerts, telegram_login_tokens) and also adds a new
+# `db.OnConflictDoNothing(cols)` / `db.InsertIgnorePrefix()` pair
+# for cross-backend `INSERT OR IGNORE` dispatch.
+#
+# B60 pins:
+#   - db.OnConflictDoNothing + db.InsertIgnorePrefix exist
+#   - the 10 fixed files reference db.PlaceholdersList at least once
+#   - the legacy `INSERT OR IGNORE` keyword is gone from production
+#     code (only the helper emits it on SQLite)
+run_check "B60" "comprehensive ? placeholder PG-unsafe sweep (v0.33.1.12)" 'f=/tmp/b60.sh; printf "%s" "grep -q OnConflictDoNothing internal/db/on_conflict.go && grep -q InsertIgnorePrefix internal/db/on_conflict.go && grep -q OnConflictDoNothing internal/db/on_conflict_sqlite.go && grep -q OnConflictDoNothing internal/db/on_conflict_postgres.go && grep -q db.PlaceholdersList internal/feature/admin/headscale_acl.go && grep -q db.PlaceholdersList internal/feature/admin/backup.go && grep -q db.PlaceholdersList internal/feature/admin/exit_nodes.go && grep -q db.PlaceholdersList internal/feature/admin/acl_import.go && grep -q db.PlaceholdersList internal/feature/admin/user_subnet.go && grep -q db.PlaceholdersList internal/feature/admin/user_subnet_download.go && grep -q db.PlaceholdersList internal/feature/exit_rules/routescript_data.go && grep -q db.PlaceholdersList internal/sidecar/manager.go && grep -q db.PlaceholdersList internal/telegram/commands_clear.go && grep -q db.PlaceholdersList internal/feature/my/device_exit_pref.go && grep -q db.PlaceholdersList internal/headscale_version/monitor.go && grep -q db.PlaceholdersList internal/invite/bridge.go && grep -q db.PlaceholdersList internal/telegram/alerts.go && ! grep -rnE INSERT OR IGNORE internal/ cmd/ | grep -v migrations_ | grep -v on_conflict_ | grep -v _test.go | head -1" > "$f" && bash "$f"; rm -f "$f"'

@@ -65,15 +65,21 @@ func (NoopNotifier) SendAlert(string) int64 { return 0 }
 
 // insertAlert writes a new row to telegram_alerts. v0.32.27:
 // uses RETURNING id (works for both SQLite 3.35+ and PG).
+// v0.33.1.12: switched from hardcoded "$1" to
+// db.PlaceholdersList(1) so SQLite mode (which the dev
+// Makefile defaults to) doesn't crash with "near '$1':
+// syntax error".
 func insertAlert(d *sql.DB, body string) (int64, error) {
 	var id int64
-	err := d.QueryRow(`INSERT INTO telegram_alerts(body) VALUES ($1) RETURNING id`, body).Scan(&id)
+	err := d.QueryRow(`INSERT INTO telegram_alerts(body) VALUES (`+db.PlaceholdersList(1)+`) RETURNING id`, body).Scan(&id)
 	return id, err
 }
 
 // pruneAlerts keeps at most maxRows in telegram_alerts. We delete
 // any rows older than the Nth-from-the-top (so the most recent
 // maxRows survive). Cheaper than a full COUNT on every send.
+// v0.33.1.12: switched from hardcoded "?" to
+// db.PlaceholdersList(1) for PG compat.
 func pruneAlerts(d *sql.DB, maxRows int) {
 	if maxRows <= 0 {
 		return
@@ -83,7 +89,7 @@ func pruneAlerts(d *sql.DB, maxRows int) {
 		 WHERE id NOT IN (
 			SELECT id FROM telegram_alerts
 			 ORDER BY id DESC
-			 LIMIT ?
+			 LIMIT `+db.PlaceholdersList(1)+`
 		 )`, maxRows)
 }
 

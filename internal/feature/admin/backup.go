@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"skygate/internal/backup"
+	"skygate/internal/db"
 )
 
 // resolveBackupDir picks the legacy on-disk backup directory.
@@ -371,7 +372,14 @@ func (s *Service) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	r.ParseForm()
 	if ep := r.FormValue("exit_policy"); ep == "allow_all" || ep == "deny_all" {
-		s.DB.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('exit_policy', ?)", ep)
+		// 2026-08-05 v0.33.1.12: use the cross-backend SetGlobalSetting
+		// helper (which dispatches ? → $N + strftime → nowUnixSQL on
+		// PG via build tag) instead of the inline SQLite-only
+		// "INSERT OR REPLACE" which crashed on PG with
+		// "syntax error at or near ','" + "function strftime()
+		// does not exist". Without this fix the /admin/settings
+		// "Exit policy" radio never persists.
+		_ = db.SetGlobalSetting(s.DB, "exit_policy", ep)
 	}
 	_ = r.FormValue("headscale_url")
 	_ = r.FormValue("headscale_api_key")

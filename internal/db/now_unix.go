@@ -11,3 +11,17 @@ package db
 func nowUnixSQL() string {
 	return nowUnix
 }
+
+// NowUnixSQL is the public mirror of nowUnixSQL, used by
+// callers outside the db package (e.g. backup/config.go's
+// Save + SetStatus which need to dispatch the "current
+// UNIX timestamp" SQL between SQLite's strftime('%s','now')
+// and PG's EXTRACT(EPOCH FROM now())::bigint emulation).
+//
+// 2026-08-05 v0.33.1.12: added so the per-backend "?"
+// placeholder fix can also swap strftime() for the PG
+// equivalent in one place (the v0.33.1.8 fix covered
+// SetGlobalSetting only; backup/config.go's 2 sites
+// still hardcoded the strftime() form, which crashes
+// PG with "function strftime() does not exist").
+func NowUnixSQL() string { return nowUnixSQL() }

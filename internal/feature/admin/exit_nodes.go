@@ -773,7 +773,12 @@ func (s *Service) ensureExitServers() {
 			// Node no longer qualifies — delete the row.
 			// Best-effort: errors are logged but not fatal
 			// (the next page load will retry).
-			if _, err := s.DB.Exec("DELETE FROM exit_servers WHERE id = ?", id); err != nil {
+			// 2026-08-05 v0.33.1.12: db.PlaceholdersList(1) so
+			// "?" → "$1" on PG. Without this the auto-cleanup
+			// (which fires from the background discovery loop)
+			// silently fails on PG and the next page load
+			// retries forever.
+			if _, err := s.DB.Exec("DELETE FROM exit_servers WHERE id = "+db.PlaceholdersList(1), id); err != nil {
 				s.Backend.Audit(0, "skygate", "exit_server_cleanup_failed",
 					fmt.Sprintf("node_id=%s id=%d: %v", nid, id, err))
 			}

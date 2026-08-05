@@ -55,7 +55,7 @@ func (s *Service) readUserForSubnetPage(id int64) (username, headscaleURL string
 	// headscale_url is a denormalized column on
 	// portal_users (v0.12.0 multi-plane). Empty
 	// string = global plane.
-	row := s.DB.QueryRow(`SELECT headscale_url FROM portal_users WHERE id = ?`, id)
+	row := s.DB.QueryRow(`SELECT headscale_url FROM portal_users WHERE id = `+db.PlaceholdersList(1), id)
 	if err := row.Scan(&headscaleURL); err != nil {
 		return "", "", fmt.Errorf("get headscale_url: %w", err)
 	}
@@ -155,7 +155,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 			rows := make([]shareRow, 0, len(sharedBy))
 			for _, sb := range sharedBy {
 				var uname string
-				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, sb.GranteeUserID).Scan(&uname)
+				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), sb.GranteeUserID).Scan(&uname)
 				rows = append(rows, shareRow{sb.GranteeUserID, uname, sb.CreatedAt})
 			}
 			data["SharedBy"] = rows
@@ -169,7 +169,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 			rows := make([]incomingRow, 0, len(sharedWith))
 			for _, sw := range sharedWith {
 				var uname string
-				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, sw.GrantorUserID).Scan(&uname)
+				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), sw.GrantorUserID).Scan(&uname)
 				rows = append(rows, incomingRow{sw.GrantorUserID, uname, sw.CreatedAt})
 			}
 			data["SharedWith"] = rows
@@ -304,7 +304,7 @@ func (s *Service) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Reques
 	}
 	var granteeID int64
 	if err := s.DB.QueryRow(
-		`SELECT id FROM portal_users WHERE username = ?`, granteeName,
+		`SELECT id FROM portal_users WHERE username = `+db.PlaceholdersList(1), granteeName,
 	).Scan(&granteeID); err != nil {
 		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
 			"FlashError": fmt.Sprintf("user %q not found", granteeName),
@@ -479,7 +479,7 @@ func (s *Service) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Re
 	}
 	// Look up the username (needed for the suggested --hostname).
 	var username string
-	if err := s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, id).Scan(&username); err != nil {
+	if err := s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), id).Scan(&username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "user not found", 404)
 			return

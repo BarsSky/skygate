@@ -248,14 +248,20 @@ func LoadTelegramStrictMode(d *sql.DB) bool {
 // the admin /admin/telegram page when the operator toggles the
 // checkbox. Stored as "0" / "1" (string) to keep global_settings
 // uniformly TEXT.
+//
+// v0.33.1.12: switched from hardcoded "?" + strftime('%s','now')
+// to db.PlaceholdersList + db.NowUnixSQL so PG mode (the
+// production backend since v0.33.1.7) doesn't crash with
+// "function strftime() does not exist" or "syntax error at
+// or near '?'". The pattern matches SetGlobalSetting.
 func SaveTelegramStrictMode(d *sql.DB, enabled bool) error {
 	v := "0"
 	if enabled {
 		v = "1"
 	}
 	_, err := d.Exec(`INSERT INTO global_settings(key, value, updated_at)
-		VALUES ('telegram.strict_mode', ?, strftime('%s','now'))
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`, v)
+		VALUES ('telegram.strict_mode', `+placeholdersList(1)+`, `+nowUnixSQL()+`)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = `+nowUnixSQL(), v)
 	return err
 }
 

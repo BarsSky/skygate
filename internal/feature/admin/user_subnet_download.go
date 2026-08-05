@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/handlers/bundles"
 	"skygate/internal/httputil"
 )
@@ -52,7 +53,7 @@ func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Requ
 		cidr     string
 	)
 	if err := s.DB.QueryRow(
-		`SELECT username, COALESCE(subnet_cidr, '') FROM portal_users WHERE id = ?`, id,
+		`SELECT username, COALESCE(subnet_cidr, '') FROM portal_users WHERE id = `+db.PlaceholdersList(1), id,
 	).Scan(&username, &cidr); err != nil {
 		http.Error(w, fmt.Sprintf("user not found: %v", err), 404)
 		return

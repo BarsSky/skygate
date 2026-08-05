@@ -44,6 +44,7 @@ import (
 	"sync"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/subnet"
 )
@@ -456,7 +457,7 @@ func (m *Manager) GeneratePreauth(ctx context.Context, userID int64) (string, ti
 	// Look up the headscale user_id for this portal user.
 	var hsUserID int64
 	if err := m.DB.QueryRow(
-		`SELECT headscale_user_id FROM portal_users WHERE id = ?`, userID,
+		`SELECT headscale_user_id FROM portal_users WHERE id = `+db.PlaceholdersList(1), userID,
 	).Scan(&hsUserID); err != nil {
 		return "", time.Time{}, fmt.Errorf("lookup portal user %d: %w", userID, err)
 	}

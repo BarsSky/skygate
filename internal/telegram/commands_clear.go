@@ -258,7 +258,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	// for domain rules.
 	rows, err := env.DB.Query(
 		`SELECT id, target_type, COALESCE(parent_domain, '')
-		   FROM device_rules WHERE user_id = ?`, target.ID)
+		   FROM device_rules WHERE user_id = `+db.PlaceholdersList(1), target.ID)
 	if err != nil {
 		return i18n.Tf(lang, "bot.clearrules.db_error", err)
 	}

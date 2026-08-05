@@ -11,7 +11,11 @@
 // type (used by the body builders in the same package).
 package exit_rules
 
-import "fmt"
+import (
+	"fmt"
+
+	"skygate/internal/db"
+)
 
 // routeEntry is one (target_type, target_value, device_ip) row pulled
 // from device_rules, restricted to ip/subnet targets (DNS domains and
@@ -28,10 +32,10 @@ type routeEntry struct {
 // the user has no such rules (the orchestrator turns that into a
 // friendly "no rules configured" comment in the generated script).
 func (s *Service) loadRoutesForScript(userID int, deviceID int) ([]routeEntry, error) {
-	query := "SELECT target_type, target_value, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND user_id = ?"
+	query := "SELECT target_type, target_value, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND user_id = " + db.PlaceholdersList(1)
 	args := []any{userID}
 	if deviceID > 0 {
-		query += " AND device_id = ?"
+		query += " AND device_id = " + db.PlaceholdersList(1)
 		args = append(args, deviceID)
 	}
 	query += " ORDER BY id"

@@ -289,10 +289,18 @@ func Save(d *sql.DB, c *Config) error {
 		return err
 	}
 	defer tx.Rollback()
+	// 2026-08-05 v0.33.1.12: dispatch the 2 "?" placeholders
+	// (SQLite → pgx PG) and swap strftime for the per-backend
+	// nowUnixSQL() helper (SQLite has strftime; PG has the
+	// EXTRACT(EPOCH) emulation registered in v0.32.27).
+	// Without this fix the "Save" button on /admin/backup/config
+	// fails on PG with "syntax error at or near ','" — the
+	// operator's per-key edits (Password, SSHKeyPath,
+	// KeepCount, etc.) never persist.
 	for k, v := range pairs {
 		if _, err := tx.Exec(
-			`INSERT INTO global_settings (key, value) VALUES (?, ?)
-			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`,
+			`INSERT INTO global_settings (key, value) VALUES (`+db.PlaceholdersList(2)+`)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = `+db.NowUnixSQL()+``,
 			k, v,
 		); err != nil {
 			return fmt.Errorf("save %s: %w", k, err)
@@ -319,10 +327,15 @@ func SetStatus(d *sql.DB, status, errMsg, archive string, runAt time.Time) error
 		return err
 	}
 	defer tx.Rollback()
+	// 2026-08-05 v0.33.1.12: same per-backend placeholder +
+	// strftime→nowUnixSQL() dispatch as Save() above.
+	// Without this fix /admin/backup "Last run / status / error"
+	// never updates on PG, and the "Run now" button can't
+	// mark status=running/ok/fail in global_settings.
 	for k, v := range pairs {
 		if _, err := tx.Exec(
-			`INSERT INTO global_settings (key, value) VALUES (?, ?)
-			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')`,
+			`INSERT INTO global_settings (key, value) VALUES (`+db.PlaceholdersList(2)+`)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = `+db.NowUnixSQL()+``,
 			k, v,
 		); err != nil {
 			return err

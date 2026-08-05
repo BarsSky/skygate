@@ -190,7 +190,7 @@ func (s *Service) callerOwnsDevice(d *sql.DB, userID int64, lowerHostname string
 	// form. We do a case-insensitive match here.
 	var n int
 	err := d.QueryRow(
-		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = ? AND LOWER(hostname) = ?`,
+		`SELECT COUNT(*) FROM node_owner_map WHERE tagged_by_user_id = `+db.PlaceholdersList(1)+` AND LOWER(hostname) = `+db.PlaceholdersList(1),
 		userID, lowerHostname,
 	).Scan(&n)
 	if err != nil {
