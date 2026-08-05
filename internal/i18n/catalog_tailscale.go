@@ -45,6 +45,21 @@ var ruTailscale = map[string]string{
 	"tailscale.legacy_docker_secret"     : "Примечание: если в этом деплое ранее был настроен Tailscale через docker-secret, он имеет приоритет над web-UI ключом. Чтобы переключиться на web-UI — обратитесь к администратору сервера.",
 	"tailscale.generate_btn"              : "Сгенерировать автоматически",
 	"tailscale.generate_help"             : "Запросит preauth key у headscale для пользователя <code>%s</code> (1 час, reusable). Используйте, если skygate уже зарегистрирован в headscale — копировать ключ вручную из /admin/headscale больше не нужно.",
+	// v0.33.1.13 — login server (SKYGATE_TS_LOGIN_SERVER) editable from web UI.
+	// The value persists in global_settings (key "tailscale.login_server")
+	// and survives container restarts / migrations / VM clones. The env
+	// var is still the bootstrap value on first start (when DB row is
+	// empty); the web UI overrides it from that point on.
+	"tailscale.login_server_heading"      : "Headscale URL (login server)",
+	"tailscale.login_server_label"        : "URL",
+	"tailscale.login_server_placeholder"  : "https://head.example.com",
+	"tailscale.login_server_help"         : "Передаётся в <code>tailscale up</code> как <code>--login-server=</code>. Сохраняется в БД — после рестарта / миграции значение подхватится автоматически. Переменная окружения <code>SKYGATE_TS_LOGIN_SERVER</code> используется как bootstrap-значение при первом старте (когда в БД пусто).",
+	"tailscale.login_server_source_env"    : "источник: переменная окружения <code>SKYGATE_TS_LOGIN_SERVER</code> (ещё не переопределено через web-UI)",
+	"tailscale.login_server_source_db"     : "источник: web-UI / БД (env <code>SKYGATE_TS_LOGIN_SERVER</code> игнорируется)",
+	"tailscale.login_server_save"         : "Сохранить URL",
+	"tailscale.login_server_saved"         : "Headscale URL сохранён в БД. Будет использован при следующем Start.",
+	"tailscale.login_server_saved_reboot" : "Headscale URL сохранён в БД. Перезапустите Tailscale (Stop → Start), чтобы применить.",
+	"tailscale.login_server_invalid"      : "Некорректный URL. Ожидается https:// или http://, например <code>https://head.example.com</code>.",
 }
 
 var enTailscale = map[string]string{
@@ -78,4 +93,19 @@ var enTailscale = map[string]string{
 	"tailscale.legacy_docker_secret"     : "Note: if this deployment was previously configured with a docker-secret for Tailscale, it has higher priority than the web-UI key. To switch — contact the server administrator.",
 	"tailscale.generate_btn"              : "Generate automatically",
 	"tailscale.generate_help"             : "Requests a preauth key from headscale for user <code>%s</code> (1h, reusable). Use this if skygate is already registered in headscale — no more copying the key from /admin/headscale by hand.",
+	// v0.33.1.13 — login server (SKYGATE_TS_LOGIN_SERVER) editable from web UI.
+	// The value persists in global_settings (key "tailscale.login_server")
+	// and survives container restarts / migrations / VM clones. The env
+	// var is still the bootstrap value on first start (when DB row is
+	// empty); the web UI overrides it from that point on.
+	"tailscale.login_server_heading"      : "Headscale URL (login server)",
+	"tailscale.login_server_label"        : "URL",
+	"tailscale.login_server_placeholder"  : "https://head.example.com",
+	"tailscale.login_server_help"         : "Passed to <code>tailscale up</code> as <code>--login-server=</code>. Persists in the DB — after a restart or migration the value is picked up automatically. The <code>SKYGATE_TS_LOGIN_SERVER</code> env var is the bootstrap value on first start (when the DB row is empty).",
+	"tailscale.login_server_source_env"    : "source: env var <code>SKYGATE_TS_LOGIN_SERVER</code> (not yet overridden via web-UI)",
+	"tailscale.login_server_source_db"     : "source: web-UI / DB (env <code>SKYGATE_TS_LOGIN_SERVER</code> is ignored)",
+	"tailscale.login_server_save"         : "Save URL",
+	"tailscale.login_server_saved"         : "Headscale URL saved to the DB. Will be used on the next Start.",
+	"tailscale.login_server_saved_reboot" : "Headscale URL saved to the DB. Restart Tailscale (Stop → Start) to apply.",
+	"tailscale.login_server_invalid"      : "Invalid URL. Expected https:// or http://, e.g. <code>https://head.example.com</code>.",
 }

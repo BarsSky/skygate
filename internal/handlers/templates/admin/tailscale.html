@@ -111,6 +111,30 @@
   </div>
 
   <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-globe"></i> {{t "tailscale.login_server_heading"}}</h3>
+    <p class="sub">{{t "tailscale.login_server_help" | safeHTML}}</p>
+    <form action="/admin/tailscale" method="POST" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="save_login_server">
+      <div class="form-group">
+        <label>{{t "tailscale.login_server_label"}}</label>
+        <input type="url" name="login_server" class="form-control"
+               value="{{.State.LoginServer}}"
+               placeholder="{{t "tailscale.login_server_placeholder"}}"
+               pattern="https?://.*" required>
+        <div class="sub" style="margin-top:.3rem">
+          {{if eq .State.LoginServerSource "db"}}
+            <i class="fa-solid fa-database" style="color:var(--info)"></i> {{t "tailscale.login_server_source_db" | safeHTML}}
+          {{else}}
+            <i class="fa-solid fa-cube" style="color:var(--text-muted)"></i> {{t "tailscale.login_server_source_env" | safeHTML}}
+          {{end}}
+        </div>
+      </div>
+      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.login_server_save"}}</button>
+    </form>
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-power-off"></i> Start / Stop</h3>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap">
       <form action="/admin/tailscale" method="POST" style="display:inline">

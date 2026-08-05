@@ -2690,6 +2690,29 @@ one.
 runtime, and end-to-end verification work happens on the VM:
 `admin@192.0.2.1` (a.k.a. `192.0.2.1`).
 
+### `verify_post_deploy.sh` — SSH_HOST resolution (v0.33.1.13)
+
+`scripts/verify_post_deploy.sh` SSHes into the VM and runs the
+R1-R32 catalog there. The SSH target is resolved in this order
+(highest priority first):
+
+| Source | Example | Use when |
+|---|---|---|
+| **Positional `$1`** (preferred) | `bash scripts/verify_post_deploy.sh skyadmin@192.168.13.69` | one-off operator invocations |
+| `$SSH_HOST` env var (legacy) | `SSH_HOST=skyadmin@192.168.13.69 bash scripts/verify_post_deploy.sh` | shell pipelines / CI |
+| Built-in default | `admin@192.0.2.1` | the legacy placeholder — almost certainly wrong for real deployments |
+
+The script also accepts:
+- `--quick` — run only R1-R9 + R26 (the core "is skygate up?" checks)
+- `--skip-network` — skip R22-R25 (no internet/Let’s Encrypt/HAProxy probes)
+- `--help` / `-h` — print the catalog header and exit 0
+
+The default `admin@192.0.2.1` is a documentation placeholder (RFC
+5737 reserved range) that the script warns about via the header
+text — pass an explicit value for any real deployment. The
+operator's skygate-vm lives at `skyadmin@192.168.13.69` in
+practice (a non-RFC 5737 private LAN).
+
 **VM is for:**
 - Building skygate (`docker compose restart skygate`)
 - Running `make test` (smoke + `check_exit_nodes.py`)

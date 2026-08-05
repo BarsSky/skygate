@@ -1437,3 +1437,40 @@ run_check "B59" "system_tests works on both backends (v0.33.1.11)" 'f=/tmp/b59.s
 #   - the legacy `INSERT OR IGNORE` keyword is gone from production
 #     code (only the helper emits it on SQLite)
 run_check "B60" "comprehensive ? placeholder PG-unsafe sweep (v0.33.1.12)" 'f=/tmp/b60.sh; printf "%s" "grep -q OnConflictDoNothing internal/db/on_conflict.go && grep -q InsertIgnorePrefix internal/db/on_conflict.go && grep -q OnConflictDoNothing internal/db/on_conflict_sqlite.go && grep -q OnConflictDoNothing internal/db/on_conflict_postgres.go && grep -q db.PlaceholdersList internal/feature/admin/headscale_acl.go && grep -q db.PlaceholdersList internal/feature/admin/backup.go && grep -q db.PlaceholdersList internal/feature/admin/exit_nodes.go && grep -q db.PlaceholdersList internal/feature/admin/acl_import.go && grep -q db.PlaceholdersList internal/feature/admin/user_subnet.go && grep -q db.PlaceholdersList internal/feature/admin/user_subnet_download.go && grep -q db.PlaceholdersList internal/feature/exit_rules/routescript_data.go && grep -q db.PlaceholdersList internal/sidecar/manager.go && grep -q db.PlaceholdersList internal/telegram/commands_clear.go && grep -q db.PlaceholdersList internal/feature/my/device_exit_pref.go && grep -q db.PlaceholdersList internal/headscale_version/monitor.go && grep -q db.PlaceholdersList internal/invite/bridge.go && grep -q db.PlaceholdersList internal/telegram/alerts.go && ! grep -rnE INSERT OR IGNORE internal/ cmd/ | grep -v migrations_ | grep -v on_conflict_ | grep -v _test.go | head -1" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B61 (v0.33.1.13) — verify_post_deploy.sh SSH_HOST CLI arg + --help ───
+# The 2026-08-05 review of verify_post_deploy.sh revealed the
+# legacy default "admin@192.0.2.1" was almost always wrong for
+# real deployments (the operator's VM is on 192.168.x.x, not the
+# 192.0.2.x documentation range). v0.33.1.13 added:
+#   1. A positional $1 (e.g. "skyadmin@192.168.13.69") as the
+#      primary SSH_HOST override
+#   2. An --help flag that prints the catalog header (the
+#      previous script had no way to ask "what does this do?")
+#   3. An --bad-flag error path (previously unknown flags were
+#      silently ignored)
+#
+# B61 pins:
+#   - the script accepts "skyadmin@192.168.13.69" as $1 and
+#     SSH_HOST resolves to that (not the legacy default)
+#   - --help exits 0 after printing the catalog header
+#   - an unknown flag exits non-zero with "unknown flag: ..."
+run_check "B61" "verify_post_deploy.sh accepts SSH_HOST as positional \$1 (v0.33.1.13)" 'f=/tmp/b61.sh; printf "%s" "set +e; out1=\$(bash scripts/verify_post_deploy.sh skyadmin@192.168.13.69 --help 2>&1 | head -3); case \"\$out1\" in *\"runtime guarantees for skygate\"*) echo help-ok;; *) echo \"help text missing: \$out1\"; exit 1;; esac; out2=\$(bash scripts/verify_post_deploy.sh --bad-flag 2>&1); case \"\$out2\" in *\"unknown flag\"*) echo bad-flag-ok;; *) echo \"bad-flag path broken: \$out2\"; exit 1;; esac; grep -q \"SSH_HOST=\\\"\\\${SSH_HOST:-admin@192.0.2.1}\\\"\" scripts/verify_post_deploy.sh || { echo \"SSH_HOST fallback line missing\"; exit 1; }; grep -q \"SSH_HOST_SET\" scripts/verify_post_deploy.sh || { echo \"SSH_HOST_SET var missing\"; exit 1; }" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B62 (v0.33.1.13) — SKYGATE_TS_LOGIN_SERVER editable from /admin/tailscale ───
+# Before v0.33.1.13 the headscale URL was env-var only
+# (SKYGATE_TS_LOGIN_SERVER). v0.33.1.13 added a web-UI form
+# on /admin/tailscale that persists the value to
+# global_settings (key "tailscale.login_server"); the env var
+# is now only consulted when the DB row is empty. After a
+# container restart / migration / VM clone, the saved DB
+# value is read on next start.
+#
+# B62 pins:
+#   - the DB key constant exists in feature/admin/tailscale.go
+#   - the resolution function checks the DB first
+#   - the source-tracking helper distinguishes db/env/default
+#   - the save action handler writes to global_settings
+#   - the i18n keys are present in both RU + EN
+#   - the template renders the form with the new field
+run_check "B62" "SKYGATE_TS_LOGIN_SERVER editable from /admin/tailscale + DB-persisted (v0.33.1.13)" 'f=/tmp/b62.sh; printf "%s" "grep -q tailscaleLoginServerDBKey internal/feature/admin/tailscale.go && grep -q 'tailscale.login_server' internal/feature/admin/tailscale.go && grep -q tailscaleLoginServerSource internal/feature/admin/tailscale.go && grep -q save_login_server internal/feature/admin/tailscale.go && grep -q login_server_placeholder internal/i18n/catalog_tailscale.go && grep -q login_server_source_db internal/i18n/catalog_tailscale.go && grep -q login_server_saved internal/i18n/catalog_tailscale.go && grep -q login_server_heading internal/handlers/templates/admin/tailscale.html && grep -q name=\"login_server\" internal/handlers/templates/admin/tailscale.html && grep -q TailscaleLoginServerSource internal/feature/admin/tailscale.go && grep -q SetGlobalSettingForTest internal/feature/admin/tailscale.go" > "$f" && bash "$f"; rm -f "$f"'

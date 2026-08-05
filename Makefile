@@ -154,8 +154,16 @@ verify-pre:
 # and runs the 25-check catalog. Should be invoked immediately
 # after `docker compose up -d skygate` (or after `make
 # restart`). Exits non-zero if any guarantee fails.
+# v0.33.1.13: SSH_HOST is now passable as positional $1
+# (preferred) or as a make-arg. The script's positional form
+# is:
+#   make verify-post SSH_HOST=skyadmin@192.168.13.69
+# or via the legacy SSH_HOST env var (still works for
+# pipelines + CI). The script's built-in default
+# (admin@192.0.2.1) is almost always wrong — pass an
+# explicit value.
 verify-post:
-	@bash scripts/verify_post_deploy.sh
+	@bash scripts/verify_post_deploy.sh $(SSH_HOST)
 
 # 2026-07-25: v0.28.5 — both pre and post in one. Pre runs
 # locally; post SSHes into the VM. If pre fails, post still

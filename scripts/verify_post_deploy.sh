@@ -41,9 +41,16 @@
 #
 # Usage:
 #   bash scripts/verify_post_deploy.sh                       # all 32 checks
+#   bash scripts/verify_post_deploy.sh skyadmin@192.168.13.69   # SSH_HOST as $1
 #   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 + R26 (core)
 #   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
-#   SSH_HOST=admin@192.0.2.1 bash scripts/verify_post_deploy.sh
+#   SSH_HOST=admin@192.0.2.1 bash scripts/verify_post_deploy.sh   # legacy env-var form (still works)
+#
+# SSH_HOST resolution order (highest priority first):
+#   1. Positional $1 if it looks like "user@host" (e.g. "skyadmin@192.168.13.69")
+#   2. $SSH_HOST env var (backward compat with old invocations)
+#   3. Default: admin@192.0.2.1   (legacy placeholder; almost certainly wrong
+#      for any real deployment — pass an explicit value)
 #
 # Cross-platform: pure bash. Runs from the OPERATOR'S machine
 # (Linux/Mac shell or Windows Git Bash) — SSHes into the VM and
@@ -78,13 +85,40 @@ set -u
 # ---------------------------------------------------------------------------
 QUICK=0
 SKIP_NETWORK=0
+# First non-flag positional arg is treated as SSH_HOST (e.g.
+# "skyadmin@192.168.13.69"). Flag args (--quick, --skip-network)
+# are consumed by the case below. SSH_HOST resolution order:
+#   1. $1 if it doesn't start with "--" (positional override)
+#   2. $SSH_HOST env var (legacy)
+#   3. Default "admin@192.0.2.1" (placeholder — pass a real value)
 for arg in "$@"; do
   case "$arg" in
     --quick)        QUICK=1 ;;
     --skip-network) SKIP_NETWORK=1 ;;
+    --help|-h)
+      sed -n '2,65p' "$0" | sed 's/^# \?//'
+      exit 0
+      ;;
+    -*)
+      echo "unknown flag: $arg" >&2
+      echo "run with --help for usage" >&2
+      exit 2
+      ;;
+    *)
+      if [ -z "${SSH_HOST_SET:-}" ]; then
+        # First positional wins. Strip surrounding quotes if any.
+        SSH_HOST="${arg%\"}"; SSH_HOST="${SSH_HOST#\"}"
+        SSH_HOST="${SSH_HOST%\'}"; SSH_HOST="${SSH_HOST#\'}"
+        SSH_HOST_SET=1
+      fi
+      ;;
   esac
 done
 
+# v0.33.1.13: SSH_HOST now accepts a positional $1 in addition to the
+# legacy $SSH_HOST env var. The env-var form (export SSH_HOST=...)
+# still works for shell pipelines and CI; the positional form is
+# friendlier for one-off operator invocations.
 SSH_HOST="${SSH_HOST:-admin@192.0.2.1}"
 # v0.29.2: SKYGATE_CONTAINER is resolved at runtime via the
 # `com.docker.compose.service=skygate` label (set by docker compose

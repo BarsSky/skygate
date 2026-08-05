@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,6 +129,16 @@ type TailscaleState struct {
 	AuthKeyFP string
 	// LoginServer mirrors s.TailscaleLoginServer.
 	LoginServer string
+	// LoginServerSource is "db" when the value came from the
+	// web-UI's persisted global_settings row (takes
+	// precedence over the env var), or "env" when the
+	// value still falls back to s.TailscaleLoginServer
+	// (the SKYGATE_TS_LOGIN_SERVER env var). Template
+	// uses this to render a "source: web-UI/DB" vs
+	// "source: env var" hint so the operator knows which
+	// value actually wins.
+	// v0.33.1.13.
+	LoginServerSource string
 	// Hostname mirrors s.TailscaleHostname.
 	Hostname string
 	// StateDir is where tailscaled keeps its state file
@@ -195,10 +206,11 @@ func (s *Service) invalidateTailscaleState() {
 // from anywhere; doesn't touch the cache.
 func (s *Service) readTailscaleState() TailscaleState {
 	st := TailscaleState{
-		AuthKeyPath: s.tailscaleAuthKeyPath(),
-		LoginServer: s.tailscaleLoginServer(),
-		Hostname:    s.tailscaleHostname(),
-		StateDir:    s.tailscaleStateDir(),
+		AuthKeyPath:       s.tailscaleAuthKeyPath(),
+		LoginServer:       s.tailscaleLoginServer(),
+		LoginServerSource: s.tailscaleLoginServerSource(),
+		Hostname:          s.tailscaleHostname(),
+		StateDir:          s.tailscaleStateDir(),
 	}
 	st.Available = tailscaleAvailable()
 	st.AuthKeySet, st.AuthKeyFP = s.readTailscaleAuthKey()
@@ -228,11 +240,62 @@ func (s *Service) tailscaleAuthKeyPath() string {
 	return "/data/ts/authkey"
 }
 
+// SetGlobalSettingForTest is a thin wrapper around
+// db.SetGlobalSetting exposed on the Service so unit tests
+// can seed the global_settings table without forking on
+// the per-backend placeholder syntax (?  vs  $1,$2,...).
+// The v0.33.1.13 login-server tests use it to set up a
+// known DB state and assert the resolution order. v0.33.1.13.
+func (s *Service) SetGlobalSettingForTest(key, value string) error {
+	return db.SetGlobalSetting(s.DB, key, value)
+}
+
+// tailscaleLoginServerDBKey is the global_settings key for
+// the user-editable headscale URL (set via /admin/tailscale
+// "save_login_server" action). Lives in global_settings so
+// the value survives container restarts, Postgres → SQLite
+// migrations, and VM clones. v0.33.1.13.
+//
+// Resolution order at read time (highest priority first):
+//   1. global_settings[tailscale.login_server]  (web-UI override)
+//   2. s.TailscaleLoginServer                   (SKYGATE_TS_LOGIN_SERVER env var)
+//   3. "https://head.example.com"               (last-resort default)
+//
+// The env var is only consulted on first start (when the
+// global_settings row is empty) — once the operator saves a
+// value via the web UI, the env var is ignored until the
+// operator clears the DB row (e.g. via `sqlite3 skygate.db
+// "DELETE FROM global_settings WHERE key='tailscale.login_server'"`).
+// This makes the deployment fully re-creatable from the web
+// UI without touching the .env file.
+const tailscaleLoginServerDBKey = "tailscale.login_server"
+
 func (s *Service) tailscaleLoginServer() string {
+	// 1. Web-UI override (DB). Empty string means "not set".
+	if v, err := db.GetGlobalSetting(s.DB, tailscaleLoginServerDBKey, ""); err == nil && v != "" {
+		return v
+	}
+	// 2. Env-var bootstrap.
 	if s.TailscaleLoginServer != "" {
 		return s.TailscaleLoginServer
 	}
+	// 3. Last-resort default.
 	return "https://head.example.com"
+}
+
+// tailscaleLoginServerSource reports which of the three layers
+// (db / env / default) the running config is actually using.
+// Returns "db", "env", or "default". The template uses this
+// to render a small "source: ..." hint so the operator knows
+// whether changing the .env file would have any effect.
+func (s *Service) tailscaleLoginServerSource() string {
+	if v, err := db.GetGlobalSetting(s.DB, tailscaleLoginServerDBKey, ""); err == nil && v != "" {
+		return "db"
+	}
+	if s.TailscaleLoginServer != "" {
+		return "env"
+	}
+	return "default"
 }
 
 func (s *Service) tailscaleHostname() string {
@@ -527,6 +590,12 @@ func (s *Service) PostAdminTailscale(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "save_key":
 		s.handleTailscaleSaveKey(w, r, c)
+	case "save_login_server":
+		// v0.33.1.13 — persist SKYGATE_TS_LOGIN_SERVER to
+		// global_settings so the value survives container
+		// restarts, migrations, and VM clones. The env var
+		// is only consulted when the DB row is empty.
+		s.handleTailscaleSaveLoginServer(w, r, c)
 	case "start":
 		s.handleTailscaleStart(w, r, c)
 	case "stop":
@@ -575,6 +644,53 @@ func (s *Service) handleTailscaleSaveKey(w http.ResponseWriter, r *http.Request,
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_save_key", "fp="+fp)
 	s.invalidateTailscaleState()
 	tsRedirect(w, r, "Auth key сохранён. Теперь нажмите «Start» чтобы запустить tailscale.", "")
+}
+
+// handleTailscaleSaveLoginServer persists the operator-edited
+// headscale URL (SKYGATE_TS_LOGIN_SERVER equivalent) to
+// global_settings. The new value takes effect on the NEXT
+// `tailscale up` invocation — i.e. the operator should
+// follow Save with Stop → Start. v0.33.1.13.
+//
+// Validation: must start with http:// or https://. We don't
+// try to resolve the host (could be a private LAN like
+// 192.168.x.x where DNS would otherwise fail; the operator
+// knows the real URL). Empty string is allowed (clears the
+// override → falls back to env var).
+//
+// Audit: stores the full URL (it's not a secret — it's the
+// public headscale endpoint the operator wants to join).
+func (s *Service) handleTailscaleSaveLoginServer(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	raw := strings.TrimSpace(r.FormValue("login_server"))
+	if raw != "" {
+		// Use url.Parse; require a non-empty scheme that is
+		// http or https and a non-empty host. Don't try to
+		// resolve it — see comment above.
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			tsRedirect(w, r, "", "Некорректный URL. Ожидается https:// или http://, например https://head.example.com.")
+			return
+		}
+	}
+	if err := db.SetGlobalSetting(s.DB, tailscaleLoginServerDBKey, raw); err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_save_login_server",
+			fmt.Sprintf("err=%q", err.Error()))
+		tsRedirect(w, r, "", "Не удалось сохранить: "+err.Error())
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "tailscale_save_login_server",
+		"url_set="+strconv.FormatBool(raw != "")+" value="+raw)
+	// Invalidate the state cache so the next GET shows
+	// the new source ("db") + value immediately.
+	s.invalidateTailscaleState()
+	// Different success message depending on whether
+	// tailscaled is currently running (operator may want
+	// to restart it to pick up the new value).
+	if s.loadTailscaleState().Running {
+		tsRedirect(w, r, "Headscale URL сохранён в БД. Перезапустите Tailscale (Stop → Start), чтобы применить.", "")
+		return
+	}
+	tsRedirect(w, r, "Headscale URL сохранён в БД. Будет использован при следующем Start.", "")
 }
 
 // handleTailscaleStart spawns tailscaled + runs tailscale up.

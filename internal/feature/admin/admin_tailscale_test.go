@@ -1,13 +1,22 @@
 package admin
 
 // v0.33.1.9 — Tailscale web-UI tests.
+// v0.33.1.13 — added login-server resolution + save tests
+//              (SKYGATE_TS_LOGIN_SERVER editable from the web
+//              UI, persisted in global_settings).
 //
-// 5 tests pin the contract of the Tailscale service:
+// 10 tests pin the contract of the Tailscale service:
 //   1. readTailscaleAuthKey returns the right FP / set flag
 //   2. writeTailscaleAuthKey is atomic + mode 0600
 //   3. handleTailscaleSaveKey writes to the configured path
 //   4. handleTailscaleSaveKey rejects an empty key
-//   5. tsRedirect builds the right query string for ok/err
+//   5. handleTailscaleSaveKey rejects missing CSRF
+//   6. tsRedirect builds the right query string for ok/err
+//   7. tailscaleLoginServer: env var wins when DB is empty
+//   8. tailscaleLoginServer: last-resort default when both empty
+//   9. tailscaleLoginServer: DB row wins over env (v0.33.1.13)
+//  10. handleTailscaleSaveLoginServer: persists to DB +
+//      rejects bad URL + empty clears override
 //
 // Tailscale Start/Stop are not unit-tested (they exec tailscaled
 // in a real container); the integration test for them runs on
@@ -266,6 +275,168 @@ func TestTailscaleStateFingerprintNotInAudit(t *testing.T) {
 	}
 	// JSON-serialise the response for a sanity smoke test.
 	_ = json.RawMessage{}
+}
+
+// v0.33.1.13 — SKYGATE_TS_LOGIN_SERVER is now configurable
+// from /admin/tailscale (the "Headscale URL" card) and
+// persisted in global_settings. The env var remains the
+// bootstrap value on first start (when the DB row is
+// empty); the web-UI value takes precedence thereafter.
+//
+// These tests pin the resolution order contract.
+
+// TestTailscaleLoginServer_EnvOnly: with no DB row, the
+// service-level env value (s.TailscaleLoginServer) wins.
+// Falls back to the default only when both DB and env
+// are empty.
+func TestTailscaleLoginServer_EnvOnly(t *testing.T) {
+	s := newTestService(t)
+	s.TailscaleLoginServer = "https://head.example.com:8443"
+	if got := s.tailscaleLoginServer(); got != "https://head.example.com:8443" {
+		t.Errorf("env-only: got %q, want %q", got, "https://head.example.com:8443")
+	}
+	if src := s.tailscaleLoginServerSource(); src != "env" {
+		t.Errorf("source: got %q, want env", src)
+	}
+}
+
+// TestTailscaleLoginServer_Default: no DB row, no env →
+// the last-resort default. Source reported as "default".
+func TestTailscaleLoginServer_Default(t *testing.T) {
+	s := newTestService(t)
+	s.TailscaleLoginServer = ""
+	if got := s.tailscaleLoginServer(); got != "https://head.example.com" {
+		t.Errorf("default: got %q, want %q", got, "https://head.example.com")
+	}
+	if src := s.tailscaleLoginServerSource(); src != "default" {
+		t.Errorf("source: got %q, want default", src)
+	}
+}
+
+// TestTailscaleLoginServer_DBOverride: when the DB row
+// is set, it wins over the env var. This is the v0.33.1.13
+// contract — once the operator saves a value via the web
+// UI, future restarts/migrations/clones read from the DB
+// and ignore SKYGATE_TS_LOGIN_SERVER.
+func TestTailscaleLoginServer_DBOverride(t *testing.T) {
+	s := newTestService(t)
+	s.TailscaleLoginServer = "https://head.from.env.example.com"
+	seedTailscaleLoginServerDB(t, s, "https://head.from.db.example.com")
+	got := s.tailscaleLoginServer()
+	if got != "https://head.from.db.example.com" {
+		t.Errorf("DB override: got %q, want %q", got, "https://head.from.db.example.com")
+	}
+	if src := s.tailscaleLoginServerSource(); src != "db" {
+		t.Errorf("source: got %q, want db", src)
+	}
+}
+
+// TestHandleTailscaleSaveLoginServer: POST save_login_server
+// writes to global_settings. The 303 redirect flashes
+// "ok=". The next call to tailscaleLoginServer() returns
+// the new DB value.
+func TestHandleTailscaleSaveLoginServer(t *testing.T) {
+	s := newTestService(t)
+	// No env var set; start with the default.
+	s.TailscaleLoginServer = ""
+
+	csrfCookie, csrf := issueTailscaleCSRF(t)
+	req := httptest.NewRequest("POST", "/admin/tailscale",
+		strings.NewReader("csrf="+csrf+"&action=save_login_server&login_server=https://head.example.com:8443"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-Test-User", "admin")
+	req.Header.Set("X-Test-IsAdmin", "1")
+	w := httptest.NewRecorder()
+	s.PostAdminTailscale(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Location"), "ok=") {
+		t.Errorf("Location = %q, want ok= flash", w.Header().Get("Location"))
+	}
+	// Next call returns the DB value (env-var fallback no
+	// longer applies).
+	if got := s.tailscaleLoginServer(); got != "https://head.example.com:8443" {
+		t.Errorf("after save: got %q, want %q", got, "https://head.example.com:8443")
+	}
+}
+
+// TestHandleTailscaleSaveLoginServer_InvalidURL: bad URL
+// → err= flash, nothing written. Pins the validation
+// contract (scheme must be http/https, host non-empty).
+func TestHandleTailscaleSaveLoginServer_InvalidURL(t *testing.T) {
+	s := newTestService(t)
+	csrfCookie, csrf := issueTailscaleCSRF(t)
+
+	for _, badURL := range []string{
+		"not-a-url",
+		"ftp://head.example.com",
+		"https://",
+		"http://",
+	} {
+		req := httptest.NewRequest("POST", "/admin/tailscale",
+			strings.NewReader("csrf="+csrf+"&action=save_login_server&login_server="+url.QueryEscape(badURL)))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(csrfCookie)
+		req.Header.Set("X-Test-User", "admin")
+		req.Header.Set("X-Test-IsAdmin", "1")
+		w := httptest.NewRecorder()
+		s.PostAdminTailscale(w, req)
+		if w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Location"), "err=") {
+			t.Errorf("bad URL %q: status=%d loc=%q, want 303 with err=",
+				badURL, w.Code, w.Header().Get("Location"))
+		}
+	}
+}
+
+// TestHandleTailscaleSaveLoginServer_Empty: empty value
+// clears the override → env-var fallback kicks back in.
+// This is the "I changed my mind, use the env var again"
+// path.
+func TestHandleTailscaleSaveLoginServer_Empty(t *testing.T) {
+	s := newTestService(t)
+	s.TailscaleLoginServer = "https://head.from.env.example.com"
+	// Pre-seed the DB with a value.
+	seedTailscaleLoginServerDB(t, s, "https://head.from.db.example.com")
+
+	csrfCookie, csrf := issueTailscaleCSRF(t)
+	req := httptest.NewRequest("POST", "/admin/tailscale",
+		strings.NewReader("csrf="+csrf+"&action=save_login_server&login_server="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-Test-User", "admin")
+	req.Header.Set("X-Test-IsAdmin", "1")
+	w := httptest.NewRecorder()
+	s.PostAdminTailscale(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	// DB row cleared → env value should now win.
+	if got := s.tailscaleLoginServer(); got != "https://head.from.env.example.com" {
+		t.Errorf("after clear: got %q, want env-var fallback %q",
+			got, "https://head.from.env.example.com")
+	}
+	if src := s.tailscaleLoginServerSource(); src != "env" {
+		t.Errorf("source: got %q, want env", src)
+	}
+}
+
+// seedTailscaleLoginServerDB inserts a known row into
+// global_settings (using whichever placeholder syntax the
+// test backend supports) so resolution-order tests have a
+// predictable starting state.
+func seedTailscaleLoginServerDB(t *testing.T, s *Service, value string) {
+	t.Helper()
+	// Use the same SetGlobalSetting helper the production
+	// code uses — it dispatches the placeholder syntax
+	// per-backend (SQLite "?" vs PG "$1,$2"). Avoids
+	// forking the test on backend-specific SQL.
+	if err := s.SetGlobalSettingForTest("tailscale.login_server", value); err != nil {
+		t.Fatalf("seed global_settings: %v", err)
+	}
 }
 
 // ensure unused imports
