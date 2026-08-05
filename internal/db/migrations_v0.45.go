@@ -91,7 +91,7 @@ func GetUserExitNodePref(d *sql.DB, userID int64) (ExitNodePref, error) {
 		SELECT p.user_id, pu.username, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM user_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
-		 WHERE p.user_id = ?`, userID,
+		 WHERE p.user_id = `+placeholdersList(1), userID,
 	).Scan(&p.UserID, &p.Username, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled)
 	if err == sql.ErrNoRows {
 		return p, nil
@@ -129,7 +129,7 @@ func SetUserExitNodePref(d *sql.DB, userID int64, exitNodeTag string, setByUserI
 	}
 	_, err := d.Exec(`
 		INSERT INTO user_exit_node_prefs (user_id, exit_node_tag, set_by_user_id, updated_at, via_enabled)
-		VALUES (?, ?, ?, strftime('%s','now'), ?)
+		VALUES (`+placeholdersList(4)+`, `+nowUnixSQL()+`, `+placeholdersList(1)+`)
 		ON CONFLICT(user_id) DO UPDATE SET
 			exit_node_tag = excluded.exit_node_tag,
 			set_by_user_id = excluded.set_by_user_id,

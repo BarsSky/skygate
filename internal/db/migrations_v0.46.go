@@ -85,7 +85,7 @@ func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (Devi
 		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
-		 WHERE p.user_id = ? AND p.device_hostname = ?`,
+		 WHERE p.user_id = `+placeholdersList(1)+` AND p.device_hostname = `+placeholdersList(1),
 		userID, deviceHostname,
 	).Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled)
 	if err == sql.ErrNoRows {
@@ -116,7 +116,7 @@ func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (Devi
 // stored and shown in the UI; it's just not enforced.
 func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag string, setByUserID int64, viaEnabled bool) error {
 	if exitNodeTag == "" {
-		_, err := d.Exec(`DELETE FROM device_exit_node_prefs WHERE user_id = ? AND device_hostname = ?`,
+		_, err := d.Exec(`DELETE FROM device_exit_node_prefs WHERE user_id = `+placeholdersList(1)+` AND device_hostname = `+placeholdersList(1),
 			userID, deviceHostname)
 		return err
 	}
@@ -126,7 +126,7 @@ func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag 
 	}
 	_, err := d.Exec(`
 		INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, updated_at, via_enabled)
-		VALUES (?, ?, ?, ?, strftime('%s','now'), ?)
+		VALUES (`+placeholdersList(4)+`, `+nowUnixSQL()+`, `+placeholdersList(1)+`)
 		ON CONFLICT(user_id, device_hostname) DO UPDATE SET
 			exit_node_tag = excluded.exit_node_tag,
 			set_by_user_id = excluded.set_by_user_id,
@@ -183,7 +183,7 @@ func ListDeviceExitNodePrefsForUser(d *sql.DB, userID int64) ([]DeviceExitNodePr
 		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
-		 WHERE p.user_id = ?
+		 WHERE p.user_id = `+placeholdersList(1)+`
 		 ORDER BY p.device_hostname`, userID)
 	if err != nil {
 		return nil, err
