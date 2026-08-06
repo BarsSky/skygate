@@ -110,14 +110,41 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.33.1.8 — Telegram egress relay admin-UI selector.
-  Single commit on top of v0.33.1.7 (which itself shipped 4
-  user-reported bugfixes: skyworker/skygate-vm attribution,
-  /admin/devices table overflow, backup path env, /admin/update
-  ZgotmplZ). v0.33.1.8 closes the "I don't want to SSH to a relay
-  to fix Telegram" request from 2026-08-05. All tests green
+* **Current**: v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER from .env
+  + restart-skgate button (the "Tailscale never picks up the
+  new URL" fix). 3 commits since v0.33.1.15. All tests green
   (`go test ./... -count=1 -short` 27/27 PASS); `make verify-pre`
-  51/51 PASS (B1-B53, B8 smoke is VM-only). What's added:
+  65/65 PASS (B1-B65, B8 smoke is VM-only). What's added:
+  - **`docker-compose.yml` env-source fix** (commit 9ffb288):
+    the hardcoded `- SKYGATE_TS_LOGIN_SERVER=https://head.example.com`
+    in the `environment:` section was OVERRIDING the .env value
+    (docker-compose precedence: environment > env_file), so the
+    operator's edit on /admin/tailscale (DB-persisted) was
+    never picked up by the entrypoint. Now removed — the .env
+    value wins. `SKYGATE_TS_HOSTNAME` stays hardcoded (one
+    skygate host = one tailnet identity).
+  - **`/admin/tailscale` "Restart skygate" card** (v0.33.1.16,
+    commit 149cee8): single-click restart of the entire
+    skygate process (not just tailscaled). Required after
+    editing `SKYGATE_TS_LOGIN_SERVER` (the entrypoint reads
+    the env var at container start, not at runtime). In
+    container mode: `docker compose restart skygate`. In
+    native (systemd) mode: `systemctl restart skygate`. The
+    restart subprocess is `setsid`'d so it survives the
+    SIGTERM that hits the parent. The handler also writes
+    the current effective URL back to .env atomically
+    (`.env.tmp` + rename), so the next entrypoint invocation
+    picks up the new value. 5 new i18n keys (RU+EN) for
+    the button + confirm dialog.
+  - Files: `docker-compose.yml`; `internal/feature/admin/tailscale.go`
+    (handleTailscaleRestart + updateEnvFileSKYGATE_TS_LOGIN_SERVER
+    + isRunningInContainer); `internal/feature/admin/setsid_linux.go`
+    + `setsid_other.go` (build-tag pair for applySysProcAttr);
+    `internal/handlers/templates/admin/tailscale.html` (new
+    card); `internal/i18n/catalog_tailscale.go` (5 keys);
+    `internal/feature/admin/admin_tailscale_test.go` (5 new
+    tests covering replace / append / clear / restart dispatch
+    / CSRF guard); `scripts/verify_pre_deploy.sh` (B65 added).
   - **`/admin/telegram` "Egress relay" card** (v0.33.1.8): the
     operator can now pick which enabled exit-node runs the
     canonical Telegram-CIDR list **from the web UI** — no
