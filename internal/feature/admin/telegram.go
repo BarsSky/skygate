@@ -563,7 +563,7 @@ func findEnabledExitServer(d *sql.DB, nodeID string) (*db.ExitServer, error) {
 
 // TelegramCIDRs is the canonical Telegram IP list mirrored
 // from deploy/tailscale-relay/update-routes.sh. The same
-// constant lives in docs/telegram-relay.md; the helper
+// constant lives in docs/internal/internal/telegram-relay.md; the helper
 // SetAdvertisedRoutes dedupes + prepends 0.0.0.0/0+::/0 so
 // the relay keeps its exit-node capability.
 //

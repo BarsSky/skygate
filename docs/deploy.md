@@ -56,7 +56,7 @@ canonical template is `.env.example`. Required variables are marked
 | `HEADSCALE_API_KEY` | — **[required]** | API key Skygate uses. Generate with `docker exec headscale headscale apikeys create --expiration 365d` |
 | `HEADSCALE_CONTAINER` | `headscale` | Container name for `docker exec` tag/CLI fallback |
 | `HEADSCALE_SERVER_URL` | `https://head.example.com` | Public headscale URL (advertised to clients) |
-| `HEADSCALE_BASE_DOMAIN` | `tsnet.example.com` | MagicDNS workstation-8 domain |
+| `HEADSCALE_BASE_DOMAIN` | `tsnet.example.com` | MagicDNS base domain (e.g. `<host>.tsnet.example.com` for a device named `host`) |
 | `HEADSCALE_AUTO_APPROVE_ROUTES` | `0.0.0.0/0,::/0` | Comma-separated CIDRs auto-approved on the headscale side |
 | `HEADSCALE_DERP_URLS` | `https://controlplane.tailscale.com/derpmap/default` | Comma-separated DERP map URLs |
 | `HEADSCALE_LOG_LEVEL` | `info` | |
@@ -79,8 +79,8 @@ Each exit-node has a separate env var:
 
 ```
 SKYGATE_EXIT_SSH=user1@exit1.example.com
-SKYGATE_EXIT_SSH_EMILIA=root@relay-1.example.com
-SKYGATE_EXIT_SSH_SHARLOTTA=root@relay-2.example.com
+SKYGATE_EXIT_SSH_EXIT_NODE_A=root@relay-1.example.com
+SKYGATE_EXIT_SSH_EXIT_NODE_B=root@relay-2.example.com
 ```
 
 The variable name pattern is `SKYGATE_EXIT_SSH_<UPPERNAME>`. The

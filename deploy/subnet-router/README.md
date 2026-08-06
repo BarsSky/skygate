@@ -101,7 +101,7 @@ your LAN that **don't** run Tailscale (NAS, printer, IoT).
   ```
 
 The full troubleshooting guide is in the upstream
-`docs/subnet-router.md` of the skygate repo.
+`docs/internal/internal/subnet-router.md` of the skygate repo.
 
 ## Security notes
 

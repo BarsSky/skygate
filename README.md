@@ -275,7 +275,7 @@ Skygate is HTTP only. Always put it behind a TLS terminator.
 
 Cookies are HttpOnly + SameSite=Lax — works behind any standard
 reverse proxy. Make sure the proxy does NOT strip the `Set-Cookie`
-header. See [docs/https-setup.md](docs/https-setup.md) for a Caddy
+header. See [docs/internal/internal/https-setup.md](docs/internal/internal/https-setup.md) for a Caddy
 + Let's Encrypt walkthrough.
 
 ## Security

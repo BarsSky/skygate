@@ -551,7 +551,7 @@ for migration bookkeeping).
    - `docs/BACKLOG.md` updated — 6 completed entries added
      (v0.32.13, v0.32.14, v0.32.15, v0.32.16, v0.32.17,
      v0.32.18). Last-updated stamp → 2026-08-03.
-   - `docs/subnet-router.md` — new "Removing a subnet-router
+   - `docs/internal/internal/subnet-router.md` — new "Removing a subnet-router
      (admin-only, v0.32.18+)" section with the full inverse
      flow of the v0.16.7 Provision, idempotency notes, what
      NOT to use Remove for, and verify-after-Remove SQL.
@@ -575,14 +575,14 @@ for migration bookkeeping).
 
 4. **HA active-router design proposal (the operator's
    2026-08-03 ask)**
-   - New `docs/ha-active-router.md` — 3 architectures
+   - New `docs/internal/internal/ha-active-router.md` — 3 architectures
      (A: PG active-passive / B: single-writer role / C:
      multi-writer eventual consistency) with pros/cons
      comparison, RTO/RPO, complexity, and a clear
      recommendation: **Architecture B** for the current
      deployment (1-2 day implementation, no PG required,
      RTO 5-15 min via manual role flip + DNS swap).
-   - `docs/ha-architecture.md` — added "Tier 0.5" entry to
+   - `docs/internal/internal/ha-architecture.md` — added "Tier 0.5" entry to
      the tier table, with the rationale for choosing it over
      Tier 1 today and the upgrade path to Tier 1 once the
      PG cutover ships.
@@ -599,10 +599,10 @@ for migration bookkeeping).
 AGENTS.md                                          | +80
 README.md                                          | +40
 docs/BACKLOG.md                                    | +48
-docs/ha-architecture.md                            | +32
-docs/ha-active-router.md                           | NEW (15.6 KB)
+docs/internal/internal/ha-architecture.md                            | +32
+docs/internal/internal/ha-active-router.md                           | NEW (15.6 KB)
 docs/plans/pg-migration-handling.md                | +124/-32
-docs/subnet-router.md                              | +77
+docs/internal/internal/subnet-router.md                              | +77
 docs/v0.33.0-pg-cutover-runbook.md                 | NEW (10.9 KB)
 internal/db/db.go                                  | +13
 internal/db/migration_tracking.go                  | NEW (8.3 KB)
@@ -631,7 +631,7 @@ scripts/verify_pre_deploy.sh                       | +27
   soft-mode observation.
 - **HA Architecture B implementation**: blocked on operator
   feedback to the 4 open questions in
-  `docs/ha-active-router.md` § "Open questions for the
+  `docs/internal/internal/ha-active-router.md` § "Open questions for the
   operator".
 - **Live VM still on v0.32.15 build label**: v0.32.16/17/18/19
   are committed + pushed but not redeployed. Manual
@@ -743,7 +743,7 @@ scripts/verify_pre_deploy.sh                       | +27
   This already works in v0.32.18; just flagging that the
   Remove flow doesn't re-apply on the new device (it
   doesn't need to — that's a Provision-time concern).
-- **Documentation update**: `docs/subnet-router.md` should
+- **Documentation update**: `docs/internal/internal/subnet-router.md` should
   mention the Remove button (currently only documents
   Provision). Deferred to doc-cleanup pass.
 
@@ -1114,7 +1114,7 @@ What changed:
    documented default with a copy-pasteable opt-in
    procedure (DNS-01 vs HTTP-01, real hostnames, token
    file paths).
-4. **`docs/https-setup.md`** — new top-level section
+4. **`docs/internal/internal/https-setup.md`** — new top-level section
    "Caddy is off by default" with the full rationale,
    the operator-side `docker ps` / `ss -tlnp` check, and
    the opt-in / opt-out procedure. The architecture
@@ -1182,7 +1182,7 @@ Files in v0.32.11:
 * `.env.example` — `CADDY_ENABLED=true` → `false`; new
   comment block listing both modes with copy-pasteable
   steps.
-* `docs/https-setup.md` — new TL;DR section at the top
+* `docs/internal/internal/https-setup.md` — new TL;DR section at the top
   + a full "Caddy is off by default — the why and the
   opt-in" section (~150 lines) + the architecture
   diagram rewritten to make the TLS terminator a
@@ -1988,17 +1988,17 @@ for the abandoned/blocked work that the operator wants done later.
   - **Priority 5**: v0.19.1 dns.extra_records, v0.23.1 Phase 2,
     testutil stubs, unmerged branches
 
-- **`docs/v0.27.0-postgres-ha.md`** (moved from dead
+- **`docs/internal/internal/v0.27.0-postgres-ha.md`** (moved from dead
   `feat/postgres-migration` branch). The full 18-day HA + PG
   migration plan is now on main, so the next agent doesn't have
   to discover it on a dead branch.
 
-- **`docs/ha-architecture.md`** (NEW, 7.1 KB): executive
+- **`docs/internal/internal/ha-architecture.md`** (NEW, 7.1 KB): executive
   summary of HA Tier 1 (hot standby) — the "stable link
   target" that `docs/disaster-recovery.md` references but
   didn't have. Tier 0 (current single-VM) and Tier 1 (target
   hot standby) are compared side-by-side; the full design is
-  in v0.27.0-postgres-ha.md.
+  in internal/v0.27.0-postgres-ha.md.
 
 - **`AGENTS.md`**: added a one-line pointer to `docs/BACKLOG.md`
   at the top so the next AI assistant reads it first.

@@ -281,7 +281,7 @@ Skygate — только HTTP. Всегда ставьте его за TLS-те�
 
 Куки HttpOnly + SameSite=Lax — работают за любым стандартным
 reverse-proxy. Убедитесь, что прокси не срезает `Set-Cookie`.
-См. [docs/https-setup.md](docs/https-setup.md) для Caddy +
+См. [docs/internal/internal/https-setup.md](docs/internal/internal/https-setup.md) для Caddy +
 Let's Encrypt walkthrough.
 
 ## Безопасность

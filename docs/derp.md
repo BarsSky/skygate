@@ -147,5 +147,5 @@ Until that ships, edit `.env` and re-run `./deploy/deploy.sh`.
   for the operator UI sidecar.
 - `docs/skygate-as-shell.md` — the wider roadmap for moving
   deploy-time config into a web UI.
-- `docs/telegram-relay.md` — the use case: Tailscale clients
+- `docs/internal/internal/telegram-relay.md` — the use case: Tailscale clients
   reaching `api.telegram.org` through a custom DERP.

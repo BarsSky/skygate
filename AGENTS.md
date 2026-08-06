@@ -215,7 +215,7 @@ explaining why.
     (4 new tests: clear/idempotent + set/unknown-node +
     set/disabled-row + loadUIState/Egress);
     `scripts/verify_pre_deploy.sh` (B53);
-    `docs/telegram-relay.md` (new "Admin UI egress selector"
+    `docs/internal/internal/telegram-relay.md` (new "Admin UI egress selector"
     section + 3 new troubleshooting rows).
 
 * **Previous**: v0.33.1.7 — 4 user-reported bugfixes. Same catalog
@@ -470,7 +470,7 @@ explaining why.
      recent audit, exits 0/1/2 with [OK]/[WARN]/[FAIL]).
      Companion `scripts/_check_subnet_nodes.py` is the
      Python helper that `check_subnet_router.sh` shells
-     out to. Plus docs/subnet-router.md rewritten with
+     out to. Plus docs/internal/internal/subnet-router.md rewritten with
      6 concrete use cases (home NAS, smart home, SOHO
      server room, family sharing, lab/dev, cross-site
      backup) and the e2e verification output.
@@ -479,7 +479,7 @@ explaining why.
   headscale/healthz.go, scripts/check_subnet_router.sh,
   scripts/_check_subnet_nodes.py), 10 files modified
   (backfill, tags, sidecar, handlers.go, main.go,
-  bundle scripts, Makefile, docs/subnet-router.md),
+  bundle scripts, Makefile, docs/internal/internal/subnet-router.md),
   1 test renamed/updated. 17/17 packages green.
   check-bundles / check-nodes / check-https green.
   Smoke 79+79 pass, 4 fail in step 13 (multi-user
@@ -598,7 +598,7 @@ explaining why.
   `make check-bundles` targets keep the embed copies
   of setup.sh / README.md in
   `internal/handlers/bundles/` in sync with the
-  canonical `deploy/subnet-router/`. `docs/subnet-router.md`
+  canonical `deploy/subnet-router/`. `docs/internal/internal/subnet-router.md`
   got three new top-level sections: TL;DR (concrete
   examples of what works after setup), Quick start
   (3-command path for users who already have
@@ -639,7 +639,7 @@ explaining why.
   `deploy/subnet-router/setup.sh` (runs on the user's
   RPi/NAS/mini-PC, takes a preauth from the admin,
   executes `tailscale up` with the correct flags + prints
-  next-steps), `docs/subnet-router.md` (full user guide:
+  next-steps), `docs/internal/internal/subnet-router.md` (full user guide:
   5-step setup, troubleshooting, security notes), and
   `deploy/subnet-router/allocate-existing-users.sh` (one-off
   for backfilling users that were created before the
@@ -1672,7 +1672,7 @@ explaining why.
   inside a single 30-line Caddyfile. No nginx Proxy
   Manager, no PHP, no DB. DERP relay already did TLS
   itself (certmode=letsencrypt).
-  * `docs/https-setup.md` — 17KB operator guide with
+  * `docs/internal/internal/https-setup.md` — 17KB operator guide with
     per-module checklist, full rendered Caddyfile,
     verification commands, alternatives for tailnet-only
     / headscale-only / Tailscale TLS deployments.
@@ -2217,7 +2217,7 @@ as a `pending` status pill with a `Issue preauth key`
 button) but the LAN behind the subnet-router isn't reachable
 from the tailnet.
 
-**End-to-end flow** (the user reads `docs/subnet-router.md`,
+**End-to-end flow** (the user reads `docs/internal/internal/subnet-router.md`,
 the admin reads this section):
 
 1. **User has a subnet row** in `user_subnets` with status
@@ -2275,7 +2275,7 @@ the admin reads this section):
    `ping skygate-subnet-<username>` works via MagicDNS;
    `ping 10.0.<uid>.1` works to the gateway IP on the
    user's LAN (assuming the subnet-router has IP forwarding
-   enabled — see `docs/subnet-router.md` § Optional).
+   enabled — see `docs/internal/internal/subnet-router.md` § Optional).
 
 **Verification** (on the skygate host):
 
@@ -2384,7 +2384,7 @@ own the helpers that were previously private methods on
 - `scripts/smoke.sh` (bilingual 83+83=166 HTTP-level checks, B8)
 - `scripts/check_exit_nodes.py`, `scripts/check_https.py`, `scripts/audit_routes.py`
 - `Makefile` — `build / run / test / smoke / verify-pre / verify-post / audit` targets
-- `docs/plans/` — refactor-v0.30.md, pg-migration-handling.md, self-update-v0.29.md, refactor-v0.6.0.md (history)
+- `docs/plans/` — refactor-v0.30.md, pg-migration-handling.md, self-update-v0.29.md, internal/plans/refactor-v0.6.0.md (history)
 - `AGENTS.md` — this file
 
 **When adding a new feature** (post-refactor): drop a new directory
@@ -2650,7 +2650,7 @@ relay still says "tailnet policy does not permit you to SSH".
 * `static/css/themes.css` — probe-state CSS
 * `deploy/tailscale-relay/setup.sh` — one-time relay setup
 * `deploy/tailscale-relay/update-routes.sh` — IP refresh
-* `docs/telegram-relay.md` — full procedure + troubleshooting
+* `docs/internal/internal/telegram-relay.md` — full procedure + troubleshooting
 * `docs/headplane.md` — Headplane (optional sidecar UI) integration
   contract, version pin policy, compatibility matrix, optional/required
   status, upgrade procedure, **existing-Headplane mode

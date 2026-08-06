@@ -8,7 +8,7 @@ the headscale DB.
 **Scope:** covers RTO ≤ 30 min, RPO ≤ 1 hour on the
 single-VM deployment. Tier 1 (hot standby with PostgreSQL
 streaming replication) is **NOT** covered here — that's a
-separate architecture (see `docs/ha-architecture.md` in
+separate architecture (see `docs/internal/internal/ha-architecture.md` in
 v0.26.0). This runbook is the "low-budget" recovery that
 4 users can rely on.
 
@@ -335,7 +335,7 @@ recovery, at 2am, with users waiting. Don't skip.
   Includes WAL checkpoint, noise_private.key backup,
   .env backup (gpg if configured), and an age-based
   "is backup stale?" check.
-- `docs/ha-architecture.md` (v0.26.0) — the Tier 1 hot
+- `docs/internal/internal/ha-architecture.md` (v0.26.0) — the Tier 1 hot
   standby design.
 - `Makefile` — the `test` target runs `smoke +
   check-nodes + check-https` which is the smoke test

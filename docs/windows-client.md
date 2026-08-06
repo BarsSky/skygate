@@ -181,7 +181,7 @@ route print -4
 ## What this page is NOT
 
 - **Not a script for a relay / exit node.** Exit nodes (relay-1/2/3) use a *different* command — they `--advertise-exit-node` and `--advertise-routes=...`. See `deploy/tailscale-relay/setup.sh` in the repo.
-- **Not a subnet-router setup.** A subnet-router advertises LAN routes from a Tailscale node on the LAN. See `docs/subnet-router.md`.
+- **Not a subnet-router setup.** A subnet-router advertises LAN routes from a Tailscale node on the LAN. See `docs/internal/internal/subnet-router.md`.
 - **Not a Linux setup.** The same flags work on Linux/macOS; the only difference is the install method (`apt install tailscale` vs MSI).
 
 ## Related pages
@@ -191,5 +191,5 @@ route print -4
 - `/my/exit-rules/help` — full API reference (`POST /my/exit-rules/api` for bulk add).
 - `/admin/exit-nodes` — the three relays, online status, advertised routes.
 - `/admin/exit-rules/sync` — the button that pushes the route set to the relays (admin-only).
-- `docs/subnet-router.md` — the sidecar / per-user LAN bridge.
+- `docs/internal/internal/subnet-router.md` — the sidecar / per-user LAN bridge.
 - `docs/tailscale-relay.md` (in `deploy/tailscale-relay/`) — how the relays are set up.

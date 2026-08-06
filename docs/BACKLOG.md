@@ -49,7 +49,7 @@ no separate sidebar item needed.)
 **Status**: Phase 1 done (v0.31.0 foundation on main), Phases
 2-5 blocked on operator providing a PG-staging VM for live
 testing. The full plan is at
-[`docs/v0.27.0-postgres-ha.md`](v0.27.0-postgres-ha.md) (moved
+[`docs/internal/internal/v0.27.0-postgres-ha.md`](internal/v0.27.0-postgres-ha.md) (moved
 from the dead `feat/postgres-migration` branch in this commit).
 
 **What's done (Phase 1.1-1.3)**:
@@ -87,10 +87,10 @@ then this is blocked.
 ## Priority 3 — HA "skygate-host-2" / Tier 1 hot standby (BLOCKED on 2nd VM + etcd quorum + S3)
 
 **Status**: design-only. Plan exists at
-[`docs/v0.27.0-postgres-ha.md`](v0.27.0-postgres-ha.md) and
-[`docs/ha-architecture.md`](ha-architecture.md) (the second is
+[`docs/internal/internal/v0.27.0-postgres-ha.md`](internal/v0.27.0-postgres-ha.md) and
+[`docs/internal/internal/ha-architecture.md`](internal/ha-architecture.md) (the second is
 a stub created in this commit — the DR doc references it but
-the full design is in v0.27.0-postgres-ha.md).
+the full design is in internal/v0.27.0-postgres-ha.md).
 
 **What "HA Tier 1" means**:
 - RTO < 1 min (Patroni auto-failover)
@@ -149,7 +149,7 @@ improvements remain.
   This catches silent corruption before DR is needed.
   ~1 day of work.
 - **DR doc update**: `docs/disaster-recovery.md` references
-  `docs/ha-architecture.md` — that file now exists (as a
+  `docs/internal/internal/ha-architecture.md` — that file now exists (as a
   stub in this commit) but the link target's content is
   minimal. May want to inline the relevant context into the
   DR doc itself or flesh out the stub.

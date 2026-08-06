@@ -4,11 +4,11 @@
 **Target version**: v0.33.0 (PG cutover) + v0.34.0 (HA active)
 **Last updated**: 2026-08-03
 **See also**:
-[`docs/ha-active-router.md`](../../docs/ha-active-router.md) (the
+[`docs/internal/internal/ha-active-router.md`](../../docs/internal/internal/ha-active-router.md) (the
 design proposal that picks Architecture A);
 [`docs/v0.33.0-pg-cutover-runbook.md`](../../docs/v0.33.0-pg-cutover-runbook.md)
 (the cutover sequence);
-[`docs/v0.27.0-postgres-ha.md`](../../docs/v0.27.0-postgres-ha.md) (the
+[`docs/internal/internal/v0.27.0-postgres-ha.md`](../../docs/internal/internal/v0.27.0-postgres-ha.md) (the
 detailed PG HA plan, 18 days).
 
 ---
