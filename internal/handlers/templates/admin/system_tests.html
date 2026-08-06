@@ -17,6 +17,50 @@
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}
+{{if .FlashDNSAutoToggled}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> DNS-autoupdater {{.FlashDNSAutoToggled}}. Takes effect on the next autoupdate tick (≤ {{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}).</div>
+{{end}}
+
+{{/* 2026-08-06 v0.33.1.18 — DNS-autoupdater toggle. The v0.32.13
+     gate was wired to SKYGATE_AUTO_UPDATE_ENABLED (a flag meant
+     for the skygate self-update banner on /admin/update), which
+     meant an operator who turned off self-update in .env was
+     silently also turning off domain→/32 DNS refresh. After
+     v0.33.1.18 the two flags are separate. The state here is
+     DB-backed (global_settings.dns_autoupdate_enabled) and
+     overrides the env var on the next autoupdate tick. */}}
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div style="flex:1;min-width:280px">
+      <h3 style="margin:0"><i class="fa-solid fa-arrows-rotate"></i> {{t "title.dns_autoupdater"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        Background goroutine that re-resolves every enabled <code>target_type=domain</code> exit-rule
+        to its current <code>/32</code> IPs every <code>{{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}</code>.
+        <strong>{{t "dns_autoupdater.required"}}</strong>
+      </p>
+      <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:12px">
+        State:
+        {{if .DNSAutoUpdateEnabled}}
+          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> ENABLED</span>
+          &nbsp;(DB row in global_settings overrides env on next tick)
+        {{else}}
+          <span class="tag tag-warn"><i class="fa-solid fa-circle-pause"></i> DISABLED</span>
+          &nbsp;({{t "dns_autoupdater.rot_warning"}})
+        {{end}}
+      </p>
+    </div>
+    <form method="post" action="/admin/system_tests/dns-autoupdate-toggle" style="display:inline">
+      <input type="hidden" name="enabled" value="{{if .DNSAutoUpdateEnabled}}0{{else}}1{{end}}">
+      <button type="submit" class="btn {{if .DNSAutoUpdateEnabled}}btn-warn{{else}}btn-primary{{end}}">
+        {{if .DNSAutoUpdateEnabled}}
+          <i class="fa-solid fa-circle-pause"></i> Disable DNS autoupdater
+        {{else}}
+          <i class="fa-solid fa-circle-play"></i> Enable DNS autoupdater
+        {{end}}
+      </button>
+    </form>
+  </div>
+</div>
 
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">

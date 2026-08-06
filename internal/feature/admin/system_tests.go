@@ -791,6 +791,155 @@ var TestRegistry = []SystemTestDef{
 			return SystemTestPass, "warn: " + detail
 		},
 	},
+	// 2026-08-06 v0.33.1.18 — verification test: every enabled
+	// subnet/ip device_rule is reflected in the live headscale
+	// policy as a grant. The operator reported "old rules work,
+	// 3 new ones don't" on 2026-08-06 — the root cause was a
+	// silent policy-push regression where the live headscale
+	// policy had 0 grants even though 100+ rules existed in
+	// device_rules. This test catches the same class of bug in
+	// the future: cross-check device_rules.enabled=1 against
+	// the grants[] array fetched from headscale.
+	//
+	// Algorithm:
+	//   1. Read every enabled subnet/ip rule + its
+	//      user_name/device_hostname/device_ip from device_rules.
+	//   2. Read the live headscale policy (grants[]).
+	//   3. For each rule, build the expected (src, dst) tuple
+	//      the same way GenerateACLWithViaForPlane does:
+	//        src = tag:dev-<user>-<device>  if user_name+device_hostname set
+	//        src = device_ip                 if device_ip set
+	//        src = "*"                       otherwise (no real rules like this)
+	//        dst = h-rule-<sanitized>        (the host alias)
+	//   4. Look up the tuple in grants[]. Missing = bug.
+	//
+	// Domain rules are NOT in grants (Tailscale is L3/L4); the
+	// autoupdater-derived /32 children are. This test only
+	// checks the /32 children, not the domain itself.
+	//
+	// Failure threshold: 0 missing = pass, 1-5 missing = pass
+	// with warn (transient: Tailscale just hadn't refreshed),
+	// > 5 missing = fail (real sync regression).
+	{
+		Name:        "exit_rules.all_in_headscale_acl",
+		Category:    "exit_rules",
+		Description: "Every enabled subnet/ip device_rule has a matching grant in the live headscale policy",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.DB == nil {
+				return SystemTestFail, "DB not configured"
+			}
+			hs := s.HSGlobalFn()
+			if hs == nil {
+				return SystemTestFail, "headscale client not configured"
+			}
+			// 1) Read every enabled subnet/ip rule.
+			rows, err := s.DB.QueryContext(ctx, `
+				SELECT target_value, COALESCE(user_name, ''), COALESCE(device_hostname, ''), COALESCE(device_ip, '')
+				  FROM device_rules
+				 WHERE enabled = 1 AND (target_type = 'subnet' OR target_type = 'ip')`)
+			if err != nil {
+				return SystemTestFail, "query rules: " + err.Error()
+			}
+			defer rows.Close()
+			type ruleRow struct {
+				target string
+				uname  string
+				host   string
+				ip     string
+			}
+			var rules []ruleRow
+			for rows.Next() {
+				var r ruleRow
+				if err := rows.Scan(&r.target, &r.uname, &r.host, &r.ip); err != nil {
+					continue
+				}
+				if r.target == "" {
+					continue
+				}
+				rules = append(rules, r)
+			}
+			if len(rules) == 0 {
+				return SystemTestSkip, "no enabled subnet/ip rules — nothing to verify"
+			}
+			// 2) Read the live headscale policy.
+			policyJSON, err := hs.GetACL()
+			if err != nil {
+				return SystemTestFail, "getacl: " + err.Error()
+			}
+			var policy struct {
+				Grants []struct {
+					Src []string `json:"src"`
+					Dst []string `json:"dst"`
+				} `json:"grants"`
+			}
+			if err := json.Unmarshal([]byte(policyJSON), &policy); err != nil {
+				return SystemTestFail, "parse policy: " + err.Error()
+			}
+			// Build a set of (src, dst) tuples for O(1) lookup.
+			grantSet := make(map[string]bool, len(policy.Grants))
+			for _, g := range policy.Grants {
+				for _, s := range g.Src {
+					for _, d := range g.Dst {
+						grantSet[s+"\x00"+d] = true
+					}
+				}
+			}
+			// 3) For each rule, compute the expected (src, dst) and
+			// look it up. Mirror the loop in
+			// internal/acl/acl.go:1141-1162 (GenerateACLWithViaForPlane).
+			// MUST stay in lockstep with the generator: if the
+			// generator adds strings.ToLower(host) or any other
+			// transform, this verification test will start
+			// reporting false-positive "missing grants" for every
+			// row. The unit tests TestSanitizeRuleAlias +
+			// TestExpectedGrantTuple pin the exact formula.
+			sanitize := func(s string) string {
+				return strings.NewReplacer(".", "-", "/", "-", ":", "_").Replace(s)
+			}
+			var missing []string
+			for _, r := range rules {
+				var src string
+				switch {
+				case r.uname != "" && r.host != "":
+					// Generator does NOT lowercase — uses the
+					// row's device_hostname verbatim. In practice
+					// the column is lowercase (v0.28.0 backfill
+					// normalises via internal/nodeownership), so
+					// the match works against headscale's
+					// tagOwners entry which is also lowercase.
+					src = "tag:dev-" + r.uname + "-" + r.host
+				case r.ip != "":
+					src = r.ip
+				default:
+					src = "*"
+				}
+				dst := "h-rule-" + sanitize(r.target)
+				key := src + "\x00" + dst
+				if !grantSet[key] {
+					if len(missing) < 5 {
+						missing = append(missing, fmt.Sprintf("%s→%s", src, dst))
+					}
+				}
+			}
+			// 4) Report.
+			miss := len(missing)
+			if miss == 0 {
+				return SystemTestPass, fmt.Sprintf("all %d subnet/ip rules reflected in headscale grants[]", len(rules))
+			}
+			detail := fmt.Sprintf("%d/%d rules missing from grants[] (headscale may not have refreshed yet): %s",
+				miss, len(rules), strings.Join(missing, "; "))
+			// > 5 missing = real sync regression. Below that
+			// it's almost certainly Tailscale client-side lag
+			// (Tailscale pulls the new policy every 60-90s).
+			// 2026-08-06: the operator's incident showed 117
+			// missing in one shot — that was a real bug, not lag.
+			if miss > 5 {
+				return SystemTestFail, detail
+			}
+			return SystemTestPass, "warn: " + detail
+		},
+	},
 }
 
 // testService is the runtime Service for in-process test

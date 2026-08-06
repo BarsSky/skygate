@@ -248,13 +248,46 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 	log.Printf("autoupdater: starting (interval=%s)", interval)
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	// 2026-08-06 v0.33.1.18 — read the DB-backed toggle on every
+	// tick so the /admin/system_tests UI takes effect without a
+	// skygate restart. The env var SKYGATE_DNS_AUTOUPDATE_ENABLED
+	// is the default only when the global_settings row doesn't
+	// exist (e.g. fresh start). After the first UI toggle the
+	// DB value wins.
+	checkEnabled := func() bool {
+		// 2026-08-06 v0.33.1.18 — read the DB-backed toggle.
+		// GetGlobalSetting returns the third arg as the default
+		// when the row doesn't exist (first start). We pass ""
+		// so missing row → "". Then we map the string to a bool
+		// (only "1"/"true" count as enabled). Any other value
+		// (including "" after a fresh DB write, or "0"/"false"
+		// after the operator disabled it) means the autoupdater
+		// is off. The empty-row case here means "operator never
+		// touched the UI, defer to the start-up gate in main.go"
+		// — and since we ARE running, the start-up gate decided
+		// we should be running, so default-true is the right
+		// fallback.
+		row, err := db.GetGlobalSetting(a.DB, "dns_autoupdate_enabled", "")
+		if err != nil {
+			log.Printf("autoupdater: read global_settings: %v (assuming enabled)", err)
+			return true
+		}
+		if row == "" {
+			return true // no UI override yet — start-up gate decided
+		}
+		return row == "1" || row == "true"
+	}
 	// Run once immediately, then on tick.
-	added, removed, err := a.exitRulesSvc.DomainAutoUpdater()
-	if err != nil {
-		log.Printf("autoupdater: initial: %v", err)
-	} else if added > 0 || removed > 0 {
-		log.Printf("autoupdater: initial: added=%d removed=%d", added, removed)
-		a.exitRulesSvc.StaggeredSync() // 2026-07-07: issue #12 — staggered
+	if !checkEnabled() {
+		log.Printf("autoupdater: dns_autoupdate_enabled=false, skipping initial run")
+	} else {
+		added, removed, err := a.exitRulesSvc.DomainAutoUpdater()
+		if err != nil {
+			log.Printf("autoupdater: initial: %v", err)
+		} else if added > 0 || removed > 0 {
+			log.Printf("autoupdater: initial: added=%d removed=%d", added, removed)
+			a.exitRulesSvc.StaggeredSync() // 2026-07-07: issue #12 — staggered
+		}
 	}
 	for {
 		select {
@@ -262,6 +295,9 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 			log.Printf("autoupdater: stopping")
 			return
 		case <-t.C:
+			if !checkEnabled() {
+				continue // toggle flipped off — skip this tick
+			}
 			added, removed, err := a.exitRulesSvc.DomainAutoUpdater()
 			if err != nil {
 				log.Printf("autoupdater: %v", err)

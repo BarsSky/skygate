@@ -1605,3 +1605,33 @@ run_check "B66" "exit-rule / preferred exit-node cross-check (v0.33.1.17)" 'f=/t
 #   - the helper has unit tests for the happy path, case-insensitive
 #     match, unknown-hostname, and disabled-inclusion cases
 run_check "B67" "/admin/exit-rules?device=NAME drill-down (v0.33.1.18)" 'f=/tmp/b67.sh; printf "%s" "grep -q GetAllRulesForAdminByDevice internal/db/device_rules.go && grep -q qSelectAllRulesForAdminByDevice internal/db/queries.go && grep -q qSelectAllRulesForAdmin internal/db/queries.go && grep -q DeviceFilter internal/feature/exit_rules/form_admin.go && grep -q device-filter-banner internal/handlers/templates/admin/exit_rules.html && grep -q exit_rules_admin.device_filter_banner internal/i18n/catalog_exit_rules.go && grep -q exit_rules_admin.device_filter_show_all internal/i18n/catalog_exit_rules.go && grep -q TestGetAllRulesForAdminByDevice_FiltersByHostname internal/db/device_rules_test.go && grep -q TestGetAllRulesForAdminByDevice_CaseInsensitive internal/db/device_rules_test.go && grep -q TestGetAllRulesForAdminByDevice_UnknownDevice internal/db/device_rules_test.go && grep -q TestGetAllRulesForAdminByDevice_IncludesDisabled internal/db/device_rules_test.go" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B68 (v0.33.1.18) — DNS-autoupdater toggle + verification test ───
+# v0.32.13 conflated SKYGATE_AUTO_UPDATE_ENABLED (skygate self-update
+# banner) with the DNS-resolve autoupdater gate, so any operator who
+# turned off skygate self-update in .env was silently disabling their
+# domain→/32 refresh → rules rotted as Cloudflare rotated IPs. The
+# 2026-08-06 operator incident ("3 new rules for skyworker don't
+# work") was the same root cause: the autoupdater was off since
+# 2026-07-31, the /32 children were stale, and the operator
+# assumed the form was broken when the policy was actually correct
+# but the IPs had rotated.
+#
+# B68 pins:
+#   - the conflated flag is fixed: cfg.DNSAutoUpdateEnabled is the
+#     gate, separate from cfg.AutoUpdateEnabled (the v0.32.20 self-
+#     update flag). main.go gates RunDomainAutoUpdater on the new
+#     flag, with the log message naming the new env var.
+#   - the goroutine reads global_settings.dns_autoupdate_enabled
+#     on every tick so the UI toggle takes effect without a restart
+#   - the UI toggle is on /admin/system_tests (POST handler +
+#     template card with i18n)
+#   - the verification test (exit_rules.all_in_headscale_acl) reads
+#     device_rules.enabled=1 and looks up each (src, dst) tuple in
+#     headscale's live grants[]; > 5 missing = fail
+#   - the 2 unit tests pin the (src, dst) formula in lockstep
+#     with the generator (if the generator changes, both tests
+#     must be updated together — otherwise the verification
+#     test will report false-positive "missing grants" for every
+#     row).
+run_check "B68" "DNS-autoupdater flag split + verification test (v0.33.1.18)" 'f=/tmp/b68.sh; printf "%s" "grep -q DNSAutoUpdateEnabled internal/config/config.go && grep -q cfg.DNSAutoUpdateEnabled cmd/skygate/main.go && grep -q SKYGATE_DNS_AUTOUPDATE_ENABLED internal/config/config.go && grep -q PostAdminSystemTestsDNSAutoToggle internal/feature/admin/settings_dns_autoupdate.go && grep -q dns-autoupdate-toggle internal/handlers/templates/admin/system_tests.html && grep -q title.dns_autoupdater internal/i18n/catalog_common.go && grep -q dns_autoupdate_enabled internal/handlers/handlers.go && grep -q exit_rules.all_in_headscale_acl internal/feature/admin/system_tests.go && grep -q TestSanitizeRuleAlias internal/feature/admin/system_tests_test.go && grep -q TestExpectedGrantTuple internal/feature/admin/system_tests_test.go && grep -q dns-autoupdate-toggle cmd/skygate/main.go" > "$f" && bash "$f"; rm -f "$f"'

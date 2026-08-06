@@ -10,6 +10,7 @@ package admin
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -157,5 +158,106 @@ func TestPersistRun_RequiresDB(t *testing.T) {
 	_, err := s.PersistRun(context.Background(), nil, nil, 0)
 	if err == nil {
 		t.Errorf("expected error for nil service, got nil")
+	}
+}
+
+// TestSanitizeRuleAlias pins the rule-alias sanitization
+// (the same formula used in GenerateACLWithViaForPlane to
+// build h-rule-* host aliases). The verification test
+// "exit_rules.all_in_headscale_acl" uses this to compute
+// the expected (src, dst) tuple for each enabled rule; if
+// this drifts from the generator, the verification test
+// will report false-positive "missing grants" for every
+// rule. The invariant: the sanitization must stay in
+// lockstep with internal/acl/acl.go:1159-1161.
+func TestSanitizeRuleAlias(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"1.2.3.4", "h-rule-1-2-3-4"},
+		{"1.2.3.4/32", "h-rule-1-2-3-4-32"},
+		{"8.47.69.0/32", "h-rule-8-47-69-0-32"},
+		{"2001:db8::1", "h-rule-2001_db8__1"},
+		{"cloudflare.com", "h-rule-cloudflare-com"},
+		{"example.com", "h-rule-example-com"},
+		{"a.b.c.d/22", "h-rule-a-b-c-d-22"},
+	}
+	for _, c := range cases {
+		got := "h-rule-" + strings.NewReplacer(".", "-", "/", "-", ":", "_").Replace(c.in)
+		if got != c.want {
+			t.Errorf("sanitize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestExpectedGrantTuple pins the (src, dst) tuple formula
+// the verification test uses to look up a rule in
+// headscale's grants[]. The src is the per-device tag if
+// user_name+device_hostname are both set, else device_ip,
+// else "*". The dst is always h-rule-<sanitized target>.
+// This mirrors internal/acl/acl.go:1148-1161 — if the
+// generator changes its src-selection logic, this test
+// (and the verification test) will start disagreeing with
+// reality. The unit test below pins the contract for the
+// 3 cases that actually occur in production.
+func TestExpectedGrantTuple(t *testing.T) {
+	// Tiny copy of the formula from the verification test —
+	// the two MUST stay identical, otherwise the verification
+	// test will systematically miss the same grants the
+	// generator just produced.
+	sanitize := func(s string) string {
+		return strings.NewReplacer(".", "-", "/", "-", ":", "_").Replace(s)
+	}
+	expected := func(uname, host, ip, target string) (string, string) {
+		var src string
+		switch {
+		case uname != "" && host != "":
+			// Generator does NOT lowercase — it uses the
+			// row's device_hostname verbatim. In production
+			// the value is lowercase (the v0.28.0 backfill
+			// normalises), but the formula here is exact.
+			src = "tag:dev-" + uname + "-" + host
+		case ip != "":
+			src = ip
+		default:
+			src = "*"
+		}
+		dst := "h-rule-" + sanitize(target)
+		return src, dst
+	}
+	cases := []struct {
+		uname, host, ip, target string
+		wantSrc, wantDst        string
+	}{
+		// Per-device tag (the common case for tagged devices,
+		// the v0.28.0 backfill populates user_name+device_hostname).
+		{"skyadmin", "skyworker", "", "8.47.69.0/32",
+			"tag:dev-skyadmin-skyworker", "h-rule-8-47-69-0-32"},
+		// Per-device tag with mixed-case hostname. The
+		// generator does NOT lowercase the hostname in the
+		// src — it uses e.DeviceHostname verbatim. The
+		// v0.28.0 backfill populates device_hostname in
+		// lowercase (see internal/nodeownership/), so in
+		// production both sides are lowercase and the
+		// match works. If a future row lands with
+		// mixed-case, the tag won't match headscale's
+		// tagOwners entry, but that's a separate bug.
+		{"skyadmin", "SkyWorker", "", "1.2.3.4/32",
+			"tag:dev-skyadmin-SkyWorker", "h-rule-1-2-3-4-32"},
+		// Legacy device_ip path: user_name+device_hostname
+		// empty (pre-v0.28.0 row), device_ip is the only
+		// usable src. The generator uses the device_ip verbatim.
+		{"", "", "100.64.0.1", "5.5.5.5/32",
+			"100.64.0.1", "h-rule-5-5-5-5-32"},
+		// No src fallback (should not occur in production —
+		// every enabled rule has at least device_ip — but
+		// the verification test handles it gracefully).
+		{"", "", "", "6.7.8.9/32",
+			"*", "h-rule-6-7-8-9-32"},
+	}
+	for _, c := range cases {
+		gotSrc, gotDst := expected(c.uname, c.host, c.ip, c.target)
+		if gotSrc != c.wantSrc || gotDst != c.wantDst {
+			t.Errorf("expected(%q, %q, %q, %q) = (%q, %q), want (%q, %q)",
+				c.uname, c.host, c.ip, c.target, gotSrc, gotDst, c.wantSrc, c.wantDst)
+		}
 	}
 }

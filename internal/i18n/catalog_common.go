@@ -112,6 +112,14 @@ var ruCommon = map[string]string{
 	"title.admin_headscale"          : "Обновления headscale",
 	"title.admin_headscale_acl"      : "Сетевой доступ (headscale ACL)",
 	"title.admin_system_tests"       : "Тесты системы",
+	// 2026-08-06 v0.33.1.18 — DNS autoupdater toggle on the
+	// /admin/system_tests page. Separate from the skygate
+	// self-update banner (title.admin_update). Critical to
+	// keep this distinction: turning off skygate self-update
+	// MUST NOT silently turn off domain→/32 refresh.
+	"title.dns_autoupdater"          : "DNS-autoupdater (обновление /32 для доменов)",
+	"dns_autoupdater.required"       : "Нужен для любого доменного правила: иначе /32 устаревают после ротации Cloudflare и правило перестаёт матчить реальные IP.",
+	"dns_autoupdater.rot_warning"    : "домен правила будут устаревать по мере ротации Cloudflare",
 	"title.admin_invites"            : "Инвайт-коды",
 	"title.admin_meshes"             : "Mesh-сети",
 	"title.admin_update"             : "Обновления Skygate",
@@ -220,6 +228,12 @@ var enCommon = map[string]string{
 	"title.admin_headscale"          : "Headscale updates",
 	"title.admin_headscale_acl"      : "Network access (headscale ACL)",
 	"title.admin_system_tests"       : "System tests",
+	// 2026-08-06 v0.33.1.18 — DNS autoupdater toggle. See the
+	// RU block above for the design rationale (must be
+	// separate from the skygate self-update banner).
+	"title.dns_autoupdater"          : "DNS autoupdater (domain→/32 refresh)",
+	"dns_autoupdater.required"       : "Required for any domain rule: without it, /32 entries rot as Cloudflare rotates IPs and the rule stops matching real traffic.",
+	"dns_autoupdater.rot_warning"    : "domain rules will rot as Cloudflare rotates IPs",
 	"title.admin_invites"            : "Invite codes",
 	"title.admin_meshes"             : "Meshes",
 	"title.admin_update"             : "Skygate updates",

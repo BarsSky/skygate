@@ -776,6 +776,12 @@ func main() {
 	// the result inline. History in system_tests_runs.
 	mux.Handle("GET /admin/system_tests", authMW(http.HandlerFunc(adminSvc.GetAdminSystemTests)))
 	mux.Handle("POST /admin/system_tests/run", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsRun)))
+	// 2026-08-06 v0.33.1.18 — DNS-autoupdater toggle (DB-backed).
+	// Was previously wired to SKYGATE_AUTO_UPDATE_ENABLED (the
+	// skygate self-update flag), which silently turned off
+	// domain→/32 refresh for operators who disabled self-update
+	// in .env. See internal/feature/admin/settings_dns_autoupdate.go.
+	mux.Handle("POST /admin/system_tests/dns-autoupdate-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsDNSAutoToggle)))
 	// 2026-07-27: v0.29.0 — self-update page. Shows
 	// current vs latest GitHub release + copy-pasteable
 	// manual steps for the detected install kind. The
@@ -1039,10 +1045,25 @@ func main() {
 	// as the 504-on-https postmortem — see RELEASE-NOTES.md
 	// v0.32.13). The /admin/update button still works for
 	// manual deploys regardless of this gate.
-	if cfg.AutoUpdateEnabled {
+	//
+	// 2026-08-06 v0.33.1.18 — fix: cfg.AutoUpdateEnabled is the
+	// flag for the skygate SELF-UPDATE banner on /admin/update,
+	// not for the DNS-resolve autoupdater. The two were
+	// conflated in v0.32.13, which meant any operator who
+	// turned off skygate self-updates (a sane default for
+	// production) accidentally also turned off DNS-resolution
+	// of their domain rules → /32 entries rotted and the
+	// operator's rules silently stopped matching the IPs
+	// Cloudflare (or any CDN) rotated to. SKYGATE_DNS_AUTOUPDATE_ENABLED
+	// is the new gate; default true (preserves the v0.32.13+
+	// behaviour of "DNS autoupdater ON by default"). The
+	// /admin/system_tests page exposes a DB-backed toggle
+	// for this flag (overrides env on next skygate start
+	// AND on the next autoupdate tick).
+	if cfg.DNSAutoUpdateEnabled {
 		go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)
 	} else {
-		log.Printf("autoupdater: SKYGATE_AUTO_UPDATE_ENABLED=false, skipping startup goroutine")
+		log.Printf("autoupdater: SKYGATE_DNS_AUTOUPDATE_ENABLED=false, skipping startup goroutine (set true to re-enable)")
 	}
 
 	// 2026-07-14: Этап 14 v6 — in-app backup scheduler. Started

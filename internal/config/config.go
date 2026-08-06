@@ -66,6 +66,17 @@ type Config struct {
 	BootstrapAdminPass string
 	SSHKeyPath         string // path to SSH key for exit node sync
 	DNSAutoCheck       time.Duration // 0 = disabled, default 5m
+	// 2026-08-06 v0.33.1.18 — explicit gate for the DNS-resolve
+	// autoupdater (domain → /32). Previously this was conflated
+	// with AutoUpdateEnabled (the skygate self-update banner on
+	// /admin/update), which led operators who turned off self-
+	// update to ALSO turn off DNS autoupdate — domain rules then
+	// rotted as Cloudflare rotated IPs. Default true preserves
+	// the v0.32.13+ behaviour of "DNS autoupdater ON by default";
+	// the /admin/system_tests page exposes a DB-backed toggle that
+	// overrides this env on the next start + on the next autoupdate
+	// tick (so the operator can flip it without a skygate restart).
+	DNSAutoUpdateEnabled bool
 	// 2026-07-07: issue #12 — limits & staggered sync
 	MaxRulesPerDevice int           // 0 = no limit; default 200
 	MaxTotalRules     int           // 0 = no limit; default 10000
@@ -301,6 +312,14 @@ func Load() (*Config, error) {
 		DerpPeerNPM:   getenv("SKYGATE_DERP_PEER_NPM", "192.0.2.67"),
 		DerpLANNet:    getenv("SKYGATE_DERP_LAN_NET", "192.0.2.0/24"),
 		DNSAutoCheck:       getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
+		// 2026-08-06 v0.33.1.18 — separate flag from AutoUpdateEnabled
+		// (see DNSAutoUpdateEnabled comment above). Default true so
+		// upgrading from v0.33.1.17 keeps DNS autoupdate on. Setting
+		// SKYGATE_AUTO_UPDATE_ENABLED=false no longer turns DNS
+		// autoupdate off — the operator's prior "I'll just disable
+		// self-update" change in .env was silently disabling their
+		// domain rule refresh.
+		DNSAutoUpdateEnabled: getenv("SKYGATE_DNS_AUTOUPDATE_ENABLED", "true") == "true",
 		MaxRulesPerDevice:  getInt("SKYGATE_MAX_RULES_PER_DEVICE", 200),
 		MaxTotalRules:      getInt("SKYGATE_MAX_TOTAL_RULES", 10000),
 		StaggerSync:        getenv("SKYGATE_STAGGER_SYNC", "true") == "true",
