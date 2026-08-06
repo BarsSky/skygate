@@ -155,6 +155,17 @@
   </div>
 
   <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "tailscale.restart_heading"}}</h3>
+    <p class="sub">{{t "tailscale.restart_help" | safeHTML}}</p>
+    <form action="/admin/tailscale" method="POST" autocomplete="off"
+          onsubmit="return confirm({{t "tailscale.restart_confirm" | safeJSON}});">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="restart_skgate">
+      <button type="submit" class="btn btn-warn"><i class="fa-solid fa-arrows-rotate"></i> {{t "tailscale.restart_btn"}}</button>
+    </form>
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-circle-question"></i> {{t "tailscale.help_heading"}}</h3>
     <p class="sub">{{t "tailscale.help_body" | safeHTML}}</p>
     <p class="sub" style="font-style:italic;margin-top:.5rem">{{t "tailscale.legacy_docker_secret" | safeHTML}}</p>

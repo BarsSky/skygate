@@ -8,10 +8,9 @@
 
 package i18n
 
-// tailscale feature — 30 ru keys, 30 en keys (v0.33.1.9 + path-cleanup
-// pass: removed `/data/ts/authkey`, `/home/skyadmin/skygate/data/ts/`,
-// `entrypoint.sh`, `docker-compose.yml`, `SKYGATE_TS_AUTHKEY_FILE`,
-// `/run/secrets/ts_authkey`, `/data` from the public-facing strings).
+// tailscale feature — 35 ru keys, 35 en keys (v0.33.1.9 + v0.33.1.13 +
+// v0.33.1.16: added restart_skgate keys for the "restart the whole
+// skygate process from web-UI" button).
 // Top-level prefixes: tailscale
 
 var ruTailscale = map[string]string{
@@ -60,6 +59,19 @@ var ruTailscale = map[string]string{
 	"tailscale.login_server_saved"         : "Headscale URL сохранён в БД. Будет использован при следующем Start.",
 	"tailscale.login_server_saved_reboot" : "Headscale URL сохранён в БД. Перезапустите Tailscale (Stop → Start), чтобы применить.",
 	"tailscale.login_server_invalid"      : "Некорректный URL. Ожидается https:// или http://, например <code>https://head.example.com</code>.",
+	// v0.33.1.16 — restart-skgate button. Required after
+	// saving SKYGATE_TS_LOGIN_SERVER (the entrypoint reads
+	// the env var at container start, not at runtime). The
+	// button writes the current effective URL back to .env
+	// and triggers `docker compose restart skygate` (or
+	// `systemctl restart skygate` on a native host). The
+	// subprocess that runs the restart is setsid'd so it
+	// outlives the SIGTERM that hits the parent process.
+	"tailscale.restart_heading"            : "Перезапустить skygate",
+	"tailscale.restart_help"               : "Требуется после изменения <code>SKYGATE_TS_LOGIN_SERVER</code> (entrypoint читает переменную окружения при старте контейнера, не в рантайме). Также полезно, если нужно подхватить другие переменные окружения из <code>.env</code> после ручного редактирования. В режиме контейнера: <code>docker compose restart skygate</code>. В нативном режиме (systemd): <code>systemctl restart skygate</code>. Страница станет недоступна на ~30s.",
+	"tailscale.restart_btn"                : "Перезапустить skygate",
+	"tailscale.restart_confirm"            : "Перезапустить skygate? Страница будет недоступна ~30s.",
+	"tailscale.restart_in_progress"        : "Перезапуск запущен. Страница вернётся через ~30s.",
 }
 
 var enTailscale = map[string]string{
@@ -108,4 +120,17 @@ var enTailscale = map[string]string{
 	"tailscale.login_server_saved"         : "Headscale URL saved to the DB. Will be used on the next Start.",
 	"tailscale.login_server_saved_reboot" : "Headscale URL saved to the DB. Restart Tailscale (Stop → Start) to apply.",
 	"tailscale.login_server_invalid"      : "Invalid URL. Expected https:// or http://, e.g. <code>https://head.example.com</code>.",
+	// v0.33.1.16 — restart-skgate button. Required after
+	// saving SKYGATE_TS_LOGIN_SERVER (the entrypoint reads
+	// the env var at container start, not at runtime). The
+	// button writes the current effective URL back to .env
+	// and triggers `docker compose restart skygate` (or
+	// `systemctl restart skygate` on a native host). The
+	// subprocess that runs the restart is setsid'd so it
+	// outlives the SIGTERM that hits the parent process.
+	"tailscale.restart_heading"            : "Restart skygate",
+	"tailscale.restart_help"               : "Required after editing <code>SKYGATE_TS_LOGIN_SERVER</code> (the entrypoint reads the env var at container start, not at runtime). Also useful for picking up other <code>.env</code> changes. In container mode: <code>docker compose restart skygate</code>. In native (systemd) mode: <code>systemctl restart skygate</code>. The page will be unreachable for ~30s.",
+	"tailscale.restart_btn"                : "Restart skygate",
+	"tailscale.restart_confirm"            : "Restart skygate? The page will be unreachable for ~30s.",
+	"tailscale.restart_in_progress"        : "Restart triggered. Page will return in ~30s.",
 }

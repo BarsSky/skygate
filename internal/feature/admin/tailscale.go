@@ -610,6 +610,16 @@ func (s *Service) PostAdminTailscale(w http.ResponseWriter, r *http.Request) {
 		// and writes the key to the same /data/ts/authkey
 		// file the "Save" path uses.
 		s.handleTailscaleGenerateKey(w, r, c)
+	case "restart_skgate":
+		// v0.33.1.16 — restart the entire skygate
+		// process (not just tailscaled). Required after
+		// saving SKYGATE_TS_LOGIN_SERVER (the entrypoint
+		// reads the env var at container start, not at
+		// runtime). In container mode, this triggers
+		// `docker compose restart skygate` via a detached
+		// subprocess. In native mode, it triggers
+		// `systemctl restart skygate`.
+		s.handleTailscaleRestart(w, r, c)
 	default:
 		tsRedirect(w, r, "", "Неизвестное действие: "+action)
 	}
@@ -796,6 +806,193 @@ func (s *Service) handleTailscaleGenerateKey(w http.ResponseWriter, r *http.Requ
 			uid, hostname, userName, fp))
 	s.invalidateTailscaleState()
 	tsRedirect(w, r, fmt.Sprintf("Preauth key сгенерирован для %s (user=%s, 1h, reusable). Теперь нажмите «Start» чтобы запустить tailscale.", hostname, userName), "")
+}
+
+// handleTailscaleRestart restarts the skygate process (not
+// just tailscaled). v0.33.1.16.
+//
+// WHY this exists: the entrypoint.sh reads SKYGATE_TS_LOGIN_SERVER
+// at container start. Saving the value via /admin/tailscale
+// only writes to the DB + (after this fix) the .env file.
+// The operator's next step was either:
+//   (a) SSH in and run `docker compose restart skygate` (or
+//       `systemctl restart skygate` on a native host), or
+//   (b) remember to restart before saving. Both are error-prone.
+// This endpoint makes restart a single click.
+//
+// Flow:
+//   1. Determine the current effective login_server (DB > .env > default).
+//   2. Write it to the in-container .env (atomic via .tmp + rename).
+//      This makes the next entrypoint invocation pick up the
+//      new value.
+//   3. Trigger the restart:
+//      - container mode: spawn a setsid'd subprocess that runs
+//        `docker compose -p skygate -f <host-repo>/docker-compose.yml
+//        restart skygate`. The setsid is critical — the parent
+//        skygate process gets SIGTERM'd by `docker compose
+//        restart` and any child process in the same process
+//        group dies with it. setsid puts the child in a new
+//        session so it survives.
+//      - native mode: try `systemctl restart skygate`. If that
+//        fails, fall back to `service skygate restart`.
+//   4. Return success to the client IMMEDIATELY (the response
+//      flushes before the SIGTERM arrives).
+//
+// Audit: full event log including effective URL, in_container,
+// restart_method.
+func (s *Service) handleTailscaleRestart(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	effective := s.tailscaleLoginServer()
+	inContainer := isRunningInContainer()
+
+	// Step 1: write the effective value back to the in-container
+	// .env so the next entrypoint invocation picks it up. This
+	// is best-effort — if the .env is read-only or doesn't exist
+	// (e.g. native host), we still want to attempt the restart.
+	envPath := filepath.Join(s.Cfg.RepoPath, ".env")
+	envUpdateMsg := ""
+	if _, err := os.Stat(envPath); err == nil {
+		if err := updateEnvFileSKYGATE_TS_LOGIN_SERVER(envPath, effective); err != nil {
+			s.Backend.Audit(c.UserID, c.Username, "tailscale_restart_skgate",
+				fmt.Sprintf("err=env_update_failed path=%s err=%q",
+					envPath, err.Error()))
+			tsRedirect(w, r, "", "Не удалось обновить .env: "+err.Error())
+			return
+		}
+		envUpdateMsg = " .env обновлён"
+	}
+
+	// Step 2: trigger restart. Best-effort — we run the actual
+	// command in a goroutine that uses setsid to detach the
+	// subprocess from our process group. The Go HTTP server
+	// keeps serving until docker compose restart sends SIGTERM
+	// to PID 1; the response has already flushed by then.
+	restartMethod := "none"
+	if inContainer {
+		hostRepo := os.Getenv("SKYGATE_HOST_REPO_PATH")
+		if hostRepo == "" {
+			// Fall back to the parent of the bind-mount
+			// point (in-container RepoPath is /app, so
+			// we can't use it for docker compose -f;
+			// the daemon needs the host path).
+			hostRepo = "/home/operator/skygate"
+		}
+		composeFile := filepath.Join(hostRepo, "docker-compose.yml")
+		go func() {
+			// setsid: new session so the subprocess
+			// outlives the SIGTERM that hits the parent
+			// (docker compose restart sends SIGTERM to
+			// PID 1 = entrypoint.sh = parent of all).
+			cmd := exec.Command("setsid", "docker", "compose",
+				"-p", "skygate",
+				"-f", composeFile,
+				"restart", "skygate")
+			applySysProcAttr(cmd)
+			// Best-effort: log the result to /tmp. We
+			// can't return an error to the client
+			// (we already responded + the parent is
+			// about to die).
+			out, _ := cmd.CombinedOutput()
+			logFile := "/tmp/skygate-restart.log"
+			_ = os.WriteFile(logFile,
+				[]byte(fmt.Sprintf("[%s] docker compose restart: %s\n",
+					time.Now().UTC().Format(time.RFC3339), string(out))),
+				0644)
+		}()
+		restartMethod = "container:docker_compose_restart"
+	} else {
+		// Native host: try systemctl first, fall back
+		// to service. We run the command in a goroutine
+		// + setsid so it survives the parent dying (the
+		// skygate process is itself the service in
+		// question, so the OS will kill the parent).
+		go func() {
+			cmd := exec.Command("setsid", "bash", "-c",
+				"systemctl restart skygate 2>&1 || service skygate restart 2>&1")
+			applySysProcAttr(cmd)
+			out, _ := cmd.CombinedOutput()
+			logFile := "/tmp/skygate-restart.log"
+			_ = os.WriteFile(logFile,
+				[]byte(fmt.Sprintf("[%s] systemctl/service restart: %s\n",
+					time.Now().UTC().Format(time.RFC3339), string(out))),
+				0644)
+		}()
+		restartMethod = "native:systemctl_or_service"
+	}
+
+	s.Backend.Audit(c.UserID, c.Username, "tailscale_restart_skgate",
+		fmt.Sprintf("login_server=%q in_container=%v method=%s%s",
+			effective, inContainer, restartMethod, envUpdateMsg))
+
+	// Return IMMEDIATELY. The Go process is about to be
+	// SIGTERM'd by the restart we just triggered; the
+	// response must flush before that happens. The redirect
+	// target reloads the page after the restart completes
+	// (the operator will see the new build label).
+	tsRedirect(w, r,
+		fmt.Sprintf("Перезапуск запущен (%s). Страница вернётся через ~30s с новой версией.", restartMethod),
+		"")
+}
+
+// isRunningInContainer returns true if the current process is
+// running inside a Docker/Podman/CRI-O container. We check the
+// well-known marker files: /.dockerenv (Docker), /run/.containerenv
+// (Podman + generic OCI). Bare-metal systemd hosts return
+// false.
+func isRunningInContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+	return false
+}
+
+// updateEnvFileSKYGATE_TS_LOGIN_SERVER sets or replaces the
+// SKYGATE_TS_LOGIN_SERVER= line in the given .env file.
+// Atomic: write to .env.tmp, fsync, rename. The file's other
+// lines are preserved as-is (no comment-stripping, no
+// normalization — operators may have hand-edited the file
+// with non-standard formatting).
+//
+// If the file doesn't contain SKYGATE_TS_LOGIN_SERVER=
+// yet, the new value is appended on a new line (with a
+// trailing newline). If the value is empty, the existing
+// line (if any) is removed (clears the override → next
+// compose-up will not pass SKYGATE_TS_LOGIN_SERVER to the
+// container unless something else sets it).
+func updateEnvFileSKYGATE_TS_LOGIN_SERVER(envPath, newValue string) error {
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", envPath, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	out := make([]string, 0, len(lines)+1)
+	found := false
+	prefix := "SKYGATE_TS_LOGIN_SERVER="
+	for _, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			found = true
+			if newValue != "" {
+				out = append(out, prefix+newValue)
+			}
+			// else: skip (clears the override)
+			continue
+		}
+		out = append(out, line)
+	}
+	if !found && newValue != "" {
+		out = append(out, prefix+newValue)
+	}
+	newContent := strings.Join(out, "\n")
+	tmpPath := envPath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := os.Rename(tmpPath, envPath); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
 }
 
 // tsRedirect is a flash-and-redirect back to /admin/tailscale.

@@ -1534,3 +1534,32 @@ run_check "B63" "placeholdersList(1)+placeholdersList(1) 2-arg fix via db.Placeh
 #   - test TestGenerateACLWithVia_PerDeviceTagOwners
 #     exists and verifies the (a)+(b)+(c) contract
 run_check "B64" "per-device exit_node_pref device tag in tagOwners (v0.33.1.15)" 'f=/tmp/b64.sh; printf "%s" "grep -q \"also include via tags from per-device prefs\" internal/acl/acl.go && grep -q \"per-device-pref device tags in tagOwners\" internal/acl/acl.go && grep -q \"augmentedTagsByUser\" internal/acl/acl.go && grep -q TestGenerateACLWithVia_PerDeviceTagOwners internal/acl/acl_test.go" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B65 (v0.33.1.16) — SKYGATE_TS_LOGIN_SERVER editable from .env + restart-skgate button ───
+# Before v0.33.1.16, docker-compose.yml had a hardcoded
+# `SKYGATE_TS_LOGIN_SERVER=https://head.example.com` in the
+# `environment:` section, which OVERRODE the .env value
+# (docker-compose precedence: environment > env_file). The
+# operator's edit on /admin/tailscale (DB-persisted) was
+# never picked up by the entrypoint. The fix:
+#   (a) remove the hardcoded value from docker-compose.yml so
+#       the .env value wins
+#   (b) add a "Restart skygate" button on /admin/tailscale
+#       that writes the current effective value to .env
+#       (atomic via .tmp + rename) and triggers
+#       `docker compose restart skygate` (or
+#       `systemctl restart skygate` on a native host).
+#       The restart subprocess is setsid'd so it survives
+#       the SIGTERM that hits the parent.
+#
+# B65 pins:
+#   - SKYGATE_TS_LOGIN_SERVER is no longer in docker-compose.yml
+#     environment: section (so .env wins)
+#   - the handler handleTailscaleRestart exists + dispatches
+#     via the action="restart_skgate" path
+#   - the updateEnvFileSKYGATE_TS_LOGIN_SERVER helper exists
+#     + tests cover the replace / append / clear cases
+#   - applySysProcAttr helper (setsid) exists for the
+#     detached-restart pattern
+#   - i18n keys for the restart button exist in both RU+EN
+run_check "B65" "SKYGATE_TS_LOGIN_SERVER from .env + restart-skgate button (v0.33.1.16)" 'f=/tmp/b65.sh; printf "%s" "! grep -q \"SKYGATE_TS_LOGIN_SERVER=https://head.example.com\" docker-compose.yml && grep -q handleTailscaleRestart internal/feature/admin/tailscale.go && grep -q \"action=\\\"restart_skgate\\\"\" internal/feature/admin/tailscale.go && grep -q updateEnvFileSKYGATE_TS_LOGIN_SERVER internal/feature/admin/tailscale.go && grep -q applySysProcAttr internal/feature/admin/setsid_linux.go && grep -q TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Replace internal/feature/admin/admin_tailscale_test.go && grep -q TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Append internal/feature/admin/admin_tailscale_test.go && grep -q TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Clear internal/feature/admin/admin_tailscale_test.go && grep -q TestHandleTailscaleRestart_WritesEnvAndDispatches internal/feature/admin/admin_tailscale_test.go && grep -q TestHandleTailscaleRestart_RejectsBadCSRF internal/feature/admin/admin_tailscale_test.go && grep -q tailscale.restart_btn internal/i18n/catalog_tailscale.go && grep -q tailscale.restart_help internal/i18n/catalog_tailscale.go && grep -q tailscale.restart_confirm internal/i18n/catalog_tailscale.go && grep -q tailscale.restart_btn internal/handlers/templates/admin/tailscale.html" > "$f" && bash "$f"; rm -f "$f"'

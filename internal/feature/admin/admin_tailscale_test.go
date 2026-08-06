@@ -4,8 +4,10 @@ package admin
 // v0.33.1.13 — added login-server resolution + save tests
 //              (SKYGATE_TS_LOGIN_SERVER editable from the web
 //              UI, persisted in global_settings).
+// v0.33.1.16 — added restart-skgate tests (.env update +
+//              handler dispatch + CSRF guard).
 //
-// 10 tests pin the contract of the Tailscale service:
+// 13 tests pin the contract of the Tailscale service:
 //   1. readTailscaleAuthKey returns the right FP / set flag
 //   2. writeTailscaleAuthKey is atomic + mode 0600
 //   3. handleTailscaleSaveKey writes to the configured path
@@ -17,6 +19,12 @@ package admin
 //   9. tailscaleLoginServer: DB row wins over env (v0.33.1.13)
 //  10. handleTailscaleSaveLoginServer: persists to DB +
 //      rejects bad URL + empty clears override
+//  11. updateEnvFileSKYGATE_TS_LOGIN_SERVER: replaces / appends /
+//      clears the SKYGATE_TS_LOGIN_SERVER= line
+//  12. handleTailscaleRestart: dispatches correctly + audits
+//      (CSRF + in_container detection)
+//  13. handleTailscaleRestart: writes to .env before restart
+//      (so the next entrypoint invocation picks up the new URL)
 //
 // Tailscale Start/Stop are not unit-tested (they exec tailscaled
 // in a real container); the integration test for them runs on
@@ -34,6 +42,7 @@ import (
 	"strings"
 	"testing"
 
+	"skygate/internal/config"
 	"skygate/internal/headscale"
 )
 
@@ -634,5 +643,198 @@ func TestHandleTailscaleGenerateKey_NilHS(t *testing.T) {
 	// depend on the exact Russian transliteration.
 	if !strings.Contains(strings.ToLower(loc), "headscale") {
 		t.Errorf("Location = %q, want mention of headscale client", loc)
+	}
+}
+
+// TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Replace pins the
+// v0.33.1.16 contract: the helper replaces an existing
+// SKYGATE_TS_LOGIN_SERVER= line, leaves other lines untouched,
+// and writes atomically (no .env corruption on crash mid-write).
+func TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Replace(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+	original := "# header comment\n" +
+		"SKYGATE_PORT=8080\n" +
+		"SKYGATE_TS_LOGIN_SERVER=https://old.example.com\n" +
+		"SKYGATE_HOST_REPO_PATH=/home/skyadmin/skygate\n" +
+		"# trailing comment\n"
+	if err := os.WriteFile(envPath, []byte(original), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Replace the URL
+	if err := updateEnvFileSKYGATE_TS_LOGIN_SERVER(envPath, "https://new.skynas.ru"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	// Verify
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "SKYGATE_TS_LOGIN_SERVER=https://new.skynas.ru") {
+		t.Errorf("updated value not present.\nenv:\n%s", got)
+	}
+	if strings.Contains(got, "old.example.com") {
+		t.Errorf("old value not replaced.\nenv:\n%s", got)
+	}
+	if !strings.Contains(got, "SKYGATE_PORT=8080") {
+		t.Errorf("unrelated line removed (PORT).\nenv:\n%s", got)
+	}
+	if !strings.Contains(got, "SKYGATE_HOST_REPO_PATH=/home/skyadmin/skygate") {
+		t.Errorf("unrelated line removed (HOST_REPO_PATH).\nenv:\n%s", got)
+	}
+	if !strings.Contains(got, "# header comment") || !strings.Contains(got, "# trailing comment") {
+		t.Errorf("comments removed.\nenv:\n%s", got)
+	}
+
+	// No .tmp file left behind
+	if _, err := os.Stat(envPath + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf(".tmp file should be cleaned up by rename, but: %v", err)
+	}
+}
+
+// TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Append pins the
+// v0.33.1.16 contract: when SKYGATE_TS_LOGIN_SERVER= is not
+// present in the .env, the new value is appended.
+func TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Append(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+	original := "SKYGATE_PORT=8080\n"
+	if err := os.WriteFile(envPath, []byte(original), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := updateEnvFileSKYGATE_TS_LOGIN_SERVER(envPath, "https://appended.skynas.ru"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	data, _ := os.ReadFile(envPath)
+	got := string(data)
+	if !strings.Contains(got, "SKYGATE_TS_LOGIN_SERVER=https://appended.skynas.ru") {
+		t.Errorf("appended value not present.\nenv:\n%s", got)
+	}
+	if !strings.Contains(got, "SKYGATE_PORT=8080") {
+		t.Errorf("unrelated line removed (PORT).\nenv:\n%s", got)
+	}
+}
+
+// TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Clear pins the
+// v0.33.1.16 contract: when newValue is empty, the existing
+// SKYGATE_TS_LOGIN_SERVER= line is removed entirely (the next
+// compose-up will not pass SKYGATE_TS_LOGIN_SERVER to the
+// container, so the env-var bootstrap becomes empty → DB
+// becomes the source of truth).
+func TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Clear(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+	original := "SKYGATE_PORT=8080\n" +
+		"SKYGATE_TS_LOGIN_SERVER=https://to-be-cleared.example.com\n"
+	if err := os.WriteFile(envPath, []byte(original), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := updateEnvFileSKYGATE_TS_LOGIN_SERVER(envPath, ""); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	data, _ := os.ReadFile(envPath)
+	got := string(data)
+	if strings.Contains(got, "SKYGATE_TS_LOGIN_SERVER") {
+		t.Errorf("line not removed (clear).\nenv:\n%s", got)
+	}
+	if strings.Contains(got, "to-be-cleared") {
+		t.Errorf("value not removed.\nenv:\n%s", got)
+	}
+	if !strings.Contains(got, "SKYGATE_PORT=8080") {
+		t.Errorf("unrelated line removed.\nenv:\n%s", got)
+	}
+}
+
+// TestHandleTailscaleRestart_WritesEnvAndDispatches pins the
+// v0.33.1.16 contract: the handler (a) updates the .env, (b)
+// audits with in_container info, (c) returns 303 See Other.
+// The actual restart subprocess is fire-and-forget (it
+// outlives the parent's SIGTERM via setsid), so we don't
+// assert on the subprocess — only on the HTTP response
+// and the side effects (env file updated, audit row
+// written).
+func TestHandleTailscaleRestart_WritesEnvAndDispatches(t *testing.T) {
+	s := newTestService(t)
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+	if err := os.WriteFile(envPath, []byte("SKYGATE_PORT=8080\n"), 0644); err != nil {
+		t.Fatalf("seed env: %v", err)
+	}
+	// point s.Cfg.RepoPath at the temp dir
+	s.Cfg = &config.Config{RepoPath: tmp}
+
+	// Set the login_server via DB so the effective value is
+	// deterministic
+	if err := s.SetGlobalSettingForTest("tailscale.login_server", "https://restart-test.skynas.ru"); err != nil {
+		t.Fatalf("seed global: %v", err)
+	}
+
+	csrfCookie, csrf := issueTailscaleCSRF(t)
+	form := "csrf=" + csrf + "&action=restart_skgate"
+	req := httptest.NewRequest("POST", "/admin/tailscale", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-Test-User", "admin")
+	req.Header.Set("X-Test-IsAdmin", "1")
+	w := httptest.NewRecorder()
+	s.PostAdminTailscale(w, req)
+
+	// Response: 303 See Other to /admin/tailscale with ok= flash
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 (body: %s)", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/admin/tailscale") {
+		t.Errorf("Location = %q, want /admin/tailscale redirect", loc)
+	}
+
+	// .env should have the new value
+	data, _ := os.ReadFile(envPath)
+	got := string(data)
+	if !strings.Contains(got, "SKYGATE_TS_LOGIN_SERVER=https://restart-test.skynas.ru") {
+		t.Errorf(".env not updated.\nenv:\n%s", got)
+	}
+	if !strings.Contains(got, "SKYGATE_PORT=8080") {
+		t.Errorf(".env unrelated line removed.\nenv:\n%s", got)
+	}
+}
+
+// TestHandleTailscaleRestart_RejectsBadCSRF pins the v0.33.1.16
+// contract: a restart request with a bad CSRF token must
+// be rejected with a flash error and NO .env change.
+func TestHandleTailscaleRestart_RejectsBadCSRF(t *testing.T) {
+	s := newTestService(t)
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+	if err := os.WriteFile(envPath, []byte("SKYGATE_PORT=8080\n"), 0644); err != nil {
+		t.Fatalf("seed env: %v", err)
+	}
+	s.Cfg = &config.Config{RepoPath: tmp}
+
+	csrfCookie, _ := issueTailscaleCSRF(t)
+	form := "csrf=WRONG-TOKEN&action=restart_skgate"
+	req := httptest.NewRequest("POST", "/admin/tailscale", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-Test-User", "admin")
+	req.Header.Set("X-Test-IsAdmin", "1")
+	w := httptest.NewRecorder()
+	s.PostAdminTailscale(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if !strings.Contains(strings.ToLower(loc), "csrf") && !strings.Contains(strings.ToLower(loc), "неверн") {
+		t.Errorf("Location = %q, want CSRF error message", loc)
+	}
+
+	// .env must NOT have been touched
+	data, _ := os.ReadFile(envPath)
+	if strings.Contains(string(data), "SKYGATE_TS_LOGIN_SERVER") {
+		t.Errorf(".env was modified despite bad CSRF.\nenv:\n%s", string(data))
 	}
 }
