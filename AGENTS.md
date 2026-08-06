@@ -110,7 +110,50 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER from .env
+* **Current**: v0.33.1.17 — exit-rule ↔ preferred exit-node
+  cross-check (the "rules saved but Tailscale ignores them"
+  fix). 1 commit since v0.33.1.16. All tests green
+  (`go test ./... -count=1 -short` 27/27 PASS);
+  `make verify-pre` 66/66 PASS (B1-B66, B8 smoke is VM-only).
+  What's added:
+  - **Cross-check between `device_rules` and
+    `device_exit_node_prefs` / `user_exit_node_prefs`**
+    (commit b7bedd1). A `device_rule` that points at
+    exit-node X only takes effect on device D if D's
+    preferred exit-node is also X (per-device pref >
+    per-user pref > unset). Before v0.33.1.17, the
+    operator's Cloudflare CIDR rules for `rutracker.org`
+    were pointed at `karolina` but every device was pinned
+    to `emilia` via `device_exit_node_prefs` — the rules
+    were "saved" but Tailscale silently ignored them.
+    The fix:
+    * `internal/feature/exit_rules/preferred_check.go`
+      (new): `PreferredExitNodeForRule` (per-device >
+      per-user > ""), `IsRuleApplicable`, `TagToHostname`,
+      `RulesByDeviceHostname` + 6 unit tests in
+      `preferred_check_test.go`.
+    * `/my/exit-rules`: top-of-page warning banner with
+      "Use device's preferred exit-node" button when
+      `MismatchCount > 0`; per-rule "Preferred" column
+      with green/red icon.
+    * `/admin/exit-rules` (cross-user view): same
+      banner + per-row "Preferred" column on the
+      `AnnotatedRules` slice.
+    * `/admin/devices`: per-device "dead rules" count
+      badge with link to the device's exit-rule subset.
+    * `/admin/system_tests` → `exit_rules.preferred_mismatch`:
+      3 SQL queries (device_rules, device_exit_node_prefs,
+      user_exit_node_prefs) + Go cross-check.
+      Threshold: 0 = pass, 1-5 = pass with warn,
+      > 5 = fail. Skips if no enabled rules.
+      Backend-dispatching (works on both SQLite and PG).
+    * i18n: 18 new keys (RU+EN) — banner text, button
+      label, column header, per-row title tooltips.
+    * `B66` verify-pre check pins the 13 new file
+      references (preferred_check.go helpers, system_tests
+      entry, both template banners, devices.go
+      DeadRuleCount, all i18n keys).
+* **Previous**: v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER from .env
   + restart-skgate button (the "Tailscale never picks up the
   new URL" fix). 3 commits since v0.33.1.15. All tests green
   (`go test ./... -count=1 -short` 27/27 PASS); `make verify-pre`
