@@ -110,12 +110,57 @@ explaining why.
 
 ## Release status
 
-* **Current**: v0.33.1.17 — exit-rule ↔ preferred exit-node
-  cross-check (the "rules saved but Tailscale ignores them"
-  fix). 1 commit since v0.33.1.16. All tests green
-  (`go test ./... -count=1 -short` 27/27 PASS);
-  `make verify-pre` 66/66 PASS (B1-B66, B8 smoke is VM-only).
-  What's added:
+* **Current**: v0.33.1.18 — DNS-autoupdater flag split + UI
+  toggle + verification test (the "rules silently don't match
+  because autoupdater is off" fix). 2 commits since v0.33.1.16
+  (B67 + B68). All tests green (`go test -count=1 -short`
+  full suite); `make verify-pre` 68/68 PASS (B1-B68, B8 smoke
+  is VM-only). What's added:
+  - **DNS-autoupdater flag split** (commit 21b3afa). v0.32.13
+    conflated `SKYGATE_AUTO_UPDATE_ENABLED` (the skygate self-
+    update banner on /admin/update) with the DNS-resolve
+    autoupdater gate. Any operator who turned off self-update
+    in `.env` (a sane default for production) silently
+    disabled their domain→/32 refresh → rules rotted as
+    Cloudflare rotated IPs. v0.33.1.18 separates the two
+    flags: new `SKYGATE_DNS_AUTOUPDATE_ENABLED` (default true
+    so upgrading keeps DNS autoupdate on) is the autoupdater
+    gate, distinct from `SKYGATE_AUTO_UPDATE_ENABLED`.
+  - **UI toggle on /admin/system_tests** — "DNS autoupdater"
+    card with Enable / Disable button. State is DB-backed
+    (`global_settings.dns_autoupdate_enabled`) and overrides
+    the env on the next autoupdate tick — no restart needed.
+    The autoupdater goroutine reads the DB toggle on every
+    tick (was: gated solely at startup).
+  - **New verification test `exit_rules.all_in_headscale_acl`**
+    — reads every enabled subnet/ip rule from `device_rules`
+    and looks up the expected `(src, dst)` tuple in the live
+    headscale `policy.grants[]`. 0 missing = pass, 1-5
+    missing = pass-with-warn (Tailscale 60-90s client-side
+    lag), > 5 missing = **fail** (real sync regression). This
+    is the structural fix for the class of bug that hit
+    v0.33.1.14 (per-device pref not writable) +
+    v0.33.1.15 (cyborg exit rules not visible) + v0.33.1.18
+    (autoupdater silently off) — every `/admin/system_tests`
+    run will now catch this class of regression before the
+    operator notices.
+  - **2 new unit tests** (`TestSanitizeRuleAlias` +
+    `TestExpectedGrantTuple`) pin the `(src, dst)` formula in
+    lockstep with the generator. If the generator changes
+    (e.g. adds `strings.ToLower`, or picks device_ip over
+    device_hostname), the unit tests will fail and force the
+    refactorer to update both the generator AND the
+    verification test. Without these, a one-sided refactor
+    would make the verification test systematically miss
+    the same grants the generator just produced — silent
+    false-positive "all rules in ACL" forever.
+  - **/admin/exit-rules?device=NAME drill-down** (commit
+    e605d2e, B67). The /admin/devices "dead rules" badge
+    (B66) links to `/admin/exit-rules?device=NAME`; this
+    commit lands the drill-down itself so a future refactor
+    can't silently drop the filter. 4 unit tests cover the
+    happy path, case-insensitive match, unknown-hostname,
+    and disabled-inclusion cases.
   - **Cross-check between `device_rules` and
     `device_exit_node_prefs` / `user_exit_node_prefs`**
     (commit b7bedd1). A `device_rule` that points at
