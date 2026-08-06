@@ -1,5 +1,181 @@
 # Skygate release notes
 
+## v0.33.1.17 — exit-rule ↔ preferred exit-node cross-check (B66)
+
+**Date:** 2026-08-06
+**Tag:** v0.33.1.17 (commit `b7bedd1`)
+**Scope:** 1 commit. 2 new files (preferred_check.go + tests), 9
+modified, +732/-3 lines. No API change, no schema change, no
+migration, no build-tag change.
+
+### The bug
+
+A device_rule in `device_rules` (e.g. `target=rutracker.org`,
+`exit_node=exit-node-A`) only takes effect on device D if D's
+preferred exit-node is also `exit-node-A`. The decision is made
+by `device_exit_node_prefs` (per-device, overrides everything)
+or `user_exit_node_prefs` (per-user fallback). If they don't
+match, **Tailscale silently ignores the rule** — the operator
+sees a "dead rule" in the UI: saved, audit-logged, even approved
+by headscale, but never routed through the chosen exit-node.
+
+The bug surfaced in production: Cloudflare CIDR rules for
+`rutracker.org` were pointed at one exit-node, but every device
+was pinned to a different one via `device_exit_node_prefs`. The
+rules were "saved" but Tailscale routed the traffic through the
+wrong exit-node — and Cloudflare responded with a JS challenge
+because the wrong exit-node's IP was in its low-reputation list.
+30-minute debug to find the root cause.
+
+### The fix
+
+1. **Cross-check helpers**
+   (`internal/feature/exit_rules/preferred_check.go`, new):
+   - `PreferredExitNodeForRule(db, userID, hostname)` —
+     per-device > per-user > ""
+   - `IsRuleApplicable(ruleExitNode, preferredHost)` — true
+     when there's no preferred OR they match
+   - `TagToHostname("tag:exit-<host>")` → `"<host>"` — strip
+     the tag prefix for comparison
+   - `RulesByDeviceHostname(db)` — batch lookup for the
+     admin cross-user view
+   - 6 unit tests in `preferred_check_test.go`
+     (TestIsRuleApplicable_NoPreference / Mismatch /
+     WhitespaceHandling / RuleEmpty + TestTagToHostname_StandardForms)
+
+2. **User-scope UI** (`/my/exit-rules`):
+   - Top-of-page warning banner when `MismatchCount > 0`:
+     "%d rules reference an exit-node that the device does
+     not use. The rules are saved, but Tailscale ignores them."
+   - "Use device's preferred exit-node" button — pre-fills
+     the `select[name="exit_node"]` with the user's preferred
+     tag and briefly highlights it.
+   - Per-rule "Preferred" column with green check (match) /
+     red warning + the preferred host tag (mismatch) / gray
+     question (no preferred).
+
+3. **Admin cross-user view** (`/admin/exit-rules`):
+   - `AnnotatedRules` slice
+     (`{AdminRule, PreferredHost, Applicable}`)
+   - Same top-of-page banner with the cross-user mismatch
+     count.
+   - Per-row "Preferred" column.
+
+4. **Admin devices** (`/admin/devices`):
+   - Per-device "dead rules" count badge: red link to
+     `/admin/exit-rules` when count > 0. Tooltip explains
+     what "dead" means.
+
+5. **System test**
+   (`/admin/system_tests` → `exit_rules.preferred_mismatch`):
+   - 3 SQL queries (`device_rules`, `device_exit_node_prefs`,
+     `user_exit_node_prefs`) + Go cross-check.
+   - Backend-dispatching — works on both SQLite and
+     PostgreSQL via `db.BackendOf`.
+   - Threshold: 0 = pass, 1–5 = pass with "warn" prefix,
+     > 5 = **fail**.
+   - Skips if no enabled rules.
+
+6. **i18n**
+   (`internal/i18n/catalog_exit_rules.go`, RU + EN,
+   18 new keys): banner text, button label, column
+   header, per-row title tooltips — full Russian and
+   English parity.
+
+7. **B66 verify-pre check** — pins the 13 new file
+   references (`preferred_check.go` helpers, `system_tests`
+   entry, both template banners, `devices.go`
+   `DeadRuleCount`, all i18n keys).
+
+### Files
+
+- `internal/feature/exit_rules/preferred_check.go` — new,
+  158 lines
+- `internal/feature/exit_rules/preferred_check_test.go` —
+  new, 130 lines
+- `internal/feature/exit_rules/form_my.go` — adds
+  `DeviceInfo.PreferredExitNode`, `MismatchCount`,
+  `UserPreferred`
+- `internal/feature/exit_rules/form_admin.go` — adds
+  `RulesAnnotated`, mismatch count
+- `internal/feature/admin/devices.go` — per-device
+  `DeadRuleCount`
+- `internal/feature/admin/system_tests.go` — new
+  `exit_rules.preferred_mismatch` test
+- `internal/handlers/templates/exit_rules.html` — banner +
+  button + JS handler + per-rule column
+- `internal/handlers/templates/admin/exit_rules.html` —
+  banner + per-rule column
+- `internal/handlers/templates/admin/devices.html` —
+  dead-rule badge
+- `internal/i18n/catalog_exit_rules.go` — 18 new keys
+  (RU + EN)
+- `scripts/verify_pre_deploy.sh` — B66
+- `AGENTS.md` — Current section bumped to v0.33.1.17
+
+### Test results
+
+- `go test -count=1 -short ./...` → **27 / 27 packages PASS**
+- `bash scripts/verify_pre_deploy.sh` →
+  **66 / 66 PASS** (B1–B66; B8 smoke is VM-only)
+
+### Live verify (post-deploy on the operator's VM)
+
+After the operator set the preferred exit-node on
+`/my/devices` for the affected device, the system test
+reports:
+
+```
+mismatches | total | no_pref
+          0 |   138 |     13
+```
+
+— 0 dead rules (was 138+ before the operator manually set
+the preferred), 13 rules with no preferred (Tailscale picks
+by metrics; not a mismatch). The warning banner on
+`/my/exit-rules` and `/admin/exit-rules` disappears.
+
+### Live cleanup (also run post-deploy)
+
+The 25-July-2026 PG migration lost the
+`cdn:cloudflare:rutracker.org` marker that the
+autoupdater had added. We re-inserted the 15 Cloudflare
+CIDR ranges (`104.16.0.0/12`, `172.64.0.0/13`,
+`103.21.244.0/22`, `103.22.200.0/22`, …) with
+`parent_domain='cdn:cloudflare:rutracker.org'`, removed
+4 stale /32 (`104.21.32.39/32`, `104.21.50.150/32`,
+`172.67.163.237/32`, `172.67.182.196/32`) for the same
+domain, and re-synced the Cloudflare-routed exit-node via
+`tailscale set --advertise-routes=…` + headscale
+approve. After re-sync, the exit-node's approvedRoutes
+now contain all 4 Cloudflare /13+ supernets and they
+appear in `Serving (Primary)` for Cloudflare traffic.
+
+### How to use
+
+If the warning banner shows up on `/my/exit-rules` or
+`/admin/exit-rules`:
+
+1. **Quick fix on the rules side** — click "Use device's
+   preferred exit-node" in the banner. The form's
+   `exit_node` field gets prefilled with your preferred tag.
+2. **Root-cause fix** — open `/my/devices` (or
+   `/admin/devices` for the user) and either set or clear
+   the per-device preferred exit-node so it matches what
+   your rules point at.
+3. **Verify** — reload `/my/exit-rules`. The banner
+   disappears when the per-device / per-user pref matches
+   every rule's `exit_node_id`.
+
+### Future ideas (not in this release)
+
+- `?device=NAME` query filter on `/admin/exit-rules` — the
+  link from the per-device dead-rule badge points there
+  but the handler doesn't filter yet (10-line follow-up).
+- UI tests / E2E — only backend unit tests in this release.
+
+
+
 ## v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER from .env + restart-skgate button (the "Tailscale never picks up the new URL" fix)
 
 **Date:** 2026-08-06

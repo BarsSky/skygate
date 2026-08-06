@@ -5,7 +5,259 @@ All notable changes to Skygate are documented here. The format is based on
 [Semantic Versioning](https://semver.org/) (best-effort; we don't ship API
 stability promises yet — pin to a tag if you depend on a specific shape).
 
-## [Unreleased] — v0.9.1-dev (work in progress on main)
+> **Note on historical entries:** the per-version detail (root cause +
+> fix + files + live verify) lives in [RELEASE-NOTES.md](RELEASE-NOTES.md)
+> for every shipped tag. This file is the at-a-glance list of what
+> changed in each version; the v0.6 → v0.32 history is preserved in
+> git history (`git log v0.6.0..v0.33.0 -- CHANGELOG.md`).
+
+## [v0.33.1.17] — 2026-08-06
+
+### Added
+
+- **Exit-rule / preferred exit-node cross-check** — `device_rule`
+  pointing at exit-node X only takes effect on device D if D's
+  preferred exit-node is also X (per-device pref > per-user pref >
+  unset). Catches the "rule saved but Tailscale ignores it" bug.
+  - Helpers in `internal/feature/exit_rules/preferred_check.go`
+    (`PreferredExitNodeForRule`, `IsRuleApplicable`, `TagToHostname`,
+    `RulesByDeviceHostname`) with 6 unit tests.
+  - `/my/exit-rules`: top-of-page warning banner with "Use device's
+    preferred exit-node" button when `MismatchCount > 0`; per-rule
+    "Preferred" column with green/red icon.
+  - `/admin/exit-rules`: same banner + per-row "Preferred" column
+    on the new `AnnotatedRules` slice.
+  - `/admin/devices`: per-device "dead rules" count badge with
+    tooltip explaining what "dead" means.
+  - `/admin/system_tests` → `exit_rules.preferred_mismatch`:
+    in-process system test (3 SQL queries + Go cross-check,
+    backend-dispatching for SQLite/PG; threshold 0 = pass,
+    1–5 = pass with warn, > 5 = fail).
+  - 18 new i18n keys (RU + EN) for banner text, button label,
+    column header, per-row title tooltips.
+  - `B66` verify-pre check (13 grep-pins).
+
+## [v0.33.1.16] — 2026-08-06
+
+### Fixed
+
+- **`SKYGATE_TS_LOGIN_SERVER` not picked up by the entrypoint** —
+  the hardcoded `https://head.example.com` in
+  `docker-compose.yml:environment:` was overriding the `.env`
+  value (docker-compose precedence: `environment:` > `env_file:`).
+  Removed the hardcoded value; added a "Restart skygate" card on
+  `/admin/tailscale` that writes the current effective value to
+  `.env` atomically (`.tmp` + rename) and triggers
+  `docker compose restart skygate`. Setsid'd subprocess survives
+  the SIGTERM that hits the parent. 5 new i18n keys, 5 new
+  tests. `B65` verify-pre check.
+
+## [v0.33.1.15] — 2026-08-05
+
+### Fixed
+
+- **Per-device exit_node_pref device tag missing from
+  `tagOwners`** — headscale rejected the per-device grant
+  because the device's tag (e.g. `tag:dev-<user>-<device>`)
+  was not in `tagOwners`. ACL builder now augments `tagOwners`
+  with per-device-pref device tags. `B64` verify-pre check.
+
+## [v0.33.1.14] — 2026-08-04
+
+### Fixed
+
+- **`placeholdersList(1)+placeholdersList(1)` 2-arg PG-unsafe
+  query** — produced `WHERE user_id = $1 AND device_hostname = $1`
+  on PG (two refs to the same param). Replaced with `PlaceholderAt(2, i)`.
+  `B63` verify-pre check (comprehensive sweep).
+
+## [v0.33.1.13] — 2026-08-03
+
+### Fixed
+
+- **`SKYGATE_TS_LOGIN_SERVER` DB-persisted but ignored by
+  `tailscale up`** — the entrypoint read the env var at start, not
+  the DB value. Wired the entrypoint to fall back to the DB
+  value when the env var is empty. `B62` verify-pre check.
+
+## [v0.33.1.12] — 2026-08-02
+
+### Fixed
+
+- **Multiple `?` placeholder PG-unsafe queries** — found by
+  `?` → `$N` sweep script. `B60` verify-pre check (full sweep
+  across the codebase).
+
+## [v0.33.1.11] — 2026-08-01
+
+### Added
+
+- **`/admin/system_tests` works on both backends** — tests
+  dispatch on `db.BackendOf` so the same registry runs on
+  SQLite (default) and PostgreSQL (v0.31+ opt-in). 7 new tests
+  covering exit-nodes, integrations, DNS resolution, duplicate
+  devices, rule sanity, recent backups, and active meshes.
+  `B59` verify-pre check.
+
+## [v0.33.1.10] — 2026-07-30
+
+### Fixed
+
+- **Tailscale auto-generate preauth key** — `/admin/tailscale`
+  now has a one-click "Generate automatically" button. `B58`
+  verify-pre check.
+
+## [v0.33.1.9] — 2026-07-29
+
+### Added
+
+- **Tailscale web-UI management** — `SKYGATE_TS_LOGIN_SERVER` is
+  editable from `/admin/tailscale` (DB-persisted). `B56`
+  verify-pre check (env-source fix).
+
+## [v0.33.0] — 2026-07-28
+
+### Added — Network Access Manager + Admin Test Page
+
+- **`devicemeta` package** (new `internal/devicemeta/`): per-device
+  `os` + `device_type` columns on `node_owner_map`. Auto-detect
+  heuristic (`DetectOS`/`DetectType`). Auto-detect runs on every
+  `/my/devices` load. Manual override form on `/admin/devices`.
+  5 unit tests, RU + EN i18n keys.
+- **`via:` sync bug fix** in `Service.generateACL`: the
+  `/my/exit-rules` + `/admin/exit-rules` + REST API paths
+  hardcoded the no-via generator; per-device-pref path
+  already used `acl.ApplyACLPipelineForPlane`. Unified dispatch
+  honours `SKYGATE_ACL_VIA_ENABLED`.
+- **refactor-v0.30 Phase C + D** (internal, no API change):
+  catalog.go split into 12 per-feature `catalog_*.go` files
+  + glue; `SanitizeFilename` → `internal/httputil/`;
+  `backfillNodeOwnership` → `internal/nodeownership/`;
+  per-user control plane router → `internal/controlplane/`.
+- **Network Access Manager** (`internal/feature/admin/headscale_acl.go`):
+  `/admin/headscale/acl` for adding/removing skygate-managed
+  headscale ACL rules. Read-modify-write of the live policy
+  preserves every other field. Idempotent on rule fingerprint.
+- **Admin Test Page** (`internal/feature/admin/system_tests.go`):
+  `/admin/system_tests` runs 6 in-process tests (network, db,
+  headscale, disk, wal-g, replication) and stores results in
+  `system_tests_runs`.
+- Catalog extended: B38–B42 (build-time) + R31, R32 (runtime).
+
+## [v0.33.1.x history] — Recent fixes and features
+
+The full v0.33 series shipped in 2026-Q3 and added: per-feature
+refactor of the handlers package, the in-app Update orchestrator
+with auto-rollback, the headscale release monitor
+(`/admin/headscale`), the per-user exit-rule cleanup helper, the
+postgreSQL foundation (27 PG migrations, 4 verification tests),
+the `?` → `$N` placeholder sweep, the Telegram egress relay
+selector (`/admin/telegram` per-chat pick of which enabled
+exit-node runs the canonical Telegram CIDR list), the
+`SKYGATE_TS_LOGIN_SERVER` config-source fix, and the
+exit-rule / preferred cross-check.
+
+## [v0.32.x → v0.16.x] — Major feature history
+
+- **v0.32.x** — PostgreSQL foundation + driver abstraction;
+  refactor-v0.30 (handlers split into `internal/feature/*`);
+  Tailscale in-image integration; exit-rules CDN-range
+  substitution (Cloudflare/Fastly/Google/Akamai); mesh
+  visibility; v0.32.14+ CASCADE-LOCK fix (SQLite WAL +
+  MaxOpenConns=15 + synchronous=NORMAL); v0.32.16+ distroless
+  healthcheck pattern for headplane.
+- **v0.31.0** — PostgreSQL foundation: 27 PG migrations + 4
+  verification tests; `pg-ha` deploy with wal-g; build tag
+  `-tags postgres`. See
+  [release notes](https://github.com/BarsSky/skygate/releases/tag/v0.31.0)
+  for the full breakdown.
+- **v0.30.1** — per-user device can't be tagged as exit-node
+  (the "workstation-8" fix). 8 unit tests; R26 added to
+  verify-post.
+- **v0.30.0** — Self-update orchestrator (v0.29.0) +
+  Auto-swap via helper container in host PID namespace
+  (v0.29.3.1) + `skygate` host-side wrapper (v0.29.2) +
+  per-user device can't be exit-node (v0.30.1).
+- **v0.29.x** — Self-update orchestrator with auto-rollback
+  (`/admin/update`); `skygate` host-side wrapper (`skygate-cli.sh`)
+  using `com.docker.compose.service=skygate` label; helper
+  container in host PID namespace for safe swap; Tailscale
+  in-image integration (off by default since v0.32.15).
+- **v0.28.x** — explicit opt-in for `via` constraint
+  (Android-friendly) + tagged-device exit-node fix + idempotent
+  migration + entrypoint always clears stale Tailscale exit-node.
+  4 patches (v0.28.5 / v0.28.5a / v0.28.5b / v0.28.5c). The
+  v0.28.5 guarantee catalog was the reason B1–B18 + R1–R27
+  exist.
+- **v0.27.x → v0.16.x** — per-user subnets, per-user headscale
+  control plane (compliance tier), mesh, per-device preferred
+  exit-node, subnet router, personal API tokens, self-service
+  password change, rate limits, cleanup of orphaned /32, Bilingual
+  EN/RU web UI (1 000+ keys), Telegram bot (real ops:
+  preauth / rules / devices / restart / version), exit-node
+  rules with per-device accept/deny ACL, automatic DNS-driven
+  /32 resolution for domain rules, multi-user, per-user rule
+  limits, headscale integration, headplane integration.
+
+## [v0.6.0 and earlier] — Pre-refactor baseline
+
+- v0.6.1-amnezia-fix — preserves workstation-8 exit-node
+  routes in `SetAdvertisedRoutes` and `SyncAdvertisedRoutes`
+- v0.6.0 — first refactored release: exit-node rules with
+  per-device accept/deny ACL, automatic DNS-driven /32
+  resolution, multi-user, per-user rule limits, per-device
+  limits, cleanup of orphaned /32, sync to exit-node
+  advertised-routes, tag-aware device ownership, hierarchical
+  view, backup integrity verification, in-process Telegram
+  mock harness, `docs/SYNC.md` for agent workflow, `Makefile`
+- v0.5.0 and earlier — pre-refactor baseline (see
+  `git log v0.5.0`)
+
+## [v0.33.1.0 — v0.6.0] — Compact history (one line per minor)
+
+(For users who want a quick scan of what shipped in each
+minor without drilling into every patch. Detailed entries
+are in [RELEASE-NOTES.md](RELEASE-NOTES.md) and git history.)
+
+- **v0.33.0** — Network Access Manager (`/admin/headscale/acl`)
+  + Admin Test Page (`/admin/system_tests`)
+- **v0.32.0** — refactor-v0.30 (handlers → `internal/feature/*`),
+  PostgreSQL opt-in, CASCADE-LOCK fix, distroless healthcheck
+- **v0.31.0** — PostgreSQL foundation (27 migrations + 4
+  verification tests, build-tag `-tags postgres`)
+- **v0.30.x** — per-user device can't be exit-node
+  (workstation-8 fix), self-update orchestrator
+- **v0.29.x** — in-app update, host-side wrapper, helper
+  container swap
+- **v0.28.5** — `via` opt-in (Android-friendly) + tagged-device
+  exit-node fix + idempotent migration + entrypoint clears
+  stale Tailscale exit-node. The v0.28.5 guarantee catalog
+  (B1–B18 / R1–R27) was created in this release.
+- **v0.28.x** — per-user preferred exit-node (v0.28.1) +
+  per-device preferred (v0.28.4) + via flag (v0.28.5)
+- **v0.27.x** — PostgreSQL HA (multi-host) foundation
+- **v0.26.0** — HA-ready: `/healthz` + `/readyz`, subnet-router
+  tooling, e2e pilot script
+- **v0.25.0** — mesh visibility on `/my/devices` + operator
+  overview
+- **v0.24.x** — download bundle for per-user subnet-router,
+  per-device preferred exit-node (v0.28.4 superset)
+- **v0.23.x** — per-user headscale control plane (compliance
+  tier) + safe user migration
+- **v0.22.x** — mesh (N-way bridge) + safe user migration design
+- **v0.21.x** — user-to-user subnet bridge (invite codes +
+  bot `/invite` + `/accept` + `/admin/invites`)
+- **v0.20.x** — headscale-update-monitor +
+  auto-allocate subnet on user create
+- **v0.19.x** — `exitnode.skygate-subnet-<user>` DNS records
+  (BLOCKED on headscale 0.29 — `dns.extra_records` unsupported)
+- **v0.18.x** — MagicDNS for personal subnets
+- **v0.17.x** — share subnet cross-user (admin-mediated)
+- **v0.16.x** — per-user subnets foundation (v0.16.6+) +
+  subnet router (v0.16.7+)
+- **v0.10.x → v0.15.x** — full release history in
+  [RELEASE-NOTES.md](RELEASE-NOTES.md) and git tags
+
 
 ### Added
 
