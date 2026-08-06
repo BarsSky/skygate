@@ -69,7 +69,20 @@ services:
       #   2. Write it to secrets/ts_authkey on the host
       #   3. Re-add the env var + secrets: mount here
       - SKYGATE_TS_AUTHKEY_FILE=/run/secrets/ts_authkey
-      - SKYGATE_TS_LOGIN_SERVER=https://head.example.com
+      # 2026-08-06: v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER now
+      # comes from .env (via env_file) instead of a hardcoded
+      # placeholder. Pre-v0.33.1.16 the hardcoded value here
+      # OVERRODE the .env value (docker-compose precedence:
+      # environment > env_file), so the operator's edit on
+      # /admin/tailscale was never picked up by the entrypoint.
+      # The new /admin/tailscale restart button writes the
+      # current effective value back to .env, then restarts
+      # the container. The COMPOSE_PROJECT_NAME + SKYGATE_HOST_REPO_PATH
+      # overrides below are kept (they were intentionally
+      # hardcoded to keep the in-container auto-updater in sync
+      # with the host-side compose; the operator shouldn't change
+      # them via .env). Tailnet hostname stays hardcoded too
+      # (a single skygate host = a single tailnet identity).
       - SKYGATE_TS_HOSTNAME=skygate-host-1
       # 2026-07-27: v0.29.0 — pin the docker compose project name
       # so the auto-updater (which runs `docker compose` from inside
