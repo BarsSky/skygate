@@ -20,6 +20,20 @@
 {{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.rolled_back"}}</div>{{end}}
 {{if .reapplied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.reapplied"}}</div>{{end}}
 
+{{/* 2026-08-06: preferred-mismatch banner. Surfaces the count of
+     rules whose exit_node_id doesn't match the device's preferred
+     exit-node. Tells the admin "your rules are configured but
+     Tailscale isn't actually using them" — the cross-check that
+     would have caught the v0.33.1.16 Cloudflare-CIDR bug at the
+     /admin/exit-rules page instead of needing a /system_tests
+     page discovery. */}}
+{{if gt .MismatchCount 0}}
+  <div class="alert alert-warn" id="admin-preferred-mismatch">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <span>{{tf "exit_rules_admin.preferred_mismatch_banner" .MismatchCount}}</span>
+  </div>
+{{end}}
+
 {{if .MaxTotalRules}}
 <div class="card">
   <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -65,12 +79,25 @@
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             <table>
-              <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
+              <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
               {{range $rules}}<tr>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td><span class="tag">{{.TargetType}}</span></td>
                 <td class="col-target"><code>{{.TargetValue}}</code></td>
                 <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                <td class="col-preferred">
+                  {{$pref := ""}}
+                  {{range $ar := $.RulesAnnotated}}{{if eq $ar.ID .ID}}{{$pref = $ar.PreferredHost}}{{end}}{{end}}
+                  {{if $pref}}
+                    {{if eq $pref $exitNode}}
+                      <span class="tag tag-success" title="{{tf "exit_rules_admin.preferred_match_title" $pref}}"><i class="fa-solid fa-check"></i></span>
+                    {{else}}
+                      <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" $pref}}"><i class="fa-solid fa-triangle-exclamation"></i> {{$pref}}</span>
+                    {{end}}
+                  {{else}}
+                    <span class="tag" title="{{t "exit_rules_admin.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+                  {{end}}
+                </td>
                 <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
                 <td class="col-delete">
                   <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" .ID}}')">

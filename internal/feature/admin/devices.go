@@ -18,6 +18,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/devicemeta"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
 )
 
@@ -136,8 +137,68 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 			NodeView: n, OS: os, DeviceType: typ,
 		})
 	}
+
+	// 2026-08-06: per-device "dead rules" count. For each
+	// device, count rules in device_rules whose exit_node_id
+	// doesn't match the device's preferred exit-node (or
+	// whose preferred is unset). The admin template renders
+	// a per-row warning with the count and a link to the
+	// device's exit-rule subset.
+	//
+	// Build (hostname → preferred host) from the per-device +
+	// per-user pref maps. Per-device wins; per-user is the
+	// fallback for devices that have no override.
+	hostnameToUserID := map[string]int64{}
+	for hn, uid := range skygateUserByHost {
+		hostnameToUserID[strings.ToLower(hn)] = uid
+	}
+	prefByHostname := map[string]string{}
+	for _, dp := range deviceExitPrefs {
+		hn := strings.ToLower(dp.DeviceHostname)
+		if hn == "" {
+			continue
+		}
+		prefByHostname[hn] = exit_rules.TagToHostname(dp.ExitNodeTag)
+	}
+	for hn, uid := range hostnameToUserID {
+		if _, has := prefByHostname[hn]; has {
+			continue
+		}
+		prefKey := strconv.FormatInt(uid, 10)
+		if v, ok := userExitPrefMap[prefKey]; ok {
+			prefByHostname[hn] = exit_rules.TagToHostname(v)
+		}
+	}
+	// Walk all enabled device_rules and count dead rules per
+	// hostname.
+	allRules, _ := db.GetAllRulesForAdmin(s.DB)
+	deadByHostname := map[string]int{}
+	// Pre-bucket by hostname so the cross-check is O(N).
+	for _, r := range allRules {
+		hn := strings.ToLower(r.DeviceName)
+		if hn == "" {
+			continue
+		}
+		pref := prefByHostname[hn]
+		if !exit_rules.IsRuleApplicable(r.ExitNodeID, pref) {
+			deadByHostname[hn]++
+		}
+	}
+	// Augment each row with the count for template rendering.
+	type adminDeviceRow2 struct {
+		adminDeviceRow
+		DeadRuleCount int
+	}
+	deviceRowsWithDead := make([]adminDeviceRow2, 0, len(deviceRows))
+	for _, dr := range deviceRows {
+		deviceRowsWithDead = append(deviceRowsWithDead, adminDeviceRow2{
+			adminDeviceRow: dr,
+			DeadRuleCount:  deadByHostname[strings.ToLower(dr.Hostname)],
+		})
+	}
+
 	s.Backend.RenderWithLayout(w, r, "admin/devices.html", c, map[string]any{
-		"Nodes":             deviceRows,
+		"Nodes":             deviceRowsWithDead,
 		"Users":             users,
 		"FlashSuccess":      r.URL.Query().Get("ok"),
 		"FlashError":        r.URL.Query().Get("err"),

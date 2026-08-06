@@ -632,6 +632,165 @@ var TestRegistry = []SystemTestDef{
 				active, len(meshes), strings.Join(parts, ", "))
 		},
 	},
+	{
+		// 2026-08-06: exit_rules.preferred_mismatch — cross-check
+		// between device_rules and the device/user preferred
+		// exit-node pref. A rule pointing at exit-node X only
+		// takes effect on device D if D's preferred exit-node is
+		// also X (per-device > per-user > unset, in which case
+		// "Tailscale picks by metrics" so the rule MAY apply).
+		//
+		// This test would have caught the v0.33.1.16 Cloudflare
+		// bug at the /admin/system_tests page instead of needing
+		// 30 minutes of curl-through-relay debug. The
+		// /my/exit-rules + /admin/exit-rules + /admin/devices
+		// pages now also render a banner when this count is > 0.
+		//
+		// Threshold: 5 mismatches. Below that it's usually
+		// transient (user just set a new preferred and the
+		// browser cache hasn't caught up). Above 5 means the
+		// operator's rule-set is meaningfully misconfigured.
+		Name:        "exit_rules.preferred_mismatch",
+		Category:    "exit_rules",
+		Description: "No device_rules reference a non-preferred exit-node (per-device or per-user pref)",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.DB == nil {
+				return SystemTestFail, "DB not configured"
+			}
+			// Pull all enabled rules + the per-device / per-user
+			// prefs in 3 queries, then cross-check in Go.
+			rows, err := s.DB.QueryContext(ctx, `
+				SELECT r.user_id, COALESCE(d.hostname, ''), r.exit_node_id
+				  FROM device_rules r
+				  LEFT JOIN node_owner_map d ON d.id = r.device_id
+				 WHERE r.enabled = 1 AND r.exit_node_id != ''
+			`)
+			if err != nil {
+				return SystemTestFail, "query rules: " + err.Error()
+			}
+			defer rows.Close()
+			type ruleRow struct {
+				userID int64
+				host   string
+				exit   string
+			}
+			var rules []ruleRow
+			for rows.Next() {
+				var rr ruleRow
+				var uid int
+				if err := rows.Scan(&uid, &rr.host, &rr.exit); err != nil {
+					continue
+				}
+				rr.userID = int64(uid)
+				rr.host = strings.ToLower(strings.TrimSpace(rr.host))
+				if rr.host == "" {
+					continue
+				}
+				rules = append(rules, rr)
+			}
+			if len(rules) == 0 {
+				return SystemTestSkip, "no enabled device_rules — no test to run"
+			}
+			// Per-device prefs (userID:hostname → tag).
+			devPrefRows, err := s.DB.QueryContext(ctx, `SELECT user_id, device_hostname, exit_node_tag FROM device_exit_node_prefs`)
+			if err != nil {
+				return SystemTestFail, "device prefs: " + err.Error()
+			}
+			defer devPrefRows.Close()
+			type prefRow struct {
+				userID int64
+				host   string
+				tag    string
+			}
+			var devPrefs []prefRow
+			for devPrefRows.Next() {
+				var p prefRow
+				var uid int
+				if err := devPrefRows.Scan(&uid, &p.host, &p.tag); err != nil {
+					continue
+				}
+				p.userID = int64(uid)
+				p.host = strings.ToLower(strings.TrimSpace(p.host))
+				devPrefs = append(devPrefs, p)
+			}
+			// Per-user prefs (userID → tag).
+			userPrefRows, err := s.DB.QueryContext(ctx, `SELECT user_id, exit_node_tag FROM user_exit_node_prefs`)
+			if err != nil {
+				return SystemTestFail, "user prefs: " + err.Error()
+			}
+			defer userPrefRows.Close()
+			userPrefs := map[int64]string{}
+			for userPrefRows.Next() {
+				var uid int
+				var tag string
+				if err := userPrefRows.Scan(&uid, &tag); err != nil {
+					continue
+				}
+				userPrefs[int64(uid)] = tag
+			}
+			// Cross-check: for each rule, does its exit_node_id
+			// match the device's preferred host?
+			prefByUserHost := map[string]string{}
+			tagToHost := func(t string) string {
+				t = strings.TrimSpace(t)
+				if !strings.HasPrefix(t, "tag:") {
+					return t
+				}
+				r := strings.TrimPrefix(t, "tag:")
+				r = strings.TrimPrefix(r, "exit-")
+				return r
+			}
+			mismatch := 0
+			samples := []string{}
+			for _, r := range rules {
+				key := fmt.Sprintf("%d:%s", r.userID, r.host)
+				pref, ok := prefByUserHost[key]
+				if !ok {
+					// 1) per-device pref
+					for _, p := range devPrefs {
+						if p.userID == r.userID && p.host == r.host {
+							pref = tagToHost(p.tag)
+							prefByUserHost[key] = pref
+							ok = true
+							break
+						}
+					}
+				}
+				if !ok {
+					// 2) per-user pref
+					if t, ok2 := userPrefs[r.userID]; ok2 {
+						pref = tagToHost(t)
+						prefByUserHost[key] = pref
+					}
+				}
+				// No preferred = rule "may" apply (Tailscale
+				// picks by metrics). Don't count as mismatch.
+				if pref == "" {
+					continue
+				}
+				if pref != r.exit {
+					mismatch++
+					if len(samples) < 3 {
+						samples = append(samples, fmt.Sprintf("%s→%s (pref=%s)", r.host, r.exit, pref))
+					}
+				}
+			}
+			if mismatch == 0 {
+				return SystemTestPass, fmt.Sprintf("0 mismatches across %d rules", len(rules))
+			}
+			// > 5 = real misconfiguration; warn loudly so the
+			// operator sees it on the system_tests page.
+			// 1-5 = transient (user just changed a pref);
+			// report but don't fail.
+			detail := fmt.Sprintf("%d/%d rules reference non-preferred exit-node: %s",
+				mismatch, len(rules), strings.Join(samples, "; "))
+			if mismatch > 5 {
+				return SystemTestFail, detail
+			}
+			return SystemTestPass, "warn: " + detail
+		},
+	},
 }
 
 // testService is the runtime Service for in-process test

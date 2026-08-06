@@ -26,6 +26,16 @@ var ruExitRules = map[string]string{
 	"exit_rules.duplicate"              : "Правило для %s уже существует — не дублируем. Удалите существующее, если нужно обновить.",
 	"exit_rules.dns_pending"            : "Домен добавлен, но DNS пока не отвечает: %s. Autoupdater попробует при следующем цикле (до 5 минут).",
 	"exit_rules.deleted"                : "Правило удалено",
+	// 2026-08-06: preferred-mismatch cross-check (v0.33.1.16
+	// Cloudflare CIDR debug). Surfaces the count of rules
+	// that point at a non-preferred exit-node — those rules
+	// are silently ignored by Tailscale.
+	"exit_rules.preferred_mismatch_banner" : "%d правил ссылаются на exit-node, который устройство не использует. Правила сохранены, но Tailscale их игнорирует.",
+	"exit_rules.use_preferred_btn"      : "Use preferred (%s)",
+	"exit_rules.preferred_col"           : "Preferred",
+	"exit_rules.preferred_match_title"   : "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
+	"exit_rules.preferred_mismatch_title": "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
+	"exit_rules.preferred_none_title"    : "No preferred exit-node set for this device — Tailscale picks by metrics, rule may or may not apply.",
 	"exit_rules.device"                 : "Устройство",
 	"exit_rules.device_hint"            : "Устройство, для которого применяется правило. Видны только ваши устройства.",
 	"exit_rules.exit_node"              : "Exit node (выходной узел)",
@@ -133,6 +143,15 @@ var ruExitRules = map[string]string{
 	"exit_rules_admin.col_type"         : "Тип",
 	"exit_rules_admin.col_resource"     : "Ресурс",
 	"exit_rules_admin.col_parent"       : "Родитель",
+	// 2026-08-06: admin-side preferred column + mismatch banner
+	// (mirror of the user-scope ones).
+	"exit_rules_admin.col_preferred"    : "Preferred",
+	"exit_rules_admin.preferred_match_title"   : "Matches the device's preferred exit-node (%s).",
+	"exit_rules_admin.preferred_mismatch_title": "Differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
+	"exit_rules_admin.preferred_none_title"    : "No preferred exit-node set.",
+	"exit_rules_admin.preferred_mismatch_banner" : "%d rules across all users reference a non-preferred exit-node. Check the 'Preferred' column.",
+	"exit_rules_admin.dead_rules_count"        : "%d dead rule(s)",
+	"exit_rules_admin.dead_rules_count_title"  : "%d device_rule(s) for this device reference a non-preferred exit-node. Tailscale will ignore them. Open /admin/exit-rules to see which.",
 	"exit_rules_admin.col_created"      : "Создано",
 	"exit_rules_admin.auto_managed"     : "Авто-сопровождение",
 	"exit_rules_admin.delete_confirm"   : "Удалить правило #%d?",
@@ -185,6 +204,14 @@ var enExitRules = map[string]string{
 	"exit_rules.duplicate"              : "A rule for %s already exists — not duplicating. Remove the existing one to update.",
 	"exit_rules.dns_pending"            : "Domain added, but DNS is not responding yet: %s. Autoupdater will retry on the next cycle (up to 5 minutes).",
 	"exit_rules.deleted"                : "Rule deleted",
+	// 2026-08-06: preferred-mismatch cross-check (mirror of the
+	// RU keys above).
+	"exit_rules.preferred_mismatch_banner" : "%d rules reference an exit-node that the device does not use. The rules are saved, but Tailscale ignores them.",
+	"exit_rules.use_preferred_btn"      : "Use preferred (%s)",
+	"exit_rules.preferred_col"           : "Preferred",
+	"exit_rules.preferred_match_title"   : "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
+	"exit_rules.preferred_mismatch_title": "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
+	"exit_rules.preferred_none_title"    : "No preferred exit-node set for this device — Tailscale picks by metrics, rule may or may not apply.",
 	"exit_rules.device"                 : "Device",
 	"exit_rules.device_hint"            : "The device this rule applies to. Only your devices are visible.",
 	"exit_rules.exit_node"              : "Exit node",
@@ -292,6 +319,14 @@ var enExitRules = map[string]string{
 	"exit_rules_admin.col_type"         : "Type",
 	"exit_rules_admin.col_resource"     : "Resource",
 	"exit_rules_admin.col_parent"       : "Parent",
+	// 2026-08-06: admin-side EN mirror.
+	"exit_rules_admin.col_preferred"    : "Preferred",
+	"exit_rules_admin.preferred_match_title"   : "Matches the device's preferred exit-node (%s).",
+	"exit_rules_admin.preferred_mismatch_title": "Differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
+	"exit_rules_admin.preferred_none_title"    : "No preferred exit-node set.",
+	"exit_rules_admin.preferred_mismatch_banner" : "%d rules across all users reference a non-preferred exit-node. Check the 'Preferred' column.",
+	"exit_rules_admin.dead_rules_count"        : "%d dead rule(s)",
+	"exit_rules_admin.dead_rules_count_title"  : "%d device_rule(s) for this device reference a non-preferred exit-node. Tailscale will ignore them. Open /admin/exit-rules to see which.",
 	"exit_rules_admin.col_created"      : "Created",
 	"exit_rules_admin.auto_managed"     : "Auto-managed",
 	"exit_rules_admin.delete_confirm"   : "Delete rule #%d?",

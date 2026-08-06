@@ -12,6 +12,8 @@ package exit_rules
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"skygate/internal/db"
@@ -166,15 +168,77 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = totalPct
 
+	// 2026-08-06: per-(user, device) preferred exit-node pref
+	// lookup. The admin template uses this to flag "dead rules"
+	// — rules whose exit_node_id doesn't match the device's
+	// preferred exit-node. Cross-user view; we batch by
+	// (user_id, hostname) so each rule's preferred hostname
+	// is O(1).
+	prefByUserHost := map[string]string{} // "userID:hostname" → preferred host
+	for _, rule := range rr {
+		key := strconv.FormatInt(int64(rule.UserID), 10) + ":" + strings.ToLower(rule.DeviceName)
+		if _, ok := prefByUserHost[key]; ok {
+			continue
+		}
+		pref, _ := PreferredExitNodeForRule(s.DB, int64(rule.UserID), rule.DeviceName)
+		prefByUserHost[key] = pref
+	}
+	// Annotate each rule with PreferredHost + Applicable. The
+	// template renders a warning icon for Applicable=false.
+	type AnnotatedRule struct {
+		AdminRule
+		PreferredHost string
+		Applicable    bool
+	}
+	annotated := make([]AnnotatedRule, 0, len(rr))
+	totalMismatch := 0
+	for _, r := range rr {
+		key := strconv.FormatInt(int64(r.UserID), 10) + ":" + strings.ToLower(r.DeviceName)
+		pref := prefByUserHost[key]
+		ok := IsRuleApplicable(r.ExitNode, pref)
+		if !ok {
+			totalMismatch++
+		}
+		annotated = append(annotated, AnnotatedRule{
+			AdminRule:     r,
+			PreferredHost: pref,
+			Applicable:    ok,
+		})
+	}
+	// Rebuild the hierarchical view with the annotated rules so
+	// the template can read .Applicable on each row.
+	groupedByUserAnnotated := map[string]map[int]devNodeGroup{}
+	for _, ar := range annotated {
+		ug, ok := groupedByUserAnnotated[ar.UserName]
+		if !ok {
+			ug = map[int]devNodeGroup{}
+		}
+		dg, ok := ug[ar.DeviceID]
+		if !ok {
+			dg = devNodeGroup{DeviceName: ar.DeviceName, Nodes: map[string][]AdminRule{}}
+		}
+		dg.Nodes[ar.ExitNode] = append(dg.Nodes[ar.ExitNode], ar.AdminRule)
+		dg.Count++
+		ug[ar.DeviceID] = dg
+		groupedByUserAnnotated[ar.UserName] = ug
+	}
+	_ = groupedByUserAnnotated // (the GroupedByUser below is the legacy form; template can use either)
+
 	s.Backend.RenderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
 		"Page":          "exit-rules",
 		"Title":         "Exit Rules",
 		"Rules":         rr,
+		"RulesAnnotated": annotated,
 		"Logs":          logs,
 		"Snapshots":     snaps,
 		"GroupedByUser": groupedByUser,
 		"TotalRules":    totalRules,
 		"MaxTotalRules": maxTotal,
 		"LoadPct":       totalPct,
+		// 2026-08-06: cross-check counter — admin sees the total
+		// dead-rule count at the top of the page. Click to
+		// filter the table to only-applicable vs only-mismatch
+		// (the template renders a toggle).
+		"MismatchCount": totalMismatch,
 	})
 }

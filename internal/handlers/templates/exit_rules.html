@@ -65,6 +65,24 @@
 {{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{tf "exit_rules.dns_pending" .warn}}</div>{{end}}
 {{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "exit_rules.deleted"}}</div>{{end}}
 
+{{/* 2026-08-06: cross-check between device_rules and the device/user preferred exit-node.
+     Renders a single warning banner when at least one rule's exit_node_id doesn't match
+     the device's preferred exit-node. The user must change either the rule's exit_node
+     or the device's preferred exit-node (/my/devices) to make the rule take effect.
+     The banner also surfaces the "Use device's preferred" button so the user can fix
+     the rule from the same page. */}}
+{{if gt .MismatchCount 0}}
+  <div class="alert alert-warn" id="preferred-mismatch-banner">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <span>{{tf "exit_rules.preferred_mismatch_banner" .MismatchCount}}</span>
+    {{if .UserPreferred}}
+      <button type="button" class="btn btn-sm" id="use-preferred-btn" data-preferred="{{.UserPreferred}}">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> {{tf "exit_rules.use_preferred_btn" .UserPreferred}}
+      </button>
+    {{end}}
+  </div>
+{{end}}
+
 <div class="exit-layout">
 
   {{/* ===== LEFT COLUMN — forms + rules ===== */}}
@@ -186,11 +204,24 @@
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             <table>
-              <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th></th></tr>
+              <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
               {{range $rules}}<tr class="rule-row" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                 <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                <td class="col-preferred">
+                  {{$pref := index $.DeviceInfos 0}}{{/* placeholder — overwritten below */}}
+                  {{range $di := $.DeviceInfos}}{{if eq $di.Hostname $host}}{{$pref = $di}}{{end}}{{end}}
+                  {{if $pref.PreferredExitNode}}
+                    {{if eq $pref.PreferredExitNode $exitNode}}
+                      <span class="tag tag-success" title="{{tf "exit_rules.preferred_match_title" $pref.PreferredExitNode}}"><i class="fa-solid fa-check"></i></span>
+                    {{else}}
+                      <span class="tag tag-danger" title="{{tf "exit_rules.preferred_mismatch_title" $pref.PreferredExitNode}}"><i class="fa-solid fa-triangle-exclamation"></i> {{$pref.PreferredExitNode}}</span>
+                    {{end}}
+                  {{else}}
+                    <span class="tag" title="{{t "exit_rules.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+                  {{end}}
+                </td>
                 <td class="col-delete">
                   <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                 </td>
@@ -272,6 +303,35 @@
       };
       if (document.getElementById('device-select')) {
         updateDeviceUsageHint();
+      }
+
+      // 2026-08-06: "Use device's preferred exit-node" button
+      // (renders only when the preferred-mismatch banner is up).
+      // On click: pre-fill the exit_node <select> with the user's
+      // preferred exit-node. The user can still tweak the rule
+      // before submitting.
+      var prefBtn = document.getElementById('use-preferred-btn');
+      if (prefBtn) {
+        prefBtn.addEventListener('click', function(){
+          var pref = prefBtn.getAttribute('data-preferred') || '';
+          if (!pref) return;
+          var sel = document.querySelector('select[name="exit_node"]');
+          if (!sel) return;
+          for (var i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === pref) {
+              sel.value = pref;
+              // highlight the field briefly so the user sees what changed
+              sel.style.transition = 'box-shadow 0.3s';
+              sel.style.boxShadow = '0 0 0 3px var(--accent)';
+              setTimeout(function(){ sel.style.boxShadow = ''; }, 1500);
+              sel.scrollIntoView({behavior: 'smooth', block: 'center'});
+              return;
+            }
+          }
+          // preferred value isn't in the dropdown — show a hint and let
+          // the user pick manually (exit-node list might be filtered).
+          prefBtn.title = 'preferred=' + pref + ' is not in the dropdown — pick manually';
+        });
       }
     })();
     </script>

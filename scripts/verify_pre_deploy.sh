@@ -1563,3 +1563,26 @@ run_check "B64" "per-device exit_node_pref device tag in tagOwners (v0.33.1.15)"
 #     detached-restart pattern
 #   - i18n keys for the restart button exist in both RU+EN
 run_check "B65" "SKYGATE_TS_LOGIN_SERVER from .env + restart-skgate button (v0.33.1.16)" 'f=/tmp/b65.sh; printf "%s" "! grep -q \"SKYGATE_TS_LOGIN_SERVER=https://head.example.com\" docker-compose.yml && grep -q handleTailscaleRestart internal/feature/admin/tailscale.go && grep -q \"action=\\\"restart_skgate\\\"\" internal/feature/admin/tailscale.go && grep -q updateEnvFileSKYGATE_TS_LOGIN_SERVER internal/feature/admin/tailscale.go && grep -q applySysProcAttr internal/feature/admin/setsid_linux.go && grep -q TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Replace internal/feature/admin/admin_tailscale_test.go && grep -q TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Append internal/feature/admin/admin_tailscale_test.go && grep -q TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Clear internal/feature/admin/admin_tailscale_test.go && grep -q TestHandleTailscaleRestart_WritesEnvAndDispatches internal/feature/admin/admin_tailscale_test.go && grep -q TestHandleTailscaleRestart_RejectsBadCSRF internal/feature/admin/admin_tailscale_test.go && grep -q tailscale.restart_btn internal/i18n/catalog_tailscale.go && grep -q tailscale.restart_help internal/i18n/catalog_tailscale.go && grep -q tailscale.restart_confirm internal/i18n/catalog_tailscale.go && grep -q tailscale.restart_btn internal/handlers/templates/admin/tailscale.html" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B66 (v0.33.1.17) — exit_rule / preferred exit-node cross-check ───
+# The bug fixed by this check: the operator's Cloudflare CIDR rules
+# for rutracker.org (v0.33.1.16 debug session) were pointed at
+# karolina, but every device was pinned to emilia via
+# device_exit_node_prefs. The rules were "saved" but Tailscale
+# silently ignored them because the device's preferred exit-node
+# didn't match.
+#
+# B66 pins:
+#   - the cross-check helpers (PreferredExitNodeForRule,
+#     IsRuleApplicable, TagToHostname, RulesByDeviceHostname) all
+#     exist in internal/feature/exit_rules/preferred_check.go
+#   - the system_tests registry has an "exit_rules.preferred_mismatch"
+#     test that counts device_rules with non-preferred exit_nodes
+#   - the /my/exit-rules template renders the warning banner
+#     + "Use device's preferred" button when MismatchCount > 0
+#   - the /admin/exit-rules template renders the per-row "Preferred"
+#     column + a top-of-page mismatch banner
+#   - the /admin/devices template renders a per-device dead-rule count
+#   - i18n keys (RU+EN) cover the banner, button, and column
+#   - pure-function unit tests cover IsRuleApplicable + TagToHostname
+run_check "B66" "exit-rule / preferred exit-node cross-check (v0.33.1.17)" 'f=/tmp/b66.sh; printf "%s" "grep -q PreferredExitNodeForRule internal/feature/exit_rules/preferred_check.go && grep -q IsRuleApplicable internal/feature/exit_rules/preferred_check.go && grep -q TagToHostname internal/feature/exit_rules/preferred_check.go && grep -q RulesByDeviceHostname internal/feature/exit_rules/preferred_check.go && grep -q TestIsRuleApplicable_NoPreference internal/feature/exit_rules/preferred_check_test.go && grep -q TestIsRuleApplicable_Mismatch internal/feature/exit_rules/preferred_check_test.go && grep -q TestTagToHostname_StandardForms internal/feature/exit_rules/preferred_check_test.go && grep -q exit_rules.preferred_mismatch internal/feature/admin/system_tests.go && grep -q preferred-mismatch-banner internal/handlers/templates/exit_rules.html && grep -q use-preferred-btn internal/handlers/templates/exit_rules.html && grep -q admin-preferred-mismatch internal/handlers/templates/admin/exit_rules.html && grep -q col-preferred internal/handlers/templates/admin/exit_rules.html && grep -q DeadRuleCount internal/feature/admin/devices.go && grep -q exit_rules.preferred_mismatch_banner internal/i18n/catalog_exit_rules.go && grep -q exit_rules.use_preferred_btn internal/i18n/catalog_exit_rules.go && grep -q exit_rules.preferred_col internal/i18n/catalog_exit_rules.go && grep -q exit_rules_admin.preferred_mismatch_banner internal/i18n/catalog_exit_rules.go && grep -q exit_rules_admin.dead_rules_count internal/i18n/catalog_exit_rules.go" > "$f" && bash "$f"; rm -f "$f"'

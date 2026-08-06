@@ -71,6 +71,15 @@
               <span class="tag" style="font-size:9px;margin-left:2px" title="Тип: {{.DeviceType}}"><i class="fa-solid {{if eq .DeviceType "exit-node"}}fa-globe{{else if eq .DeviceType "subnet-router"}}fa-route{{else if eq .DeviceType "phone"}}fa-mobile-screen{{else if eq .DeviceType "server"}}fa-server{{else}}fa-desktop{{end}}"></i></span>
             {{end}}
           {{end}}
+          {{/* 2026-08-06: per-device "dead rules" count.
+               Surfaces rules in device_rules whose
+               exit_node_id doesn't match this device's
+               preferred exit-node. The admin template
+               shows a count badge + tooltip explaining
+               what it means. */}}
+          {{if gt .DeadRuleCount 0}}
+            <a href="/admin/exit-rules?device={{.Hostname}}" class="tag tag-danger" style="font-size:10px;margin-left:6px;text-decoration:none" title="{{tf "exit_rules_admin.dead_rules_count_title" .DeadRuleCount}}"><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules_admin.dead_rules_count" .DeadRuleCount}}</a>
+          {{end}}
         </td>
         <td>{{.UserName}}</td>
         <td class="mono">{{index .IPAddresses 0}}</td>

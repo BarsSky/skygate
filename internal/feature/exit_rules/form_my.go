@@ -158,6 +158,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		UserFacing   int // 2026-07-09: user-facing count (excludes /32 from autoupdater)
 		HasRoutes    bool
 		MaxForDevice int // 2026-07-09: per-device limit (MaxRulesPerDevice)
+		// 2026-08-06: preferred exit-node hostname for this device
+		// (empty if no per-device or per-user pref is set). The
+		// template uses this to render a warning on rules that
+		// don't match the preference.
+		PreferredExitNode string
 		// i18n: pre-rendered hint templates the JS uses to display per-device
 		// usage at the current usage level. %d/%d (%d%%) gets replaced with
 		// used/max/pct in the browser.
@@ -182,6 +187,13 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			RuleCount:    len(deviceRoutes[hn]),
 			HasRoutes:    hasRoutes[hn],
 			MaxForDevice: maxPerDeviceLimit,
+		}
+		// 2026-08-06: preferred exit-node hostname for this device
+		// (per-device pref > per-user pref > ""). The template
+		// renders a warning on rules whose exit_node doesn't match.
+		// Best-effort: a DB error here must not break the page.
+		if pref, perr := PreferredExitNodeForRule(s.DB, c.UserID, hn); perr == nil {
+			info.PreferredExitNode = pref
 		}
 		// The i18n hints (HintOK/HintWarn/HintDanger) are
 		// used by the browser-side JS. When I18n is nil
@@ -313,6 +325,29 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		deviceInfos[i].UserFacing = deviceUsage[did]
 	}
 
+	// 2026-08-06: count "dead rules" — rules whose exit_node_id
+	// doesn't match the device's preferred exit-node. A non-zero
+	// count triggers a warning banner on the page (template:
+	// exit_rules.preferred_mismatch_banner).
+	mismatchCount := 0
+	// Build (hostname → preferred) once for the rules loop.
+	prefByHostname := map[string]string{}
+	for _, di := range deviceInfos {
+		prefByHostname[di.Hostname] = di.PreferredExitNode
+	}
+	for _, r := range rules {
+		hn := deviceNames[r.DeviceID]
+		pref := prefByHostname[hn]
+		if !IsRuleApplicable(r.ExitNodeID, pref) {
+			mismatchCount++
+		}
+	}
+	// User-level preferred exit-node (fallback when no per-device
+	// pref is set). Used by the "Use device's preferred exit-node"
+	// button in the form.
+	userPreferred, _ := db.GetUserExitNodePref(s.DB, c.UserID)
+	userPreferredHost := TagToHostname(userPreferred.ExitNodeTag)
+
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
 		"Title":             "Exit Rules",
@@ -330,6 +365,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"UserFacingCount":   userFacingCount,
 		"MaxPerUser":        maxPerUser,
 		"MaxPerDevice":      maxPerDeviceLimit,
+		// 2026-08-06: preferred-exit-node cross-check. The
+		// template renders a warning banner when MismatchCount > 0
+		// and offers UserPreferred as a "use this" button.
+		"MismatchCount":     mismatchCount,
+		"UserPreferred":     userPreferredHost,
 		"FormValues": map[string]string{
 			"device_id":    formDeviceID,
 			"exit_node":    formExitNode,
