@@ -1586,3 +1586,22 @@ run_check "B65" "SKYGATE_TS_LOGIN_SERVER from .env + restart-skgate button (v0.3
 #   - i18n keys (RU+EN) cover the banner, button, and column
 #   - pure-function unit tests cover IsRuleApplicable + TagToHostname
 run_check "B66" "exit-rule / preferred exit-node cross-check (v0.33.1.17)" 'f=/tmp/b66.sh; printf "%s" "grep -q PreferredExitNodeForRule internal/feature/exit_rules/preferred_check.go && grep -q IsRuleApplicable internal/feature/exit_rules/preferred_check.go && grep -q TagToHostname internal/feature/exit_rules/preferred_check.go && grep -q RulesByDeviceHostname internal/feature/exit_rules/preferred_check.go && grep -q TestIsRuleApplicable_NoPreference internal/feature/exit_rules/preferred_check_test.go && grep -q TestIsRuleApplicable_Mismatch internal/feature/exit_rules/preferred_check_test.go && grep -q TestTagToHostname_StandardForms internal/feature/exit_rules/preferred_check_test.go && grep -q exit_rules.preferred_mismatch internal/feature/admin/system_tests.go && grep -q preferred-mismatch-banner internal/handlers/templates/exit_rules.html && grep -q use-preferred-btn internal/handlers/templates/exit_rules.html && grep -q admin-preferred-mismatch internal/handlers/templates/admin/exit_rules.html && grep -q col-preferred internal/handlers/templates/admin/exit_rules.html && grep -q DeadRuleCount internal/feature/admin/devices.go && grep -q exit_rules.preferred_mismatch_banner internal/i18n/catalog_exit_rules.go && grep -q exit_rules.use_preferred_btn internal/i18n/catalog_exit_rules.go && grep -q exit_rules.preferred_col internal/i18n/catalog_exit_rules.go && grep -q exit_rules_admin.preferred_mismatch_banner internal/i18n/catalog_exit_rules.go && grep -q exit_rules_admin.dead_rules_count internal/i18n/catalog_exit_rules.go" > "$f" && bash "$f"; rm -f "$f"'
+
+# ─── B67 (v0.33.1.18) — /admin/exit-rules?device=NAME drill-down ───
+# The /admin/devices "dead rules" badge (B66) links to
+# /admin/exit-rules?device=NAME; this check pins the drill-down
+# itself so a future refactor can't silently drop the filter.
+#
+# B67 pins:
+#   - the filtered DB helper (GetAllRulesForAdminByDevice) is in
+#     internal/db/device_rules.go with a backend-neutral query
+#   - the SQL constant qSelectAllRulesForAdminByDevice exists
+#     in internal/db/queries.go, alongside the unfiltered
+#     qSelectAllRulesForAdmin (regression guard)
+#   - the form dispatcher in internal/feature/exit_rules/form_admin.go
+#     reads `?device=` and routes to the filtered query when present
+#   - the template renders the filter banner with the show-all link
+#   - the i18n catalog has the banner + show-all strings (RU+EN)
+#   - the helper has unit tests for the happy path, case-insensitive
+#     match, unknown-hostname, and disabled-inclusion cases
+run_check "B67" "/admin/exit-rules?device=NAME drill-down (v0.33.1.18)" 'f=/tmp/b67.sh; printf "%s" "grep -q GetAllRulesForAdminByDevice internal/db/device_rules.go && grep -q qSelectAllRulesForAdminByDevice internal/db/queries.go && grep -q qSelectAllRulesForAdmin internal/db/queries.go && grep -q DeviceFilter internal/feature/exit_rules/form_admin.go && grep -q device-filter-banner internal/handlers/templates/admin/exit_rules.html && grep -q exit_rules_admin.device_filter_banner internal/i18n/catalog_exit_rules.go && grep -q exit_rules_admin.device_filter_show_all internal/i18n/catalog_exit_rules.go && grep -q TestGetAllRulesForAdminByDevice_FiltersByHostname internal/db/device_rules_test.go && grep -q TestGetAllRulesForAdminByDevice_CaseInsensitive internal/db/device_rules_test.go && grep -q TestGetAllRulesForAdminByDevice_UnknownDevice internal/db/device_rules_test.go && grep -q TestGetAllRulesForAdminByDevice_IncludesDisabled internal/db/device_rules_test.go" > "$f" && bash "$f"; rm -f "$f"'

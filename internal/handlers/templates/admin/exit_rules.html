@@ -34,6 +34,19 @@
   </div>
 {{end}}
 
+{{/* 2026-08-06: per-device filter banner. Renders when
+     /admin/exit-rules?device=NAME is set (the operator clicked
+     a "dead rules" badge on /admin/devices). The banner shows
+     the filter name + count + a "show all" link to clear
+     the filter. */}}
+{{if .DeviceFilter}}
+  <div class="alert alert-info" id="device-filter-banner">
+    <i class="fa-solid fa-filter"></i>
+    <span>{{tf "exit_rules_admin.device_filter_banner" .DeviceFilter .DeviceRuleCount}}</span>
+    <a href="/admin/exit-rules" class="btn btn-sm" style="margin-left:8px"><i class="fa-solid fa-xmark"></i> {{t "exit_rules_admin.device_filter_show_all"}}</a>
+  </div>
+{{end}}
+
 {{if .MaxTotalRules}}
 <div class="card">
   <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">

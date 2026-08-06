@@ -310,7 +310,34 @@ func GetDeviceRulesForUser(d *sql.DB, userID int64) ([]DeviceRule, error) {
 // the user was deleted (the COALESCE in SQL returns "?" for
 // orphaned rows). Used by /admin/exit-rules.
 func GetAllRulesForAdmin(d *sql.DB) ([]DeviceRule, error) {
-	rows, err := d.Query(qSelectAllRulesForAdmin)
+	return getAllRulesForAdminQuery(d, qSelectAllRulesForAdmin)
+}
+
+// GetAllRulesForAdminByDevice returns every rule across all users
+// for a single device hostname. Same shape as
+// GetAllRulesForAdmin but filtered by `device_hostname` (the
+// user-facing identifier, not the headscale node_id). The hostname
+// match is case-insensitive.
+//
+// Returns an empty slice (NOT nil) when the device has no rules,
+// so the caller can distinguish "no rules" from "device not
+// found" by checking the rule count.
+//
+// 2026-08-06: introduced for the per-device "dead rules"
+// drill-down from /admin/devices — see the v0.33.1.17 commit
+// that introduced the cross-check between device_rules and
+// the device's preferred exit-node. The /admin/devices
+// dead-rule count badge links to /admin/exit-rules?device=NAME
+// and this helper is what filters that view.
+func GetAllRulesForAdminByDevice(d *sql.DB, hostname string) ([]DeviceRule, error) {
+	return getAllRulesForAdminQuery(d, qSelectAllRulesForAdminByDevice, hostname)
+}
+
+// getAllRulesForAdminQuery is the shared scan loop for both
+// GetAllRulesForAdmin and GetAllRulesForAdminByDevice — same
+// row shape, same column set, just different WHERE.
+func getAllRulesForAdminQuery(d *sql.DB, q string, args ...interface{}) ([]DeviceRule, error) {
+	rows, err := d.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

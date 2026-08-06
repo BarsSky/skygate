@@ -355,6 +355,26 @@ const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_nod
 // portal_users so the row carries username even if the user was deleted.
 const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id`
 
+// qSelectAllRulesForAdminByDevice is the cross-user admin view
+// filtered to a single device hostname. The LEFT JOIN onto
+// node_owner_map is what lets us filter by hostname (which is
+// the user-facing identifier) instead of the headscale node_id
+// (the DB key). Used by the per-device "dead rules" drill-down
+// from /admin/devices.
+//
+// 2026-08-06: introduced for the /admin/exit-rules?device=NAME
+// drill-down. The previous behavior was that the link from the
+// per-device dead-rule count badge on /admin/devices pointed
+// at /admin/exit-rules?device=NAME but the handler didn't filter
+// — the operator saw all rules across all devices and had to
+// scroll. Now the handler respects the query string.
+//
+// The hostname match is case-insensitive (LOWER on both sides)
+// because /admin/devices stores hostnames in lowercase (see
+// backfillNodeOwnership in internal/nodeownership), but a hand-
+// edited `?device=` URL parameter could be any case.
+const qSelectAllRulesForAdminByDevice = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id LEFT JOIN node_owner_map n ON CAST(n.node_id AS INTEGER) = r.device_id WHERE LOWER(COALESCE(n.hostname, '')) = LOWER($1) ORDER BY r.id`
+
 // qSelectTargetTypeByIDForDelete reads (target_type, parent_domain) of a
 // single rule; the delete handler uses it to decide between single-row
 // delete and cascade.

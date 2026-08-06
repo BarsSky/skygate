@@ -20,15 +20,52 @@ import (
 )
 
 // AdminExitRules renders the admin cross-user view.
-// GET /admin/exit-rules
+// GET /admin/exit-rules[?device=NAME]
+//
+// 2026-08-06: ?device=NAME filter for the per-device "dead rules"
+// drill-down from /admin/devices. The /admin/devices page shows
+// a per-device dead-rule count badge (added in v0.33.1.17); the
+// badge links to /admin/exit-rules?device=NAME and this handler
+// filters the view to that device's rules only.
+//
+// Behaviour:
+//   - no query param        → all rules across all users
+//                             (the original v0.16.x behaviour)
+//   - ?device=NAME present  → only rules whose device_id maps to
+//                             a node_owner_map row with hostname
+//                             = NAME (case-insensitive). The
+//                             template shows a banner with the
+//                             filter name and a "show all" link.
+//   - ?device=NAME not found → empty result set + banner. The
+//                             handler does NOT 404 — the
+//                             "device not found" case is
+//                             indistinguishable from "device
+//                             exists but has no rules" from the
+//                             operator's perspective.
 func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", 403)
 		return
 	}
+	// Read the filter FIRST (before any DB work) so we can
+	// pass it to the data map for the template banner.
+	deviceFilter := strings.TrimSpace(r.URL.Query().Get("device"))
 	// 2026-07-11: Этап 9 part 2 — SQL moved to db.GetAllRulesForAdmin
-	dbRules, err := db.GetAllRulesForAdmin(s.DB)
+	var dbRules []db.DeviceRule
+	var err error
+	if deviceFilter != "" {
+		// 2026-08-06: per-device drill-down. The
+		// `LEFT JOIN node_owner_map` in
+		// qSelectAllRulesForAdminByDevice handles the
+		// "device deleted but rules still present" edge
+		// case (the rule is returned with a NULL
+		// hostname, which won't match the LOWER() filter,
+		// so it's correctly excluded from the result).
+		dbRules, err = db.GetAllRulesForAdminByDevice(s.DB, deviceFilter)
+	} else {
+		dbRules, err = db.GetAllRulesForAdmin(s.DB)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -240,5 +277,12 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// filter the table to only-applicable vs only-mismatch
 		// (the template renders a toggle).
 		"MismatchCount": totalMismatch,
+		// 2026-08-06: per-device filter state. Non-empty
+		// when the operator clicked a "dead rules" badge on
+		// /admin/devices. The template renders a banner
+		// ("filtered to device X, show all") and keeps the
+		// rule count scoped to this device only.
+		"DeviceFilter":   deviceFilter,
+		"DeviceRuleCount": len(rr),
 	})
 }
