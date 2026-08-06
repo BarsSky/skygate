@@ -1,5 +1,124 @@
 # Skygate release notes
 
+## v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER from .env + restart-skgate button (the "Tailscale never picks up the new URL" fix)
+
+**Date:** 2026-08-06
+**Tag:** _pending_
+**Scope:** 3 commits (9ffb288 + 149cee8). 1 docker-compose.yml
+fix + 1 admin handler + 1 web-UI button + 5 tests + 5 i18n
+keys + 1 verify-pre check (B65). No API change, no schema
+change, no migration.
+
+### The bug
+
+The operator reported (2026-08-06) that they set
+`SKYGATE_TS_LOGIN_SERVER=https://head.skynas.ru` via
+`/admin/tailscale` (which writes to the DB and is supposed
+to be the source of truth from v0.33.1.13 onward). But the
+entrypoint kept using the placeholder `https://head.example.com`,
+so tailscaled logged out with
+"fetch control key: failed to resolve head.example.com".
+
+### Root cause
+
+`docker-compose.yml` had:
+```yaml
+  environment:
+    - SKYGATE_TS_LOGIN_SERVER=https://head.example.com
+```
+hardcoded. Per docker-compose precedence, `environment:`
+**overrides** `env_file:` (which is where the .env value
+lives). So the operator's edit on /admin/tailscale persisted
+to the DB correctly, but the entrypoint kept reading the
+hardcoded placeholder from the container env.
+
+The 22-hour ACL-apply failure loop from v0.33.1.15 was a
+similar pattern (entrypoint vs runtime divergence), so this
+v0.33.1.16 fix is the second "config-source-of-truth"
+cleanup in a row.
+
+### The fix
+
+1. **`docker-compose.yml`** (commit 9ffb288): remove the
+   hardcoded `SKYGATE_TS_LOGIN_SERVER=https://head.example.com`
+   from the `environment:` section so the .env value wins
+   via `env_file:`. `SKYGATE_TS_HOSTNAME` stays hardcoded
+   (one skygate host = one tailnet identity — not a value
+   operators should change per deploy).
+
+2. **`handleTailscaleRestart`** (commit 149cee8): new
+   `action="restart_skgate"` POST endpoint. Flow:
+   1. Read the current effective login_server (DB > .env > default).
+   2. Write it to `<RepoPath>/.env` atomically
+      (`updateEnvFileSKYGATE_TS_LOGIN_SERVER` — writes to
+      `.env.tmp`, fsync, rename). Replaces / appends /
+      clears the existing `SKYGATE_TS_LOGIN_SERVER=` line
+      and leaves every other line untouched.
+   3. Spawn a `setsid`'d subprocess (via `applySysProcAttr`
+      helper, build-tagged for Linux + no-op on other
+      platforms) that runs:
+      - container: `docker compose -p skygate -f
+        <host-repo>/docker-compose.yml restart skygate`
+      - native: `systemctl restart skygate || service
+        skygate restart`
+      The `setsid` is critical — `docker compose restart`
+      sends SIGTERM to the parent skygate process group
+      (PID 1 = entrypoint.sh), and the subprocess is in
+      a new session so it survives.
+   4. Return 303 immediately. The response flushes before
+      the SIGTERM arrives, so the operator sees the success
+      message; the page is unreachable for ~30s while the
+      new container comes up.
+   5. Audit row: `tailscale_restart_skgate` with
+      `login_server=...`, `in_container=...`, `method=...`.
+
+3. **Web-UI button**: new "Restart skygate" card on
+   `/admin/tailscale` (just below the existing Start/Stop
+   card). Includes a `confirm()` dialog with the
+   `tailscale.restart_confirm` i18n string. 5 new i18n
+   keys in both RU+EN.
+
+### Files
+
+- `docker-compose.yml` — remove hardcoded env override
+- `internal/feature/admin/tailscale.go` — new
+  `handleTailscaleRestart` + `updateEnvFileSKYGATE_TS_LOGIN_SERVER`
+  + `isRunningInContainer`
+- `internal/feature/admin/setsid_linux.go` (new) +
+  `setsid_other.go` (new) — build-tag pair for
+  `applySysProcAttr` (Setsid on Linux, no-op elsewhere)
+- `internal/handlers/templates/admin/tailscale.html` —
+  new restart card
+- `internal/i18n/catalog_tailscale.go` — 5 new keys (RU+EN)
+- `internal/feature/admin/admin_tailscale_test.go` — 5 new tests
+- `scripts/verify_pre_deploy.sh` — B65 added
+
+### Test results
+
+- `go test -count=1 -short ./...` — 27/27 packages PASS
+- `make verify-pre` — **65/65 PASS** (B1-B65)
+- `TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Replace` PASS
+- `TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Append`  PASS
+- `TestUpdateEnvFileSKYGATE_TS_LOGIN_SERVER_Clear`  PASS
+- `TestHandleTailscaleRestart_WritesEnvAndDispatches` PASS
+- `TestHandleTailscaleRestart_RejectsBadCSRF` PASS
+
+### Live verify (post-deploy)
+
+1. `docker-compose.yml` on VM no longer has the hardcoded
+   `SKYGATE_TS_LOGIN_SERVER` (verified with
+   `grep SKYGATE_TS_LOGIN_SERVER docker-compose.yml` → no
+   hardcoded `=` line in the environment section)
+2. `/admin/tailscale` shows the "Restart skygate" card
+3. `SKYGATE_TS_LOGIN_SERVER=https://head.skynas.ru` in
+   `.env` on the host (operator's web-UI edit propagated
+   automatically on the next restart click)
+4. `docker compose restart skygate` from a click on the
+   button → new container starts → entrypoint reads
+   `https://head.skynas.ru` → tailscaled logs in successfully
+5. `R5/R6` (tailscale IP + exit-node) verify-post checks
+   start passing on the next tick
+
 ## v0.33.1.15 — per-device-pref device tag in tagOwners (the "cyborg exit rules not visible" fix)
 
 **Date:** 2026-08-05
