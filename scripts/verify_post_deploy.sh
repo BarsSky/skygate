@@ -100,22 +100,37 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # raw `python3 -c` calls below work fine.
 #
 # Usage: json_field "$JSON_STRING" "$PYTHON_CODE"
-#   - $1: JSON input (on the host, piped to python's stdin on VM)
-#   - $2: python code that reads `d` (after json.loads(sys.stdin))
-#          and calls print(). Newlines are preserved.
+#   - $1: JSON input (on the host, saved to a temp file on VM)
+#   - $2: python code that opens the temp file and calls
+#          print(). The path is exposed as JFPATH (Json File
+#          PATH) so callers don't have to hardcode the
+#          /tmp/_json_field_$$ prefix.
 #
 # v1.0.0.12: switched from base64 to heredoc. The base64
 # approach assumed the VM has the `base64` utility, but
 # minimal alpine containers (which skygate uses) sometimes
-# strip it out. Heredoc is supported by every POSIX shell
-# since forever.
+# strip it out.
+#
+# v1.0.0.13: heredoc+stdin conflict. The earlier
+# 'python3 - <<PYEOF ... PYEOF' had a stdin conflict — `python3 -`
+# reads the script from stdin, but stdin was already used for
+# the JSON input via the printf pipe. Fix: write the JSON to
+# a temp file on the VM and have the python code read it via
+# the JFPATH env var.
 json_field() {
   local json_input="$1"
   local py_code="$2"
-  printf '%s' "$json_input" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" "python3 - <<'PYEOF'
+  # $$ is the host PID; we tag the temp file with it so
+  # concurrent verify_post_deploy.sh runs (CI matrix, parallel
+  # operators) don't clobber each other's file.
+  local jfpath="/tmp/_json_field_$$.json"
+  printf '%s' "$json_input" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" "
+    cat > $jfpath
+    JFPATH=$jfpath python3 <<'PYEOF'
 $py_code
 PYEOF
-" 2>/dev/null
+    rm -f $jfpath
+  " 2>/dev/null
 }
 
 # v1.0.0.6: add common Windows python install locations to PATH
@@ -220,6 +235,11 @@ done
 # still works for shell pipelines and CI; the positional form is
 # friendlier for one-off operator invocations.
 SSH_HOST="${SSH_HOST:-admin@192.0.2.1}"
+# v1.0.0.14: export SSH_HOST so the verify_login.sh subshell
+# (R31/R32/R34) inherits it. Without export, the subshell
+# sees SSH_HOST as unset and prints "SSH_HOST env var or
+# positional $1 is required" → R31 SKIPs.
+export SSH_HOST
 # v0.29.2: SKYGATE_CONTAINER is resolved at runtime via the
 # `com.docker.compose.service=skygate` label (set by docker compose
 # automatically). The "skygate" literal used to work because
@@ -538,8 +558,8 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
     docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_ucnt_\$\$.sqlite
     sqlite3 /tmp/_db_ucnt_\$\$.sqlite 'SELECT COUNT(*) FROM portal_users;'
     rm -f /tmp/_db_ucnt_\$\$.sqlite" 2>/dev/null | tr -d ' \n')
-  USER_GRANT_COUNT=$(json_field "$LIVE_POLICY" 'import json, sys
-d = json.loads(sys.stdin.read() or "{}")
+  USER_GRANT_COUNT=$(json_field "$LIVE_POLICY" 'import json, os
+d = json.loads(open(os.environ["JFPATH"]).read() or "{}")
 p = json.loads(d.get("policy","{}"))
 n = sum(1 for g in p.get("grants",[])
         if any("@tsnet.example.com" in s for s in g.get("src",[]))
@@ -1281,7 +1301,7 @@ if [ "$QUICK" = 0 ]; then
   if [ -f /tmp/_skygate_verify_cookie_remote ] && [ -s /tmp/_skygate_verify_cookie_remote ]; then
     REMOTE_CK="/tmp/_skygate_verify_cookie"
   else
-    REMOTE_CK=$(bash "$SCRIPT_DIR/verify_login.sh" 2>/dev/null) || REMOTE_CK=""
+    REMOTE_CK=$(bash "$SCRIPT_DIR/verify_login.sh") || REMOTE_CK=""
   fi
   if [ -z "$REMOTE_CK" ]; then
     echo "  ${YLW}SKIP${NC}  R31 login failed (admin creds) — cannot verify page"
@@ -1408,7 +1428,7 @@ echo "[R34] /admin/services page renders with admin session + B92 snapshot has >
 SERVICES_PAGE=""
 SERVICES_GREP_HITS=0
 if [ -z "$REMOTE_CK" ]; then
-  REMOTE_CK=$(bash "$SCRIPT_DIR/verify_login.sh" 2>/dev/null) || REMOTE_CK=""
+  REMOTE_CK=$(bash "$SCRIPT_DIR/verify_login.sh") || REMOTE_CK=""
 fi
 if [ -n "$REMOTE_CK" ]; then
   SERVICES_HTML=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
