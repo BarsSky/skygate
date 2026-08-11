@@ -570,8 +570,14 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
   USER_GRANT_COUNT=$(json_field "$LIVE_POLICY" 'import json, os
 d = json.loads(open(os.environ["JFPATH"]).read() or "{}")
 p = json.loads(d.get("policy","{}"))
+# v1.2.1: was hardcoded to "@tsnet.example.com" which never
+# matched the real domain ("tsnet.skynas.ru" on this operator's
+# headscale, varies per deployment). Use "@" alone — any
+# per-user grant has src like "alice@tailnet.example.com",
+# which always contains "@". This also correctly excludes
+# tag:dev-* (no "@") and catch-all "*" (no "@").
 n = sum(1 for g in p.get("grants",[])
-        if any("@tsnet.example.com" in s for s in g.get("src",[]))
+        if any("@" in s for s in g.get("src",[]))
         and "autogroup:internet" in g.get("dst",[]))
 print(n)')
   if [ -n "$USER_COUNT_DB" ] && [ "$USER_GRANT_COUNT" = "$USER_COUNT_DB" ]; then
