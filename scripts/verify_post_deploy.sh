@@ -130,7 +130,7 @@ json_field() {
   local jfpath="/tmp/_json_field_$$.json"
   local py_file="/tmp/_json_field_$$.py"
   printf '%s\n' "$py_code" > "$py_file"
-  printf '%s' "$json_input" | ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no "$SSH_HOST" "
+  printf '%s' "$json_input" | ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=no "$SSH_HOST" "
     cat > $jfpath
     python3 $py_file
     rm -f $jfpath
