@@ -69,8 +69,14 @@ func TestChecker_HeadscaleOK(t *testing.T) {
 	if st.LastChecked.IsZero() {
 		t.Errorf("LastChecked should be set after a successful probe")
 	}
-	if st.LatencyMS <= 0 {
-		t.Errorf("expected positive latency, got %d ms", st.LatencyMS)
+	// LatencyMS is `time.Since(t0).Milliseconds()` — can be
+	// 0 on fast localhost (e.g. the test's httptest.NewServer
+	// returns in <1ms on modern hardware). We only assert
+	// "non-negative" (i.e. the timer is wired correctly);
+	// asserting "positive" was a flaky-test bug. 2026-08-11
+	// v1.0.0.1 fix.
+	if st.LatencyMS < 0 {
+		t.Errorf("latency should be non-negative, got %d ms", st.LatencyMS)
 	}
 }
 

@@ -61,8 +61,17 @@ elif [ -x "/c/Users/knaga/go/bin/staticcheck.exe" ]; then
     STATICCHECK="/c/Users/knaga/go/bin/staticcheck.exe"
 elif [ -x "/mnt/c/Users/knaga/go/bin/staticcheck.exe" ]; then
     STATICCHECK="/mnt/c/Users/knaga/go/bin/staticcheck.exe"
+elif [ -x "$HOME/go/bin/staticcheck" ]; then
+    # 2026-08-11: v1.0.0.1 — added the Linux/VM path. The
+    # operator installed staticcheck on the VM via
+    # `go install honnef.co/go/tools/cmd/staticcheck@latest`
+    # and the binary lives at $GOPATH/bin/staticcheck
+    # (default $HOME/go/bin/staticcheck). Without this
+    # fallback, B95 fails on the VM with "staticcheck
+    # not found" even when the binary is installed.
+    STATICCHECK="$HOME/go/bin/staticcheck"
 else
-    echo "SKY-FAIL: staticcheck not found" >&2
+    echo "SKY-FAIL: staticcheck not found (install: GOPATH=\$HOME/go go install honnef.co/go/tools/cmd/staticcheck@latest)" >&2
     exit 1
 fi
 

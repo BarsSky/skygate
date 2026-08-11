@@ -420,14 +420,27 @@ func TestBackupRecent_ContainerPathTranslation(t *testing.T) {
 	// OS-agnostic temp dir, using the same translation
 	// logic. Skip on Windows where /home/... paths can't
 	// be MkdirAll'd under a temp root that uses \ separators.
+	//
+	// 2026-08-11: v1.0.0.1 — fixed a pre-existing bug where
+	// the test always created `hostPath`, so the
+	// IsNotExist branch never triggered, and the
+	// translation was never applied. The test then
+	// looked for the file in the empty `hostPath` and
+	// always failed. Fix: create only the container
+	// path (which is what the production code reads in
+	// the alpine container) and let the translation
+	// logic recover by switching from the (non-existent)
+	// host path to the container path.
 	if os.PathSeparator == '/' {
 		root := t.TempDir()
 		hostPath := root + "/home/skyadmin/skygate/backup"
 		containerPath := root + "/app/backup"
-		for _, p := range []string{hostPath, containerPath} {
-			if err := os.MkdirAll(p, 0o755); err != nil {
-				t.Fatalf("mkdir %s: %v", p, err)
-			}
+		// Only create the container path — the host
+		// path is the "configured" one that doesn't
+		// exist in the container, which is exactly the
+		// scenario the production code handles.
+		if err := os.MkdirAll(containerPath, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", containerPath, err)
 		}
 		fname := "skygate-2026-08-10.tar.gz"
 		if err := os.WriteFile(containerPath+"/"+fname, []byte("fake"), 0o644); err != nil {
