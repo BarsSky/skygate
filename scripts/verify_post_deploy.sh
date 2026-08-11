@@ -91,6 +91,45 @@ set -u
 # the directory once at the top of the script.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# v1.0.0.6: json_field() runs a python3 expression against a
+# JSON string on the VM (where python3 is always installed).
+# Windows hosts don't have python3 in PATH by default, so the
+# prior `echo $X | python3 -c "..."` calls printed "Python was
+# not found" and returned 0/empty. The helper exists as a
+# fallback for hosts without python3; on hosts WITH python3 the
+# raw `python3 -c` calls below work fine.
+#
+# Usage: json_field "$JSON_STRING" "$PYTHON_CODE"
+#   - $1: JSON input (on the host, piped to python's stdin on VM)
+#   - $2: python code that reads `d` (after json.loads(sys.stdin))
+#          and calls print(). Newlines are preserved.
+#
+# The helper writes the python code to a temp file on the VM and
+# runs `python3 <tmpfile>` there with stdin = $JSON_STRING.
+json_field() {
+  local json_input="$1"
+  local py_code="$2"
+  local py_b64
+  py_b64=$(printf '%s' "$py_code" | base64 -w0)
+  printf '%s' "$json_input" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
+    "echo '$py_b64' | base64 -d > /tmp/_json_field_\$\$.py && python3 /tmp/_json_field_\$\$.py; rm -f /tmp/_json_field_\$\$.py" 2>/dev/null
+}
+
+# v1.0.0.6: add common Windows python install locations to PATH
+# (the verify_post_deploy.sh runs from the operator's machine,
+# which is often Windows + Git Bash; python3 is rarely in PATH
+# there). Best-effort: silently skip if the directory doesn't
+# exist.
+for _pydir in "/c/Python314" "/c/Python313" "/c/Python312" \
+              "/c/Users/knaga/AppData/Local/Programs/Python/Python314" \
+              "/c/Users/knaga/AppData/Local/Programs/Python/Python313"; do
+  if [ -d "$_pydir" ] && [ -x "$_pydir/python.exe" ]; then
+    export PATH="$_pydir:$PATH"
+    break
+  fi
+done
+unset _pydir
+
 # ---------------------------------------------------------------------------
 # Args
 # ---------------------------------------------------------------------------
@@ -449,15 +488,13 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
     docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_ucnt_\$\$.sqlite
     sqlite3 /tmp/_db_ucnt_\$\$.sqlite 'SELECT COUNT(*) FROM portal_users;'
     rm -f /tmp/_db_ucnt_\$\$.sqlite" 2>/dev/null | tr -d ' \n')
-  USER_GRANT_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
-n = sum(1 for g in p.get('grants',[])
-        if any('@tsnet.example.com' in s for s in g.get('src',[]))
-        and 'autogroup:internet' in g.get('dst',[]))
-print(n)
-")
+  USER_GRANT_COUNT=$(json_field "$LIVE_POLICY" 'import json, sys
+d = json.loads(sys.stdin.read() or "{}")
+p = json.loads(d.get("policy","{}"))
+n = sum(1 for g in p.get("grants",[])
+        if any("@tsnet.example.com" in s for s in g.get("src",[]))
+        and "autogroup:internet" in g.get("dst",[]))
+print(n)')
   if [ -n "$USER_COUNT_DB" ] && [ "$USER_GRANT_COUNT" = "$USER_COUNT_DB" ]; then
     echo "  ${GRN}PASS${NC}  R10 $USER_GRANT_COUNT per-user grants (matches portal_users=$USER_COUNT_DB, all with autogroup:internet)"
     RESULTS_PASS=$((RESULTS_PASS+1))
@@ -1343,20 +1380,22 @@ fi
 # v1.0.0.3: parse on the VM (where python3 is always present)
 # instead of locally — Windows hosts don't have python3 in PATH
 # by default, and the previous local-pipe approach printed
-# "Python was not found" and returned 0. We scp the JSON to
-# /tmp on the VM, run python3 there, and capture the result.
+# "Python was not found" and returned 0.
+# v1.0.0.6: pipe the JSON to the VM via stdin (the prior approach
+# wrote to /tmp/_r34_readyz.json on the HOST, but the ssh command
+# read it from the VM's /tmp, so the file never existed on the VM
+# and python3 saw an empty stdin and printed 0).
 READYZ_JSON=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
   "curl -sS http://localhost:8080/readyz" 2>/dev/null || echo "")
-echo "$READYZ_JSON" > /tmp/_r34_readyz.json
-AVAIL_COUNT=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
+AVAIL_COUNT=$(printf '%s\n' "$READYZ_JSON" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
   "python3 -c 'import sys,json
 try:
     d=json.loads(sys.stdin.read() or \"{}\")
     a=d.get(\"availability\") or {}
     print(len(a.get(\"integrations\") or []))
 except Exception:
-    print(0)' < /tmp/_r34_readyz.json" 2>/dev/null || echo 0)
-HAS_HEADSCALE=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
+    print(0)'" 2>/dev/null || echo 0)
+HAS_HEADSCALE=$(printf '%s\n' "$READYZ_JSON" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
   "python3 -c 'import sys,json
 try:
     d=json.loads(sys.stdin.read() or \"{}\")
@@ -1364,8 +1403,7 @@ try:
     ids=[i.get(\"id\") for i in (a.get(\"integrations\") or [])]
     print(\"yes\" if \"headscale\" in ids else \"no\")
 except Exception:
-    print(\"no\")' < /tmp/_r34_readyz.json" 2>/dev/null || echo "no")
-rm -f /tmp/_r34_readyz.json
+    print(\"no\")'" 2>/dev/null || echo "no")
 if [ "$SERVICES_PAGE" = "200" ] && [ "$SERVICES_GREP_HITS" -ge 3 ] && [ "$AVAIL_COUNT" -ge 3 ] && [ "$HAS_HEADSCALE" = "yes" ]; then
   echo "  ${GRN}PASS${NC}  R34 /admin/services=200 with admin session (3/3 integration labels visible) + /readyz.availability has $AVAIL_COUNT integrations (B92 snapshot + D1 cookie-auth page render)"
   RESULTS_PASS=$((RESULTS_PASS+1))
