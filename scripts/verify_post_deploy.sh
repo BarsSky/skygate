@@ -85,6 +85,11 @@
 
 set -u
 # No `set -e` — count failures, don't abort.
+# v1.0.0.3: SCRIPT_DIR was referenced on lines 1184/1311
+# (verify_login.sh path) but never defined. Under `set -u` the
+# expansion failed silently and R31/R32/R34 SKIPped. Pin
+# the directory once at the top of the script.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------------------------------------------------------------------------
 # Args
@@ -1327,23 +1332,32 @@ if [ -n "$REMOTE_CK" ]; then
 fi
 
 # /readyz.availability check — the B92 snapshot is the contract.
+# v1.0.0.3: parse on the VM (where python3 is always present)
+# instead of locally — Windows hosts don't have python3 in PATH
+# by default, and the previous local-pipe approach printed
+# "Python was not found" and returned 0. We scp the JSON to
+# /tmp on the VM, run python3 there, and capture the result.
 READYZ_JSON=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
   "curl -sS http://localhost:8080/readyz" 2>/dev/null || echo "")
-AVAIL_COUNT=$(echo "$READYZ_JSON" | python3 -c "import sys,json
+echo "$READYZ_JSON" > /tmp/_r34_readyz.json
+AVAIL_COUNT=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
+  "python3 -c 'import sys,json
 try:
-    d=json.loads(sys.stdin.read() or '{}')
-    a=d.get('availability') or {}
-    print(len(a.get('integrations') or []))
+    d=json.loads(sys.stdin.read() or \"{}\")
+    a=d.get(\"availability\") or {}
+    print(len(a.get(\"integrations\") or []))
 except Exception:
-    print(0)")
-HAS_HEADSCALE=$(echo "$READYZ_JSON" | python3 -c "import sys,json
+    print(0)' < /tmp/_r34_readyz.json" 2>/dev/null || echo 0)
+HAS_HEADSCALE=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
+  "python3 -c 'import sys,json
 try:
-    d=json.loads(sys.stdin.read() or '{}')
-    a=d.get('availability') or {}
-    ids=[i.get('id') for i in (a.get('integrations') or [])]
-    print('yes' if 'headscale' in ids else 'no')
+    d=json.loads(sys.stdin.read() or \"{}\")
+    a=d.get(\"availability\") or {}
+    ids=[i.get(\"id\") for i in (a.get(\"integrations\") or [])]
+    print(\"yes\" if \"headscale\" in ids else \"no\")
 except Exception:
-    print('no')")
+    print(\"no\")' < /tmp/_r34_readyz.json" 2>/dev/null || echo "no")
+rm -f /tmp/_r34_readyz.json
 if [ "$SERVICES_PAGE" = "200" ] && [ "$SERVICES_GREP_HITS" -ge 3 ] && [ "$AVAIL_COUNT" -ge 3 ] && [ "$HAS_HEADSCALE" = "yes" ]; then
   echo "  ${GRN}PASS${NC}  R34 /admin/services=200 with admin session (3/3 integration labels visible) + /readyz.availability has $AVAIL_COUNT integrations (B92 snapshot + D1 cookie-auth page render)"
   RESULTS_PASS=$((RESULTS_PASS+1))
