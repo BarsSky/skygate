@@ -240,6 +240,15 @@ SSH_HOST="${SSH_HOST:-admin@192.0.2.1}"
 # sees SSH_HOST as unset and prints "SSH_HOST env var or
 # positional $1 is required" → R31 SKIPs.
 export SSH_HOST
+# v1.0.0.15: SKYGATE_ADMIN_PASSWORD vs SKYGATE_ADMIN_PASS.
+# verify_post_deploy.sh + verify_login.sh accept the
+# "PASSWORD" form (the explicit name), but the operator's
+# .env uses "SKYGATE_ADMIN_PASS" (the .env convention). Fall
+# back to the short form if PASSWORD is unset, so a plain
+# `set -a; . .env; set +a` works without remapping.
+if [ -z "${SKYGATE_ADMIN_PASSWORD:-}" ] && [ -n "${SKYGATE_ADMIN_PASS:-}" ]; then
+  export SKYGATE_ADMIN_PASSWORD="$SKYGATE_ADMIN_PASS"
+fi
 # v0.29.2: SKYGATE_CONTAINER is resolved at runtime via the
 # `com.docker.compose.service=skygate` label (set by docker compose
 # automatically). The "skygate" literal used to work because

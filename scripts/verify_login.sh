@@ -55,6 +55,13 @@ if [ -z "${SKYGATE_ADMIN_USER:-}" ]; then
   echo "verify_login: SKYGATE_ADMIN_USER env var is required (no default; do not hardcode operator credentials in tracked files)" >&2
   exit 2
 fi
+# v1.0.0.15: accept SKYGATE_ADMIN_PASS (the .env convention)
+# as a fallback for SKYGATE_ADMIN_PASSWORD. The operator's
+# .env uses the short form; the verify scripts historically
+# used the long form. Both should work.
+if [ -z "${SKYGATE_ADMIN_PASSWORD:-}" ] && [ -n "${SKYGATE_ADMIN_PASS:-}" ]; then
+  export SKYGATE_ADMIN_PASSWORD="$SKYGATE_ADMIN_PASS"
+fi
 if [ -z "${SKYGATE_ADMIN_PASSWORD:-}" ]; then
   echo "verify_login: SKYGATE_ADMIN_PASSWORD env var is required (no default; do not hardcode operator credentials in tracked files)" >&2
   exit 2
