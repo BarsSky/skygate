@@ -438,7 +438,7 @@ The 'infra' user is a system account that owns:
   of index-based for TestGetAllPortalUsers, etc.),
   `subnet/manager_test.go` (compute CIDR from
   actual uid).
-- **Live verify on VM (192.168.13.69)**: V054
+- **Live verify on VM (operator's <VM_HOST>)**: V054
   creates the 'infra' portal_users row at id=99 on
   next restart; ensureInfraUser provisions the
   headscale user 'infra' and links it (id=N);
@@ -594,7 +594,7 @@ is registered (302 redirect to /login is the expected
 response when accessed without auth — proves the route
 exists).
 
-### Live verify on VM (192.168.13.69)
+### Live verify on VM (operator's <VM_HOST>)
 
 `/readyz.availability.integrations` after deploy:
 - headscale: ok (0ms, `{"status":"pass"}`)
@@ -1267,7 +1267,7 @@ After deploying v0.33.1.36, click "Run all" on
 
 ```sql
 -- On the live VM, against the active PG:
-PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 \
+PGPASSWORD=<DB-ADMIN-PASSWORD> psql -h 172.17.0.1 -p 5000 \
   -U admin -d skygate_staging \
   -c "DELETE FROM meshes WHERE name LIKE 'smoke-mesh-%'"
 ```

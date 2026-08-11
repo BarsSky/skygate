@@ -46,16 +46,16 @@
 #       a non-nil snapshot (v0.33.1.40 B92)
 #
 # Usage:
-#   bash scripts/verify_post_deploy.sh                       # all 33 checks
-#   bash scripts/verify_post_deploy.sh skyadmin@192.168.13.69   # SSH_HOST as $1
-#   bash scripts/verify_post_deploy.sh --quick              # only R1-R9 + R26 (core)
-#   bash scripts/verify_post_deploy.sh --skip-network        # no R22-R25
-#   SSH_HOST=admin@192.0.2.1 bash scripts/verify_post_deploy.sh   # legacy env-var form (still works)
+#   bash scripts/verify_post_deploy.sh                          # all 33 checks
+#   bash scripts/verify_post_deploy.sh skyadmin@<VM_HOST>        # SSH_HOST as $1
+#   bash scripts/verify_post_deploy.sh --quick                   # only R1-R9 + R26 (core)
+#   bash scripts/verify_post_deploy.sh --skip-network             # no R22-R25
+#   SSH_HOST=admin@<VM_HOST> bash scripts/verify_post_deploy.sh   # legacy env-var form (still works)
 #
 # SSH_HOST resolution order (highest priority first):
-#   1. Positional $1 if it looks like "user@host" (e.g. "skyadmin@192.168.13.69")
+#   1. Positional $1 if it looks like "user@host" (e.g. "skyadmin@<VM_HOST>")
 #   2. $SSH_HOST env var (backward compat with old invocations)
-#   3. Default: admin@192.0.2.1   (legacy placeholder; almost certainly wrong
+#   3. Default: admin@<VM_HOST>   (legacy placeholder; almost certainly wrong
 #      for any real deployment — pass an explicit value)
 #
 # Cross-platform: pure bash. Runs from the OPERATOR'S machine
@@ -92,7 +92,7 @@ set -u
 QUICK=0
 SKIP_NETWORK=0
 # First non-flag positional arg is treated as SSH_HOST (e.g.
-# "skyadmin@192.168.13.69"). Flag args (--quick, --skip-network)
+# "skyadmin@<VM_HOST>"). Flag args (--quick, --skip-network)
 # are consumed by the case below. SSH_HOST resolution order:
 #   1. $1 if it doesn't start with "--" (positional override)
 #   2. $SSH_HOST env var (legacy)
@@ -1119,8 +1119,24 @@ if [ "$QUICK" = 0 ]; then
 
   echo
   echo "[R29] HAProxy backends: :5000 primary, :5001 replica"
-  PRIMARY_OK=$(ssh_vm "echo 'SELECT 1' | PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5000 -U admin -d skygate_staging -tA 2>&1 | head -1" 2>&1)
-  REPLICA_OK=$(ssh_vm "echo 'SELECT pg_is_in_recovery()' | PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5001 -U admin -d skygate_staging -tA 2>&1 | head -1" 2>&1)
+  # 2026-08-11: v0.34.0.1 — read the live DB admin password from the
+  # operator's .env (via SSH) instead of hardcoding the fresh-install
+  # default. The previous version had the literal `skygate_admin_pass`
+  # as a tracked default, which (a) leaked the fresh-install password
+  # to anyone with read access to the public repo and (b) would have
+  # silently used the default on a deployment where the operator had
+  # rotated the password. The password is read in the local shell,
+  # passed via stdin, and applied to the SSH command via standard
+  # local variable expansion (ssh_vm runs the expanded string on
+  # the remote end).
+  PRIMARY_PASS=$(ssh_vm "grep '^PG_DB_PASSWORD' /home/skyadmin/skygate/.env 2>/dev/null | tail -1 | cut -d= -f2-" 2>&1)
+  if [ -z "$PRIMARY_PASS" ]; then
+    # Fallback for older .env files that use the legacy var name.
+    PRIMARY_PASS=$(ssh_vm "grep '^PGPASSWORD' /home/skyadmin/skygate/.env 2>/dev/null | tail -1 | cut -d= -f2-" 2>&1)
+  fi
+  REPLICA_PASS="$PRIMARY_PASS"
+  PRIMARY_OK=$(ssh_vm "echo 'SELECT 1' | PGPASSWORD=$PRIMARY_PASS psql -h 127.0.0.1 -p 5000 -U admin -d skygate_staging -tA 2>&1 | head -1" 2>&1)
+  REPLICA_OK=$(ssh_vm "echo 'SELECT pg_is_in_recovery()' | PGPASSWORD=$REPLICA_PASS psql -h 127.0.0.1 -p 5001 -U admin -d skygate_staging -tA 2>&1 | head -1" 2>&1)
   if [ "$PRIMARY_OK" = "1" ] && [ "$REPLICA_OK" = "t" ]; then
     echo "  ${GRN}PASS${NC}  R29 HAProxy :5000 (primary) + :5001 (replica) both reachable and returning expected pg_is_in_recovery"
     RESULTS_PASS=$((RESULTS_PASS+1))
@@ -1136,7 +1152,7 @@ if [ "$QUICK" = 0 ]; then
   # If archive_mode is on AND archive_command contains "wal-g", AND
   # pg_stat_archiver.archived_count > 0 → PASS. The svyatoslava primary
   # is at 45.152.198.217 behind HAProxy :5000 on skygate-vm.
-  R30_OUT=$(ssh_vm "PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5000 -U admin -d skygate_staging -tA -c \"
+  R30_OUT=$(ssh_vm "PGPASSWORD=$PRIMARY_PASS psql -h 127.0.0.1 -p 5000 -U admin -d skygate_staging -tA -c \"
     SELECT
       (SELECT setting FROM pg_settings WHERE name='archive_mode') || '|' ||
       (SELECT setting FROM pg_settings WHERE name='archive_command') || '|' ||

@@ -19,7 +19,7 @@
 #   - Every var must be `export`ed so the wal-g subprocess sees it
 #
 # MinIO endpoint choice depends on the node's network:
-#   - skygate-vm (192.168.13.69) is on the home LAN → use http://192.168.13.13:9000
+#   - skygate-vm (operator's <VM_HOST>) is on the home LAN → use http://<LAN_MINIO>:9000
 #   - svyatoslava (45.152.198.217) is on a public VPS → use https://minio.skynas.ru
 #     (resolves to 95.165.170.190, reverse-proxied to home MinIO)
 # Pass the right endpoint via SKYGATE_MINIO_ENDPOINT env var.

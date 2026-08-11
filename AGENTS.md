@@ -251,7 +251,7 @@ explaining why.
       + TestIsInfraNode in `internal/nodeownership/
       infra_test.go`, 3 TestInfraAuditIdentity_ in
       `internal/feature/admin/B93_infra_audit_test.go`).
-  - **Live verify on VM (192.168.13.69)**: V054
+  - **Live verify on VM (operator's <VM_HOST>)**: V054
     creates the 'infra' portal_users row at id=99 on
     next restart; ensureInfraUser provisions the
     headscale user 'infra' and links it; BackfillInfra
@@ -360,7 +360,7 @@ explaining why.
     runtime mirror — direct ssh to VM, plain curl
     to capture body even on 503), `RELEASE-NOTES.md` +
     `AGENTS.md` (this section).
-  - **Live verify on VM (192.168.13.69)**:
+  - **Live verify on VM (operator's <VM_HOST>)**:
     `/readyz.availability.integrations` = [headscale (ok,
     0ms, status:pass), headplane (fail, refused on
     172.18.0.2:8080 — operator doesn't run headplane
@@ -611,7 +611,7 @@ explaining why.
       `/var/lib/docker/volumes/skygate-data/_data/skygate.db`,
       NOT the active PG DB. The PG DB still has all
       30 rows. To fix:
-      `PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1
+      `PGPASSWORD=<DB-ADMIN-PASSWORD> psql -h 172.17.0.1
       -p 5000 -U admin -d skygate_staging -c "DELETE
       FROM meshes WHERE name LIKE 'smoke-mesh-%'"`.
       The `meshes` FK CASCADE removes `mesh_members`
@@ -5417,9 +5417,9 @@ R1-R32 catalog there. The SSH target is resolved in this order
 
 | Source | Example | Use when |
 |---|---|---|
-| **Positional `$1`** (preferred) | `bash scripts/verify_post_deploy.sh skyadmin@192.168.13.69` | one-off operator invocations |
-| `$SSH_HOST` env var (legacy) | `SSH_HOST=skyadmin@192.168.13.69 bash scripts/verify_post_deploy.sh` | shell pipelines / CI |
-| Built-in default | `admin@192.0.2.1` | the legacy placeholder — almost certainly wrong for real deployments |
+| **Positional `$1`** (preferred) | `bash scripts/verify_post_deploy.sh skyadmin@<VM_HOST>` | one-off operator invocations |
+| `$SSH_HOST` env var (legacy) | `SSH_HOST=skyadmin@<VM_HOST> bash scripts/verify_post_deploy.sh` | shell pipelines / CI |
+| Built-in default | `admin@<VM_HOST>` | the legacy placeholder — almost certainly wrong for real deployments |
 
 The script also accepts:
 - `--quick` — run only R1-R9 + R26 (the core "is skygate up?" checks)
@@ -5429,7 +5429,7 @@ The script also accepts:
 The default `admin@192.0.2.1` is a documentation placeholder (RFC
 5737 reserved range) that the script warns about via the header
 text — pass an explicit value for any real deployment. The
-operator's skygate-vm lives at `skyadmin@192.168.13.69` in
+operator's skygate-vm lives at `skyadmin@<VM_HOST>` in
 practice (a non-RFC 5737 private LAN).
 
 **VM is for:**

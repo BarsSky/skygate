@@ -1450,7 +1450,7 @@ run_check "B60" "comprehensive ? placeholder PG-unsafe sweep (v0.33.1.12)" 'f=/t
 # legacy default "admin@192.0.2.1" was almost always wrong for
 # real deployments (the operator's VM is on 192.168.x.x, not the
 # 192.0.2.x documentation range). v0.33.1.13 added:
-#   1. A positional $1 (e.g. "skyadmin@192.168.13.69") as the
+#   1. A positional $1 (e.g. "skyadmin@<VM_HOST>") as the
 #      primary SSH_HOST override
 #   2. An --help flag that prints the catalog header (the
 #      previous script had no way to ask "what does this do?")
@@ -1458,11 +1458,11 @@ run_check "B60" "comprehensive ? placeholder PG-unsafe sweep (v0.33.1.12)" 'f=/t
 #      silently ignored)
 #
 # B61 pins:
-#   - the script accepts "skyadmin@192.168.13.69" as $1 and
+#   - the script accepts "skyadmin@<VM_HOST>" as $1 and
 #     SSH_HOST resolves to that (not the legacy default)
 #   - --help exits 0 after printing the catalog header
 #   - an unknown flag exits non-zero with "unknown flag: ..."
-run_check "B61" "verify_post_deploy.sh accepts SSH_HOST as positional \$1 (v0.33.1.13)" 'f=/tmp/b61.sh; printf "%s" "set +e; out1=\$(bash scripts/verify_post_deploy.sh skyadmin@192.168.13.69 --help 2>&1 | head -3); case \"\$out1\" in *\"runtime guarantees for skygate\"*) echo help-ok;; *) echo \"help text missing: \$out1\"; exit 1;; esac; out2=\$(bash scripts/verify_post_deploy.sh --bad-flag 2>&1); case \"\$out2\" in *\"unknown flag\"*) echo bad-flag-ok;; *) echo \"bad-flag path broken: \$out2\"; exit 1;; esac; grep -q \"SSH_HOST=\\\"\\\${SSH_HOST:-admin@192.0.2.1}\\\"\" scripts/verify_post_deploy.sh || { echo \"SSH_HOST fallback line missing\"; exit 1; }; grep -q \"SSH_HOST_SET\" scripts/verify_post_deploy.sh || { echo \"SSH_HOST_SET var missing\"; exit 1; }" > "$f" && bash "$f"; rm -f "$f"'
+run_check "B61" "verify_post_deploy.sh accepts SSH_HOST as positional \$1 (v0.33.1.13)" 'f=/tmp/b61.sh; printf "%s" "set +e; out1=\$(bash scripts/verify_post_deploy.sh skyadmin@<VM_HOST> --help 2>&1 | head -3); case \"\$out1\" in *\"runtime guarantees for skygate\"*) echo help-ok;; *) echo \"help text missing: \$out1\"; exit 1;; esac; out2=\$(bash scripts/verify_post_deploy.sh --bad-flag 2>&1); case \"\$out2\" in *\"unknown flag\"*) echo bad-flag-ok;; *) echo \"bad-flag path broken: \$out2\"; exit 1;; esac; grep -q \"SSH_HOST=\\\"\\\${SSH_HOST:-admin@<VM_HOST>}\\\"\" scripts/verify_post_deploy.sh || { echo \"SSH_HOST fallback line missing\"; exit 1; }; grep -q \"SSH_HOST_SET\" scripts/verify_post_deploy.sh || { echo \"SSH_HOST_SET var missing\"; exit 1; }" > "$f" && bash "$f"; rm -f "$f"'
 
 # ─── B62 (v0.33.1.13) — SKYGATE_TS_LOGIN_SERVER editable from /admin/tailscale ───
 # Before v0.33.1.13 the headscale URL was env-var only

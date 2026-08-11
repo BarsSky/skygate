@@ -13,29 +13,61 @@
 #
 # This helper:
 #   1. Reads SKYGATE_ADMIN_USER + SKYGATE_ADMIN_PASSWORD from
-#      env (fall back to "admin" / "skygate_admin_pass" if
-#      unset — matches the live .env)
-#   2. POSTs to /login on the VM (via direct ssh, same
+#      env (REQUIRED — no defaults; the script refuses to run
+#      if either is unset, to avoid hardcoding the live
+#      operator credentials in a tracked file).
+#   2. Reads SSH_HOST from $1 (positional) or $SSH_HOST env
+#      (also REQUIRED — no defaults). Same rationale.
+#   3. POSTs to /login on the VM (via direct ssh, same
 #      pattern as R33/R34)
-#   3. Captures the skygate_session cookie into a tmp
+#   4. Captures the skygate_session cookie into a tmp
 #      file the caller can re-use
 #
 # Usage:
-#   . scripts/verify_login.sh   # sources $SKY_CK_FILE
-#   ... curl -b "$SKY_CK_FILE" http://localhost:8080/admin/whatever
+#   SKYGATE_ADMIN_USER=skyadmin \
+#     SKYGATE_ADMIN_PASSWORD='<set-via-env>' \
+#     SSH_HOST='skyadmin@<VM_HOST>' \
+#     bash scripts/verify_login.sh
 #
-# Or as a one-liner:
-#   CK=$(bash scripts/verify_login.sh)
-#   ssh ... "curl -sS -b $CK http://localhost:8080/admin/services"
+# Or via the operator's .env:
+#   set -a; . /home/skyadmin/skygate/.env; set +a
+#   bash scripts/verify_login.sh
 #
 # The helper exits non-zero on login failure (caller checks
 # $? to decide whether to skip the R-check or fail it).
+# It also exits non-zero if any of the required env vars
+# is missing — this is intentional; it prevents accidentally
+# running with stale or hardcoded credentials.
 
 set -e
 
-ADMIN_USER="${SKYGATE_ADMIN_USER:-skyadmin}"
-ADMIN_PASS="${SKYGATE_ADMIN_PASSWORD:-SkyAdm_1782736105_b6e7aac4}"
-SSH_HOST="${SSH_HOST:-skyadmin@192.168.13.69}"
+# 2026-08-11: v0.34.0.1 — removed the live-credential
+# defaults that shipped in v0.33.1.42. The operator's
+# live admin password and SSH host were in tracked git
+# history as default values (an artifact of the v0.33.1.42
+# post-deploy fix that needed the live creds to make the
+# R31/R32/R34 cookie-auth checks pass on the operator's
+# actual deployment). Moving to env-var-only is the
+# immediate mitigation; the full history-rewrite /
+# global-squash to v1.0.0 is
+# tracked in docs/PLANS.md.
+if [ -z "${SKYGATE_ADMIN_USER:-}" ]; then
+  echo "verify_login: SKYGATE_ADMIN_USER env var is required (no default; do not hardcode operator credentials in tracked files)" >&2
+  exit 2
+fi
+if [ -z "${SKYGATE_ADMIN_PASSWORD:-}" ]; then
+  echo "verify_login: SKYGATE_ADMIN_PASSWORD env var is required (no default; do not hardcode operator credentials in tracked files)" >&2
+  exit 2
+fi
+if [ -z "${SSH_HOST:-}" ] && [ -z "${1:-}" ]; then
+  echo "verify_login: SSH_HOST env var or positional \$1 is required (e.g. 'skyadmin@<VM_HOST>')" >&2
+  exit 2
+fi
+# Positional $1 wins (matches the B61 contract: "user@host" as $1).
+# Falls back to $SSH_HOST env var if $1 is empty.
+SSH_HOST="${1:-${SSH_HOST:-}}"
+ADMIN_USER="${SKYGATE_ADMIN_USER}"
+ADMIN_PASS="${SKYGATE_ADMIN_PASSWORD}"
 
 # Cookie file is per-process; the caller re-uses it for
 # multiple R-checks within the same verify_post_deploy.sh

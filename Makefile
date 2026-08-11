@@ -157,10 +157,10 @@ verify-pre:
 # v0.33.1.13: SSH_HOST is now passable as positional $1
 # (preferred) or as a make-arg. The script's positional form
 # is:
-#   make verify-post SSH_HOST=skyadmin@192.168.13.69
+#   make verify-post SSH_HOST=skyadmin@<VM_HOST>
 # or via the legacy SSH_HOST env var (still works for
 # pipelines + CI). The script's built-in default
-# (admin@192.0.2.1) is almost always wrong — pass an
+# (admin@<VM_HOST>) is almost always wrong — pass an
 # explicit value.
 verify-post:
 	@bash scripts/verify_post_deploy.sh $(SSH_HOST)

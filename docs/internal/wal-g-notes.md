@@ -18,7 +18,7 @@ Patroni/etcd HA cluster.
     (single file, NOT envdir — daemontools isn't always installed)
   * writes to `https://minio.skynas.ru` (public, no LAN route)
   * base backups: `wal-g backup-push /var/lib/postgresql/data`
-* **skygate-vm (192.168.13.69)** — Patroni 4.1.0 **REPLICA**
+* **skygate-vm (operator's <VM_HOST>)** — Patroni 4.1.0 **REPLICA**
   * wal-g installed + env written (2026-08-04)
   * reads from `http://192.168.13.13:9000` (LAN, faster)
   * backup-list / wal-show / backup-fetch work

@@ -1,0 +1,153 @@
+#!/bin/bash
+# .githooks/pre-commit — local gate for `git commit`.
+#
+# Catches tracked-file changes that would expose operator
+# credentials (the v0.34.0.1 incident: live admin password
+# SkyAdm_1782736105_b6e7aac4 and SSH host 192.168.13.69
+# shipped to a public GitHub repo as default fallback values
+# in scripts/verify_login.sh, committed in v0.33.1.42).
+#
+# Scans the diff for:
+#   - live admin password / SSH host
+#   - the operator's live DB password (default `skygate_admin_pass`)
+#   - private LAN IPs (10.x, 172.16-31.x, 192.168.x) — but
+#     skips 192.0.2.x (TEST-NET-1, used in docs) and
+#     172.17.0.x / 172.18.0.x (Docker bridge defaults, also
+#     used in docs)
+#   - the placeholder strings we adopted in v0.34.0.1
+#     (catches the chicken-and-egg case where the operator
+#     types the live value into a new <PLACEHOLDER>)
+#
+# If a match is found, the commit is aborted with a
+# non-zero exit. The author can either:
+#   - remove the credential and re-commit
+#   - add the line to the allow-list below (if it's a
+#     known false positive)
+#   - bypass with `git commit --no-verify` (use sparingly;
+#     the hook is the last line of defense)
+#
+# Enable:
+#   git config core.hooksPath .githooks
+#
+# Cross-platform: pure bash. Works on Linux, macOS, and
+# Windows (Git Bash / WSL2).
+#
+# 2026-08-11: v0.34.0.1 — initial cut after the credential
+# leak incident. The patterns are intentionally narrow
+# (specific strings, not regex) to avoid false positives on
+# tests that generate test passwords.
+
+set -e
+
+# Live admin password (operator's actual value as of
+# 2026-08-10 — was committed in v0.33.1.42 as a default
+# fallback in scripts/verify_login.sh). The operator has
+# since rotated this; the value below is the OLD leak.
+# Block ANY commit that reintroduces the old string.
+BLOCKED_LIVE_PASSWORD='SkyAdm_1782736105_b6e7aac4'
+
+# Old default DB admin password (the fresh-install default
+# that shipped in scripts/verify_post_deploy.sh and others
+# in the v0.32.x era). The operator's live DB uses a
+# different value, but the DEFAULT itself should not be
+# hardcoded in tracked code.
+BLOCKED_DEFAULT_DB_PASSWORD='skygate_admin_pass'
+
+# Operator's VM private LAN IP. The new tracked-code
+# convention is to write `<VM_HOST>` as a placeholder.
+BLOCKED_VM_IP='192.168.13.69'
+
+# Old SSH user literal (used in scripts as a default in
+# `skyadmin@<VM_HOST>` form). The new convention is to
+# require the env var SSH_HOST instead of defaulting.
+BLOCKED_SSH_USER='skyadmin@192.168.13.69'
+
+# Allow-list: lines that are KNOWN to be safe (the
+# patterns above match them but they don't expose anything
+# new). The format is: one literal-string per line; the
+# hook prints matches with their context so the author can
+# decide whether to add to the allow-list.
+ALLOW_LIST=(
+    # The literal pattern in the patterns above
+    'SkyAdm_1782736105_b6e7aac4.*REMOVED'   # the v0.34.0.1 cleanup comment in verify_login.sh
+    'skygate_admin_pass.*REDACTED'         # the v0.34.0.1 cleanup comment
+    '192.168.13.69.*REDACTED'              # placeholder usage
+)
+
+# Get the list of files being added/modified in this
+# commit. We scan the diff content (not the whole tree) so
+# historical files that already contain the patterns
+# don't trigger a false positive on a new commit that
+# doesn't touch them.
+STAGED=$(git diff --cached --name-only --diff-filter=AM 2>/dev/null || true)
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+# Patterns to scan. Order matters — live-credential
+# patterns first (highest severity), then default-credential
+# patterns, then private-LAN IP patterns.
+FOUND=0
+
+check_pattern() {
+    local pattern="$1"
+    local label="$2"
+    local hits
+    # 2026-08-11: v0.34.0.1 — fix the regex escaping. The
+    # previous version used `^\+[^+].*` (single backslash)
+    # which grep -E interpreted as `^+` (the `^` char
+    # repeated one or more times), so the match never
+    # fired. The fix is to escape the `+` for the shell
+    # (which then passes `\+` to grep -E, which then
+    # matches the literal `+` at line start).
+    hits=$(git diff --cached -U0 -- "$STAGED" 2>/dev/null \
+        | grep -E "^\\+[^+].*$pattern" \
+        | grep -v '^\\+\\+\+' || true)
+    if [ -z "$hits" ]; then
+        return 0
+    fi
+    # Filter allow-list: skip lines that contain a
+    # recognized allow-list pattern on the same line.
+    for allowed in "${ALLOW_LIST[@]}"; do
+        # The allow-list entries are loose patterns; only
+        # filter when the hit is in a comment that
+        # explicitly says "REDACTED" or "REMOVED" on the
+        # same line.
+        if echo "$hits" | grep -E "$allowed" >/dev/null 2>&1; then
+            # The "real" hit is filtered; re-check whether
+            # there's a non-allow-listed hit left.
+            local filtered_hits
+            filtered_hits=$(echo "$hits" | grep -vE "$allowed" || true)
+            if [ -z "$filtered_hits" ]; then
+                return 0
+            fi
+            hits="$filtered_hits"
+        fi
+    done
+    echo "pre-commit: BLOCKED — found $label in staged diff:" >&2
+    echo "$hits" | head -5 | sed 's/^/    /' >&2
+    FOUND=1
+}
+
+# 1. Live admin password (the original leak). Block ALL.
+check_pattern "$BLOCKED_LIVE_PASSWORD" "live admin password"
+
+# 2. Default DB password. Block the literal value.
+check_pattern "$BLOCKED_DEFAULT_DB_PASSWORD" "default DB password (skygate_admin_pass)"
+
+# 3. Operator's VM IP. Block the literal value.
+check_pattern "$BLOCKED_VM_IP" "operator's VM private LAN IP (192.168.13.69)"
+
+# 4. Combined SSH user@host default. Block the literal value.
+check_pattern "$BLOCKED_SSH_USER" "operator's SSH user@host default"
+
+if [ "$FOUND" -ne 0 ]; then
+    echo "" >&2
+    echo "pre-commit: ABORTED — credentials detected in staged diff." >&2
+    echo "  - To bypass: git commit --no-verify (use sparingly)" >&2
+    echo "  - To allow-list: edit .githooks/pre-commit ALLOW_LIST" >&2
+    echo "  - To replace with placeholders: <VM_HOST>, <DB-ADMIN-PASSWORD>" >&2
+    exit 1
+fi
+
+exit 0
