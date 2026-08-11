@@ -577,32 +577,64 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
   # via-flag cross-check; R10 just checks the count + presence
   # of the per-user shape.
   #
-  # Authoritative count: SELECT COUNT(*) FROM portal_users via
-  # ssh-into-vm sqlite3 (the .db file is bind-mounted from the
-  # host, so we have to docker cp it out for sqlite to read).
-  USER_COUNT_DB=$(ssh_vm "set -e
-    docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_ucnt_\$\$.sqlite
-    sqlite3 /tmp/_db_ucnt_\$\$.sqlite 'SELECT COUNT(*) FROM portal_users;'
-    rm -f /tmp/_db_ucnt_\$\$.sqlite" 2>/dev/null | tr -d ' \n')
-  USER_GRANT_COUNT=$(json_field "$LIVE_POLICY" 'import json, os
+  # v1.2.5: R10 now checks that EVERY portal_user has a
+  # per-user grant in the live policy (not a count equality,
+  # which fails when headscale has more users than portal —
+  # e.g. bot/infra users that exist only in headscale).
+  #
+  # The previous logic compared `grants-with-@` count to
+  # portal_users count, which broke when headscale contained
+  # 6 users but portal only 4 (e.g. infra user from
+  # V054/v0.33.1.41, svyatoslava pre-existing). 6 != 4 = FAIL,
+  # but the system was actually fine.
+  #
+  # Authoritative usernames: SELECT username FROM portal_users
+  # via ssh-into-vm sqlite3 (the .db file is bind-mounted from
+  # the host, so we have to docker cp it out for sqlite to read).
+  PORTAL_USERNAMES=$(ssh_vm "set -e
+    docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_un_\$\$.sqlite
+    sqlite3 /tmp/_db_un_\$\$.sqlite 'SELECT username FROM portal_users ORDER BY id;'
+    rm -f /tmp/_db_un_\$\$.sqlite" 2>/dev/null | tr -d ' ' | grep -v '^$' || true)
+  if [ -z "$PORTAL_USERNAMES" ]; then
+    echo "  ${RED}FAIL${NC}  R10 cannot read portal_users usernames (sqlite/docker cp issue)"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  else
+    # Pass the username list as PORTAL_USERNAMES env var; the
+    # python code reads both JFPATH (the policy JSON) and the
+    # env var, and checks every portal user has a matching
+    # per-user grant (src = "<user>@<domain>").
+    R10_RESULT=$(PORTAL_USERNAMES="$PORTAL_USERNAMES" json_field "$LIVE_POLICY" 'import json, os
+usernames = set(u for u in os.environ.get("PORTAL_USERNAMES","").splitlines() if u)
 d = json.loads(open(os.environ["JFPATH"]).read() or "{}")
 p = json.loads(d.get("policy","{}"))
-# v1.2.1: was hardcoded to "@tsnet.example.com" which never
-# matched the real domain ("tsnet.skynas.ru" on this operator
-# headscale, varies per deployment). Use "@" alone - any
-# per-user grant has src like "alice@tailnet.example.com",
-# which always contains "@". This also correctly excludes
-# tag:dev-* (no "@") and catch-all "*" (no "@").
-n = sum(1 for g in p.get("grants",[])
-        if any("@" in s for s in g.get("src",[]))
-        and "autogroup:internet" in g.get("dst",[]))
-print(n)')
-  if [ -n "$USER_COUNT_DB" ] && [ "$USER_GRANT_COUNT" = "$USER_COUNT_DB" ]; then
-    echo "  ${GRN}PASS${NC}  R10 $USER_GRANT_COUNT per-user grants (matches portal_users=$USER_COUNT_DB, all with autogroup:internet)"
-    RESULTS_PASS=$((RESULTS_PASS+1))
-  else
-    echo "  ${RED}FAIL${NC}  R10 per-user grants count=$USER_GRANT_COUNT (expected $USER_COUNT_DB from portal_users)"
-    RESULTS_FAIL=$((RESULTS_FAIL+1))
+grant_users = set()
+for g in p.get("grants", []):
+    if "autogroup:internet" not in g.get("dst", []):
+        continue
+    for s in g.get("src", []):
+        if "@" in s and not s.startswith("tag:") and s != "*":
+            grant_users.add(s.split("@", 1)[0])
+missing = sorted(u for u in usernames if u not in grant_users)
+if missing:
+    print("missing " + " ".join(missing))
+else:
+    print("ok " + str(len(usernames)))')
+    case "$R10_RESULT" in
+      "ok "*)
+        COUNT=$(echo "$R10_RESULT" | awk '{print $2}')
+        echo "  ${GRN}PASS${NC}  R10 all $COUNT portal_users have a per-user grant in the live policy"
+        RESULTS_PASS=$((RESULTS_PASS+1))
+        ;;
+      "missing "*)
+        MISSING=$(echo "$R10_RESULT" | sed 's/^missing //')
+        echo "  ${RED}FAIL${NC}  R10 missing per-user grants for: $MISSING"
+        RESULTS_FAIL=$((RESULTS_FAIL+1))
+        ;;
+      *)
+        echo "  ${RED}FAIL${NC}  R10 unexpected python output: $R10_RESULT"
+        RESULTS_FAIL=$((RESULTS_FAIL+1))
+        ;;
+    esac
   fi
 
   # R28: live policy size + grant count — exit-node route
