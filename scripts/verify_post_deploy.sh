@@ -133,25 +133,34 @@ unset _pydir
 # v1.0.0.6: Windows Python installs typically only ship
 # `python.exe` (no `python3.exe`), so the PATH bump above
 # only exposes `python`, not `python3`. Define a `python3`
-# shell function that prefers a WORKING `python3` (verified
-# by `python3 -c "print('ok')"`) and falls back to `python`.
-# This makes all the `python3 -c "..."` calls below work on
-# both the operator's Windows host AND the VM.
+# shell function that prefers a WORKING `python3` and falls
+# back to `python`. This makes all the `python3 -c "..."`
+# calls below work on both the operator's Windows host AND
+# the VM.
 #
 # v1.0.0.7: `command -v python3` on Windows finds the
 # Microsoft Store alias (`/c/Users/.../WindowsApps/python3`)
 # which is a redirector that prints "Python was not found"
-# instead of running the interpreter. We have to actually
-# invoke the candidate and check the exit code.
+# instead of running the interpreter.
+#
+# v1.0.0.9: invoking the alias hangs forever (it pops a
+# Store install prompt in the background). We can't actually
+# call the candidate to test it. Instead, check the path:
+# skip candidates under /c/Users/.../WindowsApps/.
 python3() {
-  if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0)' 2>/dev/null; then
+  local cand
+  cand="$(command -v python3 2>/dev/null || true)"
+  if [ -n "$cand" ] && ! echo "$cand" | grep -q "WindowsApps"; then
     command python3 "$@"
-  elif command -v python >/dev/null 2>&1 && python -c 'import sys; sys.exit(0)' 2>/dev/null; then
-    command python "$@"
-  else
-    echo "verify_post_deploy: neither python3 nor python is on PATH" >&2
-    return 127
+    return
   fi
+  cand="$(command -v python 2>/dev/null || true)"
+  if [ -n "$cand" ] && ! echo "$cand" | grep -q "WindowsApps"; then
+    command python "$@"
+    return
+  fi
+  echo "verify_post_deploy: no working python3 / python on PATH (skipped Microsoft Store alias)" >&2
+  return 127
 }
 
 # ---------------------------------------------------------------------------
