@@ -120,22 +120,34 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 json_field() {
   local json_input="$1"
   local py_code="$2"
-  # v1.2.2: write python code to a local file, then copy it to
-  # the VM (scp), then run it with the JSON piped to stdin.
-  # This sidesteps the bash quoting hell of trying to pass
-  # multi-line python code through ssh command arguments
-  # (any `(` `)` `[` `]` `,` `\"` etc. would break the parse
-  # one way or another). The VM doesn't need base64 or any
-  # particular tool — just python3.
-  local jfpath="/tmp/_json_field_$$.json"
-  local py_file="/tmp/_json_field_$$.py"
-  printf '%s\n' "$py_code" > "$py_file"
+  # v1.2.2/3/4: write python code to a local file, then scp it
+  # to the VM, then run it with the JSON piped to stdin. This
+  # sidesteps the bash quoting hell of trying to pass multi-
+  # line python code through ssh command arguments (any
+  # '(' ')' '[' ']' ',' etc. would break the parse). The VM
+  # only needs python3.
+  #
+  # v1.2.4: scp the file across (earlier the py_file was named
+  # after the host $$ PID, but ssh on the VM doesn't see host
+  # PIDs, so 'python3 /tmp/_json_field_<host_pid>.py' failed
+  # with "No such file"). Use the remote $$ (which on the VM
+  # is the actual PID of the remote shell) as the file name,
+  # and scp with that same name.
+  local rfile="/tmp/_json_field_$RANDOM.py"
+  local py_file="$rfile"  # path on VM
+  printf '%s\n' "$py_code" > /tmp/_json_field_local_$$.py
+  if [ -n "${SSH_KEY:-}" ]; then
+    scp -i "$SSH_KEY" -o StrictHostKeyChecking=no /tmp/_json_field_local_$$.py "$SSH_HOST:$py_file" 2>/dev/null
+  else
+    scp -o StrictHostKeyChecking=no /tmp/_json_field_local_$$.py "$SSH_HOST:$py_file" 2>/dev/null
+  fi
+  local jfpath="/tmp/_json_field_$RANDOM.json"
   printf '%s' "$json_input" | ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=no "$SSH_HOST" "
     cat > $jfpath
-    python3 $py_file
-    rm -f $jfpath
+    JFPATH=$jfpath python3 $py_file
+    rm -f $jfpath $py_file
   " 2>/dev/null
-  rm -f "$py_file"
+  rm -f /tmp/_json_field_local_$$.py
 }
 
 # v1.0.0.6: add common Windows python install locations to PATH
