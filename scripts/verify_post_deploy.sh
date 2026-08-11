@@ -130,6 +130,24 @@ for _pydir in "/c/Python314" "/c/Python313" "/c/Python312" \
 done
 unset _pydir
 
+# v1.0.0.6: Windows Python installs typically only ship
+# `python.exe` (no `python3.exe`), so the PATH bump above
+# only exposes `python`, not `python3`. Define a `python3`
+# shell function that prefers `python3` (Linux/Mac, or
+# Windows with a symlink) and falls back to `python`. This
+# makes all the `python3 -c "..."` calls below work on both
+# the operator's Windows host AND the VM.
+python3() {
+  if command -v python3 >/dev/null 2>&1; then
+    command python3 "$@"
+  elif command -v python >/dev/null 2>&1; then
+    command python "$@"
+  else
+    echo "verify_post_deploy: neither python3 nor python is on PATH" >&2
+    return 127
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Args
 # ---------------------------------------------------------------------------
