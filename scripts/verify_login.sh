@@ -109,7 +109,9 @@ ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
 # would only have last_username).
 LOGIN_BODY=$(ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "$SSH_HOST" "curl -sS -L -c /tmp/_skygate_verify_cookie \
-    -d 'username=${ADMIN_USER}&password=${ADMIN_PASS}&remember=0' \
+    --data-urlencode 'username=${ADMIN_USER}' \
+    --data-urlencode 'password=${ADMIN_PASS}' \
+    --data-urlencode 'remember=0' \
     -o /dev/null -w '%{http_code}' \
     http://localhost:8080/login" 2>/dev/null || echo "000")
 
