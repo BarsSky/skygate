@@ -74,7 +74,19 @@ ADMIN_PASS="${SKYGATE_ADMIN_PASSWORD}"
 # run.
 SKY_CK_FILE="${SKY_CK_FILE:-/tmp/_skygate_verify_cookie_$$}"
 
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+# 2026-08-11: v1.0.0.4 — also accept an explicit SSH_KEY via env
+# (parent verify_post_deploy.sh resolves it the same way the
+# host-side ssh fallback does). Without -i, on Windows hosts the
+# subshell that runs this script does NOT inherit the parent's
+# ssh-agent forwarding, and ssh falls back to "Permission denied
+# (publickey,password)". The parent sets SSH_KEY=id_ed25519 path;
+# pass it through.
+SSH_KEY_FLAG=""
+if [ -n "${SSH_KEY:-}" ] && [ -f "${SSH_KEY}" ]; then
+  SSH_KEY_FLAG="-i ${SSH_KEY} -o IdentitiesOnly=yes"
+fi
+
+ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "$SSH_HOST" "rm -f /tmp/_skygate_verify_cookie" 2>/dev/null
 
 # POST to /login. The form fields (username, password) match
@@ -88,7 +100,7 @@ ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
 # it (curl -L) so the cookie jar is populated with the
 # post-login Set-Cookie, not the pre-login response (which
 # would only have last_username).
-LOGIN_BODY=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+LOGIN_BODY=$(ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "$SSH_HOST" "curl -sS -L -c /tmp/_skygate_verify_cookie \
     -d 'username=${ADMIN_USER}&password=${ADMIN_PASS}&remember=0' \
     -o /dev/null -w '%{http_code}' \
@@ -104,7 +116,7 @@ fi
 # login succeeded but the cookie file is empty/missing, we
 # have a different problem (e.g. /login returned 200 but
 # didn't set a cookie — would mean a bug in the handler).
-COOKIE_CONTENTS=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+COOKIE_CONTENTS=$(ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "$SSH_HOST" "cat /tmp/_skygate_verify_cookie 2>/dev/null" 2>/dev/null || echo "")
 
 if ! echo "$COOKIE_CONTENTS" | grep -q "skygate_session"; then

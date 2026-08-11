@@ -169,6 +169,14 @@ for cand in \
   fi
 done
 
+# 2026-08-11: v1.0.0.4 — export SSH_KEY so the verify_login.sh
+# subshell (which verify_post_deploy.sh spawns for R31/R32/R34)
+# can authenticate to the VM with the explicit key, not the
+# default agent. Without this, Windows hosts hit "Permission
+# denied" because the parent's ssh-agent isn't inherited by
+# the subshell that runs verify_login.sh.
+export SSH_KEY
+
 # v0.29.2: resolve SKYGATE_CONTAINER by label. If the env var was
 # already set, leave it alone (the operator may have overridden
 # to a specific id for a one-off check). Otherwise, find the
@@ -210,11 +218,11 @@ if [ -z "$HEADSCALE_CONTAINER" ]; then
   fi
 fi
 
-API_KEY="$(grep '^HEADSCALE_API_KEY=' /home/admin/skygate/.env 2>/dev/null | cut -d= -f2-)"
+API_KEY="$(grep '^HEADSCALE_API_KEY=' /home/skyadmin/skygate/.env 2>/dev/null | cut -d= -f2-)"
 if [ -z "$API_KEY" ]; then
   # We don't have the .env locally. SSH in and grab it.
   API_KEY="$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" \
-    "grep '^HEADSCALE_API_KEY=' /home/admin/skygate/.env | cut -d= -f2-")"
+    "grep '^HEADSCALE_API_KEY=' /home/skyadmin/skygate/.env | cut -d= -f2-")"
 fi
 
 if [ -t 1 ]; then
