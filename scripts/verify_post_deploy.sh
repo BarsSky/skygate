@@ -147,16 +147,30 @@ unset _pydir
 # Store install prompt in the background). We can't actually
 # call the candidate to test it. Instead, check the path:
 # skip candidates under /c/Users/.../WindowsApps/.
+#
+# v1.0.0.10: `command python3` (the standard way to call
+# a command while skipping functions) is a BUILTIN, not
+# the function. When we tried `command python3 "$@"` inside
+# the function, `command` looks up python3 as an external
+# command and finds the Microsoft Store alias. We need to
+# invoke the resolved interpreter DIRECTLY (by absolute
+# path), not via `command python3`.
+#
+# v1.0.0.11: `command -v python3` returns the FUNCTION
+# NAME ("python3"), not a path, when this function is
+# defined. Using "python3" as a path tries to exec the
+# function as a binary and recurses forever. Use `type -p`
+# instead, which returns only external command paths.
 python3() {
   local cand
-  cand="$(command -v python3 2>/dev/null || true)"
+  cand="$(type -p python3 2>/dev/null || true)"
   if [ -n "$cand" ] && ! echo "$cand" | grep -q "WindowsApps"; then
-    command python3 "$@"
+    "$cand" "$@"
     return
   fi
-  cand="$(command -v python 2>/dev/null || true)"
+  cand="$(type -p python 2>/dev/null || true)"
   if [ -n "$cand" ] && ! echo "$cand" | grep -q "WindowsApps"; then
-    command python "$@"
+    "$cand" "$@"
     return
   fi
   echo "verify_post_deploy: no working python3 / python on PATH (skipped Microsoft Store alias)" >&2
