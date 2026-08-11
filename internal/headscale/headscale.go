@@ -118,7 +118,7 @@ func getenvDefault(key, def string) string {
 // APIError is the typed error returned by do() for non-2xx responses.
 // Callers can use errors.As(err, &apiErr) to inspect StatusCode and
 // decide between "endpoint not supported in this headscale mode" (e.g.
-// file-mode 404/405) and "request failed for other reasons" (5xx,
+// file-mode http.StatusNotFound/http.StatusMethodNotAllowed) and "request failed for other reasons" (5xx,
 // network). The Error() string keeps the legacy "headscale METHOD PATH:
 // CODE BODY" format so existing log scrapers / human greps stay
 // readable.
@@ -154,7 +154,7 @@ func (c *Client) do(method, path string, body any, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= http.StatusBadRequest {
 		buf, _ := io.ReadAll(resp.Body)
 		return &APIError{
 			Method:     method,

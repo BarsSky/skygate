@@ -23,7 +23,7 @@ import (
 func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	// 2026-07-11: read optional ?action= and ?user= filters so the
@@ -61,7 +61,7 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-11: Этап 9 part 2 — moved to db.ListAuditActions
 	actions, err := db.ListAuditActions(s.DB)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -72,7 +72,7 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		 ORDER BY id DESC
 		 LIMIT 200`, args...)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -108,7 +108,7 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	hs := s.HSGlobalFn()

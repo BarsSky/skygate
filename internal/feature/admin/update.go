@@ -95,7 +95,7 @@ func normalizeUpdateTarget(target string) string {
 func (s *Service) GetAdminUpdate(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	s.renderUpdatePage(w, r, c, "")
@@ -108,7 +108,7 @@ func (s *Service) GetAdminUpdate(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	s.renderUpdatePage(w, r, c, "")
@@ -291,7 +291,7 @@ var stateStoreMu sync.Mutex
 var inFlightUpdater *runningUpdater
 
 // PostAdminUpdateApply kicks off the auto-updater in a
-// background goroutine and returns 303 to the page. The
+// background goroutine and returns http.StatusSeeOther to the page. The
 // orchestrator's full run takes 3-5 minutes (git pull +
 // docker build + container recreate + healthz poll); a
 // synchronous HTTP response would risk the operator's
@@ -303,17 +303,17 @@ var inFlightUpdater *runningUpdater
 // intervention required" hint. The page's status panel
 // auto-refreshes every 5s and surfaces the failure.
 //
-// 409 Conflict is returned when a previous job is still
+// http.StatusConflict Conflict is returned when a previous job is still
 // running. The page handles this by waiting for the
 // in-flight job to complete.
 func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if !s.Cfg.UpdateCheckEnabled {
-		http.Error(w, "update checker disabled (SKYGATE_UPDATE_CHECK=false)", 400)
+		http.Error(w, "update checker disabled (SKYGATE_UPDATE_CHECK=false)", http.StatusBadRequest)
 		return
 	}
 
@@ -340,7 +340,7 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == "" {
-		http.Error(w, "no target version (GitHub unreachable and no cached value; click 'Check now' first)", 400)
+		http.Error(w, "no target version (GitHub unreachable and no cached value; click 'Check now' first)", http.StatusBadRequest)
 		return
 	}
 	target = normalizeUpdateTarget(target)
@@ -349,7 +349,7 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 	// path branches on this.
 	installKind := update.DetectInstallKind()
 	if installKind == update.InstallUnknown {
-		http.Error(w, "could not detect install kind (set SKYGATE_INSTALL_KIND=docker|systemd|bare to override)", 400)
+		http.Error(w, "could not detect install kind (set SKYGATE_INSTALL_KIND=docker|systemd|bare to override)", http.StatusBadRequest)
 		return
 	}
 
@@ -426,7 +426,7 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	http.Redirect(w, r, "/admin/update", 303)
+	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
 }
 
 // 2026-07-30: v0.32.3 — PostAdminUpdatePush is the MANUAL
@@ -453,7 +453,7 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -471,7 +471,7 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 
 	installKind := update.DetectInstallKind()
 	if installKind == update.InstallUnknown {
-		http.Error(w, "could not detect install kind (set SKYGATE_INSTALL_KIND=docker|systemd|bare to override)", 400)
+		http.Error(w, "could not detect install kind (set SKYGATE_INSTALL_KIND=docker|systemd|bare to override)", http.StatusBadRequest)
 		return
 	}
 
@@ -535,7 +535,7 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	http.Redirect(w, r, "/admin/update", 303)
+	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
 }
 
 // PostAdminUpdateRollback cancels any in-flight job AND
@@ -550,7 +550,7 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	store := s.UpdateState
@@ -601,7 +601,7 @@ func (s *Service) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request
 func (s *Service) PostAdminUpdateDismiss(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	s.UpdateState.Clear()

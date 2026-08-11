@@ -167,7 +167,7 @@ func main() {
 			// BEFORE swapping — a migration
 			// failure here triggers rollback to
 			// the previous tag without the
-			// operator ever seeing a 500.
+			// operator ever seeing a http.StatusInternalServerError.
 			if err := runMigrateOnly(); err != nil {
 				log.Fatalf("migrate-only: %v", err)
 			}
@@ -366,7 +366,7 @@ func main() {
 	// v0.26.0 — liveness + readiness probes (HA-ready).
 	// Both are UNAUTHENTICATED. /healthz is always 200
 	// if the process is alive (K8s livenessProbe pattern).
-	// /readyz pings the DB and headscale, returns 503
+	// /readyz pings the DB and headscale, returns http.StatusServiceUnavailable
 	// if either is down (K8s readinessProbe pattern).
 	//
 	// refactor-v0.30 Phase B step 1 (2026-07-29): handlers
@@ -1217,7 +1217,7 @@ func main() {
 	// `DomainAutoUpdater()` call held the SQLite WAL write
 	// lock for 30+ seconds, which wedged every other query
 	// with `context deadline exceeded` (the same root cause
-	// as the 504-on-https postmortem — see RELEASE-NOTES.md
+	// as the http.StatusGatewayTimeout-on-https postmortem — see RELEASE-NOTES.md
 	// v0.32.13). The /admin/update button still works for
 	// manual deploys regardless of this gate.
 	//
@@ -1281,7 +1281,7 @@ func main() {
 	// 2026-08-05 v0.33.1.10: Owner / Repo are now wired
 	// from cfg (defaults to "BarsSky"/"skygate" — the
 	// operator's actual GitHub repo; the previous
-	// "skygate-operator/skygate" hardcode 404'd).
+	// "skygate-operator/skygate" hardcode http.StatusNotFound'd).
 	releaseMon := &release.Monitor{
 		HTTP:      &http.Client{Timeout: 10 * time.Second},
 		Current:   version,
@@ -1400,7 +1400,7 @@ func main() {
 // this flag to apply any pending migrations BEFORE
 // swapping the live container. A migration failure here
 // triggers rollback to the previous tag without the
-// operator ever seeing a 500. The function returns
+// operator ever seeing a http.StatusInternalServerError. The function returns
 // an error (not os.Exit) so unit tests can exercise
 // the happy path without forking a subprocess.
 func runMigrateOnly() error {

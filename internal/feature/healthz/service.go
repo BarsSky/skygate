@@ -75,7 +75,7 @@ func (s *Service) GetHealthz(w http.ResponseWriter, r *http.Request) {
 
 // GetReadyz — readiness probe. Pings the DB and the
 // headscale client (if configured), caches the result
-// for 1 second, returns 200 OK or 503 Service Unavailable
+// for 1 second, returns 200 OK or http.StatusServiceUnavailable Service Unavailable
 // with a per-component breakdown. K8s readinessProbe.
 func (s *Service) GetReadyz(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
@@ -109,7 +109,7 @@ func (s *Service) GetReadyz(w http.ResponseWriter, r *http.Request) {
 // v0.33.1.42 D5: /readyz semantics change. Pre-D5, the
 // healthy flag was AND-of-all (DB + headscale + headplane +
 // tailscale). A headscale outage flipped the whole instance
-// to "unhealthy" (503) even though the DB was fine and skygate
+// to "unhealthy" (http.StatusServiceUnavailable) even though the DB was fine and skygate
 // could still serve /my/devices, /my/exit-rules, /admin/headscale
 // config, etc. — those endpoints just needed to talk to
 // headscale, which they do non-blockingly. Post-D5, the
@@ -117,7 +117,7 @@ func (s *Service) GetReadyz(w http.ResponseWriter, r *http.Request) {
 // is reachable. The per-integration statuses (headscale,
 // headplane, tailscale) are still populated and shown in
 // the JSON, but they're ADVISORY — they don't gate the
-// 200/503 status code.
+// 200/http.StatusServiceUnavailable status code.
 //
 // Rationale: the B91 architectural principle is "skygate
 // starts independently of headscale". /readyz should
@@ -141,7 +141,7 @@ func (s *Service) runReadyzChecks(ctx context.Context) readyzState {
 	}
 	// DB check — cheap (a single ping). The ONLY gate for
 	// the top-level `Healthy` field. /readyz returns 200
-	// iff DB is reachable; otherwise 503.
+	// iff DB is reachable; otherwise http.StatusServiceUnavailable.
 	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := s.DB.PingContext(dbCtx); err != nil {

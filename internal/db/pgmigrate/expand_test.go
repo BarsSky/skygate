@@ -1,6 +1,7 @@
 package pgmigrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -115,7 +116,7 @@ func TestRun_NilDBReturnsError(t *testing.T) {
 			t.Errorf("Run on nil DB should return error, not panic: %v", r)
 		}
 	}()
-	err := Run(nil, nil)
+	err := Run(context.TODO(), nil)
 	if err == nil {
 		t.Error("Run(nil, nil) should return error")
 	}
@@ -153,7 +154,7 @@ func TestRun_NilStmtsIsNoop(t *testing.T) {
 	// exercise the BeginTx path. This will fail (no real
 	// driver behind it), so we just assert that we get SOME
 	// error, not a panic, and that the error mentions Begin.
-	err := Run(nil, nil)
+	err := Run(context.TODO(), nil)
 	if err == nil {
 		t.Skip("Run with no DB returns an error; test depends on having no driver registered")
 	}

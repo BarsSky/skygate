@@ -54,7 +54,7 @@ import (
 // `cmd/apply_pg_migrations`. On the live VM the cutover happened
 // before v0.33.0 was deployed, so the manual apply picked up
 // everything up to v0.49 (no v0.50, no v0.51) — and the
-// /admin/headscale/acl page returned 500 "relation
+// /admin/headscale/acl page returned http.StatusInternalServerError "relation
 // headscale_acl_rules does not exist" until the operator
 // triggered a deploy. Calling MigratePostgres() here makes
 // the PG path symmetric with the SQLite Open() → migrate(conn)

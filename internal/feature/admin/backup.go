@@ -173,7 +173,7 @@ func formatSize(b int64) string {
 func (s *Service) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	backupDir := resolveBackupDir()
@@ -248,7 +248,7 @@ func (s *Service) PostAdminBackupSave(w http.ResponseWriter, r *http.Request) {
 func (s *Service) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	backupDir := resolveBackupDir()
@@ -274,7 +274,7 @@ func (s *Service) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request)
 func (s *Service) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	r.ParseMultipartForm(100 << 20)
@@ -367,7 +367,7 @@ func (s *Service) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	r.ParseForm()

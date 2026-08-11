@@ -23,7 +23,7 @@ package update
 // manual steps so the operator can run them by hand.
 //
 // Concurrency: only ONE updater runs at a time. PostAdminUpdateApply
-// returns 409 Conflict if a job is already in progress. The
+// returns http.StatusConflict Conflict if a job is already in progress. The
 // "Rollback now" button is a separate state transition that
 // cancels the in-progress job (or rolls back a completed-but-
 // bad update) without starting a new one.
@@ -31,6 +31,7 @@ package update
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -159,10 +160,10 @@ type LogEntry struct {
 }
 
 // MaxLogLines caps the in-memory log buffer. Older lines
-// are dropped. 500 is enough for the typical 5-minute
+// are dropped. http.StatusInternalServerError is enough for the typical 5-minute
 // update (3-5 lines per second * 300s = 1500, but most
 // lines are short and a typical update has <100 events).
-const MaxLogLines = 500
+const MaxLogLines = http.StatusInternalServerError
 
 // StateStore holds the current state in memory and on disk.
 // All access is serialized through mu (the status file is
@@ -395,7 +396,7 @@ func appendLog(log []LogEntry, level LogLevel, msg string) []LogEntry {
 // a single-operator surface, 32 bits of entropy is more
 // than enough (the actual risk is "operator clicks
 // Update twice in a row" → the second click returns
-// 409 Conflict and the JobID is unused; no auth context
+// http.StatusConflict Conflict and the JobID is unused; no auth context
 // to brute-force).
 func GenerateJobID() string {
 	var b [4]byte

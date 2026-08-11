@@ -99,7 +99,7 @@ type ExitNodeInfo struct {
 func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	// 2026-07-31: v0.32.13 — call ensureExitServers inside
@@ -143,7 +143,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		listErr = fmt.Errorf("timeout")
 	}
 	if listErr != nil {
-		http.Error(w, listErr.Error(), 500)
+		http.Error(w, listErr.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -471,7 +471,7 @@ func (s *Service) PostAdminExitNodesHealthNow(w http.ResponseWriter, r *http.Req
 func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	nodeID := strings.TrimSpace(r.FormValue("node_id"))
@@ -487,7 +487,7 @@ func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) 
 	sshPort := strings.TrimSpace(r.FormValue("ssh_port"))
 	desc := strings.TrimSpace(r.FormValue("description"))
 	if nodeID == "" || hostname == "" {
-		http.Error(w, "node_id and hostname required", 400)
+		http.Error(w, "node_id and hostname required", http.StatusBadRequest)
 		return
 	}
 	acceptRoutes := 0
@@ -499,7 +499,7 @@ func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) 
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.UpsertExitServer.
 	if err := db.UpsertExitServer(s.DB, nodeID, hostname, sshTarget, sshKey, desc, sshPort, acceptRoutes); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_add", fmt.Sprintf("node=%s ssh=%s", hostname, sshTarget))
@@ -511,17 +511,17 @@ func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) 
 func (s *Service) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	nodeID := r.FormValue("node_id")
 	if nodeID == "" {
-		http.Error(w, "node_id required", 400)
+		http.Error(w, "node_id required", http.StatusBadRequest)
 		return
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.DeleteExitServerByNodeID.
 	if err := db.DeleteExitServerByNodeID(s.DB, nodeID); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_delete", nodeID)
@@ -544,12 +544,12 @@ func (s *Service) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Reques
 func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	nodeID := strings.TrimSpace(r.FormValue("node_id"))
 	if nodeID == "" {
-		http.Error(w, "node_id required", 400)
+		http.Error(w, "node_id required", http.StatusBadRequest)
 		return
 	}
 	// Read the existing row so we can preserve ssh_key_path /
@@ -571,7 +571,7 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 		 FROM exit_servers WHERE node_id = $1`, nodeID,
 	).Scan(&hostname, &sshKeyPath, &description, &sshPort, &acceptRoutes, &enabled)
 	if err != nil {
-		http.Error(w, "exit_servers row not found: "+err.Error(), 404)
+		http.Error(w, "exit_servers row not found: "+err.Error(), http.StatusNotFound)
 		return
 	}
 	if !enabled {
@@ -594,7 +594,7 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 		return
 	}
 	if err := db.UpsertExitServer(s.DB, nodeID, hostname, resolved, sshKeyPath, description, sshPort, acceptRoutes); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_use_tailscale_ip",
@@ -608,11 +608,11 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 func (s *Service) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, `{"error":"forbidden"}`, 403)
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}
 	if s.SyncRoutes == nil {
-		http.Error(w, `{"error":"sync not wired"}`, 500)
+		http.Error(w, `{"error":"sync not wired"}`, http.StatusInternalServerError)
 		return
 	}
 	result := s.SyncRoutes()
@@ -648,7 +648,7 @@ func (s *Service) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request)
 func (s *Service) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	idStr := r.FormValue("node_id")
@@ -787,7 +787,7 @@ func (s *Service) PostAdminExitNodeTagAsExitNode(w http.ResponseWriter, r *http.
 func (s *Service) PostAdminExitNodeUntagAsExitNode(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	idStr := r.FormValue("node_id")

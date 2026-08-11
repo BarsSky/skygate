@@ -37,19 +37,19 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	hsUserID, _, err := db.GetUserHSByID(s.DB, c.UserID)
 	if err != nil {
 		log.Printf("web.my.preauth: GetUserHSByID userID=%d err=%v", c.UserID, err)
-		http.Error(w, "no headscale user linked", 400)
+		http.Error(w, "no headscale user linked", http.StatusBadRequest)
 		return
 	}
 	if !hsUserID.Valid {
 		log.Printf("web.my.preauth: no headscale_user_id for userID=%d username=%q", c.UserID, c.Username)
-		http.Error(w, "no headscale user linked", 400)
+		http.Error(w, "no headscale user linked", http.StatusBadRequest)
 		return
 	}
 	log.Printf("web.my.preauth: userID=%d hsUserID=%d, calling CreatePreauthKey", c.UserID, hsUserID.Int64)
 	key, err := s.Backend.HSForUserFn(c.UserID).CreatePreauthKey(hsUserID.Int64, "1h", false)
 	if err != nil {
 		log.Printf("web.my.preauth: CreatePreauthKey hsUserID=%d err=%v", hsUserID.Int64, err)
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	keyPrefix := key.Key

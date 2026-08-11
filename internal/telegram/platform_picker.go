@@ -34,7 +34,7 @@ import (
 // /add_device reply now ships with parse_mode=HTML
 // (see buildPlatformPicker), and the substituted username
 // can legally contain <, >, & in a future release — HTML
-// parse_mode would then 400 with "can't parse entities".
+// parse_mode would then http.StatusBadRequest with "can't parse entities".
 // The preauth key is always [A-Za-z0-9_-] so escaping is
 // belt-and-braces, not load-bearing.
 func escapeHTML(s string) string { return html.EscapeString(s) }
@@ -68,7 +68,7 @@ func buildPlatformPicker(lang, preauthKey string) *PendingReply {
 	// 2026-07-15: v0.14.1 — Telegram Bot API 7.0+ requires
 	// `copy_text` to be an OBJECT {"text": "..."}, not a
 	// bare string. We were sending it as a string and
-	// Telegram rejected the whole sendMessage with HTTP 400
+	// Telegram rejected the whole sendMessage with HTTP http.StatusBadRequest
 	// "Field \"copy_text\" must be of type Object" — which
 	// in turn made /add_device silently fail (sendPlain
 	// dropped the response body before the v0.14.1 logging

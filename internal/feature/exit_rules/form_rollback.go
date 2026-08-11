@@ -21,18 +21,18 @@ import (
 func (s *Service) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	verStr := r.FormValue("version")
 	ver, _ := strconv.Atoi(verStr)
 	if ver == 0 {
-		http.Error(w, "invalid version", 400)
+		http.Error(w, "invalid version", http.StatusBadRequest)
 		return
 	}
 	config, err := db.GetACLConfig(s.DB, ver)
 	if err != nil {
-		http.Error(w, "version not found", 404)
+		http.Error(w, "version not found", http.StatusNotFound)
 		return
 	}
 	if err := s.HS.SetPolicy(config); err != nil {
@@ -43,7 +43,7 @@ func (s *Service) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 			go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL rollback failed (by %s, target v%d)\n  err: %v",
 				c.Username, ver, err))
 		}
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.saveACLSnapshot(config, c.Username)

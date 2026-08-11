@@ -1306,7 +1306,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// <user>-<device> that the parser couldn't find in
 	// tagOwners. Symptom: every ACL apply for the last
 	// 22+ hours has been failing with "headscale PUT
-	// /api/v1/policy: 500 src=tag not found:
+	// /api/v1/policy: http.StatusInternalServerError src=tag not found:
 	// tag:dev-skyadmin-skygate-host-1". The fix: also
 	// include every per-device-pref's tag in tagOwners.
 	augmentedTagsByUser := make(map[string][]string, len(tagsByUser))

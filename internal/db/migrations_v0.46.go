@@ -157,7 +157,7 @@ func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag 
 	// placeholdersList(4) + placeholdersList(1) produced
 	// "$1, $2, $3, $4, $1" on PG (two refs to $1). The
 	// /my/exit-nodes + /my/devices/preferred-exit POST
-	// handlers returned 500. The fix: use PlaceholdersRange
+	// handlers returned http.StatusInternalServerError. The fix: use PlaceholdersRange
 	// (1, 4) for the first 4 placeholders, splice
 	// nowUnixSQL(), then PlaceholdersRange(5, 5) for the
 	// 5th placeholder (viaInt). 5 placeholders total

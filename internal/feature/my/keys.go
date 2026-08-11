@@ -36,7 +36,7 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 	// CreatedAt, HeadscalePreauthID).
 	rows, err := db.ListPreauthKeysByUser(s.DB, c.UserID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Live "used" check: if any headscale node currently has this
@@ -81,7 +81,7 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 //     expired by setting expires_at to the current time.
 //     We do NOT delete the row — it's audit history.
 //
-// On error from headscale we return 500 with the
+// On error from headscale we return http.StatusInternalServerError with the
 // message; the user can retry. We do NOT mutate the
 // local row in that case.
 func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
@@ -93,23 +93,23 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// Path parameter: /my/keys/{id}/expire
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		http.Error(w, "missing key id", 400)
+		http.Error(w, "missing key id", http.StatusBadRequest)
 		return
 	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		http.Error(w, "bad key id", 400)
+		http.Error(w, "bad key id", http.StatusBadRequest)
 		return
 	}
 	// Look up the key, scoped to current user.
 	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.GetPreauthKeyByID
 	k, err := db.GetPreauthKeyByID(s.DB, id, c.UserID)
 	if errors.Is(err, db.ErrPreauthKeyNotFound) {
-		http.Error(w, "key not found", 404)
+		http.Error(w, "key not found", http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// No-ops for used or already-expired keys.
@@ -128,7 +128,7 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetHSIDByID
 	hsUserID, err := db.GetHSIDByID(s.DB, c.UserID)
 	if err != nil || !hsUserID.Valid {
-		http.Error(w, "no headscale user linked", 400)
+		http.Error(w, "no headscale user linked", http.StatusBadRequest)
 		return
 	}
 	// Expire in headscale. The local headscale_preauth_id is the
@@ -141,7 +141,7 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// key string is in our DB only, not headscale.)
 	if k.HeadscalePreauthID != "" {
 		if err := s.Backend.HSForUserFn(c.UserID).ExpirePreauthKey(hsUserID.Int64, k.HeadscalePreauthID); err != nil {
-			http.Error(w, "headscale expire failed: "+err.Error(), 500)
+			http.Error(w, "headscale expire failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -151,7 +151,7 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// expires_at timestamp convention used for TTL-based expiry).
 	// 2026-07-11: Этап 10 part 3 — UPDATE moved to db.ExpirePreauthKey
 	if err := db.ExpirePreauthKey(s.DB, id, c.UserID, now); err != nil {
-		http.Error(w, "local update failed: "+err.Error(), 500)
+		http.Error(w, "local update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "preauth_expired", fmt.Sprintf("key_id=%d", id))

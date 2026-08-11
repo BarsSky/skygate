@@ -8,7 +8,7 @@ import (
 
 // RequireLoginLimit blocks POST /login after too many attempts.
 //
-// On block: returns 429 Too Many Requests with a plain-text message.
+// On block: returns http.StatusTooManyRequests Too Many Requests with a plain-text message.
 // On pass: delegates to next.ServeHTTP.
 //
 // The username comes from the form (parsed by the handler) but we
@@ -17,7 +17,7 @@ import (
 // credential-stuffing (per-IP) and brute-force on a known username
 // (per-key).
 //
-// If AllowLogin returns false for either bucket we 429 immediately.
+// If AllowLogin returns false for either bucket we http.StatusTooManyRequests immediately.
 func RequireLoginLimit(rl *ratelimit.Limiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func RequireLoginLimit(rl *ratelimit.Limiter) func(http.Handler) http.Handler {
 // RequireAPILimit applies the per-IP API bucket to /my/exit-rules/api
 // and similar JSON endpoints.
 //
-// On block: 429 with JSON error body matching the api response shape.
+// On block: http.StatusTooManyRequests with JSON error body matching the api response shape.
 func RequireAPILimit(rl *ratelimit.Limiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

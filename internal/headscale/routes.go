@@ -26,7 +26,7 @@ import (
 
 // ApproveAllRoutes enables all pending routes for a node via headscale
 // CLI (docker exec). 2026-07-07: previously used /api/v1/routes but
-// that's deprecated/404 in headscale 0.29.1. Now we shell out to
+// that's deprecated/http.StatusNotFound in headscale 0.29.1. Now we shell out to
 // `docker exec headscale headscale nodes approve-routes -i <id> -r <routes>`.
 func (c *Client) ApproveAllRoutes(nodeHostname string) (int, error) {
 	return c.ApproveAllRoutesWithList(nodeHostname, nil)

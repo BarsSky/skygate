@@ -77,19 +77,19 @@ func (s *Service) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request
 		format = "csv"
 	}
 	if format != "csv" && format != "json" {
-		http.Error(w, "format must be 'csv' or 'json'", 400)
+		http.Error(w, "format must be 'csv' or 'json'", http.StatusBadRequest)
 		return
 	}
 	since, err := parseSinceParam(q.Get("since"))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("invalid since: %v", err), 400)
+		http.Error(w, fmt.Sprintf("invalid since: %v", err), http.StatusBadRequest)
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
 	rows, err := db.ListAuditLogForUser(s.DB, c.UserID, c.Username, since, limit, offset)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Audit the export itself — security-sensitive.

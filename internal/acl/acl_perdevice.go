@@ -31,7 +31,7 @@ package acl
 //     must bring its own separator. Without this, headscale's HuJSON
 //     parser returns:
 //       invalid character '{' after array value (expecting ',' or ']')
-//     and the reapply returns HTTP 500.
+//     and the reapply returns HTTP http.StatusInternalServerError.
 //
 // Skip rule: users with <2 tagged devices produce no grants
 // (no inter-device traffic to allow). Same applies to users with 0

@@ -97,7 +97,7 @@ type Config struct {
 	StaggerBatchSize  int           // rules per batch (default 20)
 	StaggerInterval   time.Duration // delay between batches (default 30s)
 	// 2026-07-07: per-user rule limits. Map username -> max rules. Default = MaxRulesPerDevice.
-	// Example: "SKYGATE_USER_MAX_RULES=admin:1000,user1:500"
+	// Example: "SKYGATE_USER_MAX_RULES=admin:1000,user1:http.StatusInternalServerError"
 	UserMaxRules       map[string]int
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// keys are encrypted with this 32-byte hex key. Empty

@@ -18,7 +18,7 @@
 // router_node_id is empty (e.g. admin hit Remove twice), step 1
 // is skipped and steps 2-4 still run. If the user_subnets row
 // does not exist at all (user never allocated), the handler
-// returns a 404 — there is nothing to remove.
+// returns a http.StatusNotFound — there is nothing to remove.
 //
 // The ACL policy is NOT re-applied here. h-user-admin-subnet
 // is always in the per-user grant (it maps to 10.0.<uid>.0/24
@@ -54,23 +54,23 @@ import (
 func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/remove")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 
-	// 1. Read user_subnets. Missing row → 404.
+	// 1. Read user_subnets. Missing row → http.StatusNotFound.
 	sub, err := subnet.Get(s.DB, id)
 	if err != nil {
 		if errors.Is(err, subnet.ErrNotFound) {
-			http.Error(w, "no subnet row for this user (run /subnet/allocate first)", 404)
+			http.Error(w, "no subnet row for this user (run /subnet/allocate first)", http.StatusNotFound)
 			return
 		}
-		http.Error(w, fmt.Sprintf("read user_subnets: %v", err), 500)
+		http.Error(w, fmt.Sprintf("read user_subnets: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -113,7 +113,7 @@ func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Reque
 		 WHERE user_id = $2`,
 		subnet.StatusPending, id,
 	); err != nil {
-		http.Error(w, fmt.Sprintf("update user_subnets: %v", err), 500)
+		http.Error(w, fmt.Sprintf("update user_subnets: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -129,7 +129,7 @@ func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Reque
 		 WHERE id = $2`,
 		subnet.StatusPending, id,
 	); err != nil {
-		http.Error(w, fmt.Sprintf("update portal_users: %v", err), 500)
+		http.Error(w, fmt.Sprintf("update portal_users: %v", err), http.StatusInternalServerError)
 		return
 	}
 

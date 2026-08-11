@@ -35,7 +35,7 @@ import (
 func (s *Service) GetAdminDERP(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	s.Backend.RenderWithLayout(w, r, "admin/derp.html", c, map[string]any{
@@ -247,7 +247,7 @@ func httpGet(url string, timeout time.Duration) ([]byte, error) {
 	// derper checks Host header against its TLS hostname. When we
 	// query it over plain HTTP from inside the skygate container (to
 	// 192.0.2.1:8443) we must present the public hostname, otherwise
-	// /debug/ returns 403 Forbidden.
+	// /debug/ returns http.StatusForbidden Forbidden.
 	req.Host = "derper.example.com"
 	req.Header.Set("Host", "derper.example.com")
 	resp, err := client.Do(req)

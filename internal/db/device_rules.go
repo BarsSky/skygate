@@ -193,7 +193,7 @@ func CountEnabledRules(d *sql.DB) (int, error) {
 }
 
 // CountEnabledRulesForDevice returns the count of enabled rules on a
-// specific device_id. The per-device 500-cap check (SKYGATE_MAX_RULES_PER_DEVICE)
+// specific device_id. The per-device http.StatusInternalServerError-cap check (SKYGATE_MAX_RULES_PER_DEVICE)
 // uses this.
 func CountEnabledRulesForDevice(d *sql.DB, deviceID int) (int, error) {
 	var n int

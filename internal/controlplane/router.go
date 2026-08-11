@@ -25,7 +25,7 @@
 // is corrupt (ErrSecretCiphertextCorrupt), we log and fall
 // through to the global client. The user sees the global
 // plane's data with a degraded experience (their own rules
-// might not show), but the page doesn't 500. The admin can
+// might not show), but the page doesn't http.StatusInternalServerError. The admin can
 // fix the row in /admin/users.
 //
 // refactor-v0.30 Phase D3 (2026-07-29): the Router type
@@ -133,7 +133,7 @@ func (r *Router) ForUser(userID int64) *headscale.Client {
 	if r.secretKeyHex == "" {
 		// v0.12.0 wasn't fully wired (SKYGATE_SECRET_KEY
 		// not set) — fall through to the global client.
-		// We don't want to 500 the whole portal just
+		// We don't want to http.StatusInternalServerError the whole portal just
 		// because encryption isn't configured.
 		return r.Global()
 	}

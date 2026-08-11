@@ -8,7 +8,7 @@
 package healthz
 
 // readyzState is the body returned by GET /readyz.
-// The HTTP status is 200 if Healthy=true, 503 otherwise.
+// The HTTP status is 200 if Healthy=true, http.StatusServiceUnavailable otherwise.
 //
 // JSON shape (stable contract for external monitors like
 // Prometheus blackbox-exporter, Grafana, opsgenie, etc.):

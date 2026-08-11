@@ -554,7 +554,7 @@ func (n *RealNotifier) envForMessage(chatID int64, langCode string) (BotEnv, boo
 // so we correctly distinguish "polling" (token-only is enough) from
 // "sending" (need both). Without this, Configured() returned true
 // for a token-only config and SendTelegram would proceed with
-// chatID="" → Telegram API returns 400.
+// chatID="" → Telegram API returns http.StatusBadRequest.
 func (n *RealNotifier) SendTelegram(text string) {
 	if n == nil {
 		return
@@ -600,7 +600,7 @@ func (n *RealNotifier) SendTelegramToChat(text string, chatID int64) {
 	}
 	if chatID == 0 {
 		// Defensive: 0 is the zero value for int64, and Telegram
-		// returns 400 for chat_id=0. Bail rather than POST a
+		// returns http.StatusBadRequest for chat_id=0. Bail rather than POST a
 		// malformed request.
 		log.Printf("telegram: SendTelegramToChat called with chatID=0; skipping")
 		return

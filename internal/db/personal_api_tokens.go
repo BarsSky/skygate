@@ -63,7 +63,7 @@ type APIToken struct {
 //
 // 2026-07-16: v0.15.5 — added ExpiresAt so the lookup
 // returns the expiry timestamp; AuthenticateBearer compares
-// it against time.Now() and returns 401 if past.
+// it against time.Now() and returns http.StatusUnauthorized if past.
 type APITokenLookup struct {
 	UserID    int64
 	Username  string
@@ -163,7 +163,7 @@ func InsertAPIToken(d *sql.DB, userID int64, tokenHash, label string, expiresAt 
 // DeleteAPITokenByUser removes the token with the given id IF it
 // belongs to userID. Returns rows affected so callers can detect
 // "wrong user" or "already revoked". The handler currently ignores
-// both cases (it always returns 302 to /my/tokens?revoked=1 even
+// both cases (it always returns http.StatusFound to /my/tokens?revoked=1 even
 // when the row didn't exist), but the helper exposes the info
 // in case the UI later wants to show an error.
 func DeleteAPITokenByUser(d *sql.DB, id, userID int64) (int64, error) {

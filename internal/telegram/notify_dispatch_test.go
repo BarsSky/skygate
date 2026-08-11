@@ -24,6 +24,7 @@ package telegram
 //   (c) token set, global chat_id set, chat_id matches the global
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -165,7 +166,7 @@ func TestEnvForMessageLoginHandler(t *testing.T) {
 
 	n := &RealNotifier{apiBase: "https://api.telegram.org", db: d, client: nil, pollInt: 0}
 	env, _ := n.envForMessage(555, "")
-	got := HandleCommand(nil, env, "/login "+testLoginToken)
+	got := HandleCommand(context.TODO(), env, "/login "+testLoginToken)
 	if strings.Contains(got, "internal error") {
 		t.Errorf("loginReply returned the v0.10.2 'chat_id missing' error: %q — the v0.10.3 fix should prevent this", got)
 	}

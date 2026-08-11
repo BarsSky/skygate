@@ -25,12 +25,12 @@ import (
 func (s *Service) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
-		http.Error(w, `{"error":"unauthorized"}`, 401)
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 	rules, err := s.getDeviceRules(c.UserID)
 	if err != nil {
-		http.Error(w, `{"error":"db error"}`, 500)
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
 		return
 	}
 	var out []apiRule
@@ -59,18 +59,18 @@ func (s *Service) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
-		http.Error(w, `{"error":"unauthorized"}`, 401)
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 	var req struct {
 		Rules []apiRule `json:"rules"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid json: `+err.Error()+`"}`, 400)
+		http.Error(w, `{"error":"invalid json: `+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
 	if len(req.Rules) == 0 {
-		http.Error(w, `{"error":"empty rules array"}`, 400)
+		http.Error(w, `{"error":"empty rules array"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		currentTotal, _ := db.CountEnabledRules(s.DB)
 		if currentTotal+len(req.Rules) > maxTotal {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(403)
+			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]any{
 				"error":     fmt.Sprintf("system limit exceeded: %d/%d", currentTotal, maxTotal),
 				"current":   currentTotal,

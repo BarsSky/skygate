@@ -76,7 +76,7 @@ func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", 400)
+		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
 	tag := strings.TrimSpace(r.FormValue("tag"))
@@ -88,7 +88,7 @@ func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request
 	// don't understand, so the default is OFF.
 	viaEnabled := r.FormValue("via") == "1"
 	if err := db.SetUserExitNodePref(s.DB, c.UserID, tag, c.UserID, viaEnabled); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "my_preferred_exit_set",

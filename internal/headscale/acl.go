@@ -9,6 +9,7 @@ package headscale
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"strings"
 	"time"
@@ -82,14 +83,14 @@ func (c *Client) GetACL() (string, error) {
 // Tries REST API first (database mode), then file-mode fallback:
 // write ACL to config volume + update config.yaml + restart headscale.
 //
-// 2026-07-13: the file-mode fallback is now strictly gated on 404/405
-// from the headscale API. A 5xx (or any non-2xx other than 404/405) is
+// 2026-07-13: the file-mode fallback is now strictly gated on http.StatusNotFound/http.StatusMethodNotAllowed
+// from the headscale API. A 5xx (or any non-2xx other than http.StatusNotFound/http.StatusMethodNotAllowed) is
 // treated as a real failure and returned to the caller. The previous
 // "any error → fallback" heuristic silently masked transient headscale
 // failures (e.g. policy rejected mid-restart) by writing to
 // acl_policy.hujson while the running headscale was still using the
 // database policy — the operator saw "ok" in the audit log while the
-// new rules never reached Tailscale clients. 404/405 are the
+// new rules never reached Tailscale clients. http.StatusNotFound/http.StatusMethodNotAllowed are the
 // documented headscale signals for "policy endpoint not available in
 // this mode" and the only codes the fallback should react to.
 func (c *Client) SetPolicy(policy string) error {
@@ -100,9 +101,9 @@ func (c *Client) SetPolicy(policy string) error {
 		return nil
 	}
 
-	// Only fall back to file-mode on 404/405. Any other error is real.
+	// Only fall back to file-mode on http.StatusNotFound/http.StatusMethodNotAllowed. Any other error is real.
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || (apiErr.StatusCode != 404 && apiErr.StatusCode != 405) {
+	if !errors.As(err, &apiErr) || (apiErr.StatusCode != http.StatusNotFound && apiErr.StatusCode != http.StatusMethodNotAllowed) {
 		return err
 	}
 

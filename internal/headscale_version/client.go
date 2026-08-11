@@ -303,12 +303,12 @@ func FormatAlert(pinned, latest *Release, breaking bool) string {
 }
 
 // ErrRateLimited is returned by Latest when GitHub
-// returns 403. The Monitor should back off and retry
+// returns http.StatusForbidden. The Monitor should back off and retry
 // on the next tick; this is not a hard error.
 var ErrRateLimited = fmt.Errorf("github releases: rate limited")
 
 // ErrNoReleases is returned when the repo has no
-// published releases yet (404). Defensive — headscale
+// published releases yet (http.StatusNotFound). Defensive — headscale
 // has releases since 0.16, so this should never fire
 // in practice.
 var ErrNoReleases = fmt.Errorf("github releases: no releases published")

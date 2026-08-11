@@ -128,7 +128,7 @@ func (s *Service) PostLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// 2026-07-17: v0.16.8 — "Remember me" extends the session cookie.
@@ -138,7 +138,7 @@ func (s *Service) PostLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	tok, err := auth.IssueJWT(s.JWTSecret, id, u, isAdmin, sessionHours)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(id, u, "login_ok", "")
@@ -280,7 +280,7 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	tokens, err := db.ListAPITokensByUser(s.DB, c.UserID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if tokens == nil {
@@ -318,7 +318,7 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostMyToken(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
-		http.Error(w, "unauthorized", 401)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	label := r.FormValue("label")
@@ -342,7 +342,7 @@ func (s *Service) PostMyToken(w http.ResponseWriter, r *http.Request) {
 	autoRotate := r.FormValue("auto_rotate") == "1"
 	raw, hash := auth.GenerateAPIToken()
 	if _, err := db.InsertAPIToken(s.DB, c.UserID, hash, label, expiresAt, autoRotate); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	detail := fmt.Sprintf("label=%q ttl=%s auto_rotate=%v", label, r.FormValue("ttl"), autoRotate)
@@ -356,7 +356,7 @@ func (s *Service) PostMyToken(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostMyTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
-		http.Error(w, "unauthorized", 401)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	idStr := r.PathValue("id")

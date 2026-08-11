@@ -59,7 +59,7 @@ func (c *Client) PingContext(ctx context.Context) error {
 	defer resp.Body.Close()
 	// 2xx and 4xx both mean "the server responded". Only
 	// 5xx (or empty resp) counts as degraded.
-	if resp.StatusCode >= 500 {
+	if resp.StatusCode >= http.StatusInternalServerError {
 		return errServerDegraded
 	}
 	return nil

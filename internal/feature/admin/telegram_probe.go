@@ -109,7 +109,7 @@ func probeTelegramAPIWithBase(ctx context.Context, token, apiBase string) Telegr
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 500 {
+	if resp.StatusCode >= http.StatusInternalServerError {
 		return TelegramProbeResult{
 			State:     ProbeUnreachable,
 			Message:   "api.telegram.org 5xx: HTTP " + resp.Status,

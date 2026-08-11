@@ -958,7 +958,7 @@ func migrateV049PG(d *sql.DB) error {
 // generator. The fix: add the full PG port of migrateV050
 // (headscale_acl_rules + idx_headscale_acl_enabled) below the
 // strftime function. The pre-fix /admin/headscale/acl page
-// returned 500 ("relation headscale_acl_rules does not exist")
+// returned http.StatusInternalServerError ("relation headscale_acl_rules does not exist")
 // until this landed; now the page renders.
 func migrateV050PG(d *sql.DB) error {
 	stmts := []string{

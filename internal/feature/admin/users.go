@@ -46,12 +46,12 @@ func extractIDFromPath(path string) string {
 func (s *Service) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	users, err := db.GetAllPortalUsers(s.DB)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -86,47 +86,47 @@ func (s *Service) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	isAdmin := r.FormValue("is_admin") == "on"
 	if username == "" || password == "" {
-		http.Error(w, "username and password required", 400)
+		http.Error(w, "username and password required", http.StatusBadRequest)
 		return
 	}
 	if len(password) < 6 {
-		http.Error(w, "password too short (min 6)", 400)
+		http.Error(w, "password too short (min 6)", http.StatusBadRequest)
 		return
 	}
 	if !regexp.MustCompile(`^[a-z0-9_-]+$`).MatchString(username) {
-		http.Error(w, "username: lowercase letters, digits, _ and - only", 400)
+		http.Error(w, "username: lowercase letters, digits, _ and - only", http.StatusBadRequest)
 		return
 	}
 	_, err := db.GetUserIDByName(s.DB, username)
 	if err == nil {
-		http.Error(w, fmt.Sprintf("user %q already exists in skygate", username), 409)
+		http.Error(w, fmt.Sprintf("user %q already exists in skygate", username), http.StatusConflict)
 		return
 	}
 	if !errors.Is(err, db.ErrUserNotFound) {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	hsUser, err := s.HSGlobalFn().CreateUser(username)
 	if err != nil {
-		http.Error(w, "headscale create user: "+err.Error(), 500)
+		http.Error(w, "headscale create user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	hsID, _ := strconv.ParseInt(hsUser.ID, 10, 64)
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	newUserID, err := db.InsertPortalUser(s.DB, username, hash, isAdmin, hsID)
 	if err != nil {
-		http.Error(w, "portal insert: "+err.Error(), 500)
+		http.Error(w, "portal insert: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// 2026-07-20: v0.20.0 — auto-allocate subnet on user
@@ -150,22 +150,22 @@ func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	idStr := extractIDFromPath(r.URL.Path)
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id == c.UserID {
-		http.Error(w, "cannot delete yourself", 400)
+		http.Error(w, "cannot delete yourself", http.StatusBadRequest)
 		return
 	}
 	username, hsID, err := db.GetUserNameAndHSByID(s.DB, id)
 	if errors.Is(err, db.ErrUserNotFound) {
-		http.Error(w, "user not found", 404)
+		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	hsDeleteMsg := ""
@@ -181,7 +181,7 @@ func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	tokensDeleted, _ := db.DeleteAPITokensByUserID(s.DB, int64(id))
 	_, err = db.DeletePortalUserByID(s.DB, id)
 	if err != nil {
-		http.Error(w, "delete: "+err.Error(), 500)
+		http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "user_delete",
@@ -195,36 +195,36 @@ func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	idStr := extractIDFromPath(r.URL.Path)
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id <= 0 {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	newPassword := r.FormValue("new_password")
 	if len(newPassword) < 6 {
-		http.Error(w, "password too short (min 6)", 400)
+		http.Error(w, "password too short (min 6)", http.StatusBadRequest)
 		return
 	}
 	username, err := db.GetUserNameByID(s.DB, id)
 	if errors.Is(err, db.ErrUserNotFound) {
-		http.Error(w, "user not found", 404)
+		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	hash, err := auth.HashPassword(newPassword)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if _, err := db.UpdatePasswordHash(s.DB, id, hash); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "user_password_reset", fmt.Sprintf("id=%d %s", id, username))

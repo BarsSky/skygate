@@ -37,7 +37,7 @@ import (
 //                             template shows a banner with the
 //                             filter name and a "show all" link.
 //   - ?device=NAME not found → empty result set + banner. The
-//                             handler does NOT 404 — the
+//                             handler does NOT http.StatusNotFound — the
 //                             "device not found" case is
 //                             indistinguishable from "device
 //                             exists but has no rules" from the
@@ -45,7 +45,7 @@ import (
 func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	// Read the filter FIRST (before any DB work) so we can
@@ -67,7 +67,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		dbRules, err = db.GetAllRulesForAdmin(s.DB)
 	}
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

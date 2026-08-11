@@ -55,7 +55,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		restore := r.URL.Query().Get("restore") == "1"
 		script, err := s.GenerateRouteSetupScript(int(c.UserID), devID, os, restore)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// Build filename with device name if specified
@@ -388,11 +388,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
-		http.Error(w, "unauthorized", 401)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	devID, _ := strconv.Atoi(r.FormValue("device_id"))
@@ -404,7 +404,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		action = "accept"
 	}
 	if devID == 0 || targetValue == "" {
-		http.Error(w, "missing fields", 400)
+		http.Error(w, "missing fields", http.StatusBadRequest)
 		return
 	}
 
@@ -438,7 +438,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if maxPerUser > 0 {
 		userRuleCount := countUserFacing(c.UserID, 0, false)
 		if userRuleCount >= maxPerUser {
-			http.Error(w, fmt.Sprintf("user limit exceeded: %d/%d rules for user %s (auto-resolved /32 IP rules не учитываются)", userRuleCount, maxPerUser, c.Username), 403)
+			http.Error(w, fmt.Sprintf("user limit exceeded: %d/%d rules for user %s (auto-resolved /32 IP rules не учитываются)", userRuleCount, maxPerUser, c.Username), http.StatusForbidden)
 			return
 		}
 	}
@@ -449,7 +449,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if maxPerDevice > 0 {
 		deviceRuleCount := countUserFacing(0, devID, false)
 		if deviceRuleCount >= maxPerDevice {
-			http.Error(w, fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on this device (auto-resolved /32 IP rules не учитываются)", deviceRuleCount, maxPerDevice), 403)
+			http.Error(w, fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on this device (auto-resolved /32 IP rules не учитываются)", deviceRuleCount, maxPerDevice), http.StatusForbidden)
 			return
 		}
 	}
@@ -460,7 +460,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if maxTotal > 0 {
 		totalCount := countUserFacing(0, 0, true)
 		if totalCount >= maxTotal {
-			http.Error(w, fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", totalCount, maxTotal), 403)
+			http.Error(w, fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", totalCount, maxTotal), http.StatusForbidden)
 			return
 		}
 	}
@@ -495,11 +495,11 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !owned {
-		http.Error(w, "invalid device (not in your node_owner_map)", 403)
+		http.Error(w, "invalid device (not in your node_owner_map)", http.StatusForbidden)
 		return
 	}
 	if isExitNode {
-		http.Error(w, "cannot attach rules to exit-node (routing infrastructure)", 403)
+		http.Error(w, "cannot attach rules to exit-node (routing infrastructure)", http.StatusForbidden)
 		return
 	}
 
@@ -578,7 +578,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	for _, ip := range ipsToInsert {
 		ok, existingID := s.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
 		if !ok {
-			http.Error(w, "db error", 500)
+			http.Error(w, "db error", http.StatusInternalServerError)
 			return
 		}
 		if existingID > 0 {
@@ -667,7 +667,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
-		http.Error(w, "unauthorized", 401)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -689,7 +689,7 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		rawIDs = append(rawIDs, v)
 	}
 	if len(rawIDs) == 0 {
-		http.Error(w, "missing id(s)", 400)
+		http.Error(w, "missing id(s)", http.StatusBadRequest)
 		return
 	}
 

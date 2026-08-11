@@ -348,12 +348,12 @@ func (s *Service) CleanupRulesApply() (*CleanupPlan, error) {
 func (s *Service) AdminCleanupRules(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	plan, err := s.CleanupRulesAnalyze()
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.RenderWithLayout(w, r, "admin/exit_rules_cleanup.html", c, map[string]any{
@@ -369,12 +369,12 @@ func (s *Service) AdminCleanupRules(w http.ResponseWriter, r *http.Request) {
 func (s *Service) AdminCleanupRulesApply(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	plan, err := s.CleanupRulesApply()
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_rules_cleanup",

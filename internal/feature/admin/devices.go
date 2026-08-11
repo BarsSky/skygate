@@ -39,7 +39,7 @@ import (
 func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	users, _ := s.HSGlobalFn().ListUsers()
@@ -240,12 +240,12 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	nodes, err := s.HSGlobalFn().ListAllNodes()
 	if err != nil {
-		http.Error(w, "headscale list failed: "+err.Error(), 500)
+		http.Error(w, "headscale list failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var syncInfos []db.SyncNodeInfo
@@ -283,7 +283,7 @@ func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *ht
 	}
 	ins, upd, err := db.SyncNodesFromHeadscale(s.DB, syncInfos)
 	if err != nil {
-		http.Error(w, "sync failed: "+err.Error(), 500)
+		http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "node_sync_from_headscale",
@@ -299,13 +299,13 @@ func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *ht
 func (s *Service) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	idStr := extractIDFromPath(r.URL.Path)
 	nodeID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		http.Error(w, "bad node id", 400)
+		http.Error(w, "bad node id", http.StatusBadRequest)
 		return
 	}
 	tag := r.FormValue("tag")
@@ -336,7 +336,7 @@ func (s *Service) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := hs.TagNode(nodeID, tag); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -363,13 +363,13 @@ func (s *Service) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	idStr := extractIDFromPath(r.URL.Path)
 	nodeID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		http.Error(w, "bad node id", 400)
+		http.Error(w, "bad node id", http.StatusBadRequest)
 		return
 	}
 	tag := r.FormValue("tag")
@@ -378,7 +378,7 @@ func (s *Service) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
 	}
 	hs := s.HSGlobalFn()
 	if err := hs.UntagNode(nodeID, tag); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	_ = db.DeleteNodeOwnerByNodeTag(s.DB, strconv.FormatInt(nodeID, 10), tag)
@@ -473,27 +473,27 @@ func transferTargets(skygateUserByName map[string]int64) []string {
 func (s *Service) PostAdminDeviceMeta(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form: "+err.Error(), 400)
+		http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	idStr := r.FormValue("node_id")
 	nodeID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		http.Error(w, "bad node id", 400)
+		http.Error(w, "bad node id", http.StatusBadRequest)
 		return
 	}
 	os := strings.TrimSpace(r.FormValue("os"))
 	typeIn := strings.TrimSpace(r.FormValue("device_type"))
 	if !devicemeta.IsOSValid(os) {
-		http.Error(w, "invalid os: "+os, 400)
+		http.Error(w, "invalid os: "+os, http.StatusBadRequest)
 		return
 	}
 	if !devicemeta.IsTypeValid(typeIn) {
-		http.Error(w, "invalid device_type: "+typeIn, 400)
+		http.Error(w, "invalid device_type: "+typeIn, http.StatusBadRequest)
 		return
 	}
 	// Default the empty form value to "unknown" so the
@@ -505,7 +505,7 @@ func (s *Service) PostAdminDeviceMeta(w http.ResponseWriter, r *http.Request) {
 		typeIn = devicemeta.TypeUnknown
 	}
 	if err := db.SetDeviceMetaNodeOwner(s.DB, strconv.FormatInt(nodeID, 10), os, typeIn); err != nil {
-		http.Error(w, "db write failed: "+err.Error(), 500)
+		http.Error(w, "db write failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "device_meta_set",
@@ -550,7 +550,7 @@ func (s *Service) PostAdminDeviceMeta(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if s.HSGlobalFn == nil {
@@ -558,24 +558,24 @@ func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *ht
 		// a possible misconfigured single-tenant deploy
 		// without main.go's HSGlobalFn wiring) can leave
 		// the callback nil. Calling a nil func value
-		// panics; check FIRST so we surface a clean 500
+		// panics; check FIRST so we surface a clean http.StatusInternalServerError
 		// instead of crashing the goroutine.
-		http.Error(w, "headscale client not configured", 500)
+		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
 		return
 	}
 	hs := s.HSGlobalFn()
 	if hs == nil {
-		http.Error(w, "headscale client not configured", 500)
+		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
 		return
 	}
 	nodes, err := hs.ListAllNodes()
 	if err != nil {
-		http.Error(w, "headscale list failed: "+err.Error(), 500)
+		http.Error(w, "headscale list failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	users, err := db.GetAllPortalUsers(s.DB)
 	if err != nil {
-		http.Error(w, "list users failed: "+err.Error(), 500)
+		http.Error(w, "list users failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	hs.InvalidateCache()
@@ -644,28 +644,28 @@ func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *ht
 func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form: "+err.Error(), 400)
+		http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	nodeIDStr := r.FormValue("node_id")
 	targetUsername := strings.TrimSpace(r.FormValue("target_username"))
 	nodeID, err := strconv.ParseInt(nodeIDStr, 10, 64)
 	if err != nil || nodeID <= 0 {
-		http.Error(w, "bad node id", 400)
+		http.Error(w, "bad node id", http.StatusBadRequest)
 		return
 	}
 	if targetUsername == "" {
-		http.Error(w, "target_username required", 400)
+		http.Error(w, "target_username required", http.StatusBadRequest)
 		return
 	}
 	// Look up the target portal user.
 	users, err := db.GetAllPortalUsers(s.DB)
 	if err != nil {
-		http.Error(w, "list users failed: "+err.Error(), 500)
+		http.Error(w, "list users failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var target *db.User
@@ -676,30 +676,30 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if target == nil {
-		http.Error(w, "target user not found: "+targetUsername, 400)
+		http.Error(w, "target user not found: "+targetUsername, http.StatusBadRequest)
 		return
 	}
 	// Read the current node_owner_map row FIRST (doesn't
-	// need headscale) so a missing node returns 400 instead
-	// of the headscale-500 that the v0.33.1.20 pre-check
+	// need headscale) so a missing node returns http.StatusBadRequest instead
+	// of the headscale-http.StatusInternalServerError that the v0.33.1.20 pre-check
 	// would otherwise return. v0.33.1.20: the HS check used
-	// to fire before the node check, which made the 500 vs
-	// 400 distinction confusing for the operator — "is the
+	// to fire before the node check, which made the http.StatusInternalServerError vs
+	// http.StatusBadRequest distinction confusing for the operator — "is the
 	// node missing, or is my headscale down?".
 	currentRow, err := db.GetNodeOwner(s.DB, nodeIDStr)
 	if err != nil {
-		http.Error(w, "node not in node_owner_map: "+err.Error(), 400)
+		http.Error(w, "node not in node_owner_map: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if s.HSGlobalFn == nil {
 		// v0.33.1.20: defensive — see PostAdminDevicesForceBackfillTags
 		// for the rationale (nil func value panics).
-		http.Error(w, "headscale client not configured", 500)
+		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
 		return
 	}
 	hs := s.HSGlobalFn()
 	if hs == nil {
-		http.Error(w, "headscale client not configured", 500)
+		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
 		return
 	}
 	// Pull the live hostname from headscale (n.Hostname
@@ -724,7 +724,7 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 	newDevTag := fmt.Sprintf("tag:dev-%s-%s", targetUsername, liveHostname)
 	// 1) Upsert the row with the new owner + new dev tag.
 	if err := db.UpsertNodeOwner(s.DB, nodeIDStr, target.HeadscaleUserID, targetUsername, newDevTag, c.UserID); err != nil {
-		http.Error(w, "db upsert failed: "+err.Error(), 500)
+		http.Error(w, "db upsert failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// 2) UntagNode the OLD dev-tag (if any) so headscale

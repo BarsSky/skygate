@@ -155,7 +155,7 @@ func SetUserExitNodePref(d *sql.DB, userID int64, exitNodeTag string, setByUserI
 	// "mismatched param and argument count" because the
 	// number of unique $N placeholders didn't match the
 	// number of Go args. The /my/exit-nodes +
-	// /my/devices/preferred-exit POST handlers returned 500
+	// /my/devices/preferred-exit POST handlers returned http.StatusInternalServerError
 	// on every click for every user. The fix: use
 	// PlaceholdersRange(from, to) so the placeholder numbers
 	// continue past the spliced nowUnixSQL() function.

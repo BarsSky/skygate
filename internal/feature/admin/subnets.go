@@ -28,13 +28,13 @@ import (
 func (s *Service) GetAdminSubnets(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	filter := strings.TrimSpace(r.URL.Query().Get("status"))
 	all, err := s.subnetsForOverview()
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	rows := make([]overviewRow, 0, len(all))

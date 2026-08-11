@@ -10,6 +10,7 @@
 package telegram
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ func TestPreviewBotReplies(t *testing.T) {
 		"/audit", "/exit_nodes_health", "/version", "/restart", "/help",
 	}
 	for _, c := range cmds {
-		got := HandleCommand(nil, env, c)
+		got := HandleCommand(context.TODO(), env, c)
 		out := "/tmp/preview_" + strings.TrimPrefix(c, "/") + ".txt"
 		_ = os.WriteFile(out, []byte(got), 0644)
 		t.Logf("Wrote %s (%d bytes)", out, len(got))

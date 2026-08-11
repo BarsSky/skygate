@@ -28,12 +28,12 @@ import (
 func (s *Service) GetAdminACLsExport(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	policy, err := acl.GenerateACL(s.DB)
 	if err != nil {
-		http.Error(w, "generate acl: "+err.Error(), 500)
+		http.Error(w, "generate acl: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	ts := time.Now().UTC().Format("2006-01-02-1504")
@@ -49,7 +49,7 @@ func (s *Service) GetAdminACLsExport(w http.ResponseWriter, r *http.Request) {
 func (s *Service) GetAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	currentPolicy, _ := acl.GenerateACL(s.DB)
@@ -63,11 +63,11 @@ func (s *Service) GetAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseMultipartForm(2 << 20); err != nil {
-		http.Error(w, "form parse: "+err.Error(), 400)
+		http.Error(w, "form parse: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	var policy string
@@ -80,11 +80,11 @@ func (s *Service) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 		policy = r.FormValue("policy")
 	}
 	if strings.TrimSpace(policy) == "" {
-		http.Error(w, "empty policy (no file and no textarea)", 400)
+		http.Error(w, "empty policy (no file and no textarea)", http.StatusBadRequest)
 		return
 	}
 	if err := validateImportedACL(policy); err != nil {
-		http.Error(w, "policy: "+err.Error(), 400)
+		http.Error(w, "policy: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	currentPolicy, _ := acl.GenerateACL(s.DB)
@@ -106,16 +106,16 @@ func (s *Service) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 func (s *Service) PostAdminACLsImportApply(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form parse: "+err.Error(), 400)
+		http.Error(w, "form parse: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	policy := r.FormValue("policy")
 	if err := validateImportedACL(policy); err != nil {
-		http.Error(w, "policy: "+err.Error(), 400)
+		http.Error(w, "policy: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	var alerter acl.Alerter
@@ -153,7 +153,7 @@ func (s *Service) PostAdminACLsImportApply(w http.ResponseWriter, r *http.Reques
 	)
 	for _, r := range results {
 		if r.Err != nil {
-			http.Error(w, "set policy: "+r.Err.Error(), 500)
+			http.Error(w, "set policy: "+r.Err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}

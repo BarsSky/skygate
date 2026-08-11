@@ -60,7 +60,7 @@ type PreauthKey struct {
 
 // ErrPreauthKeyNotFound is returned by GetPreauthKeyByID when no
 // row matches (id, userID). Callers can errors.Is against this to
-// map "no such key" to a 404 (the /my/keys/{id}/expire flow does
+// map "no such key" to a http.StatusNotFound (the /my/keys/{id}/expire flow does
 // this). The multi-row ListPreauthKeysByUser never returns this —
 // it returns an empty slice for "user has no keys".
 var ErrPreauthKeyNotFound = errors.New("db: preauth_key not found")
@@ -99,7 +99,7 @@ func ListPreauthKeysByUser(d *sql.DB, userID int64) ([]PreauthKey, error) {
 // keys by guessing an id.
 //
 // Returns ErrPreauthKeyNotFound when no row matches; callers can
-// errors.Is against that to map to 404. Other errors (db down, etc.)
+// errors.Is against that to map to http.StatusNotFound. Other errors (db down, etc.)
 // pass through unchanged.
 //
 // Used by PostMyKeyExpire to fetch headscale_preauth_id before

@@ -110,7 +110,7 @@ func (m *Monitor) Start(ctx context.Context) {
 // 2026-08-05 v0.33.1.10: builds the Client with m.Owner
 // and m.Repo (set at Monitor construction in cmd/skygate
 // from Cfg.GitHubOwner / Cfg.GitHubRepo). The previous
-// hardcoded value 404'd because the operator's actual
+// hardcoded value http.StatusNotFound'd because the operator's actual
 // repo name differed from the assumed placeholder.
 func (m *Monitor) tick(ctx context.Context) {
 	c := &Client{HTTP: m.HTTP, Owner: m.Owner, Repo: m.Repo}

@@ -269,7 +269,7 @@ type PendingReply struct {
 	// [][]map[string]any so the inner "copy_text" field
 	// (Telegram Bot API 7.0+) can be a typed object
 	// {"text": "..."} rather than a bare string. A bare
-	// string triggers a 400 from sendMessage with
+	// string triggers a http.StatusBadRequest from sendMessage with
 	// "Field \"copy_text\" must be of type Object" — which
 	// silently dropped the entire /add_device reply in
 	// production until the v0.14.1 logging fix.

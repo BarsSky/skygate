@@ -34,16 +34,16 @@ import (
 func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/download")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if s.Sidecar == nil {
-		http.Error(w, "sidecar manager not configured (check SKYGATE_SIDECAR_SYNC_PERIOD env)", 500)
+		http.Error(w, "sidecar manager not configured (check SKYGATE_SIDECAR_SYNC_PERIOD env)", http.StatusInternalServerError)
 		return
 	}
 
@@ -55,11 +55,11 @@ func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Requ
 	if err := s.DB.QueryRow(
 		`SELECT username, COALESCE(subnet_cidr, '') FROM portal_users WHERE id = `+db.PlaceholdersList(1), id,
 	).Scan(&username, &cidr); err != nil {
-		http.Error(w, fmt.Sprintf("user not found: %v", err), 404)
+		http.Error(w, fmt.Sprintf("user not found: %v", err), http.StatusNotFound)
 		return
 	}
 	if cidr == "" {
-		http.Error(w, "user has no subnet allocated — click Allocate on /admin/users/{id}/subnet first", 400)
+		http.Error(w, "user has no subnet allocated — click Allocate on /admin/users/{id}/subnet first", http.StatusBadRequest)
 		return
 	}
 
@@ -67,7 +67,7 @@ func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Requ
 	// PostAdminUserSubnetProvision.
 	key, exp, err := s.Sidecar.GeneratePreauth(r.Context(), id)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("issue preauth: %v", err), 500)
+		http.Error(w, fmt.Sprintf("issue preauth: %v", err), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "subnet_download",

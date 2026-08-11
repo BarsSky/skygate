@@ -331,9 +331,9 @@ func (s *Service) PostMyTelegramRevoke(w http.ResponseWriter, r *http.Request) {
 // it, and the bot refuses to bind a chat_id that's already
 // taken.
 //
-// Returns 400 if the token doesn't match the
+// Returns http.StatusBadRequest if the token doesn't match the
 // `^skg-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$` shape — same
-// validator the bot uses. Returns 503 if the bot username
+// validator the bot uses. Returns http.StatusServiceUnavailable if the bot username
 // hasn't been discovered yet (token configured but getMe
 // hasn't run, or just failed).
 func (s *Service) GetMyTelegramQR(w http.ResponseWriter, r *http.Request) {

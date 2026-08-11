@@ -479,7 +479,7 @@ func (s *Service) startTailscaled() (string, error) {
 		if tailscaledRunning() {
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(http.StatusInternalServerError * time.Millisecond)
 	}
 	if !tailscaledRunning() {
 		return "", fmt.Errorf("tailscaled did not start within 15s; check /var/log/tailscaled.log")
@@ -709,7 +709,7 @@ func (s *Service) handleTailscaleStart(w http.ResponseWriter, r *http.Request, c
 	if err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "tailscale_start",
 			fmt.Sprintf("err=%q out=%q", err.Error(), truncate(out, 200)))
-		tsRedirect(w, r, "", "Не удалось запустить Tailscale: "+err.Error()+" — output: "+truncate(out, 400))
+		tsRedirect(w, r, "", "Не удалось запустить Tailscale: "+err.Error()+" — output: "+truncate(out, http.StatusBadRequest))
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_start", "ok out="+truncate(out, 200))
@@ -718,7 +718,7 @@ func (s *Service) handleTailscaleStart(w http.ResponseWriter, r *http.Request, c
 		tsRedirect(w, r, "Tailscale запущен. Проверьте accepted routes через ~30s.", "")
 		return
 	}
-	tsRedirect(w, r, "Tailscale запущен. Output: "+truncate(out, 400), "")
+	tsRedirect(w, r, "Tailscale запущен. Output: "+truncate(out, http.StatusBadRequest), "")
 }
 
 // handleTailscaleStop kills tailscaled. Idempotent.

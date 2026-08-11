@@ -26,7 +26,7 @@ func (s *Service) PostSettingsTheme(w http.ResponseWriter, r *http.Request) {
 		theme = r.URL.Query().Get("theme")
 	}
 	if !db.IsValidTheme(theme) {
-		http.Error(w, "invalid theme", 400)
+		http.Error(w, "invalid theme", http.StatusBadRequest)
 		return
 	}
 	c := s.Backend.CurrentUser(r)
@@ -36,7 +36,7 @@ func (s *Service) PostSettingsTheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := db.SetUserTheme(s.DB, c.UserID, theme); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "theme_change", theme)

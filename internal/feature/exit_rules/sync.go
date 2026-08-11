@@ -294,7 +294,7 @@ func (s *Service) StaggeredSync() {
 func (s *Service) PostSyncAdvertisedRoutes(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, `{"error":"forbidden"}`, 403)
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}
 	result := s.SyncAdvertisedRoutes()

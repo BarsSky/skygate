@@ -9,10 +9,10 @@ import "database/sql"
 // recorded in telegram_alerts; the rowid becomes the id we prefix
 // to the outgoing message and the id /ack looks up.
 //
-// We keep a hard cap (500 rows) so the table can't grow unbounded
+// We keep a hard cap (http.StatusInternalServerError rows) so the table can't grow unbounded
 // under chatty triggers; prune is fired-and-forgotten on each insert
 // because exact bound is not important — older acked rows are useless
-// anyway and a 500-row window covers any reasonable recent activity.
+// anyway and a http.StatusInternalServerError-row window covers any reasonable recent activity.
 //
 // A row is "open" while acked_at=0 and "acked" otherwise. The /ack
 // command flips acked_at/acked_by in place (idempotent: re-acking is

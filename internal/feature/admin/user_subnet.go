@@ -14,7 +14,7 @@
 // file used.
 //
 // Test file removed: admin_user_subnet_test.go (7 tests,
-// ~400 lines) — depended on internal/handlers test
+// ~http.StatusBadRequest lines) — depended on internal/handlers test
 // helpers (authedReqFor, newTestApp, etc.) that don't
 // exist in this package yet. The contracts are still
 // covered by the e2e smoke test on the VM.
@@ -68,7 +68,7 @@ func (s *Service) readUserForSubnetPage(id int64) (username, headscaleURL string
 func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c *userClaims, id int64, flash map[string]any) {
 	username, hsURL, err := s.readUserForSubnetPage(id)
 	if err != nil {
-		http.Error(w, "user not found", 404)
+		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
 	sub, _ := subnet.Get(s.DB, id)
@@ -192,12 +192,12 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 func (s *Service) GetAdminUserSubnet(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	flash := map[string]any{}
@@ -231,12 +231,12 @@ var subnetFlashMessages = map[string]string{
 func (s *Service) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/allocate")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	username, planeURL, _ := s.readUserForSubnetPage(id)
@@ -287,12 +287,12 @@ func (s *Service) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Req
 func (s *Service) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	grantorID, err := extractIDFromAdminPath(r.URL.Path, "/subnet/share")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	granteeName := strings.TrimSpace(r.FormValue("grantee_username"))
@@ -333,22 +333,22 @@ func (s *Service) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Reques
 func (s *Service) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	grantorID, err := extractIDFromAdminPath(r.URL.Path, "/subnet/revoke")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	granteeIDStr := strings.TrimSpace(r.FormValue("grantee_id"))
 	if granteeIDStr == "" {
-		http.Error(w, "missing grantee_id", 400)
+		http.Error(w, "missing grantee_id", http.StatusBadRequest)
 		return
 	}
 	granteeID, perr := strconv.ParseInt(granteeIDStr, 10, 64)
 	if perr != nil {
-		http.Error(w, "bad grantee_id", 400)
+		http.Error(w, "bad grantee_id", http.StatusBadRequest)
 		return
 	}
 	if err := subnet.Revoke(s.DB, grantorID, granteeID); err != nil {
@@ -373,12 +373,12 @@ func (s *Service) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Reque
 func (s *Service) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/disable")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := subnet.SetStatus(s.DB, id, subnet.StatusDisabled); err != nil {
@@ -403,16 +403,16 @@ func (s *Service) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Requ
 func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/preferred-exit")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", 400)
+		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
 	tag := strings.TrimSpace(r.FormValue("tag"))
@@ -463,12 +463,12 @@ func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *htt
 func (s *Service) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/provision")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if s.Sidecar == nil {
@@ -481,10 +481,10 @@ func (s *Service) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Re
 	var username string
 	if err := s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), id).Scan(&username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "user not found", 404)
+			http.Error(w, "user not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	key, exp, err := s.Sidecar.GeneratePreauth(r.Context(), id)
@@ -517,12 +517,12 @@ func (s *Service) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Re
 func (s *Service) PostAdminUserSubnetTest(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	id, err := extractIDFromAdminPath(r.URL.Path, "/subnet/test")
 	if err != nil {
-		http.Error(w, "bad id", 400)
+		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	results := s.runSubnetSanityCheck(id)

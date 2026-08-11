@@ -21,7 +21,7 @@ package admin
 //   3. The full policy (read → modify → write) happens in
 //      one transaction in headscale. A concurrent edit
 //      (operator adds via headplane while skygate writes) is
-//      detected by the API as a 409 or by re-reading the
+//      detected by the API as a http.StatusConflict or by re-reading the
 //      policy and seeing our write was overwritten. We log
 //      a warning but don't loop.
 //

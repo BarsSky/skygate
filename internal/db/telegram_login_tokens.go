@@ -228,7 +228,7 @@ func DeleteTelegramLoginTokensByUser(d *sql.DB, userID int64) error {
 // LoadTelegramStrictMode reads the strict_mode flag from
 // global_settings. Returns false on any error (missing key, DB
 // error, unparseable value) so a freshly-migrated DB or a
-// corruption never causes a 500; the bot just falls back to the
+// corruption never causes a http.StatusInternalServerError; the bot just falls back to the
 // legacy behaviour, which is the safer failure mode for
 // availability.
 //
@@ -282,7 +282,7 @@ func LoadTelegramLoginTokenTTL(d *sql.DB) int {
 	}
 	// Parse the integer. We deliberately don't return an error —
 	// a typo in the DB (e.g. "five minutes") should fall back to
-	// the default, not 500 the web page.
+	// the default, not http.StatusInternalServerError the web page.
 	var n int
 	for _, r := range v {
 		if r < '0' || r > '9' {

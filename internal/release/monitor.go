@@ -32,7 +32,7 @@
 // hardcoded. They're supplied by the caller (cmd/skygate
 // reads Cfg.GitHubOwner / Cfg.GitHubRepo, defaults to
 // the operator's actual repo on github.com). The
-// previous hardcoded value 404'd at runtime (the
+// previous hardcoded value http.StatusNotFound'd at runtime (the
 // real repo name was different from the assumed
 // placeholder).
 
@@ -276,6 +276,6 @@ func FormatAlert(current, latest *Release) string {
 }
 
 // ErrRateLimited is returned by Latest when GitHub returns
-// 403. The scheduler should back off and retry on the next
+// http.StatusForbidden. The scheduler should back off and retry on the next
 // tick; this is not a hard error.
 var ErrRateLimited = fmt.Errorf("github releases: rate limited")

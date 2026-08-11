@@ -58,13 +58,13 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", 400)
+		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
 	hostname := strings.ToLower(strings.TrimSpace(r.FormValue("hostname")))
 	tag := strings.TrimSpace(r.FormValue("tag"))
 	if hostname == "" {
-		http.Error(w, "hostname required", 400)
+		http.Error(w, "hostname required", http.StatusBadRequest)
 		return
 	}
 	// 2026-07-25: v0.28.5 — strict pinning is opt-in
@@ -72,11 +72,11 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	// for Android compatibility.
 	viaEnabled := r.FormValue("via") == "1"
 	if !s.callerOwnsDevice(s.DB, c.UserID, hostname) {
-		http.Error(w, "device not found or not owned by you", 403)
+		http.Error(w, "device not found or not owned by you", http.StatusForbidden)
 		return
 	}
 	if err := db.SetDeviceExitNodePref(s.DB, c.UserID, hostname, tag, c.UserID, viaEnabled); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "my_device_preferred_exit_set",
@@ -121,11 +121,11 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if !c.IsAdmin {
-		http.Error(w, "admin only", 403)
+		http.Error(w, "admin only", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", 400)
+		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
 	var userID int64
@@ -133,7 +133,7 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 		var n int64
 		for i := 0; i < len(v); i++ {
 			if v[i] < '0' || v[i] > '9' {
-				http.Error(w, "bad user_id", 400)
+				http.Error(w, "bad user_id", http.StatusBadRequest)
 				return
 			}
 			n = n*10 + int64(v[i]-'0')
@@ -144,11 +144,11 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 	tag := strings.TrimSpace(r.FormValue("tag"))
 	viaEnabled := r.FormValue("via") == "1"
 	if userID == 0 || hostname == "" {
-		http.Error(w, "user_id and hostname required", 400)
+		http.Error(w, "user_id and hostname required", http.StatusBadRequest)
 		return
 	}
 	if err := db.SetDeviceExitNodePref(s.DB, userID, hostname, tag, c.UserID, viaEnabled); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "admin_device_preferred_exit_set",

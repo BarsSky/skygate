@@ -53,7 +53,7 @@ func GenerateDockerSteps(current, target, owner, repo string) ManualSteps {
 	// next line uses the EXISTING remote, which the operator may
 	// have cloned from a fork. The new "git remote set-url" line
 	// pins the remote to the canonical owner/repo so a stale fork
-	// can't 404 a tag the operator is trying to roll forward to.
+	// can't http.StatusNotFound a tag the operator is trying to roll forward to.
 	return ManualSteps{
 		Kind:    InstallDocker,
 		Target:  target,
@@ -231,7 +231,7 @@ func GenerateManualSteps(kind InstallKind, current, target, owner, repo string) 
 // ever moves the repo, only this needs to change.
 //
 // 2026-08-05 v0.33.1.10: the previous hardcoded repo
-// 404'd at runtime; the operator's actual repo was
+// http.StatusNotFound'd at runtime; the operator's actual repo was
 // different from the assumed placeholder. Update via
 // SKYGATE_GITHUB_REPO_OWNER / _NAME env vars (read in
 // cmd/skygate/main.go from config.Config.GitHubOwner

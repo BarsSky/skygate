@@ -44,11 +44,11 @@ import (
 func (s *Service) PostAdminACLReapply(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form parse: "+err.Error(), 400)
+		http.Error(w, "form parse: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	var alerter acl.Alerter
@@ -92,7 +92,7 @@ func (s *Service) PostAdminACLReapply(w http.ResponseWriter, r *http.Request) {
 				go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL reapply failed (by %s)\n  err: %v",
 					c.Username, r.Err))
 			}
-			http.Error(w, "set policy: "+r.Err.Error(), 500)
+			http.Error(w, "set policy: "+r.Err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}

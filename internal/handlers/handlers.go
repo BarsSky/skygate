@@ -418,7 +418,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data a
 	i18n.SetLang(lang)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.templates.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, "render: "+err.Error(), 500)
+		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 	}
 }
 
@@ -526,7 +526,7 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 		wrapper[k] = v
 	}
 	if err := a.templates.ExecuteTemplate(w, "layout", wrapper); err != nil {
-		http.Error(w, "render: "+err.Error(), 500)
+		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 	}
 }
 

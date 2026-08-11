@@ -1,6 +1,7 @@
 package healthz
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -237,7 +238,7 @@ func TestAvailability_JSON(t *testing.T) {
 // goroutine; the goroutine complicates the test timing).
 func (c *Checker) runOnceInTest(t *testing.T) {
 	t.Helper()
-	c.runOnce(nil)
+	c.runOnce(context.TODO())
 }
 
 // mustFind returns the integration status with the given

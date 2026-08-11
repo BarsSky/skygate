@@ -36,7 +36,7 @@ import (
 
 // ErrUserNotFound is returned by single-row lookups (GetUserByID,
 // GetUserNameByID, etc.) when no matching row exists. Callers can use
-// errors.Is to detect "no such user" and respond with 404 / redirect.
+// errors.Is to detect "no such user" and respond with http.StatusNotFound / redirect.
 // The multi-row variants (GetAllPortalUsers, GetPortalUsernames) and
 // "find" helpers do NOT return this — they return an empty slice.
 var ErrUserNotFound = errors.New("db: portal_user not found")
@@ -108,7 +108,7 @@ func GetPasswordHashByID(d *sql.DB, id int64) (string, error) {
 // On "user not found" we return (zero-value, nil) rather than
 // ErrUserNotFound because callers treat "user doesn't exist" and
 // "user has no hs link" identically — both should short-circuit
-// to a 400 "no headscale user linked". A caller that needs to
+// to a http.StatusBadRequest "no headscale user linked". A caller that needs to
 // distinguish can call GetUserNameByID first.
 func GetHSIDByID(d *sql.DB, id int64) (sql.NullInt64, error) {
 	var hsID sql.NullInt64
@@ -136,7 +136,7 @@ func GetUserNameAndHSByID(d *sql.DB, id int64) (string, sql.NullInt64, error) {
 
 // GetUserHSByID returns (headscale_user_id, username) for a given
 // user id. Used by GetMyDevices and PostMyPreauth, both of which
-// need the hs id first (it's the "if we don't have this, fail 400"
+// need the hs id first (it's the "if we don't have this, fail http.StatusBadRequest"
 // gate) and the username second (for the audit log). Order matches
 // the SQL and the call sites.
 func GetUserHSByID(d *sql.DB, id int64) (sql.NullInt64, string, error) {

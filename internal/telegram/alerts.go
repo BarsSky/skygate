@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 
 	"skygate/internal/db"
@@ -20,9 +21,9 @@ import (
 
 // alertsKeep is the cap on telegram_alerts rows. We prune older rows
 // on every insert; exact bound is not important — once an alert is
-// acked (or stale) it has no value, and 500 rows covers weeks of
+// acked (or stale) it has no value, and http.StatusInternalServerError rows covers weeks of
 // activity under the current trigger rate.
-const alertsKeep = 500
+const alertsKeep = http.StatusInternalServerError
 
 // SendAlert posts text as an alert (i.e. as a numbered row in
 // telegram_alerts) and returns the id that /ack can reference.

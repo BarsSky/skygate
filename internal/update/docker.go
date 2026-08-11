@@ -25,7 +25,7 @@ package update
 // The orchestrator runs in a goroutine, NOT a synchronous
 // HTTP handler, because the full update takes 3-5 minutes
 // (git pull + docker compose build + container recreate +
-// healthz poll). The HTTP handler returns 303 to the page
+// healthz poll). The HTTP handler returns http.StatusSeeOther to the page
 // within 100ms; the page auto-refreshes every 5s while
 // a job is in progress.
 //
@@ -147,7 +147,7 @@ func NewDockerUpgrader(repoPath string, state *StateStore, currentVersion string
 // rollback → state ends at "failed" with the rollback log).
 //
 // Run is intended to be called from a goroutine. The HTTP
-// handler kicks it off and returns 303 to the page.
+// handler kicks it off and returns http.StatusSeeOther to the page.
 func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	u.State.Log(LogInfo, fmt.Sprintf("starting update %s → %s", u.CurrentVersion, target))
 
