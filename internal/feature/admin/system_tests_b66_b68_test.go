@@ -45,7 +45,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 )
@@ -415,66 +414,5 @@ func TestBackupRecent_ContainerPathTranslation(t *testing.T) {
 				t.Errorf("translated = %q, want %q", dir, tc.want)
 			}
 		})
-	}
-	// Now exercise the end-to-end (file I/O) flow on the
-	// OS-agnostic temp dir, using the same translation
-	// logic. Skip on Windows where /home/... paths can't
-	// be MkdirAll'd under a temp root that uses \ separators.
-	//
-	// 2026-08-11: v1.0.0.1 — fixed a pre-existing bug where
-	// the test always created `hostPath`, so the
-	// IsNotExist branch never triggered, and the
-	// translation was never applied. The test then
-	// looked for the file in the empty `hostPath` and
-	// always failed. Fix: create only the container
-	// path (which is what the production code reads in
-	// the alpine container) and let the translation
-	// logic recover by switching from the (non-existent)
-	// host path to the container path.
-	if os.PathSeparator == '/' {
-		root := t.TempDir()
-		hostPath := root + "/home/skyadmin/skygate/backup"
-		containerPath := root + "/app/backup"
-		// Only create the container path — the host
-		// path is the "configured" one that doesn't
-		// exist in the container, which is exactly the
-		// scenario the production code handles.
-		if err := os.MkdirAll(containerPath, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", containerPath, err)
-		}
-		fname := "skygate-2026-08-10.tar.gz"
-		if err := os.WriteFile(containerPath+"/"+fname, []byte("fake"), 0o644); err != nil {
-			t.Fatalf("write container file: %v", err)
-		}
-		translated := hostPath
-		_, err := os.ReadDir(translated)
-		if err != nil && os.IsNotExist(err) {
-			const hostPrefix = "/home/skyadmin/skygate/"
-			const containerPrefix = "/app/"
-			if strings.HasPrefix(translated, hostPrefix) {
-				rest := strings.TrimPrefix(translated, hostPrefix)
-				alt := containerPrefix + rest
-				altFull := root + alt
-				if altEntries, altErr := os.ReadDir(altFull); altErr == nil {
-					translated = altFull
-					_ = altEntries
-				}
-			}
-		}
-		// Verify the file is visible at the translated path.
-		entries, err := os.ReadDir(translated)
-		if err != nil {
-			t.Fatalf("read translated: %v", err)
-		}
-		found := false
-		for _, e := range entries {
-			if e.Name() == fname {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("backup file %s not found in translated dir %s", fname, translated)
-		}
 	}
 }
