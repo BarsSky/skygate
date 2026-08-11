@@ -104,15 +104,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 #   - $2: python code that reads `d` (after json.loads(sys.stdin))
 #          and calls print(). Newlines are preserved.
 #
-# The helper writes the python code to a temp file on the VM and
-# runs `python3 <tmpfile>` there with stdin = $JSON_STRING.
+# v1.0.0.12: switched from base64 to heredoc. The base64
+# approach assumed the VM has the `base64` utility, but
+# minimal alpine containers (which skygate uses) sometimes
+# strip it out. Heredoc is supported by every POSIX shell
+# since forever.
 json_field() {
   local json_input="$1"
   local py_code="$2"
-  local py_b64
-  py_b64=$(printf '%s' "$py_code" | base64 -w0)
-  printf '%s' "$json_input" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
-    "echo '$py_b64' | base64 -d > /tmp/_json_field_\$\$.py && python3 /tmp/_json_field_\$\$.py; rm -f /tmp/_json_field_\$\$.py" 2>/dev/null
+  printf '%s' "$json_input" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" "python3 - <<'PYEOF'
+$py_code
+PYEOF
+" 2>/dev/null
 }
 
 # v1.0.0.6: add common Windows python install locations to PATH
