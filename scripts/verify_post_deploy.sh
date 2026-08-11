@@ -120,17 +120,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 json_field() {
   local json_input="$1"
   local py_code="$2"
-  # $$ is the host PID; we tag the temp file with it so
-  # concurrent verify_post_deploy.sh runs (CI matrix, parallel
-  # operators) don't clobber each other's file.
+  # v1.2.2: write python code to a local file, then copy it to
+  # the VM (scp), then run it with the JSON piped to stdin.
+  # This sidesteps the bash quoting hell of trying to pass
+  # multi-line python code through ssh command arguments
+  # (any `(` `)` `[` `]` `,` `\"` etc. would break the parse
+  # one way or another). The VM doesn't need base64 or any
+  # particular tool — just python3.
   local jfpath="/tmp/_json_field_$$.json"
-  printf '%s' "$json_input" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" "
+  local py_file="/tmp/_json_field_$$.py"
+  printf '%s\n' "$py_code" > "$py_file"
+  printf '%s' "$json_input" | ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no "$SSH_HOST" "
     cat > $jfpath
-    JFPATH=$jfpath python3 <<'PYEOF'
-$py_code
-PYEOF
+    python3 $py_file
     rm -f $jfpath
   " 2>/dev/null
+  rm -f "$py_file"
 }
 
 # v1.0.0.6: add common Windows python install locations to PATH
@@ -571,8 +576,8 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
 d = json.loads(open(os.environ["JFPATH"]).read() or "{}")
 p = json.loads(d.get("policy","{}"))
 # v1.2.1: was hardcoded to "@tsnet.example.com" which never
-# matched the real domain ("tsnet.skynas.ru" on this operator's
-# headscale, varies per deployment). Use "@" alone — any
+# matched the real domain ("tsnet.skynas.ru" on this operator
+# headscale, varies per deployment). Use "@" alone - any
 # per-user grant has src like "alice@tailnet.example.com",
 # which always contains "@". This also correctly excludes
 # tag:dev-* (no "@") and catch-all "*" (no "@").
