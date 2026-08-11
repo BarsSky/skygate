@@ -120,6 +120,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 json_field() {
   local json_input="$1"
   local py_code="$2"
+  shift 2
   # v1.2.2/3/4: write python code to a local file, then scp it
   # to the VM, then run it with the JSON piped to stdin. This
   # sidesteps the bash quoting hell of trying to pass multi-
@@ -133,6 +134,11 @@ json_field() {
   # with "No such file"). Use the remote $$ (which on the VM
   # is the actual PID of the remote shell) as the file name,
   # and scp with that same name.
+  #
+  # v1.2.6: extra args (after the 2 required) are forwarded as
+  # env vars to the python interpreter on the VM. Format:
+  # "NAME=value" (one per space-separated token). The python
+  # code reads them via os.environ["NAME"].
   local rfile="/tmp/_json_field_$RANDOM.py"
   local py_file="$rfile"  # path on VM
   printf '%s\n' "$py_code" > /tmp/_json_field_local_$$.py
@@ -144,7 +150,7 @@ json_field() {
   local jfpath="/tmp/_json_field_$RANDOM.json"
   printf '%s' "$json_input" | ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=no "$SSH_HOST" "
     cat > $jfpath
-    JFPATH=$jfpath python3 $py_file
+    $* JFPATH=$jfpath python3 $py_file
     rm -f $jfpath $py_file
   " 2>/dev/null
   rm -f /tmp/_json_field_local_$$.py
@@ -603,8 +609,22 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
     # python code reads both JFPATH (the policy JSON) and the
     # env var, and checks every portal user has a matching
     # per-user grant (src = "<user>@<domain>").
-    R10_RESULT=$(PORTAL_USERNAMES="$PORTAL_USERNAMES" json_field "$LIVE_POLICY" 'import json, os
-usernames = set(u for u in os.environ.get("PORTAL_USERNAMES","").splitlines() if u)
+    # v1.2.6: pass PORTAL_USERNAMES via a temp file on the VM
+    # rather than as an env var. Multi-line env vars lose
+    # their content to bash word splitting (the \n in
+    # "skyadmin\nmichail\n..." becomes 4 separate words, only
+    # the first of which is an env assignment). Writing the
+    # list to a file and reading it on the VM is simpler.
+    local users_file="/tmp/_portal_usernames_$$.txt"
+    printf '%s\n' "$PORTAL_USERNAMES" > /tmp/_portal_users_local_$$.txt
+    if [ -n "${SSH_KEY:-}" ]; then
+      scp -i "$SSH_KEY" -o StrictHostKeyChecking=no /tmp/_portal_users_local_$$.txt "$SSH_HOST:$users_file" 2>/dev/null
+    else
+      scp -o StrictHostKeyChecking=no /tmp/_portal_users_local_$$.txt "$SSH_HOST:$users_file" 2>/dev/null
+    fi
+    rm -f /tmp/_portal_users_local_$$.txt
+    R10_RESULT=$(json_field "$LIVE_POLICY" 'import json, os
+usernames = set(u for u in open(os.environ["USERS_FILE"]).read().splitlines() if u)
 d = json.loads(open(os.environ["JFPATH"]).read() or "{}")
 p = json.loads(d.get("policy","{}"))
 grant_users = set()
@@ -618,7 +638,9 @@ missing = sorted(u for u in usernames if u not in grant_users)
 if missing:
     print("missing " + " ".join(missing))
 else:
-    print("ok " + str(len(usernames)))')
+    print("ok " + str(len(usernames)))' "USERS_FILE=$users_file")
+    # v1.2.6: clean up the users file on the VM
+    ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=no "$SSH_HOST" "rm -f $users_file" 2>/dev/null || true
     case "$R10_RESULT" in
       "ok "*)
         COUNT=$(echo "$R10_RESULT" | awk '{print $2}')
