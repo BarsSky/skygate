@@ -1,0 +1,366 @@
+{{define "body-user-devices"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-laptop"></i>{{t "devices.title"}}</h2>
+    <div class="sub">{{t "devices.subtitle"}}: {{.Username}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/my/exit-nodes" class="btn btn-secondary"><i class="fa-solid fa-route"></i>{{t "nav.exit_nodes"}}</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-network-wired"></i>{{t "my_devices.subnet_card_title"}}</h3>
+  {{if .SubnetCIDR}}
+  <table>
+    <tr>
+      <th>{{t "my_devices.subnet_card_cidr_label"}}</th>
+      <td><code>{{.SubnetCIDR}}</code></td>
+    </tr>
+    <tr>
+      <th>{{t "my_devices.subnet_card_status_label"}}</th>
+      <td>
+        {{if eq .SubnetStatus "router_active"}}<span class="tag tag-success"><i class="fa-solid fa-tower-broadcast"></i> {{t "user_subnet.cell_router_active"}}</span>
+        {{else if eq .SubnetStatus "active"}}<span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>
+        {{else if eq .SubnetStatus "pending"}}<span class="tag tag-warning"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>
+        {{else if eq .SubnetStatus "disabled"}}<span class="tag" style="opacity:0.6"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>
+        {{else}}<code>{{.SubnetStatus}}</code>
+        {{end}}
+      </td>
+    </tr>
+    <tr>
+      <th>{{t "my_devices.subnet_card_mesh_label"}}</th>
+      <td>
+        {{if .MySharesTo}}
+          <div style="font-size:12px;margin-bottom:4px">
+            <i class="fa-solid fa-share-from-square"></i> {{t "my_devices.subnet_card_shared_with"}}
+            {{range .MySharesTo}}<code class="route">{{.CIDR}}</code> <span style="color:var(--text-muted)">→ {{.Username}}</span> {{end}}
+          </div>
+        {{end}}
+        {{if .SharesToMe}}
+          <div style="font-size:12px">
+            <i class="fa-solid fa-share-to-square"></i> {{t "my_devices.subnet_card_shared_from"}}
+            {{range .SharesToMe}}<code class="route">{{.CIDR}}</code> <span style="color:var(--text-muted)">← {{.Username}}</span> {{end}}
+          </div>
+        {{end}}
+        {{if not .MySharesTo}}{{if not .SharesToMe}}
+          <span style="color:var(--text-subtle);font-size:12px">{{t "my_devices.subnet_card_no_shares"}}</span>
+        {{end}}{{end}}
+      </td>
+    </tr>
+    <tr>
+      <th>{{t "my_devices.subnet_card_mesh_count_label"}}</th>
+      <td>
+        {{if .MeshCount}}
+          <span class="tag" style="background:var(--accent);color:var(--accent-fg)">
+            <i class="fa-solid fa-circle-nodes"></i> {{.MeshCount}}
+            {{if eq (printf "%d" .MeshCount) "1"}}{{t "my_devices.mesh_count_one"}}{{else}}{{t "my_devices.mesh_count_many"}}{{end}}
+          </span>
+          {{if .MyMeshMembers}}
+            <span style="color:var(--text-muted);font-size:12px;margin-left:6px">
+              {{t "my_devices.subnet_card_members"}}:
+              {{range $i, $m := .MyMeshMembers}}{{if $i}}, {{end}}<code>{{.Username}}</code>{{if .CIDR}} ({{.CIDR}}){{end}}{{end}}
+            </span>
+          {{end}}
+        {{else}}
+          <span style="color:var(--text-subtle);font-size:12px">{{t "my_devices.subnet_card_no_mesh"}}</span>
+        {{end}}
+      </td>
+    </tr>
+  </table>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "my_devices.subnet_card_help" | safeHTML}}</p>
+
+  {{if .SubnetCIDR}}
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">
+      <i class="fa-solid fa-circle-question"></i> {{t "my_devices.subnet_use_cases_title"}}
+    </summary>
+    <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.5">
+      {{t "my_devices.subnet_use_cases_body" | safeHTML}}
+    </div>
+  </details>
+
+  <details style="margin-top:8px" open>
+    <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">
+      <i class="fa-solid fa-list-check"></i> {{t "my_devices.subnet_howto_title"}}
+    </summary>
+    <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.55">
+      {{if eq .SubnetStatus "router_active"}}
+        {{t "my_devices.subnet_howto_body_router_active" | safeHTML}}
+      {{else if eq .SubnetStatus "active"}}
+        {{t "my_devices.subnet_howto_body_active" | safeHTML}}
+      {{else}}
+        {{t "my_devices.subnet_howto_body_pending" | safeHTML}}
+      {{end}}
+      <p style="margin:10px 0 0 0;font-size:12px;color:var(--text-muted)">
+        <i class="fa-solid fa-book"></i>
+        <a href="https://github.com/BarsSky/skygate/blob/main/docs/subnet-router.md" target="_blank" rel="noopener">
+          {{t "my_devices.subnet_docs_link_text"}} <i class="fa-solid fa-up-right-from-square" style="font-size:10px"></i>
+        </a>
+      </p>
+    </div>
+  </details>
+  {{end}}
+
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>{{t "user_subnet.no_subnet_title"}}</div>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-globe"></i>{{t "devices.tag_public"}} ({{t "nav.exit_nodes"}})</h3>
+  {{if .PublicNodes}}
+  <table>
+    <thead><tr><th>{{t "devices.hostname"}}</th><th>Owner</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th></tr></thead>
+    <tbody>
+      {{range .PublicNodes}}
+      <tr>
+        <td><code>{{.Hostname}}</code></td>
+        <td>{{.UserName}}</td>
+        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td>
+          {{if .Online}}
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{t "devices.online"}}</span>
+          {{else}}
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{t "devices.offline"}}</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>{{t "exit_nodes.empty"}} — admin can mark devices as public via <a href="{{.HeadplaneURL}}acls" target="_blank" rel="noopener">Headplane</a>.</div>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}</h3>
+  {{if .HasMyNodes}}
+  <table>
+    <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th><th>{{t "devices.mesh_subnet"}}</th><th>{{t "devices.dev_tag_label"}}</th><th>{{t "devices.device_exit_pref"}}</th></tr></thead>
+    <tbody>
+      {{range .MyNodes}}
+      <tr>
+        <td>
+          <code>{{.Hostname}}</code>
+          {{/* 2026-07-29: per-device OS + device_type
+               badges inline next to the hostname. Skip
+               both badges when the auto-detect returned
+               "unknown" for both — i.e. the row hasn't
+               been auto-detected yet. The auto-detect
+               pass runs every /my/devices load, so a
+               both-unknown pair is transient. */}}
+          {{if or (ne .OS "unknown") (ne .DeviceType "unknown")}}
+            {{if ne .OS "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:4px" title="OS: {{.OS}}"><i class="fa-brands {{if eq .OS "windows"}}fa-windows{{else if eq .OS "macos"}}fa-apple{{else if eq .OS "linux"}}fa-linux{{else if eq .OS "android"}}fa-android{{else if eq .OS "ios"}}fa-apple{{else}}fa-circle-question{{end}}"></i></span>
+            {{end}}
+            {{if ne .DeviceType "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:2px" title="Тип: {{.DeviceType}}"><i class="fa-solid {{if eq .DeviceType "exit-node"}}fa-globe{{else if eq .DeviceType "subnet-router"}}fa-route{{else if eq .DeviceType "phone"}}fa-mobile-screen{{else if eq .DeviceType "server"}}fa-server{{else}}fa-desktop{{end}}"></i></span>
+            {{end}}
+          {{end}}
+        </td>
+        <td class="mono">{{.IP}}</td>
+        <td>
+          {{if .Online}}
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{t "devices.online"}}</span>
+          {{else}}
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{t "devices.offline"}}</span>
+          {{end}}
+        </td>
+        <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
+        <td>
+          {{if .IsSubnetRouter}}
+            <span class="tag" style="background:var(--accent);color:var(--accent-fg)"><i class="fa-solid fa-tower-broadcast"></i>{{t "devices.tag_subnet_router"}}</span>
+          {{else if .IsPublic}}
+            <span class="tag tag-success"><i class="fa-solid fa-globe"></i>{{t "devices.tag_public"}}</span>
+            {{if eq .Source "snapshot"}}
+              <span style="color:var(--text-muted);font-size:11px" title="headscale shows the owner as tagged-devices, original owner is preserved in skygate">via snapshot</span>
+            {{end}}
+          {{else if .IsExitNode}}
+            <span class="tag" style="background:var(--warning);color:var(--warning-fg)"><i class="fa-solid fa-door-open"></i>{{t "devices.tag_exit_node"}}</span>
+          {{else}}
+            <span class="tag"><i class="fa-solid fa-lock"></i>{{t "devices.tag_private"}}</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .IsShared}}
+            {{/* exit-nodes и public ноды — shared infrastructure. Их AvailableRoutes
+                 (Telegram CIDRs, 0.0.0.0/0, relay-3 148+ маршрутов) — это НЕ personal subnets
+                 пользователя. Показываем прочерк, реальный смысл — в колонке Mesh subnet
+                 через pill "shared". */}}
+            <span style="color:var(--text-subtle);font-size:11px" title="shared infrastructure — см. колонку Mesh subnet">—</span>
+          {{else if .AvailableRoutes}}
+            {{range .AvailableRoutes}}
+              <code class="route" style="font-size:11px;padding:1px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:3px;display:inline-block;margin:1px">{{.}}</code>
+            {{end}}
+            {{$approvedCount := len .ApprovedRoutes}}
+            {{$availableCount := len .AvailableRoutes}}
+            {{if not (eq $approvedCount $availableCount)}}
+              <span class="tag" style="background:var(--warning);color:var(--warning-fg);font-size:10px;margin-left:4px" title="{{t "devices.routes_pending_help"}}">
+                <i class="fa-solid fa-hourglass-half"></i>{{t "devices.routes_pending"}}
+              </span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .IsShared}}
+            <span class="tag" style="font-size:10px"><i class="fa-solid fa-share"></i>{{t "devices.mesh_subnet_shared"}}</span>
+          {{else if .MeshSubnet}}
+            <code style="font-size:11px;padding:1px 4px;background:var(--bg-elev);border-radius:3px">{{.MeshSubnet}}</code>
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .DevTag}}
+            {{if .DevTagApplied}}
+              <span class="tag tag-success" title="{{t "devices.dev_tag_applied_help"}}"><i class="fa-solid fa-circle-check"></i><code style="font-size:10px;background:transparent">{{.DevTag}}</code></span>
+            {{else}}
+              <span class="tag tag-warning" title="{{t "devices.dev_tag_pending_help"}}"><i class="fa-solid fa-hourglass-half"></i><code style="font-size:10px;background:transparent">{{.DevTag}}</code></span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .DeviceExitPref}}
+            <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{.DeviceExitPref}}</code></span>
+            {{if .DeviceExitViaEnabled}}
+              <span class="tag tag-warning" style="font-size:9px;margin-left:2px" title="{{t "devices.device_exit_via_enabled_help"}}"><i class="fa-solid fa-lock"></i> {{t "devices.device_exit_via_strict"}}</span>
+            {{else}}
+              <span class="tag" style="font-size:9px;margin-left:2px;background:var(--text-subtle);color:var(--bg-card)" title="{{t "devices.device_exit_via_disabled_help"}}"><i class="fa-solid fa-unlock"></i> {{t "devices.device_exit_via_any"}}</span>
+            {{end}}
+            <form method="post" action="/my/devices/preferred-exit" style="display:inline-block;margin-left:4px" onsubmit="return confirm('{{t "devices.device_exit_pref_clear_confirm"}}')">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="">
+              <input type="hidden" name="via" value="{{if .DeviceExitViaEnabled}}1{{else}}0{{end}}">
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 6px" title="{{t "devices.device_exit_pref_clear_help"}}"><i class="fa-solid fa-xmark"></i></button>
+            </form>
+            {{/* v0.28.5: per-device via opt-in toggle. Click
+                 the lock icon to flip the flag; the form
+                 submits the current pref tag + the flipped
+                 via value. */}}
+            <form method="post" action="/my/devices/preferred-exit" style="display:inline-block;margin-left:4px">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="{{.DeviceExitPref}}">
+              <input type="hidden" name="via" value="{{if .DeviceExitViaEnabled}}0{{else}}1{{end}}">
+              <button type="submit" class="btn btn-ghost" style="font-size:9px;padding:2px 5px" title="{{if .DeviceExitViaEnabled}}{{t "devices.device_exit_via_disable_help"}}{{else}}{{t "devices.device_exit_via_enable_help"}}{{end}}">
+                <i class="fa-solid fa-{{if .DeviceExitViaEnabled}}unlock{{else}}lock{{end}}"></i>
+              </button>
+            </form>
+          {{else}}
+            <form method="post" action="/my/devices/preferred-exit" style="display:inline-flex;gap:4px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="via" value="0">
+              <select name="tag" style="font-size:11px;padding:2px 4px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                {{range $.AvailableExitNodes}}
+                  {{$tag := printf "tag:exit-%s" (printf "%s" .Hostname | tolower)}}
+                  <option value="{{$tag}}">{{.Hostname}}</option>
+                {{end}}
+              </select>
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 6px" title="{{t "devices.device_exit_pref_set_button_help"}}"><i class="fa-solid fa-bullseye"></i></button>
+            </form>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:12px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
+    <span>{{t "devices.tag_hint_v0_24_1"}}.</span>
+  </p>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:4px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-circle-info" style="margin-top:2px"></i>
+    <span>{{t "devices.dev_tag_hint_v0_28_0" | safeHTML}}.</span>
+  </p>
+  {{else}}
+  <div class="alert alert-warn" style="margin-top:0">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <div>{{t "devices.no_devices"}}.</div>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-plus-circle"></i>{{t "devices.add"}}</h3>
+  <p style="color:var(--text-muted);margin-bottom:16px">
+    {{t "devices.add_hint"}}
+    {{t "preauth.warning"}}
+    {{t "devices.tag_hint_v0_24_1"}}.
+  </p>
+  <form method="post" action="/my/preauth" id="preauth-form">
+    <div class="os-grid">
+      <label class="os-tile"><input type="radio" name="os" value="android" required><i class="fa-brands fa-android"></i>Android</label>
+      <label class="os-tile"><input type="radio" name="os" value="ios"><i class="fa-brands fa-apple"></i>iOS</label>
+      <label class="os-tile"><input type="radio" name="os" value="linux"><i class="fa-brands fa-linux"></i>Linux</label>
+      <label class="os-tile"><input type="radio" name="os" value="macos"><i class="fa-brands fa-apple"></i>macOS</label>
+      <label class="os-tile"><input type="radio" name="os" value="windows"><i class="fa-brands fa-windows"></i>Windows</label>
+    </div>
+    <div class="btn-row right">
+      <button type="submit" class="btn"><i class="fa-solid fa-key"></i>{{t "keys.issue"}}</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-question"></i>FAQ</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+    {{t "dashboard.quickref_control"}} <code>{{.ControlURL}}</code>
+  </p>
+
+  <details>
+    <summary style="cursor:pointer;color:var(--accent)"><b>Android / iOS</b></summary>
+    <ol class="plain" style="margin-top:8px">
+      <li>Install Tailscale (Google Play / App Store).</li>
+      <li>In the app: <b>Settings → Use custom coordination server</b> → paste the URL above.</li>
+      <li>Tap <b>Sign in</b> → on the login page pick <b>"Use a preauth key"</b> → paste the key.</li>
+    </ol>
+  </details>
+
+  <details>
+    <summary style="cursor:pointer;color:var(--accent);margin-top:8px"><b>Linux / macOS / Windows (CLI)</b></summary>
+    <pre style="margin-top:8px">sudo tailscale up --login-server={{.ControlURL}} --authkey=YOUR_KEY</pre>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:4px">
+      Add <code>--accept-routes</code> if you want to accept routes from exit nodes.
+    </p>
+  </details>
+</div>
+
+<script>
+// Auto-select the OS radio button based on the browser's User-Agent.
+(function() {
+  try {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    var os = '';
+    if (ua.indexOf('android') !== -1)      os = 'android';
+    else if (ua.indexOf('iphone') !== -1 || ua.indexOf('ipad') !== -1 || ua.indexOf('ios') !== -1) os = 'ios';
+    else if (ua.indexOf('mac os') !== -1 || ua.indexOf('macintosh') !== -1) os = 'macos';
+    else if (ua.indexOf('windows') !== -1) os = 'windows';
+    else if (ua.indexOf('linux') !== -1 || ua.indexOf('x11') !== -1) os = 'linux';
+    if (os) {
+      var r = document.querySelector('input[name="os"][value="' + os + '"]');
+      if (r) r.checked = true;
+    }
+  } catch (e) { /* ignore */ }
+})();
+
+document.querySelectorAll('.os-tile').forEach(function(tile){
+  var input = tile.querySelector('input');
+  tile.addEventListener('click', function(e){
+    document.querySelectorAll('.os-tile').forEach(function(t){t.classList.remove('selected')});
+    if(input && input.checked) tile.classList.add('selected');
+  });
+  if(input && input.checked) tile.classList.add('selected');
+});
+</script>
+{{end}}

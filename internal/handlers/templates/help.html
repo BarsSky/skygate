@@ -1,0 +1,339 @@
+{{define "body-help"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-circle-question"></i>{{t "title.help"}}</h2>
+    <div class="sub">
+      {{if .IsAdmin}}{{t "help.admin_subtitle"}}{{else}}{{t "help.user_subtitle"}}{{end}}
+    </div>
+  </div>
+</div>
+
+{{if .IsAdmin}}
+{{template "body-help-admin" .}}
+{{else}}
+{{template "body-help-user" .}}
+{{end}}
+
+{{end}}
+
+{{define "body-help-user"}}
+<div class="tabs">
+  <a href="#start" class="active"><i class="fa-solid fa-rocket"></i>{{t "help.tabs.start"}}</a>
+  <a href="#exit"><i class="fa-solid fa-route"></i>{{t "help.tabs.exit"}}</a>
+  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>{{t "help.tabs.derp"}}</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>{{t "help.tabs.troubleshoot"}}</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</a>
+</div>
+
+<div id="start" class="doc-card">
+  <h3><i class="fa-solid fa-rocket"></i>{{t "help.tabs.start"}}</h3>
+  <p>{{t "help.user.intro" | safeHTML}}</p>
+
+  <h4>{{t "help.user.step1"}}</h4>
+  <ul>
+    <li>{{t "help.user.install_android" | safeHTML}}</li>
+    <li>{{t "help.user.install_ios" | safeHTML}}</li>
+    <li>{{t "help.user.install_windows" | safeHTML}}</li>
+    <li>{{t "help.user.install_macos" | safeHTML}}</li>
+    <li>{{t "help.user.install_linux" | safeHTML}}</li>
+  </ul>
+
+  <h4>{{t "help.user.step2"}}</h4>
+  <p>{{t "help.user.signin_intro"}}</p>
+  <ul>
+    <li>{{t "help.user.signin_server" | safeHTML}}</li>
+    <li>{{t "help.user.signin_login" | safeHTML}}</li>
+  </ul>
+  <p>{{t "help.user.signin_done"}}</p>
+
+  <h4>{{t "help.user.step3"}}</h4>
+  <p>{{t "help.user.step3_body" | safeHTML}}</p>
+
+  <h4>{{t "help.user.step4"}}</h4>
+  <p>{{t "help.user.step4_intro" | safeHTML}}</p>
+  <ul>
+    <li>{{t "help.user.step4_name" | safeHTML}}</li>
+    <li>{{t "help.user.step4_create" | safeHTML}}</li>
+    <li>{{t "help.user.step4_copy" | safeHTML}}</li>
+    <li>{{t "help.user.step4_paste" | safeHTML}}</li>
+  </ul>
+  <p>{{t "help.user.step4_done"}}</p>
+
+  <div class="note">
+    <i class="fa-solid fa-circle-info"></i> {{t "help.user.tag_note" | safeHTML}}
+  </div>
+</div>
+
+<div id="exit" class="doc-card">
+  <h3><i class="fa-solid fa-route"></i>{{t "help.user.exit_title" | safeHTML}}</h3>
+  <p>{{t "help.user.exit_intro" | safeHTML}}</p>
+  <ul>
+    <li>{{t "help.user.exit_reason1" | safeHTML}}</li>
+    <li>{{t "help.user.exit_reason2" | safeHTML}}</li>
+    <li>{{t "help.user.exit_reason3" | safeHTML}}</li>
+    <li>{{t "help.user.exit_reason4" | safeHTML}}</li>
+  </ul>
+
+  <h4>{{t "help.user.exit_avail" | safeHTML}}</h4>
+
+  <h4>{{t "help.user.exit_how"}}</h4>
+  <ol>
+    <li>{{t "help.user.exit_how1" | safeHTML}}</li>
+    <li>{{t "help.user.exit_how2" | safeHTML}}</li>
+    <li>{{t "help.user.exit_how3" | safeHTML}}</li>
+  </ol>
+
+  <h4>{{t "help.user.exit_verify"}}</h4>
+  <p>{{t "help.user.exit_verify_body"}}</p>
+
+  <h4>{{t "help.user.exit_disable"}}</h4>
+  <p>{{t "help.user.exit_disable_body" | safeHTML}}</p>
+
+  <div class="note">
+    <i class="fa-solid fa-triangle-exclamation"></i> <strong>Note</strong>: {{t "help.user.exit_warning"}}
+  </div>
+</div>
+
+<div id="derp" class="doc-card">
+  <h3><i class="fa-solid fa-tower-broadcast"></i>{{t "help.user.derp_title"}}</h3>
+  <p>{{t "help.user.derp_intro" | safeHTML}}</p>
+
+  <h4>{{t "help.user.derp_meaning"}}</h4>
+  <ul>
+    <li>{{t "help.user.derp_direct" | safeHTML}}</li>
+    <li>{{t "help.user.derp_relay" | safeHTML}}</li>
+  </ul>
+
+  <h4>{{t "help.user.derp_ours" | safeHTML}}</h4>
+  <p>{{t "help.user.derp_ours_body" | safeHTML}}</p>
+
+  <h4>{{t "help.user.derp_links"}}</h4>
+  <ul>
+    <li>{{t "help.user.derp_link1" | safeHTML}}</li>
+    <li>{{t "help.user.derp_link2" | safeHTML}}</li>
+  </ul>
+</div>
+
+<div id="troubleshoot" class="doc-card">
+  <h3><i class="fa-solid fa-wrench"></i>{{t "help.tabs.troubleshoot"}}</h3>
+
+  <h4>{{t "help.user.ts_login_title" | safeHTML}}</h4>
+  <ol>
+    <li>{{t "help.user.ts_login"}}</li>
+    <li>{{t "help.user.ts_login2"}}</li>
+    <li>{{t "help.user.ts_login3"}}</li>
+    <li>{{t "help.user.ts_login4"}}</li>
+  </ol>
+
+  <h4>{{t "help.user.exit_no_inet_title" | safeHTML}}</h4>
+  <ol>
+    <li>{{t "help.user.exit_no_inet" | safeHTML}}</li>
+    <li>{{t "help.user.exit_no_inet2"}}</li>
+    <li>{{t "help.user.exit_no_inet3"}}</li>
+    <li>{{t "help.user.exit_no_inet4"}}</li>
+  </ol>
+
+  <h4>{{t "help.user.magicdns_title" | safeHTML}}</h4>
+  <p>{{t "help.user.magicdns_intro"}}</p>
+  <ol>
+    <li>{{t "help.user.magicdns1" | safeHTML}}</li>
+    <li>{{t "help.user.magicdns2" | safeHTML}}</li>
+  </ol>
+
+  <h4>{{t "help.user.no_ping_title" | safeHTML}}</h4>
+  <ul>
+    <li>{{t "help.user.no_ping1"}}</li>
+    <li>{{t "help.user.no_ping2"}}</li>
+    <li>{{t "help.user.no_ping3"}}</li>
+  </ul>
+
+  <h4>{{t "help.user.slow_title" | safeHTML}}</h4>
+  <ul>
+    <li>{{t "help.user.slow1"}}</li>
+    <li>{{t "help.user.slow2" | safeHTML}}</li>
+    <li>{{t "help.user.slow3"}}</li>
+  </ul>
+
+  <div class="card" style="background:var(--card-elevated);text-align:center;color:var(--text-muted);font-size:13px">
+    <i class="fa-solid fa-life-ring"></i> {{t "help.user.no_solution"}}
+  </div>
+</div>
+
+<div id="glossary" class="doc-card">
+  <h3><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</h3>
+  <table>
+    <thead><tr><th>Term</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Tailnet</strong></td><td>{{t "help.user.glossary_tailnet"}}</td></tr>
+      <tr><td><strong>Node</strong></td><td>{{t "help.user.glossary_node"}}</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>{{t "help.user.glossary_magicdns"}}</td></tr>
+      <tr><td><strong>DERP</strong></td><td>{{t "help.user.glossary_derp"}}</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>{{t "help.user.glossary_exit"}}</td></tr>
+      <tr><td><strong>Preauth key</strong></td><td>{{t "help.user.glossary_preauth"}}</td></tr>
+      <tr><td><strong>tag:private</strong></td><td>{{t "help.user.glossary_tag_private" | safeHTML}}</td></tr>
+      <tr><td><strong>tag:public</strong></td><td>{{t "help.user.glossary_tag_public" | safeHTML}}</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>{{t "help.user.glossary_cgnat"}}</td></tr>
+      <tr><td><strong>ACL</strong></td><td>{{t "help.user.glossary_acl"}}</td></tr>
+      <tr><td><strong>Headscale</strong></td><td>{{t "help.user.glossary_headscale"}}</td></tr>
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{define "body-help-admin"}}
+<div class="tabs">
+  <a href="#overview" class="active"><i class="fa-solid fa-diagram-project"></i>{{t "help.tabs.overview"}}</a>
+  <a href="#derp"><i class="fa-solid fa-tower-broadcast"></i>{{t "help.tabs.derp"}}</a>
+  <a href="#exit"><i class="fa-solid fa-route"></i>{{t "help.tabs.exit"}}</a>
+  <a href="#acl"><i class="fa-solid fa-shield-halved"></i>{{t "help.tabs.acl"}}</a>
+  <a href="#troubleshoot"><i class="fa-solid fa-wrench"></i>{{t "help.tabs.diagnostics"}}</a>
+  <a href="#glossary"><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</a>
+</div>
+
+<div id="overview" class="doc-card">
+  <h3><i class="fa-solid fa-diagram-project"></i>{{t "help.admin.what_title"}}</h3>
+  <p>{{t "help.admin.what_body" | safeHTML}}</p>
+
+  <h4>{{t "help.admin.flow_title"}}</h4>
+  <div class="flow">
+    <span class="node you">{{t "help.admin.flow_node_you" | safeHTML}}</span>
+    <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+    <span class="node">{{t "help.admin.flow_node_exit" | safeHTML}}</span>
+    <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+    <span class="node">{{t "help.admin.flow_node_internet" | safeHTML}}</span>
+  </div>
+  <div class="note">{{t "help.admin.flow_note"}}</div>
+
+  <h4>{{t "help.admin.management"}}</h4>
+  <ul>
+    <li>{{t "help.admin.management_devices" | safeHTML}}</li>
+    <li>{{t "help.admin.management_users" | safeHTML}}</li>
+    <li>{{t "help.admin.management_derp" | safeHTML}}</li>
+    <li>{{t "help.admin.management_audit" | safeHTML}}</li>
+  </ul>
+</div>
+
+<div id="derp" class="doc-card">
+  <h3><i class="fa-solid fa-tower-broadcast"></i>{{t "help.admin.derp_how"}}</h3>
+  <p>{{t "help.admin.derp_what" | safeHTML}}</p>
+
+  <h4>{{t "help.admin.derp_architecture"}}</h4>
+  <pre>┌──────────┐    WireGuard-over-WS    ┌─────────┐    WebSocket    ┌──────────┐
+│ my-phone │ ────TLS 1.3 + WSS────────▶│  DERP   │─────────────────▶│ exit-vps │
+│ 4G CGNAT │   TCP 443 (like HTTPS)   │  relay  │  TCP 443        │  VPS EU  │
+└──────────┘                          └─────────┘                  └──────────┘
+                                            │
+                                  sees only:
+                                  • client IPs
+                                  • packet sizes
+                                  • NOT contents
+                                  (TLS 1.3 + WireGuard)</pre>
+
+  <h4>{{t "help.admin.derp_when"}}</h4>
+  <ul>
+    <li>{{t "help.admin.derp_direct" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_relay" | safeHTML}}</li>
+  </ul>
+
+  <h4>{{t "help.admin.derp_proto"}}</h4>
+  <ul>
+    <li>{{t "help.admin.derp_tls" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_port" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_ws" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_rotation" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_custom" | safeHTML}}</li>
+  </ul>
+
+  <h4>{{t "help.admin.derp_weak"}}</h4>
+  <ul>
+    <li>{{t "help.admin.derp_throttle" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_filter" | safeHTML}}</li>
+    <li>{{t "help.admin.derp_latency" | safeHTML}}</li>
+  </ul>
+
+  <h4>{{t "help.admin.derp_own" | safeHTML}}</h4>
+  <p>{{t "help.admin.derp_own_body" | safeHTML}}</p>
+</div>
+
+<div id="exit" class="doc-card">
+  <h3><i class="fa-solid fa-route"></i>{{t "help.admin.exit_title"}}</h3>
+  <p>{{t "help.admin.exit_intro"}}</p>
+
+  <h4>{{t "help.admin.exit_why"}}</h4>
+  <ul>
+    <li>{{t "help.admin.exit_why1" | safeHTML}}</li>
+    <li>{{t "help.admin.exit_why2" | safeHTML}}</li>
+    <li>{{t "help.admin.exit_why3" | safeHTML}}</li>
+    <li>{{t "help.admin.exit_why4" | safeHTML}}</li>
+  </ul>
+
+  <h4>{{t "help.admin.exit_how"}}</h4>
+  <ol>
+    <li>{{t "help.admin.exit_how1"}}</li>
+    <li>{{t "help.admin.exit_how2"}}</li>
+    <li>{{t "help.admin.exit_how3"}}</li>
+  </ol>
+
+  <h4>{{t "help.admin.exit_iptables" | safeHTML}}</h4>
+  <pre>iptables -t nat -A POSTROUTING -s 100.64.100.0/10 -o $EXT_IF -j MASQUERADE
+iptables -A FORWARD -i tailscale0 -o $EXT_IF -j ACCEPT
+iptables -A FORWARD -i $EXT_IF -o tailscale0 -m state --state RELATED,ESTABLISHED -j ACCEPT</pre>
+</div>
+
+<div id="acl" class="doc-card">
+  <h3><i class="fa-solid fa-shield-halved"></i>{{t "help.admin.acl_title"}}</h3>
+  <p>{{t "help.admin.acl_intro"}}</p>
+
+  <h4>{{t "help.admin.acl_allow_exit" | safeHTML}}</h4>
+  <pre>{ "action": "accept", "src": ["*"], "dst": ["autogroup:internet:*"] }</pre>
+  <p>{{t "help.admin.acl_allow_exit_warn" | safeHTML}}</p>
+
+  <h4>{{t "help.admin.acl_isolate" | safeHTML}}</h4>
+  <pre>{ "action": "accept", "src": ["admin"], "dst": ["*:*"] },
+{ "action": "accept", "src": ["user1"], "dst": ["user1:*", "tag:public:*"] }</pre>
+  <p>{{t "help.admin.acl_isolate_body" | safeHTML}}</p>
+</div>
+
+<div id="troubleshoot" class="doc-card">
+  <h3><i class="fa-solid fa-wrench"></i>{{t "help.admin.diag_title"}}</h3>
+
+  <h4>{{t "help.admin.diag_exit_title" | safeHTML}}</h4>
+  <pre>sudo journalctl -u tailscaled --since 5m | grep "suggested exit"
+iptables -t nat -L POSTROUTING -n -v | grep "100.64.100.0/10"
+iptables -L FORWARD -n -v | grep "tailscale0"
+tailscale status</pre>
+  <pre>{{t "help.admin.diag_exit1"}}
+{{t "help.admin.diag_exit2"}}
+{{t "help.admin.diag_exit3"}}
+{{t "help.admin.diag_exit4"}}
+{{t "help.admin.diag_exit5"}}
+{{t "help.admin.diag_exit6"}}</pre>
+
+  <h4>{{t "help.admin.diag_problems"}}</h4>
+
+  <h4>{{t "help.admin.diag_no_inet" | safeHTML}}</h4>
+  <p>{{t "help.admin.diag_no_inet_body" | safeHTML}}</p>
+
+  <h4>{{t "help.admin.diag_no_dns" | safeHTML}}</h4>
+  <p>{{t "help.admin.diag_no_dns_body" | safeHTML}}</p>
+</div>
+
+<div id="glossary" class="doc-card">
+  <h3><i class="fa-solid fa-book"></i>{{t "help.tabs.glossary"}}</h3>
+  <table>
+    <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Tailnet</strong></td><td>{{t "help.admin.glossary_tailnet"}}</td></tr>
+      <tr><td><strong>MagicDNS</strong></td><td>{{t "help.admin.glossary_magicdns" | safeHTML}}</td></tr>
+      <tr><td><strong>DERP</strong></td><td>{{t "help.admin.glossary_derp" | safeHTML}}</td></tr>
+      <tr><td><strong>Exit node</strong></td><td>{{t "help.admin.glossary_exit"}}</td></tr>
+      <tr><td><strong>ACL</strong></td><td>{{t "help.admin.glossary_acl"}}</td></tr>
+      <tr><td><strong>Headscale</strong></td><td>{{t "help.admin.glossary_headscale"}}</td></tr>
+      <tr><td><strong>STUN</strong></td><td>{{t "help.admin.glossary_stun"}}</td></tr>
+      <tr><td><strong>CGNAT</strong></td><td>{{t "help.admin.glossary_cgnat"}}</td></tr>
+      <tr><td><strong>WireGuard</strong></td><td>{{t "help.admin.glossary_wireguard"}}</td></tr>
+      <tr><td><strong>tag:public / tag:private</strong></td><td>{{t "help.admin.glossary_tags" | safeHTML}}</td></tr>
+    </tbody>
+  </table>
+</div>
+{{end}}

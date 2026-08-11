@@ -1,0 +1,201 @@
+package handlers
+
+import (
+	"bytes"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
+	"io/fs"
+	"path"
+	"strings"
+	"time"
+
+	"skygate/internal/feature/admin"
+	"skygate/internal/i18n"
+)
+
+//go:embed templates/*.html templates/*/*.html
+var tplFS embed.FS
+
+type Templates struct {
+	t *template.Template
+}
+
+// LoadTemplates parses all templates and returns a renderer.
+// Uses {{define "body-..."}} blocks for body content and a single "layout"
+// template that calls {{renderBody .BodyTemplate .}} to inject the body.
+//
+// i18n: translations are resolved via the funcmap helpers `t` and `tf`,
+// which read the per-request language from i18n.GlobalLang (atomic.Value).
+// The caller (renderWithLayout / render) MUST call i18n.SetLang(lang)
+// before ExecuteTemplate so the helpers see the right catalog.
+func LoadTemplates() *Templates {
+	t := template.New("root")
+
+	// First pass: register renderBody placeholder so ParseFS doesn't fail.
+	// We'll re-register with the real impl after parsing bodies.
+	t.Funcs(template.FuncMap{
+		"t": func(key string) string {
+			lang, _ := i18n.GlobalLang.Load().(string)
+			return i18n.GlobalCatalog.T(lang, key)
+		},
+		"tf": func(key string, args ...any) string {
+			lang, _ := i18n.GlobalLang.Load().(string)
+			return i18n.GlobalCatalog.Tf(lang, key, args...)
+		},
+		"safeJS": func(s string) template.JS { return template.JS(s) },
+		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+		"dividefloat": func(a, b float64) float64 {
+			if b == 0 { return 0 }
+			return a / b
+		},
+		// 2026-07-25: v0.28.4 — `tolower` for the
+		// per-device exit-node form, which renders
+		// `tag:exit-<hostname-lowercased>` as the
+		// option value. The hostname in headscale is
+		// the case-preserved givenName; the v0.28.0
+		// tag convention is lowercase.
+		"tolower": func(s string) string {
+			return strings.ToLower(s)
+		},
+		"add": func(a, b int) int { return a + b },
+		"usageLevel": func(count, max int) string {
+			// Returns tag class for usage display: "danger" >75%, "warn" >50%, else "success".
+			if max <= 0 {
+				return "success"
+			}
+			if count*4 > max*3 {
+				return "danger"
+			}
+			if count*2 > max {
+				return "warn"
+			}
+			return "success"
+		},
+		"datetimeformat": func(unix int64) string {
+			if unix <= 0 {
+				return "—"
+			}
+			return time.Unix(unix, 0).UTC().Format("2006-01-02 15:04")
+		},
+		"bytesfmt": func(n int64) string {
+			const k = 1024
+			if n >= 1024*1024 {
+				return fmt.Sprintf("%.1f MB", float64(n)/float64(k*k))
+			}
+			if n >= 1024 {
+				return fmt.Sprintf("%.1f KB", float64(n)/float64(k))
+			}
+			return fmt.Sprintf("%d B", n)
+		},
+		"renderBody": func(name string, data any) (template.HTML, error) {
+			return template.HTML("<!-- placeholder -->"), nil
+		},
+		// 2026-08-04 v0.33.1: safeJSON wraps a Go string in a JS
+		// string literal (with proper escaping for quotes,
+		// newlines, and Cyrillic). Use this instead of safeJS
+		// for catalog values that need to land in a JS context
+		// — safeJS casts to template.JS which doesn't add
+		// quotes, so `{{t "..." | safeJS}}` produced invalid
+		// JS like `status.textContent = Синхронизация…;` (a
+		// ReferenceError, not a string assignment). safeJSON
+		// emits `"Синхронизация…"` — a valid JS string literal.
+		// Internally just json.Marshal + cast, so all the
+		// corner cases (quotes, newlines, backslashes, UTF-8)
+		// are handled by the stdlib.
+		"safeJSON": func(s string) template.JS {
+			b, _ := json.Marshal(s)
+			return template.JS(b)
+		},
+		// 2026-08-09 v0.33.1.26 — system_tests template
+		// helpers. humanizeAgeSeconds renders a Unix-seconds
+		// age as a short human string ("just now" / "5m
+		// ago" / "2h ago" / "3d ago"). indexResultByName
+		// looks up a test's status in a []SystemTestResult
+		// slice by Name; used to highlight FAIL rows on
+		// the /admin/system_tests page even when the page
+		// is opened fresh (no LiveResults).
+		"humanizeAgeSeconds": func(secs int64) string {
+			if secs < 0 {
+				secs = 0
+			}
+			if secs < 60 {
+				return "just now"
+			}
+			if secs < 3600 {
+				return fmt.Sprintf("%dm ago", secs/60)
+			}
+			if secs < 86400 {
+				return fmt.Sprintf("%dh ago", secs/3600)
+			}
+			return fmt.Sprintf("%dd ago", secs/86400)
+		},
+		"indexResultByName": func(results any, name string) string {
+			rs, ok := results.([]admin.SystemTestResult)
+			if !ok {
+				return ""
+			}
+			for _, r := range rs {
+				if r.Name == name {
+					return string(r.Status)
+				}
+			}
+			return ""
+		},
+	})
+
+	// Collect body files (everything except layout.html)
+	var bodyFiles []string
+	entries, err := fs.ReadDir(tplFS, "templates")
+	if err != nil {
+		panic("read tplFS: " + err.Error())
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			sub, _ := fs.ReadDir(tplFS, path.Join("templates", e.Name()))
+			for _, s := range sub {
+				if strings.HasSuffix(s.Name(), ".html") {
+					bodyFiles = append(bodyFiles, path.Join("templates", e.Name(), s.Name()))
+				}
+			}
+		} else if strings.HasSuffix(e.Name(), ".html") && e.Name() != "layout.html" {
+			bodyFiles = append(bodyFiles, path.Join("templates", e.Name()))
+		}
+	}
+
+	// Parse all body files first — each {{define "body-..."}} becomes a named template.
+	for _, f := range bodyFiles {
+		if _, err := t.ParseFS(tplFS, f); err != nil {
+			panic("parse " + f + ": " + err.Error())
+		}
+	}
+
+	// Now overwrite renderBody with the real implementation. Funcs mutates
+	// the template and returns it; subsequent ExecuteTemplate calls use the
+	// updated funcmap.
+	t.Funcs(template.FuncMap{
+		"renderBody": func(name string, data any) (template.HTML, error) {
+			base := strings.ReplaceAll(name, "/", "-")
+			base = strings.TrimSuffix(base, ".html")
+			defineName := "body-" + base
+			var buf bytes.Buffer
+			if err := t.ExecuteTemplate(&buf, defineName, data); err != nil {
+				return "", err
+			}
+			return template.HTML(buf.String()), nil
+		},
+	})
+
+	// Finally parse layout.html which {{define "layout"}} and uses {{renderBody .BodyTemplate .}}.
+	if _, err := t.ParseFS(tplFS, "templates/layout.html"); err != nil {
+		panic("parse layout: " + err.Error())
+	}
+
+	return &Templates{t: t}
+}
+
+func (t *Templates) ExecuteTemplate(w io.Writer, name string, data any) error {
+	return t.t.ExecuteTemplate(w, name, data)
+}

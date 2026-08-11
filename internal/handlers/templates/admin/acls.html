@@ -1,0 +1,53 @@
+﻿{{define "body-admin-acls"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-shield-halved"></i>{{t "acls.title"}}</h2>
+    <div class="sub">{{t "acls.subtitle"}}: <a href="https://tsnet.example.com/admin/acls" target="_blank" rel="noopener">Headplane UI</a></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-pen-to-square"></i>{{t "acls.external"}}</h3>
+  <p style="color:var(--text-muted);margin-bottom:16px">
+    {{t "acls.subtitle"}}.
+  </p>
+
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <a href="https://tsnet.example.com/admin/acls" target="_blank" rel="noopener" class="btn">
+      <i class="fa-solid fa-arrow-up-right-from-square"></i>{{t "acls.external"}}
+    </a>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-file-code"></i>{{t "acls.title"}}</h3>
+  {{if .Policy}}
+  <pre>{{.Policy}}</pre>
+  {{else}}
+  <div class="alert alert-danger" style="margin-top:0">
+    <i class="fa-solid fa-circle-exclamation"></i>
+    <div>
+      {{t "acls.empty"}}.
+      <br><br>
+      <span style="color:var(--text-subtle);font-size:12px">{{.Error}}</span>
+    </div>
+  </div>
+  {{end}}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+    <a href="/admin/acls/export" class="btn btn-sm">
+      <i class="fa-solid fa-download"></i> {{t "acls.export_btn"}}
+    </a>
+    <a href="/admin/acls/import" class="btn btn-sm btn-primary">
+      <i class="fa-solid fa-upload"></i> {{t "acls.import_btn_short"}}
+    </a>
+    <a href="/admin/subnets" class="btn btn-sm">
+      <i class="fa-solid fa-network-wired"></i> {{t "admin.subnets.title"}}
+    </a>
+  </div>
+</div>
+
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "acls.v0_17_0_note_title"}}</h3>
+  <p style="margin-top:6px;font-size:13px;line-height:1.6">{{t "acls.v0_17_0_note_body" | safeHTML}}</p>
+</div>
+{{end}}

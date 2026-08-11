@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress run when a new commit lands on the same ref
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go vet + test + build (linux/amd64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # CGO is required for github.com/mattn/go-sqlite3; GitHub runners
+      # ship gcc so we don't need an extra apt-get step.
+      CGO_ENABLED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: go mod download
+        run: go mod download
+
+      - name: go vet ./...
+        run: go vet ./...
+
+      - name: go test ./... (race + verbose)
+        run: go test -race -count=1 -v ./...
+
+      - name: go build ./... (sanity, no output)
+        run: go build ./...
+
+  # 2026-07-25: v0.28.6 — guarantee catalog (B1-B10 build-time).
+  # Runs the same catalog `make verify-pre` runs locally, so the
+  # local pre-push hook and CI can never disagree. B8 (smoke) is
+  # VM-only and is SKIPped automatically on this runner; B9
+  # (RELEASE-NOTES.md) and B10 (no secrets) catch the doc and
+  # hygiene regressions that go test would miss.
+  verify-pre:
+    name: v0.28.5 guarantee catalog B1-B10 (verify-pre)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run verify_pre_deploy.sh
+        # The script auto-skips B8 on hosts without /home/admin
+        # and is fully self-contained otherwise. Output is shown
+        # verbatim in the CI log so a red row stands out.
+        run: bash scripts/verify_pre_deploy.sh
+
+  audit:
+    name: static route audit (audit_routes.py)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run audit_routes.py
+        run: python3 scripts/audit_routes.py

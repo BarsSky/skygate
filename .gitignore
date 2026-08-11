@@ -1,0 +1,146 @@
+# ---- Build artifacts ----
+# Anchored to repo root so `cmd/skygate/` (the source dir) is NOT ignored.
+# Without the leading slash, `skygate` would match any path segment named
+# `skygate` — including the source tree.
+/skygate
+/skygate.new
+/skygate-*-linux-*
+*.exe
+
+# ---- Backups & patches ----
+*.bak
+*.bak.*
+*.bak-*
+*.orig
+*.rej
+*.tmp
+*.tar
+*.tar.*
+*.tgz
+
+# ---- Local-only state ----
+.env
+/data/
+/static/
+skygate.db
+*.log
+*.pid
+
+# ---- Dump/experimental scripts ----
+.sg_*.ps1
+# One-off investigation / verify / debug / cleanup scripts
+# (created during live ops, never intended to be committed).
+# They live in the working tree so `ls` and `grep` find them,
+# but `git add -A` and `git status` ignore them. If a script
+# graduates to "kept" status (used by smoke / docs / release
+# tooling), move it to scripts/ or deploy/ and re-add to
+# git explicitly.
+#
+# NOTE: scripts/verify_*.sh are the v0.28.5 guarantee catalog
+# (B1-B94 + R1-R35) and ARE committed — they're referenced by
+# `make verify-pre` / `make verify-post` in the Makefile. The
+# ignore patterns below deliberately only cover the ROOT-level
+# verify_* / check_* / etc. (created during debugging), not the
+# production ones under scripts/.
+check_*.sh
+test_*.sh
+copy_*.sh
+debug_*.sh
+/debug.sh
+debug.sh
+reset_*.sh
+fix_*.sh
+cleanup_*.sh
+deploy_*.sh
+run_*.sh
+wait_*.sh
+check_*.py
+check_*.ps1
+verify_*.py
+verify_*.ps1
+test_*.py
+test_*.ps1
+# Anything explicitly named "test_*" or "check_*" lives under
+# scripts/ in the repo (e.g. scripts/check_b91.sh,
+# scripts/test_check_https.py); root-level test_*.py / check_*.sh
+# is debugging scratch. The "scripts/check_*" and "scripts/test_*"
+# allowance is via the explicit `!` override below.
+!scripts/check_*.sh
+!scripts/test_*.sh
+sg_*.ps1
+sg_*.sh
+/sg_*.html
+/sg_*.txt
+
+# ---- v0.34.0 — additional debug/throwaway patterns ----
+# Root-level .bat files (operator's PowerShell release scripts
+# left over from deploys). Production deploy lives in deploy/.
+# Anchored to root with leading /.
+/*.bat
+# Root-level version-specific deploy scripts (deploy_v0.33.1.42.sh,
+# deploy_v33139_v2.sh, etc.). Canonical: deploy/deploy.sh.
+# (deploy_*.sh is already in the patterns above; this is for the
+# operator's `<vX.Y.Z>.sh` version-specific copies.)
+deploy_*-v*.sh
+deploy_*-v*.*.sh
+# Operator ad-hoc investigation scripts (state_check*.sh,
+# pull_and_verify*.sh, final_verify*.sh, r*_focused_*.sh).
+state_check*.sh
+pull_*.sh
+final_*.sh
+r*_focused_*.sh
+local_*.sh
+vm_*.sh
+db_*.sh
+full_*.sh
+healthz_*.sh
+i18n_*.sh
+tpl_*.sh
+find_*.sh
+desc_*.sh
+diff_check.sh
+do_*.sh
+b91_*.sh
+backfill_*.sh
+build_check*.sh
+create_release*.*
+# e2e_*.sh: pilot scripts. If one graduates to a regression test
+# (referenced in docs / used by smoke), move it to scripts/ and
+# re-add to git explicitly.
+e2e_*.sh
+encrypt_*.sh
+# Operator ad-hoc verify scripts at root.
+# Production: scripts/verify_*.sh.
+verify_*.sh
+verify_*.bat
+# Backup directories from the B91 / v0.33.1.39 deploy work.
+.backup_*/
+# Netscape cookie file left by `curl -c` during debug sessions.
+# Literal $CK_FILE — no var expansion in gitignore patterns.
+$CK_FILE
+# Curl cookie jars and other transient debugging state.
+*.cookie
+*.cookies
+
+# ---- Editor / OS ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ---- Backup output directory ----
+backup/
+
+# Hermes agent backup directories (do not commit)
+.hermes-*/
+
+# Tailscale authkey (read at runtime by entrypoint.sh if TS_AUTHKEY_FILE=...)
+# Created by `docker secret create` during local bring-up; never commit.
+secrets/
+/secrets/
+
+# v0.27.0: go-sqlite3 fallback когда SKYGATE_DB=postgres:// —
+# binary без pq driver создаёт фейковую SQLite с этим именем.
+# Если увидишь postgres:/ в git status — обнови бинарник (Phase 1.1)
+postgres:/

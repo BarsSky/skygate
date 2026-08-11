@@ -1,0 +1,69 @@
+# .dockerignore for skygate image build.
+#
+# We copy . (the build context) in the Dockerfile to find go.mod /
+# the source. Most operator-side files (data, backup, .git history
+# beyond what `git describe` needs) shouldn't be in the image
+# because they bloat the build context and slow down the COPY.
+#
+# 2026-07-31: v0.32.8 — created when we moved the Go build from
+# the runtime entrypoint into the Dockerfile.
+
+# Git: keep .git for `git describe` (build-time only). .git is NOT
+# included in the runtime image because the second `FROM alpine:3.20`
+# stage only COPYs the binary + entrypoint, not .git.
+!.git/HEAD
+!.git/refs
+!.git/packed-refs
+!.git/config
+.git/
+
+# Runtime data (bind-mounted, not part of the image).
+data/
+deploy/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Backup / temp / operator scratch.
+backup/
+*.log
+*.bak
+*.tmp
+.DS_Store
+
+# Local tooling that's not part of the build.
+.githooks/
+.github/workflows/   # CI config — not needed in the image
+scripts/diag_*.sh     # debug scripts
+scripts/_*.sh         # scratch helpers
+scripts/check_*.sh    # old guarantee scripts (deleted in v0.32.8)
+scripts/verify_*.ps1   # Windows-specific scratch
+scripts/audit_*.py    # route audit (local only)
+
+# The .gitignore'd root-level scratch files.
+check_*.sh
+check_*.py
+copy_*.sh
+debug_*.sh
+reset_*.sh
+fix_*.sh
+cleanup_*.sh
+deploy_*.sh
+run_*.sh
+wait_*.sh
+verify_*.py
+verify_*.ps1
+test_*.py
+test_*.ps1
+test_*.sh
+sg_*.ps1
+sg_*.sh
+sg_*.html
+sg_*.txt
+
+# IDE / editor.
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak

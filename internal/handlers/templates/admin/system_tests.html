@@ -1,0 +1,192 @@
+{{define "body-admin-system_tests"}}
+{{/* 2026-08-04: v0.33.0 — Admin Test Page.
+
+     Renders the TestRegistry as a grid + last 20 runs
+     from system_tests_runs as a history strip. Clicking
+     "Run all" re-runs the suite, persists the result, and
+     updates the page with live + history data.
+
+     Tests are in-process Go functions (5s timeout each).
+     The /admin/system_tests page is the operator's
+     single-pane "is everything OK?" view.
+*/}}
+
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashDNSAutoToggled}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> DNS-autoupdater {{.FlashDNSAutoToggled}}. Takes effect on the next autoupdate tick (≤ {{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}).</div>
+{{end}}
+
+{{/* 2026-08-06 v0.33.1.18 — DNS-autoupdater toggle. The v0.32.13
+     gate was wired to SKYGATE_AUTO_UPDATE_ENABLED (a flag meant
+     for the skygate self-update banner on /admin/update), which
+     meant an operator who turned off self-update in .env was
+     silently also turning off domain→/32 DNS refresh. After
+     v0.33.1.18 the two flags are separate. The state here is
+     DB-backed (global_settings.dns_autoupdate_enabled) and
+     overrides the env var on the next autoupdate tick. */}}
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div style="flex:1;min-width:280px">
+      <h3 style="margin:0"><i class="fa-solid fa-arrows-rotate"></i> {{t "title.dns_autoupdater"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        Background goroutine that re-resolves every enabled <code>target_type=domain</code> exit-rule
+        to its current <code>/32</code> IPs every <code>{{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}</code>.
+        <strong>{{t "dns_autoupdater.required"}}</strong>
+      </p>
+      <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:12px">
+        State:
+        {{if .DNSAutoUpdateEnabled}}
+          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> ENABLED</span>
+          &nbsp;(DB row in global_settings overrides env on next tick)
+        {{else}}
+          <span class="tag tag-warn"><i class="fa-solid fa-circle-pause"></i> DISABLED</span>
+          &nbsp;({{t "dns_autoupdater.rot_warning"}})
+        {{end}}
+      </p>
+    </div>
+    <form method="post" action="/admin/system_tests/dns-autoupdate-toggle" style="display:inline">
+      <input type="hidden" name="enabled" value="{{if .DNSAutoUpdateEnabled}}0{{else}}1{{end}}">
+      <button type="submit" class="btn {{if .DNSAutoUpdateEnabled}}btn-warn{{else}}btn-primary{{end}}">
+        {{if .DNSAutoUpdateEnabled}}
+          <i class="fa-solid fa-circle-pause"></i> Disable DNS autoupdater
+        {{else}}
+          <i class="fa-solid fa-circle-play"></i> Enable DNS autoupdater
+        {{end}}
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-vial"></i> {{t "title.admin_system_tests"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{len .Tests}} test(s). Each runs in-process, ≤ 5s timeout. Failures do not block other tests.
+      </p>
+    </div>
+    <form method="post" action="/admin/system_tests/run" style="display:inline">
+      <button type="submit" class="btn btn-primary">
+        <i class="fa-solid fa-play"></i> Run all
+      </button>
+    </form>
+  </div>
+
+  {{if .LiveResults}}
+  <h4 style="margin-top:24px">Live result ({{.LiveSummary.Pass}} pass, {{.LiveSummary.Fail}} fail, {{.LiveSummary.Skip}} skip · {{.LiveSummary.Duration}})</h4>
+  {{else if .LastResults}}
+  <h4 style="margin-top:24px">
+    {{t "system_tests.last_run_label"}}
+    <small style="color:var(--text-muted);font-weight:normal">
+      {{tf "system_tests.last_run_age" (humanizeAgeSeconds .LastRunAgeSec)}}
+      · {{.LastSummary.Pass}} <span class="text-pass">pass</span>,
+        {{.LastSummary.Fail}} <span class="text-fail">fail</span>,
+        {{.LastSummary.Skip}} <span class="text-skip">skip</span>
+      · run #{{.LastRunID}}
+    </small>
+  </h4>
+  {{else}}
+  <h4 style="margin-top:24px">{{t "system_tests.no_runs_yet"}}</h4>
+  <p style="color:var(--text-muted);margin:8px 0">{{t "system_tests.no_runs_help"}}</p>
+  {{end}}
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th style="width:60px"></th>
+        <th>Test</th>
+        <th>Category</th>
+        <th>Description</th>
+        <th>Output</th>
+        <th style="width:100px">Duration</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Tests}}
+      {{$testName := .Name}}
+      {{/* Pick the right slice: prefer LiveResults (POST) over LastResults (GET). */}}
+      {{$src := $.LastResults}}
+      {{if $.LiveResults}}{{$src = $.LiveResults}}{{end}}
+      {{$rowStatus := indexResultByName $src $testName}}
+      <tr{{if and (not $.LiveResults) $.LastResults}}{{if eq $rowStatus "fail"}} class="row-fail"{{end}}{{end}}>
+        <td>
+          {{if eq $rowStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="pass"></i>
+          {{else if eq $rowStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="fail"></i>
+          {{else if eq $rowStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="skip"></i>
+          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="no data"></i>{{end}}
+        </td>
+        <td><code>{{.Name}}</code></td>
+        <td><span class="badge badge-category">{{.Category}}</span></td>
+        <td>{{.Description}}</td>
+        <td>
+          {{if $src}}
+            {{range $src}}
+              {{if eq .Name $testName}}
+                <small><code>{{.Output}}</code></small>
+              {{end}}
+            {{end}}
+          {{end}}
+        </td>
+        <td>
+          {{if $src}}
+            {{range $src}}
+              {{if eq .Name $testName}}
+                <small>{{.Duration}}</small>
+              {{end}}
+            {{end}}
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+{{if .RecentRuns}}
+<div class="card">
+  <h4 style="margin-top:0"><i class="fa-solid fa-clock-rotate-left"></i> Recent runs (last 20)</h4>
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th>Started</th>
+        <th>Duration</th>
+        <th>Pass</th>
+        <th>Fail</th>
+        <th>Skip</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .RecentRuns}}
+      <tr>
+        <td><small>{{.StartedAt.Format "2006-01-02 15:04:05"}} UTC</small></td>
+        <td><small>{{.Duration}}</small></td>
+        <td><span class="badge-pass">{{.Pass}}</span></td>
+        <td>{{if gt .Fail 0}}<span class="badge-fail">{{.Fail}}</span>{{else}}<span class="badge-pass">0</span>{{end}}</td>
+        <td><small>{{.Skip}}</small></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+<style>
+  .badge-pass { background: #198754; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
+  .badge-fail { background: #dc3545; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
+  .badge-category { background: var(--bg-secondary); color: var(--text); padding: 2px 8px; border-radius: 3px; font-size: 0.75em; }
+  /* 2026-08-09 v0.33.1.26 — visual emphasis for FAIL rows
+     on initial page load. Pre-fix all rows looked identical
+     (gray circle + empty output) so the operator couldn't
+     tell which test was broken. Now: red-tinted row +
+     inline-color text in the header summary. */
+  tr.row-fail { background: rgba(220, 53, 69, 0.08); }
+  tr.row-fail td { border-left: 3px solid #dc3545; }
+  .text-pass { color: #198754; font-weight: 600; }
+  .text-fail { color: #dc3545; font-weight: 600; }
+  .text-skip { color: #6c757d; font-weight: 500; }
+</style>
+{{end}}

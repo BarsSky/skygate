@@ -1,0 +1,107 @@
+﻿{{define "body-admin-users"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-users"></i>{{t "users.title"}}</h2>
+    <div class="sub">{{t "users.subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/users/new" class="btn"><i class="fa-solid fa-user-plus"></i>{{t "users.add_btn"}}</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-check"></i>{{tf "users.active_count" (len .Users)}}</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:60px">ID</th>
+        <th>{{t "users.username"}}</th>
+        <th style="width:100px">{{t "users.headscale_id"}}</th>
+        <th style="width:80px">{{t "users.role"}}</th>
+        <th style="width:160px">{{t "user_subnet.column_header"}}</th>
+        <th style="width:160px">{{t "users.created"}}</th>
+        <th style="width:140px">{{t "common.actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Users}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td><code>{{.Username}}</code></td>
+        <td class="mono">{{if .HeadscaleUserID}}{{.HeadscaleUserID}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
+        <td>{{if .IsAdmin}}<span class="tag tag-admin"><i class="fa-solid fa-shield-halved"></i>{{t "users.admin_tag"}}</span>{{else}}<span style="color:var(--text-muted);font-size:12px"><i class="fa-solid fa-user"></i> {{t "users.user_tag"}}</span>{{end}}</td>
+        <td>
+          <a href="/admin/users/{{.ID}}/subnet" style="font-family:ui-monospace,monospace;font-size:12px">
+            {{if .SubnetCIDR}}<code>{{.SubnetCIDR}}</code> · {{if eq .SubnetStatus "router_active"}}<span class="tag tag-success" style="font-size:10px" title="{{t "user_subnet.status_pill_router_active_title"}}"><i class="fa-solid fa-tower-broadcast"></i> {{t "user_subnet.cell_router_active"}}</span>{{else if eq .SubnetStatus "active"}}<span class="tag tag-success" style="font-size:10px" title="{{t "user_subnet.status_pill_active_title"}}"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>{{else if eq .SubnetStatus "pending"}}<span class="tag tag-warning" style="font-size:10px" title="{{t "user_subnet.status_pill_pending_title"}}"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>{{else if eq .SubnetStatus "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6" title="{{t "user_subnet.status_pill_disabled_title"}}"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>{{else}}<span style="color:var(--text-subtle)">{{t "user_subnet.cell_none"}}</span>{{end}}{{else}}<span style="color:var(--text-subtle)">{{t "user_subnet.cell_none"}}</span>{{end}}
+          </a>
+        </td>
+        <td style="color:var(--text-muted)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        <td>
+          <details class="user-actions">
+            <summary class="btn btn-sm"><i class="fa-solid fa-ellipsis-vertical"></i></summary>
+            <div class="user-actions-menu">
+              <a href="/admin/users/{{.ID}}/subnet" class="btn btn-sm" style="display:inline-flex;align-items:center;gap:4px"><i class="fa-solid fa-network-wired"></i> {{t "user_subnet.open_button"}}</a>
+              <form method="post" action="/admin/users/{{.ID}}/reset-password" class="user-reset-form" onsubmit="return confirm('{{tf "users.reset_confirm" .Username}}')">
+                <input type="password" name="new_password" required minlength="6" placeholder="{{t "users.reset_password_placeholder"}}" class="ufg-input-sm">
+                <button type="submit" class="btn btn-sm" title="{{t "users.reset_password"}}"><i class="fa-solid fa-key"></i> {{t "users.reset_password"}}</button>
+              </form>
+              <form method="post" action="/admin/users/{{.ID}}/delete" onsubmit="return confirm('{{tf "users.delete_confirm" .Username}}')">
+                <button type="submit" class="btn btn-danger btn-sm" title="{{t "common.delete"}}"><i class="fa-solid fa-trash"></i> {{t "common.delete"}}</button>
+              </form>
+            </div>
+          </details>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="7" style="color:var(--text-muted);text-align:center;padding:24px">{{t "users.empty"}}</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+{{if .HSOrphans}}
+<div class="card" style="border-color:var(--warning)">
+  <h3><i class="fa-solid fa-user-slash" style="color:var(--warning)"></i>{{tf "users.hs_orphans" (len .HSOrphans)}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
+    <span>{{t "users.hs_orphans_desc"}}</span>
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:100px">{{t "users.hs_id"}}</th>
+        <th>{{t "users.username"}}</th>
+        <th style="width:160px">{{t "users.created"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .HSOrphans}}
+      <tr>
+        <td class="mono">{{.HeadscaleID}}</td>
+        <td><code>{{.Username}}</code></td>
+        <td style="color:var(--text-muted)">{{.CreatedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-plus"></i>{{t "users.add"}}</h3>
+  <form method="post" action="/admin/users" class="user-form-grid">
+    <label class="ufg-field">
+      <div class="ufg-label"><i class="fa-solid fa-user"></i> {{t "users.username"}}</div>
+      <input name="username" required pattern="[a-z0-9_-]+" placeholder="{{t "users.username_placeholder"}}" class="ufg-input">
+    </label>
+    <label class="ufg-field">
+      <div class="ufg-label"><i class="fa-solid fa-lock"></i> {{t "users.password"}}</div>
+      <input name="password" required minlength="6" type="password" class="ufg-input">
+    </label>
+    <button type="submit" class="btn ufg-btn"><i class="fa-solid fa-plus"></i>{{t "users.create"}}</button>
+  </form>
+  <label style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;color:var(--text-muted);cursor:pointer">
+    <input type="checkbox" name="is_admin"> {{t "users.make_admin"}}
+  </label>
+</div>
+{{end}}

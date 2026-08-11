@@ -1,0 +1,118 @@
+{{define "body-admin-services"}}
+{{/* 2026-08-10: v0.33.1.40 B92 — Integration status page.
+     Shows the live status of the integrations skygate depends on
+     but does not own: headscale (gRPC API + health endpoint),
+     headplane (web UI), and the local Tailscale node. The status
+     is refreshed every 30s by a background goroutine in
+     internal/feature/healthz/availability.go. The page auto-
+     refreshes every 30s via meta refresh — operator-friendly
+     "is everything up?" view.
+
+     Layout: a card per integration, with status badge + URL +
+     last-checked + latency + error if any. The data is read
+     from the cached snapshot (no live HTTP probe on page load —
+     /readyz is the live endpoint; this page is for human eyes). */}}
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-heart-pulse"></i> {{t "title.admin_services"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{t "services.subtitle"}}
+      </p>
+    </div>
+    <div style="color:var(--text-muted);font-size:12px;text-align:right">
+      <div>{{t "services.check_interval"}}: <strong>{{.CheckIntervalSec}}s</strong></div>
+      <div>{{t "services.snapshot_generated"}}: <strong>{{.GeneratedAt}}</strong></div>
+    </div>
+  </div>
+
+  {{if .AllOK}}
+  <div class="alert alert-success" style="margin-top:16px">
+    <i class="fa-solid fa-circle-check"></i>
+    {{t "services.all_ok"}}
+  </div>
+  {{else}}
+  <div class="alert alert-warning" style="margin-top:16px">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    {{t "services.some_down"}}
+  </div>
+  {{end}}
+
+  <div style="margin-top:16px;display:grid;grid-template-columns:1fr;gap:12px">
+    {{range .Integrations}}
+    <div style="padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-weight:600;font-size:16px">
+            {{if .OK}}
+              <span style="color:var(--green)"><i class="fa-solid fa-circle-check"></i></span>
+            {{else if .IsZero}}
+              <span style="color:var(--text-muted)"><i class="fa-solid fa-circle-question"></i></span>
+            {{else}}
+              <span style="color:var(--red)"><i class="fa-solid fa-circle-xmark"></i></span>
+            {{end}}
+            {{.Label}}
+          </div>
+          <div style="color:var(--text-muted);font-size:12px;margin-top:4px">
+            {{if .URL}}
+              <code>{{.URL}}</code>
+            {{else}}
+              <em>{{t "services.url_local"}}</em>
+            {{end}}
+          </div>
+        </div>
+        <div style="text-align:right">
+          {{if .OK}}
+            <span class="badge badge-green">{{t "services.status_ok"}}</span>
+          {{else if .IsZero}}
+            <span class="badge badge-gray">{{t "services.status_not_configured"}}</span>
+          {{else}}
+            <span class="badge badge-red">{{t "services.status_down"}}</span>
+          {{end}}
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:12px;font-size:13px">
+        <div>
+          <div style="color:var(--text-muted);font-size:11px">{{t "services.last_checked"}}</div>
+          <div>{{.LastCheckedDisplay}}</div>
+        </div>
+        <div>
+          <div style="color:var(--text-muted);font-size:11px">{{t "services.latency"}}</div>
+          <div>{{.LatencyDisplay}}</div>
+        </div>
+        <div>
+          <div style="color:var(--text-muted);font-size:11px">{{t "services.detail"}}</div>
+          <div><code>{{.DetailDisplay}}</code></div>
+        </div>
+        {{if .Error}}
+        <div>
+          <div style="color:var(--text-muted);font-size:11px">{{t "services.error"}}</div>
+          <div style="color:var(--red)"><code>{{.Error}}</code></div>
+        </div>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+
+  <div style="margin-top:16px;color:var(--text-muted);font-size:12px">
+    <i class="fa-solid fa-arrows-rotate"></i>
+    {{t "services.auto_refresh"}}
+  </div>
+</div>
+
+{{/* 30s meta refresh — matches the checker interval so the
+     operator sees near-real-time status without manual reload.
+     The page is read-only (no forms), so a full reload is
+     safe and matches operator mental model. */}}
+<meta http-equiv="refresh" content="30">
+{{end}}

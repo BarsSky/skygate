@@ -1,0 +1,79 @@
+﻿{{define "body-admin-audit"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-clipboard-list"></i>{{t "audit.title"}}</h2>
+    <div class="sub">
+      {{t "audit.subtitle"}}: {{len .Entries}}
+      {{if .FilterActive}}<span style="color:var(--accent)"> ({{t "audit.filter_action"}})</span>{{end}}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-filter"></i>{{t "common.search"}}</h3>
+  <form method="get" action="/admin/audit" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+    <div>
+      <label for="action" style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">
+        <i class="fa-solid fa-bolt"></i> {{t "audit.col_action"}}
+      </label>
+      <select name="action" id="action" style="min-width:200px;padding:6px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px">
+        <option value="">— {{t "audit.all_actions"}} —</option>
+        {{range .Actions}}
+        <option value="{{.}}" {{if eq . $.ActionFilter}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </div>
+    <div>
+      <label for="user" style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">
+        <i class="fa-solid fa-user"></i> {{t "audit.col_user"}}
+      </label>
+      <input type="text" name="user" id="user" value="{{.UserFilter}}"
+             placeholder="alice, telegram, ..."
+             style="min-width:180px;padding:6px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px">
+    </div>
+    <div>
+      <button type="submit" class="btn" style="padding:6px 14px">
+        <i class="fa-solid fa-magnifying-glass"></i> {{t "common.search"}}
+      </button>
+    </div>
+    {{if .FilterActive}}
+    <div>
+      <a href="/admin/audit" class="btn" style="background:var(--bg-input);padding:6px 14px;text-decoration:none">
+        <i class="fa-solid fa-xmark"></i> {{t "common.refresh"}}
+      </a>
+    </div>
+    {{end}}
+  </form>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i>{{t "audit.col_action"}}</h3>
+  {{if .Entries}}
+  <table>
+    <thead>
+      <tr>
+        <th style="width:160px"><i class="fa-solid fa-clock"></i> {{t "audit.col_time"}}</th>
+        <th style="width:140px"><i class="fa-solid fa-user"></i> {{t "audit.col_user"}}</th>
+        <th style="width:160px"><i class="fa-solid fa-bolt"></i> {{t "audit.col_action"}}</th>
+        <th><i class="fa-solid fa-message"></i> {{t "audit.col_detail"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Entries}}
+      <tr>
+        <td class="mono" style="color:var(--text-muted)">{{.Time}}</td>
+        <td>{{.Username}}</td>
+        <td><code>{{.Action}}</code></td>
+        <td style="color:var(--text-muted)">{{.Detail}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>{{t "audit.empty"}}.</div>
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,131 @@
+#!/bin/bash
+# scripts/headscale-push-acl.sh — push a fresh per-user ACL to headscale.
+# Used to fix the Tailscale Android "all nodes visible" bug.
+#
+# Builds a policy with:
+#   - per-user rules (user@... → user@...:*)
+#   - tag:public / tag:exit-node visible to all
+#   - internet egress (last *:*)
+#   - tagOwners: all portal users own tag:private
+#   - groups: one per portal user
+#   - SSH rule kept from current policy
+#
+# Usage:
+#   bash scripts/headscale-push-acl.sh
+#
+# Reads HEADSCALE_API_KEY from /home/admin/skygate/.env.
+
+set -e
+
+#!/bin/bash
+set -e
+KEY=$(grep -oP 'HEADSCALE_API_KEY=\K[^\s\n]+' /home/admin/skygate/.env)
+[ -z "$KEY" ] && { echo "no key"; exit 1; }
+echo "key prefix: ${KEY:0:12}..."
+
+# Save python script (no interpolation issues)
+cat > /tmp/do_push.py <<'PYTHON'
+import sys, json, re, urllib.request
+
+K = sys.stdin.read().strip()
+def req(method, path, data=None):
+    h = {"Authorization": "Bearer " + K, "Content-Type": "application/json"}
+    body = json.dumps(data).encode() if data is not None else None
+    r = urllib.request.Request("http://localhost:50444" + path, data=body, headers=h, method=method)
+    return json.loads(urllib.request.urlopen(r).read().decode(), strict=False)
+
+raw = req("GET", "/api/v1/policy")["policy"]
+fixed = re.sub(r",(\s*[}\]])", r"\1", raw)
+current = json.loads(fixed, strict=False)
+print("current tagOwners:", current.get("tagOwners"))
+
+users = req("GET", "/api/v1/user")["users"]
+user_emails = [u["name"] + "@tsnet.example.com" for u in users]
+print("users:", user_emails)
+
+# Tag-based ACL: every portal user can reach their own user@...:* devices
+# (legacy, for non-tagged devices) plus every tag:private, tag:public,
+# and tag:exit-node device.
+#
+# Why 16 rules: 4 per-user user@...:* + 4 users * 3 tag types (private,
+# public, exit-node). With "*" src as a wildcard the Tailscale Android
+# client shows every node to every user, which is what we want to avoid.
+# With explicit per-user src we let Tailscale filter the node list
+# according to each user.
+#
+# Trade-off: tag:private is shared between all users, so user1/user3/
+# user2 can see other users' private devices in their Tailscale UI.
+# The proper fix is per-user-private tags (tag:admin, tag:user1, ...)
+# which would require re-tagging every node. For now the simpler model
+# keeps the UI populated.
+# Catch-all egress rules. Required for exit-node traffic: the user's
+# Tailscale client checks the ACL for the actual destination (0.0.0.0/0,
+# ::/0) before forwarding via the exit node. Without these, the client
+# drops exit-node traffic at the ACL check, even though the exit node
+# itself is reachable.
+#
+# Trade-off: the f0881e2 commit removed the catch-all to avoid the
+# "Tailscale Android all devices visible" bug. We re-add it (in explicit
+# subnet-route form rather than "*:*") because exit-node functionality
+# is the core feature of the public exit nodes. If Android UI filtering
+# becomes critical, the proper fix is per-user-private tags
+# (tag:admin, tag:user1, ...) — bigger refactor.
+new_acls = [
+    {"action": "accept", "src": ["*"], "dst": ["0.0.0.0/0:*"]},
+    {"action": "accept", "src": ["*"], "dst": ["::/0:*"]},
+]
+for ue in user_emails:
+    new_acls.append({"action": "accept", "src": [ue], "dst": [ue + ":*"]})
+    new_acls.append({"action": "accept", "src": [ue], "dst": ["tag:private:*"]})
+# tag:public and tag:exit-node are SHARED INFRASTRUCTURE — they must be
+# reachable from any Tailscale client, not only portal users. This matches
+# the original (pre-1386449) design and fixes the regression where exit
+# nodes became invisible to non-portal Tailscale clients.
+new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:public:*"]})
+new_acls.append({"action": "accept", "src": ["*"], "dst": ["tag:exit-node:*"]})
+
+new_tag_owners = {
+    "tag:public": ["admin@tsnet.example.com"],
+    "tag:exit-node": ["admin@tsnet.example.com"],
+    "tag:client": ["admin@tsnet.example.com"],
+    "tag:private": user_emails,
+}
+new_groups = {}
+for ue in user_emails:
+    gname = "group:" + ue.split(chr(64))[0]
+    new_groups[gname] = [ue]
+
+new_ssh = current.get("ssh", [])
+if not new_ssh:
+    new_ssh = [
+        {
+            "action": "accept",
+            "src": ["tag:private", "admin@tsnet.example.com"],
+            "dst": ["tag:exit-node"],
+            "users": ["root"],
+        }
+    ]
+
+new_policy = {
+    "acls": new_acls,
+    "tagOwners": new_tag_owners,
+    "groups": new_groups,
+    "ssh": new_ssh,
+}
+print("new policy size:", len(json.dumps(new_policy)))
+
+result = req("PUT", "/api/v1/policy", {"policy": json.dumps(new_policy)})
+print("PUT result:", result)
+
+raw2 = req("GET", "/api/v1/policy")["policy"]
+fixed2 = re.sub(r",(\s*[}\]])", r"\1", raw2)
+new = json.loads(fixed2, strict=False)
+print("NEW tagOwners:", new.get("tagOwners"))
+print("NEW groups keys:", list(new.get("groups", {}).keys()))
+print("NEW acls count:", len(new.get("acls", [])))
+PYTHON
+
+chmod 666 /tmp/do_push.py
+head -3 /tmp/do_push.py
+
+echo "$KEY" | python3 /tmp/do_push.py

@@ -1,0 +1,368 @@
+services:
+  # 2026-07-14: Этап 14 v2 — Tailscale in-image (no sidecar).
+  #
+  # The skygate container runs tailscaled in its own network
+  # namespace and joins the tailnet with `tailscale up --accept-routes`.
+  # The relay (a separate node, e.g. relay-1) advertises the Telegram
+  # IP ranges as subnet routes; skygate accepts them, so
+  # api.telegram.org traffic flows through the relay while
+  # headscale (which is on the tailnet) stays direct.
+  #
+  # Required capabilities for the in-image tailscaled:
+  #   - NET_ADMIN: manipulate routing tables / iptables
+  #   - SYS_ADMIN: mount /dev/net/tun (some kernels also need this)
+  #   - /dev/net/tun: the TUN device tailscale0 lives on
+  #
+  # To disable Tailscale entirely (non-RF deployments, testing,
+  # local dev), just remove the TS_AUTHKEY_FILE env var and the
+  # secrets: mount — the entrypoint will skip tailscaled and
+  # skygate will use direct internet.
+  skygate:
+    build:
+      context: .
+      # 2026-07-31: v0.32.8 — pass the version label to the
+      # Dockerfile so the prebuilt binary carries the right
+      # GIT_VER / GIT_COMMIT / BUILD_TIME values. Without
+      # these the build would fall back to "dev"/"unknown"
+      # (the Dockerfile's default ARGs) and /healthz would
+      # report the wrong version. The rebuild_deploy.sh script
+      # populates these from `git describe --tags --always` and
+      # `git rev-parse --short HEAD` so deploy + tag stay in sync.
+      args:
+        GIT_VER: "${SKYGATE_GIT_VER:-dev}"
+        GIT_COMMIT: "${SKYGATE_GIT_COMMIT:-unknown}"
+        BUILD_TIME: "${SKYGATE_BUILD_TIME:-unknown}"
+    # v0.29.2: no `container_name: skygate` — let compose auto-name
+    # the container (`skygate-skygate-1` etc.). The previous
+    # explicit name caused a race with `docker compose up
+    # --force-recreate` (the old container's name wasn't
+    # always released before compose tried to create the new
+    # one, leaving it in `Created` state). Scripts that need
+    # to address the container (docker exec / docker logs /
+    # docker stop) use the `skygate` wrapper from
+    # `deploy/skygate-cli.sh` (installed on the host as
+    # /usr/local/bin/skygate) which does a label-based
+    # lookup and never sees the auto-generated name.
+    env_file:
+      - .env
+    # 2026-08-10: v0.33.1.39 B91 follow-up — use the bind-mounted
+    # entrypoint.sh from /app/entrypoint.sh, not the baked-in
+    # /entrypoint.sh from the image. The bind mount is set up by
+    # the volume block below (the repo dir is mounted at /app),
+    # and the B91 pre-flight wait + B86 LOGIN_SERVER fallback +
+    # B82 entrypoint changes only land in the source tree, not
+    # in the image (the image's /entrypoint.sh is a snapshot from
+    # the LAST `docker compose build` and only refreshes when the
+    # operator runs `docker compose build` explicitly). With this
+    # override, `docker compose up -d --force-recreate --no-deps
+    # skygate` always picks up the latest entrypoint.sh from the
+    # bind-mount, so the new B91 pre-flight wait runs on every
+    # restart, not just on full image rebuilds.
+    entrypoint: /app/entrypoint.sh
+    environment:
+      - SKYGATE_DB=/data/skygate.db
+      # 2026-08-03: v0.32.15 — Tailscale is OPTIONAL and
+      # disabled by default. To re-enable: set
+      # TS_AUTHKEY_FILE=/run/secrets/ts_authkey + add the
+      # secrets: mount back in. Pre-v0.32.15 the entrypoint
+      # would HANG indefinitely on a 0-byte authkey file
+      # (secrets/ts_authkey was committed empty in 2021 and
+      # never updated). The hung entrypoint kept the
+      # container in "Starting" state, port 8080 never
+      # bound, /healthz 000 forever, no log of the hang
+      # (entrypoint was buffering stdout to TTY). The fix:
+      # omit the env var + omit the secret mount. The
+      # entrypoint's existing `[ -n "$TS_AUTHKEY_FILE" ]
+      # && [ -f ... ]` check now correctly short-circuits
+      # to "Tailscale skipped (non-RF mode)" and the runtime
+      # build proceeds to exec /app/skygate immediately.
+      # If the operator later wants Tailscale back, they
+      # need to:
+      #   1. Provision a real authkey (e.g. via headscale
+      #      `headscale preauthkeys create`)
+      #   2. Write it to secrets/ts_authkey on the host
+      #   3. Re-add the env var + secrets: mount here
+      - SKYGATE_TS_AUTHKEY_FILE=/run/secrets/ts_authkey
+      # 2026-08-06: v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER now
+      # comes from .env (via env_file) instead of a hardcoded
+      # placeholder. Pre-v0.33.1.16 the hardcoded value here
+      # OVERRODE the .env value (docker-compose precedence:
+      # environment > env_file), so the operator's edit on
+      # /admin/tailscale was never picked up by the entrypoint.
+      # The new /admin/tailscale restart button writes the
+      # current effective value back to .env, then restarts
+      # the container. The COMPOSE_PROJECT_NAME + SKYGATE_HOST_REPO_PATH
+      # overrides below are kept (they were intentionally
+      # hardcoded to keep the in-container auto-updater in sync
+      # with the host-side compose; the operator shouldn't change
+      # them via .env). Tailnet hostname stays hardcoded too
+      # (a single skygate host = a single tailnet identity).
+      - SKYGATE_TS_HOSTNAME=skygate-host-1
+      # 2026-07-27: v0.29.0 — pin the docker compose project name
+      # so the auto-updater (which runs `docker compose` from inside
+      # the container, where the bind-mount of the source dir is
+      # at /app) uses the same project name as the host's host-side
+      # compose (which sees the source dir as /home/operator/skygate).
+      # Without this, basename(/app) = "app" while
+      # basename(/home/operator/skygate) = "skygate", and the
+      # named volume `skygate-data` is labelled with the original
+      # project name on first creation — so the in-container
+      # `docker compose up` would refuse to use it ("volume
+      # skygate-data already exists but was created for project
+      # skygate (expected app). Use external: true").
+      - COMPOSE_PROJECT_NAME=skygate
+      # 2026-07-27: v0.29.0 — host-side repo path. The auto-updater
+      # (running INSIDE the skygate container) needs to pass the
+      # operator's actual host path to docker compose for bind-mount
+      # sources, because the docker daemon runs on the HOST and
+      # resolves bind-mount paths as host paths — `/app/...` from
+      # the container's perspective becomes `/app/...` from the
+      # daemon's perspective too, and `/app` doesn't exist on the
+      # host. Setting this env var to the host-side path
+      # (default /home/operator/skygate) lets the `${VAR:-...}`
+      # substitutions in the volumes + secrets sections below
+      # resolve to a path the daemon can actually mount.
+      # Override via the operator's .env file or the host shell
+      # for non-standard layouts.
+      #
+      # 2026-08-09 v0.33.1.28: use `${VAR:-default}` syntax
+      # instead of a HARDCODED value. Pre-fix, the environment
+      # block's HARDCODED value ALWAYS won over .env (docker
+      # compose precedence: environment > env_file), so the
+      # operator's SKYGATE_HOST_REPO_PATH in .env was ignored.
+      # On a VM where the actual path differs from the
+      # default (e.g. /home/skyadmin/skygate on this VM vs
+      # the production default /home/operator/skygate), the
+      # in-container auto-updater's swap helper looked for
+      # docker-compose.yml at the WRONG path, the helper
+      # container's docker compose up failed with
+      # "no configuration file provided: not found", and
+      # the orchestrator reported "update complete" because
+      # the OLD container's healthz still returned 200.
+      # Result: every deploy via the web-UI was a silent no-op
+      # (manual docker compose up -d --force-recreate
+      # --no-deps skygate was required to actually swap).
+      # The `${VAR:-default}` form lets the .env value win
+      # when set, and falls back to the production default
+      # otherwise. Same precedence rules as the volumes +
+      # secrets sections below (which already use the
+      # `${...:-...}` form).
+      - SKYGATE_HOST_REPO_PATH=${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}
+    volumes:
+      # Bind-mount source code - any change is picked up on container restart.
+      # Uses ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate} (NOT `./`)
+      # so the in-container orchestrator's `docker compose` resolves
+      # to a path the host docker daemon can actually mount.
+      # See the SKYGATE_HOST_REPO_PATH env var above for the full
+      # rationale.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/:/app
+      # Named volume for DB only
+      - skygate-data:/data
+      # docker.sock to call headscale CLI for preauth keys
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Tailscale state dir. Persists across container restarts so we
+      # don't re-auth on every `docker compose restart`. The
+      # tailscaled.state file holds the node key; losing it forces
+      # a re-auth (and a new preauth key from headscale).
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ts:/var/lib/tailscale
+      # Bind-mount the control socket path so tailscale CLI can
+      # talk to tailscaled. Not strictly required (tailscale finds
+      # the socket via /var/run/tailscale), but explicit.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ts/run:/var/run/tailscale
+      # 2026-07-21: v0.23.0 Phase 1 — per-user headscale provisioning
+      # scripts. The skygate process runs these via os/exec to
+      # create/teardown per-user headscale containers. The scripts
+      # are pure bash and need docker access (which skygate already
+      # has via the docker.sock mount above) plus write access to
+      # the per-user directory under /home/admin/headscale/users/.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-bootstrap.sh:/usr/local/bin/headscale-bootstrap.sh:ro
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
+      - /home/admin/headscale:/home/admin/headscale
+      # 2026-08-04 v0.33.1: SSH key for the `tailscale set --advertise-routes=`
+      # step in SyncAdvertisedRoutes. The pre-v0.33.1 code hard-coded
+      # `-F /home/admin/.ssh/config` (the legacy operator's home) which
+      # doesn't exist in the dockerised skygate — the SSH call silently
+      # failed and the operator saw "ok approved=N" while the actual
+      # tailscaled on the relay was never re-configured. Mounting the
+      # SSH dir at /ssh-sync (read-only) gives the process a stable,
+      # inspectable path; per-exit-node overrides in exit_servers.ssh_key_path
+      # still win when set. The path is configurable via
+      # SKYGATE_EXIT_SSH_KEY (already wired into Config.SSHKeyPath).
+      - ${SKYGATE_SSH_DIR:-${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ssh-sync}:/ssh-sync:ro
+    secrets:
+      # short form — just reference the top-level definition below.
+      # The `file:` path is configured at top-level so we can use
+      # ${SKYGATE_HOST_REPO_PATH:-...} for the host-side path.
+      - ts_authkey
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
+    # 2026-07-30: v0.32.4 — stop_grace_period + healthcheck.
+    # The DB corruption on 2026-07-30 was traced to docker
+    # compose --force-recreate sending SIGKILL after the
+    # default 10s grace period, before SQLite could flush
+    # its WAL. The autoupdate's per-tick write to
+    # exit_rule_logs would then leave btree pages in an
+    # inconsistent state. 30s + a /healthz-based healthcheck
+    # means docker waits for the container to actually
+    # drain (Go's db.Close flushes the WAL) before sending
+    # SIGKILL. The healthcheck also blocks the new
+    # container from starting until the old one is fully
+    # stopped, preventing the two from racing on the same
+    # skygate.db file.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    # 2026-07-15: v0.15.0 — when the Caddy sidecar handles
+    # TLS, the :8080 listener doesn't need to be on the
+    # host's public interface. We still keep the bind
+    # (Caddy forwards here) but the operator can opt to
+    # remove the ports line below if they only want
+    # Caddy to expose the dashboard. Leaving it bound
+    # is the safer default (allows `curl localhost:8080`
+    # from the host for ad-hoc debugging).
+    ports:
+      - "8080:8080"
+    networks:
+      - skygate-net
+    # 2026-08-10: v0.33.1.39 B91 — skygate starts INDEPENDENTLY
+    # of headscale and headplane. The whole point of this
+    # restart policy is to recover from any single-service
+    # outage: if skygate crashes (OOM, DB lock, panic) docker
+    # brings it back without operator intervention, even if
+    # headscale is still booting after a VM reboot.
+    #
+    # We intentionally do NOT have `depends_on: headscale`
+    # here. Architectural principle: skygate is the
+    # control-plane front-end; headscale is the data-plane
+    # back-end. The admin configures HEADSCALE_URL via .env
+    # (or the /admin/headscale web UI at runtime). If
+    # skygate had a hard depends_on: headscale with
+    # `condition: service_healthy`, the admin couldn't fix a
+    # wrong HEADSCALE_URL — skygate would never come up, so
+    # the admin couldn't even open /admin/headscale to point
+    # it at the right headscale. The current loose coupling
+    # means: skygate comes up, /readyz returns 503 until
+    # headscale is reachable, but /admin/headscale and the
+    # auth flow are already working — the admin can fix the
+    # URL and the next poll recovers.
+    #
+    # Pre-v0.33.1.39 the entrypoint had NO pre-flight wait
+    # for headscale either, so on a cold reboot skygate
+    # logged 25s of "headscale unreachable" errors before
+    # headscale came up. The B91 fix adds a 60s non-blocking
+    # pre-flight wait in entrypoint.sh; on a healthy system
+    # headscale answers in 5-10s and skygate starts cleanly.
+    restart: unless-stopped
+
+  # 2026-07-15: v0.15.0 — Caddy sidecar.
+  # TLS-terminating reverse proxy for all public-facing
+  # modules. Auto-issues Let's Encrypt certs via DNS-01
+  # (no port-80 inbound required; works on private subnets).
+  # Per-hostname routing in the rendered Caddyfile
+  # (deploy/templates/Caddyfile.tmpl): head.* routes to
+  # skygate+headscale, headplane.* to headplane, derp.* to
+  # the derper container.
+  #
+  # 2026-07-31: v0.32.11 — Caddy is OFF by default. The
+  # service is gated behind `profiles: ["caddy"]` so a
+  # plain `docker compose up -d` does NOT start it. The
+  # operator opts in by setting `CADDY_ENABLED=true` in
+  # .env, which makes deploy.sh call
+  #   docker compose --profile caddy up -d
+  # Why off by default: most operators run an external
+  # TLS terminator (NPM, Cloudflare Tunnel, Caddy on a
+  # separate VM, Tailscale TLS, …) and the in-container
+  # caddy on 80/443 then races for those ports and
+  # silently breaks the public site when its placeholder
+  # Caddyfile can't issue certs (see the 2026-07-31
+  # skygate.example.com incident). To run caddy, also set
+  # CADDY_HOSTS_HEAD=your.domain and either
+  # CADDY_DNS_PROVIDER=cloudflare (with
+  # CADDY_DNS_API_TOKEN_FILE pointing at a real token) or
+  # CADDY_DNS_PROVIDER=http (port 80 must be reachable).
+  # See docs/https-setup.md § "Caddy is off by default"
+  # for the full migration / opt-in procedure.
+  caddy:
+    profiles: ["caddy"]
+    # 2026-07-31: v0.32.10 — switch from `image: caddy:2-alpine`
+    # to a custom build (Dockerfile.caddy) that bakes in the
+    # caddy-dns-cloudflare plugin. The standard caddy:2-alpine
+    # image doesn't include the cloudflare DNS provider
+    # (`module not registered: dns.providers.cloudflare`), so
+    # the v0.15.0 Caddyfile's `tls { dns cloudflare }` block
+    # caused caddy to crash-loop on start. Operators who
+    # switch back to `CADDY_DNS_PROVIDER=http` can revert
+    # this to `image: caddy:2-alpine` (HTTP-01 needs no DNS
+    # plugin).
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    # v0.29.2: no `container_name: caddy` (same race avoidance
+    # as the skygate service above; `caddy` is in the same
+    # compose file so a stale `caddy` would also block
+    # recreate).
+    restart: unless-stopped
+    # :80 is the HTTP-01 challenge port; :443 is the
+    # HTTPS port. Operators behind Cloudflare should
+    # also enable proxy (orange cloud) so Caddy sees
+    # the real client IP.
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Rendered Caddyfile (deploy.sh writes this).
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Cert + ACME account state. Caddy stores certs
+      # under /data by default; persisting this on the
+      # host means the next start doesn't re-issue.
+      - caddy-data:/data
+      # ACME account config (Caddy writes this on first
+      # ACME registration; persisting means the rate
+      # limit on Let's Encrypt isn't hit on every
+      # restart).
+      - caddy-config:/config
+    # 2026-07-15: v0.15.0 — env_file. The deploy
+    # script writes a Caddy-specific .env with the
+    # DNS-01 API token (and only the token — the
+    # operator's main .env, which is often committed
+    # to git, is not touched). The rendered Caddyfile
+    # references the token via env.CADDY_DNS_TOKEN_VALUE.
+    env_file:
+      - ./caddy/caddy.env
+    networks:
+      - skygate-net
+    depends_on:
+      - skygate
+
+networks:
+  skygate-net:
+    name: headscale_default
+    external: true
+
+volumes:
+  skygate-data:
+    name: skygate-data
+  caddy-data:
+    name: caddy-data
+  caddy-config:
+    name: caddy-config
+
+secrets:
+  # Top-level secret definition. The `file:` is a HOST path
+  # the docker daemon will read when injecting the secret
+  # into the skygate container. Using ${SKYGATE_HOST_REPO_PATH:-...}
+  # ensures the in-container orchestrator's `docker compose` calls
+  # (which inherit this path through COMPOSE_PROJECT_NAME + the
+  # ${VAR:-default} substitution) resolve to a path the host
+  # daemon can actually open. Default /home/operator/skygate
+  # is a generic placeholder — operators set
+  # SKYGATE_HOST_REPO_PATH in .env to their real layout.
+  ts_authkey:
+    file: ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/secrets/ts_authkey

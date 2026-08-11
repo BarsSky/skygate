@@ -1,0 +1,102 @@
+#!/bin/bash
+# .githooks/pre-push — local gate for `git push`.
+#
+# Runs the FULL v0.28.5+ guarantee catalog (B1-B76+ — see
+# scripts/verify_pre_deploy.sh) before allowing the push.
+# If any check fails, the push is aborted.
+#
+# The early comment said "B1-B10" but the hook always ran
+# the full catalog (the grep-based checks are cheap, the
+# expensive part is `go test ./...` ~60-90s on Windows).
+# v0.33.1.25 (2026-08-09): corrected the comment to match
+# the actual behavior so future readers don't waste time
+# wondering why the catalog is broader than the docstring
+# claims.
+#
+# Enable:
+#   git config core.hooksPath .githooks
+#
+# Disable for one push (e.g. you have a reason):
+#   git push --no-verify
+#
+# Cross-platform: pure bash. Works on Linux, macOS, and Windows
+# (Git Bash / WSL2). Looks for `go` in the same places the
+# verify_pre_deploy.sh script does, so this hook and the script
+# can never disagree about the toolchain.
+#
+# 2026-07-25: v0.28.6 — first cut.
+# 2026-08-09: v0.33.1.25 — corrected header comment (B1-B10 → B1-B76+).
+
+set -u
+
+# 1. Locate go (mirror the search in scripts/verify_pre_deploy.sh)
+GO=""
+if command -v go >/dev/null 2>&1; then
+  GO="go"
+else
+  for cand in \
+    "/c/Program Files/Go/bin/go.exe" \
+    "/mnt/c/Program Files/Go/bin/go.exe" \
+    "/usr/local/go/bin/go" \
+    "/usr/lib/go/bin/go" \
+    "/opt/go/bin/go"; do
+    if [ -x "$cand" ]; then GO="$cand"; break; fi
+  done
+fi
+if [ -z "$GO" ]; then
+  echo "pre-push: go not found — install Go or set PATH" >&2
+  echo "pre-push: skipping guarantee catalog (push will proceed)" >&2
+  exit 0
+fi
+
+# 2. Find repo root (parent of .githooks/). The hook script lives
+# in .githooks/pre-push; its parent is the repo root.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# 3. Auto-detect the bash mount root for the Windows tests that
+# need to translate C:/foo/bar → /<drive>/foo/bar. WSL2 uses
+# /mnt/<drive>/, Git Bash uses /<drive>/. Pick whichever exists;
+# the `internal/headscale` tests use SKYGATE_BASH_MOUNT_ROOT to
+# know which style to use. See provision.go runScript comment.
+#
+# 2026-07-28: v0.29.1 — fixed the detection for hybrid systems
+# (Git Bash inside WSL2 or a Windows host where both /c and
+# /mnt/c happen to exist). MSYSTEM is the Git Bash-only env
+# var (set to MINGW64, MINGW32, MSYS, or CYGWIN by Git for
+# Windows) and is the most reliable signal. We also fall back
+# to OSTYPE for MSYS/Cygwin, then to a directory probe.
+if [ -z "${SKYGATE_BASH_MOUNT_ROOT:-}" ]; then
+  if [ -n "${MSYSTEM:-}" ]; then
+    # Git Bash on Windows (any MSYSTEM variant)
+    export SKYGATE_BASH_MOUNT_ROOT="/"
+  elif [ "${OSTYPE:-}" = "msys" ] || [ "${OSTYPE:-}" = "cygwin" ]; then
+    # Older Git Bash / Cygwin without MSYSTEM
+    export SKYGATE_BASH_MOUNT_ROOT="/"
+  elif [ -d /mnt/c ]; then
+    # WSL2 (has /mnt/c mount, no MSYSTEM)
+    export SKYGATE_BASH_MOUNT_ROOT="/mnt"
+  elif [ -d /c ]; then
+    # Last resort: Git Bash without MSYSTEM (very old Git for
+    # Windows or a custom MSYS env). Use /c/... style.
+    export SKYGATE_BASH_MOUNT_ROOT="/"
+  fi
+fi
+
+echo "pre-push: running v0.28.5+ guarantee catalog (B1-B76+)..."
+echo "  bash-mount-root: ${SKYGATE_BASH_MOUNT_ROOT:-<unset>}"
+echo
+
+# 4. Run the catalog. Don't use `make` because make on Windows
+# defaults to cmd.exe — call the script directly.
+if bash scripts/verify_pre_deploy.sh; then
+  echo
+  echo "pre-push: catalog green — push allowed"
+  exit 0
+else
+  echo
+  echo "pre-push: catalog RED — push ABORTED" >&2
+  echo "pre-push: fix the failing guarantee and re-push." >&2
+  echo "pre-push: bypass with 'git push --no-verify' (NOT recommended)." >&2
+  exit 1
+fi

@@ -1,0 +1,90 @@
+﻿{{define "body-admin-settings"}}
+{{/* 2026-07-15: v0.12.0.2 — full RU translation. Every visible
+     string goes through {{t "..."}} / {{tf "..."}}. The previous
+     version mixed Russian and English; the English holdouts were
+     the labels and helper text in the Headscale / Public domain /
+     Security / Exit Node Policy / After-migration cards. */}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-gear"></i> {{t "settings.title"}}</h2>
+    <div class="sub">{{t "settings.subtitle"}}.</div>
+  </div>
+</div>
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<form action="/admin/settings" method="POST">
+  <div class="card-grid">
+    <div class="card">
+      <h3><i class="fa-solid fa-plug"></i> {{t "settings.title"}}</h3>
+      <div class="form-group">
+        <label>{{t "settings.headscale_url"}}</label>
+        <input type="text" name="headscale_url" value="{{.HeadscaleURL}}" class="form-control" placeholder="http://headscale:50444">
+        <div class="sub">{{t "settings.headscale_url_help"}}</div>
+      </div>
+      <div class="form-group">
+        <label>{{t "settings.headscale_key"}}</label>
+        <input type="password" name="headscale_api_key" value="{{.HeadscaleAPIKey}}" class="form-control" placeholder="leave empty to keep current">
+        <div class="sub">{{tf "settings.headscale_key_help" "docker exec headscale headscale apikeys create"}}</div>
+      </div>
+      <div class="form-group">
+        <label>{{t "settings.public_domain"}}</label>
+        <input type="text" name="public_domain" value="{{.PublicDomain}}" class="form-control" placeholder="skygate.example.com">
+        <div class="sub">{{t "settings.public_domain_help"}}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><i class="fa-solid fa-lock"></i> {{t "settings.section_security"}}</h3>
+      <div class="form-group">
+        <label>{{t "settings.new_admin_password"}}</label>
+        <input type="password" name="admin_password" class="form-control" placeholder="leave empty to keep current">
+        <div class="sub">{{t "settings.new_admin_password_help"}}</div>
+      </div>
+      <div class="form-group">
+        <label>{{t "settings.jwt_secret"}}</label>
+        <div class="mono" style="padding:0.5rem;background:var(--bg2);border-radius:6px">{{.JWTSecretMask}}</div>
+        <div class="sub">{{t "settings.jwt_secret_help"}}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h3><i class="fa-solid fa-right-from-bracket"></i> {{t "settings.section_exit_policy"}}</h3>
+    <div class="form-group">
+      <label>{{t "settings.routing_mode"}}</label>
+      <select name="exit_policy" class="form-control">
+        <option value="allow_all"{{if eq .ExitPolicy "allow_all"}} selected{{end}}>{{t "settings.exit_policy_allow_all"}}</option>
+        <option value="deny_all"{{if eq .ExitPolicy "deny_all"}} selected{{end}}>{{t "settings.exit_policy_deny_all"}}</option>
+      </select>
+      <div class="sub">
+        <b>{{t "settings.exit_policy_allow_all"}}</b>: {{t "settings.exit_policy_allow_all_help"}}<br>
+        <b>{{t "settings.exit_policy_deny_all"}}</b>: {{t "settings.exit_policy_deny_all_help"}}.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h3><i class="fa-solid fa-circle-info"></i> {{t "settings.section_after_migration"}}</h3>
+    <div class="alert alert-warning">
+      <p>{{t "settings.after_migration_intro"}}</p>
+      <ol>
+        <li>{{tf "settings.after_migration_step1" "headscale"}}</li>
+        <li>{{t "settings.after_migration_step2"}}</li>
+        <li>{{tf "settings.after_migration_step3" "docker exec headscale headscale apikeys create"}}</li>
+        <li><strong>{{t "settings.after_migration_step4"}}</strong></li>
+        <li>{{tf "settings.after_migration_step5" (t "settings.backups_link")}}</li>
+      </ol>
+    </div>
+    <div style="display:flex;gap:1rem;margin-top:1rem">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "settings.save"}}</button>
+      <a href="/admin/backup" class="btn"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+    </div>
+  </div>
+</form>
+{{end}}

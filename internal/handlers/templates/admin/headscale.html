@@ -1,0 +1,138 @@
+{{define "body-admin-headscale"}}
+{{/* 2026-07-20: v0.20.0 — headscale-update-monitor status page.
+     Shows: pinned version, latest GitHub release, the
+     history table (last 20 seen), and a "Run check now"
+     button that forces an immediate re-poll. */}}
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-satellite-dish"></i> {{t "title.admin_headscale"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{t "headscale_admin.subtitle"}}
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      {{if .MonitorOK}}
+      <form method="post" action="/admin/headscale/check-now" style="display:inline">
+        <button type="submit" class="btn btn-sm"><i class="fa-solid fa-arrows-rotate"></i> {{t "headscale_admin.run_check_now"}}</button>
+      </form>
+      {{end}}
+    </div>
+  </div>
+
+  <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_admin.pinned_label"}}</div>
+      <div style="font-size:18px;font-weight:600">
+        {{if .Pinned}}
+          <code>{{.Pinned}}</code>
+        {{else}}
+          <span style="color:var(--text-muted)">{{t "headscale_admin.pinned_unset"}}</span>
+        {{end}}
+      </div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{t "headscale_admin.pinned_help"}}
+      </div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_admin.latest_label"}}</div>
+      <div style="font-size:18px;font-weight:600">
+        {{if .Latest.TagName}}
+          <code>{{.Latest.TagName}}</code>
+          {{if .Latest.HTMLURL}}
+            <a href="{{.Latest.HTMLURL}}" target="_blank" rel="noopener" style="font-size:12px;margin-left:6px"><i class="fa-solid fa-up-right-from-square"></i></a>
+          {{end}}
+        {{else}}
+          <span style="color:var(--text-muted)">—</span>
+        {{end}}
+      </div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{if .CheckedAt}}
+          {{t "headscale_admin.checked_at"}}: {{.CheckedAt.Format "2006-01-02 15:04:05 MST"}}
+        {{end}}
+      </div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_admin.status_label"}}</div>
+      <div style="margin-top:6px">
+        {{if .Breaking}}
+          <span class="tag tag-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{t "headscale_admin.state_breaking"}}</span>
+        {{else if .Update}}
+          <span class="tag tag-warning"><i class="fa-solid fa-circle-arrow-up"></i> {{t "headscale_admin.state_update"}}</span>
+        {{else if .Pinned}}
+          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "headscale_admin.state_current"}}</span>
+        {{else}}
+          <span class="tag tag-info">{{t "headscale_admin.state_no_pin"}}</span>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-clock-rotate-left"></i> {{t "headscale_admin.history_title"}}</h4>
+  {{if .History}}
+  <table>
+    <tr>
+      <th>{{t "headscale_admin.col_version"}}</th>
+      <th>{{t "headscale_admin.col_published"}}</th>
+      <th>{{t "headscale_admin.col_first_seen"}}</th>
+      <th>{{t "headscale_admin.col_severity"}}</th>
+      <th>{{t "headscale_admin.col_notified"}}</th>
+      <th></th>
+    </tr>
+    {{range .History}}
+    <tr>
+      <td><code>{{.Version}}</code></td>
+      <td>
+        {{if .PublishedAt.IsZero}}—{{else}}{{.PublishedAt.Format "2006-01-02"}}{{end}}
+      </td>
+      <td>
+        {{if .FirstSeenAt.IsZero}}—{{else}}{{.FirstSeenAt.Format "2006-01-02 15:04"}}{{end}}
+      </td>
+      <td>
+        {{if .IsBreaking}}
+          <span class="tag tag-danger">{{t "headscale_admin.severity_breaking"}}</span>
+        {{else}}
+          <span class="tag tag-info">{{t "headscale_admin.severity_patch"}}</span>
+        {{end}}
+      </td>
+      <td>
+        {{if .Notified}}
+          <i class="fa-solid fa-check" style="color:var(--success)"></i>
+        {{else}}
+          <span style="color:var(--text-muted)">—</span>
+        {{end}}
+      </td>
+      <td>
+        {{if .HTMLURL}}
+          <a href="{{.HTMLURL}}" target="_blank" rel="noopener" style="font-size:12px"><i class="fa-solid fa-up-right-from-square"></i> {{t "headscale_admin.view_release"}}</a>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+  </table>
+  {{else}}
+  <p style="color:var(--text-muted);margin:0">{{t "headscale_admin.history_empty"}}</p>
+  {{end}}
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-circle-info"></i> {{t "headscale_admin.setup_title"}}</h4>
+  <p style="color:var(--text-muted);margin:0 0 8px 0">
+    {{t "headscale_admin.setup_p1"}}
+  </p>
+  <p style="color:var(--text-muted);margin:0">
+    {{t "headscale_admin.setup_p2" | safeHTML}}
+  </p>
+</div>
+
+{{end}}

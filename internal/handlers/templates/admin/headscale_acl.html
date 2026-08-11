@@ -1,0 +1,163 @@
+{{define "body-admin-headscale_acl"}}
+{{/* 2026-08-04: v0.33.0 — Network Access Manager.
+
+     Lists every acls[] entry in the live headscale policy,
+     classified as either "skygate-managed" (in the
+     headscale_acl_rules table, removable via this page) or
+     "external" (operator-added via headplane / CLI / direct
+     DB edit, NOT removable from this page).
+
+     Add-rule form: src + dst + label. Read-modify-write of
+     the live policy preserves the operator's manual rules.
+*/}}
+
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+{{if .EmptyWarning}}
+<div class="alert alert-warning" style="margin-bottom:16px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>Heads up:</strong> 0 ACL rules. Peer-to-peer traffic
+  is denied by default in headscale. Add a rule below
+  (e.g. <code>skyadmin@tsnet.skynas.ru → *:*</code> to let
+  admin reach every device) or import one from headplane.
+</div>
+{{end}}
+
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-network-wired"></i> {{t "title.admin_headscale_acl"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{if .View}}
+        {{.View.TotalCount}} rule(s): {{.View.SkygateCount}} skygate-managed,
+        {{.View.ExternalCount}} external.
+        {{end}}
+        Existing policy fields (ssh, groups, tagOwners, hosts)
+        are never touched — only the acls list is modified.
+      </p>
+    </div>
+  </div>
+
+  {{if .View}}
+  {{if .View.SkygateACLs}}
+  <h4 style="margin-top:24px">Skygate-managed rules</h4>
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th>Label</th>
+        <th>Action</th>
+        <th>Source</th>
+        <th>Destination</th>
+        <th style="width:120px">Created</th>
+        <th style="width:80px"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .View.SkygateACLs}}
+      <tr>
+        <td><code>{{.Label}}</code></td>
+        <td><span class="badge badge-accept">{{.Rule.Action}}</span></td>
+        <td>
+          {{range .Rule.Src}}<code class="acl-cell">{{.}}</code><br>{{end}}
+        </td>
+        <td>
+          {{range .Rule.Dst}}<code class="acl-cell">{{.}}</code><br>{{end}}
+        </td>
+        <td><small>{{.CreatedAt.Format "2006-01-02 15:04"}}</small></td>
+        <td>
+          <form method="post" action="/admin/headscale/acl/remove" style="display:inline"
+                onsubmit="return confirm('Remove rule &quot;{{.Label}}&quot;? This will also soft-delete it from the audit log.');">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button type="submit" class="btn btn-sm btn-danger">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+
+  {{if .View.ExternalACLs}}
+  <h4 style="margin-top:24px">External rules (operator-managed)</h4>
+  <p style="color:var(--text-muted);font-size:0.9em">
+    These rules were added outside skygate (via headplane,
+    headscale CLI, or direct edit). They are shown for
+    visibility only and cannot be removed from this page —
+    use the same tool you used to add them.
+  </p>
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th>Action</th>
+        <th>Source</th>
+        <th>Destination</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .View.ExternalACLs}}
+      <tr>
+        <td><span class="badge badge-secondary">{{.Action}}</span></td>
+        <td>
+          {{range .Src}}<code class="acl-cell">{{.}}</code><br>{{end}}
+        </td>
+        <td>
+          {{range .Dst}}<code class="acl-cell">{{.}}</code><br>{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+
+  {{if and (not .View.SkygateACLs) (not .View.ExternalACLs)}}
+  <p style="color:var(--text-muted);font-style:italic;margin-top:16px">
+    No ACL rules yet. Add one below.
+  </p>
+  {{end}}
+  {{end}}
+
+  <h4 style="margin-top:32px">Add rule</h4>
+  <form method="post" action="/admin/headscale/acl/add">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+      <div>
+        <label for="src"><strong>Source</strong></label>
+        <input type="text" name="src" id="src" class="form-control"
+               placeholder="skyadmin@tsnet.skynas.ru, group:skyadmin"
+               required>
+        <small style="color:var(--text-muted)">Comma-separated identities, groups, tags, or CIDRs.</small>
+      </div>
+      <div>
+        <label for="dst"><strong>Destination</strong></label>
+        <input type="text" name="dst" id="dst" class="form-control"
+               placeholder="*:*, 100.64.0.10:*, tag:exit-node"
+               required>
+        <small style="color:var(--text-muted)">Comma-separated destinations.</small>
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <label for="label"><strong>Label</strong> <small style="color:var(--text-muted)">(audit trail + UI)</small></label>
+      <input type="text" name="label" id="label" class="form-control"
+             placeholder="admin → all devices"
+             value="">
+    </div>
+    <div style="margin-top:16px">
+      <button type="submit" class="btn btn-primary">
+        <i class="fa-solid fa-plus"></i> Add rule
+      </button>
+    </div>
+  </form>
+</div>
+
+<style>
+  .acl-cell { font-size: 0.85em; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; display: inline-block; margin-bottom: 2px; }
+  .badge-accept { background: #198754; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.8em; }
+  .badge-secondary { background: #6c757d; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.8em; }
+</style>
+{{end}}

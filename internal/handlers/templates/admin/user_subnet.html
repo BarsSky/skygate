@@ -1,0 +1,257 @@
+{{define "body-admin-user_subnet"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-network-wired"></i>{{t "user_subnet.title"}}</h2>
+    <div class="sub">{{.User.Username}} — {{t "user_subnet.subtitle" | safeHTML}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/users" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+
+{{if .FlashTestResult}}
+<div class="card">
+  <h3><i class="fa-solid fa-stethoscope"></i> {{t "user_subnet.test_results"}}</h3>
+  <pre style="white-space:pre-wrap;font-family:ui-monospace,monospace">{{range .FlashTestResult}}{{.}}
+{{end}}</pre>
+</div>
+{{end}}
+
+{{if not .Subnet}}
+<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+  <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "user_subnet.no_subnet_title"}}</h3>
+  <div style="margin-top:6px">{{t "user_subnet.no_subnet_body" | safeHTML}}</div>
+  <form method="POST" action="/admin/users/{{.User.ID}}/subnet/allocate" style="margin-top:12px">
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "user_subnet.allocate_button"}}</button>
+  </form>
+</div>
+{{else}}
+<div class="card">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.status_title"}}</h3>
+  <table class="kv-table" style="margin-top:8px">
+    <tr><th>{{t "user_subnet.cidr"}}</th><td><code>{{.Subnet.CIDR}}</code></td></tr>
+    <tr>
+      <th>{{t "user_subnet.status"}}</th>
+      <td>
+        {{if eq .Subnet.Status "router_active"}}<span class="tag tag-success" title="{{t "user_subnet.status_pill_router_active_title"}}"><i class="fa-solid fa-tower-broadcast"></i> {{t "user_subnet.cell_router_active"}}</span>
+        {{else if eq .Subnet.Status "active"}}<span class="tag tag-success" title="{{t "user_subnet.status_pill_active_title"}}"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>
+        {{else if eq .Subnet.Status "pending"}}<span class="tag tag-warning" title="{{t "user_subnet.status_pill_pending_title"}}"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>
+        {{else if eq .Subnet.Status "disabled"}}<span class="tag" style="opacity:0.6" title="{{t "user_subnet.status_pill_disabled_title"}}"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>
+        {{else}}<code>{{.Subnet.Status}}</code>
+        {{end}}
+      </td>
+    </tr>
+    <tr><th>{{t "user_subnet.bits"}}</th><td><code>/{{.SubnetBits}}</code></td></tr>
+    <tr><th>{{t "user_subnet.plane"}}</th><td><code>{{.HeadscaleURL}}</code></td></tr>
+    <tr><th>{{t "user_subnet.router_hostname"}}</th><td><code>{{if .Subnet.RouterHostname}}{{.Subnet.RouterHostname}}{{else}}—{{end}}</code></td></tr>
+    <tr><th>{{t "user_subnet.router_node_id"}}</th><td><code>{{if .Subnet.RouterNodeID}}{{.Subnet.RouterNodeID}}{{else}}—{{end}}</code></td></tr>
+    <tr><th>{{t "user_subnet.created_at"}}</th><td><code>{{.Subnet.CreatedAt}}</code></td></tr>
+    <tr><th>{{t "user_subnet.updated_at"}}</th><td><code>{{.Subnet.UpdatedAt}}</code></td></tr>
+  </table>
+  <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/provision" style="display:inline">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-key"></i> {{t "user_subnet.provision_button"}}</button>
+    </form>
+    <a href="/admin/users/{{.User.ID}}/subnet/download" class="btn btn-secondary" title="{{t "user_subnet.download_button_help"}}">
+      <i class="fa-solid fa-download"></i> {{t "user_subnet.download_button"}}
+    </a>
+
+    <details style="display:inline;margin-left:6px">
+      <summary class="btn btn-sm"><i class="fa-solid fa-globe"></i> {{t "user_subnet.magicdns_button"}}</summary>
+      <div style="margin-top:8px;padding:12px;background:var(--bg-elev);border-radius:4px;font-size:12px;font-family:var(--mono);max-width:680px">
+        <div><b>{{t "user_subnet.magicdns_sidecar_label"}}</b>: <code>{{.MagicDNS.Sidecar}}</code></div>
+        <div style="margin-top:4px"><b>{{t "user_subnet.magicdns_short_label"}}</b>: <code>{{.MagicDNS.SidecarShort}}</code></div>
+        <div style="margin-top:4px"><b>{{t "user_subnet.magicdns_wildcard_label"}}</b>: <code>{{.MagicDNS.UserWildcard}}</code></div>
+        <div style="margin-top:8px;color:var(--text-muted);font-family:var(--font)">
+          <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.magicdns_note" | safeHTML}}
+        </div>
+      </div>
+    </details>
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/test" style="display:inline">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-stethoscope"></i> {{t "user_subnet.test_button"}}</button>
+    </form>
+    {{if or (eq .Subnet.Status "active") (eq .Subnet.Status "router_active")}}
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/disable" style="display:inline">
+      <button type="submit" class="btn btn-warning"><i class="fa-solid fa-pause"></i> {{t "user_subnet.disable_button"}}</button>
+    </form>
+    {{end}}
+    {{if eq .Subnet.Status "router_active"}}
+    <form method="POST" action="/admin/users/{{.User.ID}}/subnet/remove" style="display:inline"
+          onsubmit="return confirm('{{t "user_subnet.remove_confirm" | safeJS}}')">
+      <button type="submit" class="btn btn-danger" title="{{t "user_subnet.remove_button_help"}}">
+        <i class="fa-solid fa-trash"></i> {{t "user_subnet.remove_button"}}
+      </button>
+    </form>
+    {{end}}
+  </div>
+
+  {{if .FlashMessage}}
+  <div class="flash flash-success" style="margin:12px 0;padding:10px 14px;border-radius:6px;background:#0d3320;border:1px solid #1c6b3f;color:#7ee2a8">
+    <i class="fa-solid fa-check-circle"></i> {{t .FlashMessage}}
+  </div>
+  {{end}}
+  <p style="color:var(--text-muted);font-size:12px;margin-top:12px">{{t "user_subnet.status_explainer_v0_22_3" | safeHTML}}</p>
+</div>
+
+{{if .Subnet}}
+<div class="card">
+  <h3><i class="fa-solid fa-route"></i> {{t "user_subnet.preferred_exit_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "user_subnet.preferred_exit_help" | safeHTML}}
+  </p>
+  {{if .AvailableExitNodes}}
+  <form method="POST" action="/admin/users/{{.User.ID}}/subnet/preferred-exit" style="margin-top:10px;display:flex;gap:8px;align-items:flex-end">
+    <label class="ufg-field" style="flex:1;margin:0">
+      <div class="ufg-label"><i class="fa-solid fa-server"></i> {{t "user_subnet.preferred_exit_label"}}</div>
+      <select name="tag" class="ufg-input">
+        <option value="" {{if eq .PreferredExitNodeTag ""}}selected{{end}}>— {{t "user_subnet.preferred_exit_none"}} —</option>
+        {{range .AvailableExitNodes}}
+        <option value="{{.Tag}}" {{if eq $.PreferredExitNodeTag .Tag}}selected{{end}}>{{.Hostname}} ({{.IP}}) — {{.Tag}}</option>
+        {{end}}
+      </select>
+    </label>
+    {{/* 2026-07-25: v0.28.5 — strict-mode opt-in checkbox.
+         The default (newly-set) is OFF for Android compat.
+         The form preserves the existing tag selection; the
+         via field is the only thing that changes. */}}
+    <label class="ufg-field" style="flex:0 0 auto;margin:0;display:flex;align-items:center;gap:6px;height:36px">
+      <input type="checkbox" name="via" value="1" {{if .ViaEnabled}}checked{{end}}>
+      <span style="font-size:13px;white-space:nowrap" title="{{t "user_subnet.preferred_exit_via_help"}}">{{t "user_subnet.preferred_exit_via_label"}}</span>
+    </label>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> {{t "user_subnet.preferred_exit_button"}}</button>
+  </form>
+  {{if .PreferredExitNodeTag}}
+  <p style="color:var(--success);font-size:12px;margin-top:8px">
+    <i class="fa-solid fa-circle-check"></i> {{t "user_subnet.preferred_exit_currently"}}: <code>{{.PreferredExitNodeTag}}</code>
+  </p>
+  {{else}}
+  <p style="color:var(--text-subtle);font-size:12px;margin-top:8px;font-style:italic">
+    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.preferred_exit_default_help"}}
+  </p>
+  {{end}}
+  {{else}}
+  <p style="color:var(--text-subtle);font-size:12px;margin-top:8px;font-style:italic">
+    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.no_exit_nodes"}}
+  </p>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-share-nodes"></i> {{t "user_subnet.sharing_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "user_subnet.sharing_help" | safeHTML}}
+  </p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+    <div>
+      <h4 style="font-size:13px;margin-bottom:6px;color:var(--text-muted)">{{t "user_subnet.sharing_i_shared"}}</h4>
+      {{if .SharedBy}}
+      <table>
+        {{range .SharedBy}}
+        <tr>
+          <td><code>{{.GranteeUsername}}</code></td>
+          <td style="font-size:11px;color:var(--text-subtle)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+          <td>
+            <form method="POST" action="/admin/users/{{$.User.ID}}/subnet/revoke" style="display:inline">
+              <input type="hidden" name="grantee_id" value="{{.GranteeID}}">
+              <button type="submit" class="btn btn-sm btn-warning" title="{{t "user_subnet.revoke_button"}}">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </table>
+      {{else}}
+      <div style="color:var(--text-subtle);font-size:12px;font-style:italic">{{t "user_subnet.sharing_none_i"}}</div>
+      {{end}}
+    </div>
+
+    <div>
+      <h4 style="font-size:13px;margin-bottom:6px;color:var(--text-muted)">{{t "user_subnet.sharing_shared_with"}}</h4>
+      {{if .SharedWith}}
+      <table>
+        {{range .SharedWith}}
+        <tr>
+          <td><code>{{.GrantorUsername}}</code></td>
+          <td style="font-size:11px;color:var(--text-subtle)">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        </tr>
+        {{end}}
+      </table>
+      {{else}}
+      <div style="color:var(--text-subtle);font-size:12px;font-style:italic">{{t "user_subnet.sharing_none_with"}}</div>
+      {{end}}
+    </div>
+  </div>
+
+  <form method="POST" action="/admin/users/{{.User.ID}}/subnet/share" style="margin-top:14px;display:flex;gap:8px;align-items:flex-end">
+    <label class="ufg-field" style="flex:1;margin:0">
+      <div class="ufg-label"><i class="fa-solid fa-user-plus"></i> {{t "user_subnet.sharing_grantee_label"}}</div>
+      <input type="text" name="grantee_username" required pattern="[a-z0-9_-]+" placeholder="{{t "user_subnet.sharing_grantee_placeholder"}}" class="ufg-input">
+    </label>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-share"></i> {{t "user_subnet.share_button"}}</button>
+  </form>
+</div>
+{{end}}
+
+{{if .FlashPreauth}}
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-key"></i> {{t "user_subnet.preauth_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
+    {{t "user_subnet.preauth_help" | safeHTML}}
+  </p>
+  <div style="margin-top:10px;display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px">
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_key"}}</span>
+    <code style="user-select:all;font-size:12px;background:var(--bg-elev);padding:4px 6px;border-radius:3px;word-break:break-all">{{.FlashPreauth.Key}}</code>
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_hostname"}}</span>
+    <code style="font-size:12px">{{.FlashPreauth.Hostname}}</code>
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_routes"}}</span>
+    <code style="font-size:12px">{{.FlashPreauth.Routes}}</code>
+    <span style="color:var(--text-muted)">{{t "user_subnet.preauth_expires"}}</span>
+    <code style="font-size:12px">{{.FlashPreauth.ExpiresAt.Format "2006-01-02 15:04 MST"}}</code>
+  </div>
+  <pre style="margin-top:12px;background:var(--bg);padding:10px 12px;border-radius:4px;font-size:12px;overflow-x:auto;white-space:pre-wrap"><b>Linux / macOS / Docker:</b>
+sudo tailscale up \
+  --authkey={{.FlashPreauth.Key}} \
+  --hostname={{.FlashPreauth.Hostname}} \
+  --advertise-routes={{.FlashPreauth.Routes}}</pre>
+  <p style="color:var(--text-subtle);font-size:12px;margin-top:8px">
+    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.preauth_note" | safeHTML}}
+  </p>
+</div>
+{{end}}
+
+<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.v0_16_0_note_title"}}</h3>
+  <div style="margin-top:6px">{{t "user_subnet.v0_16_0_note_body" | safeHTML}}</div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-question"></i> {{t "user_subnet.use_cases_title"}}</h3>
+  <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.55">
+    {{t "user_subnet.use_cases_body" | safeHTML}}
+  </div>
+  <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">
+    <i class="fa-solid fa-book"></i>
+    <a href="https://github.com/BarsSky/skygate/blob/main/docs/subnet-router.md" target="_blank" rel="noopener">
+      {{t "user_subnet.docs_link_text"}} <i class="fa-solid fa-up-right-from-square" style="font-size:10px"></i>
+    </a>
+  </p>
+</div>
+
+{{if .Subnet}}
+<div class="card">
+  <h3><i class="fa-solid fa-list-check"></i> {{t "user_subnet.onboard_title"}}</h3>
+  <ol style="margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.55">
+    <li style="margin-bottom:6px">{{t "user_subnet.onboard_step1" | safeHTML}}</li>
+    <li style="margin-bottom:6px">{{t "user_subnet.onboard_step2" | safeHTML}}</li>
+    <li style="margin-bottom:0">{{t "user_subnet.onboard_step3" | safeHTML}}</li>
+  </ol>
+</div>
+{{end}}
+
+{{end}}
+
+{{end}}

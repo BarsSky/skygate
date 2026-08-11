@@ -1,0 +1,423 @@
+﻿{{define "body-exit_rules"}}
+<style>
+/* Two-column layout for exit rules page */
+.exit-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.exit-main { min-width: 0; min-height: 0; }
+.title-row > * { min-width: 0; }
+.exit-layout > * { min-width: 0; }
+.exit-help { position: static; align-self: start; }
+.help-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
+.help-card h4 { font-size: 13px; font-weight: 600; margin: 0 0 8px 0; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+.help-card h4 i { font-size: 12px; }
+.help-card p, .help-card li { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin: 0 0 6px 0; }
+.help-card ul, .help-card ol { padding-left: 16px; margin: 0; }
+.help-card code { font-size: 11px; background: var(--bg-hover); padding: 1px 4px; border-radius: 3px; word-break: break-all; }
+.help-card .tag { font-size: 11px; }
+.device-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.device-row .os-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg-hover); color: var(--text-muted); }
+@media (max-width: 900px) { .exit-layout { grid-template-columns: 1fr; } .exit-help { position: static; } }
+
+.exit-main .card .table-wrap { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.exit-main .card table { table-layout: auto; width: 100%; }
+.exit-main .card table code { word-break: break-all; font-size: 11px; }
+.exit-main .card table td { vertical-align: top; }
+.exit-main .card table th, .exit-main .card table td { white-space: normal; }
+.exit-main .card table th { white-space: nowrap; }
+.exit-main .card table td.col-target { max-width: 200px; word-break: break-all; }
+.exit-main .card table td.col-target code { display: inline-block; max-width: 100%; }
+.exit-main .card table td.col-action { white-space: nowrap; }
+.exit-main .card table td.col-delete { white-space: nowrap; text-align: right; }
+@media (max-width: 1200px) {
+  .exit-layout { grid-template-columns: minmax(0, 1fr) !important; }
+  .exit-help { position: static !important; }
+}
+</style>
+<style>
+.exit-main .card table .col-check { width: 32px; text-align: center; }
+.exit-main .card table input[type="checkbox"].rule-check { cursor: pointer; transform: scale(1.15); }
+.multi-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 6px 0; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); flex-wrap: wrap; }
+.multi-bar .count { font-size: 12px; color: var(--text-muted); }
+.multi-bar .count b { color: var(--text); font-weight: 600; }
+.multi-bar .spacer { flex: 1; }
+.multi-bar select.filter-target { padding: 4px 8px; font-size: 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border-strong); border-radius: 4px; }
+.multi-bar input.search { padding: 4px 8px; font-size: 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border-strong); border-radius: 4px; min-width: 180px; }
+.multi-bar.sticky { position: sticky; bottom: 0; z-index: 10; box-shadow: 0 -2px 8px rgba(0,0,0,0.15); }
+.exit-main .card table tr.hidden { display: none; }
+</style>
+
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-route"></i> {{t "exit_rules.title"}}</h2>
+    <div class="sub">{{t "exit_rules.subtitle"}}</div>
+  </div>
+  <div>
+    <span class="tag tag-info" title="{{t "exit_rules.dns_autoupdate_title"}}">
+      <i class="fa-solid fa-arrows-rotate"></i> {{t "exit_rules.dns_autoupdate"}}
+    </span>
+    <a href="/docs/windows-client.md" target="_blank" rel="noopener" class="btn btn-sm" title="{{t "exit_rules.client_win_guide_title"}}"><i class="fa-solid fa-laptop"></i> {{t "exit_rules.client_win_guide"}}</a>
+    <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> {{t "exit_rules.api_help_btn"}}</a>
+  </div>
+</div>
+
+{{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules.added_ok"}}</div>{{end}}
+{{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{t "exit_rules.partial"}}</div>{{end}}
+{{if .duplicate}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.duplicate" .existing}}</div>{{end}}
+{{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{tf "exit_rules.dns_pending" .warn}}</div>{{end}}
+{{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "exit_rules.deleted"}}</div>{{end}}
+
+{{/* 2026-08-06: cross-check between device_rules and the device/user preferred exit-node.
+     Renders a single warning banner when at least one rule's exit_node_id doesn't match
+     the device's preferred exit-node. The user must change either the rule's exit_node
+     or the device's preferred exit-node (/my/devices) to make the rule take effect.
+     The banner also surfaces the "Use device's preferred" button so the user can fix
+     the rule from the same page. */}}
+{{if gt .MismatchCount 0}}
+  <div class="alert alert-warn" id="preferred-mismatch-banner">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <span>{{tf "exit_rules.preferred_mismatch_banner" .MismatchCount}}</span>
+    {{if .UserPreferred}}
+      <button type="button" class="btn btn-sm" id="use-preferred-btn" data-preferred="{{.UserPreferred}}">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> {{tf "exit_rules.use_preferred_btn" .UserPreferred}}
+      </button>
+    {{end}}
+  </div>
+{{end}}
+
+<div class="exit-layout">
+
+  {{/* ===== LEFT COLUMN — forms + rules ===== */}}
+  <div class="exit-main">
+
+    <div class="card">
+      <h3><i class="fa-solid fa-plus"></i> {{t "exit_rules.add_rule"}}</h3>
+      <form method="post" action="/my/exit-rules">
+        <div class="field">
+          <label>{{t "exit_rules.device"}}</label>
+          <select name="device_id" id="device-select" onchange="updateDeviceUsageHint()">
+            {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}" data-hint-ok="{{.HintOK}}" data-hint-warn="{{.HintWarn}}" data-hint-danger="{{.HintDanger}}" data-hint-default="{{t "exit_rules.usage_default"}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">{{t "exit_rules.no_devices"}}</option>{{end}}
+          </select>
+          <div class="hint" id="device-usage-hint">{{t "exit_rules.device_hint"}}</div>
+        </div>
+        <div class="field">
+          <label>{{t "exit_rules.exit_node"}}</label>
+          <select name="exit_node">
+            {{range .ExitNodes}}<option value="{{.hostname}}"{{if eq .hostname $.FormValues.exit_node}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">{{t "exit_rules.no_exit_nodes"}}</option>{{end}}
+          </select>
+          <div class="hint">{{t "exit_rules.exit_node_hint"}}</div>
+        </div>
+        <div class="field">
+          <label>{{t "exit_rules.action"}}</label>
+          <select name="action">
+            <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>{{t "exit_rules.action_accept"}}</option>
+            <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>{{t "exit_rules.action_deny"}}</option>
+          </select>
+          <div class="hint">{{t "exit_rules.action_hint"}}</div>
+        </div>
+        <div class="field">
+          <label>{{t "exit_rules.target_type"}}</label>
+          <select name="target_type">
+            <option value="ip"{{if eq $.FormValues.target_type "ip"}} selected{{end}}>{{t "exit_rules.target_type_ip"}}</option>
+            <option value="subnet"{{if eq $.FormValues.target_type "subnet"}} selected{{end}}>{{t "exit_rules.target_type_subnet"}}</option>
+            <option value="domain"{{if eq $.FormValues.target_type "domain"}} selected{{end}}>{{t "exit_rules.target_type_domain"}}</option>
+          </select>
+          <div class="hint">{{t "exit_rules.target_type_hint"}}</div>
+        </div>
+        <div class="field">
+          <label>{{t "exit_rules.target_value"}}</label>
+          <input type="text" name="target_value" placeholder="{{t "exit_rules.target_value_ph"}}" value="{{.FormValues.target_value}}" required>
+        </div>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "exit_rules.submit"}}</button> <a href="/my/exit-rules" class="btn"><i class="fa-solid fa-eraser"></i> {{t "exit_rules.clear"}}</a>
+      </form>
+    </div>
+
+    {{if .DeviceInfos}}
+    <div class="card">
+      <h3><i class="fa-solid fa-download"></i> {{t "exit_rules.scripts_title"}}</h3>
+      <p style="margin:0 0 8px 0;">{{t "exit_rules.scripts_sub"}}</p>
+      <table>
+        <tr><th>{{t "exit_rules.col_device"}}</th><th>{{t "exit_rules.col_rules"}}</th><th>{{t "exit_rules.col_linux_script"}}</th><th>{{t "exit_rules.col_restore"}}</th></tr>
+        {{range .DeviceInfos}}
+        <tr>
+          <td><b>{{.Hostname}}</b></td>
+          <td>{{.RuleCount}} {{if .HasRoutes}}<span class="tag tag-success">IP</span>{{end}}</td>
+          <td>
+            {{if .HasRoutes}}
+            <a href="/my/exit-rules?script=1&os=linux&device_id={{.ID}}" class="btn btn-sm btn-primary"><i class="fa-solid fa-download"></i> .sh</a>
+            {{else}}<span class="tag">—</span>{{end}}
+          </td>
+          <td>
+            {{if .HasRoutes}}
+            <a href="/my/exit-rules?script=1&os=linux&device_id={{.ID}}&restore=1" class="btn btn-sm" style="background:var(--border);color:var(--text-muted);">↺ restore</a>
+            {{else}}<span class="tag">—</span>{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </table>
+    </div>
+    {{end}}
+
+    {{if .Rules}}
+    <div class="card">
+      <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span><i class="fa-solid fa-list"></i> {{tf "exit_rules.current_rules" (len .Rules)}}</span>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="{{t "exit_rules.user_facing_title"}}">{{tf "exit_rules.user_facing" .UserFacingCount .MaxPerUser}}</span>{{else}}<span class="tag">{{tf "exit_rules.user_facing" .UserFacingCount 0}}</span>{{end}}
+          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="{{t "exit_rules.system_title"}}">{{tf "exit_rules.system" .LoadPct .TotalRules .MaxTotalRules}}</span>{{end}}
+        </span>
+      </h3>
+
+      <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('{{t "exit_rules.confirm_multi_delete"}}')">
+        <div class="multi-bar">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <input type="checkbox" id="select-all-top" onclick="toggleAll(this.checked)">
+            {{t "exit_rules.select_all"}}
+          </label>
+          <span class="count">{{t "exit_rules.selected"}} <b id="sel-count">0</b></span>
+          <select class="filter-target" id="filter-type" onchange="applyFilter()">
+            <option value="">{{t "exit_rules.filter_type"}}</option>
+            <option value="domain">{{t "exit_rules.filter_domain"}}</option>
+            <option value="subnet">{{t "exit_rules.filter_subnet"}}</option>
+            <option value="ip">{{t "exit_rules.filter_ip"}}</option>
+          </select>
+          <input type="text" class="search" id="search-input" placeholder="{{t "exit_rules.search_ph"}}" oninput="applyFilter()">
+          <span class="spacer"></span>
+          <span style="font-size:11px;color:var(--text-muted)" title="{{t "exit_rules.cascade_hint_title"}}">
+            <i class="fa-solid fa-circle-info"></i> {{t "exit_rules.cascade_hint"}}
+          </span>
+        </div>
+
+      {{range $host, $nodes := .GroupedByHostname}}
+      <details open style="margin-bottom:8px">
+        <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
+          <i class="fa-solid fa-laptop"></i>
+          <span>{{$host}}</span>
+          <span class="tag">{{len $nodes}}{{t "exit_rules.exit_nodes_suffix"}}</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
+        </summary>
+
+        {{range $exitNode, $rules := $nodes}}
+        <details style="margin:6px 0 6px 24px">
+          <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
+            <i class="fa-solid fa-route"></i>
+            <span class="tag tag-info">{{$exitNode}}</span>
+            <span style="color:var(--text-muted)">{{len $rules}}{{t "exit_rules.rules_count_suffix"}}</span>
+          </summary>
+          <div class="table-wrap" style="margin-top:6px">
+            <table>
+              <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
+              {{range $rules}}<tr class="rule-row" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
+                <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
+                <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                <td class="col-preferred">
+                  {{$pref := index $.DeviceInfos 0}}{{/* placeholder — overwritten below */}}
+                  {{range $di := $.DeviceInfos}}{{if eq $di.Hostname $host}}{{$pref = $di}}{{end}}{{end}}
+                  {{if $pref.PreferredExitNode}}
+                    {{if eq $pref.PreferredExitNode $exitNode}}
+                      <span class="tag tag-success" title="{{tf "exit_rules.preferred_match_title" $pref.PreferredExitNode}}"><i class="fa-solid fa-check"></i></span>
+                    {{else}}
+                      <span class="tag tag-danger" title="{{tf "exit_rules.preferred_mismatch_title" $pref.PreferredExitNode}}"><i class="fa-solid fa-triangle-exclamation"></i> {{$pref.PreferredExitNode}}</span>
+                    {{end}}
+                  {{else}}
+                    <span class="tag" title="{{t "exit_rules.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+                  {{end}}
+                </td>
+                <td class="col-delete">
+                  <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
+                </td>
+              </tr>
+              <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
+                <input type="hidden" name="id" value="{{.ID}}">
+              </form>
+              {{end}}
+            </table>
+          </div>
+        </details>
+        {{end}}
+      </details>
+      {{end}}
+
+        <div class="multi-bar sticky">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <input type="checkbox" id="select-all-bottom" onclick="toggleAll(this.checked); document.getElementById('select-all-top').checked=this.checked">
+            {{t "exit_rules.select_all"}}
+          </label>
+          <span class="count">{{t "exit_rules.selected"}} <b id="sel-count-bottom">0</b></span>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-sm" onclick="document.getElementById('search-input').value=''; document.getElementById('filter-type').value=''; applyFilter()"><i class="fa-solid fa-eraser"></i> {{t "exit_rules.reset_filters"}}</button>
+          <button type="submit" class="btn btn-danger"><i class="fa-solid fa-trash"></i> {{t "exit_rules.delete_selected"}}</button>
+        </div>
+      </form>
+    </div>
+
+    <script>
+    (function(){
+      function syncCount(){
+        var n = document.querySelectorAll('.rule-check:checked:not(#select-all-top):not(#select-all-bottom)').length;
+        var a = document.getElementById('sel-count'); if(a) a.textContent = n;
+        var b = document.getElementById('sel-count-bottom'); if(b) b.textContent = n;
+        var t = document.getElementById('select-all-top'); if(t) t.indeterminate = n>0 && !t.checked;
+        var bb = document.getElementById('select-all-bottom'); if(bb) bb.indeterminate = n>0 && !bb.checked;
+      }
+      window.updateSelCount = syncCount;
+      window.toggleAll = function(checked){
+        var visible = document.querySelectorAll('.rule-row:not(.hidden) input.rule-check');
+        visible.forEach(function(cb){ cb.checked = checked; });
+        syncCount();
+      };
+      window.applyFilter = function(){
+        var t = document.getElementById('filter-type').value;
+        var q = (document.getElementById('search-input').value || '').toLowerCase();
+        document.querySelectorAll('.rule-row').forEach(function(r){
+          var type = r.getAttribute('data-type') || '';
+          var target = (r.getAttribute('data-target') || '').toLowerCase();
+          var ok = (!t || type===t) && (!q || target.indexOf(q)>=0);
+          if(ok) r.classList.remove('hidden'); else r.classList.add('hidden');
+        });
+        syncCount();
+      };
+      // Per-device usage hint — translated strings come from data-* attributes
+      // (server-rendered via the user's language) so JS just substitutes numbers.
+      window.updateDeviceUsageHint = function(){
+        var sel = document.getElementById('device-select');
+        if (!sel) return;
+        var opt = sel.options[sel.selectedIndex];
+        if (!opt) return;
+        var used = parseInt(opt.getAttribute('data-user-facing') || '0', 10);
+        var max = parseInt(opt.getAttribute('data-max') || '0', 10);
+        var hint = document.getElementById('device-usage-hint');
+        if (!hint) return;
+        if (max <= 0) {
+          hint.textContent = opt.getAttribute('data-hint-default') || '';
+          hint.style.color = '';
+          return;
+        }
+        var pct = Math.round(used * 100 / max);
+        var level = used*4 > max*3 ? 'danger' : (used*2 > max ? 'warn' : 'ok');
+        var tpl = opt.getAttribute('data-hint-' + level) || '';
+        // Replace placeholders %d/%d (%d%%) with used/max/pct.
+        var parts = tpl.split('%d');
+        var msg = parts[0] + used + parts[1] + max + parts[2] + '(' + pct + '%)' + (parts[3] || '');
+        hint.textContent = msg;
+        hint.style.color = level === 'danger' ? 'var(--danger)' : (level === 'warn' ? 'var(--warning)' : '');
+      };
+      if (document.getElementById('device-select')) {
+        updateDeviceUsageHint();
+      }
+
+      // 2026-08-06: "Use device's preferred exit-node" button
+      // (renders only when the preferred-mismatch banner is up).
+      // On click: pre-fill the exit_node <select> with the user's
+      // preferred exit-node. The user can still tweak the rule
+      // before submitting.
+      var prefBtn = document.getElementById('use-preferred-btn');
+      if (prefBtn) {
+        prefBtn.addEventListener('click', function(){
+          var pref = prefBtn.getAttribute('data-preferred') || '';
+          if (!pref) return;
+          var sel = document.querySelector('select[name="exit_node"]');
+          if (!sel) return;
+          for (var i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === pref) {
+              sel.value = pref;
+              // highlight the field briefly so the user sees what changed
+              sel.style.transition = 'box-shadow 0.3s';
+              sel.style.boxShadow = '0 0 0 3px var(--accent)';
+              setTimeout(function(){ sel.style.boxShadow = ''; }, 1500);
+              sel.scrollIntoView({behavior: 'smooth', block: 'center'});
+              return;
+            }
+          }
+          // preferred value isn't in the dropdown — show a hint and let
+          // the user pick manually (exit-node list might be filtered).
+          prefBtn.title = 'preferred=' + pref + ' is not in the dropdown — pick manually';
+        });
+      }
+    })();
+    </script>
+    {{end}}
+
+    <div class="card">
+      <h3><i class="fa-solid fa-info-circle"></i> {{t "exit_rules.how_title"}}</h3>
+      <ol style="padding-left:20px;margin:0">
+        <li>{{t "exit_rules.how_li1" | safeHTML}}</li>
+        <li>{{t "exit_rules.how_li2" | safeHTML}}</li>
+        <li>{{t "exit_rules.how_li3" | safeHTML}}</li>
+        <li>{{t "exit_rules.how_li4" | safeHTML}}</li>
+        <li>{{t "exit_rules.how_li5" | safeHTML}}
+          <ul>
+            <li>{{t "exit_rules.how_li3_win" | safeHTML}}</li>
+            <li>{{t "exit_rules.how_li3_mobile" | safeHTML}}</li>
+          </ul>
+        </li>
+      </ol>
+    </div>
+
+  </div>
+
+  {{/* ===== RIGHT COLUMN — permanent help ===== */}}
+  <div class="exit-help">
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-play"></i> {{t "exit_rules.quick_title"}}</h4>
+      <ol>
+        <li>{{t "exit_rules.quick_li1"}}</li>
+        <li>{{t "exit_rules.quick_li2"}}</li>
+        <li>{{t "exit_rules.quick_li3"}}</li>
+        <li>{{t "exit_rules.quick_li4"}}</li>
+      </ol>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-laptop"></i> {{t "exit_rules.client_title"}}</h4>
+      <p><b>{{t "exit_rules.client_win_linux"}}</b></p>
+      <p style="font-size:12px"><code>{{t "exit_rules.client_win_cmd"}}</code></p>
+      <p style="font-size:11px"><code>{{t "exit_rules.client_win_cmd_after"}}</code></p>
+      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_win_hint" | safeHTML}}</p>
+      <p style="margin-top:10px"><b>{{t "exit_rules.client_mobile"}}</b></p>
+      <p><code>tailscale up --exit-node=&lt;name&gt;</code></p>
+      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_full_hint" | safeHTML}}</p>
+    </div>
+
+    <div class="help-card" style="border-left:3px solid var(--accent)">
+      <h4><i class="fa-brands fa-windows"></i> {{t "exit_rules.win_flow_title"}}</h4>
+      <ol style="margin-top:4px">
+        <li style="font-size:12px;line-height:1.5;color:var(--text)">{{t "exit_rules.win_flow_li1" | safeHTML}}</li>
+        <li style="font-size:12px;line-height:1.5;color:var(--text)">{{t "exit_rules.win_flow_li2" | safeHTML}}</li>
+        <li style="font-size:12px;line-height:1.5;color:var(--text)">{{t "exit_rules.win_flow_li3" | safeHTML}}</li>
+      </ol>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:8px;padding:8px;background:var(--bg-elev);border-radius:4px">
+        <i class="fa-solid fa-circle-info"></i> {{t "exit_rules.win_flow_no_scripts" | safeHTML}}
+      </p>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_rules.important"}}</h4>
+      <ul>
+        <li>{{t "exit_rules.important_li1"}}</li>
+        <li>{{t "exit_rules.important_li2"}}</li>
+        <li>{{t "exit_rules.important_li3"}}</li>
+        <li>{{t "exit_rules.important_li4"}}</li>
+      </ul>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-robot"></i> {{t "exit_rules.bulk_title"}}</h4>
+      <p>{{t "exit_rules.bulk_desc"}}</p>
+      <p style="font-size:11px">{{t "exit_rules.bulk_example"}}</p>
+      <p><a href="/my/exit-rules/help" class="btn btn-sm" style="width:100%;text-align:center"><i class="fa-solid fa-book"></i> {{t "exit_rules.api_help_btn"}}</a></p>
+    </div>
+
+    <div class="help-card">
+      <h4><i class="fa-solid fa-shield-halved"></i> {{t "exit_rules.privacy_title"}}</h4>
+      <ul>
+        <li>{{t "exit_rules.privacy_li1"}}</li>
+        <li>{{t "exit_rules.privacy_li2"}}</li>
+        <li>{{t "exit_rules.privacy_li3"}}</li>
+      </ul>
+    </div>
+
+  </div>
+
+</div>
+{{end}}

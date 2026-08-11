@@ -1,0 +1,267 @@
+{{define "body-admin-update"}}
+{{/* 2026-07-27: v0.29.0 — self-update page.
+     Phase 1: detection + manual steps.
+     Phase 2: apply button + status panel + auto-refresh + rollback. */}}
+
+{{if .Flash}}
+<div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{.Flash}}</div>
+{{end}}
+{{if .Error}}
+<div class="alert alert-warning"><i class="fa-solid fa-circle-exclamation"></i>
+  {{t "update.error_prefix"}}: {{.Error}}
+</div>
+{{end}}
+
+{{if .UpdateState}}
+  {{$st := .UpdateState}}
+  {{/* 2026-08-04 (v0.33.1.7): Go's html/template package
+       refuses to put an arbitrary string into a CSS context —
+       it prints the literal "ZgotmplZ" placeholder. The
+       pre-v0.33.1.7 template interpolated var(--success) /
+       var(--danger) into a `border-left:4px solid` CSS context,
+       which Go treats as untrusted CSS and replaces with
+       ZgotmplZ. Fix: use a static class per phase and let
+       the static stylesheet pick the colour. */}}
+  {{$phaseClass := "card-update-info"}}
+  {{if eq $st.Phase "done"}}{{$phaseClass = "card-update-done"}}{{end}}
+  {{if eq $st.Phase "failed"}}{{$phaseClass = "card-update-failed"}}{{end}}
+  {{if eq $st.Phase "rolled_back"}}{{$phaseClass = "card-update-rolled-back"}}{{end}}
+  <div class="card {{$phaseClass}}" style="margin-bottom:24px">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <div>
+        <h3 data-update-phase="{{$st.Phase}}" style="margin:0">
+          {{if eq $st.Phase "done"}}<i class="fa-solid fa-circle-check"></i>{{end}}
+          {{if eq $st.Phase "failed"}}<i class="fa-solid fa-circle-xmark"></i>{{end}}
+          {{if eq $st.Phase "rolled_back"}}<i class="fa-solid fa-rotate-left"></i>{{end}}
+          {{if eq $st.Phase "pending"}}<i class="fa-solid fa-hourglass-start"></i>{{end}}
+          {{if and (ne $st.Phase "done") (ne $st.Phase "failed") (ne $st.Phase "rolled_back") (ne $st.Phase "pending")}}<i class="fa-solid fa-circle-notch fa-spin"></i>{{end}}
+          {{t "update.status_title"}}: <code>{{$st.Phase}}</code>
+        </h3>
+        <p style="color:var(--text-muted);margin:8px 0 0 0">
+          {{t "update.status_job"}}: <code>{{$st.JobID}}</code> ·
+          {{$st.FromVersion}} → {{$st.ToVersion}} ·
+          {{$st.InstallKind}}
+        </p>
+      </div>
+      <form method="post" action="/admin/update/dismiss" style="display:inline">
+        <button type="submit" class="btn btn-sm">
+          <i class="fa-solid fa-xmark"></i> {{t "update.dismiss"}}
+        </button>
+      </form>
+    </div>
+
+    {{if $st.Error}}
+    <div class="alert alert-danger" style="margin-top:12px">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <strong>{{t "update.failure"}}</strong>: {{$st.Error}}
+    </div>
+    {{end}}
+
+    {{if $st.ManualFallback}}
+    <div class="alert alert-warning" style="margin-top:12px">
+      <i class="fa-solid fa-hand"></i>
+      {{t "update.manual_fallback_hint"}}
+      <a href="#manual" style="color:inherit;text-decoration:underline">
+        {{t "update.banner_jump_to_steps"}}
+      </a>
+    </div>
+    {{end}}
+
+    {{if $st.Log}}
+    <details {{if ne $st.Phase "done"}}open{{end}} style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)">
+        <i class="fa-solid fa-list-ul"></i>
+        {{t "update.log_entries"}}: {{len $st.Log}}
+        {{if ne $st.Phase "done"}}<i class="fa-solid fa-circle-notch fa-spin" style="margin-left:6px"></i>{{end}}
+      </summary>
+      <pre id="update-log" style="white-space:pre-wrap;font-family:monospace;font-size:11px;line-height:1.4;margin:8px 0 0;max-height:400px;overflow:auto;background:var(--bg-secondary);padding:8px;border-radius:4px">{{range $st.Log}}{{/* 2026-08-04 (v0.33.1.7): replace inline color interpolation with a static class
+           (log-line-{level}) — Go's html/template refuses to interpolate
+           var(--xxx) into CSS context and prints "ZgotmplZ". */}}{{$lineClass := "log-line-info"}}{{if eq .Level "error"}}{{$lineClass = "log-line-error"}}{{end}}{{if eq .Level "warn"}}{{$lineClass = "log-line-warn"}}{{end}}<span class="{{$lineClass}}">{{.At.Format "15:04:05"}} [{{.Level}}] {{.Msg}}</span>
+{{end}}</pre>
+    </details>
+    {{end}}
+  </div>
+{{end}}
+
+{{if .IsNewer}}
+<div class="alert alert-success" style="margin-bottom:16px">
+  <i class="fa-solid fa-circle-arrow-up"></i>
+  <strong>{{t "update.banner_new_version"}}</strong>
+  {{.Current}} → {{.Latest}}.
+  <a href="#manual" style="color:inherit;text-decoration:underline">{{t "update.banner_jump_to_steps"}}</a>
+</div>
+{{end}}
+
+{{/* 2026-07-30: v0.32.3 — auto-update mode banner.
+     Tells the operator whether the SKYGATE_AUTO_UPDATE_ENABLED
+     flag is on (one-click Apply on newer release) or off
+     (manual Push only). The banner always shows so the
+     operator doesn't have to guess. */}}
+<div class="alert {{if .AutoUpdateEnabled}}alert-info{{else}}alert-warning{{end}}" style="margin-bottom:16px">
+  <i class="fa-solid {{if .AutoUpdateEnabled}}fa-circle-check{{else}}fa-circle-pause{{end}}"></i>
+  {{if .AutoUpdateEnabled}}
+    {{t "update.auto_enabled_banner"}}
+  {{else}}
+    {{t "update.auto_disabled_banner"}}
+  {{end}}
+  {{/* 2026-08-03: v0.32.20 — UI-controlled toggle.
+       The auto-update mode is now controlled by a checkbox
+       on this page (persisted in global_settings). The
+       env var SKYGATE_AUTO_UPDATE_ENABLED is only the
+       DEFAULT at first start (when the global_settings row
+       doesn't exist yet). The toggle takes effect on the
+       next 5s tick of the orchestrator — no restart. */}}
+  <form method="post" action="/admin/update/auto-toggle" style="margin-top:8px;display:inline-block">
+    <input type="hidden" name="enabled" value="{{if .AutoUpdateEnabled}}0{{else}}1{{end}}">
+    <button type="submit" class="btn btn-sm">
+      <i class="fa-solid fa-toggle-{{if .AutoUpdateEnabled}}on{{else}}off{{end}}"></i>
+      {{if .AutoUpdateEnabled}}{{t "update.auto_toggle_off"}}{{else}}{{t "update.auto_toggle_on"}}{{end}}
+    </button>
+  </form>
+</div>
+
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-cloud-arrow-down"></i> {{t "title.admin_update"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{t "update.subtitle"}}
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <form method="post" action="/admin/update/check-now" style="display:inline">
+        <button type="submit" class="btn btn-sm">
+          <i class="fa-solid fa-arrows-rotate"></i> {{t "update.check_now"}}
+        </button>
+      </form>
+      {{if and .IsNewer .AutoUpdateEnabled}}
+      {{/* 2026-07-30: v0.32.3 — Apply button is gated by
+           SKYGATE_AUTO_UPDATE_ENABLED. When the flag is
+           false (default), the operator uses the Push
+           button below to manually trigger the orchestrator. */}}
+      <form method="post" action="/admin/update/apply" style="display:inline" onsubmit="return confirm('{{t "update.apply_confirm"}}')">
+        <input type="hidden" name="target" value="{{.Latest}}">
+        <button type="submit" class="btn btn-primary">
+          <i class="fa-solid fa-rocket"></i> {{t "update.apply"}} → {{.Latest}}
+        </button>
+      </form>
+      {{end}}
+      {{/* 2026-07-30: v0.32.3 — Push update button.
+           Always visible, ALWAYS works (independent of
+           the auto-update flag). For when the operator
+           wants to force a rebuild + restart of the
+           current state, e.g. after a failed auto-apply
+           or to re-apply without waiting for a newer
+           release to be detected. */}}
+      <form method="post" action="/admin/update/push" style="display:inline" onsubmit="return confirm('{{t "update.push_confirm"}}')">
+        <button type="submit" class="btn" title="{{t "update.push_help"}}">
+          <i class="fa-solid fa-cloud-arrow-up"></i> {{t "update.push"}}
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "update.current_label"}}</div>
+      <div style="font-size:18px;font-weight:600"><code>{{.Current}}</code></div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "update.latest_label"}}</div>
+      <div style="font-size:18px;font-weight:600">
+        {{if .Latest}}
+          <code>{{.Latest}}</code>
+          {{if .ReleaseURL}}
+            <a href="{{.ReleaseURL}}" target="_blank" rel="noopener" style="font-size:12px;margin-left:6px">
+              <i class="fa-solid fa-up-right-from-square"></i>
+            </a>
+          {{end}}
+        {{else}}
+          <span style="color:var(--text-muted)">—</span>
+        {{end}}
+      </div>
+      {{if .CheckedAt}}
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{t "update.checked_at"}}: {{.CheckedAt.Format "2006-01-02 15:04:05 MST"}}
+      </div>
+      {{end}}
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "update.install_label"}}</div>
+      <div style="font-size:18px;font-weight:600">{{.InstallLabel}}</div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{t "update.channel"}}: <code>{{.Channel}}</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .Body}}
+<div class="card" style="margin-bottom:24px">
+  <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-file-lines"></i> {{t "update.release_notes"}}</h4>
+  <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.5;margin:0;max-height:400px;overflow:auto;background:var(--bg-secondary);padding:12px;border-radius:6px">{{.Body}}</pre>
+  {{if .ReleaseURL}}
+  <div style="margin-top:8px;font-size:12px">
+    <a href="{{.ReleaseURL}}" target="_blank" rel="noopener">{{t "update.view_on_github"}} →</a>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+<div class="card" id="manual" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <h4 style="margin:0"><i class="fa-solid fa-terminal"></i> {{t "update.manual_steps_title"}}</h4>
+    <button type="button" class="btn btn-sm" onclick="copyManualSteps()">
+      <i class="fa-solid fa-copy"></i> {{t "update.copy_to_clipboard"}}
+    </button>
+  </div>
+  <p style="color:var(--text-muted);font-size:12px;margin:8px 0">
+    {{t "update.manual_steps_subtitle"}}: <code>{{.Current}}</code> → <code>{{.Target}}</code>
+    ({{.InstallLabel}})
+  </p>
+  <pre id="manual-steps" style="white-space:pre-wrap;font-family:monospace;font-size:12px;line-height:1.4;margin:0;max-height:500px;overflow:auto;background:var(--bg-secondary);padding:12px;border-radius:6px">{{range .ManualSteps}}{{.}}
+{{end}}</pre>
+  <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">
+    <i class="fa-solid fa-circle-check"></i> {{t "update.verify_after"}}: <code>{{.VerifyAfter}}</code>
+  </div>
+</div>
+
+{{if .Rollback}}
+<div class="card" style="margin-bottom:24px">
+  <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-undo"></i> {{t "update.rollback_title"}}</h4>
+  <p style="color:var(--text-muted);font-size:12px;margin:8px 0">{{t "update.rollback_subtitle"}}</p>
+  <pre id="rollback-steps" style="white-space:pre-wrap;font-family:monospace;font-size:12px;line-height:1.4;margin:0;max-height:300px;overflow:auto;background:var(--bg-secondary);padding:12px;border-radius:6px">{{range .Rollback}}{{.}}
+{{end}}</pre>
+</div>
+{{end}}
+
+{{if not .CheckEnabled}}
+<div class="alert alert-warning" style="margin-top:16px">
+  <i class="fa-solid fa-circle-exclamation"></i> {{t "update.disabled"}}
+</div>
+{{end}}
+
+<script>
+function copyManualSteps() {
+  var steps = document.getElementById('manual-steps');
+  if (!steps) return;
+  var text = steps.innerText;
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = document.querySelector('button[onclick="copyManualSteps()"]');
+    if (btn) {
+      var orig = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-check"></i> copied';
+      setTimeout(function() { btn.innerHTML = orig; }, 1500);
+    }
+  });
+}
+(function() {
+  var phaseEl = document.querySelector('[data-update-phase]');
+  if (!phaseEl) return;
+  var phase = phaseEl.getAttribute('data-update-phase');
+  var done = ['done', 'failed', 'rolled_back', 'pending'];
+  if (done.indexOf(phase) !== -1) return;
+  setTimeout(function() { location.reload(); }, 5000);
+})();
+</script>
+{{end}}

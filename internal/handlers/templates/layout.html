@@ -1,0 +1,134 @@
+﻿{{define "layout"}}<!DOCTYPE html>
+<html lang="{{.Lang}}" data-theme="{{.Theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — Skygate</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/favicon.svg">
+<link rel="stylesheet" href="/static/css/font-awesome.min.css">
+<link rel="stylesheet" href="/static/css/themes.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar">
+  <div class="shead">
+    <h1>Skygate</h1>
+    <button class="toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')" title="{{t "common.collapse_sidebar"}}"><i class="fa-solid fa-bars"></i></button>
+  </div>
+  <nav>
+    <a href="/dashboard" {{if eq .Page "dashboard"}}class="active"{{end}}><i class="fa-solid fa-house"></i><span>{{t "nav.dashboard"}}</span></a>
+    <a href="/my/devices" {{if eq .Page "my/devices"}}class="active"{{end}}><i class="fa-solid fa-laptop"></i><span>{{t "nav.devices"}}</span></a>
+    <a href="/my/exit-nodes" {{if eq .Page "my/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_nodes"}}</span></a>
+    <a href="/my/keys" {{if eq .Page "user/keys"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.preauth"}}</span></a>
+    <a href="/help" {{if eq .Page "help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i><span>{{t "nav.help"}}</span></a>
+    <a href="/my/tokens" {{if eq .Page "tokens"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.tokens"}}</span></a>
+    <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules"}}</span></a>
+    <a href="/my/account" {{if eq .Page "account"}}class="active"{{end}}><i class="fa-solid fa-user-gear"></i><span>{{t "nav.account"}}</span></a>
+    <a href="/my/telegram" {{if eq .Page "telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram_my"}}</span></a>
+    <a href="/my/meshes" {{if eq .Page "my/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes"}}</span></a>
+{{if .IsAdmin}}
+    <hr class="nav-sep">
+    <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
+    <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{t "nav.settings"}}</span></a>
+    <a href="/admin/users"><i class="fa-solid fa-users"></i><span>{{t "nav.users"}}</span></a>
+    <a href="/admin/control-planes" {{if eq .Page "admin/control-planes"}}class="active"{{end}}><i class="fa-solid fa-server-stack"></i><span>{{t "nav.control_planes"}}</span></a>
+    <a href="/admin/exit-nodes" {{if eq .Page "admin/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_nodes_admin"}}</span></a>
+    <a href="/admin/subnets" {{if eq .Page "admin/subnets"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "admin.subnets.title"}}</span></a>
+    <a href="/admin/devices"><i class="fa-solid fa-server"></i><span>{{t "nav.devices_all"}}</span></a>
+    <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.acls"}}</span></a>
+    <a href="/admin/headscale" {{if eq .Page "admin/headscale"}}class="active"{{end}}><i class="fa-solid fa-cube"></i><span>{{t "nav.headscale"}}</span></a>
+    <a href="/admin/headscale/acl" {{if eq .Page "admin/headscale_acl"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "nav.headscale_acl"}}</span></a>
+    <a href="/admin/system_tests" {{if eq .Page "admin/system_tests"}}class="active"{{end}}><i class="fa-solid fa-vial"></i><span>{{t "nav.system_tests"}}</span></a>
+    <a href="/admin/services" {{if eq .Page "admin/services"}}class="active"{{end}}><i class="fa-solid fa-heart-pulse"></i><span>{{t "title.admin_services"}}</span></a>
+    <a href="/admin/headplane" {{if eq .Page "admin/headplane"}}class="active"{{end}}><i class="fa-solid fa-window-maximize"></i><span>{{t "nav.headplane"}}</span></a>
+    <a href="/admin/integrations" {{if eq .Page "admin/integrations"}}class="active"{{end}}><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.integrations"}}</span></a>
+    <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.derp"}}</span></a>
+    <a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i><span>{{t "nav.audit"}}</span></a>
+    <a href="/admin/invites" {{if eq .Page "admin/invites"}}class="active"{{end}}><i class="fa-solid fa-envelope-open-text"></i><span>{{t "nav.invites"}}</span></a>
+    <a href="/admin/meshes" {{if eq .Page "admin/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes_admin"}}</span></a>
+    <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram"}}</span></a>
+    <a href="/admin/tailscale" {{if eq .Page "admin/tailscale"}}class="active"{{end}}><i class="fa-solid fa-link"></i><span>{{t "tailscale.title"}}</span></a>
+    <a href="/admin/exit-rules"><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules_all"}}</span></a>
+    <a href="/admin/update" {{if eq .Page "admin/update"}}class="active"{{end}}><i class="fa-solid fa-cloud-arrow-down"></i><span>{{t "nav.update"}}</span></a>
+{{end}}
+  </nav>
+
+  <div class="sidebar-user">
+    <hr class="nav-sep">
+    <div class="user-info">
+      <span class="user-icon"><i class="fa-solid fa-user"></i></span>
+      <span class="user-name">{{.Username}}{{if .IsAdmin}} <span class="tag tag-admin">ADMIN</span>{{end}}</span>
+    </div>
+    <div class="sidebar-actions">
+      <details class="theme-picker-sb">
+        <summary title="{{t "common.toggle_theme"}}"><i class="fa-solid fa-palette"></i></summary>
+        <div class="menu">
+          <a href="/settings/theme?theme=linear" {{if eq .Theme "linear"}}class="active"{{end}}><i class="fa-solid fa-moon"></i>Linear</a>
+          <a href="/settings/theme?theme=vercel" {{if eq .Theme "vercel"}}class="active"{{end}}><i class="fa-solid fa-sun"></i>Vercel</a>
+          <a href="/settings/theme?theme=sentry" {{if eq .Theme "sentry"}}class="active"{{end}}><i class="fa-solid fa-bolt"></i>Sentry</a>
+          <a href="/settings/theme?theme=nvidia" {{if eq .Theme "nvidia"}}class="active"{{end}}><i class="fa-solid fa-microchip"></i>NVIDIA</a>
+        </div>
+      </details>
+      <details class="theme-picker-sb">
+        <summary title="{{t "lang.toggle_label"}}"><i class="fa-solid fa-language"></i>{{if eq .Lang "en"}}EN{{else}}RU{{end}}</summary>
+        <div class="menu">
+          <form method="post" action="/lang" style="margin:0">
+            <input type="hidden" name="lang" value="ru">
+            <input type="hidden" name="return_to" value="">
+            <button type="submit" class="menu-btn{{if eq .Lang "ru"}} active{{end}}">{{t "lang.ru"}}</button>
+          </form>
+          <form method="post" action="/lang" style="margin:0">
+            <input type="hidden" name="lang" value="en">
+            <input type="hidden" name="return_to" value="">
+            <button type="submit" class="menu-btn{{if eq .Lang "en"}} active{{end}}">{{t "lang.en"}}</button>
+          </form>
+        </div>
+      </details>
+      <form method="post" action="/logout"><button type="submit" title="{{t "common.logout"}}"><i class="fa-solid fa-right-from-bracket"></i></button></form>
+    </div>
+  </div>
+</aside>
+<main>
+<div class="shell">
+{{/* 2026-07-15: v0.14.0 — release-monitor banner. Shown
+     on every admin page when the monitor has detected a
+     newer release on GitHub. The "current version" comes
+     from the build-time .Version injected by cmd/skygate,
+     and the "latest" + "checked at" come from the monitor's
+     last successful tick. The link goes to the GitHub
+     release page (or the GitHub releases list if the
+     monitor hasn't seen the specific tag yet — defensive). */}}
+{{if and .IsAdmin .UpdateAvailable}}
+<div class="alert alert-info" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+  <i class="fa-solid fa-circle-up" style="font-size:20px"></i>
+  <div style="flex:1;min-width:0">
+    <strong>{{t "update.banner_title"}}</strong>
+    <div style="color:var(--text-muted);font-size:13px;margin-top:2px">
+      {{tf "update.banner_body" .Version .UpdateLatest}}
+      {{if .UpdateCheckedAt}} · {{tf "update.banner_checked" .UpdateCheckedAt}}{{end}}
+    </div>
+  </div>
+  {{if .UpdateLatestURL}}
+  <a href="{{.UpdateLatestURL}}" target="_blank" rel="noopener" class="btn btn-sm"><i class="fa-solid fa-up-right-from-square"></i> {{t "update.banner_open"}}</a>
+  {{else}}
+  {{/* 2026-08-09: v0.33.1.24 (B73) — derive the fallback
+       URL from Cfg.GitHubOwner / Cfg.GitHubRepo (auto-injected
+       into the data map by renderWithLayout) instead of
+       hardcoding the operator's GitHub org. The pre-fix
+       `https://github.com/skygate-operator/skygate/releases`
+       leaked the original developer's org (v0.32.29
+       no-personal-data violation; flagged in v0.33.1.23). */}}
+  <a href="https://github.com/{{.GitHubOwner}}/{{.GitHubRepo}}/releases" target="_blank" rel="noopener" class="btn btn-sm"><i class="fa-solid fa-up-right-from-square"></i> {{t "update.banner_open"}}</a>
+  {{end}}
+</div>
+{{end}}
+
+{{renderBody .BodyTemplate .}}
+</div>
+</main>
+<footer>
+  Skygate {{.Version}} · {{t "footer.powered_by"}} · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/help">{{t "footer.docs"}}</a>
+</footer>
+</body>
+</html>{{end}}

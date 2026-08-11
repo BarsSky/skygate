@@ -1,0 +1,92 @@
+# Patroni config for skygate PG HA (Architecture A).
+#
+# Used by BOTH skygate-host-1 (primary) AND skygate-host-2 (replica).
+# The `name` and `listen`/`connect_address` fields are per-node
+# and need to be set in the .env file (see init-pg-primary.sh
+# / init-pg-replica.sh for the templating).
+#
+# Reference: https://patroni.readthedocs.io/en/latest/dynamic_configuration.html
+
+scope: skygate-pg
+namespace: /skygate/
+name: ${SKYGATE_PG_NODE_NAME}
+
+# REST API (used by Patroni + HAProxy health checks).
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: ${SKYGATE_PG_NODE_IP}:8008
+
+# etcd is single-node, on skygate-host-2.
+etcd:
+  hosts: ${SKYGATE_ETCD_HOST}:2379
+
+# PostgreSQL config (Patroni applies these on top of postgresql.conf).
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576  # 1 MB
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_log_hints: "on"
+        logging_collector: "on"
+        log_directory: pg_log
+        log_filename: "postgresql-%Y-%m-%d.log"
+        log_rotation_age: "1d"
+        log_rotation_size: "100MB"
+        log_min_duration_statement: 1000  # log slow queries
+        # PG 13+
+        wal_compression: "on"
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - local   all           all                          trust
+    - host    all           all       127.0.0.1/32        md5
+    - host    all           all       192.168.0.0/16      md5
+    - host    replication   replicator 192.168.0.0/16    md5
+
+  users:
+    admin:
+      password: ${SKYGATE_PG_ADMIN_PASSWORD}
+      options:
+        - createrole
+        - createdb
+    replicator:
+      password: ${SKYGATE_PG_REPLICATOR_PASSWORD}
+      options:
+        - replication
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: ${SKYGATE_PG_NODE_IP}:5432
+  data_dir: /var/lib/postgresql/data
+  bin_dir: /usr/lib/postgresql/16/bin
+  pgpass: /tmp/pgpass0
+  authentication:
+    superuser:
+      username: postgres
+      password: ${SKYGATE_PG_SUPERUSER_PASSWORD}
+    replication:
+      username: replicator
+      password: ${SKYGATE_PG_REPLICATOR_PASSWORD}
+    rewind:
+      username: postgres
+      password: ${SKYGATE_PG_SUPERUSER_PASSWORD}
+  parameters:
+    unix_socket_directories: '/var/run/postgresql'
+
+# Tags (used by HAProxy to route reads/writes).
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

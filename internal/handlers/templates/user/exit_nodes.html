@@ -1,0 +1,122 @@
+﻿{{define "body-user-exit_nodes"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-route"></i>{{t "exit_nodes.title"}}</h2>
+    <div class="sub">{{t "exit_nodes.subtitle"}}</div>
+  </div>
+</div>
+
+{{if .FlashSuccess}}
+<div class="alert alert-success" style="margin-bottom:12px">
+  <i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.preferred_set_ok"}}
+</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger" style="margin-bottom:12px">
+  <i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-server"></i>{{t "exit_nodes.title"}}</h3>
+  {{if .PreferredExitNodeTag}}
+  <p style="color:var(--success);font-size:12px;margin-top:6px">
+    <i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.preferred_currently_set"}}: <code>{{.PreferredExitNodeTag}}</code>
+    {{if .ViaEnabled}}
+      <span class="tag tag-warning" style="margin-left:6px" title="{{t "exit_nodes.via_enabled_help"}}"><i class="fa-solid fa-lock"></i> {{t "exit_nodes.via_enabled_label"}}</span>
+    {{else}}
+      <span class="tag" style="margin-left:6px;background:var(--text-subtle);color:var(--bg-card)" title="{{t "exit_nodes.via_disabled_help"}}"><i class="fa-solid fa-unlock"></i> {{t "exit_nodes.via_disabled_label"}}</span>
+    {{end}}
+    <form method="POST" action="/my/exit-nodes/preferred" style="display:inline;margin-left:8px">
+      <input type="hidden" name="tag" value="">
+      <button type="submit" class="btn btn-sm btn-secondary" title="{{t "exit_nodes.preferred_clear_help"}}">
+        <i class="fa-solid fa-xmark"></i> {{t "exit_nodes.preferred_clear_button"}}
+      </button>
+    </form>
+  </p>
+  {{end}}
+  {{if .ExitNodes}}
+  <table>
+    <thead>
+      <tr>
+        <th>{{t "exit_nodes.hostname"}}</th>
+        <th>{{t "exit_nodes.ip"}}</th>
+        <th>Owner</th>
+        <th style="width:100px">{{t "exit_nodes.status"}}</th>
+        <th style="width:240px">{{t "exit_nodes.preferred_column"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .ExitNodes}}
+      <tr>
+        <td><code>{{.Hostname}}</code></td>
+        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td>{{.UserName}}</td>
+        <td>
+          {{if .Online}}
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{t "exit_nodes.online"}}</span>
+          {{else}}
+            <span style="color:var(--text-subtle);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{t "exit_nodes.offline"}}</span>
+          {{end}}
+        </td>
+        <td>
+          {{$derivedTag := printf "tag:exit-%s" .Hostname}}
+          {{if eq $.PreferredExitNodeTag $derivedTag}}
+            <span class="tag tag-success" title="{{t "exit_nodes.preferred_currently_help"}}">
+              <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_currently"}}
+            </span>
+          {{else}}
+            <form method="POST" action="/my/exit-nodes/preferred" style="display:inline">
+              <input type="hidden" name="tag" value="{{$derivedTag}}">
+              <input type="hidden" name="via" value="{{if $.ViaEnabled}}1{{else}}0{{end}}">
+              <button type="submit" class="btn btn-sm">
+                <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_set_button"}}
+              </button>
+            </form>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="alert" style="margin-top:0">
+    <i class="fa-solid fa-info-circle"></i>
+    <div>{{t "exit_nodes.empty"}}.</div>
+  </div>
+  <p style="color:var(--text-muted);margin-top:12px;font-size:12px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
+    <span>Exit-node = <code>tag:exit-node</code> in headscale ACL policy, or hostname starts with <code>exit-</code>. Configure tags in <a href="{{.HeadplaneURL}}" target="_blank" rel="noopener">Headplane UI</a>.</span>
+  </p>
+  {{end}}
+</div>
+
+{{if .PreferredExitNodeTag}}
+<div class="card">
+  <h3><i class="fa-solid fa-shield-halved"></i>{{t "exit_nodes.via_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "exit_nodes.via_intro"}}</p>
+  <form method="POST" action="/my/exit-nodes/preferred" style="display:flex;align-items:center;gap:8px">
+    <input type="hidden" name="tag" value="{{.PreferredExitNodeTag}}">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" name="via" value="1" {{if .ViaEnabled}}checked{{end}} onchange="this.form.submit()">
+      <span>{{t "exit_nodes.via_checkbox_label"}}</span>
+    </label>
+    <span style="color:var(--text-muted);font-size:12px">({{t "exit_nodes.via_checkbox_help"}})</span>
+  </form>
+</div>
+{{end}}
+
+{{if .ExitNodes}}
+<div class="card">
+  <h3><i class="fa-solid fa-terminal"></i>How to connect</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">Pick an exit-node on your device:</p>
+  <pre>tailscale set --exit-node=&lt;hostname&gt;
+
+# example: tailscale set --exit-node={{(index .ExitNodes 0).Hostname}}</pre>
+  <p style="color:var(--text-muted);margin-top:12px;font-size:12px;display:flex;align-items:center;gap:6px">
+    <i class="fa-solid fa-circle-info"></i>
+    <span>Disable: <code>tailscale set --exit-node=</code></span>
+  </p>
+</div>
+{{end}}
+{{end}}

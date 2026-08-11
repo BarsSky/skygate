@@ -1,0 +1,590 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	Port               string
+	DBPath             string
+	// DBDSN is the optional PostgreSQL connection string. If set
+	// (e.g. "postgres://skygate:pass@host:5432/skygate?sslmode=disable"),
+	// skygate connects to PG instead of SQLite. Set via SKYGATE_DB_DSN
+	// env var. Phase 4.1 of the v0.33.0 PG cutover (no live change
+	// in production unless this is set). See
+	// `docs/v0.33.0-pg-cutover-runbook.md` for the cutover sequence.
+	DBDSN              string
+	HeadscaleURL       string
+	HeadscaleKey       string
+	// HeadplaneExternalURL is the public URL of an existing
+	// Headplane instance the operator wants to use instead of
+	// the bundled sidecar. Empty = use the bundled sidecar.
+	// See docs/headplane.md "Use an existing Headplane" for
+	// the full contract.
+	HeadplaneExternalURL string
+	ControlURL           string // human-facing URL clients connect to
+	// BaseDomain is the headscale tailnet domain used to
+	// build per-user ACL identities (e.g. "alice@<BaseDomain>").
+	// Default "tsnet.example.com" (placeholder — operators MUST
+	// set SKYGATE_BASE_DOMAIN in their .env to the real domain
+	// their headscale serves, e.g. "tsnet.example.com" or
+	// "tailnet.example.com"). The placeholder default keeps
+	// the public github repo free of any operator-specific
+	// domain names.
+	BaseDomain string
+	// AdminIdentity is the headscale user that owns the
+	// privileged tags (tag:public, tag:exit-node) and is
+	// referenced in the SSH rules. Default "admin"
+	// (placeholder). Operators with a different admin
+	// username set SKYGATE_ADMIN_IDENTITY in .env. Keep this
+	// in sync with BootstrapAdminUser below.
+	AdminIdentity string
+	// DerpBaseURL is the URL the DERP map fetcher polls.
+	// Default "http://derp.example.com:8766" (placeholder).
+	// Operators set SKYGATE_DERP_BASE_URL in .env.
+	DerpBaseURL string
+	// DerpPeerNPM is the IP of the operator's Nginx Proxy
+	// Manager that maintains persistent WebSocket
+	// connections to the derper for /admin/derp. Default
+	// "192.0.2.67" (RFC 5737 documentation IP). Operators
+	// set SKYGATE_DERP_PEER_NPM in .env to the real NPM
+	// address on their LAN.
+	DerpPeerNPM string
+	// DerpLANNet is the operator's LAN CIDR (used to
+	// classify DERP peer connections as "lan" vs "ws_admin"
+	// vs "ws_relay"). Default "192.0.2.0/24" (RFC 5737).
+	// Operators set SKYGATE_DERP_LAN_NET in .env to their
+	// real LAN CIDR (e.g. "192.168.1.0/24").
+	DerpLANNet string
+	JWTSecret          string
+	SessionHours       int
+	BootstrapAdminUser string
+	BootstrapAdminPass string
+	SSHKeyPath         string // path to SSH key for exit node sync
+	DNSAutoCheck       time.Duration // 0 = disabled, default 5m
+	// 2026-08-09: v0.33.1.25 (B77) — node-discovery
+	// autoupdater period. The goroutine in
+	// internal/nodeownership/auto.go polls headscale every
+	// NodeDiscoveryInterval for new nodes that haven't been
+	// back-filled into node_owner_map yet, and applies the
+	// `tag:dev-<user>-<device>` so the per-device ACL rule
+	// can match. Pre-fix (Issue 2 from the 2026-08-09
+	// operator report), new devices didn't get the tag
+	// until the user manually visited /my/devices or the
+	// admin clicked "Force backfill" — effectively
+	// denying internet access until the user noticed.
+	// Default 5m matches DNSAutoCheck; 0 disables.
+	NodeDiscoveryInterval time.Duration
+	// 2026-08-06 v0.33.1.18 — explicit gate for the DNS-resolve
+	// autoupdater (domain → /32). Previously this was conflated
+	// with AutoUpdateEnabled (the skygate self-update banner on
+	// /admin/update), which led operators who turned off self-
+	// update to ALSO turn off DNS autoupdate — domain rules then
+	// rotted as Cloudflare rotated IPs. Default true preserves
+	// the v0.32.13+ behaviour of "DNS autoupdater ON by default";
+	// the /admin/system_tests page exposes a DB-backed toggle that
+	// overrides this env on the next start + on the next autoupdate
+	// tick (so the operator can flip it without a skygate restart).
+	DNSAutoUpdateEnabled bool
+	// 2026-07-07: issue #12 — limits & staggered sync
+	MaxRulesPerDevice int           // 0 = no limit; default 200
+	MaxTotalRules     int           // 0 = no limit; default 10000
+	StaggerSync       bool          // split autoupdate work into batches
+	StaggerBatchSize  int           // rules per batch (default 20)
+	StaggerInterval   time.Duration // delay between batches (default 30s)
+	// 2026-07-07: per-user rule limits. Map username -> max rules. Default = MaxRulesPerDevice.
+	// Example: "SKYGATE_USER_MAX_RULES=admin:1000,user1:500"
+	UserMaxRules       map[string]int
+	// 2026-07-15: v0.12.0 — per-user headscale control plane
+	// keys are encrypted with this 32-byte hex key. Empty
+	// means "encryption not configured"; the per-user router
+	// falls through to the global client (operators who
+	// haven't enabled per-user planes see no change).
+	SecretKeyHex string
+	// 2026-07-15: v0.13.0 — exit-node health monitor. The
+	// monitor runs in a background goroutine and ticks every
+	// ExitNodeCheckInterval (default 5 min). ExitNodeOnStartup
+	// (default true) runs an immediate pre-tick at boot so a
+	// fresh skygate that starts when all exit-nodes are down
+	// sends the "0 healthy" alert right away. ExitNodeOfflineAfter
+	// is the time window after last_seen beyond which a node
+	// is considered "offline" even if headscale says online
+	// (forgiving fallback for transient WireGuard session
+	// drops). Set ExitNodeCheckInterval to 0 to disable the
+	// monitor entirely (the deploy test still runs from
+	// check_exit_nodes.py).
+	ExitNodeCheckInterval time.Duration
+	ExitNodeOnStartup     bool
+	ExitNodeOfflineAfter  time.Duration
+	// 2026-07-15: v0.14.1 — auto-heal node_owner_map sync.
+	// When true, the monitor's per-tick path also calls
+	// db.SyncNodesFromHeadscale (INSERTs missing rows,
+	// UPDATEs drifted tags) before classifying exit-nodes.
+	// Default false (opt-in) so an operator running a
+	// multi-thousand-node tailnet doesn't pay a full
+	// node_owner_map write per 5-min tick without asking
+	// for it. Set to "true" once you're comfortable with
+	// the per-tick cost.
+	ExitNodeAutoSync bool
+	// 2026-07-17: v0.16.7 — per-user subnet sidecar auto-approver
+	// sync period. The Manager goroutine in cmd/skygate/main.go
+	// polls headscale every SidecarSyncPeriod for tag:subnet-router
+	// nodes, approves the user's CIDR when the sidecar
+	// advertises it, and flips user_subnets.status to
+	// active/disabled. Default 30s — long enough that the
+	// headscale API doesn't get hammered, short enough that
+	// the "click Provision → node appears → status flips" loop
+	// feels responsive. Set to 0 to disable the auto-approver
+	// (preauth-key issuance on /admin/users/{id}/subnet still
+	// works, but the sidecar node won't get its route approved
+	// automatically).
+	SidecarSyncPeriod time.Duration
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// HeadscaleVersionPin is the operator's currently-running
+	// headscale version (e.g. "0.29.2"). The monitor
+	// compares this against the latest GitHub release and
+	// emits a Telegram alert when a newer version is
+	// available. Empty string = monitor is in "observe only"
+	// mode (no alerts, but the /admin/headscale page still
+	// shows the latest known version and history).
+	//
+	// The pin is an env var (not auto-detected) because
+	// skygate doesn't shell into the headscale container.
+	// Auto-detect could come in a v0.21.0+ if we add a
+	// /api/v1/version endpoint to headscale via a wrapper
+	// — for now, the operator updates the env var when
+	// they upgrade headscale.
+	HeadscaleVersionPin string
+	// HeadscalePollInterval is how often the monitor hits
+	// the GitHub Releases API. Default 24h (matches the
+	// headscale release cadence — they ship a minor or
+	// patch every few weeks, not every hour). Set to 0
+	// to disable the monitor entirely (the
+	// /admin/headscale page still works as a manual
+	// look-up; the bot /headscale command still works
+	// against the cached snapshot).
+	HeadscalePollInterval time.Duration
+	// 2026-07-20: v0.20.0 — auto-allocate subnet on
+	// user create. When true, PostAdminUserCreate
+	// automatically calls subnet.Allocate(userID) after
+	// the portal_users row is inserted. Default true
+	// (matches the operator's stated preference: "I
+	// want subnets allocated by default, not via a
+	// separate button click"). Set to false to revert
+	// to v0.16.0-v0.18.1 behaviour where the operator
+	// must visit /admin/users/{id}/subnet and click
+	// "Allocate" manually.
+	AutoAllocateSubnetOnUserCreate bool
+	// 2026-07-24: v0.28.1 — grants-with-via ACL
+	// builder. When true, GenerateACLWithVia runs
+	// (renders grants[] with `via: ["<user's preferred
+	// exit-node>"]`); when false, the legacy
+	// GenerateACL runs (renders acls[] with no `via`).
+	// Default: false on day 1 of v0.28.1 — the
+	// operator flips to true once the per-exit-node
+	// tagOwners entries are in place and the first
+	// /admin/exit-rules/reapply returns clean. The
+	// flag is a safety belt: if a headscale 0.29.x
+	// regression ever rejects the grants shape, the
+	// operator can flip back to false and the legacy
+	// acls[] policy is still functional.
+	ACLWithViaEnabled bool
+	// 2026-07-21: v0.23.3 — node-expiry watcher.
+	// The Tailscale 1.98.x clients ship a RegisterRequest
+	// whose Expiry is only a few seconds in the future,
+	// and headscale 0.29.x applies that Expiry verbatim
+	// (see hscontrol/state.go). The watcher is a
+	// background goroutine that ticks every
+	// ExpireWatchInterval (default 5m), lists every
+	// non-tagged node, and for any node whose Expiry is
+	// missing or within ExpireWatchThreshold (default
+	// 7d) it calls headscale.ExtendNodeExpiry to push
+	// the expiry out to now + ExpireWatchRenewal
+	// (default 30d). This keeps user devices online
+	// even though headscale's per-node state is
+	// initially set to a 2-4-second window. Set
+	// ExpireWatchInterval to "off"/"0" to disable.
+	// Tagged nodes (tag:exit-node, tag:public) are
+	// skipped — headscale's state.go explicitly guards
+	// `if !node.IsTagged()` around the regReq.Expiry
+	// branch, so they keep their nil/none expiry and
+	// never need the watcher.
+	ExpireWatchEnabled   bool
+	ExpireWatchInterval  time.Duration
+	ExpireWatchThreshold time.Duration
+	ExpireWatchRenewal   time.Duration
+	// 2026-07-27: v0.29.0 — self-update checker.
+	// UpdateCheckEnabled gates the GitHub Releases API
+	// polling. Default true. Set to false for air-gapped
+	// deploys (the /admin/update page still shows
+	// "channel disabled" so the operator doesn't think
+	// the page is broken).
+	//
+	// UpdateCheckInterval is the polling period. Default
+	// 24h. GitHub unauthenticated rate limit is 60 req/h;
+	// one check per day leaves 59 unused. Operators with
+	// large fleets (which would hit the limit) can set
+	// SKYGATE_GITHUB_TOKEN to bump to 5000 req/h.
+	//
+	// UpdateChannel is "stable" (only non-prerelease
+	// tags) or "all" (any tag, including v0.30.0-rc.1).
+	// Default "stable".
+	UpdateCheckEnabled  bool
+	UpdateCheckInterval time.Duration
+	UpdateChannel       string
+	// 2026-07-30: v0.32.3 — AutoUpdateEnabled gates the
+	// banner-driven "Apply" button on /admin/update. When
+	// false (the default), the page shows a separate manual
+	// "Push update" button instead — the operator must
+	// explicitly click to apply any update, even if a
+	// newer release is detected. Set to true to enable
+	// the auto-apply flow (banner shows the new release
+	// + the one-click Apply button).
+	//
+	// Separate from UpdateCheckEnabled (which gates the
+	// GitHub polling itself). It's possible to have
+	// UpdateCheckEnabled=true + AutoUpdateEnabled=false:
+	// the page shows "newer release detected" but the
+	// operator must click "Push update" to apply.
+	AutoUpdateEnabled bool
+	GitHubToken         string
+	// 2026-08-05 v0.33.1.10 — GitHub repo coordinates for
+	// the release monitor + update checker + manual
+	// download URL. Default "BarsSky/skygate" (the
+	// operator's actual repo on github.com — previously
+	// hardcoded as "skygate-operator/skygate" which 404s).
+	// Override via SKYGATE_GITHUB_REPO_OWNER / _NAME env
+	// vars for staging / forks / mirror deployments.
+	GitHubOwner string
+	GitHubRepo  string
+	// RepoPath is the path to the skygate source repo used
+	// by the auto-updater to run `git` and `docker compose`.
+	//
+	// Default: inside a container, "/app" (the bind-mount
+	// point for the source dir per docker-compose.yml —
+	// `./:/app`). On a bare/systemd host, the generic
+	// placeholder "/home/operator/skygate".
+	//
+	// Why auto-detect: the orchestrator runs INSIDE the
+	// skygate container (it's a Go process started by the
+	// container's entrypoint), so the host path is
+	// unreachable — `chdir /home/operator/skygate` would
+	// fail on hosts with a different layout. The bind-mount
+	// exposes the same tree at /app inside the container,
+	// which is what git + docker compose operate on.
+	//
+	// Override via SKYGATE_REPO_PATH if your layout differs
+	// (e.g. custom bind-mount path, separate data partition).
+	RepoPath string
+	// UpdateStatePath is the path to the auto-update
+	// status file. Default "/data/skygate-update-status.json"
+	// (bind-mounted into the container, so the file
+	// survives a container recreate). Override via
+	// SKYGATE_UPDATE_STATE_PATH.
+	UpdateStatePath string
+}
+
+func Load() (*Config, error) {
+	c := &Config{
+		Port:               getenv("SKYGATE_PORT", "8080"),
+		DBPath:             getenv("SKYGATE_DB", "/var/lib/skygate/skygate.db"),
+		DBDSN:              os.Getenv("SKYGATE_DB_DSN"),
+		HeadscaleURL:       getenv("HEADSCALE_URL", "http://headscale:50444"),
+		HeadscaleKey:       os.Getenv("HEADSCALE_API_KEY"),
+		HeadplaneExternalURL: os.Getenv("HEADPLANE_EXTERNAL_URL"),
+		ControlURL:         deriveControlURL(getenv("SKYGATE_CONTROL_URL", ""), getenv("HEADSCALE_URL", "http://headscale:50444")),
+		JWTSecret:          os.Getenv("SKYGATE_JWT_SECRET"),
+		SessionHours:       24,
+		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "admin"),
+		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
+		// 2026-08-04 v0.33.1: default path points at the
+		// in-container /ssh-sync mount defined in
+		// docker-compose.yml (the operator's ~/.ssh is bind-mounted
+		// at /ssh-sync so the in-container SetAdvertisedRoutes
+		// SSH call finds the key). The /home/operator/.ssh/
+		// default was correct for the legacy non-docker install
+		// but the dockerised skygate has no /home/operator/
+		// at all — the old default was the same hard-coded
+		// mistake that bit /admin/exit-rules/sync pre-v0.33.1.
+		// Operators can still override per-call by setting
+		// SKYGATE_EXIT_SSH_KEY=… in .env.
+		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/ssh-sync/id_ed25519"),
+		// 2026-08-03: v0.32.29 — moved from source-level
+		// constants to env-driven config so the public
+		// github repo carries no operator-specific DNS,
+		// IPs, hostnames, or usernames. Live deployments
+		// MUST set SKYGATE_BASE_DOMAIN, SKYGATE_ADMIN_IDENTITY,
+		// SKYGATE_DERP_BASE_URL in .env to their real values.
+		BaseDomain:    getenv("SKYGATE_BASE_DOMAIN", "tsnet.example.com"),
+		AdminIdentity: getenv("SKYGATE_ADMIN_IDENTITY", "admin"),
+		DerpBaseURL:   getenv("SKYGATE_DERP_BASE_URL", "http://derp.example.com:8766"),
+		DerpPeerNPM:   getenv("SKYGATE_DERP_PEER_NPM", "192.0.2.67"),
+		DerpLANNet:    getenv("SKYGATE_DERP_LAN_NET", "192.0.2.0/24"),
+		DNSAutoCheck:       getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
+		// 2026-08-09: v0.33.1.25 (B77) — node-discovery
+		// autoupdater. Default 5m (same as DNSAutoCheck);
+		// set SKYGATE_NODE_DISCOVERY_INTERVAL=off to disable.
+		NodeDiscoveryInterval: getDuration("SKYGATE_NODE_DISCOVERY_INTERVAL", 5*time.Minute),
+		// 2026-08-06 v0.33.1.18 — separate flag from AutoUpdateEnabled
+		// (see DNSAutoUpdateEnabled comment above). Default true so
+		// upgrading from v0.33.1.17 keeps DNS autoupdate on. Setting
+		// SKYGATE_AUTO_UPDATE_ENABLED=false no longer turns DNS
+		// autoupdate off — the operator's prior "I'll just disable
+		// self-update" change in .env was silently disabling their
+		// domain rule refresh.
+		DNSAutoUpdateEnabled: getenv("SKYGATE_DNS_AUTOUPDATE_ENABLED", "true") == "true",
+		MaxRulesPerDevice:  getInt("SKYGATE_MAX_RULES_PER_DEVICE", 200),
+		MaxTotalRules:      getInt("SKYGATE_MAX_TOTAL_RULES", 10000),
+		StaggerSync:        getenv("SKYGATE_STAGGER_SYNC", "true") == "true",
+		StaggerBatchSize:   getInt("SKYGATE_STAGGER_BATCH_SIZE", 20),
+		StaggerInterval:    getDuration("SKYGATE_STAGGER_INTERVAL", 30*time.Second),
+		UserMaxRules:       parseUserLimits(getenv("SKYGATE_USER_MAX_RULES", "")),
+		SecretKeyHex:       os.Getenv("SKYGATE_SECRET_KEY"),
+		// 2026-07-15: v0.13.0 — exit-node health monitor
+		// knobs. "off" / "0" disables the monitor (default
+		// is 5m; same shape as SKYGATE_DNS_AUTO_CHECK so an
+		// operator's mental model carries over).
+		ExitNodeCheckInterval: getDuration("SKYGATE_EXIT_NODE_CHECK_INTERVAL", 5*time.Minute),
+		ExitNodeOnStartup:     getenv("SKYGATE_EXIT_NODE_CHECK_ON_STARTUP", "true") == "true",
+		ExitNodeOfflineAfter:  getDuration("SKYGATE_EXIT_NODE_OFFLINE_AFTER", 2*time.Minute),
+		// 2026-07-15: v0.14.1 — auto-heal sync (opt-in).
+		// Operators who already use the admin "Sync from
+		// headscale" button can leave this false; the
+		// monitor's job is just the health check, and
+		// /admin/devices is where the explicit sync lives.
+		// Set SKYGATE_EXIT_NODE_AUTO_SYNC=true on a
+		// single-tailnet deployment where the
+		// always-current view matters more than the
+		// per-tick write cost.
+		ExitNodeAutoSync: getenv("SKYGATE_EXIT_NODE_AUTO_SYNC", "false") == "true",
+		// 2026-07-17: v0.16.7 — per-user subnet sidecar
+		// auto-approver. Set to 0 to disable (operator-driven
+		// approve-routes only).
+		SidecarSyncPeriod: getDuration("SKYGATE_SIDECAR_SYNC_PERIOD", 30*time.Second),
+		// 2026-07-20: v0.20.0 — headscale-update-monitor.
+		// Default pin is empty (operator must set
+		// SKYGATE_HEADSCALE_VERSION_PIN to enable alerts);
+		// default poll is 24h (one check per day is plenty
+		// for headscale's release cadence). Set the
+		// interval to "off" or "0" to disable.
+		HeadscaleVersionPin:    os.Getenv("SKYGATE_HEADSCALE_VERSION_PIN"),
+		HeadscalePollInterval:  getDuration("SKYGATE_HEADSCALE_POLL_INTERVAL", 24*time.Hour),
+		// 2026-07-20: v0.20.0 — auto-allocate subnet on
+		// user create. Default true. Set to "false" in
+		// .env to revert to v0.16.0-v0.18.1 manual
+		// allocation via /admin/users/{id}/subnet.
+		AutoAllocateSubnetOnUserCreate: getenv("SKYGATE_AUTO_ALLOCATE_SUBNET", "true") == "true",
+		// 2026-07-24: v0.28.1 — SKYGATE_ACL_VIA_ENABLED.
+		// Default false. Set true to switch the ACL
+		// builder to the grants-with-via path. The
+		// admin /admin/exit-rules/reapply is the
+		// canonical "try it" — SetPolicy returns the
+		// headscale error verbatim, and the rollback
+		// button restores the previous (a working
+		// acls[]) snapshot.
+		ACLWithViaEnabled: getenv("SKYGATE_ACL_VIA_ENABLED", "false") == "true",
+		// 2026-07-21: v0.23.3 — node-expiry watcher.
+		// Default: 5m tick, renew nodes with <7d remaining
+		// out to 30d. SKYGATE_EXPIREWATCH_ENABLED=false
+		// disables the goroutine; SKYGATE_EXPIREWATCH_INTERVAL
+		// = "off" / "0" has the same effect.
+		ExpireWatchEnabled:   getenv("SKYGATE_EXPIREWATCH_ENABLED", "true") == "true",
+		ExpireWatchInterval:  getDuration("SKYGATE_EXPIREWATCH_INTERVAL", 5*time.Minute),
+		ExpireWatchThreshold: getDuration("SKYGATE_EXPIREWATCH_THRESHOLD", 7*24*time.Hour),
+		ExpireWatchRenewal:   getDuration("SKYGATE_EXPIREWATCH_RENEWAL", 30*24*time.Hour),
+		// 2026-07-27: v0.29.0 — self-update checker.
+		// UpdateCheckEnabled defaults to true; SKYGATE_UPDATE_CHECK=false
+		// disables polling (air-gapped deploys).
+		// UpdateCheckInterval defaults to 24h. SKYGATE_UPDATE_CHECK_INTERVAL
+		// = "off" / "0" disables.
+		// UpdateChannel defaults to "stable". "all" includes prereleases.
+		// GitHubToken is optional (Basic auth bumps rate limit from
+		// 60/h to 5000/h).
+		UpdateCheckEnabled:  getenv("SKYGATE_UPDATE_CHECK", "true") == "true",
+		UpdateCheckInterval: getDuration("SKYGATE_UPDATE_CHECK_INTERVAL", 24*time.Hour),
+		UpdateChannel:       getenv("SKYGATE_UPDATE_CHANNEL", "stable"),
+		GitHubToken:         os.Getenv("SKYGATE_GITHUB_TOKEN"),
+		// v0.32.3: auto-update flag. Default false.
+		// SKYGATE_AUTO_UPDATE_ENABLED=true enables the
+		// banner + "Apply" button. When false, the operator
+		// must use the separate "Push update" button to
+		// trigger an apply — the system never auto-updates
+		// without an explicit click.
+		AutoUpdateEnabled: getenv("SKYGATE_AUTO_UPDATE_ENABLED", "false") == "true",
+		// 2026-08-05 v0.33.1.10: GitHub repo coordinates.
+		// The "BarsSky/skygate" default matches the
+		// operator's actual github.com repo (the previous
+		// hardcoded "skygate-operator/skygate" 404s).
+		// Operators with their own fork can set
+		// SKYGATE_GITHUB_REPO_OWNER / _NAME.
+		GitHubOwner: getenv("SKYGATE_GITHUB_REPO_OWNER", "BarsSky"),
+		GitHubRepo:  getenv("SKYGATE_GITHUB_REPO_NAME", "skygate"),
+		// v0.29.0: auto-updater paths. RepoPath
+		// auto-detects: inside a container, default to /app
+		// (the bind-mount point in docker-compose.yml).
+		// On a bare/systemd host, default to
+		// /home/operator/skygate (generic placeholder —
+		// operators with a non-standard layout should set
+		// SKYGATE_REPO_PATH). The /data state file matches
+		// the bind-mounted volume (so it survives a
+		// container recreate).
+		RepoPath:        getenv("SKYGATE_REPO_PATH", defaultRepoPath()),
+		UpdateStatePath: getenv("SKYGATE_UPDATE_STATE_PATH", "/data/skygate-update-status.json"),
+	}
+
+	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {
+		if v == "off" || v == "0" {
+			c.DNSAutoCheck = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_NODE_DISCOVERY_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.NodeDiscoveryInterval = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_EXIT_NODE_CHECK_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.ExitNodeCheckInterval = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_HEADSCALE_POLL_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.HeadscalePollInterval = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_EXPIREWATCH_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.ExpireWatchInterval = 0
+		}
+	}
+	if v := os.Getenv("SKYGATE_UPDATE_CHECK_INTERVAL"); v != "" {
+		if v == "off" || v == "0" {
+			c.UpdateCheckInterval = 0
+		}
+	}
+	if c.HeadscaleKey == "" {
+		return nil, fmt.Errorf("HEADSCALE_API_KEY is required")
+	}
+	if c.JWTSecret == "" {
+		return nil, fmt.Errorf("SKYGATE_JWT_SECRET is required")
+	}
+	return c, nil
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// deriveControlURL returns the URL clients (Tailscale) should be pointed at.
+// Priority:
+//  1. SKYGATE_CONTROL_URL (explicit human-facing URL)
+//  2. HEADSCALE_URL with http:// replaced by https:// and trailing /api stripped
+//     (best-effort fallback for self-hosted setups).
+func deriveControlURL(explicit, hsAPI string) string {
+	explicit = strings.TrimRight(explicit, "/")
+	if explicit != "" {
+		return explicit
+	}
+	// Fallback: take headscale API URL, strip /api path, force https
+	u := strings.TrimRight(hsAPI, "/")
+	u = strings.TrimSuffix(u, "/api/v1")
+	u = strings.TrimSuffix(u, "/api")
+	if strings.HasPrefix(u, "http://") {
+		u = "https://" + strings.TrimPrefix(u, "http://")
+	} else if !strings.HasPrefix(u, "https://") {
+		u = "https://" + u
+	}
+	return u
+}
+
+
+
+func getInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func getDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(n) * time.Second
+	}
+	return def
+}
+
+func parseUserLimits(s string) map[string]int {
+	m := map[string]int{}
+	if s == "" { return m }
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" { continue }
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 { continue }
+		name := strings.TrimSpace(parts[0])
+		n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || n <= 0 { continue }
+		m[name] = n
+	}
+	return m
+}
+
+// defaultRepoPath returns the default RepoPath for the
+// auto-updater, choosing based on whether the process is
+// running inside a container.
+//
+// Inside a container: "/app" — that's the bind-mount point
+// of the source dir per docker-compose.yml (`./:/app`). The
+// host's actual repo path is NOT visible from inside the
+// container (only the bind-mounts are), so the orchestrator
+// MUST use the in-container path. chdir <host-path> would
+// fail with "no such file or directory" because the process
+// has no view of the host's filesystem root.
+//
+// On a bare/systemd host: "/home/operator/skygate" — a
+// generic placeholder. Operators with a different layout
+// should set SKYGATE_REPO_PATH.
+//
+// SKYGATE_REPO_PATH env always wins (handled at the
+// getenv() call site).
+func defaultRepoPath() string {
+	if runningInContainer() {
+		return "/app"
+	}
+	// Generic bare-host default. Operators who need a
+	// non-standard path should set SKYGATE_REPO_PATH.
+	return "/home/operator/skygate"
+}
+
+// runningInContainer returns true if the process is running
+// inside a container. Checks for Docker's /.dockerenv marker
+// (Docker Engine, Docker Desktop, rootless Docker) and the
+// OCI-standard /run/.containerenv marker (Podman, CRI-O,
+// containerd, Kubernetes). The function is best-effort: a
+// false negative falls back to the bare-host default, which
+// is harmless (the operator can override via env).
+func runningInContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+	return false
+}

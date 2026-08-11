@@ -1,0 +1,37 @@
+# Dockerfile.caddy — custom Caddy build with DNS provider plugins.
+#
+# Why this exists (v0.32.10): the v0.15.0 Caddyfile uses
+# `tls { dns cloudflare }` for the DNS-01 ACME challenge
+# (no port-80 inbound required). The standard caddy:2-alpine
+# image does NOT include the cloudflare DNS provider module
+# (`module not registered: dns.providers.cloudflare`), so the
+# caddy container crash-loops on start. This Dockerfile
+# builds a caddy binary with the cloudflare plugin baked in.
+#
+# The xcaddy build approach (caddy:2-builder -> caddy:2-alpine)
+# is the official caddy-dns-cloudflare project recommendation:
+# https://github.com/caddy-dns/cloudflare
+#
+# Build context: this Dockerfile lives at the repo root so
+# docker-compose.yml can reference it as
+#   build: { context: ., dockerfile: Dockerfile.caddy }
+# No source files are copied; the build context is only used
+# to evaluate the FROM lines.
+
+# ── Stage 1: build caddy with the cloudflare DNS plugin ──
+FROM caddy:2-builder AS builder
+
+# caddy-builder is a helper script in the caddy:2-builder
+# image that takes a list of plugins and produces a custom
+# caddy binary at /usr/bin/caddy. The github.com/caddy-dns/
+# org hosts community-maintained DNS provider modules.
+RUN caddy-builder github.com/caddy-dns/cloudflare
+
+# ── Stage 2: copy the custom binary into the minimal runtime ──
+FROM caddy:2-alpine
+
+# Replace the stock /usr/bin/caddy with the one from the
+# builder stage (which has cloudflare compiled in). Everything
+# else in the alpine image stays the same — same volumes,
+# same entrypoint, same default Caddyfile path.
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

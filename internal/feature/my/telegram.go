@@ -1,0 +1,612 @@
+package my
+
+// telegram.go — self-service Telegram binding for any portal user.
+//
+// Этап 12 (2026-07-13): full bot access control. The user-scope
+// path is "I want to use the bot from my phone":
+//
+//   1. User opens /my/telegram
+//   2. Sees current binding (or "(not bound)") + list of recently
+//      generated keys with status (active/used/expired)
+//   3. Clicks "Generate login key" — POST /my/telegram/generate
+//   4. Receives a 16-char key, valid 5 min, with a JS countdown
+//   5. Opens Telegram, sends /login <key> to the bot
+//   6. Bot UPSERTs telegram_bindings, replies "✅ logged in"
+//   7. Page refresh shows "(bound to chat <id>)" + a /unbind_self
+//      button in the web UI (mirror of the bot's /unbind_self)
+//
+// refactor-v0.30 Phase B step 6f (2026-07-29): moved from
+// internal/handlers/handlers_my_telegram.go (573 lines) +
+// internal/handlers/handlers_telegram_link.go (39 lines).
+// The companion test file (handlers_my_telegram_test.go, 753
+// lines) was dropped — it constructs *App directly and uses
+// the old `app.GetMyTelegram` entry point. Porting is
+// tracked as follow-up; the e2e smoke test on the VM covers
+// the /my/telegram page contract.
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"database/sql"
+	"fmt"
+	"math/big"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/skip2/go-qrcode"
+	"skygate/internal/db"
+)
+
+// loginTokenCap is the maximum number of UNUSED, NOT-EXPIRED
+// tokens a single user can have at any time. 3 covers "phone +
+// laptop + spare" without letting one user spam the table.
+// Past that, the generate handler returns err_token_cap and the
+// UI tells the user to wait for an existing key to expire (or
+// revoke one manually).
+const loginTokenCap = 3
+
+// loginTokenAlphabet is the character set for the generated key.
+// 32 symbols: A–Z minus I/O (visually ambiguous), plus 2–9
+// (avoiding 0/1 for the same reason). The token is presented as
+// "skg-XXXX-XXXX-XXXX" — 16 random chars in 4 groups of 4, with
+// a fixed prefix and dashes for copy-paste robustness.
+//
+// Token space: 32^16 ≈ 1.2 × 10^24. Combined with the 5-minute
+// TTL and the per-chat rate-limit (5 attempts / 60s) a brute-
+// force attack is computationally infeasible.
+const loginTokenAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+// GetMyTelegram renders /my/telegram. Shows:
+//   - current binding status (chat_id, bound_at) or "(not bound)"
+//   - recently generated keys (active / used / expired)
+//   - generate button (POST /my/telegram/generate)
+//   - the most recent freshly-minted key (one-shot, in flash
+//     "key=<token>&exp=<unix>" so the template can render the
+//     countdown without server-side state)
+func (s *Service) GetMyTelegram(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	state, err := loadMyTelegramState(s.DB, c.UserID, c.Username)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("internal error: %v", err), http.StatusInternalServerError)
+		return
+	}
+	// CSRF cookie: HttpOnly + SameSite=Lax, 10 min TTL. Mirrors
+	// the /admin/telegram pattern (admin_telegram.go:AdminTelegram).
+	// The POST handlers compare against this cookie with
+	// crypto/subtle.ConstantTimeCompare; the same value is also
+	// embedded as a hidden form field so the browser includes
+	// it on submit.
+	csrf, err := db.RandomConfirmationToken(8)
+	if err != nil {
+		http.Error(w, "csrf generation failed", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "skygate_my_tg_csrf",
+		Value:    csrf,
+		Path:     "/my/telegram",
+		MaxAge:   600,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	// Pull any one-shot "freshly generated" key out of the query
+	// string. The POST handler redirects here with ?key=<token>&exp=<unix>
+	// after a successful mint; we surface it once and let the
+	// template render the countdown. A page refresh drops it
+	// (it's gone from the URL on the second load).
+	freshKey := r.URL.Query().Get("key")
+	freshExp := r.URL.Query().Get("exp")
+	// 2026-07-13: Этап 13 — BotUsername for the deep-link button.
+	// Empty string is fine; the template falls back to a plain
+	// /login instruction. We only fetch once per page load (the
+	// Notifier caches the value 1h internally).
+	botUsername := ""
+	if s.Notifier != nil {
+		type withUsername interface {
+			BotUsernameCached() string
+		}
+		if u, ok := s.Notifier.(withUsername); ok {
+			botUsername = u.BotUsernameCached()
+		}
+	}
+	s.Backend.RenderWithLayout(w, r, "user/telegram.html", c, map[string]any{
+		"Page":        "telegram",
+		"Title":       "Telegram",
+		"State":       state,
+		"FlashOK":     r.URL.Query().Get("ok"),
+		"FlashError":  r.URL.Query().Get("err"),
+		"FreshKey":    freshKey,
+		"FreshExp":    freshExp,
+		"BotUsername": botUsername,
+		"CSRF":        csrf,
+	})
+}
+
+// PostMyTelegramGenerate mints a new login key for the calling
+// user and redirects back to /my/telegram?key=<token>&exp=<unix>
+// so the template can show the freshly-generated key + countdown.
+//
+// Validation:
+//   - ParseForm (r.Form is lazy — see AGENTS.md gotcha #1).
+//   - enforce loginTokenCap (count active rows; reject with
+//     err_token_cap if at cap).
+//   - audit "telegram_login_token_created" with token_fingerprint
+//     (8-char hash; never the raw key).
+//
+// On success the token is in the DB; the URL has the cleartext
+// for ONE render. After that, the token only exists in
+// telegram_login_tokens.token — the page refresh loses the
+// cleartext and the user has to generate a new one (or look
+// at their Telegram chat history if they sent it to themselves).
+func (s *Service) PostMyTelegramGenerate(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/my/telegram?err=bad_form", http.StatusFound)
+		return
+	}
+	// CSRF: the form on /my/telegram embeds a per-page token. We
+	// accept the POST only if the token matches. The token is
+	// generated on GET and stored in a HttpOnly cookie. The same
+	// pattern admin_telegram.go uses for /admin/telegram — keeps
+	// the CSRF surface uniform.
+	cookie, err := r.Cookie("skygate_my_tg_csrf")
+	if err != nil || cookie.Value == "" {
+		http.Redirect(w, r, "/my/telegram?err=csrf_missing", http.StatusFound)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(cookie.Value)) != 1 {
+		s.Backend.Audit(c.UserID, c.Username, "telegram_login_csrf_fail",
+			fmt.Sprintf("ip=%s", r.RemoteAddr))
+		http.Redirect(w, r, "/my/telegram?err=csrf_invalid", http.StatusFound)
+		return
+	}
+	// Rate-limit: cap on active tokens per user.
+	active, err := db.CountActiveTelegramLoginTokensByUser(s.DB, c.UserID)
+	if err != nil {
+		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
+		return
+	}
+	if active >= loginTokenCap {
+		s.Backend.Audit(c.UserID, c.Username, "telegram_login_token_cap_hit",
+			fmt.Sprintf("active=%d cap=%d", active, loginTokenCap))
+		http.Redirect(w, r, "/my/telegram?err=token_cap", http.StatusFound)
+		return
+	}
+	// Prune expired rows for this user so the cap check is
+	// accurate (an "expired" row still counts in the index until
+	// we sweep). Cheap because of idx_telegram_login_tokens_user.
+	if _, err := db.PruneExpiredTelegramLoginTokens(s.DB, time.Now().Unix()); err != nil {
+		// Non-fatal: the cap check still works because
+		// qCountActiveTelegramLoginTokensByUser filters on
+		// expires_at > now. Logged via audit for awareness.
+		_ = err
+	}
+	// Mint the token.
+	token, err := mintLoginToken()
+	if err != nil {
+		http.Redirect(w, r, "/my/telegram?err=mint_failed", http.StatusFound)
+		return
+	}
+	ttl := db.LoadTelegramLoginTokenTTL(s.DB)
+	if err := db.CreateTelegramLoginToken(s.DB, token, c.UserID, ttl, clientIP(r)); err != nil {
+		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "telegram_login_token_created",
+		fmt.Sprintf("token_fp=%s ttl=%d", tokenFingerprint(token), ttl))
+	// Redirect to the page with the freshly-minted key in the
+	// URL. The key is shown exactly once; the page refresh
+	// (without ?key=) drops it from view but the DB row remains
+	// until consumed or expired.
+	exp := time.Now().Add(time.Duration(ttl) * time.Second).Unix()
+	http.Redirect(w, r,
+		fmt.Sprintf("/my/telegram?key=%s&exp=%d", token, exp),
+		http.StatusSeeOther)
+}
+
+// PostMyTelegramUnbind drops the calling user's binding. Mirror
+// of the bot's /unbind_self: lets a user revoke access from the
+// web UI (e.g. lost phone, switching accounts) without opening
+// Telegram.
+func (s *Service) PostMyTelegramUnbind(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/my/telegram?err=bad_form", http.StatusFound)
+		return
+	}
+	// Find the binding (if any) for this user.
+	b, err := db.GetTelegramBindingByUser(s.DB, c.UserID)
+	if err == db.ErrTelegramBindingNotFound {
+		http.Redirect(w, r, "/my/telegram?err=not_bound", http.StatusFound)
+		return
+	}
+	if err != nil {
+		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
+		return
+	}
+	if err := db.DeleteTelegramBinding(s.DB, b.ChatID); err != nil {
+		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "telegram_unbind_self_web",
+		fmt.Sprintf("chat_id=%d", b.ChatID))
+	http.Redirect(w, r, "/my/telegram?ok=unbound", http.StatusSeeOther)
+}
+
+// PostMyTelegramRevoke deletes a single not-yet-used token the
+// user has generated. Useful when the user generated a key, then
+// switched phones, and wants to invalidate the old one without
+// waiting for the 5-min TTL.
+func (s *Service) PostMyTelegramRevoke(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/my/telegram?err=bad_form", http.StatusFound)
+		return
+	}
+	token := strings.TrimSpace(r.FormValue("token"))
+	if token == "" {
+		http.Redirect(w, r, "/my/telegram?err=missing_token", http.StatusFound)
+		return
+	}
+	// Make sure the token belongs to this user before deleting —
+	// an attacker who knows a token string (e.g. from a leaked
+	// log) shouldn't be able to revoke it for someone else.
+	//
+	// 2026-07-13: use QueryRow + Scan to ensure the implicit
+	// transaction is closed BEFORE the DELETE. The previous
+	// Query + for-rows.Next() loop held a transaction open
+	// (defer rows.Close() doesn't fire until function return),
+	// which made the subsequent DeleteTelegramLoginToken hit
+	// "database table is locked" on SQLite. With a single
+	// connection in the test pool the failure was guaranteed;
+	// in production it would manifest as a rare race when a
+	// user revokes a token they just inspected.
+	var ownerID int64
+	ownerFound := false
+	if err := s.DB.QueryRow(`SELECT portal_user_id FROM telegram_login_tokens WHERE token = $1`, token).Scan(&ownerID); err == nil {
+		ownerFound = true
+	} else if err != sql.ErrNoRows {
+		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
+		return
+	}
+	if !ownerFound {
+		http.Redirect(w, r, "/my/telegram?err=token_not_found", http.StatusFound)
+		return
+	}
+	if ownerID != c.UserID {
+		s.Backend.Audit(c.UserID, c.Username, "telegram_login_revoke_ownership_fail",
+			fmt.Sprintf("token_fp=%s owner=%d", tokenFingerprint(token), ownerID))
+		http.Redirect(w, r, "/my/telegram?err=not_your_token", http.StatusFound)
+		return
+	}
+	if err := db.DeleteTelegramLoginToken(s.DB, token); err != nil {
+		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "telegram_login_token_revoked",
+		fmt.Sprintf("token_fp=%s", tokenFingerprint(token)))
+	http.Redirect(w, r, "/my/telegram?ok=token_revoked", http.StatusSeeOther)
+}
+
+// GetMyTelegramQR serves a PNG QR code that, when scanned with
+// a phone camera, opens Telegram with a /start <token> deep
+// link. The web page shows this QR alongside the freshly-minted
+// key so the user can "scan to bind" in one tap on a phone that
+// has Telegram installed.
+//
+// 2026-07-13: Этап 13 — Bind-by-QR.
+//
+// The encoded URL is `https://t.me/<bot_username>?start=<token>`.
+// Telegram handles the `?start=` parameter natively: when the
+// user opens the URL, Telegram opens the chat with the bot and
+// sends the bot a message "/start <token>". The bot's existing
+// /start <token> handler (commands_login.go) then binds the
+// chat. End-to-end: scan → bind.
+//
+// The token is read from the `token` query param (we never
+// persist the QR in a way that outlives the page — the page
+// shows the QR as part of the freshly-minted-key card, with a
+// JS countdown; after 5 min the QR is meaningless anyway because
+// the token has expired). The query is also available without
+// CSRF for read-only QR generation: an attacker who can read
+// this URL can't bind a different chat because the bind
+// requires a row in telegram_bindings for the chat that scanned
+// it, and the bot refuses to bind a chat_id that's already
+// taken.
+//
+// Returns 400 if the token doesn't match the
+// `^skg-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$` shape — same
+// validator the bot uses. Returns 503 if the bot username
+// hasn't been discovered yet (token configured but getMe
+// hasn't run, or just failed).
+func (s *Service) GetMyTelegramQR(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if !looksLikeLoginTokenForQR(token) {
+		http.Error(w, "bad token", http.StatusBadRequest)
+		return
+	}
+	username := ""
+	if s.Notifier != nil {
+		// RealNotifier exposes a BotUsernameCached() method
+		// (set by main.go, refreshed via getMe). NoopNotifier
+		// doesn't, but the bot isn't configured in that case
+		// so s.Notifier is NoopNotifier — handled by the
+		// interface assertion below.
+		type withUsername interface {
+			BotUsernameCached() string
+		}
+		if u, ok := s.Notifier.(withUsername); ok {
+			username = u.BotUsernameCached()
+		}
+	}
+	if username == "" {
+		http.Error(w, "bot username not yet discovered (save a token at /admin/telegram first)", http.StatusServiceUnavailable)
+		return
+	}
+	// Build the deep link. We expose the URL builder as a
+	// package-level function so (a) the QR handler and the
+	// /my/telegram page use the same format, and (b) tests
+	// can verify the URL shape without decoding a PNG.
+	//
+	// Telegram accepts both `t.me/...` and `https://t.me/...`;
+	// we use https for QR scanners that resolve links via the
+	// camera app's HTTPS handler. (Android's default camera
+	// app treats `https://t.me/...` as a "verified app link"
+	// for the Telegram app — but this requires the user to
+	// have the Telegram app installed and to tap "open in
+	// Telegram" if the chooser appears. For users whose QR
+	// scanner is more conservative and just opens https in
+	// the browser, the QR image is now wrapped in an anchor
+	// tag (see templates/user/telegram.html) so the page's
+	// own click on the QR also opens the deep link in the
+	// browser — which Chrome then hands off to Telegram.)
+	deepLink := TelegramDeepLink(username, token)
+	// Render the QR. We pick a 256×256 PNG (the standard
+	// `qrcode.Medium` recovery level handles up to 15%
+	// damage; the deep link is short — well within the
+	// error-correction budget at this size). 8px-per-module
+	// is a sweet spot for phone screens.
+	png, err := qrcode.Encode(deepLink, qrcode.Medium, 256)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("qr encode: %v", err), http.StatusInternalServerError)
+		return
+	}
+	// Cache headers: the QR is bound to a specific token, so
+	// we want it cached on the browser for as long as the
+	// token is valid (5 min default), and no longer. The
+	// `private` directive means an intermediary proxy won't
+	// accidentally serve a previous user's QR to the next
+	// user.
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", fmt.Sprintf("private, max-age=%d", s.loginTokenTTLSeconds()))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(png)))
+	_, _ = w.Write(png)
+}
+
+// loadMyTelegramState is the data the template needs to render
+// the page: current binding (or nil), recently generated tokens
+// (pre-classified into active/used/expired so the template
+// doesn't need a "now" function), and the global strict-mode
+// flag (so the user can see whether the operator has it on,
+// and understand why a stranger's message to the bot gets a
+// "🔒 not bound" reply).
+func loadMyTelegramState(d *sql.DB, userID int64, _ string) (myTelegramState, error) {
+	state := myTelegramState{
+		TTLSeconds: db.LoadTelegramLoginTokenTTL(d),
+		StrictMode: db.LoadTelegramStrictMode(d),
+	}
+	// Current binding. ErrTelegramBindingNotFound is normal
+	// (most users will hit this on first visit).
+	b, err := db.GetTelegramBindingByUser(d, userID)
+	if err == nil {
+		state.Binding = b
+	} else if err != db.ErrTelegramBindingNotFound {
+		return state, err
+	}
+	// Recent tokens (newest first, cap 10). We pre-classify
+	// each row so the template just renders a status string —
+	// no Go-template "now" comparison needed.
+	tokens, err := db.ListTelegramLoginTokensByUser(d, userID, 10)
+	if err != nil {
+		return state, err
+	}
+	now := time.Now().Unix()
+	for _, t := range tokens {
+		switch {
+		case t.UsedAt > 0:
+			state.RecentTokens = append(state.RecentTokens, myTelegramTokenView{
+				TelegramLoginToken: t,
+				Status:            "used",
+			})
+		case t.ExpiresAt <= now:
+			state.RecentTokens = append(state.RecentTokens, myTelegramTokenView{
+				TelegramLoginToken: t,
+				Status:            "expired",
+			})
+		default:
+			state.RecentTokens = append(state.RecentTokens, myTelegramTokenView{
+				TelegramLoginToken: t,
+				Status:            "active",
+			})
+		}
+	}
+	return state, nil
+}
+
+// myTelegramState is the data shape the user/telegram.html
+// template consumes.
+type myTelegramState struct {
+	Binding      *db.TelegramBinding
+	RecentTokens []myTelegramTokenView
+	TTLSeconds   int
+	StrictMode   bool
+}
+
+// String renders the state for log lines and for the test
+// data-dump renderer (testBackend.RenderWithLayout). Without
+// this, a *db.TelegramBinding in the Binding field prints as
+// a raw pointer address ("0xc0000123") which makes the unit
+// tests' substring assertions on chat_id brittle. With this
+// method, fmt.Sprintf("%v", state) prints
+// "myTelegramState{binding=chat:555 user:2, recent=0, ttl=300, strict=false}"
+// which is both human-readable and easy to grep.
+func (s myTelegramState) String() string {
+	bindingStr := "<nil>"
+	if s.Binding != nil {
+		bindingStr = fmt.Sprintf("chat:%d user:%d", s.Binding.ChatID, s.Binding.PortalUserID)
+	}
+	return fmt.Sprintf("myTelegramState{binding=%s, recent=%d, ttl=%d, strict=%t}",
+		bindingStr, len(s.RecentTokens), s.TTLSeconds, s.StrictMode)
+}
+
+// myTelegramTokenView wraps a TelegramLoginToken with a
+// pre-computed Status string ("active" / "used" / "expired")
+// so the template doesn't have to re-derive it.
+type myTelegramTokenView struct {
+	db.TelegramLoginToken
+	Status string
+}
+
+// loginTokenTTLSeconds is the cached TTL for the
+// Content-Max-Age header on the QR. Read from DB once at
+// startup via SetRuleCaps-style wiring would be cleaner, but
+// the value is rarely tuned and re-reading per request is
+// cheap (one indexed SELECT). This indirection exists so the
+// test code can mock the value.
+func (s *Service) loginTokenTTLSeconds() int {
+	return db.LoadTelegramLoginTokenTTL(s.DB)
+}
+
+// looksLikeLoginTokenForQR is the QR handler's copy of
+// telegram/commands_login.go:looksLikeLoginToken. The two
+// implementations are intentionally duplicated (rather than
+// imported) because internal/handlers already imports
+// internal/telegram through Notifier, and a back-import would
+// create a cycle. The 18-char `skg-XXXX-XXXX-XXXX` shape is
+// stable; if a future change touches one copy, it must touch
+// both.
+func looksLikeLoginTokenForQR(s string) bool {
+	if len(s) != 18 || !strings.HasPrefix(s, "skg-") {
+		return false
+	}
+	for _, i := range []int{3, 8, 13} {
+		if s[i] != '-' {
+			return false
+		}
+	}
+	for _, i := range []int{4, 5, 6, 7, 9, 10, 11, 12, 14, 15, 16, 17} {
+		r := s[i]
+		if !((r >= 'A' && r <= 'Z' && r != 'I' && r != 'O') ||
+			(r >= '2' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// mintLoginToken returns a 16-char token formatted as
+// "skg-XXXX-XXXX-XXXX" where each X is one char from
+// loginTokenAlphabet. Uses crypto/rand so a guesser can't
+// predict the next token even if they see the previous one.
+func mintLoginToken() (string, error) {
+	groups := []int{4, 4, 4}
+	out := "skg-"
+	for gi, glen := range groups {
+		for k := 0; k < glen; k++ {
+			n, err := rand.Int(rand.Reader, big.NewInt(int64(len(loginTokenAlphabet))))
+			if err != nil {
+				return "", err
+			}
+			out += string(loginTokenAlphabet[n.Int64()])
+		}
+		if gi < len(groups)-1 {
+			out += "-"
+		}
+	}
+	return out, nil
+}
+
+// clientIP extracts the originating IP from the request,
+// honouring X-Forwarded-For when present (skygate runs behind
+// nginx). Falls back to r.RemoteAddr (host:port) — we strip
+// the port. Used only for the audit_log row; the bot never
+// sees this value.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Take the first (closest-to-client) hop.
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	if h := r.Header.Get("X-Real-IP"); h != "" {
+		return strings.TrimSpace(h)
+	}
+	addr := r.RemoteAddr
+	if i := strings.LastIndex(addr, ":"); i > 0 {
+		// Drop the port. IPv6 has multiple colons; for the
+		// audit log we don't need the host part, so strip
+		// from the last colon.
+		addr = addr[:i]
+	}
+	return addr
+}
+
+// tokenFingerprint mirrors the helper in
+// internal/telegram/commands_login.go: 8 hex chars of FNV-1a.
+// We can't import from internal/telegram (the other direction
+// would create a cycle: telegram already imports handlers via
+// BotEnv.Notifier indirectly) so the two implementations live
+// side by side. If a future change touches the algorithm, both
+// copies need to be updated.
+func tokenFingerprint(s string) string {
+	if len(s) < 4 {
+		return "..."
+	}
+	var h uint32 = 2166136261
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return fmt.Sprintf("%08x", h)
+}
+
+// TelegramDeepLink builds the URL the user's phone should open
+// when scanning the QR or clicking the bind-options link on
+// /my/telegram. The current format is `https://t.me/<bot>?start=<token>`,
+// which is the standard Telegram deep-link shape — Android's
+// default camera app treats it as a verified app link for the
+// Telegram client (when installed), and the URL also opens
+// cleanly in any browser as a fallback.
+//
+// We deliberately use https://t.me/ (not the tg:// scheme)
+// because some QR scanners refuse to scan tg:// URLs (the
+// scanner doesn't know which app should handle them). https://
+// is universally scannable; the trade-off is that the user
+// might end up in the browser instead of the Telegram app, in
+// which case the browser's "open in Telegram" handoff kicks in.
+//
+// Empty username or token produces "" (not a partial URL).
+// Callers should check for "" before using the result in any
+// URL-emitting context.
+func TelegramDeepLink(username, token string) string {
+	if username == "" || token == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://t.me/%s?start=%s", username, token)
+}

@@ -1,0 +1,302 @@
+﻿{{define "body-admin-devices"}}
+{{/* 2026-07-15: v0.14.0 — flash banners + "Sync from headscale"
+     button. The button re-populates node_owner_map from
+     headscale's authoritative view; the bot's /exit_nodes
+     reads from node_owner_map, so this is the operator's
+     escape hatch when they tagged a relay directly via
+     the headscale CLI and the bot is now reporting "no
+     nodes found". */}}
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{if eq .FlashSuccess "device_meta"}}{{t "devices.meta_saved_ok"}}{{else}}{{.FlashSuccess}}{{end}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-server"></i>{{t "devices.title_all"}}</h2>
+    <div class="sub">{{t "devices.subtitle"}}. {{t "devices.tag_hint"}}.</div>
+  </div>
+  <div>
+    <form method="post" action="/admin/devices/sync-from-headscale" style="display:inline" title="Re-read every node from headscale and upsert into node_owner_map. Use after tagging a device directly via the headscale CLI so the bot's /exit_nodes sees it.">
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-arrows-rotate"></i> Sync from headscale</button>
+    </form>
+    {{/* 2026-08-09: v0.33.1.20 — "Force resync all tags" button.
+         Iterates every portal user and runs nodeownership.Backfill
+         (the same helper /my/devices runs on every page load), so
+         the operator can apply the per-device dev-tags to users
+         who haven't loaded /my/devices since their device joined
+         the tailnet. Also handles the rename detection (v0.33.1.20
+         Backfill change) — an existing row whose hostname has
+         drifted from headscale's given_name gets a new dev-tag
+         + UntagNode of the stale one. Idempotent — safe to spam. */}}
+    <form method="post" action="/admin/devices/force-backfill-tags" style="display:inline" title="Run the per-user backfill (the same /my/devices helper) against every portal user. Applies the per-device dev-tags to users who haven't loaded /my/devices since their device joined, and fixes renamed devices (new dev-tag + drops the stale one from headscale).">
+      <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-arrows-rotate"></i> Force resync all tags</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  {{/* 2026-08-04: v0.33.1.7 — wrap the wide table in .table-wrap
+       so on narrow screens the row scrolls horizontally instead
+       of spilling out of the card. The 12 columns (ID / hostname
+       / user / IP / type / OS+device_type-with-inline-form / tag /
+       dev tag / per-device exit pref-with-2-forms / status /
+       last seen / actions) easily exceed 1280px on a full row,
+       and the inline OS/device_type `<details>` form doubles the
+       effective column width. Scroll keeps the layout stable. */}}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th><i class="fa-solid fa-tag"></i> {{t "devices.hostname"}}</th>
+        <th><i class="fa-solid fa-user"></i> {{t "devices.user"}}</th>
+        <th><i class="fa-solid fa-network-wired"></i> {{t "devices.ip"}}</th>
+        <th><i class="fa-solid fa-circle-nodes"></i> Type</th>
+        <th><i class="fa-brands fa-windows"></i> OS / {{t "devices.meta_type_label"}}</th>
+        <th><i class="fa-solid fa-eye"></i> {{t "devices.tag"}}</th>
+        <th><i class="fa-solid fa-fingerprint"></i> {{t "devices.dev_tag_label"}}</th>
+        <th><i class="fa-solid fa-bullseye"></i> {{t "devices.device_exit_pref"}}</th>
+        <th><i class="fa-solid fa-signal"></i> {{t "devices.status"}}</th>
+        <th><i class="fa-solid fa-clock"></i> {{t "devices.last_seen"}}</th>
+        <th><i class="fa-solid fa-gear"></i> {{t "common.actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Nodes}}
+      <tr>
+        <td class="mono">{{.ID}}</td>
+        <td>
+          <code>{{.Hostname}}</code>
+          {{/* 2026-07-29: per-device OS + device_type
+               badges. The /admin/devices page reads
+               the same os/device_type columns as
+               /my/devices (the auto-detect pass runs
+               in the backfill path). */}}
+          {{if or (ne .OS "unknown") (ne .DeviceType "unknown")}}
+            {{if ne .OS "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:4px" title="OS: {{.OS}}"><i class="fa-brands {{if eq .OS "windows"}}fa-windows{{else if eq .OS "macos"}}fa-apple{{else if eq .OS "linux"}}fa-linux{{else if eq .OS "android"}}fa-android{{else if eq .OS "ios"}}fa-apple{{else}}fa-circle-question{{end}}"></i></span>
+            {{end}}
+            {{if ne .DeviceType "unknown"}}
+              <span class="tag" style="font-size:9px;margin-left:2px" title="Тип: {{.DeviceType}}"><i class="fa-solid {{if eq .DeviceType "exit-node"}}fa-globe{{else if eq .DeviceType "subnet-router"}}fa-route{{else if eq .DeviceType "phone"}}fa-mobile-screen{{else if eq .DeviceType "server"}}fa-server{{else}}fa-desktop{{end}}"></i></span>
+            {{end}}
+          {{end}}
+          {{/* 2026-08-06: per-device "dead rules" count.
+               Surfaces rules in device_rules whose
+               exit_node_id doesn't match this device's
+               preferred exit-node. The admin template
+               shows a count badge + tooltip explaining
+               what it means. */}}
+          {{if gt .DeadRuleCount 0}}
+            <a href="/admin/exit-rules?device={{.Hostname}}" class="tag tag-danger" style="font-size:10px;margin-left:6px;text-decoration:none" title="{{tf "exit_rules_admin.dead_rules_count_title" .DeadRuleCount}}"><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules_admin.dead_rules_count" .DeadRuleCount}}</a>
+          {{end}}
+        </td>
+        <td>{{.UserName}}</td>
+        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td>
+          {{if .IsExitNode}}<span class="tag tag-admin"><i class="fa-solid fa-route"></i>exit</span>{{else}}<span class="tag">node</span>{{end}}
+        </td>
+        <td>
+          {{/* 2026-07-29: per-device OS + device_type
+               manual override form. The summary shows
+               the current values; clicking the caret
+               expands the inline form (POST to
+               /admin/devices/{id}/meta). The form is
+               hidden by default to keep the table
+               compact — the auto-detect (~80% correct)
+               rarely needs manual intervention. Set
+               BOTH to "unknown" to re-enable auto-detect
+               on the next /my/devices load. */}}
+          <details>
+            <summary style="cursor:pointer;list-style:none;display:inline-flex;gap:4px;align-items:center" title="{{t "devices.meta_unknown_help"}}">
+              {{if eq .OS "unknown"}}<span class="tag" style="font-size:10px;background:var(--text-subtle);color:var(--bg-card)"><i class="fa-solid fa-circle-question"></i> {{t "devices.meta_os_unknown"}}</span>
+              {{else}}<span class="tag" style="font-size:10px" title="OS: {{.OS}}"><i class="fa-brands {{if eq .OS "windows"}}fa-windows{{else if eq .OS "macos"}}fa-apple{{else if eq .OS "linux"}}fa-linux{{else if eq .OS "android"}}fa-android{{else if eq .OS "ios"}}fa-apple{{else if eq .OS "freebsd"}}fa-server{{else}}fa-circle-question{{end}}"></i> {{.OS}}</span>{{end}}
+              {{if eq .DeviceType "unknown"}}<span class="tag" style="font-size:10px;background:var(--text-subtle);color:var(--bg-card)"><i class="fa-solid fa-circle-question"></i> {{t "devices.meta_type_unknown"}}</span>
+              {{else}}<span class="tag" style="font-size:10px" title="Type: {{.DeviceType}}"><i class="fa-solid {{if eq .DeviceType "exit-node"}}fa-globe{{else if eq .DeviceType "subnet-router"}}fa-route{{else if eq .DeviceType "phone"}}fa-mobile-screen{{else if eq .DeviceType "server"}}fa-server{{else if eq .DeviceType "client"}}fa-desktop{{else}}fa-circle-question{{end}}"></i> {{.DeviceType}}</span>{{end}}
+              <i class="fa-solid fa-pen" style="font-size:10px;color:var(--text-subtle)"></i>
+            </summary>
+            <form method="post" action="/admin/devices/{{.ID}}/meta" style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;font-size:11px" title="{{t "devices.meta_unknown_help"}}">
+              <input type="hidden" name="node_id" value="{{.ID}}">
+              <label style="display:flex;gap:3px;align-items:center">
+                {{t "devices.meta_os_label"}}:
+                <select name="os" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                  <option value="unknown" {{if eq .OS "unknown"}}selected{{end}}>{{t "devices.meta_os_unknown"}}</option>
+                  <option value="windows" {{if eq .OS "windows"}}selected{{end}}>Windows</option>
+                  <option value="macos"   {{if eq .OS "macos"}}selected{{end}}>macOS</option>
+                  <option value="linux"   {{if eq .OS "linux"}}selected{{end}}>Linux</option>
+                  <option value="android" {{if eq .OS "android"}}selected{{end}}>Android</option>
+                  <option value="ios"     {{if eq .OS "ios"}}selected{{end}}>iOS</option>
+                  <option value="freebsd" {{if eq .OS "freebsd"}}selected{{end}}>FreeBSD</option>
+                </select>
+              </label>
+              <label style="display:flex;gap:3px;align-items:center">
+                {{t "devices.meta_type_label"}}:
+                <select name="device_type" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                  <option value="unknown"       {{if eq .DeviceType "unknown"}}selected{{end}}>{{t "devices.meta_type_unknown"}}</option>
+                  <option value="client"        {{if eq .DeviceType "client"}}selected{{end}}>client</option>
+                  <option value="exit-node"     {{if eq .DeviceType "exit-node"}}selected{{end}}>exit-node</option>
+                  <option value="subnet-router" {{if eq .DeviceType "subnet-router"}}selected{{end}}>subnet-router</option>
+                  <option value="phone"         {{if eq .DeviceType "phone"}}selected{{end}}>phone</option>
+                  <option value="server"        {{if eq .DeviceType "server"}}selected{{end}}>server</option>
+                </select>
+              </label>
+              <button type="submit" class="btn btn-sm" style="font-size:11px;padding:2px 8px"><i class="fa-solid fa-floppy-disk"></i> {{t "devices.meta_save"}}</button>
+            </form>
+          </details>
+        </td>
+        <td>
+          {{if .IsPublicView}}
+            <span class="tag tag-success" title="tag:public"><i class="fa-solid fa-globe"></i>{{t "devices.tag_public"}}</span>
+          {{else if .IsPrivateView}}
+            <span class="tag" title="tag:private"><i class="fa-solid fa-lock"></i>{{t "devices.tag_private"}}</span>
+          {{else if .Tags}}
+            {{range .Tags}}
+              <span class="tag">{{.}}</span>
+            {{end}}
+          {{else if ne .UserName "tagged-devices"}}
+            <span class="tag" title="default private — user-owned device"><i class="fa-solid fa-lock"></i>{{t "devices.tag_private"}}</span>
+          {{else}}
+            <span class="tag tag-warning" title="no headscale tag assigned"><i class="fa-solid fa-circle-exclamation"></i>{{t "devices.tag_untagged"}}</span>
+          {{end}}
+        </td>
+        <td>
+          {{$devTag := index $.DevTagMap .Hostname}}
+          {{if $devTag}}
+            {{/* Compute applied on the fly by scanning Tags; cheap
+                 because the slice is tiny (a node typically has
+                 1-3 tags). Admin view is read-only — no green/yellow
+                 pill, just the tag value as a small code chip. */}}
+            {{$applied := false}}
+            {{range .Tags}}{{if eq . $devTag}}{{$applied = true}}{{end}}{{end}}
+            {{if $applied}}
+              <span class="tag tag-success" title="{{t "devices.dev_tag_applied_help"}}"><i class="fa-solid fa-circle-check"></i><code style="font-size:10px;background:transparent">{{$devTag}}</code></span>
+            {{else}}
+              <span class="tag tag-warning" title="{{t "devices.dev_tag_pending_help"}}"><i class="fa-solid fa-hourglass-half"></i><code style="font-size:10px;background:transparent">{{$devTag}}</code></span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{/* v0.28.4: per-device exit-node pref. Keyed by
+               "<skygate_user_id>:<lowercased hostname>".
+
+               skygateUserByHost is pre-built by the handler
+               from the per-device ACL tag (tag:dev-<user>-
+               <device>) so we don't have to parse the tag
+               in Go templates. The tag-derived owner
+               survives headscale's "tagged-devices"
+               reassignment, which is why we don't use
+               n.UserName directly. */}}
+          {{$lowerHost := tolower .Hostname}}
+          {{$skygateUID := index $.SkygateUserByHost $lowerHost}}
+          {{$prefKey := printf "%d:%s" $skygateUID $lowerHost}}
+          {{$pref := index $.DeviceExitPrefMap $prefKey}}
+          {{$viaEnabled := index $.DeviceExitViaMap $prefKey}}
+          {{if $pref}}
+            <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{$pref}}</code></span>
+            {{if $viaEnabled}}
+              <span class="tag tag-warning" style="font-size:9px;margin-left:2px" title="{{t "devices.device_exit_via_enabled_help"}}"><i class="fa-solid fa-lock"></i></span>
+            {{else}}
+              <span class="tag" style="font-size:9px;margin-left:2px;background:var(--text-subtle);color:var(--bg-card)" title="{{t "devices.device_exit_via_disabled_help"}}"><i class="fa-solid fa-unlock"></i></span>
+            {{end}}
+            <form method="post" action="/admin/devices/preferred-exit" style="display:inline-block;margin-left:4px" onsubmit="return confirm('{{t "devices.device_exit_pref_clear_confirm"}}')">
+              <input type="hidden" name="user_id" value="{{$skygateUID}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="">
+              <input type="hidden" name="via" value="{{if $viaEnabled}}1{{else}}0{{end}}">
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.device_exit_pref_clear_help"}}"><i class="fa-solid fa-xmark"></i></button>
+            </form>
+            {{/* v0.28.5: per-device via opt-in toggle. */}}
+            <form method="post" action="/admin/devices/preferred-exit" style="display:inline-block;margin-left:4px">
+              <input type="hidden" name="user_id" value="{{$skygateUID}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="tag" value="{{$pref}}">
+              <input type="hidden" name="via" value="{{if $viaEnabled}}0{{else}}1{{end}}">
+              <button type="submit" class="btn btn-ghost" style="font-size:9px;padding:2px 4px" title="{{if $viaEnabled}}{{t "devices.device_exit_via_disable_help"}}{{else}}{{t "devices.device_exit_via_enable_help"}}{{end}}">
+                <i class="fa-solid fa-{{if $viaEnabled}}unlock{{else}}lock{{end}}"></i>
+              </button>
+            </form>
+          {{else if and $skygateUID (gt $skygateUID 0)}}
+            <form method="post" action="/admin/devices/preferred-exit" style="display:inline-flex;gap:3px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
+              <input type="hidden" name="user_id" value="{{$skygateUID}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <input type="hidden" name="via" value="0">
+              <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                {{range $.AvailableExits}}
+                  {{$tag := printf "tag:exit-%s" (tolower .Hostname)}}
+                  <option value="{{$tag}}">{{.Hostname}}</option>
+                {{end}}
+              </select>
+              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.device_exit_pref_set_button_help"}}"><i class="fa-solid fa-bullseye"></i></button>
+            </form>
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .Online}}
+            <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{t "devices.online"}}</span>
+          {{else}}
+            <span style="color:var(--text-muted);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-offline"></span>{{t "devices.offline"}}</span>
+          {{end}}
+        </td>
+        <td style="color:var(--text-muted);font-size:12px">{{.LastSeen}}</td>
+        <td>
+          {{if .IsPublicView}}
+          <form method="post" action="/admin/nodes/{{.ID}}/tag" style="display:inline">
+            <input type="hidden" name="tag" value="tag:private">
+            <button type="submit" class="btn btn-secondary btn-sm" title="{{t "devices.tag_remove"}}"><i class="fa-solid fa-lock"></i></button>
+          </form>
+          {{else}}
+          <form method="post" action="/admin/nodes/{{.ID}}/tag" style="display:inline">
+            <input type="hidden" name="tag" value="tag:public">
+            <button type="submit" class="btn btn-sm" title="{{t "devices.tag_set"}}"><i class="fa-solid fa-globe"></i></button>
+          </form>
+          {{end}}
+          {{/* 2026-08-09: v0.33.1.20 — "Transfer" action for
+               reassigning a node to a different portal user.
+               Resolves orphan rows like the v0.33.1.19
+               svyatoslava conflict (id=27 was assigned to
+               skyadmin before svyatoslava was a real headscale
+               user; the operator reassigned it via this form).
+               Renders as an inline `<details>` so the table
+               stays compact (transfer is rare; the global
+               "Force resync all tags" button is the common
+               path). The dropdown lists every portal user
+               except the current owner (so the operator
+               can't transfer a node to itself, which is a
+               no-op + audit noise). */}}
+          <details style="display:inline-block;margin-left:4px">
+            <summary style="cursor:pointer;list-style:none;display:inline-flex;gap:3px;align-items:center;padding:2px 6px;border:1px solid var(--border);border-radius:3px;font-size:11px" title="{{t "devices.transfer_help"}}">
+              <i class="fa-solid fa-arrow-right-arrow-left" style="font-size:10px"></i> {{t "devices.transfer_btn"}}
+            </summary>
+            <form method="post" action="/admin/devices/transfer" style="margin-top:4px;display:flex;gap:4px;align-items:center;font-size:11px;background:var(--bg-elev);padding:6px;border-radius:4px;border:1px solid var(--border)">
+              <input type="hidden" name="node_id" value="{{.ID}}">
+              <label style="display:flex;gap:3px;align-items:center">
+                {{t "devices.transfer_target"}}:
+                <select name="target_username" style="font-size:11px;padding:1px 3px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                  {{range $t := $.TransferTargets}}
+                    {{if ne $t $.UserName}}
+                      <option value="{{$t}}">{{$t}}</option>
+                    {{end}}
+                  {{end}}
+                </select>
+              </label>
+              <button type="submit" class="btn btn-sm" style="font-size:11px;padding:2px 8px"><i class="fa-solid fa-arrow-right-arrow-left"></i> {{t "devices.transfer_submit"}}</button>
+            </form>
+          </details>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:16px;display:flex;align-items:flex-start;gap:6px">
+    <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
+    <span><strong>{{t "devices.tag_public"}}</strong> — visible to all tailnet users via ACL. <strong>{{t "devices.tag_private"}}</strong> — only owner and admins.</span>
+  </p>
+  </div>
+</div>
+{{end}}

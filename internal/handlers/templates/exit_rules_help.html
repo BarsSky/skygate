@@ -1,0 +1,328 @@
+﻿{{define "body-exit_rules_help"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-book"></i> {{t "title.exit_rules_help"}}</h2>
+    <div class="sub">Routing management · <a href="/my/tokens" style="color:var(--accent)"><i class="fa-solid fa-key"></i> API Tokens</a> · <a href="/my/exit-rules" style="color:var(--accent)"><i class="fa-solid fa-route"></i> Exit Rules</a></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-gear"></i> For users — how to add rules</h3>
+  <ol style="padding-left:20px;margin:0">
+    <li>Go to <a href="/my/exit-rules"><b>/my/exit-rules</b></a>.</li>
+    <li>In the "Add rule" form:
+      <ul>
+        <li><b>Device</b> — pick your device (e.g. "my-laptop").</li>
+        <li><b>Exit node</b> — pick a server (e.g. "node-europe").</li>
+        <li><b>Action</b> — Allow (pass traffic) or Deny (drop traffic).</li>
+        <li><b>Target type</b> — IP address, subnet (10.0.0.0/24), or domain (example.com).</li>
+        <li><b>Value</b> — IP/subnet/domain.</li>
+      </ul>
+    </li>
+    <li>Click <b>"Add"</b>. The rule is applied immediately.</li>
+    <li>On the device: <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=false</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS). See <a href="/docs/windows-client.md" target="_blank" rel="noopener">Windows client guide</a>.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-arrows-rotate"></i> DNS auto-update (since July 2026)</h3>
+  <p>For rules with <b>target type "domain"</b>, Skygate every <b>5 minutes</b> automatically:</p>
+  <ol style="padding-left:20px;margin:0">
+    <li>Resolves the domain via DNS (if it doesn't resolve yet, adds as <code>target_type=domain</code> and retries later).</li>
+    <li>Finds static subdomains (e.g. <code>static.rutracker.cc</code> for <code>rutracker.org</code>) and adds their IPs.</li>
+    <li>Updates /32 rules: removes stale IPs, adds new ones.</li>
+    <li>Syncs advertised-routes on exit-nodes and approves them through <code>headscale nodes approve-routes</code>.</li>
+  </ol>
+  <p style="margin-top:8px">In the rules table domain rules are marked with the <b><i class="fa-solid fa-arrows-rotate"></i> auto</b> badge.</p>
+  <p>All IPs added by the auto-updater have <code>parent_domain</code> in the DB — autoupdater distinguishes them and doesn't touch manual /32 rules.</p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    ⚠️ Some sites (rutracker.org, kinozal.tv, etc.) use a <b>separate subdomain for static content</b>. If autoupdater finds it in HTML, it auto-resolves and adds it. If not — file a request to the admin, we'll add to the <code>knownSubdomains</code> map.
+  </p>
+  <p style="margin-top:4px"><b>Known subdomains:</b> rutracker.org → static.rutracker.cc</p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-shield-halved"></i> Rule deduplication</h3>
+  <p>When you add a rule Skygate checks uniqueness by the combination <b>(device_id, exit_node, target_type, target_value)</b>:</p>
+  <ul>
+    <li>✅ <b>New rule</b> — added, you'll see the green "Rule added" alert.</li>
+    <li>🔁 <b>Duplicate</b> — the rule already exists, you'll see the red alert "A rule for X already exists".</li>
+    <li>⚠️ <b>Partial add</b> — some IPs already exist (for domains resolving to shared Cloudflare IPs), you'll see the yellow alert.</li>
+    <li>⚠️ <b>DNS warning</b> — domain doesn't resolve, saved as <code>target_type=domain</code>, autoupdater will try on the next cycle.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-key"></i> API Tokens — access tokens</h3>
+  <p>For API access use a personal token. It's safer than a cookie session and more convenient for AI assistants and scripts.</p>
+  <ol style="padding-left:20px;margin:0">
+    <li>Go to <a href="/my/tokens"><b>/my/tokens</b></a> → "Create token", specify a label (e.g. "Hermes").</li>
+    <li><b>Copy the token</b> — it's shown <u>only once</u>. Store it safely.</li>
+    <li>Use in the header: <code>Authorization: Bearer &lt;your token&gt;</code></li>
+    <li>The token has no expiration. Revoke anytime on /my/tokens.</li>
+  </ol>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;margin-top:8px;">
+# With token (recommended):
+curl -H "Authorization: Bearer &lt;token&gt;" \
+  {{.BaseURL}}/my/exit-rules/api
+
+# Bulk create:
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"rules":[{"device_id":5,"exit_node":"node-europe","target_type":"subnet","target_value":"10.0.0.0/24","action":"accept"}]}' \
+  {{.BaseURL}}/my/exit-rules/api</pre>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-diagram-project"></i> How it works</h3>
+  <p>Skygate uses <b>advertised routes</b> for selective routing (split-tunnel).</p>
+  <ol style="padding-left:20px;margin:0">
+    <li><b>Exit nodes</b> (VPS servers) advertise whitelist subnets via <code>--advertise-routes</code>.</li>
+    <li><b>Headscale</b> (control plane) approves and distributes routes to clients <b>per ACL</b> — each device gets only its own subnets.</li>
+    <li><b>Clients:</b>
+      <ul>
+        <li><b>Windows/Linux:</b> <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=false</code> — split-tunnel (only whitelist → exit-node, exit-node picked in Tailscale menu)</li>
+        <li><b>Android/iOS:</b> <code>tailscale up --exit-node=X</code> — full tunnel (mobile does not support split-tunnel)</li>
+      </ul>
+    </li>
+    <li>When rules change Skygate auto-updates advertised-routes on all exit-nodes + <b>autoupdater</b> watches domains.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-globe"></i> Tailnet — private mesh network</h3>
+  <p><b>Tailnet</b> is a mesh network based on Tailscale/headscale. All devices in the tailnet get IPs in the <code>100.64.100.0/10</code> range and see each other directly, regardless of physical location (home, office, datacenter, behind CGNAT).</p>
+  <p>Example:</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+my-phone (100.64.100.5) ──► exit-node (100.64.100.3) ──► internet (8.8.8.8)</pre>
+  <p>When a client uses an exit-node, its internet traffic goes through that exit-node's VPS. For external sites the request source will be the VPS IP, not the client's.</p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    ⚠️ <b>Cloudflare Challenge:</b> some sites (rutracker.org, etc.) show a CAPTCHA when accessed from an exit-node IP outside Russia. Fix: use a <b>Russian exit-node</b> (relay-2) for such sites, or work via <code>--exit-node=relay-3</code> for all traffic.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-server"></i> Setting up an exit node (admin)</h3>
+  <p>Run <b>on each exit node</b> (the VPS server that will be the egress point):</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+# Script: /static/scripts/skygate_exit_node_setup.sh
+# Or manually:
+
+tailscale set \
+  --ssh \
+  --advertise-exit-node \
+  --advertise-routes="10.0.0.0/24,172.16.0.0/16,192.168.0.0/24,..."</pre>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    ⚠️ <code>--advertise-routes</code> <b>replaces</b> the list. <code>0.0.0.0/0</code> and <code>::/0</code> are kept automatically.
+  </p>
+  <p style="margin-top:4px"><b>Rollback:</b> <code>tailscale set --advertise-exit-node --advertise-routes="0.0.0.0/0,::/0"</code></p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    Requirements for an exit node: <code>ip_forward=1</code>, <code>iptables MASQUERADE</code> (auto-configured with <code>--advertise-exit-node</code>).
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-tower-broadcast"></i> DERP relay</h3>
+  <p><b>DERP</b> (Designated Encrypted Relay for Packets) is a relay server that carries traffic when a direct connection between clients is impossible (CGNAT, firewall, NAT).</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+┌──────────┐   TLS 1.3 + WSS    ┌─────────┐   WebSocket   ┌──────────┐
+│ my-phone │ ──────────────────▶│  DERP   │──────────────▶│ exit-vps │
+│ 4G CGNAT │   TCP 443 (HTTPS)  │  relay  │  TCP 443      │  VPS EU  │
+└──────────┘                    └─────────┘               └──────────┘
+                                      │
+                          sees: client IPs, packet sizes
+                          does NOT see: contents (TLS 1.3 + WireGuard)</pre>
+  <p><b>When it's used:</b></p>
+  <ul>
+    <li>🟢 <b>Direct</b> — clients connect directly (LAN, NAT punched). Maximum speed.</li>
+    <li>🟡 <b>DERP relay</b> — direct not possible. The nearest relay is auto-picked. Slower, but always works.</li>
+  </ul>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
+    DERP uses TLS 1.3 on TCP 443 — traffic looks like regular HTTPS, including to DPI.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-terminal"></i> API Reference</h3>
+
+  <h4>GET /my/exit-rules/api — list rules</h4>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+# With token:
+curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/my/exit-rules/api
+
+# Or with cookie:
+curl -b skygate_session=TOKEN {{.BaseURL}}/my/exit-rules/api</pre>
+  <p>Response: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x", "parent_domain":""}]}</code></p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    The <code>parent_domain</code> field — for /32 rules created by autoupdater, contains the originating domain.
+  </p>
+
+  <h4>POST /my/exit-rules/api — bulk create</h4>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+# With token:
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"rules":[
+    {"device_id":5, "exit_node":"node-europe", "target_type":"subnet", "target_value":"10.0.0.0/24", "action":"accept"},
+    {"device_id":5, "exit_node":"node-europe", "target_type":"ip",     "target_value":"1.2.3.4",     "action":"accept"},
+    {"device_id":5, "exit_node":"node-europe", "target_type":"domain",  "target_value":"rutracker.org", "action":"accept"}
+  ]}' \
+  {{.BaseURL}}/my/exit-rules/api
+
+# Or with cookie:
+curl -X POST -b skygate_session=TOKEN \
+  -H "Content-Type: application/json" \
+  -d '{"rules":[...]}' \
+  {{.BaseURL}}/my/exit-rules/api</pre>
+  <p>Response: <code>{"added": 3, "duplicates": 0, "errors": []}</code></p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    For <code>target_type=domain</code> the server auto-resolves the domain to IPs (if DNS answers) and saves each as <code>subnet /32</code>. The domain rule itself stays in the DB for autoupdater.
+  </p>
+
+  <table style="margin-top:12px">
+    <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+    <tr><td><code>device_id</code></td><td>int</td><td>yes</td><td>Device ID (see /my/devices)</td></tr>
+    <tr><td><code>exit_node</code></td><td>string</td><td>no</td><td>Exit node name (e.g. "node-europe")</td></tr>
+    <tr><td><code>target_type</code></td><td>string</td><td>yes</td><td>"ip", "subnet", or "domain"</td></tr>
+    <tr><td><code>target_value</code></td><td>string</td><td>yes</td><td>IP, subnet (10.0.0.0/24), or domain (example.com)</td></tr>
+    <tr><td><code>action</code></td><td>string</td><td>no</td><td>"accept" (default) or "deny"</td></tr>
+  </table>
+
+  <h4 style="margin-top:16px">GET /admin/exit-rules/sync (admin)</h4>
+  <p>Syncs advertised-routes on all exit nodes.</p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/admin/exit-rules/sync</pre>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-robot"></i> Example prompt for an AI assistant</h3>
+  <p><b>To add rules via AI (Hermes/Claude/Cline):</b></p>
+  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+Add routing rules for my-laptop (device_id=5) through exit-node node-europe.
+Token: &lt;copy from /my/tokens&gt;
+
+Service 1 (subnets):
+  10.0.0.0/24, 10.0.1.0/24, 172.16.0.0/20
+
+Service 2 (subnets):
+  192.168.0.0/16, 198.51.100.0/24
+
+Service 3 (domains, autoupdater will pick up the IPs):
+  rutracker.org, kernel.org, github.com
+
+Use POST /my/exit-rules/api.
+Base URL: {{.BaseURL}}</pre>
+
+  <p style="margin-top:8px"><b>What the AI assistant should know:</b></p>
+  <ul>
+    <li>target_type can be "ip", "subnet", or "domain".</li>
+    <li>For domains, the server auto-resolves and pulls in all IPs (autoupdater every 5 min).</li>
+    <li>For Russian sites, use a Russian exit-node (e.g. relay-2) — otherwise Cloudflare shows a challenge.</li>
+    <li>List and revoke tokens at <a href="/my/tokens">/my/tokens</a>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-square-check"></i> Bulk delete (multi-delete)</h3>
+  <p>The rules table has <b>checkboxes</b> and a <b>sticky bar</b> at top and bottom:</p>
+  <ul>
+    <li><b>Select all</b> in top and bottom bars — selects all visible rules.</li>
+    <li><b>Type filter</b> (All types / Domains only / /32 only / IP only) — narrows the selection.</li>
+    <li><b>Search</b> by IP/subnet/domain — hides non-matching rows.</li>
+    <li><b>Counter</b> "Selected: N" — updates in real time in both bars.</li>
+    <li>Button <b>"Delete selected"</b> at the bottom — cascade-deletes all selected rules.</li>
+  </ul>
+  <p style="margin-top:8px"><b>Cascade delete:</b> when you delete a rule with type <code>domain</code>, all related /32 rules with the same <code>parent_domain</code> are removed automatically. Without this, autoupdater would leave "orphaned" /32 for domains the user no longer tracks.</p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Single delete (the <i class="fa-solid fa-trash"></i> button in a row) is also cascade for domains.
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-scale-balanced"></i> Rule counters</h3>
+  <p>Counters (per-user / per-device / system) count only <b>user-set ("user-facing") rules</b>:</p>
+  <ul>
+    <li>Counted: <code>target_type=ip</code>, <code>target_type=subnet</code> without <code>parent_domain</code>, <code>target_type=domain</code>.</li>
+    <li>NOT counted: <code>target_type=subnet</code> <b>with</b> <code>parent_domain</code> (these are /32 created by autoupdater for domain resolution).</li>
+  </ul>
+  <p style="margin-top:8px">In other words: if you have 9 domains and autoupdater added 240 /32 IPs, the per-user counter (default 200) does <b>not</b> count the auto-expanded IPs. Each domain counts as 1 rule.</p>
+  <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
+    Settings: <code>SKYGATE_MAX_RULES_PER_DEVICE</code> (default 200), <code>SKYGATE_MAX_TOTAL_RULES</code> (default 10000), <code>SKYGATE_USER_MAX_RULES</code> (optional, format <code>user1:500,user2:1000</code>).
+  </p>
+  <p style="margin-top:8px"><b>Example:</b> 9 domains + 130 manual /32 + 240 autoupdater /32 = 379 rules total, but the counter sees only 9+130=139, the other 240 are service (auto-resolved).</p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-broom"></i> Cleanup orphaned /32 (admin)</h3>
+  <p>If you used to delete rules manually and "orphaned" /32 remain (autoupdater can't remove them since the parent domain is gone), open <a href="/admin/exit-rules/cleanup"><b>/admin/exit-rules/cleanup</b></a>. There:</p>
+  <ul>
+    <li>Analysis of current state: distinct <code>device_id</code>, distinct <code>hostname</code>, pending /32 deletions, pending <code>backfill device_ip</code>.</li>
+    <li>Button <b>"Apply"</b> — merges duplicate <code>device_id</code> under one canonical (by hostname) and backfills <code>device_ip</code> for all rules.</li>
+    <li><b>Idempotent:</b> re-running does nothing if the data is already clean.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-user-shield"></i> Visibility in the tailnet (ACL)</h3>
+  <p>Skygate generates a <strong>per-user ACL policy</strong>. Each user
+  sees and reaches only their own devices plus shared exit-nodes
+  (tag:public / tag:exit-node).</p>
+  <pre style="background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto">{
+  "acls": [
+    {"src": ["admin@tsnet.example.com"], "dst": ["admin@tsnet.example.com:*"]},
+    ... per portal user ...
+    {"src": ["*"], "dst": ["tag:public:*"]},
+    {"src": ["*"], "dst": ["tag:exit-node:*"]},
+    {"src": ["*"], "dst": ["*:*"]}
+  ],
+  "tagOwners": {
+    "tag:private": [admin, user1, user3, user2, ...],
+    "tag:public": ["admin@tsnet.example.com"],
+    "tag:exit-node": ["admin@tsnet.example.com"]
+  }
+}</pre>
+  <p><strong>First match wins</strong> — if <code>*:*</code> were first,
+  it would open the entire tailnet to everyone. Right now the first rule
+  is <em>only your own</em>; Tailscale Android shows only your devices plus
+  exit-nodes. Other users' tag:private are not visible to each other.</p>
+
+  <h3><i class="fa-solid fa-tags"></i> Auto-tagging (tag:private)</h3>
+  <p>When you add a new device through Skygate it auto-receives the
+  <code>tag:private</code> tag in headscale. This happens through
+  <code>backfillNodeOwnership</code> on the first load of
+  <a href="/my/devices">/my/devices</a>:</p>
+  <ul>
+    <li>If a node was registered through a skygate-issued preauth key, it
+      is auto-tagged <code>tag:private</code>.</li>
+    <li>Exit-nodes (relay-3, relay-1, relay-2) stay <code>tag:public</code>
+      — the admin tags them manually through <code>/admin/devices</code>.</li>
+    <li>Tag changes apply to headscale through the CLI fallback
+      (<code>docker exec headscale headscale nodes tag</code>). Visibility on
+      Tailscale Android updates within ~60s.</li>
+  </ul>
+  <p>To set a tag manually (e.g. to share a device) — the admin does it
+  through <a href="/admin/devices">/admin/devices</a>.</p>
+
+  <h3><i class="fa-solid fa-bug"></i> Common pitfalls</h3>
+  <ul>
+    <li><b>target_type=ip without /32</b> — Skygate auto-adds <code>/32</code> (e.g. <code>5.5.5.5</code> → <code>5.5.5.5/32</code>) so headscale <code>approve-routes</code> doesn't fail with <code>parsing route: no '/'</code>.</li>
+    <li><b>Shared IP for two domains</b> (e.g. <code>gcr.io</code> and <code>ghcr.io</code> sometimes resolve to one IP) — Skygate stores <b>one</b> /32 row, no duplicates. Autoupdater won't remove this IP while any of the domains needs it.</li>
+    <li><b>DNS doesn't resolve</b> when adding a domain — the rule is saved as <code>target_type=domain</code>, autoupdater will try on the next cycle (up to 5 minutes).</li>
+    <li><b>Cloudflare Challenge</b> on Russian sites (rutracker etc.) — use a Russian exit-node (relay-2), not one abroad.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-lightbulb"></i> IP-range sources</h3>
+  <p>Many services publish current IP ranges. Examples:</p>
+  <ul>
+    <li>Service A: <code>https://example.com/ips.txt</code></li>
+    <li>Service B: <code>https://example.com/ipranges.json</code></li>
+    <li>Provider C: <code>https://example.com/ips-v4</code></li>
+  </ul>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">IP ranges change over time. Recommended:
+  <ul>
+    <li>For <b>subnets</b> — update every 1-3 months manually via AI.</li>
+    <li>For <b>domains</b> — autoupdater updates IPs automatically, nothing to do.</li>
+  </ul></p>
+</div>
+{{end}}

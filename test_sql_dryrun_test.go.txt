@@ -1,0 +1,11 @@
+// This file is intentionally empty.
+//
+// The real v0.33.1.27 tests live in:
+//   - internal/db/test_sql_dryrun_test.go (PG build, TestPlaceholdersRange_PGFormat)
+//   - internal/db/placeholders_range_sqlite_test.go (SQLite build, TestPlaceholdersRange_SQLiteFormat)
+//   - internal/db/migrations_v0_45_46_test.go (TestSetUserExitNodePref_RoundTrip etc.)
+//
+// A copy of the test was first written here at the repo root
+// (mistake: the package decl "db" made it conflict with the
+// internal/db package). The copy is preserved as an empty
+// placeholder so the v0.33.1.27 commit history is clear.
