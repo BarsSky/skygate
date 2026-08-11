@@ -615,7 +615,7 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
     # "skyadmin\nmichail\n..." becomes 4 separate words, only
     # the first of which is an env assignment). Writing the
     # list to a file and reading it on the VM is simpler.
-    local users_file="/tmp/_portal_usernames_$$.txt"
+    users_file="/tmp/_portal_usernames_$$.txt"
     printf '%s\n' "$PORTAL_USERNAMES" > /tmp/_portal_users_local_$$.txt
     if [ -n "${SSH_KEY:-}" ]; then
       scp -i "$SSH_KEY" -o StrictHostKeyChecking=no /tmp/_portal_users_local_$$.txt "$SSH_HOST:$users_file" 2>/dev/null
