@@ -2894,3 +2894,15 @@ run_check "B102" "Dockerfile has cifs-utils + nfs-utils + sshfs; test_backup_pro
 # directly from S3 to the browser via minio-go.
 run_check "B103" "in-app S3 download: handler + route + template button + hasPrefix func + i18n + audit (B103, BL-18 v1.3.8 s3-download)" \
   'test -f scripts/check_b103.sh && bash scripts/check_b103.sh'
+
+# ─── B104 (v1.3.8) — autonomous migration verify (BL-17) ───
+# Background: pre-v1.3.8 cross-host migration was a
+# 4-step manual process. v1.3.8 (BL-17) adds a one-shot
+# scripts/verify_migration.sh that chains the 5 checks
+# (healthz / readyz / git HEAD / backup production /
+# replay) and returns a single PASS/FAIL. The operator
+# runs it once on the new host after restore.sh +
+# docker compose up; the script proves the migration
+# is end-to-end functional.
+run_check "B104" "autonomous migration verify: 5-phase one-shot script (B104, BL-17 v1.3.8 mig-verify)" \
+  'test -f scripts/check_b104.sh && bash scripts/check_b104.sh'
