@@ -306,13 +306,24 @@ func (c *Checker) checkHeadscale(ctx context.Context) IntegrationStatus {
 	return st
 }
 
-// checkHeadplane probes HEADPLANE_URL/ (root). headplane's web
-// UI returns 200 with HTML. We don't need auth for the root.
+// checkHeadplane probes HEADPLANE_URL + "/admin/healthz".
+// headplane 0.6.x is a distroless Node.js image that does NOT
+// expose HTML on `/` (it returns 404) — the only public
+// health endpoint is `/admin/healthz` which returns
+// `{"status":"OK"}` with 200. The `/` probe in the v0.33.1.40
+// (B92) original code worked against the older `ghcr.io/tale/headplane`
+// web-UI image but the distroless 0.6.3 image replaced it.
+//
+// The probe URL is the operator's HEADPLANE_URL + "/admin/healthz"
+// (HEADPLANE_URL is the headplane base URL, e.g.
+// `http://headplane:50445`). If the operator already included
+// `/admin/healthz` in HEADPLANE_URL, this is a no-op
+// (`strings.HasSuffix` check prevents double-append).
 //
 // If headplane is on a different host from headscale (operator
 // runs them separately), the URL is read from HEADPLANE_URL
 // (which defaults to the same host as HEADSCALE_URL on port
-// the operator chooses, e.g. http://headplane:8080).
+// the operator chooses, e.g. http://headplane:50445).
 func (c *Checker) checkHeadplane(ctx context.Context) IntegrationStatus {
 	st := IntegrationStatus{
 		ID:    IntegrationHeadplane,
@@ -322,8 +333,12 @@ func (c *Checker) checkHeadplane(ctx context.Context) IntegrationStatus {
 	if c.HeadplaneURL == "" {
 		return st // IsZero=true
 	}
+	probeURL := c.HeadplaneURL
+	if !strings.HasSuffix(probeURL, "/admin/healthz") {
+		probeURL = strings.TrimRight(probeURL, "/") + "/admin/healthz"
+	}
 	t0 := time.Now()
-	req, err := http.NewRequestWithContext(ctx, "GET", c.HeadplaneURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
 	if err != nil {
 		st.Error = err.Error()
 		st.LastChecked = time.Now().UTC()
@@ -338,11 +353,11 @@ func (c *Checker) checkHeadplane(ctx context.Context) IntegrationStatus {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		st.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		st.Error = fmt.Sprintf("HTTP %d (probed %s)", resp.StatusCode, probeURL)
 		st.LastChecked = time.Now().UTC()
 		return st
 	}
-	st.Detail = fmt.Sprintf("HTTP %d (HTML)", resp.StatusCode)
+	st.Detail = fmt.Sprintf("HTTP %d (probed %s)", resp.StatusCode, probeURL)
 	st.OK = true
 	st.LastChecked = time.Now().UTC()
 	return st

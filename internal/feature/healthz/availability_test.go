@@ -123,10 +123,22 @@ func TestChecker_EmptyURLSkipped(t *testing.T) {
 
 // TestChecker_HeadplaneOK spins up a second server, points
 // the headplane check at it, verifies the cached status.
+//
+// The v1.3.5 fix probes HEADPLANE_URL + "/admin/healthz"
+// (headplane 0.6.x is distroless — the only public health
+// endpoint is /admin/healthz, NOT the root which returns 404).
+// The fake server below only responds 200 on /admin/healthz
+// and 404 on everything else, proving the new probe path
+// is correct and the old root-probe would fail.
 func TestChecker_HeadplaneOK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte(`<html>headplane ui</html>`))
+		if r.URL.Path == "/admin/healthz" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"status":"OK"}`))
+			return
+		}
+		// Mimic the real distroless headplane: 404 on root.
+		http.NotFound(w, r)
 	}))
 	defer srv.Close()
 	c := NewChecker("", srv.URL, nil, 30*time.Second)
@@ -134,6 +146,30 @@ func TestChecker_HeadplaneOK(t *testing.T) {
 	st := mustFind(t, c.Snapshot(), IntegrationHeadplane)
 	if !st.OK {
 		t.Errorf("expected headplane OK; got error: %q", st.Error)
+	}
+}
+
+// TestChecker_HeadplaneAlreadyIncludesPath verifies the
+// no-double-append guard. If the operator sets
+// HEADPLANE_URL=http://headplane:50445/admin/healthz, the
+// checker should probe that URL verbatim (not append
+// /admin/healthz again).
+func TestChecker_HeadplaneAlreadyIncludesPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(200)
+		w.Write([]byte(`{"status":"OK"}`))
+	}))
+	defer srv.Close()
+	c := NewChecker("", srv.URL+"/admin/healthz", nil, 30*time.Second)
+	c.runOnceInTest(t)
+	st := mustFind(t, c.Snapshot(), IntegrationHeadplane)
+	if !st.OK {
+		t.Errorf("expected headplane OK; got error: %q", st.Error)
+	}
+	if gotPath != "/admin/healthz" {
+		t.Errorf("expected probe path /admin/healthz (no double-append); got %q", gotPath)
 	}
 }
 
