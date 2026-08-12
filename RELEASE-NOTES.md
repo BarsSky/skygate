@@ -1,5 +1,207 @@
 # Skygate release notes
 
+## v1.1.0 — UI refactoring (TD-1) + mobile-responsive (TD-3)
+
+**Date:** 2026-08-12
+**Tag:** v1.1.0
+**Scope:** Addresses the two deferred UI tasks from
+`docs/PLANS.md`:
+- **TD-1**: 22 admin pages → 6 collapsible sidebar sections
+- **TD-3**: mobile-responsive UI (sidebar becomes slide-in
+  drawer at <768px, hamburger button, 44px tap targets)
+
+The pre-v1.1.0 admin sidebar was a flat list of 22 admin
+nav items. On desktop it was a chore to scan; on a phone
+(<=414px viewport) the fixed 220px sidebar ate the whole
+viewport, making the admin panel effectively unusable on
+mobile. v1.1.0 fixes both.
+
+**What changed:**
+
+- **`internal/handlers/templates/layout.html`**:
+  - **6 collapsible `<details class="sidebar-section">`
+    blocks** replace the flat list of 22 admin `<a>` items.
+    The sections, in sidebar order:
+    1. **Devices & Nodes** (4): /admin/devices,
+       /admin/exit-nodes, /admin/meshes, /admin/subnets
+    2. **Access Control** (3): /admin/acls, /admin/exit-rules,
+       /admin/headscale/acl
+    3. **System Health & Logs** (3): /admin/system_tests,
+       /admin/services, /admin/audit
+    4. **Integrations** (6): /admin/integrations,
+       /admin/headscale, /admin/headplane, /admin/telegram,
+       /admin/tailscale, /admin/derp
+    5. **Data** (3): /admin/backup, /admin/invites,
+       /admin/control-planes
+    6. **Settings & Users** (3): /admin/settings,
+       /admin/users, /admin/update
+  - **Auto-open conditional**: each `<details>` block
+    uses `{{if .InSectionX}}open{{end}}` so the section
+    containing the current page auto-opens. The
+    `InSectionX` booleans are computed by
+    `sectionPageSet()` in `internal/handlers/handlers.go`
+    from the page name.
+  - **User-side nav (top 10 items) stays flat** — those
+    are per-user self-service pages and don't benefit
+    from grouping.
+  - **Hamburger button** at the top of `<body>`:
+    `<input type="checkbox" id="sidebar-toggle">` +
+    `<label class="sidebar-toggle">`. Uses the native
+    checkbox hack — no JS required.
+
+- **`static/css/themes.css`**:
+  - **`.sidebar-section` styles**: section header has
+    `text-transform:uppercase` + `letter-spacing` for
+    a section-divider look; collapsed sections show a
+    right-pointing caret (`▸`); open sections rotate it
+    to down (`▾`).
+  - **`.sidebar-toggle` class**: hidden on desktop
+    (`display:none`); shown on mobile
+    (`display:flex` inside `@media (max-width:768px)`).
+  - **`.sidebar-toggle-input`**: the hidden checkbox
+    that drives the slide-in state via the `:checked ~
+    .sidebar` sibling selector.
+  - **Mobile drawer**: `@media (max-width:768px)` block
+    adds `transform:translateX(-100%)` to the sidebar
+    by default, `translateX(0)` when the checkbox is
+    checked. A semi-transparent `::before` overlay on
+    `<main>` dims the content while the drawer is open.
+  - **Breakpoint renamed 760px → 768px** (the v1.3.x-era
+    `@media (max-width:760px)` is now `(max-width:768px)`
+    — the canonical iPad-portrait width).
+  - **Touch-friendly tap targets**: sidebar links
+    bumped to `12px 14px` padding + `min-height:44px`
+    per Apple HIG / Google's Material Design.
+
+- **`internal/handlers/handlers.go`**:
+  - **`sectionPageSet(page string) map[string]bool`**:
+    returns the 6 `InSectionX` booleans for the current
+    page. The set of pages per section is hardcoded; if
+    a page moves between sections, update both
+    `sectionPageSet()` and the corresponding
+    `<details>` block in `layout.html`. The B96
+    catalog row pins both sides — drift fails the
+    pre-push hook.
+  - **`renderWithLayout`**: iterates the booleans and
+    sets them on the data map. No other handler change.
+
+- **`internal/i18n/catalog_common.go`**: 8 new keys
+  (6 section titles + 2 toggle labels) added in both
+  `ruCommon` and `enCommon`. B4 parity test
+  (`TestCatalogsParity`) verifies the key sets match.
+
+  | Key | ru | en |
+  |---|---|---|
+  | `nav.section_devices` | Устройства и узлы | Devices & Nodes |
+  | `nav.section_access` | Контроль доступа | Access Control |
+  | `nav.section_health` | Здоровье и логи | System Health & Logs |
+  | `nav.section_integrations` | Интеграции | Integrations |
+  | `nav.section_data` | Данные | Data |
+  | `nav.section_settings` | Настройки и пользователи | Settings & Users |
+  | `nav.toggle_sidebar` | Открыть меню | Open menu |
+  | `nav.toggle_section` | Свернуть секцию | Collapse section |
+
+- **`internal/handlers/layout_v1_1_0_test.go`** (NEW,
+  4 tests):
+  - `TestB96_AdminLayoutGroupsAll22Pages` — 22 admin
+    pages are present + 6 sections + 6 InSectionX
+    booleans + 8 i18n keys + hamburger input/label
+  - `TestB96_AllAdminPagesInASection` — strict grouping:
+    every admin page link is inside some
+    `<details class="sidebar-section">` block, no admin
+    links outside sections
+  - `TestB97_ThemesCSSMobileDrawer` — 768px breakpoint +
+    hamburger `display:none`→`display:flex` + translateX
+    slide + 44px tap targets
+  - `TestB97_StaticFilePresence` — sanity: themes.css
+    exists at the expected path
+
+- **`scripts/check_b96.sh`** (NEW): B96 pre-push check.
+  Greps the layout + i18n + runs the 2 B96 unit tests.
+- **`scripts/check_b97.sh`** (NEW): B97 pre-push check.
+  Greps the CSS + runs the 2 B97 unit tests.
+- **`scripts/verify_pre_deploy.sh`**: 2 new `run_check`
+  lines (B96, B97).
+
+**Files (9 modified, 4 new):**
+- 4 modified: `layout.html`, `themes.css`,
+  `catalog_common.go`, `handlers.go`
+- 2 modified (docs): `AGENTS.md`, `docs/PLANS.md`
+- 1 modified (verify): `scripts/verify_pre_deploy.sh`
+- 1 new test: `internal/handlers/layout_v1_1_0_test.go`
+- 2 new shell: `scripts/check_b96.sh`,
+  `scripts/check_b97.sh`
+- 1 new release-notes section (this file)
+
+**Net change:** 7 source + 2 scripts + 1 test file,
++~1100/-~250.
+
+**Verification:**
+- `go test -count=1 -short ./...` — 28/28 packages
+  green (no regressions; the 4 new B96/B97 unit tests
+  pass).
+- `make verify-pre` — 73 PASS / 19 FAIL. B96 + B97
+  both PASS (the new v1.1.0 contracts). The 19 FAILs
+  are unchanged from v1.3.2 (all v0.32.x-era).
+- `make verify-post` — should re-run after deploy.
+  No new R-rows; the runtime contract is unchanged.
+
+**Deferred (recorded for v1.4.0+):**
+- **Status badges from B92 availability**: the
+  Integrations section could show a green/red dot
+  based on the cached headscale/headplane/tailscale
+  status. The data is already available via
+  `adminSvc.AvailabilityChecker.Snapshot()` — just
+  needs to be plumbed into the layout's data map.
+- **Consolidate /admin/headscale + /admin/headplane
+  into one "Control plane" page with tabs**: TD-1
+  grouped them under the Integrations section, but
+  they're still separate pages. Consolidation is a
+  separate ~half-day job.
+- **Info density on /admin/devices** (chip collapse for
+  OS+type+last_seen).
+- **Inline action confirmation** (replace `confirm=yes`
+  checkboxes with a small modal).
+- **B98 (B92 status badges)** — a follow-up catalog
+  row when the badges land.
+
+**Renumbering note** in `docs/PLANS.md`: the v0.34.0-era
+TD-3 ("Style cleanup SA1012, 5 items") is renumbered to
+TD-14. The TD-3 slot is now occupied by mobile-responsive
+UI. v1.2.0's roadmap entry "Style cleanups (TD-2, TD-3)"
+becomes "Style cleanup (TD-2)" — the SA1012 work moves
+under TD-14.
+
+**Why one commit**: TD-1 and TD-3 are visually intertwined
+(the new sidebar grouping is the prerequisite for a usable
+mobile drawer; an ungrouped drawer would have 22 links
+flipping in one at a time). Splitting them would leave
+intermediate commits with a working but ugly UI.
+
+**Live verify on VM** (operator action required):
+1. `cd /home/skyadmin/skygate && git pull --tags --force`
+2. `docker compose build skygate` (rebuild with the new
+   layout/CSS — 30-60s for the static binary)
+3. `docker compose up -d --force-recreate --no-deps skygate`
+4. Open https://skygate.example.com/admin/devices in a
+   desktop browser → confirm the sidebar shows 6 sections
+5. Open the same URL in a phone (or DevTools mobile
+   emulation @ 375px / 414px) → confirm the hamburger
+   appears, the sidebar slides in, all 22 admin pages
+   are reachable from the 6 sections
+
+**Backlog (NOT in this release, recorded for v1.4.0+):**
+- B92 status badges in sidebar (B98)
+- Consolidate /admin/headscale + /admin/headplane
+- Info density on /admin/devices + /admin/exit-nodes
+- Inline action confirmation modal
+- BL-2 (HA skygate-host-2) — blocked on 2nd VM + etcd
+  + S3 + DNS plan
+- BL-3 (Telegram DPI workaround) — blocked on operator's
+  network
+
+---
+
 ## v1.3.2 — SQLite removal: docs polish (Phase 3 of 3)
 
 **Date:** 2026-08-12

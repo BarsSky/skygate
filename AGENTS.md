@@ -6,16 +6,62 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 **Before proposing work, also read [`docs/BACKLOG.md`](docs/BACKLOG.md)** —
 it tracks abandoned / blocked / in-progress features (HA skygate-host-2,
 PG cutover (now done in v1.3.x), backup polish, perf regression tests,
-**UI refactoring (Priority 9, deferred — 23 admin pages grouped into
-6 sections; see `docs/PLANS.md` TD-1)**, **mobile-responsive UI
-(touch UX, deferred — see `docs/PLANS.md` TD-3)**, etc.) so you don't
-re-litigate old decisions or propose work that's already in flight.
+**UI refactoring (DONE in v1.1.0 — 22 admin pages grouped into 6
+collapsible sidebar sections; see `docs/PLANS.md` TD-1)**,
+**mobile-responsive UI (DONE in v1.1.0 — sidebar becomes slide-in
+drawer at <768px, hamburger button, 44px tap targets; see
+`docs/PLANS.md` TD-3)**, etc.) so you don't re-litigate old
+decisions or propose work that's already in flight.
 
 ---
 
 ## Release status
 
-* **Current**: v1.3.1 (Phase 2 of SQLite removal) — scripts + Docker
+* **Current**: v1.1.0 — UI refactoring (TD-1) + mobile-responsive
+  (TD-3). 1 commit since v1.3.2. All tests green
+  (`go test -count=1 -short ./...` full suite, 28/28 packages);
+  `make verify-pre` 73 PASS / 19 FAIL (the FAILs are all pre-existing
+  v0.32.x-era ones; B96 + B97 are the new v1.1.0 contracts and
+  both PASS). What's added:
+  - **B96 (v1.1.0, TD-1)**: 22 admin pages grouped into 6
+    collapsible `<details class="sidebar-section">` blocks
+    (Devices & Nodes / Access Control / System Health & Logs /
+    Integrations / Data / Settings & Users). Each section
+    auto-opens via the `InSectionX` booleans that
+    `renderWithLayout` computes from `.Page` in
+    `internal/handlers/handlers.go:sectionPageSet()`. Pinned by
+    2 Go unit tests in `layout_v1_1_0_test.go` + 1
+    `scripts/check_b96.sh` shell script.
+  - **B97 (v1.1.0, TD-3)**: mobile-responsive sidebar. The
+    pre-v1.1.0 fixed 220px sidebar ate the whole viewport on
+    a phone. The new layout has a hamburger button
+    (`.sidebar-toggle`, hidden on desktop, visible on mobile)
+    that drives a slide-in drawer via the native checkbox hack
+    (no JS). Breakpoint renamed from `760px` (v1.3.x era) to
+    `768px` (the canonical iPad-portrait width). Touch targets
+    bumped to 44px min per Apple HIG / Material Design. Pinned
+    by 2 Go unit tests + 1 `scripts/check_b97.sh` shell script.
+  - 8 new i18n keys added to `catalog_common.go` (ru + en
+    parity preserved via the B4 `TestCatalogsParity` test):
+    `nav.section_devices`, `nav.section_access`,
+    `nav.section_health`, `nav.section_integrations`,
+    `nav.section_data`, `nav.section_settings`,
+    `nav.toggle_sidebar`, `nav.toggle_section`.
+  - 4 files changed (`layout.html`, `themes.css`,
+    `catalog_common.go`, `handlers.go`), +2 new test files
+    (`layout_v1_1_0_test.go`, `check_b96.sh`, `check_b97.sh`),
+    +1 verify_pre_deploy.sh update.
+  - **Live state**: v1.1.0 NOT YET committed; current
+    `origin/main` is `ffd4495` (v1.3.2 docs polish). Deploy
+    order: commit v1.1.0 first, then `git pull` on VM,
+    `docker compose build skygate`, restart.
+
+* **Previous**: v1.3.2 (Phase 3 of SQLite removal) — docs polish.
+  1 commit since v1.3.1. No code changes; only `AGENTS.md` +
+  4 `docs/*` files. Closes BL-1 (PG cutover) on the docs side.
+  See the v1.3.2 entry in `RELEASE-NOTES.md`.
+
+* **Previous**: v1.3.1 (Phase 2 of SQLite removal) — scripts + Docker
   for PG-only runtime. 1 commit since v1.3.0. All tests green
   (`go test -count=1 -short ./...` full suite, 28/28 packages);
   `make verify-pre` 70 PASS / 19 FAIL (the FAILs are all pre-existing
@@ -143,6 +189,8 @@ to reflect a deliberate design change.
 | **B34 (v1.3.1)** | **device_rules has no duplicate `(device_hostname, exit_node_id)` pairs, queried via `psql` against the live PG cluster (was sqlite3 on a bind-mounted `.db` file).** | **psql on the VM (via `psql_vm` helper that reads `SKYGATE_DB_DSN` from `.env`) OR docker run --network host postgres:15-alpine psql fallback.** |
 | B70 (v1.3.1) | auto-update orchestrator migrate step (`--migrate-only` flag + `--profile local-pg` aware). PG-only. | grep for `TestRunMigrateOnly_*` test function names (the SQLite-named ones are t.Skip stubs but the function names still exist for the grep pins). |
 | **B79 (v1.3.1)** | **exit-node pref INSERT placeholder fix. PG-only — the pre-v1.3.0 `placeholders_sqlite.go` + `placeholders_range_sqlite_test.go` files were removed in v1.3.0.** | **grep `func PlaceholdersRange` in `internal/db/placeholders.go` + `func placeholdersFromTo` in `internal/db/placeholders_postgres.go` (no `_sqlite.go` variant).** |
+| **B96 (v1.1.0)** | **TD-1: 22 admin pages grouped into 6 collapsible `<details class="sidebar-section">` blocks. Each section has `{{if .InSectionX}}open{{end}}` for auto-open. Pinned by 2 Go tests in `internal/handlers/layout_v1_1_0_test.go` + `scripts/check_b96.sh`.** | **`bash scripts/check_b96.sh` (runs `go test -count=1 -run TestB96_ ./internal/handlers/`) — pins 6 sections, 6 InSection* booleans, 8 i18n keys, 22 admin links, hamburger input/label, +2 unit tests.** |
+| **B97 (v1.1.0)** | **TD-3: mobile-responsive sidebar (breakpoint renamed 760px→768px, matches iPad-portrait). Hamburger `.sidebar-toggle` is `display:none` on desktop, `display:flex` on mobile. Sidebar slides via `transform:translateX(-100%)`→`translateX(0)`. Touch targets `min-height:44px` (Apple HIG / Material).** | **`bash scripts/check_b97.sh` (runs `go test -count=1 -run TestB97_ ./internal/handlers/`) — pins 768px breakpoint, ! 760px, .sidebar-toggle + .sidebar-toggle-input classes, translateX(-100%) + translateX(0), .sidebar-section styles, min-height:44px, +2 unit tests.** |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`
 

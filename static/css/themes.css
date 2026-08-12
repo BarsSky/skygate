@@ -107,6 +107,62 @@ header h1 .ver{opacity:.5;font-size:10px;font-weight:500;margin-left:2px;font-fa
 .sidebar.collapsed nav a span{display:none}
 .sidebar.collapsed .shead h1{opacity:0;width:0;overflow:hidden}
 .sidebar .nav-sep{margin:4px 0;border:none;border-top:1px solid var(--border);opacity:.2}
+
+/* 2026-08-12: v1.1.0 (TD-1) — sidebar sections. The 22 admin
+   nav items are grouped into 6 collapsible <details> blocks
+   (Devices & Nodes, Access Control, System Health & Logs,
+   Integrations, Data, Settings & Users). The <summary> is
+   the section header; clicking it toggles the child <a> list.
+   On desktop the <details> stays closed by default unless the
+   current page belongs to that section (auto-open via
+   {{if .InSectionX}}open{{end}} in layout.html). On mobile
+   the @media rule below overrides this — sections always
+   render open so the operator doesn't have to tap 6 times. */
+.sidebar-section{margin:2px 0}
+.sidebar-section>summary{
+  list-style:none;cursor:pointer;
+  padding:8px 10px;border-radius:var(--radius);
+  font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;
+  color:var(--text-muted);
+  display:flex;align-items:center;gap:10px;
+  transition:all .15s;user-select:none;
+}
+.sidebar-section>summary::-webkit-details-marker{display:none}
+.sidebar-section>summary::before{
+  content:"\f0da";font-family:"Font Awesome 6 Free";font-weight:900;
+  font-size:10px;width:10px;flex-shrink:0;
+  transition:transform .15s;display:inline-block;text-align:center;
+}
+.sidebar-section[open]>summary::before{transform:rotate(90deg)}
+.sidebar-section>summary:hover{background:var(--bg-hover);color:var(--text)}
+.sidebar-section[open]>summary{color:var(--text)}
+.sidebar-section>summary i{width:16px;text-align:center;font-size:12px;flex-shrink:0;color:var(--accent)}
+.sidebar-section>summary>span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-section>a{padding-left:30px !important;font-size:12px !important}
+.sidebar.collapsed .sidebar-section>summary>span,
+.sidebar.collapsed .sidebar-section>a>span{display:none}
+.sidebar.collapsed .sidebar-section>summary::before{transform:rotate(0deg)}
+.sidebar.collapsed .sidebar-section[open]>a{display:none}
+.sidebar.collapsed .sidebar-section{opacity:.75}
+.sidebar.collapsed .sidebar-section:hover{opacity:1}
+
+/* 2026-08-12: v1.1.0 (TD-3) — hamburger toggle + mobile drawer.
+   On desktop (.sidebar-toggle-input, .sidebar-toggle) are
+   display:none — the sidebar is always visible. On mobile
+   (<768px) the hamburger appears in the top-left, the sidebar
+   is hidden by default (translateX(-100%)), and tapping the
+   hamburger slides it in. The checkbox hack — input[id=sidebar-toggle]
+   + label[for=sidebar-toggle] — drives the state without any
+   JavaScript. */
+.sidebar-toggle-input{display:none}
+.sidebar-toggle{
+  display:none;position:fixed;top:12px;left:12px;z-index:200;
+  width:40px;height:40px;align-items:center;justify-content:center;
+  background:var(--bg-card);color:var(--text);
+  border:1px solid var(--border);border-radius:var(--radius);
+  cursor:pointer;box-shadow:var(--shadow-lg);
+}
+.sidebar-toggle i{font-size:16px}
 .sidebar-user{padding:8px;border-top:1px solid var(--border);flex-shrink:0}
 .sidebar-user .user-info{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:13px}
 .sidebar-user .user-icon{width:16px;text-align:center;color:var(--accent)}
@@ -318,16 +374,75 @@ footer{margin-top:48px;padding:24px 0;border-top:1px solid var(--border);text-al
 footer a{color:var(--text-muted);text-decoration:none;margin:0 6px}
 footer a:hover{color:var(--accent)}
 
-@media (max-width:760px){
-  header .shell{flex-wrap:wrap;height:auto;padding:8px 14px;gap:8px}
+@media (max-width:768px){
+  /* 2026-08-12: v1.1.0 (TD-3) — B97 pins this breakpoint.
+     Below 768px the sidebar becomes a slide-in drawer driven
+     by the checkbox hack (.sidebar-toggle-input +
+     .sidebar-toggle label). The hamburger button is
+     display:flex on mobile (display:none on desktop). The
+     sidebar starts off-screen (translateX(-100%)) and slides
+     in when the checkbox is checked (:checked ~ .sidebar).
+     The main content area gets a 16px left padding so the
+     hamburger doesn't overlap the page title. */
+  .sidebar-toggle{display:flex}
+  .sidebar-toggle-input:checked ~ .sidebar-toggle{left:auto;right:12px}
+  .sidebar{
+    transform:translateX(-100%);transition:transform .25s;
+    width:280px !important;box-shadow:var(--shadow-lg);
+  }
+  .sidebar-toggle-input:checked ~ .sidebar{
+    transform:translateX(0);
+  }
+  /* When the drawer is open, dim the main content. We use
+     a body class via the checkbox's :checked sibling selector
+     (the body has to be a sibling, not main, because <main>
+     is a sibling of <input>, not of <body>). The label is
+     clickable from anywhere in the viewport — the body class
+     is what gives the visual feedback. */
+  .sidebar-toggle-input:checked ~ main::before{
+    content:"";position:fixed;inset:0;background:rgba(0,0,0,0.4);
+    z-index:90;cursor:pointer;
+  }
+  /* Reset the desktop's fixed 220px content offset — on mobile
+     the sidebar is overlay, not a column. */
+  main .shell{margin-left:0 !important}
+  header{margin-left:0 !important}
+  /* Sections: always open on mobile (operator shouldn't have
+     to tap 6 times to find a page). The caret is removed for
+     visual cleanliness. */
+  .sidebar-section[open]>summary::before{transform:none}
+  .sidebar-section>summary{cursor:default}
+
+  /* 2026-08-12: v1.1.0 (TD-3) — touch-friendly tap targets.
+     Apple's HIG / Material both recommend 44x44 px min for
+     primary interactive elements. Sidebar nav links + buttons
+     get 12px vertical padding (was 8px on desktop) so thumb
+     taps are reliable on a phone. */
+  .sidebar nav a{padding:12px 14px;font-size:14px;min-height:44px}
+  .sidebar .toggle{width:44px;height:44px}
+  .sidebar .shead{padding:14px 16px}
+  .sidebar-user .sidebar-actions button{padding:12px 14px;min-width:44px;min-height:44px}
+  .sidebar nav a i{font-size:15px;width:20px}
+  .theme-picker-sb summary{padding:10px 12px;min-height:44px}
+
+  /* v0.33.1.7: header + main shell compaction (kept from the
+     pre-v1.1.0 760px breakpoint; breakpoint renamed to 768px
+     so it matches the iPad-portrait width). */
+  header .shell{flex-wrap:wrap;height:auto;padding:8px 14px;gap:8px;padding-left:60px}
   header h1{font-size:14px}
 
   header .user-area{flex-basis:100%;justify-content:space-between;padding-bottom:6px}
   main{padding:20px 0 48px}
   .shell{padding:0 14px}
   .card{padding:16px}
-  .metric-grid{grid-template-columns:repeat(2,1fr)}
+  .metric-grid{grid-template-columns:repeat(2,1fr);gap:8px}
   .title-row h2{font-size:18px}
+  /* Tables: force the existing .table-wrap (B50) to scroll
+     horizontally rather than squishing columns. */
+  .table-wrap{margin:0 -14px;padding:0 14px}
+  /* Form buttons: bigger hit target on mobile. */
+  .btn{padding:10px 16px;font-size:14px;min-height:40px}
+  .btn-sm{padding:6px 12px;min-height:32px}
 }
 </style>
 /* Align username/password fields in the create-user form on /admin/users. */

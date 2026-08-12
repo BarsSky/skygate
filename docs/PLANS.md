@@ -1,6 +1,6 @@
 # Skygate plans & technical debt
 
-**Last updated:** 2026-08-11
+**Last updated:** 2026-08-12
 **Maintained by:** Mavis (skygate) + operator
 **Status:** live roadmap; updated after every release
 
@@ -157,7 +157,47 @@ the squash (estimated, depends on pack efficiency).
   about these. The fix is mechanical and the project
   should not have 68 style violations in main.
 
-**[TD-3] Style cleanup (SA1012, 5 items)**
+**[TD-3] Mobile-responsive UI (NEW)**
+- **Status:** DONE in v1.1.0 (combined with TD-1)
+- **Effort:** ~1-2 days (CSS refactor + tests; piggybacks
+  on TD-1's section grouping — the grouped sidebar was
+  the prerequisite for a usable mobile drawer)
+- **Scope:** the admin panel was effectively unusable on
+  a phone (the fixed 220px sidebar ate the whole viewport
+  on 375-414px phones). v1.1.0 adds:
+  1. **Hamburger button** (`.sidebar-toggle`, fixed top-left,
+     only visible on mobile <768px). Driven by the native
+     checkbox hack — no JS required.
+  2. **Slide-in drawer**: sidebar starts at
+     `transform:translateX(-100%)` on mobile, slides to
+     `translateX(0)` when the hamburger is toggled.
+     `backdrop-filter: blur(8px)` overlay dims the main
+     content while the drawer is open.
+  3. **Breakpoint renamed 760px → 768px** (the canonical
+     iPad-portrait width; 760px was a v0.28.5-era
+     carryover).
+  4. **Touch-friendly tap targets**: sidebar links + buttons
+     bumped to 12px vertical padding + `min-height:44px`
+     per Apple HIG / Material Design.
+  5. **Sections always open on mobile** so the operator
+     doesn't have to tap 6 times to find a page.
+  6. **B97 catalog row** + 2 Go unit tests pin the
+     breakpoint + hamburger + translateX + 44px contract.
+- **Files**: `static/css/themes.css` (added `.sidebar-toggle`
+  class + `@media (max-width:768px)` block; renamed
+  `@media (max-width:760px)` → 768px), `layout.html`
+  (added `<input type="checkbox" id="sidebar-toggle">`
+  + `<label class="sidebar-toggle">`).
+- **Verification**: `bash scripts/check_b97.sh` →
+  `go test -count=1 -run TestB97_ ./internal/handlers/`
+  (2 tests, both PASS in v1.1.0).
+
+**Renumber note**: this entry takes the TD-3 slot that
+the v0.34.0-era `docs/PLANS.md` used for the SA1012
+"intentional nil context" cleanup (5 items). That
+work has been moved to TD-14 below.
+
+**[TD-14] Style cleanup (SA1012, 5 items)** *(renumbered from TD-3 in v1.1.0)*
 - **Status:** DEFERRED from v0.34.0
 - **Effort:** ~30 min
 - **Scope:** in test files that intentionally pass `nil`
@@ -165,7 +205,8 @@ the squash (estimated, depends on pack efficiency).
   paths), add a `//nolint:staticcheck // intentional nil
   test` comment so the next staticcheck run doesn't warn
   about them
-- **Why high:** same as TD-2
+- **Why high:** same as TD-2 (low risk, but every CI
+  run warns until done)
 
 ### MEDIUM priority — fix in v1.x
 
@@ -382,27 +423,38 @@ the squash (estimated, depends on pack efficiency).
 
 ## Future roadmap (rough order)
 
-**v1.1.0 — UI refactoring (TD-1)**
-- 6 collapsible sidebar sections
-- Status badges from B92 availability snapshot
-- Consolidate headscale + headplane into one "Control
-  plane" page with tabs
-- Info density on /admin/devices + /admin/exit-nodes
-- Inline action confirmation (modal instead of
-  confirm=yes checkbox)
-- Effort: ~3-4 days
+**v1.1.0 — UI refactoring (TD-1) + mobile-responsive (TD-3)**
+- **Status:** DONE in v1.1.0
+- 6 collapsible sidebar sections (Devices & Nodes /
+  Access Control / System Health & Logs / Integrations /
+  Data / Settings & Users), each auto-opens via the
+  `InSectionX` booleans that `renderWithLayout` computes
+  from `.Page`
+- Hamburger button + slide-in drawer at <768px breakpoint
+  (renamed from 760px → 768px to match iPad-portrait
+  width)
+- 44px min-height tap targets for touch UX
+- B96 (TD-1) + B97 (TD-3) catalog rows added; both PASS
+- Deferred to a follow-up release: status badges from
+  B92 availability, control-plane consolidation, info
+  density on /admin/devices, inline action confirmation
+  modal
+- Effort: ~1.5 days (combined into single release)
 
-**v1.2.0 — Style cleanups (TD-2, TD-3)**
+**v1.2.0 — Style cleanup (TD-2)**
 - Replace 68 numeric HTTP status codes with `http.StatusXxx`
   constants
-- Add `//nolint` comments on the 5 SA1012 false-positives
+- The 5 SA1012 false-positives are now TD-14 (renumbered
+  from TD-3 in v1.1.0 when TD-3 was reassigned to mobile-
+  responsive UI)
 - Effort: ~2 hours
 
 **v1.3.0 — Backup S3 (TD-4)**
 - Add S3 destination to /admin/backup/config
 - New `internal/backup/dest_s3.go` (aws-sdk-go-v2)
-- Verify-pre catalog check (B96) for S3 endpoint
-  connectivity
+- Verify-pre catalog check for S3 endpoint connectivity
+  (the pre-v1.1.0 plan said "B96" — but B96 is now taken
+  by TD-1, so this release will use a new B number)
 - Effort: ~half a day
 
 **v1.4.0 — UI quality-of-life (TD-6, TD-7)**
@@ -425,12 +477,23 @@ the squash (estimated, depends on pack efficiency).
 - Daily cron to remove smoke-mesh test data
 - Effort: ~30 min
 
-**v2.0.0 — PostgreSQL cutover (BL-1)**
-- Full placeholder rewrite
+**v1.8.0+ — PostgreSQL cutover (BL-1) — DONE across v1.3.0 + v1.3.1 + v1.3.2**
 - Live cutover on the operator's PG-staging VM
-- R27 verification (lock_timeout + 4 roundtrip tests)
-- Effort: ~3-5 days
-- Blocked on operator's PG-staging VM
+- Phase 1 (v1.3.0): Go source — removed all SQLite code paths,
+  `cfg.DBDSN` is now REQUIRED, pgx is the only DB driver
+- Phase 2 (v1.3.1): Docker + scripts — Dockerfile
+  `CGO_ENABLED=0`, 24 MB static binary, docker-compose adds
+  the `postgres:15-alpine` service behind `local-pg` profile,
+  9 operator scripts converted sqlite3 → psql (throwaway
+  `postgres:15-alpine` container pattern for portable psql)
+- Phase 3 (v1.3.2): docs — `docs/deploy.md#10-postgresql` +
+  `#11-postgresql-migration-from-sqlite`, disaster-recovery
+  + architecture + AGENTS.md updated
+- 117 files +1400/-27331 (v1.3.0) + 14 files +1044/-384 (v1.3.1)
+  + 5 docs +803/-83 (v1.3.2)
+- 4 new catalog rows: B26 (CGO_ENABLED=0), B34 (psql
+  duplicate check), B70 (PG-only title), B79 (PG-only
+  placeholders). All 4 PASS.
 
 **v3.0.0 — HA Tier 1 (BL-2)**
 - skygate-host-2 + etcd + S3 + DNS plan

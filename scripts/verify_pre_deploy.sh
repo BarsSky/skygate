@@ -2723,3 +2723,51 @@ run_check "B93" "Issue 4 infra user: V054 portal_users row + ensureInfraUser + B
 # cleanup. They get a follow-up in a later release.
 run_check "B95" "v0.34.0 code debt cleanup: 0 U1000 / SA5011 / ST1019 / SA4010 + dead branches deleted + .gitignore + dead code + real bug fixes (B95)" \
   'test -f scripts/check_b95.sh && bash scripts/check_b95.sh'
+
+# 2026-08-12: v1.1.0 (TD-1) — group 22 admin pages into 6
+# collapsible sidebar sections. The pre-v1.1.0 layout had a
+# flat list of 22 admin nav items which was impossible to
+# scan on a phone (TD-3) and a chore to find anything in on
+# desktop too. The new layout uses <details> elements so
+# each section collapses cleanly, and the {{if .InSectionX}}
+# conditional auto-opens the section containing the current
+# page (computed by sectionPageSet() in handlers.go).
+#
+# Pinned contracts (see scripts/check_b96.sh for the full
+# list — same pattern as B91/B92):
+#   - internal/handlers/templates/layout.html groups all
+#     22 admin pages into exactly 6 <details class="sidebar-section">
+#     blocks
+#   - Each block has a {{if .InSectionX}}open{{end}} auto-open
+#     conditional (X = Devices/Access/Health/Integrations/Data/Settings)
+#   - 8 new i18n keys (6 section titles + 2 toggle labels) exist
+#     in catalog_common.go (B4 parity already enforces ru == en)
+#   - The hamburger input/label is present in layout.html
+#     (B97's contract, also pinned here for symmetry)
+#   - 2 Go unit tests pass: TestB96_AdminLayoutGroupsAll22Pages
+#     and TestB96_AllAdminPagesInASection
+run_check "B96" "v1.1.0 TD-1 admin sidebar refactor: 22 admin pages grouped into 6 collapsible sections + 2 Go unit tests (B96)" \
+  'test -f scripts/check_b96.sh && bash scripts/check_b96.sh'
+
+# 2026-08-12: v1.1.0 (TD-3) — mobile-responsive UI. Before
+# v1.1.0 the admin panel was effectively unusable on a phone
+# (the fixed 220px sidebar ate the whole viewport). The new
+# layout has a hamburger button + slide-in drawer at the
+# canonical 768px breakpoint (was 760px in v1.3.x; v1.1.0
+# renames to 768px = the iPad-portrait width, the standard
+# mobile boundary). The drawer uses the native checkbox hack
+# (no JS) and slides in/out via transform:translateX.
+#
+# Pinned contracts (see scripts/check_b97.sh):
+#   - static/css/themes.css has the @media (max-width:768px)
+#     block (and NOT the v1.3.x-era 760px)
+#   - .sidebar-toggle is display:none on desktop and
+#     display:flex on mobile
+#   - The sidebar slides from translateX(-100%) to
+#     translateX(0) when toggled
+#   - Touch-friendly tap targets (min-height:44px per
+#     Apple HIG / Material Design)
+#   - 2 Go unit tests pass: TestB97_ThemesCSSMobileDrawer
+#     and TestB97_StaticFilePresence
+run_check "B97" "v1.1.0 TD-3 mobile-responsive: sidebar becomes slide-in drawer <768px + hamburger button + 44px tap targets + 2 Go unit tests (B97)" \
+  'test -f scripts/check_b97.sh && bash scripts/check_b97.sh'

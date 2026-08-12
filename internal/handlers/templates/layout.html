@@ -11,6 +11,30 @@
 <link rel="stylesheet" href="/static/css/themes.css">
 </head>
 <body>
+{{/* 2026-08-12: v1.1.0 (TD-1 + TD-3) — sidebar was a flat list
+     of 22 admin nav items in v1.3.x. Now grouped into 6
+     collapsible <details> sections (Devices & Nodes, Access
+     Control, System Health & Logs, Integrations, Data,
+     Settings & Users). The user-side nav (10 items above the
+     hr) stays flat — those are the per-user self-service
+     pages and don't benefit from grouping.
+
+     Each section is rendered with class .sidebar-section so
+     the CSS can target it. The current section is auto-
+     detected from .Page via the .InSection* booleans that
+     renderWithLayout sets in handlers.go. The <details>
+     element is open by default; on mobile (CSS @media) it
+     always renders open regardless of the open attribute
+     so the operator doesn't have to tap 6 times to find a
+     page. */}}
+
+{{/* Hamburger button — only visible on mobile (<768px via
+     CSS .sidebar-toggle display rule). Uses the native
+     checkbox hack: the input drives the body class that
+     CSS uses to slide the sidebar in. No JS required. */}}
+<input type="checkbox" id="sidebar-toggle" class="sidebar-toggle-input" aria-label="{{t "nav.toggle_sidebar"}}">
+<label for="sidebar-toggle" class="sidebar-toggle" title="{{t "nav.toggle_sidebar"}}"><i class="fa-solid fa-bars"></i></label>
+
 <aside class="sidebar" id="sidebar">
   <div class="shead">
     <h1>Skygate</h1>
@@ -29,28 +53,58 @@
     <a href="/my/meshes" {{if eq .Page "my/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes"}}</span></a>
 {{if .IsAdmin}}
     <hr class="nav-sep">
-    <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
-    <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{t "nav.settings"}}</span></a>
-    <a href="/admin/users"><i class="fa-solid fa-users"></i><span>{{t "nav.users"}}</span></a>
-    <a href="/admin/control-planes" {{if eq .Page "admin/control-planes"}}class="active"{{end}}><i class="fa-solid fa-server-stack"></i><span>{{t "nav.control_planes"}}</span></a>
-    <a href="/admin/exit-nodes" {{if eq .Page "admin/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_nodes_admin"}}</span></a>
-    <a href="/admin/subnets" {{if eq .Page "admin/subnets"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "admin.subnets.title"}}</span></a>
-    <a href="/admin/devices"><i class="fa-solid fa-server"></i><span>{{t "nav.devices_all"}}</span></a>
-    <a href="/admin/acls"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.acls"}}</span></a>
-    <a href="/admin/headscale" {{if eq .Page "admin/headscale"}}class="active"{{end}}><i class="fa-solid fa-cube"></i><span>{{t "nav.headscale"}}</span></a>
-    <a href="/admin/headscale/acl" {{if eq .Page "admin/headscale_acl"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "nav.headscale_acl"}}</span></a>
-    <a href="/admin/system_tests" {{if eq .Page "admin/system_tests"}}class="active"{{end}}><i class="fa-solid fa-vial"></i><span>{{t "nav.system_tests"}}</span></a>
-    <a href="/admin/services" {{if eq .Page "admin/services"}}class="active"{{end}}><i class="fa-solid fa-heart-pulse"></i><span>{{t "title.admin_services"}}</span></a>
-    <a href="/admin/headplane" {{if eq .Page "admin/headplane"}}class="active"{{end}}><i class="fa-solid fa-window-maximize"></i><span>{{t "nav.headplane"}}</span></a>
-    <a href="/admin/integrations" {{if eq .Page "admin/integrations"}}class="active"{{end}}><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.integrations"}}</span></a>
-    <a href="/admin/derp"><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.derp"}}</span></a>
-    <a href="/admin/audit"><i class="fa-solid fa-clipboard-list"></i><span>{{t "nav.audit"}}</span></a>
-    <a href="/admin/invites" {{if eq .Page "admin/invites"}}class="active"{{end}}><i class="fa-solid fa-envelope-open-text"></i><span>{{t "nav.invites"}}</span></a>
-    <a href="/admin/meshes" {{if eq .Page "admin/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes_admin"}}</span></a>
-    <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram"}}</span></a>
-    <a href="/admin/tailscale" {{if eq .Page "admin/tailscale"}}class="active"{{end}}><i class="fa-solid fa-link"></i><span>{{t "tailscale.title"}}</span></a>
-    <a href="/admin/exit-rules"><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules_all"}}</span></a>
-    <a href="/admin/update" {{if eq .Page "admin/update"}}class="active"{{end}}><i class="fa-solid fa-cloud-arrow-down"></i><span>{{t "nav.update"}}</span></a>
+
+    {{/* Section 1: Devices & Nodes (4 pages) */}}
+    <details class="sidebar-section" {{if .InSectionDevices}}open{{end}}>
+      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-server"></i><span>{{t "nav.section_devices"}}</span></summary>
+      <a href="/admin/devices" {{if eq .Page "admin/devices"}}class="active"{{end}}><i class="fa-solid fa-server"></i><span>{{t "nav.devices_all"}}</span></a>
+      <a href="/admin/exit-nodes" {{if eq .Page "admin/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_nodes_admin"}}</span></a>
+      <a href="/admin/meshes" {{if eq .Page "admin/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes_admin"}}</span></a>
+      <a href="/admin/subnets" {{if eq .Page "admin/subnets"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "admin.subnets.title"}}</span></a>
+    </details>
+
+    {{/* Section 2: Access Control (3 pages) */}}
+    <details class="sidebar-section" {{if .InSectionAccess}}open{{end}}>
+      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.section_access"}}</span></summary>
+      <a href="/admin/acls" {{if eq .Page "admin/acls"}}class="active"{{end}}><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.acls"}}</span></a>
+      <a href="/admin/exit-rules" {{if eq .Page "admin/exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules_all"}}</span></a>
+      <a href="/admin/headscale/acl" {{if eq .Page "admin/headscale_acl"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "nav.headscale_acl"}}</span></a>
+    </details>
+
+    {{/* Section 3: System Health & Logs (3 pages) */}}
+    <details class="sidebar-section" {{if .InSectionHealth}}open{{end}}>
+      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-heart-pulse"></i><span>{{t "nav.section_health"}}</span></summary>
+      <a href="/admin/system_tests" {{if eq .Page "admin/system_tests"}}class="active"{{end}}><i class="fa-solid fa-vial"></i><span>{{t "nav.system_tests"}}</span></a>
+      <a href="/admin/services" {{if eq .Page "admin/services"}}class="active"{{end}}><i class="fa-solid fa-heart-pulse"></i><span>{{t "title.admin_services"}}</span></a>
+      <a href="/admin/audit" {{if eq .Page "admin/audit"}}class="active"{{end}}><i class="fa-solid fa-clipboard-list"></i><span>{{t "nav.audit"}}</span></a>
+    </details>
+
+    {{/* Section 4: Integrations (6 pages) */}}
+    <details class="sidebar-section" {{if .InSectionIntegrations}}open{{end}}>
+      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.section_integrations"}}</span></summary>
+      <a href="/admin/integrations" {{if eq .Page "admin/integrations"}}class="active"{{end}}><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.integrations"}}</span></a>
+      <a href="/admin/headscale" {{if eq .Page "admin/headscale"}}class="active"{{end}}><i class="fa-solid fa-cube"></i><span>{{t "nav.headscale"}}</span></a>
+      <a href="/admin/headplane" {{if eq .Page "admin/headplane"}}class="active"{{end}}><i class="fa-solid fa-window-maximize"></i><span>{{t "nav.headplane"}}</span></a>
+      <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram"}}</span></a>
+      <a href="/admin/tailscale" {{if eq .Page "admin/tailscale"}}class="active"{{end}}><i class="fa-solid fa-link"></i><span>{{t "tailscale.title"}}</span></a>
+      <a href="/admin/derp" {{if eq .Page "admin/derp"}}class="active"{{end}}><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.derp"}}</span></a>
+    </details>
+
+    {{/* Section 5: Data (3 pages) */}}
+    <details class="sidebar-section" {{if .InSectionData}}open{{end}}>
+      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-database"></i><span>{{t "nav.section_data"}}</span></summary>
+      <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
+      <a href="/admin/invites" {{if eq .Page "admin/invites"}}class="active"{{end}}><i class="fa-solid fa-envelope-open-text"></i><span>{{t "nav.invites"}}</span></a>
+      <a href="/admin/control-planes" {{if eq .Page "admin/control-planes"}}class="active"{{end}}><i class="fa-solid fa-server-stack"></i><span>{{t "nav.control_planes"}}</span></a>
+    </details>
+
+    {{/* Section 6: Settings & Users (3 pages) */}}
+    <details class="sidebar-section" {{if .InSectionSettings}}open{{end}}>
+      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-gear"></i><span>{{t "nav.section_settings"}}</span></summary>
+      <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{t "nav.settings"}}</span></a>
+      <a href="/admin/users" {{if eq .Page "admin/users"}}class="active"{{end}}><i class="fa-solid fa-users"></i><span>{{t "nav.users"}}</span></a>
+      <a href="/admin/update" {{if eq .Page "admin/update"}}class="active"{{end}}><i class="fa-solid fa-cloud-arrow-down"></i><span>{{t "nav.update"}}</span></a>
+    </details>
 {{end}}
   </nav>
 

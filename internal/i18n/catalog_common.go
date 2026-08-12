@@ -66,6 +66,21 @@ var ruCommon = map[string]string{
 	"nav.integrations"               : "Интеграции",
 	"nav.invites"                    : "Инвайт-коды",
 	"nav.meshes_admin"               : "Mesh-сети (все)",
+	// 2026-08-12: v1.1.0 (TD-1 + TD-3) — sidebar section
+	// titles for the 6 collapsible groups in the admin nav
+	// (Devices & Nodes, Access Control, System Health & Logs,
+	// Integrations, Data, Settings & Users). nav.toggle_sidebar
+	// is the aria-label for the hamburger button visible on
+	// mobile (<768px). nav.toggle_section is the summary
+	// hint for the <details> section toggles.
+	"nav.section_devices"            : "Устройства и узлы",
+	"nav.section_access"             : "Контроль доступа",
+	"nav.section_health"             : "Здоровье и логи",
+	"nav.section_integrations"       : "Интеграции",
+	"nav.section_data"               : "Данные",
+	"nav.section_settings"           : "Настройки и пользователи",
+	"nav.toggle_sidebar"             : "Открыть меню",
+	"nav.toggle_section"             : "Свернуть секцию",
 	"common.save"                    : "Сохранить",
 	"common.cancel"                  : "Отмена",
 	"common.delete"                  : "Удалить",
@@ -199,6 +214,18 @@ var enCommon = map[string]string{
 	"nav.integrations"               : "Integrations",
 	"nav.invites"                    : "Invite codes",
 	"nav.meshes_admin"               : "Meshes (all)",
+	// 2026-08-12: v1.1.0 (TD-1 + TD-3) — see the RU block
+	// above for the design rationale. These keys are added
+	// simultaneously in both RU and EN; the B4 i18n parity
+	// test (TestCatalogsParity in i18n_test.go) enforces it.
+	"nav.section_devices"            : "Devices & Nodes",
+	"nav.section_access"             : "Access Control",
+	"nav.section_health"             : "System Health & Logs",
+	"nav.section_integrations"       : "Integrations",
+	"nav.section_data"               : "Data",
+	"nav.section_settings"           : "Settings & Users",
+	"nav.toggle_sidebar"             : "Open menu",
+	"nav.toggle_section"             : "Collapse section",
 	"common.save"                    : "Save",
 	"common.cancel"                  : "Cancel",
 	"common.delete"                  : "Delete",

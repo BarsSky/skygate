@@ -488,6 +488,17 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	data["GitHubOwner"] = githubOwner
 	data["GitHubRepo"] = githubRepo
 
+	// 2026-08-12: v1.1.0 (TD-1) — compute which sidebar section
+	// the current page belongs to so the layout can auto-open
+	// the corresponding <details> block. The 22 admin pages
+	// are grouped into 6 sections; section membership is
+	// declared in sectionPageSet() below. Regular user pages
+	// (dashboard, /my/*) don't belong to any section — the
+	// booleans are false and the sections stay closed.
+	for section, inSection := range sectionPageSet(pageFromName(name)) {
+		data[section] = inSection
+	}
+
 	// 2026-07-15: v0.14.0 — release-monitor banner. We
 	// only surface the banner to admins (regular users
 	// don't need upgrade prompts). The data shape is
@@ -548,6 +559,62 @@ func pageFromName(name string) string {
 		return "help"
 	}
 	return name
+}
+
+// 2026-08-12: v1.1.0 (TD-1) — sectionPageSet returns the
+// map of section keys to membership booleans for the given
+// .Page. The keys are the data map fields the layout reads
+// (InSectionDevices, InSectionAccess, etc.) and the values
+// are true if the page is in that section, false otherwise.
+// The set of pages per section MUST match the grouping in
+// layout.html — drift between this map and the template's
+// <details> blocks breaks the auto-open behaviour (the
+// section just stays closed when you visit a page in it).
+//
+// Pin: B96 (verify_pre_deploy.sh) greps for these page
+// paths in the layout, so adding a new admin page to a
+// section requires updating BOTH this map and the
+// corresponding <details> block in layout.html. The B96
+// test catches the inverse direction too: removing a page
+// from a section without updating this map.
+func sectionPageSet(page string) map[string]bool {
+	// 22 admin pages → 6 sections. The page strings are the
+	// values returned by pageFromName() above, which strips
+	// ".html" from the template name and uses the raw name
+	// as the section identifier (e.g. "admin/devices" for
+	// "admin/devices.html").
+	sections := map[string][]string{
+		"InSectionDevices": {
+			"admin/devices", "admin/exit-nodes", "admin/meshes", "admin/subnets",
+		},
+		"InSectionAccess": {
+			"admin/acls", "admin/exit-rules", "admin/headscale_acl",
+		},
+		"InSectionHealth": {
+			"admin/system_tests", "admin/services", "admin/audit",
+		},
+		"InSectionIntegrations": {
+			"admin/integrations", "admin/headscale", "admin/headplane",
+			"admin/telegram", "admin/tailscale", "admin/derp",
+		},
+		"InSectionData": {
+			"admin/backup", "admin/invites", "admin/control-planes",
+		},
+		"InSectionSettings": {
+			"admin/settings", "admin/users", "admin/update",
+		},
+	}
+	out := make(map[string]bool, len(sections))
+	for section, pages := range sections {
+		out[section] = false
+		for _, p := range pages {
+			if p == page {
+				out[section] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 // pageTitle returns an i18n key (not a translated string) for the given
