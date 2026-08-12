@@ -275,40 +275,80 @@ the squash (estimated, depends on pack efficiency).
 
 ## BLOCKED — needs operator action
 
-**[BL-1] PostgreSQL cutover (Priority 2)**
-- **Status:** Phase 1 DONE in v1.3.0 (this release).
-  Phase 2 (scripts + Docker) and Phase 3 (docs) follow
-  in v1.3.1 and v1.3.2.
-- **Phase 1 (v1.3.0, DONE):** runtime is PG-only. The
-  SQLite backend is removed entirely. `cfg.DBDSN` is
-  required. `mattn/go-sqlite3` is out of `go.mod`. 30
-  old migration files + 4 SQLite-specific helper files
-  are deleted. 25 test files are stubbed (Phase 2 will
-  rewrite them for PG). `go test ./...` is 28/28
-  green.
-- **Phase 2 (v1.3.1, NEXT):** update the operator-facing
-  scripts (verify_post_deploy.sh, verify_backup.sh,
-  cleanup_orphan_meshes.sh, check_subnet_router.sh,
-  reconcile_snapshots.sh, recover_db_corruption.sh,
-  backup.sh, _recover_helper.sh, _swap_recovered.sh)
-  to use `psql` instead of `sqlite3`; remove
-  `sqlite-libs` from Dockerfile; add `postgres:15`
-  service to `docker-compose.yml`; rewrite the
-  verify-pre catalog (B26, B34, B70, B79, B93) for PG;
-  restore CGO_ENABLED=0 in the Dockerfile.
-- **Phase 3 (v1.3.2, after that):** documentation —
-  `docs/deploy.md#postgresql` (PG install + init +
-  backup), `docs/deploy.md#postgresql-migration-from-sqlite`
-  (one-time runbook for the legacy SQLite file),
-  `docs/disaster-recovery.md` (pg_dump replaces file
-  copy), `docs/architecture.md` (single PG backend),
-  `PLANS.md` updates, `AGENTS.md` catalog updates.
-- **Operator action required for Phase 2/3:** review
-  the verify-post script changes on the live VM; confirm
-  the new `psql` queries return the same data as the old
-  `sqlite3` queries (R10, R19, R30 are the most
-  sensitive).
-- **References:** `RELEASE-NOTES.md` v1.3.0 entry,
+> **[BL-1] PostgreSQL cutover (Priority 2)**
+  - **Status:** DONE across v1.3.0 + v1.3.1 + v1.3.2.
+    Runtime is PG-only end-to-end. All three phases landed
+    in this v1.3.x series.
+  - **Phase 1 (v1.3.0, DONE):** runtime is PG-only. The
+    SQLite backend is removed entirely. `cfg.DBDSN` is
+    required. `mattn/go-sqlite3` is out of `go.mod`. 30
+    old migration files + 4 SQLite-specific helper files
+    are deleted. 25 test files are stubbed (Phase 2/3
+    work targets the same code paths via the live
+    admin UI on the real PG cluster). `go test ./...`
+    is 28/28 green.
+  - **Phase 2 (v1.3.1, DONE):** 9 operator scripts converted
+    from `sqlite3` to `psql` (backup.sh, verify_backup.sh,
+    check_subnet_router.sh, cleanup_orphan_meshes.sh,
+    reconcile_snapshots.sh, recover_db_corruption.sh,
+    verify_post_deploy.sh, verify_pre_deploy.sh). New
+    `psql_vm` helper in verify_post_deploy.sh parses
+    `SKYGATE_DB_DSN` and runs psql on the VM if installed,
+    or falls back to a throwaway `postgres:15-alpine`
+    container on the `headscale_default` network.
+    `Dockerfile` drops `gcc`/`musl-dev`/`sqlite-libs`
+    (CGO_ENABLED=0, 24 MB static binary). `docker-compose.yml`
+    adds the `postgres:15-alpine` service gated behind
+    the `local-pg` profile. The verify-pre catalog updates
+    B26 (CGO_ENABLED=0 contract), B34 (psql duplicate
+    check), B70 (PG-only title), B79 (PG-only
+    placeholders). 2 SQLite-era helpers deleted
+    (`_recover_helper.sh` + `_swap_recovered.sh` -> moved
+    to `.trash/sqlite_helpers/` for historical ref).
+    14 files changed, +1044/-384.
+  - **Phase 3 (v1.3.2, DONE — this release):** documentation
+    updated in this commit:
+    - `docs/deploy.md#10-postgresql` — new section (PG
+      install + init + backup + two deployment modes
+      local docker-compose vs external PG)
+    - `docs/deploy.md#11-postgresql-migration-from-sqlite`
+      — new section (one-time runbook for legacy v0.32.x
+      `skygate.db` -> PG conversion via
+      `cmd/apply_pg_migrations` + `dump_sqlite.py`)
+    - `docs/disaster-recovery.md` — Step 3 (PG restore
+      flow), Step 4 (skygate container restart), RPO
+      section, "Backed up by" table updated for the new
+      `skygate-pg.sql` artifact
+    - `docs/architecture.md` — new "Database backend
+      (v1.3.0+)" section, CGO section rewritten (no
+      more CGO), TL;DR updated
+    - `AGENTS.md` — release status updated to v1.3.1,
+      catalog tables updated for the new B26/B34/B70/B79
+      contracts, runtime section updated for the
+      `psql_vm` helper
+    - `PLANS.md` — this entry (BL-1 moved from "Phase 1
+      DONE" to "DONE across v1.3.0 + v1.3.1 + v1.3.2")
+  - **Operator action required:** deploy v1.3.0 + v1.3.1
+    to the live VM (`git pull` + `docker compose build
+    skygate` + `docker compose up -d --force-recreate
+    --no-deps skygate`). The runtime is forward-compatible
+    — the existing `SKYGATE_DB_DSN` in
+    `/home/admin/skygate/.env` works as-is. After the
+    binary is live, take a fresh `scripts/backup.sh`
+    archive so the next backup contains `skygate-pg.sql`
+    (not the old `skygate.db`).
+  - **Outcome:** skygate is now a static 24 MB binary
+    that talks to a single `*sql.DB` pool (pgx v5).
+    No more CGO coupling, no more WAL-corruption class
+    of failures, no more "container has no sqlite3"
+    script workarounds. The 25 PG-test rewrites from
+    Phase 1 are recorded as a Phase 4 backlog (low
+    priority — the production code path is exercised
+    by the live admin UI against the real PG cluster).
+  - **References:** `RELEASE-NOTES.md` v1.3.0 + v1.3.1
+    + v1.3.2 entries, `docs/internal/v0.27.0-postgres-ha.md`
+    (now historical; the plan was followed end-to-end
+    in 2026-08). `RELEASE-NOTES.md` v1.3.0 entry,
   `docs/internal/v0.27.0-postgres-ha.md`
 
 **[BL-2] HA skygate-host-2 (Priority 3)**

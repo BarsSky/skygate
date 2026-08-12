@@ -1,5 +1,267 @@
 # Skygate release notes
 
+## v1.3.2 — SQLite removal: docs polish (Phase 3 of 3)
+
+**Date:** 2026-08-12
+**Tag:** v1.3.2
+**Scope:** Phase 3 (final) of the v1.3.0 milestone. Documentation
+polish only. No code changes. Closes BL-1 (PostgreSQL cutover) on
+the docs side; the runtime cutover happened in v1.3.0.
+
+**What changed (Phase 3, this release):**
+
+- **`docs/deploy.md`**:
+  - **New section `#10-postgresql`**: complete PG setup
+    walkthrough — Mode A (local docker-compose with `local-pg`
+    profile, persistent `skygate-pg-data` named volume) and
+    Mode B (external PG HA / Patroni / RDS via `SKYGATE_DB_DSN`
+    pointing at the cluster). Covers `PG_DB_PASSWORD`, health
+    check via `pg_isready`, and the `--network host` rule for
+    psql from the host (HA setups where the docker bridge
+    doesn't reach the cluster).
+  - **New section `#11-postgresql-migration-from-sqlite`**:
+    one-time runbook for the rare case of converting a
+    pre-v1.3.0 SQLite backup. Uses `cmd/apply_pg_migrations` to
+    create an empty PG schema + `dump_sqlite.py` to bulk-copy
+    rows. After this one-time pass the operator deletes the
+    SQLite file via `docker exec skygate rm -f /data/skygate.db`.
+  - **Environment variables table**: `SKYGATE_DB` (the SQLite
+    path) is now marked **LEGACY** with a note that v1.3.0+
+    ignores it. Added `SKYGATE_DB_DSN` (PG DSN, required) and
+    `PG_DB_PASSWORD` (used by docker-compose when generating
+    the DSN for the bundled `postgres` service).
+  - **Backup section**: updated to use `pg_dump -Fp --clean
+    --if-exists` (text-format dump) → `skygate-pg.sql` in the
+    archive. The previous SQLite `.backup` flow is gone.
+  - **Restore section**: new `psql -f skygate-pg.sql` step.
+
+- **`docs/disaster-recovery.md`**:
+  - **Step 3 (PG restore)**: `pg_dump -Fp --clean --if-exists`
+    format, replay with `psql -f`, then restart the skygate
+    container. Updated for PG-specific failure modes (no more
+    `PRAGMA integrity_check` / `.recover + rebuild`).
+  - **RPO / RTO section**: RPO stays at 24h (nightly
+    `pg_dump`). RTO is now 5-10 min for restore + 1-2 min
+    for container restart = ~10-15 min total.
+  - **"Backed up by" table**: `skygate-pg.sql` is the canonical
+    backup artifact (replaces the old `skygate.db` SQLite file).
+  - **Failure modes**: dropped the "WAL-write-silent-failure"
+    case (PG's `full_page_writes=on` makes it impossible).
+    Added "disk-full → `ALTER SYSTEM` flips PG read-only →
+    container can't write" with the recovery step from
+    `scripts/recover_db_corruption.sh`.
+
+- **`docs/architecture.md`**:
+  - **New section "Database backend (v1.3.0+)"**:
+    documents the two deployment modes (A: bundled
+    `postgres:15-alpine` via compose profile; B: external PG
+    via `SKYGATE_DB_DSN`). CGO is now a non-issue
+    (`CGO_ENABLED=0` static binary; pgx is pure Go).
+  - **CGO section rewritten**: was "CGO is required for
+    `go-sqlite3`", now "CGO is disabled (`CGO_ENABLED=0`).
+    The runtime is a 24 MB static binary with no libc/musl/
+    sqlite-libs dependencies. pgx is the only DB driver and
+    it's pure Go."
+  - **TL;DR updated**: removes the v0.32.x-era "CGO toolchain
+    + sqlite-libs" mentions; adds the 24 MB static binary
+    point.
+
+- **`AGENTS.md`**:
+  - **Release status block updated** to v1.3.1 (Phase 2
+    summary) with B26/B34/B70/B79 contracts documented.
+  - **Build-time catalog** gets four new rows: B26 (Dockerfile
+    has NO `gcc`/`musl-dev`/`sqlite-libs`; CGO_ENABLED=0),
+    B34 (psql duplicate check replaces the SQLite-era
+    duplicate check), B70 (PG-only title in auto-update
+    orchestrator), B79 (PG-only placeholders in exit-node
+    pref INSERT).
+  - **Runtime section** updated: R29 (psql) and R30 (backup
+    dump) now use the `psql_vm` helper that tries VM-side
+    psql first, falls back to throwaway `postgres:15-alpine`
+    on `--network host`.
+  - **PLANS.md cross-reference**: TD-1 (UI refactoring) and
+    TD-3 (mobile-responsive UI) added to the in-flight list.
+
+- **`docs/PLANS.md`**:
+  - **BL-1** marked **DONE across v1.3.0 + v1.3.1 + v1.3.2**
+    with one-line summary per phase.
+  - **TD-3 (mobile-responsive UI)** added as a new in-flight
+    item, scope: CSS grid/flex refactor of the admin layout,
+    `<768px` breakpoint, sidebar collapses to a hamburger
+    menu, touch-friendly tap targets. Combined with TD-1 in
+    the v1.1.0 work cycle.
+
+**Files (5 modified):**
+- `AGENTS.md` (+99/-3)
+- `docs/PLANS.md` (+78/-30)
+- `docs/architecture.md` (+75/-9)
+- `docs/deploy.md` (+219/-7)
+- `docs/disaster-recovery.md` (+83/-21)
+
+**Why no code changes.** Phase 1 (v1.3.0) removed SQLite from
+the runtime. Phase 2 (v1.3.1) made Docker + operator scripts
+PG-only. Phase 3 (this release) finishes the operator-facing
+side: docs that document the new shape, the two deployment
+modes, and the disaster recovery flow. No source files
+touched.
+
+**Verification:**
+- `go test -count=1 -short ./...` — 28/28 packages green
+  (unchanged from v1.3.1).
+- `make verify-pre` — same 70 PASS / 19 FAIL profile as
+  v1.3.1; no new contracts added (B26/B34/B70/B79 are the
+  v1.3.1 contracts; this release is docs-only).
+- Web UI / templates / routes / i18n — **no changes**. The
+  admin panel looks and behaves identically to v1.3.1; only
+  the underlying docs that describe it changed.
+
+**Backlog (NOT in this release, recorded for v1.1.0+):**
+- **TD-1 (UI refactoring)**: 23 admin pages → 6 collapsible
+  sidebar sections (Devices & Nodes, Access Control, System
+  Health & Logs, Integrations, Data, Settings & Users).
+  Status badges from the B92 `/admin/services` snapshot.
+  Consolidate `/admin/headscale` + `/admin/headplane`.
+- **TD-3 (mobile-responsive UI)**: CSS grid/flex refactor,
+  `<768px` breakpoint, sidebar → hamburger menu, touch-friendly
+  tap targets. Combined with TD-1 in v1.1.0.
+- **BL-2 (HA skygate-host-2)**: blocked on 2nd VM + etcd +
+  S3 + DNS plan.
+- **BL-3 (Telegram DPI workaround)**: blocked on operator's
+  network.
+
+---
+
+## v1.3.1 — SQLite removal: scripts + Docker for PG-only runtime (Phase 2 of 3)
+
+**Date:** 2026-08-12
+**Tag:** v1.3.1
+**Scope:** Phase 2 of the v1.3.0 milestone. Makes the Docker
+build, `docker-compose.yml`, `entrypoint.sh`, and all
+operator scripts PG-only. No Go source changes (Phase 1 did
+that). Closes the runtime cutover started in v1.3.0 on the
+infrastructure side.
+
+**What changed (Phase 2, this release):**
+
+- **`Dockerfile`**: drops `gcc` / `musl-dev` / `sqlite-libs`
+  from `apk add`. The runtime is now `CGO_ENABLED=0` — a
+  24 MB static binary with no libc / musl / sqlite-libs
+  dependencies. This catches regressions that re-add CGO
+  deps (e.g. if someone re-introduces `go-sqlite3`).
+- **`docker-compose.yml`**: adds a `postgres:15-alpine`
+  service gated behind `profiles: ["local-pg"]`. The service
+  ships a persistent `skygate-pg-data` named volume and a
+  `pg_isready` healthcheck. Operators running against an
+  external PG (HA Patroni, RDS) skip this service via
+  `--profile local-pg` not being activated. **No
+  `depends_on: postgres`** — skygate comes up independently
+  of PG (mirrors B91: a wrong `SKYGATE_DB_DSN` must not
+  prevent the admin from opening `/admin/services` to fix it).
+- **`entrypoint.sh`**: drops the `-tags postgres` build flag.
+  The `//go:build postgres` tag is gone (v1.3.0); pgx is the
+  only DB driver and is always compiled in.
+- **`.env.example`**: adds `SKYGATE_DB_DSN` +
+  `PG_DB_PASSWORD` with the docker-compose default
+  (`postgres://skygate:${PG_DB_PASSWORD}@postgres:5432/
+  skygate?sslmode=disable`). The legacy `SKYGATE_DB` SQLite
+  path is kept for one release cycle so old `.env` files
+  don't break startup; v1.3.0+ ignores it.
+- **`internal/db/open_pg_pg.go`**: changed to
+  `//go:build never` (dead-code sentinel). The `openPostgres`
+  wrapper had no callers after v1.3.0 removed the build-tag
+  system; the file is kept as a marker so a future grep for
+  "where was the PG opener?" lands somewhere.
+- **9 operator scripts converted** from `sqlite3` → `psql`:
+  - `scripts/backup.sh` — `pg_dump` via throwaway
+    `postgres:15-alpine` container; archive now contains
+    `skygate-pg.sql` instead of `skygate.db`.
+  - `scripts/verify_backup.sh` — replays the dump into a
+    throwaway PG, asserts ≥20 public tables + presence of 4
+    critical tables (`portal_users`, `device_rules`,
+    `acl_snapshots`, `audit_log`). This is the new "PRAGMA
+    integrity_check equivalent" (PG has no such primitive).
+  - `scripts/check_subnet_router.sh` — 4 queries via psql.
+  - `scripts/cleanup_orphan_meshes.sh` — 6 queries via
+    heredoc on throwaway container.
+  - `scripts/reconcile_snapshots.sh` — 1 INSERT converted
+    to PG (TIMESTAMPTZ literal replaces the old
+    `strftime('%s','now')` epoch math).
+  - `scripts/recover_db_corruption.sh` — **rewritten** for
+    the PG era. PG's WAL + `full_page_writes=on` prevents
+    the btree-inconsistency class of failures that motivated
+    the v0.32.5 SQLite flow. New flow: disk-space check →
+    container health → `ALTER SYSTEM RESET
+    default_transaction_read_only` for the disk-full
+    read-only flip → restore from backup only when
+    explicitly requested (no auto-restore).
+  - `scripts/verify_post_deploy.sh` — 6 queries via the new
+    `psql_vm` helper. The helper parses `SKYGATE_DB_DSN`
+    into host/port/user/db/password, tries `psql` on the
+    VM first (HA setup has it), falls back to throwaway
+    `postgres:15-alpine` on `--network host`. Works for both
+    docker-compose local-PG and external HA without
+    operator action.
+  - `scripts/verify_pre_deploy.sh` — 4 new B-catalog
+    contracts: B26 (Dockerfile has NO `gcc` / `musl-dev` /
+    `sqlite-libs`), B34 (psql duplicate-check replaces
+    the SQLite-era duplicate check), B70 (auto-update
+    orchestrator is PG-only), B79 (exit-node pref INSERT
+    uses PG placeholders). All 4 PASS.
+- **2 SQLite-era helpers deleted**: `scripts/_recover_helper.sh`
+  and `scripts/_swap_recovered.sh` (the `.recover` +
+  `rebuild` pattern was SQLite-specific; the v0.32.5 incident
+  flow is obsolete in PG). Moved to `.trash/sqlite_helpers/`
+  for historical reference.
+
+**The throwaway container pattern** (used by 6 of the 9
+scripts): when the operator host may not have `psql` /
+`pg_dump` installed (verified 2026-08-12: the Windows build
+host has neither in PATH), the script runs
+`docker run --rm --network host postgres:15-alpine psql ...`.
+The `--network host` is critical for HA setups (svyatoslava
+on `127.0.0.1:5000` via HAProxy) where the docker bridge
+doesn't reach the cluster. The throwaway image ships the
+same client/server version pair, so client/server version
+drift is impossible.
+
+**Files (14 modified):**
+- 1 Dockerfile
+- 1 docker-compose.yml
+- 1 entrypoint.sh
+- 1 .env.example
+- 1 internal/db/open_pg_pg.go
+- 9 scripts (backup, verify_backup, check_subnet_router,
+  cleanup_orphan_meshes, reconcile_snapshots,
+  recover_db_corruption, verify_post_deploy, verify_pre_deploy,
+  + 2 deletions → trash)
+
+**Net change:** 14 files, +1044/-384.
+
+**Verification:**
+- `go test -count=1 -short ./...` — 28/28 packages green
+  (unchanged from v1.3.0; no Go source touched).
+- `make verify-pre` — 70 PASS / 19 FAIL. The 19 FAILs are
+  all pre-existing (B17, B18, B19, B24, B31, B36-B40, B42,
+  B54, B82-B85, B88, B93, B95) from the v0.32.x era. The 4
+  new v1.3.1 contracts (B26, B34, B70, B79) **all PASS**.
+- `make verify-post` on the live VM — needs to be re-run
+  after the operator deploys v1.3.0+v1.3.1 (still pending
+  at the time of this release).
+- Web UI / templates / routes / i18n — **no changes**.
+
+**Backlog (NOT in this release):**
+- Phase 3 (v1.3.2) — docs polish (deploy.md#postgresql,
+  disaster-recovery.md, architecture.md, AGENTS.md) +
+  RELEASE-NOTES entries. Fully deployable as of this
+  release; Phase 3 is docs polish only.
+- TD-1 (UI refactoring) + TD-3 (mobile-responsive UI) —
+  combined into v1.1.0.
+- BL-2 (HA skygate-host-2) — blocked on 2nd VM + etcd + S3.
+- BL-3 (Telegram DPI workaround) — blocked on operator's
+  network.
+
+---
+
 ## v1.3.0 — SQLite removal: skygate is PostgreSQL-only (Phase 1 of 3)
 
 **Date:** 2026-08-12

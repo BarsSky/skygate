@@ -4,13 +4,24 @@ This document describes the runtime architecture of Skygate: the
 components, how they talk to each other, the request lifecycle, and the
 goroutines that run in the background.
 
-> **TL;DR for the impatient:** Skygate is a single Go binary
+> **TL;DR for the impatient (v1.3.0+):** Skygate is a single Go binary
 > (`cmd/skygate/main.go`) that talks to a headscale instance over its
 > REST API (and falls back to `docker exec` for tag changes), persists
-> state in a single SQLite file (WAL mode), embeds HTML templates at
+> state in **PostgreSQL 15+** (via the `SKYGATE_DB_DSN` env var;
+> default points at the bundled `postgres:15-alpine` docker service
+> or an external HA Patroni cluster), embeds HTML templates at
 > build time, and optionally drives a long-poll Telegram bot for ops
 > notifications and per-user commands. The whole thing runs in one
-> container; no Redis, no message broker, no service mesh.
+> container + one PG container (or external PG); no Redis, no
+> message broker, no service mesh.
+
+> **Pre-v1.3.0 history:** the runtime was SQLite (a single file at
+> `/data/skygate.db` inside the container, WAL mode). v1.3.0 (commit
+> `b1baa4a`) removed the SQLite path; v1.3.1 (commit `5bc0017`)
+> added the local `postgres:15-alpine` service + 9 operator scripts
+> converted from `sqlite3` to `psql`. The single SQLite file no
+> longer exists; the docker volume `skygate-data` is kept for
+> backward compat but contains nothing the v1.3.0+ runtime reads.
 
 ## High-level component map
 
@@ -265,14 +276,65 @@ drops stale entries.
 
 ## CGO & cross-compile
 
-- `mattn/go-sqlite3` needs CGO. The official Go installer ships gcc
-  via MinGW, so `go build` works on Windows. Linux/macOS need gcc
-  installed.
-- `GOTOOLCHAIN=local` in the Makefile pins the local toolchain (no
-  surprise auto-upgrade during `make build`).
-- `-ldflags "-X main.version=$(git describe --tags --always)"` in
-  the entrypoint flows the build label through to the web footer +
-  Telegram `/version`.
+v1.3.0+: the runtime is **PG-only** via the pure-Go
+`github.com/jackc/pgx/v5` driver. **No CGO.** The Dockerfile
+`apk add` list no longer needs `gcc` / `musl-dev` / `sqlite-libs`
+— the binary is a 24 MB static Go binary that needs no libc, no
+musl, no libsqlite3.so. Cross-compile is `CGO_ENABLED=0 go build`
+(Go's default when no `import "C"` exists; verified 2026-08-12
+by `grep -r 'import "C"' cmd/ internal/ 2>/dev/null` returning
+zero matches).
+
+Pre-v1.3.0: `mattn/go-sqlite3` required CGO. The official Go
+installer ships gcc via MinGW, so `go build` worked on Windows.
+Linux/macOS needed gcc installed. This constraint is gone in
+v1.3.0+.
+
+`GOTOOLCHAIN=local` in the Makefile pins the local toolchain (no
+surprise auto-upgrade during `make build`).
+`-ldflags "-X main.version=$(git describe --tags --always)"` in
+the entrypoint flows the build label through to the web footer +
+Telegram `/version`.
+
+## Database backend (v1.3.0+)
+
+v1.3.0 removed the SQLite path entirely. v1.3.1 added the local
+`postgres:15-alpine` docker service. Two deployment modes:
+
+**Mode A — local docker-compose PG (default for fresh installs):**
+`docker-compose.yml` ships a `postgres:15-alpine` container gated
+behind the `local-pg` profile. Brings up with
+`docker compose --profile local-pg up -d`. Data lives in the
+`skygate-pg-data` named volume. `SKYGATE_DB_DSN` defaults to
+`postgres://skygate:${PG_DB_PASSWORD}@postgres:5432/skygate?sslmode=disable`.
+
+**Mode B — external PG (HA Patroni, RDS, etc.):**
+Operator points `SKYGATE_DB_DSN` at their cluster and skips
+the local service. The `postgres` service is not started in
+this mode (it's gated behind `local-pg`).
+
+Either way, the runtime opens a single `*sql.DB` pool (10 open,
+5 idle, pgx-native tuning via the DSN's `pool_max_conns`).
+
+**Migrations** are now PG-only (`MigratePostgres`, run on every
+container start, idempotent via `CREATE TABLE IF NOT EXISTS` /
+`ADD COLUMN IF NOT EXISTS` / `CREATE OR REPLACE FUNCTION`).
+
+**Backups** are `pg_dump -Fp --clean --if-exists` text-format
+dumps in `skygate-pg.sql` inside the backup archive. The
+v0.32.x `skygate.db` (SQLite file) is gone — the docker
+volume `skygate-data` is kept for backward compat but
+contains nothing the v1.3.0+ runtime reads. Pre-v1.3.0 archives
+need the one-time SQLite → PG conversion documented in
+`docs/deploy.md#11-postgresql-migration-from-sqlite`.
+
+**Live verification** of the cluster uses `scripts/verify_post_deploy.sh`
+(via the new `psql_vm` helper which parses `SKYGATE_DB_DSN` and
+runs psql on the VM if available, falls back to a throwaway
+`postgres:15-alpine` container on `--network host`). R30 (DB
+integrity) now asserts the cluster has ≥20 public tables AND the
+4 critical tables (`portal_users`, `device_rules`, `acl_snapshots`,
+`audit_log`).
 
 ## Versioning
 

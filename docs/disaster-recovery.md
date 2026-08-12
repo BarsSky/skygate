@@ -28,10 +28,36 @@ sudo cp /tmp/headscale-backup-*/db.sqlite* /var/lib/headscale/
 sudo cp /tmp/headscale-backup-*/acl.hujson* /etc/headscale/
 sudo systemctl start headscale
 
-# 3. Restore skygate from the most recent backup
-#    (~2 min).
+# 3. Restore the PG cluster (v1.3.0+; was a SQLite file copy before)
+#    (~3 min — depends on cluster size + local-PG vs external).
+#    (a) local docker-compose PG (default for fresh installs):
+docker compose --profile local-pg up -d
+until docker exec skygate-postgres-1 pg_isready -U skygate -d skygate; do
+  sleep 2
+done
+#        Apply the dump (idempotent — --clean --if-exists drops existing):
+docker run --rm -i --network headscale_default \
+  -e PGPASSWORD="$PG_DB_PASSWORD" postgres:15-alpine \
+  psql -h postgres -U skygate -d skygate -v ON_ERROR_STOP=1 < \
+  /tmp/skygate-backup-*/skygate-pg.sql
+#    (b) external PG (HA Patroni, RDS, etc.):
+#        See `deploy/pg-ha/README.md` §"Restore" for the
+#        Patroni + wal-g + S3 restore flow. TL;DR: the
+#        skygate-pg.sql from the backup is the source of
+#        truth; `psql -h <cluster> -U skygate -d skygate -f
+#        skygate-pg.sql` rehydrates an empty cluster.
+#
+#    Pre-v1.3.0 archives contain `skygate.db` (SQLite file)
+#    instead of `skygate-pg.sql`. Those archives need the
+#    one-time SQLite → PG conversion; see
+#    docs/deploy.md#11-postgresql-migration-from-sqlite.
+#    This runbook's rest of step 3 (the "skygate 502" check
+#    below) is also different in that case.
+
+# 4. Restore skygate from the most recent backup
+#    (~2 min). v1.3.0+ skygate binary opens SKYGATE_DB_DSN
+#    from .env; ensure it's set before this step.
 docker compose stop skygate
-docker cp /tmp/skygate-backup-*/skygate.db /var/lib/docker/volumes/skygate-data/_data/
 docker compose up -d --force-recreate --no-deps skygate
 
 # 4. Repoint DNS to the new VM's public IP
@@ -57,8 +83,9 @@ backup restoration is rehearsed.
 | `/etc/headscale/config.yaml` | DERP, OIDC, base_domain | ~5 KB | |
 | `/etc/headscale/acl.hujson` | The deployed policy | ~10 KB | |
 | `/var/lib/headscale/noise_private.key` | Tailscale node-key (Tailscale identity for THIS headscale) | 100 B | **CRITICAL**: identical noise key = identical control server identity, all client preauths / pre-keys remain valid |
-| `/var/lib/docker/volumes/skygate-data/_data/skygate.db` | skygate: portal_users, audit_log, user_subnets, mesh_members, etc. | ~30 MB | + wal, shm |
-| `/home/admin/skygate/.env` | SKYGATE_* env vars (DB path, headscale URL, API key, Telegram token, Caddy DNS) | ~3 KB | **secrets** — backup SHOULD be encrypted; cron uses gpg if SKYGATE_BACKUP_GPG_RECIPIENT is set |
+| **v1.3.0+**: `skygate-pg.sql` (text-format pg_dump) inside the backup archive | skygate: portal_users, device_rules, audit_log, user_subnets, mesh_members, acl_snapshots, etc. | ~50 KB-5 MB (depends on table count) | Replayable with `psql -f skygate-pg.sql`. Pre-v1.3.0 archives had `skygate.db` (SQLite file) instead. |
+| **pre-v1.3.0**: `/var/lib/docker/volumes/skygate-data/_data/skygate.db` | skygate SQLite (legacy only) | ~30 MB | + wal, shm. v1.3.0+ ignores this path — see "PostgreSQL migration from SQLite" in deploy.md for the one-time conversion. |
+| `/home/admin/skygate/.env` | SKYGATE_* env vars (DB DSN, headscale URL, API key, Telegram token, Caddy DNS) | ~3 KB | **secrets** — backup SHOULD be encrypted; cron uses gpg if SKYGATE_BACKUP_GPG_RECIPIENT is set |
 | `/home/admin/skygate/deploy/templates/headscale-config.yaml` | The skygate-side config | ~3 KB | |
 | `/home/admin/headscale/headscale-config/` | the skygate-managed headscale config files (versioned in skygate repo) | ~10 KB | |
 
@@ -75,9 +102,12 @@ backup restoration is rehearsed.
 
 ## RPO (Recovery Point Objective)
 
-- **For skygate SQLite**: 1 hour (cron runs every hour via
-  `deploy/backup.sh`, the `SKYGATE_BACKUP_FREQ` env var
-  controls this; default 1h).
+- **For skygate PG (v1.3.0+)**: 1 hour (cron runs every hour via
+  `deploy/backup.sh`, the `SKYGATE_BACKUP_FREQ` env var controls this;
+  default 1h). The backup is a `pg_dump --clean --if-exists` text-format
+  dump — replayable on any PG 15+ cluster. For sub-hour RPO use
+  Patroni streaming replication (see `deploy/pg-ha/README.md`).
+- **For skygate SQLite (pre-v1.3.0, legacy)**: 1 hour.
 - **For headscale SQLite**: 1 hour (same cron).
 - **For the deploy scripts / config**: every commit is
   pushed to `github.com/BarsSky/skygate`, so even if the
@@ -198,32 +228,48 @@ docker compose -f /home/admin/headscale/docker-compose.yml \
 ### 4. Restore skygate
 
 ```bash
-# 4.1 Stop skygate.
+# 4.1 Stop skygate (the PG cluster from step 3 stays up;
+# only the skygate container restarts).
 cd /home/admin/skygate
 docker compose stop skygate
 
-# 4.2 Restore the SQLite DB into the skygate-data
-# docker volume.
-VOL=/var/lib/docker/volumes/skygate-data/_data
-cp /var/backups/skygate/latest/skygate.db "$VOL/"
-
-# 4.3 Restore .env (with secrets) — use a different
-# backup target if SKYGATE_BACKUP_GPG_RECIPIENT is set.
+# 4.2 Restore .env (with secrets) — must include
+# SKYGATE_DB_DSN and PG_DB_PASSWORD for v1.3.0+.
+# Use a different backup target if SKYGATE_BACKUP_GPG_RECIPIENT
+# is set.
 cp /var/backups/skygate/latest/.env /home/admin/skygate/
 
-# 4.4 Restart skygate.
+# 4.3 Restart skygate. The runtime opens SKYGATE_DB_DSN
+# at startup and runs MigratePostgres (idempotent — the
+# migrations are no-op on a freshly-replayed cluster).
 docker compose up -d --force-recreate --no-deps skygate
 
-# 4.5 Wait for the build (5-7 min the first time after
-# a re-provision; faster on warm caches).
+# 4.4 Wait for /healthz (5-7 min the first time after
+# a re-provision — the entrypoint.sh runs `go build`; faster
+# on warm caches).
 for i in $(seq 1 60); do
     sleep 5
-    if curl -fsS -m 2 http://localhost:8080/version >/dev/null 2>&1; then
+    if curl -fsS -m 2 http://localhost:8080/healthz >/dev/null 2>&1; then
         echo "skygate healthy after ${i}*5s"
         break
     fi
 done
+
+# 4.5 (optional) sanity-check the PG cluster from inside skygate:
+docker exec skygate-postgres-1 psql -U skygate -d skygate -c \
+  "SELECT count(*) FROM pg_tables WHERE schemaname='public'"
+#   should be >=20 after v1.3.0 migrations
 ```
+
+Pre-v1.3.0 step 4.2 was a `cp skygate.db /var/lib/docker/volumes/skygate-data/_data/`
+of the SQLite file. v1.3.0+ removed the file from the container
+(mattn/go-sqlite3 deleted in commit `b1baa4a`); the runtime is
+PG-only. The "skygate 502" failure mode from the verification
+section below no longer applies to a missing .db file — instead, if
+`SKYGATE_DB_DSN` is wrong or PG is unreachable, the v1.3.0+ binary
+logs "dial tcp ...: connection refused" on every query, /readyz
+returns 503 with `db:fail`, and the container stays up (loops
+reconnecting).
 
 ### 5. Repoint DNS
 
@@ -262,8 +308,17 @@ If any of these fail, the recovery is incomplete —
 **do not announce recovery as done** until smoke is
 green. Common failure modes:
 
-- **skygate 502**: skygate.db restore was incomplete
-  (forgot `-wal` / `-shm`). Re-run with all 3 files.
+- **skygate 502 (v0.32.x / pre-v1.3.0)**: skygate.db restore
+  was incomplete (forgot `-wal` / `-shm`). Re-run with all 3 files.
+- **skygate /readyz returns 503 with `db:fail` (v1.3.0+)**:
+  SKYGATE_DB_DSN in .env is wrong, OR the PG cluster is not
+  reachable from the skygate container. Verify:
+  - `docker exec skygate-postgres-1 pg_isready -U skygate -d skygate`
+    (local-PG case) — should return "accepting connections"
+  - `grep SKYGATE_DB_DSN /home/admin/skygate/.env` — URL form
+    is correct, password matches
+  - The skygate container is on the `headscale_default` network:
+    `docker inspect skygate -f '{{.NetworkSettings.Networks}}'`
 - **headscale 500**: noise_private.key mismatch. The
   preauth keys clients were issued are bound to the
   OLD server's identity. Either:
@@ -272,6 +327,11 @@ green. Common failure modes:
   - Issue new preauths to every client (`/my/preauth`).
 - **Login fails for known good password**: .env restore
   was wrong. `SKYGATE_ADMIN_PASS` must match.
+- **PG dump replay errors mid-restore (v1.3.0+)**: the
+  dump was taken from a cluster with a newer PG version than
+  the target. Check the `dump.sql` header for `-- Dumped from
+  database version X.Y`; the target must be ≥ that version.
+  PostgreSQL major versions are forward-compatible only.
 
 ### 7. Document the recovery
 

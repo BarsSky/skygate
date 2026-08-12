@@ -34,7 +34,9 @@ canonical template is `.env.example`. Required variables are marked
 | Var | Default | What it does |
 |---|---|---|
 | `SKYGATE_PORT` | `8080` | HTTP listen port |
-| `SKYGATE_DB` | `/var/lib/skygate/skygate.db` | SQLite path inside the container |
+| `SKYGATE_DB` | `/data/skygate.db` | **LEGACY** (v0.32.x). Pre-v1.3.0 SQLite file path. v1.3.0+ ignores this — the runtime is PG-only. Kept for backward compat with the v0.32.x-era `/data` bind mount. |
+| `SKYGATE_DB_DSN` | `postgres://skygate:${PG_DB_PASSWORD}@postgres:5432/skygate?sslmode=disable` | **v1.3.0+ REQUIRED.** libpq URL form. The runtime opens this DSN at every `db.OpenDSN` call and runs `MigratePostgres` on it. For external PG (HA Patroni, RDS), replace `postgres` with the host/port of your cluster. |
+| `PG_DB_PASSWORD` | (empty) | **v1.3.0+ REQUIRED for local-PG.** Generate with `openssl rand -hex 24`. The `postgres` docker service reads this as `POSTGRES_PASSWORD` and bakes it into `pg_authid` on first init. The same value goes into `SKYGATE_DB_DSN`. |
 | `SKYGATE_JWT_SECRET` | — **[required]** | HS256 secret for session cookies. Generate with `openssl rand -hex 32`. |
 | `SKYGATE_ADMIN_USER` | `admin` | Initial admin username (bootstrapped on first start) |
 | `SKYGATE_ADMIN_PASS` | — **[required]** | Initial admin password (bootstrapped on first start; ignored if `portal_users` already has the user) |
@@ -192,15 +194,15 @@ restarts are fast (incremental Go build).
 Default output: `${DEPLOY_BACKUP_DIR}/skygate-full-YYYYMMDD_HHMMSS/`,
 packaged as `.tar.gz` (with SHA256).
 
-What's in the archive:
+What's in the archive (v1.3.0+):
 
 | Item | Source | Why |
 |---|---|---|
 | `.env` | `${PROJECT_DIR}/.env` | Skygate secrets (chmod 600 in the backup) |
 | `skygate-repo.bundle` | `git bundle create --all` | Source code, restorable with `git clone` |
 | `skygate-git-log.txt` | `git log --oneline -10` | Quick eyeball of HEAD |
-| `skygate.db` | docker volume `skygate-data` (WAL-checkpointed first) | Portal DB |
-| `headscale-db.sqlite` | docker volume `headscale_headscale_data` | Headscale DB |
+| `skygate-pg.sql` | `pg_dump -Fp --clean --if-exists` from the live PG cluster (v1.3.0+) | Portal DB. Replayable with `psql -f skygate-pg.sql`. Pre-v1.3.0 archives had `skygate.db` (SQLite file) instead. |
+| `headscale-db.sqlite` | docker volume `headscale_headscale_data` | Headscale DB (still SQLite in headscale 0.29.x) |
 | `headscale-config/` | `${DEPLOY_HEADSCALE_DIR}/config/` | `config.yaml`, `noise_private.key`, etc. |
 | `headplane-config.yaml` | `${DEPLOY_HEADSCALE_DIR}/headplane/config.yaml` | |
 | `headplane-data/` | docker volume `headscale_headplane_data` | |
@@ -209,10 +211,22 @@ What's in the archive:
 | `skygate-image.tar`, `headscale-image.tar`, `headplane-image.tar` | `docker save` | Pre-pulled images, in case the registry is down on restore |
 | `inventory.txt` | generated | Manifest |
 
-> **WAL on backup:** the script calls `PRAGMA wal_checkpoint(FULL)`
-> on `skygate-data/skygate.db` and `headscale_headscale_data/db.sqlite`
+> **Backup integrity check:** the script runs `psql` against the live
+> PG cluster (`SELECT count(*) FROM pg_tables WHERE schemaname='public'`
+> + presence check on `portal_users`/`device_rules`/`acl_snapshots`/
+> `audit_log`). Pre-v1.3.0 this was `sqlite3 ... 'PRAGMA integrity_check'`.
+> The v1.3.0+ check is stronger: it proves the cluster has all
+> expected public tables AND the 4 critical tables. The dump-replay
+> check (run separately by `scripts/verify_backup.sh` on a cron)
+> replays the dump into a throwaway postgres:15-alpine container
+> and asserts the same invariants on the replayed DB — proof that
+> the dump is structurally valid AND replayable.
+
+> **WAL on backup (headscale only):** the script calls
+> `PRAGMA wal_checkpoint(FULL)` on `headscale_headscale_data/db.sqlite`
 > before `docker run … cp`. Without this, the .db file alone is
-> inconsistent if a write was in-flight.
+> inconsistent if a write was in-flight. Skygate's PG is unaffected
+> — PG's WAL is managed by the cluster, not by skygate.
 
 ## 6. Restore
 
@@ -241,10 +255,23 @@ What `--from-path` does:
    missing in `${DEPLOY_HEADSCALE_DIR}`, restores source.
 8. **If `.env` is in the backup**, copies to `${PROJECT_DIR}/.env`.
 9. **If `ssh/` is in the backup**, copies keys to `${SSH_DIR}`.
-10. **If `skygate.db` is in the backup**, copies it into the
-    `skygate-data` volume.
-11. Starts skygate.
-12. (DERP, if enabled) restores `derper.conf` + `derpmap.json`.
+10. **If `skygate-pg.sql` is in the backup (v1.3.0+)**:
+    a. The PG cluster must be running first. If using the
+       `local-pg` profile: `docker compose --profile local-pg up -d`
+       brings it up; the cluster is empty (no database yet).
+    b. Apply the dump: `docker run --rm -i --network headscale_default \
+       -e PGPASSWORD="$PG_DB_PASSWORD" postgres:15-alpine \
+       psql -h postgres -U skygate -d skygate -v ON_ERROR_STOP=1 < skygate-pg.sql`.
+    c. The dump uses `--clean --if-exists` so it's idempotent against
+       a partially-populated database.
+    d. For external PG (Patroni, RDS), use the operator's psql client
+       with the appropriate `-h host -p port -U user -d db` flags.
+11. **If `skygate.db` is in the backup (v0.32.x legacy archive)**,
+    the operator is on a pre-v1.3.0 SQLite archive. v1.3.0+ cannot
+    read SQLite. See "PostgreSQL migration from SQLite" below for the
+    one-time conversion.
+12. Starts skygate.
+13. (DERP, if enabled) restores `derper.conf` + `derpmap.json`.
 
 > **The backup archive is self-contained.** You don't need to keep
 > `${DEPLOY_BACKUP_DIR}` around — the `.tar.gz` is the unit of
@@ -340,3 +367,180 @@ docker compose up -d
 - [docs/architecture.md](architecture.md) — runtime topology
 - [docs/db-schema.md](db-schema.md) — what gets written
 - [CHANGELOG.md](../CHANGELOG.md) — version history
+
+## 10. PostgreSQL
+
+v1.3.0+ is PostgreSQL-only. The `mattn/go-sqlite3` driver and all 30
+SQLite migrations are gone (commits `b1baa4a` and `5bc0017`).
+The runtime opens a single PG connection pool via `db.OpenDSN(dsn)` and
+runs `MigratePostgres` on every container start (idempotent — safe
+across restarts).
+
+### Two deployment modes
+
+The same `SKYGATE_DB_DSN` env var works for both modes. The operator
+picks ONE.
+
+#### Mode A — local docker-compose PG (default for fresh installs)
+
+The `docker-compose.yml` ships a `postgres` service (gated behind the
+`local-pg` profile) that brings up a single `postgres:15-alpine` container
+on the `headscale_default` docker network. The same `.env` drives both
+the postgres container (`POSTGRES_PASSWORD=$PG_DB_PASSWORD`) and the
+skygate container (`SKYGATE_DB_DSN=postgres://skygate:$PG_DB_PASSWORD
+@postgres:5432/skygate?sslmode=disable`).
+
+```bash
+# 1. Set the password
+echo "PG_DB_PASSWORD=$(openssl rand -hex 24)" >> .env
+
+# 2. Bring up skygate + postgres
+docker compose --profile local-pg up -d
+
+# 3. Validate
+./deploy/validate.sh
+# R1 /healthz, R2 /readyz (db:ok, headscale:ok), R30 PG integrity — all PASS
+```
+
+The named volume `skygate-pg-data` persists the cluster. Data survives
+`docker compose down`; only `docker volume rm skygate-pg-data` wipes
+it. To restore from a backup: see Section 6 step 10.
+
+#### Mode B — external PG (HA Patroni, RDS, etc.)
+
+Operators with an existing PG cluster (e.g. svyatoslava on
+`45.152.198.217:5432` behind Patroni) point skygate at it:
+
+```bash
+# 1. Create the skygate database + user on the cluster
+CREATE USER skygate WITH PASSWORD '...';
+CREATE DATABASE skygate OWNER skygate;
+
+# 2. Set the DSN
+cat >> .env <<EOF
+SKYGATE_DB_DSN=postgres://skygate:<password>@45.152.198.217:5432/skygate?sslmode=require
+PG_DB_PASSWORD=<unused in this mode>
+EOF
+
+# 3. Bring up skygate (no postgres service needed)
+docker compose up -d
+```
+
+The `postgres` service is gated behind `local-pg`; it's not started
+in Mode B. The `skygate` container still needs `SKYGATE_DB_DSN` (read
+from `.env` via `env_file`); `PG_DB_PASSWORD` is unused in this mode
+but kept for consistency.
+
+### Verifying the live cluster
+
+```bash
+# From the operator workstation (over SSH):
+bash scripts/verify_post_deploy.sh
+# R1-R30 — all the runtime checks, including R30 (PG integrity via psql_vm)
+
+# From the skygate host directly (one-off):
+docker exec skygate-postgres-1 psql -U skygate -d skygate -c "\dt"
+#   — lists all public tables
+docker exec skygate-postgres-1 psql -U skygate -d skygate -c \
+  "SELECT count(*) FROM pg_tables WHERE schemaname='public'"
+#   — should be ≥20 after v1.3.0 migrations
+```
+
+### Backup
+
+`scripts/backup.sh` runs `pg_dump -Fp --clean --if-exists` via a
+throwaway `postgres:15-alpine` container on the docker bridge, writes
+the output to `skygate-pg.sql` in the backup archive, then verifies
+the cluster with a `psql` connectivity + table-count check (exit 0
+if ≥20 public tables, 1 otherwise).
+
+To restore from a backup, see Section 6 step 10.
+
+### Recovery from corruption
+
+`scripts/recover_db_corruption.sh` is the operator runbook for
+recovery. Pre-v1.3.0 it used the `sqlite3 .recover` flow to rebuild
+a clean SQLite file from a corrupted one. v1.3.0+ focuses on the
+realistic PG failure modes:
+
+1. **Disk full** — PG flips to read-only mode (`default_transaction_read_only=on`).
+   The script detects this and runs `ALTER SYSTEM RESET default_transaction_read_only;
+   SELECT pg_reload_conf();` to flip back.
+2. **Container down** — restart the container (`docker compose --profile
+   local-pg up -d`).
+3. **Cluster unrecoverable** (data dir corruption, wrong permissions) —
+   the script prints the exact `scripts/restore.sh` invocation to
+   replay the latest `skygate-pg.sql` backup. **Restoration is
+   destructive and requires explicit operator confirmation** (no
+   auto-restore).
+
+PG's WAL+full_page_writes=on prevents the btree-inconsistency class
+of failures that motivated the v0.32.5 SQLite flow. The .recover +
+rebuild pattern was SQLite-specific and is not applicable to PG.
+
+## 11. PostgreSQL migration from SQLite (one-time, for v0.32.x legacy)
+
+If you have a v0.32.x-era archive (containing `skygate.db` instead of
+`skygate-pg.sql`), the v1.3.0+ skygate binary cannot read it. You need
+a one-time conversion.
+
+### When is this needed?
+
+- Your backup archive contains `skygate.db` (SQLite file) — not
+  `skygate-pg.sql` (text-format pg_dump).
+- Your live `skygate-data` named volume still has a `skyage.db` file
+  from v0.32.x.
+
+If neither is true, you're already on v1.3.0+ — skip this section.
+
+### Convert a v0.32.x `skygate.db` file to a PG cluster
+
+The `cmd/apply_pg_migrations/main.go` binary applies the v0.32.x
+migration set to a fresh PG cluster (v0.20 through v0.49 are bundled
+in `internal/db/migrations_pg.go` and `migrations_v0.50_pg.go`). The
+flow is:
+
+```bash
+# 1. Bring up an empty PG cluster (local or external)
+docker compose --profile local-pg up -d postgres
+# 2. Run the migrations
+SKYGATE_TEST_PG_DSN=postgres://skygate:$PG_DB_PASSWORD@localhost:5432/skygate?sslmode=disable \
+  go run -tags postgres ./cmd/apply_pg_migrations
+# Output: "Applied N migrations" + table list
+
+# 3. Translate the SQLite rows to PG INSERTs
+python3 scripts/dump_sqlite.py /path/to/skygate.db /tmp/skygate_pg_dump.sql
+# The script handles:
+#   - INTEGER timestamp → TIMESTAMPTZ literal
+#   - '?' placeholder → '$1' / '$2' / ...
+#   - 'true'/'false' → 'true'/'false' (already compatible)
+#   - json_object/json_group_array → json_build_object/json_agg
+#   - 'INTEGER PRIMARY KEY AUTOINCREMENT' → 'SERIAL PRIMARY KEY'
+
+# 4. Apply the dump
+docker run --rm -i --network headscale_default \
+  -e PGPASSWORD="$PG_DB_PASSWORD" postgres:15-alpine \
+  psql -h postgres -U skygate -d skygate -v ON_ERROR_STOP=1 < /tmp/skygate_pg_dump.sql
+```
+
+The `dump_sqlite.py` script is a one-shot translator (not committed
+to the repo). It was used internally during the v1.3.0 cutover
+(2026-08-03) on the live skygate-vm → svyatoslava. If your data
+volume is small (<10k rows) the manual `sqlite3 ... .dump` + sed
+replacements work too.
+
+### After migration
+
+1. Verify: `bash scripts/verify_post_deploy.sh` (R19 should show
+   `user_prefs` + `device_prefs` JSON arrays matching what
+   `sqlite3 skygate.db "SELECT ... FROM user_exit_node_prefs"` showed
+   pre-migration).
+2. Take a fresh backup with `scripts/backup.sh` — the new archive
+   will contain `skygate-pg.sql` (not `skygate.db`).
+3. Delete the old SQLite file from the `skygate-data` volume to
+   free disk: `docker exec skygate rm -f /data/skygate.db`.
+
+The `skygate-data` named volume itself is kept (it's a no-op
+container for v1.3.0+ — the runtime is PG-only). Operators who
+want the disk back can `docker volume rm skygate-data` after
+confirming nothing references it.
