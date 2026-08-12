@@ -499,6 +499,17 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 		data[section] = inSection
 	}
 
+	// 2026-08-12: v1.1.5 — breadcrumb "вы здесь". Precompute
+	// the section label + page label on the Go side (not in
+	// the template — the project's template funcmap doesn't
+	// include sprig's `dict`, and adding it just for this
+	// would be overkill). Returns empty strings when the
+	// current page isn't an admin page (the template's `if
+	// and .BreadcrumbSection` guard hides the breadcrumb in
+	// that case).
+	data["BreadcrumbSection"] = sectionLabel(pageFromName(name))
+	data["BreadcrumbPage"] = pageLabel(pageFromName(name))
+
 	// 2026-07-15: v0.14.0 — release-monitor banner. We
 	// only surface the banner to admins (regular users
 	// don't need upgrade prompts). The data shape is
@@ -669,6 +680,90 @@ func pageTitle(name string) string {
 	default:
 		return "title.skygate"
 	}
+}
+
+// sectionLabel returns an i18n key for the section the given
+// page belongs to. Returns "" for non-admin pages (the template
+// hides the breadcrumb in that case). Used by the v1.1.5
+// "вы здесь" breadcrumb above the page content.
+func sectionLabel(page string) string {
+	switch {
+	case page == "admin/devices" || page == "admin/exit-nodes" ||
+		page == "admin/meshes" || page == "admin/subnets":
+		return "nav.section_devices"
+	case page == "admin/acls" || page == "admin/exit-rules" ||
+		page == "admin/headscale_acl":
+		return "nav.section_access"
+	case page == "admin/system_tests" || page == "admin/services" ||
+		page == "admin/audit":
+		return "nav.section_health"
+	case page == "admin/integrations" || page == "admin/headscale" ||
+		page == "admin/headplane" || page == "admin/telegram" ||
+		page == "admin/tailscale" || page == "admin/derp":
+		return "nav.section_integrations"
+	case page == "admin/backup" || page == "admin/invites" ||
+		page == "admin/control-planes":
+		return "nav.section_data"
+	case page == "admin/settings" || page == "admin/users" ||
+		page == "admin/update":
+		return "nav.section_settings"
+	}
+	return ""
+}
+
+// pageLabel returns an i18n key for the given admin page,
+// used by the v1.1.5 "вы здесь" breadcrumb. Returns "" if
+// the page is unknown (the template hides that breadcrumb
+// segment in that case). Keys match what the sidebar uses
+// (so sidebar label = breadcrumb label always).
+func pageLabel(page string) string {
+	switch page {
+	case "admin/devices":
+		return "nav.devices_all"
+	case "admin/exit-nodes":
+		return "nav.exit_nodes_admin"
+	case "admin/meshes":
+		return "nav.meshes_admin"
+	case "admin/subnets":
+		return "admin.subnets.title"
+	case "admin/acls":
+		return "nav.acls"
+	case "admin/exit-rules":
+		return "nav.exit_rules_all"
+	case "admin/headscale_acl":
+		return "nav.headscale_acl"
+	case "admin/system_tests":
+		return "nav.system_tests"
+	case "admin/services":
+		return "title.admin_services"
+	case "admin/audit":
+		return "nav.audit"
+	case "admin/integrations":
+		return "nav.integrations"
+	case "admin/headscale":
+		return "nav.headscale"
+	case "admin/headplane":
+		return "nav.headplane"
+	case "admin/telegram":
+		return "nav.telegram"
+	case "admin/tailscale":
+		return "tailscale.title"
+	case "admin/derp":
+		return "nav.derp"
+	case "admin/backup":
+		return "nav.backup"
+	case "admin/invites":
+		return "nav.invites"
+	case "admin/control-planes":
+		return "nav.control_planes"
+	case "admin/settings":
+		return "nav.settings"
+	case "admin/users":
+		return "nav.users"
+	case "admin/update":
+		return "nav.update"
+	}
+	return ""
 }
 
 // currentUser parses JWT cookie and returns claims. nil if not authenticated.

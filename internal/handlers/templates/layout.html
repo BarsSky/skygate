@@ -56,7 +56,7 @@
 
     {{/* Section 1: Devices & Nodes (4 pages) */}}
     <details class="sidebar-section" {{if .InSectionDevices}}open{{end}}>
-      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-server"></i><span>{{t "nav.section_devices"}}</span></summary>
+      <summary class="{{if .InSectionDevices}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-server"></i><span>{{t "nav.section_devices"}}</span></summary>
       <a href="/admin/devices" {{if eq .Page "admin/devices"}}class="active"{{end}}><i class="fa-solid fa-server"></i><span>{{t "nav.devices_all"}}</span></a>
       <a href="/admin/exit-nodes" {{if eq .Page "admin/exit-nodes"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_nodes_admin"}}</span></a>
       <a href="/admin/meshes" {{if eq .Page "admin/meshes"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.meshes_admin"}}</span></a>
@@ -65,7 +65,7 @@
 
     {{/* Section 2: Access Control (3 pages) */}}
     <details class="sidebar-section" {{if .InSectionAccess}}open{{end}}>
-      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.section_access"}}</span></summary>
+      <summary class="{{if .InSectionAccess}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.section_access"}}</span></summary>
       <a href="/admin/acls" {{if eq .Page "admin/acls"}}class="active"{{end}}><i class="fa-solid fa-shield-halved"></i><span>{{t "nav.acls"}}</span></a>
       <a href="/admin/exit-rules" {{if eq .Page "admin/exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules_all"}}</span></a>
       <a href="/admin/headscale/acl" {{if eq .Page "admin/headscale_acl"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "nav.headscale_acl"}}</span></a>
@@ -73,7 +73,7 @@
 
     {{/* Section 3: System Health & Logs (3 pages) */}}
     <details class="sidebar-section" {{if .InSectionHealth}}open{{end}}>
-      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-heart-pulse"></i><span>{{t "nav.section_health"}}</span></summary>
+      <summary class="{{if .InSectionHealth}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-heart-pulse"></i><span>{{t "nav.section_health"}}</span></summary>
       <a href="/admin/system_tests" {{if eq .Page "admin/system_tests"}}class="active"{{end}}><i class="fa-solid fa-vial"></i><span>{{t "nav.system_tests"}}</span></a>
       <a href="/admin/services" {{if eq .Page "admin/services"}}class="active"{{end}}><i class="fa-solid fa-heart-pulse"></i><span>{{t "title.admin_services"}}</span></a>
       <a href="/admin/audit" {{if eq .Page "admin/audit"}}class="active"{{end}}><i class="fa-solid fa-clipboard-list"></i><span>{{t "nav.audit"}}</span></a>
@@ -81,7 +81,7 @@
 
     {{/* Section 4: Integrations (6 pages) */}}
     <details class="sidebar-section" {{if .InSectionIntegrations}}open{{end}}>
-      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.section_integrations"}}</span></summary>
+      <summary class="{{if .InSectionIntegrations}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.section_integrations"}}</span></summary>
       <a href="/admin/integrations" {{if eq .Page "admin/integrations"}}class="active"{{end}}><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.integrations"}}</span></a>
       <a href="/admin/headscale" {{if eq .Page "admin/headscale"}}class="active"{{end}}><i class="fa-solid fa-cube"></i><span>{{t "nav.headscale"}}</span></a>
       <a href="/admin/headplane" {{if eq .Page "admin/headplane"}}class="active"{{end}}><i class="fa-solid fa-window-maximize"></i><span>{{t "nav.headplane"}}</span></a>
@@ -92,7 +92,7 @@
 
     {{/* Section 5: Data (3 pages) */}}
     <details class="sidebar-section" {{if .InSectionData}}open{{end}}>
-      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-database"></i><span>{{t "nav.section_data"}}</span></summary>
+      <summary class="{{if .InSectionData}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-database"></i><span>{{t "nav.section_data"}}</span></summary>
       <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
       <a href="/admin/invites" {{if eq .Page "admin/invites"}}class="active"{{end}}><i class="fa-solid fa-envelope-open-text"></i><span>{{t "nav.invites"}}</span></a>
       <a href="/admin/control-planes" {{if eq .Page "admin/control-planes"}}class="active"{{end}}><i class="fa-solid fa-server-stack"></i><span>{{t "nav.control_planes"}}</span></a>
@@ -100,7 +100,7 @@
 
     {{/* Section 6: Settings & Users (3 pages) */}}
     <details class="sidebar-section" {{if .InSectionSettings}}open{{end}}>
-      <summary title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-gear"></i><span>{{t "nav.section_settings"}}</span></summary>
+      <summary class="{{if .InSectionSettings}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-gear"></i><span>{{t "nav.section_settings"}}</span></summary>
       <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{t "nav.settings"}}</span></a>
       <a href="/admin/users" {{if eq .Page "admin/users"}}class="active"{{end}}><i class="fa-solid fa-users"></i><span>{{t "nav.users"}}</span></a>
       <a href="/admin/update" {{if eq .Page "admin/update"}}class="active"{{end}}><i class="fa-solid fa-cloud-arrow-down"></i><span>{{t "nav.update"}}</span></a>
@@ -144,6 +144,25 @@
   </div>
 </aside>
 <main>
+{{/* 2026-08-12: v1.1.5 — breadcrumb "вы здесь" for admin pages.
+     Renders a small text trail above the page content:
+       "Админ › Devices & Nodes › Devices"
+     so the operator always knows which group + page they're
+     on, even when the sidebar section is collapsed. The
+     .BreadcrumbSection / .BreadcrumbPage fields are
+     pre-computed on the Go side (see sectionLabel + pageLabel
+     in handlers.go) — the template's template funcmap
+     doesn't include sprig's `dict`, and adding it just for
+     this would be overkill. */}}
+{{if and .IsAdmin .BreadcrumbSection}}
+<nav class="admin-breadcrumb" aria-label="breadcrumb">
+  <i class="fa-solid fa-house crumb-home"></i>
+  <span class="crumb-root">Админ</span>
+  <i class="fa-solid fa-chevron-right crumb-sep"></i>
+  <span class="crumb-section">{{t .BreadcrumbSection}}</span>
+  {{if .BreadcrumbPage}}<i class="fa-solid fa-chevron-right crumb-sep"></i><span class="crumb-page">{{t .BreadcrumbPage}}</span>{{end}}
+</nav>
+{{end}}
 <div class="shell">
 {{/* 2026-07-15: v0.14.0 — release-monitor banner. Shown
      on every admin page when the monitor has detected a
