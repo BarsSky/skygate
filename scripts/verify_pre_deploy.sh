@@ -2797,3 +2797,28 @@ run_check "B97" "v1.1.0 TD-3 mobile-responsive: sidebar becomes slide-in drawer 
 #     network in `go test ./...`)
 run_check "B98" "exit-node speed/availability system tests registered + helper + 15+ Go unit tests + B40 coverage preserved (B98, exit node speed)" \
   'test -f scripts/check_b98.sh && bash scripts/check_b98.sh'
+
+# ─── B99 (v1.3.6) — backup runs (bash in runtime image) ───
+# Background: 2026-08-12 — backup.last_error on live VM was
+#   "backup.sh failed: exec: \"bash\": executable file not found in $PATH"
+# because internal/backup/runner.go:233 does
+#   exec.CommandContext(ctx, "bash", scriptPath, dest)
+# and Alpine's busybox ships only `ash` (not `bash`). The backup
+# script is bash (uses set -euo pipefail + [[ ]] etc.) so it
+# MUST be invoked with bash — rewriting it as POSIX sh is risky
+# (bash-isms are scattered throughout the SFTP/SMB/NFS path
+# branches). Adding `bash` to the Dockerfile's apk add line
+# fixes the long-standing backup error and is 1.5MB of image
+# weight (negligible vs the 24 MB static binary).
+#
+# B99 pins that bash is in the runtime image so a future
+# apk-cleanup pass can't silently break the backup path
+# again. Catches both:
+#   - "bash not in apk add list" (explicit removal)
+#   - "bash installed but exec.Command(\"bash\") not updated"
+#     (defense-in-depth — if a future refactor changes the
+#     runner to use `sh` instead, B99 would still PASS but
+#     the Go unit test `TestBackupRunner_UsesBash` would fail
+#     — both checks must pass for the fix to hold)
+run_check "B99" "bash is in Dockerfile runtime apk add (B99, v1.3.6 backup error fix)" \
+  'grep -v "^[[:space:]]*#" Dockerfile | grep -qE "^[[:space:]]+bash(\$| )" && grep -qE "exec\.Command(Context)?\([^)]*\"bash\"" internal/backup/runner.go'

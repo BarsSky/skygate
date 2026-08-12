@@ -54,7 +54,14 @@ FROM golang:1.25-alpine
 # required at container start (entrypoint.sh runs `git describe --tags`
 # to embed the build label). openssh-client is required for the
 # SyncAdvertisedRoutes path (B81/B85 — `ssh -p <port> <user>@<host>` to
-# approve routes on the relay).
+# approve routes on the relay). bash is required by
+# `internal/backup/runner.go:233` (it does
+# `exec.Command("bash", scriptPath, dest)` to invoke scripts/backup.sh
+# which uses bash-specific `set -euo pipefail` + `[[ ]]` etc.). Alpine
+# ships only `ash` (busybox), so the pre-v1.3.6 backup always failed
+# with `backup.last_error = "exec: \"bash\": executable file not found
+# in $PATH"`. Adding `bash` to the image fixes the long-standing
+# backup error.
 #
 # 2026-08-12: v1.3.1 — REMOVED gcc + musl-dev + sqlite-libs. The runtime
 # is now CGO_ENABLED=0 (Phase 1 of v1.3.0 removed mattn/go-sqlite3;
@@ -68,6 +75,7 @@ FROM golang:1.25-alpine
 # `docker compose build skygate` step errors with
 # "docker: unknown command: docker compose".
 RUN apk add --no-cache \
+        bash \
         ca-certificates \
         docker-cli \
         docker-cli-compose \
