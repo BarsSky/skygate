@@ -1,10 +1,7 @@
-//go:build postgres
-
-// PostgreSQL variant (compiled with -tags postgres).
+// PostgreSQL variant (v1.3.0+; no build tag, always compiled).
 // Returns the comma-joined placeholder list for n parameters,
 // using the $1, $2, ... syntax that pgx/extended-protocol
-// PostgreSQL requires. SQLite uses the simpler "?" for every
-// parameter (see placeholders_sqlite.go).
+// PostgreSQL requires.
 package db
 
 // placeholders returns "n" parameters as a comma-joined

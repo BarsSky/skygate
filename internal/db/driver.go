@@ -1,26 +1,20 @@
-// Package db — driver abstraction (v0.27.0 PostgreSQL HA migration).
+// Package db — driver abstraction (v0.27.0 PostgreSQL HA migration,
+// v1.3.0 PG-only).
 //
-// As of v0.27.0, skygate supports two database backends:
+// As of v1.3.0, skygate is PostgreSQL-only. SQLite is no longer
+// supported. The driver abstraction in this file remains because
+// query helpers (e.g. backup/config.go, system_tests.go) dispatch
+// on backend type — but the only valid value is BackendPostgres.
 //
-//   - SQLite (default, via github.com/mattn/go-sqlite3, registered as "sqlite3")
-//   - PostgreSQL (via github.com/jackc/pgx/v5, registered as "pgx")
+// Selection happens at OpenDSN() time: the dsn must start with
+// "postgres://" or "postgresql://". The PG path runs
+// MigratePostgres on every Open so the container start re-applies
+// the idempotent migration chain.
 //
-// Selection happens at Open() time by inspecting the dsn argument:
-//
-//   - if dsn starts with "postgres://" or "postgresql://" → PostgreSQL
-//   - otherwise → SQLite (treated as a file path)
-//
-// This is purely additive; existing call sites that pass a SQLite
-// file path (e.g. "/var/lib/skygate/skygate.db") continue to work
-// unchanged. New deployments set SKYGATE_DB_DSN to a PostgreSQL
-// connection string of the form:
-//
-//   postgres://skygate:<password>@<host>:5432/skygate?sslmode=disable
-//
-// Migrations are duplicated per-backend: each version has both a
-// SQLite version (existing migrations_v0.XX.go) and a PostgreSQL
-// version (new migrations_v0.XX_pg.go). The dispatcher in
-// migrate.go picks the right one based on BackendOf(d).
+// Migrations are duplicated per-version: migrations_v0.XX.go runs
+// the SQLite-style SQL, migrations_pg.go runs the PG-equivalent.
+// The same data shape is produced in both, but the SQL differs
+// (PRAGMA → ALTER, ? placeholders → $N, strftime → EXTRACT, etc.).
 package db
 
 import (
@@ -30,14 +24,13 @@ import (
 )
 
 // Backend identifies which database engine a *sql.DB is connected to.
+// v1.3.0: the only valid value is BackendPostgres. BackendSQLite
+// has been removed.
 type Backend string
 
 const (
-	// BackendSQLite is the default. Single-file, single-writer.
-	// Best for: solo deployments, unit tests, edge cases.
-	BackendSQLite Backend = "sqlite"
-	// BackendPostgres is the new HA-capable backend. Replicated,
-	// concurrent-writer-safe, scales to 100+ users. v0.27.0+.
+	// BackendPostgres is the only supported backend as of v1.3.0.
+	// Replicated, concurrent-writer-safe, scales to 100+ users.
 	BackendPostgres Backend = "postgres"
 )
 
@@ -47,40 +40,43 @@ func (b Backend) String() string { return string(b) }
 // IsPostgres reports whether the backend is PostgreSQL.
 func (b Backend) IsPostgres() bool { return b == BackendPostgres }
 
-// IsSQLite reports whether the backend is SQLite.
-func (b Backend) IsSQLite() bool { return b == BackendSQLite }
-
 // DetectBackend looks at a dsn string and returns the corresponding
 // Backend. It does NOT open a connection — just inspects the prefix.
 //
-// Rules (intentionally simple; we don't try to be clever):
+// Rules:
 //
 //   - starts with "postgres://" or "postgresql://" → BackendPostgres
-//   - otherwise → BackendSQLite
+//   - anything else → BackendPostgres (v1.3.0: PG-only, no SQLite)
+//
+// The SQLite branch was removed in v1.3.0. Callers that passed
+// a non-DSN string previously got a SQLite file path; now they
+// get a PG-shaped *sql.DB (which will fail at sql.Open with
+// "sql: unknown driver" if pgx is not registered, OR at Ping if
+// the dsn is malformed). Both are loud failures that an operator
+// notices immediately — better than the silent SQLite fallback
+// pre-v1.3.0.
 func DetectBackend(dsn string) Backend {
 	lower := strings.ToLower(dsn)
 	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
 		return BackendPostgres
 	}
-	return BackendSQLite
+	// v1.3.0: PG-only. Treat any non-DSN string as a malformed
+	// PG DSN (the next sql.Open / Ping will fail loudly).
+	return BackendPostgres
 }
 
 // registry maps each *sql.DB to the Backend it was opened with.
 // We can't introspect the driver name (database/sql/driver.Driver
-// has no Name() method) so we set this explicitly in openSQLite
-// and openPostgres. The map is keyed by the *sql.DB pointer value,
-// which is stable for the lifetime of the connection.
+// has no Name() method) so we set this explicitly in OpenDSN.
 var (
 	registryMu sync.RWMutex
 	registry   = map[*sql.DB]Backend{}
 )
 
 // registerBackend records the backend for a freshly-opened *sql.DB.
-// Called from openSQLite / openPostgres. Idempotent: re-registering
-// the same backend is a no-op; re-registering a different backend
-// for the same *sql.DB is treated as a programmer error and panics
-// (which would mean we're double-opening the same connection, which
-// shouldn't happen).
+// Called from OpenDSN. Idempotent: re-registering the same backend
+// is a no-op; re-registering a different backend for the same
+// *sql.DB is treated as a programmer error and panics.
 func registerBackend(d *sql.DB, b Backend) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -93,11 +89,11 @@ func registerBackend(d *sql.DB, b Backend) {
 }
 
 // BackendOf returns the Backend that d was opened with. Returns
-// the empty string if d is nil or was not opened via db.Open().
+// the empty string if d is nil or was not opened via db.OpenDSN().
 //
 // This is the canonical way for code in the rest of skygate to
-// dispatch on backend type (e.g. migrations, query helpers that
-// need different SQL).
+// dispatch on backend type. v1.3.0: the only non-empty return
+// value is BackendPostgres.
 func BackendOf(d *sql.DB) Backend {
 	if d == nil {
 		return ""

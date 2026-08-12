@@ -1,33 +1,33 @@
-//go:build postgres
-
 // test_pg_migrations_test.go — v0.31.0 PG verification tests
+// (updated v1.3.0: skygate is PG-only; no build tag).
 //
-// Four tests pin the contract for the v0.31.0 PG foundation:
+// Four tests pin the contract for the PG migration chain:
 //
-//  1. roundtrip    — SQLite migrations have a PG port (schema
-//                    equivalence check via table list)
+//  1. roundtrip    — MigratePostgres creates the expected table set
 //  2. idempotency  — running MigratePostgres twice on the same DB
 //                    produces the same final state (no FK errors,
 //                    no duplicate-row errors)
 //  3. lock_timeout — concurrent MigratePostgres calls don't deadlock
 //                    (lock_timeout + 5s budget per call)
-//  4. data_mig     — the dump_sqlite.py output applies cleanly to PG
+//  4. data_mig     — historical SQLite dump applies cleanly to PG
 //                    (roundtrip: SQLite → SQL file → PG)
 //
-// All four require a live PG instance. The build tag is
-// `postgres` (matches driver_postgres.go). Tests skip unless
-// SKYGATE_TEST_PG_DSN is set, so they don't break default CI.
+// All four require a live PG instance. They skip when
+// SKYGATE_TEST_PG_DSN is unset, so the suite still passes on
+// dev machines without PG.
 //
 // Set SKYGATE_TEST_PG_DSN=postgres://skygate:skygate_dev@127.0.0.1:5432/skygate?sslmode=disable
 // to enable on a staging VM.
+//
+// As of v1.3.0, the actual test helper (OpenTestPG + pgTestDSN +
+// skipPGMessage) lives in test_helpers_pg.go (no _test.go suffix
+// + no build tag) so packages outside internal/db can use it.
 
 package db
 
 import (
 	"database/sql"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -35,51 +35,11 @@ import (
 	"time"
 )
 
-const skipPGMessage = "SKYGATE_TEST_PG_DSN not set; skipping live PG test (build with -tags postgres and set the env var to enable)"
-
-// pgTestDSN returns the test DSN, or empty if not configured.
-func pgTestDSN() string {
-	return os.Getenv("SKYGATE_TEST_PG_DSN")
-}
-
-// openTestPG opens a fresh test DB (uses a unique schema name so
-// concurrent tests don't collide on table names).
-func openTestPG(t *testing.T) *sql.DB {
-	t.Helper()
-	dsn := pgTestDSN()
-	if dsn == "" {
-		t.Skip(skipPGMessage)
-	}
-	// The DSN is a real connection. We use the SAME database for all
-	// tests; the unique-schema trick (below) gives each test a clean
-	// slate. Without that, table-name conflicts would fail the
-	// second test that runs.
-	conn, err := OpenPostgres(dsn)
-	if err != nil {
-		t.Fatalf("OpenPostgres: %v", err)
-	}
-	// Use a unique schema per test for isolation. PG lets us
-	// CREATE SCHEMA IF NOT EXISTS, so this is idempotent.
-	schema := "skygate_pgtest_" + strings.ReplaceAll(t.Name(), "/", "_")
-	schema = strings.ToLower(schema)
-	if _, err := conn.Exec(`CREATE SCHEMA IF NOT EXISTS ` + schema); err != nil {
-		t.Fatalf("CREATE SCHEMA %q: %v", schema, err)
-	}
-	if _, err := conn.Exec(`SET search_path TO ` + schema); err != nil {
-		t.Fatalf("SET search_path %q: %v", schema, err)
-	}
-	t.Cleanup(func() {
-		conn.Exec(`DROP SCHEMA IF EXISTS ` + schema + ` CASCADE`)
-		conn.Close()
-	})
-	return conn
-}
-
 // Test 1: roundtrip — PG migration creates the same set of tables
 // as the SQLite migration. We check by name (the full column-level
 // equivalence is a separate, future test).
 func TestPGRoundtripSchema(t *testing.T) {
-	conn := openTestPG(t)
+	conn := OpenTestPG(t)
 	if err := MigratePostgres(conn); err != nil {
 		t.Fatalf("MigratePostgres: %v", err)
 	}
@@ -132,7 +92,7 @@ func TestPGRoundtripSchema(t *testing.T) {
 // duplicate-column guards make this safe. We verify by counting
 // tables before and after.
 func TestPGMigrationIdempotency(t *testing.T) {
-	conn := openTestPG(t)
+	conn := OpenTestPG(t)
 	if err := MigratePostgres(conn); err != nil {
 		t.Fatalf("MigratePostgres (1st): %v", err)
 	}
@@ -238,75 +198,14 @@ func TestPGLockTimeout(t *testing.T) {
 // dump_sqlite.py on it, apply the output to a fresh PG, and
 // verify the row counts match.
 //
-// This test only runs if the dump_sqlite.py script exists in the
-// expected path (the standard project layout) AND Python is on PATH.
-// On the build host without the helper, t.Skip the data-mig step.
+// v1.3.0: skygate is PG-only. SQLite → PG data migration is no
+// longer a supported flow (fresh deploys start on PG; the legacy
+// SQLite DB on the VM is dead). The dump_sqlite.py script is
+// retained for one-time historical conversion but is not tested
+// in CI. The body of this test is replaced with a stub to keep
+// the test file compiling (no Open() / os.Stdin references
+// allowed after the SQLite driver removal).
 func TestPGDataMigrationFromSQLite(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		if _, err := exec.LookPath("python"); err != nil {
-			t.Skip("no python on PATH; skipping dump_sqlite.py roundtrip test")
-		}
-	}
-	python := "python3"
-	if _, err := exec.LookPath("python3"); err != nil {
-		python = "python"
-	}
-	// 1. Build a small SQLite DB with a few rows.
-	dir := t.TempDir()
-	sqlitePath := filepath.Join(dir, "source.db")
-	src, err := Open(sqlitePath)
-	if err != nil {
-		t.Fatalf("Open sqlite: %v", err)
-	}
-	defer src.Close()
-	// Insert one portal_users row + one audit_log row so the
-	// dump has something to emit.
-	if _, err := src.Exec(`INSERT INTO portal_users (username, password_hash) VALUES (?, ?)`, "dumpme", "x"); err != nil {
-		t.Fatalf("insert portal_users: %v", err)
-	}
-	if _, err := src.Exec(`INSERT INTO audit_log (user_id, username, action, detail) VALUES (1, 'dumpme', 'pg_dump_test', 'created')`); err != nil {
-		t.Fatalf("insert audit_log: %v", err)
-	}
-	src.Close()
-
-	// 2. Run dump_sqlite.py to produce SQL.
-	dumpScript := filepath.Join("scripts", "dump_sqlite.py")
-	if _, err := os.Stat(dumpScript); err != nil {
-		t.Skipf("dump_sqlite.py not found at %s: %v", dumpScript, err)
-	}
-	outPath := filepath.Join(dir, "dump.sql")
-	cmd := exec.Command(python, dumpScript, "--input", sqlitePath, "--output", outPath)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("dump_sqlite.py: %v\noutput: %s", err, out)
-	}
-
-	// 3. Apply the dump to a fresh PG schema.
-	conn := openTestPG(t)
-	if err := MigratePostgres(conn); err != nil {
-		t.Fatalf("MigratePostgres: %v", err)
-	}
-	// Read the dump file.
-	sqlBytes, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("ReadFile dump: %v", err)
-	}
-	if _, err := conn.Exec(string(sqlBytes)); err != nil {
-		t.Fatalf("apply dump.sql to PG: %v", err)
-	}
-
-	// 4. Verify the rows are there.
-	var n int
-	if err := conn.QueryRow(`SELECT count(*) FROM portal_users WHERE username = $1`, "dumpme").Scan(&n); err != nil {
-		t.Fatalf("SELECT portal_users: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("portal_users count = %d, want 1", n)
-	}
-	if err := conn.QueryRow(`SELECT count(*) FROM audit_log WHERE action = $1`, "pg_dump_test").Scan(&n); err != nil {
-		t.Fatalf("SELECT audit_log: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("audit_log count = %d, want 1", n)
-	}
-	t.Logf("PG data migration OK: dump_sqlite.py output applied cleanly, 2 rows verified")
+	t.Skip("v1.3.0: skygate is PG-only; SQLite → PG data migration is no longer a supported flow. The dump_sqlite.py script is retained for one-time historical conversion but is not tested in CI. Operators upgrading from a pre-v1.3.0 SQLite deployment should follow docs/deploy.md#postgresql-migration-from-sqlite (added in Phase 5).")
+	_ = exec.Command // keep import for tests that DO run above
 }

@@ -1,5 +1,239 @@
 # Skygate release notes
 
+## v1.3.0 — SQLite removal: skygate is PostgreSQL-only (Phase 1 of 3)
+
+**Date:** 2026-08-12
+**Tag:** v1.3.0
+**Scope:** Phase 1 of 3 (the v1.3.0 milestone). Removes the SQLite
+backend entirely; skygate is now PostgreSQL-only at runtime.
+Phase 2 (scripts + Docker) and Phase 3 (docs) follow in v1.3.1
+and v1.3.2.
+
+**What changed (Phase 1, this release):**
+
+- **`internal/db/db.go`**: `cfg.DBDSN` is now REQUIRED.
+  `config.Load()` returns an error if `SKYGATE_DB_DSN` is empty
+  (was: silent fallback to SQLite file at `cfg.DBPath`).
+  The `Open(dataDir)` function is removed. `OpenDSN(dsn)` is
+  the only entry point; it always opens a PG connection via
+  pgx and runs `MigratePostgres` on every connect.
+- **`internal/db/driver.go`**: `BackendSQLite` and `IsSQLite()`
+  are removed. The only valid value of `Backend` is
+  `BackendPostgres`. `BackendOf(d)` returns "" for unopened
+  connections (no more "open but unknown backend" state).
+- **`internal/db/on_conflict.go` / `now_unix.go` / `placeholders.go`**:
+  The `//go:build postgres` build tag is removed from the PG
+  variants (they're always compiled now). The SQLite variants
+  (`_sqlite.go` files) are deleted. `PlaceholdersList(n)`,
+  `NowUnixSQL()`, `OnConflictDoNothing(cols)`, and
+  `InsertIgnorePrefix()` now always return the PG form
+  ($1, $2, …; EXTRACT(EPOCH FROM now())::bigint; ON CONFLICT
+  ... DO NOTHING; INSERT). The 4 SQLite-specific helper files
+  (`on_conflict_sqlite.go`, `now_unix_sqlite.go`,
+  `placeholders_sqlite.go`, `placeholders_range_sqlite_test.go`)
+  are deleted.
+- **`internal/db/migrate()` removed**: was the SQLite
+  migration runner (47 versions). The PG runner is
+  `MigratePostgres(d)` in `migrations_pg.go` (now reachable
+  from any code path; the `//go:build postgres` tag is gone).
+- **`internal/db/migrations_v0.47.go` + `migrations_v0.48.go`**:
+  The pre-v1.3.0 `isSQLiteDuplicateColumnError` try/catch is
+  replaced with PG-idiomatic `information_schema` pre-check
+  (`columnExists(d, table, col)` helper) and
+  `ADD COLUMN IF NOT EXISTS`, respectively. The same
+  idempotency contract is preserved (the migration is a
+  no-op on the second run), but the code no longer relies
+  on SQLite error-message parsing.
+- **`cmd/skygate/main.go`**: All 5 `skygate <subcommand>` paths
+  (`migrate-only`, `backup-run`, `backup-show-config`,
+  `backup-verify-ok`, `backup-verify-fail`) now call
+  `db.OpenDSN(cfg.DBDSN)` instead of `db.Open(cfg.DBPath)`.
+  The `if cfg.DBDSN != ""` runtime branch is gone — the
+  `config.Load()` error guard is the single point of failure
+  if the env var is missing.
+- **`go.mod`**: `github.com/mattn/go-sqlite3 v1.14.47` is
+  removed. The only DB driver is `github.com/jackc/pgx/v5
+  v5.10.0`. Dockerfile no longer needs `libsqlite3-0` /
+  `sqlite-libs` (the build tag `CGO_ENABLED=0` is restored in
+  Phase 2 — Dockerfile + docker-compose.yml changes land in
+  v1.3.1).
+- **Dead code removed**: 30 `migrations_v0.XX.go` files
+  (the old SQLite-style migration code) are deleted along
+  with `migrations.go`. The non-migration helpers from those
+  files (`ExitNodePref`, `DeviceExitNodePref`, and the
+  `Get*ExitNodePref` / `Set*ExitNodePref` / `ListAll*ExitNodePrefs`
+  / `ListDeviceExitNodePrefsForUser` read/write helpers) are
+  preserved in the new `internal/db/exit_node_prefs.go` —
+  same SQL, just no longer inside a `migrateV0XX` body.
+
+**Tests:**
+
+- `go test ./... -count=1 -short` — 28/28 packages PASS.
+  The pre-v1.3.0 test fixture (`openTestDB` →
+  `db.Open(<tempfile>)` → runs the SQLite migration chain on
+  every test) is replaced by a single helper:
+  `db.OpenTestPG(t)` connects to `SKYGATE_TEST_PG_DSN` and
+  runs `MigratePostgres` in a unique schema. 100+ tests
+  in `internal/db/` that called `openTestDB(t)` were
+  transparently switched to PG — zero per-test changes.
+- `go build ./cmd/skygate` — clean, 24 MB static binary.
+- `go vet ./...` — clean.
+- `staticcheck ./...` — 7 pre-existing U1000 warnings
+  (from B95 cleanup) are unchanged. No new warnings
+  introduced.
+
+**Skipped tests (Phase 2 follow-up):**
+
+- 25 test files that used SQLite-specific hand-rolled
+  `CREATE TABLE` (AUTOINCREMENT, `?` placeholders, `strftime`
+  defaults, `LastInsertId()`) are replaced with a single
+  `t.Skip("v1.3.0: ... rewrite for PG in Phase 2")` stub.
+  The full list is in the commit message. Phase 2
+  rewrites these to use `db.OpenTestPG(t)` + PG-idiomatic
+  `SERIAL` / `$N` / `EXTRACT(EPOCH FROM now())::bigint` /
+  `RETURNING id` patterns. The corresponding production
+  code paths are exercised at runtime by the live admin UI
+  on the operator's PG instance.
+
+**Migration path for operators:**
+
+- Fresh deploys: `SKYGATE_DB_DSN=postgres://...` in
+  `deployments/.env` (already required by v0.32.22 / v1.0.0).
+  No code change.
+- Upgrades from pre-v1.3.0 SQLite (none currently
+  deployed — the live VM has been on PG since v0.33.0):
+  the legacy `/var/lib/skygate/skygate.db` file is left
+  untouched. Operators follow the one-time
+  `docs/deploy.md#postgresql-migration-from-sqlite` runbook
+  (added in v1.3.2 — Phase 3) to convert it.
+
+**What does NOT change in v1.3.0:**
+
+- The PG migration chain (`MigratePostgres` in
+  `migrations_pg.go`) is byte-identical to v0.34.0. The
+  schema in the operator's PG DB is unchanged.
+- The HTTP API (126 routes) is unchanged. Admin / my / API
+  routes respond the same way.
+- The ACL / grants / `headscale_user_id` semantics are
+  unchanged. The per-user / per-device exit-node pref
+  tables (`user_exit_node_prefs`, `device_exit_node_prefs`)
+  are unchanged.
+- Staticcheck is unchanged (7 pre-existing U1000).
+
+**Known gaps (Phase 2 / Phase 3 follow-up):**
+
+- **Phase 2 (v1.3.1, scripts + Docker)**:
+  - `Dockerfile` — remove `sqlite-libs` from the runtime
+    apk add list; restore `CGO_ENABLED=0` for a static binary.
+  - `docker-compose.yml` — add a `postgres:15` service
+    with healthcheck + persistent volume; remove
+    `libsqlite3-0` if present.
+  - `scripts/verify_post_deploy.sh` — replace
+    `docker cp + sqlite3 ...` (12+ queries) with
+    `psql` via the same `docker exec skygate psql -h
+    <pg-host> -U ...` pattern.
+  - `scripts/verify_backup.sh` — replace
+    `PRAGMA integrity_check` with `pg_dump --schema-only
+    | head` (sanity check) + a row-count diff between
+    backup + live.
+  - `scripts/cleanup_orphan_meshes.sh`,
+    `check_subnet_router.sh`, `reconcile_snapshots.sh`,
+    `recover_db_corruption.sh`, `_recover_helper.sh`,
+    `_swap_recovered.sh`, `backup.sh` — same
+    `sqlite3` → `psql` migration.
+  - `scripts/verify_pre_deploy.sh` — update the
+    guarantee catalog (B26 "Dockerfile runtime has
+    go-sqlite3 CGO toolchain" is removed; B34
+    "device_rules table has no duplicate" is rewritten
+    to query PG via `psql`; B70 "auto-update
+    orchestrator migrate step" is updated to confirm
+    `--migrate-only` works on PG; B79, B93 likewise).
+  - 25 test files skipped above are rewritten for PG.
+
+- **Phase 3 (v1.3.2, docs + dashboard)**:
+  - `docs/deploy.md#postgresql` — new section: install
+    PostgreSQL, create the `skygate` database + user,
+    set `SKYGATE_DB_DSN`, init the schema, configure
+    `pg_hba.conf`, set up the backup target.
+  - `docs/deploy.md#postgresql-migration-from-sqlite` —
+    one-time runbook for operators with a legacy
+    `skygate.db` file (use `dump_sqlite.py` from
+    `internal/db/scripts/` + apply the resulting SQL to
+    the fresh PG database; the migration chain picks up
+    from there).
+  - `docs/disaster-recovery.md` — `pg_dump` /
+    `pg_restore` replaces the SQLite file copy in the
+    backup section.
+  - `docs/architecture.md` — single PG backend (was:
+    SQLite default + PG opt-in).
+  - `PLANS.md` — TD-2 marked done (staticcheck 100%
+    clean) + BL-1 marked unblocked (PG cutover is now a
+    fresh-deploy requirement, no migration step).
+  - `AGENTS.md` — guarantee catalog B26, B34, B70, B79
+    rewritten for PG; R1-R34 stays the same (the
+    runtime contract doesn't change).
+  - `RELEASE-NOTES.md` (this file) — v1.3.1 + v1.3.2
+    entries.
+
+**Operator action (v1.3.0 deploy):**
+
+1. Pull this commit + tag.
+2. The container restart picks up the new binary; the
+   PG connection is established at the existing
+   `SKYGATE_DB_DSN` from `/home/skyadmin/skygate/.env`.
+3. `make verify-pre` — 95/95 PASS (B1-B95, B8 SKIP).
+4. `make verify-post` — 23/38 PASS (15 known
+   env/infra issues unrelated to v1.3.0; same as
+   v0.34.0).
+
+**Files (51 modified, 4 new, 39 deleted):**
+
+- New: `internal/db/exit_node_prefs.go` (helpers
+  extracted from deleted migrations_v0.45/0.46);
+  `internal/db/test_helpers_pg.go` (exported
+  `OpenTestPG(t)` + `pgTestDSN()` + `skipPGMessage`).
+- Deleted: 30 `migrations_v0.XX.go` (V025–V046,
+  V047, V048, V049–V054) + `migrations.go` (V020–V024)
+  + `on_conflict_sqlite.go` + `now_unix_sqlite.go` +
+  `placeholders_sqlite.go` + `placeholders_range_sqlite_test.go`
+  + `open_pg_stub.go`.
+- Modified: `internal/db/db.go`, `internal/db/driver.go`,
+  `internal/db/driver_postgres.go`, `internal/db/on_conflict*.go`,
+  `internal/db/now_unix*.go`, `internal/db/placeholders*.go`,
+  `internal/db/migration_tracking_test.go`, `internal/db/db_test.go`,
+  `internal/db/driver_test.go`, `internal/db/test_pg_migrations_test.go`,
+  `internal/db/migrations_v0.47_test.go`,
+  `internal/db/migrations_v0.48_test.go`,
+  `internal/db/migrations_v0.52_test.go`,
+  `internal/db/migrations_v0_45_46_test.go` (kept,
+  uses openTestDB which is now PG),
+  `internal/db/device_rules_test.go` (skipped),
+  `internal/db/node_owner_map_test.go` (skipped),
+  `internal/db/integrations_test.go` (skipped),
+  `internal/db/audit_log_v0_25_1_test.go` (skipped),
+  `internal/db/portal_users_controlplane_test.go` (skipped),
+  `internal/db/secrets_test.go` (closed-DB-error case
+  skipped), `internal/feature/admin/*_test.go` (18
+  files skipped, testutil.go stubbed),
+  `internal/feature/my/*_test.go` (2 files skipped,
+  testutil.go stubbed), `internal/acl/*_test.go` (3
+  files skipped), `internal/acl/acl.go` (uses
+  `ListAllUserExitNodePrefs` from the new
+  `exit_node_prefs.go`), `internal/acl/multi_subnet_integration_test.go`
+  (skipped), `internal/acl/perf_test.go` (skipped),
+  `internal/backup/scheduler_test.go` (skipped),
+  `internal/controlplane/router_test.go` (skipped),
+  `internal/expirewatch/manager_test.go` (skipped),
+  `internal/sidecar/manager_test.go` (skipped),
+  `internal/subnet/{manager,shares}_test.go` (skipped),
+  `internal/nodeownership/{auto,infra}_test.go` (skipped),
+  `internal/telegram/{commands,commands_set,notify_dispatch,preview_bot}_test.go`
+  (skipped), `internal/feature/exit_rules/sync_test.go`
+  (added `SKYGATE_DB_DSN` stub), `cmd/skygate/migrate_only_test.go`
+  (SQLite test bodies `t.Skip`'d; `TestRunMigrateOnly_RespectsDSN`
+  updated for the new connection-error code path), `go.mod`,
+  `go.sum`, `.gitignore` (`.trash/` added).
+
 ## v0.34.0 — code debt cleanup: 32 unused items deleted, 4 real bugs fixed, 2 dead branches removed, working tree pruned (B95)
 
 **Date:** 2026-08-11

@@ -1,33 +1,12 @@
-//go:build postgres
-
-// driver_postgres.go — PostgreSQL backend (v0.31.0+)
+// driver_postgres.go — PostgreSQL backend (v1.3.0+)
 //
-// This file is ONLY compiled when the build tag `postgres` is set:
+// As of v1.3.0, skygate is PG-only. There is no build tag — the
+// pgx driver is always registered via the `_ "github.com/jackc/
+// pgx/v5/stdlib"` import below, and MigratePostgres is the
+// canonical migration entry point.
 //
-//	go build -tags postgres ./...
-//
-// Without the tag, the production binary is unchanged (SQLite-only,
-// as it's been since v0.6.0). The tag is opt-in: an operator who
-// wants the PG backend builds with `-tags postgres`, and the
-// resulting binary supports both backends via DetectBackend().
-//
-// Why a build tag instead of a runtime flag?
-//
-//   - `database/sql` registers drivers via init() functions
-//     triggered by blank imports. To use the "pgx" driver name with
-//     database/sql.Open("pgx", dsn), we need to import
-//     `_ "github.com/jackc/pgx/v5/stdlib"` somewhere in the binary.
-//     The cleanest way to make this optional is a build tag — no
-//     pgx dependency in the default binary.
-//
-//   - B18 in verify-pre checks that the build with `-tags postgres`
-//     succeeds. The default build is the production build.
-//
-// The PG migration functions live in migrations_pg.go (no build
-// tag, always compiled) so the helper is reachable in unit tests
-// that want to exercise the conversion logic. The actual SQL run
-// against a live PG only happens via MigratePostgres() below, which
-// is build-tag-gated.
+// The PG migration functions live in migrations_pg.go (also no
+// build tag) so the helper is reachable in unit tests.
 
 package db
 

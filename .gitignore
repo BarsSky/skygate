@@ -144,3 +144,4 @@ secrets/
 # binary без pq driver создаёт фейковую SQLite с этим именем.
 # Если увидишь postgres:/ в git status — обнови бинарник (Phase 1.1)
 postgres:/
+.trash/

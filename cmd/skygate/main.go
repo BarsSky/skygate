@@ -204,21 +204,13 @@ func main() {
 	log.Printf("🌐 Skygate starting on :%s", cfg.Port)
 	log.Printf("   Headscale URL: %s", cfg.HeadscaleURL)
 
-	// 2026-08-03: v0.32.22 (Phase 4.1) — DB backend
-	// selection. If SKYGATE_DB_DSN is set, OpenDSN picks
-	// SQLite (default) or PostgreSQL based on the DSN
-	// prefix. If DSN is empty, falls back to Open(DBPath)
-	// for the historical SQLite-only path. Phase 4.2+
-	// (HA setup on skygate-host-2) is when the PG path
-	// becomes the default.
+	// v1.3.0: PostgreSQL is mandatory. SQLite is no longer
+	// supported. cfg.DBDSN is required (validated in
+	// config.Load). cfg.DBPath is kept for log diagnostics
+	// only — no longer used at runtime.
+	log.Printf("   DB backend:    postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
 	var d *sql.DB
-	if cfg.DBDSN != "" {
-		log.Printf("   DB backend:    postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
-		d, err = db.OpenDSN(cfg.DBDSN)
-	} else {
-		log.Printf("   DB backend:    sqlite (%s)", cfg.DBPath)
-		d, err = db.Open(cfg.DBPath)
-	}
+	d, err = db.OpenDSN(cfg.DBDSN)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
@@ -1408,14 +1400,10 @@ func runMigrateOnly() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	var d *sql.DB
-	if cfg.DBDSN != "" {
-		log.Printf("migrate-only: opening postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
-		d, err = db.OpenDSN(cfg.DBDSN)
-	} else {
-		log.Printf("migrate-only: opening sqlite (%s)", cfg.DBPath)
-		d, err = db.Open(cfg.DBPath)
-	}
+	// v1.3.0: PG-only. cfg.DBDSN is required (validated by
+	// config.Load), no SQLite fallback.
+	log.Printf("migrate-only: opening postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
+	d, err := db.OpenDSN(cfg.DBDSN)
 	if err != nil {
 		return err
 	}
@@ -1438,7 +1426,8 @@ func runBackupSubcommand() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	d, err := db.Open(cfg.DBPath)
+	// v1.3.0: PG-only. cfg.DBDSN is required.
+	d, err := db.OpenDSN(cfg.DBDSN)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}
@@ -1492,7 +1481,8 @@ func runBackupShowConfig() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	d, err := db.Open(cfg.DBPath)
+	// v1.3.0: PG-only. cfg.DBDSN is required.
+	d, err := db.OpenDSN(cfg.DBDSN)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}
@@ -1521,7 +1511,8 @@ func runBackupVerifyOK(args []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	d, err := db.Open(cfg.DBPath)
+	// v1.3.0: PG-only. cfg.DBDSN is required.
+	d, err := db.OpenDSN(cfg.DBDSN)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}
@@ -1556,7 +1547,8 @@ func runBackupVerifyFail(args []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	d, err := db.Open(cfg.DBPath)
+	// v1.3.0: PG-only. cfg.DBDSN is required.
+	d, err := db.OpenDSN(cfg.DBDSN)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}

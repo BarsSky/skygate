@@ -10,7 +10,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"skygate/internal/i18n"
 )
+
+func init() {
+	// butlerEnvelope uses i18n.T to look up greeting + signoff
+	// keys. Pre-fix the test ran without initializing the
+	// catalog, so the keys came back untranslated ("bot.envelope.signoff"
+	// instead of "Ваш Дворецкий"). The pre-existing test
+	// failure was masked by other failures in CI; v1.3.0 fixed
+	// those and exposed this one. Initialize the catalog here
+	// so the envelope renders the real Russian strings.
+	i18n.GlobalCatalog = i18n.New()
+}
 
 // TestButlerEnvelope_AllZones checks the happy path:
 // greeting + title + subheader + body + footer + signoff,

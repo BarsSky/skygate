@@ -1,6 +1,4 @@
-//go:build postgres
-
-// PostgreSQL variant (compiled with -tags postgres).
+// PostgreSQL variant (v1.3.0+; no build tag, always compiled).
 // OnConflictDoNothing returns the `ON CONFLICT (<cols>)
 // DO NOTHING` suffix for use after a plain
 // `INSERT ...` statement. The `cols` argument is the

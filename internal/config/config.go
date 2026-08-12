@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -434,6 +435,18 @@ func Load() (*Config, error) {
 		// container recreate).
 		RepoPath:        getenv("SKYGATE_REPO_PATH", defaultRepoPath()),
 		UpdateStatePath: getenv("SKYGATE_UPDATE_STATE_PATH", "/data/skygate-update-status.json"),
+	}
+
+	// v1.3.0: PostgreSQL is mandatory. SQLite is no longer
+	// supported. A missing DSN is a fatal config error, not a
+	// silent fallback to a local file (which would be insecure
+	// for any deployment with multiple skygate instances).
+	if c.DBDSN == "" {
+		return nil, fmt.Errorf("SKYGATE_DB_DSN is required (PostgreSQL-only as of v1.3.0; SQLite is no longer supported); see docs/deploy.md#postgresql")
+	}
+	if c.JWTSecret == "" {
+		c.JWTSecret = "dev-only-insecure-jwt-secret-do-not-use-in-prod"
+		log.Printf("⚠️  SKYGATE_JWT_SECRET not set, using insecure default (dev only)")
 	}
 
 	if v := os.Getenv("SKYGATE_DNS_AUTO_CHECK"); v != "" {

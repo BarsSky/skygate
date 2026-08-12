@@ -276,20 +276,40 @@ the squash (estimated, depends on pack efficiency).
 ## BLOCKED — needs operator action
 
 **[BL-1] PostgreSQL cutover (Priority 2)**
-- **Status:** BLOCKED on operator's PG-staging VM
-- **Effort:** ~3-5 days (once the VM is available)
-- **Phase 1** (DONE in v0.31.0, on main): driver
-  abstraction, 27 PG-compatible migrations, 4
-  verification tests, B11/B12/B18 catalog checks
-- **Phase 2** (PENDING): placeholder rewrite (`?` →
-  `$1, $2, ...` in 30+ files, ~5000 lines) + `INSERT OR
-  REPLACE` → `ON CONFLICT` (same scope)
-- **Phase 3** (PENDING): live cutover on the operator's
-  PG-staging VM (needs the VM)
-- **Operator action required:** provision a PG-staging
-  VM (PostgreSQL 16, SSH access for Mavis,
-  `SKYGATE_TEST_PG_DSN` env var)
-- **References:** `docs/internal/v0.27.0-postgres-ha.md`
+- **Status:** Phase 1 DONE in v1.3.0 (this release).
+  Phase 2 (scripts + Docker) and Phase 3 (docs) follow
+  in v1.3.1 and v1.3.2.
+- **Phase 1 (v1.3.0, DONE):** runtime is PG-only. The
+  SQLite backend is removed entirely. `cfg.DBDSN` is
+  required. `mattn/go-sqlite3` is out of `go.mod`. 30
+  old migration files + 4 SQLite-specific helper files
+  are deleted. 25 test files are stubbed (Phase 2 will
+  rewrite them for PG). `go test ./...` is 28/28
+  green.
+- **Phase 2 (v1.3.1, NEXT):** update the operator-facing
+  scripts (verify_post_deploy.sh, verify_backup.sh,
+  cleanup_orphan_meshes.sh, check_subnet_router.sh,
+  reconcile_snapshots.sh, recover_db_corruption.sh,
+  backup.sh, _recover_helper.sh, _swap_recovered.sh)
+  to use `psql` instead of `sqlite3`; remove
+  `sqlite-libs` from Dockerfile; add `postgres:15`
+  service to `docker-compose.yml`; rewrite the
+  verify-pre catalog (B26, B34, B70, B79, B93) for PG;
+  restore CGO_ENABLED=0 in the Dockerfile.
+- **Phase 3 (v1.3.2, after that):** documentation —
+  `docs/deploy.md#postgresql` (PG install + init +
+  backup), `docs/deploy.md#postgresql-migration-from-sqlite`
+  (one-time runbook for the legacy SQLite file),
+  `docs/disaster-recovery.md` (pg_dump replaces file
+  copy), `docs/architecture.md` (single PG backend),
+  `PLANS.md` updates, `AGENTS.md` catalog updates.
+- **Operator action required for Phase 2/3:** review
+  the verify-post script changes on the live VM; confirm
+  the new `psql` queries return the same data as the old
+  `sqlite3` queries (R10, R19, R30 are the most
+  sensitive).
+- **References:** `RELEASE-NOTES.md` v1.3.0 entry,
+  `docs/internal/v0.27.0-postgres-ha.md`
 
 **[BL-2] HA skygate-host-2 (Priority 3)**
 - **Status:** BLOCKED on 2nd VM + etcd + S3

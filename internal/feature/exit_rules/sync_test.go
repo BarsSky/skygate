@@ -159,6 +159,10 @@ func TestConfigSSHKeyPath_DefaultChangedForDocker(t *testing.T) {
 	// without these. Stub them.
 	t.Setenv("HEADSCALE_API_KEY", "hskey-test-stub-not-real")
 	t.Setenv("SKYGATE_JWT_SECRET", "test-stub-jwt-secret-not-real")
+	// v1.3.0: config.Load now requires SKYGATE_DB_DSN (PG-only).
+	// This test never opens the DB — it only reads SSHKeyPath.
+	// A dummy DSN is enough to pass the validation gate.
+	t.Setenv("SKYGATE_DB_DSN", "postgres://stub:stub@127.0.0.1:1/stub?sslmode=disable")
 	c, err := config.Load()
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)

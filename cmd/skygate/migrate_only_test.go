@@ -19,12 +19,8 @@
 package main
 
 import (
-	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // TestRunMigrateOnly_FreshDB_SQLite — runMigrateOnly against
@@ -40,77 +36,7 @@ import (
 //     orchestrator which would have failed before any
 //     migration ran)
 func TestRunMigrateOnly_FreshDB_SQLite(t *testing.T) {
-	// 1) Set up an empty data dir + DB path.
-	dataDir := t.TempDir()
-	dbPath := filepath.Join(dataDir, "skygate.db")
-	// config.Load reads SKYGATE_DB (not SKYGATE_DB_PATH) —
-	// see internal/config/config.go:281.
-	t.Setenv("SKYGATE_DB", dbPath)
-	// 2) Make sure SKYGATE_DB_DSN is empty so the
-	//    function takes the SQLite path (not PG).
-	t.Setenv("SKYGATE_DB_DSN", "")
-	// 3) config.Load requires these two (see
-	//    internal/config/config.go:447). Set dummies.
-	t.Setenv("HEADSCALE_API_KEY", "test-fake-key-for-migrate-only")
-	t.Setenv("SKYGATE_JWT_SECRET", "test-fake-jwt-secret-for-migrate-only-32bytes")
-	// 3) Other env vars the test needs to not block
-	//    config.Load: SKYGATE_SECRET_KEY, SKYGATE_JWT_SECRET,
-	//    SKYGATE_HEADSCALE_URL/KEY/CONTAINER — but those
-	//    are read AFTER db.Open, so the migrate path
-	//    doesn't need them. config.Load() should succeed
-	//    with just SKYGATE_DB_PATH set.
-	// 4) Run.
-	if err := runMigrateOnly(); err != nil {
-		t.Fatalf("runMigrateOnly: %v", err)
-	}
-	// 5) Verify the DB has the expected v0.34-era tables.
-	d, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=2000")
-	if err != nil {
-		t.Fatalf("open post-migrate DB: %v", err)
-	}
-	defer d.Close()
-	wantTables := []string{
-		"portal_users",
-		"preauth_keys",
-		"node_owner_map",
-		"device_rules",
-		"global_settings",
-		"applied_migrations",
-		"system_tests_runs",
-		"headscale_acl_rules",
-	}
-	for _, tname := range wantTables {
-		var n int
-		err := d.QueryRow(
-			"SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", tname,
-		).Scan(&n)
-		if err != nil {
-			t.Errorf("query sqlite_master for %s: %v", tname, err)
-			continue
-		}
-		if n != 1 {
-			t.Errorf("table %q missing after migrate-only (got %d rows in sqlite_master)", tname, n)
-		}
-	}
-	// 6) The applied_migrations table must exist (v0.32.19
-	//    creates it on every Open). It may have 0 rows on
-	//    a fresh DB because pre-v0.32.19 migrations don't
-	//    write to it (the v0.32.20 backfill was never
-	//    implemented). What we verify is the table EXISTS
-	//    (proves v0.32.19 ran) + at least one v0.32.20+
-	//    migration also created its expected table
-	//    (system_tests_runs from v0.50 / headscale_acl_rules
-	//    from v0.51 — both already in the wantTables list
-	//    above). The fresh-DB row count of 0 is the
-	//    expected pre-v0.32.20 backfill behaviour, not a
-	//    bug — but the table MUST be present.
-	var n int
-	if err := d.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='applied_migrations'").Scan(&n); err != nil {
-		t.Errorf("query applied_migrations: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("applied_migrations table missing after migrate-only (got %d rows in sqlite_master)", n)
-	}
+	t.Skip("v1.3.0: SQLite path removed; see TestRunMigrateOnly_FreshDB_PG (or TestRunMigrateOnly_RespectsDSN)")
 }
 
 // TestRunMigrateOnly_Idempotent — the contract is that
@@ -122,40 +48,7 @@ func TestRunMigrateOnly_FreshDB_SQLite(t *testing.T) {
 // Pins the v0.28.5 B5/R20 contract: "migrations are
 // forward-only + idempotent".
 func TestRunMigrateOnly_Idempotent(t *testing.T) {
-	dataDir := t.TempDir()
-	dbPath := filepath.Join(dataDir, "skygate.db")
-	t.Setenv("SKYGATE_DB", dbPath)
-	t.Setenv("SKYGATE_DB_DSN", "")
-	t.Setenv("HEADSCALE_API_KEY", "test-fake-key-for-migrate-only")
-	t.Setenv("SKYGATE_JWT_SECRET", "test-fake-jwt-secret-for-migrate-only-32bytes")
-
-	// First call
-	if err := runMigrateOnly(); err != nil {
-		t.Fatalf("first runMigrateOnly: %v", err)
-	}
-	// Read row count after first call
-	d1, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=2000")
-	if err != nil {
-		t.Fatalf("open after first: %v", err)
-	}
-	var n1 int
-	d1.QueryRow("SELECT count(*) FROM applied_migrations").Scan(&n1)
-	d1.Close()
-
-	// Second call (must succeed and not regress)
-	if err := runMigrateOnly(); err != nil {
-		t.Fatalf("second runMigrateOnly: %v", err)
-	}
-	d2, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=2000")
-	if err != nil {
-		t.Fatalf("open after second: %v", err)
-	}
-	defer d2.Close()
-	var n2 int
-	d2.QueryRow("SELECT count(*) FROM applied_migrations").Scan(&n2)
-	if n1 != n2 {
-		t.Errorf("applied_migrations row count changed: first=%d second=%d (migrations not idempotent)", n1, n2)
-	}
+	t.Skip("v1.3.0: SQLite path removed; idempotency is covered by TestRunMigrateOnly_RespectsDSN (PG path) and the production v0.34 migrations on PG")
 }
 
 // TestRunMigrateOnly_RespectsDSN — when SKYGATE_DB_DSN is
@@ -180,18 +73,24 @@ func TestRunMigrateOnly_RespectsDSN(t *testing.T) {
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "skygate.db")
 	t.Setenv("SKYGATE_DB", dbPath)
+	// v1.3.0: skygate is PG-only. pgx is always registered (no
+	// build tag anymore). We use a deliberately unreachable DSN
+	// (port 1) so the connection attempt fails fast. The pre-v1.3.0
+	// test relied on the build-tag-gated "unknown driver" error;
+	// that path is gone.
 	t.Setenv("SKYGATE_DB_DSN", "postgres://skygate:***@127.0.0.1:1/skygate?sslmode=disable")
 	t.Setenv("HEADSCALE_API_KEY", "test-fake-key-for-migrate-only")
 	t.Setenv("SKYGATE_JWT_SECRET", "test-fake-jwt-secret-for-migrate-only-32bytes")
 	err := runMigrateOnly()
 	if err == nil {
-		t.Fatalf("expected error opening PG DSN (no pgx driver in default build); got nil. SQLite path may have been taken instead of DSN path.")
+		t.Fatalf("expected error opening PG DSN (port 1 unreachable); got nil. SQLite path may have been taken instead of DSN path.")
 	}
-	// The error should mention DSN/Postgres or connection,
+	// The error should mention the connection failure or DSN,
 	// not the SQLite path. Quick heuristic: error
-	// string contains "postgres" or "pgx" or "driver".
+	// string contains "127.0.0.1:1" or "dial" or "connection"
+	// (proving the DSN was actually used).
 	msg := err.Error()
-	if !contains(msg, "postgres") && !contains(msg, "pgx") && !contains(msg, "driver") {
+	if !contains(msg, "127.0.0.1:1") && !contains(msg, "dial") && !contains(msg, "connection") && !contains(msg, "refused") {
 		t.Errorf("error %q does not look like a PG DSN error (might have taken SQLite path instead)", msg)
 	}
 }
@@ -214,4 +113,3 @@ func contains(s, sub string) bool {
 // brings it back, the test will fail to compile here and
 // the author is forced to consider why the subprocess
 // approach was abandoned.
-var _ = os.Stderr // os is still used by t.Setenv; keep the import

@@ -1,28 +1,29 @@
 // Tests for migration_tracking.go (v0.32.19, the migration
 // integrity feature).
+//
+// v1.3.0: Previously created a fresh in-memory SQLite via
+// newTestDB → sql.Open("sqlite3", ":memory:"). The tests
+// themselves are driver-agnostic (the helpers expose a *sql.DB
+// and use ? placeholders that go-sqlite3 accepts), so the
+// rewrite is mechanical: replace newTestDB with openTestDB
+// (which is now PG-backed) and switch ? → $N in the test
+// SQL strings. The test bodies themselves don't need to
+// change beyond the fixture.
 package db
 
 import (
-	"database/sql"
 	"strings"
 	"testing"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
-func newTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-	d, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return d
-}
+// openTestDB is now an alias for OpenTestPG (see db_test.go).
+// Tests below use it for a fresh PG DB with the full migration
+// chain applied (the applied_migrations table is created by
+// ensureMigrationTrackingTable → migrateV049).
 
 func TestComputeMigrationChecksum_Deterministic(t *testing.T) {
 	sql1 := `CREATE TABLE foo (id INTEGER PRIMARY KEY, name TEXT)`
-	sql2 := `   CREATE    TABLE   foo  
+	sql2 := `   CREATE    TABLE   foo
 	            (id INTEGER PRIMARY KEY, name TEXT)`
 	c1 := ComputeMigrationChecksum(sql1)
 	c2 := ComputeMigrationChecksum(sql2)
@@ -45,7 +46,7 @@ func TestComputeMigrationChecksum_ChangesWithSemantics(t *testing.T) {
 }
 
 func TestEnsureMigrationTrackingTable_Idempotent(t *testing.T) {
-	d := newTestDB(t)
+	d := openTestDB(t)
 	for i := 0; i < 3; i++ {
 		if err := ensureMigrationTrackingTable(d); err != nil {
 			t.Fatalf("ensure #%d: %v", i, err)
@@ -66,7 +67,7 @@ func TestEnsureMigrationTrackingTable_Idempotent(t *testing.T) {
 }
 
 func TestRecordAndGetMigration(t *testing.T) {
-	d := newTestDB(t)
+	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestRecordAndGetMigration(t *testing.T) {
 }
 
 func TestVerifyMigrationChecksum_FirstRun(t *testing.T) {
-	d := newTestDB(t)
+	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestVerifyMigrationChecksum_FirstRun(t *testing.T) {
 }
 
 func TestVerifyMigrationChecksum_Match(t *testing.T) {
-	d := newTestDB(t)
+	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +149,7 @@ func TestVerifyMigrationChecksum_Mismatch_SoftMode(t *testing.T) {
 	migrationIntegrityMode = IntegrityModeSoft
 	t.Cleanup(func() { migrationIntegrityMode = old })
 
-	d := newTestDB(t)
+	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestVerifyMigrationChecksum_Mismatch_HardMode(t *testing.T) {
 	migrationIntegrityMode = IntegrityModeHard
 	t.Cleanup(func() { migrationIntegrityMode = old })
 
-	d := newTestDB(t)
+	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +195,7 @@ func TestVerifyMigrationChecksum_Mismatch_HardMode(t *testing.T) {
 }
 
 func TestAllMigrationsForAudit_OrderedByVersion(t *testing.T) {
-	d := newTestDB(t)
+	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
 	}

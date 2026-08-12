@@ -2,10 +2,7 @@ package db
 
 import (
 	"database/sql"
-	"path/filepath"
 	"testing"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestThemeLabel(t *testing.T) {
@@ -40,29 +37,27 @@ func TestIsValidTheme(t *testing.T) {
 	}
 }
 
+// TestOpenAndMigrate — v1.3.0: skygate is PG-only. The
+// "fresh DB has the expected tables" check is now a PG test
+// (queries information_schema + pg_tables instead of
+// sqlite_master). The test skips when SKYGATE_TEST_PG_DSN
+// is unset, so it still passes on a dev machine without PG.
 func TestOpenAndMigrate(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "skygate.db")
-	d, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer d.Close()
-	// 2026-07-09: refactor v0.6.0 — Open() now runs migrate() internally.
-	// We do not call it again here.
-	// All canonical tables should now exist on a fresh DB:
+	d := openTestDB(t)
+	// 2026-08-12: PG-only check via information_schema.tables
+	// (was sqlite_master pre-v1.3.0).
 	want := []string{
-		"portal_users",   // v0.25 (bootstrap)
-		"personal_api_tokens", // v0.23 (was silently failing before)
-		"device_rules",   // v0.20
-		"exit_servers",   // v0.20
-		"acl_snapshots",  // v0.20
-		"exit_rule_logs", // v0.20
-		"global_settings",// v0.21
+		"portal_users",          // v0.25 (bootstrap)
+		"personal_api_tokens",   // v0.23
+		"device_rules",          // v0.20
+		"exit_servers",          // v0.20
+		"acl_snapshots",         // v0.20
+		"exit_rule_logs",        // v0.20
+		"global_settings",       // v0.21
 	}
 	for _, name := range want {
 		var got string
-		q := "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+		q := `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1`
 		if err := d.QueryRow(q, name).Scan(&got); err != nil {
 			t.Errorf("table %q missing after Open: %v", name, err)
 		}
@@ -72,7 +67,7 @@ func TestOpenAndMigrate(t *testing.T) {
 func TestGetSetUserTheme(t *testing.T) {
 	d := openTestDB(t)
 	// seed user
-	res, err := d.Exec(`INSERT INTO portal_users (username, password_hash, is_admin, theme) VALUES ('utester', 'x', 0, ?)`, ThemeVercel)
+	res, err := d.Exec(`INSERT INTO portal_users (username, password_hash, is_admin, theme) VALUES ('utester', 'x', 0, $1)`, ThemeVercel)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -105,15 +100,12 @@ func TestGetSetUserTheme(t *testing.T) {
 	}
 }
 
-// openTestDB returns a fresh sqlite db with the full schema applied.
-// As of refactor v0.6.0, Open() calls migrate() so portal_users already exists.
+// openTestDB returns a fresh PG DB with the full schema applied.
+// v1.3.0: was SQLite (Open → migrate), now uses OpenTestPG which
+// connects to SKYGATE_TEST_PG_DSN and runs MigratePostgres.
+// The 100+ tests that call openTestDB(t) all transparently
+// switched to PG with no per-test changes.
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dir := t.TempDir()
-	d, err := Open(filepath.Join(dir, "t.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return d
+	return OpenTestPG(t)
 }
