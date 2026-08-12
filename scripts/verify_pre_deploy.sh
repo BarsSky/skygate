@@ -2848,3 +2848,21 @@ run_check "B99" "bash is in Dockerfile runtime apk add (B99, v1.3.6 backup error
 # See scripts/check_b100.sh for the full grep list.
 run_check "B100" "S3 / S3-compatible backup destination: protocol + 8 fields + transport + UI + i18n + tests (B100, v1.3.8 multi-protocol backup)" \
   'test -f scripts/check_b100.sh && bash scripts/check_b100.sh'
+
+# ─── B101 (v1.3.8) — restore.sh handles PG dump (BL-15) ───
+# Background: 2026-08-12 — the operator's "давно висящая
+# ошибка" was partly the missing restore path. Pre-v1.3.8
+# restore.sh's do_skygate_db() only handled the v0.32.x
+# SQLite file (skygate.db) by copying it into a Docker
+# volume. v1.3.0+ archives contain skygate-pg.sql (text
+# pg_dump) instead — the SQLite dispatcher silently did
+# nothing for the PG archive (no skygate.db to copy, no
+# error message), so the in-app /admin/backup "Restore"
+# button appeared to work but actually restored no DB.
+# v1.3.8's do_pg_restore() uses the postgres:18-alpine
+# throwaway (same pattern as backup.sh) to replay the
+# dump. The DSN is parsed from skygate.env in the
+# archive (so the restore targets the DB the backup came
+# from, not whatever is on localhost).
+run_check "B101" "restore.sh handles PG dump: do_pg_restore + load_dsn_from_env + dispatcher + throwaway (B101, BL-15 v1.3.8 restore-for-pg)" \
+  'test -f scripts/check_b101.sh && bash scripts/check_b101.sh'

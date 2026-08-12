@@ -4,6 +4,20 @@
 # Restore full Skygate + Headscale + Headplane state from backup archive
 # Usage: ./restore.sh <backup-file.tar.gz> [target-dir]
 #   target-dir: where to restore (default: /home/admin/skygate/)
+#
+# 2026-08-12 v1.3.8 (BL-15): added do_pg_restore() for the
+# v1.3.0+ archives that contain skygate-pg.sql (a text-format
+# pg_dump with --clean --if-exists). The pre-v1.3.0 SQLite
+# path (do_skygate_db copying skygate.db into the skygate-data
+# Docker volume) is preserved for legacy archives — the
+# dispatcher picks whichever file is present in the archive.
+#
+# The PG restore uses the same postgres:18-alpine throwaway
+# pattern as backup.sh so the operator doesn't need
+# postgresql-client installed on the host. The DSN is parsed
+# from the skygate.env file in the archive (so the restore
+# targets the SAME DB the backup was taken from, not whatever
+# happens to be on localhost).
 #===============================================================================
 set -euo pipefail
 
@@ -54,13 +68,28 @@ cat inventory.txt 2>/dev/null || true
 log "Checking extracted files..."
 ls -la
 
+# 2026-08-12 v1.3.8 (BL-15): detect which DB format the
+# archive has so the menu below can show the right option.
+# v1.3.0+ archives have skygate-pg.sql; v0.32.x archives
+# have skygate.db. We support both.
+HAS_PG_DUMP="no"
+HAS_SQLITE_DB="no"
+[ -f skygate-pg.sql ] && HAS_PG_DUMP="yes"
+[ -f skygate.db ]    && HAS_SQLITE_DB="yes"
+
 echo ""
 echo "=============================================="
 echo "  What to restore?"
 echo "=============================================="
 echo "  1) Skygate source code (git bundle → clone)"
 echo "  2) Skygate .env (configuration with secrets)"
-echo "  3) Skygate database (skygate.db → Docker volume)"
+if [ "${HAS_PG_DUMP}" = "yes" ]; then
+    echo "  3) Skygate database (skygate-pg.sql → psql replay, v1.3.0+)"
+elif [ "${HAS_SQLITE_DB}" = "yes" ]; then
+    echo "  3) Skygate database (skygate.db → Docker volume, v0.32.x)"
+else
+    echo "  3) Skygate database (no DB file in archive — skipped)"
+fi
 echo "  4) Headscale config + ACL"
 echo "  5) Headscale database (→ Docker volume)"
 echo "  6) Headplane data"
@@ -95,13 +124,118 @@ do_env() {
     fi
 }
 
+# 2026-08-12 v1.3.8 (BL-15): parse the DSN out of the
+# skygate.env that lives inside the archive. The dump
+# was taken from THIS specific DB, so the restore should
+# target THIS specific DB (not whatever happens to be
+# listening on localhost:5432). The format is the libpq
+# URL form:
+#   postgres://<user>:<password>@<host>:<port>/<database>?<params>
+# We use bash parameter expansion (no python3 needed for
+# the common case). Password is URL-decoded by libpq when
+# PGPASSWORD= is set, so we pass it as-is.
+load_dsn_from_env() {
+    local env_file="$1"
+    if [ ! -r "${env_file}" ]; then
+        err "Cannot read ${env_file} — needed for PG restore"
+    fi
+    local dsn
+    dsn=$(grep -E '^SKYGATE_DB_DSN=' "${env_file}" 2>/dev/null | head -1 | cut -d= -f2-)
+    if [ -z "${dsn}" ]; then
+        err "SKYGATE_DB_DSN not found in ${env_file}"
+    fi
+    # Strip postgres:// prefix and any ?params
+    local stripped="${dsn#postgres://}"
+    stripped="${stripped%%\?*}"
+    # user:password@host:port/db
+    PG_USER="${stripped%%:*}"
+    local rest="${stripped#*:}"
+    PG_PASS="${rest%%@*}"
+    rest="${rest#*@}"
+    PG_HOST="${rest%%:*}"
+    rest="${rest#*:}"
+    PG_PORT="${rest%%/*}"
+    PG_DB="${rest#*/}"
+    log "  DSN parsed: ${PG_USER}@${PG_HOST}:${PG_PORT}/${PG_DB}"
+}
+
+# 2026-08-12 v1.3.8 (BL-15): replay skygate-pg.sql into
+# the PG the backup came from. Same postgres:18-alpine
+# throwaway pattern as backup.sh so the operator doesn't
+# need psql installed on the host. The dump is text-format
+# (pg_dump -Fp --clean --if-exists) so psql -f replays it
+# cleanly on a fresh database. The DSN is parsed from
+# skygate.env (the .env in the archive), not from the
+# host environment, so the restore targets the RIGHT DB.
+#
+# Caveats for the operator:
+#   1. The DSN points to the DB that EXISTED when the
+#      backup was taken. If the new host has a different
+#      DB, the restore will write to the old DSN's host
+#      and may not be visible locally. (Most operators
+#      keep the same DB host across restores, but on a
+#      cross-host migration, the operator typically
+#      updates the .env FIRST and then re-runs restore.)
+#   2. psql with -v ON_ERROR_STOP=1 aborts on the first
+#      error. A pre-populated DB with conflicting tables
+#      will fail at the first DROP TABLE. The dump's
+#      --clean --if-exists handles DROP IF EXISTS so
+#      idempotent replays work on a fresh DB; for a
+#      non-fresh DB, the operator should DROP the target
+#      DB first.
+do_pg_restore() {
+    if [ ! -f skygate-pg.sql ]; then
+        return 0
+    fi
+    log "Restoring Skygate PG database (skygate-pg.sql)..."
+    # Source of truth: skygate.env in the archive.
+    # Fall back to ${TARGET_DIR}/.env (already restored
+    # to disk by do_env) if the in-archive copy is missing.
+    local env_source="skygate.env"
+    [ ! -r "${env_source}" ] && [ -r "${TARGET_DIR}/.env" ] && env_source="${TARGET_DIR}/.env"
+    if [ ! -r "${env_source}" ]; then
+        err "No skygate.env found — cannot determine target DB. Restore option 2 (env) first."
+    fi
+    load_dsn_from_env "${env_source}"
+    # Mirror backup.sh's network handling: the throwaway
+    # needs to reach the DB host. The default
+    # `headscale_default` covers docker-compose deployments;
+    # for external PG the operator can set
+    # SKYGATE_BACKUP_NETWORK=host or similar (we use the
+    # same env var name as backup.sh for consistency).
+    local net="${SKYGATE_BACKUP_NETWORK:-headscale_default}"
+    log "  replaying skygate-pg.sql via postgres:18-alpine (network=${net})..."
+    if ! docker run --rm \
+        --network "${net}" \
+        -e PGPASSWORD="${PG_PASS}" \
+        -v "$(pwd):/restore:ro" \
+        postgres:18-alpine \
+        psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" \
+             -v ON_ERROR_STOP=1 -f /restore/skygate-pg.sql 2>&1 ; then
+        err "  psql replay failed — see output above. If the target DB has conflicting tables, DROP it first and re-run."
+    fi
+    log "  PG database restored to ${PG_HOST}:${PG_PORT}/${PG_DB}"
+    log "  (table count: $(docker run --rm --network "${net}" -e PGPASSWORD="${PG_PASS}" postgres:18-alpine \
+        psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" -tA -c \
+        "SELECT count(*) FROM pg_tables WHERE schemaname='public';" 2>/dev/null) public tables)"
+}
+
+# 2026-08-12 v1.3.8 (BL-15): dispatcher. Picks PG vs
+# SQLite based on which file is in the archive. Both
+# paths are no-ops if the corresponding file is missing
+# (so a partial archive doesn't break the restore).
 do_skygate_db() {
-    if [ -f skygate.db ]; then
-        log "Restoring Skygate database..."
+    if [ -f skygate-pg.sql ]; then
+        do_pg_restore
+    elif [ -f skygate.db ]; then
+        # v0.32.x legacy path — kept for old archives.
+        log "Restoring Skygate SQLite database (skygate.db, v0.32.x legacy)..."
         docker run --rm -v skygate-data:/data -v "$(pwd):/restore" alpine \
             sh -c "cp /restore/skygate.db /data/skygate.db && chown -R 1000:1000 /data" 2>/dev/null && \
             log "  skygate.db restored to Docker volume" || \
             warn "  DB restore failed (is container running?)"
+    else
+        warn "No skygate-pg.sql or skygate.db in archive — DB step skipped"
     fi
 }
 
@@ -163,6 +297,10 @@ case "${CHOICE}" in
     6) do_headplane ;;
     7) do_derp ;;
     8)
+        # Note: we deliberately call do_env BEFORE do_skygate_db
+        # in the "ALL" path so the .env is on disk for the PG
+        # dispatcher to read. (For interactive choice=3 the
+        # operator can do env first manually.)
         do_skygate_code
         do_env
         do_skygate_db
