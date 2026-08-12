@@ -15,18 +15,25 @@
 package admin
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"skygate/internal/backup"
 	"skygate/internal/db"
+
+	"github.com/minio/minio-go/v7"
 )
 
 // resolveBackupDir picks the legacy on-disk backup directory.
@@ -316,6 +323,147 @@ func (s *Service) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request)
 	cmd.CombinedOutput()
 
 	http.Redirect(w, r, "/admin/backup?success=restore+complete!+Check+/admin/settings+to+update+URLs", http.StatusFound)
+}
+
+// GetAdminBackupDownloadS3 streams a backup archive from
+// S3 to the operator's browser. Triggered by the
+// "Download from S3" button next to the last-archive
+// line on /admin/backup when LastArchive starts with
+// "s3://". The pre-v1.3.8 UI only had a download link
+// for files on the local filesystem; S3 backups had
+// to be fetched with `aws s3 cp` or `mc cp` and then
+// uploaded back to /admin/backup/restore. v1.3.8 (BL-18)
+// closes that loop with this streaming endpoint.
+//
+// The flow:
+//   1. Read the S3 config from global_settings (same
+//      path the upload uses).
+//   2. Parse the `archive=s3://bucket/key` query arg
+//      to extract bucket + key.
+//   3. minio-go GetObject opens a stream from S3.
+//   4. We copy that stream to the response writer with
+//      Content-Disposition: attachment so the browser
+//      saves the file with the right name.
+//   5. Content-Length and Content-Type mirror what
+//      the S3 server reports (we use FGetObject-style
+//      metadata via StatObject first, then GetObject).
+//
+// Security:
+//   - Admin-only (gated by s.Backend.CurrentUser + IsAdmin).
+//   - Validates that the archive arg starts with
+//     "s3://" and uses the configured bucket (no
+//     path-traversal to other buckets).
+//   - S3 credentials stay in the DB; we never echo
+//     them back to the client.
+func (s *Service) GetAdminBackupDownloadS3(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	archive := r.URL.Query().Get("archive")
+	if !strings.HasPrefix(archive, "s3://") {
+		http.Error(w, "archive must start with s3://", http.StatusBadRequest)
+		return
+	}
+	// Load the S3 config so we can validate the
+	// bucket + get credentials. We deliberately
+	// re-parse the URL here instead of trusting
+	// the form value, so a crafted `archive` param
+	// can't trick us into fetching from a different
+	// bucket.
+	cfg, err := backup.Load(s.DB)
+	if err != nil {
+		http.Error(w, "load backup config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	parsed, err := url.Parse(archive)
+	if err != nil || parsed.Scheme != "s3" {
+		http.Error(w, "invalid s3 URL", http.StatusBadRequest)
+		return
+	}
+	bucket := parsed.Host
+	key := strings.TrimLeft(parsed.Path, "/")
+	if bucket == "" || key == "" {
+		http.Error(w, "invalid s3 URL (need bucket + key)", http.StatusBadRequest)
+		return
+	}
+	// Defense in depth: bucket must match the
+	// configured one. (A future option might
+	// allow cross-bucket downloads; for now the
+	// operator only ever backs up to the one
+	// bucket they configured, so the cross-bucket
+	// case is always an error.)
+	if cfg.S3Bucket != "" && bucket != cfg.S3Bucket {
+		http.Error(w, "bucket mismatch (config="+cfg.S3Bucket+", url="+bucket+")", http.StatusForbidden)
+		return
+	}
+	// Populate the S3 config fields the download
+	// needs (the load() already filled them, but
+	// be explicit for the reader).
+	_ = cfg
+	mc, err := backup.NewS3ClientForConfig(cfg)
+	if err != nil {
+		http.Error(w, "s3 client: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+	defer cancel()
+	// Stat first so we can set Content-Length and
+	// Content-Type correctly. (GetObject alone
+	// returns an io.Reader; we lose the metadata
+	// that way.)
+	stat, err := mc.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		http.Error(w, "s3 stat: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	// 2026-08-12 v1.3.8 (BL-18): derive the
+	// download filename from the key (the trailing
+	// path component). The Content-Disposition
+	// header tells the browser to save with that
+	// name instead of "download" or the full s3
+	// URL.
+	filename := key
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		filename = key[idx+1:]
+	}
+	if filename == "" {
+		filename = "backup.tar.gz"
+	}
+	contentType := "application/gzip"
+	if stat.ContentType != "" {
+		contentType = stat.ContentType
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size))
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("X-Skygate-S3-Bucket", bucket)
+	w.Header().Set("X-Skygate-S3-Key", key)
+	// Now stream the object.
+	obj, err := mc.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		http.Error(w, "s3 get: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer obj.Close()
+	if _, err := io.Copy(w, obj); err != nil {
+		// The headers are already sent at this
+		// point; we can't return a proper HTTP
+		// status. Log the error (operator can
+		// find it in the skygate logs) and abort
+		// the stream. The browser will show a
+		// partial download — not ideal but the
+		// only option for streaming errors.
+		log.Printf("s3 download: io.Copy failed: %v", err)
+		return
+	}
+	// Audit log the download (success only —
+	// the audit row is the operator's record
+	// of who pulled what).
+	s.Backend.Audit(c.UserID, c.Username, "backup.download_s3",
+		fmt.Sprintf("bucket=%s key=%s size=%d", bucket, key, stat.Size))
 }
 
 // GetAdminSettings serves /admin/settings. Admin-only.

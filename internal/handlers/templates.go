@@ -144,6 +144,20 @@ func LoadTemplates() *Templates {
 			}
 			return ""
 		},
+		// 2026-08-12 v1.3.8 (BL-18): hasPrefix is the
+		// string-prefix check the backup.html template
+		// uses to decide whether to show the
+		// "Download from S3" button (only when
+		// LastArchive starts with "s3://"). Built-in
+		// sprig is not included in the project's
+		// template funcmap (only t / tf / safeJS /
+		// safeJSON / datetimeformat / bytesfmt / etc.
+		// — see the t.Funcs block above), so we add
+		// it explicitly. Cheap (one string compare)
+		// and used on a single render path.
+		"hasPrefix": func(s, prefix string) bool {
+			return strings.HasPrefix(s, prefix)
+		},
 	})
 
 	// Collect body files (everything except layout.html)

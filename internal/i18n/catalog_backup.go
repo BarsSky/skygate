@@ -62,6 +62,11 @@ var ruBackup = map[string]string{
 	"backup.s3_staging_dir_help"     : "Куда skygate пишет tar.gz перед загрузкой в S3. По умолчанию /var/lib/skygate/backup-staging",
 	"backup.s3_use_ssl"              : "Использовать HTTPS",
 	"backup.s3_test_ok"              : "S3 доступен: %s · корзина: %s · регион: %s",
+	// 2026-08-12 v1.3.8 (BL-18): the in-app
+	// /admin/backup/download-s3 button + its
+	// audit log row.
+	"backup.download_from_s3"        : "Скачать из S3",
+	"backup.download_s3_failed"     : "Не удалось скачать из S3: %s",
 	"backup.keep_count"              : "Хранить копий",
 	"backup.keep_count_help"         : "0 — не удалять. Самые старые архивы удаляются после каждого успешного бэкапа",
 	"backup.schedule"                : "Расписание (cron)",
@@ -165,6 +170,11 @@ var enBackup = map[string]string{
 	"backup.s3_staging_dir_help"     : "Where skygate writes the tarball before uploading to S3. Default /var/lib/skygate/backup-staging",
 	"backup.s3_use_ssl"              : "Use HTTPS",
 	"backup.s3_test_ok"              : "S3 reachable: %s · bucket: %s · region: %s",
+	// 2026-08-12 v1.3.8 (BL-18): the in-app
+	// /admin/backup/download-s3 button + its
+	// audit log row.
+	"backup.download_from_s3"        : "Download from S3",
+	"backup.download_s3_failed"     : "S3 download failed: %s",
 	"backup.keep_count"              : "Keep copies",
 	"backup.keep_count_help"         : "0 = keep all. Oldest archives are deleted after each successful backup",
 	"backup.schedule"                : "Schedule (cron)",

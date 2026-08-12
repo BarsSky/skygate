@@ -2883,3 +2883,14 @@ run_check "B101" "restore.sh handles PG dump: do_pg_restore + load_dsn_from_env 
 # covered by the test.
 run_check "B102" "Dockerfile has cifs-utils + nfs-utils + sshfs; test_backup_protocols.sh covers all 5 protocols (B102, BL-16 v1.3.8 mount helpers)" \
   'test -f scripts/check_b102.sh && bash scripts/check_b102.sh'
+
+# ─── B103 (v1.3.8) — in-app S3 download (BL-18) ───
+# Background: pre-v1.3.8, /admin/backup's Download link
+# only worked for files on the local BACKUP_DIR. For
+# S3 backups the file was in the bucket — operators
+# had to `aws s3 cp` then re-upload to /admin/backup
+# restore. BL-18 closes the loop with a new
+# "Download from S3" button + handler that streams
+# directly from S3 to the browser via minio-go.
+run_check "B103" "in-app S3 download: handler + route + template button + hasPrefix func + i18n + audit (B103, BL-18 v1.3.8 s3-download)" \
+  'test -f scripts/check_b103.sh && bash scripts/check_b103.sh'

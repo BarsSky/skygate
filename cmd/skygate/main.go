@@ -844,6 +844,15 @@ func main() {
 	mux.Handle("POST /admin/backup/save", authMW(http.HandlerFunc(adminSvc.PostAdminBackupSave)))
 	mux.Handle("POST /admin/backup/restore", authMW(http.HandlerFunc(adminSvc.PostAdminBackupRestore)))
 	mux.Handle("GET /admin/backup/download", authMW(http.HandlerFunc(adminSvc.GetAdminBackupDownload)))
+	// 2026-08-12 v1.3.8 (BL-18): stream an S3 backup
+	// directly to the operator's browser. Triggered
+	// by the "Download from S3" button on
+	// /admin/backup when LastArchive starts with
+	// "s3://". Closes the gap where the operator
+	// had to `aws s3 cp` (or `mc cp`) the file
+	// down and then re-upload to
+	// /admin/backup/restore.
+	mux.Handle("GET /admin/backup/download-s3", authMW(http.HandlerFunc(adminSvc.GetAdminBackupDownloadS3)))
 	// 2026-07-14: Этап 14 v6 — destination & schedule config.
 	// /admin/backup itself serves the form; the four action
 	// endpoints accept POSTs from the form buttons. No CSRF

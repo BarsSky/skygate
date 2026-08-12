@@ -203,6 +203,17 @@ func uploadToS3(ctx context.Context, c *Config, filePath string) (*s3UploadResul
 	}, nil
 }
 
+// NewS3ClientForConfig is the exported wrapper around
+// newS3Client for callers outside the backup package
+// (e.g. the in-app /admin/backup/download-s3 handler in
+// internal/feature/admin/backup.go, which needs to
+// stream an object from S3 to the operator's browser).
+// Returns the live *minio.Client so the caller can
+// invoke GetObject / StatObject / FPutObject directly.
+func NewS3ClientForConfig(c *Config) (*minio.Client, error) {
+	return newS3Client(c)
+}
+
 // buildS3Key joins the prefix and the basename with
 // exactly one "/". A trailing slash on the prefix is
 // tolerated; a leading slash on the basename is

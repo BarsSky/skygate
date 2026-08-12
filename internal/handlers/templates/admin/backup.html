@@ -250,6 +250,21 @@
       {{end}}
       {{if .Config.LastArchive}}
         &nbsp;<span class="sub">{{t "backup.last_archive"}}: <code>{{.Config.LastArchive}}</code></span>
+        {{/* 2026-08-12 v1.3.8 (BL-18): if the last archive
+             is on S3 (s3://...), add a "Download from S3"
+             button. The local /admin/backup/download endpoint
+             only works for files on the local filesystem (it
+             just streams from BACKUP_DIR); for S3 the file
+             lives in the bucket, so the operator had to
+             `aws s3 cp` to download. The new endpoint
+             /admin/backup/download-s3 streams directly from
+             S3 to the browser via minio-go GetObject. */}}
+        {{if hasPrefix .Config.LastArchive "s3://"}}
+          &nbsp;<a href="/admin/backup/download-s3?archive={{.Config.LastArchive}}"
+                  class="btn btn-sm" title="Stream the archive from S3 to your browser">
+            <i class="fa-solid fa-cloud-arrow-down"></i> {{t "backup.download_from_s3"}}
+          </a>
+        {{end}}
       {{end}}
       {{if and (eq .Config.LastStatus "fail") .Config.LastError}}
         <div class="alert alert-danger" style="margin-top:0.5rem; font-size:0.85em">
