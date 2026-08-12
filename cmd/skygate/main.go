@@ -327,9 +327,23 @@ func main() {
 	// v0.26.0 — set the BuildVersion once at boot, so
 	// /healthz and /readyz can surface it. The format
 	// mirrors what git tags + GitHub releases use, so a
-	// probe response like "v0.26.0+4eed3a4" is
+	// probe response like "v1.0.0-15-gd6f7b6b" is
 	// self-explanatory.
-	app.BuildVersion = version + "+" + commit
+	//
+	// 2026-08-12 (v1.1.0): avoid duplicating the commit hash.
+	// `git describe --tags --always` ALREADY embeds the short
+	// commit hash in the suffix (the "-g<hash>" part). Adding
+	// `+<commit>` on top produces "v1.0.0-15-gd6f7b6b+d6f7b6b"
+	// which is ugly and confuses the operator ("why is the
+	// commit hash listed twice?"). When `version` already
+	// contains a "-g<hex>" suffix, drop the redundant
+	// "+<commit>". compareSemver in internal/update/checker.go
+	// strips the `+...` part before comparing, so the
+	// IsNewer result is unchanged.
+	app.BuildVersion = version
+	if !strings.Contains(version, "-g") && commit != "unknown" {
+		app.BuildVersion = version + "+" + commit
+	}
 	log.Printf("🌐 Skygate %s (commit %s, built %s)", version, commit, buildTime)
 
 	mux := http.NewServeMux()

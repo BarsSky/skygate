@@ -165,6 +165,9 @@
     <div>
       <div style="color:var(--text-muted);font-size:12px">{{t "update.current_label"}}</div>
       <div style="font-size:18px;font-weight:600"><code>{{.Current}}</code></div>
+      {{if .CurrentBuild}}
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">build: <code>{{.CurrentBuild}}</code></div>
+      {{end}}
     </div>
     <div>
       <div style="color:var(--text-muted);font-size:12px">{{t "update.latest_label"}}</div>

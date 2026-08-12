@@ -86,6 +86,63 @@ func normalizeUpdateTarget(target string) string {
 	return "v" + target
 }
 
+// displayVersionForUpdate is the v1.1.0 fix for the duplicate-
+// commit bug. entrypoint.sh passes both
+//   -X main.version=$(git describe --tags --always)
+//   -X main.commit=$(git rev-parse --short HEAD)
+// and BuildVersion = version + "+" + commit produced
+// "v1.0.0-15-gd6f7b6b+d6f7b6b" (commit hash twice). The
+// "+..." suffix is also stripped by compareSemver before
+// the semver comparison, so it has zero functional value
+// for the page — it's purely cosmetic noise that the
+// operator was reading as "v1.1.0+78d4559 → v1.1.0 looks
+// like a downgrade".
+//
+// Returns the "Current" label + optional "build" subtitle.
+// Examples (BuildVersion input → Current, BuildSubtitle):
+//   "v1.0.0-15-gd6f7b6b+d6f7b6b" → ("v1.0.0-15-gd6f7b6b", "15-gd6f7b6b")
+//   "v1.1.0"                      → ("v1.1.0", "")
+//   "v1.1.0+78d4559"              → ("v1.1.0", "")        (no "-g" in tag → no subtitle)
+//   "dev"                         → ("vdev", "")          (gets "v" prefix)
+//   ""                            → ("v", "")
+func displayVersionForUpdate(buildVersion string) (current string, buildSubtitle string) {
+	current = buildVersion
+	// Ensure leading "v" — the GitHub tag always has it, the
+	// /version CLI does too, and the page links to the
+	// /<owner>/<repo>/releases/tag/<tag> URL which expects
+	// the "v" prefix.
+	if !strings.HasPrefix(current, "v") {
+		current = "v" + current
+	}
+	// Strip the redundant "+<commit>" suffix.
+	if i := strings.Index(current, "+"); i >= 0 {
+		current = current[:i]
+	}
+	// Extract the build subtitle ("15-gd6f7b6b" from
+	// "v1.0.0-15-gd6f7b6b"). Best-effort: the build subtitle
+	// only appears when the version looks like
+	// "vX.Y.Z-N-gHEX". For clean tags ("v1.1.0") or custom
+	// build labels, the subtitle stays empty and the page
+	// just shows the version.
+	//
+	// Important: split at the FIRST "-" (after the tag), not
+	// the last. "v1.0.0-15-gd6f7b6b" has two dashes — the
+	// subtitle is the entire "15-gd6f7b6b" part (count+commit),
+	// not just "gd6f7b6b". Index finds the first occurrence;
+	// LastIndex would only return the second dash and break
+	// the build-suffix detection.
+	if i := strings.Index(current, "-"); i >= 0 {
+		tagPart := current[:i]
+		suffix := current[i+1:]
+		if strings.HasPrefix(tagPart, "v") &&
+			strings.Contains(tagPart, ".") &&
+			strings.Contains(suffix, "g") {
+			buildSubtitle = suffix
+		}
+	}
+	return current, buildSubtitle
+}
+
 // GetAdminUpdate renders the /admin/update page. Admin-only.
 //
 // The page is safe to render even if GitHub is unreachable:
@@ -187,6 +244,13 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	if !strings.HasPrefix(target, "v") {
 		target = "v" + target
 	}
+	// 2026-08-12 (v1.1.0): strip the duplicate "+commit" from
+	// the displayed "Current" — see displayVersionForUpdate for
+	// the full rationale. The page shows Current (clean) and
+	// CurrentBuild (the "15-gd6f7b6b" suffix if present), so
+	// the operator can still see the build hash but it's not
+	// in the main "→ Latest" line.
+	currentDisplay, buildSubtitle := displayVersionForUpdate(s.BuildVersion)
 	manualSteps := update.GenerateManualSteps(installKind, current, target, s.Cfg.GitHubOwner, s.Cfg.GitHubRepo)
 
 	// Audit: page load is the only operation here. The "Check
@@ -197,20 +261,22 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// "v0.28.6" everywhere anyway; the BuildVersion is the
 	// canonical "vX.Y.Z+commit" form).
 	s.Backend.RenderWithLayout(w, r, "admin/update.html", c, map[string]any{
-		"Page":         "admin/update",
-		"Title":        "title.admin_update",
-		"Current":      current,
-		"Latest":       result.Latest,
-		"LatestVer":    result.LatestVersion,
-		"IsNewer":      result.IsNewer,
-		"ReleaseURL":   result.ReleaseURL,
-		"Body":         result.Body,
-		"CheckedAt":    result.CheckedAt,
-		"Error":        result.Error,
-		"SourceURL":    result.SourceURL,
-		"InstallKind":  installKind.String(),
-		"InstallLabel": installLabel(installKind),
-		"ManualSteps":  manualSteps.Steps,
+		"Page":           "admin/update",
+		"Title":          "title.admin_update",
+		"Current":        currentDisplay,
+		"CurrentBuild":   buildSubtitle,
+		"BuildVersion":   s.BuildVersion,
+		"Latest":         result.Latest,
+		"LatestVer":      result.LatestVersion,
+		"IsNewer":        result.IsNewer,
+		"ReleaseURL":     result.ReleaseURL,
+		"Body":           result.Body,
+		"CheckedAt":      result.CheckedAt,
+		"Error":          result.Error,
+		"SourceURL":      result.SourceURL,
+		"InstallKind":    installKind.String(),
+		"InstallLabel":   installLabel(installKind),
+		"ManualSteps":    manualSteps.Steps,
 		// 2026-07-30: v0.32.3 — auto-update mode (gated by
 		// SKYGATE_AUTO_UPDATE_ENABLED). When false, the
 		// template hides the one-click "Apply" button and
