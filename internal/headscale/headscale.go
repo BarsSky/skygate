@@ -191,3 +191,15 @@ func (c *Client) InvalidateCache() {
 func (c *Client) SetDockerRunner(fn func(args ...string) ([]byte, error)) {
 	c.dockerRunner = fn
 }
+
+// SetCacheTTL overrides the default cache TTL. Production
+// callers leave this alone — the default is the right
+// trade-off for the page-render workload. Tests use this
+// to keep the cache warm across multiple ListAllNodes calls
+// within a single test, avoiding re-hitting the (faked)
+// HTTP server between setup and the Run-closure invocation.
+func (c *Client) SetCacheTTL(d time.Duration) {
+	c.cacheMu.Lock()
+	c.cacheTTL = d
+	c.cacheMu.Unlock()
+}

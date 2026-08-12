@@ -1,5 +1,127 @@
 # Skygate release notes
 
+## v1.1.1 — exit-node speed/availability system tests (B98)
+
+**Date:** 2026-08-12
+**Scope:** Adds two new system tests for exit-node
+reachability from the `/admin/system_tests` page. Operator
+asked: "необходимо также добавить в тесты системы
+тестирование по скорости доступа exit nodes" — what's
+the latency to each exit node, and what % of online exit
+nodes actually respond?
+
+**What changed:**
+
+- **`internal/feature/admin/system_tests_exit_node_speed.go`**
+  (NEW, ~11 KB, 2 new test defs):
+  - `exit_nodes.tcp_connect_speed` — measures TCP-connect
+    latency to each online exit node's Tailscale IP on
+    port 22. Output lists every node with its latency;
+    `PASS` if all under 2s, `SLOW (>1s, N)` warning if
+    any above 1s (the threshold below which a `PASS` is
+    still useful), `FAIL` on any timeout/refused.
+  - `exit_nodes.availability_summary` — % of online exit
+    nodes that respond within 2s. `PASS` at ≥80%, `FAIL`
+    below. `80%` is the threshold at which losing 1 of 3
+    relays is a warning, not a failure; losing 2 of 3 is
+    a hard failure that needs immediate attention.
+  - `tailscaleIPFromNode()` — extracts the first
+    `100.64.0.0/10` IPv4 from a headscale node's
+    `IPAddresses` slice.
+  - `probeExitNodeConnect(ctx, host, port)` — TCP dial
+    with 2s timeout. Overridable via
+    `probeExitNodeConnectOverride` for unit tests (no
+    real network in `go test ./...`).
+  - `formatLatencyMs()` — test helper.
+  - `init()` registers both tests with `TestRegistry` in
+    the `network` category. B40 (≥6 tests across
+    network/db/headscale) still PASSes.
+
+- **`internal/feature/admin/system_tests_exit_node_speed_test.go`**
+  (NEW, ~23 KB, 20 Go unit tests):
+  - `TestTailscaleIPFromNode` (13 sub-cases): boundary
+    checks for the CGNAT range, garbage input, IPv6,
+    IPv6-mapped form, nil/empty lists.
+  - `TestFormatLatencyMs` (4 sub-cases): zero, sub-ms
+    clamping, seconds, milliseconds.
+  - `TestProbeExitNodeConnect_*` (3 tests): override
+    returns latency, override returns error, real
+    network to `127.0.0.1:1` fails fast (<2s).
+  - `TestExitNodesTCPSpeedTest_*` (7 tests): no service,
+    no nodes, no Tailscale IP, all fast, one failed,
+    one slow (PASS with SLOW warning), non-exit node
+    ignored, offline node ignored.
+  - `TestExitNodesAvailabilityTest_*` (4 tests): all
+    available (3/3), 1/5 down (still PASS at 80%),
+    2/3 down (FAIL at 33%), no exit nodes (SKIP).
+  - `TestExitNodeSpeedTestsAreRegistered`,
+    `TestTestRegistryHasMinimumCoverage`,
+    `TestExitNodeSpeedTestsDescribeThemselves`: catalog
+    invariants (TestRegistry has ≥6 entries spanning
+    network/db/headscale, both new tests have
+    non-empty `Description`).
+  - **Fake headscale server pattern**: `fakeHS()` spins
+    up an `httptest.NewServer` that responds to
+    `GET /api/v1/node` with the given node list.
+    `setUpServiceWithFakeHS()` pre-warms the headscale
+    Client's cache (via the new `SetCacheTTL` method)
+    and wires it into a `*Service` with `HSGlobalFn` so
+    the Run closures see a controlled node set.
+
+- **`internal/headscale/headscale.go`**: new exported
+  `Client.SetCacheTTL(d time.Duration)` method. Tests
+  use it to keep the cache warm across multiple
+  `ListAllNodes` calls within a single test, avoiding
+  re-hitting the (faked) HTTP server between setup and
+  the Run-closure invocation. Production callers leave
+  it alone — the 30s default is the right trade-off
+  for page-render workload.
+
+- **`scripts/check_b98.sh`** (NEW, ~3 KB, dedicated
+  B-check helper): pins the 2 new defs, the test file's
+  ≥15 test functions, the `Category: "network"` for B40
+  coverage, the `probeExitNodeConnectOverride` hook, and
+  the actual `go test` pass. Same pattern as
+  `check_b96.sh` / `check_b97.sh` to avoid nested-quote
+  issues in the main `verify_pre_deploy.sh`.
+
+- **`scripts/verify_pre_deploy.sh`**:
+  - **B40 fix**: v1.3.0 deleted `migrations_v0.51.go`
+    (the old SQLite-style file). The B40 grep was
+    looking for `system_tests_runs` only in that
+    deleted file → B40 was FAILing on main since
+    v1.3.0. Updated the check to also accept
+    `migrations_pg.go` (where v0.51PG now lives).
+    B40 → PASS.
+  - **B98** (NEW): exit-node speed/availability
+    catalog row. Calls `scripts/check_b98.sh`.
+
+**Operator action required:** redeploy via
+`git pull --tags --force` + `docker compose build skygate`
++ restart. The two new tests show up on
+`/admin/system_tests` automatically (the page renders
+`TestRegistry`; the new entries appear at the top of the
+"network" section because the new file's `init()` runs
+after the main `TestRegistry` literal is initialised, so
+the new entries are appended at the end of the network
+category).
+
+**Live verify:** the two tests will run on next page
+hit after deploy. Expected output for a healthy fleet:
+```
+exit_nodes.tcp_connect_speed        pass
+  3 exit nodes probed:
+    relay-1 (100.64.0.X): 23ms
+    relay-2 (100.64.0.X): 47ms
+    relay-3 (100.64.0.X): 31ms
+
+exit_nodes.availability_summary    pass
+  3/3 exit nodes responsive (100%)
+    relay-1 (100.64.0.X): 23ms [available]
+    relay-2 (100.64.0.X): 47ms [available]
+    relay-3 (100.64.0.X): 31ms [available]
+```
+
 ## v1.1.0 — UI refactoring (TD-1) + mobile-responsive (TD-3)
 
 **Date:** 2026-08-12

@@ -1015,7 +1015,7 @@ run_check "B40" "system_tests.go: TestRegistry has ≥6 tests across network/db/
     grep -cE \"^\\s*Name:\\s*\\\"\" internal/feature/admin/system_tests.go | grep -qE \"^[6-9]|[1-9][0-9]\" &&
     grep -qF \"func (s *Service) RunAllTests\" internal/feature/admin/system_tests.go &&
     grep -qF \"func (s *Service) PersistRun\" internal/feature/admin/system_tests.go &&
-    grep -qF \"system_tests_runs\" internal/db/migrations_v0.51.go
+    ( grep -qF \"system_tests_runs\" internal/db/migrations_v0.51.go || grep -qF \"system_tests_runs\" internal/db/migrations_pg.go )
   '"
 
 # ─── B41 (v0.33.0) — Admin Test Page: routes registered ───
@@ -2771,3 +2771,29 @@ run_check "B96" "v1.1.0 TD-1 admin sidebar refactor: 22 admin pages grouped into
 #     and TestB97_StaticFilePresence
 run_check "B97" "v1.1.0 TD-3 mobile-responsive: sidebar becomes slide-in drawer <768px + hamburger button + 44px tap targets + 2 Go unit tests (B97)" \
   'test -f scripts/check_b97.sh && bash scripts/check_b97.sh'
+
+# ─── B98 — exit-node speed/availability system tests (operator's
+# "необходимо также добавить в тесты системы тестирование по
+# скорости доступа exit nodes", 2026-08-12) ───
+# The /admin/system_tests page now includes two new
+# TCP-probe-driven tests that the operator can run from the
+# UI:
+#   - exit_nodes.tcp_connect_speed — per-node latency
+#   - exit_nodes.availability_summary — % of online exit
+#     nodes that respond within 2s
+# Both live in system_tests_exit_node_speed.go (a separate
+# file to keep system_tests.go under 1100 lines) and use
+# the probeExitNodeConnect hook for testability.
+# Pinned contracts:
+#   - system_tests_exit_node_speed.go exists and defines
+#     both test defs (with Category="network" so the
+#     B40 category coverage still holds)
+#   - 23 Go unit tests in system_tests_exit_node_speed_test.go
+#     pass under -count=1
+#   - B40 still PASSes (TestRegistry count >= 6 with
+#     network/db/headscale categories)
+#   - probeExitNodeConnectOverride is a package-private
+#     var so the test can inject a fake probe (no real
+#     network in `go test ./...`)
+run_check "B98" "exit-node speed/availability system tests registered + helper + 15+ Go unit tests + B40 coverage preserved (B98, exit node speed)" \
+  'test -f scripts/check_b98.sh && bash scripts/check_b98.sh'
