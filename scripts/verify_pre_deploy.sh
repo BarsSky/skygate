@@ -2866,3 +2866,20 @@ run_check "B100" "S3 / S3-compatible backup destination: protocol + 8 fields + t
 # from, not whatever is on localhost).
 run_check "B101" "restore.sh handles PG dump: do_pg_restore + load_dsn_from_env + dispatcher + throwaway (B101, BL-15 v1.3.8 restore-for-pg)" \
   'test -f scripts/check_b101.sh && bash scripts/check_b101.sh'
+
+# ─── B102 (v1.3.8) — Dockerfile includes mount helpers (BL-16) ───
+# Background: the BL-16 per-protocol e2e test showed that
+# the in-app backup (which runs INSIDE the skygate
+# container via `bash scripts/backup.sh`) could not mount
+# SMB / NFS / SFTP shares because the Dockerfile's apk
+# add list did not include cifs-utils / nfs-utils / sshfs.
+# The mount commands in internal/backup/mount.go would
+# have failed with "executable file not found" for any
+# non-local / non-S3 protocol. v1.3.8's Dockerfile fix
+# adds the 3 packages so the code paths in mount.go are
+# actually exercisable from inside the container. B102
+# pins: the 3 packages in the apk add list +
+# test_backup_protocols.sh exists + all 5 protocols
+# covered by the test.
+run_check "B102" "Dockerfile has cifs-utils + nfs-utils + sshfs; test_backup_protocols.sh covers all 5 protocols (B102, BL-16 v1.3.8 mount helpers)" \
+  'test -f scripts/check_b102.sh && bash scripts/check_b102.sh'

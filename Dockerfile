@@ -74,16 +74,29 @@ FROM golang:1.25-alpine
 # skygate container. Without it the orchestrator's
 # `docker compose build skygate` step errors with
 # "docker: unknown command: docker compose".
+# 2026-08-12 v1.3.8: added cifs-utils, nfs-utils, sshfs so
+# scripts/backup.sh (invoked from the in-app runner via
+# `bash scripts/backup.sh`) can mount SMB / NFS / SFTP
+# shares. Without these, the in-app backup via /admin/backup
+# (which runs inside this container) would only work for
+# local + S3 destinations — the SMB / NFS / SFTP paths
+# would silently fail at `mount` with "executable file not
+# found" or "mount: bad usage". The 3 packages add ~3 MB
+# to the image; the v1.3.8 BL-16 per-protocol e2e test
+# verified each protocol's mount path with this image.
 RUN apk add --no-cache \
         bash \
         ca-certificates \
+        cifs-utils \
         docker-cli \
         docker-cli-compose \
         git \
         iptables \
         ip6tables \
         libcap \
-        openssh-client
+        nfs-utils \
+        openssh-client \
+        sshfs
 
 # Copy the official tailscale binaries from stage 1. The official image
 # puts both at /usr/local/bin/; we re-chmod to be safe.
