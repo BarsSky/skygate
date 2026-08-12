@@ -112,6 +112,22 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 		Password:    r.FormValue("password"), // don't trim — leading/trailing space might be intentional
 		SSHKeyPath:  strings.TrimSpace(r.FormValue("ssh_key_path")),
 		Schedule:    strings.TrimSpace(r.FormValue("schedule")),
+		// 2026-08-12 v1.3.8: S3 fields. The form
+		// sends these as plain inputs (not
+		// type=password for the secret in
+		// this code path — the form uses
+		// type=password so the browser
+		// doesn't autofill it). The empty
+		// default for S3StagingDir is filled
+		// in by Validate() / Load() defaults.
+		S3Endpoint:   strings.TrimSpace(r.FormValue("s3_endpoint")),
+		S3Region:     strings.TrimSpace(r.FormValue("s3_region")),
+		S3AccessKey:  strings.TrimSpace(r.FormValue("s3_access_key")),
+		S3SecretKey:  r.FormValue("s3_secret_key"), // don't trim — same reason as Password
+		S3Bucket:     strings.TrimSpace(r.FormValue("s3_bucket")),
+		S3Prefix:     strings.TrimSpace(r.FormValue("s3_prefix")),
+		S3StagingDir: strings.TrimSpace(r.FormValue("s3_staging_dir")),
+		S3UseSSL:     r.FormValue("s3_use_ssl") == "1",
 	}
 	// Booleans: HTML form only sends the value when the
 	// checkbox is checked. Missing = false.
@@ -152,7 +168,7 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 		backupConfigRedirect(w, r, "", "Save failed: "+err.Error())
 		return
 	}
-	s.Backend.Audit(c.UserID, c.Username, "backup.config.save", fmt.Sprintf("protocol=%s destination=%s enabled=%t in_app=%t", cfg.Protocol, cfg.Destination, cfg.Enabled, cfg.InAppEnabled))
+	s.Backend.Audit(c.UserID, c.Username, "backup.config.save", fmt.Sprintf("protocol=%s destination=%s enabled=%t in_app=%t s3_bucket=%s", cfg.Protocol, cfg.Destination, cfg.Enabled, cfg.InAppEnabled, cfg.S3Bucket))
 	backupConfigRedirect(w, r, "Saved", "")
 }
 
@@ -177,6 +193,18 @@ func (s *Service) PostAdminBackupTest(w http.ResponseWriter, r *http.Request) {
 		Mountpoint:  strings.TrimSpace(r.FormValue("mountpoint")),
 		Username:    strings.TrimSpace(r.FormValue("username")),
 		SSHKeyPath:  strings.TrimSpace(r.FormValue("ssh_key_path")),
+		// 2026-08-12 v1.3.8: S3 fields on
+		// the test path. We copy them
+		// through so TestConnection can
+		// actually probe the S3 endpoint
+		// (HEAD bucket via the S3 API).
+		S3Endpoint:  strings.TrimSpace(r.FormValue("s3_endpoint")),
+		S3Region:    strings.TrimSpace(r.FormValue("s3_region")),
+		S3AccessKey: strings.TrimSpace(r.FormValue("s3_access_key")),
+		S3SecretKey: r.FormValue("s3_secret_key"),
+		S3Bucket:    strings.TrimSpace(r.FormValue("s3_bucket")),
+		S3Prefix:    strings.TrimSpace(r.FormValue("s3_prefix")),
+		S3UseSSL:    r.FormValue("s3_use_ssl") == "1",
 	}
 	// Run the no-mount test. We do NOT Save() here — the
 	// admin has to click "Save" separately to persist.
@@ -195,6 +223,13 @@ func (s *Service) PostAdminBackupTest(w http.ResponseWriter, r *http.Request) {
 		okMsg = i18n.Tf(lang, "backup.test_ok_sftp", tc.Fields["source"], s.SSHKeyPath)
 	case backup.ProtocolNFS:
 		okMsg = i18n.Tf(lang, "backup.test_nfs", tc.Fields["host"]+":"+tc.Fields["path"])
+	// 2026-08-12 v1.3.8: S3 test path
+	// shows endpoint + bucket + region
+	// (the three things the admin
+	// actually configured).
+	case backup.ProtocolS3:
+		okMsg = i18n.Tf(lang, "backup.s3_test_ok",
+			tc.Fields["endpoint"], tc.Fields["bucket"], tc.Fields["region"])
 	default:
 		okMsg = "OK"
 	}

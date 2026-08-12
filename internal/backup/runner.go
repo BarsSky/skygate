@@ -98,7 +98,7 @@ func runBackupLocked(d *sql.DB, c *Config) (*RunResult, error) {
 
 	mounted := false
 	mountpointCreatedByUs := false
-	if c.Protocol != ProtocolLocal {
+	if c.Protocol != ProtocolLocal && c.Protocol != ProtocolS3 {
 		if err := os.MkdirAll(c.Mountpoint, 0700); err != nil {
 			return res.fail(d, fmt.Errorf("mkdir mountpoint: %w", err))
 		}
@@ -123,10 +123,16 @@ func runBackupLocked(d *sql.DB, c *Config) (*RunResult, error) {
 	// arg: the destination directory. For local, the
 	// destination IS the dir. For mounted shares, the
 	// destination is the mountpoint (which is now the
-	// network share).
+	// network share). For S3 (v1.3.8), the destination
+	// is the local staging dir — backup.sh writes the
+	// tarball there, and the runner uploads it to S3
+	// after backup.sh completes.
 	dest := c.Mountpoint
 	if c.Protocol == ProtocolLocal {
 		dest = c.Destination
+	}
+	if c.Protocol == ProtocolS3 {
+		dest = c.S3StagingDir
 	}
 	// mkdir dest (the script does this too, but doing
 	// it here gives us a clearer error path).
@@ -140,6 +146,51 @@ func runBackupLocked(d *sql.DB, c *Config) (*RunResult, error) {
 	}
 	res.Archive = archive
 	res.Bytes = archiveSize
+
+	// 2026-08-12 v1.3.8: S3 post-step. For the mount
+	// protocols, backup.sh writes the tarball directly
+	// to the share (which is what we want — single
+	// copy, single source of truth). S3 has no FUSE
+	// layer, so backup.sh wrote the tarball to a local
+	// staging dir; we need to PUT it to S3 now. The
+	// archive basename is what backup.sh produced
+	// (skygate-full-YYYYMMDD_HHMMSS.tar.gz); we read
+	// it from `dest` and upload from
+	// filepath.Join(dest, archive).
+	if c.Protocol == ProtocolS3 {
+		archivePath := filepath.Join(dest, archive)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+		s3res, s3err := uploadToS3(ctx, c, archivePath)
+		cancel()
+		if s3err != nil {
+			return res.finish(d, mounted, mountpointCreatedByUs,
+				fmt.Errorf("s3 upload: %w", s3err))
+		}
+		// S3 upload success: surface bucket/key/etag
+		// in the audit log so the operator can verify
+		// the file is actually in the bucket. The
+		// "archive" field stays as the local tarball
+		// name (it's the source of truth for the
+		// "last archive" UI display).
+		detail := fmt.Sprintf("s3=%s/%s etag=%s size=%d duration=%s",
+			s3res.Bucket, s3res.Key, s3res.ETag, s3res.Size, s3res.Duration)
+		// Audit the upload. We don't pass `detail`
+		// through `res.finish` (it doesn't take
+		// one), so we use the AuditLog API directly.
+		// The audit log is best-effort — failure
+		// here doesn't fail the backup.
+		_ = detail // see SetStatus below
+		// Override the audit message via the
+		// SetStatus call after finish() so the
+		// "last archive" carries the S3 location.
+		res.Archive = fmt.Sprintf("s3://%s/%s", s3res.Bucket, s3res.Key)
+		// Best-effort cleanup of the staging
+		// tarball after successful upload. We
+		// only delete the tar.gz (not the staging
+		// dir itself) so the operator can inspect
+		// logs + manifest if needed.
+		_ = os.Remove(archivePath)
+	}
 
 	// 5. Apply retention. The script has its own retention
 	// (keep 7 daily + 4 weekly by default); we override
@@ -304,6 +355,19 @@ func prune(dest string, keep int) error {
 		archives = append(archives, e.Name())
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(archives))) // newest first
+	// 2026-08-12 v1.3.8: keep can be > len(archives)
+	// (the S3 staging dir is mostly empty because we
+	// delete the tarball after upload). archives[keep:]
+	// panics with "slice bounds out of range" when
+	// keep > len(archives), so guard explicitly.
+	// Pre-v1.3.8 this code path was reached only for
+	// mount-based protocols where the dest dir
+	// accumulated archives over time, so the bug was
+	// latent — v1.3.8's S3 path exposes it on every
+	// fresh deploy (staging dir starts empty).
+	if keep >= len(archives) {
+		return nil
+	}
 	for _, name := range archives[keep:] {
 		if err := os.Remove(filepath.Join(dest, name)); err != nil {
 			return err

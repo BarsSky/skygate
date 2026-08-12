@@ -2822,3 +2822,29 @@ run_check "B98" "exit-node speed/availability system tests registered + helper +
 #     — both checks must pass for the fix to hold)
 run_check "B99" "bash is in Dockerfile runtime apk add (B99, v1.3.6 backup error fix)" \
   'grep -v "^[[:space:]]*#" Dockerfile | grep -qE "^[[:space:]]+bash(\$| )" && grep -qE "exec\.Command(Context)?\([^)]*\"bash\"" internal/backup/runner.go'
+
+# ─── B100 (v1.3.8) — S3 / S3-compatible backup destination ───
+# 2026-08-12 — adds the 5th backup protocol: S3 (AWS S3,
+# MinIO, Yandex Object Storage, Selectel, VK Cloud, Backblaze
+# B2, etc.). Unlike SMB/NFS/SFTP, S3 has no FUSE layer — the
+# in-app runner uploads the produced tarball via the S3 REST
+# API (PUT object) using github.com/minio/minio-go/v7 (a
+# 2 MB Go dep that supports any S3-compatible endpoint with
+# a uniform API). B100 pins:
+#   - Config.ProtocolS3 + 8 S3 fields + detectProtocol +
+#     Validate paths
+#   - internal/backup/s3.go (newS3Client, uploadToS3,
+#     buildS3Key) + s3_test.go (4 unit tests)
+#   - runner.go wires the S3 path (staging dir +
+#     post-backup upload)
+#   - mount.go makes Mount/Unmount no-ops for S3
+#   - /admin/backup/config UI has the 8 S3 form fields
+#     (data-show-for="s3" toggles)
+#   - i18n keys for protocol_s3 + the 9 S3 fields
+#     (ru + en parity covered by B4 TestCatalogsParity)
+#   - go.mod: minio-go in DIRECT deps (not indirect — proves
+#     some Go code actually imports it)
+#   - the 4 unit tests in s3_test.go pass
+# See scripts/check_b100.sh for the full grep list.
+run_check "B100" "S3 / S3-compatible backup destination: protocol + 8 fields + transport + UI + i18n + tests (B100, v1.3.8 multi-protocol backup)" \
+  'test -f scripts/check_b100.sh && bash scripts/check_b100.sh'

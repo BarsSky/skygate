@@ -44,11 +44,20 @@ const (
 	ProtocolSMB   Protocol = "smb"   // SMB/CIFS share (mount -t cifs)
 	ProtocolNFS   Protocol = "nfs"   // NFS share (mount -t nfs)
 	ProtocolSFTP  Protocol = "sftp"  // SSHFS / FUSE (mount -t fuse.sshfs)
+	// 2026-08-12 v1.3.8: S3 / S3-compatible (AWS, MinIO,
+	// Yandex Object Storage, Selectel, VK Cloud, Backblaze
+	// B2 S3 endpoint, etc.). Unlike the mount-based
+	// protocols, S3 is not a filesystem — the in-app
+	// runner uploads the produced tar.gz via the S3 REST
+	// API (PUT object) using minio-go. The destination
+	// field stores the bucket+prefix in the form
+	// "bucket/optional/prefix".
+	ProtocolS3 Protocol = "s3"
 )
 
 // AllProtocols lists every protocol the UI offers. The order
 // here is also the order they appear in the dropdown.
-var AllProtocols = []Protocol{ProtocolLocal, ProtocolSMB, ProtocolNFS, ProtocolSFTP}
+var AllProtocols = []Protocol{ProtocolLocal, ProtocolSMB, ProtocolNFS, ProtocolSFTP, ProtocolS3}
 
 // IsValidProtocol reports whether p is a known protocol. Used
 // by the form validator and by the auto-detect fallback (when
@@ -104,6 +113,64 @@ type Config struct {
 	// passed to sshfs.
 	SSHKeyPath string
 
+	// --- 2026-08-12 v1.3.8: S3 protocol fields. ---
+
+	// S3Endpoint is the S3 API endpoint URL. Empty
+	// string = use AWS default
+	// (https://s3.<region>.amazonaws.com). Set this for
+	// S3-compatible storage (MinIO, Yandex Object
+	// Storage, Selectel, VK Cloud, Backblaze B2, etc.).
+	// Examples:
+	//   "https://s3.amazonaws.com"
+	//   "https://storage.yandexcloud.net"
+	//   "https://s3.amazonaws.com"  (AWS, region in S3Region)
+	//   "http://minio.local:9000"  (MinIO without TLS)
+	S3Endpoint string
+
+	// S3Region is the AWS region (e.g. "us-east-1").
+	// Required even for non-AWS S3-compatible storage
+	// (the SigV4 signing scope includes it; MinIO
+	// accepts any non-empty value).
+	S3Region string
+
+	// S3AccessKey + S3SecretKey are the S3 credentials.
+	// Like Password for SMB, these are stored as
+	// plaintext in global_settings — the threat model
+	// is the deployment's disk encryption.
+	S3AccessKey string
+	S3SecretKey string
+
+	// S3Bucket is the destination bucket name. The
+	// bucket must already exist (the script does not
+	// create it; that requires extra IAM perms and
+	// varies by provider).
+	S3Bucket string
+
+	// S3Prefix is an optional key prefix inside the
+	// bucket (e.g. "backups/skygate-prod/"). Trailing
+	// slash is added by the runner if missing. Empty
+	// string = root of the bucket.
+	S3Prefix string
+
+	// S3StagingDir is the local directory where the
+	// backup.sh script writes the tarball before it's
+	// uploaded to S3. Defaults to /var/lib/skygate/
+	// backup-staging when empty. The dir is created
+	// on demand and pruned after upload.
+	S3StagingDir string
+
+	// S3UseSSL controls whether the S3 client uses
+	// HTTPS. Defaults to true (set in Load when key
+	// is missing). Operators running a private MinIO
+	// without TLS can set this to "0" in global_settings
+	// (parsed via stringToBool below).
+	//
+	// 2026-08-12 v1.3.8: stored as string in
+	// global_settings (the on-disk key/value store
+	// doesn't have a native bool column), parsed on
+	// Load. UI checkbox writes "1" or "0".
+	S3UseSSL bool
+
 	// KeepCount is how many archive files to retain at the
 	// destination. Older archives are pruned on each
 	// successful run. 0 = keep all (use with caution —
@@ -157,6 +224,18 @@ const (
 	keyLastStatus  = "backup.last_status"
 	keyLastError   = "backup.last_error"
 	keyLastArchive = "backup.last_archive"
+	// 2026-08-12 v1.3.8: S3 protocol storage keys. The
+	// "s3_" prefix groups them in the global_settings
+	// table so /admin/backup/config's grep for
+	// "s3_*" finds all the relevant rows.
+	keyS3Endpoint    = "backup.s3_endpoint"
+	keyS3Region      = "backup.s3_region"
+	keyS3AccessKey   = "backup.s3_access_key"
+	keyS3SecretKey   = "backup.s3_secret_key"
+	keyS3Bucket      = "backup.s3_bucket"
+	keyS3Prefix      = "backup.s3_prefix"
+	keyS3StagingDir  = "backup.s3_staging_dir"
+	keyS3UseSSL      = "backup.s3_use_ssl"
 )
 
 // Default values applied on first Load when no row exists. The
@@ -179,6 +258,20 @@ func Default() *Config {
 		LastStatus:   "",
 		LastError:    "",
 		LastArchive:  "",
+		// 2026-08-12 v1.3.8: S3 defaults. Leave
+		// credentials empty so the admin has to
+		// explicitly set them. Default staging
+		// dir is /var/lib/skygate/backup-staging
+		// (a path the skygate container has
+		// write access to without needing sudo).
+		S3Endpoint:   "",
+		S3Region:     "us-east-1",
+		S3AccessKey:  "",
+		S3SecretKey:  "",
+		S3Bucket:     "",
+		S3Prefix:     "",
+		S3StagingDir: "/var/lib/skygate/backup-staging",
+		S3UseSSL:     true,
 	}
 }
 
@@ -241,6 +334,28 @@ func Load(d *sql.DB) (*Config, error) {
 			c.LastError = v
 		case keyLastArchive:
 			c.LastArchive = v
+		// 2026-08-12 v1.3.8: S3 fields. Same
+		// pattern as the other keys — read the raw
+		// value, no validation here (Validate()
+		// catches empty creds at RunBackup time so
+		// the admin can save partial config and
+		// fill credentials later).
+		case keyS3Endpoint:
+			c.S3Endpoint = v
+		case keyS3Region:
+			c.S3Region = v
+		case keyS3AccessKey:
+			c.S3AccessKey = v
+		case keyS3SecretKey:
+			c.S3SecretKey = v
+		case keyS3Bucket:
+			c.S3Bucket = v
+		case keyS3Prefix:
+			c.S3Prefix = v
+		case keyS3StagingDir:
+			c.S3StagingDir = v
+		case keyS3UseSSL:
+			c.S3UseSSL = v == "1"
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -283,6 +398,18 @@ func Save(d *sql.DB, c *Config) error {
 		keySchedule:    c.Schedule,
 		keyEnabled:     boolToOnOff(c.Enabled),
 		keyInApp:       boolToOnOff(c.InAppEnabled),
+		// 2026-08-12 v1.3.8: S3 fields. Saving
+		// empty strings is fine (admin can clear
+		// a credential). boolToOnOff maps true
+		// → "1", false → "0" (Load inverts).
+		keyS3Endpoint:   c.S3Endpoint,
+		keyS3Region:     c.S3Region,
+		keyS3AccessKey:  c.S3AccessKey,
+		keyS3SecretKey:  c.S3SecretKey,
+		keyS3Bucket:     c.S3Bucket,
+		keyS3Prefix:     c.S3Prefix,
+		keyS3StagingDir: c.S3StagingDir,
+		keyS3UseSSL:     boolToOnOff(c.S3UseSSL),
 	}
 	tx, err := d.Begin()
 	if err != nil {
@@ -371,6 +498,18 @@ func detectProtocol(dest string) Protocol {
 	if strings.HasPrefix(dest, "sftp://") {
 		return ProtocolSFTP
 	}
+	// 2026-08-12 v1.3.8: S3 detection. The
+	// destination field for S3 stores "bucket"
+	// or "bucket/prefix" (no scheme, no
+	// host). The admin picks s3:// in the
+	// dropdown when they want S3 transport.
+	// The string "s3://" prefix is also
+	// recognized for the rare case where the
+	// admin pastes a full S3 URL into the
+	// destination field.
+	if strings.HasPrefix(dest, "s3://") {
+		return ProtocolS3
+	}
 	if strings.Contains(dest, "@") && strings.Contains(dest, ":") {
 		// user@host:/path style — SFTP.
 		return ProtocolSFTP
@@ -423,8 +562,31 @@ func (c *Config) Validate() error {
 	if !IsValidProtocol(c.Protocol) {
 		return fmt.Errorf("unknown protocol %q", c.Protocol)
 	}
-	if c.Protocol != ProtocolLocal && c.Mountpoint == "" {
-		return errors.New("mountpoint is required for non-local destinations")
+	if c.Protocol != ProtocolLocal && c.Protocol != ProtocolS3 && c.Mountpoint == "" {
+		// 2026-08-12 v1.3.8: S3 doesn't need a
+		// mountpoint (no FUSE layer), only a
+		// staging dir. All other non-local
+		// protocols still require a mountpoint.
+		return errors.New("mountpoint is required for non-local, non-S3 destinations")
+	}
+	// 2026-08-12 v1.3.8: S3-specific validation.
+	// Done after the protocol check so the
+	// admin gets a clear "S3 requires bucket +
+	// credentials" message instead of a generic
+	// "validate failed".
+	if c.Protocol == ProtocolS3 {
+		if c.S3Bucket == "" {
+			return errors.New("S3 destination requires a bucket name (set backup.s3_bucket)")
+		}
+		if c.S3AccessKey == "" || c.S3SecretKey == "" {
+			return errors.New("S3 destination requires access_key + secret_key (set backup.s3_access_key / backup.s3_secret_key)")
+		}
+		if c.S3Region == "" {
+			c.S3Region = "us-east-1"
+		}
+		if c.S3StagingDir == "" {
+			c.S3StagingDir = "/var/lib/skygate/backup-staging"
+		}
 	}
 	if c.KeepCount < 0 {
 		return errors.New("keep_count must be >= 0")

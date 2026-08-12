@@ -23,20 +23,45 @@ var ruBackup = map[string]string{
 	"backup.upload"                  : "Загрузить файл",
 	"backup.empty"                   : "Нет бэкапов",
 	"backup.config_title"            : "Хранилище и расписание",
-	"backup.config_subtitle"         : "Куда и как часто сохранять бэкапы (локально, SMB, NFS, SFTP)",
+	"backup.config_subtitle"         : "Куда и как часто сохранять бэкапы (локально, SMB, NFS, SFTP, S3)",
 	"backup.protocol"                : "Протокол",
 	"backup.protocol_local"          : "Локальная папка",
 	"backup.protocol_smb"            : "SMB / CIFS (Synology, Windows share)",
 	"backup.protocol_nfs"            : "NFS",
 	"backup.protocol_sftp"           : "SFTP / SSHFS",
+	// 2026-08-12 v1.3.8: S3 / S3-compatible
+	// destinations (AWS, MinIO, Yandex Object
+	// Storage, Selectel, VK Cloud, Backblaze B2).
+	// The tarball is uploaded via the S3 REST
+	// API (PUT object) — no FUSE layer, no
+	// mountpoint.
+	"backup.protocol_s3"             : "S3 / S3-совместимое (AWS, MinIO, Yandex, Selectel)",
 	"backup.destination"             : "Путь назначения",
-	"backup.destination_help"        : "Локально: /mnt/backups · SMB: //host/share/path · NFS: host:/path · SFTP: user@host:/path",
+	"backup.destination_help"        : "Локально: /mnt/backups · SMB: //host/share/path · NFS: host:/path · SFTP: user@host:/path · S3: bucket/prefix",
 	"backup.mountpoint"              : "Точка монтирования",
 	"backup.mountpoint_help"         : "Локальная папка, куда подключается сетевая шара (для SMB/NFS/SFTP)",
 	"backup.username"                : "Имя пользователя",
 	"backup.password"                : "Пароль",
 	"backup.ssh_key_path"            : "Путь к SSH-ключу",
 	"backup.ssh_key_path_help"       : "Только для SFTP. Файл должен иметь права 600",
+	// 2026-08-12 v1.3.8: S3 fields. The form
+	// shows these when the protocol dropdown
+	// is set to "s3" (driven by the JS
+	// data-show-for="s3" on each .form-group).
+	"backup.s3_endpoint"             : "S3 endpoint URL",
+	"backup.s3_endpoint_help"        : "Например: https://s3.amazonaws.com, https://storage.yandexcloud.net, http://minio.local:9000. Пусто = AWS по умолчанию",
+	"backup.s3_region"               : "Регион",
+	"backup.s3_region_help"          : "Например us-east-1, ru-central1. Для MinIO — любое непустое значение",
+	"backup.s3_access_key"           : "Access Key ID",
+	"backup.s3_secret_key"           : "Secret Access Key",
+	"backup.s3_bucket"               : "Bucket (имя корзины)",
+	"backup.s3_bucket_help"          : "Корзина должна существовать. Скрипт не создаёт её",
+	"backup.s3_prefix"               : "Префикс (опц.)",
+	"backup.s3_prefix_help"          : "Например backups/skygate-prod/. Пусто = корень корзины",
+	"backup.s3_staging_dir"          : "Локальная staging-папка",
+	"backup.s3_staging_dir_help"     : "Куда skygate пишет tar.gz перед загрузкой в S3. По умолчанию /var/lib/skygate/backup-staging",
+	"backup.s3_use_ssl"              : "Использовать HTTPS",
+	"backup.s3_test_ok"              : "S3 доступен: %s · корзина: %s · регион: %s",
 	"backup.keep_count"              : "Хранить копий",
 	"backup.keep_count_help"         : "0 — не удалять. Самые старые архивы удаляются после каждого успешного бэкапа",
 	"backup.schedule"                : "Расписание (cron)",
@@ -101,20 +126,45 @@ var enBackup = map[string]string{
 	"backup.upload"                  : "Upload file",
 	"backup.empty"                   : "No backups",
 	"backup.config_title"            : "Destination & schedule",
-	"backup.config_subtitle"         : "Where and how often to store backups (local, SMB, NFS, SFTP)",
+	"backup.config_subtitle"         : "Where and how often to store backups (local, SMB, NFS, SFTP, S3)",
 	"backup.protocol"                : "Protocol",
 	"backup.protocol_local"          : "Local directory",
 	"backup.protocol_smb"            : "SMB / CIFS (Synology, Windows share)",
 	"backup.protocol_nfs"            : "NFS",
 	"backup.protocol_sftp"           : "SFTP / SSHFS",
+	// 2026-08-12 v1.3.8: S3 / S3-compatible
+	// destinations (AWS, MinIO, Yandex Object
+	// Storage, Selectel, VK Cloud, Backblaze B2).
+	// The tarball is uploaded via the S3 REST
+	// API (PUT object) — no FUSE layer, no
+	// mountpoint.
+	"backup.protocol_s3"             : "S3 / S3-compatible (AWS, MinIO, Yandex, Selectel)",
 	"backup.destination"             : "Destination",
-	"backup.destination_help"        : "Local: /mnt/backups · SMB: //host/share/path · NFS: host:/path · SFTP: user@host:/path",
+	"backup.destination_help"        : "Local: /mnt/backups · SMB: //host/share/path · NFS: host:/path · SFTP: user@host:/path · S3: bucket/prefix",
 	"backup.mountpoint"              : "Mountpoint",
 	"backup.mountpoint_help"         : "Local directory where the network share gets attached (SMB/NFS/SFTP only)",
 	"backup.username"                : "Username",
 	"backup.password"                : "Password",
 	"backup.ssh_key_path"            : "SSH key path",
 	"backup.ssh_key_path_help"       : "SFTP only. File must be mode 600",
+	// 2026-08-12 v1.3.8: S3 fields. The form
+	// shows these when the protocol dropdown
+	// is set to "s3" (driven by the JS
+	// data-show-for="s3" on each .form-group).
+	"backup.s3_endpoint"             : "S3 endpoint URL",
+	"backup.s3_endpoint_help"        : "e.g. https://s3.amazonaws.com, https://storage.yandexcloud.net, http://minio.local:9000. Empty = AWS default",
+	"backup.s3_region"               : "Region",
+	"backup.s3_region_help"          : "e.g. us-east-1, ru-central1. MinIO accepts any non-empty value",
+	"backup.s3_access_key"           : "Access Key ID",
+	"backup.s3_secret_key"           : "Secret Access Key",
+	"backup.s3_bucket"               : "Bucket (name)",
+	"backup.s3_bucket_help"          : "The bucket must already exist. The script does not create it",
+	"backup.s3_prefix"               : "Prefix (optional)",
+	"backup.s3_prefix_help"          : "e.g. backups/skygate-prod/. Empty = root of the bucket",
+	"backup.s3_staging_dir"          : "Local staging dir",
+	"backup.s3_staging_dir_help"     : "Where skygate writes the tarball before uploading to S3. Default /var/lib/skygate/backup-staging",
+	"backup.s3_use_ssl"              : "Use HTTPS",
+	"backup.s3_test_ok"              : "S3 reachable: %s · bucket: %s · region: %s",
 	"backup.keep_count"              : "Keep copies",
 	"backup.keep_count_help"         : "0 = keep all. Oldest archives are deleted after each successful backup",
 	"backup.schedule"                : "Schedule (cron)",

@@ -58,6 +58,17 @@ func Mount(c *Config) error {
 		// Local needs no mount.
 		return nil
 	}
+	// 2026-08-12 v1.3.8: S3 has no FUSE
+	// layer — the in-app runner uploads
+	// the tarball via the S3 REST API
+	// after backup.sh finishes. Mount is
+	// a no-op for S3 (and callers should
+	// NOT call it for S3 — runner.go's
+	// gate excludes S3 already, but
+	// defense in depth is cheap).
+	if c.Protocol == ProtocolS3 {
+		return nil
+	}
 	if !isMounted(c.Mountpoint) {
 		switch c.Protocol {
 		case ProtocolSMB:
@@ -89,7 +100,10 @@ func Unmount(protocol Protocol) error {
 	if runtime.GOOS == "windows" {
 		return nil // no-op on Windows
 	}
-	if protocol == ProtocolLocal {
+	if protocol == ProtocolLocal || protocol == ProtocolS3 {
+		// Local needs no unmount; S3 (v1.3.8)
+		// uploads the tarball via REST and
+		// has no FUSE mount to detach.
 		return nil
 	}
 	// We need the mountpoint to know what to unmount.
@@ -393,6 +407,47 @@ func TestConnection(c *Config) *ConnectionTest {
 		}
 		if c.Mountpoint == "" {
 			out.Issues = append(out.Issues, "mountpoint is required")
+		}
+	// 2026-08-12 v1.3.8: S3 test path.
+	// We don't do a real HEAD request here
+	// (that would couple the form click
+	// to network latency + bucket ACLs).
+	// Instead we check the config is
+	// self-consistent: bucket + creds +
+	// region all non-empty. The actual
+	// network probe happens in
+	// uploadToS3's BucketExists call at
+	// run time, where a clear "bucket
+	// does not exist: foo" error surfaces
+	// in the audit log.
+	case ProtocolS3:
+		// Endpoint defaults to AWS regional
+		// (matches newS3Client logic).
+		ep := strings.TrimSpace(c.S3Endpoint)
+		if ep == "" {
+			ep = "(AWS default)"
+		}
+		out.Fields["endpoint"] = ep
+		out.Fields["region"] = c.S3Region
+		out.Fields["bucket"] = c.S3Bucket
+		if c.S3Bucket == "" {
+			out.Issues = append(out.Issues, "s3_bucket is required")
+		}
+		if c.S3AccessKey == "" {
+			out.Issues = append(out.Issues, "s3_access_key is required")
+		}
+		if c.S3SecretKey == "" {
+			out.Issues = append(out.Issues, "s3_secret_key is required")
+		}
+		if c.S3Region == "" {
+			// 2026-08-12 v1.3.8: region has
+			// a default in Load(), so this
+			// only fires for a manually
+			// built Config. Still warn so
+			// the operator can fix it before
+			// RunBackup falls back to
+			// us-east-1 silently.
+			out.Issues = append(out.Issues, "s3_region is empty (will default to us-east-1)")
 		}
 	default:
 		out.Issues = append(out.Issues, "unknown protocol: "+string(c.Protocol))

@@ -217,8 +217,48 @@ dir=${BACKUP_DIR}"
 trap cleanup_on_error ERR
 
 # -----------------------------------------------------------------------------
+# 2026-08-12 v1.3.8: when this script runs as root (the typical
+# path when invoked from the skygate container via
+# `cmd/skygate/main.go:backup-run` or from a root cron job),
+# files we write to a host bind-mount end up root-owned.
+# That locks the operator (skyadmin) out of the destination
+# on the next run with "Permission denied" — the exact
+# failure mode that hid the actual backup error for the
+# last 5+ deploys (see TODO B100 in scripts/verify_pre_deploy.sh).
+#
+# Fix: chown the destination tree to the operator at the
+# START of the run, and again at the end so the tarball and
+# its subdirs are manageable from the host. SUDO_USER is set
+# when invoked via `sudo`; fall back to the user who owns
+# ${HOME} (the operator's typical identity), and finally to
+# "skyadmin" as the documented default.
+if [[ "$(id -u)" -eq 0 ]]; then
+  OPERATOR_USER="${SUDO_USER:-}"
+  if [[ -z "${OPERATOR_USER}" ]] && [[ -n "${HOME}" ]]; then
+    OPERATOR_USER="$(stat -c '%U' "${HOME}" 2>/dev/null || true)"
+  fi
+  OPERATOR_USER="${OPERATOR_USER:-skyadmin}"
+  # chown the destination only if it exists. If we have to
+  # create it, mkdir below will do that as root and we'll
+  # chown right after.
+  if [[ -d "${BACKUP_DIR}" ]]; then
+    chown "${OPERATOR_USER}:${OPERATOR_USER}" "${BACKUP_DIR}" 2>/dev/null || true
+  fi
+  export SKYGATE_OPERATOR_USER="${OPERATOR_USER}"
+fi
+
+# -----------------------------------------------------------------------------
 mkdir -p "${BACKUP_PATH}"
 cd "${BACKUP_PATH}"
+# 2026-08-12 v1.3.8: if we just created the run dir as root,
+# chown it to the operator immediately so subsequent steps
+# (git bundle, tar) can write into it. (mkdir -p doesn't
+# change perms if the dir already exists; if it does, we
+# want root to be able to write into it, then chown for the
+# operator to clean up.)
+if [[ "$(id -u)" -eq 0 ]] && [[ -n "${SKYGATE_OPERATOR_USER:-}" ]]; then
+  chown "${SKYGATE_OPERATOR_USER}:${SKYGATE_OPERATOR_USER}" "${BACKUP_PATH}" 2>/dev/null || true
+fi
 
 echo "=============================================="
 echo "  Skygate Full Backup — ${DATE_TAG}"
@@ -357,6 +397,17 @@ rm -rf "skygate-full-${DATE_TAG}"
 BACKUP_FILE="${BACKUP_DIR}/skygate-full-${DATE_TAG}.tar.gz"
 BACKUP_SIZE=$(du -b "${BACKUP_FILE}" | cut -f1)
 SHA256=$(sha256sum "${BACKUP_FILE}" | cut -d' ' -f1)
+# 2026-08-12 v1.3.8: chown the final tarball and the
+# destination dir to the operator so they can be downloaded
+# / rsynced / pruned by skyadmin without sudo. Without
+# this the in-app backup (run as root inside the skygate
+# container) leaves everything root-owned and the operator
+# has to sudo to manage the archive tree — the exact
+# Permission-denied loop the operator hit on 2026-08-12.
+if [[ "$(id -u)" -eq 0 ]] && [[ -n "${SKYGATE_OPERATOR_USER:-}" ]]; then
+  chown "${SKYGATE_OPERATOR_USER}:${SKYGATE_OPERATOR_USER}" "${BACKUP_FILE}" 2>/dev/null || true
+  chown "${SKYGATE_OPERATOR_USER}:${SKYGATE_OPERATOR_USER}" "${BACKUP_DIR}" 2>/dev/null || true
+fi
 
 echo ""
 echo "=============================================="
