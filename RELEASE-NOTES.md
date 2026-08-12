@@ -1,5 +1,176 @@
 # Skygate release notes
 
+## v1.3.8 — backup permission-denied fix + S3 / S3-compatible destination
+
+**Date:** 2026-08-12
+**Scope:** 1) Fix the long-standing "Permission denied" on
+`/home/skyadmin/skygate-backups/` (root cause: skygate container
+runs as root, writes to a host bind-mount, files end up
+root-owned). 2) Fix the `slice bounds out of range` panic in
+`prune()` that fires on every fresh S3 backup. 3) Add S3 /
+S3-compatible (AWS, MinIO, Yandex Object Storage, Selectel,
+VK Cloud, Backblaze B2) as a 5th backup protocol via
+`github.com/minio/minio-go/v7`.
+
+**What's added:**
+- **Permission-denied fix (scripts/backup.sh)**: when invoked
+  as root (the typical in-app / cron path), backup.sh now
+  chowns the destination to the operator
+  (`${SUDO_USER:-skyadmin}`) at the start of every run AND
+  after the tarball is created. Idempotent — no operator
+  action needed on subsequent runs.
+- **Prune guard (internal/backup/runner.go)**: `if keep >= len(archives)
+  { return nil }` before `archives[keep:]`. Prevents the
+  panic when the dest dir has fewer archives than
+  `KeepCount`. The S3 staging dir is empty on every fresh
+  deploy (we delete the tarball after upload), so the bug
+  was latent until v1.3.8's S3 path exposed it.
+- **5 regression tests** in `internal/backup/prune_test.go`
+  covering: empty dir, fewer-than-keep archives, keep-N-of-M,
+  keep-larger-than-archives (the real-world case), and
+  "non-archive files are left alone".
+- **S3 protocol (internal/backup/s3.go, ~250 lines)**:
+  - `Config.ProtocolS3` constant + 8 new S3 fields
+    (Endpoint, Region, AccessKey, SecretKey, Bucket, Prefix,
+    StagingDir, UseSSL) with 8 new storage keys
+    (`backup.s3_*`) in `global_settings`.
+  - `s3Client` interface + `realS3Client` wrapper around
+    `*minio.Client` (forwarder methods, testable via
+    interface mock).
+  - `newS3Client(c *Config)` builds the minio client,
+    normalizes the endpoint (strips scheme, falls back to
+    AWS regional URL).
+  - `uploadToS3(ctx, c, filePath)` does `BucketExists` check
+    + `FPutObject` with `ContentType: application/gzip`,
+    returns `{Bucket, Key, ETag, Size, Duration}` for
+    audit-log surfacing.
+  - `buildS3Key(prefix, basename)` joins prefix + basename
+    with exactly one "/".
+  - `internal/backup/runner.go:runBackupLocked`: S3 path
+    picks `c.S3StagingDir` as the dest, then calls
+    `uploadToS3()` after backup.sh. Sets
+    `res.Archive = "s3://bucket/key"` on success so the
+    UI "last archive" line shows the S3 location.
+  - `internal/backup/mount.go`: `Mount()` and `Unmount()`
+    are no-ops for S3 (no FUSE layer).
+  - `TestConnection()` (mount.go) checks S3 config is
+    self-consistent (bucket + creds + region) without a
+    network call.
+- **S3 UI (internal/handlers/templates/admin/backup.html +
+  internal/feature/admin/backup_config.go)**: 8 new form
+  fields (s3_endpoint, s3_region, s3_bucket, s3_prefix,
+  s3_access_key, s3_secret_key, s3_staging_dir, s3_use_ssl)
+  with `data-show-for="s3"` toggles. `PostAdminBackupConfig`
+  parses the S3 fields from the form and saves them via
+  `backup.Save`. `PostAdminBackupTest` passes the S3 fields
+  through to `TestConnection`. Audit log detail includes
+  `s3_bucket`.
+- **S3 i18n (internal/i18n/catalog_backup.go)**: 10 new keys
+  (ru + en parity preserved via B4 `TestCatalogsParity`):
+  `backup.protocol_s3`, `backup.s3_endpoint`,
+  `backup.s3_endpoint_help`, `backup.s3_region`,
+  `backup.s3_region_help`, `backup.s3_access_key`,
+  `backup.s3_secret_key`, `backup.s3_bucket`,
+  `backup.s3_bucket_help`, `backup.s3_prefix`,
+  `backup.s3_prefix_help`, `backup.s3_staging_dir`,
+  `backup.s3_staging_dir_help`, `backup.s3_use_ssl`,
+  `backup.s3_test_ok`. The `config_subtitle` and
+  `destination_help` texts updated to mention S3.
+- **Dependency: `github.com/minio/minio-go/v7` v7.2.1**
+  (~2 MB binary growth; CGO_ENABLED=0 still holds; works
+  with any S3-compatible endpoint).
+- **B100 catalog check (`scripts/check_b100.sh`)**: dedicated
+  helper (same pattern as B96/B97/B98/B99) to avoid the
+  nested-quote hell that hits when 37 greps get inlined
+  in a single `run_check` function. 37/37 PASS on the
+  current tree. Wired into `scripts/verify_pre_deploy.sh`
+  as the B100 row.
+- **B40 fix (in passing)**: the pre-existing B40 grep was
+  looking for `system_tests_runs` in
+  `internal/db/migrations_v0.51.go` (deleted in v1.3.0).
+  Now also accepts `internal/db/migrations_pg.go` so B40
+  PASSes. (Old behavior: 1 PASS → new behavior: 1 PASS,
+  but the B40 catalog row no longer falsely fails on PG.)
+- **Documentation (`docs/backup-restore-and-migration.md`,
+  380 lines, NEW)**: the single runbook for backup / restore
+  / cross-host migration. Replaces the 3 README fragments
+  that used to live in /admin/backup hints. Sections: what's
+  in a tarball, 5 protocols (with live-verified status),
+  trigger methods, the 2-step restore flow, cross-host
+  migration (5 things to change in order), failure modes
+  (Permission denied, bash not found, bucket does not
+  exist, DNS SERVFAIL, restore.sh for SQLite, slice bounds
+  out of range), and the e2e test results table.
+- **Documentation (`docs/TODO.md`, 250 lines, NEW)**: the
+  operator's prioritized "what's left" list. Priorities 1-5
+  with what / why / effort / suggested-next-step per item.
+  Complements `docs/BACKLOG.md` (historical) and
+  `docs/PLANS.md` (medium-term design).
+
+**Live verification (VM 192.168.13.69, 2026-08-12):**
+- Local backup: `last_status=ok` after `Run now`, 15 MiB
+  tar.gz at `/home/skyadmin/skygate-backups/`, owner
+  `skyadmin:skyadmin` (the v1.3.8 chown fix).
+- S3 backup (minio throwaway on `headscale_default`):
+  `last_status=ok` in 1 second, `last_archive =
+  s3://skygate-backups/v1.3.8-test/skygate-full-...tar.gz`,
+  file in minio bucket (15 MiB, ETag returned,
+  Content-Type=application/gzip).
+- S3 → fresh PG replay: download tar.gz from minio, extract,
+  `psql -f skygate-pg.sql` into a fresh `skygate_restore_test`
+  DB → 28 tables restored, 4/6 critical tables byte-equal
+  to live (portal_users, acl_snapshots, global_settings,
+  exit_servers), 2 minor drifts on device_rules and
+  audit_log (data drift between backup and now — expected).
+- All `go test ./...` packages green (28/28).
+- B100 catalog check: 37/37 PASS.
+
+**Files changed:** 15 files, +1764/-46 lines:
+```
+go.mod                                           +28 -1
+go.sum                                           +64 -1
+internal/backup/config.go                        +158 -10
+internal/backup/mount.go                         +48 -9
+internal/backup/runner.go                        +60 -5
+internal/feature/admin/backup_config.go          +29 -8
+internal/handlers/templates/admin/backup.html   +71 -0
+internal/i18n/catalog_backup.go                  +54 -4
+scripts/backup.sh                                +43 -8
+scripts/verify_pre_deploy.sh                     +24 -0
+internal/backup/s3.go                            +250 (new)
+internal/backup/s3_test.go                       +180 (new)
+internal/backup/prune_test.go                    +165 (new)
+scripts/check_b100.sh                            +260 (new)
+docs/backup-restore-and-migration.md             +380 (new)
+docs/TODO.md                                     +250 (new)
+```
+
+**Build / release:**
+- Commit: `33738ef` (v1.3.8 + docs)
+- Tag: `v1.3.8`
+- Live binary: `v1.3.8+33738ef` (v1.3.3 build-label fix verified
+  end-to-end — no `-N-g` prefix, just `+commit`)
+- GitHub release: https://github.com/BarsSky/skygate/releases/tag/v1.3.8
+- Operator action: `git fetch --tags --force origin main && git reset
+  --hard origin/main && docker compose build skygate && docker
+  compose up -d --force-recreate --no-deps skygate`. (The
+  one-time `sudo chown -R skyadmin:skyadmin
+  /home/skyadmin/skygate-backups` was already done on the live
+  VM before this commit.)
+
+**What's NOT in this release (deferred, see docs/TODO.md):**
+- `scripts/restore.sh` for PG dump (BL-15) — restore.sh still
+  has the v0.32.x SQLite-era `do_skygate_db()`. For v1.3.0+
+  operators must run `psql -f skygate-pg.sql` manually.
+  Documented in `docs/backup-restore-and-migration.md`
+  Section 2.
+- Per-protocol e2e test for SMB / NFS / SFTP (BL-16) — only
+  local + s3 have been live-verified. Code paths exist.
+- Autonomous migration verify (BL-17) — operator must manually
+  run `verify_post_deploy.sh` after a cross-host move.
+- In-app S3 download (BL-18) — operator must `aws s3 cp` or
+  `mc cp` to get the tarball, then upload to /admin/backup.
+
 ## v1.1.1 — exit-node speed/availability system tests (B98)
 
 **Date:** 2026-08-12

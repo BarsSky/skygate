@@ -17,12 +17,67 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.1.0 — UI refactoring (TD-1) + mobile-responsive
-  (TD-3). 1 commit since v1.3.2. All tests green
-  (`go test -count=1 -short ./...` full suite, 28/28 packages);
-  `make verify-pre` 73 PASS / 19 FAIL (the FAILs are all pre-existing
-  v0.32.x-era ones; B96 + B97 are the new v1.1.0 contracts and
-  both PASS). What's added:
+* **Current**: v1.3.8 — backup permission-denied fix + S3 / S3-
+  compatible destination. 1 commit since v1.3.7. All tests
+  green (`go test -count=1 -short ./...` full suite, 28/28
+  packages); `make verify-pre` 96+ PASS / 18 FAIL (B98, B99,
+  B100 are the new contracts and all PASS; B40 was fixed in
+  this release — was broken since v1.3.0 deleted the
+  migrations_v0.51.go file; the FAILs are all pre-existing
+  v0.32.x-era grep-path staleness from the SQLite-removal
+  era). What's added:
+  - **Permission-denied fix (the operator's "давно висящая
+    ошибка" from 2026-08-12)**: `scripts/backup.sh` now
+    chowns the destination to the operator
+    (`${SUDO_USER:-skyadmin}`) at the start of every run AND
+    after the tarball is created. Idempotent — no operator
+    action needed on subsequent runs. Root cause: skygate
+    container runs as root, writes to a host bind-mount, files
+    end up root-owned. The one-time `sudo chown -R skyadmin:skyadmin
+    /home/skyadmin/skygate-backups` on the live VM was done
+    before this commit.
+  - **Prune guard** (internal/backup/runner.go): `if keep >=
+    len(archives) { return nil }` before `archives[keep:]`.
+    Prevents the `slice bounds out of range [5:2]` panic that
+    fired on every fresh S3 backup (the staging dir is empty
+    after the tarball is uploaded). 5 regression tests in
+    `internal/backup/prune_test.go`.
+  - **S3 / S3-compatible destination (B100)**: 5th backup
+    protocol (alongside local / smb / nfs / sftp). Works
+    with AWS S3, MinIO, Yandex Object Storage, Selectel,
+    VK Cloud, Backblaze B2, and any S3-compatible endpoint.
+    Uses `github.com/minio/minio-go/v7` (~2 MB Go dep).
+    No FUSE layer (unlike mount-based protocols); the in-app
+    runner uploads the produced tarball via the S3 REST API
+    (PUT object).
+  - **B100 catalog check** (`scripts/check_b100.sh`): 37/37
+    PASS on the current tree. Pinned: ProtocolS3 constant +
+    8 S3 fields + s3.go transport (newS3Client, uploadToS3,
+    buildS3Key) + s3_test.go (4 unit tests) + runner.go S3
+    path + mount.go S3 no-op + UI form fields +
+    i18n keys + go.mod minio-go direct dep.
+  - **B40 fix** (in passing): the pre-existing B40 grep
+    was looking for `system_tests_runs` in
+    `internal/db/migrations_v0.51.go` (deleted in v1.3.0).
+    Now also accepts `internal/db/migrations_pg.go` so B40
+    PASSes.
+  - **Documentation**:
+    - `docs/backup-restore-and-migration.md` (NEW, 380 lines):
+      single runbook for backup / restore / cross-host
+      migration. Replaces the 3 README fragments that used
+      to live in /admin/backup hints.
+    - `docs/TODO.md` (NEW, 250 lines): operator's prioritized
+      "what's left" list. Priorities 1-5 with what / why /
+      effort / suggested-next-step per item. Complements
+      `docs/BACKLOG.md` (historical) and `docs/PLANS.md`
+      (medium-term design).
+  - 15 files changed, +1764/-46 lines. Live build
+    `v1.3.8+33738ef` (v1.3.3 build-label fix verified
+    end-to-end). S3 e2e verified with minio throwaway:
+    `last_status=ok` in 1 second, file in bucket (15 MiB,
+    ETag returned, Content-Type=application/gzip).
+    S3 → fresh PG replay verified: 28 tables restored, 4/6
+    critical tables byte-equal to live.
   - **B96 (v1.1.0, TD-1)**: 22 admin pages grouped into 6
     collapsible `<details class="sidebar-section">` blocks
     (Devices & Nodes / Access Control / System Health & Logs /
