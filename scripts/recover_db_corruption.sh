@@ -146,15 +146,15 @@ fi
 echo
 echo '=== 3. PG health + WAL state ==='
 # Run pg_isready first (the cheapest check). Then probe the
-# cluster with a SELECT 1 via throwaway postgres:15-alpine
+# cluster with a SELECT 1 via throwaway postgres:18-alpine
 # (matches the verify_post_deploy pattern).
 PG_OK=no
 if sudo docker exec skygate-postgres-1 pg_isready -U ${PG_USER} -d ${PG_DB} 2>/dev/null | grep -q 'accepting connections'; then
   PG_OK=yes
 fi
 if [ \"\$PG_OK\" = \"no\" ]; then
-  # Try via the docker service name on the skygate-net bridge.
-  if sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:15-alpine \
+  # Try via the docker service name on the headscale_default bridge.
+  if sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:18-alpine \
        psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${PG_DB} -tA -c 'SELECT 1' 2>/dev/null | grep -q '^1\$'; then
     PG_OK=yes
   fi
@@ -164,12 +164,12 @@ echo \"  PG accepting connections: \${PG_OK}\"
 if [ \"\$PG_OK\" = \"yes\" ]; then
   echo
   echo '=== 4a. Check for read-only mode (disk-full recovery) ==='
-  RO=\$(sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:15-alpine \
+  RO=\$(sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:18-alpine \
         psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${PG_DB} -tA -c \
         'SELECT setting FROM pg_settings WHERE name = \"default_transaction_read_only\";' 2>/dev/null | tr -d '[:space:]')
   if [ \"\$RO\" = 'on' ]; then
     echo '  PG is in read-only mode (disk was full). Flipping back to read-write...'
-    sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:15-alpine \\
+    sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:18-alpine \\
         psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${PG_DB} -c \\
         'ALTER SYSTEM RESET default_transaction_read_only; SELECT pg_reload_conf();' 2>&1 | tail -3
   else
@@ -181,18 +181,18 @@ if [ \"\$PG_OK\" = \"yes\" ]; then
   #   - count of public tables (≥20 after v1.3.0 migrations)
   #   - presence of the 4 critical tables
   #   - audit_log recent count (sanity)
-  sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:15-alpine \\
+  sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:18-alpine \\
       psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${PG_DB} -tA -c \\
       'SELECT \"public_tables=\" || count(*) FROM pg_tables WHERE schemaname='\\''public'\\'';' 2>&1
   for t in portal_users device_rules acl_snapshots audit_log; do
-    EX=\$(sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:15-alpine \\
+    EX=\$(sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:18-alpine \\
         psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${PG_DB} -tA -c \\
         \"SELECT to_regclass('public.\${t}') IS NOT NULL\" 2>/dev/null | tr -d '[:space:]')
     echo \"  table \${t}: \${EX}\"
   done
   echo
   echo '=== 4c. Audit log: last 3 entries ==='
-  sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:15-alpine \\
+  sudo docker run --rm --network headscale_default -e PGPASSWORD=${PG_PASS} postgres:18-alpine \\
       psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${PG_DB} -tA -c \\
       'SELECT id, to_char(created_at AT TIME ZONE '\\''UTC'\\'', '\\''YYYY-MM-DD HH24:MI:SS'\\''), action FROM audit_log ORDER BY id DESC LIMIT 3;' 2>&1
 else

@@ -44,7 +44,7 @@
 #   4. `docker exec rm` the container's file (clean up)
 # v1.3.0 removed /data/skygate.db. v1.3.1 keeps the skygate
 # container out of the loop entirely: we use a throwaway
-# postgres:15-alpine on the skygate-net bridge to do the
+# postgres:18-alpine on the headscale_default bridge to do the
 # INSERT. The container never stops, never restarts, and
 # never has its DB touched (other than the INSERT we made,
 # which is committed via a single psql invocation).
@@ -91,8 +91,8 @@ echo
 # touches the PG cluster (via SKYGATE_DB_DSN). The flow is:
 #   1. GET /api/v1/policy from headscale (unchanged)
 #   2. parse updatedAt → epoch (unchanged)
-#   3. INSERT into acl_snapshots via `docker run --rm postgres:15-alpine psql ...`
-#      (the throwaway container joins skygate-net, sees the
+#   3. INSERT into acl_snapshots via `docker run --rm postgres:18-alpine psql ...`
+#      (the throwaway container joins headscale_default, sees the
 #      postgres service by its docker name, runs the INSERT)
 #   4. print the last 3 rows so the operator can eyeball
 #      the alignment with the headscale updatedAt from step 1
@@ -110,7 +110,7 @@ echo "  updatedAt: \$UPDATED_AT"
 # real timestamp with timezone (was INTEGER unix epoch in SQLite).
 echo "\$POLICY_BODY" > /tmp/_policy_recon.json
 
-# Build the psql command via a throwaway postgres:15-alpine
+# Build the psql command via a throwaway postgres:18-alpine
 # container. The DSN is the same SKYGATE_DB_DSN the live skygate
 # uses; the throwaway container joins the same docker network so
 # the docker service name `postgres` resolves (or, for HA setups,
@@ -139,7 +139,7 @@ PG_DB="\${DSN_REST#*/}"
 docker run --rm -i \
   --network headscale_default \
   -e PGPASSWORD="\$PG_PASS" \
-  postgres:15-alpine \
+  postgres:18-alpine \
   psql -h "\$PG_HOST" -p "\$PG_PORT" -U "\$PG_USER" -d "\$PG_DB" \
        -tA -v ON_ERROR_STOP=1 <<SQL
 WITH next_ver AS (
@@ -158,7 +158,7 @@ SQL < /tmp/_policy_recon.json
 docker run --rm -i \
   --network headscale_default \
   -e PGPASSWORD="\$PG_PASS" \
-  postgres:15-alpine \
+  postgres:18-alpine \
   psql -h "\$PG_HOST" -p "\$PG_PORT" -U "\$PG_USER" -d "\$PG_DB" \
        -tA -v ON_ERROR_STOP=1 <<SQL
 SELECT id, version,

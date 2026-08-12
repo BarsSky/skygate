@@ -879,7 +879,7 @@ run_check "B34" "device_rules table has no duplicate (device, exit_node) pairs (
     if command -v psql >/dev/null 2>&1; then
       DUPES=\$(PGPASSWORD=\"\$PP\" psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c \"\$QUERY\" 2>/dev/null | tr -d \"[:space:]\")
     else
-      DUPES=\$(docker run --rm -i --network host -e PGPASSWORD=\"\$PP\" postgres:15-alpine psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c \"\$QUERY\" 2>/dev/null | tr -d \"[:space:]\")
+      DUPES=\$(docker run --rm -i --network host -e PGPASSWORD=\"\$PP\" postgres:18-alpine psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c \"\$QUERY\" 2>/dev/null | tr -d \"[:space:]\")
     fi
     if [ -z \"\$DUPES\" ]; then
       echo \"(psql read failed, skipping B34)\" 1>&2

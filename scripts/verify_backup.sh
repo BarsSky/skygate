@@ -1,7 +1,7 @@
 #!/bin/bash
 # scripts/verify_backup.sh — v1.3.1: weekly auto-verify the latest
 # backup file by replaying the embedded PG dump into a throwaway
-# postgres:15-alpine database and confirming the table count.
+# postgres:18-alpine database and confirming the table count.
 #
 # Cron: `0 4 * * 0` (Sundays at 04:00, off-peak). Picks the newest
 # `skygate-*.tar.gz` in the configured destination, extracts the
@@ -20,7 +20,7 @@
 # Pre-v1.3.1 the script extracted the embedded skygate.db and ran
 # `sqlite3 ... 'PRAGMA integrity_check'`. v1.3.0 removed SQLite
 # entirely; v1.3.1 extracts skygate-pg.sql and replays it into a
-# throwaway postgres:15-alpine container on the same docker network
+# throwaway postgres:18-alpine container on the same docker network
 # as the live PG, then asserts the table count. This is a stronger
 # check than the pre-v1.3.0 one (it proves the dump is structurally
 # valid AND replayable, not just "the btree is consistent at the
@@ -91,16 +91,16 @@ if [ -z "$DUMP_FILE" ]; then
     exit 1
 fi
 
-# Replay the dump into a throwaway postgres:15-alpine container.
+# Replay the dump into a throwaway postgres:18-alpine container.
 # This is the strongest integrity check: a syntactically-valid
 # dump with a btree-consistent table layout would still fail this
 # if any CREATE/INSERT/GRANT references a missing column, type, or
 # role. docker run --rm + the network the live PG is on (default:
-# skygate-net; override via SKYGATE_VERIFY_BACKUP_NETWORK for HA
+# headscale_default; override via SKYGATE_VERIFY_BACKUP_NETWORK for HA
 # setups where the throwaway must reach an external PG host — but
 # in that case, the throwaway just runs `psql` directly via the
 # host's path, not the throwaway container).
-NET="${SKYGATE_VERIFY_BACKUP_NETWORK:-skygate-net}"
+NET="${SKYGATE_VERIFY_BACKUP_NETWORK:-headscale_default}"
 THROWAWAY_NAME="skygate-verify-$$-$(date +%s)"
 cleanup_container() {
   docker rm -f "$THROWAWAY_NAME" 2>/dev/null || true
@@ -109,7 +109,7 @@ cleanup_container() {
 trap cleanup_container EXIT
 
 # Boot a fresh postgres with the SAME image the live cluster uses
-# (postgres:15-alpine). The dump's `--clean --if-exists` header
+# (postgres:18-alpine). The dump's `--clean --if-exists` header
 # drops existing objects, so this DB starts clean.
 docker run --rm -d \
   --name "$THROWAWAY_NAME" \
@@ -117,7 +117,7 @@ docker run --rm -d \
   -e POSTGRES_USER=verify \
   -e POSTGRES_PASSWORD=verify \
   -e POSTGRES_DB=verify \
-  postgres:15-alpine >/dev/null
+  postgres:18-alpine >/dev/null
 
 # Wait for postgres to accept connections (up to 30s).
 WAITED=0

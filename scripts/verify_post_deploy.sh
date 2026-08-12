@@ -438,8 +438,8 @@ curl_vm() { ssh_vm "curl -fsS -H 'Authorization: Bearer $API_KEY' $HEADSCALE_URL
 # the VM, with the DSN sourced from SKYGATE_DB_DSN. The VM may
 # not have psql installed (only the HA setup explicitly adds
 # it for R29/R30), so the helper falls back to a throwaway
-# postgres:15-alpine container on the same docker network
-# (default skygate-net / headscale_default) as the live cluster.
+# postgres:18-alpine container on the same docker network
+# (default headscale_default / headscale_default) as the live cluster.
 # Both paths read the same SQL, so the R-checks are identical
 # regardless of which path runs.
 psql_vm() {
@@ -464,14 +464,14 @@ psql_vm() {
       PGPASSWORD=\"\$PP\" psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" \\
         -tA -v ON_ERROR_STOP=1 -c \"$sql\" 2>&1
     else
-      # Fallback: throwaway postgres:15-alpine container.
+      # Fallback: throwaway postgres:18-alpine container.
       # --network host so the container can reach the host's
       # 127.0.0.1 (HAProxy :5000 on the HA setup) and the docker
       # service name (postgres:5432 on the docker-compose setup
       # both resolve via the host's docker DNS).
       docker run --rm -i --network host \\
         -e PGPASSWORD=\"\$PP\" \\
-        postgres:15-alpine \\
+        postgres:18-alpine \\
         psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" \\
           -tA -v ON_ERROR_STOP=1 -c \"$sql\" 2>&1
     fi

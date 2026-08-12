@@ -22,8 +22,8 @@
 # v1.3.0 removed SQLite from the skygate image (no more /data/skygate.db),
 # and v1.3.1 removed the apk add step. The skygate container now
 # connects to PG via SKYGATE_DB_DSN; the read-only queries below
-# run on the host via `docker run --rm --network skygate-net
-# postgres:15-alpine psql` (same pattern as scripts/backup.sh).
+# run on the host via `docker run --rm --network headscale_default
+# postgres:18-alpine psql` (same pattern as scripts/backup.sh).
 # We use a single throwaway psql container per query — the cost is
 # one container start per check, but the script is operator-side
 # (not in the hot path) and the simplicity beats maintaining a
@@ -69,15 +69,15 @@ PG_PORT="${DSN_REST%%/*}"
 PG_DB="${DSN_REST#*/}"
 
 # 2026-08-12: v1.3.1 — psql_cmd helper. Runs the given SQL via a
-# throwaway postgres:15-alpine container on the skygate-net bridge.
+# throwaway postgres:18-alpine container on the headscale_default bridge.
 # Returns psql's stdout (tab-separated by default; -tA strips headers
 # and alignment so callers can pipe to cut/awk safely).
 psql_cmd() {
   local sql="$1"
   docker run --rm \
-    --network "${SKYGATE_PSQL_NETWORK:-skygate-net}" \
+    --network "${SKYGATE_PSQL_NETWORK:-headscale_default}" \
     -e PGPASSWORD="${PG_PASS}" \
-    postgres:15-alpine \
+    postgres:18-alpine \
     psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" \
          -tA -v ON_ERROR_STOP=1 -c "${sql}" 2>&1
 }

@@ -23,7 +23,7 @@
 # The script still uses docker run for the psql/pg_dump clients because
 # the operator host may not have postgresql-client installed (verified
 # 2026-08-12: Windows build host has no psql/pg_dump in PATH). The
-# `postgres:15-alpine` image is the same one used by the docker-compose
+# `postgres:18-alpine` image is the same one used by the docker-compose
 # `postgres` service, so the dump is byte-identical to what the live
 # cluster sees.
 #===============================================================================
@@ -90,7 +90,7 @@ load_dsn() {
   return 0
 }
 
-# 2026-08-12: v1.3.1 — run psql in a throwaway postgres:15-alpine
+# 2026-08-12: v1.3.1 — run psql in a throwaway postgres:18-alpine
 # container. We always go through `docker run --rm` rather than the
 # host's `psql` because:
 #   (a) the operator host may not have postgresql-client installed
@@ -99,7 +99,7 @@ load_dsn() {
 #       docker-compose `postgres` service, so client/server version
 #       drift (e.g. host psql 13 vs server 15) can't cause a dump
 #       to fail with "server version mismatch".
-#   (c) the `--network skygate-net` (or skygate-net by another name)
+#   (c) the `--network headscale_default` (or headscale_default by another name)
 #       makes the docker service name `postgres` resolvable from
 #       inside the throwaway container, so the dump works without
 #       exposing 5432 on the host.
@@ -109,14 +109,14 @@ psql_run() {
   local sql_cmd="$1"; shift
   # If host:port is reachable directly (e.g. 127.0.0.1:5000 via HAProxy),
   # the throwaway container can use that too — it just needs the
-  # network setup. We default to `skygate-net` which is the docker
+  # network setup. We default to `headscale_default` which is the docker
   # compose default. For external PG, the operator can pass
   # `--network host` via SKYGATE_BACKUP_NETWORK env var.
-  local net="${SKYGATE_BACKUP_NETWORK:-skygate-net}"
+  local net="${SKYGATE_BACKUP_NETWORK:-headscale_default}"
   docker run --rm \
     --network "${net}" \
     -e PGPASSWORD="${PG_PASS}" \
-    postgres:15-alpine \
+    postgres:18-alpine \
     psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" \
          -tA -v ON_ERROR_STOP=1 \
          "$@" -c "${sql_cmd}" 2>&1
@@ -130,11 +130,11 @@ psql_run() {
 # redirects to the backup file.
 pg_dump_run() {
   local outfile="$1"
-  local net="${SKYGATE_BACKUP_NETWORK:-skygate-net}"
+  local net="${SKYGATE_BACKUP_NETWORK:-headscale_default}"
   docker run --rm \
     --network "${net}" \
     -e PGPASSWORD="${PG_PASS}" \
-    postgres:15-alpine \
+    postgres:18-alpine \
     pg_dump -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" \
             -Fp --clean --if-exists \
     > "${outfile}" 2> "${outfile}.err"
@@ -245,7 +245,7 @@ fi
 #       sh -c "cp /data/skygate.db /backup/skygate.db && chmod 644 /backup/skygate.db"
 # The new flow:
 #   1. parse SKYGATE_DB_DSN (host/port/user/db/password)
-#   2. `pg_dump -Fp --clean --if-exists` via throwaway postgres:15-alpine
+#   2. `pg_dump -Fp --clean --if-exists` via throwaway postgres:18-alpine
 #      container on the docker bridge so the dump picks up the live
 #      server version and is replayable on any PG 15+ cluster.
 #   3. the resulting .sql dump is replayable with `psql -f skygate-pg.sql`
