@@ -14,6 +14,20 @@
 # Returns 0 if everything is green, 1 if any check fails.
 # Each check prints a [OK] or [FAIL] tag so the output is
 # easy to grep / monitor.
+#
+# 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — sqlite3 → psql.
+# Pre-v1.3.1 the script did:
+#   docker exec skygate apk add --no-cache sqlite >/dev/null
+#   docker exec skygate sqlite3 /data/skygate.db "SELECT ..."
+# v1.3.0 removed SQLite from the skygate image (no more /data/skygate.db),
+# and v1.3.1 removed the apk add step. The skygate container now
+# connects to PG via SKYGATE_DB_DSN; the read-only queries below
+# run on the host via `docker run --rm --network skygate-net
+# postgres:15-alpine psql` (same pattern as scripts/backup.sh).
+# We use a single throwaway psql container per query — the cost is
+# one container start per check, but the script is operator-side
+# (not in the hot path) and the simplicity beats maintaining a
+# long-lived psql sidecar.
 
 set -e
 
@@ -29,27 +43,59 @@ fi
 cd /home/admin/skygate
 USER_INPUT="$1"
 
+# 2026-08-12: v1.3.1 — read SKYGATE_DB_DSN from .env if not in
+# the script's env. We use grep + cut rather than sourcing the
+# whole .env (HEADSCALE_API_KEY + others would leak into the
+# script's env unnecessarily). DSN is the libpq URL form:
+#   postgres://<user>:<password>@<host>:<port>/<database>
+DSN="${SKYGATE_DB_DSN:-}"
+if [ -z "$DSN" ]; then
+  DSN=$(grep -E '^SKYGATE_DB_DSN=' .env 2>/dev/null | head -1 | cut -d= -f2-)
+fi
+if [ -z "$DSN" ]; then
+  echo "[FAIL] SKYGATE_DB_DSN is not set in env or .env"
+  exit 1
+fi
+# Strip postgres:// prefix and query params
+DSN_PATH="${DSN#postgres://}"
+DSN_PATH="${DSN_PATH%%\?*}"
+PG_USER="${DSN_PATH%%:*}"
+DSN_REST="${DSN_PATH#*:}"
+PG_PASS="${DSN_REST%%@*}"
+DSN_REST="${DSN_REST#*@}"
+PG_HOST="${DSN_REST%%:*}"
+DSN_REST="${DSN_REST#*:}"
+PG_PORT="${DSN_REST%%/*}"
+PG_DB="${DSN_REST#*/}"
+
+# 2026-08-12: v1.3.1 — psql_cmd helper. Runs the given SQL via a
+# throwaway postgres:15-alpine container on the skygate-net bridge.
+# Returns psql's stdout (tab-separated by default; -tA strips headers
+# and alignment so callers can pipe to cut/awk safely).
+psql_cmd() {
+  local sql="$1"
+  docker run --rm \
+    --network "${SKYGATE_PSQL_NETWORK:-skygate-net}" \
+    -e PGPASSWORD="${PG_PASS}" \
+    postgres:15-alpine \
+    psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" \
+         -tA -v ON_ERROR_STOP=1 -c "${sql}" 2>&1
+}
+
 # If the input is a number, use it as user_id; otherwise resolve
-# the username to user_id via the skygate DB.
+# the username to user_id via the skygate PG.
 if [[ "$USER_INPUT" =~ ^[0-9]+$ ]]; then
   USER_ID="$USER_INPUT"
 else
-  USER_ID=$(docker exec skygate sqlite3 /data/skygate.db \
-    "SELECT id FROM portal_users WHERE username='$USER_INPUT' LIMIT 1;" 2>/dev/null)
+  USER_ID=$(psql_cmd "SELECT id FROM portal_users WHERE username='${USER_INPUT}' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
   if [ -z "$USER_ID" ]; then
     echo "[FAIL] no portal user named '$USER_INPUT'"
     exit 1
   fi
 fi
 
-# Make sure sqlite3 is in the skygate container (transient
-# install; gets lost on every container restart, hence the
-# silent re-install on every run).
-docker exec skygate apk add --no-cache sqlite >/dev/null 2>&1 || true
-
 echo "=== Check 1: user_subnets row for user_id=$USER_ID ==="
-SUBNET=$(docker exec skygate sqlite3 /data/skygate.db \
-  "SELECT cidr, status, router_hostname, router_node_id FROM user_subnets WHERE user_id=$USER_ID;")
+SUBNET=$(psql_cmd "SELECT cidr || '|' || status || '|' || COALESCE(router_hostname,'') || '|' || COALESCE(router_node_id::text,'') FROM user_subnets WHERE user_id=${USER_ID}")
 if [ -z "$SUBNET" ]; then
   echo "[FAIL] no user_subnets row for user_id=$USER_ID"
   exit 1
@@ -63,8 +109,7 @@ echo "  CIDR=$CIDR  STATUS=$STATUS  ROUTER=$ROUTER_HOSTNAME  NODE_ID=$ROUTER_NOD
 
 echo ""
 echo "=== Check 2: denormalised portal_users row ==="
-DENORM=$(docker exec skygate sqlite3 /data/skygate.db \
-  "SELECT username, subnet_cidr, subnet_status, subnet_router_node_id FROM portal_users WHERE id=$USER_ID;")
+DENORM=$(psql_cmd "SELECT username || '|' || COALESCE(subnet_cidr,'') || '|' || COALESCE(subnet_status,'') || '|' || COALESCE(subnet_router_node_id::text,'') FROM portal_users WHERE id=${USER_ID}")
 echo "  $DENORM"
 DENORM_STATUS=$(echo "$DENORM" | cut -d'|' -f3)
 if [ "$DENORM_STATUS" != "$STATUS" ]; then
@@ -106,10 +151,11 @@ echo "  status pill text fragments: $PILL"
 
 echo ""
 echo "=== Check 5: latest audit events ==="
-docker exec skygate sqlite3 /data/skygate.db \
-  "SELECT datetime(created_at, 'unixepoch'), action, substr(detail,1,60) FROM audit_log \
-    WHERE (action LIKE 'subnet%' OR action LIKE 'sidecar%' OR username='sidecar') \
-    ORDER BY id DESC LIMIT 5;"
+# 2026-08-12: v1.3.1 — `created_at` is now a PG TIMESTAMPTZ (was
+# an INTEGER unix epoch in SQLite). We use `to_char` to render it
+# in the same YYYY-MM-DD HH:MM:SS shape the old script printed, so
+# any operator's grep + eyeball pattern keeps working.
+psql_cmd "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') || '|' || action || '|' || COALESCE(substr(detail,1,60),'') FROM audit_log WHERE (action LIKE 'subnet%' OR action LIKE 'sidecar%' OR username='sidecar') ORDER BY id DESC LIMIT 5"
 
 echo ""
 echo "=== Summary ==="

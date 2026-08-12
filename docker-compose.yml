@@ -60,7 +60,22 @@ services:
     # restart, not just on full image rebuilds.
     entrypoint: /app/entrypoint.sh
     environment:
-      - SKYGATE_DB=/data/skygate.db
+      # 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — SKYGATE_DB no
+      # longer used. The v0.32.x single-file SQLite at /data/skygate.db
+      # is gone (v1.3.0 commit b1baa4a removed the mattn/go-sqlite3
+      # driver and all SQLite migrations). The runtime now requires
+      # SKYGATE_DB_DSN (PG connection string, set in .env):
+      #
+      #   SKYGATE_DB_DSN=postgres://skygate:<password>@postgres:5432/skygate?sslmode=disable
+      #
+      # Where `postgres` is the docker service name (resolves via
+      # Docker's embedded DNS to the postgres:15 container on the
+      # skygate-net bridge). The password comes from PG_DB_PASSWORD
+      # in the host's .env; the postgres service sets it via
+      # POSTGRES_PASSWORD (see below). Production deployments with an
+      # external PG (e.g. svyatoslava Patroni cluster) override this
+      # DSN to point at the cluster — see deploy/pg-ha/README.md.
+      #
       # 2026-08-03: v0.32.15 — Tailscale is OPTIONAL and
       # disabled by default. To re-enable: set
       # TS_AUTHKEY_FILE=/run/secrets/ts_authkey + add the
@@ -156,8 +171,18 @@ services:
       # See the SKYGATE_HOST_REPO_PATH env var above for the full
       # rationale.
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/:/app
-      # Named volume for DB only
-      - skygate-data:/data
+      # 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — /data is now
+      # Tailscale state only. The pre-v1.3.0 skygate.db file is GONE
+      # (the runtime is PG-only; the file was bind-mounted from
+      # skygate-data:/data/skygate.db on the host). /data is still
+      # bind-mounted from the host via SKYGATE_HOST_REPO_PATH/data,
+      # so the tailscale state dir (data/ts/{tailscaled.state,
+      # tailscaled.log}) and the legacy authkey file (data/ts/authkey)
+      # survive container restarts. The named `skygate-data` volume
+      # is kept in the top-level volumes block for backward compat
+      # (existing installs have it), but skygate no longer writes
+      # anything to /data/skygate.db.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data:/data
       # docker.sock to call headscale CLI for preauth keys
       - /var/run/docker.sock:/var/run/docker.sock
       # Tailscale state dir. Persists across container restarts so we
@@ -200,18 +225,23 @@ services:
     devices:
       - /dev/net/tun
     # 2026-07-30: v0.32.4 — stop_grace_period + healthcheck.
-    # The DB corruption on 2026-07-30 was traced to docker
-    # compose --force-recreate sending SIGKILL after the
-    # default 10s grace period, before SQLite could flush
-    # its WAL. The autoupdate's per-tick write to
-    # exit_rule_logs would then leave btree pages in an
-    # inconsistent state. 30s + a /healthz-based healthcheck
-    # means docker waits for the container to actually
-    # drain (Go's db.Close flushes the WAL) before sending
-    # SIGKILL. The healthcheck also blocks the new
-    # container from starting until the old one is fully
-    # stopped, preventing the two from racing on the same
-    # skygate.db file.
+    # The pre-v1.3.0 DB corruption on 2026-07-30 was traced to
+    # docker compose --force-recreate sending SIGKILL after the
+    # default 10s grace period, before SQLite could flush its
+    # WAL. v1.3.1 is PG-only (the WAL-flush race no longer
+    # applies — PG's WAL is managed by the postgres container,
+    # not by skygate), but we KEEP the 30s grace period and
+    # /healthz healthcheck because:
+    #
+    #   (a) Go's pgx pool still wants a clean drain on shutdown
+    #       (uncommitted transactions are rolled back, not lost).
+    #   (b) The healthcheck blocks the new container from starting
+    #       until the old one is fully stopped, preventing the two
+    #       from racing on the bind-mount / source tree.
+    #   (c) Active HTTP requests (e.g. /admin/exit-rules/reapply)
+    #       can take 5-10s to finish; the 30s ceiling matches
+    #       the pre-v1.3.0 SQLite-flush ceiling and is the right
+    #       order of magnitude for HTTP drain.
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
@@ -260,6 +290,95 @@ services:
     # pre-flight wait in entrypoint.sh; on a healthy system
     # headscale answers in 5-10s and skygate starts cleanly.
     restart: unless-stopped
+
+  # 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — PostgreSQL 15.
+  # skygate is now PG-only (commit b1baa4a removed mattn/go-sqlite3 and
+  # all SQLite migrations). The default local-PG service is a single
+  # postgres:15-alpine container on the same skygate-net bridge, with
+  # a named volume (skygate-pg-data) for the data dir, a healthcheck
+  # (skygate's OpenDSN pings /readiness once a minute, but the
+  # healthcheck gives docker the "is it accepting connections?" signal
+  # that affects depends_on ordering), and a fixed POSTGRES_DB /
+  # POSTGRES_USER. The POSTGRES_PASSWORD is read from .env (via
+  # env_file) so the same credential flows to skygate's SKYGATE_DB_DSN
+  # (which builds the URL from PG_DB_PASSWORD — see
+  # deploy/templates/skygate.env.tmpl).
+  #
+  # Why default to a single-node container (instead of requiring
+  # external Patroni / HA): most operators have ONE skygate VM. HA
+  # Postgres (Patroni + etcd + MinIO + HAProxy) is a separate
+  # deployment, documented in deploy/pg-ha/README.md. Operators who
+  # already run external PG just set SKYGATE_DB_DSN to point at it and
+  # DON'T start this postgres service (`profiles: ["local-pg"]` gates
+  # the default local service). Same pattern as the caddy service
+  # being off-by-default.
+  #
+  # Profiles: `local-pg` is the inverse of `caddy` — opt-IN to start
+  # the local PG. The default `docker compose up -d` does NOT start
+  # postgres; operators running against external PG skip it. To use
+  # the local PG: `docker compose --profile local-pg up -d` (and set
+  # SKYGATE_DB_DSN=postgres://skygate:$PG_DB_PASSWORD@postgres:5432/skygate
+  # in .env).
+  postgres:
+    profiles: ["local-pg"]
+    image: postgres:15-alpine
+    # 2026-08-12: v1.3.1 — env_file provides the password. The
+    # operator's .env already has PG_DB_PASSWORD; the postgres image
+    # reads POSTGRES_PASSWORD from its environment. The env_file
+    # also provides POSTGRES_USER and POSTGRES_DB so the URL skygate
+    # builds matches what postgres actually creates on first run.
+    env_file:
+      - .env
+    environment:
+      # Force the same name/role the skygate DSN expects, even if the
+      # operator's .env has a different POSTGRES_USER (rare; the
+      # env_file only carries the password). `postgres:15-alpine` reads
+      # POSTGRES_USER + POSTGRES_DB at first init and bakes them into
+      # pg_authid / template1; changing them later requires a wipe of
+      # the data dir.
+      - POSTGRES_USER=skygate
+      - POSTGRES_DB=skygate
+    volumes:
+      - skygate-pg-data:/var/lib/postgresql/data
+    # 2026-08-12: v1.3.1 — healthcheck. The image's built-in
+    # `pg_isready` healthcheck is the canonical probe; docker-compose
+    # uses it for `condition: service_healthy` dependencies. We expose
+    # the explicit form (instead of relying on the image default) so
+    # the check is grep-able from verify-post-deploy and tunable in
+    # one place. The 10s interval + 5s timeout + 5 retries = 50s
+    # worst-case before docker marks postgres unhealthy; skygate's
+    # OpenDSN keeps retrying via pgx's pool until PG comes back, so
+    # a temporary PG outage doesn't break /readyz permanently.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skygate -d skygate"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    # 2026-08-12: v1.3.1 — 5432 is NOT bound to the host. Local-only
+    # access is via the skygate-net bridge (the skygate container
+    # connects to `postgres:5432` by service name). Operators who want
+    # to run `psql` from the host can either:
+    #   (a) `docker exec -it <postgres-container> psql -U skygate -d skygate`
+    #   (b) bind 5432:5432 here (uncomment the ports block below)
+    # Default is (a) — never expose PG to the host network unless
+    # the operator explicitly opts in. The HA setup (deploy/pg-ha)
+    # uses port 5000/5001 via HAProxy for a similar reason.
+    networks:
+      - skygate-net
+    # 2026-08-12: v1.3.1 — `depends_on: postgres` for skygate
+    # is INTENTIONALLY absent. Architectural principle (mirroring
+    # the B91 comment on headscale above): skygate must come up
+    # regardless of PG state, so the admin can open
+    # /admin/services (B92) and see the live status + fix
+    # SKYGATE_DB_DSN via the env file. The pre-flight headscale
+    # wait pattern (B91) applies to PG too: on a cold boot, all
+    # 3 services start in parallel, PG takes 10-30s to come up,
+    # skygate logs "db unreachable" errors during that window
+    # and recovers once PG is healthy. The PG healthcheck above
+    # is purely informational; skygate's connection pool retries
+    # autonomously.
 
   # 2026-07-15: v0.15.0 — Caddy sidecar.
   # TLS-terminating reverse proxy for all public-facing
@@ -347,8 +466,22 @@ networks:
     external: true
 
 volumes:
+  # 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — skygate-data is
+  # LEGACY. Pre-v1.3.0 this volume held the SQLite file
+  # (skygate-data:/data/skygate.db). v1.3.0 removed SQLite entirely.
+  # We keep the named volume here so existing installs don't break
+  # (the volume is now empty), but new data goes to skygate-pg-data
+  # (the local PG's data dir). Operators can `docker volume rm
+  # skygate-data` after upgrading if they want the disk back.
   skygate-data:
     name: skygate-data
+  # 2026-08-12: v1.3.1 — skygate-pg-data is the data dir for the
+  # local postgres:15 service above. The named volume survives
+  # `docker compose down`; only `docker volume rm skygate-pg-data`
+  # wipes it. To restore from a backup, follow
+  # docs/disaster-recovery.md#postgresql-restore.
+  skygate-pg-data:
+    name: skygate-pg-data
   caddy-data:
     name: caddy-data
   caddy-config:

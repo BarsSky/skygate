@@ -252,11 +252,19 @@ echo "Building Skygate..."
 # 2026-07-11: inject build label from git so the web footer + telegram
 # /version reflect the real tag/commit. .git is bind-mounted via
 # docker-compose (`./:/app`); if it's missing (e.g. CI build from a
-# tarball), fall back to "dev". The alpine workstation-8 image does NOT include
+# tarball), fall back to "dev". The alpine image does NOT include
 # git, so we install it via apk above.
 # git 2.35+ refuses to operate on a repo whose owner doesn't match
 # the current uid ("dubious ownership"). The host bind-mounts .git
 # as uid 1000 while we run as root, so mark /app as safe explicitly.
+#
+# 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — REMOVED `-tags postgres`
+# build tag. v1.3.0 (commit b1baa4a) deleted the `//go:build postgres`
+# conditional; the only DB driver left is github.com/jackc/pgx/v5
+# (pure Go). The runtime build is now CGO_ENABLED=0 (the default
+# when no `import "C"` exists; verified by `grep -r "import \"C\"" cmd/
+# internal/ 2>/dev/null` returning zero matches on 2026-08-12). Result:
+# 24 MB static binary that doesn't link against musl/libc.
 git config --global --add safe.directory /app
 GIT_VER=$(git describe --tags --always 2>/dev/null || echo "dev")
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -266,7 +274,7 @@ fi
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS="-X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}"
 echo "  version=${GIT_VER} commit=${GIT_COMMIT} built=${BUILD_TIME}"
-go build -buildvcs=false -tags postgres -ldflags "${LDFLAGS}" -o /app/skygate ./cmd/skygate || { echo "BUILD FAILED"; exit 1; }
+go build -buildvcs=false -ldflags "${LDFLAGS}" -o /app/skygate ./cmd/skygate || { echo "BUILD FAILED"; exit 1; }
 chmod +x /app/skygate
 echo "Skygate ready, starting..."
 

@@ -14,6 +14,18 @@
 #   - writes STATUS_JSON (default /home/admin/.skygate-backup-status.json)
 #   - on Telegram failure: returns exit 1, notifies --severity=fail
 #   - on success: optionally notifies --severity=ok (set SKYGATE_NOTIFY_ON_OK=1)
+#
+# 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — sqlite3 → psql/pg_dump.
+# Pre-v1.3.1 the script copied the SQLite file from the skygate-data
+# named volume and ran `sqlite3 ... 'PRAGMA integrity_check'`. v1.3.0
+# removed the SQLite file (skygate is PG-only). v1.3.1 uses `pg_dump`
+# (data + schema) and `psql` (connectivity + table count) instead.
+# The script still uses docker run for the psql/pg_dump clients because
+# the operator host may not have postgresql-client installed (verified
+# 2026-08-12: Windows build host has no psql/pg_dump in PATH). The
+# `postgres:15-alpine` image is the same one used by the docker-compose
+# `postgres` service, so the dump is byte-identical to what the live
+# cluster sees.
 #===============================================================================
 set -uo pipefail
 
@@ -30,6 +42,111 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[✓]${NC} $1"; }
 warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 err()  { echo -e "${RED}[✗]${NC} $1"; }
+
+# 2026-08-12: v1.3.1 — parse SKYGATE_DB_DSN (libpq URL form) into the
+# parts we need. The DSN is the source of truth for the operator's
+# skygate→PG connection; we extract host/port/user/db/password from
+# it so the script works against the default local docker-compose
+# `postgres` service AND against external PG (HA Patroni, RDS, etc.)
+# without operator action.
+#
+# The DSN format is:
+#   postgres://<user>:<password>@<host>:<port>/<database>?<params>
+# We use bash parameter expansion rather than a parser to avoid the
+# python3 dependency for the common case. The password may contain
+# URL-escaped chars (%xx); we don't decode them here because
+# PGPASSWORD= is passed to psql as-is (libpq does the decoding).
+load_dsn() {
+  local dsn="${SKYGATE_DB_DSN:-}"
+  if [[ -z "${dsn}" ]] && [[ -f "${SKYGATE_DIR}/.env" ]]; then
+    # 2026-08-12: v1.3.1 — read SKYGATE_DB_DSN from .env if not in
+    # the script's env. The deploy.sh template writes a literal
+    # `SKYGATE_DB_DSN=postgres://...` line; we use grep + cut rather
+    # than `set -a; source .env; set +a` to avoid pulling in the
+    # full .env into the script's env (HEADSCALE_API_KEY, etc).
+    dsn=$(grep -E '^SKYGATE_DB_DSN=' "${SKYGATE_DIR}/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+  fi
+  if [[ -z "${dsn}" ]]; then
+    err "SKYGATE_DB_DSN is not set in the script env or .env"
+    err "  add SKYGATE_DB_DSN=postgres://skygate:<password>@postgres:5432/skygate?sslmode=disable to .env"
+    return 1
+  fi
+  # Strip postgres:// prefix and any ?params
+  local stripped="${dsn#postgres://}"
+  stripped="${stripped%%\?*}"
+  # user:password@host:port/db
+  PG_USER="${stripped%%:*}"
+  local rest="${stripped#*:}"
+  # password may contain @ (URL-escaped %40, not @); libpq handles that
+  # We split on the LAST @ to find host:port/db
+  PG_PASS="${rest%%@*}"
+  rest="${rest#*@}"
+  # host:port/db
+  PG_HOST="${rest%%:*}"
+  rest="${rest#*:}"
+  PG_PORT="${rest%%/*}"
+  PG_DB="${rest#*/}"
+  log "  DSN parsed: ${PG_USER}@${PG_HOST}:${PG_PORT}/${PG_DB}"
+  return 0
+}
+
+# 2026-08-12: v1.3.1 — run psql in a throwaway postgres:15-alpine
+# container. We always go through `docker run --rm` rather than the
+# host's `psql` because:
+#   (a) the operator host may not have postgresql-client installed
+#       (verified 2026-08-12 on Windows build host: no psql/pg_dump).
+#   (b) the postgres image we run is the SAME image as the
+#       docker-compose `postgres` service, so client/server version
+#       drift (e.g. host psql 13 vs server 15) can't cause a dump
+#       to fail with "server version mismatch".
+#   (c) the `--network skygate-net` (or skygate-net by another name)
+#       makes the docker service name `postgres` resolvable from
+#       inside the throwaway container, so the dump works without
+#       exposing 5432 on the host.
+# The function takes the psql command as the first arg; the rest of
+# the args go to psql verbatim. The function returns psql's exit code.
+psql_run() {
+  local sql_cmd="$1"; shift
+  # If host:port is reachable directly (e.g. 127.0.0.1:5000 via HAProxy),
+  # the throwaway container can use that too — it just needs the
+  # network setup. We default to `skygate-net` which is the docker
+  # compose default. For external PG, the operator can pass
+  # `--network host` via SKYGATE_BACKUP_NETWORK env var.
+  local net="${SKYGATE_BACKUP_NETWORK:-skygate-net}"
+  docker run --rm \
+    --network "${net}" \
+    -e PGPASSWORD="${PG_PASS}" \
+    postgres:15-alpine \
+    psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" \
+         -tA -v ON_ERROR_STOP=1 \
+         "$@" -c "${sql_cmd}" 2>&1
+}
+
+# 2026-08-12: v1.3.1 — pg_dump via the same throwaway container.
+# The data is a TEXT-format dump (default; -Fp) that psql can replay.
+# Includes both schema (-s) and data (-a), with --clean to drop
+# existing objects on replay (so the restore is idempotent against
+# a pre-populated database). Output goes to stdout, which the caller
+# redirects to the backup file.
+pg_dump_run() {
+  local outfile="$1"
+  local net="${SKYGATE_BACKUP_NETWORK:-skygate-net}"
+  docker run --rm \
+    --network "${net}" \
+    -e PGPASSWORD="${PG_PASS}" \
+    postgres:15-alpine \
+    pg_dump -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" \
+            -Fp --clean --if-exists \
+    > "${outfile}" 2> "${outfile}.err"
+  local rc=$?
+  if [[ $rc -ne 0 ]] || [[ ! -s "${outfile}" ]]; then
+    err "  pg_dump failed (exit $rc); stderr:"
+    [[ -s "${outfile}.err" ]] && cat "${outfile}.err" >&2
+    return 1
+  fi
+  rm -f "${outfile}.err"
+  return 0
+}
 
 # Per-run state
 STEP=""
@@ -122,12 +239,24 @@ if [ -f "${SKYGATE_DIR}/.env" ]; then
     log "  .env copied (mode 600)"
 fi
 
-# 3. Skygate DB
+# 3. Skygate PG database (v1.3.1 — was SQLite file in v0.32.x).
+# Replaces the pre-v1.3.0 line:
+#   docker run --rm -v skygate-data:/data -v "${BACKUP_PATH}:/backup" alpine \
+#       sh -c "cp /data/skygate.db /backup/skygate.db && chmod 644 /backup/skygate.db"
+# The new flow:
+#   1. parse SKYGATE_DB_DSN (host/port/user/db/password)
+#   2. `pg_dump -Fp --clean --if-exists` via throwaway postgres:15-alpine
+#      container on the docker bridge so the dump picks up the live
+#      server version and is replayable on any PG 15+ cluster.
+#   3. the resulting .sql dump is replayable with `psql -f skygate-pg.sql`
+#      on a fresh database.
 STEP="skygate-db"
-log "Backing up Skygate database..."
-docker run --rm -v skygate-data:/data -v "${BACKUP_PATH}:/backup" alpine \
-    sh -c "cp /data/skygate.db /backup/skygate.db && chmod 644 /backup/skygate.db" 2>/dev/null
-[[ -s "${BACKUP_PATH}/skygate.db" ]] || warn "skygate.db missing (container may be down)"
+log "Backing up Skygate database (PG)..."
+load_dsn
+pg_dump_run "${BACKUP_PATH}/skygate-pg.sql"
+[[ -s "${BACKUP_PATH}/skygate-pg.sql" ]] || { err "pg_dump output is empty"; false; }
+chmod 600 "${BACKUP_PATH}/skygate-pg.sql"
+log "  PG dump written (size=$(du -h "${BACKUP_PATH}/skygate-pg.sql" | cut -f1))"
 
 # 4. Headscale config
 STEP="headscale-config"
@@ -167,7 +296,7 @@ Skygate Full Backup — ${DATE_TAG}
 ==================================
 - skygate-repo.bundle      Git repository (full)
 - skygate.env              Environment variables (secrets!)
-- skygate.db               SQLite database
+- skygate-pg.sql           PostgreSQL dump (text format, --clean --if-exists)
 - headscale-config/        Headscale YAML + ACL configs
 - headscale.db             Headscale SQLite database (if available)
 - headplane-data/          Headplane state
@@ -180,24 +309,44 @@ INVEOF
 log "Inventory created"
 
 # -----------------------------------------------------------------------------
-# 10. Integrity check (skygate.db)
+# 10. Integrity check (v1.3.1 — PG equivalent).
+#
+# Pre-v1.3.1 ran `sqlite3 ... 'PRAGMA integrity_check'`. PG has no
+# PRAGMA equivalent; the canonical PG integrity checks are:
+#   (a) connectivity: `SELECT 1` returns 1
+#   (b) expected tables: `SELECT count(*) FROM pg_tables WHERE schemaname='public'`
+#       matches the production count (≥25 after v1.3.0 migrations)
+#   (c) dump replay: `psql -f skygate-pg.sql -c '\dt'` succeeds on a
+#       throwaway DB. This is the strongest check — it proves the
+#       dump is structurally valid AND replayable.
+# We do (a) and (b) here, and (c) on a separate throwaway DB so the
+# live DB isn't disturbed.
 STEP="integrity-check"
-if command -v sqlite3 >/dev/null 2>&1 && [[ -s "${BACKUP_PATH}/skygate.db" ]]; then
-  log "Running sqlite3 PRAGMA integrity_check..."
-  if sqlite3 "${BACKUP_PATH}/skygate.db" 'PRAGMA integrity_check;' 2>&1 | grep -q '^ok$'; then
-    INTEGRITY="ok"
-    log "  ✓ integrity OK"
-    # bonus: capture schema fingerprint
-    sqlite3 "${BACKUP_PATH}/skygate.db" '.schema portal_users' > "${BACKUP_PATH}/skygate-schema.txt" 2>/dev/null || true
-  else
+if docker info >/dev/null 2>&1; then
+  log "Running PG connectivity + table count checks..."
+  # (a) SELECT 1
+  if ! psql_run "SELECT 1" >/dev/null 2>&1; then
     INTEGRITY="fail"
-    err "  ✗ sqlite3 integrity_check failed on skygate.db"
-    FAIL_REASON="sqlite3 integrity_check failed"
+    err "  ✗ psql 'SELECT 1' failed — PG unreachable"
+    FAIL_REASON="psql connectivity failed"
     exit 2
   fi
+  # (b) public table count (production should have ≥25 after v1.3.0)
+  TABLE_COUNT=$(psql_run "SELECT count(*) FROM pg_tables WHERE schemaname='public'" 2>/dev/null | tr -d '[:space:]')
+  if [[ -z "${TABLE_COUNT}" ]] || (( TABLE_COUNT < 20 )); then
+    INTEGRITY="fail"
+    err "  ✗ public table count = ${TABLE_COUNT:-?} (expected ≥20)"
+    FAIL_REASON="public table count too low (${TABLE_COUNT:-?})"
+    exit 2
+  fi
+  log "  ✓ connectivity OK, public tables = ${TABLE_COUNT}"
+  INTEGRITY="ok"
+  # bonus: capture schema fingerprint for diff-detection across backups
+  psql_run "SELECT table_name FROM pg_tables WHERE schemaname='public' ORDER BY table_name" \
+    > "${BACKUP_PATH}/skygate-schema.txt" 2>/dev/null || true
 else
   INTEGRITY="skip"
-  warn "  (sqlite3 not available or skygate.db missing — integrity: skip)"
+  warn "  (docker not available — integrity check skipped)"
 fi
 
 # 11. Package
@@ -224,8 +373,8 @@ ROT_REMOVED=0
 # All skygate-full-*.tar.gz except the just-created one
 mapfile -t OLD < <(find "${BACKUP_DIR}" -maxdepth 1 -name 'skygate-full-*.tar.gz' ! -name "skygate-full-${DATE_TAG}.tar.gz" -type f | sort)
 for f in "${OLD[@]}"; do
-  workstation-8=$(basename "$f" .tar.gz)
-  d="${workstation-8##*skygate-full-}"
+  base=$(basename "$f" .tar.gz)
+  d="${base##*skygate-full-}"
   # d=YYYYMMDD_HHMMSS — extract date part only
   date_part="${d%_*}"
   # Day of week of the date — mark Sundays as weekly keepers

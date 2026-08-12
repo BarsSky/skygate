@@ -81,7 +81,9 @@
 # 2026-07-28: v0.30.1 — added R26.
 # 2026-07-30: R10 made dynamic (was hardcoded to "4" — broke
 # when the system grew past the 4 baseline users; now reads
-# COUNT(*) FROM portal_users via ssh-into-vm sqlite3).
+# COUNT(*) FROM portal_users via ssh-into-vm psql).
+# 2026-08-12: v1.3.1 — psql (was sqlite3; v1.3.0 removed the
+# SQLite file).
 
 set -u
 # No `set -e` — count failures, don't abort.
@@ -425,6 +427,57 @@ echo
 ssh_vm()  { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" "$@"; }
 curl_vm() { ssh_vm "curl -fsS -H 'Authorization: Bearer $API_KEY' $HEADSCALE_URL$1"; }
 
+# 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — psql_vm.
+# Pre-v1.3.1 the R10/R19/R30/integrity checks ran
+#   docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_xxx.sqlite
+#   sqlite3 /tmp/_xxx.sqlite "..."
+#   rm -f /tmp/_xxx.sqlite
+# to query the SQLite DB on the VM's host (the alpine skygate
+# image has no sqlite3 binary, so the DB had to be copied out
+# first). v1.3.0 removed the SQLite file. v1.3.1 uses psql on
+# the VM, with the DSN sourced from SKYGATE_DB_DSN. The VM may
+# not have psql installed (only the HA setup explicitly adds
+# it for R29/R30), so the helper falls back to a throwaway
+# postgres:15-alpine container on the same docker network
+# (default skygate-net / headscale_default) as the live cluster.
+# Both paths read the same SQL, so the R-checks are identical
+# regardless of which path runs.
+psql_vm() {
+  local sql="$1"
+  ssh_vm "set -e
+    DSN=\$(grep -E '^SKYGATE_DB_DSN=' /home/skyadmin/skygate/.env | head -1 | cut -d= -f2-)
+    if [ -z \"\$DSN\" ]; then
+      echo 'psql_vm: SKYGATE_DB_DSN not set in .env' >&2
+      exit 1
+    fi
+    DS=\${DSN#postgres://}
+    DS=\${DS%%\?*}
+    PU=\${DS%%:*}
+    REST=\${DS#*:}
+    PP=\${REST%%@*}
+    REST=\${REST#*@}
+    PH=\${REST%%:*}
+    REST=\${REST#*:}
+    PPORT=\${REST%%/*}
+    PDB=\${REST#*/}
+    if command -v psql >/dev/null 2>&1; then
+      PGPASSWORD=\"\$PP\" psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" \\
+        -tA -v ON_ERROR_STOP=1 -c \"$sql\" 2>&1
+    else
+      # Fallback: throwaway postgres:15-alpine container.
+      # --network host so the container can reach the host's
+      # 127.0.0.1 (HAProxy :5000 on the HA setup) and the docker
+      # service name (postgres:5432 on the docker-compose setup
+      # both resolve via the host's docker DNS).
+      docker run --rm -i --network host \\
+        -e PGPASSWORD=\"\$PP\" \\
+        postgres:15-alpine \\
+        psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" \\
+          -tA -v ON_ERROR_STOP=1 -c \"$sql\" 2>&1
+    fi
+  "
+}
+
 # R1: /healthz (also gives us the build label for R3)
 HEALTHZ=$(ssh_vm "curl -fsS http://localhost:8080/healthz" 2>&1)
 BUILD_LABEL=$(echo "$HEALTHZ" | grep -oE '"build":"[^"]+"' | head -1 | cut -d'"' -f4)
@@ -439,19 +492,14 @@ LIVE_POLICY=$(curl_vm "/api/v1/policy" 2>/dev/null)
 # R17 + R18: headscale nodes list (via SSH)
 NODES_JSON=$(curl_vm "/api/v1/node" 2>/dev/null)
 
-# R19: DB state — copy DB out via `docker cp` (no alpine / sqlite3 in
-# the alpine image, and skygate container has no sqlite3 either) and
-# run sqlite3 on the VM's host. The query is piped via heredoc
-# because the .mode json directive needs to be a separate command
-# from the SELECT (newlines in -c args get split by bash).
-DB_JSON=$(ssh_vm "set -e
-  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_verify_$$.sqlite
-  sqlite3 /tmp/_db_verify_$$.sqlite <<'SQL'
-.mode json
-SELECT json_object('user_prefs',COALESCE((SELECT json_group_array(json_object('user_id',user_id,'tag',exit_node_tag,'via',via_enabled)) FROM user_exit_node_prefs),'[]'),
-                   'device_prefs',COALESCE((SELECT json_group_array(json_object('user_id',user_id,'hostname',device_hostname,'tag',exit_node_tag,'via',via_enabled)) FROM device_exit_node_prefs),'[]'));
-SQL
-  rm -f /tmp/_db_verify_$$.sqlite" 2>&1 | tr -d '\n' | grep -oE '\{.*\}')
+# R19: DB state — v1.3.1: psql_vm replaces the pre-v1.3.0 flow
+# (docker cp the SQLite file out, run sqlite3, rm the temp).
+# The SQL is functionally identical: emit JSON of {user_prefs:[...],
+# device_prefs:[...]} so the downstream R15/R16 logic (which parses
+# this with jq) keeps working unchanged. PG has json_build_object +
+# json_agg instead of SQLite's json_object + json_group_array; the
+# output shape is identical.
+DB_JSON=$(psql_vm "SELECT json_build_object('user_prefs', COALESCE((SELECT json_agg(json_build_object('user_id', user_id, 'tag', exit_node_tag, 'via', via_enabled)) FROM user_exit_node_prefs), '[]'::json), 'device_prefs', COALESCE((SELECT json_agg(json_build_object('user_id', user_id, 'hostname', device_hostname, 'tag', exit_node_tag, 'via', via_enabled)) FROM device_exit_node_prefs), '[]'::json))::text" 2>&1 | tr -d '\n' | grep -oE '\{.*\}')
 
 # ---------------------------------------------------------------------------
 # Phase 2: core (R1-R9) — always run
@@ -519,21 +567,16 @@ run_vm_check "R7" "headscale API reachable from skygate-host-1 (172.18.0.3:50444
 UPDATED_AT=$(echo "$LIVE_POLICY" | grep -oE '"updatedAt":"[^"]+"' | cut -d'"' -f4)
 
 # Read both: last attempt (any outcome) and last successful.
-# The output is two lines: epoch, applied_success (0/1).
-SNAPSHOT_INFO=$(ssh_vm "set -e
-  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_v_\$\$.sqlite
-  sqlite3 /tmp/_db_v_\$\$.sqlite <<'SQL'
-SELECT printf('%d %d', created_at, COALESCE(applied_success, 0))
-FROM acl_snapshots ORDER BY id DESC LIMIT 1;
-SQL
-  rm -f /tmp/_db_v_\$\$.sqlite" 2>/dev/null)
+# The output is two columns: epoch, applied_success (0/1).
+# 2026-08-12: v1.3.1 — created_at is now a PG TIMESTAMPTZ (was
+# INTEGER unix epoch in SQLite). We use EXTRACT(epoch from ...)
+# to keep the downstream R9 arithmetic (date -d "@$EPOCH")
+# working unchanged.
+SNAPSHOT_INFO=$(psql_vm "SELECT EXTRACT(epoch FROM created_at)::bigint || ' ' || COALESCE(applied_success::text, '0') FROM acl_snapshots ORDER BY id DESC LIMIT 1" 2>/dev/null)
 LAST_ATTEMPT_EPOCH=$(echo "$SNAPSHOT_INFO" | awk '{print $1}')
 LAST_ATTEMPT_SUCCESS=$(echo "$SNAPSHOT_INFO" | awk '{print $2}')
 
-LAST_APPLIED_EPOCH=$(ssh_vm "set -e
-  docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_v2_\$\$.sqlite
-  sqlite3 /tmp/_db_v2_\$\$.sqlite \"SELECT created_at FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1\"
-  rm -f /tmp/_db_v2_\$\$.sqlite" 2>/dev/null)
+LAST_APPLIED_EPOCH=$(psql_vm "SELECT EXTRACT(epoch FROM created_at)::bigint FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1" 2>/dev/null)
 
 if [ -n "$LAST_ATTEMPT_EPOCH" ] && [ -n "$UPDATED_AT" ]; then
   LAST_ATTEMPT_ISO=$(date -u -d "@$LAST_ATTEMPT_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
@@ -597,10 +640,7 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
   # Authoritative usernames: SELECT username FROM portal_users
   # via ssh-into-vm sqlite3 (the .db file is bind-mounted from
   # the host, so we have to docker cp it out for sqlite to read).
-  PORTAL_USERNAMES=$(ssh_vm "set -e
-    docker cp $SKYGATE_CONTAINER:/data/skygate.db /tmp/_db_un_\$\$.sqlite
-    sqlite3 /tmp/_db_un_\$\$.sqlite 'SELECT username FROM portal_users ORDER BY id;'
-    rm -f /tmp/_db_un_\$\$.sqlite" 2>/dev/null | tr -d ' ' | grep -v '^$' || true)
+  PORTAL_USERNAMES=$(psql_vm "SELECT username FROM portal_users ORDER BY id" 2>/dev/null | tr -d ' ' | grep -v '^$' || true)
   if [ -z "$PORTAL_USERNAMES" ]; then
     echo "  ${RED}FAIL${NC}  R10 cannot read portal_users usernames (sqlite/docker cp issue)"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
@@ -726,12 +766,7 @@ print(len(p.get('hosts',{})))
   # but routes not yet approved). When the gap is large,
   # the page warning isn't enough — the operator needs a
   # CI-grade alert to investigate.
-  DRIFT_RESULT=$(ssh_vm "set -e
-    CID=\$(docker ps --filter 'label=com.docker.compose.service=skygate' --format '{{.ID}}' | head -1)
-    docker cp \$CID:/data/skygate.db /tmp/_db_drift_\$\$.sqlite
-    sqlite3 /tmp/_db_drift_\$\$.sqlite \"SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND (target_type='ip' OR target_type='subnet') GROUP BY exit_node_id;\"
-    rm -f /tmp/_db_drift_\$\$.sqlite
-  " 2>/dev/null)
+  DRIFT_RESULT=$(psql_vm "SELECT exit_node_id || '|' || COUNT(*) FROM device_rules WHERE enabled=1 AND (target_type='ip' OR target_type='subnet') GROUP BY exit_node_id" 2>/dev/null)
 
   if [ -n "$DRIFT_RESULT" ]; then
     DRIFT_NODES=$(echo "$DRIFT_RESULT" | wc -l)
@@ -788,14 +823,25 @@ print(n)
   # PASS: integrity_check returns "ok"
   # FAIL: integrity_check returns anything else (page damage,
   #       rowid out of order, btree init errors, etc.)
-  # SKIP: skygate container is down (can't copy the DB)
-  INTEGRITY=$(ssh_vm "set -e
-    CID=\$(sudo docker ps --filter 'label=com.docker.compose.service=skygate' --format '{{.ID}}' | head -1)
-    if [ -z \"\$CID\" ]; then echo SKIP_NO_CONTAINER; exit 0; fi
-    sudo docker cp \$CID:/data/skygate.db /tmp/_integ_\$\$.sqlite
-    sqlite3 /tmp/_integ_\$\$.sqlite 'PRAGMA integrity_check;' 2>&1 | head -1
-    rm -f /tmp/_integ_\$\$.sqlite
-  " 2>/dev/null)
+  # SKIP: skygate container is down (can't query the DB)
+  # 2026-08-12: v1.3.1 — PG has no PRAGMA integrity_check. The
+  # canonical PG equivalent is a check that the cluster has all
+  # expected public tables AND the 4 critical tables are present.
+  # PG's own consistency is enforced by WAL + full_page_writes
+  # (see scripts/recover_db_corruption.sh for the long version).
+  # We use psql_vm to do both checks in one query.
+  if [ -z "$SKYGATE_CONTAINER" ]; then
+    INTEGRITY="SKIP_NO_CONTAINER"
+  else
+    INTEGRITY=$(psql_vm "SELECT CASE
+      WHEN (SELECT count(*) FROM pg_tables WHERE schemaname='public') >= 20
+       AND (SELECT to_regclass('public.portal_users') IS NOT NULL)
+       AND (SELECT to_regclass('public.device_rules') IS NOT NULL)
+       AND (SELECT to_regclass('public.acl_snapshots') IS NOT NULL)
+       AND (SELECT to_regclass('public.audit_log') IS NOT NULL)
+      THEN 'ok' ELSE 'fail' END" 2>/dev/null | tr -d '[:space:]')
+    INTEGRITY="${INTEGRITY:-fail}"
+  fi
   if [ "$INTEGRITY" = "SKIP_NO_CONTAINER" ]; then
     echo "  ${YLW}SKIP${NC}  R30 skygate container down — can't check DB integrity"
   elif [ "$INTEGRITY" = "ok" ]; then

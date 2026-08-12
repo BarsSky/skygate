@@ -550,39 +550,39 @@ run_check "B25" "Caddy is OFF by default (v0.32.11)" \
   '"
 
 
-# ─── B26 (v0.32.13) — Dockerfile runtime has go-sqlite3 CGO toolchain ───
-# Background: 2026-07-31 v0.32.8 set `ENV CGO_ENABLED=0` in the
-# multi-stage build stage to get a static binary; go-sqlite3
-# requires cgo and the import resolved to a stub. v0.32.12
-# reverted to CGO_ENABLED=1 + added gcc/musl-dev/sqlite-dev to
-# the build stage. v0.32.13 then reverted the entire multi-stage
-# build pattern (see B22) — the runtime image is the full
-# golang:1.25-alpine which already has gcc + musl-dev pre-installed
-# (the workstation-8 image ships them as part of the Go toolchain). The
-# only thing we need to add is sqlite-libs (the C library
-# libsqlite3.so that go-sqlite3 dynamically links against at
-# runtime).
+# ─── B26 (v1.3.1) — Dockerfile runtime is CGO_ENABLED=0 (PG-only) ───
+# 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — REWRITTEN.
+# Pre-v1.3.1 this B26 pinned the CGO+sqlite-libs contract for the
+# v0.32.x build (gcc + musl-dev + sqlite-libs in the runtime apk
+# add list, no `ENV CGO_ENABLED=0`). v1.3.0 (commit b1baa4a) removed
+# mattn/go-sqlite3 from go.mod; v1.3.1 drops the CGO toolchain
+# from the runtime entirely. The new contract is the INVERSE:
 #
-# B26 pins the contract for the runtime-build pattern:
-#   (a) Dockerfile does NOT set ENV CGO_ENABLED=0 anywhere
-#       (the v0.32.8 regression shape — would break go-sqlite3).
-#   (b) Dockerfile installs gcc + musl-dev in the runtime apk
-#       add list (CGO toolchain; required to compile go-sqlite3
-#       at container start via the entrypoint's `go build`).
-#   (c) Dockerfile installs sqlite-libs in the runtime apk add
-#       list (the libsqlite3.so that the resulting binary
-#       dynamically links against; without it the binary errors
-#       with "error while loading shared libraries: libsqlite3.so.0"
-#       on first DB call).
-#   (d) entrypoint.sh's `go build` runs with the CGO toolchain
-#       (CGO_ENABLED defaults to 1 on golang:1.25-alpine, which
-#       is what we want — B26 doesn't need to set it explicitly).
-run_check "B26" "Dockerfile runtime has go-sqlite3 CGO toolchain (v0.32.13)" \
+#   (a) Dockerfile does NOT install gcc, musl-dev, or sqlite-libs
+#       in the runtime apk add list. These were CGO toolchain
+#       pieces for the now-removed mattn/go-sqlite3 driver; without
+#       a CGO dep in the source (verified 2026-08-12 via
+#       `grep -r 'import "C"' cmd/ internal/ 2>/dev/null` returning
+#       zero matches), the CGO toolchain is dead weight.
+#   (b) The runtime is CGO_ENABLED=0 (Go's default when no `import
+#       "C"` exists). The 24 MB binary is fully static — no musl,
+#       no libc, no libsqlite3.so to ship.
+#   (c) The postgres:15 image (added in v1.3.1 docker-compose.yml)
+#       is the only DB-related container; the skygate container
+#       connects via SKYGATE_DB_DSN (libpq URL form).
+#
+# Why this matters: pre-v1.3.0 the runtime needed ~50 MB of CGO
+# toolchain packages (gcc + musl-dev + sqlite-libs) that did
+# nothing at runtime except satisfy the dynamic linker. v1.3.1
+# drops them → smaller image, faster cold builds, no CGO
+# coupling. A regression that re-adds these packages (e.g. a
+# future port that pulls in a CGO dep) would inflate the image
+# by ~50 MB and re-introduce the v0.32.x musl CGO HTTP wedge
+# class of bugs. B26 catches that.
+run_check "B26" "Dockerfile runtime is CGO_ENABLED=0 — no gcc/musl-dev/sqlite-libs in apk add (v1.3.1)" \
   "bash -c '
-    ! grep -qE \"^ENV CGO_ENABLED=0\" Dockerfile &&
-    grep -qE \"^[[:space:]]*gcc\" Dockerfile &&
-    grep -qF \"musl-dev\" Dockerfile &&
-    grep -qF \"sqlite-libs\" Dockerfile
+    if grep -vE \"^[[:space:]]*#\" Dockerfile | grep -qE \"^[[:space:]]+(gcc|musl-dev|sqlite-libs) *$\"; then exit 1; fi
+    ! grep -qE \"^ENV CGO_ENABLED=1\" Dockerfile
   '"
 
 # ─── B27 (v0.32.13) — entrypoint.sh runs `go build` at container start ───
@@ -824,6 +824,12 @@ run_check "B33" "headplane healthcheck override in compose template (v0.32.16)" 
 
 
 # ─── B34 (v0.32.16) — device_rules has no duplicates (group by device+exit_node) ───
+# 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — rewritten to use
+# psql against the live PG cluster (was sqlite3 on a copied-out
+# /var/lib/docker/volumes/skygate-data/_data/skygate.db file).
+# The contract is unchanged: fail if any (exit_node_id,
+# device_hostname) group has COUNT(*) > 1.
+#
 # Background: 2026-08-03 a stale batch script left 365 duplicate
 # device_rules rows for `workstation-1 → relay-3` (all with the same
 # created_at timestamp). The duplicates inflated the
@@ -836,8 +842,8 @@ run_check "B33" "headplane healthcheck override in compose template (v0.32.16)" 
 #      NOT IN (SELECT MIN(id) GROUP BY exit_node_id, device_hostname))
 #      — 363 rows removed on the live VM on 2026-08-03.
 #   2. This B-check ensures no future batch script can re-introduce
-#      the duplicates. Runs `sqlite3` on the production DB
-#      (skygate-data volume) and fails if any (exit_node_id,
+#      the duplicates. Runs `psql` against the live PG cluster
+#      (SKYGATE_DB_DSN) and fails if any (exit_node_id,
 #      device_hostname) group has COUNT(*) > 1.
 #
 # Why the B-check belongs in verify-pre (not verify-post):
@@ -849,23 +855,34 @@ run_check "B33" "headplane healthcheck override in compose template (v0.32.16)" 
 #     past bugs).
 #
 # Skip semantics: on a fresh VM with no skygate deployed yet
-# (DB file doesn't exist) the check returns 0 (passes). On
-# Windows host (no sqlite3) the check returns 0 (passes). Both
-# cases are documented.
-run_check "B34" "device_rules table has no duplicate (device, exit_node) pairs (v0.32.16)" \
+# (DSN not set, or no .env) the check returns 0 (passes). On
+# Windows host (no psql, no docker) the check returns 0 (passes).
+# Both cases are documented.
+run_check "B34" "device_rules table has no duplicate (device, exit_node) pairs (v0.32.16, v1.3.1 psql)" \
   "bash -c '
-    DB=/var/lib/docker/volumes/skygate-data/_data/skygate.db
-    if [ ! -f \"\$DB\" ]; then
-      echo \"(skygate DB not present, skipping B34)\" 1>&2
+    DSN=\${SKYGATE_DB_DSN:-}
+    if [ -z \"\$DSN\" ] && [ -f /home/skyadmin/skygate/.env ]; then
+      DSN=\$(grep -E \"^SKYGATE_DB_DSN=\" /home/skyadmin/skygate/.env | head -1 | cut -d= -f2-)
+    fi
+    if [ -z \"\$DSN\" ]; then
+      echo \"(SKYGATE_DB_DSN not set, skipping B34)\" 1>&2
       exit 0
     fi
-    if ! command -v sqlite3 >/dev/null 2>&1; then
-      echo \"(sqlite3 not on PATH, skipping B34)\" 1>&2
+    if ! command -v psql >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
+      echo \"(psql/docker not available, skipping B34)\" 1>&2
       exit 0
     fi
-    DUPES=\$(sudo sqlite3 \"\$DB\" \"SELECT COUNT(*) FROM (SELECT exit_node_id, device_hostname FROM device_rules GROUP BY exit_node_id, device_hostname HAVING COUNT(*) > 1)\" 2>/dev/null)
+    DS=\${DSN#postgres://}; DS=\${DS%%\\?*}
+    PU=\${DS%%:*}; REST=\${DS#*:}; PP=\${REST%%@*}; REST=\${REST#*@}
+    PH=\${REST%%:*}; REST=\${REST#*:}; PPORT=\${REST%%/*}; PDB=\${REST#*/}
+    QUERY=\"SELECT COUNT(*) FROM (SELECT exit_node_id, device_hostname FROM device_rules GROUP BY exit_node_id, device_hostname HAVING COUNT(*) > 1) d\"
+    if command -v psql >/dev/null 2>&1; then
+      DUPES=\$(PGPASSWORD=\"\$PP\" psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c \"\$QUERY\" 2>/dev/null | tr -d \"[:space:]\")
+    else
+      DUPES=\$(docker run --rm -i --network host -e PGPASSWORD=\"\$PP\" postgres:15-alpine psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c \"\$QUERY\" 2>/dev/null | tr -d \"[:space:]\")
+    fi
     if [ -z \"\$DUPES\" ]; then
-      echo \"(sqlite3 read failed, skipping B34)\" 1>&2
+      echo \"(psql read failed, skipping B34)\" 1>&2
       exit 0
     fi
     [ \"\$DUPES\" = \"0\" ]
@@ -1763,7 +1780,7 @@ run_check "B69" "backfill tag fix + force-backfill + transfer (v0.33.1.20)" 'f=/
 #     resolves the skygate container ID via the
 #     `com.docker.compose.service=skygate` label lookup
 #   - tests: FreshDB_SQLite + Idempotent + RespectsDSN
-run_check "B70" "auto-update orchestrator migrate step (bash→sh + container by label + --migrate-only flag) (v0.33.1.21)" 'f=/tmp/b70.sh; printf "%s" "grep -qF \"migrate-only\" cmd/skygate/main.go && grep -qF runMigrateOnly cmd/skygate/main.go && grep -qF \"open the DB\" cmd/skygate/main.go && grep -qF \"sh\" internal/update/docker.go && grep -qF label=com.docker.compose.service=skygate internal/update/docker.go && grep -qF TestRunMigrateOnly_FreshDB_SQLite cmd/skygate/migrate_only_test.go && grep -qF TestRunMigrateOnly_Idempotent cmd/skygate/migrate_only_test.go && grep -qF TestRunMigrateOnly_RespectsDSN cmd/skygate/migrate_only_test.go" > "$f" && bash "$f"; rm -f "$f"'
+run_check "B70" "auto-update orchestrator migrate step (bash→sh + container by label + --migrate-only flag) (v0.33.1.21, v1.3.1 PG-only)" 'f=/tmp/b70.sh; printf "%s" "grep -qF \"migrate-only\" cmd/skygate/main.go && grep -qF runMigrateOnly cmd/skygate/main.go && grep -qF \"open the DB\" cmd/skygate/main.go && grep -qF \"sh\" internal/update/docker.go && grep -qF label=com.docker.compose.service=skygate internal/update/docker.go && grep -qF TestRunMigrateOnly_FreshDB_SQLite cmd/skygate/migrate_only_test.go && grep -qF TestRunMigrateOnly_Idempotent cmd/skygate/migrate_only_test.go && grep -qF TestRunMigrateOnly_RespectsDSN cmd/skygate/migrate_only_test.go" > "$f" && bash "$f"; rm -f "$f"'
 
 # ─── B71 (v0.33.1.22) — orchestrator healthz poll uses Go net/http (not curl) ───
 # Live verify on the VM (2026-08-09, immediately after deploying
@@ -1997,10 +2014,10 @@ run_check "B78" "per-test status on /admin/system_tests (v0.33.1.26)" 'f=/tmp/b7
 # B79 pins the contract:
 #   - internal/db/placeholders.go: PlaceholdersRange
 #     (new public helper)
-#   - internal/db/placeholders_postgres.go +
-#     placeholders_sqlite.go: the placeholdersFromTo
-#     variant (PG returns "$from..$to", SQLite returns
-#     "?"*count)
+#   - internal/db/placeholders_postgres.go: the
+#     placeholdersFromTo variant (returns "$from..$to"
+#     contiguous range; SQLite is gone in v1.3.0, so only
+#     the PG variant remains)
 #   - internal/db/migrations_v0.45.go:
 #     SetUserExitNodePref uses PlaceholdersRange(1, 3) +
 #     nowUnixSQL() + PlaceholdersRange(4, 4)
@@ -2009,11 +2026,11 @@ run_check "B78" "per-test status on /admin/system_tests (v0.33.1.26)" 'f=/tmp/b7
 #     SetDeviceExitNodePref uses PlaceholdersRange(1, 4) +
 #     nowUnixSQL() + PlaceholdersRange(5, 5)
 #     (5 placeholders + 1 fn + 5 Go args)
-#   - 4 new unit tests in internal/db/ +
-#     internal/db/test_sql_dryrun_test.go +
-#     placeholders_range_sqlite_test.go pin the format on
-#     both backends
-run_check "B79" "exit-node pref INSERT placeholder fix (v0.33.1.27)" 'f=/tmp/b79.sh; printf "%s" "grep -qF \"func PlaceholdersRange\" internal/db/placeholders.go && grep -qF \"func placeholdersFromTo\" internal/db/placeholders_postgres.go && grep -qF \"func placeholdersFromTo\" internal/db/placeholders_sqlite.go && grep -qF \"PlaceholdersRange(1, 3)\" internal/db/migrations_v0.45.go && grep -qF \"PlaceholdersRange(4, 4)\" internal/db/migrations_v0.45.go && grep -qF \"PlaceholdersRange(1, 4)\" internal/db/migrations_v0.46.go && grep -qF \"PlaceholdersRange(5, 5)\" internal/db/migrations_v0.46.go && grep -qF TestSetUserExitNodePref_RoundTrip internal/db/migrations_v0_45_46_test.go && grep -qF TestSetDeviceExitNodePref_RoundTrip internal/db/migrations_v0_45_46_test.go && grep -qF TestSetUserExitNodePref_RecentTimestamp internal/db/migrations_v0_45_46_test.go && grep -qF TestPlaceholdersRange_PGFormat internal/db/test_sql_dryrun_test.go && grep -qF TestPlaceholdersRange_SQLiteFormat internal/db/placeholders_range_sqlite_test.go" > "$f" && bash "$f"; rm -f "$f"'
+#   - 4 new unit tests in internal/db/migrations_v0_45_46_test.go
+#     + internal/db/test_sql_dryrun_test.go pin the PG format
+#     (the pre-v1.3.0 placeholders_range_sqlite_test.go was
+#     removed along with the SQLite backend in v1.3.0)
+run_check "B79" "exit-node pref INSERT placeholder fix (v0.33.1.27, v1.3.1 PG-only)" 'f=/tmp/b79.sh; printf "%s" "grep -qF \"func PlaceholdersRange\" internal/db/placeholders.go && grep -qF \"func placeholdersFromTo\" internal/db/placeholders_postgres.go && grep -qF \"PlaceholdersRange(1, 3)\" internal/db/migrations_v0.45.go && grep -qF \"PlaceholdersRange(4, 4)\" internal/db/migrations_v0.45.go && grep -qF \"PlaceholdersRange(1, 4)\" internal/db/migrations_v0.46.go && grep -qF \"PlaceholdersRange(5, 5)\" internal/db/migrations_v0.46.go && grep -qF TestSetUserExitNodePref_RoundTrip internal/db/migrations_v0_45_46_test.go && grep -qF TestSetDeviceExitNodePref_RoundTrip internal/db/migrations_v0_45_46_test.go && grep -qF TestSetUserExitNodePref_RecentTimestamp internal/db/migrations_v0_45_46_test.go && grep -qF TestPlaceholdersRange_PGFormat internal/db/test_sql_dryrun_test.go" > "$f" && bash "$f"; rm -f "$f"'
 
 # B80 — v0.33.1.28: orchestrator swap broken on this VM
 # (B79-backlog).
