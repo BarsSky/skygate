@@ -457,6 +457,39 @@ footer a:hover{color:var(--accent)}
      the sidebar is overlay, not a column. */
   main .shell{margin-left:0 !important}
   header{margin-left:0 !important}
+  /* 2026-08-13: hide the in-sidebar .toggle button on mobile.
+     The pre-fix CSS only set .sidebar .toggle{width:44px;height:44px}
+     (the v1.1.0 touch-target rule) but left it display:visible. On
+     mobile the sidebar is a drawer controlled by the
+     .sidebar-toggle-input checkbox + .sidebar-toggle hamburger
+     label at top:12px,left:12px — NOT by the in-sidebar .toggle
+     button. The in-sidebar button toggles the .collapsed class
+     (52px ↔ 220px), which is the desktop "compact mode" toggle,
+     useless on mobile where the sidebar is always 280px (overridden
+     by `width:280px !important` above). Worse: if the user
+     clicks the in-sidebar .toggle on mobile BEFORE the hamburger,
+     the sidebar gets .collapsed class, and the desktop rule
+     `.sidebar.collapsed{width:52px}` quietly applies in addition
+     to the mobile `width:280px !important` (the !important wins,
+     so width stays 280 — but the collapsed state is now
+     "stuck" in the DOM, breaking future desktop sessions until
+     they manually click the toggle again). The fix: hide the
+     in-sidebar .toggle on mobile. On desktop, the rule above
+     (no @media) keeps it visible — see line 100 (display
+     inherited from default <button>). */
+  .sidebar .toggle{display:none}
+  /* 2026-08-13: if the user previously toggled the sidebar to
+     collapsed (e.g. on a tablet and then resized to mobile),
+     the `collapsed` class persists in the DOM via JS
+     classList.toggle (no auto-reset on resize). The mobile
+     drawer pattern wants the sidebar at full 280px when open
+     (drawer style) and off-screen via transform when closed.
+     Force-clear the collapsed class on mobile so a stuck
+     state doesn't make the sidebar 52px wide inside a 280px
+     drawer. The `width:280px !important` above would still
+     apply, but the spec is ambiguous and the !important is
+     fragile. This explicit clear removes the ambiguity. */
+  .sidebar.collapsed{width:280px}
   /* Sections: always open on mobile (operator shouldn't have
      to tap 6 times to find a page). The caret is removed for
      visual cleanliness. */
