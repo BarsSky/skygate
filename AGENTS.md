@@ -17,7 +17,89 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.13 — youtube.com/32 bug fix. 1 commit since
+* **Current**: v1.3.16 — tailnet test skip filter (self + home-LAN-without-SSH).
+  1 commit since v1.3.15 (`6a0ec3a`). All tests green
+  (28/28 packages); `make verify-pre` **112 PASS / 0 FAIL / 1 SKIP**
+  (B8 VM-only; B19 now PASS, was SKIP — t.Skip stub form improved).
+  What's added:
+  - **B115 (v1.3.16)**: side-effect of v1.3.15 (port fallback) —
+    karolina now reachable on 18022, BUT 3 tailnet tests still
+    fire false-positive TAILNET SPLIT alerts because the probe
+    set includes the skygate container itself (no SSH daemon)
+    and 5 home-LAN devices (no SSH daemon either). New skip
+    filter:
+    - `tailnetSelfHostname()` reads self HostName via
+      `tailscale status --json`, with `SKYGATE_TAILNET_SELF_HOSTNAME`
+      env override. Test-injection hook
+      `tailnetSelfHostnameOverride` for unit tests.
+    - `tailnetSkipHostnames()` returns the set of hostnames to
+      skip: self (always) + 5 hardcoded home-LAN
+      (skyworker, skybars, a71, olesya, nothing-phone-2) +
+      `SKYGATE_TAILNET_SKIP_HOSTNAMES` env override
+      (REPLACES not merges; self preserved).
+    - All 3 tailnet tests filter probes through
+      `tailnetSkipHostnames()`; output surfaces
+      `(skipped N: [...])` for operator visibility.
+  - 2 unit tests updated:
+    - `TestVpsToVPSLatencyTest_LessThanTwoVPS_Skips` — text
+      "online VPS" phrasing (was "probable VPS" in code).
+    - `TestSplitSuspectedTest_OneUnreachable_Passes` —
+      skybars (now in skip set) replaced by `relay-1`
+      (VPS-class) as the unreachable target, so the
+      "1 unreachable is OK" branch can still be exercised.
+  - 10 contracts pinned in `scripts/check_b115.sh`
+    (3 function defs, 5 hardcoded hostnames, 2 env vars,
+    3 test call sites, helper presence, test update,
+    override-first check, phrasing, build clean via B1).
+  - 4 files changed, +378 lines. `go build ./...` +
+    `go vet ./...` clean.
+  - **Live state**: v1.3.16 COMMITTED + PUSHED + DEPLOYED to
+    live VM (build `v1.3.11-10-g6a0ec3a`). Live verify of
+    tailnet tests via /admin/system_tests UI pending
+    (operator runs them in browser to confirm
+    `5/5 probable Tailscale nodes reachable (100%)`).
+
+* **Previous**: v1.3.15 — tailnet probe port fallback 22 + 18022.
+  1 commit since v1.3.14 (`a983275`). All tests green
+  (28/28 packages); `make verify-pre` 111 PASS / 0 FAIL / 2 SKIP
+  (B8 VM-only, B19 PG-rewrite pending). What's added:
+  - **Bug**: pre-v1.3.15 tailnet tests hardcoded TCP:22; karolina
+    (100.64.0.2) ALSO listens SSH on 18022 (internal access
+    restriction). karolina was reported UNREACHABLE → TAILNET
+    SPLIT false-positive on every test run.
+  - **Fix**: new helper `probeTailnetNode(ctx, host)` tries
+    `tailnetProbePorts = ["22", "18022"]` in order; returns
+    first success latency + port. All 3 tailnet tests use
+    the new helper. Output surfaces port
+    (e.g. `100.64.0.2 karolina 140ms :22`).
+  - No new B-check (this is a small fix, contract is
+    "probe 22+18022" — implicitly covered by the
+    3 tests now passing on live).
+  - 1 file changed (system_tests_tailnet.go), +25 lines.
+  - **Live state**: v1.3.15 COMMITTED + PUSHED + DEPLOYED
+    to live VM (build `v1.3.11-9-ga983275`). 3 tailnet
+    tests still FAIL pre-v1.3.16 (for the self +
+    home-LAN reasons addressed in v1.3.16/B115).
+
+* **Previous**: v1.3.14 — BL-17 verify_migration.sh
+  (autonomous migration verify). 1 commit since v1.3.13
+  (`c07f4d3`). All tests green; `make verify-pre`
+  111 PASS / 0 FAIL / 2 SKIP. What's added:
+  - `scripts/verify_migration.sh` (NEW, ~466 lines):
+    chains 3 phases — verify_post_deploy.sh --quick,
+    POST /admin/system_tests/run via Python+urllib driver
+    staged to the skygate container (busybox wget no
+    cookies), and printed manual checks. PRE_BUILD
+    pre-state capture for cold-standby restore flow.
+  - Phase 1 SKIP fallback for Windows+
+    verify_post_deploy.sh python3 issue (12 false-positive
+    FAILs).
+  - 9 contracts pinned in `scripts/check_b114.sh`.
+  - B104 marked SUPERSEDED (was 5-phase v1.3.8, never
+    landed; B114 is canonical BL-17 impl).
+  - **Live state**: v1.3.14 COMMITTED + PUSHED + DEPLOYED.
+
+* **Previous**: v1.3.13 — youtube.com/32 bug fix. 1 commit since
   v1.3.12 (`d7c3b00`). All tests green (28/28 packages);
   `make verify-pre` **110 PASS / 0 FAIL / 2 SKIP** (B8 VM-only,
   B19 PG-rewrite pending Phase 2). What's added:
@@ -378,6 +460,9 @@ to reflect a deliberate design change.
 | **B110 (v1.3.10)** | TAILNET SPLIT detection (3 Go tests + shell script + docs) | `bash scripts/check_b110.sh` |
 | **B111 (v1.3.11)** | B93 infra-owns-technical-nodes completion (5 contracts: isInfraNode rule 3, BackfillInfra UPDATE, getInfraExitNodeTags, 2 call sites, 6 unit tests) | `bash scripts/check_b111.sh` |
 | **B112 (v1.3.12)** | P4 catalog cleanup (5 staticcheck U1000 dead-code removals + 3 verify-pre check updates + 1 go build) | `bash scripts/check_b112.sh` (16 contracts) |
+| **B113 (v1.3.13)** | youtube.com/32 bug fix: form validates targetValue is IP/CIDR for target_type=ip\|subnet | `bash scripts/check_b113.sh` (4 contracts) |
+| **B114 (v1.3.14)** | BL-17 autonomous migration verify: 3-phase chain + portable Python driver staging + pre-state capture | `bash scripts/check_b114.sh` (9 contracts) |
+| **B115 (v1.3.16)** | tailnet test skip filter: tailnetSelfHostname + tailnetSkipHostnames (5 home-LAN hardcoded) + 3 tests use filter + setUpTailnetSelfOverride helper | `bash scripts/check_b115.sh` (10 contracts) |
 | **B38 fix (v1.3.12)** | headscale_acl.go: ListACL + AddACL + RemoveACL + PreviewACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form). Was looking for deleted `migrations_v0.50.go` and old SQLite test fns; updated to `t.Skip` stub check + `migrations_pg.go` grep. | inline grep in `verify_pre_deploy.sh` line 999-1008 |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`

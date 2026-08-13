@@ -1,16 +1,37 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-13, post-v1.3.13 (youtube.com/32 bug fix).
-> **Status of v1.3.12**: COMMITTED (`8c4c5be`) + PUSHED. NOT YET deployed
-> to live VM. verify-pre catalog: **109 PASS / 0 FAIL / 2 SKIP** (B8 VM-only,
-> B19 PG-rewrite pending Phase 2). `go test ./...` 28/28 packages green.
+> **Last updated**: 2026-08-13, post-v1.3.16 (tailnet test skip filter).
+> **Status of v1.3.16**: COMMITTED (`6a0ec3a`) + PUSHED + DEPLOYED to live VM
+> (build `v1.3.11-10-g6a0ec3a`). verify-pre catalog:
+> **112 PASS / 0 FAIL / 1 SKIP** (B8 VM-only; B19 now PASS, was SKIP).
+> `go test ./...` 28/28 packages green.
 >
 > Recent shipped releases:
+> - **v1.3.16** (2026-08-13): B115 tailnet test skip filter — tailnet
+>   reachability/latency/split tests now exclude self (skygate-host-1
+>   has no SSH daemon) + 5 home-LAN-without-SSH hostnames
+>   (skyworker, skybars, a71, olesya, nothing-phone-2). Pre-v1.3.16
+>   these were always unreachable → false-positive TAILNET SPLIT
+>   alerts on every test run. New env overrides
+>   `SKYGATE_TAILNET_SELF_HOSTNAME` and
+>   `SKYGATE_TAILNET_SKIP_HOSTNAMES`. DEPLOYED.
+> - **v1.3.15** (2026-08-13): tailnet probe port fallback — karolina
+>   also listens SSH on 18022; new `tailnetProbePorts = ["22", "18022"]`
+>   tries both. Pre-fix, karolina was reported UNREACHABLE on every run.
+>   No B-check (small fix, contract implicit in 3 tests).
+>   DEPLOYED (build `v1.3.11-9-ga983275`).
+> - **v1.3.14** (2026-08-13): B114 BL-17 autonomous migration verify —
+>   `scripts/verify_migration.sh` (3-phase chain with Python+urllib
+>   driver staged to skygate container; PRE_BUILD pre-state capture
+>   for cold-standby restore). DEPLOYED.
+> - **v1.3.13** (2026-08-13): B113 youtube.com/32 bug fix — form
+>   validates targetValue is IP/CIDR for target_type=ip|subnet.
+>   Pre-fix, bare hostname → malformed `h-rule-youtube-com-32: youtube.com/32`
+>   CIDR that headscale rejected. DEPLOYED.
 > - **v1.3.12** (2026-08-13): P4 catalog cleanup — removed 5 staticcheck
->   U1000 dead-code items (s3Client/realS3Client wrappers, dockerCmdStdin,
->   renderHeadscaleCompose, stripHeadplaneServiceBlock, startsWithWhitespace,
->   resetLoginAttempts, setKillProcess, hostnameMapFromHeadscale). Updated
->   3 verify-pre checks (B38, B93, B95) for v1.3.0+ PG form.
+>   U1000 dead-code items. Updated 3 verify-pre checks (B38, B93, B95)
+>   for v1.3.0+ PG form. COMMITTED + PUSHED (NOT YET deployed as of
+>   v1.3.13 deploy; live VM is v1.3.11 build from Phase 3).
 > - **v1.3.11** (2026-08-13): B93+B111 Phase 3 complete — 5 nodes
 >   re-tagged to `tag:dev-infra-*` (skygate-host-1, emilia, karolina,
 >   sharlotta, svyatoslava-1), svyatoslava portal user removed (5/5 left),
@@ -254,6 +275,9 @@ but the pre-existing ones remain.
 - **B110** (tailnet split detection, v1.3.10) — DONE
 - **B111** (B93 infra-owns-technical-nodes completion, v1.3.11) — DONE
 - **B112** (P4 catalog cleanup + B38 fix, v1.3.12) — DONE
+- **B113** (youtube.com/32 bug fix, v1.3.13) — DONE
+- **B114** (BL-17 autonomous migration verify, v1.3.14) — DONE
+- **B115** (tailnet test skip filter, v1.3.16) — DONE
 - **AGENTS.md catalog** of v0.32.5-era B-checks — already in AGENTS.md,
   no need to duplicate
 - **v1.3.x SQLite removal** (v1.3.0, v1.3.1, v1.3.2) — DONE
