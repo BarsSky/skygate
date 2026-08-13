@@ -195,6 +195,26 @@ header h1 .ver{opacity:.5;font-size:10px;font-weight:500;margin-left:2px;font-fa
 .sidebar.collapsed .sidebar-section[open]>a{display:none}
 .sidebar.collapsed .sidebar-section{opacity:.75}
 .sidebar.collapsed .sidebar-section:hover{opacity:1}
+/* 2026-08-13: section summary width on collapsed sidebar.
+   The summary has 8px 10px padding + 10px gap + 10px caret
+   (::before) + 16px icon (i) = 56px content. With the sidebar
+   at 52px when collapsed, this overflows by 4px and triggers
+   a horizontal scroll bar inside the sidebar. The operator-
+   reported symptom: "когда меню скрыто иконки групп не
+   переходят в скрытый режим и появляется снизу горизонтальный
+   скролл". The pre-fix CSS only hid the <span> text inside the
+   summary but left the caret + icon visible. The fix: drop
+   padding/gap on collapsed, hide the caret (the section
+   links are also hidden on collapsed via `[open]>a{display:none}`
+   so the caret has nothing to open/close), and center the
+   icon. Net result: the collapsed summary becomes a single
+   centered 16px icon that fits in 52px. Works for BOTH desktop
+   (where the user manually clicks .toggle to collapse the
+   sidebar to 52px) AND mobile (where the B106 force-clear
+   rule prevents a stuck .collapsed state, but if one ever
+   does slip through, the icon still fits). */
+.sidebar.collapsed .sidebar-section>summary{padding:0;gap:0;justify-content:center}
+.sidebar.collapsed .sidebar-section>summary::before{display:none}
 
 /* 2026-08-12: v1.1.0 (TD-3) — hamburger toggle + mobile drawer.
    On desktop (.sidebar-toggle-input, .sidebar-toggle) are
@@ -514,6 +534,23 @@ footer a:hover{color:var(--accent)}
      padding doesn't break flexbox — the h2 just gets a
      left margin. */
   .title-row{padding-left:60px}
+  /* 2026-08-13: breadcrumb offset. The .admin-breadcrumb
+     nav (renders the "Админ › Устройства и узлы › Все устройства"
+     path on every admin page) is rendered at the top of the
+     main area, BELOW the header. On mobile the .sidebar-toggle
+     hamburger is fixed at top:12px,left:12px,40×40px — it
+     visually overlaps the start of the breadcrumb because the
+     breadcrumb's first icon (fa-house crumb-home) sits at
+     x=24 (left padding 24px). The 2026-08-13 v1.3.9 fix
+     added padding-left:60px to .title-row (the page h2) but
+     the breadcrumb is a SIBLING nav, not a child of .title-row
+     — it didn't get the same offset. The operator-reported
+     symptom: "Админ" is half-hidden behind the hamburger on
+     /admin/devices (and any admin page with a breadcrumb).
+     The fix: add the same 60px left padding to .admin-breadcrumb
+     so the breadcrumb starts AT the same x as the page title
+     (both clear the 40px hamburger + 8px gap + 12px edge). */
+  .admin-breadcrumb{padding-left:60px}
   /* Tables: force the existing .table-wrap (B50) to scroll
      horizontally rather than squishing columns. */
   .table-wrap{margin:0 -14px;padding:0 14px}

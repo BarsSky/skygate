@@ -3008,3 +3008,22 @@ run_check "B105" "mobile-friendly admin tables (.table-wrap) + .title-row hambur
 #      previous desktop session).
 run_check "B106" "mobile sidebar: .toggle button hidden on mobile + .collapsed state force-cleared (B106, v1.3.9 mobile-friendly)" \
   'test -f scripts/check_b106.sh && bash scripts/check_b106.sh'
+
+# ─── B107 (v1.3.9) — admin breadcrumb + collapsed section icons ───
+# Background: B105 added padding-left:60px to .title-row so the
+# page h2 clears the mobile hamburger, but the .admin-breadcrumb
+# is a sibling nav (not a child of .title-row) and didn't get
+# the same offset — "Админ" was half-hidden behind the
+# hamburger. Additionally, when the sidebar is collapsed
+# (52px on desktop), the section summary's default 8px 10px
+# padding + 10px caret + 10px gap + 16px icon = 56px content
+# overflows the 52px sidebar by 4px, triggering a horizontal
+# scroll bar. B107 pins both fixes:
+#   1. .admin-breadcrumb{padding-left:60px} in @media
+#      (max-width:768px) — the breadcrumb clears the hamburger.
+#   2. .sidebar.collapsed .sidebar-section>summary gets
+#      padding:0;gap:0;justify-content:center + the caret
+#      (::before) gets display:none — the summary becomes a
+#      single 16px icon that fits in 52px.
+run_check "B107" "admin breadcrumb + collapsed section icons: .admin-breadcrumb cleared on mobile + .sidebar-section summary fits 52px collapsed (B107, v1.3.9 mobile-friendly)" \
+  'test -f scripts/check_b107.sh && bash scripts/check_b107.sh'
