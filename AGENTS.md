@@ -17,7 +17,47 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.16 — tailnet test skip filter (self + home-LAN-without-SSH).
+* **Current**: v1.3.17 — DERP relay CRUD UI (per-row add/edit/
+  delete/toggle/test, like /admin/exit-nodes). Replaces the
+  v0.11.0 comma-separated textarea model with a first-class
+  `derp_relays` PG table. `make verify-pre`
+  **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only; B19 PASS).
+  What's added:
+  - **B116 (v1.3.17)**: new page `/admin/derp/relays` (the
+    per-row management surface the operator asked for in
+    2026-08-13). Six POST handlers: add / edit / delete /
+    toggle / test + one GET. Backed by new table
+    `derp_relays` (id, hostname, url, region_id, region_code,
+    region_name, is_bundled, enabled, sort_order, notes,
+    created_at, updated_at) with UNIQUE(url) + indexes on
+    `enabled` and `is_bundled`.
+  - `db.AutoMigrateDerpRelays` runs on every GET to bridge
+    the v0.11.0 `global_settings.derp.*` keys into the new
+    table (idempotent, gated by a "derp.relays_migrated"=1
+    marker). Bundled row is undeletable; at-most-one
+    `is_bundled=1` row.
+  - `applyBundledDERP` now reads `db.IsBundledDerpRelayEnabled`
+    (the table is the source of truth; falls back to legacy
+    `cfg.BundledDERP` if the table is empty for the
+    deploy-time apply path).
+  - `renderHeadscaleConfig` merges `db.ListEnabledDerpRelayURLs`
+    with the legacy `cfg.DERPExternalURLs` (so the headscale
+    derp.urls block includes both the textarea-managed and
+    CRUD-managed rows, dedup'd).
+  - 20 contracts pinned in `scripts/check_b116.sh`.
+  - 8 db unit tests (`internal/db/derp_relays_test.go`).
+  - 38 new i18n keys (ru + en) in `catalog_derp.go`.
+  - 13 files changed, +1120/-25 lines. `go build ./...` +
+    `go vet ./...` clean. No behavior change for the legacy
+    `/admin/derp/config` page — both UIs work and write to
+    the same `global_settings.derp.*` keys (which
+    `AutoMigrateDerpRelays` consumes on the first
+    `/admin/derp/relays` GET).
+  - **Live state**: v1.3.17 COMMITTED (pending) + NOT YET
+    deployed to live VM (build remains `v1.3.11-10-g6a0ec3a`
+    from v1.3.16). Live verify pending.
+
+* **Previous**: v1.3.16 — tailnet test skip filter (self + home-LAN-without-SSH).
   1 commit since v1.3.15 (`6a0ec3a`). All tests green
   (28/28 packages); `make verify-pre` **112 PASS / 0 FAIL / 1 SKIP**
   (B8 VM-only; B19 now PASS, was SKIP — t.Skip stub form improved).
@@ -463,6 +503,7 @@ to reflect a deliberate design change.
 | **B113 (v1.3.13)** | youtube.com/32 bug fix: form validates targetValue is IP/CIDR for target_type=ip\|subnet | `bash scripts/check_b113.sh` (4 contracts) |
 | **B114 (v1.3.14)** | BL-17 autonomous migration verify: 3-phase chain + portable Python driver staging + pre-state capture | `bash scripts/check_b114.sh` (9 contracts) |
 | **B115 (v1.3.16)** | tailnet test skip filter: tailnetSelfHostname + tailnetSkipHostnames (5 home-LAN hardcoded) + 3 tests use filter + setUpTailnetSelfOverride helper | `bash scripts/check_b115.sh` (10 contracts) |
+| **B116 (v1.3.17)** | DERP relay CRUD UI: `derp_relays` PG table + 6 handlers + 6 routes + `applyBundledDERP` uses table (not legacy `cfg.BundledDERP`) + `renderHeadscaleConfig` merges `derp_relays` URLs | `bash scripts/check_b116.sh` (20 contracts) |
 | **B38 fix (v1.3.12)** | headscale_acl.go: ListACL + AddACL + RemoveACL + PreviewACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form). Was looking for deleted `migrations_v0.50.go` and old SQLite test fns; updated to `t.Skip` stub check + `migrations_pg.go` grep. | inline grep in `verify_pre_deploy.sh` line 999-1008 |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`

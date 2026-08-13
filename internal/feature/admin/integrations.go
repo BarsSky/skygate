@@ -137,7 +137,7 @@ func (s *Service) applyAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, 
 	full.DERPExternalURLs = cfg.DERPExternalURLs
 	full.BundledDERP = cfg.BundledDERP
 
-	rndr := newRenderer()
+	rndr := newRendererWithDB(s.DB)
 	res := rndr.applyAll(full)
 	lang := s.I18n.LangFromRequest(r)
 	_ = lang
@@ -245,7 +245,7 @@ func (s *Service) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("mode=%s external_url=%q", mode, externalURL))
 
 	if action == "apply" {
-		rndr := newRenderer()
+		rndr := newRendererWithDB(s.DB)
 		res := rndr.applyAll(current)
 		trace := strings.Join(res.Steps, " | ")
 		s.Backend.Audit(c.UserID, c.Username, "headplane.config.apply",

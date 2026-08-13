@@ -3221,3 +3221,5 @@ run_check "B114" "autonomous migration verify: 3-phase chain + portable driver s
   'test -f scripts/check_b114.sh && bash scripts/check_b114.sh'
 run_check "B115" "tailnet test skip filter: tailnetSelfHostname + tailnetSkipHostnames + 5 home-LAN hardcoded + 3 tests use filter (B115, v1.3.16)" \
   'test -f scripts/check_b115.sh && bash scripts/check_b115.sh'
+run_check "B116" "DERP relay CRUD UI: derp_relays table + 6 handlers + 6 routes + apply uses table (B116, v1.3.17)" \
+  'test -f scripts/check_b116.sh && bash scripts/check_b116.sh'

@@ -1,0 +1,161 @@
+{{define "body-admin-derp_relays"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-tower-broadcast"></i>{{t "derp.relays_title"}}</h2>
+    <div class="sub">{{t "derp.relays_subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-chart-line"></i> {{t "derp.relays_link_status"}}</a>
+    <a href="/admin/derp/config" class="btn btn-secondary"><i class="fa-solid fa-sliders"></i> {{t "derp.relays_link_legacy"}}</a>
+    <a href="/admin/integrations" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{t (printf "derp.relays_err_%s" .FlashError)}}</div>{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-nodes"></i> {{t "derp.relays_section_list"}}</h3>
+  <div style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+    {{tf "derp.relays_count" (len .Relays)}}
+  </div>
+
+  {{if .Relays}}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr style="text-align:left">
+        <th style="padding:6px">{{t "derp.relays_col_hostname"}}</th>
+        <th style="padding:6px">{{t "derp.relays_col_url"}}</th>
+        <th style="padding:6px">{{t "derp.relays_col_region"}}</th>
+        <th style="padding:6px">{{t "derp.relays_col_status"}}</th>
+        <th style="padding:6px">{{t "derp.relays_col_order"}}</th>
+        <th style="padding:6px">{{t "derp.relays_col_actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Relays}}
+      <tr>
+        <td style="padding:6px">
+          <form method="POST" action="/admin/derp/relays/edit" style="display:inline">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <input type="text" name="hostname" value="{{.Hostname}}" style="width:140px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+        </td>
+        <td style="padding:6px">
+            <input type="text" name="url" value="{{.URL}}" style="width:240px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--mono)">
+        </td>
+        <td style="padding:6px">
+            <input type="number" name="region_id" value="{{.RegionID}}" min="0" max="9999" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+            <input type="text" name="region_code" value="{{.RegionCode}}" placeholder="mow" maxlength="8" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+            <input type="text" name="region_name" value="{{.RegionName}}" placeholder="Moscow" style="width:120px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+        </td>
+        <td style="padding:6px">
+            {{if .IsBundled}}<span class="tag tag-info" title="{{t "derp.relays_bundled_help"}}"><i class="fa-solid fa-cube"></i> {{t "derp.relays_status_bundled"}}</span>{{end}}
+            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-left:6px">
+              <input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}>
+              <span style="color:{{if .Enabled}}var(--accent){{else}}var(--text-muted){{end}}">{{if .Enabled}}{{t "derp.relays_status_enabled"}}{{else}}{{t "derp.relays_status_disabled"}}{{end}}</span>
+            </label>
+        </td>
+        <td style="padding:6px">
+            <input type="number" name="sort_order" value="{{.SortOrder}}" min="0" max="9999" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+        </td>
+        <td style="padding:6px;white-space:nowrap">
+            <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" title="{{t "derp.relays_action_save_help"}}"><i class="fa-solid fa-floppy-disk"></i></button>
+          </form>
+            <form method="POST" action="/admin/derp/relays/toggle" style="display:inline">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" title="{{t "derp.relays_action_toggle_help"}}"><i class="fa-solid fa-power-off"></i></button>
+            </form>
+            {{if .URL}}
+            <form method="POST" action="/admin/derp/relays/test" style="display:inline">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" title="{{t "derp.relays_action_test_help"}}"><i class="fa-solid fa-stethoscope"></i></button>
+            </form>
+            {{end}}
+            {{if not .IsBundled}}
+            <form method="POST" action="/admin/derp/relays/delete" style="display:inline" onsubmit="return confirm('{{t "derp.relays_action_delete_confirm"}}')">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px;color:var(--danger)" title="{{t "derp.relays_action_delete_help"}}"><i class="fa-solid fa-trash"></i></button>
+            </form>
+            {{else}}
+            <span class="tag" title="{{t "derp.relays_bundled_no_delete_help"}}" style="font-size:11px"><i class="fa-solid fa-lock"></i> {{t "derp.relays_bundled_no_delete"}}</span>
+            {{end}}
+        </td>
+      </tr>
+      {{if .Notes}}
+      <tr>
+        <td colspan="6" style="padding:2px 6px 8px 6px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border)">
+          <i class="fa-solid fa-note-sticky"></i> {{.Notes}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}
+  <div class="alert alert-info">
+    <i class="fa-solid fa-circle-info"></i> {{t "derp.relays_empty"}}
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-plus"></i> {{t "derp.relays_add_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+    {{t "derp.relays_add_help" | safeHTML}}
+  </p>
+  <form method="POST" action="/admin/derp/relays/add">
+    <div class="form-row">
+      <label for="url">{{t "derp.relays_field_url"}}</label>
+      <input type="text" id="url" name="url" required placeholder="https://derp.example.com" style="font-family:var(--mono)">
+      <div class="form-hint">{{t "derp.relays_field_url_help"}}</div>
+    </div>
+    <div class="form-row">
+      <label for="hostname">{{t "derp.relays_field_hostname"}}</label>
+      <input type="text" id="hostname" name="hostname" placeholder="Moscow Custom">
+      <div class="form-hint">{{t "derp.relays_field_hostname_help"}}</div>
+    </div>
+    <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:12px">
+      <div>
+        <label for="region_id">{{t "derp.relays_field_region_id"}}</label>
+        <input type="number" id="region_id" name="region_id" value="901" min="0" max="9999">
+      </div>
+      <div>
+        <label for="region_code">{{t "derp.relays_field_region_code"}}</label>
+        <input type="text" id="region_code" name="region_code" placeholder="fra" maxlength="8">
+      </div>
+      <div>
+        <label for="region_name">{{t "derp.relays_field_region_name"}}</label>
+        <input type="text" id="region_name" name="region_name" placeholder="Frankfurt">
+      </div>
+    </div>
+    <div class="form-row" style="display:grid;grid-template-columns:1fr 4fr;gap:12px;align-items:end">
+      <div>
+        <label for="sort_order">{{t "derp.relays_field_sort_order"}}</label>
+        <input type="number" id="sort_order" name="sort_order" value="100" min="0" max="9999">
+      </div>
+      <div>
+        <label for="notes">{{t "derp.relays_field_notes"}}</label>
+        <input type="text" id="notes" name="notes" placeholder="{{t "derp.relays_field_notes_placeholder"}}">
+      </div>
+    </div>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="enabled" value="1" checked>
+        {{t "derp.relays_field_enabled"}}
+      </label>
+    </div>
+    <div class="btn-row" style="margin-top:12px">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "derp.relays_add_submit"}}</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="alert alert-info">
+    <i class="fa-solid fa-circle-info"></i>
+    {{t "derp.relays_footer_help" | safeHTML}}
+  </div>
+</div>
+{{end}}

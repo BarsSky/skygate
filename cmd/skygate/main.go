@@ -838,6 +838,19 @@ func main() {
 	mux.Handle("GET /admin/integrations", authMW(http.HandlerFunc(adminSvc.GetAdminIntegrations)))
 	mux.Handle("GET /admin/derp/config", authMW(http.HandlerFunc(adminSvc.GetAdminDerpConfig)))
 	mux.Handle("POST /admin/derp/config", authMW(http.HandlerFunc(adminSvc.PostAdminDerpConfig)))
+	// 2026-08-13: v1.3.17 — DERP relay CRUD (per-row
+	// add/edit/delete/toggle/test). The /admin/derp/config
+	// page above is the v0.11.0 deprecated form; the new
+	// /admin/derp/relays is the per-row management surface
+	// the operator asked for. AutoMigrateDerpRelays runs
+	// on every GET to bridge any legacy global_settings
+	// rows into the new table.
+	mux.Handle("GET /admin/derp/relays", authMW(http.HandlerFunc(adminSvc.GetAdminDerpRelays)))
+	mux.Handle("POST /admin/derp/relays/add", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysAdd)))
+	mux.Handle("POST /admin/derp/relays/edit", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysEdit)))
+	mux.Handle("POST /admin/derp/relays/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysDelete)))
+	mux.Handle("POST /admin/derp/relays/toggle", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysToggle)))
+	mux.Handle("POST /admin/derp/relays/test", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysTest)))
 	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
 	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(adminSvc.GetAdminBackup)))

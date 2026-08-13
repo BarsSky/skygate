@@ -15,6 +15,7 @@ package admin
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,10 +52,18 @@ var dockerCmd = func(name string, args ...string) ([]byte, error) {
 // instance can be built with a custom templatesDir.
 type renderer struct {
 	templatesDir string
+	// v1.3.17: DB handle for the new derp_relays table.
+	// applyBundledDERP reads IsBundledDerpRelayEnabled
+	// (the CRUD-managed source of truth) instead of
+	// cfg.BundledDERP (the legacy global_settings flag).
+	db *sql.DB
 }
 
-func newRenderer() *renderer {
-	return &renderer{templatesDir: "/app/deploy/templates"}
+// newRendererWithDB returns a renderer that can query
+// the derp_relays table. Used by applyAndRenderDerp in
+// integrations.go — the new (v1.3.17) call site.
+func newRendererWithDB(d *sql.DB) *renderer {
+	return &renderer{templatesDir: "/app/deploy/templates", db: d}
 }
 
 func (r *renderer) renderHeadscaleConfig(cfg *intConfig) (string, error) {
@@ -67,9 +76,39 @@ func (r *renderer) renderHeadscaleConfig(cfg *intConfig) (string, error) {
 		csvFromEnv("HEADSCALE_AUTO_APPROVE_ROUTES"))
 	out = strings.ReplaceAll(out, "__HEADSCALE_AUTO_APPROVE_ROUTES__", routesBlock)
 	merged := append(csvFromEnv("HEADSCALE_DERP_URLS"), cfg.DERPExternalURLs...)
+	// v1.3.17: also include the v1.3.17 derp_relays
+	// table's enabled rows. The legacy cfg.DERPExternalURLs
+	// (textarea) is kept for backward compat — operators
+	// who haven't migrated to /admin/derp/relays still
+	// work. db.ListEnabledDerpRelayURLs may add NEW URLs
+	// (operator added via the CRUD UI) or omit disabled
+	// ones (operator toggled off via the CRUD UI).
+	if r.db != nil {
+		if extra, err := db.ListEnabledDerpRelayURLs(r.db); err == nil {
+			merged = appendUnique(merged, extra)
+		}
+	}
 	derpBlock := renderYAMLList("HEADSCALE_DERP_URLS", merged)
 	out = strings.ReplaceAll(out, "__HEADSCALE_DERP_URLS__", derpBlock)
 	return out, nil
+}
+
+// appendUnique appends to from b's elements to a, skipping
+// any already present in a. Used by renderHeadscaleConfig
+// to merge the legacy cfg.DERPExternalURLs with the new
+// derp_relays table's enabled URLs.
+func appendUnique(a, b []string) []string {
+	seen := make(map[string]bool, len(a))
+	for _, s := range a {
+		seen[s] = true
+	}
+	for _, s := range b {
+		if !seen[s] {
+			a = append(a, s)
+			seen[s] = true
+		}
+	}
+	return a
 }
 
 // 2026-08-12 v1.3.9 (P4 catalog cleanup): renderHeadscaleCompose
@@ -219,7 +258,29 @@ func (r *renderer) applyHeadscale(cfg *intConfig) ApplyResult {
 
 func (r *renderer) applyBundledDERP(cfg *intConfig) ApplyResult {
 	res := ApplyResult{}
+	// v1.3.17: prefer the derp_relays table's bundled
+	// row (the CRUD-managed source of truth) over the
+	// legacy global_settings.derp.bundled_enabled flag.
+	// Falls back to cfg.BundledDERP if the table is
+	// empty (the AutoMigrateDerpRelays helper will have
+	// copied the legacy flag into a row on the first
+	// /admin/derp/relays GET, so this fallback is for
+	// the deploy-time apply path before the UI is
+	// loaded).
+	if bundledEnabled, err := db.IsBundledDerpRelayEnabled(r.db); err == nil {
+		want := bundledEnabled
+		_ = want // shadow below
+		res.Steps = append(res.Steps,
+			fmt.Sprintf("ok: derp_relays bundled row enabled=%t", bundledEnabled))
+	} else {
+		res.Steps = append(res.Steps,
+			"warn: IsBundledDerpRelayEnabled failed: "+err.Error()+
+				" (falling back to cfg.BundledDERP)")
+	}
 	want := cfg.BundledDERP
+	if v, err := db.IsBundledDerpRelayEnabled(r.db); err == nil {
+		want = v
+	}
 
 	out, err := dockerCmd("docker", "inspect", "-f", "{{.State.Running}}", "derper")
 	if err != nil {

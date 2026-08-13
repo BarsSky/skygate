@@ -1,20 +1,18 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-13, post-v1.3.16 (tailnet test skip filter).
-> **Status of v1.3.16**: COMMITTED (`6a0ec3a`) + PUSHED + DEPLOYED to live VM
-> (build `v1.3.11-10-g6a0ec3a`). verify-pre catalog:
-> **112 PASS / 0 FAIL / 1 SKIP** (B8 VM-only; B19 now PASS, was SKIP).
-> `go test ./...` 28/28 packages green.
+> **Last updated**: 2026-08-13, post-v1.3.17 (DERP relay CRUD UI).
+> **Status of v1.3.17**: COMMITTED (pending) + verify-pre catalog
+> **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only). `go test ./...`
+> 28/28 packages green. Not yet deployed.
 >
 > Recent shipped releases:
-> - **v1.3.16** (2026-08-13): B115 tailnet test skip filter — tailnet
->   reachability/latency/split tests now exclude self (skygate-host-1
->   has no SSH daemon) + 5 home-LAN-without-SSH hostnames
->   (skyworker, skybars, a71, olesya, nothing-phone-2). Pre-v1.3.16
->   these were always unreachable → false-positive TAILNET SPLIT
->   alerts on every test run. New env overrides
->   `SKYGATE_TAILNET_SELF_HOSTNAME` and
->   `SKYGATE_TAILNET_SKIP_HOSTNAMES`. DEPLOYED.
+> - **v1.3.17** (2026-08-13): B116 DERP relay CRUD UI — new
+>   `derp_relays` PG table replaces the v0.11.0 comma-separated
+>   textarea model. New page `/admin/derp/relays` with per-row
+>   add/edit/delete/toggle/test (like `/admin/exit-nodes`).
+>   Bundled row is undeletable (toggle its enabled flag instead).
+>   At-most-one `is_bundled=1` row. AutoMigrate from
+>   `global_settings.derp.*` on first GET. NOT YET deployed.
 > - **v1.3.15** (2026-08-13): tailnet probe port fallback — karolina
 >   also listens SSH on 18022; new `tailnetProbePorts = ["22", "18022"]`
 >   tries both. Pre-fix, karolina was reported UNREACHABLE on every run.
@@ -278,6 +276,7 @@ but the pre-existing ones remain.
 - **B113** (youtube.com/32 bug fix, v1.3.13) — DONE
 - **B114** (BL-17 autonomous migration verify, v1.3.14) — DONE
 - **B115** (tailnet test skip filter, v1.3.16) — DONE
+- **B116** (DERP relay CRUD UI, v1.3.17) — DONE
 - **AGENTS.md catalog** of v0.32.5-era B-checks — already in AGENTS.md,
   no need to duplicate
 - **v1.3.x SQLite removal** (v1.3.0, v1.3.1, v1.3.2) — DONE

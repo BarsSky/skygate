@@ -125,21 +125,24 @@ sub-page with the full derper `/debug/vars` JSON for that
 node. There is no "configure DERP" UI in v0.10.12; the
 configuration is deploy-time only.
 
-## Web UI management (roadmap)
+## Web UI management
 
-Editing the DERP list from the web UI is on the
-`skygate-as-shell` roadmap (v0.11.0+). The intended UX:
+Editing the DERP list from the web UI is **available** as of
+v1.3.17 — `/admin/derp/relays` is the per-row management
+surface (like `/admin/exit-nodes`): add / edit / delete /
+toggle / per-row "Test connection". Backed by the
+`derp_relays` PG table. The bundled derper container is
+managed via a single row with `is_bundled=1` (toggle its
+`enabled` flag to start/stop the container).
 
-- `/admin/derp/config` — form for adding/removing external DERP
-  URLs. Writes to `global_settings` like backup-config-ui
-  (v0.10.6). Reapplies headscale config on save.
-- `/admin/derp/add-bundled` — toggle to enable/disable the
-  bundled derper; the deploy script picks up the change on the
-  next `./deploy/deploy.sh` run.
-- "Test connection" button per URL — runs the same 5s probe
-  from the admin page, no need to wait for clients to report.
+The older `/admin/derp/config` form (v0.11.0) is still
+served for backward compat — it reads/writes the same
+`global_settings.derp.*` keys, and `AutoMigrateDerpRelays`
+copies them into the new `derp_relays` table on the first
+GET of the new page.
 
-Until that ships, edit `.env` and re-run `./deploy/deploy.sh`.
+Direct `.env` + `./deploy/deploy.sh` editing is no longer
+required for any DERP change.
 
 ## See also
 

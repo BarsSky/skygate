@@ -1089,3 +1089,61 @@ func migrateV054PG(d *sql.DB) error {
 	}
 	return nil
 }
+
+// migrateV055PG — v1.3.17 — DERP relays per-row table.
+//
+// Replaces the v0.11.0 "comma-separated URLs in global_settings"
+// model with a first-class table. v0.11.0's /admin/derp/config had
+// a textarea + bundled checkbox, but the operator wanted the
+// exit-nodes-style CRUD (per-row add/edit/delete/toggle/test) so
+// they can manage multiple relays with region metadata, not a
+// flat list of URLs.
+//
+// Schema mirrors the exit_servers shape (BIGSERIAL id + integer
+// enabled flag + sort_order for the operator's preferred order +
+// notes for the operator's context). The "is_bundled" flag
+// singles out the row that owns the bundled derper container —
+// at most ONE row can have is_bundled=1, enforced at the
+// application layer (AddDerpRelay rejects a 2nd bundled row;
+// the bundled row is undeletable from the UI but its enabled
+// flag is freely toggleable).
+//
+// Backward compat: the v0.11.0 /admin/derp/config still works
+// — it reads + writes the same global_settings.derp.external_urls
+// + global_settings.derp.bundled_enabled keys. The new DERP CRUD
+// UI is additive. db.AutoMigrateDerpRelays (called from
+// LoadIntegrationsFromOS on every read) does the one-shot
+// migration: if derp_relays is empty, copy the legacy
+// global_settings rows in and write a "migrated" marker.
+//
+// 2026-08-13: v1.3.17.
+func migrateV055PG(d *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS derp_relays (
+			id BIGSERIAL PRIMARY KEY,
+			hostname TEXT NOT NULL,
+			url TEXT NOT NULL,
+			region_id INTEGER NOT NULL DEFAULT 900,
+			region_code TEXT NOT NULL DEFAULT '',
+			region_name TEXT NOT NULL DEFAULT '',
+			is_bundled INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			sort_order INTEGER NOT NULL DEFAULT 100,
+			notes TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+			updated_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS derp_relays_url_uniq
+			ON derp_relays(url)`,
+		`CREATE INDEX IF NOT EXISTS derp_relays_enabled_idx
+			ON derp_relays(enabled)`,
+		`CREATE INDEX IF NOT EXISTS derp_relays_is_bundled_idx
+			ON derp_relays(is_bundled) WHERE is_bundled = 1`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.55 derp_relays: %w", err)
+		}
+	}
+	return nil
+}

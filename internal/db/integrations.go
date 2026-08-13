@@ -207,6 +207,26 @@ func loadGlobalSetting(d *sql.DB, key string) string {
 	return v
 }
 
+// saveGlobalSetting upserts a single global_settings row.
+// Used by the v1.3.17 DERP-relay auto-migrate to write the
+// "derp.relays_migrated"=1 marker. v0.11.0's
+// SaveIntegrations writes the four integration keys
+// (derp.external_urls, derp.bundled_enabled, headplane.mode,
+// headplane.external_url) through a different code path
+// because they share the global_settings table; this helper
+// is the general-purpose version for non-integration keys.
+func saveGlobalSetting(d *sql.DB, key, value string) error {
+	_, err := d.Exec(`
+		INSERT INTO global_settings (key, value)
+		VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+	`, key, value)
+	if err != nil {
+		return fmt.Errorf("save global_setting %s: %w", key, err)
+	}
+	return nil
+}
+
 // splitCSV trims whitespace around each element. Tailscale's own
 // CSV parsing tolerates whitespace, but the operator types these
 // into a form field and a trailing space is an easy typo — be
