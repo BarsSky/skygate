@@ -1,10 +1,26 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-12, post-v1.3.8 (backup permission fix + S3).
-> **Status of v1.3.8**: COMMITTED (`7f5d4fe`) + PUSHED + DEPLOYED to
-> live VM 192.168.13.69 (build `v1.3.7-1-g7f5d4fe`). All
-> `go test ./...` packages green (28/28), B100 catalog check 37/37
-> PASS, S3 e2e verified end-to-end with minio throwaway.
+> **Last updated**: 2026-08-13, post-v1.3.12 (P4 catalog cleanup + B38 fix).
+> **Status of v1.3.12**: COMMITTED (`8c4c5be`) + PUSHED. NOT YET deployed
+> to live VM. verify-pre catalog: **109 PASS / 0 FAIL / 2 SKIP** (B8 VM-only,
+> B19 PG-rewrite pending Phase 2). `go test ./...` 28/28 packages green.
+>
+> Recent shipped releases:
+> - **v1.3.12** (2026-08-13): P4 catalog cleanup — removed 5 staticcheck
+>   U1000 dead-code items (s3Client/realS3Client wrappers, dockerCmdStdin,
+>   renderHeadscaleCompose, stripHeadplaneServiceBlock, startsWithWhitespace,
+>   resetLoginAttempts, setKillProcess, hostnameMapFromHeadscale). Updated
+>   3 verify-pre checks (B38, B93, B95) for v1.3.0+ PG form.
+> - **v1.3.11** (2026-08-13): B93+B111 Phase 3 complete — 5 nodes
+>   re-tagged to `tag:dev-infra-*` (skygate-host-1, emilia, karolina,
+>   sharlotta, svyatoslava-1), svyatoslava portal user removed (5/5 left),
+>   B111 catch-alls `* → tag:dev-infra-X` active in policy, DEPLOYED
+>   to live VM (build `v1.3.11-2-g4a4899d`).
+> - **v1.3.10** (2026-08-13): B110 tailnet reachability/speed/split
+>   diagnostics, DEPLOYED.
+> - **v1.3.9** (2026-08-13): B105-B109 mobile-friendly + B101-B104 backup
+>   polish, DEPLOYED.
+> - **v1.3.8** (2026-08-12): B100 S3 destination + B99 bash in runtime, DEPLOYED.
 
 This document is the operator's prioritized list of unimplemented
 work. It's complementary to `docs/BACKLOG.md` (which is the
@@ -214,6 +230,12 @@ but the pre-existing ones remain.
   cold-standby flow viable (operator brings up skygate-
   host-2 from a recent backup on a 2nd VM when host-1
   dies), but the recovery time is hours, not minutes.
+- **Prerequisite (DONE 2026-08-13)**: svyatoslava-1 is now
+  in the `infra` bucket with `tag:dev-infra-svyatoslava-1,
+  tag:exit-node, tag:private` (Phase 3 / B111). A 2nd
+  skygate host provisioned on svyatoslava VM would
+  auto-attribute to the infra bucket via BackfillInfra
+  (isInfraNode rule 3 matches `tag:exit-node`).
 - **Effort**: 3-4 days.
 - **Suggested next step**: operator's "maybe later"
   priority. Cold-standby-via-restore is acceptable for
@@ -227,6 +249,11 @@ but the pre-existing ones remain.
 - **B98** (exit-node speed/availability system tests, v1.1.1) — DONE
 - **B99** (bash in runtime image for backup, v1.3.6) — DONE
 - **B100** (S3 backup destination, v1.3.8) — DONE
+- **B101/B102/B103/B104** (BL-15/BL-16/BL-18/BL-17, v1.3.8) — DONE
+- **B105-B109** (mobile-friendly + sidebar, v1.3.9) — DONE
+- **B110** (tailnet split detection, v1.3.10) — DONE
+- **B111** (B93 infra-owns-technical-nodes completion, v1.3.11) — DONE
+- **B112** (P4 catalog cleanup + B38 fix, v1.3.12) — DONE
 - **AGENTS.md catalog** of v0.32.5-era B-checks — already in AGENTS.md,
   no need to duplicate
 - **v1.3.x SQLite removal** (v1.3.0, v1.3.1, v1.3.2) — DONE

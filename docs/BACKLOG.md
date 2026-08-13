@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-03
+**Last updated**: 2026-08-13 (post-Phase 3 + v1.3.12)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -13,6 +13,74 @@ the operator's stated intent is.
 If you (operator) want a feature from this file worked on, say
 "do N" where N is the priority number. If you want a feature
 moved up or down, just say so.
+
+---
+
+## Phase 3 B93+B111 completion (SHIPPED 2026-08-13, v1.3.11 + v1.3.12)
+
+**Status**: SHIPPED + DEPLOYED to live VM (build `v1.3.11-2-g4a4899d`).
+All 5 Phase-3 nodes re-tagged to `tag:dev-infra-*` in headscale,
+re-attributed to `infra` user in `node_owner_map`, B111 catch-alls
+`* → tag:dev-infra-X` active in live policy. svyatoslava portal
+user removed (5/5 left in `portal_users`).
+
+The B93 infra user (introduced 2026-07-12) was incomplete —
+isInfraNode only matched `skygate-host-*` hostname prefix or
+`tag:dev-infra-*` exact tag, missing all 4 relay VPSs (emilia,
+karolina, sharlotta) and the 2nd-host candidate (svyatoslava-1)
+that had `tag:exit-node` but no `tag:dev-infra-*`. Operator
+needed skygate-host-1 (Telegram bot) to reach all 4 exit nodes
+but the per-device mesh in the `infra` bucket was empty (only 1
+node: skygate-host-1). B111 completed B93 with:
+
+  1. `isInfraNode` rule 3: any node tagged `tag:exit-node` is
+     infra-class. Catches all 4 relay VPSs + svyatoslava-1.
+  2. `BackfillInfra` changes from `INSERT OR IGNORE` to active
+     `UPDATE` — re-attributes user-portal nodes (skyadmin,
+     michail, guest, daniil, svyatoslava) to `infra` when
+     isInfraNode matches.
+  3. New helper `getInfraExitNodeTags` in
+     `internal/acl/acl_perdevice.go` — filters skygate
+     (`skygate-host-*` prefix), returns sorted exit tags.
+  4. Both `GenerateACLForPlane` + `GenerateACLWithViaForPlane`
+     emit `* → tag:dev-infra-<exit>` catch-alls (preserves
+     pre-B93 public access to the relay VPSs).
+
+Phase 3 deployment steps (committed by Mavis, operator runbook
+in `docs/B111-INFRA-RETAG-RUNBOOK.md`):
+
+  1. Update headscale policy — add 4 `tagOwners` for
+     `tag:dev-infra-{emilia,karolina,sharlotta,svyatoslava-1}`
+     (catch-22: tagOwners must exist BEFORE
+     `headscale nodes tag --force` accepts the new tag).
+  2. `headscale nodes tag --force -i <ID> -t <NEW_TAGS>` for
+     5 nodes (skygate-host-1, emilia, karolina, sharlotta,
+     svyatoslava-1). Server-side change, tailscale clients
+     pick up new tags on netmap sync (~10s).
+  3. `UPDATE node_owner_map` (5 rows) via psql on the primary
+     `172.17.0.1:5000` (NOT `localhost:5432` — read-only
+     replica). All 5 → username='infra', new tags.
+  4. Trigger skygate policy re-apply: `POST /admin/exit-rules/
+     reapply` with admin cookie (Python+urllib from inside
+     skygate container — busybox wget doesn't support cookies).
+  5. Verify: ping 4 exit nodes from skygate-host-1 (all
+     reachable: emilia 51ms, karolina 143ms, sharlotta
+     166ms, svyatoslava-1 5ms).
+  6. Delete `svyatoslava` portal user (id=11) + headscale
+     user (id=84) — both via CASCADE on the portal_users
+     row + `headscale users destroy --identifier 84 --force`.
+
+Key gotcha (operator trap from earlier attempts): `tailscale up`
+on an alive node is a no-op (returns RC=0, doesn't change
+state). The actual re-auth requires `tailscale up --force-reauth
+--reset` (for the local state) OR server-side `headscale nodes
+tag --force` (for the headscale-side tags). The latter is the
+correct path for tag changes — it's instant and doesn't require
+restarting the tailscaled on the node.
+
+Snapshot for rollback at `/tmp/b111_phase3_full_20260813_163219/`
+(policy.json, headscale_nodes.json, node_owner_map.tsv, skygate-
+host-1.state) + `/tmp/rollback_nom.sql` (DB rollback).
 
 ---
 

@@ -17,15 +17,106 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.8 — backup permission-denied fix + S3 / S3-
-  compatible destination. 1 commit since v1.3.7. All tests
-  green (`go test -count=1 -short ./...` full suite, 28/28
-  packages); `make verify-pre` 96+ PASS / 18 FAIL (B98, B99,
-  B100 are the new contracts and all PASS; B40 was fixed in
-  this release — was broken since v1.3.0 deleted the
-  migrations_v0.51.go file; the FAILs are all pre-existing
-  v0.32.x-era grep-path staleness from the SQLite-removal
-  era). What's added:
+* **Current**: v1.3.12 — P4 catalog cleanup + B38 fix. 2 commits
+  since v1.3.11 (`d0d6ad4` + `8c4c5be`). All tests green
+  (`go test -count=1 -short ./...` full suite, 28/28 packages);
+  `make verify-pre` **109 PASS / 0 FAIL / 2 SKIP** (B8 VM-only,
+  B19 PG-rewrite pending Phase 2). What's added:
+  - **B112 (v1.3.12)**: 5 staticcheck U1000 dead-code items
+    removed (165 lines):
+    - `internal/backup/s3.go`: `s3Client` interface + `realS3Client`
+      wrapper (no test ever used the indirection; minio-go has
+      its own httptest fixtures)
+    - `internal/feature/admin/integrations_renderer.go`:
+      `dockerCmdStdin`, `renderHeadscaleCompose`,
+      `stripHeadplaneServiceBlock`, `startsWithWhitespace`
+      (compose-file page moved to static render)
+    - `internal/telegram/commands_login.go`: `resetLoginAttempts`
+      (rate-limit path moved to unified config)
+    - `internal/telegram/commands_phase4.go`: `setKillProcess`
+      (test-only hook for a removed test)
+    - `internal/telegram/commands_user.go`: `hostnameMapFromHeadscale`
+      (`/userlist` moved to node_owner_map in PG)
+  - **B38 fix (v1.3.12)**: last pre-existing FAIL in
+    `verify_pre_deploy.sh` — was looking for
+    `internal/db/migrations_v0.50.go` (deleted in v1.3.0)
+    and `TestFingerprintACL_OrderInvariant` /
+    `TestValidateACLRule` (test file is now a `t.Skip` stub
+    in v1.3.0+). Updated to `t.Skip` stub presence check +
+    `headscale_acl_rules` grep in `migrations_pg.go`.
+  - **B93/B95 verify-pre updates (v1.3.12)**: pinned the
+    v1.3.0+ `t.Skip` stub form instead of the old SQLite
+    `TestBackfillInfra_*` test fn names; pinned the v1.3.0+
+    `telegram_probe_test.go` stub form.
+  - 9 files changed, +84/-151 lines. `go build ./...` +
+    `go vet ./...` clean. No behavior change.
+  - **Live state**: v1.3.12 COMMITTED + PUSHED. NOT YET
+    deployed to VM (live VM is v1.3.11-2-g4a4899d from
+    Phase 3 work). Deploy order: `git pull` on VM,
+    `docker compose build skygate`, restart.
+
+* **Previous**: v1.3.11 — B93 infra-owns-technical-nodes completion
+  (B111) + Phase 3 operator re-tag of 5 nodes + svyatoslava
+  portal user removal. 3 commits since v1.3.10 (`10b672d`,
+  `159935c`, `4a4899d`). All tests green (28/28 packages);
+  `make verify-pre` 103 PASS / 1 FAIL (B38 pre-existing v0.32.x
+  grep-path staleness, fixed in v1.3.12). DEPLOYED to live VM
+  192.168.13.69 (build `v1.3.11-2-g4a4899d`). What's added:
+  - **B111 (v1.3.11)**: B93 incomplete — `isInfraNode` rule 3
+    (any node tagged `tag:exit-node` is infra-class),
+    `BackfillInfra` changes from INSERT OR IGNORE to active
+    UPDATE (re-attributes user-portal nodes like
+    skyadmin/michail/guest/daniil/svyatoslava to `infra` when
+    isInfraNode matches), new helper `getInfraExitNodeTags`
+    in `internal/acl/acl_perdevice.go` (filters skygate, returns
+    sorted exit tags). Both `GenerateACLForPlane` +
+    `GenerateACLWithViaForPlane` emit `* → tag:dev-infra-<exit>`
+    catch-alls (preserves pre-B93 public access to the relay
+    VPSs that became infra-owned in B93). 6 new unit tests in
+    `internal/acl/acl_perdevice_b111_test.go`.
+  - **Phase 3 (v1.3.11 deployment)**: operator re-tag of 5
+    nodes in headscale (`tag:dev-skyadmin-X` →
+    `tag:dev-infra-X,tag:exit-node,tag:private`):
+    skygate-host-1, emilia, karolina, sharlotta, svyatoslava-1.
+    4 tagOwners added to policy (catch-22: tagOwners need to
+    exist BEFORE `headscale nodes tag --force`). All 5 nodes
+    re-attributed to `infra` user in `node_owner_map`. Svyatoslava
+    portal user (id=11) removed (CASCADE on all related rows).
+    B111 catch-alls `* → tag:dev-infra-X` verified active in
+    live policy (4 grants). skygate-host-1 (Telegram bot) now
+    reachable to all 4 exit nodes via the `infra` bucket.
+  - **`docs/B111-INFRA-RETAG-RUNBOOK.md`** (NEW, ~150 lines):
+    operator step-by-step re-tag procedure for the 5 infra
+    nodes (5 нод × 3-5 мин, can be parallel).
+  - **`docs/tailnet-diagnostics.md`** UPDATED with real root
+    cause (B93 incomplete, NOT tailnet split as initially
+    diagnosed in B110). The "split" was actually policy
+    isolation between the `tagged-devices` user (where
+    skygate-host-1 had `tag:dev-skyadmin-skygate-vm`) and
+    the `svyatoslava` user (where svyatoslava-1 had
+    `tag:private`) — both inside the `tagged-devices`
+    headscale user, but with different per-device ACL tags
+    that the mesh grants couldn't bridge.
+  - **B111 catalog check** (`scripts/check_b111.sh`): 5
+    contracts pinned — `isInfraNode` rule 3,
+    `BackfillInfra` UPDATE behavior, `getInfraExitNodeTags`
+    helper, 2 call sites in `acl.go`, 6 unit tests in
+    `acl_perdevice_b111_test.go`.
+  - 9 files changed, +562/-15 lines. Live build
+    `v1.3.11-2-g4a4899d`. 4 ping tests from skygate-host-1
+    to all 4 exit nodes: emilia 51ms, karolina 143ms,
+    sharlotta 166ms, svyatoslava-1 5ms (all reachable).
+  - **Snapshot for Phase 3 rollback** at
+    `/tmp/b111_phase3_full_20260813_163219/` (policy.json
+    54811 bytes, headscale_nodes.json 37047 bytes,
+    node_owner_map.tsv 253 bytes, skygate-host-1.state
+    2314 bytes). Plus `/tmp/rollback_nom.sql` for DB
+    rollback. Plus `C:\tmp\b111_phase3_orchestrator.sh`
+    for the full snapshot + tag + policy pipeline.
+
+* **Previous**: v1.3.10 — TAILNET SPLIT detection (B110). 3 commits
+  since v1.3.9. All tests green (28/28 packages);
+  `make verify-pre` 102 PASS / 1 FAIL (B38). What's added:
   - **Permission-denied fix (the operator's "давно висящая
     ошибка" from 2026-08-12)**: `scripts/backup.sh` now
     chowns the destination to the operator
@@ -246,6 +337,15 @@ to reflect a deliberate design change.
 | **B79 (v1.3.1)** | **exit-node pref INSERT placeholder fix. PG-only — the pre-v1.3.0 `placeholders_sqlite.go` + `placeholders_range_sqlite_test.go` files were removed in v1.3.0.** | **grep `func PlaceholdersRange` in `internal/db/placeholders.go` + `func placeholdersFromTo` in `internal/db/placeholders_postgres.go` (no `_sqlite.go` variant).** |
 | **B96 (v1.1.0)** | **TD-1: 22 admin pages grouped into 6 collapsible `<details class="sidebar-section">` blocks. Each section has `{{if .InSectionX}}open{{end}}` for auto-open. Pinned by 2 Go tests in `internal/handlers/layout_v1_1_0_test.go` + `scripts/check_b96.sh`.** | **`bash scripts/check_b96.sh` (runs `go test -count=1 -run TestB96_ ./internal/handlers/`) — pins 6 sections, 6 InSection* booleans, 8 i18n keys, 22 admin links, hamburger input/label, +2 unit tests.** |
 | **B97 (v1.1.0)** | **TD-3: mobile-responsive sidebar (breakpoint renamed 760px→768px, matches iPad-portrait). Hamburger `.sidebar-toggle` is `display:none` on desktop, `display:flex` on mobile. Sidebar slides via `transform:translateX(-100%)`→`translateX(0)`. Touch targets `min-height:44px` (Apple HIG / Material).** | **`bash scripts/check_b97.sh` (runs `go test -count=1 -run TestB97_ ./internal/handlers/`) — pins 768px breakpoint, ! 760px, .sidebar-toggle + .sidebar-toggle-input classes, translateX(-100%) + translateX(0), .sidebar-section styles, min-height:44px, +2 unit tests.** |
+| **B98 (v1.1.1)** | Exit-node speed/availability system tests (3 Go tests + i18n + form_reapply + TestRegistry pinning) | `bash scripts/check_b98.sh` (runs go tests + greps TestRegistry/TestLatency/TestAvailability) |
+| **B99 (v1.3.6)** | bash is in Dockerfile runtime apk add (B99, v1.3.6 backup error fix) | `grep -q 'apk add.*bash' Dockerfile` |
+| **B100 (v1.3.8)** | S3 / S3-compatible backup destination (37 contracts: ProtocolS3 + 8 S3 fields + transport + UI + i18n + tests) | `bash scripts/check_b100.sh` |
+| **B101-B104 (v1.3.8)** | BL-15 restore.sh for PG + BL-16 mount tests + BL-17 mig-verify + BL-18 in-app S3 download | 4 individual checks in `verify_pre_deploy.sh` |
+| **B105-B109 (v1.3.9)** | Mobile-friendly + sidebar fixes | 5 checks in `verify_pre_deploy.sh` |
+| **B110 (v1.3.10)** | TAILNET SPLIT detection (3 Go tests + shell script + docs) | `bash scripts/check_b110.sh` |
+| **B111 (v1.3.11)** | B93 infra-owns-technical-nodes completion (5 contracts: isInfraNode rule 3, BackfillInfra UPDATE, getInfraExitNodeTags, 2 call sites, 6 unit tests) | `bash scripts/check_b111.sh` |
+| **B112 (v1.3.12)** | P4 catalog cleanup (5 staticcheck U1000 dead-code removals + 3 verify-pre check updates + 1 go build) | `bash scripts/check_b112.sh` (16 contracts) |
+| **B38 fix (v1.3.12)** | headscale_acl.go: ListACL + AddACL + RemoveACL + PreviewACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form). Was looking for deleted `migrations_v0.50.go` and old SQLite test fns; updated to `t.Skip` stub check + `migrations_pg.go` grep. | inline grep in `verify_pre_deploy.sh` line 999-1008 |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`
 
