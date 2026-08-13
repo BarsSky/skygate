@@ -232,12 +232,22 @@ For each of these 5 nodes (4 VPS + 1 skygate container):
   `tag:dev-infra-emilia`
 - karolina: same pattern
 - sharlotta: same pattern
-- svyatoslava-1: change tag from (none) to
-  `tag:dev-infra-svyatoslava-1`
+- svyatoslava-1: **add** `tag:dev-infra-svyatoslava-1,tag:exit-node`
+  (currently has only `tag:private`; svyatoslava-1 is the
+  future skygate-host-2 per the B93 design)
 
 This requires `tailscale up --authkey=<KEY> --advertise-tags=...`
 on each device. Tailscale doesn't support changing tags without
 re-registration, so expect ~3-5 min downtime per node.
+
+**Why svyatoslava-1 needs `tag:exit-node` explicitly** (not just
+`tag:dev-infra-svyatoslava-1`): isInfraNode rule 2 (hostname
+prefix `skygate-host-`) does NOT match `svyatoslava-1`. Rule 3
+(any `tag:exit-node`) is the trigger. Without `tag:exit-node`,
+BackfillInfra UPDATE will not fire and svyatoslava-1 will stay
+in the `svyatoslava` portal-user bucket (a leftover from earlier
+experiments — see the historical context in
+`docs/B111-INFRA-RETAG-RUNBOOK.md`).
 
 **Order matters for minimal disruption:**
 
