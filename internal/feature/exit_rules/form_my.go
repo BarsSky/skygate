@@ -34,6 +34,33 @@ import (
 	"skygate/internal/db"
 )
 
+// isValidIPOrCIDR returns true if s is a valid IPv4/IPv6
+// address (with or without /N suffix). Pre-v1.3.13 the form
+// for target_type=ip|subnet would blindly append "/32" to
+// whatever the operator typed, so a bare hostname (e.g.
+// "youtube.com") would land in device_rules as
+// "youtube.com/32" — a malformed CIDR that breaks the
+// headscale policy re-apply.
+//
+// v1.3.13: validate at the form boundary. For
+// target_type=domain, the form does DNS resolution and
+// stores per-IP /32 rules; the hostname is valid there
+// (validation skipped).
+func isValidIPOrCIDR(s string) bool {
+	if s == "" {
+		return false
+	}
+	// Accept "1.2.3.4", "1.2.3.4/24", "::1", "::1/128".
+	if _, _, err := net.ParseCIDR(s); err == nil {
+		return true
+	}
+	// ParseCIDR requires a "/N" — also accept bare IPs.
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	return false
+}
+
 // GetMyExitRules serves the user-facing /my/exit-rules
 // page. Also handles the ?script= download (delegates to
 // GenerateRouteSetupScript for the per-OS bash/.cmd body).
@@ -406,6 +433,23 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if devID == 0 || targetValue == "" {
 		http.Error(w, "missing fields", http.StatusBadRequest)
 		return
+	}
+
+	// v1.3.13 (youtube.com/32 bug fix): validate targetValue is a
+	// valid IP/CIDR for targetType "ip" or "subnet". Pre-fix, an
+	// operator who typed a bare hostname (e.g. "youtube.com") in
+	// the IP field would get "youtube.com/32" saved to the DB,
+	// which the ACL builder then promoted to a host alias
+	// "h-rule-youtube-com-32: youtube.com/32" — a malformed CIDR
+	// that headscale rejects, causing the whole policy to fail
+	// re-apply. For "domain" targetType the form does DNS
+	// resolution and stores per-IP /32 rules (so a hostname IS
+	// valid input there) — that path is unchanged.
+	if targetType == "ip" || targetType == "subnet" {
+		if !isValidIPOrCIDR(targetValue) {
+			http.Error(w, fmt.Sprintf("invalid target_value %q: expected IP or CIDR for target_type=%q (use target_type=domain for hostnames like youtube.com — the system will resolve it to IPs and add /32 rules automatically)", targetValue, targetType), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// 2026-07-09: per-user / per-device / total limits count only

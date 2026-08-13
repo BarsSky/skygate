@@ -3173,3 +3173,25 @@ run_check "B111" "B93 infra-owns-technical-nodes completion (isInfraNode + Backf
 #  - 1 file-presence check (cl.FPutObject removed, mc.FPutObject used)
 run_check "B112" "v1.3.12 P4 catalog cleanup (5 dead-code removals + 3 check updates + 1 build check) (B112)" \
   'test -f scripts/check_b112.sh && bash scripts/check_b112.sh'
+
+# ─── B113 (v1.3.13) — youtube.com/32 bug fix ───
+# Background: pre-v1.3.13, an operator who typed a bare
+# hostname (e.g. "youtube.com") in the IP field of
+# /my/exit-rules would get "youtube.com/32" saved to
+# the DB. The ACL builder then promoted it to a host
+# alias "h-rule-youtube-com-32: youtube.com/32" — a
+# malformed CIDR that headscale rejects, causing the
+# whole policy re-apply to fail.
+#
+# Fix: form_my.go validates targetValue via isValidIPOrCIDR
+# before any processing. For target_type=domain, the form
+# does DNS resolution (hostname is valid input there).
+#
+# Pin: 4 contracts in scripts/check_b113.sh:
+#  - isValidIPOrCIDR helper exists in form_my.go
+#  - helper is called in PostMyExitRule (form path)
+#  - 400 BadRequest on bad input
+#  - unit test (TestIsValidIPOrCIDR_IPv4) covers IPv4 + IPv6 +
+#    CIDRs + bare hostnames (the bug) + garbage
+run_check "B113" "youtube.com/32 bug fix: form validates targetValue is IP/CIDR for target_type=ip|subnet (B113, v1.3.13)" \
+  'test -f scripts/check_b113.sh && bash scripts/check_b113.sh'
