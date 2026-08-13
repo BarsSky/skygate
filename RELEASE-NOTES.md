@@ -1,5 +1,360 @@
 # Skygate release notes
 
+## v1.3.17 — DERP relay CRUD UI (per-row add/edit/delete/toggle/test)
+
+**Date:** 2026-08-13
+**Scope:** Replace the v0.11.0 comma-separated DERP-URL
+textarea model with a first-class `derp_relays` PG table
++ per-row CRUD UI at `/admin/derp/relays` (like
+`/admin/exit-nodes`). The legacy `/admin/derp/config`
+form still works (writes the same `global_settings.derp.*`
+keys; `AutoMigrateDerpRelays` copies them into the new
+table on first GET).
+
+**What's added:**
+
+- **`migrateV055PG`**: new `derp_relays` table
+  (id, hostname, url, region_id, region_code, region_name,
+  is_bundled, enabled, sort_order, notes, created_at,
+  updated_at) with `UNIQUE(url)` + indexes on `enabled`
+  and `is_bundled`. Idempotent, applied on every
+  `MigratePostgres()` call (i.e. on every container start).
+- **`internal/db/derp_relays.go`** (NEW, ~410 lines):
+  - `List / Get / Add / Update / Delete / Toggle`
+    (Add rejects a 2nd `is_bundled=1` row; Delete
+    refuses to remove the bundled row — toggle its
+    `enabled` flag instead).
+  - `ListEnabledDerpRelayURLs` — used by
+    `renderHeadscaleConfig` to build the
+    `derp.urls` list (merged with legacy
+    `cfg.DERPExternalURLs`, deduplicated).
+  - `IsBundledDerpRelayEnabled` — used by
+    `applyBundledDERP` to decide whether to
+    start/stop the derper container.
+  - `AutoMigrateDerpRelays` — one-shot bridge
+    from the v0.11.0 `global_settings.derp.*`
+    keys into the new table. Idempotent (gated
+    by a `"derp.relays_migrated"=1` marker).
+  - Typed errors: `ErrDerpRelayNotFound` /
+    `ErrDerpRelayDuplicateURL` /
+    `ErrDerpRelayBundledExists` /
+    `ErrDerpRelayBundledUndeletable`.
+  - 8 new unit tests (`derp_relays_test.go`).
+- **`internal/feature/admin/derp_relays.go`** (NEW):
+  6 admin handlers — `Get / Add / Edit / Delete /
+  Toggle / Test`. All redirect back to
+  `/admin/derp/relays` with a `?ok=` or `?err=`
+  flash message. Per-row "Test connection" runs the
+  same 5s probe as the v0.11.0 "Test all" button.
+- **`internal/handlers/templates/admin/derp_relays.html`**
+  (NEW): per-row CRUD table with inline edit + per-row
+  Save / Toggle / Test / Delete buttons. Bundled row
+  is undeletable; shows a "bundled" tag.
+- **Sidebar + landing** (v1.3.17.1): new sidebar
+  entry "/admin/derp/relays" in the Integrations
+  section + a "Manage relays" button on the
+  `/admin/integrations` landing page (next to the
+  legacy "Configure" button).
+- **40 new i18n keys** (ru + en) in `catalog_derp.go`:
+  `derp.relays_title`, `derp.relays_add_title`,
+  `derp.relays_col_*`, `derp.relays_action_*_help`,
+  `derp.relays_err_*`, etc.
+- **`scripts/check_b116.sh`** (NEW, 21 contracts): migration
+  defined + registered, table schema, 6 db helpers,
+  6 admin handlers, 6 routes, template, apply uses
+  table (not legacy flag), `renderHeadscaleConfig`
+  merges table URLs, ≥30 i18n keys, ≥5 unit tests,
+  bundled undeletable, at-most-one bundled, sidebar
+  + landing links.
+- **`AGENTS.md` / `docs/TODO.md` / `docs/derp.md`**:
+  v1.3.17 = Current. `docs/derp.md` "Web UI management"
+  section updated from "roadmap" to "shipped in v1.3.17".
+
+**Operator workflow:**
+
+- Add a new DERP relay: `/admin/derp/relays` → fill
+  the form (URL, hostname, region id/code/name,
+  sort_order, notes, enabled) → Save.
+- Toggle: per-row "power" button. Disabled rows are
+  filtered out of `derp.urls` on the next apply.
+- Test: per-row "stethoscope" button — 5s probe, latency
+  in the redirect flash.
+- Delete: per-row "trash" button (rejected for
+  bundled row).
+- Bundled row: managed via the legacy
+  `/admin/derp/config` page (the "Bundled derper"
+  checkbox + Apply) — `applyBundledDERP` reads
+  `db.IsBundledDerpRelayEnabled` (table is the
+  source of truth; falls back to legacy
+  `cfg.BundledDERP` only for the deploy-time path
+  before the UI is loaded).
+
+**Backward compat:**
+
+- Legacy `/admin/derp/config` still works (same
+  `global_settings.derp.*` keys, same Apply flow).
+- `AutoMigrateDerpRelays` runs on every GET of the
+  new page; idempotent (one-shot copy + marker).
+- Operators who never open the new page see NO change
+  to the legacy flow.
+- The headscale config now reads BOTH `cfg.DERPExternalURLs`
+  AND `db.ListEnabledDerpRelayURLs` (merged + deduped)
+  — adding a relay via the new UI works without
+  re-saving the legacy form.
+
+**Catalog:** verify-pre **113 PASS / 0 FAIL / 1 SKIP**
+(B8 VM-only). 28/28 packages green.
+
+**Live state:** build `v1.3.11-12-gd4d8ab3` deployed
+to VM (192.168.13.69). Legacy URL
+(`https://controlplane.tailscale.com/derpmap/default`)
+migrated to the new table.
+
+## v1.3.16 — tailnet test skip filter (self + home-LAN-without-SSH)
+
+**Date:** 2026-08-13
+**Scope:** Side-effect of v1.3.15 (port fallback
+22+18022) — after karolina became reachable, the
+tailnet tests still fired false-positive TAILNET SPLIT
+alerts because the probe set included the skygate
+container itself (no SSH daemon) and 5 home-LAN
+devices (no SSH daemon either). v1.3.16 adds a skip
+filter that excludes both groups.
+
+**What's added:**
+
+- `tailnetSelfHostname()` — reads self HostName via
+  `tailscale status --json` (or `SKYGATE_TAILNET_SELF_HOSTNAME`
+  env override). Test-injection hook
+  `tailnetSelfHostnameOverride`.
+- `tailnetSkipHostnames()` — set of hostnames to skip
+  (self always + 5 hardcoded home-LAN
+  `skyworker / skybars / a71 / olesya / nothing-phone-2` +
+  `SKYGATE_TAILNET_SKIP_HOSTNAMES` env override, comma-sep,
+  REPLACES not merges; self preserved).
+- All 3 tailnet tests filter probes through
+  `tailnetSkipHostnames()`; output surfaces
+  `(skipped N non-probable nodes: [...])`.
+- 2 unit tests updated: `TestVpsToVPSLatencyTest_LessThanTwoVPS_Skips`
+  (text "online VPS") + `TestSplitSuspectedTest_OneUnreachable_Passes`
+  (skybars → relay-1, VPS-class).
+- 10 contracts pinned in `scripts/check_b115.sh`.
+- `AGENTS.md` / `docs/TODO.md` updated for v1.3.16.
+
+**Catalog:** verify-pre **112 PASS / 0 FAIL / 1 SKIP**
+(B8 VM-only; B19 now PASS, was SKIP — t.Skip stub
+form improved). 28/28 packages green.
+
+**Live state:** build `v1.3.11-10-g6a0ec3a` deployed.
+
+## v1.3.15 — tailnet probe port fallback 22 + 18022
+
+**Date:** 2026-08-13
+**Scope:** Bug fix — pre-v1.3.15 tailnet tests
+hardcoded `port 22`, but the operator's `karolina`
+VPS (100.64.0.2) ALSO listens SSH on 18022 (for
+internal access restriction). karolina was reported
+UNREACHABLE → TAILNET SPLIT false-positive on every
+test run.
+
+**What's added:**
+
+- New helper `probeTailnetNode(ctx, host)` tries
+  `tailnetProbePorts = ["22", "18022"]` in order;
+  returns the latency + port of the first successful
+  handshake.
+- All 3 tailnet tests use the new helper; output
+  surfaces the port (e.g.
+  `100.64.0.2  karolina  140ms :22`).
+- 1 file changed (`system_tests_tailnet.go`), +25
+  lines.
+
+**Catalog:** No new B-check (small fix; contract
+implicit in the 3 tests now passing on live).
+
+**Live state:** build `v1.3.11-9-ga983275` deployed.
+3 tailnet tests still FAIL pre-v1.3.16 (for the
+self + home-LAN reasons addressed in v1.3.16/B115).
+
+## v1.3.14 — BL-17 autonomous migration verify
+
+**Date:** 2026-08-13
+**Scope:** `scripts/verify_migration.sh` (NEW, ~466
+lines) chains 3 post-deploy phases:
+1. `verify_post_deploy.sh --quick` (R1-R9 + R26).
+2. `POST /admin/system_tests/run` via a portable
+   Python+urllib driver staged to the skygate
+   container (busybox wget doesn't support cookies,
+   and the system tests endpoint is internal
+   localhost:8080).
+3. Manual checks (healthz, readyz, /admin/services) —
+   printed for the operator to run themselves.
+
+**Plus:**
+- `PRE_BUILD` pre-state capture → "MIGRATION DETECTED"
+  mode for cold-standby restore flow.
+- Phase 1 SKIP fallback for Windows+
+  `verify_post_deploy.sh` python3 issue (12 false-positive
+  FAILs).
+- 9 contracts pinned in `scripts/check_b114.sh`.
+- B104 marked SUPERSEDED (was 5-phase v1.3.8, never
+  landed; B114 is canonical BL-17 impl).
+
+**Live state:** build `v1.3.11-8-gc07f4d3` deployed.
+
+## v1.3.13 — youtube.com/32 bug fix
+
+**Date:** 2026-08-13
+**Scope:** `internal/feature/exit_rules/form_my.go`
+validates `targetValue` via a new `isValidIPOrCIDR`
+helper before any processing. For `target_type=ip|subnet`,
+bare hostnames (e.g. `youtube.com`) are now rejected
+with 400 + a message that points to `target_type=domain`
+as the right way to add hostnames (the form does DNS
+resolution and stores per-IP /32 rules).
+
+**Bug:** pre-fix, a hostname in the IP field would
+get `youtube.com/32` saved to `device_rules`; the
+ACL builder then promoted it to a host alias
+`h-rule-youtube-com-32: youtube.com/32` — a malformed
+CIDR that headscale rejects, breaking the whole policy
+re-apply.
+
+**What's added:**
+
+- `isValidIPOrCIDR(s)` helper.
+- 1 unit test (`TestIsValidIPOrCIDR_IPv4`, 18
+  table-driven cases: bare IPv4 / IPv4 CIDRs / IPv6 /
+  IPv6 CIDRs / hostnames / hostname CIDRs / garbage).
+- 4 contracts pinned in `scripts/check_b113.sh`.
+
+**Live smoke test (5 cases from inside skygate
+container):** `youtube.com` (ip) → 400, `google.com/24`
+→ 400, `8.8.8.8` → 302, `10.0.0.0/8` → 302,
+`example.com` (domain) → 302.
+
+**Live state:** build `v1.3.11-6-gd7c3b00` deployed.
+Live policy re-applied (snapshot 146798, version=1136,
+applied_success=1).
+
+## v1.3.12 — P4 catalog cleanup + B38 fix
+
+**Date:** 2026-08-13
+**Scope:** 5 staticcheck U1000 dead-code items
+removed (165 lines):
+- `internal/backup/s3.go`: `s3Client` interface +
+  `realS3Client` wrapper (no test ever used the
+  indirection; minio-go has its own httptest fixtures).
+- `internal/feature/admin/integrations_renderer.go`:
+  `dockerCmdStdin`, `renderHeadscaleCompose`,
+  `stripHeadplaneServiceBlock`, `startsWithWhitespace`
+  (compose-file page moved to static render).
+- `internal/telegram/commands_login.go`:
+  `resetLoginAttempts` (rate-limit path moved to
+  unified config).
+- `internal/telegram/commands_phase4.go`:
+  `setKillProcess` (test-only hook for a removed test).
+- `internal/telegram/commands_user.go`:
+  `hostnameMapFromHeadscale` (`/userlist` moved to
+  `node_owner_map` in PG).
+
+**Plus:**
+- 2 verify-pre checks updated: `check_b93.sh` +
+  `check_b95.sh` (v1.3.0+ PG form with t.Skip stubs).
+- **B38 fix**: was looking for deleted
+  `migrations_v0.50.go` and old SQLite test fns;
+  updated to `t.Skip` stub check + `migrations_pg.go`
+  grep.
+- 16 contracts pinned in `scripts/check_b112.sh`.
+
+**Catalog:** 109 PASS / 0 FAIL / 2 SKIP. 28/28
+packages green.
+
+## v1.3.11 — B93 infra-owns-technical-nodes completion (B111)
+
+**Date:** 2026-08-13
+**Scope:** Completes the v0.32.x-era B93 + B111 work:
+infra user owns the 5 technical nodes (skygate-host-1,
+emilia, karolina, sharlotta, svyatoslava-1) instead
+of the user-portal users. Plus a Phase 3 operator
+re-tag of those 5 nodes (server-side via
+`headscale nodes tag --force`, not `tailscale up`
+which is a no-op on alive nodes).
+
+**What's added:**
+
+- `isInfraNode` rule 3 (any node tagged
+  `tag:exit-node` is infra-class).
+- `BackfillInfra` changes from INSERT OR IGNORE to
+  active UPDATE (re-attributes user-portal nodes
+  like `skyadmin / michail / guest / daniil /
+  svyatoslava` to `infra` when `isInfraNode` matches).
+- New helper `getInfraExitNodeTags` in
+  `internal/acl/acl_perdevice.go` (filters skygate,
+  returns sorted exit tags).
+- Both `GenerateACLForPlane` +
+  `GenerateACLWithViaForPlane` emit
+  `* → tag:dev-infra-<exit>` catch-alls (preserves
+  pre-B93 public access to the relay VPSs that
+  became infra-owned in B93).
+- 6 new unit tests in
+  `internal/acl/acl_perdevice_b111_test.go`.
+
+**Live:** 5 nodes re-tagged to `tag:dev-infra-X` +
+svyatoslava portal user (id=11) + headscale user
+(id=84) destroyed. 5 portal users + 5 headscale
+users + 5 nodes in `infra` bucket. B111 catch-alls
+`* → tag:dev-infra-X` active in live policy (4
+grants). Build `v1.3.11-2-g4a4899d`.
+
+## v1.3.10 — TAILNET SPLIT detection (B110)
+
+**Date:** 2026-08-13
+**Scope:** Adds 3 new system tests for tailnet
+diagnostics:
+- `tailnet.all_nodes_reachability` — for every
+  online Tailscale node, TCP-connect to :22 from
+  skygate-host-1. Reports reachability %. Fails at
+  <60%.
+- `tailnet.vps_to_vps_latency` — TCP latency matrix
+  between VPS-class nodes (emilia / karolina /
+  sharlotta / skygate-host-1 / svyatoslava-1).
+  Surfaces "one of the VPS relays is degraded".
+- `tailnet.split_suspected` — explicit split
+  detector. If 2+ nodes are unreachable AND
+  reachability <90%, fails with a clear message
+  pointing the operator at `docs/tailnet-diagnostics.md`.
+
+**Bug observed:** 2026-08-13, headscale `nodes list`
+shows 17 nodes, 10 online. `docker exec skygate-skygate-1
+tailscale status` shows only 4 peers. 6 of the 10
+online nodes (skybars, skyworker, a71, svyatoslava-1,
+olesya, nothing-phone-2) are invisible from
+skygate-host-1. Pre-B93/B111, this was due to policy
+isolation between the `tagged-devices` user buckets
+(see B111 release notes for the fix).
+
+**Live state:** build `v1.3.10` deployed.
+
+## v1.3.9 — mobile-friendly + sidebar fixes (B105-B109)
+
+**Date:** 2026-08-13
+**Scope:** Five small UI fixes for the mobile
+experience:
+- B105: mobile-friendly admin tables (`.table-wrap`)
+  + `.title-row` hamburger gap (60px on mobile).
+- B106: mobile sidebar — `.toggle` button hidden on
+  mobile + `.collapsed` state force-cleared.
+- B107: admin breadcrumb + collapsed section icons:
+  `.admin-breadcrumb` cleared on mobile +
+  `.sidebar-section summary` fits 52px collapsed.
+- B108: section summary click in collapsed sidebar
+  auto-expands + opens section: `<script>` in
+  `layout.html` removes `collapsed` class on click.
+- B109: desktop breadcrumb `padding-left: 40px`
+  (breathing room from 220px sidebar) + B107 mobile
+  60px preserved.
+
 ## v1.3.8 — backup permission-denied fix + S3 / S3-compatible destination
 
 **Date:** 2026-08-12

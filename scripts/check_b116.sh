@@ -145,7 +145,8 @@ pass "renderHeadscaleConfig merges derp_relays enabled URLs"
 F=internal/i18n/catalog_derp.go
 for key in 'derp.relays_title' 'derp.relays_add_title' 'derp.relays_action_save_help' \
            'derp.relays_action_delete_help' 'derp.relays_err_duplicate_url' \
-           'derp.relays_err_bundled_exists' 'derp.relays_added' 'derp.relays_toggled'; do
+           'derp.relays_err_bundled_exists' 'derp.relays_added' 'derp.relays_toggled' \
+           'derp.relays_link_manage' 'derp.relays_nav'; do
     grep -q "\"$key\"" "$F" || fail "i18n key $key missing in $F"
 done
 COUNT=$(grep -c '"derp\.relays_' "$F" || true)
@@ -178,6 +179,23 @@ pass "go build ./cmd/skygate (covered by B1 in verify_pre_deploy.sh)"
 # full PATH; the check_b116.sh script is meant to be
 # runnable without `go` in the operator's Git Bash PATH)
 pass "templates parse (B7) + i18n parity (B4) (covered by verify_pre_deploy.sh)"
+
+# 20. Sidebar + landing page link to the new CRUD surface.
+# v1.3.17.1: added /admin/derp/relays to the Integrations
+# sidebar section + a "Manage relays" button on the
+# /admin/integrations landing page (next to the legacy
+# "Configure" form button).
+F=internal/handlers/templates/layout.html
+grep -q '/admin/derp/relays' "$F" \
+    || fail "/admin/derp/relays not in layout.html sidebar"
+pass "/admin/derp/relays added to sidebar (Integrations section)"
+
+F=internal/handlers/templates/admin/integrations.html
+grep -q '/admin/derp/relays' "$F" \
+    || fail "/admin/derp/relays not linked from integrations.html"
+grep -q 'relays_link_manage' "$F" \
+    || fail "integrations.html missing 'Manage relays' button"
+pass "/admin/integrations landing has 'Manage relays' button → /admin/derp/relays"
 
 echo ""
 echo "  All B116 contracts pinned (20 checks). v1.3.17 DERP CRUD UI verified."
