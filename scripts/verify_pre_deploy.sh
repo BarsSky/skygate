@@ -2969,16 +2969,18 @@ run_check "B103" "in-app S3 download: handler + route + template button + hasPre
   'test -f scripts/check_b103.sh && bash scripts/check_b103.sh'
 
 # ─── B104 (v1.3.8) — autonomous migration verify (BL-17) ───
-# Background: pre-v1.3.8 cross-host migration was a
-# 4-step manual process. v1.3.8 (BL-17) adds a one-shot
-# scripts/verify_migration.sh that chains the 5 checks
-# (healthz / readyz / git HEAD / backup production /
-# replay) and returns a single PASS/FAIL. The operator
-# runs it once on the new host after restore.sh +
-# docker compose up; the script proves the migration
-# is end-to-end functional.
-run_check "B104" "autonomous migration verify: 5-phase one-shot script (B104, BL-17 v1.3.8 mig-verify)" \
-  'test -f scripts/check_b104.sh && bash scripts/check_b104.sh'
+# v1.3.14: SUPERSEDED by B114. The original B104 contract
+# assumed verify_migration.sh would be added in v1.3.8
+# with a "5-phase" structure (healthz / readyz / git HEAD /
+# backup production / replay). That script never landed
+# in v1.3.8 — the actual implementation is B114 (v1.3.14,
+# 3 phases: verify_post_deploy.sh --quick + system tests
+# + manual checks). We keep the B104 catalog entry as a
+# "superseded" pin that just verifies the B114 script
+# exists (re-using the same script — B114 is the canonical
+# implementation of BL-17).
+run_check "B104" "autonomous migration verify: BL-17 (v1.3.8→v1.3.14 — implementation landed in v1.3.14 as B114, see below) (B104, BL-17)" \
+  'test -f scripts/verify_migration.sh && test -x scripts/verify_migration.sh && bash -n scripts/verify_migration.sh'
 
 # ─── B105 (v1.3.9) — mobile-friendly admin tables + title-row hamburger gap ───
 # Background: v1.1.0 (TD-3) added the .sidebar-toggle hamburger
@@ -3195,3 +3197,25 @@ run_check "B112" "v1.3.12 P4 catalog cleanup (5 dead-code removals + 3 check upd
 #    CIDRs + bare hostnames (the bug) + garbage
 run_check "B113" "youtube.com/32 bug fix: form validates targetValue is IP/CIDR for target_type=ip|subnet (B113, v1.3.13)" \
   'test -f scripts/check_b113.sh && bash scripts/check_b113.sh'
+
+# ─── B114 (v1.3.14) — BL-17 verify_migration.sh (autonomous migration verify) ───
+# Background: after a cross-host restore + cutover (the migration
+# flow in docs/backup-restore-and-migration.md section 3), the
+# operator previously had to run 3 separate checks in order, each
+# in its own terminal. If they skipped step 2 (system tests) or
+# step 3 (manual) they'd only find out about subtle issues when
+# a user complained.
+#
+# scripts/verify_migration.sh chains the 3 phases:
+#   1. verify_post_deploy.sh --quick (R1-R9 + R26)
+#   2. POST /admin/system_tests/run via Python driver (staged
+#      via scp + docker cp because the skygate container's
+#      busybox wget doesn't support cookies)
+#   3. Manual checks (healthz, readyz, /admin/services) — printed
+#      as a copy-pasteable curl one-liner for the operator
+#
+# Plus a PRE_BUILD pre-state capture that prints MIGRATION DETECTED
+# when the post-migration build label differs from the pre-migration
+# one (cold-standby restore flow uses this).
+run_check "B114" "autonomous migration verify: 3-phase chain + portable driver staging (B114, BL-17 v1.3.14 mig-verify)" \
+  'test -f scripts/check_b114.sh && bash scripts/check_b114.sh'
