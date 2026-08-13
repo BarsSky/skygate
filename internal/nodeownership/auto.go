@@ -275,41 +275,80 @@ func BackfillInfra(dbConn *sql.DB, nodes []headscale.NodeView) {
 		// matches the production behaviour.
 		return
 	}
-	count := 0
+	matched := 0
+	reattributed := 0
 	for _, n := range nodes {
 		if !isInfraNode(n) {
 			continue
 		}
-		// InsertIgnoreNodeOwnerWithHostname: idempotent
-		// on the node_id PK. If a row already exists
-		// (e.g. owned by 'skyadmin' from a prior
-		// backfill), the insert is a no-op and the
-		// existing row is preserved.
-		err := db.InsertIgnoreNodeOwnerWithHostname(
-			dbConn, n.ID, infraHSID.Int64, "infra",
-			"tag:private", n.Hostname, infraPortalID.Int64,
+		matched++
+		// 2026-08-13: v1.3.11 (B111) — Re-attribute existing
+		// rows from user-portal buckets (skyadmin, michail,
+		// svyatoslava, etc.) to the 'infra' user when the
+		// node matches isInfraNode. The original v0.33.1.41
+		// logic used INSERT OR IGNORE which preserved the
+		// existing owner; that worked for skygate-host-1
+		// (a fresh node) but left exit nodes (emilia,
+		// karolina, sharlotta, svyatoslava-1) stranded in
+		// the user-portal bucket from a B69/B89 backfill.
+		// Without this UPDATE, the per-infra public-access
+		// grants (added in B111) miss the exit nodes, and
+		// the per-device mesh in 'infra' is empty (the
+		// generator skips users with <2 devices).
+		//
+		// Safety: only update rows that are CURRENTLY in a
+		// user-portal bucket (skyadmin/michail/guest/
+		// daniil/svyatoslava — i.e. the portal_users that
+		// have headscale_user_id IS NOT NULL and are not
+		// 'infra'). Rows with an operator-set custom owner
+		// (anything else) are preserved.
+		//
+		// The new tag is `tag:dev-infra-<hostname>` — the
+		// future headscale tag the operator will set on
+		// this node. Until the operator re-tags, the
+		// policy has grants for `tag:dev-infra-emilia`
+		// that match no device (emilia still has
+		// `tag:dev-skyadmin-emilia`). The grants become
+		// live the moment the operator re-tags the node.
+		newTag := "tag:dev-infra-" + n.Hostname
+		res, err := dbConn.Exec(
+			`UPDATE node_owner_map
+			    SET username = 'infra',
+			        headscale_user_id = $1,
+			        tag = $2,
+			        hostname = $3,
+			        tagged_by_user_id = $4,
+			        tagged_at = EXTRACT(epoch FROM now())::bigint
+			  WHERE node_id = $5
+			    AND username IN (
+			        SELECT username FROM portal_users
+			         WHERE username != 'infra'
+			           AND headscale_user_id IS NOT NULL
+			    )`,
+			infraHSID.Int64, newTag, n.Hostname, infraPortalID.Int64, n.ID,
 		)
 		if err != nil {
-			log.Printf("infra-backfill: insert %s (%s): %v", n.ID, n.Hostname, err)
+			log.Printf("infra-backfill: update %s (%s): %v", n.ID, n.Hostname, err)
 			continue
 		}
-		count++
+		rows, _ := res.RowsAffected()
+		if rows > 0 {
+			reattributed++
+			log.Printf("infra-backfill: re-attributed node_id=%s hostname=%s → username=infra tag=%s", n.ID, n.Hostname, newTag)
+		}
+		// If the row didn't update (e.g. node not in
+		// node_owner_map yet, or already owned by 'infra'
+		// / 'tagged-devices' / operator-set), try the
+		// INSERT. The INSERT OR IGNORE preserves any
+		// existing row (idempotent) and adds the new row
+		// when missing.
+		_ = db.InsertIgnoreNodeOwnerWithHostname(
+			dbConn, n.ID, infraHSID.Int64, "infra",
+			newTag, n.Hostname, infraPortalID.Int64,
+		)
 	}
-	if count > 0 {
-		// count = number of nodes that matched the isInfraNode
-		// predicate (skygate-host-* prefix OR tag:dev-infra-*
-		// tag) AND for which InsertIgnoreNodeOwnerWithHostname
-		// didn't error. Note: most of these will be no-ops at
-		// the DB level because the live skygate-host-1 node
-		// already has a row from the B69/B89 backfills with
-		// username='tagged-devices'. The INSERT OR IGNORE on
-		// the node_id PK preserves the existing row. The log
-		// message says "matched" rather than "new" to avoid
-		// implying a re-attribution happened — the live
-		// skygate-host-1 stays owned by 'tagged-devices'
-		// (or 'skyadmin' for an older snapshot) until the
-		// operator runs a one-shot UPDATE on node_owner_map.
-		log.Printf("infra-backfill: %d node(s) matched the infra pattern (INSERT OR IGNORE may have skipped rows that already have an owner)", count)
+	if matched > 0 {
+		log.Printf("infra-backfill: %d node(s) matched isInfraNode, %d re-attributed from user-portal to infra", matched, reattributed)
 	}
 }
 
@@ -322,9 +361,21 @@ func BackfillInfra(dbConn *sql.DB, nodes []headscale.NodeView) {
 //   2. Hostname starts with "skygate-host-" — the
 //      skygate VM itself, regardless of which user
 //      currently owns it in headscale.
+//   3. Any tag equals `tag:exit-node` — an exit node
+//      (relay VPS that advertises 0.0.0.0/0 + ::/0).
+//      Added in v1.3.11 (B111) per operator request:
+//      "infra user будет владеть skygate + exit nodes
+//      (karolina sharlotta emilia svyatoslava) и давать
+//      публичный доступ к exit nodes остальным".
+//      Without rule 3, exit nodes stay owned by
+//      skyadmin/michail/svyatoslava and the per-infra
+//      public-access grants miss them.
 func isInfraNode(n headscale.NodeView) bool {
 	for _, t := range n.Tags {
 		if strings.HasPrefix(t, "tag:dev-infra-") {
+			return true
+		}
+		if t == "tag:exit-node" {
 			return true
 		}
 	}

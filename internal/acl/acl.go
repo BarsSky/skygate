@@ -369,6 +369,45 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// (separator pattern, `ip: ["*"]`, dst=tag-only).
 	writePerDeviceGrants(&sb, usernames, tagsByUser)
 
+	// 2026-08-13: v1.3.11 (B111) — public access to
+	// infra-owned exit nodes. The 'infra' user owns
+	// skygate-host-* + exit nodes (per isInfraNode).
+	// Per-user grants for skyadmin/michail/etc. include
+	// autogroup:internet:* in their dst (so the user's
+	// own devices can use exit nodes), but they do NOT
+	// include specific `tag:dev-infra-<exit>` dst
+	// entries — and Tailscale's exit-node forwarding
+	// requires the client to be able to reach the exit
+	// node's Tailscale IP (100.64.0.X) directly. Without
+	// these catch-alls, skyadmin's android/cyborg/
+	// nothing-phone-2 etc. would lose the ability to use
+	// emilia/karolina/sharlotta/svyatoslava-1 as exit
+	// nodes the moment we move those nodes to the 'infra'
+	// bucket.
+	//
+	// Why a catch-all (`src=*`) instead of a per-user
+	// grant per (portal user × infra exit node): the
+	// operator requested that the public access match
+	// the pre-B93 behaviour. Pre-B93, emilia/karolina/
+	// sharlotta had `tag:dev-skyadmin-<name>` and the
+	// per-device mesh between skyadmin's 14 devices
+	// gave every skyadmin device access to every other
+	// skyadmin device. Post-B111, the per-device mesh
+	// lives in the 'infra' bucket (only 5 infra devices
+	// so far), and the per-user grants (which go to
+	// autogroup:internet, NOT specific device IPs) don't
+	// cover the exit-node IP. The `*` src is safe because
+	// the dst is a per-infrastructure-exit-node tag (only
+	// reachable by the operator's VPN traffic — no
+	// public internet origin can reach 100.64.0.X).
+	infraExitTags := getInfraExitNodeTags(tagsByUser)
+	for _, exitTag := range infraExitTags {
+		// Match the catch-all style: bare tag in dst
+		// (no :* suffix — breaks v2 parser), `ip: ["*"]`
+		// (required by headscale 0.29.2).
+		sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"" + exitTag + "\"], \"ip\": [\"*\"] }")
+	}
+
 	// Per-device exit-rules. v0.28.0: src prefers
 	// tag:dev-<user>-<device> (set by the v0.28.0
 	// backfillNodeOwnership auto-tag, survives IP changes)
@@ -1153,6 +1192,15 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// shape as GenerateACLForPlane; the duplication
 	// introduced by the v0.28.7 fix is now consolidated.
 	writePerDeviceGrants(&sb, usernames, tagsByUser)
+
+	// 2026-08-13: v1.3.11 (B111) — public access to
+	// infra-owned exit nodes (mirrors the same block in
+	// GenerateACLForPlane). See getInfraExitNodeTags
+	// in acl_perdevice.go for the full rationale.
+	infraExitTags := getInfraExitNodeTags(tagsByUser)
+	for _, exitTag := range infraExitTags {
+		sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"" + exitTag + "\"], \"ip\": [\"*\"] }")
+	}
 
 	for _, e := range aclRows {
 		if e.TargetType != "subnet" && e.TargetType != "ip" {

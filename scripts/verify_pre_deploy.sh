@@ -3105,3 +3105,41 @@ run_check "B109" "desktop breadcrumb padding-left 40px (breathing room from 220p
 #   7. The Go unit tests pass (full suite + tailnet-specific).
 run_check "B110" "tailnet reachability/speed/split diagnostics (3 Go tests + shell script + docs) (B110, v1.3.10 TAILNET SPLIT)" \
   'test -f scripts/check_b110.sh && bash scripts/check_b110.sh'
+
+# ─── B111 (v1.3.11) — B93 "infra owns technical nodes" completion ───
+# Background: operator request 2026-08-13: "infra user будет
+# владеть skygate + exit nodes (karolina sharlotta emilia
+# svyatoslava) и давать публичный доступ к exit nodes
+# остальным". The original B93 commit (v0.33.1.41) only
+# matched skygate-host-* prefix + tag:dev-infra-* — it missed
+# the 4 exit nodes that still sat in the skyadmin/michail/
+# svyatoslava user-portal buckets from the B69/B89 backfills.
+# Result: skygate-host-1 ended up in the infra bucket but the
+# per-device mesh for 'infra' was empty (only 1 device, the
+# generator skips <2). The other 9 online nodes were
+# invisible to skygate-host-1 because their tags
+# (tag:dev-skyadmin-X, tag:dev-michail-X) were never paired
+# with the new tag:dev-infra-skygate-host-1 in any grant.
+# B111 closes the gap with three changes:
+#   1. isInfraNode adds rule 3: any tag == "tag:exit-node"
+#      (catches emilia, karolina, sharlotta, svyatoslava-1).
+#   2. BackfillInfra changes from INSERT OR IGNORE to
+#      active UPDATE — nodes matching isInfraNode that are
+#      currently in a user-portal bucket get re-attributed
+#      to 'infra' with tag=tag:dev-infra-<hostname>.
+#   3. The policy generator emits `* → tag:dev-infra-<exit>`
+#      catch-alls so any Tailscale client can still use
+#      infra-owned exit nodes (preserves the pre-B93
+#      behaviour where every skyadmin device could reach
+#      every other skyadmin device, including relays).
+# Pin: 5 contracts in scripts/check_b111.sh (isInfraNode
+# tag:exit-node rule, BackfillInfra UPDATE, getInfraExitNodeTags
+# helper, both GenerateACL call sites, 4+ unit tests pass).
+# Runtime: requires the operator to re-tag the 4 exit nodes
+# + skygate-host-1 in headscale to use tag:dev-infra-<hostname>
+# instead of tag:dev-skyadmin-<hostname>. Until that
+# operator action is done, the policy has grants for tags
+# that don't match any device (no-op) — the existing
+# per-skyadmin mesh keeps working.
+run_check "B111" "B93 infra-owns-technical-nodes completion (isInfraNode + BackfillInfra UPDATE + public-access grants) (B111, v1.3.11)" \
+  'test -f scripts/check_b111.sh && bash scripts/check_b111.sh'

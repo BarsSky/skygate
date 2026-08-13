@@ -39,6 +39,7 @@ package acl
 // has been offline long enough to drop from headscale).
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -101,4 +102,59 @@ func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser ma
 			sb.WriteString("], \"ip\": [\"*\"] }")
 		}
 	}
+}
+
+// getInfraExitNodeTags — v1.3.11 (B111) — returns the
+// `tag:dev-infra-<hostname>` strings for every infra-owned
+// exit node currently in `tagsByUser["infra"]`.
+//
+// The caller emits a `src=*, dst=tag:dev-infra-<exit>` catch-all
+// per returned tag so any Tailscale client in the tailnet
+// can use the infra-owned exit nodes (preserves the
+// pre-B93 skyadmin-mesh behaviour where every skyadmin
+// device could reach every other skyadmin device, including
+// the relay VPSs that became 'infra'-owned in B93).
+//
+// Only `tag:dev-infra-*` tags are returned (not
+// `tag:dev-infra-skygate-host-1` or any other non-exit
+// infra device — we don't want the skygate host itself
+// to be publicly routeable as if it were an exit node).
+//
+// Why a heuristic, not a SQL query for "exit nodes" tags:
+// the policy generator doesn't know which `tag:dev-infra-X`
+// tags map to exit nodes vs skygate VMs vs future
+// infrastructure. The operator decides what "exit node"
+// means; today it's 4 VPS nodes (emilia, karolina, sharlotta,
+// svyatoslava-1) plus the catch-all `* → tag:exit-node` for
+// any node that headscale tags `tag:exit-node`. Future
+// operator-added exit nodes are automatically picked up
+// because BackfillInfra (with the v1.3.11 isInfraNode
+// rule 3) re-attributes them to 'infra' and adds them to
+// tagsByUser["infra"], so the next policy reapply emits
+// the catch-all automatically.
+//
+// Skips empty/nil tags defensively (shouldn't happen in
+// production — writePerDeviceGrants already filters empty
+// tags — but cheap insurance).
+func getInfraExitNodeTags(tagsByUser map[string][]string) []string {
+	infraTags := tagsByUser["infra"]
+	if len(infraTags) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(infraTags))
+	for _, t := range infraTags {
+		if t == "" {
+			continue
+		}
+		// Skip the skygate host itself. The infra user
+		// owns skygate-host-* nodes (hostname prefix
+		// `skygate-`); we only want exit nodes in the
+		// public-access catch-all.
+		if strings.HasPrefix(t, "tag:dev-infra-skygate") {
+			continue
+		}
+		out = append(out, t)
+	}
+	sort.Strings(out) // deterministic policy output
+	return out
 }
