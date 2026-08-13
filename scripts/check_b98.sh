@@ -19,6 +19,39 @@
 set -e
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 
+# Find go. PowerShell on Windows runs scripts through a
+# different shell (Git Bash) that may not have go on PATH;
+# WSL bash has /mnt/c/... paths in PATH but the embedded
+# space ("Program Files") breaks the lookup. Probe a
+# handful of known locations explicitly.
+find_go() {
+  if command -v go >/dev/null 2>&1; then
+    command -v go
+    return 0
+  fi
+  for cand in \
+    "/mnt/c/Program Files/Go/bin/go.exe" \
+    "/mnt/c/Program Files (x86)/Go/bin/go.exe" \
+    "/mnt/c/ProgramFiles/Go/bin/go.exe" \
+    "/c/Program Files/Go/bin/go.exe" \
+    "/c/Program Files (x86)/Go/bin/go.exe" \
+    "/c/ProgramFiles/Go/bin/go.exe" \
+    "/usr/local/go/bin/go" \
+    "/opt/go/bin/go" \
+    ; do
+    if [ -f "$cand" ]; then
+      echo "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+GO_BIN=$(find_go)
+if [ -z "$GO_BIN" ]; then
+  echo "B98 FAIL: go not in PATH and not found in standard install paths" >&2
+  exit 1
+fi
+
 # 1. The two new test defs exist with the right shape.
 grep -qF 'Name:        "exit_nodes.tcp_connect_speed"' internal/feature/admin/system_tests_exit_node_speed.go || {
   echo "FAIL: exit_nodes.tcp_connect_speed not registered in system_tests_exit_node_speed.go"
@@ -51,7 +84,7 @@ if [ "$test_count" -lt 15 ]; then
 fi
 
 # 4. The Go tests actually pass.
-test_output=$(cd internal/feature/admin && go test -count=1 -run 'TestExitNodeSpeed|TestExitNodes|TestTailscaleIPFromNode|TestFormatLatencyMs|TestProbeExitNodeConnect_' 2>&1)
+test_output=$(cd internal/feature/admin && "$GO_BIN" test -count=1 -run 'TestExitNodeSpeed|TestExitNodes|TestTailscaleIPFromNode|TestFormatLatencyMs|TestProbeExitNodeConnect_' 2>&1)
 if ! echo "$test_output" | grep -qE '^ok\s+skygate/internal/feature/admin'; then
   echo "FAIL: Go tests for exit-node speed/availability did not pass"
   echo "$test_output" | tail -5

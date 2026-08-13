@@ -3078,3 +3078,30 @@ run_check "B108" "section summary click in collapsed sidebar auto-expands + open
 #      padding-left:60px on mobile (regression guard).
 run_check "B109" "desktop breadcrumb padding-left 40px (breathing room from 220px sidebar) + B107 mobile 60px preserved (B109, v1.3.9 mobile-friendly)" \
   'test -f scripts/check_b109.sh && bash scripts/check_b109.sh'
+
+# ─── B110 (v1.3.10) — tailnet reachability/speed/split diagnostics ───
+# Background: operator request 2026-08-13 — "проверить скорость к
+# skybars от karolina, организовать тесты для проверки скорости и
+# доступа". Live symptom: headscale says 10 nodes are online but
+# skygate-host-1's `tailscale status` shows only 4 — a tailnet split
+# where the home-LAN cluster (skybars, skyworker, a71, olesya,
+# svyatoslava-1, nothing-phone-2) is invisible from the server. Root
+# cause analysis + fix procedure in docs/tailnet-diagnostics.md.
+# B110 pins 7 contracts in scripts/check_b110.sh:
+#   1. internal/feature/admin/system_tests_tailnet.go has 3 new
+#      TestRegistry entries (allNodesReachabilityTest,
+#      vpsToVPSLatencyTest, splitSuspectedTest) + the vpsHostnameSet
+#      helper with the 5 known VPS hostnames.
+#   2. internal/feature/admin/system_tests_tailnet_test.go has ≥12
+#      Test* functions covering pass/fail/skip branches.
+#   3. scripts/tailnet_probe.sh is bash-syntax-valid and supports
+#      the 4 documented flags (--to, --iperf3, --ping, --json).
+#   4. docs/tailnet-diagnostics.md has the 5 mandatory sections
+#      (TL;DR, Symptom, Root cause analysis, Fix procedure,
+#      Prevention).
+#   5. init() registers all 3 tests in TestRegistry.
+#   6. All 3 tests use Category:"network" (matches B98 + B40
+#      coverage of network category).
+#   7. The Go unit tests pass (full suite + tailnet-specific).
+run_check "B110" "tailnet reachability/speed/split diagnostics (3 Go tests + shell script + docs) (B110, v1.3.10 TAILNET SPLIT)" \
+  'test -f scripts/check_b110.sh && bash scripts/check_b110.sh'
