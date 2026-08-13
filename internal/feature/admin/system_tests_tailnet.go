@@ -92,6 +92,46 @@ func vpsHostnameSet() map[string]bool {
 	}
 }
 
+// tailnetProbePorts is the list of TCP ports that count as
+// "this node is alive" for tailnet reachability / split tests.
+// Most nodes run SSH on the default 22, but the operator's
+// karolina VPS also runs SSH on 18022 (a non-default port,
+// probably for an internal access restriction). We treat
+// EITHER port as success — a node that responds on any
+// of them is reachable from the tailnet.
+//
+// Order matters: we probe 22 first because it's the
+// overwhelmingly common case (so the latency we report is
+// the canonical SSH port, not the 18022 fallback).
+var tailnetProbePorts = []string{"22", "18022"}
+
+// probeTailnetNode dials host:<port> for each port in
+// tailnetProbePorts (in order) and returns the latency of
+// the FIRST successful handshake. If all ports fail, the
+// error from the last port is returned.
+//
+// v1.3.15 (BL-15 follow-up): pre-v1.3.15 the tailnet
+// tests hardcoded port "22", which meant karolina (and
+// any future node that only listens on 18022) was reported
+// as UNREACHABLE even when the node was perfectly fine.
+// This was triggering false-positive TAILNET SPLIT alerts.
+//
+// The test output surfaces the port that worked: if a
+// node answers on 22 we report latency for 22; if only
+// 18022 is open we report that. The threshold logic
+// (60% for reachability, 40% for split) is unchanged.
+func probeTailnetNode(ctx context.Context, host string) (time.Duration, string, error) {
+	var lastErr error
+	for _, port := range tailnetProbePorts {
+		latency, err := probeExitNodeConnect(ctx, host, port)
+		if err == nil {
+			return latency, port, nil
+		}
+		lastErr = err
+	}
+	return 0, "", lastErr
+}
+
 // allNodesReachabilityTest is a TestRegistry entry. For
 // every online Tailscale node, attempts a TCP:22 connect
 // from skygate-host-1. Reports reachability % and the
@@ -133,6 +173,7 @@ var allNodesReachabilityTest = SystemTestDef{
 		type probe struct {
 			ip       string
 			hostname string
+			port     string // which tailnetProbePorts entry worked (22 or 18022)
 			latency  time.Duration
 			err      error
 		}
@@ -145,10 +186,14 @@ var allNodesReachabilityTest = SystemTestDef{
 			if ip == "" {
 				continue
 			}
-			latency, err := probeExitNodeConnect(ctx, ip, "22")
+			// v1.3.15: probe 22 + 18022 (karolina also
+			// listens on 18022 for internal access). The
+			// first port to respond wins.
+			latency, port, err := probeTailnetNode(ctx, ip)
 			probes = append(probes, probe{
 				ip:       ip,
 				hostname: n.GivenName,
+				port:     port,
 				latency:  latency,
 				err:      err,
 			})
@@ -166,8 +211,8 @@ var allNodesReachabilityTest = SystemTestDef{
 		for _, p := range probes {
 			if p.err == nil {
 				available++
-				lines = append(lines, fmt.Sprintf("  %-15s %-20s %s",
-					p.ip, p.hostname, p.latency.Round(time.Millisecond)))
+				lines = append(lines, fmt.Sprintf("  %-15s %-20s %s :%s",
+					p.ip, p.hostname, p.latency.Round(time.Millisecond), p.port))
 			} else {
 				lines = append(lines, fmt.Sprintf("  %-15s %-20s ERROR %v",
 					p.ip, p.hostname, p.err))
@@ -239,6 +284,7 @@ var vpsToVPSLatencyTest = SystemTestDef{
 		type probe struct {
 			ip       string
 			hostname string
+			port     string
 			latency  time.Duration
 			err      error
 		}
@@ -254,10 +300,12 @@ var vpsToVPSLatencyTest = SystemTestDef{
 			if ip == "" {
 				continue
 			}
-			latency, err := probeExitNodeConnect(ctx, ip, "22")
+			// v1.3.15: 22 + 18022 fallback
+			latency, port, err := probeTailnetNode(ctx, ip)
 			probes = append(probes, probe{
 				ip:       ip,
 				hostname: n.GivenName,
+				port:     port,
 				latency:  latency,
 				err:      err,
 			})
@@ -280,8 +328,8 @@ var vpsToVPSLatencyTest = SystemTestDef{
 				lines = append(lines, fmt.Sprintf("  %-15s %-20s ERROR %v", p.ip, p.hostname, p.err))
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("  %-15s %-20s %s",
-				p.ip, p.hostname, p.latency.Round(time.Millisecond)))
+			lines = append(lines, fmt.Sprintf("  %-15s %-20s %s :%s",
+				p.ip, p.hostname, p.latency.Round(time.Millisecond), p.port))
 			if p.latency > slowThreshold {
 				slow = append(slow, fmt.Sprintf("%s (%s): %s", p.hostname, p.ip, p.latency.Round(time.Millisecond)))
 			}
@@ -362,11 +410,12 @@ var splitSuspectedTest = SystemTestDef{
 				continue
 			}
 			online = append(online, fmt.Sprintf("%s (%s)", n.GivenName, ip))
-			latency, err := probeExitNodeConnect(ctx, ip, "22")
+			// v1.3.15: 22 + 18022 fallback
+			latency, port, err := probeTailnetNode(ctx, ip)
 			if err != nil {
 				unreachable = append(unreachable, fmt.Sprintf("%s (%s): %v", n.GivenName, ip, err))
 			} else {
-				reachable = append(reachable, fmt.Sprintf("%s (%s): %s", n.GivenName, ip, latency.Round(time.Millisecond)))
+				reachable = append(reachable, fmt.Sprintf("%s (%s) :%s %s", n.GivenName, ip, port, latency.Round(time.Millisecond)))
 			}
 		}
 		if len(online) == 0 {
