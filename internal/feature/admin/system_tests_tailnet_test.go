@@ -30,6 +30,18 @@ import (
 	"time"
 )
 
+// setUpTailnetSelfOverride pins tailnetSelfHostname to a
+// test-controlled value (otherwise it would call
+// `tailscale status --json` which doesn't exist in the
+// test process, returning "" and leaving the test's own
+// skygate-host-1 node in the probe set).
+func setUpTailnetSelfOverride(t *testing.T, hostname string) {
+	t.Helper()
+	prev := tailnetSelfHostnameOverride
+	tailnetSelfHostnameOverride = func() string { return hostname }
+	t.Cleanup(func() { tailnetSelfHostnameOverride = prev })
+}
+
 // --- vpsHostnameSet -----------------------------------------------
 
 func TestVpsHostnameSet_IncludesKnownVPS(t *testing.T) {
@@ -103,7 +115,7 @@ func TestAllNodesReachabilityTest_AllReachable_Passes(t *testing.T) {
 	if status != SystemTestPass {
 		t.Errorf("status = %v, want PASS (output: %s)", status, out)
 	}
-	for _, want := range []string{"3/3 online Tailscale nodes reachable (100%)", "emilia", "karolina", "sharlotta"} {
+	for _, want := range []string{"3/3 probable Tailscale nodes reachable (100%)", "emilia", "karolina", "sharlotta"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\nfull: %s", want, out)
 		}
@@ -111,32 +123,45 @@ func TestAllNodesReachabilityTest_AllReachable_Passes(t *testing.T) {
 }
 
 func TestAllNodesReachabilityTest_SplitScenario_FailsBelow60(t *testing.T) {
-	// 10 online, only 3 reachable = 30% → FAIL.
-	// Mirrors the operator's live state on 2026-08-13.
+	// v1.3.16: only VPS-class nodes in the test set
+	// (home-LAN-without-SSH are now in tailnetSkipHostnames,
+	// self is also skipped). 6 probable VPS nodes total,
+	// 3 reachable = 3/6 = 50% < 60% → FAIL (split).
+	// The 2 home-LAN nodes below are NOT in the reachable
+	// set — they're filtered by the skip set so they
+	// don't drag the % down further (they were never
+	// meant to be probed).
+	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
 		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
 		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
 		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
-		{ID: "5", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
-		{ID: "6", GivenName: "skyworker", IPAddresses: []string{"100.64.0.1"}, Online: true},
-		{ID: "7", GivenName: "a71", IPAddresses: []string{"100.64.0.19"}, Online: true},
-		{ID: "8", GivenName: "olesya", IPAddresses: []string{"100.64.0.16"}, Online: true},
-		{ID: "9", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
-		{ID: "10", GivenName: "nothing-phone-2", IPAddresses: []string{"100.64.0.6"}, Online: true},
+		{ID: "4", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
+		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
+		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true},
+		// home-LAN — these should be SKIPPED, not probed.
+		// We include them in the setup to verify the skip
+		// filter works.
+		{ID: "7", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
+		{ID: "8", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
+		{ID: "9", GivenName: "skyworker", IPAddresses: []string{"100.64.0.1"}, Online: true},
+		{ID: "10", GivenName: "a71", IPAddresses: []string{"100.64.0.19"}, Online: true},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
 		"100.64.0.3":  {latency: 50 * time.Millisecond},
 		"100.64.0.2":  {latency: 75 * time.Millisecond},
 		"100.64.0.4":  {latency: 60 * time.Millisecond},
-		"100.64.0.18": {latency: 20 * time.Millisecond},
+		// 3 VPS nodes unreachable (split signature)
+		"100.64.0.15": {err: errors.New("i/o timeout")},
+		"100.64.0.7":  {err: errors.New("i/o timeout")},
+		"100.64.0.8":  {err: errors.New("i/o timeout")},
+		// home-LAN-without-SSH — also unreachable but should
+		// be SKIPPED (not fail the test)
+		"100.64.0.18": {err: errors.New("connection refused")},
 		"100.64.0.5":  {err: errors.New("i/o timeout")},
 		"100.64.0.1":  {err: errors.New("i/o timeout")},
 		"100.64.0.19": {err: errors.New("i/o timeout")},
-		"100.64.0.16": {err: errors.New("i/o timeout")},
-		"100.64.0.15": {err: errors.New("i/o timeout")},
-		"100.64.0.6":  {err: errors.New("i/o timeout")},
 	})
 
 	status, out := allNodesReachabilityTest.Run(context.Background())
@@ -146,46 +171,49 @@ func TestAllNodesReachabilityTest_SplitScenario_FailsBelow60(t *testing.T) {
 	if !strings.Contains(out, "UNREACHABLE") {
 		t.Errorf("output missing UNREACHABLE block:\n%s", out)
 	}
-	if !strings.Contains(out, "4/10 online Tailscale nodes reachable (40%)") {
-		t.Errorf("output missing 4/10 summary line:\n%s", out)
+	// v1.3.16: 3/6 = 50%, 4 home-LAN+self skipped
+	if !strings.Contains(out, "3/6 probable Tailscale nodes reachable (50%)") {
+		t.Errorf("output missing 3/6 summary line:\n%s", out)
+	}
+	// The skip block should list the home-LAN hostnames
+	if !strings.Contains(out, "skygate-host-1") || !strings.Contains(out, "skybars") {
+		t.Errorf("output should list skipped home-LAN/self hostnames:\n%s", out)
 	}
 }
 
 func TestAllNodesReachabilityTest_OneUnreachable_Passes(t *testing.T) {
-	// 9/10 = 90% > 60% threshold → PASS, but unreachable
-	// node listed. Models "one phone asleep".
+	// v1.3.16: only VPS-class nodes. 5 probable, 4 reachable
+	// = 80% > 60% → PASS, but unreachable node listed.
+	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
 		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
 		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
 		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
-		{ID: "5", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
-		{ID: "6", GivenName: "skyworker", IPAddresses: []string{"100.64.0.1"}, Online: true},
-		{ID: "7", GivenName: "a71", IPAddresses: []string{"100.64.0.19"}, Online: true},
-		{ID: "8", GivenName: "olesya", IPAddresses: []string{"100.64.0.16"}, Online: true},
-		{ID: "9", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
-		{ID: "10", GivenName: "nothing-phone-2", IPAddresses: []string{"100.64.0.6"}, Online: true},
+		{ID: "4", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
+		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
+		// home-LAN — skipped
+		{ID: "6", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
+		{ID: "7", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
 		"100.64.0.3":  {latency: 50 * time.Millisecond},
 		"100.64.0.2":  {latency: 75 * time.Millisecond},
 		"100.64.0.4":  {latency: 60 * time.Millisecond},
-		"100.64.0.18": {latency: 20 * time.Millisecond},
-		"100.64.0.5":  {latency: 30 * time.Millisecond},
-		"100.64.0.1":  {latency: 40 * time.Millisecond},
-		"100.64.0.19": {latency: 25 * time.Millisecond},
-		"100.64.0.16": {latency: 30 * time.Millisecond},
 		"100.64.0.15": {latency: 80 * time.Millisecond},
-		"100.64.0.6":  {err: errors.New("connection refused")},
+		// 1 VPS unreachable = "phone asleep" or relay hiccup
+		"100.64.0.7":  {err: errors.New("i/o timeout")},
+		// home-LAN unreachable — skipped
+		"100.64.0.18": {err: errors.New("connection refused")},
+		"100.64.0.5":  {err: errors.New("i/o timeout")},
 	})
 
 	status, out := allNodesReachabilityTest.Run(context.Background())
 	if status != SystemTestPass {
-		t.Errorf("status = %v, want PASS at 90%% (output: %s)", status, out)
+		t.Errorf("status = %v, want PASS at 80%% (output: %s)", status, out)
 	}
-	if !strings.Contains(out, "9/10 online Tailscale nodes reachable (90%)") {
-		t.Errorf("output missing 9/10 summary:\n%s", out)
+	if !strings.Contains(out, "4/5 probable Tailscale nodes reachable (80%)") {
+		t.Errorf("output missing 4/5 summary:\n%s", out)
 	}
 }
 
@@ -362,18 +390,32 @@ func TestSplitSuspectedTest_AllReachable_Passes(t *testing.T) {
 func TestSplitSuspectedTest_OneUnreachable_Passes(t *testing.T) {
 	// 1 unreachable is "phone asleep", not a split. Test
 	// must PASS with the unreachable entry listed.
+	// v1.3.16: use a VPS-class node (relay-1) as the
+	// unreachable one — home-LAN-without-SSH hostnames
+	// (skybars, skyworker, a71, olesya, nothing-phone-2)
+	// are now SKIPPED by tailnetSkipHostnames() and never
+	// appear in the probe set, so they can't exercise the
+	// "1 unreachable is OK" branch.
+	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
 		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
 		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
 		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
+		{ID: "4", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
+		// self + home-LAN — should be SKIPPED
+		{ID: "5", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
+		{ID: "6", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
 		"100.64.0.3": {latency: 50 * time.Millisecond},
 		"100.64.0.2": {latency: 80 * time.Millisecond},
 		"100.64.0.4": {latency: 100 * time.Millisecond},
-		"100.64.0.5": {err: errors.New("i/o timeout")},
+		// 1 VPS unreachable (relay-1) — "phone asleep" case
+		"100.64.0.7":  {err: errors.New("i/o timeout")},
+		// self + home-LAN unreachable — should be SKIPPED
+		"100.64.0.18": {err: errors.New("connection refused")},
+		"100.64.0.5":  {err: errors.New("i/o timeout")},
 	})
 
 	status, out := splitSuspectedTest.Run(context.Background())
@@ -386,31 +428,38 @@ func TestSplitSuspectedTest_OneUnreachable_Passes(t *testing.T) {
 }
 
 func TestSplitSuspectedTest_ManyUnreachable_Fails(t *testing.T) {
-	// 4/10 reachable = 40%, 6 unreachable → split signature.
+	// v1.3.16: only VPS-class nodes in the test set (home-
+	// LAN-without-SSH are skipped by tailnetSkipHostnames).
+	// 6 probable VPS nodes total, 3 reachable = 3/6 = 50%
+	// < 90% threshold + 3 unreachable ≥ 2 → FAIL.
+	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
 		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
 		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
 		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
-		{ID: "5", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
-		{ID: "6", GivenName: "skyworker", IPAddresses: []string{"100.64.0.1"}, Online: true},
-		{ID: "7", GivenName: "a71", IPAddresses: []string{"100.64.0.19"}, Online: true},
-		{ID: "8", GivenName: "olesya", IPAddresses: []string{"100.64.0.16"}, Online: true},
-		{ID: "9", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
-		{ID: "10", GivenName: "nothing-phone-2", IPAddresses: []string{"100.64.0.6"}, Online: true},
+		{ID: "4", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
+		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
+		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true},
+		// home-LAN — should be SKIPPED
+		{ID: "7", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
+		{ID: "8", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
+		{ID: "9", GivenName: "skyworker", IPAddresses: []string{"100.64.0.1"}, Online: true},
+		{ID: "10", GivenName: "a71", IPAddresses: []string{"100.64.0.19"}, Online: true},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
 		"100.64.0.3":  {latency: 50 * time.Millisecond},
 		"100.64.0.2":  {latency: 80 * time.Millisecond},
 		"100.64.0.4":  {latency: 100 * time.Millisecond},
-		"100.64.0.18": {latency: 20 * time.Millisecond},
+		// 3 VPS nodes unreachable (split signature)
+		"100.64.0.15": {err: errors.New("i/o timeout")},
+		"100.64.0.7":  {err: errors.New("i/o timeout")},
+		"100.64.0.8":  {err: errors.New("i/o timeout")},
+		// home-LAN unreachable — should be SKIPPED, not fail
+		"100.64.0.18": {err: errors.New("connection refused")},
 		"100.64.0.5":  {err: errors.New("i/o timeout")},
 		"100.64.0.1":  {err: errors.New("i/o timeout")},
 		"100.64.0.19": {err: errors.New("i/o timeout")},
-		"100.64.0.16": {err: errors.New("i/o timeout")},
-		"100.64.0.15": {err: errors.New("i/o timeout")},
-		"100.64.0.6":  {err: errors.New("i/o timeout")},
 	})
 
 	status, out := splitSuspectedTest.Run(context.Background())

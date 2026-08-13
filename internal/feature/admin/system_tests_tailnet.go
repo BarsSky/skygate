@@ -54,7 +54,10 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -90,6 +93,115 @@ func vpsHostnameSet() map[string]bool {
 		// appears in `tailscale status` as a peer of self).
 		"svyatoslava-1":    true,
 	}
+}
+
+// tailnetSelfHostnameOverride is the test-injection hook
+// for tailnetSelfHostname. The default (nil) reads from
+// `tailscale status --json`. Tests can swap it to return a
+// specific value (typically the hostname of a fake node
+// in the test setup).
+var tailnetSelfHostnameOverride func() string
+
+// tailnetSelfHostname returns this skygate container's
+// Tailscale HostName (e.g. "skygate-host-1"). Used to skip
+// the self-probe in the reachability/split tests — there's
+// no point in TCP:22/18022-connecting to yourself from
+// yourself, and skygate-host-1 doesn't have an SSH daemon
+// listening on either port (it's the skygate container
+// itself, not a server with SSH).
+//
+// Falls back to "" if tailscale status can't be parsed
+// (the tests then proceed with no self-skip — same as
+// the pre-v1.3.16 behaviour, just degraded).
+func tailnetSelfHostname() string {
+	if tailnetSelfHostnameOverride != nil {
+		return tailnetSelfHostnameOverride()
+	}
+	// Try the env var first (operator can set it if
+	// tailscale status is broken for any reason). The
+	// env var name is deliberately not in Cfg — it's a
+	// per-process runtime override, not a deployment
+	// config.
+	if h := os.Getenv("SKYGATE_TAILNET_SELF_HOSTNAME"); h != "" {
+		return h
+	}
+	// Try tailscale status --json (the standard path).
+	out, err := exec.Command("tailscale", "status", "--json").Output()
+	if err != nil {
+		return ""
+	}
+	var d struct {
+		Self struct {
+			HostName string `json:"HostName"`
+		} `json:"Self"`
+	}
+	if err := json.Unmarshal(out, &d); err != nil {
+		return ""
+	}
+	return d.Self.HostName
+}
+
+// tailnetSkipHostnames returns the set of hostnames that
+// should be SKIPPED by the all-nodes reachability + split
+// tests. v1.3.16 — was needed because:
+//   1. The skygate container itself doesn't have SSH
+//      listening on 22 or 18022, so self-probing always
+//      fails (with "connection refused"). Excluding self
+//      is required for the tests to be meaningful.
+//   2. The operator's home-LAN devices (skyworker,
+//      skybars, a71, nothing-phone-2) have no SSH daemon
+//      at all (they're phones/tablets/desktops, not
+//      servers). The test would always report them as
+//      unreachable, dragging the reachability % down
+//      and triggering false-positive TAILNET SPLIT
+//      alerts every run.
+//
+// The self hostname is computed at runtime via
+// `tailnetSelfHostname()`. The home-LAN set is hardcoded
+// to match the operator's deploy (override via
+// SKYGATE_TAILNET_SKIP_HOSTNAMES env var, comma-sep).
+func tailnetSkipHostnames() map[string]bool {
+	out := make(map[string]bool)
+
+	// v1.3.16: always exclude self (was previously probed
+	// in v1.3.15, always reported ERROR → false TAILNET SPLIT)
+	if self := tailnetSelfHostname(); self != "" {
+		out[self] = true
+	}
+
+	// v1.3.16: hardcoded set of home-LAN-without-SSH
+	// hostnames. Matches the operator's deploy as of
+	// 2026-08-13. Add new entries here as the fleet changes.
+	homeLANWithoutSSH := []string{
+		"skyworker",     // operator's workstation
+		"skybars",       // operator's NAS
+		"a71",           // Android phone
+		"olesya",        // iPad (added 2026-08-13 — was previously reachable)
+		"nothing-phone-2", // Android phone (added 2026-08-13)
+	}
+	for _, h := range homeLANWithoutSSH {
+		out[h] = true
+	}
+
+	// Override via env var. Comma-separated, whitespace
+	// trimmed. The hardcoded set is the BASE; the env var
+	// REPLACES (not merges) so the operator can override
+	// the entire denylist if needed.
+	if env := os.Getenv("SKYGATE_TAILNET_SKIP_HOSTNAMES"); env != "" {
+		out = make(map[string]bool)
+		for _, h := range strings.Split(env, ",") {
+			if h = strings.TrimSpace(h); h != "" {
+				out[h] = true
+			}
+		}
+		// Always keep self in the denylist (regardless of
+		// env var). The operator should not need to repeat
+		// the self-skip in every env var.
+		if self := tailnetSelfHostname(); self != "" {
+			out[self] = true
+		}
+	}
+	return out
 }
 
 // tailnetProbePorts is the list of TCP ports that count as
@@ -169,6 +281,9 @@ var allNodesReachabilityTest = SystemTestDef{
 		if err != nil {
 			return SystemTestFail, "list nodes: " + err.Error()
 		}
+		// v1.3.16: skip self + home-LAN-without-SSH
+		// nodes (see tailnetSkipHostnames comment for why).
+		skip := tailnetSkipHostnames()
 		// Per-probe result, sorted later.
 		type probe struct {
 			ip       string
@@ -178,8 +293,13 @@ var allNodesReachabilityTest = SystemTestDef{
 			err      error
 		}
 		var probes []probe
+		var skipped []string
 		for _, n := range nodes {
 			if !n.Online {
+				continue
+			}
+			if skip[n.GivenName] {
+				skipped = append(skipped, n.GivenName)
 				continue
 			}
 			ip := tailscaleIPFromNode(n.IPAddresses)
@@ -199,7 +319,7 @@ var allNodesReachabilityTest = SystemTestDef{
 			})
 		}
 		if len(probes) == 0 {
-			return SystemTestSkip, "no online Tailscale nodes"
+			return SystemTestSkip, fmt.Sprintf("no probable Tailscale nodes (skipped %d: %v)", len(skipped), skipped)
 		}
 		// Sort by hostname for stable output.
 		sort.Slice(probes, func(i, j int) bool {
@@ -222,8 +342,12 @@ var allNodesReachabilityTest = SystemTestDef{
 		}
 		pct := (available * 100) / len(probes)
 		var buf strings.Builder
-		buf.WriteString(fmt.Sprintf("%d/%d online Tailscale nodes reachable (%d%%)\n",
+		buf.WriteString(fmt.Sprintf("%d/%d probable Tailscale nodes reachable (%d%%)\n",
 			available, len(probes), pct))
+		if len(skipped) > 0 {
+			sort.Strings(skipped)
+			buf.WriteString(fmt.Sprintf("  (skipped %d non-probable nodes: %v)\n", len(skipped), skipped))
+		}
 		for _, l := range lines {
 			buf.WriteString(l)
 			buf.WriteString("\n")
@@ -281,6 +405,9 @@ var vpsToVPSLatencyTest = SystemTestDef{
 			return SystemTestFail, "list nodes: " + err.Error()
 		}
 		vps := vpsHostnameSet()
+		// v1.3.16: skip self (skygate-host-1 has no SSH
+		// daemon, so self-probe always fails).
+		skip := tailnetSkipHostnames()
 		type probe struct {
 			ip       string
 			hostname string
@@ -289,11 +416,16 @@ var vpsToVPSLatencyTest = SystemTestDef{
 			err      error
 		}
 		var probes []probe
+		var skipped []string
 		for _, n := range nodes {
 			if !n.Online {
 				continue
 			}
 			if !vps[n.GivenName] {
+				continue
+			}
+			if skip[n.GivenName] {
+				skipped = append(skipped, n.GivenName)
 				continue
 			}
 			ip := tailscaleIPFromNode(n.IPAddresses)
@@ -311,7 +443,7 @@ var vpsToVPSLatencyTest = SystemTestDef{
 			})
 		}
 		if len(probes) < 2 {
-			return SystemTestSkip, fmt.Sprintf("only %d online VPS nodes — need ≥2 to compare latency", len(probes))
+			return SystemTestSkip, fmt.Sprintf("only %d online VPS nodes (skipped %d: %v) — need ≥2 to compare latency", len(probes), len(skipped), skipped)
 		}
 		sort.Slice(probes, func(i, j int) bool {
 			return probes[i].hostname < probes[j].hostname
@@ -339,6 +471,10 @@ var vpsToVPSLatencyTest = SystemTestDef{
 		for _, l := range lines {
 			buf.WriteString(l)
 			buf.WriteString("\n")
+		}
+		if len(skipped) > 0 {
+			sort.Strings(skipped)
+			buf.WriteString(fmt.Sprintf("(skipped %d: %v)\n", len(skipped), skipped))
 		}
 		if len(failed) > 0 {
 			buf.WriteString(fmt.Sprintf("\nFAILED (%d):\n", len(failed)))
@@ -401,8 +537,13 @@ var splitSuspectedTest = SystemTestDef{
 			return SystemTestFail, "list nodes: " + err.Error()
 		}
 		var online, reachable, unreachable []string
+		// v1.3.16: skip self + home-LAN-without-SSH
+		skip := tailnetSkipHostnames()
 		for _, n := range nodes {
 			if !n.Online {
+				continue
+			}
+			if skip[n.GivenName] {
 				continue
 			}
 			ip := tailscaleIPFromNode(n.IPAddresses)

@@ -3219,3 +3219,5 @@ run_check "B113" "youtube.com/32 bug fix: form validates targetValue is IP/CIDR 
 # one (cold-standby restore flow uses this).
 run_check "B114" "autonomous migration verify: 3-phase chain + portable driver staging (B114, BL-17 v1.3.14 mig-verify)" \
   'test -f scripts/check_b114.sh && bash scripts/check_b114.sh'
+run_check "B115" "tailnet test skip filter: tailnetSelfHostname + tailnetSkipHostnames + 5 home-LAN hardcoded + 3 tests use filter (B115, v1.3.16)" \
+  'test -f scripts/check_b115.sh && bash scripts/check_b115.sh'
