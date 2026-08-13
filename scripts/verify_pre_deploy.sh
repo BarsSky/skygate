@@ -3053,3 +3053,28 @@ run_check "B107" "admin breadcrumb + collapsed section icons: .admin-breadcrumb 
 #      still happen so the section opens after the sidebar expands.
 run_check "B108" "section summary click in collapsed sidebar auto-expands + opens section: <script> in layout.html removes 'collapsed' class on click (B108, v1.3.9 mobile-friendly)" \
   'test -f scripts/check_b108.sh && bash scripts/check_b108.sh'
+
+# ─── B109 (v1.3.9) — desktop breadcrumb padding-left 24px → 40px ───
+# Background: the .admin-breadcrumb nav (renders "Админ › section ›
+# page" path on every admin page) lives on its own line with its
+# own bg-card background + bottom border, separate from the .shell
+# content. The 24px "standard" padding that header .shell uses
+# looked visually too tight against the 220px sidebar. Operator-
+# reported symptom (2026-08-13): "в новых страницах групп не
+# учитывает смещение от меню" — the breadcrumb sits too close to
+# the menu, doesn't account for the sidebar offset. Fix: bump
+# desktop padding-left from 24px to 40px (via 4-value shorthand
+# `padding:10px 24px 10px 40px` so the original 10px vertical
+# and 24px right padding are preserved). The mobile @media rule
+# (B107) still has its own padding-left:60px to clear the
+# hamburger — desktop and mobile values stay independent. B109
+# pins 3 contracts in scripts/check_b109.sh +
+# internal/handlers/handlers_b109_test.go:
+#   1. .admin-breadcrumb has padding:10px 24px 10px 40px in
+#      the main CSS (outside @media).
+#   2. The 4-value shorthand preserves the original 10px
+#      vertical + 24px right padding (only left changes).
+#   3. The @media (max-width:768px) B107 rule still pins
+#      padding-left:60px on mobile (regression guard).
+run_check "B109" "desktop breadcrumb padding-left 40px (breathing room from 220px sidebar) + B107 mobile 60px preserved (B109, v1.3.9 mobile-friendly)" \
+  'test -f scripts/check_b109.sh && bash scripts/check_b109.sh'

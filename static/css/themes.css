@@ -176,7 +176,18 @@ header h1 .ver{opacity:.5;font-size:10px;font-weight:500;margin-left:2px;font-fa
    when the sidebar section is collapsed. */
 .admin-breadcrumb{
   display:flex;align-items:center;gap:6px;
-  padding:10px 24px;
+  /* 2026-08-13: v1.3.9 round 7 (B109) — desktop padding-left
+     bumped from 24px to 40px. The breadcrumb lives on its own
+     line (with its own bg-card background + bottom border),
+     separate from the .shell content, so the 24px "standard"
+     padding that header .shell uses looked visually too tight
+     against the 220px sidebar. The 40px gives the breadcrumb
+     the same visual "breathing room" as the page title (h2 in
+     .title-row) has from the .shell's left edge. The mobile
+     @media rule below overrides padding-left:60px for the
+     hamburger-clearance case (B107) — desktop and mobile
+     padding values stay independent. */
+  padding:10px 24px 10px 40px;
   font-size:12px;
   color:var(--text-muted);
   background:var(--bg-card);
