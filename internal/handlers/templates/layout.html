@@ -203,5 +203,35 @@
 <footer>
   Skygate {{.Version}} · {{t "footer.powered_by"}} · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/help">{{t "footer.docs"}}</a>
 </footer>
+{{/* 2026-08-13: v1.3.9 round 6 (B108) — section summary in collapsed
+     sidebar auto-expands the sidebar. In the collapsed (52px, icons-only)
+     state, clicking a section summary only toggles <details>, but the
+     page links inside are hidden by
+     `.sidebar.collapsed .sidebar-section[open]>a{display:none}` (themes.css
+     line ~195). The user gets stuck: the section "opens" invisibly and
+     there's no way to navigate to a page in that section.
+
+     Fix: on click, if the sidebar has the .collapsed class, remove it
+     first. The native <details> toggle still happens (we don't
+     preventDefault), so the section opens too. The pages inside become
+     visible because the `.sidebar.collapsed ...[open]>a` rule no longer
+     applies. In the expanded (220px) state the handler is a no-op and
+     the <summary> behaves normally. No JS frameworks — vanilla DOM, ~15
+     lines, runs once at parse. The .sidebar id is hard-coded in
+     layout.html (line ~38) so the lookup is safe. */}}
+<script>
+(function(){
+  var sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  var summaries = document.querySelectorAll('.sidebar-section>summary');
+  for (var i = 0; i < summaries.length; i++) {
+    summaries[i].addEventListener('click', function() {
+      if (sidebar.classList.contains('collapsed')) {
+        sidebar.classList.remove('collapsed');
+      }
+    });
+  }
+})();
+</script>
 </body>
 </html>{{end}}

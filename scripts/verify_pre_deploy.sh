@@ -3027,3 +3027,29 @@ run_check "B106" "mobile sidebar: .toggle button hidden on mobile + .collapsed s
 #      single 16px icon that fits in 52px.
 run_check "B107" "admin breadcrumb + collapsed section icons: .admin-breadcrumb cleared on mobile + .sidebar-section summary fits 52px collapsed (B107, v1.3.9 mobile-friendly)" \
   'test -f scripts/check_b107.sh && bash scripts/check_b107.sh'
+
+# ─── B108 (v1.3.9) — section summary click in collapsed sidebar ───
+# Background: in the collapsed (52px, icons-only) sidebar, clicking a
+# section summary only toggles <details>. The page links inside are
+# hidden by `.sidebar.collapsed .sidebar-section[open]>a{display:none}`
+# (themes.css line ~195), so the user gets stuck — the section
+# "opens" invisibly and there's no way to navigate to a page in
+# that section. Operator-reported symptom (2026-08-13):
+# "не работают по нажатию кнопки групп для того чтобы раскрыть меню
+# и выбрать страницу из списка".
+# Fix: a small inline <script> in layout.html (between </footer> and
+# </body) attaches a click listener to every '.sidebar-section>summary'.
+# When the sidebar has the 'collapsed' class, the listener removes
+# it — the sidebar expands to 220px AND the native <details> toggle
+# still happens (no preventDefault), so the section opens and the
+# page links become visible. In the expanded (220px) state the
+# handler is a no-op. B108 pins 5 contracts in scripts/check_b108.sh
+# + internal/handlers/handlers_b108_test.go:
+#   1. <script> tag exists between </footer> and </body>
+#   2. Script queries getElementById('sidebar')
+#   3. Script iterates '.sidebar-section>summary' (6 sections)
+#   4. On click, removes 'collapsed' class from sidebar
+#   5. Does NOT call preventDefault() — native <details> toggle must
+#      still happen so the section opens after the sidebar expands.
+run_check "B108" "section summary click in collapsed sidebar auto-expands + opens section: <script> in layout.html removes 'collapsed' class on click (B108, v1.3.9 mobile-friendly)" \
+  'test -f scripts/check_b108.sh && bash scripts/check_b108.sh'
