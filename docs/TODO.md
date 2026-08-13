@@ -1,6 +1,6 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-13, post-v1.3.12 (P4 catalog cleanup + B38 fix).
+> **Last updated**: 2026-08-13, post-v1.3.13 (youtube.com/32 bug fix).
 > **Status of v1.3.12**: COMMITTED (`8c4c5be`) + PUSHED. NOT YET deployed
 > to live VM. verify-pre catalog: **109 PASS / 0 FAIL / 2 SKIP** (B8 VM-only,
 > B19 PG-rewrite pending Phase 2). `go test ./...` 28/28 packages green.

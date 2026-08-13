@@ -17,7 +17,40 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.12 — P4 catalog cleanup + B38 fix. 2 commits
+* **Current**: v1.3.13 — youtube.com/32 bug fix. 1 commit since
+  v1.3.12 (`d7c3b00`). All tests green (28/28 packages);
+  `make verify-pre` **110 PASS / 0 FAIL / 2 SKIP** (B8 VM-only,
+  B19 PG-rewrite pending Phase 2). What's added:
+  - **B113 (v1.3.13)**: `internal/feature/exit_rules/form_my.go`
+    now validates `targetValue` via a new `isValidIPOrCIDR`
+    helper before any processing. For `target_type=ip|subnet`,
+    bare hostnames (e.g. `youtube.com`) are now rejected with
+    400 + a message that points to `target_type=domain` as
+    the right way to add hostnames (the form does DNS
+    resolution and stores per-IP /32 rules). Pre-fix, a
+    hostname in the IP field would get `youtube.com/32`
+    saved to `device_rules`; the ACL builder then promoted
+    it to a host alias `h-rule-youtube-com-32: youtube.com/32`
+    — a malformed CIDR that headscale rejects, breaking the
+    whole policy re-apply.
+  - 4 contracts pinned in `scripts/check_b113.sh` (helper
+    exists + called + 400 on bad input + unit test passes).
+  - 1 unit test (`TestIsValidIPOrCIDR_IPv4`, 18 table-driven
+    cases: bare IPv4 / IPv4 CIDRs / IPv6 / IPv6 CIDRs /
+    hostnames / hostname CIDRs / garbage).
+  - 4 files changed, +234 lines. `go build ./...` + `go vet ./...`
+    clean. No behavior change for valid inputs.
+  - **Live smoke test** (5 cases from inside skygate
+    container, 2026-08-13): `youtube.com` as `target_type=ip`
+    → 400 ✓, `google.com/24` → 400 ✓, `8.8.8.8` → 302 ✓,
+    `10.0.0.0/8` → 302 ✓, `example.com` as `target_type=domain`
+    → 302 ✓ (DNS path unchanged).
+  - **Live state**: v1.3.13 COMMITTED + PUSHED + DEPLOYED to
+    live VM (build `v1.3.11-6-gd7c3b00`). Live policy
+    re-applied (snapshot 146798, version=1136,
+    applied_success=1).
+
+* **Previous**: v1.3.12 — P4 catalog cleanup + B38 fix. 2 commits
   since v1.3.11 (`d0d6ad4` + `8c4c5be`). All tests green
   (`go test -count=1 -short ./...` full suite, 28/28 packages);
   `make verify-pre` **109 PASS / 0 FAIL / 2 SKIP** (B8 VM-only,
