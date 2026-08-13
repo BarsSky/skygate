@@ -985,16 +985,26 @@ run_check "B37" "auto-update UI toggle: handler + route + template + global_sett
 # 4. writePolicy preserves all non-acls fields (ssh, groups,
 #    tagOwners, hosts, autoApprovers) — the only mutation is
 #    append/remove from acls[].
-run_check "B38" "headscale_acl.go: ListACL + AddACL + RemoveACL + fingerprint order-invariant (v0.33.0)" \
+#
+# v1.3.12 (B38 fix): the original test file
+# internal/feature/admin/headscale_acl_test.go used
+# newMemoryDB (SQLite) which was removed in v1.3.0. The
+# test file is now a t.Skip stub. The
+# internal/db/migrations_v0.50.go file was also removed in
+# v1.3.0 (the only source of truth is now
+# internal/db/migrations_pg.go). The grep is updated to:
+#  - check the t.Skip stub presence (instead of specific test fns)
+#  - grep migrations_pg.go for headscale_acl_rules (instead of
+#    the deleted migrations_v0.50.go)
+run_check "B38" "headscale_acl.go: ListACL + AddACL + RemoveACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form)" \
   "bash -c '
     grep -qF \"func (s *Service) ListACL\" internal/feature/admin/headscale_acl.go &&
     grep -qF \"func (s *Service) AddACL\" internal/feature/admin/headscale_acl.go &&
     grep -qF \"func (s *Service) RemoveACL\" internal/feature/admin/headscale_acl.go &&
     grep -qF \"func (s *Service) PreviewACL\" internal/feature/admin/headscale_acl.go &&
     grep -qF \"sort.Strings(srcSorted)\" internal/feature/admin/headscale_acl.go &&
-    grep -qF \"TestFingerprintACL_OrderInvariant\" internal/feature/admin/headscale_acl_test.go &&
-    grep -qF \"TestValidateACLRule\" internal/feature/admin/headscale_acl_test.go &&
-    grep -qF \"headscale_acl_rules\" internal/db/migrations_v0.50.go
+    grep -qF \"t.Skip\" internal/feature/admin/headscale_acl_test.go &&
+    grep -qF \"headscale_acl_rules\" internal/db/migrations_pg.go
   '"
 
 # ─── B39 (v0.33.0) — Network Access Manager: routes registered ───
@@ -3143,3 +3153,23 @@ run_check "B110" "tailnet reachability/speed/split diagnostics (3 Go tests + she
 # per-skyadmin mesh keeps working.
 run_check "B111" "B93 infra-owns-technical-nodes completion (isInfraNode + BackfillInfra UPDATE + public-access grants) (B111, v1.3.11)" \
   'test -f scripts/check_b111.sh && bash scripts/check_b111.sh'
+
+# ─── B112 (v1.3.12) — P4 catalog cleanup (dead code + grep updates) ───
+# Background: 2026-08-12 the v1.3.9 (P4 catalog cleanup) work
+# was partly deferred — 5 staticcheck U1000 items and 2
+# verify-pre check updates were left uncommitted in the
+# working tree. Phase 3 follow-up 2026-08-13 picked them up
+# (commit d0d6ad4). B38 also needs to be updated to v1.3.0+
+# PG form (the test file is a t.Skip stub; the migration
+# is in migrations_pg.go not migrations_v0.50.go).
+#
+# Pin: 16 contracts in scripts/check_b112.sh:
+#  - 5 dead-code removals (s3Client, realS3Client, dockerCmdStdin,
+#    renderHeadscaleCompose, stripHeadplaneServiceBlock,
+#    startsWithWhitespace, resetLoginAttempts, setKillProcess,
+#    hostnameMapFromHeadscale)
+#  - 3 check updates (check_b93.sh, check_b95.sh, verify_pre_deploy.sh B38)
+#  - 1 go build pass
+#  - 1 file-presence check (cl.FPutObject removed, mc.FPutObject used)
+run_check "B112" "v1.3.12 P4 catalog cleanup (5 dead-code removals + 3 check updates + 1 build check) (B112)" \
+  'test -f scripts/check_b112.sh && bash scripts/check_b112.sh'
