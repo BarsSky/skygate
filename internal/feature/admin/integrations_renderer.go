@@ -36,13 +36,12 @@ var dockerCmd = func(name string, args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// dockerCmdStdin is like dockerCmd but feeds stdin (used to
-// pipe rendered files into a `docker exec` cat command).
-var dockerCmdStdin = func(stdin io.Reader, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	cmd.Stdin = stdin
-	return cmd.CombinedOutput()
-}
+// 2026-08-12 v1.3.9 (P4 catalog cleanup): dockerCmdStdin
+// was added in a prior refactor for the integrations
+// page but is no longer called — the renderer was
+// simplified to render the compose file in-memory
+// rather than piping through `docker exec`. Staticcheck
+// U1000 (unused). Removed.
 
 // renderer is the runtime renderer for the integration
 // config. It is stateless (the App.DB has the persisted
@@ -73,17 +72,13 @@ func (r *renderer) renderHeadscaleConfig(cfg *intConfig) (string, error) {
 	return out, nil
 }
 
-func (r *renderer) renderHeadscaleCompose(cfg *intConfig) (string, error) {
-	tmpl, err := r.readTemplate("headscale-compose.yml.tmpl")
-	if err != nil {
-		return "", err
-	}
-	out := expandEnv(tmpl)
-	if cfg.HeadplaneMode != "bundled" {
-		out = stripHeadplaneServiceBlock(out)
-	}
-	return out, nil
-}
+// 2026-08-12 v1.3.9 (P4 catalog cleanup): renderHeadscaleCompose
+// + stripHeadplaneServiceBlock + startsWithWhitespace
+// were used by the old "render compose file from /admin
+// integrations" page which was removed in a recent
+// refactor (the page now shows pre-rendered content
+// from a static file). All three are staticcheck
+// U1000 (unused). Removed.
 
 func (r *renderer) readTemplate(name string) (string, error) {
 	p := filepath.Join(r.templatesDir, name)
@@ -170,58 +165,10 @@ func csvFromEnv(name string) []string {
 	return out
 }
 
-func stripHeadplaneServiceBlock(s string) string {
-	startMarker := "\n  headplane:"
-	start := strings.Index(s, startMarker)
-	if start < 0 {
-		return s
-	}
-	body := s[start+1:]
-	lines := strings.Split(body, "\n")
-	end := len(lines)
-	for i := 1; i < len(lines); i++ {
-		line := lines[i]
-		if line == "" {
-			continue
-		}
-		if !startsWithWhitespace(line) {
-			end = i
-			break
-		}
-	}
-	kept := append([]string{}, lines[:0]...)
-	kept = append(kept, lines[end:]...)
-	newBody := strings.Join(kept, "\n")
-	volMarker := "\n  headplane_data:"
-	volStart := strings.Index(newBody, volMarker)
-	if volStart >= 0 {
-		volBody := newBody[volStart+1:]
-		volLines := strings.Split(volBody, "\n")
-		volEnd := len(volLines)
-		for i := 1; i < len(volLines); i++ {
-			line := volLines[i]
-			if line == "" {
-				continue
-			}
-			if !startsWithWhitespace(line) {
-				volEnd = i
-				break
-			}
-		}
-		volKept := append([]string{}, volLines[:0]...)
-		volKept = append(volKept, volLines[volEnd:]...)
-		newBody = strings.Join(volKept, "\n")
-	}
-	return s[:start+1] + newBody
-}
-
-func startsWithWhitespace(s string) bool {
-	if s == "" {
-		return false
-	}
-	c := s[0]
-	return c == ' ' || c == '\t'
-}
+// 2026-08-12 v1.3.9 (P4 catalog cleanup): stripHeadplaneServiceBlock
+// and startsWithWhitespace were used by the removed
+// renderHeadscaleCompose above. All three are now dead.
+// Removed.
 
 // ApplyResult is the outcome of an Apply action. The
 // handler renders the result back to the user as a

@@ -94,9 +94,11 @@ func getKillProcess() func() {
 
 // setKillProcess atomically replaces the killProcess func.
 // Used by tests to install a no-op or signalling stub.
-func setKillProcess(fn func()) {
-	killProcess.Store(&fn)
-}
+// 2026-08-12 v1.3.9 (P4 catalog cleanup): setKillProcess
+// was a leftover test hook from a kill-signal test
+// that was removed when we moved the test suite to
+// pure runtime (no kill signal in the test path).
+// Staticcheck U1000 (unused). Removed.
 
 // versionReply returns the build label, Go runtime, and DB schema
 // level. The Go version comes from runtime.Version(); the schema

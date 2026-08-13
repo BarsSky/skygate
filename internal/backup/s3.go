@@ -54,35 +54,16 @@ type s3UploadResult struct {
 	Duration time.Duration
 }
 
-// s3Client is a tiny wrapper around the minio-go client
-// so we can mock it from tests. In production it's
-// always a real *minio.Client.
-type s3Client interface {
-	FPutObject(ctx context.Context, bucket, object, filePath string, opts minio.PutObjectOptions) (info minio.UploadInfo, err error)
-	BucketExists(ctx context.Context, bucket string) (bool, error)
-}
-
-// realS3Client wraps *minio.Client so it satisfies
-// s3Client. Used in production; tests can pass a fake
-// that records calls. The methods are 1-line
-// forwarders — they exist so tests can swap a fake
-// via the s3Client interface without rewriting
-// uploadToS3.
-type realS3Client struct{ c *minio.Client }
-
-// BucketExists forwards to the underlying minio
-// client. Errors from this method are wrapped by
-// uploadToS3 with bucket-name context.
-func (r *realS3Client) BucketExists(ctx context.Context, bucket string) (bool, error) {
-	return r.c.BucketExists(ctx, bucket)
-}
-
-// FPutObject forwards to the underlying minio
-// client. The opts.ContentType is set by the caller
-// (uploadToS3) so this is a true pass-through.
-func (r *realS3Client) FPutObject(ctx context.Context, bucket, object, filePath string, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
-	return r.c.FPutObject(ctx, bucket, object, filePath, opts)
-}
+// 2026-08-12 v1.3.9 (BL-15 / P4 catalog cleanup): the
+// s3Client interface + realS3Client wrapper were
+// created in v1.3.8 (BL-100) for unit-testability
+// but no test was ever written. The forwarder
+// methods just pass through to *minio.Client. The
+// 22 lines of indirection are unused dead code
+// (staticcheck U1000). Removed. Tests for uploadToS3
+// (if needed in the future) can use minio's own
+// httptest fixtures directly — no need for our
+// wrapper layer.
 
 // newS3Client builds a real minio.Client from cfg.
 // The endpoint is parsed with url.Parse so a missing
@@ -163,7 +144,6 @@ func uploadToS3(ctx context.Context, c *Config, filePath string) (*s3UploadResul
 	if err != nil {
 		return nil, err
 	}
-	cl := &realS3Client{c: mc}
 
 	// BucketExists is a cheap HEAD that catches
 	// typos + missing creds early. minio-go
@@ -174,7 +154,7 @@ func uploadToS3(ctx context.Context, c *Config, filePath string) (*s3UploadResul
 	// as an error so the operator sees "no such
 	// bucket: foo" instead of a confusing
 	// NoSuchBucket from FPutObject.
-	exists, err := cl.BucketExists(ctx, c.S3Bucket)
+	exists, err := mc.BucketExists(ctx, c.S3Bucket)
 	if err != nil {
 		return nil, fmt.Errorf("s3 bucket check: %w", err)
 	}
@@ -184,7 +164,7 @@ func uploadToS3(ctx context.Context, c *Config, filePath string) (*s3UploadResul
 
 	key := buildS3Key(c.S3Prefix, filepath.Base(filePath))
 	t0 := time.Now()
-	info, err := cl.FPutObject(ctx, c.S3Bucket, key, filePath, minio.PutObjectOptions{
+	info, err := mc.FPutObject(ctx, c.S3Bucket, key, filePath, minio.PutObjectOptions{
 		// ContentType: application/gzip
 		// helps browsers / S3 console render
 		// the file as a downloadable archive

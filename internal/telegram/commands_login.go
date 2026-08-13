@@ -81,9 +81,11 @@ func loginAttemptAllowed(d *sql.DB, chatID int64) bool {
 // resetLoginAttempts clears the rate-limit slot for a chat.
 // Used by tests (and could be used by an admin "clear" path
 // in the future if a user legitimately tripped the limiter).
-func resetLoginAttempts(d *sql.DB, chatID int64) {
-	_, _ = db.ResetTelegramRateLimit(d, fmt.Sprintf("login:%d", chatID))
-}
+// 2026-08-12 v1.3.9 (P4 catalog cleanup): resetLoginAttempts
+// was used by a previous /login rate-limit reset path
+// that was removed when the dispatcher moved to a
+// unified rate-limit config. Staticcheck U1000
+// (unused). Removed.
 
 // loginReply handles /login [key]. The strict-mode gate in
 // HandleCommand already whitelisted /login for unidentified

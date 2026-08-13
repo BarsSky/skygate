@@ -230,26 +230,12 @@ func myNodesReply(env BotEnv) string {
 //
 // 2026-07-15: Этап 14 v13 — extracted for the lazy backfill
 // helper; previously inlined in three places.
-func hostnameMapFromHeadscale(hs *headscale.Client) map[string]string {
-	out := map[string]string{}
-	if hs == nil {
-		return out
-	}
-	nodes, err := hs.ListAllNodes()
-	if err != nil {
-		return out
-	}
-	for _, n := range nodes {
-		hn := n.GivenName
-		if hn == "" {
-			hn = n.Hostname
-		}
-		if hn != "" {
-			out[n.ID] = hn
-		}
-	}
-	return out
-}
+// 2026-08-12 v1.3.9 (P4 catalog cleanup): hostnameMapFromHeadscale
+// was used by the old /userlist command which showed
+// headscale hostnames. The command was removed when
+// the user list was reimplemented against the PG
+// node_owner_map (which has fewer round-trips + better
+// language support). Staticcheck U1000 (unused). Removed.
 
 // listAllNodesForBackfill wraps the headscale round-trip used by
 // the bot's lazy backfill (hostname + tag) so the call site can
