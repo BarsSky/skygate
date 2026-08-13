@@ -49,6 +49,7 @@
 <div class="card">
   <h3><i class="fa-solid fa-clock-rotate-left"></i>{{t "audit.col_action"}}</h3>
   {{if .Entries}}
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -69,6 +70,7 @@
       {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div class="alert" style="margin-top:0">
     <i class="fa-solid fa-info-circle"></i>

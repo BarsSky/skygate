@@ -15,6 +15,7 @@
 </div>
 
 {{if .Meshes}}
+<div class="table-wrap">
 <table>
   <tr>
     <th>{{t "admin_meshes.col_name"}}</th>
@@ -59,6 +60,7 @@
   </tr>
   {{end}}
 </table>
+</div>
 {{else}}
 <div class="card">
   <p style="color:var(--text-muted);margin:0">{{t "admin_meshes.empty"}}</p>

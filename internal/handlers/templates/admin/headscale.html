@@ -80,6 +80,7 @@
 <div class="card">
   <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-clock-rotate-left"></i> {{t "headscale_admin.history_title"}}</h4>
   {{if .History}}
+  <div class="table-wrap">
   <table>
     <tr>
       <th>{{t "headscale_admin.col_version"}}</th>
@@ -120,6 +121,7 @@
     </tr>
     {{end}}
   </table>
+  </div>
   {{else}}
   <p style="color:var(--text-muted);margin:0">{{t "headscale_admin.history_empty"}}</p>
   {{end}}

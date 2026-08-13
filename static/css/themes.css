@@ -487,6 +487,21 @@ footer a:hover{color:var(--accent)}
   .card{padding:16px}
   .metric-grid{grid-template-columns:repeat(2,1fr);gap:8px}
   .title-row h2{font-size:18px}
+  /* 2026-08-13: page title offset. The .sidebar-toggle
+     hamburger is fixed at top:12px,left:12px and 40×40px —
+     it sits on top of the page title (h2 in .title-row) on
+     narrow viewports because the .title-row also starts at
+     12px from the left edge. The pre-fix CSS had a comment
+     claiming "16px left padding so the hamburger doesn't
+     overlap" but never actually applied it. The fix: add
+     padding-left:60px to .title-row on mobile (matching the
+     header .shell's existing padding-left:60px). The 60px
+     gives the 40px hamburger + 8px breathing room + 12px
+     existing edge gap. The right-side controls (.title-row's
+     justify-content:space-between) still work because
+     padding doesn't break flexbox — the h2 just gets a
+     left margin. */
+  .title-row{padding-left:60px}
   /* Tables: force the existing .table-wrap (B50) to scroll
      horizontally rather than squishing columns. */
   .table-wrap{margin:0 -14px;padding:0 14px}

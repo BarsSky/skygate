@@ -148,6 +148,7 @@
     <div>
       <h4 style="font-size:13px;margin-bottom:6px;color:var(--text-muted)">{{t "user_subnet.sharing_i_shared"}}</h4>
       {{if .SharedBy}}
+      <div class="table-wrap">
       <table>
         {{range .SharedBy}}
         <tr>
@@ -164,6 +165,7 @@
         </tr>
         {{end}}
       </table>
+      </div>
       {{else}}
       <div style="color:var(--text-subtle);font-size:12px;font-style:italic">{{t "user_subnet.sharing_none_i"}}</div>
       {{end}}

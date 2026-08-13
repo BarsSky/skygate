@@ -463,12 +463,20 @@ var TestRegistry = []SystemTestDef{
 			// hs.ListAllNodes, not from this table. The
 			// hostname-only duplicate check is what the
 			// table can actually answer.
+			//
+			// 2026-08-13: replaced `HAVING c > 1` with
+			// `HAVING count(*) > 1` — PostgreSQL doesn't
+			// allow output-column aliases in HAVING (the
+			// alias is assigned after the WHERE/GROUP/
+			// HAVING phases resolve). The pre-fix form
+			// errored with `column "c" does not exist
+			// (SQLSTATE 42703)` on every run.
 			rows, err := s.DB.QueryContext(ctx, `
 				SELECT hostname, count(*) AS c
 				FROM node_owner_map
 				WHERE hostname != ''
 				GROUP BY hostname
-				HAVING c > 1
+				HAVING count(*) > 1
 			`)
 			if err != nil {
 				return SystemTestFail, "query: " + err.Error()
@@ -588,9 +596,27 @@ var TestRegistry = []SystemTestDef{
 		Category:    "backup",
 		Description: "A backup file is present in the backup dir and is < 7 days old",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
-			dir := ResolveBackupDir()
+			// 2026-08-13: read the status JSON first. The
+			// in-app backup stores its `backup_dir` in
+			// `~/.skygate-backup-status.json` (set by
+			// /admin/backup). DEPLOY_BACKUP_DIR / SKYGATE_BACKUP_DIR
+			// are LEGACY overrides that the operator may
+			// have set to a different (now empty) directory
+			// — falling back to those first masked the real
+			// archives and made the test look broken even
+			// when the backup was healthy. We try, in order:
+			//   1. $HOME/.skygate-backup-status.json
+			//      (operator-set via /admin/backup → DB)
+			//   2. $SKYGATE_BACKUP_DIR / $DEPLOY_BACKUP_DIR
+			//      (legacy env-var override)
+			//   3. /app/.skygate-backup-status.json
+			//      (the in-container path when HOME isn't set)
+			dir := readBackupDirFromStatus()
 			if dir == "" {
-				return SystemTestFail, "backup dir not configured (set SKYGATE_BACKUP_DIR or DEPLOY_BACKUP_DIR)"
+				dir = ResolveBackupDir()
+			}
+			if dir == "" {
+				return SystemTestFail, "backup dir not configured (set SKYGATE_BACKUP_DIR or DEPLOY_BACKUP_DIR, or run /admin/backup Run-now once)"
 			}
 			// If the literal path doesn't exist (container
 			// view vs host view mismatch), try the most
@@ -776,10 +802,24 @@ var TestRegistry = []SystemTestDef{
 			// autoincrement). The pre-fix SQL errored with
 			// "no such column: d.id" and the test returned
 			// SystemTestFail on every run.
+			//
+			// 2026-08-13: added `::text` cast. The
+			// node_owner_map.node_id column is `text` (it
+			// holds headscale's machine key, stored as a
+			// string), but device_rules.device_id is
+			// `integer` (an autoincrement internal id).
+			// PostgreSQL refuses to compare them without
+			// an explicit cast: `operator does not exist:
+			// text = integer (SQLSTATE 42883)`. The
+			// cast is safe because both values hold the
+			// same semantic identifier (headscale's
+			// numeric machine id) — text on the
+			// node_owner_map side, integer on the
+			// device_rules side.
 			rows, err := s.DB.QueryContext(ctx, `
 				SELECT r.user_id, COALESCE(d.hostname, ''), r.exit_node_id
 				  FROM device_rules r
-				  LEFT JOIN node_owner_map d ON d.node_id = r.device_id
+				  LEFT JOIN node_owner_map d ON d.node_id = r.device_id::text
 				 WHERE r.enabled = 1 AND r.exit_node_id != ''
 			`)
 			if err != nil {

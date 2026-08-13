@@ -81,6 +81,93 @@ func resolveBackupDir() string {
 // backup target is /tmp/skygate-backup" surprises).
 func ResolveBackupDir() string { return resolveBackupDir() }
 
+// readBackupDirFromStatus reads the in-app backup status JSON
+// (the file scripts/backup_cron.sh writes after every backup-run)
+// and returns the `backup_dir` field — the path the operator
+// actually configured via /admin/backup (DB-stored, not env-var).
+//
+// 2026-08-13: the in-app `backup.recent` system test used to
+// read DEPLOY_BACKUP_DIR first, but on the live VM that env
+// var points to `/home/skyadmin/skygate/backup` (a stale
+// legacy default) while the actual archive lives at
+// `/home/skyadmin/skygate-backups/` (the path the operator
+// set via the /admin/backup web UI, which writes through to
+// backup.Config in the DB and then to the status JSON). The
+// test failed with "no backup files in ..." even though the
+// backup was healthy. The fix: prefer the status JSON
+// (the actual path the backup script used last), fall back
+// to env vars if the status file is missing or unreadable.
+//
+// The status file lives at ${HOME}/.skygate-backup-status.json
+// (default) or ${SKYGATE_BACKUP_STATUS_JSON}. Inside the
+// skygate container $HOME is typically /home/skyadmin
+// (set by the entrypoint). Returns "" if the file can't be
+// read or the JSON has no `backup_dir` key.
+func readBackupDirFromStatus() string {
+	// 1. ${SKYGATE_BACKUP_STATUS_JSON} if set (operator override).
+	// 2. ${HOME}/.skygate-backup-status.json (the script's default).
+	// 3. /app/.skygate-backup-status.json (in-container path when
+	//    $HOME is empty in some minimal containers).
+	candidates := []string{}
+	if v := os.Getenv("SKYGATE_BACKUP_STATUS_JSON"); v != "" {
+		candidates = append(candidates, v)
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		candidates = append(candidates, filepath.Join(home, ".skygate-backup-status.json"))
+	}
+	candidates = append(candidates, "/app/.skygate-backup-status.json")
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		// Hand-rolled JSON extract — we only need the
+		// single string value, and adding an encoding/json
+		// import just for this one read is overkill.
+		// The format is well-known: written by
+		// scripts/backup.sh, never user-edited.
+		// Looking for `"backup_dir":"<path>"` with proper
+		// handling of trailing chars (closing quote +
+		// comma/brace).
+		const key = `"backup_dir":`
+		idx := strings.Index(string(data), key)
+		if idx < 0 {
+			continue
+		}
+		rest := string(data)[idx+len(key):]
+		// Skip optional whitespace.
+		rest = strings.TrimLeft(rest, " \t")
+		if !strings.HasPrefix(rest, `"`) {
+			continue
+		}
+		rest = rest[1:]
+		end := strings.Index(rest, `"`)
+		if end < 0 {
+			continue
+		}
+		val := rest[:end]
+		// Sanity: the directory must actually exist
+		// (so we don't return a stale value from a
+		// previous VM incarnation). The "absolute
+		// path" check is Linux-only because the
+		// status file is always written on a Linux
+		// host by the bash backup script; on a
+		// Windows test host `filepath.IsAbs` accepts
+		// both `C:\...` and `C:/...` so we use that
+		// instead of a hardcoded "/" check (which
+		// would reject Windows paths during go test
+		// on the operator's dev machine).
+		if !filepath.IsAbs(val) {
+			continue
+		}
+		if info, err := os.Stat(val); err != nil || !info.IsDir() {
+			continue
+		}
+		return val
+	}
+	return ""
+}
+
 // GetAdminBackup serves /admin/backup. Admin-only.
 //
 // The page has two halves:

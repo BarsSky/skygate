@@ -63,6 +63,7 @@
   </div>
 
   {{if .Nodes}}
+  <div class="table-wrap">
   <table>
     <tr>
       <th>{{t "exit_nodes.hostname"}}</th>
@@ -206,6 +207,7 @@
     </tr>
     {{end}}
   </table>
+  </div>
   {{else}}
   <p style="color:var(--text-muted)">{{t "exit_nodes.empty"}}. {{t "exit_nodes.empty_hint"}}</p>
   {{end}}
