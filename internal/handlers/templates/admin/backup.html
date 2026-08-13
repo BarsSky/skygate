@@ -223,7 +223,7 @@
       </button>
       <button type="submit" formaction="/admin/backup/run" formmethod="POST" class="btn btn-warning"
               id="backup-run-btn"
-              onclick="return confirm({{t "backup.confirm_run" | safeJS}});">
+              onclick="return confirm({{t "backup.confirm_run" | safeJSON}});">
         <i class="fa-solid fa-play"></i> {{t "backup.run_now"}}
       </button>
     </div>

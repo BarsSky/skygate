@@ -30,6 +30,7 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
 	"html/template"
 	"strings"
 	"testing"
@@ -83,6 +84,10 @@ func loadExitNodesBody(t *testing.T) *template.Template {
 		"tf":     func(key string, args ...any) string { return key },
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+		"safeJSON": func(s string) template.JS {
+			b, _ := json.Marshal(s)
+			return template.JS(b)
+		},
 	}).Parse(string(data))
 	if err != nil {
 		t.Fatalf("parse exit_nodes.html: %v", err)

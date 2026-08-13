@@ -564,6 +564,34 @@ func pageFromName(name string) string {
 		return "my/exit-nodes"
 	}
 	if strings.HasPrefix(name, "admin/") {
+		// 2026-08-13: 3 admin pages have a URL-vs-template
+		// mismatch — the URL uses hyphens (canonical:
+		// /admin/exit-nodes, /admin/exit-rules, /admin/control-planes)
+		// but the template filename uses underscores
+		// (admin/exit_nodes.html, admin/exit_rules.html,
+		// admin/control_planes.html). Without the translation
+		// below, the runtime .Page value would be
+		// "admin/exit_nodes" (underscore) but the sidebar
+		// active-link check (`{{if eq .Page "admin/exit-nodes"}}`),
+		// sectionPageSet() (auto-open the <details> block),
+		// sectionLabel(), and pageLabel() (breadcrumb) all
+		// look for "admin/exit-nodes" (hyphen) — so the
+		// active highlight is never set, the section never
+		// auto-opens, and the breadcrumb is empty.
+		//
+		// Note: /admin/system_tests and /admin/headscale_acl
+		// use underscores in BOTH the URL and the template
+		// name (different convention — kept as-is for
+		// backward-compat with the v0.32.x era), so we
+		// translate ONLY the 3 known mismatched pages.
+		underscoreToHyphen := map[string]string{
+			"admin/exit_nodes":       "admin/exit-nodes",
+			"admin/exit_rules":       "admin/exit-rules",
+			"admin/control_planes":   "admin/control-planes",
+		}
+		if hyphen, ok := underscoreToHyphen[name]; ok {
+			return hyphen
+		}
 		return name
 	}
 	if name == "help" {

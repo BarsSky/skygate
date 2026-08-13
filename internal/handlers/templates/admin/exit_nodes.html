@@ -308,16 +308,23 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
 async function syncExitNodes() {
   const status = document.getElementById('sync-all-status');
   const result = document.getElementById('sync-all-result');
-  status.textContent = {{t "exit_nodes.syncing" | safeJS}};
+  // 2026-08-13: use safeJSON (not safeJS) for catalog strings that
+  // land in a JS code context. safeJS just casts to template.JS
+  // without adding quotes — the result was `status.textContent =
+  // Синхронизация…;` (a ReferenceError, not a string assignment).
+  // safeJSON wraps in JSON quotes via json.Marshal, so the
+  // resulting JS is a valid string literal. See
+  // internal/handlers/templates.go (safeJSON helper).
+  status.textContent = {{t "exit_nodes.syncing" | safeJSON}};
   try {
     const r = await fetch('/admin/exit-nodes/sync', {method:'POST'});
     const data = await r.json();
-    status.textContent = r.ok ? {{t "exit_nodes.sync_done" | safeJS}} : {{t "exit_nodes.sync_error" | safeJS}};
+    status.textContent = r.ok ? {{t "exit_nodes.sync_done" | safeJSON}} : {{t "exit_nodes.sync_error" | safeJSON}};
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
     setTimeout(() => location.reload(), 1500);
   } catch(err) {
-    status.textContent = {{t "exit_nodes.sync_error" | safeJS}} + ': ' + err;
+    status.textContent = {{t "exit_nodes.sync_error" | safeJSON}} + ': ' + err;
   }
   status.style.color = 'var(--text-muted)';
 }
