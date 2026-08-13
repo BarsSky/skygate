@@ -2989,3 +2989,22 @@ run_check "B104" "autonomous migration verify: 5-phase one-shot script (B104, BL
 # either rule fails the check before the page goes live.
 run_check "B105" "mobile-friendly admin tables (.table-wrap) + .title-row hamburger gap (60px on mobile) (B105, v1.3.9 mobile-friendly)" \
   'test -f scripts/check_b105.sh && bash scripts/check_b105.sh'
+
+# ─── B106 (v1.3.9) — mobile sidebar .toggle button hidden ───
+# Background: the in-sidebar .toggle button toggles a
+# `.collapsed` class on the sidebar (52px ↔ 220px on desktop).
+# On mobile, the sidebar is a drawer (always 280px, off-screen
+# by default, slides in on hamburger click) — the .toggle is
+# irrelevant on mobile and confuses the operator when they
+# tap it (no visible effect because `width:280px !important`
+# wins over `.sidebar.collapsed{width:52px}`). The pre-fix CSS
+# left the .toggle visible on mobile. B106 pins:
+#   1. layout.html still has the .toggle button (desktop needs it).
+#   2. @media (max-width:768px) hides it via display:none.
+#   3. The display:none rule is AFTER the touch-target rule
+#      (cascade order: later wins, equal specificity 0,0,2,0).
+#   4. The .sidebar.collapsed{width:280px} force-clear is
+#      inside the @media block (catches stuck states from a
+#      previous desktop session).
+run_check "B106" "mobile sidebar: .toggle button hidden on mobile + .collapsed state force-cleared (B106, v1.3.9 mobile-friendly)" \
+  'test -f scripts/check_b106.sh && bash scripts/check_b106.sh'
