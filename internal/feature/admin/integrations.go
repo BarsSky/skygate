@@ -35,7 +35,7 @@ func (s *Service) GetAdminIntegrations(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.Backend.RenderWithLayout(w, r, "admin-integrations", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/integrations.html", c, map[string]any{
 		"Cfg":          cfg,
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
@@ -187,7 +187,7 @@ func (s *Service) GetAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.Backend.RenderWithLayout(w, r, "admin-headplane", c, map[string]any{
+	s.Backend.RenderWithLayout(w, r, "admin/headplane.html", c, map[string]any{
 		"Cfg":          cfg,
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
@@ -251,7 +251,7 @@ func (s *Service) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 		s.Backend.Audit(c.UserID, c.Username, "headplane.config.apply",
 			fmt.Sprintf("ok=%t steps=%q err=%q", res.OK, trace, res.Err))
 		loaded, _ := db.LoadIntegrationsFromOS(s.DB)
-		s.Backend.RenderWithLayout(w, r, "admin-headplane", c, map[string]any{
+		s.Backend.RenderWithLayout(w, r, "admin/headplane.html", c, map[string]any{
 			"Cfg":          loaded,
 			"ApplyResult":  &res,
 			"FlashSuccess": "",

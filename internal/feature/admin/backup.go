@@ -155,7 +155,7 @@ func (s *Service) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Backups"] = backups
 
-	s.Backend.RenderWithLayout(w, r, "admin-backup", c, data)
+	s.Backend.RenderWithLayout(w, r, "admin/backup.html", c, data)
 }
 
 // formatSize converts a byte count to a short human
@@ -503,7 +503,7 @@ func (s *Service) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 		data["FlashError"] = e
 	}
 
-	s.Backend.RenderWithLayout(w, r, "admin-settings", c, data)
+	s.Backend.RenderWithLayout(w, r, "admin/settings.html", c, data)
 }
 
 // PostAdminSettings persists the exit_policy into
