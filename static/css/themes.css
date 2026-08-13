@@ -457,27 +457,6 @@ footer a:hover{color:var(--accent)}
      the sidebar is overlay, not a column. */
   main .shell{margin-left:0 !important}
   header{margin-left:0 !important}
-  /* 2026-08-13: hide the in-sidebar .toggle button on mobile.
-     The pre-fix CSS only set .sidebar .toggle{width:44px;height:44px}
-     (the v1.1.0 touch-target rule) but left it display:visible. On
-     mobile the sidebar is a drawer controlled by the
-     .sidebar-toggle-input checkbox + .sidebar-toggle hamburger
-     label at top:12px,left:12px — NOT by the in-sidebar .toggle
-     button. The in-sidebar button toggles the .collapsed class
-     (52px ↔ 220px), which is the desktop "compact mode" toggle,
-     useless on mobile where the sidebar is always 280px (overridden
-     by `width:280px !important` above). Worse: if the user
-     clicks the in-sidebar .toggle on mobile BEFORE the hamburger,
-     the sidebar gets .collapsed class, and the desktop rule
-     `.sidebar.collapsed{width:52px}` quietly applies in addition
-     to the mobile `width:280px !important` (the !important wins,
-     so width stays 280 — but the collapsed state is now
-     "stuck" in the DOM, breaking future desktop sessions until
-     they manually click the toggle again). The fix: hide the
-     in-sidebar .toggle on mobile. On desktop, the rule above
-     (no @media) keeps it visible — see line 100 (display
-     inherited from default <button>). */
-  .sidebar .toggle{display:none}
   /* 2026-08-13: if the user previously toggled the sidebar to
      collapsed (e.g. on a tablet and then resized to mobile),
      the `collapsed` class persists in the DOM via JS
@@ -541,6 +520,24 @@ footer a:hover{color:var(--accent)}
   /* Form buttons: bigger hit target on mobile. */
   .btn{padding:10px 16px;font-size:14px;min-height:40px}
   .btn-sm{padding:6px 12px;min-height:32px}
+  /* 2026-08-13: hide the in-sidebar .toggle button on
+     mobile. MUST come AFTER the earlier
+     `.sidebar .toggle{width:44px;height:44px}` rule (the
+     v1.1.0 touch-target rule, line ~488) so the later
+     `display:none` wins the cascade. The two rules have
+     equal specificity (0,0,2,0); cascade resolves by source
+     order. If this rule is placed BEFORE the touch-target
+     rule, the .toggle button remains visible (just at 44x44
+     — the wrong behavior on mobile). The in-sidebar .toggle
+     is the desktop "compact mode" button (220px ↔ 52px);
+     on mobile the sidebar is a drawer controlled by the
+     .sidebar-toggle-input checkbox + .sidebar-toggle
+     hamburger label at top:12px,left:12px, so the in-sidebar
+     .toggle is irrelevant and just confuses the user when
+     they tap it (no visible effect because the
+     `width:280px !important` on .sidebar overrides the
+     `width:52px` from .collapsed). */
+  .sidebar .toggle{display:none}
 }
 </style>
 /* Align username/password fields in the create-user form on /admin/users. */
