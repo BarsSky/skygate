@@ -76,15 +76,47 @@ func TestB107_AdminBreadcrumbMobileOffset(t *testing.T) {
 	}
 	block := css[mediaStart+openBrace : i]
 
-	// The .admin-breadcrumb padding-left:60px rule.
-	re := regexp.MustCompile(`\.admin-breadcrumb[[:space:]]*\{([^}]*)\}`)
-	m := re.FindStringSubmatch(block)
-	if m == nil {
+	// The .admin-breadcrumb padding-left:60px rule. Match
+	// ANY `.admin-breadcrumb{...}` rule (including the
+	// `main .admin-breadcrumb{...}` from the v1.3.19.2 B120
+	// fix), then iterate to find the one with
+	// padding-left:60px. The BARE `.admin-breadcrumb{...}`
+	// rule (added in v1.3.9 for hamburger clearance) is what
+	// we want — it has padding-left:60px. The B120 fix
+	// doesn't add padding-left:60px to its mobile override
+	// (the breadcrumb fills the viewport on mobile, only the
+	// bare rule has the hamburger clearance).
+	//
+	// Why iterate? Go's regexp uses RE2 which has no
+	// lookbehind, so we can't exclude `main .admin-` with
+	// a negative lookbehind. Instead, we find all matches
+	// and check each for padding-left:60px.
+	allRe := regexp.MustCompile(`\.admin-breadcrumb[[:space:]]*\{([^}]*)\}`)
+	matches := allRe.FindAllStringSubmatch(block, -1)
+	if len(matches) == 0 {
 		t.Error("B107 FAIL: .admin-breadcrumb rule missing inside @media (max-width:768px)")
 		return
 	}
-	if !regexp.MustCompile(`padding-left[[:space:]]*:[[:space:]]*60px`).MatchString(m[1]) {
-		t.Errorf("B107 FAIL: .admin-breadcrumb inside @media (max-width:768px) is missing padding-left:60px (breadcrumb hidden behind the hamburger); got: %s", strings.TrimSpace(m[1]))
+	// Find the rule that has padding-left:60px. The bare
+	// .admin-breadcrumb rule (added v1.3.9, B107) is the
+	// only one that should have it; the B120 mobile
+	// override does NOT.
+	var found bool
+	for _, m := range matches {
+		if regexp.MustCompile(`padding-left[[:space:]]*:[[:space:]]*60px`).MatchString(m[1]) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		// List all the matches for diagnostic clarity.
+		var dumps []string
+		for _, m := range matches {
+			dumps = append(dumps, strings.TrimSpace(m[1]))
+		}
+		t.Errorf("B107 FAIL: NO .admin-breadcrumb rule inside @media (max-width:768px) has padding-left:60px (breadcrumb hidden behind the hamburger). "+
+			"Found %d rule(s): %s",
+			len(matches), strings.Join(dumps, " | "))
 	}
 }
 

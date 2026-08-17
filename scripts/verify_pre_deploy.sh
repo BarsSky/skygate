@@ -3227,3 +3227,5 @@ run_check "B118" "tag-owner-from-name (via loop parses owner from tag:dev-<user>
   'test -f scripts/check_b118.sh && bash scripts/check_b118.sh'
 run_check "B119" "TagToHostname handles 4 formats (v1.3.18.1 missed the exported helper, fixed in v1.3.19.1) (B119, v1.3.19.1 preferred_check follow-up)" \
   'test -f scripts/check_b119.sh && bash scripts/check_b119.sh'
+run_check "B120" "admin-breadcrumb has margin-left:220px desktop / 52px collapsed / 0 mobile (sidebar offset, B120, v1.3.19.2 layout fix)" \
+  'test -f scripts/check_b120.sh && bash scripts/check_b120.sh'

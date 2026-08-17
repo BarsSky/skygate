@@ -266,6 +266,23 @@ main .shell{margin-left:220px;transition:margin-left .25s}
 .sidebar.collapsed ~ main .shell{margin-left:52px}
 .sidebar.collapsed ~ header{margin-left:52px}
 .sidebar.collapsed ~ header{margin-left:52px}
+/* 2026-08-17: v1.3.19.2 follow-up (B120) — admin-breadcrumb offset.
+   Pre-fix, the .admin-breadcrumb element (rendered in
+   layout.html as a SIBLING of .shell, both inside <main>) had
+   no margin-left, so its left edge sat at 0px and the
+   position:fixed sidebar (left:0, width:220px) covered its
+   leftmost 220px. The "Админ › Devices & Nodes › Devices"
+   text was hidden under the sidebar — only the rightmost
+   text fragments were visible.
+
+   Fix: mirror the .shell margin-left pattern for .admin-
+   breadcrumb. The width:calc(...) keeps the breadcrumb's
+   background-card spanning the visible area instead of
+   just the text width. The ~ selector mirrors the .shell
+   rule so collapsing the sidebar (52px) also shifts the
+   breadcrumb correctly. */
+main .admin-breadcrumb{margin-left:220px;width:calc(100% - 220px);transition:margin-left .25s, width .25s}
+.sidebar.collapsed ~ main .admin-breadcrumb{margin-left:52px;width:calc(100% - 52px)}
 
 header .user-area button i{font-size:11px}
 
@@ -487,6 +504,15 @@ footer a:hover{color:var(--accent)}
   /* Reset the desktop's fixed 220px content offset — on mobile
      the sidebar is overlay, not a column. */
   main .shell{margin-left:0 !important}
+  /* 2026-08-17: v1.3.19.2 (B120) — reset the breadcrumb's
+     desktop margin-left:220px to 0 on mobile (the breadcrumb
+     fills the viewport on mobile, the sidebar is a drawer).
+     The .admin-breadcrumb rule below adds padding-left:60px
+     to clear the 40px hamburger (B107) — both rules together
+     give us: left=0 (no column), padding-left=60px (hamburger
+     clearance), width=100% (full viewport). The base rule
+     already has padding-left:40px, so 60px overrides it. */
+  main .admin-breadcrumb{margin-left:0 !important;width:100% !important}
   header{margin-left:0 !important}
   /* 2026-08-13: if the user previously toggled the sidebar to
      collapsed (e.g. on a tablet and then resized to mobile),
