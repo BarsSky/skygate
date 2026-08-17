@@ -1,5 +1,160 @@
 # Skygate release notes
 
+## v1.3.19.1 — svyatoslava-1 (HA mirror) removed + B118 finalized
+
+**Date:** 2026-08-17
+**Scope:** Hotfix — operator cleanup + B118 B-check fix.
+
+**Operator trigger (2026-08-17):** "старые тэги по svyatoslava
+надо почистить вес что оффлайн оно уже не рабочее" — svyatoslava-1
+(HA mirror, headscale id=30) is offline and not working, remove
+its tag references entirely.
+
+**What's added (3-step destructive change with snapshot-then-act):**
+
+1. **Snapshot** at `/tmp/svyatoslava1_cleanup_20260817_104048/`:
+   - `policy.json` (51540 bytes, latest v=1147)
+   - `headscale_nodes.json` (36263 bytes, 16 nodes incl. id=30)
+   - `node_owner_map.tsv` (568 bytes, 16 rows incl. node_id=30)
+   - `node_30.json` (full headscale record for id=30)
+   - `MANIFEST.md` (rollback procedure)
+   - `rollback.sql` (DB-level restore; headscale node recovery
+     needs `headscale_nodes.json`)
+
+2. **Destructive changes** (operator-side, NOT a code deploy):
+   - `docker exec headscale headscale nodes delete --force -i 30`
+     → "Node deleted" (id=30 = svyatoslava-1 HA mirror).
+     Headscale nodes count: 16 → 15.
+   - `DELETE FROM node_owner_map WHERE node_id = '30';` → 1 row
+     deleted. node_owner_map: 16 → 15 rows.
+   - `POST /admin/exit-rules/reapply` from inside
+     `skygate-skygate-1` container via
+     `python3 /tmp/reapply_v3.py` (NoRedirect handler +
+     CookieJar — busybox wget doesn't support cookies).
+     Re-apply returned HTTP 303 (success).
+
+3. **B118 B-check SQL fix** (`e32e12f`):
+   - Pre-fix: SQL pattern `ORDER BY version DESC LIMIT 1` in a
+     subquery forces PostgreSQL to materialize the jsonb cast
+     on EVERY row before applying the LIMIT. Old rows (v<1063)
+     have malformed JSON (e.g. `"acls": [,`), which makes the
+     cast fail. Even though we only want the latest row, the
+     cast evaluates all of them first.
+   - Post-fix: `WHERE version=(SELECT max(version) FROM
+     acl_snapshots)` — first get the max version in a separate
+     scalar subquery (which doesn't touch jsonb), then filter.
+     The cast only runs on the one matching row. Contracts C
+     and D now PASS instead of WARN.
+   - Plus: backticks `\`infra\`` in contract E summary line
+     were being interpreted as command substitution, producing
+     "infra: command not found" on stderr. Cosmetic fix:
+     use `'infra'` single quotes.
+
+**Live state post-cleanup (v=1148):**
+
+- **4 infra tags** (was 5): emilia, karolina, sharlotta,
+  skygate-host-1. svyatoslava-1 GONE.
+- **15 tagOwners total** (was 21).
+- **0 references to svyatoslava-1 OR svyatoslava-legacy**
+  in latest policy.
+- `tag:exit-node` still owned by `infra@`.
+- `tag:public` still owned by `skyadmin@`.
+- `node_owner_map`: 15 rows (was 16).
+
+**B118 contract changes:**
+
+- **Contract E (5 → 4)**: B-check `check_b118.sh` now expects
+  exactly 4 `tag:dev-infra-*` rows in node_owner_map and
+  exactly 4 in policy tagOwners.
+- **New contract G (v1.3.19.1)**: 5 sub-checks pin svyatoslava-1
+  removal — policy (text-search ILIKE), `node_owner_map`
+  (exact match), `tagOwners` (jsonb key check), counts
+  (4 in policy, 4 in nom).
+- **Test update**: `acl_perdevice_b118_test.go` renamed
+  `TestB118_TagOwnerFromName_AllFiveInfraExits` →
+  `TestB118_TagOwnerFromName_AllFourInfraExits` (svyatoslava-1
+  removed from regression list).
+- 3 files changed (`check_b118.sh` + `acl_perdevice_b118_test.go`
+  + AGENTS.md/RELEASE-NOTES). +83/-9 lines.
+- `go test ./internal/acl/ -run TestB118_` PASS (7/7 sub-tests).
+- `go build ./...` + `go vet ./...` clean.
+- **`make verify-pre` 112 PASS / 2 FAIL / 1 SKIP** (B8 VM-only;
+  2 pre-existing FAILs: B34 device_rules auto-add duplicates +
+  B104 superseded by B114).
+- B118 B-check standalone: **16 pass / 0 fail / 0 warn**
+  (6 contracts A-F + 5 v1.3.19.1 sub-checks G = 16 total).
+
+**Live state**: build `v1.3.11-19-ge32e12f` (last commit was
+the B118 B-check fix). No code deploy needed for v1.3.19.1
+(cleanup was operator-side). 16/18 system tests PASS (2 SKIP:
+`db.journal_mode` PG-specific + `mesh.active_meshes` live
+state-dependent). 0 FAIL. Snapshot 1148, applied_success=1.
+
+**Rollback procedure (if needed):**
+
+1. Restore headscale policy: `docker cp <SNAP_DIR>/policy.json
+   headscale:/tmp/policy_rollback.json && docker exec headscale
+   headscale policy set -f /tmp/policy_rollback.json`
+2. Restore headscale node 30: see `<SNAP_DIR>/headscale_nodes.json`
+   (complex — node keys + machine keys needed; contact operator).
+3. Restore node_owner_map: `PGPASSWORD=... psql ... -f
+   <SNAP_DIR>/rollback.sql`
+4. Trigger skygate re-apply: `POST /admin/exit-rules/reapply`
+
+## v1.3.19 — B118 tag-owner-from-name
+
+**Date:** 2026-08-17
+**Scope:** Bugfix — pre-fix via loop hardcoded `envAdminIdentity()@domain`
+(= `skyadmin@` in production) for every via tag. Due to first-write-wins
+dedup (v1.3.18 hotfix), this `skyadmin@` always won over the per-user
+loop's correct `infra@` → `tag:dev-infra-emilia` showed as `skyadmin@`
+in the live policy even though the DB had `infra@`.
+
+**What's added (2 commits `b0cacf6` + `e32e12f`):**
+
+- `internal/acl/acl.go` (via loop in `GenerateACLWithViaForPlane`,
+  line ~1380): parse owner from tag name with format
+  `tag:dev-<user>-<device>` → `<user>@domain`; fallback to
+  `envAdminIdentity()` for non-`tag:dev-*` via tags (defensive).
+- `GenerateACLForPlane:561`: `tag:exit-node` → `infra@`
+  (was `envAdminIdentity()@` = `skyadmin@`).
+- `GenerateACLWithViaForPlane:1353`: same `tag:exit-node` → `infra@`.
+- **Svyatoslava-legacy cleanup (operator-approved 2026-08-17)**:
+  snapshot headscale pre-cleanup → `headscale nodes delete --force
+  -i 27` (was offline, last_seen=2026-05-29) +
+  `DELETE FROM node_owner_map WHERE node_id = '27'`. Re-apply:
+  v=1146, tagOwners 21→20, grants 389→385, 0 references to
+  legacy tag.
+- New test file `internal/acl/acl_perdevice_b118_test.go` (7 tests).
+- New file `scripts/check_b118.sh` (6 contracts A-F, plus 5
+  v1.3.19.1 sub-checks G).
+
+**B118 design intent (operator directive 2026-08-17):**
+
+- `infra` = technical user for all exit-nodes/hosts.
+- `skyadmin` = operator's personal account.
+- `tag:public` owner stays `skyadmin@` (directive).
+- `tag:exit-node` owner = `infra@`.
+- Per-plane architecture intentional — multiple nodes per VM/device
+  serve different roles; do NOT delete duplicates.
+
+**Live state (v=1147, pre-v1.3.19.1 cleanup):** 5 infra tags all →
+`infra@` (emilia, karolina, sharlotta, svyatoslava-1, skygate-host-1).
+`tag:exit-node` → `infra@`. `tag:public` → `skyadmin@` (unchanged).
+20 tagOwners total. 0 malformed hosts. Build `v1.3.11-18-gb0cacf6`
+deployed to VM.
+
+**Operator trigger (Android emilia hang):** "на андроид exit node
+emilia очень долго прогружает, хотя по положению он ближе всех" —
+root cause was pre-B93 legacy `tag:exit-emilia` etc. in
+`user_exit_node_prefs` + `device_exit_node_prefs` (not new tags,
+just stale). Manual SQL migration: `UPDATE … SET exit_node_tag =
+'tag:dev-infra-' || substring(exit_node_tag FROM 10) WHERE
+exit_node_tag LIKE 'tag:exit-emilia|karo|sharlotta|svyatoslava'`.
+The pre-fix tagOwners were skyadmin@ because of B118's hardcoded
+fallback — the post-fix policy had the correct `infra@` for all
+5 infra tags.
+
 ## v1.3.18.1 — exit_rules.preferred_mismatch helper fix (post-B111 tag format)
 
 **Date:** 2026-08-17

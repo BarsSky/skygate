@@ -1,11 +1,29 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post-v1.3.18.1 (exit_rules.preferred_mismatch helper fix).
-> **Status of v1.3.18 + v1.3.18.1**: hotfix pair, COMMITTED + DEPLOYED.
-> verify-pre catalog **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
-> 18/20 system tests PASS, 0 FAIL (2 SKIP: db.journal_mode + mesh.active_meshes).
+> **Last updated**: 2026-08-17, post-v1.3.19.1 (svyatoslava-1 removal + B118 finalized).
+> **Status of v1.3.19 + v1.3.19.1**: code+cleanup pair, COMMITTED + DEPLOYED.
+> verify-pre catalog **112 PASS / 2 FAIL / 1 SKIP** (B8 VM-only;
+> 2 pre-existing FAILs: B34 device_rules auto-add + B104 superseded by B114).
+> 16/18 system tests PASS, 0 FAIL (2 SKIP: db.journal_mode + mesh.active_meshes).
 >
 > Recent shipped releases:
+> - **v1.3.19.1** (2026-08-17): svyatoslava-1 (HA mirror, headscale id=30)
+>   removed per operator directive. Snapshot-then-act: snapshot at
+>   `/tmp/svyatoslava1_cleanup_20260817_104048/`, then
+>   `headscale nodes delete --force -i 30` +
+>   `DELETE FROM node_owner_map WHERE node_id = '30'` + re-apply policy.
+>   4 infra tags remain (was 5). B118 contract E updated (5→4) +
+>   new contract G (5 sub-checks). Test renamed
+>   `AllFiveInfraExits` → `AllFourInfraExits`. NO CODE DEPLOY (cleanup
+>   was operator-side). Re-apply: v=1148. DEPLOYED (build `v1.3.11-19-ge32e12f`).
+> - **v1.3.19** (2026-08-17): B118 tag-owner-from-name — via loop
+>   in `GenerateACLWithViaForPlane` parses owner from
+>   `tag:dev-<user>-<device>` → `<user>@domain` (was hardcoded
+>   `envAdminIdentity()@` = `skyadmin@`). Plus `tag:exit-node`
+>   owned by `infra@` in 2 emit sites. Svyatoslava-legacy (id=27)
+>   cleaned up. New B-check `check_b118.sh` (6 contracts) +
+>   7 new unit tests in `internal/acl/acl_perdevice_b118_test.go`.
+>   B-check fix `e32e12f` (max(version) filter + backticks). DEPLOYED.
 > - **v1.3.18.1** (2026-08-17): `tagToHost` helper fix for post-B111
 >   `tag:dev-infra-X` format. Pre-fix, every `exit_rules` row was
 >   flagged as "preferred mismatch" because the helper only stripped

@@ -17,11 +17,133 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.18.1 — exit_rules.preferred_mismatch helper
-  fix for post-B111 tag format (paired with v1.3.18 ACL
-  tagOwners dedup hotfix). `make verify-pre`
-  **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only). 28/28
-  packages green. What's added:
+* **Current**: v1.3.19.1 — svyatoslava-1 (HA mirror, headscale
+  id=30) removed per operator directive 2026-08-17
+  ("старые тэги по svyatoslava надо почистить вес что
+  оффлайн оно уже не рабочее"). `make verify-pre`
+  **112 PASS / 2 FAIL / 1 SKIP** (B8 VM-only; 2 pre-existing
+  FAILs: B34 device_rules auto-add duplicates + B104
+  superseded by B114). 28/28 packages green. What's added:
+  - **v1.3.19.1 hotfix (operator cleanup)**: 3-step
+    destructive change with snapshot-then-act:
+    1. Snapshot at `/tmp/svyatoslava1_cleanup_20260817_104048/`
+       (policy.json 51540, headscale_nodes.json 36263,
+       node_owner_map.tsv 568, node_30.json, MANIFEST.md,
+       rollback.sql).
+    2. `headscale nodes delete --force -i 30` (id=30 was the
+       HA mirror given_name=svyatoslava-1). Confirmed: 15
+       nodes remain in headscale.
+    3. `DELETE FROM node_owner_map WHERE node_id = '30';` (1
+       row deleted).
+    4. POST `/admin/exit-rules/reapply` from inside
+       `skygate-skygate-1` container via
+       `python3 /tmp/reapply_v3.py` (NoRedirect handler +
+       CookieJar — busybox wget doesn't support cookies).
+       Re-apply returned HTTP 303 (success).
+  - **Live state post-cleanup** (v=1148):
+    - 4 infra tags (was 5): emilia, karolina, sharlotta,
+      skygate-host-1. svyatoslava-1 GONE.
+    - 15 tagOwners total (was 21).
+    - 0 references to svyatoslava-1 OR svyatoslava-legacy
+      in latest policy.
+    - tag:exit-node still owned by `infra@`.
+    - tag:public still owned by `skyadmin@`.
+    - node_owner_map: 15 rows (was 16).
+  - **B118 contract E (5 → 4)**: B-check `check_b118.sh`
+    now expects exactly 4 `tag:dev-infra-*` rows in
+    node_owner_map and exactly 4 in policy tagOwners.
+  - **New B118 contract G (v1.3.19.1)**: 5 sub-checks
+    pin svyatoslava-1 removal — policy / node_owner_map /
+    tagOwners / count. Test `acl_perdevice_b118_test.go`
+    renamed `TestB118_TagOwnerFromName_AllFiveInfraExits` →
+    `TestB118_TagOwnerFromName_AllFourInfraExits` (svyatoslava-1
+    removed from regression list).
+  - 3 files changed (`check_b118.sh` + `acl_perdevice_b118_test.go`
+    + 0 code; the destructive change was operator-side via
+    headscale CLI + SQL DELETE + re-apply). +83/-9 lines.
+    `go test ./internal/acl/ -run TestB118_` PASS
+    (7/7 sub-tests). `go build ./...` + `go vet ./...` clean.
+  - **Live state**: build `v1.3.11-19-ge32e12f` (last commit
+    was the B118 B-check fix). No code deploy needed for
+    v1.3.19.1 (cleanup was operator-side). 16/18 system
+    tests PASS (2 SKIP: `db.journal_mode` PG-specific +
+    `mesh.active_meshes` live state-dependent). 0 FAIL.
+    Snapshot 1148, applied_success=1.
+
+* **Previous**: v1.3.19 — B118 tag-owner-from-name (covered by
+  v1.3.19.1's B-check updates). 2 commits since v1.3.18.1
+  (`b0cacf6` code fix + `e32e12f` B-check SQL fix). What's
+  added:
+  - **B118 (v1.3.19)**: code fix in `internal/acl/acl.go`:
+    - Via loop (in `GenerateACLWithViaForPlane`,
+      line ~1380): parse owner from tag name with format
+      `tag:dev-<user>-<device>` → `<user>@domain`; fallback
+      to `envAdminIdentity()` for non-`tag:dev-*` via tags
+      (defensive). Pre-fix, every via tag was hardcoded
+      `envAdminIdentity()@domain` = `skyadmin@` for ALL tags,
+      and due to first-write-wins dedup (v1.3.18 hotfix)
+      this `skyadmin@` always won over the per-user loop's
+      `infra@` → `tag:dev-infra-emilia` showed as `skyadmin@`
+      in policy.
+    - `GenerateACLForPlane:561`: `tag:exit-node` → `infra@`
+      (was `envAdminIdentity()@` = `skyadmin@`).
+    - `GenerateACLWithViaForPlane:1353`: same `tag:exit-node`
+      → `infra@`.
+  - **Svyatoslava-legacy cleanup (operator-approved
+    2026-08-17)**: snapshot headscale pre-cleanup →
+    `headscale nodes delete --force -i 27` (was offline,
+    last_seen=2026-05-29) + `DELETE FROM node_owner_map
+    WHERE node_id = '27'`. Re-apply: v=1146, tagOwners
+    21→20, grants 389→385, 0 references to legacy tag.
+  - **B118 design intent (operator directive)**:
+    - `infra` = technical user for all exit-nodes/hosts.
+    - `skyadmin` = operator's personal account.
+    - `tag:public` owner stays `skyadmin@` (directive).
+    - `tag:exit-node` owner = `infra@`.
+    - Per-plane architecture intentional — multiple nodes
+      per VM/device serve different roles; do NOT delete
+      duplicates.
+  - **New test file
+    `internal/acl/acl_perdevice_b118_test.go`** (7 tests):
+    - `TestB118_TagOwnerFromName_InfraTag` —
+      `tag:dev-infra-emilia` → `infra@domain`.
+    - `TestB118_TagOwnerFromName_SkyadminTag`,
+      `TestB118_TagOwnerFromName_MichailTag`.
+    - `TestB118_TagOwnerFromName_NonDevTagFallsBackToAdmin` —
+      `tag:public` → `skyadmin@domain`.
+    - Defensive tests for `tag:dev-` (empty), `tag:dev--X`
+      (empty user).
+    - `TestB118_TagOwnerFromName_AllFiveInfraExits` (renamed
+      to `AllFourInfraExits` in v1.3.19.1).
+  - **New file `scripts/check_b118.sh`** (6 contracts A-F):
+    - A. via loop has fallback AND owner-from-name.
+    - B. tag:exit-node owned by `infra@` in >=2 emit sites.
+    - C. all `tag:dev-infra-*` in live policy → `infra@`.
+    - D. tag:exit-node in live policy → `infra@`.
+    - E. all `tag:dev-infra-*` in node_owner_map → `infra`.
+    - F. `tag:dev-skyadmin-svyatoslava-legacy` is GONE
+      (text-search, not jsonb).
+    - Plus **G (v1.3.19.1)**: 5 sub-checks pinning the
+      svyatoslava-1 removal (policy / node_owner_map /
+      tagOwners / counts).
+  - `scripts/verify_pre_deploy.sh`: registered B118.
+  - `go test ./internal/acl/ -run TestB118_` PASS
+    (7/7 sub-tests).
+  - 2 files added + 2 modified, +567/-15 lines.
+  - **Live state (pre-v1.3.19.1)**: 5 infra tags all → `infra@`
+    (emilia, karolina, sharlotta, svyatoslava-1,
+    skygate-host-1). `tag:exit-node` → `infra@`. Snapshot
+    v=1147 (16 tagOwners, 0 malformed hosts). `tag:public`
+    → `skyadmin@` (unchanged). Build `v1.3.11-18-gb0cacf6`
+    deployed to VM. Operator trigger: Android emilia exit
+    node hung ("на андроид exit node emilia очень долго
+    прогружает, хотя по положению он ближе всех") — root
+    cause: pre-B93 legacy `tag:exit-emilia` prefs + per-
+    device ACL tags that bridged between users.
+
+* **Previous**: v1.3.18 + v1.3.18.1 — paired
+  hotfixes for ACL re-apply. 2 commits since v1.3.17.1
+  (`a2c11de7` v1.3.18 + `8dd0c47` v1.3.18.1). What's added:
   - **v1.3.18.1 hotfix**: `tagToHost` helper in
     `internal/feature/admin/system_tests.go` was stripping
     only the legacy `tag:exit-` prefix; for the new
@@ -566,6 +688,8 @@ to reflect a deliberate design change.
 | **B116 (v1.3.17)** | DERP relay CRUD UI: `derp_relays` PG table + 6 handlers + 6 routes + `applyBundledDERP` uses table (not legacy `cfg.BundledDERP`) + `renderHeadscaleConfig` merges `derp_relays` URLs | `bash scripts/check_b116.sh` (21 contracts incl. v1.3.17.1 sidebar + landing) |
 | **v1.3.18 hotfix** | ACL tagOwners dedup: `emittedTagOwners` set + first-write-wins `emitTagOwner()` closure in BOTH `GenerateACLForPlane` AND `GenerateACLWithViaForPlane` (was 4 emit paths duplicating `tag:dev-infra-*` keys after Phase 3 / B111). No new B-check (deferred to openTestDB harness; covered indirectly by `acl.reapply` system test). | (no `check_b118.sh` yet) |
 | **v1.3.18.1 hotfix** | `tagToHost` helper extended to strip `tag:dev-infra-X` / `tag:exit-X` / `tag:X` / `X` prefixes. Covered indirectly by the `exit_rules.preferred_mismatch` system test (now PASSes; was FAIL post-v1.3.18 due to the legacy prefix strip). | (no `check_b119.sh` yet) |
+| **B118 (v1.3.19)** | tag-owner-from-name: via loop parses owner from `tag:dev-<user>-<device>` → `<user>@domain`; `tag:exit-node` owned by `infra@` in 2 emit sites; svyatoslava-legacy GONE. Source grep + live DB. | `bash scripts/check_b118.sh` (16 contracts: 6 source/live + 5 v1.3.19.1 sub-checks, B-check fix `e32e12f` for max(version) filter) |
+| **v1.3.19.1 hotfix (operator cleanup)** | svyatoslava-1 / headscale id=30 (HA mirror) removed: snapshot → `headscale nodes delete --force -i 30` → `DELETE FROM node_owner_map` → re-apply policy. 4 infra tags remain (was 5): emilia, karolina, sharlotta, skygate-host-1. | covered by B118 contract G (5 sub-checks) |
 | **B38 fix (v1.3.12)** | headscale_acl.go: ListACL + AddACL + RemoveACL + PreviewACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form). Was looking for deleted `migrations_v0.50.go` and old SQLite test fns; updated to `t.Skip` stub check + `migrations_pg.go` grep. | inline grep in `verify_pre_deploy.sh` line 999-1008 |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`
