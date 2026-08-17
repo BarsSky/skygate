@@ -541,24 +541,22 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "]\"")
 	emittedTagOwners["tag:public"] = true
-	// 2026-07-14: Этап 14 v7 — register tag:exit-node as
-	// owned by admin so the headscale parser accepts the
-	// policy. The SSH rule (and the per-user ACL) references
-	// this tag; without an entry in tagOwners the policy
-	// load fails with "tag not found: tag:exit-node". We
-	// never *apply* this tag through skygate (it stays as
-	// a headplane admin task), but headscale still requires
-	// the owner entry to be present in the policy file.
-	// 2026-07-14: Этап 14 v7 — register tag:exit-node as
-	// owned by admin so the headscale parser accepts the
-	// policy. The SSH rule (and the per-user ACL) references
-	// this tag; without an entry in tagOwners the policy
-	// load fails with "tag not found: tag:exit-node". We
-	// never *apply* this tag through skygate (it stays as
-	// a Headplane admin task — see docs/headplane.md), but
-	// headscale still requires the owner entry to be
-	// present in the policy file.
-	emitTagOwner("tag:exit-node", "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
+	// 2026-08-17: v1.3.19 (B118) — tag:exit-node is owned by
+	// `infra` per the DESIGN (AGENTS.md "Tag ownership
+	// rules"). `infra` is the technical user that owns
+	// all exit-nodes/hosts; admin's portal account
+	// (skyadmin) does NOT own infra tags so the policy
+	// distinguishes "operator's personal devices" from
+	// "infrastructure nodes" at the headscale tagOwners
+	// level. Pre-fix, this was `envAdminIdentity()` which
+	// gave the tag to skyadmin — when headplane applied
+	// `tag:exit-node` to a node owned by the infra
+	// headscale user, the tagOwners check passed only
+	// because the policy was loose. With infra@ as
+	// the owner, the policy is consistent with the DB
+	// (node_owner_map.username for all 4 tagged
+	// exit-nodes is `infra`).
+	emitTagOwner("tag:exit-node", "[\"infra@"+baseDomain+"\"]")
 	if len(identities) > 1 {
 		emitTagOwner("tag:private", "["+strings.Join(quoteAll(identities), ",")+"]")
 	} else if len(identities) == 1 {
@@ -1350,7 +1348,10 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
 	emittedTagOwners2["tag:public"] = true
-	emitTagOwner2("tag:exit-node", "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
+	// 2026-08-17: v1.3.19 (B118) — tag:exit-node is owned by
+	// `infra` per the DESIGN (see GenerateACLForPlane's
+	// tag:exit-node comment for the full rationale).
+	emitTagOwner2("tag:exit-node", "[\"infra@"+baseDomain+"\"]")
 	if len(identities) > 1 {
 		emitTagOwner2("tag:private", "["+strings.Join(quoteAll(identities), ",")+"]")
 	} else if len(identities) == 1 {
@@ -1382,8 +1383,33 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		exitNodeTags = append(exitNodeTags, tag)
 	}
 	sort.Strings(exitNodeTags)
+	// 2026-08-17: v1.3.19 (B118) — tag owner for via tags
+	// comes from the tag name (tag:dev-<user>-<device> →
+	// <user>@domain), not from a hardcoded admin identity.
+	// The DESIGN (AGENTS.md "Tag ownership rules") requires
+	// `infra` to own infra tags, `skyadmin` to own
+	// skyadmin tags, etc. — so headscale's tagOwners list
+	// reflects the actual owner. Pre-fix, the via loop
+	// emitted every via tag with envAdminIdentity()
+	// (= skyadmin@), which overwrote the correct owner
+	// for infra tags (e.g. tag:dev-infra-emilia showed
+	// `skyadmin@` instead of `infra@`) due to the
+	// first-write-wins dedup at the top of this block.
+	// The dedup order (static → via → per-user) meant
+	// the via path always won, so the per-user path's
+	// correct `infra@` was discarded. Fix: parse the
+	// owner from the tag name. Falls back to admin
+	// identity for non-`tag:dev-*` via tags (none in
+	// production today, but defensive).
 	for _, tag := range exitNodeTags {
-		emitTagOwner2(tag, "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
+		owner := envAdminIdentity() + "@" + baseDomain
+		if strings.HasPrefix(tag, "tag:dev-") {
+			rest := tag[len("tag:dev-"):]
+			if idx := strings.Index(rest, "-"); idx > 0 {
+				owner = rest[:idx] + "@" + baseDomain
+			}
+		}
+		emitTagOwner2(tag, "[\""+owner+"\"]")
 	}
 
 	type perDevTagOwner struct {

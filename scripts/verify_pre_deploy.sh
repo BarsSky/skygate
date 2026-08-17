@@ -3223,3 +3223,5 @@ run_check "B115" "tailnet test skip filter: tailnetSelfHostname + tailnetSkipHos
   'test -f scripts/check_b115.sh && bash scripts/check_b115.sh'
 run_check "B116" "DERP relay CRUD UI: derp_relays table + 6 handlers + 6 routes + apply uses table (B116, v1.3.17)" \
   'test -f scripts/check_b116.sh && bash scripts/check_b116.sh'
+run_check "B118" "tag-owner-from-name (via loop parses owner from tag:dev-<user>-<device>, tag:exit-node owned by infra@, svyatoslava-legacy gone) (B118, v1.3.19)" \
+  'test -f scripts/check_b118.sh && bash scripts/check_b118.sh'
