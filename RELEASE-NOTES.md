@@ -1,6 +1,155 @@
 # Skygate release notes
 
-## v1.3.19.2 — TagToHostname handles post-B111 tag:dev-infra-X (preferred_check follow-up)
+## v1.3.19.2 — TagToHostname + admin-breadcrumb sidebar offset (B119 + B120)
+
+**Date:** 2026-08-17
+**Scope:** Two hotfixes (B119 code fix + B120 CSS/layout fix).
+
+**Two operator reports (2026-08-17 14:00-14:42 UTC):**
+
+1. **"240 правил ссылаются на exit-node, который устройство
+   не использует"** — false-positive mismatch banner on
+   /my/exit-rules. Root cause: `TagToHostname` (exported
+   helper in `internal/feature/exit_rules/preferred_check.go`)
+   was missing the `tag:dev-infra-X` case. The v1.3.18.1
+   hotfix only updated the LOCAL `tagToHost` closure in
+   `system_tests.go` (so the system test was reporting
+   correctly) — the EXPORTED helper used by
+   /my/exit-rules + /admin/exit-rules + /admin/devices was
+   missed.
+2. **"при раскрытии меню накрывается верхняя плашка"** —
+   the admin-breadcrumb ("Админ › Devices & Nodes › Devices")
+   was hidden under the fixed-position sidebar on PC.
+
+**B119 fix (TagToHostname):**
+
+```go
+// pre-fix (v1.3.18.1 and earlier):
+func TagToHostname(tag string) string {
+    t := strings.TrimSpace(tag)
+    if !strings.HasPrefix(t, "tag:") {
+        return t
+    }
+    rest := strings.TrimPrefix(t, "tag:")
+    rest = strings.TrimPrefix(rest, "exit-")  // BUG
+    return rest
+}
+```
+
+For `tag:dev-infra-karolina`:
+- After `TrimPrefix(t, "tag:")`: `dev-infra-karolina`
+- After `TrimPrefix(rest, "exit-")`: `dev-infra-karolina` (no match)
+- Returns: `dev-infra-karolina` (WRONG — should be `karolina`)
+
+```go
+// post-fix (v1.3.19.2 / B119):
+func TagToHostname(tag string) string {
+    t := strings.TrimSpace(tag)
+    switch {
+    case strings.HasPrefix(t, "tag:dev-infra-"):
+        return strings.TrimPrefix(t, "tag:dev-infra-")
+    case strings.HasPrefix(t, "tag:exit-"):
+        return strings.TrimPrefix(t, "tag:exit-")
+    case strings.HasPrefix(t, "tag:"):
+        return strings.TrimPrefix(t, "tag:")
+    default:
+        return t
+    }
+}
+```
+
+The case order matters: `tag:dev-infra-` MUST be checked
+BEFORE `tag:` (a naive `TrimPrefix(t, "tag:")` would still
+leave `dev-infra-emilia` unchanged — the v1.3.18.1 bug).
+
+**B119 files changed:**
+
+- `internal/feature/exit_rules/preferred_check.go`
+  (TagToHostname rewrite, +27/-12 lines)
+- `internal/feature/exit_rules/preferred_check_test.go`
+  (4 new tests, +83 lines)
+- `scripts/check_b119.sh` (new, 8 contracts A-H, ~250 lines)
+- `scripts/verify_pre_deploy.sh` (B119 entry, +2 lines)
+
+**B120 fix (admin-breadcrumb sidebar offset):**
+
+`<main>` in layout.html contains the `.admin-breadcrumb` as
+a SIBLING of `.shell` (not inside it). The CSS rule
+`main .shell { margin-left: 220px; }` only applied to
+`.shell` — the `.admin-breadcrumb` had no left offset, so
+its left edge sat at 0px and the position:fixed sidebar
+(left:0, width:220px) covered the leftmost 220px. On PC the
+operator saw only the right fragments of the breadcrumb
+text — the start was hidden.
+
+Fix: mirror the `.shell` margin-left pattern for
+`.admin-breadcrumb` (3 rules — desktop expanded 220px,
+collapsed 52px, mobile 0):
+
+```css
+/* desktop expanded */
+main .admin-breadcrumb{margin-left:220px;width:calc(100% - 220px);transition:margin-left .25s, width .25s}
+
+/* desktop collapsed */
+.sidebar.collapsed ~ main .admin-breadcrumb{margin-left:52px;width:calc(100% - 52px)}
+
+/* mobile (sidebar is a drawer on <768px) */
+@media (max-width:768px) {
+  main .admin-breadcrumb{margin-left:0 !important;width:100% !important}
+}
+```
+
+The `width: calc(100% - 220px)` keeps the breadcrumb's
+background-card spanning the visible area instead of just
+the text width (otherwise the breadcrumb would shrink to
+its text width and look like a floating label). The
+existing bare `.admin-breadcrumb { padding-left: 60px }`
+from B107 (v1.3.9 mobile hamburger clearance) still applies
+on mobile.
+
+**B120 files changed:**
+
+- `static/css/themes.css` (+26 lines: 3 new rules +
+  comments)
+- `internal/handlers/layout_v1_3_19_2_test.go` (new, 4
+  Go unit tests, ~200 lines)
+- `internal/handlers/handlers_b107_test.go` (regex fix:
+  the v1.3.19.2 mobile `main .admin-breadcrumb{...}` rule
+  was being matched first by B107's loose regex; updated
+  to iterate all matches and find the one with
+  `padding-left:60px` — Go's RE2 has no lookbehind)
+- `scripts/check_b120.sh` (new, 5 contracts A-E, ~180 lines)
+- `scripts/verify_pre_deploy.sh` (B120 entry, +2 lines)
+
+**Live state (verified 2026-08-17 13:00 UTC):**
+
+- `/my/exit-rules`: 0 false-positive mismatches (was 240).
+  PREFERRED column shows clean hostnames (`karolina` /
+  `emilia`) instead of `dev-infra-X`.
+- `/my/exit-rules` + `/admin/exit-rules` + `/admin/devices`:
+  breadcrumb is now fully visible, not hidden under the
+  sidebar.
+- 28/28 packages green, `go build ./...` + `go vet ./...`
+  clean.
+- `make verify-pre` 116 PASS / 0 FAIL / 1 SKIP (B8 VM-only).
+- B119 standalone on VM: 9 pass / 0 fail / 0 warn.
+- B120 standalone on VM: 5 pass / 0 fail / 0 warn.
+- B107 (predecessor) still PASSes after the regex fix.
+
+**Files changed (combined B119 + B120):**
+
+- `internal/feature/exit_rules/preferred_check.go`
+- `internal/feature/exit_rules/preferred_check_test.go`
+- `internal/handlers/handlers_b107_test.go` (regex fix)
+- `internal/handlers/layout_v1_3_19_2_test.go` (new)
+- `static/css/themes.css`
+- `scripts/check_b119.sh` (new)
+- `scripts/check_b120.sh` (new)
+- `scripts/verify_pre_deploy.sh`
+
+**Live build label:** `v1.3.11-23-g99dd4ad` (deployed to VM).
+
+## v1.3.19.1 — svyatoslava-1 (HA mirror) removed + B118 finalized
 
 **Date:** 2026-08-17
 **Scope:** Hotfix — `TagToHostname` (exported helper in

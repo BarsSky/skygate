@@ -1,26 +1,23 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post-v1.3.19.2 (TagToHostname fix for post-B111 tag format).
-> **Status of v1.3.19.2**: hotfix, COMMITTED + DEPLOYED.
-> verify-pre catalog **113 PASS / 2 FAIL / 1 SKIP** (B8 VM-only;
-> 2 pre-existing FAILs: B34 device_rules auto-add + B104 superseded by B114).
+> **Last updated**: 2026-08-17, post-v1.3.19.2 (TagToHostname B119 + admin-breadcrumb B120).
+> **Status of v1.3.19.2**: hotfix pair (B119 code + B120 layout), COMMITTED + DEPLOYED.
+> verify-pre catalog **116 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+> 28/28 packages green.
 > 16/18 system tests PASS, 0 FAIL (2 SKIP: db.journal_mode + mesh.active_meshes).
 >
 > Recent shipped releases:
-> - **v1.3.19.2** (2026-08-17): `TagToHostname` (exported helper in
->   `internal/feature/exit_rules/preferred_check.go`) rewritten with
->   case-ordered switch to handle `tag:dev-infra-X` (the operator's
->   post-B111 standard format). Pre-fix returned `dev-infra-karolina`
->   for a `tag:dev-infra-karolina` pref → 240 false-positive
->   preferred-mismatches on the UI banner ("240 правил ссылаются на
->   exit-node, который устройство не использует"). v1.3.18.1 fixed
->   the LOCAL `tagToHost` closure in `system_tests.go` but missed
->   the EXPORTED helper used by /my/exit-rules + /admin/exit-rules +
->   /admin/devices. Post-fix: 0 false positives, PREFERRED column
->   shows clean hostnames (`karolina` not `dev-infra-karolina`).
->   New B-check `check_b119.sh` (8 contracts A-H, 9 sub-checks).
->   4 new Go tests in `preferred_check_test.go`. DEPLOYED (build
->   `v1.3.11-21-g761bb26`).
+> - **v1.3.19.2** (2026-08-17): two hotfixes — B119 (TagToHostname
+>   `tag:dev-infra-X` fix, 240 false-positive preferred-mismatches on
+>   /my/exit-rules) and B120 (admin-breadcrumb sidebar-offset fix,
+>   breadcrumb was hidden under the fixed sidebar on PC). Both
+>   fixed: PREFERRED column shows clean hostnames (B119) +
+>   breadcrumb is fully visible on every admin page (B120). New
+>   B-checks: `check_b119.sh` (8 contracts) + `check_b120.sh` (5
+>   contracts). 4 new Go tests in `preferred_check_test.go` + 4
+>   new Go tests in `layout_v1_3_19_2_test.go`. B107 regex updated
+>   to handle the new `main .admin-breadcrumb` selector. DEPLOYED
+>   (build `v1.3.11-23-g99dd4ad`).
 > - **v1.3.19.1** (2026-08-17): svyatoslava-1 (HA mirror, headscale id=30)
 >   removed per operator directive. Snapshot-then-act: snapshot at
 >   `/tmp/svyatoslava1_cleanup_20260817_104048/`, then

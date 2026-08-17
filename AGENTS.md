@@ -20,6 +20,12 @@ decisions or propose work that's already in flight.
 * **Current**: v1.3.19.2 — `TagToHostname` (exported helper in
   `internal/feature/exit_rules/preferred_check.go`) extended
   to handle the post-B111 `tag:dev-infra-X` tag format.
+  Plus B120 (admin-breadcrumb sidebar-offset fix — the
+  breadcrumb was being covered by the fixed sidebar on PC
+  because it's a SIBLING of `.shell` inside `<main>` and
+  the existing `main .shell { margin-left: 220px }` rule
+  didn't cascade). `make verify-pre` **116 PASS / 0 FAIL /
+  1 SKIP** (B8 VM-only). 28/28 packages green. What's added:
   The v1.3.18.1 hotfix only updated the LOCAL `tagToHost`
   closure in `system_tests.go` — the EXPORTED helper used
   by `/my/exit-rules` + `/admin/exit-rules` +
@@ -762,6 +768,7 @@ to reflect a deliberate design change.
 | **B118 (v1.3.19)** | tag-owner-from-name: via loop parses owner from `tag:dev-<user>-<device>` → `<user>@domain`; `tag:exit-node` owned by `infra@` in 2 emit sites; svyatoslava-legacy GONE. Source grep + live DB. | `bash scripts/check_b118.sh` (16 contracts: 6 source/live + 5 v1.3.19.1 sub-checks, B-check fix `e32e12f` for max(version) filter) |
 | **v1.3.19.1 hotfix (operator cleanup)** | svyatoslava-1 / headscale id=30 (HA mirror) removed: snapshot → `headscale nodes delete --force -i 30` → `DELETE FROM node_owner_map` → re-apply policy. 4 infra tags remain (was 5): emilia, karolina, sharlotta, skygate-host-1. | covered by B118 contract G (5 sub-checks) |
 | **B119 (v1.3.19.2)** | `TagToHostname` (exported helper) extended to handle `tag:dev-infra-X` (v1.3.18.1 only fixed the LOCAL `tagToHost` closure in `system_tests.go`; missed the exported helper used by /my/exit-rules + /admin/exit-rules + /admin/devices). Pre-fix returned `dev-infra-karolina` for `tag:dev-infra-karolina` → 240 false-positive preferred-mismatches on the UI banner. | `bash scripts/check_b119.sh` (8 contracts A-H, 9 sub-checks) |
+| **B120 (v1.3.19.2)** | admin-breadcrumb sidebar offset: the breadcrumb was a SIBLING of `.shell` inside `<main>`, but only `.shell` had `margin-left:220px` — the breadcrumb had no left offset, so its leftmost 220px sat under the fixed sidebar. Fix: mirror the `.shell` margin-left pattern for `.admin-breadcrumb` (3 rules: desktop 220px, collapsed 52px, mobile 0). 4 new Go unit tests in `layout_v1_3_19_2_test.go` + B107 regex fix (to handle the new `main .admin-breadcrumb` selector). | `bash scripts/check_b120.sh` (5 contracts A-E) |
 | **B38 fix (v1.3.12)** | headscale_acl.go: ListACL + AddACL + RemoveACL + PreviewACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form). Was looking for deleted `migrations_v0.50.go` and old SQLite test fns; updated to `t.Skip` stub check + `migrations_pg.go` grep. | inline grep in `verify_pre_deploy.sh` line 999-1008 |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`
