@@ -26,6 +26,13 @@ const (
 	ThemeVercel = "vercel"
 	ThemeSentry = "sentry"
 	ThemeNvidia = "nvidia"
+	// 2026-08-17: v1.3.19.2 follow-up (B121) — Mint theme. Light
+	// theme with silver background + mint-green accent. Designed
+	// for long admin sessions: high-contrast text, soft borders,
+	// mint accent that's easy on the eyes (vs the high-saturation
+	// indigo of Linear). Pairs with the form-contrast improvements
+	// to the Linear theme (also in B121).
+	ThemeMint = "mint"
 )
 
 func ThemeLabel(t string) string {
@@ -38,6 +45,8 @@ func ThemeLabel(t string) string {
 		return "Sentry"
 	case ThemeNvidia:
 		return "NVIDIA"
+	case ThemeMint:
+		return "Mint"
 	default:
 		return "Linear"
 	}
@@ -45,7 +54,7 @@ func ThemeLabel(t string) string {
 
 func IsValidTheme(t string) bool {
 	switch t {
-	case ThemeLinear, ThemeVercel, ThemeSentry, ThemeNvidia:
+	case ThemeLinear, ThemeVercel, ThemeSentry, ThemeNvidia, ThemeMint:
 		return true
 	}
 	return false

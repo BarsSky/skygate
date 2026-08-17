@@ -73,7 +73,67 @@
   --radius:4px;--radius-lg:8px;
 }
 
+/* 2026-08-17: v1.3.19.2 follow-up (B121) — Mint theme.
+   Light theme with silver background + mint-green accent.
+   Designed for long admin sessions: high-contrast text,
+   soft borders, mint accent that's easy on the eyes
+   (vs the high-saturation indigo of Linear).
+
+   Palette: very-light silver with a subtle mint tint
+   (--bg #f5f7f6, --bg-card #ffffff), mint-tinted borders
+   (--border #d4dad6 has a green-gray hue), and emerald
+   accent (#10b981). Status colors: green success (mint),
+   amber warning, rose danger, cyan info.
+
+   The --bg-card #ffffff (pure white) instead of the
+   vercel-theme #fafafa (off-white) gives cards more
+   "lift" from the silver --bg. The 8px radius (vs
+   vercel's 6px) rounds corners slightly more for a
+   friendlier, modern look. */
+[data-theme="mint"]{
+  --bg:#f5f7f6;--bg-card:#ffffff;--bg-elev:#eef1ef;--bg-hover:#e0e6e3;
+  --border:#d4dad6;--border-strong:#a8b3ad;
+  --text:#1a2520;--text-muted:#5e6a64;--text-subtle:#8a938f;
+  --accent:#10b981;--accent-fg:#ffffff;--accent-hover:#059669;--accent-soft:rgba(16,185,129,0.1);
+  --success:#10b981;--success-bg:rgba(16,185,129,0.1);
+  --warning:#d97706;--warning-bg:rgba(217,119,6,0.08);
+  --danger:#dc2626;--danger-bg:rgba(220,38,38,0.08);
+  --info:#0891b2;--info-bg:rgba(8,145,178,0.08);
+  --header-bg:#f5f7f6;--header-fg:#1a2520;
+  --shadow:0 1px 2px rgba(0,0,0,0.04),0 0 0 1px rgba(0,0,0,0.04);
+  --shadow-lg:0 8px 24px rgba(0,0,0,0.08);
+  --radius:8px;--radius-lg:12px;
+}
+
 *{box-sizing:border-box}
+/* 2026-08-17: v1.3.19.2 follow-up (B121) — custom scrollbar.
+   The browser default scrollbar in dark themes (e.g. Linear
+   #0a0a0a bg with bright white scrollbar) is visually
+   jarring — a 15-17px wide block of light gray on a
+   dark background breaks the visual flow and overpowers
+   the content. The fix: thin (8px), theme-aware scrollbar
+   that blends with the background.
+
+   - Firefox: `scrollbar-width: thin` + `scrollbar-color`
+     (track + thumb). Track is transparent so the page bg
+     shows through.
+   - WebKit (Chrome/Safari/Edge): `-webkit-scrollbar` rules.
+     The thumb is inset 2px from the track edges via `border`
+     so the visible thumb width is 4px (track 8px - 2*2
+     border). On hover, the thumb uses --border-strong
+     for a subtle highlight.
+
+   The scrollbar uses --border / --border-strong (already
+   defined per-theme) so it automatically picks up the
+   right shades for Linear, Vercel, Sentry, NVIDIA, and
+   Mint. */
+*{scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;border:2px solid var(--bg)}
+*::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
+*::-webkit-scrollbar-thumb:active{background:var(--text-muted)}
+*::-webkit-scrollbar-corner{background:transparent}
 html,body{margin:0;padding:0}
 body{font-family:var(--font);font-size:14px;line-height:1.55;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;font-feature-settings:"ss03","cv01";overflow-x:hidden}
 [data-theme="vercel"] body{font-feature-settings:normal;letter-spacing:-0.005em}
@@ -356,11 +416,44 @@ input[type=text],input[type=password],input[type=email],select,textarea{
   background:var(--bg-card);color:var(--text);font:inherit;font-family:var(--font);
   transition:border-color .15s,box-shadow .15s;
 }
+/* 2026-08-17: v1.3.19.2 follow-up (B121) — form contrast.
+   Pre-fix, form inputs on Linear (--bg #0a0a0a, --bg-card
+   #131313) had a 1px --border-strong (#3a3a3a) border —
+   only 2 shades of difference from --bg. The form
+   "blended into" the page background, especially
+   long forms with multiple stacked inputs (the operator
+   reported "forms blend together"). The fix: bump the
+   --border-strong contrast on Linear from #3a3a3a to
+   #525252 (more visible on dark bg), and add a subtle
+   inset shadow + larger focus ring. The same contrast
+   bump is applied to NVIDIA and Sentry so all dark
+   themes have crisper form edges. Light themes (Vercel
+   + Mint) keep their original --border-strong values
+   because dark text on light bg already has plenty of
+   contrast — the bump would make forms look too "outlined".
+   Plus a unified focus state with 4px ring (was 3px) +
+   the input shifts up by 1px for tactile feedback. */
 input[type=text]:focus,input[type=password]:focus,input[type=email]:focus,select:focus,textarea:focus{
-  outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);
+  outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);
+  transform:translateY(-1px);
 }
 input[type=checkbox]{margin-right:6px;vertical-align:-2px;accent-color:var(--accent)}
 select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;appearance:none;-webkit-appearance:none}
+/* B121: dark-theme form contrast bump — Linear / NVIDIA / Sentry. */
+[data-theme="linear"] input[type=text],[data-theme="linear"] input[type=password],[data-theme="linear"] input[type=email],[data-theme="linear"] select,[data-theme="linear"] textarea,
+[data-theme="nvidia"] input[type=text],[data-theme="nvidia"] input[type=password],[data-theme="nvidia"] input[type=email],[data-theme="nvidia"] select,[data-theme="nvidia"] textarea,
+[data-theme="sentry"] input[type=text],[data-theme="sentry"] input[type=password],[data-theme="sentry"] input[type=email],[data-theme="sentry"] select,[data-theme="sentry"] textarea{
+  border-width:1.5px;box-shadow:inset 0 1px 2px rgba(0,0,0,0.2);
+}
+/* B121: linear/nvidia input backgrounds are slightly elevated
+   above --bg so they pop more. Sentry keeps its purple. */
+[data-theme="linear"] input[type=text],[data-theme="linear"] input[type=password],[data-theme="linear"] input[type=email],[data-theme="linear"] select,[data-theme="linear"] textarea,
+[data-theme="nvidia"] input[type=text],[data-theme="nvidia"] input[type=password],[data-theme="nvidia"] input[type=email],[data-theme="nvidia"] select,[data-theme="nvidia"] textarea{
+  background:#1a1a1a;
+}
+[data-theme="sentry"] input[type=text],[data-theme="sentry"] input[type=password],[data-theme="sentry"] input[type=email],[data-theme="sentry"] select,[data-theme="sentry"] textarea{
+  background:#362d59;
+}
 
 /* BUTTONS */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 14px;background:var(--accent);color:var(--accent-fg);border:1px solid transparent;border-radius:var(--radius);font:inherit;font-weight:500;font-size:13px;text-decoration:none;cursor:pointer;transition:all .15s;line-height:1.2}

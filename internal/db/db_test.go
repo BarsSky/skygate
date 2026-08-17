@@ -13,6 +13,7 @@ func TestThemeLabel(t *testing.T) {
 		{ThemeVercel, "Vercel"},
 		{ThemeSentry, "Sentry"},
 		{ThemeNvidia, "NVIDIA"},
+		{ThemeMint, "Mint"}, // 2026-08-17 B121
 		{"dark", "Linear"},       // fallback for unknown
 		{"", "Linear"},            // empty → fallback
 		{"VerCeL", "Linear"},      // case sensitive: unknown
@@ -25,7 +26,7 @@ func TestThemeLabel(t *testing.T) {
 }
 
 func TestIsValidTheme(t *testing.T) {
-	for _, ok := range []string{ThemeLinear, ThemeVercel, ThemeSentry, ThemeNvidia} {
+	for _, ok := range []string{ThemeLinear, ThemeVercel, ThemeSentry, ThemeNvidia, ThemeMint} {
 		if !IsValidTheme(ok) {
 			t.Errorf("IsValidTheme(%q) false, want true", ok)
 		}

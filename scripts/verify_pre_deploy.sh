@@ -3229,3 +3229,5 @@ run_check "B119" "TagToHostname handles 4 formats (v1.3.18.1 missed the exported
   'test -f scripts/check_b119.sh && bash scripts/check_b119.sh'
 run_check "B120" "admin-breadcrumb has margin-left:220px desktop / 52px collapsed / 0 mobile (sidebar offset, B120, v1.3.19.2 layout fix)" \
   'test -f scripts/check_b120.sh && bash scripts/check_b120.sh'
+run_check "B121" "Mint theme (silver+mint) + thin themed scrollbar + dark-theme form contrast bump (B121, v1.3.19.2 follow-up)" \
+  'test -f scripts/check_b121.sh && bash scripts/check_b121.sh'
