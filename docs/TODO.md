@@ -1,12 +1,25 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post-v1.3.19.2 follow-up (B125 / Goal 37 follow-up).
-> **Status of v1.3.19.2 follow-up**: B123 (Exit Rules duplicate
-> alert UX), B124 (dev version element + semver fix), and B125
-> (device_rules auto-add duplicate prevention) all COMMITTED +
-> DEPLOYED. Goals 39 + 37 follow-up both closed. verify-pre
-> catalog **121 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
-> 28/28 packages green.
+> **Last updated**: 2026-08-17, post v1.3.19.3 release.
+> **Status**: v1.3.19.2 follow-up cycle (B123 + B124 + B125) is
+> FULLY CLOSED. Tag `v1.3.19.3` published at commit `a3aae29`
+> (B125 + B-check + docs). Live VM on `v1.3.19.2-4-ga3aae29`,
+> `/admin/update` dev-banner verified end-to-end in both modes.
+> verify-pre catalog **121 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+> 28/28 packages green. Goals 39 + 37 follow-up both closed.
+>
+> **DOC NOTE (2026-08-17)**: a previous version of this file
+> listed BL-15 / BL-17 / BL-18 under Priority 1-2 as TODO.
+> That section is STALE — those items are SHIPPED:
+>   - **BL-15** (restore.sh for PG) — DONE in v1.3.8 (B101)
+>     + e2e in v1.3.13.1 (B122). The TODO.md description
+>     of "do_skygate_db copies skygate.db which doesn't exist
+>     in v1.3.0+ archives" is the PRE-FIX state, not current.
+>     See `scripts/check_b101.sh` + `scripts/check_b122.sh`.
+>   - **BL-17** (autonomous migration verify) — DONE in v1.3.14
+>     (B114). See `scripts/check_b114.sh` + `scripts/verify_migration.sh`.
+>   - **BL-18** (in-app S3 download) — DONE in v1.3.8 (B103).
+>     See `scripts/check_b103.sh`.
 >
 > Recent shipped releases:
 > - **v1.3.19.2 follow-up (B125)** (2026-08-17): device_rules
@@ -160,7 +173,7 @@ Priority order: 1 = most impactful, 5 = nice-to-have.
 
 ---
 
-## Priority 1 — Backup end-to-end (MOSTLY DONE, residual items below)
+## Priority 1 — Backup end-to-end (DONE in v1.3.8, NFS part remains)
 
 The "давно висящая ошибка" the operator reported 2026-08-12
 turned out to be TWO bugs:
@@ -173,81 +186,35 @@ turned out to be TWO bugs:
      (`if keep >= len(archives) { return nil }` guard) +
      5 regression tests in `prune_test.go`.
 
-What's left:
-
 ### BL-15: `scripts/restore.sh` for PG dump (v1.3.0+)
-- **What**: the operator-side `scripts/restore.sh` was written
-  for the SQLite era and its `do_skygate_db()` function
-  copies `skygate.db` (which doesn't exist in v1.3.0+ archives
-  — those have `skygate-pg.sql` instead).
-- **Impact**: the in-app /admin/backup "Restore" button POSTs
-  an uploaded archive to restore.sh, which silently does
-  nothing for the DB step. The operator must run
-  `psql -f skygate-pg.sql` manually for a real restore.
-  See `docs/backup-restore-and-migration.md` Section 2.
-- **Effort**: 1-2 hours (rewrite the do_skygate_db function
-  to handle the PG dump; add a do_pg_restore helper that
-  parses SKYGATE_DB_DSN from skygate.env in the archive
-  and runs the psql via throwaway postgres:18-alpine,
-  same pattern as backup.sh).
-- **Suggested next step**: rewrite restore.sh to detect
-  skygate-pg.sql vs skygate.db and dispatch accordingly.
-  Add a `B-check` for the new function.
+- **Status**: ✅ **DONE in v1.3.8 (B101) + e2e in v1.3.13.1 (B122)**.
+- `scripts/restore.sh` now has `do_pg_restore()` that detects
+  `skygate-pg.sql` (v1.3.0+ archives) vs `skygate.db` (v0.32.x
+  archives) and dispatches accordingly. The DSN is parsed
+  out of the in-archive `skygate.env` so the restore targets
+  the right DB.
+- Pinned by `scripts/check_b101.sh` (source contracts) +
+  `scripts/check_b122.sh` (e2e flow).
+- If this entry was in your "TODO" list — it's already shipped.
+  Remove from your mental backlog.
 
-### BL-16: Per-protocol end-to-end test for SMB / NFS / SFTP
-- **What**: code paths exist and the form validators work,
-  but no live e2e test has been run for the mount-based
-  protocols (only local and S3 have been live-tested on
-  the VM).
-- **Impact**: a regression in the SMB/NFS/SFTP mount logic
-  would only be caught by a real mount, which we don't have
-  on the live VM.
-- **Effort**: 2-3 hours (provision throwaway SMB/NFS/SFTP
-  servers via docker, configure skygate to use them, run
-  the same restore test the S3 path got).
-- **Suggested next step**: docker-compose.test.yml with
-  throwaway samba + nfs + sftp-server containers on the
-  headscale_default network; add a `scripts/test_backup_
-  protocols.sh` that runs the same flow as
-  `vm_s3_test.sh` for each protocol.
-
----
-
-## Priority 2 — Cross-host migration (partial)
-
-### BL-17: Autonomous migration verify
-- **What**: the operator's migration flow
-  (`docs/backup-restore-and-migration.md` Section 3) is
-  documented and works, but there's no single
-  "is this migration done?" script. After a migration
-  the operator manually runs:
-    1. `scripts/verify_post_deploy.sh` (R1-R27 catalog)
-    2. /admin/system_tests (15 base + 2 exit_node tests)
-    3. Manual /healthz / /readyz / /admin headscale check
-- **Impact**: if the operator skips step 2 or 3, subtle
-  issues (e.g. wrong HEADPLANE_URL port, stale JWT secret)
-  might not surface until a user complains.
-- **Effort**: 4-6 hours (one `scripts/verify_migration.sh`
-  that chains all three + auto-detects the host changed
-  by comparing pre/post /healthz build labels).
-- **Suggested next step**: write the script. Pin with
-  a B-check that the script exists and has the 3
-  required phases.
-
-### BL-18: In-app S3 download
-- **What**: there's no "download from S3" button in
-  /admin/backup. The operator must use `aws s3 cp` or
-  `mc cp` to get the tarball, then upload it via the
-  in-app form. Awkward.
-- **Impact**: UX only. The data is safe and recoverable;
-  the operator just has to type more commands.
-- **Effort**: 2-3 hours (add a `DownloadFromS3` button
-  + handler that streams the tarball from S3 to the
-  browser, then upload-to-restore path takes it from
-  there).
-- **Suggested next step**: implement using minio-go's
-  `GetObject`. Streaming pattern mirrors
-  `internal/feature/admin/backup.go:PostAdminBackupRestore`.
+### BL-16: Per-protocol e2e for SMB / NFS / SFTP (PARTIAL)
+- **Status**: 🟡 **SMB + SFTP done in v1.3.8 (B102) — NFS BLOCKED**
+- The Dockerfile has the mount helpers for all 3 protocols
+  (mountSMB, mountNFS, mountSFTP). Live-tested SMB and SFTP
+  in v1.3.8 (throwaway atmoz/sftp + dperson/samba containers
+  on the headscale_default network).
+- **NFS is blocked**: the live VM's host kernel refuses
+  `modprobe nfs` with EPERM. Workarounds to try:
+  - **unfsd** (userspace NFS server): `apt install unfsd`,
+    point at the throwaway data dir, mount via NFS client.
+    Avoids kernel module entirely.
+  - **nfs-ganesha**: full userspace NFS. Heavier config.
+  - **Skip + document**: add a B126 note that NFS live e2e
+    is blocked on the host kernel and the SMB+SFTP coverage
+    is the closest substitute.
+- **Effort**: 2-3 hours for the unfsd path. Easy to do
+  as a self-contained session.
 
 ---
 
@@ -281,8 +248,8 @@ The pre-push verify catalog has 18 pre-existing FAILs from
 the v0.32.x / v1.3.0 era. These are NOT regressions — they
 were known broken at the time and the operator accepted
 them as "follow up later". The catalog is green from
-"what the new commits added" (B98, B40 fix, B99, B100)
-but the pre-existing ones remain.
+"what the new commits added" (B98, B40 fix, B99, B100,
+B101-B116, B118-B125) but the pre-existing ones remain.
 
 | #     | What                                                 | Why it fails                                  |
 |-------|------------------------------------------------------|------------------------------------------------|
@@ -308,8 +275,12 @@ but the pre-existing ones remain.
   but they're all grep-path staleness, not actual code issues.
 - **Effort**: 1 day (rewrite each B-check to grep the NEW code
   path; or remove the checks if the contract no longer applies).
-- **Suggested next step**: not blocking. Best done as a
-  standalone "v1.4.0 catalog cleanup" pass.
+- **Status update (2026-08-17)**: the v0.32.x cleanup wave
+  fixed several of these (B36/B40, B42 partially, B93
+  partially, B95). Remaining ~15 are all grep-staleness,
+  not real bugs. The cleanest path is to do a focused
+  "B-check v1.4.0 cleanup" pass before tagging the next
+  major version.
 
 ---
 
