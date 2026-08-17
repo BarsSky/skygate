@@ -120,8 +120,15 @@ if [ -f /home/skyadmin/skygate/.env ] && command -v psql >/dev/null 2>&1; then
     if [ -n "${DSN}" ]; then
         host=$(echo "${DSN}" | sed -E 's|.*@([^:/]+):.*|\1|')
         port=$(echo "${DSN}" | sed -E 's|.*@[^:/]+:([0-9]+).*|\1|')
+        # Use (SELECT max(version) FROM ...) to first get the
+        # latest version number, then filter — this avoids
+        # evaluating `config::jsonb` on the OLD malformed
+        # rows (v<1063 have e.g. "acls": [, which is invalid
+        # JSON). ORDER BY version DESC LIMIT 1 in a subquery
+        # forces PostgreSQL to materialize the cast on every row
+        # before the LIMIT, which fails on the malformed ones.
         out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
-            "SELECT tag, owners FROM (SELECT key as tag, value::text as owners FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots ORDER BY version DESC LIMIT 1))) t WHERE tag LIKE 'tag:dev-infra-%';" 2>/dev/null)
+            "SELECT tag, owners FROM (SELECT key as tag, value::text as owners FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots)))) t WHERE tag LIKE 'tag:dev-infra-%';" 2>/dev/null)
         if [ -z "${out}" ]; then
             warn "could not query latest acl_snapshots — is the DB up?"
         else
@@ -152,8 +159,15 @@ fi
 echo
 echo "=== D. live policy: tag:exit-node owner (live DB) ==="
 if [ -n "${DSN:-}" ]; then
+    # Use (SELECT max(version) FROM ...) to first get the
+    # latest version number, then filter — this avoids
+    # evaluating `config::jsonb` on the OLD malformed
+    # rows (v<1063 have e.g. "acls": [, which is invalid
+    # JSON). ORDER BY version DESC LIMIT 1 in a subquery
+    # forces PostgreSQL to materialize the cast on every row
+    # before the LIMIT, which fails on the malformed ones.
     out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
-        "SELECT value FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots ORDER BY version DESC LIMIT 1)) WHERE key = 'tag:exit-node';" 2>/dev/null)
+        "SELECT value FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots))) WHERE key = 'tag:exit-node';" 2>/dev/null)
     if [ -z "${out}" ]; then
         warn "tag:exit-node not in live policy tagOwners — is the policy applied?"
     elif echo "${out}" | grep -q '"infra@'; then
@@ -186,7 +200,7 @@ if [ -n "${DSN:-}" ]; then
             fi
         done <<< "${out}"
         if [ "${bad_nom}" -eq 0 ]; then
-            ok "all tag:dev-infra-* in node_owner_map owned by `infra`"
+            ok "all tag:dev-infra-* in node_owner_map owned by 'infra'"
         fi
     fi
 fi
