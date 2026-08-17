@@ -1,6 +1,181 @@
 # Skygate release notes
 
-## v1.3.19.2 — TagToHostname + admin-breadcrumb sidebar offset (B119 + B120)
+## v1.3.19.2 — TagToHostname + admin-breadcrumb + Mint theme + scrollbar + form contrast (B119 + B120 + B121)
+
+**Date:** 2026-08-17
+**Scope:** Three follow-up hotfixes (B119, B120, B121).
+
+**Three operator reports (2026-08-17 14:00-15:13 UTC):**
+
+1. **"240 правил ссылаются на exit-node, который устройство
+   не использует"** — false-positive preferred-mismatch banner
+   on /my/exit-rules. Root cause: `TagToHostname` (exported
+   helper in `internal/feature/exit_rules/preferred_check.go`)
+   was missing the `tag:dev-infra-X` case. The v1.3.18.1
+   hotfix only updated the LOCAL `tagToHost` closure in
+   `system_tests.go` — the EXPORTED helper used by
+   /my/exit-rules + /admin/exit-rules + /admin/devices was
+   missed.
+2. **"при раскрытии меню накрывается верхняя плашка"** —
+   the admin-breadcrumb was hidden under the fixed-position
+   sidebar on PC (it's a SIBLING of `.shell` inside `<main>`,
+   and only `.shell` had `margin-left:220px`).
+3. **"необходимо переработать стиль для более комфортного
+   взаимодействия в сторону серебристых оттенков и светло
+   зеленых мятных"** — three sub-asks: (a) scrollbars are
+   very prominent in dark themes, (b) Linear theme forms
+   blend into the page background, (c) want a new
+   "comfortable" theme in silver + light mint green.
+
+**B119 fix (TagToHostname):**
+
+```go
+// pre-fix (v1.3.18.1 and earlier):
+func TagToHostname(tag string) string {
+    t := strings.TrimSpace(tag)
+    if !strings.HasPrefix(t, "tag:") {
+        return t
+    }
+    rest := strings.TrimPrefix(t, "tag:")
+    rest = strings.TrimPrefix(rest, "exit-")  // BUG
+    return rest
+}
+```
+
+For `tag:dev-infra-karolina`:
+- After `TrimPrefix(t, "tag:")`: `dev-infra-karolina`
+- After `TrimPrefix(rest, "exit-")`: `dev-infra-karolina` (no match)
+- Returns: `dev-infra-karolina` (WRONG — should be `karolina`)
+
+```go
+// post-fix (v1.3.19.2 / B119):
+func TagToHostname(tag string) string {
+    t := strings.TrimSpace(tag)
+    switch {
+    case strings.HasPrefix(t, "tag:dev-infra-"):
+        return strings.TrimPrefix(t, "tag:dev-infra-")
+    case strings.HasPrefix(t, "tag:exit-"):
+        return strings.TrimPrefix(t, "tag:exit-")
+    case strings.HasPrefix(t, "tag:"):
+        return strings.TrimPrefix(t, "tag:")
+    default:
+        return t
+    }
+}
+```
+
+**B120 fix (admin-breadcrumb sidebar offset):**
+
+`<main>` in layout.html contains the `.admin-breadcrumb` as
+a SIBLING of `.shell` (not inside it). The CSS rule
+`main .shell { margin-left: 220px; }` only applied to
+`.shell` — the `.admin-breadcrumb` had no left offset, so
+its left edge sat at 0px and the position:fixed sidebar
+(left:0, width:220px) covered the leftmost 220px.
+
+Fix: mirror the `.shell` margin-left pattern for
+`.admin-breadcrumb` (3 rules — desktop expanded 220px,
+collapsed 52px, mobile 0):
+
+```css
+main .admin-breadcrumb{margin-left:220px;width:calc(100% - 220px);transition:margin-left .25s, width .25s}
+.sidebar.collapsed ~ main .admin-breadcrumb{margin-left:52px;width:calc(100% - 52px)}
+@media (max-width:768px) {
+  main .admin-breadcrumb{margin-left:0 !important;width:100% !important}
+}
+```
+
+**B121 fix (Mint theme + thin scrollbar + dark form contrast):**
+
+Three pieces, all in `static/css/themes.css` + `internal/db/db.go`
++ `internal/handlers/templates/layout.html`:
+
+1. **Custom thin scrollbar (all themes)** — pre-fix, the
+   browser-default 15-17px wide white scrollbar in dark
+   themes visually broke the page. Post-fix: 8px themed
+   scrollbar (4px visible thumb after 2px inset border on
+   each side), colors from `--border` / `--border-strong`,
+   track transparent. Firefox: `scrollbar-width: thin` +
+   `scrollbar-color`. WebKit: `::-webkit-scrollbar` +
+   `::-webkit-scrollbar-thumb`.
+
+2. **Dark-theme form contrast bump** (Linear / NVIDIA /
+   Sentry) — pre-fix, the 1px border in `--border-strong`
+   barely contrasted with the dark `--bg`, and operators
+   reported "forms blend together". Post-fix:
+   - `border-width: 1.5px` (was 1px)
+   - `box-shadow: inset 0 1px 2px rgba(0,0,0,0.2)` (depth)
+   - Linear / NVIDIA `background: #1a1a1a` (was #131313
+     inherited from `--bg-card`) — slightly elevated
+   - Sentry `background: #362d59` (matches its `--bg-elev`)
+   - Vercel + Mint (light themes) keep their original
+     values (dark text on light bg already has plenty
+     of contrast)
+   - Unified focus state: 4px ring (was 3px) + 1px lift
+     for tactile feedback (transform: translateY(-1px))
+
+3. **New "Mint" theme** — light theme with silver bg +
+   mint-green accent:
+   - bg `#f5f7f6` (very light silver with subtle mint tint)
+   - bg-card `#ffffff` (pure white for card lift)
+   - accent `#10b981` (mint/emerald, Tailwind emerald-500)
+   - accent-hover `#059669` (deeper mint)
+   - border `#d4dad6` (soft mint-tinted silver)
+   - text `#1a2520` (dark charcoal with green tint)
+   - 8px / 12px radius (vs Vercel's 6px / 8px — more friendly)
+   - Two-layer shadow (1px + ring) for cards
+
+Theme registration: `ThemeMint = "mint"` constant in
+`internal/db/db.go`, added to `ThemeLabel` and
+`IsValidTheme`. Theme-picker in layout.html shows
+"Mint" with fa-leaf icon at `/settings/theme?theme=mint`.
+
+**What's added (3 commits, 7 files):**
+
+- `internal/feature/exit_rules/preferred_check.go`
+  (TagToHostname rewrite, +27/-12 lines)
+- `internal/feature/exit_rules/preferred_check_test.go`
+  (4 new tests, +83 lines)
+- `internal/db/db.go` (ThemeMint constant + label + valid-theme)
+- `internal/db/db_test.go` (2 updated tests)
+- `internal/handlers/handlers_b107_test.go` (regex fix)
+- `internal/handlers/layout_v1_3_19_2_test.go` (4 new B120 tests)
+- `internal/handlers/layout_v1_3_19_2_b121_test.go` (4 new B121 tests)
+- `internal/handlers/templates/layout.html` (Mint option in
+  theme-picker + B120 sibling order)
+- `static/css/themes.css` (Mint block + scrollbar + form
+  contrast bump, +90 lines)
+- `scripts/check_b118.sh` (already had max-version fix)
+- `scripts/check_b119.sh` (new, 8 contracts A-H, ~250 lines)
+- `scripts/check_b120.sh` (new, 5 contracts A-E, ~180 lines)
+- `scripts/check_b121.sh` (new, 6 contracts A-F, 18 sub-checks, ~250 lines)
+- `scripts/verify_pre_deploy.sh` (B119 + B120 + B121 entries, +6 lines)
+
+**Live state (verified 2026-08-17 15:30 UTC):**
+
+- `/my/exit-rules`: 0 false-positive mismatches (was 240).
+  PREFERRED column shows clean hostnames (`karolina` /
+  `emilia`) instead of `dev-infra-X`. [B119]
+- `/my/exit-rules` + `/admin/exit-rules` + `/admin/devices`:
+  breadcrumb is now fully visible, not hidden under the
+  sidebar. [B120]
+- All themes: thin 8px themed scrollbar (was 15-17px
+  browser default). [B121]
+- Linear / NVIDIA / Sentry: form inputs now have 1.5px
+  border + inset shadow + elevated background. [B121]
+- Mint theme available in the theme-picker with fa-leaf
+  icon. [B121]
+- 28/28 packages green, `go build ./...` + `go vet ./...`
+  clean.
+- `make verify-pre` 117 PASS / 0 FAIL / 1 SKIP (B8 VM-only).
+- B119 standalone on VM: 9 pass / 0 fail / 0 warn.
+- B120 standalone on VM: 5 pass / 0 fail / 0 warn.
+- B121 standalone on VM: 19 pass / 0 fail / 0 warn.
+- B107 (predecessor) still PASSes after the regex fix.
+
+**Live build label:** `v1.3.11-25-g0352f40` (deployed to VM).
+
+## v1.3.19.1 — svyatoslava-1 (HA mirror) removed + B118 finalized
 
 **Date:** 2026-08-17
 **Scope:** Two hotfixes (B119 code fix + B120 CSS/layout fix).

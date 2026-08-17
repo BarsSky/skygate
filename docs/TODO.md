@@ -1,23 +1,30 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post-v1.3.19.2 (TagToHostname B119 + admin-breadcrumb B120).
-> **Status of v1.3.19.2**: hotfix pair (B119 code + B120 layout), COMMITTED + DEPLOYED.
-> verify-pre catalog **116 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+> **Last updated**: 2026-08-17, post-v1.3.19.2 (B119 + B120 + B121).
+> **Status of v1.3.19.2**: hotfix trio (B119 code + B120 layout + B121 theme), COMMITTED + DEPLOYED.
+> verify-pre catalog **117 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
 > 28/28 packages green.
 > 16/18 system tests PASS, 0 FAIL (2 SKIP: db.journal_mode + mesh.active_meshes).
 >
 > Recent shipped releases:
-> - **v1.3.19.2** (2026-08-17): two hotfixes — B119 (TagToHostname
+> - **v1.3.19.2** (2026-08-17): three hotfixes — B119 (TagToHostname
 >   `tag:dev-infra-X` fix, 240 false-positive preferred-mismatches on
->   /my/exit-rules) and B120 (admin-breadcrumb sidebar-offset fix,
->   breadcrumb was hidden under the fixed sidebar on PC). Both
->   fixed: PREFERRED column shows clean hostnames (B119) +
->   breadcrumb is fully visible on every admin page (B120). New
->   B-checks: `check_b119.sh` (8 contracts) + `check_b120.sh` (5
->   contracts). 4 new Go tests in `preferred_check_test.go` + 4
->   new Go tests in `layout_v1_3_19_2_test.go`. B107 regex updated
->   to handle the new `main .admin-breadcrumb` selector. DEPLOYED
->   (build `v1.3.11-23-g99dd4ad`).
+>   /my/exit-rules), B120 (admin-breadcrumb sidebar-offset fix,
+>   breadcrumb was hidden under the fixed sidebar on PC), and B121
+>   (Mint theme + thin scrollbar + dark-theme form contrast bump).
+>   All three fixed: PREFERRED column shows clean hostnames (B119)
+>   + breadcrumb fully visible on every admin page (B120) +
+>   comfortable new "Mint" theme (silver + mint-green) for long
+>   admin sessions, plus thin themed scrollbar (was 15-17px
+>   browser default) and improved form contrast in dark themes
+>   (was 1px border that blended into the page). New B-checks:
+>   `check_b119.sh` (8 contracts) + `check_b120.sh` (5
+>   contracts) + `check_b121.sh` (18 sub-checks, 6 contracts).
+>   8 new Go tests across 3 new test files
+>   (`preferred_check_test.go` + `layout_v1_3_19_2_test.go` +
+>   `layout_v1_3_19_2_b121_test.go`). B107 regex updated to
+>   handle the new `main .admin-breadcrumb` selector. DEPLOYED
+>   (build `v1.3.11-25-g0352f40`).
 > - **v1.3.19.1** (2026-08-17): svyatoslava-1 (HA mirror, headscale id=30)
 >   removed per operator directive. Snapshot-then-act: snapshot at
 >   `/tmp/svyatoslava1_cleanup_20260817_104048/`, then
