@@ -1,12 +1,33 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post-v1.3.19.2 (B119 + B120 + B121).
-> **Status of v1.3.19.2**: hotfix trio (B119 code + B120 layout + B121 theme), COMMITTED + DEPLOYED.
-> verify-pre catalog **117 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+> **Last updated**: 2026-08-17, post-v1.3.19.2 follow-up (B123 / Goal 39).
+> **Status of v1.3.19.2 follow-up**: B123 (Exit Rules duplicate
+> alert UX) COMMITTED. Goal 39 closed. verify-pre catalog
+> **118 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
 > 28/28 packages green.
-> 16/18 system tests PASS, 0 FAIL (2 SKIP: db.journal_mode + mesh.active_meshes).
 >
 > Recent shipped releases:
+> - **v1.3.19.2 follow-up (B123)** (2026-08-17): Exit Rules
+>   duplicate alert UX (Goal 39). The /my/exit-rules
+>   "правило для X уже существует" alert now carries the
+>   blocking IP, the conflicting rule's ID (for a jump-to
+>   link), the parent_domain (in the shared-IP case), and
+>   re-fills the form so the user can tweak and retry. 3
+>   layers: (1) `form_my.go` extracts a pure
+>   `buildDuplicateRedirectURL` helper that the POST handler
+>   calls; the redirect URL has 9 params (target +
+>   existing_id + blocking_ip + parent_domain + 5 form_*).
+>   (2) `exit_rules.html` adds `id="duplicate-alert"` to the
+>   alert, renders the 3 new fields, and has
+>   `id="rule-{{.ID}}"` on each rule row so the
+>   "→ к правилу #N" link scrolls to it. (3) 3 new i18n
+>   keys (`exit_rules.duplicate_blocking`,
+>   `exit_rules.duplicate_parent`, `exit_rules.duplicate_view`)
+>   in both RU + EN (B4 parity). 5 new unit tests in
+>   `form_my_b123_test.go` pin the redirect URL contract;
+>   31 contracts in `scripts/check_b123.sh`. Back-compat:
+>   the old `?existing=` URL still works (GET handler falls
+>   back to `target` when `?existing=` is present).
 > - **v1.3.19.2** (2026-08-17): three hotfixes — B119 (TagToHostname
 >   `tag:dev-infra-X` fix, 240 false-positive preferred-mismatches on
 >   /my/exit-rules), B120 (admin-breadcrumb sidebar-offset fix,

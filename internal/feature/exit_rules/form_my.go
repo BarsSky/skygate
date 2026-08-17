@@ -300,7 +300,21 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 
 		// 2026-07-07: issue #5 — query params for dedup notification
 	duplicate := r.URL.Query().Get("duplicate") == "1"
-	existing := r.URL.Query().Get("existing")
+	// B123: `existing` was renamed to `target` for clarity (it's the
+	// value the user tried to add, NOT the existing rule). `existing_id`,
+	// `blocking_ip`, `parent_domain` carry the details needed to point
+	// the user at the rule that already covers the target. Back-compat:
+	// if an old ?existing= link slips through, treat it as the target.
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = r.URL.Query().Get("existing")
+	}
+	existingIDStr := r.URL.Query().Get("existing_id")
+	// B123: parse once here so the template can do
+	// {{if gt .existing_id 0}} directly (no per-render strconv).
+	existingIDInt, _ := strconv.Atoi(existingIDStr)
+	blockingIP := r.URL.Query().Get("blocking_ip")
+	parentDomain := r.URL.Query().Get("parent_domain")
 	partial := r.URL.Query().Get("partial") == "1"
 
 	// 2026-07-06: form persistence (issue #1) — после добавления правила
@@ -404,11 +418,14 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			"target_value": formTargetValue,
 			"action":       formAction,
 		},
-		"duplicate": duplicate,
-		"warn":      r.URL.Query().Get("warn"),
-		"existing":  existing,
-		"partial":   partial,
-		"HasRoutes": anyRoutes,
+		"duplicate":     duplicate,
+		"warn":          r.URL.Query().Get("warn"),
+		"target":        target,
+		"existing_id":   existingIDInt,
+		"blocking_ip":   blockingIP,
+		"parent_domain": parentDomain,
+		"partial":       partial,
+		"HasRoutes":     anyRoutes,
 	})
 }
 
@@ -619,6 +636,16 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if targetType == "domain" && typeToInsert == "subnet" {
 		subnetParent = targetValue
 	}
+	// B123: track metadata of the first duplicate for the warning banner.
+	// Before B123, the redirect only carried ?existing=<targetValue> which
+	// gave no way for the user to know which specific rule blocked the
+	// insert — especially painful in the shared-IP case where one /32
+	// already exists for a DIFFERENT parent_domain. Now we surface the
+	// blocking IP, the conflicting rule's ID (so the template can link
+	// to it), and the parent_domain that already owns the IP.
+	var firstExistingID int
+	var firstBlockingIP string
+	var firstParentDomain string
 	for _, ip := range ipsToInsert {
 		ok, existingID := s.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
 		if !ok {
@@ -638,13 +665,26 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 				// что для другого домена этот IP ещё нужен.
 				dupCount++
 			}
+			// B123: capture the first blocker for the alert.
+			if firstExistingID == 0 {
+				firstExistingID = existingID
+				firstBlockingIP = ip
+				firstParentDomain = existingParent
+			}
 		} else {
 			insertedCount++
 		}
 	}
 	if dupCount > 0 && insertedCount == 0 {
-		// All already exist — return user-friendly redirect
-		http.Redirect(w, r, fmt.Sprintf("/my/exit-rules?duplicate=1&existing=%s", url.QueryEscape(targetValue)), http.StatusFound)
+		// B123: All already exist — return user-friendly redirect with details.
+		// Params: target (the value the user tried to add), existing_id (the
+		// rule that already covers it), blocking_ip (the IP that was a dup),
+		// parent_domain (the domain that "owns" that IP, or empty for manual
+		// IP/CIDR rules). Also re-fill the form values so the user can tweak
+		// and retry without re-typing.
+		redirect := buildDuplicateRedirectURL(targetValue, firstExistingID, firstBlockingIP, firstParentDomain,
+			devID, exitNode, typeToInsert, targetValue, action)
+		http.Redirect(w, r, redirect, http.StatusFound)
 		return
 	}
 	warnParam := ""
@@ -808,4 +848,31 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Redirect(w, r, "/my/exit-rules?deleted=1", http.StatusFound)
+}
+
+// buildDuplicateRedirectURL is the B123 contract for the "all duplicates"
+// redirect. It surfaces the value the user tried to add (target), the
+// rule that already covers it (existing_id), the IP that was a dup
+// (blocking_ip), the domain that "owns" that IP for DNS-tracked /32s
+// (parent_domain, empty for manual IP/CIDR rules), and re-fills the
+// form values so the user can tweak and retry without re-typing.
+//
+// All values are url.QueryEscape'd; the function is safe to use with
+// any printable ASCII in the inputs (including & = ? % which would
+// otherwise break the query string).
+func buildDuplicateRedirectURL(target string, existingID int, blockingIP, parentDomain string,
+	devID int, exitNode, typeToInsert, targetValue, action string) string {
+	return fmt.Sprintf(
+		"/my/exit-rules?duplicate=1&target=%s&existing_id=%d&blocking_ip=%s&parent_domain=%s"+
+			"&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s",
+		url.QueryEscape(target),
+		existingID,
+		url.QueryEscape(blockingIP),
+		url.QueryEscape(parentDomain),
+		url.QueryEscape(strconv.Itoa(devID)),
+		url.QueryEscape(exitNode),
+		url.QueryEscape(typeToInsert),
+		url.QueryEscape(targetValue),
+		url.QueryEscape(action),
+	)
 }

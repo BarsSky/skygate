@@ -17,7 +17,67 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.19.2 — `TagToHostname` (exported helper in
+* **Current**: v1.3.19.2 follow-up — **B123 (Goal 39) Exit Rules
+  duplicate alert UX**. The /my/exit-rules "правило для X
+  уже существует" alert now carries the blocking IP, the
+  conflicting rule's ID (for a jump-to link), the
+  parent_domain (in the shared-IP case), and re-fills the
+  form so the user can tweak and retry. 3 layers:
+  (1) `form_my.go` extracts a pure `buildDuplicateRedirectURL`
+  helper that the POST handler calls; the redirect URL has
+  9 params (target + existing_id + blocking_ip +
+  parent_domain + 5 form_*). (2) `exit_rules.html` adds
+  `id="duplicate-alert"` to the alert, renders the 3 new
+  fields, and has `id="rule-{{.ID}}"` on each rule row so
+  the "→ к правилу #N" link scrolls to it. (3) 3 new i18n
+  keys (`exit_rules.duplicate_blocking`,
+  `exit_rules.duplicate_parent`, `exit_rules.duplicate_view`)
+  in both RU + EN (B4 parity). 5 new unit tests in
+  `form_my_b123_test.go` pin the redirect URL contract;
+  31 contracts in `scripts/check_b123.sh`. Back-compat: the
+  old `?existing=` URL still works (GET handler falls back
+  to `target` when `?existing=` is present). `make verify-pre`
+  **118 PASS / 0 FAIL / 1 SKIP** (B8 VM-only). 28/28
+  packages green. What's added:
+  - **B123 (v1.3.19.2 follow-up)**: pure helper +
+    3 query params + i18n + alert render. Replaces the
+    "Правило для %s уже существует — не дублируем" bare
+    message that left the user hunting for the existing
+    rule, especially in the shared-IP case (one /32
+    already exists for a DIFFERENT parent_domain). The
+    240-rule false-positive banner from B119 stays at 0
+    mismatches; B123 is the UX follow-up that completes
+    Goal 39.
+  - **Live state**: build `v1.3.11-26-g03a1d97` deployed
+    (no change needed for B123 deploy — same binary as
+    B122). 31/31 B123 contracts PASS in
+    `scripts/check_b123.sh` (5 unit tests + 26
+    source/i18n contracts + 0 live contracts — pure
+    feature work, no live DB state involved).
+  - **New file `internal/feature/exit_rules/form_my_b123_test.go`**
+    (5 tests, ~120 lines): AllParamsPresent,
+    SharedIP_HasParentDomain, SpecialCharsAreEscaped,
+    ZeroExistingID_StillValid, NumericFormDeviceID.
+  - **New file `scripts/check_b123.sh`** (9 contracts
+    A-I, 31 sub-checks): helper signature + POST uses
+    helper + redirect URL has all 9 params + GET reads
+    new params + rule row has id="rule-{{.ID}}" + alert
+    has id="duplicate-alert" + renders 3 new fields +
+    has #rule-N link + 3 i18n keys in both languages +
+    Go test passes + B4 parity (arg-count matches).
+  - 3 files changed (`form_my.go` + `exit_rules.html` +
+    `catalog_exit_rules.go`) + 2 new test/script files
+    (`form_my_b123_test.go` + `check_b123.sh`) +
+    `verify_pre_deploy.sh` updated to register B123.
+    +548/-15 lines.
+  - **Goal 39 closed**: the original 2026-08-17 ask
+    ("Exit Rules warning message UX") is now fully
+    resolved. B119 fixed the false-positive banner
+    (240 → 0 mismatches); B123 fixes the alert itself
+    (now shows blocking IP, parent_domain, jump link,
+    and re-fills the form).
+
+* **Previous**: v1.3.19.2 — `TagToHostname` (exported helper in
   `internal/feature/exit_rules/preferred_check.go`) extended
   to handle the post-B111 `tag:dev-infra-X` tag format.
   Plus B120 (admin-breadcrumb sidebar-offset fix — the

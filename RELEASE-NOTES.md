@@ -1,5 +1,107 @@
 # Skygate release notes
 
+## v1.3.19.2 follow-up — Exit Rules duplicate alert UX (B123 / Goal 39)
+
+**Date:** 2026-08-17
+**Scope:** UX improvement to the "duplicate rule" alert on /my/exit-rules.
+
+**Operator report (the original Goal 39 ask):**
+the "правило для X уже существует" alert on /my/exit-rules
+left the user hunting through the rule list to find the
+existing rule, especially in the shared-IP case (one /32
+already exists for a DIFFERENT parent_domain). After B119
+fixed the false-positive 240-rule banner, the remaining
+issue was the alert itself.
+
+**B123 fix (3 layers):**
+
+1. **POST handler (`internal/feature/exit_rules/form_my.go`):**
+   the "all duplicates" redirect now carries 4 new query
+   params in addition to the target:
+   - `target` (was: `existing` — renamed for clarity;
+     `existing` is still accepted as back-compat)
+   - `existing_id` — the rule that already covers the
+     target (used for the "→ к правилу #N" jump link)
+   - `blocking_ip` — the IP that was a dup (typically
+     `target + "/32"` or a /32 from another domain)
+   - `parent_domain` — the domain that "owns" the
+     blocking IP (empty for manual IP/CIDR rules; the
+     shared-IP case shows the OTHER domain here)
+   Plus 5 form_* params so the form re-fills after the
+   warning. All extracted into a pure helper
+   `buildDuplicateRedirectURL(...)` that's unit-tested.
+
+2. **Template (`internal/handlers/templates/exit_rules.html`):**
+   the alert now has `id="duplicate-alert"` and renders:
+   - The main message (unchanged 1-arg format)
+   - `<small>Блокирующий IP: <code>...</code></small>` (if set)
+   - `<small>Уже обслуживается доменом: <code>...</code></small>`
+     (if set — only in the shared-IP case)
+   - `<a href="#rule-N">→ к правилу #N</a>` (if existing_id > 0)
+   Plus `id="rule-{{.ID}}"` on each rule row so the link
+   actually scrolls to the right rule.
+
+3. **i18n (`internal/i18n/catalog_exit_rules.go`):**
+   3 new keys, RU + EN parity (B4 enforces):
+   - `exit_rules.duplicate_blocking` — "Блокирующий IP:" /
+     "Blocking IP:"
+   - `exit_rules.duplicate_parent` — "Уже обслуживается
+     доменом:" / "Already tracked by domain:"
+   - `exit_rules.duplicate_view` — "→ к правилу #%d" /
+     "→ jump to rule #%d"
+
+**B-check (`scripts/check_b123.sh`, 31 contracts):**
+
+- A. `buildDuplicateRedirectURL` helper exists + has the
+  4 key params (target/existingID/blockingIP/parentDomain)
+- B. PostMyExitRule uses the helper (old `?existing=`
+  inline redirect is GONE)
+- C. redirect URL has all 9 params (target + existing_id
+  + blocking_ip + parent_domain + 5 form_*)
+- D. GET handler reads new params + back-compat for
+  `?existing=` + exposes them in template data dict
+- E. rule row has `id="rule-{{.ID}}"` anchor
+- F. duplicate alert has `id="duplicate-alert"` + renders
+  all 3 new fields + has the `#rule-N` link
+- G. 3 new i18n keys in BOTH RU + EN
+- H. Go test file exists (5 tests, 31 sub-checks PASS)
+- I. arg-count parity between RU + EN for the 3 new keys
+
+**Tests added (5 unit tests in
+`internal/feature/exit_rules/form_my_b123_test.go`):**
+
+- `TestBuildDuplicateRedirectURL_AllParamsPresent` — every
+  param lands in the URL with the right value
+- `TestBuildDuplicateRedirectURL_SharedIP_HasParentDomain`
+  — the main motivation: shared-IP case shows the
+  parent_domain
+- `TestBuildDuplicateRedirectURL_SpecialCharsAreEscaped`
+  — &, =, ?, % in inputs don't break the query string
+- `TestBuildDuplicateRedirectURL_ZeroExistingID_StillValid`
+  — defensive: existing_id=0 doesn't crash
+- `TestBuildDuplicateRedirectURL_NumericFormDeviceID` —
+  form_device_id is always strconv.Atoi-clean
+
+**Files (3 modified + 2 new):**
+
+- `internal/feature/exit_rules/form_my.go` — extracted
+  `buildDuplicateRedirectURL` + updated both redirects
+  (dup + back-compat for ?existing=) + 3 new template
+  data fields
+- `internal/handlers/templates/exit_rules.html` — new
+  duplicate alert block with id + 3 fields + link +
+  `id="rule-{{.ID}}"` on rule rows
+- `internal/i18n/catalog_exit_rules.go` — 3 new keys
+  in both languages
+- `internal/feature/exit_rules/form_my_b123_test.go`
+  (NEW, 5 tests)
+- `scripts/check_b123.sh` (NEW, 31 contracts)
+- `scripts/verify_pre_deploy.sh` — registered B123
+
+**Back-compat:** the old `?existing=` URL still works
+(GET handler falls back to `target` when `?existing=` is
+present). No external links break.
+
 ## v1.3.19.2 — TagToHostname + admin-breadcrumb + Mint theme + scrollbar + form contrast (B119 + B120 + B121)
 
 **Date:** 2026-08-17

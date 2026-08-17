@@ -61,7 +61,17 @@
 
 {{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules.added_ok"}}</div>{{end}}
 {{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{t "exit_rules.partial"}}</div>{{end}}
-{{if .duplicate}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.duplicate" .existing}}</div>{{end}}
+{{/* B123: duplicate alert now carries the blocking IP, the parent_domain
+     (if the IP is owned by a DNS-tracked /32 from another domain), and a
+     link to the rule row that already covers the target. The .existing
+     variable is still accepted as back-compat for .target. */}}
+{{if .duplicate}}<div class="alert alert-danger" id="duplicate-alert">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  {{tf "exit_rules.duplicate" .target}}
+  {{if .blocking_ip}}<br><small>{{t "exit_rules.duplicate_blocking"}} <code>{{.blocking_ip}}</code></small>{{end}}
+  {{if .parent_domain}}<br><small>{{t "exit_rules.duplicate_parent"}} <code>{{.parent_domain}}</code></small>{{end}}
+  {{if gt .existing_id 0}}<br><a href="#rule-{{.existing_id}}" class="alert-link">{{tf "exit_rules.duplicate_view" .existing_id}}</a>{{end}}
+</div>{{end}}
 {{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{tf "exit_rules.dns_pending" .warn}}</div>{{end}}
 {{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "exit_rules.deleted"}}</div>{{end}}
 
@@ -205,7 +215,7 @@
           <div class="table-wrap" style="margin-top:6px">
             <table>
               <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
-              {{range $rules}}<tr class="rule-row" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
+              {{range $rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                 <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                 <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                 <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>

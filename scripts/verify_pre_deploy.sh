@@ -3233,3 +3233,5 @@ run_check "B121" "Mint theme (silver+mint) + thin themed scrollbar + dark-theme 
   'test -f scripts/check_b121.sh && bash scripts/check_b121.sh'
 run_check "B122" "restore.sh PG path: do_pg_restore (postgres:18-alpine + psql -f skygate-pg.sql) + DSN from skygate.env + sudo for headscale steps + shell-glob for do_headscale_db (B122, v1.3.19.2 follow-up / BL-15 e2e)" \
   'test -f scripts/check_b122.sh && bash scripts/check_b122.sh'
+run_check "B123" "Exit Rules duplicate alert UX: target + existing_id + blocking_ip + parent_domain + form_* in redirect, jump-to-rule anchor, 3 new i18n keys (B123, v1.3.19.2 follow-up / Goal 39)" \
+  'test -f scripts/check_b123.sh && bash scripts/check_b123.sh'
