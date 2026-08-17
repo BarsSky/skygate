@@ -517,7 +517,30 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
-	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]\n")
+	// 2026-08-17: v1.3.18 (hotfix) — track which tag names
+	// have already been emitted so the 4 emission blocks
+	// (static `tag:public` / `tag:exit-node` / `tag:subnet-router`
+	// / `tag:private`, the per-user tagOwners loop from
+	// tagsByUser, the distinctVias loop, and the
+	// augmentedTagsByUser / perDevTagOwners loop) can't
+	// emit the same key twice. The headscale v2 JSON parser
+	// rejects duplicate object keys with
+	// "duplicate object member name" — see commit 6a0ec3a..HEAD
+	// for the bug that surfaces after migrating legacy
+	// `tag:exit-X` user_exit_node_prefs to `tag:dev-infra-X`
+	// (the new tag already lives in tagsByUser via the
+	// infra bucket, so re-emitting it via the via=tag
+	// path produces a duplicate).
+	emittedTagOwners := make(map[string]bool, 32)
+	emitTagOwner := func(tag, ownerListJSON string) {
+		if emittedTagOwners[tag] {
+			return
+		}
+		emittedTagOwners[tag] = true
+		sb.WriteString(",\n    \"" + tag + "\": " + ownerListJSON + "\n")
+	}
+	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "]\"")
+	emittedTagOwners["tag:public"] = true
 	// 2026-07-14: Этап 14 v7 — register tag:exit-node as
 	// owned by admin so the headscale parser accepts the
 	// policy. The SSH rule (and the per-user ACL) references
@@ -535,11 +558,11 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// a Headplane admin task — see docs/headplane.md), but
 	// headscale still requires the owner entry to be
 	// present in the policy file.
-	sb.WriteString(",\n    \"tag:exit-node\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]\n")
+	emitTagOwner("tag:exit-node", "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
 	if len(identities) > 1 {
-		sb.WriteString(",\n    \"tag:private\": [" + strings.Join(quoteAll(identities), ",") + "]\n")
+		emitTagOwner("tag:private", "["+strings.Join(quoteAll(identities), ",")+"]")
 	} else if len(identities) == 1 {
-		sb.WriteString(",\n    \"tag:private\": [\"" + identities[0] + "\"]\n")
+		emitTagOwner("tag:private", "[\""+identities[0]+"\"]")
 	} else {
 		// 2026-08-10: v0.33.1.41 — handle the empty
 		// identities case. Pre-fix, the `else` branch
@@ -555,7 +578,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		// which headscale accepts as "no user-scoped
 		// rules" — same shape as a fresh deployment
 		// before any portal user is linked).
-		sb.WriteString(",\n    \"tag:private\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]\n")
+		emitTagOwner("tag:private", "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
 	}
 	// 2026-07-17: v0.17.0 — register tag:subnet-router as
 	// owned by EVERY portal user. Each user's tailscale
@@ -570,7 +593,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// "every portal user is eligible for a personal
 	// subnet"). Without this entry, headscale rejects the
 	// policy with "tag not found: tag:subnet-router".
-	sb.WriteString(",\n    \"tag:subnet-router\": [" + strings.Join(quoteAll(identities), ",") + "]\n")
+	emitTagOwner("tag:subnet-router", "["+strings.Join(quoteAll(identities), ",")+"]")
 	// 2026-07-24: v0.28.0 — per-user-per-device tags.
 	// One tagOwners entry per (user, device) — headscale
 	// expects each tag to have its own line. Without
@@ -595,7 +618,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		return tagOwners[i].owner < tagOwners[j].owner
 	})
 	for _, to := range tagOwners {
-		sb.WriteString(",\n    \"" + to.tag + "\": [\"" + to.owner + "\"]\n")
+		emitTagOwner(to.tag, "[\""+to.owner+"\"]")
 	}
 	sb.WriteString("  },\n")
 
@@ -1305,14 +1328,37 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("\n  ],\n")
 
 	sb.WriteString("  \"tagOwners\": {\n")
-	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
-	sb.WriteString(",\n    \"tag:exit-node\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
-	if len(identities) > 1 {
-		sb.WriteString(",\n    \"tag:private\": [" + strings.Join(quoteAll(identities), ",") + "]")
-	} else {
-		sb.WriteString(",\n    \"tag:private\": [\"" + identities[0] + "\"]")
+	// 2026-08-17: v1.3.18 (hotfix) — same dedup helper
+	// as GenerateACLForPlane. Pre-fix, an exit-node tag
+	// (e.g. tag:dev-infra-emilia) could be emitted via
+	// BOTH the via-pref loop AND the per-user tagOwners
+	// loop if a user had a via-enabled pref for a node
+	// that already had a tag from the infra bucket. The
+	// headscale v2 parser rejects duplicate object keys
+	// with "duplicate object member name" (see commit
+	// 6a0ec3a..HEAD — the bug surfaces after migrating
+	// legacy tag:exit-X user_exit_node_prefs to
+	// tag:dev-infra-X, which collides with the existing
+	// tagOwners entries from the infra bucket).
+	emittedTagOwners2 := make(map[string]bool, 32)
+	emitTagOwner2 := func(tag, ownerListJSON string) {
+		if emittedTagOwners2[tag] {
+			return
+		}
+		emittedTagOwners2[tag] = true
+		sb.WriteString(",\n    \"" + tag + "\": " + ownerListJSON)
 	}
-	sb.WriteString(",\n    \"tag:subnet-router\": [" + strings.Join(quoteAll(identities), ",") + "]")
+	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
+	emittedTagOwners2["tag:public"] = true
+	emitTagOwner2("tag:exit-node", "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
+	if len(identities) > 1 {
+		emitTagOwner2("tag:private", "["+strings.Join(quoteAll(identities), ",")+"]")
+	} else if len(identities) == 1 {
+		emitTagOwner2("tag:private", "[\""+identities[0]+"\"]")
+	} else {
+		emitTagOwner2("tag:private", "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
+	}
+	emitTagOwner2("tag:subnet-router", "["+strings.Join(quoteAll(identities), ",")+"]")
 
 	distinctVias := make(map[string]bool, len(viaByUser))
 	for _, via := range viaByUser {
@@ -1337,7 +1383,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 	sort.Strings(exitNodeTags)
 	for _, tag := range exitNodeTags {
-		sb.WriteString(",\n    \"" + tag + "\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
+		emitTagOwner2(tag, "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
 	}
 
 	type perDevTagOwner struct {
@@ -1398,7 +1444,7 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		return perDevTagOwners[i].owner < perDevTagOwners[j].owner
 	})
 	for _, to := range perDevTagOwners {
-		sb.WriteString(",\n    \"" + to.tag + "\": [\"" + to.owner + "\"]")
+		emitTagOwner2(to.tag, "[\""+to.owner+"\"]")
 	}
 	sb.WriteString("\n  },\n")
 
