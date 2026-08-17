@@ -888,14 +888,30 @@ var TestRegistry = []SystemTestDef{
 			// Cross-check: for each rule, does its exit_node_id
 			// match the device's preferred host?
 			prefByUserHost := map[string]string{}
+			// 2026-08-17: v1.3.18 hotfix — tagToHost was
+			// stripping only "tag:exit-" (the pre-B93
+			// tag format). After the post-B111 migration
+			// to "tag:dev-infra-emilia" (and the analogous
+			// infra tags for karolina / sharlotta /
+			// svyatoslava-1), the helper returned
+			// "dev-infra-emilia" instead of "emilia", so
+			// every rule whose exit_node_id is "emilia"
+			// showed up as a mismatch against
+			// pref "tag:dev-infra-emilia" (the operator's
+			// "fixed" form). Strip both formats so the
+			// comparison is hostname-vs-hostname.
 			tagToHost := func(t string) string {
 				t = strings.TrimSpace(t)
-				if !strings.HasPrefix(t, "tag:") {
+				switch {
+				case strings.HasPrefix(t, "tag:dev-infra-"):
+					return strings.TrimPrefix(t, "tag:dev-infra-")
+				case strings.HasPrefix(t, "tag:exit-"):
+					return strings.TrimPrefix(t, "tag:exit-")
+				case strings.HasPrefix(t, "tag:"):
+					return strings.TrimPrefix(t, "tag:")
+				default:
 					return t
 				}
-				r := strings.TrimPrefix(t, "tag:")
-				r = strings.TrimPrefix(r, "exit-")
-				return r
 			}
 			mismatch := 0
 			samples := []string{}
