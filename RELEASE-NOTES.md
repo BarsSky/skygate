@@ -1,5 +1,128 @@
 # Skygate release notes
 
+## v1.3.19.2 — TagToHostname handles post-B111 tag:dev-infra-X (preferred_check follow-up)
+
+**Date:** 2026-08-17
+**Scope:** Hotfix — `TagToHostname` (exported helper in
+`internal/feature/exit_rules/preferred_check.go`) was
+returning `dev-infra-karolina` for a `tag:dev-infra-karolina`
+pref (the operator's post-B111 standard format). The
+v1.3.18.1 hotfix only updated the LOCAL `tagToHost` closure
+in `internal/feature/admin/system_tests.go` — the
+EXPORTED helper used by the `/my/exit-rules` +
+`/admin/exit-rules` + `/admin/devices` pages was missed.
+
+**Operator symptom (2026-08-17 14:00 UTC):**
+
+The `/my/exit-rules` page rendered a warning banner:
+"240 правил ссылаются на exit-node, который устройство
+не использует. Правила сокращены, но Tailscale их игнорирует."
+(240 rules refer to an exit-node the device doesn't use. Rules
+are shortened, but Tailscale ignores them.)
+
+The PREFERRED column showed the literal string
+`dev-infra-karolina` for every karolina rule (instead of the
+hostname `karolina`). The `exit_rules.preferred_mismatch`
+system test reported 0 mismatches (its LOCAL `tagToHost` was
+already fixed in v1.3.18.1) — the bug was UI-only.
+
+**Root cause:**
+
+```go
+// pre-fix (v1.3.18.1 and earlier):
+func TagToHostname(tag string) string {
+    t := strings.TrimSpace(tag)
+    if !strings.HasPrefix(t, "tag:") {
+        return t
+    }
+    rest := strings.TrimPrefix(t, "tag:")
+    rest = strings.TrimPrefix(rest, "exit-")  // BUG: no-op for "dev-infra-emilia"
+    return rest
+}
+```
+
+For `tag:dev-infra-karolina`:
+- After `TrimPrefix(t, "tag:")`: `dev-infra-karolina`
+- After `TrimPrefix(rest, "exit-")`: `dev-infra-karolina` (no match)
+- Returns: `dev-infra-karolina` (WRONG — should be `karolina`)
+
+This made every rule whose `exit_node_id="karolina"` fail the
+`IsRuleApplicable("karolina", "dev-infra-karolina")` check
+and show as a preferred-mismatch on the UI.
+
+**Fix:**
+
+```go
+// post-fix (v1.3.19.2):
+func TagToHostname(tag string) string {
+    t := strings.TrimSpace(tag)
+    switch {
+    case strings.HasPrefix(t, "tag:dev-infra-"):
+        return strings.TrimPrefix(t, "tag:dev-infra-")
+    case strings.HasPrefix(t, "tag:exit-"):
+        return strings.TrimPrefix(t, "tag:exit-")
+    case strings.HasPrefix(t, "tag:"):
+        return strings.TrimPrefix(t, "tag:")
+    default:
+        return t
+    }
+}
+```
+
+The case order matters: `tag:dev-infra-` MUST be checked
+BEFORE `tag:` (a naive `TrimPrefix(t, "tag:")` would still
+leave `dev-infra-emilia` unchanged — the v1.3.18.1 bug).
+
+**What's added (1 commit `761bb26`):**
+
+- `internal/feature/exit_rules/preferred_check.go`:
+  `TagToHostname` rewritten with case-ordered switch.
+- `internal/feature/exit_rules/preferred_check_test.go`:
+  4 new tests (`PostB111_DevInfraFormat`, `PrefixOrder`,
+  `IsRuleApplicable_PostB111_DevInfraPref`, plus
+  strengthened `StandardForms` cases).
+- `scripts/check_b119.sh` (NEW, 8 contracts A-H):
+  - A. Source: TagToHostname handles 4 formats.
+  - B. Source: case order (dev-infra BEFORE tag:).
+  - C. Source: form_my.go uses TagToHostname.
+  - D. Source: form_admin.go uses PreferredExitNodeForRule.
+  - E. Source: form_my.go uses db.Get*ExitNodePref.
+  - F. Source: NO `TrimPrefix(rest, "exit-")` (the v1.3.18.1
+    bug pattern — must not regress).
+  - G. Live DB: all pref rows use a supported format.
+  - H. Source: system_tests.go has v1.3.18.1 tagToHost
+    fix (defensive, in case it regresses).
+- `scripts/verify_pre_deploy.sh`: B119 entry.
+
+**Live state (UI fix verified 2026-08-17 14:12 UTC):**
+
+- `/my/exit-rules`: 0 false-positive mismatches (was 240).
+- `preferred-mismatch-banner` NOT rendered.
+- PREFERRED column shows clean hostnames (`karolina` /
+  `emilia`) instead of `dev-infra-X`.
+- All 240 rules on skyworker now show as MATCH (green check).
+- `exit_rules.preferred_mismatch` system test: still PASS
+  (it was already correct; the LOCAL `tagToHost` in
+  `system_tests.go` was fixed in v1.3.18.1).
+- 28/28 packages green, `go build ./...` + `go vet ./...`
+  clean.
+- `make verify-pre` 113 PASS / 2 FAIL / 1 SKIP (B8 VM-only;
+  2 pre-existing FAILs unchanged: B34 device_rules
+  auto-add + B104 superseded by B114).
+- B119 standalone on VM: **9 pass / 0 fail / 0 warn**.
+
+**Files changed:** 4 (`preferred_check.go` +
+`preferred_check_test.go` + `check_b119.sh` +
+`verify_pre_deploy.sh`). +329/-12 lines.
+
+**Live build label:** `v1.3.11-21-g761bb26` (deployed to VM).
+
+**Rollback procedure (if needed):**
+
+1. `cd /home/skyadmin/skygate && git revert 761bb26`
+2. `docker restart skygate-skygate-1` (entrypoint will
+   rebuild from reverted source)
+
 ## v1.3.19.1 — svyatoslava-1 (HA mirror) removed + B118 finalized
 
 **Date:** 2026-08-17

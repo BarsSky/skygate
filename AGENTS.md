@@ -17,7 +17,78 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.19.1 — svyatoslava-1 (HA mirror, headscale
+* **Current**: v1.3.19.2 — `TagToHostname` (exported helper in
+  `internal/feature/exit_rules/preferred_check.go`) extended
+  to handle the post-B111 `tag:dev-infra-X` tag format.
+  The v1.3.18.1 hotfix only updated the LOCAL `tagToHost`
+  closure in `system_tests.go` — the EXPORTED helper used
+  by `/my/exit-rules` + `/admin/exit-rules` +
+  `/admin/devices` still returned `dev-infra-karolina` for
+  a `tag:dev-infra-karolina` pref, so every rule pointing
+  at `karolina` was falsely flagged as a preferred-mismatch
+  on the UI (banner: "240 правил ссылаются на exit-node,
+  который устройство не использует"). `make verify-pre`
+  **113 PASS / 2 FAIL / 1 SKIP** (B8 VM-only; 2 pre-existing
+  FAILs unchanged). What's added:
+  - **v1.3.19.2 hotfix (preferred_check follow-up)**:
+    `TagToHostname` rewritten with case-ordered switch —
+    `tag:dev-infra-` BEFORE `tag:exit-` BEFORE `tag:`.
+    Pre-fix pattern was `TrimPrefix(rest, "exit-")` which
+    left `dev-infra-emilia` unchanged. Post-fix all 4
+    formats return the bare hostname (`karolina` not
+    `dev-infra-karolina`).
+  - **Live state (UI fix verified 2026-08-17 14:12 UTC)**:
+    /my/exit-rules: 0 false-positive mismatches (was
+    240), no preferred-mismatch-banner rendered, PREFERRED
+    column shows clean hostnames (`karolina` / `emilia`)
+    instead of `dev-infra-X`. All 240 rules on skyworker
+    (234 karolina + 6 emilia-user-facing) now show as
+    MATCH (green check).
+  - **4 new Go unit tests** in
+    `internal/feature/exit_rules/preferred_check_test.go`:
+    - `TestTagToHostname_PostB111_DevInfraFormat` —
+      5 cases for the new format.
+    - `TestTagToHostname_PrefixOrder` — regression
+      test for the prefix-order bug.
+    - `TestIsRuleApplicable_PostB111_DevInfraPref` —
+      integration test (handler pipeline).
+    - Plus tightened contract E in `check_b119.sh`.
+  - **New file `scripts/check_b119.sh`** (8 contracts
+    A-H): 6 source contracts (TagToHostname handles 4
+    formats + case order + callers) + 1 bug-pattern
+    check (NO `TrimPrefix(rest, "exit-")` in
+    preferred_check.go) + 1 live DB contract (all pref
+    rows use a supported format) + 1 defensive check
+    (system_tests.go still has the v1.3.18.1 fix).
+    9 sub-checks (A=1, B=2, C=1, D=1, E=1, F=1, G=1,
+    H=1). PASS on VM: 9/9.
+  - **3 callers of `TagToHostname` verified to use
+    the FIXED function**:
+    - `internal/feature/exit_rules/form_my.go` (the
+      `/my/exit-rules` page handler — the source of the
+      "240 правил" banner)
+    - `internal/feature/exit_rules/form_admin.go`
+      (the `/admin/exit-rules` page handler — admin
+      per-rule PREFERRED column)
+    - `internal/feature/admin/devices.go` (the
+      `/admin/devices` page — device-level pref display)
+  - 4 files changed (`preferred_check.go` +
+    `preferred_check_test.go` + `check_b119.sh` +
+    `verify_pre_deploy.sh`). +329/-12 lines.
+    `go test ./internal/feature/exit_rules/ -run
+    "TestTagToHostname|TestIsRuleApplicable"` PASS
+    (9/9). `go test ./...` PASS (28/28 packages).
+    `go build ./...` + `go vet ./...` clean.
+  - **Live state**: build `v1.3.11-21-g761bb26` deployed
+    to VM. 113/2/1 verify-pre (2 pre-existing FAILs: B34
+    device_rules auto-add + B104 superseded by B114).
+    No system tests regressed; the v1.3.18.1 LOCAL
+    `tagToHost` closure in `system_tests.go` was
+    already correct, so the `exit_rules.preferred_mismatch`
+    system test was reporting correctly throughout
+    (it was just the UI that was wrong).
+
+* **Previous**: v1.3.19.1 — svyatoslava-1 (HA mirror, headscale
   id=30) removed per operator directive 2026-08-17
   ("старые тэги по svyatoslava надо почистить вес что
   оффлайн оно уже не рабочее"). `make verify-pre`
@@ -690,6 +761,7 @@ to reflect a deliberate design change.
 | **v1.3.18.1 hotfix** | `tagToHost` helper extended to strip `tag:dev-infra-X` / `tag:exit-X` / `tag:X` / `X` prefixes. Covered indirectly by the `exit_rules.preferred_mismatch` system test (now PASSes; was FAIL post-v1.3.18 due to the legacy prefix strip). | (no `check_b119.sh` yet) |
 | **B118 (v1.3.19)** | tag-owner-from-name: via loop parses owner from `tag:dev-<user>-<device>` → `<user>@domain`; `tag:exit-node` owned by `infra@` in 2 emit sites; svyatoslava-legacy GONE. Source grep + live DB. | `bash scripts/check_b118.sh` (16 contracts: 6 source/live + 5 v1.3.19.1 sub-checks, B-check fix `e32e12f` for max(version) filter) |
 | **v1.3.19.1 hotfix (operator cleanup)** | svyatoslava-1 / headscale id=30 (HA mirror) removed: snapshot → `headscale nodes delete --force -i 30` → `DELETE FROM node_owner_map` → re-apply policy. 4 infra tags remain (was 5): emilia, karolina, sharlotta, skygate-host-1. | covered by B118 contract G (5 sub-checks) |
+| **B119 (v1.3.19.2)** | `TagToHostname` (exported helper) extended to handle `tag:dev-infra-X` (v1.3.18.1 only fixed the LOCAL `tagToHost` closure in `system_tests.go`; missed the exported helper used by /my/exit-rules + /admin/exit-rules + /admin/devices). Pre-fix returned `dev-infra-karolina` for `tag:dev-infra-karolina` → 240 false-positive preferred-mismatches on the UI banner. | `bash scripts/check_b119.sh` (8 contracts A-H, 9 sub-checks) |
 | **B38 fix (v1.3.12)** | headscale_acl.go: ListACL + AddACL + RemoveACL + PreviewACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form). Was looking for deleted `migrations_v0.50.go` and old SQLite test fns; updated to `t.Skip` stub check + `migrations_pg.go` grep. | inline grep in `verify_pre_deploy.sh` line 999-1008 |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`
