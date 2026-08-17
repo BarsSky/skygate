@@ -17,10 +17,61 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.17 — DERP relay CRUD UI (per-row add/edit/
-  delete/toggle/test, like /admin/exit-nodes). Replaces the
-  v0.11.0 comma-separated textarea model with a first-class
-  `derp_relays` PG table. `make verify-pre`
+* **Current**: v1.3.18.1 — exit_rules.preferred_mismatch helper
+  fix for post-B111 tag format (paired with v1.3.18 ACL
+  tagOwners dedup hotfix). `make verify-pre`
+  **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only). 28/28
+  packages green. What's added:
+  - **v1.3.18.1 hotfix**: `tagToHost` helper in
+    `internal/feature/admin/system_tests.go` was stripping
+    only the legacy `tag:exit-` prefix; for the new
+    `tag:dev-infra-<exit>` format introduced in B111 (v1.3.11)
+    it returned `dev-infra-<exit>` instead of `<exit>`, so
+    every rule with `exit_node_id="<exit>"` was flagged as
+    a "preferred mismatch" against the pref
+    `tag:dev-infra-<exit>`. Fix: extended strip-prefix
+    cascade to handle all 4 formats — `tag:dev-infra-X → X`,
+    `tag:exit-X → X`, `tag:X → X`, `X → X`. No new B-check
+    (helper is exercised by the `exit_rules.preferred_mismatch`
+    system test which now PASSes).
+  - **v1.3.18 hotfix (paired)**: ACL re-apply returned HTTP
+    500 with `duplicate object member name 'tag:dev-infra-
+    emilia' within '/tagOwners'` after Phase 3 / B111
+    introduced the `tag:dev-infra-X` namespace. The
+    headscale v2 JSON parser rejects duplicate object keys,
+    so ANY of the 4 tagOwners emit paths in
+    `internal/acl/acl.go` (static + per-user `tagsByUser`
+    loop + `distinctVias` loop + per-device
+    `augmentedTagsByUser` loop) was enough to break
+    re-apply. Fix: `emittedTagOwners` set + first-write-
+    wins `emitTagOwner(tag, ownerListJSON)` closure in
+    BOTH `GenerateACLForPlane` AND
+    `GenerateACLWithViaForPlane`. 0 duplicate tagOwners
+    post-fix (was 1 dup for `tag:dev-infra-emilia`).
+  - **Operator report (the trigger)**: "на андроид exit
+    node emilia очень долго прогружает, хотя по положению
+    он ближе всех" — root cause was pre-B93 legacy
+    `tag:exit-emilia` etc. in `user_exit_node_prefs` +
+    `device_exit_node_prefs` (not new tags, just stale).
+    Manual SQL migration:
+    `UPDATE … SET exit_node_tag = 'tag:dev-infra-' ||
+    substring(exit_node_tag FROM 10) WHERE exit_node_tag
+    LIKE 'tag:exit-emilia|karo|sharlotta|svyatoslava'`.
+    The HTTP 500 came AFTER the prefs were fixed and was
+    the v1.3.18 dedup fix.
+  - 2 files changed (`acl.go` + `system_tests.go`),
+    +60/-10 lines. `go build ./...` + `go vet ./...` clean.
+  - **Live state**: build `v1.3.11-15-g8dd0c47` deployed
+    to VM (192.168.13.69). 18/20 system tests PASS
+    (2 SKIP: `db.journal_mode` PG-specific +
+    `mesh.active_meshes` live state-dependent). 0 FAIL.
+    Snapshot 1141, applied_success=1.
+
+* **Previous**: v1.3.17 + v1.3.17.1 — DERP relay CRUD UI
+  (per-row add/edit/delete/toggle/test, like /admin/exit-
+  nodes). Replaces the v0.11.0 comma-separated textarea
+  model with a first-class `derp_relays` PG table. 2
+  commits (`d4d8ab3` + `88b9acc`). `make verify-pre`
   **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only; B19 PASS).
   What's added:
   - **B116 (v1.3.17)**: new page `/admin/derp/relays` (the
@@ -44,18 +95,27 @@ decisions or propose work that's already in flight.
     with the legacy `cfg.DERPExternalURLs` (so the headscale
     derp.urls block includes both the textarea-managed and
     CRUD-managed rows, dedup'd).
-  - 20 contracts pinned in `scripts/check_b116.sh`.
+  - 20 → 21 contracts pinned in `scripts/check_b116.sh`
+    (v1.3.17.1 added sidebar + landing checks).
   - 8 db unit tests (`internal/db/derp_relays_test.go`).
-  - 38 new i18n keys (ru + en) in `catalog_derp.go`.
-  - 13 files changed, +1120/-25 lines. `go build ./...` +
+  - 40 new i18n keys (ru + en) in `catalog_derp.go`
+    (38 for v1.3.17 + 2 for v1.3.17.1: `derp.relays_link_manage`,
+    `derp.relays_nav`).
+  - 16 files changed, +1718/-34 lines. `go build ./...` +
     `go vet ./...` clean. No behavior change for the legacy
     `/admin/derp/config` page — both UIs work and write to
     the same `global_settings.derp.*` keys (which
     `AutoMigrateDerpRelays` consumes on the first
     `/admin/derp/relays` GET).
-  - **Live state**: v1.3.17 COMMITTED (pending) + NOT YET
-    deployed to live VM (build remains `v1.3.11-10-g6a0ec3a`
-    from v1.3.16). Live verify pending.
+  - **v1.3.17.1 polish (commit `88b9acc`)**: added
+    `/admin/derp/relays` to sidebar (Integrations section,
+    after `/admin/derp`) + "Manage relays" button on
+    `/admin/integrations` landing (next to legacy
+    "Configure" button). 2 new i18n keys.
+  - **Live state**: build `v1.3.11-13-g88b9acc` deployed
+    to VM. Legacy URL `https://controlplane.tailscale.com/
+    derpmap/default` migrated to `derp_relays` table
+    (id=1) via `AutoMigrateDerpRelays` on first GET.
 
 * **Previous**: v1.3.16 — tailnet test skip filter (self + home-LAN-without-SSH).
   1 commit since v1.3.15 (`6a0ec3a`). All tests green
@@ -503,7 +563,9 @@ to reflect a deliberate design change.
 | **B113 (v1.3.13)** | youtube.com/32 bug fix: form validates targetValue is IP/CIDR for target_type=ip\|subnet | `bash scripts/check_b113.sh` (4 contracts) |
 | **B114 (v1.3.14)** | BL-17 autonomous migration verify: 3-phase chain + portable Python driver staging + pre-state capture | `bash scripts/check_b114.sh` (9 contracts) |
 | **B115 (v1.3.16)** | tailnet test skip filter: tailnetSelfHostname + tailnetSkipHostnames (5 home-LAN hardcoded) + 3 tests use filter + setUpTailnetSelfOverride helper | `bash scripts/check_b115.sh` (10 contracts) |
-| **B116 (v1.3.17)** | DERP relay CRUD UI: `derp_relays` PG table + 6 handlers + 6 routes + `applyBundledDERP` uses table (not legacy `cfg.BundledDERP`) + `renderHeadscaleConfig` merges `derp_relays` URLs | `bash scripts/check_b116.sh` (20 contracts) |
+| **B116 (v1.3.17)** | DERP relay CRUD UI: `derp_relays` PG table + 6 handlers + 6 routes + `applyBundledDERP` uses table (not legacy `cfg.BundledDERP`) + `renderHeadscaleConfig` merges `derp_relays` URLs | `bash scripts/check_b116.sh` (21 contracts incl. v1.3.17.1 sidebar + landing) |
+| **v1.3.18 hotfix** | ACL tagOwners dedup: `emittedTagOwners` set + first-write-wins `emitTagOwner()` closure in BOTH `GenerateACLForPlane` AND `GenerateACLWithViaForPlane` (was 4 emit paths duplicating `tag:dev-infra-*` keys after Phase 3 / B111). No new B-check (deferred to openTestDB harness; covered indirectly by `acl.reapply` system test). | (no `check_b118.sh` yet) |
+| **v1.3.18.1 hotfix** | `tagToHost` helper extended to strip `tag:dev-infra-X` / `tag:exit-X` / `tag:X` / `X` prefixes. Covered indirectly by the `exit_rules.preferred_mismatch` system test (now PASSes; was FAIL post-v1.3.18 due to the legacy prefix strip). | (no `check_b119.sh` yet) |
 | **B38 fix (v1.3.12)** | headscale_acl.go: ListACL + AddACL + RemoveACL + PreviewACL + fingerprint order-invariant (v0.33.0, v1.3.0+ PG form). Was looking for deleted `migrations_v0.50.go` and old SQLite test fns; updated to `t.Skip` stub check + `migrations_pg.go` grep. | inline grep in `verify_pre_deploy.sh` line 999-1008 |
 
 ### Runtime (R1-R34) — run `make verify-post` after `docker compose up -d skygate`

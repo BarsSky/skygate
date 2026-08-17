@@ -1,5 +1,87 @@
 # Skygate release notes
 
+## v1.3.18.1 — exit_rules.preferred_mismatch helper fix (post-B111 tag format)
+
+**Date:** 2026-08-17
+**Scope:** Hotfix — after v1.3.18 ACL re-apply succeeded,
+the `exit_rules.preferred_mismatch` system test still FAILed
+on every row. Root cause: `tagToHost` helper in
+`internal/feature/admin/system_tests.go` only stripped the
+legacy `tag:exit-` prefix. For the new `tag:dev-infra-<exit>`
+format introduced in B111 (v1.3.11), it returned
+`dev-infra-<exit>` instead of `<exit>`, so every
+`exit_rules` row with `exit_node_id="<exit>"` was flagged as
+a "preferred mismatch" against the pref
+`tag:dev-infra-<exit>`.
+
+**What's added:**
+
+- `tagToHost` extended to handle 4 formats:
+  `tag:dev-infra-X → X`, `tag:exit-X → X`, `tag:X → X`,
+  `X → X`. (B111 introduced `tag:dev-infra-*` for the 5
+  infra nodes; B93-era legacy `tag:exit-*` is still in the
+  test fixtures.)
+- No new B-check (helper is exercised by the
+  `exit_rules.preferred_mismatch` system test which now
+  PASSes; was FAIL pre-fix).
+- 1 file changed (`internal/feature/admin/system_tests.go`),
+  +18/-4 lines. `go build ./...` + `go vet ./...` clean.
+
+**Live state:** build `v1.3.11-15-g8dd0c47` deployed to VM
+(192.168.13.69). 18/20 system tests PASS (2 SKIP:
+`db.journal_mode` PG-specific + `mesh.active_meshes` live
+state-dependent). 0 FAIL.
+
+## v1.3.18 — ACL tagOwners dedup hotfix (Android emilia hang)
+
+**Date:** 2026-08-17
+**Scope:** Hotfix — ACL re-apply returned HTTP 500 with
+`duplicate object member name 'tag:dev-infra-emilia' within
+'/tagOwners'` after Phase 3 / B111 introduced the
+`tag:dev-infra-X` namespace. The headscale v2 JSON parser
+rejects duplicate object keys, so ANY of the 4 tagOwners
+emit paths in `internal/acl/acl.go` was enough to break
+re-apply.
+
+**What's added:**
+
+- `emittedTagOwners` map + first-write-wins
+  `emitTagOwner(tag, ownerListJSON)` closure in BOTH
+  `GenerateACLForPlane` AND `GenerateACLWithViaForPlane`.
+  The 4 emit paths fixed:
+  1. Static (`tag:public`, `tag:exit-node`,
+     `tag:subnet-router`, `tag:private`).
+  2. Per-user `tagsByUser` loop.
+  3. `distinctVias` loop.
+  4. Per-device `augmentedTagsByUser` loop.
+- 0 duplicate tagOwners post-fix (was 1 dup for
+  `tag:dev-infra-emilia`).
+- No new B-check (deferred to openTestDB harness for
+  GenerateACL string-output tests; covered indirectly by
+  the `acl.reapply` system test which now PASSes).
+- 1 file changed (`internal/acl/acl.go`), +40/-8 lines.
+  `go build ./...` + `go vet ./...` clean.
+
+**Operator report (the trigger):** "на андроид exit node
+emilia очень долго прогружает, хотя по положению он ближе
+всех". Two-stage root cause:
+
+1. Pre-B93 legacy `tag:exit-emilia` etc. were still in
+   `user_exit_node_prefs` + `device_exit_node_prefs`.
+   ACL grants `via: ["tag:exit-emilia"]` pointed at
+   non-existent tags → Tailscale Android retried forever.
+   Manual SQL migration:
+   `UPDATE … SET exit_node_tag = 'tag:dev-infra-' ||
+   substring(exit_node_tag FROM 10) WHERE exit_node_tag
+   LIKE 'tag:exit-emilia|karo|sharlotta|svyatoslava'`.
+   (The `FROM 10` was a fix; initial `FROM 11` dropped
+   the first letter → `milia` / `arolina`.)
+2. After the prefs were fixed, the re-apply HTTP 500 fired
+   (v1.3.18 dedup fix).
+
+**Live state:** build `v1.3.11-14-ga2c11de` deployed to VM.
+Snapshot 1141, applied_success=1. 0 duplicate tagOwners.
+
 ## v1.3.17 — DERP relay CRUD UI (per-row add/edit/delete/toggle/test)
 
 **Date:** 2026-08-13

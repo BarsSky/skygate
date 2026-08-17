@@ -1,18 +1,38 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-13, post-v1.3.17 (DERP relay CRUD UI).
-> **Status of v1.3.17**: COMMITTED (pending) + verify-pre catalog
-> **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only). `go test ./...`
-> 28/28 packages green. Not yet deployed.
+> **Last updated**: 2026-08-17, post-v1.3.18.1 (exit_rules.preferred_mismatch helper fix).
+> **Status of v1.3.18 + v1.3.18.1**: hotfix pair, COMMITTED + DEPLOYED.
+> verify-pre catalog **113 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+> 18/20 system tests PASS, 0 FAIL (2 SKIP: db.journal_mode + mesh.active_meshes).
 >
 > Recent shipped releases:
-> - **v1.3.17** (2026-08-13): B116 DERP relay CRUD UI — new
->   `derp_relays` PG table replaces the v0.11.0 comma-separated
+> - **v1.3.18.1** (2026-08-17): `tagToHost` helper fix for post-B111
+>   `tag:dev-infra-X` format. Pre-fix, every `exit_rules` row was
+>   flagged as "preferred mismatch" because the helper only stripped
+>   the legacy `tag:exit-` prefix. DEPLOYED (build `v1.3.11-15-g8dd0c47`).
+> - **v1.3.18** (2026-08-17): ACL tagOwners dedup hotfix. The headscale
+>   v2 JSON parser rejected re-apply with `duplicate object member name
+>   'tag:dev-infra-emilia' within '/tagOwners'` after Phase 3 / B111
+>   introduced the new tag namespace. Fix: `emittedTagOwners` set +
+>   first-write-wins `emitTagOwner()` closure in BOTH
+>   `GenerateACLForPlane` AND `GenerateACLWithViaForPlane` (4 emit
+>   paths: static + per-user + distinctVias + per-device). No B-check
+>   (deferred to openTestDB harness). DEPLOYED (build `v1.3.11-14-ga2c11de`).
+> - **v1.3.17 + v1.3.17.1** (2026-08-13): B116 DERP relay CRUD UI
+>   — new `derp_relays` PG table replaces the v0.11.0 comma-separated
 >   textarea model. New page `/admin/derp/relays` with per-row
 >   add/edit/delete/toggle/test (like `/admin/exit-nodes`).
->   Bundled row is undeletable (toggle its enabled flag instead).
->   At-most-one `is_bundled=1` row. AutoMigrate from
->   `global_settings.derp.*` on first GET. NOT YET deployed.
+>   v1.3.17.1 polish: added sidebar entry + "Manage relays" landing
+>   button. Bundled row is undeletable (toggle its enabled flag
+>   instead). At-most-one `is_bundled=1` row. AutoMigrate from
+>   `global_settings.derp.*` on first GET. DEPLOYED (build
+>   `v1.3.11-13-g88b9acc`).
+> - **v1.3.16** (2026-08-13): B115 tailnet test skip filter — self
+>   (skygate container, no SSH daemon) + 5 home-LAN
+>   (skyworker / skybars / a71 / olesya / nothing-phone-2).
+>   `tailnetSkipHostnames()` reads `SKYGATE_TAILNET_SKIP_HOSTNAMES`
+>   env override (REPLACES, not merges). DEPLOYED
+>   (build `v1.3.11-10-g6a0ec3a`).
 > - **v1.3.15** (2026-08-13): tailnet probe port fallback — karolina
 >   also listens SSH on 18022; new `tailnetProbePorts = ["22", "18022"]`
 >   tries both. Pre-fix, karolina was reported UNREACHABLE on every run.
@@ -276,7 +296,9 @@ but the pre-existing ones remain.
 - **B113** (youtube.com/32 bug fix, v1.3.13) — DONE
 - **B114** (BL-17 autonomous migration verify, v1.3.14) — DONE
 - **B115** (tailnet test skip filter, v1.3.16) — DONE
-- **B116** (DERP relay CRUD UI, v1.3.17) — DONE
+- **B116** (DERP relay CRUD UI, v1.3.17 + v1.3.17.1 polish) — DONE
+- **v1.3.18** (ACL tagOwners dedup hotfix) — DONE
+- **v1.3.18.1** (exit_rules.preferred_mismatch helper fix) — DONE
 - **AGENTS.md catalog** of v0.32.5-era B-checks — already in AGENTS.md,
   no need to duplicate
 - **v1.3.x SQLite removal** (v1.3.0, v1.3.1, v1.3.2) — DONE
