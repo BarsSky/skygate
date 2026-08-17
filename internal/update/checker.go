@@ -270,15 +270,14 @@ type ghRelease struct {
 func compareSemver(a, b string) int {
 	a = stripBuildLabelSuffix(a)
 	b = stripBuildLabelSuffix(b)
-	aParts := strings.SplitN(strings.TrimPrefix(a, "v"), ".", 3)
-	bParts := strings.SplitN(strings.TrimPrefix(b, "v"), ".", 3)
-	// Pad to 3 parts
-	for len(aParts) < 3 {
-		aParts = append(aParts, "0")
-	}
-	for len(bParts) < 3 {
-		bParts = append(bParts, "0")
-	}
+	// Split into at most 4 parts to handle 4-component versions
+	// like "1.3.19.2" (skygate convention since v1.3.12+). The
+	// first 3 parts are major.minor.patch; the 4th (if present)
+	// is a sub-patch that's IGNORED for compare purposes. This
+	// matches the original 3-part semantics while accepting the
+	// 4-part naming the operator has been using.
+	aParts := splitVersionParts(a, 3)
+	bParts := splitVersionParts(b, 3)
 	for i := 0; i < 3; i++ {
 		an, aerr := parseUint(aParts[i])
 		bn, berr := parseUint(bParts[i])
@@ -302,6 +301,26 @@ func compareSemver(a, b string) int {
 		}
 	}
 	return 0
+}
+
+// splitVersionParts returns the first n integer parts of a
+// dot-separated version string. Extra parts (4th, 5th, ...) are
+// dropped — they don't participate in the compare. Missing
+// parts are padded with "0" so "0.29" compares as "0.29.0".
+// Non-integer parts (from prerelease / buildmetadata like
+// "0.29.0-rc.1") are passed through as-is and trigger the
+// lex fallback in compareSemver. The version's leading "v"
+// (e.g. "v1.3.19.2") is stripped first.
+func splitVersionParts(v string, n int) []string {
+	v = strings.TrimPrefix(v, "v")
+	all := strings.Split(v, ".")
+	if len(all) > n {
+		all = all[:n]
+	}
+	for len(all) < n {
+		all = append(all, "0")
+	}
+	return all
 }
 
 // stripBuildLabelSuffix returns the version with both

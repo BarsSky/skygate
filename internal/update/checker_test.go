@@ -42,6 +42,18 @@ func TestCompareSemver(t *testing.T) {
 		{"1.3.11-0-gdeadbeef", "1.3.12", -1},
 		// Build label with both git-describe and explicit commit
 		{"1.3.11-27-g03a1d97+extra", "1.3.11", 0},
+		// 4-component version (skygate v1.3.12+ convention):
+		// "1.3.19.2" compares on the first 3 parts only — the
+		// 4th is sub-patch and ignored (by design — sub-patch
+		// ordering isn't part of the GitHub release contract;
+		// it would need a 4-part compare to be meaningful). Before
+		// B124 split, the 3-part SplitN gave ["1","3","19.2"] and
+		// the parseUint fallback lex-compared "9" < "19.2"
+		// (incorrectly reporting v1.3.9 as newer than v1.3.19.2).
+		{"1.3.19.2", "1.3.9", 1},   // local newer (live B124 case)
+		{"1.3.9", "1.3.19.2", -1},  // GitHub old, local new
+		{"1.3.19.2", "1.3.19.2", 0},
+		{"1.3.19.2", "1.3.19.1", 0},  // sub-patch ignored
 		// (Pre-release suffix handling like "0.29.0-rc.1" is a
 		// separate concern — the channel check filters those
 		// out before compareSemver is called. compareSemver

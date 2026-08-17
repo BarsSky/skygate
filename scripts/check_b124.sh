@@ -196,6 +196,22 @@ if grep -qF '1.3.11-27-g03a1d97", "1.3.11", 0' "${CHECKER_TEST_GO}"; then
 else
     bad "TestCompareSemver is missing the self B124 case"
 fi
+# 4-component version (skygate v1.3.12+ convention):
+if grep -qF '1.3.19.2", "1.3.9", 1' "${CHECKER_TEST_GO}"; then
+    ok "TestCompareSemver pins the 4-part case (local v1.3.19.2 vs GitHub v1.3.9 → +1)"
+else
+    bad "TestCompareSemver is missing the 4-part regression case"
+fi
+if grep -qF '1.3.9", "1.3.19.2", -1' "${CHECKER_TEST_GO}"; then
+    ok "TestCompareSemver pins the 4-part swapped case (GitHub v1.3.9 vs local v1.3.19.2 → -1)"
+else
+    bad "TestCompareSemver is missing the 4-part swapped B124 case"
+fi
+if grep -qE 'func splitVersionParts' "${CHECKER_GO}"; then
+    ok "splitVersionParts helper exists (4-component version support)"
+else
+    bad "splitVersionParts helper is missing"
+fi
 if grep -qE 'func TestStripBuildLabelSuffix' "${CHECKER_TEST_GO}"; then
     ok "TestStripBuildLabelSuffix exists (helper regression guard)"
 else
