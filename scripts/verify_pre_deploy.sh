@@ -3237,3 +3237,5 @@ run_check "B123" "Exit Rules duplicate alert UX: target + existing_id + blocking
   'test -f scripts/check_b123.sh && bash scripts/check_b123.sh'
 run_check "B124" "Dev version element: SKYGATE_DEV_BUILD=true → dev banner + no 'update available' + no auto-apply, plus compareSemver fix for git-describe '-N-g<hex>' suffix (B124, v1.3.19.2 follow-up)" \
   'test -f scripts/check_b124.sh && bash scripts/check_b124.sh'
+run_check "B125" "device_rules auto-add duplicate prevention: UNIQUE INDEX device_rules_natural_key_uniq + ON CONFLICT (key) DO UPDATE SET id = id RETURNING id in qInsertDeviceRule + 2 ON CONFLICT DO NOTHING in sync.go (B125, v1.3.19.2 follow-up / Goal 37 follow-up)" \
+  'test -f scripts/check_b125.sh && bash scripts/check_b125.sh'
