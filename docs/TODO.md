@@ -1,12 +1,36 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post-v1.3.19.2 follow-up (B123 / Goal 39).
+> **Last updated**: 2026-08-17, post-v1.3.19.2 follow-up (B125 / Goal 37 follow-up).
 > **Status of v1.3.19.2 follow-up**: B123 (Exit Rules duplicate
-> alert UX) COMMITTED. Goal 39 closed. verify-pre catalog
-> **118 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+> alert UX), B124 (dev version element + semver fix), and B125
+> (device_rules auto-add duplicate prevention) all COMMITTED +
+> DEPLOYED. Goals 39 + 37 follow-up both closed. verify-pre
+> catalog **121 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
 > 28/28 packages green.
 >
 > Recent shipped releases:
+> - **v1.3.19.2 follow-up (B125)** (2026-08-17): device_rules
+>   auto-add duplicate prevention. Closes the
+>   SELECT-then-INSERT race in `sync.go:432, 512` (the
+>   /my/exit-rules auto-add path) that could let concurrent
+>   goroutines both pass the "INSERT-IF-NOT-EXISTS" check
+>   and both commit, producing duplicate /32 rules. 3 layers:
+>   (1) `migrateV056PG` adds
+>   `device_rules_natural_key_uniq` UNIQUE INDEX on the
+>   6-column natural key (user_id, device_id, exit_node_id,
+>   target_type, target_value, parent_domain — all NOT NULL);
+>   (2) `qInsertDeviceRule` in `internal/db/queries.go` now
+>   uses `ON CONFLICT (key) DO UPDATE SET id = device_rules.id
+>   RETURNING id` so `AppendDeviceRule` is a true "insert or
+>   get-existing" with no race window; (3) `sync.go:432, 512`
+>   use direct `INSERT ... ON CONFLICT DO NOTHING` +
+>   `RowsAffected()` to track new vs skipped rows. 3 new
+>   sequential tests in `device_rules_b125_test.go`
+>   (Sequential + DistinctKeys + SameKeyReturnsSameID);
+>   18 contracts in `scripts/check_b125.sh`. Operator-side
+>   cleanup SQL for pre-existing duplicates documented in
+>   the B125 commit message. DEPLOYED (build
+>   `v1.3.19.2-1-ga965fe5`).
 > - **v1.3.19.2 follow-up (B123)** (2026-08-17): Exit Rules
 >   duplicate alert UX (Goal 39). The /my/exit-rules
 >   "правило для X уже существует" alert now carries the

@@ -17,7 +17,73 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.19.2 follow-up — **B123 + B124 (Goal 39) Exit Rules
+* **Current**: v1.3.19.2 follow-up — **B125 (Goal 37 follow-up)
+  device_rules auto-add duplicate prevention**. Closes the
+  SELECT-then-INSERT race in the auto-add path (sync.go:432,
+  512) that could let concurrent goroutines both pass the
+  "INSERT-IF-NOT-EXISTS" check and both commit, producing
+  duplicate /32 rules. Goal 37 cleaned up the 114 redundant
+  rules produced by this race; B125 prevents new ones. 3
+  layers: (1) `migrateV056PG` adds
+  `device_rules_natural_key_uniq` UNIQUE INDEX on the
+  6-column natural key (user_id, device_id, exit_node_id,
+  target_type, target_value, parent_domain — all NOT NULL
+  in the current schema); (2) `qInsertDeviceRule` in
+  `internal/db/queries.go` now uses `ON CONFLICT (key) DO
+  UPDATE SET id = device_rules.id RETURNING id` so
+  `AppendDeviceRule` is a true "insert or get-existing"
+  with no race window; (3) `sync.go:432, 512` use direct
+  `INSERT ... ON CONFLICT DO NOTHING` + `RowsAffected()` to
+  track new vs skipped rows (`cdnAdded` / `added` only
+  increment on `n > 0`). 3 new sequential tests in
+  `device_rules_b125_test.go` (Sequential + DistinctKeys +
+  SameKeyReturnsSameID); 18 contracts in
+  `scripts/check_b125.sh`. Operator-side cleanup SQL for
+  pre-existing duplicates documented in the B125 commit
+  message. `make verify-pre` **121 PASS / 0 FAIL / 1 SKIP**
+  (B8 VM-only). 28/28 packages green. What's added:
+  - **B125 (v1.3.19.2 follow-up)**: UNIQUE INDEX +
+    `ON CONFLICT DO UPDATE SET id = id RETURNING id` in the
+    canonical INSERT + 2 `ON CONFLICT DO NOTHING` rewrites
+    in the auto-add path. The migration is in the V049+
+    chain; existing DBs with no duplicates get the index
+    cleanly. DBs with duplicates need the operator-side
+    cleanup (B125 commit message has the SQL).
+  - **Live state**: build `v1.3.19.2-1-ga965fe5` deployed
+    to the live VM. The 240-rule false-positive banner
+    from B119 stays at 0 mismatches. The new
+    `device_rules_natural_key_uniq` index is present on
+    the live PG.
+  - **New file `internal/db/device_rules_b125_test.go`**
+    (3 tests, ~95 lines): the SQL contract is pinned by
+    sequential tests. Concurrent test was tried but
+    unreliable on the live-PG pool (the test's `SET
+    search_path` only affects one connection per call, so
+    concurrent goroutines on different pool connections
+    see different search_path and the test fails on FK
+    setup). The race is closed at the SQL level
+    (UNIQUE INDEX + ON CONFLICT is the atomic primitive),
+    so sequential tests are enough to verify the
+    contract.
+  - **New file `scripts/check_b125.sh`** (9 contracts
+    A-I, 18 sub-checks): migrateV056PG exists + creates
+    the UNIQUE INDEX + is registered in
+    `driver_postgres.go` + UNIQUE INDEX covers all 6
+    natural-key columns + `qInsertDeviceRule` uses
+    ON CONFLICT + uses `DO UPDATE SET id = id RETURNING
+    id` + queries.go does NOT have the SELECT-FOR-UPDATE-
+    then-INSERT pattern + sync.go CDN marker loop uses
+    ON CONFLICT DO NOTHING + RowsAffected + per-IP /32
+    loop also uses ON CONFLICT + 3 test functions in
+    the B125 test file + Go test passes.
+  - 3 files changed (`migrations_pg.go` +
+    `driver_postgres.go` + `queries.go` + `sync.go`) + 2
+    new test/script files (`device_rules_b125_test.go` +
+    `check_b125.sh`) + `verify_pre_deploy.sh` updated to
+    register B125. +241/-23 lines (migration + dispatch
+    entry + queries + sync + tests + B-check + B-verify
+    registration).
+* **Previous**: v1.3.19.2 follow-up — **B123 + B124 (Goal 39) Exit Rules
   duplicate alert UX + dev version element**. The /my/exit-rules
   "правило для X уже существует" alert now carries the blocking IP,
   the conflicting rule's ID (for a jump-to link), the parent_domain

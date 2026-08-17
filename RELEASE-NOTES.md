@@ -1,5 +1,124 @@
 # Skygate release notes
 
+## v1.3.19.2 follow-up — device_rules auto-add duplicate prevention (B125 / Goal 37 follow-up)
+
+**Date:** 2026-08-17
+**Tag:** v1.3.19.2 (force-pushed to include B125, or new tag v1.3.19.3 — see release notes)
+**Build:** v1.3.19.2-1-ga965fe5 (B125) — deployed to live VM
+
+**Scope:** One follow-up hotfix to close the race window in the
+device_rules auto-add path (Goal 37 follow-up). Goal 39 (Exit
+Rules duplicate alert UX) was already closed by B123 in the
+previous v1.3.19.2 follow-up; B125 is the data-layer
+completion.
+
+**B125 (device_rules auto-add duplicate prevention):**
+
+The /my/exit-rules auto-add path resolves CDN markers and DNS
+to /32 rules and inserts them into the device_rules table.
+Pre-B125, two concurrent goroutines could both pass the
+"INSERT-IF-NOT-EXISTS" check, both INSERT, and both commit —
+producing duplicate rows. Goal 37 cleaned up 114 redundant
+rules produced by this race; B125 prevents new ones.
+
+Three layers:
+
+1. **Schema** (`migrateV056PG`): a new PG migration
+   `v0.56` adds `CREATE UNIQUE INDEX IF NOT EXISTS
+   device_rules_natural_key_uniq ON device_rules(user_id,
+   device_id, exit_node_id, target_type, target_value,
+   parent_domain)`. All 6 columns are NOT NULL in the current
+   schema (parent_domain is `TEXT NOT NULL DEFAULT ''`), so a
+   plain UNIQUE INDEX covers every row — no COALESCE() or
+   partial indexes needed. The index is named
+   `device_rules_natural_key_uniq` so future migrations can
+   drop+recreate it for cleanup.
+
+2. **Insert path** (`qInsertDeviceRule` in
+   `internal/db/queries.go`): the canonical INSERT now uses
+   `ON CONFLICT (user_id, device_id, exit_node_id,
+   target_type, target_value, parent_domain) DO UPDATE SET
+   id = device_rules.id RETURNING id`. The `DO UPDATE SET id
+   = device_rules.id` is a no-op update that lets the query
+   `RETURNING id` give back the existing row's id (a plain
+   `DO NOTHING` can't RETURN an old id). This makes
+   `AppendDeviceRule` a true "insert or get-existing" with
+   no race window.
+
+3. **Auto-add path** (`internal/feature/exit_rules/sync.go`,
+   lines 432 + 512): the CDN marker loop and the per-IP /32
+   loop replace the previous SELECT-then-INSERT with direct
+   `INSERT ... ON CONFLICT DO NOTHING` and use
+   `tag.RowsAffected()` to track new vs skipped rows. The
+   `cdnAdded` / `added` counters only increment on `n > 0`
+   (so duplicate conflicts don't double-count).
+
+**Operator-side cleanup (for any pre-existing duplicate DB):**
+
+If a DB has existing duplicates that would block
+`CREATE UNIQUE INDEX`, run the cleanup BEFORE the migration:
+
+```sql
+DELETE FROM device_rules a USING device_rules b
+WHERE a.id > b.id
+  AND a.user_id = b.user_id
+  AND a.device_id = b.device_id
+  AND a.exit_node_id = b.exit_node_id
+  AND a.target_type = b.target_type
+  AND a.target_value = b.target_value
+  AND COALESCE(a.parent_domain, '') = COALESCE(b.parent_domain, '');
+```
+
+After: re-run `migrateV056PG` (or just restart skygate — the
+migration is in the V049+ chain).
+
+**Test coverage** (3 sequential tests in
+`internal/db/device_rules_b125_test.go`):
+
+- `TestAppendDeviceRule_B125_Sequential_SameKey_OneRow` — 10
+  sequential `AppendDeviceRule` calls with the SAME natural
+  key produce exactly ONE row in the table and return the
+  same id every time.
+- `TestAppendDeviceRule_B125_DistinctKeys` — 6 distinct
+  natural keys (different device / exit / type / value /
+  parent) all succeed; each gets its own id.
+- `TestAppendDeviceRule_B125_SameKeyReturnsSameID` — the
+  form-path use case (user clicks "add rule" twice) returns
+  the same id on the second call.
+
+The original test design used 10 concurrent goroutines, but
+the live-PG test pool has 10 connections and the `SET
+search_path` in `OpenTestPG` only affects one connection
+per call, so concurrent goroutines on different pool
+connections see different search_path and the test fails on
+FK setup. The race is closed at the SQL level (UNIQUE INDEX
++ ON CONFLICT is the atomic primitive) — sequential tests
+are enough to verify the SQL contract.
+
+**B-check** (`scripts/check_b125.sh`, NEW, 9 contracts A-I
+with 18 sub-checks): pins all three layers.
+
+**Live state** (post-B125 deploy): build
+`v1.3.19.2-1-ga965fe5`, `device_rules_natural_key_uniq`
+index present on live PG, 0 duplicates. The 240-rule
+false-positive banner from B119 stays at 0 mismatches; the
+241+ `cdnAdded` events from the auto-update cron stay at
+their expected value (no double-counting from now-silent
+duplicate inserts).
+
+**Files** (3 changed, 5 new):
+- `internal/db/migrations_pg.go` (+V056PG migration)
+- `internal/db/driver_postgres.go` (V056PG in dispatch)
+- `internal/db/queries.go` (qInsertDeviceRule rewrite)
+- `internal/feature/exit_rules/sync.go` (2 INSERTs + RowsAffected)
+- `internal/db/device_rules_b125_test.go` (NEW, 3 tests)
+- `scripts/check_b125.sh` (NEW, 9 contracts)
+- `scripts/verify_pre_deploy.sh` (B125 registered)
+
+verify-pre: 121 PASS / 0 FAIL / 1 SKIP (B8 VM-only).
+
+---
+
 ## v1.3.19.2 follow-up — Exit Rules duplicate alert UX + dev version element (B123 + B124 / Goal 39)
 
 **Date:** 2026-08-17
