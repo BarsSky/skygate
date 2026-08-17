@@ -134,21 +134,41 @@ func IsRuleApplicable(ruleExitNode, preferredHost string) bool {
 	return ruleExitNode == preferredHost
 }
 
-// tagToHostname strips the "tag:exit-" (or just "tag:") prefix
-// from a headscale tag and returns the bare hostname.
+// TagToHostname strips the "tag:dev-infra-" / "tag:exit-" /
+// "tag:" prefix from a headscale tag and returns the bare hostname.
 //
-// Examples:
-//   "tag:exit-emilia"  → "emilia"
-//   "tag:exit-karolina" → "karolina"
-//   "emilia"            → "emilia"   (no-op for already-bare hostnames)
-//   "tag:public"        → "public"   (for tag:public relays — unlikely
-//                                     exit-node case but handled)
+// 4 formats supported (must mirror the LOCAL `tagToHost`
+// closure in internal/feature/admin/system_tests.go that
+// was fixed in v1.3.18.1 for the post-B111 tag format):
+//
+//   "tag:dev-infra-emilia"    → "emilia"      (B111+ format)
+//   "tag:dev-infra-karolina"  → "karolina"    (B111+ format)
+//   "tag:exit-emilia"         → "emilia"      (legacy pre-B93 format)
+//   "tag:exit-karolina"       → "karolina"    (legacy pre-B93 format)
+//   "emilia"                  → "emilia"      (no-op for already-bare)
+//   "tag:public"              → "public"      (non-exit-node tag, defensive)
+//
+// The DB stores tags as "tag:dev-infra-emilia" but
+// device_rules.exit_node_id stores bare hostnames ("emilia"),
+// so the comparison needs this helper. Pre-v1.3.19.1
+// `TagToHostname` only handled "tag:exit-X" and "tag:X" forms
+// — the v1.3.18.1 fix updated the LOCAL `tagToHost` in
+// system_tests.go but missed this exported function. As a
+// result, every rule whose exit_node was "karolina" was
+// flagged as a "preferred_mismatch" against the device's
+// preferred "tag:dev-infra-karolina" (which the buggy helper
+// returned as "dev-infra-karolina" — the wrong hostname).
+// This is the v1.3.19.1 follow-up.
 func TagToHostname(tag string) string {
 	t := strings.TrimSpace(tag)
-	if !strings.HasPrefix(t, "tag:") {
+	switch {
+	case strings.HasPrefix(t, "tag:dev-infra-"):
+		return strings.TrimPrefix(t, "tag:dev-infra-")
+	case strings.HasPrefix(t, "tag:exit-"):
+		return strings.TrimPrefix(t, "tag:exit-")
+	case strings.HasPrefix(t, "tag:"):
+		return strings.TrimPrefix(t, "tag:")
+	default:
 		return t
 	}
-	rest := strings.TrimPrefix(t, "tag:")
-	rest = strings.TrimPrefix(rest, "exit-")
-	return rest
 }

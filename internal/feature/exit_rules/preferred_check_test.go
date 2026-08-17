@@ -95,3 +95,86 @@ func TestTagToHostname_StandardForms(t *testing.T) {
 		}
 	}
 }
+
+// TestTagToHostname_PostB111_DevInfraFormat — the v1.3.19.1
+// follow-up. Pre-fix, `TagToHostname` only stripped "tag:exit-X"
+// (the pre-B93 format). After B111 (v1.3.11), the operator's
+// prefs use the "tag:dev-infra-X" format — and the buggy
+// helper returned the WHOLE "dev-infra-X" string instead of
+// just "X". This caused every "exit_node=karolina" rule to
+// be flagged as a "preferred_mismatch" against a pref of
+// "tag:dev-infra-karolina" (which was extracted to
+// "dev-infra-karolina" — the wrong hostname). Fix: handle
+// the dev-infra- prefix BEFORE the legacy tag:exit- prefix.
+func TestTagToHostname_PostB111_DevInfraFormat(t *testing.T) {
+	cases := map[string]string{
+		// B111+ format (the format currently used in production)
+		"tag:dev-infra-emilia":         "emilia",
+		"tag:dev-infra-karolina":       "karolina",
+		"tag:dev-infra-sharlotta":      "sharlotta",
+		"tag:dev-infra-skygate-host-1": "skygate-host-1",
+		// Whitespace + post-fix
+		"  tag:dev-infra-emilia  ":     "emilia",
+	}
+	for in, want := range cases {
+		got := TagToHostname(in)
+		if got != want {
+			t.Errorf("TagToHostname(%q) = %q, want %q (v1.3.19.1 follow-up)", in, got, want)
+		}
+	}
+}
+
+// TestTagToHostname_PrefixOrder — regression test for the
+// v1.3.19.1 fix. Pre-fix, the switch statement used
+// `strings.TrimPrefix(rest, "exit-")` on the rest AFTER
+// stripping "tag:" — so "tag:dev-infra-emilia" was reduced
+// to "dev-infra-emilia" (the whole rest, not just "emilia").
+// The fix uses case-based ordering: "tag:dev-infra-" first,
+// then "tag:exit-", then "tag:". This test ensures the
+// prefix order is correct for the edge case "tag:dev-infra-X"
+// which DOES contain "tag:" but NOT "tag:exit-".
+func TestTagToHostname_PrefixOrder(t *testing.T) {
+	// The "tag:dev-infra-" prefix MUST be checked before "tag:"
+	// or "tag:exit-". A naive `TrimPrefix(t, "tag:")` then
+	// `TrimPrefix(rest, "exit-")` would leave "dev-infra-emilia"
+	// unchanged (the bug).
+	if got := TagToHostname("tag:dev-infra-emilia"); got != "emilia" {
+		t.Errorf("pre-fix bug: TagToHostname(\"tag:dev-infra-emilia\") = %q, want \"emilia\"", got)
+	}
+	// Same for the "tag:exit-" legacy format.
+	if got := TagToHostname("tag:exit-emilia"); got != "emilia" {
+		t.Errorf("legacy: TagToHostname(\"tag:exit-emilia\") = %q, want \"emilia\"", got)
+	}
+	// Bare hostname — no-op.
+	if got := TagToHostname("emilia"); got != "emilia" {
+		t.Errorf("bare: TagToHostname(\"emilia\") = %q, want \"emilia\"", got)
+	}
+	// Empty — no-op.
+	if got := TagToHostname(""); got != "" {
+		t.Errorf("empty: TagToHostname(\"\") = %q, want \"\"", got)
+	}
+}
+
+// TestIsRuleApplicable_PostB111_DevInfraPref — the v1.3.19.1
+// integration test. The rule exit_node is a BARE hostname
+// ("karolina"). The device's preferred is stored in the DB
+// as "tag:dev-infra-karolina" (the post-B111 format) and
+// passed through TagToHostname. Pre-fix, the helper returned
+// "dev-infra-karolina" so the comparison failed. Post-fix,
+// the helper returns "karolina" so the comparison succeeds
+// → IsRuleApplicable = true (the rule IS applicable).
+func TestIsRuleApplicable_PostB111_DevInfraPref(t *testing.T) {
+	// The HANDLER does: pref = TagToHostname(dbPref.ExitNodeTag)
+	// So we simulate that here.
+	dbPref := "tag:dev-infra-karolina"
+	pref := TagToHostname(dbPref) // what form_my.go gets back
+	if !IsRuleApplicable("karolina", pref) {
+		t.Errorf("pre-fix bug: IsRuleApplicable(\"karolina\", TagToHostname(%q)=%q) = false, want true (v1.3.19.1 follow-up)", dbPref, pref)
+	}
+	// And the inverse: rule on emilia, device prefers karolina.
+	dbPref2 := "tag:dev-infra-karolina"
+	pref2 := TagToHostname(dbPref2)
+	if IsRuleApplicable("emilia", pref2) {
+		t.Errorf("true mismatch: IsRuleApplicable(\"emilia\", TagToHostname(%q)=%q) = true, want false (genuine mismatch)", dbPref2, pref2)
+	}
+}

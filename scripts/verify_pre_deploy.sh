@@ -3225,3 +3225,5 @@ run_check "B116" "DERP relay CRUD UI: derp_relays table + 6 handlers + 6 routes 
   'test -f scripts/check_b116.sh && bash scripts/check_b116.sh'
 run_check "B118" "tag-owner-from-name (via loop parses owner from tag:dev-<user>-<device>, tag:exit-node owned by infra@, svyatoslava-legacy gone) (B118, v1.3.19)" \
   'test -f scripts/check_b118.sh && bash scripts/check_b118.sh'
+run_check "B119" "TagToHostname handles 4 formats (v1.3.18.1 missed the exported helper, fixed in v1.3.19.1) (B119, v1.3.19.1 preferred_check follow-up)" \
+  'test -f scripts/check_b119.sh && bash scripts/check_b119.sh'
