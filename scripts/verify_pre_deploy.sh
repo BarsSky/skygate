@@ -3231,3 +3231,5 @@ run_check "B120" "admin-breadcrumb has margin-left:220px desktop / 52px collapse
   'test -f scripts/check_b120.sh && bash scripts/check_b120.sh'
 run_check "B121" "Mint theme (silver+mint) + thin themed scrollbar + dark-theme form contrast bump (B121, v1.3.19.2 follow-up)" \
   'test -f scripts/check_b121.sh && bash scripts/check_b121.sh'
+run_check "B122" "restore.sh PG path: do_pg_restore (postgres:18-alpine + psql -f skygate-pg.sql) + DSN from skygate.env + sudo for headscale steps + shell-glob for do_headscale_db (B122, v1.3.19.2 follow-up / BL-15 e2e)" \
+  'test -f scripts/check_b122.sh && bash scripts/check_b122.sh'

@@ -242,20 +242,47 @@ do_skygate_db() {
 do_headscale_config() {
     if [ -d headscale-config ]; then
         log "Restoring Headscale config..."
-        mkdir -p /home/admin/headscale/config
-        cp -r headscale-config/* /home/admin/headscale/config/
+        # 2026-08-17: v1.3.19.2 follow-up (BL-15 e2e) — use sudo
+        # for the cp. The /home/admin/headscale/config dir is owned
+        # by root:root with 755 perms (headscale container was
+        # created by the deploy.sh as root). The in-app restore
+        # path (PostAdminBackupRestore) runs restore.sh via
+        # `bash` from the skygate container, which runs as
+        # root, so the cp would normally work. But the
+        # INTERACTIVE path (operator runs restore.sh from their
+        # shell) runs as the operator's user (skyadmin) which
+        # doesn't have write access to the root-owned config
+        # dir. Adding sudo here covers both paths — it's a
+        # no-op when running as root (sudo NOPASSWD is set
+        # for skyadmin, verified 2026-08-17).
+        sudo mkdir -p /home/admin/headscale/config
+        sudo cp -r headscale-config/* /home/admin/headscale/config/
         log "  Headscale config restored"
         warn "  Restart headscale: sudo docker restart headscale"
     fi
 }
 
 do_headscale_db() {
-    local DB_FILE
-    DB_FILE=$(ls headscale*.db 2>/dev/null | head -1)
+    # 2026-08-17: v1.3.19.2 follow-up (BL-15 e2e) — use
+    # shell-glob match (not `ls ... | head`) so an empty
+    # archive doesn't trip `set -euo pipefail`. The v1.3.8+
+    # archives don't always include a headscale SQLite file
+    # (headscale keeps state in /data/headscale.db in the
+    # named volume, which headscale recreates on first start
+    # if missing — so an archive without the file is valid).
+    local DB_FILE=""
+    for f in headscale*.db; do
+        if [ -f "${f}" ]; then
+            DB_FILE="${f}"
+            break
+        fi
+    done
     if [ -n "${DB_FILE}" ]; then
         log "Restoring Headscale database..."
-        # Copy via temporary container
-        docker run --rm -v headscale_headscale_data:/data -v "$(pwd):/restore" alpine \
+        # Copy via temporary container. The headscale_headscale_data
+        # volume is owned by root (headscale container creates it),
+        # so we use sudo to create the temp container.
+        sudo docker run --rm -v headscale_headscale_data:/data -v "$(pwd):/restore" alpine \
             sh -c "find /data -name '*.db' -exec cp /restore/${DB_FILE} {} \; 2>/dev/null" && \
             log "  Headscale DB restored" || \
             warn "  Headscale DB restore failed"
@@ -266,7 +293,9 @@ do_headscale_db() {
 do_headplane() {
     if [ -d headplane-data ]; then
         log "Restoring Headplane data..."
-        docker run --rm -v headscale_headplane_data:/data -v "$(pwd):/restore" alpine \
+        # headplane container is created by deploy.sh as root; the
+        # headscale_headplane_data volume is root-owned. Use sudo.
+        sudo docker run --rm -v headscale_headplane_data:/data -v "$(pwd):/restore" alpine \
             sh -c "rm -rf /data/* && cp -r /restore/headplane-data/* /data/" 2>/dev/null && \
             log "  Headplane data restored" || \
             warn "  Headplane restore failed"

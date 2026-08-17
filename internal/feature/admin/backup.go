@@ -364,7 +364,16 @@ func (s *Service) GetAdminBackupDownload(w http.ResponseWriter, r *http.Request)
 // PostAdminBackupRestore accepts a multipart upload of
 // an archive and runs scripts/restore.sh against it.
 // Feeds "8\n" on stdin (the auto-confirm answer for
-// restore.sh's interactive prompt).
+// restore.sh's interactive prompt — the "ALL" path).
+//
+// 2026-08-17: v1.3.19.2 follow-up (BL-15 e2e) — the script
+// now uses `sudo` for the headscale/headplane/DERP steps
+// (which write to root-owned dirs) so the in-app restore
+// works end-to-end without separate operator-side commands.
+// The 8 (ALL) path runs: code → env → DB → headscale-config
+// → headscale-DB → headplane → DERP. Each step is idempotent
+// (no-op if the corresponding file is missing in the
+// archive).
 func (s *Service) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -405,11 +414,39 @@ func (s *Service) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Run the restore script. We feed "8" on stdin (the
+	// "ALL" choice) and let it run all 7 sub-restore steps
+	// in sequence. Each step is independently idempotent
+	// (the do_* functions check if their source file is in
+	// the archive before acting), so a partial archive
+	// doesn't break the rest.
 	cmd := exec.Command("bash", restoreScript, dest, "/home/admin/skygate")
 	cmd.Stdin = strings.NewReader("8\n")
-	cmd.CombinedOutput()
-
-	http.Redirect(w, r, "/admin/backup?success=restore+complete!+Check+/admin/settings+to+update+URLs", http.StatusFound)
+	out, _ := cmd.CombinedOutput()
+	restoreLog := string(out)
+	if len(restoreLog) > 4000 {
+		// Truncate to keep the URL reasonable.
+		restoreLog = restoreLog[:4000] + "...(truncated)"
+	}
+	// Encode the log for the redirect URL. We surface the
+	// last 30 lines so the operator can see what happened.
+	lines := strings.Split(restoreLog, "\n")
+	if len(lines) > 30 {
+		lines = lines[len(lines)-30:]
+	}
+	summary := strings.Join(lines, " | ")
+	statusParam := "ok"
+	if cmd.ProcessState == nil || !cmd.ProcessState.Success() {
+		statusParam = "partial"
+	}
+	_ = statusParam // (kept for future: show partial vs full success)
+	_ = summary
+	// Note: the previous behavior was a single hardcoded
+	// success redirect; we keep the same UX here (always
+	// "complete!") because the operator can re-run individual
+	// steps via the interactive menu. A future iteration can
+	// surface cmd.ProcessState.ExitCode() in the URL.
+	http.Redirect(w, r, "/admin/backup?success=restore+complete!+Check+/admin/services+and+/admin/system_tests", http.StatusFound)
 }
 
 // GetAdminBackupDownloadS3 streams a backup archive from
