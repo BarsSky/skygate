@@ -253,6 +253,16 @@ type Config struct {
 	// operator must click "Push update" to apply.
 	AutoUpdateEnabled bool
 	GitHubToken         string
+	// 2026-08-17 (B124) — DevBuild marks the running binary
+	// as a dev/edge build. The /admin/update page shows a
+	// "dev build" banner instead of the "update available"
+	// alert, and the auto-apply button is hidden. Set via
+	// SKYGATE_DEV_BUILD=true (typically by CI on a branch
+	// build, or by an operator running an unreleased commit
+	// against the live VM). Default false. The dev build
+	// still shows the GitHub version for reference — it
+	// just doesn't *suggest* updating.
+	DevBuild bool
 	// 2026-08-05 v0.33.1.10 — GitHub repo coordinates for
 	// the release monitor + update checker + manual
 	// download URL. Default "BarsSky/skygate" (the
@@ -408,6 +418,9 @@ func Load() (*Config, error) {
 		UpdateCheckEnabled:  getenv("SKYGATE_UPDATE_CHECK", "true") == "true",
 		UpdateCheckInterval: getDuration("SKYGATE_UPDATE_CHECK_INTERVAL", 24*time.Hour),
 		UpdateChannel:       getenv("SKYGATE_UPDATE_CHANNEL", "stable"),
+		// 2026-08-17 (B124): dev-build marker. Default false
+		// (treated as a regular release build).
+		DevBuild:            getenv("SKYGATE_DEV_BUILD", "false") == "true",
 		GitHubToken:         os.Getenv("SKYGATE_GITHUB_TOKEN"),
 		// v0.32.3: auto-update flag. Default false.
 		// SKYGATE_AUTO_UPDATE_ENABLED=true enables the

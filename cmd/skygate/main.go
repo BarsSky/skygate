@@ -578,6 +578,10 @@ func main() {
 		// version in the page header and uses it as
 		// the Checker's CurrentVersion.
 		BuildVersion: app.BuildVersion,
+		// 2026-08-17 (B124): when SKYGATE_DEV_BUILD=true,
+		// /admin/update shows a "dev build" banner
+		// instead of the "update available" alert.
+		DevBuild: app.Config().DevBuild,
 	}
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers

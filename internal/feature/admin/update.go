@@ -282,6 +282,11 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// template hides the one-click "Apply" button and
 		// shows the always-on "Push update" button instead.
 		"AutoUpdateEnabled": db.GetGlobalSettingBool(s.DB, "auto_update_enabled", s.Cfg.AutoUpdateEnabled),
+		// 2026-08-17 (B124): when this is a dev build
+		// (SKYGATE_DEV_BUILD=true), the template renders
+		// a "dev build" banner instead of the "update
+		// available" alert and hides the auto-apply button.
+		"DevBuild":     s.DevBuild,
 		"Rollback":     manualSteps.Rollback,
 		"VerifyAfter":  manualSteps.VerifyAfter,
 		"Target":       target,

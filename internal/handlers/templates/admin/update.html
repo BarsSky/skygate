@@ -83,12 +83,29 @@
   </div>
 {{end}}
 
-{{if .IsNewer}}
+{{if and .IsNewer (not .DevBuild)}}
 <div class="alert alert-success" style="margin-bottom:16px">
   <i class="fa-solid fa-circle-arrow-up"></i>
   <strong>{{t "update.banner_new_version"}}</strong>
   {{.Current}} → {{.Latest}}.
   <a href="#manual" style="color:inherit;text-decoration:underline">{{t "update.banner_jump_to_steps"}}</a>
+</div>
+{{end}}
+
+{{/* 2026-08-17 (B124): when this binary is a dev build
+     (SKYGATE_DEV_BUILD=true), show a clear "dev build"
+     banner instead of any "update available" hint. The
+     banner surfaces the current build + last commit so
+     the operator can confirm what they're running. The
+     "Check now" button below still works (you can compare
+     against any GitHub release for reference) but the
+     one-click auto-apply is hidden. */}}
+{{if .DevBuild}}
+<div class="alert alert-warning" style="margin-bottom:16px">
+  <i class="fa-solid fa-vial"></i>
+  <strong>{{t "update.banner_dev_build"}}</strong>
+  {{.BuildVersion}}.
+  {{t "update.banner_dev_build_hint"}}
 </div>
 {{end}}
 
@@ -134,11 +151,12 @@
           <i class="fa-solid fa-arrows-rotate"></i> {{t "update.check_now"}}
         </button>
       </form>
-      {{if and .IsNewer .AutoUpdateEnabled}}
+      {{if and .IsNewer .AutoUpdateEnabled (not .DevBuild)}}
       {{/* 2026-07-30: v0.32.3 — Apply button is gated by
            SKYGATE_AUTO_UPDATE_ENABLED. When the flag is
            false (default), the operator uses the Push
-           button below to manually trigger the orchestrator. */}}
+           button below to manually trigger the orchestrator.
+           2026-08-17 (B124): also hidden when DevBuild=true. */}}
       <form method="post" action="/admin/update/apply" style="display:inline" onsubmit="return confirm('{{t "update.apply_confirm"}}')">
         <input type="hidden" name="target" value="{{.Latest}}">
         <button type="submit" class="btn btn-primary">

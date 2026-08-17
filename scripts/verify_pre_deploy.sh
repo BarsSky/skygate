@@ -3235,3 +3235,5 @@ run_check "B122" "restore.sh PG path: do_pg_restore (postgres:18-alpine + psql -
   'test -f scripts/check_b122.sh && bash scripts/check_b122.sh'
 run_check "B123" "Exit Rules duplicate alert UX: target + existing_id + blocking_ip + parent_domain + form_* in redirect, jump-to-rule anchor, 3 new i18n keys (B123, v1.3.19.2 follow-up / Goal 39)" \
   'test -f scripts/check_b123.sh && bash scripts/check_b123.sh'
+run_check "B124" "Dev version element: SKYGATE_DEV_BUILD=true → dev banner + no 'update available' + no auto-apply, plus compareSemver fix for git-describe '-N-g<hex>' suffix (B124, v1.3.19.2 follow-up)" \
+  'test -f scripts/check_b124.sh && bash scripts/check_b124.sh'

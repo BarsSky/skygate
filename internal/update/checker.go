@@ -250,15 +250,26 @@ type ghRelease struct {
 }
 
 // compareSemver returns -1, 0, +1 if a < b, a == b, a > b.
-// Handles the skygate build label suffix (e.g. "0.28.6+abc1234"
-// vs "0.28.6") by stripping everything after "+".
+// Handles the skygate build label suffixes:
+//   - "+abc1234"    — explicit commit hash appended by ldflags
+//     (e.g. "0.28.6+abc1234" vs "0.28.6") — stripped before compare.
+//   - "-N-g<hash>"  — git-describe --tags suffix (e.g.
+//     "1.3.11-27-g03a1d97" = "1.3.11 + 27 commits ahead").
+//     This means the build is N commits past the last tag. We
+//     treat the version as the BASE (the part before "-N-g..."),
+//     so "1.3.11-27-g03a1d97" compares equal to "1.3.11" — the
+//     build is the v1.3.11 line, not a different version.
+//     Without this strip, parseUint on "11-27-g03a1d97" fails
+//     and the fallback lex compare puts "9" > "11-..." (because
+//     '9' > '1'), incorrectly reporting a v1.3.9 release as
+//     newer than a v1.3.11+27 local build (the live B124 bug).
 //
 // Not a full semver impl — doesn't handle 4-part versions
 // (1.2.3.4) or pre-release ordering (1.0.0-rc.1 < 1.0.0).
 // Sufficient for skygate's x.y.z tag scheme.
 func compareSemver(a, b string) int {
-	a = strings.SplitN(a, "+", 2)[0]
-	b = strings.SplitN(b, "+", 2)[0]
+	a = stripBuildLabelSuffix(a)
+	b = stripBuildLabelSuffix(b)
 	aParts := strings.SplitN(strings.TrimPrefix(a, "v"), ".", 3)
 	bParts := strings.SplitN(strings.TrimPrefix(b, "v"), ".", 3)
 	// Pad to 3 parts
@@ -272,7 +283,9 @@ func compareSemver(a, b string) int {
 		an, aerr := parseUint(aParts[i])
 		bn, berr := parseUint(bParts[i])
 		if aerr != nil || berr != nil {
-			// Fall back to lexicographic
+			// Both failed → lex compare. This is the original
+			// fallback; the stripBuildLabelSuffix above handles
+			// the git-describe case before we get here.
 			if aParts[i] < bParts[i] {
 				return -1
 			}
@@ -289,6 +302,83 @@ func compareSemver(a, b string) int {
 		}
 	}
 	return 0
+}
+
+// stripBuildLabelSuffix returns the version with both
+// git-describe ("-N-g<hex>") and explicit-commit ("+<hex>")
+// suffixes removed. Examples:
+//   "1.3.11-27-g03a1d97"   → "1.3.11"
+//   "1.3.11-27-g03a1d97+abc1234" → "1.3.11"
+//   "0.28.6+abc1234"       → "0.28.6"
+//   "1.3.11"               → "1.3.11"  (unchanged)
+func stripBuildLabelSuffix(v string) string {
+	// Strip the explicit-commit "+<hex>" suffix first (it's
+	// always at the very end if present).
+	if i := strings.Index(v, "+"); i >= 0 {
+		v = v[:i]
+	}
+	// Strip the git-describe "-N-g<hex>" suffix. Pattern:
+	//   "-" then a non-empty run of digits (the commit count
+	//   ahead of the last tag) then "-g" then a hex hash.
+	//   Examples: "-27-g03a1d97", "-1-gabc1234", "-0-gdeadbeef"
+	// We deliberately do NOT strip plain "-rc.1" / "-beta"
+	// pre-release markers — those are real semver suffixes
+	// that the channel check (hasPrereleaseSuffix) handles.
+	if i := gitDescribeSuffixStart(v); i >= 0 {
+		v = v[:i]
+	}
+	return v
+}
+
+// gitDescribeSuffixStart returns the index of the "-N-g<hex>"
+// suffix start in v, or -1 if no such suffix is present.
+// Detected pattern: at least one "-", followed by digits, then
+// "-g", then 7+ hex chars. The check is anchored at the LAST
+// "-g" in the string so that v1.2.3-rc.1-g0123456 would still
+// match (rc.1 is prerelease, g0123456 is the git-describe hash).
+func gitDescribeSuffixStart(v string) int {
+	// Find the LAST "-g" that has a hex hash after it.
+	// Scan right-to-left to find candidates.
+	idx := strings.LastIndex(v, "-g")
+	for idx > 0 {
+		hash := v[idx+2:]
+		if len(hash) >= 7 && isAllHex(hash) {
+			// Found the hash. Now walk back to find the
+			// digits between the previous "-" and here.
+			// The pattern is "<base>-<count>-g<hash>".
+			prefix := v[:idx] // everything before "-g<hash>"
+			// The "count" is between the last "-" in prefix
+			// and the end of prefix.
+			dash := strings.LastIndex(prefix, "-")
+			if dash < 0 {
+				return -1
+			}
+			count := prefix[dash+1:]
+			if count == "" || !isAllDigits(count) {
+				return -1
+			}
+			// Valid git-describe suffix. Return the index
+			// of the leading "-".
+			return dash
+		}
+		// Not a hex hash — keep searching leftward.
+		next := strings.LastIndex(v[:idx], "-g")
+		if next < 0 {
+			return -1
+		}
+		idx = next
+	}
+	return -1
+}
+
+func isAllHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // hasPrereleaseSuffix returns true if the version string has

@@ -17,7 +17,41 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.19.2 follow-up — **B123 (Goal 39) Exit Rules
+* **Current**: v1.3.19.2 follow-up — **B123 + B124 (Goal 39) Exit Rules
+  duplicate alert UX + dev version element**. The /my/exit-rules
+  "правило для X уже существует" alert now carries the blocking IP,
+  the conflicting rule's ID (for a jump-to link), the parent_domain
+  (in the shared-IP case), and re-fills the form so the user can
+  tweak and retry. Plus: `SKYGATE_DEV_BUILD=true` env var marks
+  the binary as a dev/edge build — the /admin/update page shows
+  a "dev build" banner instead of the "update available" alert,
+  the one-click auto-apply is hidden, and a fixed `compareSemver`
+  no longer mis-compares git-describe suffixes like
+  `v1.3.11-27-g03a1d97` against older GitHub releases
+  (v1.3.9 used to compare as newer because the lex fallback
+  put "9" > "11-..."). 3 layers (B123): (1) `form_my.go` extracts
+  a pure `buildDuplicateRedirectURL` helper that the POST
+  handler calls; the redirect URL has 9 params (target +
+  existing_id + blocking_ip + parent_domain + 5 form_*). (2)
+  `exit_rules.html` adds `id="duplicate-alert"` to the alert,
+  renders the 3 new fields, and has `id="rule-{{.ID}}"` on each
+  rule row so the "→ к правилу #N" link scrolls to it. (3) 3
+  new i18n keys (`exit_rules.duplicate_blocking`,
+  `exit_rules.duplicate_parent`, `exit_rules.duplicate_view`)
+  in both RU + EN (B4 parity). 5 new unit tests in
+  `form_my_b123_test.go` pin the redirect URL contract; 31
+  contracts in `scripts/check_b123.sh`. Plus B124 (4 layers):
+  (1) `internal/update/checker.go`: `stripBuildLabelSuffix`
+  helper strips `-N-g<hex>` before compare; (2)
+  `internal/config/config.go`: `DevBuild` field reads
+  `SKYGATE_DEV_BUILD=true`; (3) `Service.DevBuild` plumbed to
+  template; (4) `update.html` renders dev banner and hides
+  auto-apply when `DevBuild=true`. 24 contracts in
+  `scripts/check_b124.sh`. Back-compat: the old
+  `?existing=` URL still works (GET handler falls back to
+  `target` when `?existing=` is present). `make verify-pre`
+  **118 PASS / 0 FAIL / 1 SKIP** (B8 VM-only). 28/28
+  packages green. What's added:
   duplicate alert UX**. The /my/exit-rules "правило для X
   уже существует" alert now carries the blocking IP, the
   conflicting rule's ID (for a jump-to link), the

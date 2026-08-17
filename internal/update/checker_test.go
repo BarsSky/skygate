@@ -29,12 +29,56 @@ func TestCompareSemver(t *testing.T) {
 		{"0.28.6", "0.29", -1},
 		// Major bumps
 		{"1.0.0", "0.99.99", 1},
+		// B124: git-describe "-N-g<hex>" suffix is stripped.
+		// Before B124, these mis-compares gave WRONG results
+		// (e.g. "1.3.9" > "1.3.11-27-g03a1d97" because of the
+		// lex fallback on the "11-27-g..." part). After B124,
+		// "1.3.11-27-g03a1d97" compares equal to "1.3.11" — the
+		// build is on the v1.3.11 line, just ahead of the tag.
+		{"1.3.11-27-g03a1d97", "1.3.11", 0},
+		{"1.3.11-27-g03a1d97", "1.3.9", 1},  // local ahead
+		{"1.3.9", "1.3.11-27-g03a1d97", -1}, // GitHub old, local new
+		{"1.3.11-1-gabc1234", "1.3.11", 0},
+		{"1.3.11-0-gdeadbeef", "1.3.12", -1},
+		// Build label with both git-describe and explicit commit
+		{"1.3.11-27-g03a1d97+extra", "1.3.11", 0},
+		// (Pre-release suffix handling like "0.29.0-rc.1" is a
+		// separate concern — the channel check filters those
+		// out before compareSemver is called. compareSemver
+		// itself doesn't claim to handle pre-release ordering.)
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("%s_vs_%s", c.a, c.b), func(t *testing.T) {
 			got := compareSemver(c.a, c.b)
 			if got != c.want {
 				t.Errorf("compareSemver(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+			}
+		})
+	}
+}
+
+func TestStripBuildLabelSuffix(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"1.3.11-27-g03a1d97", "1.3.11"},
+		{"1.3.11-1-gabc1234", "1.3.11"},
+		{"1.3.11-0-gdeadbeef", "1.3.11"},
+		{"1.3.11-27-g03a1d97+extra", "1.3.11"},
+		{"0.28.6+abc1234", "0.28.6"},
+		{"1.3.11", "1.3.11"},                              // unchanged
+		{"v1.3.11-27-g03a1d97", "v1.3.11"},                // preserves "v"
+		// Plain pre-release NOT stripped
+		{"0.29.0-rc.1", "0.29.0-rc.1"},
+		{"0.29.0-beta", "0.29.0-beta"},
+		// Numeric "-N" is not a git-describe (no -g<hex> part)
+		{"0.29.0-1", "0.29.0-1"},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got := stripBuildLabelSuffix(c.in)
+			if got != c.want {
+				t.Errorf("stripBuildLabelSuffix(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
 	}

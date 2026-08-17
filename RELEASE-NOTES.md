@@ -1,5 +1,44 @@
 # Skygate release notes
 
+## v1.3.19.2 follow-up — Exit Rules duplicate alert UX + dev version element (B123 + B124 / Goal 39)
+
+**Date:** 2026-08-17
+**Scope:** Two follow-up hotfixes (B123, B124).
+
+**B124 (dev version element + semver suffix fix):**
+
+1. **`SKYGATE_DEV_BUILD=true`** env var marks the running
+   binary as a dev/edge build. When set, `/admin/update`
+   shows a clear "dev build" banner instead of the "update
+   available" alert and hides the one-click auto-apply
+   button. The page still surfaces the GitHub version for
+   reference — the dev banner just doesn't *suggest*
+   updating. Default false (release builds).
+
+2. **`compareSemver` fix for git-describe suffix**: the
+   build label `v1.3.11-27-g03a1d97` (27 commits past
+   the v1.3.11 tag) was being mis-compared against
+   GitHub's `v1.3.9` release — the function returned
+   +1 (treating v1.3.9 as newer) because the lex
+   fallback put "9" > "11-27-..." (the '9' digit is
+   lexicographically greater than '1'). After the fix,
+   the `-N-g<hex>` suffix is stripped before numeric
+   compare, so "v1.3.11+27 commits" correctly reports
+   as AHEAD of v1.3.9.
+
+3. **Files** (8 modified, 2 new):
+   - `internal/config/config.go` (+`DevBuild` field + `SKYGATE_DEV_BUILD` env)
+   - `internal/config/dev_build_test.go` (NEW, 3 test functions, 12 sub-cases)
+   - `internal/feature/admin/service.go` (+`Service.DevBuild` field)
+   - `internal/feature/admin/update.go` (+template passthrough)
+   - `internal/handlers/templates/admin/update.html` (dev banner + hide auto-apply)
+   - `internal/i18n/catalog_update.go` (+2 keys, RU+EN parity)
+   - `internal/update/checker.go` (+`stripBuildLabelSuffix` + `gitDescribeSuffixStart`)
+   - `internal/update/checker_test.go` (+5 B124 cases)
+   - `cmd/skygate/main.go` (wire `DevBuild: app.Config().DevBuild`)
+   - `scripts/check_b124.sh` (NEW, 24 contracts A-J)
+   - `scripts/verify_pre_deploy.sh` (registered B124)
+
 ## v1.3.19.2 follow-up — Exit Rules duplicate alert UX (B123 / Goal 39)
 
 **Date:** 2026-08-17

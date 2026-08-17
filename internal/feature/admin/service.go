@@ -186,6 +186,14 @@ type Service struct {
 	// once at boot from app.BuildVersion.
 	BuildVersion string
 
+	// 2026-08-17 (B124) — DevBuild is true when this binary
+	// is a dev/edge build (SKYGATE_DEV_BUILD=true at boot).
+	// The /admin/update page shows a "dev build" banner
+	// instead of the "update available" alert, and hides
+	// the one-click auto-apply button. Wired from
+	// cfg.Config.DevBuild.
+	DevBuild bool
+
 	// v0.33.1.9 — Tailscale web-UI management (/admin/tailscale).
 	// All three fields are wired from cmd/skygate/main.go at
 	// boot, defaulting to the same values entrypoint.sh
