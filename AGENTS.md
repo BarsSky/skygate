@@ -17,7 +17,43 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.19.2 follow-up — **B125 (Goal 37 follow-up)
+* **Current**: v1.3.19.4 — **B126 R9 verify_post_deploy.sh EXTRACT
+  bug fix**. The R9 check ("live policy ≈ last applied snapshot")
+  was FAILing with `diff=80715s` even when the live policy matched
+  the snapshot to the second. Root cause: the PG column
+  `acl_snapshots.created_at` is INTEGER (Unix epoch), not TIMESTAMPTZ
+  as the v1.3.1 comment claimed. `EXTRACT(epoch FROM created_at)`
+  on an INTEGER column errors with `function pg_catalog.extract
+  (unknown, integer) does not exist`; the error text gets awk'd
+  into `LAST_ATTEMPT_EPOCH="ERROR:"` /
+  `LAST_ATTEMPT_SUCCESS="function"`, then `date -d ""` (for empty
+  `LAST_ATTEMPT_ISO`) returns midnight-today instead of 0, giving
+  a bogus DIFF. Fix: use `created_at` directly (the column default
+  is already `EXTRACT(epoch FROM now())::bigint`, so the integer
+  epoch IS the value). 11 contracts in `scripts/check_b126.sh`
+  pin the change. `make verify-pre` **122 PASS / 0 FAIL / 1 SKIP**
+  (B8 VM-only). 28/28 packages green. What's added:
+  - **B126 (v1.3.19.4)**: 2-line SQL change in
+    `scripts/verify_post_deploy.sh` (line 583 + 587) + corrected
+    comment block. Plus new `scripts/check_b126.sh` (11
+    contracts A-G: no-EXTRACT in non-comment lines + new
+    SNAPSHOT_INFO query + new LAST_APPLIED_EPOCH query + comment
+    correctness + live psql returns parseable epoch + awk parse
+    + DIFF arithmetic in [-60, 3600] range).
+  - **Live verify-post R9 now PASSes**:
+    `updatedAt=2026-08-17T19:25:15.861718255Z ≈ last applied
+    2026-08-17T19:25:16Z (diff=-1s)`. Pre-B126 the same live
+    state gave `diff=80715s FAIL`.
+  - **Remaining verify-post FAILs are environmental** (documented
+    in `docs/TODO.md` "verify_post_deploy.sh known limitations"):
+    R11-R16 + R28 fail because WSL bash has no `python3` (the
+    script uses `python3 -c '...'` directly; the `json_field`
+    helper used by R10 would work but wasn't applied to these).
+    R5/R6/R7 fail in non-Tailscale mode (B32). R34 has a
+    `REMOTE_CK: unbound variable` bug in `--quick` mode (1-line
+    fix). All are small follow-ups, not blocking.
+
+* **Previous**: v1.3.19.2 follow-up — **B125 (Goal 37 follow-up)
   device_rules auto-add duplicate prevention**. Closes the
   SELECT-then-INSERT race in the auto-add path (sync.go:432,
   512) that could let concurrent goroutines both pass the

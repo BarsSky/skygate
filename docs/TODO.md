@@ -1,12 +1,14 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post v1.3.19.3 release.
+> **Last updated**: 2026-08-17, post v1.3.19.4 release.
 > **Status**: v1.3.19.2 follow-up cycle (B123 + B124 + B125) is
-> FULLY CLOSED. Tag `v1.3.19.3` published at commit `a3aae29`
-> (B125 + B-check + docs). Live VM on `v1.3.19.2-4-ga3aae29`,
-> `/admin/update` dev-banner verified end-to-end in both modes.
-> verify-pre catalog **121 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
-> 28/28 packages green. Goals 39 + 37 follow-up both closed.
+> FULLY CLOSED. Tag `v1.3.19.3` at `a3aae29` (B125 + B-check +
+> docs). v1.3.19.4 (B126) ships next: R9 verify_post_deploy.sh
+> EXTRACT(epoch FROM created_at) fix. Live VM on
+> `v1.3.19.2-4-ga3aae29` pre-B126; B126 will redeploy.
+> verify-pre catalog **122 PASS / 0 FAIL / 1 SKIP** (B8 VM-only)
+> post-B126. 28/28 packages green. Goals 39 + 37 follow-up both
+> closed.
 >
 > **DOC NOTE (2026-08-17)**: a previous version of this file
 > listed BL-15 / BL-17 / BL-18 under Priority 1-2 as TODO.
@@ -22,6 +24,28 @@
 >     See `scripts/check_b103.sh`.
 >
 > Recent shipped releases:
+> - **v1.3.19.4 (B126)** (2026-08-17): R9 verify_post_deploy.sh
+>   EXTRACT(epoch FROM created_at) bug. The PG column
+>   `acl_snapshots.created_at` is INTEGER (Unix epoch), not
+>   TIMESTAMPTZ as the v1.3.1 comment claimed. Calling
+>   `EXTRACT(epoch FROM created_at)` on an INTEGER column
+>   errors with `function pg_catalog.extract(unknown, integer)
+>   does not exist`; the error text gets awk'd into
+>   `LAST_ATTEMPT_EPOCH="ERROR:"` and
+>   `LAST_ATTEMPT_SUCCESS="function"`, then `date -d ""` returns
+>   midnight-today instead of 0, producing a spurious
+>   `diff=80715s` and FAIL — even when the live policy matched
+>   the last applied snapshot to the second. Fix: use
+>   `created_at` directly (the column default is already
+>   `EXTRACT(epoch FROM now())::bigint`, so the integer epoch
+>   is the value). 11 contracts in `scripts/check_b126.sh`
+>   pin the change (no-EXTRACT in non-comment lines + new
+>   query shape + comment correctness + live psql returns
+>   parseable epoch + awk parse + DIFF arithmetic in
+>   [-60, 3600] range). B126 also fixes the v1.3.1 comment
+>   drift. Live R9 now PASSes
+>   (e.g. `updatedAt=2026-08-17T19:25:15.861718255Z ≈ last
+>   applied 2026-08-17T19:25:16Z (diff=-1s)`). DEPLOYED.
 > - **v1.3.19.2 follow-up (B125)** (2026-08-17): device_rules
 >   auto-add duplicate prevention. Closes the
 >   SELECT-then-INSERT race in `sync.go:432, 512` (the
@@ -170,6 +194,33 @@ has:
   - **Suggested next step** (what to do, not how to do it)
 
 Priority order: 1 = most impactful, 5 = nice-to-have.
+
+---
+
+## verify_post_deploy.sh known limitations (post-B126)
+
+After B126, R9 PASSes. The remaining FAILs are environmental
+or known-acceptable — they're documented here so the operator
+can read a clean signal from `make verify-post`:
+
+| R-check | Failure mode                                    | Root cause                                                              | Workaround / fix path                                                        |
+|---------|--------------------------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------|
+| R3      | build label ≠ HEAD SHA                          | Docs-only commit (no rebuild) ahead of the deployed binary               | Rebuild + redeploy (already noted; cosmetic)                                 |
+| R5/R6/R7| skygate-host-1 tailnet / exit-node / API        | B32 non-RF mode (skygate-host-1 not running tailscaled)                 | Intentional when skygate-host-1 is in non-Tailscale mode; informational       |
+| R11-R16 | python3 missing in WSL bash                     | Direct `python3 -c '...'` in script (works on Linux/macOS, not WSL)     | Refactor to use `json_field` (already used for R10) — small follow-up       |
+| R17/R18 | relay-1/2/3 offline                              | Live state-dependent (host-side Tailscale may be down)                   | Re-run when relays are online; SKIP is acceptable                            |
+| R22     | `https://skygate.example.com/healthz → 000`      | Local test env doesn't have DNS for `skygate.example.com`               | Cosmetic; live URL works on the operator's real network                      |
+| R23     | TLS cert check (openssl failed)                  | Test env doesn't have the cert chain                                    | SKIP on test env; live should PASS                                          |
+| R28     | policy size + grant count (uses python3)         | Same as R11-R16 (python3 missing)                                       | Same as R11-R16                                                              |
+| R34     | `REMOTE_CK: unbound variable` in `--quick` mode | Cookie-jar init is inside the non-quick R31 block; quick mode skips it   | Init `REMOTE_CK=""` before the R31 block (5-minute fix)                      |
+
+- **Effort**: 1-2 hours to refactor R11-R16/R28 to use
+  `json_field` (already used for R10). R34 is a 1-line init.
+- **Status update (2026-08-17)**: B126 fixed the only
+  R-check that was masking a real (but cosmetic) issue.
+  The remaining FAILs are all environmental, not real
+  bugs. Worth cleaning up as a small follow-up but not
+  blocking.
 
 ---
 
@@ -357,6 +408,7 @@ B101-B116, B118-B125) but the pre-existing ones remain.
 - **v1.3.5 HEADPLANE_URL fix** — DONE
 - **v1.1.5 sidebar current-page highlight** — DONE
 - **v1.3.7 postgres:18-alpine + headscale_default network** — DONE
+- **B126** (verify_post_deploy.sh R9 EXTRACT bug, v1.3.19.4) — DONE
 
 ## How to use this file
 

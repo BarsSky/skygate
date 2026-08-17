@@ -3239,3 +3239,5 @@ run_check "B124" "Dev version element: SKYGATE_DEV_BUILD=true → dev banner + n
   'test -f scripts/check_b124.sh && bash scripts/check_b124.sh'
 run_check "B125" "device_rules auto-add duplicate prevention: UNIQUE INDEX device_rules_natural_key_uniq + ON CONFLICT (key) DO UPDATE SET id = id RETURNING id in qInsertDeviceRule + 2 ON CONFLICT DO NOTHING in sync.go (B125, v1.3.19.2 follow-up / Goal 37 follow-up)" \
   'test -f scripts/check_b125.sh && bash scripts/check_b125.sh'
+run_check "B126" "verify_post_deploy.sh R9: replace EXTRACT(epoch FROM created_at) (which fails on INTEGER column) with direct created_at read (B126, v1.3.19.4)" \
+  'test -f scripts/check_b126.sh && bash scripts/check_b126.sh'

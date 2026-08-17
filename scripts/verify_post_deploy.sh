@@ -568,15 +568,23 @@ UPDATED_AT=$(echo "$LIVE_POLICY" | grep -oE '"updatedAt":"[^"]+"' | cut -d'"' -f
 
 # Read both: last attempt (any outcome) and last successful.
 # The output is two columns: epoch, applied_success (0/1).
-# 2026-08-12: v1.3.1 — created_at is now a PG TIMESTAMPTZ (was
-# INTEGER unix epoch in SQLite). We use EXTRACT(epoch from ...)
-# to keep the downstream R9 arithmetic (date -d "@$EPOCH")
-# working unchanged.
-SNAPSHOT_INFO=$(psql_vm "SELECT EXTRACT(epoch FROM created_at)::bigint || ' ' || COALESCE(applied_success::text, '0') FROM acl_snapshots ORDER BY id DESC LIMIT 1" 2>/dev/null)
+#
+# `created_at` is stored as Unix epoch INTEGER (PG column type
+# stays INTEGER even after the v1.3.1 SQLite→PG migration; the
+# default value is just `EXTRACT(epoch FROM now())::bigint`, not
+# the column type). So we read it directly as an int — calling
+# `EXTRACT(epoch FROM created_at)` on an INTEGER column errors
+# out with `function pg_catalog.extract(unknown, integer) does
+# not exist`, which then gets awk'd as "ERROR:" / "function"
+# and produces a bogus diff downstream (`date -d ""` returns
+# ~midnight-today, not 0). B126 (v1.3.19.4): use the column
+# directly. The downstream R9 arithmetic (`date -d "@$EPOCH"`)
+# is unchanged.
+SNAPSHOT_INFO=$(psql_vm "SELECT created_at || ' ' || COALESCE(applied_success::text, '0') FROM acl_snapshots ORDER BY id DESC LIMIT 1" 2>/dev/null)
 LAST_ATTEMPT_EPOCH=$(echo "$SNAPSHOT_INFO" | awk '{print $1}')
 LAST_ATTEMPT_SUCCESS=$(echo "$SNAPSHOT_INFO" | awk '{print $2}')
 
-LAST_APPLIED_EPOCH=$(psql_vm "SELECT EXTRACT(epoch FROM created_at)::bigint FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1" 2>/dev/null)
+LAST_APPLIED_EPOCH=$(psql_vm "SELECT created_at FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1" 2>/dev/null)
 
 if [ -n "$LAST_ATTEMPT_EPOCH" ] && [ -n "$UPDATED_AT" ]; then
   LAST_ATTEMPT_ISO=$(date -u -d "@$LAST_ATTEMPT_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
