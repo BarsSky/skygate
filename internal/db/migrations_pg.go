@@ -1090,6 +1090,42 @@ func migrateV054PG(d *sql.DB) error {
 	return nil
 }
 
+// migrateV056PG — v1.3.19.2 follow-up (B125) — UNIQUE INDEX on
+// device_rules natural key. Closes the SELECT-then-INSERT race
+// in sync.go:432, 512 (auto-add of /32 rules from DNS resolution)
+// that previously let duplicate rows accumulate. The
+// ON CONFLICT DO NOTHING in internal/feature/exit_rules/sync.go
+// relies on this index — without it, the conflict target has no
+// unique constraint to match against and PG returns a syntax
+// error.
+//
+// Natural key = (user_id, device_id, exit_node_id, target_type,
+// target_value, parent_domain). All 6 columns are NOT NULL in
+// the current schema (parent_domain is TEXT NOT NULL DEFAULT ''),
+// so a plain UNIQUE INDEX covers every row — no need for
+// COALESCE() or partial indexes.
+//
+// The index is named device_rules_natural_key_uniq so future
+// migrations can drop+recreate it for cleanup. If a DB has
+// existing duplicates, the CREATE UNIQUE INDEX will fail with
+// a clear error; the operator should run the cleanup first
+// (see scripts/check_b125.sh for the audit query).
+//
+// Live state (2026-08-17, post-B123 deploy): 0 duplicates. The
+// index will be created cleanly on the first run.
+func migrateV056PG(d *sql.DB) error {
+	stmts := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS device_rules_natural_key_uniq
+			ON device_rules(user_id, device_id, exit_node_id, target_type, target_value, parent_domain)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.56 device_rules UNIQUE INDEX: %w", err)
+		}
+	}
+	return nil
+}
+
 // migrateV055PG — v1.3.17 — DERP relays per-row table.
 //
 // Replaces the v0.11.0 "comma-separated URLs in global_settings"

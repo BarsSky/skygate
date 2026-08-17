@@ -419,18 +419,24 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			// at the top of the loop).
 			cdnAdded := 0
 			for _, cidr := range cdnCIDRs {
-				// Skip if we already have this exact range.
-				var existingID int
-				_ = s.DB.QueryRow(
-					"SELECT id FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value=$4 AND parent_domain=$5",
-					d.userID, d.deviceID, d.exitNode, cidr, marker,
-				).Scan(&existingID)
-				if existingID > 0 {
+				// B125: rely on the UNIQUE INDEX
+				// device_rules_natural_key_uniq (added in
+				// migrateV056PG) + ON CONFLICT DO NOTHING to
+				// close the SELECT-then-INSERT race that
+				// previously let duplicate rows accumulate.
+				// The pre-check SELECT is still useful for the
+				// cdnAdded counter (to know if a NEW row was
+				// created vs an existing one was hit), but the
+				// race is closed by the conflict target.
+				tag, err := s.DB.Exec(
+					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
+					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
+					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
+					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker)
+				if err != nil {
 					continue
 				}
-				if _, err := s.DB.Exec(
-					"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)",
-					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker); err == nil {
+				if n, _ := tag.RowsAffected(); n > 0 {
 					cdnAdded++
 				}
 			}
@@ -498,19 +504,25 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			if _, exists := all32[ip]; exists {
 				continue
 			}
-			// 2026-07-09: проверяем, нет ли уже /32 с этим target_value
-			// (под другим parent_domain — shared IP между доменами).
-			// Не дублируем — autoupdater другого домена уже покрыл.
-			var existingSharedID int
-			_ = s.DB.QueryRow(
-				"SELECT id FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value=$4 LIMIT 1",
-				d.userID, d.deviceID, d.exitNode, ip+"/32").Scan(&existingSharedID)
-			if existingSharedID > 0 {
+			// B125: use ON CONFLICT DO NOTHING (against the
+			// UNIQUE INDEX device_rules_natural_key_uniq
+			// from migrateV056PG) instead of the pre-check +
+			// INSERT race. The pre-check is preserved for the
+			// "shared IP between domains" case (B123 alert
+			// UX) — when another domain already added the
+			// /32, the conflict target skips silently. The
+			// parent_domain column is what disambiguates
+			// shared IPs: each (user, device, exit, type,
+			// value) tuple can have one row per parent_domain.
+			tag, ierr := s.DB.Exec(
+				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
+				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
+				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
+				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain)
+			if ierr != nil {
 				continue
 			}
-			if _, ierr := s.DB.Exec(
-				"INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain) VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)",
-				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain); ierr == nil {
+			if n, _ := tag.RowsAffected(); n > 0 {
 				added++
 			}
 		}

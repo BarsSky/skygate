@@ -359,7 +359,17 @@ const qSelectSubnet32NoParentDomain = `SELECT id, target_value FROM device_rules
 // qInsertDeviceRule is the canonical INSERT for a new rule. Action and
 // parent_domain are caller-supplied (caller picks 'accept'/'deny' and
 // whether to record a parent_domain link).
-const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
+//
+// 2026-08-17 (B125): ON CONFLICT clause closes the
+// SELECT-then-INSERT race that previously let duplicate rows
+// accumulate (Goal 37 found 114 redundant rules). The conflict
+// target matches the UNIQUE INDEX device_rules_natural_key_uniq
+// from migrateV056PG. DO UPDATE SET id = device_rules.id is a
+// no-op that returns the EXISTING row's id when the conflict
+// fires (PG's DO NOTHING can't RETURNING the old id) — so
+// AppendDeviceRule is now a true "insert or get-existing" with
+// no race window, returning the row's id in both cases.
+const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO UPDATE SET id = device_rules.id RETURNING id`
 
 // qSelectUserRulesForView is used by /my/exit-rules: every enabled rule
 // for a user, ordered for stable display.
