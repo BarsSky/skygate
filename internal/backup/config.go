@@ -197,6 +197,34 @@ type Config struct {
 	// pause in-app backups while keeping system cron.
 	InAppEnabled bool
 
+	// 2026-08-18 (B142, v1.4.1): in-app backup-verify
+	// scheduler fields. The pre-B142 verify pipeline
+	// (scripts/verify_backup.sh) ran ONLY via system
+	// cron (`0 4 * * 0` weekly). B142 adds a parallel
+	// in-app goroutine that runs the SAME script on a
+	// configurable schedule and sends Telegram alerts on
+	// failure. The fields mirror the backup-creation pair
+	// (Enabled + Schedule + InAppEnabled) so the UI can
+	// re-use the same control pattern.
+	//
+	// Default VerifySchedule is "0 4 * * 0" (Sunday 04:00)
+	// — matches the pre-B142 system-cron default so the
+	// in-app scheduler is a drop-in replacement. Operators
+	// can change to daily (e.g. "0 4 * * *") or twice-weekly
+	// ("0 4 * * 0,3") without a restart; the schedule is
+	// re-read from the DB on every tick.
+
+	// InAppVerifyEnabled controls the in-app verify
+	// scheduler. Independent of InAppEnabled (so an
+	// operator can disable verify while keeping backup
+	// creation, or vice versa).
+	InAppVerifyEnabled bool
+
+	// VerifySchedule is a cron expression for the in-app
+	// verify scheduler. Same format as Schedule (parsed
+	// by ParseSchedule).
+	VerifySchedule string
+
 	// --- status fields (read-only from the admin UI, written
 	// by RunBackup). ---
 
@@ -204,6 +232,22 @@ type Config struct {
 	LastStatus  string // "ok" / "fail" / "running" / ""
 	LastError   string // last failure message (truncated to 1KB)
 	LastArchive string // basename of the most recent archive
+
+	// 2026-08-18 (B142): verify status fields. Read-only
+	// from the admin UI; written by the in-app verify
+	// scheduler (and by the runBackupVerifyOK / runBackupVerifyFail
+	// CLI subcommands the system-cron verify_backup.sh
+	// calls). The /admin/backup page renders these next
+	// to the LastRun/LastStatus/LastArchive block so the
+	// operator sees backup health AND backup-verify health
+	// in one place. The values are persisted as separate
+	// global_settings keys (backup.last_verify_*) — see
+	// the runBackupVerifyOK / runBackupVerifyFail subcommands
+	// in cmd/skygate/main.go for the read/write side.
+	LastVerifyAt     int64  // unix seconds of last completed verify (0 = never)
+	LastVerifyStatus string // "ok" / "fail" / "" (empty = never run)
+	LastVerifyError  string // last verify failure message
+	LastVerifyArchive string // archive that was last verified
 }
 
 // storage keys (kept as constants so the schema name is in
@@ -236,6 +280,24 @@ const (
 	keyS3Prefix      = "backup.s3_prefix"
 	keyS3StagingDir  = "backup.s3_staging_dir"
 	keyS3UseSSL      = "backup.s3_use_ssl"
+	// 2026-08-18 (B142): in-app verify-scheduler storage keys.
+	// Same naming convention as the in-app backup-scheduler pair
+	// (backup.in_app_enabled + backup.schedule).
+	keyInAppVerifyEnabled = "backup.in_app_verify_enabled"
+	keyVerifySchedule     = "backup.verify_schedule"
+	// 2026-08-18 (B142): verify-status storage keys. Written
+	// by the in-app verify scheduler's runVerify() function
+	// (which calls the same skygate binary's backup-verify-ok
+	// / backup-verify-fail subcommands that scripts/verify_backup.sh
+	// uses for the system-cron path) and read by the /admin/backup
+	// page to render the "last verify" panel. The key names
+	// are different from the existing backup.last_* set so the
+	// Load() switch doesn't accidentally pick up the verify
+	// fields as backup-creation status.
+	keyLastVerifyAt      = "backup.last_verify_at"
+	keyLastVerifyStatus  = "backup.last_verify_status"
+	keyLastVerifyError   = "backup.last_verify_error"
+	keyLastVerifyArchive = "backup.last_verify_archive"
 )
 
 // Default values applied on first Load when no row exists. The
@@ -272,6 +334,24 @@ func Default() *Config {
 		S3Prefix:     "",
 		S3StagingDir: "/var/lib/skygate/backup-staging",
 		S3UseSSL:     true,
+		// 2026-08-18 (B142): default verify-scheduler
+		// config. Off by default so B142 doesn't fire on
+		// existing deployments until the operator opts in
+		// (the system-cron verify_backup.sh continues to
+		// run on the weekly schedule for those).
+		// VerifySchedule is "0 4 * * 0" — matches the
+		// pre-B142 system-cron default (Sunday 04:00,
+		// off-peak), so the in-app scheduler is a drop-in
+		// replacement for the operator who switches.
+		InAppVerifyEnabled: false,
+		VerifySchedule:     "0 4 * * 0",
+		// Status fields default to "never run" — same as
+		// the pre-B142 LastRun/LastStatus/LastArchive
+		// pattern.
+		LastVerifyAt:       0,
+		LastVerifyStatus:   "",
+		LastVerifyError:    "",
+		LastVerifyArchive:  "",
 	}
 }
 
@@ -356,6 +436,27 @@ func Load(d *sql.DB) (*Config, error) {
 			c.S3StagingDir = v
 		case keyS3UseSSL:
 			c.S3UseSSL = v == "1"
+		// 2026-08-18 (B142): in-app verify-scheduler
+		// fields. Same read pattern as the existing
+		// in-app-enabled key above.
+		case keyInAppVerifyEnabled:
+			c.InAppVerifyEnabled = v == "1"
+		case keyVerifySchedule:
+			c.VerifySchedule = v
+		// 2026-08-18 (B142): verify-status fields.
+		// Mirror the LastRun / LastStatus / LastError /
+		// LastArchive reads above. Empty string on any
+		// field → "never run" (no flash, no badge).
+		case keyLastVerifyAt:
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				c.LastVerifyAt = n
+			}
+		case keyLastVerifyStatus:
+			c.LastVerifyStatus = v
+		case keyLastVerifyError:
+			c.LastVerifyError = v
+		case keyLastVerifyArchive:
+			c.LastVerifyArchive = v
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -410,6 +511,14 @@ func Save(d *sql.DB, c *Config) error {
 		keyS3Prefix:     c.S3Prefix,
 		keyS3StagingDir: c.S3StagingDir,
 		keyS3UseSSL:     boolToOnOff(c.S3UseSSL),
+		// 2026-08-18 (B142): in-app verify-scheduler
+		// fields. NOT in this map — they're written by
+		// the in-app scheduler and the runBackupVerify*
+		// subcommands, not by the admin form. The Load
+		// side reads them; the Save side skips them so
+		// a form save doesn't accidentally clear them.
+		// 2026-08-18 (B142): verify-status fields are
+		// also NOT in this map — same reasoning.
 	}
 	tx, err := d.Begin()
 	if err != nil {

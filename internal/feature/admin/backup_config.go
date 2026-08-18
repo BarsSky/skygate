@@ -13,13 +13,16 @@
 package admin
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strconv"
 	"strings"
 
 	"skygate/internal/backup"
+	"skygate/internal/config"
 	"skygate/internal/i18n"
 )
 
@@ -112,6 +115,13 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 		Password:    r.FormValue("password"), // don't trim — leading/trailing space might be intentional
 		SSHKeyPath:  strings.TrimSpace(r.FormValue("ssh_key_path")),
 		Schedule:    strings.TrimSpace(r.FormValue("schedule")),
+		// 2026-08-18 (B142, v1.4.1): in-app
+		// backup-verify scheduler fields. Same
+		// form field naming as the backup-
+		// creation pair (schedule + in_app_*
+		// toggle) so the operator recognises
+		// the pattern.
+		VerifySchedule: strings.TrimSpace(r.FormValue("verify_schedule")),
 		// 2026-08-12 v1.3.8: S3 fields. The form
 		// sends these as plain inputs (not
 		// type=password for the secret in
@@ -133,6 +143,11 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 	// checkbox is checked. Missing = false.
 	cfg.Enabled = r.FormValue("enabled") == "1"
 	cfg.InAppEnabled = r.FormValue("in_app_enabled") == "1"
+	// 2026-08-18 (B142): in-app verify enable.
+	// Independent toggle from InAppEnabled so the
+	// operator can disable verify while keeping
+	// backup creation, or vice versa.
+	cfg.InAppVerifyEnabled = r.FormValue("in_app_verify_enabled") == "1"
 
 	// Keep count.
 	kcStr := strings.TrimSpace(r.FormValue("keep_count"))
@@ -168,7 +183,7 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 		backupConfigRedirect(w, r, "", "Save failed: "+err.Error())
 		return
 	}
-	s.Backend.Audit(c.UserID, c.Username, "backup.config.save", fmt.Sprintf("protocol=%s destination=%s enabled=%t in_app=%t s3_bucket=%s", cfg.Protocol, cfg.Destination, cfg.Enabled, cfg.InAppEnabled, cfg.S3Bucket))
+	s.Backend.Audit(c.UserID, c.Username, "backup.config.save", fmt.Sprintf("protocol=%s destination=%s enabled=%t in_app=%t in_app_verify=%t verify_schedule=%q s3_bucket=%s", cfg.Protocol, cfg.Destination, cfg.Enabled, cfg.InAppEnabled, cfg.InAppVerifyEnabled, cfg.VerifySchedule, cfg.S3Bucket))
 	backupConfigRedirect(w, r, "Saved", "")
 }
 
@@ -280,6 +295,84 @@ func (s *Service) PostAdminBackupRun(w http.ResponseWriter, r *http.Request) {
 	}
 	backupConfigRedirect(w, r, i18n.T(lang, "backup.run_started")+
 		fmt.Sprintf(" (%s, %d bytes)", res.Archive, res.Bytes), "")
+}
+
+// PostAdminBackupVerifyNow — 2026-08-18 (B142, v1.4.1).
+//
+// Triggers scripts/verify_backup.sh synchronously. The
+// operator is OK waiting 5-15s for a manual verify (vs
+// the scheduler's fire-and-forget tick). On non-zero
+// exit, the script has already written the failure
+// detail to global_settings (backup.last_verify_error)
+// via its own `skygate backup-verify-fail "$LATEST" "..."
+// call, so /admin/backup shows the detail when the page
+// reloads. The flash here is the human summary.
+//
+// We deliberately do NOT call the in-app verify
+// scheduler's runVerify() here — the scheduler is a
+// background tick, not a synchronous "verify now"
+// orchestrator. The script is the only thing that
+// knows how to do the verify (extract + replay +
+// assert), so we shell out to it directly.
+//
+// Admin-only. Wire-up is in cmd/skygate/main.go.
+func (s *Service) PostAdminBackupVerifyNow(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	// 2026-08-18 (B142): resolve the script path
+	// from cfg.RepoPath the same way the in-app
+	// scheduler does. The skygate binary lives in
+	// $cfg.RepoPath/skygate (per the deploy layout);
+	// the script in $cfg.RepoPath/scripts/.
+	cfg, err := config.Load()
+	if err != nil {
+		backupConfigRedirect(w, r, "", "Load config: "+err.Error())
+		return
+	}
+	scriptPath := "/home/skyadmin/skygate/scripts/verify_backup.sh"
+	if cfg.RepoPath != "" {
+		scriptPath = cfg.RepoPath + "/scripts/verify_backup.sh"
+	}
+	cmd := exec.CommandContext(r.Context(), "bash", scriptPath)
+	// The script reads $SKYGATE_DIR to find the
+	// skygate binary (it shells out to
+	// `skygate backup-verify-ok/fail` internally).
+	// Set the env so the script picks up the
+	// binary the operator deployed.
+	cmd.Env = append(cmd.Environ(), "SKYGATE_DIR="+cfg.RepoPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	if runErr != nil {
+		// The script's own `skygate backup-verify-fail`
+		// call has already populated
+		// backup.last_verify_error — the operator
+		// will see it on the page reload. The flash
+		// here is a short human summary so the
+		// operator doesn't have to scroll to find
+		// the error.
+		tail := tailBytes(stderr.Bytes(), 1500)
+		backupConfigRedirect(w, r, "", i18n.T(s.I18n.LangFromRequest(r), "backup.verify_now_failed")+": "+runErr.Error()+"\n"+tail)
+		s.Backend.Audit(c.UserID, c.Username, "backup.verify_now", fmt.Sprintf("status=fail err=%v stderr_tail=%q", runErr, tail))
+		return
+	}
+	backupConfigRedirect(w, r, i18n.T(s.I18n.LangFromRequest(r), "backup.verify_now_ok"), "")
+	s.Backend.Audit(c.UserID, c.Username, "backup.verify_now", "status=ok")
+}
+
+// tailBytes returns the last n bytes of b as a string,
+// safely handling empty input. Used to bound the flash
+// error message size (Telegram has a 4096-char limit;
+// the page already renders LastVerifyError separately).
+func tailBytes(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[len(b)-n:])
 }
 
 // PostAdminBackupToggle flips the in-app scheduler

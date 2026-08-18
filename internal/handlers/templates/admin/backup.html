@@ -211,6 +211,27 @@
         </label>
         <div class="form-hint">{{t "backup.in_app_scheduler_help"}}</div>
       </div>
+
+      {{/* 2026-08-18 (B142, v1.4.1): in-app backup-verify
+           scheduler. Mirrors the backup-creation pair above:
+           a toggle + a cron input. Default disabled so existing
+           deployments keep the system-cron verify_backup.sh on the
+           weekly 04:00 Sun schedule until the operator opts in. */}}
+      <div class="form-group">
+        <label>{{t "backup.verify_schedule"}}</label>
+        <input type="text" name="verify_schedule" class="form-control"
+               value="{{.Config.VerifySchedule}}"
+               placeholder="0 4 * * 0">
+        <div class="form-hint">{{t "backup.verify_schedule_help"}}</div>
+      </div>
+
+      <div class="form-group form-check" style="grid-column: 1 / -1">
+        <label>
+          <input type="checkbox" name="in_app_verify_enabled" value="1" {{if .Config.InAppVerifyEnabled}}checked{{end}}>
+          {{t "backup.in_app_verify_scheduler"}}
+        </label>
+        <div class="form-hint">{{t "backup.in_app_verify_help"}}</div>
+      </div>
     </div>
 
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:1rem">
@@ -225,6 +246,14 @@
               id="backup-run-btn"
               onclick="return confirm({{t "backup.confirm_run" | safeJSON}});">
         <i class="fa-solid fa-play"></i> {{t "backup.run_now"}}
+      </button>
+      {{/* 2026-08-18 (B142, v1.4.1): per-button "Verify now". Runs
+           scripts/verify_backup.sh synchronously (operator waits 5-15s).
+           On success/failure the page reloads with the standard
+           ?ok= / ?err= flash + the Last Verify panel below. */}}
+      <button type="submit" formaction="/admin/backup/verify-now" formmethod="POST" class="btn"
+              id="backup-verify-now-btn">
+        <i class="fa-solid fa-magnifying-glass-chart"></i> {{t "backup.verify_now"}}
       </button>
     </div>
   </form>
@@ -273,6 +302,41 @@
       {{end}}
     {{else}}
       <span class="sub">{{t "backup.last_status_never"}}</span>
+    {{end}}
+  </div>
+
+  {{/* 2026-08-18 (B142, v1.4.1): Last verify panel.
+       Mirrors the Last run block above. The values come from
+       backup.last_verify_{at,status,archive,error} in global_settings
+       (populated by runBackupVerifyOK/Fail in cmd/skygate/main.go and
+       read by backup.Load via the B142-added Config fields).
+       The pre-B142 page had no verify panel -- the operator had to
+       check the global_settings table or wait for a Telegram alert
+       (which only system-cron could send). B142 surfaces it next to
+       the Last run panel so backup health and backup-verify health
+       are visible in one place. */}}
+  <div style="margin-top:0.75rem; padding-top:0.75rem; border-top:1px solid var(--border, #2a2f3a)">
+    <strong>{{t "backup.last_verify"}}:</strong>
+    {{if gt .Config.LastVerifyAt 0}}
+      <code>{{datetimeformat .Config.LastVerifyAt}}</code>
+      &nbsp;
+      {{if eq .Config.LastVerifyStatus "ok"}}
+        <span class="badge badge-success">{{t "backup.last_status_ok"}}</span>
+      {{else if eq .Config.LastVerifyStatus "fail"}}
+        <span class="badge badge-danger">{{t "backup.last_status_fail"}}</span>
+      {{else}}
+        <code>{{.Config.LastVerifyStatus}}</code>
+      {{end}}
+      {{if .Config.LastVerifyArchive}}
+        &nbsp;<span class="sub">{{t "backup.last_verify_archive"}}: <code>{{.Config.LastVerifyArchive}}</code></span>
+      {{end}}
+      {{if and (eq .Config.LastVerifyStatus "fail") .Config.LastVerifyError}}
+        <div class="alert alert-danger" style="margin-top:0.5rem; font-size:0.85em">
+          {{t "backup.last_verify_error"}}: <code>{{.Config.LastVerifyError}}</code>
+        </div>
+      {{end}}
+    {{else}}
+      <span class="sub">{{t "backup.last_verify_never"}}</span>
     {{end}}
   </div>
 </div>

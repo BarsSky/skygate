@@ -266,6 +266,21 @@ type Config struct {
 	// disabled (opt-in), 03:00.
 	UpdateScheduleEnabled bool
 	UpdateScheduleTime    string // "HH:MM" 24-hour format
+	// 2026-08-18 (B142, v1.4.1): in-app backup-verify
+	// scheduler config. Mirrors the UpdateSchedule*
+	// pair (B130 pattern) — opt-in via env-var or
+	// /admin/backup page toggle. When enabled, the
+	// scheduler runs scripts/verify_backup.sh on the
+	// configured cron schedule and sends a Telegram
+	// alert on failure. When disabled (the default),
+	// the pre-B142 system-cron verify_backup.sh entry
+	// continues to run; the in-app scheduler is a
+	// drop-in replacement for operators who want
+	// alerts. Default: disabled, weekly Sunday 04:00
+	// (matches the pre-B142 system-cron default so
+	// the transition is a like-for-like swap).
+	BackupVerifyInAppEnabled bool
+	BackupVerifySchedule     string // cron expression, e.g. "0 4 * * 0"
 	GitHubToken         string
 	// 2026-08-17 (B124) — DevBuild marks the running binary
 	// as a dev/edge build. The /admin/update page shows a
@@ -451,6 +466,15 @@ func Load() (*Config, error) {
 		// invalid values fall back to the default).
 		UpdateScheduleEnabled: getenv("SKYGATE_UPDATE_SCHEDULE_ENABLED", "false") == "true",
 		UpdateScheduleTime:    getenv("SKYGATE_UPDATE_SCHEDULE_TIME", "03:00"),
+		// 2026-08-18 (B142): in-app backup-verify
+		// scheduler env-var defaults. The page can
+		// override these at runtime via the global_settings
+		// DB keys (backup.in_app_verify_enabled +
+		// backup.verify_schedule) which the scheduler
+		// re-reads on every tick. Env vars are just the
+		// boot-time fallback.
+		BackupVerifyInAppEnabled: getenv("SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED", "false") == "true",
+		BackupVerifySchedule:     getenv("SKYGATE_BACKUP_VERIFY_SCHEDULE", "0 4 * * 0"),
 		// 2026-08-05 v0.33.1.10: GitHub repo coordinates.
 		// The "BarsSky/skygate" default matches the
 		// operator's actual github.com repo (the previous

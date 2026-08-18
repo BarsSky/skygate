@@ -895,6 +895,14 @@ func main() {
 	mux.Handle("POST /admin/backup/config", authMW(http.HandlerFunc(adminSvc.PostAdminBackupConfig)))
 	mux.Handle("POST /admin/backup/test", authMW(http.HandlerFunc(adminSvc.PostAdminBackupTest)))
 	mux.Handle("POST /admin/backup/run", authMW(http.HandlerFunc(adminSvc.PostAdminBackupRun)))
+	// 2026-08-18 (B142, v1.4.1): "Verify now" button on
+	// /admin/backup. The pre-B142 page only had "Run now"
+	// for backup creation; verify had to be triggered
+	// by hand-running scripts/verify_backup.sh on the
+	// VM. B142 adds the manual button so the operator
+	// can verify a freshly-created backup without
+	// waiting for the weekly schedule.
+	mux.Handle("POST /admin/backup/verify-now", authMW(http.HandlerFunc(adminSvc.PostAdminBackupVerifyNow)))
 	mux.Handle("POST /admin/backup/toggle", authMW(http.HandlerFunc(adminSvc.PostAdminBackupToggle)))
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(adminSvc.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegram)))
@@ -1487,6 +1495,35 @@ func main() {
 		log.Printf("⏰ update-scheduler: disabled (SKYGATE_UPDATE_SCHEDULE_ENABLED=false; /admin/update page can enable)")
 	}
 
+	// 2026-08-18 (B142, v1.4.1): in-app backup-verify
+	// scheduler. Mirrors the B130 update-scheduler wire-up
+	// above. When enabled, runs scripts/verify_backup.sh
+	// on the configured cron schedule and sends a
+	// Telegram alert on failure (the pre-B142 system-cron
+	// path wrote the status to global_settings but didn't
+	// notify). The script path is the standard deploy
+	// location ($cfg.RepoPath/scripts/verify_backup.sh).
+	// Disabled by default — operators opt in via
+	// SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED=true (or
+	// /admin/backup page toggle once B142 ships).
+	if cfg.BackupVerifyInAppEnabled {
+		verifyScriptPath := ""
+		skygateBinPath := ""
+		if cfg.RepoPath != "" {
+			verifyScriptPath = cfg.RepoPath + "/scripts/verify_backup.sh"
+			skygateBinPath = cfg.RepoPath
+		}
+		backup.StartVerifyScheduler(ctx, backup.VerifySchedulerDeps{
+			DB:             d,
+			Notifier:       schedulerNotifierSink(app.Notifier),
+			ScriptPath:     verifyScriptPath,
+			SkygateBinPath: skygateBinPath,
+		})
+		log.Printf("🔍 backup-verify-scheduler: enabled (env-var default schedule=%q; /admin/backup page can override)", cfg.BackupVerifySchedule)
+	} else {
+		log.Printf("🔍 backup-verify-scheduler: disabled (SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED=false; /admin/backup page can enable). Pre-B142 system-cron verify_backup.sh continues to run.")
+	}
+
 	// 2026-07-17: v0.16.7 — per-user subnet sidecar
 	// auto-approver moved earlier so the RealNotifier
 	// can pick up the same manager via SetSidecar().
@@ -1612,13 +1649,21 @@ func runBackupShowConfig() error {
 	return nil
 }
 
-// runBackupVerifyOK — v0.33.1.42 B2.
+// runBackupVerifyOK — v0.33.1.42 B2 + 2026-08-18 (B142, v1.4.1).
 //
 // Called by scripts/verify_backup.sh on a successful
-// `sqlite3 ... "PRAGMA integrity_check"` (returns "ok").
-// Persists the verify timestamp + status so /admin/backup
-// shows "latest verify: ok at <date>". The script argument
-// is the archive basename (for display only).
+// `sqlite3 ... "PRAGMA integrity_check"` (returns "ok") or
+// a successful PG dump replay (v1.3.1+ path). Persists
+// the verify timestamp + status so /admin/backup shows
+// "latest verify: ok at <date>". B142 renamed the time
+// key from `backup.last_verify` to `backup.last_verify_at`
+// for clarity (so it can't be confused with the backup-
+// creation LastRun field), and B142 also stores the
+// archive basename so the page can show "verified
+// <archive> on <date>".
+//
+// Args (from os.Args[2:]):
+//   [0] = archive basename (e.g. "skygate-full-20260818_030000.tar.gz")
 func runBackupVerifyOK(args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -1630,17 +1675,36 @@ func runBackupVerifyOK(args []string) error {
 		return fmt.Errorf("db open: %w", err)
 	}
 	defer d.Close()
+	archive := ""
+	if len(args) > 0 {
+		archive = args[0]
+	}
 	now := time.Now().Unix()
-	if err := db.SetGlobalSetting(d, "backup.last_verify", fmt.Sprintf("%d", now)); err != nil {
-		return fmt.Errorf("set last_verify: %w", err)
+	if err := db.SetGlobalSetting(d, "backup.last_verify_at", fmt.Sprintf("%d", now)); err != nil {
+		return fmt.Errorf("set last_verify_at: %w", err)
 	}
 	if err := db.SetGlobalSetting(d, "backup.last_verify_status", "ok"); err != nil {
 		return fmt.Errorf("set last_verify_status: %w", err)
 	}
+	if archive != "" {
+		if err := db.SetGlobalSetting(d, "backup.last_verify_archive", archive); err != nil {
+			return fmt.Errorf("set last_verify_archive: %w", err)
+		}
+	}
+	// 2026-08-18 (B142): clear the previous error (if
+	// any) so a successful verify after a failure
+	// doesn't leave a stale error in the DB. The
+	// pre-B142 code didn't store an error key at all
+	// (only status), so this is a new write — but
+	// it's idempotent: setting "" is a no-op on a
+	// fresh row.
+	if err := db.SetGlobalSetting(d, "backup.last_verify_error", ""); err != nil {
+		return fmt.Errorf("set last_verify_error: %w", err)
+	}
 	return nil
 }
 
-// runBackupVerifyFail — v0.33.1.42 B2.
+// runBackupVerifyFail — v0.33.1.42 B2 + 2026-08-18 (B142, v1.4.1).
 //
 // Called by scripts/verify_backup.sh when integrity_check
 // fails OR tar extract fails. Persists the failure status
@@ -1651,6 +1715,16 @@ func runBackupVerifyOK(args []string) error {
 // operator wants alerts) — we don't try to wire the
 // in-process Notifier here because main()'s app variable
 // isn't in scope at subcommand dispatch time.
+//
+// B142: the in-app verify scheduler (internal/backup/
+// verify_scheduler.go) handles Telegram alerting on its
+// own — it spawns the same verify_backup.sh script and
+// sends a SendAlert on non-zero exit code. The system-cron
+// path (which calls runBackupVerifyFail directly) continues
+// to leave Telegram to the cron wrapper; if the operator
+// wants system-cron alerts they wire them in the cron
+// entry. The in-app scheduler is the recommended path
+// for operators who want alerts.
 //
 // Args (from os.Args[2:]):
 //   [0] = archive basename (for the log detail)
@@ -1675,16 +1749,43 @@ func runBackupVerifyFail(args []string) error {
 		detail = args[1]
 	}
 	now := time.Now().Unix()
-	if err := db.SetGlobalSetting(d, "backup.last_verify", fmt.Sprintf("%d", now)); err != nil {
-		return fmt.Errorf("set last_verify: %w", err)
+	if err := db.SetGlobalSetting(d, "backup.last_verify_at", fmt.Sprintf("%d", now)); err != nil {
+		return fmt.Errorf("set last_verify_at: %w", err)
 	}
 	if err := db.SetGlobalSetting(d, "backup.last_verify_status", "fail"); err != nil {
 		return fmt.Errorf("set last_verify_status: %w", err)
+	}
+	if archive != "" {
+		if err := db.SetGlobalSetting(d, "backup.last_verify_archive", archive); err != nil {
+			return fmt.Errorf("set last_verify_archive: %w", err)
+		}
+	}
+	// 2026-08-18 (B142): store the failure detail so
+	// the /admin/backup page can show the operator
+	// what went wrong without forcing them to read
+	// the audit log. Truncated to 1KB to keep the
+	// global_settings value bounded (matches the
+	// LastError pattern for backup-creation failures).
+	if err := db.SetGlobalSetting(d, "backup.last_verify_error", truncateForDB(detail, 1024)); err != nil {
+		return fmt.Errorf("set last_verify_error: %w", err)
 	}
 	if err := db.AppendExitRuleLog(d, 0, "backup_verify_fail", fmt.Sprintf("archive=%s detail=%s", archive, detail)); err != nil {
 		log.Printf("backup-verify-fail: log write failed: %v", err)
 	}
 	return nil
+}
+
+// truncateForDB clamps a string to max bytes, appending
+// "..." when truncated. Used by runBackupVerifyFail to
+// keep global_settings values bounded (a 4096-char
+// detail in a TEXT column is fine, but the page render
+// truncates anyway and storing 1MB of replay stderr
+// just bloats the DB).
+func truncateForDB(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 // bootstrapAdmin creates the admin user in Skygate DB on first start.
