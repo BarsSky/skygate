@@ -6,6 +6,13 @@
      "Run all" re-runs the suite, persists the result, and
      updates the page with live + history data.
 
+     2026-08-18 (TD-8, v1.4.4) — added a tabbed layout:
+     the page now has 2 tabs ("Tests" and "History"). The
+     Tests tab is the original grid; the History tab shows
+     per-test pass/fail/skip aggregates over a configurable
+     window (7d / 30d / all). The tab is selected by
+     ?tab=history in the URL.
+
      Tests are in-process Go functions (5s timeout each).
      The /admin/system_tests page is the operator's
      single-pane "is everything OK?" view.
@@ -21,6 +28,171 @@
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> DNS-autoupdater {{.FlashDNSAutoToggled}}. Takes effect on the next autoupdate tick (≤ {{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}).</div>
 {{end}}
 
+{{/* 2026-08-18 (TD-8): tab bar. CSS-only — the data
+     switch is in the template below. The active class is
+     applied based on the .Tab field set by the handler. */}}
+<div class="tabs" style="margin-bottom:16px">
+  <a href="?tab=tests" class="tab {{if eq .Tab "tests"}}tab-active{{end}}">
+    <i class="fa-solid fa-vial"></i> {{t "system_tests.tab_tests"}}
+  </a>
+  <a href="?tab=history" class="tab {{if eq .Tab "history"}}tab-active{{end}}">
+    <i class="fa-solid fa-clock-rotate-left"></i> {{t "system_tests.tab_history"}}
+  </a>
+</div>
+
+{{if eq .Tab "history"}}
+{{/* 2026-08-18 (TD-8): History tab content. The window
+     selector (7d / 30d / all) and the per-test aggregate
+     table live here. The summary stats at the top echo
+     the totals from TestHistory so the operator sees
+     "5 runs in 7 days, total time 12s" without scrolling
+     to the bottom. */}}
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-clock-rotate-left"></i> {{t "system_tests.history_title"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        {{t "system_tests.history_subtitle"}}
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span style="color:var(--text-muted);font-size:12px">{{t "system_tests.window_label"}}:</span>
+      <a href="?tab=history&window=7d" class="btn btn-sm {{if eq .Window "7d"}}btn-primary{{else}}btn-secondary{{end}}">{{t "system_tests.window_7d"}}</a>
+      <a href="?tab=history&window=30d" class="btn btn-sm {{if eq .Window "30d"}}btn-primary{{else}}btn-secondary{{end}}">{{t "system_tests.window_30d"}}</a>
+      <a href="?tab=history&window=all" class="btn btn-sm {{if eq .Window "all"}}btn-primary{{else}}btn-secondary{{end}}">{{t "system_tests.window_all"}}</a>
+    </div>
+  </div>
+  {{if .History}}
+  <div class="history-stats" style="display:flex;gap:24px;flex-wrap:wrap;margin-top:16px;padding:12px;background:var(--bg-secondary);border-radius:4px">
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">{{t "system_tests.stat_total_runs"}}</div>
+      <div style="font-size:24px;font-weight:600">{{.History.TotalRuns}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">{{t "system_tests.stat_window"}}</div>
+      <div style="font-size:14px;font-weight:500">{{.History.WindowLabel}}</div>
+      {{if .History.OldestRun}}
+      <div style="font-size:11px;color:var(--text-muted)">{{.History.OldestRun.Format "2006-01-02"}} → {{.History.NewestRun.Format "2006-01-02"}}</div>
+      {{end}}
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">{{t "system_tests.stat_total_duration"}}</div>
+      <div style="font-size:14px;font-weight:500">{{.History.TotalDuration.String}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">{{t "system_tests.stat_tests_tracked"}}</div>
+      <div style="font-size:14px;font-weight:500">{{len .History.Rows}}</div>
+    </div>
+  </div>
+  {{end}}
+</div>
+
+{{if .History}}
+{{if eq .History.TotalRuns 0}}
+<div class="card">
+  <h4 style="margin-top:0">{{t "system_tests.no_runs_yet"}}</h4>
+  <p style="color:var(--text-muted)">{{t "system_tests.history_no_runs_help"}}</p>
+  <a href="?tab=tests" class="btn btn-primary"><i class="fa-solid fa-vial"></i> {{t "system_tests.tab_tests"}}</a>
+</div>
+{{else}}
+<div class="card">
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th>Test</th>
+        <th>Category</th>
+        <th style="text-align:right;width:60px">{{t "system_tests.col_pass"}}</th>
+        <th style="text-align:right;width:60px">{{t "system_tests.col_fail"}}</th>
+        <th style="text-align:right;width:60px">{{t "system_tests.col_skip"}}</th>
+        <th style="text-align:right;width:80px">{{t "system_tests.col_pass_rate"}}</th>
+        <th style="text-align:right;width:100px">{{t "system_tests.col_last_status"}}</th>
+        <th style="text-align:right;width:140px">{{t "system_tests.col_last_run"}}</th>
+        <th>{{t "system_tests.col_last_error"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .History.Rows}}
+      <tr>
+        <td><code>{{.Name}}</code></td>
+        <td><span class="badge badge-category">{{.Category}}</span></td>
+        <td style="text-align:right"><span class="badge-pass">{{.PassCount}}</span></td>
+        <td style="text-align:right">
+          {{if gt .FailCount 0}}<span class="badge-fail">{{.FailCount}}</span>
+          {{else}}<span class="badge-pass">0</span>{{end}}
+        </td>
+        <td style="text-align:right"><small>{{.SkipCount}}</small></td>
+        <td style="text-align:right">
+          {{$rate := .PassRate}}
+          {{if eq (.TotalRuns) 0}}
+            <small style="color:var(--text-muted)">—</small>
+          {{else if ge $rate 95}}
+            <strong style="color:#198754">{{$rate}}%</strong>
+          {{else if ge $rate 50}}
+            <strong style="color:#f0ad4e">{{$rate}}%</strong>
+          {{else}}
+            <strong style="color:#dc3545">{{$rate}}%</strong>
+          {{end}}
+        </td>
+        <td style="text-align:right">
+          {{if eq .LastStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="pass"></i>
+          {{else if eq .LastStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="fail"></i>
+          {{else if eq .LastStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="skip"></i>
+          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="never run"></i>{{end}}
+        </td>
+        <td style="text-align:right">
+          {{if .LastRunAt}}
+            <small>{{.LastRunAt.Format "2006-01-02 15:04"}}</small>
+          {{else}}
+            <small style="color:var(--text-muted)">{{t "system_tests.never"}}</small>
+          {{end}}
+        </td>
+        <td>
+          {{if .LastError}}
+            <small><code style="color:#dc3545">{{.LastError}}</code></small>
+          {{else}}
+            <small style="color:var(--text-muted)">—</small>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
+
+{{if .RecentRuns}}
+<div class="card">
+  <h4 style="margin-top:0"><i class="fa-solid fa-clock-rotate-left"></i> {{t "system_tests.recent_runs_title"}} (last 20)</h4>
+  <table class="table table-sm" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th>{{t "system_tests.col_started"}}</th>
+        <th>{{t "system_tests.col_duration"}}</th>
+        <th>{{t "system_tests.col_pass"}}</th>
+        <th>{{t "system_tests.col_fail"}}</th>
+        <th>{{t "system_tests.col_skip"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .RecentRuns}}
+      <tr>
+        <td><small>{{.StartedAt.Format "2006-01-02 15:04:05"}} UTC</small></td>
+        <td><small>{{.Duration}}</small></td>
+        <td><span class="badge-pass">{{.Pass}}</span></td>
+        <td>{{if gt .Fail 0}}<span class="badge-fail">{{.Fail}}</span>{{else}}<span class="badge-pass">0</span>{{end}}</td>
+        <td><small>{{.Skip}}</small></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{else}}
+{{/* Default tab: the original Tests grid (unchanged
+     behaviour). Everything below this point is the
+     pre-TD-8 layout. */}}
 {{/* 2026-08-06 v0.33.1.18 — DNS-autoupdater toggle. The v0.32.13
      gate was wired to SKYGATE_AUTO_UPDATE_ENABLED (a flag meant
      for the skygate self-update banner on /admin/update), which
@@ -92,7 +264,7 @@
   </h4>
   {{else}}
   <h4 style="margin-top:24px">{{t "system_tests.no_runs_yet"}}</h4>
-  <p style="color:var(--text-muted);margin:8px 0">{{t "system_tests.no_runs_help"}}</p>
+  <p style="color:var(--text-muted);margin:0 0 16px 0">{{t "system_tests.no_runs_help"}}</p>
   {{end}}
   <table class="table table-sm" style="margin-top:8px">
     <thead>
@@ -145,36 +317,26 @@
     </tbody>
   </table>
 </div>
-
-{{if .RecentRuns}}
-<div class="card">
-  <h4 style="margin-top:0"><i class="fa-solid fa-clock-rotate-left"></i> Recent runs (last 20)</h4>
-  <table class="table table-sm" style="margin-top:8px">
-    <thead>
-      <tr>
-        <th>Started</th>
-        <th>Duration</th>
-        <th>Pass</th>
-        <th>Fail</th>
-        <th>Skip</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .RecentRuns}}
-      <tr>
-        <td><small>{{.StartedAt.Format "2006-01-02 15:04:05"}} UTC</small></td>
-        <td><small>{{.Duration}}</small></td>
-        <td><span class="badge-pass">{{.Pass}}</span></td>
-        <td>{{if gt .Fail 0}}<span class="badge-fail">{{.Fail}}</span>{{else}}<span class="badge-pass">0</span>{{end}}</td>
-        <td><small>{{.Skip}}</small></td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-</div>
 {{end}}
 
 <style>
+  .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--bg-secondary); }
+  .tab {
+    padding: 10px 20px;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: 4px 4px 0 0;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab:hover { color: var(--text); background: var(--bg-secondary); }
+  .tab-active {
+    color: var(--text);
+    border-bottom-color: var(--accent, #0d6efd);
+    background: transparent;
+  }
   .badge-pass { background: #198754; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
   .badge-fail { background: #dc3545; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
   .badge-category { background: var(--bg-secondary); color: var(--text); padding: 2px 8px; border-radius: 3px; font-size: 0.75em; }

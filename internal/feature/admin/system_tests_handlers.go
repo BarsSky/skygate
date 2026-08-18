@@ -27,6 +27,13 @@ import (
 // refresh from the web UI without editing .env or
 // restarting skygate. The DB-backed state overrides the
 // env var on the next autoupdate tick (5m default).
+//
+// 2026-08-18 (TD-8, v1.4.4) — added a "History" tab
+// (?tab=history) that aggregates per-test pass/fail/skip
+// counts across the last 7/30/all days. The Tests tab
+// (?tab=tests, default) is the original grid view. The
+// tab UI is just a CSS link bar; the actual data switch
+// happens in the template.
 func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -57,6 +64,25 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 	// s.Cfg.DNSAutoUpdateEnabled so the operator sees the
 	// SAME effective state the goroutine would use.
 	dnsAutoEnabled := db.GetGlobalSettingBool(s.DB, globalSettingsKeyDNSAutoUpdate, s.Cfg.DNSAutoUpdateEnabled)
+	// TD-8 (2026-08-18): read the ?tab= and ?window= query
+	// params. Default tab is "tests" (the original grid);
+	// default window is "7d". Unknown values fall back to
+	// the defaults (no error to the operator — a typo'd
+	// URL shouldn't 500).
+	tab := r.URL.Query().Get("tab")
+	if tab != "history" {
+		tab = "tests"
+	}
+	windowStr := r.URL.Query().Get("window")
+	now := time.Now().UTC()
+	hw := ParseHistoryWindow(windowStr, now)
+	// 2026-08-18 (TD-8): always compute the history so the
+	// operator can switch tabs without a second round-trip
+	// (the data is small — at most a few hundred runs even
+	// on busy deployments). The cost is dominated by the
+	// JSON parse inside ComputeTestHistory; the page render
+	// is the next bottleneck.
+	history, _ := s.ComputeTestHistory(r.Context(), hw.Since, hw.Until)
 	data := map[string]any{
 		"Page":                  "admin/system_tests",
 		"Title":                 i18n.T(lang, "title.admin_system_tests"),
@@ -65,7 +91,11 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 		"FlashError":            r.URL.Query().Get("err"),
 		"DNSAutoUpdateEnabled":  dnsAutoEnabled,
 		"FlashDNSAutoToggled":   r.URL.Query().Get("dns_auto_toggled"),
-		"Now":                   time.Now().UTC(),
+		"Now":                   now,
+		"Tab":                   tab,
+		"Window":                windowStr,
+		"WindowLabel":           hw.Label,
+		"History":               history,
 	}
 	if last != nil {
 		data["LastRunID"] = last.RunID
