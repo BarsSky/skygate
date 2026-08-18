@@ -227,7 +227,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **Plan update per operator**: `/admin/ha` page must support admin-managed HA node CRUD + reg.ru credentials (no SSH or `.env` edit required after initial deploy)
   - Phase 5 expanded: 4 new methods (`PostAdminHAAddNode`, `PostAdminHARemoveNode`, `PostAdminHARegapiCreds`) + 7 new i18n keys
   - Phase 5.1: explicit sub-section documenting the admin-managed credentials design
-- IP whitelist: confirmed not required (reg.ru's IP whitelist is for browser access, not API; the 2 IPs in screenshot are operator's personal IPs)
+- IP whitelist: **REVISED** — likely DOES apply to API calls (per reg.ru docs). The 2 IPs in screenshot are operator's personal IPs (194.58.116.30/32, 172.65.32.248/32). For API to work from skygate VM, must add `95.165.170.190/32` + new svyatoslava-1 public IP/32. **TBD**: needs verification via first API call after cert registration
 - Status: cert generated + saved, awaiting operator registration in reg.ru; meanwhile Phase 1 (chain + elector) can start independently
 
 ---
