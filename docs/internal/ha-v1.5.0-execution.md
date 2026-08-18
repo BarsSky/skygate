@@ -147,8 +147,8 @@ UI sections in `/admin/ha`:
 
 | # | Question | Blocker for | Operator answer | Status |
 |---|---|---|---|---|
-| 1 | reg.ru API credentials (user + password) | Phase 2, 4 | **NEEDED** — see "How to provide" below | ⏳ PENDING |
-| 2 | reg.ru API IP whitelist — add both VM public IPs | Phase 2 | **NEEDED** if reg.ru has IP whitelist enabled | ⏳ PENDING |
+| 1 | reg.ru API credentials (user + password) | Phase 2, 4 | **NEEDED** — see "How to provide" below; cert is registered but reg.ru v2 API still requires HTTP Basic (login + alternative password) | ⏳ PENDING |
+| 2 | reg.ru API IP whitelist — add both VM public IPs | Phase 2 | **NEEDED** if reg.ru has IP whitelist enabled (likely required for API) | ⏳ PENDING |
 | 3 | Tailscale Funnel: NO (decided 2026-08-18) | n/a | DECIDED (decision #4) | ✅ DONE |
 | 4 | S3 bucket `s3://skygate-ha/` creation status | Phase 3+ | **RESOLVED** — reusing `s3://skygate-backups/ha/` prefix (existing bucket, same IAM) | ✅ DONE 2026-08-18 |
 | 5 | S3 IAM credentials for skygate process | Phase 3+ | **RESOLVED** — using existing backup.s3_* credentials (skygate-test / skygate-test-pass-2026 / endpoint http://172.18.0.5:9000) | ✅ DONE 2026-08-18 |
@@ -223,12 +223,22 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 ### 2026-08-18 (reg.ru SSL cert approach + admin-managed UI)
 - **Auth method: SSL cert** (over HTTP Basic Auth) — generated `cert.pem` + `key.pem` (RSA 2048, SHA-512, 365 days) on live VM at `/home/skyadmin/skygate-secrets/regapi/`
 - Fingerprint: `91:DA:41:BD:7C:18:45:41:AB:E2:BE:9F:68:B8:BA:30:DB:02:FB:59:EE:BA:87:0E:98:54:F1:95:C5:20:9F:0D`
+- **First cert rejected by reg.ru** — missing Extended Key Usage = `clientAuth`. Regenerated with proper EKU (TLS Web Client Authentication) + Key Usage + SubjectKeyIdentifier + AuthorityKeyIdentifier. New fingerprint: `1F:21:CC:99:50:99:C9:32:B4:E7:63:91:E8:1E:BE:BC:9D:BC:12:06:DB:B9:7D:4D`
 - **Operator action pending**: register cert via reg.ru UI "Add SSL certificate" (provided PEM content)
 - **Plan update per operator**: `/admin/ha` page must support admin-managed HA node CRUD + reg.ru credentials (no SSH or `.env` edit required after initial deploy)
   - Phase 5 expanded: 4 new methods (`PostAdminHAAddNode`, `PostAdminHARemoveNode`, `PostAdminHARegapiCreds`) + 7 new i18n keys
   - Phase 5.1: explicit sub-section documenting the admin-managed credentials design
 - IP whitelist: **REVISED** — likely DOES apply to API calls (per reg.ru docs). The 2 IPs in screenshot are operator's personal IPs (194.58.116.30/32, 172.65.32.248/32). For API to work from skygate VM, must add `95.165.170.190/32` + new svyatoslava-1 public IP/32. **TBD**: needs verification via first API call after cert registration
-- Status: cert generated + saved, awaiting operator registration in reg.ru; meanwhile Phase 1 (chain + elector) can start independently
+- Status: cert regenerated with EKU + saved, awaiting operator registration in reg.ru; meanwhile Phase 1 (chain + elector) can start independently
+
+### 2026-08-18 (cert registered, API test reveals HTTP Basic needed)
+- **Operator registered the new cert** (EKU=clientAuth) in reg.ru UI
+- **First API call test** from VM (mTLS only, no HTTP Basic): returns `{"error_code":"NO_AUTH","error_text":"No authorization mechanism selected"}`
+- **Conclusion**: reg.ru v2 API requires BOTH:
+  1. SSL client cert (mTLS handshake) — have it
+  2. HTTP Basic Auth with login + "Альтернативный пароль" — DON'T have password yet
+- Status: cert registered + working at TLS layer, but API call needs alternative password from reg.ru account
+- Open question Q1 UPDATED: now needs only the **alternative password** (login can be derived as "skynas" from cert name)
 
 ---
 
