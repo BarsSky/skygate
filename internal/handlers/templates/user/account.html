@@ -122,7 +122,7 @@
         <button type="button" class="color-swatch" data-color="#ff9aa2" style="background:#ff9aa2" title="#ff9aa2" aria-label="#ff9aa2"></button>
         <button type="button" class="color-swatch" data-color="#6c5ce7" style="background:#6c5ce7" title="#6c5ce7" aria-label="#6c5ce7"></button>
         <button type="button" class="color-swatch" data-color="#fdcb6e" style="background:#fdcb6e" title="#fdcb6e" aria-label="#fdcb6e"></button>
-        <button type="button" class="color-swatch swatch-custom {{if not (in (slice "" "#ffcc00" "#ff6b6b" "#4ecdc4" "#95e1d3" "#a8e6cf" "#ffd93d" "#fcbad3" "#c9cbff" "#aa96da" "#ff9aa2" "#6c5ce7" "#fdcb6e") .DisplaySelBg)}}selected{{end}}" data-color="__custom__" title="{{t "account.selection_swatch_custom"}}" aria-label="{{t "account.selection_swatch_custom"}}">
+        <button type="button" class="color-swatch swatch-custom {{if and (ne .DisplaySelBg "") (and (ne .DisplaySelBg "#ffcc00") (ne .DisplaySelBg "#ff6b6b") (ne .DisplaySelBg "#4ecdc4") (ne .DisplaySelBg "#95e1d3") (ne .DisplaySelBg "#a8e6cf") (ne .DisplaySelBg "#ffd93d") (ne .DisplaySelBg "#fcbad3") (ne .DisplaySelBg "#c9cbff") (ne .DisplaySelBg "#aa96da") (ne .DisplaySelBg "#ff9aa2") (ne .DisplaySelBg "#6c5ce7") (ne .DisplaySelBg "#fdcb6e"))}}selected{{end}}" data-color="__custom__" title="{{t "account.selection_swatch_custom"}}" aria-label="{{t "account.selection_swatch_custom"}}">
           <i class="fa-solid fa-palette"></i>
         </button>
       </div>
