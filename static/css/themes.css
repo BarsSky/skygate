@@ -6,19 +6,34 @@
    - sentry: dark purple, lime accent (Rubik)
    ============================================================ */
 
-/* Defaults (linear) */
+/* Defaults (linear) — v1.3.20.1 (B131) contrast bump.
+   The pre-B131 palette had --bg=#0a0a0a and --bg-card=#131313
+   (delta only 9/255 ≈ 3.5%) and --border=#262626 (delta
+   ~4.7% from --bg-elev). Cards blended into the background,
+   the sticky header-bg was identical to --bg (so the
+   header band was invisible), and the 0.10-opacity
+   alert backgrounds (#info-bg, #success-bg, etc.)
+   rendered as a barely-visible tint on the near-black bg.
+
+   The post-B131 palette lifts the bg by ~1.5%, bumps the
+   card by another ~5% (matches Mint's 4-5% comfortable
+   contrast), bumps borders so they're actually visible,
+   gives the sticky header its own slightly-darker
+   surface, and raises alert opacities from 0.10 → 0.15
+   so the auto-update banner + success/info alerts read
+   clearly. Pure CSS change — no template/HTML/i18n touch. */
 :root{
-  --bg:#0a0a0a;--bg-card:#131313;--bg-elev:#1a1a1a;--bg-hover:#1f1f1f;
-  --border:#262626;--border-strong:#3a3a3a;
-  --text:#ededed;--text-muted:#a0a0a0;--text-subtle:#6a6a6a;
-  --accent:#7c7aff;--accent-fg:#0a0a0a;--accent-hover:#9b9aff;--accent-soft:rgba(124,122,255,0.12);
-  --success:#4ade80;--success-bg:rgba(74,222,128,0.1);
-  --warning:#fbbf24;--warning-bg:rgba(251,191,36,0.1);
-  --danger:#f87171;--danger-bg:rgba(248,113,113,0.1);
-  --info:#60a5fa;--info-bg:rgba(96,165,250,0.1);
-  --header-bg:#0a0a0a;--header-fg:#ededed;
-  --shadow:0 0 0 1px rgba(255,255,255,0.04);
-  --shadow-lg:0 8px 24px rgba(0,0,0,0.4);
+  --bg:#0e0f12;--bg-card:#1a1c21;--bg-elev:#25282e;--bg-hover:#2d3036;
+  --border:#383b42;--border-strong:#4d5158;
+  --text:#ededed;--text-muted:#9ca3af;--text-subtle:#6a6a6a;
+  --accent:#7c7aff;--accent-fg:#0a0a0a;--accent-hover:#9b9aff;--accent-soft:rgba(124,122,255,0.18);
+  --success:#4ade80;--success-bg:rgba(74,222,128,0.15);
+  --warning:#fbbf24;--warning-bg:rgba(251,191,36,0.15);
+  --danger:#f87171;--danger-bg:rgba(248,113,113,0.15);
+  --info:#60a5fa;--info-bg:rgba(96,165,250,0.15);
+  --header-bg:#15171c;--header-fg:#ededed;
+  --shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 2px 8px rgba(0,0,0,0.5);
+  --shadow-lg:0 8px 24px rgba(0,0,0,0.6);
   --radius:6px;--radius-lg:10px;
   --font:'Inter',system-ui,-apple-system,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -446,10 +461,14 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
   border-width:1.5px;box-shadow:inset 0 1px 2px rgba(0,0,0,0.2);
 }
 /* B121: linear/nvidia input backgrounds are slightly elevated
-   above --bg so they pop more. Sentry keeps its purple. */
+   above --bg so they pop more. Sentry keeps its purple.
+   v1.3.20.1 (B131): bumped from hardcoded #1a1a1a to var(--bg-elev)
+   so the input bg tracks the new Linear palette (B131 lifted
+   --bg-elev to #25282e). Without this fix the input bg would
+   be DARKER than the surrounding card. */
 [data-theme="linear"] input[type=text],[data-theme="linear"] input[type=password],[data-theme="linear"] input[type=email],[data-theme="linear"] select,[data-theme="linear"] textarea,
 [data-theme="nvidia"] input[type=text],[data-theme="nvidia"] input[type=password],[data-theme="nvidia"] input[type=email],[data-theme="nvidia"] select,[data-theme="nvidia"] textarea{
-  background:#1a1a1a;
+  background:var(--bg-elev);
 }
 [data-theme="sentry"] input[type=text],[data-theme="sentry"] input[type=password],[data-theme="sentry"] input[type=email],[data-theme="sentry"] select,[data-theme="sentry"] textarea{
   background:#362d59;
