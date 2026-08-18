@@ -243,6 +243,23 @@ const (
 	qSelectPasswordHash    = `SELECT password_hash FROM portal_users WHERE id = $1`
 	qSelectHSIDByID        = `SELECT headscale_user_id FROM portal_users WHERE id = $1`
 	qInsertPortalUser      = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4) RETURNING id`
+	// qInsertPortalUserAdopt powers db.InsertPortalUserAdopt.
+	// v1.4.0 B141: "Adopt as skygate user" button on /admin/users
+	// HSOrphans list. The pre-B141 admin UI only DISPLAYED the
+	// orphans list (users.go:79) — to adopt one the operator had
+	// to run a manual SQL INSERT into portal_users with the
+	// headscale_user_id, plus a separate API call to set the
+	// password. B141 wraps that into a single button.
+	//
+	// Uses ON CONFLICT(username) DO NOTHING so two concurrent
+	// adopt clicks on the same orphan produce exactly one row
+	// (the second click gets 0 rows affected, the handler
+	// returns a friendly "already adopted" flash instead of
+	// an error). The (theme, font_family, font_scale,
+	// selection_bg) columns are intentionally omitted from
+	// the INSERT — the V057 migration's column defaults
+	// ('linear' / 'manrope' / 0 / '') apply on insert.
+	qInsertPortalUserAdopt = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, 0, $3) ON CONFLICT(username) DO NOTHING RETURNING id`
 	qUpdatePasswordHash    = `UPDATE portal_users SET password_hash = $1 WHERE id = $2`
 	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = $1`
 )
@@ -621,6 +638,21 @@ const (
 	qDeleteExitServerByNodeID     = `DELETE FROM exit_servers WHERE node_id = $1`
 	// qInsertExitServerOnDiscovery powers db.InsertIgnoreExitServerOnDiscovery.
 	qInsertExitServerOnDiscovery  = `INSERT INTO exit_servers (node_id, hostname, tailscale_ip) VALUES ($1, $2, $3) ON CONFLICT(node_id) DO NOTHING`
+	// qUpdateExitServerAcceptRoutes powers db.SetExitServerAcceptRoutes.
+	// v1.4.0 B140: per-row accept_routes toggle on /admin/exit-nodes.
+	// Updates just the accept_routes column (1=true, -1=false, 0=default)
+	// without touching any other column. The pre-B140 admin UI had no
+	// way to change this value after the initial node add — the form
+	// in PostAdminExitNodesAdd was the only entry point, and editing
+	// any other field via the row's actions column would NOT update
+	// accept_routes (UpsertExitServer would, but the per-row buttons
+	// don't call it for the accept_routes use case).
+	qUpdateExitServerAcceptRoutes = `UPDATE exit_servers SET accept_routes = $1 WHERE node_id = $2`
+	// qSelectExitServerNodeIDByNodeID powers db.GetExitServerNodeID.
+	// Returns the node_id for a given node_id (the lookup is used
+	// to validate the row exists before attempting an UPDATE — gives
+	// a clear 404 error instead of a silent no-op on missing rows).
+	qSelectExitServerByNodeID      = `SELECT COALESCE(hostname, '') FROM exit_servers WHERE node_id = $1 LIMIT 1`
 )
 
 // ---------------------------------------------------------------

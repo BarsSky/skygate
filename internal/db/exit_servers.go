@@ -43,8 +43,18 @@ package db
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 )
+
+// ErrExitServerNotFound is returned by SetExitServerAcceptRoutes
+// (v1.4.0 B140) when the UPDATE matches 0 rows — i.e. the
+// node_id was deleted concurrently, or the URL was forged. The
+// handler maps this to a 404 + "exit node not found" error.
+// The "not found" error pattern matches the existing
+// ErrUserNotFound (used in users.go + portal_users.go).
+var ErrExitServerNotFound = errors.New("exit_servers row not found")
 
 // ExitServer is the typed view of one row in exit_servers. It is
 // the in-memory shape used by both the admin /admin/exit-nodes page
@@ -357,6 +367,61 @@ func UpsertExitServer(d dbExec, nodeID, hostname, sshTarget, sshKeyPath, descrip
 func DeleteExitServerByNodeID(d dbExec, nodeID string) error {
 	_, err := d.Exec(qDeleteExitServerByNodeID, nodeID)
 	return err
+}
+
+// SetExitServerAcceptRoutes updates just the accept_routes column
+// for the given nodeID. v1.4.0 B140 — the per-row accept_routes
+// toggle on /admin/exit-nodes. The pre-B140 UI only let admins
+// set this value at initial node add (via the form in
+// PostAdminExitNodesAdd); editing after add required either a
+// re-add (which clobbered every other field) or direct SQL.
+//
+// state uses the same -1/0/1 tri-state as the column:
+//   1  = true  (node accepts routes from peers)
+//   0  = unset (Tailscale decides the default)
+//   -1 = false (node does NOT accept routes from peers)
+//
+// Returns db.ErrExitServerNotFound (or a wrapped err from
+// sql.ErrNoRows via the row existence check) when the node_id
+// doesn't exist. The handler uses the existence check to
+// distinguish "no-op because row was deleted concurrently"
+// from "real error" — the former gets a 404, the latter
+// gets a 500.
+func SetExitServerAcceptRoutes(d dbExec, nodeID string, state int) error {
+	// Validate state at the boundary. The handler also validates
+	// (via parseAcceptRoutesFormValue) so this is defense-in-depth.
+	if state < -1 || state > 1 {
+		return fmt.Errorf("SetExitServerAcceptRoutes: state must be -1, 0, or 1 (got %d)", state)
+	}
+	res, err := d.Exec(qUpdateExitServerAcceptRoutes, state, nodeID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrExitServerNotFound
+	}
+	return nil
+}
+
+// GetExitServerHostname returns the hostname for a given node_id
+// (empty string + nil error when the row doesn't exist). Used by
+// the B140 handler for the audit log message: we want to log the
+// human-readable hostname, not the numeric node_id. The pre-B140
+// code only updated the column without checking; the B140 audit
+// message is "exit_node_set_accept_routes node=<hostname>
+// state=<state>" so the audit reader can see the change at a
+// glance without joining against headscale.
+func GetExitServerHostname(d dbExec, nodeID string) (string, error) {
+	var hostname string
+	err := d.QueryRow(qSelectExitServerByNodeID, nodeID).Scan(&hostname)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return hostname, err
 }
 
 // InsertIgnoreExitServerOnDiscovery inserts a new row if and only

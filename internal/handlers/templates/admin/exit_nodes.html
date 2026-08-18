@@ -242,6 +242,33 @@
             <button type="submit" class="btn btn-sm" style="background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning)"><i class="fa-solid fa-arrows-rotate"></i> {{t "exit_nodes.resync_button"}}</button>
           </form>
         {{end}}
+        {{/*
+          2026-08-18 (v1.4.0 B140): per-row accept_routes toggle.
+          The pre-B140 admin UI only let the operator set this
+          value at initial node add (the "Add exit node" form
+          on the same page), not edit it per-row afterwards.
+          Changing accept_routes for an existing node required
+          either a full re-add (which clobbered every other
+          field via UpsertExitServer's ON CONFLICT DO UPDATE)
+          or direct SQL. The B140 form lets the operator cycle
+          1 (true) / -1 (false) / 0 (default) per-row, with
+          the current value preselected.
+
+          state is sent as integer string ("1" / "0" / "-1").
+          The handler (PostAdminExitNodeSetAcceptRoutes) parses
+          it via parseAcceptRoutesFormValue. The form submits
+          to /admin/exit-nodes/{node_id}/accept-routes (POST)
+          and the handler 303-redirects back to the page with
+          an "ok" or "err" flash.
+        */}}
+        <form method="post" action="/admin/exit-nodes/{{.NodeID}}/accept-routes" style="display:inline;margin-left:4px" title="{{t "exit_nodes.accept_routes_help"}}">
+          <select name="state" style="font-size:11px;padding:2px 4px;height:24px;vertical-align:middle" aria-label="{{t "exit_nodes.accept_routes_label"}}">
+            <option value="1" {{if eq .AcceptRoutes 1}}selected{{end}}>{{t "exit_nodes.form_accept_routes_true_long"}}</option>
+            <option value="-1" {{if eq .AcceptRoutes -1}}selected{{end}}>{{t "exit_nodes.form_accept_routes_false_long"}}</option>
+            <option value="0" {{if eq .AcceptRoutes 0}}selected{{end}}>{{t "exit_nodes.form_accept_routes_default_long"}}</option>
+          </select>
+          <button type="submit" class="btn btn-sm" style="background:var(--bg-elev);color:var(--text);border:1px solid var(--border)"><i class="fa-solid fa-check"></i> {{t "exit_nodes.accept_routes_btn_set"}}</button>
+        </form>
       </td>
     </tr>
     {{end}}

@@ -17,6 +17,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -659,6 +660,82 @@ func (s *Service) PostAdminExitNodeSync(w http.ResponseWriter, r *http.Request) 
 		fmt.Sprintf("hostname=%s result=%v", hostname, result))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// PostAdminExitNodeSetAcceptRoutes is the v1.4.0 B140 per-row
+// "accept_routes" toggle on /admin/exit-nodes. The pre-B140
+// admin UI only let the operator set this value at initial
+// node add (the "Add exit node" form), not edit it per-row
+// afterwards — so changing accept_routes for an existing node
+// required either a full re-add (which clobbered every other
+// field) or direct SQL. The B140 button lets the operator
+// cycle 1 (true) / -1 (false) / 0 (default) per-row.
+//
+// state is read from the form value "state" (integer string
+// from the <select>). The handler validates the value before
+// hitting the DB; the db.SetExitServerAcceptRoutes helper
+// also validates as defense-in-depth.
+//
+// URL: POST /admin/exit-nodes/{nodeID}/accept-routes
+//
+// Admin-only. Wire-up is in cmd/skygate/main.go.
+func (s *Service) PostAdminExitNodeSetAcceptRoutes(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	nodeID := r.PathValue("node_id")
+	if nodeID == "" {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("node_id path var is empty"), http.StatusSeeOther)
+		return
+	}
+	state, err := parseAcceptRoutesFormValue(r.FormValue("state"))
+	if err != nil {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("accept_routes: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	// Read the hostname for the audit log. We do this BEFORE the
+	// UPDATE so the audit message has the human-readable hostname
+	// (the post-update scan would still see it, but the existence
+	// check is implicit in UPDATE…WHERE — a 0-rows-affected means
+	// the row was deleted between the read and the write).
+	hostname, _ := db.GetExitServerHostname(s.DB, nodeID)
+	if err := db.SetExitServerAcceptRoutes(s.DB, nodeID, state); err != nil {
+		if errors.Is(err, db.ErrExitServerNotFound) {
+			http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("exit node not found: "+nodeID), http.StatusSeeOther)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "exit_node_set_accept_routes",
+		fmt.Sprintf("node=%s hostname=%s state=%d", nodeID, hostname, state))
+	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("accept_routes updated for "+nodeID), http.StatusSeeOther)
+}
+
+// parseAcceptRoutesFormValue converts the form "state" string
+// to the -1/0/1 int the column + headscale SetAdvertisedRoutes
+// expect. Returns a friendly error for unknown values so the
+// handler can render a "bad value" flash without 500ing.
+//
+//  "1"   →  1  (true)
+//  "0"   →  0  (default / unset)
+//  "-1"  → -1  (false)
+//
+// Whitespace trimmed. Anything else → error.
+func parseAcceptRoutesFormValue(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	switch s {
+	case "1":
+		return 1, nil
+	case "0":
+		return 0, nil
+	case "-1":
+		return -1, nil
+	default:
+		return 0, fmt.Errorf("state must be 1, 0, or -1 (got %q)", s)
+	}
 }
 
 // PostAdminExitNodeTagAsExitNode is the v0.18.1 "Tag as

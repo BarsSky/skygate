@@ -734,6 +734,17 @@ func main() {
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(adminSvc.PostAdminUser)))
 	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDeleteUser)))
 	mux.Handle("POST /admin/users/{id}/reset-password", authMW(http.HandlerFunc(adminSvc.PostAdminUserResetPassword)))
+	// v1.4.0 B141: "Adopt as skygate user" button on the
+	// /admin/users HSOrphans list. The pre-B141 admin UI only
+	// DISPLAYED the orphans list — to adopt one the operator had
+	// to run a manual SQL INSERT into portal_users with the
+	// headscale_user_id, plus a separate API call to set the
+	// password. B141 wraps that into a single button per row.
+	// The handler (PostAdminHSOrphanAdopt) uses ON CONFLICT DO
+	// NOTHING so concurrent clicks on the same orphan are safe
+	// (the second click gets a friendly "already adopted" flash
+	// instead of an error).
+	mux.Handle("POST /admin/users/HSOrphan/adopt", authMW(http.HandlerFunc(adminSvc.PostAdminHSOrphanAdopt)))
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// (multi-tailnet). /admin/control-planes is the landing;
 	// /admin/users/{id}/plane is the per-user edit form.
@@ -1070,6 +1081,13 @@ func main() {
 	// to "root@<tailscale_ip>" so the operator's manual override
 	// (e.g. firewalled public IP) doesn't shadow the B81 auto-fallback.
 	mux.Handle("POST /admin/exit-nodes/use-ts-ip", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeUseTailscaleIP)))
+	// v1.4.0 B140: per-row accept_routes toggle on /admin/exit-nodes.
+	// The pre-B140 UI only let the operator set accept_routes at
+	// initial node add; B140 adds an inline <form> per row that
+	// posts the new state (1 / 0 / -1) to this handler. The handler
+	// (PostAdminExitNodeSetAcceptRoutes) updates just the
+	// accept_routes column without touching the other fields.
+	mux.Handle("POST /admin/exit-nodes/{node_id}/accept-routes", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeSetAcceptRoutes)))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

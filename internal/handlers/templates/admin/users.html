@@ -1,4 +1,22 @@
 ﻿{{define "body-admin-users"}}
+{{/* 2026-08-18 (v1.4.0 B141): flash banner. The pre-B141
+     /admin/users page had no banner — the ?ok= / ?err= query
+     params that the sibling handlers emit were silently dropped.
+     B141 also reads the new ?adopted= and ?already_adopted=
+     query params emitted by PostAdminHSOrphanAdopt. */}}
+{{if .FlashHSOrphanAdopt}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{tf "users.hs_orphan_adopted_flash" .FlashHSOrphanAdopt}}</div>
+{{end}}
+{{if .FlashHSOrphanExists}}
+<div class="alert alert-warning"><i class="fa-solid fa-circle-info"></i> already adopted: <code>{{.FlashHSOrphanExists}}</code></div>
+{{end}}
+{{if .FlashSuccess}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
+{{end}}
+{{if .FlashError}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-users"></i>{{t "users.title"}}</h2>
@@ -72,6 +90,7 @@
         <th style="width:100px">{{t "users.hs_id"}}</th>
         <th>{{t "users.username"}}</th>
         <th style="width:160px">{{t "users.created"}}</th>
+        <th style="width:300px">{{t "common.actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -80,6 +99,28 @@
         <td class="mono">{{.HeadscaleID}}</td>
         <td><code>{{.Username}}</code></td>
         <td style="color:var(--text-muted)">{{.CreatedAt}}</td>
+        <td>
+          {{/*
+            2026-08-18 (v1.4.0 B141): per-row "Adopt as skygate user"
+            form. The pre-B141 admin UI only DISPLAYED the orphans
+            list — to adopt one the operator had to run a manual
+            SQL INSERT into portal_users with the headscale_user_id,
+            plus a separate API call to set the password. B141
+            wraps that into a single inline form per row.
+            The form posts to /admin/users/HSOrphan/adopt with
+            the headscale user id (hidden) and the operator-chosen
+            initial password. The handler (PostAdminHSOrphanAdopt)
+            INSERTs the row with ON CONFLICT DO NOTHING, so a
+            concurrent second click on the same orphan is a no-op
+            (the handler returns a friendly "already adopted"
+            flash instead of an error).
+          */}}
+          <form method="post" action="/admin/users/HSOrphan/adopt" style="display:flex;gap:6px;align-items:center" title="{{t "users.hs_orphan_adopt_help"}}">
+            <input type="hidden" name="hs_id" value="{{.HeadscaleID}}">
+            <input type="password" name="password" required minlength="6" placeholder="{{t "users.hs_orphan_adopt_password_ph"}}" class="ufg-input-sm" style="width:140px">
+            <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-user-plus"></i> {{t "users.hs_orphan_adopt_btn"}}</button>
+          </form>
+        </td>
       </tr>
       {{end}}
     </tbody>

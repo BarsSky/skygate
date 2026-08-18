@@ -484,6 +484,48 @@ func InsertPortalUser(d *sql.DB, username, passwordHash string, isAdmin bool, hs
 	return id, err
 }
 
+// InsertPortalUserAdopt creates one row in portal_users for an
+// existing headscale orphan. v1.4.0 B141 — the "Adopt as skygate
+// user" button on /admin/users HSOrphans list.
+//
+// The pre-B141 admin UI only DISPLAYED the orphans list — to
+// adopt one the operator had to run a manual SQL INSERT into
+// portal_users with the headscale_user_id, plus a separate API
+// call to set the password. B141 wraps that into a single
+// button.
+//
+// Behavior:
+//   - is_admin is hardcoded to 0 (adopted users are never admin;
+//     admin can promote them after via the existing edit flow).
+//   - theme / font_family / font_scale / selection_bg are NOT
+//     set explicitly — the V057 column defaults ('linear' /
+//     'manrope' / 0 / '') apply. This matches the behaviour of
+//     the legacy SQL INSERT the operator used to run by hand.
+//   - ON CONFLICT(username) DO NOTHING means a concurrent second
+//     click on the same orphan doesn't fail; the handler maps
+//     the 0-rows-affected return to a friendly "already adopted"
+//     flash. This is the atomic primitive that closes the
+//     SELECT-then-INSERT race window.
+//
+// Returns (id, true, nil) on a successful insert, (0, false, nil)
+// on a no-op duplicate (the row already exists), or (0, false, err)
+// on a real DB error.
+func InsertPortalUserAdopt(d *sql.DB, username, passwordHash string, hsID int64) (int64, bool, error) {
+	var id int64
+	err := d.QueryRow(qInsertPortalUserAdopt, username, passwordHash, hsID).Scan(&id)
+	if err == sql.ErrNoRows {
+		// ON CONFLICT DO NOTHING with RETURNING id returns no
+		// row when the conflict fires (the conflict path doesn't
+		// project id). Treat this as "already adopted", not as
+		// an error — the handler will render a friendly flash.
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
 // UpdatePasswordHash sets a new password_hash for a user. Used by
 // PostMyAccount (self-service change) and PostAdminUserResetPassword
 // (admin-triggered reset). Returns the number of rows affected so
