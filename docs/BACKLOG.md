@@ -152,37 +152,56 @@ then this is blocked.
 
 ---
 
-## Priority 3 — HA "skygate-host-2" / Tier 1 hot standby (BLOCKED on 2nd VM + etcd quorum + S3)
+## Priority 3 — HA Tier 1 hot standby (BL-2) — UNBLOCKED 2026-08-18, target v1.5.0
 
-**Status**: design-only. Plan exists at
-[`docs/internal/internal/v0.27.0-postgres-ha.md`](internal/v0.27.0-postgres-ha.md) and
-[`docs/internal/internal/ha-architecture.md`](internal/ha-architecture.md) (the second is
-a stub created in this commit — the DR doc references it but
-the full design is in internal/v0.27.0-postgres-ha.md).
+**Status**: **UNBLOCKED** as of 2026-08-18. The 2nd VM
+(`svyatoslava-1`) is available, S3 bucket configured, Patroni +
+etcd cluster in place (`45.152.198.217:2379`).
 
-**What "HA Tier 1" means**:
-- RTO < 1 min (Patroni auto-failover)
-- RPO = 0 (synchronous streaming replication)
-- Active-passive: 2nd VM (skygate-host-2) is the warm standby
-- Old VM (192.0.2.1) becomes the replica
-- etcd cluster for Patroni consensus (3 nodes ideal, 1 node
-  minimum)
-- HAProxy pg-aware routing (port 5000 = primary, 5001 = replica)
-- wal-g → S3 for WAL archive + point-in-time recovery
-- headscale stays on SQLite + Litestream (headscale 0.29.x has
-  no PG support; 0.30+ does but isn't out)
+**Locked-in design decisions** (from operator reply 2026-08-18):
 
-**What's needed**:
-- Provision skygate-host-2 (2nd VM, same OS + Docker)
-- etcd cluster — 3rd node OR accept single-node (no quorum,
-  Patroni can't elect during a node failure)
-- S3 bucket for WAL archive
-- DNS plan: `head.example.com` + `skygate.example.com` flip with
-  5-min TTL
-- ~2-3 weeks of work following the v0.27.0 plan phases 2-5
+| Decision | Value | Source |
+|---|---|---|
+| Public DNS FQDN | `skygate.skynas.ru` | operator (reg.ru is registrar) |
+| Active node name | `skygate` (in headscale) | operator — "skygate-prod был confusing" |
+| Standby node name | `skygate-standby` | derived |
+| Active VM (today) | `svyatoslava-1` (new) | operator — "текуший проект на svyatoslava-1 и будет основным" |
+| Standby VM (today) | `192.168.13.69` (current `95.165.170.190`) | operator — current VM becomes дублером |
+| HA topology | Active-Passive with priority chain (NOT Active-Active) | operator — "стоит делать сразу с учетом приоритета" |
+| Starter chain | 2 nodes (P1 + P2) | operator — "Starter chain пока из двух" |
+| DNS failover | reg.ru API (no Cloudflare) | operator — РФ, reg.ru is registrar |
+| Tailscale Funnel | NO (skipped) | operator — "сеть tailscale скорейвсего не доступна" |
+| Cert acquisition | reg.ru DNS-01 via Caddy + manual upload fallback | per BL-2 design + operator request |
+| Failover policy | auto + manual override | operator — "сделал авто но оставил возможность и в ручную" |
+| Auto-reclaim | default OFF (manual "Reclaim primary" button) | anti-flap |
+| Patroni config | **NOT touched** | operator — "Зачем мучаться с перенастройкой Patroni" |
+| S3 bucket name | `s3://skygate-ha/` (suggested) | consistent with backup infra |
+| headplane API key | file-based in `.env`, replicated via S3 deploy/ | operator — "прописывается автоматом" |
 
-**Operator action required**: provision skygate-host-2 VM + S3
-bucket. Until then this is blocked.
+**What "HA Tier 1" means (revised for v1.5.0)**:
+- RTO < 1 min (Patroni auto-failover + skygate HA role flip)
+- RPO = 0 (Patroni async replication is acceptable for the
+  household tailnet — synchronous is a separate decision)
+- Active-Passive: 2nd VM (skygate-standby) is the warm standby
+- etcd cluster for Patroni consensus (already in place)
+- reg.ru DNS failover (A-record flip on role change)
+- certsync: S3 ↔ local certs (single source of truth)
+- /admin/ha page: chain editor + force promote/demote
+- /admin/certificates: upload + reg.ru DNS-01 toggle
+- /admin/deploy: push/pull/promote buttons
+- headscale stays on its current SQLite + Litestream
+  (no change in v1.5.0)
+
+**What's needed (now unblocked)**:
+- ~~2nd VM~~ — DONE (svyatoslava-1)
+- ~~etcd cluster~~ — DONE (45.152.198.217:2379)
+- ~~S3 bucket~~ — DONE (operator-confirmed)
+- reg.ru API credentials — **NEEDED** (operator to provide)
+- 10 open questions per `docs/internal/ha-v1.5.0-execution.md` §4
+- ~3-4 weeks of work per `docs/internal/ha-v1.5.0-execution.md` §3
+
+**Execution tracker**: [`docs/internal/ha-v1.5.0-execution.md`](internal/ha-v1.5.0-execution.md)
+(10 phases, 10 open questions, locked decisions log, status updates).
 
 **Note**: the existing Tier 0 (single-VM, daily backups) is
 documented in [`docs/disaster-recovery.md`](disaster-recovery.md)

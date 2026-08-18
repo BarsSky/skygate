@@ -4,7 +4,9 @@ This file is for AI assistants (Hermes, Claude, Cline, Cursor, etc.) working on
 or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 **Before proposing work, also read [`docs/BACKLOG.md`](docs/BACKLOG.md)** —
-it tracks abandoned / blocked / in-progress features (HA skygate-host-2,
+it tracks abandoned / blocked / in-progress features (HA skygate-host-2
+**UNBLOCKED 2026-08-18** — see `docs/internal/ha-v1.5.0-execution.md` for
+the v1.5.0 plan and 10 open questions awaiting operator input,
 PG cutover (now done in v1.3.x), backup polish, perf regression tests,
 **UI refactoring (DONE in v1.1.0 — 22 admin pages grouped into 6
 collapsible sidebar sections; see `docs/PLANS.md` TD-1)**,
@@ -12,6 +14,11 @@ collapsible sidebar sections; see `docs/PLANS.md` TD-1)**,
 drawer at <768px, hamburger button, 44px tap targets; see
 `docs/PLANS.md` TD-3)**, etc.) so you don't re-litigate old
 decisions or propose work that's already in flight.
+
+**v1.5.0 HA tracker rule**: when working on anything that touches
+the HA chain, certsync, DNS failover, or deploy subcommands,
+update `docs/internal/ha-v1.5.0-execution.md` §6 status log
+in the same commit. Don't let the tracker drift.
 
 ---
 

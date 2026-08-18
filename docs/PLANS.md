@@ -462,22 +462,38 @@ work has been moved to TD-14 below.
 - /admin/users HSOrphans "Add as skygate user" button
 - Effort: ~6 hours
 
-**v1.5.0 — DNS records (TD-5)**
+**v1.5.0 — HA Tier 1 (BL-2) — UNBLOCKED 2026-08-18**
+- `svyatoslava-1` VM available, S3 bucket configured, Patroni + etcd in place
+- Active-Passive with priority chain (`skygate` P1 / `skygate-standby` P2)
+- Patroni auto-failover (existing config, **NOT touched**)
+- reg.ru DNS failover (reg.ru is the registrar, no Cloudflare)
+- Tailscale Funnel: NO (operator's network doesn't expose Tailscale)
+- Certsync: S3 as single source of truth, both nodes sync
+- /admin/certificates: upload + reg.ru DNS-01 toggle
+- /admin/ha: chain editor + failover policy + force promote/demote
+- /admin/deploy + `skygate deploy {push,pull}` + `skygate ha {promote,demote,reclaim}`
+- Auto-failover with manual override (default ON)
+- Auto-reclaim: OFF (avoid flap)
+- Effort: ~3-4 weeks
+- Execution tracker: `docs/internal/ha-v1.5.0-execution.md`
+- **Open**: 10 questions awaiting operator answers (reg.ru creds, S3 IAM, etc.)
+
+**v1.5.1 — DNS records (TD-5)**
 - Requires headscale 0.30+ (release-not-yet)
-- Per-user `exitnode.<user>.skygate.example.com` DNS
+- Per-user `exitnode.<user>.skynas.ru` DNS
 - Effort: ~1 day
 - Blocked on headscale release
 
-**v1.6.0 — System tests persistence + reporting (TD-8)**
-- Verify /admin/system_tests records to system_tests_runs
-- Add "history" tab to /admin/system_tests
-- Effort: ~2 hours
+**v1.5.2 — System tests persistence + reporting (TD-8) — DONE in v1.4.4**
+- Verify /admin/system_tests records to system_tests_runs ✓
+- Add "history" tab to /admin/system_tests ✓
+- (delivered early as part of v1.4.4 — promoted from v1.6.0)
 
-**v1.7.0 — Subnet-router auto-cleanup cron (TD-9)**
-- Daily cron to remove smoke-mesh test data
-- Effort: ~30 min
+**v1.5.3 — Subnet-router auto-cleanup cron (TD-9) — DONE in v1.4.3**
+- Daily cron to remove smoke-mesh test data ✓
+- (delivered early as part of v1.4.3 — promoted from v1.7.0)
 
-**v1.8.0+ — PostgreSQL cutover (BL-1) — DONE across v1.3.0 + v1.3.1 + v1.3.2**
+**v1.5.4+ — PostgreSQL cutover (BL-1) — DONE across v1.3.0 + v1.3.1 + v1.3.2**
 - Live cutover on the operator's PG-staging VM
 - Phase 1 (v1.3.0): Go source — removed all SQLite code paths,
   `cfg.DBDSN` is now REQUIRED, pgx is the only DB driver
@@ -494,12 +510,6 @@ work has been moved to TD-14 below.
 - 4 new catalog rows: B26 (CGO_ENABLED=0), B34 (psql
   duplicate check), B70 (PG-only title), B79 (PG-only
   placeholders). All 4 PASS.
-
-**v3.0.0 — HA Tier 1 (BL-2)**
-- skygate-host-2 + etcd + S3 + DNS plan
-- Patroni auto-failover
-- Effort: ~2-3 weeks
-- Blocked on operator's 2nd VM + etcd + S3 bucket
 
 ---
 
