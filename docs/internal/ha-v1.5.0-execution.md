@@ -81,12 +81,31 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 - [ ] `internal/i18n/catalog_admin.go` — 7 new keys (cert_title / cert_current / cert_upload_pem / cert_upload_key / cert_apply / cert_dns01_toggle / cert_dns01_help) in RU+EN
 - [ ] `scripts/check_b148.sh` (5 contracts)
 
-### Phase 5: /admin/ha (chain editor + failover controls)
-- [ ] `internal/feature/admin/ha.go` — `GetAdminHA` + `PostAdminHAForcePromote` + `PostAdminHAForceDemote` + `PostAdminHAAutoReclaimToggle` + `PostAdminHAChainEdit`
-- [ ] `internal/handlers/templates/admin/ha.html` — chain table + failover policy radio (auto/manual) + force buttons + reclaim button
+### Phase 5: /admin/ha (chain editor + failover controls + admin-managed credentials)
+- [ ] `internal/feature/admin/ha.go` — `GetAdminHA` + `PostAdminHAForcePromote` + `PostAdminHAForceDemote` + `PostAdminHAAutoReclaimToggle` + `PostAdminHAChainEdit` + **`PostAdminHAAddNode`** + **`PostAdminHARemoveNode`** + **`PostAdminHARegapiCreds`** (paste reg.ru SSL cert + key, applies immediately)
+- [ ] `internal/handlers/templates/admin/ha.html` — chain table + failover policy radio (auto/manual) + force buttons + reclaim button + **"Add HA node" form** (hostname + priority + public IP + tailscale IP) + **"reg.ru API credentials" form** (SSL cert paste + "test connection" button + status badge: connected/failed/not configured)
+- [ ] `internal/ha/regapi/credentials.go` — apply + validate + persist reg.ru SSL cert to `internal/secretbox/` (age-encrypted) + auto-test on save
 - [ ] `cmd/skygate/main.go` — routes + audit log writes
-- [ ] `internal/i18n/catalog_admin.go` — 9 new keys (ha_title / ha_chain / ha_priority / ha_status / ha_role_active / ha_role_standby / ha_policy / ha_force_promote / ha_force_promote_confirm) in RU+EN
+- [ ] `internal/i18n/catalog_admin.go` — 9 + 7 = 16 new keys (ha_title / ha_chain / ha_priority / ha_status / ha_role_active / ha_role_standby / ha_policy / ha_force_promote / ha_force_promote_confirm / **ha_add_node / ha_remove_node / ha_add_node_help / ha_regapi_section / ha_regapi_cert / ha_regapi_key / ha_regapi_test**) in RU+EN
 - [ ] `scripts/check_b149.sh` (5 contracts)
+
+### Phase 5.1: Admin-managed credentials (sub-section of Phase 5)
+
+Per operator 2026-08-18: "для будущих настроек необходимо будет учитывать возможность настраивать управление администратору через веб интерфейс после того как он развернет первичный прод и решит добавить дубликат".
+
+The `/admin/ha` page must let the admin:
+- Add/remove HA nodes (no SSH or `.env` edit required)
+- Manage reg.ru API credentials (no manual file copy)
+- See live status: which node is active, which is standby, what's the failover policy
+- Trigger force promote/demote with audit log
+
+UI sections in `/admin/ha`:
+1. **Cluster topology** (read-only): chain table with priority, last seen, status
+2. **Failover policy** (read-write): auto / manual radio + threshold settings
+3. **HA nodes** (CRUD): add new node form (hostname + priority + public IP + tailscale IP) + remove button
+4. **External DNS** (CRUD): reg.ru API config form (SSL cert + key paste, "test connection" button) + status badge
+5. **Force actions** (form, requires typed confirmation): force promote / demote / reclaim
+6. **Audit log** (read-only): last 20 HA-related events
 
 ### Phase 6: skygate deploy subcommand + /admin/deploy
 - [ ] `internal/deploy/push.go` — build, push to `s3://skygate-ha/deploy/<target-hostname>/`
@@ -200,6 +219,16 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **Only Q1 (reg.ru creds) and Q2 (reg.ru IP whitelist) remain as blocking**
 - Step-by-step reg.ru API credential guide added to §4
 - Status: S3 unblocked, awaiting reg.ru creds to start Phase 1 + Phase 2
+
+### 2026-08-18 (reg.ru SSL cert approach + admin-managed UI)
+- **Auth method: SSL cert** (over HTTP Basic Auth) — generated `cert.pem` + `key.pem` (RSA 2048, SHA-512, 365 days) on live VM at `/home/skyadmin/skygate-secrets/regapi/`
+- Fingerprint: `91:DA:41:BD:7C:18:45:41:AB:E2:BE:9F:68:B8:BA:30:DB:02:FB:59:EE:BA:87:0E:98:54:F1:95:C5:20:9F:0D`
+- **Operator action pending**: register cert via reg.ru UI "Add SSL certificate" (provided PEM content)
+- **Plan update per operator**: `/admin/ha` page must support admin-managed HA node CRUD + reg.ru credentials (no SSH or `.env` edit required after initial deploy)
+  - Phase 5 expanded: 4 new methods (`PostAdminHAAddNode`, `PostAdminHARemoveNode`, `PostAdminHARegapiCreds`) + 7 new i18n keys
+  - Phase 5.1: explicit sub-section documenting the admin-managed credentials design
+- IP whitelist: confirmed not required (reg.ru's IP whitelist is for browser access, not API; the 2 IPs in screenshot are operator's personal IPs)
+- Status: cert generated + saved, awaiting operator registration in reg.ru; meanwhile Phase 1 (chain + elector) can start independently
 
 ---
 
