@@ -533,6 +533,21 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
 .status-relay{background:var(--warning);box-shadow:0 0 0 3px var(--warning-bg);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
 
+/* COLOR SWATCH GRID (B137 — v1.3.20.6 hotfix).
+   14 small colored squares for the /my/account Display form's
+   selection_bg picker. The first tile is "no color" (use
+   theme default), the next 12 are preset colors, the last is
+   "custom" (reveals the text input). The selected tile has
+   an accent ring. Works in all 5 themes because the colors
+   are explicit hex values. */
+.color-swatch-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin:8px 0 4px;max-width:420px}
+.color-swatch{aspect-ratio:1;width:100%;border:1px solid var(--border);border-radius:5px;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;background:var(--bg-card);color:var(--text-muted);font-size:13px;transition:transform .1s,box-shadow .1s;position:relative}
+.color-swatch:hover{transform:scale(1.08)}
+.color-swatch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.color-swatch.selected{box-shadow:0 0 0 2px var(--accent),0 0 0 4px var(--accent-soft);border-color:var(--accent)}
+.color-swatch.swatch-default{background:var(--bg-elev);color:var(--text-subtle)}
+.color-swatch.swatch-custom{background:var(--bg-elev);color:var(--text)}
+
 /* ALERTS */
 .alert{border:1px solid var(--border);border-left:3px solid var(--info);background:var(--info-bg);color:var(--info);padding:13px 16px;border-radius:var(--radius);margin-bottom:16px;font-size:14px;display:flex;align-items:flex-start;gap:10px}
 .alert i{font-size:15px;margin-top:1px;flex-shrink:0}

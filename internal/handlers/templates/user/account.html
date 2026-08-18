@@ -98,7 +98,35 @@
     </div>
     <div class="field">
       <label>{{t "account.selection_bg"}}</label>
-      <input type="text" name="selection_bg" value="{{.DisplaySelBg}}" placeholder="{{t "account.selection_bg_placeholder"}}" maxlength="32">
+      {{/* 2026-08-18: v1.3.20.6+ (B137) — color picker grid.
+           The pre-B137 form had a freeform text input; the
+           operator's 2026-08-18 feedback was "добавь удобную
+           форму выбора цвета из таблицы чтобы не писать
+           вручную". 14 preset swatches (1 "default" + 12
+           colors + 1 "custom" that reveals the text input)
+           replace the bare <input>. The hidden <input>
+           carries the value the form submits. */}}
+      <div class="color-swatch-grid" id="sel-swatches">
+        <button type="button" class="color-swatch swatch-default {{if eq .DisplaySelBg ""}}selected{{end}}" data-color="" title="{{t "account.selection_swatch_default"}}" aria-label="{{t "account.selection_swatch_default"}}">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+        <button type="button" class="color-swatch" data-color="#ffcc00" style="background:#ffcc00" title="#ffcc00" aria-label="#ffcc00"></button>
+        <button type="button" class="color-swatch" data-color="#ff6b6b" style="background:#ff6b6b" title="#ff6b6b" aria-label="#ff6b6b"></button>
+        <button type="button" class="color-swatch" data-color="#4ecdc4" style="background:#4ecdc4" title="#4ecdc4" aria-label="#4ecdc4"></button>
+        <button type="button" class="color-swatch" data-color="#95e1d3" style="background:#95e1d3" title="#95e1d3" aria-label="#95e1d3"></button>
+        <button type="button" class="color-swatch" data-color="#a8e6cf" style="background:#a8e6cf" title="#a8e6cf" aria-label="#a8e6cf"></button>
+        <button type="button" class="color-swatch" data-color="#ffd93d" style="background:#ffd93d" title="#ffd93d" aria-label="#ffd93d"></button>
+        <button type="button" class="color-swatch" data-color="#fcbad3" style="background:#fcbad3" title="#fcbad3" aria-label="#fcbad3"></button>
+        <button type="button" class="color-swatch" data-color="#c9cbff" style="background:#c9cbff" title="#c9cbff" aria-label="#c9cbff"></button>
+        <button type="button" class="color-swatch" data-color="#aa96da" style="background:#aa96da" title="#aa96da" aria-label="#aa96da"></button>
+        <button type="button" class="color-swatch" data-color="#ff9aa2" style="background:#ff9aa2" title="#ff9aa2" aria-label="#ff9aa2"></button>
+        <button type="button" class="color-swatch" data-color="#6c5ce7" style="background:#6c5ce7" title="#6c5ce7" aria-label="#6c5ce7"></button>
+        <button type="button" class="color-swatch" data-color="#fdcb6e" style="background:#fdcb6e" title="#fdcb6e" aria-label="#fdcb6e"></button>
+        <button type="button" class="color-swatch swatch-custom {{if not (in (slice "" "#ffcc00" "#ff6b6b" "#4ecdc4" "#95e1d3" "#a8e6cf" "#ffd93d" "#fcbad3" "#c9cbff" "#aa96da" "#ff9aa2" "#6c5ce7" "#fdcb6e") .DisplaySelBg)}}selected{{end}}" data-color="__custom__" title="{{t "account.selection_swatch_custom"}}" aria-label="{{t "account.selection_swatch_custom"}}">
+          <i class="fa-solid fa-palette"></i>
+        </button>
+      </div>
+      <input type="text" id="sel-bg-input" name="selection_bg" value="{{.DisplaySelBg}}" placeholder="{{t "account.selection_bg_placeholder"}}" maxlength="64" autocomplete="off" style="margin-top:8px;font-family:var(--mono);font-size:13px">
       <p class="hint">{{t "account.selection_bg_help"}}</p>
     </div>
     <div class="btn-row" style="margin-top:16px;display:flex;gap:8px">
@@ -111,4 +139,50 @@
     </div>
   </form>
 </div>
+
+{{/* B137: color swatch click → text input. Tiny vanilla-JS,
+     no framework. The Custom tile (data-color="__custom__")
+     focuses the text input so the user can type their own. */}}
+<script>
+(function() {
+  var grid = document.getElementById('sel-swatches');
+  if (!grid) return;
+  var input = document.getElementById('sel-bg-input');
+  if (!input) return;
+  // Pre-selected set (matches the 12 swatches + empty).
+  // Used to mark the "Custom" tile as selected when the
+  // current value isn't one of the 12 presets.
+  var presets = ["#ffcc00","#ff6b6b","#4ecdc4","#95e1d3","#a8e6cf","#ffd93d","#fcbad3","#c9cbff","#aa96da","#ff9aa2","#6c5ce7","#fdcb6e"];
+  function markSelected(target) {
+    grid.querySelectorAll('.color-swatch').forEach(function(el){ el.classList.remove('selected'); });
+    if (target) target.classList.add('selected');
+  }
+  grid.querySelectorAll('.color-swatch').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var c = el.getAttribute('data-color') || '';
+      if (c === '__custom__') {
+        markSelected(el);
+        input.focus();
+        input.select();
+        return;
+      }
+      input.value = c;
+      markSelected(el);
+    });
+  });
+  // When the user types in the input, mark Custom as selected
+  // (so the swatch UI reflects "you're on a custom value").
+  input.addEventListener('input', function() {
+    var v = input.value.trim();
+    if (presets.indexOf(v.toLowerCase()) >= 0) {
+      var btn = grid.querySelector('.color-swatch[data-color="' + v.toLowerCase() + '"]');
+      markSelected(btn);
+    } else if (v === '') {
+      markSelected(grid.querySelector('.swatch-default'));
+    } else {
+      markSelected(grid.querySelector('.swatch-custom'));
+    }
+  });
+})();
+</script>
 {{end}}
