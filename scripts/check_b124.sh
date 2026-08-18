@@ -149,13 +149,29 @@ fi
 
 # ------------------------------------------------------------------------------
 # Contract F: auto-apply button is hidden when DevBuild=true
+# 2026-08-18 (B129): the pre-B129 contract was
+#   {{if and .IsNewer .AutoUpdateEnabled (not .DevBuild)}}
+# The B129 redesign (per the operator's 2026-08-17 feedback
+# "некорректно называть это автообновлением так как по сути
+# это просто уведомление") removed the .AutoUpdateEnabled
+# gate — the Apply button is now always visible when IsNewer
+# (and !DevBuild). The "auto-update" concept moved to the
+# separate Schedule section (B129's new card). The DevBuild
+# gate is preserved.
 # ------------------------------------------------------------------------------
 echo
-echo "=== F. /admin/update hides auto-apply button when DevBuild=true ==="
-if grep -qE 'if and \.IsNewer \.AutoUpdateEnabled \(not \.DevBuild\)' "${TEMPLATE}"; then
-    ok "auto-apply button is gated by {{if and .IsNewer .AutoUpdateEnabled (not .DevBuild)}}"
+echo "=== F. /admin/update hides auto-apply button when DevBuild=true (B129: no .AutoUpdateEnabled gate) ==="
+if grep -qE 'if and \.IsNewer \(not \.DevBuild\)' "${TEMPLATE}"; then
+    ok "auto-apply button is gated by {{if and .IsNewer (not .DevBuild)}} (B129 contract — .AutoUpdateEnabled gate removed)"
 else
-    bad "auto-apply button is NOT gated by DevBuild=false — dev builds would still see auto-apply"
+    bad "auto-apply button is NOT gated by .IsNewer and .DevBuild — the B129 contract is broken"
+fi
+# Negative: the pre-B129 .AutoUpdateEnabled gate must NOT be present
+# in the apply form's conditional. (B129 removed it.)
+if grep -qE 'if and \.IsNewer \.AutoUpdateEnabled \(not \.DevBuild\)' "${TEMPLATE}"; then
+    bad "pre-B129 .AutoUpdateEnabled gate is still on the Apply button (B129 should have removed it)"
+else
+    ok "pre-B129 .AutoUpdateEnabled gate is gone from the Apply button (B129 contract)"
 fi
 
 # ------------------------------------------------------------------------------

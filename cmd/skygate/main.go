@@ -1421,6 +1421,40 @@ func main() {
 		log.Printf("📡 headscale-update-monitor: disabled (SKYGATE_HEADSCALE_POLL_INTERVAL=0). /admin/headscale still works as a manual look-up.")
 	}
 
+	// 2026-08-18 (B130): background scheduler for
+	// time-of-day auto-update. Reads the schedule from
+	// global_settings (with env-var fallbacks) and
+	// triggers the update orchestrator when (a) schedule
+	// is enabled, (b) current time matches the configured
+	// HH:MM, (c) GitHub has a newer release, and (d) no
+	// update is already in flight. The /admin/update
+	// page (B129) shows the schedule + last-run state.
+	if cfg.UpdateScheduleEnabled {
+		schedChecker := &update.Checker{
+			Owner:          cfg.GitHubOwner,
+			Repo:           cfg.GitHubRepo,
+			Channel:        cfg.UpdateChannel,
+			GitHubToken:    cfg.GitHubToken,
+			CurrentVersion: app.BuildVersion,
+		}
+		schedState := update.NewStateStore("") // path resolved internally
+		update.Start(ctx, update.SchedulerDeps{
+			DB:           d,
+			State:        schedState,
+			Checker:      schedChecker,
+			BuildVersion: app.BuildVersion,
+			Notifier:     schedulerNotifierSink(app.Notifier),
+			RepoPath:     cfg.RepoPath,
+			Cfg: update.SchedulerCfg{
+				UpdateScheduleEnabled: cfg.UpdateScheduleEnabled,
+				UpdateScheduleTime:    cfg.UpdateScheduleTime,
+			},
+		})
+		log.Printf("⏰ update-scheduler: enabled (time=%s, env-var default; /admin/update page can override)", cfg.UpdateScheduleTime)
+	} else {
+		log.Printf("⏰ update-scheduler: disabled (SKYGATE_UPDATE_SCHEDULE_ENABLED=false; /admin/update page can enable)")
+	}
+
 	// 2026-07-17: v0.16.7 — per-user subnet sidecar
 	// auto-approver moved earlier so the RealNotifier
 	// can pick up the same manager via SetSidecar().
@@ -1974,4 +2008,24 @@ func isTailscaleRunningInContainer() bool {
 		}
 	}
 	return false
+}
+
+// 2026-08-18 (B130): adapter from the full telegram.Notifier
+// to the update package's NotifierSink. Avoids an import
+// cycle (internal/update can't import internal/telegram
+// because internal/telegram doesn't import internal/update,
+// but the test fixtures sometimes do and the cycle would
+// block refactors). Returns nil if n is nil so the scheduler
+// can simply call if deps.Notifier != nil.
+func schedulerNotifierSink(n telegram.Notifier) update.NotifierSink {
+	if n == nil {
+		return nil
+	}
+	return schedulerSink{n: n}
+}
+
+type schedulerSink struct{ n telegram.Notifier }
+
+func (s schedulerSink) SendAlert(text string) int64 {
+	return s.n.SendAlert(text)
 }

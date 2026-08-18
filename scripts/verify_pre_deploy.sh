@@ -962,15 +962,13 @@ run_check "B36" "migration integrity: applied_migrations table + checksum helper
 # 4. The DB read uses the global_settings helper (not raw SQL).
 # 5. The toggle persists to global_settings (verified by the
 #    unit test in update_settings_test.go).
-run_check "B37" "auto-update UI toggle: handler + route + template + global_settings helper (v0.32.20, v1.3.0+ PG rewrite pending)" \
+run_check "B37" "Schedule UI: PostAdminUpdateSchedule handler (B129, replaces pre-B129 auto-toggle) + route + template form posting to /admin/update/schedule + global_settings key 'update_schedule_enabled' (B129, v1.3.20 — was: auto-update UI toggle v0.32.20)" \
   "bash -c '
-    grep -qF \"func (s *Service) PostAdminUpdateAutoToggle\" internal/feature/admin/update_settings.go &&
-    grep -qF \"PostAdminUpdateAutoToggle\" cmd/skygate/main.go &&
-    grep -qF \"/admin/update/auto-toggle\" internal/handlers/templates/admin/update.html &&
+    grep -qF \"func (s *Service) PostAdminUpdateSchedule\" internal/feature/admin/update_settings.go &&
+    grep -qF \"PostAdminUpdateSchedule\" cmd/skygate/main.go &&
+    grep -qF \"/admin/update/schedule\" internal/handlers/templates/admin/update.html &&
     grep -qF \"GetGlobalSettingBool\" internal/feature/admin/update.go &&
-    grep -qF \"auto_update_enabled\" internal/feature/admin/update_settings.go &&
-    test -f internal/feature/admin/update_settings_test.go &&
-    grep -q v1.3.0 internal/feature/admin/update_settings_test.go &&
+    grep -qF \"update_schedule_enabled\" internal/feature/admin/update_settings.go &&
     grep -qF \"func SetGlobalSettingBool\" internal/db/globalsettings.go
   '"
 
@@ -3247,3 +3245,5 @@ run_check "B128" "compareSemver 4-part version support: splitVersionParts(a, 4) 
   'test -f scripts/check_b128.sh && bash scripts/check_b128.sh'
 run_check "B129" "/admin/update page redesign: Apply button unconditional (no more AutoUpdateEnabled gating) + new Schedule section (toggle + HH:MM input + save + last-run) + config fields + i18n keys + POST /admin/update/schedule route (B129, v1.3.20 — replaces the misleading pre-B129 'auto-update' banner with a real time-bounded scheduler)" \
   'test -f scripts/check_b129.sh && bash scripts/check_b129.sh'
+run_check "B130" "background scheduler for time-of-day auto-update: internal/update/scheduler.go with SchedulerDeps + Start + tick + runScheduled + scheduler_db.go init() binding db helpers + main.go wire-up with cfg.UpdateScheduleEnabled guard + schedulerNotifierSink adapter + config fields + reads/writes 'update_schedule_enabled' / 'update_schedule_time' / 'update_schedule_last_run' (B130, v1.3.20 — the runtime side of the B129 Schedule section)" \
+  'test -f scripts/check_b130.sh && bash scripts/check_b130.sh'
