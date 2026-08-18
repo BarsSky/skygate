@@ -1,4 +1,3 @@
-<style>
 /* ============================================================
    SKYGATE — 4 themes via [data-theme]
    - linear: dark, indigo accent (Inter)
@@ -757,7 +756,7 @@ footer a:hover{color:var(--accent)}
      `width:52px` from .collapsed). */
   .sidebar .toggle{display:none}
 }
-</style>
+
 /* Align username/password fields in the create-user form on /admin/users. */
 .user-form-grid {
   display: grid;
