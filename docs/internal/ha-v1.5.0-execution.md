@@ -25,7 +25,7 @@
 | 10 | **Failover: auto + manual override** | operator reply 2026-08-18 | "сделал авто но оставил возможность и в ручную" |
 | 11 | **Auto-reclaim: default OFF** (when P1 returns, no auto-flip; manual "Reclaim primary" button) | derived from operator's anti-flap intent | avoids flap |
 | 12 | **Patroni config: NOT touched** | operator reply 2026-08-18 | "Зачем мучаться с перенастройкой Patroni есть ли в этом смысли если сейчас уже все настроено" |
-| 13 | **S3 bucket name: `s3://skygate-ha/`** (suggested) | derived from existing backup bucket pattern | consistent with backup infra |
+| 13 | **S3 prefix: `s3://skygate-backups/ha/`** (revised 2026-08-18) | reusing existing backup bucket (`skygate-backups` at `http://172.18.0.5:9000`) with same IAM creds (`skygate-test` / `skygate-test-pass-2026`); no new bucket or IAM needed |
 | 14 | **Cert acquisition: reg.ru DNS-01 via Caddy plugin** | reg.ru has RFC 2136 support | no Cloudflare dep |
 | 15 | **Cert acquisition fallback: user upload via /admin/certificates** | operator asked for "прием их через загрузку от пользователя" | works without external DNS dep |
 | 16 | **headplane API key: in `.env` (file-based), replicated via S3 deploy/** | operator: "при развертывании с нуля если он развертывается в единой докер системе с skygate и headscale то прописывается и применяется автоматом" | simpler than DB-encrypted storage |
@@ -42,7 +42,7 @@
 | External DNS | unknown (need to confirm reg.ru API access) | reg.ru API client in `internal/dns/regapi/` |
 | Tailscale/headscale | tsnet.skynas.ru base domain, `head.skynas.ru` API | unchanged; add `skygate` and `skygate-standby` node identities |
 | TLS cert | currently self-managed (Caddy OFF per v0.32.11) | reg.ru DNS-01 via Caddy plugin (decision #14) |
-| Backup | S3 already configured (per B142 / backup system) | add `s3://skygate-ha/` bucket for HA state (decision #13) |
+| Backup | S3 already configured (per B142 / backup system) | add `s3://skygate-backups/ha/` prefix for HA state (decision #13) |
 
 ---
 
@@ -70,7 +70,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 - [ ] `internal/certsync/certsync.go` — 30s tick: HEAD S3 `.version` + pull newer .pem/.key + reload Caddy
 - [ ] `internal/certsync/certsync_test.go` — version-bump + Caddy reload stub
 - [ ] `cmd/skygate/main.go` — `StartCertSync(ctx, deps)` (mirrors B130/B142 pattern)
-- [ ] `internal/config/config.go` — `SKYGATE_CERTSYNC_ENABLED` + `SKYGATE_CERTSYNC_S3_BUCKET` (default `s3://skygate-ha/certs/`) + `SKYGATE_CERTSYNC_LOCAL_DIR` (default `/var/lib/skygate/certs/`) + `SKYGATE_CERTSYNC_INTERVAL` (default 30s)
+- [ ] `internal/config/config.go` — `SKYGATE_CERTSYNC_ENABLED` + `SKYGATE_CERTSYNC_S3_BUCKET` (default `s3://skygate-backups/ha/certs/`) + `SKYGATE_CERTSYNC_LOCAL_DIR` (default `/var/lib/skygate/certs/`) + `SKYGATE_CERTSYNC_INTERVAL` (default 30s)
 - [ ] `scripts/check_b147.sh` (5 contracts)
 
 ### Phase 4: /admin/certificates (upload + reg.ru DNS-01 toggle)
@@ -126,18 +126,43 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## 4. Open questions (block Phase start)
 
-| # | Question | Blocker for | Operator answer |
-|---|---|---|---|
-| 1 | reg.ru API credentials (user + password) | Phase 2, 4 | **NEEDED** — operator to provide |
-| 2 | reg.ru API access test from a VM outside reg.ru's IP whitelist (if any) | Phase 2 | **NEEDED** — operator to confirm |
-| 3 | Tailscale Funnel: NO (decided 2026-08-18) | n/a | DECIDED (decision #4) |
-| 4 | S3 bucket `s3://skygate-ha/` creation status | Phase 3+ | **NEEDED** — operator to confirm bucket exists with proper IAM |
-| 5 | S3 IAM credentials for skygate process (read+write to `s3://skygate-ha/certs/`, `deploy/`, `wal/`) | Phase 3+ | **NEEDED** — operator to provide |
-| 6 | Auto-failover default: ON or OFF? | Phase 1 | operator reply 2026-08-18: "сделал авто" → **default ON**, with manual override available |
-| 7 | svyatoslava-1 hostname in headscale (current name vs rename to `skygate-prod`) | Phase 7 | DECIDED (decision #2) — rename to `skygate` |
-| 8 | Caddy installation on svyatoslava-1 (LE + reg.ru plugin) | Phase 4 | **NEEDED** — operator to confirm Caddy install path |
-| 9 | Live DR drill date | Phase 9 | **NEEDED** — operator to pick a maintenance window |
-| 10 | Backup bucket already in S3: name + IAM | Phase 3 reference | operator to share existing config (re-use IAM) |
+| # | Question | Blocker for | Operator answer | Status |
+|---|---|---|---|---|
+| 1 | reg.ru API credentials (user + password) | Phase 2, 4 | **NEEDED** — see "How to provide" below | ⏳ PENDING |
+| 2 | reg.ru API IP whitelist — add both VM public IPs | Phase 2 | **NEEDED** if reg.ru has IP whitelist enabled | ⏳ PENDING |
+| 3 | Tailscale Funnel: NO (decided 2026-08-18) | n/a | DECIDED (decision #4) | ✅ DONE |
+| 4 | S3 bucket `s3://skygate-ha/` creation status | Phase 3+ | **RESOLVED** — reusing `s3://skygate-backups/ha/` prefix (existing bucket, same IAM) | ✅ DONE 2026-08-18 |
+| 5 | S3 IAM credentials for skygate process | Phase 3+ | **RESOLVED** — using existing backup.s3_* credentials (skygate-test / skygate-test-pass-2026 / endpoint http://172.18.0.5:9000) | ✅ DONE 2026-08-18 |
+| 6 | Auto-failover default: ON or OFF? | Phase 1 | DECIDED — default ON (per operator's "сделал авто"), with manual override | ✅ DONE 2026-08-18 |
+| 7 | svyatoslava-1 hostname in headscale | Phase 7 | DECIDED — rename to `skygate` (decision #2) | ✅ DONE |
+| 8 | Caddy installation on svyatoslava-1 (LE + reg.ru plugin) | Phase 4 | **REMOVED** — decided on-site during Phase 4 impl (standard apt install + caddyserver.com binary) | 🗑️ REMOVED 2026-08-18 |
+| 9 | Live DR drill date | Phase 9 | **NEEDED before Phase 9** — operator to pick a maintenance window | ⏳ PENDING (not blocking) |
+| 10 | Backup bucket already in S3: name + IAM | Phase 3 reference | **RESOLVED** — see Q4/Q5 | ✅ DONE 2026-08-18 |
+
+### How to provide reg.ru API credentials (Q1)
+
+1. Log in: https://www.reg.ru/user/
+2. Navigate: "Настройки" → "API" (or https://www.reg.ru/user/api/)
+3. Create API key with scope: **DNS only** (read + write records, no billing/domain-transfer)
+4. Send back as file/env block (any secure channel):
+   ```bash
+   SKYGATE_DNS_PROVIDER=regapi
+   SKYGATE_DNS_REGAPI_USER=<your_reg_ru_login>
+   SKYGATE_DNS_REGAPI_PASSWORD=<api_key_password>
+   SKYGATE_DNS_REGAPI_ZONE=skynas.ru
+   ```
+5. I will:
+   - Save to `internal/secretbox/` (age-encrypted, master key from `SKYGATE_SECRET_KEY`)
+   - Replicate to standby via S3 deploy/ subdir
+   - NOT store in postgres (per your "при миграции headplane все равно новый уникальный ключ")
+
+### How to verify reg.ru IP whitelist (Q2)
+
+1. Log in: https://www.reg.ru/user/
+2. Navigate: "Настройки" → "Безопасность" → "API IP whitelist"
+3. If whitelist is enabled: add `<svyatoslava-1-public-ip>` and `<current-VM-public-ip>` (95.165.170.190)
+4. If whitelist is disabled: nothing to do
+5. Tell me which case applies (so I document the right behavior in the deploy script)
 
 ---
 
@@ -166,6 +191,15 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - 10-phase plan + 10 open questions created
 - Patroni config NOT touched (operator's explicit guidance)
 - Status: PLANNING complete, awaiting operator answers to open questions + go-ahead
+
+### 2026-08-18 (S3 resolution + open questions cleanup)
+- S3 layout: `s3://skygate-backups/ha/` (reusing existing `skygate-backups` bucket at `http://172.18.0.5:9000`, same IAM `skygate-test` / `skygate-test-pass-2026`); no new bucket or credentials needed
+- Q4, Q5, Q10 RESOLVED (S3 layout)
+- Q8 REMOVED (Caddy install path — decided on-site during Phase 4)
+- Q9 reclassified (DR drill date — needed only at Phase 9, not blocking)
+- **Only Q1 (reg.ru creds) and Q2 (reg.ru IP whitelist) remain as blocking**
+- Step-by-step reg.ru API credential guide added to §4
+- Status: S3 unblocked, awaiting reg.ru creds to start Phase 1 + Phase 2
 
 ---
 
