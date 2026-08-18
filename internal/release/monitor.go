@@ -143,12 +143,21 @@ func CompareSemver(a, b string) int {
 	// different. We split on '-' to get the base + suffix.
 	pa := strings.SplitN(a, "-", 2)
 	pb := strings.SplitN(b, "-", 2)
-	// Base comparison is on dot-separated integer triples.
-	// We only support major.minor.patch; anything past is
-	// ignored.
+	// 2026-08-18: B128 — base comparison is on dot-separated
+	// integer parts. We support up to 4 components (skygate
+	// v1.3.12+ convention: x.y.z.w where w is sub-patch).
+	// Earlier iterations truncated to 3 parts and silently
+	// dropped the 4th, so the layout banner "Доступно обновление"
+	// on every admin page would show v1.3.19.3 as the latest
+	// even when v1.3.19.4 was already published (the monitor
+	// read r.TagName="v1.3.19.4" correctly but the compare
+	// only used the first 3 dot-separated parts). After B128
+	// the 4th component is included so v1.3.19.4 correctly
+	// compares as newer than v1.3.19.2 (the live case that
+	// triggered this B-check).
 	as := strings.Split(pa[0], ".")
 	bs := strings.Split(pb[0], ".")
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		if i >= len(as) {
 			as = append(as, "0")
 		}

@@ -264,21 +264,24 @@ type ghRelease struct {
 //     '9' > '1'), incorrectly reporting a v1.3.9 release as
 //     newer than a v1.3.11+27 local build (the live B124 bug).
 //
-// Not a full semver impl — doesn't handle 4-part versions
-// (1.2.3.4) or pre-release ordering (1.0.0-rc.1 < 1.0.0).
-// Sufficient for skygate's x.y.z tag scheme.
+// Not a full semver impl — doesn't handle pre-release ordering
+// (1.0.0-rc.1 < 1.0.0). Sufficient for skygate's x.y.z or
+// x.y.z.w tag scheme.
 func compareSemver(a, b string) int {
 	a = stripBuildLabelSuffix(a)
 	b = stripBuildLabelSuffix(b)
-	// Split into at most 4 parts to handle 4-component versions
-	// like "1.3.19.2" (skygate convention since v1.3.12+). The
-	// first 3 parts are major.minor.patch; the 4th (if present)
-	// is a sub-patch that's IGNORED for compare purposes. This
-	// matches the original 3-part semantics while accepting the
-	// 4-part naming the operator has been using.
-	aParts := splitVersionParts(a, 3)
-	bParts := splitVersionParts(b, 3)
-	for i := 0; i < 3; i++ {
+	// 2026-08-18: B128 — split into up to 4 parts (skygate
+	// v1.3.12+ convention: x.y.z.w where w is sub-patch).
+	// Earlier iterations of this function truncated to 3 parts
+	// and silently dropped the 4th, so v1.3.19.2 and v1.3.19.4
+	// compared as equal and the live "Update" button on
+	// /admin/update stayed hidden because IsNewer returned
+	// false. After B128 the 4th component is included in the
+	// compare, so v1.3.19.4 correctly compares as newer than
+	// v1.3.19.2 (the live case that triggered this B-check).
+	aParts := splitVersionParts(a, 4)
+	bParts := splitVersionParts(b, 4)
+	for i := 0; i < 4; i++ {
 		an, aerr := parseUint(aParts[i])
 		bn, berr := parseUint(bParts[i])
 		if aerr != nil || berr != nil {

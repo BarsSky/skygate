@@ -27,6 +27,18 @@ func TestCompareSemver(t *testing.T) {
 		{"v1", "v1.0.0", 0},                       // missing minor.patch == 0
 		{"v2", "v1.99.99", +1},
 		{"v0.10.8-rc.1", "v0.10.7", +1},
+		// 2026-08-18: B128 — 4-component versions (skygate
+		// v1.3.12+ convention: x.y.z.w). The pre-B128 code
+		// ignored the 4th component, so v1.3.19.2 == v1.3.19.4
+		// and the layout banner on every admin page would show
+		// the wrong "latest" version. After B128 the 4th
+		// component is included in the compare.
+		{"v1.3.19.2", "v1.3.19.2", 0},
+		{"v1.3.19.2", "v1.3.19.1", +1},    // sub-patch bump
+		{"v1.3.19.1", "v1.3.19.2", -1},
+		{"v1.3.19.4", "v1.3.19.2", +1},    // the live B128 trigger
+		{"v1.3.19.2", "v1.3.19.4", -1},
+		{"v1.3.19", "v1.3.19.0", 0},       // implicit .0 padding
 	}
 	for _, c := range cases {
 		got := CompareSemver(c.a, c.b)

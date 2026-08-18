@@ -144,10 +144,17 @@ func CompareSemver(a, b string) int {
 	// suffix.
 	pa := strings.SplitN(a, "-", 2)
 	pb := strings.SplitN(b, "-", 2)
-	// Base comparison on dot-separated integer triples.
+	// 2026-08-18: B128 — base comparison on up to 4 dot-separated
+	// integer parts (skygate v1.3.12+ convention: x.y.z.w).
+	// Earlier iterations truncated to 3 parts and dropped the
+	// 4th. After B128 the 4th component is included. The
+	// headscale-version package isn't strictly affected by
+	// the live bug (headscale tags are x.y.z not x.y.z.w),
+	// but the system-wide 4-part behaviour is the consistent
+	// contract pinned by check_b128.sh.
 	as := strings.Split(pa[0], ".")
 	bs := strings.Split(pb[0], ".")
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		if i >= len(as) {
 			as = append(as, "0")
 		}

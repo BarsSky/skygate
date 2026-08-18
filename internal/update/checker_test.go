@@ -43,17 +43,26 @@ func TestCompareSemver(t *testing.T) {
 		// Build label with both git-describe and explicit commit
 		{"1.3.11-27-g03a1d97+extra", "1.3.11", 0},
 		// 4-component version (skygate v1.3.12+ convention):
-		// "1.3.19.2" compares on the first 3 parts only — the
-		// 4th is sub-patch and ignored (by design — sub-patch
-		// ordering isn't part of the GitHub release contract;
-		// it would need a 4-part compare to be meaningful). Before
-		// B124 split, the 3-part SplitN gave ["1","3","19.2"] and
-		// the parseUint fallback lex-compared "9" < "19.2"
-		// (incorrectly reporting v1.3.9 as newer than v1.3.19.2).
-		{"1.3.19.2", "1.3.9", 1},   // local newer (live B124 case)
-		{"1.3.9", "1.3.19.2", -1},  // GitHub old, local new
+		// "1.3.19.2" compares on all 4 parts (B128). The
+		// pre-B128 code used `splitVersionParts(a, 3)` which
+		// DROPPED the 4th component — so v1.3.19.2 == v1.3.19.4
+		// in the comparison, and the live "Update" button on
+		// /admin/update stayed hidden because IsNewer returned
+		// false. Before B124 split, the 3-part SplitN gave
+		// ["1","3","19.2"] and the parseUint fallback lex-compared
+		// "9" < "19.2" (incorrectly reporting v1.3.9 as newer
+		// than v1.3.19.2).
+		{"1.3.19.2", "1.3.9", 1},    // local newer (live B124 case)
+		{"1.3.9", "1.3.19.2", -1},   // GitHub old, local new
 		{"1.3.19.2", "1.3.19.2", 0},
-		{"1.3.19.2", "1.3.19.1", 0},  // sub-patch ignored
+		// B128: 4th component IS now compared.
+		{"1.3.19.2", "1.3.19.1", 1},    // sub-patch bump
+		{"1.3.19.1", "1.3.19.2", -1},
+		{"1.3.19.4", "1.3.19.2", 1},    // the live B128 trigger
+		{"1.3.19.2", "1.3.19.4", -1},   // the live B128 trigger (reversed)
+		// Padding still works for 3-part versions.
+		{"1.3.19", "1.3.19.0", 0},      // implicit .0 == explicit .0
+		{"1.3.19.1", "1.3.19", 1},      // .1 > implicit .0
 		// (Pre-release suffix handling like "0.29.0-rc.1" is a
 		// separate concern — the channel check filters those
 		// out before compareSemver is called. compareSemver
