@@ -26,9 +26,44 @@ import (
 // (pgx stdlib does NOT auto-convert "?" to "$N"). The new
 // placeholdersList(1) helper returns "?" on SQLite and
 // "$1" on PG, matching the dispatcher pattern.
+// Querier is the minimal interface satisfied by both *sql.DB
+// and *sql.Tx. It lets the global_settings helpers be called
+// from inside a transaction (e.g. internal/ha.SaveChain) or
+// from a plain *sql.DB connection. v1.5.0 (B145) added the
+// *sql.Tx variants so the HA chain save can wrap a SELECT
+// (change detection) + UPDATE in a single transaction.
+type Querier interface {
+	QueryRow(query string, args ...any) *sql.Row
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 func GetGlobalSetting(d *sql.DB, key, defaultValue string) (string, error) {
+	return getGlobalSetting(qDB{d}, key, defaultValue)
+}
+
+// GetGlobalSettingTx is the *sql.Tx variant of GetGlobalSetting.
+// Added v1.5.0 (B145) so internal/ha.SaveChain can do an
+// atomic SELECT-then-UPDATE without racing concurrent
+// /admin/ha editors. See storage.go for the full rationale.
+func GetGlobalSettingTx(tx *sql.Tx, key, defaultValue string) (string, error) {
+	return getGlobalSetting(qTx{tx}, key, defaultValue)
+}
+
+type qDB struct{ D *sql.DB }
+type qTx struct{ T *sql.Tx }
+
+func (q qDB) QueryRow(query string, args ...any) *sql.Row { return q.D.QueryRow(query, args...) }
+func (q qDB) Exec(query string, args ...any) (sql.Result, error) {
+	return q.D.Exec(query, args...)
+}
+func (q qTx) QueryRow(query string, args ...any) *sql.Row { return q.T.QueryRow(query, args...) }
+func (q qTx) Exec(query string, args ...any) (sql.Result, error) {
+	return q.T.Exec(query, args...)
+}
+
+func getGlobalSetting(q Querier, key, defaultValue string) (string, error) {
 	var v string
-	err := d.QueryRow(`SELECT value FROM global_settings WHERE key = `+placeholdersList(1), key).Scan(&v)
+	err := q.QueryRow(`SELECT value FROM global_settings WHERE key = `+placeholdersList(1), key).Scan(&v)
 	if err == sql.ErrNoRows {
 		return defaultValue, nil
 	}
@@ -70,7 +105,19 @@ func GetGlobalSetting(d *sql.DB, key, defaultValue string) (string, error) {
 // otherwise. The ?,$1,etc split is the same pattern that the
 // other DB helpers use (see nowUnixSQL).
 func SetGlobalSetting(d *sql.DB, key, value string) error {
-	_, err := d.Exec(`
+	return setGlobalSetting(qDB{d}, key, value)
+}
+
+// SetGlobalSettingTx is the *sql.Tx variant of SetGlobalSetting.
+// v1.5.0 (B145) — lets internal/ha.SaveChain wrap a SELECT
+// (change detection) + UPDATE in a single transaction. See
+// storage.go for the full rationale.
+func SetGlobalSettingTx(tx *sql.Tx, key, value string) error {
+	return setGlobalSetting(qTx{tx}, key, value)
+}
+
+func setGlobalSetting(q Querier, key, value string) error {
+	_, err := q.Exec(`
 		INSERT INTO global_settings (key, value, updated_at)
 		VALUES (`+placeholdersList(2)+`, `+nowUnixSQL()+`)
 		ON CONFLICT(key) DO UPDATE SET

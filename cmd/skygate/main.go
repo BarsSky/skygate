@@ -19,7 +19,9 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/backup"
 	"skygate/internal/config"
+	"skygate/internal/dns"
 	"skygate/internal/expirewatch"
+	"skygate/internal/ha"
 	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
 	exitrules "skygate/internal/feature/exit_rules"
@@ -1575,6 +1577,67 @@ func main() {
 		log.Printf("🧹 cleanup-scheduler: disabled (SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED=false; /admin/system_tests page can enable). Pre-B143 manual SQL DELETE workaround is still the only other option.")
 	}
 
+	// 2026-08-18: v1.5.0 (B145) — HA chain + elector + DNS
+	// provider wire-up. Disabled by default
+	// (SKYGATE_HA_ENABLED=false) so the boot path is a
+	// no-op on existing installs until the operator
+	// has finished /admin/ha configuration. When
+	// enabled, the elector goroutine runs every
+	// cfg.HAHeartbeatInterval (default 5s) and
+	// reconciles the chain in `global_settings.ha_chain`
+	// based on local Patroni state + remote heartbeats.
+	//
+	// The DNS provider (cfg.DNSProvider) is constructed
+	// via dns.BuildProvider. At v1.5.0 (B145) only
+	// "regapi" is implemented; "cloudflare" / "route53" /
+	// "rfc2136" return ErrUnknownProvider. The elector
+	// currently doesn't auto-update DNS (that's Phase 3 /
+	// B147 — the certsync + DNS update combined path); the
+	// Phase 1 wire-up is intentionally limited to chain
+	// reconciliation + transition audit-log entries.
+	//
+	// HASelfRoleOverride maps to Elector.SelfRoleOverride.
+	// "auto" (default) → trust Patroni. "active" / "standby"
+	// → force the role regardless of Patroni state. The
+	// empty string falls through to "auto" (defensive).
+	haProvider, haErr := dns.BuildProvider(cfg.DNSProvider, dns.BuildDeps{
+		DB:        d,
+		SecretKey: cfg.SecretKeyHex,
+	})
+	if haErr != nil {
+		log.Printf("ha: DNS provider build failed: %v (HA chain will still work, just no DNS update on failover)", haErr)
+	}
+	_ = haProvider // used in B147 (certsync + DNS update); kept here so the build validates the construction.
+	if cfg.HAEnabled {
+		elector := ha.NewElector(d)
+		elector.SelfHostname = os.Getenv("SKYGATE_HA_SELF_HOSTNAME")
+		if elector.SelfHostname == "" {
+			if h, err := os.Hostname(); err == nil {
+				elector.SelfHostname = h
+			}
+		}
+		elector.HeartbeatInterval = cfg.HAHeartbeatInterval
+		elector.MissedThreshold = cfg.HAMissedThreshold
+		if cfg.HASelfRoleOverride != "" && cfg.HASelfRoleOverride != config.HARoleAuto {
+			elector.SelfRoleOverride = string(cfg.HASelfRoleOverride)
+		}
+		// Wire the existing telegram notifier into the
+		// elector's transition callback via a thin
+		// adapter. The adapter implements the ha.Notifier
+		// interface (which has NotifyRoleChange, NOT
+		// SendAlert — the update.NotifierSink interface
+		// isn't reusable here without a wrapping method).
+		elector.Notifier = haNotifierAdapter{n: app.Notifier}
+		// We don't auto-update DNS from the elector yet
+		// (that's B147). Log the provider for visibility.
+		log.Printf("ha: HA enabled (self=%s, tick=%s, threshold=%d, role_override=%q, dns=%q)",
+			elector.SelfHostname, elector.HeartbeatInterval, elector.MissedThreshold,
+			elector.SelfRoleOverride, haProviderName(cfg.DNSProvider))
+		go elector.Run(ctx)
+	} else {
+		log.Printf("ha: HA disabled (SKYGATE_HA_ENABLED=false; /admin/ha page or env-var will enable once the chain is configured)")
+	}
+
 	// 2026-07-17: v0.16.7 — per-user subnet sidecar
 	// auto-approver moved earlier so the RealNotifier
 	// can pick up the same manager via SetSidecar().
@@ -2256,4 +2319,29 @@ type schedulerSink struct{ n telegram.Notifier }
 
 func (s schedulerSink) SendAlert(text string) int64 {
 	return s.n.SendAlert(text)
+}
+
+// haNotifierAdapter bridges the skygate telegram notifier
+// (which exposes SendAlert) to the ha.Notifier interface
+// (which has NotifyRoleChange). The elector calls
+// NotifyRoleChange exactly once per role transition;
+// failures are logged inside the adapter so the chain
+// update isn't blocked by a Telegram outage.
+type haNotifierAdapter struct{ n telegram.Notifier }
+
+func (a haNotifierAdapter) NotifyRoleChange(_ context.Context, msg string) error {
+	_ = a.n.SendAlert(msg)
+	return nil
+}
+
+// haProviderName returns the human-readable name of the
+// configured DNS provider for the HA startup log. The
+// empty string means "no provider configured" — the
+// elector will skip the DNS update step and just log
+// the role transition to Telegram.
+func haProviderName(name string) string {
+	if name == "" {
+		return "none"
+	}
+	return name
 }

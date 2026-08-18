@@ -296,6 +296,20 @@ type Config struct {
 	// Default: disabled, 5 AM daily.
 	CleanupSmokeMeshInAppEnabled bool
 	CleanupSmokeMeshSchedule     string // cron expression, e.g. "0 5 * * *"
+	// 2026-08-18: v1.5.0 (B145) — HA chain + elector
+	// + DNS provider config. See the long docstring
+	// above (just after getDuration) for the full
+	// rationale. The defaults match the v1.5.0 plan:
+	// 5s heartbeat, 3-miss threshold, Patroni-driven
+	// role, no DNS provider (operator opts in via
+	// SKYGATE_DNS_PROVIDER=regapi or via /admin/ha
+	// once Phase 5 lands).
+	HAEnabled                 bool
+	HAHeartbeatInterval       time.Duration
+	HAMissedThreshold         int
+	HASelfRoleOverride        HARole
+	HAOnTransition            func(from, to string, memberName string) // optional, set in main.go
+	DNSProvider               string
 	GitHubToken         string
 	// 2026-08-17 (B124) — DevBuild marks the running binary
 	// as a dev/edge build. The /admin/update page shows a
@@ -502,6 +516,25 @@ func Load() (*Config, error) {
 		// the 3 AM backup + 4 AM verify).
 		CleanupSmokeMeshInAppEnabled: getenv("SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED", "false") == "true",
 		CleanupSmokeMeshSchedule:     getenv("SKYGATE_CLEANUP_SMOKE_MESH_SCHEDULE", "0 5 * * *"),
+		// 2026-08-18: v1.5.0 (B145) — HA chain + elector
+		// + DNS provider. Env-var defaults match the
+		// plan. HASelfRoleOverride defaults to "auto"
+		// (= trust Patroni); operators can pin to
+		// "active" or "standby" via SKYGATE_HA_ROLE
+		// while they work on a specific node.
+		//
+		// HAEnabled defaults to false — the in-app
+		// elector + DNS-update path is opt-in until the
+		// operator has finished /admin/ha configuration.
+		// Setting SKYGATE_HA_ENABLED=true without a
+		// configured chain logs "no chain" every tick
+		// and exits the loop, so there's no false
+		// promotion risk during the ramp-up.
+		HAEnabled:                 getenv("SKYGATE_HA_ENABLED", "false") == "true",
+		HAHeartbeatInterval:       getDuration("SKYGATE_HA_HEARTBEAT_INTERVAL", 5*time.Second),
+		HAMissedThreshold:         getInt("SKYGATE_HA_MISSED_THRESHOLD", 3),
+		HASelfRoleOverride:        HARole(getenv("SKYGATE_HA_ROLE", "auto")),
+		DNSProvider:               getenv("SKYGATE_DNS_PROVIDER", ""),
 		// 2026-08-05 v0.33.1.10: GitHub repo coordinates.
 		// The "BarsSky/skygate" default matches the
 		// operator's actual github.com repo (the previous
@@ -627,6 +660,42 @@ func getDuration(key string, def time.Duration) time.Duration {
 	}
 	return def
 }
+
+// 2026-08-18: v1.5.0 (B145) — HA chain + elector + DNS
+// provider config. These are the env-var-tunable knobs for
+// the active-passive chain documented in
+// docs/internal/ha-v1.5.0-execution.md. The defaults match
+// the plan ("5s tick, 3 missed = 15s failover threshold").
+// Operators on a flaky link can raise HeartbeatInterval
+// (e.g. to 10s) and MissedThreshold (to 5) for a 50s
+// failure-detection window; the cost is a slower failover.
+//
+// DNSProvider selects which Provider implementation
+// BuildProvider() returns ("regapi" / "cloudflare" /
+// "route53" / "rfc2136"). Empty string disables the DNS
+// update step of the HA failover entirely — useful for
+// operators who manage the A-record out-of-band.
+//
+// HARole is the operator-assigned self-role override
+// ("active" / "standby" / "auto"). When "auto" (default),
+// the elector derives its role from Patroni state
+// (skygate is active if it's the Patroni primary,
+// standby otherwise). When "active" or "standby", the
+// elector forces the role regardless of Patroni — this
+// is the "pin the active on this node while I work on
+// the other" knob documented in the v1.5.0 plan.
+//
+// All four are exposed via SKYGATE_* env vars (no .env
+// edits needed after the initial deploy; the /admin/ha
+// page can override DNSProvider at runtime once B149
+// lands).
+type HARole string
+
+const (
+	HARoleAuto    HARole = "auto"
+	HARoleActive  HARole = "active"
+	HARoleStandby HARole = "standby"
+)
 
 func parseUserLimits(s string) map[string]int {
 	m := map[string]int{}
