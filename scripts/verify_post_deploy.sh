@@ -274,6 +274,40 @@ export SSH_HOST
 if [ -z "${SKYGATE_ADMIN_PASSWORD:-}" ] && [ -n "${SKYGATE_ADMIN_PASS:-}" ]; then
   export SKYGATE_ADMIN_PASSWORD="$SKYGATE_ADMIN_PASS"
 fi
+# v1.3.19.4 B127: if SKYGATE_ADMIN_PASSWORD is STILL empty (operator
+# didn't export it and SKYGATE_ADMIN_PASS is also empty), read it
+# from the .env on the VM (the same source the runtime uses).
+# Without this, R31/R32/R34 FAIL on every run for any operator
+# who doesn't have the password already in their env. The previous
+# behavior was to fail with a confusing "cookie jar has no
+# skygate_session entry" message from verify_login.sh, which
+# looked like a session bug but was actually a missing env var.
+if [ -z "${SKYGATE_ADMIN_PASSWORD:-}" ]; then
+  SKYGATE_ADMIN_PASS_FROM_ENV=$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" \
+    "docker exec skygate-skygate-1 sh -c 'echo \$SKYGATE_ADMIN_PASS' 2>/dev/null" 2>/dev/null || echo "")
+  if [ -n "$SKYGATE_ADMIN_PASS_FROM_ENV" ]; then
+    export SKYGATE_ADMIN_PASSWORD="$SKYGATE_ADMIN_PASS_FROM_ENV"
+  fi
+fi
+# v1.3.19.4 B127: similar fallback for SKYGATE_ADMIN_USER. The
+# verify_login.sh subshell needs this to be set; if the operator
+# has SKYGATE_ADMIN_USER in their .env but didn't export it,
+# this makes the script Just Work.
+if [ -z "${SKYGATE_ADMIN_USER:-}" ]; then
+  # Try to read it from the .env on the VM (the same source the
+  # script reads SKYGATE_ADMIN_PASS from below). Default to
+  # 'skyadmin' (the canonical production admin) so the R31/R34
+  # cookie-jar dance has a username to authenticate as. The
+  # operator can override by exporting SKYGATE_ADMIN_USER before
+  # running the script.
+  SKYGATE_ADMIN_USER_FROM_ENV=$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" \
+    "grep '^SKYGATE_ADMIN_USER=' /home/skyadmin/skygate/.env 2>/dev/null | cut -d= -f2- | tr -d '\"'" 2>/dev/null || echo "")
+  if [ -n "$SKYGATE_ADMIN_USER_FROM_ENV" ]; then
+    export SKYGATE_ADMIN_USER="$SKYGATE_ADMIN_USER_FROM_ENV"
+  else
+    export SKYGATE_ADMIN_USER="skyadmin"
+  fi
+fi
 # v0.29.2: SKYGATE_CONTAINER is resolved at runtime via the
 # `com.docker.compose.service=skygate` label (set by docker compose
 # automatically). The "skygate" literal used to work because
@@ -410,6 +444,13 @@ run_policy_check() {
 
 RESULTS_PASS=0
 RESULTS_FAIL=0
+
+# v1.3.19.4 B127: pre-init REMOTE_CK so the R34 block (which runs
+# even in --quick mode) can safely check [ -z "$REMOTE_CK" ]. The
+# actual cookie fetch happens lazily inside R31 (skipped in --quick)
+# and again in R34 if still empty. Without this init, `set -u` made
+# R34 abort with "REMOTE_CK: unbound variable" on every --quick run.
+REMOTE_CK=""
 
 # ---------------------------------------------------------------------------
 # Phase 1: fetch live state (no checks yet, just data collection).
@@ -730,22 +771,27 @@ else:
   # All three are informational/early-warning: a slow
   # growth is fine, a sudden spike (R10 PASS yesterday,
   # R28 FAIL today) is the signal to investigate.
-  POLICY_BYTES=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
-print(len(d['policy']))
+  # v1.3.19.4 B127: refactored from `echo $X | python3 -c` to
+  # json_field so this works on WSL bash (where local python3
+  # is missing or aliased to the Microsoft Store redirector).
+  # json_field runs the python on the VM where python3 is
+  # always installed.
+  POLICY_BYTES=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
+print(len(d.get('policy','')))
 ")
-  POLICY_GRANT_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+  POLICY_GRANT_COUNT=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 print(len(p.get('grants',[])))
 ")
-  POLICY_HOST_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+  POLICY_HOST_COUNT=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 print(len(p.get('hosts',{})))
 ")
   if [ "$POLICY_BYTES" -lt 102400 ] && [ "$POLICY_GRANT_COUNT" -lt 500 ] && [ "$POLICY_HOST_COUNT" -lt 2000 ]; then
@@ -781,13 +827,16 @@ print(len(p.get('hosts',{})))
     DRIFT_MAX_GAP=0
     while IFS='|' read -r node count; do
       [ -z "$node" ] && continue
-      HS_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+      # v1.3.19.4 B127: json_field + NODE env var (the loop
+      # variable) instead of direct python3 on the host.
+      HS_COUNT=$(NODE="$node" json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 # Sum approved routes that reference this exit node
 # (via the headscale-side view — this is approximate but
 # good enough for the drift alarm)
+node = os.environ.get('NODE','')
 n = 0
 for g in p.get('grants', []):
     if node in str(g.get('via', [])) or 'tag:exit-'+node.replace('skygate-subnet-','') in str(g.get('via', [])):
@@ -901,11 +950,15 @@ print(n)
     RESULTS_PASS=$((RESULTS_PASS+1))
   fi
 
+  # v1.3.19.4 B127: refactored R11-R14 from direct python3 (which
+  # is missing/aliased on WSL bash) to json_field (runs python3 on
+  # the VM, where it's always installed).
+  #
   # R11: per-device loose grants (no via) for every tagged device
-  LOOSE_DEV_COUNT=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+  LOOSE_DEV_COUNT=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 n = sum(1 for g in p.get('grants',[])
         if any(s.startswith('tag:dev-') for s in g.get('src',[]))
         and 'autogroup:internet' in g.get('dst',[])
@@ -921,10 +974,10 @@ print(n)
   fi
 
   # R12: catch-all for autogroup:internet has src=tag:public, NOT *
-  HAS_STAR_CATCHALL=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+  HAS_STAR_CATCHALL=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 n = sum(1 for g in p.get('grants',[])
         if g.get('src')==['*'] and 'autogroup:internet' in g.get('dst',[]))
 print(n)
@@ -938,18 +991,18 @@ print(n)
   fi
 
   # R13: * → tag:public and * → tag:exit-node catch-alls present
-  HAS_PUBLIC_CATCHALL=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+  HAS_PUBLIC_CATCHALL=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 n = sum(1 for g in p.get('grants',[])
         if g.get('src')==['*'] and g.get('dst')==['tag:public'])
 print(n)
 ")
-  HAS_EXITNODE_CATCHALL=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+  HAS_EXITNODE_CATCHALL=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 n = sum(1 for g in p.get('grants',[])
         if g.get('src')==['*'] and g.get('dst')==['tag:exit-node'])
 print(n)
@@ -963,10 +1016,10 @@ print(n)
   fi
 
   # R14: tagOwners contains the required tags
-  TAGOWNERS_OK=$(echo "$LIVE_POLICY" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-p = json.loads(d['policy'])
+  TAGOWNERS_OK=$(json_field "$LIVE_POLICY" "
+import json, os
+d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+p = json.loads(d.get('policy','{}'))
 to = p.get('tagOwners',{})
 required = ['tag:public', 'tag:exit-node', 'tag:private', 'tag:subnet-router']
 missing = [t for t in required if t not in to]
@@ -981,73 +1034,83 @@ print('OK' if not missing else 'MISSING:'+','.join(missing))
   fi
 
   # R15 + R16: cross-check DB via_enabled vs live policy via
-  VIA_CROSS_CHECK=$(LIVE_POLICY="$LIVE_POLICY" DB_JSON="$DB_JSON" python3 << 'PYEOF'
-import json, os, sys
-live = json.loads(os.environ["LIVE_POLICY"])
-policy = json.loads(live["policy"])
-db = json.loads(os.environ["DB_JSON"])
+  # v1.3.19.4 B127: refactored from `LIVE_POLICY=... python3 <<EOF`
+  # (heredoc, runs on host) to json_field (runs on VM, where
+  # python3 is always installed).
+  #
+  # B127 quirk: json_field's `$*` (extra args) is unquoted, so
+  # any value containing `"` (i.e. JSON) gets mangled by the
+  # host's shell. The clean fix is to write DB_JSON to a temp
+  # file on the VM and pass the FILE PATH as the env var
+  # (paths have no quotes, so they survive the unquoted $*).
+  # python reads it via os.environ["DB_JSON_FILE"].
+  DB_JSON_FILE="/tmp/_db_json_$$.json"
+  printf '%s' "$DB_JSON" | ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=no "$SSH_HOST" "cat > $DB_JSON_FILE" 2>/dev/null
+  VIA_CROSS_CHECK=$(json_field "$LIVE_POLICY" "
+import json, os
+live = json.loads(open(os.environ['JFPATH']).read() or '{}')
+policy = json.loads(live.get('policy','{}'))
+db = json.loads(open(os.environ.get('DB_JSON_FILE','')).read() or '{}')
 
 # Build: for each user, is via in live per-user grant == db.via_enabled?
 mismatch = []
-for g in policy.get("grants", []):
-    srcs = g.get("src", [])
-    user_match = [s for s in srcs if "@tsnet.example.com" in s]
+for g in policy.get('grants', []):
+    srcs = g.get('src', [])
+    user_match = [s for s in srcs if '@tsnet.example.com' in s]
     if not user_match:
         continue
-    user = user_match[0].split("@")[0]
-    has_via = "via" in g
-    via = g.get("via", [None])[0] if has_via else None
+    user = user_match[0].split('@')[0]
+    has_via = 'via' in g
+    via = g.get('via', [None])[0] if has_via else None
     # Find user in db
-    db_user = next((u for u in db.get("user_prefs", [])
-                    if str(u.get("user_id")) in {"1":"admin","6":"user1","9":"user3","10":"user2"}.get(str(u.get("user_id")),"") or u.get("user_id") in (1,6,9,10) and u.get("tag") in (None,via) ), None)
-    # Simpler: match by user_id→username map
-    user_map = {"1":"admin","6":"user1","9":"user3","10":"user2"}
     db_user = None
-    for u in db.get("user_prefs", []):
-        if user_map.get(str(u["user_id"])) == user:
+    user_map = {'1':'admin','6':'user1','9':'user3','10':'user2'}
+    for u in db.get('user_prefs', []):
+        if user_map.get(str(u['user_id'])) == user:
             db_user = u
             break
     if db_user is None:
         continue
-    if db_user["via"] == 1 and not has_via:
-        mismatch.append(f"user={user} db.via=1 but live grant has no via")
-    if db_user["via"] == 0 and has_via:
-        mismatch.append(f"user={user} db.via=0 but live grant has via={via}")
+    if db_user['via'] == 1 and not has_via:
+        mismatch.append('user=' + user + ' db.via=1 but live grant has no via')
+    if db_user['via'] == 0 and has_via:
+        mismatch.append('user=' + user + ' db.via=0 but live grant has via=' + str(via))
 
 # For per-device: same check
-for g in policy.get("grants", []):
-    srcs = g.get("src", [])
-    dev_match = [s for s in srcs if s.startswith("tag:dev-")]
+for g in policy.get('grants', []):
+    srcs = g.get('src', [])
+    dev_match = [s for s in srcs if s.startswith('tag:dev-')]
     if not dev_match:
         continue
     tag = dev_match[0]  # tag:dev-<user>-<host>
-    rest = tag[len("tag:dev-"):]
+    rest = tag[len('tag:dev-'):]
     # user-host: split on LAST '-'
-    idx = rest.rfind("-")
+    idx = rest.rfind('-')
     user = rest[:idx]
     host = rest[idx+1:]
-    has_via = "via" in g
-    via = g.get("via", [None])[0] if has_via else None
+    has_via = 'via' in g
+    via = g.get('via', [None])[0] if has_via else None
     db_dev = None
-    for d in db.get("device_prefs", []):
-        if d["hostname"] == host and d["user_id"] in (1,6):
-            user_map = {1:"admin", 6:"user1"}
-            if user_map.get(d["user_id"]) == user:
+    for d in db.get('device_prefs', []):
+        if d['hostname'] == host and d['user_id'] in (1,6):
+            user_map = {1:'admin', 6:'user1'}
+            if user_map.get(d['user_id']) == user:
                 db_dev = d
                 break
     if db_dev is None:
         continue
-    if db_dev["via"] == 1 and not has_via:
-        mismatch.append(f"device={host} db.via=1 but no via in grant")
-    if db_dev["via"] == 0 and has_via:
-        mismatch.append(f"device={host} db.via=0 but live has via={via}")
+    if db_dev['via'] == 1 and not has_via:
+        mismatch.append('device=' + host + ' db.via=1 but no via in grant')
+    if db_dev['via'] == 0 and has_via:
+        mismatch.append('device=' + host + ' db.via=0 but live has via=' + str(via))
 
 if mismatch:
-    print("MISMATCH:" + ";".join(mismatch))
+    print('MISMATCH:' + ';'.join(mismatch))
 else:
-    print("OK")
-PYEOF
-)
+    print('OK')
+" DB_JSON_FILE="$DB_JSON_FILE" 2>/dev/null)
+  # clean up the temp file
+  ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=no "$SSH_HOST" "rm -f $DB_JSON_FILE" 2>/dev/null
   if [ "$VIA_CROSS_CHECK" = "OK" ]; then
     echo "  ${GRN}PASS${NC}  R15+R16 DB via_enabled matches live policy (no via mismatch)"
     RESULTS_PASS=$((RESULTS_PASS+1))
@@ -1063,12 +1126,15 @@ fi
 if [ "$QUICK" = 0 ] && [ -n "$NODES_JSON" ]; then
   echo
   echo "[R17-R18] exit-nodes"
+  # v1.3.19.4 B127: refactored R17-R18 to use json_field (python3
+  # runs on the VM, not on the WSL host).
   for host in relay-1 relay-2 relay-3; do
-    ONLINE=$(echo "$NODES_JSON" | python3 -c "
-import json, sys
+    ONLINE=$(HOST="$host" json_field "$NODES_JSON" "
+import json, os
 try:
-    d = json.load(sys.stdin)
-    n = next((n for n in d.get('nodes',[]) if n.get('givenName')=='$host'), None)
+    d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+    host = os.environ.get('HOST','')
+    n = next((n for n in d.get('nodes',[]) if n.get('givenName')==host), None)
     print('online' if n and n.get('online') else 'offline')
 except Exception as e:
     print('error:'+str(e))
@@ -1084,11 +1150,12 @@ except Exception as e:
 
   # R18: each exit-node has 0.0.0.0/0 in advertised routes
   for host in relay-1 relay-2 relay-3; do
-    HAS_DEFAULT=$(echo "$NODES_JSON" | python3 -c "
-import json, sys
+    HAS_DEFAULT=$(HOST="$host" json_field "$NODES_JSON" "
+import json, os
 try:
-    d = json.load(sys.stdin)
-    n = next((n for n in d.get('nodes',[]) if n.get('givenName')=='$host'), None)
+    d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+    host = os.environ.get('HOST','')
+    n = next((n for n in d.get('nodes',[]) if n.get('givenName')==host), None)
     routes = (n or {}).get('availableRoutes', [])
     print('yes' if '0.0.0.0/0' in routes else 'no')
 except Exception as e:
@@ -1595,25 +1662,31 @@ fi
 # wrote to /tmp/_r34_readyz.json on the HOST, but the ssh command
 # read it from the VM's /tmp, so the file never existed on the VM
 # and python3 saw an empty stdin and printed 0).
+# v1.3.19.4 B127: refactored AVAIL_COUNT + HAS_HEADSCALE to use
+# json_field (cleaner than piping through ssh). python3 still runs
+# on the VM (json_field always does), but the result comes back
+# via stdout just like the previous approach.
 READYZ_JSON=$(ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
   "curl -sS http://localhost:8080/readyz" 2>/dev/null || echo "")
-AVAIL_COUNT=$(printf '%s\n' "$READYZ_JSON" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
-  "python3 -c 'import sys,json
+AVAIL_COUNT=$(json_field "$READYZ_JSON" "
+import json, os
 try:
-    d=json.loads(sys.stdin.read() or \"{}\")
-    a=d.get(\"availability\") or {}
-    print(len(a.get(\"integrations\") or []))
+    d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+    a = d.get('availability') or {}
+    print(len(a.get('integrations') or []))
 except Exception:
-    print(0)'" 2>/dev/null || echo 0)
-HAS_HEADSCALE=$(printf '%s\n' "$READYZ_JSON" | ssh -o StrictHostKeyChecking=no "$SSH_HOST" \
-  "python3 -c 'import sys,json
+    print(0)
+" 2>/dev/null || echo 0)
+HAS_HEADSCALE=$(json_field "$READYZ_JSON" "
+import json, os
 try:
-    d=json.loads(sys.stdin.read() or \"{}\")
-    a=d.get(\"availability\") or {}
-    ids=[i.get(\"id\") for i in (a.get(\"integrations\") or [])]
-    print(\"yes\" if \"headscale\" in ids else \"no\")
+    d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+    a = d.get('availability') or {}
+    ids = [i.get('id') for i in (a.get('integrations') or [])]
+    print('yes' if 'headscale' in ids else 'no')
 except Exception:
-    print(\"no\")'" 2>/dev/null || echo "no")
+    print('no')
+" 2>/dev/null || echo "no")
 if [ "$SERVICES_PAGE" = "200" ] && [ "$SERVICES_GREP_HITS" -ge 3 ] && [ "$AVAIL_COUNT" -ge 3 ] && [ "$HAS_HEADSCALE" = "yes" ]; then
   echo "  ${GRN}PASS${NC}  R34 /admin/services=200 with admin session (3/3 integration labels visible) + /readyz.availability has $AVAIL_COUNT integrations (B92 snapshot + D1 cookie-auth page render)"
   RESULTS_PASS=$((RESULTS_PASS+1))
@@ -1641,13 +1714,24 @@ fi
 # ---------------------------------------------------------------------------
 echo
 echo "[R35] Tailscale BackendState='Running' (D2 + D8: tailscale status --json)"
-TS_STATE=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$SSH_HOST" \
-  'docker exec skygate-skygate-1 tailscale status --json 2>/dev/null | python3 -c "import sys, json
+# v1.3.19.4 B127: fetch the tailscale status JSON separately, then
+# run json_field on the captured result. Previous form piped
+# through an inline `python3 -c` (which was fine on Linux hosts
+# but broke on WSL/Windows — same root cause as the other R-checks).
+TS_STATE_RAW=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$SSH_HOST" \
+  'docker exec skygate-skygate-1 tailscale status --json 2>/dev/null' 2>/dev/null || echo "")
+if [ -z "$TS_STATE_RAW" ]; then
+  TS_STATE="EXEC_ERROR"
+else
+  TS_STATE=$(json_field "$TS_STATE_RAW" "
+import json, os
 try:
-    d = json.loads(sys.stdin.read() or \"{}\")
-    print(d.get(\"BackendState\", \"\"))
+    d = json.loads(open(os.environ['JFPATH']).read() or '{}')
+    print(d.get('BackendState',''))
 except Exception:
-    print(\"PARSE_ERROR\")"' 2>/dev/null || echo "EXEC_ERROR")
+    print('PARSE_ERROR')
+" 2>/dev/null || echo "PARSE_ERROR")
+fi
 if [ "$TS_STATE" = "Running" ]; then
   echo "  ${GRN}PASS${NC}  R35 tailscale BackendState=Running (D8 BackendState check + D2 verify-post mirror)"
   RESULTS_PASS=$((RESULTS_PASS+1))

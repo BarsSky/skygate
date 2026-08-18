@@ -17,7 +17,48 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.19.4 — **B126 R9 verify_post_deploy.sh EXTRACT
+* **Current**: v1.3.19.4 — **B127 verify_post_deploy.sh
+  false-positive cleanup**. The previous v1.3.19.4 (B126) fixed
+  R9 only; this adds B127 which refactors R11-R16/R17-R18/R28/
+  R29 from `echo $X | python3 -c '...'` (which silently
+  returned empty/0 on WSL bash where python3 is the Microsoft
+  Store alias) to `json_field` (which runs python3 on the VM
+  where it's always installed). Plus 3 supporting fixes: R34
+  pre-inits `REMOTE_CK=""` so the R34 block (which runs even in
+  `--quick` mode) can safely check `[ -z "$REMOTE_CK" ]` under
+  `set -u`; SKYGATE_ADMIN_USER defaults to "skyadmin" if not in
+  the operator's env; SKYGATE_ADMIN_PASSWORD reads from the
+  VM's `SKYGATE_ADMIN_PASS` (via `docker exec ... echo
+  $SKYGATE_ADMIN_PASS`) if not set locally. 18 contracts in
+  `scripts/check_b127.sh` (7 contracts A-G) pin the change:
+  no `python3 -c` / heredoc in non-comment lines + REMOTE_CK
+  init before R31 + both env fallbacks present + json_field
+  used in 9 R-checks + R15+R16 uses the file-based
+  DB_JSON_FILE pattern (avoids json_field's unquoted `$*`
+  mangling JSON quotes) + json_field itself still defined.
+  Live verify-post: 21 PASS / 4 FAIL (all environmental —
+  skygate-host-1 in non-Tailscale mode, relay-1/2/3 offline,
+  skygate.example.com DNS missing, openssl missing on VM).
+  `make verify-pre` **123 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+  28/28 packages green. What's added:
+  - **B127 (v1.3.19.4)**: 9 R-checks refactored + R34 init
+    + 2 env fallbacks. The `DB_JSON_FILE` workaround (write
+    JSON to a temp file on the VM, pass the file PATH as
+    the env var) is the key new pattern — the previous
+    `DB_JSON=...` value-substitution broke on the `"` in JSON
+    because json_field's `$*` is unquoted (bash word-split
+    on whitespace AND `"` gets interpreted by the host
+    shell when interpolating `$*` into a double-quoted ssh
+    command).
+  - **Live state**: pre-B127, verify-post on the operator's
+    Windows + WSL setup had 19 PASS / 6 FAIL (R11-R16 + R28
+    FAILed silently + R34 unbound var). Post-B127: 21 PASS
+    / 4 FAIL (only environmental issues remain). R9, R3,
+    R28, R29, R11-R16, R31, R33, R34, R35 all PASS.
+  - **New file `scripts/check_b127.sh`** (18 contracts A-G,
+    ~245 lines): the B-check that pins the change.
+
+* **Previous**: v1.3.19.4 — **B126 R9 verify_post_deploy.sh EXTRACT
   bug fix**. The R9 check ("live policy ≈ last applied snapshot")
   was FAILing with `diff=80715s` even when the live policy matched
   the snapshot to the second. Root cause: the PG column

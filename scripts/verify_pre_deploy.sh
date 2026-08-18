@@ -3241,3 +3241,5 @@ run_check "B125" "device_rules auto-add duplicate prevention: UNIQUE INDEX devic
   'test -f scripts/check_b125.sh && bash scripts/check_b125.sh'
 run_check "B126" "verify_post_deploy.sh R9: replace EXTRACT(epoch FROM created_at) (which fails on INTEGER column) with direct created_at read (B126, v1.3.19.4)" \
   'test -f scripts/check_b126.sh && bash scripts/check_b126.sh'
+run_check "B127" "verify_post_deploy.sh false-positive cleanup: R11-R16/R17-R18/R28/R29 refactored to json_field (python3 runs on VM, not on WSL); R34 pre-init REMOTE_CK; SKYGATE_ADMIN_USER + SKYGATE_ADMIN_PASSWORD fallbacks read from VM .env (B127, v1.3.19.4)" \
+  'test -f scripts/check_b127.sh && bash scripts/check_b127.sh'
