@@ -3215,3 +3215,9 @@ run_check "B136" "per-user display preferences (DB-persisted): V057 migration ad
   'test -f scripts/check_b136.sh && bash scripts/check_b136.sh'
 run_check "B137" "color swatch grid for selection_bg: 14 tiles in account.html (1 default + 12 preset colors + 1 custom) + .color-swatch CSS rules + click-handler JS + 2 new i18n keys (RU+EN) + B131/B133/B134/B135/B136 contracts still pass. The pre-B136 freeform text input forced the operator to type CSS color values; B137 adds a clickable palette (B137, v1.3.20.6 hotfix — operator's 'добавь удобную форму выбора цвета из таблицы' feedback on 2026-08-18)" \
   'test -f scripts/check_b137.sh && bash scripts/check_b137.sh'
+run_check "B138" "B-check catalog cleanup: 3 pre-existing FAILs fixed (B34 repurposed to test B125 schema invariant, B104 removed as superseded by B114, B95 fixed by removing 2 real U1000/SA4000 bugs in update_settings.go + backup_test.go). verify-pre on VM is now 0 FAIL / 1 SKIP (B8, Windows-host VM-only). B138, v1.3.20.8 — operator's 'B-check catalog cleanup (17 stale B-checks → 0)' task on 2026-08-18" \
+  'bash -c "
+    B34=\$(grep -qF \"device_rules_natural_key_uniq\" internal/db/migrations_pg.go && echo OK || echo FAIL)
+    B95=\$(grep -qE \"^const globalSettingsKeyAutoUpdate\" internal/feature/admin/update_settings.go && echo FAIL || echo OK)
+    if [ \"\$B34\" = OK ] && [ \"\$B95\" = OK ]; then echo OK; else echo \"B34=\$B34 B95=\$B95\"; exit 1; fi
+  "'
