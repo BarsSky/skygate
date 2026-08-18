@@ -252,6 +252,20 @@ type Config struct {
 	// the page shows "newer release detected" but the
 	// operator must click "Push update" to apply.
 	AutoUpdateEnabled bool
+	// 2026-08-18 (B129): UpdateScheduleEnabled + UpdateScheduleTime
+	// are the REAL auto-update mechanism — a time-of-day HH:MM
+	// at which the background scheduler triggers the update
+	// orchestrator if a newer release is available. This
+	// replaces the misleading "auto-update" flag (which the
+	// pre-B129 UI called "auto-update" but which was really
+	// just a notification permission — the operator still
+	// had to click the Apply button). Post-B129 the manual
+	// "Update" button is always visible when IsNewer, and
+	// the schedule is a separate, time-bounded mechanism
+	// (e.g. "auto-update every night at 03:00"). Default:
+	// disabled (opt-in), 03:00.
+	UpdateScheduleEnabled bool
+	UpdateScheduleTime    string // "HH:MM" 24-hour format
 	GitHubToken         string
 	// 2026-08-17 (B124) — DevBuild marks the running binary
 	// as a dev/edge build. The /admin/update page shows a
@@ -429,6 +443,14 @@ func Load() (*Config, error) {
 		// trigger an apply — the system never auto-updates
 		// without an explicit click.
 		AutoUpdateEnabled: getenv("SKYGATE_AUTO_UPDATE_ENABLED", "false") == "true",
+		// 2026-08-18 (B129): the REAL auto-update is now a
+		// time-of-day scheduler. The env vars are the default
+		// for first start; the /admin/update page lets the
+		// operator override them via DB-backed toggles. Both
+		// are validated at start (time must be HH:MM 24-hour;
+		// invalid values fall back to the default).
+		UpdateScheduleEnabled: getenv("SKYGATE_UPDATE_SCHEDULE_ENABLED", "false") == "true",
+		UpdateScheduleTime:    getenv("SKYGATE_UPDATE_SCHEDULE_TIME", "03:00"),
 		// 2026-08-05 v0.33.1.10: GitHub repo coordinates.
 		// The "BarsSky/skygate" default matches the
 		// operator's actual github.com repo (the previous

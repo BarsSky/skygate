@@ -65,6 +65,25 @@ var ruUpdate = map[string]string{
 	"update.phase_done"            : "Готово",
 	"update.phase_failed"          : "Провалено",
 	"update.phase_rolled_back"     : "Откачено",
+	// 2026-08-18 (B129): the new "Schedule" section on
+	// /admin/update. Replaces the pre-B129 auto-update
+	// banner (which was misleading — it claimed "auto-update
+	// is on" but the operator still had to click "Apply" to
+	// run the orchestrator). Post-B129 the schedule is the
+	// REAL auto-update mechanism: a time-of-day HH:MM at
+	// which the background scheduler (B130) triggers the
+	// orchestrator.
+	"update.schedule_title"        : "Расписание автообновления",
+	"update.schedule_subtitle"     : "Skygate сам выполнит обновление в указанное время, если вышла новая версия. По умолчанию — выключено.",
+	"update.schedule_enabled"      : "Включить расписание",
+	"update.schedule_time_label"   : "Время (HH:MM, 24-часовой формат)",
+	"update.schedule_save"         : "Сохранить расписание",
+	"update.schedule_last_run"     : "Последний запуск",
+	"update.schedule_never"        : "ни разу",
+	"update.schedule_saved"        : "Расписание сохранено",
+	"update.schedule_fallback"     : "Некорректное время — использовано значение по умолчанию (03:00).",
+	"update.schedule_next_run"     : "Следующий запуск",
+	"update.section_settings"      : "Параметры",
 }
 
 var enUpdate = map[string]string{
@@ -121,4 +140,23 @@ var enUpdate = map[string]string{
 	"update.phase_done"            : "Done",
 	"update.phase_failed"          : "Failed",
 	"update.phase_rolled_back"     : "Rolled back",
+	// 2026-08-18 (B129): the new "Schedule" section on
+	// /admin/update. Replaces the pre-B129 auto-update
+	// banner (which was misleading - it claimed "auto-update
+	// is on" but the operator still had to click "Apply" to
+	// run the orchestrator). Post-B129 the schedule is the
+	// REAL auto-update mechanism: a time-of-day HH:MM at
+	// which the background scheduler (B130) triggers the
+	// orchestrator.
+	"update.schedule_title"        : "Schedule auto-update",
+	"update.schedule_subtitle"     : "Skygate will run the update orchestrator at the specified time if a newer release is available. Default - off.",
+	"update.schedule_enabled"      : "Enable schedule",
+	"update.schedule_time_label"   : "Time (HH:MM, 24-hour format)",
+	"update.schedule_save"         : "Save schedule",
+	"update.schedule_last_run"     : "Last run",
+	"update.schedule_never"        : "never",
+	"update.schedule_saved"        : "Schedule saved",
+	"update.schedule_fallback"     : "Invalid time - fell back to default (03:00).",
+	"update.schedule_next_run"     : "Next run",
+	"update.section_settings"      : "Settings",
 }

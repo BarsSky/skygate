@@ -24,6 +24,7 @@ package admin
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -149,13 +150,22 @@ func displayVersionForUpdate(buildVersion string) (current string, buildSubtitle
 // Result.Error carries the failure reason and the page shows
 // "no new version" + a "Check now" button for the operator
 // to retry manually.
+//
+// 2026-08-18 (B129): the page now reads `schedule_saved` and
+// `schedule_fallback` query params (set by
+// PostAdminUpdateSchedule) and surfaces them in the Schedule
+// section as a one-shot confirmation badge.
 func (s *Service) GetAdminUpdate(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	s.renderUpdatePage(w, r, c, "")
+	flash := r.URL.Query().Get("schedule_saved")
+	if flash == "" {
+		flash = r.URL.Query().Get("schedule_fallback")
+	}
+	s.renderUpdatePage(w, r, c, flash)
 }
 
 // PostAdminUpdateCheck forces an immediate GitHub check (bypasses
@@ -281,7 +291,29 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// SKYGATE_AUTO_UPDATE_ENABLED). When false, the
 		// template hides the one-click "Apply" button and
 		// shows the always-on "Push update" button instead.
+		// 2026-08-18 (B129): this flag is now META-info
+		// only — the post-B129 Update button is always
+		// visible when IsNewer. The flag is still read so
+		// the page can show "schedule was on / schedule was
+		// off" in the auto-update banner area (replaced by
+		// the new Schedule section). Kept for back-compat.
 		"AutoUpdateEnabled": db.GetGlobalSettingBool(s.DB, "auto_update_enabled", s.Cfg.AutoUpdateEnabled),
+		// 2026-08-18 (B129): the new scheduled auto-update
+		// state. The /admin/update page shows a "Schedule"
+		// section with a toggle + HH:MM input. Both values
+		// are persisted in global_settings with env-var
+		// fallbacks from Cfg (SKYGATE_UPDATE_SCHEDULE_ENABLED
+		// + SKYGATE_UPDATE_SCHEDULE_TIME). The background
+		// scheduler (B130) reads these same values to
+		// decide when to trigger the orchestrator.
+		"UpdateScheduleEnabled": db.GetGlobalSettingBool(s.DB, "update_schedule_enabled", s.Cfg.UpdateScheduleEnabled),
+		"UpdateScheduleTime":    safeGetString(s.DB, "update_schedule_time", s.Cfg.UpdateScheduleTime),
+		// 2026-08-18 (B129): last-run timestamp of the
+		// scheduled auto-update. Stored in global_settings
+		// (key='update_schedule_last_run', ISO 8601 string).
+		// The background scheduler writes it on every run;
+		// the page shows it as "Последний запуск: …".
+		"UpdateScheduleLastRun": safeGetString(s.DB, "update_schedule_last_run", ""),
 		// 2026-08-17 (B124): when this is a dev build
 		// (SKYGATE_DEV_BUILD=true), the template renders
 		// a "dev build" banner instead of the "update
@@ -348,6 +380,20 @@ func defaultStr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// safeGetString wraps db.GetGlobalSetting and swallows the
+// error — a DB read failure on a non-critical key (like the
+// schedule time or last-run timestamp) shouldn't crash the
+// page render. The default value is returned on any error
+// (missing row, DB unavailable, etc.). Used by the B129
+// schedule fields.
+func safeGetString(d *sql.DB, key, def string) string {
+	v, err := db.GetGlobalSetting(d, key, def)
+	if err != nil {
+		return def
+	}
+	return v
 }
 
 // stateStoreMu serializes the Start() calls so a

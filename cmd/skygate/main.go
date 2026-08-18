@@ -1000,6 +1000,13 @@ func main() {
 	// orchestrator below reads this same DB value at every
 	// tick (5s), so the change takes effect without a restart.
 	mux.Handle("POST /admin/update/auto-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateAutoToggle)))
+	// 2026-08-18 (B129): the new "Schedule" section on
+	// /admin/update. Replaces the pre-B129 auto-toggle form
+	// for the schedule-enabled + schedule-time fields. The
+	// /admin/update/auto-toggle route is kept for back-compat
+	// (the form's hidden field) but writes to the B129+
+	// key (see PostAdminUpdateAutoToggle).
+	mux.Handle("POST /admin/update/schedule", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateSchedule)))
 	// 2026-07-20: v0.20.0 — "Run check now" button on
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as

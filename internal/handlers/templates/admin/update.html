@@ -109,33 +109,21 @@
 </div>
 {{end}}
 
-{{/* 2026-07-30: v0.32.3 — auto-update mode banner.
-     Tells the operator whether the SKYGATE_AUTO_UPDATE_ENABLED
-     flag is on (one-click Apply on newer release) or off
-     (manual Push only). The banner always shows so the
-     operator doesn't have to guess. */}}
-<div class="alert {{if .AutoUpdateEnabled}}alert-info{{else}}alert-warning{{end}}" style="margin-bottom:16px">
-  <i class="fa-solid {{if .AutoUpdateEnabled}}fa-circle-check{{else}}fa-circle-pause{{end}}"></i>
-  {{if .AutoUpdateEnabled}}
-    {{t "update.auto_enabled_banner"}}
-  {{else}}
-    {{t "update.auto_disabled_banner"}}
-  {{end}}
-  {{/* 2026-08-03: v0.32.20 — UI-controlled toggle.
-       The auto-update mode is now controlled by a checkbox
-       on this page (persisted in global_settings). The
-       env var SKYGATE_AUTO_UPDATE_ENABLED is only the
-       DEFAULT at first start (when the global_settings row
-       doesn't exist yet). The toggle takes effect on the
-       next 5s tick of the orchestrator — no restart. */}}
-  <form method="post" action="/admin/update/auto-toggle" style="margin-top:8px;display:inline-block">
-    <input type="hidden" name="enabled" value="{{if .AutoUpdateEnabled}}0{{else}}1{{end}}">
-    <button type="submit" class="btn btn-sm">
-      <i class="fa-solid fa-toggle-{{if .AutoUpdateEnabled}}on{{else}}off{{end}}"></i>
-      {{if .AutoUpdateEnabled}}{{t "update.auto_toggle_off"}}{{else}}{{t "update.auto_toggle_on"}}{{end}}
-    </button>
-  </form>
+{{/* 2026-08-18 (B129): the old "auto-update enabled" banner
+     (with a misleading toggle that didn't actually auto-update
+     anything) is REPLACED by the new "Schedule" card below.
+     The pre-B129 banner said "auto-update is on — the Update
+     button appears below" but the operator still had to click
+     that button. Post-B129 the only thing the auto-update
+     banner can show is the schedule status. */}}
+{{if .UpdateScheduleEnabled}}
+<div class="alert alert-info" style="margin-bottom:16px">
+  <i class="fa-solid fa-clock"></i>
+  <strong>{{t "update.schedule_title"}}</strong>:
+  {{t "update.schedule_time_label"}}
+  <code>{{.UpdateScheduleTime}}</code>.
 </div>
+{{end}}
 
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -146,33 +134,37 @@
       </p>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      {{/* 2026-08-18 (B129): the Update button is now
+           UNCONDITIONAL when IsNewer. The pre-B129 gating
+           by .AutoUpdateEnabled was misleading — the
+           pre-B129 "auto-update is on" banner was really
+           just a permission for the operator to see the
+           button, not a permission to run an automatic
+           update. Post-B129 the manual Update button is
+           always visible when a newer release is detected
+           (and !DevBuild). The separate "Schedule" card
+           below is the actual auto-update mechanism
+           (handled by the B130 background scheduler). */}}
+      {{if and .IsNewer (not .DevBuild)}}
+      <form method="post" action="/admin/update/apply" style="display:inline" onsubmit="return confirm('{{t "update.apply_confirm"}}')">
+        <input type="hidden" name="target" value="{{.Latest}}">
+        <button type="submit" class="btn btn-primary" style="font-weight:600">
+          <i class="fa-solid fa-rocket"></i> {{t "update.apply"}} → {{.Latest}}
+        </button>
+      </form>
+      {{end}}
+      {{/* 2026-08-18 (B129): secondary actions demoted to
+           smaller "btn btn-sm" — the Update button above is
+           now the primary CTA. Check-now is for the
+           operator to force a re-check; Push is the
+           rare-operation escape hatch. */}}
       <form method="post" action="/admin/update/check-now" style="display:inline">
         <button type="submit" class="btn btn-sm">
           <i class="fa-solid fa-arrows-rotate"></i> {{t "update.check_now"}}
         </button>
       </form>
-      {{if and .IsNewer .AutoUpdateEnabled (not .DevBuild)}}
-      {{/* 2026-07-30: v0.32.3 — Apply button is gated by
-           SKYGATE_AUTO_UPDATE_ENABLED. When the flag is
-           false (default), the operator uses the Push
-           button below to manually trigger the orchestrator.
-           2026-08-17 (B124): also hidden when DevBuild=true. */}}
-      <form method="post" action="/admin/update/apply" style="display:inline" onsubmit="return confirm('{{t "update.apply_confirm"}}')">
-        <input type="hidden" name="target" value="{{.Latest}}">
-        <button type="submit" class="btn btn-primary">
-          <i class="fa-solid fa-rocket"></i> {{t "update.apply"}} → {{.Latest}}
-        </button>
-      </form>
-      {{end}}
-      {{/* 2026-07-30: v0.32.3 — Push update button.
-           Always visible, ALWAYS works (independent of
-           the auto-update flag). For when the operator
-           wants to force a rebuild + restart of the
-           current state, e.g. after a failed auto-apply
-           or to re-apply without waiting for a newer
-           release to be detected. */}}
       <form method="post" action="/admin/update/push" style="display:inline" onsubmit="return confirm('{{t "update.push_confirm"}}')">
-        <button type="submit" class="btn" title="{{t "update.push_help"}}">
+        <button type="submit" class="btn btn-sm" title="{{t "update.push_help"}}">
           <i class="fa-solid fa-cloud-arrow-up"></i> {{t "update.push"}}
         </button>
       </form>
@@ -213,6 +205,56 @@
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
         {{t "update.channel"}}: <code>{{.Channel}}</code>
       </div>
+    </div>
+  </div>
+</div>
+
+{{/* 2026-08-18 (B129): the new "Schedule" section.
+     Replaces the pre-B129 misleading auto-update banner.
+     The schedule is a time-of-day HH:MM at which the
+     background scheduler (B130) will trigger the update
+     orchestrator if a newer release is available. Default:
+     disabled. The "Last run" timestamp is written by the
+     scheduler (B130) on every run; "Next run" is computed
+     client-side from the configured time + now(). */}}
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h4 style="margin:0"><i class="fa-solid fa-clock"></i> {{t "update.schedule_title"}}</h4>
+      <p style="color:var(--text-muted);font-size:13px;margin:8px 0 0 0">
+        {{t "update.schedule_subtitle"}}
+      </p>
+    </div>
+  </div>
+  <form method="post" action="/admin/update/schedule" style="margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+      <input type="checkbox" name="enabled" value="1" {{if .UpdateScheduleEnabled}}checked{{end}}>
+      <span>{{t "update.schedule_enabled"}}</span>
+    </label>
+    <label style="display:flex;gap:8px;align-items:center">
+      <span style="color:var(--text-muted);font-size:13px">{{t "update.schedule_time_label"}}:</span>
+      <input type="time" name="time" value="{{.UpdateScheduleTime}}" pattern="[0-2][0-9]:[0-5][0-9]" required
+             style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text);font-family:monospace">
+    </label>
+    <button type="submit" class="btn btn-sm btn-primary">
+      <i class="fa-solid fa-save"></i> {{t "update.schedule_save"}}
+    </button>
+    {{if eq .Flash "schedule_saved"}}
+    <span style="color:var(--success);font-size:12px">
+      <i class="fa-solid fa-circle-check"></i> {{t "update.schedule_saved"}}
+    </span>
+    {{end}}
+    {{if eq .Flash "schedule_fallback"}}
+    <span style="color:var(--warning);font-size:12px">
+      <i class="fa-solid fa-circle-exclamation"></i> {{t "update.schedule_fallback"}}
+    </span>
+    {{end}}
+  </form>
+  <div style="margin-top:12px;display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:var(--text-muted)">
+    <div>
+      <i class="fa-solid fa-clock-rotate-left"></i>
+      {{t "update.schedule_last_run"}}:
+      <code>{{if .UpdateScheduleLastRun}}{{.UpdateScheduleLastRun}}{{else}}{{t "update.schedule_never"}}{{end}}</code>
     </div>
   </div>
 </div>

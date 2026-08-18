@@ -3245,3 +3245,5 @@ run_check "B127" "verify_post_deploy.sh false-positive cleanup: R11-R16/R17-R18/
   'test -f scripts/check_b127.sh && bash scripts/check_b127.sh'
 run_check "B128" "compareSemver 4-part version support: splitVersionParts(a, 4) + splitVersionParts(b, 4) in checker.go + 4-iteration loops in monitor.go + client.go + 4-part test cases + live TestCompareSemver (B128, v1.3.20 — fixes the silent 'Update button hidden despite newer GitHub release' bug on /admin/update)" \
   'test -f scripts/check_b128.sh && bash scripts/check_b128.sh'
+run_check "B129" "/admin/update page redesign: Apply button unconditional (no more AutoUpdateEnabled gating) + new Schedule section (toggle + HH:MM input + save + last-run) + config fields + i18n keys + POST /admin/update/schedule route (B129, v1.3.20 — replaces the misleading pre-B129 'auto-update' banner with a real time-bounded scheduler)" \
+  'test -f scripts/check_b129.sh && bash scripts/check_b129.sh'
