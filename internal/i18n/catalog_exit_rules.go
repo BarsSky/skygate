@@ -187,6 +187,20 @@ var ruExitRules = map[string]string{
 	"cleanup.merge_confirm"             : "Слить %d дублей?",
 	"cleanup.delete_orphans"            : "Удалить orphan-ы",
 	"cleanup.delete_orphans_confirm"    : "Удалить %d orphan-правил?",
+	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
+	// cleanup scheduler. The /admin/system_tests
+	// page (post-TD-8) renders these — the cleanup
+	// itself runs as a Go goroutine in
+	// mesh.StartCleanupScheduler and emits a single
+	// audit_log line per tick via
+	// db.AppendExitRuleLog.
+	"cleanup_smoke.run_btn"             : "Очистить smoke-mesh",
+	"cleanup_smoke.run_btn_help"        : "Удалить все строки meshes с именем smoke-mesh-* и без mesh_members. Запускается немедленно (тот же путь, что и in-app cron).",
+	"cleanup_smoke.last_run"            : "Последняя очистка: %s",
+	"cleanup_smoke.last_run_never"      : "Никогда",
+	"cleanup_smoke.removed"             : "Удалено %d smoke-mesh строк",
+	"cleanup_smoke.no_rows"             : "Мусор не найден",
+	"cleanup_smoke.failed"              : "Очистка не удалась: %s",
 	"exit_rules_nodes.title"            : "Exit nodes (sync)",
 	"exit_rules_nodes.subtitle"         : "Sync advertised-routes на exit-узлах",
 	"exit_rules_nodes.sync"             : "Sync",
@@ -367,6 +381,16 @@ var enExitRules = map[string]string{
 	"cleanup.merge_confirm"             : "Merge %d duplicates?",
 	"cleanup.delete_orphans"            : "Delete orphans",
 	"cleanup.delete_orphans_confirm"    : "Delete %d orphan rules?",
+	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
+	// cleanup scheduler — see ru side for the full
+	// contract.
+	"cleanup_smoke.run_btn"             : "Clean up smoke-meshes",
+	"cleanup_smoke.run_btn_help"        : "Delete all meshes rows with name smoke-mesh-* and no mesh_members. Runs immediately (same path as the in-app cron).",
+	"cleanup_smoke.last_run"            : "Last cleanup: %s",
+	"cleanup_smoke.last_run_never"      : "Never",
+	"cleanup_smoke.removed"             : "Removed %d smoke-mesh rows",
+	"cleanup_smoke.no_rows"             : "No cruft found",
+	"cleanup_smoke.failed"              : "Cleanup failed: %s",
 	"exit_rules_nodes.title"            : "Exit nodes (sync)",
 	"exit_rules_nodes.subtitle"         : "Sync advertised-routes to exit nodes",
 	"exit_rules_nodes.sync"             : "Sync",

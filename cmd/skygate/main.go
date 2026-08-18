@@ -31,6 +31,7 @@ import (
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
+	"skygate/internal/mesh"
 	"skygate/internal/nodeownership"
 	"skygate/internal/monitoring"
 	"skygate/internal/sidecar"
@@ -157,6 +158,27 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "cleanup-smoke-meshes":
+			// 2026-08-18 (B143, v1.4.3): one-shot
+			// manual trigger of the smoke-mesh
+			// cleanup. Mirrors the
+			// `backup-verify-ok` / `-fail`
+			// subcommands from B142. Runs the SAME
+			// mesh.RunCleanup path the in-app
+			// scheduler uses, so the operator can
+			// ad-hoc run the cleanup without
+			// waiting for the 5 AM cron (or
+			// without enabling the scheduler at
+			// all). Output: a one-line
+			// human-readable summary on stdout.
+			// Exit code: 0 on success, 1 on error
+			// (matches the rest of the
+			// subcommands).
+			if err := runCleanupSmokeMeshes(); err != nil {
+				fmt.Fprintf(os.Stderr, "cleanup-smoke-meshes failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "migrate-only":
 			// Open the DB (which runs all pending
 			// migrations as part of Open() per the
@@ -177,11 +199,15 @@ func main() {
 			return
 		case "help", "--help", "-h":
 			fmt.Println("skygate <command> [args]")
-			fmt.Println("  (no command)        start the web server")
-			fmt.Println("  backup-run          run a backup using the config from the DB")
-			fmt.Println("  migrate-only        open the DB + run pending migrations, then exit (v0.33.1.21)")
-			fmt.Println("  version             print build version")
-			fmt.Println("  help                this help")
+			fmt.Println("  (no command)            start the web server")
+			fmt.Println("  backup-run              run a backup using the config from the DB")
+			fmt.Println("  backup-verify-ok        mark the latest verify_backup run as ok (B142)")
+			fmt.Println("  backup-verify-fail      mark the latest verify_backup run as fail (B142)")
+			fmt.Println("  backup-show-config      print backup-related config as key=value pairs")
+			fmt.Println("  cleanup-smoke-meshes    delete smoke-mesh cruft (B143) — one-shot manual trigger")
+			fmt.Println("  migrate-only            open the DB + run pending migrations, then exit (v0.33.1.21)")
+			fmt.Println("  version                 print build version")
+			fmt.Println("  help                    this help")
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q (try `skygate help`)\n", os.Args[1])
@@ -1524,10 +1550,35 @@ func main() {
 		log.Printf("🔍 backup-verify-scheduler: disabled (SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED=false; /admin/backup page can enable). Pre-B142 system-cron verify_backup.sh continues to run.")
 	}
 
+	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
+	// cleanup scheduler. Mirrors the B142
+	// backup-verify-scheduler wire-up above. When
+	// enabled, runs mesh.DeleteSmokeMeshes on the
+	// configured cron schedule (default 5 AM daily,
+	// after the 3 AM backup + 4 AM verify) and sends
+	// a Telegram alert when the cleanup actually
+	// deletes rows. The pre-B143 manual workaround
+	// (operator-side SQL DELETE on the 30 cruft rows
+	// that accumulated between v0.33.1.36 and now)
+	// is no longer needed. Disabled by default —
+	// operators opt in via
+	// SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED=true
+	// (or /admin/system_tests page toggle once TD-8
+	// ships).
+	if cfg.CleanupSmokeMeshInAppEnabled {
+		mesh.StartCleanupScheduler(ctx, mesh.CleanupSchedulerDeps{
+			DB:       d,
+			Notifier: schedulerNotifierSink(app.Notifier),
+		})
+		log.Printf("🧹 cleanup-scheduler: enabled (env-var default schedule=%q; /admin/system_tests page can override)", cfg.CleanupSmokeMeshSchedule)
+	} else {
+		log.Printf("🧹 cleanup-scheduler: disabled (SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED=false; /admin/system_tests page can enable). Pre-B143 manual SQL DELETE workaround is still the only other option.")
+	}
+
 	// 2026-07-17: v0.16.7 — per-user subnet sidecar
 	// auto-approver moved earlier so the RealNotifier
 	// can pick up the same manager via SetSidecar().
-	// (See "Telegram bot" block above.)
+	// (See "Telegram bot" block above.")
 
 	<-ctx.Done()
 	log.Println("🌐 shutting down")
@@ -1772,6 +1823,50 @@ func runBackupVerifyFail(args []string) error {
 	if err := db.AppendExitRuleLog(d, 0, "backup_verify_fail", fmt.Sprintf("archive=%s detail=%s", archive, detail)); err != nil {
 		log.Printf("backup-verify-fail: log write failed: %v", err)
 	}
+	return nil
+}
+
+// runCleanupSmokeMeshes — 2026-08-18 (B143, v1.4.3).
+//
+// Manual one-shot entry point for
+// `skygate cleanup-smoke-meshes`. Loads the DB +
+// runs mesh.RunCleanup (the SAME function the in-app
+// scheduler uses) and prints a one-line summary to
+// stdout. Exit code 0 on success (including the
+// "0 cruft found" happy path), 1 on error.
+//
+// The function intentionally does NOT require the
+// scheduler to be enabled — the operator might
+// want to clear cruft one-off without turning on
+// the daily cron. The cleanup itself is
+// unconditional; the scheduler only adds the
+// trigger timing + Telegram alerts.
+func runCleanupSmokeMeshes() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	// v1.3.0: PG-only.
+	d, err := db.OpenDSN(cfg.DBDSN)
+	if err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	defer d.Close()
+
+	res, err := mesh.RunCleanup(context.Background(), mesh.CleanupSchedulerDeps{
+		DB: d,
+		// No Notifier on the manual subcommand —
+		// the operator running the command IS
+		// the audience, and the stdout line
+		// below is their feedback channel. The
+		// scheduler path uses the Notifier for
+		// unattended Telegram alerts.
+	}, time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", mesh.FormatCleanupMessage(res))
+		return err
+	}
+	fmt.Println(mesh.FormatCleanupMessage(res))
 	return nil
 }
 

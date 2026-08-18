@@ -281,6 +281,21 @@ type Config struct {
 	// the transition is a like-for-like swap).
 	BackupVerifyInAppEnabled bool
 	BackupVerifySchedule     string // cron expression, e.g. "0 4 * * 0"
+	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
+	// cleanup scheduler config. Mirrors the
+	// BackupVerify* pair (B142 pattern) — opt-in via
+	// env-var or /admin/system_tests page toggle
+	// (post-TD-8). When enabled, the scheduler runs
+	// mesh.DeleteSmokeMeshes on the configured cron
+	// schedule (default 5 AM daily) and sends a
+	// Telegram alert when the cleanup actually
+	// deletes rows. When disabled (the default), the
+	// smoke-mesh cruft accumulates; the operator's
+	// pre-B143 manual SQL DELETE workaround (used in
+	// v0.33.1.36) is still the only other option.
+	// Default: disabled, 5 AM daily.
+	CleanupSmokeMeshInAppEnabled bool
+	CleanupSmokeMeshSchedule     string // cron expression, e.g. "0 5 * * *"
 	GitHubToken         string
 	// 2026-08-17 (B124) — DevBuild marks the running binary
 	// as a dev/edge build. The /admin/update page shows a
@@ -475,6 +490,18 @@ func Load() (*Config, error) {
 		// boot-time fallback.
 		BackupVerifyInAppEnabled: getenv("SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED", "false") == "true",
 		BackupVerifySchedule:     getenv("SKYGATE_BACKUP_VERIFY_SCHEDULE", "0 4 * * 0"),
+		// 2026-08-18 (B143, v1.4.3): in-app
+		// smoke-mesh cleanup scheduler env-var
+		// defaults. The page can override these at
+		// runtime via the global_settings DB keys
+		// (cleanup.smoke_mesh_enabled +
+		// cleanup.smoke_mesh_schedule) which the
+		// scheduler re-reads on every tick. Env
+		// vars are just the boot-time fallback.
+		// Default: disabled, daily 05:00 (after
+		// the 3 AM backup + 4 AM verify).
+		CleanupSmokeMeshInAppEnabled: getenv("SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED", "false") == "true",
+		CleanupSmokeMeshSchedule:     getenv("SKYGATE_CLEANUP_SMOKE_MESH_SCHEDULE", "0 5 * * *"),
 		// 2026-08-05 v0.33.1.10: GitHub repo coordinates.
 		// The "BarsSky/skygate" default matches the
 		// operator's actual github.com repo (the previous
