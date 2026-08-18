@@ -6,34 +6,41 @@
    - sentry: dark purple, lime accent (Rubik)
    ============================================================ */
 
-/* Defaults (linear) — v1.3.20.1 (B131) contrast bump.
-   The pre-B131 palette had --bg=#0a0a0a and --bg-card=#131313
-   (delta only 9/255 ≈ 3.5%) and --border=#262626 (delta
-   ~4.7% from --bg-elev). Cards blended into the background,
-   the sticky header-bg was identical to --bg (so the
-   header band was invisible), and the 0.10-opacity
-   alert backgrounds (#info-bg, #success-bg, etc.)
-   rendered as a barely-visible tint on the near-black bg.
+/* Defaults (linear) — v1.3.20.3 (B133) dramatic contrast overhaul.
+   B131 bumped contrast moderately (5% bg→card) but the
+   operator reported the page still had "no proper style
+   separation". Diagnosis: it wasn't the bg/border deltas
+   that were the problem — it was (1) table rows had no
+   backgrounds, only a thin border-bottom in --border
+   (#383b42 on #1a1c21 is barely visible), (2) cards had
+   no shadow so they didn't feel "elevated" off the page,
+   (3) the 4 action buttons in the rightmost column were
+   all the same dark icon, (4) alert pills (info-bg /
+   warning-bg / etc.) at 0.15 opacity rendered as a
+   near-invisible tint on the dark bg.
 
-   The post-B131 palette lifts the bg by ~1.5%, bumps the
-   card by another ~5% (matches Mint's 4-5% comfortable
-   contrast), bumps borders so they're actually visible,
-   gives the sticky header its own slightly-darker
-   surface, and raises alert opacities from 0.10 → 0.15
-   so the auto-update banner + success/info alerts read
-   clearly. Pure CSS change — no template/HTML/i18n touch. */
+   B133 fixes all 4 by (a) bumping the Linear palette to
+   high-contrast values (bg→card delta ~7%, border at
+   18% lift from card, alert opacities 0.15 → 0.22),
+   (b) adding table zebra striping via
+   `tbody tr:nth-child(even)` in a separate (theme-aware)
+   rule below, (c) adding a card box-shadow, (d) making
+   the action buttons color-coded by intent (tag=primary
+   blue, untag=warning yellow, TS IP=info cyan, delete
+   =danger red) so the column is readable at a glance.
+   Other 4 themes (Vercel, Sentry, NVIDIA, Mint) unchanged. */
 :root{
-  --bg:#0e0f12;--bg-card:#1a1c21;--bg-elev:#25282e;--bg-hover:#2d3036;
-  --border:#383b42;--border-strong:#4d5158;
-  --text:#ededed;--text-muted:#9ca3af;--text-subtle:#6a6a6a;
-  --accent:#7c7aff;--accent-fg:#0a0a0a;--accent-hover:#9b9aff;--accent-soft:rgba(124,122,255,0.18);
-  --success:#4ade80;--success-bg:rgba(74,222,128,0.15);
-  --warning:#fbbf24;--warning-bg:rgba(251,191,36,0.15);
-  --danger:#f87171;--danger-bg:rgba(248,113,113,0.15);
-  --info:#60a5fa;--info-bg:rgba(96,165,250,0.15);
-  --header-bg:#15171c;--header-fg:#ededed;
-  --shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 2px 8px rgba(0,0,0,0.5);
-  --shadow-lg:0 8px 24px rgba(0,0,0,0.6);
+  --bg:#0c0d10;--bg-card:#23262e;--bg-elev:#2d3038;--bg-hover:#363941;
+  --border:#555a64;--border-strong:#6b707b;
+  --text:#f5f5f5;--text-muted:#a8acb5;--text-subtle:#6f7480;
+  --accent:#7c7aff;--accent-fg:#0a0a0a;--accent-hover:#9b9aff;--accent-soft:rgba(124,122,255,0.22);
+  --success:#4ade80;--success-bg:rgba(74,222,128,0.22);
+  --warning:#fbbf24;--warning-bg:rgba(251,191,36,0.22);
+  --danger:#f87171;--danger-bg:rgba(248,113,113,0.22);
+  --info:#60a5fa;--info-bg:rgba(96,165,250,0.22);
+  --header-bg:#181a20;--header-fg:#ededed;
+  --shadow:0 1px 0 rgba(255,255,255,0.05) inset, 0 1px 3px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.25);
+  --shadow-lg:0 12px 32px rgba(0,0,0,0.5);
   --radius:6px;--radius-lg:10px;
   --font:'Inter',system-ui,-apple-system,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -385,7 +392,16 @@ main{padding:32px 0 64px;min-height:calc(100vh - var(--header-h))}
 .title-row .sub{font-size:13px;color:var(--text-muted)}
 
 /* CARDS */
-.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:16px;box-shadow:var(--shadow)}
+/* 2026-08-18 (B133): cards now use --border-strong (was
+   --border) for the outline. The pre-B133 --border on
+   Linear was #383b42 on --bg-card #1a1c21 — a 1px line
+   that was nearly invisible. Bumping to --border-strong
+   (#6b707b) gives a clear "card" outline. The light
+   themes (Vercel/Mint) override back to --border via
+   the [data-theme] block because their --border-strong
+   is too dark for a light card. */
+.card{background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:16px;box-shadow:var(--shadow)}
+[data-theme="mint"] .card,[data-theme="vercel"] .card{border-color:var(--border)}
 [data-theme="sentry"] .card{box-shadow:var(--shadow)}
 .card h3{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin:0 0 14px 0;display:flex;align-items:center;gap:6px}
 .card h3 i{color:var(--accent);font-size:11px}
@@ -395,6 +411,22 @@ main{padding:32px 0 64px;min-height:calc(100vh - var(--header-h))}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:middle}
 th{background:transparent;font-weight:600;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid var(--border-strong);white-space:nowrap}
+/* 2026-08-18 (B133): stronger row border + zebra striping.
+   Pre-B133 the td border-bottom was var(--border) which on
+   Linear was #383b42 on #1a1c21 — a 1px line that was
+   nearly invisible at typical monitor brightness. B133
+   bumps td border-bottom to var(--border-strong)
+   (#6b707b on Linear) AND adds zebra striping so each
+   row alternates between card-bg and elev-bg. The
+   combination gives the table a clear "tabular" feel
+   that was missing in B131/B132. The light themes
+   (Vercel/Mint) get a subtler stripe (--bg-elev is
+   already close to --bg-card there) so this doesn't
+   make them look striped. */
+td{border-bottom-color:var(--border-strong)}
+tbody tr:nth-child(even){background:var(--bg-elev)}
+[data-theme="mint"] tbody tr:nth-child(even),
+[data-theme="vercel"] tbody tr:nth-child(even){background:rgba(0,0,0,0.02)}
 tbody tr:last-child td{border-bottom:none}
 tbody tr{transition:background .1s}
 tbody tr:hover{background:var(--bg-hover)}

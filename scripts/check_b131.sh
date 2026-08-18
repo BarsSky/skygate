@@ -72,30 +72,51 @@ get_var() {
 # Contract A: post-B131 :root colors
 # ------------------------------------------------------------------------------
 echo
-echo "=== A. :root has the post-B131 Linear colors ==="
+echo "=== A. :root has the post-B131 Linear colors (or stronger via B133) ==="
+# 2026-08-18 (B133): the operator reported the B131 contrast
+# bump wasn't enough. B133 bumps the bg→card delta from
+# 5% to ~10% (bg #0c0d10 → card #23262e) + border at 18% lift
+# (#555a64 vs the B131 #383b42). This contract test accepts
+# EITHER the B131 values (bg #0e0f12, card #1a1c21) OR
+# the B133 stronger values (bg #0c0d10, card #23262e).
+# The sRGB contrast (Contract C below) is the authoritative
+# check — if that's >= 5%, the contract holds.
 a_bg=$(get_var bg)
 a_card=$(get_var bg-card)
 a_elev=$(get_var bg-elev)
 a_border=$(get_var border)
 a_header=$(get_var header-bg)
+b131_ok=0
+b133_ok=0
 if [ "${a_bg}" = "0e0f12" ] && [ "${a_card}" = "1a1c21" ] && [ "${a_elev}" = "25282e" ] && [ "${a_border}" = "383b42" ] && [ "${a_header}" = "15171c" ]; then
-    ok ":root has --bg=#0e0f12 --bg-card=#1a1c21 --bg-elev=#25282e --border=#383b42 --header-bg=#15171c (all 5 post-B131)"
+    b131_ok=1
+fi
+if [ "${a_bg}" = "0c0d10" ] && [ "${a_card}" = "23262e" ] && [ "${a_elev}" = "2d3038" ] && [ "${a_border}" = "555a64" ] && [ "${a_header}" = "181a20" ]; then
+    b133_ok=1
+fi
+if [ "${b131_ok}" -eq 1 ]; then
+    ok ":root has the B131 Linear colors (bg #0e0f12, card #1a1c21, etc.)"
+elif [ "${b133_ok}" -eq 1 ]; then
+    ok ":root has the B133 stronger Linear colors (bg #0c0d10, card #23262e, etc.) — B131's bump wasn't enough, B133 escalates"
 else
-    bad ":root Linear colors are wrong: bg=${a_bg} card=${a_card} elev=${a_elev} border=${a_border} header=${a_header}"
+    bad ":root Linear colors are neither B131 nor B133 set: bg=${a_bg} card=${a_card} elev=${a_elev} border=${a_border} header=${a_header}"
 fi
 
 # ------------------------------------------------------------------------------
 # Contract B: alert opacities at 0.15
 # ------------------------------------------------------------------------------
 echo
-echo "=== B. alert background opacities are 0.15 (was 0.10) ==="
-b_info=$(grep -cE 'info-bg:rgba\(96,165,250,0\.15\)' "${THEMES}" || true)
-b_success=$(grep -cE 'success-bg:rgba\(74,222,128,0\.15\)' "${THEMES}" || true)
-b_warning=$(grep -cE 'warning-bg:rgba\(251,191,36,0\.15\)' "${THEMES}" || true)
-b_danger=$(grep -cE 'danger-bg:rgba\(248,113,113,0\.15\)' "${THEMES}" || true)
-b_accent=$(grep -cE 'accent-soft:rgba\(124,122,255,0\.18\)' "${THEMES}" || true)
+echo "=== B. alert background opacities are 0.15 or higher (was 0.10) ==="
+# B133 bumped from 0.15 → 0.22. Contract: any value >= 0.15
+# is acceptable. Pin the exact B131 value (0.15) OR the
+# B133 value (0.22) — both pass.
+b_info=$(grep -cE 'info-bg:rgba\(96,165,250,0\.(15|22)\)' "${THEMES}" || true)
+b_success=$(grep -cE 'success-bg:rgba\(74,222,128,0\.(15|22)\)' "${THEMES}" || true)
+b_warning=$(grep -cE 'warning-bg:rgba\(251,191,36,0\.(15|22)\)' "${THEMES}" || true)
+b_danger=$(grep -cE 'danger-bg:rgba\(248,113,113,0\.(15|22)\)' "${THEMES}" || true)
+b_accent=$(grep -cE 'accent-soft:rgba\(124,122,255,0\.(18|22)\)' "${THEMES}" || true)
 if [ "${b_info}" -ge 1 ] && [ "${b_success}" -ge 1 ] && [ "${b_warning}" -ge 1 ] && [ "${b_danger}" -ge 1 ] && [ "${b_accent}" -ge 1 ]; then
-    ok "All 5 alert/accent backgrounds bumped: info=0.15 success=0.15 warning=0.15 danger=0.15 accent-soft=0.18"
+    ok "All 5 alert/accent backgrounds >= 0.15 opacity (B131: 0.15/0.18, B133: 0.22)"
 else
     bad "alert opacity bump incomplete: info=${b_info} success=${b_success} warning=${b_warning} danger=${b_danger} accent=${b_accent}"
 fi
