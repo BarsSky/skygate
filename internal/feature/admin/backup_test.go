@@ -155,7 +155,7 @@ func TestReadBackupDirFromStatus_ExactPath(t *testing.T) {
 	got := readBackupDirFromStatus()
 	// On Windows the path may have backslashes (os.Stat works
 	// with both), so accept either separator.
-	if !strings.HasSuffix(got, "skygate-backups") && !strings.HasSuffix(got, "skygate-backups") {
+	if !strings.HasSuffix(got, "skygate-backups") {
 		t.Errorf("readBackupDirFromStatus = %q, want suffix ...skygate-backups", got)
 	}
 }

@@ -27,10 +27,6 @@ import (
 	"skygate/internal/db"
 )
 
-// globalSettingsKeyAutoUpdate is the legacy key (pre-B129).
-// Kept for back-compat; not read by the post-B129 scheduler.
-const globalSettingsKeyAutoUpdate = "auto_update_enabled"
-
 // globalSettingsKeyUpdateScheduleEnabled is the B129+ key for
 // the schedule toggle. Read on every render of /admin/update
 // AND by the background scheduler in B130.

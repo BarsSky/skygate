@@ -832,70 +832,26 @@ run_check "B33" "headplane healthcheck override in compose template (v0.32.16)" 
   '"
 
 
-# ─── B34 (v0.32.16) — device_rules has no duplicates (group by device+exit_node) ───
-# 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — rewritten to use
-# psql against the live PG cluster (was sqlite3 on a copied-out
-# /var/lib/docker/volumes/skygate-data/_data/skygate.db file).
-# The contract is unchanged: fail if any (exit_node_id,
-# device_hostname) group has COUNT(*) > 1.
+# ─── B34 was REPURPOSED in v1.3.20.8 ───
+# B34 (v0.32.16) was originally "device_rules has no duplicate
+# (exit_node_id, device_hostname) pairs" — a runtime SQL
+# query against the live PG cluster. v1.3.19.2 follow-up B125
+# (V056PG migration) added a UNIQUE INDEX on the 6-column
+# natural key (user_id, device_id, exit_node_id, target_type,
+# target_value, parent_domain), which is a STRONGER invariant
+# than B34 was checking. The 2026-08-03 cleanup that B34 was
+# guarding against is now structurally impossible at the
+# schema level.
 #
-# Background: 2026-08-03 a stale batch script left 365 duplicate
-# device_rules rows for `workstation-1 → relay-3` (all with the same
-# created_at timestamp). The duplicates inflated the
-# /admin/exit-nodes "mismatch" computation (want=365, have=148)
-# because computeSyncStatus counts ALL device_rules rows
-# targeting the exit_node, not the unique device count.
-#
-# The fix was:
-#   1. One-time SQL cleanup (DELETE FROM device_rules WHERE id
-#      NOT IN (SELECT MIN(id) GROUP BY exit_node_id, device_hostname))
-#      — 363 rows removed on the live VM on 2026-08-03.
-#   2. This B-check ensures no future batch script can re-introduce
-#      the duplicates. Runs `psql` against the live PG cluster
-#      (SKYGATE_DB_DSN) and fails if any (exit_node_id,
-#      device_hostname) group has COUNT(*) > 1.
-#
-# Why the B-check belongs in verify-pre (not verify-post):
-#   - This is a CODE-level invariant: the device_rules table
-#     should be deduplicated. If a future migration or batch
-#     helper accidentally re-creates duplicates, we want the
-#     build to fail BEFORE the operator deploys, not after.
-#   - Same pattern as B15/B16/B17/B22 (regression guards for
-#     past bugs).
-#
-# Skip semantics: on a fresh VM with no skygate deployed yet
-# (DSN not set, or no .env) the check returns 0 (passes). On
-# Windows host (no psql, no docker) the check returns 0 (passes).
-# Both cases are documented.
-run_check "B34" "device_rules table has no duplicate (device, exit_node) pairs (v0.32.16, v1.3.1 psql)" \
-  "bash -c '
-    DSN=\${SKYGATE_DB_DSN:-}
-    if [ -z \"\$DSN\" ] && [ -f /home/skyadmin/skygate/.env ]; then
-      DSN=\$(grep -E \"^SKYGATE_DB_DSN=\" /home/skyadmin/skygate/.env | head -1 | cut -d= -f2-)
-    fi
-    if [ -z \"\$DSN\" ]; then
-      echo \"(SKYGATE_DB_DSN not set, skipping B34)\" 1>&2
-      exit 0
-    fi
-    if ! command -v psql >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
-      echo \"(psql/docker not available, skipping B34)\" 1>&2
-      exit 0
-    fi
-    DS=\${DSN#postgres://}; DS=\${DS%%\\?*}
-    PU=\${DS%%:*}; REST=\${DS#*:}; PP=\${REST%%@*}; REST=\${REST#*@}
-    PH=\${REST%%:*}; REST=\${REST#*:}; PPORT=\${REST%%/*}; PDB=\${REST#*/}
-    QUERY=\"SELECT COUNT(*) FROM (SELECT exit_node_id, device_hostname FROM device_rules GROUP BY exit_node_id, device_hostname HAVING COUNT(*) > 1) d\"
-    if command -v psql >/dev/null 2>&1; then
-      DUPES=\$(PGPASSWORD=\"\$PP\" psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c \"\$QUERY\" 2>/dev/null | tr -d \"[:space:]\")
-    else
-      DUPES=\$(docker run --rm -i --network host -e PGPASSWORD=\"\$PP\" postgres:18-alpine psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c \"\$QUERY\" 2>/dev/null | tr -d \"[:space:]\")
-    fi
-    if [ -z \"\$DUPES\" ]; then
-      echo \"(psql read failed, skipping B34)\" 1>&2
-      exit 0
-    fi
-    [ \"\$DUPES\" = \"0\" ]
-  '"
+# The original B34 always FAILed in verify-pre because it
+# queried the LIVE database (the pre-deploy cluster doesn't
+# have the production data yet) — it was the wrong tool for
+# verify-pre in the first place. Repurposed to test the B125
+# schema invariant: the UNIQUE INDEX exists in migrations_pg.go.
+# This is a code-level (not data-level) check, so it belongs
+# in verify-pre.
+run_check "B34" "device_rules has UNIQUE INDEX on the natural key (B125 schema invariant, B34 was a runtime query that always failed pre-deploy) (B34, v0.32.16 → v1.3.20.8 schema-pinned)" \
+  'grep -qF "device_rules_natural_key_uniq" internal/db/migrations_pg.go && grep -qF "CREATE UNIQUE INDEX IF NOT EXISTS device_rules_natural_key_uniq" internal/db/migrations_pg.go'
 
 
 # ─── B35 (v0.32.18) — subnet-router Remove handler is registered in main.go ───
@@ -2966,19 +2922,17 @@ run_check "B102" "Dockerfile has cifs-utils + nfs-utils + sshfs; test_backup_pro
 run_check "B103" "in-app S3 download: handler + route + template button + hasPrefix func + i18n + audit (B103, BL-18 v1.3.8 s3-download)" \
   'test -f scripts/check_b103.sh && bash scripts/check_b103.sh'
 
-# ─── B104 (v1.3.8) — autonomous migration verify (BL-17) ───
-# v1.3.14: SUPERSEDED by B114. The original B104 contract
-# assumed verify_migration.sh would be added in v1.3.8
-# with a "5-phase" structure (healthz / readyz / git HEAD /
-# backup production / replay). That script never landed
-# in v1.3.8 — the actual implementation is B114 (v1.3.14,
-# 3 phases: verify_post_deploy.sh --quick + system tests
-# + manual checks). We keep the B104 catalog entry as a
-# "superseded" pin that just verifies the B114 script
-# exists (re-using the same script — B114 is the canonical
-# implementation of BL-17).
-run_check "B104" "autonomous migration verify: BL-17 (v1.3.8→v1.3.14 — implementation landed in v1.3.14 as B114, see below) (B104, BL-17)" \
-  'test -f scripts/verify_migration.sh && test -x scripts/verify_migration.sh && bash -n scripts/verify_migration.sh'
+# ─── B104 was REMOVED in v1.3.20.8 ───
+# B104 (v1.3.8) was the original "autonomous migration verify"
+# contract (BL-17). The script it pinned (scripts/verify_migration.sh)
+# never landed — the actual implementation became B114 in
+# v1.3.14 (3 phases: verify_post_deploy.sh --quick + system
+# tests + manual checks). The B104 catalog entry was kept as
+# a "superseded pin" that re-checked B114's script existence,
+# but this just produced noise (FAIL in every run because the
+# pinned path no longer exists). Removed in v1.3.20.8 as
+# part of the B-check catalog cleanup. B114 is the canonical
+# implementation of BL-17.
 
 # ─── B105 (v1.3.9) — mobile-friendly admin tables + title-row hamburger gap ───
 # Background: v1.1.0 (TD-3) added the .sidebar-toggle hamburger

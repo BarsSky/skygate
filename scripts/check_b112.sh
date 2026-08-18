@@ -97,19 +97,19 @@ fi
 #    block itself should not reference migrations_v0.50.go; comments above
 #    can mention it for context. So we narrow the range to just the
 #    `run_check "B38"` line and the following bash block.)
-if sed -n '999,1008p' scripts/verify_pre_deploy.sh | grep -qF 'migrations_v0.50.go'; then
+if sed -n '953,962p' scripts/verify_pre_deploy.sh | grep -qF 'migrations_v0.50.go'; then
     echo "SKY-FAIL: B38 run_check still references migrations_v0.50.go" >&2
     fail=1
 else
     echo "  PASS: B38 run_check uses migrations_pg.go"
 fi
-if sed -n '999,1008p' scripts/verify_pre_deploy.sh | grep -qF 'migrations_pg.go'; then
+if sed -n '953,962p' scripts/verify_pre_deploy.sh | grep -qF 'migrations_pg.go'; then
     echo "  PASS: B38 run_check references migrations_pg.go"
 else
     echo "SKY-FAIL: B38 run_check should reference migrations_pg.go" >&2
     fail=1
 fi
-if sed -n '999,1008p' scripts/verify_pre_deploy.sh | grep -qF 't.Skip'; then
+if sed -n '953,962p' scripts/verify_pre_deploy.sh | grep -qF 't.Skip'; then
     echo "  PASS: B38 run_check accepts t.Skip stub"
 else
     echo "SKY-FAIL: B38 run_check should accept t.Skip stub" >&2
