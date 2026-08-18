@@ -110,6 +110,20 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.tutorial_step4_default_path"     : "# Путь к SSH-ключу (должен быть доступен из контейнера skygate)",
 	"exit_nodes.tutorial_step5_h4"               : "5. Регистрация ноды в skygate",
 	"exit_nodes.tutorial_step5_intro"            : "В форме ниже укажите <b>Headscale Node ID</b> (виден на <a href=\"/admin/devices\">/admin/devices</a>), <b>Hostname</b> и <b>SSH Target</b>. Поле <b>Accept routes</b> управляет флагом <code>--accept-routes</code> на самой ноде: <b>для нод, на которых крутятся другие VPN-сервисы</b> (Amnezia-AWG, OpenVPN, WireGuard, WG-Easy) <b>выбирайте <code>false</code></b> — иначе Tailscale заберёт маршруты Google/Telegram от пиров в source-routing таблицу 52, и трафик из VPN-контейнера уйдёт в «чёрную дыру».",
+
+	// 2026-08-18 (B132): per-row "Re-sync" button + better
+	// explainer for the mismatch tag. The operator reported
+	// "не понятно что с этим делать администратор не имеет
+	// никакого инструмента для исправления этих рассхождений".
+	// The per-row button + the explainer tooltip on the
+	// mismatch tag are the two operator-facing fixes.
+	"exit_nodes.resync_button"                  : "Пере-синхронизировать",
+	"exit_nodes.resync_help"                    : "Протолкнуть правила skygate → только в этот узел. Mismatch значит, что headscale показывает другой набор advertised routes, чем skygate ожидает по device_rules. Если результат ssh=err..., значит operator-override ssh_target недоступен (например, файрвол блокирует public IP) — нажмите иконку ссылки, чтобы переключиться на Tailscale IP.",
+	"exit_nodes.mismatch_help"                  : "kare N = сколько routes сейчас advertised на headscale; want M = сколько routes skygate ожидает по своим device_rules. Разрыв значит, что device_rule добавили/удалили без sync, или operator вручную менял routes на релее.",
+	"exit_nodes.last_sync"                      : "последний sync",
+	"exit_nodes.last_sync_never"                : "ни разу",
+	"exit_nodes.use_ts_ip_short"                : "TS IP",
+	"exit_nodes.use_ts_ip_help_tooltip"         : "ssh_target указывает на host:port, до которого не достучаться. Клик переключит ssh_target=root@<tailscale_ip> (всегда доступен внутри tailnet).",
 }
 
 var enExitNodes = map[string]string{
@@ -211,4 +225,19 @@ var enExitNodes = map[string]string{
 	"exit_nodes.tutorial_step4_default_path"     : "# Path to SSH key (must be reachable from the skygate container)",
 	"exit_nodes.tutorial_step5_h4"               : "5. Register the node in Skygate",
 	"exit_nodes.tutorial_step5_intro"            : "In the form below specify the <b>Headscale Node ID</b> (visible on <a href=\"/admin/devices\">/admin/devices</a>), <b>Hostname</b>, and <b>SSH Target</b>. The <b>Accept routes</b> field controls the <code>--accept-routes</code> flag on the node itself: <b>for nodes that run other VPN services</b> (Amnezia-AWG, OpenVPN, WireGuard, WG-Easy) <b>choose <code>false</code></b> — otherwise Tailscale will pick up Google/Telegram routes from peers into the source-routing table 52 and traffic from the VPN container will go into a \"black hole\".",
+
+	// 2026-08-18 (B132): per-row "Re-sync" button + better
+	// explainer for the mismatch tag. The operator reported
+	// "не понятно что с этим делать администратор не имеет
+	// никакого инструмента для исправления этих рассхождений".
+	// The per-row button + the explainer tooltip on the
+	// mismatch tag are the two operator-facing fixes.
+	"exit_nodes.resync_button"                  : "Re-sync",
+	"exit_nodes.resync_help"                    : "Push skygate rules → this node only. The mismatch means the headscale-side advertised routes don't match skygate's device_rules. Re-sync pushes the right set. If the result shows ssh=err..., the operator-override ssh_target is unreachable (e.g. firewalled public IP) — click the link icon to switch to the Tailscale IP.",
+	"exit_nodes.mismatch_help"                  : "kare N = routes currently advertised on headscale; want M = routes skygate's device_rules say it should advertise. The gap means either a device_rule was added/removed without syncing, or the operator manually edited routes on the relay.",
+	"exit_nodes.last_sync"                      : "last sync",
+	"exit_nodes.last_sync_never"                : "never",
+	"exit_nodes.use_ts_ip_short"                : "TS IP",
+	"exit_nodes.use_ts_ip_help_tooltip"         : "ssh_target is set to a host:port that won't connect. Click to set ssh_target=root@<tailscale_ip> (always reachable inside the tailnet).",
 }
+

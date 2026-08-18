@@ -19,6 +19,7 @@
 package exit_rules
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"skygate/internal/headscale"
 
 	"skygate/internal/db"
 )
@@ -97,71 +100,126 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 		defaultKeyPath = s.Cfg.SSHKeyPath
 	}
 	for node, routes := range exitRoutes {
-		// 2026-07-08: prepend base exit-node routes (0.0.0.0/0, ::/0) so the
-		// node stays an exit node after sync. SetAdvertisedRoutes already
-		// adds these on the SSH side, but the headscale CLI approve-routes
-		// call below only knows about the routes we pass explicitly.
-		approveRoutes := []string{"0.0.0.0/0", "::/0"}
-		seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
-		for _, r := range routes {
-			if !seen[r] {
-				seen[r] = true
-				approveRoutes = append(approveRoutes, r)
-			}
-		}
-		// Resolve per-exit-node SSH config. The empty-row fallback
-		// (no row for this hostname) is fine — SetAdvertisedRoutes
-		// will use nodeHostname as the target and defaultKeyPath as
-		// the key. The v0.33.1 signature refuses to run when both
-		// per-row and default key are empty (so the operator sees
-		// a clear "no ssh_key_path" error instead of a silent
-		// "config file not found" from ssh).
-		//
-		// 2026-08-09 v0.33.1.29 B81: sshTarget is resolved through
-		// the new LookupExitServerSSHTarget helper which applies
-		// the fallback chain operator-override → root@<tailscale_ip>
-		// → "". This fixes the "ssh root@<public-ip>:22: Operation
-		// timed out" failure mode where the operator had set
-		// ssh_target to a firewalled public IP and the SetAdvertisedRoutes
-		// call had no way to fall back to the always-reachable
-		// Tailscale IP. The legacy "ssh_target empty → nodeHostname"
-		// fallback in SetAdvertisedRoutes still exists for the
-		// "no exit_servers row at all" case but is intentionally
-		// NOT used here — empty ssh_target with a row in
-		// exit_servers means "use the auto-fallback", not "fall
-		// through to a hostname that doesn't resolve".
-		sshRow, _ := db.LookupExitServerSSH(s.DB, node)
-		sshTarget, _ := db.LookupExitServerSSHTarget(s.DB, node)
-		sshKeyPath := sshRow.KeyPath
-		if sshKeyPath == "" {
-			sshKeyPath = defaultKeyPath
-		}
-		// SSH first. On error, we STILL try the headscale approve
-		// step below — the operator may have already approved these
-		// routes some other way (e.g. directly via the headscale
-		// CLI) and the SSH failure should be visible but not block
-		// the approval side.
-		sshLabel := "ok"
-		_, sshErr := s.HS.SetAdvertisedRoutes(node, approveRoutes, s.lookupAcceptRoutes(node), sshTarget, sshKeyPath)
-		if sshErr != nil {
-			sshLabel = "err=" + sshErr.Error()
-		}
-		// Approve all routes (including base 0.0.0.0/0, ::/0) for this exit
-		// node via headscale CLI (docker exec).
-		// 2026-07-08: pass full list (base + per-rule) so the node keeps
-		// its exit-node capability (default route advertised AND approved).
-		approveLabel := "approved=0"
-		if approved, approveErr := s.HS.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
-			approveLabel = "approve=err=" + approveErr.Error()
-		} else if approved > 0 {
-			approveLabel = fmt.Sprintf("approved=%d", approved)
-		}
-		result[node] = "ssh=" + sshLabel + " " + approveLabel
+		syncOneExitNode(s.HS, s.DB, s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
 	}
 	if len(exitRoutes) == 0 {
 		result["info"] = "no IP/subnet rules configured"
 	}
 	return result
+}
+
+// 2026-08-18 (B132): SyncAdvertisedRoutesForNode syncs just ONE
+// node. Same per-node logic as the loop body in
+// SyncAdvertisedRoutes (extracted to syncOneExitNode so the two
+// paths can't drift). Used by the new per-row "Re-sync" button
+// on /admin/exit-nodes — the operator asked "не понятно что с
+// этим делать" because the only available tool was the
+// global "Sync all" (re-runs SetAdvertisedRoutes on every
+// node, which is wasteful when only one is in mismatch).
+//
+// Returns a map with a single entry (same shape as
+// SyncAdvertisedRoutes). The "info" key is set when the
+// requested node has no enabled IP/subnet rules (no
+// advertised routes to push).
+func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
+	result := map[string]string{}
+	if node == "" {
+		result["error"] = "node hostname is empty"
+		return result
+	}
+	rows, err := s.DB.Query("SELECT target_value FROM device_rules WHERE enabled = 1 AND exit_node_id = $1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY target_value", node)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer rows.Close()
+	var routes []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			continue
+		}
+		routes = append(routes, t)
+	}
+	if len(routes) == 0 {
+		result[node] = "info=no IP/subnet rules target this node"
+		return result
+	}
+	var defaultKeyPath string
+	if s.Cfg != nil {
+		defaultKeyPath = s.Cfg.SSHKeyPath
+	}
+	syncOneExitNode(s.HS, s.DB, s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
+	return result
+}
+
+// syncOneExitNode is the per-node sync body extracted from
+// SyncAdvertisedRoutes. Both SyncAdvertisedRoutes (all-nodes
+// loop) and SyncAdvertisedRoutesForNode (per-node) call this
+// so the two paths share the same SetAdvertisedRoutes +
+// ApproveAllRoutesWithList logic. The result map is written
+// in-place (single key: node → "ssh=X approve=Y").
+func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(string) int, defaultKeyPath, node string, routes []string, result map[string]string) {
+	// 2026-07-08: prepend base exit-node routes (0.0.0.0/0, ::/0) so the
+	// node stays an exit node after sync. SetAdvertisedRoutes already
+	// adds these on the SSH side, but the headscale CLI approve-routes
+	// call below only knows about the routes we pass explicitly.
+	approveRoutes := []string{"0.0.0.0/0", "::/0"}
+	seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
+	for _, r := range routes {
+		if !seen[r] {
+			seen[r] = true
+			approveRoutes = append(approveRoutes, r)
+		}
+	}
+	// Resolve per-exit-node SSH config. The empty-row fallback
+	// (no row for this hostname) is fine — SetAdvertisedRoutes
+	// will use nodeHostname as the target and defaultKeyPath as
+	// the key. The v0.33.1 signature refuses to run when both
+	// per-row and default key are empty (so the operator sees
+	// a clear "no ssh_key_path" error instead of a silent
+	// "config file not found" from ssh).
+	//
+	// 2026-08-09 v0.33.1.29 B81: sshTarget is resolved through
+	// the new LookupExitServerSSHTarget helper which applies
+	// the fallback chain operator-override → root@<tailscale_ip>
+	// → "". This fixes the "ssh root@<public-ip>:22: Operation
+	// timed out" failure mode where the operator had set
+	// ssh_target to a firewalled public IP and the SetAdvertisedRoutes
+	// call had no way to fall back to the always-reachable
+	// Tailscale IP. The legacy "ssh_target empty → nodeHostname"
+	// fallback in SetAdvertisedRoutes still exists for the
+	// "no exit_servers row at all" case but is intentionally
+	// NOT used here — empty ssh_target with a row in
+	// exit_servers means "use the auto-fallback", not "fall
+	// through to a hostname that doesn't resolve".
+	sshRow, _ := db.LookupExitServerSSH(d, node)
+	sshTarget, _ := db.LookupExitServerSSHTarget(d, node)
+	sshKeyPath := sshRow.KeyPath
+	if sshKeyPath == "" {
+		sshKeyPath = defaultKeyPath
+	}
+	// SSH first. On error, we STILL try the headscale approve
+	// step below — the operator may have already approved these
+	// routes some other way (e.g. directly via the headscale
+	// CLI) and the SSH failure should be visible but not block
+	// the approval side.
+	sshLabel := "ok"
+	_, sshErr := hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath)
+	if sshErr != nil {
+		sshLabel = "err=" + sshErr.Error()
+	}
+	// Approve all routes (including base 0.0.0.0/0, ::/0) for this exit
+	// node via headscale CLI (docker exec).
+	// 2026-07-08: pass full list (base + per-rule) so the node keeps
+	// its exit-node capability (default route advertised AND approved).
+	approveLabel := "approved=0"
+	if approved, approveErr := hs.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
+		approveLabel = "approve=err=" + approveErr.Error()
+	} else if approved > 0 {
+		approveLabel = fmt.Sprintf("approved=%d", approved)
+	}
+	result[node] = "ssh=" + sshLabel + " " + approveLabel
 }
 
 // 2026-07-09: aggregated sync per node (issue: stale batches overwrote each other).

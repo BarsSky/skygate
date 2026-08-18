@@ -154,6 +154,15 @@ type Service struct {
 	// (SyncAdvertisedRoutes) and is wired from
 	// cmd/skygate/main.go.
 	SyncRoutes func() map[string]string
+	// 2026-08-18 (B132): per-row version. Wired from
+	// cmd/skygate/main.go to exit_rules.Service
+	// .SyncAdvertisedRoutesForNode. Powers the per-row
+	// "Re-sync" button on /admin/exit-nodes (was missing
+	// pre-B132 — the operator had to fall back to the
+	// global "Sync all" which re-runs SetAdvertisedRoutes
+	// on every node, masking the actual mismatch with
+	// the per-node SSH error).
+	SyncRoutesForNode func(node string) map[string]string
 
 	// refactor-v0.30 Phase B step 6a (2026-07-29): moved
 	// from *App. /admin/derp's collectDerpStatus seeds

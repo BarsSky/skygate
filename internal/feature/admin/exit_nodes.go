@@ -620,6 +620,47 @@ func (s *Service) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(result)
 }
 
+// PostAdminExitNodeSync is the B132 per-row "Re-sync" button
+// handler. Takes a hostname from the URL path
+// (POST /admin/exit-nodes/{hostname}/sync) and re-runs the
+// sync just for that one node. Returns a JSON map with a
+// single entry: {"<hostname>": "ssh=<label> approved=<n>"} or
+// an "error" key on failure.
+//
+// 2026-08-18 (B132): the per-row tool was missing — the
+// operator had to use the global "Sync all" which re-runs
+// SetAdvertisedRoutes on every node and re-masks the actual
+// per-node SSH error (e.g. emilia's ssh_target=public IP
+// was timing out while karolina worked fine, but a global
+// sync would re-fail emilia AND re-do karolina's no-op work).
+// The per-row button shows the operator exactly which node
+// failed and why, and only re-touches the broken node.
+//
+// Admin-only. Wire-up is in cmd/skygate/main.go.
+func (s *Service) PostAdminExitNodeSync(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+	if s.SyncRoutesForNode == nil {
+		http.Error(w, `{"error":"sync not wired (B132)"}`, http.StatusInternalServerError)
+		return
+	}
+	// Path variable via Go 1.22+ mux syntax. The {hostname}
+	// is URL-decoded by the mux.
+	hostname := r.PathValue("hostname")
+	if hostname == "" {
+		http.Error(w, `{"error":"hostname path var is empty"}`, http.StatusBadRequest)
+		return
+	}
+	result := s.SyncRoutesForNode(hostname)
+	s.Backend.Audit(c.UserID, c.Username, "exit_node_sync_one",
+		fmt.Sprintf("hostname=%s result=%v", hostname, result))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 // PostAdminExitNodeTagAsExitNode is the v0.18.1 "Tag as
 // exit-node" button on /admin/exit-nodes. It replaces the
 // operator's two manual `docker exec headscale headscale

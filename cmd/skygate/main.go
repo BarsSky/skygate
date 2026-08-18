@@ -643,6 +643,11 @@ func main() {
 	// behaviour because app.SyncAdvertisedRoutes wraps the
 	// Service, but this removes the indirect call).
 	adminSvc.SyncRoutes = exitRulesSvc.SyncAdvertisedRoutes
+	// 2026-08-18 (B132): per-row version for the
+	// "Re-sync" button. Uses the same per-node logic as
+	// the all-nodes sync (extracted to syncOneExitNode so
+	// the two paths share the code).
+	adminSvc.SyncRoutesForNode = exitRulesSvc.SyncAdvertisedRoutesForNode
 	app.SetExitRulesService(exitRulesSvc)
 	// 2026-08-04: v0.33.0 — wire the runtime admin Service
 	// into the TestRegistry closures so the /admin/system_tests
@@ -1031,6 +1036,10 @@ func main() {
 	mux.Handle("POST /admin/exit-nodes/add", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodesAdd)))
 	mux.Handle("POST /admin/exit-nodes/delete", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodesDelete)))
 	mux.Handle("POST /admin/exit-nodes/sync", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodesSync)))
+	// 2026-08-18 (B132): per-row "Re-sync" button. URL
+	// carries the hostname; the handler returns a single-
+	// entry JSON map with the result for just this node.
+	mux.Handle("POST /admin/exit-nodes/{hostname}/sync", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeSync)))
 	// 2026-07-15: v0.13.0 — "Run health check now" button on
 	// /admin/exit-nodes. Admin-only. Triggers the background
 	// monitor's CheckNow synchronously and redirects back to

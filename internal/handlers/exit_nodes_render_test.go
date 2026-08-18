@@ -228,8 +228,18 @@ func TestExitNodesRendersB81_UseTailscaleIPButton(t *testing.T) {
 	if !strings.Contains(got, `value="3"`) {
 		t.Errorf("hidden node_id=3 must render in the form, got:\n%s", got)
 	}
-	// The "Use Tailscale IP" i18n key must be referenced.
-	if !strings.Contains(got, "exit_nodes.ssh_target_use_ts_ip") {
+	// 2026-08-18 (B132): the button label i18n key changed
+	// from "exit_nodes.ssh_target_use_ts_ip" (long form,
+	// pre-B132 button was icon-only with the long form in
+	// the title attribute) to "exit_nodes.use_ts_ip_short"
+	// (the visible button label, prepended to the Tailscale
+	// IP for self-explanatory UX). The title attribute
+	// still uses the explanatory "use_ts_ip_help_tooltip" key.
+	// Pin either of the two i18n keys as proof the button
+	// rendered (back-compat with pre-B132 templates + new
+	// B132 templates).
+	if !strings.Contains(got, "exit_nodes.use_ts_ip_short") &&
+		!strings.Contains(got, "exit_nodes.ssh_target_use_ts_ip") {
 		t.Errorf("use-ts-ip button i18n key must render, got:\n%s", got)
 	}
 }

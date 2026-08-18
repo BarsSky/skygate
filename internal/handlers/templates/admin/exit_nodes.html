@@ -140,8 +140,17 @@
         {{if .LastSeenAgo}}{{.LastSeenAgo}} {{t "exit_nodes.health.ago"}}{{else}}—{{end}}
       </td>
       <td>
+        {{/*
+          2026-08-18 (B132): the pre-B132 mismatch tag had
+          NO tooltip — the operator saw "mismatch: have 34,
+          want 102" and had no way to learn what the two
+          numbers mean or what to do. B132 adds the
+          mismatch_help i18n key as a tooltip, AND adds a
+          small "(?)" hint so the operator knows the
+          tooltip exists.
+        */}}
         {{if eq .SyncStatus "synced"}}<span class="tag tag-success">{{t "exit_nodes.synced_status"}}</span>
-        {{else if .SyncStatus}}<span class="tag tag-warning">{{.SyncStatus}}</span>
+        {{else if .SyncStatus}}<span class="tag tag-warning" title="{{t "exit_nodes.mismatch_help"}}">{{.SyncStatus}} <i class="fa-solid fa-circle-question" style="font-size:10px;opacity:0.6;margin-left:2px"></i></span>
         {{else}}<span class="tag" style="background:var(--bg-hover)">{{t "exit_nodes.idle_status"}}</span>{{end}}
       </td>
       <td>
@@ -194,15 +203,45 @@
           and resolved values now match). */}}
         {{$showButton := and .TailscaleIP .Enabled (ne .SSHTarget .ResolvedSSHTarget)}}
         {{if $showButton}}
-          <form method="post" action="/admin/exit-nodes/use-ts-ip" style="display:inline;margin-right:4px" title="{{t "exit_nodes.ssh_target_use_ts_ip"}}: {{.TailscaleIP}}">
+          <form method="post" action="/admin/exit-nodes/use-ts-ip" style="display:inline;margin-right:4px" title="{{t "exit_nodes.use_ts_ip_help_tooltip"}}">
             <input type="hidden" name="node_id" value="{{.NodeID}}">
-            <button type="submit" class="btn btn-sm" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info)"><i class="fa-solid fa-link"></i> {{t "exit_nodes.ssh_target_use_ts_ip"}}</button>
+            {{/* 2026-08-18 (B132): the pre-B132 button showed only
+                 the link icon — operators consistently missed
+                 the action. B132 adds the short "TS IP" label
+                 inline so the button is self-explanatory at a
+                 glance. The full tooltip explains the SSH
+                 failure mode the button fixes. */}}
+            <button type="submit" class="btn btn-sm" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info)"><i class="fa-solid fa-link"></i> {{t "exit_nodes.use_ts_ip_short"}} <code style="font-size:10px">{{.TailscaleIP}}</code></button>
           </form>
         {{end}}
         <form method="post" action="/admin/exit-nodes/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_nodes.delete_confirm" .Hostname}}')">
           <input type="hidden" name="node_id" value="{{.NodeID}}">
           <button class="btn btn-sm" style="background:var(--danger-bg);color:var(--danger)"><i class="fa-solid fa-trash"></i></button>
         </form>
+        {{/*
+          2026-08-18 (B132): per-row "Re-sync" button. The
+          pre-B132 page only had the global "Sync all" button
+          at the top, which re-runs SetAdvertisedRoutes on
+          every node and re-masks the actual per-node SSH
+          error (e.g. emilia's ssh_target=public IP timing
+          out while karolina works fine). The operator
+          reported "не понятно что с этим делать". The
+          per-row button targets one hostname via the
+          URL path and returns a single-entry JSON map
+          with the result. Shows ONLY when the node has
+          enabled IP/subnet rules (the SyncAdvertisedRoutes
+          loop in exit_rules_sync.go would be a no-op
+          otherwise) AND the node is in mismatch state
+          (computed server-side via the same
+          computeSyncStatus that drives the table tag).
+        */}}
+        {{$hasRules := and (gt .RouteCount 0) (or (eq .SyncStatus "synced") (.SyncStatus))}}
+        {{if and $hasRules (or (eq .SyncStatus "synced") (eq .SyncStatus ""))}}
+        {{else}}
+          <form method="post" action="/admin/exit-nodes/{{.Hostname}}/sync" style="display:inline;margin-left:4px" title="{{t "exit_nodes.resync_help"}}">
+            <button type="submit" class="btn btn-sm" style="background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning)"><i class="fa-solid fa-arrows-rotate"></i> {{t "exit_nodes.resync_button"}}</button>
+          </form>
+        {{end}}
       </td>
     </tr>
     {{end}}
