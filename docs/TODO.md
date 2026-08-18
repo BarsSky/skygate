@@ -1,6 +1,21 @@
 # Skygate TODO — what remains unimplemented
 
-> **Last updated**: 2026-08-17, post v1.3.19.4 release.
+> **Last updated**: 2026-08-18, post v1.3.20 release.
+> **Status**: v1.3.20 (B128 + B129 + B130) ships next. B128 fixed
+> the silent "Update button hidden despite newer GitHub release"
+> bug by extending `compareSemver` to handle 4-part versions
+> (the pre-v1.3.20 3-part compare dropped the 4th component so
+> v1.3.19.2 == v1.3.19.4 in the comparison). B129 redesigned
+> /admin/update: the "auto-update" banner is gone, the Apply
+> button is now always visible when IsNewer, and a new
+> "Расписание автообновления" section is the real auto-update
+> mechanism (time-of-day HH:MM + checkbox). B130 added a
+> background scheduler in `cmd/skygate/main.go` that triggers
+> the update orchestrator at the configured time when a
+> newer release is available. Live verify-post: 21 PASS / 4 FAIL
+> (all environmental). verify-pre catalog **125 PASS / 0 FAIL /
+> 1 SKIP** (B8 VM-only) + 1 pre-existing FAIL (B95, known stale).
+> 28/28 packages green.
 > **Status**: v1.3.19.4 (B126 + B127) ships next. B126 fixed the
 > R9 EXTRACT bug; B127 cleans up the remaining verify_post_deploy.sh
 > false positives (R11-R16/R17-R18/R28/R29 use json_field now, R34
@@ -25,6 +40,21 @@
 >     See `scripts/check_b103.sh`.
 >
 > Recent shipped releases:
+> - **v1.3.20 (B128+B129+B130)** (2026-08-18): /admin/update
+>   redesign + real time-of-day auto-update. Three operator-
+>   visible changes: (1) the Update button is now always
+>   visible when a newer release is detected (no more
+>   `auto_update_enabled` flag gating); (2) the misleading
+>   "Авто-обновление включено" banner is replaced by a new
+>   "Расписание автообновления" section with a toggle +
+>   HH:MM time picker + "Last run" timestamp; (3) a
+>   background goroutine in `cmd/skygate/main.go` triggers
+>   the update orchestrator at the configured time when
+>   a newer release is available. Env vars: `SKYGATE_UPDATE_
+>   SCHEDULE_ENABLED` (default false), `SKYGATE_UPDATE_
+>   SCHEDULE_TIME` (default 03:00). Three new B-checks:
+>   `check_b128.sh` (compareSemver 4-part), `check_b129.sh`
+>   (page redesign), `check_b130.sh` (scheduler).
 > - **v1.3.19.4 (B127)** (2026-08-17): verify_post_deploy.sh
 >   false-positive cleanup. Four sub-fixes in one cycle:
 >   (1) **R11-R16/R17-R18/R28/R29** refactored from

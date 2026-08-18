@@ -17,7 +17,36 @@ decisions or propose work that's already in flight.
 
 ## Release status
 
-* **Current**: v1.3.19.4 — **B127 verify_post_deploy.sh
+* **Current**: v1.3.20 — **/admin/update redesign + real time-of-day
+  auto-update (B128 + B129 + B130)**. The pre-v1.3.20 page had a
+  misleading "auto-update" banner (the operator still had to click
+  the Apply button to actually run the orchestrator). The v1.3.20
+  redesign splits the concept cleanly:
+  1. The **Apply** button is now **always visible** when a newer
+     release is detected (no more "auto-update enabled" gating).
+  2. A new **"Расписание автообновления"** section lets the operator
+     pick an HH:MM time-of-day for real auto-update.
+  3. A new **background scheduler** in `cmd/skygate/main.go` reads
+     the schedule and triggers the update orchestrator at the
+     configured time (when a newer release is available). Ticks
+     every 30s. Sends Telegram alerts on start + done/fail.
+  The pre-v1.3.20 bug was a 4-part version compare: compareSemver
+  in 3 places (internal/update, internal/release,
+  internal/headscale_version) dropped the 4th component, so
+  v1.3.19.2 vs v1.3.19.4 incorrectly compared as equal — the
+  Apply button was hidden even when a real new release was
+  available. B128 fixes the compare, B129 redesigns the page,
+  B130 implements the scheduler. 28/28 Go packages green.
+  verify-pre **125 PASS / 0 FAIL / 1 SKIP** (B8 VM-only)
+  + 1 pre-existing FAIL (B95, known stale — v0.34.0 code debt
+  cleanup deferred to v1.4.0 catalog cleanup). 3 new B-checks:
+  - **B128 (v1.3.20)**: `splitVersionParts(a, 4)` + `splitVersionParts(b, 4)` in checker.go + 4-iteration loops in monitor.go + client.go
+  - **B129 (v1.3.20)**: Apply button unconditional (no more AutoUpdateEnabled gating) + new Schedule section (toggle + HH:MM input + save + last-run) + config fields + i18n keys
+  - **B130 (v1.3.20)**: `internal/update/scheduler.go` (SchedulerDeps + Start + tick + runScheduled) + `scheduler_db.go` (init() binding db helpers) + main.go wire-up with `cfg.UpdateScheduleEnabled` guard + schedulerNotifierSink adapter
+  Env vars: `SKYGATE_UPDATE_SCHEDULE_ENABLED` (default false),
+  `SKYGATE_UPDATE_SCHEDULE_TIME` (default 03:00). Both override
+  the page's defaults at boot.
+* **Previous**: v1.3.19.4 — **B127 verify_post_deploy.sh
   false-positive cleanup**. The previous v1.3.19.4 (B126) fixed
   R9 only; this adds B127 which refactors R11-R16/R17-R18/R28/
   R29 from `echo $X | python3 -c '...'` (which silently

@@ -1,5 +1,101 @@
 # Skygate release notes
 
+## v1.3.20 — /admin/update redesign + real time-of-day auto-update (B128 + B129 + B130)
+
+**Date:** 2026-08-18
+
+Three operator-visible changes that fix a long-standing UX
+disconnect on the /admin/update page and add a real
+auto-update mechanism.
+
+### What
+
+**1. (B128) The Update button now appears when a newer
+GitHub release is available.** Pre-B128, `compareSemver` in
+three places (`internal/update/checker.go`,
+`internal/release/monitor.go`, `internal/headscale_version/client.go`)
+compared only the first 3 dot-separated components and
+silently dropped the 4th. Skygate adopted 4-component
+versioning (`x.y.z.w`, sub-patch) in v1.3.12+, so the
+4-part compare is required. Pre-B128, comparing
+`v1.3.19.2-7-g0670b64` (current build) against `v1.3.19.4`
+(latest GitHub release) gave `[1,3,19]` vs `[1,3,19]` →
+equal → `IsNewer=false` → the "Update" button on
+/admin/update stayed hidden even though a real new release
+was available. The same bug in the monitor caused the
+"Доступно обновление" banner on every admin page to show
+stale data (last monitor tick + GitHub's
+`v1.3.19.4` filtered to `[1,3,19]` → equal → not newer).
+After B128 the 4th component is included and the button
+appears.
+
+**2. (B129) The /admin/update page is redesigned around
+the new "Update is a button, auto-update is a schedule"
+mental model.** The pre-B129 "Авто-обновление включено"
+banner was misleading — the page called it "auto-update"
+but the operator still had to click "Apply" to actually
+run the orchestrator. Post-B129 the Apply button is
+**unconditional** when `IsNewer` (no more
+`AutoUpdateEnabled` gating) and the page has a new
+"Расписание автообновления" section with a checkbox +
+HH:MM time picker + "Last run" timestamp. The
+`SKYGATE_AUTO_UPDATE_ENABLED` env var is now read-only
+(used as a default for first start; the UI overrides it).
+
+**3. (B130) A background goroutine in `cmd/skygate/main.go`
+triggers the update orchestrator at the configured time.**
+Ticks every 30s. When (a) schedule is enabled, (b) current
+HH:MM matches, (c) GitHub has a newer release, (d) no
+update is in flight, (e) hasn't already fired for this
+minute → spawns the Docker upgrader + sends Telegram
+alerts (start + done/fail) + stamps the last-run
+timestamp. The `SKYGATE_UPDATE_SCHEDULE_ENABLED` env var
+gates the goroutine at boot (set to `true` to enable the
+default behavior; the /admin/update page is the
+operator-facing toggle).
+
+### Operator action
+
+- **For a quick install** (no real auto-update): no env-var
+  change needed. The new "Apply" button will appear
+  immediately when a newer release is detected.
+- **For real time-of-day auto-update**: set
+  `SKYGATE_UPDATE_SCHEDULE_ENABLED=true` in `/home/skyadmin/skygate/.env`,
+  then in /admin/update enable the "Расписание автообновления"
+  toggle and set the time (default 03:00).
+- **Customize the default time** (without using the page):
+  set `SKYGATE_UPDATE_SCHEDULE_TIME=HH:MM` in .env.
+- **Disable auto-update entirely**: leave the env var at
+  `false` and the page toggle off. The Apply button
+  still works for manual upgrades.
+
+### Verify
+
+- `make verify-pre` (or `bash scripts/verify_pre_deploy.sh
+  --quick`): **125 PASS / 0 FAIL / 1 SKIP** (B8 VM-only).
+  B128, B129, B130 are all green. B95 (v0.34.0 code debt
+  cleanup) is the only pre-existing FAIL — known stale,
+  deferred to v1.4.0 catalog cleanup.
+- `go test ./...` (28/28 packages green).
+- `go test -count=1 ./internal/update/`: 7 scheduler unit
+  tests + the existing TestCompareSemver all pass.
+- Live `/admin/update`: Apply button now visible without
+  manual `auto_update_enabled` flag; new "Schedule" card
+  with toggle + HH:MM input; "Last run" timestamp appears
+  after the first scheduled run.
+
+### What this is NOT
+
+- Not a hotfix to v1.3.19.x. The B128 compareSemver fix is
+  a 3-line core change in 3 files; the B129 + B130 work is
+  a full UX redesign + a new background goroutine. A
+  `v1.3.19.5` patch bump would undersell the scope.
+- Not a release of the v0.34.0 catalog cleanup work (the
+  15+ remaining stale B-checks). That's a separate
+  v1.4.0-effort item.
+- Not a release of headscale 0.30+ support (the `dns.extra_records`
+  policy still requires headscale 0.30+ which isn't out).
+
 ## v1.3.19.2 follow-up — device_rules auto-add duplicate prevention (B125 / Goal 37 follow-up)
 
 **Date:** 2026-08-17
