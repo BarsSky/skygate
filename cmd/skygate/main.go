@@ -900,6 +900,11 @@ func main() {
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(authSvc.PostMyTokenRevoke)))
 	mux.Handle("GET /my/account", authMW(http.HandlerFunc(authSvc.GetMyAccount)))
 	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(authSvc.PostMyAccountPassword)))
+	// B136 (v1.3.20.6): per-user display prefs (font + size +
+	// selection color). DB-persisted in portal_users, so the
+	// operator's display follows them across devices and
+	// survives cache clears (operator request on 2026-08-18).
+	mux.Handle("POST /my/account/display", authMW(http.HandlerFunc(mySvc.PostMyAccountDisplay)))
 	// v0.25.1: per-user audit log export (CSV or JSON).
 	// Gated by the user's session cookie — they get only
 	// their own audit trail. Useful for compliance

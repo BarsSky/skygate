@@ -448,6 +448,25 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	}
 	data["Theme"] = theme
 	data["ThemeLabel"] = db.ThemeLabel(theme)
+	// B136 (v1.3.20.6): per-user display prefs (font + size +
+	// selection color). DB-persisted in portal_users so the
+	// user's chosen display follows them across devices and
+	// browsers (the operator's 2026-08-18 "wherever I open the
+	// UI, my prefs are saved"). Auto-injected for every page
+	// that goes through renderWithLayout — the layout template
+	// reads {{.DisplayFont}} / {{.DisplayScale}} / {{.DisplaySelBg}}
+	// and emits a <style id="user-display-prefs"> block that
+	// overrides themes.css. The handler that owns /my/account
+	// (auth.GetMyAccount) also explicitly passes these in its
+	// data map to surface them in the form (so the dropdown
+	// shows the current value), but the layout's auto-inject
+	// here is the source of truth for rendering the override.
+	if c != nil {
+		prefs := db.GetUserDisplayPrefs(a.DB, c.UserID)
+		data["DisplayFont"] = prefs.FontFamily
+		data["DisplayScale"] = prefs.FontScale
+		data["DisplaySelBg"] = prefs.SelectionBg
+	}
 	data["Version"] = a.Version
 
 	// 2026-07-20: v0.18.1 — auto-inject ControlURL so every

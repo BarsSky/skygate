@@ -1126,6 +1126,41 @@ func migrateV056PG(d *sql.DB) error {
 	return nil
 }
 
+// migrateV057PG — v1.3.20.6 (B136) — per-user display preferences.
+// Adds 3 columns to portal_users:
+//   - font_family   TEXT NOT NULL DEFAULT 'manrope' (manrope|inter|geist|sora|system)
+//   - font_scale    INTEGER NOT NULL DEFAULT 0       (-2..+2 px delta on body font-size)
+//   - selection_bg  TEXT NOT NULL DEFAULT ''         (CSS color for ::selection, '' = use theme default)
+//
+// These are per-user settings, persisted in DB so the user's
+// preferred display travels with their account (the pre-B136
+// behavior was theme-only per-user, font+size were global in
+// themes.css). After the migration, the user's display prefs
+// (font + size + selection color) follow them across devices,
+// browsers, and cache clears — the operator's 2026-08-18
+// request "чтобы не сбрасывалось с кешем".
+//
+// DEFAULT 'manrope' is the B135 default (matches the
+// post-v1.3.20.5 themes.css --font). Existing rows pick up
+// these defaults automatically via ALTER TABLE ... DEFAULT,
+// so no backfill is needed. The new columns are NOT NULL
+// with explicit DEFAULT, which is the safe form for PG.
+//
+// B136 contract test: see scripts/check_b136.sh.
+func migrateV057PG(d *sql.DB) error {
+	stmts := []string{
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS font_family TEXT NOT NULL DEFAULT 'manrope'`,
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS font_scale INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS selection_bg TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.57 portal_users display prefs: %w", err)
+		}
+	}
+	return nil
+}
+
 // migrateV055PG — v1.3.17 — DERP relays per-row table.
 //
 // Replaces the v0.11.0 "comma-separated URLs in global_settings"

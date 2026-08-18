@@ -9,14 +9,14 @@
 {{if .FlashOK}}
 <div class="alert alert-ok" style="margin-top:0">
   <i class="fa-solid fa-check-circle"></i>
-  <div>{{t "account.password_changed_ok"}}</div>
+  <div>{{if eq .FlashOK "display"}}{{t "account.display_saved"}}{{else}}{{t "account.password_changed_ok"}}{{end}}</div>
 </div>
 {{end}}
 
 {{if .FlashError}}
 <div class="alert alert-error" style="margin-top:0">
   <i class="fa-solid fa-triangle-exclamation"></i>
-  <div>{{if eq .FlashError "wrong_current_password"}}{{t "account.wrong_current_password"}}{{else if eq .FlashError "passwords_dont_match"}}{{t "account.passwords_dont_match"}}{{else if eq .FlashError "password_too_short"}}{{t "account.password_too_short"}}{{else if eq .FlashError "fields_empty"}}{{t "account.fields_empty"}}{{else if eq .FlashError "user_not_found"}}{{t "account.user_not_found"}}{{else if eq .FlashError "hash_failed"}}{{t "account.hash_failed"}}{{else if eq .FlashError "db_error"}}{{t "account.db_error"}}{{else if eq .FlashError "bad_form"}}{{t "account.bad_form"}}{{else}}{{tf "account.error_generic" .FlashError}}{{end}}</div>
+  <div>{{if eq .FlashError "wrong_current_password"}}{{t "account.wrong_current_password"}}{{else if eq .FlashError "passwords_dont_match"}}{{t "account.passwords_dont_match"}}{{else if eq .FlashError "password_too_short"}}{{t "account.password_too_short"}}{{else if eq .FlashError "fields_empty"}}{{t "account.fields_empty"}}{{else if eq .FlashError "user_not_found"}}{{t "account.user_not_found"}}{{else if eq .FlashError "hash_failed"}}{{t "account.hash_failed"}}{{else if eq .FlashError "db_error"}}{{t "account.db_error"}}{{else if eq .FlashError "bad_form"}}{{t "account.bad_form"}}{{else if eq .FlashError "display_save_failed"}}{{t "account.display_save_failed"}}{{else}}{{tf "account.error_generic" .FlashError}}{{end}}</div>
 </div>
 {{end}}
 
@@ -61,5 +61,54 @@
   <a href="/my/telegram" class="btn btn-secondary">
     <i class="fa-brands fa-telegram"></i>{{t "account.telegram_bot_button"}}
   </a>
+</div>
+
+{{/* B136 (v1.3.20.6): per-user display prefs. Saved to
+     portal_users so the user sees the same font + size +
+     selection color on every device they log in from.
+     The 3 form fields are all optional — submitting the
+     form with no changes keeps the current value (the
+     handler reads existing prefs and overwrites only
+     submitted fields). */}}
+<div class="card" style="margin-top:16px">
+  <h3><i class="fa-solid fa-palette"></i>{{t "account.display_title"}}</h3>
+  <p class="hint" style="margin-top:0">{{t "account.display_desc"}}</p>
+  <form method="post" action="/my/account/display" autocomplete="off">
+    <div class="field">
+      <label>{{t "account.font_family"}}</label>
+      <select name="font_family">
+        <option value="manrope" {{if eq .DisplayFont "manrope"}}selected{{end}}>Manrope</option>
+        <option value="inter"   {{if eq .DisplayFont "inter"}}selected{{end}}>Inter</option>
+        <option value="geist"   {{if eq .DisplayFont "geist"}}selected{{end}}>Geist</option>
+        <option value="sora"    {{if eq .DisplayFont "sora"}}selected{{end}}>Sora</option>
+        <option value="system"  {{if eq .DisplayFont "system"}}selected{{end}}>{{t "account.font_system"}}</option>
+      </select>
+      <p class="hint">{{t "account.font_family_help"}}</p>
+    </div>
+    <div class="field">
+      <label>{{t "account.font_scale"}}</label>
+      <select name="font_scale">
+        <option value="-2" {{if eq .DisplayScale -2}}selected{{end}}>{{t "account.font_scale_smaller"}}</option>
+        <option value="-1" {{if eq .DisplayScale -1}}selected{{end}}>{{t "account.font_scale_small"}}</option>
+        <option value="0"  {{if eq .DisplayScale 0}}selected{{end}}>{{t "account.font_scale_normal"}}</option>
+        <option value="1"  {{if eq .DisplayScale 1}}selected{{end}}>{{t "account.font_scale_large"}}</option>
+        <option value="2"  {{if eq .DisplayScale 2}}selected{{end}}>{{t "account.font_scale_larger"}}</option>
+      </select>
+      <p class="hint">{{t "account.font_scale_help"}}</p>
+    </div>
+    <div class="field">
+      <label>{{t "account.selection_bg"}}</label>
+      <input type="text" name="selection_bg" value="{{.DisplaySelBg}}" placeholder="{{t "account.selection_bg_placeholder"}}" maxlength="32">
+      <p class="hint">{{t "account.selection_bg_help"}}</p>
+    </div>
+    <div class="btn-row" style="margin-top:16px;display:flex;gap:8px">
+      <button type="submit" class="btn btn-primary">
+        <i class="fa-solid fa-floppy-disk"></i>{{t "account.display_save"}}
+      </button>
+      <a href="/dashboard" class="btn btn-secondary">
+        <i class="fa-solid fa-xmark"></i>{{t "common.cancel"}}
+      </a>
+    </div>
+  </form>
 </div>
 {{end}}

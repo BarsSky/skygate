@@ -7,11 +7,37 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/favicon.svg">
+{{/* B136 (v1.3.20.6): per-user font family. pre-B136 always
+     loaded Manrope from Google Fonts. Now we load only the
+     family the user picked. family=system skips Google Fonts
+     entirely (uses OS sans-serif fallback). preconnect stays
+     for all non-system families. */}}
+{{if or (not .DisplayFont) (eq .DisplayFont "manrope")}}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+{{else if eq .DisplayFont "inter"}}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+{{else if eq .DisplayFont "geist"}}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap">
+{{else if eq .DisplayFont "sora"}}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+{{end}}
 <link rel="stylesheet" href="/static/css/font-awesome.min.css">
 <link rel="stylesheet" href="/static/css/themes.css">
+{{/* B136: per-user display overrides. :root --font wins over
+     themes.css because this <style> is loaded AFTER it. The
+     font-size calc(15px + Npx) applies the per-user scale
+     (-2..+2). Selection color is the optional 3rd setting. */}}
+<style id="user-display-prefs">
+{{if eq .DisplayFont "system"}}:root{--font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}{{else if eq .DisplayFont "inter"}}:root{--font:'Inter',system-ui,-apple-system,sans-serif}{else if eq .DisplayFont "geist"}}:root{--font:'Geist',system-ui,-apple-system,sans-serif}{else if eq .DisplayFont "sora"}}:root{--font:'Sora',system-ui,-apple-system,sans-serif}{{end}}body{font-size:calc(15px + {{if .DisplayScale}}{{.DisplayScale}}{{else}}0{{end}}px)}{{if .DisplaySelBg}}::selection{background:{{.DisplaySelBg}};color:var(--bg)}{{end}}
+</style>
 </head>
 <body>
 {{/* 2026-08-12: v1.1.0 (TD-1 + TD-3) — sidebar was a flat list

@@ -28,6 +28,31 @@ var ruMy = map[string]string{
 	"account.db_error"                           : "Ошибка базы данных. Попробуйте позже.",
 	"account.bad_form"                           : "Некорректная форма.",
 	"account.error_generic"                      : "Ошибка: %s",
+	// 2026-08-18: v1.3.20.6 (B136) — per-user display prefs.
+	// Saved in portal_users (not localStorage) so the user's
+	// display follows them across devices and survives cache
+	// clears. The form lives on /my/account, under the password
+	// card. font_family / font_scale / selection_bg are all
+	// optional in the form — missing fields keep the user's
+	// current value.
+	"account.display_title"                      : "Отображение",
+	"account.display_desc"                       : "Шрифт, размер и цвет выделения. Сохраняются в вашем аккаунте и применяются везде, где вы входите.",
+	"account.font_family"                        : "Шрифт",
+	"account.font_family_help"                   : "Загружается из Google Fonts. «System» — без веб-шрифта, использует системный sans-serif.",
+	"account.font_system"                        : "Системный (без веб-шрифта)",
+	"account.font_scale"                         : "Размер шрифта",
+	"account.font_scale_smaller"                 : "На 2px меньше",
+	"account.font_scale_small"                   : "На 1px меньше",
+	"account.font_scale_normal"                  : "Обычный (по умолчанию)",
+	"account.font_scale_large"                   : "На 1px больше",
+	"account.font_scale_larger"                  : "На 2px больше",
+	"account.font_scale_help"                    : "Дельта к базовому размеру 15px. Применяется ко всему интерфейсу.",
+	"account.selection_bg"                        : "Цвет выделения текста",
+	"account.selection_bg_placeholder"           : "оставьте пустым для темы",
+	"account.selection_bg_help"                  : "Любой CSS-цвет (#ffcc00, rgba(255,0,0,0.3), transparent). Пусто — тема по умолчанию.",
+	"account.display_save"                       : "Сохранить",
+	"account.display_saved"                      : "Настройки отображения сохранены.",
+	"account.display_save_failed"                : "Не удалось сохранить настройки отображения.",
 	"account.password_min_hint"                  : "Минимум 8 символов.",
 	"account.api_tokens"                         : "API-токены",
 	"account.api_tokens_desc"                    : "Для интеграций с AI-помощниками используйте персональные токены.",
@@ -347,6 +372,26 @@ var enMy = map[string]string{
 	"account.db_error"                           : "Database error. Please try again later.",
 	"account.bad_form"                           : "Invalid form.",
 	"account.error_generic"                      : "Error: %s",
+	// 2026-08-18: v1.3.20.6 (B136) — per-user display prefs.
+	// Mirrors the RU block above. Keep keys in lockstep.
+	"account.display_title"                      : "Display",
+	"account.display_desc"                       : "Font, size and selection color. Saved in your account and applied everywhere you sign in.",
+	"account.font_family"                        : "Font",
+	"account.font_family_help"                   : "Loaded from Google Fonts. \"System\" skips the web font and uses the OS sans-serif.",
+	"account.font_system"                        : "System (no web font)",
+	"account.font_scale"                         : "Font size",
+	"account.font_scale_smaller"                 : "2px smaller",
+	"account.font_scale_small"                   : "1px smaller",
+	"account.font_scale_normal"                  : "Normal (default)",
+	"account.font_scale_large"                   : "1px larger",
+	"account.font_scale_larger"                  : "2px larger",
+	"account.font_scale_help"                    : "Delta from the 15px baseline. Applied to the whole UI.",
+	"account.selection_bg"                        : "Text selection color",
+	"account.selection_bg_placeholder"           : "leave empty to use theme default",
+	"account.selection_bg_help"                  : "Any CSS color (#ffcc00, rgba(255,0,0,0.3), transparent). Empty = theme default.",
+	"account.display_save"                       : "Save",
+	"account.display_saved"                      : "Display preferences saved.",
+	"account.display_save_failed"                : "Failed to save display preferences.",
 	"account.password_min_hint"                  : "Minimum 8 characters.",
 	"account.api_tokens"                         : "API tokens",
 	"account.api_tokens_desc"                    : "Use personal tokens to integrate with AI assistants.",

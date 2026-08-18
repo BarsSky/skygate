@@ -204,11 +204,19 @@ func (s *Service) GetMyAccount(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	// B136 (v1.3.20.6): load per-user display prefs (font + size + selection
+	// color) so the /my/account form can show the current values and the
+	// layout can inject the right <style> block.
+	prefs := db.GetUserDisplayPrefs(s.DB, c.UserID)
 	s.Backend.RenderWithLayout(w, r, "user/account.html", c, map[string]any{
-		"Page":       "account",
-		"Title":      "Account",
-		"FlashOK":    r.URL.Query().Get("saved"),
-		"FlashError": r.URL.Query().Get("err"),
+		"Page":             "account",
+		"Title":            "Account",
+		"FlashOK":          r.URL.Query().Get("saved"),
+		"FlashError":       r.URL.Query().Get("err"),
+		"DisplayFont":      prefs.FontFamily,
+		"DisplayScale":     prefs.FontScale,
+		"DisplaySelBg":     prefs.SelectionBg,
+		"DisplayFontLabel": db.FontFamilyLabel(prefs.FontFamily),
 	})
 }
 
