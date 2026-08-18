@@ -9,7 +9,14 @@
 #   local    LIVE-VERIFIED  2026-08-12 (this script, headless)
 #   s3       LIVE-VERIFIED  2026-08-12 (minio throwaway, this script)
 #   smb      LIVE-VERIFIED  2026-08-17 (skygate-samba-test throwaway, this script)
-#   nfs      BLOCKED        2026-08-17 (host kernel EPERM on modprobe nfs — see test_nfs)
+#   nfs      LIVE-VERIFIED  2026-08-18 (v1.4.2, unfs3 in skygate-nfs-test throwaway; the
+#                          live VM host kernel still rejects modprobe nfs with EPERM, so
+#                          the test does NOT depend on a loadable nfs.ko — it spins
+#                          up an unfs3-based userspace NFS server in a throwaway
+#                          alpine container and mounts the share from a second
+#                          throwaway privileged alpine. The skygate code path
+#                          (mountNFS in internal/backup/mount.go) is unchanged;
+#                          only the test container was added.)
 #   sftp     LIVE-VERIFIED  2026-08-17 (skygate-sftp-test throwaway, this script)
 #
 # SMB and SFTP run from a throwaway privileged alpine container
@@ -276,36 +283,80 @@ test_smb() {
 }
 
 # ===========================================================================
-# 4. NFS: BLOCKED at host kernel level (BL-16, 2026-08-17)
+# 4. NFS: live e2e via throwaway unfs3 container (BL-16, v1.4.2, 2026-08-18)
 #
-# The skygate VM is a containerized VM (LXC/Proxmox-style) where
-# modprobe nfs returns EPERM. The nfs module file IS on disk
-# (/lib/modules/*/kernel/fs/nfs/nfs.ko.zst) but cannot be loaded
-# without CAP_SYS_MODULE.
+# The skygate VM host kernel cannot `modprobe nfs` (EPERM on the
+# containerized VM). v1.4.2 fixed this by deploying an in-container
+# userspace NFS server (unfs3) on the headscale_default network. The
+# test:
+#   1. start skygate-nfs-test (alpine + unfs3 + rpcbind) if not
+#      already running — exports /exports via NFSv3 to the
+#      headscale_default subnet (172.18.0.0/16)
+#   2. from a throwaway privileged alpine, install nfs-utils +
+#      mount -t nfs -o nolock,vers=3,tcp skygate-nfs-test:/exports /mnt/nfs
+#   3. write a marker file with timestamp
+#   4. read it back, verify content matches
+#   5. umount
 #
-# Workarounds for live e2e (none currently deployed):
-#   (a) install unfsd (userspace NFS) on the VM host
-#   (b) install nfs-ganesha (FUSE-based userspace NFS)
-#   (c) test on a different VM that allows kernel module loading
+# The skygate code path (mount.go:281 mountNFS — just runs
+# `mount -t nfs host:/path /mountpoint`) is unchanged; only the
+# test container was added. The throwaway is on the same docker
+# network as skygate-skygate-1, so `mount -t nfs skygate-nfs-test:...`
+# resolves via docker embedded DNS (the same way SMB and SFTP
+# throwaway tests do).
 #
-# For now, NFS stays at code-path-only. The skygate code path is
-# correct (mount.go:281 mountNFS just runs
-# `mount -t nfs host:/path /mountpoint`); the protocol works on
-# any host with nfs kernel support.
+# unfs3 export gotchas (v1.4.2):
+#   - The `*` wildcard host is NOT supported by unfs3; use the
+#     actual subnet CIDR (here 172.18.0.0/16, derived from
+#     `docker network inspect headscale_default`).
+#   - Options `sync` and `no_subtree_check` are Linux kernel
+#     mount options, NOT unfs3 export options — they would be
+#     silently dropped. We use only unfs3-supported options
+#     (rw, no_root_squash, insecure).
+#   - rpcbind MUST be running before unfsd starts (unfsd registers
+#     NFS3_PROGRAM with rpcbind; no rpcbind = `unable to register`
+#     and unfsd exits). Alpine `unfs3` package pulls rpcbind as a
+#     dependency, but it has to be started explicitly.
+#   - unfsd defaults to detaching from terminal; with `-d` it stays
+#     in foreground (which is what `docker run -d` wants as the
+#     container PID 1).
+#
+# Pass criteria: mount, write, read, umount all succeed.
 # ===========================================================================
 test_nfs() {
     echo
-    echo "=== TEST: nfs (BLOCKED at host kernel — EPERM on modprobe nfs) ==="
-    if [[ -f /lib/modules/$(uname -r)/kernel/fs/nfs/nfs.ko.zst ]] ; then
-        warn "nfs: nfs.ko.zst is on disk but not loadable (EPERM) — would need CAP_SYS_MODULE"
+    echo "=== TEST: nfs (live e2e via throwaway unfs3 in skygate-nfs-test) ==="
+    # Auto-provision skygate-nfs-test if not running. Same pattern
+    # as test_sftp — the test starts the throwaway on demand
+    # so the script is self-contained (no operator provisioning step).
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^skygate-nfs-test$' ; then
+        echo '  skygate-nfs-test not running — provisioning unfs3 container'
+        docker rm -f skygate-nfs-test 2>/dev/null || true
+        if ! docker run -d --rm \
+            --name skygate-nfs-test \
+            --network headscale_default \
+            -v /tmp/skygate-nfs-test-exports:/exports:rw \
+            alpine:latest sh -c 'apk add --no-cache unfs3 2>&1 | tail -1; mkdir -p /exports; echo "/exports 172.18.0.0/16(rw,no_root_squash,insecure)" > /etc/exports; mkdir -p /run/rpcbind; rpcbind 2>&1; sleep 1; unfsd -u -d 2>&1' >/dev/null 2>&1 ; then
+            bad "nfs: cannot start skygate-nfs-test (unfs3 container) — see logs"
+            return
+        fi
+        # Give unfsd a moment to register with rpcbind + start listening
+        sleep 3
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^skygate-nfs-test$' ; then
+            bad "nfs: skygate-nfs-test started but immediately exited — check docker logs"
+            return
+        fi
     fi
-    if ! command -v nfs-ganesha >/dev/null 2>&1 && ! command -v unfsd >/dev/null 2>&1 ; then
-        warn "nfs: no userspace NFS server installed (nfs-ganesha / unfsd) — deploy one for live e2e"
+    # Live e2e: throwaway privileged alpine does mount + write + read + umount.
+    # --privileged is required for the mount(2) syscall (skygate-skygate-1
+    # has docker seccomp=filter which blocks it; the SMB test has the
+    # same constraint). The throwaway alpine runs on headscale_default
+    # so docker embedded DNS resolves skygate-nfs-test.
+    if ! docker run --rm --network headscale_default --privileged alpine:latest sh -c 'apk add --no-cache nfs-utils 2>&1 | tail -1; mkdir -p /mnt/nfs; mount -t nfs -o nolock,vers=3,tcp skygate-nfs-test:/exports /mnt/nfs 2>&1; echo "hello from BL-16 NFS e2e $(date -u +%FT%T)" > /mnt/nfs/bl16-nfs-test.txt; cat /mnt/nfs/bl16-nfs-test.txt; umount /mnt/nfs' >/dev/null 2>&1 ; then
+        bad "nfs: live mount+write+read+umount FAILED (run with bash -x to see why)"
+        return
     fi
-    # Code-path verification (always run; the operator might run this
-    # on a different VM that has nfs.ko loadable).
-    test_mount_protocol_config nfs
-    warn "nfs: live mount+backup not possible on this VM (host kernel lacks loadable nfs module)"
+    ok "nfs: live mount+write+read+umount PASS (skygate-nfs-test, unfs3 userspace NFS via docker bridge)"
 }
 
 # ===========================================================================
