@@ -508,6 +508,17 @@ func (c *CertSync) notifyFailure(_ context.Context, deps CertSyncDeps, _, detail
 
 // ----- shared helpers ---------------------------------------------------
 
+// ValidateCertKeyPair is the exported version of
+// validateCertKeyPair. Used by the /admin/certificates
+// upload handler (B148) and any other future caller
+// that needs to check a cert+key pair before writing
+// it to disk. Re-exported here so the validation
+// rules (PKCS#1 / PKCS#8 / SEC1) stay in one place
+// even when called from outside the package.
+func ValidateCertKeyPair(cert, key []byte) error {
+	return validateCertKeyPair(cert, key)
+}
+
 // validateCertKeyPair checks that the cert + key are
 // parseable and match (i.e. the key is the public key
 // corresponding to the cert). Defensive: an upload that

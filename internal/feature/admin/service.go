@@ -120,6 +120,19 @@ type Service struct {
 	// service runs in a read-only / no-headscale mode).
 	AvailabilityChecker *healthz.Checker
 
+	// 2026-08-19: v1.5.0 / B148 — CertUploadToS3 is the
+	// S3-upload hook the /admin/certificates handler
+	// calls after a successful cert validation.
+	// Wired by main.go at boot (same path the
+	// certsync scheduler uses). Nil = the page
+	// still works, but the operator gets a
+	// "queued for upload" flash instead of a
+	// "S3 upload succeeded" flash. The
+	// certsync scheduler picks up the upload
+	// on its next tick regardless (the operator
+	// can also run the renew script manually).
+	CertUploadToS3 CertUploadFn
+
 	// refactor-v0.30 Phase B step 3b.3 (2026-07-29): moved
 	// from *App. SSHKeyPath is the default path shown in
 	// the /admin/exit-nodes "ssh_key_path" form field

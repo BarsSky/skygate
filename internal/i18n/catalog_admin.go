@@ -381,6 +381,36 @@ var ruAdmin = map[string]string{
 	"deploy.test_failover_help"             : "Чистая симуляция: показывает, кого elector промотит, если активный узел сейчас упадёт. Цепочка и audit log не изменяются.",
 	"deploy.test_failover_button"           : "Запустить dry-run",
 	"deploy.dry_run_label"                  : "Dry-run result",
+	// v1.5.0 / B148 — /admin/certificates page.
+	//
+	// Russian cert.* keys, kept in lock-step with the enAdmin
+	// block below (TestCatalogsParity in internal/i18n/catches any drift).
+	
+	"cert.title                          ": "Сертификаты",
+	"cert.subtitle                       ": "Управление TLS-сертификатом узла. Загрузка нового сертификата, инспекция текущего и (в v1.5.x) автообновление через Let's Encrypt DNS-01 на reg.ru.",
+	"cert_current                        ": "Текущий сертификат",
+	"cert_current_help                   ": "Считывается из локального файла, который пишет certsync-планировщик (B147).",
+	"cert_subject                        ": "Subject",
+	"cert_issuer                         ": "Issuer",
+	"cert_not_before                     ": "Not before",
+	"cert_not_after                      ": "Not after",
+	"cert_sha256                         ": "SHA-256",
+	"cert_no_local                       ": "Локального сертификата ещё нет — certsync ещё не скачал. Это нормальное состояние на свежем деплое.",
+	"cert_upload_title                   ": "Загрузить новый сертификат",
+	"cert_upload_help                    ": "Вставьте PEM-сертификат + соответствующий приватный ключ. Пара проверяется (x509 + matchedAny), и валидная пара записывается в S3-бакет. certsync-планировщик подхватит её в течение 30 секунд.",
+	"cert_upload_pem                     ": "Сертификат (PEM)",
+	"cert_upload_key                     ": "Ключ (PEM)",
+	"cert_apply                          ": "Загрузить",
+	"cert_dns01_title                    ": "Let's Encrypt DNS-01 (reg.ru)",
+	"cert_dns01_help                     ": "В v1.5.0 только сохраняет намерение. Сам certbot + reg.ru DNS-01 появится в v1.5.x, когда B146 (reg.ru DNS-клиент) будет разблокирован.",
+	"cert_dns01_toggle                   ": "Включить авто-обновление через LE DNS-01",
+	"cert_save                           ": "Сохранить",
+	"cert_recent_events                  ": "Последние события",
+	"cert_event_when                     ": "Когда",
+	"cert_event_actor                    ": "Кто",
+	"cert_event_action                   ": "Действие",
+	"cert_event_detail                   ": "Детали",
+	"cert_no_events                      ": "Пока нет событий certsync.* / certs.*.",
 }
 
 var enAdmin = map[string]string{
@@ -745,4 +775,31 @@ var enAdmin = map[string]string{
 	"deploy.test_failover_help"             : "Read-only simulation: shows which chain member the elector would promote if the active node went down right now. No chain or audit log changes.",
 	"deploy.test_failover_button"           : "Run dry-run",
 	"deploy.dry_run_label"                  : "Dry-run result",
+	// v1.5.0 / B148 — /admin/certificates page (English block).
+	
+	"cert.title                          ": "Certificates",
+	"cert.subtitle                       ": "Manage the TLS certificate served by this node. Upload a new cert+key pair, inspect the current cert, or (in v1.5.x) enable auto-renewal via Let's Encrypt DNS-01 on reg.ru.",
+	"cert_current                        ": "Current certificate",
+	"cert_current_help                   ": "Read from the local file the certsync scheduler writes (B147).",
+	"cert_subject                        ": "Subject",
+	"cert_issuer                         ": "Issuer",
+	"cert_not_before                     ": "Not before",
+	"cert_not_after                      ": "Not after",
+	"cert_sha256                         ": "SHA-256",
+	"cert_no_local                       ": "No local cert yet — the certsync scheduler has not downloaded one. This is the normal state on a fresh deploy.",
+	"cert_upload_title                   ": "Upload a new certificate",
+	"cert_upload_help                    ": "Paste the PEM cert + matching private key. The pair is validated (x509 + matchedAny); a valid pair is uploaded to the S3 bucket, and the certsync scheduler picks it up within 30 seconds.",
+	"cert_upload_pem                     ": "Certificate (PEM)",
+	"cert_upload_key                     ": "Key (PEM)",
+	"cert_apply                          ": "Upload",
+	"cert_dns01_title                    ": "Let's Encrypt DNS-01 (reg.ru)",
+	"cert_dns01_help                     ": "In v1.5.0 this only stores the operator's intent. The actual certbot + reg.ru DNS-01 flow is a v1.5.x surface that depends on B146 (reg.ru DNS client) being unblocked.",
+	"cert_dns01_toggle                   ": "Enable auto-renewal via LE DNS-01",
+	"cert_save                           ": "Save",
+	"cert_recent_events                  ": "Recent events",
+	"cert_event_when                     ": "When",
+	"cert_event_actor                    ": "Actor",
+	"cert_event_action                   ": "Action",
+	"cert_event_detail                   ": "Detail",
+	"cert_no_events                      ": "No certsync.* / certs.* events yet.",
 }

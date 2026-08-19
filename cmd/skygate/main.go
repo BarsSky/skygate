@@ -980,6 +980,16 @@ func main() {
 	mux.Handle("POST /admin/ha/reclaim", authMW(http.HandlerFunc(adminSvc.PostAdminHAReclaim)))
 	mux.Handle("POST /admin/ha/regapi/save", authMW(http.HandlerFunc(adminSvc.PostAdminHARegapiCreds)))
 	mux.Handle("POST /admin/ha/regapi/test", authMW(http.HandlerFunc(adminSvc.PostAdminHARegapiTest)))
+	// v1.5.0 / B148 — /admin/certificates (TLS cert management:
+	// show current cert, upload new PEM pair, LE DNS-01 toggle).
+	// See internal/feature/admin/certificates.go for the handler
+	// bodies. The upload handler re-uses the certsync package's
+	// ValidateCertKeyPair so the rules (x509 + matchedAny over
+	// PKCS#1/PKCS#8/SEC1) stay in one place (B147 + B148 share
+	// the same validation surface).
+	mux.Handle("GET /admin/certificates", authMW(http.HandlerFunc(adminSvc.GetAdminCertificates)))
+	mux.Handle("POST /admin/certificates/upload", authMW(http.HandlerFunc(adminSvc.PostAdminCertificateUpload)))
+	mux.Handle("POST /admin/certificates/toggle-dns01", authMW(http.HandlerFunc(adminSvc.PostAdminCertificateToggleDNS01)))
 	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
 	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(adminSvc.GetAdminBackup)))

@@ -656,6 +656,7 @@ func sectionPageSet(page string) map[string]bool {
 			"admin/telegram", "admin/tailscale", "admin/derp",
 			"admin/derp_relays", "admin/ha",  // v1.5.0 / B149
 			"admin/deploy",                 // v1.5.0 / B150
+			"admin/certificates",           // v1.5.0 / B148
 		},
 		"InSectionData": {
 			"admin/backup", "admin/invites", "admin/control-planes",

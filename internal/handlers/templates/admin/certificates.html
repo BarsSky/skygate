@@ -1,0 +1,173 @@
+{{define "body-admin-certificates"}}
+{{/*
+  /admin/certificates — v1.5.0 / B148
+
+  The operator-facing surface for cert management. The page
+  shows the current cert (read from the local file the
+  certsync scheduler writes), the upload form (paste
+  PEM or upload a file), and the "Enable LE DNS-01" toggle
+  (the actual cert-acquisition flow is a separate v1.5.x
+  surface; this v1.5.0 surface just stores the operator's
+  intent in global_settings).
+
+  Page sections (per docs/internal/ha-v1.5.0-execution.md
+  §5.1 / Phase 4):
+
+    1. Current cert info    — Subject / NotAfter / days_left
+                              / SHA-256 (read from local file)
+    2. Upload form          — paste PEM cert + matching key
+                              (or browse to upload), handler
+                              validates the pair (x509 +
+                              matchedAny), writes to S3,
+                              bumps .version
+    3. DNS-01 toggle        — "Enable Let's Encrypt auto
+                              via reg.ru DNS-01" (intent
+                              only for v1.5.0)
+    4. Recent cert events   — last 10 `certsync.*` +
+                              `certs.*` audit rows
+
+  The page is a thin wrapper around the certsync B147
+  surface: every successful upload is picked up by the
+  certsync scheduler on its next 30s tick, which
+  propagates the new cert to all nodes and reloads
+  Caddy. The /admin/certificates page does NOT need to
+  "push to nodes" or "reload Caddy" itself.
+
+  Shared keys (re-used from B147 to keep the catalog
+  surface small):
+  - cert.title (new)
+  - cert_current (new) — "Current cert" section
+  - cert_current_subject (re-use ha.subject via t key)
+  - cert_current_not_after (re-use ha.not_after via t key)
+  - cert_current_days_left (re-use ha.days_left via t key)
+  - cert_upload_pem (new) — textarea label
+  - cert_upload_key (new) — textarea label
+  - cert_apply (new) — submit button
+  - cert_dns01_toggle (new) — toggle label
+  - cert_dns01_help (new) — toggle help text
+*/}}
+
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-certificate"></i>{{t "cert.title"}}</h2>
+    <div class="sub">{{t "cert.subtitle"}}</div>
+  </div>
+</div>
+
+{{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
+{{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
+
+{{/* ===================== Section 1: Current cert ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-file-shield"></i>{{t "cert_current"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "cert_current_help"}}</p>
+
+  {{if .Data.CurrentCert}}
+  <table class="table" style="width:100%;font-size:13px">
+    <tbody>
+      <tr><td style="width:200px;color:var(--text-muted)">{{t "cert_subject"}}</td><td><code>{{.Data.CurrentCert.Subject}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "cert_issuer"}}</td><td><code>{{.Data.CurrentCert.Issuer}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "cert_not_before"}}</td><td><code>{{.Data.CurrentCert.NotBefore}}</code></td></tr>
+      <tr>
+        <td style="color:var(--text-muted)">{{t "cert_not_after"}}</td>
+        <td>
+          <code>{{.Data.CurrentCert.NotAfter}}</code>
+          {{if le .Data.CurrentCert.DaysLeft 7}}
+            <span class="tag tag-warning">{{.Data.CurrentCert.DaysLeft}} days</span>
+          {{else}}
+            <span class="tag tag-success">{{.Data.CurrentCert.DaysLeft}} days</span>
+          {{end}}
+        </td>
+      </tr>
+      <tr><td style="color:var(--text-muted)">{{t "cert_sha256"}}</td><td><code style="font-size:11px">{{.Data.CurrentCert.SHA256}}</code></td></tr>
+      {{if .Data.CurrentCert.DNSNames}}
+      <tr>
+        <td style="color:var(--text-muted);vertical-align:top">DNS names</td>
+        <td>
+          {{range .Data.CurrentCert.DNSNames}}
+            <code style="font-size:11px;display:inline-block;margin:2px 4px 2px 0;padding:2px 6px;background:var(--bg-muted);border-radius:3px">{{.}}</code>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p style="color:var(--text-muted);font-size:13px;padding:12px;background:var(--bg-muted);border-radius:4px">
+    {{t "cert_no_local"}}
+  </p>
+  {{end}}
+</div>
+
+{{/* ===================== Section 2: Upload form ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-cloud-arrow-up"></i>{{t "cert_upload_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "cert_upload_help"}}</p>
+
+  <form method="POST" action="/admin/certificates/upload" enctype="multipart/form-data">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "cert_upload_pem"}}</label>
+        <textarea name="cert_pem_text" rows="8" style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-muted)" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">or</div>
+        <input type="file" name="cert_pem_file" accept=".pem,.crt,.cer" style="margin-top:4px">
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "cert_upload_key"}}</label>
+        <textarea name="key_pem_text" rows="8" style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-muted)" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">or</div>
+        <input type="file" name="key_pem_file" accept=".pem,.key" style="margin-top:4px">
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-cloud-arrow-up"></i> {{t "cert_apply"}}</button>
+    </div>
+  </form>
+</div>
+
+{{/* ===================== Section 3: DNS-01 toggle ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-arrows-rotate"></i>{{t "cert_dns01_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "cert_dns01_help"}}</p>
+
+  <form method="POST" action="/admin/certificates/toggle-dns01" style="padding:12px;background:var(--bg-muted);border-radius:4px">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" name="dns01_enabled" value="1" {{if .Data.DNS01Enabled}}checked{{end}} style="width:18px;height:18px">
+      <span style="font-size:14px">{{t "cert_dns01_toggle"}}</span>
+    </label>
+    <div style="margin-top:8px">
+      <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "cert_save"}}</button>
+    </div>
+  </form>
+</div>
+
+{{/* ===================== Section 4: Recent events ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i>{{t "cert_recent_events"}}</h3>
+  {{if .Data.RecentEvents}}
+  <table class="table" style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th>{{t "cert_event_when"}}</th>
+        <th>{{t "cert_event_actor"}}</th>
+        <th>{{t "cert_event_action"}}</th>
+        <th>{{t "cert_event_detail"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.RecentEvents}}
+      <tr>
+        <td><span style="font-size:12px;color:var(--text-muted)">{{.WhenUnix}}</span></td>
+        <td><code style="font-size:12px">{{.Actor}}</code></td>
+        <td><code style="font-size:12px">{{.Action}}</code></td>
+        <td style="font-size:12px;word-break:break-all">{{.Detail}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p style="color:var(--text-muted);font-size:13px">{{t "cert_no_events"}}</p>
+  {{end}}
+</div>
+
+{{end}}
