@@ -23,6 +23,7 @@ under [docs/internal/](internal/README.md).
 | [headplane.md](headplane.md) | Headplane sidecar integration contract (version pinning, optional mode) | Operators |
 | [refactor-v0.30-postmortem.md](refactor-v0.30-postmortem.md) | What refactor-v0.30 did, lessons learned | Contributors |
 | [runbooks/pg-failover.md](runbooks/pg-failover.md) | PostgreSQL HA failover runbook | On-call operators |
+| [runbooks/v1.5.0-ha-and-deploy.md](runbooks/v1.5.0-ha-and-deploy.md) | v1.5.0 HA chain + certsync + /admin/{ha,certificates,deploy} + skygate deploy CLI runbook | On-call operators |
 | [skygate-as-shell.md](skygate-as-shell.md) | Long-term roadmap for pluggable Headscale / multi-control-plane / ACL import | Architects |
 | [SYNC.md](SYNC.md) | AI agent sync workflow (how to bring an agent up to speed) | AI assistants |
 | [TELEGRAM.md](TELEGRAM.md) | Telegram bot config + every command + the i18n catalog | Bot operators, integrators |
