@@ -1,14 +1,14 @@
 {{define "body-admin-ha"}}
 {{/*
   /admin/ha — v1.5.0 / B149
-  High Availability chain editor + failover controls + reg.ru
+  High Availability chain editor + failover controls + the configured DNS provider
   credentials. The page renders 6 sections (per
   docs/internal/ha-v1.5.0-execution.md §5.1):
 
     1. Cluster topology  — read-only chain table
     2. Failover policy   — auto / manual radio + save
     3. HA nodes (CRUD)   — per-row edit + add + remove
-    4. External DNS      — reg.ru creds form + test
+    4. External DNS      — DNS provider creds form + test
     5. Force actions     — promote / demote / reclaim
     6. Audit log         — last 20 HA events
 
@@ -32,7 +32,7 @@
     <div style="font-size:13px;line-height:1.6">
       <strong>No HA chain configured yet.</strong> Add at least one node below to get started.
       On a fresh deploy the chain is empty — the elector has nothing to manage and the
-      <code>skygate.skynas.ru</code> DNS record is not updated automatically.
+      <code>skygate.<your-domain></code> DNS record is not updated automatically.
     </div>
   </div>
 {{end}}
@@ -146,45 +146,45 @@
   </form>
 </div>
 
-{{/* ===================== Section 4: External DNS (reg.ru) ===================== */}}
+{{/* ===================== Section 4: External DNS (the configured DNS provider) ===================== */}}
 <div class="card">
-  <h3><i class="fa-solid fa-globe"></i>{{t "ha.section_regapi"}}</h3>
-  <p style="color:var(--text-muted);font-size:13px">{{t "ha.regapi_help" | safeHTML}}</p>
-  {{if not .Data.RegapiConfigured}}
-    <div class="alert alert-warning"><i class="fa-solid fa-triangle-exclamation"></i> {{t "ha.regapi_not_configured"}}</div>
+  <h3><i class="fa-solid fa-globe"></i>{{t "ha.section_external_dns"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "ha.ha.dns_help" | safeHTML}}</p>
+  {{if not .Data.dnsConfigured}}
+    <div class="alert alert-warning"><i class="fa-solid fa-triangle-exclamation"></i> {{t "ha.ha.dns_not_configured"}}</div>
   {{else}}
-    <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> reg.ru credentials configured.</div>
+    <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> the configured DNS provider credentials configured.</div>
   {{end}}
-  <form method="POST" action="/admin/ha/regapi/save" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+  <form method="POST" action="/admin/ha/dns/save" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.regapi_provider"}}</label>
-      <input type="text" name="provider" value="regapi" required style="width:100%" readonly>
+      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.ha.dns_provider"}}</label>
+      <input type="text" name="provider" value="external" required style="width:100%" readonly>
     </div>
     <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.regapi_zone"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.ha.dns_zone"}}</label>
       <input type="text" name="zone" placeholder="example.com" required style="width:100%">
     </div>
     <div style="grid-column:1/3">
-      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.regapi_login"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.ha.dns_login"}}</label>
       <input type="text" name="login" placeholder="user@example.com" required style="width:100%">
     </div>
     <div style="grid-column:1/3">
-      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.regapi_cert"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.ha.dns_cert"}}</label>
       <textarea name="cert_pem" rows="5" required placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
         style="width:100%;font-family:var(--font-mono);font-size:12px"></textarea>
     </div>
     <div style="grid-column:1/3">
-      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.regapi_password"}}</label>
+      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.ha.dns_password"}}</label>
       <input type="password" name="password" required style="width:100%">
     </div>
     <div style="grid-column:1/3;display:flex;gap:8px">
-      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "ha.regapi_save"}}</button>
-      <button type="submit" form="regapi-test" formaction="/admin/ha/regapi/test" formmethod="post" class="btn btn-secondary">
-        <i class="fa-solid fa-vial"></i> {{t "ha.regapi_test"}}
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "ha.ha.dns_save"}}</button>
+      <button type="submit" form="dns-test" formaction="/admin/ha/dns/test" formmethod="post" class="btn btn-secondary">
+        <i class="fa-solid fa-vial"></i> {{t "ha.ha.dns_test"}}
       </button>
     </div>
   </form>
-  <form id="regapi-test" method="POST" action="/admin/ha/regapi/test" style="display:none"></form>
+  <form id="dns-test" method="POST" action="/admin/ha/dns/test" style="display:none"></form>
 </div>
 
 {{/* ===================== Section 5: Force actions ===================== */}}

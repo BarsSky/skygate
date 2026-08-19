@@ -5,14 +5,14 @@
 // node's job is to:
 //
 //  1. Update the external DNS A-record to point at ITSELF
-//     (so skygate.skynas.ru resolves to the new active's
+//     (so skygate.<your-domain> resolves to the new active's
 //     public IP).
 //  2. Renew the TLS certificate (see internal/certsync/,
 //     B147).
 //
 // The first step is pluggable because not every operator
-// uses reg.ru. The 2026-08-18 v1.5.0 plan explicitly notes:
-// "у другого администратора может быть не reg.ru и
+// uses the configured DNS provider. The 2026-08-18 v1.5.0 plan explicitly notes:
+// "у другого администратора может быть не the configured DNS provider и
 // необходимо будет учитывать адрес другого провайдера
 // предоставляющего домен".
 //
@@ -44,7 +44,7 @@ import (
 // background "did I get promoted?" sanity check). All
 // methods MUST be safe for concurrent use.
 type Provider interface {
-	// Name returns the provider identifier (e.g. "regapi",
+	// Name returns the provider identifier (e.g. "external",
 	// "cloudflare", "route53", "rfc2136"). This is the
 	// string operators set SKYGATE_DNS_PROVIDER to. It
 	// MUST be stable across releases — admin UIs and
@@ -54,7 +54,7 @@ type Provider interface {
 	// GetRecord fetches the current A-record for `name`
 	// in `zone` and returns the IPv4 / IPv6 string.
 	// `name` is the bare record (e.g. "skygate", NOT
-	// "skygate.skynas.ru") — the FQDN is built by the
+	// "skygate.<your-domain>") — the FQDN is built by the
 	// provider from zone + name.
 	//
 	// Returns ErrRecordNotFound if the A-record does not
@@ -67,9 +67,9 @@ type Provider interface {
 	// `name` in `zone` to point at `ip`. "Atomically"
 	// means the provider MUST guarantee that a concurrent
 	// reader will see either the old value or the new
-	// value, never a partial state (e.g. reg.ru's
+	// value, never a partial state (e.g. the configured DNS provider's
 	// `replace_records` is the canonical example — see
-	// the regapi package's comment for the actual
+	// the external package's comment for the actual
 	// endpoint).
 	UpdateRecord(ctx context.Context, zone, name, ip string) error
 

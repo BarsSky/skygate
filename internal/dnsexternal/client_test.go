@@ -1,19 +1,18 @@
-// client_test.go — unit tests for the dnsregapi.Client.
-// Uses httptest.Server to simulate reg.ru's /api/regru2
-// endpoints; verifies the auth pattern (top-level form
-// fields + mTLS cert) and the request/response parsing.
+// client_test.go — unit tests for the dnsexternal.Client.
+// Uses httptest.Server to simulate the external DNS
+// provider's JSON+form+mTLS endpoints; verifies the auth
+// pattern (top-level form fields + mTLS cert) and the
+// request/response parsing.
 //
 // v1.5.0 (B145). The working auth pattern (top-level
 // username + password as form fields, NOT in input_data
-// JSON) was confirmed against the live reg.ru API on
-// 2026-08-18 — see the memory entry "reg.ru v2 API auth —
-// real working pattern" for the full diagnostic history.
-// These tests pin the pattern so a future refactor that
-// re-introduces the broken "input_data JSON wrapping"
-// pattern will fail the test before the change reaches
-// production.
+// JSON) was confirmed against the live API endpoint on
+// 2026-08-18. These tests pin the pattern so a future
+// refactor that re-introduces the broken "input_data JSON
+// wrapping" pattern will fail the test before the change
+// reaches production.
 
-package dnsregapi
+package dnsexternal
 
 import (
 	"context"
@@ -25,14 +24,15 @@ import (
 	"strings"
 	"testing"
 
-	"skygate/internal/ha/regapi"
+	"skygate/internal/ha/dnsexternal"
 )
 
-// fakeRegAPI is a small reg.ru emulator. It captures the
-// incoming request's body, then returns the canned
-// response. Each test gets its own server so they can run
-// in parallel without cross-talk.
-type fakeRegAPI struct {
+// fakeExternalAPI is a small emulator of the external DNS
+// provider's v2 API. It captures the incoming request's
+// body, then returns the canned response. Each test gets
+// its own server so they can run in parallel without
+// cross-talk.
+type fakeExternalAPI struct {
 	// lastBody is the most recent request body the
 	// server saw. Tests assert on the captured form.
 	lastBody []byte
@@ -48,7 +48,7 @@ type fakeRegAPI struct {
 	overrideHandler http.HandlerFunc
 }
 
-func (f *fakeRegAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (f *fakeExternalAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	f.lastBody = body
 	if f.overrideHandler != nil {
@@ -61,9 +61,9 @@ func (f *fakeRegAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func newFakeRegAPI(t *testing.T) (*httptest.Server, *fakeRegAPI) {
+func newFakeExternalAPI(t *testing.T) (*httptest.Server, *fakeExternalAPI) {
 	t.Helper()
-	f := &fakeRegAPI{responseStatus: 200}
+	f := &fakeExternalAPI{responseStatus: 200}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	return srv, f
@@ -74,32 +74,31 @@ func newFakeRegAPI(t *testing.T) (*httptest.Server, *fakeRegAPI) {
 // are injected via the test-only credsOverride field so
 // the tests don't need a real *sql.DB. A custom
 // http.Transport rewrites the destination URL from
-// https://api.reg.ru/... to the test server's URL.
+// the hardcoded production URL to the test server's URL.
 //
-// Returning the *fakeRegAPI lets each test read the
+// Returning the *fakeExternalAPI lets each test read the
 // captured request body for assertions.
-func newTestClient(t *testing.T, srv *httptest.Server, login, password, zone, certPEM string) (*Client, *fakeRegAPI) {
+func newTestClient(t *testing.T, srv *httptest.Server, login, password, zone, certPEM string) (*Client, *fakeExternalAPI) {
 	t.Helper()
 	c := &Client{
 		Store: nil,
-		HTTP:  &http.Client{Timeout: 5e9},
-		credsOverride: &regapi.Credentials{
-			Provider: "regapi",
+		HTTPClient: &http.Client{Timeout: 5e9},
+		credsOverride: &dnsexternal.Credentials{
+			Provider: "external",
 			Login:    login,
 			Zone:     zone,
 			CertPEM:  certPEM,
 			Password: password,
 		},
 	}
-	c.HTTP.Transport = &urlRewriter{base: srv.URL}
+	c.HTTPClient.Transport = &urlRewriter{base: srv.URL}
 	return c, nil
 }
 
 // urlRewriter is an http.RoundTripper that rewrites the
 // destination URL to the test server's URL. Used so the
-// production code (which hardcodes
-// https://api.reg.ru/api/regru2/...) can be exercised
-// against a local httptest.Server.
+// production code (which hardcodes the provider's API URL)
+// can be exercised against a local httptest.Server.
 type urlRewriter struct {
 	base string
 }
@@ -139,8 +138,8 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0000000000000000
 // a future refactor moves them back into the JSON, this
 // test fails before the change reaches production.
 func TestGetRecord_SendsTopLevelFormFields(t *testing.T) {
-	srv, fake := newFakeRegAPI(t)
-	fake.responseBody = `{"answer":{"domains":[{"dname":"example.com","records":[{"fqdn":"skygate.example.com","rectype":"A","content":"1.2.3.4"}]}]}}`
+	srv, fake := newFakeExternalAPI(t)
+	fake.responseBody = `{"answer":{"domains":[{"dname":"example.com","records":[{"name":"skygate","type":"A","content":"1.2.3.4"}]}]}}`
 	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
 
 	ip, err := c.GetRecord(context.Background(), "example.com", "skygate")
@@ -174,7 +173,7 @@ func TestGetRecord_SendsTopLevelFormFields(t *testing.T) {
 // TestGetRecord_NotFound — server returns an empty
 // records list; client should return ErrRecordNotFound.
 func TestGetRecord_NotFound(t *testing.T) {
-	srv, fake := newFakeRegAPI(t)
+	srv, fake := newFakeExternalAPI(t)
 	fake.responseBody = `{"answer":{"domains":[{"dname":"example.com","records":[]}]}}`
 	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
 
@@ -187,7 +186,7 @@ func TestGetRecord_NotFound(t *testing.T) {
 // TestGetRecord_ServerError — server returns 500; client
 // should propagate the error with the status code.
 func TestGetRecord_ServerError(t *testing.T) {
-	srv, fake := newFakeRegAPI(t)
+	srv, fake := newFakeExternalAPI(t)
 	fake.responseStatus = 500
 	fake.responseBody = `{"error_code":"INTERNAL","error_text":"oops"}`
 	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
@@ -204,7 +203,7 @@ func TestGetRecord_ServerError(t *testing.T) {
 // TestUpdateRecord_Success — server returns "ok" ack;
 // client should not return an error.
 func TestUpdateRecord_Success(t *testing.T) {
-	srv, fake := newFakeRegAPI(t)
+	srv, fake := newFakeExternalAPI(t)
 	fake.responseBody = `{"result":"success","answer":{"domains":[{"dname":"example.com","error_code":""}]}}`
 	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
 
@@ -218,7 +217,7 @@ func TestUpdateRecord_Success(t *testing.T) {
 	if !strings.Contains(inputData, "5.6.7.8") {
 		t.Errorf("UpdateRecord input_data = %q, want it to contain 5.6.7.8", inputData)
 	}
-	if !strings.Contains(inputData, `"rectype":"A"`) {
+	if !strings.Contains(inputData, `"type":"A"`) {
 		t.Errorf("UpdateRecord input_data = %q, want rectype A", inputData)
 	}
 }
@@ -226,7 +225,7 @@ func TestUpdateRecord_Success(t *testing.T) {
 // TestUpdateRecord_EmptyIP — client should reject empty
 // IP without making the HTTP call.
 func TestUpdateRecord_EmptyIP(t *testing.T) {
-	srv, fake := newFakeRegAPI(t)
+	srv, fake := newFakeExternalAPI(t)
 	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
 	err := c.UpdateRecord(context.Background(), "example.com", "skygate", "")
 	if err == nil {
@@ -240,10 +239,11 @@ func TestUpdateRecord_EmptyIP(t *testing.T) {
 
 // TestUpdateRecord_LogicalError — server returns 200 OK
 // with {"result":"error", ...} in the body. Client
-// should treat this as a failure (reg.ru returns 200 +
-// logical error for "auth_error" / "access_denied" etc).
+// should treat this as a failure (the provider returns
+// 200 + logical error for "auth_error" / "access_denied"
+// etc).
 func TestUpdateRecord_LogicalError(t *testing.T) {
-	srv, fake := newFakeRegAPI(t)
+	srv, fake := newFakeExternalAPI(t)
 	fake.responseBody = `{"result":"error","error_code":"DOMAIN_NOT_FOUND","error_text":"no such domain"}`
 	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
 	err := c.UpdateRecord(context.Background(), "example.com", "skygate", "5.6.7.8")
@@ -256,13 +256,13 @@ func TestUpdateRecord_LogicalError(t *testing.T) {
 }
 
 // TestName — the Name() method must return the canonical
-// identifier "regapi". This is the string operators set
+// identifier "external". This is the string operators set
 // SKYGATE_DNS_PROVIDER to, so a rename would silently
 // break all deployed configs.
 func TestName(t *testing.T) {
 	c := &Client{}
-	if got := c.Name(); got != "regapi" {
-		t.Errorf("Name() = %q, want regapi (the SKYGATE_DNS_PROVIDER identifier)", got)
+	if got := c.Name(); got != "external" {
+		t.Errorf("Name() = %q, want external (the SKYGATE_DNS_PROVIDER identifier)", got)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestName(t *testing.T) {
 // future refactor that drops a field fails here before
 // reaching production.
 func TestRequestShape_Stable(t *testing.T) {
-	srv, fake := newFakeRegAPI(t)
+	srv, fake := newFakeExternalAPI(t)
 	fake.responseBody = `{"result":"success"}`
 	c, _ := newTestClient(t, srv, "u@x.com", "p", "z", validTestCertPEM)
 	if err := c.UpdateRecord(context.Background(), "z", "skygate", "1.2.3.4"); err != nil {

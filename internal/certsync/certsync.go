@@ -1,7 +1,7 @@
 // Package certsync — in-app cert-sync scheduler (v1.5.0 / B147).
 //
 // The pre-B147 cert pipeline (scripts/cert-renew.sh + system
-// cron) ran the certbot / reg.ru DNS-01 dance on the ACTIVE
+// cron) ran the certbot / DNS-01 via the configured provider dance on the ACTIVE
 // node only, wrote the new PEM + key to /var/lib/skygate/certs/,
 // and reloaded Caddy via `docker exec skygate-caddy caddy reload`.
 // On a HA cluster with two skygate nodes (active + standby),

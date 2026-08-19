@@ -45,24 +45,24 @@ func tagOwnerFromName(tag, adminIdentity, baseDomain string) string {
 
 func TestB118_TagOwnerFromName_InfraTag(t *testing.T) {
 	// B118 contract 1: tag:dev-infra-emilia → "infra@domain"
-	got := tagOwnerFromName("tag:dev-infra-emilia", "skyadmin", "tsnet.skynas.ru")
-	if got != "infra@tsnet.skynas.ru" {
-		t.Errorf("tag:dev-infra-emilia → owner=%q, want infra@tsnet.skynas.ru", got)
+	got := tagOwnerFromName("tag:dev-infra-emilia", "skyadmin", "tsnet.<your-domain>")
+	if got != "infra@tsnet.<your-domain>" {
+		t.Errorf("tag:dev-infra-emilia → owner=%q, want infra@tsnet.<your-domain>", got)
 	}
 }
 
 func TestB118_TagOwnerFromName_SkyadminTag(t *testing.T) {
 	// tag:dev-skyadmin-skyworker → "skyadmin@domain"
-	got := tagOwnerFromName("tag:dev-skyadmin-skyworker", "admin", "tsnet.skynas.ru")
-	if got != "skyadmin@tsnet.skynas.ru" {
-		t.Errorf("tag:dev-skyadmin-skyworker → owner=%q, want skyadmin@tsnet.skynas.ru", got)
+	got := tagOwnerFromName("tag:dev-skyadmin-skyworker", "admin", "tsnet.<your-domain>")
+	if got != "skyadmin@tsnet.<your-domain>" {
+		t.Errorf("tag:dev-skyadmin-skyworker → owner=%q, want skyadmin@tsnet.<your-domain>", got)
 	}
 }
 
 func TestB118_TagOwnerFromName_MichailTag(t *testing.T) {
-	got := tagOwnerFromName("tag:dev-michail-basic", "skyadmin", "tsnet.skynas.ru")
-	if got != "michail@tsnet.skynas.ru" {
-		t.Errorf("tag:dev-michail-basic → owner=%q, want michail@tsnet.skynas.ru", got)
+	got := tagOwnerFromName("tag:dev-michail-basic", "skyadmin", "tsnet.<your-domain>")
+	if got != "michail@tsnet.<your-domain>" {
+		t.Errorf("tag:dev-michail-basic → owner=%q, want michail@tsnet.<your-domain>", got)
 	}
 }
 
@@ -70,18 +70,18 @@ func TestB118_TagOwnerFromName_NonDevTagFallsBackToAdmin(t *testing.T) {
 	// B118 contract 3: defensive fallback for non-`tag:dev-*`
 	// tags. No such tags exist in production today, but
 	// keep the safety net.
-	got := tagOwnerFromName("tag:public", "skyadmin", "tsnet.skynas.ru")
-	if got != "skyadmin@tsnet.skynas.ru" {
-		t.Errorf("tag:public (no tag:dev- prefix) → owner=%q, want skyadmin@tsnet.skynas.ru", got)
+	got := tagOwnerFromName("tag:public", "skyadmin", "tsnet.<your-domain>")
+	if got != "skyadmin@tsnet.<your-domain>" {
+		t.Errorf("tag:public (no tag:dev- prefix) → owner=%q, want skyadmin@tsnet.<your-domain>", got)
 	}
 }
 
 func TestB118_TagOwnerFromName_EmptyAfterPrefixFallsBack(t *testing.T) {
 	// Defensive: "tag:dev-" with no <user>-<device> should
 	// NOT panic — falls back to admin identity.
-	got := tagOwnerFromName("tag:dev-", "skyadmin", "tsnet.skynas.ru")
-	if got != "skyadmin@tsnet.skynas.ru" {
-		t.Errorf("tag:dev- (empty after prefix) → owner=%q, want skyadmin@tsnet.skynas.ru", got)
+	got := tagOwnerFromName("tag:dev-", "skyadmin", "tsnet.<your-domain>")
+	if got != "skyadmin@tsnet.<your-domain>" {
+		t.Errorf("tag:dev- (empty after prefix) → owner=%q, want skyadmin@tsnet.<your-domain>", got)
 	}
 }
 
@@ -89,9 +89,9 @@ func TestB118_TagOwnerFromName_HyphenOnlyAfterPrefix(t *testing.T) {
 	// Defensive: "tag:dev--something" (empty user part) should
 	// also fall back gracefully (strings.Index returns 0
 	// which is not > 0, so the parse is skipped).
-	got := tagOwnerFromName("tag:dev--weird", "skyadmin", "tsnet.skynas.ru")
-	if got != "skyadmin@tsnet.skynas.ru" {
-		t.Errorf("tag:dev--weird (empty user) → owner=%q, want skyadmin@tsnet.skynas.ru", got)
+	got := tagOwnerFromName("tag:dev--weird", "skyadmin", "tsnet.<your-domain>")
+	if got != "skyadmin@tsnet.<your-domain>" {
+		t.Errorf("tag:dev--weird (empty user) → owner=%q, want skyadmin@tsnet.<your-domain>", got)
 	}
 }
 
@@ -104,8 +104,8 @@ func TestB118_TagOwnerFromName_AllFourInfraExits(t *testing.T) {
 		"emilia", "karolina", "sharlotta", "skygate-host-1",
 	} {
 		tag := "tag:dev-infra-" + name
-		got := tagOwnerFromName(tag, "skyadmin", "tsnet.skynas.ru")
-		want := "infra@tsnet.skynas.ru"
+		got := tagOwnerFromName(tag, "skyadmin", "tsnet.<your-domain>")
+		want := "infra@tsnet.<your-domain>"
 		if got != want {
 			t.Errorf("%s → owner=%q, want %q (B118 regression: pre-fix the policy had skyadmin@ for this tag)", tag, got, want)
 		}

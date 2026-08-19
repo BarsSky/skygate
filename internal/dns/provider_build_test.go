@@ -1,5 +1,5 @@
 // provider_build_test.go — unit tests for the BuildProvider
-// factory. v1.5.0 (B145) only ships the "regapi" provider;
+// factory. v1.5.0 (B145) only ships the "external" provider;
 // the other names return a "not implemented yet" error
 // (Phase 5+ work).
 
@@ -23,11 +23,11 @@ func TestBuildProvider_EmptyName(t *testing.T) {
 	}
 }
 
-func TestBuildProvider_RegapiRequiresDB(t *testing.T) {
-	// "regapi" needs a *sql.DB to load credentials.
-	_, err := BuildProvider("regapi", BuildDeps{SecretKey: "k"})
+func TestBuildProvider_externalRequiresDB(t *testing.T) {
+	// "external" needs a *sql.DB to load credentials.
+	_, err := BuildProvider("external", BuildDeps{SecretKey: "k"})
 	if err == nil {
-		t.Error("BuildProvider(regapi) without DB returned nil error, want error")
+		t.Error(`BuildProvider("external" without DB returned nil error, want error`)
 	}
 	if !errors.Is(err, err) { // sanity
 		t.Logf("got expected error: %v", err)

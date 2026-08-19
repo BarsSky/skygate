@@ -941,7 +941,7 @@ in the same commit. Don't let the tracker drift.
     deployed to VM (no `git pull` + restart yet). Operator's
     choice when to deploy — the binary works with the existing
     PG connection from `/home/skyadmin/skygate/.env` (v0.32.25-era
-    `postgres://admin:skygate_admin_pass@45.152.198.217:5432/skygate_staging?sslmode=disable`).
+    `postgres://admin:skygate_admin_pass@<operator-vm-public-ip>:5432/skygate_staging?sslmode=disable`).
 
 * **Previous**: v1.3.0 (Phase 1 of SQLite removal) — skygate is
   PostgreSQL-only. 1 commit since v0.34.0. 28/28 packages green.
@@ -1848,7 +1848,7 @@ explaining why.
   against the placeholder
   `https://head.example.com` instead of
   the operator's real
-  `https://head.skynas.ru`). 1 commit
+  `https://head.<your-domain>`). 1 commit
   since v0.33.1.33. All tests green
   (`go test -count=1 -short ./...` full
   suite); `make verify-pre` 83/83 PASS
@@ -1910,7 +1910,7 @@ explaining why.
        skygate`.
     4. Watch the entrypoint log for
        `[init] tailscale up --accept-routes
-       (login-server=https://head.skynas.ru,
+       (login-server=https://head.<your-domain>,
        hostname=...)` — confirms B86
        worked.
     5. `docker exec skygate-skygate-1
@@ -2118,7 +2118,7 @@ explaining why.
         is in NoState: state file points to
         `https://head.example.com` (placeholder)
         instead of the real
-        `https://head.skynas.ru`.
+        `https://head.<your-domain>`.
       - The host's `tailscale0` interface is
         missing — 100.64.x packets route via
         the LAN gateway (192.168.13.1) and

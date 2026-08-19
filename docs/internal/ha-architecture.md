@@ -68,7 +68,7 @@ daily cron → /var/backups/skygate/latest/
             /var/backups/headscale/latest/
 ```
 
-- One VM (`192.0.2.1`, public `95.165.170.190`)
+- One VM (`192.0.2.1`, public `<operator-public-ip>`)
 - SQLite for both skygate.db and headscale.db
 - `deploy/backup.sh` runs daily (configurable)
 - DR: 15-30 min, documented in `disaster-recovery.md`

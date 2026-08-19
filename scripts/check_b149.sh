@@ -16,7 +16,7 @@
 #      TestCatalogsParity in the i18n package).
 #   5. cmd/skygate/main.go wires the 10 new routes (1 GET
 #      + 9 POSTs) + the Service struct carries the two new
-#      fields (RegapiStore, SelfHostname) per the B149
+#      fields (DNSCredsStore, SelfHostname) per the B149
 #      plan.
 #
 # The script is intentionally read-only — it does not touch
@@ -85,8 +85,8 @@ for h in \
     "func (s *Service) PostAdminHAForcePromote" \
     "func (s *Service) PostAdminHAForceDemote" \
     "func (s *Service) PostAdminHAReclaim" \
-    "func (s *Service) PostAdminHARegapiCreds" \
-    "func (s *Service) PostAdminHARegapiTest"; do
+    "func (s *Service) PostAdminHADNSCredsSave" \
+    "func (s *Service) PostAdminHADNSCredsTest"; do
     if grep -q -F "$h" internal/feature/admin/ha.go; then
         ok "ha.go has handler: ${h##* }"
     else
@@ -108,9 +108,9 @@ for t in \
     "TestParseHAChainEditForm_UpdatesPriorities" \
     "TestParseHAChainEditForm_MissingOldHostnames" \
     "TestParseHAChainEditForm_DuplicatePriorities" \
-    "TestParseHARegapiCredsForm_OK" \
-    "TestParseHARegapiCredsForm_TrimsWhitespace" \
-    "TestParseHARegapiCredsForm_DelegatesToCredentialsValidate" \
+    "TestParseHADNSCredsForm_OK" \
+    "TestParseHADNSCredsForm_TrimsWhitespace" \
+    "TestParseHADNSCredsForm_DelegatesToCredentialsValidate" \
     "TestIsHAForceActionConfirmationCorrect" \
     "TestFormatHAChainForTemplate_EmptyChain" \
     "TestFormatHAChainForTemplate_ListsMembers" \
@@ -135,7 +135,7 @@ for marker in \
     "ha.section_topology" \
     "ha.section_policy" \
     "ha.add_node" \
-    "ha.section_regapi" \
+    "ha.section_external_dns" \
     "ha.section_force" \
     "ha.section_audit"; do
     if grep -q "$marker" internal/handlers/templates/admin/ha.html; then
@@ -164,7 +164,7 @@ for key in \
     "ha.subtitle" \
     "ha.col_hostname" \
     "ha.add_node" \
-    "ha.regapi_save" \
+    "ha.dns_save" \
     "ha.force_promote" \
     "ha.section_audit"; do
     if grep -q "\"$key\"" internal/i18n/catalog_admin.go; then
@@ -191,8 +191,8 @@ for route in \
     "POST /admin/ha/force-promote" \
     "POST /admin/ha/force-demote" \
     "POST /admin/ha/reclaim" \
-    "POST /admin/ha/regapi/save" \
-    "POST /admin/ha/regapi/test"; do
+    "POST /admin/ha/dns/save" \
+    "POST /admin/ha/dns/test"; do
     if grep -q "mux.Handle(\"$route\"" cmd/skygate/main.go; then
         ok "main.go registers route: $route"
     else
@@ -200,21 +200,21 @@ for route in \
     fi
 done
 # Service struct carries the two new fields.
-if grep -q "RegapiStore" internal/feature/admin/service.go; then
-    ok "service.go has RegapiStore field"
+if grep -q "DNSCredsStore" internal/feature/admin/service.go; then
+    ok "service.go has DNSCredsStore field"
 else
-    bad "service.go missing RegapiStore field"
+    bad "service.go missing DNSCredsStore field"
 fi
 if grep -q "SelfHostname" internal/feature/admin/service.go; then
     ok "service.go has SelfHostname field"
 else
     bad "service.go missing SelfHostname field"
 fi
-# main.go actually wires the RegapiStore from the config.
-if grep -q "regapi.NewStore" cmd/skygate/main.go; then
-    ok "main.go wires regapi.NewStore"
+# main.go actually wires the DNSCredsStore from the config.
+if grep -q "extcreds.NewStore" cmd/skygate/main.go; then
+    ok "main.go wires extcreds.NewStore"
 else
-    bad "main.go does not wire regapi.NewStore"
+    bad "main.go does not wire extcreds.NewStore"
 fi
 # main.go wires SelfHostname too.
 if grep -q "SelfHostname:" cmd/skygate/main.go; then

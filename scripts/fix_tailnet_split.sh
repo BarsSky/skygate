@@ -146,7 +146,7 @@ done
 # If we still don't have a ControlURL, ask the operator.
 if [ -z "$CONTROL_URL" ]; then
     echo "Could not auto-detect login server from state file." >&2
-    echo "Enter the login server URL for this tailnet (e.g. https://head.skynas.ru):" >&2
+    echo "Enter the login server URL for this tailnet (e.g. https://head.<your-domain>):" >&2
     read -r CONTROL_URL
 fi
 

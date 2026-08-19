@@ -10,13 +10,13 @@ Patroni/etcd HA cluster.
   * existing data: 49 `wal_005/0000000100000000000000D*.lz4` files
     (66-69 KB each, from a previous wal-g setup that ran briefly on
     2026-07-23)
-  * exposed publicly as `https://minio.skynas.ru` (resolves to
-    `95.165.170.190`, reverse-proxied to home MinIO) — for VPS
+  * exposed publicly as `https://minio.<your-domain>` (resolves to
+    `<operator-public-ip>`, reverse-proxied to home MinIO) — for VPS
     nodes that can't reach the home LAN
-* **svyatoslava (45.152.198.217)** — Patroni 4.1.0 **PRIMARY**
+* **svyatoslava (<operator-vm-public-ip>)** — Patroni 4.1.0 **PRIMARY**
   * `archive_command: '. /etc/wal-g/env && wal-g wal-push %p'`
     (single file, NOT envdir — daemontools isn't always installed)
-  * writes to `https://minio.skynas.ru` (public, no LAN route)
+  * writes to `https://minio.<your-domain>` (public, no LAN route)
   * base backups: `wal-g backup-push /var/lib/postgresql/data`
 * **skygate-vm (operator's <VM_HOST>)** — Patroni 4.1.0 **REPLICA**
   * wal-g installed + env written (2026-08-04)
@@ -31,14 +31,14 @@ Run on **each** PG node (primary and replica):
 ```bash
 # On svyatoslava (VPS, public network):
 SKYGATE_MINIO_ACCESS_KEY=skyadmin \
-SKYGATE_MINIO_SECRET_KEY='Vfrttdf97' \
+SKYGATE_MINIO_SECRET_KEY='<your-minio-secret>' \
 SKYGATE_MINIO_BUCKET=skygate-pg-wal \
-SKYGATE_MINIO_ENDPOINT=https://minio.skynas.ru \
+SKYGATE_MINIO_ENDPOINT=https://minio.<your-domain> \
 sudo bash /home/skyadmin/skygate/deploy/pg-ha/wal-g/install_wal_g.sh
 
 # On skygate-vm (home LAN):
 SKYGATE_MINIO_ACCESS_KEY=skyadmin \
-SKYGATE_MINIO_SECRET_KEY='Vfrttdf97' \
+SKYGATE_MINIO_SECRET_KEY='<your-minio-secret>' \
 SKYGATE_MINIO_BUCKET=skygate-pg-wal \
 SKYGATE_MINIO_ENDPOINT=http://192.168.13.13:9000 \
 sudo bash /home/skyadmin/skygate/deploy/pg-ha/wal-g/install_wal_g.sh
@@ -118,9 +118,9 @@ Verified working env:
 
 ```bash
 export WALG_S3_PREFIX=s3://skygate-pg-wal
-export AWS_ENDPOINT=https://minio.skynas.ru
+export AWS_ENDPOINT=https://minio.<your-domain>
 export AWS_ACCESS_KEY_ID=skyadmin
-export AWS_SECRET_ACCESS_KEY=Vfrttdf97
+export AWS_SECRET_ACCESS_KEY=<your-minio-secret>
 export AWS_REGION=us-east-1
 export AWS_S3_FORCE_PATH_STYLE=true
 # all other WALG_* knobs (COMPRESSION_METHOD, etc.)

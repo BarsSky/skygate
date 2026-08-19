@@ -7,4 +7,4 @@
 // tests for Save/Load land in B145.1 alongside the
 // other integration test harness work.
 
-package regapi
+package dnsexternal

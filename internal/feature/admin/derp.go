@@ -156,7 +156,11 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		RegionCode: "mow",
 		RegionID:   "900",
 		RegionName: "Moscow Custom",
-		WhiteIP:    "95.165.170.190",
+		// WhiteIP is filled in by parseDerperDebugHTML when reachable,
+		// or by the best-effort outbound-iface probe at the end of
+		// collectDerpStatus. Left empty here (not hardcoded) to avoid
+		// leaking operator-specific egress IPs into the binary.
+		WhiteIP: "",
 	}
 
 	// Try derper debug endpoints (in priority order)
@@ -232,10 +236,37 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		}
 	}
 
-	// Hostname (white IP) from outbound interface (best-effort, no actual HTTP needed)
-	st.WhiteIP = "95.165.170.190"
+	// Hostname (white IP) from outbound interface (best-effort, no actual HTTP needed).
+	// Empty until the probe below actually resolves the egress IP — do not hardcode
+	// operator-specific addresses here.
+	if st.WhiteIP == "" {
+		if ip, err := detectEgressIP(); err == nil {
+			st.WhiteIP = ip
+		}
+	}
 
 	return st
+}
+
+// detectEgressIP returns the outbound IPv4 of this process by dialing a
+// discard socket and reading the local address. Best-effort: returns "" on
+// any error. Used as a fallback when the derper debug endpoint is unreachable
+// and we still want to show a "White IP" hint on the DERP status page.
+func detectEgressIP() (string, error) {
+	conn, err := net.DialTimeout("udp", "192.0.2.1:80", 2*time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	local, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || local == nil {
+		return "", fmt.Errorf("no local addr")
+	}
+	ip := local.IP.To4()
+	if ip == nil {
+		return "", fmt.Errorf("no ipv4 addr")
+	}
+	return ip.String(), nil
 }
 
 func httpGet(url string, timeout time.Duration) ([]byte, error) {

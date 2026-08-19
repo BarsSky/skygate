@@ -466,21 +466,21 @@ work has been moved to TD-14 below.
 - `svyatoslava-1` VM available, S3 bucket configured, Patroni + etcd in place
 - Active-Passive with priority chain (`skygate` P1 / `skygate-standby` P2)
 - Patroni auto-failover (existing config, **NOT touched**)
-- reg.ru DNS failover (reg.ru is the registrar, no Cloudflare)
+- external DNS provider failover (pluggable adapter)
 - Tailscale Funnel: NO (operator's network doesn't expose Tailscale)
 - Certsync: S3 as single source of truth, both nodes sync
-- /admin/certificates: upload + reg.ru DNS-01 toggle
+- /admin/certificates: upload + DNS-01 toggle
 - /admin/ha: chain editor + failover policy + force promote/demote
 - /admin/deploy + `skygate deploy {push,pull}` + `skygate ha {promote,demote,reclaim}`
 - Auto-failover with manual override (default ON)
 - Auto-reclaim: OFF (avoid flap)
 - Effort: ~3-4 weeks
 - Execution tracker: `docs/internal/ha-v1.5.0-execution.md`
-- **Open**: 10 questions awaiting operator answers (reg.ru creds, S3 IAM, etc.)
+- **Open**: 10 questions awaiting operator answers (DNS provider creds, S3 IAM, etc.)
 
 **v1.5.1 — DNS records (TD-5)**
 - Requires headscale 0.30+ (release-not-yet)
-- Per-user `exitnode.<user>.skynas.ru` DNS
+- Per-user `exitnode.<user>.<your-domain>` DNS
 - Effort: ~1 day
 - Blocked on headscale release
 

@@ -156,22 +156,22 @@ then this is blocked.
 
 **Status**: **UNBLOCKED** as of 2026-08-18. The 2nd VM
 (`svyatoslava-1`) is available, S3 bucket configured, Patroni +
-etcd cluster in place (`45.152.198.217:2379`).
+etcd cluster in place (`<operator-vm-public-ip>:2379`).
 
 **Locked-in design decisions** (from operator reply 2026-08-18):
 
 | Decision | Value | Source |
 |---|---|---|
-| Public DNS FQDN | `skygate.skynas.ru` | operator (reg.ru is registrar) |
+| Public DNS FQDN | `skygate.<your-domain>` | operator (DNS provider is operator-specific) |
 | Active node name | `skygate` (in headscale) | operator — "skygate-prod был confusing" |
 | Standby node name | `skygate-standby` | derived |
 | Active VM (today) | `svyatoslava-1` (new) | operator — "текуший проект на svyatoslava-1 и будет основным" |
-| Standby VM (today) | `192.168.13.69` (current `95.165.170.190`) | operator — current VM becomes дублером |
+| Standby VM (today) | `192.168.13.69` (current `<operator-public-ip>`) | operator — current VM becomes дублером |
 | HA topology | Active-Passive with priority chain (NOT Active-Active) | operator — "стоит делать сразу с учетом приоритета" |
 | Starter chain | 2 nodes (P1 + P2) | operator — "Starter chain пока из двух" |
-| DNS failover | reg.ru API (no Cloudflare) | operator — РФ, reg.ru is registrar |
+| DNS failover | external DNS provider API (pluggable; B145 ships the adapter interface) | operator — РФ, DNS provider is operator-specific |
 | Tailscale Funnel | NO (skipped) | operator — "сеть tailscale скорейвсего не доступна" |
-| Cert acquisition | reg.ru DNS-01 via Caddy + manual upload fallback | per BL-2 design + operator request |
+| Cert acquisition | DNS-01 via the configured provider + manual upload fallback | per BL-2 design + operator request |
 | Failover policy | auto + manual override | operator — "сделал авто но оставил возможность и в ручную" |
 | Auto-reclaim | default OFF (manual "Reclaim primary" button) | anti-flap |
 | Patroni config | **NOT touched** | operator — "Зачем мучаться с перенастройкой Patroni" |
@@ -184,19 +184,19 @@ etcd cluster in place (`45.152.198.217:2379`).
   household tailnet — synchronous is a separate decision)
 - Active-Passive: 2nd VM (skygate-standby) is the warm standby
 - etcd cluster for Patroni consensus (already in place)
-- reg.ru DNS failover (A-record flip on role change)
+- external DNS provider failover (A-record flip on role change)
 - certsync: S3 ↔ local certs (single source of truth)
 - /admin/ha page: chain editor + force promote/demote
-- /admin/certificates: upload + reg.ru DNS-01 toggle
+- /admin/certificates: upload + DNS-01 toggle
 - /admin/deploy: push/pull/promote buttons
 - headscale stays on its current SQLite + Litestream
   (no change in v1.5.0)
 
 **What's needed (now unblocked)**:
 - ~~2nd VM~~ — DONE (svyatoslava-1)
-- ~~etcd cluster~~ — DONE (45.152.198.217:2379)
+- ~~etcd cluster~~ — DONE (<operator-vm-public-ip>:2379)
 - ~~S3 bucket~~ — DONE (operator-confirmed)
-- reg.ru API credentials — **NEEDED** (operator to provide)
+- external DNS provider credentials — **NEEDED** (operator to provide)
 - 10 open questions per `docs/internal/ha-v1.5.0-execution.md` §4
 - ~3-4 weeks of work per `docs/internal/ha-v1.5.0-execution.md` §3
 

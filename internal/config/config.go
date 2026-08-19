@@ -320,7 +320,7 @@ type Config struct {
 	// rationale. The defaults match the v1.5.0 plan:
 	// 5s heartbeat, 3-miss threshold, Patroni-driven
 	// role, no DNS provider (operator opts in via
-	// SKYGATE_DNS_PROVIDER=regapi or via /admin/ha
+	// SKYGATE_DNS_PROVIDER=external or via /admin/ha
 	// once Phase 5 lands).
 	HAEnabled                 bool
 	HAHeartbeatInterval       time.Duration
@@ -702,7 +702,7 @@ func getDuration(key string, def time.Duration) time.Duration {
 // failure-detection window; the cost is a slower failover.
 //
 // DNSProvider selects which Provider implementation
-// BuildProvider() returns ("regapi" / "cloudflare" /
+// BuildProvider() returns ("external" / "cloudflare" /
 // "route53" / "rfc2136"). Empty string disables the DNS
 // update step of the HA failover entirely — useful for
 // operators who manage the A-record out-of-band.

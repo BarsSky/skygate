@@ -244,7 +244,7 @@ var TestRegistry = []SystemTestDef{
 		// AllACLs empty. The test always failed on live
 		// with "no rule with skyadmin in src" even though
 		// the policy had a perfectly valid
-		// `grants: [{src: ["skyadmin@tsnet.skynas.ru"],
+		// `grants: [{src: ["skyadmin@tsnet.<your-domain>"],
 		//  dst: [..., autogroup:internet]}]` rule.
 		// The fix: parse the raw policy JSON and look at
 		// BOTH "acls" and "grants" arrays. The view's

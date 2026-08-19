@@ -20,8 +20,8 @@
 #
 # MinIO endpoint choice depends on the node's network:
 #   - skygate-vm (operator's <VM_HOST>) is on the home LAN → use http://<LAN_MINIO>:9000
-#   - svyatoslava (45.152.198.217) is on a public VPS → use https://minio.skynas.ru
-#     (resolves to 95.165.170.190, reverse-proxied to home MinIO)
+#   - <ha-mirror-vm> (<ha-mirror-public-ip>) is on a public VPS → use https://minio.<your-domain>
+#     (resolves to <primary-vm-public-ip>, reverse-proxied to MinIO)
 # Pass the right endpoint via SKYGATE_MINIO_ENDPOINT env var.
 #
 # archive_command gotcha: daemontools' `envdir` expects a DIRECTORY of

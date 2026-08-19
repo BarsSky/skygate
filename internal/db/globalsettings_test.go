@@ -37,27 +37,27 @@ func TestGetGlobalSetting_RoundTrip(t *testing.T) {
 	}
 
 	// Write a value, then read it back.
-	if err := SetGlobalSetting(d, "tailscale.login_server", "https://head.skynas.ru:8443"); err != nil {
+	if err := SetGlobalSetting(d, "tailscale.login_server", "https://head.<your-domain>:8443"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	got, err = GetGlobalSetting(d, "tailscale.login_server", "https://default.example.com")
 	if err != nil {
 		t.Fatalf("read after set: %v", err)
 	}
-	if got != "https://head.skynas.ru:8443" {
-		t.Errorf("read after set: got %q, want %q", got, "https://head.skynas.ru:8443")
+	if got != "https://head.<your-domain>:8443" {
+		t.Errorf("read after set: got %q, want %q", got, "https://head.<your-domain>:8443")
 	}
 
 	// Overwrite (upsert) — should still read back the new value.
-	if err := SetGlobalSetting(d, "tailscale.login_server", "https://head2.skynas.ru"); err != nil {
+	if err := SetGlobalSetting(d, "tailscale.login_server", "https://head2.<your-domain>"); err != nil {
 		t.Fatalf("set (overwrite): %v", err)
 	}
 	got, err = GetGlobalSetting(d, "tailscale.login_server", "https://default.example.com")
 	if err != nil {
 		t.Fatalf("read after overwrite: %v", err)
 	}
-	if got != "https://head2.skynas.ru" {
-		t.Errorf("read after overwrite: got %q, want %q", got, "https://head2.skynas.ru")
+	if got != "https://head2.<your-domain>" {
+		t.Errorf("read after overwrite: got %q, want %q", got, "https://head2.<your-domain>")
 	}
 
 	// Clear (empty value) — should fall back to default.

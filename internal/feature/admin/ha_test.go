@@ -15,9 +15,9 @@
 //     faster than running the live VM and reading the
 //     rendered error.
 //
-//  2. The HA chain / regapi.credentials packages already have
+//  2. The HA chain / extcreds.credentials packages already have
 //     their own pure-Go tests (`internal/ha/chain_test.go`,
-//     `internal/ha/regapi/credentials_test.go`). The /admin/ha
+//     `internal/ha/dnsexternal/credentials_test.go`). The /admin/ha
 //     handlers glue those primitives into HTTP handlers, so
 //     the test suite focuses on the glue — what the HTTP form
 //     shape should look like, how the values are coerced,
@@ -31,7 +31,7 @@ import (
 	"testing"
 
 	"skygate/internal/ha"
-	"skygate/internal/ha/regapi"
+	extcreds "skygate/internal/ha/dnsexternal"
 )
 
 // ---------- parseHAAddNodeForm ----------------------------------------
@@ -195,21 +195,21 @@ func TestParseHAChainEditForm_DuplicatePriorities(t *testing.T) {
 	}
 }
 
-// ---------- parseHARegapiCredsForm ------------------------------------
+// ---------- parseHADNSCredsForm ------------------------------------
 
-func TestParseHARegapiCredsForm_OK(t *testing.T) {
+func TestParseHADNSCredsForm_OK(t *testing.T) {
 	form := url.Values{}
-	form.Set("provider", "regapi")
+	form.Set("provider", "external")
 	form.Set("login", "user@example.com")
 	form.Set("zone", "example.com")
 	form.Set("cert_pem", "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n")
 	form.Set("password", "alt-pass-2026")
 
-	got, err := parseHARegapiCredsForm(form)
+	got, err := parseHADNSCredsForm(form)
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
-	if got.Provider != "regapi" || got.Login != "user@example.com" || got.Zone != "example.com" {
+	if got.Provider != "external" || got.Login != "user@example.com" || got.Zone != "example.com" {
 		t.Errorf("basic fields wrong: %+v", got)
 	}
 	if !strings.Contains(got.CertPEM, "BEGIN CERTIFICATE") {
@@ -220,47 +220,47 @@ func TestParseHARegapiCredsForm_OK(t *testing.T) {
 	}
 }
 
-func TestParseHARegapiCredsForm_TrimsWhitespace(t *testing.T) {
+func TestParseHADNSCredsForm_TrimsWhitespace(t *testing.T) {
 	form := url.Values{}
-	form.Set("provider", "  regapi  ")
+	form.Set("provider", "  external  ")
 	form.Set("login", "  user@example.com  ")
 	form.Set("zone", "  example.com  ")
 	form.Set("cert_pem", "  -----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n  ")
 	form.Set("password", "  alt-pass-2026  ")
 
-	got, err := parseHARegapiCredsForm(form)
+	got, err := parseHADNSCredsForm(form)
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
-	if got.Provider != "regapi" {
-		t.Errorf("Provider = %q, want regapi (whitespace not trimmed)", got.Provider)
+	if got.Provider != "external" {
+		t.Errorf("Provider = %q, want external (whitespace not trimmed)", got.Provider)
 	}
 	if got.Zone != "example.com" {
 		t.Errorf("Zone = %q, want example.com (whitespace not trimmed)", got.Zone)
 	}
 }
 
-func TestParseHARegapiCredsForm_DelegatesToCredentialsValidate(t *testing.T) {
+func TestParseHADNSCredsForm_DelegatesToCredentialsValidate(t *testing.T) {
 	// The form parser is intentionally thin — it does ONLY the
 	// string trimming + forwarding. The semantic checks
-	// (provider == "regapi", login non-empty, cert PEM format,
-	// etc.) live in regapi.Credentials.Validate() so the same
+	// (provider == "external", login non-empty, cert PEM format,
+	// etc.) live in extcreds.Credentials.Validate() so the same
 	// rules apply to programmatic callers (CLI, tests, future
 	// /admin/certificates). The form parser just returns
 	// whatever the user pasted + calls Validate.
 	form := url.Values{}
-	form.Set("provider", "regapi")
+	form.Set("provider", "external")
 	form.Set("login", "")
 	form.Set("zone", "example.com")
 	form.Set("cert_pem", "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n")
 	form.Set("password", "alt-pass-2026")
 
-	_, err := parseHARegapiCredsForm(form)
+	_, err := parseHADNSCredsForm(form)
 	if err == nil {
 		t.Fatal("expected error when login is empty (delegated Validate)")
 	}
 	// The error should mention "login is required" — comes from
-	// regapi.Credentials.Validate(), not from the form parser.
+	// extcreds.Credentials.Validate(), not from the form parser.
 	if !strings.Contains(err.Error(), "login is required") {
 		t.Fatalf("expected 'login is required', got %q", err.Error())
 	}
@@ -326,40 +326,40 @@ func TestFormatHAChainForTemplate_ListsMembers(t *testing.T) {
 	}
 }
 
-// ---------- regression: regapi.Credentials.Validate rules still apply
+// ---------- regression: extcreds.Credentials.Validate rules still apply
 
 // This test exists so that a refactor of the form parser that
 // drops the Validate() delegation gets caught. The /admin/ha
-// reg.ru creds form has the SAME validation rules as the
+// DNS provider creds form has the SAME validation rules as the
 // standalone Credentials.Validate(); both call sites are
-// pinned by the B-check (the regapi-credentials B-check
+// pinned by the B-check (the dns-credentials B-check
 // catches Validate regressions; the form-parser B-check
 // catches delegation drops).
 
 func TestRegapiCredentialsValidate_FormAndLibraryAgree(t *testing.T) {
 	cases := []struct {
 		name string
-		cred regapi.Credentials
+		cred extcreds.Credentials
 	}{
 		{
 			name: "missing provider",
-			cred: regapi.Credentials{Login: "u@e.com", Zone: "example.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n", Password: "p"},
+			cred: extcreds.Credentials{Login: "u@e.com", Zone: "example.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n", Password: "p"},
 		},
 		{
 			name: "missing login",
-			cred: regapi.Credentials{Provider: "regapi", Zone: "example.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n", Password: "p"},
+			cred: extcreds.Credentials{Provider: "external", Zone: "example.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n", Password: "p"},
 		},
 		{
 			name: "missing zone",
-			cred: regapi.Credentials{Provider: "regapi", Login: "u@e.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n", Password: "p"},
+			cred: extcreds.Credentials{Provider: "external", Login: "u@e.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n", Password: "p"},
 		},
 		{
 			name: "cert without BEGIN marker",
-			cred: regapi.Credentials{Provider: "regapi", Login: "u@e.com", Zone: "example.com", CertPEM: "not a pem", Password: "p"},
+			cred: extcreds.Credentials{Provider: "external", Login: "u@e.com", Zone: "example.com", CertPEM: "not a pem", Password: "p"},
 		},
 		{
 			name: "missing password",
-			cred: regapi.Credentials{Provider: "regapi", Login: "u@e.com", Zone: "example.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"},
+			cred: extcreds.Credentials{Provider: "external", Login: "u@e.com", Zone: "example.com", CertPEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"},
 		},
 	}
 	for _, tc := range cases {

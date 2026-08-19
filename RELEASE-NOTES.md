@@ -3563,8 +3563,8 @@ The pre-fix test iterated `view.AllACLs` (the JSON
 any device"` even though the live policy has a perfectly
 valid grant:
 ```json
-{"src": ["skyadmin@tsnet.skynas.ru"],
- "dst": ["skyadmin@tsnet.skynas.ru:*",
+{"src": ["skyadmin@tsnet.<your-domain>"],
+ "dst": ["skyadmin@tsnet.<your-domain>:*",
          "h-user-skyadmin-subnet",
          "autogroup:internet"], "ip": ["*"]}
 ```
@@ -3907,7 +3907,7 @@ if the state has a different ControlURL). Steps:
    --force-recreate --no-deps skygate`.
 4. Watch the entrypoint log for the new
    `[init] tailscale up --accept-routes
-   (login-server=https://head.skynas.ru,
+   (login-server=https://head.<your-domain>,
    hostname=...)` line — confirms the B86 fallback
    worked.
 5. Inside the container, `tailscale status` should
@@ -4149,7 +4149,7 @@ operators who don't need a non-default port).
   - `skygate-skygate-1` in-image tailscaled is in NoState:
     state file points to `https://head.example.com`
     (placeholder) instead of the real
-    `https://head.skynas.ru`.
+    `https://head.<your-domain>`.
   - The host's `tailscale0` interface is missing — 100.64.x
     packets route via the LAN gateway (192.168.13.1) and
     are dropped. The post-B84 "Operation timed out" on ssh
@@ -6769,7 +6769,7 @@ change, no migration.
 ### The bug
 
 The operator reported (2026-08-06) that they set
-`SKYGATE_TS_LOGIN_SERVER=https://head.skynas.ru` via
+`SKYGATE_TS_LOGIN_SERVER=https://head.<your-domain>` via
 `/admin/tailscale` (which writes to the DB and is supposed
 to be the source of truth from v0.33.1.13 onward). But the
 entrypoint kept using the placeholder `https://head.example.com`,
@@ -6867,12 +6867,12 @@ cleanup in a row.
    `grep SKYGATE_TS_LOGIN_SERVER docker-compose.yml` → no
    hardcoded `=` line in the environment section)
 2. `/admin/tailscale` shows the "Restart skygate" card
-3. `SKYGATE_TS_LOGIN_SERVER=https://head.skynas.ru` in
+3. `SKYGATE_TS_LOGIN_SERVER=https://head.<your-domain>` in
    `.env` on the host (operator's web-UI edit propagated
    automatically on the next restart click)
 4. `docker compose restart skygate` from a click on the
    button → new container starts → entrypoint reads
-   `https://head.skynas.ru` → tailscaled logs in successfully
+   `https://head.<your-domain>` → tailscaled logs in successfully
 5. `R5/R6` (tailscale IP + exit-node) verify-post checks
    start passing on the next tick
 

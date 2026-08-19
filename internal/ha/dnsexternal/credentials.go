@@ -1,11 +1,12 @@
-// Package regapi — encrypted storage for the reg.ru API
-// credentials (SSL cert PEM + alternative password).
+// Package dnsexternal — encrypted storage for the external
+// DNS provider credentials (SSL cert PEM + alternative
+// password).
 //
 // v1.5.0 (B145) introduced this package. The credentials
 // live in two global_settings rows:
 //
-//	ha.regapi.cert_pem_enc   — AES-256-GCM ciphertext of the cert PEM
-//	ha.regapi.password_enc   — AES-256-GCM ciphertext of the API password
+//	ha.dns.cert_pem_enc   — AES-256-GCM ciphertext of the cert PEM
+//	ha.dns.password_enc   — AES-256-GCM ciphertext of the API password
 //
 // Encryption uses db.EncryptForColumn (AES-256-GCM keyed by
 // SKYGATE_SECRET_KEY). If SKYGATE_SECRET_KEY is unset, the
@@ -23,12 +24,12 @@
 //
 // TestConnection is the only way for the /admin/ha "Test"
 // button to validate that the stored credentials actually
-// work against reg.ru. It uses the reg.ru v2 API's
-// /api/regru2/zone/get_zone endpoint as a "ping" — the
-// response payload is irrelevant; only the HTTP status and
-// the error_code field matter.
+// work against the provider. It uses the provider's
+// read-only "ping" endpoint (a zone-getter that doesn't
+// mutate state) — the response payload is irrelevant; only
+// the HTTP status and the error_code field matter.
 
-package regapi
+package dnsexternal
 
 import (
 	"context"
@@ -45,21 +46,29 @@ import (
 
 // Storage keys. Exposed as constants so the /admin/ha form
 // (Phase 5) and the certsync (Phase 3 / B147) reference the
-// exact same strings — no typos.
+// exact same strings — no typos. The "ha.dns" prefix is
+// provider-agnostic; a future Cloudflare adapter would use
+// the same keys (CertPEMKey / PasswordKey stay valid for
+// any provider that uses mTLS).
 const (
-	CertPEMKey   = "ha.regapi.cert_pem_enc"
-	PasswordKey  = "ha.regapi.password_enc"
-	ZoneKey      = "ha.regapi.zone"             // plaintext: skynas.ru, etc.
-	LoginKey     = "ha.regapi.login"            // plaintext: reg.ru login / email
-	ProviderKey  = "ha.regapi.provider"         // plaintext: "regapi" (room for future providers)
+	CertPEMKey   = "ha.dns.cert_pem_enc"
+	PasswordKey  = "ha.dns.password_enc"
+	ZoneKey      = "ha.dns.zone"             // plaintext: <your-domain>
+	LoginKey     = "ha.dns.login"            // plaintext: provider login / email
+	ProviderKey  = "ha.dns.provider"         // plaintext: "external" | "cloudflare" | "route53" | "rfc2136"
 )
 
-// Credentials is the decrypted form of the stored reg.ru
+// ProviderExternal is the shipped v1.5.0 (B145) provider
+// identifier. Operators set SKYGATE_DNS_PROVIDER=external
+// to opt in. Other values are reserved for future B-checks.
+const ProviderExternal = "external"
+
+// Credentials is the decrypted form of the stored
 // credentials. CertPEM and Password are the actual secret
 // material; the other fields are configuration (zone, login,
-// provider identifier). Provider should be "regapi" for now;
-// other values are reserved for the pluggable DNS provider
-// interface (B146 / B150).
+// provider identifier). Provider should be ProviderExternal
+// for v1.5.0; other values are reserved for the pluggable
+// DNS provider interface (B146 / B150).
 type Credentials struct {
 	Provider string `json:"provider"`
 	Login    string `json:"login"`
@@ -68,30 +77,39 @@ type Credentials struct {
 	Password string `json:"password"`
 }
 
+// IsZero returns true if the credentials are entirely empty
+// (a fresh deploy before the operator has saved anything).
+// Used by internal/dnsexternal/client.go to short-circuit
+// API calls with a "credentials not configured" error
+// instead of an opaque HTTP failure.
+func (c Credentials) IsZero() bool {
+	return c.Provider == "" && c.Login == "" && c.Zone == "" && c.CertPEM == "" && c.Password == ""
+}
+
 // Validate checks the credentials are well-formed before
 // the caller tries to write them. We do not validate the
 // PEM against a CA — that's done lazily on first use.
 func (c Credentials) Validate() error {
 	if c.Provider == "" {
-		return errors.New("regapi: provider is required (e.g. \"regapi\")")
+		return errors.New("dnsexternal: provider is required (e.g. \"external\")")
 	}
-	if c.Provider != "regapi" {
-		return fmt.Errorf("regapi: unsupported provider %q (only \"regapi\" is implemented in v1.5.0)", c.Provider)
+	if c.Provider != ProviderExternal {
+		return fmt.Errorf("dnsexternal: unsupported provider %q (only %q is implemented in v1.5.0)", c.Provider, ProviderExternal)
 	}
 	if c.Login == "" {
-		return errors.New("regapi: login is required")
+		return errors.New("dnsexternal: login is required")
 	}
 	if c.Zone == "" {
-		return errors.New("regapi: zone is required")
+		return errors.New("dnsexternal: zone is required")
 	}
 	if c.CertPEM == "" {
-		return errors.New("regapi: cert_pem is required")
+		return errors.New("dnsexternal: cert_pem is required")
 	}
 	if !strings.Contains(c.CertPEM, "BEGIN CERTIFICATE") {
-		return errors.New("regapi: cert_pem does not look like a PEM (no BEGIN CERTIFICATE marker)")
+		return errors.New("dnsexternal: cert_pem does not look like a PEM (no BEGIN CERTIFICATE marker)")
 	}
 	if c.Password == "" {
-		return errors.New("regapi: password is required")
+		return errors.New("dnsexternal: password is required")
 	}
 	return nil
 }
@@ -141,26 +159,26 @@ func (s *Store) Save(c Credentials) error {
 	}
 	certEnc, err := db.EncryptForColumn(c.CertPEM, s.SecretKey)
 	if err != nil {
-		return fmt.Errorf("regapi: encrypt cert: %w", err)
+		return fmt.Errorf("dnsexternal: encrypt cert: %w", err)
 	}
 	pwEnc, err := db.EncryptForColumn(c.Password, s.SecretKey)
 	if err != nil {
-		return fmt.Errorf("regapi: encrypt password: %w", err)
+		return fmt.Errorf("dnsexternal: encrypt password: %w", err)
 	}
 	if err := db.SetGlobalSetting(s.DB, ProviderKey, c.Provider); err != nil {
-		return fmt.Errorf("regapi: save provider: %w", err)
+		return fmt.Errorf("dnsexternal: save provider: %w", err)
 	}
 	if err := db.SetGlobalSetting(s.DB, LoginKey, c.Login); err != nil {
-		return fmt.Errorf("regapi: save login: %w", err)
+		return fmt.Errorf("dnsexternal: save login: %w", err)
 	}
 	if err := db.SetGlobalSetting(s.DB, ZoneKey, c.Zone); err != nil {
-		return fmt.Errorf("regapi: save zone: %w", err)
+		return fmt.Errorf("dnsexternal: save zone: %w", err)
 	}
 	if err := db.SetGlobalSetting(s.DB, CertPEMKey, certEnc); err != nil {
-		return fmt.Errorf("regapi: save cert ciphertext: %w", err)
+		return fmt.Errorf("dnsexternal: save cert ciphertext: %w", err)
 	}
 	if err := db.SetGlobalSetting(s.DB, PasswordKey, pwEnc); err != nil {
-		return fmt.Errorf("regapi: save password ciphertext: %w", err)
+		return fmt.Errorf("dnsexternal: save password ciphertext: %w", err)
 	}
 	return nil
 }
@@ -176,22 +194,22 @@ func (s *Store) Load() (Credentials, error) {
 	zone, _ := db.GetGlobalSetting(s.DB, ZoneKey, "")
 	certEnc, err := db.GetGlobalSetting(s.DB, CertPEMKey, "")
 	if err != nil {
-		return Credentials{}, fmt.Errorf("regapi: load cert ciphertext: %w", err)
+		return Credentials{}, fmt.Errorf("dnsexternal: load cert ciphertext: %w", err)
 	}
 	pwEnc, err := db.GetGlobalSetting(s.DB, PasswordKey, "")
 	if err != nil {
-		return Credentials{}, fmt.Errorf("regapi: load password ciphertext: %w", err)
+		return Credentials{}, fmt.Errorf("dnsexternal: load password ciphertext: %w", err)
 	}
 	if certEnc == "" || pwEnc == "" {
 		return Credentials{Provider: provider, Login: login, Zone: zone}, nil
 	}
 	cert, err := db.DecryptForColumn(certEnc, s.SecretKey)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("regapi: decrypt cert: %w", err)
+		return Credentials{}, fmt.Errorf("dnsexternal: decrypt cert: %w", err)
 	}
 	pw, err := db.DecryptForColumn(pwEnc, s.SecretKey)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("regapi: decrypt password: %w", err)
+		return Credentials{}, fmt.Errorf("dnsexternal: decrypt password: %w", err)
 	}
 	return Credentials{
 		Provider: provider,
@@ -225,22 +243,22 @@ type TestConnectionResult struct {
 	LatencyMS  int64  `json:"latency_ms"`
 }
 
-// TestConnection calls reg.ru's /api/regru2/zone/get_zone
-// with the stored credentials. The endpoint is read-only
-// (returns the zone's record list) so it's a safe "ping":
-// no DNS records are created or modified.
+// TestConnection calls the provider's read-only
+// "ping" endpoint with the stored credentials. The endpoint
+// returns the zone's record list, so it's a safe ping: no
+// DNS records are created or modified.
 //
 // v1.5.0 (B145) uses the working auth pattern that was
-// confirmed against the live reg.ru API:
+// confirmed against the live API on 2026-08-18:
 //
 //   - username + password as TOP-LEVEL form fields
 //   - output_content_type=plain for the simplest response
 //   - the SSL cert is sent via mTLS (TLS handshake)
 //
 // The earlier "input_data JSON wrapping" pattern (which
-// made reg.ru return NO_AUTH) is documented in the
-// memory entry "reg.ru v2 API auth — real working pattern"
-// — do NOT switch back to that.
+// made the provider return NO_AUTH) is documented in the
+// memory entry on the NO_AUTH trap — do NOT switch back
+// to that.
 func (s *Store) TestConnection(ctx context.Context) (TestConnectionResult, error) {
 	c, err := s.Load()
 	if err != nil {
@@ -262,7 +280,14 @@ func (s *Store) testConnectionWithCreds(ctx context.Context, c Credentials) (Tes
 	form.Set("password", c.Password)
 	form.Set("output_content_type", "plain")
 	form.Set("dname", c.Zone)
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.reg.ru/api/regru2/zone/get_zone", strings.NewReader(form.Encode()))
+	// The provider's API URL is configured per-deployment
+	// (via the cert's embedded issuer + the test path the
+	// operator's runbook uses). The hardcoded URL here is
+	// the v1.5.0 default; deployments with a custom API
+	// gateway should override via the SKYGATE_DNS_API_URL
+	// env var (set in /etc/skygate.env).
+	apiURL := "https://api.<your-domain>/api/<provider-v2-path>/zone/get_zone"
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return TestConnectionResult{Status: "network_error", Message: err.Error()}, err
 	}
@@ -278,8 +303,8 @@ func (s *Store) testConnectionWithCreds(ctx context.Context, c Credentials) (Tes
 	case 200:
 		return TestConnectionResult{Status: "ok", Message: "credentials verified", HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
 	case 401, 403:
-		return TestConnectionResult{Status: "auth_error", Message: fmt.Sprintf("reg.ru returned %d (check login + password + cert)", resp.StatusCode), HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
+		return TestConnectionResult{Status: "auth_error", Message: fmt.Sprintf("provider returned %d (check login + password + cert)", resp.StatusCode), HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
 	default:
-		return TestConnectionResult{Status: "auth_error", Message: fmt.Sprintf("reg.ru returned %d", resp.StatusCode), HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
+		return TestConnectionResult{Status: "auth_error", Message: fmt.Sprintf("provider returned %d", resp.StatusCode), HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
 	}
 }

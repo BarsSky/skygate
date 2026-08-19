@@ -5,7 +5,7 @@
 // skygate test harness so the global_settings table is
 // actually exercised (encryption + DB I/O combined).
 
-package regapi
+package dnsexternal
 
 import (
 	"strings"
@@ -46,33 +46,33 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "missing login",
-			creds:   Credentials{Provider: "regapi", Zone: "example.com", CertPEM: validCertPEM, Password: "p"},
+			creds:   Credentials{Provider: ProviderExternal, Zone: "example.com", CertPEM: validCertPEM, Password: "p"},
 			wantErr: "login is required",
 		},
 		{
 			name:    "missing zone",
-			creds:   Credentials{Provider: "regapi", Login: "x", CertPEM: validCertPEM, Password: "p"},
+			creds:   Credentials{Provider: ProviderExternal, Login: "x", CertPEM: validCertPEM, Password: "p"},
 			wantErr: "zone is required",
 		},
 		{
 			name:    "missing cert",
-			creds:   Credentials{Provider: "regapi", Login: "x", Zone: "example.com", Password: "p"},
+			creds:   Credentials{Provider: ProviderExternal, Login: "x", Zone: "example.com", Password: "p"},
 			wantErr: "cert_pem is required",
 		},
 		{
 			name:    "cert without BEGIN marker",
-			creds:   Credentials{Provider: "regapi", Login: "x", Zone: "example.com", CertPEM: "garbage", Password: "p"},
+			creds:   Credentials{Provider: ProviderExternal, Login: "x", Zone: "example.com", CertPEM: "garbage", Password: "p"},
 			wantErr: "cert_pem does not look like a PEM",
 		},
 		{
 			name:    "missing password",
-			creds:   Credentials{Provider: "regapi", Login: "x", Zone: "example.com", CertPEM: validCertPEM},
+			creds:   Credentials{Provider: ProviderExternal, Login: "x", Zone: "example.com", CertPEM: validCertPEM},
 			wantErr: "password is required",
 		},
 		{
 			name: "all fields OK",
 			creds: Credentials{
-				Provider: "regapi",
+				Provider: ProviderExternal,
 				Login:    "user@example.com",
 				Zone:     "example.com",
 				CertPEM:  validCertPEM,
@@ -102,16 +102,16 @@ func TestValidate(t *testing.T) {
 
 // TestStorageKeys_Stable pins the storage-key strings so
 // an accidental rename doesn't silently break existing
-// skygate installs (the rows already exist in
-// `global_settings` from earlier versions — the keys are
-// effectively part of the persisted schema).
+// skygate installs. The keys are the persisted schema
+// (rows in global_settings); changing them requires a
+// data migration.
 func TestStorageKeys_Stable(t *testing.T) {
 	want := map[string]string{
-		"CertPEMKey":  "ha.regapi.cert_pem_enc",
-		"PasswordKey": "ha.regapi.password_enc",
-		"ZoneKey":     "ha.regapi.zone",
-		"LoginKey":    "ha.regapi.login",
-		"ProviderKey": "ha.regapi.provider",
+		"CertPEMKey":  "ha.dns.cert_pem_enc",
+		"PasswordKey": "ha.dns.password_enc",
+		"ZoneKey":     "ha.dns.zone",
+		"LoginKey":    "ha.dns.login",
+		"ProviderKey": "ha.dns.provider",
 	}
 	got := map[string]string{
 		"CertPEMKey":  CertPEMKey,

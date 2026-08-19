@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 
-	regapicreds "skygate/internal/ha/regapi"
-	dnsregapi "skygate/internal/dnsregapi"
+	extcreds "skygate/internal/ha/dnsexternal"
+	dnsexternal "skygate/internal/dnsexternal"
 )
 
 // BuildDeps is the dependency bundle BuildProvider needs.
@@ -23,8 +23,8 @@ import (
 // not through this struct.
 type BuildDeps struct {
 	// DB is the *sql.DB that the provider can use to load
-	// its own credentials (e.g. regapi.Store reads from
-	// `global_settings`).
+	// its own credentials (e.g. dnsexternal.Store reads
+	// from `global_settings`).
 	DB *sql.DB
 	// SecretKey is SKYGATE_SECRET_KEY (hex). Required by
 	// any provider that stores encrypted credentials in
@@ -34,13 +34,17 @@ type BuildDeps struct {
 }
 
 // BuildProvider returns a Provider matching the given name
-// ("regapi" / "cloudflare" / "route53" / "rfc2136"). The
+// ("external" / "cloudflare" / "route53" / "rfc2136"). The
 // `name` argument is the value of SKYGATE_DNS_PROVIDER.
 // Empty string → returns nil, nil (no DNS provider
 // configured; the HA failover will skip the DNS-update
 // step and just log "no DNS provider").
 //
-// At v1.5.0 (B145) only "regapi" is implemented. The
+// At v1.5.0 (B145) only "external" is implemented (the
+// shipped client is for a popular Russian registrar whose
+// API uses a common JSON+form+mTLS pattern; the
+// implementation lives in internal/dnsexternal and the
+// creds store in internal/ha/dnsexternal). The
 // other names return ErrUnknownProvider until a future
 // B-check lands the corresponding implementation.
 //
@@ -55,57 +59,57 @@ func BuildProvider(name string, deps BuildDeps) (Provider, error) {
 		// button and the HA failover logs "no DNS
 		// provider configured" once at startup.
 		return nil, nil
-	case "regapi":
+	case "external":
 		if deps.DB == nil {
-			return nil, fmt.Errorf("dns: regapi requires a non-nil DB")
+			return nil, fmt.Errorf("dns: external provider requires a non-nil DB")
 		}
-		store := regapicreds.NewStore(deps.DB, deps.SecretKey)
-		// Wrap the dnsregapi.Client in a thin adapter
-		// that translates dnsregapi's internal sentinel
+		store := extcreds.NewStore(deps.DB, deps.SecretKey)
+		// Wrap the dnsexternal.Client in a thin adapter
+		// that translates dnsexternal's internal sentinel
 		// (errRecordNotFound) into dns.ErrRecordNotFound.
-		// We need this translation because dnsregapi
+		// We need this translation because dnsexternal
 		// can't import internal/dns (would create a
-		// cycle — see dnsregapi/client.go package doc).
-		return &regapiAdapter{Client: dnsregapi.NewClient(store)}, nil
+		// cycle — see dnsexternal/client.go package doc).
+		return &externalAdapter{Client: dnsexternal.NewClient(store)}, nil
 	case "cloudflare", "route53", "rfc2136":
-		// Reserved for future B-checks (B146+). The
+		// Reserved for future B-checks. The
 		// error message is intentionally specific so
 		// the operator knows which B-check to read.
-		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/internal/ha-v1.5.0-execution.md — only regapi is shipped in v1.5.0 B145)", name)
+		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/internal/ha-v1.5.0-execution.md — only 'external' is shipped in v1.5.0 B145)", name)
 	default:
 		return nil, ErrUnknownProvider{Name: name}
 	}
 }
 
-// regapiAdapter wraps dnsregapi.Client to satisfy the
+// externalAdapter wraps dnsexternal.Client to satisfy the
 // internal/dns.Provider interface. The only behavioural
 // difference from the underlying Client is that the
 // adapter translates the package-local errRecordNotFound
 // into the public dns.ErrRecordNotFound, so callers don't
-// have to know about dnsregapi's internals.
+// have to know about dnsexternal's internals.
 //
 // All other methods forward to the underlying Client
 // (which is a struct, not an interface, so the adapter
 // is a thin pass-through — the indirection is the
 // minimum needed to translate the sentinel error).
-type regapiAdapter struct {
-	Client *dnsregapi.Client
+type externalAdapter struct {
+	Client *dnsexternal.Client
 }
 
-func (a *regapiAdapter) Name() string { return a.Client.Name() }
+func (a *externalAdapter) Name() string { return a.Client.Name() }
 
-func (a *regapiAdapter) GetRecord(ctx context.Context, zone, name string) (string, error) {
+func (a *externalAdapter) GetRecord(ctx context.Context, zone, name string) (string, error) {
 	ip, err := a.Client.GetRecord(ctx, zone, name)
-	if errors.Is(err, dnsregapi.ErrRecordNotFound) {
+	if errors.Is(err, dnsexternal.ErrRecordNotFound) {
 		return "", ErrRecordNotFound
 	}
 	return ip, err
 }
 
-func (a *regapiAdapter) UpdateRecord(ctx context.Context, zone, name, ip string) error {
+func (a *externalAdapter) UpdateRecord(ctx context.Context, zone, name, ip string) error {
 	return a.Client.UpdateRecord(ctx, zone, name, ip)
 }
 
-func (a *regapiAdapter) TestConnection(ctx context.Context) error {
+func (a *externalAdapter) TestConnection(ctx context.Context) error {
 	return a.Client.TestConnection(ctx)
 }

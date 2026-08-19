@@ -21,7 +21,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/config"
 	"skygate/internal/feature/healthz"
-	"skygate/internal/ha/regapi"
+	extcreds "skygate/internal/ha/dnsexternal"
 	"skygate/internal/headscale"
 	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
@@ -245,14 +245,14 @@ type Service struct {
 
 	// v1.5.0 / B149 — /admin/ha page.
 	//
-	// RegapiStore is the encrypted credential store for the
-	// reg.ru API (cert PEM + alternative password). Wired
+	// DNSCredsStore is the encrypted credential store for the
+	// DNS provider API (cert PEM + alternative password). Wired
 	// from cmd/skygate/main.go at boot via
-	// `regapi.NewStore(s.DB, cfg.SecretKey)`. Nil = the
+	// `extcreds.NewStore(s.DB, cfg.SecretKey)`. Nil = the
 	// /admin/ha "External DNS" section renders a "store not
 	// configured" banner; the handlers also check for nil
 	// and return a clear error.
-	RegapiStore *regapi.Store
+	DNSCredsStore *extcreds.Store
 	// SelfHostname is THIS skygate instance's name in the HA
 	// chain (typically the value of TailscaleHostname, but
 	// the chain may have multiple roles per host). Used by

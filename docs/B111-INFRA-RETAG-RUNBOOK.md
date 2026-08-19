@@ -93,7 +93,7 @@ bash /tmp/fix.sh
 The script prints:
 ```
 sudo tailscale up \
-    --login-server=https://head.skynas.ru \
+    --login-server=https://head.<your-domain> \
     --hostname=<this-node> \
     --advertise-tags=<its-tags> \
     --auth-key=hskey-auth-XXXX
@@ -119,7 +119,7 @@ tag:private) so the node still functions as an exit node.
 ### 4. Run the modified command
 
 ```bash
-sudo bash -c "tailscale up --login-server=https://head.skynas.ru --hostname=<this-node> --advertise-tags=<NEW-TAGS> --auth-key=hskey-auth-XXXX"
+sudo bash -c "tailscale up --login-server=https://head.<your-domain> --hostname=<this-node> --advertise-tags=<NEW-TAGS> --auth-key=hskey-auth-XXXX"
 ```
 
 ### 5. Verify

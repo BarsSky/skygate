@@ -13,14 +13,14 @@
 
 | # | Decision | Source | Why locked |
 |---|---|---|---|
-| 1 | **DNS-side hostname**: `skygate.skynas.ru` is the public FQDN | operator reply 2026-08-18 | reg.ru is the registrar, no Cloudflare |
+| 1 | **DNS-side hostname**: `skygate.<your-domain>` is the public FQDN | operator reply 2026-08-18 | reg.ru is the registrar, no Cloudflare |
 | 2 | **Active node hostname**: `skygate` (in headscale + Tailscale MagicDNS) | operator reply 2026-08-18 | "skygate-prod" was confusing; operator prefers `skygate` |
 | 3 | **Standby node hostname**: `skygate-standby` | derived from #2 | consistent naming |
 | 4 | **Tailscale Funnel: NO** | operator reply 2026-08-18 | "сеть tailscale скорейвсего не доступна" + headscale != Tailscale |
 | 5 | **External DNS via reg.ru API** | reg.ru is the registrar | no Cloudflare dependency, reg.ru has its own API |
 | 6 | **Active-Passive with priority chain** (not Active-Active) | operator reply 2026-08-18 | "стоит учесть что дубликатов может быть несколько и стоит делать сразу с учетом того что они могут иметь приоритет" |
 | 7 | **Starter chain: 2 nodes** (P1=`skygate`, P2=`skygate-standby`) | operator reply 2026-08-18 | "Starter chain пока из двух как ты указал" |
-| 8 | **Active = svyatoslava-1 (the new VM)**, current `95.165.170.190` becomes standby | operator reply 2026-08-18 | "текуший проект на VM передет на svyatoslava-1 и будет основным а текущий активный станет дублером" |
+| 8 | **Active = svyatoslava-1 (the new VM)**, current `<operator-public-ip>` becomes standby | operator reply 2026-08-18 | "текуший проект на VM передет на svyatoslava-1 и будет основным а текущий активный станет дублером" |
 | 9 | **Public IP on svyatoslava: yes** | operator reply 2026-08-18 | "public ip на svyatoslava есть" |
 | 10 | **Failover: auto + manual override** | operator reply 2026-08-18 | "сделал авто но оставил возможность и в ручную" |
 | 11 | **Auto-reclaim: default OFF** (when P1 returns, no auto-flip; manual "Reclaim primary" button) | derived from operator's anti-flap intent | avoids flap |
@@ -99,11 +99,11 @@ SKYGATE_DNS_ROUTE53_ZONE_ID=<your-zone-id>
 
 | Component | Current | Target |
 |---|---|---|
-| Primary VM | `192.168.13.69` (public `95.165.170.190`) — runs headscale + skygate + PG-primary | **becomes `skygate-standby`** (P2) |
+| Primary VM | `192.168.13.69` (public `<operator-public-ip>`) — runs headscale + skygate + PG-primary | **becomes `skygate-standby`** (P2) |
 | Standby VM | none | **`svyatoslava-1`** — new skygate-prod (P1) |
-| Patroni | running async replication, etcd at `45.152.198.217:2379` | unchanged (per decision #12) |
+| Patroni | running async replication, etcd at `<operator-vm-public-ip>:2379` | unchanged (per decision #12) |
 | External DNS | unknown (need to confirm reg.ru API access) | reg.ru API client in `internal/dns/regapi/` |
-| Tailscale/headscale | tsnet.skynas.ru base domain, `head.skynas.ru` API | unchanged; add `skygate` and `skygate-standby` node identities |
+| Tailscale/headscale | tsnet.<your-domain> base domain, `head.<your-domain>` API | unchanged; add `skygate` and `skygate-standby` node identities |
 | TLS cert | currently self-managed (Caddy OFF per v0.32.11) | reg.ru DNS-01 via Caddy plugin (decision #14) |
 | Backup | S3 already configured (per B142 / backup system) | add `s3://skygate-backups/ha/` prefix for HA state (decision #13) |
 
@@ -231,7 +231,7 @@ UI sections in `/admin/ha`:
    SKYGATE_DNS_PROVIDER=regapi
    SKYGATE_DNS_REGAPI_USER=<your_reg_ru_login>
    SKYGATE_DNS_REGAPI_PASSWORD=<api_key_password>
-   SKYGATE_DNS_REGAPI_ZONE=skynas.ru
+   SKYGATE_DNS_REGAPI_ZONE=<your-domain>
    ```
 5. I will:
    - Save to `internal/secretbox/` (age-encrypted, master key from `SKYGATE_SECRET_KEY`)
@@ -242,7 +242,7 @@ UI sections in `/admin/ha`:
 
 1. Log in: https://www.reg.ru/user/
 2. Navigate: "Настройки" → "Безопасность" → "API IP whitelist"
-3. If whitelist is enabled: add `<svyatoslava-1-public-ip>` and `<current-VM-public-ip>` (95.165.170.190)
+3. If whitelist is enabled: add `<svyatoslava-1-public-ip>` and `<current-VM-public-ip>` (<operator-public-ip>)
 4. If whitelist is disabled: nothing to do
 5. Tell me which case applies (so I document the right behavior in the deploy script)
 
@@ -269,7 +269,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 
 ### 2026-08-18 (initial)
 - v1.5.0 plan created based on operator's "BL-2 detailed design" conversation
-- Decisions locked: `skygate.skynas.ru` (DNS) / `skygate` (active) / `skygate-standby` (standby) / reg.ru DNS / no Tailscale Funnel / Active-Passive / starter chain 2 nodes
+- Decisions locked: `skygate.<your-domain>` (DNS) / `skygate` (active) / `skygate-standby` (standby) / reg.ru DNS / no Tailscale Funnel / Active-Passive / starter chain 2 nodes
 - 10-phase plan + 10 open questions created
 - Patroni config NOT touched (operator's explicit guidance)
 - Status: PLANNING complete, awaiting operator answers to open questions + go-ahead
@@ -286,12 +286,12 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 ### 2026-08-18 (reg.ru SSL cert approach + admin-managed UI)
 - **Auth method: SSL cert** (over HTTP Basic Auth) — generated `cert.pem` + `key.pem` (RSA 2048, SHA-512, 365 days) on live VM at `/home/skyadmin/skygate-secrets/regapi/`
 - Fingerprint: `91:DA:41:BD:7C:18:45:41:AB:E2:BE:9F:68:B8:BA:30:DB:02:FB:59:EE:BA:87:0E:98:54:F1:95:C5:20:9F:0D`
-- **First cert rejected by reg.ru** — missing Extended Key Usage = `clientAuth`. Regenerated with proper EKU (TLS Web Client Authentication) + Key Usage + SubjectKeyIdentifier + AuthorityKeyIdentifier. New fingerprint: `1F:21:CC:99:50:99:C9:32:B4:E7:63:91:E8:1E:BE:BC:9D:BC:12:06:DB:B9:7D:4D`
+- **First cert rejected by reg.ru** — missing Extended Key Usage = `clientAuth`. Regenerated with proper EKU (TLS Web Client Authentication) + Key Usage + SubjectKeyIdentifier + AuthorityKeyIdentifier. New fingerprint: `<old-cert-fingerprint-sha256>`
 - **Operator action pending**: register cert via reg.ru UI "Add SSL certificate" (provided PEM content)
 - **Plan update per operator**: `/admin/ha` page must support admin-managed HA node CRUD + reg.ru credentials (no SSH or `.env` edit required after initial deploy)
   - Phase 5 expanded: 4 new methods (`PostAdminHAAddNode`, `PostAdminHARemoveNode`, `PostAdminHARegapiCreds`) + 7 new i18n keys
   - Phase 5.1: explicit sub-section documenting the admin-managed credentials design
-- IP whitelist: **REVISED** — likely DOES apply to API calls (per reg.ru docs). The 2 IPs in screenshot are operator's personal IPs (194.58.116.30/32, 172.65.32.248/32). For API to work from skygate VM, must add `95.165.170.190/32` + new svyatoslava-1 public IP/32. **TBD**: needs verification via first API call after cert registration
+- IP whitelist: **REVISED** — likely DOES apply to API calls (per reg.ru docs). The 2 IPs in screenshot are operator's personal IPs (<operator-personal-ip-1>/32, <operator-personal-ip-2>/32). For API to work from skygate VM, must add `<operator-public-ip>/32` + new svyatoslava-1 public IP/32. **TBD**: needs verification via first API call after cert registration
 - Status: cert regenerated with EKU + saved, awaiting operator registration in reg.ru; meanwhile Phase 1 (chain + elector) can start independently
 
 ### 2026-08-18 (cert registered, API test reveals HTTP Basic needed)
@@ -301,7 +301,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   1. SSL client cert (mTLS handshake) — have it
   2. HTTP Basic Auth with login + "Альтернативный пароль" — DON'T have password yet
 - Status: cert registered + working at TLS layer, but API call needs alternative password from reg.ru account
-- Open question Q1 UPDATED: now needs only the **alternative password** (login can be derived as "skynas" from cert name)
+- Open question Q1 UPDATED: now needs only the **alternative password** (login can be derived as <account-name> from cert name)
 
 ### 2026-08-18 (password reset, but cert MISMATCH discovered)
 - **Operator reset reg.ru alternative password** to new value (not committed to repo)
@@ -309,15 +309,15 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **Combined cert+key in single --cert arg**: also NO_AUTH
 - **TLS handshake OK, cert IS being presented, server cert `*.reg.ru` is valid**
 - **🔴 CRITICAL FINDING — cert MISMATCH**:
-  - Cert currently on VM (`/home/skyadmin/skygate-secrets/regapi/cert.pem`, 1399 bytes): **SHA-256 = `8D:D0:29:DE:3A:E5:E9:FB:03:34:F1:14:3E:DC:61:2A:0A:5E:E7:ED:A4:39:88:AF:3B:AD:CC:26:17:C3:18:71`**
-  - Cert registered in reg.ru UI (per prior conversation): **SHA-256 = `1F:21:CC:99:50:99:C9:32:B4:E7:63:91:E8:1E:BE:BC:9D:BC:12:06:DB:B9:7D:4D`**
-  - Subject: `C=RU, ST=Skynas, L=Skynas, O=Skygate, OU=HA-1.5.0, CN=skygate-regapi`
+  - Cert currently on VM (`/home/skyadmin/skygate-secrets/regapi/cert.pem`, 1399 bytes): **SHA-256 = `<current-cert-fingerprint-sha256>`**
+  - Cert registered in reg.ru UI (per prior conversation): **SHA-256 = `<old-cert-fingerprint-sha256>`**
+  - Subject: `C=<country>, ST=<state>, L=<locality>, O=<org>, OU=<unit>, CN=<cert-name>`
   - Validity: 2026-08-18 to 2027-08-18, EKU = TLS Web Client Authentication
   - **MOST LIKELY**: the cert on VM was regenerated AFTER the one that was uploaded to reg.ru UI. reg.ru sees our cert, doesn't recognize it as bound to the account, returns NO_AUTH.
 - **Test 8 (ipify outbound IP check) timed out** — VM has limited outbound access; can't auto-verify source IP from VM side. Operator must check reg.ru IP whitelist manually (Path: "Настройки" → "Безопасность" → "API IP whitelist")
 - **Resolution path for operator (2-step)**:
-  1. **Step A (CRITICAL)**: in reg.ru UI "Настройки" → "API" → look at the registered cert's SHA-256 fingerprint. If it shows `1F:21:CC:...` (the OLD fingerprint), re-upload the CURRENT cert (with fingerprint `8D:D0:29:...` from VM)
-  2. **Step B (likely also needed)**: in reg.ru UI "Настройки" → "Безопасность" → add VM public IP `95.165.170.190` to the IP whitelist (or confirm it's already there)
+  1. **Step A (CRITICAL)**: in reg.ru UI "Настройки" → "API" → look at the registered cert's SHA-256 fingerprint. If it shows `<old-cert-fingerprint-sha256>` (the OLD fingerprint), re-upload the CURRENT cert (with fingerprint `<current-cert-fingerprint-sha256>` from VM)
+  2. **Step B (likely also needed)**: in reg.ru UI "Настройки" → "Безопасность" → add VM public IP `<operator-public-ip>` to the IP whitelist (or confirm it's already there)
 - **Helper diagnostic command for operator** (run on VM):
   ```bash
   openssl x509 -in /home/skyadmin/skygate-secrets/regapi/cert.pem -noout -fingerprint -sha256
@@ -326,18 +326,18 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - Status: password reset did not help; cert MISMATCH is the most likely root cause. Awaiting operator to (a) re-upload current cert OR (b) restore the old cert that was registered.
 
 ### 2026-08-18 (cert verified, IP added, REAL auth issue found in our scripts)
-- **Cert verified by SHA-512**: VM cert `5E:08:42:01:...:E8:5B` exactly matches the cert in reg.ru UI. Mismatch hypothesis REFUTED.
-- **IP added to whitelist**: `95.165.170.190/32` confirmed in UI screenshot. Outbound IP from VM verified as `95.165.170.190` via 3 external services (checkip.amazonaws.com, ifconfig.me, icanhazip.com).
+- **Cert verified by SHA-512**: VM cert `<cert-fingerprint-sha512>` exactly matches the cert in reg.ru UI. Mismatch hypothesis REFUTED.
+- **IP added to whitelist**: `<operator-public-ip>/32` confirmed in UI screenshot. Outbound IP from VM verified as `<operator-public-ip>` via 3 external services (checkip.amazonaws.com, ifconfig.me, icanhazip.com).
 - **🔴 REAL ROOT CAUSE — WRONG API CALL FORMAT**:
   - reg.ru v2 API requires **`application/x-www-form-urlencoded` or `multipart/form-data` with username+password as TOP-LEVEL form fields**, NOT inside `input_data` JSON
   - We were sending `input_data={"username":"...","password":"..."}` (password in JSON)
   - Working pattern (from PCNEWS blog + flant/cert-manager-webhook-regru): `curl -d "username=X&password=Y&dname=..." https://api.reg.ru/...`
   - **Fix**: separate top-level `username` and `password` form fields + cert via mTLS
 - **After fix, all 5 tests return `ACCESS_DENIED_FROM_IP` instead of `NO_AUTH`**:
-  - ✅ Login: `kanagaenko@mail.ru` accepted
-  - ✅ Password: `Vfrttdf97` accepted
-  - ✅ Cert: `skygate-regapi` (SHA-512 verified match) accepted
-  - ❌ IP `95.165.170.190/32` still rejected by reg.ru despite being in whitelist
+  - ✅ Login: `<reg.ru login email>` accepted
+  - ✅ Password: `<reg.ru password>` accepted
+  - ✅ Cert: `<cert-name>` (SHA-512 verified match) accepted
+  - ❌ IP `<operator-public-ip>/32` still rejected by reg.ru despite being in whitelist
 - **Likely cause of remaining IP error**: reg.ru cache not yet propagated (5-30 min typical), OR operator added the IP but didn't click "Save" button in UI
 - Status: **auth is functionally working**; just need IP whitelist to propagate. Phase 2 (B146) implementation can start in parallel — `internal/dns/regapi/client.go` will use the now-confirmed working auth pattern.
 

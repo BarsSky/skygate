@@ -55,7 +55,7 @@ package admin
 //       the operator clicks Apply.
 //
 //   (*Service).BootstrapAdminRule(ctx) -> error
-//       idempotent: ensures `skyadmin@tsnet.skynas.ru -> *:*`
+//       idempotent: ensures `skyadmin@tsnet.<your-domain> -> *:*`
 //       exists. Called on first deploy (cmd/skygate/main.go)
 //       and from the audit "fix" link on R31 failures.
 
@@ -314,7 +314,7 @@ func (s *Service) PreviewACL(ctx context.Context, draft ACLRule) (*ACLDiff, erro
 // Default rule: src=[skyadmin@<BaseDomain>], dst=[*:*]
 // (the operator's full identity, full access to everything).
 func (s *Service) BootstrapAdminRule(ctx context.Context) error {
-	// Get the BaseDomain from config (e.g. "tsnet.skynas.ru").
+	// Get the BaseDomain from config (e.g. "tsnet.<your-domain>").
 	// The /admin/headscale/acl page lets the operator
 	// re-bootstrap if needed.
 	hs := s.HSGlobalFn()

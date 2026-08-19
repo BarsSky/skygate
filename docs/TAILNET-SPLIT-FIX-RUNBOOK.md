@@ -33,7 +33,7 @@ ssh skyadmin@192.168.13.69 "docker exec headscale headscale preauthkeys list -o 
 - [x] **skygate-host-1** (100.64.0.18) — re-authed via VM SSH
 
 ### VPS nodes (4) — operator SSHs from laptop
-- [ ] **emilia** (100.64.0.3, VPS 213.176.92.205)
+- [ ] **emilia** (100.64.0.3, VPS `<operator-exit-vps-public-ip>`)
 - [ ] **karolina** (100.64.0.2, headscale alias for svyatoslava-1, VPS 193.233.130.178)
 - [ ] **sharlotta** (100.64.0.4, VPS)
 - [ ] **svyatoslava-1** (100.64.0.15, if separate host from karolina)
@@ -79,7 +79,7 @@ bash /tmp/fix.sh
 The script prints:
 ```
 sudo tailscale up \
-    --login-server=https://head.skynas.ru \
+    --login-server=https://head.<your-domain> \
     --hostname=<this-node> \
     --advertise-tags=<its-tags> \
     --auth-key=hskey-auth-XXXX
@@ -87,7 +87,7 @@ sudo tailscale up \
 
 ### 3. Run the printed command
 ```bash
-sudo bash -c "tailscale up --login-server=https://head.skynas.ru --hostname=<this-node> --advertise-tags=<its-tags> --auth-key=hskey-auth-XXXX"
+sudo bash -c "tailscale up --login-server=https://head.<your-domain> --hostname=<this-node> --advertise-tags=<its-tags> --auth-key=hskey-auth-XXXX"
 ```
 
 Or just copy-paste the exact lines.

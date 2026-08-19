@@ -24,7 +24,7 @@ import (
 	"skygate/internal/dns"
 	"skygate/internal/expirewatch"
 	"skygate/internal/ha"
-	"skygate/internal/ha/regapi"
+	extcreds "skygate/internal/ha/dnsexternal"
 	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
 	exitrules "skygate/internal/feature/exit_rules"
@@ -633,12 +633,12 @@ func main() {
 		// v1.5.0 / B149 — /admin/ha page.
 		//
 		// RegapiStore is the encrypted credential store for
-		// the reg.ru API (cert + alt-password). The store
+		// the provider API (cert + alt-password). The store
 		// reads SKYGATE_SECRET_KEY for AES-256-GCM; when
 		// unset, Save() returns db.ErrSecretKeyUnset and
 		// the /admin/ha "External DNS" form shows a
 		// "store not configured" banner.
-		RegapiStore: regapi.NewStore(app.DB, cfg.SecretKeyHex),
+		DNSCredsStore: extcreds.NewStore(app.DB, cfg.SecretKeyHex),
 		// SelfHostname is THIS skygate instance's name in
 		// the HA chain. Defaults to the Tailscale hostname
 		// (the same name the operator SSHes into). The
@@ -956,7 +956,7 @@ func main() {
 
 	// v1.5.0 / B149 — /admin/ha (High Availability chain editor).
 	// The page renders the cluster topology, failover policy,
-	// HA nodes CRUD, reg.ru credentials, and force actions.
+	// HA nodes CRUD, DNS provider credentials, and force actions.
 	// See internal/feature/admin/ha.go for the handler bodies
 	// + doc comments and internal/ha/ for the underlying types.
 	mux.Handle("GET /admin/ha", authMW(http.HandlerFunc(adminSvc.GetAdminHA)))
@@ -978,8 +978,8 @@ func main() {
 	mux.Handle("POST /admin/ha/force-promote", authMW(http.HandlerFunc(adminSvc.PostAdminHAForcePromote)))
 	mux.Handle("POST /admin/ha/force-demote", authMW(http.HandlerFunc(adminSvc.PostAdminHAForceDemote)))
 	mux.Handle("POST /admin/ha/reclaim", authMW(http.HandlerFunc(adminSvc.PostAdminHAReclaim)))
-	mux.Handle("POST /admin/ha/regapi/save", authMW(http.HandlerFunc(adminSvc.PostAdminHARegapiCreds)))
-	mux.Handle("POST /admin/ha/regapi/test", authMW(http.HandlerFunc(adminSvc.PostAdminHARegapiTest)))
+	mux.Handle("POST /admin/ha/dns/save", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsSave)))
+	mux.Handle("POST /admin/ha/dns/test", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsTest)))
 	// v1.5.0 / B148 — /admin/certificates (TLS cert management:
 	// show current cert, upload new PEM pair, LE DNS-01 toggle).
 	// See internal/feature/admin/certificates.go for the handler
@@ -1648,7 +1648,7 @@ func main() {
 	// every 30s, pulls newer certs if the local SHA
 	// doesn't match, writes to LocalDir, then
 	// triggers the Caddy reload callback. Independent
-	// of the reg.ru rate limit (no DNS-side work —
+	// of the provider rate limit (no DNS-side work —
 	// just S3 reads + local file writes). Disabled
 	// by default (operator opts in via
 	// SKYGATE_CERTSYNC_ENABLED=true).
@@ -1727,7 +1727,7 @@ func main() {
 	//
 	// The DNS provider (cfg.DNSProvider) is constructed
 	// via dns.BuildProvider. At v1.5.0 (B145) only
-	// "regapi" is implemented; "cloudflare" / "route53" /
+	// "external" is implemented; "cloudflare" / "route53" /
 	// "rfc2136" return ErrUnknownProvider. The elector
 	// currently doesn't auto-update DNS (that's Phase 3 /
 	// B147 — the certsync + DNS update combined path); the

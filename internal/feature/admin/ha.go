@@ -1,6 +1,6 @@
 // Package admin — ha.go owns the /admin/ha page (High
 // Availability chain editor + failover controls + admin-managed
-// reg.ru credentials).
+// the DNS provider credentials).
 //
 // v1.5.0 / B149.
 //
@@ -10,7 +10,7 @@
 //  1. Cluster topology        — read-only chain table
 //  2. Failover policy         — auto / manual radio + auto-reclaim
 //  3. HA nodes (CRUD)         — add / remove buttons
-//  4. External DNS (reg.ru)   — credentials form + "test" button
+//  4. External DNS (the DNS provider)   — credentials form + "test" button
 //  5. Force actions           — promote / demote / reclaim
 //  6. Audit log (read-only)   — last 20 HA-related events
 //
@@ -23,12 +23,12 @@
 //     and writes the result here on each tick. The /admin/ha
 //     page is operator-driven, not derived.
 //
-//   - The reg.ru creds live in 5 global_settings rows
+//   - The the DNS provider creds live in 5 global_settings rows
 //     (encrypted cert + password + plaintext zone / login /
 //     provider). The page is a UI around
-//     `internal/ha/regapi.Store` — same package that B145
+//     `internal/ha/extcreds.Store` — same package that B145
 //     tests cover. The "Test" button calls
-//     regapi.Store.TestConnection, which uses the working
+//     extcreds.Store.TestConnection, which uses the working
 //     auth pattern (top-level form fields + mTLS).
 //
 //   - "Force promote" / "Force demote" do not bypass the
@@ -57,7 +57,7 @@ import (
 	"time"
 
 	"skygate/internal/ha"
-	"skygate/internal/ha/regapi"
+	extcreds "skygate/internal/ha/dnsexternal"
 )
 
 // ---------- GET /admin/ha (the page) ---------------------------------
@@ -71,10 +71,7 @@ type haPageData struct {
 	AutoFailoverEnabled bool
 	SelfHostname        string
 	SelfRole            string
-	RegapiConfigured    bool
-	RegapiStatus        string // "ok" | "auth_error" | "network_error" | "not_configured" | ""
-	RegapiMessage       string
-	RegapiLatencyMS     int64
+	extcredsConfigured    bool
 	RecentEvents        []haAuditEvent
 	FlashSuccess        string
 	FlashError          string
@@ -104,7 +101,7 @@ func (s *Service) GetAdminHA(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// collectHAPageData reads the chain + the reg.ru creds + the
+// collectHAPageData reads the chain + the the DNS provider creds + the
 // last 20 HA audit events. All errors degrade to "show the
 // page with the error in the flash". The page should never
 // 500 on a transient DB / decrypt error — a missing or
@@ -140,10 +137,10 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 	}
 	data.SelfHostname = s.SelfHostname
 
-	// 3. reg.ru credentials (just IsConfigured — the test
-	// connection result is loaded lazily by PostAdminHARegapiTest).
-	if s.RegapiStore != nil {
-		data.RegapiConfigured = s.RegapiStore.IsConfigured()
+	// 3. the DNS provider credentials (just IsConfigured — the test
+	// connection result is loaded lazily by PostAdminHADNSCredsTest).
+	if s.DNSCredsStore != nil {
+		data.extcredsConfigured = s.DNSCredsStore.IsConfigured()
 	}
 
 	// 4. Last 20 HA events. Pattern matches /admin/audit's
@@ -488,59 +485,59 @@ func (s *Service) forceAction(w http.ResponseWriter, r *http.Request, action str
 	haRedirect(w, r, msg, "")
 }
 
-// ---------- POST /admin/ha/regapi/save --------------------------------
+// ---------- POST /admin/ha/extcreds/save --------------------------------
 
-// PostAdminHARegapiCreds saves the reg.ru credentials. The
+// PostAdminHAextcredsCreds saves the the DNS provider credentials. The
 // cert + password are encrypted by the underlying Store
 // (AES-256-GCM via db.EncryptForColumn). The page form is
 // the only writer; the autosave on first /admin/ha load
 // does NOT seed anything (a fresh deploy shows the "not
 // configured" badge until the operator pastes the cert).
-func (s *Service) PostAdminHARegapiCreds(w http.ResponseWriter, r *http.Request) {
+func (s *Service) PostAdminHADNSCredsSave(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if s.RegapiStore == nil {
-		haRedirect(w, r, "", "regapi store not configured on this skygate instance")
+	if s.DNSCredsStore == nil {
+		haRedirect(w, r, "", "external store not configured on this skygate instance")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
 		haRedirect(w, r, "", "Form parse error: "+err.Error())
 		return
 	}
-	creds, err := parseHARegapiCredsForm(r.Form)
+	creds, err := parseHADNSCredsForm(r.Form)
 	if err != nil {
 		haRedirect(w, r, "", err.Error())
 		return
 	}
-	if err := s.RegapiStore.Save(creds); err != nil {
+	if err := s.DNSCredsStore.Save(creds); err != nil {
 		haRedirect(w, r, "", "Save credentials: "+err.Error())
 		return
 	}
-	s.Backend.Audit(c.UserID, c.Username, "ha.regapi.creds.save",
+	s.Backend.Audit(c.UserID, c.Username, "ha.dns.creds.save",
 		fmt.Sprintf("provider=%s zone=%s login=%s", creds.Provider, creds.Zone, creds.Login))
-	haRedirect(w, r, "reg.ru credentials saved. Click \"Test connection\" to verify.", "")
+	haRedirect(w, r, "the DNS provider credentials saved. Click \"Test connection\" to verify.", "")
 }
 
-// ---------- POST /admin/ha/regapi/test -------------------------------
+// ---------- POST /admin/ha/extcreds/test -------------------------------
 
-// PostAdminHARegapiTest calls regapi.Store.TestConnection
+// PostAdminHADNSCredsTest calls extcreds.Store.TestConnection
 // and renders the result inline (success / auth_error /
 // network_error / not_configured). Doesn't redirect — the
 // page shows the test badge on the next render.
-func (s *Service) PostAdminHARegapiTest(w http.ResponseWriter, r *http.Request) {
+func (s *Service) PostAdminHADNSCredsTest(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if s.RegapiStore == nil {
-		haRedirect(w, r, "", "regapi store not configured on this skygate instance")
+	if s.DNSCredsStore == nil {
+		haRedirect(w, r, "", "external store not configured on this skygate instance")
 		return
 	}
-	res, err := s.RegapiStore.TestConnection(r.Context())
+	res, err := s.DNSCredsStore.TestConnection(r.Context())
 	ok := "Test failed: " + err.Error()
 	if err == nil {
 		switch res.Status {
@@ -558,7 +555,7 @@ func (s *Service) PostAdminHARegapiTest(w http.ResponseWriter, r *http.Request) 
 	}
 	// Render the result inline by passing it through the
 	// flash "info" param. The page re-renders with the badge
-	// text from the regapi page data — but the regapi
+	// text from the external page data — but the extcreds
 	// section's inline result is computed by the page GET.
 	// We cheat by appending the result to the info flash.
 	haRedirect(w, r, "", "")
@@ -657,12 +654,12 @@ func parseHAChainEditForm(form url.Values) (map[string]ha.HaMember, error) {
 	return updates, nil
 }
 
-// parseHARegapiCredsForm turns the reg.ru creds form into a
-// regapi.Credentials. The validation is delegated to
-// regapi.Credentials.Validate() so the form parser stays
+// parseHADNSCredsForm turns the the DNS provider creds form into a
+// extcreds.Credentials. The validation is delegated to
+// extcreds.Credentials.Validate() so the form parser stays
 // pure-shape (no semantic checks duplicated).
-func parseHARegapiCredsForm(form url.Values) (regapi.Credentials, error) {
-	c := regapi.Credentials{
+func parseHADNSCredsForm(form url.Values) (extcreds.Credentials, error) {
+	c := extcreds.Credentials{
 		Provider: strings.TrimSpace(form.Get("provider")),
 		Login:    strings.TrimSpace(form.Get("login")),
 		Zone:     strings.TrimSpace(form.Get("zone")),
@@ -670,7 +667,7 @@ func parseHARegapiCredsForm(form url.Values) (regapi.Credentials, error) {
 		Password: strings.TrimSpace(form.Get("password")),
 	}
 	if err := c.Validate(); err != nil {
-		return regapi.Credentials{}, err
+		return extcreds.Credentials{}, err
 	}
 	return c, nil
 }

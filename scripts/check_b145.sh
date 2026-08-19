@@ -6,11 +6,11 @@
 #
 #   1. internal/ha package exists + has the expected files
 #      (chain.go, storage.go, elector.go).
-#   2. internal/ha/regapi package exists + has the
+#   2. internal/ha/dnsexternal package exists + has the
 #      credentials.go file (encrypted cert+password).
 #   3. internal/dns package exists with the Provider
 #      interface + BuildProvider factory.
-#   4. internal/dnsregapi package exists with the
+#   4. internal/dnsexternal package exists with the
 #      working auth pattern (top-level form fields).
 #   5. internal/config has the new HA env vars.
 #   6. cmd/skygate/main.go wires the elector on startup
@@ -58,29 +58,29 @@ done
 
 # --- contract B: encrypted credentials --------------
 echo
-echo "=== contract B: internal/ha/regapi credentials ==="
-if [ -d internal/ha/regapi ]; then
-    ok "internal/ha/regapi/ directory exists"
+echo "=== contract B: internal/ha/dnsexternal credentials ==="
+if [ -d internal/ha/dnsexternal ]; then
+    ok "internal/ha/dnsexternal/ directory exists"
 else
-    bad "internal/ha/regapi/ directory missing"
+    bad "internal/ha/dnsexternal/ directory missing"
 fi
 for f in credentials.go credentials_test.go; do
-    if [ -f "internal/ha/regapi/$f" ]; then
-        ok "internal/ha/regapi/$f exists"
+    if [ -f "internal/ha/dnsexternal/$f" ]; then
+        ok "internal/ha/dnsexternal/$f exists"
     else
-        bad "internal/ha/regapi/$f missing"
+        bad "internal/ha/dnsexternal/$f missing"
     fi
 done
 # Verify the encrypted storage uses db.EncryptForColumn
 # (AES-256-GCM, not plain text).
-if grep -q "EncryptForColumn" internal/ha/regapi/credentials.go; then
+if grep -q "EncryptForColumn" internal/ha/dnsexternal/credentials.go; then
     ok "credentials.go uses db.EncryptForColumn for the secret fields"
 else
     bad "credentials.go does NOT use db.EncryptForColumn (secret would be plain text)"
 fi
 # Verify it rejects empty SKYGATE_SECRET_KEY (fail-fast
 # instead of writing plain text).
-if grep -q "ErrSecretKeyUnset" internal/ha/regapi/credentials.go; then
+if grep -q "ErrSecretKeyUnset" internal/ha/dnsexternal/credentials.go; then
     ok "credentials.go fails fast when SKYGATE_SECRET_KEY is unset"
 else
     bad "credentials.go does NOT check ErrSecretKeyUnset (could write plain text)"
@@ -111,13 +111,13 @@ for method in "Name() string" "GetRecord" "UpdateRecord" "TestConnection"; do
     fi
 done
 # Verify BuildProvider supports the four providers from
-# the v1.5.0 plan. The "regapi" case is its own line;
+# the v1.5.0 plan. The "external" case is its own line;
 # the other three (cloudflare / route53 / rfc2136) share
 # one case statement at v1.5.0 (B145) because all three
 # return the same "not implemented yet" error. The check
 # accepts either form: a dedicated `case "X"` or a
 # shared `case "Y", "X"`.
-for name in regapi cloudflare route53 rfc2136; do
+for name in external cloudflare route53 rfc2136; do
     if grep -qE "(^|\s)\"?$name\"?" internal/dns/provider_build.go; then
         ok "BuildProvider mentions $name (in a case clause)"
     else
@@ -125,30 +125,30 @@ for name in regapi cloudflare route53 rfc2136; do
     fi
 done
 
-# --- contract D: dnsregapi uses the WORKING pattern -----
+# --- contract D: dnsexternal uses the WORKING pattern -----
 echo
-echo "=== contract D: dnsregapi uses top-level form fields ==="
-if [ -d internal/dnsregapi ]; then
-    ok "internal/dnsregapi/ directory exists (sibling of dns/, not dns/regapi/ — cycle avoidance)"
+echo "=== contract D: dnsexternal uses top-level form fields ==="
+if [ -d internal/dnsexternal ]; then
+    ok "internal/dnsexternal/ directory exists (sibling of dns/, not dns/external/ — cycle avoidance)"
 else
-    bad "internal/dnsregapi/ directory missing"
+    bad "internal/dnsexternal/ directory missing"
 fi
 for f in client.go client_test.go; do
-    if [ -f "internal/dnsregapi/$f" ]; then
-        ok "internal/dnsregapi/$f exists"
+    if [ -f "internal/dnsexternal/$f" ]; then
+        ok "internal/dnsexternal/$f exists"
     else
-        bad "internal/dnsregapi/$f missing"
+        bad "internal/dnsexternal/$f missing"
     fi
 done
 # Verify GetRecord sends username+password as TOP-LEVEL
 # form fields (not inside input_data JSON). The test
 # file pins this contract — search for the assertion.
-if grep -q "form username" internal/dnsregapi/client_test.go; then
+if grep -q "form username" internal/dnsexternal/client_test.go; then
     ok "client_test.go pins top-level username field (regression test for the NO_AUTH bug)"
 else
     bad "client_test.go does NOT assert on top-level username field"
 fi
-if grep -q "password leaked into input_data" internal/dnsregapi/client_test.go; then
+if grep -q "password leaked into input_data" internal/dnsexternal/client_test.go; then
     ok "client_test.go fails if password is put into input_data (regression test)"
 else
     bad "client_test.go does NOT assert that password is NOT in input_data"

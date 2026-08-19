@@ -409,7 +409,7 @@ it. To restore from a backup: see Section 6 step 10.
 #### Mode B — external PG (HA Patroni, RDS, etc.)
 
 Operators with an existing PG cluster (e.g. svyatoslava on
-`45.152.198.217:5432` behind Patroni) point skygate at it:
+`<operator-vm-public-ip>:5432` behind Patroni) point skygate at it:
 
 ```bash
 # 1. Create the skygate database + user on the cluster
@@ -418,7 +418,7 @@ CREATE DATABASE skygate OWNER skygate;
 
 # 2. Set the DSN
 cat >> .env <<EOF
-SKYGATE_DB_DSN=postgres://skygate:<password>@45.152.198.217:5432/skygate?sslmode=require
+SKYGATE_DB_DSN=postgres://skygate:<password>@<operator-vm-public-ip>:5432/skygate?sslmode=require
 PG_DB_PASSWORD=<unused in this mode>
 EOF
 

@@ -1,7 +1,7 @@
 // Package ha — High-Availability chain for skygate (v1.5.0 / B145).
 //
 // The HA model is **active-passive with priority chain**:
-//   - One node holds the "active" role (responds to skygate.skynas.ru,
+//   - One node holds the "active" role (responds to skygate.<your-domain>,
 //     holds the DNS A-record, owns the Patroni primary).
 //   - The rest of the chain are "standby" nodes, ordered by
 //     priority (lower number = higher priority; P1 is the
@@ -20,8 +20,8 @@
 //
 // SecretBox
 // ---------
-// The reg.ru SSL cert + alternative password live in
-// `internal/ha/regapi/credentials.go` and are stored in
+// The the configured DNS provider SSL cert + alternative password live in
+// `internal/ha/external/credentials.go` and are stored in
 // `global_settings` rows encrypted via `db.EncryptForColumn`
 // (AES-256-GCM keyed by SKYGATE_SECRET_KEY).
 package ha
@@ -36,7 +36,7 @@ import (
 
 // HaRole is a node's role within the HA chain.
 //
-// "active"   — currently serving skygate.skynas.ru (owns DNS,
+// "active"   — currently serving skygate.<your-domain> (owns DNS,
 //              Patroni primary, holds the cert + secret).
 // "standby"  — alive and ready to take over; lower priority = later
 //              in the failover order.

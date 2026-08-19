@@ -1,5 +1,5 @@
 // Package admin — certificates.go owns the /admin/certificates
-// page (upload + reg.ru DNS-01 toggle + current cert info).
+// page (upload + DNS-01 via the configured provider toggle + current cert info).
 //
 // v1.5.0 / B148.
 //
@@ -15,7 +15,7 @@
 //                           (x509 + matchedAny), writes to
 //                           S3, bumps .version
 //  3. DNS-01 toggle       — "Enable Let's Encrypt auto via
-//                           reg.ru DNS-01" (the actual
+//                           DNS-01 via the configured provider" (the actual
 //                           cert-acquisition flow is
 //                           v1.5.x; this v1.5.0 surface
 //                           stores the operator's intent
@@ -37,7 +37,7 @@
 //   - The DNS-01 toggle is intentionally minimal for
 //     v1.5.0: it just stores `dns01_enabled=true` in
 //     global_settings. The actual cert-acquisition flow
-//     (LE certbot + reg.ru DNS-01 challenge) is a
+//     (LE certbot + DNS-01 via the configured provider challenge) is a
 //     separate v1.5.x surface (Phase 4.5 in the plan)
 //     that depends on B146 being unblocked. The v1.5.0
 //     toggle is the "intent" — the operator sees the
@@ -87,7 +87,7 @@ type certificatesPageData struct {
 	// exists on the host).
 	CurrentCertPath string
 	// DNS01Enabled is the operator's "I want
-	// Let's Encrypt auto-renewal via reg.ru
+	// Let's Encrypt auto-renewal via the configured provider
 	// DNS-01" toggle. Persisted in
 	// global_settings.dns01_enabled.
 	DNS01Enabled bool
@@ -258,10 +258,10 @@ func (s *Service) PostAdminCertificateUpload(w http.ResponseWriter, r *http.Requ
 }
 
 // PostAdminCertificateToggleDNS01 handles the
-// "Enable LE auto via reg.ru DNS-01" toggle. For
+// "Enable LE auto via DNS-01 via the configured provider" toggle. For
 // v1.5.0, this just stores the operator's intent in
 // global_settings. A future v1.5.x release will read
-// the toggle + run the actual LE certbot + reg.ru
+// the toggle + run the actual LE certbot + the configured provider
 // DNS-01 challenge flow.
 func (s *Service) PostAdminCertificateToggleDNS01(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
@@ -300,7 +300,7 @@ func (s *Service) PostAdminCertificateToggleDNS01(w http.ResponseWriter, r *http
 	}
 	msg := "LE DNS-01 disabled (cert will be renewed manually via the Upload form)."
 	if enabled {
-		msg = "LE DNS-01 enabled (a future v1.5.x release will run the certbot + reg.ru DNS-01 challenge; until then, use the Upload form for cert changes)."
+		msg = "LE DNS-01 enabled (a future v1.5.x release will run the certbot + DNS-01 via the configured provider challenge; until then, use the Upload form for cert changes)."
 	}
 	certRedirect(w, r, msg, "")
 }
