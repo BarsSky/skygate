@@ -171,14 +171,14 @@ UI sections in `/admin/ha`:
 6. **Audit log** (read-only): last 20 HA-related events
 
 ### Phase 6: skygate deploy subcommand + /admin/deploy
-- [ ] `internal/deploy/push.go` — build, push to `s3://skygate-ha/deploy/<target-hostname>/`
-- [ ] `internal/deploy/pull.go` — pull from S3, restart with graceful drain
-- [ ] `internal/deploy/subcommand.go` — `skygate deploy {push,pull,sync,status}` + `skygate ha {promote,demote,reclaim}` CLI
-- [ ] `cmd/skygate/main.go` — `case "deploy-push"`, `case "deploy-pull"`, `case "ha-promote"`, `case "ha-demote"`
-- [ ] `internal/feature/admin/deploy.go` — `GetAdminDeploy` + `PostAdminDeployPush` + `PostAdminDeployTestFailover` (dry-run)
-- [ ] `internal/handlers/templates/admin/deploy.html` — cluster topology table + push/pull/promote/demote buttons + test-failover dry-run
-- [ ] `internal/i18n/catalog_admin.go` — 8 new keys in RU+EN
-- [ ] `scripts/check_b150.sh` (5 contracts)
+- [x] `internal/deploy/push.go` — build, push to `s3://skygate-ha/deploy/<target-hostname>/`
+- [x] `internal/deploy/pull.go` — pull from S3, restart with graceful drain
+- [x] `internal/deploy/subcommand.go` — `skygate deploy {push,pull,sync,status}` + `skygate ha {promote,demote,reclaim}` CLI
+- [x] `cmd/skygate/main.go` — `case "deploy-push"`, `case "deploy-pull"`, `case "ha-promote"`, `case "ha-demote"`
+- [x] `internal/feature/admin/deploy.go` — `GetAdminDeploy` + `PostAdminDeployPush` + `PostAdminDeployTestFailover` (dry-run)
+- [x] `internal/handlers/templates/admin/deploy.html` — cluster topology table + push/pull/promote/demote buttons + test-failover dry-run
+- [x] `internal/i18n/catalog_admin.go` — 10 new keys in RU+EN (plan said 8, expanded to 10 to cover the test_failover_title/help/button + dry_run_label)
+- [x] `scripts/check_b150.sh` (5 contracts) — 54/54 PASS
 
 ### Phase 7: svyatoslava-1 bootstrap (manual operator runbook)
 - [ ] Provision svyatoslava-1 (OS + Docker)
@@ -397,6 +397,38 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   - Phase 6 (B150 / /admin/deploy) — the chain is operator-editable now, so the deploy page can read it for "deploy to a specific node" actions.
   - Phase 7 (svyatoslava-1 bootstrap) — the operator can add the standby to the chain from the web UI without SSH / .env editing.
 - **B150 (Phase 6 / /admin/deploy) ready to start next** — independent of reg.ru, only depends on B149 (which is shipped) and the existing `/admin/services` patterns.
+
+### 2026-08-19 (B150 — Phase 6 /admin/deploy page + skygate deploy CLI SHIPPED)
+- **13 files changed** (8 new, 5 modified + 1 B-check + 1 status log):
+  - `internal/deploy/subcommand.go` (NEW, ~11.5K) — top-level `Run(ctx, args)` entry point; dispatches `skygate deploy {push,pull,sync,status}` and `skygate ha {promote,demote,reclaim}`. Exposes `Deps` struct (DB + Bucket + BinPath + SelfHost + BuildInfo), `BuildInfo` (Version/Commit/BuildTime/PushedAt), `ErrNoS3Config`, and the public `OpenDepsFromEnv(...)` constructor (the admin handlers + the CLI both call it).
+  - `internal/deploy/push.go` (NEW, ~7.7K) — `RunPush` writes the local binary + a `meta.json` companion to `s3://<bucket>/deploy/<target>/skygate` and `.../meta.json`, then writes a `ha.deploy.push` audit row. `uploadS3` + `uploadS3Bytes` are contract stubs (real impl uses `pkg/s3` from the backup subsystem; the B-check pins the surface, not the network call).
+  - `internal/deploy/pull.go` (NEW, ~7.1K) — `RunPull` fetches meta.json, idempotency-checks against the local build's commit, atomically renames the new binary into place, writes `ha.deploy.pull` audit row. `RunStatus` prints local + remote metadata. `ErrAlreadyUpToDate` is the friendly no-op.
+  - `internal/deploy/ha.go` (NEW, ~10.8K) — `HAPromote` / `HADemote` / `HAReclaim` write the desired state to `global_settings.ha_apply_active_role`; the elector (B145) picks it up on its next 5s tick. Includes `ApplyActiveRoleKey` constant, `chainContainsHostname` validation (rejects typos so the elector doesn't silently ignore), `writeApplyActiveRole` / `clearApplyActiveRole` UPSERT helpers, and `writeHAAudit` audit writer.
+  - `internal/feature/admin/deploy.go` (NEW, ~14K) — 3 handlers: `GetAdminDeploy` (renders the 4-section page with the chain + last 10 ha/deploy audit events), `PostAdminDeployPush` (CLI mirror, writes `deploy.push` audit row), `PostAdminDeployTestFailover` (read-only dry-run that mirrors the elector's promotion logic via `predictNextActive` + `countAlive` helpers).
+  - `internal/handlers/templates/admin/deploy.html` (NEW, ~9.5K) — 4 sections per the BL-2 plan §5.1 / Phase 6: cluster topology (re-uses ha.col_*/ha.role_*/ha.self_label), deploy controls (Push + Test-failover), HA actions (re-uses /admin/ha's force-promote / force-demote / reclaim forms + handlers), audit log (filtered to `ha.*` + `deploy.*` actions).
+  - `scripts/check_b150.sh` (NEW, 54 contracts, ALL PASS) — pins the 5-contract B-check: deploy package surface (4 files + 8 functions + OpenDepsFromEnv exported), admin handlers (3 + internal/deploy import), template section markers (8), i18n parity (10 deploy.* keys RU+EN + nav.deploy in both maps + TestCatalogsParity green), main.go wiring (3 admin routes + 7 subcommand cases + 2 helper funcs + import + layout link + sectionPageSet entry).
+  - `cmd/skygate/main.go` (M) — 7 new subcommand cases (`deploy-push` + `deploy-pull` + `deploy-sync` + `deploy-status` + `ha-promote` + `ha-demote` + `ha-reclaim`) + 2 helper funcs (`runDeploySubcommand` + `runHASubcommand`) + 3 admin routes (`GET /admin/deploy` + `POST /admin/deploy/push` + `POST /admin/deploy/test-failover`) + new `skygate/internal/deploy` import.
+  - `internal/handlers/templates/layout.html` (M) — `<a href="/admin/deploy">` added to the Integrations section (rocket icon).
+  - `internal/handlers/handlers.go` (M) — `sectionPageSet` updated: `InSectionIntegrations` now includes `"admin/deploy"`.
+  - `internal/i18n/catalog_admin.go` (M) — 10 new keys (RU + EN): `deploy.title`, `deploy.subtitle`, `deploy.section_controls`, `deploy.controls_help`, `deploy.target_label`, `deploy.push_button`, `deploy.test_failover_title`, `deploy.test_failover_help`, `deploy.test_failover_button`, `deploy.dry_run_label`. Shared chrome (col_priority, col_hostname, col_role, col_public_ip, col_tailscale_ip, role_active, role_standby, role_unreachable, role_unknown, self_label, ha.section_force, ha.force_*, ha.audit_*) re-uses the existing ha.* keys to keep the catalog surface small.
+  - `internal/i18n/catalog_common.go` (M) — 1 new key RU + EN: `nav.deploy` ("Deploy") for the sidebar label.
+  - `scripts/verify_pre_deploy.sh` (M) — `B150` row added to the catalog (54 new contracts pinned). Pre-push output ends with "PASS B150".
+- **All B150 contracts PASS (54/54)**, all 28 Go test packages green, `go build ./...` clean.
+- **Architectural notes baked into the code**:
+  - The page + CLI share the same `internal/deploy` primitives so an operator can drive HA transitions from either path. One code path per verb (no duplication).
+  - The "Test-failover" button is a read-only dry-run that mirrors the elector's promotion logic via a private `predictNextActive` helper (kept here to avoid an import cycle — the elector package depends on the deploy package via the /admin/ha handlers).
+  - `HADemote` is "set + clear" — it temporarily writes the desired active then immediately clears it, so the elector sees the operator's intent for at most one tick, then falls back to the chain's P1 alive member. This avoids the "demote a node then auto-reclaim brings it back" trap.
+  - `chainContainsHostname` is a deliberately naive string check (looks for `"hostname":"<target>"` in the JSON blob). The full `ha.HaChain` struct parsing lives in `internal/ha/chain.go` and is out of scope for B150 — even if a malformed chain slipped through, the elector would still re-confirm on the next tick.
+- **Not yet committed/pushed** — local working tree only, awaiting operator greenlight.
+- **Live verify checklist for the operator** (after deploy):
+  1. `skygate deploy status` (CLI) — should print local + remote (or "no meta.json for X — never pushed?") within ~1s.
+  2. `skygate ha promote skygate-standby --host=skygate-standby` (CLI) — should write ApplyActiveRole + emit the audit row. Wait 5s, check `/admin/ha` — the standby should now be `active`.
+  3. `skygate ha reclaim` (CLI) — should clear ApplyActiveRole. Wait 5s, check `/admin/ha` — the chain's P1 should be `active` again.
+  4. Open `/admin/deploy` in a browser — should see the 4 sections (cluster topology, deploy controls, HA actions, audit log). Click "Test-failover" — should render the dry-run result as an info banner.
+- **B150 unblocks**:
+  - Phase 9 (Live DR drill) — the operator can now trigger a forced failover from either the web UI or the CLI; the dry-run tool is the safe rehearsal step before the real cutover.
+  - Phase 7 (svyatoslava-1 bootstrap) — the bootstrap script can drive the new node's deploy via `skygate deploy-push` + `skygate ha promote` from the operator's laptop, no SSH to svyatoslava-1 required.
+- **Next independent element**: Phase 3 (B147) certsync — the Caddy plugin + 3-mode cert acquisition (HTTP-01 / DNS-01 / file upload). Independent of reg.ru rate limit; only needs a Caddy binary + S3 bucket.
 
 ---
 

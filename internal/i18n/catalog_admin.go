@@ -363,6 +363,24 @@ var ruAdmin = map[string]string{
 	"ha.role_self_other"                : "This skygate is not in the chain (run a deploy to add it).",
 	"ha.role_self_unknown"              : "This skygate's role is unknown — the elector has not yet observed the chain.",
 	"ha.ha_disabled"                    : "HA is disabled (SKYGATE_HA_ENABLED=false). Set it to true in .env to start the elector and the failover chain.",
+
+	// v1.5.0 / B150 — /admin/deploy page. 10 new keys
+	// (page chrome + the 6 deploy-specific form labels).
+	// Shared labels (col_*, role_*, ha.section_force,
+	// ha.audit_*) re-use keys already defined in the ha.*
+	// block above, so the B-check only needs to verify
+	// this 10-key set + the file presence + the routes
+	// + the handler existence.
+	"deploy.title"                          : "Deploy",
+	"deploy.subtitle"                       : "Push the local build to the S3 deploy bucket, or trigger a dry-run failover to see what the elector would do.",
+	"deploy.section_controls"               : "Управление развёртыванием",
+	"deploy.controls_help"                  : "Push uploads the running binary + meta.json to the S3 deploy bucket. Test-failover is a read-only dry run that shows which chain member the elector would promote if the active went down right now.",
+	"deploy.target_label"                   : "Целевой узел",
+	"deploy.push_button"                    : "Push to S3",
+	"deploy.test_failover_title"            : "Dry-run failover",
+	"deploy.test_failover_help"             : "Чистая симуляция: показывает, кого elector промотит, если активный узел сейчас упадёт. Цепочка и audit log не изменяются.",
+	"deploy.test_failover_button"           : "Запустить dry-run",
+	"deploy.dry_run_label"                  : "Dry-run result",
 }
 
 var enAdmin = map[string]string{
@@ -714,4 +732,17 @@ var enAdmin = map[string]string{
 	"ha.role_self_other"                : "This skygate is not in the chain (run a deploy to add it).",
 	"ha.role_self_unknown"              : "This skygate's role is unknown — the elector has not yet observed the chain.",
 	"ha.ha_disabled"                    : "HA is disabled (SKYGATE_HA_ENABLED=false). Set it to true in .env to start the elector and the failover chain.",
+
+	// v1.5.0 / B150 — /admin/deploy page. Mirrors the
+	// 10 RU keys above. Keep in lock-step.
+	"deploy.title"                          : "Deploy",
+	"deploy.subtitle"                       : "Push the local build to the S3 deploy bucket, or trigger a dry-run failover to see what the elector would do.",
+	"deploy.section_controls"               : "Deploy controls",
+	"deploy.controls_help"                  : "Push uploads the running binary + meta.json to the S3 deploy bucket. Test-failover is a read-only dry run that shows which chain member the elector would promote if the active went down right now.",
+	"deploy.target_label"                   : "Target node",
+	"deploy.push_button"                    : "Push to S3",
+	"deploy.test_failover_title"            : "Dry-run failover",
+	"deploy.test_failover_help"             : "Read-only simulation: shows which chain member the elector would promote if the active node went down right now. No chain or audit log changes.",
+	"deploy.test_failover_button"           : "Run dry-run",
+	"deploy.dry_run_label"                  : "Dry-run result",
 }

@@ -19,6 +19,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/backup"
 	"skygate/internal/config"
+	"skygate/internal/deploy"
 	"skygate/internal/dns"
 	"skygate/internal/expirewatch"
 	"skygate/internal/ha"
@@ -179,6 +180,41 @@ func main() {
 			// subcommands).
 			if err := runCleanupSmokeMeshes(); err != nil {
 				fmt.Fprintf(os.Stderr, "cleanup-smoke-meshes failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "deploy-push", "deploy-pull", "deploy-sync", "deploy-status":
+			// v1.5.0 / B150 — CLI mirror of the
+			// /admin/deploy web surface. Each
+			// subcommand translates to a `skygate
+			// deploy <verb>` call into the
+			// internal/deploy package. Optional
+			// --target=<host> is supported (e.g.
+			// `skygate deploy-push --target=
+			// skygate-standby` to stage a build
+			// for a specific host).
+			//
+			// Exit code 0 on success (including
+			// "already up to date"), 1 on error.
+			verb := strings.TrimPrefix(os.Args[1], "deploy-")
+			if err := runDeploySubcommand(context.Background(), os.Args[1:], verb); err != nil {
+				fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
+				os.Exit(1)
+			}
+			return
+		case "ha-promote", "ha-demote", "ha-reclaim":
+			// v1.5.0 / B150 — CLI mirror of the
+			// /admin/ha "Force actions" buttons.
+			// `ha-promote` and `ha-demote` take
+			// the target hostname as the second
+			// CLI arg (`skygate ha-promote
+			// skygate-standby`); `ha-reclaim`
+			// takes none.
+			//
+			// Exit code 0 on success, 1 on error.
+			verb := strings.TrimPrefix(os.Args[1], "ha-")
+			if err := runHASubcommand(context.Background(), os.Args[1:], verb); err != nil {
+				fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
 				os.Exit(1)
 			}
 			return
@@ -923,6 +959,17 @@ func main() {
 	// See internal/feature/admin/ha.go for the handler bodies
 	// + doc comments and internal/ha/ for the underlying types.
 	mux.Handle("GET /admin/ha", authMW(http.HandlerFunc(adminSvc.GetAdminHA)))
+	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
+	// failover dry-run). The page is the web mirror of
+	// `skygate deploy {push,pull,sync,status}` and
+	// `skygate ha {promote,demote,reclaim}` — same
+	// internal/deploy primitives, different transport.
+	// See internal/feature/admin/deploy.go for the
+	// handler bodies + doc comments and
+	// internal/deploy/ for the underlying verbs.
+	mux.Handle("GET /admin/deploy", authMW(http.HandlerFunc(adminSvc.GetAdminDeploy)))
+	mux.Handle("POST /admin/deploy/push", authMW(http.HandlerFunc(adminSvc.PostAdminDeployPush)))
+	mux.Handle("POST /admin/deploy/test-failover", authMW(http.HandlerFunc(adminSvc.PostAdminDeployTestFailover)))
 	mux.Handle("POST /admin/ha/chain/edit", authMW(http.HandlerFunc(adminSvc.PostAdminHAChainEdit)))
 	mux.Handle("POST /admin/ha/auto-reclaim-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminHAAutoReclaimToggle)))
 	mux.Handle("POST /admin/ha/node/add", authMW(http.HandlerFunc(adminSvc.PostAdminHAAddNode)))
@@ -1964,6 +2011,45 @@ func runCleanupSmokeMeshes() error {
 	}
 	fmt.Println(mesh.FormatCleanupMessage(res))
 	return nil
+}
+
+// runDeploySubcommand translates the top-level CLI verb
+// (`skygate deploy-push`, `skygate deploy-pull`, etc.)
+// into the deploy.Run() call, which expects
+// `[verb, --target=...]` shape.
+//
+// v1.5.0 / B150.
+//
+// `args` is the full os.Args[1:]; we re-slice it to
+// drop the leading `deploy-X` token so the verb becomes
+// the first arg to deploy.Run(). `--target=<host>` (if
+// present) flows through unchanged.
+func runDeploySubcommand(ctx context.Context, args []string, verb string) error {
+	// args[0] is the `deploy-X` token; skip it.
+	tail := args[1:]
+	// Prepend the verb so deploy.Run sees `[verb, ...flags]`.
+	return deploy.Run(ctx, append([]string{"deploy", verb}, tail...))
+}
+
+// runHASubcommand is the ha.* equivalent of
+// runDeploySubcommand. `ha-promote <host>` and
+// `ha-demote <host>` take a hostname arg; `ha-reclaim`
+// takes none.
+//
+// The hostname arg is passed through as `--host=<X>`
+// so deploy.Run's flag parser handles it. (deploy.Run
+// uses flag.ContinueOnError + explicit parsing, so the
+// shape is "skygate ha promote --host=foo" → os.Args
+// = ["ha-promote", "foo"], which we re-shape to
+// ["ha", "promote", "--host=foo"].)
+func runHASubcommand(ctx context.Context, args []string, verb string) error {
+	// args[0] is the `ha-X` token. The hostname (if
+	// any) is args[1].
+	tail := args[1:]
+	if len(tail) > 0 {
+		tail = append([]string{"--host=" + tail[0]}, tail[1:]...)
+	}
+	return deploy.Run(ctx, append([]string{"ha", verb}, tail...))
 }
 
 // truncateForDB clamps a string to max bytes, appending

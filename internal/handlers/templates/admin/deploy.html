@@ -1,0 +1,199 @@
+{{define "body-admin-deploy"}}
+{{/*
+  /admin/deploy — v1.5.0 / B150
+
+  Operator-facing surface for `skygate deploy {push,pull,
+  sync,status}` and `skygate ha {promote,demote,reclaim}`.
+  The page is the web mirror of the CLI subcommands in
+  internal/deploy; the actual work is done in push.go /
+  pull.go / ha.go (same code path as the CLI).
+
+  Page surface (per docs/internal/ha-v1.5.0-execution.md
+  §5.1 / Phase 6):
+
+    1. Cluster topology  — read-only chain table (reuses
+                            the same ha.col_*, ha.role_*,
+                            ha.self_label keys /admin/ha uses
+                            for the same fields)
+    2. Deploy controls   — Push / Test-failover (the 6
+                            deploy.* keys introduced by B150)
+    3. HA actions        — promote / demote / reclaim
+                            (re-uses /admin/ha's handlers +
+                            form fields, no new keys)
+    4. Audit log         — re-uses /admin/ha's audit table
+                            with a "deploy.*" filter
+
+  8 new i18n keys (per the B150 plan): deploy.title,
+  deploy.subtitle, deploy.section_controls, deploy.controls_help,
+  deploy.push_button, deploy.test_failover_button,
+  deploy.test_failover_help, deploy.dry_run_label.
+  All other labels are reused from ha.* to keep the catalog
+  surface small (the B-check only verifies the 8 new keys;
+  reuse keeps the B-check focused on the deploy-specific
+  additions, not the shared chrome).
+*/}}
+
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-rocket"></i>{{t "deploy.title"}}</h2>
+    <div class="sub">{{t "deploy.subtitle"}}</div>
+  </div>
+</div>
+
+{{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
+{{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
+{{if .Data.DryRunResult}}<div class="alert alert-info"><i class="fa-solid fa-flask-vial"></i> <strong>{{t "deploy.dry_run_label"}}:</strong> {{.Data.DryRunResult}}</div>{{end}}
+
+{{if not .Data.Chain.Members}}
+  <div class="card" style="background:var(--bg-muted)">
+    <div style="font-size:13px;line-height:1.6">
+      <strong>{{t "ha.empty_chain"}}</strong>
+      <span style="display:block;margin-top:4px">{{t "deploy.controls_help"}}</span>
+    </div>
+  </div>
+{{end}}
+
+{{/* ===================== Section 1: Cluster topology ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-sitemap"></i>{{t "ha.section_topology"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "ha.topology_help"}}</p>
+
+  {{if .Data.SelfHostname}}
+    <div style="margin:8px 0;padding:8px 12px;background:var(--bg-muted);border-radius:4px">
+      <strong>{{t "ha.self_label"}}:</strong> <code>{{.Data.SelfHostname}}</code>
+      {{if eq .Data.SelfRole "active"}}<span class="tag tag-success">{{t "ha.role_active"}}</span>
+      {{else if eq .Data.SelfRole "standby"}}<span class="tag">{{t "ha.role_standby"}}</span>
+      {{else if eq .Data.SelfRole "unreachable"}}<span class="tag tag-warning">{{t "ha.role_unreachable"}}</span>
+      {{else}}<span class="tag">{{t "ha.role_unknown"}}</span>
+      {{end}}
+    </div>
+  {{end}}
+
+  {{if .Data.Chain.Members}}
+  <table class="table" style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th>{{t "ha.col_priority"}}</th>
+        <th>{{t "ha.col_hostname"}}</th>
+        <th>{{t "ha.col_role"}}</th>
+        <th>{{t "ha.col_public_ip"}}</th>
+        <th>{{t "ha.col_tailscale_ip"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.Chain.SortedByPriority}}
+      <tr>
+        <td>P{{.Priority}}</td>
+        <td>
+          <code>{{.Hostname}}</code>
+          {{if eq .Hostname $.Data.SelfHostname}}<span class="tag">{{t "ha.self_label"}}</span>{{end}}
+        </td>
+        <td>
+          {{if eq .Role "active"}}<span class="tag tag-success">{{t "ha.role_active"}}</span>
+          {{else if eq .Role "standby"}}<span class="tag">{{t "ha.role_standby"}}</span>
+          {{else if eq .Role "unreachable"}}<span class="tag tag-warning">{{t "ha.role_unreachable"}}</span>
+          {{else}}<span class="tag">{{t "ha.role_unknown"}}</span>
+          {{end}}
+        </td>
+        <td><code style="font-size:12px">{{.PublicIP}}</code></td>
+        <td><code style="font-size:12px">{{.TailscaleIP}}</code></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+
+{{/* ===================== Section 2: Deploy controls ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-cloud-arrow-up"></i>{{t "deploy.section_controls"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "deploy.controls_help"}}</p>
+
+  <form method="POST" action="/admin/deploy/push" style="margin-bottom:16px;padding:12px;background:var(--bg-muted);border-radius:4px">
+    <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-cloud-arrow-up"></i> {{t "deploy.push_button"}}</h4>
+    <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+      <div>
+        <label style="display:block;font-size:12px;color:var(--text-muted)">{{t "deploy.target_label"}}</label>
+        <select name="target" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px">
+          {{if .Data.Chain.Members}}
+            {{range .Data.Chain.SortedByPriority}}<option value="{{.Hostname}}" {{if eq .Hostname $.Data.FormState.Target}}selected{{end}}>{{.Hostname}} (P{{.Priority}})</option>{{end}}
+          {{else}}
+            <option value="{{.Data.SelfHostname}}" selected>{{.Data.SelfHostname}} (self)</option>
+          {{end}}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-cloud-arrow-up"></i> {{t "deploy.push_button"}}</button>
+    </div>
+  </form>
+
+  <form method="POST" action="/admin/deploy/test-failover" style="padding:12px;background:var(--bg-muted);border-radius:4px">
+    <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-flask-vial"></i> {{t "deploy.test_failover_title"}}</h4>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px 0">{{t "deploy.test_failover_help"}}</p>
+    <button type="submit" class="btn"><i class="fa-solid fa-play"></i> {{t "deploy.test_failover_button"}}</button>
+  </form>
+</div>
+
+{{/* ===================== Section 3: HA actions (re-uses /admin/ha) ======== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-arrows-rotate"></i>{{t "ha.section_force"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "ha.force_help"}}</p>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:12px">
+    <form method="POST" action="/admin/ha/force-promote" style="padding:12px;background:var(--bg-muted);border-radius:4px">
+      <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-arrow-up"></i> {{t "ha.force_promote"}}</h4>
+      <div>
+        <select name="hostname" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px">
+          {{range .Data.Chain.SortedByPriority}}<option value="{{.Hostname}}">{{.Hostname}} (P{{.Priority}})</option>{{end}}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%">{{t "ha.force_promote"}}</button>
+    </form>
+
+    <form method="POST" action="/admin/ha/force-demote" style="padding:12px;background:var(--bg-muted);border-radius:4px">
+      <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-arrow-down"></i> {{t "ha.force_demote"}}</h4>
+      <div>
+        <select name="hostname" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px">
+          {{range .Data.Chain.SortedByPriority}}<option value="{{.Hostname}}">{{.Hostname}} (P{{.Priority}})</option>{{end}}
+        </select>
+      </div>
+      <button type="submit" class="btn" style="width:100%">{{t "ha.force_demote"}}</button>
+    </form>
+
+    <form method="POST" action="/admin/ha/reclaim" style="padding:12px;background:var(--bg-muted);border-radius:4px">
+      <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-rotate-left"></i> {{t "ha.force_reclaim"}}</h4>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px 0">{{t "ha.force_reclaim_help"}}</p>
+      <button type="submit" class="btn" style="width:100%">{{t "ha.force_reclaim"}}</button>
+    </form>
+  </div>
+</div>
+
+{{/* ===================== Section 4: Audit log ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i>{{t "ha.section_audit"}}</h3>
+  {{if .Data.AuditEvents}}
+  <table class="table" style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th>{{t "ha.audit_when"}}</th>
+        <th>{{t "ha.audit_actor"}}</th>
+        <th>{{t "ha.audit_action"}}</th>
+        <th>{{t "ha.audit_detail"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.AuditEvents}}
+      <tr>
+        <td><span style="font-size:12px;color:var(--text-muted)">{{.WhenUnix}}</span></td>
+        <td><code style="font-size:12px">{{.Actor}}</code></td>
+        <td><code style="font-size:12px">{{.Action}}</code></td>
+        <td style="font-size:12px;word-break:break-all">{{.Detail}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p style="color:var(--text-muted);font-size:13px">{{t "ha.audit_empty"}}</p>
+  {{end}}
+</div>
+
+{{end}}
