@@ -22,6 +22,7 @@ import (
 	"skygate/internal/dns"
 	"skygate/internal/expirewatch"
 	"skygate/internal/ha"
+	"skygate/internal/ha/regapi"
 	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
 	exitrules "skygate/internal/feature/exit_rules"
@@ -591,6 +592,22 @@ func main() {
 		TailscaleAuthKeyPath: tailscaleEnvOr("SKYGATE_TS_AUTHKEY_PATH", "/data/ts/authkey"),
 		TailscaleLoginServer:  tailscaleEnvOr("SKYGATE_TS_LOGIN_SERVER", "https://head.example.com"),
 		TailscaleHostname:     tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host-1"),
+
+		// v1.5.0 / B149 — /admin/ha page.
+		//
+		// RegapiStore is the encrypted credential store for
+		// the reg.ru API (cert + alt-password). The store
+		// reads SKYGATE_SECRET_KEY for AES-256-GCM; when
+		// unset, Save() returns db.ErrSecretKeyUnset and
+		// the /admin/ha "External DNS" form shows a
+		// "store not configured" banner.
+		RegapiStore: regapi.NewStore(app.DB, cfg.SecretKeyHex),
+		// SelfHostname is THIS skygate instance's name in
+		// the HA chain. Defaults to the Tailscale hostname
+		// (the same name the operator SSHes into). The
+		// /admin/ha "Self role" column reads this to render
+		// the active/standby/unreachable badge.
+		SelfHostname: tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host-1"),
 		// refactor-v0.30 Phase B step 6b (2026-07-29):
 		// /admin/acls links to this URL (when non-empty)
 		// instead of the bundled Headplane sidecar.
@@ -899,6 +916,22 @@ func main() {
 	mux.Handle("POST /admin/derp/relays/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysDelete)))
 	mux.Handle("POST /admin/derp/relays/toggle", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysToggle)))
 	mux.Handle("POST /admin/derp/relays/test", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysTest)))
+
+	// v1.5.0 / B149 — /admin/ha (High Availability chain editor).
+	// The page renders the cluster topology, failover policy,
+	// HA nodes CRUD, reg.ru credentials, and force actions.
+	// See internal/feature/admin/ha.go for the handler bodies
+	// + doc comments and internal/ha/ for the underlying types.
+	mux.Handle("GET /admin/ha", authMW(http.HandlerFunc(adminSvc.GetAdminHA)))
+	mux.Handle("POST /admin/ha/chain/edit", authMW(http.HandlerFunc(adminSvc.PostAdminHAChainEdit)))
+	mux.Handle("POST /admin/ha/auto-reclaim-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminHAAutoReclaimToggle)))
+	mux.Handle("POST /admin/ha/node/add", authMW(http.HandlerFunc(adminSvc.PostAdminHAAddNode)))
+	mux.Handle("POST /admin/ha/node/remove", authMW(http.HandlerFunc(adminSvc.PostAdminHARemoveNode)))
+	mux.Handle("POST /admin/ha/force-promote", authMW(http.HandlerFunc(adminSvc.PostAdminHAForcePromote)))
+	mux.Handle("POST /admin/ha/force-demote", authMW(http.HandlerFunc(adminSvc.PostAdminHAForceDemote)))
+	mux.Handle("POST /admin/ha/reclaim", authMW(http.HandlerFunc(adminSvc.PostAdminHAReclaim)))
+	mux.Handle("POST /admin/ha/regapi/save", authMW(http.HandlerFunc(adminSvc.PostAdminHARegapiCreds)))
+	mux.Handle("POST /admin/ha/regapi/test", authMW(http.HandlerFunc(adminSvc.PostAdminHARegapiTest)))
 	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
 	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(adminSvc.GetAdminBackup)))

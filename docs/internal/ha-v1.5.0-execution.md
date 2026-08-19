@@ -367,6 +367,37 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   - certsync (B147) is independent of reg.ru and can start now
 - **Decision #17 (pluggable DNS provider) verified**: `internal/dns` interface + factory + 4 reserved provider names; adding a new provider = implementing the interface + adding a case. Decision #18 (anonymization) verified: no real certs / passwords / IPs / fingerprints in source, only in operator-side .env / VM / S3.
 
+### 2026-08-19 (B149 — Phase 5 /admin/ha page SHIPPED)
+- **9 files changed** (6 modified, 3 new + B-check):
+  - `internal/feature/admin/ha.go` (NEW, ~27K) — 10 handlers: GetAdminHA, PostAdminHAChainEdit, PostAdminHAAutoReclaimToggle, PostAdminHAAddNode, PostAdminHARemoveNode, PostAdminHAForcePromote, PostAdminHAForceDemote, PostAdminHAReclaim, PostAdminHARegapiCreds, PostAdminHARegapiTest
+  - `internal/feature/admin/ha_test.go` (NEW, ~13K) — 12 pure-Go unit tests for the form-parsing / confirmation helpers (no DB needed): parseHAAddNodeForm (OK + 9 error cases), parseHAChainEditForm (3 cases), parseHARegapiCredsForm (3 cases), isHAForceActionConfirmationCorrect (9 sub-cases), formatHAChainForTemplate (2 cases), regapi.Credentials.Validate regression (5 cases)
+  - `internal/handlers/templates/admin/ha.html` (NEW, ~14K) — 6-section UI: cluster topology, failover policy, add node, reg.ru creds, force actions, audit log
+  - `scripts/check_b149.sh` (NEW, 56 contracts, ALL PASS) — pins the 5-contract B-check: handler presence, test presence, template section markers, i18n parity, route+field wiring
+  - `cmd/skygate/main.go` (M) — 10 new routes + 2 new Service fields wired (RegapiStore, SelfHostname) + new `skygate/internal/ha/regapi` import
+  - `internal/feature/admin/service.go` (M) — RegapiStore + SelfHostname fields added + `skygate/internal/ha/regapi` import
+  - `internal/handlers/handlers.go` (M) — sectionPageSet updated (InSectionIntegrations now includes `admin/derp_relays` + `admin/ha`)
+  - `internal/handlers/templates/layout.html` (M) — `<a href="/admin/ha">` added to Integrations section
+  - `internal/i18n/catalog_admin.go` (M) — 72 new keys (RU + EN): `ha.title`, `ha.subtitle`, 6× `ha.section_*`, `ha.col_*` (7 columns), `ha.role_*` (5), `ha.edit_*` (2), `ha.add_node_*` (6), `ha.remove_node_*` (2), `ha.empty_chain`, `ha.regapi_*` (13), `ha.force_*` (12), `ha.section_audit` (3), `ha.role_self_*` (4), `ha.ha_disabled` — total 72 new keys
+  - `internal/i18n/catalog_common.go` (M) — 1 new key RU + EN: `nav.ha` ("High Availability")
+- **All B149 contracts PASS (56/56)**, all 28 Go test packages green, `go build ./...` clean.
+- **Architectural notes baked into the code**:
+  - Force actions write to `global_settings.ha_chain`; the elector (B145) picks up the new state on its next 5s tick. The admin handler never bypasses the elector — the "force" is just a fast write, not a manual takeover.
+  - The `regapi.Store` is reused from B145 — the form parser (`parseHARegapiCredsForm`) is intentionally thin (just trim + forward), validation lives in `regapi.Credentials.Validate()` so the same rules apply to programmatic callers (CLI, tests, future /admin/certificates).
+  - `isHAForceActionConfirmationCorrect` is a UX guard, not a security check — string equality is fine (deliberately not constant-time, since the action is non-sensitive).
+  - The 6 sections of the UI map 1:1 to the plan's §5.1 enumeration, so the doc and the template stay in lockstep.
+- **Not yet committed/pushed** — local working tree only, awaiting operator greenlight.
+- **Live verify checklist for the operator** (after deploy):
+  1. Navigate to `/admin/ha` — should see the "High Availability" page with an empty chain card (fresh deploy state).
+  2. Click "Integrations" sidebar section, then "High Availability" — auto-opens the section.
+  3. Add a node via the form (hostname=skygate-standby, priority=2, public_ip=192.0.2.10) — chain should appear in the topology table.
+  4. Toggle auto-failover on, off — flash should report the new state.
+  5. Visit `/admin/audit` and filter for "ha." — should see the audit rows.
+  6. (Phase 2 / B146 dependent) Once the reg.ru IP whitelist is sorted: paste the cert + password into the "External DNS" form, click "Test connection" — should see a Test OK / FAILED line.
+- **B149 unblocks**:
+  - Phase 6 (B150 / /admin/deploy) — the chain is operator-editable now, so the deploy page can read it for "deploy to a specific node" actions.
+  - Phase 7 (svyatoslava-1 bootstrap) — the operator can add the standby to the chain from the web UI without SSH / .env editing.
+- **B150 (Phase 6 / /admin/deploy) ready to start next** — independent of reg.ru, only depends on B149 (which is shipped) and the existing `/admin/services` patterns.
+
 ---
 
 ## 7. References

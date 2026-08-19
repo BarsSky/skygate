@@ -64,6 +64,7 @@ var ruCommon = map[string]string{
 	"nav.system_tests"               : "Тесты системы",
 	"nav.headplane"                  : "Headplane",
 	"nav.integrations"               : "Интеграции",
+	"nav.ha"                          : "High Availability",  // v1.5.0 / B149
 	"nav.invites"                    : "Инвайт-коды",
 	"nav.meshes_admin"               : "Mesh-сети (все)",
 	// 2026-08-12: v1.1.0 (TD-1 + TD-3) — sidebar section
@@ -239,6 +240,7 @@ var enCommon = map[string]string{
 	"nav.system_tests"               : "System tests",
 	"nav.headplane"                  : "Headplane",
 	"nav.integrations"               : "Integrations",
+	"nav.ha"                          : "High Availability",  // v1.5.0 / B149
 	"nav.invites"                    : "Invite codes",
 	"nav.meshes_admin"               : "Meshes (all)",
 	// 2026-08-12: v1.1.0 (TD-1 + TD-3) — see the RU block
