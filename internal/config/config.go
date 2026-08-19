@@ -296,6 +296,24 @@ type Config struct {
 	// Default: disabled, 5 AM daily.
 	CleanupSmokeMeshInAppEnabled bool
 	CleanupSmokeMeshSchedule     string // cron expression, e.g. "0 5 * * *"
+	// 2026-08-19: v1.5.0 (B147) — in-app certsync
+	// scheduler. Polls S3 for a `.version` file every
+	// Interval seconds, pulls newer cert.pem + key.pem
+	// if the local SHA doesn't match, validates the
+	// pair (x509 cert + matching private key), writes
+	// to LocalDir (atomic rename), then triggers the
+	// Caddy reload callback. The S3 layout is fixed:
+	// `<Bucket>/certs/cert.pem` +
+	// `<Bucket>/certs/key.pem` + `<Bucket>/certs/.version`.
+	// The S3 client is wired separately in main.go
+	// (the package's interface is package-local so
+	// the test can pass a fake; production uses
+	// `pkg/s3`). Default: enabled, 30s tick, local
+	// dir /var/lib/skygate/certs/.
+	CertSyncEnabled  bool
+	CertSyncBucket   string
+	CertSyncLocalDir string
+	CertSyncInterval time.Duration
 	// 2026-08-18: v1.5.0 (B145) — HA chain + elector
 	// + DNS provider config. See the long docstring
 	// above (just after getDuration) for the full
@@ -515,6 +533,19 @@ func Load() (*Config, error) {
 		// Default: disabled, daily 05:00 (after
 		// the 3 AM backup + 4 AM verify).
 		CleanupSmokeMeshInAppEnabled: getenv("SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED", "false") == "true",
+		// 2026-08-19: v1.5.0 (B147) — certsync env
+		// defaults. The S3 bucket defaults to the same
+		// `skygate-backups` bucket the backup +
+		// wal-g subsystems use (per the B150 deploy
+		// plan §13). The local dir is operator-
+		// overridable for VMs that mount certs from
+		// a non-standard path. The interval default
+		// of 30s matches the B130/B142 schedulers'
+		// tick rate.
+		CertSyncEnabled:  getenv("SKYGATE_CERTSYNC_ENABLED", "true") == "true",
+		CertSyncBucket:   getenv("SKYGATE_CERTSYNC_S3_BUCKET", "skygate-backups"),
+		CertSyncLocalDir: getenv("SKYGATE_CERTSYNC_LOCAL_DIR", "/var/lib/skygate/certs"),
+		CertSyncInterval: getDuration("SKYGATE_CERTSYNC_INTERVAL", 30*time.Second),
 		CleanupSmokeMeshSchedule:     getenv("SKYGATE_CLEANUP_SMOKE_MESH_SCHEDULE", "0 5 * * *"),
 		// 2026-08-18: v1.5.0 (B145) — HA chain + elector
 		// + DNS provider. Env-var defaults match the

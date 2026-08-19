@@ -18,6 +18,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/backup"
+	"skygate/internal/certsync"
 	"skygate/internal/config"
 	"skygate/internal/deploy"
 	"skygate/internal/dns"
@@ -1632,6 +1633,53 @@ func main() {
 		log.Printf("🔍 backup-verify-scheduler: disabled (SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED=false; /admin/backup page can enable). Pre-B142 system-cron verify_backup.sh continues to run.")
 	}
 
+	// 2026-08-19: v1.5.0 (B147) — in-app certsync.
+	// Polls the S3 deploy bucket's `certs/` prefix
+	// every 30s, pulls newer certs if the local SHA
+	// doesn't match, writes to LocalDir, then
+	// triggers the Caddy reload callback. Independent
+	// of the reg.ru rate limit (no DNS-side work —
+	// just S3 reads + local file writes). Disabled
+	// by default (operator opts in via
+	// SKYGATE_CERTSYNC_ENABLED=true).
+	if cfg.CertSyncEnabled {
+		// B147 reads the S3 config from the backup's
+		// well-known env vars (SKYGATE_S3_*) — same
+		// source the backup subsystem uses, so
+		// operators only configure one place. The
+		// bucket is the certsync-specific one
+		// (cfg.CertSyncBucket, default
+		// "skygate-backups"); the key prefix
+		// `certs/` is hardcoded in the scheduler.
+		backupCfg := buildBackupConfigForCertSync(cfg)
+		s3Client, s3Err := backup.NewS3ClientForConfig(backupCfg)
+		if s3Err != nil {
+			log.Printf("🔐 certsync: WARN could not build S3 client: %v (certsync disabled)", s3Err)
+		} else {
+			certsyncAdapter, err := certsync.NewMinioS3Client(s3Client)
+			if err != nil {
+				log.Printf("🔐 certsync: WARN could not build S3 adapter: %v (certsync disabled)", err)
+			} else {
+				_, err := certsync.Start(ctx, certsync.CertSyncDeps{
+					DB:          d,
+					LocalDir:    cfg.CertSyncLocalDir,
+					S3Client:    certsyncAdapter,
+					S3Bucket:    cfg.CertSyncBucket,
+					Interval:    cfg.CertSyncInterval,
+					Notifier:    schedulerNotifierSink(app.Notifier),
+					CaddyReload: nil, // future: wire to `docker exec skygate-caddy caddy reload`
+				})
+				if err != nil {
+					log.Printf("🔐 certsync: WARN start failed: %v (certsync disabled)", err)
+				} else {
+					log.Printf("🔐 certsync: enabled (interval=%s, bucket=%s, local_dir=%s, caddy_reload=not_configured)", cfg.CertSyncInterval, cfg.CertSyncBucket, cfg.CertSyncLocalDir)
+				}
+			}
+		}
+	} else {
+		log.Printf("🔐 certsync: disabled (SKYGATE_CERTSYNC_ENABLED=false). Pre-B147 system-cron cert-renew.sh continues to run.")
+	}
+
 	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
 	// cleanup scheduler. Mirrors the B142
 	// backup-verify-scheduler wire-up above. When
@@ -2418,6 +2466,36 @@ func isTailscaleRunningInContainer() bool {
 		}
 	}
 	return false
+}
+
+// 2026-08-18 (B130): adapter from the full telegram.Notifier
+// to the update package's NotifierSink. Avoids an import
+// cycle (internal/update can't import internal/telegram
+// because internal/telegram doesn't import internal/update,
+// buildBackupConfigForCertSync builds a minimal
+// backup.Config from env vars + the certsync-specific
+// bucket (cfg.CertSyncBucket). The certsync scheduler
+// uses the same S3 endpoint / credentials as the backup
+// subsystem (the bucket is the only certsync-specific
+// field), so the operator configures one place.
+//
+// v1.5.0 / B147.
+//
+// Returns a Config that's safe to pass to
+// backup.NewS3ClientForConfig. The S3Prefix is left
+// empty — the certsync uses hardcoded `certs/...` keys
+// (see internal/certsync/certsync.go), not the backup's
+// S3 prefix.
+func buildBackupConfigForCertSync(cfg *config.Config) *backup.Config {
+	return &backup.Config{
+		S3Endpoint:  os.Getenv("SKYGATE_S3_ENDPOINT"),
+		S3Region:    os.Getenv("SKYGATE_S3_REGION"),
+		S3AccessKey: os.Getenv("SKYGATE_S3_ACCESS_KEY"),
+		S3SecretKey: os.Getenv("SKYGATE_S3_SECRET_KEY"),
+		S3Bucket:    cfg.CertSyncBucket,
+		// S3Prefix intentionally empty (certsync uses
+		// absolute keys: `certs/cert.pem`, etc).
+	}
 }
 
 // 2026-08-18 (B130): adapter from the full telegram.Notifier
