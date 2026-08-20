@@ -9,20 +9,23 @@
   </div>
 </div>
 
-{{/* B155 (v1.5.0): post-reissue success flash. The
-   handler renders the preauth_result page directly
-   when the reissue succeeds (so the new raw key
-   never appears in a URL/log), but a reissue-from-the
-   -table path that doesn't go through preauth_result
-   would still hit this branch via a future redirect.
-   For now the main consumer of this alert is a
-   manual ?reissued=1&from=<N>&to=<M> GET (e.g. an
-   admin URL with explicit params). The alert is a
-   no-op when those query params are missing. */}}
-{{if and .reissuedFrom .reissuedTo}}
+{{/* B159 (v1.5.0): post-cleanup success flash. The
+   PostMyKeysCleanup handler redirects to
+   /my/keys?cleaned=N; we render the "Removed
+   expired keys: N" alert. The cleaned count is
+   non-secret (just a row count), so the URL is
+   safe. cleaned=0 renders a different "no
+   expired keys" alert so the user isn't confused
+   about a no-op. */}}
+{{if .cleanedCount}}
 <div class="alert alert-success">
-  <i class="fa-solid fa-arrows-rotate"></i>
-  {{tf "keys.reissued_to" .reissuedFrom .reissuedTo}}
+  <i class="fa-solid fa-broom"></i>
+  {{tf "keys.cleanup_done" .cleanedCount}}
+</div>
+{{else if .cleanedNone}}
+<div class="alert alert-info">
+  <i class="fa-solid fa-info-circle"></i>
+  {{t "keys.cleanup_none"}}
 </div>
 {{end}}
 
@@ -38,17 +41,39 @@
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-key"></i>{{t "keys.title"}}</h3>
+  <h3>
+    <i class="fa-solid fa-key"></i>{{t "keys.title"}}
+    {{/* B159 (v1.5.0): bulk-cleanup button. Only
+       rendered when at least one (used=0,
+       expires_at>0, expires_at<=now) row exists
+       for the current user. The handler
+       (PostMyKeysCleanup) does the actual DELETE.
+       The button has a confirm() prompt that
+       includes the count so a misclick doesn't
+       silently nuke the audit history. The
+       prompt copy is i18n so the RU/EN buttons
+       show RU/EN strings. */}}
+    {{if gt .ExpiredUnusedCount 0}}
+    <form method="post" action="/my/keys/cleanup"
+          style="display:inline;float:right"
+          onsubmit='return confirm({{ safeJS (tf "keys.cleanup_confirm" .ExpiredUnusedCount) }});'>
+      <button type="submit" class="btn btn-secondary" style="padding:3px 10px;font-size:12px">
+        <i class="fa-solid fa-broom"></i>{{tf "keys.cleanup_expired" .ExpiredUnusedCount}}
+      </button>
+    </form>
+    {{end}}
+  </h3>
   {{if .Keys}}
   <table>
     <thead>
       <tr>
-        <th style="width:60px">ID</th>
+        <th style="width:50px">ID</th>
         <th>{{t "devices.preauth_key"}}</th>
-        <th style="width:160px">{{t "devices.created"}}</th>
-        <th style="width:200px">{{t "devices.expire"}}</th>
-        <th style="width:120px">{{t "devices.status"}}</th>
-        <th style="width:240px">{{t "common.actions"}}</th>
+        <th style="width:140px">{{t "devices.created"}}</th>
+        <th style="width:220px">{{t "devices.expire"}}</th>
+        <th style="width:80px">{{t "devices.status"}}</th>
+        <th style="width:140px">{{t "keys.device"}}</th>
+        <th style="width:200px">{{t "common.actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -56,19 +81,32 @@
       <tr>
         <td class="mono" style="color:var(--text-muted)">{{.ID}}</td>
         <td><code style="font-size:11px">{{slice .Key 0 18}}…</code></td>
-        <td class="mono" style="color:var(--text-muted)">{{datetimeformat .CreatedAt}}</td>
-        <td class="mono" style="color:var(--text-muted)">
-          {{/* B155: warning pill for expiring keys.
-             Mirrors B153's /my/tokens ExpiresWarn
-             pattern. The handler sets ExpiresWarn
-             to "expired" / "soon" / "month" / "";
-             ExpiresInWords is the human-readable
-             hint. */}}
-          {{if .ExpiresWarn}}
-            {{if gt .ExpiresAt 0}}{{datetimeformat .ExpiresAt}}{{end}}
-            <span class="badge badge-{{.ExpiresWarn}}">{{.ExpiresInWords}}</span>
+        <td class="mono" style="color:var(--text-muted);font-size:12px">{{datetimeformat .CreatedAt}}</td>
+        <td class="mono" style="color:var(--text-muted);font-size:12px">
+          {{/* B159: the Expire column now shows the
+             absolute date + the relative-time hint
+             BELOW it (small, muted). For never-
+             expiring keys (ExpiresAt==0) we just
+             show "no expiry". For used keys we
+             still show the original ExpiresAt
+             (auditors want to know when the key
+             was created+expires, even after
+             consumption). The warning pill (red/
+             yellow) is preserved from B155 for the
+             "within 14d" / "expired" cases — the
+             pill renders ON TOP of the relative
+             time, so the visual hierarchy is:
+             date (primary) → relative time
+             (secondary) → pill (urgent). */}}
+          {{if gt .ExpiresAt 0}}
+            <div>{{datetimeformat .ExpiresAt}}</div>
+            {{if .ExpiresWarn}}
+              <div style="margin-top:3px"><span class="badge badge-{{.ExpiresWarn}}">{{.ExpiresInWords}}</span></div>
+            {{else}}
+              <div style="color:var(--text-subtle);font-size:11px;margin-top:2px">{{.TimeRemaining}}</div>
+            {{end}}
           {{else}}
-            {{if gt .ExpiresAt 0}}{{datetimeformat .ExpiresAt}}{{else}}{{t "keys.not_set"}}{{end}}
+            <div style="color:var(--text-subtle)">{{.TimeRemaining}}</div>
           {{end}}
         </td>
         <td>
@@ -78,6 +116,20 @@
             <span class="tag" style="color:var(--text-subtle)">{{t "keys.expired"}}</span>
           {{else}}
             <span class="tag" style="color:var(--info,#075985);background:var(--info-bg,#f0f9ff);padding:2px 7px;border-radius:3px">{{t "devices.status"}}: ok</span>
+          {{end}}
+        </td>
+        {{/* B159: Device column. Shows the headscale
+           givenName of the node that consumed the
+           key. For unused / unbound keys we show
+           the placeholder ("—"). The Device is
+           scoped to the current user via headscale
+           user filter (HSForUserFn), so a user
+           can't see another user's device name. */}}
+        <td>
+          {{if .Device}}
+            <span style="font-size:13px"><i class="fa-solid fa-laptop" style="color:var(--text-muted);margin-right:4px"></i>{{.Device}}</span>
+          {{else}}
+            <span style="color:var(--text-subtle)">{{t "keys.device_unbound"}}</span>
           {{end}}
         </td>
         <td>

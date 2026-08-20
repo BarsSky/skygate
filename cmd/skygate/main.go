@@ -801,6 +801,14 @@ func main() {
 	// preauth_result page so the user sees the
 	// new raw key.
 	mux.Handle("POST /my/keys/{id}/reissue", authMW(http.HandlerFunc(mySvc.PostMyKeyReissue)))
+	// B159 (v1.5.0): bulk-cleanup endpoint.
+	// POST /my/keys/cleanup (no id segment) deletes
+	// every (used=0, expires_at>0, expires_at<=now)
+	// preauth_keys row for the current user. Used
+	// keys are NEVER deleted (audit history). The
+	// handler redirects back to /my/keys?cleaned=N
+	// with the count of removed rows.
+	mux.Handle("POST /my/keys/cleanup", authMW(http.HandlerFunc(mySvc.PostMyKeysCleanup)))
 	// B157 (v1.5.0): in-web notification inbox.
 	// The bell icon in the layout sidebar calls
 	// these POST endpoints. The user_id scoping

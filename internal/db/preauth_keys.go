@@ -221,6 +221,55 @@ func DeletePreauthKeysByUserID(d *sql.DB, userID int64) (int64, error) {
 	return res.RowsAffected()
 }
 
+// DeleteExpiredUnusedPreauthKeysByUser (B159, v1.5.0)
+// bulk-deletes every preauth_keys row for userID
+// that is BOTH unused AND has a past expiry. Used
+// keys are NEVER deleted (they're audit history).
+// Never-expiring keys (expires_at=0) are NEVER
+// deleted (they have no expiry to clean up).
+//
+// Returns the number of rows actually removed. The
+// caller (PostMyKeysCleanup) renders a flash with
+// the count so the user knows what happened.
+//
+// The 3-WHERE-clause guard matches the operator's
+// intent ("подчистить истёкшие ключи"): an unused
+// key that hasn't expired yet (still in the 14-day
+// warning window) is left alone so the user can
+// still reissue it. A used key (consumed by a
+// device registration) is left alone for audit.
+// A never-expiring key (e.g. an operator-issued
+// permanent service key) is left alone because
+// it's not "expired".
+func DeleteExpiredUnusedPreauthKeysByUser(d *sql.DB, userID, nowUnix int64) (int64, error) {
+	res, err := d.Exec(qDeleteExpiredUnusedPreauthByUser, userID, nowUnix)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// CountExpiredUnusedPreauthKeysByUser (B159, v1.5.0)
+// returns the number of rows that
+// DeleteExpiredUnusedPreauthKeysByUser would
+// remove for userID right now. Used by GetMyKeys
+// to decide whether to render the "Clean up
+// expired (N)" button (the button only appears
+// when there's at least one row to clean —
+// otherwise a no-op click would be confusing).
+//
+// Same WHERE clause as the DELETE so the count
+// and the cleanup are always consistent. The
+// SELECT cost is negligible (the (user_id,
+// expires_at) composite index used by the
+// dashboard's split is the same one this query
+// hits).
+func CountExpiredUnusedPreauthKeysByUser(d *sql.DB, userID, nowUnix int64) (int64, error) {
+	var n int64
+	err := d.QueryRow(qCountExpiredUnusedPreauthByUser, userID, nowUnix).Scan(&n)
+	return n, err
+}
+
 // ExpiringPreauthKey is the slim row shape used by
 // ListExpiringPreauthKeys (B156). The full PreauthKey
 // struct already exists for the /my/keys list, but the

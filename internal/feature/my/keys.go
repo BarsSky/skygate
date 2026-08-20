@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 	"skygate/internal/notifications"
 )
 
@@ -40,6 +41,14 @@ import (
 // not-yet-expired key is within 14 days of expiry. Post-
 // reissue flash via ?reissued=1&from=<N>&to=<M>. Dedicated
 // ?reissue=ID form for power users who want a custom TTL.
+//
+// B159 (v1.5.0) enrichment: per-row Device name (the
+// headscale node that consumed the key, looked up via
+// ListAllNodes().PreAuthKeyID → givenName) and
+// per-row TimeRemaining i18n string ("5 days left" /
+// "5 days ago" / "today"). ExpiredUnusedCount drives
+// the "Clean up expired (N)" button. Post-cleanup flash
+// via ?cleaned=N.
 func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
@@ -56,6 +65,32 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// B159: build a preAuthKeyID → givenName map from
+	// the headscale node list. Used to render the
+	// "Device" column for USED keys. The map is
+	// built ONCE per /my/keys load and reused across
+	// all rows (the per-row lookup is O(1)).
+	//
+	// Best-effort: if ListAllNodes fails (headscale
+	// down, transient network), the Device column
+	// just shows "—" for every row instead of
+	// breaking the whole page.
+	deviceByPreauthID := map[string]string{}
+	if hsNodes, hsErr := s.Backend.HSForUserFn(c.UserID).ListAllNodes(); hsErr == nil {
+		for _, n := range hsNodes {
+			if n.PreAuthKeyID != "" && n.GivenName != "" {
+				// If multiple devices share the
+				// same PreAuthKeyID (rare — only
+				// happens for reusable keys), the
+				// last write wins. The Device
+				// column shows ONE device name;
+				// power users can find the rest on
+				// /my/devices.
+				deviceByPreauthID[n.PreAuthKeyID] = n.GivenName
+			}
+		}
+	}
+
 	// Live "used" check: if any headscale node currently has this
 	// key as its preAuthKey, mark used even if our local flag is
 	// behind. Same logic as countMyPreAuthKeys.
@@ -99,10 +134,43 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 			"ExpiresWarn":        "",
 			"ExpiresInWords":     "",
 			"Renewable":          false,
+			// B159 additions: device name + relative
+			// time + an "expired unused" flag (the
+			// template uses this to decide whether
+			// to render the row in the "eligible
+			// for cleanup" style).
+			"Device":         "",
+			"TimeRemaining":  "",
+			"ExpiredUnused":  false,
 		}
-		// Only compute warnings for unused keys with a
-		// future expiry. Used keys (consumed) and never-
-		// expiring keys (ExpiresAt==0) get no warning.
+		// B159: device name. Look up the bound device
+		// by headscale_preauth_id. Unused keys get
+		// the unbound placeholder.
+		if k.Used && k.HeadscalePreauthID != "" {
+			if name, ok := deviceByPreauthID[k.HeadscalePreauthID]; ok {
+				view["Device"] = name
+			} else {
+				// Used per local DB + headscale
+				// reality, but no live node
+				// found (device might have been
+				// deleted in headscale). Show
+				// the unbound placeholder rather
+				// than hiding the column.
+				view["Device"] = ""
+			}
+		}
+		// B159: relative-time hint. We compute this
+		// for EVERY row, not just expiring-soon
+		// ones — the operator (and the
+		// post-B156 scheduler messages) want to
+		// see "expires in 5d" or "expired 3d ago"
+		// on every row, not just on warning pills.
+		// "never" keys get the "no expiry" string.
+		view["TimeRemaining"] = formatRelativeExpiry(s.I18n, lang, k.ExpiresAt, nowUnix)
+		// Only compute warning pills for unused
+		// keys with a future expiry. Used keys
+		// (consumed) and never-expiring keys
+		// (ExpiresAt==0) get no warning.
 		if !k.Used && k.ExpiresAt > 0 {
 			delta := time.Unix(k.ExpiresAt, 0).Sub(now)
 			days := int(delta / (24 * time.Hour))
@@ -148,15 +216,38 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 			// reissue handler, so we don't show the
 			// button on rows that would 404.
 			view["Renewable"] = delta > 0
+			// B159: mark the row as "eligible for
+			// cleanup" so the template can render
+			// a small "expired" hint inline AND so
+			// the per-row cleanup count is
+			// consistent with the dashboard
+			// counter.
+			if delta <= 0 {
+				view["ExpiredUnused"] = true
+			}
 		}
 		viewRows = append(viewRows, view)
 	}
 
+	// B159: count of unused, expired keys for the
+	// cleanup button. Same SQL the DELETE will run,
+	// so the count and the action are always
+	// consistent. Negligible cost — the (user_id,
+	// expires_at) index from the dashboard's split
+	// already covers this.
+	expiredUnused, err := db.CountExpiredUnusedPreauthKeysByUser(s.DB, c.UserID, nowUnix)
+	if err != nil {
+		log.Printf("web.my.keys: CountExpiredUnusedPreauthKeysByUser userID=%d err=%v", c.UserID, err)
+		// Non-fatal — just don't show the button.
+		expiredUnused = 0
+	}
+
 	data := map[string]any{
-		"Keys":          viewRows,
-		"HasKeys":       len(viewRows) > 0,
-		"Now":           nowUnix,
-		"ExpiringCount": expiringCount,
+		"Keys":              viewRows,
+		"HasKeys":           len(viewRows) > 0,
+		"Now":               nowUnix,
+		"ExpiringCount":     expiringCount,
+		"ExpiredUnusedCount": expiredUnused,
 	}
 
 	// B155: dedicated reissue form. If ?reissue=ID is
@@ -197,6 +288,22 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 			if to, terr := strconv.ParseInt(toStr, 10, 64); terr == nil {
 				data["reissuedFrom"] = from
 				data["reissuedTo"] = to
+			}
+		}
+	}
+
+	// B159: post-cleanup success flash. The
+	// PostMyKeysCleanup handler redirects to
+	// /my/keys?cleaned=N with the number of rows
+	// removed. We render a one-time alert so the
+	// user sees "Removed expired keys: N" (or "No
+	// expired keys to clean up" when N=0).
+	if cleanedStr := r.URL.Query().Get("cleaned"); cleanedStr != "" {
+		if cleaned, cerr := strconv.ParseInt(cleanedStr, 10, 64); cerr == nil && cleaned >= 0 {
+			if cleaned == 0 {
+				data["cleanedNone"] = true
+			} else {
+				data["cleanedCount"] = cleaned
 			}
 		}
 	}
@@ -480,4 +587,153 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Backend.Audit(c.UserID, c.Username, "preauth_expired", fmt.Sprintf("key_id=%d", id))
 	http.Redirect(w, r, "/my/keys", http.StatusFound)
+}
+
+// PostMyKeysCleanup (B159, v1.5.0) bulk-deletes every
+// preauth_keys row for the current user that is:
+//   - used = 0  (consumed-by-device keys are audit
+//                history; we never delete those)
+//   - expires_at > 0  (the key had a finite TTL —
+//                "never" keys are not eligible)
+//   - expires_at <= now  (the key has actually
+//                passed its expiry, not just the
+//                warning-window)
+//
+// Returns the count of removed rows via ?cleaned=<N>
+// query param. The /my/keys GET handler reads this
+// and renders a flash alert with the count.
+//
+// Use case (operator 2026-08-20): "также есть ли
+// возможность подчистить истёкшие ключи?" — power
+// users who accumulate dozens of unused, expired
+// one-time keys over months want a one-click clean
+// rather than clicking `Expire` per row.
+//
+// Scoping is enforced in the SQL WHERE clause
+// (user_id = $caller); a user cannot clean up
+// another user's keys.
+func (s *Service) PostMyKeysCleanup(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	now := time.Now().Unix()
+	removed, err := db.DeleteExpiredUnusedPreauthKeysByUser(s.DB, c.UserID, now)
+	if err != nil {
+		log.Printf("web.my.cleanup: DeleteExpiredUnusedPreauthKeysByUser userID=%d err=%v", c.UserID, err)
+		http.Error(w, "cleanup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "preauth_cleanup", fmt.Sprintf("removed=%d", removed))
+	// Redirect with the count so the GET handler can
+	// render a one-time success flash. The cleaned
+	// param is non-secret (it's the count, not a
+	// key or token).
+	http.Redirect(w, r, fmt.Sprintf("/my/keys?cleaned=%d", removed), http.StatusFound)
+}
+
+// formatRelativeExpiry returns the i18n-formatted
+// relative-time hint for a preauth key's expiry,
+// shown alongside the absolute date in the Expire
+// column on /my/keys. B159 motivation: pre-B159 the
+// column only showed "expires" / "expired" with no
+// concrete time hint, which was confusing ("Сейчас
+// в пояснении истекает - Истек не совсем понятно
+// что с ключем, нет времени о том сколько ключу
+// осталось" — operator 2026-08-20). The user
+// explicitly wanted CONCRETE time, so we avoid the
+// vague "today" / "tomorrow" phrasing and always
+// render "<N> min/h/d" — the absolute date below
+// already shows the calendar day.
+//
+// Granularity (matches the B156 notification
+// scheduler's "key.expiring" message style):
+//
+//   expiresAt == 0   → "no expiry"  (the caller
+//                                 treats ExpiresAt==0
+//                                 as "never")
+//   now < expiresAt  → future hint:
+//                       <1m:  "1 min left"
+//                       <1h:  "<N> min left"
+//                       <24h: "<N> hours left"
+//                       >=24h:"<N> days left"
+//   now >= expiresAt → past hint:
+//                       <1m:  "expired 1 min ago"
+//                       <1h:  "expired <N> min ago"
+//                       <24h: "expired <N> hours ago"
+//                       >=24h:"expired <N> days ago"
+//
+// The function is intentionally tiny and pure so
+// the test file (preauth_test.go) can drive it
+// from a tabular suite of (expiresAt, nowUnix) →
+// expected-string cases.
+func formatRelativeExpiry(c *i18n.Catalog, lang string, expiresAt, nowUnix int64) string {
+	if expiresAt == 0 {
+		return c.T(lang, "keys.never_expires")
+	}
+	delta := time.Unix(expiresAt, 0).Sub(time.Unix(nowUnix, 0))
+	absDelta := delta
+	if absDelta < 0 {
+		absDelta = -absDelta
+	}
+	if delta > 0 {
+		// Future (delta>0 only — delta==0 falls through
+		// to the past branch and is reported as
+		// "expired <N> min ago", which is the most
+		// honest phrasing when there's literally no
+		// time left).
+		switch {
+		case absDelta < time.Minute:
+			return c.Tf(lang, "keys.time_minutes_left", 1)
+		case absDelta < time.Hour:
+			mins := int(absDelta / time.Minute)
+			if mins < 1 {
+				mins = 1
+			}
+			return c.Tf(lang, "keys.time_minutes_left", mins)
+		case absDelta < 48*time.Hour:
+			// <2 calendar days → keep hours
+			// granularity (concrete: "36 hours left"
+			// is more useful than "1 day" / "2 days"
+			// for the 24h-48h window, per the
+			// operator's B159 feedback that the old
+			// "expires in N days" was vague when N
+			// was actually <2).
+			hours := int(absDelta / time.Hour)
+			if hours < 1 {
+				hours = 1
+			}
+			return c.Tf(lang, "keys.time_hours_left", hours)
+		default:
+			days := int(absDelta / (24 * time.Hour))
+			if days < 1 {
+				days = 1
+			}
+			return c.Tf(lang, "keys.time_days_left", days)
+		}
+	}
+	// Past (or exactly now).
+	switch {
+	case absDelta < time.Minute:
+		return c.Tf(lang, "keys.time_expired_minutes_ago", 1)
+	case absDelta < time.Hour:
+		mins := int(absDelta / time.Minute)
+		if mins < 1 {
+			mins = 1
+		}
+		return c.Tf(lang, "keys.time_expired_minutes_ago", mins)
+	case absDelta < 24*time.Hour:
+		hours := int(absDelta / time.Hour)
+		if hours < 1 {
+			hours = 1
+		}
+		return c.Tf(lang, "keys.time_expired_hours_ago", hours)
+	default:
+		days := int(absDelta / (24 * time.Hour))
+		if days < 1 {
+			days = 1
+		}
+		return c.Tf(lang, "keys.time_expired_days_ago", days)
+	}
 }

@@ -17,6 +17,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"skygate/internal/i18n"
 )
 
 func TestResolvePreauthTTL_CustomValid(t *testing.T) {
@@ -218,5 +220,66 @@ func TestDurationFromSeconds(t *testing.T) {
 				t.Errorf("durationFromSeconds(%d) = %q, want %q", c.sec, got, c.want)
 			}
 		})
+	}
+}
+
+// B159 (v1.5.0) — tests for the formatRelativeExpiry
+// helper used by GetMyKeys to render the "5 days left"
+// / "5 days ago" / "today" hint in the Expire column.
+//
+// The function is intentionally pure: (i18n catalog,
+// lang, expiresAt unix, nowUnix unix) → string. We
+// instantiate a fresh i18n.New() per case so the
+// catalog is realistic (not a hand-rolled mock).
+func TestFormatRelativeExpiry(t *testing.T) {
+	cat := i18n.New()
+	now := int64(1_700_000_000) // fixed for determinism (≈ 2023-11-14 22:13:20 UTC)
+	cases := []struct {
+		name      string
+		expiresAt int64
+		nowUnix   int64
+		lang      string
+		want      string
+	}{
+		// 0 / never
+		{"never_ru", 0, now, "ru", "бессрочно"},
+		{"never_en", 0, now, "en", "no expiry"},
+		// Past — minutes / hours / days
+		{"expired_30s_ago_ru", now - 30, now, "ru", "истёк 1 мин назад"},
+		{"expired_5m_ago_en", now - 300, now, "en", "expired 5 min ago"},
+		{"expired_3h_ago_ru", now - 3 * 3600, now, "ru", "истёк 3 ч назад"},
+		{"expired_23h_ago_en", now - 23 * 3600, now, "en", "expired 23 hours ago"},
+		{"expired_2d_ago_ru", now - 2 * 86400, now, "ru", "истёк 2 д назад"},
+		{"expired_30d_ago_en", now - 30 * 86400, now, "en", "expired 30 days ago"},
+		// Future — minutes / hours / days. The
+		// operator wants CONCRETE time (not "today" /
+		// "tomorrow"), so <24h is "<N> hours left".
+		{"in_30s_ru", now + 30, now, "ru", "осталось 1 мин"},
+		{"in_5m_en", now + 300, now, "en", "5 min left"},
+		{"in_3h_ru", now + 3 * 3600, now, "ru", "осталось 3 ч"},
+		{"in_12h_en", now + 12 * 3600, now, "en", "12 hours left"},
+		{"in_23h_ru", now + 23 * 3600, now, "ru", "осталось 23 ч"},
+		{"in_36h_en", now + 36 * 3600, now, "en", "36 hours left"},
+		// Days (>=2d)
+		{"in_2d_ru", now + 2 * 86400, now, "ru", "осталось 2 д"},
+		{"in_14d_en", now + 14 * 86400, now, "en", "14 days left"},
+		// Boundary: exactly now → delta=0 falls
+		// through to the past branch (delta>0 is
+		// strictly future) → "expired 1 min ago"
+		// (the absDelta=0 < 1min branch).
+		{"exactly_now_ru", now, now, "ru", "истёк 1 мин назад"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := formatRelativeExpiry(cat, c.lang, c.expiresAt, c.nowUnix)
+			if got != c.want {
+				t.Errorf("formatRelativeExpiry(%d, %d, %s) = %q, want %q",
+					c.expiresAt, c.nowUnix, c.lang, got, c.want)
+			}
+		})
+	}
+	// Unknown language falls back to RU.
+	if got := formatRelativeExpiry(cat, "xx", 0, now); got != "бессрочно" {
+		t.Errorf("unknown lang fallback: got %q, want %q", got, "бессрочно")
 	}
 }

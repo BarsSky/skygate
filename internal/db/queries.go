@@ -474,6 +474,19 @@ const (
 	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
 	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
 	qDeletePreauthByUser         = `DELETE FROM preauth_keys WHERE user_id = $1`
+	// B159 (v1.5.0): bulk-cleanup helper. Removes
+	// every (used=0, expires_at>0, expires_at<=now)
+	// row for one user. Used keys are NEVER deleted
+	// (they're audit history). Never-expiring keys
+	// (expires_at=0) are NEVER deleted (they have no
+	// expiry to clean up).
+	qDeleteExpiredUnusedPreauthByUser = `DELETE FROM preauth_keys WHERE user_id = $1 AND used = 0 AND expires_at > 0 AND expires_at <= $2`
+	// B159 (v1.5.0): counter for the cleanup button
+	// visibility ("Clean up expired (N)" — only
+	// shown when N>0). Same WHERE clause as the
+	// DELETE so the count and the action are
+	// always consistent.
+	qCountExpiredUnusedPreauthByUser = `SELECT COUNT(*) FROM preauth_keys WHERE user_id = $1 AND used = 0 AND expires_at > 0 AND expires_at <= $2`
 )
 
 // ---------------------------------------------------------------
