@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,6 +180,38 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// DeviceType is "client" / "exit-node" / "subnet-router"
 		// / "phone" — same origin as OS. 2026-07-29.
 		DeviceType string
+		// Expiry is the headscale-side node.expiry
+		// (RFC3339Nano string). Empty for nodes that
+		// have no expiry (tag:exit-node, tag:public,
+		// tag:subnet-router, or any node the operator
+		// ran `headscale nodes expire -i N --disable`
+		// on). The /my/devices template renders this
+		// in the new "Expires" column and shows a
+		// "Renew" button only when Expiry is non-empty
+		// (B160, v1.5.0 — operator 2026-08-20
+		// "продление работы ключа которым устройство
+		// аутентифицировалось в headscale через
+		// вебинтерфейс skygate").
+		// 2026-08-20.
+		Expiry string
+		// ExpiryUnix is Expiry parsed to a unix
+		// timestamp (0 when Expiry is empty or
+		// unparseable). The template uses this for
+		// datetimeformat + formatRelativeExpiry.
+		// 2026-08-20.
+		ExpiryUnix int64
+		// ExpiresRelative is the i18n-formatted
+		// relative-time hint ("5 days left" / "5 days
+		// ago" / "no expiry") pre-computed by the
+		// handler so the template stays pure
+		// presentation. 2026-08-20.
+		ExpiresRelative string
+		// ExpiryWarning is "soon" / "month" / "expired"
+		// for nodes whose expiry is within 7d / 30d /
+		// past, empty otherwise. Mirrors the B155
+		// token-page pattern (red/yellow pill).
+		// 2026-08-20.
+		ExpiryWarning string
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
@@ -262,6 +296,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
 				OS:                 osByHost[strings.ToLower(n.Hostname)],
 				DeviceType:         typeByHost[strings.ToLower(n.Hostname)],
+				Expiry:             n.Expiry,
 			})
 		}
 	}
@@ -318,6 +353,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
 				OS:                 osByHost[strings.ToLower(n.Hostname)],
 				DeviceType:         typeByHost[strings.ToLower(n.Hostname)],
+				Expiry:             n.Expiry,
 			})
 		}
 	}
@@ -326,6 +362,56 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	for _, n := range all {
 		if n.IsExitNode || n.IsPublicView() {
 			publicNodes = append(publicNodes, n)
+		}
+	}
+
+	// B160 (v1.5.0) — per-row expiry enrichment for
+	// the "Expires" column + "Renew" button. The
+	// raw headscale NodeView.Expiry string is
+	// already populated above; this pass just
+	// parses it to unix + computes the i18n
+	// relative-time hint + the warning pill kind
+	// (mirrors the B155 token-page pattern).
+	//
+	// Nodes with Expiry=="" (tag:exit-node,
+	// tag:public, tag:subnet-router, or
+	// `headscale nodes expire --disable` nodes)
+	// get ExpiresRelative = "no expiry" and
+	// ExpiryWarning = "" — the template renders
+	// the placeholder "—" and no Renew button.
+	now := time.Now()
+	lang := s.I18n.LangFromRequest(r)
+	for i := range myNodesList {
+		row := &myNodesList[i]
+		if row.Expiry == "" {
+			row.ExpiresRelative = s.I18n.T(lang, "keys.never_expires")
+			continue
+		}
+		// headscale returns RFC3339Nano; time.Parse
+		// accepts it as RFC3339 (Nano is a superset).
+		t, perr := time.Parse(time.RFC3339Nano, row.Expiry)
+		if perr != nil {
+			// Unparseable — treat as "no expiry" so
+			// the template degrades gracefully instead
+			// of crashing.
+			log.Printf("web.my.devices: parse Expiry %q for node %s: %v",
+				row.Expiry, row.Hostname, perr)
+			row.ExpiresRelative = s.I18n.T(lang, "keys.never_expires")
+			continue
+		}
+		row.ExpiryUnix = t.Unix()
+		row.ExpiresRelative = formatRelativeExpiry(s.I18n, lang, row.ExpiryUnix, now.Unix())
+		// Warning kind — mirrors B155. 7d = "soon"
+		// (red), 30d = "month" (yellow), past =
+		// "expired" (red).
+		delta := t.Sub(now)
+		switch {
+		case delta <= 0:
+			row.ExpiryWarning = "expired"
+		case delta < 7*24*time.Hour:
+			row.ExpiryWarning = "soon"
+		case delta < 30*24*time.Hour:
+			row.ExpiryWarning = "month"
 		}
 	}
 
@@ -482,7 +568,223 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		"AvailableExitNodes":   publicNodes, // for the per-device dropdown
 		"FlashSuccess":         r.URL.Query().Get("ok"),
 		"FlashError":           r.URL.Query().Get("err"),
+		// B160 (v1.5.0): post-renew flash. The
+		// PostMyDeviceRenew handler redirects to
+		// /my/devices?renewed=<host> with the
+		// just-renewed hostname so the template can
+		// render "Device <host> session extended to
+		// <new_expiry>". The hostname is the only
+		// non-secret in the URL (the audit log
+		// captures the full node ID + new expiry).
+		"RenewedHost":          r.URL.Query().Get("renewed"),
+		"RenewedNewExpiry":     r.URL.Query().Get("new_expiry"),
 	})
+}
+
+// PostMyDeviceRenew (B160, v1.5.0) extends the
+// headscale-side expiry of one of the current user's
+// own devices by 30 days. Operator use case
+// (2026-08-20): "можно ли реализовать продление
+// работы ключа которым устройство аутентифицировалось
+// в headscale через веб интерфейс skygate" — the
+// preauth key is one-time (B155), so renewing it
+// doesn't help; the device's NODE EXPIRY is what
+// keeps the device authenticated. The auto-renewer
+// (internal/expirewatch) does this every 5min for
+// nodes within 7d, but a manual button is useful
+// when:
+//   - the user disabled expirewatch
+//   - the user wants to renew NOW (not wait for
+//     the next tick)
+//   - the user wants explicit visibility into
+//     "renewed 5 days ago" (the audit log already
+//     records every renewal)
+//
+// Scope: the node MUST be owned by the current
+// user (verified by re-listing the user's headscale
+// nodes — same scoping as B155's PostMyKeyReissue).
+// Cross-user renewals are rejected with 404.
+//
+// Errors:
+//   - bad id (not int64) → 400
+//   - node not in user's node list → 404
+//   - node has no Expiry (tagged/shared infra) → 400
+//     (these are policy-controlled; the user can't
+//     unilaterally extend them)
+//   - headscale.ExtendNodeExpiry fails → 500
+//
+// On success: redirect to /my/devices?renewed=<host>
+// &new_expiry=<RFC3339> with the new expiry so the
+// template can render a flash alert with both the
+// hostname and the new timestamp. The host + expiry
+// are non-secret (the audit log already shows them).
+func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		http.Error(w, "missing node id", http.StatusBadRequest)
+		return
+	}
+	_, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad node id", http.StatusBadRequest)
+		return
+	}
+
+	// Scope-check: the node MUST be in the current
+	// user's node list. We reuse the same ListAllNodes
+	// → username filter as GetMyDevices. The
+	// headscale.ExecContainer is on this user's
+	// control plane (HSForUserFn), so even a forged
+	// ID would fail at the gRPC layer.
+	hsClient := s.Backend.HSForUserFn(c.UserID)
+	allNodes, lerr := hsClient.ListAllNodes()
+	if lerr != nil {
+		log.Printf("web.my.renew: ListAllNodes userID=%d err=%v", c.UserID, lerr)
+		http.Error(w, "headscale unreachable", http.StatusBadGateway)
+		return
+	}
+	hsUserID, _, herr := db.GetUserHSByID(s.DB, c.UserID)
+	if herr != nil || !hsUserID.Valid {
+		http.Error(w, "no headscale user linked", http.StatusBadRequest)
+		return
+	}
+	for _, n := range allNodes {
+		// headscale returns the user as the
+		// numeric/username id; the existing handler
+		// uses n.UserName. We re-resolve to a string
+		// via the headscale user map (same pattern
+		// as GetMyDevices). For now: just match by
+		// n.ID first (the simplest + safest check).
+		if n.ID == idStr {
+			// Verify via node_owner_map too
+			// (catches tag:private reassigned
+			// nodes that headscale shows under
+			// "tagged-devices").
+			ok := false
+			if n.UserName != "" {
+				// headscale reports the user
+				// as the user's name; we
+				// don't have direct access
+				// to c.Username here but
+				// the nodeOwnerMap below
+				// covers it.
+			}
+			// Use node_owner_map as the source
+			// of truth (matches the B159 / B155
+			// pattern).
+			snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+			for _, sid := range snapIDs {
+				if sid == idStr {
+					ok = true
+					break
+				}
+			}
+			// Also accept the live "this user
+			// owns the node right now" check.
+			if !ok {
+				// Try the live
+				// user-id-based match
+				// (headscale's
+				// NodeView.UserName).
+				if n.UserName == c.Username {
+					ok = true
+				}
+			}
+			if !ok {
+				log.Printf("web.my.renew: node %s not owned by userID=%d username=%q",
+					idStr, c.UserID, c.Username)
+				http.Error(w, "device not found", http.StatusNotFound)
+				return
+			}
+			// Tagged / shared-infra nodes
+			// have Expiry == ""; reject
+			// the renew request.
+			if n.Expiry == "" {
+				http.Error(w, "device has no expiry (tagged/shared)", http.StatusBadRequest)
+				return
+			}
+			// Compute the new expiry:
+			// now + 30d. Same default
+			// the auto-renewer uses
+			// (internal/expirewatch,
+			// SKYGATE_EXPIREWATCH_RENEWAL=720h).
+			newExpiry := time.Now().Add(30 * 24 * time.Hour)
+			if rerr := hsClient.ExtendNodeExpiry(hsUserID.Int64, newExpiry); rerr != nil {
+				log.Printf("web.my.renew: ExtendNodeExpiry node=%s err=%v", idStr, rerr)
+				http.Error(w, "renew failed: "+rerr.Error(), http.StatusInternalServerError)
+				return
+			}
+			// Audit log: every renewal is
+			// recorded so the admin audit
+			// page can correlate
+			// "device just reconnected" with
+			// "skygate extended the node".
+			detail := fmt.Sprintf("node_id=%s new_expiry=%s", idStr, newExpiry.UTC().Format(time.RFC3339))
+			s.Backend.Audit(c.UserID, c.Username, "device_renewed", detail)
+			// Redirect with hostname + new
+			// expiry so the flash alert
+			// can show both. The hostname
+			// is the user-facing name; the
+			// new_expiry is the timestamp
+			// the user just got.
+			host := n.Hostname
+			http.Redirect(w, r, fmt.Sprintf("/my/devices?renewed=%s&new_expiry=%s",
+				url.QueryEscape(host),
+				url.QueryEscape(newExpiry.UTC().Format(time.RFC3339))), http.StatusFound)
+			return
+		}
+	}
+	// No matching node in the live list. We
+	// also check the snapshot (node_owner_map)
+	// in case the node is tagged-private and
+	// headscale has reassigned it.
+	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+	for _, sid := range snapIDs {
+		if sid == idStr {
+			// Same scope as the live check;
+			// we need n.Expiry + n.Hostname
+			// for the audit + redirect, so
+			// re-fetch from the live list
+			// (which already failed to
+			// match above — so the node
+			// is in snapshot but not in
+			// live, which is the
+			// tagged-private case). For
+			// these nodes, headscale shows
+			// them under "tagged-devices"
+			// and n.Expiry may still be
+			// populated. Re-list and
+			// match by id.
+			for _, n := range allNodes {
+				if n.ID == idStr {
+					if n.Expiry == "" {
+						http.Error(w, "device has no expiry", http.StatusBadRequest)
+						return
+					}
+					newExpiry := time.Now().Add(30 * 24 * time.Hour)
+					if rerr := hsClient.ExtendNodeExpiry(hsUserID.Int64, newExpiry); rerr != nil {
+						http.Error(w, "renew failed: "+rerr.Error(), http.StatusInternalServerError)
+						return
+					}
+					detail := fmt.Sprintf("node_id=%s new_expiry=%s", idStr, newExpiry.UTC().Format(time.RFC3339))
+					s.Backend.Audit(c.UserID, c.Username, "device_renewed", detail)
+					http.Redirect(w, r, fmt.Sprintf("/my/devices?renewed=%s&new_expiry=%s",
+						url.QueryEscape(n.Hostname),
+						url.QueryEscape(newExpiry.UTC().Format(time.RFC3339))), http.StatusFound)
+					return
+				}
+			}
+			log.Printf("web.my.renew: node %s in snapshot but not in live list", idStr)
+			http.Error(w, "device not found in headscale", http.StatusNotFound)
+			return
+		}
+	}
+	http.Error(w, "device not found", http.StatusNotFound)
 }
 
 // backfillNodeOwnership was a local copy of the helper in

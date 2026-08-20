@@ -793,6 +793,18 @@ func main() {
 	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(mySvc.PostMyPreauth)))
 	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(mySvc.GetMyKeys)))
 	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(mySvc.PostMyKeyExpire)))
+	// B160 (v1.5.0): per-device manual expiry
+	// renewal. The preauth key is one-time (B155
+	// reissue, B159 cleanup) so renewing it doesn't
+	// help; the device's NODE EXPIRY is what keeps
+	// the device authenticated. The auto-renewer
+	// (internal/expirewatch) does this every 5min
+	// for nodes within 7d, but the manual button is
+	// useful for "renew now" + explicit visibility
+	// (the audit log records every renewal). The
+	// handler scope-checks the node to the current
+	// user (cross-user renewals return 404).
+	mux.Handle("POST /my/devices/{id}/renew", authMW(http.HandlerFunc(mySvc.PostMyDeviceRenew)))
 	// B155 (v1.5.0): per-row preauth key reissue.
 	// Mirrors B153's /my/token/{id}/renew pattern:
 	// reissue button on /my/keys (POST, no JS).
