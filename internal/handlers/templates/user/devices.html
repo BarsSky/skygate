@@ -306,6 +306,33 @@
       <label class="os-tile"><input type="radio" name="os" value="macos"><i class="fa-brands fa-apple"></i>macOS</label>
       <label class="os-tile"><input type="radio" name="os" value="windows"><i class="fa-brands fa-windows"></i>Windows</label>
     </div>
+    {{/* B155 (v1.5.0): custom TTL + reusable checkbox.
+       The handler parses custom_ttl_value +
+       custom_ttl_unit BEFORE the legacy ttl dropdown
+       (mirrors the B153 token pattern). 0 = never
+       (headscale TTL = 5y cap). The reusable
+       checkbox defaults to OFF (single-use = the
+       pre-B155 behaviour). */}}
+    <div class="field">
+      <label>{{t "keys.custom_ttl_label"}}</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" name="custom_ttl_value" min="0" max="43800" step="1" placeholder="—" style="width:120px" inputmode="numeric">
+        <select name="custom_ttl_unit" class="form-control" style="max-width:140px">
+          <option value="h">{{t "keys.custom_ttl_h"}}</option>
+          <option value="d" selected>{{t "keys.custom_ttl_d"}}</option>
+          <option value="w">{{t "keys.custom_ttl_w"}}</option>
+          <option value="y">{{t "keys.custom_ttl_y"}}</option>
+        </select>
+      </div>
+      <div class="form-hint">{{t "keys.custom_ttl_hint"}}</div>
+    </div>
+    <div class="field form-check">
+      <label>
+        <input type="checkbox" name="reusable" value="1">
+        {{t "keys.reusable_label"}}
+      </label>
+      <div class="form-hint">{{t "keys.reusable_hint"}}</div>
+    </div>
     <div class="btn-row right">
       <button type="submit" class="btn"><i class="fa-solid fa-key"></i>{{t "keys.issue"}}</button>
     </div>

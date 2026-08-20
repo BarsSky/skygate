@@ -792,6 +792,14 @@ func main() {
 	mux.Handle("POST /my/preauth", authMW(http.HandlerFunc(mySvc.PostMyPreauth)))
 	mux.Handle("GET /my/keys", authMW(http.HandlerFunc(mySvc.GetMyKeys)))
 	mux.Handle("POST /my/keys/{id}/expire", authMW(http.HandlerFunc(mySvc.PostMyKeyExpire)))
+	// B155 (v1.5.0): per-row preauth key reissue.
+	// Mirrors B153's /my/token/{id}/renew pattern:
+	// reissue button on /my/keys (POST, no JS).
+	// The handler expires the old key + issues a
+	// new one with the same TTL + renders the
+	// preauth_result page so the user sees the
+	// new raw key.
+	mux.Handle("POST /my/keys/{id}/reissue", authMW(http.HandlerFunc(mySvc.PostMyKeyReissue)))
 	// 2026-07-29: refactor-v0.30 Phase B step 5b —
 	// /my/devices moved to feature/my.
 	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(mySvc.GetMyDevices)))

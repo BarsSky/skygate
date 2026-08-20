@@ -6,6 +6,20 @@
   </div>
 </div>
 
+{{/* B155 (v1.5.0): reissue banner. When the user
+   clicks the "Reissue" button on /my/keys, the
+   handler renders THIS page with .ReissueFrom +
+   .ReissueTo set. We show a "this key replaces
+   key #N" alert so the user knows the old key
+   is no longer valid (no device can use it for
+   registration any more). */}}
+{{if and .ReissueFrom .ReissueTo}}
+<div class="alert alert-success">
+  <i class="fa-solid fa-arrows-rotate"></i>
+  {{tf "keys.reissued_to" .ReissueFrom .ReissueTo}}
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-key"></i>{{t "devices.preauth_key"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.warning"}} (instructions for <b>{{.OSLabel}}</b>):</p>

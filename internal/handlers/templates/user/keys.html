@@ -9,6 +9,34 @@
   </div>
 </div>
 
+{{/* B155 (v1.5.0): post-reissue success flash. The
+   handler renders the preauth_result page directly
+   when the reissue succeeds (so the new raw key
+   never appears in a URL/log), but a reissue-from-the
+   -table path that doesn't go through preauth_result
+   would still hit this branch via a future redirect.
+   For now the main consumer of this alert is a
+   manual ?reissued=1&from=<N>&to=<M> GET (e.g. an
+   admin URL with explicit params). The alert is a
+   no-op when those query params are missing. */}}
+{{if and .reissuedFrom .reissuedTo}}
+<div class="alert alert-success">
+  <i class="fa-solid fa-arrows-rotate"></i>
+  {{tf "keys.reissued_to" .reissuedFrom .reissuedTo}}
+</div>
+{{end}}
+
+{{/* B155: ExpiringCount banner — fires when ≥1 unused,
+   not-yet-expired key is within 14 days of expiry.
+   The handler computes the count; the template just
+   renders the alert. */}}
+{{if .ExpiringCount}}
+<div class="alert alert-warn">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  {{tf "keys.banner_expiring" .ExpiringCount}}
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-key"></i>{{t "keys.title"}}</h3>
   {{if .Keys}}
@@ -18,9 +46,9 @@
         <th style="width:60px">ID</th>
         <th>{{t "devices.preauth_key"}}</th>
         <th style="width:160px">{{t "devices.created"}}</th>
-        <th style="width:160px">{{t "devices.expire"}}</th>
+        <th style="width:200px">{{t "devices.expire"}}</th>
         <th style="width:120px">{{t "devices.status"}}</th>
-        <th style="width:140px">{{t "common.actions"}}</th>
+        <th style="width:240px">{{t "common.actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -30,13 +58,24 @@
         <td><code style="font-size:11px">{{slice .Key 0 18}}…</code></td>
         <td class="mono" style="color:var(--text-muted)">{{datetimeformat .CreatedAt}}</td>
         <td class="mono" style="color:var(--text-muted)">
-          {{if gt .ExpiresAt 0}}{{datetimeformat .ExpiresAt}}{{else}}{{t "keys.not_set"}}{{end}}
+          {{/* B155: warning pill for expiring keys.
+             Mirrors B153's /my/tokens ExpiresWarn
+             pattern. The handler sets ExpiresWarn
+             to "expired" / "soon" / "month" / "";
+             ExpiresInWords is the human-readable
+             hint. */}}
+          {{if .ExpiresWarn}}
+            {{if gt .ExpiresAt 0}}{{datetimeformat .ExpiresAt}}{{end}}
+            <span class="badge badge-{{.ExpiresWarn}}">{{.ExpiresInWords}}</span>
+          {{else}}
+            {{if gt .ExpiresAt 0}}{{datetimeformat .ExpiresAt}}{{else}}{{t "keys.not_set"}}{{end}}
+          {{end}}
         </td>
         <td>
           {{if .Used}}
             <span class="tag tag-online" style="color:var(--success)">{{t "keys.used"}}</span>
           {{else if and (gt .ExpiresAt 0) (le .ExpiresAt $.Now)}}
-            <span class="tag" style="color:var(--text-subtle)">{{t "devices.expired"}}</span>
+            <span class="tag" style="color:var(--text-subtle)">{{t "keys.expired"}}</span>
           {{else}}
             <span class="tag" style="color:var(--info,#075985);background:var(--info-bg,#f0f9ff);padding:2px 7px;border-radius:3px">{{t "devices.status"}}: ok</span>
           {{end}}
@@ -45,7 +84,15 @@
           {{if or .Used (and (gt .ExpiresAt 0) (le .ExpiresAt $.Now))}}
             <span style="color:var(--text-subtle);font-size:12px">—</span>
           {{else}}
-            <form method="post" action="/my/keys/{{.ID}}/expire" onsubmit="return confirm('{{tf "devices.expire_confirm" .ID}}');" style="margin:0">
+            {{/* B155: Reissue button (POST, no JS).
+               Same pattern as the per-row Renew
+               button on /my/tokens. The handler
+               expires the old key + issues a new
+               one with the same TTL. */}}
+            <form method="post" action="/my/keys/{{.ID}}/reissue" style="display:inline" title="{{t "keys.reissue_title"}}">
+              <button type="submit" class="btn btn-secondary" style="padding:3px 10px;font-size:12px"><i class="fa-solid fa-arrows-rotate"></i>{{t "keys.reissue"}}</button>
+            </form>
+            <form method="post" action="/my/keys/{{.ID}}/expire" onsubmit="return confirm('{{tf "devices.expire_confirm" .ID}}');" style="margin:0;display:inline">
               <button type="submit" class="btn btn-secondary" style="padding:3px 10px;font-size:12px"><i class="fa-solid fa-ban"></i>{{t "devices.expire_action"}}</button>
             </form>
           {{end}}
@@ -62,12 +109,34 @@
   {{end}}
 </div>
 
+{{/* B155: dedicated reissue form. Visible when
+   ?reissue=ID is in the URL — the handler exposes
+   the targeted key's id+prefix as .ReissueForm. The
+   form posts to /my/keys/{ID}/reissue with a `ttl=`
+   field (1h/1d/1w/never) so the operator can pick a
+   fresh TTL instead of carrying the old one forward.
+   For now the inline per-row button uses the
+   carry-forward default; the dedicated form is the
+   power-user surface. */}}
+{{if .ReissueForm}}
+<div class="card">
+  <h3><i class="fa-solid fa-arrows-rotate"></i>{{t "keys.reissue_title"}} <code style="font-size:11px">{{.ReissueForm.Prefix}}</code></h3>
+  <form method="post" action="/my/keys/{{.ReissueForm.ID}}/reissue">
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+      {{t "keys.subtitle"}}.
+    </p>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-arrows-rotate"></i>{{t "keys.reissue"}}</button>
+    <a href="/my/keys" class="btn btn-secondary">{{t "common.cancel"}}</a>
+  </form>
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-circle-info"></i>{{t "exit_rules.how_title"}}</h3>
   <ul class="plain">
     <li><b>{{t "devices.status"}}: ok</b> — {{t "keys.unused"}}.</li>
     <li><b>{{t "keys.used"}}</b> — {{t "keys.used"}}.</li>
-    <li><b>{{t "devices.expired"}}</b> — {{t "devices.expire"}}.</li>
+    <li><b>{{t "keys.expired"}}</b> — {{t "devices.expire"}}.</li>
     <li>{{t "keys.subtitle"}}.</li>
   </ul>
 </div>
