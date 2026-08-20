@@ -205,7 +205,10 @@
           {{if .UnreadNotifications}}
             {{range .UnreadNotifications}}
             <div class="notif-item">
-              <div class="notif-title"><b>{{.Title}}</b></div>
+              <div class="notif-item-header">
+                <i class="fa-solid notif-icon-{{.Severity}}"></i>
+                <b>{{.Title}}</b>
+              </div>
               <div class="notif-body">{{.Body}}</div>
               <div class="notif-actions">
                 {{if .Link}}<a href="{{.Link}}" class="menu-btn"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "notif.cta_open"}}</a>{{end}}

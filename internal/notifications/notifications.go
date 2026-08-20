@@ -18,6 +18,8 @@ package notifications
 
 import (
 	"database/sql"
+	"fmt"
+	"time"
 
 	"skygate/internal/db"
 )
@@ -104,4 +106,109 @@ func MarkAllRead(d *sql.DB, userID int64) (int64, error) {
 // cascade helpers.
 func DeleteForUser(d *sql.DB, userID int64) (int64, error) {
 	return db.DeleteNotificationsForUser(d, userID)
+}
+
+// --- B157.1 pure-function helpers ---
+
+// TimeAgo returns a human-friendly "ago" string
+// for a notification's CreatedAt timestamp. The
+// result is English-only for now; the i18n keys
+// (notif.time_ago_*) are pre-declared in
+// catalog_my.go so a future B157.1.1 can branch
+// on lang without a schema change.
+//
+// Examples (ref=now):
+//   30 seconds ago → "just now"
+//   5 minutes ago  → "5 min ago"
+//   2 hours ago    → "2 h ago"
+//   1 day ago      → "1 d ago"
+//   3 days ago     → "3 d ago"
+//   2 months ago    → "2 mo ago"
+//   older          → "YYYY-MM-DD" (raw date)
+//
+// The thresholds are tuned for the B156 keynotify
+// scheduler's daily 9 AM run: most notifications
+// are "today" / "yesterday" / "this week", so the
+// verbose raw date only kicks in for old items
+// (the user scrolled deep into the list).
+func TimeAgo(t time.Time, ref time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	delta := ref.Sub(t)
+	if delta < 0 {
+		// Future timestamp (clock skew). Show
+		// as "just now" rather than negative
+		// time.
+		delta = 0
+	}
+	secs := int(delta.Seconds())
+	switch {
+	case secs < 45:
+		return "just now"
+	case secs < 90:
+		return "1 min ago"
+	case secs < 60*60:
+		return fmt.Sprintf("%d min ago", secs/60)
+	case secs < 2*60*60:
+		return "1 h ago"
+	case secs < 24*60*60:
+		return fmt.Sprintf("%d h ago", secs/(60*60))
+	case secs < 2*24*60*60:
+		return "1 d ago"
+	case secs < 30*24*60*60:
+		return fmt.Sprintf("%d d ago", secs/(24*60*60))
+	case secs < 60*24*60*60:
+		// 1-2 months — show as weeks.
+		return fmt.Sprintf("%d wk ago", secs/(7*24*60*60))
+	case secs < 365*24*60*60:
+		return fmt.Sprintf("%d mo ago", secs/(30*24*60*60))
+	}
+	// Older than 1 year — show raw date so
+	// the user has a precise reference.
+	return t.Format("2006-01-02")
+}
+
+// TypeIcon returns the FontAwesome 5/6 icon class
+// for a notification Type. Used by the bell
+// dropdown + the full /my/notifications page so
+// each notification kind has a distinct visual
+// signature (key icon for key.expiring, etc).
+//
+// Returns "fa-bell" as the fallback for unknown
+// types so a future B-check that adds a new type
+// without updating this switch still renders
+// something reasonable (just a generic bell).
+func TypeIcon(t string) string {
+	switch t {
+	case TypeKeyExpiring:
+		return "fa-key"
+	// Future: case TypeCertRenewal: return "fa-certificate"
+	// Future: case TypeBackupFailed:  return "fa-triangle-exclamation"
+	default:
+		return "fa-bell"
+	}
+}
+
+// TypeSeverityColor returns the B153/B155
+// badge-* class suffix for a notification's
+// Severity. The bell's per-item icon background
+// uses the same colour family so the user
+// learns the visual mapping between severity
+// and colour (info=blue, warn=yellow,
+// danger=red). Returns the empty string for
+// unknown severities so the template's class
+// concatenation doesn't produce a broken CSS
+// class.
+func TypeSeverityColor(severity string) string {
+	switch severity {
+	case SeverityInfo:
+		return "info"
+	case SeverityWarn:
+		return "warn"
+	case SeverityDanger:
+		return "danger"
+	default:
+		return ""
+	}
 }

@@ -584,11 +584,52 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
 .notif-menu{min-width:280px;max-width:340px;max-height:480px;overflow-y:auto;padding:0;background:var(--bg-elev,#fff);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.08)}
 .notif-item{padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;display:flex;flex-direction:column;gap:4px}
 .notif-item:last-child{border-bottom:none}
+.notif-item-header{display:flex;align-items:center;gap:6px;color:var(--text,#222);line-height:1.3}
+.notif-item-header b{font-weight:600}
+.notif-icon-info{color:var(--info,#075985);font-size:14px}
+.notif-icon-warn{color:var(--warning,#b45309);font-size:14px}
+.notif-icon-danger{color:var(--danger,#dc2626);font-size:14px}
 .notif-title{color:var(--text,#222);font-weight:600;line-height:1.3}
 .notif-body{color:var(--text-muted,#666);font-size:12px;line-height:1.4}
 .notif-actions{display:flex;gap:6px;margin-top:4px}
 .notif-actions .menu-btn{padding:3px 8px;font-size:11px;flex:0 0 auto}
 .notif-empty{padding:16px;text-align:center;color:var(--text-muted,#666);font-size:13px;font-style:italic}
+/* 2026-08-20: B157.1 — full-page /my/notifications
+   view. .notif-filter-pills: the All / Unread
+   toggle at the top. Plain <a> links (not
+   forms) so the URL is shareable. .notif-pill
+   uses the same pill pattern as the B155
+   ExpiresWarn badge so the visual style
+   matches. .notif-table: per-row icon + title +
+   body + time-ago + actions. .notif-icon-cell
+   keeps the icon centred. .notif-icon-{info,*
+   warn,danger}: the icon colour follows the
+   B153/B155 severity palette. .notif-row.unread
+   has a subtle background tint so the user can
+   scan for unread at a glance. .notif-empty-page:
+   the empty state when the user has zero
+   notifications (large icon + "we'll let you
+   know" copy). .notif-pagination: prev/next
+   buttons + the "N total" hint at the bottom. */
+.notif-filter-pills{display:flex;gap:6px;margin:0 0 16px 0;flex-wrap:wrap}
+.notif-pill{display:inline-block;padding:6px 12px;border-radius:999px;background:var(--bg-elev,#fff);border:1px solid var(--border);color:var(--text-muted,#666);font-size:13px;text-decoration:none;transition:background 0.15s}
+.notif-pill:hover{background:var(--info-bg,#f0f9ff);color:var(--text,#222)}
+.notif-pill.active{background:var(--info-bg,#f0f9ff);color:var(--info,#075985);border-color:var(--info,#075985);font-weight:600}
+.notif-table{width:100%;border-collapse:collapse}
+.notif-table th{padding:8px 10px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted,#666);border-bottom:1px solid var(--border)}
+.notif-table td{padding:12px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.notif-row.unread{background:var(--info-bg,#f0f9ff)}
+.notif-row.unread .notif-title{color:var(--text,#222)}
+.notif-icon-cell{text-align:center;width:48px}
+.notif-icon-info{color:var(--info,#075985);font-size:18px}
+.notif-icon-warn{color:var(--warning,#b45309);font-size:18px}
+.notif-icon-danger{color:var(--danger,#dc2626);font-size:18px}
+.notif-title{color:var(--text,#222);font-size:14px;line-height:1.4;margin-bottom:2px}
+.notif-body{color:var(--text-muted,#666);font-size:12px;line-height:1.4}
+.notif-empty-page{text-align:center;padding:48px 16px;color:var(--text-muted,#666)}
+.notif-empty-page i{font-size:48px;color:var(--text-subtle,#aaa);display:block;margin-bottom:16px}
+.notif-empty-page p{font-size:14px;line-height:1.5;max-width:420px;margin:0 auto}
+.notif-pagination{display:flex;justify-content:center;align-items:center;gap:12px;padding:16px 0 0 0}
 /* 2026-07-14: Этап 14 v2 — Tailscale reachability probe. The
    .alert-probe class uses the same layout as .alert but adds
    room for a multi-line body (sub-text + a troubleshooting

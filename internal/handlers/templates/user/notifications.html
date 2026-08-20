@@ -1,0 +1,81 @@
+﻿{{define "body-user-notifications"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-bell"></i> {{t "notif.page_title"}}</h2>
+    <div class="sub">{{t "tokens.subtitle"}}.</div>
+  </div>
+  <div class="btn-row">
+    {{if gt .UnreadCount 0}}
+    <form method="post" action="/my/notifications/read-all" style="margin:0">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-check-double"></i> {{t "notif.mark_all_read"}}</button>
+    </form>
+    {{end}}
+  </div>
+</div>
+
+{{/* Filter pills: All / Unread. Plain <a> links
+   (not a form) so the URL is shareable + the
+   browser's back button works. */}}
+<div class="notif-filter-pills">
+  <a href="/my/notifications?filter=all" class="notif-pill{{if eq .Filter "all"}} active{{end}}">
+    <i class="fa-solid fa-list"></i> {{t "notif.filter_all"}}
+  </a>
+  <a href="/my/notifications?filter=unread" class="notif-pill{{if eq .Filter "unread"}} active{{end}}">
+    <i class="fa-solid fa-bell"></i> {{t "notif.filter_unread"}}{{if gt .UnreadCount 0}} ({{.UnreadCount}}){{end}}
+  </a>
+</div>
+
+{{if .Rows}}
+<div class="card">
+  <table class="notif-table">
+    <thead>
+      <tr>
+        <th style="width:48px"></th>
+        <th>{{t "notif.page_title"}}</th>
+        <th style="width:160px">{{t "common.time"}}</th>
+        <th style="width:180px">{{t "common.actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr class="notif-row{{if not .IsRead}} unread{{else}} read{{end}}">
+        <td class="notif-icon-cell">
+          <i class="fa-solid {{.Icon}} notif-icon-{{.Severity}}"></i>
+        </td>
+        <td>
+          <div class="notif-title"><b>{{.Title}}</b></div>
+          <div class="notif-body">{{.Body}}</div>
+        </td>
+        <td class="mono" style="color:var(--text-muted);font-size:12px">
+          {{.TimeAgo}}
+          {{if .IsRead}}<br><span class="badge badge-success" style="margin-top:4px">{{t "notif.read"}}</span>{{end}}
+        </td>
+        <td style="white-space:nowrap">
+          {{if .Link}}<a href="{{.Link}}" class="btn btn-secondary btn-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "notif.cta_open"}}</a>{{end}}
+          {{if not .IsRead}}
+          <form method="post" action="/my/notifications/{{.ID}}/read" style="display:inline">
+            <button type="submit" class="btn btn-secondary btn-sm" title="{{t "notif.mark_read"}}"><i class="fa-solid fa-check"></i></button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{if or .HasPrev .HasNext}}
+  <div class="notif-pagination">
+    {{if .HasPrev}}<a href="/my/notifications?filter={{.Filter}}&page={{.PrevPage}}" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i></a>{{end}}
+    <span style="color:var(--text-muted);font-size:13px">{{.TotalCount}} total</span>
+    {{if .HasNext}}<a href="/my/notifications?filter={{.Filter}}&page={{.NextPage}}" class="btn btn-secondary"><i class="fa-solid fa-arrow-right"></i></a>{{end}}
+  </div>
+  {{end}}
+</div>
+{{else}}
+<div class="card">
+  <div class="notif-empty-page">
+    <i class="fa-solid fa-bell-slash"></i>
+    <p>{{t "notif.empty_page"}}</p>
+  </div>
+</div>
+{{end}}
+{{end}}

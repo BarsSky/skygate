@@ -809,6 +809,13 @@ func main() {
 	// a malicious id-probe returns 404.
 	mux.Handle("POST /my/notifications/{id}/read", authMW(http.HandlerFunc(mySvc.PostMyNotificationRead)))
 	mux.Handle("POST /my/notifications/read-all", authMW(http.HandlerFunc(mySvc.PostMyNotificationsReadAll)))
+	// B157.1 (v1.5.0): full-page /my/notifications
+	// view. The bell dropdown shows the unread
+	// slice; this page shows EVERYTHING
+	// (unread + read) with filter pills
+	// (All / Unread) + pagination. Same
+	// user_id scoping as the POST endpoints.
+	mux.Handle("GET /my/notifications", authMW(http.HandlerFunc(mySvc.GetMyNotifications)))
 	// 2026-07-29: refactor-v0.30 Phase B step 5b —
 	// /my/devices moved to feature/my.
 	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(mySvc.GetMyDevices)))

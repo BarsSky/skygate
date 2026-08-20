@@ -282,6 +282,88 @@ else
 fi
 
 echo ""
+echo "=== contract M (B157.1): full-page /my/notifications view ==="
+# B157.1 added a dedicated page (not just the bell
+# dropdown) with filter pills + pagination + time-ago
+# + type-specific icons.
+if grep -q 'func (s \*Service) GetMyNotifications' internal/feature/my/notifications.go; then
+    ok "GetMyNotifications handler defined"
+else
+    bad "GetMyNotifications handler MISSING — no full-page view"
+fi
+if [ -f "internal/handlers/templates/user/notifications.html" ]; then
+    ok "user/notifications.html template exists"
+else
+    bad "user/notifications.html template MISSING"
+fi
+if grep -q 'GET /my/notifications' cmd/skygate/main.go; then
+    ok "main.go registers GET /my/notifications"
+else
+    bad "main.go MISSING GET /my/notifications"
+fi
+# The page must have filter pills (All / Unread).
+if grep -q 'notif.filter_all' internal/handlers/templates/user/notifications.html && \
+   grep -q 'notif.filter_unread' internal/handlers/templates/user/notifications.html; then
+    ok "notifications.html has All / Unread filter pills"
+else
+    bad "notifications.html missing filter pills"
+fi
+# The page must have prev/next pagination.
+if grep -q 'notif-pagination' internal/handlers/templates/user/notifications.html; then
+    ok "notifications.html has pagination controls"
+else
+    bad "notifications.html missing pagination"
+fi
+# The pure-function helpers MUST be defined + tested.
+if grep -q 'func TimeAgo' internal/notifications/notifications.go; then
+    ok "notifications.TimeAgo defined"
+else
+    bad "notifications.TimeAgo MISSING"
+fi
+if grep -q 'func TypeIcon' internal/notifications/notifications.go; then
+    ok "notifications.TypeIcon defined"
+else
+    bad "notifications.TypeIcon MISSING"
+fi
+if grep -q 'func TypeSeverityColor' internal/notifications/notifications.go; then
+    ok "notifications.TypeSeverityColor defined"
+else
+    bad "notifications.TypeSeverityColor MISSING"
+fi
+# Unit tests for the helpers MUST exist + pass.
+if [ -f "internal/notifications/notifications_test.go" ]; then
+    ok "internal/notifications/notifications_test.go exists"
+else
+    bad "internal/notifications/notifications_test.go MISSING"
+fi
+for tn in TestTimeAgo TestTypeIcon TestTypeSeverityColor; do
+    if grep -q "func $tn" internal/notifications/notifications_test.go; then
+        ok "$tn test defined"
+    else
+        bad "$tn test MISSING"
+    fi
+done
+# The bell dropdown + full page both use the type
+# icon (so the user sees a key icon for
+# key.expiring). The CSS class is "notif-icon-{Severity}".
+if grep -q 'notif-icon-' internal/handlers/templates/layout.html && \
+   grep -q 'notif-icon-' static/css/themes.css; then
+    ok "bell dropdown + CSS use the notif-icon-{Severity} class"
+else
+    bad "notif-icon-{Severity} class not wired in template + CSS"
+fi
+# i18n parity for the new keys.
+for k in page_title filter_all filter_unread empty_page time_just_now time_min_ago time_h_ago time_d_ago read; do
+    count=$(grep -c "\"notif\\.${k}\"" internal/i18n/catalog_my.go internal/i18n/catalog_common.go 2>/dev/null | awk -F: '{sum+=$2} END {print sum}')
+    if [ "${count:-0}" -ge 2 ]; then
+        ok "notif.${k} present in both RU and EN"
+    else
+        bad "notif.${k} missing parity ($count total occurrences across RU+EN)"
+    fi
+done
+
+echo ""
 echo "=== summary ==="
 echo "B157: in-web notification inbox (bell icon + count + dismiss)"
+echo "B157.1: full-page view + type icons + time-ago + filter pills + pagination"
 echo "all B157 contracts satisfied"
