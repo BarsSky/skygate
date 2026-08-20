@@ -331,6 +331,24 @@ type Config struct {
 	// share the 03:00 window).
 	TokenAutoRotateEnabled bool
 	TokenAutoRotateSchedule string // cron expression, e.g. "0 3 * * *"
+	// 2026-08-20: v1.5.0 (B156) — in-app preauth key
+	// expiration notification scheduler. Scans
+	// preauth_keys daily (default 9 AM), sends a
+	// localized Telegram message to the user
+	// when their unused, not-yet-expired key is
+	// within 14 days of expiry, with the
+	// reissue instructions ("go to /my/keys →
+	// click Reissue"). Differs from B154 (auto-
+	// rotate) in two ways: (1) per-user chat
+	// (not operator chat), (2) notify only, no
+	// automatic action. Disabled by default
+	// (operator opt-in via SKYGATE_KEY_NOTIFY_
+	// ENABLED=true). The future /admin/settings
+	// page (post-B156.1) will expose a runtime
+	// toggle via global_settings["keys.
+	// notify_enabled"].
+	KeyNotifyEnabled  bool
+	KeyNotifySchedule string // cron expression, e.g. "0 9 * * *"
 	// 2026-08-18: v1.5.0 (B145) — HA chain + elector
 	// + DNS provider config. See the long docstring
 	// above (just after getDuration) for the full
@@ -577,6 +595,19 @@ func Load() (*Config, error) {
 		// nightly cron window).
 		TokenAutoRotateEnabled:  getenv("SKYGATE_TOKEN_AUTO_ROTATE_ENABLED", "false") == "true",
 		TokenAutoRotateSchedule: getenv("SKYGATE_TOKEN_AUTO_ROTATE_SCHEDULE", "0 3 * * *"),
+		// 2026-08-20 (B156): key-expiration
+		// notification env-var defaults. The
+		// future /admin/settings page can
+		// override the enabled flag at runtime
+		// via the global_settings DB key
+		// (keys.notify_enabled) which the
+		// scheduler re-reads on every tick. Env
+		// var is just the boot-time fallback.
+		// Default: disabled, daily 09:00 (after
+		// the 5 AM smoke-mesh cleanup + 3 AM
+		// backup + 4 AM verify window).
+		KeyNotifyEnabled:  getenv("SKYGATE_KEY_NOTIFY_ENABLED", "false") == "true",
+		KeyNotifySchedule: getenv("SKYGATE_KEY_NOTIFY_SCHEDULE", "0 9 * * *"),
 		CleanupSmokeMeshSchedule:     getenv("SKYGATE_CLEANUP_SMOKE_MESH_SCHEDULE", "0 5 * * *"),
 		// 2026-08-18: v1.5.0 (B145) — HA chain + elector
 		// + DNS provider. Env-var defaults match the

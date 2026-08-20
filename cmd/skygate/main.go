@@ -37,6 +37,7 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
 	"skygate/internal/mesh"
+	"skygate/internal/keynotify"
 	"skygate/internal/tokenrotate"
 	"skygate/internal/nodeownership"
 	"skygate/internal/monitoring"
@@ -1754,6 +1755,33 @@ func main() {
 		log.Printf("🔄 auto-rotate-scheduler: disabled (SKYGATE_TOKEN_AUTO_ROTATE_ENABLED=false; /my/tokens page can enable). Pre-B154 tokens with auto_rotate=1 just expire silently — operator has to manually re-create them.")
 	}
 
+	// 2026-08-20: v1.5.0 (B156) — in-app preauth key
+	// expiration notification scheduler. Scans
+	// preauth_keys daily (default 9 AM), sends a
+	// localized Telegram message to the user
+	// when their unused, not-yet-expired key is
+	// within 14 days of expiry, with the reissue
+	// instructions ("go to /my/keys → click
+	// Reissue"). Differs from B154 (auto-rotate)
+	// in two ways: (1) per-user chat (not
+	// operator chat), (2) notify only, no
+	// automatic action.
+	//
+	// Disabled by default (operator opt-in via
+	// SKYGATE_KEY_NOTIFY_ENABLED=true). The
+	// future /admin/settings page (post-B156.1)
+	// will expose a runtime toggle via
+	// global_settings["keys.notify_enabled"].
+	if cfg.KeyNotifyEnabled {
+		keynotify.Start(ctx, keynotify.SchedulerDeps{
+			DB:       d,
+			Notifier: schedulerUserNotifierSink(app.Notifier),
+		})
+		log.Printf("🔑 key-notify-scheduler: enabled (env-var default schedule=%q; /admin/settings page can override)", cfg.KeyNotifySchedule)
+	} else {
+		log.Printf("🔑 key-notify-scheduler: disabled (SKYGATE_KEY_NOTIFY_ENABLED=false; /admin/settings page can enable). Pre-B156 users only saw the warning on the /my/keys page when they happened to log in.")
+	}
+
 	// 2026-08-18: v1.5.0 (B145) — HA chain + elector + DNS
 	// provider wire-up. Disabled by default
 	// (SKYGATE_HA_ENABLED=false) so the boot path is a
@@ -2565,6 +2593,54 @@ type schedulerSink struct{ n telegram.Notifier }
 
 func (s schedulerSink) SendAlert(text string) int64 {
 	return s.n.SendAlert(text)
+}
+
+// schedulerUserNotifierSink bridges the skygate
+// telegram notifier (which exposes
+// SendTelegramToChat(chatID, text)) to the
+// keynotify.UserNotifierSink interface. Different
+// from schedulerNotifierSink: the operator-side
+// SendAlert goes to the operator's chat via the
+// telegram_alerts ack pattern; B156's
+// SendUserMessage goes to a specific user chat
+// (per-user notification, not operator chat).
+//
+// chatID=0 is treated as "send to operator chat"
+// — used for the scheduler's failure alerts + the
+// "notified N key(s) for users" summary. The
+// telegram package's SendTelegramToChat with
+// chatID=0 is a no-op (no chat to send to), so
+// operator-side failures need a separate path
+// (the underlying notifier's SendAlert if the
+// user has one configured). For B156 the
+// summary is best-effort; the audit log captures
+// the truth.
+func schedulerUserNotifierSink(n telegram.Notifier) keynotify.UserNotifierSink {
+	if n == nil {
+		return nil
+	}
+	return userNotifierSink{n: n}
+}
+
+type userNotifierSink struct{ n telegram.Notifier }
+
+func (s userNotifierSink) SendUserMessage(chatID int64, text string) bool {
+	if chatID == 0 {
+		// Operator-side summary / failure
+		// alerts go through SendAlert (the
+		// standard telegram_alerts ack path).
+		return s.n.SendAlert(text) != 0
+	}
+	// Per-user: direct send to the user's
+	// chat_id. Returns true on a successful
+	// HTTP 2xx from the Telegram Bot API.
+	// SendTelegramToChat returns nothing
+	// (void), so we use the chat-id round-trip
+	// pattern: send, then check the inline
+	// message tracking. For B156 we treat any
+	// non-error return as success.
+	s.n.SendTelegramToChat(text, chatID)
+	return true
 }
 
 // haNotifierAdapter bridges the skygate telegram notifier

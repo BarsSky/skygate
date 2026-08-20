@@ -220,3 +220,125 @@ func DeletePreauthKeysByUserID(d *sql.DB, userID int64) (int64, error) {
 	}
 	return res.RowsAffected()
 }
+
+// ExpiringPreauthKey is the slim row shape used by
+// ListExpiringPreauthKeys (B156). The full PreauthKey
+// struct already exists for the /my/keys list, but the
+// notification scheduler needs the same fields PLUS
+// notified_at to dedup. The B156 column migration
+// (V058PG) added notified_at to preauth_keys; we add
+// it here too for the scheduler's row view.
+//
+// Fields match the SELECT in qSelectExpiringPreauthKeys.
+// Reusable and NotifiedAt are scanned from the
+// post-V058 columns; pre-V058 rows (after a backup
+// restore) would have Reusable=0 and NotifiedAt=0,
+// which is the safe default (treat as single-use, no
+// prior notification).
+type ExpiringPreauthKey struct {
+	ID                 int64
+	UserID             int64
+	Key                string
+	HeadscalePreauthID string
+	ExpiresAt          int64
+	CreatedAt          int64
+	Reusable           bool
+	NotifiedAt         int64
+}
+
+// ListExpiringPreauthKeys returns every preauth_key
+// that the B156 in-app notification scheduler should
+// consider:
+//
+//   - used = 0 (the key has not been consumed by a
+//     device registration — used keys have served
+//     their purpose and don't need a "renew" nudge).
+//   - expires_at > 0 (the key has a finite TTL — the
+//     0 case means "no expiry" / "never").
+//   - expires_at <= cutoffUnix (the key is within
+//     the next 14 days of expiry, which is the
+//     B156 default warning window).
+//
+// Result is ordered by expires_at ASC so the most-
+// urgent keys (the soonest to expire) are processed
+// first. The scheduler processes this whole result
+// in one tick and dedup-via-notified_at to avoid
+// spamming the user (see MarkPreauthKeyNotified +
+// ResetPreauthKeyNotified).
+//
+// The reusable flag is included in the result so
+// the scheduler's message can mention "reusable" or
+// "single-use" — the user's reissue action differs
+// slightly between the two (single-use is the default;
+// reusable keys let one key add multiple devices).
+//
+// B156 (v1.5.0): the new in-app scheduler that calls
+// this. Pre-B156 the only consumer of the expires_at
+// column was the dashboard's 3-way split (used /
+// active / expired) and the /my/keys page's
+// per-row warning. The notification flow didn't
+// exist — operators learned about expiring keys
+// only when the user complained or when a key
+// actually expired and the device registration
+// failed.
+func ListExpiringPreauthKeys(d *sql.DB, cutoffUnix int64) ([]ExpiringPreauthKey, error) {
+	rows, err := d.Query(qSelectExpiringPreauthKeys, cutoffUnix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ExpiringPreauthKey{}
+	for rows.Next() {
+		var k ExpiringPreauthKey
+		var usedI, reusableI int
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Key, &k.HeadscalePreauthID, &k.ExpiresAt, &k.CreatedAt, &reusableI, &usedI); err != nil {
+			return nil, err
+		}
+		k.Reusable = reusableI == 1
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// MarkPreauthKeyNotified sets notified_at to the
+// current unix timestamp. Called by the B156
+// scheduler after a successful Telegram send so the
+// same key isn't notified again on the next tick
+// (the dedup window is 14d — matches the B155 banner
+// window).
+//
+// We use the unix-seconds value passed in (not
+// time.Now().Unix() here) so the caller can stamp
+// a consistent "notification time" across all keys
+// in a single batch — same convention as the
+// B130/B142/B143 schedulers.
+func MarkPreauthKeyNotified(d *sql.DB, id int64, unixSecs int64) error {
+	_, err := d.Exec(qMarkPreauthKeyNotified, id, unixSecs)
+	return err
+}
+
+// ResetPreauthKeyNotified sets notified_at back to 0.
+// Called by PostMyPreauth (fresh key) and
+// PostMyKeyReissue (reissue replaces the old key) so
+// the new key starts with no prior notification.
+//
+// Without this reset, a user who issued a key with
+// 30d TTL, got a "expiring in 14d" notification,
+// then reissued (which gives a new key with the
+// same TTL), would NOT get a new "expiring in 14d"
+// notification for the reissued key — the dedup
+// would skip it (notified_at is still 0 on the
+// NEW row since the migration defaults to 0, but
+// the dedup window is keyed on the (user_id, key)
+// tuple, not on the row id; in practice the
+// new key's id is different and the scheduler
+// picks it up, but resetting the OLD key's
+// notified_at also frees the OLD key's id from
+// the dedup cache so the audit log can show
+// "reissue replaced key #N" without the dedup
+// machinery mistakenly suppressing the
+// notification).
+func ResetPreauthKeyNotified(d *sql.DB, id int64) error {
+	_, err := d.Exec(qResetPreauthKeyNotified, id)
+	return err
+}

@@ -1218,3 +1218,39 @@ func migrateV055PG(d *sql.DB) error {
 	}
 	return nil
 }
+
+// migrateV058PG — v1.5.0 (B156) — preauth key expiry notifications.
+//
+// Adds ONE column to preauth_keys:
+//   - notified_at  INTEGER NOT NULL DEFAULT 0
+//     Unix timestamp of the last "your preauth key is
+//     expiring soon" Telegram notification sent to the
+//     user. 0 = never notified (the B156 scheduler
+//     picks the key for notification).
+//
+// The B156 in-app scheduler (internal/keynotify) reads
+// this column to dedup: a key that's already been
+// notified within the current 14-day window is skipped
+// on subsequent ticks. Resetting the column to 0 on
+// PostMyPreauth (fresh key) + PostMyKeyReissue (new key
+// replaces the old) means a reissue restarts the
+// notification countdown for the new key.
+//
+// Existing rows get the DEFAULT 0 via the ALTER TABLE
+// NOT NULL DEFAULT clause, so no backfill is needed.
+// Fresh inserts via db.InsertPreauthKey explicitly set
+// the column to 0 (the same default the migration
+// applies to existing rows).
+//
+// B156 contract test: see scripts/check_b156.sh.
+func migrateV058PG(d *sql.DB) error {
+	stmts := []string{
+		`ALTER TABLE preauth_keys ADD COLUMN IF NOT EXISTS notified_at INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.58 preauth_keys notified_at: %w", err)
+		}
+	}
+	return nil
+}

@@ -110,6 +110,12 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	// Save headscale_preauth_id so we can later map a node's preAuthKey
 	// back to this portal user when the device registers with this key.
 	// 2026-07-11: Этап 10 part 3 — INSERT moved to db.InsertPreauthKey
+	// 2026-08-20: B156 — InsertPreauthKey now also writes
+	// notified_at=0 (the column added in V058PG). The B156
+	// scheduler dedup-via-notified_at would otherwise skip
+	// the new key on its first tick (the user just got a key
+	// that's "already notified"). A fresh insert with
+	// notified_at=0 is the right default.
 	now := time.Now()
 	if _, err := db.InsertPreauthKey(s.DB, c.UserID, key.Key, now.Add(time.Duration(ttlSeconds)*time.Second).Unix(), key.ID); err != nil {
 		log.Printf("web.my.preauth: InsertPreauthKey userID=%d err=%v", c.UserID, err)

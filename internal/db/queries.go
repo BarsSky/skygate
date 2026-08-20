@@ -461,6 +461,9 @@ const (
 	// the live install.
 	qSelectPreauthFullByID       = `SELECT id, user_id, key, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0), created_at FROM preauth_keys WHERE id = $1 AND user_id = $2`
 	qInsertPreauthKey            = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES ($1, $2, $3, $4) RETURNING id`
+	qSelectExpiringPreauthKeys   = `SELECT id, user_id, key, headscale_preauth_id, expires_at, created_at, reusable, used FROM preauth_keys WHERE used = 0 AND expires_at > 0 AND expires_at <= $1 ORDER BY expires_at ASC`
+	qMarkPreauthKeyNotified      = `UPDATE preauth_keys SET notified_at = $2 WHERE id = $1`
+	qResetPreauthKeyNotified     = `UPDATE preauth_keys SET notified_at = 0 WHERE id = $1`
 	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
 	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
 	qDeletePreauthByUser         = `DELETE FROM preauth_keys WHERE user_id = $1`

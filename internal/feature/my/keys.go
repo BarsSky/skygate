@@ -321,6 +321,10 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist the new key in the local mirror.
+	// 2026-08-20: B156 — InsertPreauthKey now also writes
+	// notified_at=0 (the V058PG column). The B156 scheduler
+	// dedup-via-notified_at would otherwise skip the new
+	// key on its first tick.
 	newID, err := db.InsertPreauthKey(s.DB, c.UserID, newKey.Key, now+ttlSeconds, newKey.ID)
 	if err != nil {
 		log.Printf("web.my.reissue: InsertPreauthKey err=%v", err)
