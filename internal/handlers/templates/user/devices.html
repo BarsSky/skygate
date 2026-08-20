@@ -158,6 +158,19 @@
 <div class="card">
   <h3><i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}</h3>
   {{if .HasMyNodes}}
+  {{/* B160.1 (2026-08-20): wrap the table in .table-wrap
+     so the 10-column "My devices" list scrolls
+     horizontally on smaller viewports instead of
+     overflowing the .card (the user reported the
+     new Expires column pushed the table out of the
+     form area on a 1024px-wide screen). Same pattern
+     as the admin/* pages (B50 + B158.1+ all use
+     .table-wrap on their wide tables). The B160
+     addition of the Expires column + Renew button
+     took the table from 9 to 10 columns; without
+     this wrapper the table spills past the .card
+     edge on the operator's screen. */}}
+  <div class="table-wrap">
   <table>
     <thead><tr><th>{{t "devices.hostname"}}</th><th>{{t "devices.ip"}}</th><th>{{t "devices.status"}}</th><th>{{t "devices.last_seen"}}</th><th>{{t "devices.expires_col"}}</th><th>{{t "devices.tag"}}</th><th>{{t "devices.subnets"}}</th><th>{{t "devices.mesh_subnet"}}</th><th>{{t "devices.dev_tag_label"}}</th><th>{{t "devices.device_exit_pref"}}</th></tr></thead>
     <tbody>
@@ -322,6 +335,7 @@
       {{end}}
     </tbody>
   </table>
+  </div><!-- /.table-wrap (B160.1) -->
   <p style="color:var(--text-muted);font-size:12px;margin-top:12px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
     <span>{{t "devices.tag_hint_v0_24_1"}}.</span>

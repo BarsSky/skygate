@@ -600,6 +600,19 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 //     "renewed 5 days ago" (the audit log already
 //     records every renewal)
 //
+// B160.1 (2026-08-20) — added the "node no longer
+// exists" case. Operator 2026-08-20 hit this in the
+// wild: the local node_owner_map snapshot still had
+// the device's headscale ID, the /my/devices page
+// rendered the Renew button, the user clicked it,
+// and headscale returned "rpc error: code = Unknown
+// desc = node no longer exists in NodeStore: 1" —
+// a 500. The fix is pattern-match the error string
+// and return 410 Gone instead, so the user sees a
+// clear "device was removed, refresh" message and
+// the audit log isn't polluted with a no-op
+// "device_renewed" entry.
+//
 // Scope: the node MUST be owned by the current
 // user (verified by re-listing the user's headscale
 // nodes — same scoping as B155's PostMyKeyReissue).
@@ -611,13 +624,83 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 //   - node has no Expiry (tagged/shared infra) → 400
 //     (these are policy-controlled; the user can't
 //     unilaterally extend them)
-//   - headscale.ExtendNodeExpiry fails → 500
+//   - headscale says the node no longer exists →
+//     410 Gone with the B160.1 "refresh the page"
+//     message. This happens when the local
+//     node_owner_map snapshot still has the ID but
+//     the node was deleted from headscale in
+//     between the last /my/devices load and the
+//     renew click. The audit log is NOT written in
+//     this case (the renewal didn't actually happen).
+//   - any other headscale error → 500
 //
 // On success: redirect to /my/devices?renewed=<host>
 // &new_expiry=<RFC3339> with the new expiry so the
 // template can render a flash alert with both the
 // hostname and the new timestamp. The host + expiry
 // are non-secret (the audit log already shows them).
+
+// renewNodeResult is the outcome of a tryRenewNode
+// call. Used to translate the headscale-side gRPC
+// error into the right HTTP status (410 vs 500)
+// without duplicating the error-string parsing at
+// every call site. B160.1, 2026-08-20.
+type renewNodeResult int
+
+const (
+	renewOK renewNodeResult = iota
+	// renewDeleted — headscale says the node no
+	// longer exists in its NodeStore. The local
+	// node_owner_map still has the ID (a stale
+	// snapshot from the last /my/devices load), but
+	// headscale has since removed the node (operator
+	// ran `headscale nodes delete`, the device
+	// expired and was cleaned up, etc.). 410 Gone
+	// is the right HTTP status — the resource WAS
+	// here, the user has stale data, refresh to
+	// see the new state. We do NOT write the audit
+	// log in this case (no actual renewal happened).
+	renewDeleted
+	// renewFailed — any other headscale / gRPC /
+	// docker error. The raw message is returned
+	// alongside so the caller can log it for
+	// diagnostics; it's NEVER exposed to the user
+	// (the user sees only the i18n key, which
+	// doesn't leak headscale internals).
+	renewFailed
+)
+
+// tryRenewNode wraps hsClient.ExtendNodeExpiry with
+// the "no longer exists in NodeStore" detection
+// (B160.1, 2026-08-20).
+//
+// We match on TWO patterns because headscale has
+// shifted the error wording across versions:
+//   - "no longer exists in NodeStore" (current
+//     headscale 0.29.x — the operator's live VM
+//     error from 2026-08-20)
+//   - "node not found" (older / alternative
+//     wording — defensive for future headscale
+//     upgrades that might phrase it differently)
+//
+// Returning renewDeleted tells the caller to use
+// 410 Gone (not 404) — the resource was there, the
+// local snapshot is just stale. The user should
+// refresh /my/devices to get the current list, at
+// which point the deleted device disappears from
+// the table.
+func tryRenewNode(hsClient *headscale.Client, hsUserID int64, newExpiry time.Time) (renewNodeResult, string) {
+	if err := hsClient.ExtendNodeExpiry(hsUserID, newExpiry); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "no longer exists in NodeStore") ||
+			strings.Contains(msg, "node not found") {
+			return renewDeleted, msg
+		}
+		return renewFailed, msg
+	}
+	return renewOK, ""
+}
+
 func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
@@ -714,9 +797,27 @@ func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
 			// (internal/expirewatch,
 			// SKYGATE_EXPIREWATCH_RENEWAL=720h).
 			newExpiry := time.Now().Add(30 * 24 * time.Hour)
-			if rerr := hsClient.ExtendNodeExpiry(hsUserID.Int64, newExpiry); rerr != nil {
-				log.Printf("web.my.renew: ExtendNodeExpiry node=%s err=%v", idStr, rerr)
-				http.Error(w, "renew failed: "+rerr.Error(), http.StatusInternalServerError)
+			// B160.1: detect the "node no longer
+			// exists in NodeStore" error and
+			// return 410 Gone with a friendly
+			// "refresh the page" message
+			// instead of a 500 with the raw
+			// gRPC error. The local
+			// node_owner_map snapshot is just
+			// stale (the device was deleted
+			// from headscale between the last
+			// /my/devices load and the renew
+			// click). The audit log is NOT
+			// written in this case.
+			lang := s.I18n.LangFromRequest(r)
+			switch result, rerrMsg := tryRenewNode(hsClient, hsUserID.Int64, newExpiry); result {
+			case renewDeleted:
+				log.Printf("web.my.renew: node=%s no longer exists in headscale (B160.1): %s", idStr, rerrMsg)
+				http.Error(w, s.I18n.T(lang, "devices.renew_err_deleted"), http.StatusGone)
+				return
+			case renewFailed:
+				log.Printf("web.my.renew: ExtendNodeExpiry node=%s err=%v", idStr, rerrMsg)
+				http.Error(w, s.I18n.Tf(lang, "devices.renew_err_failed", rerrMsg), http.StatusInternalServerError)
 				return
 			}
 			// Audit log: every renewal is
@@ -767,8 +868,24 @@ func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 					newExpiry := time.Now().Add(30 * 24 * time.Hour)
-					if rerr := hsClient.ExtendNodeExpiry(hsUserID.Int64, newExpiry); rerr != nil {
-						http.Error(w, "renew failed: "+rerr.Error(), http.StatusInternalServerError)
+					// B160.1: same deleted-vs-failed
+					// detection as the live branch
+					// above. A node that lives in
+					// the snapshot (node_owner_map)
+					// but has been deleted from
+					// headscale since the last
+					// /my/devices load still hits
+					// this path; we want the same
+					// 410 Gone behaviour.
+					lang := s.I18n.LangFromRequest(r)
+					switch result, rerrMsg := tryRenewNode(hsClient, hsUserID.Int64, newExpiry); result {
+					case renewDeleted:
+						log.Printf("web.my.renew: snapshot-node=%s no longer exists in headscale (B160.1): %s", idStr, rerrMsg)
+						http.Error(w, s.I18n.T(lang, "devices.renew_err_deleted"), http.StatusGone)
+						return
+					case renewFailed:
+						log.Printf("web.my.renew: ExtendNodeExpiry node=%s err=%v", idStr, rerrMsg)
+						http.Error(w, s.I18n.Tf(lang, "devices.renew_err_failed", rerrMsg), http.StatusInternalServerError)
 						return
 					}
 					detail := fmt.Sprintf("node_id=%s new_expiry=%s", idStr, newExpiry.UTC().Format(time.RFC3339))

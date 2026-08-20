@@ -205,6 +205,84 @@ else
 fi
 
 echo ""
+echo "=== contract H: B160.1 — 'node no longer exists' handling ==="
+# B160.1 (2026-08-20) was added after the operator
+# hit the headscale gRPC error "no longer exists in
+# NodeStore" in the wild. The handler must:
+#   1. Pattern-match the error and return 410 Gone
+#   2. NOT write the audit log (no actual renewal)
+#   3. Render a friendly i18n message
+# Future edits to the renew error handling must
+# keep all three.
+if grep -qE 'tryRenewNode' internal/feature/my/devices.go; then
+    ok "PostMyDeviceRenew uses tryRenewNode helper"
+else
+    bad "PostMyDeviceRenew MISSING the tryRenewNode wrapper"
+fi
+# Pattern must include "no longer exists in NodeStore"
+# (the current headscale 0.29.x wording) — the
+# operator hit this exact string on 2026-08-20.
+if grep -qE 'no longer exists in NodeStore' internal/feature/my/devices.go; then
+    ok "tryRenewNode matches 'no longer exists in NodeStore'"
+else
+    bad "tryRenewNode MISSING the headscale error pattern"
+fi
+# 410 Gone (not 500) for the deleted case — the
+# user should refresh the page to see the new state.
+if grep -qE 'StatusGone' internal/feature/my/devices.go; then
+    c=$(grep -cE 'StatusGone' internal/feature/my/devices.go)
+    if [ "$c" -ge 2 ]; then
+        ok "PostMyDeviceRenew returns 410 Gone for deleted nodes (>=2 sites: live + snapshot)"
+    else
+        bad "PostMyDeviceRenew only returns 410 Gone in $c site(s); need >=2"
+    fi
+else
+    bad "PostMyDeviceRenew MISSING the 410 Gone response"
+fi
+# i18n key for the deleted case (so the user
+# sees a friendly message, not a raw 500).
+if grep -qE '"devices\.renew_err_deleted"' internal/i18n/catalog_my.go; then
+    c=$(grep -cE '"devices\.renew_err_deleted"' internal/i18n/catalog_my.go)
+    if [ "$c" -ge 2 ]; then
+        ok "devices.renew_err_deleted i18n key in both RU and EN"
+    else
+        bad "devices.renew_err_deleted has only $c occurrence(s); need >=2"
+    fi
+else
+    bad "devices.renew_err_deleted i18n key MISSING"
+fi
+
+echo ""
+echo "=== contract I: B160.1 — /my/devices table overflow fix ==="
+# B160 added the Expires column (table went from
+# 9 to 10 columns). The operator reported the
+# table overflowing the .card on a 1024px-wide
+# screen. The fix: wrap the table in .table-wrap
+# (overflow-x: auto) — same pattern as admin/*.
+if grep -qE '<div class="table-wrap">' internal/handlers/templates/user/devices.html; then
+    ok "devices.html wraps the My-devices table in .table-wrap"
+else
+    bad "devices.html MISSING the .table-wrap wrapper"
+fi
+# The wrapper must close after </table>, not
+# at the end of the file. We check that .table-wrap
+# appears BEFORE the My-devices table opens.
+if grep -qE 'table-wrap' internal/handlers/templates/user/devices.html; then
+    # Both <div class="table-wrap"> and the closing
+    # </div> must be present.
+    open=$(grep -cE '<div class="table-wrap">' internal/handlers/templates/user/devices.html)
+    close=$(grep -cE '</div><!-- /.table-wrap' internal/handlers/templates/user/devices.html)
+    if [ "$open" -ge 1 ] && [ "$close" -ge 1 ]; then
+        ok ".table-wrap opens ($open) and closes ($close) correctly"
+    else
+        bad ".table-wrap mismatch: open=$open close=$close"
+    fi
+else
+    bad ".table-wrap wrapper MISSING from devices.html"
+fi
+
+echo ""
 echo "=== summary ==="
 echo "B160: /my/devices manual expiry renewal (Expires column + Renew button)"
+echo "B160.1: 'node no longer exists' (410 Gone) + table overflow (.table-wrap)"
 echo "all B160 contracts satisfied"
