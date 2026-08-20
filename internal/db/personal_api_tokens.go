@@ -174,6 +174,21 @@ func DeleteAPITokenByUser(d *sql.DB, id, userID int64) (int64, error) {
 	return res.RowsAffected()
 }
 
+// UpdateAPITokenExpiryByUser extends (or removes) the expiry of the
+// token with the given id, IF it belongs to userID. Called by
+// PostMyTokenRenew (B153). The newExpiresAt value follows the
+// same convention as InsertAPIToken: 0 = never expires,
+// anything else = unix timestamp at which the token stops being
+// valid. Returns rows affected so the handler can detect "wrong
+// user" or "already revoked" cases.
+func UpdateAPITokenExpiryByUser(d *sql.DB, id, userID int64, newExpiresAt int64) (int64, error) {
+	res, err := d.Exec(qUpdateAPITokenExpiryByUser, id, userID, newExpiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // TouchAPITokenLastUsed bumps the last_used_at column for the token
 // whose hash matches. Called by the Bearer-auth path after a
 // successful match. Best-effort by convention — the handler drops

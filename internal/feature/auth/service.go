@@ -280,12 +280,36 @@ func (s *Service) PostMyAccountPassword(w http.ResponseWriter, r *http.Request) 
 // GetMyTokens lists the caller's API tokens with formatted timestamps
 // (last-used, expires-at). Each token is shown only once at creation
 // (see PostMyToken).
+//
+// B153 (v1.5.0): per-row expiry warnings. For each row we set
+//
+//	ExpiresWarn     — "expired" (red, past) / "soon" (red, <7d) /
+//	                  "month" (yellow, <30d) / "" (fine or never).
+//	ExpiresBadge    — short badge label ("Expired" / "Soon" / "This
+//	                  month" / ""), surfaced as a small pill.
+//	ExpiresInWords  — localizable human-readable hint, e.g.
+//	                  "expires in 3 day(s)" / "expires today" /
+//	                  "expires in 5 hour(s)" / "expires tomorrow".
+//	Renewable       — true if the row has a finite expiry and the
+//	                  Renew button should be shown.
+//
+// We also compute ExpiringCount = number of tokens with
+// expires_at in the next 14 days. The template uses that to render
+// a top-of-page warning banner (B153 UX: "X token(s) expiring within
+// 14 days. Renew or rotate them.").
+//
+// When ?renew=ID is present in the URL, we additionally build a
+// .RenewForm payload (just the targeted token's ID + Label) so the
+// template can render the dedicated "Extend token expiry" form
+// below the table. The form posts to /my/token/{ID}/renew with a
+// new ttl= field. Without ?renew= the form is hidden.
 func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	lang := s.I18n.LangFromRequest(r)
 	tokens, err := db.ListAPITokensByUser(s.DB, c.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -294,35 +318,133 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 	if tokens == nil {
 		tokens = []db.APIToken{}
 	}
-	rows := make([]map[string]string, 0, len(tokens))
+	now := time.Now()
+	const expiringSoonWindow = 14 * 24 * time.Hour
+	expiringCount := 0
+	rows := make([]map[string]any, 0, len(tokens))
 	for _, t := range tokens {
 		last := "—"
 		if !t.LastUsed.IsZero() {
 			last = t.LastUsed.Format("2006-01-02 15:04")
 		}
 		exp := "—"
+		warn := ""
+		badge := ""
+		inWords := ""
+		renewable := false
 		if !t.ExpiresAt.IsZero() {
 			exp = t.ExpiresAt.Format("2006-01-02 15:04")
+			delta := t.ExpiresAt.Sub(now)
+			days := int(delta / (24 * time.Hour))
+			hours := int(delta / time.Hour)
+			switch {
+			case delta <= 0:
+				warn = "expired"
+				badge = s.I18n.T(lang, "tokens.expired")
+				inWords = s.I18n.T(lang, "tokens.expired")
+			case hours < 24:
+				warn = "soon"
+				badge = s.I18n.T(lang, "tokens.renew")
+				if hours <= 1 {
+					inWords = s.I18n.Tf(lang, "tokens.expires_in_hours", 1)
+				} else {
+					inWords = s.I18n.Tf(lang, "tokens.expires_in_hours", hours)
+				}
+			case days <= 7:
+				warn = "soon"
+				badge = s.I18n.T(lang, "tokens.renew")
+				if days == 1 {
+					inWords = s.I18n.T(lang, "tokens.expires_tomorrow")
+				} else {
+					inWords = s.I18n.Tf(lang, "tokens.expires_in_days", days)
+				}
+			case days <= 30:
+				warn = "month"
+				badge = s.I18n.T(lang, "tokens.renew")
+				inWords = s.I18n.Tf(lang, "tokens.expires_in_days", days)
+			}
+			// ExpiringSoon banner counter: includes the
+			// "already expired" tokens (so the user gets a
+			// nudge to revoke+rotate) plus any future expiry
+			// inside the 14-day window.
+			if delta <= expiringSoonWindow {
+				expiringCount++
+			}
+			// Renewable iff the row has a finite expiry. The
+			// Renew button is meaningless for never-expires.
+			renewable = true
 		}
-		rows = append(rows, map[string]string{
-			"ID":         fmt.Sprintf("%d", t.ID),
-			"Label":      t.Label,
-			"LastUsed":   last,
-			"Created":    t.CreatedAt.Format("2006-01-02 15:04"),
-			"Expires":    exp,
-			"AutoRotate": fmt.Sprintf("%v", t.AutoRotate),
+		rows = append(rows, map[string]any{
+			"ID":            fmt.Sprintf("%d", t.ID),
+			"Label":         t.Label,
+			"LastUsed":      last,
+			"Created":       t.CreatedAt.Format("2006-01-02 15:04"),
+			"Expires":       exp,
+			"ExpiresWarn":   warn,
+			"ExpiresBadge":  badge,
+			"ExpiresInWords": inWords,
+			"Renewable":     renewable,
+			"AutoRotate":    fmt.Sprintf("%v", t.AutoRotate),
 		})
 	}
-	s.Backend.RenderWithLayout(w, r, "my_tokens.html", c, map[string]any{
-		"Page":  "tokens",
-		"Title": "API Tokens",
-		"Tokens": rows,
-	})
+
+	// B153: dedicated renew form. If ?renew=ID is set, find that
+	// token in the list and expose its id+label as .RenewForm.
+	data := map[string]any{
+		"Page":          "tokens",
+		"Title":         "API Tokens",
+		"Tokens":        rows,
+		"ExpiringCount": expiringCount,
+		"revoked":       r.URL.Query().Get("revoked") == "1",
+	}
+	// B153: post-renew success flash. The handler redirects to
+	// /my/tokens?renewed=1&t=<unix>; we convert the unix
+	// timestamp to a localised YYYY-MM-DD HH:MM string and
+	// expose it as .renewedAt for the template to render
+	// inside the "Expiry extended to …" success alert.
+	if r.URL.Query().Get("renewed") == "1" {
+		if tStr := r.URL.Query().Get("t"); tStr != "" {
+			if tUnix, err := strconv.ParseInt(tStr, 10, 64); err == nil {
+				if tUnix > 0 {
+					data["renewedAt"] = time.Unix(tUnix, 0).Format("2006-01-02 15:04")
+				} else {
+					// never expires
+					data["renewedAt"] = s.I18n.T(s.I18n.LangFromRequest(r), "tokens.ttl_never")
+				}
+			}
+		}
+	}
+	if renewIDStr := r.URL.Query().Get("renew"); renewIDStr != "" {
+		if renewID, err := strconv.ParseInt(renewIDStr, 10, 64); err == nil {
+			for _, t := range tokens {
+				if t.ID == renewID {
+					data["RenewForm"] = map[string]any{
+						"ID":    fmt.Sprintf("%d", t.ID),
+						"Label": t.Label,
+					}
+					break
+				}
+			}
+		}
+	}
+	s.Backend.RenderWithLayout(w, r, "my_tokens.html", c, data)
 }
 
 // PostMyToken creates a new API token. The raw token is shown ONCE
 // in the response — only the hash is stored (db.InsertAPIToken).
-// TTL dropdown: "1h" / "1d" / "7d" / "30d" / "never" (v0.15.5).
+//
+// TTL resolution order (B153, v1.5.0):
+//  1. custom_ttl_value + custom_ttl_unit — a free-form
+//     "number + unit" pair (h/d/w/y) chosen by the operator.
+//     Min 1h, max 5y. 0 = never expires (same convention as
+//     the dropdown's "never").
+//  2. ttl — the pre-B153 dropdown ("1h" / "1d" / "7d" / "30d" /
+//     "never"). Any other value falls through to "never" so an
+//     old / buggy form can't lock the user out.
+//
+// If the custom TTL fails validation (out of range, non-numeric)
+// we fall through to the dropdown rather than 400 — keeps the
+// page usable for an operator mid-typing.
 func (s *Service) PostMyToken(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
@@ -330,30 +452,82 @@ func (s *Service) PostMyToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	label := r.FormValue("label")
-	// 2026-07-16: v0.15.5 — TTL dropdown. "1h" / "1d" /
-	// "7d" / "30d" / "never". Any other value falls through
-	// to "never" (the v0.15.0 default) so an old / buggy
-	// form can't lock the user out.
 	expiresAt := int64(0)
-	switch r.FormValue("ttl") {
-	case "1h":
-		expiresAt = time.Now().Add(time.Hour).Unix()
-	case "1d":
-		expiresAt = time.Now().Add(24 * time.Hour).Unix()
-	case "7d":
-		expiresAt = time.Now().Add(7 * 24 * time.Hour).Unix()
-	case "30d":
-		expiresAt = time.Now().Add(30 * 24 * time.Hour).Unix()
-	case "never", "":
-		expiresAt = 0
+	ttlUsed := "never"
+
+	// 2026-08-20: B153 — custom TTL (number + unit) takes
+	// precedence over the dropdown. The unit is one of h/d/w/y;
+	// value is in the corresponding unit (e.g. value=2 unit=d
+	// → +2 days). Min 1h, max 5y (43800h). 0 = never expires
+	// (matches the dropdown's "never" convention).
+	if rawVal := strings.TrimSpace(r.FormValue("custom_ttl_value")); rawVal != "" {
+		v, perr := strconv.ParseInt(rawVal, 10, 64)
+		if perr == nil && v >= 0 {
+			unit := r.FormValue("custom_ttl_unit")
+			if unit == "" {
+				unit = "d"
+			}
+			// Convert to hours first, then validate the
+			// final expiry against the 1h..5y range.
+			var hours int64
+			switch unit {
+			case "h":
+				hours = v
+			case "d":
+				hours = v * 24
+			case "w":
+				hours = v * 24 * 7
+			case "y":
+				hours = v * 24 * 365
+			default:
+				hours = v * 24
+				unit = "d"
+			}
+			if v == 0 {
+				expiresAt = 0
+				ttlUsed = "never"
+			} else if hours < 1 {
+				// too small → fall through to dropdown
+				ttlUsed = ""
+			} else if hours > 5*24*365 {
+				// too large → fall through to dropdown
+				ttlUsed = ""
+			} else {
+				expiresAt = time.Now().Add(time.Duration(hours) * time.Hour).Unix()
+				ttlUsed = fmt.Sprintf("custom:%d%s", v, unit)
+			}
+		}
 	}
+
+	// 2026-07-16: v0.15.5 — TTL dropdown. Used as the
+	// fallback when no valid custom TTL was provided.
+	if ttlUsed == "" {
+		switch r.FormValue("ttl") {
+		case "1h":
+			expiresAt = time.Now().Add(time.Hour).Unix()
+			ttlUsed = "1h"
+		case "1d":
+			expiresAt = time.Now().Add(24 * time.Hour).Unix()
+			ttlUsed = "1d"
+		case "7d":
+			expiresAt = time.Now().Add(7 * 24 * time.Hour).Unix()
+			ttlUsed = "7d"
+		case "30d":
+			expiresAt = time.Now().Add(30 * 24 * time.Hour).Unix()
+			ttlUsed = "30d"
+		case "never", "":
+			expiresAt = 0
+			ttlUsed = "never"
+		}
+	}
+
 	autoRotate := r.FormValue("auto_rotate") == "1"
 	raw, hash := auth.GenerateAPIToken()
 	if _, err := db.InsertAPIToken(s.DB, c.UserID, hash, label, expiresAt, autoRotate); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	detail := fmt.Sprintf("label=%q ttl=%s auto_rotate=%v", label, r.FormValue("ttl"), autoRotate)
+	detail := fmt.Sprintf("label=%q ttl=%s auto_rotate=%v", label, ttlUsed, autoRotate)
 	s.Backend.Audit(c.UserID, c.Username, "token_create", detail)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, "<div class=\"card\"><h3>Токен создан</h3><p>Скопируйте сейчас — больше он показан не будет.</p><pre style=\"background:var(--bg);padding:12px;border-radius:4px;word-break:break-all\">%s</pre><p><a href=\"/my/tokens\">← Назад к списку</a></p></div>", raw)
@@ -372,4 +546,76 @@ func (s *Service) PostMyTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	_, _ = db.DeleteAPITokenByUser(s.DB, id, c.UserID)
 	s.Backend.Audit(c.UserID, c.Username, "token_revoke", idStr)
 	http.Redirect(w, r, "/my/tokens?revoked=1", http.StatusFound)
+}
+
+// PostMyTokenRenew extends (or removes) the expiry of one of the
+// caller's API tokens. B153 (v1.5.0): the per-row Renew button
+// posts a blank form (defaults to "30d from now"); the
+// ?renew=ID form posts a `ttl` field with one of
+// "1d" / "7d" / "30d" / "90d" / "365d" / "never".
+//
+// Behaviour:
+//   - Expired tokens can be renewed (we set the new expires_at
+//     unconditionally — the old expiry is irrelevant).
+//   - The form's "never" option resets expires_at to 0 (matches
+//     the "never expires" convention used everywhere else).
+//   - Wrong id / wrong user / already-revoked → 404 (a
+//     rows-affected check).
+//   - Unknown ttl value → 30d default (operator convenience).
+//
+// Audit log: action=token_renew, detail="id=<N> new_ttl=<X>".
+// On success we redirect to /my/tokens?renewed=1&t=<new_ttl_secs>
+// so the template can show a "Renewed to <date>" flash via the
+// i18n key tokens.renewed_to.
+func (s *Service) PostMyTokenRenew(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	idStr := r.PathValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+
+	// B153: TTL resolution. The dedicated ?renew=ID form
+	// sends `ttl=<value>`. The inline per-row Renew button
+	// sends nothing — we treat that as the default 30d.
+	expiresAt := time.Now().Add(30 * 24 * time.Hour).Unix()
+	ttlUsed := "30d"
+	switch r.FormValue("ttl") {
+	case "1d":
+		expiresAt = time.Now().Add(24 * time.Hour).Unix()
+		ttlUsed = "1d"
+	case "7d":
+		expiresAt = time.Now().Add(7 * 24 * time.Hour).Unix()
+		ttlUsed = "7d"
+	case "30d", "":
+		expiresAt = time.Now().Add(30 * 24 * time.Hour).Unix()
+		ttlUsed = "30d"
+	case "90d":
+		expiresAt = time.Now().Add(90 * 24 * time.Hour).Unix()
+		ttlUsed = "90d"
+	case "365d":
+		expiresAt = time.Now().Add(365 * 24 * time.Hour).Unix()
+		ttlUsed = "365d"
+	case "never":
+		expiresAt = 0
+		ttlUsed = "never"
+	}
+
+	rows, err := db.UpdateAPITokenExpiryByUser(s.DB, id, c.UserID, expiresAt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == 0 {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	detail := fmt.Sprintf("id=%d new_ttl=%s", id, ttlUsed)
+	s.Backend.Audit(c.UserID, c.Username, "token_renew", detail)
+	http.Redirect(w, r, fmt.Sprintf("/my/tokens?renewed=1&t=%d", expiresAt), http.StatusFound)
 }

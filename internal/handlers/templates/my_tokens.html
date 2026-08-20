@@ -6,6 +6,14 @@
   </div>
 </div>
 {{if .revoked}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "tokens.revoke"}}</div>{{end}}
+{{/* B153 (v1.5.0): success flash after renewal. The
+   handler redirects to /my/tokens?renewed=1&t=<unix>; we
+   re-format the unix timestamp into a localised date so
+   the operator sees "Expiry extended to YYYY-MM-DD HH:MM". */}}
+{{if .renewedAt}}<div class="alert alert-success"><i class="fa-solid fa-clock-rotate-left"></i> {{tf "tokens.renewed_to" .renewedAt}}</div>{{end}}
+{{if .ExpiringCount}}
+<div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i> {{tf "tokens.banner_expiring" .ExpiringCount}}</div>
+{{end}}
 <div class="card">
   <h3><i class="fa-solid fa-plus"></i> {{t "tokens.create"}}</h3>
   <form method="post" action="/my/token">
@@ -24,6 +32,23 @@
       </select>
       <div class="form-hint">{{t "tokens.ttl_hint"}}</div>
     </div>
+    {{/* B153 (v1.5.0): custom TTL — number input + unit dropdown.
+       The handler treats value="0" as "never expires" (matches
+       the dropdown's "never" option). Value is capped at 5 years
+       (43800 hours) to bound the DB and the audit log volume. */}}
+    <div class="field">
+      <label>{{t "tokens.custom_ttl_label"}}</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" name="custom_ttl_value" min="0" max="43800" step="1" placeholder="—" style="width:120px" inputmode="numeric">
+        <select name="custom_ttl_unit" class="form-control" style="max-width:140px">
+          <option value="h">{{t "tokens.custom_ttl_h"}}</option>
+          <option value="d" selected>{{t "tokens.custom_ttl_d"}}</option>
+          <option value="w">{{t "tokens.custom_ttl_w"}}</option>
+          <option value="y">{{t "tokens.custom_ttl_y"}}</option>
+        </select>
+      </div>
+      <div class="form-hint">{{t "tokens.custom_ttl_hint"}}</div>
+    </div>
     <div class="field form-check">
       <label>
         <input type="checkbox" name="auto_rotate" value="1">
@@ -40,8 +65,26 @@
   <table>
     <tr><th>{{t "tokens.name"}}</th><th>{{t "tokens.created"}}</th><th>{{t "tokens.last_used"}}</th><th>{{t "tokens.expires"}}</th><th></th></tr>
     {{range .Tokens}}<tr>
-      <td><b>{{.Label}}</b></td><td>{{.Created}}</td><td>{{.LastUsed}}</td><td>{{.Expires}}</td>
+      <td><b>{{.Label}}</b></td><td>{{.Created}}</td><td>{{.LastUsed}}</td>
       <td>
+        {{/* B153: visual warning for expiring-soon tokens. The handler
+           sets the .ExpiresWarn field per row: "expired" (red, past),
+           "soon" (red, <7d), "month" (yellow, <30d), or "". The
+           i18n string is templated with the days-remaining count. */}}
+        {{if .ExpiresWarn}}{{.ExpiresBadge}} <span class="badge badge-{{.ExpiresWarn}}">{{.ExpiresInWords}}</span>{{else}}{{.Expires}}{{end}}
+      </td>
+      <td style="white-space:nowrap">
+        {{/* B153: Renew button — same form pattern as Revoke (POST, no
+           JS). The handler extends ExpiresAt by the token's original
+           TTL (or the default 30d if the token was created with
+           "never expires" / has no recorded TTL). To change TTL on
+           renew, the user picks a new value in the dedicated form
+           below the table. */}}
+        {{if .Renewable}}
+        <form method="post" action="/my/token/{{.ID}}/renew" style="display:inline" title="{{t "tokens.renew_title"}}">
+          <button type="submit" class="btn btn-secondary btn-sm"><i class="fa-solid fa-clock-rotate-left"></i> {{t "tokens.renew"}}</button>
+        </form>
+        {{end}}
         <form method="post" action="/my/token/{{.ID}}/revoke" style="display:inline" onsubmit="return confirm('{{t "tokens.revoke"}}?')">
           <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
         </form>
@@ -49,6 +92,31 @@
     </tr>{{end}}
   </table>
 </div>
+{{/* B153: per-token renew form (visible only when ?renew=ID is in
+   the URL — the handler sets .RenewForm for the targeted token).
+   Lets the user pick a fresh TTL instead of the default "same as
+   original". The "default 30d" option is the safest middle ground
+   between operator convenience and a runaway-long-lived token. */}}
+{{if .RenewForm}}
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> {{t "tokens.renew_title"}}</h3>
+  <form method="post" action="/my/token/{{.RenewForm.ID}}/renew">
+    <div class="field">
+      <label>{{t "tokens.ttl_label"}}</label>
+      <select name="ttl" class="form-control">
+        <option value="1d">{{t "tokens.ttl_1d"}}</option>
+        <option value="7d">{{t "tokens.ttl_7d"}}</option>
+        <option value="30d" selected>{{t "tokens.ttl_30d"}}</option>
+        <option value="90d">{{t "tokens.ttl_30d"}}</option>
+        <option value="365d">365 дней</option>
+        <option value="never">{{t "tokens.ttl_never"}}</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">{{t "tokens.renew"}}</button>
+    <a href="/my/tokens" class="btn btn-secondary">{{t "tokens.revoke"}}</a>
+  </form>
+</div>
+{{end}}
 {{end}}
 <div class="card">
   <h3><i class="fa-solid fa-terminal"></i> {{t "tokens.usage_hint"}}</h3>

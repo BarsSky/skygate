@@ -1036,6 +1036,10 @@ func main() {
 	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(authSvc.GetMyTokens)))
 	mux.Handle("POST /my/token", authMW(http.HandlerFunc(authSvc.PostMyToken)))
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(authSvc.PostMyTokenRevoke)))
+	// B153 (v1.5.0): per-row token renewal. Default 30d
+	// when the per-row button is clicked; the dedicated
+	// ?renew=ID form posts a `ttl` field with a custom value.
+	mux.Handle("POST /my/token/{id}/renew", authMW(http.HandlerFunc(authSvc.PostMyTokenRenew)))
 	mux.Handle("GET /my/account", authMW(http.HandlerFunc(authSvc.GetMyAccount)))
 	mux.Handle("POST /my/account/password", authMW(http.HandlerFunc(authSvc.PostMyAccountPassword)))
 	// B136 (v1.3.20.6): per-user display prefs (font + size +

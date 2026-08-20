@@ -554,6 +554,20 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
 .alert-success{border-left-color:var(--success);background:var(--success-bg);color:var(--success)}
 .alert-warn{border-left-color:var(--warning);background:var(--warning-bg);color:var(--warning)}
 .alert-danger{border-left-color:var(--danger);background:var(--danger-bg);color:var(--danger)}
+/* 2026-08-20: B153 — inline pill badges for the /my/tokens
+   page. Used by the ExpiresWarn column (expired / soon / month)
+   and by the admin/backup page (badge-success / badge-info /
+   badge-danger). Keeps the table compact while still colour-coding
+   the urgency. The base class is just rounded-padding + small
+   text; the variants supply the colour. */
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:0.02em;line-height:1.4;vertical-align:middle;border:1px solid transparent;margin-left:6px}
+.badge-expired{background:var(--danger-bg);color:var(--danger);border-color:var(--danger)}
+.badge-soon{background:var(--danger-bg);color:var(--danger);border-color:var(--danger)}
+.badge-month{background:var(--warning-bg);color:var(--warning);border-color:var(--warning)}
+.badge-success{background:var(--success-bg);color:var(--success);border-color:var(--success)}
+.badge-danger{background:var(--danger-bg);color:var(--danger);border-color:var(--danger)}
+.badge-info{background:var(--info-bg);color:var(--info);border-color:var(--info)}
+.badge-warn{background:var(--warning-bg);color:var(--warning);border-color:var(--warning)}
 /* 2026-07-14: Этап 14 v2 — Tailscale reachability probe. The
    .alert-probe class uses the same layout as .alert but adds
    room for a multi-line body (sub-text + a troubleshooting
