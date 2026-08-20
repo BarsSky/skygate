@@ -133,6 +133,29 @@ else
 fi
 
 echo ""
+echo "=== contract F: layout.html Go template block is balanced ==="
+# Defensive: the B158 edit removed a {{if}} block that
+# loaded Google Fonts <link>s, but kept the {{end}} — that
+# left the parser one 'end' too many. A similar
+# future edit (removing a {{if}} without its {{end}})
+# would again produce a 'panic: parse layout: template:
+# layout.html:N: unexpected {{end}}' on the live VM
+# (seen 2026-08-20 after B158 commit 592b69d, the
+# skygate container was stuck restarting).
+# This check counts {{if/range/define}} opens vs
+# {{end}} closes; mismatch means a future template edit
+# broke balance. NOTE: {{else if ...}} does NOT count
+# as an extra {{if}} — it's a branch of the same if.
+layout=internal/handlers/templates/layout.html
+opens=$(grep -cE '\{\{(if|range|define)\b' "$layout" || true)
+closes=$(grep -cE '\{\{end\}\}' "$layout" || true)
+if [ "$opens" = "$closes" ]; then
+    ok "layout.html template blocks balanced (if+range+define=$opens, end=$closes)"
+else
+    bad "layout.html template blocks UNBALANCED: if+range+define=$opens, end=$closes"
+fi
+
+echo ""
 echo "=== summary ==="
 echo "B158: self-hosted Google Fonts (Manrope + Inter + Geist + Sora + Geist Mono + JetBrains Mono)"
 echo "all B158 contracts satisfied"
