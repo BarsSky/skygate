@@ -7,27 +7,17 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/favicon.svg">
-{{/* B136 (v1.3.20.6): per-user font family. pre-B136 always
-     loaded Manrope from Google Fonts. Now we load only the
-     family the user picked. family=system skips Google Fonts
-     entirely (uses OS sans-serif fallback). preconnect stays
-     for all non-system families. */}}
-{{if or (not .DisplayFont) (eq .DisplayFont "manrope")}}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-{{else if eq .DisplayFont "inter"}}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-{{else if eq .DisplayFont "geist"}}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap">
-{{else if eq .DisplayFont "sora"}}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+{{/* B158 (v1.5.0): all 4 user-pickable body fonts (Manrope /
+     Inter / Geist / Sora) + 2 monospace fonts (Geist Mono /
+     JetBrains Mono) are now self-hosted from
+     static/webfonts/ via the @font-face rules at the top
+     of themes.css. Pre-B158 the layout loaded them from
+     fonts.googleapis.com, which timed out on networks
+     without external access (operator report 2026-08-20:
+     'net::ERR_CONNECTION_TIMED_OUT'). The @font-face uses
+     font-display: swap so the page renders immediately
+     with the system fallback, then swaps to the webfont
+     when loaded. No more external <link>s. */}}
 {{end}}
 <link rel="stylesheet" href="/static/css/font-awesome.min.css">
 <link rel="stylesheet" href="/static/css/themes.css">

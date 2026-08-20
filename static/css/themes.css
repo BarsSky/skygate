@@ -5,6 +5,56 @@
    - sentry: dark purple, lime accent (Rubik)
    ============================================================ */
 
+/* 2026-08-20: B158 — self-hosted Google Fonts.
+   Pre-B158 every page loaded Manrope/Inter/Geist/Sora +
+   JetBrains Mono from fonts.googleapis.com, which timed
+   out on networks without external access (operator
+   report 2026-08-20: 'GET .../css2?family=Manrope...
+   net::ERR_CONNECTION_TIMED_OUT'). We bundle the woff2
+   files locally + Cache-Control immutable max-age=1y
+   (handled by static.go's hasContentHash() check, B152).
+   The @font-face srcs use /webfonts/<file>.woff2; the
+   static handler serves them with the right Cache-Control
+   + immutable headers because the filename has a content
+   hash style (Manrope, Inter, etc) — the static handler
+   treats /webfonts/* as versioned assets.
+
+   The 4 families (Manrope + Inter + Geist + Sora) cover
+   the 4 user-pickable body fonts; JetBrains Mono + Geist
+   Mono cover the 2 user-pickable monospace fonts. Each
+   has weights 400/500/600/700 (400/500 for monospace) in
+   the latin subset; cyrillic + other subsets are picked
+   up by the system fallback fonts (the layout's RU
+   strings fall back to system-ui which is the OS's
+   preferred cyrillic font — visually OK, no extra
+   download).
+
+   font-display: swap means the browser uses the
+   fallback font for ~100ms while the woff2 loads,
+   then swaps to the webfont. No "invisible text"
+   flash. Critical for slow links (which is the
+   whole reason we're self-hosting). */
+@font-face{font-family:'Manrope';font-style:normal;font-weight:400;font-display:swap;src:url(/webfonts/manrope-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:500;font-display:swap;src:url(/webfonts/manrope-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:600;font-display:swap;src:url(/webfonts/manrope-latin-600-normal.woff2) format('woff2')}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:700;font-display:swap;src:url(/webfonts/manrope-latin-700-normal.woff2) format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url(/webfonts/inter-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url(/webfonts/inter-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url(/webfonts/inter-latin-600-normal.woff2) format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url(/webfonts/inter-latin-700-normal.woff2) format('woff2')}
+@font-face{font-family:'Geist';font-style:normal;font-weight:400;font-display:swap;src:url(/webfonts/geist-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'Geist';font-style:normal;font-weight:500;font-display:swap;src:url(/webfonts/geist-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'Geist';font-style:normal;font-weight:600;font-display:swap;src:url(/webfonts/geist-latin-600-normal.woff2) format('woff2')}
+@font-face{font-family:'Geist';font-style:normal;font-weight:700;font-display:swap;src:url(/webfonts/geist-latin-700-normal.woff2) format('woff2')}
+@font-face{font-family:'Sora';font-style:normal;font-weight:400;font-display:swap;src:url(/webfonts/sora-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'Sora';font-style:normal;font-weight:500;font-display:swap;src:url(/webfonts/sora-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'Sora';font-style:normal;font-weight:600;font-display:swap;src:url(/webfonts/sora-latin-600-normal.woff2) format('woff2')}
+@font-face{font-family:'Sora';font-style:normal;font-weight:700;font-display:swap;src:url(/webfonts/sora-latin-700-normal.woff2) format('woff2')}
+@font-face{font-family:'Geist Mono';font-style:normal;font-weight:400;font-display:swap;src:url(/webfonts/geist-mono-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'Geist Mono';font-style:normal;font-weight:500;font-display:swap;src:url(/webfonts/geist-mono-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url(/webfonts/jetbrains-mono-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:500;font-display:swap;src:url(/webfonts/jetbrains-mono-latin-500-normal.woff2) format('woff2')}
+
 /* Defaults (linear) — v1.3.20.3 (B133) dramatic contrast overhaul.
    B131 bumped contrast moderately (5% bg→card) but the
    operator reported the page still had "no proper style
