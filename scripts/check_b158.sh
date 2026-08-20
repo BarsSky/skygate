@@ -115,6 +115,31 @@ else
     ok "layout.html has no fonts.gstatic.com <link> tags"
 fi
 
+# login.html is a standalone template (does NOT use
+# layout.html) and had its own Google Fonts <link>
+# tags. It needs the same treatment: drop the
+# preconnect + stylesheet, point at the self-hosted
+# themes.css (which now has @font-face for all 6
+# families).
+if grep -qE '<link[^>]*href="https://fonts\.googleapis\.com' internal/handlers/templates/login.html; then
+    bad "login.html STILL has a Google Fonts <link> — remove it"
+else
+    ok "login.html has no Google Fonts <link> tags"
+fi
+if grep -qE '<link[^>]*href="https://fonts\.gstatic\.com' internal/handlers/templates/login.html; then
+    bad "login.html STILL has a fonts.gstatic.com <link> — remove it"
+else
+    ok "login.html has no fonts.gstatic.com <link> tags"
+fi
+# And login.html must link to themes.css (so it
+# gets the @font-face rules). Pre-B158 only had
+# font-awesome.
+if grep -qE '<link[^>]*href="[^"]*themes\.css' internal/handlers/templates/login.html; then
+    ok "login.html links to themes.css (gets the @font-face rules)"
+else
+    bad "login.html MISSING link to themes.css — fonts won't self-host here"
+fi
+
 echo ""
 echo "=== contract D: total Google Fonts woff2 size is reasonable (<500KB) ==="
 total=$(du -k -s static/webfonts/ | awk '{print $1}')
