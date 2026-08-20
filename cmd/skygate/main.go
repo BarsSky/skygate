@@ -37,6 +37,7 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
 	"skygate/internal/mesh"
+	"skygate/internal/tokenrotate"
 	"skygate/internal/nodeownership"
 	"skygate/internal/monitoring"
 	"skygate/internal/sidecar"
@@ -1717,6 +1718,32 @@ func main() {
 		log.Printf("🧹 cleanup-scheduler: enabled (env-var default schedule=%q; /admin/system_tests page can override)", cfg.CleanupSmokeMeshSchedule)
 	} else {
 		log.Printf("🧹 cleanup-scheduler: disabled (SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED=false; /admin/system_tests page can enable). Pre-B143 manual SQL DELETE workaround is still the only other option.")
+	}
+
+	// 2026-08-20: v1.5.0 (B154) — in-app auto-rotate
+	// scheduler for personal API tokens with
+	// auto_rotate=1. When enabled, runs a daily cron
+	// (default 03:00) that extends the expiry of any
+	// token within 7 days of expiry to (now + 30d).
+	// The token's hash DOES NOT change — the existing
+	// token keeps working. Sends a Telegram alert with
+	// the per-token label list when the extension
+	// actually fires.
+	//
+	// Disabled by default (operator opt-in via
+	// SKYGATE_TOKEN_AUTO_ROTATE_ENABLED=true). The
+	// /my/tokens page (post-B154.1) will expose a
+	// runtime toggle via global_settings["tokens.
+	// auto_rotate_enabled"]. Same wire-up pattern as
+	// the B130/B142/B143 schedulers above.
+	if cfg.TokenAutoRotateEnabled {
+		tokenrotate.Start(ctx, tokenrotate.SchedulerDeps{
+			DB:       d,
+			Notifier: schedulerNotifierSink(app.Notifier),
+		})
+		log.Printf("🔄 auto-rotate-scheduler: enabled (env-var default schedule=%q; /my/tokens page can override)", cfg.TokenAutoRotateSchedule)
+	} else {
+		log.Printf("🔄 auto-rotate-scheduler: disabled (SKYGATE_TOKEN_AUTO_ROTATE_ENABLED=false; /my/tokens page can enable). Pre-B154 tokens with auto_rotate=1 just expire silently — operator has to manually re-create them.")
 	}
 
 	// 2026-08-18: v1.5.0 (B145) — HA chain + elector + DNS

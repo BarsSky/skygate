@@ -199,6 +199,76 @@ func TouchAPITokenLastUsed(d *sql.DB, tokenHash string) error {
 	return err
 }
 
+// APITokenForRotation is the slim row shape used by
+// ListAPITokensForAutoRotate. Only the fields the auto-rotate
+// scheduler actually needs — the heavy APIToken struct includes
+// LastUsed/CreatedAt/AutoRotate for the /my/tokens table, but
+// the scheduler doesn't need any of that.
+type APITokenForRotation struct {
+	ID        int64
+	UserID    int64
+	Label     string
+	ExpiresAt time.Time
+}
+
+// ListAPITokensForAutoRotate returns every personal API token
+// that the auto-rotate scheduler should consider for extension:
+// auto_rotate=1, expires_at>0 (not "never"), and expires_at
+// within the next `cutoffUnix` seconds (the scheduler passes
+// now+7d as the cutoff so tokens within 7 days of expiry are
+// caught). The result is ordered by expires_at ASC so the
+// most-urgent tokens are processed first.
+//
+// Called by internal/tokenrotate.runOnce on each tick. The
+// scheduler is idempotent (extending a token twice within the
+// same 7-day window is harmless — the second extension just
+// adds another 30d to the now-extended expiry), so a race
+// between two scheduler instances is not catastrophic — at
+// worst, a token's expiry is extended by 60d instead of 30d.
+// The in-process inFlightMutex narrows this window to a
+// single process; the process-local check is the only
+// guarantee.
+//
+// Pre-B154: the scheduler didn't exist. Tokens with
+// auto_rotate=1 just expired silently, and the operator
+// had to manually re-create them. Post-B154: the same
+// tokens get their expiry auto-extended + a Telegram alert.
+func ListAPITokensForAutoRotate(d *sql.DB, cutoffUnix int64) ([]APITokenForRotation, error) {
+	rows, err := d.Query(qSelectAPITokensForAutoRotate, cutoffUnix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []APITokenForRotation{}
+	for rows.Next() {
+		var t APITokenForRotation
+		var exp int64
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Label, &exp); err != nil {
+			return nil, err
+		}
+		if exp > 0 {
+			t.ExpiresAt = time.Unix(exp, 0)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// UpdateAPITokenExpiryByID extends the expiry of the token with
+// the given id unconditionally (no user_id check — used by the
+// auto-rotate scheduler, which owns its own rowset via the
+// auto-rotate=1 flag). The newExpiresAt value follows the same
+// convention as InsertAPIToken: 0=never, anything else=unix
+// timestamp. Returns rows affected (always 1 unless the row
+// was concurrently deleted).
+func UpdateAPITokenExpiryByID(d *sql.DB, id int64, newExpiresAt int64) (int64, error) {
+	res, err := d.Exec(qUpdateAPITokenExpiryByID, id, newExpiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeleteAPITokensByUserID removes every personal_api_tokens row
 // owned by userID. Called by PostAdminDeleteUser as part of the
 // user-delete cascade. The pre-Этап-10 handler forgot to do this,

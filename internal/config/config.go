@@ -314,6 +314,23 @@ type Config struct {
 	CertSyncBucket   string
 	CertSyncLocalDir string
 	CertSyncInterval time.Duration
+	// 2026-08-20: v1.5.0 (B154) — in-app auto-rotate
+	// scheduler for personal API tokens with
+	// auto_rotate=1. When enabled, runs a 3 AM
+	// daily cron (default) that extends the expiry
+	// of any token within 7 days of expiry to
+	// (now + 30d). Hash DOES NOT change — the
+	// existing token keeps working. Sends a
+	// Telegram alert with the per-token label list
+	// when the extension actually fires. Default:
+	// disabled (opt-in). The /my/tokens page
+	// (post-B154.1) will expose a runtime toggle
+	// via global_settings["tokens.auto_rotate_enabled"].
+	// Default: disabled, daily 03:00 (matches the
+	// B130 update scheduler so all lifecycle jobs
+	// share the 03:00 window).
+	TokenAutoRotateEnabled bool
+	TokenAutoRotateSchedule string // cron expression, e.g. "0 3 * * *"
 	// 2026-08-18: v1.5.0 (B145) — HA chain + elector
 	// + DNS provider config. See the long docstring
 	// above (just after getDuration) for the full
@@ -546,6 +563,20 @@ func Load() (*Config, error) {
 		CertSyncBucket:   getenv("SKYGATE_CERTSYNC_S3_BUCKET", "skygate-backups"),
 		CertSyncLocalDir: getenv("SKYGATE_CERTSYNC_LOCAL_DIR", "/var/lib/skygate/certs"),
 		CertSyncInterval: getDuration("SKYGATE_CERTSYNC_INTERVAL", 30*time.Second),
+		// 2026-08-20 (B154): in-app auto-rotate
+		// scheduler env-var defaults. The /my/tokens
+		// page (post-B154.1) can override the
+		// enabled flag at runtime via the
+		// global_settings DB key
+		// (tokens.auto_rotate_enabled) which the
+		// scheduler re-reads on every tick. Env var
+		// is just the boot-time fallback. Default:
+		// disabled, daily 03:00 (after the 3 AM
+		// backup, before the 4 AM verify + 5 AM
+		// cleanup — fits the existing 03/04/05
+		// nightly cron window).
+		TokenAutoRotateEnabled:  getenv("SKYGATE_TOKEN_AUTO_ROTATE_ENABLED", "false") == "true",
+		TokenAutoRotateSchedule: getenv("SKYGATE_TOKEN_AUTO_ROTATE_SCHEDULE", "0 3 * * *"),
 		CleanupSmokeMeshSchedule:     getenv("SKYGATE_CLEANUP_SMOKE_MESH_SCHEDULE", "0 5 * * *"),
 		// 2026-08-18: v1.5.0 (B145) — HA chain + elector
 		// + DNS provider. Env-var defaults match the

@@ -504,6 +504,8 @@ const (
 	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES ($1, $2, $3, $4, $5) RETURNING id`
 	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = $1 AND user_id = $2`
 	qUpdateAPITokenExpiryByUser  = `UPDATE personal_api_tokens SET expires_at = $3 WHERE id = $1 AND user_id = $2`
+	qUpdateAPITokenExpiryByID    = `UPDATE personal_api_tokens SET expires_at = $2 WHERE id = $1`
+	qSelectAPITokensForAutoRotate = `SELECT id, user_id, label, expires_at FROM personal_api_tokens WHERE auto_rotate = 1 AND expires_at > 0 AND expires_at <= $1 ORDER BY expires_at ASC`
 	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = $1`
 	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = $1`
 )
