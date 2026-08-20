@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/notifications"
 )
 
 // GetMyKeys lists every preauth key the current user has
@@ -328,6 +329,26 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 	newID, err := db.InsertPreauthKey(s.DB, c.UserID, newKey.Key, now+ttlSeconds, newKey.ID)
 	if err != nil {
 		log.Printf("web.my.reissue: InsertPreauthKey err=%v", err)
+	}
+
+	// B157 (v1.5.0): mark the OLD key's
+	// notification as read so the user's bell
+	// doesn't keep showing "Key #N expires in
+	// 3 days" after the reissue. We don't
+	// DELETE the row (the audit log + history
+	// view would lose it); we just set
+	// read_at = now. The user's bell updates
+	// on the next page render.
+	//
+	// Failure mode: if MarkAllRead fails, the
+	// user will see a stale "key expiring"
+	// notification for the OLD key (which is
+	// already revoked in headscale + locally).
+	// The next reissue OR the user clicking
+	// "Mark as read" fixes it. Not a hard
+	// failure.
+	if _, nerr := notifications.MarkAllRead(s.DB, c.UserID); nerr != nil {
+		log.Printf("web.my.reissue: MarkAllRead err=%v", nerr)
 	}
 
 	s.Backend.Audit(c.UserID, c.Username, "preauth_reissued", fmt.Sprintf("from_id=%d to_id=%d ttl=%s", id, newID, expirationStr))

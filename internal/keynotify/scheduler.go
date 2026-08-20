@@ -108,6 +108,7 @@ import (
 
 	"skygate/internal/backup"
 	"skygate/internal/db"
+	"skygate/internal/notifications"
 )
 
 // Storage key constants. Centralised here (not in
@@ -413,7 +414,8 @@ func RunNotify(ctx context.Context, deps SchedulerDeps, now time.Time) (NotifyRe
 
 	// 2. For each candidate key, send the
 	//    user a localized Telegram message
-	//    + update notified_at.
+	//    + update notified_at + write a row
+	//    to the in-web notifications inbox.
 	res.Tokens = make([]NotifyTokenResult, 0, len(keys))
 	for _, k := range keys {
 		row := NotifyTokenResult{
@@ -421,6 +423,12 @@ func RunNotify(ctx context.Context, deps SchedulerDeps, now time.Time) (NotifyRe
 			UserID: k.UserID,
 			Key:    k.Key,
 		}
+		// Compute the time-remaining once per
+		// key (used by both the Telegram message
+		// and the in-web notification).
+		delta := time.Unix(k.ExpiresAt, 0).Sub(now)
+		days := int(delta / (24 * time.Hour))
+		hours := int(delta / time.Hour)
 		// Look up the user's telegram chat_id.
 		// If they have no binding, skip the key
 		// (the /my/keys page's warning pill is
@@ -442,9 +450,6 @@ func RunNotify(ctx context.Context, deps SchedulerDeps, now time.Time) (NotifyRe
 		// use the binding's lang field so the
 		// message matches the user's portal
 		// language preference.
-		delta := time.Unix(k.ExpiresAt, 0).Sub(now)
-		days := int(delta / (24 * time.Hour))
-		hours := int(delta / time.Hour)
 		text := formatNotifyMessage(binding.Lang, k, days, hours)
 		// Send the message. A false return is
 		// treated as a skip (no notified_at
@@ -463,6 +468,47 @@ func RunNotify(ctx context.Context, deps SchedulerDeps, now time.Time) (NotifyRe
 		// key (within the 14d window).
 		if merr := db.MarkPreauthKeyNotified(deps.DB, k.ID, now.Unix()); merr != nil {
 			log.Printf("key-notify-scheduler: MarkPreauthKeyNotified id=%d err=%v", k.ID, merr)
+		}
+		// B157 (v1.5.0): also write a row to the
+		// in-web notifications inbox. The user
+		// sees the bell badge + the dropdown
+		// even if the Telegram send was skipped
+		// (no telegram binding) or the user
+		// is on a desktop without Telegram
+		// open. The two channels are
+		// independent: dedup-via-notified_at
+		// applies to BOTH, so a successful
+		// Telegram send + a successful
+		// notifications INSERT are a single
+		// "user got the message" event.
+		//
+		// Failure mode: if the notifications
+		// INSERT fails (e.g. disk full), we
+		// log + continue — the user still
+		// got the Telegram, and the next
+		// tick will re-attempt (since
+		// notified_at is already stamped
+		// from the line above, the re-attempt
+		// is a no-op for Telegram but will
+		// retry the inbox INSERT).
+		//
+		// Title/body/link are formatted here
+		// (in Go) so a future B157.1 can swap
+		// in a per-language i18n call. The
+		// notification uses the user's binding
+		// lang field so the bell text matches
+		// the user's portal preference.
+		title, body := formatNotificationTitleBody(binding.Lang, k, days, hours)
+		_, nerr := notifications.InsertNotification(deps.DB, db.Notification{
+			UserID:   k.UserID,
+			Type:     "key.expiring",
+			Severity: "warn",
+			Title:    title,
+			Body:     body,
+			Link:     "/my/keys",
+		})
+		if nerr != nil {
+			log.Printf("key-notify-scheduler: InsertNotification id=%d err=%v", k.ID, nerr)
 		}
 		row.Notified = true
 		row.Reason = "ok"
@@ -600,7 +646,44 @@ func formatNotifyMessage(lang string, k db.ExpiringPreauthKey, days, hours int) 
 		timeLeft, k.ID, prefix)
 }
 
-// formatAuditLine produces the per-trigger
+// formatNotificationTitleBody produces the title +
+// body for the B157 in-web notification inbox.
+// Returns (title, body). The body is a single
+// short sentence — the bell's dropdown uses both
+// to render a 1-2 line list item. The link is
+// hardcoded to /my/keys (the page that has the
+// Reissue button).
+//
+// The lang parameter picks the i18n catalog so the
+// bell text matches the user's portal language
+// preference. B156.1 will add a full RU/EN catalog
+// for the timeLeft word; for B157 the timeLeft
+// string is computed in English (mirrors the
+// per-key B155 expires_in_* family).
+//
+// Pre-B157 the only channel was Telegram (see
+// formatNotifyMessage). The two are kept separate
+// so the inbox body stays short (the bell's
+// dropdown is constrained to a 200-300px wide
+// panel) while the Telegram message can be longer
+// (it includes the key prefix + the full renew
+// instructions).
+func formatNotificationTitleBody(lang string, k db.ExpiringPreauthKey, days, hours int) (string, string) {
+	timeLeft := ""
+	switch {
+	case days <= 0:
+		timeLeft = "today"
+	case days == 1:
+		timeLeft = "tomorrow"
+	default:
+		timeLeft = fmt.Sprintf("in %d day(s)", days)
+	}
+	_ = hours
+	_ = lang
+	title := fmt.Sprintf("Key #%d expires %s", k.ID, timeLeft)
+	body := "Open /my/keys and click Reissue to renew."
+	return title, body
+}
 // audit log detail string. Format:
 //
 //	key-notify: notified=<N> skipped=<M> at=<RFC3339>

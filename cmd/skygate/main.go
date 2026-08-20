@@ -801,6 +801,14 @@ func main() {
 	// preauth_result page so the user sees the
 	// new raw key.
 	mux.Handle("POST /my/keys/{id}/reissue", authMW(http.HandlerFunc(mySvc.PostMyKeyReissue)))
+	// B157 (v1.5.0): in-web notification inbox.
+	// The bell icon in the layout sidebar calls
+	// these POST endpoints. The user_id scoping
+	// is enforced inside the handlers (MarkRead
+	// / MarkAllRead both filter on user_id) so
+	// a malicious id-probe returns 404.
+	mux.Handle("POST /my/notifications/{id}/read", authMW(http.HandlerFunc(mySvc.PostMyNotificationRead)))
+	mux.Handle("POST /my/notifications/read-all", authMW(http.HandlerFunc(mySvc.PostMyNotificationsReadAll)))
 	// 2026-07-29: refactor-v0.30 Phase B step 5b —
 	// /my/devices moved to feature/my.
 	mux.Handle("GET /my/devices", authMW(http.HandlerFunc(mySvc.GetMyDevices)))

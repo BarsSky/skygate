@@ -568,6 +568,27 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
 .badge-danger{background:var(--danger-bg);color:var(--danger);border-color:var(--danger)}
 .badge-info{background:var(--info-bg);color:var(--info);border-color:var(--info)}
 .badge-warn{background:var(--warning-bg);color:var(--warning);border-color:var(--warning)}
+/* 2026-08-20: B157 — notification bell (sidebar).
+   .notif-badge: small red circle with the unread
+   count, rendered next to the bell icon. Only
+   shows when UnreadCount > 0 (the template
+   suppresses the <span> when the count is 0).
+   .notif-menu: dropdown panel inside the bell's
+   <details> wrapper. Wide enough for the title +
+   body to read on one line each. .notif-item:
+   each unread notification row. Stacked rows
+   separated by a thin border. .notif-actions:
+   the row's "Open" + "Mark as read" buttons,
+   inline so they fit on one row. */
+.notif-badge{display:inline-block;min-width:16px;height:16px;padding:0 5px;margin-left:4px;border-radius:999px;background:var(--danger);color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;vertical-align:middle}
+.notif-menu{min-width:280px;max-width:340px;max-height:480px;overflow-y:auto;padding:0;background:var(--bg-elev,#fff);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.08)}
+.notif-item{padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;display:flex;flex-direction:column;gap:4px}
+.notif-item:last-child{border-bottom:none}
+.notif-title{color:var(--text,#222);font-weight:600;line-height:1.3}
+.notif-body{color:var(--text-muted,#666);font-size:12px;line-height:1.4}
+.notif-actions{display:flex;gap:6px;margin-top:4px}
+.notif-actions .menu-btn{padding:3px 8px;font-size:11px;flex:0 0 auto}
+.notif-empty{padding:16px;text-align:center;color:var(--text-muted,#666);font-size:13px;font-style:italic}
 /* 2026-07-14: Этап 14 v2 — Tailscale reachability probe. The
    .alert-probe class uses the same layout as .alert but adds
    room for a multi-line body (sub-text + a troubleshooting

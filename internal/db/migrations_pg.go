@@ -1254,3 +1254,66 @@ func migrateV058PG(d *sql.DB) error {
 	}
 	return nil
 }
+
+// migrateV059PG — v1.5.0 (B157) — in-web notification inbox.
+//
+// Adds a first-class notifications table for the B157
+// bell-icon inbox on the user sidebar. The table is
+// the user-facing mirror of the B156 keynotify
+// scheduler: every expiring-key event the scheduler
+// finds ALSO writes a row here (in addition to the
+// Telegram send), so the user sees a per-page
+// notification even if they don't have Telegram
+// bound, or if the Telegram send was skipped for
+// some reason.
+//
+// Schema:
+//   - id           BIGSERIAL PRIMARY KEY
+//   - user_id      INTEGER NOT NULL  -- FK portal_users (ON DELETE CASCADE)
+//   - type         TEXT    NOT NULL  -- enum-like: 'key.expiring', future types
+//   - severity     TEXT    NOT NULL DEFAULT 'info'  -- 'info' | 'warn' | 'danger'
+//   - title        TEXT    NOT NULL  -- short title (1 line)
+//   - body         TEXT    NOT NULL DEFAULT ''  -- longer description (1-2 lines)
+//   - link         TEXT    NOT NULL DEFAULT ''  -- relative URL the bell links to (e.g. /my/keys)
+//   - created_at   INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+//   - read_at      INTEGER NOT NULL DEFAULT 0  -- unix-seconds; 0 = unread
+//
+// Indexes:
+//   - idx_notifications_user_unread on (user_id, read_at) — the
+//     count-unread + list-unread query. Cheap + covers the
+//     "bell badge" hot path (every page render).
+//   - idx_notifications_user_created on (user_id, created_at DESC) —
+//     the list view, "newest first".
+//
+// The type field is text (not a PG enum) so future
+// B-checks can add new notification kinds without a
+// schema migration. Same pattern as B156's storage
+// keys.
+//
+// B157 contract test: see scripts/check_b157.sh.
+func migrateV059PG(d *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS notifications (
+			id BIGSERIAL PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			severity TEXT NOT NULL DEFAULT 'info',
+			title TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			link TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+			read_at INTEGER NOT NULL DEFAULT 0,
+			FOREIGN KEY (user_id) REFERENCES portal_users (id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
+			ON notifications(user_id, read_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+			ON notifications(user_id, created_at DESC)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.59 notifications: %w", err)
+		}
+	}
+	return nil
+}

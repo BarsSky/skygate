@@ -464,6 +464,13 @@ const (
 	qSelectExpiringPreauthKeys   = `SELECT id, user_id, key, headscale_preauth_id, expires_at, created_at, reusable, used FROM preauth_keys WHERE used = 0 AND expires_at > 0 AND expires_at <= $1 ORDER BY expires_at ASC`
 	qMarkPreauthKeyNotified      = `UPDATE preauth_keys SET notified_at = $2 WHERE id = $1`
 	qResetPreauthKeyNotified     = `UPDATE preauth_keys SET notified_at = 0 WHERE id = $1`
+	qInsertNotification           = `INSERT INTO notifications (user_id, type, severity, title, body, link, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
+	qListNotificationsByUser     = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`
+	qListUnreadNotificationsByUser = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 AND read_at = 0 ORDER BY created_at DESC LIMIT $2`
+	qCountUnreadNotifications    = `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at = 0`
+	qMarkNotificationRead        = `UPDATE notifications SET read_at = $1 WHERE id = $2 AND user_id = $3 AND read_at = 0`
+	qMarkAllNotificationsRead    = `UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at = 0`
+	qDeleteNotificationsForUser  = `DELETE FROM notifications WHERE user_id = $1`
 	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
 	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
 	qDeletePreauthByUser         = `DELETE FROM preauth_keys WHERE user_id = $1`

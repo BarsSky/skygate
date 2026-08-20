@@ -19,6 +19,7 @@ import (
 	"skygate/internal/headscale_version"
 	"skygate/internal/httputil"
 	"skygate/internal/i18n"
+	"skygate/internal/notifications"
 	"skygate/internal/ratelimit"
 	"skygate/internal/release"
 	"skygate/internal/sidecar"
@@ -466,6 +467,34 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 		data["DisplayFont"] = prefs.FontFamily
 		data["DisplayScale"] = prefs.FontScale
 		data["DisplaySelBg"] = prefs.SelectionBg
+		// B157 (v1.5.0): in-web notification bell
+		// badge + dropdown. Auto-inject the unread
+		// count + the list of unread notifications
+		// for every page that goes through
+		// renderWithLayout — the layout template
+		// renders the bell in the sidebar and the
+		// dropdown on click. We load the list
+		// here (rather than via a separate API
+		// endpoint) so the dropdown opens
+		// instantly without a JS roundtrip. The
+		// cap of 50 matches the SQL helper's
+		// default — the dropdown scrolls.
+		// Failure mode: if the DB read fails, we
+		// silently set UnreadCount=0 + nil list
+		// so the bell still renders (just shows
+		// "No notifications"). The user's real
+		// notifications are still in the DB;
+		// the next page load will retry.
+		if count, cerr := notifications.CountUnread(a.DB, c.UserID); cerr == nil {
+			data["UnreadCount"] = count
+		} else {
+			data["UnreadCount"] = 0
+		}
+		if list, lerr := notifications.ListUnreadByUser(a.DB, c.UserID, 50); lerr == nil {
+			data["UnreadNotifications"] = list
+		} else {
+			data["UnreadNotifications"] = []db.Notification{}
+		}
 	}
 	data["Version"] = a.Version
 

@@ -173,6 +173,53 @@
           </form>
         </div>
       </details>
+      {{/* B157 (v1.5.0): in-web notification bell.
+         The <details> wrapper means the dropdown
+         opens on click without a JS handler — uses
+         the browser's native disclosure UI. The
+         count badge only renders when UnreadCount
+         is > 0 (the CSS uses :empty to keep the
+         padding balanced when the badge is hidden).
+         The list of UnreadNotifications is injected
+         by renderWithLayout (auto-injected for every
+         page, so the bell always shows the current
+         state). Each item has a "Mark as read"
+         form (POST, no JS) + an "Open" link to the
+         notification's target page. The
+         "Mark all as read" button is at the top of
+         the dropdown so the user can clear the
+         badge with one click. */}}
+      <details class="theme-picker-sb" id="notif-bell">
+        <summary title="{{t "notif.bell_title"}}">
+          <i class="fa-solid fa-bell"></i>
+          {{if gt .UnreadCount 0}}<span class="notif-badge">{{.UnreadCount}}</span>{{end}}
+        </summary>
+        <div class="menu notif-menu">
+          {{if gt .UnreadCount 0}}
+          <form method="post" action="/my/notifications/read-all" style="margin:0">
+            <button type="submit" class="menu-btn" style="width:100%;text-align:left;border-bottom:1px solid var(--border)">
+              <i class="fa-solid fa-check-double"></i> {{t "notif.mark_all_read"}}
+            </button>
+          </form>
+          {{end}}
+          {{if .UnreadNotifications}}
+            {{range .UnreadNotifications}}
+            <div class="notif-item">
+              <div class="notif-title"><b>{{.Title}}</b></div>
+              <div class="notif-body">{{.Body}}</div>
+              <div class="notif-actions">
+                {{if .Link}}<a href="{{.Link}}" class="menu-btn"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "notif.cta_open"}}</a>{{end}}
+                <form method="post" action="/my/notifications/{{.ID}}/read" style="display:inline">
+                  <button type="submit" class="menu-btn"><i class="fa-solid fa-check"></i> {{t "notif.mark_read"}}</button>
+                </form>
+              </div>
+            </div>
+            {{end}}
+          {{else}}
+            <div class="notif-empty"><i class="fa-solid fa-bell-slash"></i> {{t "notif.empty"}}</div>
+          {{end}}
+        </div>
+      </details>
       <form method="post" action="/logout"><button type="submit" title="{{t "common.logout"}}"><i class="fa-solid fa-right-from-bracket"></i></button></form>
     </div>
   </div>
