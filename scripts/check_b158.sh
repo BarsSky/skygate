@@ -80,13 +80,18 @@ for family in "Manrope" "Inter" "Geist" "Sora" "Geist Mono" "JetBrains Mono"; do
         bad "themes.css missing @font-face for '$family'"
     fi
 done
-# All srcs must point to /webfonts/ (local), not
-# fonts.gstatic.com.
-if grep -c "src:url(/webfonts/" static/css/themes.css | grep -qE '^[1-9][0-9]*$'; then
-    count=$(grep -c "src:url(/webfonts/" static/css/themes.css)
-    ok "themes.css has $count local @font-face srcs (all /webfonts/)"
+# All srcs must point to /static/webfonts/ (local), not
+# fonts.gstatic.com. The static handler is mounted at
+# /static/ in main.go (line 520: mux.HandleFunc("/static/",
+# app.StaticHandler)), so /webfonts/<file> would 302 to
+# /login via the auth middleware. The /static/webfonts/
+# path is served by the static handler with
+# Cache-Control: max-age=86400, must-revalidate.
+if grep -c "src:url(/static/webfonts/" static/css/themes.css | grep -qE '^[1-9][0-9]*$'; then
+    count=$(grep -c "src:url(/static/webfonts/" static/css/themes.css)
+    ok "themes.css has $count local @font-face srcs (all /static/webfonts/)"
 else
-    bad "themes.css has NO local @font-face srcs — fonts not self-hosted"
+    bad "themes.css has NO /static/webfonts/ srcs — fonts not self-hosted OR using wrong path"
 fi
 
 echo ""
