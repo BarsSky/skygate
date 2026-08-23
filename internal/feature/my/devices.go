@@ -49,6 +49,36 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
 	hsUserID, username, _ = db.GetUserHSByID(s.DB, c.UserID)
 
+	// B160.2 (2026-08-20): optional cache bypass.
+	// The headscale.Client caches ListAllNodes()
+	// results for 5s to absorb the gRPC-to-HTTP
+	// gateway cost. After a mutation (B155 issued
+	// a new preauth key + the user reconnected
+	// their device, B160.1 renewed an expiry, or
+	// B162.0 node-delete) the cache can show stale
+	// data for up to 5s. The /my/devices?refresh=1
+	// route (linked by the "Refresh" button) forces
+	// a fresh fetch by calling InvalidateCache()
+	// before the ListAllNodes() call below.
+	//
+	// Operator 2026-08-20 hit this in the wild: they
+	// reconnected a device with a new preauth key
+	// from B155, the cache was still warm from the
+	// pre-B155 /my/devices load, and the table
+	// showed the pre-reconnect state. The user
+	// expected an instant update.
+	//
+	// We only invalidate when ?refresh=1 is present
+	// (NOT on every load) — the cache is doing real
+	// work absorbing the 50ms-per-load headscale
+	// cost; bypassing it on every render would
+	// re-introduce the latency the cache was added
+	// to fix in the first place.
+	refreshRequested := r.URL.Query().Get("refresh") == "1"
+	if refreshRequested {
+		s.Backend.HSForUserFn(c.UserID).InvalidateCache()
+	}
+
 	// 2026-07-21: v0.22.3 — read the user's subnet row
 	// (denormalized on portal_users) so the /my/devices page
 	// can show "Your personal subnet: 10.0.<uid>.0/24 (active)"
@@ -578,6 +608,19 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// captures the full node ID + new expiry).
 		"RenewedHost":          r.URL.Query().Get("renewed"),
 		"RenewedNewExpiry":     r.URL.Query().Get("new_expiry"),
+		// B160.2 (2026-08-20): data freshness. The
+		// "Last refreshed at HH:MM:SS" indicator
+		// shows the user when the headscale data
+		// was last fetched. The "Refresh" button
+		// bypasses the cache (?refresh=1) and
+		// updates this timestamp. Without this
+		// indicator the user can't tell if they're
+		// seeing a 5s-stale cache or the actual
+		// headscale state — operator 2026-08-20 hit
+		// this and thought the page was broken
+		// (it wasn't; the cache was doing its job).
+		"LastRefreshedAt":      time.Now().Unix(),
+		"RefreshRequested":     refreshRequested,
 	})
 }
 

@@ -156,7 +156,32 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}</h3>
+  <h3>
+    <i class="fa-solid fa-house-laptop"></i>{{t "devices.title"}}
+    {{/* B160.2 (2026-08-20): Refresh button + last-
+       refreshed indicator. The headscale.Client
+       caches ListAllNodes() for 5s. After a
+       mutation (B155 issued a new preauth key,
+       B160.1 renewed an expiry, B162.0 deleted
+       a node) the cache can show stale data for
+       up to 5s. The button bypasses the cache
+       via ?refresh=1. Operator 2026-08-20 hit
+       this and thought the page was broken; the
+       indicator below the title shows when the
+       data was actually fetched. */}}
+    <a href="/my/devices?refresh=1" class="btn btn-secondary" style="font-size:11px;padding:2px 8px;margin-left:auto" title="{{t "devices.refresh_title"}}">
+      <i class="fa-solid fa-rotate"></i>{{t "devices.refresh_btn"}}
+    </a>
+  </h3>
+  <div style="font-size:11px;color:var(--text-subtle);margin:-8px 0 12px 0">
+    {{if .RefreshRequested}}
+      <i class="fa-solid fa-check"></i>
+      {{tf "devices.refreshed" (datetimeformat .LastRefreshedAt)}}
+    {{else}}
+      <i class="fa-solid fa-database"></i>
+      {{t "devices.cache_note"}}
+    {{end}}
+  </div>
   {{if .HasMyNodes}}
   {{/* B160.1 (2026-08-20): wrap the table in .table-wrap
      so the 10-column "My devices" list scrolls

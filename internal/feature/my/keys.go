@@ -427,6 +427,15 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "headscale create failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// B160.2 (2026-08-20): invalidate the headscale
+	// node-list cache so the next /my/devices load
+	// (after the reissue redirect) gets fresh data
+	// instead of hitting the 5s cache. The reissue
+	// itself doesn't change any node in headscale,
+	// but the user typically reissues then goes to
+	// /my/devices to verify, and the fresh data
+	// path saves a click on the "Refresh" button.
+	s.Backend.HSForUserFn(c.UserID).InvalidateCache()
 
 	// Persist the new key in the local mirror.
 	// 2026-08-20: B156 — InsertPreauthKey now also writes

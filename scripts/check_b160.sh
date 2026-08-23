@@ -282,7 +282,74 @@ else
 fi
 
 echo ""
+echo "=== contract J: B160.2 — cache bypass + last-refreshed indicator ==="
+# B160.2 (2026-08-20) was added after the operator
+# reconnected a device with a new preauth key
+# from B155 and the /my/devices table didn't
+# update for 5s. Root cause: the headscale.Client
+# caches ListAllNodes() results for 5s. The fix
+# is a manual refresh button + automatic cache
+# invalidation in the B155 mutation paths.
+#
+# We check:
+#   1. ?refresh=1 query param triggers
+#      InvalidateCache() in GetMyDevices
+#   2. The "Refresh" button is visible
+#   3. The "Last refreshed" indicator is rendered
+#   4. B155 (PostMyPreauth) invalidates the cache
+#   5. B155 (PostMyKeyReissue) invalidates the cache
+#   6. The 4 new i18n keys are in both RU + EN
+if grep -qE 'r\.URL\.Query\(\)\.Get\("refresh"\) == "1"' internal/feature/my/devices.go; then
+    ok "GetMyDevices parses ?refresh=1"
+else
+    bad "GetMyDevices MISSING the ?refresh=1 query param handler"
+fi
+if grep -qE 's\.Backend\.HSForUserFn\(c\.UserID\)\.InvalidateCache\(\)' internal/feature/my/devices.go; then
+    ok "GetMyDevices calls InvalidateCache() when refresh=1"
+else
+    bad "GetMyDevices MISSING the InvalidateCache() call"
+fi
+if grep -qE 'href="/my/devices\?refresh=1"' internal/handlers/templates/user/devices.html; then
+    ok "devices.html renders the Refresh button (?refresh=1)"
+else
+    bad "devices.html MISSING the Refresh button"
+fi
+if grep -qE 'tf "devices\.refreshed"' internal/handlers/templates/user/devices.html; then
+    ok "devices.html renders the last-refreshed indicator"
+else
+    bad "devices.html MISSING the last-refreshed indicator"
+fi
+# B155 (PostMyPreauth) — invalidate after CreatePreauthKey
+if grep -qE 'InvalidateCache\(\)' internal/feature/my/preauth.go; then
+    ok "PostMyPreauth invalidates the headscale cache (B155 mutation path)"
+else
+    bad "PostMyPreauth MISSING the cache invalidation"
+fi
+# B155 (PostMyKeyReissue) — invalidate after CreatePreauthKey
+if grep -qE 'InvalidateCache\(\)' internal/feature/my/keys.go; then
+    ok "PostMyKeyReissue invalidates the headscale cache (B155 reissue path)"
+else
+    bad "PostMyKeyReissue MISSING the cache invalidation"
+fi
+# 4 new i18n keys — RU+EN parity
+needed=(
+  "devices.refresh_btn"
+  "devices.refresh_title"
+  "devices.refreshed"
+  "devices.cache_note"
+)
+for k in "${needed[@]}"; do
+    c=$(grep -cE "\"$k\"" internal/i18n/catalog_my.go || true)
+    if [ "$c" -ge 2 ]; then
+        ok "i18n key '$k' present in both RU and EN"
+    else
+        bad "i18n key '$k' has only $c occurrence(s); need >=2 (RU+EN)"
+    fi
+done
+
+echo ""
 echo "=== summary ==="
 echo "B160: /my/devices manual expiry renewal (Expires column + Renew button)"
 echo "B160.1: 'node no longer exists' (410 Gone) + table overflow (.table-wrap)"
+echo "B160.2: cache bypass (Refresh button + last-refreshed) + B155 invalidation"
 echo "all B160 contracts satisfied"

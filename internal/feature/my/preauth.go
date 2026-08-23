@@ -102,6 +102,16 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// B160.2 (2026-08-20): invalidate the headscale
+	// node-list cache so the next /my/devices load
+	// (which backfills node_owner_map from the new
+	// preauth key) gets fresh data instead of
+	// hitting the 5s cache. Operator 2026-08-20
+	// reported "after issuing a new preauth key +
+	// reconnecting a device, the /my/devices
+	// table didn't update" — the root cause was
+	// the cache showing the pre-issue state.
+	s.Backend.HSForUserFn(c.UserID).InvalidateCache()
 	keyPrefix := key.Key
 	if len(keyPrefix) > 20 {
 		keyPrefix = keyPrefix[:20]
