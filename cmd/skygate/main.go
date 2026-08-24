@@ -1046,6 +1046,12 @@ func main() {
 	// is a separate manual step (the handler's redirect
 	// message tells the operator).
 	mux.Handle("POST /admin/devices/transfer", authMW(http.HandlerFunc(adminSvc.PostAdminDeviceTransfer)))
+	// B169 (v1.5.2) — admin-side device deletion. B162
+	// (v1.5.1) is the per-user delete on /my/devices;
+	// this one is the admin-scoped delete on /admin/devices
+	// for cleaning up orphan / duplicate / stuck devices.
+	// Admin-only (handler does the c.IsAdmin check).
+	mux.Handle("POST /admin/devices/{id}/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDeviceDelete)))
 	mux.Handle("GET /admin/audit", authMW(http.HandlerFunc(adminSvc.GetAdminAudit)))
 	// 2026-07-16: v0.13.0 — ACL import/export. GET shows
 	// the current policy in a downloadable file; POST

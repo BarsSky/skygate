@@ -288,6 +288,25 @@
               <button type="submit" class="btn btn-sm" style="font-size:11px;padding:2px 8px"><i class="fa-solid fa-arrow-right-arrow-left"></i> {{t "devices.transfer_submit"}}</button>
             </form>
           </details>
+          {{/* B169 (v1.5.2) — admin-side device delete. Mirror of the
+             B162 (v1.5.1) per-row delete on /my/devices, but at
+             the admin scope. The handler returns one of:
+               - 302 → /admin/devices?ok="Node N (host) deleted"
+               - 302 → /admin/devices?err="Node is an exit node — remove routes first"
+               - 302 → /admin/devices?err="Node not found"
+               - 302 → /admin/devices?err="DeleteNode failed: ..."
+             The confirm() prevents accidental deletes (the
+             "B162-style" client-side guard — the server does the
+             authoritative scope-check via the admin-only handler).
+             The button is red so the operator reads the confirm
+             prompt. NO confirm() means the operator could delete
+             a real device with one misclick. */}}
+          <form method="post" action="/admin/devices/{{.ID}}/delete" style="margin-top:4px;display:inline"
+                onsubmit="return confirm('{{t "devices.delete_admin_confirm" | safeJS}}')">
+            <button type="submit" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:var(--danger);color:#fff;border-color:var(--danger)" title="{{t "devices.delete_admin_help"}}">
+              <i class="fa-solid fa-trash-can"></i> {{t "devices.delete_admin_btn"}}
+            </button>
+          </form>
         </td>
       </tr>
       {{end}}

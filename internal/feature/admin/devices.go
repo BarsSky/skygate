@@ -6,19 +6,30 @@ package admin
 // internal/handlers/handlers_admin_nodes.go.
 //
 // Handlers: GetAdminDevices, PostAdminDevicesSyncFromHeadscale,
-// PostAdminNodeTag, PostAdminNodeUntag. Helper: nodeTagRefusedForUserDevice
-// (pure function, unit-tested in the original handlers).
+// PostAdminNodeTag, PostAdminNodeUntag, PostAdminDeviceDelete.
+// Helper: nodeTagRefusedForUserDevice (pure function,
+// unit-tested in the original handlers).
 //
 // 2026-08-09: v0.33.1.20 — added PostAdminDevicesForceBackfillTags
 // (per-user Backfill loop that runs against ALL portal users at
 // once) and PostAdminDeviceTransfer (resolve orphan rows like the
 // v0.33.1.19 svyatoslava conflict by reassigning a node to a
+// different portal user).
+//
+// 2026-08-24: v1.5.2 — B169 — added PostAdminDeviceDelete
+// (admin-side device deletion). The B162 (v1.5.1) user-side
+// delete on /my/devices is scoped to the per-user control
+// plane — admin could not clean up orphan / duplicate /
+// stuck devices without SSH'ing into the skygate VM. B169
+// closes that gap with an admin-scoped delete on the
+// /admin/devices page.
 // different portal user). Together they form the "fix everything"
 // admin toolkit: sync the DB from headscale, force re-apply the
 // per-user dev-tags, transfer misattributed devices.
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -759,4 +770,149 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, fmt.Sprintf(
 		"/admin/devices?ok=%s", url.QueryEscape(
 			fmt.Sprintf("Node %d transferred to %s (tag=%s). Click 'Re-apply ACL' on /admin/exit-rules to push the new tagOwners.", nodeID, targetUsername, newDevTag))), http.StatusSeeOther)
+}
+
+// PostAdminDeviceDelete (B169, v1.5.2) deletes a node from
+// headscale. The B162 (v1.5.1) user-side delete on /my/devices
+// is scoped to the per-user control plane — admin could not
+// clean up orphan / duplicate / stuck devices without SSH'ing
+// into the skygate VM and running `headscale nodes delete`
+// directly. B169 closes that gap with an admin-scoped delete
+// on the /admin/devices page.
+//
+// Flow (mirrors B162 + the s.Backend.Audit pattern):
+//   1. Verify admin
+//   2. Parse {id} from the URL path
+//   3. ListAllNodes — verify the node exists (catch 404 from
+//      headscale before the delete call, gives a cleaner error
+//      than "node not found" from headscale)
+//   4. Call hs.DeleteNode (gRPC: headscale.v1.NodeService.DeleteNode)
+//   5. Clean up node_owner_map (the bot's /exit_nodes reads from
+//      this — a stale row would keep showing the deleted node)
+//   6. hs.InvalidateCache (so the next /admin/devices load
+//      re-fetches from headscale)
+//   7. Audit log: device_deleted id=<N> hostname=<H> user=<U>
+//
+// Failure modes (handled the same way as B162):
+//   - 400 if id is missing or not a valid int64
+//   - 404 if ListAllNodes doesn't return a node with that ID
+//   - 502 if headscale is unreachable
+//   - 500 with the headscale error string if DeleteNode fails
+//     (most common cause: a node that's a route exit point —
+//     headscale refuses with "node is an exit node, remove the
+//     routes first". Admin must remove the routes via
+//     /admin/devices/preferred-exit or the headscale CLI
+//     before retrying.)
+//
+// Safety: this is an admin-only endpoint (c.IsAdmin check
+// before the ListAllNodes call). No scope-check against
+// node_user_id (the whole point of admin is to operate on
+// any node).
+func (s *Service) PostAdminDeviceDelete(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		http.Error(w, "missing node id", http.StatusBadRequest)
+		return
+	}
+	nodeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad node id", http.StatusBadRequest)
+		return
+	}
+
+	// Use the global headscale client (admin has the
+	// full view, no per-user scope restriction).
+	hs := s.HSGlobalFn()
+
+	// 1) Verify the node exists + capture hostname for
+	// the audit row. If the node was already deleted
+	// (e.g. concurrent operator action), 404 instead
+	// of 500.
+	allNodes, lerr := hs.ListAllNodes()
+	if lerr != nil {
+		log.Printf("web.admin.device-delete: ListAllNodes err=%v", lerr)
+		http.Error(w, "headscale unreachable", http.StatusBadGateway)
+		return
+	}
+	var hostname string
+	var found bool
+	for _, n := range allNodes {
+		if n.ID == idStr {
+			hostname = n.Hostname
+			found = true
+			break
+		}
+	}
+	if !found {
+		log.Printf("web.admin.device-delete: node id=%s not found in headscale", idStr)
+		s.Backend.Audit(c.UserID, c.Username, "device_delete_not_found",
+			fmt.Sprintf("id=%s", idStr))
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(
+			fmt.Sprintf("Node %s not found (already deleted?)", idStr)), http.StatusSeeOther)
+		return
+	}
+
+	// 2) Delete the node. headscale returns one of:
+	//   - nil (success)
+	//   - "node not found" / "no longer exists in NodeStore" /
+	//     "Not Found" / 404 — already deleted, treat as 404
+	//   - "node is an exit node, remove the routes first" —
+	//     surface as 409 with the headscale error
+	//   - any other error — 500
+	if derr := hs.DeleteNode(nodeID); derr != nil {
+		msg := derr.Error()
+		log.Printf("web.admin.device-delete: DeleteNode id=%s err=%v", idStr, derr)
+		s.Backend.Audit(c.UserID, c.Username, "device_delete_failed",
+			fmt.Sprintf("id=%s hostname=%s err=%s", idStr, hostname, msg))
+		// 404 patterns match B162 — if the node was deleted
+		// between our ListAllNodes and DeleteNode, treat as
+		// success.
+		if strings.Contains(msg, "node not found") ||
+			strings.Contains(msg, "no longer exists in NodeStore") ||
+			strings.Contains(msg, "Not Found") ||
+			strings.Contains(strings.ToLower(msg), " 404") {
+			// Fall through to cleanup
+		} else if strings.Contains(msg, "exit node") || strings.Contains(msg, "routes") {
+			http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(
+				fmt.Sprintf("Node %s is an exit node — remove the routes first (headscale: %s)", idStr, msg)), http.StatusSeeOther)
+			return
+		} else {
+			http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(
+				fmt.Sprintf("DeleteNode failed: %s", msg)), http.StatusSeeOther)
+			return
+		}
+	}
+
+	// 3) Clean up node_owner_map. The bot's /exit_nodes
+	// reads from this; a stale row would keep showing
+	// the deleted node as a relay candidate.
+	if rerr := db.DeleteNodeOwnerByNodeTag(s.DB, idStr, ""); rerr != nil {
+		log.Printf("web.admin.device-delete: DeleteNodeOwnerByNodeTag id=%s err=%v", idStr, rerr)
+		// Non-fatal — the node is gone from headscale, the
+		// bot's /exit_nodes will see the stale row on its
+		// next refresh and skip it (it'll try to look up
+		// the node by id and fail). Log + audit so the
+		// operator knows to clean up manually.
+		s.Backend.Audit(c.UserID, c.Username, "device_delete_node_owner_cleanup_failed",
+			fmt.Sprintf("id=%s err=%v", idStr, rerr))
+	}
+
+	// 4) Invalidate the headscale cache so the next
+	// /admin/devices page load re-fetches from headscale
+	// (otherwise the operator would see the deleted node
+	// for up to 5s — the cache TTL).
+	hs.InvalidateCache()
+
+	// 5) Audit log entry. The format matches the B162
+	// user-side delete so the /admin/audit page renders
+	// them consistently.
+	s.Backend.Audit(c.UserID, c.Username, "device_deleted",
+		fmt.Sprintf("id=%s hostname=%s", idStr, hostname))
+	http.Redirect(w, r, "/admin/devices?ok="+url.QueryEscape(
+		fmt.Sprintf("Node %s (%s) deleted", idStr, hostname)), http.StatusSeeOther)
 }

@@ -242,6 +242,10 @@ var ruMy = map[string]string{
 	"devices.transfer_target"                    : "Target user",
 	"devices.transfer_submit"                    : "Transfer",
 	"devices.transfer_help"                      : "Reassign this node to a different portal user (resolves orphan rows like the svyatoslava dual-owner case).",
+	// B169 (v1.5.2) — admin-side device delete on /admin/devices
+	"devices.delete_admin_btn"                   : "Delete",
+	"devices.delete_admin_help"                  : "Remove this device from headscale entirely (use for orphan / duplicate / stuck devices). Cannot be undone.",
+	"devices.delete_admin_confirm"               : "Delete this device from headscale? This cannot be undone.",
 	"devices.refresh"                            : "Обновить список",
 	"devices.user"                               : "Пользователь",
 	"devices.user_facing"                        : "User-facing",
@@ -687,6 +691,10 @@ var enMy = map[string]string{
 	"devices.transfer_target"                    : "Target user",
 	"devices.transfer_submit"                    : "Transfer",
 	"devices.transfer_help"                      : "Reassign this node to a different portal user (resolves orphan rows like the svyatoslava dual-owner case).",
+	// B169 (v1.5.2) — admin-side device delete on /admin/devices
+	"devices.delete_admin_btn"                   : "Delete",
+	"devices.delete_admin_help"                  : "Remove this device from headscale entirely (use for orphan / duplicate / stuck devices). Cannot be undone.",
+	"devices.delete_admin_confirm"               : "Delete this device from headscale? This cannot be undone.",
 	"devices.refresh"                            : "Refresh list",
 	"devices.user"                               : "User",
 	"devices.user_facing"                        : "User-facing",
