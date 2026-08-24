@@ -116,6 +116,12 @@
          configures TLS + OIDC together for the
          headscale integration). */}}
       <a href="/admin/oidc" {{if eq .Page "admin/oidc"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.oidc"}}</span></a>
+      {{/* B167 (v1.5.2) — OIDC config auto-sync.
+         Sub-link under /admin/oidc (the operator
+         clicks "Sync to headscale" from the
+         /admin/oidc page, but a direct link here
+         saves a click for the common case). */}}
+      <a href="/admin/oidc/sync" {{if eq .Page "admin/oidc_sync"}}class="active"{{end}} class="sub-link"><i class="fa-solid fa-arrows-rotate"></i><span>{{t "nav.oidc_sync"}}</span></a>
     </details>
 
     {{/* Section 5: Data (3 pages) */}}

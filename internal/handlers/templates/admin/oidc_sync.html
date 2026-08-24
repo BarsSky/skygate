@@ -1,0 +1,228 @@
+{{define "body-admin-oidc_sync"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-arrows-rotate"></i>{{t "oidc_sync.title"}}</h2>
+    <div class="sub">{{t "oidc_sync.subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/oidc" class="btn btn-secondary"><i class="fa-solid fa-key"></i> {{t "oidc_sync.back_to_oidc"}}</a>
+  </div>
+</div>
+
+{{if .FlashOK}}
+<div class="alert alert-success">
+  <i class="fa-solid fa-circle-check"></i>
+  <div>
+    <b>{{t "oidc_sync.apply_ok"}}</b> — <code>{{.FlashDetail}}</code>
+    <div class="sub" style="margin-top:4px">{{t "oidc_sync.apply_ok_help"}}</div>
+  </div>
+</div>
+<details style="margin-top:12px" {{if eq .FlashMode "download"}}open{{end}}>
+  <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">
+    <i class="fa-solid fa-file-code"></i> {{t "oidc_sync.generated_block"}}
+  </summary>
+  <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:12px;overflow-x:auto;font-size:12px;margin-top:8px"><code>{{.FlashResult}}</code></pre>
+  <p style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "oidc_sync.generated_block_help" | safeHTML}}</p>
+</details>
+{{end}}
+
+{{if .FlashErr}}
+<div class="alert alert-danger">
+  <i class="fa-solid fa-circle-exclamation"></i>
+  <div>
+    <b>{{if t (printf "oidc_sync.err_%s" .FlashErr)}}{{t (printf "oidc_sync.err_%s" .FlashErr)}}{{else}}{{t "oidc_sync.err_generic"}}{{end}}</b>
+    {{if .FlashDetail}}<div class="sub" style="margin-top:4px"><code>{{.FlashDetail}}</code></div>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{if not .OIDCEnabled}}
+<div class="alert alert-warn">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <div>{{t "oidc_sync.disabled_warn" | safeHTML}}</div>
+</div>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-info"></i>{{t "oidc_sync.section_current"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+    {{t "oidc_sync.section_current_help" | safeHTML}}
+  </p>
+  <table>
+    <tr>
+      <th style="width:240px"><code>SKYGATE_OIDC_ISSUER</code></th>
+      <td><code>{{.Issuer}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_CLIENT_ID</code></th>
+      <td><code>{{.ClientID}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_CLIENT_SECRET</code></th>
+      <td><code>{{t "oidc.env_secret_set"}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_KEY_DIR</code></th>
+      <td><code>{{.KeyDir}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_REDIRECT_URIS</code></th>
+      <td><code>{{.RedirectURIs}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_AUTOSYNC</code></th>
+      <td>
+        {{if .AutoSync}}
+          <code style="color:var(--success)">true</code>
+          <span style="color:var(--text-muted);font-size:12px;margin-left:6px">{{t "oidc_sync.autosync_on" | safeHTML}}</span>
+        {{else}}
+          <code>false</code>
+          <span style="color:var(--text-muted);font-size:12px;margin-left:6px">{{t "oidc_sync.autosync_off" | safeHTML}}</span>
+        {{end}}
+      </td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-bolt"></i>{{t "oidc_sync.section_apply"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+    {{t "oidc_sync.section_apply_help" | safeHTML}}
+  </p>
+  <form method="post" action="/admin/oidc/sync" id="oidc-sync-form">
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="headscale_config_path">{{t "oidc_sync.field_config_path"}}</label>
+        <input type="text" name="headscale_config_path" id="headscale_config_path"
+               value="{{index .FormDefaults "HeadscaleConfigPath"}}"
+               placeholder="/home/skyadmin/headscale/config/config.yaml">
+        <div class="form-hint">{{t "oidc_sync.field_config_path_help" | safeHTML}}</div>
+      </div>
+      <div class="form-group">
+        <label for="headscale_container">{{t "oidc_sync.field_container"}}</label>
+        <input type="text" name="headscale_container" id="headscale_container"
+               value="{{index .FormDefaults "HeadscaleContainer"}}"
+               placeholder="headscale">
+        <div class="form-hint">{{t "oidc_sync.field_container_help"}}</div>
+      </div>
+      <div class="form-group">
+        <label for="skygate_env_path">{{t "oidc_sync.field_env_path"}}</label>
+        <input type="text" name="skygate_env_path" id="skygate_env_path"
+               value="{{index .FormDefaults "SkygateEnvPath"}}"
+               placeholder="/home/skyadmin/skygate/.env">
+        <div class="form-hint">{{t "oidc_sync.field_env_path_help"}}</div>
+      </div>
+      <div class="form-group">
+        <label for="mode">{{t "oidc_sync.field_mode"}}</label>
+        <select name="mode" id="mode">
+          <option value="auto" selected>{{t "oidc_sync.mode_auto"}}</option>
+          <option value="docker">{{t "oidc_sync.mode_docker"}}</option>
+          <option value="systemd">{{t "oidc_sync.mode_systemd"}}</option>
+          <option value="k8s">{{t "oidc_sync.mode_k8s"}}</option>
+          <option value="api">{{t "oidc_sync.mode_api"}}</option>
+          <option value="manual">{{t "oidc_sync.mode_manual"}}</option>
+          <option value="download">{{t "oidc_sync.mode_download"}}</option>
+        </select>
+        <div class="form-hint">{{t "oidc_sync.field_mode_help" | safeHTML}}</div>
+      </div>
+      <div class="form-group form-group-wide">
+        <label for="redirect_uris">{{t "oidc_sync.field_redirect_uris"}}</label>
+        <input type="text" name="redirect_uris" id="redirect_uris"
+               value="{{index .FormDefaults "RedirectURIs"}}"
+               placeholder="https://head.skynas.ru/oidc/callback">
+        <div class="form-hint">{{t "oidc_sync.field_redirect_uris_help" | safeHTML}}</div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" id="oidc-sync-submit"
+              {{if not .OIDCEnabled}}disabled{{end}}>
+        <i class="fa-solid fa-arrows-rotate"></i> {{t "oidc_sync.apply_btn"}}
+      </button>
+      <span class="form-hint-strong">
+        {{t "oidc_sync.apply_btn_help" | safeHTML}}
+      </span>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-question"></i>{{t "oidc_sync.section_faq"}}</h3>
+  <details>
+    <summary><b>{{t "oidc_sync.faq_q_docker" | safeHTML}}</b></summary>
+    <p>{{t "oidc_sync.faq_a_docker" | safeHTML}}</p>
+  </details>
+  <details>
+    <summary><b>{{t "oidc_sync.faq_q_systemd" | safeHTML}}</b></summary>
+    <p>{{t "oidc_sync.faq_a_systemd" | safeHTML}}</p>
+  </details>
+  <details>
+    <summary><b>{{t "oidc_sync.faq_q_k8s" | safeHTML}}</b></summary>
+    <p>{{t "oidc_sync.faq_a_k8s" | safeHTML}}</p>
+  </details>
+  <details>
+    <summary><b>{{t "oidc_sync.faq_q_manual" | safeHTML}}</b></summary>
+    <p>{{t "oidc_sync.faq_a_manual" | safeHTML}}</p>
+  </details>
+  <details>
+    <summary><b>{{t "oidc_sync.faq_q_download" | safeHTML}}</b></summary>
+    <p>{{t "oidc_sync.faq_a_download" | safeHTML}}</p>
+  </details>
+  <details>
+    <summary><b>{{t "oidc_sync.faq_q_autosync" | safeHTML}}</b></summary>
+    <p>{{t "oidc_sync.faq_a_autosync" | safeHTML}}</p>
+  </details>
+  <details>
+    <summary><b>{{t "oidc_sync.faq_q_rollback" | safeHTML}}</b></summary>
+    <p>{{t "oidc_sync.faq_a_rollback" | safeHTML}}</p>
+  </details>
+</div>
+
+<style>
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 18px;
+  margin-top: 8px;
+}
+@media (max-width: 768px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.form-group-wide {
+  grid-column: 1 / -1;
+}
+.form-hint-strong {
+  display: inline-block;
+  margin-left: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+.form-actions {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+#oidc-sync-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+</style>
+
+<script>
+// Disable the submit button on click to prevent
+// double-submit (the script can take up to 120s).
+document.getElementById('oidc-sync-form')?.addEventListener('submit', function() {
+  const btn = document.getElementById('oidc-sync-submit');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> {{t "oidc_sync.apply_btn_running"}}';
+  }
+});
+</script>
+{{end}}

@@ -49,6 +49,7 @@ var ruCommon = map[string]string{
 	"nav.backup"                     : "Backup",
 	"nav.certificates"               : "Сертификаты",      // v1.5.0 / B148
 	"nav.oidc"                        : "OIDC",              // v1.5.1 / B161.4 — headscale OIDC integration
+	"nav.oidc_sync"                   : "OIDC → headscale",  // v1.5.2 / B167 — auto-sync to headscale
 	"nav.settings"                   : "Настройки",
 	"nav.users"                      : "Пользователи",
 	"nav.devices_all"                : "Все устройства",
@@ -241,6 +242,7 @@ var enCommon = map[string]string{
 	"nav.backup"                     : "Backup",
 	"nav.certificates"               : "Certificates",      // v1.5.0 / B148
 	"nav.oidc"                        : "OIDC",              // v1.5.1 / B161.4 — headscale OIDC integration
+	"nav.oidc_sync"                   : "OIDC → headscale",  // v1.5.2 / B167 — auto-sync to headscale
 	"nav.settings"                   : "Settings",
 	"nav.users"                      : "Users",
 	"nav.devices_all"                : "All devices",

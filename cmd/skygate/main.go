@@ -472,6 +472,41 @@ func main() {
 			}
 		}()
 	}
+
+	// B167 (v1.5.2) — auto-sync on init. When
+	// SKYGATE_OIDC_AUTOSYNC=true (opt-in) AND the
+	// 3 OIDC env vars are set, run the sync
+	// synchronously at boot, BEFORE the HTTP server
+	// starts accepting traffic. This is for the
+	// "I deploy skygate with the OIDC env vars
+	// set and want headscale to pick up the config
+	// on the same boot" case.
+	//
+	// We run synchronously (not in a goroutine)
+	// because headscale needs the new config
+	// before skygate serves its first OIDC
+	// request. A sync that fails (e.g. headscale
+	// doesn't come back healthy in 60s) does NOT
+	// abort skygate startup — we log + continue
+	// (so a misconfigured env var doesn't take
+	// down the whole service).
+	if oidcsvc.ShouldAutoSync() {
+		log.Printf("oidc sync: SKYGATE_OIDC_AUTOSYNC=true, running sync at boot (issuer=%s, client_id=%s)",
+			app.OIDCIssuerURL, app.OIDCClientID)
+		req := oidcsvc.SyncRequest{
+			SkygateURL:   strings.TrimRight(app.OIDCIssuerURL, "/"),
+			ClientID:     app.OIDCClientID,
+			ClientSecret: app.OIDCClientSecret,
+			RedirectURIs: app.OIDCRedirectURIs,
+			ModeOverride: "auto",
+		}
+		if res, err := oidcsvc.RunSync(req); err != nil {
+			log.Printf("oidc sync: boot auto-sync FAILED: %v (skygate will continue to start)", err)
+		} else {
+			log.Printf("oidc sync: boot auto-sync OK (mode=%s, headscale_restarted=%v, healthy=%v, took=%dms)",
+				res.Mode, res.HeadscaleRestarted, res.HeadscaleHealthy, res.DurationMs)
+		}
+	}
 	mux.HandleFunc("GET /login", authSvc.GetLogin)
 	mux.HandleFunc("POST /lang", authSvc.PostLang)
 	mux.Handle("POST /login", loginMW(http.HandlerFunc(authSvc.PostLogin)))
@@ -1109,6 +1144,15 @@ func main() {
 	// docs/oidc-headscale.md for the operator runbook.
 	mux.Handle("GET /admin/oidc", authMW(http.HandlerFunc(adminSvc.GetAdminOIDC)))
 	mux.Handle("POST /admin/oidc/test", authMW(http.HandlerFunc(adminSvc.PostAdminOIDCTest)))
+	// B167 (v1.5.2) — /admin/oidc/sync operator-
+	// facing page. The Apply button posts to
+	// /admin/oidc/sync, which calls
+	// deploy/oidc-sync.sh via internal/oidc/sync.go
+	// (Go wrapper) and returns a JSON result.
+	// Auto-detects docker / systemd / k8s / manual
+	// mode (full Option C).
+	mux.Handle("GET /admin/oidc/sync", authMW(http.HandlerFunc(adminSvc.GetAdminOIDCSync)))
+	mux.Handle("POST /admin/oidc/sync", authMW(http.HandlerFunc(adminSvc.PostAdminOIDCSync)))
 	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
 	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(adminSvc.GetAdminBackup)))
