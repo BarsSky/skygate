@@ -44,6 +44,20 @@ else
     bad "deploy/oidc-sync.sh MISSING or not executable"
 fi
 
+# A.1.5 — B167.2 regression guard: the SCOPE default must
+# be the OIDC-standard scopes (openid, profile, email),
+# NOT a URL or any other value. The B167 v1 commit had
+# `SCOPE="${SCOPE:-/oidc/userinfo}"` (a URL, not a scope)
+# which broke headscale's OIDC flow at the /oidc/token
+# step (headscale would log a warning + the user claims
+# wouldn't be returned — the Tailscale client would log
+# in but no user would be created in headscale).
+if grep -qE 'SCOPE="\$\{SCOPE:-(openid,profile,email|openid)\}"' deploy/oidc-sync.sh; then
+    ok "SCOPE default is the OIDC-standard 'openid,profile,email' (B167.2 regression guard)"
+else
+    bad "SCOPE default is NOT 'openid,profile,email' — headscale would reject the /oidc/userinfo URL as an unknown scope, breaking the OIDC flow (this was the B167 v1 bug that broke the live Tailscale e2e on 2026-08-24)"
+fi
+
 # A.2 — the Go wrapper for the script.
 if grep -q 'package oidc' internal/oidc/sync.go 2>/dev/null; then
     ok "internal/oidc/sync.go exists"

@@ -76,7 +76,16 @@ RESTART_TIMEOUT="${RESTART_TIMEOUT:-60}"
 MODE_OVERRIDE=""
 DOWNLOAD_ONLY=0
 API_ENDPOINT=""
-SCOPE="${SCOPE:-/oidc/userinfo}"
+# B167.2: SCOPE default was /oidc/userinfo (a URL) — that's a
+# leftover from the B161.4 B-check phase and was wrong. The
+# valid OIDC scopes (per RFC 8693 / OpenID Connect Core 1.0
+# §5.4) are openid, profile, email. headscale 0.29.x
+# rejects an unknown scope (it would log a warning + the
+# /oidc/userinfo request would not get the user claims
+# back — the Tailscale client would log in but no user
+# would be created in headscale). The default below is
+# what headscale documents in its own config example.
+SCOPE="${SCOPE:-openid,profile,email}"
 EXTRA_PARAMS="${EXTRA_PARAMS:-domain=client_id}"
 ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-}"
 AUTO_UPDATE="${AUTO_UPDATE:-true}"
