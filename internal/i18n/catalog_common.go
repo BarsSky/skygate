@@ -48,6 +48,7 @@ var ruCommon = map[string]string{
 	"nav.preauth"                    : "Preauth-ключи",
 	"nav.backup"                     : "Backup",
 	"nav.certificates"               : "Сертификаты",      // v1.5.0 / B148
+	"nav.oidc"                        : "OIDC",              // v1.5.1 / B161.4 — headscale OIDC integration
 	"nav.settings"                   : "Настройки",
 	"nav.users"                      : "Пользователи",
 	"nav.devices_all"                : "Все устройства",
@@ -239,6 +240,7 @@ var enCommon = map[string]string{
 	"nav.preauth"                    : "Preauth keys",
 	"nav.backup"                     : "Backup",
 	"nav.certificates"               : "Certificates",      // v1.5.0 / B148
+	"nav.oidc"                        : "OIDC",              // v1.5.1 / B161.4 — headscale OIDC integration
 	"nav.settings"                   : "Settings",
 	"nav.users"                      : "Users",
 	"nav.devices_all"                : "All devices",

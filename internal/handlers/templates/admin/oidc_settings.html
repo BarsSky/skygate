@@ -1,0 +1,117 @@
+{{define "body-admin-oidc_settings"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-key"></i>{{t "oidc.title"}}</h2>
+    <div class="sub">{{t "oidc.subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/integrations" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+{{if .FlashTestResult}}
+  {{if eq (index .Endpoints "ok") "ok"}}
+    <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc.test_ok"}} — <code>{{.FlashTestResult}}</code></div>
+  {{else}}
+    <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{t "oidc.test_failed"}} — <code>{{.FlashTestResult}}</code></div>
+  {{end}}
+{{end}}
+
+{{if not .OIDCEnabled}}
+<div class="alert alert-warn">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <div>{{t "oidc.disabled_warn" | safeHTML}}</div>
+</div>
+{{else}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-info"></i>{{t "oidc.section_endpoints"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+    {{t "oidc.endpoints_help" | safeHTML}}
+  </p>
+  <table>
+    <tr>
+      <th style="width:200px">{{t "oidc.row_issuer"}}</th>
+      <td><code>{{.Issuer}}</code></td>
+    </tr>
+    <tr>
+      <th>{{t "oidc.row_discovery"}}</th>
+      <td><code>{{index .Endpoints "discovery"}}</code></td>
+    </tr>
+    <tr>
+      <th>{{t "oidc.row_authorization"}}</th>
+      <td><code>{{index .Endpoints "authorization"}}</code></td>
+    </tr>
+    <tr>
+      <th>{{t "oidc.row_token"}}</th>
+      <td><code>{{index .Endpoints "token"}}</code></td>
+    </tr>
+    <tr>
+      <th>{{t "oidc.row_userinfo"}}</th>
+      <td><code>{{index .Endpoints "userinfo"}}</code></td>
+    </tr>
+    <tr>
+      <th>{{t "oidc.row_jwks"}}</th>
+      <td><code>{{index .Endpoints "jwks"}}</code></td>
+    </tr>
+  </table>
+  <p style="margin-top:12px">
+    <form method="post" action="/admin/oidc/test" style="display:inline">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-bolt"></i> {{t "oidc.test_btn"}}</button>
+    </form>
+    <span style="color:var(--text-muted);font-size:12px;margin-left:8px">{{t "oidc.test_help" | safeHTML}}</span>
+  </p>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-file-code"></i>{{t "oidc.section_headscale_snippet"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "oidc.snippet_help" | safeHTML}}</p>
+  <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:12px;overflow-x:auto;font-size:12px"><code>{{.Snippet}}</code></pre>
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">
+      <i class="fa-solid fa-circle-question"></i> {{t "oidc.field_help_title"}}
+    </summary>
+    <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.5">
+      <p><b>issuer</b> — {{t "oidc.field_issuer" | safeHTML}}</p>
+      <p><b>client_id</b> — {{t "oidc.field_client_id" | safeHTML}}</p>
+      <p><b>client_secret</b> — {{t "oidc.field_client_secret" | safeHTML}}</p>
+      <p><b>scope</b> — {{t "oidc.field_scope" | safeHTML}}</p>
+      <p><b>extra_params</b> — {{t "oidc.field_extra_params" | safeHTML}}</p>
+      <p><b>allowed_domains</b> — {{t "oidc.field_allowed_domains" | safeHTML}}</p>
+      <p><b>auto_update</b> — {{t "oidc.field_auto_update" | safeHTML}}</p>
+      <p><b>strip_email_domain</b> — {{t "oidc.field_strip_email_domain" | safeHTML}}</p>
+    </div>
+  </details>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-keyboard"></i>{{t "oidc.section_envvars"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "oidc.envvars_help" | safeHTML}}</p>
+  <table>
+    <tr>
+      <th style="width:280px"><code>SKYGATE_OIDC_ISSUER</code></th>
+      <td><code>{{.Issuer}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_CLIENT_ID</code></th>
+      <td><code>{{.ClientID}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_CLIENT_SECRET</code></th>
+      <td><code>{{t "oidc.env_secret_set"}}</code> <span style="color:var(--text-muted);font-size:12px">({{t "oidc.env_secret_help"}})</span></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_KEY_DIR</code></th>
+      <td><code>{{.KeyDir}}</code></td>
+    </tr>
+    <tr>
+      <th><code>SKYGATE_OIDC_REDIRECT_URIS</code></th>
+      <td><code>{{.RedirectURIs}}</code></td>
+    </tr>
+  </table>
+</div>
+
+{{end}}
+{{end}}

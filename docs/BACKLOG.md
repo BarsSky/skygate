@@ -750,6 +750,94 @@ that were written during the refactor-v0.30 work but aren't
 exercised by any test (infra without contracts). Low ROI to
 backfill; will happen naturally as new features are added.
 
+### B161.4 — headscale.conf snippet + e2e verification (SHIPPED 2026-08-24, v1.5.1)
+
+**Status**: SHIPPED + DEPLOYED. The OIDC block
+(B161.1+2+3) was the skygate-side; B161.4 is
+the operator-side runbook that wires headscale
+to it. The deliverable is documentation + a
+B-check, not new skygate code (headscale.conf
+lives on the headscale host, not skygate's
+codebase).
+
+**What's in B161.4**:
+- `docs/internal/oidc-headscale.md` (~13 KB) — the
+  operator runbook with the headscale.conf `oidc:`
+  block snippet (YAML, with `automatic_authorization:
+  true` for one-click UX), the 4 must-match values
+  table (SKYGATE_OIDC_ISSUER ↔ oidc.issuer,
+  SKYGATE_OIDC_CLIENT_ID ↔ oidc.client_id,
+  SKYGATE_OIDC_CLIENT_SECRET ↔ oidc.client_secret,
+  SKYGATE_OIDC_REDIRECT_URIS ↔ oidc.redirect_url),
+  3-step smoke test (discovery + JWKS + /authorize)
+  with expected JSON shapes, common e2e failures
+  table (issuer mismatch, client_id mismatch,
+  redirect_uri mismatch, kid not in JWKS, etc.) so
+  the operator can self-diagnose when the first
+  Tailscale client shows "authentication failed",
+  `curl`-based drive-the-flow-yourself section
+  for verification without a real Tailscale device,
+  and 5 reusable lessons (4 must-match values, the
+  discovery doc as the OIDC "heartbeat", the
+  redirect_uri byte-for-byte match rule,
+  automatic_authorization as the one-click UX,
+  Tailscale's auth flow being server-driven).
+- `scripts/check_b161_4.sh` (10 contracts A-D) —
+  A: source contract (snippet exists + 4 must-match
+  env vars + 3 smoke-test commands + common-failures
+  table + automatic_authorization in the snippet).
+  B: live endpoint smoke test (curls the 4 OIDC
+  endpoints on the live VM, verifies field presence
+  + JWKS key count + 302 vs 400 status codes). SKIPs
+  (not FAILs) on a fresh deploy where
+  SKYGATE_OIDC_ISSUER is unset. C: system test
+  stub (soft warning if the operator wants to add
+  a `headscale.oidc.*` test to the /admin/system_tests
+  page). D: build + vet clean.
+
+**Operator action** (the B161.4 deliverable
+includes a step-by-step, but it boils down to):
+1. Generate `client_secret`: `openssl rand -base64 32`
+2. Store the same value in BOTH places:
+   - `/etc/headscale/config.yaml` (the
+     `oidc.client_secret` field)
+   - `/etc/skygate-secrets/` on the skygate host
+     (`SKYGATE_OIDC_CLIENT_SECRET` env var)
+3. Add the `oidc:` block to headscale.conf with
+   the 4 must-match values pointing at the
+   operator's real headscale + skygate URLs
+4. `docker restart headscale`
+5. Run the 3-step smoke test (B161.4 §2 in the doc)
+   to confirm discovery + JWKS + /authorize are
+   reachable
+6. Attach a real Tailscale client (macOS / Windows /
+   iOS / Android with "Use custom coordination server")
+   and run through the full flow once
+
+**Reusable lessons** (for any future "wire skygate
+to external X" integration):
+- Always produce a 4-values-must-match table.
+  The 90% of OIDC integration failures are typos
+  in 1 of 4 env vars / config fields.
+- Always produce a "common e2e failures" table.
+  The operator will hit at least one of these on
+  the first real Tailscale client; having the fix
+  on the same page is the difference between "I can
+  fix it" and "I have to call you".
+- The 3-step smoke test is a guard against
+  "deploy + pray". discovery + JWKS + /authorize
+  reachable = IdP is alive. Anything past that is
+  a headscale-side issue.
+- The redirect_uri match is exact-string per
+  RFC 6749 §3.1.2 (no wildcard, no substring).
+  B161.2 already enforces this on skygate side.
+  A trailing slash or query param = 400.
+- Tailscale's auth flow is server-driven: the
+  Tailscale client just opens the browser to the
+  login-server URL. Everything else is headscale
+  ↔ skygate. The Tailscale client has no idea OIDC
+  is involved — it just sees a successful auth.
+
 ### Web UI refactoring + admin pages grouping (Priority 9, deferred)
 
 **Recorded 2026-08-10 after v0.33.1.40 — `/admin/services`**

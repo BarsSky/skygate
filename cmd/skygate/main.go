@@ -1097,6 +1097,18 @@ func main() {
 	mux.Handle("GET /admin/certificates", authMW(http.HandlerFunc(adminSvc.GetAdminCertificates)))
 	mux.Handle("POST /admin/certificates/upload", authMW(http.HandlerFunc(adminSvc.PostAdminCertificateUpload)))
 	mux.Handle("POST /admin/certificates/toggle-dns01", authMW(http.HandlerFunc(adminSvc.PostAdminCertificateToggleDNS01)))
+
+	// B161.4 (v1.5.1) — /admin/oidc operator-facing
+	// surface for the OIDC config. The page renders
+	// the 5 endpoint URLs + a copy-paste headscale.conf
+	// snippet + the current env-var values + a
+	// "Test connection" button that runs a live
+	// discovery+userinfo probe. The handler is
+	// admin-only; the actual OIDC config lives in
+	// the 4 env vars (read at boot). See
+	// docs/oidc-headscale.md for the operator runbook.
+	mux.Handle("GET /admin/oidc", authMW(http.HandlerFunc(adminSvc.GetAdminOIDC)))
+	mux.Handle("POST /admin/oidc/test", authMW(http.HandlerFunc(adminSvc.PostAdminOIDCTest)))
 	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
 	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(adminSvc.GetAdminBackup)))

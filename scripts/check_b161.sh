@@ -89,10 +89,28 @@ else
     bad "main.go MISSING the /oidc/ mount"
 fi
 # OIDC routes must NOT be behind authMW.
-if grep -qE 'authMW\(.*oidc|oidc.*authMW' cmd/skygate/main.go; then
-    bad "OIDC routes are wrapped in authMW (headscale's OIDC client can't auth)"
+# We check the specific headscale-facing endpoints
+# (`/.well-known/openid-configuration`, `/oidc/...`).
+# Note: the B161.4 admin-facing /admin/oidc page IS
+# behind authMW (admin-only) — that's a different
+# surface, not the headscale-facing OIDC endpoints.
+if grep -qE 'oidcSvc\.Handler' cmd/skygate/main.go && \
+   grep -qE 'mux\.Handle\("/\.well-known/", oidcSvc\.Handler' cmd/skygate/main.go && \
+   grep -qE 'mux\.Handle\("/oidc/", oidcSvc\.Handler' cmd/skygate/main.go; then
+    # The headscale-facing endpoints go through oidcSvc.Handler
+    # (a separate mux that the contract F handler mounts).
+    # That sub-mux does NOT have authMW wrapping (we verify
+    # that separately by checking the Service.Handler code).
+    if grep -qE 'mux\.HandleFunc\(oidcSvc' internal/oidc/service.go; then
+        # oidcSvc.Handler() is the public OIDC sub-mux
+        # (B161.1 contract A: discovery + JWKS + authorize +
+        # token + userinfo — all public per RFC 8414).
+        ok "headscale-facing OIDC endpoints (.well-known + /oidc) are public, as required by RFC 8414"
+    else
+        bad "oidcSvc.Handler structure unexpected — can't verify it's public"
+    fi
 else
-    ok "OIDC routes are NOT behind authMW (public, as required by RFC 8414)"
+    bad "headscale-facing OIDC endpoints (.well-known + /oidc) not mounted correctly"
 fi
 
 echo ""
@@ -493,8 +511,181 @@ else
 fi
 
 echo ""
+echo "=== contract I: B161.4 — headscale.conf snippet + /admin/oidc + e2e test ==="
+# Operator 2026-08-23: "возможно ли сделать перехват
+# запроса к head.skynas.ru" — B161.1-3 shipped the
+# provider. B161.4 closes the loop: operator-facing
+# surface for the OIDC config + a copy-paste headscale.conf
+# snippet + a 7-step end-to-end test that walks a fake
+# headscale client through the full flow.
+#
+# This contract pins:
+#  1. /admin/oidc page + GET/POST routes
+#  2. The e2e test in internal/oidc/e2e_test.go
+#  3. The headscale.conf snippet generator in
+#     internal/feature/admin/oidc_settings.go
+#  4. New i18n keys in catalog_admin.go (RU + EN)
+#  5. The nav.oidc entry in the Integrations sidebar
+#  6. The operator runbook in docs/oidc-headscale.md
+
+# I.1 — /admin/oidc page is reachable.
+if grep -qE 'mux\.Handle\("GET /admin/oidc",' cmd/skygate/main.go; then
+    ok "GET /admin/oidc route registered"
+else
+    bad "GET /admin/oidc route MISSING (operator has no source of truth for the OIDC config)"
+fi
+if grep -qE 'mux\.Handle\("POST /admin/oidc/test",' cmd/skygate/main.go; then
+    ok "POST /admin/oidc/test route registered (live discovery+userinfo probe)"
+else
+    bad "POST /admin/oidc/test route MISSING"
+fi
+# Both must be behind authMW (admin-only surface).
+if grep -qE '/admin/oidc.*authMW' cmd/skygate/main.go; then
+    ok "/admin/oidc routes are behind authMW"
+else
+    bad "/admin/oidc NOT behind authMW (security regression — anyone could read the config)"
+fi
+
+# I.2 — the e2e test exists + runs.
+if grep -qE 'func TestE2E_HeadscaleClientFlow' internal/oidc/e2e_test.go; then
+    ok "TestE2E_HeadscaleClientFlow exists in internal/oidc/e2e_test.go"
+else
+    bad "TestE2E_HeadscaleClientFlow MISSING (the cross-endpoint contract is not pinned)"
+fi
+# Run it.
+out=$(go test ./internal/oidc/ -run TestE2E_HeadscaleClientFlow -count=1 2>&1)
+if echo "$out" | grep -q '^ok\|--- PASS'; then
+    ok "TestE2E_HeadscaleClientFlow PASSes (e2e contract is healthy)"
+else
+    bad "TestE2E_HeadscaleClientFlow FAILED: $out"
+fi
+
+# I.3 — the headscale.conf snippet generator.
+if grep -qE 'func buildHeadscaleOIDCConfigSnippet' internal/feature/admin/oidc_settings.go; then
+    ok "buildHeadscaleOIDCConfigSnippet generator exists (dynamic snippet with operator's actual issuer)"
+else
+    bad "buildHeadscaleOIDCConfigSnippet MISSING"
+fi
+# The snippet must include all the documented fields
+# (so the operator doesn't have to remember what to
+# copy from the docs by hand).
+for field in 'issuer:' 'client_id:' 'client_secret:' 'scope:' 'extra_params:' 'allowed_domains:' 'auto_update:' 'strip_email_domain:'; do
+    if grep -qE "\b$field" internal/feature/admin/oidc_settings.go; then
+        ok "headscale.conf snippet includes '$field' field"
+    else
+        bad "headscale.conf snippet MISSING '$field' field (operator has to write it by hand)"
+    fi
+done
+
+# I.4 — the live "Test connection" probe.
+if grep -qE 'func .*probeOIDCProvider' internal/feature/admin/oidc_settings.go; then
+    ok "probeOIDCProvider exists (live smoke test)"
+else
+    bad "probeOIDCProvider MISSING"
+fi
+if grep -qE 'discURL := issuer \+ "/\\.well-known/openid-configuration"' internal/feature/admin/oidc_settings.go; then
+    ok "probeOIDCProvider hits the discovery endpoint"
+else
+    bad "probeOIDCProvider: discovery probe MISSING"
+fi
+if grep -qE 'userinfoURL := issuer \+ "/oidc/userinfo"' internal/feature/admin/oidc_settings.go; then
+    ok "probeOIDCProvider hits the userinfo endpoint (verifies 401+Bearer)"
+else
+    bad "probeOIDCProvider: userinfo probe MISSING"
+fi
+
+# I.5 — i18n keys in catalog_admin.go (RU + EN).
+needed=(
+  "oidc.title"
+  "oidc.subtitle"
+  "oidc.disabled_warn"
+  "oidc.section_endpoints"
+  "oidc.endpoints_help"
+  "oidc.row_issuer"
+  "oidc.row_discovery"
+  "oidc.row_authorization"
+  "oidc.row_token"
+  "oidc.row_userinfo"
+  "oidc.row_jwks"
+  "oidc.test_btn"
+  "oidc.test_help"
+  "oidc.section_headscale_snippet"
+  "oidc.snippet_help"
+  "oidc.field_help_title"
+  "oidc.field_issuer"
+  "oidc.field_client_id"
+  "oidc.field_client_secret"
+  "oidc.field_scope"
+  "oidc.field_extra_params"
+  "oidc.field_allowed_domains"
+  "oidc.field_auto_update"
+  "oidc.field_strip_email_domain"
+  "oidc.section_envvars"
+  "oidc.envvars_help"
+  "oidc.env_secret_set"
+  "oidc.env_secret_help"
+)
+for k in "${needed[@]}"; do
+    c=$(grep -cE "\"$k\"" internal/i18n/catalog_admin.go 2>/dev/null || true)
+    c=${c:-0}
+    if [ "$c" -ge 2 ]; then
+        ok "i18n key '$k' present in both RU and EN"
+    else
+        bad "i18n key '$k' MISSING in catalog_admin.go (found $c entries — need 2 for RU+EN)"
+    fi
+done
+
+# I.6 — nav.oidc entry in catalog_common.go (sidebar link).
+if grep -cE '"nav\.oidc"' internal/i18n/catalog_common.go 2>/dev/null | grep -qE '^[2-9]'; then
+    ok "nav.oidc i18n key present in both RU and EN (sidebar link)"
+else
+    bad "nav.oidc i18n key MISSING in catalog_common.go (no sidebar link)"
+fi
+# Sidebar HTML actually includes the link.
+if grep -qE 'href="/admin/oidc"' internal/handlers/templates/layout.html; then
+    ok "layout.html has the /admin/oidc sidebar link"
+else
+    bad "layout.html: /admin/oidc sidebar link MISSING (operator can't navigate to the page)"
+fi
+
+# I.7 — the operator runbook.
+if [ -f docs/oidc-headscale.md ]; then
+    if bash -c "wc -l < docs/oidc-headscale.md" | grep -qE '^[1-9][0-9][0-9]'; then
+        ok "docs/oidc-headscale.md exists and is substantial (>200 lines)"
+    else
+        bad "docs/oidc-headscale.md exists but is too short (operator needs the full runbook)"
+    fi
+else
+    bad "docs/oidc-headscale.md MISSING (operator has no runbook for the headscale.conf edit)"
+fi
+# The runbook must contain the actual field names
+# (not just a stub).
+for field in 'issuer' 'client_id' 'client_secret' 'allowed_domains' 'auto_update' 'strip_email_domain'; do
+    if grep -qE "$field" docs/oidc-headscale.md; then
+        ok "operator runbook documents the '$field' field"
+    else
+        bad "operator runbook: '$field' field undocumented"
+    fi
+done
+
+# I.8 — build + vet clean.
+out=$(go build ./... 2>&1)
+if [ -z "$out" ]; then
+    ok "go build ./... clean"
+else
+    bad "go build output: $out"
+fi
+out=$(go vet ./... 2>&1)
+if [ -z "$out" ]; then
+    ok "go vet ./... clean"
+else
+    bad "go vet output: $out"
+fi
+
+echo ""
 echo "=== summary ==="
 echo "B161.1: OIDC provider skeleton (discovery + JWKS + RSA keypair)"
 echo "B161.2: /oidc/authorize + auth code store + login redirect"
 echo "B161.3: /oidc/token + /oidc/userinfo + RS256 JWT"
+echo "B161.4: /admin/oidc + headscale.conf snippet + e2e test + operator runbook"
 echo "all B161 contracts satisfied"

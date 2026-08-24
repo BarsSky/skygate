@@ -17,6 +17,7 @@ in code" policy extension to documentation.
 | `https-setup.md` | Caddy + Let's Encrypt walkthrough with example Tailscale IP | Tailscale-specific setup |
 | `telegram-relay.md` | Telegram egress relay operator guide with specific relay hostnames + paths | Names 3 specific relay nodes by their operator-given hostnames |
 | `wal-g-notes.md` | (moved from `deploy/pg-ha/wal-g/README.md`) Wal-G backup/restore procedure with operator-specific paths and IPs | Operator's specific backup architecture |
+| `oidc-headscale.md` | B161.4 headscale.conf snippet + e2e verification (with example Tailscale client) for the skygate OIDC provider | Generic runbook, but the "4 values that must match" table is specific to the skygate + headscale pairing |
 | `plans/refactor-v0.6.0.md` | v0.6.0 refactor plan, historical | Historical planning doc, not relevant to current code |
 
 ## Maintenance

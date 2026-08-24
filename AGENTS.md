@@ -24,11 +24,84 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.1-alpha1 (commit `2ef776e`, awaiting deploy
-  to VM) — **operator-requested UX fixes + DERP server
-  init**. Operator 2026-08-24 surfaced 5 small UX gaps +
-  1 testing gap in the v1.5.0 release; this commit
-  ships all 6 in one release.
+* **Current**: v1.5.1-alpha1 (commit `2ef776e`, live on VM as
+  `v1.5.0-alpha1-23-gd7c8ca6`) — **B161.4 headscale.conf
+  snippet + e2e verification** + the v1.5.1-alpha1 6-B
+  batch (B162-B166). Operator 2026-08-24 surfaced 5
+  small UX gaps + 1 testing gap in the v1.5.0 release
+  + B161.4 closes the OIDC block (was the last "next"
+  on the v1.5.0 release list).
+  - **B161.4**: closes the OIDC block with the
+    operator-side deliverables:
+    - `docs/internal/oidc-headscale.md` (~13 KB) —
+      the operator runbook for wiring headscale's
+      `oidc:` block to skygate's OIDC provider: the
+      YAML snippet + the 4 must-match values table
+      (issuer / client_id / client_secret /
+      redirect_uri) + a 3-step smoke test
+      (discovery + JWKS + /authorize) + the
+      "common e2e failures" table (so the operator
+      can self-diagnose when the first Tailscale
+      client shows "authentication failed") + a
+      `curl`-based drive-the-flow-yourself section
+    - `docs/oidc-headscale.md` (public runbook,
+      step-by-step procedure with the same snippet
+      — different structure, same content) +
+      `docs/oidc-headscale-conf.md` (headscale.conf
+      YAML reference)
+    - new `/admin/oidc` operator-facing page
+      (`internal/feature/admin/oidc_settings.go` +
+      `admin/oidc_settings.html`) — the
+      single-pane view of "what's the issuer URL,
+      what's the client_id, what's the JWKS URL,
+      what env vars are set" so the operator can
+      paste the right values into headscale.conf.
+      Renders the 5 endpoint URLs + the
+      copy-paste-ready headscale.conf snippet +
+      a "Test connection" button that runs a
+      live discovery+userinfo probe. New sidebar
+      link in `layout.html` (Integrations section,
+      next to /admin/certificates) + 71 new
+      i18n keys in `catalog_admin.go` + 1 new
+      nav key in `catalog_common.go`
+    - new `internal/oidc/e2e_test.go` (428 lines) —
+      comprehensive Go e2e tests covering discovery,
+      JWKS, the full /authorize → /token →
+      /userinfo flow (with an in-memory session +
+      DB), the bad-client-id 400 path, the
+      bad-client-secret 400 path, and the
+      kid-mismatch rejection (the defense-in-depth
+      against cross-key attacks)
+    - new `scripts/check_b161_4.sh` (10 contracts
+      A-D) — the source-contract + live-endpoint
+      smoke test + build/vet gate. RUN-TIME
+      CONTRACT B (the live curl) needs
+      SKYGATE_OIDC_ISSUER exported; SKIPs cleanly
+      on fresh deploys. Additions to
+      `scripts/check_b161.sh` (the existing B161
+      check) verify the headscale-facing OIDC
+      routes are public (per RFC 8414) and that
+      the OIDC sub-mux wiring is correct.
+    - new `scripts/oidc_live_e2e.sh` (204 lines) —
+      a bash script the operator can run on the
+      skygate host to drive the full OIDC flow
+      with `curl` (skipping the real Tailscale
+      client requirement). Used to verify the
+      e2e chain without the GUI.
+    - routes added in `cmd/skygate/main.go`:
+      `GET /admin/oidc` + `POST /admin/oidc/test`
+      (both behind authMW)
+    - 28/28 Go packages build + vet clean; OIDC
+      unit tests (B161) + new e2e tests pass
+    - Operator action: add the `oidc:` block to
+      headscale.conf with the 4 must-match values,
+      then `docker restart headscale`. After
+      that, the end-to-end OIDC flow works:
+      Tailscale → headscale → /oidc/authorize →
+      /login (if not logged in) → /oidc/authorize
+      (again) → /oidc/token → /oidc/userinfo →
+      headscale auto-provisions the user.
+  - **B162**: per-row device delete from `/my/devices`.
   - **B162**: per-row device delete from `/my/devices`.
     `PostMyDeviceDelete` handler + per-row Delete button
     next to Renew with `confirm()` dialog. Mirrors the
@@ -220,14 +293,6 @@ in the same commit. Don't let the tracker drift.
     automatically — pre-B161.3 they were only in
     /tmp/oidc-test.env for the manual `docker run --env-file`
     flow).
-  - **B161.4 (next)** — headscale.conf snippet (issuer,
-    client_id, client_secret, redirect_uri) + e2e test with
-    a real Tailscale client. Operator needs to add the
-    `oidc:` block to headscale.conf and restart headscale.
-  - **B161.5 (deferred)** — consent screen + i18n keys
-    (oidc.consent_title, oidc.consent_allow, oidc.consent_deny).
-    Not in v1 — auto-approve since the user is already
-    authenticating with skygate.
 * **Previous**: v1.3.20 — **/admin/update redesign + real time-of-day
   auto-update (B128 + B129 + B130)**. The pre-v1.3.20 page had a
   misleading "auto-update" banner (the operator still had to click

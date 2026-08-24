@@ -411,6 +411,41 @@ var ruAdmin = map[string]string{
 	"cert_event_action                   ": "Действие",
 	"cert_event_detail                   ": "Детали",
 	"cert_no_events                      ": "Пока нет событий certsync.* / certs.*.",
+
+	// B161.4 (v1.5.1) — /admin/oidc page. See the RU
+	// block above for the field-by-field reference.
+	// The EN values are intentionally verbose (a
+	// non-engineer operator is the primary audience).
+	"oidc.title"                         : "OIDC provider (headscale integration)",
+	"oidc.subtitle"                      : "Single-pane view of the OIDC config that headscale uses to authenticate Tailscale users against skygate. Paste the headscale.conf snippet below into your headscale.conf and restart headscale to enable the integration.",
+	"oidc.disabled_warn"                 : "<b>OIDC is currently disabled</b> (SKYGATE_OIDC_ISSUER is empty). Set the env var in <code>/home/admin/skygate/.env</code> + restart the skygate container to enable the provider. The 4 endpoint URLs and the headscale.conf snippet will appear here once the provider is enabled.",
+	"oidc.section_endpoints"             : "OIDC endpoints (paste into headscale.conf)",
+	"oidc.endpoints_help"                : "These 5 URLs are what headscale needs to verify the provider's metadata, fetch the public key, exchange the auth code, and resolve the user. The <b>issuer</b> is the only one headscale actually reads from <code>oidc.issuer</code>; the others are derived.",
+	"oidc.row_issuer"                    : "Issuer",
+	"oidc.row_discovery"                 : "Discovery (RFC 8414)",
+	"oidc.row_authorization"             : "Authorization endpoint",
+	"oidc.row_token"                     : "Token endpoint",
+	"oidc.row_userinfo"                  : "Userinfo endpoint",
+	"oidc.row_jwks"                      : "JWKS (public key)",
+	"oidc.test_btn"                      : "Test connection",
+	"oidc.test_help"                     : "Runs a live discovery+userinfo probe (5s timeout) to confirm the endpoints are reachable from the skygate container.",
+	"oidc.test_ok"                       : "OIDC provider is reachable",
+	"oidc.test_failed"                   : "OIDC probe failed",
+	"oidc.section_headscale_snippet"     : "headscale.conf snippet (B161.4)",
+	"oidc.snippet_help"                  : "Copy this block into your headscale.conf under the top-level <code>oidc:</code> key. Restart headscale after the change. See <a href=\"https://github.com/BarsSky/skygate/blob/main/docs/oidc-headscale.md\" target=\"_blank\">docs/oidc-headscale.md</a> for the full runbook + version matrix.",
+	"oidc.field_help_title"               : "Field-by-field reference",
+	"oidc.field_issuer"                   : "The exact issuer URL (no trailing slash). Must match <code>SKYGATE_OIDC_ISSUER</code> on the skygate side. headscale fetches <code>{issuer}/.well-known/openid-configuration</code> on startup to discover the other 4 endpoints.",
+	"oidc.field_client_id"                : "The OAuth client_id headscale sends in the authorize request. Must match <code>SKYGATE_OIDC_CLIENT_ID</code> on the skygate side (default: <code>headscale</code>).",
+	"oidc.field_client_secret"            : "The OAuth client_secret. headscale sends it in the token exchange POST. <b>Set this in headscale.conf — NOT in the skygate admin UI.</b> The skygate side stores it in <code>SKYGATE_OIDC_CLIENT_SECRET</code> and never echoes it back through the admin pages (defense in depth).",
+	"oidc.field_scope"                    : "The OAuth scopes. Must include <code>openid</code>; <code>profile</code> + <code>email</code> are recommended so headscale gets the user's name + email for the headscale-side user record. The skygate OIDC provider always returns the user claims regardless of scope (no DB re-fetch — they're embedded in the JWT).",
+	"oidc.field_extra_params"             : "Arbitrary query params headscale adds to the authorize URL. The <code>domain</code> param is a non-OIDC-standard Tailscale thing that headscale uses to scope the login page. Any non-empty string works; <code>client_id</code> is the safe default.",
+	"oidc.field_allowed_domains"          : "The list of email domains headscale accepts (after the <code>@</code>). A user with email <code>alice@example.com</code> is allowed only if <code>example.com</code> is in this list. <b>Set this to your tailnet's email base domain</b> (e.g. <code>example.com</code> or <code>ts.net</code>).",
+	"oidc.field_auto_update"              : "When true, headscale refreshes its ACL + node list on every OIDC login. Set true for development (operator wants the latest config), false for production (avoid re-apply storms on every user login).",
+	"oidc.field_strip_email_domain"       : "When true, headscale uses the email's local part (<code>alice</code> in <code>alice@example.com</code>) as the headscale username. When false, the full email is used. The skygate <code>preferred_username</code> claim is always the local part regardless of this setting.",
+	"oidc.section_envvars"                : "Current env-var values",
+	"oidc.envvars_help"                   : "These are the values skygate is running with right now. Changing them requires editing the env_file and restarting the skygate container (<code>docker compose up -d --force-recreate --no-deps skygate</code>).",
+	"oidc.env_secret_set"                 : "(set, not echoed)",
+	"oidc.env_secret_help"                : "skygate stores the secret in <code>SKYGATE_OIDC_CLIENT_SECRET</code> but never echoes it back in the admin UI. View the value in <code>/home/admin/skygate/.env</code> on the host.",
 }
 
 var enAdmin = map[string]string{
@@ -802,4 +837,40 @@ var enAdmin = map[string]string{
 	"cert_event_action                   ": "Action",
 	"cert_event_detail                   ": "Detail",
 	"cert_no_events                      ": "No certsync.* / certs.* events yet.",
+
+	// B161.4 (v1.5.1) — /admin/oidc page. Operator-facing
+	// surface for the OIDC config: shows the 4 endpoint
+	// URLs, the current env-var values, a copy-paste
+	// headscale.conf snippet, and a "Test connection"
+	// button that runs a live discovery+userinfo probe.
+	"oidc.title"                         : "OIDC provider (headscale integration)",
+	"oidc.subtitle"                      : "Single-pane view of the OIDC config that headscale uses to authenticate Tailscale users against skygate. Paste the headscale.conf snippet below into your headscale.conf and restart headscale to enable the integration.",
+	"oidc.disabled_warn"                 : "<b>OIDC is currently disabled</b> (SKYGATE_OIDC_ISSUER is empty). Set the env var in <code>/home/admin/skygate/.env</code> + restart the skygate container to enable the provider. The 4 endpoint URLs and the headscale.conf snippet will appear here once the provider is enabled.",
+	"oidc.section_endpoints"             : "OIDC endpoints (paste into headscale.conf)",
+	"oidc.endpoints_help"                : "These 5 URLs are what headscale needs to verify the provider's metadata, fetch the public key, exchange the auth code, and resolve the user. The <b>issuer</b> is the only one headscale actually reads from <code>oidc.issuer</code>; the others are derived.",
+	"oidc.row_issuer"                    : "Issuer",
+	"oidc.row_discovery"                 : "Discovery (RFC 8414)",
+	"oidc.row_authorization"             : "Authorization endpoint",
+	"oidc.row_token"                     : "Token endpoint",
+	"oidc.row_userinfo"                  : "Userinfo endpoint",
+	"oidc.row_jwks"                      : "JWKS (public key)",
+	"oidc.test_btn"                      : "Test connection",
+	"oidc.test_help"                     : "Runs a live discovery+userinfo probe (5s timeout) to confirm the endpoints are reachable from the skygate container.",
+	"oidc.test_ok"                       : "OIDC provider is reachable",
+	"oidc.test_failed"                   : "OIDC probe failed",
+	"oidc.section_headscale_snippet"     : "headscale.conf snippet (B161.4)",
+	"oidc.snippet_help"                  : "Copy this block into your headscale.conf under the top-level <code>oidc:</code> key. Restart headscale after the change. See <a href=\"https://github.com/BarsSky/skygate/blob/main/docs/oidc-headscale.md\" target=\"_blank\">docs/oidc-headscale.md</a> for the full runbook + version matrix.",
+	"oidc.field_help_title"               : "Field-by-field reference",
+	"oidc.field_issuer"                   : "The exact issuer URL (no trailing slash). Must match <code>SKYGATE_OIDC_ISSUER</code> on the skygate side. headscale fetches <code>{issuer}/.well-known/openid-configuration</code> on startup to discover the other 4 endpoints.",
+	"oidc.field_client_id"                : "The OAuth client_id headscale sends in the authorize request. Must match <code>SKYGATE_OIDC_CLIENT_ID</code> on the skygate side (default: <code>headscale</code>).",
+	"oidc.field_client_secret"            : "The OAuth client_secret. headscale sends it in the token exchange POST. <b>Set this in headscale.conf — NOT in the skygate admin UI.</b> The skygate side stores it in <code>SKYGATE_OIDC_CLIENT_SECRET</code> and never echoes it back through the admin pages (defense in depth).",
+	"oidc.field_scope"                    : "The OAuth scopes. Must include <code>openid</code>; <code>profile</code> + <code>email</code> are recommended so headscale gets the user's name + email for the headscale-side user record. The skygate OIDC provider always returns the user claims regardless of scope (no DB re-fetch — they're embedded in the JWT).",
+	"oidc.field_extra_params"             : "Arbitrary query params headscale adds to the authorize URL. The <code>domain</code> param is a non-OIDC-standard Tailscale thing that headscale uses to scope the login page. Any non-empty string works; <code>client_id</code> is the safe default.",
+	"oidc.field_allowed_domains"          : "The list of email domains headscale accepts (after the <code>@</code>). A user with email <code>alice@example.com</code> is allowed only if <code>example.com</code> is in this list. <b>Set this to your tailnet's email base domain</b> (e.g. <code>example.com</code> or <code>ts.net</code>).",
+	"oidc.field_auto_update"              : "When true, headscale refreshes its ACL + node list on every OIDC login. Set true for development (operator wants the latest config), false for production (avoid re-apply storms on every user login).",
+	"oidc.field_strip_email_domain"       : "When true, headscale uses the email's local part (<code>alice</code> in <code>alice@example.com</code>) as the headscale username. When false, the full email is used. The skygate <code>preferred_username</code> claim is always the local part regardless of this setting.",
+	"oidc.section_envvars"                : "Current env-var values",
+	"oidc.envvars_help"                   : "These are the values skygate is running with right now. Changing them requires editing the env_file and restarting the skygate container (<code>docker compose up -d --force-recreate --no-deps skygate</code>).",
+	"oidc.env_secret_set"                 : "(set, not echoed)",
+	"oidc.env_secret_help"                : "skygate stores the secret in <code>SKYGATE_OIDC_CLIENT_SECRET</code> but never echoes it back in the admin UI. View the value in <code>/home/admin/skygate/.env</code> on the host.",
 }

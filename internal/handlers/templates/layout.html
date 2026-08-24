@@ -110,6 +110,12 @@
       <a href="/admin/ha" {{if eq .Page "admin/ha"}}class="active"{{end}}><i class="fa-solid fa-shield-heart"></i><span>{{t "nav.ha"}}</span></a>
       <a href="/admin/deploy" {{if eq .Page "admin/deploy"}}class="active"{{end}}><i class="fa-solid fa-rocket"></i><span>{{t "nav.deploy"}}</span></a>
       <a href="/admin/certificates" {{if eq .Page "admin/certificates"}}class="active"{{end}}><i class="fa-solid fa-certificate"></i><span>{{t "nav.certificates"}}</span></a>
+      {{/* B161.4 (v1.5.1) — OIDC config surface.
+         Sits next to /admin/certificates in the
+         Integrations section (the operator
+         configures TLS + OIDC together for the
+         headscale integration). */}}
+      <a href="/admin/oidc" {{if eq .Page "admin/oidc"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.oidc"}}</span></a>
     </details>
 
     {{/* Section 5: Data (3 pages) */}}
