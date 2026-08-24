@@ -1,6 +1,6 @@
 # Skygate — реализованные возможности
 
-Этот документ описывает, что умеет Skygate на текущий момент (v1.5.0-alpha1)
+Этот документ описывает, что умеет Skygate на текущий момент (v1.5.2-alpha1)
 в стиле краткого справочника. Используются только обезличенные примеры
 (IP из RFC 5737, домен `example.com`, имена `node-1`, `user-1` и т.п.).
 Реальные операторские данные здесь не приводятся.
@@ -215,6 +215,17 @@ cat /root/.ssh/id_ed25519.pub   # скопировать в authorized_keys
 - Token: `/oidc/token` (RS256-signed JWT, 1h TTL).
 - Userinfo: `/oidc/userinfo` (Bearer auth, sub + email + name +
   preferred_username).
+- **B167 (v1.5.2) — auto-sync to headscale**: страница
+  `/admin/oidc/sync` закрывает операторский цикл. Pre-B167
+  оператор копировал snippet из `/admin/oidc` в `headscale.conf`
+  + `docker restart headscale` вручную. B167 делает это одной
+  кнопкой: 6 режимов рестарта (auto / docker / systemd / k8s /
+  api / manual) + 7-й (`download`, только генерация YAML).
+  Дополнительно: `SKYGATE_OIDC_AUTOSYNC=true` — boot-time
+  auto-sync (скрипт запускается при старте skygate-контейнера
+  до того, как HTTP-сервер начнёт принимать трафик). Полное
+  описание — в `AGENTS.md` (commit `0c6875a`) и `BACKLOG.md`
+  (Priority 10).
 
 ### 4.8. DERP (B164 init flow)
 

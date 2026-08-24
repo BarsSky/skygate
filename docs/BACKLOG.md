@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-24 (B161.3 deployed; new tasks added for v1.5.0 backlog)
+**Last updated**: 2026-08-24 (B167 OIDC config auto-sync SHIPPED in v1.5.2-alpha1; B162-B166 from v1.5.1 batch also SHIPPED)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -26,7 +26,7 @@ operator can pick any order.
 
 ### B162 — Device delete from /my/devices (+ session terminate)
 
-**Status**: NOT STARTED (target: v1.5.1)
+**Status**: SHIPPED 2026-08-24 (commit 2ef776e, v1.5.1-alpha1) — see commit 2ef776e for the full diff
 **Effort**: ~0.5-1 day
 **Symptom**: there is a Renew button per row (B160) but no
 Delete. If a user wants to remove a lost phone or a decommissioned
@@ -69,7 +69,7 @@ page" message instead of leaking the raw gRPC text.
 
 ### B163 — System tests: full FAIL output is not visible
 
-**Status**: NOT STARTED (target: v1.5.1)
+**Status**: SHIPPED 2026-08-24 (commit 2ef776e, v1.5.1-alpha1) — see commit 2ef776e for the full diff
 **Effort**: ~0.5-1 day
 **Symptom**: `/admin/system_tests` shows the FAIL reason but
 truncates / formats it badly. The current template has
@@ -106,7 +106,7 @@ be visually distinguished from regular content. The
 
 ### B164 — DERP server init on new host (SSH-based auto-config)
 
-**Status**: NOT STARTED (target: v1.5.1)
+**Status**: SHIPPED 2026-08-24 (commit 2ef776e, v1.5.1-alpha1) — see commit 2ef776e for the full diff
 **Effort**: ~1.5-2 days
 **Symptom**: `/admin/derp/relays` has CRUD for adding
 **existing** DERP relays (you paste the hostname + region
@@ -171,7 +171,7 @@ custom SSH client code.
 
 ### B165 — /my/devices registration form: stable layout + better hints
 
-**Status**: NOT STARTED (target: v1.5.1)
+**Status**: SHIPPED 2026-08-24 (commit 2ef776e, v1.5.1-alpha1) — see commit 2ef776e for the full diff
 **Effort**: ~1-1.5 days
 **Symptom**: the "Add new device" form on `/my/devices`
 has the OS tiles + custom TTL + reusable checkbox, but:
@@ -222,7 +222,7 @@ context-switch to docs while registering a device.
 
 ### B166 — B160 e2e + system tests
 
-**Status**: NOT STARTED (target: v1.5.1)
+**Status**: SHIPPED 2026-08-24 (commit 2ef776e, v1.5.1-alpha1) — see commit 2ef776e for the full diff
 **Effort**: ~0.5-1 day
 **Symptom**: B160 (device renewal) shipped with unit tests
 but no e2e test that exercises the full flow on a real
@@ -331,6 +331,53 @@ restarting the tailscaled on the node.
 Snapshot for rollback at `/tmp/b111_phase3_full_20260813_163219/`
 (policy.json, headscale_nodes.json, node_owner_map.tsv, skygate-
 host-1.state) + `/tmp/rollback_nom.sql` (DB rollback).
+
+---
+
+## Priority 10 — v1.5.2 OIDC config auto-sync (SHIPPED 2026-08-24, B167)
+
+### B167 — OIDC config auto-sync (full Option C)
+
+**Status**: SHIPPED 2026-08-24 (commit `0c6875a`, v1.5.2-alpha1)
+**Effort**: ~2 days
+**What was delivered**: closes the operator-side OIDC loop. Pre-B167
+the operator had to:
+  1. Visit /admin/oidc to see the 4 must-match values
+  2. Hand-copy the headscale.conf `oidc:` block to /etc/headscale/config.yaml
+  3. `docker restart headscale` (or `systemctl restart headscale`,
+     or `kubectl rollout restart deploy/headscale`)
+  4. Hope headscale's /health came back OK
+
+B167 collapses this to 1 click on /admin/oidc/sync. 6 restart modes
+(auto / docker / systemd / k8s / api / manual) + a 7th (download)
+that just renders the generated YAML for copy-paste. Plus a
+boot-time auto-sync via `SKYGATE_OIDC_AUTOSYNC=true` for the
+"deploy skygate with the OIDC env vars set and want headscale to
+pick up the config on the same boot" case.
+
+**Files**: 11 changed, +2030 lines (commit `0c6875a`):
+- `deploy/oidc-sync.sh` (10-step, ~290 lines) — bash workhorse
+- `internal/oidc/sync.go` (~330 lines) — Go wrapper
+- `internal/oidc/sync_test.go` (5 unit tests)
+- `internal/feature/admin/oidc_sync.go` (~270 lines) — admin handler
+- `internal/handlers/templates/admin/oidc_sync.html` (~210 lines)
+- `internal/i18n/catalog_admin.go` — 55 oidc_sync.* keys in RU + 55 in EN
+- `internal/handlers/templates/layout.html` — nav.oidc_sync sidebar sub-link
+- `internal/i18n/catalog_common.go` — nav.oidc_sync key in RU + EN
+- `cmd/skygate/main.go` — GET + POST /admin/oidc/sync routes + boot-time auto-sync
+- `scripts/check_b167.sh` (38 contracts: source + live-script + live-route)
+- `scripts/verify_pre_deploy.sh` — registered B167 in the runner
+
+**Operator action**: visit /admin/oidc/sync, click "Sync now"
+(with mode=auto to use the auto-detected runner), confirm the
+result on the page. Or set `SKYGATE_OIDC_AUTOSYNC=true` in the
+skygate .env for a boot-time auto-sync (no manual click needed
+on every restart).
+
+**B167.1 (rolled into B167)**: the generated `oidc:` block must NOT
+include `strip_email_domain` (removed in headscale 0.23+). A
+regression would crash headscale 0.29.x at startup. The B167
+B-check pins this as a regression guard.
 
 ---
 
