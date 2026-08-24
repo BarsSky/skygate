@@ -28,11 +28,34 @@
    PostMyDeviceDelete handler redirects to
    /my/devices?deleted=<host>; we render the
    success alert with the hostname. The same
-   pattern as the B160 renew flash. */}}
+   pattern as the B160 renew flash.
+   B171 (v1.5.2) extends the flash: the
+   handler now also passes deleted_rules=N
+   (the count of device_rules that were
+   cleaned by the comprehensive delete) and
+   acl_err=... (set only when the post-delete
+   ACL regen failed). The rules count is
+   rendered as a green "+N ACL rules
+   cleaned" badge; the ACL error renders
+   as a red alert above the success alert so
+   the operator notices it (a failed ACL
+   regen means headscale's policy still
+   names the deleted device). */}}
 {{if .DeletedHost}}
 <div class="alert alert-success">
   <i class="fa-solid fa-trash"></i>
   {{tf "devices.delete_ok" .DeletedHost}}
+  {{if gt .DeletedRulesCount 0}}
+    <span style="margin-left:8px;display:inline-block;background:var(--success-bg);color:var(--success);border:1px solid var(--success);padding:1px 8px;border-radius:999px;font-size:11px">
+      <i class="fa-solid fa-shield-halved"></i> +{{.DeletedRulesCount}} {{t "devices.delete_acl_rules_cleaned"}}
+    </span>
+  {{end}}
+</div>
+{{end}}
+{{if .DeletedACLErr}}
+<div class="alert alert-warning" style="margin-top:8px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  {{tf "devices.delete_acl_err" .DeletedACLErr}}
 </div>
 {{end}}
 
@@ -292,27 +315,36 @@
             <form method="post" action="/my/devices/{{.ID}}/renew" style="margin-top:6px;display:inline" title="{{t "devices.renew_title"}}">
               <button type="submit" class="btn btn-secondary" style="padding:2px 8px;font-size:11px"><i class="fa-solid fa-clock-rotate-left"></i>{{t "devices.renew"}}</button>
             </form>
-            {{/* B162 (v1.5.1): per-row Delete button.
-               Same action shape as Renew (POST, no JS
-               besides the browser confirm), same
-               visual treatment. The onsubmit
-               `confirm()` uses the i18n
-               `devices.delete_confirm` string with
-               the hostname interpolated so the user
-               sees exactly which device they're
-               about to remove. The button is
-               rendered next to Renew (not inside
-               the Renew form) so a misclick on
-               Delete can't accidentally re-extend
-               the session. */}}
-            <form method="post" action="/my/devices/{{.ID}}/delete" style="margin-top:6px;display:inline" onsubmit="return confirm('{{tf "devices.delete_confirm" .Hostname}}')">
-              <button type="submit" class="btn btn-danger" style="padding:2px 8px;font-size:11px" title="{{t "devices.delete_title"}}">
-                <i class="fa-solid fa-trash"></i>{{t "devices.delete"}}
-              </button>
-            </form>
           {{else}}
             <span style="color:var(--text-subtle)">{{.ExpiresRelative}}</span>
           {{end}}
+          {{/* B171 (v1.5.2): per-row Delete button
+             — moved OUTSIDE the {{if .ExpiryUnix}}
+             block (was inside in B162, v1.5.1).
+             Pre-B171 the button only rendered for
+             devices with a non-empty Expiry (i.e.
+             "client" devices with a TTL); tagged /
+             shared / no-expiry devices (tag:exit-node,
+             tag:public, tag:subnet-router, or any
+             node the user ran `headscale nodes
+             expire --disable` on) had no Delete
+             button at all. The operator's 2026-08-25
+             report was: "кнопка удалить устройство
+             отсуствует у пользователя" — they
+             couldn't delete their own exit-node or
+             subnet-router from /my/devices. Now the
+             button is shown for every device in the
+             .MyNodes loop (i.e. every device the
+             current user owns, regardless of
+             Expiry). The B162 confirm() guard +
+             the B169 404/exit-node-error special
+             cases in the handler ensure the button
+             is safe to click for every device type. */}}
+          <form method="post" action="/my/devices/{{.ID}}/delete" style="margin-top:6px;display:inline" onsubmit="return confirm('{{tf "devices.delete_confirm" .Hostname}}')">
+            <button type="submit" class="btn btn-danger" style="padding:2px 8px;font-size:11px" title="{{t "devices.delete_title"}}">
+              <i class="fa-solid fa-trash"></i>{{t "devices.delete"}}
+            </button>
+          </form>
         </td>
         <td>
           {{if .IsSubnetRouter}}

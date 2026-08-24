@@ -348,6 +348,23 @@ const qDeleteRulesByIDOrParentDomain = `DELETE FROM device_rules WHERE user_id =
 // qDeleteRulesByIDAndUser is the safe-by-ownership single delete.
 const qDeleteRulesByIDAndUser = `DELETE FROM device_rules WHERE id = $1 AND user_id = $2`
 
+// qDeleteRulesByDeviceID removes every device_rules row that
+// references the given headscale node ID. Used by the
+// comprehensive device-delete flow (B171, v1.5.2) to clean up
+// orphaned rules after the node is gone from headscale —
+// without this, the next ACL regen would emit a HuJSON policy
+// that still names a non-existent device, which headscale
+// rejects (400 Bad Request on the SetPolicy call).
+//
+// The DELETE is safe-by-id: device_id is unique per
+// (user_id, device_id) combination, so we don't need a
+// user_id guard here. The caller (PostMyDeviceDelete /
+// PostAdminDeviceDelete) has already verified that the
+// device belongs to the user (or that the request is
+// admin-scoped), so a "wrong user deleting the wrong
+// device_rules" race is impossible.
+const qDeleteRulesByDeviceID = `DELETE FROM device_rules WHERE device_id = $1`
+
 // qCountEnabledUserRulesNonSubnet is used by the per-user quota panel
 // (counts the "logical" rules, treating parent_domain IS NOT NULL /32
 // rules as already-counted under their parent domain).

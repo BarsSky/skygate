@@ -553,6 +553,37 @@ func DeleteRule(d *sql.DB, id int) error {
 	return err
 }
 
+// DeleteRulesByDeviceID removes every device_rules row that
+// references the given headscale node ID. Returns the number
+// of rows deleted so the caller can include the count in the
+// audit log + the user-visible flash message.
+//
+// B171 (v1.5.2) — comprehensive device-delete. The pre-B171
+// behaviour (just headscale.DeleteNode + DeleteNodeOwnerByNodeTag)
+// left orphaned device_rules pointing at a non-existent
+// device. The next ACL regen would either (a) skip those rules
+// silently (if GenerateACL filters by some join) and produce
+// a policy that's inconsistent with what the user sees in
+// /my/exit-rules, or (b) include them and crash headscale's
+// SetPolicy with a 400. Either way the user-visible "I deleted
+// this device" action left a stale data trail. DeleteRulesByDeviceID
+// is the cleanup that closes the loop.
+//
+// The DELETE is intentionally NOT scoped to user_id: the
+// caller (PostMyDeviceDelete / PostAdminDeviceDelete) has
+// already verified that the device belongs to the user (or
+// that the request is admin-scoped), and device_id is unique
+// per (user_id, device_id) combination, so the cross-user
+// risk that the per-rule DeleteRuleForUser guards against
+// does not apply here.
+func DeleteRulesByDeviceID(d *sql.DB, deviceID int) (int64, error) {
+	res, err := d.Exec(qDeleteRulesByDeviceID, deviceID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeleteRuleForUser removes a single rule by id, with a user_id
 // ownership check. If the rule doesn't exist OR doesn't belong to
 // userID, zero rows are deleted (the call still returns nil —

@@ -218,6 +218,19 @@ var ruMy = map[string]string{
 	"devices.delete_ok"                          : "Устройство \"%s\" удалено из headscale",
 	"devices.delete_err_404"                     : "Устройство не найдено или не принадлежит вашему аккаунту",
 	"devices.delete_err_deleted"                 : "Устройство уже удалено из headscale — обновите страницу, чтобы обновить список",
+	// B171 (v1.5.2): post-delete flash extensions
+	// (rendered by the user/devices.html template
+	// next to the base devices.delete_ok message).
+	// devices.delete_acl_rules_cleaned is the short
+	// text for the "+N ACL rules cleaned" pill (the
+	// count is pre-formatted with a "+" by the
+	// template). devices.delete_acl_err is the
+	// error format string for the warning alert
+	// that surfaces when the post-delete ACL regen
+	// fails — the %s is the headscale error text
+	// (URL-escaped in the handler).
+	"devices.delete_acl_rules_cleaned"           : "правил ACL очищено",
+	"devices.delete_acl_err"                      : "Устройство удалено, но перегенерация ACL не удалась: %s — проверьте /admin/audit",
 	"devices.delete_err_failed"                  : "Не удалось удалить устройство: %s",
 	"devices.device_exit_pref"                   : "Exit node",
 	"devices.device_exit_pref_pinned_help"       : "это устройство pinned к этому exit-node — перебивает per-user default",
@@ -680,6 +693,10 @@ var enMy = map[string]string{
 	"devices.delete_ok"                          : "Device \"%s\" removed from headscale",
 	"devices.delete_err_404"                     : "Device not found or not owned by your account",
 	"devices.delete_err_deleted"                 : "Device was already removed from headscale — refresh the page to update the list",
+	// B171 (v1.5.2): post-delete flash extensions
+	// — see the RU block above for the design.
+	"devices.delete_acl_rules_cleaned"           : "ACL rules cleaned",
+	"devices.delete_acl_err"                      : "Device deleted, but ACL regen failed: %s — check /admin/audit",
 	"devices.delete_err_failed"                  : "Could not delete device: %s",
 	"devices.device_exit_pref"                   : "Exit node",
 	"devices.device_exit_pref_pinned_help"       : "this device is pinned to this exit-node — overrides the per-user default",

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/devicedelete"
 	"skygate/internal/devicemeta"
 	"skygate/internal/headscale"
 )
@@ -695,6 +696,22 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// hostname. The full node ID is in the
 		// audit log (not in the URL).
 		"DeletedHost":          r.URL.Query().Get("deleted"),
+		// B171 (v1.5.2): post-delete flash
+		// extensions. The handler redirects to
+		// /my/devices?deleted=<host>&deleted_rules=N
+		// (&acl_err=...) so the user can see the
+		// comprehensive-cleanup outcome (rules
+		// removed count + optional ACL regen
+		// error). The query string is parsed as
+		// an int (rules) and a string (err). The
+		// template renders the rules count via
+		// .DeletedRules (the raw string, for
+		// truthy checks) and .DeletedRulesCount
+		// (the int, for `gt` comparisons). The
+		// ACL error renders via .DeletedACLErr.
+		"DeletedRules":         r.URL.Query().Get("deleted_rules"),
+		"DeletedRulesCount":    parseIntQuery(r.URL.Query().Get("deleted_rules")),
+		"DeletedACLErr":        r.URL.Query().Get("acl_err"),
 		// B160.2 (2026-08-20): data freshness. The
 		// "Last refreshed at HH:MM:SS" indicator
 		// shows the user when the headscale data
@@ -1159,56 +1176,108 @@ func (s *Service) PostMyDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	// delete -i N` from the headscale CLI), the gRPC
 	// call returns "no longer exists in NodeStore"
 	// or "node not found". Treat that as 410 Gone +
-	// still clean up the local snapshot.
+	// still run the comprehensive local cleanup
+	// (otherwise the local snapshot + device_rules
+	// would keep naming the deleted device, and
+	// the next ACL regen would crash headscale's
+	// SetPolicy).
 	lang := s.I18n.LangFromRequest(r)
+	headscaleAlreadyGone := false
 	if derr := hsClient.DeleteNode(nodeID); derr != nil {
 		msg := derr.Error()
 		if strings.Contains(msg, "no longer exists in NodeStore") ||
 			strings.Contains(msg, "node not found") {
-			log.Printf("web.my.delete: node=%s no longer exists in headscale (B162): %s", idStr, msg)
-			// Still clean up the local snapshot
-			// (otherwise the row stays on
-			// /my/devices forever).
-			if rerr := db.DeleteNodeOwnerByNodeTag(s.DB, idStr, ""); rerr != nil {
-				log.Printf("web.my.delete: cleanup node_owner_map node=%s err=%v", idStr, rerr)
-			}
-			// Also clear the per-hostname prefs.
-			if host != "" {
-				_ = db.DeleteDeviceExitNodePref(s.DB, c.UserID, strings.ToLower(host))
-			}
-			http.Error(w, s.I18n.T(lang, "devices.delete_err_deleted"), http.StatusGone)
+			headscaleAlreadyGone = true
+			log.Printf("web.my.delete: node=%s no longer exists in headscale (B162 + B171): %s", idStr, msg)
+			// Fall through to devicedelete.Delete
+			// — the local DB still has stale rows
+			// (node_owner_map, device_rules, etc.)
+			// that must be cleaned + the ACL must be
+			// regenerated. Skipping this would leave
+			// the user with a ghost node in
+			// /my/exit-rules and a stale policy in
+			// headscale.
+		} else {
+			log.Printf("web.my.delete: DeleteNode id=%s err=%v", idStr, derr)
+			http.Error(w, s.I18n.Tf(lang, "devices.delete_err_failed", derr.Error()), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("web.my.delete: DeleteNode id=%s err=%v", idStr, derr)
-		http.Error(w, s.I18n.Tf(lang, "devices.delete_err_failed", derr.Error()), http.StatusInternalServerError)
+	}
+	// B171 (v1.5.2) — comprehensive cleanup. Both
+	// the success path (headscale.DeleteNode
+	// returned nil) and the "already gone" path
+	// above reach this line, so the local DB +
+	// device_rules + ACL regen happen consistently
+	// regardless of how the deletion was triggered.
+	// The shared helper (internal/devicedelete)
+	// owns the cleanup logic so the admin path
+	// (PostAdminDeviceDelete) can call the same
+	// function with admin-scoped dependencies.
+	deps := devicedelete.Deps{
+		DB:     s.DB,
+		HS:     hsClient,
+		Cfg:    s.Cfg,
+		Username: c.Username,
+		AuditDetail: fmt.Sprintf("user_device_delete id=%s hostname=%s", idStr, host),
+		AuditFn: func(action, detail string) {
+			if s.Backend != nil {
+				s.Backend.Audit(c.UserID, c.Username, action, detail)
+			}
+		},
+	}
+	cleanRes, _ := devicedelete.Delete(r.Context(), deps, nodeID, host, c.Username)
+	if headscaleAlreadyGone {
+		// 410 Gone — the node was already removed
+		// from headscale (operator action via the
+		// headscale CLI, or a parallel admin
+		// delete). The local DB is now clean, but
+		// the user-visible message is the B160.1
+		// "already removed" copy so the user
+		// doesn't see a contradictory "device
+		// deleted" flash next to a 410.
+		http.Error(w, s.I18n.T(lang, "devices.delete_err_deleted"), http.StatusGone)
 		return
 	}
-	// Local cleanup (best-effort; failures are
-	// logged but don't fail the user-visible
-	// redirect — headscale already removed the
-	// node, the row will re-disappear on the next
-	// snapshot cycle).
-	if rerr := db.DeleteNodeOwnerByNodeTag(s.DB, idStr, ""); rerr != nil {
-		log.Printf("web.my.delete: cleanup node_owner_map node=%s err=%v", idStr, rerr)
-	}
-	if host != "" {
-		if rerr := db.DeleteDeviceExitNodePref(s.DB, c.UserID, strings.ToLower(host)); rerr != nil {
-			log.Printf("web.my.delete: cleanup device_exit_node_prefs host=%s err=%v", host, rerr)
-		}
-	}
 
-	// Audit log (always, even on the already-purged
-	// case above — the operator wants to know who
-	// tried to delete what).
-	detail := fmt.Sprintf("node_id=%s hostname=%s", idStr, host)
-	if s.Backend != nil {
-		s.Backend.Audit(c.UserID, c.Username, "device_deleted", detail)
+	// Success path: redirect with a flash that
+	// shows the rules-cleaned count so the user
+	// knows the ACL was also regenerated. The
+	// deleted=... query param keeps the B162
+	// backwards-compat (the pre-B171 /my/devices
+	// template already reads deleted= to render a
+	// toast). The new deleted_rules=N param is
+	// read by the B171 template update.
+	rulesCount := cleanRes.RulesDeleted
+	redirect := fmt.Sprintf("/my/devices?deleted=%s&deleted_rules=%d",
+		url.QueryEscape(host), rulesCount)
+	if !cleanRes.ACLRegen.Applied && cleanRes.ACLRegen.Err != nil {
+		// The device is gone but the ACL regen
+		// failed. Surface the error to the user
+		// so they know to check /admin/audit
+		// (the audit row already records the
+		// failure with full detail).
+		redirect += "&acl_err=" + url.QueryEscape(cleanRes.ACLRegen.Err.Error())
 	}
-	// Redirect with flash so the user sees "Device
-	// X was deleted" (same pattern as the B160
-	// renew redirect with `renewed=...`).
-	http.Redirect(w, r, fmt.Sprintf("/my/devices?deleted=%s",
-		url.QueryEscape(host)), http.StatusFound)
+	http.Redirect(w, r, redirect, http.StatusFound)
+}
+
+// parseIntQuery converts a query-string value to int64,
+// returning 0 on empty / unparseable input. Used by the
+// B171 post-delete flash to read ?deleted_rules=N (the
+// number of device_rules the comprehensive delete
+// removed). The template uses the int for `gt`
+// comparisons (the string form is kept too, for the
+// truthy check that hides the badge when no rules
+// were cleaned).
+func parseIntQuery(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // parseLastSeenAndClassify is the B170 (v1.5.2) helper

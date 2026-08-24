@@ -345,6 +345,25 @@ func DeleteNodeOwnerByNodeTag(d dbExec, nodeID, tag string) error {
 	return err
 }
 
+// DeleteNodeOwnerByNodeTagCounted is the B171 (v1.5.2)
+// variant: same SQL, but returns the number of rows
+// deleted so the comprehensive device-delete coordinator
+// can include the count in the audit log + the user-visible
+// flash message. The two functions share the same
+// qDeleteNodeOwnerByNodeTag query constant; the only
+// difference is the return type. We keep both because
+// the existing B162/B169 call sites (and the
+// handlers_node_ownership.go backfill caller) only
+// care about success/failure and would need a
+// mechanical edit to ignore the count.
+func DeleteNodeOwnerByNodeTagCounted(d dbExec, nodeID, tag string) (int64, error) {
+	res, err := d.Exec(qDeleteNodeOwnerByNodeTag, nodeID, tag)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // UpdateNodeOwnerTag sets a new tag for an existing row, keyed by
 // node_id. The (username, headscale_user_id, hostname) columns
 // are preserved — only tag and tagged_by_user_id are changed.

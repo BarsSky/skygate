@@ -6,8 +6,32 @@
      escape hatch when they tagged a relay directly via
      the headscale CLI and the bot is now reporting "no
      nodes found". */}}
+{{/* B171 (v1.5.2): the post-delete flash now carries
+   the comprehensive-cleanup outcome — the rules
+   cleaned count + an optional ACL regen error. The
+   base FlashSuccess / FlashError pair was added in
+   v0.33.1.20 (B141, /admin/users); B171 extends the
+   same pattern for /admin/devices. The rules count
+   is rendered as a green pill next to the success
+   flash (mirrors the B171 /my/devices template);
+   the ACL regen error is rendered as a red alert
+   ABOVE the success flash (so the operator notices
+   it — a failed regen means headscale's policy
+   still names the deleted device). */}}
 {{if .FlashSuccess}}
-<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{if eq .FlashSuccess "device_meta"}}{{t "devices.meta_saved_ok"}}{{else}}{{.FlashSuccess}}{{end}}</div>
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{if eq .FlashSuccess "device_meta"}}{{t "devices.meta_saved_ok"}}{{else}}{{.FlashSuccess}}{{end}}
+  {{if gt .FlashOkRulesCount 0}}
+    <span style="margin-left:8px;display:inline-block;background:var(--success-bg);color:var(--success);border:1px solid var(--success);padding:1px 8px;border-radius:999px;font-size:11px">
+      <i class="fa-solid fa-shield-halved"></i> +{{.FlashOkRulesCount}} {{t "devices.delete_acl_rules_cleaned"}}
+    </span>
+  {{end}}
+</div>
+{{end}}
+{{if .FlashACLErr}}
+<div class="alert alert-warning" style="margin-top:8px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  {{tf "devices.delete_acl_err" .FlashACLErr}}
+</div>
 {{end}}
 {{if .FlashError}}
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>

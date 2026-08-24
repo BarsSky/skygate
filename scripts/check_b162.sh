@@ -153,16 +153,33 @@ echo "=== contract F: local cleanup (node_owner_map + device_exit_node_prefs) ==
 # would re-show the device on the next page load
 # (the snapshot branch in GetMyDevices reads
 # node_owner_map). We must clean up the local row.
-if grep -qE 'db\.DeleteNodeOwnerByNodeTag\(s\.DB, idStr, ""\)' internal/feature/my/devices.go; then
-    ok "PostMyDeviceDelete cleans up node_owner_map"
+# B171 (v1.5.2) moved the cleanup into the shared
+# devicedelete.Delete coordinator, so the actual
+# db.DeleteNodeOwnerByNodeTag call is now in
+# internal/devicedelete/devicedelete.go. The
+# contract is unchanged — the user-side PostMyDeviceDelete
+# handler must STILL trigger the cleanup (directly
+# or via devicedelete.Delete). The two greps below
+# cover both architectures.
+if grep -qE 'db\.DeleteNodeOwnerByNodeTag\(s\.DB, idStr, ""\)' internal/feature/my/devices.go || \
+    (grep -qE 'devicedelete\.Delete\(' internal/feature/my/devices.go && \
+     grep -qE 'DeleteNodeOwnerByNodeTag' internal/devicedelete/devicedelete.go); then
+    ok "PostMyDeviceDelete cleans up node_owner_map (directly or via devicedelete.Delete)"
 else
     bad "PostMyDeviceDelete: node_owner_map cleanup MISSING (row would re-appear on /my/devices)"
 fi
 # Per-device exit-node prefs keyed on hostname.
 # They're inert for a non-existent device but
-# accumulate over time if not cleaned.
-if grep -qE 'db\.DeleteDeviceExitNodePref\(s\.DB, c\.UserID, strings\.ToLower\(host\)\)' internal/feature/my/devices.go; then
-    ok "PostMyDeviceDelete cleans up device_exit_node_prefs"
+# accumulate over time if not cleaned. Same
+# B171 architecture note: the call may be in
+# PostMyDeviceDelete directly OR inside
+# devicedelete.Delete (which looks up the
+# original user_id from node_owner_map before
+# the row was deleted).
+if grep -qE 'db\.DeleteDeviceExitNodePref\(s\.DB, c\.UserID, strings\.ToLower\(host\)\)' internal/feature/my/devices.go || \
+    (grep -qE 'devicedelete\.Delete\(' internal/feature/my/devices.go && \
+     grep -qE 'DeleteDeviceExitNodePref' internal/devicedelete/devicedelete.go); then
+    ok "PostMyDeviceDelete cleans up device_exit_node_prefs (directly or via devicedelete.Delete)"
 else
     bad "PostMyDeviceDelete: device_exit_node_prefs cleanup MISSING"
 fi
@@ -208,14 +225,31 @@ fi
 
 echo ""
 echo "=== contract I: build + vet clean ==="
-out=$(bash -c "PATH='$PATH' go build ./..." 2>&1) || {
-    # The PATH trick doesn't survive to nested
-    # bash invocations from this script context;
-    # fall back to the system go on PATH.
-    go build ./... 2>&1
-} | (read line; if [ -n "$line" ]; then echo "$line"; bad "go build output: $line"; fi)
-ok "go build ./... clean"
-out=$(go vet ./... 2>&1)
+# Find `go` on the host. On the operator's hybrid
+# Windows + WSL2 setup, `go` is on the PowerShell
+# PATH but not on the WSL2 PATH. We probe the
+# standard install locations so the B-check
+# works on both. If we can't find `go`, skip
+# rather than false-positive (the pre-push hook
+# has the same fallback).
+GO_BIN=""
+for cand in "$(command -v go)" \
+    "/c/Program Files/Go/bin/go.exe" \
+    "/mnt/c/Program Files/Go/bin/go.exe" \
+    "/usr/local/go/bin/go" \
+    "/usr/lib/go/bin/go" \
+    "/opt/go/bin/go"; do
+    if [ -n "$cand" ] && [ -x "$cand" ]; then
+        GO_BIN="$cand"
+        break
+    fi
+done
+if [ -z "$GO_BIN" ]; then
+    echo "  SKIP  go build ./... (go binary not on PATH — skipping)"
+elif "$GO_BIN" build ./... 2>&1 | (read line; if [ -n "$line" ]; then echo "$line"; bad "go build output: $line"; fi); then
+    ok "go build ./... clean"
+fi
+out=$([ -n "$GO_BIN" ] && "$GO_BIN" vet ./... 2>&1)
 if [ -z "$out" ]; then
     ok "go vet ./... clean"
 else
