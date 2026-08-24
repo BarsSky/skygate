@@ -19,13 +19,15 @@ CADDY_ENABLED=false   # this is the new default as of 2026-07-31
 ```
 
 If you have an **external** TLS terminator already
-(Nginx Proxy Manager on a different host, Cloudflare
-Tunnel in front of this VM, Caddy on a separate VM,
-Tailscale TLS, an ALB in front, …), leave it at
-`false` and **do nothing else**. The deploy script
-will not start the caddy container, will not bind
-ports 80/443, will not render a Caddyfile. Your
-external terminator keeps working with no change.
+(Nginx Proxy Manager on a different host — see
+[§ Alternative: Nginx Proxy Manager (NPM)](#alternative-nginx-proxy-manager-npm-on-a-separate-vm)
+below — Cloudflare Tunnel in front of this VM,
+Caddy on a separate VM, Tailscale TLS, an ALB in
+front, …), leave it at `false` and **do nothing
+else**. The deploy script will not start the caddy
+container, will not bind ports 80/443, will not
+render a Caddyfile. Your external terminator keeps
+working with no change.
 
 If you want **this VM's Caddy to issue and renew
 Let's Encrypt certs**, opt in:
@@ -691,35 +693,299 @@ choice.
 
 ---
 
-## Why not nginx + certbot?
+## When to choose NPM over Caddy (operator-side decision)
 
-nginx works fine. The downsides for the Skygate use
-case are:
+Both paths are supported. Pick the one that matches
+your existing infrastructure:
 
-* **More config**: nginx.conf + sites-enabled/* + the
-  certbot cron + the `dhparam.pem` for modern TLS. Caddy's
-  single Caddyfile is ~30 lines for the same setup.
-* **No automatic OCSP stapling**: nginx needs
-  `ssl_stapling on; ssl_stapling_verify on;` plus a
-  resolver. Caddy does this automatically.
-* **No automatic HTTP→HTTPS redirect**: nginx needs
-  a separate `server { listen 80; return 301 https://... }`
-  block. Caddy does this automatically.
-* **nginx Proxy Manager specifically** is a third
-  product (PHP app + MariaDB) that adds another moving
-  part (the database, the PHP-FPM process, the UI login
-  itself). For a single-operator deployment, that's
-  overkill — the operator would have to maintain the
-  Proxy Manager UI, the cert renewal cron, the database
-  backups, and the Proxy Manager upgrade path. Caddy is
-  one binary.
+| Situation | Use this path |
+|-----------|---------------|
+| This is a **fresh** Skygate install + this VM has the public IP | **Caddy** (default) — single binary, no extra config |
+| You already run **Nginx Proxy Manager on a separate fronting VM** | **NPM** (this section) — reuse the existing web UI |
+| You have an **ALB / Cloudflare Tunnel / Cloudflare proxy** in front | Leave `CADDY_ENABLED=false`, set the X-Forwarded-Proto at the cloud layer |
+| Tailnet-only deployment (Tailscale TLS) | See [§ Alternative: Tailscale TLS](#alternative-tailscale-tls-no-certbot-no-dns-01-no-caddy) below |
 
-The Skygate v0.15.0 release ships Caddy as the
-recommended path because it removes the most moving
-parts. nginx + certbot is supported as a documented
-fallback (you can write the same architecture with
-nginx if you prefer; the per-module changes are
-identical).
+The rest of this section is the **NPM** runbook. It
+was written against the live verified setup on
+2026-08-24 (operator VM: `95.165.170.190` public IP,
+skygate VM internal: `192.168.13.69:8080`,
+hostnames: `head.skynas.ru` + `skygate.skynas.ru`).
+
+---
+
+## Alternative: Nginx Proxy Manager (NPM) on a separate VM
+
+This is the **fully verified** path for operators who
+already run NPM on a fronting VM. NPM is a web UI
+for managing nginx reverse proxies + Let's Encrypt
+cert renewals, backed by a MariaDB database. It
+runs on its own VM (typically on the public IP
+that receives the operator's DNS A-records).
+
+### Architecture (NPM path)
+
+```
+Public internet
+     │
+     ▼ DNS A-record: skygate.skynas.ru → 95.165.170.190
+     ▼ DNS A-record: head.skynas.ru    → 95.165.170.190
+     │
+┌────┴─────────────────────────────┐
+│ Fronting VM (NPM)                │  ← 95.165.170.190
+│   openresty (NPM)                │
+│   - skygate.skynas.ru:443 (TLS)  │  ← NPM issues + renews cert
+│   - head.skynas.ru:443    (TLS)  │
+└────┬─────────────────────────────┘
+     │ 192.168.13.69:8080  (internal network)
+     ▼
+┌────┴─────────────────────────────┐
+│ skygate VM (this project)         │  ← 192.168.13.69
+│   - skygate container :8080       │     (skygate-skygate-1)
+│   - headscale container :50444   │
+│   - headplane container :50445   │
+└──────────────────────────────────┘
+```
+
+### Step 1: Add a Proxy Host in NPM
+
+`NPM web UI → Hosts → Proxy Hosts → Add Proxy Host`
+
+**Details tab**:
+
+| Field | Value |
+|-------|-------|
+| Domain Names | `skygate.skynas.ru` |
+| Scheme | `http` |
+| Forward Hostname / IP | `192.168.13.69` (the skygate VM's internal IP) |
+| Forward Port | `8080` |
+| Cache Assets | ✅ |
+| Block Common Exploits | ✅ |
+| Websockets Support | ✅ |
+| Access List | `Public` |
+
+**SSL tab**:
+
+| Field | Value |
+|-------|-------|
+| SSL Certificate | `Request a new SSL Certificate` (Let's Encrypt) |
+| Email | your email (for cert-expiry notifications) |
+| Terms of Service | ✅ agree |
+| Force SSL | ✅ |
+| HTTP/2 | ✅ |
+| HSTS | ✅ (enable after cert is verified) |
+
+Click **Save**. NPM will obtain the cert via
+HTTP-01 challenge on port 80, then reload its
+own openresty. Takes 30-60 sec.
+
+### Step 2: Custom Locations (Advanced tab)
+
+`NPM → Hosts → Proxy Hosts → skygate.skynas.ru → Advanced tab`
+
+Paste the following into the **Custom Nginx Configuration**
+textarea. These 5 location rules override the default
+forward for the OIDC-specific paths so we can tune
+timeouts, cache headers, and proxy headers:
+
+```nginx
+# ============================================================
+# OIDC-specific tuning for skygate.skynas.ru (B168)
+# ============================================================
+
+# --- 1. OIDC Discovery (cached 1h) ---
+location = /.well-known/openid-configuration {
+    proxy_pass http://192.168.13.69:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header Connection "";
+    expires 1h;
+    add_header Cache-Control "public, max-age=3600";
+}
+
+# --- 2. OIDC JWKS (cached 1h) ---
+location = /oidc/jwks.json {
+    proxy_pass http://192.168.13.69:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header Connection "";
+    expires 1h;
+    add_header Cache-Control "public, max-age=3600";
+}
+
+# --- 3. /oidc/ — authorize, token, userinfo (60s timeout) ---
+location /oidc/ {
+    proxy_pass http://192.168.13.69:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+}
+
+# --- 4. /admin/oidc (operator-facing page) ---
+location /admin/oidc {
+    proxy_pass http://192.168.13.69:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header Connection "";
+}
+
+# --- 5. /admin/oidc/sync (B167 Apply button, 130s timeout) ---
+location /admin/oidc/sync {
+    proxy_pass http://192.168.13.69:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 130s;
+    proxy_read_timeout 130s;
+}
+```
+
+Click **Save**. NPM reloads openresty with the
+new config in 5-10 sec.
+
+### Step 3: Run the B168 setup on the skygate VM
+
+On the skygate VM, the project ships a one-shot
+script that updates `SKYGATE_OIDC_ISSUER` in
+`/home/skyadmin/skygate/.env`, restarts skygate,
+verifies the new issuer, and pushes the new
+`oidc:` block to `headscale.conf`:
+
+```bash
+cd /home/skyadmin/skygate
+bash deploy/scripts/setup-skygate-public.sh --issuer https://skygate.skynas.ru
+```
+
+Expected output (5 steps + summary):
+
+```
+[setup] === setup-skygate-public.sh (B168) ===
+[setup] issuer:        https://skygate.skynas.ru
+[setup] redirect_uris: https://head.skynas.ru/oidc/callback
+[setup] [1/5] validate https://skygate.skynas.ru is reachable
+[setup]   https://skygate.skynas.ru/.well-known/openid-configuration returns 200
+[setup] [2/5] update .env
+[setup]   wrote SKYGATE_OIDC_ISSUER to /home/skyadmin/skygate/.env
+[setup] [3/5] restart skygate container
+[setup] [4/5] wait for skygate /healthz + verify new issuer
+[setup] [5/5] push the new OIDC config to headscale (docker mode)
+```
+
+If the script fails at step 1 with `discovery returned
+NNN`, the NPM cert isn't ready yet — wait 30 sec and
+re-run. If step 4 fails with `skygate did not become
+healthy within 30s`, run `chmod +x entrypoint.sh` once
+on the skygate VM (this happens after `git reset --hard`).
+
+### Step 4: End-to-end verification (from any external host)
+
+```bash
+# 1. discovery: 200 + correct issuer
+curl -s https://skygate.skynas.ru/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+# → "issuer":"https://skygate.skynas.ru"
+
+# 2. JWKS: 200
+curl -sk -o /dev/null -w '%{http_code}\n' https://skygate.skynas.ru/oidc/jwks.json
+# → 200
+
+# 3. authorize (unauth): 302 → /login
+curl -sk -o /dev/null -w 'code=%{http_code} loc=%{redirect_url}\n' \
+  "https://skygate.skynas.ru/oidc/authorize?client_id=headscale&redirect_uri=https%3A%2F%2Fhead.skynas.ru%2Foidc%2Fcallback&response_type=code&state=test&scope=openid+profile+email&code_challenge=abc&code_challenge_method=S256"
+# → code=302 loc=https://skygate.skynas.ru/login?next=...
+
+# 4. userinfo (no auth): 401 + WWW-Authenticate Bearer
+curl -sk -o /dev/null -w '%{http_code}\n' https://skygate.skynas.ru/oidc/userinfo
+# → 401
+
+# 5. cross-check: headscale /oidc/callback reachable
+curl -sk -o /dev/null -w '%{http_code}\n' https://head.skynas.ru/oidc/callback
+# → 400 (reaches headscale, rejects fake code — correct)
+```
+
+All 5 should pass. If step 1 returns `skygate.example.com`
+as the issuer, the skygate container is still on the
+old `.env` — re-run `setup-skygate-public.sh` (idempotent).
+
+### Step 5: Live Tailscale client test
+
+```bash
+# On a test device (phone, laptop, fresh VM):
+tailscale up --login-server https://head.skynas.ru
+```
+
+The Tailscale client opens the browser to
+`https://head.skynas.ru/oidc/authorize?client_id=headscale&...`
+→ headscale 302s to `https://skygate.skynas.ru/oidc/authorize?...`
+→ skygate 302s to `https://skygate.skynas.ru/login?next=...`
+→ user types skygate admin creds → skygate 302s to
+`https://skygate.skynas.ru/oidc/authorize?code=...`
+→ skygate 302s to `https://head.skynas.ru/oidc/callback?code=...&state=...`
+→ headscale exchanges the code, creates the user, returns
+to the Tailscale client.
+
+### NPM gotchas (lessons from the live verify)
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `502 Bad Gateway` from NPM | skygate VM unreachable on 192.168.13.69:8080 from fronting VM | `curl http://192.168.13.69:8080/healthz` from fronting VM; check firewall / VPC ACL |
+| Cert issuance hangs at "pending" | Port 80 closed from internet on 95.165.170.190 | Open 80/tcp; check ISP / hosting provider firewall |
+| `525 / 526` errors in browser | Cloudflare SSL mismatch (you have a CF proxy in front) | Pause CF proxy (grey cloud) OR set CF SSL = "Full" |
+| `200 OK` but discovery shows `issuer: skygate.example.com` | skygate .env not updated | Run `setup-skygate-public.sh` on skygate VM |
+| `302 → /login` but `next=` param is empty | `X-Forwarded-Proto` header missing from NPM | Verify the custom locations include `proxy_set_header X-Forwarded-Proto $scheme;` |
+| `tailscale up` shows "connection refused" | headscale container down | `docker ps` on skygate VM; restart if needed |
+| `tailscale up` opens browser, login succeeds, but device never appears in tailnet | headscale's `oidc:` block missing from config | Run `setup-skygate-public.sh` step 5 (oidc-sync) again |
+
+### Files shipped in B168 for the NPM path
+
+* `deploy/snippets/nginx-skygate-oidc.conf` — the
+  canonical raw nginx config (the equivalent of
+  what NPM writes when you paste the custom
+  locations above). Useful if you migrate off NPM
+  to raw nginx.
+* `deploy/scripts/setup-skygate-public.sh` — the
+  5-step setup script.
+* `scripts/check_b168.sh` — 19 B-check contracts
+  that pin the B168 surface.
+
+---
+
+## When NOT to use Caddy (legacy doc — see NPM section above)
+
+The previous "Why not nginx + certbot?" section is
+preserved for reference. nginx + certbot is
+supported as a documented fallback — but **NPM is
+the recommended path if you already have it
+running**, not raw nginx. The Caddyfile shipped in
+`deploy/templates/Caddyfile.tmpl` is the alternative
+for fresh installs.
 
 ---
 
@@ -731,6 +997,19 @@ identical).
   `CADDY_ENABLED=true`
 * `.env.example` — new `CADDY_*` and `HEADPLANE_SERVER__COOKIE_SECURE`
   knobs
+
+## Files added in v1.5.2 (B168 — NPM path)
+
+* `docs/internal/https-setup.md` — new "Alternative:
+  Nginx Proxy Manager (NPM)" section above
+* `deploy/snippets/nginx-skygate-oidc.conf` — the
+  canonical raw nginx config equivalent to what
+  NPM generates from the custom-locations paste
+* `deploy/scripts/setup-skygate-public.sh` — the
+  5-step operator script (update .env, restart
+  skygate, push to headscale, write audit row)
+* `scripts/check_b168.sh` — 19 B-check contracts
+  that pin the B168 surface
 
 ## Files NOT changed in v0.15.0
 

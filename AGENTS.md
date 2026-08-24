@@ -53,6 +53,19 @@ in the same commit. Don't let the tracker drift.
   skygate → verify new issuer → reuses B167's `deploy/oidc-sync.sh`
   to push the new headscale.conf + restart headscale). 19
   B-check contracts in `scripts/check_b168.sh`.
+  - **Verified live setup (2026-08-24)**: operator
+    uses **Nginx Proxy Manager** on a fronting VM
+    (`95.165.170.190`). skygate runs on
+    `192.168.13.69:8080`. DNS: `skygate.skynas.ru`
+    + `head.skynas.ru` both → `95.165.170.190`. NPM
+    issues the Let's Encrypt cert + terminates TLS;
+    the 5 custom locations in NPM's "Advanced" tab
+    route the OIDC paths to the skygate VM. Full
+    NPM runbook documented in
+    `docs/internal/https-setup.md` (the new
+    "Alternative: Nginx Proxy Manager (NPM) on a
+    separate VM" section). 5/5 OIDC endpoints
+    verified end-to-end on the live public URL.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
