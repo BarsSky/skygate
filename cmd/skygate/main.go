@@ -447,12 +447,31 @@ func main() {
 		app.OIDCClientID,
 		app.OIDCClientSecret,
 		app.OIDCKeyDir,
+		app.OIDCRedirectURIs,
 	)
 	if oidcErr != nil {
 		log.Fatalf("oidc: init failed: %v", oidcErr)
 	}
 	mux.Handle("/.well-known/", oidcSvc.Handler())
 	mux.Handle("/oidc/", oidcSvc.Handler())
+
+	// B161.2: periodic sweep of expired auth codes
+	// to bound the in-memory footprint. Runs every
+	// 60s; the sweep itself is O(n) over the map
+	// but n is bounded by active users * 1 code, so
+	// the cost is negligible.
+	if oidcSvc.Codes != nil {
+		go func() {
+			t := time.NewTicker(60 * time.Second)
+			defer t.Stop()
+			for range t.C {
+				n := oidcSvc.Codes.Sweep()
+				if n > 0 {
+					log.Printf("oidc.codes: swept %d expired entries", n)
+				}
+			}
+		}()
+	}
 	mux.HandleFunc("GET /login", authSvc.GetLogin)
 	mux.HandleFunc("POST /lang", authSvc.PostLang)
 	mux.Handle("POST /login", loginMW(http.HandlerFunc(authSvc.PostLogin)))

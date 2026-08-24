@@ -60,6 +60,8 @@ type App struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCKeyDir       string
+	// B161.2: comma-separated allowlist of redirect URIs.
+	OIDCRedirectURIs string
 	// ControlURL is the public-facing URL of the headscale control plane,
 	// shown to users in preauth instructions so they can configure
 	// Tailscale with a custom coordination server. Typically
@@ -379,6 +381,7 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		OIDCClientID:     cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCClientID }),
 		OIDCClientSecret: cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCClientSecret }),
 		OIDCKeyDir:       cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCKeyDir }),
+		OIDCRedirectURIs: cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCRedirectURIs }),
 		// 2026-08-09 v0.33.1.31 B83: sshKeyPath is the
 		// in-container path of the SSH private key used by
 		// the per-row `exit_servers.ssh_key_path` fallback

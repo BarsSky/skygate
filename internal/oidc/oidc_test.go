@@ -3,11 +3,13 @@ package oidc
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestNewKeyStore_GeneratesOnFirstRun ensures the
@@ -217,5 +219,225 @@ func TestServeJWKS_SingleKey(t *testing.T) {
 	}
 	if doc.Keys[0]["kid"] != string(ks.ActiveKey().KID) {
 		t.Errorf("JWKS kid = %q, want %q", doc.Keys[0]["kid"], ks.ActiveKey().KID)
+	}
+}
+
+// TestAuthCodeStore_PutAndGet covers the basic
+// put/get round-trip. Each code is single-use
+// per RFC 6749 sec 4.1.2.
+func TestAuthCodeStore_PutAndGet(t *testing.T) {
+	s := NewAuthCodeStore()
+	entry := AuthCodeEntry{
+		UserID:      42,
+		Username:    "alice",
+		Email:       "alice@example.com",
+		ClientID:    "headscale",
+		RedirectURI: "https://head.skynas.ru/oidc/callback",
+		Scope:       "openid profile email",
+		Nonce:       "abc123",
+	}
+	code := s.Put(entry)
+	if len(code) < 32 {
+		t.Errorf("auth code too short: %d chars (want >= 32)", len(code))
+	}
+	got, ok := s.Get(code)
+	if !ok {
+		t.Fatal("Get returned !ok for just-Put code")
+	}
+	if got.UserID != entry.UserID || got.Username != entry.Username {
+		t.Errorf("Get returned %+v, want UserID=%d Username=%q", got, entry.UserID, entry.Username)
+	}
+	// Second Get should fail (single-use).
+	_, ok = s.Get(code)
+	if ok {
+		t.Error("second Get returned ok; code is single-use per RFC 6749")
+	}
+}
+
+// TestAuthCodeStore_Expired validates that the
+// ttl is enforced. We use a tiny ttl to keep the
+// test fast.
+func TestAuthCodeStore_Expired(t *testing.T) {
+	s := NewAuthCodeStore()
+	s.ttl = 50 * time.Millisecond
+	code := s.Put(AuthCodeEntry{UserID: 1})
+	time.Sleep(60 * time.Millisecond)
+	_, ok := s.Get(code)
+	if ok {
+		t.Error("Get on expired code returned ok; want !ok")
+	}
+}
+
+// TestAuthCodeStore_Sweep validates the
+// background-cleanup helper.
+func TestAuthCodeStore_Sweep(t *testing.T) {
+	s := NewAuthCodeStore()
+	s.ttl = 50 * time.Millisecond
+	_ = s.Put(AuthCodeEntry{UserID: 1})
+	_ = s.Put(AuthCodeEntry{UserID: 2})
+	if s.Size() != 2 {
+		t.Errorf("Size = %d, want 2", s.Size())
+	}
+	time.Sleep(60 * time.Millisecond)
+	removed := s.Sweep()
+	if removed != 2 {
+		t.Errorf("Sweep removed %d, want 2", removed)
+	}
+	if s.Size() != 0 {
+		t.Errorf("Size after sweep = %d, want 0", s.Size())
+	}
+}
+
+// TestAllowedRedirect_ExactMatch validates the
+// RFC 6749 sec 3.1.2.3 exact-string match.
+// Substring or wildcard match is a known OIDC
+// vuln class (open redirect); we explicitly
+// reject it.
+func TestAllowedRedirect_ExactMatch(t *testing.T) {
+	s := &Service{RedirectURIs: "https://head.skynas.ru/oidc/callback,http://localhost:8085/oidc/callback"}
+	cases := []struct {
+		uri     string
+		allowed bool
+	}{
+		{"https://head.skynas.ru/oidc/callback", true},
+		{"http://localhost:8085/oidc/callback", true},
+		{"https://head.skynas.ru/oidc/callback/", false},   // trailing slash
+		{"https://head.skynas.ru/oidc/callback?foo=1", false}, // query
+		{"https://attacker.example.com/oidc/callback", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := s.allowedRedirect(c.uri); got != c.allowed {
+			t.Errorf("allowedRedirect(%q) = %v, want %v", c.uri, got, c.allowed)
+		}
+	}
+}
+
+// TestServeAuthorize_NoIssuerReturns503 ensures
+// the provider-disabled fallback works for the
+// new /authorize route (B161.1 had the same
+// fallback for discovery; B161.2 extends it).
+func TestServeAuthorize_NoIssuerReturns503(t *testing.T) {
+	s := &Service{IssuerURL: ""}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/oidc/authorize?client_id=headscale", nil)
+	s.ServeAuthorize(rr, req)
+	if rr.Code != 503 {
+		t.Errorf("status = %d, want 503 when provider is disabled", rr.Code)
+	}
+}
+
+// TestServeAuthorize_UnknownClientID validates
+// the 400 path for an unknown client_id. We
+// don't 302 here because the client_id is
+// invalid — we can't trust the redirect_uri to
+// be valid either, so a 400 is the safe
+// response.
+func TestServeAuthorize_UnknownClientID(t *testing.T) {
+	s := &Service{
+		IssuerURL:     "https://skygate.example.com",
+		ClientID:      "headscale",
+		RedirectURIs:  "https://head.skynas.ru/oidc/callback",
+		Codes:         NewAuthCodeStore(),
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/oidc/authorize?client_id=wrong", nil)
+	s.ServeAuthorize(rr, req)
+	if rr.Code != 400 {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+}
+
+// TestServeAuthorize_RedirectURINotAllowed
+// validates the open-redirect defense. The
+// handler MUST reject redirect URIs not in the
+// allowlist, not silently 302 to them.
+func TestServeAuthorize_RedirectURINotAllowed(t *testing.T) {
+	s := &Service{
+		IssuerURL:    "https://skygate.example.com",
+		ClientID:     "headscale",
+		RedirectURIs: "https://head.skynas.ru/oidc/callback",
+		Codes:        NewAuthCodeStore(),
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/oidc/authorize?client_id=headscale&redirect_uri=https://attacker.example.com/callback&response_type=code", nil)
+	s.ServeAuthorize(rr, req)
+	if rr.Code != 400 {
+		t.Errorf("status = %d, want 400 (open-redirect defense)", rr.Code)
+	}
+	// The 400 body should NOT contain the
+	// attacker URL (defense in depth: don't
+	// reflect untrusted input).
+	if strings.Contains(rr.Body.String(), "attacker.example.com") {
+		t.Errorf("400 body leaks the attacker URL: %q", rr.Body.String())
+	}
+}
+
+// TestServeAuthorize_LoggedInIssuesCode is the
+// happy path: user has a valid session cookie,
+// all params are valid, and the handler
+// redirects to headscale's callback with
+// ?code=...&state=...
+func TestServeAuthorize_LoggedInIssuesCode(t *testing.T) {
+	s := &Service{
+		IssuerURL:    "https://skygate.example.com",
+		ClientID:     "headscale",
+		RedirectURIs: "https://head.skynas.ru/oidc/callback",
+		Codes:        NewAuthCodeStore(),
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/oidc/authorize?client_id=headscale&redirect_uri=https://head.skynas.ru/oidc/callback&response_type=code&state=xyz&scope=openid+profile+email", nil)
+	// Inject a valid skygate session cookie.
+	// Format: "<user_id>:<username>:<email>:<expires_unix>"
+	req.AddCookie(&http.Cookie{
+		Name:  skygateSessionCookie,
+		Value: "1:alice:alice@example.com:9999999999",
+	})
+	s.ServeAuthorize(rr, req)
+	if rr.Code != 302 {
+		t.Fatalf("status = %d, want 302; body=%q", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://head.skynas.ru/oidc/callback?") {
+		t.Errorf("Location = %q, want to start with the configured redirect_uri", loc)
+	}
+	if !strings.Contains(loc, "code=") {
+		t.Errorf("Location = %q, want ?code=...", loc)
+	}
+	if !strings.Contains(loc, "state=xyz") {
+		t.Errorf("Location = %q, want state=xyz echoed back", loc)
+	}
+	// The code should be in the in-memory store.
+	if s.Codes.Size() != 1 {
+		t.Errorf("Codes.Size = %d, want 1 (the code we just issued)", s.Codes.Size())
+	}
+}
+
+// TestServeAuthorize_NotLoggedInRedirectsToLogin
+// validates the unauthenticated path: the
+// handler 302s to /login?next=<this URL> so the
+// OIDC params survive the round trip.
+func TestServeAuthorize_NotLoggedInRedirectsToLogin(t *testing.T) {
+	s := &Service{
+		IssuerURL:    "https://skygate.example.com",
+		ClientID:     "headscale",
+		RedirectURIs: "https://head.skynas.ru/oidc/callback",
+		Codes:        NewAuthCodeStore(),
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/oidc/authorize?client_id=headscale&redirect_uri=https://head.skynas.ru/oidc/callback&response_type=code", nil)
+	// No session cookie.
+	s.ServeAuthorize(rr, req)
+	if rr.Code != 302 {
+		t.Fatalf("status = %d, want 302; body=%q", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/login?next=") {
+		t.Errorf("Location = %q, want /login?next=... (so OIDC params survive the login round-trip)", loc)
+	}
+	// No code should be issued (the user hasn't
+	// authenticated yet).
+	if s.Codes.Size() != 0 {
+		t.Errorf("Codes.Size = %d, want 0 (no code before login)", s.Codes.Size())
 	}
 }

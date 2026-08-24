@@ -76,6 +76,14 @@ type Config struct {
 	OIDCClientID       string
 	OIDCClientSecret   string
 	OIDCKeyDir         string
+	// B161.2 (v1.5.0): OIDC redirect-URI allowlist.
+	// Comma-separated list of URLs the OIDC
+	// provider will redirect to after a successful
+	// auth. Per RFC 6749 sec 3.1.2.3 the server
+	// MUST do an exact-string match. headscale's
+	// default is https://<headscale-host>/oidc/callback
+	// — operators add this to the list.
+	OIDCRedirectURIs   string
 	BootstrapAdminUser string
 	BootstrapAdminPass string
 	SSHKeyPath         string // path to SSH key for exit node sync
@@ -445,6 +453,11 @@ func Load() (*Config, error) {
 		OIDCClientID:       getenv("SKYGATE_OIDC_CLIENT_ID", "headscale"),
 		OIDCClientSecret:   os.Getenv("SKYGATE_OIDC_CLIENT_SECRET"),
 		OIDCKeyDir:         getenv("SKYGATE_OIDC_KEY_DIR", "./data/oidc-keys"),
+		// B161.2: default to headscale's canonical
+		// callback URL (matches the operator's
+		// headscale.conf `oidc.redirect_uri`). The
+		// operator can override via env.
+		OIDCRedirectURIs:   getenv("SKYGATE_OIDC_REDIRECT_URIS", "https://head.skynas.ru/oidc/callback"),
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "admin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
 		// 2026-08-04 v0.33.1: default path points at the

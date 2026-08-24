@@ -41,10 +41,18 @@ type Service struct {
 	// same pair MUST be set in headscale.conf.
 	ClientID     string
 	ClientSecret string
+	// RedirectURIs is a comma-separated allowlist
+	// for the redirect_uri parameter on
+	// /oidc/authorize. RFC 6749 sec 3.1.2.3
+	// requires exact-string match. B161.2.
+	RedirectURIs string
 	// Keys is the RSA keypair for signing id_tokens
 	// (B161.3) + exposing the public key in JWKS
 	// (B161.1, this commit).
 	Keys *KeyStore
+	// Codes is the in-memory store of pending
+	// auth codes. B161.2.
+	Codes *AuthCodeStore
 }
 
 // NewService loads the RSA keypair (or generates
@@ -58,7 +66,7 @@ type Service struct {
 // (in main.go). B161.2 / B161.3 will extend this
 // constructor with the auth code store + token
 // store.
-func NewService(issuerURL, clientID, clientSecret, keyDir string) (*Service, error) {
+func NewService(issuerURL, clientID, clientSecret, keyDir, redirectURIs string) (*Service, error) {
 	if issuerURL == "" {
 		// Provider disabled — main.go can still
 		// mount the routes (they'll return 503)
@@ -67,7 +75,8 @@ func NewService(issuerURL, clientID, clientSecret, keyDir string) (*Service, err
 		// skip mounting entirely; both work.
 		log.Printf("oidc: SKYGATE_OIDC_ISSUER not set — OIDC routes will return 503 until configured")
 	} else {
-		log.Printf("oidc: provider enabled issuer=%s client_id=%s", issuerURL, clientID)
+		log.Printf("oidc: provider enabled issuer=%s client_id=%s redirect_uris=%d",
+			issuerURL, clientID, len(redirectURIs))
 	}
 	keys, err := NewKeyStore(keyDir)
 	if err != nil {
@@ -77,7 +86,9 @@ func NewService(issuerURL, clientID, clientSecret, keyDir string) (*Service, err
 		IssuerURL:    issuerURL,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
+		RedirectURIs: redirectURIs,
 		Keys:         keys,
+		Codes:        NewAuthCodeStore(),
 	}, nil
 }
 
@@ -87,15 +98,14 @@ func NewService(issuerURL, clientID, clientSecret, keyDir string) (*Service, err
 //	mux.Handle("/.well-known/", oidcSvc.Handler())
 //	mux.Handle("/oidc/", oidcSvc.Handler())
 //
-// B161.1 mounts only the read-only endpoints
-// (discovery + JWKS). B161.2 will add the
-// /authorize POST/GET; B161.3 will add /token + /userinfo.
+// B161.2 adds the /authorize handler. B161.3 will
+// add /token + /userinfo.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", s.ServeDiscoveryDoc)
 	mux.HandleFunc("GET /oidc/jwks.json", s.ServeJWKS)
-	// B161.2 + B161.3 will add:
-	//   mux.HandleFunc("GET /oidc/authorize", s.ServeAuthorize)
+	mux.HandleFunc("GET /oidc/authorize", s.ServeAuthorize)
+	// B161.3 will add:
 	//   mux.HandleFunc("POST /oidc/token", s.ServeToken)
 	//   mux.HandleFunc("GET /oidc/userinfo", s.ServeUserInfo)
 	return mux
