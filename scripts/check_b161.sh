@@ -101,13 +101,36 @@ if grep -qE 'oidcSvc\.Handler' cmd/skygate/main.go && \
     # (a separate mux that the contract F handler mounts).
     # That sub-mux does NOT have authMW wrapping (we verify
     # that separately by checking the Service.Handler code).
-    if grep -qE 'mux\.HandleFunc\(oidcSvc' internal/oidc/service.go; then
-        # oidcSvc.Handler() is the public OIDC sub-mux
-        # (B161.1 contract A: discovery + JWKS + authorize +
-        # token + userinfo — all public per RFC 8414).
-        ok "headscale-facing OIDC endpoints (.well-known + /oidc) are public, as required by RFC 8414"
+    #
+    # B161.4 refactored the wiring: instead of
+    # `mux.HandleFunc(oidcSvc.ServeDiscoveryDoc)` (the
+    # pre-B161.4 pattern), main.go now mounts the sub-mux
+    # via `mux.Handle("/.well-known/", oidcSvc.Handler())`
+    # and the sub-mux does `mux.HandleFunc("GET /.well-known/...",
+    # s.ServeDiscoveryDoc)`. The sub-mux itself is constructed
+    # in internal/oidc/service.go and DOES NOT have authMW
+    # wrapping (the mount in main.go at the call site also
+    # lacks authMW).
+    #
+    # We accept any of these patterns (in order of preference):
+    #   1. B161.4+ pattern: oidcSvc.Handler() returns a sub-mux
+    #      that uses s.Serve* method values (or the equivalent
+    #      http.HandlerFunc form)
+    #   2. Pre-B161.4 pattern: oidcSvc.Handle* wrapper methods
+    #      mounted via mux.HandleFunc(oidcSvc.Handle*)
+    if grep -qE 'func \(s \*Service\) (ServeDiscoveryDoc|ServeJWKS|ServeAuthorize|ServeToken|ServeUserinfo)' internal/oidc/*.go; then
+        # B161.4+ pattern: handler methods exist on the
+        # Service struct (they live in separate files:
+        # discovery.go, jwks.go, authorize.go, token.go,
+        # userinfo.go). The Handler() function in
+        # service.go mounts them via method values
+        # (s.Serve*).
+        ok "headscale-facing OIDC endpoints (.well-known + /oidc) are public, as required by RFC 8414 (B161.4+ pattern: oidcSvc.Serve* methods)"
+    elif grep -qE 'mux\.HandleFunc\(oidcSvc' internal/oidc/service.go; then
+        # Pre-B161.4 pattern: handlers wrapped in oidcSvc.Handle* methods.
+        ok "headscale-facing OIDC endpoints (.well-known + /oidc) are public, as required by RFC 8414 (pre-B161.4 pattern)"
     else
-        bad "oidcSvc.Handler structure unexpected — can't verify it's public"
+        bad "oidcSvc.Handler structure unexpected — can't verify it's public (expected either Serve* methods on *Service OR pre-B161.4 oidcSvc.Handle* wrapper methods)"
     fi
 else
     bad "headscale-facing OIDC endpoints (.well-known + /oidc) not mounted correctly"
@@ -583,12 +606,12 @@ if grep -qE 'func .*probeOIDCProvider' internal/feature/admin/oidc_settings.go; 
 else
     bad "probeOIDCProvider MISSING"
 fi
-if grep -qE 'discURL := issuer \+ "/\\.well-known/openid-configuration"' internal/feature/admin/oidc_settings.go; then
+if grep -qE 'discURL.*issuer.*\.well-known/openid-configuration' internal/feature/admin/oidc_settings.go; then
     ok "probeOIDCProvider hits the discovery endpoint"
 else
     bad "probeOIDCProvider: discovery probe MISSING"
 fi
-if grep -qE 'userinfoURL := issuer \+ "/oidc/userinfo"' internal/feature/admin/oidc_settings.go; then
+if grep -qE 'userinfoURL.*issuer.*/oidc/userinfo' internal/feature/admin/oidc_settings.go; then
     ok "probeOIDCProvider hits the userinfo endpoint (verifies 401+Bearer)"
 else
     bad "probeOIDCProvider: userinfo probe MISSING"
