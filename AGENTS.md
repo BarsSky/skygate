@@ -24,13 +24,79 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.1-alpha1 (commit `2ef776e`, live on VM as
-  `v1.5.0-alpha1-23-gd7c8ca6`) — **B161.4 headscale.conf
-  snippet + e2e verification** + the v1.5.1-alpha1 6-B
-  batch (B162-B166). Operator 2026-08-24 surfaced 5
-  small UX gaps + 1 testing gap in the v1.5.0 release
-  + B161.4 closes the OIDC block (was the last "next"
-  on the v1.5.0 release list).
+* **Current**: v1.5.2-alpha1 (commit `0c6875a`, on VM remote;
+  rebuild pending) — **B167 OIDC config auto-sync (full Option C)**.
+  Operator 2026-08-24 asked for the "click one button to push
+  the OIDC config from skygate to headscale + restart headscale"
+  flow. The pre-B167 manual flow was: copy snippet from
+  /admin/oidc → paste into /etc/headscale/config.yaml → `docker
+  restart headscale` (3 steps + 2 commands). B167 collapses this
+  to 1 click on a new /admin/oidc/sync page, with 6 restart
+  modes (auto / docker / systemd / k8s / api / manual) + a
+  7th (download) that just renders the generated YAML for
+  copy-paste. Plus a boot-time auto-sync via
+  SKYGATE_OIDC_AUTOSYNC=true for the "deploy skygate with the
+  OIDC env vars set and want headscale to pick up the config
+  on the same boot" case.
+  - **B167**: full Option C (docker + systemd + k8s + manual +
+    download + auto-init + api):
+    - `deploy/oidc-sync.sh` (10-step, ~290 lines) — the
+      bash workhorse. Validates the skygate_url, detects the
+      mode, generates the `oidc:` YAML block, backs up the
+      existing headscale.conf, writes the new block, updates
+      skygate's .env, restarts headscale (docker / systemd /
+      k8s / api), waits for /health, runs an optional probe,
+      outputs a JSON result on stdout. `--download-only` mode
+      skips all file writes + restarts (just generates the
+      YAML). Idempotent: same inputs → same output, no state
+      drift.
+    - `internal/oidc/sync.go` (~330 lines) — Go wrapper.
+      `RunSync` / `RunSyncCtx` invoke the bash script, parse
+      the 14-field JSON result, surface it as a typed
+      `SyncResult`. `ShouldAutoSync` gates the boot-time hook
+      (requires SKYGATE_OIDC_AUTOSYNC=true AND non-empty issuer
+      + client_secret). 5 Go unit tests in
+      `internal/oidc/sync_test.go` pin the contract.
+    - `internal/feature/admin/oidc_sync.go` (~270 lines) — the
+      admin handler. `GetAdminOIDCSync` renders the form;
+      `PostAdminOIDCSync` parses it, calls `oidc.RunSync`,
+      redirects back to the page with a flash + collapsible
+      log of the generated YAML. Admin-only + behind `authMW`.
+    - `internal/handlers/templates/admin/oidc_sync.html`
+      (~210 lines) — the page. 3 sections (current config +
+      Apply form + FAQ). 5 form fields, mode `<select>` with
+      7 options, client-side submit-disable to prevent
+      double-click.
+    - `internal/i18n/catalog_admin.go` — 55 new `oidc_sync.*`
+      keys in RU + 55 in EN. The EN values are intentionally
+      verbose (operator audience).
+    - `internal/handlers/templates/layout.html` — `nav.oidc_sync`
+      sidebar sub-link under /admin/oidc.
+    - `internal/i18n/catalog_common.go` — `nav.oidc_sync` key
+      in RU + EN.
+    - `cmd/skygate/main.go` — `GET` + `POST /admin/oidc/sync`
+      routes (both behind `authMW`) + boot-time auto-sync
+      (when `SKYGATE_OIDC_AUTOSYNC=true` AND issuer + secret
+      are set). Auto-sync runs synchronously before the HTTP
+      server starts accepting traffic.
+    - `scripts/check_b167.sh` (~280 lines) — 38 contracts:
+      source (script + Go wrapper + handler + template + i18n
+      + routes + auto-init) + live bash-script (download mode
+      generates a valid `oidc:` block, no `strip_email_domain`
+      regression) + live route (`GET /admin/oidc/sync` 200 /
+      302).
+  - **B167.1** (rolled into B167 above): the generated
+    `oidc:` block must NOT include `strip_email_domain`
+    (removed in headscale 0.23+). The B167 B-check pins this
+    as a regression guard. The skygate OIDC provider always
+    emits the email's local part as `preferred_username`, so
+    headscale gets the right value without needing the
+    stripped key. A regression would crash headscale 0.29.x
+    at startup.
+  - **Live state**: build `0c6875a` is on the VM remote (via
+    `git push vm main`); the actual `docker compose up -d
+    --force-recreate --no-deps skygate` will run in a
+    follow-up turn after the operator reviews the diff.
   - **B161.4**: closes the OIDC block with the
     operator-side deliverables:
     - `docs/internal/oidc-headscale.md` (~13 KB) —
@@ -201,6 +267,22 @@ in the same commit. Don't let the tracker drift.
     115/115 (B161.1-3 unchanged). Plus the existing
     B-checks still pass (B151-B160). 28/28 Go
     packages build + vet clean.
+* **Previous**: v1.5.1-alpha1 (commit `2ef776e`, live on VM as
+  `v1.5.0-alpha1-23-gd7c8ca6`) — **B161.4 headscale.conf
+  snippet + e2e verification** + the v1.5.1-alpha1 6-B
+  batch (B162-B166). What's added: B161.4 OIDC runbook
+  (docs/internal/oidc-headscale.md + /admin/oidc page +
+  e2e test) + B162 per-row device delete from /my/devices
+  + B163 collapsible FAIL output on /admin/system_tests +
+  B164 DERP server init on a new host via SSH +
+  B165 /my/devices registration form UX fix +
+  B166 e2e + system tests for B160 + B162. Operator
+  2026-08-24 surfaced 5 small UX gaps + 1 testing gap in
+  the v1.5.0 release + B161.4 closed the OIDC documentation
+  block (the operator's only guide to wiring headscale.conf
+  to skygate's OIDC provider). **All 5 B-checks pass on
+  the local checkout**: check_b161_4 + check_b162-166.
+  Build + vet clean. 28/28 Go packages green.
 
 * **Previous**: v1.5.0-alpha1 (live on VM as v1.4.4-30-gb6265f8) —
   **B161 OIDC provider for headscale** (B161.1 skeleton +
