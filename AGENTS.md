@@ -24,9 +24,11 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `7d4c91f7`, on VM remote;
-  rebuild pending) — **B167 OIDC config auto-sync (full Option C)**
-  + **B168 live OIDC e2e on a public hostname**.
+* **Current**: v1.5.2-alpha1 (commit `8ce799c8` on VM remote,
+  `7d90af2f` B170 in flight) — **B167 OIDC config auto-sync (full
+  Option C)** + **B168 live OIDC e2e on a public hostname**
+  + **B169 admin-side device delete on /admin/devices**
+  + **B170 expired-row sub-classification hint on /my/devices**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -66,6 +68,58 @@ in the same commit. Don't let the tracker drift.
     "Alternative: Nginx Proxy Manager (NPM) on a
     separate VM" section). 5/5 OIDC endpoints
     verified end-to-end on the live public URL.
+  - **B169 (v1.5.2)**: admin-side device delete on
+    `/admin/devices` — the operator's escape hatch
+    for cleaning orphan / duplicate / stuck devices
+    without SSH'ing into the skygate VM.
+    `PostAdminDeviceDelete` handler in
+    `internal/feature/admin/devices.go` (IsAdmin
+    guard + `headscale.DeleteNode` via `HSGlobalFn`
+    + `node_owner_map` cleanup + `hs.InvalidateCache`
+    + `'device_deleted'` audit row + 404/exit-node-
+    error special cases) + `POST /admin/devices/{id}/
+    delete` route behind `authMW` in
+    `cmd/skygate/main.go` + red Delete button per
+    row in `internal/handlers/templates/admin/
+    devices.html` with `onsubmit="return confirm(...)"`
+    guard + 3 new `devices.delete_admin*` i18n keys
+    in `catalog_my.go` (RU + EN) + 19 contracts in
+    `scripts/check_b169.sh`. Mirrors B162 per-user
+    delete but admin-scoped (uses `HSGlobalFn` not
+    `HSForUserFn` — admin should not be scoped to
+    one user's control plane).
+  - **B170 (v1.5.2)**: expired-row sub-classification
+    hint on `/my/devices`. Operator 2026-08-25: a
+    device force-expired by headscale (admin action
+    or the user running `tailscale logout`) shows
+    the same red "Истёк" pill as a device whose TTL
+    ran out naturally — different root causes, so
+    the hint disambiguates without SSH.
+    `parseLastSeenAndClassify` helper in
+    `internal/feature/my/devices.go` uses
+    `|LastSeen − Expiry|` with a 5-min threshold
+    (absolute delta to handle future-dated
+    `LastSeen` from clock skew). Returns one of:
+    - `no_activity` — `LastSeen` empty/unparseable
+      (orphan / snapshot-only / admin force-removed)
+    - `near_expiry` — `|LastSeen − Expiry| ≤ 5 min`
+      (device was online at the moment expiry was
+      set; most likely `tailscale logout`)
+    - `while_offline` — `|LastSeen − Expiry| > 5 min`
+      (device was offline when TTL ran out, or admin
+      force-expired a long-idle device)
+    `ExpiryHint` + `LastSeenTime` fields on
+    `myNodeRow` + 3-way `{{if eq .ExpiryHint}}`
+    chain under the existing `.ExpiryWarning` badge
+    in `internal/handlers/templates/user/devices.html`
+    (small muted caption, NOT a separate pill, so
+    the visual hierarchy keeps the red pill as the
+    primary signal) + 4 new `devices.expired_hint_*`
+    i18n keys in `catalog_my.go` (RU + EN) + 4 unit
+    tests in `internal/feature/my/devices_b170_test.go`
+    (the 3 hint categories + the 5-min boundary +
+    the Nano-precision regression guard) + 28
+    contracts in `scripts/check_b170.sh`.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

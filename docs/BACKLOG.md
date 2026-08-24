@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-24 (B168 live OIDC e2e on a public hostname SHIPPED in v1.5.2-alpha1; B151+B152+B153 HA runbooks also SHIPPED; B167 OIDC config auto-sync also SHIPPED; B162-B166 from v1.5.1 batch also SHIPPED)
+**Last updated**: 2026-08-25 (B170 expired-row sub-classification hint on /my/devices SHIPPED in v1.5.2-alpha1; B169 admin-side device delete on /admin/devices SHIPPED 2026-08-24)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -427,6 +427,34 @@ on every restart).
 include `strip_email_domain` (removed in headscale 0.23+). A
 regression would crash headscale 0.29.x at startup. The B167
 B-check pins this as a regression guard.
+
+---
+
+## Priority 13 — v1.5.2 expired-row sub-classification hint on /my/devices (SHIPPED 2026-08-25, B170)
+
+### B170 — /my/devices expired-row sub-classification hint
+
+**Status**: SHIPPED 2026-08-25 (commit `7d90af2f`, v1.5.2-alpha1)
+**Effort**: ~0.5 day
+**What was delivered**: operator 2026-08-25 observed that a device force-expired by headscale (admin action, or the user running `tailscale logout`) shows up on /my/devices with the same red "Истёк" pill as a device whose TTL ran out naturally while offline. The two cases have very different root causes, so the operator wants a one-line hint that disambiguates without SSH'ing into the VM and running `headscale nodes list`. B170 ships:
+
+- `parseLastSeenAndClassify` helper in `internal/feature/my/devices.go` — uses `|LastSeen − Expiry|` with a 5-min threshold (absolute delta so a future-dated `LastSeen` from headscale clock skew is still classified correctly). Returns `(time.Time, string)` where the string is one of `no_activity` / `near_expiry` / `while_offline`.
+- `ExpiryHint` + `LastSeenTime` fields on `myNodeRow` (the row struct used by `/my/devices`).
+- 3-way `{{if eq .ExpiryHint}}` chain under the existing `.ExpiryWarning` badge in `internal/handlers/templates/user/devices.html` — small muted caption, NOT a separate pill, so the visual hierarchy keeps the red pill as the primary signal.
+- 4 new i18n keys (`devices.expired_hint_title` + `_no_activity` + `_near_expiry` + `_while_offline`) in RU + EN.
+- 4 unit tests in `internal/feature/my/devices_b170_test.go` — pins the 3 hint categories + the 5-min boundary (inclusive on both sides) + the Nano-precision regression guard (a 5min+0.5s delta must classify as `while_offline`, not round to whole seconds).
+- 28 contracts in `scripts/check_b170.sh` (ALL PASS).
+- `scripts/verify_pre_deploy.sh` — B170 registered in the runner.
+
+**Heuristic summary**:
+
+| LastSeen vs Expiry | Hint | Most likely cause |
+|---|---|---|
+| `LastSeen == ""` (or unparseable) | `no_activity` | Orphan / snapshot-only / admin force-removed |
+| `|LastSeen − Expiry| ≤ 5 min` | `near_expiry` | `tailscale logout` (expiry set to "now" on headscale side) |
+| `|LastSeen − Expiry| > 5 min` | `while_offline` | TTL ran out while offline, OR admin force-expired a long-idle device |
+
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./internal/feature/my/...` PASS, `bash scripts/check_b170.sh` 28/28 PASS.
 
 ---
 
