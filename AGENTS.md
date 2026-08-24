@@ -24,7 +24,112 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.0-alpha1 (live on VM as v1.4.4-30-gb6265f8) —
+* **Current**: v1.5.1-alpha1 (commit `2ef776e`, awaiting deploy
+  to VM) — **operator-requested UX fixes + DERP server
+  init**. Operator 2026-08-24 surfaced 5 small UX gaps +
+  1 testing gap in the v1.5.0 release; this commit
+  ships all 6 in one release.
+  - **B162**: per-row device delete from `/my/devices`.
+    `PostMyDeviceDelete` handler + per-row Delete button
+    next to Renew with `confirm()` dialog. Mirrors the
+    B160 renew pattern: per-user scope-check (live +
+    snapshot), 404 on cross-user, 410 Gone on
+    "no longer exists in NodeStore", cleanup of
+    `node_owner_map` + `device_exit_node_prefs`, audit
+    log `device_deleted`. New helper
+    `db.DeleteDeviceExitNodePref` in
+    `internal/db/exit_node_prefs.go`. 7 new i18n keys
+    (`devices.delete` + `delete_title` + `delete_confirm`
+    + `delete_ok` + `delete_err_404` + `delete_err_deleted`
+    + `delete_err_failed`) in RU+EN. 26 B-check contracts.
+  - **B163**: collapsible FAIL output on
+    `/admin/system_tests`. `<details class="system-test-output">`
+    wrapping `{{.Output}}` (open for FAIL, closed for
+    PASS/SKIP), inner `<pre>` with `white-space: pre-wrap`
+    + `max-height: 280px` + `overflow-y: auto`, Copy
+    button (navigator.clipboard.writeText with
+    document.execCommand fallback). 6 new i18n keys
+    (`system_tests.output_fail_label` +
+    `output_pass_label` + `output_skip_label` +
+    `output_empty_label` + `output_copy_btn` +
+    `output_copy_title`) in RU+EN. CSS for
+    `details.system-test-output` in
+    `static/css/themes.css`. 18 B-check contracts.
+    Same treatment applied to the History tab's
+    `last-error` field.
+  - **B164**: DERP server init on a new host via SSH.
+    `GET/POST /admin/derp/relays/init` behind authMW +
+    `GetAdminDerpRelaysInit` (suggests next free
+    region_id via `COALESCE(MAX(region_id),0)+1`) +
+    `PostAdminDerpRelaysInit` (calls `headscale.RunScript`
+    on `deploy/derp-init.sh`, parses JSON, inserts
+    into `derp_relays` via `db.AddDerpRelay`). New
+    files: `internal/feature/admin/derp_init.go`
+    (~350 lines), `internal/handlers/templates/admin/derp_relays_init.html`
+    (3 sections + FAQ), `deploy/derp-init.sh` (7-step
+    flow: install Go 1.23+, `go install tailscale.com/cmd/derper@latest`,
+    generate self-signed cert, configure systemd
+    `derper.service`, open firewall, start, probe
+    HTTPS). 30+ new i18n keys in `catalog_derp.go`
+    RU+EN. 41 B-check contracts. `headscale.RunScript`
+    was exported from the `headscale` package to
+    avoid duplicating the WSL2/Linux path-translation
+    logic.
+  - **B165**: `/my/devices` registration form UX fix.
+    2-column `.form-grid` (1fr 1fr on desktop, 1 column
+    on <768px) replaces the pre-v1.5.1 inline-flex
+    layout. `.form-group-inline` wraps the Custom TTL
+    value + unit pair so the label clearly owns the
+    pair. `aria-label` on the value/unit inputs.
+    `.form-hint-strong` replaces the default gray
+    hints. New `<details>` Help block with
+    `ssh-keygen -t ed25519` example + per-OS `tailscale up`
+    commands (Linux/macOS/Windows with
+    `--advertise-exit-node` + `--advertise-routes`,
+    Android/iOS via the Tailscale app GUI, Windows
+    via the tray icon). 16 new i18n keys (`reg.*`) in
+    `catalog_my.go` RU+EN. CSS rules in
+    `static/css/themes.css`. 36 B-check contracts.
+  - **B166**: e2e + system tests for B160 + B162.
+    System test `headscale.device_renew`: picks the
+    first non-tagged device, calls `ExtendNodeExpiry`
+    with now+30d, asserts the new expiry is in
+    [now+29d, now+31d], RESTORES the original via
+    `defer` (idempotent — a non-idempotent test would
+    silently move the operator's device 30 days
+    into the future every run). System test
+    `headscale.device_delete`: tests the gRPC error
+    path — `DeleteNode` on a non-existent ID returns
+    one of the patterns the B162 410-Gone handler
+    matches on: "node not found" / "no longer exists
+    in NodeStore" / "Not Found" / "404". Both tests
+    use `HSForUserFn(0)` (the admin user) and SKIP
+    on missing headscale / no nodes (no false-alarm
+    on a fresh deploy). 18 B-check contracts.
+  - **Documentation**: new `docs/features.md` (~25 KB)
+    describes all implemented features in the v1.5.0
+    release (admin pages, user pages, integrations,
+    env vars, backup + restore, operator cookbook
+    with per-task examples). Style: simple reference
+    with example data only (RFC 5737 IPs, `example.com`
+    domain, etc.) — no real operator values. Also
+    `docs/BACKLOG.md` got a "Priority 9 — v1.5.0 UX
+    gaps" section as the historical record of the 5
+    tasks.
+  - **Live state**: VM is still on `v1.4.4-30-gb6265f8`
+    (B161.3). v1.5.1 (commit `2ef776e`) is in the
+    VM remote (via `git push vm main`); the actual
+    `docker compose up -d --force-recreate --no-deps skygate`
+    will run in a follow-up turn after the operator
+    reviews the diff.
+  - **All 5 B-checks pass on the local checkout**:
+    check_b162 26/26, check_b163 18/18, check_b164 41/41,
+    check_b165 36/36, check_b166 18/18, check_b161
+    115/115 (B161.1-3 unchanged). Plus the existing
+    B-checks still pass (B151-B160). 28/28 Go
+    packages build + vet clean.
+
+* **Previous**: v1.5.0-alpha1 (live on VM as v1.4.4-30-gb6265f8) —
   **B161 OIDC provider for headscale** (B161.1 skeleton +
   B161.2 /authorize + B161.3 /token + /userinfo). Operator
   2026-08-23: "возможно ли сделать перехват запроса к
