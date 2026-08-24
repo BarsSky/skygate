@@ -24,8 +24,9 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `0c6875a`, on VM remote;
-  rebuild pending) — **B167 OIDC config auto-sync (full Option C)**.
+* **Current**: v1.5.2-alpha1 (commit `7d4c91f7`, on VM remote;
+  rebuild pending) — **B167 OIDC config auto-sync (full Option C)**
+  + **B168 live OIDC e2e on a public hostname**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -37,7 +38,21 @@ in the same commit. Don't let the tracker drift.
   copy-paste. Plus a boot-time auto-sync via
   SKYGATE_OIDC_AUTOSYNC=true for the "deploy skygate with the
   OIDC env vars set and want headscale to pick up the config
-  on the same boot" case.
+  on the same boot" case. **B168** closes the operator side:
+  wires the OIDC endpoints on a public hostname
+  (`skygate.skynas.ru`) so a Tailscale client in the operator
+  browser can reach the OIDC login flow. Pre-B168 the OIDC
+  provider was reachable on `127.0.0.1:8080` only — the
+  `SKYGATE_OIDC_ISSUER` was a placeholder that didn't resolve.
+  B168 ships `deploy/snippets/nginx-skygate-oidc.conf` (5-location
+  server block: discovery + jwks + /oidc/ + /admin/oidc +
+  /admin/oidc/sync, with X-Forwarded-Proto for the issuer
+  claim) + `deploy/scripts/setup-skygate-public.sh` (5-step
+  setup script the operator runs after DNS + nginx are in
+  place: validate discovery 200 → update .env → restart
+  skygate → verify new issuer → reuses B167's `deploy/oidc-sync.sh`
+  to push the new headscale.conf + restart headscale). 19
+  B-check contracts in `scripts/check_b168.sh`.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

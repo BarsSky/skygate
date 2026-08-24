@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-24 (B151+B152+B153 HA runbooks SHIPPED in v1.5.2-alpha1; B167 OIDC config auto-sync also SHIPPED; B162-B166 from v1.5.1 batch also SHIPPED)
+**Last updated**: 2026-08-24 (B168 live OIDC e2e on a public hostname SHIPPED in v1.5.2-alpha1; B151+B152+B153 HA runbooks also SHIPPED; B167 OIDC config auto-sync also SHIPPED; B162-B166 from v1.5.1 batch also SHIPPED)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -331,6 +331,26 @@ restarting the tailscaled on the node.
 Snapshot for rollback at `/tmp/b111_phase3_full_20260813_163219/`
 (policy.json, headscale_nodes.json, node_owner_map.tsv, skygate-
 host-1.state) + `/tmp/rollback_nom.sql` (DB rollback).
+
+---
+
+## Priority 12 — v1.5.2 live OIDC e2e on a public hostname (SHIPPED 2026-08-24, B168)
+
+### B168 — setup-skygate-public.sh + deploy/snippets/nginx-skygate-oidc.conf
+
+**Status**: SHIPPED 2026-08-24 (commit `7d4c91f7`, v1.5.2-alpha1)
+**Effort**: ~0.5 day
+**What was delivered**: closes the operator side of the B167-B168 pair. Pre-B168 the operator could not test the OIDC flow because `SKYGATE_OIDC_ISSUER` was a placeholder (`https://skygate.example.com` doesn't resolve) and there was no public reverse-proxy for the skygate container. B168 ships 2 files + 1 B-check + 1 verify_pre_deploy row:
+- `deploy/snippets/nginx-skygate-oidc.conf` (~9.2 KB) — nginx server block for `skygate.skynas.ru:443`. 5 location blocks (discovery + jwks + /oidc/ + /admin/oidc + /admin/oidc/sync) all proxy to the skygate container on port 8080. Sets `X-Forwarded-Proto` (skygate OIDC code uses it to render https:// in the issuer claim). 3 TLS options documented (certbot / existing pipeline / Tailscale cert).
+- `deploy/scripts/setup-skygate-public.sh` (~10.4 KB) — 5-step setup script the operator runs on the skygate VM after DNS + nginx are in place. 1: validate the new issuer URL is reachable. 2: update `SKYGATE_OIDC_ISSUER` + `SKYGATE_OIDC_REDIRECT_URIS` in .env with `.pre-setup-public.YYYYMMDDHHMMSS` backup (idempotent). 3: restart skygate. 4: wait for /healthz + verify the discovery doc reports the new issuer (round-trip check). 5: reuses `deploy/oidc-sync.sh` (B167) in docker mode to push the new headscale.conf + restart headscale. Writes an `oidc_setup` audit row.
+- 19 B-check contracts in `scripts/check_b168.sh` (ALL PASS): source-contract (5 locations + X-Forwarded-Proto + 5 steps + B167 reuse) + idempotency + safety (idempotent, validates before .env, verifies after restart, .env backup) + audit log row.
+
+**Operator action (after deploy)**:
+1. Add DNS A-record on reg.ru: `skygate.skynas.ru` → `<skygate-vm-public-ip>` (same IP as head.skynas.ru)
+2. Paste `deploy/snippets/nginx-skygate-oidc.conf` into the fronting nginx + `nginx -s reload`
+3. On the skygate VM: `bash deploy/scripts/setup-skygate-public.sh`
+4. Install Tailscale on a test device, custom coord server = `https://head.skynas.ru`, log in
+5. The Tailscale client redirects to `https://skygate.skynas.ru/oidc/authorize` → `/login` → `/oidc/callback` → device registered
 
 ---
 
