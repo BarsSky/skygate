@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-24 (B167 OIDC config auto-sync SHIPPED in v1.5.2-alpha1; B162-B166 from v1.5.1 batch also SHIPPED)
+**Last updated**: 2026-08-24 (B151+B152+B153 HA runbooks SHIPPED in v1.5.2-alpha1; B167 OIDC config auto-sync also SHIPPED; B162-B166 from v1.5.1 batch also SHIPPED)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -331,6 +331,35 @@ restarting the tailscaled on the node.
 Snapshot for rollback at `/tmp/b111_phase3_full_20260813_163219/`
 (policy.json, headscale_nodes.json, node_owner_map.tsv, skygate-
 host-1.state) + `/tmp/rollback_nom.sql` (DB rollback).
+
+---
+
+## Priority 11 — v1.5.0 HA runbooks batch (SHIPPED 2026-08-24, B151 + B152 + B153)
+
+### B151 — init-headplane.sh (Phase 8: auto-apply headplane API key on fresh deploy)
+
+**Status**: SHIPPED 2026-08-24 (commit `91999d68`, v1.5.2-alpha1)
+**Effort**: ~0.5 day
+**What was delivered**: pre-B151 the operator had to (1) generate a headscale API key via `docker exec`, (2) paste it into .env as `HEADPLANE_HEADSCALE__API_KEY`, (3) re-run `deploy.sh` + restart headplane. B151 collapses this to `bash scripts/init-headplane.sh`. 2 modes (bundled + external headplane), 6-step bundled flow with idempotent NEEDS_KEY gate, getenv/setenv helpers consistent with `deploy/lib/env.sh`. 20 B-check contracts in `scripts/check_b151.sh` (ALL PASS).
+
+### B152 — bootstrap_standby.sh (Phase 7: provision a new skygate-standby node)
+
+**Status**: SHIPPED 2026-08-24 (commit `91999d68`, v1.5.2-alpha1)
+**Effort**: ~0.5 day
+**What was delivered**: pre-B152 provisioning a new standby was a multi-hour manual runbook (clone repo, copy .env, set SKYGATE_HA_ROLE=standby, start containers, wait, verify). B152 is a single `bash scripts/bootstrap_standby.sh` on the new VM. S3-pulls the skygate binary + headscale config from the primary, starts the docker-compose stack with role=standby, verifies `/healthz` + `ha_chain` registration, writes `ha.bootstrap` audit row. Idempotent. 18 B-check contracts in `scripts/check_b152.sh` (ALL PASS).
+
+### B153 — dr_drill.sh (Phase 9: live DR drill runbook)
+
+**Status**: SHIPPED 2026-08-24 (commit `91999d68`, v1.5.2-alpha1)
+**Effort**: ~0.5 day
+**What was delivered**: pre-B153 the operator had no structured way to verify the HA chain actually works under failure. B153 is a 5-step live DR drill (verify version match + kill active + verify failover within 60s + verify no-flap rejoin + optional kill-both). 3 operator flags (`--yes` unattended, `--skip-regapi-check`, `--skip-kill-both`). Polls `/readyz` for the B145 role banner, NEVER uses `docker compose down -v` (no data destruction). 18 B-check contracts in `scripts/check_b153.sh` (ALL PASS).
+
+**Operator action (after deploy)**:
+1. Wait for the operator to provision svyatoslava-1
+2. Operator runs `scripts/bootstrap_standby.sh` on the new VM
+3. Operator schedules a maintenance window + runs `scripts/dr_drill.sh`
+4. After the drill passes, tag `v1.5.0` (Phase 10)
+5. reg.ru IP whitelist still blocking B146 (Phase 2)
 
 ---
 
