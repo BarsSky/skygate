@@ -127,6 +127,28 @@ var ruMy = map[string]string{
 	"devices.add_form_title"                     : "Новое устройство",
 	"devices.add_btn"                            : "Создать",
 	"devices.add_hint"                           : "Preauth-ключ будет показан один раз — скопируйте его сразу.",
+	// B165 (v1.5.1): registration form help. The
+	// "reg.*" keys are read by the Help <details>
+	// block on /my/devices that has the SSH-key
+	// generation example + per-OS tailscale up
+	// commands. The hint keys (reg.os_hint) are
+	// shown inline under the form fields with
+	// the new .form-hint-strong class (darker
+	// than the default gray).
+	"reg.os_label"                                : "Платформа",
+	"reg.os_hint"                                  : "Выберите ОС, на которой будете регистрировать новое устройство. Если не уверены — клик по тайлу определит автоматически по User-Agent.",
+	"reg.help_title"                               : "Как зарегистрировать устройство (после получения ключа)",
+	"reg.help_ssh_title"                           : "1. Сгенерируйте SSH-ключ (только для Linux/macOS серверов)",
+	"reg.help_ssh_intro"                           : "Если устройство будет работать как exit-node или subnet-router, ему нужен SSH-ключ для автонастройки маршрутов. Для обычного клиента (телефон, ноутбук) этот шаг можно пропустить.",
+	"reg.help_linux_title"                         : "2. Linux / macOS / Windows — Tailscale CLI",
+	"reg.help_linux_intro"                         : "Залогиньтесь с preauth-ключом, который вы только что получили. После успешной авторизации — опционально включите advertise-exit-node или advertise-routes для ваших подсетей.",
+	"reg.help_mobile_title"                        : "2. Android / iOS — приложение Tailscale",
+	"reg.help_mobile_intro"                        : "В мобильном приложении Tailscale настройка такая же, как на десктопе, но через GUI:",
+	"reg.help_mobile_step1"                        : "Откройте Tailscale → верхнее-правое меню → <b>Use custom coordination server</b> → вставьте URL вашего headscale (см. выше).",
+	"reg.help_mobile_step2"                        : "На странице логина выберите <b>Use a preauth key</b> → вставьте ключ, который вы получили.",
+	"reg.help_mobile_step3"                        : "После логина мобильный клиент сразу подключится к tailnet; на странице <b>/my/devices</b> появится новая строка.",
+	"reg.help_windows_title"                       : "2. Windows — Tailscale GUI",
+	"reg.help_windows_intro"                       : "В GUI Tailscale: правый клик в трее → <b>Use custom coordination server</b> → вставьте URL → Sign in → выберите <b>Use a preauth key</b>.",
 	"devices.preauth_key"                        : "Preauth ключ",
 	"devices.preauth_command"                    : "Команда для подключения",
 	"devices.copy_command"                       : "Скопировать",
@@ -156,6 +178,23 @@ var ruMy = map[string]string{
 	"devices.refresh_title"                      : "Обновить список устройств (сбросить кэш 5s)",
 	"devices.refreshed"                          : "Обновлено в %s",
 	"devices.cache_note"                         : "Данные кэшируются на 5 секунд; кнопка «Обновить» сбрасывает кэш",
+	// B162 (v1.5.1): per-row device delete UX. The
+	// button is rendered next to the Renew button
+	// for every device with Expiry!="" (we don't
+	// show Delete for tagged/shared infra nodes
+	// because the user can't unilaterally delete
+	// them — same scope-check as the renew button).
+	// The confirm dialog shows the hostname so the
+	// user knows exactly which device they're
+	// about to remove. The "ok" / "err" flash
+	// messages mirror the B160 renew pattern.
+	"devices.delete"                             : "Удалить",
+	"devices.delete_title"                       : "Удалить устройство из headscale",
+	"devices.delete_confirm"                     : "Удалить устройство \"%s\" из headscale? Tailscale-клиент сразу потеряет доступ к tailnet. Действие необратимо.",
+	"devices.delete_ok"                          : "Устройство \"%s\" удалено из headscale",
+	"devices.delete_err_404"                     : "Устройство не найдено или не принадлежит вашему аккаунту",
+	"devices.delete_err_deleted"                 : "Устройство уже удалено из headscale — обновите страницу, чтобы обновить список",
+	"devices.delete_err_failed"                  : "Не удалось удалить устройство: %s",
 	"devices.device_exit_pref"                   : "Exit node",
 	"devices.device_exit_pref_pinned_help"       : "это устройство pinned к этому exit-node — перебивает per-user default",
 	"devices.device_exit_pref_set_help"          : "выберите exit-node — это устройство будет использовать его вместо per-user default",
@@ -335,6 +374,8 @@ var ruMy = map[string]string{
 	"keys.empty"                                 : "Нет ключей",
 	"keys.custom_ttl_label"                      : "Свой срок (число + единица)",
 	"keys.custom_ttl_hint"                       : "Введите число и выберите единицу (h/d/w/y). Минимум 1 час, максимум 5 лет. 0 = бессрочно.",
+	"keys.custom_ttl_value_aria"                  : "Числовое значение срока",
+	"keys.custom_ttl_unit_aria"                   : "Единица измерения срока",
 	"keys.custom_ttl_h"                          : "часы",
 	"keys.custom_ttl_d"                          : "дни",
 	"keys.custom_ttl_w"                          : "недели",
@@ -552,6 +593,21 @@ var enMy = map[string]string{
 	"devices.add_form_title"                     : "New device",
 	"devices.add_btn"                            : "Create",
 	"devices.add_hint"                           : "The preauth key is shown only once — copy it immediately.",
+	// B165 (v1.5.1): registration form help.
+	"reg.os_label"                                : "Platform",
+	"reg.os_hint"                                  : "Pick the OS you'll register the new device on. If unsure, the tile auto-selects from your User-Agent.",
+	"reg.help_title"                               : "How to register the device (after you get the key)",
+	"reg.help_ssh_title"                           : "1. Generate an SSH key (Linux/macOS servers only)",
+	"reg.help_ssh_intro"                           : "If the device will run as an exit-node or a subnet-router, it needs an SSH key for the auto-routing setup. For a regular client (phone, laptop) you can skip this step.",
+	"reg.help_linux_title"                         : "2. Linux / macOS / Windows — Tailscale CLI",
+	"reg.help_linux_intro"                         : "Sign in with the preauth key you just got. After auth — optionally enable advertise-exit-node or advertise-routes for your subnets.",
+	"reg.help_mobile_title"                        : "2. Android / iOS — Tailscale app",
+	"reg.help_mobile_intro"                        : "In the mobile app the setup mirrors the desktop, but via the GUI:",
+	"reg.help_mobile_step1"                        : "Open Tailscale → top-right menu → <b>Use custom coordination server</b> → paste your headscale URL (see above).",
+	"reg.help_mobile_step2"                        : "On the login page pick <b>Use a preauth key</b> → paste the key you got.",
+	"reg.help_mobile_step3"                        : "After login the mobile client joins the tailnet immediately; the new row shows up on <b>/my/devices</b>.",
+	"reg.help_windows_title"                       : "2. Windows — Tailscale GUI",
+	"reg.help_windows_intro"                       : "In the Tailscale GUI: right-click the tray icon → <b>Use custom coordination server</b> → paste the URL → Sign in → pick <b>Use a preauth key</b>.",
 	"devices.preauth_key"                        : "Preauth key",
 	"devices.preauth_command"                    : "Connect command",
 	"devices.copy_command"                       : "Copy",
@@ -581,6 +637,14 @@ var enMy = map[string]string{
 	"devices.refresh_title"                      : "Refresh device list (bypass the 5s cache)",
 	"devices.refreshed"                          : "Refreshed at %s",
 	"devices.cache_note"                         : "Data is cached for 5 seconds; the Refresh button bypasses the cache",
+	// B162 (v1.5.1): per-row device delete UX.
+	"devices.delete"                             : "Delete",
+	"devices.delete_title"                       : "Delete device from headscale",
+	"devices.delete_confirm"                     : "Delete device \"%s\" from headscale? The Tailscale client will lose its tailnet connection on the next netmap sync. This action cannot be undone.",
+	"devices.delete_ok"                          : "Device \"%s\" removed from headscale",
+	"devices.delete_err_404"                     : "Device not found or not owned by your account",
+	"devices.delete_err_deleted"                 : "Device was already removed from headscale — refresh the page to update the list",
+	"devices.delete_err_failed"                  : "Could not delete device: %s",
 	"devices.device_exit_pref"                   : "Exit node",
 	"devices.device_exit_pref_pinned_help"       : "this device is pinned to this exit-node — overrides the per-user default",
 	"devices.device_exit_pref_set_help"          : "select an exit-node — this device will use it instead of the per-user default",
@@ -755,6 +819,8 @@ var enMy = map[string]string{
 	"keys.empty"                                 : "No keys",
 	"keys.custom_ttl_label"                      : "Custom duration (number + unit)",
 	"keys.custom_ttl_hint"                       : "Enter a number and pick a unit (h/d/w/y). Min 1 hour, max 5 years. 0 = never expires.",
+	"keys.custom_ttl_value_aria"                  : "Numeric duration value",
+	"keys.custom_ttl_unit_aria"                   : "Duration unit",
 	"keys.custom_ttl_h"                          : "hours",
 	"keys.custom_ttl_d"                          : "days",
 	"keys.custom_ttl_w"                          : "weeks",

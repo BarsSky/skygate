@@ -73,6 +73,15 @@ type ProvisionResult struct {
 	HeadscaleUserID int64  `json:"headscale_user_id"`
 }
 
+// RunScript invokes the given shell script via `bash <path>
+// <args...>`. Exported so other packages (e.g. the
+// admin/derp_init.go B164 handler) can re-use the same
+// Linux/WSL2-safe execution path. See the comment on
+// runScript for the full rationale.
+func RunScript(path string, args ...string) ([]byte, error) {
+	return runScript(path, args...)
+}
+
 // runScript invokes the given shell script via `bash <path>
 // <args...>`. We always go through bash explicitly (rather
 // than relying on the kernel's shebang handling) so the

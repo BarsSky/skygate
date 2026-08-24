@@ -608,6 +608,14 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// captures the full node ID + new expiry).
 		"RenewedHost":          r.URL.Query().Get("renewed"),
 		"RenewedNewExpiry":     r.URL.Query().Get("new_expiry"),
+		// B162 (v1.5.1): post-delete flash. The
+		// PostMyDeviceDelete handler redirects to
+		// /my/devices?deleted=<host> (URL-escaped
+		// so hostnames with non-ASCII survive);
+		// we render the success alert with the
+		// hostname. The full node ID is in the
+		// audit log (not in the URL).
+		"DeletedHost":          r.URL.Query().Get("deleted"),
 		// B160.2 (2026-08-20): data freshness. The
 		// "Last refreshed at HH:MM:SS" indicator
 		// shows the user when the headscale data
@@ -945,6 +953,183 @@ func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, "device not found", http.StatusNotFound)
+}
+
+// PostMyDeviceDelete (B162, v1.5.1) removes a device from
+// the current user's headscale control plane. The user-
+// facing effect is "the Tailscale client on this device
+// loses its tailnet connection on the next netmap sync".
+//
+// Like B160 (renew), this handler is per-user, scope-checked
+// to the current user's own nodes (or snapshot-owned nodes
+// that headscale has reassigned to tagged-devices because
+// of tag:private). Cross-user deletes return 404; deletes
+// for a node the local snapshot still references but
+// headscale has already purged return 410 Gone + the
+// "refresh the page" message (mirrors B160.1's pattern).
+//
+// Side effects:
+//   1. `headscale nodes delete -i <id>` via the gRPC client
+//      (InvalidateCache() runs inside DeleteNode).
+//   2. `DELETE FROM node_owner_map WHERE node_id=$1` so the
+//      next /my/devices load doesn't re-render the row from
+//      the snapshot (the snapshot branch would otherwise
+//      keep showing the device until the admin manually
+//      intervenes).
+//   3. Audit log row `device_deleted node_id=N hostname=H`.
+//
+// What is NOT done here (deferred to v1.5.x or a follow-up):
+//   - Cleanup of headscale ACL rules that reference the
+//     deleted node (e.g. `tag:dev-<user>-<device>` grants
+//     in the per-device ACL chain). headscale retains the
+//     stale tag references harmlessly — the next policy
+//     re-apply pass (the v0.32.x `acl_snapshots` cycle) sees
+//     the device gone from ListAllNodes() and prunes the
+//     rules. We do NOT manually edit the policy here because
+//     that's the autoupdate's job and editing the live
+//     policy outside that cycle has caused more outages
+//     than it has fixed (the v0.32.4 / v0.32.13 history).
+//   - Cleanup of `device_exit_node_prefs` rows for this
+//     hostname (also auto-pruned on the next re-apply
+//     pass; the prefs don't affect the deleted device's
+//     connectivity, they only affect how OTHER devices
+//     route to this one, and the prefs are inert for a
+//     device that's not in headscale).
+func (s *Service) PostMyDeviceDelete(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		http.Error(w, "missing node id", http.StatusBadRequest)
+		return
+	}
+	nodeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad node id", http.StatusBadRequest)
+		return
+	}
+
+	// Reuse the same scope-check as the renew handler
+	// (live list + snapshot list). The HSForUserFn
+	// routes to this user's control plane, so even a
+	// forged ID would fail at the gRPC layer.
+	hsClient := s.Backend.HSForUserFn(c.UserID)
+	allNodes, lerr := hsClient.ListAllNodes()
+	if lerr != nil {
+		log.Printf("web.my.delete: ListAllNodes userID=%d err=%v", c.UserID, lerr)
+		http.Error(w, "headscale unreachable", http.StatusBadGateway)
+		return
+	}
+	host := ""
+	ok := false
+	for _, n := range allNodes {
+		if n.ID == idStr {
+			host = n.Hostname
+			// Scope-check: the node must belong
+			// to this user (live user_name
+			// match) OR be in the
+			// node_owner_map snapshot.
+			if n.UserName == c.Username {
+				ok = true
+			}
+			break
+		}
+	}
+	// Snapshot check (tagged-private nodes that
+	// headscale shows under "tagged-devices").
+	if !ok {
+		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+		for _, sid := range snapIDs {
+			if sid == idStr {
+				ok = true
+				break
+			}
+		}
+	}
+	// Also find the hostname in the snapshot if
+	// the live list didn't have it. We use a small
+	// inline scan of ListNodeOwnersByUsername
+	// (the same call the renew handler makes),
+	// filtering by node_id — cheaper than adding
+	// a new "ListNodeOwnersByNodeID" helper for
+	// this one site, and the user-prefixed call
+	// is already in the per-request cache path
+	// (the page render uses it too).
+	if ok && host == "" {
+		owners, _ := db.ListNodeOwnersByUsername(s.DB, c.Username)
+		for _, o := range owners {
+			if o.NodeID == idStr {
+				host = o.Hostname
+				break
+			}
+		}
+	}
+	if !ok {
+		log.Printf("web.my.delete: node %s not owned by userID=%d username=%q",
+			idStr, c.UserID, c.Username)
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
+	}
+
+	// B160.1-style "no longer exists" detection:
+	// if headscale has already purged the node
+	// (e.g. a parallel admin ran `headscale nodes
+	// delete -i N` from the headscale CLI), the gRPC
+	// call returns "no longer exists in NodeStore"
+	// or "node not found". Treat that as 410 Gone +
+	// still clean up the local snapshot.
+	lang := s.I18n.LangFromRequest(r)
+	if derr := hsClient.DeleteNode(nodeID); derr != nil {
+		msg := derr.Error()
+		if strings.Contains(msg, "no longer exists in NodeStore") ||
+			strings.Contains(msg, "node not found") {
+			log.Printf("web.my.delete: node=%s no longer exists in headscale (B162): %s", idStr, msg)
+			// Still clean up the local snapshot
+			// (otherwise the row stays on
+			// /my/devices forever).
+			if rerr := db.DeleteNodeOwnerByNodeTag(s.DB, idStr, ""); rerr != nil {
+				log.Printf("web.my.delete: cleanup node_owner_map node=%s err=%v", idStr, rerr)
+			}
+			// Also clear the per-hostname prefs.
+			if host != "" {
+				_ = db.DeleteDeviceExitNodePref(s.DB, c.UserID, strings.ToLower(host))
+			}
+			http.Error(w, s.I18n.T(lang, "devices.delete_err_deleted"), http.StatusGone)
+			return
+		}
+		log.Printf("web.my.delete: DeleteNode id=%s err=%v", idStr, derr)
+		http.Error(w, s.I18n.Tf(lang, "devices.delete_err_failed", derr.Error()), http.StatusInternalServerError)
+		return
+	}
+	// Local cleanup (best-effort; failures are
+	// logged but don't fail the user-visible
+	// redirect — headscale already removed the
+	// node, the row will re-disappear on the next
+	// snapshot cycle).
+	if rerr := db.DeleteNodeOwnerByNodeTag(s.DB, idStr, ""); rerr != nil {
+		log.Printf("web.my.delete: cleanup node_owner_map node=%s err=%v", idStr, rerr)
+	}
+	if host != "" {
+		if rerr := db.DeleteDeviceExitNodePref(s.DB, c.UserID, strings.ToLower(host)); rerr != nil {
+			log.Printf("web.my.delete: cleanup device_exit_node_prefs host=%s err=%v", host, rerr)
+		}
+	}
+
+	// Audit log (always, even on the already-purged
+	// case above — the operator wants to know who
+	// tried to delete what).
+	detail := fmt.Sprintf("node_id=%s hostname=%s", idStr, host)
+	if s.Backend != nil {
+		s.Backend.Audit(c.UserID, c.Username, "device_deleted", detail)
+	}
+	// Redirect with flash so the user sees "Device
+	// X was deleted" (same pattern as the B160
+	// renew redirect with `renewed=...`).
+	http.Redirect(w, r, fmt.Sprintf("/my/devices?deleted=%s",
+		url.QueryEscape(host)), http.StatusFound)
 }
 
 // backfillNodeOwnership was a local copy of the helper in

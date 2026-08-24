@@ -183,6 +183,18 @@ var ruCommon = map[string]string{
 	"system_tests.never"             : "никогда",
 	"system_tests.recent_runs_title" : "Свежие прогоны",
 	"system_tests.history_no_runs_help": "За выбранное окно не было ни одного прогона. Откройте вкладку «Тесты» и нажмите Run all чтобы выполнить полный набор.",
+	// B163 (v1.5.1): collapsible FAIL output.
+	// The summary line is always visible; the
+	// <pre> block is collapsed by default for
+	// PASS/SKIP and open by default for FAIL.
+	// The "Copy" button copies the full output
+	// to the clipboard (for Telegram messages).
+	"system_tests.output_fail_label": "Ошибка — нажмите чтобы скрыть",
+	"system_tests.output_pass_label": "Вывод (нажмите чтобы раскрыть)",
+	"system_tests.output_skip_label": "Пропущено (нажмите чтобы раскрыть)",
+	"system_tests.output_empty_label": "Пусто",
+	"system_tests.output_copy_btn": "Копировать",
+	"system_tests.output_copy_title": "Скопировать полный вывод в буфер обмена (для отправки в Telegram)",
 	"title.admin_invites"            : "Инвайт-коды",
 	"title.admin_meshes"             : "Mesh-сети",
 	"title.admin_update"             : "Обновления Skygate",
@@ -345,6 +357,13 @@ var enCommon = map[string]string{
 	"system_tests.never"             : "never",
 	"system_tests.recent_runs_title" : "Recent runs",
 	"system_tests.history_no_runs_help": "No runs in the selected window. Open the Tests tab and click Run all to execute the full suite.",
+	// B163 (v1.5.1): collapsible FAIL output.
+	"system_tests.output_fail_label": "Failed — click to collapse",
+	"system_tests.output_pass_label": "Output (click to expand)",
+	"system_tests.output_skip_label": "Skipped (click to expand)",
+	"system_tests.output_empty_label": "Empty",
+	"system_tests.output_copy_btn": "Copy",
+	"system_tests.output_copy_title": "Copy the full output to the clipboard (for pasting into a Telegram message)",
 	"title.admin_invites"            : "Invite codes",
 	"title.admin_meshes"             : "Meshes",
 	"title.admin_update"             : "Skygate updates",

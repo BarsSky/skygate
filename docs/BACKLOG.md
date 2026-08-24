@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-13 (post-Phase 3 + v1.3.12)
+**Last updated**: 2026-08-24 (B161.3 deployed; new tasks added for v1.5.0 backlog)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -13,6 +13,256 @@ the operator's stated intent is.
 If you (operator) want a feature from this file worked on, say
 "do N" where N is the priority number. If you want a feature
 moved up or down, just say so.
+
+---
+
+## Priority 9 — v1.5.0 UX gaps (added 2026-08-24)
+
+Operator 2026-08-24 review surfaced 5 small UX gaps in the v1.5.0
+release. None are blocking, but together they make the
+non-engineer user journey awkward. Each is a small B-check
+(half-day to 1.5 days), all independent of each other, so the
+operator can pick any order.
+
+### B162 — Device delete from /my/devices (+ session terminate)
+
+**Status**: NOT STARTED (target: v1.5.1)
+**Effort**: ~0.5-1 day
+**Symptom**: there is a Renew button per row (B160) but no
+Delete. If a user wants to remove a lost phone or a decommissioned
+laptop, they have to log in to headscale manually via
+`headscale nodes delete -i <id>` + clear `node_owner_map`
++ remove the auto-generated `tag:dev-<user>-<device>` ACL
+references in the policy. The user-visible effect is "phantom
+devices" that stay on /my/devices until the operator manually
+intervenes.
+
+**Scope**:
+- New handler `PostMyDeviceDelete` in `internal/feature/my/devices.go`
+  (mirror of `PostMyDeviceRenew` pattern).
+- New route `POST /my/devices/{id}/delete` in `cmd/skygate/main.go`.
+- New template form: per-row "Delete" button (next to Renew) with
+  `onsubmit="return confirm('{{t "devices.delete_confirm"}}')"`.
+- New i18n keys (RU + EN):
+  - `devices.delete` — "Удалить" / "Delete"
+  - `devices.delete_title` — "Удалить устройство из headscale"
+  - `devices.delete_confirm` — "Удалить устройство %s из headscale?
+    Tailscale-клиент сразу потеряет доступ к tailnet. Действие
+    необратимо."
+  - `devices.delete_ok` — "Устройство %s удалено"
+  - `devices.delete_err_404` — "Устройство не найдено или не
+    принадлежит вашему аккаунту"
+  - `devices.delete_err_failed` — "Не удалось удалить устройство: %s"
+- B-check contract: handler present, route registered, i18n
+  keys present, test scopes cross-user attempt to 404, test
+  handles "node no longer exists" gRPC error → 410 Gone (mirrors
+  B160.1).
+- The handler must also clean up `node_owner_map` row for
+  this node id (otherwise the snapshot branch in
+  `GetMyDevices` will re-show the row).
+- Audit log: `device_deleted node_id=N hostname=H`.
+
+**Reusable lesson** (from B160 + B160.1): the same "no longer
+exists in NodeStore" gRPC error pattern applies. Match it
+in the delete handler and return 410 Gone + "refresh the
+page" message instead of leaking the raw gRPC text.
+
+### B163 — System tests: full FAIL output is not visible
+
+**Status**: NOT STARTED (target: v1.5.1)
+**Effort**: ~0.5-1 day
+**Symptom**: `/admin/system_tests` shows the FAIL reason but
+truncates / formats it badly. The current template has
+`<small><code>{{.Output}}</code></small>` which renders
+inline, single-line, no whitespace handling. If a test
+returns a multi-line error (e.g. "SQL error: column X does
+not exist\n  at line 5\n  at line 6\n..."), the user sees
+a wall of text in a tiny inline element that wraps
+unpredictably. The operator has reported "I can't tell what
+the test actually failed on".
+
+**Scope**:
+- Edit `internal/handlers/templates/admin/system_tests.html`
+  line ~301: replace `<small><code>{{.Output}}</code></small>`
+  with a `<details><summary>{{.Name}} details</summary><pre>{{.Output}}</pre></details>`
+  collapsible block.
+- Style: `pre` with `white-space: pre-wrap; word-wrap: break-word;
+  max-height: 300px; overflow: auto; font-size: 12px;
+  background: var(--bg-elev); padding: 8px; border-radius: 4px`.
+- The collapsible is **open by default** for FAIL rows
+  (so the operator sees the reason immediately), **closed
+  by default** for PASS/SKIP rows.
+- Add a small "copy" button next to the output (clipboard
+  API, plain JS) so the operator can paste it into a
+  Telegram message when asking for help.
+- B-check contract: template has the new `<details>` markup
+  around `{{.Output}}`, CSS rules for `pre` in the test
+  section are present, copy button is rendered.
+
+**Reusable lesson**: any template that displays a multi-line
+error message should use `<pre>` (preserves whitespace) and
+be visually distinguished from regular content. The
+`<small><code>` pattern is a recurring code smell.
+
+### B164 — DERP server init on new host (SSH-based auto-config)
+
+**Status**: NOT STARTED (target: v1.5.1)
+**Effort**: ~1.5-2 days
+**Symptom**: `/admin/derp/relays` has CRUD for adding
+**existing** DERP relays (you paste the hostname + region
+metadata). But there's no "set up a new DERP relay on a
+fresh host" flow. The operator has to:
+1. SSH to the new host manually
+2. Install Go (derper is a Go binary)
+3. `go install tailscale.com/cmd/derper@latest`
+4. Generate or place cert
+5. Configure systemd unit
+6. Open firewall for DERP port
+7. Add the relay in `/admin/derp/relays`
+
+That's 7 manual steps per DERP relay. The operator wants
+one-click "Initialize on this host" with the same SSH
+access model that exit-nodes use.
+
+**Scope**:
+- New page `/admin/derp/relays/init` with a form:
+  - `hostname` (the relay's public hostname, e.g.
+    `derp-fra-1.example.com`)
+  - `region_id` (1-999, unique in the tailnet)
+  - `region_code` (3-letter code: `fra`, `ams`, ...)
+  - `region_name` (display name)
+  - `ssh_user` (default `root`)
+  - `ssh_target` (e.g. `root@198.51.100.10:22` or
+    `root@100.64.0.7:22` for Tailscale access)
+  - `ssh_key_path` (default `/root/.ssh/id_ed25519`)
+  - `derp_port` (default `443` for HTTPS derper)
+  - `stun_port` (default `3478`)
+  - `sort_order` (1 = primary, 2 = secondary, ...)
+  - `verify_tls` (checkbox, default ON — verify the
+    derper cert on first connection)
+- New handler `PostAdminDerpRelaysInit` that:
+  1. Validates form fields.
+  2. SSHes to `ssh_target` using the key.
+  3. Runs `deploy/derp-init.sh` (new) on the remote host:
+     - Installs Go 1.23+ if missing
+     - `go install tailscale.com/cmd/derper@latest`
+     - Generates self-signed cert if none provided
+     - Configures systemd unit `derper.service`
+     - Enables + starts the service
+     - Verifies it's listening on derp_port
+  4. On success, inserts a `derp_relays` row via the
+     existing `db.UpsertDerpRelay` helper.
+  5. Writes audit log `derp_init hostname=X region_id=Y
+     result=ok|failed detail="..."`.
+- B-check contract: handler present, route registered,
+  template renders form, i18n keys (10+) present, deploy
+  script syntax-checked, SSH connection test (mock) passes.
+- **Note**: the actual SSH client is the same as the
+  exit-nodes path — for v1, the handler shells out to
+  `bash deploy/derp-init.sh <host> <port> <key>` (same
+  pattern as `headscale.provision.go`'s
+  `BootstrapScriptPath`); we don't need to bring in
+  `golang.org/x/crypto/ssh` for v1.
+
+**Reusable lesson**: the headscale-bootstrap.sh pattern
+(provision.go + bash script) is the canonical "do something
+on a remote host" primitive. Use it instead of writing
+custom SSH client code.
+
+### B165 — /my/devices registration form: stable layout + better hints
+
+**Status**: NOT STARTED (target: v1.5.1)
+**Effort**: ~1-1.5 days
+**Symptom**: the "Add new device" form on `/my/devices`
+has the OS tiles + custom TTL + reusable checkbox, but:
+1. The fields shift on different screen widths (no grid
+   layout, floats on inline-flex).
+2. The hints are tiny and use `text-muted` gray — operator
+   reported "the hints don't tell me anything actionable".
+3. No example for SSH-key generation for users who want
+   to use this device as a Linux exit-node / subnet-router.
+4. The "Custom TTL" input + unit dropdown are on the same
+   row but the labels are not visually grouped with the
+   input — looks like two unrelated fields.
+
+**Scope**:
+- Restructure the form into a `<div class="form-grid">`
+  with 2 columns on desktop, 1 on mobile.
+- Add a dedicated help section (collapsible `<details>`)
+  with:
+  - "How to register a Linux server that will be an
+    exit-node / subnet-router" step-by-step.
+  - SSH key generation example:
+    ```bash
+    ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+    cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+    chmod 600 ~/.ssh/id_ed25519
+    ```
+  - Tailscale command:
+    ```bash
+    sudo tailscale up --login-server=https://head.example.com \
+      --authkey=<preauth-key-from-skygate> \
+      --advertise-exit-node  # if exit-node
+      --advertise-routes=10.0.0.0/24  # if subnet-router
+    ```
+  - Per-OS quick-ref: Android (Settings → Use custom
+    coordination server), iOS (same), Windows (Tailscale
+    GUI → top-right menu → Use custom coordination server).
+- Style: use `form-grid` class (already exists in
+  `static/css/themes.css`); add `form-hint-strong` for
+  important hints; use `<kbd>` for key names in examples.
+- B-check contract: template has the new `<details>`
+  block + form-grid class + 4 new i18n keys (`reg.linux_*`,
+  `reg.os_quickref_*`) + the SSH example block.
+
+**Reusable lesson**: any form with "do this on the server
+side too" should have a `details` block with the
+server-side commands inline. Operators don't want to
+context-switch to docs while registering a device.
+
+### B166 — B160 e2e + system tests
+
+**Status**: NOT STARTED (target: v1.5.1)
+**Effort**: ~0.5-1 day
+**Symptom**: B160 (device renewal) shipped with unit tests
+but no e2e test that exercises the full flow on a real
+headscale. The operator is concerned the unit tests
+could miss a regression in the full chain (handler →
+headscale gRPC → response → audit log → redirect).
+Also: no system test for renew. The system test for
+device health (in `internal/feature/admin/system_tests.go`)
+doesn't cover renewal at all.
+
+**Scope**:
+- Add a system test `headscale.device_renew` to the
+  TestRegistry in `system_tests.go` that:
+  1. Picks the first non-tagged device belonging to a
+     known user.
+  2. Calls `headscale.ExtendNodeExpiry` with
+     `now + 30d` directly (the same call the renew
+     handler makes).
+  3. Verifies the new expiry is in the expected range
+     ([now+29d, now+31d]).
+  4. Restores the original expiry (so the test is
+     idempotent).
+- Add a system test `headscale.device_delete` that:
+  1. Lists all devices for the test user.
+  2. Creates a test device via `headscale.RegisterNode`
+     with a known tag.
+  3. Calls `headscale.DeleteNode(id)`.
+  4. Verifies the device is gone from
+     `headscale.ListAllNodes`.
+  5. Verifies the row is removed from `node_owner_map`.
+- Document these tests in `scripts/check_b166.sh` with
+  the standard contract layout (handler presence +
+  test presence + 4 i18n keys).
+
+**Reusable lesson**: system tests for "external system
+calls" should be idempotent (restore state after the
+test) so they can run on the production VM without
+manual cleanup. The expirewatch goroutine is a good
+model — it reads + writes + restores in a transaction
+or with a rollback.
 
 ---
 

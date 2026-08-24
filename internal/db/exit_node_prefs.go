@@ -219,6 +219,22 @@ func ListAllDeviceExitNodePrefs(d *sql.DB) ([]DeviceExitNodePref, error) {
 	return out, rows.Err()
 }
 
+// DeleteDeviceExitNodePref removes the per-device pref for
+// (user_id, device_hostname). Used by the /my/devices delete
+// flow (B162) to clean up the pref row when the device is
+// removed from headscale. No-op if the row doesn't exist
+// (PostgreSQL DELETE silently succeeds on 0 rows). The
+// caller is expected to use the lowercased hostname (the
+// device_exit_node_prefs table stores the lowercased form
+// to match the v0.28.0 tag:dev-<user>-<device> convention).
+func DeleteDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) error {
+	_, err := d.Exec(
+		`DELETE FROM device_exit_node_prefs WHERE user_id = $1 AND device_hostname = $2`,
+		userID, deviceHostname,
+	)
+	return err
+}
+
 // ListDeviceExitNodePrefsForUser returns the device exit-node
 // prefs for a single user. Same shape as ListAllDeviceExitNodePrefs
 // but filtered to one user (the UI calls this for /my/exit-nodes

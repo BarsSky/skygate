@@ -24,6 +24,18 @@
 </div>
 {{end}}
 
+{{/* B162 (v1.5.1): post-delete flash. The
+   PostMyDeviceDelete handler redirects to
+   /my/devices?deleted=<host>; we render the
+   success alert with the hostname. The same
+   pattern as the B160 renew flash. */}}
+{{if .DeletedHost}}
+<div class="alert alert-success">
+  <i class="fa-solid fa-trash"></i>
+  {{tf "devices.delete_ok" .DeletedHost}}
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-network-wired"></i>{{t "my_devices.subnet_card_title"}}</h3>
   {{if .SubnetCIDR}}
@@ -256,6 +268,24 @@
             <form method="post" action="/my/devices/{{.ID}}/renew" style="margin-top:6px;display:inline" title="{{t "devices.renew_title"}}">
               <button type="submit" class="btn btn-secondary" style="padding:2px 8px;font-size:11px"><i class="fa-solid fa-clock-rotate-left"></i>{{t "devices.renew"}}</button>
             </form>
+            {{/* B162 (v1.5.1): per-row Delete button.
+               Same action shape as Renew (POST, no JS
+               besides the browser confirm), same
+               visual treatment. The onsubmit
+               `confirm()` uses the i18n
+               `devices.delete_confirm` string with
+               the hostname interpolated so the user
+               sees exactly which device they're
+               about to remove. The button is
+               rendered next to Renew (not inside
+               the Renew form) so a misclick on
+               Delete can't accidentally re-extend
+               the session. */}}
+            <form method="post" action="/my/devices/{{.ID}}/delete" style="margin-top:6px;display:inline" onsubmit="return confirm('{{tf "devices.delete_confirm" .Hostname}}')">
+              <button type="submit" class="btn btn-danger" style="padding:2px 8px;font-size:11px" title="{{t "devices.delete_title"}}">
+                <i class="fa-solid fa-trash"></i>{{t "devices.delete"}}
+              </button>
+            </form>
           {{else}}
             <span style="color:var(--text-subtle)">{{.ExpiresRelative}}</span>
           {{end}}
@@ -382,47 +412,130 @@
   <p style="color:var(--text-muted);margin-bottom:16px">
     {{t "devices.add_hint"}}
     {{t "preauth.warning"}}
-    {{t "devices.tag_hint_v0_24_1"}}.
   </p>
   <form method="post" action="/my/preauth" id="preauth-form">
-    <div class="os-grid">
-      <label class="os-tile"><input type="radio" name="os" value="android" required><i class="fa-brands fa-android"></i>Android</label>
-      <label class="os-tile"><input type="radio" name="os" value="ios"><i class="fa-brands fa-apple"></i>iOS</label>
-      <label class="os-tile"><input type="radio" name="os" value="linux"><i class="fa-brands fa-linux"></i>Linux</label>
-      <label class="os-tile"><input type="radio" name="os" value="macos"><i class="fa-brands fa-apple"></i>macOS</label>
-      <label class="os-tile"><input type="radio" name="os" value="windows"><i class="fa-brands fa-windows"></i>Windows</label>
-    </div>
-    {{/* B155 (v1.5.0): custom TTL + reusable checkbox.
-       The handler parses custom_ttl_value +
-       custom_ttl_unit BEFORE the legacy ttl dropdown
-       (mirrors the B153 token pattern). 0 = never
-       (headscale TTL = 5y cap). The reusable
-       checkbox defaults to OFF (single-use = the
-       pre-B155 behaviour). */}}
-    <div class="field">
-      <label>{{t "keys.custom_ttl_label"}}</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="number" name="custom_ttl_value" min="0" max="43800" step="1" placeholder="—" style="width:120px" inputmode="numeric">
-        <select name="custom_ttl_unit" class="form-control" style="max-width:140px">
-          <option value="h">{{t "keys.custom_ttl_h"}}</option>
-          <option value="d" selected>{{t "keys.custom_ttl_d"}}</option>
-          <option value="w">{{t "keys.custom_ttl_w"}}</option>
-          <option value="y">{{t "keys.custom_ttl_y"}}</option>
-        </select>
+    {{/* B165 (v1.5.1): stable form-grid layout.
+
+       The pre-B165 form had:
+         - OS tiles in a 5-column grid (auto-fit, minmax)
+         - Custom TTL value + unit on a single inline-flex row
+         - Reusable checkbox on its own row
+         - The labels were small (text-muted gray) and
+           didn't visually group the value/unit pair
+
+       The new layout:
+         - 2-column form-grid (1fr 1fr on desktop,
+           1 column on mobile) so the OS row + TTL row +
+           Reusable row all align consistently
+         - The Custom TTL value + unit are wrapped in
+           a labelled group (`.form-group-inline`) so
+           the label clearly owns the pair
+         - Hint text is `<small class="form-hint-strong">`
+           (slightly darker, more readable) instead of
+           the default `.form-hint` gray
+         - A new `<details>` block at the bottom of
+           the form (collapsed by default) has the
+           SSH-key generation example + per-OS quick-ref
+           commands. Operators who register a Linux
+           server that will be an exit-node or a
+           subnet-router need an SSH key + the
+           tailscale up command — the previous form
+           had to send them to the docs.
+    */}}
+    <div class="form-grid">
+      <div class="field" style="grid-column:1 / span 2">
+        <label>{{t "reg.os_label"}}</label>
+        <div class="os-grid">
+          <label class="os-tile"><input type="radio" name="os" value="android" required><i class="fa-brands fa-android"></i>Android</label>
+          <label class="os-tile"><input type="radio" name="os" value="ios"><i class="fa-brands fa-apple"></i>iOS</label>
+          <label class="os-tile"><input type="radio" name="os" value="linux"><i class="fa-brands fa-linux"></i>Linux</label>
+          <label class="os-tile"><input type="radio" name="os" value="macos"><i class="fa-brands fa-apple"></i>macOS</label>
+          <label class="os-tile"><input type="radio" name="os" value="windows"><i class="fa-brands fa-windows"></i>Windows</label>
+        </div>
+        <div class="form-hint-strong">{{t "reg.os_hint" | safeHTML}}</div>
       </div>
-      <div class="form-hint">{{t "keys.custom_ttl_hint"}}</div>
+
+      <div class="field">
+        <label for="custom_ttl_value">{{t "keys.custom_ttl_label"}}</label>
+        <div class="form-group-inline">
+          <input type="number" name="custom_ttl_value" id="custom_ttl_value" min="0" max="43800" step="1" placeholder="—" inputmode="numeric" aria-label="{{t "keys.custom_ttl_value_aria"}}">
+          <select name="custom_ttl_unit" class="form-control" aria-label="{{t "keys.custom_ttl_unit_aria"}}">
+            <option value="h">{{t "keys.custom_ttl_h"}}</option>
+            <option value="d" selected>{{t "keys.custom_ttl_d"}}</option>
+            <option value="w">{{t "keys.custom_ttl_w"}}</option>
+            <option value="y">{{t "keys.custom_ttl_y"}}</option>
+          </select>
+        </div>
+        <div class="form-hint-strong">{{t "keys.custom_ttl_hint" | safeHTML}}</div>
+      </div>
+
+      <div class="field form-check">
+        <label>
+          <input type="checkbox" name="reusable" value="1">
+          {{t "keys.reusable_label"}}
+        </label>
+        <div class="form-hint-strong">{{t "keys.reusable_hint" | safeHTML}}</div>
+      </div>
     </div>
-    <div class="field form-check">
-      <label>
-        <input type="checkbox" name="reusable" value="1">
-        {{t "keys.reusable_label"}}
-      </label>
-      <div class="form-hint">{{t "keys.reusable_hint"}}</div>
-    </div>
+
     <div class="btn-row right">
       <button type="submit" class="btn"><i class="fa-solid fa-key"></i>{{t "keys.issue"}}</button>
     </div>
   </form>
+
+  {{/* B165 (v1.5.1): server-side setup help.
+     Collapsed by default (operator reads the form
+     first; the help is for after the key is shown).
+     The Linux block has:
+       1. SSH key generation example (ed25519, the
+          recommended algorithm for new keys).
+       2. Tailscale up command with --advertise-exit-node
+          and --advertise-routes.
+     The mobile block has the Tailscale app's "Use
+     custom coordination server" flow (the official
+     Tailscale docs are heavy on screenshots; the
+     short text version here is enough). */}}
+  <details style="margin-top:16px">
+    <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+      <i class="fa-solid fa-server"></i> {{t "reg.help_title"}}
+    </summary>
+    <div style="margin-top:12px;padding:12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.55">
+
+      <p style="margin-top:0"><b>{{t "reg.help_ssh_title"}}</b></p>
+      <p style="color:var(--text-muted)">{{t "reg.help_ssh_intro" | safeHTML}}</p>
+      <pre><code>ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/id_ed25519
+ssh-add ~/.ssh/id_ed25519  # если используете ssh-agent</code></pre>
+
+      <p style="margin-top:12px"><b>{{t "reg.help_linux_title"}}</b></p>
+      <p style="color:var(--text-muted)">{{t "reg.help_linux_intro" | safeHTML}}</p>
+      <pre><code># 1. Установите Tailscale:
+curl -fsSL https://tailscale.com/install.sh | sh
+
+# 2. Залогиньтесь с preauth-ключом (см. выше):
+sudo tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ
+
+# 3. Если это будет exit-node:
+sudo tailscale set --advertise-exit-node
+
+# 4. Если это будет subnet-router (подсеть 192.168.1.0/24):
+sudo tailscale set --advertise-routes=192.168.1.0/24</code></pre>
+
+      <p style="margin-top:12px"><b>{{t "reg.help_mobile_title"}}</b></p>
+      <p style="color:var(--text-muted)">{{t "reg.help_mobile_intro" | safeHTML}}</p>
+      <ol style="margin-top:6px;padding-left:20px">
+        <li>{{t "reg.help_mobile_step1" | safeHTML}}</li>
+        <li>{{t "reg.help_mobile_step2" | safeHTML}}</li>
+        <li>{{t "reg.help_mobile_step3" | safeHTML}}</li>
+      </ol>
+
+      <p style="margin-top:12px"><b>{{t "reg.help_windows_title"}}</b></p>
+      <p style="color:var(--text-muted)">{{t "reg.help_windows_intro" | safeHTML}}</p>
+      <pre><code>tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ</code></pre>
+
+    </div>
+  </details>
 </div>
 
 <div class="card">
@@ -430,23 +543,17 @@
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
     {{t "dashboard.quickref_control"}} <code>{{.ControlURL}}</code>
   </p>
-
-  <details>
-    <summary style="cursor:pointer;color:var(--accent)"><b>Android / iOS</b></summary>
-    <ol class="plain" style="margin-top:8px">
-      <li>Install Tailscale (Google Play / App Store).</li>
-      <li>In the app: <b>Settings → Use custom coordination server</b> → paste the URL above.</li>
-      <li>Tap <b>Sign in</b> → on the login page pick <b>"Use a preauth key"</b> → paste the key.</li>
-    </ol>
-  </details>
-
-  <details>
-    <summary style="cursor:pointer;color:var(--accent);margin-top:8px"><b>Linux / macOS / Windows (CLI)</b></summary>
-    <pre style="margin-top:8px">sudo tailscale up --login-server={{.ControlURL}} --authkey=YOUR_KEY</pre>
-    <p style="color:var(--text-muted);font-size:12px;margin-top:4px">
-      Add <code>--accept-routes</code> if you want to accept routes from exit nodes.
-    </p>
-  </details>
+  {{/* B165 (v1.5.1): the per-OS quick-ref moved into
+     the "Help" <details> block above (right under
+     the form). The pre-B165 FAQ only had Android +
+     Linux + Windows; B165 adds a dedicated SSH-key
+     generation block (for users who want to use
+     this device as an exit-node / subnet-router)
+     and the exit-node + subnet-router advertise
+     commands. The "FAQ" card here stays as the
+     tailnet URL + the cross-OS quick-ref card;
+     the deeper "Help" lives next to the form
+     where it's actually used. */}}
 </div>
 
 <script>

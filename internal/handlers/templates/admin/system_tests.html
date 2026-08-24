@@ -148,7 +148,19 @@
         </td>
         <td>
           {{if .LastError}}
-            <small><code style="color:#dc3545">{{.LastError}}</code></small>
+            {{/* B163 (v1.5.1): same collapsible
+               treatment as the main Tests tab.
+               The History tab's per-test last-error
+               is often a multi-line gRPC stack trace
+               or a SQL error; rendering it inline
+               made the History table unreadable. */}}
+            <details class="system-test-output" open>
+              <summary>
+                <i class="fa-solid fa-triangle-exclamation" style="color:#dc3545"></i>
+                <span style="color:#dc3545">{{t "system_tests.output_fail_label"}}</span>
+              </summary>
+              <pre style="margin:4px 0 0 0;padding:6px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word;max-height:180px;overflow-y:auto">{{.LastError}}</pre>
+            </details>
           {{else}}
             <small style="color:var(--text-muted)">—</small>
           {{end}}
@@ -298,7 +310,55 @@
           {{if $src}}
             {{range $src}}
               {{if eq .Name $testName}}
-                <small><code>{{.Output}}</code></small>
+                {{/* B163 (v1.5.1): collapsible full FAIL
+                   output. The previous inline
+                   `<small><code>{{.Output}}</code></small>`
+                   rendered multi-line error messages
+                   as a wall of text in a tiny inline
+                   element that wrapped unpredictably
+                   — the operator reported "I can't
+                   tell what the test actually failed
+                   on". The new markup:
+                     - `<details open>` for FAIL rows
+                       (operator sees the reason
+                       immediately) + closed for
+                       PASS/SKIP (less noise on a
+                       healthy system).
+                     - `<pre>` with white-space:
+                       pre-wrap + max-height 280px +
+                       overflow: auto so a 200-line
+                       error doesn't push the table
+                       off-screen.
+                     - Inline "copy" button (plain JS
+                       + clipboard API) so the
+                       operator can paste the
+                       output into a Telegram
+                       message when asking for help.
+                   The output is still rendered
+                   (not just in a tooltip) so screen
+                   readers and `view-source` both
+                   see it. */}}
+                <details class="system-test-output" {{if eq $rowStatus "fail"}}open{{end}}>
+                  <summary>
+                    {{if eq $rowStatus "fail"}}
+                      <i class="fa-solid fa-triangle-exclamation" style="color:#dc3545"></i>
+                      <span style="color:#dc3545">{{t "system_tests.output_fail_label"}}</span>
+                    {{else if eq $rowStatus "pass"}}
+                      <i class="fa-solid fa-circle-check" style="color:#198754"></i>
+                      <span style="color:#198754">{{t "system_tests.output_pass_label"}}</span>
+                    {{else if eq $rowStatus "skip"}}
+                      <i class="fa-solid fa-circle-pause" style="color:#6c757d"></i>
+                      <span style="color:#6c757d">{{t "system_tests.output_skip_label"}}</span>
+                    {{else}}
+                      <i class="fa-solid fa-circle" style="color:#6c757d"></i>
+                      <span style="color:#6c757d">{{t "system_tests.output_empty_label"}}</span>
+                    {{end}}
+                    <button type="button" class="btn btn-ghost" style="font-size:10px;padding:1px 6px;margin-left:8px" onclick="copySystemTestOutput(this)" title="{{t "system_tests.output_copy_title"}}">
+                      <i class="fa-solid fa-copy"></i> {{t "system_tests.output_copy_btn"}}
+                    </button>
+                  </summary>
+                  <pre>{{.Output}}</pre>
+                </details>
               {{end}}
             {{end}}
           {{end}}
@@ -350,5 +410,92 @@
   .text-pass { color: #198754; font-weight: 600; }
   .text-fail { color: #dc3545; font-weight: 600; }
   .text-skip { color: #6c757d; font-weight: 500; }
+  /* B163 (v1.5.1): collapsible FAIL output.
+     The `<details>` is rendered with `open` for FAIL
+     rows (operator sees the reason immediately),
+     closed for PASS/SKIP (less noise). The inner
+     `<pre>` uses white-space: pre-wrap so multi-line
+     error messages (e.g. "SQL error: column X
+     does not exist\n  at line 5\n  at line 6")
+     render with proper line breaks. The 280px
+     max-height + overflow: auto keeps a 200-line
+     error from pushing the table off-screen. The
+     font is monospace so the error columns line
+     up (gRPC stack traces, JSON responses, etc.). */
+  details.system-test-output {
+    margin: 0;
+    padding: 0;
+  }
+  details.system-test-output > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 2px 0;
+    font-size: 12px;
+    user-select: none;
+  }
+  details.system-test-output > summary::-webkit-details-marker {
+    display: none;
+  }
+  details.system-test-output > pre {
+    margin: 6px 0 0 0;
+    padding: 8px 10px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-height: 280px;
+    overflow-y: auto;
+  }
 </style>
+
+{{/* B163 (v1.5.1): copy-to-clipboard helper.
+   Plain JS + navigator.clipboard.writeText. Falls
+   back to a deprecated document.execCommand for
+   browsers without the modern Clipboard API (rare
+   in 2026, but the fallback keeps the button
+   working on locked-down admin terminals). */}}
+<script>
+function copySystemTestOutput(btn) {
+  // The button sits inside <summary>; the <pre>
+  // is the next sibling. Walk up to the enclosing
+  // <details> and find the <pre> within.
+  var details = btn;
+  while (details && details.tagName !== 'DETAILS') details = details.parentElement;
+  if (!details) return;
+  var pre = details.querySelector('pre');
+  if (!pre) return;
+  var text = pre.textContent || '';
+  var done = function() {
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-check"></i> OK';
+    setTimeout(function() { btn.innerHTML = orig; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function() {
+      // Fall through to the legacy path
+      legacyCopy(text);
+      done();
+    });
+  } else {
+    legacyCopy(text);
+    done();
+  }
+  function legacyCopy(s) {
+    var ta = document.createElement('textarea');
+    ta.value = s;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+    document.body.removeChild(ta);
+  }
+}
+</script>
 {{end}}

@@ -1,0 +1,138 @@
+{{define "body-admin-derp_relays_init"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-tower-broadcast"></i>{{t "derp_init.title"}}</h2>
+    <div class="sub">{{t "derp_init.subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/derp/relays" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-server"></i>{{t "derp_init.section_host"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "derp_init.help_host" | safeHTML}}</p>
+  <form method="post" action="/admin/derp/relays/init">
+    <div class="form-grid">
+
+      <div class="field">
+        <label for="hostname">{{t "derp_init.hostname"}}</label>
+        <input type="text" name="hostname" id="hostname" required placeholder="derp-fra-1.example.com">
+        <div class="form-hint">{{t "derp_init.hostname_help" | safeHTML}}</div>
+      </div>
+
+      <div class="field">
+        <label for="public_ip">{{t "derp_init.public_ip"}}</label>
+        <input type="text" name="public_ip" id="public_ip" placeholder="198.51.100.10">
+        <div class="form-hint">{{t "derp_init.public_ip_help" | safeHTML}}</div>
+      </div>
+
+      <div class="field">
+        <label for="region_id">{{t "derp_init.region_id"}}</label>
+        <input type="number" name="region_id" id="region_id" min="1" max="999" value="{{.SuggestedRegionID}}" required>
+        <div class="form-hint">{{t "derp_init.region_id_help"}}</div>
+      </div>
+
+      <div class="field">
+        <label for="region_code">{{t "derp_init.region_code"}}</label>
+        <input type="text" name="region_code" id="region_code" required maxlength="8" placeholder="fra" style="text-transform:lowercase">
+        <div class="form-hint">{{t "derp_init.region_code_help" | safeHTML}}</div>
+      </div>
+
+      <div class="field" style="grid-column:1 / span 2">
+        <label for="region_name">{{t "derp_init.region_name"}}</label>
+        <input type="text" name="region_name" id="region_name" required placeholder="Frankfurt relay 1">
+        <div class="form-hint">{{t "derp_init.region_name_help"}}</div>
+      </div>
+
+    </div>
+  </div>
+
+  <h3 style="margin-top:24px"><i class="fa-solid fa-key"></i>{{t "derp_init.section_ssh"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "derp_init.help_ssh" | safeHTML}}</p>
+  <div class="form-grid">
+
+    <div class="field">
+      <label for="ssh_user">{{t "derp_init.ssh_user"}}</label>
+      <input type="text" name="ssh_user" id="ssh_user" value="root" required>
+      <div class="form-hint">{{t "derp_init.ssh_user_help"}}</div>
+    </div>
+
+    <div class="field">
+      <label for="ssh_port">{{t "derp_init.ssh_port"}}</label>
+      <input type="number" name="ssh_port" id="ssh_port" value="22" min="1" max="65535">
+      <div class="form-hint">{{t "derp_init.ssh_port_help"}}</div>
+    </div>
+
+    <div class="field" style="grid-column:1 / span 2">
+      <label for="ssh_target">{{t "derp_init.ssh_target"}}</label>
+      <input type="text" name="ssh_target" id="ssh_target" required placeholder="root@198.51.100.10 или root@100.64.0.7 (Tailscale IP)">
+      <div class="form-hint">{{t "derp_init.ssh_target_help" | safeHTML}}</div>
+    </div>
+
+    <div class="field" style="grid-column:1 / span 2">
+      <label for="ssh_key_path">{{t "derp_init.ssh_key_path"}}</label>
+      <input type="text" name="ssh_key_path" id="ssh_key_path" value="{{.DefaultSSHKey}}" required placeholder="/root/.ssh/id_ed25519">
+      <div class="form-hint">{{t "derp_init.ssh_key_path_help" | safeHTML}}</div>
+    </div>
+
+  </div>
+
+  <h3 style="margin-top:24px"><i class="fa-solid fa-network-wired"></i>{{t "derp_init.section_ports"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "derp_init.help_ports" | safeHTML}}</p>
+  <div class="form-grid">
+
+    <div class="field">
+      <label for="derp_port">{{t "derp_init.derp_port"}}</label>
+      <input type="number" name="derp_port" id="derp_port" value="443" min="1" max="65535">
+      <div class="form-hint">{{t "derp_init.derp_port_help"}}</div>
+    </div>
+
+    <div class="field">
+      <label for="stun_port">{{t "derp_init.stun_port"}}</label>
+      <input type="number" name="stun_port" id="stun_port" value="3478" min="1" max="65535">
+      <div class="form-hint">{{t "derp_init.stun_port_help"}}</div>
+    </div>
+
+    <div class="field">
+      <label for="sort_order">{{t "derp_init.sort_order"}}</label>
+      <input type="number" name="sort_order" id="sort_order" value="{{.SuggestedSortOrder}}" min="1">
+      <div class="form-hint">{{t "derp_init.sort_order_help"}}</div>
+    </div>
+
+    <div class="field">
+      <label for="notes">{{t "derp_init.notes"}}</label>
+      <input type="text" name="notes" id="notes" placeholder="{{t "derp_init.notes_placeholder"}}">
+      <div class="form-hint">{{t "derp_init.notes_help"}}</div>
+    </div>
+
+  </div>
+
+    <div class="alert" style="margin-top:16px">
+      <i class="fa-solid fa-info-circle"></i>
+      <div>{{t "derp_init.warning" | safeHTML}}</div>
+    </div>
+
+    <div class="btn-row right" style="margin-top:16px">
+      <button type="submit" class="btn"><i class="fa-solid fa-rocket"></i>{{t "derp_init.submit"}}</button>
+    </div>
+  </form>
+</div>
+
+<details style="margin-top:16px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600">
+    <i class="fa-solid fa-circle-question"></i> {{t "derp_init.faq_title"}}
+  </summary>
+  <div style="margin-top:12px;padding:12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.5">
+    <p><b>{{t "derp_init.faq_q1_title"}}</b></p>
+    <p style="color:var(--text-muted)">{{t "derp_init.faq_q1_body" | safeHTML}}</p>
+    <p style="margin-top:12px"><b>{{t "derp_init.faq_q2_title"}}</b></p>
+    <p style="color:var(--text-muted)">{{t "derp_init.faq_q2_body" | safeHTML}}</p>
+    <p style="margin-top:12px"><b>{{t "derp_init.faq_q3_title"}}</b></p>
+    <p style="color:var(--text-muted)">{{t "derp_init.faq_q3_body" | safeHTML}}</p>
+  </div>
+</details>
+{{end}}

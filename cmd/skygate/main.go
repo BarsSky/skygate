@@ -845,6 +845,16 @@ func main() {
 	// handler scope-checks the node to the current
 	// user (cross-user renewals return 404).
 	mux.Handle("POST /my/devices/{id}/renew", authMW(http.HandlerFunc(mySvc.PostMyDeviceRenew)))
+	// B162 (v1.5.1): per-row device delete. The
+	// handler calls headscale DeleteNode (which
+	// InvalidatesCache) + cleans up node_owner_map
+	// + device_exit_node_prefs + writes the
+	// device_deleted audit row. Cross-user deletes
+	// return 404; deletes for a node the snapshot
+	// still references but headscale has already
+	// purged return 410 Gone (mirrors the B160.1
+	// pattern).
+	mux.Handle("POST /my/devices/{id}/delete", authMW(http.HandlerFunc(mySvc.PostMyDeviceDelete)))
 	// B155 (v1.5.0): per-row preauth key reissue.
 	// Mirrors B153's /my/token/{id}/renew pattern:
 	// reissue button on /my/keys (POST, no JS).
@@ -1038,6 +1048,18 @@ func main() {
 	mux.Handle("POST /admin/derp/relays/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysDelete)))
 	mux.Handle("POST /admin/derp/relays/toggle", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysToggle)))
 	mux.Handle("POST /admin/derp/relays/test", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysTest)))
+	// B164 (v1.5.1) — DERP relay init on a new host.
+	// The page renders the form; the POST handler
+	// shells out to bash deploy/derp-init.sh on
+	// the SSH target (operator-supplied), which
+	// installs derper, configures systemd, and
+	// returns the relay metadata. The handler
+	// then inserts a derp_relays row so the new
+	// relay is registered in the live policy.
+	// See internal/feature/admin/derp_init.go
+	// for the handler bodies + doc comments.
+	mux.Handle("GET /admin/derp/relays/init", authMW(http.HandlerFunc(adminSvc.GetAdminDerpRelaysInit)))
+	mux.Handle("POST /admin/derp/relays/init", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysInit)))
 
 	// v1.5.0 / B149 — /admin/ha (High Availability chain editor).
 	// The page renders the cluster topology, failover policy,

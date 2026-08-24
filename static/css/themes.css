@@ -506,6 +506,71 @@ label .lbl-sub{font-weight:400;color:var(--text-muted);font-size:13px;margin-lef
 .field{margin-bottom:14px}
 .field .hint{font-size:13px;color:var(--text-muted);margin-top:4px;display:flex;align-items:flex-start;gap:4px}
 .field .hint i{font-size:12px;margin-top:2px}
+/* 2026-08-24: v1.5.1 (B165) — generic 2-column form
+   grid. Used by /my/devices (the "Add new device"
+   form) and any other form that wants a stable
+   desktop layout (1fr 1fr) that collapses to a
+   single column on mobile (<768px). Replaces the
+   pre-B165 inline-flex layouts that caused the
+   fields to "jump" when the screen width changed. */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 18px;
+  align-items: start;
+}
+.form-grid .field {
+  margin-bottom: 0;
+}
+.form-grid .field[style*="grid-column:1 / span 2"],
+.form-grid .field[style*="grid-column: 1 / span 2"] {
+  /* full-width fields (like the OS row) override the
+     2-col layout */
+  grid-column: 1 / -1;
+}
+/* Inline form group (value + unit dropdown on the
+   same row, e.g. the Custom TTL row). The label
+   owns the pair; the input is fixed-width and the
+   unit dropdown fills the remaining space. */
+.form-group-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.form-group-inline > input[type="number"] {
+  width: 130px;
+  flex-shrink: 0;
+}
+.form-group-inline > select {
+  flex: 1 1 auto;
+  min-width: 100px;
+}
+/* Stronger hint (used for the form's actionable
+   hints). The pre-B165 hints were gray-on-gray
+   (--text-muted); the new style uses a slightly
+   darker foreground so the operator can read the
+   hint without squinting. */
+.form-hint-strong {
+  font-size: 12.5px;
+  color: var(--text);
+  margin-top: 6px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+@media (max-width: 768px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .form-group-inline {
+    flex-wrap: wrap;
+  }
+  .form-group-inline > input[type="number"] {
+    width: 100%;
+  }
+  .form-group-inline > select {
+    width: 100%;
+  }
+}
 input[type=text],input[type=password],input[type=email],select,textarea{
   width:100%;padding:8px 10px;
   border:1px solid var(--border-strong);border-radius:var(--radius);
