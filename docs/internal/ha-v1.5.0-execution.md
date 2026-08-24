@@ -497,3 +497,23 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - `docs/internal/v0.27.0-postgres-ha.md` — Patroni + etcd reference (NOT modified, only consulted)
 - `docs/internal/https-setup.md` — Caddy config patterns (v0.32.11 baseline, extended for reg.ru DNS-01)
 - `docs/disaster-recovery.md` — Tier 0 fallback when v1.5.0 isn't deployed
+
+---
+
+### 2026-08-24 (B151 + B152 + B153 — Phase 7 + 8 + 9 runbooks SHIPPED)
+- **3 new operator-driven scripts** (runbooks for Phase 7 + 8 + 9 of the HA v1.5.0 plan; the B145-B150 code surfaces are already SHIPPED):
+  - `scripts/init-headplane.sh` (B151, Phase 8) — 2 modes (bundled + external headplane), 6-step bundled flow (check headscale + read .env + generate key via `docker exec headscale apikeys create -e 365d` + write to .env with `.pre-init-headplane.YYYYMMDDHHMMSS` backup + restart headplane + verify `/admin/healthz`), 4-step external flow. Idempotent (NEEDS_KEY gate skips re-mint if .env has a real key). getenv/setenv helpers consistent with `deploy/lib/env.sh`. 20 contracts in `scripts/check_b151.sh` (ALL PASS).
+  - `scripts/bootstrap_standby.sh` (B152, Phase 7) — operator SSHes to the new VM + runs this script. 6-step flow: pre-flight idempotency check + S3-pull skygate binary from `ha/deploy/<hostname>/` (B150 deploy surface) + S3-pull headscale config from `ha/headscale-config/` (same ACL policy as primary) + `docker compose up -d` + poll `/healthz` 60s + verify `ha_chain` registration in DB. Validates 3 required env vars (SKYGATE_HA_ROLE=standby + SKYGATE_HA_ENABLED=true + HEADPLANE_HEADSCALE__API_KEY non-empty). Writes `ha.bootstrap` audit row. Idempotent. 18 contracts in `scripts/check_b152.sh` (ALL PASS).
+  - `scripts/dr_drill.sh` (B153, Phase 9) — operator-driven 5-step live DR drill. Step 1: verify both nodes on the same skygate version (abort if mismatch). Step 2: kill active (`docker kill -9`), verify standby takes over within 60s. Step 3: restart the original active, verify it rejoins as standby (NO flap, per Decision #11 auto-reclaim is OFF). Step 4: verify DNS resolves to the right IP (B146 reg.ru). Step 5 (optional, `--skip-kill-both`): kill BOTH nodes + restart, verify self-heal within 90s. 3 flags: `--yes` (unattended), `--skip-regapi-check` (skip step 4 if reg.ru not yet unblocked), `--skip-kill-both` (skip step 5 for the first run). Polls `/readyz` for the B145 role banner. NEVER uses `docker compose down -v` (no data destruction). 18 contracts in `scripts/check_b153.sh` (ALL PASS).
+- **All BL-2 plan independent elements now SHIPPED**: B145 (HA chain) + B147 (certsync) + B148 (/admin/certificates) + B149 (/admin/ha) + B150 (/admin/deploy) + **B151 (init-headplane.sh) + B152 (bootstrap_standby.sh) + B153 (dr_drill.sh)**. Only B146 (reg.ru DNS live client) remains as a code element, blocked on operator's reg.ru IP whitelist.
+- **Phase 7 (svyatoslava-1 bootstrap)** — now runnable end-to-end on the new VM once it's provisioned. The operator:
+  1. Provisions svyatoslava-1 (OS + Docker + Tailscale + SSH + Patroni etcd access)
+  2. Clones the skygate repo + copies .env from the primary (or re-runs `deploy.sh`)
+  3. Sets `SKYGATE_HA_ROLE=standby` in .env
+  4. Runs `bash scripts/bootstrap_standby.sh` — the script does the rest
+  5. Verifies via `/admin/ha` (the standby appears in the chain table) + `/admin/audit` (the `ha.bootstrap` row is recorded)
+- **Phase 8 (init-headplane.sh)** — runs as part of any fresh deploy, BEFORE the first `docker compose up -d headplane`. On a re-deploy with an existing key, the NEEDS_KEY gate skips re-mint. The script is idempotent.
+- **Phase 9 (dr_drill.sh)** — operator runs in a low-traffic maintenance window (Sunday 03:00 UTC recommended). The 5 steps walk the operator through the actual failure modes the chain was designed to handle. After the drill, the operator can tag the release (`git tag v1.5.0` per Phase 10).
+- **Status**: 8/10 phases SHIPPED. Only B146 + Phase 10 (release tag) remain. Phase 10 is a single `git tag` + GitHub release, not blocked on anything but the operator's blessing.
+
+

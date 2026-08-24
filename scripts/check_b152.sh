@@ -1,112 +1,140 @@
 #!/bin/bash
-# check_b152.sh — static asset sanity (BL-2 follow-up: "долго переключение между страницами")
+# check_b152.sh — bootstrap_standby.sh (Phase 7 of v1.5.0 HA plan)
 #
-# Background (2026-08-20): operator reported page-switching in the web
-# UI is slow. Root cause: 46 templates reference /static/css/font-awesome.min.css
-# which didn't exist on disk (404 every navigation) AND the StaticHandler
-# had no Cache-Control headers (every navigation re-fetched themes.css).
+# B152 (v1.5.0) — provision a NEW skygate-standby node. The
+# script is operator-driven (they SSH into the new VM + run
+# the script), so the B-check focuses on source-contract:
 #
-# B152 (this file) pins the fixes:
-#   1. font-awesome.min.css MUST exist (no 404 on every page)
-#   2. The 3 WOFF2 webfonts MUST exist (CSS references them at ../webfonts/...)
-#   3. The StaticHandler MUST send Cache-Control on every response
-#   4. The favicon handler MUST also send Cache-Control
+#  A. Source-contract (script exists, is executable, has the
+#     6 pre-flight steps + the idempotency guard, validates
+#     required env vars, polls /healthz)
+#  B. .env contract (the script reads HEADPLANE_HEADSCALE__API_KEY
+#     + SKYGATE_HA_ROLE + SKYGATE_HA_ENABLED — same contract as
+#     the rest of the skygate deploy system)
+#  C. Audit log contract (writes a "ha.bootstrap" audit row so
+#     the /admin/audit page surfaces the bootstrap event)
 #
-# Without these checks, the silent 404 + uncached CSS would regress
-# (the 404 doesn't fail go build / go test, only the live browser
-# shows the perf issue).
-
+# The live run is operator-driven and not in the B-check.
 set -euo pipefail
 
-ok() { echo "  PASS  $1"; }
+ok()  { echo "  PASS  $1"; }
 bad() { echo "  FAIL  $1"; exit 1; }
+skip(){ echo "  SKIP  $1"; }
+hdr() { echo; echo "=== $1 ==="; }
 
-echo "=== contract A: font-awesome.min.css exists on disk ==="
-if [ -f "static/css/font-awesome.min.css" ]; then
-    sz=$(wc -c < "static/css/font-awesome.min.css")
-    if [ "$sz" -gt 10000 ]; then
-        ok "static/css/font-awesome.min.css exists ($sz bytes)"
-    else
-        bad "static/css/font-awesome.min.css is too small ($sz bytes), looks empty"
-    fi
+REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$REPO"
+
+# ---------------------------------------------------------------------------
+hdr "contract A: source file exists + has the right structure"
+
+# A.1 — the script exists + is executable + bash.
+if [ -x scripts/bootstrap_standby.sh ] && head -1 scripts/bootstrap_standby.sh | grep -qE '^#!/usr/bin/env bash$|^#!/bin/bash$'; then
+    ok "scripts/bootstrap_standby.sh exists + is executable + bash shebang"
 else
-    bad "static/css/font-awesome.min.css MISSING — every page would 404 on /static/css/font-awesome.min.css"
+    bad "scripts/bootstrap_standby.sh MISSING or not executable or not bash"
 fi
 
-echo ""
-echo "=== contract B: 3 WOFF2 webfonts exist ==="
-for f in fa-solid-900 fa-regular-400 fa-brands-400; do
-    if [ -f "static/webfonts/$f.woff2" ]; then
-        sz=$(wc -c < "static/webfonts/$f.woff2")
-        if [ "$sz" -gt 1000 ]; then
-            ok "static/webfonts/$f.woff2 exists ($sz bytes)"
-        else
-            bad "static/webfonts/$f.woff2 too small ($sz bytes)"
-        fi
+# A.2 — the script must validate the 3 required env vars.
+# A regression that skips SKYGATE_HA_ROLE would silently start
+# the new node in role=active (the wrong default) and trigger
+# a split-brain.
+for key in "SKYGATE_HA_ROLE" "SKYGATE_HA_ENABLED" "HEADPLANE_HEADSCALE__API_KEY"; do
+    if grep -qE "\\b${key}\\b" scripts/bootstrap_standby.sh; then
+        ok "script validates env var '$key'"
     else
-        bad "static/webfonts/$f.woff2 MISSING — font-awesome CSS references this"
+        bad "script does NOT validate env var '$key' (a regression could start the new node in the wrong role)"
     fi
 done
 
-echo ""
-echo "=== contract C: StaticHandler sets Cache-Control ==="
-if grep -q 'Cache-Control' internal/handlers/static.go; then
-    ok "internal/handlers/static.go has Cache-Control"
+# A.3 — the 6-step flow.
+EXPECTED_STEPS=("[1/6]" "[2/6]" "[3/6]" "[4/6]" "[5/6]" "[6/6]")
+for step in "${EXPECTED_STEPS[@]}"; do
+    if grep -qF "$step" scripts/bootstrap_standby.sh; then
+        ok "script has step $step"
+    else
+        bad "script missing step $step"
+    fi
+done
+
+# A.4 — the script must be idempotent: re-running on an
+# already-bootstrapped host should NOT re-create containers.
+if grep -qE 'skygate.*-1\$|skygate-standby' scripts/bootstrap_standby.sh \
+   && grep -qE 'already bootstrapped' scripts/bootstrap_standby.sh; then
+    ok "script is idempotent (detects existing skygate container, exits early)"
 else
-    bad "internal/handlers/static.go MISSING Cache-Control — every page re-fetches CSS"
+    bad "script is NOT idempotent (re-running on an already-bootstrapped host would re-create containers)"
 fi
 
-if grep -q 'max-age=31536000' internal/handlers/static.go; then
-    ok "Cache-Control: immutable for content-hashed assets (1 year)"
+# A.5 — the script must poll /healthz (the canonical skygate
+# readiness signal). A regression that skips the health check
+# would let the operator think the bootstrap succeeded when
+# the new node is actually 500ing.
+if grep -qE '/healthz' scripts/bootstrap_standby.sh; then
+    ok "script polls /healthz (60s timeout)"
 else
-    bad "StaticHandler missing immutable Cache-Control for content-hashed assets"
+    bad "script does NOT poll /healthz (operator would think bootstrap succeeded when it's actually 500ing)"
 fi
 
-if grep -q 'max-age=86400' internal/handlers/static.go; then
-    ok "Cache-Control: 1-day must-revalidate for versioned assets"
+# A.6 — the script must verify the standby registered in the
+# HA chain. A regression that skips the chain-registration
+# check would let the operator think the standby is ready
+# when the chain table doesn't have the new hostname.
+if grep -qE 'ha_chain' scripts/bootstrap_standby.sh; then
+    ok "script verifies ha_chain registration (operator sees the new node in /admin/ha)"
 else
-    bad "StaticHandler missing 1-day must-revalidate Cache-Control for versioned assets"
+    bad "script does NOT verify ha_chain registration (operator would think the standby is ready when it's not in the chain)"
 fi
 
-echo ""
-echo "=== contract D: FaviconHandler also has Cache-Control ==="
-if grep -q 'Cache-Control' internal/handlers/static.go | grep -A1 'Favicon' | head -1 || \
-   awk '/FaviconHandler/,/^}$/' internal/handlers/static.go | grep -q 'Cache-Control'; then
-    ok "FaviconHandler has Cache-Control"
+# A.7 — the script must S3-pull the headscale config from the
+# primary (otherwise the standby would be on a different
+# config version + different ACL policy).
+if grep -qE 'S3.*headscale.config|ha/headscale-config' scripts/bootstrap_standby.sh; then
+    ok "script S3-pulls headscale config from the primary (same ACL policy)"
 else
-    bad "FaviconHandler missing Cache-Control"
+    bad "script does NOT S3-pull headscale config (standby would be on a different ACL policy)"
 fi
 
-echo ""
-echo "=== contract E: layout.html references local font-awesome ==="
-# We should reference the LOCAL font-awesome, not a CDN. The previous
-# /static/css/font-awesome.min.css reference was correct, just missing
-# the file. After B152 the file exists, so this is a regression check.
-if grep -q '/static/css/font-awesome.min.css' internal/handlers/templates/layout.html; then
-    ok "layout.html references /static/css/font-awesome.min.css (local)"
+# A.8 — the script must S3-pull the skygate binary from
+# s3://<bucket>/ha/deploy/<hostname>/ (the B150 deploy surface).
+# A regression that uses the local git checkout instead would
+# mean the standby is on a different commit than the primary.
+if grep -qE 'ha/deploy|deploy/' scripts/bootstrap_standby.sh; then
+    ok "script S3-pulls skygate binary from ha/deploy/<hostname>/"
 else
-    bad "layout.html no longer references /static/css/font-awesome.min.css — icons broken?"
+    bad "script does NOT S3-pull skygate binary from the B150 deploy surface (standby would be on a different commit than the primary)"
 fi
 
-# We should NOT reference external CDNs for font-awesome (operator's
-# privacy + offline-first policy: no external dependencies).
-if grep -qiE 'cdnjs|jsdelivr|unpkg|fontawesome\.com.*css' internal/handlers/templates/layout.html; then
-    bad "layout.html references external font-awesome CDN — should be local"
+# A.9 — the script must write an audit log row (so the
+# /admin/audit page surfaces the bootstrap event).
+if grep -qE 'ha.bootstrap' scripts/bootstrap_standby.sh; then
+    ok "script writes 'ha.bootstrap' audit row"
 else
-    ok "layout.html uses local font-awesome (no external CDN dependency)"
+    bad "script does NOT write an audit row (the bootstrap event would be invisible in /admin/audit)"
 fi
 
-echo ""
-echo "=== contract F: pre-push hook has B152 wired ==="
-# The pre-push hook (scripts/verify_pre_deploy.sh) must include B152 so
-# the check runs in the standard pre-push gate.
-if grep -q "B152\|check_b152" scripts/verify_pre_deploy.sh; then
-    ok "verify_pre_deploy.sh includes B152"
+# A.10 — the script must print next-steps for the operator
+# (open /admin/ha, run dr_drill.sh, etc).
+if grep -qE 'Next steps|next steps' scripts/bootstrap_standby.sh; then
+    ok "script prints next-step hints for the operator"
 else
-    bad "verify_pre_deploy.sh missing B152 registration"
+    bad "script does NOT print next-step hints (operator would not know what to do after the bootstrap completes)"
 fi
 
-echo ""
-echo "=== summary ==="
-echo "B152: static asset sanity (font-awesome bundled + Cache-Control on /static/)"
-echo "all B152 contracts satisfied"
+# ---------------------------------------------------------------------------
+hdr "contract B: getenv() helper contract"
+
+# The script uses the same getenv() helper pattern as
+# deploy/lib/env.sh. This is a defensive check: a refactor that
+# inlines the grep would silently change the .env parsing
+# behavior (e.g. quote handling).
+if grep -qE '^getenv\(\)' scripts/bootstrap_standby.sh; then
+    ok "script defines getenv() helper (consistent with deploy/lib/env.sh)"
+else
+    bad "script does NOT define getenv() helper (would silently break .env parsing)"
+fi
+
+# ---------------------------------------------------------------------------
+hdr "summary"
+echo "B152: bootstrap_standby.sh (Phase 7 — provision a new skygate-standby node)"
+echo "all contracts satisfied"

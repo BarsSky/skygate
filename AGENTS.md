@@ -38,6 +38,31 @@ in the same commit. Don't let the tracker drift.
   SKYGATE_OIDC_AUTOSYNC=true for the "deploy skygate with the
   OIDC env vars set and want headscale to pick up the config
   on the same boot" case.
+
+* **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
+  (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
+  §6 status log 2026-08-24) — **B151 + B152 + B153** close the
+  operator-driven parts of the HA v1.5.0 plan (Phases 7, 8, 9).
+  8/10 phases now SHIPPED; only B146 (reg.ru DNS live client,
+  blocked on operator's IP whitelist) + Phase 10 (release tag)
+  remain. The new runbooks:
+  - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
+    the headplane API key on a fresh deploy. 2 modes (bundled
+    + external headplane), 6-step bundled flow with
+    idempotent NEEDS_KEY gate, 20 B-check contracts.
+  - `scripts/bootstrap_standby.sh` (B152, Phase 7) — operator
+    runs on the new VM after provisioning. S3-pulls the
+    skygate binary + headscale config from the primary, starts
+    the docker-compose stack with role=standby, verifies
+    `/healthz` + `ha_chain` registration, writes `ha.bootstrap`
+    audit row, 18 B-check contracts.
+  - `scripts/dr_drill.sh` (B153, Phase 9) — operator runs in
+    a maintenance window. 5-step live DR drill (verify
+    version match + kill active + verify failover within 60s
+    + verify no-flap rejoin + optional kill-both). 3 flags
+    (`--yes`, `--skip-regapi-check`, `--skip-kill-both`),
+    polls `/readyz` for the B145 role banner, NEVER uses
+    `docker compose down -v`, 18 B-check contracts.
   - **B167**: full Option C (docker + systemd + k8s + manual +
     download + auto-init + api):
     - `deploy/oidc-sync.sh` (10-step, ~290 lines) — the
