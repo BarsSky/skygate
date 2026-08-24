@@ -52,6 +52,14 @@ type App struct {
 	HS           *headscale.Client
 	HeadscaleKey string
 	JWTSecret    string
+	// B161.1 (v1.5.0): OIDC provider config. The
+	// OIDC service reads these to mount the
+	// discovery + JWKS endpoints and (in B161.2+)
+	// to validate headscale's token requests.
+	OIDCIssuerURL    string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCKeyDir       string
 	// ControlURL is the public-facing URL of the headscale control plane,
 	// shown to users in preauth instructions so they can configure
 	// Tailscale with a custom coordination server. Typically
@@ -201,6 +209,19 @@ func (a *App) SetAdminService(s adminSvcHandle) {
 	a.adminSvc = s
 }
 
+// cfgOrEmptyStr is a tiny nil-safe accessor for the
+// optional config.Config pointer that New() receives.
+// When cfg is nil (e.g. unit tests that construct App
+// directly), the field stays as "" so the OIDC routes
+// return 503 "provider disabled" instead of crashing
+// on a nil-deref. B161.1.
+func cfgOrEmptyStr(cfg *config.Config, getter func(*config.Config) string) string {
+	if cfg == nil {
+		return ""
+	}
+	return getter(cfg)
+}
+
 // SetExitRulesService wires the exit_rules feature service
 // into the legacy *App so the SyncAdvertisedRoutes +
 // RunDomainAutoUpdater wrappers can route through it.
@@ -347,6 +368,17 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		ControlURL:   controlURL,
 		SessionHours: sessionH,
 		DerpBaseURL:  derpURL,
+		// B161.1: OIDC provider config is plumbed
+		// through New() so the auth/oidc service
+		// can read it. If cfg is nil the OIDC
+		// routes still mount but return 503
+		// (provider disabled) — this lets the
+		// binary ship without forcing operators
+		// to set env vars immediately.
+		OIDCIssuerURL:    cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCIssuerURL }),
+		OIDCClientID:     cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCClientID }),
+		OIDCClientSecret: cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCClientSecret }),
+		OIDCKeyDir:       cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCKeyDir }),
 		// 2026-08-09 v0.33.1.31 B83: sshKeyPath is the
 		// in-container path of the SSH private key used by
 		// the per-row `exit_servers.ssh_key_path` fallback

@@ -36,6 +36,7 @@ import (
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
+	oidcsvc "skygate/internal/oidc"
 	"skygate/internal/mesh"
 	"skygate/internal/keynotify"
 	"skygate/internal/tokenrotate"
@@ -432,6 +433,26 @@ func main() {
 		SessionHours: app.SessionHours,
 		Version:      app.Version,
 	}
+
+	// B161.1 (v1.5.0): OIDC provider for headscale.
+	// Loads / generates the RSA keypair at boot
+	// and mounts the discovery + JWKS routes.
+	// The /authorize + /token + /userinfo handlers
+	// (B161.2 + B161.3) will add to oidcSvc.Handler()
+	// without changing this wiring. If NewKeyStore
+	// fails (disk full, bad perms), startup aborts
+	// — see the comment in NewKeyStore.
+	oidcSvc, oidcErr := oidcsvc.NewService(
+		app.OIDCIssuerURL,
+		app.OIDCClientID,
+		app.OIDCClientSecret,
+		app.OIDCKeyDir,
+	)
+	if oidcErr != nil {
+		log.Fatalf("oidc: init failed: %v", oidcErr)
+	}
+	mux.Handle("/.well-known/", oidcSvc.Handler())
+	mux.Handle("/oidc/", oidcSvc.Handler())
 	mux.HandleFunc("GET /login", authSvc.GetLogin)
 	mux.HandleFunc("POST /lang", authSvc.PostLang)
 	mux.Handle("POST /login", loginMW(http.HandlerFunc(authSvc.PostLogin)))

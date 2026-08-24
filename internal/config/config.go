@@ -63,6 +63,19 @@ type Config struct {
 	DerpLANNet string
 	JWTSecret          string
 	SessionHours       int
+	// B161.1 (v1.5.0): OIDC provider config. The
+	// issuer is the public URL of skygate (used as
+	// the iss claim in id_tokens + the discovery
+	// doc's issuer field). The client_id +
+	// client_secret are the credentials headscale
+	// presents in the token request. The key path
+	// is where the RSA keypair is persisted
+	// (./data/oidc-keys/ by default — generated
+	// on first start if missing).
+	OIDCIssuerURL      string
+	OIDCClientID       string
+	OIDCClientSecret   string
+	OIDCKeyDir         string
 	BootstrapAdminUser string
 	BootstrapAdminPass string
 	SSHKeyPath         string // path to SSH key for exit node sync
@@ -421,6 +434,17 @@ func Load() (*Config, error) {
 		ControlURL:         deriveControlURL(getenv("SKYGATE_CONTROL_URL", ""), getenv("HEADSCALE_URL", "http://headscale:50444")),
 		JWTSecret:          os.Getenv("SKYGATE_JWT_SECRET"),
 		SessionHours:       24,
+		// B161.1: OIDC defaults. If SKYGATE_OIDC_ISSUER
+		// is unset the OIDC routes are mounted but
+		// return 503 (disabled) — this lets us ship
+		// the B161.1 skeleton without forcing the
+		// operator to set env vars immediately. The
+		// full OIDC flow (B161.2 + B161.3) requires
+		// the issuer to be set.
+		OIDCIssuerURL:      os.Getenv("SKYGATE_OIDC_ISSUER"),
+		OIDCClientID:       getenv("SKYGATE_OIDC_CLIENT_ID", "headscale"),
+		OIDCClientSecret:   os.Getenv("SKYGATE_OIDC_CLIENT_SECRET"),
+		OIDCKeyDir:         getenv("SKYGATE_OIDC_KEY_DIR", "./data/oidc-keys"),
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "admin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
 		// 2026-08-04 v0.33.1: default path points at the
