@@ -178,6 +178,30 @@ var ruMy = map[string]string{
 	"devices.refresh_title"                      : "Обновить список устройств (сбросить кэш 5s)",
 	"devices.refreshed"                          : "Обновлено в %s",
 	"devices.cache_note"                         : "Данные кэшируются на 5 секунд; кнопка «Обновить» сбрасывает кэш",
+	// B170 (v1.5.2): sub-classification hint rendered
+	// as a small muted caption under the red "expired"
+	// pill on /my/devices. Distinguishes the three
+	// observable causes of an expired node:
+	//   1. no_activity  — LastSeen missing/unparseable
+	//                     (orphan / force-removed /
+	//                     stale snapshot). Renew will
+	//                     likely fail.
+	//   2. near_expiry  — device was online at the
+	//                     moment expiry was set. Most
+	//                     likely `tailscale logout` —
+	//                     the device can come back with
+	//                     a fresh preauth key.
+	//   3. while_offline— device was offline when TTL
+	//                     ran out (or admin force-expired
+	//                     a long-idle device).
+	// The hint_title key is the common hover tooltip
+	// for all three (gives the operator a one-line
+	// "why this hint exists" without spamming the
+	// page with prose).
+	"devices.expired_hint_title"                 : "Подсказка о причине истечения: TTL / разлогин / принудительное истечение",
+	"devices.expired_hint_no_activity"           : "Нет данных о последней активности — устройство было принудительно удалено или никогда не подключалось",
+	"devices.expired_hint_near_expiry"           : "Устройство было онлайн в момент истечения — скорее всего, выполнен `tailscale logout`",
+	"devices.expired_hint_while_offline"         : "Устройство было оффлайн, когда истёк TTL — переподключите, чтобы продлить",
 	// B162 (v1.5.1): per-row device delete UX. The
 	// button is rendered next to the Renew button
 	// for every device with Expiry!="" (we don't
@@ -641,6 +665,14 @@ var enMy = map[string]string{
 	"devices.refresh_title"                      : "Refresh device list (bypass the 5s cache)",
 	"devices.refreshed"                          : "Refreshed at %s",
 	"devices.cache_note"                         : "Data is cached for 5 seconds; the Refresh button bypasses the cache",
+	// B170 (v1.5.2): sub-classification hint rendered
+	// as a small muted caption under the red "expired"
+	// pill on /my/devices. See the RU block above for
+	// the full design rationale.
+	"devices.expired_hint_title"                 : "Hint about the cause of expiry: TTL ran out / user logged out / admin force-expired",
+	"devices.expired_hint_no_activity"           : "No recent activity recorded — the device was force-removed or never came back online",
+	"devices.expired_hint_near_expiry"           : "Device was online when the key expired — most likely a `tailscale logout`",
+	"devices.expired_hint_while_offline"         : "Device was offline when the TTL ran out — reconnect to renew the session",
 	// B162 (v1.5.1): per-row device delete UX.
 	"devices.delete"                             : "Delete",
 	"devices.delete_title"                       : "Delete device from headscale",

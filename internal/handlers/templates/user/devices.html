@@ -264,6 +264,30 @@
                   {{if eq .ExpiryWarning "expired"}}{{t "devices.expired"}}{{else if eq .ExpiryWarning "soon"}}{{tf "keys.expires_in_days" 7}}{{else}}{{tf "keys.expires_in_days" 30}}{{end}}
                 </span>
               </div>
+              {{/* B170 (v1.5.2): sub-classification hint
+                 that fires ONLY when ExpiryWarning ==
+                 "expired". Disambiguates the three causes
+                 of an expired row so the operator can tell
+                 `tailscale logout` from natural TTL
+                 expiry from admin force-expire without
+                 SSH'ing into the VM. Rendered as a small
+                 muted caption (not a separate badge) so
+                 the visual hierarchy keeps the red pill
+                 as the primary signal. The keys are
+                 devices.expired_hint_no_activity /
+                 _near_expiry / _while_offline; the
+                 common title key (devices.expired_hint_title)
+                 is also used as the <div title=...>
+                 tooltip on hover for screen-reader users
+                 and for the rare "what does this mean?"
+                 question. */}}
+              {{if eq .ExpiryHint "no_activity"}}
+                <div style="margin-top:3px;font-size:10px;color:var(--text-muted)" title="{{t "devices.expired_hint_title"}}">{{t "devices.expired_hint_no_activity"}}</div>
+              {{else if eq .ExpiryHint "near_expiry"}}
+                <div style="margin-top:3px;font-size:10px;color:var(--text-muted)" title="{{t "devices.expired_hint_title"}}">{{t "devices.expired_hint_near_expiry"}}</div>
+              {{else if eq .ExpiryHint "while_offline"}}
+                <div style="margin-top:3px;font-size:10px;color:var(--text-muted)" title="{{t "devices.expired_hint_title"}}">{{t "devices.expired_hint_while_offline"}}</div>
+              {{end}}
             {{end}}
             <form method="post" action="/my/devices/{{.ID}}/renew" style="margin-top:6px;display:inline" title="{{t "devices.renew_title"}}">
               <button type="submit" class="btn btn-secondary" style="padding:2px 8px;font-size:11px"><i class="fa-solid fa-clock-rotate-left"></i>{{t "devices.renew"}}</button>

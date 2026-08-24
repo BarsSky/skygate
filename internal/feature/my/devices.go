@@ -242,6 +242,62 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// token-page pattern (red/yellow pill).
 		// 2026-08-20.
 		ExpiryWarning string
+		// ExpiryHint is a sub-classification that fires
+		// only when ExpiryWarning == "expired" — it
+		// distinguishes the three kinds of "expired"
+		// state the operator can observe on a node:
+		//
+		//   "no_activity"  — LastSeen is empty /
+		//                    unparseable. The device was
+		//                    either force-expired by the
+		//                    admin, force-removed from
+		//                    headscale, or this row is a
+		//                    snapshot-only entry that
+		//                    never reconnected. Renew will
+		//                    likely 410 Gone — the operator
+		//                    should consider deleting the
+		//                    row.
+		//   "near_expiry"  — |LastSeen − Expiry| ≤ 5 min.
+		//                    The device was online at or
+		//                    near the moment the expiry
+		//                    was set. Most likely cause:
+		//                    the user ran `tailscale logout`
+		//                    (which sets node.expiry=now
+		//                    on the headscale side). The
+		//                    device can re-register by
+		//                    re-running `tailscale up` with
+		//                    a fresh preauth key.
+		//   "while_offline"— |LastSeen − Expiry| > 5 min
+		//                    AND LastSeen is older than
+		//                    Expiry. The device was offline
+		//                    for the full TTL gap, so the
+		//                    key expired naturally. This
+		//                    is also the signature of an
+		//                    admin force-expire (`headscale
+		//                    nodes expire -i N --immediate`)
+		//                    on a long-idle device.
+		//
+		// Empty for all non-expired rows. The /my/devices
+		// template renders the hint as a small muted
+		// caption directly under the red "expired" pill
+		// (B170, v1.5.2 — operator 2026-08-25
+		// "когда устройство разлогинилось из аккаунта
+		// headscale то в таблице my devices отобразилась
+		// информация что истек срок действия а не
+		// устройство разлогинилось или что то еще, есть
+		// ли возможность различить или истечение срока и
+		// разлогин имеют одну механику?").
+		// 2026-08-25.
+		ExpiryHint string
+		// LastSeenTime is the parsed RFC3339Nano
+		// timestamp from headscale NodeView.LastSeen.
+		// Zero when LastSeen is empty or unparseable.
+		// Kept as a separate field (not just inlined
+		// into the ExpiryHint computation) so future
+		// B-checks / template additions can reuse the
+		// parsed value without re-parsing the raw
+		// string. 2026-08-25.
+		LastSeenTime time.Time
 	}
 	mySet := map[string]bool{}
 	var myNodesList []myNodeRow
@@ -442,6 +498,29 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			row.ExpiryWarning = "soon"
 		case delta < 30*24*time.Hour:
 			row.ExpiryWarning = "month"
+		}
+		// B170 (v1.5.2) — when the row is expired,
+		// also classify the cause so the operator can
+		// tell "TTL ran out while offline" from
+		// "device just logged out" from "force-expired
+		// or stale snapshot". The signal is |LastSeen
+		// − Expiry|:
+		//   - LastSeen empty / unparseable → "no_activity"
+		//   - |delta| ≤ 5 min (device online at or near
+		//     the moment expiry was set) → "near_expiry"
+		//   - otherwise (device was offline before the
+		//     expiry was set) → "while_offline"
+		// The 5-min window is a deliberate trade-off:
+		// a `tailscale logout` from an active client
+		// pushes node.expiry=now, so |delta| is the gap
+		// between the last successful ping and the
+		// logout moment — typically seconds, occasionally
+		// minutes if the client had been idle. 5 min is
+		// wide enough to catch slow clients and narrow
+		// enough to NOT misclassify a natural TTL
+		// expiry (which has a |delta| of ~30 days).
+		if row.ExpiryWarning == "expired" {
+			row.LastSeenTime, row.ExpiryHint = parseLastSeenAndClassify(t, row.LastSeen, now)
 		}
 	}
 
@@ -1130,6 +1209,71 @@ func (s *Service) PostMyDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	// renew redirect with `renewed=...`).
 	http.Redirect(w, r, fmt.Sprintf("/my/devices?deleted=%s",
 		url.QueryEscape(host)), http.StatusFound)
+}
+
+// parseLastSeenAndClassify is the B170 (v1.5.2) helper
+// called from GetMyDevices' expiry-enrichment pass. It
+// parses the raw LastSeen string from headscale (empty /
+// unparseable → zero time) and returns the parsed value
+// + a sub-classification hint suitable for rendering
+// under the red "expired" pill on /my/devices.
+//
+// The caller has already established that the row is
+// expired (Expiry in the past); this function only
+// fingerprints the cause from the |LastSeen − Expiry|
+// gap.
+//
+// Returns one of:
+//   "no_activity"  — lastSeen is empty / unparseable. The
+//                    row has no recent activity record:
+//                    either an orphan (admin force-removed
+//                    from headscale), a snapshot-only
+//                    entry, or a node that never came
+//                    back online after the last refresh.
+//                    Renew will likely 410 Gone.
+//   "near_expiry"  — |lastSeen − expiry| ≤ 5 min. The
+//                    device was online at the moment the
+//                    expiry was set. Most likely cause:
+//                    `tailscale logout` (which pushes
+//                    node.expiry=now from the headscale
+//                    side). The device can re-register by
+//                    re-running `tailscale up` with a
+//                    fresh preauth key.
+//   "while_offline"— |lastSeen − expiry| > 5 min. The
+//                    device was offline well before the
+//                    expiry was set. Either the TTL
+//                    ran out while the device was offline
+//                    (the typical "I forgot to renew"
+//                    case), or the admin force-expired a
+//                    long-idle device via
+//                    `headscale nodes expire -i N
+//                    --immediate`.
+//
+// The 5-min window is a deliberate trade-off — see the
+// comment block in GetMyDevices where this function is
+// called. The exact threshold is unit-tested in
+// devices_b170_test.go.
+func parseLastSeenAndClassify(expiry time.Time, lastSeenRaw string, now time.Time) (time.Time, string) {
+	if lastSeenRaw == "" {
+		return time.Time{}, "no_activity"
+	}
+	ls, perr := time.Parse(time.RFC3339Nano, lastSeenRaw)
+	if perr != nil {
+		// Treat malformed timestamps the same as
+		// empty: we have no usable activity signal,
+		// so the safest hint is "no_activity" (the
+		// operator should investigate, not assume
+		// a clean natural-expiry story).
+		return time.Time{}, "no_activity"
+	}
+	delta := expiry.Sub(ls)
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta <= 5*time.Minute {
+		return ls, "near_expiry"
+	}
+	return ls, "while_offline"
 }
 
 // backfillNodeOwnership was a local copy of the helper in
