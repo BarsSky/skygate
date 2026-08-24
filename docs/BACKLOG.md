@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-25 (B170 expired-row sub-classification hint on /my/devices SHIPPED in v1.5.2-alpha1; B169 admin-side device delete on /admin/devices SHIPPED 2026-08-24)
+**Last updated**: 2026-08-25 (B171 comprehensive device-delete with ACL regen SHIPPED in v1.5.2-alpha1; B170 expired-row sub-classification hint on /my/devices SHIPPED 2026-08-25)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -455,6 +455,28 @@ B-check pins this as a regression guard.
 | `|LastSeen − Expiry| > 5 min` | `while_offline` | TTL ran out while offline, OR admin force-expired a long-idle device |
 
 **Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./internal/feature/my/...` PASS, `bash scripts/check_b170.sh` 28/28 PASS.
+
+---
+
+## Priority 14 — v1.5.2 comprehensive device-delete with ACL regen (SHIPPED 2026-08-25, B171)
+
+### B171 — comprehensive device-delete with ACL regen (user + admin)
+
+**Status**: SHIPPED 2026-08-25 (commit `45ab8ff9`, v1.5.2-alpha1)
+**Effort**: ~1 day
+**What was delivered**: closes the operator-observed gap from 2026-08-25: "кнопка удалить устройство отсуствует у пользователя... администратор также по кнопке очистит не только из skygate (из таблиц БД) но и из headscale и headplane. забирая на себя управлоение политиками и тегами, корректно подчищая и перегенерировывая acl". Pre-B171 the per-row Delete buttons on `/my/devices` (B162, v1.5.1) and `/admin/devices` (B169, v1.5.2) only cleaned three things: headscale (gRPC DeleteNode), `node_owner_map`, and `device_exit_node_prefs`. The `device_rules` table was left with orphaned rows pointing at the now-deleted device, and the ACL policy in headscale was left with `tag:dev-<user>-<device>` references that no longer existed. The next ACL regen would either skip the orphans (policy out of sync with `/my/exit-rules`) or include them and crash headscale's `SetPolicy` with a 400. B171 ships:
+- `internal/devicedelete/devicedelete.go` (NEW, 327 lines) — the shared coordinator that does `node_owner_map` + `device_exit_node_prefs` + `device_rules` + ACL regen + cache invalidate + audit in one call. Both `PostMyDeviceDelete` (user scope) and `PostAdminDeviceDelete` (admin scope) call this helper, so the cleanup logic is identical for both paths.
+- `db.DeleteRulesByDeviceID` + `qDeleteRulesByDeviceID` (NEW) — the SQL primitive that cleans every orphaned `device_rules` row in one query (no per-rule click required, no race window).
+- `db.DeleteNodeOwnerByNodeTagCounted` (NEW) — the row-counted variant of the existing helper (returns `int64` instead of just `error`) so the audit row can include the count.
+- `PostMyDeviceDelete` (B162 rewire) — now calls `devicedelete.Delete` + passes `deleted_rules=N` + `acl_err=...` in the redirect. The 410 Gone path (headscale already removed the node) still runs the cleanup so the local DB is consistent even when the deletion was triggered by a parallel admin action.
+- `PostAdminDeviceDelete` (B169 rewire) — same coordinator + `ok_rules=N` + `acl_err=...` in the redirect. The 404 / exit-node-error / 410 Gone special cases are preserved.
+- `/my/devices` template — Delete button moved OUTSIDE the `{{if .ExpiryUnix}}` block. The operator can now delete their own exit-nodes / subnet-routers / no-expiry devices too (the 'button is missing for my tagged device' symptom that drove the request).
+- `/admin/devices` template — `FlashOkRules` + `FlashACLErr` extensions render the rules count + ACL error inline. The B169 `ok=/err=` flash pattern is preserved for backwards compat.
+- 2 new i18n keys RU + EN (`devices.delete_acl_rules_cleaned` + `devices.delete_acl_err`) in `catalog_my.go`.
+- The audit row emitted by `devicedelete.Delete` includes the explicit headplane note (`headplane: read-only view, will refresh on next UI load`) so the operator can confirm the full cleanup with one audit query. Headplane is read-only from headscale's API; no separate call is needed — the next headplane page load (~30s) shows the deletion automatically.
+- `scripts/check_b171.sh` (NEW, 35 contracts) + fixes to `scripts/check_b162.sh` and `check_b169.sh` (the B162/B169 checks previously grepped for literal `db.DeleteNodeOwnerByNodeTag` / `InvalidateCache` / `'device_deleted'` calls inside the handler; after the B171 rewire those calls live in `devicedelete.Delete`, so the checks now accept either the direct call OR the `devicedelete.Delete` path).
+
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./...` (38 packages) all PASS, `bash scripts/check_b162.sh` all 26 PASS, `bash scripts/check_b169.sh` all 19 PASS, `bash scripts/check_b170.sh` all 28 PASS, `bash scripts/check_b171.sh` all 35 PASS, `make verify-pre` 156 PASS / 14 pre-existing FAIL (B95/B134-B137/B147/B159-B161/B163-B166, all from earlier v1.3.20-v1.5.0 batches, not caused by B171).
 
 ---
 

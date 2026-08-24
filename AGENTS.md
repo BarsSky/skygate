@@ -25,10 +25,12 @@ in the same commit. Don't let the tracker drift.
 ## Release status
 
 * **Current**: v1.5.2-alpha1 (commit `8ce799c8` on VM remote,
-  `7d90af2f` B170 in flight) — **B167 OIDC config auto-sync (full
-  Option C)** + **B168 live OIDC e2e on a public hostname**
+  `7d90af2f` B170 + `45ab8ff9` B171 in flight) —
+  **B167 OIDC config auto-sync (full Option C)**
+  + **B168 live OIDC e2e on a public hostname**
   + **B169 admin-side device delete on /admin/devices**
-  + **B170 expired-row sub-classification hint on /my/devices**.
+  + **B170 expired-row sub-classification hint on /my/devices**
+  + **B171 comprehensive device-delete with ACL regen**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -120,6 +122,67 @@ in the same commit. Don't let the tracker drift.
     (the 3 hint categories + the 5-min boundary +
     the Nano-precision regression guard) + 28
     contracts in `scripts/check_b170.sh`.
+  - **B171 (v1.5.2)**: comprehensive device-delete with
+    ACL regen (operator 2026-08-25: "кнопка удалить
+    устройство отсуствует у пользователя...
+    администратор также по кнопке очистит не только
+    из skygate (из таблиц БД) но и из headscale и
+    headplane. забирая на себя управлоение
+    политиками и тегами, корректно подчищая и
+    перегенерировывая acl"). New `internal/devicedelete`
+    package with shared `Delete` coordinator that
+    does (1) `node_owner_map` cleanup
+    (`db.DeleteNodeOwnerByNodeTagCounted`),
+    (2) `device_exit_node_prefs` cleanup
+    (`db.DeleteDeviceExitNodePref`), (3) ALL
+    orphaned `device_rules` cleanup in one query
+    (new `db.DeleteRulesByDeviceID` +
+    `qDeleteRulesByDeviceID` SQL primitive — the
+    pre-B171 behaviour left the device_rules table
+    full of orphan rows pointing at a non-existent
+    device, and the next ACL regen would either
+    skip them silently OR crash headscale's
+    `SetPolicy` with a 400), (4) ACL regen via
+    `acl.ApplyACLPipelineForPlane` (the new step
+    that fixes the "policy is stale" symptom), (5)
+    cache invalidate (`hs.InvalidateCache` so the
+    next /my/devices or /admin/devices page load
+    sees the deletion immediately, not after the
+    5s cache TTL), (6) audit row with the
+    comprehensive detail + the explicit headplane
+    note. Both `PostMyDeviceDelete` (user scope,
+    `HSForUserFn`) and `PostAdminDeviceDelete` (admin
+    scope, `HSGlobalFn`) call the same `devicedelete.
+    Delete` so the cleanup logic is identical for
+    both paths. The /my/devices template Delete
+    button is now rendered OUTSIDE the
+    `{{if .ExpiryUnix}}` block so the operator can
+    delete their own exit-nodes / subnet-routers /
+    no-expiry devices too (the "button is missing
+    for my tagged device" symptom). The /admin/devices
+    template got `FlashOkRules` + `FlashACLErr`
+    extensions that render the rules-cleaned count
+    + optional ACL regen error inline. 2 new i18n
+    keys RU + EN (`devices.delete_acl_rules_cleaned`
+    + `devices.delete_acl_err`) in `catalog_my.go`.
+    Audit row includes "headplane: read-only view,
+    will refresh on next UI load" so the operator
+    can confirm the full cleanup with one audit
+    query (headplane is read-only from headscale's
+    API, so no separate call is needed — the next
+    headplane page load shows the deletion
+    automatically). 35 contracts in
+    `scripts/check_b171.sh` (covers: devicedelete
+    package + DB primitives + handler rewire +
+    template rewire + i18n parity + build + vet +
+    audit-row content). `scripts/check_b162.sh` and
+    `check_b169.sh` updated to accept the
+    devicedelete path (the B162/B169 checks
+    previously grepped for literal
+    `db.DeleteNodeOwnerByNodeTag` /
+    `InvalidateCache` / `'device_deleted'` calls
+    inside the handler; after the B171 rewire those
+    calls live in `devicedelete.Delete`).
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
