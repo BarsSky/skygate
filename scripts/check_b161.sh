@@ -332,7 +332,7 @@ needed=(
 # DOES add the consent screen can verify the
 # keys were added too.)
 for k in "${needed[@]}"; do
-    c=$(grep -cE "\"$k\"" internal/i18n/catalog_my.go 2>/dev/null)
+    c=$(grep -cE "\"$k\"" internal/i18n/catalog_my.go 2>/dev/null || true)
     c=${c:-0}
     if [ "$c" -ge 2 ] 2>/dev/null; then
         ok "i18n key '$k' present in both RU and EN (consent screen — planned for B161.5)"
@@ -373,8 +373,128 @@ else
 fi
 
 echo ""
+echo "=== contract I: B161.3 — /oidc/token + /oidc/userinfo + RS256 JWT ==="
+# B161.3 (2026-08-24) — the token endpoint and
+# userinfo endpoint, completing the OIDC flow:
+#   1. internal/oidc/jwt.go — RS256 sign/parse
+#      (id_token + access_token; kid in header)
+#   2. internal/oidc/token.go — POST /oidc/token
+#      handler (RFC 6749 sec 4.1.3)
+#   3. internal/oidc/userinfo.go — GET /oidc/userinfo
+#      handler (OIDC core sec 5.3)
+#   4. Service.Handler() mounts both new routes
+#   5. Tests for happy path + every error path
+
+# I.1 — files exist
+for f in jwt.go token.go userinfo.go; do
+    if [ -f "internal/oidc/$f" ]; then
+        ok "$f exists"
+    else
+        bad "internal/oidc/$f MISSING"
+    fi
+done
+
+# I.2 — ServeToken handler
+if grep -qE 'func \(s \*Service\) ServeToken' internal/oidc/token.go; then
+    ok "ServeToken handler defined on *Service"
+else
+    bad "ServeToken handler MISSING"
+fi
+
+# I.3 — ServeUserinfo handler
+if grep -qE 'func \(s \*Service\) ServeUserinfo' internal/oidc/userinfo.go; then
+    ok "ServeUserinfo handler defined on *Service"
+else
+    bad "ServeUserinfo handler MISSING"
+fi
+
+# I.4 — RS256 signing
+if grep -qE 'jwt\.SigningMethodRS256' internal/oidc/jwt.go; then
+    ok "jwt.go uses RS256 (OIDC requires asymmetric)"
+else
+    bad "jwt.go: RS256 signing MISSING"
+fi
+
+# I.5 — kid in JWT header (RFC 7517 sec 4.5)
+if grep -qE 'tok\.Header\["kid"\]' internal/oidc/jwt.go; then
+    ok "JWT carries kid in header (RFC 7517 sec 4.5)"
+else
+    bad "JWT kid header MISSING"
+fi
+
+# I.6 — PKCE verifier (RFC 7636 sec 4.6)
+if grep -qE 'func verifyPKCE' internal/oidc/jwt.go; then
+    ok "verifyPKCE() exists (S256 code_verifier check)"
+else
+    bad "verifyPKCE() MISSING"
+fi
+
+# I.7 — token handler returns Cache-Control: no-store
+# (RFC 6749 sec 5.1 — prevents caching of bearer
+# tokens in browser/CDN/ISP middleware)
+if grep -qE '"no-store"' internal/oidc/token.go; then
+    ok "/oidc/token sets Cache-Control: no-store (RFC 6749 sec 5.1)"
+else
+    bad "/oidc/token: Cache-Control: no-store MISSING"
+fi
+
+# I.8 — userinfo returns 401 + WWW-Authenticate Bearer
+# (RFC 6750 sec 3 — required for invalid_token)
+if grep -qE 'WWW-Authenticate' internal/oidc/userinfo.go && \
+   grep -qE 'Bearer' internal/oidc/userinfo.go; then
+    ok "/oidc/userinfo sets WWW-Authenticate: Bearer (RFC 6750 sec 3)"
+else
+    bad "/oidc/userinfo: WWW-Authenticate Bearer MISSING"
+fi
+
+# I.9 — constant-time client_secret compare
+if grep -qE 'func secureEqual' internal/oidc/token.go; then
+    ok "secureEqual() is constant-time (defense vs timing attacks)"
+else
+    bad "secureEqual() MISSING"
+fi
+
+# I.10 — service.go mounts both new routes
+if grep -qE 'POST /oidc/token' internal/oidc/service.go; then
+    ok "Service.Handler() mounts POST /oidc/token"
+else
+    bad "Service.Handler() MISSING POST /oidc/token"
+fi
+if grep -qE 'GET /oidc/userinfo' internal/oidc/service.go; then
+    ok "Service.Handler() mounts GET /oidc/userinfo"
+else
+    bad "Service.Handler() MISSING GET /oidc/userinfo"
+fi
+
+# I.11 — new B161.3 tests
+needed_tests=(
+    "TestSignIDToken_RoundTrip"
+    "TestParseAccessToken_RejectsWrongSecret"
+    "TestVerifyPKCE"
+    "TestServeToken_HappyPath"
+    "TestServeToken_BadClientSecret"
+    "TestServeToken_UnknownCode"
+    "TestServeUserinfo_MissingAuth"
+)
+for t in "${needed_tests[@]}"; do
+    if grep -qE "func $t\b" internal/oidc/oidc_test.go; then
+        ok "test '$t' exists"
+    else
+        bad "test '$t' MISSING"
+    fi
+done
+
+# I.12 — all OIDC tests pass (B161.1 + B161.2 + B161.3)
+out=$(go test ./internal/oidc/ -count=1 2>&1)
+if echo "$out" | grep -q '^ok'; then
+    ok "internal/oidc tests pass (B161.1 + B161.2 + B161.3)"
+else
+    bad "internal/oidc tests FAILED: $out"
+fi
+
+echo ""
 echo "=== summary ==="
 echo "B161.1: OIDC provider skeleton (discovery + JWKS + RSA keypair)"
 echo "B161.2: /oidc/authorize + auth code store + login redirect"
-echo "B161.3 will add /oidc/token + /oidc/userinfo"
+echo "B161.3: /oidc/token + /oidc/userinfo + RS256 JWT"
 echo "all B161 contracts satisfied"

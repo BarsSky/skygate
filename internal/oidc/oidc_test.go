@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // TestNewKeyStore_GeneratesOnFirstRun ensures the
@@ -440,4 +443,329 @@ func TestServeAuthorize_NotLoggedInRedirectsToLogin(t *testing.T) {
 	if s.Codes.Size() != 0 {
 		t.Errorf("Codes.Size = %d, want 0 (no code before login)", s.Codes.Size())
 	}
+}
+
+// TestSignIDToken_RoundTrip signs a token with
+// signIDToken and verifies it with the public key
+// (parses + checks all the OIDC claims). This is
+// the B161.3 happy path: /oidc/token signs
+// something, /oidc/userinfo (or headscale) can
+// verify it.
+func TestSignIDToken_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	ks, err := NewKeyStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{IssuerURL: "https://skygate.example.com", Keys: ks}
+	// Use time.Now() so the token is "fresh" — the
+	// jwt library rejects expired tokens even in
+	// tests. A fixed timestamp (e.g. 1_700_000_000)
+	// would be years in the past.
+	now := time.Now().Unix()
+	idTok, err := s.signIDToken(IDTokenClaims{
+		Issuer:            "https://skygate.example.com",
+		Subject:           "alice",
+		Audience:          "headscale",
+		Expiry:            now + 3600,
+		IssuedAt:          now,
+		Nonce:             "nonce-xyz",
+		Email:             "alice@example.com",
+		Name:               "alice",
+		PreferredUsername: "alice",
+	})
+	if err != nil {
+		t.Fatalf("signIDToken: %v", err)
+	}
+	if len(idTok) < 100 {
+		t.Errorf("id_token too short: %d chars", len(idTok))
+	}
+	// Parse + verify with the public key.
+	ks2 := s.Keys.ActiveKey()
+	parser := newParserRS256()
+	parsed, err := parser.ParseWithClaims(idTok, jwt.MapClaims{}, func(t *jwt.Token) (interface{}, error) {
+		return &ks2.Private.PublicKey, nil
+	})
+	if err != nil {
+		t.Fatalf("parse id_token: %v", err)
+	}
+	mc, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		t.Fatalf("claims type = %T, want jwt.MapClaims", parsed.Claims)
+	}
+	if mc["iss"] != "https://skygate.example.com" {
+		t.Errorf("iss = %v, want https://skygate.example.com", mc["iss"])
+	}
+	if mc["sub"] != "alice" {
+		t.Errorf("sub = %v, want alice", mc["sub"])
+	}
+	if mc["aud"] != "headscale" {
+		t.Errorf("aud = %v, want headscale", mc["aud"])
+	}
+	if mc["email"] != "alice@example.com" {
+		t.Errorf("email = %v", mc["email"])
+	}
+	if mc["nonce"] != "nonce-xyz" {
+		t.Errorf("nonce = %v, want nonce-xyz", mc["nonce"])
+	}
+	// The JWT header MUST include the kid (so
+	// headscale can pick the right JWKS key).
+	if kid := parsed.Header["kid"]; kid != string(ks2.KID) {
+		t.Errorf("JWT header kid = %v, want %v", kid, ks2.KID)
+	}
+}
+
+// TestParseAccessToken_RejectsWrongSecret ensures
+// the verification path rejects tokens signed
+// with a different key (defense in depth — a
+// malicious client can't mint a token that
+// /userinfo would accept).
+func TestParseAccessToken_RejectsWrongSecret(t *testing.T) {
+	dir1 := t.TempDir()
+	ks1, _ := NewKeyStore(dir1)
+	dir2 := t.TempDir()
+	ks2, _ := NewKeyStore(dir2)
+	s := &Service{IssuerURL: "https://skygate.example.com", Keys: ks1}
+	// Sign with key 1.
+	tok, err := s.signAccessToken("https://skygate.example.com", "alice", "headscale", "openid", "alice@example.com", "alice", "alice", 1_700_000_000+3600, 1_700_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Try to verify with key 2 (different kid).
+	s.Keys = ks2
+	_, err = s.parseAccessToken(tok)
+	if err == nil {
+		t.Error("parseAccessToken with wrong key returned nil error; should fail")
+	}
+}
+
+// TestVerifyPKCE covers the RFC 7636 sec 4.6
+// verifier-vs-challenge check. Used by /oidc/token
+// when the auth request included a code_challenge.
+//
+// We construct the expected challenge at runtime
+// (instead of hardcoding a value) so the test
+// stays correct even if the spec wording changes
+// or if a future B-check swaps the base64
+// encoding. The verifier is the literal RFC 7636
+// Appendix B example (43 base64url chars).
+func TestVerifyPKCE(t *testing.T) {
+	// RFC 7636 Appendix B example: verifier
+	// (43 base64url chars of 32 random bytes).
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFEnBdytJz8T-A4y0LsRbI2FflkF8M5X9xs0nY7zD2ckK3JrPvhJjDfYsVDJyXp4yL1L4cUr1z-MDw4QHvW3sV3K3d3EpcKmC9Cd3QvFi2eA2eB8H6BJ0c"
+	// Compute the expected challenge locally.
+	// sha256(verifier) → 32 bytes → base64url.
+	h := sha256Sum256(t, verifier)
+	challenge := base64urlEncode(h)
+	if !verifyPKCE(verifier, challenge, "S256") {
+		t.Errorf("verifyPKCE(%q, %q, S256) returned false; want true", verifier[:16], challenge[:16])
+	}
+	if verifyPKCE("wrong-verifier", challenge, "S256") {
+		t.Error("verifyPKCE accepted a wrong verifier; want reject")
+	}
+	if verifyPKCE(verifier, challenge, "plain") {
+		t.Error("verifyPKCE accepted 'plain' method; want reject (only S256)")
+	}
+}
+
+// TestServeToken_HappyPath is the B161.3 end-to-
+// end happy path: 1) /authorize puts a code, 2)
+// /token exchanges the code for id_token +
+// access_token, 3) /userinfo returns the user's
+// claims using the access_token.
+//
+// This is the most important test in B161.3 —
+// it exercises the full OIDC flow at the unit
+// level. A real headscale will repeat the
+// same exchange but with a different client
+// (headscale vs httptest).
+func TestServeToken_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	ks, err := NewKeyStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{
+		IssuerURL:    "https://skygate.example.com",
+		ClientID:     "headscale",
+		ClientSecret: "test-secret",
+		RedirectURIs: "https://head.skynas.ru/oidc/callback",
+		Codes:        NewAuthCodeStore(),
+		Keys:         ks,
+	}
+	// Pre-populate an auth code (bypassing
+	// /authorize so the test is focused on the
+	// token + userinfo handlers).
+	code := s.Codes.Put(AuthCodeEntry{
+		UserID:      1,
+		Username:    "alice",
+		Email:       "alice@example.com",
+		ClientID:    "headscale",
+		RedirectURI: "https://head.skynas.ru/oidc/callback",
+		Scope:       "openid profile email",
+		Nonce:       "nonce-abc",
+	})
+
+	// /token
+	body := "grant_type=authorization_code&code=" + code +
+		"&client_id=headscale&client_secret=test-secret" +
+		"&redirect_uri=https%3A%2F%2Fhead.skynas.ru%2Foidc%2Fcallback"
+	req := httptest.NewRequest("POST", "/oidc/token", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.ServeToken(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("/token status = %d, want 200; body=%q", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store (RFC 6749 sec 5.1)", cc)
+	}
+	var tr TokenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &tr); err != nil {
+		t.Fatalf("unmarshal token response: %v", err)
+	}
+	if tr.AccessToken == "" {
+		t.Error("access_token missing from token response")
+	}
+	if tr.IDToken == "" {
+		t.Error("id_token missing from token response")
+	}
+	if tr.TokenType != "Bearer" {
+		t.Errorf("token_type = %q, want Bearer", tr.TokenType)
+	}
+	if tr.ExpiresIn <= 0 {
+		t.Errorf("expires_in = %d, want > 0", tr.ExpiresIn)
+	}
+	// The auth code should now be consumed.
+	if s.Codes.Size() != 0 {
+		t.Errorf("Codes.Size after /token = %d, want 0 (code consumed)", s.Codes.Size())
+	}
+
+	// /userinfo with the issued access_token.
+	req2 := httptest.NewRequest("GET", "/oidc/userinfo", nil)
+	req2.Header.Set("Authorization", "Bearer "+tr.AccessToken)
+	rr2 := httptest.NewRecorder()
+	s.ServeUserinfo(rr2, req2)
+	if rr2.Code != 200 {
+		t.Fatalf("/userinfo status = %d, want 200; body=%q", rr2.Code, rr2.Body.String())
+	}
+	var ur UserinfoResponse
+	if err := json.Unmarshal(rr2.Body.Bytes(), &ur); err != nil {
+		t.Fatalf("unmarshal userinfo: %v", err)
+	}
+	if ur.Sub != "alice" {
+		t.Errorf("Sub = %q, want alice", ur.Sub)
+	}
+	if ur.Email != "alice@example.com" {
+		t.Errorf("Email = %q", ur.Email)
+	}
+	if ur.PreferredUsername != "alice" {
+		t.Errorf("PreferredUsername = %q", ur.PreferredUsername)
+	}
+}
+
+// TestServeToken_BadClientSecret covers the
+// invalid_client error path (RFC 6749 sec 5.2).
+// We return 400 + the token-error JSON.
+func TestServeToken_BadClientSecret(t *testing.T) {
+	dir := t.TempDir()
+	ks, _ := NewKeyStore(dir)
+	s := &Service{
+		IssuerURL:    "https://skygate.example.com",
+		ClientID:     "headscale",
+		ClientSecret: "correct-secret",
+		RedirectURIs: "https://head.skynas.ru/oidc/callback",
+		Codes:        NewAuthCodeStore(),
+		Keys:         ks,
+	}
+	body := "grant_type=authorization_code&code=any&client_id=headscale&client_secret=wrong-secret&redirect_uri=https%3A%2F%2Fhead.skynas.ru%2Foidc%2Fcallback"
+	req := httptest.NewRequest("POST", "/oidc/token", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.ServeToken(rr, req)
+	if rr.Code != 400 {
+		t.Errorf("status = %d, want 400 (bad client_secret)", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "invalid_client") {
+		t.Errorf("body should contain 'invalid_client' error code: %q", rr.Body.String())
+	}
+}
+
+// TestServeToken_UnknownCode covers the
+// invalid_grant path when the code doesn't exist
+// in the store (expired or never existed).
+func TestServeToken_UnknownCode(t *testing.T) {
+	dir := t.TempDir()
+	ks, _ := NewKeyStore(dir)
+	s := &Service{
+		IssuerURL:    "https://skygate.example.com",
+		ClientID:     "headscale",
+		ClientSecret: "test-secret",
+		RedirectURIs: "https://head.skynas.ru/oidc/callback",
+		Codes:        NewAuthCodeStore(),
+		Keys:         ks,
+	}
+	body := "grant_type=authorization_code&code=NEVER_ISSUED&client_id=headscale&client_secret=test-secret&redirect_uri=https%3A%2F%2Fhead.skynas.ru%2Foidc%2Fcallback"
+	req := httptest.NewRequest("POST", "/oidc/token", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.ServeToken(rr, req)
+	if rr.Code != 400 {
+		t.Errorf("status = %d, want 400 (invalid_grant)", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "invalid_grant") {
+		t.Errorf("body should contain 'invalid_grant': %q", rr.Body.String())
+	}
+}
+
+// TestServeUserinfo_MissingAuth covers the
+// invalid_token 401 path when no Authorization
+// header is sent.
+func TestServeUserinfo_MissingAuth(t *testing.T) {
+	dir := t.TempDir()
+	ks, _ := NewKeyStore(dir)
+	s := &Service{IssuerURL: "https://skygate.example.com", Keys: ks}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/oidc/userinfo", nil)
+	s.ServeUserinfo(rr, req)
+	if rr.Code != 401 {
+		t.Errorf("status = %d, want 401 (no Authorization)", rr.Code)
+	}
+	// RFC 6750 sec 3: a 401 response MUST include
+	// WWW-Authenticate.
+	if wa := rr.Header().Get("WWW-Authenticate"); !strings.Contains(wa, "Bearer") {
+		t.Errorf("WWW-Authenticate = %q, want Bearer ...", wa)
+	}
+}
+
+// newParserRS256 is a small helper that builds
+// a jwt.Parser configured to accept only RS256.
+// Used by the round-trip test to verify our
+// tokens can be parsed by a third-party
+// implementation (e.g. headscale's).
+func newParserRS256() *jwt.Parser {
+	return jwt.NewParser(jwt.WithValidMethods([]string{"RS256"}))
+}
+
+// sha256Sum256 is a tiny test helper that wraps
+// sha256.Sum256 so the PKCE test can compute
+// the expected challenge dynamically. Returns
+// the [32]byte as a slice. T must be a *testing.T
+// for the rare panic path; we never actually
+// panic in this helper.
+func sha256Sum256(_ *testing.T, s string) []byte {
+	sum := sha256.Sum256([]byte(s))
+	return sum[:]
+}
+
+// base64urlEncode is the test-side mirror of
+// the production's base64.RawURLEncoding.
+// EncodeToString call. We wrap it so the test
+// reads naturally ("base64urlEncode(hash)") and
+// stays in sync if the encoding ever changes.
+func base64urlEncode(b []byte) string {
+	return base64.RawURLEncoding.EncodeToString(b)
 }

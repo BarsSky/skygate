@@ -98,15 +98,17 @@ func NewService(issuerURL, clientID, clientSecret, keyDir, redirectURIs string) 
 //	mux.Handle("/.well-known/", oidcSvc.Handler())
 //	mux.Handle("/oidc/", oidcSvc.Handler())
 //
-// B161.2 adds the /authorize handler. B161.3 will
-// add /token + /userinfo.
+// B161.3 completes the v1 OIDC surface:
+// discovery + JWKS (B161.1), /authorize
+// (B161.2), /token + /userinfo (this commit).
+// A future B-check (B161.5+) will add the
+// consent screen + refresh tokens.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", s.ServeDiscoveryDoc)
 	mux.HandleFunc("GET /oidc/jwks.json", s.ServeJWKS)
 	mux.HandleFunc("GET /oidc/authorize", s.ServeAuthorize)
-	// B161.3 will add:
-	//   mux.HandleFunc("POST /oidc/token", s.ServeToken)
-	//   mux.HandleFunc("GET /oidc/userinfo", s.ServeUserInfo)
+	mux.HandleFunc("POST /oidc/token", s.ServeToken)
+	mux.HandleFunc("GET /oidc/userinfo", s.ServeUserinfo)
 	return mux
 }
