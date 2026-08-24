@@ -24,7 +24,106 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.3.20 — **/admin/update redesign + real time-of-day
+* **Current**: v1.5.0-alpha1 (live on VM as v1.4.4-30-gb6265f8) —
+  **B161 OIDC provider for headscale** (B161.1 skeleton +
+  B161.2 /authorize + B161.3 /token + /userinfo). Operator
+  2026-08-23: "возможно ли сделать перехват запроса к
+  head.skynas.ru" — answered with **full OIDC provider** (option 1,
+  not reverse proxy). skygate now issues RS256-signed JWTs that
+  headscale can verify via the JWKS endpoint. The Tailscale auth
+  flow is now: Tailscale → headscale → /oidc/authorize →
+  /login (if not logged in) → /oidc/authorize (again) →
+  /oidc/token → /oidc/userinfo → headscale creates user. 4 env
+  vars: `SKYGATE_OIDC_ISSUER`, `SKYGATE_OIDC_CLIENT_ID`,
+  `SKYGATE_OIDC_CLIENT_SECRET`, `SKYGATE_OIDC_KEY_DIR`. RSA-2048
+  keypair persisted to `/data/oidc-keys-test/oidc-signing.pem`
+  (mode 0700) so restarts don't invalidate issued JWTs (kid
+  stable). 23/23 OIDC unit tests pass, B161 B-check 115/115
+  PASS / 0 FAIL. What's added:
+  - **B161.1 (v1.5.0)**: `internal/oidc/` package skeleton
+    (keys.go PKCS#1 PEM persistence + kid derivation,
+    discovery.go RFC 8414, jwks.go RFC 7517, service.go
+    Handler). Mounted at `mux.Handle("/.well-known/", ...)` +
+    `mux.Handle("/oidc/", ...)` in main.go, NOT behind authMW
+    (per RFC 8414). 503 fallback when SKYGATE_OIDC_ISSUER is
+    empty.
+  - **B161.2 (v1.5.0)**: `internal/oidc/authcode.go` (in-memory
+    store, 32-byte base64url codes, single-use, 5min TTL,
+    Sweep goroutine) + `internal/oidc/authorize.go`
+    (ServeAuthorize with client_id + redirect_uri allowlist +
+    PKCE S256 + state echo + login redirect via /login?next=).
+    `SKYGATE_OIDC_REDIRECT_URIS` env var (default
+    `https://head.skynas.ru/oidc/callback`). Open-redirect
+    defense: 400 (not 302) on unknown client_id or bad
+    redirect_uri.
+  - **B161.3 (v1.5.0)**: `internal/oidc/jwt.go` (RS256
+    signIDToken + signAccessToken + parseAccessToken with
+    kid in header + verifyPKCE S256 check) +
+    `internal/oidc/token.go` (POST /oidc/token: form-encoded
+    or Basic Auth client auth, constant-time
+    client_secret compare via `secureEqual`, grant_type
+    =authorization_code, redirect_uri re-validation,
+    PKCE code_verifier check; returns TokenResponse JSON
+    with Cache-Control: no-store) + `internal/oidc/userinfo.go`
+    (GET /oidc/userinfo: Bearer auth, 401 + WWW-Authenticate
+    Bearer on invalid_token). User profile claims (email,
+    name, preferred_username) embedded in BOTH id_token AND
+    access_token so /userinfo can return them in one shot
+    without a DB re-fetch. 7 new unit tests, B161.3 B-check
+    contract I (24 sub-checks).
+  - **B160 (v1.5.0) /my/devices manual expiry renewal
+    button** — `POST /my/devices/{id}/renew` extends the
+    device's node session by 30d via headscale CLI. The
+    user can renew now without waiting for the 5min
+    auto-renewal cron. Audit log captures the action.
+  - **B160.1 (v1.5.0)** — 2 deploy-bug fixes: 410 Gone (not
+    500) when the device was deleted from headscale between
+    the snapshot and the renew call (matches
+    "no longer exists in NodeStore" + "node not found" gRPC
+    error patterns from headscale); `.table-wrap` wrapper
+    on /my/devices table (10 columns overflowed the card).
+  - **B160.2 (v1.5.0)** — /my/devices cache bypass via
+    `?refresh=1` + Refresh button + "Last refreshed at HH:MM:SS"
+    indicator + automatic InvalidateCache() in B155
+    PostMyPreauth/PostMyKeyReissue.
+  - **OIDC flow as it now stands end-to-end** (verified
+    live on the VM at v1.4.4-30-gb6265f8):
+    1. Tailscale → headscale "register me"
+    2. headscale → 302 to /oidc/authorize?...
+    3. Browser opens the URL; /oidc/authorize
+       - if NOT logged in → 302 to /login?next=...
+       - if logged in → 302 to redirect_uri?code=...&state=...
+    4. /login → re-runs /oidc/authorize (now logged in)
+    5. headscale POSTs to /oidc/token with the code
+    6. /oidc/token validates + signs id_token + access_token
+    7. headscale calls /oidc/userinfo with Bearer <access_token>
+    8. /oidc/userinfo returns sub + email + name +
+       preferred_username
+  - **Live state at v1.4.4-30-gb6265f8** (B161.3 deploy
+    2026-08-24): all 8 live endpoint tests PASS:
+    - discovery doc lists all 4 endpoints
+    - /oidc/authorize (no session) → 302 to /login?next=...
+    - /oidc/token (bad secret) → 400 invalid_client
+    - /oidc/token (unknown code) → 400 invalid_grant
+    - /oidc/userinfo (no auth) → 401 + WWW-Authenticate Bearer
+    - /oidc/userinfo (bad token) → 401 + WWW-Authenticate Bearer
+    - POST /oidc/userinfo → 405 Allow: GET, HEAD
+    - JWKS has 1 key, RS256, kid present
+    The 4 OIDC env vars are in /home/skyadmin/skygate/.env
+    (B161.3 deploy also appended them to the env_file so
+    `docker compose up --force-recreate` picks them up
+    automatically — pre-B161.3 they were only in
+    /tmp/oidc-test.env for the manual `docker run --env-file`
+    flow).
+  - **B161.4 (next)** — headscale.conf snippet (issuer,
+    client_id, client_secret, redirect_uri) + e2e test with
+    a real Tailscale client. Operator needs to add the
+    `oidc:` block to headscale.conf and restart headscale.
+  - **B161.5 (deferred)** — consent screen + i18n keys
+    (oidc.consent_title, oidc.consent_allow, oidc.consent_deny).
+    Not in v1 — auto-approve since the user is already
+    authenticating with skygate.
+* **Previous**: v1.3.20 — **/admin/update redesign + real time-of-day
   auto-update (B128 + B129 + B130)**. The pre-v1.3.20 page had a
   misleading "auto-update" banner (the operator still had to click
   the Apply button to actually run the orchestrator). The v1.3.20
