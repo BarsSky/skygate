@@ -484,6 +484,35 @@ in the same commit. Don't let the tracker drift.
     on the FIRST tick after device
     registration, before the node
     transitions to tagged-devices).
+  - **B177 (v1.5.2)**: defensive dev-tag
+    rename order in
+    `internal/nodeownership/nodeownership.go`.
+    Operator 2026-08-25 renamed
+    id=35 (Android Secure Folder SkyBars)
+    from `skybars-1` to `skybars-secure`
+    via `headscale nodes rename`; the
+    pre-B177 backfill code did
+    `UntagNode(old)` THEN `AddTag(new)`,
+    so when headscale rejected the new
+    `tag:dev-skyadmin-skybars-secure`
+    with `InvalidArgument: requested tags
+    are invalid or not permitted` (the
+    tag had never been whitelisted, so
+    headscale 0.29's ACL rejected it on
+    first sight), the old `tag:dev-skyadmin-skybars`
+    was already gone — id=35 ended up
+    with NO dev-tag. B177 swaps the
+    order: `AddTag(new)` runs first, and
+    `UntagNode(old)` only fires on success.
+    The DB row update
+    (`UpdateNodeOwnerHostnameAndTag`) moves
+    inside the `AddTag` success branch so
+    a failed `AddTag` doesn't leave the row
+    out of sync with headscale. The warn
+    log now says "keeping existing tags as
+    fallback" to make the defensive intent
+    visible in skygate's stderr. 10
+    contracts in `scripts/check_b177.sh`.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

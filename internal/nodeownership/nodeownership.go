@@ -597,87 +597,119 @@ func Backfill(
 			// codebase, where the dev-tag is always
 			// lowercase to be headscale-compliant.
 			devTag := fmt.Sprintf("tag:dev-%s-%s", portalUsername, strings.ToLower(n.Hostname))
-			if existing, ok := existingByNodeID[n.ID]; ok && existing.Hostname != "" && existing.Hostname != n.Hostname {
-				// Rename detected. The existing dev-tag
-				// was tag:dev-<user>-<oldHost>; compute
-				// it from existing.Tag (the row already
-				// stores the right value, so we don't
-				// have to guess the format).
-				oldDevTag := existing.Tag
-				// Defensive: if existing.Tag happens
-				// to NOT start with the dev- prefix
-				// (e.g. tag:private left over from a
-				// pre-v0.28 row), don't try to untag
-				// it — that would drop the privacy
-				// scope and could leak the device
-				// into another portal user's view.
-				if oldDevTag != "" && strings.HasPrefix(oldDevTag, "tag:dev-") && oldDevTag != devTag && hs != nil {
-					if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
-						if err := hs.UntagNode(nodeIDInt, oldDevTag); err != nil {
-							// Non-fatal: the stale
-							// tag stays in headscale,
-							// but the per-device
-							// rule src still works
-							// (the new tag is
-							// applied). The next
-							// /admin/exit-rules
-							// reapply will surface
-							// the now-stale
-							// tagOwners and the
-							// operator can clean
-							// up via /admin/devices.
-							log.Printf("warn: untag stale dev tag %q on node %s during rename: %v", oldDevTag, n.ID, err)
-						} else {
-							log.Printf("DBG backfill rename node=%s old_hostname=%s new_hostname=%s untag=%s add=%s",
-								n.ID, existing.Hostname, n.Hostname, oldDevTag, devTag)
-						}
-					}
-				}
-				// Update DB row to match the new
-				// hostname + new dev-tag. This is the
-				// v0.33.1.20 fix that lets
-				// /admin/devices show the new name
-				// immediately (without it, the row
-				// stayed at the old hostname until
-				// an admin manually ran
-				// /admin/devices/sync, which used
-				// n.UserID=n.UserName from the live
-				// headscale list — also wrong for
-				// tagged-devices nodes, since the
-				// synthetic tagged-devices user
-				// would be assigned).
-				if err := dbpkg.UpdateNodeOwnerHostnameAndTag(db, n.ID, n.Hostname, devTag, portalUserID); err != nil {
-					// ErrNodeOwnerNotFound is
-					// benign (INSERT-OR-IGNORE
-					// just lost the race); any
-					// other error means a
-					// future /my/devices load
-					// will retry.
-					if !errors.Is(err, dbpkg.ErrNodeOwnerNotFound) {
-						log.Printf("warn: update hostname+tag for node %s: %v", n.ID, err)
-					}
-				}
-				// Refresh the local map so a
-				// later loop iteration sees the
-				// new value (not strictly needed
-				// since node_ids are unique per
-				// row, but keeps the in-memory
-				// state consistent for any
-				// future debugging in this pass).
-				existingByNodeID[n.ID] = dbpkg.NodeOwner{
-					NodeID:   n.ID,
-					Hostname: n.Hostname,
-					Tag:      devTag,
-					Username: portalUsername,
-				}
-			}
+			// B177 (v1.5.2): defensive dev-tag rename
+			// order. The pre-B177 code did
+			// hs.UntagNode(oldDevTag) BEFORE
+			// hs.AddTag(devTag), which is destructive
+			// when the new tag can't be applied
+			// (e.g. headscale ACL rejects
+			// `tag:dev-<user>-<newHost>` because the
+			// tag has never been seen by headscale
+			// before). The old dev-tag was already
+			// gone, leaving the node with no dev-tag
+			// until manual operator intervention
+			// (live-verified on 2026-08-25 for node
+			// id=35, Android Secure Folder SkyBars
+			// renamed from skybars-1 to skybars-secure
+			// via `headscale nodes rename`).
+			//
+			// B177 swaps the order: AddTag the new
+			// dev-tag FIRST. If AddTag fails, the
+			// old tag stays intact as a fallback. Only
+			// when AddTag succeeds do we UntagNode the
+			// old tag. The DB row update is moved
+			// inside the success branch so a failed
+			// AddTag doesn't leave the row out of sync
+			// with headscale.
 			if hs != nil {
 				if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
 					if err := hs.AddTag(nodeIDInt, devTag); err != nil {
-						// Non-fatal: the rule fallback to device_ip
-						// src keeps the policy live; the next
-						// /my/devices load will retry the tag.
-						log.Printf("warn: auto-apply dev tag %q to node %s: %v", devTag, n.ID, err)
+						// B177: keep existing tags as fallback.
+						// The next /my/devices load will retry
+						// the AddTag; if the underlying headscale
+						// ACL issue is fixed, the tag will be
+						// applied then. The old dev-tag (if any)
+						// stays on the node so the per-device
+						// rule src still works.
+						log.Printf("warn: auto-apply dev tag %q to node %s: %v — keeping existing tags as fallback", devTag, n.ID, err)
+					} else {
+						// AddTag succeeded. Now handle the rename
+						// case: if the DB row had an OLD dev-tag
+						// (different hostname), drop it so we don't
+						// accumulate both old+new tags. The DB row
+						// is updated to match.
+						if existing, ok := existingByNodeID[n.ID]; ok && existing.Hostname != "" && existing.Hostname != n.Hostname {
+							// Rename detected. The existing dev-tag
+							// was tag:dev-<user>-<oldHost>; compute
+							// it from existing.Tag (the row already
+							// stores the right value, so we don't
+							// have to guess the format).
+							oldDevTag := existing.Tag
+							// Defensive: if existing.Tag happens
+							// to NOT start with the dev- prefix
+							// (e.g. tag:private left over from a
+							// pre-v0.28 row), don't try to untag
+							// it — that would drop the privacy
+							// scope and could leak the device
+							// into another portal user's view.
+							if oldDevTag != "" && strings.HasPrefix(oldDevTag, "tag:dev-") && oldDevTag != devTag {
+								if err := hs.UntagNode(nodeIDInt, oldDevTag); err != nil {
+									// Non-fatal: the stale
+									// tag stays in headscale,
+									// but the per-device
+									// rule src still works
+									// (the new tag is
+									// applied). The next
+									// /admin/exit-rules
+									// reapply will surface
+									// the now-stale
+									// tagOwners and the
+									// operator can clean
+									// up via /admin/devices.
+									log.Printf("warn: untag stale dev tag %q on node %s during rename: %v", oldDevTag, n.ID, err)
+								} else {
+									log.Printf("DBG backfill rename node=%s old_hostname=%s new_hostname=%s untag=%s add=%s",
+										n.ID, existing.Hostname, n.Hostname, oldDevTag, devTag)
+								}
+							}
+							// Update DB row to match the new
+							// hostname + new dev-tag. This is the
+							// v0.33.1.20 fix that lets
+							// /admin/devices show the new name
+							// immediately (without it, the row
+							// stayed at the old hostname until
+							// an admin manually ran
+							// /admin/devices/sync, which used
+							// n.UserID=n.UserName from the live
+							// headscale list — also wrong for
+							// tagged-devices nodes, since the
+							// synthetic tagged-devices user
+							// would be assigned).
+							if err := dbpkg.UpdateNodeOwnerHostnameAndTag(db, n.ID, n.Hostname, devTag, portalUserID); err != nil {
+								// ErrNodeOwnerNotFound is
+								// benign (INSERT-OR-IGNORE
+								// just lost the race); any
+								// other error means a
+								// future /my/devices load
+								// will retry.
+								if !errors.Is(err, dbpkg.ErrNodeOwnerNotFound) {
+									log.Printf("warn: update hostname+tag for node %s: %v", n.ID, err)
+								}
+							}
+							// Refresh the local map so a
+							// later loop iteration sees the
+							// new value (not strictly needed
+							// since node_ids are unique per
+							// row, but keeps the in-memory
+							// state consistent for any
+							// future debugging in this pass).
+							existingByNodeID[n.ID] = dbpkg.NodeOwner{
+								NodeID:   n.ID,
+								Hostname: n.Hostname,
+								Tag:      devTag,
+								Username: portalUsername,
+							}
+						}
 					}
 				}
 			}
