@@ -945,6 +945,42 @@ in the same commit. Don't let the tracker drift.
     Aside type (G), Time inline node (H), JSON wire shape
     (I), build+tests (J).
 
+  - **B186.1 (v1.5.2)**: wire Telegram Rich Messages into
+    the polling loop. The original B186 commit added the
+    rich-message builder + SendRich helper but didn't actually
+    thread it into the command dispatch path — the operator's
+    "вид сообщений в боте не поменялся" was correct because
+    the polling loop still called `sendMessage` with the
+    legacy HTML body. B186.1 wires it up end-to-end:
+    `cmdReply` gets a new `blocks []RichBlock` field;
+    `HandleCommand` returns `(string, []RichBlock)` instead
+    of just a string; `ComposeRich()` (in personality.go)
+    adds the butler-voice envelope (gate `Heading` + signoff
+    `Footer`) to the body blocks, matching what
+    `ComposeDefault` does for the string path; the `Run()`
+    polling loop in notify.go picks the rich path when
+    blocks are non-empty (calls `SendRich`); falls back to
+    the legacy path on any error (and `SendRich` itself
+    falls back to `sendMessage` internally on API errors,
+    so this is a safety net for the missing-token case).
+    `/my_status` and `/version` are the first two migrated
+    commands (both fit naturally in a `Heading` +
+    `KeyValueTable` + `Footer` shape — 3-row key/value
+    tables). Most other commands still return `(body, nil)`
+    — no behaviour change for them. 4 new tests in
+    `rich_compose_test.go` (header+footer envelope shape,
+    header text equals `GateHeader`, footer text equals
+    `GateFooter`, empty body still emits header+footer
+    pair). `check_b186.sh` now has 27 contracts (was 19;
+    added C2 compose tests, K `HandleCommand` signature,
+    L `ComposeRich` call site, M polling wire-up, N
+    `/my_status` migration, O `/version` migration).
+    Live verification: set `telegram.chat_id` in
+    `/admin/telegram`, then `/version` and `/my_status`
+    render as native `<table>` blocks on 10.1+ clients
+    (with `<h3>` heading + `<i>` signoff footer) and fall
+    back to flat HTML on older clients.
+
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
   §6 status log 2026-08-24) — **B151 + B152 + B153** close the
