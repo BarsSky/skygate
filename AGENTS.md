@@ -24,12 +24,13 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `794b9c6` on VM remote,
+* **Current**: v1.5.2-alpha1 (commit `e4e1ac7` on VM remote,
   `7d90af2f` B170 + `45ab8ff9` B171 +
   `40f8c81b` B172 +
   `6b1c241` B173 +
   `9bbb750` B173.1 +
-  `794b9c6` B174 in flight) — **B167 OIDC config
+  `794b9c6` B174 +
+  `e4e1ac7` B175 in flight) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -44,7 +45,10 @@ in the same commit. Don't let the tracker drift.
   bypasses submit event listeners)**
   + **B174 OIDC readSession uses auth.ParseJWT
   (closes the "password reset on login" loop
-  the pre-B174 colon-split parser caused)**.
+  the pre-B174 colon-split parser caused)**
+  + **B175 OIDC node auto-tag Strategy E
+  (closes the "⏳ pending forever for OIDC devices"
+  gap the pre-B175 backfill had)**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -393,6 +397,52 @@ in the same commit. Don't let the tracker drift.
     UserLookup-error; build contract:
     `go build` + `go vet` + `go test
     ./internal/oidc/...`).
+  - **B175 (v1.5.2)**: OIDC node auto-tag
+    Strategy E (operator 2026-08-25: "Проверь
+    что Autoupdater тегов работает при
+    варианте когда происходит добавление
+    не по ключу а через OIDC потому что
+    ожидание тега висит уже больше 5 минут
+    и в будущем каждый раз дергать
+    администратора для обновления
+    неудобно"). Pre-B175 the
+    node-discovery autoupdater (B77) had
+    3 strategies for matching headscale
+    nodes to portal users (A:
+    PreAuthKeyID = preauth_keys.headscale_preauth_id,
+    C: temporal 1h window, D: existing
+    tag:dev-<user>-*) — none of those
+    fire for an OIDC-registered node
+    (no preauth key, no preauth_keys
+    row, no tags yet) so the per-device
+    dev-tag was never applied and
+    /my/devices showed "⏳ pending"
+    forever. B175 extracts
+    `matchOIDCStrategy` (Strategy E) —
+    matches `n.PreAuthKeyID == "" &&
+    n.UserName == portalUsername` with
+    guards that prevent stealing
+    /my/preauth nodes (PreAuthKeyID
+    guard) or cross-user ownership
+    (UserName guard) — and inserts it
+    as the 4th strategy in `Backfill`.
+    headscale creates the OIDC user with
+    name = OIDC `name` claim = skygate
+    username (internal/oidc/token.go:180
+    sets `name = entry.Username`).
+    The synthetic "tagged-devices"
+    headscale user has name="tagged-devices"
+    which doesn't match any portal
+    username (UNIQUE constraint). 16
+    contracts in `scripts/check_b175.sh`
+    + 7 unit tests in
+    `internal/nodeownership/strategy_e_b175_test.go`
+    covering the 5 critical paths
+    (OIDC match, preauth-key no-match,
+    username mismatch, tagged-devices
+    synthetic user, empty portal username)
+    + firstTagOrFallback preservation
+    + idempotency.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

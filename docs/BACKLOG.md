@@ -575,6 +575,39 @@ B-check pins this as a regression guard.
 
 ---
 
+## Priority 19 — v1.5.2 OIDC node auto-tag Strategy E (SHIPPED 2026-08-25, B175)
+
+### B175 — OIDC node auto-tag Strategy E (no more "⏳ pending forever" for OIDC devices)
+
+**Status**: SHIPPED 2026-08-25 (commit `e4e1ac70`, v1.5.2-alpha1)
+**Effort**: ~0.3 day
+**What was delivered**: closes the operator-observed gap from 2026-08-25: "Проверь что Autoupdater тегов работает при варианте когда происходит добавление не по ключу а через OIDC потому что ожидание тега висит уже больше 5 минут и в будущем каждый раз дергать администратора для обновления неудобно" (check that the tag autoupdater works for OIDC-added devices — the 'pending' state is hanging more than 5 minutes and I don't want to keep asking the admin to fix it every time). Pre-B175 the `node-discovery` autoupdater (B77, runs every 5m by default) had 3 strategies for matching headscale nodes to portal users:
+- **A**: `n.PreAuthKeyID == preauth_keys.headscale_preauth_id` (catches /my/preauth flow)
+- **C**: `n.CreatedAt` within 1h of a preauth key (temporal fallback for A)
+- **D**: existing `tag:dev-<user>-*` tag (post-hoc, after operator manually applied the tag)
+
+None of those fire for an OIDC-registered node — OIDC flow doesn't use a preauth key (`n.PreAuthKeyID == ""`), the OIDC user has no `preauth_keys` row (Strategy C skip), and the node has no tags yet (Strategy D skip). Result pre-B175: the OIDC node stays orphaned in `node_owner_map`, the per-device dev-tag (`tag:dev-<user>-<device>`) is never applied, and `/my/devices` shows the device with "⏳ pending" forever. The operator had to hit "Force backfill" on `/admin/devices` (or run `headscale nodes tag -i <id> -t 'tag:dev-<user>-<skygate-vm>' --force` manually via headscale CLI) to clear it — a UX regression the operator flagged on 2026-08-25. B175 ships:
+- New `matchOIDCStrategy(n headscale.NodeView, portalUsername string) (matchedTag string, ok bool)` helper in `internal/nodeownership/nodeownership.go` — returns `("tag:private", true)` for an OIDC node whose `n.UserName == portalUsername`, or `("", false)` otherwise. Guards:
+  - `n.PreAuthKeyID != ""` → no match (Strategy A's territory — /my/preauth nodes)
+  - `n.UserName != portalUsername` → no match (cross-user safety)
+  - `portalUsername == ""` → no match (defensive guard)
+  - `len(n.Tags) > 0` → preserve the first existing tag via `firstTagOrFallback` (matches Strategy A/C convention so an operator-applied `tag:subnet-router` isn't clobbered to `tag:private`)
+- Backfill now calls `matchOIDCStrategy` as the 4th strategy (after A, C, D), so an OIDC node matches when no preauth key, no temporal correlation, and no existing tag are present. The `otherOwners` check at the top of the per-node loop still filters nodes whose headscale user is a different portal user, so the user-renaming-attack vector is closed.
+- The synthetic `tagged-devices` headscale user (id=2147455555 in this deployment) has name="tagged-devices" — no real portal user has that name (UNIQUE constraint on `portal_users.username`), so Strategy E never matches a tagged-devices node.
+- 7 unit tests in `internal/nodeownership/strategy_e_b175_test.go` covering the 5 critical paths (OIDC match, preauth-key no-match, username mismatch, tagged-devices synthetic user no-match, empty portalUsername no-match) + firstTagOrFallback preservation + idempotency.
+- 16 contracts in `scripts/check_b175.sh` (source contract: 5 checks that `matchOIDCStrategy` exists, is called from Backfill, guards on PreAuthKeyID + UserName, returns the right tags; test contract: 7 subtests + the `MUST NOT match` assertion guard; build contract: `go build` + `go vet` + `go test ./internal/nodeownership/...`).
+
+**What B175 does NOT cover (explicitly out of scope)**:
+- **headscale `oidc.claim_map: { sub: "email" }`** — would create OIDC users with name = email local-part, not skygate username; Strategy E would not match. The operator explicitly deferred this to a future feature (B174.1+) since the change is global (adds `email` column to `portal_users`, rewires `UserLookup`, etc.) and would need a full e2e re-verification that nothing breaks or gets lost.
+- **headplane-side user display** — headplane shows users by their headscale internal name; that layer is unchanged.
+- **Cross-provider OIDC name collision** — if two OIDC providers (e.g. Google + GitHub) both issue a `name` claim that matches a skygate username, headscale creates two distinct headscale users (one per provider_id). Strategy E would match the most-recently-issued user, which is the operator's responsibility to keep unique.
+
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./...` (38 packages) all PASS, `go test ./internal/nodeownership/... -v -run TestMatchOIDCStrategy` 7/7 subtests PASS, `bash scripts/check_b175.sh` 16/16 PASS.
+
+**Live verified on VM** (build `v1.5.0-alpha1-50-ge4e1ac7`): the autoupdater is running (`node-discovery: starting (interval=5m0s)` in stderr) and the Backfill function is being called (`DBG backfill node=35 name=skybars-1 matchedTag=tag:private api_tags=[] hasPrivate=false` + `DBG backfill AddTag called for node=35 (ensure tag:private)`) — the live state confirms B175 is in the binary. Final E2E test (a Tailscale client completes the full OIDC flow) requires the operator to run `tailscale up --login-server https://head.skynas.ru` on a real device; the autoupdater will then auto-apply the dev-tag within 1 tick (≤5 min) of the device appearing in headscale, and `/my/devices` will show "✓ tag:dev-skyadmin-<host> applied" instead of "⏳ pending". The OIDC user (id=86, name=skyadmin, provider=oidc) created by the B174 e2e test is still in headscale waiting for its first device registration.
+
+---
+
 ## Priority 1 — Web UI completeness (in progress, 2026-07-30)
 
 **Status**: shipped in v0.32.1 (this commit). All admin + user
