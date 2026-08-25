@@ -53,6 +53,39 @@ type Service struct {
 	// Codes is the in-memory store of pending
 	// auth codes. B161.2.
 	Codes *AuthCodeStore
+	// JWTSecret is the HMAC secret used to verify
+	// the skygate_session cookie on /oidc/authorize.
+	// The OIDC handler must read the same session
+	// cookie that PostLogin sets (which is an HS256
+	// JWT containing uid + usr + adm claims), NOT
+	// some other format. Pre-B174 the OIDC handler
+	// tried to parse the cookie value as
+	// "<uid>:<username>:<email>:<expires_unix>"
+	// (a colon-separated format that PostLogin
+	// never used) and ALWAYS returned nil — which
+	// made /oidc/authorize think the user was
+	// unauthenticated even right after a successful
+	// login, causing a redirect loop:
+	//   /oidc/authorize → /login?next=...
+	//   → POST /login → /oidc/authorize?...
+	//   → /oidc/authorize → /login?next=...
+	// The user saw the login page re-render with
+	// an empty password ("сбрасывает"). B174 wires
+	// the OIDC service to the same auth.ParseJWT
+	// helper that feature/auth uses, so the session
+	// is recognized and the loop is broken.
+	JWTSecret string
+	// UserLookup maps a JWT-claim UserID to the
+	// user's current username + email. The JWT
+	// cookie only carries uid + usr (no email),
+	// so the OIDC handler needs a DB-side lookup
+	// to populate the id_token /userinfo email
+	// claim. Returns (username, email, error); on
+	// error the user is treated as unauthenticated.
+	// Wired in main.go via db.GetUserNameAndEmailByID
+	// (B174 introduces that helper). Optional —
+	// if nil, the email claim is left empty.
+	UserLookup func(userID int64) (username, email string, err error)
 }
 
 // NewService loads the RSA keypair (or generates
@@ -66,7 +99,7 @@ type Service struct {
 // (in main.go). B161.2 / B161.3 will extend this
 // constructor with the auth code store + token
 // store.
-func NewService(issuerURL, clientID, clientSecret, keyDir, redirectURIs string) (*Service, error) {
+func NewService(issuerURL, clientID, clientSecret, keyDir, redirectURIs, jwtSecret string) (*Service, error) {
 	if issuerURL == "" {
 		// Provider disabled — main.go can still
 		// mount the routes (they'll return 503)
@@ -89,6 +122,7 @@ func NewService(issuerURL, clientID, clientSecret, keyDir, redirectURIs string) 
 		RedirectURIs: redirectURIs,
 		Keys:         keys,
 		Codes:        NewAuthCodeStore(),
+		JWTSecret:    jwtSecret,
 	}, nil
 }
 

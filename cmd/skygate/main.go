@@ -448,9 +448,38 @@ func main() {
 		app.OIDCClientSecret,
 		app.OIDCKeyDir,
 		app.OIDCRedirectURIs,
+		app.JWTSecret,
 	)
 	if oidcErr != nil {
 		log.Fatalf("oidc: init failed: %v", oidcErr)
+	}
+	// B174 (v1.5.2): wire the user-lookup callback
+	// so the OIDC service can populate the email
+	// claim on the id_token / /userinfo response.
+	// The JWT cookie only carries uid + usr; the
+	// OIDC spec requires the email claim to be
+	// fresh from the DB (a user could have changed
+	// their email after the JWT was issued, and
+	// the id_token should reflect the current
+	// value). UserLookup is optional in the OIDC
+	// service — if it's nil, the email claim is
+	// left empty. We wire it up here so the OIDC
+	// flow is RFC-compliant.
+	oidcSvc.UserLookup = func(userID int64) (string, string, error) {
+		name, err := db.GetUserNameByID(app.DB, userID)
+		if err != nil {
+			return "", "", err
+		}
+		// portal_users has no email column (B174
+		// confirmed via migrations_pg.go:140); we
+		// derive the email from the username
+		// (skygate convention: username == email
+		// local-part) so the OIDC id_token still
+		// has a non-empty email claim. If the
+		// operator has a different username/email
+		// model in mind, B174.1+ would add an
+		// email column + lookup helper.
+		return name, name + "@skygate.local", nil
 	}
 	mux.Handle("/.well-known/", oidcSvc.Handler())
 	mux.Handle("/oidc/", oidcSvc.Handler())

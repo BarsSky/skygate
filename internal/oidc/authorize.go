@@ -6,25 +6,34 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"skygate/internal/auth"
 )
 
 // CurrentUser is the minimal auth state we
 // need from the request — the rest of skygate's
 // session machinery (JWT cookies, loginMW) is
-// owned by internal/feature/auth and not imported
-// here. The OIDC service is mounted as a
-// separate mux.Handle("/oidc/", ...) so we can
-// either:
-//   - call the existing auth service's
-//     CurrentUser(r) helper
-//   - read the session cookie directly
+// owned by internal/feature/auth. The OIDC
+// service is mounted as a separate
+// mux.Handle("/oidc/", ...) so we cannot reuse
+// the existing authMW — that middleware requires
+// a full skygate Session, while the OIDC flow
+// just needs the user identity from the JWT
+// cookie.
 //
-// B161.2 takes the simpler path: read the
-// session cookie via the standard skygate
-// session-cookie name (see feature/auth.Service
-// for the cookie name). B161.3 may add a
-// cleaner interface (CurrentUserFn func) to
-// avoid the hard-coded cookie name.
+// B174 (v1.5.2) rewires the OIDC session reader
+// to use the SAME JWT format that PostLogin sets.
+// Pre-B174 the OIDC readSession tried to parse
+// the cookie as "<uid>:<username>:<email>:<expi
+// res_unix>" (a colon-separated format that
+// PostLogin never wrote) and ALWAYS returned
+// nil. The /oidc/authorize handler then bounced
+// the user to /login?next=... even when they had
+// a valid session cookie set, causing the
+// "password is reset on login" loop the operator
+// reported. B174 calls auth.ParseJWT(s.JWTSecret,
+// c.Value) — the same helper feature/auth uses —
+// so the cookie IS recognized.
 //
 // The function returns nil when the user is not
 // authenticated. The caller (ServeAuthorize)
@@ -33,11 +42,6 @@ import (
 
 // skygate's session cookie name. MUST match
 // feature/auth.Service.SetSessionCookie.
-// Hard-coded to keep the OIDC package free of
-// import cycles (auth → oidc would be fine, but
-// the layout has historically been the other
-// way: oidc → feature packages only via
-// small interfaces).
 const skygateSessionCookie = "skygate_session"
 
 // ServeAuthorize handles the OIDC authorization
@@ -243,68 +247,72 @@ type skygateSession struct {
 
 // readSession reads the skygate session cookie
 // and returns the user identity, or nil if the
-// user is not authenticated. The cookie is
-// expected to be signed (HMAC over the payload)
-// by feature/auth.Service — B161.2 accepts the
-// cookie value as-is and relies on the auth
-// middleware to have already verified it. A
-// future B-check may add a strict signature
-// check here too (defense in depth — the OIDC
-// service must NEVER trust an unverified user
-// identity).
+// user is not authenticated. B174 (v1.5.2):
+// the cookie value is an HS256 JWT issued by
+// auth.IssueJWT in feature/auth.Service.PostLogin.
+// We call auth.ParseJWT (the same helper the
+// feature/auth package uses) to verify the HMAC
+// signature + expiry, then map the JWT claims
+// (uid, usr) to a skygateSession. The pre-B174
+// implementation tried to parse the cookie as a
+// colon-separated "<uid>:<username>:<email>"
+// string, which NEVER matched the JWT format,
+// so readSession always returned nil and
+// /oidc/authorize always redirected to /login
+// (the "password is reset" loop the operator
+// reported on 2026-08-25).
 func (s *Service) readSession(r *http.Request) *skygateSession {
 	c, err := r.Cookie(skygateSessionCookie)
 	if err != nil || c.Value == "" {
 		return nil
 	}
-	// B161.2: parse the cookie value. The format
-	// is "<user_id>:<username>:<email>:<expires_unix>"
-	// base64-encoded, signed by feature/auth.
-	// We use a tiny split on ":" (NOT on "=" or
-	// any other char) because the auth service
-	// ensures none of these fields contain a
-	// colon (usernames are [a-z0-9_-]+, emails
-	// contain @ and ., expires_unix is digits).
-	// The auth middleware has already verified
-	// the HMAC signature; if the cookie is
-	// forged, the middleware would have
-	// rejected the request before it got here.
-	parts := strings.SplitN(c.Value, ":", 4)
-	if len(parts) < 3 {
+	claims, err := auth.ParseJWT(s.JWTSecret, c.Value)
+	if err != nil {
+		// Invalid JWT (bad signature, expired,
+		// or wrong secret). Treat as anonymous;
+		// /oidc/authorize will redirect to /login.
 		return nil
 	}
-	var uid int64
-	if v, perr := parseInt64(parts[0]); perr == nil {
-		uid = v
-	} else {
-		return nil
+	// Look up the current username + email from
+	// the DB. The JWT only carries uid + usr
+	// (the auth.IssueJWT helper doesn't pack
+	// email into the claims). The OIDC id_token
+	// + /userinfo endpoints DO emit an email
+	// claim (per the openid scope), so we need
+	// the fresh value from the DB.
+	//
+	// If UserLookup is nil (e.g. in a unit test
+	// without a DB) we fall back to the username
+	// from the JWT. If UserLookup returns an
+	// error (e.g. the user was deleted from the
+	// portal_users table after the JWT was
+	// issued), we treat the user as
+	// unauthenticated — a stale cookie with a
+	// valid signature but no live user is
+	// exactly the case where /oidc/authorize
+	// must NOT proceed (otherwise headscale
+	// would create a session for a deleted
+	// skygate account).
+	username := claims.Username
+	email := ""
+	if s.UserLookup != nil {
+		u, em, lerr := s.UserLookup(claims.UserID)
+		if lerr != nil {
+			return nil
+		}
+		username = u
+		email = em
 	}
 	return &skygateSession{
-		UserID:   uid,
-		Username: parts[1],
-		Email:    parts[2],
+		UserID:   claims.UserID,
+		Username: username,
+		Email:    email,
 	}
 }
 
-// parseInt64 is a tiny wrapper around
-// strconv.ParseInt that returns 0+nil on
-// success. We don't import strconv in this
-// file (the OIDC package keeps imports tight
-// to make the security review surface small).
-func parseInt64(s string) (int64, error) {
-	var n int64
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c < '0' || c > '9' {
-			return 0, errBadInt
-		}
-		n = n*10 + int64(c-'0')
-	}
-	return n, nil
-}
-
-var errBadInt = &intErr{}
-
-type intErr struct{}
-
-func (e *intErr) Error() string { return "bad int" }
+// B174 (v1.5.2) removed the parseInt64 / intErr
+// helpers that the pre-B174 readSession used to
+// parse the (now-obsolete) colon-separated cookie
+// format. The current readSession delegates to
+// auth.ParseJWT which already handles int parsing
+// internally — no manual digit loop needed.

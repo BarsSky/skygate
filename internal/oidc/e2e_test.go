@@ -50,6 +50,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"skygate/internal/auth"
 )
 
 // TestE2E_HeadscaleClientFlow is the B161.4 end-to-end
@@ -67,6 +69,14 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 		t.Fatalf("NewKeyStore: %v", err)
 	}
 	issuerURL := "https://skygate.test" // httptest server overrides this
+	// B174 (v1.5.2): the OIDC service now needs
+	// the JWT secret so it can verify the
+	// skygate_session cookie via auth.ParseJWT.
+	// The mock login handler below issues a real
+	// HS256 JWT (via auth.IssueJWT) using this
+	// secret, so the OIDC readSession will
+	// recognize it.
+	jwtSecret := "e2e-test-jwt-secret-do-not-use-in-prod"
 	s := &Service{
 		IssuerURL:    issuerURL,
 		ClientID:     "headscale",
@@ -74,6 +84,16 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 		RedirectURIs: "https://head.test/oidc/callback",
 		Codes:        NewAuthCodeStore(),
 		Keys:         ks,
+		JWTSecret:    jwtSecret,
+		// UserLookup returns a fixed (username,
+		// email) pair — mirrors what main.go wires
+		// in production via db.GetUserNameByID.
+		// The OIDC id_token / /userinfo endpoints
+		// both read this to populate the email
+		// claim.
+		UserLookup: func(uid int64) (string, string, error) {
+			return "alice", "alice@example.com", nil
+		},
 	}
 	// Stand up a real HTTP server. We replace the
 	// IssuerURL discovery-doc output to point at the
@@ -334,6 +354,23 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 			http.Error(w, "bad creds", 401)
 			return
 		}
+		// B174 (v1.5.2): issue a REAL JWT for the
+		// skygate_session cookie (not a mock string).
+		// The pre-B174 test used "mock-jwt-for-test-only"
+		// which the OIDC readSession couldn't parse, so
+		// the e2e test was hiding the production bug.
+		// B174 issues an HS256 JWT via auth.IssueJWT
+		// using the same secret the Service was
+		// constructed with — the OIDC readSession can
+		// then verify it via auth.ParseJWT and recognize
+		// the user as authenticated.
+		uid := int64(42)
+		tok, terr := auth.IssueJWT(jwtSecret, uid, "alice", false, 24)
+		if terr != nil {
+			t.Errorf("mockLoginPost: issue jwt: %v", terr)
+			http.Error(w, "issue jwt", 500)
+			return
+		}
 		// Echo back the same next-redirect logic the
 		// real PostLogin uses (B172 fix). The real
 		// helper is in internal/feature/auth/service.go
@@ -343,7 +380,7 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 		nextParam := r.FormValue("next")
 		http.SetCookie(w, &http.Cookie{
 			Name:     "skygate_session",
-			Value:    "mock-jwt-for-test-only",
+			Value:    tok,
 			Path:     "/",
 			HttpOnly: true,
 		})
@@ -474,69 +511,52 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 	// must read the session cookie (via s.readSession)
 	// and issue the code in one step, not bounce
 	// through /login again.
+	// STEP 4e: re-run the OIDC authorize with the
+	// session cookie. Now that the user is logged
+	// in, the handler should issue an auth code
+	// (NOT redirect to /login again). This is the
+	// second half of the B172 fix: the OIDC side
+	// must read the session cookie (via s.readSession)
+	// and issue the code in one step, not bounce
+	// through /login again.
+	//
+	// B174 (v1.5.2): the mock login handler now
+	// issues a real HS256 JWT (via auth.IssueJWT)
+	// using the same secret the Service was
+	// constructed with. The OIDC readSession
+	// verifies it via auth.ParseJWT and recognizes
+	// the user as authenticated.
 	authReq2, _ := http.NewRequest("GET", authURL, nil)
 	if sessionCookie != nil {
 		authReq2.AddCookie(sessionCookie)
 	}
-	// Update the mock /authorize to read the
-	// session cookie. We do this by swapping the
-	// mux handler (httptest.NewServer shares the
-	// mux). Since the OIDC service's ServeAuthorize
-	// is what we want to test, we just call it
-	// directly with the request — the readSession
-	// helper looks at the cookie name 'skygate_session',
-	// so the mock cookie value won't parse as a real
-	// JWT (and that's fine — the B161.3 readSession
-	// already has a graceful failure path that
-	// returns nil on parse error, treating the user
-	// as unauthenticated).
-	//
-	// To make the test deterministic, we add a
-	// readSession mock that returns a fixed user
-	// when the cookie is present. This keeps the
-	// test self-contained (no JWT signing required)
-	// while still exercising the full flow.
-	authReq2.Header.Set("X-Test-Session-Cookie-Present", "1")
-	// The OIDC service's readSession is package-private
-	// (s.readSession). For this test we need to
-	// inject a session. The cleanest way is to use
-	// a custom Service.Configure callback if
-	// available, OR to run a parallel service with
-	// the cookie-parser stubbed. Since B161.3
-	// deliberately left readSession as a private
-	// method (not exported) to keep the OIDC package
-	// free of auth-package imports, we test the
-	// end-to-end behavior by using the production
-	// Service with the standard cookie parser and
-	// accepting that the mock cookie won't parse.
-	//
-	// **However**, that means STEP 4e will redirect
-	// to /login again (because the mock cookie
-	// doesn't parse). The real /login handler
-	// produces a parseable cookie; the test asserts
-	// that the post-login redirect is correct
-	// (the B172 fix), and the cross-package parse
-	// is covered by the B172 B-check source contract.
-	//
-	// For the OIDC end-to-end (which we still want to
-	// verify), we re-issue the auth code via the
-	// in-memory store — pre-populating a code with
-	// the same PKCE challenge is the established
-	// shortcut (the real path is unit-tested by
-	// TestServeAuthorize_LoggedInIssuesCode).
-	_ = authReq2
-	code := s.Codes.Put(AuthCodeEntry{
-		UserID:             42,
-		Username:           "alice",
-		Email:              "alice@example.com",
-		ClientID:           "headscale",
-		RedirectURI:        "https://head.test/oidc/callback",
-		Scope:              "openid profile email",
-		Nonce:              "test-nonce-456",
-		CodeChallenge:      codeChallenge,
-		CodeChallengeMethod: "S256",
-		ExpiresAt:          time.Now().Add(5 * time.Minute),
-	})
+	auth2 := serveAuthForReq(t, s, authReq2)
+	// The OIDC handler should now issue an auth
+	// code and redirect to headscale's callback
+	// URL (NOT bounce to /login). Pre-B174 this
+	// was a 302 → /login?next=... because the
+	// readSession couldn't parse the (now-real)
+	// JWT cookie.
+	res2 := auth2.Result()
+	if res2.StatusCode != http.StatusFound {
+		t.Fatalf("STEP 4e: /oidc/authorize after login: got %d, want 302 (the OIDC handler must recognize the session cookie via auth.ParseJWT, NOT redirect back to /login — that was the pre-B174 bug)", res2.StatusCode)
+	}
+	authLoc, err := url.Parse(res2.Header.Get("Location"))
+	if err != nil {
+		t.Fatalf("STEP 4e: parse Location: %v", err)
+	}
+	if authLoc.Scheme != "https" || authLoc.Host != "head.test" || authLoc.Path != "/oidc/callback" {
+		t.Fatalf("STEP 4e: expected redirect to https://head.test/oidc/callback, got %s", res2.Header.Get("Location"))
+	}
+	code := authLoc.Query().Get("code")
+	if code == "" {
+		t.Fatalf("STEP 4e: no auth code in callback URL: %s", res2.Header.Get("Location"))
+	}
+	stateEchoed := authLoc.Query().Get("state")
+	if stateEchoed != "test-state-123" {
+		t.Fatalf("STEP 4e: state echo broken: got %q, want %q", stateEchoed, "test-state-123")
+	}
+	t.Logf("  /oidc/authorize after login: 302 → %s (auth code + state echoed) ✓", res2.Header.Get("Location"))
 
 	// ─────────────────────────────────────────────
 	// STEP 5: POST /oidc/token
@@ -646,6 +666,30 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 // Same algorithm skygate uses in /oidc/token
 // (verifyPKCE), so the test exercises the real code
 // path (not a hand-rolled S256).
+// serveAuthForReq runs the OIDC service's
+// ServeAuthorize against a synthetic request
+// (so we can pass a cookie that the test's
+// httptest server hasn't seen). It returns the
+// httptest.ResponseRecorder so the test can
+// assert on status + Location. This is the
+// test-only way to call s.ServeAuthorize
+// directly (the production code path is wrapped
+// in the service's Handler()).
+//
+// B174 (v1.5.2) addition: pre-B174 the e2e test
+// had to call s.ServeAuthorize directly with a
+// mock session header to bypass the broken
+// readSession. B174 makes readSession use
+// auth.ParseJWT, so the cookie is parsed in
+// production code and the test can simply
+// add the cookie to the request.
+func serveAuthForReq(t *testing.T, s *Service, r *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	s.ServeAuthorize(rr, r)
+	return rr
+}
+
 func computePKCEChallengeS256(verifier string) (string, error) {
 	// Use the production verifyPKCE in reverse: pass
 	// the verifier as the "challenge" and see if it

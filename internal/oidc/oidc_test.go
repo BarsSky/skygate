@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"skygate/internal/auth"
 )
 
 // TestNewKeyStore_GeneratesOnFirstRun ensures the
@@ -382,19 +384,39 @@ func TestServeAuthorize_RedirectURINotAllowed(t *testing.T) {
 // redirects to headscale's callback with
 // ?code=...&state=...
 func TestServeAuthorize_LoggedInIssuesCode(t *testing.T) {
+	// B174 (v1.5.2): pre-B174 the test injected
+	// a colon-separated fake cookie value
+	// ("1:alice:alice@example.com:9999999999")
+	// that matched the (broken) pre-B174
+	// readSession format. B174 makes readSession
+	// use auth.ParseJWT, so we now issue a real
+	// HS256 JWT via auth.IssueJWT — the same
+	// flow the production PostLogin handler uses.
+	const jwtSecret = "oidc-test-secret-do-not-use-in-prod"
 	s := &Service{
 		IssuerURL:    "https://skygate.example.com",
 		ClientID:     "headscale",
 		RedirectURIs: "https://head.skynas.ru/oidc/callback",
 		Codes:        NewAuthCodeStore(),
+		JWTSecret:    jwtSecret,
+		// UserLookup returns a fixed (name, email)
+		// pair — mirrors what main.go wires in
+		// production via db.GetUserNameByID.
+		UserLookup: func(uid int64) (string, string, error) {
+			return "alice", "alice@example.com", nil
+		},
+	}
+	tok, err := auth.IssueJWT(jwtSecret, 1, "alice", false, 24)
+	if err != nil {
+		t.Fatalf("IssueJWT: %v", err)
 	}
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/oidc/authorize?client_id=headscale&redirect_uri=https://head.skynas.ru/oidc/callback&response_type=code&state=xyz&scope=openid+profile+email", nil)
-	// Inject a valid skygate session cookie.
-	// Format: "<user_id>:<username>:<email>:<expires_unix>"
+	// Inject a real skygate_session JWT cookie
+	// (the same format feature/auth.PostLogin sets).
 	req.AddCookie(&http.Cookie{
 		Name:  skygateSessionCookie,
-		Value: "1:alice:alice@example.com:9999999999",
+		Value: tok,
 	})
 	s.ServeAuthorize(rr, req)
 	if rr.Code != 302 {
