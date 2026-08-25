@@ -489,7 +489,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 				tag, err := s.DB.Exec(
 					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
 					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
-					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
+					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
 					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker)
 				if err != nil {
 					continue
@@ -563,19 +563,27 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 				continue
 			}
 			// B125: use ON CONFLICT DO NOTHING (against the
-			// UNIQUE INDEX device_rules_natural_key_uniq
-			// from migrateV056PG) instead of the pre-check +
+			// UNIQUE INDEX device_rules_natural_key_uniq from
+			// migrateV056PG, REDEFINED in migrateV060PG to
+			// drop parent_domain) instead of the pre-check +
 			// INSERT race. The pre-check is preserved for the
 			// "shared IP between domains" case (B123 alert
 			// UX) — when another domain already added the
-			// /32, the conflict target skips silently. The
-			// parent_domain column is what disambiguates
-			// shared IPs: each (user, device, exit, type,
-			// value) tuple can have one row per parent_domain.
+			// /32, the conflict target skips silently.
+			//
+			// 2026-08-25 (B183): the conflict target is 5
+			// columns (without parent_domain) — the pre-B183
+			// 6-column target let two parent_domains resolving
+			// to the same /32 (e.g. discord.com and
+			// discordapp.com both → 1.2.3.4) each get their
+			// own row. The 5-column target ensures the
+			// (user, device, exit, type, value) tuple maps
+			// to at most ONE rule row, with the first
+			// parent_domain winning.
 			tag, ierr := s.DB.Exec(
 				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
 				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
-				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
+				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
 				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain)
 			if ierr != nil {
 				continue
@@ -692,3 +700,4 @@ func (s *Service) lookupAcceptRoutes(nodeHostname string) int {
 	accept, _ := db.LookupExitServerAcceptRoutes(s.DB, nodeHostname)
 	return accept
 }
+

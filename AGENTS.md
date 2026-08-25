@@ -713,9 +713,35 @@ in the same commit. Don't let the tracker drift.
     pending), UnknownExitNode (host not in headscale),
     EmptyApprovedMap (headscale unreachable, defensive),
     plus 2 direct unit tests of `ruleApprovedInHeadscale`.
-    **Out of scope**: deduping the 70+ device_rule rows
-    that the autoupdater generates (one per parent_domain
-    per CDN — separate B183).
+  - **B183 (v1.5.2)**: autoupdater duplicate device_rule
+    rows fix. Filed as TODO in the B182 commit message —
+    "Out of scope: deduping the 70+ device_rule rows that
+    the autoupdater generates (one per parent_domain per
+    CDN)". The pre-B183 UNIQUE INDEX
+    `device_rules_natural_key_uniq` was 6-column (included
+    `parent_domain`), which let the autoupdater accumulate
+    duplicate rows when different `parent_domain` values
+    resolved to the same CIDR (e.g. `cdn:cloudflare:discordapp.com`
+    and `cdn:cloudflare:discord.com` both → `103.21.244.0/22` —
+    separate rows for the same logical rule). Live data for
+    emilia: 102 subnet rows but only 32 unique subnets.
+    **B183 fix** (`migrateV060PG`): drop `parent_domain`
+    from the natural key. The new UNIQUE INDEX is on 5
+    columns: `(user_id, device_id, exit_node_id, target_type,
+    target_value)`. The dedup CTE (`ROW_NUMBER() OVER
+    (PARTITION BY ... ORDER BY CASE WHEN parent_domain
+    LIKE 'cdn:%' THEN 0 ELSE 1 END, id DESC)`) prefers
+    `cdn:`-prefixed `parent_domain` over plain-domain (more
+    informative for the operator), then most-recent id as a
+    tiebreaker. The autoupdater's two `ON CONFLICT` clauses
+    in `sync.go` are updated to use the 5-column target.
+    **11 contracts** in `scripts/check_b183.sh`. 6 new unit
+    tests in `internal/db/migrations_v0_60_b183_test.go`:
+    DedupPrefersCDNMarker (cdn: wins), DedupNoCDN (id DESC
+    wins), NoDuplicates (no-op), NewIndexHas5Columns
+    (queries pg_index), Idempotent (run twice = same
+    state), PreservesDistinctNaturalKeys (4 different keys
+    all survive).
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

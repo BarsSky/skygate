@@ -1317,3 +1317,80 @@ func migrateV059PG(d *sql.DB) error {
 	}
 	return nil
 }
+
+// migrateV060PG — v1.5.2 (B183) — drop parent_domain from
+// the device_rules natural-key UNIQUE INDEX.
+//
+// The pre-B183 index
+//
+//   CREATE UNIQUE INDEX device_rules_natural_key_uniq
+//     ON device_rules(user_id, device_id, exit_node_id,
+//                     target_type, target_value, parent_domain)
+//
+// was 6-column, which let the autoupdater accumulate one
+// row per (user, device, exit, type, value) tuple PER
+// PARENT_DOMAIN. Live data for emilia (B182 live-verified):
+// 102 subnet rows, but only 32 unique subnets — 70+ rows
+// were duplicate CIDRs with different parent_domain
+// values (e.g. cdn:cloudflare:discordapp.com and
+// cdn:cloudflare:discord.com both resolve to 103.21.244.0/22
+// and got separate rows). The visible symptom was
+// /admin/exit-nodes "mismatch: have 34, want 102" (the
+// want side counts raw rows; the have side counts unique
+// routes on the Tailscale client).
+//
+// B183 fix: drop parent_domain from the natural key. The
+// natural key is (user, device, exit, type, value) —
+// parent_domain is metadata, not part of what makes a rule
+// unique. The autoupdater's two ON CONFLICT clauses (sync.go)
+// are also updated in B183 to match the 5-column target.
+//
+// Dedup strategy: pick the "winner" row per (user, device,
+// exit, type, value) natural key. Prefer:
+//   1. cdn: prefixed parent_domain (more informative —
+//      tells the operator which CDN provides the route)
+//   2. most recent id (highest id wins) as a tiebreaker
+// All other rows with the same natural key are DELETEd.
+//
+// The migration is idempotent (IF EXISTS / DROP IF EXISTS
+// guards). The new index is created with the same name
+// (`device_rules_natural_key_uniq`) so any code that
+// references it (sync.go's ON CONFLICT) doesn't need to
+// change its index name — only the column list.
+//
+// B183 contract test: see scripts/check_b183.sh.
+func migrateV060PG(d *sql.DB) error {
+	stmts := []string{
+		// Step 1: dedup existing rows by natural key. The
+		// ORDER BY picks the winner — cdn: prefix first
+		// (most informative), then most recent id.
+		// The DELETE removes all losers (rn > 1).
+		`DELETE FROM device_rules
+		 WHERE id IN (
+		   SELECT id FROM (
+		     SELECT id,
+		       ROW_NUMBER() OVER (
+		         PARTITION BY user_id, device_id, exit_node_id, target_type, target_value
+		         ORDER BY
+		           CASE WHEN parent_domain LIKE 'cdn:%' THEN 0 ELSE 1 END,
+		           id DESC
+		       ) AS rn
+		     FROM device_rules
+		   ) ranked
+		   WHERE rn > 1
+		 )`,
+		// Step 2: drop the old 6-column index
+		`DROP INDEX IF EXISTS device_rules_natural_key_uniq`,
+		// Step 3: create the new 5-column index (without
+		// parent_domain). Same name so ON CONFLICT clauses
+		// can target it by name if needed.
+		`CREATE UNIQUE INDEX IF NOT EXISTS device_rules_natural_key_uniq
+			ON device_rules(user_id, device_id, exit_node_id, target_type, target_value)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return fmt.Errorf("v0.60 device_rules natural-key drop parent_domain: %w", err)
+		}
+	}
+	return nil
+}
