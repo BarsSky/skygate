@@ -107,6 +107,50 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     # Same pattern for the hostname: legacy TS_HOSTNAME +
     # newer SKYGATE_TS_HOSTNAME.
     HOSTNAME="${TS_HOSTNAME:-${SKYGATE_TS_HOSTNAME:-skygate-host-1}}"
+    # 2026-08-25 (B185): Tailscale's `tailscale up` is an
+    # "all-or-nothing" command — if the persisted state has
+    # any non-default flag set (e.g. --advertise-tags), the
+    # next `tailscale up` MUST mention that flag, or it
+    # errors with "requires mentioning all non-default
+    # flags" and the entire call is a no-op. Live symptom
+    # (2026-08-25): the operator's earlier `tailscale set
+    # --advertise-tags=tag:dev-infra-skygate-host-1,tag:private`
+    # persisted into tailscaled.state, and every subsequent
+    # `tailscale up --accept-routes` silently failed
+    # (WARNING logged, exit code non-zero), leaving
+    # `RouteAll=false` in the state. Result: skygate
+    # container never accepted the relay's advertised
+    # subnet routes, and the Telegram probe stayed
+    # "unreachable" even though everything else was correct.
+    #
+    # The fix: read the existing state's advertise-tags
+    # (if any) and pass them back. If the state has no
+    # advertise-tags, fall back to the B111-canonical
+    # value (`tag:dev-infra-skygate-host-1,tag:private`).
+    # Operators can override with SKYGATE_TS_ADVERTISE_TAGS.
+    ADVERTISE_TAGS="${SKYGATE_TS_ADVERTISE_TAGS:-}"
+    if [ -z "$ADVERTISE_TAGS" ] && [ -f /var/lib/tailscale/tailscaled.state ]; then
+        # tailscaled.state is a JSON blob. The current
+        # profile's AdvertiseTags field is base64-encoded
+        # inside _profiles. Python is the most reliable way
+        # to extract it (jq is also fine if present).
+        ADVERTISE_TAGS=$(python3 -c "
+import json, base64, sys
+try:
+    with open('/var/lib/tailscale/tailscaled.state') as f:
+        d = json.load(f)
+    profiles = json.loads(d.get('_profiles', '{}'))
+    cur = d.get('_current-profile', '')
+    p = profiles.get(cur, {})
+    tags = p.get('AdvertiseTags') or []
+    if tags:
+        print(','.join(tags))
+except Exception:
+    pass
+" 2>/dev/null)
+    fi
+    ADVERTISE_TAGS="${ADVERTISE_TAGS:-tag:dev-infra-skygate-host-1,tag:private}"
+    echo "[init] advertise-tags=$ADVERTISE_TAGS"
 
     echo "[init] tailscale up --accept-routes (login-server=$LOGIN_SERVER, hostname=$HOSTNAME)"
     # 2026-07-14: --accept-dns=false is critical. By default
@@ -158,7 +202,8 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
         --hostname="$HOSTNAME" \
         --accept-routes \
         --accept-dns=false \
-        --exit-node= 2>&1; then
+        --exit-node= \
+        --advertise-tags="$ADVERTISE_TAGS" 2>&1; then
         # timeout exits 124, tailscale up itself exits non-zero
         # on auth failure. Either way: log and move on. v0.33.1.9
         # entry-point fix — without the timeout, `tailscale up`

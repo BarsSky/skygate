@@ -810,6 +810,90 @@ in the same commit. Don't let the tracker drift.
     exit-node returns false), ResolvedKeyForTuple_Stable
     (pins the exact key format).
 
+  - **B185 (v1.5.2)**: three follow-ups to the live operator
+    report of 2026-08-25 — (1) `/admin/telegram: настроено,
+    но API недоступен`, (2) discord / discord.gg /
+    discord.media показывают ⏳ хотя у нас 15 published
+    Cloudflare ranges, (3) the action-items list in the
+    probe section "Что проверить" is too long for a one-
+    click fix.
+    **B185 fix 1 — entrypoint tailscale up failed silently
+    with "requires mentioning all non-default flags"**:
+    the pre-B185 entrypoint ran `tailscale up --accept-routes
+    --accept-dns=false --exit-node= --hostname=$HOSTNAME`
+    but the persisted state had `advertise-tags=
+    tag:dev-infra-skygate-host-1,tag:private` (set by an
+    earlier operator action — the B111 re-tag runbook).
+    Tailscale's `tailscale up` is an all-or-nothing command:
+    if the persisted state has any non-default flag set,
+    the next `tailscale up` MUST mention that flag, or it
+    errors with "requires mentioning all non-default flags"
+    and the entire call is a no-op. Live symptom:
+    `RouteAll=false` persisted in tailscaled.state, the
+    skygate container never accepted the relay's subnet
+    routes, api.telegram.org stayed unreachable even though
+    everything else was correct. The new entrypoint reads
+    the existing state's `AdvertiseTags` (via a small
+    `python3 -c` block on the state JSON) and falls back
+    to the B111-canonical `tag:dev-infra-skygate-host-1,
+    tag:private` if the state has no tags, then passes them
+    back as `--advertise-tags=$ADVERTISE_TAGS`. Operators
+    can override with `SKYGATE_TS_ADVERTISE_TAGS=<...>`.
+    **B185 fix 2 — DOMAIN rule status now propagates from
+    `cdn:*:<domain>` resolved subnets too**: the B184
+    `LoadResolvedByDomain` was correct for autoupdater's
+    direct `net.LookupHost` path (which stores
+    `parent_domain = "<domain>"`) but missed the CDN-
+    detector path (which stores `parent_domain =
+    "cdn:<provider>:<domain>"` for Cloudflare/Fastly/
+    Google/Akamai). Live: discord.gg had 44 rows under
+    `parent_domain='discord.gg'` AND 19 rows under
+    `parent_domain='cdn:cloudflare:discord.gg'` (the CDN
+    detector kicked in for discord.gg via the Cloudflare
+    ASN match). The B184 key lookup `ResolvedKeyForTuple(uid,
+    did, exit, rule.TargetValue)` matched only the
+    `discord.gg` key and missed the `cdn:cloudflare:discord.gg`
+    key — so the DOMAIN rule showed ⏳ even though 19
+    subnets were sitting in headscale ApprovedRoutes.
+    New `LookupResolvedForDomain(resolvedByDomain, uid,
+    did, exit, domain)` helper merges both formats in one
+    O(n) suffix scan over the map (the map is small —
+    a few hundred entries for the whole admin view). The
+    5 new unit tests in `resolved_by_domain_b185_test.go`
+    pin: DirectMatch (parent_domain = domain), CDNAlias
+    (parent_domain = "cdn:cloudflare:discord.gg"),
+    BothMerged (union), None (returns nil), DifferentCDN
+    (no cross-domain alias match).
+    **B185 fix 3 — /admin/telegram now has a "Container
+    tailscale state" diagnostic card** showing the
+    skygate container's live `tailscale status --json`:
+    hostname, backend state, TailscaleIPs (v4/v6),
+    `RouteAll` (--accept-routes), AdvertiseTags, ExitNodeID.
+    When `RouteAll=false` (the B185 root cause) the card
+    shows a red badge + a one-click "Re-apply accept-routes"
+    button that runs `docker exec skygate-skygate-1
+    tailscale set --accept-routes=true` (uses
+    `tailscale set`, NOT `tailscale up`, precisely because
+    the entrypoint's `tailscale up` form is the one that
+    breaks on the "requires mentioning all" check). The
+    action is audited as `telegram_reapply_accept_routes`,
+    invalidates the probe cache (the next probe is forced
+    to run, not served from the 30s cache), and redirects
+    with a flash message. The diagnostic + button is
+    a stop-gap until the operator's container restart
+    picks up the new entrypoint — after that, the button
+    is a no-op (RouteAll stays true, button hidden by
+    `{{if .State.Container.HasAcceptIssue}}`).
+    **13 contracts** in `scripts/check_b185.sh` (A-P): the
+    9 source/wiring contracts (A-K) pin entrypoint +
+    helper + admin UI + template + i18n; (L) pins the
+    AGENTS.md mention; (M) pins `verify_pre_deploy.sh`
+    registration; (N-P) pin the live VM state — container's
+    `RouteAll=true`, probe shows `ok_relay`, and at least
+    1 discord-domain row has 1+ `cdn:*` stored subnets
+    (the B185 LookupResolvedForDomain cdn-alias propagation
+    in action).
+
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
   §6 status log 2026-08-24) — **B151 + B152 + B153** close the

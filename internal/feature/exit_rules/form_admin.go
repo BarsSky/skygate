@@ -207,8 +207,9 @@ func ruleApprovedInHeadscale(rule AdminRule, approvedByExitNode map[string]map[s
 	if rule.ExitNode == "" || rule.TargetValue == "" {
 		return false
 	}
-	resolved, ok := resolvedByDomain[ResolvedKeyForTuple(int64(rule.UserID), int64(rule.DeviceID), rule.ExitNode, rule.TargetValue)]
-	if !ok || len(resolved) == 0 {
+	resolved := LookupResolvedForDomain(resolvedByDomain,
+		int64(rule.UserID), int64(rule.DeviceID), rule.ExitNode, rule.TargetValue)
+	if len(resolved) == 0 {
 		return false // autoupdater hasn't resolved yet
 	}
 	approved, ok := approvedByExitNode[rule.ExitNode]

@@ -186,6 +186,55 @@
   </div>
 
   <div class="card" style="grid-column:1 / -1">
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-server"></i> {{t "telegram.container_title"}}</h3>
+    <p class="sub">{{t "telegram.container_subtitle" | safeHTML}}</p>
+    {{if not .State.Container.Available}}
+      <div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i>
+        {{t "telegram.container_unavailable"}}
+        {{if .State.Container.RawStderr}}<pre style="margin:.4rem 0 0;font-size:.8em;color:#666">{{.State.Container.RawStderr}}</pre>{{end}}
+      </div>
+    {{else}}
+      <table class="kv" style="font-size:.92em;line-height:1.5">
+        <tr><th style="text-align:left;width:14em">{{t "telegram.container_hostname"}}</th><td><code>{{.State.Container.Hostname}}</code></td></tr>
+        <tr><th style="text-align:left">{{t "telegram.container_backend"}}</th>
+            <td><code>{{.State.Container.BackendState}}</code>
+                {{if eq .State.Container.BackendState "Running"}}<span class="muted">✓</span>{{else}}<span class="muted">⚠</span>{{end}}
+            </td></tr>
+        <tr><th style="text-align:left">{{t "telegram.container_ip4"}}</th><td><code>{{.State.Container.IP4}}</code></td></tr>
+        <tr><th style="text-align:left">{{t "telegram.container_ip6"}}</th><td><code>{{.State.Container.IP6}}</code></td></tr>
+        <tr><th style="text-align:left">{{t "telegram.container_route_all"}}</th>
+            <td>
+              {{if .State.Container.RouteAll}}<span class="badge badge-success">{{t "telegram.container_route_all_on"}}</span>
+              {{else}}<span class="badge badge-danger">{{t "telegram.container_route_all_off"}}</span>
+                  <span class="muted" style="margin-left:.4rem">— {{t "telegram.container_route_all_off_help"}}</span>
+              {{end}}
+            </td></tr>
+        <tr><th style="text-align:left">{{t "telegram.container_advertise_tags"}}</th>
+            <td>
+              {{if .State.Container.AdvertiseTags}}{{range .State.Container.AdvertiseTags}}<code>{{.}}</code> {{end}}
+              {{else}}<span class="badge badge-danger">{{t "telegram.container_no_tags"}}</span>{{end}}
+            </td></tr>
+        <tr><th style="text-align:left">{{t "telegram.container_exit_node"}}</th>
+            <td>
+              {{if .State.Container.ExitNodeID}}<code>{{.State.Container.ExitNodeID}}</code>
+              {{else}}<span class="muted">{{t "telegram.container_no_exit_node"}}</span>{{end}}
+            </td></tr>
+      </table>
+      {{if .State.Container.HasAcceptIssue}}
+      <div class="alert alert-warn" style="margin-top:.5rem"><i class="fa-solid fa-triangle-exclamation"></i>
+        {{t "telegram.container_issue_help"}}
+      </div>
+      <form action="/admin/telegram" method="POST" style="margin-top:.5rem" onsubmit="return confirm('{{t "telegram.container_reapply_confirm"}}')">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="action" value="reapply_accept_routes">
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-rotate"></i> {{t "telegram.container_reapply_button"}}</button>
+      </form>
+      {{end}}
+    {{end}}
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-route"></i> {{t "telegram.egress_title"}}</h3>
     <p class="sub">{{t "telegram.egress_subtitle" | safeHTML}}</p>
     <p class="sub">{{t "telegram.egress_help"}}</p>

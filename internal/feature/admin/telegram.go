@@ -14,9 +14,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +100,46 @@ type telegramUIState struct {
 	// enabled exit-node the admin can pick from (sourced from
 	// exit_servers via db.ListExitServers).
 	Egress EgressState
+	// Container (B185) carries the live tailscaled state
+	// inside the skygate container — RouteAll / AdvertiseTags
+	// / ExitNodeID / TailscaleIPs. Filled by
+	// readContainerTailscaleState which `docker exec`s into
+	// the container and parses `tailscale status --json`.
+	// When the container is unreachable (no docker socket
+	// mount, wrong hostname, etc.) the helper returns a
+	// state with Available=false and the page shows a
+	// "container diagnostic not available" note instead
+	// of failing the page render.
+	Container ContainerTailscaleState
+}
+
+// ContainerTailscaleState is the diagnostic snapshot of the
+// skygate container's tailscaled — the field that decides
+// whether the container will accept subnet routes from the
+// chosen egress relay. If RouteAll is false the Telegram
+// probe will be "unreachable" no matter what the relay
+// advertises; the "Re-apply accept-routes" button is the
+// one-click fix (calls `tailscale set --accept-routes=true`
+// inside the container, which updates the persisted state
+// without the "requires mentioning all non-default flags"
+// gotcha that breaks `tailscale up` when the state already
+// has --advertise-tags set).
+//
+// 2026-08-25 (B185): replaces the "ssh to relay + run
+// update-routes.sh + check 4 things by hand" runbook
+// with a single page that shows the live container state
+// + a button to fix the most common break (RouteAll=false).
+type ContainerTailscaleState struct {
+	Available         bool
+	Hostname          string
+	BackendState      string
+	IP4               string
+	IP6               string
+	RouteAll          bool
+	AdvertiseTags     []string
+	ExitNodeID        string
+	HasAcceptIssue    bool   // RouteAll=false OR no AdvertiseTags
+	RawStderr         string // last `tailscale status` / `docker exec` error
 }
 
 // EgressState is the per-page state for the egress-relay card.
@@ -160,6 +202,15 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 	if err := row.Scan(&ts); err == nil && ts > 0 {
 		state.UpdatedAt = time.Unix(ts, 0).UTC().Format("2006-01-02 15:04:05 UTC")
 	}
+	// 2026-08-25 (B185): the container's tailscaled state
+	// decides whether the probe is even reachable. If
+	// RouteAll=false the container will never accept
+	// subnet routes from the egress relay, regardless of
+	// what the relay advertises. The diagnostic block
+	// below the probe surfaces this in one line + one
+	// button, so the operator doesn't have to ssh + read
+	// /var/lib/tailscale/tailscaled.state by hand.
+	state.Container = readContainerTailscaleState("skygate-skygate-1")
 	return state
 }
 
@@ -240,6 +291,13 @@ func (s *Service) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 		s.handleTelegramSetEgress(w, r, c)
 	case "clear_egress":
 		s.handleTelegramClearEgress(w, r, c)
+	case "reapply_accept_routes":
+		// 2026-08-25 (B185): one-click fix for the
+		// "tailscale up fails with 'requires mentioning
+		// all non-default flags'" entrypoint bug. The
+		// button is shown next to the diagnostic block
+		// when Container.HasAcceptIssue is true.
+		s.handleTelegramReapplyAcceptRoutes(w, r, c)
 	default:
 		s.redirectWithFlash(w, r, "", "Неизвестное действие: "+action)
 	}
@@ -693,4 +751,122 @@ func redactChatID(chatID, token string, c *auth.Claims) string {
 		return "<token-only>"
 	}
 	return chatID
+}
+
+// readContainerTailscaleState (B185) shells out to
+// `docker exec <container> tailscale status --json` and
+// returns a structured snapshot. Returns Available=false
+// when the container isn't reachable (no docker socket
+// mounted, wrong hostname, tailscaled not running) so
+// the template can render a clean "diagnostic not
+// available" message instead of failing the page.
+//
+// The `tailscale set --accept-routes=true` recovery
+// action (handleTelegramReapplyAcceptRoutes) is the
+// same path the B185 entrypoint fix takes on every
+// container restart, so the manual "Re-apply" button
+// is only needed when the operator restarted the
+// container after the entrypoint fix was deployed but
+// the persisted state still has RouteAll=false (e.g.
+// tailscale set --accept-routes=false was run by hand
+// at some point).
+func readContainerTailscaleState(containerName string) ContainerTailscaleState {
+	var out ContainerTailscaleState
+	out.Hostname = containerName
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "exec", containerName,
+		"tailscale", "status", "--json")
+	stdout, err := cmd.Output()
+	if err != nil {
+		out.RawStderr = err.Error()
+		return out
+	}
+	var raw struct {
+		BackendState string   `json:"BackendState"`
+		TailscaleIPs []string `json:"TailscaleIPs"`
+		Self         struct {
+			HostName string   `json:"HostName"`
+			Tags     []string `json:"Tags"`
+		} `json:"Self"`
+		Prefs struct {
+			RouteAll      bool     `json:"RouteAll"`
+			AdvertiseTags []string `json:"AdvertiseTags"`
+			ExitNodeID    string   `json:"ExitNodeID"`
+		} `json:"Prefs"`
+	}
+	if err := json.Unmarshal(stdout, &raw); err != nil {
+		out.RawStderr = "parse: " + err.Error()
+		return out
+	}
+	out.Available = true
+	out.BackendState = raw.BackendState
+	if raw.Self.HostName != "" {
+		out.Hostname = raw.Self.HostName
+	}
+	for _, ip := range raw.TailscaleIPs {
+		if strings.Contains(ip, ":") {
+			out.IP6 = ip
+		} else {
+			out.IP4 = ip
+		}
+	}
+	out.RouteAll = raw.Prefs.RouteAll
+	if len(raw.Prefs.AdvertiseTags) > 0 {
+		out.AdvertiseTags = raw.Prefs.AdvertiseTags
+	} else if len(raw.Self.Tags) > 0 {
+		// Fallback to Self.Tags — `tailscale status --json`
+		// reports the SAME tag list under both Prefs and Self
+		// but the tailnet ACLs can sometimes strip one or
+		// the other depending on the headscale version. Using
+		// either is fine for the operator-facing display.
+		out.AdvertiseTags = raw.Self.Tags
+	}
+	out.ExitNodeID = raw.Prefs.ExitNodeID
+	out.HasAcceptIssue = !out.RouteAll || len(out.AdvertiseTags) == 0
+	return out
+}
+
+// runContainerTailscale (B185) shells out to
+// `docker exec <container> tailscale set <args>`. The
+// "Re-apply accept-routes" button uses
+// `tailscale set --accept-routes=true` (NOT
+// `tailscale up --accept-routes`) precisely because the
+// `tailscale up` form is "all-or-nothing" and breaks
+// when the persisted state has --advertise-tags set
+// (the B185 entrypoint bug). `tailscale set` only
+// patches the specified field, which is what we want
+// here.
+func runContainerTailscale(containerName string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	full := append([]string{"exec", containerName, "tailscale", "set"}, args...)
+	cmd := exec.CommandContext(ctx, "docker", full...)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// handleTelegramReapplyAcceptRoutes (B185) is the
+// one-click fix for the B185 entrypoint bug: if the
+// container's tailscaled state has RouteAll=false
+// (the B185 root cause), run `tailscale set
+// --accept-routes=true` to flip the bit without
+// breaking the "requires mentioning all non-default
+// flags" check. The persisted state is updated, the
+// routes propagate to the kernel within a few seconds,
+// and the next probe will see "ok_relay" instead of
+// "unreachable".
+func (s *Service) handleTelegramReapplyAcceptRoutes(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	const containerName = "skygate-skygate-1"
+	out, err := runContainerTailscale(containerName, "--accept-routes=true")
+	if err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "telegram_reapply_accept_routes",
+			fmt.Sprintf("container=%s err=%q out=%q", containerName, err.Error(), out))
+		s.redirectWithFlash(w, r, "", fmt.Sprintf("docker exec tailscale set --accept-routes=true: %v (%s)", err, out))
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "telegram_reapply_accept_routes",
+		fmt.Sprintf("container=%s out=%q", containerName, out))
+	s.invalidateTelegramProbe()
+	s.redirectWithFlash(w, r, "Container tailscaled: --accept-routes=true применён. Probe обновится в течение 30с.", "")
 }

@@ -39,6 +39,7 @@ package exit_rules
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // qSelectResolvedByDomain selects every (subnet, ip) rule
@@ -53,6 +54,23 @@ import (
 // exit_node_id, target_type, target_value) prevents duplicate
 // resolved rows, so this query returns at most one row per
 // (tuple, target_value).
+//
+// 2026-08-25 (B185): the autoupdater stores resolved
+// subnets under TWO different parent_domain formats:
+//   - "<domain>"           — when the autoupdater resolves
+//     the domain directly via net.LookupHost (e.g. "t.me"
+//     → 149.154.167.99/32, parent_domain="t.me")
+//   - "cdn:<provider>:<domain>" — when the CDN-detector
+//     identifies the site as Cloudflare/Fastly/Google/Akamai
+//     and uses the published IP ranges for that CDN
+//     (e.g. discord.gg → cdn:cloudflare:discord.gg, then
+//     INSERTs the 15 published Cloudflare CIDRs).
+// The B184 DOMAIN-rule status propagation must look up
+// BOTH formats — otherwise a Cloudflare-routed domain
+// shows ⏳ pending even when its 15 published CDN ranges
+// are sitting in headscale ApprovedRoutes. The helper
+// `LookupResolvedForDomain` does the merged lookup
+// (key + cdn:*:key) in one call.
 const qSelectResolvedByDomain = `
 SELECT user_id, device_id, exit_node_id, COALESCE(parent_domain, ''), target_value
   FROM device_rules
@@ -117,4 +135,59 @@ func LoadResolvedByDomain(d *sql.DB) (map[string]map[string]bool, error) {
 // (TestResolvedKeyForTuple_Stable).
 func ResolvedKeyForTuple(userID, deviceID int64, exitNode, parentDomain string) string {
 	return fmt.Sprintf("%d:%d:%s:%s", userID, deviceID, exitNode, parentDomain)
+}
+
+// LookupResolvedForDomain (B185) returns the merged set of
+// resolved CIDRs for a DOMAIN rule — both the direct
+// parent_domain match AND the cdn:*:<domain> alias. The
+// autoupdater stores resolved subnets under either format
+// depending on whether the resolution came from
+// net.LookupHost (parent_domain = "<domain>") or from the
+// CDN-detector (parent_domain = "cdn:<provider>:<domain>").
+// Without the alias lookup, Cloudflare/Fastly/Google/Akamai-
+// routed domains would always show ⏳ pending in the B184
+// three-state badge even when their CDN ranges are sitting
+// in headscale ApprovedRoutes.
+//
+// Returns nil when neither key has a match. The caller
+// (`ruleApprovedInHeadscale` + form_my statusByRuleID) treats
+// nil and an empty set identically ("no resolution yet").
+func LookupResolvedForDomain(resolvedByDomain map[string]map[string]bool, userID, deviceID int64, exitNode, domain string) map[string]bool {
+	merged := map[string]bool{}
+	// (a) direct match — autoupdater's net.LookupHost path
+	// stores parent_domain = "<domain>".
+	direct := resolvedByDomain[ResolvedKeyForTuple(userID, deviceID, exitNode, domain)]
+	for cid, ok := range direct {
+		merged[cid] = ok
+	}
+	// (b) cdn alias — the CDN-detector stores
+	// parent_domain = "cdn:<provider>:<domain>". We don't
+	// know which provider the autoupdater picked (it picks
+	// by ASN match in cdn.go), so we look up by suffix.
+	// The map size is small (a few hundred entries across
+	// the whole admin view) so an O(n) suffix scan is
+	// fine; the alternative is a second SQL query with
+	// `parent_domain LIKE 'cdn:%:discord.gg'`, but that
+	// would re-introduce the autoupdater's exact LIKE
+	// pattern which is what B175 already does.
+	prefix := ResolvedKeyForTuple(userID, deviceID, exitNode, "cdn:")
+	suffix := ":" + domain
+	for k, v := range resolvedByDomain {
+		if len(k) < len(prefix)+len(suffix) {
+			continue
+		}
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if !strings.HasSuffix(k, suffix) {
+			continue
+		}
+		for cid, ok := range v {
+			merged[cid] = ok
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }

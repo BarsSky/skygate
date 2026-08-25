@@ -448,12 +448,17 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 				statusByRuleID[r.ID] = "pending"
 			}
 		} else {
-			// DOMAIN rule (B184) — propagate status from
+			// DOMAIN rule (B184+B185) — propagate status from
 			// the autoupdater's resolved subnets. approved
 			// iff at least one resolved CIDR is in
-			// headscale for the rule's ExitNode.
-			resolved, rok := resolvedByDomain[ResolvedKeyForTuple(int64(r.UserID), int64(r.DeviceID), r.ExitNodeID, r.TargetValue)]
-			if !rok || len(resolved) == 0 {
+			// headscale for the rule's ExitNode. B185
+			// adds the cdn:*:<domain> alias lookup so
+			// Cloudflare/Fastly/Google/Akamai-routed
+			// domains don't stay "pending" when their
+			// CDN ranges are already in headscale.
+			resolved := LookupResolvedForDomain(resolvedByDomain,
+				int64(r.UserID), int64(r.DeviceID), r.ExitNodeID, r.TargetValue)
+			if len(resolved) == 0 {
 				statusByRuleID[r.ID] = "pending"
 			} else {
 				approved, aok := approvedByExitNode[r.ExitNodeID]
