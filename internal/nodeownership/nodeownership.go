@@ -52,6 +52,61 @@ import (
 // (used by hasRouter detection below).
 const subnetRouterPrefix = "skygate-subnet-"
 
+// matchOIDCStrategy implements B175 (v1.5.2) — Strategy E
+// for OIDC-registered nodes. Returns the matchedTag
+// ("tag:private" by default, or firstTagOrFallback if the
+// node already carries tags) and ok=true if the node was
+// registered via the OIDC flow AND belongs to the current
+// portal user.
+//
+// Detection:
+//   - n.PreAuthKeyID == "" distinguishes OIDC nodes from
+//     /my/preauth nodes (Strategy A) and operator-issued
+//     preauth key nodes (Strategy C). The OIDC flow does
+//     not consume a preauth key.
+//   - n.UserName == portalUsername is the ownership signal.
+//     headscale creates OIDC users with name = OIDC `name`
+//     claim, and skygate's OIDC id_token sets
+//     `name = entry.Username` (see internal/oidc/token.go:180)
+//     so the headscale user's name equals the skygate
+//     portal username.
+//
+// False-positive guards (NOT enforced here — the caller is
+// responsible):
+//   - The synthetic "tagged-devices" headscale user has
+//     name="tagged-devices" which won't equal any portal
+//     username (UNIQUE constraint on portal_users.username).
+//   - The `otherOwners` map (built earlier in Backfill) is
+//     checked at the top of the per-node loop to filter
+//     nodes whose headscale user ID is a different portal
+//     user; Strategy E is skipped before reaching here.
+//
+// Extracted as a package-level function so the B175 B-check
+// and unit test can exercise the pure condition without
+// spinning up a real *sql.DB (PG-only in v1.3.0+).
+func matchOIDCStrategy(n headscale.NodeView, portalUsername string) (matchedTag string, ok bool) {
+	if portalUsername == "" {
+		return "", false
+	}
+	// OIDC flow signature: no preauth key was used.
+	if n.PreAuthKeyID != "" {
+		return "", false
+	}
+	// OIDC user name == portal username → this is our node.
+	if n.UserName != portalUsername {
+		return "", false
+	}
+	// Match. Default tag: "tag:private" (the v0.26+ scope
+	// convention). If the node already carries tags (e.g.
+	// tag:subnet-router from operator-issued preauth key
+	// created via headscale CLI), preserve the first one
+	// instead of clobbering — same fallback as Strategy A/C.
+	if len(n.Tags) > 0 {
+		return firstTagOrFallback(n), true
+	}
+	return "tag:private", true
+}
+
 // Backfill walks the live headscale nodes, and for any
 // node whose headscale preAuthKey matches one of this
 // portal user's preauth_keys, inserts a row in
@@ -387,7 +442,91 @@ func Backfill(
 				}
 			}
 			if matchedTag == "" {
-				continue
+				// 2026-08-25: v1.5.2 (B175) — Strategy E
+				// for OIDC-registered nodes. The
+				// pre-B175 backfill only matched nodes
+				// via:
+				//   A. PreAuthKeyID = preauth_keys.headscale_preauth_id
+				//      (catches /my/preauth flow)
+				//   C. CreatedAt within 1h of a preauth key
+				//      (temporal fallback for A)
+				//   D. Existing tag:dev-<user>-* tag
+				//      (post-hoc, after operator manually
+				//      applied the tag)
+				//
+				// None of those fire for a node registered
+				// via the OIDC flow: there is NO preauth
+				// key (the Tailscale client used
+				// `tailscale up --login-server
+				// https://head.skynas.ru`), the
+				// preauth_keys table has no row for this
+				// OIDC user, and the node has no tags yet
+				// (that's exactly what we're trying to
+				// apply).
+				//
+				// Result pre-B175: the OIDC node stays
+				// orphaned in node_owner_map, the
+				// per-device dev-tag is never applied,
+				// and /my/devices shows the device with
+				// "⏳ pending" forever (the operator had
+				// to hit "Force backfill" on
+				// /admin/devices, or `headscale nodes tag
+				// --force` manually, to clear it).
+				//
+				// B175 closes this gap by matching on
+				// n.UserName directly. headscale creates
+				// the OIDC user with name = OIDC `name`
+				// claim = skygate username
+				// (internal/oidc/token.go:180 sets
+				// `name = entry.Username`). So
+				// `n.UserName == portalUsername` is
+				// authoritative ownership for the OIDC
+				// path.
+				//
+				// Safety:
+				//   - `n.PreAuthKeyID == ""` distinguishes
+				//     OIDC nodes from /my/preauth nodes
+				//     (Strategy A) and from operator-issued
+				//     preauth key nodes (Strategy C). If
+				//     the operator later sets up
+				//     `headscale preauthkeys create`
+				//     directly via CLI for an OIDC user,
+				//     Strategy A/C fires first and E is
+				//     skipped.
+				//   - The synthetic "tagged-devices" headscale
+				//     user has name="tagged-devices" which
+				//     doesn't match any portal username
+				//     (UNIQUE constraint on
+				//     portal_users.username + semantically
+				//     different string).
+				//   - The `otherOwners` check at the top
+				//     of the per-node loop already
+				//     filters nodes whose headscale user
+				//     ID is a different portal user — so a
+				//     name collision between two portal
+				//     users (e.g. an admin renames user A
+				//     to match user B's name) doesn't
+				//     cause cross-ownership.
+				//   - InsertIgnoreNodeOwner is
+				//     idempotent on node_id PK, so a
+				//     re-tick is a no-op.
+				//
+				// What B175 does NOT cover (out of scope):
+				//   - Operators who configure headscale
+				//     `oidc.claim_map: { sub: "email" }`
+				//     would create OIDC users with name =
+				//     email local-part, not the skygate
+				//     username — Strategy E would NOT
+				//     match. B174.1+ (deferred per
+				//     operator) adds a real email column
+				//     to portal_users + claim_map-aware
+				//     matching.
+				if newTag, ok := matchOIDCStrategy(n, portalUsername); ok {
+					matchedTag = newTag
+				}
+				if matchedTag == "" {
+					continue
+				}
 			}
 		}
 		if matchedTag == "tag:private" {
