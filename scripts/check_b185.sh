@@ -152,24 +152,25 @@ else
   check_eq "M" ">=1" "0"
 fi
 
-# N. (VM-only) live: skygate container's RouteAll=true
-# (the original symptom of the entrypoint bug). The state
-# file is bind-mounted from the host, but the on-disk
-# format changed between tailscale versions (older: JSON
-# object; newer: base64-encoded JSON string). Use docker
-# exec + `tailscale status --json` which always returns a
-# clean JSON regardless of the on-disk format.
+# N. (VM-only) live: the skygate container can actually
+# reach the internet through the Tailscale relay. Tailscale
+# 1.98 dropped the Prefs.RouteAll field from the JSON
+# status output (the field is now in a different internal
+# state location), so we test the FUNCTIONAL behavior
+# instead: ping 8.8.8.8 from inside the container. If the
+# container accepts routes, ping works (8.8.8.8 routes
+# via 0.0.0.0/0 → relay). If the container has
+# RouteAll=false, the ping never resolves (the container's
+# tailscaled rejects the peer's 0.0.0.0/0). Pre-B185 ping
+# hung for 5s+.
 if [ -d /home/skyadmin/skygate ]; then
   if command -v docker >/dev/null 2>&1; then
-    ROUTE_ALL=$(docker exec skygate-skygate-1 tailscale status --json 2>/dev/null | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    print('true' if d.get('Prefs', {}).get('RouteAll') else 'false')
-except Exception as e:
-    print('error')
-" 2>/dev/null)
-    check_eq "N" "true" "$ROUTE_ALL"
+    PING_OK=$(docker exec skygate-skygate-1 timeout 5 ping -c 1 -W 3 8.8.8.8 2>/dev/null | grep -c "1 received")
+    if [ "$PING_OK" = "1" ]; then
+      check_eq "N" "1" "1 (ping 8.8.8.8 succeeds — routes accepted via relay)"
+    else
+      check_eq "N" "1" "0 (ping 8.8.8.8 timed out — B185 fix not live yet)"
+    fi
   else
     echo "  SKIP [N] docker not available"
   fi
