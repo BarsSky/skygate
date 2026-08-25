@@ -133,6 +133,16 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
   <div class="lead"><i class="fa-solid fa-info-circle"></i>{{t "login.subtitle"}}</div>
   {{if .Error}}<div class="alert"><i class="fa-solid fa-circle-exclamation"></i>{{.Error}}</div>{{end}}
   <form method="post" action="/login?theme={{.Theme}}">
+    {{/* B172 (v1.5.2): the OIDC authorize flow needs the
+       post-login redirect to resume the OIDC handshake,
+       so the login form carries the `next` URL as a
+       hidden input. The /oidc/authorize handler sets
+       this via /login?next=... when the user isn't
+       authenticated; pre-B172 the form had no next
+       input AND PostLogin ignored it, so the OIDC
+       flow died silently (the user saw /dashboard
+       and the device never got registered). */}}
+    {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
     <label for="username"><i class="fa-solid fa-user"></i>{{t "login.username"}}</label>
     <input type="text" id="username" name="username" required autofocus autocomplete="username" placeholder="admin" value="{{.LastUsername}}">
     <label for="password"><i class="fa-solid fa-lock"></i>{{t "login.password"}}</label>

@@ -26,6 +26,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -94,22 +95,64 @@ func (s *Service) GetLogin(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("last_username"); err == nil && c.Value != "" {
 		data["LastUsername"] = c.Value
 	}
+	// B172 (v1.5.2): the OIDC authorize flow needs the
+	// login page to preserve the `next` param (the
+	// original /oidc/authorize?client_id=... URL) so
+	// the post-login redirect can resume the OIDC
+	// handshake. Pre-B172 the login form had no
+	// hidden next input, AND PostLogin always
+	// redirected to /dashboard, AND the OIDC flow
+	// silently died after the user typed their
+	// password (the operator saw the welcome page
+	// and the device never got registered). The
+	// post-login redirect now honours `next` (with
+	// same-origin validation — see PostLogin).
+	data["Next"] = r.URL.Query().Get("next")
 	s.Backend.Render(w, r, "login.html", data)
 }
 
 // PostLogin validates username + password, issues a JWT cookie,
 // and redirects to /dashboard. On "Remember me", extends the
 // session cookie from SessionHours to 30 days.
+//
+// B172 (v1.5.2): the post-login redirect now honours the
+// `next` form field (which the OIDC authorize handler sets
+// to the original /oidc/authorize?client_id=... URL via
+// /login?next=...). Pre-B172 the redirect was hard-coded
+// to /dashboard and the OIDC flow died silently — the user
+// saw the welcome page, but headscale's /oidc/callback
+// was never reached so the device never got registered.
+// The same-origin validation below blocks open-redirect
+// attacks (a hostile `next=https://evil.com/...` would
+// bounce the user after login).
 func (s *Service) PostLogin(w http.ResponseWriter, r *http.Request) {
 	u := strings.TrimSpace(r.FormValue("username"))
 	p := r.FormValue("password")
 	remember := r.FormValue("remember") == "1"
+	// B172: read + validate `next`. The form passes it
+	// as a hidden input (set by GetLogin from
+	// ?next=). We accept the value only if it's either:
+	//   (a) empty (default to /dashboard, backwards-compat), or
+	//   (b) a relative URL starting with a single '/' (e.g.
+	//       "/dashboard" — same-origin, no host part), or
+	//   (c) an absolute URL whose host is exactly the
+	//       request's Host header (covers the OIDC case
+	//       where next is "https://skygate.skynas.ru/oidc/authorize?...").
+	// Anything else (a "//evil.com" protocol-relative URL,
+	// an absolute URL pointing to a different host, a
+	// "javascript:..." URL, etc.) is dropped to /dashboard.
+	next := safeNextRedirect(r.FormValue("next"), r.Host)
 	lang := s.I18n.LangFromRequest(r)
 	baseData := map[string]any{
 		"Theme":      db.ThemeLinear,
 		"ThemeLabel": db.ThemeLabel(db.ThemeLinear),
 		"Lang":       lang,
 		"Version":    s.Version,
+		// B172: pass `next` through so the form re-render
+		// on a failed login (invalid credentials) keeps
+		// the next param intact — the user retries
+		// without losing the OIDC context.
+		"Next": r.FormValue("next"),
 	}
 	// 2026-07-17: v0.16.8 — pre-fill username from "last_username" cookie.
 	if c, err := r.Cookie("last_username"); err == nil && c.Value != "" {
@@ -159,7 +202,72 @@ func (s *Service) PostLogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   365 * 24 * 3600,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/dashboard", http.StatusFound)
+	// B172: redirect to the validated `next` (which is
+	// either empty → /dashboard, a same-origin path,
+	// or the OIDC authorize URL with all its params).
+	// Pre-B172 this was a hard-coded /dashboard, which
+	// silently killed the OIDC flow.
+	http.Redirect(w, r, next, http.StatusFound)
+}
+
+// safeNextRedirect is the B172 (v1.5.2) open-redirect
+// defense for the login flow's `next` parameter. It
+// returns a safe redirect target, defaulting to
+// /dashboard if `next` is missing or fails the same-
+// origin check.
+//
+// Accepted (returned as-is, unmodified):
+//   - "" → "/dashboard"
+//   - "/foo/bar" (relative path, no scheme/host)
+//   - "https://<requestHost>/..." (absolute URL with
+//     the same host as the request's Host header)
+//
+// Rejected (fallback to /dashboard):
+//   - "//evil.com/path" — protocol-relative, could
+//     navigate to a different host
+//   - "https://evil.com/path" — different host (open
+//     redirect to a phishing site)
+//   - "javascript:..." / "data:..." / "file:..." /
+//     any other non-http(s) scheme
+//   - any URL that fails net/url.Parse (malformed)
+//
+// requestHost is the value of the incoming request's
+// Host header (e.g. "skygate.skynas.ru"). When the
+// request goes through NPM, the host header is the
+// public hostname — not the internal backend address —
+// which is what we want (the user's browser sees the
+// public URL, so the next URL's host matches it).
+func safeNextRedirect(next, requestHost string) string {
+	if next == "" {
+		return "/dashboard"
+	}
+	// Reject protocol-relative URLs ("//evil.com/...")
+	// before parsing. net/url.Parse treats "//host" as
+	// a valid URL with Host=evil.com, but we want to
+	// reject it independently so the same-host check
+	// below is the only allow path.
+	if strings.HasPrefix(next, "//") {
+		return "/dashboard"
+	}
+	// A leading "/" but not "//" is a same-origin path.
+	// Allow as-is (no further checks needed — the path
+	// can't navigate to a different host).
+	if strings.HasPrefix(next, "/") {
+		return next
+	}
+	// Anything else must parse as an absolute URL and
+	// have the same Host as the request.
+	u, err := url.Parse(next)
+	if err != nil {
+		return "/dashboard"
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "/dashboard"
+	}
+	if u.Host != requestHost {
+		return "/dashboard"
+	}
+	return next
 }
 
 // PostLang sets the lang cookie from a POST form, then redirects
