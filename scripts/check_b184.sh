@@ -116,8 +116,12 @@ check_ge "F-resolved-key" 1 "$(count "$REPO/internal/feature/exit_rules/form_adm
 check_ge "F-domain-loop" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin.go" 'for cid := range resolved')"
 
 # G. form_my.go calls LoadResolvedByDomain + uses resolved key
+# B185 changed form_my.go to use LookupResolvedForDomain
+# (which internally calls ResolvedKeyForTuple). The wire
+# is now via LookupResolvedForDomain — same semantics,
+# cleaner call site.
 check_ge "G-load" 1 "$(count "$REPO/internal/feature/exit_rules/form_my.go" 'LoadResolvedByDomain')"
-check_ge "G-resolved-key" 1 "$(count "$REPO/internal/feature/exit_rules/form_my.go" 'ResolvedKeyForTuple')"
+check_ge "G-resolved-key" 1 "$(count "$REPO/internal/feature/exit_rules/form_my.go" 'LookupResolvedForDomain')"
 
 # H. form_admin.go handler (not the annotator) calls
 # LoadResolvedByDomain. This is the producer-side wiring.

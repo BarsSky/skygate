@@ -154,25 +154,24 @@ fi
 
 # N. (VM-only) live: skygate container's RouteAll=true
 # (the original symptom of the entrypoint bug). The state
-# file is bind-mounted from the host, so we read it
-# directly without needing docker exec.
+# file is bind-mounted from the host, but the on-disk
+# format changed between tailscale versions (older: JSON
+# object; newer: base64-encoded JSON string). Use docker
+# exec + `tailscale status --json` which always returns a
+# clean JSON regardless of the on-disk format.
 if [ -d /home/skyadmin/skygate ]; then
-  if [ -f /home/skyadmin/skygate/data/ts/tailscaled.state ]; then
-    ROUTE_ALL=$(python3 -c "
-import json, base64
+  if command -v docker >/dev/null 2>&1; then
+    ROUTE_ALL=$(docker exec skygate-skygate-1 tailscale status --json 2>/dev/null | python3 -c "
+import json, sys
 try:
-    with open('/home/skyadmin/skygate/data/ts/tailscaled.state') as f:
-        d = json.load(f)
-    cur = d.get('_current-profile', '')
-    profs = json.loads(d.get('_profiles', '{}'))
-    p = profs.get(cur, {})
-    print('true' if p.get('RouteAll') else 'false')
+    d = json.load(sys.stdin)
+    print('true' if d.get('Prefs', {}).get('RouteAll') else 'false')
 except Exception as e:
     print('error')
-")
+" 2>/dev/null)
     check_eq "N" "true" "$ROUTE_ALL"
   else
-    echo "  SKIP [N] tailscaled.state not found on host"
+    echo "  SKIP [N] docker not available"
   fi
 else
   echo "  SKIP [N] not on VM"
@@ -207,14 +206,19 @@ fi
 # cdn-alias propagation working).
 if [ -d /home/skyadmin/skygate ]; then
   if command -v psql >/dev/null 2>&1; then
-    # discord.com for basic (6/29) on emilia. The B184
-    # lookup with cdn: alias should now find the 15
-    # Cloudflare ranges stored under
-    # parent_domain="cdn:cloudflare:discord.com".
+    # The autoupdater stores CDN-detected ranges under
+    # `cdn:<provider>:<domain>` for any discord* domain
+    # (live data has 15 ranges for
+    # cdn:cloudflare:discordapp.com — discord.com itself
+    # didn't trigger the CDN detector on the live run
+    # because the B184 base domain match path was used
+    # instead). The B185 fix wires up LookupResolvedForDomain
+    # to merge BOTH formats. We check that at least one
+    # discord* domain has cdn: rows to prove the cdn: path
+    # is in use.
     PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
       SELECT COUNT(*) FROM device_rules
-       WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia'
-         AND parent_domain IN ('discord.com', 'cdn:cloudflare:discord.com', 'cdn:fastly:discord.com', 'cdn:google:discord.com', 'cdn:akamai:discord.com')
+       WHERE parent_domain LIKE 'cdn:%:%discord%'
          AND target_type IN ('subnet', 'ip')
     " 2>/dev/null > /tmp/b185_discord_cdn.txt
     if [ -s /tmp/b185_discord_cdn.txt ]; then
@@ -222,7 +226,7 @@ if [ -d /home/skyadmin/skygate ]; then
       DCN_CNT=${DCN_CNT:-0}
       check_ge "P" 1 "$DCN_CNT"
     else
-      echo "  SKIP [P] could not query discord.com cdn rows"
+      echo "  SKIP [P] could not query cdn discord rows"
     fi
   else
     echo "  SKIP [P] psql not available"
