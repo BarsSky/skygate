@@ -894,6 +894,57 @@ in the same commit. Don't let the tracker drift.
     (the B185 LookupResolvedForDomain cdn-alias propagation
     in action).
 
+  - **B186 (v1.5.2)**: Telegram Bot API 10.1 Rich Messages
+    adapter. Operator 2026-08-25: "адаптируй сообщения бота
+    в телеграме под новый формат Bot API 10.1 Telegram добавил
+    Rich Messages". The new `sendRichMessage` endpoint
+    accepts structured HTML/markdown/blocks: headings
+    (`<h1>`-`<h4>`), native lists, tables, `<details>`
+    collapsible blocks, `<aside>` pull-quotes, `<tg-time>`
+    for client-side datetime, `<tg-map>`, `<tg-collage>`,
+    `<tg-slideshow>`, footnotes, `<sup>`/`<sub>`,
+    `==marked==`, `$math$`. Limits: 32768 chars, 500 blocks,
+    16 nesting levels, 50 media, 20 table columns. Long
+    messages fold behind a "Show more" button after ~8000
+    chars. **B186 fix**: new `internal/telegram/rich.go`
+    implements a structured builder (`Heading`, `Paragraph`,
+    `KeyValueTable`, `Details`, `Aside`, `List`, `Footer`,
+    `Time`, `CodeInline`, `Bold`, `Italic`, `Link`,
+    `Spoiler`, `Plain`) that produces the JSON the new
+    endpoint expects. `KeyValueTable` is the B186 conversion
+    of the old flat `<b>label:</b> <code>value</code>` lines
+    (which didn't align on mobile Telegram without manual
+    `<pre>`+padding) into a real `<table>` block. The
+    butler-voice envelope is preserved: header → body →
+    footer. `SendRich()` posts via `sendRichMessage` and
+    falls back to `sendMessage` with `parse_mode=HTML` on
+    any error (e.g. bot version < 10.1, network failure,
+    rate limit) so the operator still sees the body — never
+    silently drops a notification. `renderBlocksAsHTML()`
+    is the fallback path: it flattens the same block list
+    into a flat HTML body using the old `parse_mode=HTML`
+    tag subset (`<b>`, `<i>`, `<u>`, `<code>`, `<pre>`,
+    `<a>`, `<tg-spoiler>`) so it still renders on Telegram
+    v9.x and earlier. The trade-off is intentional: tables
+    become tab-separated monospace lines, lists become
+    "• " prefixed lines, headings become bold text. The
+    "rich" path (`sendRichMessage`) is what 99% of clients
+    will see; the fallback is the last-resort path. The
+    helper also adds the `getRawSlice` accessor that handles
+    Go's `[]T → []any` type-assertion gap (Go's type system
+    refuses a direct cast, so the accessor does the per-type
+    loop once). 10 unit tests in `rich_test.go` cover the
+    builder, the fallback, the size limits (20-col Table
+    guard), the HTML-escape layer (the B184-era lesson: any
+    user-controlled string must be escaped, including
+    inside the new JSON blocks), and the JSON wire shape
+    (the `chat_id` + `blocks` POST body the new endpoint
+    expects). 17 contracts in `scripts/check_b186.sh`
+    (A-J): source/wiring (A-B), test count (C), KeyValueTable
+    shape (D), Table width limit (E), Details block (F),
+    Aside type (G), Time inline node (H), JSON wire shape
+    (I), build+tests (J).
+
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
   §6 status log 2026-08-24) — **B151 + B152 + B153** close the

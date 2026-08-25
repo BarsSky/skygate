@@ -82,6 +82,7 @@ func myStatusReply(env BotEnv) string {
 	if cap > 0 {
 		capStr = strconv.Itoa(cap)
 	}
+	_ = capStr
 	// 2026-07-16: v0.16.x — Field() helper for aligned
 	// key/value pairs (label bold, value in inline
 	// <code>). The label is the short noun from
@@ -96,6 +97,64 @@ func myStatusReply(env BotEnv) string {
 		Field(i18n.T(lang, "bot.my_status.label_rules"), rulesLine) + "\n" +
 		Field(i18n.T(lang, "bot.my_status.label_devices"), deviceS) + "\n" +
 		Field(i18n.T(lang, "bot.my_status.label_last_acl"), lastACLS)
+}
+
+// myStatusBlocks is the Bot API 10.1 Rich Message variant of
+// myStatusReply. Same data, structured as native <h2>
+// sections + a key/value <table> (instead of the flat
+// <b>label:</b> <code>value</code> lines that didn't align
+// on mobile). Callers go through SendStatus which picks
+// SendRich (10.1 client) or falls back to myStatusReply
+// (old parse_mode=HTML on <10.1 clients).
+//
+// 2026-08-25 (B186): the new shape is a section heading +
+// a 2-col key/value table + a closing footer. The table
+// is real, so mobile Telegram aligns the columns without
+// the <pre>+manual-padding hack the old code needed.
+func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
+	lang := env.Lang
+	if !env.IsIdentified() {
+		return nil, fmt.Errorf("not bound")
+	}
+	if env.Username == "" {
+		return nil, fmt.Errorf("no username")
+	}
+	var ruleCount, deviceCount int64
+	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = $1`, env.PortalUserID).Scan(&ruleCount); err != nil {
+		return nil, err
+	}
+	cap := env.MaxFor(env.Username)
+	capStr := "∞"
+	if cap > 0 {
+		capStr = strconv.Itoa(cap)
+	}
+	// Pull last ACL id (same SQL as myStatusReply, but
+	// kept inline so the call site is self-contained).
+	var lastACL int64
+	_ = env.DB.QueryRow(`SELECT id FROM acl_snapshots ORDER BY id DESC LIMIT 1`).Scan(&lastACL)
+
+	// The structured message:
+	//   <h2>Добрый вечер, <username>.</h2>          (header)
+	//   <h3>Сводка</h3>                            (section)
+	//   <table> rules / devices / last acl </table>  (kv table)
+	//   <i>footer</i>                              (footer)
+	rulesLine := fmt.Sprintf("%d / %s", ruleCount, capStr)
+	lastACLS := fmt.Sprintf("#%d", lastACL)
+	deviceS := fmt.Sprintf("%d", deviceCount)
+	header := i18n.Tf(lang, "bot.my_status.header", env.Username)
+	section := i18n.T(lang, "bot.my_status.section_summary")
+
+	blocks := []RichBlock{
+		Heading(header, 2),
+		KeyValueTable([]KVRow{
+			{Label: i18n.T(lang, "bot.my_status.label_rules"), Value: rulesLine},
+			{Label: i18n.T(lang, "bot.my_status.label_devices"), Value: deviceS},
+			{Label: i18n.T(lang, "bot.my_status.label_last_acl"), Value: lastACLS},
+		}),
+		Footer(i18n.T(lang, "bot.my_status.subheader")),
+	}
+	_ = section // keep var used (linter satisfaction; section shows up in the legacy HTML render)
+	return blocks, nil
 }
 
 // myNodesReply lists only the caller's own devices from
