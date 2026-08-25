@@ -1,4 +1,4 @@
-// 2026-08-25 (B182): regression tests for ApprovedInHeadscale.
+﻿// 2026-08-25 (B182): regression tests for ApprovedInHeadscale.
 //
 // Live bug (operator report, 2026-08-25):
 //   "правила что решил поставить себе пользователь michail
@@ -43,7 +43,7 @@ func TestAnnotateRulesWithPrefs_ApprovedInHeadscale_SimpleMatch(t *testing.T) {
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"104.16.0.0/12": true, "0.0.0.0/0": true, "::/0": true},
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode)
+	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode, nil)
 	r := rr[0]
 	if !r.Applicable {
 		t.Errorf("basic/emilia: Applicable=false, want true (emilia is the preferred exit-node)")
@@ -73,7 +73,7 @@ func TestAnnotateRulesWithPrefs_ApprovedInHeadscale_Pending(t *testing.T) {
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"0.0.0.0/0": true, "::/0": true, "8.8.8.0/24": true},
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode)
+	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode, nil)
 	r := rr[0]
 	if !r.Applicable {
 		t.Errorf("Applicable should be true (emilia is the preferred exit-node)")
@@ -116,7 +116,7 @@ func TestAnnotateRulesWithPrefs_ApprovedInHeadscale_WrongExitNode(t *testing.T) 
 		"emilia":   {"104.16.0.0/12": true},
 		"karolina": {"104.16.0.0/12": true},
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode)
+	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode, nil)
 	r := rr[0]
 	if r.Applicable {
 		t.Errorf("Applicable=true, want false (rule.ExitNode=karolina, basic prefers emilia)")
@@ -147,7 +147,7 @@ func TestAnnotateRulesWithPrefs_ApprovedInHeadscale_DomainRule(t *testing.T) {
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"104.16.0.0/12": true}, // some other CIDR
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode)
+	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode, nil)
 	r := rr[0]
 	if !r.Applicable {
 		t.Errorf("Applicable=false, want true (emilia is the preferred exit-node)")
@@ -172,7 +172,7 @@ func TestAnnotateRulesWithPrefs_ApprovedInHeadscale_UnknownExitNode(t *testing.T
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"104.16.0.0/12": true},
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode)
+	_ = annotateRulesWithPrefs(rr, prefFn, approvedByExitNode, nil)
 	r := rr[0]
 	if r.Applicable {
 		t.Errorf("Applicable=true, want false (rule.ExitNode=deleted-exit-node, basic prefers emilia)")
@@ -195,7 +195,7 @@ func TestAnnotateRulesWithPrefs_ApprovedInHeadscale_EmptyApprovedMap(t *testing.
 	}
 	prefFn := func(uid int64, hn string) string { return "emilia" }
 	// nil — simulates headscale being unreachable
-	_ = annotateRulesWithPrefs(rr, prefFn, nil)
+	_ = annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	r := rr[0]
 	if r.ApprovedInHeadscale {
 		t.Errorf("ApprovedInHeadscale=true with nil approvedByExitNode, want false (defensive: headscale not reachable)")
@@ -216,13 +216,13 @@ func TestRuleApprovedInHeadscale_IPRule(t *testing.T) {
 	}
 	if !ruleApprovedInHeadscale(
 		AdminRule{ExitNode: "emilia", TargetType: "ip", TargetValue: "8.8.8.8"},
-		approvedByExitNode,
+		approvedByExitNode, nil,
 	) {
 		t.Error("8.8.8.8 should be approved in emilia's headscale state")
 	}
 	if ruleApprovedInHeadscale(
 		AdminRule{ExitNode: "emilia", TargetType: "ip", TargetValue: "1.1.1.1"},
-		approvedByExitNode,
+		approvedByExitNode, nil,
 	) {
 		t.Error("1.1.1.1 should NOT be approved in emilia's headscale state")
 	}
@@ -237,21 +237,21 @@ func TestRuleApprovedInHeadscale_EmptyFields(t *testing.T) {
 	// empty ExitNode
 	if ruleApprovedInHeadscale(
 		AdminRule{TargetType: "subnet", TargetValue: "104.16.0.0/12"},
-		approvedByExitNode,
+		approvedByExitNode, nil,
 	) {
 		t.Error("empty ExitNode should return false")
 	}
 	// empty TargetValue
 	if ruleApprovedInHeadscale(
 		AdminRule{ExitNode: "emilia", TargetType: "subnet"},
-		approvedByExitNode,
+		approvedByExitNode, nil,
 	) {
 		t.Error("empty TargetValue should return false")
 	}
 	// empty TargetType
 	if ruleApprovedInHeadscale(
 		AdminRule{ExitNode: "emilia", TargetValue: "104.16.0.0/12"},
-		approvedByExitNode,
+		approvedByExitNode, nil,
 	) {
 		t.Error("empty TargetType should return false (only subnet/ip are checked)")
 	}

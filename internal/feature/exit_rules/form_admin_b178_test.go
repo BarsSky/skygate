@@ -1,4 +1,4 @@
-// 2026-08-25 (B178): regression tests for annotateRulesWithPrefs.
+﻿// 2026-08-25 (B178): regression tests for annotateRulesWithPrefs.
 //
 // Live bug (operator report, 2026-08-25):
 //   /admin/exit-rules showed "karolina" as the preferred
@@ -56,7 +56,7 @@ func TestAnnotateRulesWithPrefs_BasicKarolinaRegression(t *testing.T) {
 	}
 	// B182: nil approvedByExitNode → no rule gets marked approved.
 	// (The B182-specific cases pass a real map below.)
-	mismatch := annotateRulesWithPrefs(rr, prefFn, nil)
+	mismatch := annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	if mismatch != 0 {
 		t.Errorf("basic/emilia/emilia rules should have 0 dead-rule mismatches, got %d", mismatch)
 	}
@@ -87,7 +87,7 @@ func TestAnnotateRulesWithPrefs_SkyworkerKarolina(t *testing.T) {
 		}
 		return ""
 	}
-	mismatch := annotateRulesWithPrefs(rr, prefFn, nil)
+	mismatch := annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	if mismatch != 0 {
 		t.Errorf("skyworker/karolina/karolina rules should have 0 mismatches, got %d", mismatch)
 	}
@@ -112,7 +112,7 @@ func TestAnnotateRulesWithPrefs_DeadRule(t *testing.T) {
 	prefFn := func(uid int64, hn string) string {
 		return "karolina"
 	}
-	mismatch := annotateRulesWithPrefs(rr, prefFn, nil)
+	mismatch := annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	if mismatch != 1 {
 		t.Errorf("emilia-rule with karolina-pref should be 1 dead rule, got %d", mismatch)
 	}
@@ -135,7 +135,7 @@ func TestAnnotateRulesWithPrefs_NoPreference(t *testing.T) {
 		{ID: 2, UserID: 99, DeviceID: 100, DeviceName: "noisy-refrigerator", ExitNode: "emilia"},
 	}
 	prefFn := func(uid int64, hn string) string { return "" }
-	mismatch := annotateRulesWithPrefs(rr, prefFn, nil)
+	mismatch := annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	if mismatch != 0 {
 		t.Errorf("no-pref rules should be applicable (Tailscale picks by metrics), got %d mismatches", mismatch)
 	}
@@ -180,7 +180,7 @@ func TestAnnotateRulesWithPrefs_BatchedLookup(t *testing.T) {
 		}
 		return ""
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, nil)
+	_ = annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	if len(calls) != 3 {
 		t.Errorf("expected 3 unique (user, host) pairs to be looked up, got %d: %v", len(calls), calls)
 	}
@@ -206,7 +206,7 @@ func TestAnnotateRulesWithPrefs_EmptyHostname(t *testing.T) {
 		t.Errorf("prefFn should NOT be called for unknown hostnames (got call for hn=%q)", hn)
 		return ""
 	}
-	mismatch := annotateRulesWithPrefs(rr, prefFn, nil)
+	mismatch := annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	if mismatch != 0 {
 		t.Errorf("unknown-hostname rules should be 0 mismatches, got %d", mismatch)
 	}
@@ -253,7 +253,7 @@ func TestAnnotateRulesWithPrefs_MixedUserDevicePrefs(t *testing.T) {
 		}
 		return userPref[uid]
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, nil)
+	_ = annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	// skyworker: per-device karolina → rule karolina = applicable
 	if rr[0].PreferredHost != "karolina" || !rr[0].Applicable {
 		t.Errorf("skyworker: got (%q, %v), want (karolina, true)", rr[0].PreferredHost, rr[0].Applicable)
@@ -284,7 +284,7 @@ func TestAnnotateRulesWithPrefs_CaseInsensitiveHostname(t *testing.T) {
 		calls++
 		return "karolina"
 	}
-	_ = annotateRulesWithPrefs(rr, prefFn, nil)
+	_ = annotateRulesWithPrefs(rr, prefFn, nil, nil)
 	if calls != 1 {
 		t.Errorf("expected 1 lookup after lowercasing, got %d (case-insensitive batching regression)", calls)
 	}

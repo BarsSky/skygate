@@ -25,6 +25,7 @@ package exit_rules
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -405,12 +406,27 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			approvedByExitNode[host] = set
 		}
 	}
+	// 2026-08-25 (B184): also load the resolved-subnets map
+	// so DOMAIN rules can propagate their headscale-state
+	// from the autoupdater-derived subnets. Same one-query
+	// load pattern as /admin/exit-rules. DB error is logged
+	// but not fatal: it falls back to the pre-B184 behaviour
+	// (DOMAIN rules show ⏳ pending) instead of breaking
+	// the page.
+	resolvedByDomain := map[string]map[string]bool{}
+	if rbd, err := LoadResolvedByDomain(s.DB); err != nil {
+		log.Printf("my/exit-rules: LoadResolvedByDomain: %v (DOMAIN rules will show pending)", err)
+	} else {
+		resolvedByDomain = rbd
+	}
 	// statusByRuleID maps rule.ID → "approved" | "pending"
 	// | "wrong" | "no_preferred". The template reads this to
 	// render the three-state ✅/⏳/⚠️ badge. DOMAIN rules
-	// are always "pending" (autoupdater resolves them to
-	// subnets first; until then we can't say they're
-	// approved in headscale).
+	// (B184) are "approved" iff at least one of their
+	// resolved subnets is in headscale ApprovedRoutes for
+	// the rule's ExitNode. Otherwise "pending" (autoupdater
+	// hasn't resolved, or resolved but headscale hasn't
+	// approved any of the resolved CIDRs).
 	statusByRuleID := map[int]string{}
 	for _, r := range rules {
 		hn := deviceNames[r.DeviceID]
@@ -432,8 +448,32 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 				statusByRuleID[r.ID] = "pending"
 			}
 		} else {
-			// DOMAIN rule — autoupdater will resolve.
-			statusByRuleID[r.ID] = "pending"
+			// DOMAIN rule (B184) — propagate status from
+			// the autoupdater's resolved subnets. approved
+			// iff at least one resolved CIDR is in
+			// headscale for the rule's ExitNode.
+			resolved, rok := resolvedByDomain[ResolvedKeyForTuple(int64(r.UserID), int64(r.DeviceID), r.ExitNodeID, r.TargetValue)]
+			if !rok || len(resolved) == 0 {
+				statusByRuleID[r.ID] = "pending"
+			} else {
+				approved, aok := approvedByExitNode[r.ExitNodeID]
+				if !aok {
+					statusByRuleID[r.ID] = "pending"
+				} else {
+					approvedViaDomain := false
+					for cid := range resolved {
+						if approved[cid] {
+							approvedViaDomain = true
+							break
+						}
+					}
+					if approvedViaDomain {
+						statusByRuleID[r.ID] = "approved"
+					} else {
+						statusByRuleID[r.ID] = "pending"
+					}
+				}
+			}
 		}
 	}
 	// User-level preferred exit-node (fallback when no per-device

@@ -31,7 +31,9 @@ in the same commit. Don't let the tracker drift.
   `9bbb750` B173.1 +
   `794b9c6` B174 +
   `e4e1ac7` B175 +
-  `66b17a3` B176 + B175.1 in flight) — **B167 OIDC config
+  `66b17a3` B176 + B175.1 in flight + B177–B183 already
+  shipped + **B184 DOMAIN status propagation
+  (uncommitted, in this branch)**) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -742,6 +744,71 @@ in the same commit. Don't let the tracker drift.
     (queries pg_index), Idempotent (run twice = same
     state), PreservesDistinctNaturalKeys (4 different keys
     all survive).
+
+  - **B184 (v1.5.2)**: DOMAIN rule status propagates from
+    its resolved subnets in `/admin/exit-rules` + `/my/exit-rules`
+    three-state badge. Operator 2026-08-25: "выглядит странно
+    словно у части есть а у части нет" — for michail/basic
+    on emilia, 8 YouTube subnets (8.8.8.0/24, 142.250.0.0/15,
+    8.34.208.0/20, 8.35.192.0/20, 8.15.202.0/24,
+    172.217.0.0/16, 173.194.0.0/16, 216.58.192.0/19) all
+    showed ✅ "accepted" in the green-badge column but the
+    parent "youtube.com" row showed ⏳ — the two states
+    disagreed even though the subnets were literally the
+    resolved-from-this-domain rows. The pre-B184
+    `ruleApprovedInHeadscale` had a hard-coded
+    `return false` for any non-(subnet,ip) target_type, so
+    DOMAIN rules never propagated their headscale-state
+    from the autoupdater's resolved subnets.
+    **B184 fix**: a DOMAIN rule is ✅ approved iff AT LEAST
+    ONE `device_rules` row with `parent_domain = THIS_DOMAIN`
+    and the same `(user_id, device_id, exit_node_id)` and
+    `target_type IN ('subnet', 'ip')` has its `target_value`
+    in headscale ApprovedRoutes for the rule's ExitNode.
+    New file `internal/feature/exit_rules/resolved_by_domain.go`:
+    `LoadResolvedByDomain(db)` runs one SQL query covering
+    ALL (user, device, exit) tuples (`SELECT user_id,
+    device_id, exit_node_id, COALESCE(parent_domain, ''),
+    target_value FROM device_rules WHERE target_type IN
+    ('subnet', 'ip') AND COALESCE(parent_domain, '') <> ''`)
+    and groups results by
+    `ResolvedKeyForTuple(userID, deviceID, exitNode, parentDomain)`
+    → `set(target_value)`. Both `form_admin.go` (handler
+    `AdminExitRules`) and `form_my.go` (handler `MyExitRules`)
+    call `LoadResolvedByDomain` and pass the map to
+    `ruleApprovedInHeadscale` / `statusByRuleID` respectively.
+    A DB error here is logged but not fatal: the function
+    returns an empty map and DOMAIN rules fall back to the
+    pre-B184 ⏳ behaviour instead of breaking the page. The
+    `annotateRulesWithPrefs` and `ruleApprovedInHeadscale`
+    signatures get a 4th / 3rd `resolvedByDomain` parameter;
+    the 13 existing `form_admin_b178_test.go` +
+    `form_admin_b182_test.go` call sites pass `nil` (the
+    parameter is unused for non-DOMAIN rules + the b178/b182
+    tests don't exercise the DOMAIN branch). The `for cid :=
+    range resolved` loop checks AT LEAST ONE resolved CIDR
+    in `approvedByExitNode[rule.ExitNode]` — a "any-of" check,
+    not "all-of", so a domain with 4 resolved subnets where
+    only 1 is in headscale still shows ✅.
+    **15 contracts** in `scripts/check_b184.sh` (A-O): the
+    9 source/wiring contracts (A-I) pin the producer +
+    consumer wiring on both /admin and /my sides + the
+    test file count; (J) pins `go test ./internal/feature/
+    exit_rules/...`; (K) pins the AGENTS.md mention; (L)
+    pins `verify_pre_deploy.sh` registration; (M-O) pin the
+    live VM state — t.me has 1+ resolved subnet (will show
+    ✅), discord.com has 0 (correctly stays ⏳), youtube.com
+    has 4 resolved subnets (will show ✅). 7 new unit tests
+    in `internal/feature/exit_rules/form_admin_b184_test.go`:
+    DomainResolvedApproved (✅ when resolved+in-headscale),
+    DomainResolvedNoneInHeadscale (⏳ when resolved but not
+    in headscale), DomainNoResolved (⏳ when no resolved),
+    CrossTupleIsolation (resolved in tuple A doesn't
+    propagate to tuple B with same parent_domain),
+    EmptyParentDomain (empty resolvedByDomain → all DOMAIN
+    stay ⏳), UnknownExitNode (DOMAIN pointing at unknown
+    exit-node returns false), ResolvedKeyForTuple_Stable
+    (pins the exact key format).
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
