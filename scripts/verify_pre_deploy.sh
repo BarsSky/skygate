@@ -181,7 +181,7 @@ run_check "B10" "no .env / secret file in git tracked paths" \
 # pin the same contract; this check is the "no regression at the
 # source-tree level" guard.
 run_check "B11" "migrations have no destructive DDL (DROP/RENAME/TRUNCATE)" \
-  "bash -c \"'$GO' test ./internal/db/pgmigrate/... -run 'TestIsDestructive|TestIsDestructiveRefused' -count=1 >/dev/null 2>&1 && ! grep -rE 'DROP[[:space:]]+(TABLE|COLUMN|INDEX)|RENAME[[:space:]]+(TO|COLUMN)|TRUNCATE[[:space:]]+(TABLE)?' internal/db/migrations_v*.go | grep -v '// ' | grep -v '^[[:space:]]*\\*'\""
+  "bash -c \"'$GO' test ./internal/db/pgmigrate/... -run 'TestIsDestructive|TestIsDestructiveRefused' -count=1 >/dev/null 2>&1 && ! grep -rE --include='migrations_v*.go' --exclude='*_test.go' 'DROP[[:space:]]+(TABLE|COLUMN|INDEX)|RENAME[[:space:]]+(TO|COLUMN)|TRUNCATE[[:space:]]+(TABLE)?' internal/db/migrations_v*.go | grep -v '// ' | grep -v '^[[:space:]]*\\*'\""
 
 # --- B12: pgmigrate package is unit-tested (the helper contract) ---
 # B12 was originally "every CREATE INDEX uses CONCURRENTLY" (per
