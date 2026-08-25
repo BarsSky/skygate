@@ -637,6 +637,38 @@ in the same commit. Don't let the tracker drift.
     pre-fix). The "all offline" was a single over-broad
     iptables rule, NOT a DERP-only "polling" issue, NOT
     a B-check script DB block, NOT a per-device pref bug.
+  - **B180 (v1.5.2)**: /admin/exit-nodes per-row "Re-sync"
+    button raw-JSON regression. Operator 2026-08-25:
+    "после нажатия пересинхронизировать получил ответ
+    как на скриншоте не произошел возврат на страницу и
+    не отобразилось ничего" — clicking "Пере-синхронизировать"
+    on emilia row showed "Качественная печать" (Chrome
+    raw printout) page with JSON body
+    `{"emilia":"ssh-ok approved=34"}` instead of returning
+    to /admin/exit-nodes with a success flash. The
+    per-row button in admin/exit_nodes.html:241 is a
+    regular `<form method="post">` (no JS), so the browser
+    rendered the JSON as raw text instead of following a
+    redirect. The global "Sync all" button (line 60) works
+    correctly because it goes through JavaScript `fetch()`
+    + manual `location.reload()` (line 376) which handles
+    JSON fine. **B180 fix**: change PostAdminExitNodeSync
+    to `http.Redirect` to /admin/exit-nodes?ok=... or
+    ?err=... like every other admin POST handler. The page
+    already has the flash mechanism (template line 38-42
+    renders FlashSuccess/FlashError; GET handler line
+    300-301 reads r.URL.Query().Get for those fields).
+    5 contracts in `scripts/check_b180.sh` pin (a) no
+    json.NewEncoder in PostAdminExitNodeSync, (b)
+    http.Redirect IS used, (c) redirect target is
+    /admin/exit-nodes?ok= or ?err=, (d) AGENTS.md mentions
+    B180, (e) verify_pre_deploy.sh includes check_b180.
+    **Live verification 2026-08-25 14:36Z**: `code=303
+    See Other`, `Location: /admin/exit-nodes?ok=Sync+emilia
+    %3A+ssh%3Dok+approved%3D34`, followed by GET to that
+    URL returns the page with the success alert
+    `<div class="alert alert-success">Sync emilia: ssh=ok
+    approved=34</div>`.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
