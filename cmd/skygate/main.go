@@ -222,6 +222,24 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "acl-apply":
+			// 2026-08-26: v1.5.2 (B188.1) — operator
+			// escape hatch for forcing a one-shot
+			// headscale ACL re-apply. Used after
+			// migrations that change exit-node-
+			// pref data (e.g. V061's tag:exit-X →
+			// tag:dev-infra-X + via_enabled=1
+			// backfill) without triggering any of
+			// the user-facing handlers that
+			// normally call ApplyACLPipelineForPlane.
+			// Defaults to admin user (skyadmin);
+			// override with -user=USERNAME for
+			// per-plane dispatch.
+			if err := runAclApply(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "acl-apply failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "migrate-only":
 			// Open the DB (which runs all pending
 			// migrations as part of Open() per the
