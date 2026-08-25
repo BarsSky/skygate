@@ -376,11 +376,64 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	for _, di := range deviceInfos {
 		prefByHostname[di.Hostname] = di.PreferredExitNode
 	}
+	// 2026-08-25 (B182): fetch headscale's ApprovedRoutes per
+	// exit-node so the template can distinguish a rule that
+	// "matches the preferred exit-node" (B178's green ✅) from
+	// a rule that "matches AND is actually approved in
+	// headscale" (B182's stronger green ✅). The user's live
+	// case was: rules shown as ✅ accepted in /my/exit-rules
+	// but the actual CIDRs were never pushed to headscale —
+	// B178's logical check passed because the exit-node
+	// matched, but headscale had no record of the CIDR.
+	approvedByExitNode := map[string]map[string]bool{}
+	if nodes, e := s.HS.ListAllNodes(); e == nil {
+		for _, n := range nodes {
+			if len(n.ApprovedRoutes) == 0 {
+				continue
+			}
+			host := n.GivenName
+			if host == "" {
+				host = n.Hostname
+			}
+			if host == "" {
+				continue
+			}
+			set := map[string]bool{}
+			for _, r := range n.ApprovedRoutes {
+				set[r] = true
+			}
+			approvedByExitNode[host] = set
+		}
+	}
+	// statusByRuleID maps rule.ID → "approved" | "pending"
+	// | "wrong" | "no_preferred". The template reads this to
+	// render the three-state ✅/⏳/⚠️ badge. DOMAIN rules
+	// are always "pending" (autoupdater resolves them to
+	// subnets first; until then we can't say they're
+	// approved in headscale).
+	statusByRuleID := map[int]string{}
 	for _, r := range rules {
 		hn := deviceNames[r.DeviceID]
 		pref := prefByHostname[hn]
+		if pref == "" {
+			statusByRuleID[r.ID] = "no_preferred"
+			continue
+		}
 		if !IsRuleApplicable(r.ExitNodeID, pref) {
+			statusByRuleID[r.ID] = "wrong"
 			mismatchCount++
+			continue
+		}
+		// Applicable — check headscale state.
+		if r.TargetType == "subnet" || r.TargetType == "ip" {
+			if approved, ok := approvedByExitNode[r.ExitNodeID]; ok && approved[r.TargetValue] {
+				statusByRuleID[r.ID] = "approved"
+			} else {
+				statusByRuleID[r.ID] = "pending"
+			}
+		} else {
+			// DOMAIN rule — autoupdater will resolve.
+			statusByRuleID[r.ID] = "pending"
 		}
 	}
 	// User-level preferred exit-node (fallback when no per-device
@@ -400,6 +453,10 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"DeviceNames":       deviceNames,
 		"Grouped":           grouped,
 		"GroupedByHostname": groupedByHostname,
+		// 2026-08-25 (B182): per-rule headscale-state status
+		// for the three-state ✅/⏳/⚠️ badge. See the
+		// for-loop above for the four possible values.
+		"StatusByRuleID":    statusByRuleID,
 		"TotalRules":        totalRules,
 		"MaxTotalRules":     maxTotal,
 		"LoadPct":           loadPct,

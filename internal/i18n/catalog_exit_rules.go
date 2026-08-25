@@ -39,6 +39,14 @@ var ruExitRules = map[string]string{
 	"exit_rules.preferred_match_title"   : "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
 	"exit_rules.preferred_mismatch_title": "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
 	"exit_rules.preferred_none_title"    : "No preferred exit-node set for this device — Tailscale picks by metrics, rule may or may not apply.",
+	// 2026-08-25 (B182): user-scope mirror of the admin
+	// B182 keys. ⏳ means the rule's target CIDR is NOT in
+	// headscale ApprovedRoutes yet — the autoupdater will
+	// push on the next 5-min tick. See the B182 commit
+	// message for why this is a separate state from "✅
+	// preferred matches" (B178 alone was misleading).
+	"exit_rules.approved_in_headscale_title" : "Target approved in headscale for %s — rule is working.",
+	"exit_rules.pending_in_headscale_title"  : "Rule's exit-node matches the device's preferred, but headscale has NOT approved %s (target %s) yet. The autoupdater will push on the next 5-min tick.",
 	"exit_rules.device"                 : "Устройство",
 	"exit_rules.device_hint"            : "Устройство, для которого применяется правило. Видны только ваши устройства.",
 	"exit_rules.exit_node"              : "Exit node (выходной узел)",
@@ -152,6 +160,16 @@ var ruExitRules = map[string]string{
 	"exit_rules_admin.preferred_match_title"   : "Matches the device's preferred exit-node (%s).",
 	"exit_rules_admin.preferred_mismatch_title": "Differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
 	"exit_rules_admin.preferred_none_title"    : "No preferred exit-node set.",
+	// 2026-08-25 (B182): the new two-state ✅ / ⏳
+	// preferred-exit-node badge. ✅ = rule's target CIDR is
+	// APPROVED in headscale ApprovedRoutes for this
+	// exit-node (the rule is fully working). ⏳ = rule
+	// matches the device's preferred exit-node but
+	// headscale has NOT approved the rule's target yet —
+	// the autoupdater will push on the next 5-min tick, or
+	// hit "Пере-синхронизировать" on /admin/exit-nodes.
+	"exit_rules_admin.approved_in_headscale_title" : "Target approved in headscale for %s — rule is working.",
+	"exit_rules_admin.pending_in_headscale_title"  : "Rule's exit-node matches the device's preferred, but headscale has NOT approved %s (target %s) yet. The autoupdater will push on the next 5-min tick (or hit 'Пере-синхронизировать' on /admin/exit-nodes).",
 	"exit_rules_admin.preferred_mismatch_banner" : "%d rules across all users reference a non-preferred exit-node. Check the 'Preferred' column.",
 	"exit_rules_admin.dead_rules_count"        : "%d dead rule(s)",
 	"exit_rules_admin.dead_rules_count_title"  : "%d device_rule(s) for this device reference a non-preferred exit-node. Tailscale will ignore them. Open /admin/exit-rules to see which.",
@@ -234,6 +252,14 @@ var enExitRules = map[string]string{
 	"exit_rules.preferred_match_title"   : "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
 	"exit_rules.preferred_mismatch_title": "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
 	"exit_rules.preferred_none_title"    : "No preferred exit-node set for this device — Tailscale picks by metrics, rule may or may not apply.",
+	// 2026-08-25 (B182): user-scope mirror of the admin
+	// B182 keys. ⏳ means the rule's target CIDR is NOT in
+	// headscale ApprovedRoutes yet — the autoupdater will
+	// push on the next 5-min tick. See the B182 commit
+	// message for why this is a separate state from "✅
+	// preferred matches" (B178 alone was misleading).
+	"exit_rules.approved_in_headscale_title" : "Target approved in headscale for %s — rule is working.",
+	"exit_rules.pending_in_headscale_title"  : "Rule's exit-node matches the device's preferred, but headscale has NOT approved %s (target %s) yet. The autoupdater will push on the next 5-min tick.",
 	"exit_rules.device"                 : "Device",
 	"exit_rules.device_hint"            : "The device this rule applies to. Only your devices are visible.",
 	"exit_rules.exit_node"              : "Exit node",
@@ -346,6 +372,16 @@ var enExitRules = map[string]string{
 	"exit_rules_admin.preferred_match_title"   : "Matches the device's preferred exit-node (%s).",
 	"exit_rules_admin.preferred_mismatch_title": "Differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
 	"exit_rules_admin.preferred_none_title"    : "No preferred exit-node set.",
+	// 2026-08-25 (B182): the new two-state ✅ / ⏳
+	// preferred-exit-node badge. ✅ = rule's target CIDR is
+	// APPROVED in headscale ApprovedRoutes for this
+	// exit-node (the rule is fully working). ⏳ = rule
+	// matches the device's preferred exit-node but
+	// headscale has NOT approved the rule's target yet —
+	// the autoupdater will push on the next 5-min tick, or
+	// hit "Пере-синхронизировать" on /admin/exit-nodes.
+	"exit_rules_admin.approved_in_headscale_title" : "Target approved in headscale for %s — rule is working.",
+	"exit_rules_admin.pending_in_headscale_title"  : "Rule's exit-node matches the device's preferred, but headscale has NOT approved %s (target %s) yet. The autoupdater will push on the next 5-min tick (or hit 'Пере-синхронизировать' on /admin/exit-nodes).",
 	"exit_rules_admin.preferred_mismatch_banner" : "%d rules across all users reference a non-preferred exit-node. Check the 'Preferred' column.",
 	"exit_rules_admin.dead_rules_count"        : "%d dead rule(s)",
 	"exit_rules_admin.dead_rules_count_title"  : "%d device_rule(s) for this device reference a non-preferred exit-node. Tailscale will ignore them. Open /admin/exit-rules to see which.",

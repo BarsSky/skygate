@@ -670,6 +670,53 @@ in the same commit. Don't let the tracker drift.
     `<div class="alert alert-success">Sync emilia: ssh=ok
     approved=34</div>`.
 
+  - **B182 (v1.5.2)**: /admin/exit-rules and /my/exit-rules
+    "Applicable" vs "ApprovedInHeadscale" three-state
+    badge. Operator 2026-08-25: "правила что решил
+    поставить себе пользователь michail они не применились
+    на exit node но в skygate в exit rules помечены как
+    принятые и текущая проверка показывает конфликт" —
+    B178's Applicable check was purely logical (rule.ExitNode
+    matches the device's preferred exit-node) and did NOT
+    verify the rule's target CIDR is in headscale
+    ApprovedRoutes. Rules showed ✅ "accepted" in the UI but
+    the actual CIDRs were never pushed to headscale. **B182
+    fix**: add ApprovedInHeadscale to AdminRule (B178's
+    Applicable field is unchanged) and a status string for
+    /my/exit-rules. Both views now render three states:
+    - **✅ green (approved)**: Applicable AND
+      ApprovedInHeadscale (rule's CIDR IS in headscale for
+      the rule's ExitNode)
+    - **⏳ yellow (pending)**: Applicable but
+      ApprovedInHeadscale=false (matches the device's
+      preferred but headscale hasn't approved the CIDR yet —
+      autoupdater will push on next 5-min tick, or hit
+      "Пере-синхронизировать" on /admin/exit-nodes)
+    - **⚠️ red (wrong)**: Applicable=false (rule.ExitNode
+      differs from device's preferred — dead rule, this is
+      the existing B178 case)
+    DOMAIN rules always show ⏳ pending (autoupdater resolves
+    them to subnets first; until then we can't verify
+    headscale-state). The new fields are populated by
+    `annotateRulesWithPrefs(rr, prefFn, approvedByExitNode)`
+    (B182) where `approvedByExitNode map[string]map[string]bool`
+    is built from `headscale.ListAllNodes().ApprovedRoutes`.
+    The user-scope view (`/my/exit-rules`) uses a separate
+    `StatusByRuleID map[int]string` with 4 values: "approved"
+    | "pending" | "wrong" | "no_preferred" (device has no
+    preferred exit-node set). 16 contracts in
+    `scripts/check_b182.sh`. 8 new unit tests in
+    `internal/feature/exit_rules/form_admin_b182_test.go`:
+    SimpleMatch (headscale has it), Pending (the regression
+    case), WrongExitNode (CIDR is in headscale for the wrong
+    exit-node, useful diagnostic), DomainRule (always
+    pending), UnknownExitNode (host not in headscale),
+    EmptyApprovedMap (headscale unreachable, defensive),
+    plus 2 direct unit tests of `ruleApprovedInHeadscale`.
+    **Out of scope**: deduping the 70+ device_rule rows
+    that the autoupdater generates (one per parent_domain
+    per CDN — separate B183).
+
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
   §6 status log 2026-08-24) — **B151 + B152 + B153** close the

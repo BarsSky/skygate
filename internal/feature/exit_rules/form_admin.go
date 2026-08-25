@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 )
 
 // 2026-08-25 (B178): AdminRule is now a package-level type
@@ -57,6 +58,26 @@ type AdminRule struct {
 	// Same semantics as IsRuleApplicable(ExitNode,
 	// PreferredHost). Template can use it directly.
 	Applicable bool
+	// 2026-08-25 (B182): true iff the rule's target CIDR is
+	// actually APPROVED in headscale for this rule's
+	// ExitNode. B178's Applicable was a LOGICAL check
+	// (rule.ExitNode == device's preferred exit-node) —
+	// it told the operator "this rule is targeted at the
+	// right exit-node" but NOT "this rule's CIDR is in
+	// headscale ApprovedRoutes". The user's live case
+	// (michail's rules shown as "✅ accepted" but actually
+	// not in headscale) was a gap in the B178 check.
+	//
+	// Set by annotateRulesWithPrefs from
+	// approvedByExitNode[rule.ExitNode] which is built in
+	// the handler from headscale's ListAllNodes.ApprovedRoutes
+	// (one set per exit-node hostname). For SUBNET/IP
+	// rules: direct check. For DOMAIN rules: always false
+	// (the domain has to be resolved to subnets first by
+	// the autoupdater; until then we mark "pending" so the
+	// operator knows it's resolution-pending, not
+	// headscale-pending).
+	ApprovedInHeadscale bool
 }
 
 // 2026-08-25 (B178): annotateRulesWithPrefs fills in the
@@ -74,7 +95,21 @@ type AdminRule struct {
 // The preferred-host lookup is taken as a callback (prefFn)
 // so unit tests don't need a real DB — they pass a stub
 // that returns whatever hostname the test wants.
-func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname string) string) int {
+//
+// 2026-08-25 (B182): also takes approvedByExitNode — a
+// map[exit_node_hostname]set(CIDR) of what's actually
+// APPROVED in headscale for each exit-node. The annotator
+// sets ApprovedInHeadscale=true iff the rule's target
+// appears in headscale ApprovedRoutes for the rule's
+// ExitNode. SUBNET/IP rules check directly; DOMAIN rules
+// are marked pending (autoupdater resolves them). The
+// template renders three states:
+//   ✅ approved      — Applicable + ApprovedInHeadscale
+//   ⏳ pending       — Applicable but ApprovedInHeadscale=false
+//                       (rule's target not in headscale yet)
+//   ⚠️ wrong-node   — Applicable=false (rule's ExitNode differs
+//                       from the device's preferred exit-node)
+func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname string) string, approvedByExitNode map[string]map[string]bool) int {
 	// Batch by (userID, hostname) — one lookup per unique
 	// (user, device), not per rule. For 324 rules covering
 	// 3 unique (user, host) pairs, that's 3 lookups instead
@@ -100,11 +135,43 @@ func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname s
 		}
 		rr[i].PreferredHost = pref
 		rr[i].Applicable = IsRuleApplicable(rr[i].ExitNode, pref)
+		// 2026-08-25 (B182): real headscale-state check, not
+		// just a logical match. Looks up the rule's target
+		// CIDR in the per-exit-node set of headscale
+		// ApprovedRoutes. DOMAIN rules skip the check (they
+		// need to be resolved to subnets first; until then
+		// the rule is "applicable" but not yet "approved").
+		// Empty ExitNode (unusual but possible) is also
+		// treated as not-approved.
+		rr[i].ApprovedInHeadscale = ruleApprovedInHeadscale(rr[i], approvedByExitNode)
 		if !rr[i].Applicable {
 			mismatch++
 		}
 	}
 	return mismatch
+}
+
+// 2026-08-25 (B182): ruleApprovedInHeadscale returns true iff
+// the rule's TargetType is "subnet" or "ip" AND its
+// TargetValue appears in headscale.ApprovedRoutes for the
+// rule's ExitNode. SUBNET/IP rules check directly. DOMAIN
+// rules return false (autoupdater resolves them later — the
+// rule's resolved subnets become their own device_rule
+// rows that go through this same check). An empty ExitNode
+// or unknown exit-node hostname returns false (the rule
+// points at an exit-node that headscale has no record of).
+func ruleApprovedInHeadscale(rule AdminRule, approvedByExitNode map[string]map[string]bool) bool {
+	if rule.TargetType != "subnet" && rule.TargetType != "ip" {
+		return false // DOMAIN rules: pending until autoupdater resolves
+	}
+	if rule.ExitNode == "" || rule.TargetValue == "" {
+		return false
+	}
+	approved, ok := approvedByExitNode[rule.ExitNode]
+	if !ok {
+		return false // unknown exit-node hostname
+	}
+	return approved[rule.TargetValue]
 }
 
 // AdminExitRules renders the admin cross-user view.
@@ -177,8 +244,16 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Resolve device hostnames from headscale API — match by Tailscale IP
-	if nodes, e := s.HS.ListAllNodes(); e == nil {
+	// Resolve device hostnames from headscale API — match by Tailscale IP.
+	// Also captured for B182 (build approvedByExitNode from
+	// node.ApprovedRoutes for the per-rule headscale-state check
+	// below). One ListAllNodes call instead of two — headscale's
+	// gRPC is fast but the per-row iteration over `nodes` was
+	// already O(rules × nodes); the ApprovedRoutes-only pass
+	// is just one more O(nodes) loop.
+	var nodes []headscale.NodeView
+	if n, e := s.HS.ListAllNodes(); e == nil {
+		nodes = n
 		for i := range rr {
 			if rr[i].DeviceIP == "" {
 				rr[i].DeviceName = "?"
@@ -295,10 +370,36 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	// map is also removed — it was never used by the
 	// template (the template reads `GroupedByUser`, which is
 	// the unannotated form).
+	//
+	// 2026-08-25 (B182): we also pass `approvedByExitNode`
+	// (built from the same `nodes` we already fetched for
+	// device-name resolution) so the annotator can fill in
+	// the per-rule ApprovedInHeadscale field. See
+	// ruleApprovedInHeadscale below for the precise
+	// semantics. Reusing the existing `nodes` slice means
+	// no second ListAllNodes call.
+	approvedByExitNode := map[string]map[string]bool{}
+	for _, n := range nodes {
+		if len(n.ApprovedRoutes) == 0 {
+			continue
+		}
+		host := n.GivenName
+		if host == "" {
+			host = n.Hostname
+		}
+		if host == "" {
+			continue
+		}
+		set := map[string]bool{}
+		for _, r := range n.ApprovedRoutes {
+			set[r] = true
+		}
+		approvedByExitNode[host] = set
+	}
 	totalMismatch := annotateRulesWithPrefs(rr, func(uid int64, hn string) string {
 		pref, _ := PreferredExitNodeForRule(s.DB, uid, hn)
 		return pref
-	})
+	}, approvedByExitNode)
 
 	groupedByUser := map[string]userGroup{}
 	totalRules := len(rr)

@@ -99,15 +99,29 @@
                 <td class="col-target"><code>{{.TargetValue}}</code></td>
                 <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
                 <td class="col-preferred">
-                  {{$pref := .PreferredHost}}
-                  {{if $pref}}
-                    {{if eq $pref $exitNode}}
-                      <span class="tag tag-success" title="{{tf "exit_rules_admin.preferred_match_title" $pref}}"><i class="fa-solid fa-check"></i></span>
-                    {{else}}
-                      <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" $pref}}"><i class="fa-solid fa-triangle-exclamation"></i> {{$pref}}</span>
-                    {{end}}
+                  {{/* 2026-08-25 (B182): three-state preferred-exit-node badge.
+                       State 1 (wrong exit-node, ⚠️ red): rule.ExitNode differs
+                         from the device's preferred exit-node. B178's
+                         "Applicable" check is false. Dead rule for this
+                         device. Tooltip: "выбрано: <X>, предпочитается: <Y>".
+                       State 2 (pending, ⏳ yellow): rule.ExitNode matches the
+                         device's preferred, but headscale has NOT
+                         approved the rule's target CIDR yet. The
+                         autoupdater will resolve it on the next 5-min
+                         tick, or the operator can hit "Пере-синхронизировать"
+                         on /admin/exit-nodes. Tooltip: "rule's target
+                         not in headscale ApprovedRoutes for <exit-node>".
+                       State 3 (approved, ✅ green): rule.ExitNode matches
+                         the device's preferred AND the target CIDR is in
+                         headscale ApprovedRoutes. The rule is fully
+                         working. Tooltip: "target approved in headscale
+                         for <exit-node>". */}}
+                  {{if not .Applicable}}
+                    <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
+                  {{else if .ApprovedInHeadscale}}
+                    <span class="tag tag-success" title="{{tf "exit_rules_admin.approved_in_headscale_title" .ExitNode}}"><i class="fa-solid fa-check"></i></span>
                   {{else}}
-                    <span class="tag" title="{{t "exit_rules_admin.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+                    <span class="tag tag-warning" title="{{tf "exit_rules_admin.pending_in_headscale_title" .ExitNode .TargetValue}}"><i class="fa-solid fa-clock"></i></span>
                   {{end}}
                 </td>
                 <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
