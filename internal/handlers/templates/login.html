@@ -111,6 +111,41 @@ button:disabled:hover{background:var(--accent)}
 .login-btn-loading{display:inline-flex;align-items:center;gap:6px}
 .login-btn-loading i{font-size:13px}
 input:read-only{background:var(--bg-elev);color:var(--text-muted);cursor:not-allowed}
+/* B173.1 (v1.5.2): full-page loading overlay. The pre-B173.1
+   button-only loading state was invisible when a password
+   manager auto-submitted the form via form.submit() (which
+   bypasses submit event listeners) or when the page navigated
+   away so fast the user never saw the button swap. The overlay
+   covers the entire viewport with a semi-transparent background
+   + a centered card containing a spinner and the "Signing in..."
+   message. It's shown by the submit event handler, by the
+   pagehide/visibilitychange/beforeunload listeners (which catch
+   ALL navigation away from the page, including programmatic
+   form.submit() calls), and by a form.submit() method override
+   (which catches direct programmatic submits before the page
+   starts navigating). backdrop-filter: blur(2px) dims the
+   page underneath so the user can't accidentally interact
+   with it during the in-flight request. */
+.login-loading-overlay{
+  position:fixed;inset:0;
+  background:rgba(0,0,0,0.55);
+  -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);
+  display:none;align-items:center;justify-content:center;
+  z-index:9999;
+  animation:login-loading-fadein .12s ease-out;
+}
+.login-loading-overlay.visible{display:flex}
+@keyframes login-loading-fadein{from{opacity:0}to{opacity:1}}
+.login-loading-card{
+  background:var(--bg-card);
+  border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:24px 32px;
+  display:flex;flex-direction:column;align-items:center;gap:14px;
+  box-shadow:var(--shadow-lg);
+  min-width:220px;
+}
+.login-loading-card i{font-size:32px;color:var(--accent)}
+.login-loading-card .login-loading-text{font-size:15px;font-weight:500;color:var(--text)}
 .alert{border:1px solid var(--danger);border-left:3px solid var(--danger);background:var(--danger-bg);color:var(--danger);padding:10px 12px;border-radius:var(--radius);margin-bottom:14px;font-size:13px;display:flex;align-items:flex-start;gap:8px}
 .alert i{margin-top:2px;flex-shrink:0}
 .help{margin-top:20px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);display:flex;align-items:flex-start;gap:8px;line-height:1.5}
@@ -194,14 +229,39 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
   </form>
   <div class="help"><i class="fa-solid fa-lightbulb"></i>{{t "login.no_account"}}</div>
 </div>
-{{/* B173 (v1.5.2): submit handler — see the form comment
-   above for the design rationale. The handler is wrapped
-   in an IIFE so it doesn't leak `f` / `btn` / `u` / `p`
-   into the global scope (CSP-safe). If the page has JS
-   disabled (rare in 2026 but possible on a hardened
-   device) the form falls through to the normal
-   no-JS POST submit — the JS is a progressive
-   enhancement, not a hard dependency. */}}
+{{/* B173.1 (v1.5.2): full-page loading overlay. See the
+   CSS comment for the design rationale. The overlay is
+   shown by the submit event handler, by the pagehide /
+   visibilitychange / beforeunload listeners (which catch
+   ALL navigation away from the page, including programmatic
+   form.submit() calls from password managers), and by a
+   form.submit() method override (which catches direct
+   programmatic submits before the page starts navigating).
+   The overlay is hidden by default (display:none) and the
+   JS swaps it to display:flex via the .visible class. */}}
+<div id="login-loading-overlay" class="login-loading-overlay" aria-hidden="true">
+  <div class="login-loading-card">
+    <i class="fa-solid fa-spinner fa-spin"></i>
+    <div class="login-loading-text">{{t "login.submitting"}}</div>
+  </div>
+</div>
+{{/* B173 (v1.5.2) + B173.1 (v1.5.2): submit handler — see
+   the form comment above for the design rationale. The
+   handler is wrapped in an IIFE so it doesn't leak `f` /
+   `btn` / `u` / `p` / `overlay` into the global scope
+   (CSP-safe). If the page has JS disabled (rare in 2026
+   but possible on a hardened device) the form falls
+   through to the normal no-JS POST submit — the JS is a
+   progressive enhancement, not a hard dependency.
+   B173.1 additions: the handler now also (1) overrides
+   form.submit() to catch programmatic submits from
+   password managers, (2) listens for pagehide /
+   visibilitychange / beforeunload to catch ALL navigation
+   away from the page (including cases where the password
+   manager's auto-submit fires before our event listener
+   can run), and (3) shows a full-page loading overlay
+   (not just a button label swap) so the user always sees
+   clear visual feedback. */}}
 <script>
 (function(){
   var f = document.getElementById('login-form');
@@ -209,22 +269,72 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
   var btn = document.getElementById('login-submit');
   var idle = btn && btn.querySelector('.login-btn-idle');
   var loading = btn && btn.querySelector('.login-btn-loading');
-  f.addEventListener('submit', function(e){
-    /* If the form is invalid (browser validation says
-       so), let the browser show the native tooltip —
-       don't enter the loading state because we're
-       not actually submitting. */
-    if (!f.checkValidity || !f.checkValidity()) return;
-    /* Otherwise: disable the inputs + button + swap
-       the button label to "Вход..." with a spinner. */
-    var u = document.getElementById('username');
-    var p = document.getElementById('password');
+  var overlay = document.getElementById('login-loading-overlay');
+  var u = document.getElementById('username');
+  var p = document.getElementById('password');
+  var submitting = false;
+
+  function showLoading(){
+    if (submitting) return;
+    submitting = true;
     if (u) u.readOnly = true;
     if (p) p.readOnly = true;
-    if (btn){ btn.disabled = true; }
+    if (btn) btn.disabled = true;
     if (idle) idle.style.display = 'none';
     if (loading) loading.style.display = 'inline-flex';
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  /* 1. Submit event handler (catches explicit submit +
+     Enter in input + button click which all trigger the
+     submit event). */
+  f.addEventListener('submit', function(e){
+    if (!f.checkValidity || !f.checkValidity()) {
+      submitting = false; /* reset for next attempt */
+      return;
+    }
+    showLoading();
   });
+
+  /* 2. Override form.submit() to catch programmatic
+     submits. Some password managers call
+     HTMLFormElement.submit() directly when they
+     auto-fill credentials — this bypasses the submit
+     event entirely, so the listener above would not
+     fire. The override sets the loading state, then
+     defers the actual submit by one frame so the
+     browser has a chance to render the overlay before
+     navigation starts. */
+  var nativeSubmit = f.submit;
+  if (typeof nativeSubmit === 'function') {
+    f.submit = function(){
+      showLoading();
+      var args = arguments;
+      var self = this;
+      setTimeout(function(){
+        try { nativeSubmit.apply(self, args); }
+        catch(err) { /* fall through — form will reload on error */ }
+      }, 60);
+    };
+  }
+
+  /* 3. pagehide / visibilitychange / beforeunload
+     listeners catch ALL navigation away from the page,
+     including cases where (a) the password manager
+     bypasses our submit handler entirely, (b) the
+     browser navigates before our event listener runs,
+     or (c) some browser extension triggers a form
+     submit via an unexpected path. These listeners
+     show the overlay as a last-resort visual feedback
+     that the form is processing. */
+  function showOverlayOnNav(){
+    if (overlay) overlay.classList.add('visible');
+  }
+  window.addEventListener('pagehide', showOverlayOnNav);
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) showOverlayOnNav();
+  });
+  window.addEventListener('beforeunload', showOverlayOnNav);
 })();
 </script>
 </body>

@@ -246,5 +246,102 @@ else
     bad "go vet ./... FAILED"
 fi
 
+# ---------------------------------------------------------------------------
+hdr "contract D: B173.1 full-page overlay (catches password-manager auto-submit)"
+
+# B173.1 (v1.5.2) follow-up: the B173 button-only loading
+# state was invisible when a password manager auto-submitted
+# the form via form.submit() (which bypasses submit event
+# listeners) or when the page navigated away so fast the
+# user never saw the button swap. B173.1 adds:
+#   1. A full-page loading overlay (position:fixed,
+#      semi-transparent background, centered card with
+#      spinner + "Signing in..." text)
+#   2. A form.submit() method override in the JS IIFE
+#      that catches programmatic submits
+#   3. pagehide / visibilitychange / beforeunload
+#      listeners that catch ALL navigation away from
+#      the page (including cases where the password
+#      manager's auto-submit fires before our event
+#      listener can run)
+# The overlay is the "you can't miss it" visual feedback
+# that the form is processing.
+
+# D.1 — the full-page overlay element exists in
+# the template. It's hidden by default
+# (display:none on .login-loading-overlay) and the
+# JS swaps it to display:flex via the .visible
+# class.
+if grep -qE 'id="login-loading-overlay"' internal/handlers/templates/login.html && \
+   grep -qE 'class="login-loading-overlay"' internal/handlers/templates/login.html; then
+    ok "login.html has the B173.1 full-page overlay element (#login-loading-overlay)"
+else
+    bad "login.html is missing the B173.1 full-page overlay element (password-manager auto-submit is invisible)"
+fi
+
+# D.2 — the overlay contains a spinner + the
+# "Signing in..." text. The user needs to see WHAT
+# is happening, not just that SOMETHING is
+# happening.
+if grep -qE 'login-loading-card' internal/handlers/templates/login.html && \
+   grep -qE 'fa-spinner fa-spin' internal/handlers/templates/login.html && \
+   grep -qE 'login-loading-text' internal/handlers/templates/login.html; then
+    ok "login.html overlay has the spinner + 'Signing in...' card (B173.1: visible cause during the in-flight submit)"
+else
+    bad "login.html overlay is missing the spinner or 'Signing in...' text"
+fi
+
+# D.3 — the overlay CSS uses position:fixed +
+# z-index:9999 so it covers the entire viewport
+# (not just the button). The z-index:9999 is
+# important so the overlay sits above any other
+# page elements (sidebar, modals, etc.).
+if grep -qE 'login-loading-overlay' internal/handlers/templates/login.html && \
+   grep -qE 'position:fixed' internal/handlers/templates/login.html && \
+   grep -qE 'z-index:9999' internal/handlers/templates/login.html; then
+    ok "login.html overlay CSS uses position:fixed + z-index:9999 (B173.1: covers the entire viewport)"
+else
+    bad "login.html overlay CSS is missing position:fixed or z-index:9999"
+fi
+
+# D.4 — the JS IIFE overrides form.submit() to
+# catch programmatic submits. This is the key
+# B173.1 fix: the pre-B173.1 IIFE only listened
+# for the submit event, which is bypassed when
+# a password manager calls form.submit() directly.
+if grep -qE 'f\.submit = function' internal/handlers/templates/login.html && \
+   grep -qE 'nativeSubmit' internal/handlers/templates/login.html; then
+    ok "login.html IIFE overrides form.submit() (B173.1: catches programmatic submits from password managers)"
+else
+    bad "login.html IIFE is missing the form.submit() override (B173.1: password-manager auto-submit is invisible)"
+fi
+
+# D.5 — the JS IIFE listens for pagehide /
+# visibilitychange / beforeunload to catch ALL
+# navigation away from the page. These are the
+# last-resort listeners that fire even when the
+# submit event doesn't (e.g. the password manager
+# bypasses our handler entirely).
+if grep -qE "addEventListener\('pagehide'" internal/handlers/templates/login.html && \
+   grep -qE "addEventListener\('visibilitychange'" internal/handlers/templates/login.html && \
+   grep -qE "addEventListener\('beforeunload'" internal/handlers/templates/login.html; then
+    ok "login.html IIFE listens for pagehide/visibilitychange/beforeunload (B173.1: catches ALL navigation away)"
+else
+    bad "login.html IIFE is missing the pagehide/visibilitychange/beforeunload listeners"
+fi
+
+# D.6 — the IIFE has a showLoading() function
+# that's called from all the submit-detection
+# paths (submit event + form.submit() override
+# + pagehide/visibilitychange/beforeunload). The
+# function is the single source of truth for the
+# "show the loading state" logic.
+if grep -qE 'function showLoading' internal/handlers/templates/login.html && \
+   grep -qE 'overlay\.classList\.add\(.visible.\)' internal/handlers/templates/login.html; then
+    ok "login.html IIFE has showLoading() that adds the .visible class to the overlay"
+else
+    bad "login.html IIFE is missing showLoading() or the .visible class toggle"
+fi
+
 echo
-echo "B173 check OK — login form has an explicit submit-time loading state (the 'page refreshes when I type the password' symptom now has a visible cause: the form IS submitting, you just couldn't see the in-flight button)."
+echo "B173 check OK — login form has an explicit submit-time loading state (the 'page refreshes when I type the password' symptom now has a visible cause: the form IS submitting, you just couldn't see the in-flight button). B173.1 adds a full-page overlay that catches password-manager auto-submit via form.submit() override + pagehide/visibilitychange/beforeunload listeners."
