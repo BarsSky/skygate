@@ -6,8 +6,17 @@
 // Renders admin/exit_rules.html with cross-user
 // hierarchical view (grouped by user -> device ->
 // exit_node), recent logs, and ACL snapshot history.
-// Local types (AdminRule, devNodeGroup, userGroup)
-// are defined inline where used.
+//
+// 2026-08-25 (B178): AdminRule now carries the preferred
+// exit-node hostname + a per-rule "Applicable" flag, so the
+// template can render a "dead rule" badge without doing a
+// O(n*m) inner lookup. The pre-B178 design (a parallel
+// []AnnotatedRule + a template inner range) had a Go-template
+// `.`-rebind bug that always leaked the last annotated
+// rule's PreferredHost into every visible row — live-verified
+// for michail/basic (UserID=6, DeviceID=29) which
+// `device_exit_node_prefs` pins to "emilia" but the rendered
+// HTML was showing "karolina".
 package exit_rules
 
 import (
@@ -18,6 +27,85 @@ import (
 
 	"skygate/internal/db"
 )
+
+// 2026-08-25 (B178): AdminRule is now a package-level type
+// (was a local closure type inside AdminExitRules before
+// B178) so annotateRulesWithPrefs can take it by reference.
+// Fields match the DB column names + post-B178 pref fields.
+type AdminRule struct {
+	ID            int
+	UserID        int
+	UserName      string
+	DeviceID      int
+	DeviceName    string
+	DeviceIP      string
+	ExitNode      string
+	TargetType    string
+	TargetValue   string
+	Action        string
+	ParentDomain  string
+	CreatedAt     string
+	// 2026-08-25 (B178): preferred exit-node hostname for
+	// this (user, device) pair. Empty when no per-device /
+	// per-user pref is set. The admin template renders a
+	// ✅ when rule.ExitNode == PreferredHost (the rule
+	// takes effect), or a ⚠️ + the preferred hostname
+	// when they differ (the "dead rule" case).
+	PreferredHost string
+	// 2026-08-25 (B178): convenience — true iff the rule
+	// is "live" given the device's preferred exit-node.
+	// Same semantics as IsRuleApplicable(ExitNode,
+	// PreferredHost). Template can use it directly.
+	Applicable bool
+}
+
+// 2026-08-25 (B178): annotateRulesWithPrefs fills in the
+// PreferredHost + Applicable fields for every rule in rr,
+// in place, and returns the total number of "dead rules"
+// (where Applicable=false).
+//
+// Why a helper, not inline in the handler: this is the
+// regression-bearing code path (the original B178 bug was
+// hidden in a template that did a Go-template `.`-rebind
+// lookup; this function is the testable replacement). Pulling
+// it out into a small pure-ish function makes the basic/
+// karolina regression easy to pin with a unit test.
+//
+// The preferred-host lookup is taken as a callback (prefFn)
+// so unit tests don't need a real DB — they pass a stub
+// that returns whatever hostname the test wants.
+func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname string) string) int {
+	// Batch by (userID, hostname) — one lookup per unique
+	// (user, device), not per rule. For 324 rules covering
+	// 3 unique (user, host) pairs, that's 3 lookups instead
+	// of 324.
+	prefByUserHost := map[string]string{} // "userID:hostname" → preferred host
+	for _, rule := range rr {
+		hn := strings.ToLower(strings.TrimSpace(rule.DeviceName))
+		if hn == "" || hn == "?" {
+			continue
+		}
+		key := strconv.FormatInt(int64(rule.UserID), 10) + ":" + hn
+		if _, ok := prefByUserHost[key]; ok {
+			continue
+		}
+		prefByUserHost[key] = prefFn(int64(rule.UserID), hn)
+	}
+	mismatch := 0
+	for i := range rr {
+		hn := strings.ToLower(strings.TrimSpace(rr[i].DeviceName))
+		pref := ""
+		if hn != "" && hn != "?" {
+			pref = prefByUserHost[strconv.FormatInt(int64(rr[i].UserID), 10)+":"+hn]
+		}
+		rr[i].PreferredHost = pref
+		rr[i].Applicable = IsRuleApplicable(rr[i].ExitNode, pref)
+		if !rr[i].Applicable {
+			mismatch++
+		}
+	}
+	return mismatch
+}
 
 // AdminExitRules renders the admin cross-user view.
 // GET /admin/exit-rules[?device=NAME]
@@ -71,20 +159,6 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type AdminRule struct {
-		ID           int
-		UserID       int
-		UserName     string
-		DeviceID     int
-		DeviceName   string
-		DeviceIP     string
-		ExitNode     string
-		TargetType   string
-		TargetValue  string
-		Action       string
-		ParentDomain string
-		CreatedAt    string
-	}
 	var rr []AdminRule
 	for _, r := range dbRules {
 		rr = append(rr, AdminRule{
@@ -92,6 +166,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 			UserID:       r.UserID,
 			UserName:     r.UserName,
 			DeviceID:     r.DeviceID,
+			DeviceName:   r.DeviceName,
 			DeviceIP:     r.DeviceIP,
 			ExitNode:     r.ExitNodeID,
 			TargetType:   r.TargetType,
@@ -205,73 +280,53 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = totalPct
 
-	// 2026-08-06: per-(user, device) preferred exit-node pref
-	// lookup. The admin template uses this to flag "dead rules"
-	// — rules whose exit_node_id doesn't match the device's
-	// preferred exit-node. Cross-user view; we batch by
-	// (user_id, hostname) so each rule's preferred hostname
-	// is O(1).
-	prefByUserHost := map[string]string{} // "userID:hostname" → preferred host
-	for _, rule := range rr {
-		key := strconv.FormatInt(int64(rule.UserID), 10) + ":" + strings.ToLower(rule.DeviceName)
-		if _, ok := prefByUserHost[key]; ok {
-			continue
-		}
-		pref, _ := PreferredExitNodeForRule(s.DB, int64(rule.UserID), rule.DeviceName)
-		prefByUserHost[key] = pref
-	}
-	// Annotate each rule with PreferredHost + Applicable. The
-	// template renders a warning icon for Applicable=false.
-	type AnnotatedRule struct {
-		AdminRule
-		PreferredHost string
-		Applicable    bool
-	}
-	annotated := make([]AnnotatedRule, 0, len(rr))
-	totalMismatch := 0
-	for _, r := range rr {
-		key := strconv.FormatInt(int64(r.UserID), 10) + ":" + strings.ToLower(r.DeviceName)
-		pref := prefByUserHost[key]
-		ok := IsRuleApplicable(r.ExitNode, pref)
-		if !ok {
-			totalMismatch++
-		}
-		annotated = append(annotated, AnnotatedRule{
-			AdminRule:     r,
-			PreferredHost: pref,
-			Applicable:    ok,
-		})
-	}
-	// Rebuild the hierarchical view with the annotated rules so
-	// the template can read .Applicable on each row.
-	groupedByUserAnnotated := map[string]map[int]devNodeGroup{}
-	for _, ar := range annotated {
-		ug, ok := groupedByUserAnnotated[ar.UserName]
-		if !ok {
-			ug = map[int]devNodeGroup{}
-		}
-		dg, ok := ug[ar.DeviceID]
-		if !ok {
-			dg = devNodeGroup{DeviceName: ar.DeviceName, Nodes: map[string][]AdminRule{}}
-		}
-		dg.Nodes[ar.ExitNode] = append(dg.Nodes[ar.ExitNode], ar.AdminRule)
-		dg.Count++
-		ug[ar.DeviceID] = dg
-		groupedByUserAnnotated[ar.UserName] = ug
-	}
-	_ = groupedByUserAnnotated // (the GroupedByUser below is the legacy form; template can use either)
+	// 2026-08-25 (B178): per-(user, device) preferred exit-node
+	// pref lookup, annotating each rule with PreferredHost +
+	// Applicable. The admin template uses these to flag "dead
+	// rules" — rules whose exit_node_id doesn't match the
+	// device's preferred exit-node.
+	//
+	// Pre-B178 architecture: built a parallel `[]AnnotatedRule`
+	// slice + `groupedByUserAnnotated` map, passed both to the
+	// template as `Rules` + `RulesAnnotated`, and the template
+	// did an O(n*m) inner `range` to look up each rule's
+	// annotation. That template was BROKEN due to a Go-template
+	// `.`-rebind bug: inside the inner `{{range $ar :=
+	// $.RulesAnnotated}}`, `.` was rebound to `$ar` (the inner
+	// iteration), so `{{if eq $ar.ID .ID}}` was effectively
+	// `{{if eq $ar.ID $ar.ID}}` — always true. The lookup
+	// overwrote $pref on every iteration, ending up with the
+	// LAST annotated rule's PreferredHost (skyworker/karolina)
+	// for every rule on the page. Live-verified: the rendered
+	// HTML showed "karolina" for basic's rules (UserID=6,
+	// DeviceID=29) even though `device_exit_node_prefs` had
+	// `michail/basic → tag:exit-emilia` and
+	// `PreferredExitNodeForRule(s.DB, 6, "basic")` returned
+	// "emilia" correctly.
+	//
+	// B178 fix: collapse the annotated slice into AdminRule
+	// itself (PreferredHost + Applicable fields), drop the
+	// inner template lookup, and let the template read
+	// `.PreferredHost` directly. O(n) lookups total, no
+	// template scope traps. The dead `groupedByUserAnnotated`
+	// map is also removed — it was never used by the
+	// template (the template reads `GroupedByUser`, which is
+	// the unannotated form).
+	totalMismatch := annotateRulesWithPrefs(rr, func(uid int64, hn string) string {
+		pref, _ := PreferredExitNodeForRule(s.DB, uid, hn)
+		return pref
+	})
 
 	s.Backend.RenderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
-		"Page":          "exit-rules",
-		"Title":         "Exit Rules",
-		"Rules":         rr,
-		"RulesAnnotated": annotated,
-		"Logs":          logs,
-		"Snapshots":     snaps,
-		"GroupedByUser": groupedByUser,
-		"TotalRules":    totalRules,
-		"MaxTotalRules": maxTotal,
-		"LoadPct":       totalPct,
+		"Page":           "exit-rules",
+		"Title":          "Exit Rules",
+		"Rules":          rr,
+		"Logs":           logs,
+		"Snapshots":      snaps,
+		"GroupedByUser":  groupedByUser,
+		"TotalRules":     totalRules,
+		"MaxTotalRules":  maxTotal,
+		"LoadPct":        totalPct,
 		// 2026-08-06: cross-check counter — admin sees the total
 		// dead-rule count at the top of the page. Click to
 		// filter the table to only-applicable vs only-mismatch
@@ -282,7 +337,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// /admin/devices. The template renders a banner
 		// ("filtered to device X, show all") and keeps the
 		// rule count scoped to this device only.
-		"DeviceFilter":   deviceFilter,
+		"DeviceFilter":    deviceFilter,
 		"DeviceRuleCount": len(rr),
 	})
 }

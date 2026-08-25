@@ -99,8 +99,7 @@
                 <td class="col-target"><code>{{.TargetValue}}</code></td>
                 <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
                 <td class="col-preferred">
-                  {{$pref := ""}}
-                  {{range $ar := $.RulesAnnotated}}{{if eq $ar.ID .ID}}{{$pref = $ar.PreferredHost}}{{end}}{{end}}
+                  {{$pref := .PreferredHost}}
                   {{if $pref}}
                     {{if eq $pref $exitNode}}
                       <span class="tag tag-success" title="{{tf "exit_rules_admin.preferred_match_title" $pref}}"><i class="fa-solid fa-check"></i></span>

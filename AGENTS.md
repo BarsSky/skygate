@@ -513,6 +513,78 @@ in the same commit. Don't let the tracker drift.
     fallback" to make the defensive intent
     visible in skygate's stderr. 10
     contracts in `scripts/check_b177.sh`.
+  - **B178 (v1.5.2)**: `/admin/exit-rules` "preferred exit
+    node" template-scope bug (operator 2026-08-25:
+    "basic показывает karolina вместо emilia"). The
+    pre-B178 template did an O(n*m) inner range over
+    `$.RulesAnnotated` with `if eq $ar.ID .ID`, but
+    inside the inner range `.` is REBOUND to `$ar` (Go
+    template scope), so the eq check was effectively
+    `eq $ar.ID $ar.ID` (always true) and `$pref` was
+    overwritten on every iteration, ending with the LAST
+    annotated rule's PreferredHost (the slice is sorted
+    by ID ascending, so the last entry was skyworker's
+    highest-ID rule whose PreferredHost is "karolina"
+    because `device_exit_node_prefs: skyadmin/skyworker →
+    tag:dev-infra-karolina`). Live-verified: ALL 103 of
+    michail/basic's rules showed "karolina" in
+    /admin/exit-rules, even though
+    `device_exit_node_prefs: michail/basic → tag:exit-emilia`
+    and `PreferredExitNodeForRule(s.DB, 6, "basic")`
+    returned "emilia" correctly. **B178 fix**:
+    1. `AdminRule` is now a package-level type (was a
+       local closure type inside `AdminExitRules` before
+       B178) with two new fields: `PreferredHost string`
+       and `Applicable bool`. The `[]AnnotatedRule`
+       parallel slice + the `groupedByUserAnnotated`
+       map are GONE.
+    2. New `annotateRulesWithPrefs(rr, prefFn)` helper
+       fills in `PreferredHost` + `Applicable` for every
+       rule in place, batching the
+       `PreferredExitNodeForRule` lookup by (userID,
+       hostname) so the handler makes 1 DB call per
+       unique (user, device) instead of 1 per rule (for
+       the live data, 3 calls instead of 324).
+    3. The template (`admin/exit_rules.html`) now reads
+       `.PreferredHost` directly — no more inner range
+       lookup, no more Go template scope trap.
+    4. 8 unit tests in
+       `internal/feature/exit_rules/form_admin_b178_test.go`:
+       - `TestAnnotateRulesWithPrefs_BasicKarolinaRegression` —
+         direct regression for the operator's report
+         (michail/basic → "emilia", not "karolina")
+       - `TestAnnotateRulesWithPrefs_SkyworkerKarolina` —
+         skyworker (per-device karolina) renders correctly
+       - `TestAnnotateRulesWithPrefs_DeadRule` — emilia rule
+         on karolina-pinned device → Applicable=false
+       - `TestAnnotateRulesWithPrefs_NoPreference` — no
+         pref set → PreferredHost="", Applicable=true
+       - `TestAnnotateRulesWithPrefs_BatchedLookup` —
+         verifies the callback is invoked EXACTLY ONCE
+         per unique (user, host) pair, not per rule
+       - `TestAnnotateRulesWithPrefs_EmptyHostname` —
+         "?" / empty / whitespace-only hostnames get no
+         pref and no callback call
+       - `TestAnnotateRulesWithPrefs_MixedUserDevicePrefs` —
+         per-device wins over per-user (cyborg on karolina
+         with skyadmin/emilia per-user → dead rule)
+       - `TestAnnotateRulesWithPrefs_CaseInsensitiveHostname` —
+         "Skyworker" / "skyworker" / "SKYWORKER" all
+         batch into 1 lookup
+    5. 15 contracts in `scripts/check_b178.sh`:
+       - A: package-level AdminRule has PreferredHost + Applicable
+       - B: annotateRulesWithPrefs function exists
+       - C-D: local AdminRule + AnnotatedRule struct are gone
+       - E-F: RulesAnnotated + groupedByUserAnnotated are gone
+       - G: handler calls annotateRulesWithPrefs
+       - H + H-no-inner-range: template uses .PreferredHost
+         and has no inner range over $.RulesAnnotated
+       - I: yellow DBG span is removed from the template
+       - J-K: B178 test file exists with the basic/karolina
+         regression test
+       - L: AGENTS.md mentions B178
+       - M: verify_pre_deploy.sh includes check_b178
+       - N: `go test ./internal/feature/exit_rules/...` passes
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
