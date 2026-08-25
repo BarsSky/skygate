@@ -490,9 +490,20 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 // portal_user_id. Used by env() to populate BotEnv.Username from
 // the binding. Returning "" on error is fine — the bot's
 // user-scope commands check Username == "" explicitly.
+//
+// 2026-08-25 (B187): changed `?` placeholder to `$1`. The
+// pre-B187 `?` was SQLite-era syntax that silently failed
+// with the PG pgx driver ("operator does not exist: ?").
+// The env() caller ignored the error and left
+// env.Username = "" — making /my_status reply with
+// "чат привязан, но у пользователя портала нет username"
+// even when the binding's portal_user row had a perfectly
+// good username. The operator's screenshot of 2026-08-25
+// showed the exact symptom. The "$1" form is what the
+// pgx driver expects (positional parameter, 1-indexed).
 func lookupPortalUsername(d *sql.DB, userID int64) (string, error) {
 	var u string
-	err := d.QueryRow(`SELECT username FROM portal_users WHERE id = ?`, userID).Scan(&u)
+	err := d.QueryRow(`SELECT username FROM portal_users WHERE id = $1`, userID).Scan(&u)
 	return u, err
 }
 

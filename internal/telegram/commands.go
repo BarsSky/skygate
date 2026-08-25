@@ -3,6 +3,8 @@ package telegram
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strconv"
 	"strings"
 
 	"skygate/internal/headscale"
@@ -608,7 +610,18 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 	}
 	switch cmd {
 	case "/status":
-		return cmdReply{body: statusReply(env), context: lookupContext(cmd)}
+		// 2026-08-25 (B186.2): /status is admin-scope and
+		// fits naturally in a Heading + 3-row KeyValueTable
+		// (rules / users / last acl). Same migration
+		// pattern as /my_status + /version.
+		sBody := statusReply(env)
+		sBlocks, serr := statusBlocks(env)
+		if serr != nil {
+			// DB error: keep the legacy body so the
+			// operator sees the i18n'd error string.
+			return cmdReply{body: sBody, context: lookupContext(cmd)}
+		}
+		return cmdReply{body: sBody, blocks: sBlocks, context: lookupContext(cmd)}
 	case "/help":
 		if len(args) == 0 {
 			return cmdReply{body: helpReply(env), context: lookupContext(cmd)}
@@ -880,6 +893,32 @@ func statusReply(env BotEnv) string {
 		i18n.Tf(env.Lang, "bot.status.rules", totalRules) + "\n" +
 		i18n.Tf(env.Lang, "bot.status.users", totalUsers) + "\n" +
 		i18n.Tf(env.Lang, "bot.status.last_acl", lastACL)
+}
+
+// statusBlocks (B186.2, 2026-08-25) is the Bot API 10.1
+// rich-message variant of statusReply. Same data, structured
+// as a Heading + a 3-row key/value table (rules / users /
+// last acl) + Footer. The envelope (gate + signoff) is
+// added by ComposeRich in the dispatcher.
+func statusBlocks(env BotEnv) ([]RichBlock, error) {
+	var totalRules, totalUsers, lastACL int64
+	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules`).Scan(&totalRules); err != nil {
+		return nil, err
+	}
+	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM portal_users`).Scan(&totalUsers); err != nil {
+		return nil, err
+	}
+	if err := env.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success=1`).Scan(&lastACL); err != nil {
+		return nil, err
+	}
+	return []RichBlock{
+		Heading(i18n.T(env.Lang, "bot.status.header"), 2),
+		KeyValueTable([]KVRow{
+			{Label: i18n.T(env.Lang, "bot.status.rules"), Value: strconv.FormatInt(totalRules, 10)},
+			{Label: i18n.T(env.Lang, "bot.status.users"), Value: strconv.FormatInt(totalUsers, 10)},
+			{Label: i18n.T(env.Lang, "bot.status.last_acl"), Value: fmt.Sprintf("#%d", lastACL)},
+		}),
+	}, nil
 }
 
 // helpReply shows a short list of commands the caller can use.

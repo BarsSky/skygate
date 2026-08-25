@@ -988,6 +988,50 @@ in the same commit. Don't let the tracker drift.
   8/10 phases now SHIPPED; only B146 (reg.ru DNS live client,
   blocked on operator's IP whitelist) + Phase 10 (release tag)
   remain. The new runbooks:
+  - **B186.2 (v1.5.2)**: extend Rich Messages migration to
+    /status. After B186.1 wired the rich path through the
+    polling loop, only /my_status + /version used it. /status
+    is the third command migrated because it's the admin-
+    scope counterpart of /my_status and shows the same 3-row
+    key/value data (rules / users / last ACL). The migration
+    follows the exact same shape: `statusReply(env) string`
+    for the legacy path + `statusBlocks(env) ([]RichBlock,
+    error)` for the rich path, with the dispatcher falling
+    back to the legacy body on DB errors. /help was
+    considered but skipped for B186.2 — its multi-bubble
+    `<pre>`-based layout (split via `splitMessageMarker`)
+    is too rich to be worth porting in this pass; the operator
+    already has 2 commands in the new format, which is
+    enough to verify the wire-up end-to-end.
+
+  - **B187 (v1.5.2)**: fix silent `env.Username = ""` regression
+    caused by SQLite-era `?` placeholder in `lookupPortalUsername`.
+    Operator 2026-08-25 screenshot showed `/my_status` replying
+    "чат привязан, но у пользователя портала нет username" even
+    though the binding's portal_user row had a perfectly good
+    username (`skyadmin`, `id=1`, `telegram_chat_id=328946535`).
+    Root cause: `lookupPortalUsername` in
+    `internal/telegram/notify.go` used
+    `SELECT username FROM portal_users WHERE id = ?` — the `?`
+    placeholder is SQLite-era syntax. The pgx driver (which
+    skygate uses since the v1.3.0 PG-only migration) doesn't
+    auto-convert `?` to `$1`; it returns "operator does not
+    exist: ?". `env()` silently swallowed the error and left
+    `env.Username = ""`. The user-scope commands
+    (`myStatusReply`, `myRulesReply`, `myQuotaReply`,
+    `myNodesReply`) check `if env.Username == ""` and return
+    the early-exit i18n strings (e.g. "no_username",
+    "not_bound"). **B187 fix**: change `?` to `$1` in the
+    `QueryRow` call. After the fix, `env.Username` is populated
+    correctly and `/my_status` (and any other user-scope
+    command) shows the operator's real data. 6 contracts in
+    `scripts/check_b187.sh` (A-F) pin: (A) `$1` placeholder
+    present, (B) `?` placeholder absent, (C) regression test
+    in `lookup_username_test.go`, (D) AGENTS.md mention,
+    (E) `verify_pre_deploy.sh` registration, (F) live: the
+    operator's chat 328946535 maps to a non-empty username
+    (`skyadmin`).
+
   - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
     the headplane API key on a fresh deploy. 2 modes (bundled
     + external headplane), 6-step bundled flow with
