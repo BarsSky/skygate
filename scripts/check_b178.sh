@@ -123,6 +123,27 @@ check_eq "F" "0" "$(count "$REPO/internal/feature/exit_rules/form_admin.go" 'gro
 # G. annotateRulesWithPrefs is called
 check_ge "G" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin.go" 'annotateRulesWithPrefs\(')"
 
+# G2. The annotateRulesWithPrefs call MUST happen BEFORE the
+#     `for _, rule := range rr` grouping loop, otherwise the
+#     copies stored in groupedByUser.Nodes miss the
+#     PreferredHost field. This was a live regression in the
+#     first B178 deploy — the annotation was correct, the
+#     prefFn returned the right values (verified by the
+#     B178-DBG log), but every rule on the page rendered
+#     "No preferred exit-node set" because the template
+#     iterates the COPIES in groupedByUser.Nodes.
+if [ -f "$REPO/internal/feature/exit_rules/form_admin.go" ]; then
+  ANNO_LINE=$(grep -n 'annotateRulesWithPrefs(rr,' "$REPO/internal/feature/exit_rules/form_admin.go" | head -1 | cut -d: -f1)
+  GROUP_LINE=$(grep -n 'for _, rule := range rr' "$REPO/internal/feature/exit_rules/form_admin.go" | tail -1 | cut -d: -f1)
+  if [ -n "$ANNO_LINE" ] && [ -n "$GROUP_LINE" ]; then
+    if [ "$ANNO_LINE" -lt "$GROUP_LINE" ]; then
+      check_eq "G2" "before" "before"
+    else
+      check_eq "G2" "before" "after (regression: annotation must run BEFORE grouping copies)"
+    fi
+  fi
+fi
+
 # H. template uses .PreferredHost directly
 if [ -f "$REPO/internal/handlers/templates/admin/exit_rules.html" ]; then
   check_ge "H" 1 "$(count "$REPO/internal/handlers/templates/admin/exit_rules.html" '\.PreferredHost')"

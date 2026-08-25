@@ -249,42 +249,25 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		LoadPct    int
 		Devices    map[int]devNodeGroup
 	}
-	groupedByUser := map[string]userGroup{}
-	totalRules := len(rr)
-	totalPct := 0
-	maxTotal := 0
-	if s.Cfg != nil {
-		maxTotal = s.Cfg.MaxTotalRules
-	}
-	if maxTotal > 0 {
-		totalPct = totalRules * 100 / maxTotal
-	}
-	for _, rule := range rr {
-		ug, ok := groupedByUser[rule.UserName]
-		if !ok {
-			ug = userGroup{Devices: map[int]devNodeGroup{}, UserLimit: s.getMaxRulesForUser(rule.UserName)}
-		}
-		dg, ok := ug.Devices[rule.DeviceID]
-		if !ok {
-			dg = devNodeGroup{DeviceName: rule.DeviceName, Nodes: map[string][]AdminRule{}}
-		}
-		dg.Nodes[rule.ExitNode] = append(dg.Nodes[rule.ExitNode], rule)
-		dg.Count++
-		ug.Devices[rule.DeviceID] = dg
-		ug.UserCount++
-		ug.TotalCount++
-		if ug.UserLimit > 0 {
-			ug.LoadPct = ug.UserCount * 100 / ug.UserLimit
-		}
-		groupedByUser[rule.UserName] = ug
-	}
-	_ = totalPct
 
 	// 2026-08-25 (B178): per-(user, device) preferred exit-node
 	// pref lookup, annotating each rule with PreferredHost +
 	// Applicable. The admin template uses these to flag "dead
 	// rules" — rules whose exit_node_id doesn't match the
 	// device's preferred exit-node.
+	//
+	// IMPORTANT: this MUST run BEFORE the groupedByUser build
+	// below. The grouping loop COPIES each AdminRule into the
+	// Nodes map (`dg.Nodes[rule.ExitNode] = append(..., rule)`),
+	// so annotations set AFTER the grouping are lost — the
+	// copies in groupedByUser still have empty PreferredHost.
+	// The first deployment of B178 ran annotate AFTER grouping
+	// and ALL 325 rules rendered with "No preferred exit-node
+	// set" — the headscale resolution worked (DeviceName was
+	// populated) and the prefFn returned the right values
+	// (verified by B178-DBG log lines in skygate stderr), but
+	// the template reads from groupedByUser which had the
+	// unannotated copies.
 	//
 	// Pre-B178 architecture: built a parallel `[]AnnotatedRule`
 	// slice + `groupedByUserAnnotated` map, passed both to the
@@ -316,6 +299,37 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		pref, _ := PreferredExitNodeForRule(s.DB, uid, hn)
 		return pref
 	})
+
+	groupedByUser := map[string]userGroup{}
+	totalRules := len(rr)
+	totalPct := 0
+	maxTotal := 0
+	if s.Cfg != nil {
+		maxTotal = s.Cfg.MaxTotalRules
+	}
+	if maxTotal > 0 {
+		totalPct = totalRules * 100 / maxTotal
+	}
+	for _, rule := range rr {
+		ug, ok := groupedByUser[rule.UserName]
+		if !ok {
+			ug = userGroup{Devices: map[int]devNodeGroup{}, UserLimit: s.getMaxRulesForUser(rule.UserName)}
+		}
+		dg, ok := ug.Devices[rule.DeviceID]
+		if !ok {
+			dg = devNodeGroup{DeviceName: rule.DeviceName, Nodes: map[string][]AdminRule{}}
+		}
+		dg.Nodes[rule.ExitNode] = append(dg.Nodes[rule.ExitNode], rule)
+		dg.Count++
+		ug.Devices[rule.DeviceID] = dg
+		ug.UserCount++
+		ug.TotalCount++
+		if ug.UserLimit > 0 {
+			ug.LoadPct = ug.UserCount * 100 / ug.UserLimit
+		}
+		groupedByUser[rule.UserName] = ug
+	}
+	_ = totalPct
 
 	s.Backend.RenderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
 		"Page":           "exit-rules",
