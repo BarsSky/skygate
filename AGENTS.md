@@ -24,11 +24,12 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `9bbb750` on VM remote,
+* **Current**: v1.5.2-alpha1 (commit `794b9c6` on VM remote,
   `7d90af2f` B170 + `45ab8ff9` B171 +
   `40f8c81b` B172 +
   `6b1c241` B173 +
-  `9bbb750` B173.1 in flight) — **B167 OIDC config
+  `9bbb750` B173.1 +
+  `794b9c6` B174 in flight) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -40,7 +41,10 @@ in the same commit. Don't let the tracker drift.
   (the user can see when the form is processing)**
   + **B173.1 full-page loading overlay
   (catches password-manager auto-submit that
-  bypasses submit event listeners)**.
+  bypasses submit event listeners)**
+  + **B174 OIDC readSession uses auth.ParseJWT
+  (closes the "password reset on login" loop
+  the pre-B174 colon-split parser caused)**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -304,6 +308,91 @@ in the same commit. Don't let the tracker drift.
     + overlay card content + overlay CSS rules + form.
     submit override + 3 nav listeners + showLoading
     function).
+  - **B174 (v1.5.2)**: OIDC `readSession` uses
+    `auth.ParseJWT` (closes the latent "password
+    reset on login" loop). Operator 2026-08-25
+    (after B172 + B173 + B173.1 shipped):
+    "все равно сбрасывает, после того как
+    браузер предлагает использовать сохраненный
+    пароль до того как вносил правки по поводу
+    next все отрабатывала" — the B173.1 full-
+    page overlay didn't help because the
+    password was being cleared AFTER the form
+    submitted (not during). **Root cause**:
+    `PostLogin` sets the `skygate_session`
+    cookie to an HS256 JWT (via `auth.IssueJWT`),
+    but the pre-B174 OIDC `readSession` tried
+    to parse the cookie as a colon-separated
+    `<uid>:<username>:<email>:<expires_unix>`
+    string — a format `PostLogin` NEVER wrote.
+    `readSession` ALWAYS returned nil → the
+    OIDC handler ALWAYS redirected back to
+    `/login?next=...` → the user saw the login
+    page re-render with an empty password
+    ("сбрасывает"). Pre-B172 the user thought
+    "it worked" because `PostLogin` hard-coded
+    `/dashboard` (the B172 bug) — the user
+    never went back through `/oidc/authorize`,
+    so the broken `readSession` was never
+    exercised. B172 fixed the redirect, which
+    EXPOSED the latent OIDC `readSession` bug.
+    **B174 fix**:
+    1. `oidc.Service` gets a `JWTSecret` field
+       (the same secret `feature/auth` uses) +
+       a `UserLookup` callback that maps the
+       JWT-claim `uid` → DB-side `username +
+       email` (the JWT doesn't carry email;
+       the OIDC `id_token` + `/userinfo`
+       endpoints need it).
+    2. `readSession` delegates to
+       `auth.ParseJWT` (the same helper
+       `feature/auth.PostLogin` uses) to
+       verify the HMAC signature + extract
+       the `uid` + `usr` claims. The
+       pre-B174 colon-split is GONE
+       (dead `parseInt64` helper deleted).
+       If `UserLookup` returns an error
+       (e.g. the user was deleted from
+       `portal_users` after the JWT was
+       issued), `readSession` returns nil —
+       a stale cookie with a valid signature
+       but no live user must NOT proceed
+       to `/oidc/authorize`.
+    3. `cmd/skygate/main.go` passes
+       `app.JWTSecret` to `oidcsvc.NewService`
+       + wires `oidcSvc.UserLookup` via
+       `db.GetUserNameByID` (returns
+       `username + "@skygate.local"` for the
+       email since the `portal_users` table
+       has no email column — a B174.1+ would
+       add one).
+    4. The B161.4 e2e test now issues a REAL
+       JWT (via `auth.IssueJWT`) instead of
+       a mock string. The pre-B174 test
+       bypassed the broken `readSession`
+       with a `X-Test-Session-Cookie-Present`
+       header — that workaround is GONE
+       in B174. The test now asserts
+       `/oidc/authorize` post-login →
+       `https://head.test/oidc/callback?code=
+       ...&state=...` (NOT a bounce to
+       `/login`).
+    22 contracts in `scripts/check_b174.sh`
+    (source contract: `JWTSecret` +
+    `UserLookup` fields + `auth.ParseJWT`
+    call + dead `parseInt64` deleted;
+    wiring contract: `main.go` passes
+    `app.JWTSecret` + sets `UserLookup`;
+    test contract: e2e uses real JWT +
+    no mock header + asserts callback URL;
+    regression contract: pre-B174 format
+    pinned as REJECTED + 7 subtests
+    covering valid-JWT, no-cookie,
+    empty-cookie, invalid-JWT,
+    expired-JWT, UserLookup-nil,
+    UserLookup-error; build contract:
+    `go build` + `go vet` + `go test
+    ./internal/oidc/...`).
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

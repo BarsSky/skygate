@@ -551,6 +551,30 @@ B-check pins this as a regression guard.
 
 ---
 
+## Priority 18 — v1.5.2 OIDC readSession uses auth.ParseJWT (SHIPPED 2026-08-25, B174)
+
+### B174 — OIDC session JWT parsing fix (closes the "password reset on login" loop)
+
+**Status**: SHIPPED 2026-08-25 (commit `794b9c68`, v1.5.2-alpha1)
+**Effort**: ~0.3 day
+**What was delivered**: closes the operator-observed gap from 2026-08-25 (after B172 + B173 + B173.1 shipped): "все равно сбрасывает, после того как браузер предлагает использовать сохраненный пароль до того как вносил правки по поводу next все отрабатывала" — the B173.1 full-page overlay didn't help because the password was being cleared AFTER the form submitted (not during). **Root cause analysis**: `PostLogin` in `internal/feature/auth/service.go:188-195` sets the `skygate_session` cookie to an HS256 JWT (via `auth.IssueJWT`), but the pre-B174 OIDC `readSession` in `internal/oidc/authorize.go:255-287` tried to parse the cookie as a colon-separated `<uid>:<username>:<email>:<expires_unix>` string — a format `PostLogin` NEVER wrote. `readSession` ALWAYS returned nil → the OIDC handler ALWAYS redirected back to `/login?next=...` → the user saw the login page re-render with an empty password (the "сбрасывает" symptom). Pre-B172 the user thought "it worked" because `PostLogin` hard-coded `/dashboard` (the B172 bug) — the user never went back through `/oidc/authorize`, so the broken `readSession` was never exercised. B172 fixed the redirect, which EXPOSED the latent OIDC `readSession` bug. B174 ships:
+- `oidc.Service` gets a `JWTSecret string` field (the same secret `feature/auth` uses) + a `UserLookup func(userID int64) (username, email string, err error)` callback that maps the JWT-claim `uid` → DB-side `username + email` (the JWT doesn't carry email; the OIDC `id_token` + `/userinfo` endpoints need it).
+- `readSession` delegates to `auth.ParseJWT` (the same helper `feature/auth.PostLogin` uses) to verify the HMAC signature + extract the `uid` + `usr` claims. The pre-B174 colon-split is GONE (dead `parseInt64` helper deleted). If `UserLookup` returns an error (e.g. the user was deleted from `portal_users` after the JWT was issued), `readSession` returns nil — a stale cookie with a valid signature but no live user must NOT proceed to `/oidc/authorize` (otherwise headscale would create a session for a deleted skygate account).
+- `cmd/skygate/main.go` passes `app.JWTSecret` to `oidcsvc.NewService` + wires `oidcSvc.UserLookup` via `db.GetUserNameByID` (returns `username + "@skygate.local"` for the email since the `portal_users` table has no email column — a B174.1+ would add one).
+- The B161.4 e2e test now issues a REAL JWT (via `auth.IssueJWT`) instead of a mock string. The pre-B174 test bypassed the broken `readSession` with a `X-Test-Session-Cookie-Present` header — that workaround is GONE in B174. The test now asserts `/oidc/authorize` post-login → `https://head.test/oidc/callback?code=...&state=...` (NOT a bounce to `/login`).
+- `oidc.NewService` signature extended from 5 to 6 params (added `jwtSecret string`). The 6th param is REQUIRED — a future refactor that drops it will fail the B174 B-check.
+- 22 contracts in `scripts/check_b174.sh` (source contract: `JWTSecret` + `UserLookup` fields + `auth.ParseJWT` call + dead `parseInt64` deleted + UserLookup-error handling; wiring contract: `main.go` passes `app.JWTSecret` + sets `UserLookup` + `oidc.NewService` accepts 6 params; test contract: e2e uses real JWT + no mock header + asserts callback URL + `authorize_b174_test.go` exists; regression contract: `TestReadSession_PreB174FormatRejected` pins the pre-B174 colon-separated cookie as REJECTED — an attacker can't forge a session by setting `"1:alice:alice@example.com:9999999999"` as the cookie value; 7 subtests for `TestReadSession_ParsesJWT` covering valid-JWT, no-cookie, empty-cookie, invalid-JWT, expired-JWT, UserLookup-nil, UserLookup-error; build contract: `go build` + `go vet` + `go test ./internal/oidc/...`).
+
+**Why B173 + B173.1 weren't enough**: the B173.1 full-page overlay was a great UX fix (the user could finally SEE that the form was processing) but it didn't address the actual bug. The overlay would show "Вход..." for a moment, then the page would navigate to `/login?next=...` (re-rendered with an empty password), and the user would think "the password was reset on submit". The root cause was a pre-existing OIDC-side bug that the B172 redirect fix EXPOSED — `readSession` couldn't parse the JWT cookie that `PostLogin` was already setting correctly.
+
+**Why the B161.4 e2e test didn't catch it pre-B174**: the test used a `X-Test-Session-Cookie-Present` header to make the OIDC handler recognize a session (the production `readSession` couldn't parse the real JWT cookie). The e2e test PASSED but the production code was BROKEN — a classic case of a test that exercises a test-only path instead of the real production path. B174 removes the test-only header and issues a real JWT, so the test now exercises the same code path the user's browser does.
+
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./...` (38 packages) all PASS, `bash scripts/check_b174.sh` 22/22 PASS.
+
+**Live verified on VM** (build `v1.5.0-alpha1-48-g794b9c6`): full OIDC flow works end-to-end — `/oidc/authorize?client_id=headscale&...` (no session) → 302 → `/login?next=...` → POST `/login` (with `skyadmin` credentials) → 302 → `/oidc/authorize?...` (with the `skygate_session` JWT cookie that PostLogin just set) → **302 → `https://head.skynas.ru/oidc/callback?code=<43 chars>&state=b174-live-test-xyz`** (NOT a bounce back to `/login`). The pre-B174 bug is closed: the user logs in once, the OIDC handshake completes, the device gets registered on headscale.
+
+---
+
 ## Priority 1 — Web UI completeness (in progress, 2026-07-30)
 
 **Status**: shipped in v0.32.1 (this commit). All admin + user
