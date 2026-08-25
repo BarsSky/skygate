@@ -624,9 +624,9 @@ func (s *Service) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request)
 // PostAdminExitNodeSync is the B132 per-row "Re-sync" button
 // handler. Takes a hostname from the URL path
 // (POST /admin/exit-nodes/{hostname}/sync) and re-runs the
-// sync just for that one node. Returns a JSON map with a
-// single entry: {"<hostname>": "ssh=<label> approved=<n>"} or
-// an "error" key on failure.
+// sync just for that one node. Redirects back to
+// /admin/exit-nodes with a flash message (ok=... or err=...)
+// in the query string, like every other admin POST handler.
 //
 // 2026-08-18 (B132): the per-row tool was missing — the
 // operator had to use the global "Sync all" which re-runs
@@ -637,29 +637,57 @@ func (s *Service) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request)
 // The per-row button shows the operator exactly which node
 // failed and why, and only re-touches the broken node.
 //
+// 2026-08-25 (B180): the pre-B180 handler returned
+// `Content-Type: application/json` to the browser. The
+// per-row button is a regular `<form method="post">` (see
+// admin/exit_nodes.html:241), so the browser treated the
+// JSON response as a literal text file and rendered it as
+// "Качественная печать" (raw printout page) instead of
+// returning the operator to /admin/exit-nodes. The global
+// "Sync all" button (line 60) keeps its JSON response
+// because it goes through JavaScript `fetch()` + manual
+// `location.reload()` (line 376) — the browser's fetch
+// pipeline handles JSON fine. The per-row button doesn't
+// have JS, so the handler now redirects like every other
+// admin POST in this file.
+//
 // Admin-only. Wire-up is in cmd/skygate/main.go.
 func (s *Service) PostAdminExitNodeSync(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if s.SyncRoutesForNode == nil {
-		http.Error(w, `{"error":"sync not wired (B132)"}`, http.StatusInternalServerError)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("sync not wired (B132)"), http.StatusSeeOther)
 		return
 	}
 	// Path variable via Go 1.22+ mux syntax. The {hostname}
 	// is URL-decoded by the mux.
 	hostname := r.PathValue("hostname")
 	if hostname == "" {
-		http.Error(w, `{"error":"hostname path var is empty"}`, http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("hostname path var is empty"), http.StatusSeeOther)
 		return
 	}
 	result := s.SyncRoutesForNode(hostname)
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_sync_one",
 		fmt.Sprintf("hostname=%s result=%v", hostname, result))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	// B180: result is map[string]string with one of these shapes:
+	//   {"<hostname>": "ssh=ok approved=34"}            — success
+	//   {"<hostname>": "info=no IP/subnet rules..."}   — empty (no rules)
+	//   {"error":      "..."}                            — failure
+	// Surface the result as a flash message on the page so the
+	// operator sees the same content in the toast that the
+	// per-row form was missing before B180.
+	if errMsg, ok := result["error"]; ok {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("sync "+hostname+": "+errMsg), http.StatusSeeOther)
+		return
+	}
+	msg, ok := result[hostname]
+	if !ok {
+		msg = fmt.Sprintf("%v", result)
+	}
+	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("Sync "+hostname+": "+msg), http.StatusSeeOther)
 }
 
 // PostAdminExitNodeSetAcceptRoutes is the v1.4.0 B140 per-row
