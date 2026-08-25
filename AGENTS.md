@@ -1004,6 +1004,34 @@ in the same commit. Don't let the tracker drift.
     already has 2 commands in the new format, which is
     enough to verify the wire-up end-to-end.
 
+  - **B186.3 (v1.5.2)**: fix silent "0 devices" regression in
+    `myStatusBlocks`. The B186.2 migration declared
+    `deviceCount int64` but never populated it — the
+    `db.ListNodeOwnersByUsername` call from the legacy
+    `myStatusReply` (line 75) was missing in the rich path.
+    Live result (operator's 2026-08-25 screenshot):
+    skyadmin (7 devices in `node_owner_map`) →
+    "устройств 0" in the rich /my_status reply. The other
+    3 fields (rules, last ACL, header with username) were
+    correct from B187 — only the device count was wrong.
+    **B186.3 fix**: add the missing
+    `db.ListNodeOwnersByUsername(env.DB, env.Username)`
+    call to `myStatusBlocks`, mirroring the legacy path.
+    The error is gracefully ignored (same as the legacy
+    `_` discard) — if the DB call fails, the user gets
+    `устройств 0` and the other fields still render; the
+    DB error path is caught by the dispatcher's
+    `if rerr != nil { return legacy body }` guard which
+    falls back to the i18n'd `bot.status.db_error` string.
+    New regression test in `my_status_blocks_test.go` pins
+    the source-level contract: `myStatusBlocks` must call
+    `ListNodeOwnersByUsername(env.DB, env.Username)`. If a
+    future change removes the call, the test fails before
+    the silent "0 devices" symptom returns. 2 new
+    contracts in `check_b186.sh` (P `my_status_blocks`
+    has the call, Q `my_status_blocks_test.go` has the
+    test) bring the B186 total to 29.
+
   - **B187 (v1.5.2)**: fix silent `env.Username = ""` regression
     caused by SQLite-era `?` placeholder in `lookupPortalUsername`.
     Operator 2026-08-25 screenshot showed `/my_status` replying
