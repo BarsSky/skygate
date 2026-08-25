@@ -166,11 +166,7 @@ fi
 if [ -d /home/skyadmin/skygate ]; then
   if command -v docker >/dev/null 2>&1; then
     PING_OK=$(docker exec skygate-skygate-1 timeout 5 ping -c 1 -W 3 8.8.8.8 2>/dev/null | grep -c "packets received")
-    if [ "$PING_OK" = "1" ]; then
-      check_eq "N" "1" "1 (ping 8.8.8.8 succeeds — routes accepted via relay)"
-    else
-      check_eq "N" "1" "0 (ping 8.8.8.8 timed out — B185 fix not live yet)"
-    fi
+    check_eq "N" "1" "$PING_OK"
   else
     echo "  SKIP [N] docker not available"
   fi
