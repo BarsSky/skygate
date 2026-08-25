@@ -24,10 +24,11 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `6b1c241` on VM remote,
+* **Current**: v1.5.2-alpha1 (commit `9bbb750` on VM remote,
   `7d90af2f` B170 + `45ab8ff9` B171 +
   `40f8c81b` B172 +
-  `6b1c241` B173 in flight) — **B167 OIDC config
+  `6b1c241` B173 +
+  `9bbb750` B173.1 in flight) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -36,7 +37,10 @@ in the same commit. Don't let the tracker drift.
   regen** + **B172 login `next`-redirect fix
   (OIDC handshake survives the login round-trip)**
   + **B173 login form submit loading-state
-  (the user can see when the form is processing)**.
+  (the user can see when the form is processing)**
+  + **B173.1 full-page loading overlay
+  (catches password-manager auto-submit that
+  bypasses submit event listeners)**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -254,6 +258,52 @@ in the same commit. Don't let the tracker drift.
     doesn't think the page just refreshed. 12 contracts
     in `scripts/check_b173.sh` (template + i18n + JS
     + CSS).
+  - **B173.1 (v1.5.2)**: full-page loading overlay
+    (operator 2026-08-25 follow-up: "все равно рефрешь
+    при вставке пароля из запомненых на странице логина"
+    — the B173 button-only loading state was invisible
+    when a password manager auto-submitted the form via
+    `form.submit()` (which bypasses submit event
+    listeners entirely) or when the page navigated away
+    so fast the user never saw the button swap). The
+    B173 IIFE now has 3 additional defenses:
+    1. **Full-page loading overlay** — a
+       `position:fixed; z-index:9999` semi-transparent
+       overlay (rgba(0,0,0,0.55) + `backdrop-filter:
+       blur(2px)`) covering the entire viewport with a
+       centered card containing a `fa-spinner fa-spin`
+       and the same "Вход..." / "Signing in..." text.
+       The overlay is the "you can't miss it" visual
+       feedback that the form is processing — far more
+       visible than the B173 button-only swap.
+    2. **`f.submit` method override** — the IIFE
+       captures the native `HTMLFormElement.submit()`
+       method and replaces it with a wrapper that
+       calls `showLoading()` then defers the actual
+       submit by 60ms via `setTimeout`. This catches
+       programmatic submits from password managers
+       (which call `form.submit()` directly to bypass
+       the browser's form-validation flow). The 60ms
+       delay ensures the browser has a chance to render
+       the overlay before navigation starts.
+    3. **`pagehide` / `visibilitychange` /
+       `beforeunload` listeners** — the IIFE registers
+       3 last-resort listeners that show the overlay
+       whenever the page is being navigated away from,
+       regardless of how the navigation was triggered.
+       This catches cases where (a) the password
+       manager bypasses our submit handler entirely,
+       (b) the browser navigates before our event
+       listener runs, or (c) some browser extension
+       triggers a form submit via an unexpected path.
+    The B173.1 IIFE is a single `showLoading()` function
+    called from all 5 detection paths (submit event +
+    form.submit override + pagehide + visibilitychange
+    + beforeunload). 6 new contracts in
+    `scripts/check_b173.sh` contract D (overlay element
+    + overlay card content + overlay CSS rules + form.
+    submit override + 3 nav listeners + showLoading
+    function).
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

@@ -530,6 +530,27 @@ B-check pins this as a regression guard.
 
 ---
 
+## Priority 17 — v1.5.2 full-page loading overlay (SHIPPED 2026-08-25, B173.1)
+
+### B173.1 — full-page loading overlay (catches password-manager auto-submit)
+
+**Status**: SHIPPED 2026-08-25 (commit `9bbb750c`, v1.5.2-alpha1)
+**Effort**: ~0.3 day
+**What was delivered**: closes the operator-observed gap from 2026-08-25 (right after B173 shipped): "все равно рефрешь при вставке пароля из запомненых на странице логина" — the B173 button-only loading state was invisible when a password manager auto-submitted the form via `form.submit()` (which bypasses submit event listeners entirely) or when the page navigated away so fast the user never saw the button swap. The B173 IIFE only listened for the `submit` event, which is NOT fired when `HTMLFormElement.submit()` is called programmatically. Password managers (1Password, LastPass, Bitwarden, Chrome's built-in manager, Firefox's built-in manager) use `form.submit()` to auto-submit the form after auto-filling credentials, which bypasses the B173 handler entirely. B173.1 adds 3 layers of defense:
+- **Full-page loading overlay** — a `position:fixed; z-index:9999` semi-transparent overlay (`rgba(0,0,0,0.55)` + `backdrop-filter: blur(2px)`) covering the entire viewport with a centered card containing a `fa-spinner fa-spin` and the same "Вход..." / "Signing in..." text. The overlay is the "you can't miss it" visual feedback that the form is processing — far more visible than the B173 button-only swap. The CSS includes a `login-loading-fadein` keyframe animation (120ms ease-out) so the overlay fades in smoothly rather than popping in.
+- **`f.submit` method override** — the IIFE captures the native `HTMLFormElement.submit()` method via `var nativeSubmit = f.submit` and replaces it with a wrapper that calls `showLoading()` then defers the actual submit by 60ms via `setTimeout`. This catches programmatic submits from password managers. The 60ms delay ensures the browser has a chance to render the overlay before navigation starts. The override wraps the original call in a try/catch so a JS error in the wrapper falls through to the normal form behavior.
+- **`pagehide` / `visibilitychange` / `beforeunload` listeners** — the IIFE registers 3 last-resort listeners that show the overlay whenever the page is being navigated away from, regardless of how the navigation was triggered. This catches cases where (a) the password manager bypasses our submit handler entirely, (b) the browser navigates before our event listener runs, or (c) some browser extension triggers a form submit via an unexpected path. The `visibilitychange` listener specifically checks `document.hidden` to avoid showing the overlay when the user just switches tabs (which would be annoying).
+- **Single `showLoading()` function** — the IIFE consolidates all the "show the loading state" logic into a single `showLoading()` function that's called from all 5 detection paths (submit event + form.submit override + pagehide + visibilitychange + beforeunload). The function uses a `submitting` flag to prevent double-execution (e.g. when the submit event fires AND the form.submit override runs in the same tick).
+- 6 new contracts in `scripts/check_b173.sh` contract D (overlay element + overlay card content + overlay CSS rules + form.submit override + 3 nav listeners + showLoading function).
+
+**Why B173 wasn't enough**: the B173 IIFE only listened for the `submit` event. The `submit` event fires for explicit submits (Enter in input, button click, `form.requestSubmit()`) but does NOT fire when `HTMLFormElement.submit()` is called programmatically. Some password managers use `form.requestSubmit()` (which fires the event), but many use `form.submit()` directly to skip browser validation. The B173.1 `form.submit` method override catches the latter case, and the `pagehide` / `visibilitychange` / `beforeunload` listeners are the last-resort catch-all for any navigation path we missed.
+
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `bash scripts/check_b173.sh` 18/18 PASS (12 original B173 + 6 new B173.1).
+
+**Live verified on VM** (build `v1.5.0-alpha1-46-g9bbb750`): `GET /login` returns HTML with all B173.1 markers — `#login-loading-overlay` element + `.login-loading-card` with `<i class="fa-solid fa-spinner fa-spin"></i>` + `<div class="login-loading-text">Вход...</div>`, CSS `position:fixed` + `z-index:9999`, JS IIFE with `f.submit = function(){ showLoading(); ... setTimeout(function(){ nativeSubmit.apply(self, args); }, 60); }` + 3 nav listeners (`pagehide` + `visibilitychange` + `beforeunload`) + `function showLoading` + `overlay.classList.add('visible')`.
+
+---
+
 ## Priority 1 — Web UI completeness (in progress, 2026-07-30)
 
 **Status**: shipped in v0.32.1 (this commit). All admin + user
