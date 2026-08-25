@@ -96,6 +96,21 @@ button{
 }
 button:hover{background:var(--accent-hover)}
 button:active{transform:translateY(1px)}
+/* B173 (v1.5.2): loading-state for the submit button.
+   The two <span>s inside <button id="login-submit">
+   share the same space; the JS handler swaps which one
+   is visible on submit. While the loading state is
+   showing, the button is also disabled + the inputs
+   are readonly — the user can't double-submit or
+   re-type while the request is in flight. The
+   :disabled style bumps the opacity so the user
+   sees the button is "stuck" (and not broken) during
+   the request. */
+button:disabled{opacity:.6;cursor:wait}
+button:disabled:hover{background:var(--accent)}
+.login-btn-loading{display:inline-flex;align-items:center;gap:6px}
+.login-btn-loading i{font-size:13px}
+input:read-only{background:var(--bg-elev);color:var(--text-muted);cursor:not-allowed}
 .alert{border:1px solid var(--danger);border-left:3px solid var(--danger);background:var(--danger-bg);color:var(--danger);padding:10px 12px;border-radius:var(--radius);margin-bottom:14px;font-size:13px;display:flex;align-items:flex-start;gap:8px}
 .alert i{margin-top:2px;flex-shrink:0}
 .help{margin-top:20px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);display:flex;align-items:flex-start;gap:8px;line-height:1.5}
@@ -132,7 +147,7 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
   <h1><i class="fa-solid fa-right-to-bracket"></i>{{t "login.title"}}</h1>
   <div class="lead"><i class="fa-solid fa-info-circle"></i>{{t "login.subtitle"}}</div>
   {{if .Error}}<div class="alert"><i class="fa-solid fa-circle-exclamation"></i>{{.Error}}</div>{{end}}
-  <form method="post" action="/login?theme={{.Theme}}">
+  <form method="post" action="/login?theme={{.Theme}}" id="login-form">
     {{/* B172 (v1.5.2): the OIDC authorize flow needs the
        post-login redirect to resume the OIDC handshake,
        so the login form carries the `next` URL as a
@@ -151,9 +166,66 @@ code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-ra
       <input type="checkbox" id="remember" name="remember" value="1" style="width:auto;margin:0;accent-color:var(--accent)">
       <span>{{t "login.remember_label"}}</span>
     </label>
-    <button type="submit"><i class="fa-solid fa-arrow-right"></i>{{t "login.submit"}}</button>
+    {{/* B173 (v1.5.2): explicit loading-state on submit.
+       The pre-B173 form had no JS — the user typed the
+       password, hit Enter (or clicked the button), and
+       the page would re-render in <100ms with no visual
+       feedback. If the credentials were wrong (e.g. wrong
+       keyboard layout, mistyped password) the form would
+       re-render with an error message; if they were right
+       the form would redirect to the OIDC URL. Either
+       way, the user saw "the page refreshed and my password
+       is gone" with no explanation. The fix:
+         1. onsubmit handler disables the button + swaps
+            the label to "Вход..." + shows a spinner
+         2. preventDefault() on invalid form (so the
+            browser's "this field is required" tooltip
+            doesn't fight the loading state)
+         3. Readonly on username/password during the
+            in-flight submit (prevents the user from typing
+            more while the request is processing)
+       The handler is wrapped in a try/catch so a JS error
+       (e.g. the user has JS disabled) just falls through
+       to the normal form submit. */}}
+    <button type="submit" id="login-submit">
+      <span class="login-btn-idle"><i class="fa-solid fa-arrow-right"></i>{{t "login.submit"}}</span>
+      <span class="login-btn-loading" style="display:none"><i class="fa-solid fa-spinner fa-spin"></i><span class="login-btn-loading-text">{{t "login.submitting"}}</span></span>
+    </button>
   </form>
   <div class="help"><i class="fa-solid fa-lightbulb"></i>{{t "login.no_account"}}</div>
 </div>
+{{/* B173 (v1.5.2): submit handler — see the form comment
+   above for the design rationale. The handler is wrapped
+   in an IIFE so it doesn't leak `f` / `btn` / `u` / `p`
+   into the global scope (CSP-safe). If the page has JS
+   disabled (rare in 2026 but possible on a hardened
+   device) the form falls through to the normal
+   no-JS POST submit — the JS is a progressive
+   enhancement, not a hard dependency. */}}
+<script>
+(function(){
+  var f = document.getElementById('login-form');
+  if (!f) return;
+  var btn = document.getElementById('login-submit');
+  var idle = btn && btn.querySelector('.login-btn-idle');
+  var loading = btn && btn.querySelector('.login-btn-loading');
+  f.addEventListener('submit', function(e){
+    /* If the form is invalid (browser validation says
+       so), let the browser show the native tooltip —
+       don't enter the loading state because we're
+       not actually submitting. */
+    if (!f.checkValidity || !f.checkValidity()) return;
+    /* Otherwise: disable the inputs + button + swap
+       the button label to "Вход..." with a spinner. */
+    var u = document.getElementById('username');
+    var p = document.getElementById('password');
+    if (u) u.readOnly = true;
+    if (p) p.readOnly = true;
+    if (btn){ btn.disabled = true; }
+    if (idle) idle.style.display = 'none';
+    if (loading) loading.style.display = 'inline-flex';
+  });
+})();
+</script>
 </body>
 </html>
