@@ -186,6 +186,38 @@ func ComposeDefault(lang, context, body string) string {
 	return Compose(lang, context, body, verboseForBody(body))
 }
 
+// ComposeRich (B186, 2026-08-25) is the rich-message
+// counterpart of ComposeDefault. It wraps the command's
+// block list in the same butler-voice envelope the
+// string path adds, but as structured blocks instead of
+// HTML strings. The result is sent via sendRichMessage.
+//
+// The envelope here is intentionally minimal:
+//   - a section_heading block carrying the gate header
+//     (the "🪶 ═══ Skygate ═══ <topic>" line that the
+//     string path prepends as plain text)
+//   - the command's body blocks (untouched)
+//   - a footer block carrying the butler's signoff
+//     ("— Ваш Дворецкий" / "— Your butler")
+//
+// We don't add an h-rule divider between header and body
+// because the section_heading's own block break provides
+// the visual gap (the v0.15.2 envelope had a \n\n there
+// in the string path). On older clients (Bot API < 10.1)
+// the renderBlocksAsHTML fallback turns the header into
+// <b>🪶 ═══ Skygate ═══ <topic></b> and the footer into
+// <i>═══ — Signoff ═══</i> — visually close to the v0.15.2
+// string output.
+func ComposeRich(lang, context string, body []RichBlock) []RichBlock {
+	headerText := GateHeader(lang, context)
+	footerText := GateFooter(lang)
+	out := make([]RichBlock, 0, len(body)+2)
+	out = append(out, Heading(headerText, 3))
+	out = append(out, body...)
+	out = append(out, Footer(footerText))
+	return out
+}
+
 // trimForTelegram is unchanged from v1. The body budget
 // is 3800 chars (Telegram's hard cap is 4096; the
 // headroom covers the header/footer wrapper, code-block

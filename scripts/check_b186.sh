@@ -88,6 +88,10 @@ check_ge "B-fallback" 1 "$(count "$REPO/internal/telegram/rich.go" 'fall.*back.*
 # C. internal/telegram/rich_test.go has 9 test functions
 check_ge "C-tests" 9 "$(count "$REPO/internal/telegram/rich_test.go" '^func Test')"
 
+# C2. internal/telegram/rich_compose_test.go has 4 tests
+# (the B186.1 wire-up: ComposeRich + dual return type)
+check_ge "C2-compose" 4 "$(count "$REPO/internal/telegram/rich_compose_test.go" '^func Test')"
+
 # D. KeyValueTable builds a 2-col table with bold/code cells
 # Pin the B186 conversion of the old "<b>label:</b>
 # <code>value</code>" lines.
@@ -115,6 +119,29 @@ check_ge "H-iso" 1 "$(count "$REPO/internal/telegram/rich.go" '\"iso\":')"
 # shape (chat_id + blocks at the top level).
 check_ge "I-endpoint" 1 "$(count "$REPO/internal/telegram/rich.go" 'sendRichMessage')"
 check_ge "I-blocks" 1 "$(count "$REPO/internal/telegram/rich.go" '\"blocks\":  blocks')"
+
+# K. Dispatcher wire-up: HandleCommand returns (string, []RichBlock).
+# This is the B186.1 change that threads the rich-message
+# variant through the polling loop. The new return type
+# shows up in commands.go.
+check_ge "K-handlecmd" 1 "$(count "$REPO/internal/telegram/commands.go" 'HandleCommand\(ctx context.Context, env BotEnv, raw string\) \(string, \[\]RichBlock\)')"
+
+# L. ComposeRich exists in personality.go and is called
+# from HandleCommand when blocks are non-empty.
+check_ge "L-compose" 1 "$(count "$REPO/internal/telegram/personality.go" 'func ComposeRich')"
+check_ge "L-called" 1 "$(count "$REPO/internal/telegram/commands.go" 'ComposeRich\(env\.Lang, reply\.context, reply\.blocks\)')"
+
+# M. Polling loop dispatches: if blocks non-empty, call
+# SendRich; else fallback to n.reply. This is the
+# actual bot-side wire-up.
+check_ge "M-sendrich" 1 "$(count "$REPO/internal/telegram/notify.go" 'n\.SendRich\(token, updateChatID')"
+check_ge "M-fallback" 1 "$(count "$REPO/internal/telegram/notify.go" 'n\.reply\(token, updateChatID, body')"
+
+# N. The migrated /my_status returns rich blocks
+check_ge "N-mystatus" 1 "$(count "$REPO/internal/telegram/commands.go" 'blocks: myBlocks, context: lookupContext')"
+
+# O. The migrated /version returns rich blocks
+check_ge "O-version" 1 "$(count "$REPO/internal/telegram/commands.go" 'blocks: vBlocks, context: lookupContext')"
 
 # J. Build + tests pass
 GO_BIN=""

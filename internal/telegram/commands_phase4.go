@@ -125,6 +125,32 @@ func versionReply(env BotEnv) string {
 		Field(i18n.T(env.Lang, "bot.version.label_schema"), dbSchemaVersion)
 }
 
+// versionBlocks is the B186 rich-message variant of
+// /version. Same data as versionReply, structured as a
+// Heading + KeyValueTable (3 rows: build / go / schema)
+// + Footer. The envelope (gate + signoff) is added by
+// ComposeRich in the dispatcher.
+//
+// 2026-08-25 (B186): /version is the second command
+// migrated to the rich path — chosen because the data
+// fits naturally in a 3-row key/value table and the
+// command is exercised frequently by both the operator
+// (smoke test) and the v1 personality tests.
+func versionBlocks(env BotEnv) []RichBlock {
+	v := env.Version
+	if v == "" {
+		v = "v0.0-dev"
+	}
+	return []RichBlock{
+		Heading(i18n.T(env.Lang, "bot.version.title"), 2),
+		KeyValueTable([]KVRow{
+			{Label: i18n.T(env.Lang, "bot.version.label_build"), Value: v},
+			{Label: i18n.T(env.Lang, "bot.version.label_go"), Value: runtime.Version()},
+			{Label: i18n.T(env.Lang, "bot.version.label_schema"), Value: dbSchemaVersion},
+		}),
+	}
+}
+
 // restartReply handles both phases of /restart:
 //
 //	/restart           → mints a token, returns it

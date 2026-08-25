@@ -747,14 +747,29 @@ func (n *RealNotifier) Run(ctx context.Context) {
 			// lang on first /login.
 			env, _ := n.envForMessage(updateChatID, updateLangCode)
 			pendingReplyForCurrentMessage = nil
-			reply := HandleCommand(ctx, env, text)
+			body, blocks := HandleCommand(ctx, env, text)
 			// Reply goes to the originating chat (not the configured
 			// admin chat). If the chat is unbound, the reply is
 			// generated but sent to the same chat — which works
 			// for the bootstrap case (admin chat replies) and
 			// degrades gracefully for unbound chats (the user
 			// sees the "admin only" / "chat not bound" message).
-			n.reply(token, updateChatID, reply, pendingReplyForCurrentMessage)
+			//
+			// 2026-08-25 (B186): if HandleCommand returned non-empty
+			// blocks, post via the Bot API 10.1 sendRichMessage
+			// path (rich message). Otherwise fall back to the
+			// legacy sendMessage path with the wrapped body. The
+			// rich path itself has a graceful fallback to the
+			// legacy path on any error, so even an old client
+			// gets the message — never a dropped notification.
+			if len(blocks) > 0 {
+				if err := n.SendRich(token, updateChatID, blocks, nil); err != nil {
+					log.Printf("telegram: SendRich failed, falling back to sendMessage: %v", err)
+					n.reply(token, updateChatID, body, pendingReplyForCurrentMessage)
+				}
+			} else {
+				n.reply(token, updateChatID, body, pendingReplyForCurrentMessage)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -1219,8 +1234,19 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 	//    actual chat_id (the chat that tapped the button), not
 	//    the "effective" chat_id from resolveBootstrapAdmin.
 	pendingReplyForCurrentMessage = nil
-	reply := HandleCommand(context.Background(), env, synthetic)
-	n.sendPlain(token, chatID, reply, pendingReplyForCurrentMessage)
+	body, blocks := HandleCommand(context.Background(), env, synthetic)
+	// 2026-08-25 (B186): prefer the rich-message path when
+	// the dispatcher produced blocks. Fall back to the
+	// legacy path on any error (SendRich itself falls
+	// back to sendMessage internally on API errors, so
+	// this is a safety net for the missing-token case).
+	if len(blocks) > 0 {
+		if err := n.SendRich(token, chatID, blocks, nil); err != nil {
+			n.sendPlain(token, chatID, body, pendingReplyForCurrentMessage)
+		}
+	} else {
+		n.sendPlain(token, chatID, body, pendingReplyForCurrentMessage)
+	}
 }
 
 // ackCallback posts answerCallbackQuery so the Telegram

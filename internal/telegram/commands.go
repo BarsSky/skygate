@@ -458,10 +458,30 @@ var commandContext = map[string]string{
 // Compose (the v1 greeting helpers, used by /start and
 // /login no-args) — HandleCommand must not wrap a second
 // time.
+//
+// 2026-08-25 (B186): added `blocks []RichBlock` for the
+// Bot API 10.1 Rich Messages path. When `blocks` is
+// non-empty, the polling loop posts via sendRichMessage
+// instead of sendMessage, so the operator sees the
+// structured format (real <table>/<details>/<h2> on
+// 10.1+ clients, fallback to flat HTML on older ones).
+// `body` is still populated so the audit log + the
+// ComposeDefault fallback path have something to read.
 type cmdReply struct {
 	body     string
 	context  string
 	skipWrap bool
+	// blocks is the rich-message variant of the reply.
+	// When non-nil, the polling loop uses SendRich
+	// (internal/telegram/rich.go) which posts via the
+	// Bot API 10.1 sendRichMessage endpoint and falls
+	// back to sendMessage with parse_mode=HTML on any
+	// error. When nil, the polling loop uses the legacy
+	// sendMessage path with `body` as the text. The
+	// envelope (gate + greeting + footer) is added by
+	// ComposeRich when blocks is non-empty, mirroring
+	// what ComposeDefault does for the string path.
+	blocks []RichBlock
 }
 
 // HandleCommand returns the reply text for a command message.
@@ -496,7 +516,23 @@ type cmdReply struct {
 // preserved — UNLESS strict mode is on, in which case unidentified
 // callers get a "🔒 chat not bound" reply for everything except
 // /help, /version, /login, /start.
-func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
+// HandleCommand returns the reply for a command message:
+// the plain-text body (legacy sendMessage path) AND
+// optional rich-message blocks (Bot API 10.1 path). The
+// polling loop in Run() picks one of the two — blocks if
+// non-empty (rich), body otherwise (legacy). It is safe
+// to call from the polling loop in Run().
+//
+// 2026-08-25 (B186): the dual return is the wire-up for
+// the Rich Messages migration. Returning a (string, []RichBlock)
+// tuple keeps the call sites unchanged: the polling loop
+// becomes the single decision point. Dispatched commands
+// that haven't been migrated yet (most of them) just
+// return (body, nil) — no behaviour change. The first
+// migrated command (/my_status) returns (body, blocks)
+// where body is the legacy HTML and blocks is the new
+// structured version.
+func HandleCommand(ctx context.Context, env BotEnv, raw string) (string, []RichBlock) {
 	_ = ctx
 	reply := dispatchCommand(env, raw)
 	if reply.skipWrap {
@@ -504,9 +540,18 @@ func HandleCommand(ctx context.Context, env BotEnv, raw string) string {
 		// returns an already-composed body (the v1 greeting
 		// helpers call ComposeDefault internally for v1 test
 		// stability). Re-wrapping would stack two headers.
-		return reply.body
+		return reply.body, reply.blocks
 	}
-	return ComposeDefault(env.Lang, reply.context, reply.body)
+	body := ComposeDefault(env.Lang, reply.context, reply.body)
+	// If the dispatcher produced a rich-message variant,
+	// wrap the blocks in the same envelope (gate heading +
+	// footer) the string path adds. This keeps the visual
+	// style consistent across both paths.
+	var richBlocks []RichBlock
+	if len(reply.blocks) > 0 {
+		richBlocks = ComposeRich(env.Lang, reply.context, reply.blocks)
+	}
+	return body, richBlocks
 }
 
 // dispatchCommand parses the command name, runs the strict-mode
@@ -570,7 +615,13 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		}
 		return cmdReply{body: helpDetailReply(args[0], env), context: lookupContext(cmd)}
 	case "/version":
-		return cmdReply{body: versionReply(env), context: lookupContext(cmd)}
+		// 2026-08-25 (B186): the /version command now
+		// produces a Bot API 10.1 rich message. The
+		// legacy HTML body is kept in `body` so the
+		// audit log + the 10.0-fallback path still work.
+		vBody := versionReply(env)
+		vBlocks := versionBlocks(env)
+		return cmdReply{body: vBody, blocks: vBlocks, context: lookupContext(cmd)}
 	// --- admin scope ---
 	case "/nodes":
 		return cmdReply{body: nodesReply(env), context: lookupContext(cmd)}
@@ -603,7 +654,21 @@ func dispatchCommand(env BotEnv, raw string) cmdReply {
 		return cmdReply{body: unbindReply(env, strings.TrimSpace(strings.Join(args, " "))), context: lookupContext(cmd)}
 	// --- user scope ---
 	case "/my_status":
-		return cmdReply{body: myStatusReply(env), context: lookupContext(cmd)}
+		// 2026-08-25 (B186): the user-scope /my_status
+		// command now produces a Bot API 10.1 rich
+		// message. The legacy HTML body is kept in
+		// `body` so the audit log + the 10.0-fallback
+		// path still work; the rich path posts via
+		// sendRichMessage when the client is >= 10.1.
+		myBody := myStatusReply(env)
+		myBlocks, rerr := myStatusBlocks(env)
+		if rerr != nil {
+			// Identity/DB errors: keep the legacy path
+			// (the error message is HTML, the rich
+			// path can't render arbitrary i18n strings).
+			return cmdReply{body: myBody, context: lookupContext(cmd)}
+		}
+		return cmdReply{body: myBody, blocks: myBlocks, context: lookupContext(cmd)}
 	case "/my_nodes":
 		return cmdReply{body: myNodesReply(env), context: lookupContext(cmd)}
 	case "/my_rules":
