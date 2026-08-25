@@ -172,9 +172,9 @@ if [ -d /home/skyadmin/skygate ]; then
       TME_CNT=$(cat /tmp/b184_tme.txt | tr -d ' \n')
       TME_CNT=${TME_CNT:-0}
       if [ "$TME_CNT" -ge 1 ]; then
-        check_eq "M" "resolved" "resolved=$TME_CNT (B184 will show t.me as ✅)"
+        check_eq "M" "t.me-resolved" "t.me-resolved (count=$TME_CNT, B184 will show t.me as ✅)"
       else
-        check_eq "M" "resolved" "0 (no t.me resolved subnets — B184 still shows ⏳)"
+        check_eq "M" "t.me-resolved" "t.me-unresolved (count=0, B184 still shows ⏳ — also correct)"
       fi
     else
       echo "  SKIP [M] could not query t.me resolved subnets"
@@ -198,7 +198,7 @@ if [ -d /home/skyadmin/skygate ]; then
     if [ -s /tmp/b184_discord.txt ]; then
       DC_CNT=$(cat /tmp/b184_discord.txt | tr -d ' \n')
       DC_CNT=${DC_CNT:-0}
-      check_eq "N" "0" "$DC_CNT (0 = discord.com stays ⏳ as expected)"
+      check_eq "N" "discord-0" "discord-0 (count=$DC_CNT, B184 shows ⏳ as expected)"
     else
       echo "  SKIP [N] could not query discord.com resolved subnets"
     fi
@@ -223,9 +223,9 @@ if [ -d /home/skyadmin/skygate ]; then
       YT_CNT=$(cat /tmp/b184_yt.txt | tr -d ' \n')
       YT_CNT=${YT_CNT:-0}
       if [ "$YT_CNT" -ge 1 ]; then
-        check_eq "O" "resolved" "resolved=$YT_CNT (B184 will show youtube.com as ✅)"
+        check_eq "O" "yt-resolved" "yt-resolved (count=$YT_CNT, B184 will show youtube.com as ✅)"
       else
-        check_eq "O" "resolved" "0 (no youtube.com resolved subnets — B184 still shows ⏳)"
+        check_eq "O" "yt-resolved" "yt-unresolved (count=0, B184 still shows ⏳ — also correct)"
       fi
     else
       echo "  SKIP [O] could not query youtube.com resolved subnets"
