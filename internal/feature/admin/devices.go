@@ -105,6 +105,23 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		deviceExitViaMap[key] = dp.ViaEnabled
 	}
 	exits, _ := s.HSGlobalFn().ListExitNodes()
+	// 2026-08-26: v1.5.2 (B188) — stamp each exit-node
+	// NodeView with its canonical headscale tag from
+	// node_owner_map. The /admin/devices dropdown template
+	// reads .DevTag (the new field) instead of synthesising
+	// the legacy `tag:exit-<host>` form inline. The
+	// post-B118 tag convention is `tag:dev-infra-<host>`,
+	// and node_owner_map is the source of truth.
+	allNodeOwners, _ := db.ListAllNodeOwners(s.DB)
+	adminTagByHost := make(map[string]string, len(allNodeOwners))
+	for _, dn := range allNodeOwners {
+		if dn.Hostname != "" {
+			adminTagByHost[strings.ToLower(dn.Hostname)] = dn.Tag
+		}
+	}
+	for i := range exits {
+		exits[i].DevTag = adminTagByHost[strings.ToLower(exits[i].Hostname)]
+	}
 
 	userExitPrefs, _ := db.ListAllUserExitNodePrefs(s.DB)
 	userExitPrefMap := make(map[string]string, len(userExitPrefs))

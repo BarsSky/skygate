@@ -12,7 +12,10 @@
 // without further conversion.
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 // ExitNodePref is the per-user preferred exit-node + strict-pinning
 // flag. See SetUserExitNodePref for the contract.
@@ -262,4 +265,61 @@ func ListDeviceExitNodePrefsForUser(d *sql.DB, userID int64) ([]DeviceExitNodePr
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// NormalizeExitNodeTag — v1.5.2 (B188) — converts a
+// free-text exit-node tag (typically submitted by a form
+// dropdown) into the canonical headscale tag stored in
+// node_owner_map.
+//
+// The form templates historically built the tag with
+// `tag:exit-<hostname>` (the LEGACY convention, before
+// the v0.33.1.39 / B118 cutover to `tag:dev-infra-<host>`).
+// Live data (2026-08-25 audit) confirms 2 rows still
+// carry the legacy form: a71 → "tag:exit-emilia" and
+// basic → "tag:exit-emilia". The tag:exit-emilia string
+// is NOT a real headscale tag (it's not in policy
+// tagOwners), so the via=[...] grant headscale sees
+// references a non-existent tag and the policy either
+// silently no-ops on the packet-filter side OR is
+// rejected outright by the v2 parser.
+//
+// NormalizeExitNodeTag is the single source of truth
+// for "given a hostname / given_name, what is the real
+// headscale tag?". It queries node_owner_map
+// (case-insensitive on hostname) and returns the .tag
+// column verbatim. The two callers (the per-device
+// POST handler and the per-user POST handler) invoke
+// it BEFORE the DB write so the persisted value is
+// always the canonical form, regardless of what the
+// template sends.
+//
+// Returns "" when:
+//   - hostname is empty (caller wants to clear the pref)
+//   - no node_owner_map row matches (unknown device;
+//     the handler logs a warning and refuses the write
+//     so a typo doesn't silently insert a ghost tag)
+//
+// The function is intentionally read-only (it does not
+// modify node_owner_map). The B188 migration (see
+// migrateV061PG) handles the one-time backfill of
+// legacy tag:exit-X rows already in the prefs tables.
+//
+// 2026-08-26: v1.5.2 (B188).
+func NormalizeExitNodeTag(d *sql.DB, hostname string) (string, error) {
+	if hostname == "" {
+		return "", nil
+	}
+	var tag string
+	err := d.QueryRow(
+		`SELECT tag FROM node_owner_map WHERE LOWER(hostname) = `+PlaceholdersList(1)+` LIMIT 1`,
+		strings.ToLower(hostname),
+	).Scan(&tag)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return tag, nil
 }

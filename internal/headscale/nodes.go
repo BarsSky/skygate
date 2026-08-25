@@ -87,6 +87,27 @@ type NodeView struct {
 	// with RFC3339Nano; an unparseable string is treated as
 	// "no expiry" and the node is renewed defensively.
 	Expiry string
+	// DevTag is the canonical headscale tag for this
+	// node (e.g. "tag:dev-infra-emilia"). Populated by
+	// the handler from node_owner_map (the source of
+	// truth) — NOT from the headscale API, which in
+	// 0.29.x doesn't return forced_tags/valid_tags.
+	// Empty when the node has no entry in node_owner_map
+	// (the admin must tag it first).
+	//
+	// 2026-08-26: v1.5.2 (B188) — the /my/devices,
+	// /admin/devices, and /my/exit-nodes templates
+	// previously synthesised the legacy `tag:exit-<host>`
+	// form inline. That's not a real headscale tag
+	// (post-B118 it's `tag:dev-infra-<host>`), so the
+	// via=[...] grant the form produced referenced a
+	// non-existent tag and headscale silently no-op'd
+	// the packet-filter pin. Templates now read this
+	// field; the dropdown shows the canonical tag
+	// and the form posts it. See exit_node_prefs.go's
+	// NormalizeExitNodeTag for the runtime equivalent
+	// of "given a hostname, return its real tag".
+	DevTag string
 }
 
 // toView flattens an HSNode into a NodeView. The conversion copies

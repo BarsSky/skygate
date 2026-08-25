@@ -42,6 +42,23 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exits, _ := s.Backend.HSForUserFn(c.UserID).ListExitNodes()
+	// 2026-08-26: v1.5.2 (B188) — stamp each exit-node
+	// NodeView with its canonical headscale tag from
+	// node_owner_map. The /my/exit-nodes template reads
+	// .DevTag (the new field) instead of synthesising
+	// the legacy `tag:exit-<host>` form inline. Without
+	// this, the dropdown sends a ghost tag and headscale
+	// silently no-ops the per-user via=... pin.
+	allNodeOwners, _ := db.ListAllNodeOwners(s.DB)
+	enTagByHost := make(map[string]string, len(allNodeOwners))
+	for _, dn := range allNodeOwners {
+		if dn.Hostname != "" {
+			enTagByHost[strings.ToLower(dn.Hostname)] = dn.Tag
+		}
+	}
+	for i := range exits {
+		exits[i].DevTag = enTagByHost[strings.ToLower(exits[i].Hostname)]
+	}
 	var prefTag string
 	var viaEnabled bool
 	if pref, err := db.GetUserExitNodePref(s.DB, c.UserID); err == nil {
@@ -59,11 +76,22 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 
 // PostMyExitNodePreferred sets (or clears) the caller's
 // preferred exit-node. Form field `tag` carries the
-// derived headscale tag (e.g. "tag:exit-relay-1"); an
-// empty value clears the preference. After the DB
-// write, an ACL re-apply pushes the new `via` to
-// headscale so the next /my/devices load sees the
-// effective policy.
+// derived headscale tag (e.g. "tag:dev-infra-emilia");
+// an empty value clears the preference.
+//
+// 2026-08-26: v1.5.2 (B188) — the form's `tag` value is
+// now normalized via db.NormalizeExitNodeTag BEFORE the
+// DB write. The /my/exit-nodes template historically
+// built the tag with `printf "tag:exit-%s" .Hostname`
+// (the LEGACY form, before the v0.33.1.39 / B118
+// cutover to `tag:dev-infra-<host>`). NormalizeExitNodeTag
+// looks up node_owner_map for the hostname and returns
+// the canonical tag. The caller-supplied value is only
+// used as a fallback when the lookup fails.
+//
+// After the DB write, an ACL re-apply pushes the new
+// `via` to headscale so the next /my/devices load sees
+// the effective policy.
 //
 // 2026-07-24: v0.28.1. Visible to all authenticated
 // users (self-service). Admin path is
@@ -79,7 +107,25 @@ func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	tag := strings.TrimSpace(r.FormValue("tag"))
+	rawTag := strings.TrimSpace(r.FormValue("tag"))
+	// B188: per-user pref. The dropdown sends the
+	// exit-node's hostname in a hidden `hostname` field
+	// (added in the same commit) so we can resolve the
+	// canonical tag via node_owner_map. Backwards-compat
+	// fallback: if no `hostname` is posted, we trust the
+	// raw tag (legacy form path) and skip normalization.
+	hostname := strings.ToLower(strings.TrimSpace(r.FormValue("hostname")))
+	tag := rawTag
+	if rawTag != "" && hostname != "" {
+		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
+		if err != nil {
+			http.Error(w, "tag normalization: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if canonicalTag != "" {
+			tag = canonicalTag
+		}
+	}
 	// 2026-07-25: v0.28.5 — strict pinning is opt-in.
 	// The form posts a `via` field ("1" to enable the
 	// headscale packet-filter pinning, anything else

@@ -434,7 +434,13 @@
               <input type="hidden" name="via" value="0">
               <select name="tag" style="font-size:11px;padding:2px 4px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
                 {{range $.AvailableExitNodes}}
-                  {{$tag := printf "tag:exit-%s" (printf "%s" .Hostname | tolower)}}
+                  {{/* B188: read the canonical headscale tag
+                       from NodeView.DevTag (populated by the
+                       handler from node_owner_map). Fall back
+                       to the legacy tag:exit-<host> form when
+                       the node hasn't been tagged yet (so the
+                       page still renders). */}}
+                  {{$tag := or .DevTag (printf "tag:exit-%s" (tolower .Hostname))}}
                   <option value="{{$tag}}">{{.Hostname}}</option>
                 {{end}}
               </select>

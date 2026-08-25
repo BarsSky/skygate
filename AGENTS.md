@@ -1060,6 +1060,96 @@ in the same commit. Don't let the tracker drift.
     operator's chat 328946535 maps to a non-empty username
     (`skyadmin`).
 
+  - **B188 (v1.5.2)**: ghost `tag:exit-<hostname>` exit-node-pref
+    tags (operator 2026-08-25: "почему для устройства basic
+    michail недоступен youtube несмотря на правила?").
+    Three layered bugs: (1) the /my/devices, /admin/devices,
+    and /my/exit-nodes templates synthesised the legacy
+    `tag:exit-<host>` form inline (`printf "tag:exit-%s"`)
+    instead of reading the canonical `tag:dev-infra-<host>`
+    from node_owner_map. (2) the post handlers stored the
+    form's tag verbatim, so a ghost tag was written to
+    device_exit_node_prefs. (3) the migrateV047PG backfill
+    that was supposed to set `via_enabled=1` on pre-existing
+    rows was guarded by a `freshlyAdded` check that returned
+    false on production (the column pre-existed), so every
+    pref row shipped with `via_enabled=0` — the per-device
+    grant in headscale is NEVER emitted with `via=`, so the
+    user has to manually select the exit-node in Tailscale.
+    **Audit (2026-08-25)** — exit-node pre-B188 DB state on
+    the VM: `user_exit_node_prefs` had 2 rows (1|tag:dev-infra-emilia,
+    6|tag:dev-infra-emilia — both REAL tags), `device_exit_node_prefs`
+    had 5 rows (1|a71|tag:exit-emilia ← GHOST, 1|emilia|tag:dev-infra-emilia,
+    1|skygate-host-1|tag:dev-infra-emilia, 1|skyworker|tag:dev-infra-karolina,
+    6|basic|tag:exit-emilia ← GHOST). All 4 infra nodes (emilia,
+    karolina, sharlotta, skygate-host-1) use the same
+    `tag:dev-infra-<host>` form, so the B188 migration rewrites
+    the 2 ghost rows + re-enables via pinning on the other 3
+    (the v0.28.5 re-run). **B188 fix** (4 layers):
+    1. New `db.NormalizeExitNodeTag(db, hostname)` helper that
+       looks up the canonical tag from node_owner_map.
+    2. `PostMyDevicePreferredExit` + `PostAdminDevicePreferredExit`
+       + `PostMyExitNodePreferred` + `PostAdminUserSubnetPreferredExit`
+       call the normaliser BEFORE the DB write (defense in depth).
+    3. The 4 dropdown templates (`user/devices.html`,
+       `admin/devices.html`, `user/exit_nodes.html`,
+       `admin/user_subnet.html`) read `NodeView.DevTag`
+       (a new field populated by the handler from
+       `node_owner_map`) instead of synthesising the legacy
+       form inline. `NodeView.DevTag` is populated in
+       `my/devices.go` (publicNodes), `admin/devices.go`
+       (exits), `my/exit_nodes.go` (exits), and
+       `admin/user_subnet.go` (exitOpts). The legacy
+       `printf "tag:exit-..."` is kept as the fallback arm
+       of `or .DevTag (...)` so the page still renders for
+       untagged nodes.
+    4. New migration `migrateV061PG` (registered in
+       `driver_postgres.go` after `migrateV060PG`) backfills
+       existing rows:
+       - `tag:exit-<host>` → `tag:dev-infra-<host>` (lookup
+         in `node_owner_map`; rows with no match LEFT ALONE
+         so the operator can clean them up by hand).
+       - `via_enabled=1` for every pre-existing row whose
+         tag points at a real headscale tag (the v0.28.5
+         re-run that the original `migrateV047PG` missed).
+       The migration is idempotent: re-running it is a no-op
+       (the LIKE 'tag:exit-%' WHERE clause matches nothing
+       on the second pass; the via_enabled=1 UPDATE is
+       idempotent for already-pinned rows).
+    5. `NodeView.DevTag` field (in `internal/headscale/nodes.go`)
+       with a doc comment that links this B188 to the
+       template fix and explains why the headscale 0.29.x
+       API can't be the source (it doesn't return
+       `forced_tags`/`valid_tags` in our version).
+    23 contracts in `scripts/check_b188.sh` (A-X) pin:
+    (A) `NormalizeExitNodeTag` helper exists, (B)
+    `PostMyDevicePreferredExit` normalises, (C)
+    `PostAdminDevicePreferredExit` normalises, (D)
+    `PostMyExitNodePreferred` normalises, (E) admin
+    user-subnet normalises (both dropdown + post), (F)
+    `NodeView.DevTag` field + my/devices populates, (G)
+    admin/devices populates, (H) publicNodes populate, (I)
+    my/exit_nodes populates, (J) 3 templates use `.DevTag`,
+    (K) `user/devices.html` reads `.DevTag`, (L)
+    `admin/devices.html` reads `.DevTag`, (M)
+    `user/exit_nodes.html` reads `.DevTag`, (N)
+    `migrateV061PG` exists, (O) migration chain registered,
+    (P) via_enabled re-enable clause, (Q) 5+
+    `NormalizeExitNodeTag` unit tests in
+    `exit_node_prefs_b188_test.go` (KnownHostname,
+    CaseInsensitive, EmptyHostname, UnknownHostname,
+    RealNodeOwnerMapEntry), (R) 6+ `migrateV061PG` tests
+    in `migrations_v0_61_b188_test.go` (TagBackfill_UserPref,
+    TagBackfill_DevicePref, ViaBackfill_OnlyForRealTags,
+    AlreadyEnabledNoOp, Idempotent, MultipleHosts), (S)
+    AGENTS.md mentions B188, (T) `verify_pre_deploy.sh`
+    includes check_b188, (U) `go build` + `go vet` pass,
+    (V) live: no ghost rows after migration, (W) live:
+    via_enabled re-enabled, (X) live: policy has
+    `tag:dev-michail-basic → h-rule-...` with
+    `via: [tag:dev-infra-emilia]` (the operator's reported
+    bug fix).
+
   - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
     the headplane API key on a fresh deploy. 2 modes (bundled
     + external headplane), 6-step bundled flow with

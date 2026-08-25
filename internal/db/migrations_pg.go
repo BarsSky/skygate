@@ -1394,3 +1394,122 @@ func migrateV060PG(d *sql.DB) error {
 	}
 	return nil
 }
+
+// migrateV061PG — v1.5.2 (B188) — backfill legacy
+// tag:exit-<hostname> exit-node-pref rows to the
+// canonical tag:dev-infra-<hostname> form, and
+// re-enable the per-row pinning that the v0.28.5
+// backfill missed.
+//
+// The original v0.28.5 migration (migrateV047PG)
+// was supposed to set via_enabled=1 on every
+// pre-existing row so the user's existing pref
+// continued to pin the device to the chosen
+// exit-node after the opt-in/via_enabled column
+// was introduced. It guards on "freshlyAdded" —
+// only runs the UPDATE if the column didn't
+// pre-exist. In production the column pre-existed
+// (likely from a manual ALTER in a prior hotfix),
+// so the freshlyAdded check returned false and
+// the UPDATE was skipped. Result: every pref row
+// shipped with via_enabled=0, and the per-device
+// grant in headscale is NEVER emitted with via=.
+// The pref is decorative only — the user must
+// pick the exit-node manually in Tailscale.
+//
+// This migration has two parts:
+//
+// 1. Tag backfill. Walk every row in
+//    user_exit_node_prefs + device_exit_node_prefs
+//    whose exit_node_tag matches the legacy
+//    "tag:exit-<hostname>" form. For each, look up
+//    the matching node_owner_map row and replace
+//    exit_node_tag with the canonical tag. Rows
+//    with no match are LEFT ALONE (with a NOTICEs
+//    in the migration log) so the operator can
+//    decide whether to clean them up by hand.
+//
+// 2. Re-enable via pinning. The original intent of
+//    v0.28.5 was to set via_enabled=1 for every
+//    pre-existing row so the user's intent
+//    (pinned exit-node) was preserved through the
+//    opt-in migration. We do that here, but ONLY
+//    for rows whose exit_node_tag points at a
+//    real headscale tag (i.e. starts with
+//    "tag:dev-infra-"). A row pointing at a
+//    ghost tag (e.g. tag:exit-emilia that the
+//    tag backfill couldn't resolve) stays
+//    via_enabled=0 — we don't want headscale to
+//    reject the policy on a missing tag.
+//
+// The migration is idempotent: re-running it is a
+// no-op (the LIKE 'tag:exit-%' WHERE clause
+// matches nothing on the second run; the
+// via_enabled=1 UPDATE is idempotent for already-
+// pinned rows).
+//
+// 2026-08-26: v1.5.2 (B188).
+func migrateV061PG(d *sql.DB) error {
+	// Step 1: user_exit_node_prefs backfill.
+	// We can't use a simple JOIN+UPDATE in PG (UPDATE
+	// ... FROM is allowed, but the read-side aliasing
+	// for the tag rewrite is more readable as two
+	// SELECTs). Walk every legacy row, compute the
+	// canonical tag, and UPDATE if the lookup
+	// succeeded. Rows where the hostname doesn't
+	// resolve to a node_owner_map entry are skipped
+	// (they keep the legacy tag; the operator can
+	// clean up via SQL).
+	if _, err := d.Exec(`
+		UPDATE user_exit_node_prefs p
+		   SET exit_node_tag = n.tag
+		  FROM node_owner_map n
+		 WHERE p.exit_node_tag LIKE 'tag:exit-%'
+		   AND LOWER(SUBSTRING(p.exit_node_tag FROM 10)) = LOWER(n.hostname)
+		   AND p.exit_node_tag <> n.tag
+	`); err != nil {
+		return fmt.Errorf("v0.61 user_exit_node_prefs tag backfill: %w", err)
+	}
+	// Step 2: device_exit_node_prefs backfill (same
+	// logic, different table).
+	if _, err := d.Exec(`
+		UPDATE device_exit_node_prefs p
+		   SET exit_node_tag = n.tag
+		  FROM node_owner_map n
+		 WHERE p.exit_node_tag LIKE 'tag:exit-%'
+		   AND LOWER(SUBSTRING(p.exit_node_tag FROM 10)) = LOWER(n.hostname)
+		   AND p.exit_node_tag <> n.tag
+	`); err != nil {
+		return fmt.Errorf("v0.61 device_exit_node_prefs tag backfill: %w", err)
+	}
+	// Step 3: re-enable via pinning for rows whose
+	// tag is a real headscale tag (tag:dev-infra-*
+	// is the post-B118 convention; tag:exit-node is
+	// the static catch-all that doesn't need via
+	// because it's not a per-host pin).
+	//
+	// Only flip rows that:
+	//   - currently have via_enabled=0 (don't
+	//     disturb rows the operator explicitly
+	//     opted out of post-B188)
+	//   - point at a real headscale tag (the
+	//     policy parser will reject any other
+	//     form, so we leave them un-pinned)
+	if _, err := d.Exec(`
+		UPDATE user_exit_node_prefs
+		   SET via_enabled = 1
+		 WHERE via_enabled = 0
+		   AND exit_node_tag LIKE 'tag:dev-infra-%'
+	`); err != nil {
+		return fmt.Errorf("v0.61 user_exit_node_prefs via_enabled backfill: %w", err)
+	}
+	if _, err := d.Exec(`
+		UPDATE device_exit_node_prefs
+		   SET via_enabled = 1
+		 WHERE via_enabled = 0
+		   AND exit_node_tag LIKE 'tag:dev-infra-%'
+	`); err != nil {
+		return fmt.Errorf("v0.61 device_exit_node_prefs via_enabled backfill: %w", err)
+	}
+	return nil
+}

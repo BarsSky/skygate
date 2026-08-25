@@ -250,7 +250,11 @@
               <input type="hidden" name="via" value="0">
               <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
                 {{range $.AvailableExits}}
-                  {{$tag := printf "tag:exit-%s" (tolower .Hostname)}}
+                  {{/* B188: read the canonical headscale tag
+                       from NodeView.DevTag. See the same
+                       pattern in user/devices.html for the
+                       per-user /my/devices dropdown. */}}
+                  {{$tag := or .DevTag (printf "tag:exit-%s" (tolower .Hostname))}}
                   <option value="{{$tag}}">{{.Hostname}}</option>
                 {{end}}
               </select>

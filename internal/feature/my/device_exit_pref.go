@@ -43,9 +43,24 @@ import (
 //                match; we lowercase before the lookup
 //                to match the v0.28.0 backfill convention)
 //   * tag      — the exit-node tag (e.g.
-//                "tag:exit-relay-3"); empty clears
+//                "tag:dev-infra-emilia"); empty clears
 //                the override (device falls back to
 //                per-user pref, if any)
+//
+// 2026-08-26: v1.5.2 (B188) — the form's `tag` value
+// is now normalized via db.NormalizeExitNodeTag BEFORE
+// the DB write. The /my/devices template historically
+// built the tag with `printf "tag:exit-%s" .Hostname`
+// (the LEGACY form, before the v0.33.1.39 / B118
+// cutover to `tag:dev-infra-<host>`). The legacy form
+// is NOT a real headscale tag (it's not in policy
+// tagOwners), so the via=[...] grant would either
+// silently no-op or be rejected. NormalizeExitNodeTag
+// looks up node_owner_map for the hostname and returns
+// the canonical tag. The caller-supplied value is
+// only used as a fallback when the lookup fails
+// (preserves the operator's ability to attach a
+// device to a not-yet-tagged node).
 //
 // After the DB write, an ACL re-apply pushes the
 // new per-device grant to headscale.
@@ -62,7 +77,7 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	hostname := strings.ToLower(strings.TrimSpace(r.FormValue("hostname")))
-	tag := strings.TrimSpace(r.FormValue("tag"))
+	rawTag := strings.TrimSpace(r.FormValue("tag"))
 	if hostname == "" {
 		http.Error(w, "hostname required", http.StatusBadRequest)
 		return
@@ -74,6 +89,24 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	if !s.callerOwnsDevice(s.DB, c.UserID, hostname) {
 		http.Error(w, "device not found or not owned by you", http.StatusForbidden)
 		return
+	}
+	// B188: normalize the form's tag value to the canonical
+	// headscale tag. Empty form tag → empty stored tag
+	// (caller is clearing the pref — no normalization needed).
+	tag := rawTag
+	if rawTag != "" {
+		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
+		if err != nil {
+			http.Error(w, "tag normalization: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if canonicalTag == "" {
+			// Unknown hostname — refuse the write so a
+			// typo doesn't silently insert a ghost tag.
+			http.Error(w, "device not found in node_owner_map; cannot resolve exit-node tag for "+hostname, http.StatusBadRequest)
+			return
+		}
+		tag = canonicalTag
 	}
 	if err := db.SetDeviceExitNodePref(s.DB, c.UserID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -141,11 +174,27 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 		userID = n
 	}
 	hostname := strings.ToLower(strings.TrimSpace(r.FormValue("hostname")))
-	tag := strings.TrimSpace(r.FormValue("tag"))
+	rawTag := strings.TrimSpace(r.FormValue("tag"))
 	viaEnabled := r.FormValue("via") == "1"
 	if userID == 0 || hostname == "" {
 		http.Error(w, "user_id and hostname required", http.StatusBadRequest)
 		return
+	}
+	// B188: same normalization as PostMyDevicePreferredExit.
+	// The /admin/devices template had the identical
+	// `tag:exit-<hostname>` ghost-tag bug.
+	tag := rawTag
+	if rawTag != "" {
+		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
+		if err != nil {
+			http.Error(w, "tag normalization: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if canonicalTag == "" {
+			http.Error(w, "device not found in node_owner_map; cannot resolve exit-node tag for "+hostname, http.StatusBadRequest)
+			return
+		}
+		tag = canonicalTag
 	}
 	if err := db.SetDeviceExitNodePref(s.DB, userID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

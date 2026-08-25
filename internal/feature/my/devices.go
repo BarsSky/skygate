@@ -325,11 +325,18 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// are still 'unknown' on the first /my/devices load.
 	osByHost := map[string]string{}
 	typeByHost := map[string]string{}
+	// 2026-08-26: v1.5.2 (B188) — also cache the canonical
+	// headscale tag per hostname. The /my/devices +
+	// /admin/devices dropdown templates read this to
+	// avoid synthesising the legacy `tag:exit-<host>`
+	// form inline.
+	tagByHost := map[string]string{}
 	deviceMeta, _ := db.ListNodeOwnersByUsername(s.DB, username)
 	for _, dn := range deviceMeta {
 		if dn.Hostname != "" {
 			osByHost[strings.ToLower(dn.Hostname)] = dn.OS
 			typeByHost[strings.ToLower(dn.Hostname)] = dn.DeviceType
+			tagByHost[strings.ToLower(dn.Hostname)] = dn.Tag
 		}
 	}
 	// hasTag returns true if the node carries the given tag.
@@ -462,6 +469,14 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	publicNodes := []headscale.NodeView{}
 	for _, n := range all {
 		if n.IsExitNode || n.IsPublicView() {
+			// B188: stamp the canonical headscale tag
+			// (from node_owner_map) so the dropdown
+			// template can render the real value. The
+			// headscale 0.29.x API does not return
+			// forced_tags/valid_tags in our version,
+			// so we have to look it up from skygate's
+			// own table.
+			n.DevTag = tagByHost[strings.ToLower(n.Hostname)]
 			publicNodes = append(publicNodes, n)
 		}
 	}

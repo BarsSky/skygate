@@ -60,7 +60,14 @@
           {{end}}
         </td>
         <td>
-          {{$derivedTag := printf "tag:exit-%s" .Hostname}}
+          {{/* B188: use the canonical headscale tag from
+               NodeView.DevTag (populated by the handler
+               from node_owner_map). The legacy
+               tag:exit-<host> form is not a real headscale
+               tag, so the via=[...] grant it produced
+               referenced a non-existent tag and headscale
+               silently no-op'd the packet-filter pin. */}}
+          {{$derivedTag := or .DevTag (printf "tag:exit-%s" (tolower .Hostname))}}
           {{if eq $.PreferredExitNodeTag $derivedTag}}
             <span class="tag tag-success" title="{{t "exit_nodes.preferred_currently_help"}}">
               <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_currently"}}
@@ -68,6 +75,7 @@
           {{else}}
             <form method="POST" action="/my/exit-nodes/preferred" style="display:inline">
               <input type="hidden" name="tag" value="{{$derivedTag}}">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
               <input type="hidden" name="via" value="{{if $.ViaEnabled}}1{{else}}0{{end}}">
               <button type="submit" class="btn btn-sm">
                 <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_set_button"}}

@@ -132,9 +132,26 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 			if len(n.IPAddresses) > 0 {
 				ip = n.IPAddresses[0]
 			}
+			// 2026-08-26: v1.5.2 (B188) — resolve the
+			// canonical headscale tag from node_owner_map
+			// instead of synthesising the legacy
+			// `tag:exit-<host>` form. The legacy form is
+			// not a real headscale tag (it's not in
+			// policy tagOwners), so the via=[...] grant
+			// would reference a non-existent tag. The
+			// fallback to the legacy form is kept so the
+			// page still renders for nodes that haven't
+			// been backfilled into node_owner_map yet
+			// (the migration runs at startup; until then
+			// the page is best-effort).
+			canonicalTag, _ := db.NormalizeExitNodeTag(s.DB, n.Hostname)
+			tag := canonicalTag
+			if tag == "" {
+				tag = "tag:exit-" + n.Hostname
+			}
 			exitOpts = append(exitOpts, exitNodeOpt{
 				Hostname: n.Hostname,
-				Tag:      "tag:exit-" + n.Hostname,
+				Tag:      tag,
 				IP:       ip,
 			})
 		}
@@ -416,6 +433,19 @@ func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *htt
 		return
 	}
 	tag := strings.TrimSpace(r.FormValue("tag"))
+	// 2026-08-26: v1.5.2 (B188) — defense in depth. The
+	// form sends the canonical tag (we now build the
+	// dropdown from node_owner_map), but a hand-crafted
+	// POST (or a pre-B188 cached form) may still send
+	// the legacy `tag:exit-<host>` form. If so, extract
+	// the hostname and re-resolve via node_owner_map.
+	if strings.HasPrefix(tag, "tag:exit-") && !strings.HasPrefix(tag, "tag:exit-node") {
+		hostname := strings.TrimPrefix(tag, "tag:exit-")
+		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
+		if err == nil && canonicalTag != "" {
+			tag = canonicalTag
+		}
+	}
 	// 2026-07-25: v0.28.5 — strict pinning is opt-in.
 	// Default OFF for Android compatibility. Admin can
 	// explicitly flip the flag to pin a specific user
