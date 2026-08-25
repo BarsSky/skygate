@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-25 (B171 comprehensive device-delete with ACL regen SHIPPED in v1.5.2-alpha1; B170 expired-row sub-classification hint on /my/devices SHIPPED 2026-08-25)
+**Last updated**: 2026-08-25 (B172 login 'next'-redirect fix SHIPPED in v1.5.2-alpha1 — closes the OIDC handshake gap that hid the welcome-page-after-login symptom; B171 comprehensive device-delete with ACL regen SHIPPED 2026-08-25)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -477,6 +477,29 @@ B-check pins this as a regression guard.
 - `scripts/check_b171.sh` (NEW, 35 contracts) + fixes to `scripts/check_b162.sh` and `check_b169.sh` (the B162/B169 checks previously grepped for literal `db.DeleteNodeOwnerByNodeTag` / `InvalidateCache` / `'device_deleted'` calls inside the handler; after the B171 rewire those calls live in `devicedelete.Delete`, so the checks now accept either the direct call OR the `devicedelete.Delete` path).
 
 **Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./...` (38 packages) all PASS, `bash scripts/check_b162.sh` all 26 PASS, `bash scripts/check_b169.sh` all 19 PASS, `bash scripts/check_b170.sh` all 28 PASS, `bash scripts/check_b171.sh` all 35 PASS, `make verify-pre` 156 PASS / 14 pre-existing FAIL (B95/B134-B137/B147/B159-B161/B163-B166, all from earlier v1.3.20-v1.5.0 batches, not caused by B171).
+
+---
+
+## Priority 15 — v1.5.2 OIDC login `next`-redirect fix (SHIPPED 2026-08-25, B172)
+
+### B172 — login `next`-redirect fix (OIDC handshake survives the login round-trip)
+
+**Status**: SHIPPED 2026-08-25 (commit `40f8c81b`, v1.5.2-alpha1)
+**Effort**: ~0.5 day
+**What was delivered**: closes the operator-observed gap from 2026-08-25: "когда попробовал залогинится в headscale через head.skynas.ru перенесло на логин в skygate, после входа в skygate открылась страница приветствия и все. устройство не добавлено и больше ничего непроисходит". Pre-B172 `PostLogin` in `internal/feature/auth/service.go` always redirected to `/dashboard`, ignoring the `next` query param that `/oidc/authorize` sets via `/login?next=...` (the full OIDC authorize URL with `client_id` + `state` + `code_challenge`). Pre-B172 the login form also had no hidden `next` input, so the OIDC handshake died silently after the user typed their password — the operator saw the welcome page and headscale's `/oidc/callback` was never reached so the device never got registered. B172 ships:
+- `PostLogin` now reads + validates + honours the `next` form field. Was hard-coded to `/dashboard`, killing the OIDC flow silently. The new `http.Redirect(w, r, next, http.StatusFound)` line at the end of the function uses the validated `next` variable.
+- New `safeNextRedirect` helper (the open-redirect defense). Accepts: empty (default to `/dashboard`, backwards-compat) / relative path starting with a single `/` / absolute URL with the same host as the request. Rejects: protocol-relative URLs (e.g. `//evil.com/path`) / absolute URLs with a different host / non-http(s) schemes (`javascript:`, `data:`, `file:`) / malformed URLs.
+- `GetLogin` reads the `next` query string param and passes it to the template as `Next`.
+- `login.html` renders a hidden `<input type="hidden" name="next" value="{{.Next}}">` inside the form. Go's `html/template` auto-escapes so a hostile `next` value can't break out of the attribute.
+- The B161.4 e2e test in `internal/oidc/e2e_test.go` is extended with a new STEP 4 that wires a mock `/login` handler into the test mux and walks the full authorize → `/login?next=...` → `POST /login` → re-run `/oidc/authorize` flow. If `PostLogin` ever drops the `next` again, the e2e test fails at the "login POST: 302 → /oidc/authorize" assertion. The test also asserts the session cookie is set on the post-login redirect + the hidden `next` input is in the form + the post-login redirect preserves the `state` + `client_id` + `code_challenge` params.
+- 18 unit tests in `service_b172_test.go` (`TestSafeNextRedirect` + `TestSafeNextRedirect_EmptyHost`) covering the 5 case categories of `safeNextRedirect` (empty/relative/protocol-relative/different-host/same-host). Pins the open-redirect defense so a future refactor can't silently weaken it.
+- 24 B-check contracts in `scripts/check_b172.sh` (source contract + security contract + e2e contract + smoke contract).
+
+**Root cause analysis**: the bug went undetected in the B161.4 e2e test because STEP 4 was a "pre-populate an auth code (simulating successful login)" shortcut that bypassed the `/login` round-trip entirely. B172 closes that gap by walking the actual login form via a mock handler.
+
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./...` (38 packages) all PASS, `go test ./internal/feature/auth/... -v` PASS (TestSafeNextRedirect 17 subtests + TestSafeNextRedirect_EmptyHost 6 subtests), `go test ./internal/oidc/... -v` PASS (TestE2E_HeadscaleClientFlow now includes STEP 4 that walks the `/login` round-trip via mock handler), `bash scripts/check_b172.sh` 24/24 PASS, `make verify-pre` 157 PASS / 13 pre-existing FAIL (B95/B134-B137/B147/B159-B161/B163-B166, all from earlier v1.3.20-v1.5.0 batches, not caused by B172).
+
+**Live verified on VM** (build `v1.5.0-alpha1-42-g40f8c81`): the `/oidc/authorize` handler returns 302 to `/login?next=...` with all OIDC params preserved; the login form contains the hidden `next` input with the OIDC URL.
 
 ---
 

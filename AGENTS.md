@@ -25,12 +25,15 @@ in the same commit. Don't let the tracker drift.
 ## Release status
 
 * **Current**: v1.5.2-alpha1 (commit `8ce799c8` on VM remote,
-  `7d90af2f` B170 + `45ab8ff9` B171 in flight) —
-  **B167 OIDC config auto-sync (full Option C)**
-  + **B168 live OIDC e2e on a public hostname**
-  + **B169 admin-side device delete on /admin/devices**
-  + **B170 expired-row sub-classification hint on /my/devices**
-  + **B171 comprehensive device-delete with ACL regen**.
+  `7d90af2f` B170 + `45ab8ff9` B171 +
+  `40f8c81b` B172 in flight) — **B167 OIDC config
+  auto-sync (full Option C)** + **B168 live OIDC
+  e2e on a public hostname** + **B169 admin-side
+  device delete on /admin/devices** + **B170
+  expired-row sub-classification hint on /my/devices**
+  + **B171 comprehensive device-delete with ACL
+  regen** + **B172 login `next`-redirect fix
+  (OIDC handshake survives the login round-trip)**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
