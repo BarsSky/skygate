@@ -503,6 +503,33 @@ B-check pins this as a regression guard.
 
 ---
 
+## Priority 16 — v1.5.2 login form submit loading-state (SHIPPED 2026-08-25, B173)
+
+### B173 — login form submit loading-state (the user can see when the form is processing)
+
+**Status**: SHIPPED 2026-08-25 (commit `6b1c241e`, v1.5.2-alpha1)
+**Effort**: ~0.3 day
+**What was delivered**: closes the operator-observed gap from 2026-08-25: "теперь при переходе страница логина всегда обновляется если написать пароль и тем самым его сбрасывает от чего нельзя залогиниться" — the page was re-rendering in <100ms with no visual feedback after the user hit Enter, so the user saw "the page refreshed and my password is gone" without any explanation. Pre-B173 the form had no JS: the user typed their password, hit Enter, and the page would re-render with no progress indicator. If credentials were wrong (typo, wrong keyboard layout, caps lock) the form re-rendered with an error message; if they were right the form would redirect to the OIDC URL. Either way the user saw "the page refreshed and my password is gone" with no explanation. The OIDC path (B172) makes the round-trip even more confusing — the user types, hits Enter, and the page silently transitions to headscale's `/oidc/callback` flow. B173 ships:
+- `login.html` has a JS `onsubmit` handler wrapped in an IIFE + try/catch (a JS error falls through to the normal form submit, so the loading state is progressive enhancement, NOT a hard dependency). The handler:
+  1. Calls `e.target.checkValidity()` BEFORE entering the loading state. If a required field is empty or invalid, the browser's native "this field is required" tooltip still shows — the loading state only kicks in for valid forms about to be POSTed.
+  2. Sets `username` + `password` to `readOnly = true` so the user can't type more characters while the request is in flight (avoids "I typed more after Enter and it didn't submit" confusion).
+  3. Disables the submit button (`btn.disabled = true`).
+  4. Swaps the button label from `Войти` (RU) / `Sign in` (EN) to `Вход...` / `Signing in...` by toggling two `<span>` elements (`#login-btn-idle` + `#login-btn-loading`) via `style.display`. The loading span also contains a `<i class="fa-solid fa-spinner fa-spin">` for a CSS-only spinning indicator.
+- CSS in `static/css/themes.css`:
+  - `button:disabled { opacity: .6; cursor: wait; }` — the button dims and the cursor changes to a wait indicator, so the user sees the button is "stuck" (and not broken) during the in-flight request.
+  - `input:read-only { background: var(--bg-elev); color: var(--text-muted); cursor: not-allowed; }` — the read-only inputs get a muted background + not-allowed cursor, reinforcing the "you can't edit this right now" state.
+- New i18n key `login.submitting` in RU + EN (`internal/i18n/catalog_common.go`): RU `"Вход..."`, EN `"Signing in..."`.
+- The form has `id="login-form"` + `id="login-submit"` so the JS handler can target them without re-querying. The button contains TWO `<span>` children (`.login-btn-idle` and `.login-btn-loading`) so the JS swap is a single `style.display` toggle on each.
+- 12 B-check contracts in `scripts/check_b173.sh` (template structure + i18n key in both RU + EN + JS handler presence + CSS rules + verify-pre integration).
+
+**The B172 + B173 combination is the end-to-end OIDC login UX**: B172 preserves the `next` parameter through the login POST (so the OIDC handshake survives); B173 makes the form submit observable so the user doesn't think the page just refreshed and lost their password. Together they close the two most-confusing symptoms of the OIDC login flow on a slow connection.
+
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./...` (38 packages) all PASS, `bash scripts/check_b173.sh` 12/12 PASS, `make verify-pre` 158 PASS / 13 pre-existing FAIL (B95/B134-B137/B147/B159-B161/B163-B166, all from earlier v1.3.20-v1.5.0 batches, not caused by B173).
+
+**Live verified on VM** (build `v1.5.0-alpha1-44-g6b1c241`): `GET /login?next=/foo` returns HTML with `id="login-form"`, `id="login-submit"`, `<span class="login-btn-idle"><i class="fa-solid fa-arrow-right"></i>Войти</span>`, `<span class="login-btn-loading" style="display:none"><i class="fa-solid fa-spinner fa-spin"></i><span class="login-btn-loading-text">Вход...</span></span>`. EN locale (via `lang=en` cookie) renders `Sign in` + `Signing in...`. The full B172 + B173 chain is also live-verified: `/oidc/authorize?client_id=headscale&...` (no session) → 302 → `/login?next=%2Foidc%2Fauthorize%3F...` → HTML contains the loading state markup AND the `next` hidden input with the full OIDC URL.
+
+---
+
 ## Priority 1 — Web UI completeness (in progress, 2026-07-30)
 
 **Status**: shipped in v0.32.1 (this commit). All admin + user

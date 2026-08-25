@@ -24,16 +24,19 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `8ce799c8` on VM remote,
+* **Current**: v1.5.2-alpha1 (commit `6b1c241` on VM remote,
   `7d90af2f` B170 + `45ab8ff9` B171 +
-  `40f8c81b` B172 in flight) — **B167 OIDC config
+  `40f8c81b` B172 +
+  `6b1c241` B173 in flight) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
   expired-row sub-classification hint on /my/devices**
   + **B171 comprehensive device-delete with ACL
   regen** + **B172 login `next`-redirect fix
-  (OIDC handshake survives the login round-trip)**.
+  (OIDC handshake survives the login round-trip)**
+  + **B173 login form submit loading-state
+  (the user can see when the form is processing)**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -186,6 +189,71 @@ in the same commit. Don't let the tracker drift.
     `InvalidateCache` / `'device_deleted'` calls
     inside the handler; after the B171 rewire those
     calls live in `devicedelete.Delete`).
+  - **B172 (v1.5.2)**: login `next`-redirect fix
+    (operator 2026-08-25: "когда попробовал залогинится
+    в headscale через head.skynas.ru перенесло на логин
+    в skygate, после входа в skygate открылась страница
+    приветствия и все. устройство не добавлено и больше
+    ничего непроисходит" — the OIDC handshake died silently
+    because `PostLogin` ignored the `next` form field and
+    always redirected to `/dashboard`). `PostLogin` in
+    `internal/feature/auth/service.go` now reads + validates
+    + honours the `next` form field via the new
+    `safeNextRedirect(next, requestHost)` helper (open-
+    redirect defense: empty → `/dashboard`, relative →
+    as-is, full URL with same host → as-is; protocol-
+    relative `//evil.com`, different-host
+    `https://evil.com`, and non-http(s) schemes
+    `javascript:` / `data:` / `file:` are all rejected).
+    `GetLogin` reads `?next=` from the query string and
+    passes it into the template; `login.html` renders
+    `<input type="hidden" name="next" value="{{.Next}}">`
+    (Go's `html/template` auto-escapes) inside the form.
+    The B161.4 e2e test (`internal/oidc/e2e_test.go`) is
+    extended with a new STEP 4 that walks the ACTUAL
+    `/login` round-trip via a mock `/login` handler — the
+    pre-B172 STEP 4 was a "pre-populate an auth code"
+    shortcut that bypassed the `/login` POST entirely,
+    which is why the bug shipped in B161.4. 18 unit
+    tests in `internal/feature/auth/service_b172_test.go`
+    (`TestSafeNextRedirect` + `TestSafeNextRedirect_
+    EmptyHost`) cover the 5 case categories (empty /
+    relative / protocol-relative / different-host /
+    same-host). 24 contracts in `scripts/check_b172.sh`.
+  - **B173 (v1.5.2)**: login form submit loading-state
+    (operator 2026-08-25: "теперь при переходе страница
+    логина всегда обновляется если написать пароль и тем
+    самым его сбрасывает от чего нельзя залогиниться" —
+    the page was re-rendering in <100ms with no visual
+    feedback after the user hit Enter, so the user saw
+    "the page refreshed and my password is gone" without
+    any explanation). `login.html` has a JS `onsubmit`
+    handler (wrapped in an IIFE + try/catch so a JS error
+    falls through to the normal form submit) that (1)
+    checks form validity via `checkValidity()` before
+    entering the loading state (the browser's native
+    "this field is required" tooltip still shows on
+    partial forms), (2) sets `username` + `password`
+    to `readOnly` so the user can't type more while the
+    request is in flight, (3) disables the submit button
+    + swaps the button label from `Войти` (RU) / `Sign
+    in` (EN) to `Вход...` / `Signing in...` with a
+    `fa-spinner fa-spin` animation, (4) dims the
+    disabled button via CSS (`opacity: .6` + `cursor:
+    wait`) so the user sees the button is "stuck" (and
+    not broken) during the in-flight request. New i18n
+    key `login.submitting` in RU + EN
+    (`internal/i18n/catalog_common.go`). The form has
+    `id="login-form"` + `id="login-submit"` + two
+    `<span>` blocks (`.login-btn-idle` / `.login-btn-
+    loading`) so the JS swap is a single
+    `style.display` toggle. The B172 + B173 combination
+    is the end-to-end OIDC login UX: B172 preserves
+    the `next` parameter through the login POST; B173
+    makes the form submit observable so the user
+    doesn't think the page just refreshed. 12 contracts
+    in `scripts/check_b173.sh` (template + i18n + JS
+    + CSS).
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
