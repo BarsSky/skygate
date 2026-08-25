@@ -420,8 +420,28 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		src := "\"*\""
 		switch {
 		case e.userName != "" && e.deviceHostname != "":
-			// tag:dev-<user>-<device> — preferred, robust
-			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.userName, e.deviceHostname)
+			// tag:dev-<user>-<device> — preferred, robust.
+			// B176 (v1.5.2): headscale 0.29 requires
+			// tags to be lowercase, AND the tag we
+			// actually apply to the node in the
+			// backfill (nodeownership.go:599) is
+			// already lowercased — so the ACL src
+			// must match exactly. Without this
+			// strings.ToLower, an ACL rule like
+			//   src = ["tag:dev-skyadmin-SkyBars"]
+			// would never match a node carrying
+			//   tag:dev-skyadmin-skybars
+			// (the actual headscale-side tag, which
+			// is lowercase per the v0.28.0
+			// convention + headscale 0.29
+			// requirement). Pre-B176 the rule was
+			// built uppercase + applied uppercase →
+			// headscale rejected the apply with
+			// "tag should be lowercase" → rule
+			// never applied → per-device ACL for
+			// the device effectively denied until
+			// the operator noticed.
+			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.userName, strings.ToLower(e.deviceHostname))
 		case e.deviceIP != "":
 			// legacy device_ip src — works for the current
 			// session, breaks on Tailscale IP change
@@ -1233,7 +1253,10 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		src := "\"*\""
 		switch {
 		case e.UserName != "" && e.DeviceHostname != "":
-			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.UserName, e.DeviceHostname)
+			// B176: see the comment in the ruleEntry
+			// loop above — headscale 0.29 + v0.28.0
+			// convention both require lowercase tags.
+			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.UserName, strings.ToLower(e.DeviceHostname))
 		case e.DeviceIP != "":
 			src = fmt.Sprintf("\"%s\"", e.DeviceIP)
 		}

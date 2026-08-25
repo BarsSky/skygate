@@ -769,7 +769,18 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 		// is offline / not in headscale list right now).
 		liveHostname = currentRow.Hostname
 	}
-	newDevTag := fmt.Sprintf("tag:dev-%s-%s", targetUsername, liveHostname)
+	// B176 (v1.5.2): headscale 0.29 requires tags to be
+	// lowercase. The post-transfer dev-tag is constructed
+	// from the live hostname (or the DB row hostname as
+	// fallback when the node is offline). Both should be
+	// lowercased before constructing the tag, otherwise
+	// headscale's "Error: setting tags: rpc error: tag
+	// should be lowercase" rejects the post-transfer tag
+	// write and the per-device ACL rule that references
+	// this tag stops matching. Pre-B176 the same uppercase
+	// issue bit /my/devices auto-apply (see the live-verify
+	// report on 2026-08-25 for node id=35 "SkyBars").
+	newDevTag := fmt.Sprintf("tag:dev-%s-%s", targetUsername, strings.ToLower(liveHostname))
 	// 1) Upsert the row with the new owner + new dev tag.
 	if err := db.UpsertNodeOwner(s.DB, nodeIDStr, target.HeadscaleUserID, targetUsername, newDevTag, c.UserID); err != nil {
 		http.Error(w, "db upsert failed: "+err.Error(), http.StatusInternalServerError)

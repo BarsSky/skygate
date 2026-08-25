@@ -577,7 +577,26 @@ func Backfill(
 		// /my/devices load that DOES have a working hs
 		// will then clean up the stale headscale tag).
 		if n.Hostname != "" {
-			devTag := fmt.Sprintf("tag:dev-%s-%s", portalUsername, n.Hostname)
+			// B176 (v1.5.2): headscale 0.29 rejects tags
+			// that contain uppercase letters ("Error:
+			// setting tags: rpc error: tag should be
+			// lowercase"). The hostname from headscale
+			// can have any case (e.g. "SkyBars"), so
+			// we lowercase the dev-tag before sending.
+			// The pre-B176 code constructed
+			// `tag:dev-skyadmin-SkyBars` which headscale
+			// silently rejected via the gRPC `tag
+			// should be lowercase` error, and the
+			// AddTag helper swallowed it (no warn: log
+			// because the AddTag failure happened in a
+			// different call site — see the live-verify
+			// report for node id=35 on 2026-08-25).
+			// Lowercasing here matches the
+			// `tag:dev-<user>-<device>` v0.28.0
+			// convention used everywhere else in the
+			// codebase, where the dev-tag is always
+			// lowercase to be headscale-compliant.
+			devTag := fmt.Sprintf("tag:dev-%s-%s", portalUsername, strings.ToLower(n.Hostname))
 			if existing, ok := existingByNodeID[n.ID]; ok && existing.Hostname != "" && existing.Hostname != n.Hostname {
 				// Rename detected. The existing dev-tag
 				// was tag:dev-<user>-<oldHost>; compute

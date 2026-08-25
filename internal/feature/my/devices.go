@@ -360,7 +360,18 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			devTag := ""
 			devTagApplied := false
 			if username != "" && n.Hostname != "" {
-				devTag = fmt.Sprintf("tag:dev-%s-%s", username, n.Hostname)
+				// B176: headscale 0.29 requires tags to be
+				// lowercase. The dev-tag displayed in the
+				// UI must match what headscale actually
+				// stores — otherwise the "applied" check
+				// below would never find the tag (because
+				// headscale has `tag:dev-skyadmin-skybars`
+				// but the UI computes `tag:dev-skyadmin-
+				// SkyBars` from n.Hostname). Pre-B176 this
+				// caused node 35 "SkyBars" to show "⏳
+				// pending" forever (see live-verify report
+				// on 2026-08-25).
+				devTag = fmt.Sprintf("tag:dev-%s-%s", username, strings.ToLower(n.Hostname))
 				devTagApplied = hasTag(n.Tags, devTag)
 			}
 			myNodesList = append(myNodesList, myNodeRow{
@@ -417,7 +428,10 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			devTag := ""
 			devTagApplied := false
 			if username != "" && n.Hostname != "" {
-				devTag = fmt.Sprintf("tag:dev-%s-%s", username, n.Hostname)
+				// B176: see the same comment in the
+				// live branch above — headscale 0.29
+				// requires lowercase tags.
+				devTag = fmt.Sprintf("tag:dev-%s-%s", username, strings.ToLower(n.Hostname))
 				devTagApplied = hasTag(n.Tags, devTag)
 			}
 			myNodesList = append(myNodesList, myNodeRow{
