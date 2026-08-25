@@ -571,12 +571,20 @@ in the same commit. Don't let the tracker drift.
        - `TestAnnotateRulesWithPrefs_CaseInsensitiveHostname` —
          "Skyworker" / "skyworker" / "SKYWORKER" all
          batch into 1 lookup
-    5. 15 contracts in `scripts/check_b178.sh`:
+    5. 18 contracts in `scripts/check_b178.sh` (15 in B178 + 1
+       added in B178.1):
        - A: package-level AdminRule has PreferredHost + Applicable
        - B: annotateRulesWithPrefs function exists
        - C-D: local AdminRule + AnnotatedRule struct are gone
        - E-F: RulesAnnotated + groupedByUserAnnotated are gone
        - G: handler calls annotateRulesWithPrefs
+       - **G2 (B178.1)**: `annotateRulesWithPrefs(rr, ...)` call
+         comes BEFORE the `for _, rule := range rr` grouping
+         loop in form_admin.go (by line number). This pins
+         the ordering that the B178.1 fix introduced — the
+         annotation MUST run before the copy, otherwise the
+         template's `Nodes[exitNode]` slices read empty
+         `PreferredHost` values.
        - H + H-no-inner-range: template uses .PreferredHost
          and has no inner range over $.RulesAnnotated
        - I: yellow DBG span is removed from the template
@@ -585,6 +593,21 @@ in the same commit. Don't let the tracker drift.
        - L: AGENTS.md mentions B178
        - M: verify_pre_deploy.sh includes check_b178
        - N: `go test ./internal/feature/exit_rules/...` passes
+  - **B178.1 (v1.5.2)**: live follow-up to B178. The first
+    deployment of B178 (commit a11bb1b) shipped the right code
+    for the basic/karolina regression — `annotateRulesWithPrefs`
+    correctly populated `PreferredHost` + `Applicable`, and the
+    prefFn returned the right values (verified live with a
+    B178-DBG log line: `[B178-DBG] prefFn uid=6 hn="basic" ->
+    pref="emilia"`). But the rendered /admin/exit-rules page
+    STILL showed "No preferred exit-node set" for ALL 325 rules
+    because the annotation ran AFTER the `groupedByUser` build.
+    The grouping loop COPIES each `AdminRule` into the Nodes
+    map (`dg.Nodes[rule.ExitNode] = append(..., rule)`), so
+    annotations set after the copy are lost — the template
+    iterates the copies, which had empty `PreferredHost`.
+    **B178.1 fix**: swap the order in `form_admin.go` so
+    `annotateRulesWithPrefs` runs BEFORE the grouping.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
