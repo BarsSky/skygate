@@ -24,13 +24,14 @@ in the same commit. Don't let the tracker drift.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `e4e1ac7` on VM remote,
+* **Current**: v1.5.2-alpha1 (commit `66b17a3` on VM remote,
   `7d90af2f` B170 + `45ab8ff9` B171 +
   `40f8c81b` B172 +
   `6b1c241` B173 +
   `9bbb750` B173.1 +
   `794b9c6` B174 +
-  `e4e1ac7` B175 in flight) — **B167 OIDC config
+  `e4e1ac7` B175 +
+  `66b17a3` B176 + B175.1 in flight) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -48,7 +49,14 @@ in the same commit. Don't let the tracker drift.
   the pre-B174 colon-split parser caused)**
   + **B175 OIDC node auto-tag Strategy E
   (closes the "⏳ pending forever for OIDC devices"
-  gap the pre-B175 backfill had)**.
+  gap the pre-B175 backfill had)**
+  + **B176 dev-tag lowercase (headscale 0.29 rejects
+  uppercase tags) + B175.1 i18n tooltip rewrite
+  (operator 2026-08-25 follow-up: "старое
+  отображение информации при навеадении на тег
+  ожидания осталось также не обновил с новым
+  проходом тег обновлятор устройство - не было
+  обновления на VM?")**.
   Operator 2026-08-24 asked for the "click one button to push
   the OIDC config from skygate to headscale + restart headscale"
   flow. The pre-B167 manual flow was: copy snippet from
@@ -443,6 +451,39 @@ in the same commit. Don't let the tracker drift.
     synthetic user, empty portal username)
     + firstTagOrFallback preservation
     + idempotency.
+  - **B176 + B175.1 (v1.5.2)**: dev-tag
+    lowercase (headscale 0.29 rejects
+    uppercase tags) + i18n tooltip
+    rewrite. Operator 2026-08-25
+    follow-up: "старое отображение
+    информации при навеадении на тег
+    ожидания осталось также не обновил
+    с новым проходом тег обновлятор
+    устройство - не было обновления на
+    VM?" — the live dev-tag was silently
+    rejected by headscale (`Error: tag
+    should be lowercase`). B176 adds
+    `strings.ToLower` at all 6 dev-tag
+    sites (nodeownership.go, devices.go
+    ×2, admin/devices.go, acl.go ×2).
+    B175.1 rewrites the
+    `devices.dev_tag_pending_help`
+    tooltip to explain the autoupdater
+    interval + the B176 edge case. 16
+    contracts in `scripts/check_b176.sh`.
+    **Known remaining gap (NOT B176)**:
+    nodes already on the synthetic
+    "tagged-devices" headscale user
+    with no live dev-tag are skipped
+    by all 4 backfill strategies (A/C/D/E)
+    — operator must apply the tag
+    manually via `headscale nodes tag
+    --force` for legacy nodes; going
+    forward, B175 + B176 cover the new
+    path (Strategy E applies the dev-tag
+    on the FIRST tick after device
+    registration, before the node
+    transitions to tagged-devices).
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`

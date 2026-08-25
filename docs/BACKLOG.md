@@ -608,6 +608,27 @@ None of those fire for an OIDC-registered node — OIDC flow doesn't use a preau
 
 ---
 
+## Priority 20 — v1.5.2 dev-tag lowercase + i18n tooltip rewrite (SHIPPED 2026-08-25, B176 + B175.1)
+
+### B176 — dev-tag lowercase (headscale 0.29 rejects uppercase tags) + B175.1 i18n rewrite
+
+**Status**: SHIPPED 2026-08-25 (commit `66b17a3d`, v1.5.2-alpha1)
+**Effort**: ~0.2 day
+**What was delivered**: closes the operator-observed gap from 2026-08-25 (right after B175 shipped): "старое отображение информации при навеадении на тег ожидания осталось также не обновил с новым проходом тег обновлятор устройство - не было обновления на VM?" (the old tooltip on the pending dev-tag is still there + the new tag-autoupdater pass didn't update the device on VM?). Two separate issues were diagnosed:
+**B176 root cause**: headscale 0.29 rejects tags with uppercase letters. Pre-B176 the dev-tag `tag:dev-<user>-<hostname>` was constructed from the live headscale hostname (e.g. "SkyBars") WITHOUT lowercasing, so headscale silently rejected every AddTag call on a device with an uppercase hostname. The /my/devices UI showed the same uppercase dev-tag as "⏳ pending" because the live headscale never had the tag.
+**B176 fix**: `strings.ToLower` at all 6 dev-tag construction sites in the codebase:
+- `internal/nodeownership/nodeownership.go:599` (the per-device tag in the backfill's AddTag call)
+- `internal/feature/my/devices.go:374, 434` (live + snapshot branches of the /my/devices listing)
+- `internal/feature/admin/devices.go:783` (post-transfer dev-tag in `PostAdminNodeTransfer`)
+- `internal/acl/acl.go:444, 1259` (the per-device src in the headscale ACL policy file — without this, the policy rule has `src = ["tag:dev-skyadmin-SkyBars"]` which headscale silently ignores because the node carries `tag:dev-skyadmin-skybars`)
+**B175.1 fix (same commit, no separate scope)**: rewrote the `devices.dev_tag_pending_help` i18n key in `internal/i18n/catalog_my.go` (RU + EN) to explain (a) the autoupdater ticks every 5 min (B175), (b) ask admin if it persists > 5 min, (c) the most common cause is uppercase letters in the hostname (B176). The pre-B175.1 RU text "следующий /my/devices повторит попытку" was the operator's specific complaint on 2026-08-25.
+**Verified locally**: `go build ./...` clean, `go vet ./...` clean, `go test ./...` (38 packages) all PASS, `bash scripts/check_b176.sh` 16/16 PASS.
+**Live verified on VM** (build `v1.5.0-alpha1-52-g66b17a3`): `docker exec headscale headscale nodes tag -i 35 -t 'tag:private,tag:dev-skyadmin-skybars' --force` now SUCCEEDS (post-B176) — the same call returned "Error: tag should be lowercase" pre-B176. Node 35 "SkyBars" now has `['tag:dev-skyadmin-skybars', 'tag:private']` on headscale.
+
+**Known remaining gap (NOT B176 — explicitly out of scope)**: nodes that are already on the synthetic "tagged-devices" headscale user (id=2147455555 in this deployment) with no live dev-tag are skipped by all 4 backfill strategies (no preauth key, no temporal match, no live dev-tag, `n.UserName="tagged-devices" ≠ portalUsername`). The DB may have a stale `node_owner_map` row (e.g. node 35's DB row has `hostname="skybars-1"` from a historical snapshot) but the backfill can't reconcile that with the live headscale state. For these legacy nodes the operator must apply the dev-tag manually via `headscale nodes tag --force` (we did this for node 35 during the live-verify). A future B-check (Strategy F: "node on tagged-devices user with a DB row matching portalUsername") would close this, but the typical path going forward is B175 + B176 — Strategy E applies the dev-tag on the FIRST autoupdate tick after device registration, before the node transitions to tagged-devices. The legacy orphan case only happens for nodes registered before B175 shipped.
+
+---
+
 ## Priority 1 — Web UI completeness (in progress, 2026-07-30)
 
 **Status**: shipped in v0.32.1 (this commit). All admin + user
