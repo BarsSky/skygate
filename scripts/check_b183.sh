@@ -169,7 +169,7 @@ if [ -d /home/skyadmin/skygate ]; then
       TOTAL=${TOTAL:-0}
       DISTINCT=${DISTINCT:-0}
       if [ "$TOTAL" -le 50 ] && [ "$DISTINCT" -gt 0 ] && [ "$TOTAL" -eq "$DISTINCT" ]; then
-        check_eq "J" "no-dup" "no-dup (emilia: $TOTAL rows = $DISTINCT distinct)"
+        check_eq "J" "no-dup" "no-dup"
       else
         check_eq "J" "no-dup" "still-has-dup (emilia: $TOTAL rows vs $DISTINCT distinct)"
       fi
