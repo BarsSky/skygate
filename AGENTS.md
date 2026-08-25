@@ -608,6 +608,35 @@ in the same commit. Don't let the tracker drift.
     iterates the copies, which had empty `PreferredHost`.
     **B178.1 fix**: swap the order in `form_admin.go` so
     `annotateRulesWithPrefs` runs BEFORE the grouping.
+  - **B179 (v1.5.2)**: iptables DOCKER-USER/INPUT over-broad
+    block regression. Operator 2026-08-25: "почему все
+    устройства offline в чем конкретно причина бага?"
+    — the 14 Tailscale clients + the skygate VM itself all
+    showed `online=false` with `last_seen` frozen at 09:41
+    (the moment a previous B177 deploy had applied an
+    iptables rule: `iptables -I DOCKER-USER 1 -s
+    192.168.13.67 -p tcp --dport 50444 -j DROP`). The rule
+    was originally added to silence `node not found` 404
+    noise from an orphan Tailscale client running inside
+    the NPM (95.165.170.190 / 192.168.13.67), but it also
+    blocked the LEGITIMATE NPM reverse-proxy traffic to
+    headscale (50444). NPM returned 504 to every Tailscale
+    client trying to fetch `/key` or push `/machine/map`,
+    so no client could update `last_seen` ever again. **B179
+    fix**: remove the over-broad DOCKER-USER + INPUT rules,
+    persist to `/etc/iptables/rules.v4`. 7 contracts in
+    `scripts/check_b179.sh` pin (a) no DOCKER-USER/INPUT
+    block for 192.168.13.67 in live iptables, (b) no block
+    in `/etc/iptables/rules.v4` (persistence), (c) headscale
+    still up on 50444 (HTTP 401, not 504), (d) AGENTS.md +
+    verify_pre_deploy.sh mention B179. **Live verification
+    2026-08-25 14:05Z** (post-fix): emilia/sharlotta/karolina
+    + skyworker all `Online=true`, `last_seen=14:05-14:06`,
+    `exit_node_health.online=1, state=online` for all 3
+    exit-nodes (was `online=0, state=offline` for 14/14
+    pre-fix). The "all offline" was a single over-broad
+    iptables rule, NOT a DERP-only "polling" issue, NOT
+    a B-check script DB block, NOT a per-device pref bug.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
   (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
