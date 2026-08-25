@@ -123,6 +123,17 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = $1`, env.PortalUserID).Scan(&ruleCount); err != nil {
 		return nil, err
 	}
+	// 2026-08-25 (B186.3): the original B186.2 migration
+	// forgot to call ListNodeOwnersByUsername, so
+	// deviceCount stayed at 0 and the rich message
+	// showed "устройств 0" even when the user had
+	// 7 devices. The legacy myStatusReply calls it
+	// at line 75; the rich path must too. Live
+	// reproduction: 2026-08-25 screenshot showed
+	// skyadmin (7 devices) → "устройств 0".
+	if owned, derr := db.ListNodeOwnersByUsername(env.DB, env.Username); derr == nil {
+		deviceCount = int64(len(owned))
+	}
 	cap := env.MaxFor(env.Username)
 	capStr := "∞"
 	if cap > 0 {
@@ -131,7 +142,7 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 	// Pull last ACL id (same SQL as myStatusReply, but
 	// kept inline so the call site is self-contained).
 	var lastACL int64
-	_ = env.DB.QueryRow(`SELECT id FROM acl_snapshots ORDER BY id DESC LIMIT 1`).Scan(&lastACL)
+	_ = env.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success = 1`).Scan(&lastACL)
 
 	// The structured message:
 	//   <h2>Добрый вечер, <username>.</h2>          (header)
@@ -154,6 +165,7 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 		Footer(i18n.T(lang, "bot.my_status.subheader")),
 	}
 	_ = section // keep var used (linter satisfaction; section shows up in the legacy HTML render)
+	_ = deviceS  // kept for the same linter satisfaction; the real value is in the table cell below
 	return blocks, nil
 }
 

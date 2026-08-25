@@ -143,6 +143,16 @@ check_ge "N-mystatus" 1 "$(count "$REPO/internal/telegram/commands.go" 'blocks: 
 # O. The migrated /version returns rich blocks
 check_ge "O-version" 1 "$(count "$REPO/internal/telegram/commands.go" 'blocks: vBlocks, context: lookupContext')"
 
+# P. (B186.3) myStatusBlocks must call ListNodeOwnersByUsername
+# to populate deviceCount. The pre-B186.3 version declared
+# deviceCount int64 but never assigned it, so the rich
+# message always showed "устройств 0" even when the user
+# had 7 devices (operator's 2026-08-25 screenshot).
+check_ge "P-my-status-blocks" 1 "$(count "$REPO/internal/telegram/commands_user.go" 'ListNodeOwnersByUsername\(env\.DB, env\.Username\)')"
+
+# Q. The regression test for B186.3 exists
+check_ge "Q-b1863-test" 1 "$(count "$REPO/internal/telegram/my_status_blocks_test.go" 'TestMyStatusBlocks_DeviceCountNotZero')"
+
 # J. Build + tests pass
 GO_BIN=""
 for cand in /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go "$(command -v go 2>/dev/null)"; do
