@@ -353,12 +353,12 @@ func TestGenerateACLForPlane_B1883_PerCIDRViaInNoViaPath(t *testing.T) {
 		if !strings.Contains(pol, `"via": ["tag:dev-infra-emilia"]`) {
 			t.Errorf("useVia=false: expected per-CIDR via=[\"tag:dev-infra-emilia\"] in policy, not found\n---POLICY---\n%s", pol)
 		}
-		if !strings.Contains(pol, `"dst": ["h-rule-64-233-164-91-32:*"]`) {
-			t.Errorf("useVia=false: expected dst=h-rule-64-233-164-91-32:* in policy, not found\n---POLICY---\n%s", pol)
+		if !strings.Contains(pol, `"dst": ["64.233.164.91:*"]`) {
+			t.Errorf("useVia=false: expected dst=64.233.164.91:* in policy, not found\n---POLICY---\n%s", pol)
 		}
 		// The mismatched rule (8.8.8.8 → karolina) should
 		// NOT get via=emilia.
-		if strings.Contains(pol, `"dst": ["h-rule-8-8-8-8-32:*"], "via": ["tag:dev-infra-emilia"]`) {
+		if strings.Contains(pol, `"dst": ["8.8.8.8:*"], "via": ["tag:dev-infra-emilia"]`) {
 			t.Errorf("useVia=false: 8.8.8.8→karolina should NOT have via=emilia (mismatch)")
 		}
 		// The catch-all (autogroup:internet for this device
@@ -390,8 +390,9 @@ func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 	// With no per-device pref, the per-CIDR grant for
 	// 1.2.3.4 must be UNPINNED (no via= clause on this
 	// specific grant). The OLD function's dst format is
-	// "h-rule-1-2-3-4-32:*" (with the :* suffix).
-	wantDst := `"dst": ["h-rule-1-2-3-4-32:*"]`
+	// literal "<target>:*" (NOT the h-rule alias that the
+	// NEW function uses).
+	wantDst := `"dst": ["1.2.3.4:*"]`
 	// Find the per-device grant block. The OLD function
 	// uses `,\n    { "action": "accept", "src": ["tag:dev-b188_3_nopref-b188_3_phone"], ...`
 	// We look for that pattern with the dst, then assert
@@ -440,7 +441,8 @@ func TestGenerateACLForPlane_B1883_LegacyRuleNoExitNodeID(t *testing.T) {
 	// but NO via= (because the rule's exit_node_id is empty,
 	// the per-CIDR pin can't fire — we'd have to guess).
 	wantSrc := `"src": ["tag:dev-b188_3_legacy-b188_3_desktop"]`
-	wantDst := `"dst": ["h-rule-5-6-7-8-32:*"]`
+	// OLD function uses literal "<target>:*" format.
+	wantDst := `"dst": ["5.6.7.8:*"]`
 	idx := strings.Index(pol, wantSrc)
 	if idx < 0 {
 		t.Fatalf("could not find per-device grant for b188_3_legacy in policy:\n%s", pol)
