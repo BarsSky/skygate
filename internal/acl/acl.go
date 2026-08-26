@@ -128,6 +128,49 @@ func exitNodeTagToHostname(tag string) string {
 	return ""
 }
 
+// resolvePerCIDRVia — v1.5.2 (B188.3) — returns the
+// `via=[exit_node_tag]` value to attach to a per-CIDR
+// grant, or "" for "no via" (loose default).
+//
+// Used by BOTH GenerateACLForPlane (useVia=false path) and
+// GenerateACLWithViaForPlane (useVia=true path) — extracted
+// to avoid duplicating the matching logic AND to make it
+// unit-testable without a DB. The OLD function (B188.3) and
+// the NEW function (B188.2) now share this single source of
+// truth for "should this per-CIDR grant be pinned?".
+//
+// Returns the via tag iff ALL of:
+//   - devTag is non-empty (rule has a per-device src;
+//     wildcard rules and legacy device_ip rules don't get
+//     a per-CIDR pin)
+//   - viaByDevice[devTag] != "" (the device has a per-device
+//     exit_node_pref)
+//   - the pref's hostname matches ruleExitNodeID (the
+//     rule's target exit_node matches the device's preferred
+//     exit-node)
+//
+// `tag:exit-node` (the headscale catch-all sentinel) is
+// correctly NOT matched — exitNodeTagToHostname returns
+// "node" for it, which never equals a real device_rule's
+// exit_node_id. So devices that pin to "node" (which no
+// rule does) get no via=.
+//
+// 2026-08-26: v1.5.2 (B188.3).
+func resolvePerCIDRVia(devTag, ruleExitNodeID string, viaByDevice map[string]string) string {
+	if devTag == "" || ruleExitNodeID == "" {
+		return ""
+	}
+	prefTag, ok := viaByDevice[devTag]
+	if !ok || prefTag == "" {
+		return ""
+	}
+	prefHost := exitNodeTagToHostname(prefTag)
+	if prefHost == "" || prefHost != ruleExitNodeID {
+		return ""
+	}
+	return prefTag
+}
+
 // GenerateACL builds the per-user headscale 0.29 HuJSON policy
 // for the global default plane (every portal user with no
 // headscale_url override). Equivalent to
@@ -201,6 +244,18 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		deviceHostname string // v0.28.0: for tag:dev-<user>-<device> src
 		target         string
 		action         string
+		// v1.5.2 (B188.3): exitNodeID is the device_rules
+		// .exit_node_id (the hostname of the exit-node the
+		// rule targets, e.g. "emilia" / "karolina"). Empty
+		// when the rule was created before v0.28.x added
+		// the column. The per-CIDR grant loop reads this
+		// to attach a per-CIDR `via=[exit_node_tag]`
+		// constraint when the device's per-device
+		// exit_node_pref matches. ACLEntry.ExitNodeID is
+		// already populated by db.GetACLEntries
+		// (B188.2 added COALESCE(exit_node_id, '') to
+		// qSelectEnabledACLEntries).
+		exitNodeID string
 	}
 	var entries []ruleEntry
 	for _, e := range aclRows {
@@ -211,8 +266,29 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 				deviceHostname: e.DeviceHostname,
 				target:         e.TargetValue,
 				action:         e.Action,
+				exitNodeID:     e.ExitNodeID,
 			})
 		}
+	}
+
+	// v1.5.2 (B188.3): per-device exit_node_pref → viaByDevice
+	// map (tag:dev-<user>-<device> → exit_node_tag). Used by
+	// the per-CIDR grant loop below to attach a `via=[exit_node_tag]`
+	// when the device's pref matches the rule's exit_node.
+	// Mirrors the loading in GenerateACLWithViaForPlane (line
+	// ~1053) so both the useVia=true and useVia=false paths emit
+	// the same per-CIDR pin.
+	devicePrefsOld, err := db.ListAllDeviceExitNodePrefs(d)
+	if err != nil {
+		return "", err
+	}
+	viaByDeviceOld := make(map[string]string, len(devicePrefsOld))
+	for _, dp := range devicePrefsOld {
+		if dp.Username == "" || dp.DeviceHostname == "" || dp.ExitNodeTag == "" || !dp.ViaEnabled {
+			continue
+		}
+		devTag := "tag:dev-" + dp.Username + "-" + strings.ToLower(dp.DeviceHostname)
+		viaByDeviceOld[devTag] = dp.ExitNodeTag
 	}
 
 	baseDomain := envBaseDomain()
@@ -472,6 +548,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// rules that have neither.
 	for _, e := range entries {
 		src := "\"*\""
+		var devTag string // tag:dev-<user>-<device> for the per-CIDR via= lookup
 		switch {
 		case e.userName != "" && e.deviceHostname != "":
 			// tag:dev-<user>-<device> — preferred, robust.
@@ -495,13 +572,33 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 			// never applied → per-device ACL for
 			// the device effectively denied until
 			// the operator noticed.
-			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.userName, strings.ToLower(e.deviceHostname))
+			devTag = "tag:dev-" + e.userName + "-" + strings.ToLower(e.deviceHostname)
+			src = "\"" + devTag + "\""
 		case e.deviceIP != "":
 			// legacy device_ip src — works for the current
 			// session, breaks on Tailscale IP change
 			src = fmt.Sprintf("\"%s\"", e.deviceIP)
 		}
-		sb.WriteString(",\n    { \"action\": \"" + e.action + "\", \"src\": [" + src + "], \"dst\": [\"" + e.target + ":*\"] }")
+		// v1.5.2 (B188.3): per-CIDR exit-node pin. Mirrors
+		// the same logic in GenerateACLWithViaForPlane
+		// (the useVia=true path) via the shared
+		// resolvePerCIDRVia helper. The OLD function's
+		// dst format is "<target>:*" (vs the NEW
+		// function's bare alias), but the via= field
+		// is identical. Pre-B188.3 the per-CIDR grant
+		// in the useVia=false path was UNPINNED — the
+		// device could use any exit-node for the
+		// destination. Post-B188.3 it's pinned to the
+		// device's preferred exit-node when the rule's
+		// target exit matches. The catch-all
+		// (autogroup:internet) stays UNPINNED in both
+		// paths.
+		viaForGrant := resolvePerCIDRVia(devTag, e.exitNodeID, viaByDeviceOld)
+		if viaForGrant != "" {
+			sb.WriteString(",\n    { \"action\": \"" + e.action + "\", \"src\": [" + src + "], \"dst\": [\"" + e.target + ":*\"], \"via\": [\"" + viaForGrant + "\"] }")
+		} else {
+			sb.WriteString(",\n    { \"action\": \"" + e.action + "\", \"src\": [" + src + "], \"dst\": [\"" + e.target + ":*\"] }")
+		}
 	}
 
 	// 2026-07-15: v0.12.0.1 — the catch-all `"*:*" accept`
@@ -1339,28 +1436,14 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		// banking.com direct". For each per-device rule,
 		// attach a `via=[exit_node_tag]` constraint ONLY
 		// when the device's per-device exit_node_pref
-		// matches the rule's exit_node. Conditions:
-		//   1. devTag is set (rule has a per-device src)
-		//   2. viaByDevice[devTag] != "" (device has pref)
-		//   3. The pref's hostname matches e.ExitNodeID
-		//   4. e.ExitNodeID is non-empty (legacy rules
-		//      created before v0.28.x have empty
-		//      exit_node_id — they don't get a pin)
-		// This is the OPPOSITE of the pre-B188.2
-		// behaviour: instead of pinning the catch-all
-		// autogroup:internet, we pin each individual
-		// rule whose target exit matches the device's
-		// preference. Result: youtube.com via emilia,
-		// banking.com direct.
-		viaForGrant := ""
-		if devTag != "" && e.ExitNodeID != "" {
-			if prefTag, ok := viaByDevice[devTag]; ok && prefTag != "" {
-				prefHost := exitNodeTagToHostname(prefTag)
-				if prefHost != "" && prefHost == e.ExitNodeID {
-					viaForGrant = prefTag
-				}
-			}
-		}
+		// matches the rule's exit_node. See
+		// resolvePerCIDRVia (above) for the matching
+		// logic — the same helper is used by both
+		// GenerateACLWithViaForPlane (this loop) and
+		// GenerateACLForPlane (the useVia=false path,
+		// added in B188.3). The catch-all autogroup:internet
+		// stays UNPINNED in both paths.
+		viaForGrant := resolvePerCIDRVia(devTag, e.ExitNodeID, viaByDevice)
 		if viaForGrant != "" {
 			sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"], \"via\": [\"" + viaForGrant + "\"] }")
 		} else {
