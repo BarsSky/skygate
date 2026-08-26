@@ -55,6 +55,7 @@ var ruCommon = map[string]string{
 	"nav.devices_all"                : "Все устройства",
 	"nav.acls"                       : "ACL",
 	"nav.derp"                       : "DERP",
+	"nav.derp_dashboard"             : "DERP Health",  // v1.5.2 / B189 — latency dashboard
 	"nav.audit"                      : "Audit",
 	"nav.telegram"                   : "Telegram",
 	"nav.telegram_my"                : "Telegram bot",
@@ -249,6 +250,7 @@ var enCommon = map[string]string{
 	"nav.devices_all"                : "All devices",
 	"nav.acls"                       : "ACL",
 	"nav.derp"                       : "DERP",
+	"nav.derp_dashboard"             : "DERP Health",  // v1.5.2 / B189 — latency dashboard
 	"nav.audit"                      : "Audit",
 	"nav.telegram"                   : "Telegram",
 	"nav.telegram_my"                : "Telegram bot",

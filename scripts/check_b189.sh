@@ -192,11 +192,25 @@ fi
 
 # --- E. Layout / navigation contracts ---
 
-# E.1 nav link to /admin/derp/dashboard (sidebar or layout)
-if grep -rqE 'admin/derp/dashboard' internal/handlers/templates/ 2>/dev/null; then
-    ok "E.1 sidebar / layout has link to /admin/derp/dashboard"
+# E.1 sidebar nav has link to /admin/derp/dashboard
+if grep -qE 'href="/admin/derp/dashboard"' internal/handlers/templates/layout.html 2>/dev/null; then
+    ok "E.1 sidebar layout has /admin/derp/dashboard link"
 else
-    bad "E.1 no template link to /admin/derp/dashboard (informational; operator can navigate via URL)"
+    bad "E.1 sidebar layout missing /admin/derp/dashboard link"
+fi
+
+# E.2 main DERP page (derp.html) has a "Health Dashboard" button
+if grep -qE 'admin/derp/dashboard' internal/handlers/templates/admin/derp.html 2>/dev/null; then
+    ok "E.2 derp.html has dashboard link button"
+else
+    bad "E.2 derp.html missing dashboard link"
+fi
+
+# E.3 derp_relays.html has a "Health Dashboard" button
+if grep -qE 'admin/derp/dashboard' internal/handlers/templates/admin/derp_relays.html 2>/dev/null; then
+    ok "E.3 derp_relays.html has dashboard link button"
+else
+    bad "E.3 derp_relays.html missing dashboard link"
 fi
 
 # --- F. Build + tests ---
