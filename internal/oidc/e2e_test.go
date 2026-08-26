@@ -345,13 +345,13 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 	mockLoginPost := func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("mockLoginPost: parse form: %v", err)
-			http.Error(w, "bad form", 400)
+			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
 		u := r.FormValue("username")
 		p := r.FormValue("password")
 		if u != "alice" || p != "hunter2" {
-			http.Error(w, "bad creds", 401)
+			http.Error(w, "bad creds", http.StatusUnauthorized)
 			return
 		}
 		// B174 (v1.5.2): issue a REAL JWT for the
@@ -368,7 +368,7 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 		tok, terr := auth.IssueJWT(jwtSecret, uid, "alice", false, 24)
 		if terr != nil {
 			t.Errorf("mockLoginPost: issue jwt: %v", terr)
-			http.Error(w, "issue jwt", 500)
+			http.Error(w, "issue jwt", http.StatusInternalServerError)
 			return
 		}
 		// Echo back the same next-redirect logic the

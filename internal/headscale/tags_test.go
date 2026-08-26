@@ -148,7 +148,7 @@ func TestAddTag_NoOpWhenAlreadyPresent(t *testing.T) {
 // error so the caller can decide whether to retry.
 func TestAddTag_PreservesOnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "internal headscale error", 500)
+		http.Error(w, "internal headscale error", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
