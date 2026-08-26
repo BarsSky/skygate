@@ -1513,3 +1513,76 @@ func migrateV061PG(d *sql.DB) error {
 	}
 	return nil
 }
+
+
+// migrateV062PG — v1.5.2 (B189) — DERP health dashboard.
+//
+// Adds the derp_health table that caches live latency
+// measurements for every known DERP server (Tailscale's
+// 28 public regions + the operator's own derp_relays
+// rows). The derphealth package (internal/derphealth)
+// probes each server's HTTPS endpoint with a TLS
+// handshake, measures TTFB, and writes results here.
+//
+// Columns:
+//   - region_id: PK. region_id 1-28 = Tailscale's
+//     public regions. region_id 900+ = operator's own
+//     derp_relays (or the bundled Tailscale default
+//     for region_id=901).
+//   - is_own: 1 if this row is one of the operator's
+//     own DERP servers, 0 if it's a Tailscale public.
+//   - host / url: where to probe. `url` is the full
+//     https://...; `host` is the bare hostname used
+//     for the latency probe and display.
+//   - region_code / region_name / locality / country:
+//     display metadata. region_code is the IATA-ish
+//     code (e.g. "waw" / "hel") when Tailscale's map
+//     exposes it; "" otherwise.
+//   - latency_ms: the most recent probe's measured
+//     TLS-handshake latency in milliseconds. NULL
+//     when never probed or the last probe failed.
+//   - last_check: unix epoch of the last probe attempt
+//     (success or failure).
+//   - healthy: 1 if the last probe returned 2xx/3xx on
+//     the / endpoint; 0 on any error.
+//   - last_error: empty on success, or the last probe's
+//     error string. Used for the dashboard's "degraded"
+//     hint without losing the last latency value (e.g.
+//     if a probe fails intermittently).
+//   - probes_total / probes_failed: counters for the
+//     DERP health time-series. probes_failed is the
+//     number of consecutive failed probes (resets to 0
+//     on the first success after any failure).
+//
+// The table does NOT replace headscale's DERP selection
+// or Tailscale's netcheck — it's an operator-facing
+// observability surface. The recommended DERP (lowest
+// latency among reachable own + public) is highlighted
+// in the dashboard, not enforced anywhere.
+//
+// Idempotent: ON CONFLICT (region_id) DO UPDATE so
+// re-probes just refresh the latency + last_check
+// columns.
+func migrateV062PG(d *sql.DB) error {
+	if _, err := d.Exec(`
+		CREATE TABLE IF NOT EXISTS derp_health (
+			region_id     INTEGER PRIMARY KEY,
+			is_own        INTEGER NOT NULL DEFAULT 0,
+			host          TEXT    NOT NULL DEFAULT '',
+			url           TEXT    NOT NULL DEFAULT '',
+			region_code   TEXT    NOT NULL DEFAULT '',
+			region_name   TEXT    NOT NULL DEFAULT '',
+			locality      TEXT    NOT NULL DEFAULT '',
+			country       TEXT    NOT NULL DEFAULT '',
+			latency_ms    INTEGER,
+			last_check    INTEGER NOT NULL DEFAULT 0,
+			healthy       INTEGER NOT NULL DEFAULT 0,
+			last_error    TEXT    NOT NULL DEFAULT '',
+			probes_total  INTEGER NOT NULL DEFAULT 0,
+			probes_failed INTEGER NOT NULL DEFAULT 0
+		)
+	`); err != nil {
+		return fmt.Errorf("v0.62 derp_health table: %w", err)
+	}
+	return nil
+}

@@ -33,6 +33,7 @@ import (
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/db"
+	"skygate/internal/derphealth"
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/middleware"
@@ -240,6 +241,17 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "derp-probe":
+			// B189 (v1.5.2) — manual one-shot DERP probe +
+			// latency report. Useful for ad-hoc debugging
+			// from the operator's laptop. Output is the
+			// same table the /admin/derp/dashboard page
+			// shows, but to stdout.
+			if err := runDerpProbe(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "derp-probe failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "migrate-only":
 			// Open the DB (which runs all pending
 			// migrations as part of Open() per the
@@ -302,6 +314,12 @@ func main() {
 		log.Fatalf("db: %v", err)
 	}
 	defer d.Close()
+
+	// B189 (v1.5.2) — DERP health probe cron. 5-min interval.
+	// One initial probe on start, then steady-state ticks.
+	if err := derphealth.StartCron(context.Background(), d, &http.Client{Timeout: 10 * time.Second}); err != nil {
+		log.Printf("derp cron: %v (continuing without background probes)", err)
+	}
 
 	// 2026-07-07: issue #6 — ensure parent_domain column exists for domain auto-updater
 	if _, err := d.Exec("ALTER TABLE device_rules ADD COLUMN parent_domain TEXT DEFAULT ''"); err != nil {
@@ -1309,6 +1327,9 @@ func main() {
 	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(exitRulesSvc.AdminCleanupRulesApply)))
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(adminSvc.PostAdminSettings)))
 	mux.Handle("GET /admin/derp/refresh", authMW(http.HandlerFunc(adminSvc.GetAdminDERPRefresh)))
+	// B189 (v1.5.2) — DERP Health Dashboard.
+	mux.Handle("GET /admin/derp/dashboard", authMW(http.HandlerFunc(adminSvc.GetAdminDerpDashboard)))
+	mux.Handle("POST /admin/derp/dashboard/refresh", authMW(http.HandlerFunc(adminSvc.PostAdminDerpDashboardRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(adminSvc.AdminExitNodes)))
 	// 2026-07-20: v0.20.0 — headscale-update-monitor
 	// status page. Renders the monitor's snapshot

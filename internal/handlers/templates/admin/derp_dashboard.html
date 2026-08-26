@@ -1,0 +1,125 @@
+{{define "body-admin-derp-dashboard"}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-server"></i> DERP Health Dashboard</h2>
+    <div class="sub">
+      Live latency probe of all known DERP servers (own + Tailscale's 28 public regions).
+      Probed every 5 minutes via TLS-handshake measurement. Click "Re-probe" for fresh data.
+    </div>
+  </div>
+  <div>
+    <form method="post" action="/admin/derp/dashboard/refresh" style="display:inline">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button type="submit" class="btn btn-primary">
+        <i class="fa-solid fa-arrows-rotate"></i> Re-probe all
+      </button>
+    </form>
+  </div>
+</div>
+
+{{if .Error}}
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Error}}</div>
+{{end}}
+
+{{if .Recommended}}
+<div class="alert alert-success">
+  <i class="fa-solid fa-bolt"></i>
+  <strong>Recommended DERP:</strong> region_id <code>{{.Recommended}}</code>
+  ({{if index .DERPs 0}}{{(index .DERPs 0).Host}}{{end}}).
+  This is the lowest-latency healthy DERP reachable from this server right now.
+</div>
+{{end}}
+
+<div class="card">
+  <table class="kv" style="width:100%; font-size:0.92em; line-height:1.5">
+    <thead>
+      <tr style="background: var(--bg-elev)">
+        <th style="text-align:left; padding:0.4rem 0.6rem">ID</th>
+        <th style="text-align:left; padding:0.4rem 0.6rem">Type</th>
+        <th style="text-align:left; padding:0.4rem 0.6rem">Region</th>
+        <th style="text-align:left; padding:0.4rem 0.6rem">Host</th>
+        <th style="text-align:right; padding:0.4rem 0.6rem">Latency</th>
+        <th style="text-align:left; padding:0.4rem 0.6rem">Status</th>
+        <th style="text-align:left; padding:0.4rem 0.6rem">Last probe</th>
+        <th style="text-align:right; padding:0.4rem 0.6rem">Probes (fail)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .DERPs}}
+      <tr style="{{if eq .RegionID $.Recommended}}background: rgba(46, 204, 113, 0.12); font-weight: 600{{end}}">
+        <td style="padding:0.3rem 0.6rem"><code>{{.RegionID}}</code></td>
+        <td style="padding:0.3rem 0.6rem">
+          {{if .IsOwn}}
+            <span class="pill pill-info">own</span>
+          {{else}}
+            <span class="pill">public</span>
+          {{end}}
+        </td>
+        <td style="padding:0.3rem 0.6rem">
+          {{if .RegionCode}}<code>{{.RegionCode}}</code>{{end}}
+          {{if .Locality}}<span style="color: var(--text-muted); margin-left: 0.4rem">{{.Locality}}</span>{{end}}
+          {{if .Country}}<span style="color: var(--text-subtle); margin-left: 0.3rem">({{.Country}})</span>{{end}}
+        </td>
+        <td style="padding:0.3rem 0.6rem; font-family: monospace; font-size: 0.9em">
+          <code>{{.Host}}</code>
+        </td>
+        <td style="padding:0.3rem 0.6rem; text-align: right; font-variant-numeric: tabular-nums">
+          {{if .LatencyMs}}
+            {{if le .LatencyMs 50}}
+              <span style="color: #2ecc71; font-weight: 600">{{.LatencyMs}} ms</span>
+            {{else if le .LatencyMs 150}}
+              <span style="color: #f39c12">{{.LatencyMs}} ms</span>
+            {{else}}
+              <span style="color: #e74c3c; font-weight: 600">{{.LatencyMs}} ms</span>
+            {{end}}
+          {{else}}
+            <span style="color: var(--text-subtle)">—</span>
+          {{end}}
+        </td>
+        <td style="padding:0.3rem 0.6rem">
+          {{if .Healthy}}
+            <span class="pill pill-success">healthy</span>
+          {{else if .LastError}}
+            <span class="pill pill-warn" title="{{.LastError}}">degraded</span>
+          {{else}}
+            <span class="pill">unknown</span>
+          {{end}}
+        </td>
+        <td style="padding:0.3rem 0.6rem; color: var(--text-muted); font-size: 0.85em">
+          {{if .LastCheck.IsZero}}—{{else}}{{.LastCheck.Format "2006-01-02 15:04:05 UTC"}}{{end}}
+        </td>
+        <td style="padding:0.3rem 0.6rem; text-align: right; font-variant-numeric: tabular-nums">
+          {{.ProbesTotal}}
+          {{if gt .ProbesFailed 0}}
+            <span style="color: #e74c3c">({{.ProbesFailed}})</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{if not .DERPs}}
+      <tr><td colspan="8" style="padding:1rem; text-align:center; color:var(--text-muted)">
+        No DERP data yet. The cron runs every 5 minutes — first probe happens on container start.
+        Click "Re-probe all" to force a fresh run.
+      </td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top: 1rem">
+  <h3 style="margin: 0 0 0.5rem 0; font-size: 1em">
+    <i class="fa-solid fa-circle-info"></i> About
+  </h3>
+  <p class="sub" style="margin: 0.3rem 0">
+    The probe measures the time to complete a TLS handshake with each DERP's :443 endpoint.
+    ICMP is not used because many cloud DERP servers are configured to not respond to ping.
+    Lower latency = better. 0 ms or "—" means the probe never ran or the last probe failed.
+  </p>
+  <p class="sub" style="margin: 0.3rem 0">
+    <strong>Recommended DERP</strong> is the lowest-latency healthy DERP — useful when
+    deciding whether to deploy your own DERP in a closer city (e.g. Stockholm /
+    Helsinki for Russia &rarr; <50ms) instead of relying on Tailscale's public region
+    (e.g. WAW at ~150-300ms from Moscow via international peering).
+  </p>
+</div>
+{{end}}
