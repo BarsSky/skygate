@@ -290,8 +290,13 @@ func TestGenerateACLForPlane_B1883_PerCIDRViaInNoViaPath(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6001)
 	b188_3SeedPortalUser(t, d, 6001, "b188_3_user")
-	b188_3SeedNodeOwner(t, d, "60010", "b188_3_user", "b188_3_laptop", "tag:dev-infra-emilia")
-	b188_3SeedNodeOwner(t, d, "60011", "b188_3_user", "karolina", "tag:dev-infra-karolina")
+	// The tag stored in node_owner_map is the per-device tag
+	// (tag:dev-<user>-<device>, the v0.28.0 convention), NOT
+	// the infra-bucket tag. tagsByUser[user] uses this per-device
+	// tag, which is what the policy emits for the per-device
+	// autogroup:internet grant.
+	b188_3SeedNodeOwner(t, d, "60010", "b188_3_user", "b188_3_laptop", "tag:dev-b188_3_user-b188_3_laptop")
+	b188_3SeedNodeOwner(t, d, "60011", "b188_3_user", "karolina", "tag:dev-b188_3_user-karolina")
 	// device 60010 (b188_3_laptop) has per-device pref for emilia
 	if err := db.SetDeviceExitNodePref(d, 6001, "b188_3_laptop", "tag:dev-infra-emilia", 6001, true); err != nil {
 		t.Fatalf("seed pref: %v", err)
@@ -364,7 +369,7 @@ func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6002)
 	b188_3SeedPortalUser(t, d, 6002, "b188_3_nopref")
-	b188_3SeedNodeOwner(t, d, "60020", "b188_3_nopref", "b188_3_phone", "tag:dev-infra-emilia")
+	b188_3SeedNodeOwner(t, d, "60020", "b188_3_nopref", "b188_3_phone", "tag:dev-b188_3_nopref-b188_3_phone")
 	// NO SetDeviceExitNodePref call — the device has no
 	// per-device exit_node_pref.
 	b188_3SeedRule(t, d, 6002, 60020, "b188_3_nopref", "b188_3_phone", "emilia", "ip", "1.2.3.4")
@@ -410,7 +415,7 @@ func TestGenerateACLForPlane_B1883_LegacyRuleNoExitNodeID(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6003)
 	b188_3SeedPortalUser(t, d, 6003, "b188_3_legacy")
-	b188_3SeedNodeOwner(t, d, "60030", "b188_3_legacy", "b188_3_desktop", "tag:dev-infra-emilia")
+	b188_3SeedNodeOwner(t, d, "60030", "b188_3_legacy", "b188_3_desktop", "tag:dev-b188_3_legacy-b188_3_desktop")
 	if err := db.SetDeviceExitNodePref(d, 6003, "b188_3_desktop", "tag:dev-infra-emilia", 6003, true); err != nil {
 		t.Fatalf("seed pref: %v", err)
 	}
