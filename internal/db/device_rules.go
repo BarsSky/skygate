@@ -64,6 +64,14 @@ type ACLEntry struct {
 	DeviceIP       string
 	UserName       string
 	DeviceHostname string
+	// ExitNodeID is the device_rules.exit_node_id (the
+	// hostname of the exit-node the rule targets, e.g.
+	// "emilia" / "karolina"). Empty when the rule was
+	// created before v0.28.x added the column. The ACL
+	// builder reads this in v1.5.2 (B188.2) to attach a
+	// per-CIDR `via=[exit_node_tag]` constraint when the
+	// device has a per-device exit_node_pref that matches.
+	ExitNodeID string
 }
 
 // DomainRule is used by the autoupdater to walk enabled domain rules
@@ -371,7 +379,7 @@ func GetACLEntries(d *sql.DB) ([]ACLEntry, error) {
 	var out []ACLEntry
 	for rows.Next() {
 		var e ACLEntry
-		if err := rows.Scan(&e.TargetType, &e.TargetValue, &e.Action, &e.DeviceIP, &e.UserName, &e.DeviceHostname); err != nil {
+		if err := rows.Scan(&e.TargetType, &e.TargetValue, &e.Action, &e.DeviceIP, &e.UserName, &e.DeviceHostname, &e.ExitNodeID); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

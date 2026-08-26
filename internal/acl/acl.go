@@ -74,6 +74,52 @@ type NoopAlerter struct{}
 // SendAlert is the no-op implementation of Alerter.
 func (NoopAlerter) SendAlert(string) int64 { return 0 }
 
+// exitNodeTagToHostname strips the headscale tag prefix
+// from an exit-node tag and returns the bare hostname.
+//
+// Examples (v1.5.2 B188.2 conventions):
+//   "tag:dev-infra-emilia"  -> "emilia"
+//   "tag:dev-infra-karolina"-> "karolina"
+//   "tag:exit-emilia"       -> "emilia" (legacy, pre-B118)
+//   "tag:exit-node"         -> "exit-node" (catch-all sentinel — caller treats as non-match)
+//   "tag:invalid-foo"       -> "" (unrecognized shape — caller treats as non-match)
+//
+// The function does NOT validate that the hostname resolves
+// to a real headscale node — that's the caller's job
+// (and a non-match is a safe default: B188.2's per-CIDR
+// pin only fires when exit_node_id matches a real hostname,
+// so a malformed tag simply produces an unpinned grant, which
+// is the "fail open" behavior we want for /my/exit-rules
+// selective routing).
+//
+// 2026-08-26: v1.5.2 (B188.2).
+func exitNodeTagToHostname(tag string) string {
+	if tag == "" {
+		return ""
+	}
+	// Strip the "tag:" prefix. The body is "<bucket>-<host>".
+	// We accept any bucket ("dev-infra", "exit", future user
+	// buckets) — only the host after the LAST "-" is the
+	// hostname. The split is safe because the tag is built
+	// by skygate (no spaces, no special chars).
+	body := strings.TrimPrefix(tag, "tag:")
+	if body == "" || body == tag {
+		// no "tag:" prefix, or the whole string was "tag:"
+		return ""
+	}
+	// Find the LAST dash. The bucket is the part BEFORE the
+	// last dash; the host is the part AFTER. Examples:
+	//   "dev-infra-emilia"  -> bucket="dev-infra", host="emilia"
+	//   "exit-emilia"        -> bucket="exit",       host="emilia"
+	//   "exit-node"          -> bucket="",          host="exit-node" (catch-all — non-match)
+	//   "public"             -> no dash,            host="public" (no bucket — non-match)
+	idx := strings.LastIndex(body, "-")
+	if idx < 0 || idx == len(body)-1 {
+		return ""
+	}
+	return body[idx+1:]
+}
+
 // GenerateACL builds the per-user headscale 0.29 HuJSON policy
 // for the global default plane (every portal user with no
 // headscale_url override). Equivalent to
@@ -1065,61 +1111,41 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 
 	sb.WriteString("  \"grants\": [\n")
 
-	// 2026-07-25: v0.28.4 — per-device preferred exit-node
-	// grants. Emitted FIRST so Tailscale's first-match
-	// semantics pick the per-device via over the per-user
-	// via. The per-device grant is narrower (src is the
-	// exact device tag, not the user identity) AND has
-	// higher priority by virtue of position in the list.
+	// v1.5.2 (B188.2): REMOVED the per-device
+	// autogroup:internet grant with via=[exit_node_tag]
+	// (which used to live here). The pre-B188.2 design
+	// pinned autogroup:internet to the device's per-device
+	// exit_node_pref — which defeated the purpose of
+	// /my/exit-rules. The user-facing UI is a selective
+	// routing mechanism: "youtube.com via emilia,
+	// banking.com direct". If we pin the catch-all to
+	// emilia, EVERY traffic goes through emilia and the
+	// per-CIDR rules are redundant.
 	//
-	// Per-device grant shape:
-	//   { "src": ["tag:dev-<user>-<device>"],
-	//     "dst": ["autogroup:internet"],
-	//     "ip":  ["*"],
-	//     "via": ["<device-pref>"] }
+	// Post-B188.2: the per-CIDR grant loop below
+	// (around line 1246) adds via=[exit_node_tag] to
+	// each rule whose exit_node matches the device's
+	// per-device pref. That's the selective pin. The
+	// autogroup:internet catch-all is emitted at line
+	// 1314+ with NO via — non-pinned traffic goes
+	// direct. (The "loose" per-device grant at line
+	// 1314 was always there; it just was being
+	// shadowed by the via-pinned grant we removed.)
 	//
-	// dst is JUST autogroup:internet — the per-user grant
-	// below covers the user's own stuff (own devices, own
-	// subnet, shared/mesh CIDRs). The per-device grant
-	// exists ONLY to override the via for autogroup:internet
-	// (exit-node routing).
-	//
-	// Why emit per-device grants before per-user grants:
-	// Tailscale ACL is order-sensitive (first match wins).
-	// workstation-3 (tag:dev-admin-workstation-3) has a per-device via for
-	// relay-3. With per-device grant first, workstation-3's packets
-	// to autogroup:internet match the per-device grant
-	// (src=tag:dev-admin-workstation-3, dst=autogroup:internet,
-	// via=tag:exit-relay-3) and use relay-3. Without the
-	// per-device grant (or with it AFTER the per-user
-	// grant), workstation-3 would fall through to the per-user grant
-	// (src=admin@<baseDomain>, via=tag:exit-relay-1) and be
-	// pinned to relay-1.
-	//
-	// Devices WITHOUT a per-device pref don't get a
-	// per-device grant — they fall through to the per-user
-	// grant (and inherit the user's via, if any).
-	perDeviceGrantEmitted := false
-	for devTag, via := range viaByDevice {
-		if perDeviceGrantEmitted {
-			sb.WriteString(",\n")
-		}
-		sb.WriteString("    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"], \"via\": [\"" + via + "\"] }")
-		perDeviceGrantEmitted = true
-	}
+	// viaByDevice is still populated above (line 919+)
+	// and consumed by the per-CIDR grant loop below.
+	// We just don't emit the catch-all pin here anymore.
 
 	for i, idn := range identities {
 		if i > 0 {
 			sb.WriteString(",\n")
-		} else if perDeviceGrantEmitted {
-			// The per-device block above wrote its last
-			// entry WITHOUT a trailing comma (the loop
-			// pattern is "leading separator" — comma
-			// before every entry except the first).
-			// The first per-user grant needs a leading
-			// separator to keep the JSON list valid.
-			sb.WriteString(",\n")
 		}
+		// v1.5.2 (B188.2): removed the per-device
+		// autogroup:internet block above, so the
+		// first per-user grant is also the first grant
+		// in the list (no leading comma needed). The
+		// previous `else if perDeviceGrantEmitted`
+		// branch is gone with that block.
 		uname := strings.SplitN(idn, "@", 2)[0]
 		dst := []string{idn + ":*"}
 		// 2026-07-25: v0.28.2 — reference the
@@ -1251,12 +1277,14 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			continue
 		}
 		src := "\"*\""
+		var devTag string // tag:dev-<user>-<device> for via lookup; empty for src=* or src=device_ip
 		switch {
 		case e.UserName != "" && e.DeviceHostname != "":
 			// B176: see the comment in the ruleEntry
 			// loop above — headscale 0.29 + v0.28.0
 			// convention both require lowercase tags.
-			src = fmt.Sprintf("\"tag:dev-%s-%s\"", e.UserName, strings.ToLower(e.DeviceHostname))
+			devTag = "tag:dev-" + e.UserName + "-" + strings.ToLower(e.DeviceHostname)
+			src = "\"" + devTag + "\""
 		case e.DeviceIP != "":
 			src = fmt.Sprintf("\"%s\"", e.DeviceIP)
 		}
@@ -1266,7 +1294,39 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		// v2 parser doesn't split alias:port.
 		ruleAlias := "h-rule-" + strings.NewReplacer(
 			".", "-", "/", "-", ":", "_").Replace(e.TargetValue)
-		sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"] }")
+		// v1.5.2 (B188.2): per-CIDR exit-node pin. The
+		// user-facing /my/exit-rules UI is a SELECTIVE
+		// routing mechanism: "youtube.com via emilia,
+		// banking.com direct". For each per-device rule,
+		// attach a `via=[exit_node_tag]` constraint ONLY
+		// when the device's per-device exit_node_pref
+		// matches the rule's exit_node. Conditions:
+		//   1. devTag is set (rule has a per-device src)
+		//   2. viaByDevice[devTag] != "" (device has pref)
+		//   3. The pref's hostname matches e.ExitNodeID
+		//   4. e.ExitNodeID is non-empty (legacy rules
+		//      created before v0.28.x have empty
+		//      exit_node_id — they don't get a pin)
+		// This is the OPPOSITE of the pre-B188.2
+		// behaviour: instead of pinning the catch-all
+		// autogroup:internet, we pin each individual
+		// rule whose target exit matches the device's
+		// preference. Result: youtube.com via emilia,
+		// banking.com direct.
+		viaForGrant := ""
+		if devTag != "" && e.ExitNodeID != "" {
+			if prefTag, ok := viaByDevice[devTag]; ok && prefTag != "" {
+				prefHost := exitNodeTagToHostname(prefTag)
+				if prefHost != "" && prefHost == e.ExitNodeID {
+					viaForGrant = prefTag
+				}
+			}
+		}
+		if viaForGrant != "" {
+			sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"], \"via\": [\"" + viaForGrant + "\"] }")
+		} else {
+			sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"] }")
+		}
 	}
 
 	// 2026-07-25: v0.28.5b — loose per-device grants.

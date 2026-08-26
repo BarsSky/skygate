@@ -322,7 +322,17 @@ const (
 // src as tag:dev-<user>-<device> (preferred) instead of
 // src = device_ip (fallback for pre-v0.28.0 rows where the
 // backfill left the new columns empty).
-const qSelectEnabledACLEntries = `SELECT target_type, target_value, action, COALESCE(device_ip, '') AS device_ip, COALESCE(user_name, '') AS user_name, COALESCE(device_hostname, '') AS device_hostname FROM device_rules WHERE enabled = 1`
+//
+// v1.5.2 (B188.2): also returns exit_node_id so the ACL
+// builder can attach a per-CIDR `via=[exit_node_tag]` constraint
+// when the device has a per-device exit_node_pref that matches
+// the rule's exit_node. The pre-B188.2 ACL pinned autogroup:internet
+// for the device (per-device catch-all via=[exit_node_tag]) which
+// was wrong: the user-facing /my/exit-rules feature is a per-CIDR
+// pinning mechanism, not a "all internet via X" toggle. The new
+// per-CIDR via= gives the user selective routing — youtube.com
+// via emilia, banking.com direct, etc.
+const qSelectEnabledACLEntries = `SELECT target_type, target_value, action, COALESCE(device_ip, '') AS device_ip, COALESCE(user_name, '') AS user_name, COALESCE(device_hostname, '') AS device_hostname, COALESCE(exit_node_id, '') AS exit_node_id FROM device_rules WHERE enabled = 1`
 
 // qSelectEnabledDomainRules is used by the autoupdater (resolves DNS → /32
 // and inserts derived rules).
