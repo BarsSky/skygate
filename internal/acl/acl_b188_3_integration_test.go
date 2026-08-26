@@ -153,14 +153,35 @@ func b188_3SeedNodeOwner(t *testing.T, d *sql.DB, nodeID string, hostname, tag s
 }
 
 // b188_3SeedRule inserts a device_rules row with the
-// given (user, device, exit_node, target).
+// given (user, device, exit_node, target). Uses ON
+// CONFLICT DO NOTHING (with the B183 natural-key unique
+// index on (user_id, device_id, exit_node_id,
+// target_type, target_value)) so re-runs of the test are
+// idempotent.
 func b188_3SeedRule(t *testing.T, d *sql.DB, userID int64, deviceID int, exitNode, targetType, target string) {
 	t.Helper()
 	b188_3Exec(t, d,
 		`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled)
-		 VALUES ($1, $2, $3, $4, $5, 'accept', 1)`,
+		 VALUES ($1, $2, $3, $4, $5, 'accept', 1)
+		 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
 		userID, deviceID, exitNode, targetType, target,
 	)
+}
+
+// b188_3CleanupUser deletes all rows we may have inserted
+// for the given user_id. Called before each test to ensure
+// a clean slate (the unique constraints make re-insertion
+// tricky if the test was previously interrupted by a
+// panic or compile error).
+func b188_3CleanupUser(t *testing.T, d *sql.DB, userID int64) {
+	t.Helper()
+	b188_3Exec(t, d,
+		`DELETE FROM device_rules WHERE user_id = $1`, userID)
+	b188_3Exec(t, d,
+		`DELETE FROM device_exit_node_prefs WHERE user_id = $1`, userID)
+	// Don't DELETE from portal_users / node_owner_map —
+	// those have FK refs and the seed uses ON CONFLICT
+	// DO NOTHING so re-inserting is safe.
 }
 
 // b188_3CountGrantsWithVia returns the number of grants
@@ -274,6 +295,7 @@ func b188_3CountGrantsWithAutogroupNoVia(t *testing.T, policy string, devTag str
 //     unpinned per B188.2)
 func TestGenerateACLForPlane_B1883_PerCIDRViaInNoViaPath(t *testing.T) {
 	d := b188_3OpenTestDB(t)
+	b188_3CleanupUser(t, d, 6001)
 	b188_3SeedPortalUser(t, d, 6001, "b188_3_user")
 	b188_3SeedNodeOwner(t, d, "60010", "b188_3_laptop", "tag:dev-infra-emilia")
 	b188_3SeedNodeOwner(t, d, "60011", "karolina", "tag:dev-infra-karolina")
@@ -349,6 +371,7 @@ func TestGenerateACLForPlane_B1883_PerCIDRViaInNoViaPath(t *testing.T) {
 // pref, the per-CIDR grant is unpinned in BOTH paths.
 func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 	d := b188_3OpenTestDB(t)
+	b188_3CleanupUser(t, d, 6002)
 	b188_3SeedPortalUser(t, d, 6002, "b188_3_nopref")
 	b188_3SeedNodeOwner(t, d, "60020", "b188_3_phone", "tag:dev-infra-emilia")
 	// NO SetDeviceExitNodePref call — the device has no
@@ -393,6 +416,7 @@ func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 // pin in either path.
 func TestGenerateACLForPlane_B1883_LegacyRuleNoExitNodeID(t *testing.T) {
 	d := b188_3OpenTestDB(t)
+	b188_3CleanupUser(t, d, 6003)
 	b188_3SeedPortalUser(t, d, 6003, "b188_3_legacy")
 	b188_3SeedNodeOwner(t, d, "60030", "b188_3_desktop", "tag:dev-infra-emilia")
 	if err := db.SetDeviceExitNodePref(d, 6003, "b188_3_desktop", "tag:dev-infra-emilia", 6003, true); err != nil {
