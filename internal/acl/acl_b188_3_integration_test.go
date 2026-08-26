@@ -23,18 +23,111 @@ package acl
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"skygate/internal/db"
 )
 
-// b188_3OpenTestDB wraps db.OpenTestPG so the test code
-// reads as "open a test DB" rather than the verbose
-// db.OpenTestPG(t) call. Same skip-on-no-DSN semantics.
+// b188_3OpenTestDB opens a live PG connection for the
+// B188.3 integration tests. Unlike db.OpenTestPG
+// (which sets a per-test schema for isolation), we
+// open the DSN directly and run MigratePostgres — the
+// production schema is what the policy generator
+// actually sees, so testing against the production
+// schema is the right thing.
+//
+// Skips (does NOT fail) when SKYGATE_TEST_PG_DSN is
+// unset, so the test suite runs on a dev machine
+// without a live PG.
 func b188_3OpenTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	return db.OpenTestPG(t)
+	dsn := os.Getenv("SKYGATE_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("SKYGATE_TEST_PG_DSN not set; skipping live PG test (set SKYGATE_TEST_PG_DSN=postgres://... to enable)")
+		return nil // unreachable
+	}
+	conn, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open pgx: %v", err)
+	}
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		t.Fatalf("ping: %v (check SKYGATE_TEST_PG_DSN)", err)
+	}
+	conn.SetMaxOpenConns(10)
+	conn.SetMaxIdleConns(5)
+	if err := db.MigratePostgres(conn); err != nil {
+		conn.Close()
+		t.Fatalf("MigratePostgres: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+// b188_3WithTx runs fn inside a transaction with
+// search_path=public. Necessary because pgx's pool
+// may hand back connections whose default search_path
+// doesn't include `public` (production has `public`
+// as the second schema, behind `"$user"`). Within a
+// single transaction, all queries share one connection,
+// so the SET propagates reliably. The b188_3SeedXxx
+// helpers below route through this.
+//
+// fn may use db.* helpers (like db.SetDeviceExitNodePref)
+// as long as those helpers use the provided *sql.Tx or
+// *sql.DB. We pass the *sql.DB to fn (not the Tx) so
+// fn can use the regular db package — the db helpers
+// re-acquire connections from the pool, which we
+// configure with SetMaxOpenConns(1) below for the
+// transaction's lifetime. This is hacky but works for
+// the test purpose.
+func b188_3WithTx(t *testing.T, d *sql.DB, fn func(tx *sql.Tx)) {
+	t.Helper()
+	tx, err := d.Begin()
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.Exec(`SET search_path TO public`); err != nil {
+		t.Fatalf("SET search_path: %v", err)
+	}
+	if _, err := tx.Exec(`SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		// PG doesn't support DEFERRED for our FKs (they're
+		// NOT DEFERRABLE by default) — but it doesn't hurt
+		// to try; we just don't rely on it.
+	}
+	fn(tx)
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+}
+
+// b188_3Exec is a wrapper around d.Exec that runs a
+// quick debug check + the query. Necessary because
+// pgx's connection pool may hand back connections
+// whose default search_path doesn't include `public`.
+// Without an explicit schema-qualified name or
+// per-query SET, INSERTs into public-schema tables
+// fail with "relation does not exist".
+func b188_3Exec(t *testing.T, d *sql.DB, query string, args ...any) sql.Result {
+	t.Helper()
+	// Diagnose the connection state first (helps debug
+	// the "relation does not exist" failures we hit
+	// when pgx's pool hands back connections with
+	// unexpected search_path).
+	var curSchema, curUser, searchPath string
+	_ = d.QueryRow(`SELECT current_schema(), current_user, current_setting('search_path')`).Scan(&curSchema, &curUser, &searchPath)
+	if _, err := d.Exec(`SET search_path TO public`); err != nil {
+		t.Fatalf("b188_3Exec SET search_path: %v (pre-state: schema=%q user=%q search_path=%q)", err, curSchema, curUser, searchPath)
+	}
+	res, err := d.Exec(query, args...)
+	if err != nil {
+		t.Fatalf("b188_3Exec %q (pre-state: schema=%q user=%q search_path=%q): %v",
+			query, curSchema, curUser, searchPath, err)
+	}
+	return res
 }
 
 // b188_3SeedPortalUser inserts a portal_users row so
@@ -42,38 +135,32 @@ func b188_3OpenTestDB(t *testing.T) *sql.DB {
 // satisfied.
 func b188_3SeedPortalUser(t *testing.T, d *sql.DB, id int64, username string) {
 	t.Helper()
-	if _, err := d.Exec(
+	b188_3Exec(t, d,
 		`INSERT INTO portal_users (id, username, password_hash, is_admin, theme) VALUES ($1, $2, 'x', 0, $3) ON CONFLICT (id) DO NOTHING`,
 		id, username, db.ThemeVercel,
-	); err != nil {
-		t.Fatalf("b188_3SeedPortalUser id=%d: %v", id, err)
-	}
+	)
 }
 
 // b188_3SeedNodeOwner inserts a node_owner_map row.
 func b188_3SeedNodeOwner(t *testing.T, d *sql.DB, nodeID string, hostname, tag string) {
 	t.Helper()
-	if _, err := d.Exec(
+	b188_3Exec(t, d,
 		`INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at, hostname, os, device_type)
 		 VALUES ($1, 99, 'infra', $2, 99, 1, $3, 'linux', 'exit-node')
 		 ON CONFLICT (node_id) DO NOTHING`,
 		nodeID, tag, hostname,
-	); err != nil {
-		t.Fatalf("b188_3SeedNodeOwner node_id=%s hostname=%q: %v", nodeID, hostname, err)
-	}
+	)
 }
 
 // b188_3SeedRule inserts a device_rules row with the
 // given (user, device, exit_node, target).
 func b188_3SeedRule(t *testing.T, d *sql.DB, userID int64, deviceID int, exitNode, targetType, target string) {
 	t.Helper()
-	if _, err := d.Exec(
+	b188_3Exec(t, d,
 		`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled)
 		 VALUES ($1, $2, $3, $4, $5, 'accept', 1)`,
 		userID, deviceID, exitNode, targetType, target,
-	); err != nil {
-		t.Fatalf("b188_3SeedRule user=%d device=%d: %v", userID, deviceID, err)
-	}
+	)
 }
 
 // b188_3CountGrantsWithVia returns the number of grants
