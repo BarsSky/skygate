@@ -44,61 +44,35 @@ func b188SeedPortalUser(t *testing.T, d *sql.DB, id int64, username string) {
 	}
 }
 
-// b188UserExitTag returns the current exit_node_tag for
-// a (user_id) row in user_exit_node_prefs. Helper for
-// the post-migration assertions.
-func b188UserExitTag(t *testing.T, d *sql.DB, userID int64) string {
+// b188UserPrefRow fetches (exit_node_tag, via_enabled) for
+// a user_id row. Returns ("", false) when the row is gone.
+func b188UserPrefRow(t *testing.T, d *sql.DB, userID int64) (string, bool) {
 	t.Helper()
 	var tag string
+	var via int
 	if err := d.QueryRow(
-		`SELECT exit_node_tag FROM user_exit_node_prefs WHERE user_id = $1`,
+		`SELECT exit_node_tag, via_enabled FROM user_exit_node_prefs WHERE user_id = $1`,
 		userID,
-	).Scan(&tag); err != nil {
-		t.Fatalf("b188UserExitTag user_id=%d: %v", userID, err)
+	).Scan(&tag, &via); err != nil {
+		t.Fatalf("b188UserPrefRow user_id=%d: %v", userID, err)
 	}
-	return tag
+	return tag, via != 0
 }
 
-// b188UserExitViaEnabled returns the current via_enabled
-// for a (user_id) row in user_exit_node_prefs.
-func b188UserExitViaEnabled(t *testing.T, d *sql.DB, userID int64) bool {
-	t.Helper()
-	var v int
-	if err := d.QueryRow(
-		`SELECT via_enabled FROM user_exit_node_prefs WHERE user_id = $1`,
-		userID,
-	).Scan(&v); err != nil {
-		t.Fatalf("b188UserExitViaEnabled user_id=%d: %v", userID, err)
-	}
-	return v != 0
-}
-
-// b188DeviceExitTag returns the current exit_node_tag for
-// a (user_id, device_hostname) row in device_exit_node_prefs.
-func b188DeviceExitTag(t *testing.T, d *sql.DB, userID int64, hostname string) string {
+// b188DevicePrefRow fetches (exit_node_tag, via_enabled) for
+// a (user_id, device_hostname) row. Returns ("", false) when
+// the row is gone.
+func b188DevicePrefRow(t *testing.T, d *sql.DB, userID int64, hostname string) (string, bool) {
 	t.Helper()
 	var tag string
+	var via int
 	if err := d.QueryRow(
-		`SELECT exit_node_tag FROM device_exit_node_prefs WHERE user_id = $1 AND device_hostname = $2`,
+		`SELECT exit_node_tag, via_enabled FROM device_exit_node_prefs WHERE user_id = $1 AND device_hostname = $2`,
 		userID, hostname,
-	).Scan(&tag); err != nil {
-		t.Fatalf("b188DeviceExitTag user=%d host=%s: %v", userID, hostname, err)
+	).Scan(&tag, &via); err != nil {
+		t.Fatalf("b188DevicePrefRow user=%d host=%s: %v", userID, hostname, err)
 	}
-	return tag
-}
-
-// b188DeviceExitViaEnabled returns the current via_enabled
-// for a (user_id, device_hostname) row.
-func b188DeviceExitViaEnabled(t *testing.T, d *sql.DB, userID int64, hostname string) bool {
-	t.Helper()
-	var v int
-	if err := d.QueryRow(
-		`SELECT via_enabled FROM device_exit_node_prefs WHERE user_id = $1 AND device_hostname = $2`,
-		userID, hostname,
-	).Scan(&v); err != nil {
-		t.Fatalf("b188DeviceExitViaEnabled user=%d host=%s: %v", userID, hostname, err)
-	}
-	return v != 0
+	return tag, via != 0
 }
 
 // TestMigrateV061PG_TagBackfill_UserPref — the
@@ -120,10 +94,11 @@ func TestMigrateV061PG_TagBackfill_UserPref(t *testing.T) {
 		t.Fatalf("migrateV061PG: %v", err)
 	}
 
-	if got := b188UserExitTag(t, d, 6001); got != "tag:dev-infra-emilia" {
-		t.Errorf("user pref tag = %q, want %q", got, "tag:dev-infra-emilia")
+	tag, via := b188UserPrefRow(t, d, 6001)
+	if tag != "tag:dev-infra-emilia" {
+		t.Errorf("user pref tag = %q, want %q", tag, "tag:dev-infra-emilia")
 	}
-	if !b188UserExitViaEnabled(t, d, 6001) {
+	if !via {
 		t.Errorf("user pref via_enabled flipped to false; should be preserved")
 	}
 }
@@ -148,10 +123,11 @@ func TestMigrateV061PG_TagBackfill_DevicePref(t *testing.T) {
 		t.Fatalf("migrateV061PG: %v", err)
 	}
 
-	if got := b188DeviceExitTag(t, d, 6002, "basic"); got != "tag:dev-infra-emilia" {
-		t.Errorf("device pref tag = %q, want %q", got, "tag:dev-infra-emilia")
+	tag, via := b188DevicePrefRow(t, d, 6002, "basic")
+	if tag != "tag:dev-infra-emilia" {
+		t.Errorf("device pref tag = %q, want %q", tag, "tag:dev-infra-emilia")
 	}
-	if !b188DeviceExitViaEnabled(t, d, 6002, "basic") {
+	if !via {
 		t.Errorf("device pref via_enabled=false after migration; want true (B188 re-enable)")
 	}
 }
@@ -177,11 +153,12 @@ func TestMigrateV061PG_ViaBackfill_OnlyForRealTags(t *testing.T) {
 	}
 
 	// The tag should still be the legacy form (unresolved).
-	if got := b188DeviceExitTag(t, d, 6003, "ghost-device"); got != "tag:exit-ghost-device" {
-		t.Errorf("unresolved tag should be left alone, got %q", got)
+	tag, via := b188DevicePrefRow(t, d, 6003, "ghost-device")
+	if tag != "tag:exit-ghost-device" {
+		t.Errorf("unresolved tag should be left alone, got %q", tag)
 	}
 	// via_enabled should still be 0 (we don't pin to a ghost tag).
-	if b188DeviceExitViaEnabled(t, d, 6003, "ghost-device") {
+	if via {
 		t.Errorf("via_enabled should stay false for ghost-tag row")
 	}
 }
@@ -201,10 +178,10 @@ func TestMigrateV061PG_AlreadyEnabledNoOp(t *testing.T) {
 		t.Fatalf("migrateV061PG: %v", err)
 	}
 
-	if got := b188DeviceExitTag(t, d, 6004, "phone"); got != "tag:dev-infra-karolina" {
+	if got, _ := b188DevicePrefRow(t, d, 6004, "phone"); got != "tag:dev-infra-karolina" {
 		t.Errorf("tag should stay %q, got %q", "tag:dev-infra-karolina", got)
 	}
-	if !b188DeviceExitViaEnabled(t, d, 6004, "phone") {
+	if _, via := b188DevicePrefRow(t, d, 6004, "phone"); !via {
 		t.Errorf("via_enabled should stay true")
 	}
 }
@@ -226,7 +203,7 @@ func TestMigrateV061PG_Idempotent(t *testing.T) {
 	if err := migrateV061PG(d); err != nil {
 		t.Fatalf("migrateV061PG first: %v", err)
 	}
-	first := b188DeviceExitTag(t, d, 6005, "laptop")
+	first, _ := b188DevicePrefRow(t, d, 6005, "laptop")
 	if first != "tag:dev-infra-sharlotta" {
 		t.Fatalf("after first pass: tag = %q, want %q", first, "tag:dev-infra-sharlotta")
 	}
@@ -235,11 +212,11 @@ func TestMigrateV061PG_Idempotent(t *testing.T) {
 	if err := migrateV061PG(d); err != nil {
 		t.Fatalf("migrateV061PG second: %v", err)
 	}
-	second := b188DeviceExitTag(t, d, 6005, "laptop")
+	second, _ := b188DevicePrefRow(t, d, 6005, "laptop")
 	if second != first {
 		t.Errorf("after second pass: tag changed from %q to %q", first, second)
 	}
-	if !b188DeviceExitViaEnabled(t, d, 6005, "laptop") {
+	if _, via := b188DevicePrefRow(t, d, 6005, "laptop"); !via {
 		t.Errorf("via_enabled should still be true after second pass")
 	}
 }
@@ -263,17 +240,17 @@ func TestMigrateV061PG_MultipleHosts(t *testing.T) {
 		t.Fatalf("migrateV061PG: %v", err)
 	}
 
-	if got := b188DeviceExitTag(t, d, 6006, "dev1"); got != "tag:dev-infra-emilia" {
+	if got, _ := b188DevicePrefRow(t, d, 6006, "dev1"); got != "tag:dev-infra-emilia" {
 		t.Errorf("dev1 tag = %q, want %q", got, "tag:dev-infra-emilia")
 	}
-	if got := b188DeviceExitTag(t, d, 6006, "dev2"); got != "tag:dev-infra-karolina" {
+	if got, _ := b188DevicePrefRow(t, d, 6006, "dev2"); got != "tag:dev-infra-karolina" {
 		t.Errorf("dev2 tag = %q, want %q", got, "tag:dev-infra-karolina")
 	}
 	// Both should have via_enabled flipped to 1.
-	if !b188DeviceExitViaEnabled(t, d, 6006, "dev1") {
+	if _, via := b188DevicePrefRow(t, d, 6006, "dev1"); !via {
 		t.Errorf("dev1 via_enabled should be true")
 	}
-	if !b188DeviceExitViaEnabled(t, d, 6006, "dev2") {
+	if _, via := b188DevicePrefRow(t, d, 6006, "dev2"); !via {
 		t.Errorf("dev2 via_enabled should be true")
 	}
 }

@@ -108,23 +108,16 @@ func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request
 		return
 	}
 	rawTag := strings.TrimSpace(r.FormValue("tag"))
-	// B188: per-user pref. The dropdown sends the
+	// B188 + refactor: the per-user dropdown sends the
 	// exit-node's hostname in a hidden `hostname` field
-	// (added in the same commit) so we can resolve the
-	// canonical tag via node_owner_map. Backwards-compat
-	// fallback: if no `hostname` is posted, we trust the
-	// raw tag (legacy form path) and skip normalization.
+	// so we can normalise the raw tag against node_owner_map.
+	// Empty hostname or empty tag: trust the raw tag (legacy
+	// compat for older form posts).
 	hostname := strings.ToLower(strings.TrimSpace(r.FormValue("hostname")))
-	tag := rawTag
-	if rawTag != "" && hostname != "" {
-		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
-		if err != nil {
-			http.Error(w, "tag normalization: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if canonicalTag != "" {
-			tag = canonicalTag
-		}
+	tag, err := db.ResolveExitNodeTag(s.DB, hostname, rawTag)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	// 2026-07-25: v0.28.5 — strict pinning is opt-in.
 	// The form posts a `via` field ("1" to enable the

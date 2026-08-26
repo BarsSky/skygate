@@ -833,6 +833,27 @@ func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, 
 	if useVia {
 		acl, err = GenerateACLWithViaForPlane(d, planeURL)
 	} else {
+		// v1.5.2 (B188.2): the legacy GenerateACLForPlane
+		// (no-via) path does NOT have the per-CIDR via=
+		// logic from GenerateACLWithViaForPlane. When
+		// useVia=false (and the operator has not flipped
+		// SKYGATE_ACL_VIA_ENABLED=true), the legacy code
+		// pins the per-device autogroup:internet to the
+		// device's exit_node_pref (the B188 bug).
+		//
+		// We keep the legacy path for now because some
+		// call sites (the bot's /clear, /add_rule, etc.)
+		// explicitly pass useVia=false to skip the per-user
+		// / per-device via= grants (they want a "plain"
+		// policy without pinning). The operator's global
+		// SKYGATE_ACL_VIA_ENABLED=true is the canonical way
+		// to get the B188.2 behaviour; the explicit-false
+		// call sites are a deliberate opt-out.
+		//
+		// TODO (B188.3): apply the B188.2 per-CIDR via=
+		// logic to GenerateACLForPlane too (so the
+		// per-device catch-all isn't pinned to the
+		// device's pref in the no-via path either).
 		acl, err = GenerateACLForPlane(d, planeURL)
 	}
 	if err != nil {

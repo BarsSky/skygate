@@ -32,6 +32,7 @@ package db
 
 import (
 	"database/sql"
+	"strconv"
 	"testing"
 )
 
@@ -44,33 +45,15 @@ func b188SeedNodeOwner(t *testing.T, d *sql.DB, nodeID int, hostname, tag string
 	t.Helper()
 	// node_owner_map has a unique-ish PK on node_id (it's
 	// TEXT but practically unique per node). We pass the
-	// integer as a string for portability.
+	// integer as a string for portability (strconv.Itoa).
 	if _, err := d.Exec(
 		`INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at, hostname, os, device_type)
 		 VALUES ($1, 99, 'infra', $2, 99, 1, $3, 'linux', 'exit-node')
 		 ON CONFLICT (node_id) DO NOTHING`,
-		nodeIDToString(nodeID), tag, hostname,
+		strconv.Itoa(nodeID), tag, hostname,
 	); err != nil {
 		t.Fatalf("b188SeedNodeOwner node_id=%d hostname=%q: %v", nodeID, hostname, err)
 	}
-}
-
-// nodeIDToString converts an int to the string form
-// node_owner_map expects. Kept as a tiny helper so the
-// test reads as data not as fmt.Sprintf plumbing.
-func nodeIDToString(n int) string {
-	const digits = "0123456789"
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = digits[n%10]
-		n /= 10
-	}
-	return string(buf[i:])
 }
 
 // TestNormalizeExitNodeTag_KnownHostname — the happy

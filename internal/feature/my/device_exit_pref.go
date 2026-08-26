@@ -90,23 +90,14 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "device not found or not owned by you", http.StatusForbidden)
 		return
 	}
-	// B188: normalize the form's tag value to the canonical
-	// headscale tag. Empty form tag → empty stored tag
-	// (caller is clearing the pref — no normalization needed).
-	tag := rawTag
-	if rawTag != "" {
-		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
-		if err != nil {
-			http.Error(w, "tag normalization: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if canonicalTag == "" {
-			// Unknown hostname — refuse the write so a
-			// typo doesn't silently insert a ghost tag.
-			http.Error(w, "device not found in node_owner_map; cannot resolve exit-node tag for "+hostname, http.StatusBadRequest)
-			return
-		}
-		tag = canonicalTag
+	// B188 + refactor: ResolveExitNodeTag normalises the form's
+	// tag value against node_owner_map. Empty form tag clears
+	// the pref; non-empty tag must resolve to a real node
+	// (refuse 400 on a typo so a ghost tag doesn't get inserted).
+	tag, err := db.ResolveExitNodeTag(s.DB, hostname, rawTag)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if err := db.SetDeviceExitNodePref(s.DB, c.UserID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -180,21 +171,13 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 		http.Error(w, "user_id and hostname required", http.StatusBadRequest)
 		return
 	}
-	// B188: same normalization as PostMyDevicePreferredExit.
-	// The /admin/devices template had the identical
-	// `tag:exit-<hostname>` ghost-tag bug.
-	tag := rawTag
-	if rawTag != "" {
-		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
-		if err != nil {
-			http.Error(w, "tag normalization: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if canonicalTag == "" {
-			http.Error(w, "device not found in node_owner_map; cannot resolve exit-node tag for "+hostname, http.StatusBadRequest)
-			return
-		}
-		tag = canonicalTag
+	// B188 + refactor: same ResolveExitNodeTag helper as the
+	// per-user handler above. The /admin/devices template had
+	// the identical `tag:exit-<hostname>` ghost-tag bug.
+	tag, err := db.ResolveExitNodeTag(s.DB, hostname, rawTag)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if err := db.SetDeviceExitNodePref(s.DB, userID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

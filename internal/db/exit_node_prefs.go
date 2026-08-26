@@ -14,6 +14,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 )
 
@@ -323,3 +324,46 @@ func NormalizeExitNodeTag(d *sql.DB, hostname string) (string, error) {
 	}
 	return tag, nil
 }
+
+// ResolveExitNodeTag normalises the form's tag value against
+// node_owner_map. It is the single entry point for the 3 form
+// handlers (PostMyDevicePreferredExit, PostAdminDevicePreferredExit,
+// PostMyExitNodePreferred) that store exit-node prefs.
+//
+// Semantics:
+//   - empty rawTag  -> returns ("", nil). The caller is
+//     clearing the pref; no DB lookup needed. The Pref helpers
+//     interpret "" as "DELETE the row".
+//   - non-empty rawTag -> looks up the canonical tag for hostname.
+//     If the hostname isn't in node_owner_map, returns
+//     ("", ErrNoSuchDevice) so the caller can return 400 with
+//     a precise error message. Otherwise returns the canonical
+//     tag (which is identical to rawTag in 99% of cases — the
+//     function is "fail-pass-through" rather than "fail-correct").
+//
+// hostname is the device hostname from the form (the handler
+// lowercases before calling). Caller doesn't need to lowercase
+// again — we do it inside the SQL via LOWER(hostname).
+//
+// 2026-08-26: v1.5.2 (B188 refactor). Replaces 3 copy-pasted
+// 16-line blocks in the 3 form handlers.
+func ResolveExitNodeTag(d *sql.DB, hostname, rawTag string) (string, error) {
+	if rawTag == "" {
+		return "", nil
+	}
+	canonicalTag, err := NormalizeExitNodeTag(d, hostname)
+	if err != nil {
+		return "", fmt.Errorf("tag normalization: %w", err)
+	}
+	if canonicalTag == "" {
+		return "", ErrNoSuchExitNodeDevice
+	}
+	return canonicalTag, nil
+}
+
+// ErrNoSuchExitNodeDevice is returned by ResolveExitNodeTag
+// when the form is being set (rawTag != "") but the hostname
+// doesn't resolve in node_owner_map. The handler turns this
+// into a 400 with a precise message so a typo in the dropdown
+// doesn't silently insert a ghost tag.
+var ErrNoSuchExitNodeDevice = fmt.Errorf("device not found in node_owner_map; cannot resolve exit-node tag")

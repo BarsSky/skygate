@@ -1,24 +1,22 @@
-// v1.5.2 (B188.2) — per-CIDR exit-node pin tests.
+// v1.5.2 (B188.2) — per-CIDR exit-node pin unit tests.
 //
-// B188.2 changed the ACL builder:
-//   1. Removed the per-device autogroup:internet grant with via=
-//      (which pinned the catch-all to the device's exit_node_pref).
-//   2. Added via=[exit_node_tag] to per-CIDR h-rule grants when
-//      the device has a per-device exit_node_pref that matches
-//      the rule's exit_node_id.
+// The per-CIDR via= logic in GenerateACLWithViaForPlane is
+// covered end-to-end by:
+//   * scripts/check_b188_2.sh contracts S-X (live policy
+//     checks on the VM).
+//   * The TestExitNodeTagToHostname unit test below (the
+//     tag-stripping helper that bridges between the per-device
+//     pref's full tag and the per-CIDR rule's hostname).
 //
-// These tests pin the new behavior with both unit-level
-// (exitNodeTagToHostname) and end-to-end (GenerateACLWithViaForPlane)
-// coverage.
-//
-// Runs on a live PG via openTestDB (skipped when SKYGATE_TEST_PG_DSN
-// is unset).
+// We don't repeat the end-to-end coverage as a Go unit test
+// (it would require a full openTestDB + a complex seeded
+// dataset, duplicating the live check's value with none of
+// its up-to-date-ness). The B-check script is the right
+// place for the end-to-end contract.
+
 package acl
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // TestExitNodeTagToHostname covers the B188.2 helper that
 // strips the tag prefix to extract the bare hostname. The
@@ -85,78 +83,4 @@ func TestExitNodeTagToHostname(t *testing.T) {
 			t.Errorf("exitNodeTagToHostname(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
-}
-
-// TestGenerateACLWithViaForPlane_B1882_PerCIDRViaIsSelective
-// pins the new selective pin behavior end-to-end:
-//   - Device with per-device pref for emilia + per-CIDR rules
-//     for emilia: h-rule grants have via=[emilia]
-//   - Device with per-device pref for emilia + per-CIDR rules
-//     for OTHER exit_node: h-rule grants do NOT have via=
-//   - Device with per-device pref for emilia but no matching
-//     per-CIDR rules: no via on anything (falls through to
-//     the per-user grant or direct)
-//   - Device WITHOUT per-device pref: no via on anything
-//   - autogroup:internet grants for tagged devices: NO via
-//     (B188.2: the catch-all is no longer pinned)
-func TestGenerateACLWithViaForPlane_B1882_PerCIDRViaIsSelective(t *testing.T) {
-	// This is a high-level test that requires a real PG
-	// (the helper needs the per-device pref map populated
-	// from the DB). It's covered end-to-end by the live
-	// B188.2 check_b188.sh contract V (the per-device
-	// autogroup:internet grant is gone, the h-rule grants
-	// have via= when matching).
-	//
-	// The unit-level coverage (exitNodeTagToHostname) is
-	// above; the migration + handlers are covered by
-	// separate tests. Skipping here to avoid the
-	// openTestDB setup cost for what's effectively an
-	// integration test.
-	t.Skip("B188.2 end-to-end coverage is on the live VM via check_b188.sh (contract V). The unit-level helper is covered by TestExitNodeTagToHostname above.")
-}
-
-// TestGenerateACLWithViaForPlane_B1882_NoCatchAllPin is a
-// documentation test that captures the B188.2 policy
-// change in code-comment form. It also serves as a
-// regression test against anyone accidentally re-adding
-// the per-device autogroup:internet grant with via=.
-//
-// To enable: run `grep` over the generated policy string
-// and verify that no per-device autogroup:internet grant
-// has a via= field.
-func TestGenerateACLWithViaForPlane_B1882_NoCatchAllPin_DocOnly(t *testing.T) {
-	t.Skip("Documentation test. The actual check is the live check_b188.sh contract V + W: per-device autogroup:internet should not have via= (it doesn't — only via-less loose grants + per-CIDR with via= matching the pref).")
-}
-
-// FindB1882CatchAllGrant scans the generated policy for
-// the legacy per-device autogroup:internet-with-via grant
-// (B188-removed). Returns the grant if found, nil otherwise.
-// Used by the live check_b188.sh to confirm the catch-all
-// was actually removed.
-func FindB1882CatchAllGrant(policyJSON string) string {
-	// Simple substring search — the legacy grant is uniquely
-	// identified by the dst=autogroup:internet + via=...
-	// combo, which is NOT emitted by the per-CIDR grant loop
-	// (which has dst=h-rule-X). The catch-all in the new
-	// design is emitted at the loose per-device loop with
-	// NO via. So any "autogroup:internet" + "via" combo in
-	// the same grant is a regression.
-	for i := 0; i < len(policyJSON); i++ {
-		idx := strings.Index(policyJSON[i:], `"dst": ["autogroup:internet"]`)
-		if idx < 0 {
-			return ""
-		}
-		start := i + idx
-		// Look for the closing } of this grant
-		end := strings.Index(policyJSON[start:], "}")
-		if end < 0 {
-			return ""
-		}
-		grant := policyJSON[start : start+end+1]
-		if strings.Contains(grant, `"via":`) {
-			return grant
-		}
-		i = start + end
-	}
-	return ""
 }
