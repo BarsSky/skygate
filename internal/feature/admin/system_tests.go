@@ -558,7 +558,7 @@ var TestRegistry = []SystemTestDef{
 			if !hasPattern {
 				return SystemTestFail, fmt.Sprintf("DeleteNode(%d) error %q does not match the B162 expected patterns (node not found / no longer exists in NodeStore)", badID, msg)
 			}
-			return SystemTestPass, fmt.Sprintf("headscale correctly returns 'not found' for missing id (B162 410-Gone path)")
+			return SystemTestPass, "headscale correctly returns 'not found' for missing id (B162 410-Gone path)"
 		},
 	},
 	{

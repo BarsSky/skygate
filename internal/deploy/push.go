@@ -46,7 +46,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -196,12 +195,4 @@ func writeDeployAudit(ctx context.Context, db *sql.DB, action, target string, me
 		 VALUES (0, 'skygate-operator', $1, $2, now())`,
 		action, detail)
 	return err
-}
-
-// syncTargetKey is the canonical S3 layout helper. Exposed
-// for tests + the /admin/deploy page (which renders the
-// "expected location" of the in-flight push for operator
-// confirmation).
-func syncTargetKey(target string) string {
-	return filepath.ToSlash(filepath.Join("deploy", target))
 }

@@ -86,8 +86,6 @@
 //     the certsync log lines.
 //
 // Concurrency:
-//   - inFlightPull mutex (process-local) prevents two parallel
-//     pulls from racing. The pull is fast (S3 + atomic rename
 //     + 1 Caddy reload) so a 30s tick never overlaps with
 //     itself in practice; the mutex is a safety net.
 //   - The local .version cache is read on every tick; it's a
@@ -96,10 +94,8 @@ package certsync
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -127,7 +123,6 @@ import (
 // internals.
 type CertSync struct {
 	mu              sync.Mutex
-	inFlightPull    bool
 	lastLocalVersion int64
 	lastLocalSHA     string
 }
@@ -647,16 +642,6 @@ func isNotFound(err error) bool {
 // page (B148) which renders "current cert" info.
 func ReadCertBytes(dir string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(dir, LocalCert))
-}
-
-// sha256Hex is a small helper used by validateCertKeyPair
-// and the future "current cert SHA" UI label. Returns the
-// hex-encoded SHA-256 of the cert body (NOT the cert +
-// key — the key is sensitive and shouldn't be hashed
-// into a public field).
-func sha256Hex(b []byte) string {
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
 }
 
 // _ silences the "imported and not used" warning for
