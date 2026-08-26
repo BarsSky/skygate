@@ -1,7 +1,7 @@
 #!/bin/bash
-# check_td15.sh — pin: no unescaped backticks in run_check descriptions.
+# check_td15.sh - pin: no unescaped backticks in run_check descriptions.
 #
-# TD-15 (v1.5.2) — false-alarm "headscale: command not found" at line
+# TD-15 (v1.5.2) - false-alarm "headscale: command not found" at line
 # 3221 of scripts/verify_pre_deploy.sh. The run_check "B160" call had
 # its description argument in double quotes, but the description
 # contained unescaped backticks around `headscale nodes expire
@@ -12,28 +12,29 @@
 # "scripts/verify_pre_deploy.sh: line 3221: headscale: command not
 # found" to stderr. The run_check function captured stderr via
 # `$(bash -c "$cmd" 2>&1)`, the failure bubbled up via $?, and
-# the entire verify_pre_deploy.sh exited non-zero — even though
+# the entire verify_pre_deploy.sh exited non-zero - even though
 # the B160 check itself was clean. The pre-push hook printed
-# "catalog RED — push ABORTED" but git push actually succeeded
+# "catalog RED - push ABORTED" but git push actually succeeded
 # (the script's non-zero exit was treated as a false alarm by
 # the operator's background task).
 #
 # This check pins: every run_check description in
 # scripts/verify_pre_deploy.sh is free of unescaped backticks.
-# Catches the regression class — any future B-description with
+# Catches the regression class - any future B-description with
 # markdown-style backticks will fail the catalog instead of
 # silently tripping command substitution.
 #
 # Two known-safe patterns are explicitly allowed:
 #  - escaped backticks: \`  (the backslash is what bash sees
-#    inside the double-quoted string; the `\` is a no-op
-#    visually)
-#  - backticks inside single-quoted arguments (the inner
-#    "cmd" in run_check is single-quoted by convention, but
-#    we don't depend on that — we only check the
-#    description argument)
+#    inside the double-quoted string, the `\` is a no-op
+#    visual)
+#  - backticks inside single-quoted arguments to echo (the
+#    inner "cmd" in `run_check` is in single quotes by
+#    convention, but we don't depend on that - we just check
+#    the description argument)
 #
-# Contract A: 0 unescaped backticks in any run_check description.
+# Contract A: 0 unescaped backticks in any run_check description
+#             (handles B### AND TD-### names)
 # Contract B: 0 unescaped backticks in any echo line of
 #             scripts/check_*.sh (the same bug class).
 # Contract C: the original B160 fix is preserved
@@ -43,7 +44,6 @@
 # Contract E: TD-15 is registered in verify_pre_deploy.sh.
 # Contract F: this script is executable.
 
-set -u
 cd "$(dirname "$0")/.." || exit 1
 
 ok()  { echo "  PASS  $1"; PASS=$((PASS+1)); }
@@ -53,217 +53,90 @@ PASS=0
 FAIL=0
 
 # ---------------------------------------------------------------------------
-# Helper: count unescaped backticks in $1, print the violating
-# substrings (max 5). A backtick is "escaped" if preceded by an
-# ODD number of backslashes (so the LAST backslash is the escape;
-# the earlier ones are themselves escaped).
-# ---------------------------------------------------------------------------
-count_unescaped_backticks() {
-    local s="$1"
-    local count=0
-    local -a samples=()
-    local i=0
-    local n=${#s}
-    while [ $i -lt $n ]; do
-        local c="${s:$i:1}"
-        if [ "$c" = '`' ]; then
-            # Count preceding backslashes
-            local bcount=0
-            local j=$((i - 1))
-            while [ $j -ge 0 ] && [ "${s:$j:1}" = '\' ]; do
-                bcount=$((bcount + 1))
-                j=$((j - 1))
-            done
-            if [ $((bcount % 2)) -eq 0 ]; then
-                count=$((count + 1))
-                if [ ${#samples[@]} -lt 5 ]; then
-                    local start=$((i - 20))
-                    [ $start -lt 0 ] && start=0
-                    local end=$((i + 20))
-                    [ $end -gt $n ] && end=$n
-                    samples+=("pos=$i: ...${s:$start:$((end - start))}...")
-                fi
-            fi
-        fi
-        i=$((i + 1))
-    done
-    echo "$count"
-    if [ $count -gt 0 ]; then
-        for sample in "${samples[@]}"; do
-            echo "    $sample"
-        done
-    fi
-}
-
-# ---------------------------------------------------------------------------
 # Contract A: no unescaped backticks in run_check descriptions
+#             (B### AND TD-### names)
 # ---------------------------------------------------------------------------
-# We use bash-only parsing of the verify_pre_deploy.sh file.
-# A run_check call has the form:
-#   run_check "B<num>" "<description>" \
-#     '<cmd>'
-# or (single-line):
-#   run_check "B<num>" "<description>" '<cmd>'
-#
-# Strategy: read the file line by line. When we see the
-# start of a run_check, accumulate lines into a buffer until
-# we see a line ending with the closing single-quote of the
-# cmd argument. Then extract the description and check it.
+# We use Python because the lookbehind-for-odd-number-of-
+# preceding-backslashes is a classic regex foot-gun in sed/awk.
+# Python is available on both Linux and Windows (with the
+# python3 || python fallback for Windows portability).
 
-total_violations=0
-tmpfile=$(mktemp)
-trap "rm -f $tmpfile" EXIT
+PYTHON_BIN=""
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN=python3
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN=python
+fi
 
-# Two awk programs: one for the multi-line form, one for inline.
-# We do this in pure bash because the file is small (~3300 lines).
-
-# First, extract every "run_check" call's description into a
-# file, one per line, prefixed with the B-number.
-
-awk '
-BEGIN { in_call = 0; buf = ""; bnum = ""; }
-/^[[:space:]]*run_check[[:space:]]+"B[0-9_]+"[[:space:]]+"/ {
-    in_call = 1
-    buf = $0
-    # Extract B-number
-    if (match($0, /run_check[[:space:]]+"B([0-9_]+)"/, arr)) {
-        bnum = arr[1]
-    } else {
-        bnum = "??"
-    }
-    next
-}
-in_call == 1 {
-    buf = buf "\n" $0
-}
-# End of multi-line form: line ends with single-quote (cmd closing)
-in_call == 1 && /'\''[[:space:]]*\\?[[:space:]]*$/ {
-    print "B" bnum "<<<" buf ">>>"
-    in_call = 0
-    buf = ""
-    bnum = ""
-    next
-}
-# End of inline form: closing single-quote, no continuation
-in_call == 1 && /'\''/ && !/\\$/ {
-    print "B" bnum "<<<" buf ">>>"
-    in_call = 0
-    buf = ""
-    bnum = ""
-    next
-}
-END {
-    # Flush any trailing buffered call that ended the file
-    if (in_call == 1) {
-        print "B" bnum "<<<" buf ">>>"
-    }
-}
-' scripts/verify_pre_deploy.sh > "$tmpfile"
-
-while IFS= read -r entry; do
-    [ -z "$entry" ] && continue
-    # Split on <<<
-    sep_pos=$(echo "$entry" | awk 'match($0, /<<</) { print RSTART; exit }')
-    if [ -z "$sep_pos" ]; then continue; fi
-    bname="${entry:0:$((sep_pos - 1))}"
-    body="${entry:$((sep_pos + 2))}"
-    # Drop the trailing >>> and any whitespace
-    body="${body%>>>}"
-    # body is the whole multi-line run_check call.
-    # The description is the 2nd double-quoted string. We
-    # find the first 3 double quotes; description is between
-    # the 2nd and 3rd.
-    # Use awk to extract.
-    desc=$(echo "$body" | awk -F'"' 'NR==1 { if (NF >= 4) print $3 }' | head -1)
-    # The above fails for multi-line bodies (NR==1 only). So
-    # we use a different approach: replace newlines with spaces
-    # in the body, then awk over the single line.
-    flat_body=$(echo "$body" | tr '\n' ' ')
-    desc=$(echo "$flat_body" | awk -F'"' '{ if (NF >= 4) print $3 }' | head -1)
-    if [ -z "$desc" ]; then continue; fi
-    # Count unescaped backticks
-    result=$(count_unescaped_backticks "$desc")
-    count=$(echo "$result" | head -1)
-    if [ "$count" != "0" ]; then
-        bad "contract A: $bname description has $count unescaped backtick(s):"
-        echo "$result" | tail -n +2 | sed 's/^/        /'
-        total_violations=$((total_violations + count))
+if [ -z "$PYTHON_BIN" ]; then
+    bad "contract A: neither python3 nor python found in PATH (can't run the regex check)"
+else
+    violations_a=$("$PYTHON_BIN" scripts/check_td15_unescaped_backticks.py 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ] && [ -z "$violations_a" ]; then
+        ok "contract A: 0 unescaped backticks in any run_check description in verify_pre_deploy.sh (handles B### AND TD-###)"
+    else
+        bad "contract A: unescaped backticks in run_check descriptions:"
+        echo "$violations_a" | sed 's/^/        /'
     fi
-done < "$tmpfile"
-
-if [ $total_violations -eq 0 ]; then
-    ok "contract A: 0 unescaped backticks in any run_check description in verify_pre_deploy.sh"
 fi
 
 # ---------------------------------------------------------------------------
 # Contract B: no unescaped backticks in echo lines of scripts/check_*.sh
 # ---------------------------------------------------------------------------
-total_b=0
-for f in scripts/check_*.sh; do
-    [ -f "$f" ] || continue
-    # Skip lines that are comments
-    # awk: for each line, if it doesn't start with #, and contains
-    # echo with a double-quoted string, extract the string and
-    # check for unescaped backticks.
-    awk_result=$(awk '
-    BEGIN { quote = 0; content = ""; in_echo_dq = 0 }
-/^[[:space:]]*#/ { next }
-{
-    line = $0
-    # Find all echo "..." patterns on this line (could be multiple
-    # but usually one). We iterate: find first echo ", take up to
-    # closing " (not preceded by \), then advance.
-    n = length(line)
-    i = 1
-    while (i <= n) {
-        # Search for the literal sequence echo " on this line
-        idx = index(substr(line, i), "echo \"")
-        if (idx == 0) break
-        start = i + idx + 5
-        # Find next unescaped "
-        j = start
-        while (j <= n) {
-            ch = substr(line, j, 1)
-            if (ch == "\\") { j += 2; continue }
-            if (ch == "\"") break
-            j += 1
-        }
-        if (j > n) break
-        content = substr(line, start, j - start)
-        # Count unescaped backticks in content
-        cnt = 0
-        k = 1
-        m = length(content)
-        while (k <= m) {
-            ch = substr(content, k, 1)
-            if (ch == "`") {
-                # Count preceding backslashes
+if [ -n "$PYTHON_BIN" ]; then
+    violations_b=$("$PYTHON_BIN" - <<'PY' 2>/dev/null
+import re, os, sys
+
+violations = []
+for fname in sorted(os.listdir('scripts')):
+    if not (fname.startswith('check_') and fname.endswith('.sh')):
+        continue
+    path = os.path.join('scripts', fname)
+    with open(path, 'r', encoding='utf-8') as f:
+        for lineno, line in enumerate(f, 1):
+            # Skip pure comment lines
+            stripped = line.lstrip()
+            if stripped.startswith('#'):
+                continue
+            if 'echo' not in line:
+                continue
+            if '"' not in line:
+                continue
+            m = re.search(r'echo\s+(?:-[a-z]+\s+)?"([^"]*)"', line)
+            if not m:
+                continue
+            content = m.group(1)
+            pos = 0
+            while True:
+                idx = content.find('`', pos)
+                if idx < 0:
+                    break
                 bcount = 0
-                b = k - 1
-                while (b >= 1 && substr(content, b, 1) == "\\") {
+                b = idx - 1
+                while b >= 0 and content[b] == '\\':
                     bcount += 1
                     b -= 1
-                }
-                if (bcount % 2 == 0) cnt += 1
-            }
-            k += 1
-        }
-        if (cnt > 0) {
-            print FILENAME ":" NR ": " cnt " unescaped backtick(s) in: " content
-        }
-        i = j + 1
-    }
-}
-' "$f")
-    if [ -n "$awk_result" ]; then
-        bad "contract B: unescaped backticks in $f:"
-        echo "$awk_result" | sed 's/^/        /'
-        total_b=$((total_b + 1))
-    fi
-done
+                if bcount % 2 == 0:
+                    ctx = content[max(0,idx-20):idx+20]
+                    violations.append(f"{path}:{lineno}: ...{ctx}...")
+                pos = idx + 1
 
-if [ $total_b -eq 0 ]; then
-    ok "contract B: 0 unescaped backticks in any echo line of scripts/check_*.sh"
+if violations:
+    for v in violations:
+        print(v)
+    sys.exit(1)
+PY
+)
+    rc=$?
+    if [ $rc -eq 0 ] && [ -z "$violations_b" ]; then
+        ok "contract B: 0 unescaped backticks in any echo line of scripts/check_*.sh"
+    else
+        bad "contract B: unescaped backticks in echo lines:"
+        echo "$violations_b" | sed 's/^/        /'
+    fi
+else
+    bad "contract B: skipped (no python3 in PATH)"
 fi
 
 # ---------------------------------------------------------------------------
