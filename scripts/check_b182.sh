@@ -111,7 +111,7 @@ check_ge "H" 1 "$(count "$REPO/internal/feature/exit_rules/form_my.go" '"StatusB
 # I. form_admin.go passes approvedByExitNode to annotator
 # (multi-line call — the map arg is on the closing line, separated
 # from the func body)
-check_ge "I" 1 "$(grep -cE '\}, approvedByExitNode\)' "$REPO/internal/feature/exit_rules/form_admin.go" 2>/dev/null || echo 0)"
+check_ge "I" 1 "$(grep -cE '\}, approvedByExitNode,' "$REPO/internal/feature/exit_rules/form_admin.go" 2>/dev/null || echo 0)"
 
 # J. AGENTS.md mentions B182
 if [ -f "$REPO/AGENTS.md" ]; then

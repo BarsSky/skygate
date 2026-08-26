@@ -113,14 +113,14 @@ fi
 # headscale policy file. If the rule's tag doesn't match
 # the node's actual tag, the rule is silently ignored by
 # headscale (same effect as the device tag being missing).
-if grep -qE 'src = fmt\.Sprintf\("\\"tag:dev-%s-%s\\"", e\.userName, strings\.ToLower\(e\.deviceHostname\)\)' internal/acl/acl.go; then
-    ok "acl.go (ruleEntry loop) lowercases e.deviceHostname in dev-tag src (B176: ACL policy matches the lowercase node tag)"
+if grep -qE '"tag:dev-"\s*\+\s*e\.userName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\.deviceHostname\)' internal/acl/acl.go; then
+    ok "acl.go (ruleEntry loop) lowercases e.deviceHostname in tag:dev-<user>-<device> construction (B176: ACL policy matches the lowercase node tag)"
 else
     bad "acl.go (ruleEntry loop) does NOT lowercase e.deviceHostname (B176: headscale policy has uppercase src, node has lowercase tag → rule never matches)"
 fi
 
-if grep -qE 'src = fmt\.Sprintf\("\\"tag:dev-%s-%s\\"", e\.UserName, strings\.ToLower\(e\.DeviceHostname\)\)' internal/acl/acl.go; then
-    ok "acl.go (DeviceRule loop) lowercases e.DeviceHostname in dev-tag src (B176: ACL policy matches the lowercase node tag)"
+if grep -qE '"tag:dev-"\s*\+\s*e\.UserName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\.DeviceHostname\)' internal/acl/acl.go; then
+    ok "acl.go (DeviceRule loop) lowercases e.DeviceHostname in tag:dev-<user>-<device> construction (B176: ACL policy matches the lowercase node tag)"
 else
     bad "acl.go (DeviceRule loop) does NOT lowercase e.DeviceHostname (B176: headscale policy has uppercase src, node has lowercase tag → rule never matches)"
 fi
