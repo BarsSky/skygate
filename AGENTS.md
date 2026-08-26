@@ -1257,6 +1257,65 @@ in the same commit. Don't let the tracker drift.
     cleanly. The per-CIDR via= now appears in the headscale
     policy for both useVia paths.
 
+  - **TD-15 (v1.5.2)** — false-alarm "headscale: command not
+    found" at line 3221 of `scripts/verify_pre_deploy.sh`.
+    Root cause: the `run_check "B160"` description was
+    enclosed in double quotes, but contained unescaped
+    backticks around `` `headscale nodes expire --disable` ``
+    (visual formatting). Bash treats backticks inside a
+    double-quoted string as **command substitution**: it
+    tried to exec `headscale nodes expire --disable`, the
+    `headscale` binary isn't on PATH on the operator's
+    Windows host, and bash emitted
+    `scripts/verify_pre_deploy.sh: line 3221: headscale: command not found`
+    to stderr. The run_check function captured stderr via
+    `$(bash -c "$cmd" 2>&1)`, the non-zero RC bubbled up,
+    and the entire verify_pre_deploy.sh exited non-zero —
+    even though the B160 check itself was clean. Pre-push
+    printed "catalog RED — push ABORTED" but `git push`
+    actually succeeded (the script's non-zero exit was
+    treated as a false alarm by the operator's background
+    task). **TD-15 fix**:
+    1. Replace `` `headscale nodes expire --disable` `` with
+       `'headscale nodes expire --disable'` (single quotes
+       in the description; single quotes do NOT trigger
+       command substitution, even inside a double-quoted
+       parent string).
+    2. Same fix applied to the pre-existing
+       backticks-in-echo in `scripts/check_b95.sh:121`
+       (dead-code branch) and `scripts/check_b95.sh:131`
+       (live echo) — same bug class, would have
+       surfaced the first time the bad branch was
+       triggered.
+    3. New `scripts/check_td15.sh` pins 0 unescaped
+       backticks in any `run_check` description in
+       `verify_pre_deploy.sh` (contract A) and any
+       `echo "..."` line in `scripts/check_*.sh` (contract
+       B), so the regression class fails the catalog
+       instead of silently tripping command substitution
+       on Windows. Also pins the B160 fix
+       (contract C), AGENTS.md mention (D), verify_pre_deploy
+       registration (E), and the script is executable (F).
+    4. check_td15.sh is registered as the last
+       run_check in verify_pre_deploy.sh so any future
+       B-description that re-introduces the bug
+       blocks the push.
+
+    **Lesson learned** — bash command substitution rules:
+    | Context | Backticks | `$()` | `$(())` | `[[ ]]` |
+    |---------|-----------|-------|---------|---------|
+    | Inside `"..."` (double quotes) | **EXECUTED** | **EXECUTED** | EXECUTED | not expanded |
+    | Inside `'...'` (single quotes) | literal | literal | literal | not expanded |
+    | Unquoted | EXECUTED | EXECUTED | EXECUTED | not expanded |
+
+    Markdown-style backticks (for `code`) are fine in
+    comments, in `echo` statements that use single
+    quotes, and in any context that doesn't end up
+    inside a double-quoted string at parse time. The
+    TD-15 check enforces this rule at the catalog
+    level so no future B-description or check_*.sh
+    echo line can re-introduce the regression.
+
   - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
     the headplane API key on a fresh deploy. 2 modes (bundled
     + external headplane), 6-step bundled flow with

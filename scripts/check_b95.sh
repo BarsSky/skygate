@@ -118,7 +118,7 @@ fi
 # 6. backup_config_test.go: no `w = ...` reassignment that
 # discards the return value.
 if grep -E '^\s*w\s*=\s*hitConfig' internal/feature/admin/backup_config_test.go; then
-    echo "SKY-FAIL: backup_config_test.go has unused `w = ...` reassignment (B95 SA4006)" >&2
+    echo "SKY-FAIL: backup_config_test.go has unused 'w = ...' reassignment (B95 SA4006)" >&2
     exit 1
 fi
 
@@ -128,7 +128,7 @@ grep -qF 'git remote set-url origin https://github.com/" + owner + "/" + repo' i
 # 8. commands_lang.go: name is declared via `var` and assigned
 # in a switch (not the `name := env.Lang` shape that staticcheck
 # flagged).
-grep -qF 'var name string' internal/telegram/commands_lang.go || { echo "SKY-FAIL: commands_lang.go doesn't have `var name string` (B95 SA4006 fix)" >&2; exit 1; }
+grep -qF 'var name string' internal/telegram/commands_lang.go || { echo "SKY-FAIL: commands_lang.go doesn't have 'var name string' (B95 SA4006 fix)" >&2; exit 1; }
 
 # 9. telegram_probe_test.go: the cache-miss assertion
 #    v0.34.0 SA4017 fix had the t.Errorf body inside
