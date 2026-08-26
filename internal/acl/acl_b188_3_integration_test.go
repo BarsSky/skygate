@@ -141,13 +141,19 @@ func b188_3SeedPortalUser(t *testing.T, d *sql.DB, id int64, username string) {
 }
 
 // b188_3SeedNodeOwner inserts a node_owner_map row.
-func b188_3SeedNodeOwner(t *testing.T, d *sql.DB, nodeID string, hostname, tag string) {
+// `username` is the OWNER of the node (headscale user
+// the node is attributed to). For B188.3 tests we use
+// the test user's own username so the NEW function's
+// tagsByUser[user] picks up the device tag and the
+// per-device autogroup:internet grant emission loop
+// produces a grant for our device.
+func b188_3SeedNodeOwner(t *testing.T, d *sql.DB, nodeID, username, hostname, tag string) {
 	t.Helper()
 	b188_3Exec(t, d,
 		`INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at, hostname, os, device_type)
-		 VALUES ($1, 99, 'infra', $2, 99, 1, $3, 'linux', 'exit-node')
+		 VALUES ($1, 99, $2, $3, 99, 1, $4, 'linux', 'device')
 		 ON CONFLICT (node_id) DO NOTHING`,
-		nodeID, tag, hostname,
+		nodeID, username, tag, hostname,
 	)
 }
 
@@ -284,8 +290,8 @@ func TestGenerateACLForPlane_B1883_PerCIDRViaInNoViaPath(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6001)
 	b188_3SeedPortalUser(t, d, 6001, "b188_3_user")
-	b188_3SeedNodeOwner(t, d, "60010", "b188_3_laptop", "tag:dev-infra-emilia")
-	b188_3SeedNodeOwner(t, d, "60011", "karolina", "tag:dev-infra-karolina")
+	b188_3SeedNodeOwner(t, d, "60010", "b188_3_user", "b188_3_laptop", "tag:dev-infra-emilia")
+	b188_3SeedNodeOwner(t, d, "60011", "b188_3_user", "karolina", "tag:dev-infra-karolina")
 	// device 60010 (b188_3_laptop) has per-device pref for emilia
 	if err := db.SetDeviceExitNodePref(d, 6001, "b188_3_laptop", "tag:dev-infra-emilia", 6001, true); err != nil {
 		t.Fatalf("seed pref: %v", err)
@@ -356,7 +362,7 @@ func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6002)
 	b188_3SeedPortalUser(t, d, 6002, "b188_3_nopref")
-	b188_3SeedNodeOwner(t, d, "60020", "b188_3_phone", "tag:dev-infra-emilia")
+	b188_3SeedNodeOwner(t, d, "60020", "b188_3_nopref", "b188_3_phone", "tag:dev-infra-emilia")
 	// NO SetDeviceExitNodePref call — the device has no
 	// per-device exit_node_pref.
 	b188_3SeedRule(t, d, 6002, 60020, "b188_3_nopref", "b188_3_phone", "emilia", "ip", "1.2.3.4")
@@ -402,7 +408,7 @@ func TestGenerateACLForPlane_B1883_LegacyRuleNoExitNodeID(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6003)
 	b188_3SeedPortalUser(t, d, 6003, "b188_3_legacy")
-	b188_3SeedNodeOwner(t, d, "60030", "b188_3_desktop", "tag:dev-infra-emilia")
+	b188_3SeedNodeOwner(t, d, "60030", "b188_3_legacy", "b188_3_desktop", "tag:dev-infra-emilia")
 	if err := db.SetDeviceExitNodePref(d, 6003, "b188_3_desktop", "tag:dev-infra-emilia", 6003, true); err != nil {
 		t.Fatalf("seed pref: %v", err)
 	}
