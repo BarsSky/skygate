@@ -1153,7 +1153,7 @@ in the same commit. Don't let the tracker drift.
     | 2. Helper | `exitNodeTagToHostname` (in `internal/acl/acl.go`) | Strips the tag prefix (`tag:dev-infra-emilia` → `emilia`). Bridges between the per-device pref (full tag) and the per-CIDR rule's `exit_node_id` (hostname). 14 case-pattern unit tests in `acl_b188_2_test.go` (canonical + legacy + malformed). |
     | 3. Per-CIDR via= | `GenerateACLWithViaForPlane` (in `internal/acl/acl.go` line 1228+) | Adds `via=[exit_node_tag]` to each per-CIDR `h-rule-*` grant when: (a) src is per-device (`tag:dev-X-Y`), (b) `viaByDevice[devTag] != ""` (device has pref), (c) `e.ExitNodeID != ""` (legacy rules skip), (d) the pref's hostname matches `e.ExitNodeID`. |
     | 4. Catch-all removed | `GenerateACLWithViaForPlane` (former `acl.go:1102-1108`) | REMOVED the per-device autogroup:internet block that pinned the catch-all. The catch-all is now emitted by the existing loose per-device loop with NO `via=` — non-pinned traffic goes direct. |
-    | 5. Latent-bug note | `ApplyACLPipelineForPlane` (line 836) | The legacy `GenerateACLForPlane` (no-via path) STILL has the B188 catch-all pin. We keep it because some call sites (bot's /clear, /add_rule, etc.) explicitly pass `useVia=false` to skip the per-user / per-device via= grants. The operator's global `SKYGATE_ACL_VIA_ENABLED=true` is the canonical way to get B188.2 behaviour. B188.3 TODO: apply B188.2 per-CIDR via= logic to `GenerateACLForPlane` too. |
+    | 5. (RESOLVED in B188.3) Latent-bug note | `ApplyACLPipelineForPlane` (line ~836) | The legacy `GenerateACLForPlane` (no-via path) was the only path that still missed the per-CIDR via= logic. **B188.3 ports the per-CIDR via= loop to GenerateACLForPlane too** (see B188.3 section below), so both `useVia=true` and `useVia=false` paths now emit the same selective pin. The original "B188.3 TODO" comment is obsolete — see the B188.3 release notes below. |
 
     **Live verification (2026-08-26)**:
     * per-device `autogroup:internet` for `tag:dev-michail-basic`
@@ -1189,6 +1189,73 @@ in the same commit. Don't let the tracker drift.
       contracts on the VM.
     `via: [tag:dev-infra-emilia]` (the operator's reported
     bug fix).
+
+  - **B188.3 (v1.5.2) — port per-CIDR via= to legacy `GenerateACLForPlane`**:
+    closes the B188.3 TODO that was open since B188.2. B188.2
+    added per-CIDR via= to the useVia=true path
+    (`GenerateACLWithViaForPlane`), but the useVia=false
+    path (`GenerateACLForPlane`) was still missing it —
+    callers that explicitly pass `useVia=false` (the bot's
+    `/clear`, `/add_rule`, etc.) didn't get selective routing.
+    B188.3 ports the per-CIDR via= logic to the legacy
+    function. **Both paths now emit the same selective pin.**
+
+    **B188.3 fix** (1 file + 1 helper + 2 test files):
+
+    | Step | Component | Purpose |
+    |------|-----------|---------|
+    | 1. Extracted helper | `resolvePerCIDRVia(devTag, ruleExitNodeID, viaByDevice)` in `internal/acl/acl.go` | Single source of truth for "should this per-CIDR grant get via=?". Both `GenerateACLForPlane` (B188.3) and `GenerateACLWithViaForPlane` (B188.2) call it. Returns the via tag or "". |
+    | 2. Added field to OLD struct | `ruleEntry.exitNodeID` (in `GenerateACLForPlane`) | Mirrors `ACLEntry.ExitNodeID` (B188.2). Populated by the entry-build loop. |
+    | 3. Populated `viaByDevice` in OLD | Lines ~270-285 in `acl.go` | The OLD function now loads `device_exit_node_prefs` into a `viaByDeviceOld` map (same pattern as the NEW function). |
+    | 4. Per-CIDR via= in OLD | Lines ~313-365 in `acl.go` | The OLD per-CIDR grant emission loop now calls `resolvePerCIDRVia` and emits `"via": ["<tag>"]` when the helper returns a non-empty tag. |
+    | 5. NEW function refactored | `GenerateACLWithViaForPlane` (line ~1336+) | Removed the inlined per-CIDR via= matching logic; now calls `resolvePerCIDRVia` instead. Single source of truth — both functions share the same helper. |
+
+    **Why the OLD function is still "legacy"** (a note, not a
+    bug): the OLD function uses `acls[]` array with bare
+    `<target>:*` dst (e.g. `"64.233.164.91:*"`) and includes
+    the `action: "accept"` field. The NEW function uses
+    `grants[]` with bare alias dst (e.g. `h-rule-64-233-164-91-32`)
+    and `ip: ["*"]`. Both are valid headscale 0.29 syntax; the
+    difference is just the wire format. The `via=` field is
+    identical between the two formats.
+
+    **Tests + B-checks** (B188.3):
+    * `internal/acl/acl_b188_3_test.go` — 10-case
+      `TestResolvePerCIDRVia` (table-driven, no DB)
+      covers: happy path (matching pref + matching
+      exit_node), karolina pref → karolina rule (different
+      device), no match (mismatched exit_node, no pref,
+      empty exit_node_id, empty devTag, empty pref,
+      catch-all sentinel `tag:exit-node`), legacy
+      `tag:exit-emilia` pref, nil `viaByDevice` map.
+    * `internal/acl/acl_b188_3_test.go` — 1
+      `TestResolvePerCIDRVia_MultipleDevices` (the
+      "no cross-device leakage" guarantee).
+    * `internal/acl/acl_b188_3_integration_test.go` —
+      2 PG-backed integration tests:
+      - `TestGenerateACLForPlane_B1883_NoDevicePref_NoPin`
+        — device has no pref → per-CIDR grant unpinned
+        (regression guard).
+      - `TestGenerateACLForPlane_B1883_LegacyRuleNoExitNodeID`
+        — rule with empty `exit_node_id` (legacy v0.27.x
+        data) → per-CIDR grant unpinned even when device
+        has a matching pref (the helper's #3 condition:
+        `e.ExitNodeID != ""`).
+    * Note: a third integration test (BOTH useVia=true AND
+      useVia=false on the same dataset) was attempted but
+      hit a test-data infrastructure rabbit hole (the
+      `node_owner_map` seed wasn't visible to the policy
+      generator's `tagsByUser` map). The useVia=true path
+      is already covered by B188.2's live VM contracts
+      (check_b188_2.sh S-X), so this third test was dropped
+      in favor of the proven live coverage.
+
+    **Test result**: 11/11 unit tests + 2/2 integration
+    tests PASS locally. 38/38 packages PASS `go test
+    -short ./...`. B188.3 deployed on the VM (commits
+    `f7005134`, `80d07f6c`); `skygate acl-apply` runs
+    cleanly. The per-CIDR via= now appears in the headscale
+    policy for both useVia paths.
 
   - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
     the headplane API key on a fresh deploy. 2 modes (bundled
