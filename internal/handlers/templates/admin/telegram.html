@@ -140,7 +140,8 @@
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.rotate_confirm"}}')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="rotate">
-      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> {{t "telegram.rotate_check_warn"}}</label>
+      <input type="hidden" name="confirm" value="yes">
+      <p class="sub" style="margin:0.5rem 0">{{t "telegram.rotate_check_warn"}}</p>
       <button type="submit" class="btn btn-warn" style="margin-top:1rem"><i class="fa-solid fa-arrows-rotate"></i> {{t "telegram.rotate"}}</button>
     </form>
   </div>
@@ -151,7 +152,8 @@
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.disable_confirm"}}')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="disable">
-      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="confirm" value="yes"> {{t "telegram.disable_check_warn"}}</label>
+      <input type="hidden" name="confirm" value="yes">
+      <p class="sub" style="margin:0.5rem 0">{{t "telegram.disable_check_warn"}}</p>
       <button type="submit" class="btn btn-danger" style="margin-top:1rem"><i class="fa-solid fa-power-off"></i> {{t "telegram.disable"}}</button>
     </form>
   </div>
@@ -174,10 +176,8 @@
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="strict">
       <input type="hidden" name="enabled" value="{{if .State.StrictMode}}0{{else}}1{{end}}">
-      <label style="display:flex;gap:8px;align-items:center;margin-bottom:0.75rem">
-        <input type="checkbox" name="confirm" value="yes">
-        {{if .State.StrictMode}}{{t "telegram.strict_mode_uncheck_warn"}}{{else}}{{t "telegram.strict_mode_check_warn"}}{{end}}
-      </label>
+      <input type="hidden" name="confirm" value="yes">
+      <p class="sub" style="margin:0.5rem 0">{{if .State.StrictMode}}{{t "telegram.strict_mode_uncheck_warn"}}{{else}}{{t "telegram.strict_mode_check_warn"}}{{end}}</p>
       <button type="submit" class="btn {{if .State.StrictMode}}btn-warn{{else}}btn-primary{{end}}">
         <i class="fa-solid fa-shield-halved"></i>
         {{if .State.StrictMode}}{{t "telegram.strict_mode_disable"}}{{else}}{{t "telegram.strict_mode_enable"}}{{end}}
