@@ -1185,6 +1185,54 @@ in the same commit. Don't let the tracker drift.
     subcommand after any future migration that changes
     exit-node-pref data.
 
+  - **B188.2 (v1.5.2)**: per-CIDR exit-node pin instead of
+    catch-all pin. B188 fixed the ghost tag and re-enabled
+    via pinning, but applied `via=` to the per-device
+    `autogroup:internet` CATCH-ALL — pinning ALL of basic's
+    internet to emilia, defeating the user-facing
+    /my/exit-rules feature (selective routing: "youtube.com
+    via emilia, banking.com direct"). Operator 2026-08-26:
+    "подожди, зачем опять на все, идея то в том чтобы можно
+    было определенный трафик направить". **B188.2 fix**:
+    (1) Added `ExitNodeID` to `ACLEntry` struct +
+    `qSelectEnabledACLEntries` SQL + `GetACLEntries` scan.
+    (2) New helper `exitNodeTagToHostname` in
+    `internal/acl/acl.go` strips the tag prefix
+    (`tag:dev-infra-emilia` → `emilia`) — bridges between
+    the per-device pref (full tag) and the per-CIDR rule's
+    `exit_node_id` (hostname). 14 case-pattern unit tests
+    in `acl_b188_2_test.go`. (3) Per-CIDR grant loop
+    (`acl.go:1228+`) adds `via=[exit_node_tag]` when:
+    (a) src is `tag:dev-<user>-<device>` (per-device rule),
+    (b) `viaByDevice[devTag] != ""` (device has pref),
+    (c) `e.ExitNodeID` is non-empty (legacy rules skip),
+    (d) the pref's hostname matches `e.ExitNodeID`.
+    (4) REMOVED the per-device autogroup:internet block
+    (former `acl.go:1102-1108`) that pinned the catch-all
+    — replaced with a comment explaining the B188.2
+    rationale. The catch-all is now emitted by the existing
+    loose per-device loop (`acl.go:1314+`) with NO `via=`
+    — non-pinned traffic goes direct. 24 contracts in
+    `scripts/check_b188_2.sh` (A-X) cover source patterns,
+    unit tests, AGENTS.md mention, verify_pre_deploy.sh
+    registration, build/vet, and 6 live policy contracts
+    (S-X) confirming the selective pin works on the VM.
+    **Live verification (2026-08-26)**: per-device
+    `autogroup:internet` for `tag:dev-michail-basic` no
+    longer has `via=[emilia]` (was 1, now 0);
+    `h-rule-64-233-164-91-32` (youtube /32) for basic HAS
+    `via=[emilia]`; skyworker h-rules have `via=[karolina]`
+    (NOT `[emilia]` — correct per-device pref); 0
+    per-device autogroup:internet grants with `via=` across
+    ALL devices. **Impact on other users**: 5
+    `device_exit_node_prefs` rows in production DB (a71,
+    emilia, skygate-host-1, skyworker, basic). For each:
+    `autogroup:internet` → direct (was via=[their pref]);
+    per-CIDR grants whose exit_node matches the pref →
+    via=[their pref] (was no via). This is the correct
+    selective routing. Devices WITHOUT a per-device pref
+    see no change.
+
   - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
     the headplane API key on a fresh deploy. 2 modes (bundled
     + external headplane), 6-step bundled flow with

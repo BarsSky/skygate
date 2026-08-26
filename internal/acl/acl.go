@@ -80,9 +80,19 @@ func (NoopAlerter) SendAlert(string) int64 { return 0 }
 // Examples (v1.5.2 B188.2 conventions):
 //   "tag:dev-infra-emilia"  -> "emilia"
 //   "tag:dev-infra-karolina"-> "karolina"
+//   "tag:dev-infra-skygate-host-1" -> "skygate-host-1"
 //   "tag:exit-emilia"       -> "emilia" (legacy, pre-B118)
-//   "tag:exit-node"         -> "exit-node" (catch-all sentinel — caller treats as non-match)
+//   "tag:exit-node"         -> "node" (catch-all sentinel — caller treats as non-match
+//                                    because no real device_rule has exit_node_id="node")
 //   "tag:invalid-foo"       -> "" (unrecognized shape — caller treats as non-match)
+//
+// The function tries the known buckets ("dev-infra", "dev",
+// "exit") as a prefix and returns whatever follows. This is
+// a known-bucket-prefixed-string, NOT a generic "strip
+// after the last dash" — that approach is wrong because
+// hostnames can themselves contain dashes (e.g.
+// "skygate-host-1" has 2 dashes: one is the bucket separator,
+// the others are part of the hostname).
 //
 // The function does NOT validate that the hostname resolves
 // to a real headscale node — that's the caller's job
@@ -97,27 +107,25 @@ func exitNodeTagToHostname(tag string) string {
 	if tag == "" {
 		return ""
 	}
-	// Strip the "tag:" prefix. The body is "<bucket>-<host>".
-	// We accept any bucket ("dev-infra", "exit", future user
-	// buckets) — only the host after the LAST "-" is the
-	// hostname. The split is safe because the tag is built
-	// by skygate (no spaces, no special chars).
 	body := strings.TrimPrefix(tag, "tag:")
 	if body == "" || body == tag {
 		// no "tag:" prefix, or the whole string was "tag:"
 		return ""
 	}
-	// Find the LAST dash. The bucket is the part BEFORE the
-	// last dash; the host is the part AFTER. Examples:
-	//   "dev-infra-emilia"  -> bucket="dev-infra", host="emilia"
-	//   "exit-emilia"        -> bucket="exit",       host="emilia"
-	//   "exit-node"          -> bucket="",          host="exit-node" (catch-all — non-match)
-	//   "public"             -> no dash,            host="public" (no bucket — non-match)
-	idx := strings.LastIndex(body, "-")
-	if idx < 0 || idx == len(body)-1 {
-		return ""
+	// Try known buckets in order of decreasing specificity.
+	// The longest match wins (dev-infra- before dev- before
+	// exit-) so multi-word buckets aren't mistaken for the
+	// short ones.
+	for _, bucket := range []string{"dev-infra-", "dev-", "exit-"} {
+		if strings.HasPrefix(body, bucket) {
+			return body[len(bucket):]
+		}
 	}
-	return body[idx+1:]
+	// No known bucket matched. Returning "" is the safe
+	// default — B188.2's caller treats this as "no via= pin",
+	// which means the rule falls through to the per-user grant
+	// or direct internet. That's the "fail open" default.
+	return ""
 }
 
 // GenerateACL builds the per-user headscale 0.29 HuJSON policy
