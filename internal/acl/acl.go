@@ -833,27 +833,37 @@ func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, 
 	if useVia {
 		acl, err = GenerateACLWithViaForPlane(d, planeURL)
 	} else {
-		// v1.5.2 (B188.2): the legacy GenerateACLForPlane
-		// (no-via) path does NOT have the per-CIDR via=
-		// logic from GenerateACLWithViaForPlane. When
-		// useVia=false (and the operator has not flipped
-		// SKYGATE_ACL_VIA_ENABLED=true), the legacy code
-		// pins the per-device autogroup:internet to the
-		// device's exit_node_pref (the B188 bug).
+		// useVia=false means "plain policy without
+		// pinning" — the bot's /clear, /add_rule, etc.
+		// pass this explicitly. The legacy
+		// GenerateACLForPlane has NO per-CIDR via= logic
+		// (that's the B188.2 selective pin, only present
+		// in the NEW function above). It also has NO
+		// per-device autogroup:internet with via= (that
+		// was a B188 mistake, since REMOVED in B188.2).
 		//
-		// We keep the legacy path for now because some
-		// call sites (the bot's /clear, /add_rule, etc.)
-		// explicitly pass useVia=false to skip the per-user
-		// / per-device via= grants (they want a "plain"
-		// policy without pinning). The operator's global
-		// SKYGATE_ACL_VIA_ENABLED=true is the canonical way
-		// to get the B188.2 behaviour; the explicit-false
-		// call sites are a deliberate opt-out.
+		// Net effect of useVia=false: per-user grants get
+		// via= (if user has a per-user pref), per-CIDR
+		// rules are allowed but UNPINNED (any exit-node
+		// is fine), catch-all is direct. This is the
+		// "legacy plain" behaviour.
 		//
-		// TODO (B188.3): apply the B188.2 per-CIDR via=
-		// logic to GenerateACLForPlane too (so the
-		// per-device catch-all isn't pinned to the
-		// device's pref in the no-via path either).
+		// The B188.2 selective routing (per-CIDR via=
+		// matching the device's exit_node_pref) is
+		// only active in the useVia=true path. So the
+		// operator's SKYGATE_ACL_VIA_ENABLED=true (or
+		// per-handler useVia=true) is the way to get
+		// B188.2 behaviour; explicit useVia=false is
+		// the deliberate opt-out.
+		//
+		// B188.3 (potential future work, NOT a bug fix):
+		// if the operator wants the B188.2 selective
+		// routing in the useVia=false path too, the
+		// per-CIDR loop would need to be ported to
+		// GenerateACLForPlane (lines ~540-700). Today
+		// no caller exercises this — the bot's /clear
+		// and /add_rule handlers don't need per-CIDR
+		// pin (they're bulk operations, not per-device).
 		acl, err = GenerateACLForPlane(d, planeURL)
 	}
 	if err != nil {
