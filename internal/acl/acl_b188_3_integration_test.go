@@ -311,9 +311,11 @@ func TestGenerateACLForPlane_B1883_PerCIDRViaInNoViaPath(t *testing.T) {
 		}
 		if n := b188_3CountGrantsWithVia(t, pol, devTag, "tag:dev-infra-emilia"); n != 1 {
 			t.Errorf("useVia=true: youtube→emilia per-CIDR via= count = %d, want 1", n)
+			t.Logf("---POLICY (useVia=true)---\n%s\n---END---", pol)
 		}
 		if n := b188_3CountGrantsWithAutogroupNoVia(t, pol, devTag); n != 1 {
 			t.Errorf("useVia=true: autogroup:internet unpinned count = %d, want 1", n)
+			t.Logf("---POLICY (useVia=true)---\n%s\n---END---", pol)
 		}
 	})
 
