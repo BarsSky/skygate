@@ -153,18 +153,23 @@ func b188_3SeedNodeOwner(t *testing.T, d *sql.DB, nodeID string, hostname, tag s
 }
 
 // b188_3SeedRule inserts a device_rules row with the
-// given (user, device, exit_node, target). Uses ON
-// CONFLICT DO NOTHING (with the B183 natural-key unique
-// index on (user_id, device_id, exit_node_id,
-// target_type, target_value)) so re-runs of the test are
-// idempotent.
-func b188_3SeedRule(t *testing.T, d *sql.DB, userID int64, deviceID int, exitNode, targetType, target string) {
+// given (user, device, exit_node, target). Populates
+// user_name + device_hostname so the OLD function's
+// per-CIDR grant emission can build a per-device src
+// (tag:dev-<user>-<device>) — without these, the OLD
+// function falls back to src="*" and the test's
+// per-device grant assertions don't match.
+//
+// Uses ON CONFLICT DO NOTHING (with the B183 natural-key
+// unique index on (user_id, device_id, exit_node_id,
+// target_type, target_value)) so re-runs are idempotent.
+func b188_3SeedRule(t *testing.T, d *sql.DB, userID int64, deviceID int, username, deviceHostname, exitNode, targetType, target string) {
 	t.Helper()
 	b188_3Exec(t, d,
-		`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled)
-		 VALUES ($1, $2, $3, $4, $5, 'accept', 1)
+		`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled, user_name, device_hostname)
+		 VALUES ($1, $2, $3, $4, $5, 'accept', 1, $6, $7)
 		 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
-		userID, deviceID, exitNode, targetType, target,
+		userID, deviceID, exitNode, targetType, target, username, deviceHostname,
 	)
 }
 
@@ -304,9 +309,9 @@ func TestGenerateACLForPlane_B1883_PerCIDRViaInNoViaPath(t *testing.T) {
 		t.Fatalf("seed pref: %v", err)
 	}
 	// rule: youtube /32 → emilia (matches pref)
-	b188_3SeedRule(t, d, 6001, 60010, "emilia", "ip", "64.233.164.91")
+	b188_3SeedRule(t, d, 6001, 60010, "b188_3_user", "b188_3_laptop", "emilia", "ip", "64.233.164.91")
 	// rule: dns /32 → karolina (mismatches pref — should NOT get via)
-	b188_3SeedRule(t, d, 6001, 60010, "karolina", "ip", "8.8.8.8")
+	b188_3SeedRule(t, d, 6001, 60010, "b188_3_user", "b188_3_laptop", "karolina", "ip", "8.8.8.8")
 
 	const devTag = "tag:dev-b188_3_user-b188_3_laptop"
 
@@ -376,7 +381,7 @@ func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 	b188_3SeedNodeOwner(t, d, "60020", "b188_3_phone", "tag:dev-infra-emilia")
 	// NO SetDeviceExitNodePref call — the device has no
 	// per-device exit_node_pref.
-	b188_3SeedRule(t, d, 6002, 60020, "emilia", "ip", "1.2.3.4")
+	b188_3SeedRule(t, d, 6002, 60020, "b188_3_nopref", "b188_3_phone", "emilia", "ip", "1.2.3.4")
 
 	pol, err := GenerateACLForPlane(d, "")
 	if err != nil {
@@ -423,12 +428,9 @@ func TestGenerateACLForPlane_B1883_LegacyRuleNoExitNodeID(t *testing.T) {
 		t.Fatalf("seed pref: %v", err)
 	}
 	// Insert a rule with empty exit_node_id (legacy).
-	if _, err := d.Exec(
-		`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled)
-		 VALUES (6003, 60030, '', 'ip', '5.6.7.8', 'accept', 1)`,
-	); err != nil {
-		t.Fatalf("seed legacy rule: %v", err)
-	}
+	// Populate user_name + device_hostname so the per-CIDR
+	// src is per-device (tag:dev-b188_3_legacy-b188_3_desktop).
+	b188_3SeedRule(t, d, 6003, 60030, "b188_3_legacy", "b188_3_desktop", "", "ip", "5.6.7.8")
 
 	pol, err := GenerateACLForPlane(d, "")
 	if err != nil {
