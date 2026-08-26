@@ -1316,6 +1316,95 @@ in the same commit. Don't let the tracker drift.
     level so no future B-description or check_*.sh
     echo line can re-introduce the regression.
 
+  - **TD-16 (v1.5.2)** — fix `/admin/ha` template error
+    `can't evaluate field dnsConfigured in type interface {}`.
+    Operator 2026-08-26 hit it on
+    `https://skygate.skynas.ru/admin/ha`. Three layered
+    bugs:
+    1. `internal/feature/admin/ha.go:74` defined
+       `extcredsConfigured bool` (lowercase first letter =
+       unexported in Go). Go's `text/template` engine
+       cannot access unexported struct fields from
+       another package — it surfaces a runtime error
+       `can't evaluate field X in type interface {}`
+       that 500s the page. Renamed to `DNSConfigured`
+       (exported) + updated the assignment at line 143
+       + updated `ha.html:153` to use
+       `.Data.DNSConfigured`.
+    2. `internal/handlers/templates/admin/ha.html:152-184`
+       referenced 9 i18n keys as `ha.ha.dns_help`,
+       `ha.ha.dns_not_configured`, `ha.ha.dns_provider`,
+       `ha.ha.dns_zone`, `ha.ha.dns_login`, `ha.ha.dns_cert`,
+       `ha.ha.dns_password`, `ha.ha.dns_save`,
+       `ha.ha.dns_test` (double `ha.ha.` prefix, likely
+       a copy-paste typo from the section name
+       "External DNS"). The catalog has them as
+       `ha.dns_help` etc. (single `ha.` prefix). Fixed
+       all 9 to match the catalog keys.
+    3. `internal/handlers/templates/admin/derp_dashboard.html:1`
+       defined `body-admin-derp-dashboard` (with a
+       **dash**). The renderBody funcmap transforms
+       the handler's `admin/derp_dashboard.html` to
+       `body-admin-derp_dashboard` (with an
+       **underscore**). The body name didn't resolve,
+       so `TestRenderWithLayout_BodyNamesResolve`
+       (internal/handlers/render_body_consistency_test.go)
+       failed. Renamed the define to
+       `body-admin-derp_dashboard` to match the
+       convention used by the other 37 admin
+       templates (all use underscores matching the
+       filename).
+
+    **TD-16 fix** (3 files + 1 new check):
+    1. `internal/feature/admin/ha.go` — renamed
+       `extcredsConfigured` → `DNSConfigured` (struct
+       field + assignment + comment).
+    2. `internal/handlers/templates/admin/ha.html` —
+       9 `ha.ha.X` → `ha.X` + `.Data.dnsConfigured`
+       → `.Data.DNSConfigured`.
+    3. `internal/handlers/templates/admin/derp_dashboard.html` —
+       `body-admin-derp-dashboard` → `body-admin-derp_dashboard`.
+    4. New `scripts/check_td16.sh` (6 contracts):
+       - (A) no `.Data.X` lowercase-ident references
+         in any template (the original bug class —
+         catches unexported field access before it
+         ships).
+       - (B) **advisory** i18n-key catalog coverage
+         report — prints 31 missing keys (pre-existing
+         catalog debt, e.g. `admin.subnets.col_actions`,
+         `cert.subtitle`, `ha.audit_action`,
+         `telegram.saved_token`) but does NOT fail
+         the catalog. These need a separate catalog
+         backfill TD/B check.
+       - (C) `admin/*.html` define name matches
+         filename (underscores, not dashes) — catches
+         the derp_dashboard bug I introduced in B189.
+       - (D) verify_pre_deploy.sh registers
+         check_td16.sh.
+       - (E) AGENTS.md mentions TD-16.
+       - (F) script is executable.
+
+    **Verification** (live re-deploy of TD-16
+    expected to be transparent — the user just
+    refreshes /admin/ha):
+    - `bash scripts/check_b160.sh` clean.
+    - `go test -short ./internal/feature/admin/
+      ./internal/handlers/ ./internal/i18n/`
+      all PASS.
+    - `go test -short ./internal/handlers/`
+      includes `TestRenderWithLayout_BodyNamesResolve`
+      which catches the derp_dashboard body name
+      mismatch (it was failing pre-fix, passes
+      post-fix).
+
+    **Lesson learned** — Go template pitfalls:
+    | Pattern | Why it fails | Fix |
+    |---------|--------------|-----|
+    | `.Data.lowercaseField` | Lowercase first letter = unexported; template engine can't access from another package | Rename to uppercase |
+    | `.Data.foo` (field doesn't exist) | Template engine looks up `foo` on the type and fails | Use the actual field name |
+    | `{{t "X.Y"}}` where `X.Y` not in catalog | Lookup returns the key string (silent bug) | Add the key to the catalog |
+    | `{{define "body-X-Y"}}` in `X_Y.html` | renderBody funcmap uses underscores, not dashes | Match the filename + renderBody transform |
+
   - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
     the headplane API key on a fresh deploy. 2 modes (bundled
     + external headplane), 6-step bundled flow with

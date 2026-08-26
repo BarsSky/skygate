@@ -71,7 +71,7 @@ type haPageData struct {
 	AutoFailoverEnabled bool
 	SelfHostname        string
 	SelfRole            string
-	extcredsConfigured    bool
+	DNSConfigured       bool
 	RecentEvents        []haAuditEvent
 	FlashSuccess        string
 	FlashError          string
@@ -140,7 +140,7 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 	// 3. the DNS provider credentials (just IsConfigured — the test
 	// connection result is loaded lazily by PostAdminHADNSCredsTest).
 	if s.DNSCredsStore != nil {
-		data.extcredsConfigured = s.DNSCredsStore.IsConfigured()
+		data.DNSConfigured = s.DNSCredsStore.IsConfigured()
 	}
 
 	// 4. Last 20 HA events. Pattern matches /admin/audit's
