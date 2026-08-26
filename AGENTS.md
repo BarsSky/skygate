@@ -1149,6 +1149,41 @@ in the same commit. Don't let the tracker drift.
     `tag:dev-michail-basic → h-rule-...` with
     `via: [tag:dev-infra-emilia]` (the operator's reported
     bug fix).
+  - **B188.1 (v1.5.2)**: `skygate acl-apply` subcommand —
+    operator escape hatch for forcing a one-shot headscale
+    ACL re-apply after a migration that changes
+    exit-node-pref data without triggering any of the
+    user-facing handlers. The B188 migration backfills
+    `device_exit_node_prefs` and re-enables `via_enabled`,
+    but the headscale policy is generated on-demand by
+    `PostMyDevicePreferredExit` / `PostMyExitNodePreferred`
+    / `PostAdminUserSubnetPreferredExit` — none of which
+    fire on a migration-only deploy. `skygate acl-apply`
+    opens the DB + a headscale client (defaults to the
+    admin user 'skyadmin'; override with `-user=USERNAME`
+    for per-plane dispatch) and calls
+    `acl.ApplyACLPipelineForPlane`, which rebuilds the
+    headscale policy from the current state of
+    `device_rules` + `user_exit_node_prefs` +
+    `device_exit_node_prefs` + `tagOwners` and pushes
+    the new policy to headscale. Exit 0 on
+    `Applied=true`, 1 on error. New file
+    `cmd/skygate/acl_apply.go` (~80 lines: flag parsing
+    + `config.Load` + `db.OpenDSN` + `headscale.New` +
+    `acl.ApplyACLPipelineForPlane` + result log). New
+    `case "acl-apply":` in `cmd/skygate/main.go` switch
+    (mirrors the `backup-run` / `ha-promote` /
+    `migrate-only` subcommand pattern). 1 new contract
+    in `scripts/check_b188.sh`: Y-acl-apply-subcommand.
+    Live verification (2026-08-26): `docker exec
+    skygate-skygate-1 /app/skygate acl-apply` →
+    `acl-apply: Applied=true user=skyadmin plane=`,
+    followed by `docker exec headscale headscale policy
+    get | python3` counting `tag:dev-michail-basic →
+    h-rule-...` grants with `via: [tag:dev-infra-emilia]`
+    → 1 (was 0 pre-B188.1). Operator can now run the
+    subcommand after any future migration that changes
+    exit-node-pref data.
 
   - `scripts/init-headplane.sh` (B151, Phase 8) — auto-applies
     the headplane API key on a fresh deploy. 2 modes (bundled
