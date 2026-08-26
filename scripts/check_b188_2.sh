@@ -145,10 +145,10 @@ check_ge "D-per-cidr-via-code-present" 1 "$D"
 E=$(count "$REPO/internal/acl/acl.go" 'func exitNodeTagToHostname')
 check_ge "E-exitNodeTagToHostname-exists" 1 "$E"
 
-# F. exitNodeTagToHostname("tag:dev-infra-emilia") = "emilia"
-# (this is a string-pattern check, not actual execution — the
-# unit test acl_b188_2_test.go covers the actual behavior).
-F=$(grep -c '"dev-infra-emilia"' "$REPO/internal/acl/acl.go" 2>/dev/null || echo 0)
+# F. exitNodeTagToHostname strips the "dev-infra-" bucket
+# prefix. The helper iterates a known-bucket list which
+# includes "dev-infra-". We grep for that exact string.
+F=$(grep -c '"dev-infra-"' "$REPO/internal/acl/acl.go" 2>/dev/null || echo 0)
 check_ge "F-tag-to-host-stripping-pattern" 1 "$F"
 
 # G. ACLEntry has ExitNodeID field.
