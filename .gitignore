@@ -145,3 +145,4 @@ secrets/
 # Если увидишь postgres:/ в git status — обнови бинарник (Phase 1.1)
 postgres:/
 .trash/
+/tmp/
