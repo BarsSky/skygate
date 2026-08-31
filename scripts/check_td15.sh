@@ -66,10 +66,35 @@ if command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN=python3
 elif command -v python >/dev/null 2>&1; then
     PYTHON_BIN=python
+elif command -v py.exe >/dev/null 2>&1; then
+    # Windows Python launcher (real binary, not the WindowsApps alias
+    # that intercepts 'python3' and prints the Microsoft Store prompt).
+    PYTHON_BIN=py.exe
+fi
+
+# On Windows, the 'python3' / 'python' shims at
+# C:\Users\<user>\AppData\Local\Microsoft\WindowsApps\python3.exe are
+# Microsoft Store app execution aliases — they don't actually run a
+# Python interpreter; they print "Python was not found; run without
+# arguments to install from the Microsoft Store". Detect this by
+# checking the binary's actual identity. If PYTHON_BIN resolves to
+# the WindowsApps path, fall back to py.exe (the real launcher).
+if [ -n "$PYTHON_BIN" ] && command -v cygpath >/dev/null 2>&1; then
+    REAL_PATH=$(cygpath -wa "$(command -v "$PYTHON_BIN")" 2>/dev/null || echo "")
+    case "$REAL_PATH" in
+        *WindowsApps*python*|*Microsoft*WindowsApps*)
+            # WindowsApps alias — try py.exe
+            if command -v py.exe >/dev/null 2>&1; then
+                PYTHON_BIN=py.exe
+            else
+                PYTHON_BIN=""
+            fi
+            ;;
+    esac
 fi
 
 if [ -z "$PYTHON_BIN" ]; then
-    bad "contract A: neither python3 nor python found in PATH (can't run the regex check)"
+    bad "contract A: no working python in PATH (WindowsApps alias intercepts python3; py.exe not found either — install Python from python.org or set PATH to a real install)"
 else
     violations_a=$("$PYTHON_BIN" scripts/check_td15_unescaped_backticks.py 2>&1)
     rc=$?
