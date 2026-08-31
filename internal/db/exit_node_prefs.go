@@ -300,11 +300,22 @@ func ListDeviceExitNodePrefsForUser(d *sql.DB, userID int64) ([]DeviceExitNodePr
 //   - no node_owner_map row matches (unknown device;
 //     the handler logs a warning and refuses the write
 //     so a typo doesn't silently insert a ghost tag)
+//   - the node_owner_map row's tag is a USER-DEVICE dev tag
+//     like "tag:dev-michail-basic" rather than an exit-node
+//     infra tag like "tag:dev-infra-emilia" — TD-17.1 fix
+//     (see internal/feature/exit_rules/td17_history.md
+//     for the michail/basic data-corruption case)
 //
 // The function is intentionally read-only (it does not
 // modify node_owner_map). The B188 migration (see
 // migrateV061PG) handles the one-time backfill of
 // legacy tag:exit-X rows already in the prefs tables.
+//
+// 2026-08-27: TD-17.1 — added tag-form check so a user-device's
+// own dev tag (tag:dev-<user>-<host>) cannot be stored as
+// an exit-node preference. The function returns
+// ErrUserDeviceDevTagNotExitNode in that case, which the
+// handler turns into 400.
 //
 // 2026-08-26: v1.5.2 (B188).
 func NormalizeExitNodeTag(d *sql.DB, hostname string) (string, error) {
@@ -322,7 +333,43 @@ func NormalizeExitNodeTag(d *sql.DB, hostname string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// TD-17.1: reject user-device dev tags. node_owner_map stores
+	// the dev tag for every node, but only "tag:dev-infra-X" or
+	// legacy "tag:exit-X" forms are valid exit-node tags. The
+	// user-device form "tag:dev-<user>-<host>" is what B175's
+	// node-ownership strategy writes for every user device
+	// (e.g. tag:dev-michail-basic for michail's basic). If we
+	// returned it here, a user could "pin" a device to itself
+	// (basic → tag:dev-michail-basic) — the via= grant would
+	// resolve to the device's own dev tag, the policy would
+	// be self-referential, and the device would never reach the
+	// actual exit node. The 2026-08-27 michail/basic case
+	// proved this happens via the UI when the dropdown is
+	// small or the user selects the source device's own tag.
+	if !isExitNodeTagForm(tag) {
+		return "", fmt.Errorf("%w: got %q for hostname %q (looks like a user-device dev tag, not an exit-node infra tag); use tag:dev-infra-<exit-hostname> or tag:exit-<exit-hostname> instead", ErrUserDeviceDevTagNotExitNode, tag, hostname)
+	}
 	return tag, nil
+}
+
+// isExitNodeTagForm reports whether `tag` matches one of the
+// canonical exit-node tag forms:
+//   - "tag:dev-infra-<host>"  (B111+ infra form — emilia, karolina, sharlotta)
+//   - "tag:exit-<host>"        (legacy pre-B93 form, still accepted)
+// Anything else (in particular "tag:dev-<user>-<host>" — the
+// user-device dev tag written by B175) returns false.
+//
+// 2026-08-27: TD-17.1.
+func isExitNodeTagForm(tag string) bool {
+	t := strings.TrimSpace(tag)
+	switch {
+	case strings.HasPrefix(t, "tag:dev-infra-"):
+		return true
+	case strings.HasPrefix(t, "tag:exit-"):
+		return true
+	default:
+		return false
+	}
 }
 
 // ResolveExitNodeTag normalises the form's tag value against
@@ -367,3 +414,15 @@ func ResolveExitNodeTag(d *sql.DB, hostname, rawTag string) (string, error) {
 // into a 400 with a precise message so a typo in the dropdown
 // doesn't silently insert a ghost tag.
 var ErrNoSuchExitNodeDevice = fmt.Errorf("device not found in node_owner_map; cannot resolve exit-node tag")
+
+// ErrUserDeviceDevTagNotExitNode is returned by
+// NormalizeExitNodeTag when the node_owner_map row's tag is
+// a user-device dev tag ("tag:dev-<user>-<host>") rather than
+// an exit-node infra tag ("tag:dev-infra-<host>"). This was
+// the TD-17.1 bug: the 2026-08-27 michail/basic case stored
+// "tag:dev-michail-basic" as basic's preferred exit-node,
+// making the via= grant self-referential. The handler
+// surfaces this error as 400 with the same form-rejection
+// path as ErrNoSuchExitNodeDevice.
+// 2026-08-27: TD-17.1.
+var ErrUserDeviceDevTagNotExitNode = fmt.Errorf("hostname found in node_owner_map but its tag is a user-device dev tag, not an exit-node infra tag")

@@ -319,6 +319,36 @@ fi
 Y=$(grep -c 'case "acl-apply"' "$REPO/cmd/skygate/main.go" 2>/dev/null || echo 0)
 check_ge "Y-acl-apply-subcommand" 1 "$Y"
 
+# Z. (TD-17.1) source: NormalizeExitNodeTag + isExitNodeTagForm
+# exist, ErrUserDeviceDevTagNotExitNode sentinel is exported,
+# and the user-device dev-tag form (tag:dev-<user>-<host>) is
+# explicitly rejected. This pins the 2026-08-27 michail/basic
+# data-corruption fix.
+Z1=$(grep -c 'func isExitNodeTagForm' "$REPO/internal/db/exit_node_prefs.go" 2>/dev/null || echo 0)
+check_ge "Z1-isExitNodeTagForm-defined" 1 "$Z1"
+Z2=$(grep -c 'isExitNodeTagForm(tag)' "$REPO/internal/db/exit_node_prefs.go" 2>/dev/null || echo 0)
+check_ge "Z2-isExitNodeTagForm-called-from-NormalizeExitNodeTag" 1 "$Z2"
+Z3=$(grep -c 'ErrUserDeviceDevTagNotExitNode' "$REPO/internal/db/exit_node_prefs.go" 2>/dev/null || echo 0)
+check_ge "Z3-ErrUserDeviceDevTagNotExitNode-defined" 1 "$Z3"
+Z4=$(grep -c 'isExitNodeTagForm' "$REPO/internal/db/exit_node_prefs_td17_test.go" 2>/dev/null || echo 0)
+check_ge "Z4-TD17-test-file-exists" 1 "$Z4"
+
+# AA. (TD-17.1, VM-only) live: device_exit_node_prefs has
+# NO row whose exit_node_tag starts with the user-device dev-tag
+# form (tag:dev-<user>-<host>) — the form should be rejected
+# at write time and the live data must be clean.
+if [ -d /home/skyadmin/skygate ]; then
+  if command -v psql >/dev/null 2>&1; then
+    USER_DEV_TAGS=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
+      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:dev-_%' AND exit_node_tag NOT LIKE 'tag:dev-infra-%'" 2>/dev/null)
+    check_eq "AA-no-user-device-devtag-in-prefs" "0" "${USER_DEV_TAGS:-<err>}"
+  else
+    echo "  SKIP [AA] psql not available"
+  fi
+else
+  echo "  SKIP [AA] not on VM"
+fi
+
 echo
 echo "=== B188 summary: $PASS passed, $FAIL failed ==="
 exit "$FAIL"
