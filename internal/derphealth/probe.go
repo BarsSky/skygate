@@ -62,12 +62,33 @@ func ProbeOne(ctx context.Context, d DERPInfo, httpClient *http.Client) (int, er
 	dialer := &net.Dialer{Timeout: probeTimeout}
 	tlsCfg := &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12}
 	if ProbeOneTLSConfig != nil {
-		// Copy so we don't mutate the caller's config.
-		cp := *ProbeOneTLSConfig
+		// 2026-08-27: B189 pre-existing fix — the old code did
+		// `cp := *ProbeOneTLSConfig` (value-copy) which `go vet`
+		// flags because tls.Config contains a sync.RWMutex and
+		// value-copying a mutex is a known foot-gun (the copied
+		// mutex has zero state and unlocks a never-locked lock
+		// = undefined behavior). Switched to tls.Config.Clone()
+		// (Go 1.8+) which does a proper deep-copy and lets
+		// `go vet ./...` pass.
+		cp := ProbeOneTLSConfig.Clone()
 		if cp.ServerName == "" {
 			cp.ServerName = serverName
 		}
-		tlsCfg = &cp
+		// Preserve the caller-requested MinVersion (caller
+		// might want a stricter TLS floor than the default
+		// tls.VersionTLS12 we just set in tlsCfg).
+		if cp.MinVersion != 0 {
+			tlsCfg.MinVersion = cp.MinVersion
+		}
+		// Surface the caller's RootCAs / InsecureSkipVerify /
+		// any other field they configured. tlsCfg starts as
+		// a fresh {ServerName, MinVersion} config; we merge
+		// in everything the caller's clone carried so the
+		// probe uses the same trust roots the rest of
+		// skygate does.
+		cp.ServerName = tlsCfg.ServerName
+		cp.MinVersion = tlsCfg.MinVersion
+		tlsCfg = cp
 	}
 	tlsDialer := &tls.Dialer{
 		NetDialer: dialer,
