@@ -31,6 +31,18 @@ import (
 // least one tick (or RunOnceNow has been called), so the
 // page always has at least 1 row of fresh data.
 func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) {
+	// 2026-08-31 (TD-18.2): the layout reads {{.UnreadCount}}
+	// for the notification bell badge (B157). renderWithLayout
+	// only auto-injects UnreadCount when c != nil. Pre-fix the
+	// handler passed nil for c, so the template's `{{if gt
+	// .UnreadCount 0}}` failed with "invalid type for
+	// comparison" and the whole page (theme + body) was
+	// unrendered. Now we extract the JWT claims from the
+	// request via Backend.CurrentUser(r) like every other
+	// admin handler (see internal/feature/admin/admin_pages.go
+	// GetAdminAudit, internal/feature/admin/acl_import.go
+	// GetAdminACLsImport, etc).
+	c := s.Backend.CurrentUser(r)
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT region_id, is_own, host, url, region_code, region_name,
 		       locality, country, latency_ms, last_check, healthy,
@@ -40,7 +52,7 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 	`)
 	if err != nil {
 		log.Printf("derp dashboard: query: %v", err)
-		s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", nil,
+		s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", c,
 			map[string]any{"Error": "db query failed"})
 		return
 	}
@@ -98,7 +110,7 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", nil,
+	s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", c,
 		map[string]any{
 			"DERPs":        all,
 			"Recommended":  recommendedID,
@@ -111,11 +123,12 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 // "Re-probe all" button. Bounded by ProbeAllTimeout so a
 // slow probe doesn't block the page forever.
 func (s *Service) PostAdminDerpDashboardRefresh(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
 	ctx := r.Context()
 	results, err := derphealth.RunOnceNow(ctx, s.DB, nil)
 	if err != nil {
 		log.Printf("derp dashboard refresh: %v", err)
-		s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", nil,
+		s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", c,
 			map[string]any{"Error": "refresh failed: " + err.Error()})
 		return
 	}

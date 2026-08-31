@@ -1305,6 +1305,48 @@ in the same commit. Don't let the tracker drift.
     in check_td18.sh (J-Q). No new code — only
     template + catalog changes.
 
+  - **TD-18.2 (v1.5.2) — fix /admin/derp/dashboard silent
+    regression (theme reset + no content)**: Operator
+    2026-08-31: the /admin/derp/dashboard page rendered
+    with no content, the theme reset to default (instead
+    of the silver+mint B121 theme), and a 500 error at
+    the bottom: `render template: layout.html:197:15:
+    executing "layout" at <error calling gt: invalid
+    type for comparison>`. **Root cause**: the B189
+    handler `GetAdminDerpDashboard` (and its POST
+    sibling) passed `nil` for the JWT claims argument to
+    `s.Backend.RenderWithLayout`. Every other admin
+    handler (GetAdminAudit, GetAdminACLsImport, etc)
+    extracts claims via `c := s.Backend.CurrentUser(r)`
+    and passes `c`. When c is nil, renderWithLayout
+    (internal/handlers/handlers.go:464) skips the
+    notification auto-inject block — specifically, it
+    does NOT set `data["UnreadCount"]`. The layout
+    template (layout.html:197) then evaluates
+    `{{if gt .UnreadCount 0}}` on a missing key. Go`s
+    `gt` builtin fails with "invalid type for comparison"
+    when called on a nil interface{}. The error halts
+    template execution, so the rest of the body (DERP
+    table) never renders AND the `<head>`-level theme
+    CSS injection (which depends on .Theme and is also
+    downstream of the failing line) does not run — so
+    the user sees the default theme instead of B121.
+    **TD-18.2 fix**: extract claims via
+    `c := s.Backend.CurrentUser(r)` in both handlers and
+    pass `c` to `RenderWithLayout` (3 nil-arg sites,
+    replaced). The pre-fix B189 code was the only
+    handler in admin/ that did this — every other
+    page was working because they all call CurrentUser.
+    8 contracts in `scripts/check_td182.sh` (A: no nil
+    claims args, B: CurrentUser called, C: POST also
+    calls CurrentUser, D: AGENTS.md mentions TD-18.2,
+    E: verify_pre_deploy.sh references check_td182.sh,
+    F: script is executable, G: go build passes,
+    H: go test ./internal/feature/admin/... passes).
+    1 file changed (internal/feature/admin/derp_dashboard.go,
+    +5 lines), 0 new i18n keys, 0 template changes — the
+    bug was purely in the handler-side claim extraction.
+
   - **B188.2 (v1.5.2) — per-CIDR exit-node pin instead of
     catch-all pin**: B188 fixed the ghost tag and re-enabled
     via pinning, but applied `via=` to the per-device
