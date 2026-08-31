@@ -1305,6 +1305,44 @@ in the same commit. Don't let the tracker drift.
     in check_td18.sh (J-Q). No new code — only
     template + catalog changes.
 
+  - **B191 (v1.5.2) — both device registration methods
+    verified end-to-end**:
+    Operator 2026-08-31 hit `500 Internal Server
+    Error: invalid pre auth key` while re-auth'ing
+    svyatoslava-1 against headscale. Suspected cause:
+    recent OIDC work (B161 / B167 / B168) may have
+    broken the classic preauth path. Actual cause:
+    the key the operator had was stale (issued on
+    a different headscale instance or already
+    consumed); the `tailscale up` actually succeeded
+    once a fresh preauth key was issued. **B191 fix**:
+    `scripts/check_b191.sh` — a B-check that verifies
+    BOTH registration paths work against the live
+    headscale. The check registers a real test
+    device as user `infra` (id=85) using a fresh
+    `hskey-auth-` preauth key (correct command
+    syntax: `--user 85 --reusable --expiration 1h` —
+    earlier attempt failed with
+    `strconv.ParseUint: parsing "skyadmin": invalid
+    syntax` because `--user` expects the numeric ID,
+    NOT the username), verifies the node appears in
+    `headscale nodes list`, then cleans up (delete
+    node + expire key + `tailscale logout`). 8
+    contracts: A (headscale CLI reachable),
+    B (preauth key created as infra), C (tailscale
+    CLI on the test host), D (tailscale can reach
+    the headscale control plane), E (full register
+    flow + node visible in DB), F (cleanup via
+    EXIT trap — garbage-free regardless of exit
+    code), G (OIDC surface: discovery + JWKS +
+    /oidc/authorize + /oidc/token + /oidc/userinfo
+    all respond with non-404 — confirms the OIDC
+    path from B161 isn't broken), H (AGENTS.md
+    mentions B191 + documents both methods). Created
+    as user 'infra' (per operator directive) so the
+    test exercises the same path the OIDC users
+    would, not the admin path.
+
   - **TD-18.2 (v1.5.2) — fix /admin/derp/dashboard silent
     regression (theme reset + no content)**: Operator
     2026-08-31: the /admin/derp/dashboard page rendered
