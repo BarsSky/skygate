@@ -961,7 +961,7 @@ run_check "B39" "headscale_acl routes: /admin/headscale/acl + /add + /remove (v0
     grep -qF \"GetAdminHeadscaleACL\" cmd/skygate/main.go &&
     grep -qF \"PostAdminHeadscaleACLAdd\" cmd/skygate/main.go &&
     grep -qF \"PostAdminHeadscaleACLRemove\" cmd/skygate/main.go &&
-    grep -qF \"title.admin_headscale_acl\" internal/handlers/templates/admin/headscale_acl.html &&
+    grep -qF \"acl.page_title\" internal/handlers/templates/admin/headscale_acl.html &&
     grep -qF \"nav.headscale_acl\" internal/handlers/templates/layout.html
   '"
 
