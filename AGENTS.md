@@ -1136,6 +1136,76 @@ in the same commit. Don't let the tracker drift.
     subcommand after any future migration that changes
     exit-node-pref data.
 
+  - **TD-17 (v1.5.2) — reject user-device dev tags as
+    exit-node preferences (michail/basic case)**:
+    Operator 2026-08-26 (during the ha.html dnsConfigured
+    fix) reported that /my/exit-rules for michail/basic
+    showed 87 rules with the PREFERRED column reading
+    `dev-michail-basic` (basic's OWN user-device dev tag,
+    written by B175's node-ownership strategy) with a
+    warning icon — but no such exit node exists. Root
+    cause: `db.NormalizeExitNodeTag(hostname)` looked up
+    the tag in `node_owner_map` and returned whatever was
+    there, without distinguishing exit-node forms
+    (`tag:dev-infra-<host>` for emilia/karolina/sharlotta
+    + the legacy `tag:exit-<host>` pre-B93 form) from
+    user-device dev tags (`tag:dev-<user>-<host>`). The
+    lock-icon form on /my/devices (`<input type="hidden"
+    name="tag" value="{{.DeviceExitPref}}">`) submits the
+    current pref tag verbatim, so once a bad value got in
+    (manually or via stale form), the handler accepted it
+    and `via=[tag:dev-michail-basic]` made the headscale
+    policy self-referential (the packet filter never matches
+    a real exit node). Audit (2026-08-27) — exit-node-pref
+    data: `device_exit_node_prefs` had 5 rows; 4 were
+    correct (`tag:dev-infra-emilia` for a71, emilia,
+    skygate-host-1, plus `tag:dev-infra-karolina` for
+    skyworker), but 1 was `tag:dev-michail-basic` with
+    `via=0` for `user_id=6, hostname=basic` (audit row 6147
+    by michail themselves via `my_device_preferred_exit_set`
+    on 2026-08-27 09:17:27 UTC — they had clicked the
+    lock-icon form to toggle `via=` and the stale
+    `tag:dev-michail-basic` got re-submitted). TD-17 fix:
+    1. New helper `isExitNodeTagForm(tag)` in
+    `internal/db/exit_node_prefs.go` that returns true
+    ONLY for `tag:dev-infra-<host>` (B111+) or
+    `tag:exit-<host>` (legacy pre-B93). `NormalizeExitNodeTag`
+    calls it after the `node_owner_map` lookup; if the
+    returned tag is a user-device dev tag, the function
+    returns the new sentinel error
+    `ErrUserDeviceDevTagNotExitNode` (with the bad tag
+    in the message for debugging). The 3 form handlers
+    (`PostMyDevicePreferredExit`,
+    `PostAdminDevicePreferredExit`,
+    `PostMyExitNodePreferred`) all share the same
+    `db.ResolveExitNodeTag` path, so the single fix
+    protects all 3 entry points. 2. New
+    `internal/db/exit_node_prefs_td17_test.go` — 16-case
+    `TestIsExitNodeTagForm` unit table (no DB needed) +
+    3-subtest `TestNormalizeExitNodeTag_RejectsUserDeviceDevTag`
+    integration test that seeds 3 fake nodes via the
+    existing `b188SeedNodeOwner` helper and asserts the
+    rejection contract. 3. New contracts in
+    `scripts/check_b188.sh`: Z1-Z4 source-level pins
+    (`isExitNodeTagForm` defined / called from
+    `NormalizeExitNodeTag` / `ErrUserDeviceDevTagNotExitNode`
+    defined / TD-17 test file exists) + AA live check on
+    VM (`SELECT COUNT(*) FROM device_exit_node_prefs
+    WHERE exit_node_tag LIKE 'tag:dev-_%' AND
+    exit_node_tag NOT LIKE 'tag:dev-infra-%'` — must be 0).
+    5 new contracts total. The michail/basic row was
+    already corrected manually on 2026-08-27 via:
+    `UPDATE device_exit_node_prefs SET
+    exit_node_tag = 'tag:dev-infra-emilia', via_enabled = 1
+    WHERE user_id = 6 AND device_hostname = 'basic'`
+    (an audit row `device_pref_corrected` was written
+    to record the manual cleanup). The TD-17 code change
+    prevents this class of bug from happening again at
+    write time. Note on the pre-existing `go vet` failure
+    in `internal/derphealth` (B189 cron) — that's a
+    `crypto/tls.Config` lock-copy issue, unrelated to
+    TD-17.
+
   - **B188.2 (v1.5.2) — per-CIDR exit-node pin instead of
     catch-all pin**: B188 fixed the ghost tag and re-enabled
     via pinning, but applied `via=` to the per-device
