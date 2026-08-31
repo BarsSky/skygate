@@ -113,6 +113,76 @@ SKYGATE_DNS_ROUTE53_ZONE_ID=<your-zone-id>
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
+### Phase 0: Tailscale mesh prerequisite (operator-side pre-flight)
+
+**Why this is a separate phase**: the HA chain (Phase 1+) and the
+svyatoslava-1 bootstrap (Phase 7) both require both nodes to be on
+the same Tailscale mesh with **subnet routes advertised + approved**
+so that the standby can reach the primary's Postgres/MinIO/headplane
+behind the Docker bridge. Without this, `bootstrap_standby.sh` runs
+but the standby can't connect to the primary's data plane.
+
+**Steps (operator runs on each VM as needed)**:
+
+1. **agent (<agent-lan-ip>)**:
+   ```bash
+   sudo systemctl enable --now tailscaled   # systemd unit uses --socket=/run/tailscale/tailscaled.sock
+   sudo tailscale up --login-server=https://head.skynas.ru \
+     --authkey=$SKYGATE_KEY --hostname=skygate-host-1 \
+     --accept-routes --accept-dns=false --netfilter-mode=off \
+     --advertise-routes=<agent-docker-subnet-1>,<agent-docker-subnet-2>,<agent-lan-subnet>
+   ```
+   Then on the **headscale** host (admin):
+   ```bash
+   AGENT_ID=$(docker exec headscale headscale nodes list -o json | python3 -c \
+     "import json,sys;d=json.load(sys.stdin);print([n['id'] for n in d if n.get('given_name','').startswith('skygate-host-1-')][0])")
+   docker exec headscale headscale nodes approve-routes -i "$AGENT_ID" \
+     --routes <agent-docker-subnet-1>,<agent-docker-subnet-2>,<agent-lan-subnet>
+   ```
+2. **svyatoslava-1 (operator-public-IP)**:
+   ```bash
+   tailscale up --login-server=https://head.skynas.ru \
+     --authkey=$SKYGATE_KEY --hostname=svyatoslava-1 \
+     --accept-routes --accept-dns=false --netfilter-mode=off
+   ```
+3. **Tag BOTH nodes for grant-based netmap visibility** — headscale
+   0.29.1 with the grants-based policy does **not** include
+   user-owned (un-tagged) nodes in other nodes' netmaps, even when
+   grants formally allow the traffic. Pre-tag the new nodes so
+   they appear in karolina/emilia/sharlotta/etc's peer list:
+   ```bash
+   AGENT_ID=...   # from step 1
+   SVYAT_ID=...   # from step 2
+   docker exec headscale headscale nodes tag -i "$AGENT_ID" \
+     --tags 'tag:dev-skyadmin-skygate-host-1,tag:private' --force
+   docker exec headscale headscale nodes tag -i "$SVYAT_ID" \
+     --tags 'tag:dev-skyadmin-skyworker,tag:private' --force
+   ```
+   The `tag:dev-skyadmin-*` family is already in `tagOwners` (owned
+   by `skyadmin@tsnet.skynas.ru`), so no policy edit is needed.
+
+4. **Verify both directions**: from svyatoslava, `tailscale ping <agent-tailscale-ip>`;
+   from agent, `tailscale ping <svyatoslava-tailscale-ip>`. Both must return
+   `pong` (via DERP or direct), NOT `no matching peer`.
+
+5. **Verify subnet routes** (after step 1's approve): from svyatoslava,
+   `ping <agent-lan-ip>` (agent's LAN) + `ping <agent-docker-gateway>` (skygate
+   container on agent). Both must return from inside the Tailscale
+   mesh.
+
+**Known gotchas** (verified 2026-08-31):
+- `tailscale up --hostname=skygate-host-1` collides with the old
+  Tailscale-SaaS-era node of the same name (id=33, offline) and
+  gets a `-1` suffix. Cosmetic, no functional impact.
+- The pre-existing tailscaled process running with the deprecated
+  `--statedir=` flag (no `--socket`) creates a state dir but
+  **no socket**, so `tailscale up` hangs. Fix:
+  `sudo kill <old-pid>; sudo systemctl start tailscaled`.
+- svyatoslava-1's `tailscale up` can take 60+ min on first run
+  (slow NAT routing). Use 24h preauth keys (1h expires mid-handshake).
+- headscale 0.29.1 may need a restart after `nodes tag` to push the
+  new netmap to all clients (not just the tagged node).
+
 ### Phase 1: HA chain + elector
 - [ ] `internal/ha/chain.go` — `HaChain` struct + `HaMember` list (priority-ordered)
 - [ ] `internal/ha/elector.go` — Patroni-derived role + heartbeat (5s) + missed-threshold (3 = 15s)
@@ -181,10 +251,12 @@ UI sections in `/admin/ha`:
 - [x] `scripts/check_b150.sh` (5 contracts) — 54/54 PASS
 
 ### Phase 7: svyatoslava-1 bootstrap (manual operator runbook)
+- [ ] **PREREQUISITE**: Phase 0 (Tailscale mesh + subnet routes) must be complete — both nodes in headscale netmap, agent's `<agent-lan-subnet>` + `<agent-docker-subnet-2>` routes approved
 - [ ] Provision svyatoslava-1 (OS + Docker)
 - [ ] `scripts/bootstrap_standby.sh` — install Patroni replica + headscale replica + skygate (in standby role) + certsync
 - [ ] Wire skygate-standby → S3 deploy bucket
 - [ ] Verify standby serves 200 on `/healthz` with role=standby banner
+- [ ] Verify standby → primary's subnet reachable (`ping <agent-lan-ip>` from svyatoslava, `curl http://<agent-docker-gateway>:8080/healthz` from svyatoslava)
 
 ### Phase 8: init-headplane.sh (auto-apply API key on fresh deploy)
 - [ ] `scripts/init-headplane.sh` — wait for headplane to generate key, copy to skygate env, restart
@@ -499,6 +571,25 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - `docs/disaster-recovery.md` — Tier 0 fallback when v1.5.0 isn't deployed
 
 ---
+
+### 2026-08-31 (Phase 0 unblock attempt + new prerequisite added)
+- **Trigger**: operator asked to "сначала всё разблокировать для правильной настройки" — both nodes need to be on the Tailscale mesh + subnet routes approved BEFORE `bootstrap_standby.sh` can work.
+- **Discovered headscale netmap gotcha**: headscale 0.29.1 + grants-based policy does NOT include user-owned (un-tagged) nodes in other nodes' peer list, even when grants formally allow the traffic. Only tagged nodes (with `tag:exit-node` etc) appear. Solution: pre-tag new nodes with `tag:dev-skyadmin-skygate-host-1` (agent) and `tag:dev-skyadmin-skyworker` (svyatoslava) — both tags are already in `tagOwners` policy.
+- **Phase 0 added to plan**: 5-step operator runbook (re-auth agent + approve routes + re-auth svyatoslava + tag both + verify mesh).
+- **Actions taken on agent (<agent-lan-ip>)**:
+  - Killed legacy tailscaled pid 1441 (was using deprecated `--statedir=` without `--socket`, so no socket was created → `tailscale up` hung).
+  - Started systemd tailscaled (uses correct `--socket=/run/tailscale/tailscaled.sock`).
+  - Created fresh preauth key (24h, reusable) for skyadmin (id=1).
+  - Ran `tailscale up --login-server=https://head.skynas.ru --authkey=... --hostname=skygate-host-1 --accept-routes --advertise-routes=<agent-docker-subnets>+<agent-lan-subnet>` — node registered as id=43 (given_name=skygate-host-1-1 because id=33 is the old Tailscale-SaaS node of the same hostname).
+  - Approved routes on headscale: `headscale nodes approve-routes -i 43 --routes <agent-docker-subnets>+<agent-lan-subnet>`.
+  - Tagged id=43 with `tag:dev-skyadmin-skygate-host-1,tag:private`.
+- **Actions taken on svyatoslava-1 (<svyatoslava-public-ip>)**:
+  - Deleted expired old node id=36 (`headscale nodes delete -i 36 --force`).
+  - Created fresh preauth key, ran `tailscale up --login-server=https://head.skynas.ru --authkey=... --hostname=svyatoslava-1 --accept-routes --accept-dns=false --netfilter-mode=off` — node registered as id=44, Tailscale IP 100.64.0.23.
+  - Tagged id=44 with `tag:dev-skyadmin-skyworker,tag:private`.
+- **🚨 BLOCKER (still open)**: svyatoslava-1 server became unreachable mid-unblock (port 22 + 41641 timed out at 12:25 UTC). Headscale still shows it as `online=true` (stale last_seen=12:10:36). Operator must verify the VM is up before Phase 7 can proceed.
+- **🚨 BLOCKER (still open)**: even after tagging, the new nodes (id=43, id=44) are NOT in the existing peers' netmaps (karolina/emilia/sharlotta still only see themselves). Likely cause: headscale 0.29.1 doesn't recompute netmap for tagged-node changes without a headscale restart, OR grants-based policy + Noise protocol have a visibility bug. Workarounds: (a) restart headscale service, (b) inspect the policy for `autogroup:tagged-devices` grant that should include all tagged nodes regardless of user, (c) fall back to classic `acls: [{...}]` instead of grants.
+- **Status**: Phase 0 steps 1-3 done, step 4 (verify bidirectional ping) cannot complete until (a) svyatoslava-1 server is back and (b) headscale netmap visibility is resolved. Phase 7 (bootstrap_standby.sh) is blocked on these two issues.
 
 ### 2026-08-24 (B151 + B152 + B153 — Phase 7 + 8 + 9 runbooks SHIPPED)
 - **3 new operator-driven scripts** (runbooks for Phase 7 + 8 + 9 of the HA v1.5.0 plan; the B145-B150 code surfaces are already SHIPPED):
