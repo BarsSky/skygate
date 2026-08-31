@@ -1,4 +1,8 @@
 {{define "body-admin-integrations"}}
+{{/* 2026-08-31 (TD-18.1): added 'What are integrations?' hint block
+     + per-card explanation. The page was i18n-wrapped pre-TD-18.1
+     but had no help text — operator didn't know what each
+     integration does or what bundled/external/off means. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-puzzle-piece"></i>{{t "integrations.title"}}</h2>
@@ -8,6 +12,13 @@
 
 {{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
 {{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+
+<details style="margin-bottom:12px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+    <i class="fa-solid fa-circle-info"></i> {{t "integrations.help_title"}}
+  </summary>
+  <div class="form-hint-strong" style="margin-top:8px">{{t "integrations.help_body" | safeHTML}}</div>
+</details>
 
 <div class="card" style="background:var(--bg-muted)">
   <div style="font-size:13px;line-height:1.6">{{t "integrations.apply_help" | safeHTML}}</div>

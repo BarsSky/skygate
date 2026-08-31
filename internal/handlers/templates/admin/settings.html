@@ -3,13 +3,27 @@
      string goes through {{t "..."}} / {{tf "..."}}. The previous
      version mixed Russian and English; the English holdouts were
      the labels and helper text in the Headscale / Public domain /
-     Security / Exit Node Policy / After-migration cards. */}}
+     Security / Exit Node Policy / After-migration cards.
+
+     2026-08-31 (TD-18.1): added 'What's being configured here?'
+     hint block + .env-vs-runtime warning. Pre-TD-18.1 the page
+     was fully i18n'd but had only 1 hint (the per-field sub text)
+     and the operator had no way to know which settings require
+     a container restart. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-gear"></i> {{t "settings.title"}}</h2>
     <div class="sub">{{t "settings.subtitle"}}.</div>
   </div>
 </div>
+
+<details style="margin-bottom:12px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+    <i class="fa-solid fa-circle-info"></i> {{t "settings.help_title"}}
+  </summary>
+  <div class="form-hint-strong" style="margin-top:8px">{{t "settings.help_body" | safeHTML}}</div>
+  <div class="alert alert-warn" style="margin-top:8px">{{t "settings.env_warning" | safeHTML}}</div>
+</details>
 
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>

@@ -1,4 +1,8 @@
 {{define "body-admin-derp"}}
+{{/* 2026-08-31 (TD-18.1): added 'What is DERP and what does this
+     page show?' hint block + per-tile metric explanation. Pre-TD-18.1
+     the page had only 2 hints (relay-link + config-link) and no
+     explanation of what each metric tile means. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-tower-broadcast"></i>{{t "derp.title"}}</h2>
@@ -9,6 +13,14 @@
     <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i>{{t "common.refresh"}}</a>
   </div>
 </div>
+
+<details style="margin-bottom:12px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+    <i class="fa-solid fa-circle-info"></i> {{t "derp.help_title"}}
+  </summary>
+  <div class="form-hint-strong" style="margin-top:8px">{{t "derp.help_body" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{t "derp.metric_help" | safeHTML}}</div>
+</details>
 
 {{if .DerpStatus}}
 <div class="section-title"><i class="fa-solid fa-circle-nodes"></i>{{t "derp.section_status"}}</div>

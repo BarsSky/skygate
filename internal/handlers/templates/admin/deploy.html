@@ -31,6 +31,11 @@
   surface small (the B-check only verifies the 8 new keys;
   reuse keeps the B-check focused on the deploy-specific
   additions, not the shared chrome).
+
+  2026-08-31 (TD-18.1): added 'What does this page do?' hint
+  block + per-section overview + audit-event explainer.
+  Pre-TD-18.1 the page had only 1 hint (the dry-run info line)
+  and the audit log was just a bare table.
 */}}
 
 <div class="title-row">
@@ -39,6 +44,14 @@
     <div class="sub">{{t "deploy.subtitle"}}</div>
   </div>
 </div>
+
+<details style="margin-bottom:12px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+    <i class="fa-solid fa-circle-info"></i> {{t "deploy.help_title"}}
+  </summary>
+  <div class="form-hint-strong" style="margin-top:8px">{{t "deploy.help_body" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{t "deploy.audit_help" | safeHTML}}</div>
+</details>
 
 {{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
 {{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}

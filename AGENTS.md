@@ -1271,6 +1271,40 @@ in the same commit. Don't let the tracker drift.
     is now a hard fail — any future t() without a
     catalog entry will be a build-blocking regression.
 
+  - **TD-18.1 (v1.5.2) — hint blocks on 7 more pages**:
+    Operator 2026-08-31: "надо доделать локализацию
+    вебинтерфейса и сделать больше подсказок
+    по интерфейсу" (continuation — TD-18 covered
+    the 3 most-confusing admin pages, TD-18.1
+    extends to the remaining 7). The 7 pages:
+    **admin/integrations.html** (B148 era — "What
+    are integrations?" hint explaining bundled/
+    external/off modes), **admin/telegram.html**
+    (B186 era — overview of the 8 sections on the
+    page: token/chat_id, test, refresh menu, rotate,
+    disable, strict mode, container state, egress),
+    **admin/derp.html** (DERP overview + per-tile
+    metric explanation: service/socket/STUN/version),
+    **admin/control_planes.html** (longer
+    help_body — was 1 line about "v0.12.0 stores
+    per-user headscale URL..." — now a full
+    explanation of what a control plane is, why
+    per-user is a compliance tier not default, and
+    the re-auth caveat), **admin/deploy.html**
+    ("What does this page do?" + audit event
+    explainer listing all 7 event types), **admin/
+    settings.html** (which settings are runtime
+    vs need-restart + .env warning), **user/
+    notifications.html** (the 5 notification types
+    + All/Unread filter help). 19 new i18n keys
+    (integrations.help_*, telegram.help_*, derp.
+    help_*, derp.metric_help, control_planes.
+    warning_help, deploy.help_*, deploy.audit_help,
+    settings.help_*, settings.env_warning, notif.
+    help_*, notif.filter_help). 7 new contracts
+    in check_td18.sh (J-Q). No new code — only
+    template + catalog changes.
+
   - **B188.2 (v1.5.2) — per-CIDR exit-node pin instead of
     catch-all pin**: B188 fixed the ghost tag and re-enabled
     via pinning, but applied `via=` to the per-device

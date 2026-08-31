@@ -19,6 +19,13 @@
   {{end}}
 </div>
 
+<details style="margin-bottom:12px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+    <i class="fa-solid fa-circle-info"></i> {{t "telegram.help_title"}}
+  </summary>
+  <div class="form-hint-strong" style="margin-top:8px">{{t "telegram.help_body" | safeHTML}}</div>
+</details>
+
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}

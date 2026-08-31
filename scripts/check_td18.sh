@@ -174,6 +174,96 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# TD-18.1 (2026-08-31): add hint blocks to 7 more pages — integrations,
+# telegram, derp, control_planes, deploy, settings, notifications.
+# Each page gets a "What is this page?" details block + per-section hints.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# J. admin/integrations.html has the 'What are integrations?' hint
+# ---------------------------------------------------------------------------
+if grep -q 't "integrations.help_title"' internal/handlers/templates/admin/integrations.html \
+    && grep -q 't "integrations.help_body"' internal/handlers/templates/admin/integrations.html; then
+    ok "contract J: integrations.html has 'What are integrations?' hint block"
+else
+    bad "contract J: integrations.html missing 'What are integrations?' hint"
+fi
+
+# ---------------------------------------------------------------------------
+# K. admin/telegram.html has the 'What is this page?' hint
+# ---------------------------------------------------------------------------
+if grep -q 't "telegram.help_title"' internal/handlers/templates/admin/telegram.html \
+    && grep -q 't "telegram.help_body"' internal/handlers/templates/admin/telegram.html; then
+    ok "contract K: telegram.html has 'What is this page?' hint block (8 sections overview)"
+else
+    bad "contract K: telegram.html missing 'What is this page?' hint"
+fi
+
+# ---------------------------------------------------------------------------
+# L. admin/derp.html has the 'What is DERP?' hint + per-tile metric help
+# ---------------------------------------------------------------------------
+if grep -q 't "derp.help_title"' internal/handlers/templates/admin/derp.html \
+    && grep -q 't "derp.help_body"' internal/handlers/templates/admin/derp.html \
+    && grep -q 't "derp.metric_help"' internal/handlers/templates/admin/derp.html; then
+    ok "contract L: derp.html has 'What is DERP and what does this page show?' hint + per-tile help"
+else
+    bad "contract L: derp.html missing DERP hint or metric_help"
+fi
+
+# ---------------------------------------------------------------------------
+# M. admin/control_planes.html has the 'What is a control plane?' hint
+# ---------------------------------------------------------------------------
+if grep -q 't "control_planes.help_title"' internal/handlers/templates/admin/control_planes.html \
+    && grep -q 't "control_planes.help_body"' internal/handlers/templates/admin/control_planes.html \
+    && grep -q 't "control_planes.warning_help"' internal/handlers/templates/admin/control_planes.html; then
+    ok "contract M: control_planes.html has 'What is a control plane?' hint + warning_help"
+else
+    bad "contract M: control_planes.html missing control plane hint or warning_help"
+fi
+
+# ---------------------------------------------------------------------------
+# N. admin/deploy.html has the 'What does this page do?' hint + audit_help
+# ---------------------------------------------------------------------------
+if grep -q 't "deploy.help_title"' internal/handlers/templates/admin/deploy.html \
+    && grep -q 't "deploy.help_body"' internal/handlers/templates/admin/deploy.html \
+    && grep -q 't "deploy.audit_help"' internal/handlers/templates/admin/deploy.html; then
+    ok "contract N: deploy.html has 'What does this page do?' hint + audit event explainer"
+else
+    bad "contract N: deploy.html missing deploy hint or audit_help"
+fi
+
+# ---------------------------------------------------------------------------
+# O. admin/settings.html has the 'What is configured here?' hint + env warning
+# ---------------------------------------------------------------------------
+if grep -q 't "settings.help_title"' internal/handlers/templates/admin/settings.html \
+    && grep -q 't "settings.help_body"' internal/handlers/templates/admin/settings.html \
+    && grep -q 't "settings.env_warning"' internal/handlers/templates/admin/settings.html; then
+    ok "contract O: settings.html has 'What is configured here?' hint + .env-vs-runtime warning"
+else
+    bad "contract O: settings.html missing settings hint or env_warning"
+fi
+
+# ---------------------------------------------------------------------------
+# P. user/notifications.html has the 'What are these notifications?' hint
+# ---------------------------------------------------------------------------
+if grep -q 't "notif.help_title"' internal/handlers/templates/user/notifications.html \
+    && grep -q 't "notif.help_body"' internal/handlers/templates/user/notifications.html \
+    && grep -q 't "notif.filter_help"' internal/handlers/templates/user/notifications.html; then
+    ok "contract P: notifications.html has 'What are these notifications?' hint + filter help"
+else
+    bad "contract P: notifications.html missing notif hint or filter_help"
+fi
+
+# ---------------------------------------------------------------------------
+# Q. AGENTS.md mentions TD-18.1
+# ---------------------------------------------------------------------------
+if grep -qF "TD-18.1" AGENTS.md; then
+    ok "contract Q: AGENTS.md mentions TD-18.1"
+else
+    bad "contract Q: AGENTS.md does NOT mention TD-18.1"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 echo "=== TD-18 summary: $PASS pass, $FAIL fail ==="
 if [ "$FAIL" -gt 0 ]; then

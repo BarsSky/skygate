@@ -1,4 +1,8 @@
 ﻿{{define "body-user-notifications"}}
+{{/* 2026-08-31 (TD-18.1): added 'What are these notifications?'
+     hint block + All/Unread filter explainer. Pre-TD-18.1 the
+     page had 0 hints and the type icons (preauth_expiring /
+     device_renewed / ha_event / etc) were unexplained. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-bell"></i> {{t "notif.page_title"}}</h2>
@@ -12,6 +16,14 @@
     {{end}}
   </div>
 </div>
+
+<details style="margin-bottom:12px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+    <i class="fa-solid fa-circle-info"></i> {{t "notif.help_title"}}
+  </summary>
+  <div class="form-hint-strong" style="margin-top:8px">{{t "notif.help_body" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{t "notif.filter_help" | safeHTML}}</div>
+</details>
 
 {{/* Filter pills: All / Unread. Plain <a> links
    (not a form) so the URL is shareable + the

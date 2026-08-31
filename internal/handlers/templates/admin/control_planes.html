@@ -1,4 +1,8 @@
 {{define "body-admin-control_planes"}}
+{{/* 2026-08-31 (TD-18.1): added 'What is a control plane?' hint block
+     (replaces the old short help_body which only said "v0.12.0 stores
+     per-user headscale URL..." — didn't explain what a control plane
+     is) + per-table explanation of the Configure/Provision buttons. */}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-tower-observation"></i>{{t "control_planes.title"}}</h2>
@@ -8,6 +12,14 @@
     <a href="/admin/integrations" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
   </div>
 </div>
+
+<details style="margin-bottom:12px">
+  <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+    <i class="fa-solid fa-circle-info"></i> {{t "control_planes.help_title"}}
+  </summary>
+  <div class="form-hint-strong" style="margin-top:8px">{{t "control_planes.help_body" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{t "control_planes.warning_help" | safeHTML}}</div>
+</details>
 
 {{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
 {{if .FlashInfo}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashInfo | safeHTML}}</div>{{end}}
