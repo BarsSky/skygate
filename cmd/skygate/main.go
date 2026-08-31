@@ -33,6 +33,7 @@ import (
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/db"
+	"skygate/internal/deployrun"
 	"skygate/internal/derphealth"
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
@@ -47,6 +48,11 @@ import (
 	"skygate/internal/ratelimit"
 	"skygate/internal/telegram"
 	"skygate/internal/update"
+
+	// B194: import the steps/ package for its init() side
+	// effects (each step registers itself in the
+	// deployrun registry at boot).
+	_ "skygate/internal/deployrun/steps"
 )
 
 // Build-time variables, overridden via -ldflags by entrypoint.sh:
@@ -807,6 +813,42 @@ func main() {
 		// instead of the "update available" alert.
 		DevBuild: app.Config().DevBuild,
 	}
+
+	// v1.5.0 / B194 — auto-deploy framework service.
+	// The Service holds a per-run broker map so the
+	// /admin/deploys/{id}/stream SSE handler can find
+	// the broker for an in-flight run. The framework
+	// works against HSClient + S3Client interfaces;
+	// the adapter (deployrun.HSFactoryFromFunc) wraps
+	// the *headscale.Client concrete type.
+	//
+	// S3Client is optional — the framework marks step 4
+	// (PushEnvToS3) as skipped with a clear hint if the
+	// S3 env is not configured. The deploy can still
+	// succeed in that case.
+	deployrunCfg := &deployrun.Config{
+		HeadscaleExecContainer: "headscale",
+		PreauthExpiration:      "24h",
+	}
+	// S3 push requires the same env the backup runner
+	// uses (SKYGATE_S3_BUCKET / SKYGATE_S3_ENDPOINT etc).
+	// Defaults are empty → step 4 skips with a clear hint.
+	if s3b := os.Getenv("SKYGATE_S3_BUCKET"); s3b != "" {
+		deployrunCfg.S3Bucket = s3b
+		deployrunCfg.S3Prefix = envOrDefault("SKYGATE_S3_DEPLOY_PREFIX", "ha/deploy")
+		deployrunCfg.S3Endpoint = os.Getenv("SKYGATE_S3_ENDPOINT")
+		deployrunCfg.S3AccessKey = os.Getenv("SKYGATE_S3_ACCESS_KEY")
+		deployrunCfg.S3SecretKey = os.Getenv("SKYGATE_S3_SECRET_KEY")
+	}
+	deployrunSvc := deployrun.NewService(
+		app.DB,
+		deployrun.HSFactoryFromFunc(app.HSGlobalFn),
+		deployrun.S3FactoryFromEnv(deployrunCfg),
+		deployrunCfg,
+		nil, // catalog: TODO wire i18n in B194.2
+	)
+	_ = deployrunSvc // used by mux.Handle below
+
 	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
 	// the adminSvc into *App so the existing thin wrappers
 	// (app.AdminTelegram, app.AdminTelegramPost) route through
@@ -1193,6 +1235,24 @@ func main() {
 	mux.Handle("POST /admin/ha/reclaim", authMW(http.HandlerFunc(adminSvc.PostAdminHAReclaim)))
 	mux.Handle("POST /admin/ha/dns/save", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsSave)))
 	mux.Handle("POST /admin/ha/dns/test", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsTest)))
+
+	// v1.5.0 / B194 — auto-deploy framework pages.
+	//
+	// /admin/deploys              — list of recent runs
+	// /admin/deploys/new          — new-run form (GET only)
+	// /admin/deploys/{id}         — single run + live SSE UI (GET)
+	// /admin/deploys/{id}/stream  — SSE event stream (GET)
+	// /admin/deploys (POST)       — start a new run
+	//
+	// The framework handles the deploy asynchronously
+	// (PostAdminDeploys returns 303 to /admin/deploys/{id}
+	// immediately; the framework.Run() runs in a goroutine
+	// and the SSE stream pushes step transitions to the
+	// open EventSource connection).
+	mux.Handle("GET /admin/deploys", authMW(http.HandlerFunc(deployrunSvc.GetAdminDeploys)))
+	mux.Handle("GET /admin/deploys/new", authMW(http.HandlerFunc(deployrunSvc.GetAdminDeploysNew)))
+	mux.Handle("POST /admin/deploys", authMW(http.HandlerFunc(deployrunSvc.PostAdminDeploys)))
+	mux.Handle("GET /admin/deploys/", authMW(http.HandlerFunc(deployrunSvc.GetAdminDeployRun)))
 	// v1.5.0 / B148 — /admin/certificates (TLS cert management:
 	// show current cert, upload new PEM pair, LE DNS-01 toggle).
 	// See internal/feature/admin/certificates.go for the handler

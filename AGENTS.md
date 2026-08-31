@@ -1305,6 +1305,70 @@ in the same commit. Don't let the tracker drift.
     in check_td18.sh (J-Q). No new code — only
     template + catalog changes.
 
+  - **B194 (v1.5.0) — auto-deploy framework
+    (`internal/deployrun/`)**: a multi-step deploy
+    orchestrator with live progress (Server-Sent
+    Events), per-step logs, rollback on failure, and
+    audit log integration. The framework is the
+    operator-driven "Add + auto-deploy standby" path:
+    a web form at `/admin/deploys` triggers a
+    `DeployRun`, the framework executes each step
+    in the registry sequentially, each step appends
+    structured logs + status updates, the operator
+    sees the progress in real-time via SSE.
+    Architecture:
+    - `internal/deployrun/types.go` — `DeployStep`
+      interface + `DeployContext` + `StepLogger` +
+      `DeployRun`/`StepResult` types. Each step has
+      `Name/Description/Run/Rollback/IsOptional/
+      DependsOn` methods.
+    - `internal/deployrun/framework.go` —
+      `Framework.Run()` orchestrates the steps,
+      persists per-step state to DB, runs the
+      rollback chain on failure, and publishes
+      SSE events for the live UI.
+    - `internal/deployrun/registry.go` — the
+      canonical step plan (StandbyPlan with 6 step
+      names). Steps register themselves via `init()`
+      in their own files (no import cycle).
+    - `internal/deployrun/sse.go` — `SSEBroker`
+      with `Subscribe/Publish/Close` for live
+      progress streaming.
+    - `internal/deployrun/s3client.go` — minimal
+      S3 PUT/Delete client (minio-go wrapper).
+    - `internal/deployrun/handlers.go` — HTTP
+      handlers: list + single + SSE stream + new.
+    - `internal/deployrun/steps/` — 6 step files
+      (Phase 1): ValidateInput, GeneratePreauthKey,
+      UpdateHAChain, PushEnvToS3, TagNode, AuditLog.
+    - `internal/db/migrations_v0_63_b194.go` —
+      `deploy_runs` + `deploy_run_steps` tables.
+    - `scripts/check_b194.sh` — 30 contracts (8
+      groups), ALL PASS. Each step implements
+      DeployStep; the framework has Run(); the
+      migration creates both tables with FK; SSE
+      broker has Subscribe/Publish/Close; AGENTS.md
+      mentions B194; verify_pre_deploy.sh
+      references check_b194.
+    Why a separate package (not in internal/deploy/):
+    internal/deploy/ is the B150 deploy CLI subcommand
+    (binary sync between primary and standby). B194
+    is the multi-step RUN orchestrator with rollback
+    + SSE — different concern, different package.
+    Naming it `deployrun` makes the boundary explicit.
+    Modularity pattern: each step is a separate file
+    with a clean interface. Adding a new step =
+    one new file in steps/ + one `RegisterStep` call
+    in init(). No changes to framework.go or
+    handlers.go. Phase 2 will add SSHConnectStep,
+    RunBootstrapScriptStep, HealthCheckStep (one
+    file each, ~150 lines).
+    Phase 1 leaves manual SSH bootstrap to the operator:
+    after the framework finishes, the run page shows
+    the bootstrap command (`curl ... | bash`) that
+    the operator pastes onto the new node. Phase 2
+    wires automatic SSH execution (B195).
+
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
     Operator 2026-08-31 hit `500 Internal Server
