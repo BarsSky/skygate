@@ -9,6 +9,13 @@
 
      Add-rule form: src + dst + label. Read-modify-write of
      the live policy preserves the operator's manual rules.
+
+     2026-08-31 (TD-18): i18n + a "What is an ACL?" hint
+     block + per-field hints (src_help / dst_help / label_help).
+     Pre-TD-18 the page was mostly English (table headers,
+     button text, helper text) and had no explanation of what
+     the page is for. The hint block + i18n wraps make it
+     usable for a non-engineer operator.
 */}}
 
 {{if .FlashSuccess}}
@@ -21,39 +28,42 @@
 {{if .EmptyWarning}}
 <div class="alert alert-warning" style="margin-bottom:16px">
   <i class="fa-solid fa-triangle-exclamation"></i>
-  <strong>Heads up:</strong> 0 ACL rules. Peer-to-peer traffic
-  is denied by default in headscale. Add a rule below
-  (e.g. <code>skyadmin@tsnet.<your-domain> → *:*</code> to let
-  admin reach every device) or import one from headplane.
+  {{t "acl.empty_warning" | safeHTML}}
 </div>
 {{end}}
 
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
-      <h3 style="margin:0"><i class="fa-solid fa-network-wired"></i> {{t "title.admin_headscale_acl"}}</h3>
+      <h3 style="margin:0"><i class="fa-solid fa-network-wired"></i> {{t "acl.page_title"}}</h3>
       <p style="color:var(--text-muted);margin:8px 0 0 0">
         {{if .View}}
-        {{.View.TotalCount}} rule(s): {{.View.SkygateCount}} skygate-managed,
+        {{.View.TotalCount}} {{t "acl.rules_count"}}: {{.View.SkygateCount}} skygate-managed,
         {{.View.ExternalCount}} external.
         {{end}}
-        Existing policy fields (ssh, groups, tagOwners, hosts)
-        are never touched — only the acls list is modified.
+        {{t "acl.page_subtitle" | safeHTML}}
       </p>
     </div>
   </div>
 
+  <details style="margin-top:16px">
+    <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+      <i class="fa-solid fa-circle-info"></i> {{t "acl.what_is_title"}}
+    </summary>
+    <div class="form-hint-strong" style="margin-top:8px">{{t "acl.what_is_body" | safeHTML}}</div>
+  </details>
+
   {{if .View}}
   {{if .View.SkygateACLs}}
-  <h4 style="margin-top:24px">Skygate-managed rules</h4>
+  <h4 style="margin-top:24px">{{t "acl.skygate_managed_label"}}</h4>
   <table class="table table-sm" style="margin-top:8px">
     <thead>
       <tr>
-        <th>Label</th>
-        <th>Action</th>
-        <th>Source</th>
-        <th>Destination</th>
-        <th style="width:120px">Created</th>
+        <th>{{t "acl.label_label"}}</th>
+        <th>{{t "acl.table_action"}}</th>
+        <th>{{t "acl.src_label"}}</th>
+        <th>{{t "acl.dst_label"}}</th>
+        <th style="width:120px">{{t "acl.table_created"}}</th>
         <th style="width:80px"></th>
       </tr>
     </thead>
@@ -85,19 +95,16 @@
   {{end}}
 
   {{if .View.ExternalACLs}}
-  <h4 style="margin-top:24px">External rules (operator-managed)</h4>
+  <h4 style="margin-top:24px">{{t "acl.external_label"}}</h4>
   <p style="color:var(--text-muted);font-size:0.9em">
-    These rules were added outside skygate (via headplane,
-    headscale CLI, or direct edit). They are shown for
-    visibility only and cannot be removed from this page —
-    use the same tool you used to add them.
+    {{t "acl.external_help" | safeHTML}}
   </p>
   <table class="table table-sm" style="margin-top:8px">
     <thead>
       <tr>
-        <th>Action</th>
-        <th>Source</th>
-        <th>Destination</th>
+        <th>{{t "acl.table_action"}}</th>
+        <th>{{t "acl.src_label"}}</th>
+        <th>{{t "acl.dst_label"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -118,38 +125,38 @@
 
   {{if and (not .View.SkygateACLs) (not .View.ExternalACLs)}}
   <p style="color:var(--text-muted);font-style:italic;margin-top:16px">
-    No ACL rules yet. Add one below.
+    {{t "acl.no_rules_yet"}}
   </p>
   {{end}}
   {{end}}
 
-  <h4 style="margin-top:32px">Add rule</h4>
+  <h4 style="margin-top:32px">{{t "acl.add_rule_btn"}}</h4>
   <form method="post" action="/admin/headscale/acl/add">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
       <div>
-        <label for="src"><strong>Source</strong></label>
+        <label for="src"><strong>{{t "acl.src_label"}}</strong></label>
         <input type="text" name="src" id="src" class="form-control"
                placeholder="skyadmin@tsnet.<your-domain>, group:skyadmin"
                required>
-        <small style="color:var(--text-muted)">Comma-separated identities, groups, tags, or CIDRs.</small>
+        <div class="form-hint-strong">{{t "acl.src_help" | safeHTML}}</div>
       </div>
       <div>
-        <label for="dst"><strong>Destination</strong></label>
+        <label for="dst"><strong>{{t "acl.dst_label"}}</strong></label>
         <input type="text" name="dst" id="dst" class="form-control"
                placeholder="*:*, 100.64.0.10:*, tag:exit-node"
                required>
-        <small style="color:var(--text-muted)">Comma-separated destinations.</small>
+        <div class="form-hint-strong">{{t "acl.dst_help" | safeHTML}}</div>
       </div>
     </div>
     <div style="margin-top:12px">
-      <label for="label"><strong>Label</strong> <small style="color:var(--text-muted)">(audit trail + UI)</small></label>
+      <label for="label"><strong>{{t "acl.label_label"}}</strong> <small style="color:var(--text-muted)">({{t "acl.label_help"}})</small></label>
       <input type="text" name="label" id="label" class="form-control"
              placeholder="admin → all devices"
              value="">
     </div>
     <div style="margin-top:16px">
       <button type="submit" class="btn btn-primary">
-        <i class="fa-solid fa-plus"></i> Add rule
+        <i class="fa-solid fa-plus"></i> {{t "acl.add_rule_btn"}}
       </button>
     </div>
   </form>

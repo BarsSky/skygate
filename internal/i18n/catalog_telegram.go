@@ -12,6 +12,7 @@ package i18n
 // Top-level prefixes: telegram
 
 var ruTelegram = map[string]string{
+	"telegram.saved_token" : "Сохранённый токен",
 	"telegram.title"                    : "Telegram",
 	"telegram.subtitle"                 : "Бот для уведомлений и команд",
 	"telegram.token"                    : "Bot token",
@@ -103,6 +104,7 @@ var ruTelegram = map[string]string{
 }
 
 var enTelegram = map[string]string{
+	"telegram.saved_token" : "Saved token",
 	"telegram.title"                    : "Telegram",
 	"telegram.subtitle"                 : "Bot for notifications and commands",
 	"telegram.token"                    : "Bot token",

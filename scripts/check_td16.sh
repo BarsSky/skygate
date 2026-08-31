@@ -112,11 +112,19 @@ fi
 
 # ---------------------------------------------------------------------------
 # Contract B: every {{t "X.Y"}} i18n key in templates exists in the catalog.
-# (Advisory only — prints missing keys but does NOT fail. The catalog
-# has pre-existing gaps from older B-changes that haven't been
-# backfilled; this contract surfaces them as a TODO list for a
-# follow-up TD/B check, without blocking this commit. Switch to
-# a hard `bad` if/when the catalog is backfilled.)
+# 2026-08-31 (TD-18): flipped from advisory to hard fail. The 31
+# pre-existing gaps from B148 (certsync) + ha.audit_* + subnets.col_actions
+# + telegram.saved_token were all backfilled. New code that adds a
+# t() reference without a corresponding catalog entry is now a build-
+# blocking regression, not a soft warning.
+#
+# Two checks combined:
+#  - B1: missing keys (the {{t "X"}} call has no "X" entry in any
+#    catalog_*.go file). FAIL.
+#  - B2: padded keys (catalog_*.go has "X   " (with trailing spaces)
+#    but the template uses "X" without padding — the lookup silently
+#    misses). FAIL. This catches the B148 catalog-generation bug that
+#    left 50 keys unreachable.
 # ---------------------------------------------------------------------------
 missing_b=$(awk '
 /\{\{[[:space:]]*t[[:space:]]+"[a-zA-Z][a-zA-Z0-9_.]*"/ {
@@ -132,11 +140,26 @@ missing_b=$(awk '
 done | sort -u)
 
 if [ -z "$missing_b" ]; then
-    ok "contract B: 0 i18n keys missing from the catalog (advisory)"
+    ok "contract B1: 0 i18n keys missing from the catalog"
 else
     n=$(echo "$missing_b" | wc -l)
-    echo "  WARN  contract B (advisory): $n i18n keys used in templates but missing from catalog (pre-existing catalog debt, see TODO):"
+    bad "contract B1: $n i18n keys used in templates but missing from catalog:"
     echo "$missing_b" | sed 's/^/        /'
+fi
+
+# B2: detect padded catalog keys ("key   " with trailing whitespace).
+# Such keys are unreachable from the {{t "key"}} funcmap because Go
+# map lookup is exact-string. The pre-TD-18 catalog had 50 such keys
+# (25 cert.* × 2 languages) — fixed by the TD-18 padding cleanup.
+padded_b=$(grep -hnE '^\s*"[a-zA-Z][a-zA-Z0-9_.]*\s+"\s*:' internal/i18n/catalog*.go 2>/dev/null \
+    | sed -E 's/.*"([^"]+)"\s*:.*/\1/' \
+    | sort -u)
+if [ -z "$padded_b" ]; then
+    ok "contract B2: 0 catalog keys with trailing whitespace (all keys reachable)"
+else
+    n=$(echo "$padded_b" | wc -l)
+    bad "contract B2: $n catalog keys with trailing whitespace (unreachable from t() — fix by removing trailing spaces):"
+    echo "$padded_b" | sed 's/^/        /'
 fi
 
 # ---------------------------------------------------------------------------

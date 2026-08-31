@@ -1206,6 +1206,71 @@ in the same commit. Don't let the tracker drift.
     `crypto/tls.Config` lock-copy issue, unrelated to
     TD-17.
 
+  - **TD-18 (v1.5.2) — close 31 pre-existing i18n gaps +
+    add hint blocks to 3 admin pages**:
+    Operator 2026-08-31: "надо доделать локализацию
+    вебинтерфейса и сделать больше подсказок по
+    интерфейсу". The user is asking for (1) finish the
+    localization debt that has accumulated since B148
+    (certsync added 25 cert.* keys in templates that
+    were never registered in the catalog) and (2) add
+    help/hint blocks to admin pages that are confusing
+    for the operator. The 31-key gap was hidden by a
+    secondary bug: 50 of the catalog keys (all 25 cert.*
+    × 2 languages) were generated with trailing
+    whitespace ("cert.title                          ") by
+    the `scripts/split_i18n.py` catalog splitter. The
+    t() funcmap looks up by exact-string match, so the
+    padded keys are unreachable. The user-visible
+    symptom on /admin/certificates was the raw key
+    string ("cert.title") rendered instead of
+    "Сертификаты" / "Certificates". The other 6 missing
+    keys (ha.audit_action/actor/detail/when,
+    admin.subnets.col_actions, telegram.saved_token)
+    were never in the catalog at all. The hint block
+    work targets the 3 most-confusing admin pages:
+    headscale_acl (0 hints pre-TD-18, the operator's
+    #1 source of confusion per the B188 release notes),
+    services (0 hints, the B92 integration status board
+    with no explanation of what ok/down/not-configured
+    mean), and derp_dashboard (added in B189, 100%
+    English, with no explanation of latency color codes
+    or own-vs-public pills). **TD-18 fix**: (1) strip
+    trailing whitespace from 50 padded catalog entries
+    (B148 split_i18n.py bug, now in check_td18.sh
+    contract B as a regression guard), (2) add 6
+    missing keys to the appropriate catalogs (catalog_admin.go:
+    admin.subnets.col_actions + 4 ha.audit_*;
+    catalog_telegram.go: telegram.saved_token),
+    (3) wrap admin/headscale_acl.html in t() + add a
+    "What is an ACL?" `<details>` hint block +
+    per-field hints (`acl.src_help`/`acl.dst_help`/
+    `acl.label_help`), (4) add 2 `<details>` hint
+    blocks to admin/services.html ("What do the statuses
+    mean?" + "What are these integrations?"), (5) full
+    i18n wrap of admin/derp_dashboard.html (was 100%
+    English pre-TD-18) + `<details>` block "About the
+    probes" with 4 sub-hints (latency color thresholds
+    ≤50/≤150/>150 ms, own vs public, Probes counter
+    "N (M)" format, status pill semantics) + tooltip
+    on every latency cell with the matching threshold
+    text, (6) flip TD-16 contract B from advisory to
+    hard fail (B1: missing keys, B2: padded keys) so
+    the next "t() without catalog entry" bug fails
+    the build, not silently degrades to raw key
+    strings. **16 contracts in scripts/check_td18.sh**:
+    A (0 missing keys), B (0 padded keys), C1-C3
+    (headscale_acl hint block + section labels + per-
+    field hints), D1-D2 (services 2 hint blocks),
+    E1-E4 (derp_dashboard i18n + about + latency
+    tooltips + own-vs-public/probes-counter), F
+    (AGENTS.md mentions TD-18), G (verify_pre_deploy.sh
+    references check_td18.sh), H (check_td18.sh is
+    executable), I (go test -short ./internal/i18n/...
+    passes). The pre-existing 31-key advisory in TD-16
+    is now a hard fail — any future t() without a
+    catalog entry will be a build-blocking regression.
+
   - **B188.2 (v1.5.2) — per-CIDR exit-node pin instead of
     catch-all pin**: B188 fixed the ghost tag and re-enabled
     via pinning, but applied `via=` to the per-device

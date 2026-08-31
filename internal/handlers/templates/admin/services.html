@@ -11,7 +11,15 @@
      Layout: a card per integration, with status badge + URL +
      last-checked + latency + error if any. The data is read
      from the cached snapshot (no live HTTP probe on page load —
-     /readyz is the live endpoint; this page is for human eyes). */}}
+     /readyz is the live endpoint; this page is for human eyes).
+
+     2026-08-31 (TD-18): added 2 hint blocks — "What do the
+     statuses mean?" (ok/down/not-configured semantics + the
+     fact that the snapshot is cached, not live) and "What are
+     these integrations?" (per-integration explanation: headscale,
+     headplane, Tailscale, DERP). The pre-TD-18 page was
+     i18n-wrapped but had no help text — the badge colors and
+     status labels were unexplained. */}}
 
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
@@ -45,6 +53,20 @@
     {{t "services.some_down"}}
   </div>
   {{end}}
+
+  <details style="margin-top:16px">
+    <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+      <i class="fa-solid fa-circle-info"></i> {{t "services.help_title"}}
+    </summary>
+    <div class="form-hint-strong" style="margin-top:8px">{{tf "services.help_body" .CheckIntervalSec .CheckIntervalSec | safeHTML}}</div>
+  </details>
+
+  <details style="margin-top:8px">
+    <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+      <i class="fa-solid fa-circle-info"></i> {{t "services.integrations_help_title"}}
+    </summary>
+    <div class="form-hint-strong" style="margin-top:8px">{{t "services.integrations_help_body" | safeHTML}}</div>
+  </details>
 
   <div style="margin-top:16px;display:grid;grid-template-columns:1fr;gap:12px">
     {{range .Integrations}}
