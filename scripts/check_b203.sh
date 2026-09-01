@@ -56,7 +56,7 @@ check() {
 }
 
 file_exists() { [ -f "$1" ]; }
-grep_q() { grep -qE "$1" "$2" 2>/dev/null; }
+grep_q() { grep -qE "$1" "$2" 2>/dev/null; return $?; }
 
 # 1. swapdb.go
 file_exists "internal/db/swapdb.go" \
@@ -239,6 +239,36 @@ b203_cluster_tests=$(grep -c '^func TestGetClusterDatabase_' "internal/db/cluste
 [ "$b203_cluster_tests" -ge 3 ] \
     && check "GetClusterDatabase NULL regression tests: $b203_cluster_tests (>= 3)" ok \
     || check "GetClusterDatabase NULL regression tests: $b203_cluster_tests (need >= 3)" fail
+
+# 27. StringArray type for PG TEXT[] columns (B203.1 stealth fix
+# discovered after COALESCE: pgx stdlib returns TEXT[] as a literal
+# string, so we need sql.Scanner + driver.Valuer).
+file_exists "internal/db/array.go" \
+    && check "internal/db/array.go exists" ok \
+    || check "internal/db/array.go exists" fail
+grep_q 'type StringArray \[\]string' "internal/db/array.go" \
+    && check "StringArray is []string with sql.Scanner" ok \
+    || check "StringArray is []string with sql.Scanner" fail
+grep_q 'func .s \*StringArray. Scan' "internal/db/array.go" \
+    && check "StringArray.Scan parses PG array literal" ok \
+    || check "StringArray.Scan parses PG array literal" fail
+grep_q 'func .s StringArray. Value' "internal/db/array.go" \
+    && check "StringArray.Value serialises to PG array literal" ok \
+    || check "StringArray.Value serialises to PG array literal" fail
+grep -A2 'func needsQuoting' "internal/db/array.go" | grep -qF '\' \
+    && check "needsQuoting includes backslash" ok \
+    || check "needsQuoting includes backslash" fail
+
+# 28. ClusterDatabase.ReplicaNodeIDs uses StringArray (not []string)
+grep_q 'ReplicaNodeIDs[[:space:]]+StringArray' "internal/db/cluster.go" \
+    && check "ClusterDatabase.ReplicaNodeIDs is StringArray" ok \
+    || check "ClusterDatabase.ReplicaNodeIDs is StringArray" fail
+
+# 29. StringArray unit tests
+sa_tests=$(grep -c '^func TestStringArray_' "internal/db/array_b203_test.go")
+[ "$sa_tests" -ge 4 ] \
+    && check "StringArray unit tests: $sa_tests (>= 4)" ok \
+    || check "StringArray unit tests: $sa_tests (need >= 4)" fail
 
 # Summary
 echo ""

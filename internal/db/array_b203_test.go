@@ -185,8 +185,16 @@ func TestStringArray_Roundtrip(t *testing.T) {
 		if len(got) != len(orig) {
 			t.Errorf("length mismatch: orig=%d got=%d (orig=%#v got=%#v)", len(orig), len(got), []string(orig), []string(got))
 		}
-		if !reflect.DeepEqual([]string(got), []string(orig)) {
-			t.Errorf("roundtrip lost data: orig=%#v got=%#v", []string(orig), []string(got))
+		// Compare element-by-element to ignore nil-vs-empty
+		// distinction (semantically equivalent for []string).
+		for i := range orig {
+			if i >= len(got) {
+				t.Errorf("orig[%d]=%q, got missing", i, orig[i])
+				continue
+			}
+			if got[i] != orig[i] {
+				t.Errorf("element %d: orig=%q got=%q", i, orig[i], got[i])
+			}
 		}
 	}
 }

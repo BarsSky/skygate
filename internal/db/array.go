@@ -122,9 +122,14 @@ func (s StringArray) Value() (driver.Value, error) {
 }
 
 // needsQuoting returns true if v contains any PG array
-// delimiter that requires double-quoting.
+// delimiter that requires double-quoting. Per the PG docs,
+// the delimiters inside a non-quoted element are: comma,
+// space, opening/closing brace, double-quote, and
+// backslash. Elements containing any of these MUST be
+// wrapped in double-quotes (with the backslash and
+// double-quote inside further escaped).
 func needsQuoting(v string) bool {
-	return strings.ContainsAny(v, `, "{}`)
+	return strings.ContainsAny(v, `, "{}`+"`"+`\`)
 }
 
 // parsePGArrayLiteral parses a PG array literal of the form
