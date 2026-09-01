@@ -1,0 +1,199 @@
+{{define "body-admin-cluster"}}
+{{/*
+  /admin/cluster — v1.5.0+ / B199
+  Cluster topology view (read-only Phase 2.1 of
+  docs/internal/cluster-management.md §2).
+
+  5 sections:
+
+    1. Cluster summary       — one card per cluster row
+    2. Nodes                 — table of cluster_node rows
+    3. Database              — pointer to /admin/database
+    4. Pending invites       — table of cluster_invite rows
+    5. Recent cluster audit  — last 20 cluster.* actions
+
+  Phase 2.1 is read-only. The "Add node" / "Generate invite"
+  buttons land in Phase 2.2 (B200.x). For now this page is
+  the operator's at-a-glance "what's in my cluster right
+  now" view.
+*/}}
+
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-circle-nodes"></i>{{t "cluster.title"}}</h2>
+    <div class="sub">{{t "cluster.subtitle"}}</div>
+  </div>
+</div>
+
+{{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
+{{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
+
+{{/* ===================== Section 1: Cluster summary ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-sitemap"></i>{{t "cluster.section_summary"}}</h3>
+  {{if .Data.HasCluster}}
+    <table class="table" style="font-size:13px">
+      <tbody>
+        <tr><th style="width:200px">{{t "cluster.col_cluster_id"}}</th><td><code>{{.Data.ClusterID}}</code></td></tr>
+        <tr><th>{{t "cluster.col_name"}}</th><td>{{if .Data.ClusterName}}{{.Data.ClusterName}}{{else}}<span class="muted">(empty)</span>{{end}}</td></tr>
+        <tr><th>{{t "cluster.col_node_count"}}</th><td>
+          {{.Data.NodeCount}}
+          {{range $state, $n := .Data.StateCounts}}
+            <span class="tag tag-{{$state}}" style="margin-left:6px">{{$state}}: {{$n}}</span>
+          {{end}}
+        </td></tr>
+        {{if .Data.ClusterChain}}
+        <tr><th>{{t "cluster.col_chain"}}</th><td>
+          {{range .Data.ClusterChain}}<div><code style="font-size:0.85em">{{.}}</code></div>{{end}}
+        </td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
+      <strong>{{t "cluster.no_cluster"}}</strong>
+      <div style="margin-top:6px">{{t "cluster.no_cluster_help"}}</div>
+    </div>
+  {{end}}
+</div>
+
+{{/* ===================== Section 2: Nodes ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-server"></i>{{t "cluster.section_nodes"}} ({{.Data.NodeCount}})</h3>
+  <p class="muted" style="font-size:13px">{{t "cluster.nodes_help"}}</p>
+
+  {{if .Data.Nodes}}
+  <table class="table" style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th>{{t "cluster.col_hostname"}}</th>
+        <th>{{t "cluster.col_tailscale_ip"}}</th>
+        <th>{{t "cluster.col_roles"}}</th>
+        <th>{{t "cluster.col_state"}}</th>
+        <th>{{t "cluster.col_skygate_version"}}</th>
+        <th>{{t "cluster.col_joined"}}</th>
+        <th>{{t "cluster.col_last_seen"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.Nodes}}
+      <tr {{if .IsSelf}}style="background:var(--bg-muted)"{{end}}>
+        <td>
+          <code>{{.Hostname}}</code>
+          {{if .IsSelf}}<span class="tag tag-self">{{t "cluster.self_label"}}</span>{{end}}
+        </td>
+        <td>{{if .TailscaleIP}}<code>{{.TailscaleIP}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>
+          {{range .Roles}}<span class="tag" style="margin-right:4px">{{.}}</span>{{end}}
+          {{if not .Roles}}<span class="muted">—</span>{{end}}
+        </td>
+        <td>
+          {{if eq .State "ready"}}<span class="tag tag-success">{{t "cluster.state_ready"}}</span>
+          {{else if eq .State "pending"}}<span class="tag tag-warning">{{t "cluster.state_pending"}}</span>
+          {{else if eq .State "draining"}}<span class="tag">{{t "cluster.state_draining"}}</span>
+          {{else if eq .State "failed"}}<span class="tag tag-danger">{{t "cluster.state_failed"}}</span>
+          {{else}}<span class="tag">{{.State}}</span>
+          {{end}}
+        </td>
+        <td>{{if .SkygateVer}}<code style="font-size:0.85em">{{.SkygateVer}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td><span class="muted" title="{{.JoinedAt}}">{{.JoinedAt}}</span></td>
+        <td><span class="muted" title="{{.LastSeenAt}}">{{.LastSeenAt}}</span></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+    <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
+      {{t "cluster.no_nodes"}}
+    </div>
+  {{end}}
+</div>
+
+{{/* ===================== Section 3: Database ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-database"></i>{{t "cluster.section_database"}}</h3>
+  {{if .Data.DBConfigured}}
+    <p style="font-size:13px">
+      {{t "cluster.db_configured"}}
+      {{if .Data.DBPrimary}}<br><strong>{{t "cluster.db_primary"}}</strong> <code>{{.Data.DBPrimary}}</code>{{end}}
+    </p>
+    <a href="/admin/database" class="btn btn-secondary btn-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "cluster.db_open"}}</a>
+  {{else}}
+    <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
+      {{t "cluster.db_not_configured"}}
+      <div style="margin-top:6px"><a href="/admin/database" class="btn btn-primary btn-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "cluster.db_open"}}</a></div>
+    </div>
+  {{end}}
+</div>
+
+{{/* ===================== Section 4: Pending invites ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-envelope-open-text"></i>{{t "cluster.section_invites"}} ({{.Data.InviteCount}})</h3>
+  <p class="muted" style="font-size:13px">{{t "cluster.invites_help"}}</p>
+
+  {{if .Data.Invites}}
+  <table class="table" style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th>{{t "cluster.col_target"}}</th>
+        <th>{{t "cluster.col_role"}}</th>
+        <th>{{t "cluster.col_issued"}}</th>
+        <th>{{t "cluster.col_expires"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.Invites}}
+      <tr>
+        <td><code>{{.TargetHostname}}</code></td>
+        <td>{{if .Role}}<span class="tag">{{.Role}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td><span class="muted" title="{{.IssuedAt}}">{{.IssuedAt}}</span></td>
+        <td><span class="muted" title="{{.ExpiresAt}}">{{.ExpiresAt}}</span></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+    <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
+      {{t "cluster.no_invites"}}
+    </div>
+  {{end}}
+</div>
+
+{{/* ===================== Section 5: Recent cluster audit ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-clipboard-list"></i>{{t "cluster.section_audit"}}</h3>
+  {{if .Data.RecentEvents}}
+  <table class="table" style="width:100%;font-size:13px">
+    <thead>
+      <tr style="text-align:left">
+        <th>{{t "cluster.col_time"}}</th>
+        <th>{{t "cluster.col_actor"}}</th>
+        <th>{{t "cluster.col_action"}}</th>
+        <th>{{t "cluster.col_detail"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.RecentEvents}}
+      <tr>
+        <td><span class="muted">{{.WhenUnix}}</span></td>
+        <td><code>{{.Actor}}</code></td>
+        <td><code>{{.Action}}</code></td>
+        <td><span class="muted" style="font-size:0.9em">{{.Detail}}</span></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+    <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
+      {{t "cluster.no_events"}}
+    </div>
+  {{end}}
+</div>
+
+{{/* ===================== Footer note ===================== */}}
+<div class="alert alert-info small mb-0">
+  <i class="fa-solid fa-info-circle"></i>
+  {{t "cluster.phase_note"}}
+</div>
+
+{{end}}

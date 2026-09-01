@@ -1463,6 +1463,86 @@ in the same commit. Don't let the tracker drift.
     db.migrate_stream_* + db.recent_runs_title) in RU+EN
     lock-step. 9 contracts in `scripts/check_b1981.sh`.
 
+  - **B199 (v1.5.0+) — `/admin/cluster` cluster
+    topology view (Phase 2.1 of cluster-management.md,
+    read-only)**: Pre-B199 there was no
+    at-a-glance "what's in my cluster right now"
+    page — the only way to see cluster_node /
+    cluster_database / cluster_invite state was
+    `psql`. B199 ships the read-only view:
+    - `internal/feature/admin/cluster.go` (new):
+      `GetAdminCluster` handler +
+      `collectClusterPageData` (5 queries: cluster,
+      cluster_node, cluster_database,
+      cluster_invite pending, last-20 cluster.*
+      audit_log rows) +
+      `parsePGTextArray` / `parseClusterChain` /
+      `abbreviateClusterTime` pure helpers.
+    - `internal/handlers/templates/admin/cluster.html`
+      (new): 5 sections — Cluster summary, Nodes
+      table (with `self` row highlighted by
+      `IsSelf = n.Hostname == s.SelfHostname`),
+      Database (pointer to `/admin/database`),
+      Pending invites (status=pending AND
+      expires_at > now()), Recent cluster audit
+      (last 20 `cluster.*` actions from
+      `audit_log`).
+    - `cmd/skygate/main.go`: registered
+      `GET /admin/cluster` behind `authMW`.
+    - `internal/handlers/handlers.go`: added
+      `admin/cluster` to `InSectionIntegrations`,
+      `sectionLabel`, `pageLabel`, `pageTitle`.
+    - `internal/handlers/templates/layout.html`:
+      sidebar link next to `/admin/ha` and
+      `/admin/deploy` (the cluster/HA group).
+    - `internal/i18n/catalog_admin.go`: 43
+      `cluster.*` keys in RU + EN lock-step
+      (title, subtitle, 5 section_*, 18 col_*,
+      4 state_*, self_label, no_cluster/help,
+      no_nodes, db_configured, db_not_configured,
+      db_open, db_primary, invites_help,
+      no_invites, no_events, phase_note).
+    - `internal/feature/admin/cluster_b199_test.go`
+      (new): 22 unit tests covering the 3 helpers
+      (parsePGTextArray: 13 subtests for empty /
+      braces / null / single / multi / spaces /
+      quoted / trailing-comma / non-literal /
+      real roles values; parseClusterChain: 7
+      subtests for nil / empty / null / 1-2
+      members / malformed / empty objects;
+      abbreviateClusterTime: 11 subtests for
+      0s/30s/59s/60s/90s/3600s/7200s/86400s/
+      172800s/negative/negative-3600s).
+    - `scripts/check_b199.sh`: 22 contracts
+      (handler + template + body define + route +
+      method + struct + sidebar + section
+      membership + section label + page label +
+      page title + RU/EN i18n counts + 3 test
+      funcs + B198.1 regression fix +
+      AGENTS.md mention + build + vet + tests).
+    - **B198.1 regression fix (caught by the
+      B199 B-check)**: `admin/database.html` and
+      `admin/migrate_run.html` were using
+      `{{define "content"}}` (pre-v0.33.1.3
+      convention) instead of
+      `{{define "body-admin-database"}}` /
+      `{{define "body-admin-migrate_run"}}` (the
+      convention every other admin page uses).
+      The pages returned HTTP 200 with an empty
+      body (the `renderBody` funcmap error was
+      silently swallowed — see
+      `internal/handlers/templates.go:193`).
+      B199 renames both defines so the body
+      actually renders. Live-verified:
+      `GET /admin/database` now returns 8809
+      bytes with 5 `<h2>/<h3>` headers (was
+      empty before).
+    Phase 2.1 is read-only. Phase 2.2 (B200.x)
+    will add the "Add node" form and "Generate
+    invite" form on top of this read view.
+    Phase 3 (skygate-watchdog + force failover)
+    is the next major chunk after 2.2.
+
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
     Operator 2026-08-31 hit `500 Internal Server

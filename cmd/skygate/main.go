@@ -1261,6 +1261,15 @@ func main() {
 	mux.Handle("GET /admin/database/migrate/{id}/stream", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrateStream)))
 	mux.Handle("GET /admin/database/migrate/{id}", authMW(http.HandlerFunc(adminSvc.GetAdminDatabaseMigrateRun)))
 
+	// v1.5.0+ / B199 — /admin/cluster (cluster topology view,
+	// Phase 2.1 read-only). The page renders the cluster +
+	// cluster_node + cluster_database + cluster_invite +
+	// cluster_audit state. Phase 2.2 (B200.x) will add the
+	// "Add node" and "Generate invite" forms. See
+	// internal/feature/admin/cluster.go for the handler and
+	// docs/internal/cluster-management.md §2 for the plan.
+	mux.Handle("GET /admin/cluster", authMW(http.HandlerFunc(adminSvc.GetAdminCluster)))
+
 	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
 	// failover dry-run). The page is the web mirror of
 	// `skygate deploy {push,pull,sync,status}` and

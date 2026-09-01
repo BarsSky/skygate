@@ -718,9 +718,10 @@ func sectionPageSet(page string) map[string]bool {
 		"InSectionIntegrations": {
 			"admin/integrations", "admin/headscale", "admin/headplane",
 			"admin/telegram", "admin/tailscale", "admin/derp",
-			"admin/derp_relays", "admin/ha",  // v1.5.0 / B149
-			"admin/deploy",                 // v1.5.0 / B150
-			"admin/certificates",           // v1.5.0 / B148
+			"admin/derp_relays", "admin/ha",       // v1.5.0 / B149
+			"admin/deploy",                        // v1.5.0 / B150
+			"admin/certificates",                  // v1.5.0 / B148
+			"admin/cluster",                       // v1.5.0+ / B199
 		},
 		"InSectionData": {
 			"admin/backup", "admin/invites", "admin/control-planes",
@@ -773,6 +774,8 @@ func pageTitle(name string) string {
 		return "title.admin_audit"
 	case "admin/derp.html":
 		return "title.admin_derp"
+	case "admin/cluster.html":
+		return "title.admin_cluster"
 	case "admin/backup.html":
 		return "title.admin_backup"
 	case "admin/settings.html":
@@ -813,7 +816,8 @@ func sectionLabel(page string) string {
 		return "nav.section_health"
 	case page == "admin/integrations" || page == "admin/headscale" ||
 		page == "admin/headplane" || page == "admin/telegram" ||
-		page == "admin/tailscale" || page == "admin/derp":
+		page == "admin/tailscale" || page == "admin/derp" ||
+		page == "admin/cluster":
 		return "nav.section_integrations"
 	case page == "admin/backup" || page == "admin/invites" ||
 		page == "admin/control-planes":
@@ -864,6 +868,8 @@ func pageLabel(page string) string {
 		return "tailscale.title"
 	case "admin/derp":
 		return "nav.derp"
+	case "admin/cluster":
+		return "nav.cluster"
 	case "admin/backup":
 		return "nav.backup"
 	case "admin/invites":

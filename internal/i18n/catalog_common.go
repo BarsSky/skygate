@@ -69,6 +69,7 @@ var ruCommon = map[string]string{
 	"nav.headplane"                  : "Headplane",
 	"nav.integrations"               : "Интеграции",
 	"nav.ha"                          : "High Availability",  // v1.5.0 / B149
+	"nav.cluster"                     : "Кластер",            // v1.5.0+ / B199
 	"nav.deploy"                      : "Deploy",             // v1.5.0 / B150
 	"nav.invites"                    : "Инвайт-коды",
 	"nav.meshes_admin"               : "Mesh-сети (все)",
@@ -264,6 +265,7 @@ var enCommon = map[string]string{
 	"nav.headplane"                  : "Headplane",
 	"nav.integrations"               : "Integrations",
 	"nav.ha"                          : "High Availability",  // v1.5.0 / B149
+	"nav.cluster"                     : "Cluster",            // v1.5.0+ / B199
 	"nav.deploy"                      : "Deploy",             // v1.5.0 / B150
 	"nav.invites"                    : "Invite codes",
 	"nav.meshes_admin"               : "Meshes (all)",

@@ -109,6 +109,10 @@
       <a href="/admin/derp/relays" {{if eq .Page "admin/derp_relays"}}class="active"{{end}}><i class="fa-solid fa-table-list"></i><span>{{t "derp.relays_nav"}}</span></a>
       <a href="/admin/derp/dashboard" {{if eq .Page "admin/derp_dashboard"}}class="active"{{end}}><i class="fa-solid fa-heart-pulse"></i><span>{{t "nav.derp_dashboard"}}</span></a>
       <a href="/admin/ha" {{if eq .Page "admin/ha"}}class="active"{{end}}><i class="fa-solid fa-shield-heart"></i><span>{{t "nav.ha"}}</span></a>
+      {{/* B199 (v1.5.0+) — cluster topology view. Sits next
+         to /admin/ha and /admin/deploy since they all manage
+         the same physical cluster. */}}
+      <a href="/admin/cluster" {{if eq .Page "admin/cluster"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.cluster"}}</span></a>
       <a href="/admin/deploy" {{if eq .Page "admin/deploy"}}class="active"{{end}}><i class="fa-solid fa-rocket"></i><span>{{t "nav.deploy"}}</span></a>
       <a href="/admin/certificates" {{if eq .Page "admin/certificates"}}class="active"{{end}}><i class="fa-solid fa-certificate"></i><span>{{t "nav.certificates"}}</span></a>
       {{/* B161.4 (v1.5.1) — OIDC config surface.

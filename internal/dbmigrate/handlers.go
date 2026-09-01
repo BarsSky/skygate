@@ -39,14 +39,23 @@ func NewService(d *sql.DB) *MigrationService {
 }
 
 // GetAdminDatabaseMigrate renders the migrate page (form +
-// recent runs list). Mirrors the B194 /admin/deploys
-// pattern: a "Run" + SSE-stream combo.
+// recent runs list). The actual template rendering is
+// done by the admin package (so we use the admin's layout);
+// this method just loads the data and stores it on a
+// context the admin handler can pick up.
+//
+// We keep this as a method on MigrationService for the
+// route registration, but the actual HTTP response is
+// deferred to the admin handler (which has access to
+// RenderWithLayout). To avoid the round-trip, the route
+// in main.go is wired to admin.GetAdminDatabaseMigrate
+// directly (which calls into this method for data).
 func (s *MigrationService) GetAdminDatabaseMigrate(w http.ResponseWriter, r *http.Request) {
-	// The admin handler (admin/database.go) owns the
-	// "migrate" section of the page. We just render the
-	// standalone migrate.html when the URL is exactly
-	// /admin/database/migrate. The full database.html
-	// embeds the migrate section inline.
+	// Replaced by admin.GetAdminDatabaseMigrate in
+	// cmd/skygate/main.go (route re-wired in B198.1).
+	// This stub is kept for backwards-compat with any
+	// caller that still holds a *MigrationService and
+	// wants a plain-text page.
 	if err := s.renderMigratePage(w, r, ""); err != nil {
 		http.Error(w, "render: "+err.Error(), http.StatusInternalServerError)
 	}
