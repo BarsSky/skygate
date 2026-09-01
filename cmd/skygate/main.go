@@ -286,6 +286,18 @@ func main() {
 		case "version", "--version", "-v":
 			fmt.Printf("skygate %s (commit %s, built %s)\n", version, commit, buildTime)
 			return
+		case "cluster":
+			// v1.5.0+ / B205 — cluster CLI subcommands.
+			// `skygate cluster <verb>` dispatches to one of
+			// invite / join / nodes / dbs / audit / failover /
+			// heartbeat-daemon. The web server is NOT started
+			// for any cluster subcommand (each one opens the
+			// DB directly via config.Load + db.OpenDSN).
+			if err := runClusterSubcommand(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "cluster: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "help", "--help", "-h":
 			fmt.Println("skygate <command> [args]")
 			fmt.Println("  (no command)            start the web server")
@@ -294,6 +306,7 @@ func main() {
 			fmt.Println("  backup-verify-fail      mark the latest verify_backup run as fail (B142)")
 			fmt.Println("  backup-show-config      print backup-related config as key=value pairs")
 			fmt.Println("  cleanup-smoke-meshes    delete smoke-mesh cruft (B143) — one-shot manual trigger")
+			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
 			fmt.Println("  migrate-only            open the DB + run pending migrations, then exit (v0.33.1.21)")
 			fmt.Println("  version                 print build version")
 			fmt.Println("  help                    this help")

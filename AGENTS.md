@@ -1999,6 +1999,77 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B205 (v1.5.0+) — `skygate cluster ...` CLI
+    subcommands (Phase 4 of cluster-management.md)**:
+    the operator-on-the-box equivalent of `/admin/cluster`
+    + `/api/cluster/join`. 7 verbs:
+    - `cluster invite [--role=skygate-standby] [--ttl-hours=24]`
+      — calls `cluster.IssueInvite` directly, prints the
+      sgn1 token to stdout (line 1) and `expires_at` to
+      stderr (line 2). bootstrap_standby.sh reads the
+      first line as the join token.
+    - `cluster join <token> [--api-url=...] [--state-file=/etc/skygate/cluster-state.json]`
+      — POSTs to `/api/cluster/join`, saves the returned
+      node_id + token + api_url to the state file. The
+      heartbeat-daemon reads this file at start.
+    - `cluster nodes [--cluster-id=...] [--json]`
+      — list cluster_node rows (tab-separated or JSON).
+    - `cluster dbs [--json]`
+      — list cluster_database rows (B203 watches this).
+    - `cluster audit [--limit=20] [--json]`
+      — show recent cluster_audit rows (B204 writes
+      node_health + failover_recommend; B205's failover
+      writes node_failover).
+    - `cluster failover --target=<id|host> [--reason=...]`
+      — admin-gated promote: validates target is in
+      'ready' state, adds 'skygate' role to the target,
+      moves the failed primary (if any) to 'draining'
+      and drops the 'skygate' role, writes a
+      `cluster_audit` row with `action='node_failover'`
+      in a single transaction.
+    - `cluster heartbeat-daemon [--state-file=...]`
+      — long-running process; POSTs
+      `/api/cluster/heartbeat` every `HeartbeatSeconds`
+      (default 30s) using the state file written by
+      `join`. Handles SIGINT/SIGTERM cleanly (systemd's
+      ExecStop workflow). 3 missed heartbeats (90s) →
+      the B204 elector transitions the node to 'failed'.
+    The dispatcher is `skygate cluster <verb>` in
+    `cmd/skygate/main.go`. The web server is NOT started
+    for any cluster subcommand — each one opens the DB
+    directly via `config.Load` + `db.OpenDSN`. This is the
+    admin-config principle: the operator doesn't need to
+    start the web server (or have an admin session) to
+    issue invites or join the cluster.
+    Files: `cmd/skygate/cluster.go` (~700 lines: dispatcher
+    + 7 verb functions + helpers clusterRolesToSlice,
+    sqlNullString, writeClusterState, readClusterState,
+    postHeartbeat) + `cmd/skygate/cluster_b205_test.go`
+    (~150 lines, 7 unit tests with 14 sub-cases:
+    clusterRolesToSlice 10 cases incl. quoted
+    segments/empty inner, sqlNullString 4 cases,
+    runClusterSubcommand dispatch errors, state file
+    roundtrip, incomplete state file errors). Local
+    `clusterRolesToSlice` is a fresh implementation (not
+    the one in `internal/cluster/node.go`) — both parse
+    the same PG literal format but the local copy keeps
+    the CLI from coupling to the cluster package's
+    internals; the test pins the contract.
+    35 B-check contracts in `scripts/check_b205.sh`
+    (dispatcher handles all 7 verbs, each verb is a
+    defined function, runClusterFailover writes
+    'node_failover' audit row + uses a transaction,
+    runClusterHeartbeatDaemon handles SIGINT + calls
+    postHeartbeat, main.go has 'cluster' case + help text
+    mentions 'cluster <verb>', 6+ unit tests, build/vet/
+    tests pass, AGENTS.md mention).
+    Live verification will exercise the full
+    invite → join → audit → failover cycle on the live
+    agent (see B205 verify script for the canonical
+    sequence). The CLI surface closes the gap that B204
+    left open: the elector only writes a
+    `failover_recommend` audit row, the operator accepts
+    via `skygate cluster failover --target=<node>`.
   - **B203.1 (v1.5.0+) — `GetClusterDatabase` NULL
     safety fix (live B203 follow-up)**: the first
     live B203 test (inserted a `cluster_database` row
