@@ -73,6 +73,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -304,40 +305,33 @@ func runClusterNodes(args []string) error {
 	}
 	defer rows.Close()
 	type nodeRow struct {
-		ID         string     `json:"id"`
-		Hostname   string     `json:"hostname"`
-		State      string     `json:"state"`
-		Roles      []string   `json:"roles"`
-		LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
-		JoinedAt   time.Time  `json:"joined_at"`
+		ID         string          `json:"id"`
+		Hostname   string          `json:"hostname"`
+		State      string          `json:"state"`
+		Roles      db.StringArray  `json:"roles"`
+		LastSeenAt *time.Time      `json:"last_seen_at,omitempty"`
+		JoinedAt   time.Time       `json:"joined_at"`
 	}
 	var out []nodeRow
 	for rows.Next() {
-		var (
-			id, host, state, rolesStr string
-			lastSeen, joined           time.Time
-			lastSeenOK                 bool
-		)
-		if err := rows.Scan(&id, &host, &state, &rolesStr, &lastSeen, &joined); err != nil {
+		var r nodeRow
+		var lastSeen sql.NullTime
+		if err := rows.Scan(&r.ID, &r.Hostname, &r.State, &r.Roles,
+			&lastSeen, &r.JoinedAt); err != nil {
 			return fmt.Errorf("cluster nodes: scan: %w", err)
 		}
-		_ = lastSeenOK
-		_ = rolesStr
-		_ = lastSeen
-		// last_seen may be NULL in the DB; pgx v5 stdlib
-		// returns the zero time + a Scan error in that
-		// case. We treat the zero time as "never seen"
-		// and omit it from the JSON output.
-		var lastSeenPtr *time.Time
-		if !lastSeen.IsZero() {
-			lastSeenPtr = &lastSeen
+		// last_seen is NULL-able (column is TIMESTAMPTZ
+		// without NOT NULL). Use sql.NullTime to scan
+		// safely; promote to a pointer for the JSON
+		// "omitempty" contract.
+		if lastSeen.Valid {
+			t := lastSeen.Time
+			r.LastSeenAt = &t
 		}
-		out = append(out, nodeRow{
-			ID: id, Hostname: host, State: state,
-			Roles:      clusterRolesToSlice(rolesStr),
-			LastSeenAt: lastSeenPtr,
-			JoinedAt:   joined,
-		})
+		if r.Roles == nil {
+			r.Roles = db.StringArray{}
+		}
+		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("cluster nodes: rows: %w", err)
@@ -395,17 +389,17 @@ func runClusterDbs(args []string) error {
 	}
 	defer rows.Close()
 	type dbRow struct {
-		ID             string     `json:"id"`
-		ClusterID      string     `json:"cluster_id"`
-		PrimaryNodeID  string     `json:"primary_node_id"`
-		ReplicaNodeIDs []string   `json:"replica_node_ids"`
-		DSNTemplate    string     `json:"dsn_template"`
-		DBName         string     `json:"dbname"`
-		Username       string     `json:"username"`
-		SSLMode        string     `json:"sslmode"`
-		CurrentDSN     string     `json:"current_dsn"`
-		UpdatedBy      string     `json:"updated_by"`
-		UpdatedAt      time.Time  `json:"updated_at"`
+		ID             string         `json:"id"`
+		ClusterID      string         `json:"cluster_id"`
+		PrimaryNodeID  string         `json:"primary_node_id"`
+		ReplicaNodeIDs db.StringArray `json:"replica_node_ids"`
+		DSNTemplate    string         `json:"dsn_template"`
+		DBName         string         `json:"dbname"`
+		Username       string         `json:"username"`
+		SSLMode        string         `json:"sslmode"`
+		CurrentDSN     string         `json:"current_dsn"`
+		UpdatedBy      string         `json:"updated_by"`
+		UpdatedAt      time.Time      `json:"updated_at"`
 	}
 	var out []dbRow
 	for rows.Next() {
@@ -415,15 +409,12 @@ func runClusterDbs(args []string) error {
 			&r.UpdatedBy, &r.UpdatedAt, &r.UpdatedAt); err != nil {
 			return fmt.Errorf("cluster dbs: scan: %w", err)
 		}
-		// pgx v5 stdlib returns TEXT[] columns as their
-		// literal string form (e.g. "{a,b}"), not as
-		// []string. Parse the literal here; the struct
-		// field is []string (so JSON output is correct).
-		// (The cluster_dbs scan reads directly into
-		// []string which works for non-empty arrays but
-		// fails for empty {} — handle that case.)
+		// db.StringArray has its own sql.Scanner; the
+		// zero value (Valid=false) means the column was
+		// NULL or empty. Promote to []string{} so the
+		// JSON output is consistent (not null).
 		if r.ReplicaNodeIDs == nil {
-			r.ReplicaNodeIDs = []string{}
+			r.ReplicaNodeIDs = db.StringArray{}
 		}
 		out = append(out, r)
 	}
