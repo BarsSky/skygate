@@ -1369,6 +1369,36 @@ in the same commit. Don't let the tracker drift.
     the operator pastes onto the new node. Phase 2
     wires automatic SSH execution (B195).
 
+  - **B195 (v1.5.0+) — cluster management tables
+    (Phase 0 of docs/internal/cluster-management.md, D1)**:
+    Operator 2026-09-01 defined 8 design decisions (D1-D8)
+    for full cluster automation ("users shouldn't have to
+    manually configure the system, just build the cluster
+    via the project"). B195 fix: 6 cluster_* tables
+    (cluster, cluster_node, cluster_database,
+    cluster_migration, cluster_invite, cluster_audit) +
+    indexes in `internal/db/migrations_v0_64_b195.go`.
+    All tables TEXT PK (admin-friendly), JSONB for
+    structured fields, IF NOT EXISTS (idempotent).
+    Registered in `driver_postgres.go` migrateV0... list.
+    15/15 contracts in `scripts/check_b195.sh`.
+
+  - **B196 (v1.5.0+) — /admin/database (Phase 1.1,
+    read-only)**:
+    First user-facing surface of the cluster-management
+    feature. `internal/feature/admin/database.go` exposes
+    3 sections: (1) live DSN from `SKYGATE_DB_DSN` env +
+    reachability probe, (2) desired DSN from
+    `cluster_database` (empty until Phase 1.2), (3) D8
+    source-of-truth note. `internal/db/cluster.go` adds
+    `GetClusterDatabase` / `SetClusterDatabase` / sentinel
+    `ErrClusterDatabaseNotFound`. Template
+    `admin/database.html` + 24 i18n keys (db.*) in RU+EN
+    in lock-step. Probe uses raw `sql.Open` + `PingContext`
+    (NOT `db.OpenDSN`) to skip migrations on every page load.
+    Phase 1.2 will add the Edit form; Phase 1.4 the migration
+    workflow. 23/24 contracts in `scripts/check_b196.sh`.
+
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
     Operator 2026-08-31 hit `500 Internal Server

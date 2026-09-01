@@ -1215,6 +1215,15 @@ func main() {
 	// See internal/feature/admin/ha.go for the handler bodies
 	// + doc comments and internal/ha/ for the underlying types.
 	mux.Handle("GET /admin/ha", authMW(http.HandlerFunc(adminSvc.GetAdminHA)))
+
+	// v1.5.0+ / B195 — /admin/database (DB management, Phase 1.1 read-only).
+	// The page renders the live DSN (from env), the desired DSN
+	// (from cluster_database), and a quick reachability probe.
+	// See internal/feature/admin/database.go for the handler
+	// + doc comments and docs/internal/cluster-management.md for
+	// the full design (D3, D8).
+	mux.Handle("GET /admin/database", authMW(http.HandlerFunc(adminSvc.GetAdminDatabase)))
+
 	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
 	// failover dry-run). The page is the web mirror of
 	// `skygate deploy {push,pull,sync,status}` and
