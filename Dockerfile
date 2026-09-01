@@ -96,6 +96,7 @@ RUN apk add --no-cache \
         libcap \
         nfs-utils \
         openssh-client \
+        postgresql-client \
         sshfs
 
 # Copy the official tailscale binaries from stage 1. The official image

@@ -56,13 +56,18 @@ func (dumpStep) Description() string  { return "Run pg_dump -Fc on source host" 
 func (dumpStep) IsOptional() bool    { return false }
 func (dumpStep) DependsOn() []string { return []string{"precheck"} }
 
-// pgDumpMagic is the first 4 bytes of every pg_dump
-// custom-format file. Verifying this catches the
-// common failure mode where the subprocess wrote
-// "psql: connection refused" text instead of dump
-// bytes (which would otherwise make pg_restore fail
-// with a less helpful "invalid magic in tar header").
-var pgDumpMagic = [4]byte{0x50, 0x47, 0x44, 0x0a} // "PGD\n"
+// pgDumpMagicLegacy is the first 4 bytes of a pg_dump
+// custom-format file from PostgreSQL 15 and earlier
+// ("PGD\n" hex: 50 47 44 0a). Kept for backward compat
+// with old dumps — pg_restore on the target can read
+// either format.
+var pgDumpMagicLegacy = [4]byte{0x50, 0x47, 0x44, 0x0a} // "PGD\n"
+
+// pgDumpMagicModern is the magic for PostgreSQL 16+
+// ("PGDM" hex: 50 47 44 4d). The custom format file
+// layout is otherwise identical between the two;
+// pg_restore on a 16+ target reads both.
+var pgDumpMagicModern = [4]byte{0x50, 0x47, 0x44, 0x4d} // "PGDM"
 
 // advisoryLockID is the pg_advisory_lock id this
 // migration uses. See the file-level comment for why
@@ -134,9 +139,9 @@ func (dumpStep) Run(ctx context.Context, mc *dbmigrate.MigrationContext) error {
 	}
 	var magicArr [4]byte
 	copy(magicArr[:], magic)
-	if magicArr != pgDumpMagic {
+	if magicArr != pgDumpMagicLegacy && magicArr != pgDumpMagicModern {
 		_ = os.Remove(mc.DumpFile)
-		return fmt.Errorf("dump file is not a valid pg_dump custom format (magic=%x, want PGD\\n=5047440a) — was the source DSN correct?", magic)
+		return fmt.Errorf("dump file is not a valid pg_dump custom format (magic=%x, want PGD\\n=5047440a or PGDM=5047444d) — was the source DSN correct?", magic)
 	}
 
 	return nil

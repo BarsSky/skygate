@@ -129,9 +129,14 @@ func TestQuoteIdent(t *testing.T) {
 
 func TestPgDumpMagic(t *testing.T) {
 	// Sanity check: the magic bytes are what we expect.
-	want := [4]byte{0x50, 0x47, 0x44, 0x0a}
-	if pgDumpMagic != want {
-		t.Errorf("pgDumpMagic = %x, want %x", pgDumpMagic, want)
+	// PG 15 and earlier use "PGD\n"; PG 16+ uses "PGDM".
+	legacy := [4]byte{0x50, 0x47, 0x44, 0x0a}
+	modern := [4]byte{0x50, 0x47, 0x44, 0x4d}
+	if pgDumpMagicLegacy != legacy {
+		t.Errorf("pgDumpMagicLegacy = %x, want %x", pgDumpMagicLegacy, legacy)
+	}
+	if pgDumpMagicModern != modern {
+		t.Errorf("pgDumpMagicModern = %x, want %x", pgDumpMagicModern, modern)
 	}
 }
 
