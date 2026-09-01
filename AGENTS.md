@@ -1999,6 +1999,75 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B207 (v1.5.0+) — `/admin/audit` unified view
+    (Phase 4.1 / G8 of cluster-management.md)**:
+    pre-B207 the existing `/admin/audit` page
+    (shipped in v0.27.0 with `?action=` and `?user=`
+    filters) only read from the legacy `audit_log`
+    table — the operator had no way to see the
+    `cluster_audit` rows (B195, populated by the
+    B200 add/remove, B204 elector, B205 failover)
+    in the UI without dropping into psql.
+    B207 makes the same `/admin/audit` URL serve a
+    `UNION ALL` of `audit_log` + `cluster_audit`:
+    ```
+    SELECT 'audit_log' AS source, ... FROM audit_log WHERE ...
+    UNION ALL
+    SELECT 'cluster_audit' AS source, ... FROM cluster_audit WHERE ...
+    ORDER BY ts DESC LIMIT N
+    ```
+    Each row carries a `Source` column (badge in
+    the table: orange for `cluster_audit`, gray
+    for `audit_log`), a `Target` column
+    (`target_node_id` for cluster_audit, "—" for
+    audit_log), and the existing `Result` /
+    `ErrorMessage` columns when they apply. 4
+    filters: `?action=`, `?user=` (substring match
+    on actor/username), `?source=` (audit_log /
+    cluster_audit / all), `?since=` (Go duration
+    syntax: `1h`, `24h`, `7d` — the `d` suffix
+    is custom since `time.ParseDuration` doesn't
+    accept it). 1 row-cap knob: `?limit=` (default
+    200, max 5000).
+    The pre-B207 /admin/audit page rendered 200
+    rows of `audit_log` only. B207 retains the
+    200-row default but the operator can now
+    raise the cap to 5000 to scan more history
+    in a single page load. The `since` filter
+    closes the gap the CHANGELOG explicitly
+    called out as TODO for 6+ months ("date
+    still TODO").
+    Files:
+    `internal/feature/admin/admin_pages.go`
+    (GetAdminAudit rewritten with the UNION +
+    filter helpers; GetAdminACLs unchanged) +
+    `internal/feature/admin/admin_audit_b207_test.go`
+    (~190 lines, 5 unit tests with 20 sub-cases:
+    parseSinceFilter 7 cases incl. 7d
+    custom-handling, parseLimit 8 cases
+    incl. 5000 cap, normalizeSourceFilter 4
+    cases, AuditEntry_FieldsRoundtrip,
+    AuditEntry_OptionalFields for audit_log
+    rows) +
+    `internal/handlers/templates/admin/audit.html`
+    (rewritten: Source + Target columns,
+    4 filter inputs, source badge).
+    i18n: 7 new keys (audit.col_source,
+    audit.col_target, audit.col_since,
+    audit.recent_events, audit.filtered,
+    audit.source_all, audit.source_audit_log,
+    audit.source_cluster_audit) in RU + EN
+    lock-step.
+    37 B-check contracts in `scripts/check_b207.sh`
+    (GetAdminAudit reads from BOTH tables, UNION
+    ALL of branches, AuditEntry 8 fields pinned,
+    AuditSource* constants, parseLimit /
+    parseSinceFilter / normalizeSourceFilter
+    helpers, template uses the new i18n keys +
+    renders the cluster_audit source badge, 7
+    new i18n keys in RU + EN, route still wired,
+    6+ unit tests, build/vet/tests pass,
+    AGENTS.md mention).
   - **B206 (v1.5.0+) — `GET /db/health` endpoint
     (Phase 1.5 / G3 of cluster-management.md)**:
     closes the gap that B195-B202 left — those
