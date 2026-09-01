@@ -100,12 +100,19 @@ type InvitePayload struct {
 // skygate, "skygate-standby" for a standby node). It is
 // only a hint — the verifier doesn't enforce it; the
 // joiner declares its own role when it joins.
+//
+// Auto-creates the cluster row if it doesn't exist yet
+// (FK constraint on cluster_invite.cluster_id).
 func IssueInvite(d *sql.DB, clusterID, role, targetHostname string, ttlHours int, secret string) (inviteID, token string, expiresAt time.Time, err error) {
 	if secret == "" {
 		return "", "", time.Time{}, errors.New("cluster: empty secret — set SKYGATE_SECRET_KEY")
 	}
 	if ttlHours <= 0 {
 		ttlHours = 24
+	}
+	// Auto-create the parent cluster row if missing.
+	if err := EnsureCluster(d, clusterID, clusterID); err != nil {
+		return "", "", time.Time{}, fmt.Errorf("ensure cluster: %w", err)
 	}
 	now := time.Now().UTC()
 	expiresAt = now.Add(time.Duration(ttlHours) * time.Hour)

@@ -13,6 +13,7 @@ package cluster
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -82,6 +83,11 @@ func LookupNode(d *sql.DB, clusterID, hostname string) (*Node, error) {
 // guard via the host_id UNIQUE INDEX we'll add in B195.1
 // — for now we just rely on the admin-side pre-check + a
 // UNIQUE constraint we'll add in a follow-up migration).
+//
+// Auto-creates the cluster row if it doesn't exist yet
+// (FK constraint on cluster_node.cluster_id means the
+// parent row must exist before the child INSERT can
+// succeed). Idempotent.
 func AddNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []string, skygateVer string) (string, error) {
 	if clusterID == "" {
 		return "", errors.New("cluster: empty cluster_id")
@@ -91,6 +97,10 @@ func AddNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []string,
 	}
 	if len(roles) == 0 {
 		roles = []string{NodeRoleSkygate}
+	}
+	// Auto-create the parent cluster row if missing.
+	if err := EnsureCluster(d, clusterID, clusterID); err != nil {
+		return "", fmt.Errorf("ensure cluster: %w", err)
 	}
 	now := time.Now().UTC()
 	var id string
