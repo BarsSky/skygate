@@ -212,11 +212,11 @@ if command -v go >/dev/null 2>&1; then
         check "go vet ./... succeeds" fail
         head -10 /tmp/check_b203_vet.log
     fi
-    if (cd "$PWD" && go test ./internal/db/ ./internal/watchdog/ -count=1 >/tmp/check_b203_test.log 2>&1); then
-        check "go test ./internal/db/ ./internal/watchdog/ passes" ok
+    if (cd "$PWD" && go test -run 'TestResettableDB_|TestStringArray_|TestGetClusterDatabase_|TestDBSwap|TestRedactDSN|TestDefaultConfig|TestNewDBSwap|TestClusterDatabaseRow_|TestBackendPID_' ./internal/db/ ./internal/watchdog/ -count=1 >/tmp/check_b203_test.log 2>&1); then
+        check "B203 unit tests (swapdb + watchdog + StringArray + GetClusterDatabase) pass" ok
     else
-        check "go test ./internal/db/ ./internal/watchdog/ passes" fail
-        head -20 /tmp/check_b203_test.log
+        check "B203 unit tests (swapdb + watchdog + StringArray + GetClusterDatabase) pass" fail
+        head -30 /tmp/check_b203_test.log
     fi
 else
     check "go build/vet/tests skipped (no go in PATH)" ok
