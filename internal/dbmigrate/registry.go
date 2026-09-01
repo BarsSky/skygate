@@ -24,29 +24,17 @@ func RegisterStep(s DeployStep) {
 	reg[s.Name()] = s
 }
 
-// listSteps returns the registered steps in deterministic
-// order (sorted by Name). The framework treats this as the
-// canonical step order; if a step needs to run before/after
-// another, it should use the Run() logic (e.g., check the
-// MigrationContext for prerequisites) rather than relying
-// on registration order.
+// listSteps returns the registered steps in their canonical
+// run order (sorted by the Ordinal() each step declares).
+// B202 added Ordinal() to the DeployStep interface so the
+// framework runs steps in the SEMANTIC order
+// (precheck → dump → restore → verify → flip → cleanup)
+// instead of the alphabetical order which was a B198
+// bug (cleanup would run before any destructive work
+// had even started).
 //
-// For Phase 1.4 the order we want is:
-//   1. PreCheck
-//   2. Dump
-//   3. Restore
-//   4. Verify
-//   5. Flip
-//   6. Cleanup
-// but since the steps are sorted alphabetically the order
-// will be: Cleanup, Dump, Flip, PreCheck, Restore, Verify.
-// We use a Sort-based ordinal so the order is stable. The
-// orchestrator (Run) calls them in slice order.
-//
-// Future: add an Ordinal() int method to DeployStep so each
-// step declares its position. For now, alphabetical + the
-// names starting with the right letters gives the right
-// order. (See the "C, D, F, P, R, V" mapping.)
+// Stable secondary sort by Name so the order is fully
+// deterministic when two steps share an ordinal.
 func listSteps() []DeployStep {
 	regMu.RLock()
 	defer regMu.RUnlock()
@@ -55,6 +43,9 @@ func listSteps() []DeployStep {
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].Ordinal() != out[j].Ordinal() {
+			return out[i].Ordinal() < out[j].Ordinal()
+		}
 		return out[i].Name() < out[j].Name()
 	})
 	return out

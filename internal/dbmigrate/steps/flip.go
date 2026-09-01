@@ -28,6 +28,7 @@ type flipStep struct{}
 
 func (flipStep) Name() string        { return "flip" }
 func (flipStep) Description() string { return "Update cluster_database + .env to point to target" }
+func (flipStep) Ordinal() int       { return 5 }
 func (flipStep) IsOptional() bool   { return false }
 func (flipStep) DependsOn() []string { return []string{"verify"} }
 

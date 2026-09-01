@@ -50,9 +50,27 @@ const (
 // DeployStep is the interface every step implements. The
 // pattern matches B194's internal/deployrun/steps/ so future
 // readers can transfer context easily.
+//
+// Ordinal() returns the step's position in the canonical
+// run order (lower = earlier). B202 added this so the
+// framework runs steps in the SEMANTIC order
+// (precheck → dump → restore → verify → flip → cleanup)
+// instead of the alphabetical order (cleanup, dump,
+// flip, precheck, restore, verify) which was a B198
+// bug — cleanup would run before any destructive work
+// had even started.
+//
+// The order we want:
+//   1 (precheck) → 2 (dump) → 3 (restore) → 4 (verify) → 5 (flip) → 6 (cleanup)
+//
+// Steps declare their position explicitly. Adding a new
+// step means picking the next free ordinal (7+ for
+// post-cleanup steps; 0 or negative for pre-precheck
+// "pre-flight" checks).
 type DeployStep interface {
 	Name() string
 	Description() string
+	Ordinal() int
 	Run(ctx context.Context, mc *MigrationContext) error
 	Rollback(ctx context.Context, mc *MigrationContext) error
 	IsOptional() bool

@@ -25,6 +25,7 @@ type precheckStep struct{}
 
 func (precheckStep) Name() string        { return "precheck" }
 func (precheckStep) Description() string { return "Validate source + target reachability and version compatibility" }
+func (precheckStep) Ordinal() int       { return 1 }
 func (precheckStep) IsOptional() bool   { return false }
 func (precheckStep) DependsOn() []string { return nil }
 

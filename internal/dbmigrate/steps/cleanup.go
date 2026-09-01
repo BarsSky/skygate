@@ -49,6 +49,7 @@ type cleanupStep struct{}
 
 func (cleanupStep) Name() string         { return "cleanup" }
 func (cleanupStep) Description() string  { return "Drop source DB (optional, off by default)" }
+func (cleanupStep) Ordinal() int        { return 6 }
 func (cleanupStep) IsOptional() bool    { return true }
 func (cleanupStep) DependsOn() []string { return []string{"flip"} }
 
