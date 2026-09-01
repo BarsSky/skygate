@@ -1638,9 +1638,83 @@ in the same commit. Don't let the tracker drift.
     Phase 2.2 ships the action surface; the actual
     join flow (the new node running
     `skygate cluster join --token=...`) lands in
-    Phase 2.3 (B200.x follow-up). Until then the
-    tokens are generated and can be saved, but
+    Phase 2.3 (B201, see below). Until B201 ships
+    the tokens are generated and can be saved, but
     nothing consumes them yet.
+
+  - **B201 (v1.5.0+) — `/api/cluster/join` +
+    `/api/cluster/heartbeat` (Phase 2.3 of
+    cluster-management.md, the join flow)**: B200
+    shipped the sgn1 invite generation; B201 ships
+    the consumer side. Two machine-to-machine POST
+    endpoints (no admin / user session — the sgn1
+    token IS the auth):
+    - `internal/cluster/join.go` (new): `Join` and
+      `Heartbeat` functions + `JoinRequest` /
+      `JoinResponse` / `HeartbeatRequest` /
+      `HeartbeatResponse` structs + 6 error
+      sentinels (`ErrHostnameMismatch`,
+      `ErrInviteExpired`, `ErrInviteRevoked`,
+      `ErrInviteNotPending`, `ErrNodeAlreadyExists`,
+      `ErrHeartbeatNodeNotFound`). Join does:
+      (1) `VerifyToken(secret, token)` (HMAC
+      check), (2) `EnsureCluster` (auto-create
+      parent row, same as B200), (3)
+      `LookupInvite` + `IsPending` (the 5
+      not-pending cases return the 4 distinct
+      sentinels), (4) `hostnamesEqual(token.th,
+      req.Hostname)` (case-insensitive; rejects
+      "evil-host" with `ErrHostnameMismatch`),
+      (5) idempotency check via `LookupNode`
+      (returns existing node_id if the new node
+      crashed mid-join and is retrying), (6)
+      INSERT cluster_node with state=pending, (7)
+      UPDATE cluster_invite.used_at + used_by_node_id,
+      (8) `readDBBootstrap` (cluster_database
+      dsn_template + dbname + username — the
+      bootstrap info the new node uses to set up
+      its own pgxpool). Heartbeat does:
+      (1) VerifyToken, (2) LookupInvite + check
+      used_by_node_id matches the request's
+      node_id, (3) UPDATE cluster_node
+      last_seen_at = NOW() with `RETURNING
+      state, last_seen_at`, (4) auto-transition
+      state pending → ready on the first
+      heartbeat (the ready → failed transition is
+      the HA elector's job, Phase 3).
+    - `internal/feature/cluster/handlers.go` (new
+      package): `Service` struct + `NewService` +
+      `PostAPIClusterJoin` + `PostAPIClusterHeartbeat`
+      + `writeJoinError` (maps the 6 sentinels to
+      401/403/409/410 status codes — 401 covers
+      signature mismatch, 403 hostname mismatch,
+      409 already used, 410 expired/revoked). The
+      endpoints are JSON in / JSON out (not HTML)
+      and no authMW (the token IS the auth).
+    - `cmd/skygate/main.go`: registered 2 routes
+      (`POST /api/cluster/join` + `POST
+      /api/cluster/heartbeat`) without authMW +
+      constructed `clusterAPI` with
+      `cfg.SecretKeyHex` as the invite secret.
+    - `internal/cluster/join_b201_test.go` (new):
+      8 unit tests covering the pure helpers
+      (`hostnamesEqual` with 8 case combos incl.
+      case-insensitive + whitespace, `trimSpaceASCII`
+      with 6 combos, `parseRolesField` with 7
+      incl. dedup, `splitComma` with 5 incl. quoted
+      comma, sentinel identity checks) + JSON
+      field pinning for the API contract.
+    - `scripts/check_b201.sh`: 31 contracts
+      (internal/cluster/join.go + 5 structs + 6
+      error sentinels + handlers + 4 status codes
+      + 2 routes + 3 main.go wirings + 3 test
+      funcs + build + vet + tests + AGENTS.md
+      mention + live empty-body 400 check).
+    Phase 2.3 ships the HTTP surface. The new-node
+    CLI (`skygate cluster join --token=...`) and
+    the heartbeat daemon are operator-side bash
+    one-liners that just curl these two endpoints;
+    they don't need to be in this repo.
     Phase 3 (skygate-watchdog + force failover)
     is the next major chunk after 2.2.
 

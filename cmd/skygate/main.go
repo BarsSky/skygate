@@ -27,6 +27,7 @@ import (
 	extcreds "skygate/internal/ha/dnsexternal"
 	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
+	clusterapi "skygate/internal/feature/cluster"
 	exitrules "skygate/internal/feature/exit_rules"
 	mysvc "skygate/internal/feature/my"
 	"skygate/internal/feature/healthz"
@@ -831,6 +832,19 @@ func main() {
 		DevBuild: app.Config().DevBuild,
 	}
 
+	// v1.5.0+ / B201 — cluster join API service. Handles
+	// POST /api/cluster/join and /api/cluster/heartbeat
+	// (no admin auth — the sgn1 token IS the auth).
+	// The InviteSecret is the same SKYGATE_SECRET_KEY
+	// the admin invite generator uses, consumed as the
+	// HMAC-SHA256 key. The endpoints are no-auth because
+	// the join bootstrap runs on a fresh machine that
+	// doesn't have a skygate session cookie yet.
+	clusterAPI := &clusterapi.Service{
+		DB:           app.DB,
+		InviteSecret: cfg.SecretKeyHex,
+	}
+
 	// v1.5.0 / B194 — auto-deploy framework service.
 	// The Service holds a per-run broker map so the
 	// /admin/deploys/{id}/stream SSE handler can find
@@ -1289,6 +1303,17 @@ func main() {
 	mux.Handle("POST /admin/cluster/node/remove", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeRemove)))
 	mux.Handle("POST /admin/cluster/invite/generate", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteGenerate)))
 	mux.Handle("POST /admin/cluster/invite/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteRevoke)))
+
+	// v1.5.0+ / B201 — cluster join + heartbeat API. No
+	// authMW — the sgn1 token is the auth (the new node
+	// doesn't have a skygate session cookie yet, and
+	// the join bootstrap runs on a fresh machine). The
+	// endpoints are JSON in / JSON out (not HTML pages).
+	// Routes are added BEFORE authMW-gated routes so the
+	// /api prefix is unambiguous to operators reading
+	// the route table.
+	mux.HandleFunc("POST /api/cluster/join", clusterAPI.PostAPIClusterJoin)
+	mux.HandleFunc("POST /api/cluster/heartbeat", clusterAPI.PostAPIClusterHeartbeat)
 
 	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
 	// failover dry-run). The page is the web mirror of
