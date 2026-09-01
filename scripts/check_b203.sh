@@ -227,6 +227,19 @@ grep_q "B203" "AGENTS.md" 2>/dev/null \
     && check "AGENTS.md mentions B203" ok \
     || check "AGENTS.md mentions B203" fail
 
+# 25. GetClusterDatabase NULL handling (B203 live bug — watchdog
+# Scan error on primary_node_id = NULL). The COALESCE on the
+# SELECT statement makes NULL read as "" instead of crashing.
+grep_q 'COALESCE\(primary_node_id' "internal/db/cluster.go" \
+    && check "GetClusterDatabase COALESCE on primary_node_id (NULL safety)" ok \
+    || check "GetClusterDatabase COALESCE on primary_node_id (NULL safety)" fail
+
+# 26. B203 unit tests for GetClusterDatabase NULL regression
+b203_cluster_tests=$(grep -c '^func TestGetClusterDatabase_' "internal/db/cluster_b203_test.go")
+[ "$b203_cluster_tests" -ge 3 ] \
+    && check "GetClusterDatabase NULL regression tests: $b203_cluster_tests (>= 3)" ok \
+    || check "GetClusterDatabase NULL regression tests: $b203_cluster_tests (need >= 3)" fail
+
 # Summary
 echo ""
 TOTAL=$((PASS+FAIL))

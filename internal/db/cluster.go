@@ -49,10 +49,23 @@ type ClusterDatabase struct {
 // the admin page can render "not configured" without checking
 // for the specific sentinel.
 func GetClusterDatabase(d *sql.DB, id string) (*ClusterDatabase, error) {
+	// COALESCE NULLs to empty strings in the SQL so the
+	// Scan can use plain string fields. The COALESCE
+	// is wrapped in an extra layer of COALESCE for
+	// current_dsn (which is the most important one for
+	// the B203 watchdog) so a NULL DSN is treated as
+	// "no override" rather than a Scan error.
 	row := d.QueryRow(`
-		SELECT id, cluster_id, primary_node_id, replica_node_ids,
-		       dsn_template, dbname, username, sslmode, current_dsn,
-		       updated_by, created_at, updated_at
+		SELECT id, cluster_id,
+		       COALESCE(primary_node_id, ''),
+		       COALESCE(replica_node_ids, '{}'),
+		       COALESCE(dsn_template, ''),
+		       COALESCE(dbname, ''),
+		       COALESCE(username, ''),
+		       COALESCE(sslmode, ''),
+		       COALESCE(current_dsn, ''),
+		       COALESCE(updated_by, ''),
+		       created_at, updated_at
 		FROM cluster_database
 		WHERE id = $1
 	`, id)

@@ -1903,6 +1903,34 @@ in the same commit. Don't let the tracker drift.
     to svi) is the remaining unblock from B202.
     Phase 3 (skygate-watchdog + force failover)
     is the next major chunk after 2.2.
+  - **B203.1 (v1.5.0+) — `GetClusterDatabase` NULL
+    safety fix (live B203 follow-up)**: the first
+    live B203 test (inserted a `cluster_database` row
+    with `primary_node_id = NULL`, since the admin
+    hadn't picked a primary node yet) caused the
+    watchdog to log
+    `dbmigrate-watchdog: read cluster_database: sql: Scan error on column index 2, name "primary_node_id": converting NULL to string is unsupported (keeping current pool)`
+    every 5s — silently keeping the env-DSN pool
+    instead of swapping. Pre-B195 the `cluster_database`
+    table had no NULL-able columns; the B203 reader
+    assumed all columns were NOT NULL. The B195
+    schema makes `primary_node_id` NULL-able
+    (`REFERENCES cluster_node(id) ON DELETE SET NULL`),
+    so the watchdog crashed on every read.
+    **Fix**: COALESCE all NULL-able columns in the
+    SELECT statement to their default empty value
+    (defensive — the schema only requires it for
+    `primary_node_id` today). 4 new unit tests in
+    `internal/db/cluster_b203_test.go` cover the NULL
+    case (the regression), the populated case (positive
+    control), the not-found case, and the empty-replicas
+    case. 2 new B-check contracts in
+    `scripts/check_b203.sh` (#25, #26) pin the
+    COALESCE on `primary_node_id` + the new test file.
+    Live-verified post-deploy: watchdog logs
+    `dbmigrate-watchdog: DSN change detected; swapping to postgres://admin:***@172.17.0.1:5433/skygate_staging?sslmode=disable`
+    then `dbmigrate-watchdog: pool swapped successfully (new backend pid: <pid>)`
+    within one 5s tick of inserting the row.
 
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
