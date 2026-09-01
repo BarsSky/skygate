@@ -25,14 +25,7 @@
   </div>
 </div>
 
-{{if .Data.FlashSuccess}}
-  {{if contains .Data.FlashSuccess "sgn1."}}
-  {{/* multi-line flash (e.g. invite generation result with the sgn1 token) */}}
-  <div class="alert alert-success" style="white-space:pre-wrap;font-family:var(--mono);font-size:0.85em;line-height:1.5"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>
-  {{else}}
-  <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>
-  {{end}}
-{{end}}
+{{if .Data.FlashSuccess}}<div class="alert alert-success" style="white-space:pre-wrap"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
 {{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
 
 {{/* ===================== Section 1: Cluster summary ===================== */}}
