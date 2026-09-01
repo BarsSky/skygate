@@ -56,6 +56,19 @@ func emit(ev SSEEvent) {
 	}
 }
 
+// EmitStepLog is a small helper for steps/ to push a
+// log line into the SSE broker. Keeps the steps/ code
+// from having to construct an SSEEvent by hand.
+func EmitStepLog(runID int64, step, msg string) {
+	emit(SSEEvent{
+		At:    time.Now(),
+		Kind:  "step_log",
+		RunID: runID,
+		Step:  step,
+		Log:   &StepLog{At: time.Now(), Level: "info", Msg: msg},
+	})
+}
+
 // StreamHandler serves the SSE stream for a given run. It
 // sends events as they come in from the broker, plus a
 // 15s heartbeat so proxies don't time out.

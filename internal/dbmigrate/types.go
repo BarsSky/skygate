@@ -94,14 +94,37 @@ type MigrationContext struct {
 
 	// Dump file. The Dump step writes a `pg_dump -Fc`
 	// file here; the Restore step reads from it.
-	// Default: /tmp/skygate-migrate-{run_id}.dump
+	// Default: /var/lib/skygate/migrations/{run_id}.dump
 	DumpFile string
+
+	// Stashed by Dump step. Bytes written + wall-time.
+	DumpBytes      int64
+	DumpDurationMs int64
+
+	// Stashed by Dump step. True if pg_try_advisory_lock
+	// returned true; the lock is held until the tx is
+	// released (or Rollback runs). The framework reads
+	// this in rollback to know whether to release.
+	SourceLockHeld bool
 
 	// Stashed by Verify step. Source row count, target
 	// row count, mismatch (if any).
 	SourceRowCount int64
 	TargetRowCount int64
 	RowCountMatch  bool
+
+	// Transport is the dump transport (default: local
+	// pg_dump). Framework defaults this to a fresh
+	// LocalDumpTransport in Run() if nil, so steps
+	// don't need to nil-check. Exposed for tests +
+	// the B202.5 SSHTransport that injects remote.
+	Transport DumpTransport
+
+	// Warning is a non-fatal message stashed by a step
+	// for the framework to surface in the audit_log /
+	// SSE event. Distinct from Error (which marks the
+	// step as failed).
+	Warning string
 
 	// Operator who initiated the run (for audit + Flash).
 	Operator string
@@ -117,11 +140,21 @@ type MigrationContext struct {
 	// need it, like the Flip step that writes to
 	// cluster_database) use for the migration's own
 	// bookkeeping tables. Set by the framework at start.
-	DB interface {
-		Exec(query string, args ...any) (sql.Result, error)
-		Query(query string, args ...any) (*sql.Rows, error)
-		QueryRow(query string, args ...any) *sql.Row
-	}
+	// Includes BeginTx so steps that hold a lock for
+	// the duration of a subprocess exec (Dump) can keep
+	// the lock alive via the transaction.
+	DB DBMigrator
+}
+
+// DBMigrator is the minimal *sql.DB surface the steps
+// need. Exported as a named type so helpers in sub-
+// packages (steps/) can take it as a parameter type
+// instead of repeating the inline interface.
+type DBMigrator interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
 // MigrationRun is the DB row representing a single migration

@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os/exec"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -60,6 +61,19 @@ func (precheckStep) Run(ctx context.Context, mc *dbmigrate.MigrationContext) err
 	// log the versions for the audit trail.
 	_ = srcVer
 	_ = tgtVer
+
+	// B202: check the pg_dump / pg_restore binaries are
+	// on PATH. Without this, the dump step would fail
+	// with a confusing "exec: pg_dump not found" — a
+	// better UX is to fail the precheck with a clear
+	// "install postgresql-client" message.
+	if _, err := exec.LookPath("pg_dump"); err != nil {
+		return fmt.Errorf("pg_dump not on PATH: install postgresql-client (apt-get install postgresql-client)")
+	}
+	if _, err := exec.LookPath("pg_restore"); err != nil {
+		return fmt.Errorf("pg_restore not on PATH: install postgresql-client (apt-get install postgresql-client)")
+	}
+
 	return nil
 }
 

@@ -1420,10 +1420,10 @@ in the same commit. Don't let the tracker drift.
   - **B198 (v1.5.0+) — DB migration workflow
     (Phase 1.4 of cluster-management.md)**:
     6-step state machine — `precheck` (ping src+tgt via
-    `pgx.Ping`), `dump` (pg_dump -Fc, STUB), `restore`
-    (pg_restore, STUB), `verify` (count key tables on both
+    `pgx.Ping`), `dump` (pg_dump -Fc, stub), `restore`
+    (pg_restore, stub), `verify` (count key tables on both
     sides), `flip` (update `cluster_database` + .env + audit),
-    `cleanup` (drop source DB, OPTIONAL, STUB). Pattern
+    `cleanup` (drop source DB, OPTIONAL, stub). Pattern
     mirrors B194 deployrun (self-registering init() in
     steps/, Run + rollback orchestrator, SSE broker).
     `internal/dbmigrate/` package: types.go, framework.go,
@@ -1431,16 +1431,115 @@ in the same commit. Don't let the tracker drift.
     `GET/POST /admin/database/migrate` + `GET .../{id}/stream`
     + `GET .../{id}`. Tables `dbmigrate_run` + `dbmigrate_step`
     in migration V065. Phase 1.4 LIMITATIONS (documented
-    in step stubs): (1) `dump` returns STUB error — operator
+    in step stubs): (1) `dump` returns stub error — operator
     runs `pg_dump -Fc` manually on source, scp the dump;
-    (2) `restore` returns STUB error — operator runs
+    (2) `restore` returns stub error — operator runs
     `pg_restore` manually on target; (3) `cleanup` is gated
-    off by default and returns STUB. Only the `flip` step
+    off by default and returns stub. Only the `flip` step
     is functional today (writes `cluster_database` + .env
     + audit). Framework waits for B200 + a second PG host
     (resource upgrade on agent) + SSH plumbing to svi for
     full end-to-end execution. 10 contracts in
     `scripts/check_b198.sh`.
+
+  - **B202 (v1.5.0+) — real dump/restore/cleanup
+    (replaces B198's three STUBs)**: B198 shipped the
+    framework + UI; the actual subprocess execution
+    was stubbed. B202 fills in the three real impls:
+    - **`internal/dbmigrate/transport.go`** (new): the
+      `DumpTransport` interface (`Dump(ctx, dsn, dest, onLog)
+      (int64, error)` + `Name() string`) + the default
+      `LocalDumpTransport` that runs `pg_dump -Fc
+      --no-owner --no-acl --no-comments` on the local
+      host. Streams stdout/stderr to a callback so the
+      SSE broker can show progress. The transport is
+      abstracted so B202.5 can drop in `SSHDumpTransport`
+      for cross-host (svi) dumps without changing
+      the step code.
+    - **`internal/dbmigrate/steps/dump.go`** (rewritten):
+      acquires `pg_try_advisory_lock(42)` in a tx for
+      the duration of the dump (so a concurrent
+      skygate writer doesn't trip the dump), calls
+      `mc.Transport.Dump`, verifies the file has the
+      PGD magic (`50 47 44 0a`), and stashes
+      `DumpBytes` + `DumpDurationMs` on `MigrationContext`
+      for the audit row. `Rollback` releases the lock
+      and removes the partial file. Dump file default
+      is `/var/lib/skygate/migrations/{run_id}.dump`.
+    - **`internal/dbmigrate/steps/restore.go`** (rewritten):
+      opens a short-lived connection to the target to
+      call `pg_terminate_backend` (free up row locks),
+      then `pg_restore -d $target -c --if-exists
+      --no-owner --no-privileges --jobs=4 --verbose
+      $dump`. Streams stderr to the SSE broker. On
+      failure, `Rollback` drops the `public` schema
+      and recreates it (clean slate for retry).
+    - **`internal/dbmigrate/steps/cleanup.go`** (rewritten):
+      gated by `SKYGATE_MIGRATE_DROP_SOURCE=true` (off
+      by default for safety). When set, calls
+      `pg_terminate_backend` + `DROP DATABASE` on the
+      source. Quoting via `quoteIdent` to defend
+      against future DB names with hyphens.
+      Non-fatal errors during DROP are surfaced
+      through `mc.Warning` (the framework continues
+      because the source DB is no longer referenced).
+    - **`internal/dbmigrate/steps/verify.go`** (extended):
+      now does per-table diff (was a single summed
+      total in B198, which masked partial-restore
+      failures). The 6 key tables are unchanged
+      (portal_users, device_rules, node_owner_map,
+      preauth_keys, user_exit_node_prefs,
+      device_exit_node_prefs) — see the package doc
+      for why audit_log etc. are excluded.
+    - **`internal/dbmigrate/steps/precheck.go`**
+      (extended): now also `exec.LookPath("pg_dump")`
+      and `exec.LookPath("pg_restore")` so a missing
+      postgresql-client fails the precheck with a
+      clear "install postgresql-client" message
+      instead of a confusing "exec: not found" later.
+    - **`internal/dbmigrate/types.go`** (extended):
+      new fields on `MigrationContext` —
+      `Transport`, `DumpBytes`, `DumpDurationMs`,
+      `SourceLockHeld`, `Warning`. New `DBMigrator`
+      interface (with `BeginTx`) replaces the inline
+      `interface{...}` so steps can hold a lock in
+      a tx for the duration of the subprocess.
+    - **`internal/dbmigrate/sse.go`** (extended):
+      `EmitStepLog(runID, step, msg)` helper so
+      steps/ doesn't have to construct an `SSEEvent`
+      by hand.
+    - **`internal/dbmigrate/framework.go`**
+      (modified): defaults `mc.Transport` to
+      `LocalDumpTransport{}` in `Run()` so callers
+      don't have to set it.
+    - **`internal/dbmigrate/steps/b202_helpers_test.go`**
+      (new): 12 unit tests — `parseLibpqDSN` (8 cases
+      incl. no-port, no-scheme, postgresql scheme,
+      params), `quoteIdent` (4 cases incl. hyphens
+      and embedded quotes), `pgDumpMagic` pin,
+      `sumCounts` / `mapsEqual` / `unionKeys`,
+      `keyTables` pin, `readFirstBytes` (3 cases:
+      valid PGD magic, short file, missing file).
+    - **`scripts/check_b202.sh`**: 37 contracts
+      (transport interface, LocalDumpTransport,
+      framework default, 3 STUBs removed, exec
+      invocation, --no-owner/--no-acl, advisory
+      lock + unlock, pg_terminate_backend,
+      pg_restore -c/--if-exists, env gate, DROP
+      DATABASE, per-table verify, precheck bin
+      check, 5 new MigrationContext fields,
+      DBMigrator interface with BeginTx, EmitStepLog
+      helper, 4 unit tests, build+vet+tests,
+      AGENTS.md mention).
+    Phase 1.4 is now fully functional for **local** dumps
+    (source on the agent, target on the agent).
+    The cross-host case (source on svi) is B202.5 —
+    swap `LocalDumpTransport` for `SSHDumpTransport`
+    that runs `ssh svi "pg_dump ..."` and streams
+    the bytes back. The SSH key already exists
+    (B194: `headscale-bootstrap@agent` ed25519 in
+    svi's `/root/.ssh/authorized_keys`), so the
+    plumbing is just the new transport.
 
   - **B198.1 (v1.5.0+) — DB migration UI
     (Phase 1.4, user-facing surface)**:

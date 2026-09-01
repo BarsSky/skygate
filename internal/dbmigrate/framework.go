@@ -56,6 +56,15 @@ type SSEEvent struct {
 // subprocess calls are stubbed (TODO B200). The framework
 // itself doesn't run any subprocesses; it just orchestrates.
 func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
+	// 0. Default the transport if the caller didn't set
+	//    one. B202 — LocalDumpTransport runs pg_dump on
+	//    the local host. B202.5 will swap in SSHDumpTransport
+	//    for cross-host cases. The framework's contract is
+	//    "if you don't set Transport, you get Local".
+	if mc.Transport == nil {
+		mc.Transport = LocalDumpTransport{}
+	}
+
 	// 1. Persist the run row.
 	mc.DB = db
 	run, err := persistRun(db, mc)
