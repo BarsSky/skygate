@@ -445,12 +445,9 @@ func (e *Elector) recommendFailover(
 	for i := range nodes {
 		n := &nodes[i]
 		if n.State != "ready" {
-			e.cfg.Logger("elector: recommendFailover: skipping %s (state=%s, not ready)", n.Hostname, n.State)
 			continue
 		}
-		hasRole := roleContains(n.Roles, "skygate-standby")
-		e.cfg.Logger("elector: recommendFailover: %s (state=%s, roles=%q) has skygate-standby role: %v", n.Hostname, n.State, n.Roles, hasRole)
-		if hasRole {
+		if roleContains(n.Roles, "skygate-standby") {
 			readyStandbys = append(readyStandbys, *n)
 		}
 	}
