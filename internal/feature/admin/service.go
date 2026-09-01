@@ -261,5 +261,13 @@ type Service struct {
 	// from cfg.TailscaleHostname.
 	SelfHostname string
 
+	// v1.5.0+ / B200 — invite signing key (HMAC-SHA256). Same
+	// SKYGATE_SECRET_KEY used for JWT signing and the per-user
+	// API key encryption, just consumed differently. Wired from
+	// cmd/skygate/main.go at boot from cfg.SecretKey (the raw
+	// string, not the hex). Empty = the /admin/cluster "Generate
+	// invite" button shows a "secret key not configured" error.
+	ClusterInviteSecret string
+
 	telegramProbeCache serviceProbeCache
 }

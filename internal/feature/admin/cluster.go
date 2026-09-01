@@ -43,9 +43,14 @@ package admin
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"skygate/internal/cluster"
+	"skygate/internal/db"
 )
 
 // ---------- GET /admin/cluster (the page) -----------------------------
@@ -102,6 +107,12 @@ type clusterPageData struct {
 	// 1. Cluster summary
 	ClusterID    string
 	ClusterName  string
+	// SelfHostname is the host name of THIS skygate
+	// instance (from Service.SelfHostname, wired from
+	// cfg.TailscaleHostname at boot). The template uses
+	// it for the "cannot remove self" hint in the per-row
+	// node Remove button.
+	SelfHostname string
 	ClusterChain []string // human-readable lines (one per member if any)
 	HasCluster   bool
 
@@ -146,6 +157,7 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	data := &clusterPageData{
 		FlashSuccess: r.URL.Query().Get("ok"),
 		FlashError:   r.URL.Query().Get("err"),
+		SelfHostname: s.SelfHostname,
 		StateCounts:  map[string]int{},
 	}
 
@@ -403,4 +415,194 @@ func abbreviateClusterTime(deltaSec int64) string {
 	default:
 		return intToString(deltaSec/86400) + "d ago"
 	}
+}
+
+// ---------- POST /admin/cluster/node/add (B200) ------------------------
+
+// PostAdminClusterNodeAdd appends a new cluster_node row.
+// Form fields: hostname (required), tailscale_ip (optional),
+// roles (comma-separated; default "skygate"), skygate_version
+// (optional). The admin UI checks for duplicates first, but
+// the DB has the ultimate say (B195 schema is the source of
+// truth).
+func (s *Service) PostAdminClusterNodeAdd(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := "skygate-staging"
+	hostname := strings.TrimSpace(r.FormValue("hostname"))
+	if hostname == "" {
+		clusterRedirect(w, r, "", "hostname is required")
+		return
+	}
+	tailscaleIP := strings.TrimSpace(r.FormValue("tailscale_ip"))
+	rolesRaw := strings.TrimSpace(r.FormValue("roles"))
+	skygateVer := strings.TrimSpace(r.FormValue("skygate_version"))
+	var roles []string
+	if rolesRaw != "" {
+		for _, p := range strings.Split(rolesRaw, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				roles = append(roles, p)
+			}
+		}
+	}
+	// Pre-check: reject duplicates with a clear message.
+	if existing, err := cluster.LookupNode(s.DB, clusterID, hostname); err == nil && existing != nil {
+		clusterRedirect(w, r, "", "hostname already in cluster_node: "+hostname)
+		return
+	}
+	id, err := cluster.AddNode(s.DB, clusterID, hostname, tailscaleIP, roles, skygateVer)
+	if err != nil {
+		clusterRedirect(w, r, "", "add node: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.node.add",
+		fmt.Sprintf("id=%s hostname=%s roles=%v", id, hostname, roles))
+	clusterRedirect(w, r, fmt.Sprintf("Added %s (id %s).", hostname, id), "")
+}
+
+// ---------- POST /admin/cluster/node/remove (B200) ---------------------
+
+// PostAdminClusterNodeRemove deletes a cluster_node row by
+// hostname. Idempotent — removing a non-existent row is a
+// no-op (still 200 OK with a flash).
+func (s *Service) PostAdminClusterNodeRemove(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := "skygate-staging"
+	hostname := strings.TrimSpace(r.FormValue("hostname"))
+	if hostname == "" {
+		clusterRedirect(w, r, "", "hostname is required")
+		return
+	}
+	// Refuse to remove the self row — the operator would
+	// lock themselves out of the admin UI on the next page
+	// load (no cluster_node = the node is "unknown" and
+	// several other admin features would misbehave).
+	if hostname == s.SelfHostname {
+		clusterRedirect(w, r, "", "cannot remove the self row ("+s.SelfHostname+") — use /admin/ha instead to take this node offline")
+		return
+	}
+	if err := cluster.RemoveNode(s.DB, clusterID, hostname); err != nil {
+		clusterRedirect(w, r, "", "remove: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.node.remove",
+		"hostname="+hostname)
+	clusterRedirect(w, r, "Removed "+hostname+".", "")
+}
+
+// ---------- POST /admin/cluster/invite/generate (B200) ----------------
+
+// PostAdminClusterInviteGenerate creates a new cluster_invite
+// row and returns the signed token via the flash. The token
+// is shown once on the next page load and never re-displayed
+// (the secret stays in the server, so the row alone can't
+// re-derive the token — this is a deliberate "one-time
+// show" UX).
+//
+// Form fields: role (default "skygate-standby"),
+// target_hostname (required, the host the invite is for),
+// ttl_hours (default 24, max 168).
+func (s *Service) PostAdminClusterInviteGenerate(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if s.ClusterInviteSecret == "" {
+		clusterRedirect(w, r, "", "ClusterInviteSecret not configured — set SKYGATE_SECRET_KEY in .env")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := "skygate-staging"
+	role := strings.TrimSpace(r.FormValue("role"))
+	if role == "" {
+		role = cluster.NodeRoleStandby
+	}
+	target := strings.TrimSpace(r.FormValue("target_hostname"))
+	if target == "" {
+		clusterRedirect(w, r, "", "target_hostname is required")
+		return
+	}
+	ttlHours := 24
+	if v := strings.TrimSpace(r.FormValue("ttl_hours")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			clusterRedirect(w, r, "", "ttl_hours must be a positive integer")
+			return
+		}
+		if n > 168 {
+			clusterRedirect(w, r, "", "ttl_hours must be <= 168 (7 days)")
+			return
+		}
+		ttlHours = n
+	}
+	inviteID, token, expiresAt, err := cluster.IssueInvite(s.DB, clusterID, role, target, ttlHours, s.ClusterInviteSecret)
+	if err != nil {
+		clusterRedirect(w, r, "", "issue invite: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.invite.generate",
+		fmt.Sprintf("id=%s role=%s target=%s ttl_hours=%d", inviteID, role, target, ttlHours))
+	// Show the token via the success flash. The token is
+	// truncated to its first 20 chars + "..." so a casual
+	// log scrape doesn't leak the full secret, while the
+	// full token is shown in the rendered flash (one-time
+	// view).
+	msg := fmt.Sprintf("Invite generated for %s. Token (shown once, expires %s):\n\n%s\n\nSave it now — it cannot be re-displayed.",
+		target, expiresAt.UTC().Format("2006-01-02 15:04 UTC"), token)
+	clusterRedirect(w, r, msg, "")
+}
+
+// ---------- POST /admin/cluster/invite/revoke (B200) -------------------
+
+// PostAdminClusterInviteRevoke marks a pending cluster_invite
+// row status=revoked. Used invites (used_at IS NOT NULL) and
+// already-revoked invites are silently no-op (idempotent).
+func (s *Service) PostAdminClusterInviteRevoke(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	inviteID := strings.TrimSpace(r.FormValue("invite_id"))
+	if inviteID == "" {
+		clusterRedirect(w, r, "", "invite_id is required")
+		return
+	}
+	if err := cluster.RevokeInvite(s.DB, inviteID); err != nil {
+		clusterRedirect(w, r, "", "revoke: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.invite.revoke",
+		"id="+inviteID)
+	clusterRedirect(w, r, "Invite "+inviteID+" revoked.", "")
+}
+
+// clusterRedirect wraps RedirectWithFlash with the /admin/cluster
+// base path baked in. Mirrors haRedirect in ha.go.
+func clusterRedirect(w http.ResponseWriter, r *http.Request, okMsg, errMsg string) {
+	RedirectWithFlash(w, r, "/admin/cluster", okMsg, errMsg)
 }

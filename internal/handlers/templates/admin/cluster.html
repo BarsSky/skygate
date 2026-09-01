@@ -25,7 +25,14 @@
   </div>
 </div>
 
-{{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
+{{if .Data.FlashSuccess}}
+  {{if eq (index (split .Data.FlashSuccess "\n") 0) .Data.FlashSuccess}}
+  <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>
+  {{else}}
+  {{/* multi-line flash (e.g. invite generation result with the sgn1 token) */}}
+  <div class="alert alert-success" style="white-space:pre-wrap;font-family:var(--mono);font-size:0.85em;line-height:1.5"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>
+  {{end}}
+{{end}}
 {{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
 
 {{/* ===================== Section 1: Cluster summary ===================== */}}
@@ -73,6 +80,7 @@
         <th>{{t "cluster.col_skygate_version"}}</th>
         <th>{{t "cluster.col_joined"}}</th>
         <th>{{t "cluster.col_last_seen"}}</th>
+        <th>{{t "cluster.col_actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -98,6 +106,16 @@
         <td>{{if .SkygateVer}}<code style="font-size:0.85em">{{.SkygateVer}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
         <td><span class="muted" title="{{.JoinedAt}}">{{.JoinedAt}}</span></td>
         <td><span class="muted" title="{{.LastSeenAt}}">{{.LastSeenAt}}</span></td>
+        <td>
+          {{if .IsSelf}}
+            <span class="muted" title="{{t "cluster.node_remove_self" $.Data.SelfHostname}}">—</span>
+          {{else}}
+          <form method="POST" action="/admin/cluster/node/remove" style="display:inline" onsubmit="return confirm('{{t "cluster.node_remove_confirm" (printf "%s" .Hostname) | js}}')">
+            <input type="hidden" name="hostname" value="{{.Hostname}}">
+            <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> {{t "cluster.node_remove"}}</button>
+          </form>
+          {{end}}
+        </td>
       </tr>
       {{end}}
     </tbody>
@@ -107,6 +125,19 @@
       {{t "cluster.no_nodes"}}
     </div>
   {{end}}
+
+  {{/* Add node form (B200) */}}
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)"><i class="fa-solid fa-plus"></i> {{t "cluster.node_add_title"}}</summary>
+    <form method="POST" action="/admin/cluster/node/add" style="margin-top:10px;display:grid;grid-template-columns:repeat(2, 1fr);gap:8px;max-width:720px">
+      <label style="font-size:12px;color:var(--text-muted)">hostname<input type="text" name="hostname" required placeholder="{{t "cluster.node_add_hostname_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">tailscale_ip<input type="text" name="tailscale_ip" placeholder="{{t "cluster.node_add_tailscale_ip_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">roles (comma-sep)<input type="text" name="roles" placeholder="{{t "cluster.node_add_roles_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">skygate_version<input type="text" name="skygate_version" placeholder="{{t "cluster.node_add_version_ph"}}" style="width:100%"></label>
+      <div style="grid-column:1 / -1"><button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-plus"></i> {{t "cluster.node_add_submit"}}</button></div>
+    </form>
+    <p class="muted" style="font-size:12px;margin-top:6px">{{t "cluster.node_add_help"}}</p>
+  </details>
 </div>
 
 {{/* ===================== Section 3: Database ===================== */}}
@@ -139,6 +170,7 @@
         <th>{{t "cluster.col_role"}}</th>
         <th>{{t "cluster.col_issued"}}</th>
         <th>{{t "cluster.col_expires"}}</th>
+        <th>{{t "cluster.col_actions"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -148,6 +180,12 @@
         <td>{{if .Role}}<span class="tag">{{.Role}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
         <td><span class="muted" title="{{.IssuedAt}}">{{.IssuedAt}}</span></td>
         <td><span class="muted" title="{{.ExpiresAt}}">{{.ExpiresAt}}</span></td>
+        <td>
+          <form method="POST" action="/admin/cluster/invite/revoke" style="display:inline" onsubmit="return confirm('{{t "cluster.invite_revoke_confirm" (printf "%s" .ID) | js}}')">
+            <input type="hidden" name="invite_id" value="{{.ID}}">
+            <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-ban"></i> {{t "cluster.invite_revoke"}}</button>
+          </form>
+        </td>
       </tr>
       {{end}}
     </tbody>
@@ -157,6 +195,18 @@
       {{t "cluster.no_invites"}}
     </div>
   {{end}}
+
+  {{/* Generate invite form (B200) */}}
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)"><i class="fa-solid fa-envelope"></i> {{t "cluster.invite_generate_title"}}</summary>
+    <form method="POST" action="/admin/cluster/invite/generate" style="margin-top:10px;display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;max-width:720px">
+      <label style="font-size:12px;color:var(--text-muted)">role<input type="text" name="role" value="skygate-standby" placeholder="{{t "cluster.invite_role_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">target_hostname *<input type="text" name="target_hostname" required placeholder="{{t "cluster.invite_target_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">ttl_hours<input type="number" name="ttl_hours" value="24" min="1" max="168" placeholder="{{t "cluster.invite_ttl_ph"}}" style="width:100%"></label>
+      <div style="grid-column:1 / -1"><button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-key"></i> {{t "cluster.invite_generate_btn"}}</button></div>
+    </form>
+    <p class="muted" style="font-size:12px;margin-top:6px">{{t "cluster.invite_generate_help"}}</p>
+  </details>
 </div>
 
 {{/* ===================== Section 5: Recent cluster audit ===================== */}}

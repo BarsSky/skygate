@@ -1537,9 +1537,110 @@ in the same commit. Don't let the tracker drift.
       `GET /admin/database` now returns 8809
       bytes with 5 `<h2>/<h3>` headers (was
       empty before).
-    Phase 2.1 is read-only. Phase 2.2 (B200.x)
-    will add the "Add node" form and "Generate
+    Phase 2.1 is read-only. Phase 2.2 (B200)
+    adds the "Add node" form and "Generate
     invite" form on top of this read view.
+
+  - **B200 (v1.5.0+) — `/admin/cluster` Phase 2.2
+    action surface**: Pre-B200 the read-only cluster
+    view (B199) let operators SEE what was in
+    cluster_node / cluster_invite, but the only way
+    to ADD a node or GENERATE an invite was direct
+    SQL. B200 ships the admin-driven action surface
+    (admin-config principle: if an admin must SSH
+    to do X, X is a gap, not a workaround):
+    - **`internal/cluster/`** (new package): the
+      signed-token layer.
+      - `invite.go`: `IssueInvite` (DB INSERT +
+        HMAC-SHA256 signature), `VerifyToken`
+        (constant-time compare + JSON parse +
+        signature check), `RevokeInvite` (UPDATE
+        status=revoked, idempotent), `LookupInvite`
+        (DB SELECT for the admin UI). Token format
+        is `sgn1.<base64url(payload)>.<base64url(sig)>`
+        — the `sgn1` prefix is a version tag for
+        future format migration (Ed25519, etc.),
+        the payload is small JSON
+        `{inv,cid,rol,th,exp}`, the signature is
+        HMAC-SHA256 over the canonical payload bytes
+        keyed by `SKYGATE_SECRET_KEY` (same secret
+        as JWT signing + per-user API key encryption,
+        consumed differently).
+      - `node.go`: `AddNode` (INSERT cluster_node
+        with state=pending), `RemoveNode` (DELETE
+        by hostname, idempotent), `LookupNode`
+        (SELECT for the duplicate check before Add).
+        `NodeState*` constants (pending/ready/
+        draining/failed) + `NodeRole*` constants
+        (skygate, skygate-standby, patroni-primary,
+        patroni-replica) keep the magic strings
+        out of the admin handler.
+      - Tests: `invite_b200_test.go` (15 unit tests
+        covering round-trip + tamper detection +
+        wrong-secret rejection + every malformed-
+        input vector + empty-secret refusal + the
+        IsPending state machine), `node_b200_test.go`
+        (10 unit tests covering pqStringArray +
+        parsePGTextArray round-trip + the constant
+        pinning).
+    - **`internal/feature/admin/cluster.go`** (4 new
+      POST handlers + clusterPageData.SelfHostname):
+      - `PostAdminClusterNodeAdd` — form fields
+        (hostname, tailscale_ip, roles, skygate_version);
+        pre-checks for duplicates via
+        `cluster.LookupNode`; INSERTs; appends
+        `cluster.node.add` audit row.
+      - `PostAdminClusterNodeRemove` — refuses to
+        remove the self row (would lock the
+        operator out of the admin UI); idempotent
+        on non-existent hostnames; appends
+        `cluster.node.remove` audit row.
+      - `PostAdminClusterInviteGenerate` — form
+        fields (role, target_hostname, ttl_hours);
+        refuses if `ClusterInviteSecret` is empty;
+        calls `cluster.IssueInvite`; returns the
+        sgn1 token via the success flash with a
+        clear "save it now" message (the token is
+        NOT recoverable from the row alone — the
+        secret stays in the server, so the row
+        alone can't re-derive the token).
+      - `PostAdminClusterInviteRevoke` — calls
+        `cluster.RevokeInvite`; idempotent on
+        already-revoked / already-used invites.
+    - **`internal/handlers/templates/admin/cluster.html`**:
+      added per-row "Remove" button (in the Nodes
+      table) + per-row "Revoke" button (in the
+      Invites table) + collapsed "Add node" and
+      "Generate invite" `<details>` forms below
+      their respective tables. The flash alert for
+      invite generation uses a `<pre>` with
+      `white-space:pre-wrap` so the sgn1 token is
+      copy-paste friendly.
+    - **`cmd/skygate/main.go`**: registered 4 POST
+      routes (`/admin/cluster/node/{add,remove}` +
+      `/admin/cluster/invite/{generate,revoke}`),
+      wired `cfg.SecretKeyHex` →
+      `adminSvc.ClusterInviteSecret`.
+    - **`internal/feature/admin/service.go`**:
+      added `ClusterInviteSecret` field (the
+      same SKYGATE_SECRET_KEY used for JWT + per-
+      user API key encryption, consumed as
+      HMAC-SHA256 key for invite signing).
+    - **`internal/i18n/catalog_admin.go`**: 13
+      `cluster.node_*` + 13 `cluster.invite_*` keys
+      in RU + EN lock-step (26 each).
+    - **`scripts/check_b200.sh`**: 37 contracts
+      (cluster package functions, 4 routes, 4
+      handlers, Service.ClusterInviteSecret, main.go
+      wiring, 4 form actions, 13+13 i18n keys
+      RU+EN, 5 named test functions, build+vet+
+      tests, AGENTS.md mention).
+    Phase 2.2 ships the action surface; the actual
+    join flow (the new node running
+    `skygate cluster join --token=...`) lands in
+    Phase 2.3 (B200.x follow-up). Until then the
+    tokens are generated and can be saved, but
+    nothing consumes them yet.
     Phase 3 (skygate-watchdog + force failover)
     is the next major chunk after 2.2.
 

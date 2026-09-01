@@ -800,6 +800,16 @@ func main() {
 		// /admin/ha "Self role" column reads this to render
 		// the active/standby/unreachable badge.
 		SelfHostname: tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host-1"),
+
+		// v1.5.0+ / B200 — invite signing key. cfg.SecretKeyHex
+		// is the raw SKYGATE_SECRET_KEY (also used for JWT
+		// signing and per-user API key encryption). The
+		// /admin/cluster "Generate invite" handler signs
+		// sgn1 tokens with HMAC-SHA256 using this key.
+		// Empty = the "Generate invite" form shows a
+		// "secret not configured" error (better than
+		// silently generating tokens no one can verify).
+		ClusterInviteSecret: cfg.SecretKeyHex,
 		// refactor-v0.30 Phase B step 6b (2026-07-29):
 		// /admin/acls links to this URL (when non-empty)
 		// instead of the bundled Headplane sidecar.
@@ -1264,11 +1274,21 @@ func main() {
 	// v1.5.0+ / B199 — /admin/cluster (cluster topology view,
 	// Phase 2.1 read-only). The page renders the cluster +
 	// cluster_node + cluster_database + cluster_invite +
-	// cluster_audit state. Phase 2.2 (B200.x) will add the
-	// "Add node" and "Generate invite" forms. See
-	// internal/feature/admin/cluster.go for the handler and
-	// docs/internal/cluster-management.md §2 for the plan.
+	// cluster_audit state. Phase 2.2 (B200) adds the action
+	// surface (add/remove nodes, generate/revoke invites).
+	// See internal/feature/admin/cluster.go for the handlers
+	// and docs/internal/cluster-management.md §2 for the plan.
 	mux.Handle("GET /admin/cluster", authMW(http.HandlerFunc(adminSvc.GetAdminCluster)))
+	// v1.5.0+ / B200 — Phase 2.2 action surface.
+	// 4 POST handlers behind authMW:
+	//   /admin/cluster/node/add      — append a new cluster_node row
+	//   /admin/cluster/node/remove   — delete by hostname
+	//   /admin/cluster/invite/generate — create signed sgn1 token
+	//   /admin/cluster/invite/revoke   — mark invite status=revoked
+	mux.Handle("POST /admin/cluster/node/add", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeAdd)))
+	mux.Handle("POST /admin/cluster/node/remove", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeRemove)))
+	mux.Handle("POST /admin/cluster/invite/generate", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteGenerate)))
+	mux.Handle("POST /admin/cluster/invite/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteRevoke)))
 
 	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
 	// failover dry-run). The page is the web mirror of
