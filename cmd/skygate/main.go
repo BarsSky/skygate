@@ -34,6 +34,7 @@ import (
 	"skygate/internal/headscale_version"
 	"skygate/internal/release"
 	"skygate/internal/db"
+	"skygate/internal/watchdog"
 	"skygate/internal/deployrun"
 	"skygate/internal/derphealth"
 	"skygate/internal/handlers"
@@ -322,21 +323,33 @@ func main() {
 	// config.Load). cfg.DBPath is kept for log diagnostics
 	// only — no longer used at runtime.
 	log.Printf("   DB backend:    postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
-	var d *sql.DB
-	d, err = db.OpenDSN(cfg.DBDSN)
+	var d *db.ResettableDB
+	pool, err := db.OpenDSN(cfg.DBDSN)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
+
+	// v1.5.0+ / B203 — wrap the *pgxpool.Pool in a
+	// ResettableDB so the watchdog can hot-swap the
+	// pool when cluster_database changes.
+	//
+	// The wrapper has all the *sql.DB methods via
+	// embedding, AND adds Reset() for the watchdog.
+	// Existing callers that take *sql.DB pass `d.DB`
+	// (the embedded *sql.DB) so their signatures
+	// don't need to change. The watchdog uses `d` directly
+	// (it has the DBMigrator interface that calls Reset).
+	d = db.NewResettableDB(pool)
 	defer d.Close()
 
 	// B189 (v1.5.2) — DERP health probe cron. 5-min interval.
 	// One initial probe on start, then steady-state ticks.
-	if err := derphealth.StartCron(context.Background(), d, &http.Client{Timeout: 10 * time.Second}); err != nil {
+	if err := derphealth.StartCron(context.Background(), d.DB, &http.Client{Timeout: 10 * time.Second}); err != nil {
 		log.Printf("derp cron: %v (continuing without background probes)", err)
 	}
 
 	// 2026-07-07: issue #6 — ensure parent_domain column exists for domain auto-updater
-	if _, err := d.Exec("ALTER TABLE device_rules ADD COLUMN parent_domain TEXT DEFAULT ''"); err != nil {
+	if _, err := d.DB.Exec("ALTER TABLE device_rules ADD COLUMN parent_domain TEXT DEFAULT ''"); err != nil {
 		// column may already exist; log only if it's not a duplicate-column error
 		if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "exists") {
 			log.Printf("warn: ALTER device_rules add parent_domain: %v", err)
@@ -348,14 +361,14 @@ func main() {
 		log.Printf("⚠️  SKYGATE_ADMIN_PASS empty - no admin user bootstrapped")
 		log.Printf("    Set SKYGATE_ADMIN_PASS in env to create admin on first start")
 	} else {
-		if err := bootstrapAdmin(d, cfg.BootstrapAdminUser, cfg.BootstrapAdminPass); err != nil {
+		if err := bootstrapAdmin(d.DB, cfg.BootstrapAdminUser, cfg.BootstrapAdminPass); err != nil {
 			log.Fatalf("bootstrap: %v", err)
 		}
 	}
 
 	// Ensure headscale user for admin
 	hs := headscale.New(cfg.HeadscaleURL, cfg.HeadscaleKey)
-	if err := ensureHeadscaleUser(d, hs, cfg.BootstrapAdminUser); err != nil {
+	if err := ensureHeadscaleUser(d.DB, hs, cfg.BootstrapAdminUser); err != nil {
 		log.Printf("warn: ensure headscale user: %v", err)
 	}
 
@@ -364,24 +377,24 @@ func main() {
 	// portal_users row that V054 created. Idempotent (V054
 	// is a no-op on re-runs; this function is a no-op when
 	// the link is already set).
-	if err := ensureInfraUser(d, hs); err != nil {
+	if err := ensureInfraUser(d.DB, hs); err != nil {
 		log.Printf("warn: ensure infra user: %v", err)
 	}
 
 	// Bootstrap Telegram credentials: copy from .env to DB once on
 	// startup if no DB record exists. After that, the admin page at
 	// /admin/telegram is the source of truth.
-	if err := bootstrapTelegramFromEnv(d); err != nil {
+	if err := bootstrapTelegramFromEnv(d.DB); err != nil {
 		log.Printf("warn: bootstrap telegram: %v", err)
 	}
 
 	// Backfill node_owner_map: any headscale node with tag:public whose
 	// original owner we don't know is attributed to the bootstrap admin.
-	if err := backfillNodeOwners(d, hs, cfg.BootstrapAdminUser); err != nil {
+	if err := backfillNodeOwners(d.DB, hs, cfg.BootstrapAdminUser); err != nil {
 		log.Printf("warn: backfill node owners: %v", err)
 	}
 
-	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+	app := handlers.New(d.DB, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
 	// 2026-07-27: v0.29.0 — initialize the auto-update
 	// state store. Loads any persisted state from the
 	// status file so a restart renders the most recent
@@ -1650,7 +1663,7 @@ func main() {
 	// auto-approver. Hoisted before the RealNotifier block
 	// so we can hand the same manager to the bot via
 	// rn.SetSidecar() below.
-	sidecarMgr := sidecar.New(d, app.HSForUserFn, log.Default(), cfg.SidecarSyncPeriod)
+	sidecarMgr := sidecar.New(d.DB, app.HSForUserFn, log.Default(), cfg.SidecarSyncPeriod)
 	app.Sidecar = sidecarMgr
 	// sidecarMgr.Run blocks on a ticker loop; launch it in a
 	// goroutine so the main flow can continue to start the
@@ -1673,6 +1686,43 @@ func main() {
 		log.Printf("sidecar: SKYGATE_SIDECAR_SYNC_PERIOD=0, skipping startup goroutine")
 	}
 
+	// v1.5.0+ / B203 — skygate-watchdog for cluster_database
+	// hot-reload. Every 5s the watchdog reads the
+	// cluster_database row and, if the desired DSN differs
+	// from the current pool's DSN, opens a new pool,
+	// pings it, and atomically swaps it into the
+	// ResettableDB. The operator edits the DSN via
+	// /admin/database/edit (B197) and the change takes
+	// effect within ~5s with no service interruption.
+	//
+	// D8 (per cluster-management.md §0.2): cluster_database
+	// wins on conflict with .env. The watchdog enforces
+	// this by always reading cluster_database; if the row
+	// is empty (no override), the env-DSN pool stays.
+	wd := watchdog.NewDBSwap(
+		watchdog.DefaultConfig(),
+		d, // d is *db.ResettableDB, satisfies watchdog.DBMigrator
+		func(ctx context.Context) (*watchdog.ClusterDatabaseRow, error) {
+			row, err := db.GetClusterDatabase(d.DB, "skygate-staging")
+			if err != nil {
+				return nil, err
+			}
+			if row == nil {
+				return nil, nil
+			}
+			return &watchdog.ClusterDatabaseRow{
+				ID:         row.ID,
+				CurrentDSN: row.CurrentDSN,
+				DBName:     row.DBName,
+				Username:   row.Username,
+				SSLMode:    row.SSLMode,
+			}, nil
+		},
+	)
+	wd.Start()
+	defer wd.Stop()
+	log.Printf("dbmigrate-watchdog: started (interval=%s, ping-timeout=%s)", watchdog.DefaultConfig().Interval, watchdog.DefaultConfig().PingTimeout)
+
 	// 2026-07-21: v0.23.3 — node-expiry watcher.
 	// Background goroutine that walks every non-tagged
 	// node in headscale every cfg.ExpireWatchInterval
@@ -1694,7 +1744,7 @@ func main() {
 	// SKYGATE_EXPIREWATCH_INTERVAL=off/0) to disable.
 	// When disabled, the goroutine returns from Run
 	// immediately and no list/extend calls are made.
-	expireWatchMgr := expirewatch.New(d, hs, log.Default(), cfg.ExpireWatchInterval)
+	expireWatchMgr := expirewatch.New(d.DB, hs, log.Default(), cfg.ExpireWatchInterval)
 	expireWatchMgr.Threshold = cfg.ExpireWatchThreshold
 	expireWatchMgr.Renewal = cfg.ExpireWatchRenewal
 	expireWatchMgr.SetAppendAudit(db.AppendAuditLog)
@@ -1729,7 +1779,7 @@ func main() {
 		// served no scoping purpose. v0.20.0 makes it a top-level
 		// var so the headscale-update-monitor wiring (later in this
 		// function) can call rn.SetHeadscaleUpdateMonitor(hsMon).
-		rn := telegram.NewRealNotifier(d)
+		rn := telegram.NewRealNotifier(d.DB)
 			// 2026-07-11: Phase 3 (/quota) needs per-user rule limits
 			// to render "user X used N of M" rather than just N. Set
 			// once at boot; the BotEnv snapshot is per-message so a
@@ -1801,9 +1851,9 @@ func main() {
 			// admin saves the token (chat_id is needed only
 			// for outgoing notifications, not for receiving
 			// commands).
-			if _, _, ok, _ := db.LoadTelegramSendTarget(d); ok {
+			if _, _, ok, _ := db.LoadTelegramSendTarget(d.DB); ok {
 				log.Printf("🤖 Telegram bot fully configured (token + chat_id); starting getUpdates loop")
-			} else if _, _, ok, _ := db.LoadTelegramToken(d); ok {
+			} else if _, _, ok, _ := db.LoadTelegramToken(d.DB); ok {
 				log.Printf("🤖 Telegram bot token set (no chat_id yet — receive-only); starting getUpdates loop. Use the 'Send test' button on /admin/telegram to populate chat_id.")
 			} else {
 				log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
@@ -1872,7 +1922,7 @@ func main() {
 	// tag + grant). Default 5m, 0/off disables.
 	if cfg.NodeDiscoveryInterval > 0 {
 		if hs := app.HSGlobalFn(); hs != nil {
-			go nodeownership.AutoBackfill(ctx, d, hs, cfg.NodeDiscoveryInterval)
+			go nodeownership.AutoBackfill(ctx, d.DB, hs, cfg.NodeDiscoveryInterval)
 		} else {
 			log.Printf("node-discovery: HSGlobalFn() returned nil, skipping startup goroutine (defensive guard)")
 		}
@@ -1885,9 +1935,9 @@ func main() {
 	// Wire the config loader first so Unmount (called by
 	// RunBackup on its way out) can re-read the mountpoint.
 	backup.SetConfigLoader(func() (*backup.Config, error) {
-		return backup.Load(d)
+		return backup.Load(d.DB)
 	})
-	backupSched := &backup.Scheduler{DB: d}
+	backupSched := &backup.Scheduler{DB: d.DB}
 	backupSched.Start(ctx)
 
 	// 2026-07-14: Этап 14 v8 — release-monitor goroutine.
@@ -1929,7 +1979,7 @@ func main() {
 	// monitor (the deploy-time check
 	// scripts/check_exit_nodes.py still runs).
 	exitMon := &monitoring.ExitNodeMonitor{
-		DB:           d,
+		DB:           d.DB,
 		HS:           app.HS,
 		Notifier:     app.Notifier,
 		CheckEvery:   cfg.ExitNodeCheckInterval,
@@ -1984,7 +2034,7 @@ func main() {
 	// = 0 disables the goroutine (the page + bot
 	// still work from the cache).
 	if cfg.HeadscalePollInterval > 0 {
-		hsMon := headscale_version.NewMonitor(d, cfg.HeadscaleVersionPin, app.Notifier)
+		hsMon := headscale_version.NewMonitor(d.DB, cfg.HeadscaleVersionPin, app.Notifier)
 		hsMon.CheckEvery = cfg.HeadscalePollInterval
 		hsMon.Start(ctx)
 		app.HeadscaleUpdateMonitor = hsMon
@@ -2019,7 +2069,7 @@ func main() {
 		}
 		schedState := update.NewStateStore("") // path resolved internally
 		update.Start(ctx, update.SchedulerDeps{
-			DB:           d,
+			DB:           d.DB,
 			State:        schedState,
 			Checker:      schedChecker,
 			BuildVersion: app.BuildVersion,
@@ -2054,7 +2104,7 @@ func main() {
 			skygateBinPath = cfg.RepoPath
 		}
 		backup.StartVerifyScheduler(ctx, backup.VerifySchedulerDeps{
-			DB:             d,
+			DB:             d.DB,
 			Notifier:       schedulerNotifierSink(app.Notifier),
 			ScriptPath:     verifyScriptPath,
 			SkygateBinPath: skygateBinPath,
@@ -2092,7 +2142,7 @@ func main() {
 				log.Printf("🔐 certsync: WARN could not build S3 adapter: %v (certsync disabled)", err)
 			} else {
 				_, err := certsync.Start(ctx, certsync.CertSyncDeps{
-					DB:          d,
+					DB:          d.DB,
 					LocalDir:    cfg.CertSyncLocalDir,
 					S3Client:    certsyncAdapter,
 					S3Bucket:    cfg.CertSyncBucket,
@@ -2128,7 +2178,7 @@ func main() {
 	// ships).
 	if cfg.CleanupSmokeMeshInAppEnabled {
 		mesh.StartCleanupScheduler(ctx, mesh.CleanupSchedulerDeps{
-			DB:       d,
+			DB:       d.DB,
 			Notifier: schedulerNotifierSink(app.Notifier),
 		})
 		log.Printf("🧹 cleanup-scheduler: enabled (env-var default schedule=%q; /admin/system_tests page can override)", cfg.CleanupSmokeMeshSchedule)
@@ -2154,7 +2204,7 @@ func main() {
 	// the B130/B142/B143 schedulers above.
 	if cfg.TokenAutoRotateEnabled {
 		tokenrotate.Start(ctx, tokenrotate.SchedulerDeps{
-			DB:       d,
+			DB:       d.DB,
 			Notifier: schedulerNotifierSink(app.Notifier),
 		})
 		log.Printf("🔄 auto-rotate-scheduler: enabled (env-var default schedule=%q; /my/tokens page can override)", cfg.TokenAutoRotateSchedule)
@@ -2181,7 +2231,7 @@ func main() {
 	// global_settings["keys.notify_enabled"].
 	if cfg.KeyNotifyEnabled {
 		keynotify.Start(ctx, keynotify.SchedulerDeps{
-			DB:       d,
+			DB:       d.DB,
 			Notifier: schedulerUserNotifierSink(app.Notifier),
 		})
 		log.Printf("🔑 key-notify-scheduler: enabled (env-var default schedule=%q; /admin/settings page can override)", cfg.KeyNotifySchedule)
@@ -2213,7 +2263,7 @@ func main() {
 	// → force the role regardless of Patroni state. The
 	// empty string falls through to "auto" (defensive).
 	haProvider, haErr := dns.BuildProvider(cfg.DNSProvider, dns.BuildDeps{
-		DB:        d,
+		DB:        d.DB,
 		SecretKey: cfg.SecretKeyHex,
 	})
 	if haErr != nil {
@@ -2221,7 +2271,7 @@ func main() {
 	}
 	_ = haProvider // used in B147 (certsync + DNS update); kept here so the build validates the construction.
 	if cfg.HAEnabled {
-		elector := ha.NewElector(d)
+		elector := ha.NewElector(d.DB)
 		elector.SelfHostname = os.Getenv("SKYGATE_HA_SELF_HOSTNAME")
 		if elector.SelfHostname == "" {
 			if h, err := os.Hostname(); err == nil {

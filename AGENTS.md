@@ -1814,6 +1814,93 @@ in the same commit. Don't let the tracker drift.
     the heartbeat daemon are operator-side bash
     one-liners that just curl these two endpoints;
     they don't need to be in this repo.
+
+  - **B203 (v1.5.0+) — `pgxpool.Reset()` + skygate-watchdog
+    (Phase 3.1 of cluster-management.md, hot-reload
+    DSN)**: Pre-B203, when the admin edited
+    cluster_database via /admin/database/edit (B197),
+    the new DSN was written to the DB but the running
+    skygate process kept using the env's
+    `SKYGATE_DB_DSN`. A container restart was required
+    for the change to take effect. B203 ships a
+    background goroutine that watches cluster_database
+    every 5s and, if the desired DSN differs from the
+    current pool, opens a new pool, pings it, and
+    atomically swaps it into the ResettableDB.
+    Operator edits DSN → change takes effect within ~5s
+    with no service interruption.
+    - **`internal/db/swapdb.go`** (new, 350 lines): the
+      `ResettableDB` type. EMBEDS `*sql.DB` (the standard
+      Go pattern for "add methods to *sql.DB without
+      copying all its method signatures") and adds
+      `Reset(newDB)`, `Current() *sql.DB`, `Close()`.
+      Embedding means every existing caller that takes
+      `*sql.DB` accepts the wrapper via Go's structural
+      typing; call-sites that need the static *sql.DB
+      use `wrapper.DB` (the embedded field). The
+      `Reset()` method takes a WLock, atomically
+      re-points the embedded `*sql.DB`, then closes the
+      old pool in a goroutine (Close() blocks on
+      in-use connections, so we don't want to block
+      the watchdog tick). All read methods (Exec,
+      Query, QueryRow, BeginTx, Ping, Conn, Stats,
+      Set*) capture the current pool under RLock, then
+      call through — this avoids the
+      dereference-after-Close race in case Reset fires
+      between the lookup and the call.
+    - **`internal/db/swapdb_b203_test.go`** (new, 240
+      lines): 7 unit tests with a custom `stubDriver` +
+      `stubConn` that satisfies the driver interfaces
+      minimally (so we don't need a real PG for the
+      tests). Covers Reset swap, nil-safety, Close,
+      nil-DB behavior, concurrent readers + writer,
+      interface satisfaction.
+    - **`internal/watchdog/dbswap.go`** (new, 320 lines):
+      the `DBSwap` type + `DBSwap.Start()/Stop()` +
+      `Config` struct (5s Interval, 3s PingTimeout) +
+      `DefaultConfig()`. The `tick()` function: reads
+      `cluster_database` via a closure injected at
+      construction, compares the desired DSN to
+      `Current()`, and if different opens a new pool,
+      pings it, calls `migrator.Reset(newPool)`. On
+      failure (bad DSN, network partition) the
+      watchdog keeps the OLD pool and retries on the
+      next tick — graceful degradation.
+    - **`internal/watchdog/dbswap_b203_test.go`** (new,
+      100 lines): 5 unit tests — redactDSN (5 cases
+      incl. no-password and non-postgres), default
+      config values, default application, struct field
+      pin, backendPID nil-safety.
+    - **`cmd/skygate/main.go`** (modified, ~30 lines):
+      wraps `d` (the boot `*pgxpool.Pool`) in
+      `db.NewResettableDB(pool)` after the open, then
+      starts the watchdog goroutine via
+      `watchdog.NewDBSwap(...).Start()`. The reader
+      closure adapts `internal/db.ClusterDatabase` to
+      the watchdog's `ClusterDatabaseRow` shape (kept
+      local to avoid an import cycle). 17+ call-sites
+      in main.go had to be updated from `d` to `d.DB`
+      (the embedded *sql.DB) where the function
+      signature required *sql.DB.
+    - **`scripts/check_b203.sh`**: 33 contracts
+      (ResettableDB type + methods, embedding,
+      `var _ sqlDBShim` compile-time check, RLock in
+      ≥8 override methods, concurrent readers + writer
+      test, watchdog DBSwap + Start/Stop, Config +
+      DefaultConfig, tick reads + pings + resets, main.go
+      wraps DB + starts watchdog, 7+5 unit tests, build
+      + vet + tests, AGENTS.md mention).
+    The watchdog enforces D8: cluster_database wins
+    on conflict with .env. If the row is empty (no
+    admin override), the watchdog no-ops and the
+    env-DSN pool stays. The admin's /admin/database
+    UI now reflects "this change will take effect
+    within ~5s" — no restart needed.
+    Follow-up: B204 (HA elector auto-failover based on
+    the heartbeat state from B201) and B205 (skygate
+    cluster CLI subcommands) are the natural next
+    chunks. The cross-host case (B202.5: SSHDumpTransport
+    to svi) is the remaining unblock from B202.
     Phase 3 (skygate-watchdog + force failover)
     is the next major chunk after 2.2.
 
