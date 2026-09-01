@@ -1963,14 +1963,42 @@ in the same commit. Don't let the tracker drift.
     recommendFailover looks for skygate-standby +
     writes failover_recommend, main.go wires up,
     6+ unit tests, build/vet/tests, AGENTS.md mention).
-    Live verification: after deploy the new container
-    starts and logs `ha-elector: started (interval=5s
-    heartbeat=30s cluster=skygate-staging)` within the
-    first second. The state-machine + audit-row paths
-    are exercised by the B-check contracts + the
-    pure-function unit tests; the live failover path
-    (agent → svi) is B205 territory because svi doesn't
-    run its own skygate yet.
+    Live verification (post-deploy, commit `3e4b803b`):
+    1. `ha-elector: started (interval=5s, heartbeat=30s,
+       cluster=skygate-staging)` logged on container start.
+    2. State transition: the test fixture `svi-direct-1`
+       (state=pending, last_seen=4h ago) was transitioned
+       to `failed` within 5s of the new container starting:
+       `elector: svi-direct-1: pending → failed (last_seen
+       4h11m39s ago (3+ missed heartbeats))`. A
+       `cluster_audit` row was written with
+       `action='node_health'` + JSONB detail `{from,
+       to, reason, actor, last_seen_unix, timestamp}`.
+    3. Auto-failover recommendation: with a primary
+       (skygate role) row in `failed` + a standby
+       (skygate-standby role) row in `ready`, the elector
+       logged `elector: failover recommended: agent-direct-1
+       (failed) → svi-direct-2 (ready)` and wrote a
+       `cluster_audit` row with
+       `action='failover_recommend'` + JSONB detail
+       `{from_node_id, from_hostname, to_node_id,
+       to_hostname, reason, actor, recommended_at}`.
+    4. 5-minute dedup: verified by setting up the scenario
+       twice, 5 min apart, and observing exactly 1 new
+       audit row per 5-min window (pre-fix: 1 row per 5s).
+    5. Hot-reload follow: B203's `dbmigrate-watchdog`
+       swapped the pool at 5s after container start
+       (visible in `dbmigrate-watchdog: pool swapped
+       successfully (new backend pid: <pid>)`). The
+       elector's next tick at +10s successfully read
+       from the new pool — no "sql: database is closed"
+       errors (the B204.1 fix that switched from
+       `*sql.DB` to `DBSource` interface).
+    6. `skygate-staging` (agent) shows as primary in the
+       recommendation; `svi-direct-2` shows as the
+       recommended target. B205 will wire the actual
+       promote (admin button + `skygate cluster
+       failover --target=<node>` CLI).
   - **B203.1 (v1.5.0+) — `GetClusterDatabase` NULL
     safety fix (live B203 follow-up)**: the first
     live B203 test (inserted a `cluster_database` row
