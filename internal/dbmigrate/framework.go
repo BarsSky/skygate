@@ -141,7 +141,7 @@ func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
 			})
 			// Rollback: best-effort. Errors during rollback
 			// are logged but do not stop the chain.
-			rollback(ctx, db, ran)
+			rollback(ctx, db, mc, ran)
 			mc.FinishedAt = time.Now()
 			return fmt.Errorf("step %s: %w", step.Name(), runErr)
 		}
@@ -162,7 +162,7 @@ func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
 
 // rollback calls Rollback on each succeeded step in reverse
 // order. Errors are logged but do not abort (best-effort).
-func rollback(ctx context.Context, db *sql.DB, ran []*StepRecord) {
+func rollback(ctx context.Context, db *sql.DB, mc *MigrationContext, ran []*StepRecord) {
 	for i := len(ran) - 1; i >= 0; i-- {
 		rec := ran[i]
 		// 5-minute cap per rollback so a stuck rollback
