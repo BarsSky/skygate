@@ -377,9 +377,16 @@ func runClusterDbs(args []string) error {
 	}
 	defer d.Close()
 	rows, err := d.Query(`
-		SELECT id, cluster_id, primary_node_id, replica_node_ids,
-		       dsn_template, dbname, username, sslmode, current_dsn,
-		       updated_by, created_at, updated_at
+		SELECT id, cluster_id,
+		       COALESCE(primary_node_id, '') AS primary_node_id,
+		       replica_node_ids,
+		       COALESCE(dsn_template, '') AS dsn_template,
+		       COALESCE(dbname, '') AS dbname,
+		       COALESCE(username, '') AS username,
+		       COALESCE(sslmode, '') AS sslmode,
+		       COALESCE(current_dsn, '') AS current_dsn,
+		       COALESCE(updated_by, '') AS updated_by,
+		       created_at, updated_at
 		  FROM cluster_database
 		 ORDER BY id
 	`)
@@ -403,20 +410,21 @@ func runClusterDbs(args []string) error {
 	var out []dbRow
 	for rows.Next() {
 		var r dbRow
-		var primary, replicas, template, dbname, username, sslmode, current, updatedBy string
-		if err := rows.Scan(&r.ID, &r.ClusterID, &primary, &replicas,
-			&template, &dbname, &username, &sslmode, &current,
-			&updatedBy, &r.UpdatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.ClusterID, &r.PrimaryNodeID, &r.ReplicaNodeIDs,
+			&r.DSNTemplate, &r.DBName, &r.Username, &r.SSLMode, &r.CurrentDSN,
+			&r.UpdatedBy, &r.UpdatedAt, &r.UpdatedAt); err != nil {
 			return fmt.Errorf("cluster dbs: scan: %w", err)
 		}
-		r.PrimaryNodeID = primary
-		r.ReplicaNodeIDs = clusterRolesToSlice(replicas)
-		r.DSNTemplate = template
-		r.DBName = dbname
-		r.Username = username
-		r.SSLMode = sslmode
-		r.CurrentDSN = current
-		r.UpdatedBy = updatedBy
+		// pgx v5 stdlib returns TEXT[] columns as their
+		// literal string form (e.g. "{a,b}"), not as
+		// []string. Parse the literal here; the struct
+		// field is []string (so JSON output is correct).
+		// (The cluster_dbs scan reads directly into
+		// []string which works for non-empty arrays but
+		// fails for empty {} — handle that case.)
+		if r.ReplicaNodeIDs == nil {
+			r.ReplicaNodeIDs = []string{}
+		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
