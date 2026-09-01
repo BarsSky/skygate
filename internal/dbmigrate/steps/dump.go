@@ -150,13 +150,20 @@ func (dumpStep) Run(ctx context.Context, mc *dbmigrate.MigrationContext) error {
 // Rollback releases the advisory lock + removes the
 // dump file. Called by the framework when a LATER step
 // (restore / verify / flip) fails.
+//
+// Nil-safe: the framework passes a nil *MigrationContext
+// in the rollback chain (see framework.go:171). All
+// fields we access are gated by `mc != nil &&` so we
+// no-op gracefully instead of panicking.
 func (dumpStep) Rollback(ctx context.Context, mc *dbmigrate.MigrationContext) error {
-	if mc.SourceLockHeld && mc.DB != nil {
-		_, _ = mc.DB.Exec("SELECT pg_advisory_unlock($1)", advisoryLockID)
-		mc.SourceLockHeld = false
-	}
-	if mc.DumpFile != "" {
-		_ = os.Remove(mc.DumpFile)
+	if mc != nil {
+		if mc.SourceLockHeld && mc.DB != nil {
+			_, _ = mc.DB.Exec("SELECT pg_advisory_unlock($1)", advisoryLockID)
+			mc.SourceLockHeld = false
+		}
+		if mc.DumpFile != "" {
+			_ = os.Remove(mc.DumpFile)
+		}
 	}
 	return nil
 }

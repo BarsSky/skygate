@@ -168,7 +168,13 @@ func rollback(ctx context.Context, db *sql.DB, ran []*StepRecord) {
 		// 5-minute cap per rollback so a stuck rollback
 		// doesn't hang the request indefinitely.
 		rctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		err := rec.Step.Rollback(rctx, nil)
+		// B202: pass the actual MigrationContext (was
+		// nil pre-B202) so steps can release their
+		// per-run resources (advisory locks, dump
+		// files, etc.). Steps MUST be nil-safe anyway
+		// (defensive) because rollback can be called
+		// after a panic with mc partially populated.
+		err := rec.Step.Rollback(rctx, mc)
 		cancel()
 		status := StepRolledBack
 		if err != nil {
