@@ -1,0 +1,136 @@
+{{define "title"}}{{t "db.migrate_run_title"}}{{end}}
+{{define "body_class"}}body-admin-migrate-run{{end}}
+
+{{define "content"}}
+<div class="container-fluid py-3">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="/admin/database">{{t "db.page_title"}}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{{t "db.migrate_run_title"}}</li>
+    </ol>
+  </nav>
+
+  <h2 class="mb-3">
+    <i class="fa fa-exchange-alt me-2"></i>
+    {{t "db.migrate_run_title"}}
+    <small class="text-muted">#{{.Data.Run.ID}}</small>
+  </h2>
+
+  {{template "flash" .}}
+
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>
+        <i class="fa fa-circle-info me-2"></i>
+        {{t "db.migrate_run_status"}}: <span class="badge bg-{{if eq .Data.Run.Status "success"}}success{{else if eq .Data.Run.Status "failed"}}danger{{else if eq .Data.Run.Status "running"}}warning{{else}}secondary{{end}}">{{.Data.Run.Status}}</span>
+      </span>
+      <small class="text-muted">
+        {{.Data.Run.StartedAt.Format "2006-01-02 15:04:05 UTC"}}
+        {{if .Data.Run.FinishedAt}}— {{.Data.Run.FinishedAt.Format "2006-01-02 15:04:05 UTC"}}{{end}}
+      </small>
+    </div>
+    <div class="card-body">
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr><th style="width:200px">{{t "db.migrate_operator"}}</th><td><code>{{.Data.Run.Operator}}</code></td></tr>
+          <tr><th>{{t "db.migrate_source"}}</th><td><code style="word-break:break-all">{{.Data.Run.SourceDSN}}</code></td></tr>
+          <tr><th>{{t "db.migrate_target"}}</th><td><code style="word-break:break-all">{{.Data.Run.TargetDSN}}</code></td></tr>
+          {{if .Data.Run.Error}}
+          <tr><th>{{t "db.migrate_error"}}</th><td><pre class="text-danger mb-0" style="white-space:pre-wrap">{{.Data.Run.Error}}</pre></td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="fa fa-list me-2"></i>{{t "db.migrate_steps_title"}}
+      <span id="sse-status" class="badge bg-secondary ms-2">{{t "db.migrate_stream_offline"}}</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th style="width:40px">#</th>
+            <th>{{t "db.migrate_step_name"}}</th>
+            <th>{{t "db.migrate_step_status"}}</th>
+            <th>{{t "db.migrate_step_duration"}}</th>
+            <th>{{t "db.migrate_step_started"}}</th>
+          </tr>
+        </thead>
+        <tbody id="steps-tbody">
+          {{range .Data.Steps}}
+          <tr id="step-{{.Ordinal}}">
+            <td>{{.Ordinal}}</td>
+            <td><code>{{.StepName}}</code></td>
+            <td>
+              <span class="step-status badge bg-{{if eq .Status "success"}}success{{else if eq .Status "failed"}}danger{{else if eq .Status "running"}}warning{{else if eq .Status "rolled_back"}}secondary{{else}}light text-dark{{end}}">{{.Status}}</span>
+              {{if .Error}}<i class="fa fa-triangle-exclamation text-danger ms-1" title="{{.Error}}"></i>{{end}}
+            </td>
+            <td>{{if .DurationMs}}{{.DurationMs}}ms{{else}}—{{end}}</td>
+            <td>
+              {{if .StartedAt}}{{.StartedAt.Format "15:04:05"}}{{else}}—{{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="alert alert-info small mb-0">
+    <i class="fa fa-info-circle me-1"></i>
+    {{t "db.migrate_stream_help"}}
+  </div>
+</div>
+
+<script>
+(function() {
+  var sseStatus = document.getElementById('sse-status');
+  var tbody = document.getElementById('steps-tbody');
+  if (!sseStatus || !tbody || !window.EventSource) { return; }
+
+  var url = '/admin/database/migrate/{{.Data.Run.ID}}/stream';
+  var es = new EventSource(url);
+
+  es.onopen = function() {
+    sseStatus.className = 'badge bg-success ms-2';
+    sseStatus.textContent = '{{t "db.migrate_stream_live"}}';
+  };
+
+  es.onmessage = function(ev) {
+    try {
+      var data = JSON.parse(ev.data);
+      if (data.kind === 'heartbeat') return;
+      if (data.kind === 'step_started' || data.kind === 'step_finished') {
+        var row = document.getElementById('step-' + data.ordinal);
+        if (row) {
+          var badge = row.querySelector('.step-status');
+          if (badge) {
+            badge.textContent = data.status;
+            badge.className = 'step-status badge ' + badgeClass(data.status);
+          }
+        }
+      }
+      if (data.kind === 'run_finished') {
+        window.location.reload();
+      }
+    } catch (e) { /* ignore parse errors */ }
+  };
+
+  es.onerror = function() {
+    sseStatus.className = 'badge bg-danger ms-2';
+    sseStatus.textContent = '{{t "db.migrate_stream_offline"}}';
+  };
+
+  function badgeClass(s) {
+    if (s === 'success') return 'bg-success';
+    if (s === 'failed') return 'bg-danger';
+    if (s === 'running') return 'bg-warning';
+    if (s === 'rolled_back') return 'bg-secondary';
+    return 'bg-light text-dark';
+  }
+})();
+</script>
+{{end}}

@@ -39,12 +39,14 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"skygate/internal/db"
+	"skygate/internal/dbmigrate"
 )
 
 // ---------- GET /admin/database (the page) --------------------------------
@@ -92,6 +94,9 @@ type databasePageData struct {
 	// 4. Flash (from query params, matches other admin pages)
 	FlashSuccess string
 	FlashError   string
+
+	// 5. Recent migration runs (Phase 1.4, last 5)
+	RecentRuns []dbmigrate.RunView
 }
 
 // GetAdminDatabase renders the /admin/database page.
@@ -187,6 +192,99 @@ func (s *Service) collectDatabasePageData(r *http.Request) *databasePageData {
 	data.FormSSLMode = data.CurrentSSLMode
 
 	return data
+}
+
+// ---------- GET /admin/database/migrate (Phase 1.4) ----------------
+
+// GetAdminDatabaseMigrate shows the migrate form + recent
+// runs. Same pattern as the rest of /admin/database —
+// collects data, calls RenderWithLayout. The migrate card
+// is on the same page as Test/Edit/Desired, so we just
+// re-render the full database.html with the migrate
+// section visible (Phase 1.4 of the plan).
+func (s *Service) GetAdminDatabaseMigrate(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	data := s.collectDatabasePageData(r)
+	// Add the recent-runs list to the page data so the
+	// template can render a "recent migrations" sidebar.
+	data.RecentRuns = s.collectRecentRuns(r, 5)
+	s.Backend.RenderWithLayout(w, r, "admin/database.html", c, map[string]any{
+		"Data": data,
+	})
+}
+
+// collectRecentRuns reads the last N dbmigrate_run rows.
+func (s *Service) collectRecentRuns(r *http.Request, limit int) []dbmigrate.RunView {
+	rows, err := s.DB.QueryContext(r.Context(), `
+		SELECT id, source_dsn, target_dsn, operator, status,
+		       started_at, finished_at
+		  FROM dbmigrate_run
+		 ORDER BY id DESC
+		 LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []dbmigrate.RunView
+	for rows.Next() {
+		var r dbmigrate.RunView
+		var finished *time.Time
+		if err := rows.Scan(&r.ID, &r.SourceDSN, &r.TargetDSN,
+			&r.Operator, &r.Status, &r.StartedAt, &finished); err != nil {
+			continue
+		}
+		r.FinishedAt = finished
+		out = append(out, r)
+	}
+	return out
+}
+
+// ---------- GET /admin/database/migrate/{id} (Phase 1.4) -----------
+
+// GetAdminDatabaseMigrateRun shows a single run with steps
+// and a "live progress" SSE block. The page polls the SSE
+// stream at /admin/database/migrate/{id}/stream for live
+// updates; the initial render shows whatever the DB has.
+func (s *Service) GetAdminDatabaseMigrateRun(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	idStr := r.URL.Path
+	if i := lastSlash(idStr); i >= 0 {
+		idStr = idStr[i+1:]
+	}
+	runID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	run, steps, err := dbmigrate.LoadRun(s.DB, runID)
+	if err != nil {
+		http.Error(w, "load: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.Backend.RenderWithLayout(w, r, "admin/migrate_run.html", c, map[string]any{
+		"Data": map[string]any{
+			"Run":   run,
+			"Steps": steps,
+		},
+	})
+}
+
+func lastSlash(s string) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '/' {
+			return i
+		}
+	}
+	return -1
 }
 
 // ---------- POST /admin/database/test ---------------------------------

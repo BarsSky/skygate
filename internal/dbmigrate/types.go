@@ -155,6 +155,20 @@ type MigrationStep struct {
 	Metadata    string // JSON: step-specific results
 }
 
+// RunView is the lightweight projection of a MigrationRun
+// used by the recent-runs list on the migrate page. It
+// omits the verbose fields (Error, CreatedAt) to keep the
+// HTML compact.
+type RunView struct {
+	ID         int64
+	SourceDSN  string
+	TargetDSN  string
+	Operator   string
+	Status     MigrationStatus
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}
+
 // StepLog is a single log line emitted by a step. The
 // framework writes these to dbmigrate_step.logs and emits
 // them via SSE.

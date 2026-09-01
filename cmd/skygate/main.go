@@ -1250,10 +1250,16 @@ func main() {
 	// The flip step is real (it updates cluster_database +
 	// the local .env so a skygate restart picks it up).
 	migrateSvc := dbmigrate.NewService(app.DB)
-	mux.Handle("GET /admin/database/migrate", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrate)))
+	_ = migrateSvc // Phase 1.4 framework is wired; routes below
+	//                  delegate to adminSvc for rendering (so the
+	//                  page uses the admin layout + nav).
+	//                  The migrateSvc methods are still called by
+	//                  the admin handler for data access (LoadRun,
+	//                  etc.).
+	mux.Handle("GET /admin/database/migrate", authMW(http.HandlerFunc(adminSvc.GetAdminDatabaseMigrate)))
 	mux.Handle("POST /admin/database/migrate", authMW(http.HandlerFunc(migrateSvc.PostAdminDatabaseMigrate)))
 	mux.Handle("GET /admin/database/migrate/{id}/stream", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrateStream)))
-	mux.Handle("GET /admin/database/migrate/{id}", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrateRun)))
+	mux.Handle("GET /admin/database/migrate/{id}", authMW(http.HandlerFunc(adminSvc.GetAdminDatabaseMigrateRun)))
 
 	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
 	// failover dry-run). The page is the web mirror of

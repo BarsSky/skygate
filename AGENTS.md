@@ -1442,6 +1442,27 @@ in the same commit. Don't let the tracker drift.
     full end-to-end execution. 10 contracts in
     `scripts/check_b198.sh`.
 
+  - **B198.1 (v1.5.0+) — DB migration UI
+    (Phase 1.4, user-facing surface)**:
+    B198 added the framework + framework handlers. B198.1
+    wires it into the admin layout:
+    - `/admin/database` page now has a 4th "Migrate to new
+      host" card with target_host/port/dbname/user/sslmode +
+      Migrate button (POST /admin/database/migrate).
+    - `/admin/database/migrate` shows the recent-runs list
+      (last 5 from dbmigrate_run via `collectRecentRuns`).
+    - `/admin/database/migrate/{id}` shows the single-run page
+      with steps table + SSE for live progress (EventSource
+      JS in `admin/migrate_run.html`).
+    Routes re-wired: GET pages → `adminSvc` (renders with
+    admin layout); POST + SSE → `migrateSvc` (framework
+    handlers). New helpers in `internal/dbmigrate/db.go`:
+    `LoadRun` + `RunView` + `ErrRunNotFound`. 20 new i18n
+    keys (db.migrate_title/help/btn/confirm/steps_help +
+    db.migrate_run_* + db.migrate_step_* +
+    db.migrate_stream_* + db.recent_runs_title) in RU+EN
+    lock-step. 9 contracts in `scripts/check_b1981.sh`.
+
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
     Operator 2026-08-31 hit `500 Internal Server
