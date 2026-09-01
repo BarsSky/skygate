@@ -47,6 +47,20 @@ func TestNextState(t *testing.T) {
 			want:     "failed",
 		},
 		{
+			name:     "pending + last_seen set but old → failed (B204.1 regression)",
+			state:    "pending",
+			lastSeen: sql.NullTime{Valid: true, Time: now.Add(-2 * staleAfter)},
+			joinedAt: sql.NullTime{Valid: true, Time: now.Add(-1 * time.Hour)},
+			want:     "failed",
+		},
+		{
+			name:     "pending + last_seen set and fresh → no transition",
+			state:    "pending",
+			lastSeen: sql.NullTime{Valid: true, Time: now.Add(-10 * time.Second)},
+			joinedAt: sql.NullTime{Valid: true, Time: now.Add(-1 * time.Minute)},
+			want:     "pending",
+		},
+		{
 			name:     "ready + recent last_seen → no transition",
 			state:    "ready",
 			lastSeen: sql.NullTime{Valid: true, Time: now.Add(-10 * time.Second)},

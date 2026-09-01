@@ -241,10 +241,6 @@ func (e *Elector) tick() {
 	if err := e.evaluate(ctx); err != nil {
 		e.cfg.Logger("elector: tick: %v", err)
 	}
-	// DEBUG (B204.1): per-tick heartbeat so the live
-	// log proves the ticker is firing. Comment out
-	// once the live test confirms the state machine.
-	e.cfg.Logger("elector: tick: ok (last_evaluated_now)")
 }
 
 // evaluate is the testable inner loop. The exported tick
@@ -281,9 +277,6 @@ func (e *Elector) evaluate(ctx context.Context) error {
 		if err := rows.Scan(&n.ID, &n.Hostname, &n.State, &n.Roles, &n.LastSeen, &n.JoinedAt); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
-		// DEBUG (B204.1): per-row log so we can see if the
-		// query is actually returning rows.
-		e.cfg.Logger("elector: tick: scanned node id=%s host=%s state=%s roles=%s last_seen_valid=%v joined_at_valid=%v", n.ID, n.Hostname, n.State, n.Roles, n.LastSeen.Valid, n.JoinedAt.Valid)
 		nodes = append(nodes, n)
 	}
 	if err := rows.Err(); err != nil {
@@ -332,13 +325,27 @@ type nodeRow struct {
 // Rules:
 //
 //	pending + last_seen is NULL + joined_at < cutoff → failed (never heartbeated)
+//	pending + last_seen     < cutoff               → failed (heartbeat stopped in pending)
 //	ready   + last_seen     < cutoff               → failed (3+ missed heartbeats)
 //	other                                      → no-op
+//
+// Note: a "pending" row that has a non-NULL last_seen is
+// a valid state — the B200 admin AddNode helper sets
+// last_seen_at = NOW() at insert time (so the row
+// doesn't immediately get flagged as failed by the
+// "no heartbeat since pending" check). The Heartbeat()
+// call would normally transition pending → ready, but
+// if heartbeats stop while still in pending, the node
+// should be marked failed by the last_seen cutoff check
+// (the same one that fires for "ready" rows).
 func nextState(state string, lastSeen, joinedAt sql.NullTime, cutoff time.Time) (string, string) {
 	switch state {
 	case "pending":
 		if !lastSeen.Valid && joinedAt.Valid && joinedAt.Time.Before(cutoff) {
 			return "failed", "no heartbeat since pending (3× heartbeat interval)"
+		}
+		if lastSeen.Valid && lastSeen.Time.Before(cutoff) {
+			return "failed", fmt.Sprintf("last_seen %s ago (3+ missed heartbeats)", time.Since(lastSeen.Time).Round(time.Second))
 		}
 		return state, ""
 	case "ready":
