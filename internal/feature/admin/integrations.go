@@ -30,7 +30,7 @@ func (s *Service) GetAdminIntegrations(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	cfg, err := db.LoadIntegrationsFromOS(s.DB)
+	cfg, err := db.LoadIntegrationsFromOS(s.dbc())
 	if err != nil {
 		http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -51,7 +51,7 @@ func (s *Service) GetAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	cfg, err := db.LoadIntegrationsFromOS(s.DB)
+	cfg, err := db.LoadIntegrationsFromOS(s.dbc())
 	if err != nil {
 		http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -100,7 +100,7 @@ func (s *Service) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case "save":
-		if err := db.SaveIntegrations(s.DB, cfg); err != nil {
+		if err := db.SaveIntegrations(s.dbc(), cfg); err != nil {
 			derpConfigRedirect(w, r, "", "Save failed: "+err.Error())
 			return
 		}
@@ -108,7 +108,7 @@ func (s *Service) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("external=%d bundled=%t", len(cfg.DERPExternalURLs), cfg.BundledDERP))
 		derpConfigRedirect(w, r, i18n.T(lang, "derp.config_saved"), "")
 	case "apply":
-		if err := db.SaveIntegrations(s.DB, cfg); err != nil {
+		if err := db.SaveIntegrations(s.dbc(), cfg); err != nil {
 			derpConfigRedirect(w, r, "", "Save failed: "+err.Error())
 			return
 		}
@@ -116,7 +116,7 @@ func (s *Service) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("external=%d bundled=%t", len(cfg.DERPExternalURLs), cfg.BundledDERP))
 		s.applyAndRenderDerp(c, cfg, w, r)
 	case "test":
-		if err := db.SaveIntegrations(s.DB, cfg); err != nil {
+		if err := db.SaveIntegrations(s.dbc(), cfg); err != nil {
 			derpConfigRedirect(w, r, "", "Save failed: "+err.Error())
 			return
 		}
@@ -129,7 +129,7 @@ func (s *Service) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) applyAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, w http.ResponseWriter, r *http.Request) {
-	full, err := db.LoadIntegrationsFromOS(s.DB)
+	full, err := db.LoadIntegrationsFromOS(s.dbc())
 	if err != nil {
 		derpConfigRedirect(w, r, "", "Load full config: "+err.Error())
 		return
@@ -137,7 +137,7 @@ func (s *Service) applyAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, 
 	full.DERPExternalURLs = cfg.DERPExternalURLs
 	full.BundledDERP = cfg.BundledDERP
 
-	rndr := newRendererWithDB(s.DB)
+	rndr := newRendererWithDB(s.dbc())
 	res := rndr.applyAll(full)
 	lang := s.I18n.LangFromRequest(r)
 	_ = lang
@@ -146,7 +146,7 @@ func (s *Service) applyAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, 
 	s.Backend.Audit(c.UserID, c.Username, "derp.config.apply",
 		fmt.Sprintf("ok=%t steps=%q err=%q", res.OK, trace, res.Err))
 
-	loaded, _ := db.LoadIntegrationsFromOS(s.DB)
+	loaded, _ := db.LoadIntegrationsFromOS(s.dbc())
 	s.Backend.RenderWithLayout(w, r, "admin/derp_config.html", c, map[string]any{
 		"Cfg":              loaded,
 		"ExternalURLsText": strings.Join(loaded.DERPExternalURLs, ","),
@@ -162,7 +162,7 @@ func (s *Service) testAndRenderDerp(c *auth.Claims, cfg *db.IntegrationConfig, w
 	results := probeAllDerps(cfg.DERPExternalURLs)
 	s.Backend.Audit(c.UserID, c.Username, "derp.config.test",
 		fmt.Sprintf("tested=%d", len(results)))
-	loaded, _ := db.LoadIntegrationsFromOS(s.DB)
+	loaded, _ := db.LoadIntegrationsFromOS(s.dbc())
 	s.Backend.RenderWithLayout(w, r, "admin/derp_config.html", c, map[string]any{
 		"Cfg":              loaded,
 		"ExternalURLsText": strings.Join(loaded.DERPExternalURLs, ","),
@@ -182,7 +182,7 @@ func (s *Service) GetAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	cfg, err := db.LoadIntegrationsFromOS(s.DB)
+	cfg, err := db.LoadIntegrationsFromOS(s.dbc())
 	if err != nil {
 		http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -230,14 +230,14 @@ func (s *Service) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	current, err := db.LoadIntegrationsFromOS(s.DB)
+	current, err := db.LoadIntegrationsFromOS(s.dbc())
 	if err != nil {
 		headplaneRedirect(w, r, "", "Load current: "+err.Error())
 		return
 	}
 	current.HeadplaneMode = mode
 	current.HeadplaneExternalURL = externalURL
-	if err := db.SaveIntegrations(s.DB, current); err != nil {
+	if err := db.SaveIntegrations(s.dbc(), current); err != nil {
 		headplaneRedirect(w, r, "", "Save failed: "+err.Error())
 		return
 	}
@@ -245,12 +245,12 @@ func (s *Service) PostAdminHeadplane(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("mode=%s external_url=%q", mode, externalURL))
 
 	if action == "apply" {
-		rndr := newRendererWithDB(s.DB)
+		rndr := newRendererWithDB(s.dbc())
 		res := rndr.applyAll(current)
 		trace := strings.Join(res.Steps, " | ")
 		s.Backend.Audit(c.UserID, c.Username, "headplane.config.apply",
 			fmt.Sprintf("ok=%t steps=%q err=%q", res.OK, trace, res.Err))
-		loaded, _ := db.LoadIntegrationsFromOS(s.DB)
+		loaded, _ := db.LoadIntegrationsFromOS(s.dbc())
 		s.Backend.RenderWithLayout(w, r, "admin/headplane.html", c, map[string]any{
 			"Cfg":          loaded,
 			"ApplyResult":  &res,

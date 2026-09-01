@@ -126,7 +126,7 @@ func (s *Service) collectDeployPageData(r *http.Request) *deployPageData {
 	// 1. Chain — same helper as /admin/ha. We don't
 	// re-implement it here because the chain storage is
 	// already centralized in internal/ha.
-	chain, _, err := ha.LoadChain(s.DB)
+	chain, _, err := ha.LoadChain(s.dbc())
 	if err == nil {
 		data.Chain = chain
 		// SelfRole: scan the chain for the row whose
@@ -154,7 +154,7 @@ func (s *Service) collectDeployPageData(r *http.Request) *deployPageData {
 // "deploy.". Order is most-recent-first. Pure DB read —
 // no caching.
 func (s *Service) queryDeployAuditEvents(limit int) []deployAuditEvent {
-	rows, err := s.DB.Query(
+	rows, err := s.dbc().Query(
 		`SELECT EXTRACT(EPOCH FROM created_at)::bigint, COALESCE(username, ''),
 		        action, COALESCE(detail, '')
 		 FROM audit_log
@@ -230,7 +230,7 @@ func (s *Service) PostAdminDeployTestFailover(w http.ResponseWriter, r *http.Req
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	chain, _, err := ha.LoadChain(s.DB)
+	chain, _, err := ha.LoadChain(s.dbc())
 	if err != nil {
 		deployRedirect(w, r, "", "Load chain: "+err.Error())
 		return

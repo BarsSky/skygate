@@ -59,7 +59,7 @@ func (s *Service) PostAdminSystemTestsDNSAutoToggle(w http.ResponseWriter, r *ht
 	}
 	enabled := r.FormValue("enabled") == "1"
 
-	if err := db.SetGlobalSettingBool(s.DB, globalSettingsKeyDNSAutoUpdate, enabled); err != nil {
+	if err := db.SetGlobalSettingBool(s.dbc(), globalSettingsKeyDNSAutoUpdate, enabled); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "dns_autoupdate_toggle", "FAILED: "+err.Error())
 		http.Error(w, "could not persist: "+err.Error(), http.StatusInternalServerError)
 		return

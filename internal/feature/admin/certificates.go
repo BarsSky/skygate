@@ -247,8 +247,8 @@ func (s *Service) PostAdminCertificateUpload(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Audit log row.
-	if s.DB != nil {
-		_, _ = s.DB.ExecContext(r.Context(),
+	if s.dbc() != nil {
+		_, _ = s.dbc().ExecContext(r.Context(),
 			`INSERT INTO audit_log (user_id, username, action, detail, created_at)
 			 VALUES ($1, $2, 'certsync.upload', $3, now())`,
 			c.UserID, c.Username, fmt.Sprintf("sha256=%s size=%d", newSHA, len(certBytes)))
@@ -276,12 +276,12 @@ func (s *Service) PostAdminCertificateToggleDNS01(w http.ResponseWriter, r *http
 	enabled := r.FormValue("dns01_enabled") == "1"
 
 	// UPSERT into global_settings.
-	if s.DB != nil {
+	if s.dbc() != nil {
 		v := "0"
 		if enabled {
 			v = "1"
 		}
-		_, err := s.DB.ExecContext(r.Context(),
+		_, err := s.dbc().ExecContext(r.Context(),
 			`INSERT INTO global_settings (key, value, updated_at)
 			 VALUES ($1, $2, now())
 			 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
@@ -292,8 +292,8 @@ func (s *Service) PostAdminCertificateToggleDNS01(w http.ResponseWriter, r *http
 		}
 	}
 	// Audit log row.
-	if s.DB != nil {
-		_, _ = s.DB.ExecContext(r.Context(),
+	if s.dbc() != nil {
+		_, _ = s.dbc().ExecContext(r.Context(),
 			`INSERT INTO audit_log (user_id, username, action, detail, created_at)
 			 VALUES ($1, $2, 'certs.dns01_toggle', $3, now())`,
 			c.UserID, c.Username, fmt.Sprintf("enabled=%t", enabled))
@@ -392,7 +392,7 @@ func certChainStrings(cert *x509.Certificate) []string {
 // or `certs.`. Order is most-recent-first. Pure DB
 // read — no caching.
 func (s *Service) queryCertAuditEvents(limit int) []certAuditEvent {
-	rows, err := s.DB.Query(
+	rows, err := s.dbc().Query(
 		`SELECT EXTRACT(EPOCH FROM created_at)::bigint, COALESCE(username, ''),
 		        action, COALESCE(detail, '')
 		 FROM audit_log
@@ -419,7 +419,7 @@ func (s *Service) queryCertAuditEvents(limit int) []certAuditEvent {
 // render the "default" state for unset keys).
 func (s *Service) readGlobalSetting(key string) (string, error) {
 	var v string
-	err := s.DB.QueryRow(
+	err := s.dbc().QueryRow(
 		`SELECT value FROM global_settings WHERE key = $1`, key).Scan(&v)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {

@@ -63,7 +63,7 @@ func (s *Service) cachedTelegramProbe(ctx context.Context, tokenFP string) Teleg
 	s.telegramProbeCache.mu.Unlock()
 
 	// Cache miss / stale / token rotated — re-probe.
-	token, _, _, _ := db.LoadTelegramToken(s.DB)
+	token, _, _, _ := db.LoadTelegramToken(s.dbc())
 	res := probeTelegramAPI(ctx, token)
 
 	s.telegramProbeCache.mu.Lock()
@@ -152,10 +152,10 @@ type EgressState struct {
 }
 
 func (s *Service) loadTelegramUIState() telegramUIState {
-	token, chatID, ok, err := db.LoadTelegramToken(s.DB)
+	token, chatID, ok, err := db.LoadTelegramToken(s.dbc())
 	state := telegramUIState{
-		LoginTokenTTL: db.LoadTelegramLoginTokenTTL(s.DB),
-		StrictMode:    db.LoadTelegramStrictMode(s.DB),
+		LoginTokenTTL: db.LoadTelegramLoginTokenTTL(s.dbc()),
+		StrictMode:    db.LoadTelegramStrictMode(s.dbc()),
 	}
 	// v0.33.1.8: load the egress selector BEFORE the early
 	// return. The operator may want to pre-configure which
@@ -166,10 +166,10 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 	// Egress card disappear until a token was saved, which
 	// was a chicken-and-egg UX trap on the
 	// "Telegram-egress unreachable" path.
-	if v, gerr := db.GetGlobalSetting(s.DB, "telegram.egress_node_id", ""); gerr == nil {
+	if v, gerr := db.GetGlobalSetting(s.dbc(), "telegram.egress_node_id", ""); gerr == nil {
 		state.Egress.SelectedNodeID = v
 	}
-	if relays, lerr := db.ListExitServers(s.DB); lerr == nil {
+	if relays, lerr := db.ListExitServers(s.dbc()); lerr == nil {
 		for _, e := range relays {
 			if e.Enabled {
 				state.Egress.Available = append(state.Egress.Available, e)
@@ -184,7 +184,7 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 			}
 		}
 		if state.Egress.SelectedHostname == "" {
-			if h, herr := db.LookupExitServerHostname(s.DB, state.Egress.SelectedNodeID); herr == nil {
+			if h, herr := db.LookupExitServerHostname(s.dbc(), state.Egress.SelectedNodeID); herr == nil {
 				state.Egress.SelectedHostname = h
 			}
 		}
@@ -197,7 +197,7 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 	state.TokenFP = db.TelegramFingerprint(token)
 	state.ChatID = chatID
 	var ts int64
-	row := s.DB.QueryRow(`SELECT MAX(updated_at) FROM global_settings WHERE key IN ($1, $2)`,
+	row := s.dbc().QueryRow(`SELECT MAX(updated_at) FROM global_settings WHERE key IN ($1, $2)`,
 		"telegram.bot_token", "telegram.chat_id")
 	if err := row.Scan(&ts); err == nil && ts > 0 {
 		state.UpdatedAt = time.Unix(ts, 0).UTC().Format("2006-01-02 15:04:05 UTC")
@@ -223,7 +223,7 @@ func (s *Service) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 	}
 	state := s.loadTelegramUIState()
 	if state.Configured {
-		token, _, _, _ := db.LoadTelegramToken(s.DB)
+		token, _, _, _ := db.LoadTelegramToken(s.dbc())
 		state.Probe = s.cachedTelegramProbe(r.Context(), db.TelegramFingerprint(token))
 	}
 	csrf, err := db.RandomConfirmationToken(8)
@@ -318,7 +318,7 @@ func (s *Service) handleTelegramSave(w http.ResponseWriter, r *http.Request, c *
 		s.redirectWithFlash(w, r, "", "chat_id должен быть числом (например 12345) или -100… для супергруппы")
 		return
 	}
-	if err := db.SaveTelegramToken(s.DB, token, chatID); err != nil {
+	if err := db.SaveTelegramToken(s.dbc(), token, chatID); err != nil {
 		s.redirectWithFlash(w, r, "", "Не удалось сохранить: "+err.Error())
 		return
 	}
@@ -326,7 +326,7 @@ func (s *Service) handleTelegramSave(w http.ResponseWriter, r *http.Request, c *
 	if token != "" {
 		mask = db.TelegramFingerprint(token)
 	} else {
-		existing, _, _, _ := db.LoadTelegramToken(s.DB)
+		existing, _, _, _ := db.LoadTelegramToken(s.dbc())
 		mask = db.TelegramFingerprint(existing)
 	}
 	s.Backend.Audit(c.UserID, c.Username, "telegram_save",
@@ -336,7 +336,7 @@ func (s *Service) handleTelegramSave(w http.ResponseWriter, r *http.Request, c *
 }
 
 func (s *Service) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
-	_, _, ok, err := db.LoadTelegramToken(s.DB)
+	_, _, ok, err := db.LoadTelegramToken(s.dbc())
 	if err != nil {
 		s.redirectWithFlash(w, r, "", "Ошибка чтения из БД: "+err.Error())
 		return
@@ -363,7 +363,7 @@ func (s *Service) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *
 		s.redirectWithFlash(w, r, "", "Бот не сконфигурирован — Notifier в no-op режиме")
 		return
 	}
-	_, globalChatID, hasGlobal, err := db.LoadTelegramSendTarget(s.DB)
+	_, globalChatID, hasGlobal, err := db.LoadTelegramSendTarget(s.dbc())
 	if err != nil {
 		s.redirectWithFlash(w, r, "", "Ошибка чтения chat_id из БД: "+err.Error())
 		return
@@ -375,7 +375,7 @@ func (s *Service) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *
 		sentCount = 1
 		sentTargets = append(sentTargets, "global chat_id="+globalChatID)
 	} else {
-		bindings, lerr := db.ListTelegramBindings(s.DB)
+		bindings, lerr := db.ListTelegramBindings(s.dbc())
 		if lerr != nil {
 			s.redirectWithFlash(w, r, "", "Ошибка чтения bindings: "+lerr.Error())
 			return
@@ -406,7 +406,7 @@ func (s *Service) handleTelegramRotate(w http.ResponseWriter, r *http.Request, c
 		s.redirectWithFlash(w, r, "", "Поставьте галочку подтверждения для rotate")
 		return
 	}
-	if err := db.DeleteTelegramToken(s.DB); err != nil {
+	if err := db.DeleteTelegramToken(s.dbc()); err != nil {
 		s.redirectWithFlash(w, r, "", "Не удалось очистить старый токен: "+err.Error())
 		return
 	}
@@ -420,7 +420,7 @@ func (s *Service) handleTelegramDisable(w http.ResponseWriter, r *http.Request, 
 		s.redirectWithFlash(w, r, "", "Поставьте галочку подтверждения для disable")
 		return
 	}
-	if err := db.DeleteTelegramToken(s.DB); err != nil {
+	if err := db.DeleteTelegramToken(s.dbc()); err != nil {
 		s.redirectWithFlash(w, r, "", "Ошибка при удалении: "+err.Error())
 		return
 	}
@@ -437,12 +437,12 @@ func (s *Service) handleTelegramStrict(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	want := r.FormValue("enabled") == "1"
-	old := db.LoadTelegramStrictMode(s.DB)
+	old := db.LoadTelegramStrictMode(s.dbc())
 	if want == old {
 		writeFlashRedirect(w, r, "Strict mode already in the requested state.")
 		return
 	}
-	if err := db.SaveTelegramStrictMode(s.DB, want); err != nil {
+	if err := db.SaveTelegramStrictMode(s.dbc(), want); err != nil {
 		s.redirectWithFlash(w, r, "", "Ошибка при сохранении: "+err.Error())
 		return
 	}
@@ -523,7 +523,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// Verify the node is in exit_servers and enabled.
-	relay, err := findEnabledExitServer(s.DB, nodeID)
+	relay, err := findEnabledExitServer(s.dbc(), nodeID)
 	if err != nil {
 		writeErrRedirect(w, r, "Не удалось найти relay: "+err.Error())
 		return
@@ -549,7 +549,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 	// to the relay. Live-verified via /admin/telegram
 	// "Set as egress relay" for emilia on the live VM (the
 	// 2026-08-09 operator report that triggered the fix).
-	sshCfg, _ := db.LookupExitServerSSH(s.DB, relay.Hostname)
+	sshCfg, _ := db.LookupExitServerSSH(s.dbc(), relay.Hostname)
 	keyPath := strings.TrimSpace(sshCfg.KeyPath)
 	if keyPath == "" {
 		keyPath = s.SSHKeyPath // Config-level default (SKYGATE_EXIT_SSH_KEY).
@@ -559,7 +559,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 	// tailscale_ip" — fall back to the legacy hostname so
 	// the error message is still meaningful (instead of
 	// "ssh :22: No address associated with hostname").
-	sshTarget, _ := db.LookupExitServerSSHTarget(s.DB, relay.Hostname)
+	sshTarget, _ := db.LookupExitServerSSHTarget(s.dbc(), relay.Hostname)
 	sshTarget = strings.TrimSpace(sshTarget)
 	if sshTarget == "" {
 		sshTarget = relay.Hostname
@@ -593,7 +593,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 	}
 	// Persist the selection so future re-applies know which
 	// relay to target. SetGlobalSetting is idempotent.
-	if err := db.SetGlobalSetting(s.DB, "telegram.egress_node_id", relay.NodeID); err != nil {
+	if err := db.SetGlobalSetting(s.dbc(), "telegram.egress_node_id", relay.NodeID); err != nil {
 		s.Backend.Audit(auditUID, auditName, "telegram_egress_set",
 			fmt.Sprintf("relay=%s ssh=ok save_err=%q", relay.Hostname, err.Error()))
 		writeErrRedirect(w, r,
@@ -623,7 +623,7 @@ func (s *Service) handleTelegramSetEgress(w http.ResponseWriter, r *http.Request
 // metric; the Clear just tells skygate not to *force*
 // any particular relay).
 func (s *Service) handleTelegramClearEgress(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
-	if err := db.SetGlobalSetting(s.DB, "telegram.egress_node_id", ""); err != nil {
+	if err := db.SetGlobalSetting(s.dbc(), "telegram.egress_node_id", ""); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "telegram_egress_clear",
 			fmt.Sprintf("err=%q", err.Error()))
 		writeErrRedirect(w, r, "Не удалось очистить: "+err.Error())

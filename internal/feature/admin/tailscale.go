@@ -247,7 +247,7 @@ func (s *Service) tailscaleAuthKeyPath() string {
 // The v0.33.1.13 login-server tests use it to set up a
 // known DB state and assert the resolution order. v0.33.1.13.
 func (s *Service) SetGlobalSettingForTest(key, value string) error {
-	return db.SetGlobalSetting(s.DB, key, value)
+	return db.SetGlobalSetting(s.dbc(), key, value)
 }
 
 // tailscaleLoginServerDBKey is the global_settings key for
@@ -272,7 +272,7 @@ const tailscaleLoginServerDBKey = "tailscale.login_server"
 
 func (s *Service) tailscaleLoginServer() string {
 	// 1. Web-UI override (DB). Empty string means "not set".
-	if v, err := db.GetGlobalSetting(s.DB, tailscaleLoginServerDBKey, ""); err == nil && v != "" {
+	if v, err := db.GetGlobalSetting(s.dbc(), tailscaleLoginServerDBKey, ""); err == nil && v != "" {
 		return v
 	}
 	// 2. Env-var bootstrap.
@@ -289,7 +289,7 @@ func (s *Service) tailscaleLoginServer() string {
 // to render a small "source: ..." hint so the operator knows
 // whether changing the .env file would have any effect.
 func (s *Service) tailscaleLoginServerSource() string {
-	if v, err := db.GetGlobalSetting(s.DB, tailscaleLoginServerDBKey, ""); err == nil && v != "" {
+	if v, err := db.GetGlobalSetting(s.dbc(), tailscaleLoginServerDBKey, ""); err == nil && v != "" {
 		return "db"
 	}
 	if s.TailscaleLoginServer != "" {
@@ -680,7 +680,7 @@ func (s *Service) handleTailscaleSaveLoginServer(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if err := db.SetGlobalSetting(s.DB, tailscaleLoginServerDBKey, raw); err != nil {
+	if err := db.SetGlobalSetting(s.dbc(), tailscaleLoginServerDBKey, raw); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "tailscale_save_login_server",
 			fmt.Sprintf("err=%q", err.Error()))
 		tsRedirect(w, r, "", "Не удалось сохранить: "+err.Error())
@@ -1041,7 +1041,7 @@ func truncate(s string, n int) string {
 }
 
 // avoid unused-import warning for the package's "database/sql"
-// re-export — some handlers read from s.DB which is *sql.DB.
+// re-export — some handlers read from s.dbc() which is *sql.DB.
 // (var _ = db.X is a no-op reference; keeps the import alive
 // in case future test helpers want to assert against the DB.)
 var _ = db.ErrUserNotFound

@@ -181,7 +181,7 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		 LIMIT $%d`, strings.Join(branches, " UNION ALL "), len(args)+1)
 	args = append(args, limit)
 
-	rows, err := s.DB.Query(query, args...)
+	rows, err := s.dbc().Query(query, args...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -207,7 +207,7 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	// Distinct action list for the dropdown. Cheap (a few
 	// dozen rows at most) and identical to the pre-B207
 	// behaviour.
-	actions, err := db.ListAuditActions(s.DB)
+	actions, err := db.ListAuditActions(s.dbc())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -136,7 +136,7 @@ type TestHistory struct {
 //     aggregate continues over the remaining runs (one
 //     corrupt run shouldn't blank the whole history).
 func (s *Service) ComputeTestHistory(ctx context.Context, since, until time.Time) (TestHistory, error) {
-	if s == nil || s.DB == nil {
+	if s == nil || s.dbc() == nil {
 		return TestHistory{}, errors.New("DB not configured")
 	}
 	var out TestHistory
@@ -148,7 +148,7 @@ func (s *Service) ComputeTestHistory(ctx context.Context, since, until time.Time
 	var rows *sql.Rows
 	var err error
 	if until.IsZero() {
-		rows, err = s.DB.QueryContext(ctx, `
+		rows, err = s.dbc().QueryContext(ctx, `
 			SELECT id, started_at, finished_at, duration_ms, results_json,
 			       pass_count, fail_count, skip_count
 			FROM system_tests_runs
@@ -156,7 +156,7 @@ func (s *Service) ComputeTestHistory(ctx context.Context, since, until time.Time
 			ORDER BY id ASC
 		`, since.Unix())
 	} else {
-		rows, err = s.DB.QueryContext(ctx, `
+		rows, err = s.dbc().QueryContext(ctx, `
 			SELECT id, started_at, finished_at, duration_ms, results_json,
 			       pass_count, fail_count, skip_count
 			FROM system_tests_runs

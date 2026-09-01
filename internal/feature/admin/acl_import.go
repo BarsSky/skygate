@@ -31,7 +31,7 @@ func (s *Service) GetAdminACLsExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	policy, err := acl.GenerateACL(s.DB)
+	policy, err := acl.GenerateACL(s.dbc())
 	if err != nil {
 		http.Error(w, "generate acl: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -52,7 +52,7 @@ func (s *Service) GetAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	currentPolicy, _ := acl.GenerateACL(s.DB)
+	currentPolicy, _ := acl.GenerateACL(s.dbc())
 	s.Backend.RenderWithLayout(w, r, "admin/acls_import.html", c, map[string]any{
 		"CurrentPolicy": currentPolicy,
 	})
@@ -87,7 +87,7 @@ func (s *Service) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "policy: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	currentPolicy, _ := acl.GenerateACL(s.DB)
+	currentPolicy, _ := acl.GenerateACL(s.dbc())
 	hCur := sha256.Sum256([]byte(currentPolicy))
 	hImp := sha256.Sum256([]byte(policy))
 	s.Backend.RenderWithLayout(w, r, "admin/acls_import.html", c, map[string]any{
@@ -122,7 +122,7 @@ func (s *Service) PostAdminACLsImportApply(w http.ResponseWriter, r *http.Reques
 	if s.Notifier != nil {
 		alerter = s.Notifier
 	}
-	results := acl.SetACLForAllPlanes(s.DB,
+	results := acl.SetACLForAllPlanes(s.dbc(),
 		func(planeURL string) *headscale.Client {
 			if planeURL == "" {
 				return s.HSGlobalFn()
@@ -132,7 +132,7 @@ func (s *Service) PostAdminACLsImportApply(w http.ResponseWriter, r *http.Reques
 			// the /admin/acls "Apply" import-Apply (which calls
 			// this resolver for every distinct plane URL) fails
 			// on PG with "syntax error at or near ','".
-			rows, err := s.DB.Query("SELECT id FROM portal_users WHERE headscale_url = "+db.PlaceholdersList(1)+" LIMIT 1", planeURL)
+			rows, err := s.dbc().Query("SELECT id FROM portal_users WHERE headscale_url = "+db.PlaceholdersList(1)+" LIMIT 1", planeURL)
 			if err != nil {
 				return s.HSGlobalFn()
 			}

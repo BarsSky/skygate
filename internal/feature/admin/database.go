@@ -164,7 +164,7 @@ func (s *Service) collectDatabasePageData(r *http.Request) *databasePageData {
 	// (Phase 1.2 lets the admin populate it). We query
 	// the table so the page renders "not configured"
 	// explicitly rather than crashing on a missing table.
-	desired, err := db.GetClusterDatabase(s.DB, "skygate-staging")
+	desired, err := db.GetClusterDatabase(s.dbc(), "skygate-staging")
 	if err == nil && desired != nil {
 		data.HasDesired = true
 		data.DesiredID = desired.ID
@@ -219,7 +219,7 @@ func (s *Service) GetAdminDatabaseMigrate(w http.ResponseWriter, r *http.Request
 
 // collectRecentRuns reads the last N dbmigrate_run rows.
 func (s *Service) collectRecentRuns(r *http.Request, limit int) []dbmigrate.RunView {
-	rows, err := s.DB.QueryContext(r.Context(), `
+	rows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id, source_dsn, target_dsn, operator, status,
 		       started_at, finished_at
 		  FROM dbmigrate_run
@@ -265,7 +265,7 @@ func (s *Service) GetAdminDatabaseMigrateRun(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	run, steps, err := dbmigrate.LoadRun(s.DB, runID)
+	run, steps, err := dbmigrate.LoadRun(s.dbc(), runID)
 	if err != nil {
 		http.Error(w, "load: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -404,7 +404,7 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 		CurrentDSN:     currentDSN,
 		UpdatedBy:      c.Username,
 	}
-	if err := db.SetClusterDatabase(s.DB, cd); err != nil {
+	if err := db.SetClusterDatabase(s.dbc(), cd); err != nil {
 		http.Redirect(w, r, "/admin/database?err=save+failed:+"+err.Error(), http.StatusSeeOther)
 		return
 	}
@@ -412,7 +412,7 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 	// /admin/audit page reads from. The action name
 	// "cluster.db.edit" follows the new cluster.*
 	// prefix convention.
-	if err := db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.db.edit", "dsn_template="+dsnTemplate); err != nil {
+	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.db.edit", "dsn_template="+dsnTemplate); err != nil {
 		// audit failure is non-fatal; just log
 		_ = err
 	}

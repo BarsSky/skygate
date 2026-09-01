@@ -259,6 +259,7 @@
     <thead>
       <tr style="text-align:left">
         <th style="width:170px">When</th>
+        <th style="width:110px">Source</th>
         <th style="width:120px">Actor</th>
         <th style="width:200px">Action</th>
         <th>Detail</th>
@@ -268,6 +269,13 @@
       {{range .Data.RecentEvents}}
       <tr>
         <td><span style="color:var(--text-muted);font-family:var(--font-mono)">{{.WhenUnix}}</span></td>
+        <td>
+          {{if eq .Source "cluster_audit"}}
+            <span class="tag" style="background:var(--accent);color:#000;padding:1px 6px;border-radius:4px;font-size:10px">cluster_audit</span>
+          {{else}}
+            <span class="tag" style="background:var(--bg-muted);color:var(--text-muted);padding:1px 6px;border-radius:4px;font-size:10px">audit_log</span>
+          {{end}}
+        </td>
         <td><code>{{.Actor}}</code></td>
         <td><code>{{.Action}}</code></td>
         <td><span style="font-family:var(--font-mono);font-size:11px">{{.Detail}}</span></td>

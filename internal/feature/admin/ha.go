@@ -81,11 +81,21 @@ type haPageData struct {
 // haAuditEvent is one row of the "Last 20 HA events" table.
 // Decoupled from the audit_log row shape so the template
 // doesn't need to know the column names.
+//
+// B208 (v1.5.0+, 2026-09-01): the Source field tells the
+// operator where the row came from ("audit_log" legacy
+// or "cluster_audit" B195). The B204 HA elector writes
+// node_health + failover_recommend to cluster_audit; the
+// B205 cluster failover writes node_failover. Pre-B208
+// the /admin/ha page only saw audit_log rows — the elector's
+// recommendations and the B205 failovers were invisible
+// without psql.
 type haAuditEvent struct {
 	WhenUnix int64
 	Actor    string
 	Action   string
 	Detail   string
+	Source   string // "audit_log" (legacy) or "cluster_audit" (B195+)
 }
 
 // GetAdminHA renders the /admin/ha page.
@@ -114,7 +124,7 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 	}
 
 	// 1. Chain
-	chain, raw, err := ha.LoadChain(s.DB)
+	chain, raw, err := ha.LoadChain(s.dbc())
 	if err != nil {
 		data.FlashError = "load chain: " + err.Error()
 		chain = &ha.HaChain{}
@@ -143,26 +153,81 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 		data.DNSConfigured = s.DNSCredsStore.IsConfigured()
 	}
 
-	// 4. Last 20 HA events. Pattern matches /admin/audit's
-	// query (db.GetRecentAuditEventsFiltered) but filtered
-	// to action LIKE 'ha.%' or 'ha_chain.%'. The LIKE filter
-	// catches both `ha.node.add` and the older `ha_chain.*`
-	// action names from before the /admin/ha form existed.
-	if rows, err := s.DB.QueryContext(r.Context(),
-		`SELECT unix_timestamp, actor, action, detail
+	// 4. Last 20 HA events. B208: UNION of audit_log +
+	// cluster_audit. The audit_log branch catches the
+	// pre-B195 events (ha.node.add, ha_chain.*, etc.).
+	// The cluster_audit branch catches the B195+ events
+	// from the B204 HA elector (node_health +
+	// failover_recommend) and the B205 cluster failover
+	// (node_failover). The B204/B205 events are the most
+	// important ones for an operator debugging "why is the
+	// primary failed?" — they were invisible here before
+	// B208.
+	//
+	// We do the UNION in Go (not in SQL) because the two
+	// tables have different schemas (audit_log.created_at
+	// is INTEGER unix, cluster_audit.created_at is
+	// TIMESTAMPTZ). Two separate queries + a merged sort +
+	// a top-20 trim is simpler than a CTE.
+	eventsByKey := map[string]haAuditEvent{} // "src:id" → event
+	if rows, err := s.dbc().QueryContext(r.Context(),
+		`SELECT id, unix_timestamp, actor, action, detail
 		   FROM audit_log
 		  WHERE action LIKE 'ha.%' OR action LIKE 'ha_chain.%'
 		  ORDER BY id DESC
-		  LIMIT 20`); err == nil {
-		defer rows.Close()
+		  LIMIT 40`); err == nil {
 		for rows.Next() {
 			var ev haAuditEvent
-			if err := rows.Scan(&ev.WhenUnix, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
+			var id int64
+			if err := rows.Scan(&id, &ev.WhenUnix, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
 				continue
 			}
-			data.RecentEvents = append(data.RecentEvents, ev)
+			ev.Source = "audit_log"
+			eventsByKey[fmt.Sprintf("audit_log:%d", id)] = ev
+		}
+		rows.Close()
+	}
+	if rows, err := s.dbc().QueryContext(r.Context(),
+		`SELECT id,
+		        extract(epoch FROM created_at)::bigint AS ts,
+		        actor,
+		        action,
+		        detail::text
+		   FROM cluster_audit
+		  WHERE action IN ('node_health', 'failover_recommend', 'node_failover')
+		     OR detail->>'reason' LIKE 'ha.%'
+		  ORDER BY id DESC
+		  LIMIT 40`); err == nil {
+		for rows.Next() {
+			var ev haAuditEvent
+			var id int64
+			if err := rows.Scan(&id, &ev.WhenUnix, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
+				continue
+			}
+			ev.Source = "cluster_audit"
+			eventsByKey[fmt.Sprintf("cluster_audit:%d", id)] = ev
+		}
+		rows.Close()
+	}
+	// Collect + sort by WhenUnix DESC, trim to 20. The
+	// map key "src:id" deduplicates across the two
+	// tables (they both use BIGSERIAL, so the id spaces
+	// can overlap; the src prefix is the safety net).
+	all := make([]haAuditEvent, 0, len(eventsByKey))
+	for _, ev := range eventsByKey {
+		all = append(all, ev)
+	}
+	// Simple insertion sort by WhenUnix DESC (sufficient
+	// for <=80 elements).
+	for i := 1; i < len(all); i++ {
+		for j := i; j > 0 && all[j].WhenUnix > all[j-1].WhenUnix; j-- {
+			all[j], all[j-1] = all[j-1], all[j]
 		}
 	}
+	if len(all) > 20 {
+		all = all[:20]
+	}
+	data.RecentEvents = all
 
 	return data
 }
@@ -204,7 +269,7 @@ func (s *Service) PostAdminHAChainEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chain, _, err := ha.LoadChain(s.DB)
+	chain, _, err := ha.LoadChain(s.dbc())
 	if err != nil {
 		haRedirect(w, r, "", "Load chain: "+err.Error())
 		return
@@ -221,7 +286,7 @@ func (s *Service) PostAdminHAChainEdit(w http.ResponseWriter, r *http.Request) {
 		haRedirect(w, r, "", "Validate chain: "+err.Error())
 		return
 	}
-	changed, _, err := ha.SaveChain(s.DB, chain)
+	changed, _, err := ha.SaveChain(s.dbc(), chain)
 	if err != nil {
 		haRedirect(w, r, "", "Save chain: "+err.Error())
 		return
@@ -249,7 +314,7 @@ func (s *Service) PostAdminHAAutoReclaimToggle(w http.ResponseWriter, r *http.Re
 		haRedirect(w, r, "", "Form parse error: "+err.Error())
 		return
 	}
-	chain, _, err := ha.LoadChain(s.DB)
+	chain, _, err := ha.LoadChain(s.dbc())
 	if err != nil {
 		haRedirect(w, r, "", "Load chain: "+err.Error())
 		return
@@ -260,7 +325,7 @@ func (s *Service) PostAdminHAAutoReclaimToggle(w http.ResponseWriter, r *http.Re
 		return
 	}
 	chain.AutoFailoverEnabled = newVal
-	if _, _, err := ha.SaveChain(s.DB, chain); err != nil {
+	if _, _, err := ha.SaveChain(s.dbc(), chain); err != nil {
 		haRedirect(w, r, "", "Save chain: "+err.Error())
 		return
 	}
@@ -293,7 +358,7 @@ func (s *Service) PostAdminHAAddNode(w http.ResponseWriter, r *http.Request) {
 		haRedirect(w, r, "", err.Error())
 		return
 	}
-	chain, _, err := ha.LoadChain(s.DB)
+	chain, _, err := ha.LoadChain(s.dbc())
 	if err != nil {
 		haRedirect(w, r, "", "Load chain: "+err.Error())
 		return
@@ -307,7 +372,7 @@ func (s *Service) PostAdminHAAddNode(w http.ResponseWriter, r *http.Request) {
 		haRedirect(w, r, "", "Validate chain: "+err.Error())
 		return
 	}
-	if _, _, err := ha.SaveChain(s.DB, chain); err != nil {
+	if _, _, err := ha.SaveChain(s.dbc(), chain); err != nil {
 		haRedirect(w, r, "", "Save chain: "+err.Error())
 		return
 	}
@@ -337,7 +402,7 @@ func (s *Service) PostAdminHARemoveNode(w http.ResponseWriter, r *http.Request) 
 		haRedirect(w, r, "", "hostname is required")
 		return
 	}
-	chain, _, err := ha.LoadChain(s.DB)
+	chain, _, err := ha.LoadChain(s.dbc())
 	if err != nil {
 		haRedirect(w, r, "", "Load chain: "+err.Error())
 		return
@@ -354,7 +419,7 @@ func (s *Service) PostAdminHARemoveNode(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	chain.Members = append(chain.Members[:idx], chain.Members[idx+1:]...)
-	if _, _, err := ha.SaveChain(s.DB, chain); err != nil {
+	if _, _, err := ha.SaveChain(s.dbc(), chain); err != nil {
 		haRedirect(w, r, "", "Save chain: "+err.Error())
 		return
 	}
@@ -410,7 +475,7 @@ func (s *Service) forceAction(w http.ResponseWriter, r *http.Request, action str
 		haRedirect(w, r, "", "Form parse error: "+err.Error())
 		return
 	}
-	chain, _, err := ha.LoadChain(s.DB)
+	chain, _, err := ha.LoadChain(s.dbc())
 	if err != nil {
 		haRedirect(w, r, "", "Load chain: "+err.Error())
 		return
@@ -476,7 +541,7 @@ func (s *Service) forceAction(w http.ResponseWriter, r *http.Request, action str
 		return
 	}
 	chain.LastTransitionUnix = time.Now().Unix()
-	if _, _, err := ha.SaveChain(s.DB, chain); err != nil {
+	if _, _, err := ha.SaveChain(s.dbc(), chain); err != nil {
 		haRedirect(w, r, "", "Save chain: "+err.Error())
 		return
 	}

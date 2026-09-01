@@ -62,7 +62,7 @@ func (s *Service) PostAdminUpdateAutoToggle(w http.ResponseWriter, r *http.Reque
 	}
 	enabled := r.FormValue("enabled") == "1"
 
-	if err := db.SetGlobalSettingBool(s.DB, globalSettingsKeyUpdateScheduleEnabled, enabled); err != nil {
+	if err := db.SetGlobalSettingBool(s.dbc(), globalSettingsKeyUpdateScheduleEnabled, enabled); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "auto_update_toggle", "FAILED: "+err.Error())
 		http.Error(w, "could not persist: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -119,12 +119,12 @@ func (s *Service) PostAdminUpdateSchedule(w http.ResponseWriter, r *http.Request
 	// transaction, but SetGlobalSetting is idempotent and
 	// the page is admin-only — partial-write risk is OK
 	// here, the next toggle will repair it).
-	if err := db.SetGlobalSettingBool(s.DB, globalSettingsKeyUpdateScheduleEnabled, enabled); err != nil {
+	if err := db.SetGlobalSettingBool(s.dbc(), globalSettingsKeyUpdateScheduleEnabled, enabled); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "update_schedule", "FAILED enabled: "+err.Error())
 		http.Error(w, "could not persist enabled: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := db.SetGlobalSetting(s.DB, globalSettingsKeyUpdateScheduleTime, timeStr); err != nil {
+	if err := db.SetGlobalSetting(s.dbc(), globalSettingsKeyUpdateScheduleTime, timeStr); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "update_schedule", "FAILED time: "+err.Error())
 		http.Error(w, "could not persist time: "+err.Error(), http.StatusInternalServerError)
 		return

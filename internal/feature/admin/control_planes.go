@@ -39,7 +39,7 @@ func (s *Service) GetAdminControlPlanes(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	rows, err := db.AllUsersHeadscaleConfig(s.DB)
+	rows, err := db.AllUsersHeadscaleConfig(s.dbc())
 	if err != nil {
 		http.Error(w, "load users: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -109,12 +109,12 @@ func (s *Service) GetAdminUserControlPlane(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "bad user id", http.StatusBadRequest)
 		return
 	}
-	username, _ := db.GetUserNameByID(s.DB, id)
+	username, _ := db.GetUserNameByID(s.dbc(), id)
 	if username == "" {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
-	cfg, err := db.GetUserHeadscaleConfig(s.DB, id, s.SecretKeyHex)
+	cfg, err := db.GetUserHeadscaleConfig(s.dbc(), id, s.SecretKeyHex)
 	currentURL := ""
 	hasKey := false
 	if err == nil {
@@ -161,7 +161,7 @@ func (s *Service) PostAdminUserControlPlane(w http.ResponseWriter, r *http.Reque
 	}
 	url := strings.TrimSpace(r.FormValue("url"))
 	apiKey := r.FormValue("api_key")
-	if err := db.SetUserHeadscaleConfig(s.DB, id, url, apiKey, s.SecretKeyHex); err != nil {
+	if err := db.SetUserHeadscaleConfig(s.dbc(), id, url, apiKey, s.SecretKeyHex); err != nil {
 		s.userControlPlaneRedirect(w, r, id, "", "Save failed: "+err.Error())
 		return
 	}
@@ -187,12 +187,12 @@ func (s *Service) PostAdminUserControlPlaneClear(w http.ResponseWriter, r *http.
 		http.Error(w, "bad user id", http.StatusBadRequest)
 		return
 	}
-	if existing, err := db.GetUserHeadscaleConfig(s.DB, id, s.SecretKeyHex); err == nil {
+	if existing, err := db.GetUserHeadscaleConfig(s.dbc(), id, s.SecretKeyHex); err == nil {
 		if s.InvalidateHSCacheFn != nil {
 			s.InvalidateHSCacheFn(existing.URL)
 		}
 	}
-	if err := db.ClearUserHeadscaleConfig(s.DB, id); err != nil {
+	if err := db.ClearUserHeadscaleConfig(s.dbc(), id); err != nil {
 		s.userControlPlaneRedirect(w, r, id, "", "Clear failed: "+err.Error())
 		return
 	}
@@ -224,14 +224,14 @@ func (s *Service) PostAdminUserControlPlaneProvision(w http.ResponseWriter, r *h
 				"Set SKYGATE_SECRET_KEY in .env and restart skygate.")
 		return
 	}
-	username, err := db.GetUserNameByID(s.DB, id)
+	username, err := db.GetUserNameByID(s.dbc(), id)
 	if err != nil {
 		s.userControlPlaneRedirect(w, r, id, "", "user not found: "+err.Error())
 		return
 	}
 	// Defensive: refuse to provision if a control plane is
 	// already set.
-	if existing, getErr := db.GetUserHeadscaleConfig(s.DB, id, s.SecretKeyHex); getErr == nil && existing.HasOverride() {
+	if existing, getErr := db.GetUserHeadscaleConfig(s.dbc(), id, s.SecretKeyHex); getErr == nil && existing.HasOverride() {
 		s.userControlPlaneRedirect(w, r, id, "",
 			"User already has a per-user headscale override ("+existing.URL+"). "+
 				"Click 'Clear' below to remove it before re-provisioning.")
@@ -248,7 +248,7 @@ func (s *Service) PostAdminUserControlPlaneProvision(w http.ResponseWriter, r *h
 		s.userControlPlaneRedirect(w, r, id, "", err.Error())
 		return
 	}
-	if err := db.SetUserHeadscaleConfig(s.DB, id, result.URL, result.APIKey, s.SecretKeyHex); err != nil {
+	if err := db.SetUserHeadscaleConfig(s.dbc(), id, result.URL, result.APIKey, s.SecretKeyHex); err != nil {
 		log.Printf("user_provision_headscale: SetUserHeadscaleConfig FAILED user=%d: %v", id, err)
 		s.Backend.Audit(c.UserID, c.Username, "user_provision_headscale.fail",
 			fmt.Sprintf("user_id=%d persist_err=%q", id, err.Error()))
@@ -285,12 +285,12 @@ func (s *Service) PostAdminUserControlPlaneDecommission(w http.ResponseWriter, r
 		http.Error(w, "bad user id", http.StatusBadRequest)
 		return
 	}
-	username, err := db.GetUserNameByID(s.DB, id)
+	username, err := db.GetUserNameByID(s.dbc(), id)
 	if err != nil {
 		s.userControlPlaneRedirect(w, r, id, "", "user not found: "+err.Error())
 		return
 	}
-	existing, _ := db.GetUserHeadscaleConfig(s.DB, id, s.SecretKeyHex)
+	existing, _ := db.GetUserHeadscaleConfig(s.dbc(), id, s.SecretKeyHex)
 	prevURL := ""
 	if existing.HasOverride() {
 		prevURL = existing.URL
@@ -306,7 +306,7 @@ func (s *Service) PostAdminUserControlPlaneDecommission(w http.ResponseWriter, r
 		s.userControlPlaneRedirect(w, r, id, "", err.Error())
 		return
 	}
-	if err := db.ClearUserHeadscaleConfig(s.DB, id); err != nil {
+	if err := db.ClearUserHeadscaleConfig(s.dbc(), id); err != nil {
 		log.Printf("user_decommission_headscale: ClearUserHeadscaleConfig FAILED user=%d: %v", id, err)
 		s.Backend.Audit(c.UserID, c.Username, "user_decommission_headscale.fail",
 			fmt.Sprintf("user_id=%d clear_err=%q", id, err.Error()))

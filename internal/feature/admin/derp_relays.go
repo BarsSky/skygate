@@ -56,12 +56,12 @@ func (s *Service) GetAdminDerpRelays(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if err := db.AutoMigrateDerpRelays(s.DB); err != nil {
+	if err := db.AutoMigrateDerpRelays(s.dbc()); err != nil {
 		http.Error(w, "auto-migrate derp_relays: "+err.Error(),
 			http.StatusInternalServerError)
 		return
 	}
-	relays, err := db.ListDerpRelays(s.DB)
+	relays, err := db.ListDerpRelays(s.dbc())
 	if err != nil {
 		http.Error(w, "list derp_relays: "+err.Error(),
 			http.StatusInternalServerError)
@@ -105,7 +105,7 @@ func (s *Service) PostAdminDerpRelaysAdd(w http.ResponseWriter, r *http.Request)
 			http.StatusFound)
 		return
 	}
-	if _, err := db.AddDerpRelay(s.DB, row); err != nil {
+	if _, err := db.AddDerpRelay(s.dbc(), row); err != nil {
 		msg := urlMsg(err)
 		http.Redirect(w, r, "/admin/derp/relays?err="+msg,
 			http.StatusFound)
@@ -156,7 +156,7 @@ func (s *Service) PostAdminDerpRelaysEdit(w http.ResponseWriter, r *http.Request
 			http.StatusFound)
 		return
 	}
-	if err := db.UpdateDerpRelay(s.DB, row); err != nil {
+	if err := db.UpdateDerpRelay(s.dbc(), row); err != nil {
 		msg := urlMsg(err)
 		http.Redirect(w, r, "/admin/derp/relays?err="+msg,
 			http.StatusFound)
@@ -192,7 +192,7 @@ func (s *Service) PostAdminDerpRelaysDelete(w http.ResponseWriter, r *http.Reque
 			http.StatusFound)
 		return
 	}
-	if err := db.DeleteDerpRelay(s.DB, id); err != nil {
+	if err := db.DeleteDerpRelay(s.dbc(), id); err != nil {
 		http.Redirect(w, r, "/admin/derp/relays?err="+urlMsg(err),
 			http.StatusFound)
 		return
@@ -225,7 +225,7 @@ func (s *Service) PostAdminDerpRelaysToggle(w http.ResponseWriter, r *http.Reque
 			http.StatusFound)
 		return
 	}
-	row, err := db.ToggleDerpRelayEnabled(s.DB, id)
+	row, err := db.ToggleDerpRelayEnabled(s.dbc(), id)
 	if err != nil {
 		http.Redirect(w, r, "/admin/derp/relays?err="+urlMsg(err),
 			http.StatusFound)
@@ -259,7 +259,7 @@ func (s *Service) PostAdminDerpRelaysTest(w http.ResponseWriter, r *http.Request
 			http.StatusFound)
 		return
 	}
-	row, err := db.GetDerpRelay(s.DB, id)
+	row, err := db.GetDerpRelay(s.dbc(), id)
 	if err != nil {
 		http.Redirect(w, r, "/admin/derp/relays?err="+urlMsg(err),
 			http.StatusFound)

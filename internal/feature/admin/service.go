@@ -15,7 +15,6 @@
 package admin
 
 import (
-	"database/sql"
 	"net/http"
 
 	"skygate/internal/auth"
@@ -92,7 +91,15 @@ type Backend interface {
 // concurrently with a save/rotate/disable invalidate).
 type Service struct {
 	Backend                Backend
-	DB                     *sql.DB
+	// DB is the live pool source (B208). Use s.dbc()
+	// at every call site instead of s.dbc().X directly
+	// — the direct pattern would point to a closed
+	// pool after the B203 watchdog's first hot-reload.
+	// The ResettableDB from internal/db satisfies this
+	// interface via its Current() method; a plain
+	// *sql.DB also satisfies it (every call returns
+	// the same pointer) for unit tests.
+	DB                     DBSource
 	HSGlobalFn             func() *headscale.Client
 	HSForUserFn            func(userID int64) *headscale.Client
 	Cfg                    *config.Config
@@ -248,7 +255,7 @@ type Service struct {
 	// DNSCredsStore is the encrypted credential store for the
 	// DNS provider API (cert PEM + alternative password). Wired
 	// from cmd/skygate/main.go at boot via
-	// `extcreds.NewStore(s.DB, cfg.SecretKey)`. Nil = the
+	// `extcreds.NewStore(s.dbc(), cfg.SecretKey)`. Nil = the
 	// /admin/ha "External DNS" section renders a "store not
 	// configured" banner; the handlers also check for nil
 	// and return a clear error.

@@ -166,7 +166,7 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	// operator switch clusters). We tolerate the "no cluster"
 	// state (not configured yet) without erroring.
 	clusterID := "skygate-staging"
-	if row := s.DB.QueryRowContext(r.Context(),
+	if row := s.dbc().QueryRowContext(r.Context(),
 		`SELECT id, name, chain FROM cluster WHERE id = $1`, clusterID,
 	); row != nil {
 		var name string
@@ -183,7 +183,7 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 
 	// 2. Nodes — read all cluster_node rows for this cluster,
 	// sorted by hostname. The "self" row is highlighted.
-	rows, err := s.DB.QueryContext(r.Context(), `
+	rows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id, cluster_id, hostname, COALESCE(tailscale_ip, ''),
 		       roles, state, COALESCE(skygate_version, ''),
 		       joined_at, last_seen_at
@@ -230,7 +230,7 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	// 3. Database — read cluster_database. The full editor is
 	// on /admin/database; here we just show whether a row
 	// exists (and which node is the primary).
-	if row := s.DB.QueryRowContext(r.Context(),
+	if row := s.dbc().QueryRowContext(r.Context(),
 		`SELECT primary_node_id, current_dsn FROM cluster_database WHERE id = $1`,
 		clusterID,
 	); row != nil {
@@ -250,7 +250,7 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	// 4. Pending invites — read cluster_invite rows that are
 	// still pending and not expired. Phase 2.2 will add the
 	// "Generate invite" form.
-	invRows, err := s.DB.QueryContext(r.Context(), `
+	invRows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id, cluster_id, role, target_hostname,
 		       issued_at, expires_at, status
 		  FROM cluster_invite
@@ -285,7 +285,7 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	// names. Phase 2.2 (invite generation) will add new
 	// "cluster.invite.generate" / "cluster.invite.revoke" rows
 	// here.
-	if aRows, err := s.DB.QueryContext(r.Context(), `
+	if aRows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT unix_timestamp, actor, action, detail
 		  FROM audit_log
 		 WHERE action LIKE 'cluster.%'
@@ -454,16 +454,16 @@ func (s *Service) PostAdminClusterNodeAdd(w http.ResponseWriter, r *http.Request
 		}
 	}
 	// Pre-check: reject duplicates with a clear message.
-	if existing, err := cluster.LookupNode(s.DB, clusterID, hostname); err == nil && existing != nil {
+	if existing, err := cluster.LookupNode(s.dbc(), clusterID, hostname); err == nil && existing != nil {
 		clusterRedirect(w, r, "", "hostname already in cluster_node: "+hostname)
 		return
 	}
-	id, err := cluster.AddNode(s.DB, clusterID, hostname, tailscaleIP, roles, skygateVer)
+	id, err := cluster.AddNode(s.dbc(), clusterID, hostname, tailscaleIP, roles, skygateVer)
 	if err != nil {
 		clusterRedirect(w, r, "", "add node: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.node.add",
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.add",
 		fmt.Sprintf("id=%s hostname=%s roles=%v", id, hostname, roles))
 	clusterRedirect(w, r, fmt.Sprintf("Added %s (id %s).", hostname, id), "")
 }
@@ -497,11 +497,11 @@ func (s *Service) PostAdminClusterNodeRemove(w http.ResponseWriter, r *http.Requ
 		clusterRedirect(w, r, "", "cannot remove the self row ("+s.SelfHostname+") — use /admin/ha instead to take this node offline")
 		return
 	}
-	if err := cluster.RemoveNode(s.DB, clusterID, hostname); err != nil {
+	if err := cluster.RemoveNode(s.dbc(), clusterID, hostname); err != nil {
 		clusterRedirect(w, r, "", "remove: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.node.remove",
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.remove",
 		"hostname="+hostname)
 	clusterRedirect(w, r, "Removed "+hostname+".", "")
 }
@@ -555,12 +555,12 @@ func (s *Service) PostAdminClusterInviteGenerate(w http.ResponseWriter, r *http.
 		}
 		ttlHours = n
 	}
-	inviteID, token, expiresAt, err := cluster.IssueInvite(s.DB, clusterID, role, target, ttlHours, s.ClusterInviteSecret)
+	inviteID, token, expiresAt, err := cluster.IssueInvite(s.dbc(), clusterID, role, target, ttlHours, s.ClusterInviteSecret)
 	if err != nil {
 		clusterRedirect(w, r, "", "issue invite: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.invite.generate",
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.invite.generate",
 		fmt.Sprintf("id=%s role=%s target=%s ttl_hours=%d", inviteID, role, target, ttlHours))
 	// Show the token via the success flash. The token is
 	// truncated to its first 20 chars + "..." so a casual
@@ -592,11 +592,11 @@ func (s *Service) PostAdminClusterInviteRevoke(w http.ResponseWriter, r *http.Re
 		clusterRedirect(w, r, "", "invite_id is required")
 		return
 	}
-	if err := cluster.RevokeInvite(s.DB, inviteID); err != nil {
+	if err := cluster.RevokeInvite(s.dbc(), inviteID); err != nil {
 		clusterRedirect(w, r, "", "revoke: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.invite.revoke",
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.invite.revoke",
 		"id="+inviteID)
 	clusterRedirect(w, r, "Invite "+inviteID+" revoked.", "")
 }

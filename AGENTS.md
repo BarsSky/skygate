@@ -1999,6 +1999,77 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B208 (v1.5.0+) — admin Service DBSource
+    migration + `/admin/ha` cluster_audit view
+    (Phase 3.2 / G9 of cluster-management.md)**:
+    two sub-chunks in one B-chunk, both addressing
+    real bugs in the pre-B208 admin surface.
+    **B208.1 — DBSource migration.** The pre-B208
+    admin Service constructed with `DB *sql.DB`
+    captured at boot. The B203 watchdog hot-reloads
+    the pgxpool every ~5s when `cluster_database.
+    current_dsn` differs from the env DSN; the old
+    pool is closed in a goroutine, so the captured
+    pointer reads from a closed pool. Symptom: every
+    admin page (database, cluster, audit, nodes,
+    ha, acls, users, ...) returned
+    `sql: database is closed` after the first B203
+    swap. B199-B207 live verifies didn't catch it
+    because the B-checks test handler reachability +
+    SQL shape, not the live connection state. The
+    B207 live verify is what surfaced the regression.
+    Fix: change `Service.DB` from `*sql.DB` to a new
+    `admin.DBSource` interface (`Current() *sql.DB`),
+    add `s.dbc()` helper that returns `s.DB.Current()`
+    per call, and update ~70 call sites in 25 files
+    from `s.DB.X` to `s.dbc().X`. The ResettableDB
+    from internal/db (B203) satisfies the interface
+    directly via its existing `Current()` method —
+    main.go passes `d` (the wrapper) instead of the
+    captured `*sql.DB`. The pre-existing `healthz` and
+    `elector` packages use the same pattern (B206 +
+    B204) — B208 is the 3rd independent copy because
+    none of those packages export their `DBSource`
+    type, and a future `internal/db/dbsource.go`
+    consolidation is a separate refactor.
+    **B208.2 — `/admin/ha` cluster_audit events.**
+    Pre-B208 the /admin/ha "Last 20 HA events" table
+    only read from the legacy `audit_log`. The B204
+    HA elector writes `node_health` +
+    `failover_recommend` to `cluster_audit` (B195);
+    the B205 cluster failover writes `node_failover`.
+    These were the most important events for an
+    operator debugging "why is the primary failed?"
+    — and they were invisible on the page without
+    psql. Fix: extend the `collectHAPageData` query
+    to UNION `audit_log` + `cluster_audit` (in Go,
+    not SQL — the two tables have different schemas
+    for `created_at` (INTEGER vs TIMESTAMPTZ)).
+    Add a `Source` column to `haAuditEvent` that the
+    template renders as an orange badge for
+    `cluster_audit` rows and a gray badge for
+    `audit_log` rows. The dedup key is
+    `src:id` (e.g. `"cluster_audit:42"`) since both
+    tables use BIGSERIAL and could collide.
+    Files: `internal/feature/admin/dbsource.go` (new,
+    ~80 lines: DBSource interface + dbc() helper +
+    B208.1 doc), `internal/feature/admin/service.go`
+    (DB field type change + 1 import cleanup),
+    `internal/feature/admin/*.go` (24 files, ~70
+    sed-driven call-site updates), `cmd/skygate/
+    main.go` (pass `d` instead of `app.DB`),
+    `internal/feature/admin/ha.go` (cluster_audit
+    branch added to collectHAPageData + Source
+    field on haAuditEvent), `internal/handlers/
+    templates/admin/ha.html` (Source column with
+    source-colored badges), `scripts/check_b208.sh`
+    (18 contracts). The B-check verifies (a) the
+    Service.DB type changed, (b) main.go passes the
+    ResettableDB, (c) NO remaining `s.DB.method`
+    patterns outside `dbsource.go` (the legitimate
+    helper), (d) the ha.go handler queries both
+    tables, (e) the template renders the Source
+    column.
   - **B207 (v1.5.0+) — `/admin/audit` unified view
     (Phase 4.1 / G8 of cluster-management.md)**:
     pre-B207 the existing `/admin/audit` page

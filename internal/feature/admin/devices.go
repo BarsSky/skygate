@@ -57,13 +57,13 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	users, _ := s.HSGlobalFn().ListUsers()
 	allNodes, _ := s.HSGlobalFn().ListAllNodes()
 
-	devTags, _ := db.GetPerUserDeviceTags(s.DB, "")
+	devTags, _ := db.GetPerUserDeviceTags(s.dbc(), "")
 	devTagMap := make(map[string]string, len(devTags))
 	for _, t := range devTags {
 		devTagMap[t.Hostname] = t.Tag
 	}
 
-	deviceExitPrefs, _ := db.ListAllDeviceExitNodePrefs(s.DB)
+	deviceExitPrefs, _ := db.ListAllDeviceExitNodePrefs(s.dbc())
 	deviceExitPrefMap := make(map[string]string, len(deviceExitPrefs))
 	deviceExitViaMap := make(map[string]bool, len(deviceExitPrefs))
 	skygateUserByName := make(map[string]int64, len(users))
@@ -74,7 +74,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	for name := range skygateUserByName {
 		var id int64
-		if err := s.DB.QueryRow(
+		if err := s.dbc().QueryRow(
 			`SELECT id FROM portal_users WHERE username = $1`, name,
 		).Scan(&id); err == nil {
 			skygateUserByName[name] = id
@@ -112,7 +112,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	// the legacy `tag:exit-<host>` form inline. The
 	// post-B118 tag convention is `tag:dev-infra-<host>`,
 	// and node_owner_map is the source of truth.
-	allNodeOwners, _ := db.ListAllNodeOwners(s.DB)
+	allNodeOwners, _ := db.ListAllNodeOwners(s.dbc())
 	adminTagByHost := make(map[string]string, len(allNodeOwners))
 	for _, dn := range allNodeOwners {
 		if dn.Hostname != "" {
@@ -123,7 +123,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		exits[i].DevTag = adminTagByHost[strings.ToLower(exits[i].Hostname)]
 	}
 
-	userExitPrefs, _ := db.ListAllUserExitNodePrefs(s.DB)
+	userExitPrefs, _ := db.ListAllUserExitNodePrefs(s.dbc())
 	userExitPrefMap := make(map[string]string, len(userExitPrefs))
 	for _, ep := range userExitPrefs {
 		userExitPrefMap[strconv.FormatInt(ep.UserID, 10)] = ep.ExitNodeTag
@@ -137,7 +137,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	// reads the result.
 	osByNodeID := make(map[string]string)
 	typeByNodeID := make(map[string]string)
-	owners, _ := db.ListNodeOwnersByUsername(s.DB, "") // empty username = all rows
+	owners, _ := db.ListNodeOwnersByUsername(s.dbc(), "") // empty username = all rows
 	for _, o := range owners {
 		if o.NodeID != "" {
 			osByNodeID[o.NodeID] = o.OS
@@ -169,7 +169,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 			(typ == "" || typ == devicemeta.TypeUnknown) {
 			detectedOS := devicemeta.DetectOS(n.Hostname)
 			detectedType := devicemeta.DetectType(n.Tags, n.ApprovedRoutes, n.AvailableRoutes, detectedOS)
-			_ = db.UpdateDeviceMetaAutoDetect(s.DB, n.ID, detectedOS, detectedType)
+			_ = db.UpdateDeviceMetaAutoDetect(s.dbc(), n.ID, detectedOS, detectedType)
 			os, typ = detectedOS, detectedType
 		}
 		deviceRows = append(deviceRows, adminDeviceRow{
@@ -210,7 +210,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	// Walk all enabled device_rules and count dead rules per
 	// hostname.
-	allRules, _ := db.GetAllRulesForAdmin(s.DB)
+	allRules, _ := db.GetAllRulesForAdmin(s.dbc())
 	deadByHostname := map[string]int{}
 	// Pre-bucket by hostname so the cross-check is O(N).
 	for _, r := range allRules {
@@ -327,7 +327,7 @@ func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *ht
 			TaggedBy: c.UserID,
 		})
 	}
-	ins, upd, err := db.SyncNodesFromHeadscale(s.DB, syncInfos)
+	ins, upd, err := db.SyncNodesFromHeadscale(s.dbc(), syncInfos)
 	if err != nil {
 		http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -393,9 +393,9 @@ func (s *Service) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 			hsUID = n
 		}
 		if origUserName == "tagged-devices" {
-			_ = db.UpdateNodeOwnerTag(s.DB, nodeIDStr, tag, c.UserID)
+			_ = db.UpdateNodeOwnerTag(s.dbc(), nodeIDStr, tag, c.UserID)
 		} else {
-			_ = db.UpsertNodeOwner(s.DB, nodeIDStr, hsUID, origUserName, tag, c.UserID)
+			_ = db.UpsertNodeOwner(s.dbc(), nodeIDStr, hsUID, origUserName, tag, c.UserID)
 		}
 	}
 
@@ -427,7 +427,7 @@ func (s *Service) PostAdminNodeUntag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = db.DeleteNodeOwnerByNodeTag(s.DB, strconv.FormatInt(nodeID, 10), tag)
+	_ = db.DeleteNodeOwnerByNodeTag(s.dbc(), strconv.FormatInt(nodeID, 10), tag)
 
 	hs.InvalidateCache()
 	s.Backend.Audit(c.UserID, c.Username, "node_untag", fmt.Sprintf("node=%d tag=%s", nodeID, tag))
@@ -569,7 +569,7 @@ func (s *Service) PostAdminDeviceMeta(w http.ResponseWriter, r *http.Request) {
 	if typeIn == "" {
 		typeIn = devicemeta.TypeUnknown
 	}
-	if err := db.SetDeviceMetaNodeOwner(s.DB, strconv.FormatInt(nodeID, 10), os, typeIn); err != nil {
+	if err := db.SetDeviceMetaNodeOwner(s.dbc(), strconv.FormatInt(nodeID, 10), os, typeIn); err != nil {
 		http.Error(w, "db write failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -638,7 +638,7 @@ func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *ht
 		http.Error(w, "headscale list failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	users, err := db.GetAllPortalUsers(s.DB)
+	users, err := db.GetAllPortalUsers(s.dbc())
 	if err != nil {
 		http.Error(w, "list users failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -656,17 +656,17 @@ func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *ht
 		// Snapshot existing rows BEFORE the backfill runs
 		// so we can count renames for the audit log
 		// (existing.hostname != n.Hostname fires a rename).
-		preRows, _ := db.ListNodeOwnersByUsername(s.DB, u.Username)
+		preRows, _ := db.ListNodeOwnersByUsername(s.dbc(), u.Username)
 		preByNodeID := make(map[string]string, len(preRows))
 		for _, r := range preRows {
 			preByNodeID[r.NodeID] = r.Hostname
 		}
-		nodeownership.Backfill(s.DB, hs, nodes, u.ID, u.Username)
+		nodeownership.Backfill(s.dbc(), hs, nodes, u.ID, u.Username)
 		// Re-read to count renames (the helper updates
 		// the row in place; comparing pre vs post is the
 		// audit-friendly way to surface "5 renames
 		// applied" instead of a generic "backfill done").
-		postRows, _ := db.ListNodeOwnersByUsername(s.DB, u.Username)
+		postRows, _ := db.ListNodeOwnersByUsername(s.dbc(), u.Username)
 		for _, r := range postRows {
 			if preHost, ok := preByNodeID[r.NodeID]; ok && preHost != "" && preHost != r.Hostname {
 				renamed++
@@ -728,7 +728,7 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// Look up the target portal user.
-	users, err := db.GetAllPortalUsers(s.DB)
+	users, err := db.GetAllPortalUsers(s.dbc())
 	if err != nil {
 		http.Error(w, "list users failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -751,7 +751,7 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 	// to fire before the node check, which made the http.StatusInternalServerError vs
 	// http.StatusBadRequest distinction confusing for the operator — "is the
 	// node missing, or is my headscale down?".
-	currentRow, err := db.GetNodeOwner(s.DB, nodeIDStr)
+	currentRow, err := db.GetNodeOwner(s.dbc(), nodeIDStr)
 	if err != nil {
 		http.Error(w, "node not in node_owner_map: "+err.Error(), http.StatusBadRequest)
 		return
@@ -799,7 +799,7 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 	// report on 2026-08-25 for node id=35 "SkyBars").
 	newDevTag := fmt.Sprintf("tag:dev-%s-%s", targetUsername, strings.ToLower(liveHostname))
 	// 1) Upsert the row with the new owner + new dev tag.
-	if err := db.UpsertNodeOwner(s.DB, nodeIDStr, target.HeadscaleUserID, targetUsername, newDevTag, c.UserID); err != nil {
+	if err := db.UpsertNodeOwner(s.dbc(), nodeIDStr, target.HeadscaleUserID, targetUsername, newDevTag, c.UserID); err != nil {
 		http.Error(w, "db upsert failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -976,7 +976,7 @@ func (s *Service) PostAdminDeviceDelete(w http.ResponseWriter, r *http.Request) 
 	// the next snapshot cycle catches the absence)
 	// and headscale's policy remains stale.
 	deps := devicedelete.Deps{
-		DB:     s.DB,
+		DB:     s.dbc(),
 		HS:     hs,
 		Cfg:    s.Cfg,
 		Username: c.Username,

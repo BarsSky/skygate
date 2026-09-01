@@ -92,14 +92,14 @@ func (s *Service) GetAdminDerpRelaysInit(w http.ResponseWriter, r *http.Request)
 	// rather than COUNT so gaps (e.g. operator
 	// deleted a relay) don't cause a duplicate.
 	var nextRegionID int
-	_ = s.DB.QueryRow(`SELECT COALESCE(MAX(region_id), 0) + 1 FROM derp_relays`).Scan(&nextRegionID)
+	_ = s.dbc().QueryRow(`SELECT COALESCE(MAX(region_id), 0) + 1 FROM derp_relays`).Scan(&nextRegionID)
 	if nextRegionID == 0 {
 		nextRegionID = 1
 	}
 	// Suggest the next free sort_order. Same MAX + 1
 	// pattern.
 	var nextSortOrder int
-	_ = s.DB.QueryRow(`SELECT COALESCE(MAX(sort_order), 0) + 1 FROM derp_relays`).Scan(&nextSortOrder)
+	_ = s.dbc().QueryRow(`SELECT COALESCE(MAX(sort_order), 0) + 1 FROM derp_relays`).Scan(&nextSortOrder)
 	if nextSortOrder == 0 {
 		nextSortOrder = 1
 	}
@@ -309,7 +309,7 @@ func (s *Service) PostAdminDerpRelaysInit(w http.ResponseWriter, r *http.Request
 		Notes:      notes,
 		Enabled:    true,
 	}
-	if _, err := db.AddDerpRelay(s.DB, row); err != nil {
+	if _, err := db.AddDerpRelay(s.dbc(), row); err != nil {
 		http.Redirect(w, r, "/admin/derp/relays/init?err="+urlQueryEscape(err.Error()),
 			http.StatusFound)
 		return

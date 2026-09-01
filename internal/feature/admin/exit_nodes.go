@@ -134,7 +134,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	var dbRows []db.ExitServer
 	var listErr error
 	go func() {
-		dbRows, listErr = db.ListExitServers(s.DB)
+		dbRows, listErr = db.ListExitServers(s.dbc())
 		close(listDone)
 	}()
 	select {
@@ -177,7 +177,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		// failed). The resolved target is also used by the
 		// "Use Tailscale IP" button (which becomes visible when
 		// the stored ssh_target differs from the resolved one).
-		if resolved, lerr := db.LookupExitServerSSHTarget(s.DB, e.Hostname); lerr == nil {
+		if resolved, lerr := db.LookupExitServerSSHTarget(s.dbc(), e.Hostname); lerr == nil {
 			n.ResolvedSSHTarget = resolved
 			n.SSHTargetAuto = strings.TrimSpace(e.SSHTarget) == "" && resolved != ""
 		}
@@ -237,7 +237,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ruleRows, _ := s.DB.Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet')")
+	ruleRows, _ := s.dbc().Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet')")
 	if ruleRows != nil {
 		defer ruleRows.Close()
 		expectedRoutes := map[string]int{}
@@ -262,7 +262,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	// may not exist yet (monitor hasn't ticked, or this node
 	// was added after the last tick); the template renders
 	// "—" placeholders in that case.
-	healthRows, _ := db.ListExitNodeHealth(s.DB)
+	healthRows, _ := db.ListExitNodeHealth(s.dbc())
 	healthByID := make(map[string]db.ExitNodeHealth, len(healthRows))
 	now := time.Now().UTC()
 	for _, h := range healthRows {
@@ -499,7 +499,7 @@ func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) 
 		acceptRoutes = -1
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.UpsertExitServer.
-	if err := db.UpsertExitServer(s.DB, nodeID, hostname, sshTarget, sshKey, desc, sshPort, acceptRoutes); err != nil {
+	if err := db.UpsertExitServer(s.dbc(), nodeID, hostname, sshTarget, sshKey, desc, sshPort, acceptRoutes); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -521,7 +521,7 @@ func (s *Service) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.DeleteExitServerByNodeID.
-	if err := db.DeleteExitServerByNodeID(s.DB, nodeID); err != nil {
+	if err := db.DeleteExitServerByNodeID(s.dbc(), nodeID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -567,7 +567,7 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 	var hostname, sshKeyPath, description, sshPort string
 	var acceptRoutes int
 	var enabled bool
-	err := s.DB.QueryRow(
+	err := s.dbc().QueryRow(
 		`SELECT hostname, COALESCE(ssh_key_path, ''), COALESCE(description, ''), COALESCE(ssh_port, ''), COALESCE(accept_routes, 0), enabled
 		 FROM exit_servers WHERE node_id = $1`, nodeID,
 	).Scan(&hostname, &sshKeyPath, &description, &sshPort, &acceptRoutes, &enabled)
@@ -589,12 +589,12 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 	// tailscale_ip is set, the helper returns "" and we
 	// short-circuit with a clear error (instead of writing
 	// a malformed ssh_target = "root@").
-	resolved, _ := db.LookupExitServerSSHTarget(s.DB, hostname)
+	resolved, _ := db.LookupExitServerSSHTarget(s.dbc(), hostname)
 	if resolved == "" || !strings.HasPrefix(resolved, "root@") {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("Use Tailscale IP: no Tailscale IP discovered yet (wait for /admin/exit-nodes to refresh discovery)"), http.StatusSeeOther)
 		return
 	}
-	if err := db.UpsertExitServer(s.DB, nodeID, hostname, resolved, sshKeyPath, description, sshPort, acceptRoutes); err != nil {
+	if err := db.UpsertExitServer(s.dbc(), nodeID, hostname, resolved, sshKeyPath, description, sshPort, acceptRoutes); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -728,8 +728,8 @@ func (s *Service) PostAdminExitNodeSetAcceptRoutes(w http.ResponseWriter, r *htt
 	// (the post-update scan would still see it, but the existence
 	// check is implicit in UPDATE…WHERE — a 0-rows-affected means
 	// the row was deleted between the read and the write).
-	hostname, _ := db.GetExitServerHostname(s.DB, nodeID)
-	if err := db.SetExitServerAcceptRoutes(s.DB, nodeID, state); err != nil {
+	hostname, _ := db.GetExitServerHostname(s.dbc(), nodeID)
+	if err := db.SetExitServerAcceptRoutes(s.dbc(), nodeID, state); err != nil {
 		if errors.Is(err, db.ErrExitServerNotFound) {
 			http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("exit node not found: "+nodeID), http.StatusSeeOther)
 			return
@@ -1066,7 +1066,7 @@ func (s *Service) ensureExitServers() {
 	// node the operator disabled.
 	for _, n := range nodes {
 		if shouldIncludeAsExitServer(n.Tags, len(n.AvailableRoutes)) {
-			db.InsertIgnoreExitServerOnDiscovery(s.DB, n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
+			db.InsertIgnoreExitServerOnDiscovery(s.dbc(), n.ID, n.GivenName, strings.Join(n.IPAddresses, ","))
 		}
 	}
 	// Step 2 (v0.32.7): clean up rows that the pre-fix
@@ -1085,7 +1085,7 @@ func (s *Service) ensureExitServers() {
 	// deleted the node from the tailnet) — leave those
 	// alone; the operator can `kill` them via the
 	// /admin/exit-nodes page or directly in the DB.
-	rows, _ := s.DB.Query("SELECT id, node_id FROM exit_servers")
+	rows, _ := s.dbc().Query("SELECT id, node_id FROM exit_servers")
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -1109,7 +1109,7 @@ func (s *Service) ensureExitServers() {
 			// (which fires from the background discovery loop)
 			// silently fails on PG and the next page load
 			// retries forever.
-			if _, err := s.DB.Exec("DELETE FROM exit_servers WHERE id = "+db.PlaceholdersList(1), id); err != nil {
+			if _, err := s.dbc().Exec("DELETE FROM exit_servers WHERE id = "+db.PlaceholdersList(1), id); err != nil {
 				s.Backend.Audit(0, "skygate", "exit_server_cleanup_failed",
 					fmt.Sprintf("node_id=%s id=%d: %v", nid, id, err))
 			}

@@ -134,12 +134,12 @@ var TestRegistry = []SystemTestDef{
 		Description: "DB is reachable + integrity check passes (PRAGMA on SQLite, connectivity on PG)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
-			if db.BackendOf(s.DB) == db.BackendPostgres {
+			if db.BackendOf(s.dbc()) == db.BackendPostgres {
 				var n int
-				if err := s.DB.QueryRowContext(ctx, "SELECT 1").Scan(&n); err != nil {
+				if err := s.dbc().QueryRowContext(ctx, "SELECT 1").Scan(&n); err != nil {
 					return SystemTestFail, "SELECT 1 failed: " + err.Error()
 				}
 				if n != 1 {
@@ -148,7 +148,7 @@ var TestRegistry = []SystemTestDef{
 				// Lightweight per-table existence check: every
 				// table from migration v0.x must still be present.
 				// PG-specific catalog query (skipped on SQLite).
-				rows, err := s.DB.QueryContext(ctx, `
+				rows, err := s.dbc().QueryContext(ctx, `
 					SELECT count(*) FROM pg_tables
 					WHERE schemaname = 'public'
 					  AND tablename IN ('portal_users','preauth_keys','audit_log',
@@ -172,7 +172,7 @@ var TestRegistry = []SystemTestDef{
 				return SystemTestPass, "PG reachable, all 8 expected tables present"
 			}
 			var result string
-			if err := s.DB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&result); err != nil {
+			if err := s.dbc().QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&result); err != nil {
 				return SystemTestFail, err.Error()
 			}
 			if result != "ok" {
@@ -192,14 +192,14 @@ var TestRegistry = []SystemTestDef{
 		Description: "DB uses crash-safe journaling (WAL on SQLite; N/A on PG — always WAL)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
-			if db.BackendOf(s.DB) == db.BackendPostgres {
+			if db.BackendOf(s.dbc()) == db.BackendPostgres {
 				return SystemTestSkip, "PG always uses WAL (no journal_mode PRAGMA equivalent)"
 			}
 			var mode string
-			if err := s.DB.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+			if err := s.dbc().QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
 				return SystemTestFail, err.Error()
 			}
 			if mode != "wal" {
@@ -574,7 +574,7 @@ var TestRegistry = []SystemTestDef{
 		Description: "DERP / headplane / telegram integration config is present in global_settings",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
 			// Probe the 3 integration keys. A value of ""
@@ -590,7 +590,7 @@ var TestRegistry = []SystemTestDef{
 			configured := 0
 			missing := []string{}
 			for _, k := range keys {
-				v, err := db.GetGlobalSetting(s.DB, k, "")
+				v, err := db.GetGlobalSetting(s.dbc(), k, "")
 				if err != nil {
 					return SystemTestFail, "get "+k+": " + err.Error()
 				}
@@ -626,7 +626,7 @@ var TestRegistry = []SystemTestDef{
 		Description: "node_owner_map has no duplicate (hostname) rows",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
 			// 2026-08-10 v0.33.1.35: dropped the tailscale_ip
@@ -644,7 +644,7 @@ var TestRegistry = []SystemTestDef{
 			// HAVING phases resolve). The pre-fix form
 			// errored with `column "c" does not exist
 			// (SQLSTATE 42703)` on every run.
-			rows, err := s.DB.QueryContext(ctx, `
+			rows, err := s.dbc().QueryContext(ctx, `
 				SELECT hostname, count(*) AS c
 				FROM node_owner_map
 				WHERE hostname != ''
@@ -700,10 +700,10 @@ var TestRegistry = []SystemTestDef{
 		Description: "device_rules has no orphan rows (every row has action + target_value)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
-			rows, err := s.DB.QueryContext(ctx, `
+			rows, err := s.dbc().QueryContext(ctx, `
 				SELECT count(*) FROM device_rules
 				WHERE action = '' OR action IS NULL
 				   OR target_value = '' OR target_value IS NULL
@@ -724,7 +724,7 @@ var TestRegistry = []SystemTestDef{
 			}
 			// Total count for the operator's info.
 			var total int
-			if err := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM device_rules").Scan(&total); err != nil {
+			if err := s.dbc().QueryRowContext(ctx, "SELECT count(*) FROM device_rules").Scan(&total); err != nil {
 				return SystemTestPass, fmt.Sprintf("no orphan rules (count unknown: %v)", err)
 			}
 			// Per-user count for the operator's info. The
@@ -732,7 +732,7 @@ var TestRegistry = []SystemTestDef{
 			// "default exit" rules — useful signal that they
 			// exist and how many.
 			var perUser int
-			if err := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM device_rules WHERE device_hostname = '' OR device_hostname IS NULL").Scan(&perUser); err != nil {
+			if err := s.dbc().QueryRowContext(ctx, "SELECT count(*) FROM device_rules WHERE device_hostname = '' OR device_hostname IS NULL").Scan(&perUser); err != nil {
 				return SystemTestPass, fmt.Sprintf("%d rules, all have action + target_value (per-user count unknown: %v)", total, err)
 			}
 			if perUser > 0 {
@@ -863,21 +863,21 @@ var TestRegistry = []SystemTestDef{
 		Description: "At least one mesh network has ≥1 member (meshes + mesh_members tables)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
 			// Probe for table existence (pre-v0.22 DBs
 			// don't have it). The query is the same on
 			// both backends.
 			var tableCount int
-			if db.BackendOf(s.DB) == db.BackendPostgres {
-				if err := s.DB.QueryRowContext(ctx,
+			if db.BackendOf(s.dbc()) == db.BackendPostgres {
+				if err := s.dbc().QueryRowContext(ctx,
 					`SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('meshes','mesh_members')`,
 				).Scan(&tableCount); err != nil {
 					return SystemTestFail, "pg_tables: " + err.Error()
 				}
 			} else {
-				if err := s.DB.QueryRowContext(ctx,
+				if err := s.dbc().QueryRowContext(ctx,
 					`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('meshes','mesh_members')`,
 				).Scan(&tableCount); err != nil {
 					return SystemTestFail, "sqlite_master: " + err.Error()
@@ -886,7 +886,7 @@ var TestRegistry = []SystemTestDef{
 			if tableCount < 2 {
 				return SystemTestSkip, "meshes tables not present (pre-v0.22 schema)"
 			}
-			rows, err := s.DB.QueryContext(ctx, `
+			rows, err := s.dbc().QueryContext(ctx, `
 				SELECT m.name, count(mm.user_id) AS members
 				FROM meshes m
 				LEFT JOIN mesh_members mm ON mm.mesh_id = m.id
@@ -964,7 +964,7 @@ var TestRegistry = []SystemTestDef{
 		Description: "No device_rules reference a non-preferred exit-node (per-device or per-user pref)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
 			// Pull all enabled rules + the per-device / per-user
@@ -989,7 +989,7 @@ var TestRegistry = []SystemTestDef{
 			// numeric machine id) — text on the
 			// node_owner_map side, integer on the
 			// device_rules side.
-			rows, err := s.DB.QueryContext(ctx, `
+			rows, err := s.dbc().QueryContext(ctx, `
 				SELECT r.user_id, COALESCE(d.hostname, ''), r.exit_node_id
 				  FROM device_rules r
 				  LEFT JOIN node_owner_map d ON d.node_id = r.device_id::text
@@ -1022,7 +1022,7 @@ var TestRegistry = []SystemTestDef{
 				return SystemTestSkip, "no enabled device_rules — no test to run"
 			}
 			// Per-device prefs (userID:hostname → tag).
-			devPrefRows, err := s.DB.QueryContext(ctx, `SELECT user_id, device_hostname, exit_node_tag FROM device_exit_node_prefs`)
+			devPrefRows, err := s.dbc().QueryContext(ctx, `SELECT user_id, device_hostname, exit_node_tag FROM device_exit_node_prefs`)
 			if err != nil {
 				return SystemTestFail, "device prefs: " + err.Error()
 			}
@@ -1044,7 +1044,7 @@ var TestRegistry = []SystemTestDef{
 				devPrefs = append(devPrefs, p)
 			}
 			// Per-user prefs (userID → tag).
-			userPrefRows, err := s.DB.QueryContext(ctx, `SELECT user_id, exit_node_tag FROM user_exit_node_prefs`)
+			userPrefRows, err := s.dbc().QueryContext(ctx, `SELECT user_id, exit_node_tag FROM user_exit_node_prefs`)
 			if err != nil {
 				return SystemTestFail, "user prefs: " + err.Error()
 			}
@@ -1171,7 +1171,7 @@ var TestRegistry = []SystemTestDef{
 		Description: "Every enabled subnet/ip device_rule has a matching grant in the live headscale policy",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
 			s := getTestService()
-			if s == nil || s.DB == nil {
+			if s == nil || s.dbc() == nil {
 				return SystemTestFail, "DB not configured"
 			}
 			hs := s.HSGlobalFn()
@@ -1179,7 +1179,7 @@ var TestRegistry = []SystemTestDef{
 				return SystemTestFail, "headscale client not configured"
 			}
 			// 1) Read every enabled subnet/ip rule.
-			rows, err := s.DB.QueryContext(ctx, `
+			rows, err := s.dbc().QueryContext(ctx, `
 				SELECT target_value, COALESCE(user_name, ''), COALESCE(device_hostname, ''), COALESCE(device_ip, '')
 				  FROM device_rules
 				 WHERE enabled = 1 AND (target_type = 'subnet' OR target_type = 'ip')`)
@@ -1373,7 +1373,7 @@ func (s *Service) RunAllTests(ctx context.Context) ([]SystemTestResult, *SystemR
 // "Run all" click. The dispatch uses the same build-tag
 // pattern as db.SetGlobalSetting + db.nowUnixSQL.
 func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, summary *SystemRunSummary, userID int64) (int64, error) {
-	if s == nil || s.DB == nil {
+	if s == nil || s.dbc() == nil {
 		return 0, errors.New("DB not available")
 	}
 	resultsJSON, err := json.Marshal(results)
@@ -1382,7 +1382,7 @@ func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, su
 	}
 	durationMs := summary.FinishedAt.Sub(summary.StartedAt).Milliseconds()
 	ph := db.PlaceholdersList(8)
-	res, err := s.DB.ExecContext(ctx, `
+	res, err := s.dbc().ExecContext(ctx, `
 		INSERT INTO system_tests_runs
 			(started_at, finished_at, duration_ms, results_json,
 			 pass_count, fail_count, skip_count, triggered_by_user_id)
@@ -1406,7 +1406,7 @@ func (s *Service) ListRecentRuns(ctx context.Context, limit int) ([]SystemRunSum
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.DB.QueryContext(ctx, `
+	rows, err := s.dbc().QueryContext(ctx, `
 		SELECT id, started_at, finished_at, duration_ms,
 		       pass_count, fail_count, skip_count
 		FROM system_tests_runs
@@ -1474,10 +1474,10 @@ type LastRunWithResults struct {
 //
 // 2026-08-09 v0.33.1.26 — added.
 func (s *Service) ListLastRunWithResults(ctx context.Context) (*LastRunWithResults, error) {
-	if s == nil || s.DB == nil {
+	if s == nil || s.dbc() == nil {
 		return nil, errors.New("DB not configured")
 	}
-	row := s.DB.QueryRowContext(ctx, `
+	row := s.dbc().QueryRowContext(ctx, `
 		SELECT id, started_at, finished_at, duration_ms,
 		       results_json, pass_count, fail_count, skip_count
 		FROM system_tests_runs

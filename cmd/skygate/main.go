@@ -777,7 +777,13 @@ func main() {
 	// internal/handlers/ and will be moved in Phase B step 3b.
 	adminSvc := &adminsvc.Service{
 		Backend:                app,
-		DB:                     app.DB,
+		// v1.5.0+ / B208 — pass the ResettableDB (not the
+		// captured *sql.DB) so the admin Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B208 every admin page 500'd
+		// after the watchdog's first swap (the captured
+		// pool was closed in the swap goroutine).
+		DB:                     d,
 		HSGlobalFn:             app.HSGlobalFn,
 		HSForUserFn:            app.HSForUserFn,
 		Cfg:                    app.Config(),

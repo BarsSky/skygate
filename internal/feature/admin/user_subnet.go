@@ -48,14 +48,14 @@ type userClaims = auth.Claims
 // HeadscaleURL); a one-row SELECT is cheaper than the
 // GetAllPortalUsers loop.
 func (s *Service) readUserForSubnetPage(id int64) (username, headscaleURL string, err error) {
-	username, err = db.GetUserNameByID(s.DB, id)
+	username, err = db.GetUserNameByID(s.dbc(), id)
 	if err != nil {
 		return "", "", fmt.Errorf("get username: %w", err)
 	}
 	// headscale_url is a denormalized column on
 	// portal_users (v0.12.0 multi-plane). Empty
 	// string = global plane.
-	row := s.DB.QueryRow(`SELECT headscale_url FROM portal_users WHERE id = `+db.PlaceholdersList(1), id)
+	row := s.dbc().QueryRow(`SELECT headscale_url FROM portal_users WHERE id = `+db.PlaceholdersList(1), id)
 	if err := row.Scan(&headscaleURL); err != nil {
 		return "", "", fmt.Errorf("get headscale_url: %w", err)
 	}
@@ -71,7 +71,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
-	sub, _ := subnet.Get(s.DB, id)
+	sub, _ := subnet.Get(s.dbc(), id)
 	hsLabel := hsURL
 	if hsLabel == "" {
 		hsLabel = "(global default)"
@@ -103,7 +103,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 	// in v0.12.0 doesn't apply to them).
 	// 2026-07-25: v0.28.5 — also surface ViaEnabled for
 	// the "Strict pinning" checkbox.
-	if pref, err := db.GetUserExitNodePref(s.DB, id); err == nil {
+	if pref, err := db.GetUserExitNodePref(s.dbc(), id); err == nil {
 		data["PreferredExitNodeTag"] = pref.ExitNodeTag
 		data["ViaEnabled"] = pref.ViaEnabled
 	}
@@ -144,7 +144,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 			// been backfilled into node_owner_map yet
 			// (the migration runs at startup; until then
 			// the page is best-effort).
-			canonicalTag, _ := db.NormalizeExitNodeTag(s.DB, n.Hostname)
+			canonicalTag, _ := db.NormalizeExitNodeTag(s.dbc(), n.Hostname)
 			tag := canonicalTag
 			if tag == "" {
 				tag = "tag:exit-" + n.Hostname
@@ -162,7 +162,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 	// effort (no error returned to the page) so a
 	// transient DB issue doesn't blank the whole page.
 	if sub != nil {
-		if sharedBy, _ := subnet.ListSharedBy(s.DB, id); sharedBy != nil {
+		if sharedBy, _ := subnet.ListSharedBy(s.dbc(), id); sharedBy != nil {
 			// Resolve the grantee usernames for display.
 			type shareRow struct {
 				GranteeID       int64
@@ -172,12 +172,12 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 			rows := make([]shareRow, 0, len(sharedBy))
 			for _, sb := range sharedBy {
 				var uname string
-				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), sb.GranteeUserID).Scan(&uname)
+				_ = s.dbc().QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), sb.GranteeUserID).Scan(&uname)
 				rows = append(rows, shareRow{sb.GranteeUserID, uname, sb.CreatedAt})
 			}
 			data["SharedBy"] = rows
 		}
-		if sharedWith, _ := subnet.ListSharedWith(s.DB, id); sharedWith != nil {
+		if sharedWith, _ := subnet.ListSharedWith(s.dbc(), id); sharedWith != nil {
 			type incomingRow struct {
 				GrantorID       int64
 				GrantorUsername string
@@ -186,7 +186,7 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 			rows := make([]incomingRow, 0, len(sharedWith))
 			for _, sw := range sharedWith {
 				var uname string
-				_ = s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), sw.GrantorUserID).Scan(&uname)
+				_ = s.dbc().QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), sw.GrantorUserID).Scan(&uname)
 				rows = append(rows, incomingRow{sw.GrantorUserID, uname, sw.CreatedAt})
 			}
 			data["SharedWith"] = rows
@@ -258,7 +258,7 @@ func (s *Service) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Req
 	}
 	username, planeURL, _ := s.readUserForSubnetPage(id)
 	hostname := fmt.Sprintf("skygate-subnet-%s", username)
-	_, err = subnet.Create(s.DB, id, planeURL, hostname)
+	_, err = subnet.Create(s.dbc(), id, planeURL, hostname)
 	if err != nil && !errors.Is(err, subnet.ErrAlreadyExists) {
 		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": err.Error(),
@@ -283,7 +283,7 @@ func (s *Service) PostAdminUserSubnetAllocate(w http.ResponseWriter, r *http.Req
 	// best-effort: a failure is logged but doesn't
 	// fail the Allocate (the row is in the DB; the
 	// operator can manually re-apply if needed).
-	res := acl.ApplyACLPipelineForPlane(s.DB, s.HSForUserFn(0), planeURL, nil, c.Username,
+	res := acl.ApplyACLPipelineForPlane(s.dbc(), s.HSForUserFn(0), planeURL, nil, c.Username,
 		fmt.Sprintf("subnet_allocate user=%d", id), false)
 	if !res.Applied {
 		log.Printf("subnet_allocate: ACL reapply failed for user=%d: %v (row is allocated; click 'Re-apply ACL' to push)",
@@ -320,7 +320,7 @@ func (s *Service) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var granteeID int64
-	if err := s.DB.QueryRow(
+	if err := s.dbc().QueryRow(
 		`SELECT id FROM portal_users WHERE username = `+db.PlaceholdersList(1), granteeName,
 	).Scan(&granteeID); err != nil {
 		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
@@ -328,7 +328,7 @@ func (s *Service) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-	if err := subnet.Grant(s.DB, grantorID, granteeID); err != nil {
+	if err := subnet.Grant(s.dbc(), grantorID, granteeID); err != nil {
 		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
 			"FlashError": err.Error(),
 		})
@@ -338,7 +338,7 @@ func (s *Service) PostAdminUserSubnetShare(w http.ResponseWriter, r *http.Reques
 		fmt.Sprintf("grantor=%d grantee=%d (%s)", grantorID, granteeID, granteeName))
 	// Re-apply ACL.
 	hs := s.HSForUserFn(0)
-	_ = acl.ApplyACLPipelineForPlane(s.DB, hs, "", nil, c.Username,
+	_ = acl.ApplyACLPipelineForPlane(s.dbc(), hs, "", nil, c.Username,
 		fmt.Sprintf("subnet_share_granted grantor=%d grantee=%d", grantorID, granteeID), false)
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", grantorID), http.StatusSeeOther)
 }
@@ -368,7 +368,7 @@ func (s *Service) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "bad grantee_id", http.StatusBadRequest)
 		return
 	}
-	if err := subnet.Revoke(s.DB, grantorID, granteeID); err != nil {
+	if err := subnet.Revoke(s.dbc(), grantorID, granteeID); err != nil {
 		s.renderUserSubnetPage(w, r, c, grantorID, map[string]any{
 			"FlashError": err.Error(),
 		})
@@ -377,7 +377,7 @@ func (s *Service) PostAdminUserSubnetRevoke(w http.ResponseWriter, r *http.Reque
 	s.Backend.Audit(c.UserID, c.Username, "subnet_share_revoked",
 		fmt.Sprintf("grantor=%d grantee=%d", grantorID, granteeID))
 	hs := s.HSForUserFn(0)
-	_ = acl.ApplyACLPipelineForPlane(s.DB, hs, "", nil, c.Username,
+	_ = acl.ApplyACLPipelineForPlane(s.dbc(), hs, "", nil, c.Username,
 		fmt.Sprintf("subnet_share_revoked grantor=%d grantee=%d", grantorID, granteeID), false)
 	http.Redirect(w, r, fmt.Sprintf("/admin/users/%d/subnet", grantorID), http.StatusSeeOther)
 }
@@ -398,7 +398,7 @@ func (s *Service) PostAdminUserSubnetDisable(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	if err := subnet.SetStatus(s.DB, id, subnet.StatusDisabled); err != nil {
+	if err := subnet.SetStatus(s.dbc(), id, subnet.StatusDisabled); err != nil {
 		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": err.Error(),
 		})
@@ -441,7 +441,7 @@ func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *htt
 	// the hostname and re-resolve via node_owner_map.
 	if strings.HasPrefix(tag, "tag:exit-") && !strings.HasPrefix(tag, "tag:exit-node") {
 		hostname := strings.TrimPrefix(tag, "tag:exit-")
-		canonicalTag, err := db.NormalizeExitNodeTag(s.DB, hostname)
+		canonicalTag, err := db.NormalizeExitNodeTag(s.dbc(), hostname)
 		if err == nil && canonicalTag != "" {
 			tag = canonicalTag
 		}
@@ -452,7 +452,7 @@ func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *htt
 	// to a specific exit-node (e.g. workstation-3 → relay-3
 	// for a Windows box that supports via).
 	viaEnabled := r.FormValue("via") == "1"
-	if err := db.SetUserExitNodePref(s.DB, id, tag, c.UserID, viaEnabled); err != nil {
+	if err := db.SetUserExitNodePref(s.dbc(), id, tag, c.UserID, viaEnabled); err != nil {
 		s.renderUserSubnetPage(w, r, c, id, map[string]any{
 			"FlashError": fmt.Sprintf("set preferred exit: %v", err),
 		})
@@ -467,7 +467,7 @@ func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *htt
 	if s.Cfg != nil {
 		viaFlag = s.Cfg.ACLWithViaEnabled
 	}
-	res := acl.ApplyACLPipelineForPlane(s.DB, s.HSForUserFn(0), planeURL, nil, c.Username,
+	res := acl.ApplyACLPipelineForPlane(s.dbc(), s.HSForUserFn(0), planeURL, nil, c.Username,
 		fmt.Sprintf("preferred_exit_set user=%d tag=%q", id, tag), viaFlag)
 	if !res.Applied {
 		log.Printf("preferred_exit_set: ACL reapply failed for user=%d: %v", id, res.Err)
@@ -509,7 +509,7 @@ func (s *Service) PostAdminUserSubnetProvision(w http.ResponseWriter, r *http.Re
 	}
 	// Look up the username (needed for the suggested --hostname).
 	var username string
-	if err := s.DB.QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), id).Scan(&username); err != nil {
+	if err := s.dbc().QueryRow(`SELECT username FROM portal_users WHERE id = `+db.PlaceholdersList(1), id).Scan(&username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
@@ -566,7 +566,7 @@ func (s *Service) PostAdminUserSubnetTest(w http.ResponseWriter, r *http.Request
 // a list of human-readable result lines (one per
 // check). The admin UI renders them in a flash card.
 func (s *Service) runSubnetSanityCheck(userID int64) []string {
-	d := s.DB
+	d := s.dbc()
 	var out []string
 	sub, err := subnet.Get(d, userID)
 	if err != nil {

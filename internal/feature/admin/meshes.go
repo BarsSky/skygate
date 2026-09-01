@@ -37,7 +37,7 @@ func (s *Service) GetAdminMeshes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	meshes, err := mesh.ListAllMeshes(s.DB)
+	meshes, err := mesh.ListAllMeshes(s.dbc())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -45,12 +45,12 @@ func (s *Service) GetAdminMeshes(w http.ResponseWriter, r *http.Request) {
 	rows := make([]meshRow, 0, len(meshes))
 	for _, m := range meshes {
 		row := meshRow{Mesh: m}
-		if name, _ := db.GetUserNameByID(s.DB, m.CreatorUserID); name != "" {
+		if name, _ := db.GetUserNameByID(s.dbc(), m.CreatorUserID); name != "" {
 			row.CreatorName = name
 		} else {
 			row.CreatorName = "user#" + strconv.FormatInt(m.CreatorUserID, 10)
 		}
-		members, _ := mesh.ListMembers(s.DB, m.ID)
+		members, _ := mesh.ListMembers(s.dbc(), m.ID)
 		row.MemberCount = len(members)
 		row.MemberList = members
 		rows = append(rows, row)

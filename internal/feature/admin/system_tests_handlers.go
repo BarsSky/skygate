@@ -63,7 +63,7 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 	// know what the fallback env value is. We pass
 	// s.Cfg.DNSAutoUpdateEnabled so the operator sees the
 	// SAME effective state the goroutine would use.
-	dnsAutoEnabled := db.GetGlobalSettingBool(s.DB, globalSettingsKeyDNSAutoUpdate, s.Cfg.DNSAutoUpdateEnabled)
+	dnsAutoEnabled := db.GetGlobalSettingBool(s.dbc(), globalSettingsKeyDNSAutoUpdate, s.Cfg.DNSAutoUpdateEnabled)
 	// TD-8 (2026-08-18): read the ?tab= and ?window= query
 	// params. Default tab is "tests" (the original grid);
 	// default window is "7d". Unknown values fall back to

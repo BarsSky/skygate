@@ -35,7 +35,7 @@ func (s *Service) GetAdminInvites(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	invites, err := invite.ListAll(s.DB)
+	invites, err := invite.ListAll(s.dbc())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -46,13 +46,13 @@ func (s *Service) GetAdminInvites(w http.ResponseWriter, r *http.Request) {
 	rows := make([]inviteRow, 0, len(invites))
 	for _, inv := range invites {
 		row := inviteRow{Invite: inv}
-		if name, _ := db.GetUserNameByID(s.DB, inv.GrantorUserID); name != "" {
+		if name, _ := db.GetUserNameByID(s.dbc(), inv.GrantorUserID); name != "" {
 			row.GrantorName = name
 		} else {
 			row.GrantorName = "user#" + strconv.FormatInt(inv.GrantorUserID, 10)
 		}
 		if inv.ConsumedByUserID > 0 {
-			if name, _ := db.GetUserNameByID(s.DB, inv.ConsumedByUserID); name != "" {
+			if name, _ := db.GetUserNameByID(s.dbc(), inv.ConsumedByUserID); name != "" {
 				row.ConsumerName = name
 			} else {
 				row.ConsumerName = "user#" + strconv.FormatInt(inv.ConsumedByUserID, 10)
@@ -89,7 +89,7 @@ func (s *Service) PostAdminInvitesRevoke(w http.ResponseWriter, r *http.Request)
 		http.Redirect(w, r, "/admin/invites?err=missing_code", http.StatusFound)
 		return
 	}
-	if err := invite.RevokeInvite(s.DB, code); err != nil {
+	if err := invite.RevokeInvite(s.dbc(), code); err != nil {
 		http.Redirect(w, r, "/admin/invites?err=revoke_failed", http.StatusFound)
 		return
 	}

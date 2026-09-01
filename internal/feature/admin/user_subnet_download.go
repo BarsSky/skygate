@@ -52,7 +52,7 @@ func (s *Service) GetAdminUserSubnetDownload(w http.ResponseWriter, r *http.Requ
 		username string
 		cidr     string
 	)
-	if err := s.DB.QueryRow(
+	if err := s.dbc().QueryRow(
 		`SELECT username, COALESCE(subnet_cidr, '') FROM portal_users WHERE id = `+db.PlaceholdersList(1), id,
 	).Scan(&username, &cidr); err != nil {
 		http.Error(w, fmt.Sprintf("user not found: %v", err), http.StatusNotFound)

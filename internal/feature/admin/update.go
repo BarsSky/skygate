@@ -297,7 +297,7 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// the page can show "schedule was on / schedule was
 		// off" in the auto-update banner area (replaced by
 		// the new Schedule section). Kept for back-compat.
-		"AutoUpdateEnabled": db.GetGlobalSettingBool(s.DB, "auto_update_enabled", s.Cfg.AutoUpdateEnabled),
+		"AutoUpdateEnabled": db.GetGlobalSettingBool(s.dbc(), "auto_update_enabled", s.Cfg.AutoUpdateEnabled),
 		// 2026-08-18 (B129): the new scheduled auto-update
 		// state. The /admin/update page shows a "Schedule"
 		// section with a toggle + HH:MM input. Both values
@@ -306,14 +306,14 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// + SKYGATE_UPDATE_SCHEDULE_TIME). The background
 		// scheduler (B130) reads these same values to
 		// decide when to trigger the orchestrator.
-		"UpdateScheduleEnabled": db.GetGlobalSettingBool(s.DB, "update_schedule_enabled", s.Cfg.UpdateScheduleEnabled),
-		"UpdateScheduleTime":    safeGetString(s.DB, "update_schedule_time", s.Cfg.UpdateScheduleTime),
+		"UpdateScheduleEnabled": db.GetGlobalSettingBool(s.dbc(), "update_schedule_enabled", s.Cfg.UpdateScheduleEnabled),
+		"UpdateScheduleTime":    safeGetString(s.dbc(), "update_schedule_time", s.Cfg.UpdateScheduleTime),
 		// 2026-08-18 (B129): last-run timestamp of the
 		// scheduled auto-update. Stored in global_settings
 		// (key='update_schedule_last_run', ISO 8601 string).
 		// The background scheduler writes it on every run;
 		// the page shows it as "Последний запуск: …".
-		"UpdateScheduleLastRun": safeGetString(s.DB, "update_schedule_last_run", ""),
+		"UpdateScheduleLastRun": safeGetString(s.dbc(), "update_schedule_last_run", ""),
 		// 2026-08-17 (B124): when this is a dev build
 		// (SKYGATE_DEV_BUILD=true), the template renders
 		// a "dev build" banner instead of the "update

@@ -58,7 +58,7 @@ func (s *Service) GetAdminBackupConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	cfg, err := backup.Load(s.DB)
+	cfg, err := backup.Load(s.dbc())
 	if err != nil {
 		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -179,7 +179,7 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 		backupConfigRedirect(w, r, "", i18n.Tf(lang, "backup.test_failed", err.Error()))
 		return
 	}
-	if err := backup.Save(s.DB, cfg); err != nil {
+	if err := backup.Save(s.dbc(), cfg); err != nil {
 		backupConfigRedirect(w, r, "", "Save failed: "+err.Error())
 		return
 	}
@@ -262,13 +262,13 @@ func (s *Service) PostAdminBackupRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	cfg, err := backup.Load(s.DB)
+	cfg, err := backup.Load(s.dbc())
 	if err != nil {
 		backupConfigRedirect(w, r, "", "Load config: "+err.Error())
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
-	res, err := backup.RunBackup(s.DB, cfg)
+	res, err := backup.RunBackup(s.dbc(), cfg)
 	if res != nil {
 		// 2026-07-30 (v0.34 fix): the detail line was previously
 		// formatted before the nil check, so a nil res from
@@ -390,13 +390,13 @@ func (s *Service) PostAdminBackupToggle(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
-	cfg, err := backup.Load(s.DB)
+	cfg, err := backup.Load(s.dbc())
 	if err != nil {
 		backupConfigRedirect(w, r, "", "Load config: "+err.Error())
 		return
 	}
 	cfg.InAppEnabled = r.FormValue("enabled") == "1"
-	if err := backup.Save(s.DB, cfg); err != nil {
+	if err := backup.Save(s.dbc(), cfg); err != nil {
 		backupConfigRedirect(w, r, "", "Save failed: "+err.Error())
 		return
 	}

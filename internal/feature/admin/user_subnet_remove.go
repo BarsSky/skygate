@@ -64,7 +64,7 @@ func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 1. Read user_subnets. Missing row → http.StatusNotFound.
-	sub, err := subnet.Get(s.DB, id)
+	sub, err := subnet.Get(s.dbc(), id)
 	if err != nil {
 		if errors.Is(err, subnet.ErrNotFound) {
 			http.Error(w, "no subnet row for this user (run /subnet/allocate first)", http.StatusNotFound)
@@ -106,7 +106,7 @@ func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Reque
 	//    the user can re-provision a new router later
 	//    (admin clicks Provision, gets a new preauth,
 	//    new device registers, sidecar re-approves).
-	if _, err := s.DB.Exec(
+	if _, err := s.dbc().Exec(
 		`UPDATE user_subnets
 		   SET status = $1, router_node_id = '', router_hostname = '',
 		       updated_at = strftime('%s','now')
@@ -122,7 +122,7 @@ func (s *Service) PostAdminUserSubnetRemove(w http.ResponseWriter, r *http.Reque
 	//    are NOT NULL DEFAULT '' in v0.16.0, so we set
 	//    them to empty string (not NULL) per the
 	//    constraint contract.
-	if _, err := s.DB.Exec(
+	if _, err := s.dbc().Exec(
 		`UPDATE portal_users
 		   SET subnet_status = $1, subnet_cidr = '',
 		       subnet_router_node_id = '', subnet_router_hostname = ''

@@ -50,7 +50,7 @@ func (s *Service) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	users, err := db.GetAllPortalUsers(s.DB)
+	users, err := db.GetAllPortalUsers(s.dbc())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -119,7 +119,7 @@ func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "username: lowercase letters, digits, _ and - only", http.StatusBadRequest)
 		return
 	}
-	_, err := db.GetUserIDByName(s.DB, username)
+	_, err := db.GetUserIDByName(s.dbc(), username)
 	if err == nil {
 		http.Error(w, fmt.Sprintf("user %q already exists in skygate", username), http.StatusConflict)
 		return
@@ -139,7 +139,7 @@ func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	newUserID, err := db.InsertPortalUser(s.DB, username, hash, isAdmin, hsID)
+	newUserID, err := db.InsertPortalUser(s.dbc(), username, hash, isAdmin, hsID)
 	if err != nil {
 		http.Error(w, "portal insert: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -147,7 +147,7 @@ func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-20: v0.20.0 — auto-allocate subnet on user
 	// create (best-effort, doesn't roll back the user).
 	if s.Cfg != nil && s.Cfg.AutoAllocateSubnetOnUserCreate {
-		if _, allocErr := subnet.Create(s.DB, newUserID, "", ""); allocErr != nil {
+		if _, allocErr := subnet.Create(s.dbc(), newUserID, "", ""); allocErr != nil {
 			log.Printf("user_create: auto-allocate subnet for %s (id=%d) failed: %v", username, newUserID, allocErr)
 			s.Backend.Audit(c.UserID, c.Username, "user_create", fmt.Sprintf("%s hs_id=%d admin=%v auto_allocate=FAIL: %v", username, hsID, isAdmin, allocErr))
 		} else {
@@ -174,7 +174,7 @@ func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot delete yourself", http.StatusBadRequest)
 		return
 	}
-	username, hsID, err := db.GetUserNameAndHSByID(s.DB, id)
+	username, hsID, err := db.GetUserNameAndHSByID(s.dbc(), id)
 	if errors.Is(err, db.ErrUserNotFound) {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
@@ -191,10 +191,10 @@ func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 			hsDeleteMsg = " [headscale: deleted]"
 		}
 	}
-	keysDeleted, _ := db.DeletePreauthKeysByUserID(s.DB, int64(id))
-	_ = db.DeleteAuditLogByUserID(s.DB, int64(id))
-	tokensDeleted, _ := db.DeleteAPITokensByUserID(s.DB, int64(id))
-	_, err = db.DeletePortalUserByID(s.DB, id)
+	keysDeleted, _ := db.DeletePreauthKeysByUserID(s.dbc(), int64(id))
+	_ = db.DeleteAuditLogByUserID(s.dbc(), int64(id))
+	tokensDeleted, _ := db.DeleteAPITokensByUserID(s.dbc(), int64(id))
+	_, err = db.DeletePortalUserByID(s.dbc(), id)
 	if err != nil {
 		http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -280,7 +280,7 @@ func (s *Service) PostAdminHSOrphanAdopt(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "hash: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	newID, inserted, err := db.InsertPortalUserAdopt(s.DB, hsName, hash, hsID)
+	newID, inserted, err := db.InsertPortalUserAdopt(s.dbc(), hsName, hash, hsID)
 	if err != nil {
 		http.Error(w, "insert: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -340,7 +340,7 @@ func (s *Service) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "password too short (min 6)", http.StatusBadRequest)
 		return
 	}
-	username, err := db.GetUserNameByID(s.DB, id)
+	username, err := db.GetUserNameByID(s.dbc(), id)
 	if errors.Is(err, db.ErrUserNotFound) {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
@@ -354,7 +354,7 @@ func (s *Service) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if _, err := db.UpdatePasswordHash(s.DB, id, hash); err != nil {
+	if _, err := db.UpdatePasswordHash(s.dbc(), id, hash); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

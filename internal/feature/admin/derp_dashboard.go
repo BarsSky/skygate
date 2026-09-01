@@ -43,7 +43,7 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 	// GetAdminAudit, internal/feature/admin/acl_import.go
 	// GetAdminACLsImport, etc).
 	c := s.Backend.CurrentUser(r)
-	rows, err := s.DB.QueryContext(r.Context(), `
+	rows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT region_id, is_own, host, url, region_code, region_name,
 		       locality, country, latency_ms, last_check, healthy,
 		       last_error, probes_total, probes_failed
@@ -125,7 +125,7 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 func (s *Service) PostAdminDerpDashboardRefresh(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	ctx := r.Context()
-	results, err := derphealth.RunOnceNow(ctx, s.DB, nil)
+	results, err := derphealth.RunOnceNow(ctx, s.dbc(), nil)
 	if err != nil {
 		log.Printf("derp dashboard refresh: %v", err)
 		s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", c,

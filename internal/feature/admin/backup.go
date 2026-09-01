@@ -209,7 +209,7 @@ func (s *Service) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	// template). We do this here so the legacy
 	// /admin/backup URL keeps working — admins can
 	// bookmark either.
-	if cfg, err := backup.Load(s.DB); err == nil {
+	if cfg, err := backup.Load(s.dbc()); err == nil {
 		data["Config"] = cfg
 		data["Protocols"] = backup.AllProtocols
 	}
@@ -496,7 +496,7 @@ func (s *Service) GetAdminBackupDownloadS3(w http.ResponseWriter, r *http.Reques
 	// the form value, so a crafted `archive` param
 	// can't trick us into fetching from a different
 	// bucket.
-	cfg, err := backup.Load(s.DB)
+	cfg, err := backup.Load(s.dbc())
 	if err != nil {
 		http.Error(w, "load backup config: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -608,7 +608,7 @@ func (s *Service) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exitPolicy string
-	s.DB.QueryRow("SELECT value FROM global_settings WHERE key = 'exit_policy'").Scan(&exitPolicy)
+	s.dbc().QueryRow("SELECT value FROM global_settings WHERE key = 'exit_policy'").Scan(&exitPolicy)
 	if exitPolicy == "" {
 		exitPolicy = "allow_all"
 	}
@@ -651,7 +651,7 @@ func (s *Service) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
 		// "syntax error at or near ','" + "function strftime()
 		// does not exist". Without this fix the /admin/settings
 		// "Exit policy" radio never persists.
-		_ = db.SetGlobalSetting(s.DB, "exit_policy", ep)
+		_ = db.SetGlobalSetting(s.dbc(), "exit_policy", ep)
 	}
 	_ = r.FormValue("headscale_url")
 	_ = r.FormValue("headscale_api_key")

@@ -209,7 +209,7 @@ func (s *Service) AddACL(ctx context.Context, rule ACLRule, label string, userID
 	// /admin/headscale/acl "Add rule" + "Apply" buttons fail
 	// with "syntax error at or near ','" on the prod PG
 	// backend.
-	if _, err := s.DB.ExecContext(ctx, `
+	if _, err := s.dbc().ExecContext(ctx, `
 		INSERT INTO headscale_acl_rules
 			(id, rule_json, fingerprint, label, created_at, created_by_user_id, enabled)
 		VALUES (`+db.PlaceholdersList(6)+`, 1)
@@ -236,7 +236,7 @@ func (s *Service) RemoveACL(ctx context.Context, id string) error {
 	var label string
 	// 2026-08-05 v0.33.1.12: same PG-placeholder fix as
 	// AddACL — "?" -> "$1" on PG.
-	err := s.DB.QueryRowContext(ctx, `
+	err := s.dbc().QueryRowContext(ctx, `
 		SELECT rule_json, fingerprint, label
 		FROM headscale_acl_rules WHERE id=`+db.PlaceholdersList(1)+` AND enabled=1
 	`, id).Scan(&ruleJSON, &fingerprint, &label)
@@ -269,7 +269,7 @@ func (s *Service) RemoveACL(ctx context.Context, id string) error {
 	// Soft-delete in DB (preserve audit trail).
 	// 2026-08-05 v0.33.1.12: same PG-placeholder fix as
 	// AddACL — "?" -> "$1" on PG.
-	if _, err := s.DB.ExecContext(ctx, `
+	if _, err := s.dbc().ExecContext(ctx, `
 		UPDATE headscale_acl_rules SET enabled=0 WHERE id=`+db.PlaceholdersList(1)+`
 	`, id); err != nil {
 		return fmt.Errorf("soft-delete: %w", err)
@@ -338,7 +338,7 @@ type skygateACLRow struct {
 }
 
 func (s *Service) loadSkygateACLMap(ctx context.Context) (map[string]skygateACLRow, error) {
-	rows, err := s.DB.QueryContext(ctx, `
+	rows, err := s.dbc().QueryContext(ctx, `
 		SELECT id, label, fingerprint, created_at, created_by_user_id
 		FROM headscale_acl_rules WHERE enabled=1
 	`)
@@ -363,7 +363,7 @@ func (s *Service) lookupByFingerprint(ctx context.Context, fp string) (string, e
 	var id string
 	// 2026-08-05 v0.33.1.12: same PG-placeholder fix as
 	// AddACL — "?" -> "$1" on PG.
-	err := s.DB.QueryRowContext(ctx, `
+	err := s.dbc().QueryRowContext(ctx, `
 		SELECT id FROM headscale_acl_rules WHERE fingerprint=`+db.PlaceholdersList(1)+` AND enabled=1 LIMIT 1
 	`, fp).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
