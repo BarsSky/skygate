@@ -101,9 +101,9 @@
         <td><span class="muted" title="{{.LastSeenAt}}">{{.LastSeenAt}}</span></td>
         <td>
           {{if .IsSelf}}
-            <span class="muted" title="{{t "cluster.node_remove_self" $.Data.SelfHostname}}">—</span>
+            <span class="muted" title="{{tf "cluster.node_remove_self" $.Data.SelfHostname}}">—</span>
           {{else}}
-          <form method="POST" action="/admin/cluster/node/remove" style="display:inline" onsubmit="return confirm('{{t "cluster.node_remove_confirm" (printf "%s" .Hostname) | js}}')">
+          <form method="POST" action="/admin/cluster/node/remove" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_remove_confirm" .Hostname | js}}')">
             <input type="hidden" name="hostname" value="{{.Hostname}}">
             <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> {{t "cluster.node_remove"}}</button>
           </form>
@@ -174,7 +174,7 @@
         <td><span class="muted" title="{{.IssuedAt}}">{{.IssuedAt}}</span></td>
         <td><span class="muted" title="{{.ExpiresAt}}">{{.ExpiresAt}}</span></td>
         <td>
-          <form method="POST" action="/admin/cluster/invite/revoke" style="display:inline" onsubmit="return confirm('{{t "cluster.invite_revoke_confirm" (printf "%s" .ID) | js}}')">
+          <form method="POST" action="/admin/cluster/invite/revoke" style="display:inline" onsubmit="return confirm('{{tf "cluster.invite_revoke_confirm" .ID | js}}')">
             <input type="hidden" name="invite_id" value="{{.ID}}">
             <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-ban"></i> {{t "cluster.invite_revoke"}}</button>
           </form>
