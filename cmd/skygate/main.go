@@ -1277,6 +1277,26 @@ func main() {
 	_ = migrateSvc // Phase 1.4 framework is wired; routes below
 	//                  delegate to adminSvc for rendering (so the
 	//                  page uses the admin layout + nav).
+
+	// v1.5.0+ / B202 — wire the auth-claims extractor so
+	// the migrate handlers can do their admin check. Pre-B202
+	// this was a pre-existing B198 bug: getClaims() always
+	// returned nil → every admin-gated migrate endpoint
+	// returned 403, even with a valid admin session. The
+	// bridge translates auth.Claims to the local claims type
+	// (dbmigrate has a tiny inline struct to avoid an
+	// import cycle with the auth package).
+	dbmigrate.SetCurrentClaims(func(r *http.Request) *dbmigrate.Claims {
+		u := app.CurrentUser(r)
+		if u == nil {
+			return nil
+		}
+		return &dbmigrate.Claims{
+			UserID:   u.UserID,
+			Username: u.Username,
+			IsAdmin:  u.IsAdmin,
+		}
+	})
 	//                  The migrateSvc methods are still called by
 	//                  the admin handler for data access (LoadRun,
 	//                  etc.).

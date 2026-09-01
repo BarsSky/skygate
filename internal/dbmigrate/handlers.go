@@ -244,11 +244,14 @@ func getSourceDSN(r *http.Request) string {
 // nil if not logged in. Pulled from the admin's
 // Backend.CurrentUser via a thin indirection so we don't
 // have to import the admin package (would cycle).
-func getClaims(r *http.Request) *claims {
+func getClaims(r *http.Request) *Claims {
 	return currentClaims(r)
 }
 
-type claims struct {
+// Claims is a tiny re-shape of auth.Claims with just the
+// fields the migrate handlers need. Exported so main.go
+// can construct one from auth.Claims in SetCurrentClaims.
+type Claims struct {
 	UserID   int64
 	Username string
 	IsAdmin  bool
@@ -256,11 +259,11 @@ type claims struct {
 
 // currentClaims is set by SetCurrentClaims (called from
 // admin handler) and read by the handlers in this package.
-var currentClaims = func(r *http.Request) *claims { return nil }
+var currentClaims = func(r *http.Request) *Claims { return nil }
 
 // SetCurrentClaims is called from admin.Service at init
 // to inject the user-claims extractor.
-func SetCurrentClaims(fn func(*http.Request) *claims) {
+func SetCurrentClaims(fn func(*http.Request) *Claims) {
 	currentClaims = fn
 }
 
