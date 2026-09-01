@@ -73,14 +73,11 @@ func (s *AuditLogStep) Rollback(ctx *deployrun.DeployContext) error {
 	return nil
 }
 
-// extractPreauthKeyIDShared is a shared helper for
-// preauth key extraction from form_data. The
-// steps/ package keeps its own copy to avoid an
-// import cycle with the deployrun package.
-func extractPreauthKeyIDShared(formData string) string {
-	return extractPreauthKeyID(formData)
-}
-
+// extractPreauthKeyID pulls the preauth_key_id out of
+// the form_data JSON blob, if the previous step
+// (GeneratePreauthKey) stashed it there. The audit
+// row is informational — the absence of the field
+// is not a failure.
 func extractPreauthKeyID(formData string) string {
 	needle := `"_preauth_key_id":"`
 	i := indexOf(formData, needle)
