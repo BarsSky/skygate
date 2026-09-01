@@ -2063,13 +2063,52 @@ in the same commit. Don't let the tracker drift.
     postHeartbeat, main.go has 'cluster' case + help text
     mentions 'cluster <verb>', 6+ unit tests, build/vet/
     tests pass, AGENTS.md mention).
-    Live verification will exercise the full
-    invite → join → audit → failover cycle on the live
-    agent (see B205 verify script for the canonical
-    sequence). The CLI surface closes the gap that B204
-    left open: the elector only writes a
-    `failover_recommend` audit row, the operator accepts
-    via `skygate cluster failover --target=<node>`.
+    Live verification (post-deploy, commit `d81d6920`):
+    1. `cluster nodes` lists all cluster_node rows in
+       tab-separated format. Test fixtures: 3 rows
+       (agent-direct-1 primary, svi-direct-1 + 2
+       standbys).
+    2. `cluster dbs` lists the cluster_database row
+       (skygate-staging) including the NULL primary_node_id
+       (the live row hasn't been promoted yet). B205.1
+       added COALESCE + db.StringArray to handle the
+       same NULL + TEXT[] scan issues as B203.1.
+    3. `cluster audit --limit 3` shows the most recent
+       cluster_audit rows: 2x `failover_recommend` (B204
+       elector) + 1x `node_health`.
+    4. `cluster invite --role=skygate-standby --hostname=svi-direct-3`
+       prints a valid sgn1 token to stdout (line 1) and
+       `expires_at` to stderr (line 2) — the format
+       `bootstrap_standby.sh` expects.
+    5. `cluster failover --target=test-b204-standby-ready
+       --reason="B205 live verification: accept the B204
+       recommendation"`:
+       - target's roles updated to `{skygate, skygate-standby}`
+       - failed primary's state → `draining`, `skygate`
+         role removed
+       - new `node_failover` cluster_audit row written
+         in a single transaction
+       - stdout: `cluster failover: test-b204-primary-failed
+         → test-b204-standby-ready (failed primary marked
+         draining)`
+    6. `cluster heartbeat-daemon` correctly errors with
+       `read state: open /etc/skygate/cluster-state.json:
+       no such file or directory (run 'skygate cluster
+       join <token>' first)` — the helpful error message
+       tells the operator the bootstrap order.
+    7. `cluster join --help` shows the flag surface
+       (`-api-url`, `-state-file`).
+    8. `skygate help` mentions `cluster <verb>` in the
+       command list.
+    The CLI surface closes the gap that B204 left open:
+    the elector only writes a `failover_recommend` audit
+    row, the operator accepts via `skygate cluster
+    failover --target=<node>`. B205.1 fixed two live
+    bugs (same NULL + TEXT[] patterns as B203.1):
+    - `cluster dbs` Scan error on `primary_node_id` →
+      COALESCE
+    - `cluster dbs` Scan error on `replica_node_ids`
+      (TEXT[] returned as literal) → db.StringArray.
   - **B203.1 (v1.5.0+) — `GetClusterDatabase` NULL
     safety fix (live B203 follow-up)**: the first
     live B203 test (inserted a `cluster_database` row
