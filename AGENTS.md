@@ -1917,20 +1917,55 @@ in the same commit. Don't let the tracker drift.
     schema makes `primary_node_id` NULL-able
     (`REFERENCES cluster_node(id) ON DELETE SET NULL`),
     so the watchdog crashed on every read.
-    **Fix**: COALESCE all NULL-able columns in the
-    SELECT statement to their default empty value
-    (defensive — the schema only requires it for
-    `primary_node_id` today). 4 new unit tests in
-    `internal/db/cluster_b203_test.go` cover the NULL
-    case (the regression), the populated case (positive
-    control), the not-found case, and the empty-replicas
-    case. 2 new B-check contracts in
-    `scripts/check_b203.sh` (#25, #26) pin the
-    COALESCE on `primary_node_id` + the new test file.
-    Live-verified post-deploy: watchdog logs
+    **Fix #1**: COALESCE `primary_node_id` in the
+    SELECT to `''` so the Scan doesn't crash. 4 new
+    unit tests in `internal/db/cluster_b203_test.go`
+    cover the NULL case (the regression), the populated
+    case (positive control), the not-found case, and
+    the empty-replicas case.
+    **Surfaced bug #2** (after the COALESCE fix):
+    pgx v5 stdlib returns `TEXT[]` columns as their
+    literal string form (`'{}'` / `'{a,b}'`), which
+    `database/sql` refuses to scan into a `*[]string`
+    with
+    `unsupported Scan, storing driver.Value type string into type *[]string`.
+    This is a pre-existing latent bug: pre-B203.1
+    the pre-B203 code never reached `replica_node_ids`
+    because the primary_node_id NULL short-circuited
+    the Scan; pre-B203.1 production never read the
+    array either (only `current_dsn`).
+    **Fix #2**: new `internal/db/array.go` with
+    `StringArray` (a `[]string` with
+    `sql.Scanner` + `driver.Valuer`). The Scan
+    parser handles nil / `{}` / `{a,b,c}` / quoted
+    elements with embedded commas/spaces/quotes/
+    backslashes. The Value serialiser
+    double-quotes and backslash-escapes per PG
+    literal rules. 13 unit tests in
+    `internal/db/array_b203_test.go` (8 Scan cases
+    + 4 Scan errors + 8 Value cases + 1 roundtrip
+    = 21 sub-tests, all passing).
+    `ReplicaNodeIDs` in `db.ClusterDatabase` and
+    `admin.databasePageData` both changed from
+    `[]string` to `db.StringArray`. The
+    `admin/database.html` template iterates with
+    `range .Data.DesiredReplicas` which works on
+    `StringArray` (underlying type is `[]string`).
+    7 new B-check contracts in `scripts/check_b203.sh`
+    (#25-29) pin the COALESCE, the test file, the
+    StringArray type, the Scan/Value methods, the
+    `needsQuoting` backslash handling, the
+    ReplicaNodeIDs field type, and the new tests.
+    B203 now passes 44/44 (was 33/33).
+    Live-verified post-deploy (commit `8fa3946e`):
+    after the new image came up, the watchdog
+    immediately logged
     `dbmigrate-watchdog: DSN change detected; swapping to postgres://admin:***@172.17.0.1:5433/skygate_staging?sslmode=disable`
-    then `dbmigrate-watchdog: pool swapped successfully (new backend pid: <pid>)`
-    within one 5s tick of inserting the row.
+    then
+    `dbmigrate-watchdog: pool swapped successfully (new backend pid: 601958)`
+    within one 5s tick. The pre-B203.1 broken state
+    ("converting NULL to string is unsupported every 5s")
+    is gone.
 
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
