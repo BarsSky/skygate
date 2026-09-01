@@ -1417,6 +1417,31 @@ in the same commit. Don't let the tracker drift.
     (RU+EN lock-step). 7 new contracts in
     `scripts/check_b197.sh`.
 
+  - **B198 (v1.5.0+) — DB migration workflow
+    (Phase 1.4 of cluster-management.md)**:
+    6-step state machine — `precheck` (ping src+tgt via
+    `pgx.Ping`), `dump` (pg_dump -Fc, STUB), `restore`
+    (pg_restore, STUB), `verify` (count key tables on both
+    sides), `flip` (update `cluster_database` + .env + audit),
+    `cleanup` (drop source DB, OPTIONAL, STUB). Pattern
+    mirrors B194 deployrun (self-registering init() in
+    steps/, Run + rollback orchestrator, SSE broker).
+    `internal/dbmigrate/` package: types.go, framework.go,
+    registry.go, sse.go, handlers.go. 4 routes in main.go:
+    `GET/POST /admin/database/migrate` + `GET .../{id}/stream`
+    + `GET .../{id}`. Tables `dbmigrate_run` + `dbmigrate_step`
+    in migration V065. Phase 1.4 LIMITATIONS (documented
+    in step stubs): (1) `dump` returns STUB error — operator
+    runs `pg_dump -Fc` manually on source, scp the dump;
+    (2) `restore` returns STUB error — operator runs
+    `pg_restore` manually on target; (3) `cleanup` is gated
+    off by default and returns STUB. Only the `flip` step
+    is functional today (writes `cluster_database` + .env
+    + audit). Framework waits for B200 + a second PG host
+    (resource upgrade on agent) + SSH plumbing to svi for
+    full end-to-end execution. 10 contracts in
+    `scripts/check_b198.sh`.
+
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
     Operator 2026-08-31 hit `500 Internal Server

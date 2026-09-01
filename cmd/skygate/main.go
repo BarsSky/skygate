@@ -53,6 +53,13 @@ import (
 	// effects (each step registers itself in the
 	// deployrun registry at boot).
 	_ "skygate/internal/deployrun/steps"
+
+	// B198: import the dbmigrate/steps/ package for its
+	// init() side effects (each of the 6 migration steps
+	// registers itself in the dbmigrate registry at boot).
+	_ "skygate/internal/dbmigrate/steps"
+
+	"skygate/internal/dbmigrate"
 )
 
 // Build-time variables, overridden via -ldflags by entrypoint.sh:
@@ -1232,6 +1239,21 @@ func main() {
 	// must restart the container to apply.
 	mux.Handle("POST /admin/database/test", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseTest)))
 	mux.Handle("POST /admin/database/edit", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseEdit)))
+
+	// v1.5.0+ / B198 — Phase 1.4 DB migration workflow.
+	// 6-step state machine (precheck, dump, restore, verify,
+	// flip, cleanup) with SSE for live progress. See
+	// internal/dbmigrate/ for the framework + steps.
+	// Phase 1.4 limitation: dump + restore + cleanup are
+	// stubbed; they need a second PG host (resource upgrade
+	// on agent) and SSH to the source (svi) to actually run.
+	// The flip step is real (it updates cluster_database +
+	// the local .env so a skygate restart picks it up).
+	migrateSvc := dbmigrate.NewService(app.DB)
+	mux.Handle("GET /admin/database/migrate", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrate)))
+	mux.Handle("POST /admin/database/migrate", authMW(http.HandlerFunc(migrateSvc.PostAdminDatabaseMigrate)))
+	mux.Handle("GET /admin/database/migrate/{id}/stream", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrateStream)))
+	mux.Handle("GET /admin/database/migrate/{id}", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrateRun)))
 
 	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
 	// failover dry-run). The page is the web mirror of
