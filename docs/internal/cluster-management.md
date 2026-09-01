@@ -132,7 +132,7 @@ admin clicks: → node enters HA chain
 ### Phase 0 — Design Finalization [IN PROGRESS]
 
 - [x] **0.1** Confirm D1–D8 with user (done 2026-09-01)
-- [~] **0.2** DB schema for `nodes`, `clusters`, `databases`, `migrations` (in headscale DB)
+- [x] **0.2** DB schema for `nodes`, `clusters`, `databases`, `migrations` (in headscale DB) — committed in `3cef7c27` (B195)
 - [ ] **0.3** API contracts for W1–W5 (HTTP routes + CLI subcommands)
 - [ ] **0.4** Bootstrap state machine: `init` / `join` / `leave` / `migrate` / `failover` events
 - [ ] **0.5** This file reviewed and approved (pending user review)
