@@ -1903,6 +1903,74 @@ in the same commit. Don't let the tracker drift.
     to svi) is the remaining unblock from B202.
     Phase 3 (skygate-watchdog + force failover)
     is the next major chunk after 2.2.
+  - **B204 (v1.5.0+) — HA elector (Phase 3.2-3.3 of
+    `docs/internal/cluster-management.md`)**: the
+    skygate-watchdog (B203) handles the *DB DSN* side
+    of cluster health (cluster_database → pgxpool
+    hot-reload). The elector handles the *node
+    liveness* side: every 5s it reads `cluster_node`
+    for the configured cluster (default
+    `skygate-staging`), and transitions stale nodes
+    via a pure state-machine function `nextState`:
+    - `pending` + no `last_seen` + `joined_at < now-90s`
+      → `failed` (never heartbeated after 3× interval)
+    - `ready` + `last_seen < now-90s` → `failed`
+      (3+ missed heartbeats; the B204 contract)
+    - `failed` → no auto-recovery (the `Heartbeat()`
+      function in B201 transitions back to `ready` on
+      a fresh heartbeat, NOT the elector)
+    Constants `HeartbeatIntervalSeconds=30` +
+    `StaleMultiplier=3` (90s staleness threshold) are
+    pinned at the B-check level — a refactor can't
+    silently change the failure-detection latency for
+    every node in the cluster.
+    Every state transition is logged to `cluster_audit`
+    as `action='node_health'` with a JSONB detail
+    payload (`from` / `to` / `reason` / `last_seen_unix`).
+    The update + audit row are written in a single
+    transaction so the state change and the audit are
+    atomic.
+    **Auto-failover recommendation pass** (per tick,
+    after the state-transition pass): if a node with
+    role `skygate` is currently `failed` AND a node
+    with role `skygate-standby` is currently `ready`,
+    the elector writes a `cluster_audit` row with
+    `action='failover_recommend'` naming the
+    recommended target (lex-first standby for
+    determinism). Idempotent: a 5-min dedup window
+    prevents a flood of audit rows on every 5s tick
+    while the primary stays failed. **The actual
+    promotion is NOT performed by the elector** —
+    it's admin-gated and lands in B205
+    (`skygate cluster failover` CLI subcommand).
+    The elector uses `d.DB` (the current `*sql.DB`
+    from the `ResettableDB` pool) so it transparently
+    follows B203 hot-reloads on its next tick — no
+    separate pool, no extra config.
+    Files: `internal/elector/elector.go` (~480 lines:
+    Elector type, Config, DefaultConfig, tick/evaluate,
+    nextState, transitionNode, recommendFailover,
+    roleContains / splitRolesLiteral helpers) +
+    `internal/elector/elector_b204_test.go` (~150
+    lines: 6 test functions, 17 sub-cases — nextState
+    6 cases / roleContains 7 / splitRolesLiteral 4 +
+    DefaultConfig + NewElector defaults + constants).
+    30 B-check contracts in `scripts/check_b204.sh`
+    (Elector + Start/Stop, Config fields, DefaultConfig
+    constants, HeartbeatIntervalSeconds + StaleMultiplier
+    pinned, nextState for pending/ready/failed,
+    transitionNode writes cluster_audit + JSONB,
+    recommendFailover looks for skygate-standby +
+    writes failover_recommend, main.go wires up,
+    6+ unit tests, build/vet/tests, AGENTS.md mention).
+    Live verification: after deploy the new container
+    starts and logs `ha-elector: started (interval=5s
+    heartbeat=30s cluster=skygate-staging)` within the
+    first second. The state-machine + audit-row paths
+    are exercised by the B-check contracts + the
+    pure-function unit tests; the live failover path
+    (agent → svi) is B205 territory because svi doesn't
+    run its own skygate yet.
   - **B203.1 (v1.5.0+) — `GetClusterDatabase` NULL
     safety fix (live B203 follow-up)**: the first
     live B203 test (inserted a `cluster_database` row

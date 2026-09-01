@@ -35,6 +35,7 @@ import (
 	"skygate/internal/release"
 	"skygate/internal/db"
 	"skygate/internal/watchdog"
+	"skygate/internal/elector"
 	"skygate/internal/deployrun"
 	"skygate/internal/derphealth"
 	"skygate/internal/handlers"
@@ -1722,6 +1723,24 @@ func main() {
 	wd.Start()
 	defer wd.Stop()
 	log.Printf("dbmigrate-watchdog: started (interval=%s, ping-timeout=%s)", watchdog.DefaultConfig().Interval, watchdog.DefaultConfig().PingTimeout)
+
+	// v1.5.0+ / B204 — HA elector. Reads cluster_node
+	// every 5s, transitions stale nodes to 'failed', and
+	// logs auto-failover recommendations to cluster_audit
+	// when a skygate primary is failed AND a skygate-standby
+	// is ready. The actual promote is admin-gated (B205).
+	// The elector uses d.DB (the current *sql.DB from the
+	// ResettableDB pool) so it sees the same rows the
+	// /admin/cluster page sees — when B203 hot-reloads the
+	// pool, the elector transparently moves to the new pool
+	// on its next tick.
+	el := elector.NewElector(elector.DefaultConfig(), d.DB)
+	el.Start()
+	defer el.Stop()
+	log.Printf("ha-elector: started (interval=%s, heartbeat=%s, cluster=%s)",
+		elector.DefaultConfig().Interval,
+		elector.DefaultConfig().HeartbeatInterval,
+		elector.DefaultConfig().ClusterID)
 
 	// 2026-07-21: v0.23.3 — node-expiry watcher.
 	// Background goroutine that walks every non-tagged
