@@ -281,6 +281,9 @@ func (e *Elector) evaluate(ctx context.Context) error {
 		if err := rows.Scan(&n.ID, &n.Hostname, &n.State, &n.Roles, &n.LastSeen, &n.JoinedAt); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
+		// DEBUG (B204.1): per-row log so we can see if the
+		// query is actually returning rows.
+		e.cfg.Logger("elector: tick: scanned node id=%s host=%s state=%s roles=%s last_seen_valid=%v joined_at_valid=%v", n.ID, n.Hostname, n.State, n.Roles, n.LastSeen.Valid, n.JoinedAt.Valid)
 		nodes = append(nodes, n)
 	}
 	if err := rows.Err(); err != nil {
