@@ -476,8 +476,8 @@ func (e *Elector) recommendFailover(
 		SELECT count(*) FROM cluster_audit
 		 WHERE cluster_id = $1
 		   AND action = 'failover_recommend'
-		   AND target_node_id = $2
-		   AND detail->>'to' = $3
+		   AND detail->>'from_node_id' = $2
+		   AND detail->>'to_node_id' = $3
 		   AND created_at > NOW() - INTERVAL '5 minutes'
 	`, e.cfg.ClusterID, failedPrimary.ID, target.ID).Scan(&existing)
 	if err != nil {
