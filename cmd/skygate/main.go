@@ -695,8 +695,29 @@ func main() {
 	availabilityChecker.Start(context.Background())
 	defer availabilityChecker.Stop()
 	healthzSvc.Availability = availabilityChecker
+
+	// v1.5.0+ / B206 — DB health sampler. Background
+	// goroutine ticks every 30s, runs the expensive
+	// pg_database_size + pg_last_wal_replay_lsn +
+	// pg_stat_user_tables queries, and caches the
+	// result. The /db/health handler reads the cached
+	// sample + live pool stats and returns in <5ms.
+	// The sampler receives the ResettableDB (not
+	// d.DB) as its DBSource so it follows B203 hot-
+	// reloads on every tick — same pattern as the
+	// B204 HA elector.
+	dbHealthSampler := healthz.NewDBHealthSampler(healthz.DefaultDBHealthConfig(), d)
+	dbHealthSampler.Start()
+	defer dbHealthSampler.Stop()
+	healthzSvc.DBHealthSampler = dbHealthSampler
+	healthzSvc.DBHealthSrc = d
+	log.Printf("db-health: started (interval=%s, query-timeout=%s)",
+		healthz.DefaultDBHealthConfig().Interval,
+		healthz.DefaultDBHealthConfig().QueryTimeout)
+
 	mux.HandleFunc("GET /healthz", healthzSvc.GetHealthz)
 	mux.HandleFunc("GET /readyz", healthzSvc.GetReadyz)
+	mux.HandleFunc("GET /db/health", healthzSvc.GetDBHealth)
 	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
 	mux.HandleFunc("/static/", app.StaticHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

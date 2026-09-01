@@ -1999,6 +1999,84 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B206 (v1.5.0+) — `GET /db/health` endpoint
+    (Phase 1.5 / G3 of cluster-management.md)**:
+    closes the gap that B195-B202 left — those
+    chunks added DB hot-reload + admin surfaces but
+    the operator had no programmatic way to ask
+    "how big is the DB? is it a replica? what's the
+    xlog position? when was the last vacuum?".
+    The new endpoint returns a JSON snapshot:
+    ```
+    GET /db/health → {
+      "pool": { open, in_use, idle, max_open,
+                wait_count, wait_duration, ... },
+      "is_replica": false,
+      "version": "PostgreSQL 16.x ...",
+      "started_at": "...",
+      "size_bytes": 539000000,
+      "size_human": "539.0 MB",
+      "replication_is_replica": false,
+      "replication_lag_seconds": null,   // null on primary
+      "replication_replay_lsn": "...",
+      "last_vacuum_at": "...",
+      "last_autovacuum_at": "...",
+      "last_analyze_at": "...",
+      "last_autoanalyze_at": "...",
+      "dead_tuples": 12345,
+      "xlog_location": "0/16A0C58",
+      "slow_queries": 0,                 // reserved for B215
+      "sampled_at": "...",
+      "sample_interval_seconds": 30
+    }
+    ```
+    A background sampler (B206's
+    `internal/feature/healthz.Sampler`) ticks every
+    30s, runs the expensive pg_* queries
+    (pg_database_size, pg_is_in_recovery,
+    pg_last_wal_replay_lsn, pg_stat_user_tables
+    aggregates), and stores the result in an
+    `atomic.Pointer[DBHealthSample]`. The handler
+    reads the cached sample + live pool stats from
+    `*sql.DB.Stats()` (cheap atomic reads) and
+    returns in <5ms. Each query in the sampler is
+    individually wrapped so a slow pg_database_size
+    doesn't block the rest of the sample.
+    The sampler receives the `ResettableDB` as its
+    `DBSource` (same pattern as the B204 HA elector)
+    so it transparently follows B203 hot-reloads on
+    the next tick — a stale `*sql.DB` pointer would
+    read from a closed pool after Reset().
+    Files:
+    `internal/feature/healthz/db_health.go`
+    (~430 lines: DBSource interface,
+    NewFixedDBSource helper, DBHealthConfig,
+    DefaultDBHealthConfig, Sampler with
+    atomic.Pointer + sync.Mutex, DBHealthSample
+    with 5 substructs, DBHealthResponse with flat
+    fields, GetDBHealth handler, humanBytes
+    helper) +
+    `internal/feature/healthz/db_health_b206_test.go`
+    (~280 lines, 8 unit tests: humanBytes 9 cases,
+    DefaultDBHealthConfig defaults applied,
+    custom config, sample-before-first-tick
+    contract, nil source no-crash, stop idempotent,
+    empty sample response shape, populated sample
+    field copy).
+    38 B-check contracts in `scripts/check_b206.sh`
+    (Sampler + Start/Stop, Config fields,
+    DefaultDBHealthConfig 30s/3s pinned, DBSource
+    interface, NewFixedDBSource, DBHealthSample 5
+    substructs, DBHealthResponse Pool field,
+    GetDBHealth handler, Service DBHealthSampler +
+    DBHealthSrc fields, main.go NewDBHealthSampler
+    + Start + GET /db/health route registration,
+    tick() consults s.src.Current() for B203 hot-
+    reload transparency, collect() queries
+    pg_is_in_recovery + pg_database_size +
+    pg_stat_user_tables + pg_current_wal_lsn,
+    humanBytes helper, 6+ unit tests, build/vet/
+    tests pass, AGENTS.md mention).
   - **B205 (v1.5.0+) — `skygate cluster ...` CLI
     subcommands (Phase 4 of cluster-management.md)**:
     the operator-on-the-box equivalent of `/admin/cluster`

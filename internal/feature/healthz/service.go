@@ -56,6 +56,19 @@ type Service struct {
 	InstanceID   string
 	BuildVersion string
 	StartedAt    time.Time
+
+	// DBHealthSampler (B206) is the background goroutine
+	// that periodically queries the DB for size, xlog
+	// position, replication lag, etc. The /db/health
+	// handler reads the cached sample from it.
+	DBHealthSampler *Sampler
+
+	// DBHealthSrc is the DBSource the sampler consults
+	// to obtain the current *sql.DB on every tick. The
+	// ResettableDB wrapper from internal/db (B203) is
+	// the canonical implementation — passing it lets
+	// the sampler transparently follow B203 hot-reloads.
+	DBHealthSrc DBSource
 }
 
 // GetHealthz — liveness probe. Always 200 OK with a
