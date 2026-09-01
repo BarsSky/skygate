@@ -48,23 +48,23 @@ type ClusterDatabase struct {
 // sql.ErrNoRows is normalized to ErrClusterDatabaseNotFound so
 // the admin page can render "not configured" without checking
 // for the specific sentinel.
+//
+// B203.1: COALESCE the only NULL-able column (primary_node_id,
+// which REFERENCES cluster_node(id) ON DELETE SET NULL) to an
+// empty string so the watchdog's every-5s Scan doesn't crash
+// on rows where the admin hasn't picked a primary node yet.
+// All other columns are NOT NULL with DEFAULT '' / DEFAULT '{}',
+// so COALESCE is unnecessary for them. We don't COALESCE
+// replica_node_ids because it's TEXT[] (array), and COALESCE
+// with a string literal would change the return type from
+// array to text, breaking the []string Scan.
 func GetClusterDatabase(d *sql.DB, id string) (*ClusterDatabase, error) {
-	// COALESCE NULLs to empty strings in the SQL so the
-	// Scan can use plain string fields. The COALESCE
-	// is wrapped in an extra layer of COALESCE for
-	// current_dsn (which is the most important one for
-	// the B203 watchdog) so a NULL DSN is treated as
-	// "no override" rather than a Scan error.
 	row := d.QueryRow(`
 		SELECT id, cluster_id,
-		       COALESCE(primary_node_id, ''),
-		       COALESCE(replica_node_ids, '{}'),
-		       COALESCE(dsn_template, ''),
-		       COALESCE(dbname, ''),
-		       COALESCE(username, ''),
-		       COALESCE(sslmode, ''),
-		       COALESCE(current_dsn, ''),
-		       COALESCE(updated_by, ''),
+		       COALESCE(primary_node_id, '') AS primary_node_id,
+		       replica_node_ids,
+		       dsn_template, dbname, username, sslmode, current_dsn,
+		       updated_by,
 		       created_at, updated_at
 		FROM cluster_database
 		WHERE id = $1
