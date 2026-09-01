@@ -6,7 +6,8 @@
   <h2 class="mb-3"><i class="fa fa-database me-2"></i>{{t "db.page_title"}}</h2>
   <p class="text-muted">{{t "db.page_subtitle"}}</p>
 
-  {{template "flash" .}}
+  {{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
+  {{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
 
   {{/* ---------- 1. Current DSN (live, from env) ---------- */}}
   <div class="card mb-4">
