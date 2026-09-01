@@ -26,7 +26,16 @@
 # Exit 0 on full pass, 1 on any failure. Prints N/M PASS/FAIL summary.
 
 set -u
-cd "$(dirname "$0")/.."
+
+# Resolve the project root. Two options, in priority order:
+#  1. SKYGATE_PROJECT_DIR env var (used when the script is
+#     copied to a different location, e.g. /tmp on the agent).
+#  2. The script's parent directory (the original layout).
+if [ -n "${SKYGATE_PROJECT_DIR:-}" ]; then
+    cd "$SKYGATE_PROJECT_DIR"
+else
+    cd "$(dirname "$0")/.."
+fi
 
 PASS=0
 FAIL=0
