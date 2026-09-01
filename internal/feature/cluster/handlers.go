@@ -106,6 +106,15 @@ func (s *Service) PostAPIClusterJoin(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	// Pre-validate the auth material so a missing token
+	// returns 400 (bad request) rather than 401 (auth
+	// error). The token IS the auth, but "the auth is
+	// missing" is a client-side problem, not a credential
+	// rejection — different from a wrong-secret 401.
+	if req.Token == "" {
+		writeError(w, http.StatusBadRequest, "token is required")
+		return
+	}
 	resp, err := cluster.Join(s.DB, s.InviteSecret, &req)
 	if err != nil {
 		writeJoinError(w, err)
