@@ -77,6 +77,9 @@ func b203SeedClusterDatabase(t *testing.T, d *sql.DB, dbID, clusterID string, wi
 // in the SELECT fixes this.
 func TestGetClusterDatabase_NullPrimaryNode(t *testing.T) {
 	d := openTestDB(t)
+	if err := MigratePostgres(d); err != nil {
+		t.Fatalf("MigratePostgres: %v", err)
+	}
 	dbID := "test-null-pn-b203"
 	clusterID := "test-null-pn-cluster-b203"
 	b203SeedClusterDatabase(t, d, dbID, clusterID, false)
@@ -102,6 +105,9 @@ func TestGetClusterDatabase_NullPrimaryNode(t *testing.T) {
 // real value to "".
 func TestGetClusterDatabase_PopulatedPrimaryNode(t *testing.T) {
 	d := openTestDB(t)
+	if err := MigratePostgres(d); err != nil {
+		t.Fatalf("MigratePostgres: %v", err)
+	}
 	dbID := "test-pop-pn-b203"
 	clusterID := "test-pop-pn-cluster-b203"
 	primaryID := b203SeedClusterDatabase(t, d, dbID, clusterID, true)
@@ -119,6 +125,9 @@ func TestGetClusterDatabase_PopulatedPrimaryNode(t *testing.T) {
 // the sentinel, not a generic sql.ErrNoRows.
 func TestGetClusterDatabase_NotFound(t *testing.T) {
 	d := openTestDB(t)
+	if err := MigratePostgres(d); err != nil {
+		t.Fatalf("MigratePostgres: %v", err)
+	}
 	_, err := GetClusterDatabase(d, "does-not-exist-b203")
 	if !errors.Is(err, ErrClusterDatabaseNotFound) {
 		t.Errorf("err = %v, want ErrClusterDatabaseNotFound", err)
@@ -132,6 +141,9 @@ func TestGetClusterDatabase_NotFound(t *testing.T) {
 // wants.
 func TestGetClusterDatabase_EmptyReplicaArray(t *testing.T) {
 	d := openTestDB(t)
+	if err := MigratePostgres(d); err != nil {
+		t.Fatalf("MigratePostgres: %v", err)
+	}
 	dbID := "test-empty-replicas-b203"
 	clusterID := "test-empty-replicas-cluster-b203"
 	b203SeedClusterDatabase(t, d, dbID, clusterID, false)
