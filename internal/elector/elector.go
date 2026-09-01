@@ -241,6 +241,10 @@ func (e *Elector) tick() {
 	if err := e.evaluate(ctx); err != nil {
 		e.cfg.Logger("elector: tick: %v", err)
 	}
+	// DEBUG (B204.1): per-tick heartbeat so the live
+	// log proves the ticker is firing. Comment out
+	// once the live test confirms the state machine.
+	e.cfg.Logger("elector: tick: ok (last_evaluated_now)")
 }
 
 // evaluate is the testable inner loop. The exported tick
