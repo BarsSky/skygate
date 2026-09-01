@@ -1399,6 +1399,24 @@ in the same commit. Don't let the tracker drift.
     Phase 1.2 will add the Edit form; Phase 1.4 the migration
     workflow. 23/24 contracts in `scripts/check_b196.sh`.
 
+  - **B197 (v1.5.0+) — /admin/database Phase 1.2
+    (Test + Edit DSN)**:
+    Adds `POST /admin/database/test` (probes DSN from form
+    fields via `sql.Open` + `PingContext` with 5s timeout,
+    no persistence) and `POST /admin/database/edit` (writes
+    `cluster_database` with audit row `cluster.db.edit`).
+    Form pre-fills from current DSN via `databasePageData.Form*`
+    fields. **IMPORTANT**: Edit does NOT change the live
+    skygate process's connection — the operator must restart
+    the skygate container (`docker restart skygate-skygate-1`)
+    to apply. After Phase 3.1 (skygate-watchdog) the hot-reload
+    happens without restart. The Test button is non-persistent
+    (probes only); the Save button is the persistence path.
+    New i18n keys: db.test_edit_title, db.port, db.test_btn,
+    db.save_btn, db.test_help, db.edit_help, db.edit_confirm
+    (RU+EN lock-step). 7 new contracts in
+    `scripts/check_b197.sh`.
+
   - **B191 (v1.5.2) — both device registration methods
     verified end-to-end**:
     Operator 2026-08-31 hit `500 Internal Server

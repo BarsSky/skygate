@@ -1223,6 +1223,15 @@ func main() {
 	// + doc comments and docs/internal/cluster-management.md for
 	// the full design (D3, D8).
 	mux.Handle("GET /admin/database", authMW(http.HandlerFunc(adminSvc.GetAdminDatabase)))
+	// v1.5.0+ / B197 — Phase 1.2: Test Connection + Edit DSN.
+	// Test is non-persistent (just probes the DSN and
+	// re-renders with the latency). Edit writes
+	// cluster_database + audit_log. Both are no-ops on the
+	// live skygate process until the Phase 3.1 watchdog
+	// (skygate-watchdog) lands — until then the operator
+	// must restart the container to apply.
+	mux.Handle("POST /admin/database/test", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseTest)))
+	mux.Handle("POST /admin/database/edit", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseEdit)))
 
 	// v1.5.0 / B150 — /admin/deploy (cluster deploy +
 	// failover dry-run). The page is the web mirror of

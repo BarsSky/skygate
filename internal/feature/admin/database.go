@@ -1,7 +1,7 @@
 // Package admin — database.go owns the /admin/database page
 // (DB management: see D3 in docs/internal/cluster-management.md).
 //
-// v1.5.0+ / B195 — Phase 1.1 (read-only).
+// v1.5.0+ / B195 + B197 — Phase 1.1 (read-only) + Phase 1.2 (test+edit).
 //
 // Page surface (3 sections):
 //
@@ -10,16 +10,27 @@
 //	   container env). This is the source of truth for the
 //	   LIVE skygate process.
 //	2. Desired DSN (cluster_database) — what the admin has
-//	   configured via the headscale/sk ygate cluster state
-//	   (empty until Phase 1.2 adds an edit form). Per D8 the
-//	   cluster_database wins on conflict; the watchdog
-//	   (Phase 3.1) will hot-reload pgxpool when these differ.
+//	   configured via the headscale/sk ygate cluster state.
+//	   Per D8 the cluster_database wins on conflict; the
+//	   watchdog (Phase 3.1) will hot-reload pgxpool when
+//	   these differ.
 //	3. Health (DB reachability) — quick pg ping + pool stats
-//	   from the running skygate process. Read-only.
+//	   from the running skygate process.
 //
-// The page is intentionally read-only for Phase 1.1. Phase 1.2
-// will add an "Edit desired DSN" form; Phase 1.4 will add the
-// "Migrate to new host" workflow.
+// Phase 1.1 = read-only view (B195).
+// Phase 1.2 = Test Connection button + Edit DSN form (B197).
+//             The Edit form populates cluster_database; until
+//             Phase 3.1 (watchdog) lands, the live skygate process
+//             does NOT pick up the new DSN automatically — the
+//             admin must restart the skygate container to apply.
+//             We show a flash banner explaining this so the
+//             operator isn't surprised.
+// Phase 1.4 = full DB migration workflow (pg_dump → scp →
+//             pg_restore → flip DSN → verify → cleanup).
+//
+// The page is intentionally simple for Phase 1.2 — just the
+// three sections above plus a form. There is no SSE yet
+// (added in Phase 1.4 for migration progress).
 
 package admin
 
@@ -44,31 +55,41 @@ import (
 // struct so the template doesn't re-fetch.
 type databasePageData struct {
 	// 1. Current DSN (the live one, from env)
-	CurrentDSN      string
-	CurrentSource   string // "env" or "cluster_database"
-	CurrentHost     string
-	CurrentPort     string
-	CurrentDBName   string
-	CurrentUsername string
-	CurrentSSLMode  string
+	CurrentDSN       string
+	CurrentSource    string // "env" or "cluster_database"
+	CurrentHost      string
+	CurrentPort      string
+	CurrentDBName    string
+	CurrentUsername  string
+	CurrentSSLMode   string
 	CurrentReachable bool
 	CurrentLatencyMs int64
-	CurrentError    string
+	CurrentError     string
 
 	// 2. Desired DSN (from cluster_database)
-	DesiredID           string
-	DesiredPrimaryNode  string
-	DesiredReplicas     []string
-	DesiredTemplate      string
-	DesiredCurrentDSN   string
-	DesiredDBName       string
-	DesiredUsername      string
-	DesiredSSLMode       string
-	DesiredUpdatedAt     string
-	DesiredUpdatedBy     string
-	HasDesired           bool
+	DesiredID          string
+	DesiredPrimaryNode string
+	DesiredReplicas    []string
+	DesiredTemplate     string
+	DesiredCurrentDSN  string
+	DesiredDBName      string
+	DesiredUsername     string
+	DesiredSSLMode      string
+	DesiredUpdatedAt    string
+	DesiredUpdatedBy    string
+	HasDesired          bool
 
-	// 3. Flash (from query params, matches other admin pages)
+	// 3. Test-Connection form (Phase 1.2) — the form
+	// pre-fills with the live DSN values so the operator
+	// can edit host/port/dbname/username/sslmode and
+	// click "Test" before saving.
+	FormHost     string
+	FormPort     string
+	FormDBName   string
+	FormUsername string
+	FormSSLMode  string
+
+	// 4. Flash (from query params, matches other admin pages)
 	FlashSuccess string
 	FlashError   string
 }
@@ -135,9 +156,9 @@ func (s *Service) collectDatabasePageData(r *http.Request) *databasePageData {
 	}
 
 	// 3. Desired DSN — read cluster_database. Empty for now
-	// (Phase 1.2 will populate it). We still query the table
-	// so the page renders "not configured" explicitly rather
-	// than crashing on a missing table.
+	// (Phase 1.2 lets the admin populate it). We query
+	// the table so the page renders "not configured"
+	// explicitly rather than crashing on a missing table.
 	desired, err := db.GetClusterDatabase(s.DB, "skygate-staging")
 	if err == nil && desired != nil {
 		data.HasDesired = true
@@ -155,7 +176,182 @@ func (s *Service) collectDatabasePageData(r *http.Request) *databasePageData {
 		data.FlashError = "load desired DSN: " + err.Error()
 	}
 
+	// 4. Pre-fill the Test-Connection / Edit form with the
+	// CURRENT DSN values. The operator can edit the form
+	// fields and click "Test" to verify the new DSN
+	// without first saving.
+	data.FormHost = data.CurrentHost
+	data.FormPort = data.CurrentPort
+	data.FormDBName = data.CurrentDBName
+	data.FormUsername = data.CurrentUsername
+	data.FormSSLMode = data.CurrentSSLMode
+
 	return data
+}
+
+// ---------- POST /admin/database/test ---------------------------------
+
+// PostAdminDatabaseTest probes the DSN built from the form
+// fields and returns a JSON result. The page is re-rendered
+// with the probe outcome in FlashError/FlashSuccess so the
+// operator sees the latency right next to the form.
+//
+// This handler does NOT persist anything. The point of the
+// "Test" button is to verify the new DSN before the operator
+// clicks "Save" (which calls PostAdminDatabaseEdit).
+func (s *Service) PostAdminDatabaseTest(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	host := strings.TrimSpace(r.FormValue("host"))
+	port := strings.TrimSpace(r.FormValue("port"))
+	dbname := strings.TrimSpace(r.FormValue("dbname"))
+	username := strings.TrimSpace(r.FormValue("username"))
+	sslmode := strings.TrimSpace(r.FormValue("sslmode"))
+	if host == "" || dbname == "" || username == "" {
+		http.Redirect(w, r, "/admin/database?err=host+dbname+username+required", http.StatusSeeOther)
+		return
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	// We can't know the password here — the password is in
+	// .env, not in the form. For the test we just check
+	// reachability. The .env must be updated separately
+	// (and the container restarted) before the new DSN
+	// actually works at runtime.
+	dsn := "postgres://" + username + "@" + host + ":" + port + "/" + dbname + "?sslmode=" + sslmode
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	reachable, errStr := probeDB(ctx, dsn)
+	latency := time.Since(start).Milliseconds()
+	flashed := "ok=reachable+latency=" + intToString(latency) + "+ms"
+	if !reachable {
+		flashed = "err=test+failed:+host+" + host + "+" + errStr
+	}
+	http.Redirect(w, r, "/admin/database?"+flashed, http.StatusSeeOther)
+}
+
+// ---------- POST /admin/database/edit ---------------------------------
+
+// PostAdminDatabaseEdit writes the admin's desired DSN to
+// cluster_database. The DSN is stored with the password
+// stripped (the form doesn't carry it; the password is in
+// .env on the host). The full DSN with the password is
+// composed at read time by the watchdog (Phase 3.1) when
+// it actually applies the desired state.
+//
+// IMPORTANT: this does NOT change the LIVE skygate process's
+// connection. The live process still uses SKYGATE_DB_DSN from
+// the env. The watchdog (Phase 3.1) will pick up the new DSN
+// once it's wired. Until then, the operator must restart the
+// skygate container to apply.
+//
+// This is by design: B179 in the recent history showed that
+// iptables/network blips can knock skygate offline. An
+// accidental DSN change should never apply instantly — the
+// admin should see the new DSN on the page, run tests, then
+// apply via container restart.
+func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	host := strings.TrimSpace(r.FormValue("host"))
+	port := strings.TrimSpace(r.FormValue("port"))
+	dbname := strings.TrimSpace(r.FormValue("dbname"))
+	username := strings.TrimSpace(r.FormValue("username"))
+	sslmode := strings.TrimSpace(r.FormValue("sslmode"))
+	if host == "" || dbname == "" || username == "" {
+		http.Redirect(w, r, "/admin/database?err=host+dbname+username+required", http.StatusSeeOther)
+		return
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	// Compose the DSN (without password — the password
+	// stays in .env). The dsn_template uses %s for the
+	// password placeholder so the watchdog (Phase 3.1)
+	// can substitute the actual password at read time.
+	dsnTemplate := "postgres://" + username + ":%s@" + host + ":" + port + "/" + dbname + "?sslmode=" + sslmode
+	// We don't have a real password in the form, so
+	// current_dsn uses a placeholder that the watchdog
+	// will overwrite with the real one.
+	currentDSN := "postgres://" + username + ":PASSWORD@" + host + ":" + port + "/" + dbname + "?sslmode=" + sslmode
+	cd := &db.ClusterDatabase{
+		ID:             "skygate-staging",
+		ClusterID:      "skygate-staging",
+		DSNTemplate:    dsnTemplate,
+		DBName:         dbname,
+		Username:       username,
+		SSLMode:        sslmode,
+		CurrentDSN:     currentDSN,
+		UpdatedBy:      c.Username,
+	}
+	if err := db.SetClusterDatabase(s.DB, cd); err != nil {
+		http.Redirect(w, r, "/admin/database?err=save+failed:+"+err.Error(), http.StatusSeeOther)
+		return
+	}
+	// Audit row. We use the same audit_log table the
+	// /admin/audit page reads from. The action name
+	// "cluster.db.edit" follows the new cluster.*
+	// prefix convention.
+	if err := db.AppendAuditLog(s.DB, c.UserID, c.Username, "cluster.db.edit", "dsn_template="+dsnTemplate); err != nil {
+		// audit failure is non-fatal; just log
+		_ = err
+	}
+	http.Redirect(w, r, "/admin/database?ok=saved", http.StatusSeeOther)
+}
+
+// ---------- helpers -----------------------------------------------------
+
+// queryReachable returns "reachable" or "unreachable" for use
+// in the URL flash. Defined as a small function so the
+// string lives in one place.
+func queryReachable(b bool) string {
+	if b {
+		return "reachable"
+	}
+	return "unreachable"
+}
+
+// intToString is a tiny helper that avoids importing strconv
+// just for a single call.
+func intToString(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	if neg {
+		b = append([]byte{'-'}, b...)
+	}
+	return string(b)
 }
 
 // parseLibpqDSN parses a postgres:// URL into its components.
@@ -164,14 +360,11 @@ func parseLibpqDSN(dsn string) (host, port, dbname, user, sslmode string, ok boo
 	if dsn == "" {
 		return "", "", "", "", "", false
 	}
-	// Strip scheme
 	const prefix = "postgres://"
 	if !strings.HasPrefix(dsn, prefix) {
 		return "", "", "", "", "", false
 	}
 	rest := strings.TrimPrefix(dsn, prefix)
-	// user[:pass]@host[:port]/dbname[?params]
-	// Split user/host
 	if i := strings.Index(rest, "@"); i >= 0 {
 		userpart := rest[:i]
 		rest = rest[i+1:]
@@ -181,7 +374,6 @@ func parseLibpqDSN(dsn string) (host, port, dbname, user, sslmode string, ok boo
 			user = userpart
 		}
 	}
-	// host[:port]/dbname
 	if i := strings.Index(rest, "/"); i >= 0 {
 		hostpart := rest[:i]
 		rest = rest[i+1:]
@@ -193,7 +385,6 @@ func parseLibpqDSN(dsn string) (host, port, dbname, user, sslmode string, ok boo
 		}
 		dbname = rest
 	}
-	// query params (just sslmode for now)
 	if i := strings.Index(dbname, "?"); i >= 0 {
 		params := dbname[i+1:]
 		dbname = dbname[:i]

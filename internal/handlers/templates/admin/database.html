@@ -19,46 +19,24 @@
     <div class="card-body">
       <table class="table table-sm mb-0">
         <tbody>
-          <tr>
-            <th style="width:200px">{{t "db.dsn_source"}}</th>
-            <td><code>{{.Data.CurrentSource}}</code></td>
-          </tr>
-          <tr>
-            <th>{{t "db.host"}}</th>
-            <td>
-              {{if .Data.CurrentHost}}
-                <code>{{.Data.CurrentHost}}:{{.Data.CurrentPort}}</code>
-              {{else}}
-                <span class="text-muted">—</span>
-              {{end}}
-            </td>
-          </tr>
-          <tr>
-            <th>{{t "db.dbname"}}</th>
-            <td>{{if .Data.CurrentDBName}}<code>{{.Data.CurrentDBName}}</code>{{else}}<span class="text-muted">—</span>{{end}}</td>
-          </tr>
-          <tr>
-            <th>{{t "db.username"}}</th>
-            <td>{{if .Data.CurrentUsername}}<code>{{.Data.CurrentUsername}}</code>{{else}}<span class="text-muted">—</span>{{end}}</td>
-          </tr>
-          <tr>
-            <th>{{t "db.sslmode"}}</th>
-            <td>{{if .Data.CurrentSSLMode}}<code>{{.Data.CurrentSSLMode}}</code>{{else}}<span class="text-muted">—</span>{{end}}</td>
-          </tr>
-          <tr>
-            <th>{{t "db.latency"}}</th>
-            <td>
-              {{if .Data.CurrentReachable}}
-                <span class="text-success">{{.Data.CurrentLatencyMs}} ms</span>
-              {{else}}
-                <span class="text-danger">{{.Data.CurrentError}}</span>
-              {{end}}
-            </td>
-          </tr>
-          <tr>
-            <th>{{t "db.full_dsn"}}</th>
-            <td><code style="word-break:break-all;font-size:0.85em">{{.Data.CurrentDSN}}</code></td>
-          </tr>
+          <tr><th style="width:200px">{{t "db.dsn_source"}}</th><td><code>{{.Data.CurrentSource}}</code></td></tr>
+          <tr><th>{{t "db.host"}}</th><td>
+            {{if .Data.CurrentHost}}<code>{{.Data.CurrentHost}}:{{.Data.CurrentPort}}</code>{{else}}<span class="text-muted">—</span>{{end}}
+          </td></tr>
+          <tr><th>{{t "db.dbname"}}</th><td>
+            {{if .Data.CurrentDBName}}<code>{{.Data.CurrentDBName}}</code>{{else}}<span class="text-muted">—</span>{{end}}
+          </td></tr>
+          <tr><th>{{t "db.username"}}</th><td>
+            {{if .Data.CurrentUsername}}<code>{{.Data.CurrentUsername}}</code>{{else}}<span class="text-muted">—</span>{{end}}
+          </td></tr>
+          <tr><th>{{t "db.sslmode"}}</th><td>
+            {{if .Data.CurrentSSLMode}}<code>{{.Data.CurrentSSLMode}}</code>{{else}}<span class="text-muted">—</span>{{end}}
+          </td></tr>
+          <tr><th>{{t "db.latency"}}</th><td>
+            {{if .Data.CurrentReachable}}<span class="text-success">{{.Data.CurrentLatencyMs}} ms</span>
+            {{else}}<span class="text-danger">{{.Data.CurrentError}}</span>{{end}}
+          </td></tr>
+          <tr><th>{{t "db.full_dsn"}}</th><td><code style="word-break:break-all;font-size:0.85em">{{.Data.CurrentDSN}}</code></td></tr>
         </tbody>
       </table>
       <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.current_dsn_help"}}</p>
@@ -80,9 +58,7 @@
             <tr><th style="width:200px">{{t "db.id"}}</th><td><code>{{.Data.DesiredID}}</code></td></tr>
             <tr><th>{{t "db.primary_node"}}</th><td>{{if .Data.DesiredPrimaryNode}}<code>{{.Data.DesiredPrimaryNode}}</code>{{else}}<span class="text-muted">—</span>{{end}}</td></tr>
             {{if .Data.DesiredReplicas}}
-            <tr><th>{{t "db.replicas"}}</th><td>
-              {{range .Data.DesiredReplicas}}<code class="me-1">{{.}}</code>{{end}}
-            </td></tr>
+            <tr><th>{{t "db.replicas"}}</th><td>{{range .Data.DesiredReplicas}}<code class="me-1">{{.}}</code>{{end}}</td></tr>
             {{end}}
             <tr><th>{{t "db.dsn_template"}}</th><td><code style="word-break:break-all">{{.Data.DesiredTemplate}}</code></td></tr>
             <tr><th>{{t "db.full_dsn"}}</th><td><code style="word-break:break-all;font-size:0.85em">{{.Data.DesiredCurrentDSN}}</code></td></tr>
@@ -96,7 +72,54 @@
     </div>
   </div>
 
-  {{/* ---------- 3. Source-of-truth note (per D8) ---------- */}}
+  {{/* ---------- 3. Test-Connection / Edit form (Phase 1.2) ---------- */}}
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="fa fa-vial me-2"></i>{{t "db.test_edit_title"}}
+    </div>
+    <div class="card-body">
+      <form method="POST" action="/admin/database/test" class="mb-3">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label small">{{t "db.host"}}</label>
+            <input class="form-control form-control-sm" type="text" name="host" value="{{.Data.FormHost}}" required>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">{{t "db.port"}}</label>
+            <input class="form-control form-control-sm" type="text" name="port" value="{{.Data.FormPort}}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">{{t "db.dbname"}}</label>
+            <input class="form-control form-control-sm" type="text" name="dbname" value="{{.Data.FormDBName}}" required>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">{{t "db.username"}}</label>
+            <input class="form-control form-control-sm" type="text" name="username" value="{{.Data.FormUsername}}" required>
+          </div>
+          <div class="col-md-1 d-grid">
+            <button class="btn btn-sm btn-outline-info" type="submit"><i class="fa fa-vial me-1"></i>{{t "db.test_btn"}}</button>
+          </div>
+          <div class="col-12 mt-2">
+            <label class="form-label small">{{t "db.sslmode"}}</label>
+            <select class="form-select form-select-sm" name="sslmode">
+              <option value="disable" {{if eq .Data.FormSSLMode "disable"}}selected{{end}}>disable</option>
+              <option value="require" {{if eq .Data.FormSSLMode "require"}}selected{{end}}>require</option>
+              <option value="verify-full" {{if eq .Data.FormSSLMode "verify-full"}}selected{{end}}>verify-full</option>
+              <option value="verify-ca" {{if eq .Data.FormSSLMode "verify-ca"}}selected{{end}}>verify-ca</option>
+            </select>
+          </div>
+        </div>
+        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.test_help"}}</p>
+      </form>
+
+      <form method="POST" action="/admin/database/edit" onsubmit="return confirm('{{t "db.edit_confirm"}}')">
+        <button class="btn btn-sm btn-primary" type="submit"><i class="fa fa-save me-1"></i>{{t "db.save_btn"}}</button>
+        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.edit_help"}}</p>
+      </form>
+    </div>
+  </div>
+
+  {{/* ---------- 4. D8 source-of-truth note ---------- */}}
   <div class="alert alert-info small mb-0">
     <i class="fa fa-info-circle me-1"></i>
     {{t "db.d8_note"}}
