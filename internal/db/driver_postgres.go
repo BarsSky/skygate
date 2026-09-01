@@ -85,6 +85,7 @@ func MigratePostgres(d *sql.DB) error {
 		migrateV053PG, migrateV054PG, migrateV055PG, migrateV056PG,
 		migrateV057PG, migrateV058PG, migrateV059PG,
 		migrateV060PG, migrateV061PG, migrateV062PG, migrateV063PG,
+		migrateV064PG,
 	} {
 		if err := fn(d); err != nil {
 			return fmt.Errorf("migration: %w", err)
