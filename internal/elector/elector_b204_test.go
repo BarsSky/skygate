@@ -11,6 +11,7 @@
 package elector
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -186,4 +187,70 @@ func TestHeartbeatIntervalConstants(t *testing.T) {
 	if StaleMultiplier != 3 {
 		t.Errorf("StaleMultiplier = %d, want 3", StaleMultiplier)
 	}
+}
+
+// TestNewElector_NilSource_NoCrash — verify the
+// elector doesn't panic when the DBSource returns nil
+// (e.g. ResettableDB.Current() called before Start).
+// The tick logs an error and returns; it does not loop
+// forever on a nil deref.
+func TestNewElector_NilSource_NoCrash(t *testing.T) {
+	e := NewElector(DefaultConfig(), nilSource{})
+	// Should not panic; should return an error from
+	// the (no-)DB lookup.
+	err := e.evaluate(nilForTest())
+	if err == nil {
+		t.Error("evaluate(nil source) = nil, want error")
+	}
+}
+
+// nilSource is a DBSource that always returns nil.
+// Used to verify the elector's nil-handling path.
+type nilSource struct{}
+
+func (nilSource) Current() *sql.DB { return nil }
+
+// TestNewElector_DBSSource_FollowsPoolSwap — pins the
+// "B203 hot-reload follow" contract: a custom DBSource
+// that swaps its returned *sql.DB on each Current() call
+// must be observed by the elector on the next tick.
+// (We can't use the real ResettableDB here without a
+// live PG, so we use a stub that just records the
+// number of Current() calls.)
+func TestNewElector_DBSSource_CurrentCalledPerTick(t *testing.T) {
+	src := &countingSource{db: nil} // nil db → tick returns error
+	e := NewElector(DefaultConfig(), src)
+	// First tick.
+	_ = e.evaluate(nilForTest())
+	// Second tick.
+	_ = e.evaluate(nilForTest())
+	if src.calls < 2 {
+		t.Errorf("Current() called %d times in 2 ticks, want >= 2", src.calls)
+	}
+}
+
+// countingSource is a DBSource that returns nil
+// (so evaluate returns an error) but records the
+// number of Current() calls. The elector must call
+// Current() on every tick (not cache the first result)
+// to follow B203 hot-reloads.
+type countingSource struct {
+	db    *sql.DB
+	calls int
+}
+
+func (c *countingSource) Current() *sql.DB {
+	c.calls++
+	return c.db
+}
+
+// nilForTest returns a context that the elector's
+// evaluate() can use. The elector never calls
+// time.AfterFunc or similar; the context just needs
+// to be non-nil to satisfy the (*Elector).evaluate
+// signature. We use context.TODO() because the
+// evaluator never actually issues a query when the
+// source is nil (it returns early).
+func nilForTest() (ctx context.Context) {
+	return context.TODO()
 }

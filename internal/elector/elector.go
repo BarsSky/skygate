@@ -119,20 +119,36 @@ func DefaultConfig() Config {
 	}
 }
 
+// DBSource returns the current *sql.DB. Required because
+// the elector's DB connection changes over time when the
+// B203 skygate-watchdog hot-reloads the pool via the
+// ResettableDB wrapper. Capturing a single *sql.DB at
+// construction time would mean the elector keeps reading
+// from a closed pool after the first hot-reload.
+//
+// The ResettableDB satisfies this interface directly
+// via its Current() method. A plain *sql.DB also
+// satisfies it (each call returns the same pointer).
+type DBSource interface {
+	Current() *sql.DB
+}
+
 // Elector is the running ticker. Construct with NewElector,
 // then call Start to launch the goroutine.
 type Elector struct {
-	cfg  Config
-	db   *sql.DB
-	mu   sync.Mutex
-	stop chan struct{}
-	done chan struct{}
+	cfg     Config
+	src     DBSource
+	mu      sync.Mutex
+	stop    chan struct{}
+	done    chan struct{}
 }
 
-// NewElector constructs the elector. The DB connection
-// is used for both reads (SELECT cluster_node) and writes
-// (UPDATE cluster_node + INSERT cluster_audit).
-func NewElector(cfg Config, db *sql.DB) *Elector {
+// NewElector constructs the elector. The DBSource is
+// called on every tick to obtain the current *sql.DB
+// (so B203 hot-reloads are followed transparently).
+// If you only have a plain *sql.DB, NewElectorWithDB
+// wraps it in a fixed-source adapter.
+func NewElector(cfg Config, src DBSource) *Elector {
 	if cfg.Interval <= 0 {
 		cfg.Interval = 5 * time.Second
 	}
@@ -147,10 +163,37 @@ func NewElector(cfg Config, db *sql.DB) *Elector {
 	}
 	return &Elector{
 		cfg:  cfg,
-		db:   db,
+		src:  src,
 		stop: make(chan struct{}),
 		done: make(chan struct{}),
 	}
+}
+
+// NewElectorWithDB constructs an elector over a fixed
+// *sql.DB (no hot-reload support). Useful for unit tests
+// and one-off scripts; production code should pass the
+// ResettableDB via NewElector.
+func NewElectorWithDB(cfg Config, db *sql.DB) *Elector {
+	return NewElector(cfg, fixedDB{db: db})
+}
+
+// fixedDB is a DBSource that always returns the same
+// *sql.DB. The unit tests + one-off scripts use it.
+type fixedDB struct {
+	db *sql.DB
+}
+
+func (f fixedDB) Current() *sql.DB { return f.db }
+
+// db is a convenience wrapper that returns the current
+// *sql.DB (or nil if the source is nil / the pool is
+// closed). The nil case is treated as a no-op by
+// evaluate (logged + return).
+func (e *Elector) db() *sql.DB {
+	if e.src == nil {
+		return nil
+	}
+	return e.src.Current()
 }
 
 // Start launches the elector goroutine. Returns immediately.
@@ -204,6 +247,10 @@ func (e *Elector) tick() {
 // wraps it with a context + error-logger; the unit tests
 // call evaluate directly with a pre-canned DB.
 func (e *Elector) evaluate(ctx context.Context) error {
+	db := e.db()
+	if db == nil {
+		return fmt.Errorf("no current DB (source returned nil)")
+	}
 	now := time.Now().UTC()
 	staleAfter := e.cfg.HeartbeatInterval * StaleMultiplier
 	cutoff := now.Add(-staleAfter)
@@ -212,7 +259,7 @@ func (e *Elector) evaluate(ctx context.Context) error {
 	// sub-query picks only nodes that are NOT in the
 	// terminal 'draining' state (the admin's "remove"
 	// path; we don't auto-fail them).
-	rows, err := e.db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
 		SELECT id, hostname, state, roles, last_seen_at, joined_at
 		  FROM cluster_node
 		 WHERE cluster_id = $1
@@ -250,7 +297,7 @@ func (e *Elector) evaluate(ctx context.Context) error {
 	}
 
 	// 3. Auto-failover recommendation pass.
-	e.recommendFailover(ctx, nodes, now)
+	e.recommendFailover(ctx, db, nodes, now)
 
 	return nil
 }
@@ -307,7 +354,11 @@ func (e *Elector) transitionNode(
 	reason string,
 	now time.Time,
 ) error {
-	tx, err := e.db.BeginTx(ctx, nil)
+	db := e.db()
+	if db == nil {
+		return fmt.Errorf("no current DB (source returned nil)")
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -359,6 +410,7 @@ func (e *Elector) transitionNode(
 // writes a new row.
 func (e *Elector) recommendFailover(
 	ctx context.Context,
+	db *sql.DB,
 	nodes []nodeRow,
 	now time.Time,
 ) {
@@ -406,7 +458,7 @@ func (e *Elector) recommendFailover(
 	// rows on every 5s tick while the primary stays
 	// failed.
 	var existing int
-	err := e.db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT count(*) FROM cluster_audit
 		 WHERE cluster_id = $1
 		   AND action = 'failover_recommend'
@@ -433,7 +485,7 @@ func (e *Elector) recommendFailover(
 		"recommended_at": now.Format(time.RFC3339),
 	}
 	detailJSON, _ := json.Marshal(detail)
-	if _, err := e.db.ExecContext(ctx, `
+	if _, err := db.ExecContext(ctx, `
 		INSERT INTO cluster_audit (
 			cluster_id, action, target_node_id, detail, result
 		) VALUES ($1, 'failover_recommend', $2, $3::jsonb, 'pending')

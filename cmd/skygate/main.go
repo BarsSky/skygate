@@ -1729,12 +1729,15 @@ func main() {
 	// logs auto-failover recommendations to cluster_audit
 	// when a skygate primary is failed AND a skygate-standby
 	// is ready. The actual promote is admin-gated (B205).
-	// The elector uses d.DB (the current *sql.DB from the
-	// ResettableDB pool) so it sees the same rows the
-	// /admin/cluster page sees — when B203 hot-reloads the
-	// pool, the elector transparently moves to the new pool
-	// on its next tick.
-	el := elector.NewElector(elector.DefaultConfig(), d.DB)
+	// The elector receives `d` (the *ResettableDB) as its
+	// DBSource; on every tick it calls d.Current() to get
+	// the current *sql.DB. This is critical: when B203's
+	// watchdog hot-reloads the pool via Reset(), the
+	// elector's next tick transparently follows the swap
+	// (it would otherwise keep reading from a closed
+	// pool). The fixed-source adapter (NewElectorWithDB)
+	// is for unit tests + one-off scripts only.
+	el := elector.NewElector(elector.DefaultConfig(), d)
 	el.Start()
 	defer el.Stop()
 	log.Printf("ha-elector: started (interval=%s, heartbeat=%s, cluster=%s)",
