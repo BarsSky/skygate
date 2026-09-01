@@ -26,11 +26,17 @@ var ErrClusterDatabaseNotFound = errors.New("cluster_database not found")
 //
 // Note: only the fields Phase 1.1 needs are here. Phase 1.2
 // (Set) and Phase 2 (cluster UI) will extend.
+//
+// B203.1: ReplicaNodeIDs is a StringArray (not []string)
+// because pgx v5 stdlib returns TEXT[] as a literal string
+// ("{a,b}"), which the database/sql interface refuses to
+// scan into a *[]string. StringArray implements
+// sql.Scanner + driver.Valuer to handle both directions.
 type ClusterDatabase struct {
 	ID              string
 	ClusterID       string
 	PrimaryNodeID   string
-	ReplicaNodeIDs  []string
+	ReplicaNodeIDs  StringArray
 	DSNTemplate     string
 	DBName          string
 	Username        string

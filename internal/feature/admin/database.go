@@ -71,7 +71,7 @@ type databasePageData struct {
 	// 2. Desired DSN (from cluster_database)
 	DesiredID          string
 	DesiredPrimaryNode string
-	DesiredReplicas    []string
+	DesiredReplicas    db.StringArray
 	DesiredTemplate     string
 	DesiredCurrentDSN  string
 	DesiredDBName      string
