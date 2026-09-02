@@ -23,7 +23,7 @@
     <div class="card-header d-flex justify-content-between align-items-center">
       <span>
         <i class="fa fa-circle-info me-2"></i>
-        {{t "db.migrate_run_status"}}: <span class="badge bg-{{if eq .Data.Run.Status "success"}}success{{else if eq .Data.Run.Status "failed"}}danger{{else if eq .Data.Run.Status "running"}}warning{{else}}secondary{{end}}">{{.Data.Run.Status}}</span>
+        {{t "db.migrate_run_status"}}: <span class="badge bg-{{if eq .Data.Run.Status "success"}}success{{else if eq .Data.Run.Status "failed"}}danger{{else if eq .Data.Run.Status "running"}}warning{{else if eq .Data.Run.Status "cancelled"}}secondary{{else}}secondary{{end}}">{{.Data.Run.Status}}</span>
       </span>
       <small class="text-muted">
         {{.Data.Run.StartedAt.Format "2006-01-02 15:04:05 UTC"}}
@@ -41,6 +41,30 @@
           {{end}}
         </tbody>
       </table>
+      {{/* B214 (Phase 1.4.4 / 1.4.5): cancel + rollback actions.
+          Visibility is controlled server-side via
+          .Data.CanCancel / .Data.CanRollback (see
+          admin/database.go's collectDatabasePageData
+          — the IsRunLive check distinguishes a stale
+          "running" status from a live one). */}}
+      {{if or .Data.CanCancel .Data.CanRollback}}
+      <div class="d-flex gap-2 mt-3">
+        {{if .Data.CanCancel}}
+        <form method="POST" action="/admin/database/migrate/{{.Data.Run.ID}}/cancel" onsubmit="return confirm('{{t "db.migrate_cancel_confirm"}}')" style="display:inline">
+          <button class="btn btn-sm btn-warning" type="submit">
+            <i class="fa fa-stop me-1"></i>{{t "db.migrate_cancel_btn"}}
+          </button>
+        </form>
+        {{end}}
+        {{if .Data.CanRollback}}
+        <form method="POST" action="/admin/database/migrate/{{.Data.Run.ID}}/rollback" onsubmit="return confirm('{{t "db.migrate_rollback_confirm"}}')" style="display:inline">
+          <button class="btn btn-sm btn-danger" type="submit">
+            <i class="fa fa-undo me-1"></i>{{t "db.migrate_rollback_btn"}}
+          </button>
+        </form>
+        {{end}}
+      </div>
+      {{end}}
     </div>
   </div>
 

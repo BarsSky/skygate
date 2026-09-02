@@ -81,11 +81,17 @@ type DeployStep interface {
 type MigrationStatus string
 
 const (
-	RunPending   MigrationStatus = "pending"
-	RunRunning   MigrationStatus = "running"
-	RunSuccess   MigrationStatus = "success"
-	RunFailed    MigrationStatus = "failed"
+	RunPending    MigrationStatus = "pending"
+	RunRunning    MigrationStatus = "running"
+	RunSuccess    MigrationStatus = "success"
+	RunFailed     MigrationStatus = "failed"
 	RunRolledBack MigrationStatus = "rolled_back"
+	// B214: RunCancelled means the operator clicked
+	// "Cancel" in the UI; the framework stopped at
+	// the next step boundary. Distinct from RunFailed
+	// (a step errored) so the operator can tell
+	// "I stopped this" from "this broke".
+	RunCancelled MigrationStatus = "cancelled"
 )
 
 // MigrationContext is the per-run state. The framework

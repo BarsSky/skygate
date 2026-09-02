@@ -270,10 +270,27 @@ func (s *Service) GetAdminDatabaseMigrateRun(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "load: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// B214: surface the cancel/rollback availability to
+	// the template. CanCancel is true ONLY if the run
+	// is in-flight IN THIS PROCESS (IsRunLive) — a
+	// stale "running" status from a previous process
+	// boot should NOT show the cancel button (the
+	// cancel endpoint would be a no-op anyway). CanRollback
+	// is true for terminal non-rolled-back states
+	// (success / failed / cancelled).
+	canCancel := run.Status == dbmigrate.RunRunning &&
+		dbmigrate.IsRunLive(runID)
+	canRollback := run.Status == dbmigrate.RunSuccess ||
+		run.Status == dbmigrate.RunFailed ||
+		run.Status == dbmigrate.RunCancelled
 	s.Backend.RenderWithLayout(w, r, "admin/migrate_run.html", c, map[string]any{
 		"Data": map[string]any{
-			"Run":   run,
-			"Steps": steps,
+			"Run":         run,
+			"Steps":       steps,
+			"CanCancel":   canCancel,
+			"CanRollback": canRollback,
+			"FlashSuccess": r.URL.Query().Get("ok"),
+			"FlashError":   r.URL.Query().Get("err"),
 		},
 	})
 }

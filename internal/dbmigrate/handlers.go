@@ -15,6 +15,7 @@
 package dbmigrate
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -66,6 +67,22 @@ func (s *MigrationService) GetAdminDatabaseMigrate(w http.ResponseWriter, r *htt
 // target_username, target_sslmode. The password is taken
 // from SKYGATE_DB_PASSWORD (or the source DSN password)
 // since the form doesn't carry it.
+//
+// B214: the run is ASYNC. The handler returns 303
+// See Other to /admin/database/migrate/{run_id}
+// immediately, and the migration proceeds in a
+// background goroutine. This lets the operator's
+// browser open the SSE live-progress page (Phase
+// 1.4.3) before the first step starts — pre-B214 the
+// browser was blocked on the POST until the run
+// completed (which made the SSE page useless — the
+// events had already fired before the page could
+// subscribe).
+//
+// The cancel func for the run's context is registered
+// in the live-runs registry (see framework.go) so the
+// /admin/database/migrate/{id}/cancel endpoint can
+// find it.
 func (s *MigrationService) PostAdminDatabaseMigrate(w http.ResponseWriter, r *http.Request) {
 	c := getClaims(r) // see admin.S.Backend.CurrentUser
 	if c == nil || !c.IsAdmin {
@@ -109,19 +126,74 @@ func (s *MigrationService) PostAdminDatabaseMigrate(w http.ResponseWriter, r *ht
 		TargetSSLMode:  sslmode,
 		Operator:       c.Username,
 	}
-	// Synchronous run (we don't spawn a goroutine here —
-	// the form is for short migrations; long ones can use
-	// the SSE page later). B200 may add an async path.
-	if err := Run(r.Context(), s.DB, mc); err != nil {
-		// Redirect back with the error so the page can
-		// render the failure.
-		http.Redirect(w, r,
-			"/admin/database?err=migrate+failed:+"+err.Error(),
-			http.StatusSeeOther)
+	// B214: spawn the run in a goroutine + return 303
+	// immediately. The Run() call inside the goroutine
+	// registers its cancel func in the live-runs
+	// registry (see framework.go's registerLiveRun)
+	// so the cancel button can find it.
+	//
+	// Pre-B214 the run was synchronous (the POST
+	// blocked the browser until the run completed).
+	// The SSE live-progress page was therefore
+	// useless — events fired before the page could
+	// subscribe. The async path lets the browser
+	// open the SSE page IMMEDIATELY after the
+	// redirect, and events are still in the
+	// broker's ring buffer (or arrive live as the
+	// goroutine progresses).
+	//
+	// We pass r.Context() as the parent — the
+	// goroutine outlives the request handler, so
+	// the actual run ctx is context.Background()
+	// with its own cancel. r.Context() is only
+	// used to inherit any client-side cancellation
+	// (rare; typically the browser doesn't cancel
+	// the POST immediately after the redirect).
+	runCtx := context.Background()
+	_ = runCtx // currently unused — Run() uses its own
+	// internal context. Kept for future per-run
+	// timeout knobs (e.g. 1h max per run).
+	// Pre-create the run row so the redirect can
+	// include the run ID. Run() also calls
+	// persistRun internally — we do the same
+	// pre-flight so the URL the user lands on is
+	// real.
+	preflightRun, err := persistRun(s.DB, &MigrationContext{
+		SourceDSN:      mc.SourceDSN,
+		TargetDSN:      mc.TargetDSN,
+		TargetHost:     mc.TargetHost,
+		TargetPort:     mc.TargetPort,
+		TargetDBName:   mc.TargetDBName,
+		TargetUsername: mc.TargetUsername,
+		TargetSSLMode:  mc.TargetSSLMode,
+		Operator:       mc.Operator,
+	})
+	if err != nil {
+		http.Error(w, "preflight: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	mc.RunID = preflightRun.ID
+	mc.StartedAt = time.Now()
+	// Mark the row as "pending" so the SSE page can
+	// show "starting..." until the goroutine's
+	// first emit (which flips it to "running" via
+	// the framework's run_started event).
+	finishRun(s.DB, mc, string(RunPending), "") // best-effort; re-called on completion
+
+	// Spawn the actual run.
+	go func() {
+		if err := Run(context.Background(), s.DB, mc); err != nil {
+			// Run() already emitted the failure +
+			// updated the run row's status. Just log
+			// for the operator's local stderr.
+			fmt.Fprintf(os.Stderr, "dbmigrate: run %d failed: %v\n", mc.RunID, err)
+		}
+	}()
+
+	// Redirect to the run page. The page will
+	// subscribe to SSE + show the live progress.
 	http.Redirect(w, r,
-		fmt.Sprintf("/admin/database/migrate/%d?ok=migrated", mc.RunID),
+		fmt.Sprintf("/admin/database/migrate/%d?ok=started", mc.RunID),
 		http.StatusSeeOther)
 }
 
@@ -231,6 +303,233 @@ func (s *MigrationService) renderMigratePage(w http.ResponseWriter, r *http.Requ
 %s
 </body></html>`, flash)
 	return nil
+}
+
+// PostAdminDatabaseMigrateCancel handles the "Cancel"
+// button on the /admin/database/migrate/{id} page.
+// B214 (Phase 1.4.4): cancels an in-flight run.
+//
+// Idempotent + safe: if the run isn't in-flight (already
+// finished, or never started in this process), returns
+// 303 with a flash like "run is no longer in-flight".
+// The cancel signal flows to the framework via the
+// live-runs registry, which calls the cancel func for
+// the run's context. The framework stops at the next
+// step boundary (we never preempt a step mid-flight —
+// pg_dump/pg_restore are not safe to interrupt).
+func (s *MigrationService) PostAdminDatabaseMigrateCancel(w http.ResponseWriter, r *http.Request) {
+	c := getClaims(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	runID, err := runIDFromPath(r.URL.Path, "/cancel")
+	if err != nil {
+		http.Error(w, "bad id: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Check the run's DB state first — if it's not
+	// "running", the cancel button shouldn't have
+	// been visible. Return a flash explaining that
+	// the run is already in a terminal state.
+	run, _, err := s.loadRun(runID)
+	if err != nil {
+		http.Error(w, "load: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if run.Status != RunRunning && run.Status != RunPending {
+		http.Redirect(w, r,
+			fmt.Sprintf("/admin/database/migrate/%d?err=run+is+%s,+not+in-flight", runID, run.Status),
+			http.StatusSeeOther)
+		return
+	}
+	// Signal the cancel. CancelRun returns false if
+	// the process has lost the in-flight tracking
+	// (e.g. skygate was restarted while the run was
+	// in progress) — in that case, manually flip the
+	// status to cancelled.
+	if !CancelRun(runID) {
+		// Process doesn't have the run in memory —
+		// update the DB directly + emit a synthetic
+		// SSE event so the open SSE page sees the
+		// status change.
+		run.Status = RunCancelled
+		now := time.Now()
+		run.FinishedAt = &now
+		run.Error = "cancelled by operator (process lost in-flight tracking — likely a restart)"
+		_, _ = s.DB.Exec(`
+			UPDATE dbmigrate_run
+			   SET status = $1, finished_at = $2, error = $3
+			 WHERE id = $4
+		`, string(RunCancelled), now, run.Error, runID)
+		emit(SSEEvent{
+			At: now, Kind: "run_finished", RunID: runID, Status: string(RunCancelled),
+		})
+		http.Redirect(w, r,
+			fmt.Sprintf("/admin/database/migrate/%d?ok=cancelled+stale", runID),
+			http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r,
+		fmt.Sprintf("/admin/database/migrate/%d?ok=cancel+requested", runID),
+		http.StatusSeeOther)
+}
+
+// PostAdminDatabaseMigrateRollback handles the
+// "Rollback" button. B214 (Phase 1.4.5): calls each
+// step's Rollback() in reverse order, updates step
+// statuses to StepRolledBack (or StepFailed if the
+// rollback itself errored), updates the run's status
+// to RunRolledBack.
+//
+// The rollback works on COMPLETED runs (status =
+// success or failed). For a still-running run, the
+// operator should cancel first, wait for the cancel
+// to take effect (next step boundary), then rollback.
+//
+// Implementation: we reconstruct the run's MigrationContext
+// from the run row + step rows, find each step's
+// Rollback() method by name, and call it.
+func (s *MigrationService) PostAdminDatabaseMigrateRollback(w http.ResponseWriter, r *http.Request) {
+	c := getClaims(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	runID, err := runIDFromPath(r.URL.Path, "/rollback")
+	if err != nil {
+		http.Error(w, "bad id: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	run, steps, err := s.loadRun(runID)
+	if err != nil {
+		http.Error(w, "load: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Allow rollback from success OR failed states.
+	// Reject from running (must cancel first) + from
+	// already-rolled_back (no-op).
+	if run.Status == RunRunning || run.Status == RunPending {
+		http.Redirect(w, r,
+			fmt.Sprintf("/admin/database/migrate/%d?err=run+still+in-flight;+cancel+first", runID),
+			http.StatusSeeOther)
+		return
+	}
+	if run.Status == RunRolledBack || run.Status == RunCancelled {
+		http.Redirect(w, r,
+			fmt.Sprintf("/admin/database/migrate/%d?err=run+already+%s", runID, run.Status),
+			http.StatusSeeOther)
+		return
+	}
+	// Reconstruct the MigrationContext.
+	mc := &MigrationContext{
+		DB:             s.DB,
+		RunID:          run.ID,
+		SourceDSN:      run.SourceDSN,
+		TargetDSN:      run.TargetDSN,
+		Operator:       run.Operator,
+	}
+	// We can't reconstruct the parsed TargetHost/Port/etc.
+	// from the run row (those aren't persisted — they
+	// are part of the parsed DSN). For step Rollback()
+	// methods that need the parsed values, this would
+	// be a gap. For B214 we only need the per-step
+	// Rollback() to be called with a non-nil mc —
+	// each step's Rollback() is best-effort and nil-safe
+	// (per the framework contract: "Steps MUST be nil-safe
+	// anyway because rollback can be called after a
+	// panic with mc partially populated").
+	// Best-effort parse: if the DSN is malformed, the
+	// parsed values are empty and individual step
+	// Rollback() methods just see an empty mc.TargetHost.
+	// That's fine — every step is documented as nil-safe.
+	host, port, dbname, username, sslmode, ok := parseTargetDSNForRollback(run.TargetDSN)
+	if ok {
+		mc.TargetHost = host
+		mc.TargetPort = port
+		mc.TargetDBName = dbname
+		mc.TargetUsername = username
+		mc.TargetSSLMode = sslmode
+	}
+	// Build the ordered list of steps that succeeded
+	// (status=success). Reverse it for rollback.
+	allSteps := listSteps()
+	stepByName := make(map[string]DeployStep, len(allSteps))
+	for _, s := range allSteps {
+		stepByName[s.Name()] = s
+	}
+	ran := make([]*StepRecord, 0, len(steps))
+	for _, s := range steps {
+		if s.Status != StepSuccess {
+			continue
+		}
+		// Look up the step's Rollback() method by name.
+		step, ok := stepByName[s.StepName]
+		if !ok {
+			// Unknown step (e.g. step was removed in
+			// a later code version). Skip — the
+			// best-effort contract says we don't
+			// abort on unknown steps.
+			continue
+		}
+		ran = append(ran, &StepRecord{
+			Step: step,
+			Row:  &s,
+		})
+	}
+	// Reverse: rollback in opposite order.
+	for i, j := 0, len(ran)-1; i < j; i, j = i+1, j-1 {
+		ran[i], ran[j] = ran[j], ran[i]
+	}
+	// Run the rollback (5-min per-step timeout).
+	for _, rec := range ran {
+		rctx, rcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		err := rec.Step.Rollback(rctx, mc)
+		rcancel()
+		status := StepRolledBack
+		if err != nil {
+			status = StepFailed
+			rec.Row.Error = "rollback: " + err.Error()
+		}
+		rec.Row.Status = status
+		_, _ = s.DB.Exec(`
+			UPDATE dbmigrate_step
+			   SET status = $1, error = $2
+			 WHERE id = $3
+		`, string(status), rec.Row.Error, rec.Row.ID)
+		emit(SSEEvent{
+			At: time.Now(), Kind: "step_finished", RunID: runID,
+			Step: rec.Step.Name(), Ordinal: rec.Row.Ordinal,
+			Status: string(status),
+		})
+	}
+	// Mark the run as rolled_back.
+	now := time.Now()
+	_, _ = s.DB.Exec(`
+		UPDATE dbmigrate_run
+		   SET status = $1, finished_at = $2
+		 WHERE id = $3
+	`, string(RunRolledBack), now, runID)
+	emit(SSEEvent{
+		At: now, Kind: "run_finished", RunID: runID, Status: string(RunRolledBack),
+	})
+	http.Redirect(w, r,
+		fmt.Sprintf("/admin/database/migrate/%d?ok=rolled+back", runID),
+		http.StatusSeeOther)
+}
+
+// runIDFromPath extracts the numeric run ID from a URL
+// path of the form /admin/database/migrate/{id}/{suffix}.
+// Used by PostAdminDatabaseMigrateCancel + PostAdminDatabaseMigrateRollback.
+func runIDFromPath(path, suffix string) (int64, error) {
+	// Strip the suffix first.
+	trimmed := strings.TrimSuffix(path, suffix)
+	// The remaining path is /admin/database/migrate/{id}.
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 1 {
+		return 0, errors.New("no id in path")
+	}
+	return strconv.ParseInt(parts[len(parts)-1], 10, 64)
 }
 
 // getSourceDSN returns the current SKYGATE_DB_DSN (read from

@@ -19,6 +19,76 @@ import (
 	"time"
 )
 
+// liveRuns is the per-process registry of in-flight
+// migration runs. The map key is the run ID (from
+// dbmigrate_run.id). The value is the cancel function
+// for the context the framework is running this run
+// under. CancelRun(runID) calls it; cleanup happens
+// when Run() returns (deferred).
+//
+// B214: this registry enables Phase 1.4.4 (cancel from
+// the UI) + async Run (the POST handler returns
+// immediately + the goroutine registers the cancel
+// func here, so the cancel button can find it).
+//
+// Process-scoped (not persisted to DB) — a process
+// restart loses any in-flight run's cancel func, but
+// the DB state (status='running' for the run) makes
+// the orphan discoverable on next start. The boot
+// recovery path is Phase 3.x territory.
+var (
+	liveRunsMu sync.RWMutex
+	liveRuns   = make(map[int64]context.CancelFunc)
+)
+
+// registerLiveRun stores the cancel func for a runID.
+// Called from Run() before the step loop starts.
+func registerLiveRun(runID int64, cancel context.CancelFunc) {
+	liveRunsMu.Lock()
+	defer liveRunsMu.Unlock()
+	liveRuns[runID] = cancel
+}
+
+// unregisterLiveRun removes the cancel func. Called from
+// Run()'s deferred cleanup so a finished run doesn't
+// leak the entry.
+func unregisterLiveRun(runID int64) {
+	liveRunsMu.Lock()
+	defer liveRunsMu.Unlock()
+	delete(liveRuns, runID)
+}
+
+// CancelRun signals the in-flight run (looked up by
+// runID) to stop at the next step boundary. Returns
+// true if a run was found + signaled, false if the
+// run is not in-flight (already finished, or never
+// started in this process).
+//
+// Idempotent — calling CancelRun twice for the same
+// runID is safe (the second call is a no-op).
+func CancelRun(runID int64) bool {
+	liveRunsMu.RLock()
+	cancel, ok := liveRuns[runID]
+	liveRunsMu.RUnlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
+
+// IsRunLive reports whether runID has an in-flight
+// goroutine in this process. Used by the UI to show
+// the "Cancel" button only for actually-running
+// migrations (a stale 'running' status from a previous
+// process boot should NOT show the cancel button).
+func IsRunLive(runID int64) bool {
+	liveRunsMu.RLock()
+	_, ok := liveRuns[runID]
+	liveRunsMu.RUnlock()
+	return ok
+}
+
 // StepRecord is the framework's internal record of a step in
 // the current run. It holds the DeployStep interface, the
 // persisted MigrationStep row, and accumulated logs.
@@ -96,6 +166,17 @@ func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
 	mc.RunID = run.ID
 	mc.StartedAt = time.Now()
 
+	// 1.5 Register this run as in-flight (B214 async +
+	//     cancel). The cancel func cancels a context
+	//     derived from the caller's ctx; the step loop
+	//     checks ctx.Err() between steps (and each step
+	//     uses a 15-min timeout derived from this ctx).
+	//     The unregister is in the deferred block below
+	//     so a finished run doesn't leak the entry.
+	runCtx, runCancel := context.WithCancel(ctx)
+	registerLiveRun(mc.RunID, runCancel)
+	defer unregisterLiveRun(mc.RunID)
+
 	// 2. Emit run_started.
 	emit(SSEEvent{
 		At: time.Now(), Kind: "run_started", RunID: mc.RunID, Detail: map[string]any{
@@ -105,6 +186,12 @@ func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
 	})
 	defer func() {
 		status := RunSuccess
+		// B214: cancellation flips the run status to
+		// "cancelled" (a new sentinel) so the UI can
+		// distinguish a user-cancel from a step error.
+		if runCtx.Err() == context.Canceled {
+			status = RunCancelled
+		}
 		if mc.FinishedAt.IsZero() {
 			mc.FinishedAt = time.Now()
 		}
@@ -121,6 +208,23 @@ func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
 
 	// 4. Run each step.
 	for ordinal, step := range all {
+		// B214: cancellation check at step boundary.
+		// If the operator clicked "Cancel" (or the
+		// context was canceled for any other reason —
+		// e.g. the HTTP handler returned), bail out
+		// BEFORE starting the next step. We do NOT
+		// interrupt a step mid-execution: pg_dump
+		// / pg_restore / DSN-flip are not safely
+		// preemptable, so we let the current step
+		// finish and stop at the next iteration.
+		if runCtx.Err() == context.Canceled {
+			emit(SSEEvent{
+				At: time.Now(), Kind: "run_cancelled", RunID: mc.RunID,
+				Detail: map[string]any{"at_step": step.Name()},
+			})
+			return nil
+		}
+
 		// Persist step row.
 		stepRow := &MigrationStep{
 			RunID:     mc.RunID,

@@ -1444,6 +1444,15 @@ func main() {
 	mux.Handle("POST /admin/database/migrate", authMW(http.HandlerFunc(migrateSvc.PostAdminDatabaseMigrate)))
 	mux.Handle("GET /admin/database/migrate/{id}/stream", authMW(http.HandlerFunc(migrateSvc.GetAdminDatabaseMigrateStream)))
 	mux.Handle("GET /admin/database/migrate/{id}", authMW(http.HandlerFunc(adminSvc.GetAdminDatabaseMigrateRun)))
+	// B214 (Phase 1.4.4 / 1.4.5): cancel + rollback
+	// endpoints for the in-flight / completed run
+	// workflow. The cancel button is visible only when
+	// the run is in-flight (per framework's IsRunLive
+	// check); the rollback button is visible only when
+	// the run is in a terminal non-rolled-back state
+	// (success / failed / cancelled).
+	mux.Handle("POST /admin/database/migrate/{id}/cancel", authMW(http.HandlerFunc(migrateSvc.PostAdminDatabaseMigrateCancel)))
+	mux.Handle("POST /admin/database/migrate/{id}/rollback", authMW(http.HandlerFunc(migrateSvc.PostAdminDatabaseMigrateRollback)))
 
 	// v1.5.0+ / B199 — /admin/cluster (cluster topology view,
 	// Phase 2.1 read-only). The page renders the cluster +

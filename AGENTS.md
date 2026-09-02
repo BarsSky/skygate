@@ -2618,6 +2618,106 @@ in the same commit. Don't let the tracker drift.
     (`applied=0` delta, no error). Stdout format
     for `up` (line 1, scriptable):
     `applied=N pending=0 duration_ms=N`.
+  - **B214 (v1.5.0+, 2026-09-02) — /admin/database
+    migration workflow: async + cancel + rollback
+    UI (Phase 1.4.4 + 1.4.5 of
+    docs/internal/cluster-management.md).** Closes
+    the "operator has no way to cancel an
+    in-flight migration or rollback a failed one"
+    gap. Pre-B214, `PostAdminDatabaseMigrate` was
+    synchronous (the POST blocked the browser
+    until the run completed, which made the SSE
+    live-progress page useless — events had
+    already fired before the page could
+    subscribe) AND there was no cancel or
+    rollback endpoint (the framework had a
+    `rollback()` function but it was
+    package-private AND there was no UI button).
+    Post-B214:
+    (1) `PostAdminDatabaseMigrate` now persists
+    the run row + spawns a goroutine that calls
+    `Run()` + returns 303 See Other to
+    `/admin/database/migrate/{id}` immediately;
+    (2) `Run()` registers its cancel func in a
+    new live-runs registry
+    (`map[int64]context.CancelFunc`,
+    process-scoped) at start + unregisters on
+    completion;
+    (3) each step boundary checks `runCtx.Err()`
+    for cancellation — if set, the run stops at
+    the next iteration (we never preempt a step
+    mid-flight because `pg_dump`/`pg_restore`/
+    DSN-flip are not safe to interrupt);
+    (4) new `RunCancelled` sentinel (distinct
+    from `RunFailed` so the UI can tell
+    operator-cancel from step-error);
+    (5) new `POST
+    /admin/database/migrate/{id}/cancel` handler
+    that signals `CancelRun(runID)` + falls back
+    to direct DB flip if the process lost
+    in-flight tracking (e.g. skygate restart
+    while the run was in-flight);
+    (6) new `POST
+    /admin/database/migrate/{id}/rollback`
+    handler that reconstructs the run + step
+    rows from the DB, looks up each successful
+    step's `Rollback()` method by name (via
+    `listSteps()` + a name→step map), calls them
+    in reverse order with a 5-min per-step
+    timeout, updates statuses to
+    `rolled_back` / `failed`;
+    (7) `migrate_run.html` has conditional
+    `Cancel` + `Rollback` buttons (controlled by
+    `CanCancel` = `IsRunLive` check + `CanRollback`
+    = terminal-state check on the server side, so
+    a stale "running" status from a previous
+    process boot doesn't show the Cancel
+    button);
+    (8) 4 new i18n keys (`db.migrate_cancel_btn`,
+    `db.migrate_cancel_confirm`,
+    `db.migrate_rollback_btn`,
+    `db.migrate_rollback_confirm`) in RU + EN.
+    23 B-check contracts in `scripts/check_b214.sh`
+    (20 source-pin + 3 go-runtime, skipped when
+    go is not on PATH). 14 unit tests in
+    `internal/dbmigrate/b214_test.go`
+    (`TestParseTargetDSNForRollback` 7 sub-cases
+    + `TestLiveRunsRegistry_RegisterAndCancel` +
+    `TestLiveRunsRegistry_ConcurrentSafety`
+    100-goroutine race test +
+    `TestRunCancelledStatus` 4 sub-cases +
+    `TestRunIDFromPath` 3 sub-cases). 2 new
+    files: `internal/dbmigrate/dsn_parse.go`
+    (~70 lines, `parseTargetDSNForRollback` helper
+    — mirrors `admin.parseLibpqDSN` but lives in
+    `dbmigrate` to avoid an import cycle),
+    `internal/dbmigrate/b214_test.go` (~210
+    lines). Modifies `internal/dbmigrate/framework.go`
+    (+~60 lines for the live-runs registry + `Run()`
+    async refactor + `RunCancelled` check between
+    steps), `internal/dbmigrate/handlers.go`
+    (+~140 lines for the cancel/rollback handlers
+    + goroutine refactor),
+    `internal/dbmigrate/types.go` (+1 line for the
+    `RunCancelled` sentinel),
+    `internal/feature/admin/database.go` (+~10
+    lines for the `CanCancel`/`CanRollback` check
+    + flash-message surfacing),
+    `internal/handlers/templates/admin/migrate_run.html`
+    (+~20 lines for the conditional buttons),
+    `cmd/skygate/main.go` (+2 lines for the new
+    routes), `internal/i18n/catalog_admin.go`
+    (+4 keys in RU + 4 in EN). Live-verify
+    planned on the agent: start a real
+    migration, click `Cancel` during the
+    `PreCheck` step, confirm the run goes to
+    `status=cancelled` and the dump step never
+    runs; then start another, let it complete,
+    click `Rollback`, confirm each step gets
+    its `Rollback()` called (idempotent — the
+    live test's DSN-template path is no-op on a
+    same-DB-source-and-target, but the
+    framework's bookkeeping gets updated).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't
