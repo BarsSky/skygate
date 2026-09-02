@@ -48,6 +48,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // ErrNodeAlreadyExists is returned by Join when the
@@ -275,6 +277,24 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 	// ready-to-use DSN.
 	dsnTpl, dbName, dbUser := readDBBootstrap(d, clusterID)
 	primaryHost := readPrimaryHost(d, clusterID)
+
+	// 10. B215: emit the node_join audit event. We
+	//     use db.InsertClusterAudit (the canonical
+	//     helper) so the JSONB shape is consistent
+	//     with the failover events. Best-effort: a
+	//     failure here doesn't abort the join (the
+	//     node row is already committed; the operator
+	//     just loses the audit row for this join).
+	//     For the same reason, we don't wrap the
+	//     insert in the join's transaction (none).
+	//     Detail captures the join-relevant fields
+	//     so the /admin/ha "Last 20 events" view can
+	//     show the new node's metadata.
+	roleStr := strings.Join(roles, ",")
+	_, _ = db.InsertClusterAudit(d, clusterID, db.NodeJoin, nodeID, req.Hostname,
+		fmt.Sprintf(`{"node_id":%q,"hostname":%q,"roles":%q,"tailscale_ip":%q,"skygate_version":%q,"invite_id":%q}`,
+			nodeID, req.Hostname, roleStr, req.TailscaleIP, req.SkygateVersion, payload.Inv))
+
 	return &JoinResponse{
 		ClusterID:     clusterID,
 		NodeID:        nodeID,

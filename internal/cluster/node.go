@@ -14,8 +14,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // NodeState values. The DB column is TEXT with a default
@@ -124,15 +127,63 @@ func AddNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []string,
 // RemoveNode deletes the cluster_node row matching
 // (cluster_id, hostname). Idempotent: removing a non-
 // existent row is a no-op (returns nil, not an error).
+//
+// B215: also emits a cluster_audit row with action
+// 'node_leave' (best-effort). The audit row is written
+// BEFORE the DELETE so the row's target_node_id still
+// exists in cluster_node (cluster_audit.target_node_id
+// has no FK, but a non-NULL target_node_id is easier
+// to JOIN against the live row than a NULL one). The
+// detail captures the row's last state + roles for
+// post-mortem analysis.
 func RemoveNode(d *sql.DB, clusterID, hostname string) error {
 	if clusterID == "" || hostname == "" {
 		return ErrNodeNotFound
 	}
-	_, err := d.Exec(`
+	// B215: snapshot the row + emit the audit event
+	// before deleting. We do this in a single
+	// transaction so a failed DELETE doesn't leave a
+	// phantom audit row.
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var nodeID, lastState, rolesText string
+	if scanErr := tx.QueryRow(`
+		SELECT id, COALESCE(state, ''), COALESCE(array_to_string(roles, ','), '')
+		  FROM cluster_node
+		 WHERE cluster_id = $1 AND hostname = $2
+	`, clusterID, hostname).Scan(&nodeID, &lastState, &rolesText); scanErr != nil {
+		// Row doesn't exist — nothing to delete or
+		// audit. The downstream DELETE will also be
+		// a no-op. Idempotent.
+		_ = tx.Rollback()
+		return nil
+	}
+	// Best-effort audit. If the audit INSERT fails,
+	// we still proceed with the DELETE (the operator
+	// clicked Remove; failing the whole op would be
+	// worse than a missing audit row).
+	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeLeave, nodeID, hostname,
+		fmt.Sprintf(`{"node_id":%q,"hostname":%q,"last_state":%q,"roles":%q}`,
+			nodeID, hostname, lastState, rolesText)); auditErr != nil {
+		fmt.Fprintf(os.Stderr, "cluster.RemoveNode: warning: node_leave audit failed: %v (continuing with delete)\n", auditErr)
+	}
+	if _, err = tx.Exec(`
 		DELETE FROM cluster_node
 		 WHERE cluster_id = $1 AND hostname = $2
-	`, clusterID, hostname)
-	return err
+	`, clusterID, hostname); err != nil {
+		return fmt.Errorf("delete cluster_node: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // UpsertNode inserts-or-updates the cluster_node row for

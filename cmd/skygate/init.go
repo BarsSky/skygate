@@ -291,6 +291,20 @@ func runInitBootstrap(args []string) error {
 		BootstrappedAt: time.Now().UTC(),
 	})
 
+	// 7. B215: emit the bootstrap audit event. We
+	//    fire this AFTER the row is committed (idempotent
+	//    UpsertNode is committed) and AFTER the state
+	//    file is written (so the audit trail reflects
+	//    the operator's intent even if the audit
+	//    INSERT itself fails — we log + continue, not
+	//    return the error, because the bootstrap itself
+	//    succeeded).
+	if _, err := db.InsertClusterAudit(d, cluster.DefaultClusterID, db.NodeInit, nodeID, hostname,
+		fmt.Sprintf(`{"node_id":%q,"hostname":%q,"roles":%q,"tailscale_ip":%q,"skygate_version":%q,"invited":true}`,
+			nodeID, hostname, strings.Join(roles, ","), tsHostname, skygateVersion)); err != nil {
+		fmt.Fprintf(os.Stderr, "init: warning: could not write node_init audit row: %v (bootstrap succeeded, audit only)\n", err)
+	}
+
 	// Print to stdout in a scriptable format:
 	//   line 1: standby token (this is what
 	//           bootstrap_standby.sh reads on stdin)

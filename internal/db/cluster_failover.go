@@ -182,6 +182,22 @@ func FailoverClusterNode(d *sql.DB, targetID, actor, reason string) (fromID, toI
 		return "", "", fmt.Errorf("demote old primary: %w", err)
 	}
 
+	// B215: emit the node_drain audit event IN THE
+	// SAME TRANSACTION as the UPDATE. We could fold
+	// this into the existing node_failover audit row
+	// below, but the B215 spec wants a distinct
+	// "drain" event (it's the bootstrap state machine
+	// primitive; failover is a higher-level
+	// composition). Using InsertClusterAudit's
+	// auditExec interface (which accepts *sql.Tx) keeps
+	// the audit atomic with the UPDATE.
+	// cluster_id is hardcoded (single-cluster deploy;
+	// matches the existing node_failover INSERT below).
+	if _, drainErr := InsertClusterAudit(tx, "skygate-staging", NodeDrain, fromIDRow, actor,
+		fmt.Sprintf(`{"from_state":"ready","reason":"demoted as old primary during failover","failover_actor":%q}`, actor)); drainErr != nil {
+		return "", "", fmt.Errorf("insert node_drain audit: %w", drainErr)
+	}
+
 	// 5. Write the cluster_audit row. The cluster_audit
 	//    table has these columns: id, cluster_id, actor,
 	//    action, target_node_id, detail, result,

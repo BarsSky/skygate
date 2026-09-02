@@ -338,7 +338,21 @@
           {{end}}
         </td>
         <td><code>{{.Actor}}</code></td>
-        <td><code>{{.Action}}</code></td>
+        <td>
+          {{/* B215: render the action name via i18n
+              for the new bootstrap events (node_init /
+              node_join / node_drain / node_leave). The
+              pre-B215 events (node_health /
+              failover_recommend / node_failover /
+              node_drill) already had their own i18n
+              keys; we fall back to the raw action
+              string for unknown values. */}}
+          {{if eq .Action "node_init"}}<span class="badge bg-info">{{t "ha.action_node_init"}}</span>
+          {{else if eq .Action "node_join"}}<span class="badge bg-info">{{t "ha.action_node_join"}}</span>
+          {{else if eq .Action "node_drain"}}<span class="badge bg-warning">{{t "ha.action_node_drain"}}</span>
+          {{else if eq .Action "node_leave"}}<span class="badge bg-secondary">{{t "ha.action_node_leave"}}</span>
+          {{else}}<code>{{.Action}}</code>{{end}}
+        </td>
         <td><span style="font-family:var(--font-mono);font-size:11px">{{.Detail}}</span></td>
       </tr>
       {{end}}

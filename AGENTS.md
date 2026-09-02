@@ -2718,6 +2718,93 @@ in the same commit. Don't let the tracker drift.
     live test's DSN-template path is no-op on a
     same-DB-source-and-target, but the
     framework's bookkeeping gets updated).
+  - **B215 (v1.5.0+, 2026-09-02) — bootstrap state
+    machine audit events (Phase 2.6 of
+    docs/internal/cluster-management.md).** Closes
+    the "bootstrap events (init/join/drain/leave)
+    are silent in cluster_audit" gap. Pre-B215,
+    only the failover path wrote to cluster_audit
+    (B204/B205/Phase 3.4/3.6: `node_health`,
+    `failover_recommend`, `node_failover`,
+    `node_drill`) — the bootstrap paths had no
+    audit trail. Operators couldn't answer "who
+    bootstrapped this node, when did the last
+    standby join, when did we drain the old
+    primary" without parsing logs. Post-B215:
+    (1) new `internal/db/cluster_audit.go` with
+    the `InsertClusterAudit` helper + typed
+    `ClusterAuditAction` enum (8 actions:
+    `NodeInit` / `NodeJoin` / `NodeDrain` /
+    `NodeLeave` from B215 + `NodeHealth` /
+    `FailoverRecommend` / `NodeFailover` /
+    `NodeDrill` from prior B-blocks);
+    (2) the helper accepts BOTH `*sql.DB`
+    (autocommit) AND `*sql.Tx` (transactional) via
+    a small `auditExec` interface — `RemoveNode`
+    wraps the audit + `DELETE` in a single tx so
+    a failed `DELETE` rolls back the audit too;
+    (3) `runInitBootstrap` (B211) emits
+    `node_init` after the `UpsertNode` commit
+    (idempotent — re-run is safe);
+    (4) `cluster.Join` emits `node_join` after
+    the new-node INSERT (also fires on idempotent
+    re-join — the operator's re-running `skygate
+    cluster join` leaves a visible audit trail);
+    (5) `cluster.RemoveNode` emits `node_leave`
+    (with `last_state` + `roles` captured in
+    detail JSONB) — wrapped in a tx with the
+    `DELETE`;
+    (6) `db.FailoverClusterNode` (Phase 3.4 path)
+    emits `node_drain` IN THE SAME TRANSACTION
+    as the old-primary demote — so the audit can
+    never be lost mid-failover;
+    (7) `/admin/ha`'s "Last 20 HA events" query
+    filter expanded from 4 actions to 8 (the 4
+    new ones added in the `WHERE` clause);
+    (8) `ha.html` renders the new actions as
+    colored badges (info for init/join, warning
+    for drain, secondary for leave) with i18n
+    keys `ha.action_node_{init,join,drain,leave}`
+    in RU + EN.
+    25 B-check contracts in `scripts/check_b215.sh`
+    (23 source-pin + 2 go-runtime, skipped when
+    go is not on PATH). 13 unit tests in
+    `internal/db/cluster_audit_b215_test.go`
+    (`TestClusterAuditAction_Constants` 8
+    sub-cases + `TestClusterAuditAction_Distinct`
+    + `TestClusterAuditAction_B215EventSet` +
+    `TestInsertClusterAudit_DetailNormalization`
+    5 sub-cases). 1 new file:
+    `internal/db/cluster_audit.go` (~180 lines:
+    helper + 8-constant enum + `auditExec`
+    interface). 7 modified:
+    `cmd/skygate/init.go` (+~10 lines: `node_init`
+    emission after `UpsertNode` commit),
+    `internal/cluster/join.go` (+~12 lines:
+    `node_join` emission after new-node INSERT +
+    import `skygate/internal/db`),
+    `internal/cluster/node.go` (+~30 lines:
+    tx-wrapped `RemoveNode` with `node_leave`
+    audit), `internal/db/cluster_failover.go`
+    (+~7 lines: `node_drain` emission in the
+    same tx as the demote),
+    `internal/feature/admin/ha.go` (+1 line: filter
+    expansion),
+    `internal/handlers/templates/admin/ha.html`
+    (+~10 lines: badge rendering),
+    `internal/i18n/catalog_admin.go` (+8 lines:
+    4 keys in RU + 4 in EN). Live-verify planned
+    on the agent: start a fresh `skygate init`
+    → confirm `cluster_audit` has 1 `node_init`
+    row; run `skygate join` with a fresh token
+    → confirm `cluster_audit` has 1 `node_join`
+    row; `skygate cluster failover --target=...`
+    → confirm `cluster_audit` has 1 `node_drain`
+    + 1 `node_failover` row; admin click "Remove"
+    on a cluster_node row → confirm
+    `cluster_audit` has 1 `node_leave` row.
+    `/admin/ha` "Last 20 events" should show all
+    4 new action types as colored badges.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

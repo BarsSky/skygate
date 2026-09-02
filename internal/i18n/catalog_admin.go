@@ -380,6 +380,20 @@ var ruAdmin = map[string]string{
 	"ha.section_audit":           "Последние события HA",
 	"ha.audit_empty":             "Событий HA пока нет.",
 	"ha.audit_help":              "Last 20 actions on the HA chain (force, add, remove, auto-failover toggle, DNS provider creds). Filter: action LIKE 'ha.%' OR 'ha_chain.%'.",
+	// B215: bootstrap state machine event labels.
+	// These are the human-readable forms of the
+	// node_init / node_join / node_drain / node_leave
+	// cluster_audit.action values (see internal/db/
+	// cluster_audit.go). The template (ha.html)
+	// renders the badge for each one — the pre-B215
+	// events (node_health / node_failover / etc.)
+	// already have their own badge styling; the
+	// template just falls back to a plain <code>
+	// for unknown actions.
+	"ha.action_node_init":        "Init (bootstrap)",
+	"ha.action_node_join":        "Join (standby onboarded)",
+	"ha.action_node_drain":        "Drain (state=draining)",
+	"ha.action_node_leave":        "Leave (node removed)",
 	"ha.role_self_active":        "This skygate is the active node.",
 	"ha.role_self_standby":       "This skygate is a standby node.",
 	"ha.role_self_other":         "This skygate is not in the chain (run a deploy to add it).",
@@ -1097,6 +1111,11 @@ var enAdmin = map[string]string{
 	"ha.section_audit":           "Recent HA events",
 	"ha.audit_empty":             "No HA-related events yet.",
 	"ha.audit_help":              "Last 20 actions on the HA chain (force, add, remove, auto-failover toggle, DNS provider creds). Filter: action LIKE 'ha.%' OR 'ha_chain.%'.",
+	// B215: bootstrap state machine event labels.
+	"ha.action_node_init":        "Init (bootstrap)",
+	"ha.action_node_join":        "Join (standby onboarded)",
+	"ha.action_node_drain":        "Drain (state=draining)",
+	"ha.action_node_leave":        "Leave (node removed)",
 	"ha.role_self_active":        "This skygate is the active node.",
 	"ha.role_self_standby":       "This skygate is a standby node.",
 	"ha.role_self_other":         "This skygate is not in the chain (run a deploy to add it).",
