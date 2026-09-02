@@ -59,31 +59,25 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	skygatedb "skygate/internal/db"
 )
 
-// DBSource is the minimum surface the sampler needs to
-// obtain the current *sql.DB. The ResettableDB wrapper
-// from internal/db (B203) satisfies it via its
-// Current() method. A plain *sql.DB also satisfies it
-// (every call returns the same pointer) — use the
-// helper NewFixedDBSource for tests + one-off scripts.
-type DBSource interface {
-	Current() *sql.DB
+// B210.1 (2026-09-02): the DBSource interface + the
+// `fixedDBSource` test wrapper + `NewFixedDBSource`
+// constructor moved to skygate/internal/db (one
+// canonical copy across the whole codebase; B208.1 +
+// B210 + B204 + B206 each had its own). The aliases
+// below keep source-compat for existing B206 callers
+// (`healthz.NewFixedDBSource(db)` still works; it
+// delegates to db.FixedDBSource{DB: db}).
+type DBSource = skygatedb.DBSource
+
+type fixedDBSource = skygatedb.FixedDBSource
+
+func NewFixedDBSource(db *sql.DB) skygatedb.DBSource {
+	return skygatedb.FixedDBSource{DB: db}
 }
-
-// fixedDBSource is a DBSource that always returns the
-// same *sql.DB. Used by unit tests + scripts that don't
-// have a ResettableDB.
-type fixedDBSource struct {
-	db *sql.DB
-}
-
-func (f fixedDBSource) Current() *sql.DB { return f.db }
-
-// NewFixedDBSource wraps a plain *sql.DB so it satisfies
-// DBSource. Most callers should pass the ResettableDB
-// directly (it already has Current()).
-func NewFixedDBSource(db *sql.DB) DBSource { return fixedDBSource{db: db} }
 
 // DBHealthConfig is the sampler's tunables.
 type DBHealthConfig struct {

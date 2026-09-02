@@ -20,16 +20,17 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+
+	skygatedb "skygate/internal/db"
 )
 
-// fixedDB is a DBSource that always returns the same
-// *sql.DB — the test stub for B210's DBSource interface.
-// B210: every test that constructed a Service with
-// `DB: <*sql.DB>` now needs `DB: fixedDB{db: <*sql.DB>}`
-// (the wrapper that satisfies the DBSource interface).
-type fixedDB struct{ db *sql.DB }
-
-func (f fixedDB) Current() *sql.DB { return f.db }
+// fixedDB is a deprecated alias for skygate/internal/db.FixedDBSource.
+// B210.1: the canonical FixedDBSource lives in skygate/internal/db
+// (consolidation of the 5 local copies — B204 elector + B206
+// healthz + B210 auth/my/exit_rules test files all had their
+// own). This alias keeps the B210 test source working with
+// `fixedDB{db: d}` syntax.
+type fixedDB = skygatedb.FixedDBSource
 
 // TestSyncAdvertisedRoutesForNode_EmptyHostname pins that the
 // empty-hostname short-circuit returns {"error": "..."} and
@@ -77,7 +78,7 @@ func TestSyncAdvertisedRoutesForNode_NoRules(t *testing.T) {
 	)`); err != nil {
 		t.Fatalf("create device_rules: %v", err)
 	}
-	s := &Service{DB: fixedDB{db: d}}
+	s := &Service{DB: fixedDB{DB: d}}
 	res := s.SyncAdvertisedRoutesForNode("emilia")
 	if v, ok := res["emilia"]; !ok || !strings.Contains(v, "no IP/subnet rules") {
 		t.Errorf("expected emilia=info=no rules, got %v", res)

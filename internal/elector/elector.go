@@ -63,6 +63,8 @@
 package elector
 
 import (
+	skygatedb "skygate/internal/db"
+
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -146,9 +148,13 @@ func (e *Elector) now() time.Time {
 // The ResettableDB satisfies this interface directly
 // via its Current() method. A plain *sql.DB also
 // satisfies it (each call returns the same pointer).
-type DBSource interface {
-	Current() *sql.DB
-}
+//
+// B210.1 (2026-09-02): DBSource is now a type alias
+// for skygate/internal/db.DBSource (the canonical copy
+// across the whole codebase; the elector's local copy
+// was the 4th of 5+ duplicates). `NewElectorWithDB` now
+// delegates to skygatedb.FixedDBSource.
+type DBSource = skygatedb.DBSource
 
 // Elector is the running ticker. Construct with NewElector,
 // then call Start to launch the goroutine.
@@ -192,18 +198,11 @@ func NewElector(cfg Config, src DBSource) *Elector {
 // NewElectorWithDB constructs an elector over a fixed
 // *sql.DB (no hot-reload support). Useful for unit tests
 // and one-off scripts; production code should pass the
-// ResettableDB via NewElector.
+// ResettableDB via NewElector. B210.1: now delegates to
+// skygatedb.FixedDBSource (one canonical wrapper).
 func NewElectorWithDB(cfg Config, db *sql.DB) *Elector {
-	return NewElector(cfg, fixedDB{db: db})
+	return NewElector(cfg, skygatedb.FixedDBSource{DB: db})
 }
-
-// fixedDB is a DBSource that always returns the same
-// *sql.DB. The unit tests + one-off scripts use it.
-type fixedDB struct {
-	db *sql.DB
-}
-
-func (f fixedDB) Current() *sql.DB { return f.db }
 
 // db is a convenience wrapper that returns the current
 // *sql.DB (or nil if the source is nil / the pool is

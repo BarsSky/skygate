@@ -2217,6 +2217,77 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B210.1 (v1.5.0+) — DBSource consolidation
+    (5+ local copies → 1 canonical in
+    skygate/internal/db)**. The follow-up to B210 that
+    collapses the interface duplication B210 left
+    behind. B208.1 (admin) + B210 (auth/my/exit_rules/
+    cluster) + earlier B204 (elector) + B206 (healthz)
+    each declared their own local copy of:
+    ```
+    type DBSource interface { Current() *sql.DB }
+    ```
+    plus their own `FixedDBSource`/`fixedDB` test
+    wrapper + per-Service `dbc()` method. 6 copies of
+    the same one-method interface. B210.1 moves the
+    canonical version into `skygate/internal/db/
+    dbsource.go` (the package that owns the
+    implementation — the ResettableDB satisfies
+    DBSource via its existing Current() method).
+    **What's now in internal/db:** the `DBSource`
+    interface (one method), a `FixedDBSource` struct
+    + Current() method (the test/one-off wrapper for
+    wrapping a plain *sql.DB), and a `DBCurrent(s
+    DBSource) *sql.DB` free function (the nil-safe
+    "give me the current *sql.DB" used by background
+    tasks, tests, and scripts that don't go through a
+    Service receiver). **What's in each feature
+    package's dbsource.go now:** just the per-Service
+    `dbc()` method (a one-liner that references the
+    Service's DB field, which lives in the feature
+    package — so it can't move to internal/db) and a
+    `type DBSource = skygatedb.DBSource` alias for
+    source-compat with B210-era callers.
+    **Source-compat shims:** `healthz.NewFixedDBSource
+    (db)` and `elector.NewElectorWithDB(cfg, db)` still
+    work — they now thinly delegate to
+    `skygatedb.FixedDBSource{DB: db}` and the ResettableDB
+    directly respectively. The one breaking change is
+    the field name: pre-B210.1 the test wrapper was
+    `fixedDB{db: <*sql.DB>}` (lowercase `db`); B210.1's
+    shared `FixedDBSource` uses `DB` (uppercase) to
+    match Go's exported-field convention. The exit_rules
+    test file (`sync_b132_test.go`) is the only one
+    that needed a 1-line update: `fixedDB{db: d}` →
+    `fixedDB{DB: d}`.
+    **Files:** `internal/db/dbsource.go` (new, ~80
+    lines: DBSource interface + FixedDBSource +
+    DBCurrent), 6 packages' dbsource.go files slimmed
+    to a `type DBSource = db.DBSource` alias + the
+    per-Service `dbc()` method (admin from 76 → 32
+    lines, auth/my/exit_rules/cluster each from ~50 →
+    20 lines, healthz from 18 → 14 lines, elector from
+    60 → 50 lines), `internal/elector/elector.go` (the
+    `fixedDB` struct + Current() removed, NewElectorWithDB
+    delegates to `skygatedb.FixedDBSource{DB: db}`),
+    `internal/feature/exit_rules/sync_b132_test.go`
+    (1-line `db:` → `DB:` rename), `scripts/check_b210_1.sh`
+    (new, 14 contracts), `scripts/verify_pre_deploy.sh`
+    (B210.1 run_check added), `AGENTS.md` (this section).
+    **Net change:** ~80 lines of duplication removed
+    across 6 packages, 0 net lines added in feature
+    packages, 80 lines added in the 1 shared definition
+    (with extensive doc comments explaining the B203
+    hot-reload contract). The canonical definition
+    lives in the package that owns the implementation
+    (internal/db owns ResettableDB, so it also owns
+    the DBSource interface ResettableDB satisfies).
+    **Why this matters:** future services (a new
+    B211 `skygate init` cluster-bootstrap service, a
+    B212 alerting service, etc.) now just `import
+    "skygate/internal/db"` + use `db.DBSource` in their
+    Service struct, without re-declaring the interface.
+    Same pattern, half the lines.
   - **B210 (v1.5.0+) — DBSource pattern for
     non-admin services (auth, my, exit_rules,
     feature/cluster). Phase 3 of
