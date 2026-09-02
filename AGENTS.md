@@ -1903,6 +1903,224 @@ in the same commit. Don't let the tracker drift.
     to svi) is the remaining unblock from B202.
     Phase 3 (skygate-watchdog + force failover)
     is the next major chunk after 2.2.
+  - **B202.5 (v1.5.0+) — SSHDumpTransport for
+    cross-host DB migrations (Phase 1.4 of
+    `docs/internal/cluster-management.md`)**: the
+    cross-host counterpart to the B202
+    `LocalDumpTransport`. Closes the "operator
+    must hand-migrate the DB via scp + pg_restore
+    on the agent" gap that was implicit in the
+    B198/B202 work — pre-B202.5 the dbmigrate
+    framework's `Dump` step only ran `pg_dump` on
+    the local host. For the live svi→agent move
+    the agent reaches svi's PG via the
+    172.17.0.1:5433 bridge, which works but
+    requires svi to expose its PG port to the
+    agent network. B202.5 adds a transport that
+    runs `ssh svi "pg_dump ..."` and streams the
+    bytes back via the same SSH channel the
+    operator already uses for `ssh root@100.64.0.24
+    "..."`. The advantages: (a) source DB doesn't
+    need to expose PG to the agent network — only
+    SSH (which Tailscale + authorized_keys already
+    provides), (b) `pg_dump` runs ON the source
+    host so it sees the same row data + collation
+    + locale as the source DB (avoids
+    locale-mismatch errors on cross-Linux
+    distributions), (c) the audit trail in
+    `cluster_audit` shows `transport=ssh` instead
+    of `transport=local` so the operator can
+    confirm "this dump was streamed from svi, not
+    from a local file copy".
+    **SSHDumpTransport design** (new
+    `internal/dbmigrate/ssh_transport.go`,
+    ~250 lines):
+    - 5 fields: `SSHHost`, `SSHUser`, `SSHKeyPath`,
+      `SSHPort`, `PgDumpPath` + optional `SSHOptions`
+      slice. Constructor `NewSSHDumpTransportFromEnv`
+      reads 5 `SKYGATE_DBMIGRATE_SSH_*` env vars and
+      returns nil if `HOST` or `USER` is empty
+      (caller falls back to `LocalDumpTransport`).
+    - `Name() = "ssh"` — persisted in `audit_log` +
+      SSE events for the operator's "this dump was
+      via ssh" grep.
+    - `Dump(ctx, sourceDSN, destPath, onLog)` spawns
+      `ssh -p 22 -i ~/.ssh/id_ed25519 -o
+      BatchMode=yes -o StrictHostKeyChecking=accept-new
+      user@host 'pg_dump -Fc --no-owner --no-acl
+      --no-comments -d "$dsn"'` and pipes SSH stdout
+      to a local file via `io.Copy` in a goroutine.
+      No temp file on the remote (no scp cleanup
+      needed). stderr from SSH + the remote pg_dump
+      is streamed to `onLog` with `ssh:` prefix so
+      the operator sees "NOTICE: ..." messages on
+      `/admin/database/migrate/{id}` just like the
+      local transport.
+    - `quoteForRemoteShell()` POSIX-shell-escapes the
+      DSN for `ssh host 'cmd'`. Handles embedded
+      single quotes via the close-quote / literal /
+      reopen idiom (`'foo'\''bar'`). 4 unit-test
+      sub-cases (plain DSN, empty, embedded quote,
+      multiple embedded quotes).
+    **Framework wiring** (B198 already had the
+    `Transport` field on `MigrationContext`; the
+    `framework.go` default-fallback now consults
+    `SKYGATE_DBMIGRATE_TRANSPORT`):
+    ```
+    if mc.Transport == nil {
+        if os.Getenv("SKYGATE_DBMIGRATE_TRANSPORT") == "ssh" {
+            if sshT := NewSSHDumpTransportFromEnv(); sshT != nil {
+                mc.Transport = sshT
+            }
+        }
+        if mc.Transport == nil {
+            mc.Transport = LocalDumpTransport{}
+        }
+    }
+    ```
+    Selection order: explicit `mc.Transport` (unit
+    tests) > SSH env + valid config > Local. The
+    nil-check on `NewSSHDumpTransportFromEnv()`
+    means an operator who set
+    `SKYGATE_DBMIGRATE_TRANSPORT=ssh` but forgot
+    `SKYGATE_DBMIGRATE_SSH_USER` gets the local
+    transport instead of a failed migration.
+    **Live verification on agent (2026-09-02,
+    dry-run, 5/5 pass):** `scripts/b202_5_verify.sh`
+    SSHes from agent to localhost loopback using
+    the existing `/home/skyadmin/.ssh/id_ed25519`
+    key (no new key, no operator action needed),
+    creates a temp test DB
+    (`b202_5_dryrun_<pid>`), populates one row in
+    `b202_5_smoke`, runs `pg_dump -Fc
+    --schema-only -d <test_db>` over SSH, verifies
+    the local dump file has the `PGD\n` magic
+    bytes (5047440a or 5047444d for PG 16+),
+    verifies `pg_restore --list` shows the test
+    table. **Does NOT touch headscale/headplane on
+    agent** (the working state we must not
+    disturb), **does NOT touch the live
+    skygate_staging DB on svi**. Cleanup is in a
+    trap that drops the test DB + removes the temp
+    file even on Ctrl-C. The dry-run proves the
+    exec.CommandContext + SSH-key + pg_dump wiring
+    works end-to-end.
+    **Operator checklist for the REAL svi→agent
+    move (NOT done by B202.5, manual):** (1) Add
+    the agent's `id_ed25519.pub` to svi's
+    `~/.ssh/authorized_keys` (one-time, on svi:
+    `cat >> ~/.ssh/authorized_keys <
+    agent_id_ed25519.pub`), (2) set in
+    `/home/skyadmin/skygate/.env` on the agent:
+    `SKYGATE_DBMIGRATE_TRANSPORT=ssh`,
+    `SKYGATE_DBMIGRATE_SSH_HOST=100.64.0.24` (svi
+    via Tailscale), `SKYGATE_DBMIGRATE_SSH_USER=root`
+    (or `skygate-svi-backup` — the existing backup
+    user already has the agent's key from B199+),
+    `SKYGATE_DBMIGRATE_SSH_KEY=/home/skyadmin/.ssh/id_ed25519`,
+    `SKYGATE_DBMIGRATE_SSH_PGDUMP=pg_dump` (or
+    `/usr/lib/postgresql/15/bin/pg_dump` on svi's
+    Patroni container if `pg_dump` is not on the
+    default PATH), (3) restart skygate container
+    so the new env vars are picked up, (4) hit
+    `/admin/database` → "Migrate" → fill target DSN
+    form, (5) watch the 6 steps run on
+    `/admin/database/migrate/{id}` with the
+    `transport=ssh` indication in the audit row.
+    **Test coverage:** 5 unit tests in
+    `internal/dbmigrate/ssh_transport_test.go`
+    (`QuoteForRemoteShell` 4 sub-cases,
+    `NewFromEnv_RequiresHostAndUser`,
+    `NewFromEnv_PortParsing`, `Dump_FakeSsh`
+    round-trip — Unix only, SKIPs on Windows
+    because `exec.LookPath` doesn't find a bare
+    `ssh` on Windows; the live-verify on the Linux
+    agent covers this path, `Dump_Validation`,
+    `Name`) + 1 compile-time interface assertion
+    (`var _ DumpTransport = SSHDumpTransport{}`) +
+    5/5 pass on the agent's `b202_5_verify.sh`
+    dry-run. 14 B-check contracts in
+    `scripts/check_b202_5.sh`. Build + vet + all
+    existing `dbmigrate` tests still pass.
+    **Files:**
+    `internal/dbmigrate/ssh_transport.go` (new,
+    ~250 lines: SSHDumpTransport + 5 fields +
+    `NewSSHDumpTransportFromEnv` +
+    `quoteForRemoteShell` + `Dump` method with the
+    same stdout/stderr/dest-file goroutine pattern
+    as `LocalDumpTransport`),
+    `internal/dbmigrate/framework.go` (+12 lines:
+    `os.Getenv("SKYGATE_DBMIGRATE_TRANSPORT")` +
+    `NewSSHDumpTransportFromEnv` in the default-
+    fallback chain, plus the `os` import),
+    `internal/dbmigrate/ssh_transport_test.go`
+    (new, ~270 lines, 5 tests + compile-time
+    assertion),
+    `scripts/b202_5_verify.sh` (new, ~190 lines,
+    5 phases: SSH key sanity + test DB create +
+    pg_dump-over-SSH + magic byte verify +
+    pg_restore --list verify + operator checklist
+    on failure),
+    `scripts/check_b202_5.sh` (new, 14 contracts),
+    `scripts/verify_pre_deploy.sh` (B202.5
+    run_check added),
+    `AGENTS.md` (this section).
+    The B-check pins: (a) `ssh_transport.go`
+    exists, (b) `SSHDumpTransport` struct
+    declared, (c) 5 fields present, (d)
+    `Name()=="ssh"`, (e) `Dump()` signature
+    matches the `DumpTransport` interface, (f)
+    `NewSSHDumpTransportFromEnv` reads 5 env vars,
+    (g) `quoteForRemoteShell` helper exists,
+    (h) `framework.go` reads
+    `SKYGATE_DBMIGRATE_TRANSPORT` +
+    `NewSSHDumpTransportFromEnv`, (i) 5+
+    test functions present in
+    `ssh_transport_test.go`, (j)
+    `Dump_FakeSsh` round-trip test exists (the
+    Unix-only path), (k) compile-time interface
+    assertion present, (l) build + vet +
+    dbmigrate tests pass, (m) AGENTS.md
+    mentions B202.5, (n) `verify_pre_deploy.sh`
+    has B202.5 run_check, (o) `b202_5_verify.sh`
+    live-verify script exists.
+    **What's NOT covered (gaps for a future
+    B-block):**
+    - The actual `ssh-copy-id` of the agent's
+      public key to svi — operator manual action
+      (the live-verify dry-run on the agent uses
+      localhost loopback, so no svi-side setup
+      was needed; the svi-side setup is a
+      one-time `cat >> authorized_keys` that's
+      out of scope for the Go code).
+    - `progress %` reporting during a long dump
+      — the current `Dump` streams bytes to a
+      file but doesn't surface "X of Y MB" to
+      the SSE broker. Future B-block: pipe
+      `pg_dump` progress to onLog + emit SSE
+      events with byte count.
+    - The `Flip` step (B198/B202) that updates
+      `cluster_database` + `.env` to point at
+      the new DSN — already implemented, B202.5
+      only adds the transport. The svi→agent
+      move will exercise the full 6-step state
+      machine end-to-end.
+    - Auto-discovery of `SSHHost` from the
+      cluster_node + DSN — the operator sets
+      the env vars. Future B-block: derive
+      `SSHHost` from `cluster_node.hostname`
+      where the DSN's host matches a registered
+      node, fall back to the env var if not.
+    - The `skygate init` full pipeline
+      (Phase 2.3) that auto-installs skygate on
+      svi after the DB move. This is a separate
+      B-block (B211 in the plan) and the
+      user-directed test target is a local
+      Windows Docker install (per user
+      instruction 2026-09-02: "the auto-deploy
+      test is better conducted on the Windows
+      machine which has Docker installed, this is
+      later").
   - **B204 (v1.5.0+) — HA elector (Phase 3.2-3.3 of
     `docs/internal/cluster-management.md`)**: the
     skygate-watchdog (B203) handles the *DB DSN* side

@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -58,11 +59,32 @@ type SSEEvent struct {
 func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
 	// 0. Default the transport if the caller didn't set
 	//    one. B202 — LocalDumpTransport runs pg_dump on
-	//    the local host. B202.5 will swap in SSHDumpTransport
-	//    for cross-host cases. The framework's contract is
-	//    "if you don't set Transport, you get Local".
+	//    the local host. B202.5 added SSHDumpTransport for
+	//    cross-host cases (the svi→agent move runs pg_dump
+	//    on svi and streams the bytes back over the SSH
+	//    channel the operator already uses for
+	//    `ssh svi "..."`).
+	//
+	//    Selection order:
+	//      1. mc.Transport explicitly set by the caller
+	//         (the unit tests use this to inject a
+	//         MemoryDumpTransport).
+	//      2. SKYGATE_DBMIGRATE_TRANSPORT=ssh + a valid
+	//         SSHDumpTransport config (SSHHost + SSHUser)
+	//         → SSHDumpTransport.
+	//      3. Default → LocalDumpTransport.
 	if mc.Transport == nil {
-		mc.Transport = LocalDumpTransport{}
+		if os.Getenv("SKYGATE_DBMIGRATE_TRANSPORT") == "ssh" {
+			if sshT := NewSSHDumpTransportFromEnv(); sshT != nil {
+				mc.Transport = sshT
+			}
+			// else: env requested ssh but config is
+			// incomplete; fall through to local so the
+			// framework doesn't fail on every Dump.
+		}
+		if mc.Transport == nil {
+			mc.Transport = LocalDumpTransport{}
+		}
 	}
 
 	// 1. Persist the run row.
