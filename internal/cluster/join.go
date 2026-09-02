@@ -46,6 +46,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -100,7 +101,9 @@ type JoinResponse struct {
 	ClusterID     string `json:"cluster_id"`
 	NodeID        string `json:"node_id"`
 	Hostname      string `json:"hostname"`
-	DSNTemplate   string `json:"dsn_template"`   // bootstrap: the new node can use this to point its own pgxpool at the cluster's PG primary
+	DSNTemplate   string `json:"dsn_template"`   // raw template (the %s is unsubstituted) — kept for backward compat with the B200 / B201 clients that want to do their own substitution
+	DSN           string `json:"dsn"`            // B212: the template with %s substituted by the primary's reachable hostname (e.g. Tailscale hostname). Empty if no primary is configured (the standby falls back to its own .env DSN).
+	PrimaryHost   string `json:"primary_host"`   // B212: the hostname we substituted into DSN. Useful for the standby to log + verify the DSN points where it expects.
 	DBName        string `json:"dbname"`
 	DBUsername    string `json:"db_username"`
 	HeartbeatHint int    `json:"heartbeat_seconds"` // recommended heartbeat interval
@@ -170,7 +173,15 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 	// that was invited as "svi-1" can't claim to be
 	// "evil-host". Case-insensitive comparison (hostnames
 	// are case-insensitive in DNS).
-	if !hostnamesEqual(invite.TargetHostname, req.Hostname) {
+	//
+	// B212 fix: an empty TargetHostname means "any
+	// host" (a wildcard invite). The pre-B212 code
+	// required an exact match even for empty target,
+	// which made the `skygate init standby-invite`
+	// (B211, which always issues with target="") always
+	// fail with ErrHostnameMismatch. Empty target
+	// skips the check.
+	if invite.TargetHostname != "" && !hostnamesEqual(invite.TargetHostname, req.Hostname) {
 		return nil, ErrHostnameMismatch
 	}
 
@@ -190,13 +201,18 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 		`, payload.Inv, existing.ID)
 		// Fetch the dsn_template from cluster_database (if
 		// configured) so the new node can bootstrap its
-		// own pgxpool.
+		// own pgxpool. B212 also substitutes the primary's
+		// hostname into the template so the standby gets a
+		// ready-to-use DSN.
 		dsnTpl, dbName, dbUser := readDBBootstrap(d, clusterID)
+		primaryHost := readPrimaryHost(d, clusterID)
 		return &JoinResponse{
 			ClusterID:     clusterID,
 			NodeID:        existing.ID,
 			Hostname:      existing.Hostname,
 			DSNTemplate:   dsnTpl,
+			DSN:           substituteDSNTemplate(dsnTpl, primaryHost),
+			PrimaryHost:   primaryHost,
 			DBName:        dbName,
 			DBUsername:    dbUser,
 			HeartbeatHint: 30,
@@ -254,13 +270,18 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 	// PG. For now, the new node probably doesn't have
 	// its own skygate yet — it just runs bootstrap_standby
 	// (Phase 7) which uses these values to set up its
-	// own .env.
+	// own .env. B212 also substitutes the primary's
+	// hostname into the template so the standby gets a
+	// ready-to-use DSN.
 	dsnTpl, dbName, dbUser := readDBBootstrap(d, clusterID)
+	primaryHost := readPrimaryHost(d, clusterID)
 	return &JoinResponse{
 		ClusterID:     clusterID,
 		NodeID:        nodeID,
 		Hostname:      req.Hostname,
 		DSNTemplate:   dsnTpl,
+		DSN:           substituteDSNTemplate(dsnTpl, primaryHost),
+		PrimaryHost:   primaryHost,
 		DBName:        dbName,
 		DBUsername:    dbUser,
 		HeartbeatHint: 30,
@@ -387,6 +408,64 @@ func readDBBootstrap(d *sql.DB, clusterID string) (dsnTpl, dbName, dbUser string
 		return "", "", ""
 	}
 	return
+}
+
+// readPrimaryHost returns the hostname of the cluster's
+// current primary (the cluster_node row whose id equals
+// cluster_database.primary_node_id). Returns an empty
+// string + nil if no primary is configured yet (the
+// admin hasn't run `skygate init` or the primary_node_id
+// is NULL for any other reason).
+//
+// Used by B212 to compute the substituted DSN — the
+// new node needs a complete DSN (not a template with
+// %s) to point its own pgxpool at the cluster's PG.
+func readPrimaryHost(d *sql.DB, clusterID string) string {
+	if d == nil || clusterID == "" {
+		return ""
+	}
+	var host string
+	err := d.QueryRow(`
+		SELECT COALESCE(n.hostname, '')
+		  FROM cluster_database cd
+		  LEFT JOIN cluster_node n ON n.id = cd.primary_node_id
+		 WHERE cd.id = $1
+	`, clusterID).Scan(&host)
+	if err != nil {
+		return ""
+	}
+	return host
+}
+
+// substituteDSNTemplate replaces the single %s in a
+// DSN template with the primary's reachable hostname.
+// Returns the template unchanged if there's no %s
+// (some setups hardcode the host) or an empty string
+// if host is empty (the caller should treat the result
+// as "no DSN bootstrap available").
+//
+// B212: the standby's `skygate join` needs a ready-to-
+// use DSN to bootstrap its own pgxpool. Pre-B212 the
+// standby got only the template (with %s unsubstituted)
+// and had to know the primary's hostname out-of-band.
+func substituteDSNTemplate(tpl, host string) string {
+	if tpl == "" {
+		return ""
+	}
+	if !strings.Contains(tpl, "%s") {
+		// No placeholder — the host is already baked
+		// in (e.g. "postgres://...@localhost:5432/...").
+		// Return the template as-is.
+		return tpl
+	}
+	if host == "" {
+		// Template wants substitution but we have no
+		// host. Return empty (the caller logs a clear
+		// "no primary host" warning and falls back to
+		// the standby's .env DSN).
+		return ""
+	}
+	return strings.Replace(tpl, "%s", host, 1)
 }
 
 // hostnamesEqual compares two hostnames case-

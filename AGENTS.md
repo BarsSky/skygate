@@ -2452,6 +2452,89 @@ in the same commit. Don't let the tracker drift.
     source-pin contracts (A–P) + 3 go-runtime
     contracts (Q–S, skipped when go is not on
     PATH).
+  - **B212 (v1.5.0+, 2026-09-02) — `skygate join`
+    CLI subcommand (Phase 2.4 of
+    docs/internal/cluster-management.md).** Closes
+    the "standby's join handshake doesn't bootstrap
+    the standby's own DSN + doesn't print clear
+    next-steps" gap. Pre-B212, `skygate cluster join
+    <token>` was a one-shot HTTP POST that wrote
+    `/etc/skygate/cluster-state.json` with only the
+    `node_id` + `token` + `api_url` — the standby
+    had to know the primary's hostname (to substitute
+    into the DSN template) and had to manually start
+    `skygate cluster heartbeat-daemon` afterwards.
+    Post-B212: (1) local token sanity check via
+    `cluster.VerifyToken` before the HTTP POST
+    (soft-fails with a warning if `SKYGATE_SECRET_KEY`
+    isn't set on the standby yet — the primary still
+    verifies the signature); (2) the primary's
+    `/api/cluster/join` now returns a ready-to-use
+    DSN (`JoinResponse.DSN`) with the primary's
+    hostname substituted into
+    `cluster_database.dsn_template`, plus a
+    `PrimaryHost` field for verification; (3) the
+    standby's `runClusterJoin` accepts
+    `--write-dsn-to=PATH` and writes a single-line
+    `KEY=VALUE` env file (default key `SKYGATE_DB_DSN`,
+    file mode 0600 because the DSN may contain a
+    password) so the standby's own skygate process
+    can source the env to point at the primary's
+    PG; (4) clear "NEXT STEPS" message on stderr
+    with the heartbeat-daemon command + systemd
+    hint + `/admin/cluster` link. New top-level
+    `skygate join` dispatcher in `cmd/skygate/join.go`
+    (parallel to `skygate init` from B211):
+    `skygate join <token>` is the canonical
+    onboarding path, `skygate join status` shows
+    the state file (cluster_id + node_id + api_url
+    + heartbeat interval + token age + token
+    remaining; `--json` for machine-readable).
+    `parseJoinArgs` extracted from `runClusterJoin`
+    so the top-level dispatcher can reuse it (and
+    so flags-before-token works: `skygate join
+    --api-url=... <token>`, with flags-after-token
+    explicitly rejected as a footgun).
+    New `internal/cluster` helpers:
+    `substituteDSNTemplate` (single-`%s` replacement
+    in the DSN template, empty string if no host
+    available) + `readPrimaryHost` (`LEFT JOIN
+    cluster_database + cluster_node` for the
+    primary's hostname). 20 B-check contracts in
+    `scripts/check_b212.sh` (17 source-pin + 3
+    go-runtime, skipped when go is not on PATH).
+    20 unit tests in
+    `internal/cluster/join_b212_test.go`
+    (`TestSubstituteDSNTemplate` 9 sub-cases +
+    `IdempotentForEmptyHost` + `JoinResponse_B212Fields`
+    + `JoinResponse_B212DSNBackwardCompat`) +
+    `cmd/skygate/join_b212_test.go`
+    (`TestParseTokenAge` 8 sub-cases +
+    `TestParseJoinArgs_Disambiguation` 3 sub-cases +
+    `TestParseJoinArgs_MissingToken` +
+    `TestJoinState_DefaultPath`). 3 new files:
+    `cmd/skygate/join.go` (~280 lines),
+    `internal/cluster/join_b212_test.go`
+    (~190 lines), `cmd/skygate/join_b212_test.go`
+    (~210 lines). Modifies `internal/cluster/join.go`
+    (+~80 lines: `JoinResponse` `DSN`/`PrimaryHost`
+    + `substituteDSNTemplate` + `readPrimaryHost` +
+    2 call sites in `Join` for the success + re-join
+    paths), `cmd/skygate/cluster.go` (+~120 lines:
+    `parseJoinArgs` + `runClusterJoin` rewrite +
+    `writeDSNEnvFile` + `joinOpts` struct), main.go
+    (+~15 lines for `case "join"` + help text).
+    Live-verify planned on the agent: issue a fresh
+    invite via `skygate init standby-invite`, run
+    `skygate join <token>` from a simulated second
+    node (different hostname, since the B211
+    init already put `agent` in cluster_node),
+    confirm state file written + standby row in
+    `cluster_node` + DSN file written + token age
+    reported correctly by `skygate join status`.
+    Stdout format (scriptable for
+    `bootstrap_standby.sh`): line 1=node_id, line
+    2=cluster_id, line 3=dsn, line 4=primary_host.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

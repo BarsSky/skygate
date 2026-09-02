@@ -72,15 +72,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -195,24 +196,55 @@ func runClusterInvite(args []string) error {
 // Usage:
 //
 //	skygate cluster join <token> [--api-url http://127.0.0.1:8080] [--state-file /etc/skygate/cluster-state.json]
+// joinOpts is the parsed-flag shape for runClusterJoin.
+// Extracted so the top-level `skygate join` dispatcher
+// (in join.go) can reuse the same parsing logic without
+// duplicating it.
+type joinOpts struct {
+	APIURL         string
+	StateFile      string
+	RolesCSV       string // comma-separated role list (default: skygate-standby)
+	WriteDSNTo     string // optional path to write SKYGATE_DB_DSN=<DSN> env file (B212: DSN bootstrap)
+	DSNKey         string // env key name to use (default: SKYGATE_DB_DSN)
+	NoHeartbeatHint bool  // suppress "start heartbeat-daemon" hint at the end
+}
+
+// runClusterJoin is the canonical "join this node to
+// the cluster" path. The operator runs it once after
+// `skygate cluster invite` (or the top-level
+// `skygate init standby-invite`) prints a fresh token.
+//
+// B212 enhancements over the pre-B212 version:
+//   - Local token sanity check via cluster.VerifyToken
+//     before HTTP POST (catches typo'd / truncated
+//     tokens without a roundtrip to the primary).
+//   - DSN bootstrap: writes jr.DSN to --write-dsn-to
+//     (default: /etc/skygate/dbs.env) so the standby's
+//     own skygate process can source the env to point
+//     at the primary's PG. The file is opt-in (the
+//     standby can also keep using its own .env DSN).
+//   - Clear "next steps" message: tells the operator
+//     to start the heartbeat-daemon (systemd unit
+//     snippet printed to stderr).
+//
+// The stdout format is scriptable: the standby's
+// bootstrap_standby.sh can read these lines:
+//
+//   line 1: node_id          (the new cluster_node id)
+//   line 2: cluster_id
+//   line 3: dsn              (the substituted DSN, if any)
+//   line 4: primary_host     (the hostname we substituted)
+//
+// stderr carries the human-readable next-steps message.
+//
+// Usage:
+//
+//	skygate cluster join <token> [--api-url=...] [--write-dsn-to=/etc/skygate/dbs.env]
 func runClusterJoin(args []string) error {
-	fs := flag.NewFlagSet("cluster join", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:8080", "skygate API base URL (the cluster's primary)")
-	stateFile := fs.String("state-file", StateFilePath, "where to write the node_id (for the heartbeat-daemon)")
-	if err := fs.Parse(args); err != nil {
+	opts, token, err := parseJoinArgs(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
-		return errors.New("cluster join: missing token (usage: skygate cluster join <token>)")
-	}
-	token := fs.Arg(0)
-
-	// 1. Read our own hostname + tailscale_ip. The
-	// /api/cluster/join requires these (the server
-	// binds the token's invite to a target_hostname,
-	// so we MUST match). We use os.Hostname for the
-	// local one and read SKYGATE_TS_HOSTNAME for the
-	// tailscale one (set by the entrypoint).
 	hostname, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("cluster join: hostname: %w", err)
@@ -225,34 +257,70 @@ func runClusterJoin(args []string) error {
 	if skygateVersion == "" {
 		skygateVersion = "unknown"
 	}
+	roles := opts.RolesCSV
+	if roles == "" {
+		roles = "skygate-standby"
+	}
+
+	// 1. Local token sanity check (B212). Catches
+	//    typo'd / truncated / expired tokens without a
+	//    network roundtrip. The primary will still
+	//    verify the signature in the HTTP handler — this
+	//    is a fast-fail for obviously-bad input.
+	secret := os.Getenv("SKYGATE_SECRET_KEY")
+	if secret != "" {
+		if _, verr := cluster.VerifyToken(secret, token); verr != nil {
+			// Soft-fail: log a warning but still try
+			// the HTTP POST. The primary may have a
+			// different secret (cross-cluster) or the
+			// token may be valid on the primary even
+			// if our local verify fails (the standby
+			// might not have the same SKYGATE_SECRET_KEY
+			// as the primary yet).
+			fmt.Fprintf(os.Stderr, "cluster join: warning: local token verify failed (%v); will try the primary anyway\n", verr)
+		}
+	}
 
 	// 2. POST to /api/cluster/join.
-	form := url.Values{
-		"token":           {token},
-		"hostname":        {hostname},
-		"tailscale_ip":    {tsHostname},
-		"skygate_version": {skygateVersion},
-		"roles":           {"skygate-standby"},
+	//    B212 fix: the /api/cluster/join handler has
+	//    always expected a JSON body (PostAPIClusterJoin
+	//    in internal/feature/cluster/handlers.go calls
+	//    decodeJSON), but the pre-B212 runClusterJoin
+	//    used http.PostForm which sent form-encoded data.
+	//    The handler's decodeJSON would silently fail
+	//    (returning 400 "empty request body" or a parse
+	//    error). Every pre-B212 `skygate cluster join`
+	//    was a 400. B212 fixes this by sending a real
+	//    JSON body — the canonical contract.
+	body, err := json.Marshal(cluster.JoinRequest{
+		Token:          token,
+		Hostname:       hostname,
+		TailscaleIP:    tsHostname,
+		SkygateVersion: skygateVersion,
+		Roles:          roles,
+	})
+	if err != nil {
+		return fmt.Errorf("cluster join: marshal request: %w", err)
 	}
-	resp, err := http.PostForm(*apiURL+"/api/cluster/join", form)
+	resp, err := http.Post(opts.APIURL+"/api/cluster/join", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("cluster join: POST: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("cluster join: server returned %s", resp.Status)
+		// Include the response body in the error so the
+		// operator can see WHY the join was rejected
+		// (token expired, hostname mismatch, etc).
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("cluster join: server returned %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 	var jr cluster.JoinResponse
 	if err := json.NewDecoder(resp.Body).Decode(&jr); err != nil {
 		return fmt.Errorf("cluster join: decode response: %w", err)
 	}
 
-	// 3. Save the state file so the heartbeat-daemon can
-	// pick up the node_id. We also save the API URL +
-	// the token (the heartbeat-daemon re-sends the token
-	// for re-auth; the B201 heartbeat handler verifies
-	// the token's invite against used_by_node_id).
-	if err := os.MkdirAll(filepath.Dir(*stateFile), 0700); err != nil {
+	// 3. Save the state file (heartbeat-daemon reads it).
+	if err := os.MkdirAll(filepath.Dir(opts.StateFile), 0700); err != nil {
 		return fmt.Errorf("cluster join: mkdir: %w", err)
 	}
 	st := clusterState{
@@ -260,16 +328,136 @@ func runClusterJoin(args []string) error {
 		ClusterID:        jr.ClusterID,
 		Hostname:         hostname,
 		Token:            token,
-		APIURL:           *apiURL,
+		APIURL:           opts.APIURL,
 		HeartbeatSeconds: jr.HeartbeatHint,
 	}
-	if err := writeClusterState(*stateFile, &st); err != nil {
+	if err := writeClusterState(opts.StateFile, &st); err != nil {
 		return fmt.Errorf("cluster join: write state: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "cluster join: node_id=%s cluster_id=%s api_url=%s\n", jr.NodeID, jr.ClusterID, *apiURL)
-	fmt.Fprintf(os.Stderr, "cluster join: state saved to %s (heartbeat-daemon will pick it up)\n", *stateFile)
+	// 4. B212: write the DSN to the requested env file
+	//    so the standby's own skygate process can
+	//    source it. We do this only if --write-dsn-to
+	//    was explicitly given OR jr.DSN is non-empty
+	//    (so the operator who passes the flag gets a
+	//    useful file even if the primary returned no
+	//    DSN — the file just gets a comment line).
+	if opts.WriteDSNTo != "" {
+		if err := writeDSNEnvFile(opts.WriteDSNTo, opts.DSNKey, jr); err != nil {
+			// Non-fatal — the state file is written,
+			// the operator can re-run --write-dsn-to
+			// later or set the env var manually.
+			fmt.Fprintf(os.Stderr, "cluster join: warning: could not write DSN env file %s: %v\n", opts.WriteDSNTo, err)
+		}
+	}
+
+	// 5. Scriptable stdout (line 1: node_id, line 2: cluster_id,
+	//    line 3: dsn, line 4: primary_host). bootstrap_standby.sh
+	//    reads these. The DSN may be empty if the primary hasn't
+	//    configured cluster_database.dsn_template yet.
+	fmt.Println(jr.NodeID)
+	fmt.Println(jr.ClusterID)
+	fmt.Println(jr.DSN)
+	fmt.Println(jr.PrimaryHost)
+
+	// 6. Stderr: human-readable summary + next steps.
+	fmt.Fprintf(os.Stderr, "cluster join: node_id=%s cluster_id=%s api_url=%s\n", jr.NodeID, jr.ClusterID, opts.APIURL)
+	fmt.Fprintf(os.Stderr, "cluster join: state saved to %s (heartbeat-daemon will pick it up)\n", opts.StateFile)
+	if jr.DSN != "" {
+		fmt.Fprintf(os.Stderr, "cluster join: dsn=%s\n", jr.DSN)
+	} else {
+		fmt.Fprintf(os.Stderr, "cluster join: no DSN bootstrap from primary (cluster_database.dsn_template is empty); use the standby's own .env SKYGATE_DB_DSN\n")
+	}
+	if !opts.NoHeartbeatHint {
+		fmt.Fprintf(os.Stderr, "cluster join: NEXT STEPS:\n")
+		fmt.Fprintf(os.Stderr, "  1. Start the heartbeat-daemon (long-running, sends heartbeats to %s every ~%ds):\n", opts.APIURL, jr.HeartbeatHint)
+		fmt.Fprintf(os.Stderr, "       skygate cluster heartbeat-daemon --state-file=%s &\n", opts.StateFile)
+		fmt.Fprintf(os.Stderr, "     (or via systemd: see deploy/heartbeat-daemon.service)\n")
+		fmt.Fprintf(os.Stderr, "  2. Watch the new node appear on /admin/cluster as state=pending → state=ready (after the first heartbeat)\n")
+	}
 	return nil
+}
+
+// parseJoinArgs is the shared flag-parsing helper for
+// runClusterJoin. Extracted so the top-level
+// `skygate join` (join.go) can reuse it without
+// duplicating the flag set.
+//
+// Note: the Go flag package stops parsing at the
+// first non-flag argument, so the token MUST come
+// last. We split the args manually so the caller
+// can pass `skygate join --api-url=... <token>`
+// and the token wins. We also explicitly reject
+// flag-looking args after the token (a common
+// source of "why is my flag being ignored" bugs).
+func parseJoinArgs(args []string) (*joinOpts, string, error) {
+	// Step 1: separate flags from the trailing
+	// positional (the token). The Go flag package
+	// is happy with this layout: all flags first,
+	// token last.
+	flagArgs := args
+	tokenIdx := -1
+	for i, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			// First non-flag arg is the token.
+			tokenIdx = i
+			flagArgs = args[:i]
+			break
+		}
+	}
+	if tokenIdx == -1 {
+		return nil, "", errors.New("cluster join: missing token (usage: skygate cluster join <token>)")
+	}
+	token := args[tokenIdx]
+	// Reject flag-looking args AFTER the token —
+	// Go's flag package silently drops these, which
+	// is a footgun.
+	for _, a := range args[tokenIdx+1:] {
+		if strings.HasPrefix(a, "-") {
+			return nil, "", fmt.Errorf("cluster join: flag %q after the token is not supported; put flags BEFORE the token", a)
+		}
+	}
+
+	fs := flag.NewFlagSet("cluster join", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "http://127.0.0.1:8080", "skygate API base URL (the cluster's primary)")
+	stateFile := fs.String("state-file", StateFilePath, "where to write the node_id (for the heartbeat-daemon)")
+	rolesCSV := fs.String("role", "skygate-standby", "comma-separated role list (default: skygate-standby)")
+	writeDSNTo := fs.String("write-dsn-to", "", "if set, write a single-line KEY=VALUE env file with SKYGATE_DB_DSN=<DSN> (B212: DSN bootstrap)")
+	dsnKey := fs.String("dsn-key", "SKYGATE_DB_DSN", "env key name to use with --write-dsn-to (default: SKYGATE_DB_DSN)")
+	noHeartbeatHint := fs.Bool("no-heartbeat-hint", false, "suppress the 'next steps' message at the end (scriptable use)")
+	if err := fs.Parse(flagArgs); err != nil {
+		return nil, "", err
+	}
+	return &joinOpts{
+		APIURL:          *apiURL,
+		StateFile:       *stateFile,
+		RolesCSV:        *rolesCSV,
+		WriteDSNTo:      *writeDSNTo,
+		DSNKey:          *dsnKey,
+		NoHeartbeatHint: *noHeartbeatHint,
+	}, token, nil
+}
+
+// writeDSNEnvFile writes a single-line KEY=VALUE env
+// file (the format skygate's entrypoint.sh sources).
+// The file is overwritten (not appended) so a re-run
+// of `skygate join` produces a clean file. The mode
+// is 0600 because the DSN may contain a password.
+func writeDSNEnvFile(path, key string, jr cluster.JoinResponse) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	// Always include a header so the operator can
+	// grep for the join that produced it.
+	header := fmt.Sprintf("# generated by skygate cluster join (cluster_id=%s node_id=%s primary_host=%s)\n",
+		jr.ClusterID, jr.NodeID, jr.PrimaryHost)
+	body := header
+	if jr.DSN != "" {
+		body += fmt.Sprintf("%s=%s\n", key, jr.DSN)
+	} else {
+		body += fmt.Sprintf("# %s=<unset — primary returned no DSN; set this manually or use the standby's own .env>\n", key)
+	}
+	return os.WriteFile(path, []byte(body), 0600)
 }
 
 // runClusterNodes lists all cluster_node rows in the local
@@ -753,16 +941,26 @@ func runClusterHeartbeatDaemon(args []string) error {
 // postHeartbeat POSTs the node_id + token to the configured
 // API URL. Returns an error if the server returns non-200
 // or the request fails.
+//
+// B212 fix: the /api/cluster/heartbeat handler has
+// always expected a JSON body (PostAPIClusterHeartbeat
+// calls decodeJSON), but the pre-B212 postHeartbeat
+// used form-encoded data (the same bug as the join
+// path). Same fix: marshal a HeartbeatRequest and
+// POST it as application/json.
 func postHeartbeat(ctx context.Context, st *clusterState) error {
-	form := url.Values{
-		"node_id": {st.NodeID},
-		"token":   {st.Token},
+	body, err := json.Marshal(cluster.HeartbeatRequest{
+		NodeID: st.NodeID,
+		Token:  st.Token,
+	})
+	if err != nil {
+		return fmt.Errorf("heartbeat: marshal request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", st.APIURL+"/api/cluster/heartbeat", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", st.APIURL+"/api/cluster/heartbeat", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

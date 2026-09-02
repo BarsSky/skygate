@@ -313,6 +313,26 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "join":
+			// v1.5.0+ / B212 — cluster join CLI.
+			// `skygate join <token>` joins THIS node to the
+			// cluster using the given invite token. The
+			// pre-existing `skygate cluster join <token>`
+			// is the implementation; B212 adds (1) local
+			// token sanity check via cluster.VerifyToken,
+			// (2) DSN bootstrap (writes a single-line
+			// KEY=VALUE env file so the standby's own
+			// skygate process can source the primary's DSN),
+			// (3) a "next steps" message with the
+			// heartbeat-daemon command. `skygate join status`
+			// shows the state file (read-only, no HTTP).
+			// The web server is NOT started (same as
+			// `skygate cluster ...`).
+			if err := runJoin(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "join: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "help", "--help", "-h":
 			fmt.Println("skygate <command> [args]")
 			fmt.Println("  (no command)            start the web server")
@@ -323,6 +343,7 @@ func main() {
 			fmt.Println("  cleanup-smoke-meshes    delete smoke-mesh cruft (B143) — one-shot manual trigger")
 			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
 			fmt.Println("  init [verb]             cluster bootstrap CLI: bootstrap / status / standby-invite (B211)")
+			fmt.Println("  join [verb]             cluster join CLI: <token> / status (B212 — DSN bootstrap + next-steps)")
 			fmt.Println("  migrate-only            open the DB + run pending migrations, then exit (v0.33.1.21)")
 			fmt.Println("  version                 print build version")
 			fmt.Println("  help                    this help")
