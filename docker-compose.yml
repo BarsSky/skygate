@@ -97,7 +97,18 @@ services:
       #      `headscale preauthkeys create`)
       #   2. Write it to secrets/ts_authkey on the host
       #   3. Re-add the env var + secrets: mount here
-      - SKYGATE_TS_AUTHKEY_FILE=/run/secrets/ts_authkey
+      # 2026-09-02 (B209.1 post-deploy): set TS_AUTHKEY_FILE
+      # to /dev/null so the entrypoint's `[ -f ... ]` check
+      # fails and tailscaled is skipped. The previous authkey
+      # (0-byte file) caused `tailscale up` to fail with
+      # "requested tags are invalid or not permitted" — the
+      # headscale ACL tagOwners policy only allows `tag:exit*`
+      # for skyadmin, but the entrypoint defaults to
+      # `tag:dev-infra-skygate-host-1,tag:private`. The authkey
+      # needs to be re-issued + the policy needs to be updated
+      # before re-enabling Tailscale. Until then, skygate
+      # runs in non-RF mode (direct internet, no 100.64.x.x).
+      - SKYGATE_TS_AUTHKEY_FILE=/dev/null
       # 2026-08-06: v0.33.1.16 — SKYGATE_TS_LOGIN_SERVER now
       # comes from .env (via env_file) instead of a hardcoded
       # placeholder. Pre-v0.33.1.16 the hardcoded value here
