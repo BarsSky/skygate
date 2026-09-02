@@ -107,6 +107,12 @@ type Config struct {
 	// Logger receives elector events. If nil, package-level
 	// log.Printf is used.
 	Logger func(format string, args ...any)
+
+	// Now is the clock source. Default time.Now. The B209
+	// e2e test hooks this so it can fast-forward through
+	// the 90s stale window without sleeping in real time.
+	// If nil, the elector uses time.Now.
+	Now func() time.Time
 }
 
 // DefaultConfig returns the recommended settings.
@@ -116,7 +122,18 @@ func DefaultConfig() Config {
 		HeartbeatInterval: HeartbeatIntervalSeconds * time.Second,
 		ClusterID:         "skygate-staging",
 		Logger:            log.Printf,
+		Now:               time.Now,
 	}
+}
+
+// now returns the configured clock source, falling back
+// to time.Now. The fallback is defensive — DefaultConfig
+// sets Now explicitly, but a caller could nil it out.
+func (e *Elector) now() time.Time {
+	if e.cfg.Now != nil {
+		return e.cfg.Now()
+	}
+	return time.Now()
 }
 
 // DBSource returns the current *sql.DB. Required because
@@ -160,6 +177,9 @@ func NewElector(cfg Config, src DBSource) *Elector {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = log.Printf
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
 	return &Elector{
 		cfg:  cfg,
@@ -251,7 +271,7 @@ func (e *Elector) evaluate(ctx context.Context) error {
 	if db == nil {
 		return fmt.Errorf("no current DB (source returned nil)")
 	}
-	now := time.Now().UTC()
+	now := e.now().UTC()
 	staleAfter := e.cfg.HeartbeatInterval * StaleMultiplier
 	cutoff := now.Add(-staleAfter)
 

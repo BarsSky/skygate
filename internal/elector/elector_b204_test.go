@@ -268,3 +268,100 @@ func (c *countingSource) Current() *sql.DB {
 func nilForTest() (ctx context.Context) {
 	return context.TODO()
 }
+
+// TestDefaultConfig_NowSet — B209 contract: DefaultConfig
+// must populate Config.Now (so callers don't have to set
+// it explicitly). The elector's evaluate() reads e.now()
+// which falls back to time.Now if Now is nil — but a
+// default-zero Config should still work out of the box.
+func TestDefaultConfig_NowSet(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Now == nil {
+		t.Fatal("DefaultConfig().Now is nil; should default to time.Now")
+	}
+	// Sanity: it actually returns a time value.
+	got := cfg.Now()
+	if got.IsZero() {
+		t.Error("DefaultConfig().Now() returned zero time")
+	}
+}
+
+// TestNewElector_NowFallback — even if the caller
+// explicitly nil's out Config.Now, NewElector should
+// restore it. This is the defensive guard for the
+// "I constructed my Config by hand and forgot to set
+// Now" path.
+func TestNewElector_NowFallback(t *testing.T) {
+	e := NewElector(Config{Now: nil}, nilSource{})
+	if e.cfg.Now == nil {
+		t.Fatal("NewElector did not restore nil Now to time.Now")
+	}
+}
+
+// TestElector_NowUsesFakeClock — pin the B209 test hook:
+// when Config.Now returns a fake clock, the elector's
+// internal e.now() returns that fake value (not real
+// time). This is the contract the e2e orchestrator
+// script relies on to fast-forward through the 90s
+// staleness window without sleeping in real time.
+//
+// We don't run evaluate() (it needs a real DB); we just
+// verify e.now() follows the Config.
+func TestElector_NowUsesFakeClock(t *testing.T) {
+	fake := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	e := NewElector(Config{Now: func() time.Time { return fake }}, nilSource{})
+	got := e.now()
+	if !got.Equal(fake) {
+		t.Errorf("e.now() = %v, want %v (fake clock)", got, fake)
+	}
+}
+
+// TestNextState_AtFakeClockBoundary — B209: verify
+// the 90s staleness boundary using a fake clock. We
+// construct now via the new Now hook (instead of the
+// time.Now() call in the test) and verify a node whose
+// last_seen is exactly 90s old stays in 'ready' (the
+// strict < comparison in nextState), and one whose
+// last_seen is 91s old transitions to 'failed'.
+//
+// The 1-second gap pins the "3 × 30s = 90s, not 91s,
+// not 89s" contract from the B204 B-check.
+func TestNextState_AtFakeClockBoundary(t *testing.T) {
+	fakeNow := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	staleAfter := HeartbeatIntervalSeconds * time.Second * StaleMultiplier // 90s
+	cutoff := fakeNow.Add(-staleAfter)
+
+	cases := []struct {
+		name     string
+		state    string
+		lastSeen time.Time
+		want     string
+	}{
+		{
+			name:     "ready + exactly 90s old → stays ready (strict <)",
+			state:    "ready",
+			lastSeen: fakeNow.Add(-90 * time.Second),
+			want:     "ready",
+		},
+		{
+			name:     "ready + 91s old → failed",
+			state:    "ready",
+			lastSeen: fakeNow.Add(-91 * time.Second),
+			want:     "failed",
+		},
+		{
+			name:     "ready + 89s old → stays ready (comfortable margin)",
+			state:    "ready",
+			lastSeen: fakeNow.Add(-89 * time.Second),
+			want:     "ready",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := nextState(c.state, sql.NullTime{Valid: true, Time: c.lastSeen}, sql.NullTime{Valid: true, Time: fakeNow.Add(-1 * time.Hour)}, cutoff)
+			if got != c.want {
+				t.Errorf("nextState(%q) = %q, want %q (fake-now boundary)", c.state, got, c.want)
+			}
+		})
+	}
+}

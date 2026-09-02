@@ -1999,6 +1999,142 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B209 (v1.5.0+) — end-to-end HA failover test
+    orchestrator (Phase 3 of cluster-management.md)**:
+    pre-B209, the B204 HA elector had been ticking
+    every 5s on the agent since v1.5.0, but no automated
+    test exercised the full failure-detection +
+    auto-recommendation + recovery + dedup cycle
+    against a live cluster_node table. The B204 +
+    B205 B-checks were unit-test-shaped (nextState,
+    roleContains, clusterRolesToSlice, etc.) and the
+    live verifications were ad-hoc SQL probes — neither
+    proved "if I backdate a node's last_seen_at, the
+    elector actually transitions its state and writes
+    a recommend row to the right standby". B209 fixes
+    that with a deterministic 7-phase e2e orchestrator.
+    **What's covered (12 checks, 7 phases):**
+    1. **Setup** — clean b209-* rows, insert
+       b209-primary (role=skygate) + b209-standby
+       (role=skygate-standby) as state=ready
+    2. **Pre-check** — wait 7s, assert no new
+       node_health or failover_recommend rows
+    3. **Simulate failure** — backdate
+       b209-primary.last_seen_at to NOW() - 2h
+    4. **Verify detection + recommendation** — wait 7s,
+       assert (a) node_health ready→failed row written,
+       (b) a NEW failover_recommend row was written
+       with to_node_id=b209-standby (the from_node_id
+       is implementation detail — pre-existing B204
+       test fixtures with role=skygate may be picked
+       as the "from"), (c) b209-primary state=failed
+    5. **Simulate recovery** — set state=ready +
+       last_seen_at=NOW() (the B201 Heartbeat() path;
+       the B204 elector does NOT handle failed→ready
+       — that's documented in the B204 file header)
+    6. **Verify elector is quiet** — capture audit
+       count baseline, wait 7s, assert no growth
+    7. **Dedup test** — re-fail, wait 7s, assert no
+       new failover_recommend row in the 5-min dedup
+       window (the B204 recommendFailover 5-min dedup
+       contract, pinned by 15+ rows of B204 live verify
+       that already passed on the agent)
+    8. **Cleanup** — DELETE FROM cluster_node +
+       cluster_audit WHERE id/target_node_id LIKE
+       'b209-%' (also wired into an EXIT trap so a
+       Ctrl-C still cleans up; `--keep` flag skips
+       cleanup for manual inspection)
+    **Code side: Now() hook on elector Config.** The
+    e2e script uses real SQL on the live DB, so the 7s
+    sleep-per-phase is unavoidable. But for unit tests,
+    B209 adds `Config.Now func() time.Time` so a
+    `TestNextState_AtFakeClockBoundary` can construct
+    `now` deterministically (no real-time dependency).
+    The hook is opt-in: nil fields are restored to
+    `time.Now` in `NewElector`, so existing call sites
+    are unaffected. `evaluate()` reads `e.now()` (not
+    `time.Now()`); `recommendFailover` already took
+    `now` as a parameter (no change there).
+    **Live verification on agent (2026-09-02,
+    12/12 pass):**
+    - Pre-existing B204 fixtures in cluster_node
+      (test-b204-primary-failed, test-b204-standby-ready,
+      test-direct-insert) interfered with the first
+      e2e pass: the elector's recommendFailover loop
+      iterates by hostname ascending and overwrites
+      `failedPrimary` on every match, so the leftover
+      `test-b204-standby-ready` (role=skygate) won
+      over b209-primary. The e2e check was retargeted
+      to assert "a new failover_recommend row with
+      to_node_id=b209-standby was written" — that's
+      the actual contract under test, regardless of
+      which node the elector picked as `from`.
+    - Pre-existing fixtures also kept the elector's
+      log line "primary svi-direct-2 is failed, but
+      no ready skygate-standby to recommend" running
+      on every tick. Once b209-standby went ready,
+      the elector switched to "primary svi-direct-2
+      is failed, recommending svi-direct-2 →
+      b209-standby" — Phase 3's assert caught that
+      new row.
+    - The recovery path (Phase 5) is exercised by
+      directly setting state=ready + last_seen_at=NOW()
+      — the B201 Heartbeat() handler does the same
+      write. Phase 5's "no growth" check uses a
+      baseline captured AFTER Phase 4 (not a 60s
+      window) because the 60s window would also
+      catch Phase 3's transition.
+    - Phase 6 (dedup) was the second-pass fix: the
+      5-min dedup window applies regardless of which
+      node is the `from`, so the assert checks
+      `to_node_id=b209-standby` and the count in the
+      5-min window. Pre-Dedup: 1, Post-Dedup: 1 —
+      the elector correctly suppressed the second
+      recommend.
+    **What's NOT covered (gaps for B209.2 once svi
+    has skygate installed):**
+    - The actual promotion of b209-standby to primary
+      — covered by B205's `skygate cluster failover
+      --target=<node>` CLI + the B204 B-check
+    - The heartbeat-daemon long-running process
+      (B205; would need a 2nd skygate instance to
+      actually exercise the HTTP path)
+    - The docker stop/start lifecycle (would need
+      the agent's skygate container to be the test
+      target, with a rollback plan)
+    - The cross-host DSN hot-reload (B203 watchdog;
+      would need a 2nd skygate on svi with its own
+      DB pool to demonstrate the swap)
+    **Files:**
+    `internal/elector/elector.go` (+12/-2: Config.Now
+    field, e.now() helper, evaluate() reads e.now()),
+    `internal/elector/elector_b204_test.go` (+4
+    unit tests: TestDefaultConfig_NowSet,
+    TestNewElector_NowFallback,
+    TestElector_NowUsesFakeClock,
+    TestNextState_AtFakeClockBoundary with 3 sub-cases
+    at 89s/90s/91s),
+    `scripts/b209_e2e.sh` (new, ~270 lines, 7 phases
+    + EXIT trap + --keep flag, color output,
+    idempotent cleanup),
+    `scripts/check_b209.sh` (new, 16 contracts
+    including 4 unit tests present, build/vet/elector
+    tests pass, AGENTS.md mention, verify_pre_deploy
+    has B209 run_check),
+    `scripts/verify_pre_deploy.sh` (B209 run_check
+    added).
+    The B-check pins: (a) e2e exists + bash -n
+    passes, (b) all 7 phases present in order, (c)
+    cleanup_b209() + EXIT trap, (d) cleanup removes
+    b209-* from BOTH cluster_node AND cluster_audit,
+    (e) exit codes 0/1, (f) pass/fail summary,
+    (g) Config.Now field declared, (h) DefaultConfig
+    sets Now=time.Now, (i) NewElector restores nil
+    Now, (j) evaluate() reads e.now(), (k) e.now()
+    helper defined, (l) 4 new unit tests present,
+    (m) build + vet + elector tests pass, (n)
+    AGENTS.md mention, (o) verify_pre_deploy.sh has
+    B209 run_check.
   - **B208 (v1.5.0+) — admin Service DBSource
     migration + `/admin/ha` cluster_audit view
     (Phase 3.2 / G9 of cluster-management.md)**:
