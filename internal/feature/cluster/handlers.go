@@ -42,7 +42,6 @@
 package cluster
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -55,14 +54,16 @@ import (
 // signing secret (the same SKYGATE_SECRET_KEY used
 // for JWT signing).
 type Service struct {
-	DB              *sql.DB
+	DB              DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
 	InviteSecret    string
 }
 
 // NewService returns a Service. Both fields are
 // required — DB for the cluster_* queries, InviteSecret
-// for the HMAC key.
-func NewService(d *sql.DB, inviteSecret string) *Service {
+// for the HMAC key. B210: DB is now DBSource (the
+// ResettableDB from internal/db) so the join + heartbeat
+// handlers follow the B203 watchdog's hot-reload.
+func NewService(d DBSource, inviteSecret string) *Service {
 	return &Service{DB: d, InviteSecret: inviteSecret}
 }
 
@@ -115,7 +116,7 @@ func (s *Service) PostAPIClusterJoin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "token is required")
 		return
 	}
-	resp, err := cluster.Join(s.DB, s.InviteSecret, &req)
+	resp, err := cluster.Join(s.dbc(), s.InviteSecret, &req)
 	if err != nil {
 		writeJoinError(w, err)
 		return
@@ -159,7 +160,7 @@ func (s *Service) PostAPIClusterHeartbeat(w http.ResponseWriter, r *http.Request
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	resp, err := cluster.Heartbeat(s.DB, s.InviteSecret, &req)
+	resp, err := cluster.Heartbeat(s.dbc(), s.InviteSecret, &req)
 	if err != nil {
 		if errors.Is(err, cluster.ErrHeartbeatNodeNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())

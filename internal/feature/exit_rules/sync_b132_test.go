@@ -22,6 +22,15 @@ import (
 	"testing"
 )
 
+// fixedDB is a DBSource that always returns the same
+// *sql.DB — the test stub for B210's DBSource interface.
+// B210: every test that constructed a Service with
+// `DB: <*sql.DB>` now needs `DB: fixedDB{db: <*sql.DB>}`
+// (the wrapper that satisfies the DBSource interface).
+type fixedDB struct{ db *sql.DB }
+
+func (f fixedDB) Current() *sql.DB { return f.db }
+
 // TestSyncAdvertisedRoutesForNode_EmptyHostname pins that the
 // empty-hostname short-circuit returns {"error": "..."} and
 // never touches the DB or the headscale client. The pre-B132
@@ -68,7 +77,7 @@ func TestSyncAdvertisedRoutesForNode_NoRules(t *testing.T) {
 	)`); err != nil {
 		t.Fatalf("create device_rules: %v", err)
 	}
-	s := &Service{DB: d}
+	s := &Service{DB: fixedDB{db: d}}
 	res := s.SyncAdvertisedRoutesForNode("emilia")
 	if v, ok := res["emilia"]; !ok || !strings.Contains(v, "no IP/subnet rules") {
 		t.Errorf("expected emilia=info=no rules, got %v", res)

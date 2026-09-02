@@ -25,7 +25,6 @@
 package exit_rules
 
 import (
-	"database/sql"
 	"net/http"
 
 	"skygate/internal/auth"
@@ -98,7 +97,7 @@ type Backend interface {
 //     to HSGlobal() on any error.
 type Service struct {
 	Backend           Backend
-	DB                *sql.DB
+	DB                DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
 	HS                *headscale.Client
 	Cfg               *config.Config
 	I18n              *i18n.Catalog

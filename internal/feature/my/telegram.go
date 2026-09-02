@@ -70,7 +70,7 @@ func (s *Service) GetMyTelegram(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	state, err := loadMyTelegramState(s.DB, c.UserID, c.Username)
+	state, err := loadMyTelegramState(s.dbc(), c.UserID, c.Username)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("internal error: %v", err), http.StatusInternalServerError)
 		return
@@ -170,7 +170,7 @@ func (s *Service) PostMyTelegramGenerate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Rate-limit: cap on active tokens per user.
-	active, err := db.CountActiveTelegramLoginTokensByUser(s.DB, c.UserID)
+	active, err := db.CountActiveTelegramLoginTokensByUser(s.dbc(), c.UserID)
 	if err != nil {
 		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
 		return
@@ -184,7 +184,7 @@ func (s *Service) PostMyTelegramGenerate(w http.ResponseWriter, r *http.Request)
 	// Prune expired rows for this user so the cap check is
 	// accurate (an "expired" row still counts in the index until
 	// we sweep). Cheap because of idx_telegram_login_tokens_user.
-	if _, err := db.PruneExpiredTelegramLoginTokens(s.DB, time.Now().Unix()); err != nil {
+	if _, err := db.PruneExpiredTelegramLoginTokens(s.dbc(), time.Now().Unix()); err != nil {
 		// Non-fatal: the cap check still works because
 		// qCountActiveTelegramLoginTokensByUser filters on
 		// expires_at > now. Logged via audit for awareness.
@@ -196,8 +196,8 @@ func (s *Service) PostMyTelegramGenerate(w http.ResponseWriter, r *http.Request)
 		http.Redirect(w, r, "/my/telegram?err=mint_failed", http.StatusFound)
 		return
 	}
-	ttl := db.LoadTelegramLoginTokenTTL(s.DB)
-	if err := db.CreateTelegramLoginToken(s.DB, token, c.UserID, ttl, clientIP(r)); err != nil {
+	ttl := db.LoadTelegramLoginTokenTTL(s.dbc())
+	if err := db.CreateTelegramLoginToken(s.dbc(), token, c.UserID, ttl, clientIP(r)); err != nil {
 		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
 		return
 	}
@@ -228,7 +228,7 @@ func (s *Service) PostMyTelegramUnbind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Find the binding (if any) for this user.
-	b, err := db.GetTelegramBindingByUser(s.DB, c.UserID)
+	b, err := db.GetTelegramBindingByUser(s.dbc(), c.UserID)
 	if err == db.ErrTelegramBindingNotFound {
 		http.Redirect(w, r, "/my/telegram?err=not_bound", http.StatusFound)
 		return
@@ -237,7 +237,7 @@ func (s *Service) PostMyTelegramUnbind(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
 		return
 	}
-	if err := db.DeleteTelegramBinding(s.DB, b.ChatID); err != nil {
+	if err := db.DeleteTelegramBinding(s.dbc(), b.ChatID); err != nil {
 		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
 		return
 	}
@@ -280,7 +280,7 @@ func (s *Service) PostMyTelegramRevoke(w http.ResponseWriter, r *http.Request) {
 	// user revokes a token they just inspected.
 	var ownerID int64
 	ownerFound := false
-	if err := s.DB.QueryRow(`SELECT portal_user_id FROM telegram_login_tokens WHERE token = $1`, token).Scan(&ownerID); err == nil {
+	if err := s.dbc().QueryRow(`SELECT portal_user_id FROM telegram_login_tokens WHERE token = $1`, token).Scan(&ownerID); err == nil {
 		ownerFound = true
 	} else if err != sql.ErrNoRows {
 		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
@@ -296,7 +296,7 @@ func (s *Service) PostMyTelegramRevoke(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/my/telegram?err=not_your_token", http.StatusFound)
 		return
 	}
-	if err := db.DeleteTelegramLoginToken(s.DB, token); err != nil {
+	if err := db.DeleteTelegramLoginToken(s.dbc(), token); err != nil {
 		http.Redirect(w, r, "/my/telegram?err=db_error", http.StatusFound)
 		return
 	}
@@ -491,7 +491,7 @@ type myTelegramTokenView struct {
 // cheap (one indexed SELECT). This indirection exists so the
 // test code can mock the value.
 func (s *Service) loginTokenTTLSeconds() int {
-	return db.LoadTelegramLoginTokenTTL(s.DB)
+	return db.LoadTelegramLoginTokenTTL(s.dbc())
 }
 
 // looksLikeLoginTokenForQR is the QR handler's copy of

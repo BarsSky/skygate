@@ -54,7 +54,7 @@ type apiRule struct {
 //
 // For manual subnet/IP rules (no DNS-resolve parent), pass "".
 func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain string) (bool, int) {
-	existingID, err := db.FindDeviceRuleID(s.DB, userID, deviceID, exitNode, targetType, targetValue)
+	existingID, err := db.FindDeviceRuleID(s.dbc(), userID, deviceID, exitNode, targetType, targetValue)
 	if err == nil {
 		return true, existingID
 	}
@@ -63,7 +63,7 @@ func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetT
 	}
 	// not found → insert. parentDomain is caller-supplied; the
 	// form passes the original domain for DNS-resolved /32 rules.
-	newID, err := db.AppendDeviceRule(s.DB, userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, "", "")
+	newID, err := db.AppendDeviceRule(s.dbc(), userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, "", "")
 	if err != nil {
 		return false, 0
 	}
@@ -76,7 +76,7 @@ func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetT
 // headscale IP-to-hostname lookup, which is Service-level
 // (not pure DB), so that part stays here.
 func (s *Service) getDeviceRules(userID int64) ([]db.DeviceRule, error) {
-	rr, err := db.GetDeviceRulesForUser(s.DB, userID)
+	rr, err := db.GetDeviceRulesForUser(s.dbc(), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +136,9 @@ func (s *Service) getDeviceRules(userID int64) ([]db.DeviceRule, error) {
 // pre-fix (the legacy no-via path).
 func (s *Service) generateACL() (string, error) {
 	if os.Getenv("SKYGATE_ACL_VIA_ENABLED") == "true" {
-		return acl.GenerateACLWithVia(s.DB)
+		return acl.GenerateACLWithVia(s.dbc())
 	}
-	return acl.GenerateACL(s.DB)
+	return acl.GenerateACL(s.dbc())
 }
 
 // saveACLSnapshot persists one acl_snapshots row and
@@ -148,7 +148,7 @@ func (s *Service) generateACL() (string, error) {
 // When Notifier is nil the free function skips the
 // alert, matching the previous App behaviour.
 func (s *Service) saveACLSnapshot(config, username string) int {
-	return acl.SaveACLSnapshot(s.DB, config, username, s.Notifier)
+	return acl.SaveACLSnapshot(s.dbc(), config, username, s.Notifier)
 }
 
 // getMaxRulesForUser returns the per-user rule limit or

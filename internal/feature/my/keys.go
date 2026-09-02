@@ -60,7 +60,7 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 	// Returns []db.PreauthKey, which the template iterates over the
 	// same fields the old local keyRow did (ID, Key, Used, ExpiresAt,
 	// CreatedAt, HeadscalePreauthID).
-	rows, err := db.ListPreauthKeysByUser(s.DB, c.UserID)
+	rows, err := db.ListPreauthKeysByUser(s.dbc(), c.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -235,7 +235,7 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 	// consistent. Negligible cost — the (user_id,
 	// expires_at) index from the dashboard's split
 	// already covers this.
-	expiredUnused, err := db.CountExpiredUnusedPreauthKeysByUser(s.DB, c.UserID, nowUnix)
+	expiredUnused, err := db.CountExpiredUnusedPreauthKeysByUser(s.dbc(), c.UserID, nowUnix)
 	if err != nil {
 		log.Printf("web.my.keys: CountExpiredUnusedPreauthKeysByUser userID=%d err=%v", c.UserID, err)
 		// Non-fatal — just don't show the button.
@@ -357,7 +357,7 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	k, err := db.GetPreauthKeyByID(s.DB, id, c.UserID)
+	k, err := db.GetPreauthKeyByID(s.dbc(), id, c.UserID)
 	if errors.Is(err, db.ErrPreauthKeyNotFound) {
 		http.Error(w, "key not found", http.StatusNotFound)
 		return
@@ -383,7 +383,7 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the headscale user.
-	hsUserID, _, err := db.GetUserHSByID(s.DB, c.UserID)
+	hsUserID, _, err := db.GetUserHSByID(s.dbc(), c.UserID)
 	if err != nil || !hsUserID.Valid {
 		http.Error(w, "no headscale user linked", http.StatusBadRequest)
 		return
@@ -415,7 +415,7 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 			// the next /my/keys load.
 		}
 	}
-	if err := db.ExpirePreauthKey(s.DB, id, c.UserID, now); err != nil {
+	if err := db.ExpirePreauthKey(s.dbc(), id, c.UserID, now); err != nil {
 		http.Error(w, "local expire failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -442,7 +442,7 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 	// notified_at=0 (the V058PG column). The B156 scheduler
 	// dedup-via-notified_at would otherwise skip the new
 	// key on its first tick.
-	newID, err := db.InsertPreauthKey(s.DB, c.UserID, newKey.Key, now+ttlSeconds, newKey.ID)
+	newID, err := db.InsertPreauthKey(s.dbc(), c.UserID, newKey.Key, now+ttlSeconds, newKey.ID)
 	if err != nil {
 		log.Printf("web.my.reissue: InsertPreauthKey err=%v", err)
 	}
@@ -463,7 +463,7 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 	// The next reissue OR the user clicking
 	// "Mark as read" fixes it. Not a hard
 	// failure.
-	if _, nerr := notifications.MarkAllRead(s.DB, c.UserID); nerr != nil {
+	if _, nerr := notifications.MarkAllRead(s.dbc(), c.UserID); nerr != nil {
 		log.Printf("web.my.reissue: MarkAllRead err=%v", nerr)
 	}
 
@@ -543,7 +543,7 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	}
 	// Look up the key, scoped to current user.
 	// 2026-07-11: Этап 10 part 3 — SELECT moved to db.GetPreauthKeyByID
-	k, err := db.GetPreauthKeyByID(s.DB, id, c.UserID)
+	k, err := db.GetPreauthKeyByID(s.dbc(), id, c.UserID)
 	if errors.Is(err, db.ErrPreauthKeyNotFound) {
 		http.Error(w, "key not found", http.StatusNotFound)
 		return
@@ -566,7 +566,7 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	}
 	// Resolve the headscale user ID for this portal user.
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetHSIDByID
-	hsUserID, err := db.GetHSIDByID(s.DB, c.UserID)
+	hsUserID, err := db.GetHSIDByID(s.dbc(), c.UserID)
 	if err != nil || !hsUserID.Valid {
 		http.Error(w, "no headscale user linked", http.StatusBadRequest)
 		return
@@ -590,7 +590,7 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 	// on next render (no separate 'expired' column; we reuse the
 	// expires_at timestamp convention used for TTL-based expiry).
 	// 2026-07-11: Этап 10 part 3 — UPDATE moved to db.ExpirePreauthKey
-	if err := db.ExpirePreauthKey(s.DB, id, c.UserID, now); err != nil {
+	if err := db.ExpirePreauthKey(s.dbc(), id, c.UserID, now); err != nil {
 		http.Error(w, "local update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -628,7 +628,7 @@ func (s *Service) PostMyKeysCleanup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().Unix()
-	removed, err := db.DeleteExpiredUnusedPreauthKeysByUser(s.DB, c.UserID, now)
+	removed, err := db.DeleteExpiredUnusedPreauthKeysByUser(s.dbc(), c.UserID, now)
 	if err != nil {
 		log.Printf("web.my.cleanup: DeleteExpiredUnusedPreauthKeysByUser userID=%d err=%v", c.UserID, err)
 		http.Error(w, "cleanup failed: "+err.Error(), http.StatusInternalServerError)

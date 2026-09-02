@@ -87,13 +87,13 @@ func (s *Service) GetMyAccountAuditExport(w http.ResponseWriter, r *http.Request
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
-	rows, err := db.ListAuditLogForUser(s.DB, c.UserID, c.Username, since, limit, offset)
+	rows, err := db.ListAuditLogForUser(s.dbc(), c.UserID, c.Username, since, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Audit the export itself — security-sensitive.
-	_ = db.AppendAuditLog(s.DB, c.UserID, c.Username, "audit_export",
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "audit_export",
 		fmt.Sprintf("format=%s since=%d limit=%d rows=%d", format, since, limit, len(rows)))
 	// Filename: skygate-audit-<username>-<ts>.<ext>
 	//

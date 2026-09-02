@@ -2217,6 +2217,102 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B210 (v1.5.0+) — DBSource pattern for
+    non-admin services (auth, my, exit_rules,
+    feature/cluster). Phase 3 of
+    `docs/internal/cluster-management.md`**: closes
+    the B203 hot-reload regression for ALL services
+    that previously captured `*sql.DB` at boot. B208.1
+    only fixed the admin package; the auth/my/
+    exit_rules/feature/cluster packages kept the
+    captured-pointer pattern and broke on every B203
+    watchdog swap (the user saw "empty devices tab +
+    unchanged theme" after every skygate restart, since
+    auth login + the my/devices page were both broken
+    — the user-reported symptom that triggered B210).
+    B210 replicates the B208.1 pattern in 4 more
+    packages: each gets a new `dbsource.go` with a
+    `DBSource` interface (one `Current() *sql.DB`
+    method, satisfied by the B203 ResettableDB) + a
+    `Service.dbc()` helper that returns
+    `s.DB.Current()`; every `s.DB.X` call site
+    (auth=9, my=many, exit_rules=many, cluster=2) is
+    replaced with `s.dbc().X`. `cmd/skygate/main.go`
+    passes `d` (the ResettableDB) to all 4 services
+    instead of `app.DB` (the captured `*sql.DB`).
+    **Live verification on agent (2026-09-02):**
+    the canonical test for B210 was setting
+    `cluster_database.current_dsn` back to the B207
+    verify test artifact
+    (`postgres://admin:skygate_admin_pass@...`),
+    restarting the skygate container (which triggers
+    the watchdog swap on the first 5s tick), and
+    verifying that BOTH the auth login AND the
+    /my/devices page still work — pre-B210 they would
+    have 500'd with "sql: database is closed" on
+    every page load. The live-verify confirmed:
+    - POST /login with skyadmin credentials → 302 →
+      /dashboard + Set-Cookie (was 200 + login page
+      before, because the captured pool was closed)
+    - /my/devices shows 9 devices (emilia, karolina,
+      a71, cyborg, desktop-cuo0tfb, msi, skybars,
+      skybars-secure, skyworker) + theme=mint
+    - /admin/devices shows all 15 devices
+    - Pre-B210: all of these 500'd after the watchdog
+      swap. Post-B210: transparent hot-reload.
+    **Files:** `internal/feature/auth/dbsource.go`
+    (new, ~100 lines: DBSource interface + dbc()
+    helper), `internal/feature/auth/service.go`
+    (Service.DB: *sql.DB → DBSource; 9 s.DB → s.dbc()
+    replacements), `internal/feature/my/dbsource.go`
+    (new), `internal/feature/my/service.go` (same
+    change), `internal/feature/my/{devices,dashboard,
+    keys,preauth,meshes,audit,notifications,
+    device_exit_pref,exit_nodes,settings,telegram}.go`
+    (s.DB → s.dbc() via bulk sed, ~80 call sites total),
+    `internal/feature/exit_rules/dbsource.go` (new),
+    `internal/feature/exit_rules/service.go` + 9
+    other files in the package (s.DB → s.dbc() via bulk
+    sed), `internal/feature/cluster/dbsource.go` (new),
+    `internal/feature/cluster/handlers.go` (2 call
+    sites), `cmd/skygate/main.go` (4 sites: authSvc,
+    mySvc, exitRulesSvc, clusterAPI all now receive `d`
+    instead of `app.DB`), `scripts/check_b210.sh`
+    (new, 19 contracts), `scripts/verify_pre_deploy.sh`
+    (B210 run_check added), `AGENTS.md` (this section).
+    **The B-check pins:** (a) 4 dbsource.go files
+    exist, (b) 4 Service.DB types are DBSource (not
+    *sql.DB), (c) 4 Service.dbc() helpers exist, (d)
+    3 packages (my + exit_rules have bulk-replaced
+    s.DB call sites; auth + cluster were replaced
+    one-by-one) have 0 remaining s.DB.method call
+    sites, (e) main.go passes `d` (the ResettableDB)
+    to all 4 services, (f) build + vet + tests pass
+    for the 4 packages, (g) AGENTS.md mentions B210,
+    (h) verify_pre_deploy.sh has B210 run_check.
+    **What's NOT covered (gaps for a follow-up B-block):**
+    - The healthz (B206) and elector (B204)
+      packages still have their own unexported
+      `DBSource` interface copies; the admin (B208.1)
+      and the 4 B210 packages added today also have
+      theirs. Consolidating all 5 (or 6, counting
+      the B203 ResettableDB's own unexported one)
+      into a single shared `internal/db/dbsource.go` is
+      a one-B-block follow-up — the shape is identical
+      (one method) but exporting the shared definition
+      requires resolving import cycles (the 4 feature
+      packages are siblings, the internal/db package
+      can't import them). The pattern B210 used (local
+      copy in each package) matches B208.1's design and
+      works; the consolidation is purely organizational.
+    - The B207 verify test still leaves a stale
+      `current_dsn` value in `cluster_database` after
+      running (this is what triggered the original
+      B210 user report). A small follow-up should
+      clear the row at the end of `b207_verify.sh` so
+      the watchdog doesn't swap on the next skygate
+      restart even if the B210 migration isn't deployed
+      yet.
   - **B209 (v1.5.0+) — end-to-end HA failover test
     orchestrator (Phase 3 of cluster-management.md)**:
     pre-B209, the B204 HA elector had been ticking

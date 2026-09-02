@@ -66,7 +66,7 @@ func (s *Service) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	meshes, err := mesh.ListMeshesForUser(s.DB, c.UserID)
+	meshes, err := mesh.ListMeshesForUser(s.dbc(), c.UserID)
 	if err != nil {
 		log.Printf("web.my.meshes: ListMeshesForUser userID=%d err=%v", c.UserID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -79,12 +79,12 @@ func (s *Service) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 	rows := make([]myMeshRow, 0, len(meshes))
 	for _, m := range meshes {
 		row := myMeshRow{Mesh: m}
-		if name, _ := getUserNameByID(s.DB, m.CreatorUserID); name != "" {
+		if name, _ := getUserNameByID(s.dbc(), m.CreatorUserID); name != "" {
 			row.CreatorName = name
 		} else {
 			row.CreatorName = fmt.Sprintf("user#%d", m.CreatorUserID)
 		}
-		members, _ := mesh.ListMembers(s.DB, m.ID)
+		members, _ := mesh.ListMembers(s.dbc(), m.ID)
 		row.MemberCount = len(members)
 		row.MemberList = members
 		// v0.25.0 — fetch each member's per-user /24
@@ -101,7 +101,7 @@ func (s *Service) GetMyMeshes(w http.ResponseWriter, r *http.Request) {
 			q := "SELECT user_id, cidr FROM user_subnets WHERE user_id IN ($1" +
 				strings.Repeat(",?", len(ids)-1) +
 				") AND status != 'disabled'"
-			cidrRows, err := s.DB.Query(q, ids...)
+			cidrRows, err := s.dbc().Query(q, ids...)
 			if err == nil {
 				for cidrRows.Next() {
 					var uid int64
@@ -205,7 +205,7 @@ func (s *Service) PostMyMeshesCreate(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/my/meshes?err=name_too_long", http.StatusFound)
 		return
 	}
-	m, err := mesh.CreateMesh(s.DB, c.UserID, name)
+	m, err := mesh.CreateMesh(s.dbc(), c.UserID, name)
 	if err != nil {
 		log.Printf("web.my.meshes: CreateMesh userID=%d err=%v", c.UserID, err)
 		http.Redirect(w, r,
@@ -240,7 +240,7 @@ func (s *Service) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/my/meshes?err=missing_code", http.StatusFound)
 		return
 	}
-	m, err := mesh.LookupByCode(s.DB, code)
+	m, err := mesh.LookupByCode(s.dbc(), code)
 	if err != nil {
 		if errors.Is(err, mesh.ErrNotFound) {
 			http.Redirect(w, r, "/my/meshes?err=not_found", http.StatusFound)
@@ -261,8 +261,8 @@ func (s *Service) PostMyMeshesJoin(w http.ResponseWriter, r *http.Request) {
 	// re-apply is skipped too — wasted work). The
 	// surface error is "already_member" so the user
 	// knows they didn't change anything.
-	alreadyMember, _ := isMeshMember(s.DB, m.ID, c.UserID)
-	if err := mesh.JoinMesh(s.DB, code, c.UserID); err != nil {
+	alreadyMember, _ := isMeshMember(s.dbc(), m.ID, c.UserID)
+	if err := mesh.JoinMesh(s.dbc(), code, c.UserID); err != nil {
 		log.Printf("web.my.meshes: JoinMesh userID=%d code=%s err=%v",
 			c.UserID, code, err)
 		http.Redirect(w, r,
@@ -312,7 +312,7 @@ func (s *Service) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(r.FormValue("code"))
 	var left int
 	if code == "" {
-		meshes, err := mesh.ListMeshesForUser(s.DB, c.UserID)
+		meshes, err := mesh.ListMeshesForUser(s.dbc(), c.UserID)
 		if err != nil {
 			log.Printf("web.my.meshes: ListMeshesForUser userID=%d err=%v",
 				c.UserID, err)
@@ -322,7 +322,7 @@ func (s *Service) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, m := range meshes {
-			if err := mesh.LeaveMesh(s.DB, m.Code, c.UserID); err != nil &&
+			if err := mesh.LeaveMesh(s.dbc(), m.Code, c.UserID); err != nil &&
 				!errors.Is(err, mesh.ErrNotMember) {
 				log.Printf("web.my.meshes: LeaveMesh userID=%d code=%s err=%v",
 					c.UserID, m.Code, err)
@@ -338,7 +338,7 @@ func (s *Service) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		m, err := mesh.LookupByCode(s.DB, code)
+		m, err := mesh.LookupByCode(s.dbc(), code)
 		if err != nil {
 			if errors.Is(err, mesh.ErrNotFound) {
 				http.Redirect(w, r, "/my/meshes?err=not_found", http.StatusFound)
@@ -349,7 +349,7 @@ func (s *Service) PostMyMeshesLeave(w http.ResponseWriter, r *http.Request) {
 				http.StatusFound)
 			return
 		}
-		if err := mesh.LeaveMesh(s.DB, code, c.UserID); err != nil {
+		if err := mesh.LeaveMesh(s.dbc(), code, c.UserID); err != nil {
 			if errors.Is(err, mesh.ErrNotMember) {
 				http.Redirect(w, r, "/my/meshes?err=leave_not_member", http.StatusFound)
 				return
@@ -455,7 +455,7 @@ func (s *Service) webMeshACLReapply(
 	// same one ApplyACLForAllPlanes uses; the
 	// per-plane iteration mirrors the v0.13.0
 	// per-plane ACL pipeline.
-	planes, err := db.ListControlPlanes(s.DB)
+	planes, err := db.ListControlPlanes(s.dbc())
 	if err != nil {
 		log.Printf("web.my.meshes: ListControlPlanes err=%v", err)
 		return
@@ -487,7 +487,7 @@ func (s *Service) webMeshACLReapply(
 		// policy from the DB state, not the caller's
 		// identity.
 		go func(plane string) {
-			_ = acl.ApplyACLPipelineForPlane(s.DB, hs, plane, nil,
+			_ = acl.ApplyACLPipelineForPlane(s.dbc(), hs, plane, nil,
 				"web:"+detailForLog,
 				"web re-apply on mesh membership change", false)
 		}(p.URL)

@@ -37,7 +37,7 @@ func (s *Service) PostSettingsTheme(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?theme="+theme, http.StatusFound)
 		return
 	}
-	if err := db.SetUserTheme(s.DB, c.UserID, theme); err != nil {
+	if err := db.SetUserTheme(s.dbc(), c.UserID, theme); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -98,7 +98,7 @@ func (s *Service) PostMyAccountDisplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Start from the existing prefs (so omitted fields keep their value).
-	cur := db.GetUserDisplayPrefs(s.DB, c.UserID)
+	cur := db.GetUserDisplayPrefs(s.dbc(), c.UserID)
 	if family := r.FormValue("font_family"); family != "" {
 		cur.FontFamily = family
 	}
@@ -111,7 +111,7 @@ func (s *Service) PostMyAccountDisplay(w http.ResponseWriter, r *http.Request) {
 	if sel := r.FormValue("selection_bg"); sel != "" {
 		cur.SelectionBg = strings.TrimSpace(sel)
 	}
-	if err := db.SetUserDisplayPrefs(s.DB, c.UserID, cur); err != nil {
+	if err := db.SetUserDisplayPrefs(s.dbc(), c.UserID, cur); err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "display_prefs_error", err.Error())
 		http.Redirect(w, r, "/my/account?err=display_save_failed", http.StatusFound)
 		return

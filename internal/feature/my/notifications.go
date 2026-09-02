@@ -78,7 +78,7 @@ func (s *Service) GetMyNotifications(w http.ResponseWriter, r *http.Request) {
 	// second SQL helper — a single SELECT +
 	// in-memory filter is cheaper than a second
 	// round-trip for the 50-row cap.
-	all, err := notifications.ListByUser(s.DB, c.UserID, 200)
+	all, err := notifications.ListByUser(s.dbc(), c.UserID, 200)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -126,7 +126,7 @@ func (s *Service) GetMyNotifications(w http.ResponseWriter, r *http.Request) {
 	hasPrev := page > 1
 
 	// Unread count for the filter pill.
-	unreadCount, _ := notifications.CountUnread(s.DB, c.UserID)
+	unreadCount, _ := notifications.CountUnread(s.dbc(), c.UserID)
 
 	data := map[string]any{
 		"Page":        "notifications",
@@ -163,7 +163,7 @@ func (s *Service) PostMyNotificationRead(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	rows, err := notifications.MarkRead(s.DB, id, c.UserID)
+	rows, err := notifications.MarkRead(s.dbc(), id, c.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -192,7 +192,7 @@ func (s *Service) PostMyNotificationsReadAll(w http.ResponseWriter, r *http.Requ
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	rows, err := notifications.MarkAllRead(s.DB, c.UserID)
+	rows, err := notifications.MarkAllRead(s.dbc(), c.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -65,7 +65,7 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
-	hsUserID, _, err := db.GetUserHSByID(s.DB, c.UserID)
+	hsUserID, _, err := db.GetUserHSByID(s.dbc(), c.UserID)
 	if err != nil {
 		log.Printf("web.my.preauth: GetUserHSByID userID=%d err=%v", c.UserID, err)
 		http.Error(w, "no headscale user linked", http.StatusBadRequest)
@@ -127,11 +127,11 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	// that's "already notified"). A fresh insert with
 	// notified_at=0 is the right default.
 	now := time.Now()
-	if _, err := db.InsertPreauthKey(s.DB, c.UserID, key.Key, now.Add(time.Duration(ttlSeconds)*time.Second).Unix(), key.ID); err != nil {
+	if _, err := db.InsertPreauthKey(s.dbc(), c.UserID, key.Key, now.Add(time.Duration(ttlSeconds)*time.Second).Unix(), key.ID); err != nil {
 		log.Printf("web.my.preauth: InsertPreauthKey userID=%d err=%v", c.UserID, err)
 	}
 	detail := fmt.Sprintf("ttl=%s reusable=%v resolved=%s", ttlUsed, reusable, expirationStr)
-	if err := db.AppendAuditLog(s.DB, c.UserID, c.Username, "preauth_issued", detail); err != nil {
+	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "preauth_issued", detail); err != nil {
 		log.Printf("web.my.preauth: AppendAuditLog userID=%d err=%v", c.UserID, err)
 	}
 	log.Printf("web.my.preauth: success userID=%d, rendering result page", c.UserID)

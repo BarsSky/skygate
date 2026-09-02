@@ -267,9 +267,9 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// case (the rule is returned with a NULL
 		// hostname, which won't match the LOWER() filter,
 		// so it's correctly excluded from the result).
-		dbRules, err = db.GetAllRulesForAdminByDevice(s.DB, deviceFilter)
+		dbRules, err = db.GetAllRulesForAdminByDevice(s.dbc(), deviceFilter)
 	} else {
-		dbRules, err = db.GetAllRulesForAdmin(s.DB)
+		dbRules, err = db.GetAllRulesForAdmin(s.dbc())
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -333,7 +333,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logs := []map[string]any{}
-	if recent, err := db.RecentExitRuleLogs(s.DB); err == nil {
+	if recent, err := db.RecentExitRuleLogs(s.dbc()); err == nil {
 		for _, l := range recent {
 			logs = append(logs, map[string]any{
 				"version": l.Version,
@@ -345,7 +345,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snaps := []map[string]any{}
-	if recent, err := db.RecentACLSnapshots(s.DB); err == nil {
+	if recent, err := db.RecentACLSnapshots(s.dbc()); err == nil {
 		for _, s := range recent {
 			success := false
 			if s.AppliedSuccess.Valid && s.AppliedSuccess.Int64 == 1 {
@@ -409,7 +409,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	// HTML showed "karolina" for basic's rules (UserID=6,
 	// DeviceID=29) even though `device_exit_node_prefs` had
 	// `michail/basic → tag:exit-emilia` and
-	// `PreferredExitNodeForRule(s.DB, 6, "basic")` returned
+	// `PreferredExitNodeForRule(s.dbc(), 6, "basic")` returned
 	// "emilia" correctly.
 	//
 	// B178 fix: collapse the annotated slice into AdminRule
@@ -454,13 +454,13 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	// falls back to the pre-B184 behaviour (all DOMAIN
 	// rules show ⏳ pending) instead of breaking the page.
 	resolvedByDomain := map[string]map[string]bool{}
-	if rbd, err := LoadResolvedByDomain(s.DB); err != nil {
+	if rbd, err := LoadResolvedByDomain(s.dbc()); err != nil {
 		log.Printf("admin/exit-rules: LoadResolvedByDomain: %v (DOMAIN rules will show pending)", err)
 	} else {
 		resolvedByDomain = rbd
 	}
 	totalMismatch := annotateRulesWithPrefs(rr, func(uid int64, hn string) string {
-		pref, _ := PreferredExitNodeForRule(s.DB, uid, hn)
+		pref, _ := PreferredExitNodeForRule(s.dbc(), uid, hn)
 		return pref
 	}, approvedByExitNode, resolvedByDomain)
 

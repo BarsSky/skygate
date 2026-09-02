@@ -97,7 +97,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-12: Этап 10 part 4 — moved to
 	// db.ListNodeOwnerNodeIDsByUsername.
 	ownedByUser := map[int]bool{}
-	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), c.Username)
 	for _, nid := range snapIDs {
 		if n, err := strconv.Atoi(nid); err == nil {
 			ownedByUser[n] = true
@@ -115,7 +115,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if maxTotal > 0 {
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRules
-		currentTotal, _ := db.CountEnabledRules(s.DB)
+		currentTotal, _ := db.CountEnabledRules(s.dbc())
 		if currentTotal+len(req.Rules) > maxTotal {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -136,7 +136,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		if maxPerDevice > 0 {
 			// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRulesForDevice
-			deviceRuleCount, _ := db.CountEnabledRulesForDevice(s.DB, rl.DeviceID)
+			deviceRuleCount, _ := db.CountEnabledRulesForDevice(s.dbc(), rl.DeviceID)
 			if deviceRuleCount >= maxPerDevice {
 				errors = append(errors, fmt.Sprintf("rule[%d]: device limit exceeded (%d/%d)", i, deviceRuleCount, maxPerDevice))
 				continue
@@ -188,8 +188,8 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		if acl, err := s.generateACL(); err == nil {
 			ver := s.saveACLSnapshot(acl, c.Username)
 			if err := s.HS.SetPolicy(acl); err == nil {
-				db.MarkACLApplied(s.DB, ver)
-				db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionAPIBulk,
+				db.MarkACLApplied(s.dbc(), ver)
+				db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionAPIBulk,
 					fmt.Sprintf("user %s added %d rules via API", c.Username, added))
 				// 2026-07-11: same operator-channel as the form path.
 				if s.Notifier != nil {
@@ -201,7 +201,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 					_ = s.SyncRoutes()
 				}
 			} else {
-				db.MarkACLFail(s.DB, ver, err.Error())
+				db.MarkACLFail(s.dbc(), ver, err.Error())
 				if s.Notifier != nil {
 					go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL bulk-apply failed (by %s, %d rules)\n  err: %v",
 						c.Username, added, err))

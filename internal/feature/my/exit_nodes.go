@@ -49,7 +49,7 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 	// the legacy `tag:exit-<host>` form inline. Without
 	// this, the dropdown sends a ghost tag and headscale
 	// silently no-ops the per-user via=... pin.
-	allNodeOwners, _ := db.ListAllNodeOwners(s.DB)
+	allNodeOwners, _ := db.ListAllNodeOwners(s.dbc())
 	enTagByHost := make(map[string]string, len(allNodeOwners))
 	for _, dn := range allNodeOwners {
 		if dn.Hostname != "" {
@@ -61,7 +61,7 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	var prefTag string
 	var viaEnabled bool
-	if pref, err := db.GetUserExitNodePref(s.DB, c.UserID); err == nil {
+	if pref, err := db.GetUserExitNodePref(s.dbc(), c.UserID); err == nil {
 		prefTag = pref.ExitNodeTag
 		viaEnabled = pref.ViaEnabled
 	}
@@ -114,7 +114,7 @@ func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request
 	// Empty hostname or empty tag: trust the raw tag (legacy
 	// compat for older form posts).
 	hostname := strings.ToLower(strings.TrimSpace(r.FormValue("hostname")))
-	tag, err := db.ResolveExitNodeTag(s.DB, hostname, rawTag)
+	tag, err := db.ResolveExitNodeTag(s.dbc(), hostname, rawTag)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -126,7 +126,7 @@ func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request
 	// (notably Android) reject policies with via they
 	// don't understand, so the default is OFF.
 	viaEnabled := r.FormValue("via") == "1"
-	if err := db.SetUserExitNodePref(s.DB, c.UserID, tag, c.UserID, viaEnabled); err != nil {
+	if err := db.SetUserExitNodePref(s.dbc(), c.UserID, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -142,7 +142,7 @@ func (s *Service) PostMyExitNodePreferred(w http.ResponseWriter, r *http.Request
 	if s.Cfg != nil {
 		viaFlag = s.Cfg.ACLWithViaEnabled
 	}
-	res := acl.ApplyACLPipelineForPlane(s.DB, s.Backend.HSForUserFn(c.UserID), "", nil, c.Username,
+	res := acl.ApplyACLPipelineForPlane(s.dbc(), s.Backend.HSForUserFn(c.UserID), "", nil, c.Username,
 		"my_preferred_exit_set tag="+tag, viaFlag)
 	if !res.Applied {
 		// The preference is in the DB regardless — the

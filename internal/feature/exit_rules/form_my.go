@@ -124,7 +124,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// filter applies uniformly regardless of IsAdmin so the "device"
 		// dropdown can't be abused to assign rules to another user's device.
 		userNodes := map[int]bool{}
-		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), c.Username)
 		for _, nid := range snapIDs {
 			if n, err := strconv.Atoi(nid); err == nil {
 				userNodes[n] = true
@@ -220,7 +220,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// (per-device pref > per-user pref > ""). The template
 		// renders a warning on rules whose exit_node doesn't match.
 		// Best-effort: a DB error here must not break the page.
-		if pref, perr := PreferredExitNodeForRule(s.DB, c.UserID, hn); perr == nil {
+		if pref, perr := PreferredExitNodeForRule(s.dbc(), c.UserID, hn); perr == nil {
 			info.PreferredExitNode = pref
 		}
 		// The i18n hints (HintOK/HintWarn/HintDanger) are
@@ -236,7 +236,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		did, _ := strconv.Atoi(info.ID)
 		if did > 0 {
 			// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledNonSubnetRulesForUserDevice
-			info.UserFacing, _ = db.CountEnabledNonSubnetRulesForUserDevice(s.DB, c.UserID, did)
+			info.UserFacing, _ = db.CountEnabledNonSubnetRulesForUserDevice(s.dbc(), c.UserID, did)
 		}
 		deviceInfos = append(deviceInfos, info)
 	}
@@ -292,7 +292,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	if maxTotal > 0 {
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRules
-		totalRules, _ = db.CountEnabledRules(s.DB)
+		totalRules, _ = db.CountEnabledRules(s.dbc())
 	}
 	loadPct := 0
 	if maxTotal > 0 {
@@ -338,7 +338,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	userFacingCount := 0
 	if c.UserID > 0 {
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledNonSubnetRulesForUser
-		userFacingCount, _ = db.CountEnabledNonSubnetRulesForUser(s.DB, c.UserID)
+		userFacingCount, _ = db.CountEnabledNonSubnetRulesForUser(s.dbc(), c.UserID)
 	}
 	maxPerUser := s.getMaxRulesForUser(c.Username)
 
@@ -350,7 +350,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	var deviceUsageList []DeviceUsage
 	// 2026-07-11: Этап 9 part 2 — moved to db.CountRulesByDeviceForUser
-	deviceCounts, qerr := db.CountRulesByDeviceForUser(s.DB, c.UserID)
+	deviceCounts, qerr := db.CountRulesByDeviceForUser(s.dbc(), c.UserID)
 	if qerr == nil {
 		for devID, count := range deviceCounts {
 			deviceUsageList = append(deviceUsageList, DeviceUsage{DeviceID: devID, Count: count})
@@ -414,7 +414,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// (DOMAIN rules show ⏳ pending) instead of breaking
 	// the page.
 	resolvedByDomain := map[string]map[string]bool{}
-	if rbd, err := LoadResolvedByDomain(s.DB); err != nil {
+	if rbd, err := LoadResolvedByDomain(s.dbc()); err != nil {
 		log.Printf("my/exit-rules: LoadResolvedByDomain: %v (DOMAIN rules will show pending)", err)
 	} else {
 		resolvedByDomain = rbd
@@ -484,7 +484,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// User-level preferred exit-node (fallback when no per-device
 	// pref is set). Used by the "Use device's preferred exit-node"
 	// button in the form.
-	userPreferred, _ := db.GetUserExitNodePref(s.DB, c.UserID)
+	userPreferred, _ := db.GetUserExitNodePref(s.dbc(), c.UserID)
 	userPreferredHost := TagToHostname(userPreferred.ExitNodeTag)
 
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
@@ -585,13 +585,13 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	countUserFacing := func(userID int64, deviceID int, _ bool) int {
 		switch {
 		case userID > 0 && deviceID > 0:
-			n, _ := db.CountEnabledNonSubnetRulesForUserDevice(s.DB, userID, deviceID)
+			n, _ := db.CountEnabledNonSubnetRulesForUserDevice(s.dbc(), userID, deviceID)
 			return n
 		case userID > 0:
-			n, _ := db.CountEnabledNonSubnetRulesForUser(s.DB, userID)
+			n, _ := db.CountEnabledNonSubnetRulesForUser(s.dbc(), userID)
 			return n
 		default:
-			n, _ := db.CountEnabledRules(s.DB)
+			n, _ := db.CountEnabledRules(s.dbc())
 			return n
 		}
 	}
@@ -652,7 +652,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		// db.CountNodeOwnerByNodeUser. devID is an int here
 		// (it came from a strconv.Atoi above); the helper
 		// expects the string form that node_owner_map stores.
-		c2, _ := db.CountNodeOwnerByNodeUser(s.DB, strconv.Itoa(devID), c.Username)
+		c2, _ := db.CountNodeOwnerByNodeUser(s.dbc(), strconv.Itoa(devID), c.Username)
 		owned = c2 > 0
 		break
 		}
@@ -707,7 +707,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	// Check for existing domain rule first to avoid dedup.
 	if targetType == "domain" {
 		// 2026-07-11: Этап 9 part 2 — moved to db.FindDomainRuleID + db.AppendDeviceRule
-		existingDomainID, _ := db.FindDomainRuleID(s.DB, c.UserID, devID, exitNode, targetValue)
+		existingDomainID, _ := db.FindDomainRuleID(s.dbc(), c.UserID, devID, exitNode, targetValue)
 		if existingDomainID == 0 {
 			// v0.28.0: pass userName (from c.UserID via portal_users)
 		// lookup) and deviceHostname. The form path doesn't
@@ -717,7 +717,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		// back to src=device_ip for rules with empty
 		// userName/deviceHostname, so the rule is live
 		// immediately after this insert.
-		_, _ = db.AppendDeviceRule(s.DB, c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, "", "")
+		_, _ = db.AppendDeviceRule(s.dbc(), c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, "", "")
 		}
 	}
 
@@ -756,7 +756,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		}
 		if existingID > 0 {
 			// 2026-07-11: Этап 9 part 2 — moved to db.GetParentDomain
-			existingParent, _ := db.GetParentDomain(s.DB, existingID)
+			existingParent, _ := db.GetParentDomain(s.dbc(), existingID)
 			if existingParent == "" || existingParent == targetValue {
 				// Ручной IP/subnet (без parent_domain) или уже наш parent_domain → дубликат
 				dupCount++
@@ -809,8 +809,8 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		ver := s.saveACLSnapshot(acl, c.Username)
 		if err := s.HS.SetPolicy(acl); err == nil {
-			db.MarkACLApplied(s.DB, ver)
-			db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionApply,
+			db.MarkACLApplied(s.dbc(), ver)
+			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionApply,
 				fmt.Sprintf("user %s added rule %s (type=%s) for %s->%s", c.Username, targetType, typeToInsert, targetValue, exitNode))
 			// 2026-07-11: notify the operator that a new exit-rule landed
 			// (security audit trail). Sent async so the redirect isn't blocked.
@@ -824,14 +824,14 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			if s.SyncRoutes != nil {
 				if sync := s.SyncRoutes(); sync != nil {
 					for node, status := range sync {
-						db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionSync,
+						db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionSync,
 							fmt.Sprintf("sync %s: %s", node, status))
 					}
 				}
 			}
 		} else {
-			db.MarkACLFail(s.DB, ver, err.Error())
-			db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionApplyFail,
+			db.MarkACLFail(s.dbc(), ver, err.Error())
+			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionApplyFail,
 				fmt.Sprintf("user %s: %v", c.Username, err))
 			// 2026-07-11: ACL apply failure is exactly the kind of thing
 			// the operator wants to wake up to. Telegram goes first, the
@@ -894,7 +894,7 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// 2026-07-11: Этап 9 part 2 — moved to db.GetRuleTargetTypeAndParent
-		targetType, parentDomain, _ := db.GetRuleTargetTypeAndParent(s.DB, id, c.UserID)
+		targetType, parentDomain, _ := db.GetRuleTargetTypeAndParent(s.dbc(), id, c.UserID)
 		infos = append(infos, ruleInfo{id: id, targetType: targetType, parentDomain: parentDomain})
 	}
 
@@ -903,24 +903,24 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 	for _, info := range infos {
 		if info.targetType == "domain" && info.parentDomain != "" {
 			// 2026-07-11: Этап 9 part 2 — moved to db.DeleteRuleOrCascadeByParentDomain
-			if n, err := db.DeleteRuleOrCascadeByParentDomain(s.DB, c.UserID, info.id, info.parentDomain); err == nil {
+			if n, err := db.DeleteRuleOrCascadeByParentDomain(s.dbc(), c.UserID, info.id, info.parentDomain); err == nil {
 				totalCascade += int(n) - 1
 			}
 		} else {
 			// 2026-07-11: Этап 9 part 2 — moved to db.DeleteRuleForUser
-			_ = db.DeleteRuleForUser(s.DB, info.id, c.UserID)
+			_ = db.DeleteRuleForUser(s.dbc(), info.id, c.UserID)
 		}
 	}
 
 	if acl, err := s.generateACL(); err == nil {
 		ver := s.saveACLSnapshot(acl, c.Username)
 		if err := s.HS.SetPolicy(acl); err == nil {
-			db.MarkACLApplied(s.DB, ver)
+			db.MarkACLApplied(s.dbc(), ver)
 			detail := fmt.Sprintf("user %s deleted %d rule(s)", c.Username, len(infos))
 			if totalCascade > 0 {
 				detail += fmt.Sprintf(" (cascade: %d /32)", totalCascade)
 			}
-			db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionDelete, detail)
+			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionDelete, detail)
 			// 2026-07-11: mirror the create-path notification so deletes are
 			// equally visible in the audit channel.
 			if s.Notifier != nil {
@@ -934,14 +934,14 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 			if s.SyncRoutes != nil {
 				if sync := s.SyncRoutes(); sync != nil {
 					for node, status := range sync {
-						db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionSync,
+						db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionSync,
 							fmt.Sprintf("sync %s: %s", node, status))
 					}
 				}
 			}
 		} else {
-			db.MarkACLFail(s.DB, ver, err.Error())
-			db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionDeleteFail, fmt.Sprintf("user %s: %v", c.Username, err))
+			db.MarkACLFail(s.dbc(), ver, err.Error())
+			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionDeleteFail, fmt.Sprintf("user %s: %v", c.Username, err))
 			// 2026-07-11: ACL delete-failure is also worth waking up for.
 			if s.Notifier != nil {
 				go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL delete failed (by %s, %d rules)\n  err: %v",

@@ -86,7 +86,7 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	// (same model as the per-user pref). Default OFF
 	// for Android compatibility.
 	viaEnabled := r.FormValue("via") == "1"
-	if !s.callerOwnsDevice(s.DB, c.UserID, hostname) {
+	if !s.callerOwnsDevice(s.dbc(), c.UserID, hostname) {
 		http.Error(w, "device not found or not owned by you", http.StatusForbidden)
 		return
 	}
@@ -94,12 +94,12 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	// tag value against node_owner_map. Empty form tag clears
 	// the pref; non-empty tag must resolve to a real node
 	// (refuse 400 on a typo so a ghost tag doesn't get inserted).
-	tag, err := db.ResolveExitNodeTag(s.DB, hostname, rawTag)
+	tag, err := db.ResolveExitNodeTag(s.dbc(), hostname, rawTag)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := db.SetDeviceExitNodePref(s.DB, c.UserID, hostname, tag, c.UserID, viaEnabled); err != nil {
+	if err := db.SetDeviceExitNodePref(s.dbc(), c.UserID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -109,7 +109,7 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	if s.Cfg != nil {
 		viaFlag = s.Cfg.ACLWithViaEnabled
 	}
-	res := acl.ApplyACLPipelineForPlane(s.DB, s.Backend.HSForUserFn(c.UserID), "", nil, c.Username,
+	res := acl.ApplyACLPipelineForPlane(s.dbc(), s.Backend.HSForUserFn(c.UserID), "", nil, c.Username,
 		"my_device_preferred_exit_set hostname="+hostname+" tag="+tag, viaFlag)
 	if !res.Applied {
 		http.Redirect(w, r, "/my/devices?err="+errToQuery(res.Err.Error()), http.StatusSeeOther)
@@ -174,12 +174,12 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 	// B188 + refactor: same ResolveExitNodeTag helper as the
 	// per-user handler above. The /admin/devices template had
 	// the identical `tag:exit-<hostname>` ghost-tag bug.
-	tag, err := db.ResolveExitNodeTag(s.DB, hostname, rawTag)
+	tag, err := db.ResolveExitNodeTag(s.dbc(), hostname, rawTag)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := db.SetDeviceExitNodePref(s.DB, userID, hostname, tag, c.UserID, viaEnabled); err != nil {
+	if err := db.SetDeviceExitNodePref(s.dbc(), userID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -189,7 +189,7 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 	if s.Cfg != nil {
 		viaFlag = s.Cfg.ACLWithViaEnabled
 	}
-	res := acl.ApplyACLPipelineForPlane(s.DB, s.Backend.HSForUserFn(userID), "", nil, c.Username,
+	res := acl.ApplyACLPipelineForPlane(s.dbc(), s.Backend.HSForUserFn(userID), "", nil, c.Username,
 		"admin_device_preferred_exit_set target_user_id="+itoa64(userID)+" hostname="+hostname+" tag="+tag, viaFlag)
 	if !res.Applied {
 		http.Redirect(w, r, "/admin/devices?err="+errToQuery(res.Err.Error()), http.StatusSeeOther)

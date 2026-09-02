@@ -46,7 +46,7 @@ type CleanupHostnameGroup struct {
 // CleanupRulesAnalyze runs the analysis without mutating DB. Safe to
 // call repeatedly.
 func (s *Service) CleanupRulesAnalyze() (*CleanupPlan, error) {
-	if s.DB == nil {
+	if s.dbc() == nil {
 		return nil, fmt.Errorf("db not initialised")
 	}
 	if s.HS == nil {
@@ -82,7 +82,7 @@ func (s *Service) CleanupRulesAnalyze() (*CleanupPlan, error) {
 	}
 
 	// Read all rules.
-	rows, err := s.DB.Query(`
+	rows, err := s.dbc().Query(`
 		SELECT id, user_id, device_id, COALESCE(device_ip,''), exit_node_id
 		FROM device_rules`)
 	if err != nil {
@@ -275,7 +275,7 @@ func (s *Service) CleanupRulesApply() (*CleanupPlan, error) {
 		}
 	}
 
-	tx, err := s.DB.Begin()
+	tx, err := s.dbc().Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
 	}

@@ -55,7 +55,7 @@ func (s *Service) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	// Get distinct exit_nodes from device_rules
 	// 2026-07-11: Этап 9 part 2 — moved to db.ListDistinctExitNodesWithRules
-	exitNodeNames, _ := db.ListDistinctExitNodesWithRules(s.DB)
+	exitNodeNames, _ := db.ListDistinctExitNodesWithRules(s.dbc())
 	exitNodeSet := map[string]bool{}
 	for _, n := range exitNodeNames {
 		exitNodeSet[n] = true
@@ -70,7 +70,7 @@ func (s *Service) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 	// dashboard never showed admin-curated exit-nodes that had no
 	// device_rules. ListEnabledExitServerHostnames queries the right
 	// column and surfaces any error to the caller.
-	if names, err := db.ListEnabledExitServerHostnames(s.DB); err == nil {
+	if names, err := db.ListEnabledExitServerHostnames(s.dbc()); err == nil {
 		for _, n := range names {
 			exitNodeSet[n] = true
 		}
@@ -78,7 +78,7 @@ func (s *Service) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 	for name := range exitNodeSet {
 		nl := NodeLoad{Name: name}
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountRulesForExitNode
-		nl.RuleCount, _ = db.CountRulesForExitNode(s.DB, name)
+		nl.RuleCount, _ = db.CountRulesForExitNode(s.dbc(), name)
 		// Get from headscale
 		// Find node by hostname
 		if allNodes, err := s.HS.ListAllNodes(); err == nil {
@@ -93,7 +93,7 @@ func (s *Service) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 		}
 		nl.LoadPct = nl.RuleCount * 100 / maxPerNode
 		// Last sync: find most recent log
-		ts, _ := db.LastSyncForExitNode(s.DB, name)
+		ts, _ := db.LastSyncForExitNode(s.dbc(), name)
 		if ts > 0 {
 			nl.LastSync = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
 		} else {

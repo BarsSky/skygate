@@ -77,7 +77,7 @@ var knownSubdomains = map[string][]string{
 //	ssh=err=<msg> approve=err=<msg>
 func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	result := map[string]string{}
-	rows, err := s.DB.Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY exit_node_id")
+	rows, err := s.dbc().Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY exit_node_id")
 	if err != nil {
 		result["error"] = err.Error()
 		return result
@@ -100,7 +100,7 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 		defaultKeyPath = s.Cfg.SSHKeyPath
 	}
 	for node, routes := range exitRoutes {
-		syncOneExitNode(s.HS, s.DB, s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
+		syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
 	}
 	if len(exitRoutes) == 0 {
 		result["info"] = "no IP/subnet rules configured"
@@ -127,7 +127,7 @@ func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
 		result["error"] = "node hostname is empty"
 		return result
 	}
-	rows, err := s.DB.Query("SELECT target_value FROM device_rules WHERE enabled = 1 AND exit_node_id = $1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY target_value", node)
+	rows, err := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled = 1 AND exit_node_id = $1 AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY target_value", node)
 	if err != nil {
 		result["error"] = err.Error()
 		return result
@@ -149,7 +149,7 @@ func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
 	if s.Cfg != nil {
 		defaultKeyPath = s.Cfg.SSHKeyPath
 	}
-	syncOneExitNode(s.HS, s.DB, s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
+	syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
 	return result
 }
 
@@ -248,7 +248,7 @@ func (s *Service) StaggeredSync() {
 		interval = 30 * time.Second
 	}
 	// Collect exit_nodes with their rule counts
-	rows, _ := s.DB.Query("SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id != '' GROUP BY exit_node_id")
+	rows, _ := s.dbc().Query("SELECT exit_node_id, COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id != '' GROUP BY exit_node_id")
 	if rows == nil {
 		s.SyncAdvertisedRoutes()
 		return
@@ -280,7 +280,7 @@ func (s *Service) StaggeredSync() {
 		totalRules, len(nodes), interval)
 	go func() {
 		for _, n := range nodes {
-			rules, _ := s.DB.Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip')", n.name)
+			rules, _ := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip')", n.name)
 			if rules == nil {
 				continue
 			}
@@ -311,8 +311,8 @@ func (s *Service) StaggeredSync() {
 			// fallback chain (see SyncAdvertisedRoutes for the
 			// full rationale). The key path stays on
 			// LookupExitServerSSH + Cfg.SSHKeyPath fallback.
-			sshRow, _ := db.LookupExitServerSSH(s.DB, n.name)
-			sshTarget, _ := db.LookupExitServerSSHTarget(s.DB, n.name)
+			sshRow, _ := db.LookupExitServerSSH(s.dbc(), n.name)
+			sshTarget, _ := db.LookupExitServerSSHTarget(s.dbc(), n.name)
 			sshKeyPath := sshRow.KeyPath
 			if sshKeyPath == "" && s.Cfg != nil {
 				sshKeyPath = s.Cfg.SSHKeyPath
@@ -391,7 +391,7 @@ func (s *Service) PostSyncAdvertisedRoutes(w http.ResponseWriter, r *http.Reques
 // Background job: resolves all domain rules every interval, reconciles with /32 IP rules.
 // Returns count of changes (added + removed) and writes log entries.
 func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
-	rows, qerr := s.DB.Query("SELECT id, user_id, device_id, exit_node_id, target_value, action, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND target_type = 'domain'")
+	rows, qerr := s.dbc().Query("SELECT id, user_id, device_id, exit_node_id, target_value, action, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND target_type = 'domain'")
 	if qerr != nil {
 		return 0, 0, qerr
 	}
@@ -437,7 +437,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 		// has inserted the marker will match here and short-
 		// circuit; the per-tick no-op.
 		existingMarker := ""
-		_ = s.DB.QueryRow(
+		_ = s.dbc().QueryRow(
 			"SELECT parent_domain FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND parent_domain LIKE $4 LIMIT 1",
 			d.userID, d.deviceID, d.exitNode, cdnParentMarkerGuess(d.domain),
 		).Scan(&existingMarker)
@@ -486,7 +486,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 				// cdnAdded counter (to know if a NEW row was
 				// created vs an existing one was hit), but the
 				// race is closed by the conflict target.
-				tag, err := s.DB.Exec(
+				tag, err := s.dbc().Exec(
 					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
 					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
 					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
@@ -503,7 +503,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			// cdn: prefix). Now that the CDN marker covers the
 			// domain, the /32 rules are dead weight.
 			legacyRemoved := 0
-			if _, err := s.DB.Exec(
+			if _, err := s.dbc().Exec(
 				"DELETE FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND COALESCE(parent_domain,'')=$4",
 				d.userID, d.deviceID, d.exitNode, d.domain,
 			); err == nil {
@@ -520,7 +520,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 
 		// Get existing /32 rules for this domain
 		existing := map[string]int{} // IP -> rule id
-		rows2, eerr := s.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value LIKE '%/32'",
+		rows2, eerr := s.dbc().Query("SELECT id, target_value FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value LIKE '%/32'",
 			d.userID, d.deviceID, d.exitNode)
 		if eerr != nil {
 			continue
@@ -542,7 +542,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 		// User-added /32 rules (manual) get deleted if we don't track — TOO DANGEROUS.
 		// Better: introduce column `parent_domain` (NULL = manual).
 		all32 := map[string]int{}
-		rows3, _ := s.DB.Query("SELECT id, target_value FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain,'')=$4",
+		rows3, _ := s.dbc().Query("SELECT id, target_value FROM device_rules WHERE user_id=$1 AND device_id=$2 AND exit_node_id=$3 AND target_type='subnet' AND target_value LIKE '%/32' AND COALESCE(parent_domain,'')=$4",
 			d.userID, d.deviceID, d.exitNode, d.domain)
 		if rows3 != nil {
 			for rows3.Next() {
@@ -580,7 +580,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			// (user, device, exit, type, value) tuple maps
 			// to at most ONE rule row, with the first
 			// parent_domain winning.
-			tag, ierr := s.DB.Exec(
+			tag, ierr := s.dbc().Exec(
 				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
 				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
 				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
@@ -597,7 +597,7 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			if currentIPs[ip] {
 				continue
 			}
-			if _, derr := s.DB.Exec("DELETE FROM device_rules WHERE id=$1", rid); derr == nil {
+			if _, derr := s.dbc().Exec("DELETE FROM device_rules WHERE id=$1", rid); derr == nil {
 				removed++
 			}
 		}
@@ -679,7 +679,7 @@ func (s *Service) logAutoUpdate(ruleID int, domain string, added, removed int, e
 	if errMsg != "" {
 		detail += " err=" + errMsg
 	}
-	_ = db.AppendExitRuleLog(s.DB, db.ExitRuleLogNoVersion, db.ExitRuleActionAutoupdate, detail)
+	_ = db.AppendExitRuleLog(s.dbc(), db.ExitRuleLogNoVersion, db.ExitRuleActionAutoupdate, detail)
 }
 
 // lookupAcceptRoutes returns the per-exit-node Tailscale AcceptRoutes
@@ -694,10 +694,10 @@ func (s *Service) logAutoUpdate(ruleID int, domain string, added, removed int, e
 // 2026-07-12: Этап 10 part 5 — moved the SELECT to db.LookupExitServerAcceptRoutes
 // (which centralises the column name + the no-row fallback to 0).
 func (s *Service) lookupAcceptRoutes(nodeHostname string) int {
-	if s == nil || s.DB == nil || nodeHostname == "" {
+	if s == nil || s.dbc() == nil || nodeHostname == "" {
 		return 0
 	}
-	accept, _ := db.LookupExitServerAcceptRoutes(s.DB, nodeHostname)
+	accept, _ := db.LookupExitServerAcceptRoutes(s.dbc(), nodeHostname)
 	return accept
 }
 

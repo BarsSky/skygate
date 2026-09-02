@@ -100,7 +100,7 @@ type Backend interface {
 //     instead of duplicated. Set by main.go at boot.
 type Service struct {
 	Backend                Backend
-	DB                     *sql.DB
+	DB                     DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
 	HS                     *headscale.Client
 	Cfg                    *config.Config
 	I18n                   *i18n.Catalog

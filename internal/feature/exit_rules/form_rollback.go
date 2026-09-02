@@ -30,13 +30,13 @@ func (s *Service) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid version", http.StatusBadRequest)
 		return
 	}
-	config, err := db.GetACLConfig(s.DB, ver)
+	config, err := db.GetACLConfig(s.dbc(), ver)
 	if err != nil {
 		http.Error(w, "version not found", http.StatusNotFound)
 		return
 	}
 	if err := s.HS.SetPolicy(config); err != nil {
-		db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionRollbackFail, err.Error())
+		db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionRollbackFail, err.Error())
 		// 2026-07-11: rollback failure is loud — admin tried to restore
 		// a known-good policy and the headscale API rejected it. Pager time.
 		if s.Notifier != nil {
@@ -47,7 +47,7 @@ func (s *Service) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.saveACLSnapshot(config, c.Username)
-	db.AppendExitRuleLog(s.DB, ver, db.ExitRuleActionRollback, fmt.Sprintf("rolled back by %s", c.Username))
+	db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionRollback, fmt.Sprintf("rolled back by %s", c.Username))
 	if s.Notifier != nil {
 		go s.Notifier.SendAlert(fmt.Sprintf("⏪ ACL rollback by %s → v%d", c.Username, ver))
 	}

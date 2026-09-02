@@ -23,7 +23,6 @@ package auth
 //   any other backend (e.g. a future test double) can too.
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -62,7 +61,7 @@ type Backend interface {
 //   - Version:     the build version string, shown on the login page.
 type Service struct {
 	Backend      Backend
-	DB           *sql.DB
+	DB           DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
 	I18n         *i18n.Catalog
 	JWTSecret    string
 	SessionHours int
@@ -80,7 +79,7 @@ func (s *Service) GetLogin(w http.ResponseWriter, r *http.Request) {
 		theme = t
 	} else if c, _ := r.Cookie("skygate_session"); c != nil {
 		if claims, err := auth.ParseJWT(s.JWTSecret, c.Value); err == nil {
-			theme = db.GetUserTheme(s.DB, claims.UserID)
+			theme = db.GetUserTheme(s.dbc(), claims.UserID)
 		}
 	}
 	lang := s.I18n.LangFromRequest(r)
@@ -163,7 +162,7 @@ func (s *Service) PostLogin(w http.ResponseWriter, r *http.Request) {
 		s.Backend.Render(w, r, "login.html", baseData)
 		return
 	}
-	id, hash, isAdmin, err := db.GetUserCredentials(s.DB, u)
+	id, hash, isAdmin, err := db.GetUserCredentials(s.dbc(), u)
 	if err != nil || !auth.CheckPassword(hash, p) {
 		s.Backend.Audit(id, u, "login_fail", "")
 		baseData["Error"] = s.I18n.T(lang, "login.invalid_credentials")
@@ -315,7 +314,7 @@ func (s *Service) GetMyAccount(w http.ResponseWriter, r *http.Request) {
 	// B136 (v1.3.20.6): load per-user display prefs (font + size + selection
 	// color) so the /my/account form can show the current values and the
 	// layout can inject the right <style> block.
-	prefs := db.GetUserDisplayPrefs(s.DB, c.UserID)
+	prefs := db.GetUserDisplayPrefs(s.dbc(), c.UserID)
 	s.Backend.RenderWithLayout(w, r, "user/account.html", c, map[string]any{
 		"Page":             "account",
 		"Title":            "Account",
@@ -358,7 +357,7 @@ func (s *Service) PostMyAccountPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	hash, err := db.GetPasswordHashByID(s.DB, c.UserID)
+	hash, err := db.GetPasswordHashByID(s.dbc(), c.UserID)
 	if err != nil {
 		http.Redirect(w, r, "/my/account?err=user_not_found", http.StatusFound)
 		return
@@ -374,7 +373,7 @@ func (s *Service) PostMyAccountPassword(w http.ResponseWriter, r *http.Request) 
 		http.Redirect(w, r, "/my/account?err=hash_failed", http.StatusFound)
 		return
 	}
-	if _, err := db.UpdatePasswordHash(s.DB, c.UserID, newHash); err != nil {
+	if _, err := db.UpdatePasswordHash(s.dbc(), c.UserID, newHash); err != nil {
 		http.Redirect(w, r, "/my/account?err=db_error", http.StatusFound)
 		return
 	}
@@ -418,7 +417,7 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
-	tokens, err := db.ListAPITokensByUser(s.DB, c.UserID)
+	tokens, err := db.ListAPITokensByUser(s.dbc(), c.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -631,7 +630,7 @@ func (s *Service) PostMyToken(w http.ResponseWriter, r *http.Request) {
 
 	autoRotate := r.FormValue("auto_rotate") == "1"
 	raw, hash := auth.GenerateAPIToken()
-	if _, err := db.InsertAPIToken(s.DB, c.UserID, hash, label, expiresAt, autoRotate); err != nil {
+	if _, err := db.InsertAPIToken(s.dbc(), c.UserID, hash, label, expiresAt, autoRotate); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -651,7 +650,7 @@ func (s *Service) PostMyTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	idStr := r.PathValue("id")
 	id, _ := strconv.ParseInt(idStr, 10, 64)
-	_, _ = db.DeleteAPITokenByUser(s.DB, id, c.UserID)
+	_, _ = db.DeleteAPITokenByUser(s.dbc(), id, c.UserID)
 	s.Backend.Audit(c.UserID, c.Username, "token_revoke", idStr)
 	http.Redirect(w, r, "/my/tokens?revoked=1", http.StatusFound)
 }
@@ -714,7 +713,7 @@ func (s *Service) PostMyTokenRenew(w http.ResponseWriter, r *http.Request) {
 		ttlUsed = "never"
 	}
 
-	rows, err := db.UpdateAPITokenExpiryByUser(s.DB, id, c.UserID, expiresAt)
+	rows, err := db.UpdateAPITokenExpiryByUser(s.dbc(), id, c.UserID, expiresAt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

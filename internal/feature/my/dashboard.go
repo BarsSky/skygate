@@ -76,7 +76,7 @@ func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *h
 	// /my/devices also fires from here, so the dashboard sees the same
 	// set the moment the user lands on the page.
 	if myUserID != 0 {
-		s.BackfillNodeOwnership(s.DB, nodes, myUserID, myUsername)
+		s.BackfillNodeOwnership(s.dbc(), nodes, myUserID, myUsername)
 	}
 	if myUsername != "" {
 		// Use a set of node IDs the user owns, sourced from
@@ -84,7 +84,7 @@ func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *h
 		// 2026-07-12: Этап 10 part 4 — moved to
 		// db.ListNodeOwnerNodeIDsByUsername.
 		owned := map[string]bool{}
-		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, myUsername)
+		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), myUsername)
 		for _, nid := range snapIDs {
 			owned[nid] = true
 		}
@@ -130,7 +130,7 @@ func (s *Service) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	// Look up the headscale username for this portal user (may be empty for
 	// brand-new users who haven't registered a device yet).
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserNameByID
-	hsUserName, _ := db.GetUserNameByID(s.DB, c.UserID)
+	hsUserName, _ := db.GetUserNameByID(s.dbc(), c.UserID)
 	// Admins see whole-tailnet metrics; users see only their own.
 	// 2026-07-15: v0.12.0 — route the headscale API call to the
 	// user's own control plane when one is configured. Admins
@@ -180,7 +180,7 @@ func (s *Service) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView)
 	// The full row (including Key, CreatedAt) is loaded but only
 	// HeadscalePreauthID, Used, ExpiresAt are used here. The extra
 	// columns are tiny; having one read function is worth it.
-	rows, err := db.ListPreauthKeysByUser(s.DB, myUserID)
+	rows, err := db.ListPreauthKeysByUser(s.dbc(), myUserID)
 	if err != nil {
 		return st
 	}

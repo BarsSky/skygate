@@ -68,7 +68,7 @@ func (s *Service) PostAdminACLReapply(w http.ResponseWriter, r *http.Request) {
 	// non-empty URL → first user_id with that
 	// headscale_url → HSForUser(uid), fallback to
 	// HSGlobal() on any error.
-	results := acl.ApplyACLForAllPlanes(s.DB,
+	results := acl.ApplyACLForAllPlanes(s.dbc(),
 		func(planeURL string) *headscale.Client {
 			if s.ResolveHSForPlane != nil {
 				return s.ResolveHSForPlane(planeURL)

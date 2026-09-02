@@ -40,7 +40,7 @@ func (s *Service) loadRoutesForScript(userID int, deviceID int) ([]routeEntry, e
 	}
 	query += " ORDER BY id"
 
-	rows, err := s.DB.Query(query, args...)
+	rows, err := s.dbc().Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query device_rules: %w", err)
 	}

@@ -504,7 +504,17 @@ func main() {
 	// wrappers in internal/handlers/handlers_export.go.
 	authSvc := &authsvc.Service{
 		Backend:      app,
-		DB:           app.DB,
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the auth Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B210 every login + display-prefs
+		// + password-change + API-token request 500'd
+		// after the watchdog's first swap (the captured
+		// pool was closed in the swap goroutine — the user
+		// saw the login page with "Неверные учётные данные"
+		// indefinitely until skygate was restarted with
+		// cluster_database.current_dsn cleared).
+		DB:           d,
 		I18n:         app.I18n,
 		JWTSecret:    app.JWTSecret,
 		SessionHours: app.SessionHours,
@@ -895,7 +905,13 @@ func main() {
 	// the join bootstrap runs on a fresh machine that
 	// doesn't have a skygate session cookie yet.
 	clusterAPI := &clusterapi.Service{
-		DB:           app.DB,
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the cluster Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B210 every /api/cluster/join +
+		// /api/cluster/heartbeat request 500'd after the
+		// watchdog's first swap.
+		DB:           d,
 		InviteSecret: cfg.SecretKeyHex,
 	}
 
@@ -951,7 +967,13 @@ func main() {
 	// handlers.go SetExitRulesService).
 	exitRulesSvc := &exitrules.Service{
 		Backend:  app,
-		DB:       app.DB,
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the exit-rules Service's
+		// s.dbc() helper transparently follows the B203
+		// watchdog's hot-reload. Pre-B210 every /my/exit-rules
+		// + /admin/exit-rules/* handler 500'd after the
+		// watchdog's first swap.
+		DB:       d,
 		HS:       app.HS,
 		Cfg:      app.Config(),
 		I18n:     app.I18n,
@@ -1017,7 +1039,13 @@ func main() {
 	// with devices / meshes / audit / device_exit_pref.
 	mySvc := &mysvc.Service{
 		Backend: app,
-		DB:      app.DB,
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the my Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B210 every /my/* handler 500'd
+		// after the watchdog's first swap (devices page
+		// empty, audit export broken, etc.).
+		DB:      d,
 		HS:      app.HS,
 		Cfg:     app.Config(),
 		I18n:    app.I18n,

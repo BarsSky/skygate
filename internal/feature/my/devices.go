@@ -48,7 +48,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	var hsUserID sql.NullInt64
 	var username string
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
-	hsUserID, username, _ = db.GetUserHSByID(s.DB, c.UserID)
+	hsUserID, username, _ = db.GetUserHSByID(s.dbc(), c.UserID)
 
 	// B160.2 (2026-08-20): optional cache bypass.
 	// The headscale.Client caches ListAllNodes()
@@ -89,7 +89,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// v0.25.0 — read it HERE (not later) so we can fill
 	// the new "Mesh subnet" column in the device rows.
 	var subnetCIDR, subnetStatus string
-	_ = s.DB.QueryRow(
+	_ = s.dbc().QueryRow(
 		`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = $1`, c.UserID,
 	).Scan(&subnetCIDR, &subnetStatus)
 
@@ -121,7 +121,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// sync; a future refactor can move it to a shared
 	// internal/nodeownership/ package.
 	if c.UserID != 0 && s.BackfillNodeOwnership != nil {
-		s.BackfillNodeOwnership(s.DB, all, c.UserID, username)
+		s.BackfillNodeOwnership(s.dbc(), all, c.UserID, username)
 	}
 
 	// headscale reassigns ownership to a synthetic "tagged-devices" user
@@ -311,7 +311,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// can look it up in O(1).
 	devicePrefByHost := map[string]string{}
 	deviceViaEnabledByHost := map[string]bool{}
-	devicePrefs, _ := db.ListDeviceExitNodePrefsForUser(s.DB, c.UserID)
+	devicePrefs, _ := db.ListDeviceExitNodePrefsForUser(s.dbc(), c.UserID)
 	for _, dp := range devicePrefs {
 		if dp.DeviceHostname != "" {
 			devicePrefByHost[strings.ToLower(dp.DeviceHostname)] = dp.ExitNodeTag
@@ -331,7 +331,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// avoid synthesising the legacy `tag:exit-<host>`
 	// form inline.
 	tagByHost := map[string]string{}
-	deviceMeta, _ := db.ListNodeOwnersByUsername(s.DB, username)
+	deviceMeta, _ := db.ListNodeOwnersByUsername(s.dbc(), username)
 	for _, dn := range deviceMeta {
 		if dn.Hostname != "" {
 			osByHost[strings.ToLower(dn.Hostname)] = dn.OS
@@ -408,7 +408,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	if username != "" {
 		// 2026-07-12: Этап 10 part 4 — moved to
 		// db.ListNodeOwnerNodeIDsByUsername.
-		snapIDList, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, username)
+		snapIDList, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), username)
 		// Build a set for O(1) membership test. The list is small
 		// (a user's owned devices) but a map keeps the lookups in the
 		// inner loop tidy.
@@ -596,7 +596,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// Persist (no-op if the admin has manually set
 		// the row). Errors are non-fatal — the next
 		// /my/devices load will retry.
-		_ = db.UpdateDeviceMetaAutoDetect(s.DB, mr.ID, detectedOS, detectedType)
+		_ = db.UpdateDeviceMetaAutoDetect(s.dbc(), mr.ID, detectedOS, detectedType)
 		// Always update the in-memory view, so the
 		// current page reflects the detected value
 		// even if the DB write was a no-op.
@@ -624,7 +624,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 
 	if subnetCIDR != "" {
 		// (1) mySharesTo: I (grantor) shared with someone (grantee).
-		rows, err := s.DB.Query(`
+		rows, err := s.dbc().Query(`
 			SELECT p.username, s.cidr
 			  FROM user_subnet_shares sh
 			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
@@ -641,7 +641,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// (2) sharesToMe: someone (grantor) shared with me (grantee).
-		rows2, err := s.DB.Query(`
+		rows2, err := s.dbc().Query(`
 			SELECT p.username, s.cidr
 			  FROM user_subnet_shares sh
 			  JOIN user_subnets s ON s.user_id = sh.grantor_user_id
@@ -662,7 +662,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// mesh I belong to (and their /24). The query is
 	// symmetric in mesh_id, so we deduplicate by username
 	// server-side via the (mesh_id, user_id) PK.
-	rows3, err := s.DB.Query(`
+	rows3, err := s.dbc().Query(`
 		SELECT p.username, COALESCE(s.cidr, '')
 		  FROM mesh_members mm_self
 		  JOIN mesh_members mm_other ON mm_other.mesh_id = mm_self.mesh_id
@@ -686,7 +686,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	// (4) meshCount: how many active meshes I'm in.
 	meshCount := 0
-	_ = s.DB.QueryRow(`
+	_ = s.dbc().QueryRow(`
 		SELECT COUNT(DISTINCT mm.mesh_id)
 		  FROM mesh_members mm
 		  JOIN meshes m ON m.id = mm.mesh_id
@@ -907,7 +907,7 @@ func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "headscale unreachable", http.StatusBadGateway)
 		return
 	}
-	hsUserID, _, herr := db.GetUserHSByID(s.DB, c.UserID)
+	hsUserID, _, herr := db.GetUserHSByID(s.dbc(), c.UserID)
 	if herr != nil || !hsUserID.Valid {
 		http.Error(w, "no headscale user linked", http.StatusBadRequest)
 		return
@@ -936,7 +936,7 @@ func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
 			// Use node_owner_map as the source
 			// of truth (matches the B159 / B155
 			// pattern).
-			snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+			snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), c.Username)
 			for _, sid := range snapIDs {
 				if sid == idStr {
 					ok = true
@@ -1020,7 +1020,7 @@ func (s *Service) PostMyDeviceRenew(w http.ResponseWriter, r *http.Request) {
 	// also check the snapshot (node_owner_map)
 	// in case the node is tagged-private and
 	// headscale has reassigned it.
-	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+	snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), c.Username)
 	for _, sid := range snapIDs {
 		if sid == idStr {
 			// Same scope as the live check;
@@ -1166,7 +1166,7 @@ func (s *Service) PostMyDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	// Snapshot check (tagged-private nodes that
 	// headscale shows under "tagged-devices").
 	if !ok {
-		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.DB, c.Username)
+		snapIDs, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), c.Username)
 		for _, sid := range snapIDs {
 			if sid == idStr {
 				ok = true
@@ -1184,7 +1184,7 @@ func (s *Service) PostMyDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	// is already in the per-request cache path
 	// (the page render uses it too).
 	if ok && host == "" {
-		owners, _ := db.ListNodeOwnersByUsername(s.DB, c.Username)
+		owners, _ := db.ListNodeOwnersByUsername(s.dbc(), c.Username)
 		for _, o := range owners {
 			if o.NodeID == idStr {
 				host = o.Hostname
@@ -1243,7 +1243,7 @@ func (s *Service) PostMyDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	// (PostAdminDeviceDelete) can call the same
 	// function with admin-scoped dependencies.
 	deps := devicedelete.Deps{
-		DB:     s.DB,
+		DB:     s.dbc(),
 		HS:     hsClient,
 		Cfg:    s.Cfg,
 		Username: c.Username,
