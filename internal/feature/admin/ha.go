@@ -48,6 +48,7 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -56,6 +57,7 @@ import (
 	"strings"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/ha"
 	extcreds "skygate/internal/ha/dnsexternal"
 )
@@ -73,9 +75,29 @@ type haPageData struct {
 	SelfRole            string
 	DNSConfigured       bool
 	RecentEvents        []haAuditEvent
+	// ClusterNodes is the Section 5b "Cluster node failover"
+	// table (v1.5.0+ / Phase 3.4). One row per cluster_node,
+	// with the pre-computed Elig* flags so the template
+	// can render the per-row "Promote" form without doing
+	// its own SQL.
+	ClusterNodes        []haClusterNodeRow
 	FlashSuccess        string
 	FlashError          string
 	FlashInfo           string
+}
+
+// haClusterNodeRow is one row in the Section 5b table.
+// The pre-computed eligibility flags are the difference
+// between "show a button" and "show a why-not hint".
+type haClusterNodeRow struct {
+	ID                string
+	Hostname          string
+	RolesStr          string // rendered "skygate,skygate-standby" string
+	State             string
+	LastSeenUnix      int64  // 0 = never
+	LastSeenAgo       string // human-readable
+	EligibleForPromote bool  // true → show the promote form
+	EligibleReason    string // false → why-not (shown in the cell)
 }
 
 // haAuditEvent is one row of the "Last 20 HA events" table.
@@ -228,6 +250,78 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 		all = all[:20]
 	}
 	data.RecentEvents = all
+
+	// Section 5b (v1.5.0+ / Phase 3.4) — cluster_node rows
+	// for the operator-driven failover button. We fetch
+	// every row (the table is small — 3-10 nodes for a
+	// typical deployment) and pre-compute the per-row
+	// eligibility flag so the template doesn't have to
+	// do its own logic.
+	//
+	// Important: the role check uses a parsed []string
+	// (db.StringArray), NOT a substring check on the PG
+	// array literal. The PG literal for {skygate,skygate-standby}
+	// is "{skygate,skygate-standby}" — a substring check
+	// for "skygate" matches both this and {skygate-standby}
+	// (the standalone standby has skygate as a prefix of
+	// skygate-standby), so naive strings.Contains mis-tags
+	// every ready skygate-standby as "already primary".
+	// db.StringArray implements sql.Scanner to parse the
+	// PG array literal into a Go slice, so roleSet["skygate"]
+	// and roleSet["skygate-standby"] are independent
+	// boolean checks. The DB helper
+	// (db.FailoverClusterNode) does the same check
+	// server-side as a defense in depth.
+	if rows, err := s.dbc().Query(`
+		SELECT id, hostname, roles, state,
+		       COALESCE(extract(epoch FROM last_seen_at)::bigint, 0) AS last_seen_unix
+		FROM cluster_node
+		ORDER BY id ASC
+	`); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var row haClusterNodeRow
+			var rolesArr db.StringArray
+			var lastSeenUnix int64
+			if err := rows.Scan(&row.ID, &row.Hostname, &rolesArr, &row.State, &lastSeenUnix); err != nil {
+				continue
+			}
+			row.RolesStr = "[" + strings.Join([]string(rolesArr), ", ") + "]" // display in the Roles cell
+			roleSet := map[string]bool{}
+			for _, r := range rolesArr {
+				roleSet[r] = true
+			}
+			row.LastSeenUnix = lastSeenUnix
+			if lastSeenUnix > 0 {
+				row.LastSeenAgo = abbreviateLastSeen(lastSeenUnix)
+			}
+			// Eligibility for promotion:
+			//   - state='ready' (the standard "alive" state)
+			//   - roles contains 'skygate-standby' (the
+			//     pre-promotion role)
+			//   - NOT roles contains 'skygate' (an
+			//     already-primary node can't be promoted
+			//     to itself; the helper catches this too)
+			// B210 test fixture cleanup: rows from earlier
+			// tests may have roles=ARRAY[]::text[] (empty
+			// array, which PG renders as "{}"); handle that
+			// without panicking on the contains check.
+			switch {
+			case row.State != "ready":
+				row.EligibleForPromote = false
+				row.EligibleReason = "state is not ready"
+			case !roleSet["skygate-standby"]:
+				row.EligibleForPromote = false
+				row.EligibleReason = "role is not skygate-standby"
+			case roleSet["skygate"]:
+				row.EligibleForPromote = false
+				row.EligibleReason = "already primary"
+			default:
+				row.EligibleForPromote = true
+			}
+			data.ClusterNodes = append(data.ClusterNodes, row)
+		}
+	}
 
 	return data
 }
@@ -454,6 +548,91 @@ func (s *Service) PostAdminHAForceDemote(w http.ResponseWriter, r *http.Request)
 // reclaim explicitly via this button.
 func (s *Service) PostAdminHAReclaim(w http.ResponseWriter, r *http.Request) {
 	s.forceAction(w, r, "reclaim")
+}
+
+// ---------- POST /admin/ha/cluster/failover -------------------------
+
+// PostAdminHAClusterFailover is the operator-driven counterpart
+// to the B204 HA elector's automatic failover_recommend.
+//
+// The elector's recommend path writes a `failover_recommend`
+// cluster_audit row when it detects a failed primary; the
+// operator (who's on call) is then expected to either (a)
+// fix the failed primary, or (b) trigger this manual failover
+// to promote a known-ready skygate-standby. Phase 3.4 of
+// docs/internal/cluster-management.md adds the button +
+// handler so the operator can do (b) without SSHing into the
+// agent.
+//
+// Form shape:
+//
+//	target_id=<cluster_node.id of the skygate-standby to promote>
+//	reason=<free text — "manual maintenance", "primary hw fail", "drill">
+//	confirm=<typed confirmation — must equal the target's hostname>
+//
+// The typed confirmation is the same UX guard as the existing
+// /admin/ha/force-promote button (preventing an accidental
+// click from immediately swapping the primary). We use the
+// target's hostname (not the id) because the id is a
+// machine-generated string and the hostname is what the
+// operator sees in the UI.
+//
+// The handler calls db.FailoverClusterNode (single
+// transaction: pick current primary, verify target eligibility,
+// promote target, demote old primary, write cluster_audit
+// row). The transaction rollback means a failure anywhere
+// leaves the cluster_node state unchanged.
+func (s *Service) PostAdminHAClusterFailover(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		haRedirect(w, r, "", "admin only")
+		return
+	}
+	targetID := r.FormValue("target_id")
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	confirm := strings.TrimSpace(r.FormValue("confirm"))
+	if targetID == "" {
+		haRedirect(w, r, "", "target_id is required")
+		return
+	}
+	if reason == "" {
+		haRedirect(w, r, "", "reason is required (free text — used in the cluster_audit row's detail.reason)")
+		return
+	}
+	// Re-fetch the target to get its hostname for the
+	// confirmation check. We need a separate SELECT here
+	// because the form only carries the id; the operator
+	// sees the hostname in the UI's per-node row.
+	var targetHost string
+	err := s.dbc().QueryRow(`SELECT hostname FROM cluster_node WHERE id = $1`, targetID).Scan(&targetHost)
+	if err != nil {
+		haRedirect(w, r, "", fmt.Sprintf("target %q not found: %v", targetID, err))
+		return
+	}
+	if confirm != targetHost {
+		haRedirect(w, r, "", fmt.Sprintf("confirmation must be exactly the target hostname %q", targetHost))
+		return
+	}
+	// The DB helper does the actual atomic swap. s.dbc() gives
+	// us the current pool per-call (B210 DBSource pattern), so
+	// this works even if the B203 watchdog just swapped the pool.
+	fromID, toID, err := db.FailoverClusterNode(s.dbc(), targetID, c.Username, reason)
+	if err != nil {
+		// Map our sentinel errors to operator-friendly messages.
+		switch {
+		case errors.Is(err, db.ErrNoPrimary):
+			haRedirect(w, r, "", "no current skygate primary in cluster_node (the primary is already missing — investigate before re-running)")
+		case errors.Is(err, db.ErrNotEligibleForFailover):
+			haRedirect(w, r, "", fmt.Sprintf("target %q is not eligible for promotion (must be state=ready with role=skygate-standby)", targetID))
+		default:
+			haRedirect(w, r, "", fmt.Sprintf("failover failed: %v", err))
+		}
+		return
+	}
+	haRedirect(w, r,
+		fmt.Sprintf("Failover complete: %s -> %s (audit row written)", fromID, toID),
+		"",
+	)
 }
 
 // forceAction is the shared implementation of the three

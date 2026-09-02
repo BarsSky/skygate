@@ -2217,6 +2217,80 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **Phase 3.4 (v1.5.0+, 2026-09-02) — "Force
+    cluster node failover" button on /admin/ha**
+    (operator-driven counterpart to the B204 elector's
+    automatic failover_recommend). Pre-Phase 3.4 the
+    only path to swap the skygate primary was SSH into
+    the agent + `psql` + `UPDATE cluster_node` + write
+    the audit row manually. Post-Phase 3.4 the operator
+    clicks a button on `/admin/ha` → the handler calls
+    `db.FailoverClusterNode` (single transaction) → the
+    audit row appears in `/admin/ha`'s "Last 20 events"
+    table immediately. The whole swap is atomic: pick
+    the current primary, verify the target is
+    `state=ready` with role `skygate-standby`, add the
+    `skygate` role to the target (idempotent via
+    `array_remove` + `unnest(roles || ARRAY['skygate'])`),
+    demote the old primary to `state=draining` and remove
+    the `skygate` role, write a `node_failover` row in
+    `cluster_audit` with `from_node_id` + `target_node_id`
+    + JSONB `detail={from,to,actor,reason}`. Failure at
+    any step rolls back the whole transaction.
+    **Files:** `internal/db/cluster_failover.go` (new,
+    ~180 lines: `FailoverClusterNode` +
+    `ErrNoPrimary` + `ErrNotEligibleForFailover`), 2
+    sentinel errors + the transaction itself),
+    `internal/feature/admin/ha.go` (handler +
+    `haClusterNodeRow` struct + `collectHAPageData`
+    now fetches `cluster_node` rows for the table),
+    `internal/handlers/templates/admin/ha.html` (new
+    `<details>` section "Cluster node failover" with a
+    per-row Promote form — only renders for eligible
+    rows; non-eligible rows show a why-not hint), 12 new
+    i18n keys in `catalog_admin.go` (RU + EN),
+    `cmd/skygate/main.go` (route registration behind
+    `authMW`), `scripts/check_phase_3_4.sh` (new, 17
+    contracts), `scripts/verify_pre_deploy.sh` (Phase_3_4
+    run_check added), `AGENTS.md` (this section).
+    **The eligibility logic:** a `cluster_node` row is
+    promotable iff `state='ready'` AND
+    `'skygate-standby' = ANY(roles)` AND
+    `'skygate' <> ANY(roles)`. The third check prevents
+    promoting an already-primary node to itself
+    (the DB helper also catches this with an explicit
+    hostname check). The template pre-computes the
+    flag per row so the page render is one SELECT + a
+    slice build — no per-row SQL inside the template.
+    **The flow on click:** the form posts to
+    `POST /admin/ha/cluster/failover` with
+    `target_id` + `confirm` (must match the target's
+    hostname — the same UX guard the existing
+    `/admin/ha/force-promote` uses) + `reason` (free
+    text, stored in the audit row's `detail.reason`).
+    The handler reads the target's hostname from the
+    DB (the form only carries the id — the operator
+    sees the hostname in the UI's per-row label), checks
+    the confirmation, calls `db.FailoverClusterNode`,
+    and redirects to `/admin/ha` with a flash message
+    that includes the from→to pair. The next page load
+    shows the new `node_failover` row in the "Last 20
+    events" table immediately.
+    **The B-check pins:** (a) `cluster_failover.go`
+    exists + the `FailoverClusterNode` signature
+    matches, (b) `ErrNoPrimary` + `ErrNotEligibleForFailover`
+    sentinels defined, (c) `FailoverClusterNode` uses
+    a transaction (sql.Tx + Commit), (d)
+    `PostAdminHAClusterFailover` handler exists +
+    is registered in main.go as `POST /admin/ha/cluster/
+    failover` behind `authMW`, (e) `haClusterNodeRow`
+    struct + `haPageData.ClusterNodes` field, (f)
+    `collectHAPageData` populates from `cluster_node`,
+    (g) eligibility logic checks all 3 conditions,
+    (h) template renders the per-row Promote form,
+    (i) i18n keys present in both RU + EN, (j) build +
+    vet + tests pass, (k) AGENTS.md + verify_pre_deploy.sh
+    mention Phase 3.4.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't
