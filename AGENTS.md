@@ -2357,6 +2357,101 @@ in the same commit. Don't let the tracker drift.
     (i) i18n keys present in both RU + EN, (j) build +
     vet + tests pass, (k) AGENTS.md + verify_pre_deploy.sh
     mention Phase 3.4.
+  - **B211 (v1.5.0+, 2026-09-02) — `skygate init`
+    CLI subcommand (Phase 2.3 of
+    docs/internal/cluster-management.md).** Closes the
+    "operator must hand-INSERT 3 cluster_* rows +
+    run `skygate cluster invite` separately on a
+    fresh install" gap. Pre-B211 the bootstrap path
+    on a new box was: SSH in, psql 3 INSERTs (cluster
+    row, cluster_database row pointing at the future
+    primary, cluster_node row in state=ready with the
+    skygate role), then `skygate cluster invite` to
+    get a standby token. All 4 steps manual, no
+    idempotency, easy to miss a column. Post-B211:
+    `skygate init` (no verb) does all 4 in one
+    idempotent call. 3 subcommands:
+    - `skygate init` (default verb = bootstrap) —
+      EnsureCluster + UpsertNode + SetClusterDatabase
+      + IssueInvite for standby, all 4 calls
+      idempotent
+    - `skygate init status` — read-only: cluster row +
+      THIS node (cluster_node) + cluster_database +
+      init state file; text or `--json` output
+    - `skygate init standby-invite` — re-print a
+      fresh standby token without touching THIS
+      node's rows (useful after the previous 24h
+      token expired)
+    New `cluster.UpsertNode` helper in
+    `internal/cluster/node.go` — idempotent
+    insert-or-update of a cluster_node row by
+    (cluster_id, hostname). The ON CONFLICT clause
+    refreshes `tailscale_ip`, `roles`,
+    `skygate_version`, and `last_seen_at` but
+    **NOT** `state` or `joined_at` (preserves the
+    operator's drain/failover decision + the
+    original join timestamp — a node in
+    `draining`/`failed` is NOT silently flipped
+    back to `ready` by a re-run). Intentionally
+    does NOT default to `[NodeRoleSkygate]` on
+    empty roles (unlike `AddNode` which does);
+    an empty roles list is a hard error so the
+    operator can't accidentally bootstrap a node
+    with no role-set. New v0.66 migration in
+    `internal/db/migrations_v0_66_b211.go` —
+    `UNIQUE (cluster_id, hostname)` on
+    `cluster_node`. This was the planned B195.1
+    follow-up mentioned in the `AddNode` comment
+    ("a UNIQUE constraint we'll add in a follow-up
+    migration"); the constraint is the canonical
+    "node id" guard that the new ON CONFLICT path
+    needs. Idempotent: `DO $$ ... pg_constraint
+    check ... ALTER TABLE ... $$` (PG doesn't have
+    `ADD CONSTRAINT IF NOT EXISTS` before v17).
+    Applied to the agent's `skygate_staging` DB
+    out-of-band to unblock the path before the
+    code-side deploy. 16 B-check contracts in
+    `scripts/check_b211.sh` (16 pass + Q/R/S
+    skipped when go is not on PATH; 19 pass when
+    run on the agent). 11 unit tests (no DB
+    required) in `internal/cluster/node_b211_test.go`
+    (5 functions: `TestUpsertNode_InputValidation`
+    with 4 sub-cases, `TestUpsertNode_AcceptsValidInputs`,
+    `TestUpsertNode_PreservesStateOnConflict`,
+    `TestUpsertNode_ErrorsAreDistinct`,
+    `TestUpsertNode_EmptyRolesNotADefaultToSkygate`)
+    + `cmd/skygate/init_b211_test.go` (3 functions:
+    `TestParseRolesCSV` with 8 sub-cases,
+    `TestParseRolesCSV_NotNilForValidInput`,
+    `TestInitState_VersionPinned`). 5 new files:
+    `cmd/skygate/init.go` (~370 lines),
+    `internal/db/migrations_v0_66_b211.go`
+    (~85 lines), `internal/cluster/node_b211_test.go`
+    (~210 lines), `cmd/skygate/init_b211_test.go`
+    (~80 lines), `scripts/check_b211.sh`
+    (~180 lines). Modifies `internal/cluster/node.go`
+    (+~70 lines for `UpsertNode`),
+    `internal/db/driver_postgres.go` (+1 line for
+    `migrateV066PG`), `cmd/skygate/main.go`
+    (+~25 lines for `case "init"` + help text +
+    `runInit` dispatch + `--help` handling),
+    `scripts/verify_pre_deploy.sh` (1 new
+    `run_check "B211"` line). Stdout format on
+    `skygate init` (line 1 = standby token for
+    `bootstrap_standby.sh` to read on stdin, line
+    2 = node_id, line 3 = hostname; expiry +
+    state-file path on stderr) is scriptable.
+    The web server is NOT started for any init
+    subcommand (same as `skygate cluster ...`).
+    Live-verify plan: Windows Docker (per user
+    preference — "тест с авторазвертыванием лучше
+    будет провести на машине под windows" — the
+    agent's working production stack is not
+    available for the destructive bootstrap
+    flow). 19 B-check contracts total: 16
+    source-pin contracts (A–P) + 3 go-runtime
+    contracts (Q–S, skipped when go is not on
+    PATH).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

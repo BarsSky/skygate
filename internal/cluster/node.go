@@ -135,6 +135,77 @@ func RemoveNode(d *sql.DB, clusterID, hostname string) error {
 	return err
 }
 
+// UpsertNode inserts-or-updates the cluster_node row for
+// (clusterID, hostname). Used by the B211 `skygate init`
+// bootstrap path: on first run it creates the row in
+// 'ready' state with the given roles; on re-run it
+// refreshes tailscale_ip / skygate_version / roles to
+// the new values WITHOUT resetting the state (so a node
+// in 'draining' or 'failed' is NOT silently flipped back
+// to 'ready' — the operator's drain/failover decision
+// must be preserved).
+//
+// Returns the row's id (existing or newly created).
+//
+// Auto-creates the parent cluster row if missing (same
+// FK-contract dance as AddNode / IssueInvite).
+//
+// `roles` is required; pass at least one role. The
+// canonical "this node is the primary" set is
+// [NodeRoleSkygate]; "this node is a standby" is
+// [NodeRoleStandby].
+//
+// `skygateVer` is informational only — it's the
+// SKYGATE_VERSION env var on the box, so an operator
+// looking at /admin/cluster can see "node X is on
+// skygate v1.5.0+ (commit abc1234)".
+func UpsertNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []string, skygateVer string) (string, error) {
+	if clusterID == "" {
+		return "", errors.New("cluster: empty cluster_id")
+	}
+	if hostname == "" {
+		return "", errors.New("cluster: empty hostname")
+	}
+	if len(roles) == 0 {
+		return "", errors.New("cluster: empty roles — at least NodeRoleSkygate / NodeRoleStandby is required")
+	}
+	// Auto-create the parent cluster row if missing
+	// (FK constraint — same as AddNode / IssueInvite).
+	if err := EnsureCluster(d, clusterID, clusterID); err != nil {
+		return "", fmt.Errorf("ensure cluster: %w", err)
+	}
+	now := time.Now().UTC()
+	// ON CONFLICT (cluster_id, hostname) DO UPDATE:
+	//   - refresh tailscale_ip / skygate_version
+	//   - replace roles with the new set
+	//   - DO NOT touch state / joined_at / last_seen_at
+	//     (preserves operator's drain/failover decisions
+	//     and the join timestamp)
+	//   - last_seen_at = now() so the watchdog + elector
+	//     see "this node is alive" right after init.
+	var id string
+	err := d.QueryRow(`
+		INSERT INTO cluster_node (
+			id, cluster_id, hostname, tailscale_ip, roles, state,
+			skygate_version, joined_at, last_seen_at
+		) VALUES (
+			'node-' || substr(md5(random()::text), 1, 12),
+			$1, $2, $3, $4, 'ready',
+			$5, $6, $6
+		)
+		ON CONFLICT (cluster_id, hostname) DO UPDATE SET
+			tailscale_ip = EXCLUDED.tailscale_ip,
+			roles = EXCLUDED.roles,
+			skygate_version = EXCLUDED.skygate_version,
+			last_seen_at = EXCLUDED.last_seen_at
+		RETURNING id
+	`, clusterID, hostname, tailscaleIP, pqStringArray(roles), skygateVer, now).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // scanNode is the shared scanner for both LookupNode and
 // any future ListNodes helper. Accepts either *sql.Row or
 // *sql.Rows (via the Scanner interface) so the same code

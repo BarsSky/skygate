@@ -298,6 +298,21 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "init":
+			// v1.5.0+ / B211 — cluster bootstrap CLI.
+			// `skygate init` (no verb) bootstraps THIS node
+			// as the cluster primary (idempotent). `skygate
+			// init status` shows this node's cluster state
+			// from cluster_node + cluster_database. `skygate
+			// init standby-invite` prints a fresh standby
+			// invite token without touching THIS node's rows.
+			// The web server is NOT started (same as
+			// `skygate cluster ...`).
+			if err := runInit(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "init: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "help", "--help", "-h":
 			fmt.Println("skygate <command> [args]")
 			fmt.Println("  (no command)            start the web server")
@@ -307,6 +322,7 @@ func main() {
 			fmt.Println("  backup-show-config      print backup-related config as key=value pairs")
 			fmt.Println("  cleanup-smoke-meshes    delete smoke-mesh cruft (B143) — one-shot manual trigger")
 			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
+			fmt.Println("  init [verb]             cluster bootstrap CLI: bootstrap / status / standby-invite (B211)")
 			fmt.Println("  migrate-only            open the DB + run pending migrations, then exit (v0.33.1.21)")
 			fmt.Println("  version                 print build version")
 			fmt.Println("  help                    this help")
