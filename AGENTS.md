@@ -2217,6 +2217,43 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **B207_fix (v1.5.0+, 2026-09-02) — clear the
+    B207 verify test artifact from cluster_database.
+    current_dsn so the B203 skygate-watchdog doesn't
+    keep swapping on every 5s tick after the verify**.
+    Small follow-up to the B208/B209/B210 incident where
+    the watchdog detected a literal "skygate_admin_pass"
+    DSN in cluster_database.current_dsn (left over from
+    the B207 verify test), closed the live pgxpool, and
+    broke every background service (backup scheduler,
+    autoupdater, exit-node-monitor) PLUS the auth flow
+    (pre-B210 the user saw "empty devices tab + unchanged
+    theme" after every skygate restart because the captured
+    `*sql.DB` was closed by the swap). The bug was:
+    B207-verify set the row to a deliberately-wrong DSN
+    to exercise the /admin/audit UNION path; the verify
+    never cleaned up; the B203 watchdog then read the
+    stale value on every 5s tick and kept swapping.
+    The fix is two parts: (a) a standalone
+    `scripts/clear_test_dsn.sh` (idempotent — running on
+    an already-empty current_dsn is a no-op) that uses
+    `sudo -u postgres psql` (peer auth, not the
+    skygate_admin path) to `UPDATE cluster_database SET
+    current_dsn = ''`, and (b) the call is wired into
+    `scripts/b208_verify.sh` as the final step so every
+    future verify cleans up after itself. The script can
+    also be re-run independently by the operator after
+    any future test that sets a non-production
+    current_dsn. 4 B-check contracts in
+    `scripts/check_b207_fix.sh`: clear_test_dsn.sh
+    exists + shebang correct + uses sudo -u postgres +
+    b208_verify.sh calls it. Post-deploy: the B210 hot-
+    reload fix means even if a future verify leaves a
+    stale current_dsn, the watchdog swap no longer breaks
+    the auth flow — the user's reported symptoms
+    (login + devices tab + theme) all work transparently
+    across swaps. This is the B209.1 "clear current_dsn"
+    follow-up made durable.
   - **B210.1 (v1.5.0+) — DBSource consolidation
     (5+ local copies → 1 canonical in
     skygate/internal/db)**. The follow-up to B210 that
