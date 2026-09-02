@@ -333,6 +333,26 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "migrate":
+			// v1.5.0+ / B213 — in-DB schema migration CLI.
+			// Phase 1.7 of cluster-management.md. The
+			// pre-B213 framework had no operator-visible
+			// way to see which migrations had been applied
+			// (the applied_migrations table was empty in
+			// the live agent — nothing populated it).
+			// B213: `skygate migrate up` runs all migrations
+			// (idempotent) + records each in
+			// applied_migrations; `skygate migrate status`
+			// shows the binary-vs-DB state with pending /
+			// extra counts (extra = binary downgrade
+			// signature). `down` is a STUB (Phase 1.7.1) —
+			// all 47 migrations are currently forward-only.
+			// The web server is NOT started.
+			if err := runMigrateSubcommand(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "help", "--help", "-h":
 			fmt.Println("skygate <command> [args]")
 			fmt.Println("  (no command)            start the web server")
@@ -344,7 +364,8 @@ func main() {
 			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
 			fmt.Println("  init [verb]             cluster bootstrap CLI: bootstrap / status / standby-invite (B211)")
 			fmt.Println("  join [verb]             cluster join CLI: <token> / status (B212 — DSN bootstrap + next-steps)")
-			fmt.Println("  migrate-only            open the DB + run pending migrations, then exit (v0.33.1.21)")
+			fmt.Println("  migrate [verb]          in-DB schema migration CLI: up / status (B213); 'down' is a stub")
+			fmt.Println("  migrate-only            open the DB + run pending migrations, then exit (v0.33.1.21 — alias for 'migrate up')")
 			fmt.Println("  version                 print build version")
 			fmt.Println("  help                    this help")
 			return

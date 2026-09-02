@@ -2535,6 +2535,89 @@ in the same commit. Don't let the tracker drift.
     Stdout format (scriptable for
     `bootstrap_standby.sh`): line 1=node_id, line
     2=cluster_id, line 3=dsn, line 4=primary_host.
+  - **B213 (v1.5.0+, 2026-09-02) — `skygate migrate`
+    CLI subcommand (Phase 1.7 of
+    docs/internal/cluster-management.md).** Closes
+    the "operator has no way to see which
+    migrations have been applied" gap. Pre-B213:
+    the `applied_migrations` table (B198
+    framework, v0.49) was empty in the live
+    agent because nothing populated it from the
+    live migration chain — only the unit tests
+    wrote to it. Pre-B213: `skygate migrate-only`
+    (v0.33.1.21) was a one-shot flag for the
+    self-update orchestrator's pre-flight; it ran
+    migrations as part of `Open()` but had no
+    status / list / dedup view. Post-B213:
+    (1) the migration list is now a `pgMigrations`
+    slice of `MigrationEntry` structs (`Version` +
+    `Name` + `SourceFile` + `Run`), preserving
+    the pre-B213 dependency order (V025 first
+    because V020-V024 have FK → portal_users
+    which V025 creates);
+    (2) `MigratePostgres` records each successful
+    application via `RecordMigrationApplied` (now
+    `ON CONFLICT DO NOTHING` for idempotency —
+    re-run of `migrate up` is safe);
+    (3) the first `skygate migrate up` on an
+    existing DB back-fills all ~47 entries;
+    (4) new `skygate migrate up` / `status` /
+    `down` subcommand — `up` is idempotent,
+    `status` shows binary-vs-DB state with
+    `pending` (in binary but not in DB) and
+    `extra` (in DB but not in binary = binary
+    downgrade) counts (text or `--json`), `down`
+    is a STUB returning a clear "not implemented"
+    error (Phase 1.7.1 needs `Down()` functions
+    for each migration; out of scope for B213);
+    (5) pre-B213 `skygate migrate-only` preserved
+    as an alias for backward compat with the
+    self-update orchestrator's docker run command.
+    `skygate migrate status` is the operator's
+    primary check: "is this DB on the latest
+    schema?" + "did the operator accidentally
+    downgrade?". 19 B-check contracts in
+    `scripts/check_b213.sh` (16 source-pin + 3
+    go-runtime, skipped when go is not on PATH).
+    7 unit tests in
+    `internal/db/migration_b213_test.go`
+    (`TestPGMigrations_ReturnsNonEmptyList` +
+    `TestPGMigrations_OrderedByVersion` +
+    `TestPGMigrations_HaveRequiredMetadata` +
+    `TestPGMigrations_UniqueVersions` +
+    `TestPGMigrations_IncludesB211V066` +
+    `TestRecordMigrationApplied_IdempotentOnReRun`
+    [skipped without `SKYGATE_TEST_PG_DSN`] +
+    `TestMigrationEntry_FieldsPinned`) + 5 unit
+    tests in `cmd/skygate/migrate_b213_test.go`
+    (`TestStartsWithDash` 7 sub-cases +
+    `TestMigrateSubcommand_UnknownVerb` +
+    `TestMigrateSubcommand_HelpFlag` 3 sub-cases +
+    `TestMigrateDown_ReturnsNotImplemented`).
+    4 new files: `cmd/skygate/migrate.go`
+    (~280 lines),
+    `internal/db/migration_b213_test.go`
+    (~170 lines),
+    `cmd/skygate/migrate_b213_test.go`
+    (~100 lines), `scripts/check_b213.sh`
+    (~190 lines). Modifies
+    `internal/db/driver_postgres.go` (the
+    anonymous function list is replaced with the
+    struct list; `MigratePostgres` now records each
+    applied migration; +~80 lines for the slice +
+    getter), `internal/db/migration_tracking.go`
+    (+1 line for `ON CONFLICT DO NOTHING`),
+    `cmd/skygate/main.go` (+~20 lines for
+    `case "migrate"` + help text). Live-verify
+    planned on the agent: back-fill all migrations
+    via `skygate migrate up` (one-time write to
+    `applied_migrations`; idempotent), then
+    `skygate migrate status` to confirm
+    `applied=47 pending=0 extra=0`, then re-run
+    `skygate migrate up` to confirm idempotency
+    (`applied=0` delta, no error). Stdout format
+    for `up` (line 1, scriptable):
+    `applied=N pending=0 duration_ms=N`.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

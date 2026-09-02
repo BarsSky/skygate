@@ -109,11 +109,19 @@ func normalizeMigrationSQL(s string) string {
 // On conflict (re-record with the same version), the existing
 // row is left unchanged — first-write-wins. Returns the rowid
 // of the (possibly new) row.
+//
+// B213: explicit ON CONFLICT (version) DO NOTHING so the
+// `skygate migrate up` re-run is safe (idempotent). The
+// pre-B213 implementation was a bare INSERT, which would
+// fail with a UNIQUE-constraint violation on the second
+// run. With the DO NOTHING, RecordMigrationApplied is
+// truly idempotent — the only "real" errors are
+// transient (DB down, FK violation), which we surface.
 func RecordMigrationApplied(d *sql.DB, version int, sha256Hex, sourceFile, firstSeenVersion string) error {
 	_, err := d.Exec(`
 		INSERT INTO applied_migrations (version, sha256, source_file, first_seen)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT(version) DO NOTHING
+		ON CONFLICT (version) DO NOTHING
 	`, version, sha256Hex, sourceFile, firstSeenVersion)
 	if err != nil {
 		return fmt.Errorf("record migration v%d: %w", version, err)
