@@ -45,6 +45,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -120,10 +121,23 @@ type clusterPageData struct {
 	Nodes       []clusterNodeRow
 	NodeCount   int
 	StateCounts map[string]int // "ready" → 2, "pending" → 1, etc.
+	// OnlineCount is the subset of Nodes that are state=ready
+	// AND have last_seen_at within OnlineThresholdSec. B216
+	// adds this so the operator sees "3 of 4 nodes online"
+	// at a glance (matches /admin/ha's "Self role" badge
+	// logic and the HA elector's stale-failover threshold).
+	OnlineCount   int
+	OfflineCount  int
+	HasStaleNodes bool // any state=ready with last_seen > threshold (network blip recovery)
 
 	// 3. Database (pointer)
-	DBConfigured bool
-	DBPrimary    string
+	DBConfigured  bool
+	DBPrimary     string
+	DBReplicas    []string // cluster_database.replica_node_ids (parsed from PG array)
+	DBReplicaCnt  int
+	DBDSNHost     string // host extracted from current_dsn for "where the primary DB is" display
+	DBSSLMode     string
+	HasReplicas   bool
 
 	// 4. Pending invites
 	Invites      []clusterInviteRow
@@ -136,6 +150,16 @@ type clusterPageData struct {
 	FlashSuccess string
 	FlashError   string
 }
+
+// OnlineThresholdSec is the staleness threshold used by
+// clusterPageData.OnlineCount. A node is "online" if it
+// has a fresh last_seen_at (within this many seconds).
+//
+// 90s matches the B204 HA elector's "3 missed heartbeats
+// → state=failed" decision (heartbeat interval 30s × 3).
+// Using the same threshold keeps the on-page online count
+// consistent with what the HA chain thinks.
+const OnlineThresholdSec = 90
 
 // GetAdminCluster renders the /admin/cluster page.
 func (s *Service) GetAdminCluster(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +207,12 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 
 	// 2. Nodes — read all cluster_node rows for this cluster,
 	// sorted by hostname. The "self" row is highlighted.
+	// B216: also compute the OnlineCount / OfflineCount
+	// summary that the new "X of Y online" pill in the
+	// Nodes section uses. A node is online if state=ready
+	// AND last_seen_at is within OnlineThresholdSec. This
+	// matches the HA elector's stale-failover threshold so
+	// the page and the HA chain agree.
 	rows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id, cluster_id, hostname, COALESCE(tailscale_ip, ''),
 		       roles, state, COALESCE(skygate_version, ''),
@@ -219,6 +249,19 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 				n.LastSeenAt = "—"
 			}
 			n.IsSelf = (n.Hostname == s.SelfHostname)
+			// B216: online/offline count. "Stale" means
+			// state=ready but last_seen beyond the
+			// threshold — the node hasn't been flipped
+			// to failed yet but the heartbeat is overdue.
+			online, stale := classifyNodeHealth(n.State, lastSeenAt, now)
+			if online {
+				data.OnlineCount++
+			} else {
+				data.OfflineCount++
+				if stale {
+					data.HasStaleNodes = true
+				}
+			}
 			data.StateCounts[n.State]++
 			data.Nodes = append(data.Nodes, n)
 		}
@@ -229,18 +272,33 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 
 	// 3. Database — read cluster_database. The full editor is
 	// on /admin/database; here we just show whether a row
-	// exists (and which node is the primary).
+	// exists (and which node is the primary + replicas +
+	// where the DSN points).
+	// B216: added replica_node_ids + dsn host extraction
+	// so the operator sees "Primary: agent, Replicas: [svi-1,
+	// svi-2], DSN: postgres://...@svi-1:5432/..." without
+	// clicking through to /admin/database.
 	if row := s.dbc().QueryRowContext(r.Context(),
-		`SELECT primary_node_id, current_dsn FROM cluster_database WHERE id = $1`,
+		`SELECT primary_node_id, replica_node_ids, current_dsn, COALESCE(sslmode, '')
+		   FROM cluster_database WHERE id = $1`,
 		clusterID,
 	); row != nil {
 		var primary sql.NullString
-		var dsn string
-		if err := row.Scan(&primary, &dsn); err == nil {
+		var replicasStr, dsn, sslmode string
+		if err := row.Scan(&primary, &replicasStr, &dsn, &sslmode); err == nil {
 			data.DBConfigured = true
 			if primary.Valid {
 				data.DBPrimary = primary.String
 			}
+			data.DBReplicas = parsePGTextArray(replicasStr)
+			data.DBReplicaCnt = len(data.DBReplicas)
+			data.HasReplicas = data.DBReplicaCnt > 0
+			data.DBSSLMode = sslmode
+			// Extract host:between-@and-:from current_dsn
+			// (e.g. "postgres://u:p@172.17.0.1:5433/d" → "172.17.0.1:5433").
+			// We use a permissive regex; if the DSN is
+			// malformed we just leave DBDSNHost empty.
+			data.DBDSNHost = extractDSNHost(dsn)
 		} else if err != sql.ErrNoRows {
 			// not fatal — just means the DB section shows
 			// "not configured" without an error badge
@@ -280,22 +338,41 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 		data.FlashError = "load invites: " + err.Error()
 	}
 
-	// 5. Recent cluster audit (last 20) — same audit_log table
-	// that /admin/audit reads, but filtered to cluster.* action
-	// names. Phase 2.2 (invite generation) will add new
-	// "cluster.invite.generate" / "cluster.invite.revoke" rows
-	// here.
+	// 5. Recent cluster audit (last 20) — B216: read from
+	// cluster_audit (B195+ dedicated table for cluster
+	// events) instead of audit_log with LIKE 'cluster.%'.
+	// The pre-B216 query was a no-op because cluster events
+	// never used a "cluster." action prefix (the B195 spec
+	// uses "node_init" / "node_join" / "node_drain" /
+	// "node_leave" / "node_health" / "failover_recommend" /
+	// "node_failover" / "node_drill" — none prefixed with
+	// "cluster."). The result was an empty events table
+	// on /admin/cluster even though the same events were
+	// visible on /admin/ha (which queries cluster_audit
+	// directly with the 8-action IN list).
+	//
+	// The 8 actions below are the same set /admin/ha
+	// uses — keeping the two pages consistent. The
+	// template renders them as colored badges (info for
+	// init/join, warning for drain, secondary for leave,
+	// default <code> for the other four) — see
+	// cluster.html section 5.
 	if aRows, err := s.dbc().QueryContext(r.Context(), `
-		SELECT unix_timestamp, actor, action, detail
-		  FROM audit_log
-		 WHERE action LIKE 'cluster.%'
+		SELECT id,
+		       extract(epoch FROM created_at)::bigint AS ts,
+		       actor,
+		       action,
+		       detail::text
+		  FROM cluster_audit
+		 WHERE action IN ('node_health', 'failover_recommend', 'node_failover', 'node_drill',
+		                  'node_init', 'node_join', 'node_drain', 'node_leave')
 		 ORDER BY id DESC
 		 LIMIT 20
 	`); err == nil {
 		defer aRows.Close()
 		for aRows.Next() {
 			var ev clusterAuditEvent
-			if err := aRows.Scan(&ev.WhenUnix, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
+			if err := aRows.Scan(new(int64), &ev.WhenUnix, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
 				continue
 			}
 			data.RecentEvents = append(data.RecentEvents, ev)
@@ -415,6 +492,96 @@ func abbreviateClusterTime(deltaSec int64) string {
 	default:
 		return intToString(deltaSec/86400) + "d ago"
 	}
+}
+
+// extractDSNHost returns the "host:port" substring of a
+// postgres DSN. Used by B216 to display "where the primary
+// DB is" on the /admin/cluster Database section without
+// exposing the password. Examples:
+//
+//	"postgres://u:p@172.17.0.1:5433/db?sslmode=disable" → "172.17.0.1:5433"
+//	"postgres://u:p@/db?host=/var/run/postgresql&..."   → "/db"  (best-effort — unix-socket form is ambiguous)
+//	""                                                → ""
+//
+// For URL-form DSNs (the common case in skygate — see
+// SKYGATE_DB_DSN), the parser uses net/url. For the
+// libpq keyword form ("host=... port=..." with no
+// scheme://) the parser returns "" — the operator
+// gets an empty host field and can see the raw DSN on
+// /admin/database if they need to. For unix-socket
+// DSNs the parser can't reliably separate the socket
+// path from the dbname (both look like "/path/segments"),
+// so we return the segment between @ and the query
+// string — not perfect, but better than nothing.
+//
+// This is a display-only helper; the actual DSN is
+// stored and used as-is by the DB pool.
+func extractDSNHost(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	// Quick reject: no scheme → likely libpq keyword form.
+	if !strings.Contains(dsn, "://") {
+		return ""
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return ""
+	}
+	// url.Parse returns:
+	//   - URL form  "postgres://u:p@host:5432/db" → Host=host:5432
+	//   - Unix-socket "postgres://u:p@/path/db"  → Host="" Path=/path/db
+	//
+	// For URL form, u.Host is the host:port we want.
+	// For unix-socket, u.Host is empty and the path
+	// contains the socket dir + dbname together — we
+	// return the path as the best-effort display.
+	if u.Host != "" {
+		return u.Host
+	}
+	if u.Path != "" {
+		return u.Path
+	}
+	return ""
+}
+
+// classifyNodeHealth is the pure helper behind the
+// "X of Y online" pill on /admin/cluster. Returns:
+//
+//   - online: state=ready AND last_seen_at is within
+//     OnlineThresholdSec. This matches the B204 HA
+//     elector's "3 missed heartbeats → state=failed"
+//     decision (heartbeat interval 30s × 3).
+//   - stale: state=ready but last_seen_at is BEYOND the
+//     threshold. The node is in the "grace window" —
+//     the HA chain hasn't flipped it to state=failed
+//     yet, but the heartbeat is overdue. The page
+//     shows a separate "stale heartbeat" warning pill.
+//
+// Anything else (state=pending / draining / failed, or
+// state=ready with NULL last_seen_at) is offline and
+// NOT stale (the stale pill is specifically for the
+// in-grace state, not the definitely-offline state).
+func classifyNodeHealth(state string, lastSeen sql.NullTime, nowUnix int64) (online, stale bool) {
+	if state != "ready" {
+		return false, false
+	}
+	if !lastSeen.Valid {
+		// state=ready but never had a heartbeat — not
+		// "stale" (never was online to begin with).
+		return false, false
+	}
+	age := nowUnix - lastSeen.Time.Unix()
+	// Strict less-than: 89s is online, 90s is the stale
+	// boundary. The B204 HA elector flips a node to
+	// state=failed after the 3rd missed heartbeat
+	// (heartbeat interval 30s × 3 = 90s), so a node
+	// that hasn't heartbeated for 90s is one tick away
+	// from being marked failed.
+	if age < OnlineThresholdSec {
+		return true, false
+	}
+	return false, true
 }
 
 // ---------- POST /admin/cluster/node/add (B200) ------------------------

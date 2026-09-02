@@ -394,6 +394,14 @@ var ruAdmin = map[string]string{
 	"ha.action_node_join":        "Join (standby onboarded)",
 	"ha.action_node_drain":        "Drain (state=draining)",
 	"ha.action_node_leave":        "Leave (node removed)",
+	// B216: also translate the 4 pre-B215 cluster_audit
+	// actions so the /admin/cluster "Recent events" table
+	// (and /admin/ha) renders them as labeled badges
+	// instead of raw action strings.
+	"ha.action_node_health":         "Health (heartbeat ok)",
+	"ha.action_failover_recommend":  "Failover recommend",
+	"ha.action_node_failover":       "Failover (promote)",
+	"ha.action_node_drill":          "Failover drill",
 	"ha.role_self_active":        "This skygate is the active node.",
 	"ha.role_self_standby":       "This skygate is a standby node.",
 	"ha.role_self_other":         "This skygate is not in the chain (run a deploy to add it).",
@@ -723,6 +731,16 @@ var ruAdmin = map[string]string{
 	"cluster.node_add_tailscale_ip_ph": "100.64.0.X (опционально)",
 	"cluster.node_add_roles_ph":        "skygate, skygate-standby, patroni-primary, patroni-replica",
 	"cluster.node_add_version_ph":      "v1.5.2-abcdef",
+	// v1.5.0+ / B216 — Phase 2.1 enrichment: online/offline
+	// summary in the Nodes section, replicas + DSN host
+	// rows in the Database section.
+	"cluster.online":         "онлайн",
+	"cluster.offline":        "оффлайн / устаревшие",
+	"cluster.stale":          "устаревший heartbeat",
+	"cluster.stale_help":     "Хотя бы одна нода в state=ready, но её last_seen_at старше 90 секунд. HA elector переведёт её в state=failed после 3 пропущенных heartbeat (≈90 секунд).",
+	"cluster.db_replicas":    "Реплики:",
+	"cluster.db_no_replicas": "(реплики не настроены — единая точка отказа)",
+	"cluster.db_dsn_host":    "Хост БД:",
 	"cluster.node_add_submit":          "Добавить ноду",
 	"cluster.node_add_added":           "Добавлена нода %s (id %s).",
 	"cluster.node_add_dup":             "hostname %q уже есть в cluster_node",
@@ -1116,6 +1134,14 @@ var enAdmin = map[string]string{
 	"ha.action_node_join":        "Join (standby onboarded)",
 	"ha.action_node_drain":        "Drain (state=draining)",
 	"ha.action_node_leave":        "Leave (node removed)",
+	// B216: also translate the 4 pre-B215 cluster_audit
+	// actions so the /admin/cluster "Recent events" table
+	// (and /admin/ha) renders them as labeled badges
+	// instead of raw action strings.
+	"ha.action_node_health":         "Health (heartbeat ok)",
+	"ha.action_failover_recommend":  "Failover recommend",
+	"ha.action_node_failover":       "Failover (promote)",
+	"ha.action_node_drill":          "Failover drill",
 	"ha.role_self_active":        "This skygate is the active node.",
 	"ha.role_self_standby":       "This skygate is a standby node.",
 	"ha.role_self_other":         "This skygate is not in the chain (run a deploy to add it).",
@@ -1440,6 +1466,16 @@ var enAdmin = map[string]string{
 	"cluster.node_add_tailscale_ip_ph": "100.64.0.X (optional)",
 	"cluster.node_add_roles_ph":        "skygate, skygate-standby, patroni-primary, patroni-replica",
 	"cluster.node_add_version_ph":      "v1.5.2-abcdef",
+	// v1.5.0+ / B216 — Phase 2.1 enrichment: online/offline
+	// summary in the Nodes section, replicas + DSN host
+	// rows in the Database section.
+	"cluster.online":         "online",
+	"cluster.offline":        "offline / stale",
+	"cluster.stale":          "stale heartbeat",
+	"cluster.stale_help":     "At least one node is in state=ready but its last_seen_at is more than 90s old. The HA elector will flip it to state=failed after 3 missed heartbeats (≈90s).",
+	"cluster.db_replicas":    "Replicas:",
+	"cluster.db_no_replicas": "(no replicas configured — single-point-of-failure)",
+	"cluster.db_dsn_host":    "DB host:",
 	"cluster.node_add_submit":          "Add node",
 	"cluster.node_add_added":           "Added node %s (id %s).",
 	"cluster.node_add_dup":             "hostname %q is already in cluster_node",

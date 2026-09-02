@@ -2805,6 +2805,88 @@ in the same commit. Don't let the tracker drift.
     `cluster_audit` has 1 `node_leave` row.
     `/admin/ha` "Last 20 events" should show all
     4 new action types as colored badges.
+  - **B216 (v1.5.0+, 2026-09-02) — /admin/cluster
+    Phase 2.1 enrichment.** Closes three gaps on
+    the B199 `/admin/cluster` page:
+    (1) the "Recent events" section was reading
+    `audit_log` with `action LIKE 'cluster.%'` —
+    but no audit_log row ever had a `cluster.`
+    action prefix, so the section was always empty
+    even though the same events were visible on
+    `/admin/ha` (which reads `cluster_audit`
+    directly). Post-B216 the query reads
+    `cluster_audit` with the same 8-action `IN`
+    list `/admin/ha` uses, so both pages show the
+    same event stream;
+    (2) the Nodes section has no at-a-glance health
+    summary — operators had to count `state=ready`
+    rows by eye. Post-B216 a green "X of Y online"
+    pill at the section header (computed from
+    `state=ready AND last_seen_at < OnlineThresholdSec`)
+    plus a red "offline / stale" pill + a yellow
+    "stale heartbeat" warning pill for the
+    in-grace state (`state=ready` past the
+    threshold but not yet flipped to `state=failed`
+    by the B204 HA elector). The 90s threshold
+    is pinned by a unit test
+    (`TestOnlineThresholdSec_HAElectorAlignment`)
+    so a drift between the page and the elector
+    fails CI;
+    (3) the Database section was a one-liner
+    pointer to `/admin/database` — operators had
+    to click through to see the primary node, the
+    replica list, or the DSN target. Post-B216 the
+    section shows the primary node + replica
+    node_ids + a DSN host (extracted via
+    `net/url` from `current_dsn` — password
+    stays hidden) + the sslmode. 6 new i18n
+    keys (`cluster.online` / `offline` / `stale`
+    / `db_replicas` / `db_no_replicas` /
+    `db_dsn_host`) in RU + EN. 4 new
+    `ha.action_*` keys (`node_health` /
+    `failover_recommend` / `node_failover` /
+    `node_drill`) — the B215 work only translated
+    the 4 new bootstrap events, so the 4
+    pre-B215 actions fell back to raw
+    `<code>{{.Action}}</code>` on both
+    `/admin/cluster` and `/admin/ha`. Post-B216
+    the 8 actions all render as colored badges
+    (info for init/join, warning for
+    drain/failover_recommend, danger for
+    failover, success for health, secondary for
+    leave/drill). 45 B-check contracts in
+    `scripts/check_b216.sh` (43 source-pin + 2
+    go-runtime, skipped when go is not on PATH).
+    3 unit tests in
+    `internal/feature/admin/cluster_b216_test.go`
+    (`TestExtractDSNHost` 9 sub-cases incl. URL /
+    unix-socket / libpq keyword forms,
+    `TestClassifyNodeHealth` 12 sub-cases incl.
+    89/90-second boundary + clock-skew +
+    never-online, `TestOnlineThresholdSec_HAElectorAlignment`
+    pins 90s to match the B204 elector). 1 new
+    file: `internal/feature/admin/cluster_b216_test.go`
+    (~170 lines: 3 test functions + 22 sub-cases).
+    3 modified: `internal/feature/admin/cluster.go`
+    (+~100 lines: `OnlineThresholdSec` const +
+    `classifyNodeHealth` + `extractDSNHost` + new
+    `clusterPageData` fields + `cluster_audit`
+    query rewrite),
+    `internal/handlers/templates/admin/cluster.html`
+    (+~30 lines: X-of-Y pill + stale pill +
+    replicas row + DSN host row + 8-action badge
+    rendering), `internal/i18n/catalog_admin.go`
+    (+14 lines: 6 `cluster.*` keys in RU + EN +
+    4 `ha.action_*` keys in RU + EN).
+    Live-verify on the agent: visit
+    `/admin/cluster` with admin auth → confirm
+    the page now renders the 7 `cluster_audit`
+    rows (B215 live-verify added them) as colored
+    badges; confirm "X of Y online" pill shows
+    the correct count (1/4 = agent, the rest are
+    `state=failed` or `state=draining`); confirm
+    "DB host: 172.17.0.1:5433" row appears with
+    the live DSN target.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

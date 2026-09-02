@@ -59,7 +59,30 @@
 
 {{/* ===================== Section 2: Nodes ===================== */}}
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i>{{t "cluster.section_nodes"}} ({{.Data.NodeCount}})</h3>
+  <h3>
+    <i class="fa-solid fa-server"></i>{{t "cluster.section_nodes"}} ({{.Data.NodeCount}})
+    {{/* B216: "X of Y online" pill — gives the operator the
+        at-a-glance health summary that the W5 monitor
+        workflow in docs/internal/cluster-management.md
+        calls for. The state pills (ready/pending/etc.)
+        in the per-row table still tell the full story;
+        this is the one-line summary. */}}
+    {{if gt .Data.NodeCount 0}}
+      <span class="tag tag-success" style="margin-left:8px;font-size:0.75em">
+        <i class="fa-solid fa-circle"></i> {{.Data.OnlineCount}}/{{.Data.NodeCount}} {{t "cluster.online"}}
+      </span>
+      {{if gt .Data.OfflineCount 0}}
+        <span class="tag tag-danger" style="margin-left:4px;font-size:0.75em">
+          <i class="fa-solid fa-circle-xmark"></i> {{.Data.OfflineCount}} {{t "cluster.offline"}}
+        </span>
+      {{end}}
+      {{if .Data.HasStaleNodes}}
+        <span class="tag tag-warning" style="margin-left:4px;font-size:0.75em" title="{{t "cluster.stale_help"}}">
+          <i class="fa-solid fa-triangle-exclamation"></i> {{t "cluster.stale"}}
+        </span>
+      {{end}}
+    {{end}}
+  </h3>
   <p class="muted" style="font-size:13px">{{t "cluster.nodes_help"}}</p>
 
   {{if .Data.Nodes}}
@@ -140,6 +163,27 @@
     <p style="font-size:13px">
       {{t "cluster.db_configured"}}
       {{if .Data.DBPrimary}}<br><strong>{{t "cluster.db_primary"}}</strong> <code>{{.Data.DBPrimary}}</code>{{end}}
+      {{/* B216: replicas row. The plan's W5 monitor example
+          shows "replicas: node-2 (lag=0s)" — for now we
+          just list the replica node_ids. Replication lag
+          is a separate (B217+ territory) feature that
+          needs pg_stat_replication. */}}
+      {{if .Data.HasReplicas}}
+        <br><strong>{{t "cluster.db_replicas"}}</strong>
+        {{range .Data.DBReplicas}}<code style="margin-right:6px">{{.}}</code>{{end}}
+        <span class="muted" style="font-size:0.85em">({{.Data.DBReplicaCnt}})</span>
+      {{else}}
+        <br><span class="muted">{{t "cluster.db_no_replicas"}}</span>
+      {{end}}
+      {{/* B216: DSN host row. Shows where the primary DB is
+          reachable (e.g. "172.17.0.1:5433") without
+          exposing the password. If the DSN is in
+          "host=..." form (no @) we show the full DSN
+          instead. */}}
+      {{if .Data.DBDSNHost}}
+        <br><strong>{{t "cluster.db_dsn_host"}}</strong> <code>{{.Data.DBDSNHost}}</code>
+        {{if .Data.DBSSLMode}}<span class="muted" style="font-size:0.85em">(sslmode={{.Data.DBSSLMode}})</span>{{end}}
+      {{end}}
     </p>
     <a href="/admin/database" class="btn btn-secondary btn-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "cluster.db_open"}}</a>
   {{else}}
@@ -220,7 +264,25 @@
       <tr>
         <td><span class="muted">{{.WhenUnix}}</span></td>
         <td><code>{{.Actor}}</code></td>
-        <td><code>{{.Action}}</code></td>
+        <td>
+          {{/* B216: render the action name via the same
+              colored-badge scheme B215 added to /admin/ha.
+              Pre-B216 this was a raw <code>{{.Action}}</code>
+              — fine for debugging but visually noisy.
+              The 8 known actions map to i18n keys; unknown
+              actions fall back to raw code (so a future
+              action that lands in cluster_audit isn't
+              silently swallowed by the template). */}}
+          {{if eq .Action "node_init"}}<span class="badge bg-info">{{t "ha.action_node_init"}}</span>
+          {{else if eq .Action "node_join"}}<span class="badge bg-info">{{t "ha.action_node_join"}}</span>
+          {{else if eq .Action "node_drain"}}<span class="badge bg-warning">{{t "ha.action_node_drain"}}</span>
+          {{else if eq .Action "node_leave"}}<span class="badge bg-secondary">{{t "ha.action_node_leave"}}</span>
+          {{else if eq .Action "node_health"}}<span class="badge bg-success">{{t "ha.action_node_health"}}</span>
+          {{else if eq .Action "failover_recommend"}}<span class="badge bg-warning">{{t "ha.action_failover_recommend"}}</span>
+          {{else if eq .Action "node_failover"}}<span class="badge bg-danger">{{t "ha.action_node_failover"}}</span>
+          {{else if eq .Action "node_drill"}}<span class="badge bg-secondary">{{t "ha.action_node_drill"}}</span>
+          {{else}}<code>{{.Action}}</code>{{end}}
+        </td>
         <td><span class="muted" style="font-size:0.9em">{{.Detail}}</span></td>
       </tr>
       {{end}}
