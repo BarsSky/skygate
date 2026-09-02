@@ -126,10 +126,42 @@
           {{if .IsSelf}}
             <span class="muted" title="{{tf "cluster.node_remove_self" $.Data.SelfHostname}}">—</span>
           {{else}}
-          <form method="POST" action="/admin/cluster/node/remove" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_remove_confirm" .Hostname | js}}')">
-            <input type="hidden" name="hostname" value="{{.Hostname}}">
-            <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> {{t "cluster.node_remove"}}</button>
-          </form>
+            {{/* B217: Phase 2.2 action surface per row.
+                - state=pending → show "Approve" button
+                  (Phase 2.2.3 explicit-approval gate)
+                - state=ready or state=failed → show
+                  "Drain" (Phase 2.2.4 step 1) +
+                  "Drain & Remove" (Phase 2.2.4 combo)
+                - state=draining → show "Remove" (the
+                  original force-delete; the row is
+                  already in draining, drain is moot)
+                - Remove is ALWAYS available as a
+                  force-delete fallback for stuck rows.
+            */}}
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              {{if eq .State "pending"}}
+              <form method="POST" action="/admin/cluster/node/approve" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_approve_confirm" .Hostname | js}}')">
+                <input type="hidden" name="hostname" value="{{.Hostname}}">
+                <button type="submit" class="btn btn-success btn-sm"><i class="fa-solid fa-circle-check"></i> {{t "cluster.node_approve"}}</button>
+              </form>
+              {{end}}
+              {{if or (eq .State "ready") (eq .State "failed")}}
+              <form method="POST" action="/admin/cluster/node/drain" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_drain_confirm" .Hostname | js}}')">
+                <input type="hidden" name="hostname" value="{{.Hostname}}">
+                <button type="submit" class="btn btn-warning btn-sm"><i class="fa-solid fa-faucet"></i> {{t "cluster.node_drain_btn"}}</button>
+              </form>
+              <form method="POST" action="/admin/cluster/node/drain-remove" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_drain_remove_confirm" .Hostname | js}}')">
+                <input type="hidden" name="hostname" value="{{.Hostname}}">
+                <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> {{t "cluster.node_drain_remove_btn"}}</button>
+              </form>
+              {{end}}
+              {{if eq .State "draining"}}
+              <form method="POST" action="/admin/cluster/node/remove" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_remove_confirm" .Hostname | js}}')">
+                <input type="hidden" name="hostname" value="{{.Hostname}}">
+                <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> {{t "cluster.node_remove"}}</button>
+              </form>
+              {{end}}
+            </div>
           {{end}}
         </td>
       </tr>
@@ -281,6 +313,7 @@
           {{else if eq .Action "failover_recommend"}}<span class="badge bg-warning">{{t "ha.action_failover_recommend"}}</span>
           {{else if eq .Action "node_failover"}}<span class="badge bg-danger">{{t "ha.action_node_failover"}}</span>
           {{else if eq .Action "node_drill"}}<span class="badge bg-secondary">{{t "ha.action_node_drill"}}</span>
+          {{else if eq .Action "node_approve"}}<span class="badge bg-success">{{t "ha.action_node_approve"}}</span>
           {{else}}<code>{{.Action}}</code>{{end}}
         </td>
         <td><span class="muted" style="font-size:0.9em">{{.Detail}}</span></td>

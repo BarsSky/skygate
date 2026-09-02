@@ -136,6 +136,14 @@ func AddNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []string,
 // to JOIN against the live row than a NULL one). The
 // detail captures the row's last state + roles for
 // post-mortem analysis.
+//
+// B217: prefer DrainAndRemoveNode (which sets
+// state=draining first and writes a node_drain audit
+// row before the node_leave audit + DELETE). This
+// function is the "force delete" path — useful when
+// the operator needs to clean up a stuck node in
+// state=draining that won't leave, but the standard
+// flow for an active node is drain-then-remove.
 func RemoveNode(d *sql.DB, clusterID, hostname string) error {
 	if clusterID == "" || hostname == "" {
 		return ErrNodeNotFound
@@ -179,6 +187,255 @@ func RemoveNode(d *sql.DB, clusterID, hostname string) error {
 		 WHERE cluster_id = $1 AND hostname = $2
 	`, clusterID, hostname); err != nil {
 		return fmt.Errorf("delete cluster_node: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// DrainNode sets state=draining on a cluster_node row
+// without deleting it. The HA chain sees state=draining
+// and the operator can still inspect the row (the
+// "frozen state" view) before issuing a separate Remove.
+//
+// B217 (v1.5.0+): this is the Phase 2.2 "drain" step
+// — the operator presses a "Drain" button, the node
+// stops accepting new work (state=draining in the HA
+// chain), and a separate "Drain & Remove" button can
+// later delete the row.
+//
+// The function emits a node_drain cluster_audit row
+// in the same transaction as the UPDATE so a failed
+// UPDATE rolls back the audit. detail captures the
+// row's previous state (typically "ready" or "failed")
+// for the post-mortem timeline.
+//
+// Idempotent: draining a node already in state=draining
+// is a no-op (returns nil, no audit row). This matters
+// because the /admin/cluster page may show the same
+// node in multiple browser tabs — the operator might
+// click Drain twice. The second click should be silent.
+//
+// `actor` is recorded in the cluster_audit row's
+// actor column (the admin username, or "system" for
+// automated drains). `reason` is free-text the
+// operator typed in the /admin/cluster form; stored
+// in the audit detail.
+func DrainNode(d *sql.DB, clusterID, hostname, actor, reason string) error {
+	if clusterID == "" || hostname == "" {
+		return ErrNodeNotFound
+	}
+	if actor == "" {
+		actor = "system"
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var nodeID, prevState, rolesText string
+	if scanErr := tx.QueryRow(`
+		SELECT id, COALESCE(state, ''), COALESCE(array_to_string(roles, ','), '')
+		  FROM cluster_node
+		 WHERE cluster_id = $1 AND hostname = $2
+		 FOR UPDATE
+	`, clusterID, hostname).Scan(&nodeID, &prevState, &rolesText); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			_ = tx.Rollback()
+			return ErrNodeNotFound
+		}
+		return fmt.Errorf("lookup node: %w", scanErr)
+	}
+	// Idempotent: already draining → no-op.
+	if prevState == NodeStateDraining {
+		_ = tx.Rollback()
+		return nil
+	}
+	if _, execErr := tx.Exec(`
+		UPDATE cluster_node SET state = $1
+		 WHERE id = $2
+	`, NodeStateDraining, nodeID); execErr != nil {
+		return fmt.Errorf("update state: %w", execErr)
+	}
+	// Audit. detail.reason is optional — if the
+	// operator didn't type anything, we leave it out
+	// of the JSON rather than serialise an empty
+	// field.
+	detailJSON := buildDrainDetail(prevState, rolesText, actor, reason, "")
+	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeDrain, nodeID, actor, detailJSON); auditErr != nil {
+		return fmt.Errorf("insert node_drain audit: %w", auditErr)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// DrainAndRemoveNode is the Phase 2.2 "drain + leave +
+// cleanup" combo: sets state=draining first (so the
+// HA chain sees the node go offline), then deletes
+// the row. Both audit rows (node_drain + node_leave)
+// are written in the same transaction so a failed
+// DELETE rolls back BOTH audits (and the state
+// update).
+//
+// Use this for the standard operator-driven remove
+// flow. Use RemoveNode (raw DELETE + node_leave) only
+// when the operator needs to clean up a stuck node
+// that's already in a weird state.
+//
+// `actor` + `reason` flow through to both audit rows
+// (the node_drain detail.reason and the node_leave
+// detail.reason are the same — the operator's intent
+// was "this node is going away because X").
+func DrainAndRemoveNode(d *sql.DB, clusterID, hostname, actor, reason string) error {
+	if clusterID == "" || hostname == "" {
+		return ErrNodeNotFound
+	}
+	if actor == "" {
+		actor = "system"
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var nodeID, prevState, rolesText string
+	if scanErr := tx.QueryRow(`
+		SELECT id, COALESCE(state, ''), COALESCE(array_to_string(roles, ','), '')
+		  FROM cluster_node
+		 WHERE cluster_id = $1 AND hostname = $2
+		 FOR UPDATE
+	`, clusterID, hostname).Scan(&nodeID, &prevState, &rolesText); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			_ = tx.Rollback()
+			return ErrNodeNotFound
+		}
+		return fmt.Errorf("lookup node: %w", scanErr)
+	}
+	// Step 1: set state=draining. If the node was
+	// already draining (rare — the operator pressed
+	// the button twice), the UPDATE is a no-op and we
+	// still emit the audit row to mark the "leave"
+	// event with a fresh timestamp.
+	if prevState != NodeStateDraining {
+		if _, execErr := tx.Exec(`
+			UPDATE cluster_node SET state = $1
+			 WHERE id = $2
+		`, NodeStateDraining, nodeID); execErr != nil {
+			return fmt.Errorf("update state to draining: %w", execErr)
+		}
+	}
+	// Step 2: node_drain audit (idempotent: the
+	// pre-existing state=draining row from a prior
+	// DrainNode call will also have its own audit,
+	// so we'll get 2 audits per drain+remove — that's
+	// the intended trace: one for "marked as draining",
+	// one for "actually left").
+	drainDetail := buildDrainDetail(prevState, rolesText, actor, reason, "drain_and_remove")
+	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeDrain, nodeID, actor, drainDetail); auditErr != nil {
+		return fmt.Errorf("insert node_drain audit: %w", auditErr)
+	}
+	// Step 3: DELETE the row.
+	if _, execErr := tx.Exec(`
+		DELETE FROM cluster_node
+		 WHERE cluster_id = $1 AND hostname = $2
+	`, clusterID, hostname); execErr != nil {
+		return fmt.Errorf("delete cluster_node: %w", execErr)
+	}
+	// Step 4: node_leave audit.
+	leaveDetail := buildDrainAndRemoveLeaveDetail(nodeID, hostname, rolesText, actor, reason, "")
+	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeLeave, nodeID, actor, leaveDetail); auditErr != nil {
+		return fmt.Errorf("insert node_leave audit: %w", auditErr)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// ApproveNode transitions a cluster_node row from
+// state=pending to state=ready. Phase 2.2 (B217) — the
+// operator presses an "Approve" button on /admin/cluster
+// after seeing a new node appear in state=pending (the
+// /api/cluster/join endpoint sets pending; the first
+// successful heartbeat auto-transitions to ready, but
+// some deployments want explicit admin approval before
+// the node is allowed to participate in the HA chain).
+//
+// The function emits a node_approve cluster_audit row
+// in the same transaction as the UPDATE.
+//
+// Idempotent: approving a node already in state=ready
+// is a no-op (returns nil, no audit row). Approving
+// a node in state=draining or state=failed is ALSO a
+// no-op (we don't auto-recover failed nodes — the
+// operator must explicitly transition them via
+// skygate init re-run on the box, or by editing the
+// row directly).
+//
+// `actor` is recorded in the cluster_audit row's
+// actor column (the admin username).
+func ApproveNode(d *sql.DB, clusterID, hostname, actor string) error {
+	if clusterID == "" || hostname == "" {
+		return ErrNodeNotFound
+	}
+	if actor == "" {
+		actor = "system"
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var nodeID, prevState string
+	if scanErr := tx.QueryRow(`
+		SELECT id, COALESCE(state, '')
+		  FROM cluster_node
+		 WHERE cluster_id = $1 AND hostname = $2
+		 FOR UPDATE
+	`, clusterID, hostname).Scan(&nodeID, &prevState); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			_ = tx.Rollback()
+			return ErrNodeNotFound
+		}
+		return fmt.Errorf("lookup node: %w", scanErr)
+	}
+	// Idempotent: already ready → no-op.
+	if prevState == NodeStateReady {
+		_ = tx.Rollback()
+		return nil
+	}
+	// Refuse to approve non-pending nodes (don't
+	// auto-recover failed / draining). The operator
+	// must explicitly handle those (e.g. by re-running
+	// skygate init on the box, or editing the row).
+	if prevState != NodeStatePending {
+		_ = tx.Rollback()
+		return fmt.Errorf("cannot approve node in state %q (only state=pending can be approved; for failed/draining, re-run skygate init on the box)", prevState)
+	}
+	if _, execErr := tx.Exec(`
+		UPDATE cluster_node SET state = $1, last_seen_at = NOW()
+		 WHERE id = $2
+	`, NodeStateReady, nodeID); execErr != nil {
+		return fmt.Errorf("update state: %w", execErr)
+	}
+	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeApprove, nodeID, actor,
+		buildApproveDetail(nodeID, hostname, actor)); auditErr != nil {
+		return fmt.Errorf("insert node_approve audit: %w", auditErr)
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -359,5 +616,39 @@ func parsePGTextArray(s string) []string {
 		}
 		out = append(out, p)
 	}
+	return out
+}
+
+// ---------- Pure detail builders (B217) ----------------------
+//
+// Extracted from the DrainNode / DrainAndRemoveNode /
+// ApproveNode body so the JSON shape can be unit-tested
+// without a DB (see node_b217_test.go). The production
+// code uses these helpers directly; the tests pin the
+// schema. If you change one, change both.
+
+func buildDrainDetail(fromState, roles, actor, reason, via string) string {
+	out := fmt.Sprintf(`{"from_state":%q,"roles":%q,"actor":%q`, fromState, roles, actor)
+	if reason != "" {
+		out += fmt.Sprintf(`,"reason":%q`, reason)
+	}
+	if via != "" {
+		out += fmt.Sprintf(`,"via":%q`, via)
+	}
+	out += "}"
+	return out
+}
+
+func buildApproveDetail(nodeID, hostname, actor string) string {
+	return fmt.Sprintf(`{"node_id":%q,"hostname":%q,"from_state":"pending","to_state":"ready","actor":%q}`,
+		nodeID, hostname, actor)
+}
+
+func buildDrainAndRemoveLeaveDetail(nodeID, hostname, roles, actor, reason, _ string) string {
+	out := fmt.Sprintf(`{"node_id":%q,"hostname":%q,"last_state":"draining","roles":%q,"actor":%q`, nodeID, hostname, roles, actor)
+	if reason != "" {
+		out += fmt.Sprintf(`,"reason":%q`, reason)
+	}
+	out += "}"
 	return out
 }

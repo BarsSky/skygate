@@ -1470,6 +1470,16 @@ func main() {
 	//   /admin/cluster/invite/revoke   — mark invite status=revoked
 	mux.Handle("POST /admin/cluster/node/add", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeAdd)))
 	mux.Handle("POST /admin/cluster/node/remove", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeRemove)))
+	// B217: Phase 2.2 — Approve / Drain / Drain+Remove.
+	// Approve is the explicit-approval gate (Phase 2.2.3):
+	// transitions state=pending → state=ready. Drain is
+	// the "mark as draining but keep the row" action
+	// (Phase 2.2.4 step 1). Drain+Remove is the safe
+	// "drain + leave + cleanup" combo (Phase 2.2.4 steps
+	// 1+2 in one transaction).
+	mux.Handle("POST /admin/cluster/node/approve", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeApprove)))
+	mux.Handle("POST /admin/cluster/node/drain", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeDrain)))
+	mux.Handle("POST /admin/cluster/node/drain-remove", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeDrainRemove)))
 	mux.Handle("POST /admin/cluster/invite/generate", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteGenerate)))
 	mux.Handle("POST /admin/cluster/invite/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteRevoke)))
 

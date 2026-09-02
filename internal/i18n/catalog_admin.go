@@ -402,6 +402,8 @@ var ruAdmin = map[string]string{
 	"ha.action_failover_recommend":  "Failover recommend",
 	"ha.action_node_failover":       "Failover (promote)",
 	"ha.action_node_drill":          "Failover drill",
+	// B217: explicit-approval gate (Phase 2.2.3).
+	"ha.action_node_approve":         "Approve (pending→ready)",
 	"ha.role_self_active":        "This skygate is the active node.",
 	"ha.role_self_standby":       "This skygate is a standby node.",
 	"ha.role_self_other":         "This skygate is not in the chain (run a deploy to add it).",
@@ -748,6 +750,21 @@ var ruAdmin = map[string]string{
 	"cluster.node_remove_confirm":      "Удалить ноду %s? Это уберёт её из cluster_node (без рестарта skygate — heartbeat просто не будет обновляться).",
 	"cluster.node_remove_self":         "нельзя удалить self-строку (%s) — используйте /admin/ha",
 	"cluster.node_removed":             "Удалена нода %s.",
+	// B217: Phase 2.2 — Approve / Drain / Drain+Remove
+	// buttons. Drain sets state=draining (HA chain sees
+	// the node go offline, but the row is preserved so
+	// the operator can inspect the frozen state). The
+	// "Drain & Remove" combo does both in one transaction
+	// so the audit trail shows node_drain → node_leave.
+	"cluster.node_approve":                 "Одобрить",
+	"cluster.node_approve_confirm":         "Одобрить ноду %s? Это переведёт её из state=pending в state=ready (heartbeat начнёт обновляться).",
+	"cluster.node_approved":                "Нода %s одобрена (state=ready).",
+	"cluster.node_drain_btn":               "Слить",
+	"cluster.node_drain_confirm":           "Перевести ноду %s в state=draining? Heartbeat перестанет обновляться, нода останется в cluster_node для инспекции. Чтобы удалить, нажмите 'Слить и удалить'.",
+	"cluster.node_drained":                 "Нода %s переведена в state=draining.",
+	"cluster.node_drain_remove_btn":        "Слить и удалить",
+	"cluster.node_drain_remove_confirm":    "Перевести ноду %s в state=draining И удалить из cluster_node? Это безопасная операция 'drain + leave' (одна транзакция, обе записи в cluster_audit).",
+	"cluster.node_drain_removed":           "Нода %s слита и удалена.",
 	"cluster.invite_generate_title":    "Сгенерировать invite",
 	"cluster.invite_generate_help":     "Создаёт запись в <code>cluster_invite</code> и возвращает подписанный sgn1-токен (HMAC-SHA256). Токен показывается один раз — скопируйте сразу. На целевой ноде запустите <code>skygate cluster join --token=&lt;...&gt;</code> (Phase 2.3).",
 	"cluster.invite_role_ph":           "роль (skygate / skygate-standby)",
@@ -1142,6 +1159,8 @@ var enAdmin = map[string]string{
 	"ha.action_failover_recommend":  "Failover recommend",
 	"ha.action_node_failover":       "Failover (promote)",
 	"ha.action_node_drill":          "Failover drill",
+	// B217: explicit-approval gate (Phase 2.2.3).
+	"ha.action_node_approve":         "Approve (pending→ready)",
 	"ha.role_self_active":        "This skygate is the active node.",
 	"ha.role_self_standby":       "This skygate is a standby node.",
 	"ha.role_self_other":         "This skygate is not in the chain (run a deploy to add it).",
@@ -1483,6 +1502,21 @@ var enAdmin = map[string]string{
 	"cluster.node_remove_confirm":      "Remove node %s? This drops it from cluster_node (no skygate restart — the heartbeat just stops being updated).",
 	"cluster.node_remove_self":         "cannot remove the self row (%s) — use /admin/ha instead",
 	"cluster.node_removed":             "Removed node %s.",
+	// B217: Phase 2.2 — Approve / Drain / Drain+Remove
+	// buttons. Drain sets state=draining (HA chain sees
+	// the node go offline, but the row is preserved so
+	// the operator can inspect the frozen state). The
+	// "Drain & Remove" combo does both in one transaction
+	// so the audit trail shows node_drain → node_leave.
+	"cluster.node_approve":                 "Approve",
+	"cluster.node_approve_confirm":         "Approve node %s? This transitions it from state=pending to state=ready (heartbeat will start updating it).",
+	"cluster.node_approved":                "Node %s approved (state=ready).",
+	"cluster.node_drain_btn":               "Drain",
+	"cluster.node_drain_confirm":           "Mark node %s as state=draining? Heartbeat will stop updating, but the row stays in cluster_node for inspection. To delete, click 'Drain & Remove'.",
+	"cluster.node_drained":                 "Node %s marked as state=draining.",
+	"cluster.node_drain_remove_btn":        "Drain & Remove",
+	"cluster.node_drain_remove_confirm":    "Drain AND remove node %s? This is the safe 'drain + leave' flow — state=draining first, then DELETE, both in one transaction (two cluster_audit rows: node_drain + node_leave).",
+	"cluster.node_drain_removed":           "Node %s drained and removed.",
 	"cluster.invite_generate_title":    "Generate invite",
 	"cluster.invite_generate_help":     "Creates a <code>cluster_invite</code> row and returns a signed sgn1 token (HMAC-SHA256). The token is shown once — copy it immediately. On the target node run <code>skygate cluster join --token=&lt;...&gt;</code> (Phase 2.3).",
 	"cluster.invite_role_ph":           "role (skygate / skygate-standby)",

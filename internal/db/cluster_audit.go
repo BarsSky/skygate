@@ -115,6 +115,19 @@ const (
 	// node_failover) so the /admin/ha "Last 20 events"
 	// table can tell them apart.
 	NodeDrill ClusterAuditAction = "node_drill"
+
+	// NodeApprove — fired by cluster.ApproveNode (B217,
+	// Phase 2.2) when the operator presses the
+	// "Approve" button on /admin/cluster for a
+	// state=pending node. The pre-B217 path auto-
+	// transitioned pending→ready on the first
+	// heartbeat (cluster.Heartbeat still does this);
+	// the new explicit-approval flow adds a manual
+	// gate so some deployments can require admin
+	// sign-off before a new standby joins the HA
+	// chain. Detail: {"node_id":..., "from_state":
+	// "pending", "to_state": "ready", "actor": "..."}.
+	NodeApprove ClusterAuditAction = "node_approve"
 )
 
 // InsertClusterAudit inserts one row into cluster_audit.

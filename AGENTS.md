@@ -2887,6 +2887,111 @@ in the same commit. Don't let the tracker drift.
     `state=failed` or `state=draining`); confirm
     "DB host: 172.17.0.1:5433" row appears with
     the live DSN target.
+  - **B217 (v1.5.0+, 2026-09-02) — /admin/cluster
+    Phase 2.2 action surface.** Closes the
+    "admin has no way to explicitly approve a new
+    pending node, or to drain-then-remove an
+    active one via the UI" gap. The pre-B217
+    "Remove" button did a raw DELETE
+    (cluster.RemoveNode from B215) — no drain
+    state, no audit detail about why the node
+    left. Post-B217: (1) new `cluster.DrainNode`
+    sets `state=draining` + emits `node_drain`
+    audit in a single tx; (2) new
+    `cluster.DrainAndRemoveNode` is the Phase 2.2.4
+    "drain + leave + cleanup" combo — `state=draining`
+    first, then DELETE, with both audit rows
+    (`node_drain` + `node_leave`) in the same tx
+    (so the operator sees "drain → leave" as one
+    intentional action, not as two separate
+    decisions); (3) new `cluster.ApproveNode` is
+    the Phase 2.2.3 explicit-approval gate —
+    `state=pending → state=ready` + emits
+    `node_approve` audit. The new helper REJECTS
+    non-pending states (draining / failed) so the
+    operator's drain/fail decision is preserved
+    across page reloads — auto-recovery would
+    silently undo that; (4) 3 new admin POST
+    handlers (`PostAdminClusterNodeDrain`,
+    `PostAdminClusterNodeDrainRemove`,
+    `PostAdminClusterNodeApprove`) + 3 new routes
+    in `main.go` + self-row protection in all 3
+    (so the operator can't accidentally
+    approve/drain themselves — same lockout
+    pattern as `PostAdminClusterNodeRemove`); (5)
+    per-row button set in `cluster.html` is
+    state-conditional: Approve shown for
+    `state=pending`, Drain + Drain&Remove for
+    `state=ready|failed`, raw Remove for
+    `state=draining` (already-drained rows that
+    need cleanup); (6) new `ClusterAuditAction`
+    constant `db.NodeApprove` + both
+    `/admin/cluster` and `/admin/ha` recent-events
+    filters expanded from 8 actions to 9; (7) 3
+    pure detail builders (`buildDrainDetail` /
+    `buildApproveDetail` /
+    `buildDrainAndRemoveLeaveDetail`) so the
+    JSON shape is unit-testable without a DB
+    (the production code uses the builders, the
+    tests pin the schema — drift between the two
+    is caught at test time); (8) 8 new i18n keys
+    (`cluster.node_approve` / `approved` /
+    `drain_btn` / `drain_confirm` /
+    `drain_remove_btn` / `drain_remove_confirm` /
+    `drained` / `drain_removed`) + 1
+    `ha.action_node_approve` in RU + EN.
+    34 B-check contracts in
+    `scripts/check_b217.sh` (32 source-pin + 2
+    go-runtime, skipped when go is not on PATH).
+    7 unit tests in
+    `internal/cluster/node_b217_test.go`
+    (`TestNodeApproveConstant` + `TestDrainDetailSchema`
+    + `TestDrainDetailSchemaNoReason` +
+    `TestDrainDetailSchemaViaField` +
+    `TestApproveDetailSchema` +
+    `TestLeaveDetailSchemaViaDrainAndRemove` +
+    `TestApproveRejectsNonPending_StateMessage`
+    with 3 sub-cases — pins the audit JSON
+    schemas + the Approve error message format).
+    1 new file:
+    `internal/cluster/node_b217_test.go` (~140
+    lines: 7 test functions + 9 sub-cases).
+    7 modified: `internal/cluster/node.go`
+    (+~150 lines: `DrainNode` +
+    `DrainAndRemoveNode` + `ApproveNode` + 3
+    detail builders),
+    `internal/feature/admin/cluster.go`
+    (+~140 lines: 3 new POST handlers + self-row
+    guards), `cmd/skygate/main.go` (+3 routes),
+    `internal/handlers/templates/admin/cluster.html`
+    (+~30 lines: per-row button set conditional
+    on state),
+    `internal/handlers/templates/admin/ha.html`
+    (+2 lines: `node_approve` badge case),
+    `internal/db/cluster_audit.go` (+~10 lines:
+    `NodeApprove` constant + doc comment),
+    `internal/feature/admin/{cluster,ha}.go`
+    (filter expansion to 9 actions),
+    `internal/i18n/catalog_admin.go` (+9 lines:
+    7 `cluster.*` keys + 1 `ha.action_node_approve`
+    in RU + EN).
+    Live-verify on the agent
+    (`scripts/b217_liveverify.go`):
+    - INSERT 3 temp `cluster_node` rows (one per
+      state we'll exercise: pending, ready, failed)
+    - POST `/admin/cluster/node/approve` for the
+      pending row → assert state=ready + 1
+      `node_approve` audit row
+    - POST `/admin/cluster/node/drain` for the
+      ready row → assert state=draining + 1
+      `node_drain` audit row with the operator's
+      `reason` captured
+    - POST `/admin/cluster/node/drain-remove` for
+      the failed row → assert row is gone + 1
+      `node_drain` + 1 `node_leave` audit row
+      (the `node_leave.detail.last_state` is
+      `"draining"` — set before the DELETE)
+    - cleanup: DELETE the temp rows
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

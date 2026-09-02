@@ -346,11 +346,18 @@
               failover_recommend / node_failover /
               node_drill) already had their own i18n
               keys; we fall back to the raw action
-              string for unknown values. */}}
+              string for unknown values. B216 added
+              the 4 pre-B215 keys + B217 added
+              node_approve. */}}
           {{if eq .Action "node_init"}}<span class="badge bg-info">{{t "ha.action_node_init"}}</span>
           {{else if eq .Action "node_join"}}<span class="badge bg-info">{{t "ha.action_node_join"}}</span>
           {{else if eq .Action "node_drain"}}<span class="badge bg-warning">{{t "ha.action_node_drain"}}</span>
           {{else if eq .Action "node_leave"}}<span class="badge bg-secondary">{{t "ha.action_node_leave"}}</span>
+          {{else if eq .Action "node_health"}}<span class="badge bg-success">{{t "ha.action_node_health"}}</span>
+          {{else if eq .Action "failover_recommend"}}<span class="badge bg-warning">{{t "ha.action_failover_recommend"}}</span>
+          {{else if eq .Action "node_failover"}}<span class="badge bg-danger">{{t "ha.action_node_failover"}}</span>
+          {{else if eq .Action "node_drill"}}<span class="badge bg-secondary">{{t "ha.action_node_drill"}}</span>
+          {{else if eq .Action "node_approve"}}<span class="badge bg-success">{{t "ha.action_node_approve"}}</span>
           {{else}}<code>{{.Action}}</code>{{end}}
         </td>
         <td><span style="font-family:var(--font-mono);font-size:11px">{{.Detail}}</span></td>

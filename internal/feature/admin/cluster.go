@@ -365,7 +365,8 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 		       detail::text
 		  FROM cluster_audit
 		 WHERE action IN ('node_health', 'failover_recommend', 'node_failover', 'node_drill',
-		                  'node_init', 'node_join', 'node_drain', 'node_leave')
+		                  'node_init', 'node_join', 'node_drain', 'node_leave',
+		                  'node_approve')
 		 ORDER BY id DESC
 		 LIMIT 20
 	`); err == nil {
@@ -671,6 +672,148 @@ func (s *Service) PostAdminClusterNodeRemove(w http.ResponseWriter, r *http.Requ
 	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.remove",
 		"hostname="+hostname)
 	clusterRedirect(w, r, "Removed "+hostname+".", "")
+}
+
+// ---------- POST /admin/cluster/node/drain (B217) -----------------
+
+// PostAdminClusterNodeDrain sets state=draining on a
+// cluster_node row. Idempotent: draining an already-
+// draining node is a no-op (no audit row, no error).
+//
+// Phase 2.2.4 partial — the "drain" half of "drain +
+// leave + cleanup". The HA chain sees state=draining
+// and the operator can still inspect the row. To
+// actually remove it, the operator clicks "Drain &
+// Remove" (PostAdminClusterNodeDrainRemove) or "Remove"
+// (PostAdminClusterNodeRemove, the B200 force-delete).
+//
+// Refuses to drain the self row (operator would
+// lock themselves out of the admin UI on the next
+// page load, same as PostAdminClusterNodeRemove).
+func (s *Service) PostAdminClusterNodeDrain(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := "skygate-staging"
+	hostname := strings.TrimSpace(r.FormValue("hostname"))
+	if hostname == "" {
+		clusterRedirect(w, r, "", "hostname is required")
+		return
+	}
+	if hostname == s.SelfHostname {
+		clusterRedirect(w, r, "", "cannot drain the self row ("+s.SelfHostname+") — use /admin/ha instead")
+		return
+	}
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if err := cluster.DrainNode(s.dbc(), clusterID, hostname, c.Username, reason); err != nil {
+		clusterRedirect(w, r, "", "drain: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.drain",
+		fmt.Sprintf("hostname=%s reason=%q", hostname, reason))
+	clusterRedirect(w, r, "Drained "+hostname+".", "")
+}
+
+// ---------- POST /admin/cluster/node/drain-remove (B217) ---------
+
+// PostAdminClusterNodeDrainRemove is the Phase 2.2
+// "drain + leave + cleanup" combo. It sets state=draining
+// first (so the HA chain sees the node go offline), then
+// DELETEs the row, in one transaction. Both cluster_audit
+// rows (node_drain + node_leave) are emitted in the same
+// transaction so the audit trail is complete even if the
+// process crashes mid-flight.
+//
+// This is the recommended remove path for an active
+// (state=ready or state=failed) node. The raw
+// PostAdminClusterNodeRemove (force DELETE) is the
+// emergency fallback for stuck rows that won't leave
+// via the normal flow.
+func (s *Service) PostAdminClusterNodeDrainRemove(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := "skygate-staging"
+	hostname := strings.TrimSpace(r.FormValue("hostname"))
+	if hostname == "" {
+		clusterRedirect(w, r, "", "hostname is required")
+		return
+	}
+	if hostname == s.SelfHostname {
+		clusterRedirect(w, r, "", "cannot drain+remove the self row ("+s.SelfHostname+") — use /admin/ha instead")
+		return
+	}
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if err := cluster.DrainAndRemoveNode(s.dbc(), clusterID, hostname, c.Username, reason); err != nil {
+		clusterRedirect(w, r, "", "drain+remove: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.drain_remove",
+		fmt.Sprintf("hostname=%s reason=%q", hostname, reason))
+	clusterRedirect(w, r, "Drained and removed "+hostname+".", "")
+}
+
+// ---------- POST /admin/cluster/node/approve (B217) ----------------
+
+// PostAdminClusterNodeApprove transitions a cluster_node
+// row from state=pending to state=ready. Phase 2.2.3 —
+// the explicit-approval gate.
+//
+// The pre-B217 path auto-transitioned pending→ready on
+// the first successful heartbeat (cluster.Heartbeat
+// still does this). The new button adds a manual gate:
+// some deployments want admin sign-off before a new
+// standby joins the HA chain. Operators who prefer
+// auto-approval can simply not click the button — the
+// auto-transition on first heartbeat still works.
+//
+// Idempotent: approving an already-ready node is a no-op.
+// Approving a non-pending node (draining / failed) is
+// rejected (no auto-recovery of failed nodes).
+func (s *Service) PostAdminClusterNodeApprove(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := "skygate-staging"
+	hostname := strings.TrimSpace(r.FormValue("hostname"))
+	if hostname == "" {
+		clusterRedirect(w, r, "", "hostname is required")
+		return
+	}
+	// Self-row guard. The Approve button is only
+	// rendered for state=pending rows, so this is
+	// defense-in-depth — but keep the consistent
+	// "self rows are read-only via /admin/cluster"
+	// guarantee with the other Phase 2.2 handlers.
+	if hostname == s.SelfHostname {
+		clusterRedirect(w, r, "", "cannot approve the self row ("+s.SelfHostname+") — re-run `skygate init` on the box to refresh it instead")
+		return
+	}
+	if err := cluster.ApproveNode(s.dbc(), clusterID, hostname, c.Username); err != nil {
+		clusterRedirect(w, r, "", "approve: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.approve",
+		"hostname="+hostname)
+	clusterRedirect(w, r, "Approved "+hostname+".", "")
 }
 
 // ---------- POST /admin/cluster/invite/generate (B200) ----------------
