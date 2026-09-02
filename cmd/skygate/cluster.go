@@ -119,10 +119,12 @@ func runClusterSubcommand(args []string) error {
 		return runClusterAudit(args[1:])
 	case "failover":
 		return runClusterFailover(args[1:])
+	case "failover-drill":
+		return runClusterFailoverDrill(args[1:])
 	case "heartbeat-daemon":
 		return runClusterHeartbeatDaemon(args[1:])
 	default:
-		return fmt.Errorf("cluster: unknown verb %q (invite, join, nodes, dbs, audit, failover, heartbeat-daemon)", verb)
+		return fmt.Errorf("cluster: unknown verb %q (invite, join, nodes, dbs, audit, failover, failover-drill, heartbeat-daemon)", verb)
 	}
 }
 
@@ -619,6 +621,77 @@ func runClusterFailover(args []string) error {
 	} else {
 		fmt.Printf("cluster failover: %s promoted to skygate primary (no failed primary to drain)\n", targetID)
 	}
+	return nil
+}
+
+// runClusterFailoverDrill is the safe-test counterpart of
+// runClusterFailover. Phase 3.6 of cluster-management.md.
+//
+// Background
+//
+// runClusterFailover is a production swap: it changes
+// cluster_node state and writes action='node_failover' to
+// cluster_audit. Once it's run, the only way to undo is to
+// run the swap again (with the OLD primary as the target).
+// The operator wanted a "test" version to verify the B204
+// elector + Phase 3.4 button + this CLI all work
+// end-to-end without committing to a real swap.
+//
+// The drill does the same atomic swap (target promoted to
+// skygate role, old primary demoted to state=draining),
+// but writes action='node_drill' to cluster_audit instead
+// of action='node_failover' — so the /admin/ha "Last 20
+// events" table and the B207 UNION query can tell test
+// swaps from real ones. The drill does NOT auto-rollback:
+// the operator runs `skygate cluster failover --target=
+// <old_primary>` to manually restore state if desired.
+//
+// The eligibility rules are the same as Phase 3.4's
+// FailoverClusterNode (state=ready + role=skygate-standby
+// + current primary must exist). The DB helper
+// (db.DrillClusterNode) is a near-copy of FailoverClusterNode
+// with the only difference being the audit-row action.
+//
+// Usage:
+//
+//	skygate cluster failover-drill --target=<node_id_or_hostname> [--reason "<text>"]
+func runClusterFailoverDrill(args []string) error {
+	fs := flag.NewFlagSet("cluster failover-drill", flag.ContinueOnError)
+	target := fs.String("target", "", "target node id or hostname (required)")
+	reason := fs.String("reason", "manual drill via skygate cluster failover-drill", "audit row reason")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *target == "" {
+		return errors.New("cluster failover-drill: --target is required")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("cluster failover-drill: config load: %w", err)
+	}
+	d, err := db.OpenDSN(cfg.DBDSN)
+	if err != nil {
+		return fmt.Errorf("cluster failover-drill: open db: %w", err)
+	}
+	defer d.Close()
+	// Resolve target id (operator may pass hostname OR id;
+	// the DB helper takes id only).
+	var targetID string
+	row := d.QueryRow(`
+		SELECT id FROM cluster_node
+		 WHERE cluster_id = $1 AND (id = $2 OR hostname = $2)
+		 LIMIT 1
+	`, cluster.DefaultClusterID, *target)
+	if err := row.Scan(&targetID); err != nil {
+		return fmt.Errorf("cluster failover-drill: target %q not found: %w", *target, err)
+	}
+	fromID, toID, err := db.DrillClusterNode(d, targetID, "skygate-cli", *reason)
+	if err != nil {
+		return fmt.Errorf("cluster failover-drill: %w", err)
+	}
+	fmt.Printf("cluster failover-drill: %s → %s (DRILL — wrote action='node_drill' to cluster_audit)\n", fromID, toID)
+	fmt.Println("NOTE: this is a TEST swap. cluster_node state is REAL but the audit row says 'drill'.")
+	fmt.Println("      To restore the old primary: skygate cluster failover --target=" + fromID)
 	return nil
 }
 

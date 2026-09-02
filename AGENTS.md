@@ -2217,6 +2217,72 @@ in the same commit. Don't let the tracker drift.
        recommended target. B205 will wire the actual
        promote (admin button + `skygate cluster
        failover --target=<node>` CLI).
+  - **Phase 3.6 (v1.5.0+, 2026-09-02) — `skygate
+    cluster failover-drill` CLI subcommand
+    (safe-test counterpart of the existing
+    `runClusterFailover`)**. Closes the "operator wants
+    to verify the failover workflow without committing
+    to a real swap" gap. Pre-Phase 3.6 the only way to
+    test the B204 elector + Phase 3.4 button +
+    `runClusterFailover` CLI together was either (a)
+    point the test at a fake cluster (no real
+    verification on the production data) or (b) do a
+    real swap and immediately swap back (operator
+    fatigue, cluster_audit log noise). Post-Phase 3.6
+    the operator runs `skygate cluster failover-drill
+    --target=<id>` — same atomic swap (target promoted
+    to skygate role, old primary demoted to
+    state=draining, single transaction), but writes
+    `action='node_drill'` to `cluster_audit` instead
+    of `action='node_failover'`. The /admin/ha "Last 20
+    events" table now includes `node_drill` in the
+    WHERE clause alongside `node_health`,
+    `failover_recommend`, `node_failover` so drills are
+    visible alongside real failovers. The detail JSONB
+    row has an extra `"drill": true` flag + a
+    `"real_action": "node_failover"` field for future
+    audit-log filters that want to re-tag a drill as a
+    real failover (or vice versa).
+    **The drill does NOT auto-rollback.** The operator
+    runs `skygate cluster failover --target=<old_primary>`
+    to manually restore state if desired. The asymmetric
+    rollback choice is intentional: a "drill" is meant
+    to verify the FULL workflow (elector's tick after
+    swap, /admin/ha events table update, audit-log
+    ingestion, etc.) — not to be silently undone. If the
+    user wants auto-rollback, that's a future B-block
+    (probably Phase 4.5 — the B209 e2e base has the
+    "failover drill" loop already; an `--auto-rollback=Nm`
+    flag would be a small extension).
+    **Files:** `internal/db/cluster_drill.go` (new,
+    ~140 lines: `DrillClusterNode` + the same
+    `ErrNoPrimary` + `ErrNotEligibleForFailover`
+    sentinels from `cluster_failover.go`), `cmd/skygate/
+    cluster.go` (`runClusterFailoverDrill` function +
+    `case "failover-drill":` in the dispatch switch +
+    updated help text in the default branch's
+    `fmt.Errorf`), `internal/feature/admin/ha.go` (the
+    /admin/ha "Last 20 events" SQL query now includes
+    `'node_drill'` in the `WHERE action IN (...)` clause),
+    `scripts/check_phase_3_6.sh` (new, 10 contracts),
+    `scripts/verify_pre_deploy.sh` (Phase_3_6 run_check
+    added), `AGENTS.md` (this section).
+    **The B-check pins:** (a) `cluster_drill.go` exists
+    + `DrillClusterNode` signature matches, (b) uses a
+    transaction (sql.Tx + Commit), (c) writes
+    `action='node_drill'` to cluster_audit, (d)
+    `runClusterFailoverDrill` in `cmd/skygate/cluster.go`,
+    (e) CLI dispatches `failover-drill` verb, (f)
+    /admin/ha filter includes `node_drill`, (g) build +
+    vet + tests pass, (h) AGENTS.md + verify_pre_deploy
+    mention Phase 3.6.
+    **Test coverage gap:** the test plan is the same as
+    Phase 3.4's — the B-check pins the code shape (10
+    contracts), the live-verify on the agent runs the
+    drill end-to-end. A unit test for
+    `DrillClusterNode` with a fake `*sql.DB` would pin
+    the eligibility + atomicity behavior in CI; that's
+    a follow-up (B213 candidate).
   - **Phase 3.4 (v1.5.0+, 2026-09-02) — "Force
     cluster node failover" button on /admin/ha**
     (operator-driven counterpart to the B204 elector's

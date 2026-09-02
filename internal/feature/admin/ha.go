@@ -216,7 +216,7 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 		        action,
 		        detail::text
 		   FROM cluster_audit
-		  WHERE action IN ('node_health', 'failover_recommend', 'node_failover')
+		  WHERE action IN ('node_health', 'failover_recommend', 'node_failover', 'node_drill')
 		     OR detail->>'reason' LIKE 'ha.%'
 		  ORDER BY id DESC
 		  LIMIT 40`); err == nil {
