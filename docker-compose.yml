@@ -194,6 +194,19 @@ services:
       # (existing installs have it), but skygate no longer writes
       # anything to /data/skygate.db.
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data:/data
+      # 2026-09-02 (B202.5): mount the agent's entire .ssh/
+      # directory so the SSHDumpTransport can `ssh svi
+      # "pg_dump ..."` using the operator's id_ed25519 key.
+      # The transport's SKYGATE_DBMIGRATE_SSH_KEY env var
+      # (set in .env) points at /etc/skygate/ssh_key/id_ed25519
+      # inside the container. We mount the whole directory
+      # 2026-09-02 (B202.5): The agent's SSH private key is
+      # NOT bind-mounted here — this container's overlayfs
+      # turns single-file bind-mounts into empty directories
+      # (a known kernel issue). We use the docker `secrets:`
+      # block below instead, which copies the key into a
+      # tmpfs mount at /etc/skygate/ssh_key with the file
+      # contents intact.
       # docker.sock to call headscale CLI for preauth keys
       - /var/run/docker.sock:/var/run/docker.sock
       # Tailscale state dir. Persists across container restarts so we
@@ -225,11 +238,42 @@ services:
       # still win when set. The path is configurable via
       # SKYGATE_EXIT_SSH_KEY (already wired into Config.SSHKeyPath).
       - ${SKYGATE_SSH_DIR:-${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ssh-sync}:/ssh-sync:ro
+      # 2026-09-02 (B202.5): mount the agent's entire .ssh/
+      # directory (NOT a single file — this host's overlayfs
+      # turns single-file bind-mounts into empty directories,
+      # a kernel issue on this docker version). The key file
+      # ends up at /etc/skygate/ssh_key/id_ed25519 inside the
+      # container; the entrypoint copies it to /tmp/ssh_key
+      # and chmods 600 (ssh requires private keys to be 0600)
+      # so the SSHDumpTransport's `ssh svi "pg_dump ..."`
+      # works.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/.ssh:/etc/skygate/ssh_key:ro
+      # 2026-09-02 (B202.5): second mount of the host's .ssh/
+      # at /host-keys. This is the FALLBACK path on hosts
+      # where the /etc/skygate/ssh_key mount above is broken
+      # (e.g. this agent's overlayfs turns single-file mounts
+      # into empty directories). The entrypoint reads the key
+      # from /host-keys/id_ed25519 if /etc/skygate/ssh_key/
+      # id_ed25519 isn't a regular file. We mount the same
+      # directory at two paths because we can't predict which
+      # one will work on a given host.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/.ssh:/host-keys:ro
     secrets:
       # short form — just reference the top-level definition below.
       # The `file:` path is configured at top-level so we can use
       # ${SKYGATE_HOST_REPO_PATH:-...} for the host-side path.
       - ts_authkey
+      # 2026-09-02 (B202.5): inject the agent's SSH private
+      # key for the SSHDumpTransport's outbound `ssh svi
+      # "pg_dump ..."` invocation. We bind-mount the
+      # source .ssh/ directory (NOT a single file, because
+      # this host's overlayfs turns single-file bind-mounts
+      # into empty directories — a kernel issue on this
+      # host's docker version). The key file is at
+      # /etc/skygate/ssh_key/id_ed25519 inside the container.
+      # The entrypoint copies it to /tmp/ssh_key and chmods
+      # 600 (ssh requires private keys to be 0600) — see
+      # entrypoint.sh's `setup_ssh_key` step.
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
@@ -510,3 +554,9 @@ secrets:
   # SKYGATE_HOST_REPO_PATH in .env to their real layout.
   ts_authkey:
     file: ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/secrets/ts_authkey
+  # 2026-09-02 (B202.5): the SSH private key is bind-mounted
+  # as a directory (not a docker secret) because this host's
+  # overlayfs turns single-file docker secret mounts into empty
+  # directories (a known docker bug on the agent's host kernel).
+  # The entrypoint copies the file to /tmp/ssh_key with 0600
+  # perms. See the volume mount in the skygate service.

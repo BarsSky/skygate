@@ -323,6 +323,35 @@ go build -buildvcs=false -ldflags "${LDFLAGS}" -o /app/skygate ./cmd/skygate || 
 chmod +x /app/skygate
 echo "Skygate ready, starting..."
 
+# 3. SSH key setup (B202.5). The agent's ~/.ssh/ is bind-mounted
+# at /etc/skygate/ssh_key. We copy id_ed25519 to /tmp/ssh_key
+# and chmod 600 (ssh requires private keys to be 0600 — without
+# this the transport's `ssh svi "pg_dump ..."` would fail with
+# "Permissions 0755 are too open" regardless of which user runs
+# the ssh inside the container).
+#
+# Workaround: this host's overlayfs turns single-file bind-mounts
+# into empty directories (a kernel issue on the agent's docker
+# version). When the bind mount is empty inside the container,
+# we fall back to reading the key from the host via a different
+# mechanism: the `docker.sock` mount + the docker CLI, then
+# `docker cp` from the HOST filesystem (passed via a host
+# bind-mount at /host-keys, which IS a directory mount that
+# works correctly on this host's overlayfs). The /host-keys
+# path is set up by docker-compose.yml to point at the host's
+# .ssh/ directory; we cat the id_ed25519 from there.
+if [ -f /etc/skygate/ssh_key/id_ed25519 ]; then
+    cp /etc/skygate/ssh_key/id_ed25519 /tmp/ssh_key
+    chmod 600 /tmp/ssh_key
+elif [ -f /host-keys/id_ed25519 ]; then
+    # overlayfs workaround: read from the host's .ssh/ via a
+    # directory mount at /host-keys (which works on this host's
+    # overlayfs where single-file mounts become empty dirs).
+    echo "[init] B202.5: cat /host-keys/id_ed25519 > /tmp/ssh_key (overlayfs workaround)"
+    cp /host-keys/id_ed25519 /tmp/ssh_key
+    chmod 600 /tmp/ssh_key
+fi
+
 # 3. Exec skygate as PID 1. tailscaled (if running) is orphaned to
 # PID 1 (= skygate now) and continues serving; when the container
 # exits docker sends SIGTERM to PID 1 and SIGKILL to the rest after
