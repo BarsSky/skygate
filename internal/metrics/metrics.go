@@ -454,7 +454,11 @@ func escapeLabelValue(v string) string {
 //     produce these — division-by-zero is not a
 //     concern in any of the current samplers)
 //   - integers are rendered without decimals
+//   - 0.0 must render as "0" (not "")
 func formatFloat(v float64) string {
+	if v == 0 {
+		return "0"
+	}
 	return strings.TrimRight(
 		strings.TrimRight(
 			fmt.Sprintf("%g", v),

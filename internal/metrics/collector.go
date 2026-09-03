@@ -115,6 +115,16 @@ func runTick(ctx context.Context, src SourceProvider) {
 	cancel()
 	DBHealthGauge.WithLabelValues("skygate-staging").Set(boolToFloat(dbOK))
 
+	// DB size gauge. Read pg_database_size once
+	// per tick (cheap query — just reads a single
+	// int). The B206 healthz sampler also queries
+	// this for its JSON response; B226 queries it
+	// independently so the metrics endpoint is
+	// decoupled from the B206 ticker.
+	if dbSize, ok := queryDBSizeBytes(ctx, src); ok {
+		DBSizeBytesGauge.WithLabelValues("skygate-staging").Set(dbSize)
+	}
+
 	// Cluster node state counts.
 	_, counts, primaryID, err := src.ListNodeStateCounts(ctx)
 	if err != nil {
@@ -158,6 +168,39 @@ func boolToFloat(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// queryDBSizeBytes is a one-off helper that
+// reads pg_database_size for the skygate DB
+// and returns it in bytes. Returns (0, false)
+// on any error (the B226 collector logs +
+// skips the update on failure).
+func queryDBSizeBytes(ctx context.Context, src SourceProvider) (float64, bool) {
+	type dbsizer interface {
+		DBSizeBytes(ctx context.Context) (int64, error)
+	}
+	if s, ok := src.(dbsizer); ok {
+		size, err := s.DBSizeBytes(ctx)
+		if err != nil {
+			return 0, false
+		}
+		return float64(size), true
+	}
+	// Fallback: query pg_database_size via the
+	// pool (works for DBPoolSource).
+	if p, ok := src.(*DBPoolSource); ok {
+		conn := p.DB.Current()
+		if conn == nil {
+			return 0, false
+		}
+		var size int64
+		err := conn.QueryRowContext(ctx, `SELECT pg_database_size(current_database())`).Scan(&size)
+		if err != nil {
+			return 0, false
+		}
+		return float64(size), true
+	}
+	return 0, false
 }
 
 // ----- The actual metric declarations -----
@@ -257,8 +300,9 @@ func (s *DBPoolSource) ListNodeStateCounts(ctx context.Context) (string, map[str
 	if conn == nil {
 		return clusterID, map[string]int{}, "", fmt.Errorf("nil pool")
 	}
+	// Counts by state.
 	rows, err := conn.QueryContext(ctx, `
-		SELECT COALESCE(state, ''), COUNT(*), COALESCE(MAX(primary_node_id), '')
+		SELECT COALESCE(state, ''), COUNT(*)
 		  FROM cluster_node
 		 WHERE cluster_id = $1
 		 GROUP BY state
@@ -266,26 +310,37 @@ func (s *DBPoolSource) ListNodeStateCounts(ctx context.Context) (string, map[str
 	if err != nil {
 		return clusterID, map[string]int{}, "", err
 	}
-	defer rows.Close()
 	counts := map[string]int{}
-	primaryID := ""
 	for rows.Next() {
 		var state string
 		var n int
-		var pid string
-		if err := rows.Scan(&state, &n, &pid); err != nil {
-			return clusterID, counts, primaryID, err
+		if err := rows.Scan(&state, &n); err != nil {
+			rows.Close()
+			return clusterID, counts, "", err
 		}
 		if state != "" {
 			counts[state] = n
 		}
-		if pid != "" {
-			primaryID = pid
-		}
+	}
+	if err := rows.Err(); err != nil {
+		return clusterID, counts, "", err
+	}
+	rows.Close()
+	// The skygate HA primary's id lives on
+	// cluster_database (the B204 schema), not
+	// on cluster_node. Read it separately.
+	var primaryID string
+	if err := conn.QueryRowContext(ctx, `
+		SELECT COALESCE(primary_node_id, '')
+		  FROM cluster_database
+		 WHERE id = $1
+		 LIMIT 1
+	`, clusterID).Scan(&primaryID); err != nil && err != sql.ErrNoRows {
+		return clusterID, counts, primaryID, err
 	}
 	// Set the total gauge (sum of all states).
 	ClusterNodesTotalGauge.Set(float64(sumValues(counts)))
-	return clusterID, counts, primaryID, rows.Err()
+	return clusterID, counts, primaryID, nil
 }
 
 func (s *DBPoolSource) ListFailoverState(ctx context.Context) (string, bool, error) {
@@ -324,6 +379,19 @@ func (s *DBPoolSource) DBPoolStats() sql.DBStats {
 		return sql.DBStats{}
 	}
 	return conn.Stats()
+}
+
+// DBSizeBytes returns pg_database_size for the
+// current database. B226 uses this for the
+// skygate_db_size_bytes gauge.
+func (s *DBPoolSource) DBSizeBytes(ctx context.Context) (int64, error) {
+	conn := s.DB.Current()
+	if conn == nil {
+		return 0, fmt.Errorf("nil pool")
+	}
+	var size int64
+	err := conn.QueryRowContext(ctx, `SELECT pg_database_size(current_database())`).Scan(&size)
+	return size, err
 }
 
 func sumValues(m map[string]int) int {
