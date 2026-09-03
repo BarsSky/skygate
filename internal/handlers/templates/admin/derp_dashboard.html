@@ -41,6 +41,25 @@
 </div>
 {{end}}
 
+{{/* B228: filter toggle + shown-of-total counter. The toggle
+     is auto-submit (no Apply button) so the operator's
+     click flips the view immediately; the counter makes
+     the filter's effect visible ("you have N hidden, click
+     to show"). */}}
+<form method="get" action="/admin/derp/dashboard" style="margin: 0 0 12px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+  <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9em">
+    <input type="checkbox" name="show_unavailable" value="1" {{if .ShowUnavailable}}checked{{end}} onchange="this.form.submit()">
+    {{t "derp_dashboard.show_unavailable"}}
+  </label>
+  <span class="form-hint" style="color: var(--text-muted); font-size: 0.85em">
+    {{if .ShowUnavailable}}
+      {{tf "derp_dashboard.shown_of_total" .VisibleCount .TotalCount}}
+    {{else}}
+      {{tf "derp_dashboard.shown_of_total" .VisibleCount .TotalCount}}
+    {{end}}
+  </span>
+</form>
+
 <details style="margin-bottom:12px">
   <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
     <i class="fa-solid fa-circle-info"></i> {{t "derp_dashboard.about_title"}}
@@ -120,7 +139,20 @@
       {{end}}
       {{if not .DERPs}}
       <tr><td colspan="8" style="padding:1rem; text-align:center; color:var(--text-muted)">
-        {{t "derp_dashboard.empty_state"}}
+        {{if and (not .ShowUnavailable) (gt .TotalCount 0)}}
+          {{/* B228: all DERPs are filtered out because they're degraded
+               or haven't been probed. Surface a clear message + a one-
+               click escape hatch to the full view. */}}
+          <div style="margin-bottom: 0.6rem">
+            <i class="fa-solid fa-circle-exclamation" style="color: #f39c12"></i>
+            {{t "derp_dashboard.all_degraded"}}
+          </div>
+          <a href="/admin/derp/dashboard?show_unavailable=1" class="btn btn-secondary" style="font-size: 0.85em">
+            <i class="fa-solid fa-eye"></i> {{t "derp_dashboard.show_all"}}
+          </a>
+        {{else}}
+          {{t "derp_dashboard.empty_state"}}
+        {{end}}
       </td></tr>
       {{end}}
     </tbody>

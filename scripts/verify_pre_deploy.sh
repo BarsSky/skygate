@@ -3463,6 +3463,25 @@ run_check "B226" "/admin/cluster Phase 4.5 — Prometheus exporter. Closes the '
 # config, not skygate code).
 run_check "B227" "B77 tag-autoupdater observability (Phase 4.6 follow-up). Closes the 'B77 AddTag failure invisible to operator' gap (live case: skygate-host-1-1 ACL reject every 5 min since 2026-09-03 14:10Z). Three signals fire on every failure: skygate_tag_autoupdate_failures_total Prometheus counter, audit_log tag.autoupdate_failed row, rate-limited Telegram alert. 14 B-check contracts in scripts/check_b227.sh. 13 unit tests in internal/nodeownership/auto_b227_test.go." \
   'test -f scripts/check_b227.sh && bash scripts/check_b227.sh'
+# --- B228: DERP dashboard "hide unavailable" filter ---
+# Closes the operator's 2026-09-03 report: /admin/derp/dashboard showed
+# 28+ rows of "degraded, —" (Tailscale's 28 public regions, all
+# degraded from the agent VM because they're 150-300ms away) which
+# buried the one actually-healthy own DERP (controlplane.tailscale.com,
+# 99ms) and made the page useless. B228 adds ?show_unavailable=0|1
+# (default 0 = filter ON = show only healthy) + re-sort by LatencyMs
+# ASC (own DESC tiebreaker) on the filtered set + UI checkbox
+# "Показать недоступные" with auto-submit + shown-of-total counter
+# "Показано X из Y DERP" + empty state "Все DERP недоступны" with
+# one-click Show All link. The pre-B228 sort (own-first + latency) is
+# preserved on the FULL slice so ?show_unavailable=1 is byte-identical
+# to the pre-B228 page. 8 B-check contracts in scripts/check_b228.sh
+# (handler reads query param + filter logic + filtered sort + pre-B228
+# sort preserved + template form/counter/empty state + 4 i18n keys +
+# build). No new tests (handler is pure-template-render; contracts
+# are static greps that pin the wire shape).
+run_check "B228" "DERP dashboard hide-unavailable filter. Closes the 2026-09-03 operator report (28+ degraded rows burying the one healthy own DERP). ?show_unavailable=0|1 (default filter ON) + re-sort by LatencyMs ASC + UI checkbox + shown-of-total counter + all-degraded empty state. 8 B-check contracts in scripts/check_b228.sh." \
+  'test -f scripts/check_b228.sh && bash scripts/check_b228.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) --- Closes the 'operator must hand-migrate the DB via scp + pg_restore on the agent' gap that was implicit in the B198/B202 work — pre-B202.5 the dbmigrate framework's Dump step only ran pg_dump on the local host, which works for the live svi→agent move because the agent reaches svi's PG via the 172.17.0.1:5433 bridge, but the bridge requires svi to expose its PG port to the agent network. B202.5 adds a transport that runs 'ssh svi \"pg_dump ...\"' and streams the bytes back, so the operator can flip the DSN + restart the agent without depending on direct PG-port reachability between svi and agent. SSHDumpTransport struct with 5 fields (SSHHost/SSHUser/SSHKeyPath/SSHPort/PgDumpPath + optional SSHOptions), Name()='ssh', Dump(ctx, sourceDSN, destPath, onLog) (int64, error) implements the DumpTransport interface. NewSSHDumpTransportFromEnv() reads 5 SKYGATE_DBMIGRATE_SSH_* env vars and returns nil if HOST or USER is empty (caller falls back to Local). quoteForRemoteShell() POSIX-shell-escapes the DSN for 'ssh host cmd' (close-quote/literal/reopen idiom for embedded single quotes). framework.go default-fallback: SKYGATE_DBMIGRATE_TRANSPORT=ssh + valid SSH config -> SSHDumpTransport, else LocalDumpTransport. 5 unit tests in internal/dbmigrate/ssh_transport_test.go: QuoteForRemoteShell (4 sub-cases incl. embedded single quote + multiple quotes), NewFromEnv_RequiresHostAndUser (returns nil on empty HOST or USER), NewFromEnv_PortParsing (22022, bad-port -> 0 silent fallback), Dump_FakeSsh round-trip (Unix only; SKIP on Windows because exec.LookPath does not find a bare 'ssh' there), Dump_Validation (empty sourceDSN, empty destPath, empty SSHHost, empty SSHUser all return error), Name()=='ssh' pinned. Compile-time interface assertion: 'var _ DumpTransport = SSHDumpTransport{}'. 14 B-check contracts in scripts/check_b202_5.sh. Live-verify dry-run (scripts/b202_5_verify.sh) on the agent: ssh to localhost + pg_dump of a temp test DB -> local file, validates PGD-N magic bytes, verifies pg_restore --list shows the test table. Does NOT touch headscale/headplane on agent, does NOT touch the live skygate_staging DB on svi. The real svi->agent move is a one-time operator action (set 4 env vars + ssh-copy-id)." \
   'test -f scripts/check_b202_5.sh && bash scripts/check_b202_5.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) ---

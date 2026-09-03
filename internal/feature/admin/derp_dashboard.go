@@ -1,5 +1,12 @@
 // File: internal/feature/admin/derp_dashboard.go
 // B189 (v1.5.2) — DERP Health Dashboard.
+// B228 (v1.5.2+) — "hide unavailable" filter (operator
+//   2026-09-03: 28+ rows of "degraded, —" на странице
+//   делают dashboard бесполезным — нужно сразу отбросить
+//   недоступные и оставить только healthy, отсортированные
+//   по latency. По умолчанию фильтр ВКЛ (соответствует
+//   предпочтению operator'а), тогглер в UI позволяет
+//   включить "show all" для отладки).
 //
 // Renders /admin/derp/dashboard with one row per known
 // DERP server (own + Tailscale's 28 public regions) showing
@@ -7,6 +14,12 @@
 // Probing happens in the background (derphealth.StartCron
 // in cmd/skygate/main.go, 5-min interval); this handler
 // just reads the cached derp_health table.
+//
+// Query params:
+//   - show_unavailable=1 — show all rows (including
+//     degraded / unprobed). Default is 0 (filter
+//     hides degraded rows so the operator sees only
+//     useful healthy DERPs sorted by latency).
 //
 // POST /admin/derp/dashboard/refresh — force a fresh probe
 // cycle and re-render the page.
@@ -80,8 +93,41 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 		all = append(all, r)
 	}
 
-	// Sort: own first, then by latency (fastest first within
-	// each group; NULL/unprobed last within each group).
+	// B228: query-param filter — drop degraded / unprobed
+	// rows by default so the operator sees only useful
+	// healthy DERPs sorted by latency. The pre-B228 page
+	// showed 28+ "degraded, —" rows which buried the one
+	// actually-healthy own DERP (the operator's exact
+	// 2026-09-03 report).
+	//
+	// `?show_unavailable=1` opts in to the pre-B228 view
+	// (useful for debugging a regional outage where the
+	// operator wants to see WHICH regions are down).
+	//
+	// "Healthy" in this filter = (r.Healthy && r.LatencyMs > 0).
+	// The LatencyMs > 0 guard is the "probe actually ran and
+	// returned a real number" check; rows where the probe
+	// failed show LatencyMs=0 (not a real measurement) and
+	// should be hidden even though r.Healthy might be set
+	// from a previous tick (defensive — don't surface stale
+	// "healthy" claims).
+	totalCount := len(all)
+	showUnavailable := r.URL.Query().Get("show_unavailable") == "1"
+	visible := all
+	if !showUnavailable {
+		visible = visible[:0]
+		for _, r := range all {
+			if r.Healthy && r.LatencyMs > 0 {
+				visible = append(visible, r)
+			}
+		}
+	}
+
+	// Sort the FULL set: pre-B228 own-first + latency.
+	// Kept verbatim so the ?show_unavailable=1 view is
+	// byte-identical to the pre-B228 page (B228 is a
+	// pure filter + re-sort on the healthy subset, NOT a
+	// sort change on the full view).
 	sort.SliceStable(all, func(i, j int) bool {
 		if all[i].IsOwn != all[j].IsOwn {
 			return all[i].IsOwn
@@ -99,22 +145,51 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 		return li < lj
 	})
 
-	// Pick the "recommended" DERP: the first healthy own
-	// DERP, or the first healthy public DERP if no own is
-	// healthy.
+	// Sort the VISIBLE set: primary = latency ASC (fastest
+	// first), tiebreaker = IsOwn DESC (own DERP wins on
+	// equal latency), then RegionID ASC for stable ordering
+	// across reloads. Only applied when the filter is
+	// active — the show_unavailable=1 view reads from
+	// `all` (the pre-B228-sorted full slice).
+	if !showUnavailable {
+		sort.SliceStable(visible, func(i, j int) bool {
+			li, lj := visible[i].LatencyMs, visible[j].LatencyMs
+			if li != lj {
+				return li < lj
+			}
+			if visible[i].IsOwn != visible[j].IsOwn {
+				return visible[i].IsOwn
+			}
+			return visible[i].RegionID < visible[j].RegionID
+		})
+	}
+
+	// Pick the "recommended" DERP from the FULL set (so the
+	// recommended banner survives even when the filtered view
+	// is empty — operator still sees "here's the best, but
+	// it's currently degraded"). First healthy+probed, own
+	// first (the pre-B228 behaviour).
 	var recommendedID int
 	for _, r := range all {
 		if r.Healthy && r.LatencyMs > 0 {
-			recommendedID = r.RegionID
-			break
+			if r.IsOwn {
+				recommendedID = r.RegionID
+				break
+			}
+			if recommendedID == 0 {
+				recommendedID = r.RegionID
+			}
 		}
 	}
 
 	s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", c,
 		map[string]any{
-			"DERPs":        all,
-			"Recommended":  recommendedID,
-			"Refreshed":    time.Now().UTC(),
+			"DERPs":            visible,
+			"TotalCount":       totalCount,
+			"VisibleCount":     len(visible),
+			"ShowUnavailable":  showUnavailable,
+			"Recommended":      recommendedID,
+			"Refreshed":        time.Now().UTC(),
 		})
 }
 

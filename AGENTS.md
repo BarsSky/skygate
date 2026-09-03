@@ -4109,6 +4109,66 @@ in the same commit. Don't let the tracker drift.
     "inform me" ask), and editing the headscale
     policy to whitelist `tag:dev-skyadmin-*`
     (operator config, not skygate code).
+  - **B228 (v1.5.2+, 2026-09-03) — DERP dashboard
+    "hide unavailable" filter**. Closes the operator's
+    2026-09-03 report: `/admin/derp/dashboard` showed
+    28+ rows of "degraded, —" (Tailscale's 28 public
+    regions, all degraded from the agent VM because
+    they're 150-300 ms away and the headscale server
+    isn't routing through them) which buried the one
+    actually-healthy own DERP (controlplane.tailscale.com,
+    99 ms) and made the page useless. Pre-B228 the
+    only sort was own-first + latency, no filter.
+    **B228 adds**:
+    1. Query param `?show_unavailable=0|1` (default 0 =
+       filter ON = show only healthy). The toggle is a
+       GET so the URL is bookmarkable + the checkbox
+       uses `onchange="this.form.submit()"` for
+       click-to-toggle UX.
+    2. Filter: drop rows where `!Healthy || LatencyMs==0`.
+       The `LatencyMs==0` guard is "probe actually ran
+       and returned a real number" (rows with
+       LatencyMs=0 are "probe failed" or "probe never
+       ran" — same thing for the operator).
+    3. Re-sort the FILTERED set: primary
+       `LatencyMs ASC`, tiebreaker `IsOwn DESC` (own
+       wins on equal latency), then `RegionID ASC` for
+       stable ordering. The pre-B228 sort (own-first +
+       latency) is preserved on the FULL slice so the
+       `?show_unavailable=1` view is byte-identical
+       to the pre-B228 page.
+    4. UI: checkbox "Показать недоступные" + counter
+       "Показано X из Y DERP" so the operator sees
+       when the filter is hiding rows. Empty state
+       when all DERP are filtered out: a one-click
+       "Показать все" link that toggles
+       `?show_unavailable=1`.
+    5. The "Recommended DERP" banner is computed from
+       the FULL set (not the filtered view) so it
+       survives an "all degraded" filter (operator
+       still sees "here's the best, but it's
+       currently degraded").
+    **Surface**:
+    - `internal/feature/admin/derp_dashboard.go`:
+      filter block after the `all` scan, secondary
+      sort on the filtered `visible` slice, render
+      map gains `TotalCount` + `VisibleCount` +
+      `ShowUnavailable` fields.
+    - `internal/handlers/templates/admin/derp_dashboard.html`:
+      filter form (GET, checkbox, auto-submit) +
+      shown-of-total counter + all-degraded empty
+      state with one-click Show All link.
+    - `internal/i18n/catalog_admin.go`: 4 new keys
+      (`show_unavailable`, `show_all`,
+      `shown_of_total`, `all_degraded`).
+    **Tests**: 8 B-check contracts in
+    `scripts/check_b228.sh` (handler reads query
+    param + filter logic + filtered sort + pre-B228
+    sort preserved + template form/counter/empty
+    state + 4 i18n keys + build). The handler is
+    pure-template-render, no DB mock needed; the
+    contracts are static greps that pin the wire
+    shape.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't
