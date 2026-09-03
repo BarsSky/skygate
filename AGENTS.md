@@ -4536,6 +4536,92 @@ in the same commit. Don't let the tracker drift.
     chain and convert them to explicit DROP+CREATE
     pairs. For now B232 is narrowly scoped to the
     specific symptom the operator reported.
+  - **B233 (v1.5.2+, 2026-09-04) — source-level
+    migration audit that catches the B232-class
+    shape-drift bug at unit-test time**. Closes the
+    test-coverage gap that let V056's silent
+    `CREATE UNIQUE INDEX IF NOT EXISTS` no-op stay
+    on production for 3+ weeks (between V056 deploy
+    2026-08-17 and the operator's "db error on
+    /my/exit-rules" report on 2026-09-03). The
+    pre-B233 framework-state test
+    (`TestPGMigrations_OrderedByVersion`) only
+    checked that V056 was REGISTERED + ORDERED; it
+    did NOT check the SHAPE of V056's CREATE
+    statement. The bug only became visible at
+    runtime. B233 ships 4 unit tests in
+    `internal/db/migrations_audit_b233_test.go`:
+    1. `TestMigrations_ShapeDriftAudit` — the
+       main anti-pattern test. Walks the migration
+       chain in version order, maintaining a
+       running "seen" set of index names. For each
+       `CREATE INDEX IF NOT EXISTS <name>`, asserts
+       EITHER (a) `<name>` is new (first-time
+       CREATE, no prior shape to drift from), OR
+       (b) there's a paired `DROP INDEX IF EXISTS
+       <name>` in the same migration, OR (c) the
+       (file, index) pair is in
+       `shapeDriftWhitelist` (one-time ack). Whitelist
+       currently has only the V056 /
+       `device_rules_natural_key_uniq` entry (the
+       original offender, fixed by V068 in B232).
+       If a future B-block adds a migration that
+       uses the V056 pattern, the test fails with
+       a clear error pointing at the offending file
+       + line.
+    2. `TestMigrations_DeviceRulesNaturalKeyIndexIsSixColumns`
+       — pins the FINAL shape of
+       `device_rules_natural_key_uniq` as 6-col
+       (with parent_domain) across the entire
+       migration chain. This is the contract that
+       `qInsertDeviceRule`'s 6-col ON CONFLICT
+       clause depends on; drift here = the B232
+       bug.
+    3. `TestMigrations_V068IsLastToCreateDeviceRulesNaturalKey`
+       — pins the version order: V068 must be the
+       LAST migration to touch the natural_key_uniq.
+       A future V069 that re-creates the index
+       with a different shape (without explicit
+       DROP + CREATE) would fail this test.
+    4. `TestShapeDriftAudit_CatchesSyntheticOffender`
+       — mutation test: constructs a synthetic
+       re-CREATE pattern and asserts the audit
+       logic catches it. If the audit ever stops
+       catching the bug, this test fails first.
+    **Source-level guard (no DB needed)**: B233
+    uses regex parsing of the migration source
+    files (no sqlite / testcontainer / docker).
+    Trade-off: catches the PATTERN, not the runtime
+    behaviour. But the B232 bug IS a pattern
+    problem (`CREATE IF NOT EXISTS` vs explicit
+    `DROP + CREATE`), so source-level catches
+    future instances. The runtime schema check is
+    deferred to B234+ (needs an embedded DB).
+    **6 B-check contracts** in
+    `scripts/check_b233.sh` (test file surface +
+    audit logic + 6-col pin + version-order pin +
+    mutation test + AGENTS + build). All pass.
+    **Out of scope** (B234+ candidates):
+    - End-to-end migration runner that creates a
+      fresh sqlite-or-Postgres DB, applies every
+      migration, and dumps the final schema. This
+      catches RUNTIME schema issues (not just
+      source-level patterns) and is the only way
+      to verify migrations don't have other
+      issues (e.g. invalid SQL syntax in some PG
+      dialect). Requires adding a sqlite driver
+      (`modernc.org/sqlite` ~5MB dep) or a
+      testcontainer-PG (CI overhead).
+    - Cross-table referential integrity test:
+      every `FOREIGN KEY` in the migration chain
+      has a corresponding `CREATE INDEX` on the
+      referencing column (PG doesn't auto-index
+      FKs).
+    - All `ALTER TABLE ... ALTER COLUMN` patterns
+      are explicit and idempotent (similar shape-
+      drift risk as CREATE INDEX).
+    These are deferred — B233 is the minimum
+    viable audit that catches the B232 bug class.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't
