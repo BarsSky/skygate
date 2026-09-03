@@ -791,6 +791,25 @@ var ruAdmin = map[string]string{
 	"cluster.node_drain_remove_btn":        "Слить и удалить",
 	"cluster.node_drain_remove_confirm":    "Перевести ноду %s в state=draining И удалить из cluster_node? Это безопасная операция 'drain + leave' (одна транзакция, обе записи в cluster_audit).",
 	"cluster.node_drain_removed":           "Нода %s слита и удалена.",
+
+	// B222 (Phase 4.2) — rolling upgrade orchestrator.
+	// The per-row "Upgrade" button on /admin/cluster +
+	// the global "Upgrade all (rolling)" button. The
+	// orchestrator marks the target state=draining,
+	// waits up to 5 min for the target's /healthz to
+	// report the new build, then rejoin (state=ready).
+	// The actual binary push is the operator's job
+	// (out-of-band via `skygate deploy push/pull` from
+	// B150); the orchestrator detects "done" by
+	// polling /healthz. Self-upgrade is refused.
+	"cluster.node_upgrade_btn":            "Обновить",
+	"cluster.node_upgrade_confirm":        "Запустить rolling upgrade для %s? Orchestrator переведёт ноду в state=draining и будет опрашивать /healthz (до 5 мин) — не забудьте залить новый бинарник на ноду!",
+	"cluster.node_upgraded":               "Нода %s обновлена (state=draining → state=ready).",
+	"cluster.upgrade_all_btn":             "Обновить все (rolling)",
+	"cluster.upgrade_all_confirm":         "Запустить rolling upgrade ВСЕХ non-self нод по очереди? Orchestrator будет ждать /healthz на каждой (до 5 мин на ноду). Self-upgrade — отдельно вручную.",
+	"cluster.upgrade_all_done":            "Rolling upgrade всех нод завершён.",
+	"cluster.upgrade_self_refused":        "Нельзя обновить self-ноду через orchestrator. Сделайте upgrade с peer-ноды, затем на этой ноде: `skygate deploy pull` + `docker restart skygate` (или `systemctl restart skygate`).",
+	"cluster.upgrade_all_help":            "Orchestrator последовательно (по одной) переводит каждую ready/failed ноду в state=draining, ждёт новый билд на её /healthz (до 5 мин), затем rejoin. Self-нода пропускается. Бинарник на ноду вы заливаете сами (B150 deploy-push/pull).",
 	"cluster.invite_generate_title":    "Сгенерировать invite",
 	"cluster.invite_generate_help":     "Создаёт запись в <code>cluster_invite</code> и возвращает подписанный sgn1-токен (HMAC-SHA256). Токен показывается один раз — скопируйте сразу. На целевой ноде запустите <code>skygate cluster join --token=&lt;...&gt;</code> (Phase 2.3).",
 	"cluster.invite_role_ph":           "роль (skygate / skygate-standby)",
@@ -1569,6 +1588,18 @@ var enAdmin = map[string]string{
 	"cluster.node_drain_remove_btn":        "Drain & Remove",
 	"cluster.node_drain_remove_confirm":    "Drain AND remove node %s? This is the safe 'drain + leave' flow — state=draining first, then DELETE, both in one transaction (two cluster_audit rows: node_drain + node_leave).",
 	"cluster.node_drain_removed":           "Node %s drained and removed.",
+
+	// B222 (Phase 4.2) — rolling upgrade orchestrator.
+	// See the RU block above for the design. The EN
+	// keys mirror the RU ones in the same order.
+	"cluster.node_upgrade_btn":            "Upgrade",
+	"cluster.node_upgrade_confirm":        "Start a rolling upgrade for %s? The orchestrator will mark the node state=draining and poll /healthz (up to 5 min) — don't forget to push the new binary to the node!",
+	"cluster.node_upgraded":               "Node %s upgraded (state=draining → state=ready).",
+	"cluster.upgrade_all_btn":             "Upgrade all (rolling)",
+	"cluster.upgrade_all_confirm":         "Start a rolling upgrade of ALL non-self nodes, one at a time? The orchestrator waits for /healthz on each (up to 5 min per node). Self-upgrade is a separate manual one-off.",
+	"cluster.upgrade_all_done":            "Rolling upgrade of all nodes complete.",
+	"cluster.upgrade_self_refused":        "Refusing to upgrade self through the orchestrator. Run the upgrade from a peer node, then on this node: `skygate deploy pull` + `docker restart skygate` (or `systemctl restart skygate`).",
+	"cluster.upgrade_all_help":            "The orchestrator iterates each ready/failed node, drains it, polls /healthz for the new build (up to 5 min), then rejoins. Self is skipped. You push the binary to each node yourself (B150 deploy-push/pull).",
 	"cluster.invite_generate_title":    "Generate invite",
 	"cluster.invite_generate_help":     "Creates a <code>cluster_invite</code> row and returns a signed sgn1 token (HMAC-SHA256). The token is shown once — copy it immediately. On the target node run <code>skygate cluster join --token=&lt;...&gt;</code> (Phase 2.3).",
 	"cluster.invite_role_ph":           "role (skygate / skygate-standby)",

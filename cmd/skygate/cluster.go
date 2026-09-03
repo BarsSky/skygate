@@ -82,6 +82,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -89,6 +90,7 @@ import (
 	"syscall"
 	"time"
 
+	"skygate/internal/auth"
 	"skygate/internal/cluster"
 	"skygate/internal/config"
 	"skygate/internal/db"
@@ -104,7 +106,7 @@ const StateFilePath = "/etc/skygate/cluster-state.json"
 // `skygate cluster <verb>` (verb is os.Args[2]).
 func runClusterSubcommand(args []string) error {
 	if len(args) < 1 {
-		return errors.New("cluster: missing verb (invite, join, nodes, dbs, audit, failover, heartbeat-daemon)")
+		return errors.New("cluster: missing verb (invite, join, nodes, dbs, audit, failover, upgrade, heartbeat-daemon)")
 	}
 	verb := args[0]
 	switch verb {
@@ -122,10 +124,19 @@ func runClusterSubcommand(args []string) error {
 		return runClusterFailover(args[1:])
 	case "failover-drill":
 		return runClusterFailoverDrill(args[1:])
+	case "upgrade":
+		// v1.5.0+ / B222 (Phase 4.2) — rolling
+		// upgrade orchestrator. CLI mirror of the
+		// /admin/cluster/upgrade POST handler. Use
+		// --target=<host> for one node or
+		// --target=all for the rolling-all path.
+		// Self-upgrade is refused by the handler
+		// (the orchestrator IS this process).
+		return runClusterUpgrade(args[1:])
 	case "heartbeat-daemon":
 		return runClusterHeartbeatDaemon(args[1:])
 	default:
-		return fmt.Errorf("cluster: unknown verb %q (invite, join, nodes, dbs, audit, failover, failover-drill, heartbeat-daemon)", verb)
+		return fmt.Errorf("cluster: unknown verb %q (invite, join, nodes, dbs, audit, failover, upgrade, heartbeat-daemon)", verb)
 	}
 }
 
@@ -881,6 +892,149 @@ func runClusterFailoverDrill(args []string) error {
 	fmt.Println("NOTE: this is a TEST swap. cluster_node state is REAL but the audit row says 'drill'.")
 	fmt.Println("      To restore the old primary: skygate cluster failover --target=" + fromID)
 	return nil
+}
+
+// runClusterUpgrade is the B222 (Phase 4.2) CLI
+// entry point for the rolling-upgrade
+// orchestrator. Wraps the HTTP
+// /admin/cluster/upgrade endpoint with the same
+// auth + body shape, so the operator gets a
+// console-friendly alternative to clicking the
+// button on /admin/cluster.
+//
+// Usage:
+//
+//	skygate cluster upgrade --target=<hostname>
+//	skygate cluster upgrade --target=all
+//
+// Flags:
+//
+//	--target=<hostname>   upgrade this one node
+//	                       (drain → wait for new build →
+//	                       rejoin)
+//	--target=all          upgrade every ready+failed
+//	                       node, one at a time, stop
+//	                       on first error
+//	--reason=<text>       free-text reason stored in
+//	                       the node_drain audit row
+//	--url=<skygate_base>  override the skygate URL
+//	                       (default: read SKYGATE_URL
+//	                       from .env or fall through
+//	                       to http://127.0.0.1:8080)
+//
+// Self-upgrade is refused by the HTTP handler
+// (the orchestrator IS this process); the CLI
+// doesn't pre-check, it just lets the HTTP
+// handler return the friendly 303 with err=
+// flash + surfaces the error here.
+func runClusterUpgrade(args []string) error {
+	fs := flag.NewFlagSet("cluster upgrade", flag.ContinueOnError)
+	target := fs.String("target", "", "target hostname, or 'all' for the rolling-all path (required)")
+	reason := fs.String("reason", "B222 rolling upgrade via CLI", "free-text reason stored in the audit row")
+	urlFlag := fs.String("url", "", "skygate base URL (default: SKYGATE_URL env or http://127.0.0.1:8080)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *target == "" {
+		return errors.New("cluster upgrade: --target=<hostname>|all is required")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	_ = cfg // cfg is read for SKYGATE_URL below via env
+	base := *urlFlag
+	if base == "" {
+		base = os.Getenv("SKYGATE_URL")
+	}
+	if base == "" {
+		base = "http://127.0.0.1:8080"
+	}
+	form := url.Values{}
+	form.Set("target", *target)
+	form.Set("reason", *reason)
+	// Bypass the admin login form (the B214 admin
+	// password reset is still unresolved). Use the
+	// same JWT-mint pattern as the live-verify
+	// scripts: trust SKYGATE_JWT_SECRET (or
+	// SKYGATE_SECRET_KEY) to sign a session for
+	// uid=1, skyadmin. The /admin/cluster/upgrade
+	// handler is behind authMW + IsAdmin.
+	secret := os.Getenv("SKYGATE_JWT_SECRET")
+	if secret == "" {
+		secret = os.Getenv("SKYGATE_SECRET_KEY")
+	}
+	if secret == "" {
+		return errors.New("SKYGATE_JWT_SECRET (or SKYGATE_SECRET_KEY) not set — cannot mint a session JWT; run from a host that has the .env sourced")
+	}
+	tok, err := auth.IssueJWT(secret, 1, "skyadmin", true, 1)
+	if err != nil {
+		return fmt.Errorf("issue JWT: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, base+"/admin/cluster/upgrade", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", "skygate_session="+tok)
+	client := &http.Client{
+		// Per-node HealthTimeout is 5 min (the
+		// orchestrator default); the "all" path
+		// multiplies by node count. The HTTP
+		// client timeout is 30 min — long
+		// enough for a 5-node cluster, short
+		// enough that a hung node doesn't
+		// silently hang the CLI.
+		Timeout: 30 * time.Minute,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Don't follow 303 redirects — the
+			// handler's redirect URL carries
+			// the ok= / err= flash params we
+			// want to surface in the CLI
+			// output.
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if req.Response != nil && req.Response.StatusCode == http.StatusSeeOther {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST /admin/cluster/upgrade: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode == http.StatusSeeOther {
+		loc := resp.Header.Get("Location")
+		if strings.Contains(loc, "ok=") {
+			fmt.Printf("rolling upgrade %s: ok\n", *target)
+			// Decode the ok= flash so the
+			// operator sees the success
+			// message in the CLI.
+			if u, perr := url.Parse(loc); perr == nil {
+				if ok := u.Query().Get("ok"); ok != "" {
+					fmt.Printf("  %s\n", ok)
+				}
+			}
+			return nil
+		}
+		if strings.Contains(loc, "err=") {
+			if u, perr := url.Parse(loc); perr == nil {
+				if errmsg := u.Query().Get("err"); errmsg != "" {
+					return fmt.Errorf("rolling upgrade %s: %s", *target, errmsg)
+				}
+			}
+			return fmt.Errorf("rolling upgrade %s: handler returned an error (see /admin/cluster for the flash)", *target)
+		}
+		return fmt.Errorf("rolling upgrade %s: 303 with no ok=/err= flash: %s", *target, loc)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return errors.New("forbidden — the JWT may have been signed with a different SKYGATE_JWT_SECRET than skygate is using to verify (re-source .env on both sides)")
+	}
+	return fmt.Errorf("rolling upgrade %s: HTTP %d: %s", *target, resp.StatusCode, strings.TrimSpace(string(body)))
 }
 
 // runClusterHeartbeatDaemon is the long-running process

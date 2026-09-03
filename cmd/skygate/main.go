@@ -1516,6 +1516,15 @@ func main() {
 	mux.Handle("POST /admin/cluster/invite/generate", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteGenerate)))
 	mux.Handle("POST /admin/cluster/invite/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteRevoke)))
 
+	// v1.5.0+ / B222 (Phase 4.2) — rolling upgrade
+	// orchestrator. POST /admin/cluster/upgrade with
+	// target=<hostname> upgrades that one node;
+	// target=all iterates every ready+failed node
+	// in cluster_node (skipping the self row).
+	// See internal/cluster/upgrade.go for the
+	// state machine + the self-upgrade guard.
+	mux.Handle("POST /admin/cluster/upgrade", authMW(http.HandlerFunc(adminSvc.PostAdminClusterUpgrade)))
+
 	// v1.5.0+ / B201 — cluster join + heartbeat API. No
 	// authMW — the sgn1 token is the auth (the new node
 	// doesn't have a skygate session cookie yet, and

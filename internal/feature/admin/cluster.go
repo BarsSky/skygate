@@ -821,6 +821,101 @@ func (s *Service) PostAdminClusterNodeApprove(w http.ResponseWriter, r *http.Req
 	clusterRedirect(w, r, "Approved "+hostname+".", "")
 }
 
+// ---------- POST /admin/cluster/upgrade (B222) ---------------------
+//
+// PostAdminClusterUpgrade is the B222 (Phase 4.2)
+// rolling-upgrade entry point. Two modes via the
+// `target` form field:
+//
+//   - target=<hostname>: upgrade that ONE node
+//     (drain → wait for /healthz to report the new
+//     build → rejoin).
+//   - target=all: iterate every ready+failed node
+//     (B222's "rolling all" mode), upgrading one
+//     at a time, stopping on first error.
+//
+// Both modes use cluster.UpgradeOrchestrator
+// (internal/cluster/upgrade.go). The handler
+// itself is synchronous — the per-node /healthz
+// poll can take up to 5 minutes (the orchestrator's
+// default HealthTimeout), and the "all" mode
+// multiplies that by the number of nodes. The
+// future B222.1 will add an async run + SSE
+// progress stream; for v1 the operator gets a
+// 303 to /admin/cluster on success, an error
+// flash on failure.
+//
+// B221: the handler writes a
+// `cluster.upgrade.fail` audit row via the
+// orchestrator on the failure path (B222
+// writes the success transitions to
+// cluster_audit via DrainNode + RejoinNode —
+// the B215 /admin/ha filter surfaces those).
+//
+// Self-upgrade guard: refuses to upgrade the
+// orchestrating node. The orchestrator IS
+// skygate, and the upgrade process restarts
+// skygate. The check matches s.SelfHostname
+// (the same value /admin/ha uses for its
+// "self row" guards). On the "all" mode the
+// orchestrator's own node is SKIPPED (not an
+// error) — the "self" upgrade is a separate
+// manual one-off (operator pushes the binary
+// via the B150 S3 flow + restart).
+func (s *Service) PostAdminClusterUpgrade(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := "skygate-staging"
+	target := strings.TrimSpace(r.FormValue("target"))
+	if target == "" {
+		clusterRedirect(w, r, "", "target is required (use a hostname or 'all')")
+		return
+	}
+	reason := strings.TrimSpace(r.FormValue("reason"))
+
+	// Self-upgrade guard for the per-node mode.
+	// The "all" mode skips self (handled by the
+	// orchestrator's UpgradeAll), but for the
+	// per-node mode the operator might type
+	// their own hostname by mistake — refuse
+	// with a clear message instead of starting
+	// the upgrade.
+	if target != "all" && target == s.SelfHostname {
+		clusterRedirect(w, r, "", "refusing to upgrade self ("+s.SelfHostname+") — run the upgrade from a peer node, then ssh here and run `skygate deploy pull` + restart manually")
+		return
+	}
+
+	// Build the orchestrator with the live build
+	// string (so waitForBuild can match it). The
+	// 5-min HealthTimeout + 2-s poll interval
+	// match the defaults documented on the struct.
+	orch := cluster.NewUpgradeOrchestrator(s.BuildVersion)
+	if err := r.Context().Err(); err != nil {
+		clusterRedirect(w, r, "", "context cancelled before upgrade started: "+err.Error())
+		return
+	}
+	if target == "all" {
+		if err := orch.UpgradeAll(r.Context(), s.dbc(), clusterID, c.Username, reason); err != nil {
+			clusterRedirect(w, r, "", "upgrade all: "+err.Error())
+			return
+		}
+		clusterRedirect(w, r, "Upgrade all (rolling) complete.", "")
+		return
+	}
+	if err := orch.UpgradeNode(r.Context(), s.dbc(), clusterID, target, c.Username, reason); err != nil {
+		clusterRedirect(w, r, "", "upgrade "+target+": "+err.Error())
+		return
+	}
+	clusterRedirect(w, r, "Upgrade complete for "+target+".", "")
+}
+
 // ---------- POST /admin/cluster/invite/generate (B200) ----------------
 
 // PostAdminClusterInviteGenerate creates a new cluster_invite

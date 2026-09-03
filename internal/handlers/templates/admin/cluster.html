@@ -132,11 +132,16 @@
                 - state=ready or state=failed → show
                   "Drain" (Phase 2.2.4 step 1) +
                   "Drain & Remove" (Phase 2.2.4 combo)
+                  + B222 "Upgrade" (Phase 4.2 rolling
+                  upgrade orchestrator)
                 - state=draining → show "Remove" (the
                   original force-delete; the row is
                   already in draining, drain is moot)
                 - Remove is ALWAYS available as a
                   force-delete fallback for stuck rows.
+                - Upgrade is NEVER shown on the self
+                  row (the orchestrator cannot upgrade
+                  itself — see cluster.upgrade_self_refused).
             */}}
             <div style="display:flex;gap:4px;flex-wrap:wrap">
               {{if eq .State "pending"}}
@@ -154,6 +159,18 @@
                 <input type="hidden" name="hostname" value="{{.Hostname}}">
                 <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> {{t "cluster.node_drain_remove_btn"}}</button>
               </form>
+              {{/* B222: per-node "Upgrade" button. The
+                  orchestrator drains + waits for the
+                  new build + rejoins. Self rows are
+                  already handled by the outer IsSelf
+                  guard, so the .IsSelf check here is
+                  belt-and-suspenders. */}}
+              {{if not .IsSelf}}
+              <form method="POST" action="/admin/cluster/upgrade" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_upgrade_confirm" .Hostname | js}}')">
+                <input type="hidden" name="target" value="{{.Hostname}}">
+                <button type="submit" class="btn btn-primary btn-sm" title="{{t "cluster.node_upgrade_help"}}"><i class="fa-solid fa-arrows-rotate"></i> {{t "cluster.node_upgrade_btn"}}</button>
+              </form>
+              {{end}}
               {{end}}
               {{if eq .State "draining"}}
               <form method="POST" action="/admin/cluster/node/remove" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_remove_confirm" .Hostname | js}}')">
@@ -172,6 +189,30 @@
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
       {{t "cluster.no_nodes"}}
     </div>
+  {{end}}
+
+  {{/* B222: "Upgrade all (rolling)" — one-click
+       rolling upgrade of all non-self nodes. The
+       orchestrator iterates every ready+failed
+       node (skipping self), drains each, waits
+       for /healthz to report the new build, then
+       rejoins. Per-node upgrades are also
+       available via the per-row Upgrade button
+       above. Only render the button when there's
+       at least one upgradeable non-self node. */}}
+  {{$hasUpgradeable := false}}
+  {{range .Data.Nodes}}{{if and (not .IsSelf) (or (eq .State "ready") (eq .State "failed"))}}{{$hasUpgradeable = true}}{{end}}{{end}}
+  {{if $hasUpgradeable}}
+  <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+    <form method="POST" action="/admin/cluster/upgrade" style="display:inline" onsubmit="return confirm('{{t "cluster.upgrade_all_confirm" | js}}')">
+      <input type="hidden" name="target" value="all">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-arrows-rotate"></i> {{t "cluster.upgrade_all_btn"}}</button>
+    </form>
+    <span class="muted" style="font-size:12px">
+      <i class="fa-solid fa-circle-info"></i>
+      {{t "cluster.upgrade_all_help"}}
+    </span>
+  </div>
   {{end}}
 
   {{/* Add node form (B200) */}}

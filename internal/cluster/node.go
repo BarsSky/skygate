@@ -443,6 +443,98 @@ func ApproveNode(d *sql.DB, clusterID, hostname, actor string) error {
 	return nil
 }
 
+// RejoinNode transitions a node from state=draining or
+// state=failed back to state=ready. The B222 rolling
+// upgrade orchestrator calls this after the per-node
+// upgrade (binary push + restart + healthz poll)
+// completes successfully. The pre-B222 behaviour for a
+// draining node was "operator must run `skygate init`
+// on the box again" — but that's a destructive action
+// (it tries to re-register the node in headscale + the
+// HA chain), not what the operator wants after a
+// planned rolling upgrade. The new RejoinNode is
+// NON-destructive: it only flips state + updates
+// last_seen_at; it does NOT touch headscale or the HA
+// chain. The heartbeat daemon (B201) takes care of
+// re-registering the node's heartbeats in the new
+// state.
+//
+// Allowed transitions:
+//
+//	pending  → rejected (use ApproveNode instead)
+//	draining → ready    (the post-upgrade path)
+//	failed   → ready    (the post-failover path; manual
+//	                     recovery is the same as upgrade
+//	                     from the orchestrator's POV)
+//	ready    → no-op    (idempotent; no audit row)
+//
+// `actor` is recorded in the cluster_audit row's actor
+// column. For B222 this is typically the orchestrating
+// admin's username, since RejoinNode is called from the
+// /admin/cluster/upgrade handler. A future B-block
+// could expose RejoinNode as a "Mark Ready" button on
+// /admin/cluster so the operator can manually recover
+// a failed node without going through the upgrade flow
+// — but B222 scopes it to the orchestrator path.
+func RejoinNode(d *sql.DB, clusterID, hostname, actor string) error {
+	if clusterID == "" || hostname == "" {
+		return ErrNodeNotFound
+	}
+	if actor == "" {
+		actor = "system"
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var nodeID, prevState string
+	if scanErr := tx.QueryRow(`
+		SELECT id, COALESCE(state, '')
+		  FROM cluster_node
+		 WHERE cluster_id = $1 AND hostname = $2
+		 FOR UPDATE
+	`, clusterID, hostname).Scan(&nodeID, &prevState); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			_ = tx.Rollback()
+			return ErrNodeNotFound
+		}
+		return fmt.Errorf("lookup node: %w", scanErr)
+	}
+	// Idempotent: already ready → no-op.
+	if prevState == NodeStateReady {
+		_ = tx.Rollback()
+		return nil
+	}
+	// Refuse to rejoin pending nodes — that's
+	// ApproveNode's job (it adds the initial
+	// last_seen_at + writes a node_approve audit
+	// row, which the B215 /admin/ha filter
+	// distinguishes from node_rejoin).
+	if prevState == NodeStatePending {
+		_ = tx.Rollback()
+		return fmt.Errorf("cannot rejoin node in state %q (use ApproveNode for pending nodes; RejoinNode is for draining/failed)", prevState)
+	}
+	if _, execErr := tx.Exec(`
+		UPDATE cluster_node SET state = $1, last_seen_at = NOW()
+		 WHERE id = $2
+	`, NodeStateReady, nodeID); execErr != nil {
+		return fmt.Errorf("update state: %w", execErr)
+	}
+	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeRejoin, nodeID, actor,
+		buildRejoinDetail(nodeID, hostname, prevState, actor)); auditErr != nil {
+		return fmt.Errorf("insert node_rejoin audit: %w", auditErr)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // UpsertNode inserts-or-updates the cluster_node row for
 // (clusterID, hostname). Used by the B211 `skygate init`
 // bootstrap path: on first run it creates the row in
@@ -642,6 +734,19 @@ func buildDrainDetail(fromState, roles, actor, reason, via string) string {
 func buildApproveDetail(nodeID, hostname, actor string) string {
 	return fmt.Sprintf(`{"node_id":%q,"hostname":%q,"from_state":"pending","to_state":"ready","actor":%q}`,
 		nodeID, hostname, actor)
+}
+
+// buildRejoinDetail — the audit row for RejoinNode
+// (B222). Mirrors buildApproveDetail's shape but with
+// the from_state=draining|failed dynamic (ApproveNode
+// is always from_state=pending). The to_state is
+// always "ready". The B222 orchestrator always passes
+// a draining or failed node; the test for "what
+// state was the node in" is the audit's from_state
+// field.
+func buildRejoinDetail(nodeID, hostname, fromState, actor string) string {
+	return fmt.Sprintf(`{"node_id":%q,"hostname":%q,"from_state":%q,"to_state":"ready","actor":%q}`,
+		nodeID, hostname, fromState, actor)
 }
 
 func buildDrainAndRemoveLeaveDetail(nodeID, hostname, roles, actor, reason, _ string) string {

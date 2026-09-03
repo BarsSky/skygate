@@ -128,6 +128,23 @@ const (
 	// chain. Detail: {"node_id":..., "from_state":
 	// "pending", "to_state": "ready", "actor": "..."}.
 	NodeApprove ClusterAuditAction = "node_approve"
+
+	// NodeRejoin — fired by cluster.RejoinNode (B222,
+	// Phase 4.2) when the rolling-upgrade orchestrator
+	// marks a node state=ready after the upgrade
+	// completed (the transition is draining→ready or
+	// failed→ready). The ApproveNode action covers
+	// the pending→ready transition; RejoinNode is the
+	// post-upgrade version that "this node WAS marked
+	// for removal (draining) or had a transient
+	// failure (failed), and is now back in service".
+	// Detail: {"node_id":..., "from_state": "draining"
+	// | "failed", "to_state": "ready", "actor": "..."}.
+	// Idempotent: ready→ready is a no-op (no audit
+	// row written — the B204 elector would otherwise
+	// see duplicate events on every orchestrator
+	// restart).
+	NodeRejoin ClusterAuditAction = "node_rejoin"
 )
 
 // InsertClusterAudit inserts one row into cluster_audit.

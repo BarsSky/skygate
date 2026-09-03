@@ -3371,6 +3371,130 @@ in the same commit. Don't let the tracker drift.
     string in the new `{{.Target}}` field. The
     script cleans up the inserted node row + the
     generated audit_log row at the end.
+  - **B222 (v1.5.0+, 2026-09-03) — /admin/cluster
+    Phase 4.2 rolling upgrade orchestrator
+    (drain → wait → rejoin).** Closes the
+    "operator must ssh to every node, run the
+    new binary + restart, then hand-update the
+    state on the primary" gap that was implicit
+    in the B150 single-node `skygate deploy
+    push` flow. Pre-B222, upgrading a 3-node
+    cluster meant 3 ssh sessions + 3 manual
+    restarts + 3 `UPDATE cluster_node SET
+    state='ready'` SQL statements. Post-B222:
+    (1) new `cluster.RejoinNode(d, clusterID,
+    hostname, actor)` helper in
+    `internal/cluster/node.go` that does the
+    draining/failed → ready transition (the
+    non-destructive recovery path; the
+    B217 `cluster.ApproveNode` only allows
+    pending → ready); the new `NodeRejoin`
+    `ClusterAuditAction` ("node_rejoin") shows
+    up in the B215 /admin/ha filter + the B221
+    unified audit view; (2) new
+    `internal/cluster/upgrade.go` orchestrator
+    with the 3-step state machine per node:
+    **drain** (B217 `DrainNode`, writes
+    `node_drain`) → **wait** (poll the target's
+    `/healthz` until the build string matches
+    the orchestrator's, default 5-min
+    HealthTimeout, 2-s poll interval — matching
+    the build string is critical because a
+    `/healthz` 200 OK doesn't mean the NEW
+    binary is live; it could be the OLD binary
+    if the operator pushed to the wrong path) →
+    **rejoin** (B222 `RejoinNode`, writes
+    `node_rejoin` + refreshes `last_seen_at`);
+    (3) the new `cluster.upgrade.fail` B221
+    audit row is written on the failure path
+    with `target_type="cluster_node"` +
+    `target_id=hostname` so the operator can
+    grep `/admin/audit` for "which node's
+    upgrade failed and why"; (4) the
+    self-upgrade guard refuses to upgrade the
+    orchestrating node (the upgrade process
+    restarts skygate, and the orchestrator IS
+    skygate) — the check uses `os.Hostname()`
+    and the per-node path returns
+    `ErrSelfUpgrade` (operator-readable
+    message: "run the upgrade from a peer
+    node, then ssh here and run `skygate
+    deploy pull` + restart manually"); the
+    `UpgradeAll` path SKIPS self (intentional,
+    not an error); (5) HTTP handler
+    `PostAdminClusterUpgrade` in
+    `internal/feature/admin/cluster.go` +
+    `POST /admin/cluster/upgrade` route +
+    `target=<hostname>|all` form field; (6) UI
+    on `/admin/cluster`: per-row "Upgrade"
+    button (rendered OUTSIDE the self row,
+    INSIDE the ready|failed state block) +
+    global "Upgrade all (rolling)" button
+    (only shown when at least one non-self
+    ready|failed node exists); 8 new i18n
+    keys in RU + EN
+    (`cluster.node_upgrade_btn`,
+    `_confirm`, `_upgraded`,
+    `cluster.upgrade_all_btn`,
+    `_confirm`, `_done`, `_self_refused`,
+    `_all_help`); (7) CLI: `skygate cluster
+    upgrade --target=<hostname>|all` in
+    `cmd/skygate/cluster.go` + the
+    `runClusterUpgrade` function that mints a
+    session JWT (via `auth.IssueJWT`, using
+    the same `cmd/jwt-mint` pattern from
+    B219) and POSTs the form to
+    `/admin/cluster/upgrade` with a 30-min
+    client timeout. 27 B-check contracts in
+    `scripts/check_b222.sh` (25 source-pin + 2
+    go-runtime). 9 pure-Go unit tests in
+    `internal/cluster/upgrade_b222_test.go`:
+    `TestRejoinDetailSchema` + `FailedFromState`
+    (the JSON shape, both transitions),
+    `TestCheckSelfUpgrade_{Same, Different,
+    HostnameReadFailure}Hostname` (the
+    self-upgrade guard), `TestPollOnce_{Build
+    Match, Mismatch, 5xx, ConnectionRefused}`
+    (the wait-for-build polling logic via
+    `httptest.Server`). The actual SQL
+    execution + the HTTP/CLI flow is exercised
+    by the live-verify (`scripts/b222_liveverify.sh`)
+    on the agent.
+    1 new file: `internal/cluster/upgrade.go`
+    (~400 lines: `UpgradeOrchestrator` struct +
+    `NewUpgradeOrchestrator` + `UpgradeNode` +
+    `UpgradeAll` + `checkSelfUpgrade` +
+    `waitForBuild` + `pollOnce` +
+    `appendUpgradeFailAudit` +
+    `SelfHostname` + `ErrSelfUpgrade` + the
+    `selfHostnameFn` test hook). 7 modified:
+    `internal/cluster/node.go` (+~80 lines:
+    `RejoinNode` + `buildRejoinDetail`),
+    `internal/db/cluster_audit.go` (+~20
+    lines: `NodeRejoin` constant + doc
+    comment), `internal/feature/admin/cluster.go`
+    (+~90 lines: `PostAdminClusterUpgrade`),
+    `cmd/skygate/main.go` (+~5 lines: route
+    registration), `cmd/skygate/cluster.go`
+    (+~10 lines: `upgrade` case in the
+    dispatcher + `auth` import + new
+    `runClusterUpgrade` function), the
+    `internal/handlers/templates/admin/cluster.html`
+    template (per-row "Upgrade" button +
+    global "Upgrade all" button),
+    `internal/i18n/catalog_admin.go` (8 new
+    keys in RU + EN). The B222.1 follow-up
+    will add (a) the actual binary push (ssh
+    to target + scp + restart, reusing the
+    B202.5 SSHDumpTransport) and (b) the
+    async SSE live-progress stream (reusing
+    the B194 deployrun framework's broker).
+    For v1 the operator pushes the binary
+    out-of-band (B150 `skygate deploy push` +
+    `pull`) between the drain and the
+    rejoin — the orchestrator's
+    `/healthz`-build-match poll detects when
+    the new binary is serving traffic.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
