@@ -3691,6 +3691,80 @@ in the same commit. Don't let the tracker drift.
     from repeated swaps. The migration to
     `db.DBSource` + `.Current()` is the complete
     fix.
+  - **B225 (v1.5.0+, 2026-09-03) — /admin/database
+    Phase 4.4 Telegram alerting.** Closes the
+    "operator finds out about a Patroni /switchover
+    failure only by manually checking /admin/audit"
+    gap. Pre-B225, the B219 /admin/database/failover
+    + B220 /admin/database/failover/rollback
+    handlers + the B224 backup scheduler all wrote
+    audit_log rows on failure, but no real-time
+    push to the operator's Telegram chat. The
+    operator had to grep audit_log after the fact
+    (and in practice, didn't — the B222 upgrade
+    + B220 rollback + B219 failover failures
+    silently degraded for days). Post-B225: (1)
+    `admin.Service.sendFailoverAlert(emoji, body)`
+    is the new helper that pushes a
+    `telegram.Notifier.SendAlert(text)` call on
+    every Patroni event. 4 call sites in
+    `internal/feature/admin/database.go`:
+    `PostAdminDatabaseFailover` success (✅ "PG
+    failover OK\ncandidate: X (now primary)\n
+    leader: Y (was primary)\nreason: ...\n
+    timestamp: ..."), the same handler's error
+    path (❌ "PG failover FAILED\n...\nerror: ..."),
+    `PostAdminDatabaseFailoverRollback` success (✅
+    with the original-failover context so the
+    operator sees "this rollback reversed the
+    earlier X → Y failover"), and the same
+    handler's error path (❌ with the original
+    failover context). (2) `backup.Scheduler`
+    gets a new `Notifier SchedulerAlertSink` field
+    (a local 1-method interface to avoid the
+    `internal/backup → internal/telegram →
+    internal/mesh → internal/backup` import cycle);
+    `tick()` calls `sendSchedulerAlert(❌, ...)`
+    on config-load-fail AND on RunBackup-fail.
+    (3) main.go wires `app.Notifier` (already
+    passed through `schedulerNotifierSink`) into
+    `backup.Scheduler{DB: d, Notifier: ...}`.
+    When the operator hasn't configured a Telegram
+    bot, `s.Notifier` is the no-op
+    `telegram.NoopNotifier{}` and the alert is
+    silently dropped (the audit_log row IS the
+    durable proof). 14 B-check contracts in
+    `scripts/check_b225.sh` (12 source-pin + 2
+    go-runtime). 11 pure-Go unit tests across 2
+    files: `internal/feature/admin/database_b225_test.go`
+    (6 tests for the failover/rollback alert text
+    format — `TestSendFailoverAlert_SuccessFormat`,
+    `ErrorFormat`, `RollbackSuccessFormat`,
+    `RollbackErrorFormat`, `NilNotifierIsSilent`,
+    `ExactOneAlertPerCall`) +
+    `internal/backup/scheduler_b225_test.go` (5 tests
+    for the scheduler alert — `TestSchedulerAlert_
+    {NilIsSilent, Format, ConfigLoadFailureText,
+    ExactOneAlertPerCall, NotNotifyingOnNoOp}`).
+    The "DB health degraded" alert from the plan
+    is deferred to a follow-up B-block (the B206
+    healthz sampler already exposes the degraded
+    state via `/db/health`; wiring the alert is a
+    one-method addition but out of scope for the
+    B225 chunk because the operator's primary
+    signal that "the DB is degraded" is the
+    pgxpool ping failing — which already surfaces
+    as the watchdog's "DSN change detected" log
+    + the B224 "sql: database is closed" symptom,
+    both of which are now fixed. The B225 follow-up
+    is `B225.1: DB health degraded alert (single
+    state transition log + Telegram push)`). The
+    B225.2 follow-up is the "PG health degraded →
+    automatic Patroni alert" path (the B203 watchdog
+    is the right place — it already pings the
+    current pool every 5s, so a 3-failed-pings
+    check is one if-statement + one
+    `notifier.SendAlert` call away).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the

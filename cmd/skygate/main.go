@@ -2174,7 +2174,10 @@ func main() {
 	backup.SetConfigLoader(func() (*backup.Config, error) {
 		return backup.Load(d.DB)
 	})
-	backupSched := &backup.Scheduler{DB: d}
+	backupSched := &backup.Scheduler{
+		DB:       d,
+		Notifier: schedulerNotifierSink(app.Notifier),
+	}
 	backupSched.Start(ctx)
 
 	// 2026-07-14: Этап 14 v8 — release-monitor goroutine.

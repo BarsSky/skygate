@@ -529,6 +529,13 @@ func (s *Service) PostAdminDatabaseFailover(w http.ResponseWriter, r *http.Reque
 			fmt.Sprintf("candidate=%q leader=%q reason=%q error=%q",
 				candidate, leader, reason, err.Error()),
 			"cluster_database", "skygate-staging")
+		// B225 (Phase 4.4): alert the operator via
+		// Telegram. The notifier is best-effort
+		// (NoopNotifier when no bot is configured)
+		// so a SendAlert failure is logged + ignored.
+		s.sendFailoverAlert("❌", fmt.Sprintf(
+			"PG failover FAILED\ncandidate: %s\nleader: %s\nreason: %s\nerror: %v",
+			candidate, leader, reason, err))
 		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
 		return
 	}
@@ -539,6 +546,15 @@ func (s *Service) PostAdminDatabaseFailover(w http.ResponseWriter, r *http.Reque
 		// audit failure is non-fatal; just log
 		_ = err
 	}
+	// B225: alert the operator on the SUCCESS
+	// path too — Patroni /switchover is a
+	// operator-initiated action, and the
+	// per-cluster chat (or operator chat via
+	// global_settings.telegram.chat_id) needs to
+	// know "the new primary is X as of <ts>".
+	s.sendFailoverAlert("✅", fmt.Sprintf(
+		"PG failover OK\ncandidate: %s (now primary)\nleader: %s (was primary)\nreason: %s\ntimestamp: %s",
+		candidate, leader, reason, result.SwitchoverTimestamp))
 	// B220: record the last failover state so the
 	// Rollback button on /admin/database can pre-
 	// populate the candidate field with the OLD
@@ -676,6 +692,14 @@ func (s *Service) PostAdminDatabaseFailoverRollback(w http.ResponseWriter, r *ht
 		_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "db.failover_rollback.error",
 			fmt.Sprintf("candidate=%q reason=%q error=%q", candidate, reason, err.Error()),
 			"cluster_database", "skygate-staging")
+		// B225: alert the operator on rollback failure.
+		// Patroni rollback failures are rare (the new
+		// primary rejected /switchover); when they
+		// happen, the cluster is in a partially-failed
+		// state and the operator needs to know.
+		s.sendFailoverAlert("❌", fmt.Sprintf(
+			"PG rollback FAILED\ncandidate: %s (rollback target)\noriginal failover: %s → %s\nreason: %s\nerror: %v",
+			candidate, last.New, last.Old, reason, err))
 		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
 		return
 	}
@@ -688,6 +712,10 @@ func (s *Service) PostAdminDatabaseFailoverRollback(w http.ResponseWriter, r *ht
 	if err := db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "db.failover_rollback", detail, "cluster_database", "skygate-staging"); err != nil {
 		_ = err
 	}
+	// B225: alert the operator on the success path.
+	s.sendFailoverAlert("✅", fmt.Sprintf(
+		"PG rollback OK\ncandidate: %s (now primary)\noriginal failover: %s → %s (now reversed)\nreason: %s\ntimestamp: %s",
+		candidate, last.New, last.Old, reason, result.SwitchoverTimestamp))
 	if err := db.ClearLastFailover(s.dbc()); err != nil {
 		// non-fatal — just log
 		fmt.Fprintf(os.Stderr, "db.failover_rollback: warning: could not clear last_failover state: %v (next rollback attempt will see the same state)\n", err)
@@ -792,4 +820,36 @@ func probeDB(ctx context.Context, dsn string) (bool, string) {
 		return false, "ping: " + err.Error()
 	}
 	return true, ""
+}
+
+// sendFailoverAlert is the B225 (Phase 4.4) helper that
+// pushes a Patroni failover / rollback event to the
+// operator's Telegram. The emoji + text format is
+// designed for /admin/telegram's per-cluster chat
+// binding: the operator sees "PG failover OK ..." or
+// "PG failover FAILED ..." in the same channel as
+// other skygate alerts (cluster.discovery, exit-node
+// transitions, etc).
+//
+// `s.Notifier` is a `telegram.Notifier` (a richer
+// interface than the exit-node-monitor's
+// `monitoring.NotifierSink`). When no bot is
+// configured, `s.Notifier` is the no-op
+// `telegram.NoopNotifier{}` and this call is silent.
+// Best-effort: we log + ignore any SendAlert error so
+// a transient Telegram hiccup doesn't break the
+// failover/rollback flow.
+func (s *Service) sendFailoverAlert(emoji, body string) {
+	if s.Notifier == nil {
+		return
+	}
+	text := emoji + " " + body
+	if id := s.Notifier.SendAlert(text); id == 0 {
+		// SendAlert returns 0 when the bot isn't
+		// configured (NoopNotifier). That's fine —
+		// the alert is silently dropped, but the
+		// audit_log row is still the durable
+		// record of the event.
+		return
+	}
 }

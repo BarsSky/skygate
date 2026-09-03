@@ -36,6 +36,7 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -43,6 +44,19 @@ import (
 )
 
 // Scheduler is the in-app backup tick loop. Construct
+// SchedulerAlertSink is the subset of telegram.Notifier
+// the scheduler needs. Defined here as a local
+// interface (not imported from internal/telegram)
+// to avoid the import cycle internal/backup →
+// internal/telegram → internal/mesh → internal/backup
+// (mesh commands import backup to call the
+// in-app scheduler). Production code passes a
+// *telegram.RealNotifier (which satisfies this
+// interface); tests can pass a recording fake.
+type SchedulerAlertSink interface {
+	SendAlert(text string) int64
+}
+
 // one in main and call Start.
 type Scheduler struct {
 	// DB is the live pool source (B208 pattern). The
@@ -55,6 +69,14 @@ type Scheduler struct {
 	// "sql: database is closed" (the captured pointer is
 	// stale).
 	DB db.DBSource
+	// Notifier (B225, Phase 4.4) is the operator
+	// alert sink for scheduler failures. The local
+	// SchedulerAlertSink interface (above) is
+	// structurally satisfied by *telegram.RealNotifier
+	// (which is what main.go passes). When nil (no
+	// bot configured), the alert is silently
+	// dropped.
+	Notifier SchedulerAlertSink
 }
 
 // Start launches the background loop. Returns
@@ -94,6 +116,16 @@ func (s *Scheduler) tick(ctx context.Context) {
 	cfg, err := Load(s.DB.Current())
 	if err != nil {
 		log.Printf("backup: scheduler config load failed: %v", err)
+		// B225 (Phase 4.4): alert the operator on
+		// config-load failure. This was the B224
+		// symptom that flooded the log every 30s
+		// (B203 watchdog swap closed the captured
+		// *sql.DB). Post-B224 the error is rare
+		// (DB actually unreachable, migration
+		// missing, etc), so the alert fires once
+		// per occurrence — not per tick.
+		s.sendSchedulerAlert("❌", fmt.Sprintf(
+			"backup: scheduler config load failed\nerror: %v", err))
 		return
 	}
 	if !cfg.InAppEnabled {
@@ -133,6 +165,13 @@ func (s *Scheduler) tick(ctx context.Context) {
 	res, err := RunBackup(s.DB.Current(), cfg)
 	if err != nil {
 		log.Printf("backup: scheduler run failed: %v (see DB status)", err)
+		// B225 (Phase 4.4): alert the operator on
+		// scheduled backup failure. The audit_log
+		// also gets a row (RunBackup writes one
+		// before returning), but the alert gives
+		// the operator a real-time Telegram push.
+		s.sendSchedulerAlert("❌", fmt.Sprintf(
+			"backup: scheduled run FAILED\nschedule: %q\nerror: %v", cfg.Schedule, err))
 		return
 	}
 	log.Printf("backup: scheduler run ok (archive=%s, bytes=%d, dur=%s)", res.Archive, res.Bytes, res.FinishedAt.Sub(res.StartedAt))
@@ -161,4 +200,19 @@ func isDueThisTick(s *Schedule, now time.Time) bool {
 	}
 	// We're in the right minute. Fire.
 	return true
+}
+
+// sendSchedulerAlert is the B225 (Phase 4.4) helper
+// for the backup scheduler's failure paths. Same
+// pattern as the exit-node-monitor's Notifier
+// field: best-effort, silent when no bot is
+// configured. The emoji + text format is designed
+// for the per-cluster Telegram chat (the same
+// channel that gets the B225 PG failover alerts).
+func (s *Scheduler) sendSchedulerAlert(emoji, body string) {
+	if s.Notifier == nil {
+		return
+	}
+	text := emoji + " " + body
+	_ = s.Notifier.SendAlert(text) // returns 0 if no bot
 }
