@@ -455,7 +455,7 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 	// /admin/audit page reads from. The action name
 	// "cluster.db.edit" follows the new cluster.*
 	// prefix convention.
-	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.db.edit", "dsn_template="+dsnTemplate); err != nil {
+	if err := db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.db.edit", "dsn_template="+dsnTemplate, "cluster_database", "skygate-staging"); err != nil {
 		// audit failure is non-fatal; just log
 		_ = err
 	}
@@ -525,16 +525,17 @@ func (s *Service) PostAdminDatabaseFailover(w http.ResponseWriter, r *http.Reque
 		// (operators need to see "admin tried to
 		// failover and Patroni said no" for
 		// post-mortem).
-		_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover.error",
+		_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "db.failover.error",
 			fmt.Sprintf("candidate=%q leader=%q reason=%q error=%q",
-				candidate, leader, reason, err.Error()))
+				candidate, leader, reason, err.Error()),
+			"cluster_database", "skygate-staging")
 		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
 		return
 	}
 	// Success audit row.
 	detail := fmt.Sprintf("candidate=%q leader=%q reason=%q timestamp=%q",
 		candidate, leader, reason, result.SwitchoverTimestamp)
-	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover", detail); err != nil {
+	if err := db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "db.failover", detail, "cluster_database", "skygate-staging"); err != nil {
 		// audit failure is non-fatal; just log
 		_ = err
 	}
@@ -672,8 +673,9 @@ func (s *Service) PostAdminDatabaseFailoverRollback(w http.ResponseWriter, r *ht
 	// state cleanup differ.
 	result, err := db.FailoverDB(r.Context(), patroniURL, "", candidate, reason)
 	if err != nil {
-		_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover_rollback.error",
-			fmt.Sprintf("candidate=%q reason=%q error=%q", candidate, reason, err.Error()))
+		_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "db.failover_rollback.error",
+			fmt.Sprintf("candidate=%q reason=%q error=%q", candidate, reason, err.Error()),
+			"cluster_database", "skygate-staging")
 		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
 		return
 	}
@@ -683,7 +685,7 @@ func (s *Service) PostAdminDatabaseFailoverRollback(w http.ResponseWriter, r *ht
 	// failover, which we don't track).
 	detail := fmt.Sprintf("candidate=%q reason=%q original_failover_new=%q original_failover_old=%q timestamp=%q",
 		candidate, reason, last.New, last.Old, result.SwitchoverTimestamp)
-	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover_rollback", detail); err != nil {
+	if err := db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "db.failover_rollback", detail, "cluster_database", "skygate-staging"); err != nil {
 		_ = err
 	}
 	if err := db.ClearLastFailover(s.dbc()); err != nil {

@@ -3230,6 +3230,147 @@ in the same commit. Don't let the tracker drift.
     the rollback after fixing Patroni). After the
     live-verify, the script cleans up the fake
     state.
+  - **B221 (v1.5.0+, 2026-09-03) — generic audit
+    log target_type + target_id (Phase 4.1 of
+    docs/internal/cluster-management.md).** Closes
+    the "audit_log rows have no structured target
+    column — operator must read the freeform
+    `detail` text to find out which entity was
+    changed" gap that was implicit in B207's
+    /admin/audit view. Pre-B221 the audit_log
+    table (B0-era, since v0.25) had columns
+    (id, user_id, username, action, detail,
+    ip_address, created_at) — the "target" was
+    buried in `detail` as `hostname=foo` or
+    `invite_id=abc`, inconsistent across writers
+    and not queryable. The B195 cluster_audit
+    table already has a proper target_node_id
+    column (B207 surfaces it on the unified view
+    with an orange "cluster_audit" badge), but
+    the B0 audit_log table did not — every
+    audit_log row read by /admin/audit showed
+    `target=""` because the column didn't exist
+    on that table. Post-B221: (1) V067 migration
+    `ALTER TABLE audit_log ADD COLUMN IF NOT
+    EXISTS target_type TEXT DEFAULT ''` + same
+    for target_id (idempotent — re-running on a
+    DB that already has them is a no-op; the
+    DEFAULT '' applies to pre-existing rows so
+    they show as "—" in the unified view instead
+    of crashing the new SELECT); (2) new
+    `db.AppendAuditLogWithTarget(d, userID,
+    username, action, detail, targetType,
+    targetID)` helper is the B221+ writer — the
+    legacy 5-arg `db.AppendAuditLog` still works
+    (it now calls the new one with empty
+    target) so no caller is broken; (3) all 7
+    cluster.go writers (`cluster.node.add`,
+    `cluster.node.remove`, `cluster.node.drain`,
+    `cluster.node.drain_remove`,
+    `cluster.node.approve`,
+    `cluster.invite.generate`,
+    `cluster.invite.revoke`) and all 5
+    database.go writers (`cluster.db.edit`,
+    `db.failover` + `db.failover.error`,
+    `db.failover_rollback` +
+    `db.failover_rollback.error`) are switched
+    to `AppendAuditLogWithTarget` with
+    documented conventions: `(cluster_node,
+    hostname)` / `(cluster_invite, invite_id)`
+    / `(cluster_database, "skygate-staging")`;
+    (4) the `/admin/audit` view's audit_log
+    branch now projects `target_type || ':' ||
+    target_id AS target` (for the existing
+    `{{.Target}}` template field) +
+    `target_type` + `target_id` separately (for
+    future "click-through" navigation); the
+    `AuditEntry` struct is extended with
+    `TargetType` + `TargetID`; the outer
+    wrapping SELECT projects 10 columns and
+    `rows.Scan` reads 10 — **the pre-B221
+    7-column SELECT+Scan was a latent bug** that
+    would have crashed the moment the branch
+    SELECT started projecting 9 columns
+    (Scan doesn't auto-derive arity from the
+    branch). 17 B-check contracts in
+    `scripts/check_b221.sh` (14 source-pin + 3
+    go-runtime). 6 new pure-Go unit tests in
+    `internal/db/audit_log_b221_test.go`:
+    `TestAppendAuditLogWithTarget_SQLHasSixPlaceholders`
+    (6 `$N` placeholders = 6 columns:
+    user_id, username, action, detail,
+    target_type, target_id),
+    `_SQLTargetsAuditLog` (INSERT must target
+    audit_log, not cluster_audit or audit_log_v2),
+    `_SQLProjectsTargetColumns` (INSERT must
+    include target_type + target_id in column
+    list AND VALUES list),
+    `_TargetTypeConventions` (the 8 documented
+    values: cluster_node, cluster_invite,
+    cluster_database, portal_user, device, acl,
+    telegram_binding, "" — all lowercase, no
+    whitespace, "" sentinel allowed),
+    `_StillWorks_BackwardCompat` (legacy
+    5-arg AppendAuditLog still compiles + uses
+    the old 4-column INSERT),
+    `_Signature` (the 7-arg signature's
+    parameter order is pinned so a future
+    refactor can't accidentally swap
+    `targetType` and `targetID`). 1 new file:
+    `internal/db/migrations_v0_67_b221.go`
+    (~85 lines: `migrateV067PG` with 2
+    idempotent ADD COLUMN statements + extensive
+    doc comment explaining the schema choice +
+    the backward-compat strategy + the
+    concurrency properties of ALTER TABLE on a
+    small audit_log table). 6 modified:
+    `internal/db/driver_postgres.go` (+1 line:
+    V067 entry in the migration list),
+    `internal/db/audit_log.go` (+~45 lines:
+    `qInsertAuditLogWithTarget` const +
+    `AppendAuditLogWithTarget` helper with the
+    documented conventions in the docstring),
+    `internal/db/migration_b213_test.go` (V066 →
+    V067 in `TestPGMigrations_OrderedByVersion`),
+    `internal/feature/admin/cluster.go` (~30
+    line-changes: all 7 writers switched to the
+    new helper with their entity-specific
+    target_type + target_id),
+    `internal/feature/admin/database.go`
+    (~16 line-changes: all 5 writers switched
+    with `(cluster_database, "skygate-staging")`),
+    `internal/feature/admin/admin_pages.go`
+    (+~30 lines: `AuditEntry` struct extended
+    with `TargetType` + `TargetID`, audit_log
+    branch projects the combined `target_type
+    || ':' || target_id` + the two columns
+    separately, cluster_audit branch does the
+    same with `target_node_id`, outer SELECT
+    updated from 7 → 10 columns, Scan from 7 →
+    10 columns). The migration runs
+    automatically on skygate boot (the
+    `OpenPostgres` → `MigratePostgres` flow
+    added in v0.33.1) so the operator doesn't
+    need to run anything manually; the new
+    columns are visible immediately in
+    /admin/audit and the existing template
+    `{{.Target}}` renders the new combined
+    string (`cluster_node:hostname`,
+    `cluster_invite:abc123`, etc.) without
+    template changes. Live-verify
+    (`scripts/b221_liveverify.sh`): apply the
+    V067 migration, assert the new columns
+    exist + default to '', trigger a sample
+    admin action (e.g. `PostAdminClusterNodeAdd`
+    via `cmd/jwt-mint` session JWT) and
+    assert the new audit_log row has
+    `target_type="cluster_node"` +
+    `target_id=hostname`; then SELECT the row
+    via /admin/audit and assert the rendered
+    HTML contains the combined `target_type:target_id`
+    string in the new `{{.Target}}` field. The
+    script cleans up the inserted node row + the
+    generated audit_log row at the end.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the

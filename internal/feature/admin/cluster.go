@@ -631,8 +631,9 @@ func (s *Service) PostAdminClusterNodeAdd(w http.ResponseWriter, r *http.Request
 		clusterRedirect(w, r, "", "add node: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.add",
-		fmt.Sprintf("id=%s hostname=%s roles=%v", id, hostname, roles))
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.node.add",
+		fmt.Sprintf("id=%s hostname=%s roles=%v", id, hostname, roles),
+		"cluster_node", hostname)
 	clusterRedirect(w, r, fmt.Sprintf("Added %s (id %s).", hostname, id), "")
 }
 
@@ -669,8 +670,9 @@ func (s *Service) PostAdminClusterNodeRemove(w http.ResponseWriter, r *http.Requ
 		clusterRedirect(w, r, "", "remove: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.remove",
-		"hostname="+hostname)
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.node.remove",
+		"hostname="+hostname,
+		"cluster_node", hostname)
 	clusterRedirect(w, r, "Removed "+hostname+".", "")
 }
 
@@ -715,8 +717,9 @@ func (s *Service) PostAdminClusterNodeDrain(w http.ResponseWriter, r *http.Reque
 		clusterRedirect(w, r, "", "drain: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.drain",
-		fmt.Sprintf("hostname=%s reason=%q", hostname, reason))
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.node.drain",
+		fmt.Sprintf("hostname=%s reason=%q", hostname, reason),
+		"cluster_node", hostname)
 	clusterRedirect(w, r, "Drained "+hostname+".", "")
 }
 
@@ -760,8 +763,9 @@ func (s *Service) PostAdminClusterNodeDrainRemove(w http.ResponseWriter, r *http
 		clusterRedirect(w, r, "", "drain+remove: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.drain_remove",
-		fmt.Sprintf("hostname=%s reason=%q", hostname, reason))
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.node.drain_remove",
+		fmt.Sprintf("hostname=%s reason=%q", hostname, reason),
+		"cluster_node", hostname)
 	clusterRedirect(w, r, "Drained and removed "+hostname+".", "")
 }
 
@@ -811,8 +815,9 @@ func (s *Service) PostAdminClusterNodeApprove(w http.ResponseWriter, r *http.Req
 		clusterRedirect(w, r, "", "approve: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.node.approve",
-		"hostname="+hostname)
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.node.approve",
+		"hostname="+hostname,
+		"cluster_node", hostname)
 	clusterRedirect(w, r, "Approved "+hostname+".", "")
 }
 
@@ -870,8 +875,9 @@ func (s *Service) PostAdminClusterInviteGenerate(w http.ResponseWriter, r *http.
 		clusterRedirect(w, r, "", "issue invite: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.invite.generate",
-		fmt.Sprintf("id=%s role=%s target=%s ttl_hours=%d", inviteID, role, target, ttlHours))
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.invite.generate",
+		fmt.Sprintf("id=%s role=%s target=%s ttl_hours=%d", inviteID, role, target, ttlHours),
+		"cluster_invite", inviteID)
 	// Show the token via the success flash. The token is
 	// truncated to its first 20 chars + "..." so a casual
 	// log scrape doesn't leak the full secret, while the
@@ -906,8 +912,9 @@ func (s *Service) PostAdminClusterInviteRevoke(w http.ResponseWriter, r *http.Re
 		clusterRedirect(w, r, "", "revoke: "+err.Error())
 		return
 	}
-	_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "cluster.invite.revoke",
-		"id="+inviteID)
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.invite.revoke",
+		"id="+inviteID,
+		"cluster_invite", inviteID)
 	clusterRedirect(w, r, "Invite "+inviteID+" revoked.", "")
 }
 

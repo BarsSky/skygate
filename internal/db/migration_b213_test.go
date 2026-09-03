@@ -47,12 +47,13 @@ func TestPGMigrations_OrderedByVersion(t *testing.T) {
 	if migs[0].Version != 25 {
 		t.Errorf("PGMigrations[0].Version = %d, want 25 (FK ordering)", migs[0].Version)
 	}
-	// V066 (B211) must be the last entry (or one
-	// of the last). The framework's natural state
-	// is to append new migrations at the end.
+	// V066 (B211) was the most recent migration; V067
+	// (B221) was added in B221 (Phase 4.1). The
+	// framework's natural state is to append new
+	// migrations at the end.
 	last := migs[len(migs)-1]
-	if last.Version != 66 {
-		t.Errorf("PGMigrations[last].Version = %d, want 66 (B211 should be the most recent)", last.Version)
+	if last.Version != 67 {
+		t.Errorf("PGMigrations[last].Version = %d, want 67 (B221 should be the most recent)", last.Version)
 	}
 }
 

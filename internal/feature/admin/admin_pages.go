@@ -44,12 +44,28 @@ const (
 
 // AuditEntry is the unified row shape (the template
 // iterates over a []AuditEntry).
+//
+// B221: TargetType + TargetID are the structured
+// (type, id) pair that lets the operator click
+// through an audit row to the affected entity.
+//   - For audit_log rows: TargetType is the
+//     discriminator (e.g. "cluster_node",
+//     "cluster_invite", "cluster_database") and
+//     TargetID is the natural key (hostname,
+//     invite_id, etc.). Empty for pre-B221 rows
+//     + for legacy call sites that still use the
+//     5-arg AppendAuditLog.
+//   - For cluster_audit rows: TargetType is
+//     always "cluster_node" and TargetID is the
+//     target_node_id.
 type AuditEntry struct {
 	Source      string // "audit_log" or "cluster_audit"
 	Time        string // formatted RFC3339-ish
 	Actor       string // username (audit_log) or actor (cluster_audit)
 	Action      string
-	Target      string // target_node_id (cluster_audit only; "" for audit_log)
+	Target      string // DEPRECATED — use TargetType + TargetID. Kept for the B207 view.
+	TargetType  string // B221 — discriminator (e.g. "cluster_node", "cluster_invite", "")
+	TargetID    string // B221 — entity id (e.g. hostname, invite_id, "")
 	Detail      string // raw text (audit_log) or JSONB->text (cluster_audit)
 	Result      string // "" (audit_log) or "ok"/"error" (cluster_audit)
 	ErrorMessage string // "" (audit_log) or error_message (cluster_audit)
@@ -148,7 +164,9 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 			       to_timestamp(created_at) AS ts,
 			       username AS actor,
 			       action,
-			       ''::text AS target,
+			       target_type || ':' || target_id AS target,
+			       target_type,
+			       target_id,
 			       detail,
 			       ''::text AS result,
 			       ''::text AS error_message
@@ -161,7 +179,9 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 			       created_at AS ts,
 			       actor,
 			       action,
-			       target_node_id AS target,
+			       'cluster_node:' || target_node_id AS target,
+			       'cluster_node'::text AS target_type,
+			       target_node_id AS target_id,
 			       detail::text AS detail,
 			       result,
 			       error_message
@@ -173,7 +193,7 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := fmt.Sprintf(`
-		SELECT source, ts, actor, action, target, detail, result, error_message
+		SELECT source, ts, actor, action, target, target_type, target_id, detail, result, error_message
 		  FROM (
 		    %s
 		  ) AS u
@@ -192,7 +212,8 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 		var e AuditEntry
 		var ts time.Time
 		if err := rows.Scan(&e.Source, &ts, &e.Actor, &e.Action,
-			&e.Target, &e.Detail, &e.Result, &e.ErrorMessage); err != nil {
+			&e.Target, &e.TargetType, &e.TargetID,
+			&e.Detail, &e.Result, &e.ErrorMessage); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

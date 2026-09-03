@@ -25,6 +25,19 @@ const (
 	// needs it; AppendAuditLogNoUser is the typed wrapper.
 	qInsertAuditLogNoUser = `INSERT INTO audit_log (username, action, detail) VALUES ($1, $2, $3)`
 
+	// qInsertAuditLogWithTarget is the B221 variant. Adds two
+	// columns (target_type + target_id) to the INSERT so the
+	// /admin/audit unified view can show "what entity was
+	// changed" instead of "all audit_log rows have target=''".
+	// target_type is a discriminator (e.g. "cluster_node",
+	// "cluster_invite", "cluster_database"); target_id is the
+	// entity id (hostname, invite_id, etc.) — same shape as
+	// cluster_audit.target_node_id. Empty strings for
+	// pre-existing rows (the migration's DEFAULT '').
+	qInsertAuditLogWithTarget = `INSERT INTO audit_log
+		(user_id, username, action, detail, target_type, target_id)
+		VALUES ($1, $2, $3, $4, $5, $6)`
+
 	// qDeleteAuditLogByUserID purges a user's audit history when the
 	// portal user is deleted. Kept private to this file for the same
 	// reason.
@@ -36,8 +49,41 @@ const (
 // is best-effort from the caller's perspective — the App.audit wrapper
 // intentionally ignores the returned error so a transient DB hiccup
 // never breaks the main action (login, rule add, etc).
+//
+// B221: this is the legacy 5-arg signature. New code should use
+// AppendAuditLogWithTarget so the /admin/audit unified view can
+// show the target_type + target_id columns. The legacy path
+// passes target_type='' + target_id='' — visible in the view
+// as "—" (no target) instead of an error.
 func AppendAuditLog(d *sql.DB, userID int64, username, action, detail string) error {
 	_, err := d.Exec(qInsertAuditLog, userID, username, action, detail)
+	return err
+}
+
+// AppendAuditLogWithTarget is the B221+ signature. Adds two
+// optional columns (target_type + target_id) so the /admin/audit
+// view can join the row to the affected entity ("who
+// added/removed/drained this cluster_node?", "which
+// cluster_invite was revoked?", etc.).
+//
+// Convention for target_type values (B221):
+//
+//	"cluster_node"      — target_id = hostname
+//	"cluster_invite"    — target_id = invite_id
+//	"cluster_database"  — target_id = cluster_id
+//	"portal_user"       — target_id = username (or uid as string)
+//	"device"            — target_id = node_id (headscale node id)
+//	"acl"               — target_id = rule_id (device_rules.id)
+//	"telegram_binding"  — target_id = telegram_chat_id
+//	""                  — pre-B221 row, no structured target
+//
+// The type/id pair mirrors the cluster_audit.target_node_id
+// pattern: one freeform-text id per entity type, with a type
+// discriminator so the operator (and the future /admin/audit
+// "click-through" feature) can route the id to the right
+// entity viewer.
+func AppendAuditLogWithTarget(d *sql.DB, userID int64, username, action, detail, targetType, targetID string) error {
+	_, err := d.Exec(qInsertAuditLogWithTarget, userID, username, action, detail, targetType, targetID)
 	return err
 }
 
