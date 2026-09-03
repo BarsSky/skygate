@@ -52,11 +52,7 @@
     {{t "derp_dashboard.show_unavailable"}}
   </label>
   <span class="form-hint" style="color: var(--text-muted); font-size: 0.85em">
-    {{if .ShowUnavailable}}
-      {{tf "derp_dashboard.shown_of_total" .VisibleCount .TotalCount}}
-    {{else}}
-      {{tf "derp_dashboard.shown_of_total" .VisibleCount .TotalCount}}
-    {{end}}
+    {{tf "derp_dashboard.shown_of_total" .VisibleCount .TotalCount | safeHTML}}
   </span>
 </form>
 
