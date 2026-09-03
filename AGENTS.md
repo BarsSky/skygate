@@ -3602,6 +3602,95 @@ in the same commit. Don't let the tracker drift.
     `tailscale status --json` source + the
     5-min ticker + the per-tick audit rows are
     sufficient.
+  - **B224 (v1.5.0+, 2026-09-03) — stabilize
+    background services by migrating from captured
+    `*sql.DB` to `db.DBSource` (the ResettableDB
+    wrapper).** Closes the "sql: database is closed"
+    cascade that flooded skygate logs (~50 errors per
+    minute) and silently dropped the login audit row
+    since B203 introduced the watchdog hot-reload.
+    Pre-B224, every background service
+    (`monitoring.ExitNodeMonitor`,
+    `backup.Scheduler`, `nodeownership.AutoBackfill`,
+    the B77 autoupdater's `db.GetGlobalSetting` read,
+    and `handlers.App.audit`'s `db.AppendAuditLog`)
+    captured `*sql.DB` at boot. The B203 watchdog's
+    first pool swap closed the captured pool, and
+    every subsequent tick got `sql: database is
+    closed` forever (the captured pointer is now
+    stale). The login handler at `/login` was the
+    most user-visible symptom: the bcrypt check
+    passed, the JWT cookie was set, the 302 to
+    `/dashboard` happened — but the
+    `db.AppendAuditLog(a.DB, ...)` call inside
+    `PostLogin` used the stale `a.DB`, so the
+    `login_ok` audit row was silently dropped.
+    Operators saw "the login worked" but `/admin/audit`
+    showed no row, and the watchdog log was
+    spammed. Post-B224: (1) `App.DB` field type
+    changed from `*sql.DB` to `*db.ResettableDB`; the
+    wrapper's promoted methods (and the explicit
+    `.Current()` call) read the embedded `*sql.DB`
+    at call time, so every write goes to the live
+    pool. (2) `monitoring.ExitNodeMonitor.DB`,
+    `backup.Scheduler.DB`, and
+    `nodeownership.AutoBackfill` / `Backfill` /
+    `BackfillInfra` parameters all changed from
+    `*sql.DB` to the `db.DBSource` interface
+    (which the `*ResettableDB` wrapper satisfies);
+    internal calls use `m.DB.Current()` to get the
+    live pool. (3) `handlers.New` signature changed
+    to `New(d *db.ResettableDB, ...)` — the call
+    site in `cmd/skygate/main.go` now passes `d`
+    (not `d.DB`). (4) `handlers.App.InfraAuditIdentity`
+    migrated its `a.DB.QueryRow` to
+    `a.DB.Current().QueryRow`. 14 B-check contracts
+    in `scripts/check_b224.sh` (12 source-pin + 2
+    go-runtime). 4 pure-Go unit tests in
+    `internal/db/resettable_b224_test.go`:
+    `TestResettableDB_SatisfiesDBSource` (compile-
+    time interface check),
+    `TestResettableDB_FollowsSwapViaCurrent` (the
+    load-bearing test — captured `*ResettableDB` +
+    `.Current()` returns the new pool after a
+    `Reset`),
+    `TestResettableDB_CapturedSQLDB_DoesNotFollowSwap`
+    (the regression guard — a captured `*sql.DB`
+    stays stale, proving the B224 anti-pattern was
+    real and the migration was the right fix),
+    `TestResettableDB_PromotedMethodsFollowSwap`
+    (the promoted-method shortcut also works). 1
+    new file:
+    `internal/db/resettable_b224_test.go` (~210
+    lines). 6 modified:
+    `internal/handlers/handlers.go` (App.DB field
+    type + 7 internal call sites that now use
+    `.Current()`),
+    `internal/handlers/handlers_export.go`
+    (`InfraAuditIdentity` migrated + `database/sql`
+    import retained for `sql.NullInt64`),
+    `internal/backup/scheduler.go` (Scheduler.DB
+    type + 2 internal calls),
+    `internal/monitoring/exit_node_monitor.go`
+    (ExitNodeMonitor.DB type + ~7 internal calls +
+    the test file uses `db.NewResettableDB(d)` to
+    wrap the test's `*sql.DB`),
+    `internal/nodeownership/auto.go` + `nodeownership.go`
+    (3 function signatures changed to `db.DBSource` +
+    internal calls use `.Current()`),
+    `cmd/skygate/main.go` (4 call sites changed to
+    pass `d` instead of `d.DB`). The watchdog
+    DSN-comparison normalization that was
+    originally also proposed in this B-block was
+    not needed — the watchdog is NOT swapping
+    repeatedly (the recent log shows just one
+    swap per container start, the one in the first
+    tick when `currentDSN` is empty); the
+    "sql: database is closed" errors were entirely
+    from the captured-`*sql.DB` anti-pattern, not
+    from repeated swaps. The migration to
+    `db.DBSource` + `.Current()` is the complete
+    fix.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the

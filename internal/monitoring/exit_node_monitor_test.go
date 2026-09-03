@@ -96,7 +96,7 @@ func newMonitor(t *testing.T, hs HeadscaleClient, sink NotifierSink) (*ExitNodeM
 	t.Helper()
 	d := db.OpenForTest(t) // see helpers below
 	return &ExitNodeMonitor{
-		DB:           d,
+		DB:           db.NewResettableDB(d),
 		HS:           hs,
 		Notifier:     sink,
 		OfflineAfter: 2 * time.Minute,
@@ -270,7 +270,7 @@ func TestTick_AllOnline_NoTransitions(t *testing.T) {
 			Tags: []string{"tag:exit-node"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
 	if err := m.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -300,7 +300,7 @@ func TestTick_TransitionOnlineToOffline_FiresAlert(t *testing.T) {
 			Tags: []string{"tag:exit-node"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
 	// First tick: seed the snapshot.
 	if err := m.tick(context.Background()); err != nil {
@@ -345,7 +345,7 @@ func TestTick_RecoveryOfflineToOnline_FiresAlert(t *testing.T) {
 			Tags: []string{"tag:exit-node"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
 	// First tick: relay-1 already offline → no transition
 	// recorded (we don't alert on the first observation,
@@ -391,7 +391,7 @@ func TestTick_DegradedTransition_RecordedButNotAlerted(t *testing.T) {
 			Tags: []string{"tag:exit-node"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 	if err := m.tick(context.Background()); err != nil {
 		t.Fatalf("seed tick: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestTick_Dedup_DoesNotReAlertSameState(t *testing.T) {
 			Tags: []string{"tag:exit-node"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
 	// Tick 1: online.
 	if err := m.tick(context.Background()); err != nil {
@@ -479,7 +479,7 @@ func TestTick_GarbageCollectsStaleNodes(t *testing.T) {
 			Tags: []string{"tag:exit-node"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
 	// Tick 1: relay-1 present.
 	if err := m.tick(context.Background()); err != nil {
@@ -590,7 +590,7 @@ func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
 			Tags: []string{"tag:exit-node", "tag:public"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink,
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink,
 		OfflineAfter: 2 * time.Minute, AutoSync: true}
 
 	if err := m.tick(context.Background()); err != nil {
@@ -644,7 +644,7 @@ func TestTick_AutoSyncDisabled_DoesNotWriteNodeOwnerMap(t *testing.T) {
 			Tags: []string{"tag:exit-node", "tag:public"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink,
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink,
 		OfflineAfter: 2 * time.Minute, AutoSync: false} // explicit off
 
 	if err := m.tick(context.Background()); err != nil {
@@ -689,7 +689,7 @@ func TestTick_AutoSyncError_DoesNotAbortHealthCheck(t *testing.T) {
 			Tags: []string{"tag:exit-node", "tag:public"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
 	}}
-	m := &ExitNodeMonitor{DB: d, HS: hs, Notifier: sink,
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink,
 		OfflineAfter: 2 * time.Minute, AutoSync: true}
 
 	// Close the DB BEFORE tick so every subsequent write

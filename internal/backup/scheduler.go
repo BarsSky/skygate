@@ -36,15 +36,25 @@ package backup
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // Scheduler is the in-app backup tick loop. Construct
 // one in main and call Start.
 type Scheduler struct {
-	DB *sql.DB
+	// DB is the live pool source (B208 pattern). The
+	// ResettableDB wrapper from internal/db (B203) is
+	// the canonical implementation — the Scheduler
+	// transparently follows the B203 hot-reload via
+	// .Current() per tick. Pre-B224 this was a captured
+	// *sql.DB; the first B203 pool swap closed the
+	// captured pool and every tick thereafter got
+	// "sql: database is closed" (the captured pointer is
+	// stale).
+	DB db.DBSource
 }
 
 // Start launches the background loop. Returns
@@ -81,7 +91,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 // scheduler is a background task and there's no caller
 // to surface the error to.
 func (s *Scheduler) tick(ctx context.Context) {
-	cfg, err := Load(s.DB)
+	cfg, err := Load(s.DB.Current())
 	if err != nil {
 		log.Printf("backup: scheduler config load failed: %v", err)
 		return
@@ -120,7 +130,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		return
 	}
 	log.Printf("backup: scheduler firing (schedule=%q, now=%s, next=%s)", cfg.Schedule, now.Format(time.RFC3339), next.Format(time.RFC3339))
-	res, err := RunBackup(s.DB, cfg)
+	res, err := RunBackup(s.DB.Current(), cfg)
 	if err != nil {
 		log.Printf("backup: scheduler run failed: %v (see DB status)", err)
 		return

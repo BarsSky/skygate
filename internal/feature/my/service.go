@@ -35,11 +35,11 @@
 package my
 
 import (
-	"database/sql"
 	"net/http"
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
 	"skygate/internal/telegram"
@@ -105,5 +105,5 @@ type Service struct {
 	Cfg                    *config.Config
 	I18n                   *i18n.Catalog
 	Notifier                telegram.Notifier
-	BackfillNodeOwnership  func(d *sql.DB, nodes []headscale.NodeView, userID int64, username string)
+	BackfillNodeOwnership  func(d db.DBSource, nodes []headscale.NodeView, userID int64, username string)
 }

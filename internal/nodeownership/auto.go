@@ -105,13 +105,13 @@ type nodeLister interface {
 // fires on schedule. This matches the existing
 // autoupdater / exit-node-monitor pattern (transient
 // errors are non-fatal, the loop keeps going).
-func AutoBackfill(ctx context.Context, dbConn *sql.DB, hs nodeLister, interval time.Duration) {
+func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, interval time.Duration) {
 	if interval <= 0 {
 		log.Printf("node-discovery: SKYGATE_NODE_DISCOVERY_INTERVAL=%v, skipping autoupdater goroutine", interval)
 		return
 	}
 	if dbConn == nil {
-		log.Printf("node-discovery: nil *sql.DB, skipping autoupdater goroutine (defensive guard)")
+		log.Printf("node-discovery: nil *db.ResettableDB, skipping autoupdater goroutine (defensive guard)")
 		return
 	}
 	if hs == nil {
@@ -151,7 +151,7 @@ func AutoBackfill(ctx context.Context, dbConn *sql.DB, hs nodeLister, interval t
 // logged and the loop continues. The intent is
 // availability: a transient headscale API hiccup or DB
 // error should not block subsequent ticks.
-func runOneTick(ctx context.Context, dbConn *sql.DB, hs nodeLister) {
+func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister) {
 	// Invalidate the headscale node cache before
 	// ListAllNodes so we get fresh data — otherwise we'd
 	// read stale node lists for `interval` minutes after
@@ -163,7 +163,7 @@ func runOneTick(ctx context.Context, dbConn *sql.DB, hs nodeLister) {
 		log.Printf("node-discovery: ListAllNodes failed: %v (skipping tick)", err)
 		return
 	}
-	users, err := db.GetAllPortalUsers(dbConn)
+	users, err := db.GetAllPortalUsers(dbConn.Current())
 	if err != nil {
 		log.Printf("node-discovery: GetAllPortalUsers failed: %v (skipping tick)", err)
 		return
@@ -242,7 +242,7 @@ func runOneTick(ctx context.Context, dbConn *sql.DB, hs nodeLister) {
 // On error: returns the first error and stops. The
 // caller (runOneTick) is fire-and-forget so a
 // failure here just means the next tick will retry.
-func BackfillInfra(dbConn *sql.DB, nodes []headscale.NodeView) {
+func BackfillInfra(dbConn db.DBSource, nodes []headscale.NodeView) {
 	// Look up the 'infra' portal user's id + headscale
 	// user id. If the row is missing (V054 didn't run
 	// yet, e.g. fresh DB before migration), bail
@@ -253,7 +253,7 @@ func BackfillInfra(dbConn *sql.DB, nodes []headscale.NodeView) {
 	// would be useless.
 	var infraPortalID sql.NullInt64
 	var infraHSID sql.NullInt64
-	if err := dbConn.QueryRow(
+	if err := dbConn.Current().QueryRow(
 		`SELECT id, headscale_user_id FROM portal_users WHERE username = 'infra'`,
 	).Scan(&infraPortalID, &infraHSID); err != nil {
 		if err == sql.ErrNoRows {
@@ -311,7 +311,7 @@ func BackfillInfra(dbConn *sql.DB, nodes []headscale.NodeView) {
 		// `tag:dev-skyadmin-emilia`). The grants become
 		// live the moment the operator re-tags the node.
 		newTag := "tag:dev-infra-" + n.Hostname
-		res, err := dbConn.Exec(
+		res, err := dbConn.Current().Exec(
 			`UPDATE node_owner_map
 			    SET username = 'infra',
 			        headscale_user_id = $1,
@@ -343,7 +343,7 @@ func BackfillInfra(dbConn *sql.DB, nodes []headscale.NodeView) {
 		// existing row (idempotent) and adds the new row
 		// when missing.
 		_ = db.InsertIgnoreNodeOwnerWithHostname(
-			dbConn, n.ID, infraHSID.Int64, "infra",
+			dbConn.Current(), n.ID, infraHSID.Int64, "infra",
 			newTag, n.Hostname, infraPortalID.Int64,
 		)
 	}

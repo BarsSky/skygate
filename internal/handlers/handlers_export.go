@@ -34,6 +34,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/nodeownership"
 )
@@ -82,7 +83,7 @@ func (a *App) InfraAuditIdentity(fallbackUID int64, fallbackUsername string) (in
 	var id sql.NullInt64
 	var hsID sql.NullInt64
 	var uname string
-	if err := a.DB.QueryRow(
+	if err := a.DB.Current().QueryRow(
 		`SELECT id, username, headscale_user_id FROM portal_users WHERE username = 'infra'`,
 	).Scan(&id, &uname, &hsID); err != nil || !id.Valid || !hsID.Valid || hsID.Int64 == 0 {
 		return fallbackUID, fallbackUsername
@@ -135,6 +136,6 @@ func (a *App) HSForUserFn(userID int64) *headscale.Client {
 // stays so feature/my's Service struct doesn't need to
 // know about nodeownership directly. Future cleanup
 // (Phase D4) can collapse this to a direct call.
-func (a *App) BackfillNodeOwnershipFn(d *sql.DB, nodes []headscale.NodeView, userID int64, username string) {
+func (a *App) BackfillNodeOwnershipFn(d db.DBSource, nodes []headscale.NodeView, userID int64, username string) {
 	nodeownership.Backfill(d, a.HS, nodes, userID, username)
 }

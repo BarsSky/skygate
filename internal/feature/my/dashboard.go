@@ -76,7 +76,7 @@ func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *h
 	// /my/devices also fires from here, so the dashboard sees the same
 	// set the moment the user lands on the page.
 	if myUserID != 0 {
-		s.BackfillNodeOwnership(s.dbc(), nodes, myUserID, myUsername)
+		s.BackfillNodeOwnership(s.DB, nodes, myUserID, myUsername)
 	}
 	if myUsername != "" {
 		// Use a set of node IDs the user owns, sourced from

@@ -40,7 +40,6 @@ package monitoring
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"strconv"
@@ -85,7 +84,18 @@ type HeadscaleClient interface {
 // caller passes a context it can cancel to stop the loop
 // cleanly on shutdown.
 type ExitNodeMonitor struct {
-	DB         *sql.DB
+	// DB is the live pool source (B208 pattern, used by
+	// admin.Service). The ResettableDB wrapper from
+	// internal/db (B203) is the canonical implementation —
+	// it transparently follows the B203 hot-reload. The
+	// tests use db.NewResettableDB(plain *sql.DB) to
+	// satisfy the DBSource interface. Pre-B224 this was
+	// a captured *sql.DB; the first B203 pool swap closed
+	// the captured pool and every tick thereafter got
+	// "sql: database is closed" (the captured pointer is
+	// stale). B224 migrated to DBSource + .Current() per
+	// call so the monitor transparently follows the swap.
+	DB         db.DBSource
 	HS         HeadscaleClient
 	Notifier   NotifierSink
 	CheckEvery time.Duration
@@ -243,7 +253,7 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 				TaggedBy: 0, // system sync (the admin /sync_nodes path also uses 0)
 			})
 		}
-		ins, upd, serr := db.SyncNodesFromHeadscale(m.DB, infos)
+		ins, upd, serr := db.SyncNodesFromHeadscale(m.DB.Current(), infos)
 		if serr != nil {
 			log.Printf("exit-node-monitor: auto-sync failed: %v", serr)
 		} else {
@@ -261,8 +271,8 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 	for _, n := range nodes {
 		liveIDs[n.ID] = struct{}{}
 		snapshot := m.computeSnapshot(n, now)
-		prev, _ := db.GetExitNodeHealth(m.DB, n.ID)
-		if err := db.UpsertExitNodeHealth(m.DB, snapshot); err != nil {
+		prev, _ := db.GetExitNodeHealth(m.DB.Current(), n.ID)
+		if err := db.UpsertExitNodeHealth(m.DB.Current(), snapshot); err != nil {
 			log.Printf("exit-node-monitor: upsert %s: %v", n.ID, err)
 			continue
 		}
@@ -273,7 +283,7 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 		// here but the dispatch loop only fires for
 		// online↔offline.
 		if prev.State != "" && prev.State != snapshot.State {
-			_, lastTo, _ := db.LatestExitNodeState(m.DB, n.ID)
+			_, lastTo, _ := db.LatestExitNodeState(m.DB.Current(), n.ID)
 			// Dedup: if the latest recorded transition has
 			// the same to_state, the alert for that
 			// transition has already been queued (or the
@@ -289,7 +299,7 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 				continue
 			}
 			note := m.transitionNote(prev, snapshot)
-			if _, err := db.RecordExitNodeStateChange(m.DB, db.ExitNodeStateChange{
+			if _, err := db.RecordExitNodeStateChange(m.DB.Current(), db.ExitNodeStateChange{
 				NodeID:     n.ID,
 				Hostname:   snapshot.Hostname,
 				FromState:  prev.State,
@@ -309,11 +319,11 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 	//
 	// We don't delete the transition log; that's a permanent
 	// audit trail.
-	snapshots, err := db.ListExitNodeHealth(m.DB)
+	snapshots, err := db.ListExitNodeHealth(m.DB.Current())
 	if err == nil {
 		for _, s := range snapshots {
 			if _, ok := liveIDs[s.NodeID]; !ok {
-				if err := db.DeleteExitNodeHealth(m.DB, s.NodeID); err != nil {
+				if err := db.DeleteExitNodeHealth(m.DB.Current(), s.NodeID); err != nil {
 					log.Printf("exit-node-monitor: delete stale %s: %v", s.NodeID, err)
 				}
 			}
@@ -475,7 +485,7 @@ func (m *ExitNodeMonitor) transitionNote(prev, next db.ExitNodeHealth) string {
 // — the only two states that matter for "is the tailnet
 // actually able to exit the internet right now?".
 func (m *ExitNodeMonitor) dispatchPending(ctx context.Context) error {
-	pending, err := db.ListPendingExitNodeStateChanges(m.DB, 32)
+	pending, err := db.ListPendingExitNodeStateChanges(m.DB.Current(), 32)
 	if err != nil {
 		return fmt.Errorf("list pending: %w", err)
 	}
@@ -488,12 +498,12 @@ func (m *ExitNodeMonitor) dispatchPending(ctx context.Context) error {
 			// re-examine the row on every tick. The note
 			// column still records what happened; only the
 			// Telegram send is suppressed.
-			_ = db.MarkExitNodeStateChangeAlerted(m.DB, sc.ID)
+			_ = db.MarkExitNodeStateChangeAlerted(m.DB.Current(), sc.ID)
 			continue
 		}
 		msg := formatAlert(sc)
 		m.Notifier.SendAlert(msg)
-		if err := db.MarkExitNodeStateChangeAlerted(m.DB, sc.ID); err != nil {
+		if err := db.MarkExitNodeStateChangeAlerted(m.DB.Current(), sc.ID); err != nil {
 			log.Printf("exit-node-monitor: mark alerted %d: %v", sc.ID, err)
 		}
 	}

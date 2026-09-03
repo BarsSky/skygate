@@ -661,7 +661,7 @@ func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *ht
 		for _, r := range preRows {
 			preByNodeID[r.NodeID] = r.Hostname
 		}
-		nodeownership.Backfill(s.dbc(), hs, nodes, u.ID, u.Username)
+		nodeownership.Backfill(s.DB, hs, nodes, u.ID, u.Username)
 		// Re-read to count renames (the helper updates
 		// the row in place; comparing pre vs post is the
 		// audit-friendly way to surface "5 renames

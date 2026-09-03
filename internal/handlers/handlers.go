@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -47,7 +46,17 @@ type App struct {
 	RateLimiter *ratelimit.Limiter
 	Notifier    telegram.Notifier
 	I18n         *i18n.Catalog
-	DB           *sql.DB
+	// DB is the *db.ResettableDB wrapper (NOT a captured
+	// *sql.DB). The B203 watchdog hot-reloads the pool via
+	// db.ResettableDB.Reset(); the wrapper's promoted
+	// methods (Query / Exec / etc.) read the embedded
+	// *sql.DB at call time, so a captured *App.DB
+	// (a *db.ResettableDB) automatically follows every
+	// swap. Pre-B224 App.DB was a *sql.DB captured at
+	// handlers.New() — the watchdog swap closed the OLD
+	// pool and every background service that held a.DB
+	// got "sql: database is closed" forever.
+	DB           *db.ResettableDB
 	hs           *headscale.Client
 	HS           *headscale.Client
 	HeadscaleKey string
@@ -291,7 +300,7 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 		// — and since we ARE running, the start-up gate decided
 		// we should be running, so default-true is the right
 		// fallback.
-		row, err := db.GetGlobalSetting(a.DB, "dns_autoupdate_enabled", "")
+		row, err := db.GetGlobalSetting(a.DB.Current(), "dns_autoupdate_enabled", "")
 		if err != nil {
 			log.Printf("autoupdater: read global_settings: %v (assuming enabled)", err)
 			return true
@@ -356,7 +365,7 @@ func (a *App) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "admin service not wired", http.StatusInternalServerError)
 }
 
-func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int, cfg *config.Config) *App {
+func New(d *db.ResettableDB, hs *headscale.Client, headscaleKey, secret, controlURL, sshKeyPath string, sessionH int, cfg *config.Config) *App {
 	derpURL := "http://derp.example.com:8766"
 	if cfg != nil && cfg.DerpBaseURL != "" {
 		derpURL = cfg.DerpBaseURL
@@ -426,7 +435,7 @@ func New(d *sql.DB, hs *headscale.Client, headscaleKey, secret, controlURL, sshK
 		// app_controlplane.go) so existing callers
 		// (handlers_export.go, app_controlplane_test.go)
 		// keep working.
-		Router: controlplane.New(d, secret, hs),
+		Router: controlplane.New(d.Current(), secret, hs),
 	}
 	a.Router.Init()
 	return a
@@ -477,7 +486,7 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	// Theme: prefer explicit theme in data, else derive from logged-in user, else linear.
 	theme := db.ThemeLinear
 	if c != nil {
-		theme = db.GetUserTheme(a.DB, c.UserID)
+		theme = db.GetUserTheme(a.DB.Current(), c.UserID)
 	}
 	if t, ok := data["Theme"].(string); ok && db.IsValidTheme(t) {
 		theme = t
@@ -498,7 +507,7 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 	// shows the current value), but the layout's auto-inject
 	// here is the source of truth for rendering the override.
 	if c != nil {
-		prefs := db.GetUserDisplayPrefs(a.DB, c.UserID)
+		prefs := db.GetUserDisplayPrefs(a.DB.Current(), c.UserID)
 		data["DisplayFont"] = prefs.FontFamily
 		data["DisplayScale"] = prefs.FontScale
 		data["DisplaySelBg"] = prefs.SelectionBg
@@ -520,12 +529,12 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 		// "No notifications"). The user's real
 		// notifications are still in the DB;
 		// the next page load will retry.
-		if count, cerr := notifications.CountUnread(a.DB, c.UserID); cerr == nil {
+		if count, cerr := notifications.CountUnread(a.DB.Current(), c.UserID); cerr == nil {
 			data["UnreadCount"] = count
 		} else {
 			data["UnreadCount"] = 0
 		}
-		if list, lerr := notifications.ListUnreadByUser(a.DB, c.UserID, 50); lerr == nil {
+		if list, lerr := notifications.ListUnreadByUser(a.DB.Current(), c.UserID, 50); lerr == nil {
 			data["UnreadNotifications"] = list
 		} else {
 			data["UnreadNotifications"] = []db.Notification{}
@@ -907,7 +916,7 @@ func (a *App) currentUser(r *http.Request) *auth.Claims {
 			// 2026-07-16: v0.15.5 — filter out expired tokens
 			// (TTL = 0 means "never expires" — the pre-v0.15.5
 			// behaviour, preserved for legacy rows).
-			candidates, err := db.ListAPITokenHashesForLookup(a.DB)
+			candidates, err := db.ListAPITokenHashesForLookup(a.DB.Current())
 			if err == nil {
 				now := time.Now().Unix()
 				for _, c := range candidates {
@@ -919,7 +928,7 @@ func (a *App) currentUser(r *http.Request) *auth.Claims {
 						continue
 					}
 					if auth.CheckAPIToken(c.TokenHash, tok) {
-						_ = db.TouchAPITokenLastUsed(a.DB, c.TokenHash)
+						_ = db.TouchAPITokenLastUsed(a.DB.Current(), c.TokenHash)
 						return &auth.Claims{UserID: c.UserID, Username: c.Username, IsAdmin: c.IsAdmin}
 					}
 				}
@@ -935,7 +944,12 @@ func (a *App) audit(userID int64, username, action, detail string) {
 	// so the SQL string lives in queries.go. Audit failures remain
 	// best-effort (the error is intentionally dropped) — a transient
 	// DB hiccup must not break the main action (login, rule add, etc).
-	_ = db.AppendAuditLog(a.DB, userID, username, action, detail)
+	// B224: a.DB is a *db.ResettableDB. AppendAuditLog takes
+	// *sql.DB, so we call .Current() to get the live pool
+	// (post-watcher-swap, the embedded *sql.DB is re-pointed;
+	// the wrapper's promoted methods would also work but
+	// AppendAuditLog's signature is fixed).
+	_ = db.AppendAuditLog(a.DB.Current(), userID, username, action, detail)
 }
 
 // SanitizeFilename is a thin re-export of httputil.SanitizeFilename

@@ -121,7 +121,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// sync; a future refactor can move it to a shared
 	// internal/nodeownership/ package.
 	if c.UserID != 0 && s.BackfillNodeOwnership != nil {
-		s.BackfillNodeOwnership(s.dbc(), all, c.UserID, username)
+		s.BackfillNodeOwnership(s.DB, all, c.UserID, username)
 	}
 
 	// headscale reassigns ownership to a synthetic "tagged-devices" user

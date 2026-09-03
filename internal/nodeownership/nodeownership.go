@@ -31,7 +31,6 @@
 package nodeownership
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -179,7 +178,7 @@ func matchOIDCStrategy(n headscale.NodeView, portalUsername string) (matchedTag 
 //   - feature/my/devices.go (via the Service.BackfillNodeOwnership
 //     callback, set in cmd/skygate/main.go).
 func Backfill(
-	db *sql.DB,
+	db dbpkg.DBSource,
 	hs nodeLister,
 	nodes []headscale.NodeView,
 	portalUserID int64,
@@ -213,10 +212,10 @@ func Backfill(
 	// is left alone.
 	// 2026-07-12: Этап 10 part 4 — both queries moved to
 	// db.ListNodeOwnerNodeIDsByUsername + db.DeleteNodeOwnerByID.
-	snapNodeIDs, _ := dbpkg.ListNodeOwnerNodeIDsByUsername(db, portalUsername)
+	snapNodeIDs, _ := dbpkg.ListNodeOwnerNodeIDsByUsername(db.Current(), portalUsername)
 	for _, nid := range snapNodeIDs {
 		if !live[nid] {
-			_ = dbpkg.DeleteNodeOwnerByID(db, nid, portalUsername)
+			_ = dbpkg.DeleteNodeOwnerByID(db.Current(), nid, portalUsername)
 		}
 	}
 	// 2026-08-09: v0.33.1.20 — also load the FULL rows so the
@@ -230,7 +229,7 @@ func Backfill(
 	// rename detection below pairs UntagNode(oldTag) with the
 	// existing AddTag(newTag) so the stale tag actually
 	// disappears from headscale.
-	existingRows, _ := dbpkg.ListNodeOwnersByUsername(db, portalUsername)
+	existingRows, _ := dbpkg.ListNodeOwnersByUsername(db.Current(), portalUsername)
 	existingByNodeID := make(map[string]dbpkg.NodeOwner, len(existingRows))
 	for _, r := range existingRows {
 		existingByNodeID[r.NodeID] = r
@@ -240,7 +239,7 @@ func Backfill(
 	// We use the full row even though only (ID, HeadscalePreauthID,
 	// CreatedAt) feed the temporal-match logic. The full struct keeps
 	// the helper single-purpose; the unused fields are zero-cost.
-	paks, err := dbpkg.ListPreauthKeysByUser(db, portalUserID)
+	paks, err := dbpkg.ListPreauthKeysByUser(db.Current(), portalUserID)
 	if err != nil {
 		return
 	}
@@ -251,7 +250,7 @@ func Backfill(
 	otherOwners := map[string]bool{}
 	{
 		// 2026-07-11: Этап 10 part 1 — moved to db.GetOtherHSUserIDs.
-		ids, _ := dbpkg.GetOtherHSUserIDs(db, portalUserID)
+		ids, _ := dbpkg.GetOtherHSUserIDs(db.Current(), portalUserID)
 		for _, hid := range ids {
 			if hid != "" {
 				otherOwners[hid] = true
@@ -547,10 +546,10 @@ func Backfill(
 			// node_id. Without this, /my_nodes is a list of opaque
 			// node ids the user has to cross-reference with
 			// Headplane.
-			_ = dbpkg.InsertIgnoreNodeOwnerWithHostname(db, n.ID, portalUserID, portalUsername, matchedTag, n.Hostname, portalUserID)
-			_ = dbpkg.UpgradeStaleNodeOwnerToPrivate(db, n.ID, matchedTag, portalUserID)
+			_ = dbpkg.InsertIgnoreNodeOwnerWithHostname(db.Current(), n.ID, portalUserID, portalUsername, matchedTag, n.Hostname, portalUserID)
+			_ = dbpkg.UpgradeStaleNodeOwnerToPrivate(db.Current(), n.ID, matchedTag, portalUserID)
 		} else {
-			_ = dbpkg.InsertIgnoreNodeOwnerWithHostname(db, n.ID, portalUserID, portalUsername, matchedTag, n.Hostname, portalUserID)
+			_ = dbpkg.InsertIgnoreNodeOwnerWithHostname(db.Current(), n.ID, portalUserID, portalUsername, matchedTag, n.Hostname, portalUserID)
 		}
 		// 2026-07-24: v0.28.0 — auto-apply the per-device tag
 		// (tag:dev-<user>-<device>) to headscale. The ACL
@@ -685,7 +684,7 @@ func Backfill(
 							// tagged-devices nodes, since the
 							// synthetic tagged-devices user
 							// would be assigned).
-							if err := dbpkg.UpdateNodeOwnerHostnameAndTag(db, n.ID, n.Hostname, devTag, portalUserID); err != nil {
+							if err := dbpkg.UpdateNodeOwnerHostnameAndTag(db.Current(), n.ID, n.Hostname, devTag, portalUserID); err != nil {
 								// ErrNodeOwnerNotFound is
 								// benign (INSERT-OR-IGNORE
 								// just lost the race); any
@@ -723,7 +722,7 @@ func Backfill(
 		// Idempotent — only writes when hostname is empty
 		// or stale. Triggered once per /my/devices load,
 		// so the next ACL re-apply picks up the tag.
-		_ = dbpkg.UpdateDeviceRuleHostnameForNode(db, n.ID, n.Hostname)
+		_ = dbpkg.UpdateDeviceRuleHostnameForNode(db.Current(), n.ID, n.Hostname)
 		// Push tag:private to headscale if matched. Safe for empty/untagged rows.
 		// Idempotent: skip if the node already carries tag:private — otherwise every
 		// /my/devices load would do an HTTP roundtrip to headscale per device,
@@ -776,7 +775,7 @@ func Backfill(
 		// != "" guard is technically redundant but kept for symmetry
 		// with the original inline code and as a fast-path skip.
 		if n.PreAuthKeyID != "" {
-			if err := dbpkg.MarkPreauthKeyUsedByHSID(db, n.PreAuthKeyID); err != nil {
+			if err := dbpkg.MarkPreauthKeyUsedByHSID(db.Current(), n.PreAuthKeyID); err != nil {
 				log.Printf("warn: mark key %s used: %v", n.PreAuthKeyID, err)
 			}
 		}
@@ -788,7 +787,7 @@ func Backfill(
 	// (user has no subnet row → not opted in → nothing to
 	// sync); every other error gets a warn log so we can
 	// spot regressions in production.
-	newStatus, syncErr := subnet.SyncStatus(db, portalUserID, hasRouter)
+	newStatus, syncErr := subnet.SyncStatus(db.Current(), portalUserID, hasRouter)
 	if syncErr != nil && !errors.Is(syncErr, subnet.ErrNotFound) {
 		log.Printf("warn: subnet.SyncStatus user=%d hasRouter=%v: %v", portalUserID, hasRouter, syncErr)
 	} else if syncErr == nil {

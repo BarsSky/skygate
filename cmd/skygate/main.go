@@ -467,7 +467,7 @@ func main() {
 		log.Printf("warn: backfill node owners: %v", err)
 	}
 
-	app := handlers.New(d.DB, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
 	// 2026-07-27: v0.29.0 — initialize the auto-update
 	// state store. Loads any persisted state from the
 	// status file so a restart renders the most recent
@@ -612,7 +612,7 @@ func main() {
 	// left empty. We wire it up here so the OIDC
 	// flow is RFC-compliant.
 	oidcSvc.UserLookup = func(userID int64) (string, string, error) {
-		name, err := db.GetUserNameByID(app.DB, userID)
+		name, err := db.GetUserNameByID(app.DB.Current(), userID)
 		if err != nil {
 			return "", "", err
 		}
@@ -707,7 +707,7 @@ func main() {
 	// stale client. The closure below adapts the
 	// method-value app.HSGlobal to the Pingable signature.
 	healthzSvc := &healthz.Service{
-		DB: app.DB,
+		DB: app.DB.Current(),
 		HeadscaleFn: func() headscale.Pingable {
 			return app.HSGlobalFn() // *headscale.Client satisfies Pingable
 		},
@@ -917,7 +917,7 @@ func main() {
 		// unset, Save() returns db.ErrSecretKeyUnset and
 		// the /admin/ha "External DNS" form shows a
 		// "store not configured" banner.
-		DNSCredsStore: extcreds.NewStore(app.DB, cfg.SecretKeyHex),
+		DNSCredsStore: extcreds.NewStore(app.DB.Current(), cfg.SecretKeyHex),
 		// SelfHostname is THIS skygate instance's name in
 		// the HA chain. Defaults to the Tailscale hostname
 		// (the same name the operator SSHes into). The
@@ -1461,7 +1461,7 @@ func main() {
 	// on agent) and SSH to the source (svi) to actually run.
 	// The flip step is real (it updates cluster_database +
 	// the local .env so a skygate restart picks it up).
-	migrateSvc := dbmigrate.NewService(app.DB)
+	migrateSvc := dbmigrate.NewService(app.DB.Current())
 	_ = migrateSvc // Phase 1.4 framework is wired; routes below
 	//                  delegate to adminSvc for rendering (so the
 	//                  page uses the admin layout + nav).
@@ -2159,7 +2159,7 @@ func main() {
 	// tag + grant). Default 5m, 0/off disables.
 	if cfg.NodeDiscoveryInterval > 0 {
 		if hs := app.HSGlobalFn(); hs != nil {
-			go nodeownership.AutoBackfill(ctx, d.DB, hs, cfg.NodeDiscoveryInterval)
+			go nodeownership.AutoBackfill(ctx, d, hs, cfg.NodeDiscoveryInterval)
 		} else {
 			log.Printf("node-discovery: HSGlobalFn() returned nil, skipping startup goroutine (defensive guard)")
 		}
@@ -2174,7 +2174,7 @@ func main() {
 	backup.SetConfigLoader(func() (*backup.Config, error) {
 		return backup.Load(d.DB)
 	})
-	backupSched := &backup.Scheduler{DB: d.DB}
+	backupSched := &backup.Scheduler{DB: d}
 	backupSched.Start(ctx)
 
 	// 2026-07-14: Этап 14 v8 — release-monitor goroutine.
@@ -2216,7 +2216,7 @@ func main() {
 	// monitor (the deploy-time check
 	// scripts/check_exit_nodes.py still runs).
 	exitMon := &monitoring.ExitNodeMonitor{
-		DB:           d.DB,
+		DB:           d,
 		HS:           app.HS,
 		Notifier:     app.Notifier,
 		CheckEvery:   cfg.ExitNodeCheckInterval,
