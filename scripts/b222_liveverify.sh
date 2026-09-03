@@ -73,8 +73,19 @@ SKYGATE_BIN="/tmp/skygate_b222"
 $GO_BIN build -o "$SKYGATE_BIN" ./cmd/skygate
 
 # Self-hostname (read once — used for the
-# self-upgrade guard test).
-SELF_HOSTNAME=$(hostname)
+# self-upgrade guard test). The handler-side
+# check uses s.SelfHostname (wired from
+# SKYGATE_TS_HOSTNAME, NOT os.Hostname()),
+# so the test must use the same value. The
+# orchestrator's internal checkSelfUpgrade
+# uses os.Hostname() — both are exercised
+# by the unit tests.
+SELF_HOSTNAME="${SKYGATE_TS_HOSTNAME:-}"
+if [ -z "$SELF_HOSTNAME" ]; then
+  echo "FATAL: SKYGATE_TS_HOSTNAME not set in .env — cannot exercise the self-upgrade guard" >&2
+  exit 1
+fi
+OS_HOSTNAME=$(hostname)
 
 echo "=== Step 1: snapshot pre-B222 state ==="
 PRE_NODE_COUNT=$($DSN_RUN -c "SELECT count(*) FROM cluster_node")
@@ -83,7 +94,8 @@ PRE_FAIL_AUDIT=$($DSN_RUN -c "SELECT count(*) FROM audit_log WHERE action='clust
 echo "  cluster_node rows: $PRE_NODE_COUNT"
 echo "  node_rejoin cluster_audit rows: $PRE_REJOIN_AUDIT"
 echo "  cluster.upgrade.fail audit_log rows: $PRE_FAIL_AUDIT"
-echo "  self hostname: $SELF_HOSTNAME"
+echo "  self hostname (SKYGATE_TS_HOSTNAME): $SELF_HOSTNAME"
+echo "  os hostname:                          $OS_HOSTNAME"
 echo ""
 
 # Mint a session JWT.
