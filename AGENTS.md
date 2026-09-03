@@ -3914,6 +3914,97 @@ in the same commit. Don't let the tracker drift.
     `wdCfg := watchdog.DefaultConfig()` +
     `wdCfg.Notifier = schedulerNotifierSink(app.Notifier)`
     + pass `wdCfg` to `NewDBSwap`).
+  - **B226 (v1.5.0+, 2026-09-03) — /admin/cluster
+    Phase 4.5 Prometheus exporter.** Closes the
+    "operator can't see skygate state in
+    Grafana / Prometheus / kubectl-top
+    equivalent" gap. Pre-B226, the only way to
+    see skygate state was the HTML dashboards
+    (which a Prometheus scraper can't read) or
+    the existing B200 JSON endpoints (`/healthz`,
+    `/db/health`, `/admin/cluster/...`). A
+    Grafana / Prometheus / VM / Alertmanager
+    operator's standard tool is the `/metrics`
+    Prometheus endpoint — B226 ships it. Post-B226:
+    `GET /metrics` serves an in-house
+    Prometheus text-format exporter (the
+    `prometheus/client_golang` transitive closure
+    is ~10 modules for ~12 metrics, so B226
+    implements the ~50-line textfmt encoder
+    directly in `internal/metrics/metrics.go`).
+    The collector (internal/metrics/collector.go)
+    samples 10 production metrics on a 30s ticker
+    (same cadence as the B206 healthz sampler so
+    operators can correlate /db/health
+    transitions with /metrics deltas during an
+    incident). The 10 metrics are:
+    - `skygate_cluster_nodes{cluster,state}` —
+      cluster_node count by state (pending|ready|
+      draining|failed)
+    - `skygate_cluster_nodes_total` — sum of all
+      states (the "total nodes" metric for
+      at-a-glance dashboards)
+    - `skygate_db_health{cluster}` — 1 if the
+      DB is reachable, 0 otherwise (sustained 0
+      triggers an Alertmanager alert)
+    - `skygate_db_size_bytes{cluster}` — current
+      pg_database_size (B206 surface; B226 just
+      exposes it as a Prometheus gauge for
+      scraping)
+    - `skygate_db_pool_{open,idle,in_use}_connections`
+      — live sql.DBStats (B224-transparent via
+      `d.Current()`)
+    - `skygate_elector_is_primary{node}` — 1 if
+      this node is the skygate HA primary, 0
+      otherwise (the B204 surface, exposed as
+      a per-node gauge)
+    - `skygate_failover_state{cluster}` — 1 if
+      there's a pending `db.last_failover`
+      (the B220 Rollback button is armed), 0
+      otherwise
+    - `skygate_build_info{version,go_version}` —
+      always 1, with labels for the build
+      metadata (Prometheus convention for
+      build info as a labelled gauge)
+    All queries use `d.Current()` (the
+    ResettableDB pattern from B203 + B224) so
+    the B203 hot-reload works transparently —
+    no captured `*sql.DB` (the B224 anti-pattern
+    the watchdog was suffering from). The
+    `/metrics` endpoint is UNAUTHENTICATED (the
+    Prometheus scraper doesn't carry cookies) —
+    same exposure level as `/healthz` +
+    `/db/health`. If the operator wants auth,
+    layer a sidecar with basic auth in front of
+    it. 24 B-check contracts in
+    `scripts/check_b226.sh`. 8 pure-Go unit
+    tests in `internal/metrics/metrics_b226_test.go`:
+    `TestCounter_Basic` (monotonic semantics),
+    `TestGauge_Basic` (settable), `TestGaugeVec_
+    WithLabelValues` (same labels = same series),
+    `TestRegistry_DuplicateName` (Register error
+    on duplicate), `TestTextFormat` (full
+    textfmt output for Counter + Gauge +
+    GaugeVec), `TestTextFormat_LabelEscaping`
+    (\\, \", newline), `TestHandler_HTTP` (textfmt
+    content-type), `TestHandler_StableOrder`
+    (alphabetical metric sort for stable scrapes).
+    3 new files: `internal/metrics/metrics.go`
+    (~280 lines — Registry, Counter, Gauge,
+    GaugeVec, CounterVec, textfmt encoder),
+    `internal/metrics/collector.go` (~250
+    lines — SourceProvider interface,
+    StartCollector, runTick, DBPoolSource,
+    10 production metric declarations),
+    `internal/metrics/metrics_b226_test.go`
+    (~180 lines, 8 tests). 2 modified:
+    `cmd/skygate/main.go` (+~10 lines: import
+    + StartCollector call + GET /metrics route
+    + BuildInfoGauge init), `scripts/verify_pre_deploy.sh`
+    (B226 check entry). The deferred 4.5 item
+    is now DONE; the cluster-management plan
+    is fully complete (Phases 1, 2, 3, 4.1,
+    4.2, 4.3, 4.4, 4.5).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the

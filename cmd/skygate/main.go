@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"os/exec"
 	"os/signal"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	mysvc "skygate/internal/feature/my"
 	"skygate/internal/feature/healthz"
 	"skygate/internal/headscale_version"
+	"skygate/internal/metrics"
 	"skygate/internal/release"
 	"skygate/internal/db"
 	"skygate/internal/watchdog"
@@ -800,9 +802,36 @@ func main() {
 		healthz.DefaultDBHealthConfig().Interval,
 		healthz.DefaultDBHealthConfig().QueryTimeout)
 
+	// 2026-09-03 / B226 (Phase 4.5) — Prometheus
+	// exporter. The collector samples skygate
+	// state every 30s (same cadence as the B206
+	// healthz sampler so operators can correlate
+	// /db/health transitions with /metrics
+	// deltas during an incident). The /metrics
+	// handler (registered below) serves the
+	// updated gauges in textfmt.
+	metricsSrc := &metrics.DBPoolSource{DB: d, Cluster: "skygate-staging"}
+	metricsStop := metrics.StartCollector(context.Background(), metricsSrc, 30*time.Second)
+	defer metricsStop()
+	// B226 build info — one-time set, never
+	// changes for the life of the process.
+	metrics.BuildInfoGauge.
+		WithLabelValues(version, runtime.Version()).
+		Set(1)
+	log.Printf("metrics: /metrics endpoint registered (collector interval=30s)")
+
 	mux.HandleFunc("GET /healthz", healthzSvc.GetHealthz)
 	mux.HandleFunc("GET /readyz", healthzSvc.GetReadyz)
 	mux.HandleFunc("GET /db/health", healthzSvc.GetDBHealth)
+	// 2026-09-03 / B226: Prometheus exporter
+	// (Phase 4.5). The /metrics endpoint serves
+	// the B226 in-house metrics registry in
+	// textfmt. UNAUTHENTICATED (the Prometheus
+	// scraper doesn't carry cookies) — same
+	// exposure level as /healthz + /db/health.
+	// If the operator wants auth, layer a
+	// sidecar with basic auth in front of it.
+	mux.Handle("GET /metrics", metrics.Default().Handler())
 	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
 	mux.HandleFunc("/static/", app.StaticHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
