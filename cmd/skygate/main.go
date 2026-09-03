@@ -775,7 +775,23 @@ func main() {
 	// d.DB) as its DBSource so it follows B203 hot-
 	// reloads on every tick — same pattern as the
 	// B204 HA elector.
-	dbHealthSampler := healthz.NewDBHealthSampler(healthz.DefaultDBHealthConfig(), d)
+	//
+	// B225.1 (Phase 4.4 follow-up): the sampler
+	// now has a Notifier field — the local
+	// DBHealthAlertSink interface (in the
+	// healthz package) is satisfied by
+	// *telegram.RealNotifier. The config below
+	// sets Notifier to the operator's bot
+	// (when configured) or the silent
+	// NoopAlertSink when no bot token is set.
+	// The transition detector inside the
+	// sampler fires on every ok→degraded and
+	// degraded→ok edge, so the operator gets a
+	// real-time Telegram push the moment the DB
+	// stops responding to pings.
+	dbHealthCfg := healthz.DefaultDBHealthConfig()
+	dbHealthCfg.Notifier = schedulerNotifierSink(app.Notifier)
+	dbHealthSampler := healthz.NewDBHealthSampler(dbHealthCfg, d)
 	dbHealthSampler.Start()
 	defer dbHealthSampler.Stop()
 	healthzSvc.DBHealthSampler = dbHealthSampler

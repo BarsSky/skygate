@@ -3765,6 +3765,83 @@ in the same commit. Don't let the tracker drift.
     current pool every 5s, so a 3-failed-pings
     check is one if-statement + one
     `notifier.SendAlert` call away).
+  - **B225.1 (v1.5.0+, 2026-09-03) — /admin/database
+    Phase 4.4 follow-up: DB health degraded
+    transition alert.** Closes the "operator finds
+    out about a DB outage only when /db/health
+    silently goes orange" gap. Pre-B225.1, the
+    B206 `healthz.Sampler` ticks every 30s and
+    stores the latest snapshot (with
+    `SampleError` populated when the tick fails),
+    but no real-time push to the operator. The
+    B225 B-block added failover + rollback +
+    backup alerts; B225.1 extends the same
+    pattern to the DB health sampler. Post-B225.1:
+    the B206 Sampler detects every ok→degraded
+    and degraded→ok edge (via the new
+    `detectTransition` method, called from
+    `Sampler.tick()` after every sample) and
+    pushes a "DB health DEGRADED" (❌) or
+    "DB health recovered" (✅) alert via the same
+    notifier pattern B225 used. The first sample
+    after startup is the baseline (no alert on
+    tick 0 — a freshly-started skygate shouldn't
+    fire a spurious "DB DEGRADED" alert just
+    because the first tick landed while the pool
+    was still warming up); ticks 1+ fire on
+    every edge. Steady state (multiple ticks at
+    the same health level) is silent. The
+    transition state (`lastHealthy bool` +
+    `hasFirstSample bool`) is protected by the
+    sampler's existing `sync.Mutex` (the /db/health
+    hot path doesn't read it — only the sampler
+    ticker writes). The `Notifier` field on
+    `DBHealthConfig` uses a local
+    `DBHealthAlertSink` interface (just
+    `SendAlert(string) int64`) to avoid the
+    `internal/feature/healthz →
+    internal/telegram → internal/mesh → ...`
+    import cycle that B225 already discovered in
+    the backup scheduler. The `ClusterID` field
+    on `DBHealthConfig` (default `"skygate-staging"`)
+    identifies the cluster the alert refers to
+    (used in the alert body text — the audit row
+    goes through the sampler's normal AppendAuditLog
+    path). 11 B-check contracts in
+    `scripts/check_b225_1.sh`. 7 pure-Go unit
+    tests in
+    `internal/feature/healthz/db_health_b225_1_test.go`:
+    `TestTransition_FirstTickIsBaseline` (the
+    initial sample doesn't fire),
+    `TestTransition_FirstTickDegradedAlsoBaseline`
+    (a degraded first tick is also baseline),
+    `TestTransition_OkToDegraded` (pins the
+    "DB health DEGRADED" alert text),
+    `TestTransition_DegradedToOk` (pins the
+    "DB health recovered" alert text),
+    `TestTransition_NoOpOnStable` (steady state
+    is silent),
+    `TestTransition_NopSinkIsSilent` (the
+    no-Telegram-bot path is safe),
+    `TestTransition_EmptyNotifierFieldIsSafe`
+    (the defensive nil check). 1 new file:
+    `internal/feature/healthz/db_health_b225_1_test.go`
+    (~210 lines). 2 modified:
+    `internal/feature/healthz/db_health.go` (+~140
+    lines: `DBHealthAlertSink` interface +
+    `NoopAlertSink` no-op fallback + `Notifier`
+    and `ClusterID` fields on `DBHealthConfig` +
+    `hasFirstSample` + `lastHealthy` fields on
+    `Sampler` + `detectTransition` method + the
+    `tick()` post-sample hook),
+    `cmd/skygate/main.go` (+2 lines:
+    `dbHealthCfg := healthz.DefaultDBHealthConfig()`
+    + `dbHealthCfg.Notifier = schedulerNotifierSink(app.Notifier)`
+    before the `NewDBHealthSampler` call). The
+    B225.2 follow-up is the "PG health degraded →
+    automatic Patroni alert" path (B203 watchdog
+    is the right place; the work is a 3-failed-
+    pings check + one `notifier.SendAlert` call).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the

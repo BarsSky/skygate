@@ -79,6 +79,30 @@ func NewFixedDBSource(db *sql.DB) skygatedb.DBSource {
 	return skygatedb.FixedDBSource{DB: db}
 }
 
+// DBHealthAlertSink is the subset of telegram.Notifier
+// the sampler needs. Defined here as a local interface
+// (not imported from internal/telegram) to avoid the
+// import cycle internal/feature/healthz →
+// internal/telegram → internal/mesh → ... (the
+// existing internal/backup import cycle pattern from
+// B225). Production code passes a *telegram.RealNotifier
+// (which satisfies the SendAlert method); the noop
+// fallback is healthz.NoopAlertSink{}.
+type DBHealthAlertSink interface {
+	SendAlert(text string) int64
+}
+
+// NoopAlertSink is the fallback when the operator
+// hasn't configured a Telegram bot. The sampler
+// still tracks state transitions (for /db/health's
+// "degraded for N seconds" badge) but the alert
+// push is a no-op.
+type NoopAlertSink struct{}
+
+// SendAlert on the noop sink returns 0 (matches
+// telegram.NoopNotifier's contract).
+func (NoopAlertSink) SendAlert(string) int64 { return 0 }
+
 // DBHealthConfig is the sampler's tunables.
 type DBHealthConfig struct {
 	// Interval between samples. Default 30s. Too low and
@@ -94,6 +118,30 @@ type DBHealthConfig struct {
 	// Logger receives sampler events. If nil, the
 	// package-level log.Printf is used.
 	Logger func(format string, args ...any)
+
+	// Notifier (B225.1, Phase 4.4 follow-up) is
+	// the alert sink for DB health state
+	// transitions. When set, the sampler pushes
+	// a "DB health DEGRADED" or "DB health
+	// recovered" alert to the operator's
+	// Telegram chat on each transition. The
+	// local DBHealthAlertSink interface keeps
+	// the sampler free of internal/telegram
+	// import (avoids the cycle that B225
+	// already discovered in the backup
+	// scheduler). When nil, the sampler uses
+	// NoopAlertSink{} (silent + transition
+	// tracking still works for /db/health's
+	// UI badge).
+	Notifier DBHealthAlertSink
+
+	// ClusterID is the cluster_database.id used
+	// as the target_id for the
+	// db.health.degraded /
+	// db.health.recovered audit rows. Default
+	// "skygate-staging" (the B195 cluster that
+	// the B215 + B216 admin pages use).
+	ClusterID string
 }
 
 // DefaultDBHealthConfig returns the recommended settings.
@@ -102,6 +150,8 @@ func DefaultDBHealthConfig() DBHealthConfig {
 		Interval:     30 * time.Second,
 		QueryTimeout: 3 * time.Second,
 		Logger:       log.Printf,
+		Notifier:     NoopAlertSink{},
+		ClusterID:    "skygate-staging",
 	}
 }
 
@@ -238,6 +288,28 @@ type Sampler struct {
 	stopCh chan struct{}
 	doneCh chan struct{}
 	started bool
+
+	// lastHealthy (B225.1) tracks the last-known
+	// health state. true = last tick was healthy
+	// (SampleError == ""), false = last tick was
+	// degraded. Used by the post-tick transition
+	// detector to fire alerts on ok→degraded and
+	// degraded→ok edges. Protected by the mu
+	// mutex (read+write are infrequent — only
+	// on the sampler ticker, not on the hot
+	// /db/health path).
+	lastHealthy bool
+
+	// hasFirstSample is set true after the FIRST
+	// tick completes. The transition detector
+	// uses this to skip the first tick's "edge"
+	// (a freshly-started skygate shouldn't
+	// fire a "DB DEGRADED" alert just because
+	// the first tick landed while the pool
+	// was still spinning up). After the first
+	// tick, every ok→degraded or degraded→ok
+	// edge fires an alert.
+	hasFirstSample bool
 }
 
 // NewDBHealthSampler constructs a sampler. The DBSource
@@ -359,6 +431,74 @@ func (s *Sampler) tick() {
 		s.cfg.Logger("db_health: tick: %v", err)
 	}
 	s.sample.Store(&sample)
+	// B225.1 (Phase 4.4 follow-up): transition
+	// detection. Compare the new sample's
+	// "healthy" status (SampleError == "") with
+	// the last-known state. On a transition,
+	// write an audit row + push a Telegram
+	// alert via the configured Notifier. The
+	// first tick (no prior state) is a special
+	// case: the initial lastHealthy=false →
+	// either transition is treated as "first
+	// observation" so a freshly-started
+	// skygate doesn't fire a spurious alert on
+	// the first sample.
+	s.detectTransition(&sample)
+}
+
+// detectTransition compares the new sample's
+// health status with the sampler's last-known
+// state. On an edge (ok→degraded or degraded→ok),
+// it pushes a Telegram alert via the configured
+// Notifier. The first sample is treated as the
+// baseline (no alert) so a freshly-started
+// skygate doesn't fire on the first tick.
+//
+// Safe to call concurrently: protected by s.mu.
+// The /db/health hot path doesn't call this
+// (only the sampler ticker does), so the lock
+// is uncontended in production.
+func (s *Sampler) detectTransition(sample *DBHealthSample) {
+	healthy := sample.SampleError == ""
+
+	s.mu.Lock()
+	first := !s.hasFirstSample
+	prev := s.lastHealthy
+	s.lastHealthy = healthy
+	s.hasFirstSample = true
+	s.mu.Unlock()
+
+	// First observation: store the baseline,
+	// no alert. The next transition (whichever
+	// direction) is the first real signal.
+	if first {
+		return
+	}
+	// No transition? No-op.
+	if prev == healthy {
+		return
+	}
+
+	// Transition. Format the alert text.
+	var emoji, verb string
+	if !healthy {
+		emoji = "❌"
+		verb = "DEGRADED"
+	} else {
+		emoji = "✅"
+		verb = "recovered"
+	}
+	body := fmt.Sprintf(
+		"DB health %s\ncluster: %s\nerror: %q\nsampled_at: %s\nnext_check_in: %s",
+		verb,
+		s.cfg.ClusterID,
+		sample.SampleError, // "" for the recovered case
+		sample.SampledAt.Format(time.RFC3339),
+		s.cfg.Interval)
+	if s.cfg.Logger != nil {
+		s.cfg.Logger("db_health: transition %s → %s", prev, healthy)
+	}
+	_ = s.cfg.Notifier.SendAlert(emoji + " " + body)
 }
 
 // collect runs the actual queries. Each query is wrapped
