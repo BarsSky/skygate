@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-08-25 (B172 login 'next'-redirect fix SHIPPED in v1.5.2-alpha1 — closes the OIDC handshake gap that hid the welcome-page-after-login symptom; B171 comprehensive device-delete with ACL regen SHIPPED 2026-08-25)
+**Last updated**: 2026-09-03 (B215–B225.2 cluster-management B-blocks SHIPPED 2026-09-01..2026-09-03 — Phases 1, 2, 3, 4.1, 4.2, 4.3, 4.4 from `docs/internal/cluster-management.md` are done; only Phase 4.5 Prometheus remains, deferred per the plan; see §9 of cluster-management.md for the B-block trail)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
