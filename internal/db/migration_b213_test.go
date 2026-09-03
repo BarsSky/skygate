@@ -48,12 +48,14 @@ func TestPGMigrations_OrderedByVersion(t *testing.T) {
 		t.Errorf("PGMigrations[0].Version = %d, want 25 (FK ordering)", migs[0].Version)
 	}
 	// V066 (B211) was the most recent migration; V067
-	// (B221) was added in B221 (Phase 4.1). The
-	// framework's natural state is to append new
-	// migrations at the end.
+	// (B221) was added in B221 (Phase 4.1). V068 (B232)
+	// was added in B232 to repair the device_rules natural
+	// key UNIQUE INDEX shape drift. The framework's
+	// natural state is to append new migrations at the
+	// end.
 	last := migs[len(migs)-1]
-	if last.Version != 67 {
-		t.Errorf("PGMigrations[last].Version = %d, want 67 (B221 should be the most recent)", last.Version)
+	if last.Version != 68 {
+		t.Errorf("PGMigrations[last].Version = %d, want 68 (B232 should be the most recent)", last.Version)
 	}
 }
 

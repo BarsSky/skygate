@@ -3520,6 +3520,27 @@ run_check "B229" "Preferred-exit auto-reconciler. Closes the 'cyborg -> emilia r
 # (4 classifications + 3 rate-limit reason keys + 3 defensive).
 run_check "B231" "Preferred-exit reconciler UI toggle + hostname-rename migrator. UI: /admin/system_tests toggle (DB-backed, env default = true) gates the reconciler. Rename: operator renames device in headscale -> auto-migrate pref to new hostname (tx: UPSERT new + DELETE old). Ambiguous (multi-candidate): alert only. Orphan (no candidate): alert with manual DELETE SQL (no auto-delete). 12 B-check contracts in scripts/check_b231.sh. 10 unit tests in internal/feature/exit_rules/reconciler_rename_b231_test.go." \
   'test -f scripts/check_b231.sh && bash scripts/check_b231.sh'
+# --- B232: device_rules natural-key UNIQUE INDEX shape drift fix ---
+# Closes the "db error on /my/exit-rules POST" symptom that started
+# after B188.2 was deployed (2026-08-17). V056 created the natural-
+# key UNIQUE INDEX as 6-col (with parent_domain), but
+# `CREATE UNIQUE INDEX IF NOT EXISTS` is a no-op when the index
+# already exists with a different shape — so on every DB that was
+# upgraded past V055 before V056, the index STAYED 5-col. Then B188.2
+# changed qInsertDeviceRule to use a 6-col ON CONFLICT clause; the
+# 5-col index didn't match, so every INSERT of a new rule failed
+# with `ERROR: there is no unique or exclusion constraint matching
+# the ON CONFLICT specification`. B232 ships migration v0.68
+# (migrateV068PG) that always re-creates the 6-col index (DROP +
+# CREATE + ANALYZE), with a pre-flight duplicate check that refuses
+# to run if the table has 6-tuple duplicates. 6 B-check contracts
+# in scripts/check_b232.sh (migration shape + driver registration +
+# framework-state invariant + tests + AGENTS + build). 3 unit
+# tests in internal/db/migrations_v0_68_b232_test.go (source-level
+# guards pinning the pre-flight GROUP BY + the DROP/CREATE/ANALYZE
+# statements + the duplicate-test skip).
+run_check "B232" "device_rules natural-key UNIQUE INDEX shape drift fix. V056 CREATE IF NOT EXISTS is a no-op when the index already exists with a different shape (5-col pre-B188.2, 6-col post-B188.2). B188.2 added parent_domain to the 6-col ON CONFLICT but the live index was 5-col, so every new INSERT failed with `ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification`. B232 adds migration v0.68 (migrateV068PG) with pre-flight duplicate check + DROP + CREATE + ANALYZE. 6 B-check contracts in scripts/check_b232.sh. 3 unit tests in internal/db/migrations_v0_68_b232_test.go." \
+  'test -f scripts/check_b232.sh && bash scripts/check_b232.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) --- Closes the 'operator must hand-migrate the DB via scp + pg_restore on the agent' gap that was implicit in the B198/B202 work — pre-B202.5 the dbmigrate framework's Dump step only ran pg_dump on the local host, which works for the live svi→agent move because the agent reaches svi's PG via the 172.17.0.1:5433 bridge, but the bridge requires svi to expose its PG port to the agent network. B202.5 adds a transport that runs 'ssh svi \"pg_dump ...\"' and streams the bytes back, so the operator can flip the DSN + restart the agent without depending on direct PG-port reachability between svi and agent. SSHDumpTransport struct with 5 fields (SSHHost/SSHUser/SSHKeyPath/SSHPort/PgDumpPath + optional SSHOptions), Name()='ssh', Dump(ctx, sourceDSN, destPath, onLog) (int64, error) implements the DumpTransport interface. NewSSHDumpTransportFromEnv() reads 5 SKYGATE_DBMIGRATE_SSH_* env vars and returns nil if HOST or USER is empty (caller falls back to Local). quoteForRemoteShell() POSIX-shell-escapes the DSN for 'ssh host cmd' (close-quote/literal/reopen idiom for embedded single quotes). framework.go default-fallback: SKYGATE_DBMIGRATE_TRANSPORT=ssh + valid SSH config -> SSHDumpTransport, else LocalDumpTransport. 5 unit tests in internal/dbmigrate/ssh_transport_test.go: QuoteForRemoteShell (4 sub-cases incl. embedded single quote + multiple quotes), NewFromEnv_RequiresHostAndUser (returns nil on empty HOST or USER), NewFromEnv_PortParsing (22022, bad-port -> 0 silent fallback), Dump_FakeSsh round-trip (Unix only; SKIP on Windows because exec.LookPath does not find a bare 'ssh' there), Dump_Validation (empty sourceDSN, empty destPath, empty SSHHost, empty SSHUser all return error), Name()=='ssh' pinned. Compile-time interface assertion: 'var _ DumpTransport = SSHDumpTransport{}'. 14 B-check contracts in scripts/check_b202_5.sh. Live-verify dry-run (scripts/b202_5_verify.sh) on the agent: ssh to localhost + pg_dump of a temp test DB -> local file, validates PGD-N magic bytes, verifies pg_restore --list shows the test table. Does NOT touch headscale/headplane on agent, does NOT touch the live skygate_staging DB on svi. The real svi->agent move is a one-time operator action (set 4 env vars + ssh-copy-id)." \
   'test -f scripts/check_b202_5.sh && bash scripts/check_b202_5.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) ---

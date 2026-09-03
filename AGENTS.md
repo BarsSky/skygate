@@ -4440,6 +4440,102 @@ in the same commit. Don't let the tracker drift.
     pure-template-render, no DB mock needed; the
     contracts are static greps that pin the wire
     shape.
+  - **B232 (v1.5.2+, 2026-09-03) — repair
+    `device_rules_natural_key_uniq` shape drift
+    caused by V056 idempotency gap**. Closes the
+    "db error on /my/exit-rules POST" symptom that
+    started after B188.2 was deployed (2026-08-17).
+    Root cause: V056 (B188.2 era) defined the
+    natural-key UNIQUE INDEX on `device_rules` as
+    6 columns (including `parent_domain`), but the
+    `CREATE UNIQUE INDEX IF NOT EXISTS` statement
+    is a no-op when an index with the same NAME
+    already exists with a different shape. Pre-V056,
+    the index was 5 columns (no `parent_domain`).
+    B188.2 changed `qInsertDeviceRule` to use a
+    6-col `ON CONFLICT` clause (to dedup
+    domain-resolved /32 rules per parent_domain);
+    every INSERT with a 6-col ON CONFLICT on a
+    5-col UNIQUE INDEX then failed with
+    `ERROR: there is no unique or exclusion
+    constraint matching the ON CONFLICT
+    specification`. Symptom in production: every
+    new `/my/exit-rules` POST returned "db error"
+    (5-col index exists, ON CONFLICT 6-col doesn't
+    match). The live fix was a one-time
+    `DROP INDEX IF EXISTS device_rules_natural_key_uniq`
+    + `CREATE UNIQUE INDEX ... (6 columns)` (5
+    minutes, 0 rows affected). **B232 makes the
+    fix permanent** by adding migration v0.68
+    that always re-creates the 6-col index,
+    regardless of what shape the index already
+    has.
+    **Surface**:
+    - `internal/db/migrations_v0_68_b232.go`
+      (new, ~120 lines): `migrateV068PG` with
+      pre-flight duplicate check (refuses to run
+      if any (user, device, exit_node, type,
+      value, parent) appears more than once,
+      telling the operator to run the B125
+      cleanup first), DROP IF EXISTS, CREATE
+      UNIQUE INDEX (6-col), ANALYZE. Idempotent
+      on a 6-col index (pre-flight finds 0
+      duplicates, DROP is a no-op for an
+      already-correct index, CREATE is a no-op
+      because the index name exists).
+    - `internal/db/driver_postgres.go`:
+      registers `migrateV068PG` as version 68
+      (after v0.67/B221, before any future
+      migrations).
+    - `internal/db/migration_b213_test.go`:
+      the framework-state invariant test
+      (`TestPGMigrations_OrderedByVersion`)
+      now asserts the last migration is v68, not
+      v67.
+    - `internal/db/migrations_v0_68_b232_test.go`
+      (new, 3 Test functions): source-level
+      guards pinning the pre-flight `GROUP BY`
+      shape, the DROP/CREATE/ANALYZE statements,
+      and the skip-marker for the duplicate-
+      test (which is exercised end-to-end on the
+      agent during live-verify, not on a sqlite
+      fixture because the pre-flight query is
+      PG-specific).
+    **Tests** (3 Test functions in
+    `migrations_v0_68_b232_test.go`):
+    - `TestMigrateV068PG_PreFlightDuplicateQueryHasNoJoin`
+      — source-level guard: the pre-flight
+      SELECT must GROUP BY the 6-tuple
+      (including `parent_domain`); uses
+      `(?s)` regex for multiline match.
+    - `TestMigrateV068PG_DropRecreateAndAnalyze`
+      — source-level guard: the migration must
+      contain `DROP INDEX IF EXISTS
+      device_rules_natural_key_uniq` +
+      `CREATE UNIQUE INDEX
+      device_rules_natural_key_uniq` (with
+      `target_type, target_value, parent_domain`)
+      + `ANALYZE device_rules`.
+    - `TestMigrateV068PG_PreFlightRefusesOnDuplicates`
+      — `t.Skip` with a comment pointing at the
+      live-verify path (we don't have a PG
+      fixture in the test infra; the live-verify
+      on the agent validates the duplicate-
+      detection branch).
+    8 B-check contracts in `scripts/check_b232.sh`
+    (migration shape + driver registration +
+    framework-state invariant + tests + AGENTS +
+    build). All pass.
+    **Out of scope** (B233+ candidates): the
+    other UNIQUE INDEXes in the schema (e.g. the
+    audit_log uniqueness, the B188 natural-key
+    on `node_owner_map`) might have the same
+    shape-drift class. A future migration framework
+    audit could systematically check every
+    `CREATE INDEX IF NOT EXISTS` in the migration
+    chain and convert them to explicit DROP+CREATE
+    pairs. For now B232 is narrowly scoped to the
+    specific symptom the operator reported.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't
