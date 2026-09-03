@@ -271,6 +271,31 @@ var BuildInfoGauge = NewGaugeVec("skygate_build_info",
 	"Build metadata (always 1; labels carry the info).",
 	[]string{"version", "go_version"})
 
+// TagAutoupdateFailuresCounter counts every failed
+// B77 AddTag call (the autoupdater's attempt to apply
+// `tag:dev-<user>-<device>` was rejected by headscale).
+// Bumped on EVERY failure — the operator can rate() the
+// metric in Prom to detect "auto-apply has been broken
+// for N minutes" without waiting on a Telegram alert.
+// Labels:
+//   - node_id: the headscale node id (string, not int —
+//     matches the headscale CLI convention; also matches
+//     audit_log.target_id format for /admin/audit cross-
+//     reference). Low cardinality (~tens of nodes per
+//     cluster).
+//   - hostname: the node's canonical hostname (low
+//     cardinality; e.g. "skygate-host-1-1").
+//   - reason: acl_reject (gRPC InvalidArgument — the
+//     headscale policy doesn't permit the auto-generated
+//     `tag:dev-<user>-<device>` namespace), rpc_error
+//     (network/5xx, transient), or unknown (fallback).
+//     At most 3 distinct values.
+var TagAutoupdateFailuresCounter = NewCounterVec(
+	"skygate_tag_autoupdate_failures_total",
+	"Failed B77 tag autoupdate attempts (AddTag returned an error from headscale).",
+	[]string{"node_id", "hostname", "reason"},
+)
+
 // ----- Production SourceProvider -----
 
 // DBPoolSource is a SourceProvider backed by a

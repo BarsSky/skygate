@@ -95,6 +95,14 @@ type nodeLister interface {
 //     node-ownership helper). hs is the *global* headscale
 //     client (same one /admin/devices/force-backfill-tags
 //     uses); per-user contexts are handled inside Backfill.
+//   - alertSink: B227 observability hook. Every failed
+//     AddTag inside Backfill flows through
+//     alertSink.ReportFailure — which increments the
+//     skygate_tag_autoupdate_failures_total Prometheus
+//     counter, writes a tag.autoupdate_failed audit_log
+//     row, and (rate-limited) sends a Telegram alert.
+//     nil is allowed (defensive — manual callers that
+//     want silent backfill can pass nil).
 //   - interval: time between ticks. <=0 disables (the
 //     function returns without doing anything — caller
 //     should not invoke AutoBackfill in this case but the
@@ -105,7 +113,7 @@ type nodeLister interface {
 // fires on schedule. This matches the existing
 // autoupdater / exit-node-monitor pattern (transient
 // errors are non-fatal, the loop keeps going).
-func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, interval time.Duration) {
+func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSink *TagAlertSink, interval time.Duration) {
 	if interval <= 0 {
 		log.Printf("node-discovery: SKYGATE_NODE_DISCOVERY_INTERVAL=%v, skipping autoupdater goroutine", interval)
 		return
@@ -127,7 +135,7 @@ func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, interv
 			log.Printf("node-discovery: context cancelled, exiting")
 			return
 		case <-ticker.C:
-			runOneTick(ctx, dbConn, hs)
+			runOneTick(ctx, dbConn, hs, alertSink)
 		}
 	}
 }
@@ -140,7 +148,7 @@ func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, interv
 // Behavior:
 //   1. List every portal user from the DB
 //   2. List every headscale node (one API call, reused)
-//   3. For each user, call Backfill(db, hs, nodes, u.ID, u.Username)
+//   3. For each user, call Backfill(db, hs, nodes, u.ID, u.Username, alertSink)
 //   4. Run BackfillInfra to attribute skygate-host-* nodes to the
 //      'infra' user (v0.33.1.41, Issue 4 — separate from per-portal-
 //      user backfill because 'infra' is a system user, not a real
@@ -151,7 +159,7 @@ func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, interv
 // logged and the loop continues. The intent is
 // availability: a transient headscale API hiccup or DB
 // error should not block subsequent ticks.
-func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister) {
+func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSink *TagAlertSink) {
 	// Invalidate the headscale node cache before
 	// ListAllNodes so we get fresh data — otherwise we'd
 	// read stale node lists for `interval` minutes after
@@ -179,7 +187,7 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister) {
 		if u.Username == "" {
 			continue
 		}
-		Backfill(dbConn, hs, nodes, u.ID, u.Username)
+		Backfill(dbConn, hs, nodes, u.ID, u.Username, alertSink)
 		processed++
 	}
 	// 2026-08-10: v0.33.1.41 — Issue 4 infra user.

@@ -2219,9 +2219,19 @@ func main() {
 	// access). 2026-08-09 operator report: Issue 2
 	// (new device registration didn't auto-assign the
 	// tag + grant). Default 5m, 0/off disables.
+	//
+	// B227: wire the TagAlertSink so failed AddTag
+	// calls surface to (a) skygate_tag_autoupdate_failures_total
+	// Prometheus counter, (b) audit_log `tag.autoupdate_failed`
+	// row, (c) rate-limited Telegram alert. Without
+	// this, a stuck ACL reject (e.g. skygate-host-1-1
+	// with `tag:infra-skygate-host-1-1` that headscale
+	// keeps refusing) is invisible to the operator
+	// except by tailing skygate stderr.
 	if cfg.NodeDiscoveryInterval > 0 {
 		if hs := app.HSGlobalFn(); hs != nil {
-			go nodeownership.AutoBackfill(ctx, d, hs, cfg.NodeDiscoveryInterval)
+			alertSink := nodeownership.NewTagAlertSink(app.Notifier, d)
+			go nodeownership.AutoBackfill(ctx, d, hs, alertSink, cfg.NodeDiscoveryInterval)
 		} else {
 			log.Printf("node-discovery: HSGlobalFn() returned nil, skipping startup goroutine (defensive guard)")
 		}

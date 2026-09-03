@@ -183,6 +183,7 @@ func Backfill(
 	nodes []headscale.NodeView,
 	portalUserID int64,
 	portalUsername string,
+	alertSink *TagAlertSink,
 ) {
 	if portalUserID == 0 || portalUsername == "" {
 		return
@@ -631,6 +632,19 @@ func Backfill(
 						// stays on the node so the per-device
 						// rule src still works.
 						log.Printf("warn: auto-apply dev tag %q to node %s: %v — keeping existing tags as fallback", devTag, n.ID, err)
+						// B227: surface the failure to the
+						// operator via the B225 (Telegram) +
+						// B226 (Prometheus) + audit_log
+						// observability stack. Without this,
+						// the only signal is the warn line
+						// above, which the operator has to
+						// actively tail to see. The alert
+						// sink rate-limits the Telegram path
+						// (1 per node+reason per hour) so
+						// a stuck ACL reject (like the
+						// live skygate-host-1-1 case from
+						// 2026-09-03) doesn't flood.
+						alertSink.ReportFailure(n.ID, n.Hostname, devTag, err)
 					} else {
 						// AddTag succeeded. Now handle the rename
 						// case: if the DB row had an OLD dev-tag

@@ -137,5 +137,14 @@ func (a *App) HSForUserFn(userID int64) *headscale.Client {
 // know about nodeownership directly. Future cleanup
 // (Phase D4) can collapse this to a direct call.
 func (a *App) BackfillNodeOwnershipFn(d db.DBSource, nodes []headscale.NodeView, userID int64, username string) {
-	nodeownership.Backfill(d, a.HS, nodes, userID, username)
+	// B227: pass nil alertSink — this is the user-initiated
+	// per-user backfill (called from feature/my when the
+	// user loads /my/devices). The operator is right there
+	// in the request flow; a Telegram alert on AddTag
+	// failure would be noise. Metric + audit are also
+	// skipped (we want the B227 observability to be the
+	// autoupdater's signal — a manual force-backfill is
+	// the operator's own action and they see the HTTP
+	// response).
+	nodeownership.Backfill(d, a.HS, nodes, userID, username, nil)
 }

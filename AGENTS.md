@@ -4005,8 +4005,110 @@ in the same commit. Don't let the tracker drift.
     is now DONE; the cluster-management plan
     is fully complete (Phases 1, 2, 3, 4.1,
     4.2, 4.3, 4.4, 4.5).
-  - **B207_fix (v1.5.0+, 2026-09-02) — clear the
-    true no-op for the cluster state).
+  - **B227 (v1.5.2+, 2026-09-03) — B77 tag-autoupdater
+    observability**. Closes the gap where a stuck
+    ACL reject (e.g. `skygate-host-1-1` which has
+    `tag:infra-skygate-host-1-1` while B77 keeps
+    trying to apply `tag:dev-skyadmin-skygate-host-1-1`
+    and headscale ACL returns `InvalidArgument:
+    requested tags ... are invalid or not permitted`
+    every 5 min since 14:10Z on 2026-09-03) was
+    invisible to the operator except by tailing
+    skygate stderr. The operator's exact ask:
+    "либо информировать администратора об ошибке
+    что устройство никак не может прописать свой
+    тег в headscale". B227 ships three signals
+    (all firing on every AddTag failure):
+    1. **Prometheus counter**
+       `skygate_tag_autoupdate_failures_total{node_id,hostname,reason}`
+       in `internal/metrics/collector.go` (B226
+       CounterVec). Cardinality is bounded: tens
+       of nodes per cluster × tens of hostnames ×
+       3 reasons (acl_reject|rpc_error|unknown).
+       Prom queries like `sum by (hostname)
+       (rate(skygate_tag_autoupdate_failures_total[5m]))`
+       surface "which node has been broken for the
+       last 5 min".
+    2. **audit_log row** `action="tag.autoupdate_failed"`,
+       `target_type="headscale_node"`,
+       `target_id=<nodeID>`, `username="system"`,
+       `user_id=0` (autoupdater has no human actor).
+       The detail field is multi-line:
+       `hostname=…\nfailed_tag=…\nreason=…\nerror=…`
+       — operator-readable in /admin/audit (B207+
+       audit union view, B221 target_id routing).
+    3. **Telegram alert** (B225 family): rate-limited
+       to 1 per (node_id, reason) per hour so the
+       5-min autoupdater cadence doesn't flood.
+       Format: `❌ skygate tag autoupdate FAILED
+       \nnode: <id> (<hostname>)\nfailed tag:
+       <tag>\nreason: <acl_reject|rpc_error|unknown>
+       \nerror: <err>\ntimestamp: <RFC3339>`. The
+       metric + audit are NOT rate-limited (durable
+       record + Prom alert surface; the operator
+       needs the granularity); only the Telegram
+       alert is.
+    **Surface**:
+    - `internal/nodeownership/auto_alert.go` (new,
+      ~330 lines): `TagAlertSink` struct +
+      `AlertSink` interface (minimal local
+      interface, mirrors the `monitoring.NotifierSink`
+      pattern — avoids importing internal/telegram
+      to break the handler→telegram cycle) +
+      `NoopAlertSink` fallback + `ClassifyFailure(err)
+      FailureReason` (parses 3 ACL-reject gRPC
+      codes: InvalidArgument, PermissionDenied,
+      FailedPrecondition + 3 transient codes:
+      Unavailable, Internal, DeadlineExceeded +
+      unknown fallback) + `buildAlertText` +
+      `buildFailureDetail`.
+    - `internal/nodeownership/auto.go`:
+      `AutoBackfill` + `runOneTick` signatures
+      take `alertSink *TagAlertSink` (positional,
+      after the existing `hs nodeLister` arg).
+    - `internal/nodeownership/nodeownership.go`:
+      `Backfill` signature takes `alertSink
+      *TagAlertSink`; the AddTag error path at
+      the B177 warn line (now ~line 633) calls
+      `alertSink.ReportFailure(n.ID, n.Hostname,
+      devTag, err)` alongside the existing
+      `log.Printf("warn: ...")` (preserved for
+      human tail-debugging).
+    - `internal/handlers/handlers_export.go`:
+      `BackfillNodeOwnershipFn` passes `nil`
+      (user-initiated, silent — operator is at
+      the page, no alert needed).
+    - `internal/feature/admin/devices.go`:
+      `/admin/devices/force-backfill-tags` handler
+      passes `nil` (admin-initiated, silent).
+    - `cmd/skygate/main.go`: constructs
+      `alertSink := nodeownership.NewTagAlertSink(app.Notifier, d)`
+      and passes to `AutoBackfill` (the only wired
+      site; manual callers stay silent).
+    - `internal/metrics/collector.go`: new
+      `TagAutoupdateFailuresCounter = NewCounterVec(...)`
+      (B226 surface, registered in Default() at
+      package init).
+    **Tests** (`internal/nodeownership/auto_b227_test.go`,
+    13 Test functions): classification (3 cases × 3
+    subtests = 9 subtests), rate-limit (3 subtests:
+    5 calls in 1 ms → 1 alert; different reasons →
+    2 alerts; window expiry via injected clock →
+    3rd call alerts), nil notifier (silent but
+    metric + audit still fire), nil receiver (no
+    panic), nil DB (no panic, metric + alert still
+    fire), audit-attempted call site, alert text
+    format, audit detail format. 14 B-check
+    contracts in `scripts/check_b227.sh` (source +
+    wiring + audit + tests + build). **Out of
+    scope for B227** (deferred, B228+ candidates):
+    pre-checking whether headscale ACL permits the
+    auto-generated tag before attempting AddTag
+    (would require an extra headscale API call per
+    tick — out of proportion to the operator's
+    "inform me" ask), and editing the headscale
+    policy to whitelist `tag:dev-skyadmin-*`
+    (operator config, not skygate code).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

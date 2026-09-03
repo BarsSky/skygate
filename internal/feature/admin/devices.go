@@ -661,7 +661,12 @@ func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *ht
 		for _, r := range preRows {
 			preByNodeID[r.NodeID] = r.Hostname
 		}
-		nodeownership.Backfill(s.DB, hs, nodes, u.ID, u.Username)
+		// B227: pass nil alertSink — the admin clicked
+		// "Force backfill tags" themselves and sees the
+		// response. A Telegram alert would be noise. The
+		// autoupdater (AutoBackfill in main.go) is the
+		// path that needs the B227 observability hook.
+		nodeownership.Backfill(s.DB, hs, nodes, u.ID, u.Username, nil)
 		// Re-read to count renames (the helper updates
 		// the row in place; comparing pre vs post is the
 		// audit-friendly way to surface "5 renames

@@ -3428,6 +3428,41 @@ run_check "B225.2" "B203 watchdog PG health degraded alert. Closes the 'B203 wat
 # --- B226: /admin/cluster Phase 4.5 — Prometheus exporter ---
 run_check "B226" "/admin/cluster Phase 4.5 — Prometheus exporter. Closes the 'operator can't see skygate state in Grafana / Prometheus / kubectl-top equivalent' gap. Pre-B226, the only way to see skygate state was the HTML dashboards (which a Prometheus scraper can't read) or the existing B200 JSON endpoints (/healthz, /db/health, /admin/cluster/...). A Grafana / Prometheus / VM / Alertmanager operator's standard tool is the /metrics Prometheus endpoint — B226 ships it. Post-B226: GET /metrics serves an in-house Prometheus text-format exporter (the prometheus/client_golang transitive closure is ~10 modules for ~12 metrics, so B226 implements the ~50-line textfmt encoder directly in internal/metrics/metrics.go). The collector (internal/metrics/collector.go) samples 10 production metrics on a 30s ticker (same cadence as the B206 healthz sampler so operators can correlate /db/health transitions with /metrics deltas during an incident). 10 metrics: skygate_cluster_nodes{cluster,state}, skygate_cluster_nodes_total, skygate_db_health{cluster}, skygate_db_size_bytes{cluster}, skygate_db_pool_{open,idle,in_use}_connections, skygate_elector_is_primary{node}, skygate_failover_state{cluster}, skygate_build_info{version,go_version}. All queries use d.Current() (the ResettableDB pattern from B203 + B224) so the B203 hot-reload works transparently — no captured *sql.DB (the B224 anti-pattern). The /metrics endpoint is UNAUTHENTICATED (the Prometheus scraper doesn't carry cookies) — same exposure level as /healthz + /db/health. If the operator wants auth, layer a sidecar with basic auth in front of it. 24 B-check contracts in scripts/check_b226.sh. 8 pure-Go unit tests in internal/metrics/metrics_b226_test.go: TestCounter_Basic, TestGauge_Basic, TestGaugeVec_WithLabelValues, TestRegistry_DuplicateName, TestTextFormat, TestTextFormat_LabelEscaping, TestHandler_HTTP, TestHandler_StableOrder. 3 new files (internal/metrics/metrics.go, collector.go, metrics_b226_test.go). The deferred 4.5 item is now DONE; the cluster-management plan is fully complete (Phases 1, 2, 3, 4.1, 4.2, 4.3, 4.4, 4.5)." \
   'test -f scripts/check_b226.sh && bash scripts/check_b226.sh'
+# --- B227: B77 tag-autoupdater observability (Phase 4.6 follow-up) ---
+# Closes the gap where a stuck ACL reject (e.g. skygate-host-1-1 with
+# tag:infra-skygate-host-1-1 while B77 keeps trying to apply
+# tag:dev-skyadmin-skygate-host-1-1 and headscale ACL returns
+# InvalidArgument every 5 min since 14:10Z on 2026-09-03) was invisible
+# to the operator except by tailing skygate stderr. B227 ships three
+# signals on every AddTag failure: (1) Prometheus counter
+# skygate_tag_autoupdate_failures_total{node_id,hostname,reason} (B226
+# CounterVec in internal/metrics/collector.go), (2) audit_log row
+# action=tag.autoupdate_failed target_type=headscale_node target_id=nodeID
+# (B221 routing, visible in /admin/audit B207+), (3) Telegram alert
+# rate-limited to 1 per (node_id, reason) per hour so the 5-min
+# autoupdater cadence doesn't flood. Surface: new
+# internal/nodeownership/auto_alert.go (~330 lines: TagAlertSink struct +
+# AlertSink local interface + NoopAlertSink fallback + ClassifyFailure
+# helper that parses 3 ACL-reject gRPC codes + 3 transient codes + unknown
+# fallback + buildAlertText + buildFailureDetail). AutoBackfill +
+# runOneTick + Backfill signatures take alertSink *TagAlertSink
+# (positional, after hs nodeLister). main.go wires
+# nodeownership.NewTagAlertSink(app.Notifier, d) for AutoBackfill; the
+# manual Backfill callers (handlers_export.go BackfillNodeOwnershipFn +
+# feature/admin/devices.go force-backfill) pass nil (operator-initiated,
+# silent). The AddTag error path at the B177 warn line calls
+# alertSink.ReportFailure(n.ID, n.Hostname, devTag, err) alongside the
+# preserved log.Printf("warn: ..."). 14 B-check contracts in
+# scripts/check_b227.sh. 13 unit tests in
+# internal/nodeownership/auto_b227_test.go (classification 3 cases x 3
+# subtests, rate-limit 3 subtests, nil notifier, nil receiver, nil DB,
+# audit-attempted, alert text format, audit detail format). Out of scope
+# for B227 (B228+ candidates): pre-checking headscale ACL permits the
+# auto-generated tag before AddTag (extra headscale API call per tick),
+# editing headscale policy to whitelist tag:dev-skyadmin-* (operator
+# config, not skygate code).
+run_check "B227" "B77 tag-autoupdater observability (Phase 4.6 follow-up). Closes the 'B77 AddTag failure invisible to operator' gap (live case: skygate-host-1-1 ACL reject every 5 min since 2026-09-03 14:10Z). Three signals fire on every failure: skygate_tag_autoupdate_failures_total Prometheus counter, audit_log tag.autoupdate_failed row, rate-limited Telegram alert. 14 B-check contracts in scripts/check_b227.sh. 13 unit tests in internal/nodeownership/auto_b227_test.go." \
+  'test -f scripts/check_b227.sh && bash scripts/check_b227.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) --- Closes the 'operator must hand-migrate the DB via scp + pg_restore on the agent' gap that was implicit in the B198/B202 work — pre-B202.5 the dbmigrate framework's Dump step only ran pg_dump on the local host, which works for the live svi→agent move because the agent reaches svi's PG via the 172.17.0.1:5433 bridge, but the bridge requires svi to expose its PG port to the agent network. B202.5 adds a transport that runs 'ssh svi \"pg_dump ...\"' and streams the bytes back, so the operator can flip the DSN + restart the agent without depending on direct PG-port reachability between svi and agent. SSHDumpTransport struct with 5 fields (SSHHost/SSHUser/SSHKeyPath/SSHPort/PgDumpPath + optional SSHOptions), Name()='ssh', Dump(ctx, sourceDSN, destPath, onLog) (int64, error) implements the DumpTransport interface. NewSSHDumpTransportFromEnv() reads 5 SKYGATE_DBMIGRATE_SSH_* env vars and returns nil if HOST or USER is empty (caller falls back to Local). quoteForRemoteShell() POSIX-shell-escapes the DSN for 'ssh host cmd' (close-quote/literal/reopen idiom for embedded single quotes). framework.go default-fallback: SKYGATE_DBMIGRATE_TRANSPORT=ssh + valid SSH config -> SSHDumpTransport, else LocalDumpTransport. 5 unit tests in internal/dbmigrate/ssh_transport_test.go: QuoteForRemoteShell (4 sub-cases incl. embedded single quote + multiple quotes), NewFromEnv_RequiresHostAndUser (returns nil on empty HOST or USER), NewFromEnv_PortParsing (22022, bad-port -> 0 silent fallback), Dump_FakeSsh round-trip (Unix only; SKIP on Windows because exec.LookPath does not find a bare 'ssh' there), Dump_Validation (empty sourceDSN, empty destPath, empty SSHHost, empty SSHUser all return error), Name()=='ssh' pinned. Compile-time interface assertion: 'var _ DumpTransport = SSHDumpTransport{}'. 14 B-check contracts in scripts/check_b202_5.sh. Live-verify dry-run (scripts/b202_5_verify.sh) on the agent: ssh to localhost + pg_dump of a temp test DB -> local file, validates PGD-N magic bytes, verifies pg_restore --list shows the test table. Does NOT touch headscale/headplane on agent, does NOT touch the live skygate_staging DB on svi. The real svi->agent move is a one-time operator action (set 4 env vars + ssh-copy-id)." \
   'test -f scripts/check_b202_5.sh && bash scripts/check_b202_5.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) ---
