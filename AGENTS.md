@@ -4109,6 +4109,144 @@ in the same commit. Don't let the tracker drift.
     "inform me" ask), and editing the headscale
     policy to whitelist `tag:dev-skyadmin-*`
     (operator config, not skygate code).
+  - **B229 (v1.5.2+, 2026-09-03) — preferred-exit
+    auto-reconciler**. Closes the gap where
+    `device_rules` existed (operator added "cyborg →
+    emilia → 8.8.8.0/24" via /my/exit-rules) but
+    `device_exit_node_prefs` was empty, so the
+    per-CIDR grant landed in headscale WITHOUT the
+    `via: tag:dev-infra-emilia` clause — Tailscale
+    routed the traffic through the default exit
+    (DERP / direct), not emilia. The user's "cyborg →
+    emilia" rule was effectively decorative (it was
+    ALLOWED, not PINNED). Pre-B229, the only path to
+    create a `device_exit_node_prefs` row was the
+    manual UI: `POST /my/devices/preferred-exit` (the
+    🎯 button on /my/devices) — two tables, two
+    forms, the user had to know to do both. B229
+    ships an **auto-reconciler** that runs at boot
+    + on a 1h ticker (configurable via
+    `SKYGATE_PREFERRED_RECONCILE_INTERVAL`, default
+    1h, 0 = disabled). For every (user, device) pair
+    that has `device_rules` rows, the reconciler:
+    1. **Auto-derive** a pref if the device's rules
+       are unanimous (all point at the same
+       exit_node) AND no pref exists yet. Resolves
+       the canonical tag from `node_owner_map` via
+       `db.NormalizeExitNodeTag` so the pref survives
+       the B188 (V061) migration.
+    2. **Refresh stale tag** for existing prefs:
+       re-derives the canonical tag from
+       `node_owner_map` and UPDATEs the row if the
+       stored `exit_node_tag` differs. Catches (a)
+       legacy `tag:exit-<host>` rows that pre-date
+       the v0.33.1.39 / B118 cutover to
+       `tag:dev-infra-<host>` and somehow survived
+       the V061 migration (e.g. the hostname was
+       missing from node_owner_map at migration
+       time), and (b) rows whose hostname was renamed
+       in headscale but the prefs row kept the old
+       tag. Also re-enables `via_enabled=1` for rows
+       where the tag is canonical but via was 0 (the
+       V061 backfill intentionally skipped re-enable
+       for unresolved rows; B229 is the catch-up).
+    3. **Skip split rules**: if the device's rules
+       point at multiple distinct exit_nodes (e.g. 7
+       rules at emilia + 3 at karolina), B229 does
+       NOT auto-derive — the operator's intent is
+       split and picking one would lock the device
+       to the wrong half the time. A "skip" change
+       is logged for visibility (operator can run
+       /my/exit-rules to manually pick the winner).
+    **Safety**: default is **read-only** (dry-run).
+    The reconciler logs every change it WOULD make
+    without writing to `device_exit_node_prefs`.
+    Setting `SKYGATE_PREFERRED_RECONCILER_LIVE=true`
+    (or 1 / yes) enables writes — the env var is
+    read on every tick so the operator can flip the
+    switch without a redeploy. Every write is
+    recorded in `audit_log` with
+    `action="preferred_exit_reconciled"`,
+    `target_type="headscale_node"`,
+    `target_id=hostname`, actor="system" (the
+    reconciler has no human actor). A rate-limited
+    Telegram alert (1 per (hostname, reason) per
+    1h) is sent on every change so the operator
+    sees the first change per device per session
+    without spam on bulk reconciles. The
+    `applyReconcilerChange` helper writes the
+    audit row + the alert inline; the dry-run
+    branch logs the same change WITHOUT the write
+    + audit + alert.
+    **Surface**:
+    - `internal/feature/exit_rules/reconciler.go`
+      (new, ~450 lines): `ReconcilerChange` struct +
+      `DevicePrefState` struct +
+      `PlanDevicePrefChange(s DevicePrefChange) (*ReconcilerChange, bool)`
+      (the pure decision function — extracted from
+      the DB layer so the unit tests don't need an
+      in-memory sqlite / sqlmock) +
+      `(s *Service) collectDevicePrefState(...)`
+      (DB → struct) +
+      `(s *Service) applyReconcilerChange(...)`
+      (struct → DB write + audit + alert) +
+      `(s *Service) ReconcileDeviceExitNodePrefs(ctx, n)`
+      (the orchestrator) +
+      `PreferredExitReconcilerLive()` (env reader) +
+      `shouldAlert(hostname, reason, now)` +
+      `ResetAlertThrottle()` (test-only) +
+      `ReconcilerNotifier` interface +
+      `noopNotifier` impl.
+    - `internal/handlers/handlers.go`: new
+      `RunPreferredExitReconciler(ctx, notifier,
+      interval)` wrapper (mirrors the
+      `RunDomainAutoUpdater` pattern). Adds
+      `ReconcileDeviceExitNodePrefs` to the
+      `exitRulesRunner` interface so `*App.exitRulesSvc`
+      can route through it.
+    - `cmd/skygate/main.go`: wires `go
+      app.RunPreferredExitReconciler(ctx,
+      app.Notifier, cfg.PrefReconcileInterval)`,
+      gated on `cfg.PrefReconcileInterval > 0`.
+    - `internal/config/config.go`: new
+      `PrefReconcileInterval time.Duration` field +
+      `SKYGATE_PREFERRED_RECONCILE_INTERVAL` env var
+      (default 1h, 0 = disabled).
+    **Tests** (13 Test functions in
+    `internal/feature/exit_rules/reconciler_b229_test.go`):
+    - `TestPreferredExitReconcilerLive_DefaultOff`
+      + `_TrueVariants` (5 sub-cases: true/TRUE/1/yes/YES)
+      + `_OtherValuesOff` (7 sub-cases: empty/0/false/no/off/garbage + default)
+    - `TestShouldAlert_RateLimit_1hWindow` (4 sub-cases:
+      first alert / 10min later / 30min later / 61min later)
+      + `_DifferentReasonsAreIndependent` +
+      `_DifferentHostnamesAreIndependent`
+    - `TestPlanDevicePrefChange_Create_MissingPrefUnanimous`
+      (the live cyborg case)
+    - `_Skip_SplitRules` (the "operator decision needed" case)
+    - `_Skip_NoCanonicalTag` (headscale node not yet tagged)
+    - `_Update_StaleTag` (B188 migration gap)
+    - `_Update_ViaDisabledButCanonical` (V061 skip)
+    - `_NoOp_CanonicalAndPinned` (the healthy state)
+    - `_Skip_HostnameDeleted` (defensive guard)
+    No DB-level integration tests — the pure
+    `PlanDevicePrefChange` is the unit-testable
+    surface; the SQL queries are pinned in code
+    review + the live-verify on the agent
+    (`/admin/audit?action=preferred_exit_reconciled`
+    + `curl /metrics` for the new audit counter).
+    **Out of scope** (B230+ candidates): per-user
+    (`user_exit_node_prefs`) reconciler. B229
+    deliberately walks only the device-scoped
+    table; the per-user table is managed by
+    /my/exit-nodes and the B188 V061 migration
+    already covered it. Auto-derive from
+    `device_rules` for the per-user table would
+    require a different decision rule (per-user
+    intent is "preferred exit for ALL my devices"
+    — not derivable from any single device's
+    rules). If a future B230 wants this, it's a
+    separate function.
   - **B228 (v1.5.2+, 2026-09-03) — DERP dashboard
     "hide unavailable" filter**. Closes the operator's
     2026-09-03 report: `/admin/derp/dashboard` showed

@@ -2209,6 +2209,26 @@ func main() {
 		log.Printf("autoupdater: SKYGATE_DNS_AUTOUPDATE_ENABLED=false, skipping startup goroutine (set true to re-enable)")
 	}
 
+	// 2026-09-03: v1.5.2 (B229) — preferred-exit
+	// auto-reconciler. Runs the per-(user, device)
+	// reconciliation logic on a 1h ticker so that
+	// `device_rules` rows paired with a missing or stale
+	// `device_exit_node_prefs` row get the missing
+	// `via:` clause attached to the per-CIDR ACL
+	// grants. Without this, the operator's "cyborg →
+	// emilia → youtube" rule was ALLOWED but not PINNED
+	// (Tailscale routed through the default exit, not
+	// emilia). Default behavior: read-only / dry-run
+	// (logs what would change without writing). Flip
+	// SKYGATE_PREFERRED_RECONCILER_LIVE=true to enable
+	// writes. The flag is checked on every tick so the
+	// operator can flip it without a redeploy.
+	if cfg.PrefReconcileInterval > 0 {
+		go app.RunPreferredExitReconciler(ctx, app.Notifier, cfg.PrefReconcileInterval)
+	} else {
+		log.Printf("preferred-reconciler: SKYGATE_PREFERRED_RECONCILE_INTERVAL=0, skipping startup goroutine (set to a positive duration to re-enable)")
+	}
+
 	// 2026-08-09: v0.33.1.25 (B77) — node-discovery
 	// autoupdater. Runs nodeownership.Backfill against
 	// every portal user on a timer, so new devices

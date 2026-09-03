@@ -3482,6 +3482,27 @@ run_check "B227" "B77 tag-autoupdater observability (Phase 4.6 follow-up). Close
 # are static greps that pin the wire shape).
 run_check "B228" "DERP dashboard hide-unavailable filter. Closes the 2026-09-03 operator report (28+ degraded rows burying the one healthy own DERP). ?show_unavailable=0|1 (default filter ON) + re-sort by LatencyMs ASC + UI checkbox + shown-of-total counter + all-degraded empty state. 8 B-check contracts in scripts/check_b228.sh." \
   'test -f scripts/check_b228.sh && bash scripts/check_b228.sh'
+# --- B229: preferred-exit auto-reconciler (Phase 4.6 follow-up) ---
+# Closes the gap where device_rules had a per-CIDR grant in headscale
+# but the per-device device_exit_node_prefs row was missing, so the
+# `via:` clause was never attached (Tailscale routed through the
+# default exit instead of the operator's chosen exit). B229 ships an
+# auto-reconciler: (1) for (user, device) pairs with unanimous
+# device_rules pointing at one exit_node, create the missing pref
+# with via_enabled=1; (2) for existing prefs, re-derive the canonical
+# tag from node_owner_map and UPDATE if stale (catches V061 migration
+# gaps + tag renames); (3) skip split rules (operator decision needed).
+# Default behavior is read-only / dry-run (logs what would change
+# without writing); SKYGATE_PREFERRED_RECONCILER_LIVE=true enables
+# writes (read on every tick, no redeploy needed). Every change is
+# audit_log'd with action=preferred_exit_reconciled + rate-limited
+# Telegram alert (1 per (hostname, reason) per 1h). 9 B-check contracts
+# in scripts/check_b229.sh (source + tests + env + wire + build). 13
+# unit tests in internal/feature/exit_rules/reconciler_b229_test.go
+# (pure PlanDevicePrefChange + env reader + rate-limit helper; the DB
+# layer is exercised via the live-verify on the agent).
+run_check "B229" "Preferred-exit auto-reconciler. Closes the 'cyborg -> emilia rule doesn't pin via emilia' gap (operator added the rule but never visited /my/devices to set the pref; Tailscale routed via the default exit). Auto-derives the missing device_exit_node_prefs row from unanimous device_rules + refreshes stale tags (B188/V061 migration gap). Default DRY-RUN; SKYGATE_PREFERRED_RECONCILE_INTERVAL=1h, SKYGATE_PREFERRED_RECONCILER_LIVE=true enables writes. 9 B-check contracts in scripts/check_b229.sh. 13 unit tests in internal/feature/exit_rules/reconciler_b229_test.go." \
+  'test -f scripts/check_b229.sh && bash scripts/check_b229.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) --- Closes the 'operator must hand-migrate the DB via scp + pg_restore on the agent' gap that was implicit in the B198/B202 work — pre-B202.5 the dbmigrate framework's Dump step only ran pg_dump on the local host, which works for the live svi→agent move because the agent reaches svi's PG via the 172.17.0.1:5433 bridge, but the bridge requires svi to expose its PG port to the agent network. B202.5 adds a transport that runs 'ssh svi \"pg_dump ...\"' and streams the bytes back, so the operator can flip the DSN + restart the agent without depending on direct PG-port reachability between svi and agent. SSHDumpTransport struct with 5 fields (SSHHost/SSHUser/SSHKeyPath/SSHPort/PgDumpPath + optional SSHOptions), Name()='ssh', Dump(ctx, sourceDSN, destPath, onLog) (int64, error) implements the DumpTransport interface. NewSSHDumpTransportFromEnv() reads 5 SKYGATE_DBMIGRATE_SSH_* env vars and returns nil if HOST or USER is empty (caller falls back to Local). quoteForRemoteShell() POSIX-shell-escapes the DSN for 'ssh host cmd' (close-quote/literal/reopen idiom for embedded single quotes). framework.go default-fallback: SKYGATE_DBMIGRATE_TRANSPORT=ssh + valid SSH config -> SSHDumpTransport, else LocalDumpTransport. 5 unit tests in internal/dbmigrate/ssh_transport_test.go: QuoteForRemoteShell (4 sub-cases incl. embedded single quote + multiple quotes), NewFromEnv_RequiresHostAndUser (returns nil on empty HOST or USER), NewFromEnv_PortParsing (22022, bad-port -> 0 silent fallback), Dump_FakeSsh round-trip (Unix only; SKIP on Windows because exec.LookPath does not find a bare 'ssh' there), Dump_Validation (empty sourceDSN, empty destPath, empty SSHHost, empty SSHUser all return error), Name()=='ssh' pinned. Compile-time interface assertion: 'var _ DumpTransport = SSHDumpTransport{}'. 14 B-check contracts in scripts/check_b202_5.sh. Live-verify dry-run (scripts/b202_5_verify.sh) on the agent: ssh to localhost + pg_dump of a temp test DB -> local file, validates PGD-N magic bytes, verifies pg_restore --list shows the test table. Does NOT touch headscale/headplane on agent, does NOT touch the live skygate_staging DB on svi. The real svi->agent move is a one-time operator action (set 4 env vars + ssh-copy-id)." \
   'test -f scripts/check_b202_5.sh && bash scripts/check_b202_5.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) ---

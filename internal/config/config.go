@@ -88,6 +88,16 @@ type Config struct {
 	BootstrapAdminPass string
 	SSHKeyPath         string // path to SSH key for exit node sync
 	DNSAutoCheck       time.Duration // 0 = disabled, default 5m
+	// 2026-09-03: v1.5.2 (B229) — preferred-exit
+	// auto-reconciler period. The goroutine in
+	// handlers.go's RunPreferredExitReconciler reads
+	// this. 0 = disabled (no startup goroutine). Default
+	// 1h matches the audit cadence; 5m is more
+	// aggressive if the operator wants faster
+	// visibility. The live/dry-run gate is
+	// SKYGATE_PREFERRED_RECONCILER_LIVE (read every
+	// tick inside the goroutine).
+	PrefReconcileInterval time.Duration
 	// 2026-08-09: v0.33.1.25 (B77) — node-discovery
 	// autoupdater period. The goroutine in
 	// internal/nodeownership/auto.go polls headscale every
@@ -484,6 +494,7 @@ func Load() (*Config, error) {
 		DerpPeerNPM:   getenv("SKYGATE_DERP_PEER_NPM", "192.0.2.67"),
 		DerpLANNet:    getenv("SKYGATE_DERP_LAN_NET", "192.0.2.0/24"),
 		DNSAutoCheck:       getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
+		PrefReconcileInterval: getDuration("SKYGATE_PREFERRED_RECONCILE_INTERVAL", 1*time.Hour),
 		// 2026-08-09: v0.33.1.25 (B77) — node-discovery
 		// autoupdater. Default 5m (same as DNSAutoCheck);
 		// set SKYGATE_NODE_DISCOVERY_INTERVAL=off to disable.

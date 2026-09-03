@@ -14,6 +14,7 @@ import (
 	"skygate/internal/controlplane"
 	"skygate/internal/db"
 	"skygate/internal/expirewatch"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
 	"skygate/internal/headscale_version"
 	"skygate/internal/httputil"
@@ -210,6 +211,10 @@ type exitRulesRunner interface {
 	DomainAutoUpdater() (added, removed int, err error)
 	StaggeredSync()
 	GenerateRouteSetupScript(userID int, deviceID int, os string, restore bool) (string, error)
+	// 2026-09-03: v1.5.2 (B229) — preferred-exit
+	// auto-reconciler. Wraps exit_rules.Service.ReconcileDeviceExitNodePrefs
+	// for the boot-time goroutine in RunPreferredExitReconciler.
+	ReconcileDeviceExitNodePrefs(ctx context.Context, n exit_rules.ReconcilerNotifier) ([]exit_rules.ReconcilerChange, error)
 }
 
 // SetAdminService wires the admin feature service into the
@@ -342,6 +347,91 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 			}
 		}
 	}
+}
+
+// RunPreferredExitReconciler — v1.5.2 (B229) — boot-time
+// goroutine that calls exitRulesSvc.ReconcileDeviceExitNodePrefs
+// on a ticker. Mirrors RunDomainAutoUpdater (initial run
+// at boot, then on tick). Live-mode controlled by
+// SKYGATE_PREFERRED_RECONCILER_LIVE — read on every tick
+// so the operator can flip the switch without a redeploy.
+//
+// The function logs a one-line summary per tick (number of
+// changes applied/skipped) + sends a rate-limited Telegram
+// alert for each new (hostname, reason) bucket. Every
+// change is recorded in audit_log with action
+// `preferred_exit_reconciled` (handled inside
+// exitRulesSvc.applyReconcilerChange).
+//
+// 2026-09-03: v1.5.2 (B229).
+func (a *App) RunPreferredExitReconciler(ctx context.Context, notifier interface {
+	SendAlert(text string) int64
+}, interval time.Duration) {
+	if a.exitRulesSvc == nil {
+		return
+	}
+	if interval <= 0 {
+		return
+	}
+	live := exit_rules.PreferredExitReconcilerLive()
+	log.Printf("preferred-reconciler: starting (interval=%s, live=%v)", interval, live)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	// Run once immediately at boot so the operator
+	// sees the first dry-run log line on startup
+	// (gives them a chance to review before flipping
+	// SKYGATE_PREFERRED_RECONCILER_LIVE).
+	changes, err := a.exitRulesSvc.ReconcileDeviceExitNodePrefs(ctx, notifier)
+	if err != nil {
+		log.Printf("preferred-reconciler: initial: %v", err)
+	} else {
+		logLiveSummary("initial", changes, live)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("preferred-reconciler: stopping")
+			return
+		case <-t.C:
+			// Re-read the live flag every tick so the
+			// operator can flip it without a redeploy.
+			live := exit_rules.PreferredExitReconcilerLive()
+			changes, err := a.exitRulesSvc.ReconcileDeviceExitNodePrefs(ctx, notifier)
+			if err != nil {
+				log.Printf("preferred-reconciler: %v", err)
+				continue
+			}
+			logLiveSummary("tick", changes, live)
+		}
+	}
+}
+
+// logLiveSummary — helper for RunPreferredExitReconciler.
+// Renders a one-line "N applied, M skipped" summary so
+// the operator can see at a glance whether B229 made
+// changes on this tick.
+//
+// 2026-09-03: v1.5.2 (B229).
+func logLiveSummary(stage string, changes []exit_rules.ReconcilerChange, live bool) {
+	if len(changes) == 0 {
+		return
+	}
+	created, updated, skipped := 0, 0, 0
+	for _, c := range changes {
+		switch c.Action {
+		case "create":
+			created++
+		case "update":
+			updated++
+		case "skip":
+			skipped++
+		}
+	}
+	mode := "DRY-RUN"
+	if live {
+		mode = "LIVE"
+	}
+	log.Printf("preferred-reconciler: %s summary [%s]: created=%d updated=%d skipped=%d", stage, mode, created, updated, skipped)
 }
 
 // AdminTelegram is a thin wrapper preserved for the existing
