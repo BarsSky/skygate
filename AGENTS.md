@@ -3495,6 +3495,113 @@ in the same commit. Don't let the tracker drift.
     rejoin — the orchestrator's
     `/healthz`-build-match poll detects when
     the new binary is serving traffic.
+  - **B223 (v1.5.0+, 2026-09-03) — /admin/cluster
+    Phase 4.3 Tailscale auto-discovery (new node
+    appears in cluster list, admin still
+    approves).** Closes the "operator must
+    manually generate an invite token + copy it
+    to the new node + ssh there to run `skygate
+    cluster join`" gap that was implicit in the
+    B200/B201 invite flow. Pre-B223, onboarding
+    a 4th skygate node to a 3-node cluster was a
+    4-step manual process (operator generates
+    invite → copies token → new node joins →
+    operator approves via B217). Post-B223:
+    (1) the orchestrator's `runDiscoveryTicker`
+    goroutine runs every 5 min (overridable via
+    `SKYGATE_DISCOVERY_INTERVAL_SEC`); each tick
+    runs `cluster.DiscoverNewNodes` which shells
+    out to `tailscale status --json` (the local
+    tailscaled, not the Tailscale HTTP API — no
+    API key needed), parses the `Peer` map,
+    filters by the optional `SKYGATE_DISCOVERY_TAG`
+    env var (default "" = no filter), and returns
+    the list of Tailscale peers not already in
+    `cluster_node`; (2) for each new peer, the
+    helper calls `cluster.EnsureDiscoveredNode`
+    which inserts a `cluster_node` row in
+    `state=pending` with a synthetic `node-disc-<hostname>`
+    id (the "disc" prefix is the operator's
+    signal that this row was auto-created, not
+    manually added via the invite flow) + writes
+    a `node_discovered` `cluster_audit` row with
+    the standard B215 detail JSON; (3) the
+    `POST /admin/cluster/discover` HTTP handler
+    + "Run Tailscale discovery" button on
+    `/admin/cluster` runs the same function on
+    demand (so the operator doesn't have to wait
+    5 min for a "just-added-a-node" discovery);
+    (4) the new B221 audit rows use
+    `cluster_audit` (consistent with the rest of
+    the per-node lifecycle events) with the new
+    `NodeDiscovered ClusterAuditAction` constant;
+    the run-level `cluster.discovery.run` and
+    `cluster.discovery.error` rows use
+    `audit_log` (consistent with the per-action
+    operator trail). The B217 explicit-approval
+    gate is unchanged — the new pending rows
+    appear on `/admin/cluster` with the existing
+    "Approve" button. The `tailscaleStatusFn`
+    package-level mock hook + the
+    `TailscaleHostnameShort` / `firstIPv4` /
+    `matchesTagFilter` pure helpers are
+    unit-testable without a live tailscaled (the
+    live-verify on the agent exercises the
+    happy path via the mock + the empty-discovery
+    path with the real `tailscale status --json`
+    binary in the skygate container). 19 B-check
+    contracts in `scripts/check_b223.sh` (16
+    source-pin + 3 go-runtime). 11 pure-Go unit
+    tests in
+    `internal/cluster/discovery_b223_test.go`:
+    `TestTailscaleHostnameShort_{TailnetSuffix,
+    EmptyString}`, `TestFirstIPv4_{MixedV4AndV6,
+    V6Only, Empty}`, `TestMatchesTagFilter_{Empty
+    FilterMeansAll, CaseInsensitiveMatch}`,
+    `TestParseTailscaleStatus_{HappyPath,
+    InvalidJSON}`,
+    `TestTailscaleStatusRaw_{UsesMockFn,
+    MockReturnsError}`. 1 new file:
+    `internal/cluster/discovery.go` (~330 lines:
+    `TailscaleStatus` + `TailscalePeer` types +
+    `TailscaleStatusRaw` + `GetTailscaleStatus` +
+    `parseTailscaleStatus` + `TailscaleHostnameShort`
+    + `firstIPv4` + `matchesTagFilter` +
+    `DiscoverNewNodes` + `listClusterHostnames`
+    + `EnsureDiscoveredNode` + the
+    `tailscaleStatusFn` test hook). 6 modified:
+    `internal/db/cluster_audit.go` (+~15 lines:
+    `NodeDiscovered` constant + doc comment),
+    `internal/feature/admin/service.go` (+~12
+    lines: `DiscoveryTag` field + doc comment),
+    `cmd/skygate/main.go` (+~30 lines: `cluster`
+    import + `DiscoveryTag` wiring from
+    `SKYGATE_DISCOVERY_TAG` + `envOrDefaultDuration`
+    helper + the `runDiscoveryTicker` +
+    `runOneDiscoveryTick` functions + the boot-
+    time `go runDiscoveryTicker(...)` call +
+    SKYGATE_DISCOVERY_INTERVAL_SEC env override),
+    `internal/feature/admin/cluster.go` (+~60
+    lines: `PostAdminClusterDiscover` handler +
+    3 B221 audit rows: `cluster.discovery.run` +
+    `cluster.discovery.error` (2 paths)),
+    `internal/handlers/templates/admin/cluster.html`
+    (+~10 lines: "Run Tailscale discovery" button
+    + help text), `internal/i18n/catalog_admin.go`
+    (2 new keys in RU + EN: `cluster.discover_btn`
+    + `cluster.discover_help`). The B223.1
+    follow-up would add: (a) per-row "Remove from
+    auto-discovery" button for stale pending
+    rows that the admin doesn't want to
+    approve, (b) the Tailscale HTTP API path
+    (via `TS_API_KEY` env) for tailnets where
+    the local tailscaled is stale, (c) the
+    `cluster.discovery.throttle` rate-limit so
+    an aggressive join burst doesn't flood
+    `audit_log`. For v1 the local
+    `tailscale status --json` source + the
+    5-min ticker + the per-tick audit rows are
+    sufficient.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the

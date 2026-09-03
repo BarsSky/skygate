@@ -276,6 +276,18 @@ type Service struct {
 	// invite" button shows a "secret key not configured" error.
 	ClusterInviteSecret string
 
+	// v1.5.0+ / B223 (Phase 4.3) — Tailscale
+	// auto-discovery tag filter. Only Tailscale
+	// peers with this tag (e.g. "tag:skygate-candidate")
+	// are considered for auto-discovery. Empty
+	// string = no filter (every peer is a
+	// candidate — useful for small tailnets,
+	// risky on production tailnets with many
+	// laptops/phones). Wired from the
+	// SKYGATE_DISCOVERY_TAG env var in
+	// cmd/skygate/main.go at boot.
+	DiscoveryTag string
+
 	// v1.5.0+ / B219 — Patroni URL for the PG failover
 	// button on /admin/database. Default is
 	// http://localhost:8008 (Patroni's default port on

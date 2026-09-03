@@ -215,6 +215,24 @@
   </div>
   {{end}}
 
+  {{/* B223: Tailscale auto-discovery — one-click
+       "run discovery now" button. The background
+       ticker runs the same function every 5 min,
+       so the operator only needs this button for
+       "I just added a node, run discovery
+       immediately" cases. The new pending rows
+       show up in the table above; admin still
+       approves via the existing B217 button. */}}
+  <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+    <form method="POST" action="/admin/cluster/discover" style="display:inline">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-magnifying-glass"></i> {{t "cluster.discover_btn"}}</button>
+    </form>
+    <span class="muted" style="font-size:12px">
+      <i class="fa-solid fa-circle-info"></i>
+      {{t "cluster.discover_help"}}
+    </span>
+  </div>
+
   {{/* Add node form (B200) */}}
   <details style="margin-top:12px">
     <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)"><i class="fa-solid fa-plus"></i> {{t "cluster.node_add_title"}}</summary>

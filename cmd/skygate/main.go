@@ -36,6 +36,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/watchdog"
 	"skygate/internal/elector"
+	"skygate/internal/cluster"
 	"skygate/internal/deployrun"
 	"skygate/internal/derphealth"
 	"skygate/internal/handlers"
@@ -941,6 +942,20 @@ func main() {
 		// Patroni for multi-host setups.
 		PatroniURL: envOrDefault("SKYGATE_PATRONI_URL", "http://localhost:8008"),
 
+		// v1.5.0+ / B223 (Phase 4.3) — Tailscale
+		// auto-discovery tag filter. The B223
+		// background poller (every 5 min) +
+		// /admin/cluster/discover button only
+		// consider Tailscale peers with this tag.
+		// Default empty = no filter (every
+		// Tailscale peer is a candidate — fine
+		// for small tailnets, risky on production
+		// tailnets with laptops/phones).
+		// Operator sets SKYGATE_DISCOVERY_TAG in
+		// .env to scope discovery to a specific
+		// Tailscale ACL tag.
+		DiscoveryTag: os.Getenv("SKYGATE_DISCOVERY_TAG"),
+
 		// refactor-v0.30 Phase B step 6b (2026-07-29):
 		// refactor-v0.30 Phase B step 6b (2026-07-29):
 		// /admin/acls links to this URL (when non-empty)
@@ -1524,6 +1539,15 @@ func main() {
 	// See internal/cluster/upgrade.go for the
 	// state machine + the self-upgrade guard.
 	mux.Handle("POST /admin/cluster/upgrade", authMW(http.HandlerFunc(adminSvc.PostAdminClusterUpgrade)))
+
+	// v1.5.0+ / B223 (Phase 4.3) — Tailscale
+	// auto-discovery. POST /admin/cluster/discover
+	// runs the discovery tick immediately (the
+	// background ticker in main.go runs the same
+	// function every 5 min). See
+	// internal/cluster/discovery.go for the parsing
+	// + de-duplication logic.
+	mux.Handle("POST /admin/cluster/discover", authMW(http.HandlerFunc(adminSvc.PostAdminClusterDiscover)))
 
 	// v1.5.0+ / B201 — cluster join + heartbeat API. No
 	// authMW — the sgn1 token is the auth (the new node
@@ -2399,6 +2423,35 @@ func main() {
 		log.Printf("🧹 cleanup-scheduler: disabled (SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED=false; /admin/system_tests page can enable). Pre-B143 manual SQL DELETE workaround is still the only other option.")
 	}
 
+	// 2026-09-03: v1.5.0+ / B223 (Phase 4.3) —
+	// Tailscale auto-discovery poller. Runs every
+	// 5 minutes (overridable via
+	// SKYGATE_DISCOVERY_INTERVAL_SEC). For each
+	// tick, runs cluster.DiscoverNewNodes (which
+	// shells out to `tailscale status --json`) +
+	// inserts cluster_node rows in state=pending
+	// for any new peer. The admin then sees the
+	// pending rows on /admin/cluster and clicks
+	// the existing B217 "Approve" button to
+	// transition them to state=ready. The HTTP
+	// handler at /admin/cluster/discover runs the
+	// same function on demand (so the operator
+	// doesn't have to wait up to 5 min for a
+	// "just-added-a-new-node" discovery).
+	//
+	// Errors are silent (the next tick retries);
+	// we log to stderr so the operator can see
+	// "discovery failed" in `docker logs`. The
+	// /admin/cluster page also surfaces the last
+	// `cluster.discovery.error` audit row.
+	discoveryInterval := envOrDefaultDuration("SKYGATE_DISCOVERY_INTERVAL_SEC", 5*time.Minute, time.Second)
+	if discoveryInterval > 0 {
+		go runDiscoveryTicker(ctx, d.DB, adminSvc.DiscoveryTag, discoveryInterval, schedulerNotifierSink(app.Notifier))
+		log.Printf("🔎 discovery-ticker: enabled (interval=%s, tag_filter=%q)", discoveryInterval, adminSvc.DiscoveryTag)
+	} else {
+		log.Printf("🔎 discovery-ticker: disabled (SKYGATE_DISCOVERY_INTERVAL_SEC=0). Operator can still trigger via /admin/cluster/discover.")
+	}
+
 	// 2026-08-20: v1.5.0 (B154) — in-app auto-rotate
 	// scheduler for personal API tokens with
 	// auto_rotate=1. When enabled, runs a daily cron
@@ -3100,6 +3153,28 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
+// envOrDefaultDuration reads an env var as a Go
+// duration string (e.g. "5m", "30s"), falling back
+// to the supplied default when unset, empty, or
+// unparseable. The minimum-allowed parameter
+// protects against a typo like
+// "SKYGATE_DISCOVERY_INTERVAL_SEC=0" causing an
+// instant-tick loop or a parse error killing
+// the ticker. Pass 0 to disable (the B223 caller
+// uses this).
+func envOrDefaultDuration(key string, def, min time.Duration) time.Duration {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < min {
+		log.Printf("⚠️ %s=%q: invalid or below minimum %s; using default %s", key, v, min, def)
+		return def
+	}
+	return d
+}
+
 // deriveHeadplaneDefault returns a sensible HEADPLANE_URL
 // default from a HEADSCALE_URL. The default convention
 // (operator's choice; documented in deploy/README.md) is
@@ -3257,6 +3332,70 @@ func schedulerNotifierSink(n telegram.Notifier) update.NotifierSink {
 		return nil
 	}
 	return schedulerSink{n: n}
+}
+
+// runDiscoveryTicker is the B223 (Phase 4.3)
+// background ticker that runs Tailscale
+// auto-discovery every `interval`. The HTTP
+// handler at /admin/cluster/discover also calls
+// the same cluster.DiscoverNewNodes +
+// cluster.EnsureDiscoveredNode pair, so the
+// "run now" path is identical to the "wait for
+// the next tick" path.
+//
+// Errors are logged but do NOT stop the ticker
+// — the next tick retries. A persistent
+// `tailscaled not running` error (e.g. on a
+// host where the operator forgot to enable
+// Tailscale) will keep firing every interval;
+// the operator sees "discovery-ticker: 0 new
+// nodes" in `docker logs` and the
+// cluster.discovery.error audit row on
+// /admin/cluster.
+func runDiscoveryTicker(ctx context.Context, d *sql.DB, tagFilter string, interval time.Duration, notifier update.NotifierSink) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			runOneDiscoveryTick(ctx, d, tagFilter, notifier)
+		}
+	}
+}
+
+// runOneDiscoveryTick runs one discovery pass.
+// Split out from runDiscoveryTicker so the
+// unit tests + the live-verify can call it
+// without spinning up a real ticker.
+func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notifier update.NotifierSink) {
+	const clusterID = "skygate-staging"
+	peers, err := cluster.DiscoverNewNodes(ctx, d, clusterID, tagFilter)
+	if err != nil {
+		log.Printf("🔎 discovery-ticker: discover failed: %v", err)
+		_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.error",
+			fmt.Sprintf("error=%q", err.Error()), "", "")
+		return
+	}
+	discovered := 0
+	for _, p := range peers {
+		if err := cluster.EnsureDiscoveredNode(d, clusterID, p.Hostname, p.TailscaleIP, "system"); err != nil {
+			log.Printf("🔎 discovery-ticker: ensure %q failed: %v", p.Hostname, err)
+			_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.error",
+				fmt.Sprintf("hostname=%q error=%q", p.Hostname, err.Error()), "cluster_node", p.Hostname)
+			continue
+		}
+		discovered++
+	}
+	runDetail := fmt.Sprintf("discovered=%d total_peers=%d tag_filter=%q via=ticker", discovered, len(peers), tagFilter)
+	_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.run", runDetail, "", "")
+	if discovered > 0 {
+		log.Printf("🔎 discovery-ticker: discovered %d new node(s) from Tailscale (tag_filter=%q)", discovered, tagFilter)
+		if notifier != nil {
+			notifier.SendAlert(fmt.Sprintf("Tailscale auto-discovery found %d new node(s) (tag_filter=%q). See /admin/cluster → Approve.", discovered, tagFilter))
+		}
+	}
 }
 
 type schedulerSink struct{ n telegram.Notifier }

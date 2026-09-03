@@ -810,6 +810,21 @@ var ruAdmin = map[string]string{
 	"cluster.upgrade_all_done":            "Rolling upgrade всех нод завершён.",
 	"cluster.upgrade_self_refused":        "Нельзя обновить self-ноду через orchestrator. Сделайте upgrade с peer-ноды, затем на этой ноде: `skygate deploy pull` + `docker restart skygate` (или `systemctl restart skygate`).",
 	"cluster.upgrade_all_help":            "Orchestrator последовательно (по одной) переводит каждую ready/failed ноду в state=draining, ждёт новый билд на её /healthz (до 5 мин), затем rejoin. Self-нода пропускается. Бинарник на ноду вы заливаете сами (B150 deploy-push/pull).",
+
+	// B223 (Phase 4.3) — Tailscale auto-discovery.
+	// "Run discovery now" button on /admin/cluster.
+	// The background ticker (5 min default) does
+	// the same scan; the button is for "I just
+	// added a new node, run now" cases. The
+	// discovery runs `tailscale status --json`,
+	// filters by SKYGATE_DISCOVERY_TAG (default
+	// "" = no filter), and inserts cluster_node
+	// rows in state=pending for every peer not
+	// already in cluster_node. The admin then
+	// clicks the existing B217 Approve button on
+	// each new row.
+	"cluster.discover_btn":               "Запустить Tailscale discovery",
+	"cluster.discover_help":              "Background-тикер уже бегает каждые 5 мин и опрашивает <code>tailscale status --json</code>. Кнопка нужна если вы только что добавили ноду в tailnet и не хотите ждать тикера. Найденные пиры → <code>cluster_node</code> в <code>state=pending</code>; вы далее нажимаете существующую кнопку «Одобрить» (B217). Тег-фильтр — <code>SKYGATE_DISCOVERY_TAG</code> в .env (пусто = все пиры).",
 	"cluster.invite_generate_title":    "Сгенерировать invite",
 	"cluster.invite_generate_help":     "Создаёт запись в <code>cluster_invite</code> и возвращает подписанный sgn1-токен (HMAC-SHA256). Токен показывается один раз — скопируйте сразу. На целевой ноде запустите <code>skygate cluster join --token=&lt;...&gt;</code> (Phase 2.3).",
 	"cluster.invite_role_ph":           "роль (skygate / skygate-standby)",
@@ -1600,6 +1615,11 @@ var enAdmin = map[string]string{
 	"cluster.upgrade_all_done":            "Rolling upgrade of all nodes complete.",
 	"cluster.upgrade_self_refused":        "Refusing to upgrade self through the orchestrator. Run the upgrade from a peer node, then on this node: `skygate deploy pull` + `docker restart skygate` (or `systemctl restart skygate`).",
 	"cluster.upgrade_all_help":            "The orchestrator iterates each ready/failed node, drains it, polls /healthz for the new build (up to 5 min), then rejoins. Self is skipped. You push the binary to each node yourself (B150 deploy-push/pull).",
+
+	// B223 (Phase 4.3) — Tailscale auto-discovery.
+	// See the RU block above for the design.
+	"cluster.discover_btn":               "Run Tailscale discovery",
+	"cluster.discover_help":              "The background ticker already runs every 5 min and polls <code>tailscale status --json</code>. Use this button if you just added a new node to the tailnet and don't want to wait for the next tick. New peers → <code>cluster_node</code> in <code>state=pending</code>; you then click the existing «Approve» button (B217). Tag filter via <code>SKYGATE_DISCOVERY_TAG</code> in .env (empty = all peers).",
 	"cluster.invite_generate_title":    "Generate invite",
 	"cluster.invite_generate_help":     "Creates a <code>cluster_invite</code> row and returns a signed sgn1 token (HMAC-SHA256). The token is shown once — copy it immediately. On the target node run <code>skygate cluster join --token=&lt;...&gt;</code> (Phase 2.3).",
 	"cluster.invite_role_ph":           "role (skygate / skygate-standby)",

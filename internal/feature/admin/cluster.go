@@ -916,6 +916,81 @@ func (s *Service) PostAdminClusterUpgrade(w http.ResponseWriter, r *http.Request
 	clusterRedirect(w, r, "Upgrade complete for "+target+".", "")
 }
 
+// ---------- POST /admin/cluster/discover (B223) --------------------
+//
+// PostAdminClusterDiscover is the B223 (Phase 4.3)
+// "run Tailscale discovery now" entry point.
+// The background ticker (started at boot in
+// cmd/skygate/main.go) runs the same function
+// every 5 min — the operator uses this HTTP
+// handler to force an immediate run after, e.g.,
+// adding a new node to the tailnet.
+//
+// Behaviour:
+//   - runs cluster.DiscoverNewNodes (returns the
+//     list of Tailscale peers not yet in
+//     cluster_node)
+//   - for each new node, runs
+//     cluster.EnsureDiscoveredNode (INSERTs a
+//     pending row + writes a node_discovered
+//     cluster_audit row)
+//   - writes a cluster.discovery.run
+//     audit_log row (the "I ran discovery" trail)
+//   - 303s back to /admin/cluster with an
+//     "ok=Discovered N new nodes" flash
+//
+// Failure modes:
+//   - Tailscale not running (binary missing,
+//     tailscaled down, JSON parse fail): the
+//     handler returns 303 with an
+//     "err=discovery failed: <reason>" flash.
+//     The page shows the error; the next
+//     background tick will retry.
+//   - DB error during INSERT: same — 303 with
+//     err= flash. The node that failed to
+//     insert is skipped (we don't half-insert).
+//
+// B221: the per-node audit row uses
+// cluster_audit (consistent with the rest of
+// the per-node lifecycle events). The "run"
+// audit row uses audit_log (consistent with
+// the per-action operator trail).
+func (s *Service) PostAdminClusterDiscover(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	clusterID := "skygate-staging"
+	peers, err := cluster.DiscoverNewNodes(r.Context(), s.dbc(), clusterID, s.DiscoveryTag)
+	if err != nil {
+		_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.discovery.error",
+			fmt.Sprintf("error=%q", err.Error()), "", "")
+		clusterRedirect(w, r, "", "discovery failed: "+err.Error())
+		return
+	}
+	discovered := 0
+	for _, p := range peers {
+		if err := cluster.EnsureDiscoveredNode(s.dbc(), clusterID, p.Hostname, p.TailscaleIP, c.Username); err != nil {
+			// Log + continue. A single bad
+			// row shouldn't abort the
+			// whole discovery tick.
+			_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.discovery.error",
+				fmt.Sprintf("hostname=%q error=%q", p.Hostname, err.Error()), "cluster_node", p.Hostname)
+			continue
+		}
+		discovered++
+	}
+	// Run-level audit row (no specific target).
+	runDetail := fmt.Sprintf("discovered=%d total_peers=%d tag_filter=%q", discovered, len(peers), s.DiscoveryTag)
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.discovery.run", runDetail, "", "")
+	if discovered == 0 {
+		clusterRedirect(w, r, fmt.Sprintf("Tailscale discovery: 0 new nodes (scanned %d peers, tag filter %q).", len(peers), s.DiscoveryTag), "")
+		return
+	}
+	clusterRedirect(w, r, fmt.Sprintf("Discovered %d new node(s) from Tailscale — see pending rows on /admin/cluster for the Approve button.", discovered), "")
+}
+
 // ---------- POST /admin/cluster/invite/generate (B200) ----------------
 
 // PostAdminClusterInviteGenerate creates a new cluster_invite

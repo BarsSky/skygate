@@ -145,6 +145,24 @@ const (
 	// see duplicate events on every orchestrator
 	// restart).
 	NodeRejoin ClusterAuditAction = "node_rejoin"
+
+	// NodeDiscovered — fired by cluster.EnsureDiscoveredNode
+	// (B223, Phase 4.3) when the Tailscale
+	// auto-discovery poller finds a new peer on the
+	// tailnet and inserts a cluster_node row in
+	// state=pending. This is the audit row the
+	// operator greps for "where did this pending
+	// node come from?" — the answer is "the B223
+	// poller auto-created it from the Tailscale
+	// peer list". Detail: {"node_id": "node-disc-<h>",
+	// "hostname": "...", "tailscale_ip": "...",
+	// "discovered_at": "<rfc3339>"}. The
+	// /admin/cluster page renders a "Discovered via
+	// Tailscale" badge next to rows with this
+	// action in their history (the B215 /admin/ha
+	// filter surfaces this for nodes that
+	// transitioned from discovered → approved).
+	NodeDiscovered ClusterAuditAction = "node_discovered"
 )
 
 // InsertClusterAudit inserts one row into cluster_audit.
