@@ -933,6 +933,15 @@ func main() {
 		// "secret not configured" error (better than
 		// silently generating tokens no one can verify).
 		ClusterInviteSecret: cfg.SecretKeyHex,
+		// v1.5.0+ / B219 — Patroni URL for the
+		// /admin/database "PG Failover" button.
+		// Defaults to http://localhost:8008 (Patroni's
+		// default local port). Set SKYGATE_PATRONI_URL
+		// in .env to point at a different host's
+		// Patroni for multi-host setups.
+		PatroniURL: envOrDefault("SKYGATE_PATRONI_URL", "http://localhost:8008"),
+
+		// refactor-v0.30 Phase B step 6b (2026-07-29):
 		// refactor-v0.30 Phase B step 6b (2026-07-29):
 		// /admin/acls links to this URL (when non-empty)
 		// instead of the bundled Headplane sidecar.
@@ -1403,6 +1412,17 @@ func main() {
 	// must restart the container to apply.
 	mux.Handle("POST /admin/database/test", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseTest)))
 	mux.Handle("POST /admin/database/edit", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseEdit)))
+	// v1.5.0+ / B219 — Phase 3.3 PG failover (Patroni plumbing).
+	// Triggers a Patroni /switchover on the configured
+	// PatroniURL (default http://localhost:8008). The
+	// candidate field names the target PG node to
+	// promote; the leader field is optional (Patroni
+	// picks the current leader from its own state if
+	// empty). After Patroni completes the switchover,
+	// the watchdog (B210) detects the new DSN from
+	// etcd and hot-reloads the pgxpool — skygate keeps
+	// running on the new primary without restart.
+	mux.Handle("POST /admin/database/failover", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseFailover)))
 
 	// v1.5.0+ / B198 — Phase 1.4 DB migration workflow.
 	// 6-step state machine (precheck, dump, restore, verify,

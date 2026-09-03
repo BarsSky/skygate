@@ -37,6 +37,7 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -434,6 +435,85 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 		_ = err
 	}
 	http.Redirect(w, r, "/admin/database?ok=saved", http.StatusSeeOther)
+}
+
+// ---------- POST /admin/database/failover (B219) ----------------
+
+// PostAdminDatabaseFailover triggers a Patroni
+// switchover — the operator names the CANDIDATE PG
+// node to promote, the CURRENT leader stays as the
+// "leader" hint (or empty for Patroni to pick), and
+// the reason text becomes the cluster_audit detail.
+//
+// Phase 3.3 of docs/internal/cluster-management.md
+// (B219). The plan says "Patroni is already in place,
+// just plumb to UI" — that's exactly what this handler
+// does. The auto-failover case (unhealthy current
+// leader) is handled by Patroni itself out-of-band;
+// this handler is the operator-driven happy path.
+//
+// On success, the watchdog (B210) detects the new
+// DSN from etcd and hot-reloads the pgxpool — skygate
+// keeps running on the new primary without restart.
+func (s *Service) PostAdminDatabaseFailover(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	candidate := strings.TrimSpace(r.FormValue("candidate"))
+	leader := strings.TrimSpace(r.FormValue("leader"))
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if candidate == "" {
+		http.Redirect(w, r, "/admin/database?err=candidate+name+required", http.StatusSeeOther)
+		return
+	}
+	// Patroni URL — read from the skygate config.
+	// The default (per the B204 elector) is
+	// http://localhost:8008, which works for the
+	// "skygate runs alongside Patroni on the same host"
+	// case. For multi-host deployments, the operator
+	// can set SKYGATE_PATRONI_URL in .env to point at
+	// a specific node's Patroni.
+	patroniURL := s.PatroniURL
+	if patroniURL == "" {
+		patroniURL = "http://localhost:8008"
+	}
+	// Call Patroni. Synchronous — Patroni blocks
+	// until the switchover completes (typically
+	// <30s for a clean swap; can take longer if the
+	// new leader needs to catch up the WAL).
+	// B219 uses a 60s client timeout (set inside
+	// db.FailoverDB). We pass the request context
+	// so the operator's browser-cancel propagates
+	// to the Patroni call (we don't want the
+	// switchover to keep going after the operator
+	// gave up).
+	result, err := db.FailoverDB(r.Context(), patroniURL, leader, candidate, reason)
+	if err != nil {
+		// Audit row for the failure — we want
+		// even the failed attempt on the audit log
+		// (operators need to see "admin tried to
+		// failover and Patroni said no" for
+		// post-mortem).
+		_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover.error",
+			fmt.Sprintf("candidate=%q leader=%q reason=%q error=%q",
+				candidate, leader, reason, err.Error()))
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	// Success audit row.
+	detail := fmt.Sprintf("candidate=%q leader=%q reason=%q timestamp=%q",
+		candidate, leader, reason, result.SwitchoverTimestamp)
+	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover", detail); err != nil {
+		// audit failure is non-fatal; just log
+		_ = err
+	}
+	http.Redirect(w, r, "/admin/database?ok=failover+to+"+candidate, http.StatusSeeOther)
 }
 
 // ---------- helpers -----------------------------------------------------

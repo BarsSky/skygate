@@ -163,6 +163,35 @@
     </div>
   </div>
 
+  {{/* ---------- 4b. PG Failover (Phase 3.3 / B219) ---------- */}}
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="fa fa-exchange-alt me-2"></i>{{t "db.failover_title"}}
+    </div>
+    <div class="card-body">
+      <p class="text-muted small">{{t "db.failover_help"}}</p>
+      <form method="POST" action="/admin/database/failover" onsubmit="return confirm('{{t "db.failover_confirm"}}')">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label small">{{t "db.failover_candidate_ph"}}</label>
+            <input class="form-control form-control-sm" type="text" name="candidate" placeholder="pg-replica-1" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">{{t "db.failover_leader_ph"}}</label>
+            <input class="form-control form-control-sm" type="text" name="leader" placeholder="">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">{{t "db.failover_reason_ph"}}</label>
+            <input class="form-control form-control-sm" type="text" name="reason" placeholder="">
+          </div>
+          <div class="col-md-2 d-grid">
+            <button class="btn btn-sm btn-danger" type="submit"><i class="fa fa-bolt me-1"></i>{{t "db.failover_btn"}}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   {{/* ---------- 5. Recent migration runs (Phase 1.4) ---------- */}}
   {{if .Data.RecentRuns}}
   <div class="card mb-4">

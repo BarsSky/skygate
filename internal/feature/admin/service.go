@@ -276,5 +276,15 @@ type Service struct {
 	// invite" button shows a "secret key not configured" error.
 	ClusterInviteSecret string
 
+	// v1.5.0+ / B219 — Patroni URL for the PG failover
+	// button on /admin/database. Default is
+	// http://localhost:8008 (Patroni's default port on
+	// the local host). The operator can override via
+	// SKYGATE_PATRONI_URL in .env for multi-host setups
+	// where skygate runs on a different host than the
+	// PG primary's Patroni. Wired from
+	// cmd/skygate/main.go.
+	PatroniURL string
+
 	telegramProbeCache serviceProbeCache
 }

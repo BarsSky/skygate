@@ -652,6 +652,19 @@ var ruAdmin = map[string]string{
 	"db.edit_help":                        "Сохраняет DSN в <code>cluster_database</code> с audit. Live skygate процесс <strong>не</strong> подхватывает новый DSN автоматически — нужно перезапустить контейнер (<code>docker restart skygate-skygate-1</code>). После Phase 3.1 (skygate-watchdog) hot-reload будет без рестарта.",
 	"db.edit_confirm":                     "Сохранить новый desired DSN? Live skygate процесс не подхватит его до рестарта контейнера.",
 	"db.migrate_title":                    "Migrate to new host (Phase 1.4)",
+	// v1.5.0+ / B219 — Phase 3.3 Patroni failover.
+	// Trigger a Patroni /switchover to promote the
+	// named candidate to primary. Watchdog (B210)
+	// detects the new DSN from etcd + hot-reloads
+	// the pgxpool — skygate keeps running without
+	// restart.
+	"db.failover_title":                   "PG Failover (Patroni switchover)",
+	"db.failover_help":                    "Запустить switchover в Patroni: указать имя candidate (Patroni promote его в primary, а текущий primary станет replica). После успешного switchover watchdog (B210) подхватит новый DSN из etcd. Если Patroni не настроен (SKYGATE_PATRONI_URL не резолвится), кнопка вернёт ошибку с текстом — это безопасно, skygate не падает.",
+	"db.failover_candidate_ph":           "имя candidate (например: pg-replica-1)",
+	"db.failover_leader_ph":               "имя текущего leader (опционально, пусто = Patroni определит сам)",
+	"db.failover_reason_ph":               "причина (например: planned maintenance)",
+	"db.failover_btn":                     "Switchover",
+	"db.failover_confirm":                 "Запустить Patroni switchover? Это demote'ит текущий primary и promote'ит candidate. Действие НЕ обратимо без ещё одного switchover.",
 	"db.migrate_help":                     "Полный workflow миграции БД (6 шагов): precheck → dump → restore → verify → flip → cleanup. Шаги dump / restore / cleanup сейчас возвращают STUB — оператор запускает их руками (см. <code>docs/internal/cluster-management.md</code> §7). Шаг flip реально работает: обновляет <code>cluster_database</code> + <code>.env</code> + audit.",
 	"db.migrate_btn":                      "Migrate",
 	"db.migrate_confirm":                  "Запустить миграцию? Будет попытка precheck → dump (STUB) → restore (STUB) → verify → flip → cleanup (STUB). Оператор должен заранее подготовить target-данные (pg_dump + pg_restore руками).",
@@ -1406,6 +1419,19 @@ var enAdmin = map[string]string{
 	"db.edit_help":                        "Saves the DSN to <code>cluster_database</code> with audit. The live skygate process does <strong>not</strong> pick up the new DSN automatically — you must restart the container (<code>docker restart skygate-skygate-1</code>). After Phase 3.1 (skygate-watchdog) the hot-reload will happen without a restart.",
 	"db.edit_confirm":                     "Save the new desired DSN? The live skygate process won't pick it up until you restart the container.",
 	"db.migrate_title":                    "Migrate to new host (Phase 1.4)",
+	// v1.5.0+ / B219 — Phase 3.3 Patroni failover.
+	// Trigger a Patroni /switchover to promote the
+	// named candidate to primary. Watchdog (B210)
+	// detects the new DSN from etcd + hot-reloads
+	// the pgxpool — skygate keeps running without
+	// restart.
+	"db.failover_title":                   "PG Failover (Patroni switchover)",
+	"db.failover_help":                    "Trigger a Patroni /switchover: type the candidate PG node name (Patroni promotes it to primary, the current primary becomes a replica). After the switchover completes, the B210 watchdog detects the new DSN from etcd and hot-reloads the pgxpool — skygate keeps running on the new primary without restart. If Patroni is not configured (SKYGATE_PATRONI_URL is unreachable), the button returns a clear error and skygate stays on the old primary — safe failure mode.",
+	"db.failover_candidate_ph":           "candidate name (e.g. pg-replica-1)",
+	"db.failover_leader_ph":               "current leader name (optional — leave empty to let Patroni pick)",
+	"db.failover_reason_ph":               "reason (e.g. planned maintenance)",
+	"db.failover_btn":                     "Switchover",
+	"db.failover_confirm":                 "Run Patroni switchover? This demotes the current primary and promotes the candidate. The action is NOT reversible without running another switchover.",
 	"db.migrate_help":                     "Full DB-migration workflow (6 steps): precheck → dump → restore → verify → flip → cleanup. Steps dump / restore / cleanup currently return STUB errors — operator runs them manually (see <code>docs/internal/cluster-management.md</code> §7). The flip step IS functional: it updates <code>cluster_database</code> + <code>.env</code> + audit.",
 	"db.migrate_btn":                      "Migrate",
 	"db.migrate_confirm":                  "Start migration? It will try precheck → dump (STUB) → restore (STUB) → verify → flip → cleanup (STUB). Operator must pre-stage target data (pg_dump + pg_restore manually) first.",

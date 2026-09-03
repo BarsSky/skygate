@@ -3069,6 +3069,76 @@ in the same commit. Don't let the tracker drift.
     `cluster_audit` `node_init` row fires + no
     standby invite token is printed (empty first
     line of stdout).
+  - **B219 (v1.5.0+, 2026-09-03) — /admin/database
+    Phase 3.3 Patroni /switchover plumbing.**
+    Closes the "operator has no UI to trigger a
+    planned PG failover — must ssh to the primary
+    and curl Patroni manually" gap. Pre-B219 the
+    only path to a planned PG failover was to ssh
+    to the primary host, curl Patroni's /switchover
+    REST API directly, and hope the watchdog (B210)
+    picks up the new DSN from etcd. The auto-failover
+    case (unhealthy current leader) is handled by
+    Patroni itself out-of-band — that doesn't need
+    skygate involvement. Post-B219: (1) new
+    `db.FailoverDB` helper does a synchronous
+    `POST {patroniURL}/switchover` with a 60s timeout
+    (synchronous so the operator gets the result
+    back in the HTTP response); (2) new
+    `PostAdminDatabaseFailover` handler reads
+    `candidate` + `leader` + `reason` from the form,
+    calls `db.FailoverDB`, and writes either
+    `db.failover` (success) or `db.failover.error`
+    (Patroni rejected) audit row — failed attempts
+    are visible in the audit log for post-mortem;
+    (3) new `POST /admin/database/failover` route +
+    a "PG Failover" card in `database.html` with
+    `candidate` / `leader` / `reason` fields; (4)
+    `Service.PatroniURL` field wired from
+    `SKYGATE_PATRONI_URL` env var (default
+    `http://localhost:8008`); (5) watchdog (B210)
+    detects the new DSN from etcd and hot-reloads
+    the pgxpool — skygate keeps running on the new
+    primary without restart. 19 B-check contracts
+    in `scripts/check_b219.sh` (17 source-pin + 2
+    go-runtime). 8 unit tests in
+    `internal/db/cluster_patroni_test.go`
+    (`TestFailoverDB_HappyPath` +
+    `TestFailoverDB_4xxRejection` +
+    `TestFailoverDB_200ButSucceededFalse` +
+    `TestFailoverDB_EmptyURL` +
+    `TestFailoverDB_EmptyCandidate` +
+    `TestFailoverDB_NetworkError` +
+    `TestFailoverDB_BodySendsCandidate` +
+    `TestFailoverDB_ContextCancelled` — all using
+    `httptest.Server`, no real Patroni required).
+    1 new file: `internal/db/cluster_patroni.go`
+    (~180 lines: helper + Patroni response struct +
+    `truncateBody`). 5 modified:
+    `internal/feature/admin/database.go` (+~80
+    lines: `PostAdminDatabaseFailover` handler),
+    `internal/feature/admin/service.go` (+~10
+    lines: `PatroniURL` field + doc comment),
+    `cmd/skygate/main.go` (+~5 lines:
+    `SKYGATE_PATRONI_URL` env wiring + route
+    registration),
+    `internal/handlers/templates/admin/database.html`
+    (+~30 lines: PG Failover card with 3 form
+    fields), `internal/i18n/catalog_admin.go` (+7
+    lines: `db.failover_*` keys in RU + EN).
+    Live-verify on the agent
+    (`scripts/b219_liveverify.sh`): the agent
+    doesn't have Patroni running, so the live-verify
+    exercises the FAILURE path — POST
+    `/admin/database/failover` with a non-existent
+    candidate → assert the handler returns a clean
+    error (the wire error from Patroni's /switchover
+    call) + assert the `db.failover.error` audit
+    row is written (the operator's failed attempt
+    is on the audit log for post-mortem) + assert
+    the `cluster_node` row + `cluster_database`
+    row are UNCHANGED (the failed attempt is a
+    true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't
