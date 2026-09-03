@@ -98,6 +98,18 @@ type databasePageData struct {
 
 	// 5. Recent migration runs (Phase 1.4, last 5)
 	RecentRuns []dbmigrate.RunView
+
+	// 6. Last failover state (Phase 3.7 / B220) —
+	// read from global_settings.key="db.last_failover"
+	// if there was a successful Patroni switchover
+	// since the last rollback. The Rollback card
+	// on the page pre-populates the candidate field
+	// with Last.Old + shows the operator "rolled
+	// forward by <operator> at <ts> — rollback?". If
+	// HasLastFailover is false, the Rollback card
+	// is hidden (no previous failover to roll back).
+	LastFailover     *db.LastFailoverState
+	HasLastFailover  bool
 }
 
 // GetAdminDatabase renders the /admin/database page.
@@ -213,6 +225,19 @@ func (s *Service) GetAdminDatabaseMigrate(w http.ResponseWriter, r *http.Request
 	// Add the recent-runs list to the page data so the
 	// template can render a "recent migrations" sidebar.
 	data.RecentRuns = s.collectRecentRuns(r, 5)
+
+	// B220: load the last failover state for the
+	// Rollback card. We tolerate a read error
+	// (just leave HasLastFailover=false; the
+	// page renders without the Rollback card).
+	// The most common failure is "no key set
+	// yet" which GetGlobalSetting returns as ""
+	// (not an error) — so this is robust.
+	if last, lerr := db.GetLastFailover(s.dbc()); lerr == nil && last != nil {
+		data.LastFailover = last
+		data.HasLastFailover = true
+	}
+
 	s.Backend.RenderWithLayout(w, r, "admin/database.html", c, map[string]any{
 		"Data": data,
 	})
@@ -513,7 +538,159 @@ func (s *Service) PostAdminDatabaseFailover(w http.ResponseWriter, r *http.Reque
 		// audit failure is non-fatal; just log
 		_ = err
 	}
+	// B220: record the last failover state so the
+	// Rollback button on /admin/database can pre-
+	// populate the candidate field with the OLD
+	// primary (the rollback target). The "old"
+	// value comes from the leader field the
+	// operator typed (or empty if they left it
+	// blank — Patroni then picks the current
+	// leader from its own state; we record the
+	// candidate as the "old" fallback so the
+	// rollback still has something to target
+	// even if Patroni API was queried for
+	// current leader at the time of the
+	// original switchover).
+	oldPrimary := leader
+	if oldPrimary == "" {
+		// Operator didn't type a leader. We
+		// still need to record SOMETHING for
+		// the rollback. The "candidate" is
+		// the new primary, so we can't use
+		// that. The best approximation is
+		// to leave "old" empty — the rollback
+		// form will then show a blank
+		// leader field + the operator types
+		// the old primary manually. Better
+		// than recording the new primary as
+		// both old and new.
+		oldPrimary = ""
+	}
+	if err := db.SetLastFailover(s.dbc(), &db.LastFailoverState{
+		Old:       oldPrimary,
+		New:       candidate,
+		Timestamp: time.Now().Unix(),
+		Operator:  c.Username,
+		Reason:    reason,
+	}); err != nil {
+		// SetLastFailover failure is non-fatal —
+		// the audit row is the source of truth
+		// for the failover, and the operator
+		// can still rollback manually (typing
+		// the old primary as candidate).
+		fmt.Fprintf(os.Stderr, "db.failover: warning: could not persist last_failover state: %v (rollback button will not pre-populate)\n", err)
+	}
 	http.Redirect(w, r, "/admin/database?ok=failover+to+"+candidate, http.StatusSeeOther)
+}
+
+// ---------- POST /admin/database/failover/rollback (B220) ----
+
+// PostAdminDatabaseFailoverRollback is the
+// "Phase 3.7 — auto-rollback" button. It triggers
+// a Patroni /switchover back to the OLD primary
+// (the one that was running before the last
+// successful failover). The OLD primary is read
+// from db.last_failover (the global_settings key
+// B220's SetLastFailover writes after every
+// successful /admin/database/failover).
+//
+// "Auto" in the plan title is a misnomer for the
+// B220 scope: we provide the OPERATOR with a
+// one-click rollback button. The "auto" version
+// (system detects the new primary is unhealthy
+// and triggers the rollback without operator
+// intervention) is a follow-up that needs:
+//   (a) a background health monitor (the watchdog
+//       B210 already has the per-poll health state)
+//   (b) a stable "is the new primary healthy for
+//       the last N seconds" check
+//   (c) a "no flap" guard (don't rollback twice
+//       in 5 min — the operator should never see
+//       the cluster in a rapid ping-pong state)
+// These are deferred to a follow-up B-block —
+// B220 ships the operator-driven rollback + the
+// state-tracking that the auto version will need.
+//
+// Refuses to rollback if there's no recorded
+// last_failover state (the button is hidden in
+// that case via the .HasLastFailover check in
+// the template, but the handler also defends
+// against direct POST).
+func (s *Service) PostAdminDatabaseFailoverRollback(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	// Read the recorded last_failover state.
+	last, err := db.GetLastFailover(s.dbc())
+	if err != nil {
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	if last == nil || last.New == "" {
+		http.Redirect(w, r, "/admin/database?err="+"no+last+failover+recorded+-+nothing+to+rollback", http.StatusSeeOther)
+		return
+	}
+	// The form may have an explicit candidate
+	// override (the operator can change the
+	// rollback target if the "old" was empty
+	// because they didn't set leader on the
+	// original switchover). The default is the
+	// recorded "old" (the OLD primary is the
+	// rollback target — we want to restore it).
+	candidate := strings.TrimSpace(r.FormValue("candidate"))
+	if candidate == "" {
+		candidate = last.Old
+	}
+	if candidate == "" {
+		// The original switchover didn't have
+		// a leader hint, AND the operator
+		// didn't type an explicit candidate.
+		// Bail with a clear error — we can't
+		// rollback to "nothing".
+		http.Redirect(w, r, "/admin/database?err="+"no+candidate+for+rollback+-+type+the+old+primary+name", http.StatusSeeOther)
+		return
+	}
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if reason == "" {
+		// Default to "rollback of <old> → <new>".
+		reason = fmt.Sprintf("rollback of failover %s → %s", last.New, last.Old)
+	}
+	// Patroni URL — same env var as B219.
+	patroniURL := s.PatroniURL
+	if patroniURL == "" {
+		patroniURL = "http://localhost:8008"
+	}
+	// Call Patroni. Same helper as B219 — the
+	// actual HTTP /switchover call is identical,
+	// only the audit action and the post-success
+	// state cleanup differ.
+	result, err := db.FailoverDB(r.Context(), patroniURL, "", candidate, reason)
+	if err != nil {
+		_ = db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover_rollback.error",
+			fmt.Sprintf("candidate=%q reason=%q error=%q", candidate, reason, err.Error()))
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	// Success audit row + clear the last_failover
+	// state (the rollback consumed it; a second
+	// rollback would target the second-to-last
+	// failover, which we don't track).
+	detail := fmt.Sprintf("candidate=%q reason=%q original_failover_new=%q original_failover_old=%q timestamp=%q",
+		candidate, reason, last.New, last.Old, result.SwitchoverTimestamp)
+	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "db.failover_rollback", detail); err != nil {
+		_ = err
+	}
+	if err := db.ClearLastFailover(s.dbc()); err != nil {
+		// non-fatal — just log
+		fmt.Fprintf(os.Stderr, "db.failover_rollback: warning: could not clear last_failover state: %v (next rollback attempt will see the same state)\n", err)
+	}
+	http.Redirect(w, r, "/admin/database?ok=rollback+to+"+candidate, http.StatusSeeOther)
 }
 
 // ---------- helpers -----------------------------------------------------

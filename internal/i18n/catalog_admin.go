@@ -665,6 +665,19 @@ var ruAdmin = map[string]string{
 	"db.failover_reason_ph":               "причина (например: planned maintenance)",
 	"db.failover_btn":                     "Switchover",
 	"db.failover_confirm":                 "Запустить Patroni switchover? Это demote'ит текущий primary и promote'ит candidate. Действие НЕ обратимо без ещё одного switchover.",
+	// v1.5.0+ / B220 — Phase 3.7 PG failover rollback
+	// (operator-driven). The Rollback card is shown
+	// on /admin/database when a successful Patroni
+	// switchover has been recorded since the last
+	// rollback (or since skygate started). The
+	// candidate field is pre-populated with the
+	// OLD primary from db.last_failover.
+	"db.rollback_title":                   "PG Failover Rollback (Phase 3.7)",
+	"db.rollback_help":                    "Откатить последний Patroni switchover: promote'ит обратно OLD primary (тот, что работал ДО последнего failover). Кнопка доступна только если в db.last_failover есть запись о последнем успешном switchover — после rollback запись удаляется, и кнопка исчезает (следующий rollback потребует ещё одного switchover вперёд).",
+	"db.rollback_last_failover":           "Last failover:",
+	"db.rollback_candidate_ph":           "target of rollback (default = OLD primary)",
+	"db.rollback_btn":                     "Rollback",
+	"db.rollback_confirm":                 "Запустить Patroni switchover обратно? Это demote'ит текущий primary и promote'ит обратно OLD primary (тот, что был до последнего failover). Действие регистрируется как db.failover_rollback в audit_log + чистит db.last_failover.",
 	"db.migrate_help":                     "Полный workflow миграции БД (6 шагов): precheck → dump → restore → verify → flip → cleanup. Шаги dump / restore / cleanup сейчас возвращают STUB — оператор запускает их руками (см. <code>docs/internal/cluster-management.md</code> §7). Шаг flip реально работает: обновляет <code>cluster_database</code> + <code>.env</code> + audit.",
 	"db.migrate_btn":                      "Migrate",
 	"db.migrate_confirm":                  "Запустить миграцию? Будет попытка precheck → dump (STUB) → restore (STUB) → verify → flip → cleanup (STUB). Оператор должен заранее подготовить target-данные (pg_dump + pg_restore руками).",
@@ -1432,6 +1445,19 @@ var enAdmin = map[string]string{
 	"db.failover_reason_ph":               "reason (e.g. planned maintenance)",
 	"db.failover_btn":                     "Switchover",
 	"db.failover_confirm":                 "Run Patroni switchover? This demotes the current primary and promotes the candidate. The action is NOT reversible without running another switchover.",
+	// v1.5.0+ / B220 — Phase 3.7 PG failover rollback
+	// (operator-driven). The Rollback card is shown
+	// on /admin/database when a successful Patroni
+	// switchover has been recorded since the last
+	// rollback (or since skygate started). The
+	// candidate field is pre-populated with the
+	// OLD primary from db.last_failover.
+	"db.rollback_title":                   "PG Failover Rollback (Phase 3.7)",
+	"db.rollback_help":                    "Откатить последний Patroni switchover: promote'ит обратно OLD primary (тот, что работал ДО последнего failover). Кнопка доступна только если в db.last_failover есть запись о последнем успешном switchover — после rollback запись удаляется, и кнопка исчезает (следующий rollback потребует ещё одного switchover вперёд).",
+	"db.rollback_last_failover":           "Last failover:",
+	"db.rollback_candidate_ph":           "target of rollback (default = OLD primary)",
+	"db.rollback_btn":                     "Rollback",
+	"db.rollback_confirm":                 "Запустить Patroni switchover обратно? Это demote'ит текущий primary и promote'ит обратно OLD primary (тот, что был до последнего failover). Действие регистрируется как db.failover_rollback в audit_log + чистит db.last_failover.",
 	"db.migrate_help":                     "Full DB-migration workflow (6 steps): precheck → dump → restore → verify → flip → cleanup. Steps dump / restore / cleanup currently return STUB errors — operator runs them manually (see <code>docs/internal/cluster-management.md</code> §7). The flip step IS functional: it updates <code>cluster_database</code> + <code>.env</code> + audit.",
 	"db.migrate_btn":                      "Migrate",
 	"db.migrate_confirm":                  "Start migration? It will try precheck → dump (STUB) → restore (STUB) → verify → flip → cleanup (STUB). Operator must pre-stage target data (pg_dump + pg_restore manually) first.",

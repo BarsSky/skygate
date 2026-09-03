@@ -67,6 +67,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -190,4 +191,127 @@ func truncateBody(b []byte, n int) string {
 		return string(b)
 	}
 	return string(b[:n]) + "…"
+}
+
+// LastFailoverState is the JSON shape we persist in
+// global_settings.key = "db.last_failover" after a
+// successful Patroni switchover. B220 reads it back
+// to pre-populate the rollback form (the OLD primary
+// is the target of a rollback — the operator needs to
+// see what they were running on before the failover).
+//
+// Stored as JSON so the shape can grow without a
+// migration. Field naming uses short, snake_case
+// (Patroni's terminology): "old" + "new" instead of
+// "from_primary" + "to_primary".
+type LastFailoverState struct {
+	// Old is the primary that was demoted during
+	// the switchover. The target of a rollback
+	// (this is what the operator wants to
+	// restore). Set from the candidate field
+	// the operator typed, OR from Patroni's
+	// current leader if no leader was given.
+	Old string `json:"old"`
+	// New is the new primary that was promoted.
+	// For a rollback, this is the candidate that
+	// will be demoted.
+	New string `json:"new"`
+	// Timestamp is unix seconds — easy to format
+	// for the operator's display ("rolled back
+	// 5 min ago") without dragging in a time lib.
+	Timestamp int64 `json:"ts"`
+	// Operator is the admin username that
+	// triggered the original switchover. Display
+	// in the rollback form so the operator knows
+	// which "session" they're undoing.
+	Operator string `json:"operator"`
+	// Reason is the free-text reason from the
+	// original switchover. Pre-populated in the
+	// rollback form (operator can edit before
+	// re-submitting).
+	Reason string `json:"reason"`
+}
+
+// globalSettingKeyLastFailover is the global_settings
+// key for LastFailoverState. The full path
+// "db.last_failover" namespaces it from other
+// global_settings keys (derp.external_urls,
+// ha_chain, etc.) so the operator can grep for
+// it in the table.
+const globalSettingKeyLastFailover = "db.last_failover"
+
+// SetLastFailover persists the last successful
+// failover state to global_settings. Called from
+// PostAdminDatabaseFailover after a successful
+// Patroni switchover (B219 / B220 contract).
+//
+// We use global_settings (key-value, JSON in
+// value TEXT) rather than cluster_audit because:
+//   - The state is per-current-session, not per-event
+//     (audit is append-only; rollback target is
+//     "the most recent successful switchover" + is
+//     consumed by a successful rollback)
+//   - cluster_audit is filtered out of /admin/cluster
+//     recent events for a small set of actions; we
+//     want this to be queryable directly without
+//     adding it to the audit filter list
+func SetLastFailover(d *sql.DB, st *LastFailoverState) error {
+	if st == nil {
+		return fmt.Errorf("cluster: nil LastFailoverState")
+	}
+	if st.Old == "" || st.New == "" {
+		return fmt.Errorf("cluster: LastFailoverState requires both Old and New (old=%q new=%q)", st.Old, st.New)
+	}
+	if st.Timestamp == 0 {
+		// Default to "now" if the caller didn't
+		// set it. The handler can override if it
+		// wants a specific timestamp.
+		st.Timestamp = time.Now().Unix()
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		return fmt.Errorf("cluster: marshal LastFailoverState: %w", err)
+	}
+	return SetGlobalSetting(d, globalSettingKeyLastFailover, string(b))
+}
+
+// GetLastFailover reads back the last successful
+// failover state. Returns (nil, nil) if no
+// failover has been recorded yet — the handler
+// treats this as "no rollback available, the
+// button should be hidden".
+func GetLastFailover(d *sql.DB) (*LastFailoverState, error) {
+	raw, err := GetGlobalSetting(d, globalSettingKeyLastFailover, "")
+	if err != nil {
+		return nil, fmt.Errorf("cluster: get last failover: %w", err)
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var st LastFailoverState
+	if err := json.Unmarshal([]byte(raw), &st); err != nil {
+		return nil, fmt.Errorf("cluster: unmarshal LastFailoverState: %w", err)
+	}
+	return &st, nil
+}
+
+// ClearLastFailover removes the last failover state.
+// Called by PostAdminDatabaseFailoverRollback after
+// a successful rollback — the rollback consumes the
+// state (a second rollback would target the second-
+// to-last failover, which we don't track yet).
+func ClearLastFailover(d *sql.DB) error {
+	// SetGlobalSetting with empty value would
+	// persist "" as the value. We want the row
+	// gone so GetLastFailover returns (nil, nil)
+	// from the "raw == ''" path (which it does
+	// naturally for empty values — see
+	// GetGlobalSetting's default value handling).
+	// But for a cleaner DB state, we should
+	// DELETE the row.
+	_, err := d.Exec(`DELETE FROM global_settings WHERE key = $1`, globalSettingKeyLastFailover)
+	if err != nil {
+		return fmt.Errorf("cluster: clear last failover: %w", err)
+	}
+	return nil
 }

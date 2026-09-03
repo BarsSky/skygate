@@ -1,7 +1,10 @@
-// v1.5.0+ / B219 — unit tests for the Patroni
-// /switchover helper (db.FailoverDB).
+// v1.5.0+ / B219 + B220 — unit tests for the Patroni
+// /switchover helper (db.FailoverDB) and the
+// last_failover state tracking
+// (db.SetLastFailover / GetLastFailover /
+// ClearLastFailover).
 //
-// The helper makes a real HTTP call to Patroni's
+// FailoverDB makes a real HTTP call to Patroni's
 // REST API. We test it against an httptest.Server
 // (no real Patroni required) covering:
 //
@@ -12,22 +15,32 @@
 //   - empty URL / empty candidate → error before HTTP
 //   - network error (server unreachable) → error
 //
+// SetLastFailover / GetLastFailover /
+// ClearLastFailover talk to global_settings (real
+// DB) and require SKYGATE_TEST_PG_DSN (or
+// SKYGATE_DB_DSN) — they skip otherwise.
+//
 // The end-to-end wiring (button → handler → audit
-// row) is exercised by the B219 live-verify on the
-// agent (the agent doesn't have Patroni running, so
-// the live-verify checks that the wiring returns a
-// clean error + writes a db.failover.error audit
-// row when Patroni is unreachable).
+// row) is exercised by the B219 / B220 live-verify
+// on the agent (the agent doesn't have Patroni
+// running, so the live-verify checks that the wiring
+// returns a clean error + writes the
+// db.failover.error / db.failover_rollback.error
+// audit rows when Patroni is unreachable).
 
 package db
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestFailoverDB_HappyPath(t *testing.T) {
@@ -178,5 +191,134 @@ func TestFailoverDB_ContextCancelled(t *testing.T) {
 	_, err := FailoverDB(ctx, srv.URL, "", "pg-replica-1", "")
 	if err == nil {
 		t.Fatalf("expected error from cancelled context")
+	}
+}
+
+func TestSetLastFailover_RoundTrip(t *testing.T) {
+	// The B220 SetLastFailover / GetLastFailover /
+	// ClearLastFailover helpers talk to global_settings
+	// (the B145-era key-value table). These tests
+	// require a real PG connection (skip if not
+	// available) so we can verify the round-trip
+	// against the actual schema.
+	dsn := os.Getenv("SKYGATE_TEST_PG_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("SKYGATE_DB_DSN")
+	}
+	if dsn == "" {
+		t.Skip("SKYGATE_TEST_PG_DSN not set — skipping DB round-trip test")
+	}
+	d, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+	if err := d.Ping(); err != nil {
+		t.Skipf("db not reachable: %v", err)
+	}
+	// Use a unique key (key = "db.last_failover" in
+	// production, but for the test we use the same
+	// key to exercise the production code path).
+	// Pre-clean.
+	_, _ = d.Exec(`DELETE FROM global_settings WHERE key = 'db.last_failover'`)
+	// Set
+	st := &LastFailoverState{
+		Old:       "pg-old-primary",
+		New:       "pg-new-primary",
+		Timestamp: 1234567890,
+		Operator:  "skyadmin",
+		Reason:    "B220 test",
+	}
+	if err := SetLastFailover(d, st); err != nil {
+		t.Fatalf("SetLastFailover: %v", err)
+	}
+	// Get
+	got, err := GetLastFailover(d)
+	if err != nil {
+		t.Fatalf("GetLastFailover: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("GetLastFailover returned nil after SetLastFailover")
+	}
+	if got.Old != st.Old || got.New != st.New || got.Operator != st.Operator || got.Reason != st.Reason || got.Timestamp != st.Timestamp {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", got, st)
+	}
+	// Clear
+	if err := ClearLastFailover(d); err != nil {
+		t.Fatalf("ClearLastFailover: %v", err)
+	}
+	// Get should now return nil
+	got2, err := GetLastFailover(d)
+	if err != nil {
+		t.Fatalf("GetLastFailover after Clear: %v", err)
+	}
+	if got2 != nil {
+		t.Errorf("GetLastFailover after Clear = %+v, want nil", got2)
+	}
+}
+
+func TestSetLastFailover_Validation(t *testing.T) {
+	// Pure tests — no DB needed.
+	dsn := os.Getenv("SKYGATE_TEST_PG_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("SKYGATE_DB_DSN")
+	}
+	if dsn == "" {
+		t.Skip("no DB DSN — skip")
+	}
+	d, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if err := d.Ping(); err != nil {
+		t.Skipf("db not reachable: %v", err)
+	}
+	cases := []struct {
+		name string
+		st   *LastFailoverState
+	}{
+		{"nil state", nil},
+		{"empty old", &LastFailoverState{New: "x"}},
+		{"empty new", &LastFailoverState{Old: "x"}},
+		{"both empty", &LastFailoverState{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := SetLastFailover(d, c.st); err == nil {
+				t.Errorf("expected error for %s, got nil", c.name)
+			}
+		})
+	}
+}
+
+func TestGetLastFailover_Empty(t *testing.T) {
+	// When db.last_failover is not set, GetLastFailover
+	// should return (nil, nil) — not an error. This
+	// is the "no rollback available" case the page
+	// uses to hide the Rollback card.
+	dsn := os.Getenv("SKYGATE_TEST_PG_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("SKYGATE_DB_DSN")
+	}
+	if dsn == "" {
+		t.Skip("no DB DSN — skip")
+	}
+	d, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if err := d.Ping(); err != nil {
+		t.Skipf("db not reachable: %v", err)
+	}
+	// Clear first to guarantee the "empty" state.
+	_, _ = d.Exec(`DELETE FROM global_settings WHERE key = 'db.last_failover'`)
+	got, err := GetLastFailover(d)
+	if err != nil {
+		t.Fatalf("GetLastFailover on empty: %v", err)
+	}
+	if got != nil {
+		t.Errorf("GetLastFailover on empty = %+v, want nil", got)
 	}
 }

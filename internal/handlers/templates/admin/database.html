@@ -192,6 +192,47 @@
     </div>
   </div>
 
+  {{/* ---------- 4c. PG Failover rollback (Phase 3.7 / B220) ---------- */}}
+  {{/* Only shown when there's a recorded last_failover
+      state (a successful Patroni switchover happened
+      since the last rollback or since skygate started).
+      The state is recorded by the B219 handler after
+      success and cleared by the B220 handler after
+      success. If no state, the card is hidden — the
+      operator can use the "Switchover" card above to
+      do a fresh failover (which then re-enables
+      this card for the NEXT rollback). */}}
+  {{if .Data.HasLastFailover}}
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="fa fa-undo me-2"></i>{{t "db.rollback_title"}}
+    </div>
+    <div class="card-body">
+      <p class="text-muted small">{{t "db.rollback_help"}}</p>
+      <p class="small">
+        <strong>{{t "db.rollback_last_failover"}}</strong>
+        <code>{{.Data.LastFailover.Old}}</code> → <code>{{.Data.LastFailover.New}}</code>
+        ({{.Data.LastFailover.Operator}}, {{.Data.LastFailover.Timestamp}})
+      </p>
+      <form method="POST" action="/admin/database/failover/rollback" onsubmit="return confirm('{{t "db.rollback_confirm"}}')">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label small">{{t "db.rollback_candidate_ph"}}</label>
+            <input class="form-control form-control-sm" type="text" name="candidate" value="{{.Data.LastFailover.Old}}" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">{{t "db.failover_reason_ph"}}</label>
+            <input class="form-control form-control-sm" type="text" name="reason" placeholder="">
+          </div>
+          <div class="col-md-2 d-grid">
+            <button class="btn btn-sm btn-warning" type="submit"><i class="fa fa-undo me-1"></i>{{t "db.rollback_btn"}}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+  {{end}}
+
   {{/* ---------- 5. Recent migration runs (Phase 1.4) ---------- */}}
   {{if .Data.RecentRuns}}
   <div class="card mb-4">

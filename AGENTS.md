@@ -3139,6 +3139,99 @@ in the same commit. Don't let the tracker drift.
     the `cluster_node` row + `cluster_database`
     row are UNCHANGED (the failed attempt is a
     true no-op for the cluster state).
+  - **B220 (v1.5.0+, 2026-09-03) — /admin/database
+    Phase 3.7 Patroni failover rollback
+    (operator-driven).** Closes the "operator has
+    no UI to roll back a recent Patroni switchover
+    if the new primary is unhealthy — must ssh to
+    Patroni and re-trigger the /switchover
+    manually, hoping the operator remembered the
+    OLD primary's name" gap. Pre-B220 the only
+    rollback path was the same B219 plumbing minus
+    the pre-population of the candidate field
+    (the operator had to type the OLD primary from
+    memory or grep the cluster_audit history to
+    find the previous candidate). Post-B220: (1) a
+    Rollback card on `/admin/database` (shown only
+    when there's a recorded last_failover state)
+    with the `candidate` input pre-populated with
+    the OLD primary from the previous switchover
+    + a "Last failover: <old> → <new> (by <op>,
+    <ts>)" caption so the operator sees which
+    session they're undoing; (2) new
+    `PostAdminDatabaseFailoverRollback` handler
+    that reads the last_failover state, runs
+    `db.FailoverDB` (B219's shared Patroni call)
+    with the OLD primary as the candidate, writes
+    `db_failover_rollback` (success) or
+    `db_failover_rollback.error` (failure) audit
+    row, and clears the last_failover state (a
+    second rollback would need a fresh forward
+    failover to re-record the state — we don't yet
+    track N-deep history); (3) new
+    `db.SetLastFailover` / `GetLastFailover` /
+    `ClearLastFailover` helpers in
+    `internal/db/cluster_patroni.go` that persist
+    the state in `global_settings.key =
+    "db.last_failover"` (the B145-era key-value
+    table); (4) the existing B219 handler is
+    UPDATED to call `SetLastFailover` on success
+    (so the Rollback card is auto-enabled after
+    any successful Patroni switchover — no manual
+    configuration step). The fully "auto" version
+    (system detects new primary is unhealthy +
+    triggers rollback without operator
+    intervention) is deferred to a follow-up
+    B-block — it needs a stable "is_healthy_for_N
+    _seconds" check (the B210 watchdog already
+    has the per-poll health state) + a "no flap"
+    guard (don't rollback twice in 5 min — the
+    operator should never see a rapid ping-pong
+    state) that B220 doesn't ship. 19 B-check
+    contracts in `scripts/check_b220.sh` (17
+    source-pin + 2 go-runtime). 3 new unit tests
+    in `internal/db/cluster_patroni_test.go`
+    (`TestSetLastFailover_RoundTrip` exercises
+    Set → Get → Clear against the real PG +
+    `TestSetLastFailover_Validation` pins the
+    nil/empty rejection + `TestGetLastFailover_Empty`
+    pins the "no key set" → (nil, nil) path the
+    page uses to hide the Rollback card). 2
+    modified: `internal/feature/admin/database.go`
+    (+~110 lines: `LastFailover` + `HasLastFailover`
+    fields on `databasePageData` + the
+    `PostAdminDatabaseFailoverRollback` handler +
+    the `SetLastFailover` call in
+    `PostAdminDatabaseFailover` after a successful
+    switchover), `internal/handlers/templates/admin/database.html`
+    (+~35 lines: the Rollback card with the
+    conditional + pre-populated candidate),
+    `cmd/skygate/main.go` (+~5 lines: route
+    registration), `internal/db/cluster_patroni.go`
+    (+~110 lines: `LastFailoverState` struct +
+    3 helpers + `globalSettingKeyLastFailover`
+    constant), `internal/i18n/catalog_admin.go`
+    (+6 lines: 6 `db.rollback_*` keys in RU + EN).
+    Live-verify on the agent
+    (`scripts/b220_liveverify.sh`): the agent
+    doesn't have Patroni, so the live-verify
+    exercises the FAILURE path — POST
+    `/admin/database/failover/rollback` with no
+    prior `db.last_failover` state → assert the
+    handler returns a "no last failover recorded"
+    error (the guard rail that prevents the
+    operator from rolling back to nothing); then
+    insert a fake `db.last_failover` state via SQL
+    → POST `/admin/database/failover/rollback`
+    again → assert the Patroni call fails (no
+    Patroni running) + the `db.failover_rollback.error`
+    audit row is written + the `db.last_failover`
+    state is NOT cleared (so the operator can retry
+    the rollback after fixing Patroni). After the
+    live-verify, the script cleans up the fake
+    state.
+  - **B207_fix (v1.5.0+, 2026-09-02) — clear the
+    true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

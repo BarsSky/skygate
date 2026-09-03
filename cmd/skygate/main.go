@@ -1423,6 +1423,19 @@ func main() {
 	// etcd and hot-reloads the pgxpool — skygate keeps
 	// running on the new primary without restart.
 	mux.Handle("POST /admin/database/failover", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseFailover)))
+	// v1.5.0+ / B220 — Phase 3.7 PG failover rollback
+	// (operator-driven). Re-uses the B219 Patroni
+	// /switchover plumbing but with the OLD primary
+	// as the candidate (read from db.last_failover
+	// global_setting, written by the B219 handler
+	// after a successful failover). The fully
+	// automatic "system detects the new primary is
+	// unhealthy + triggers the rollback without
+	// operator intervention" flow is deferred to a
+	// follow-up B-block (it needs a stable
+	// "is_healthy_for_N_seconds" check + a
+	// "no flap" guard that this B220 doesn't ship).
+	mux.Handle("POST /admin/database/failover/rollback", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseFailoverRollback)))
 
 	// v1.5.0+ / B198 — Phase 1.4 DB migration workflow.
 	// 6-step state machine (precheck, dump, restore, verify,
