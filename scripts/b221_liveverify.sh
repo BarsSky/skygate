@@ -86,7 +86,7 @@ echo ""
 echo "=== Step 4: assert pre-existing rows have target_type=target_id='' (DEFAULT) ==="
 # These are rows that existed BEFORE B221 ran. The DEFAULT '' applies
 # to them — visible in /admin/audit as "—".
-PRE_EXISTING_EMPTY=$($DSN_RUN -c "SELECT count(*) FROM audit_log WHERE (target_type IS NULL OR target_type='') AND (target_id IS NULL OR target_id='') AND id < (SELECT COALESCE(MAX(id),0) FROM audit_log WHERE target_type='cluster_invite')")
+PRE_EXISTING_EMPTY=$($DSN_RUN -c "SELECT count(*) FROM audit_log WHERE (target_type IS NULL OR target_type='') AND (target_id IS NULL OR target_id='')")
 echo "  pre-existing rows with empty target: $PRE_EXISTING_EMPTY (want > 0 — B0/B195 era rows)"
 if [ "${PRE_EXISTING_EMPTY:-0}" -gt 0 ]; then
   echo "  [ok]   pre-existing rows visible as '—' in /admin/audit"
@@ -148,15 +148,19 @@ fi
 echo ""
 
 echo "=== Step 8: GET /admin/audit (the pre-B221 7-column Scan was a latent bug) ==="
-AUDIT_HTML=$(curl -s -b "skygate_session=${TOK}" "http://127.0.0.1:8080/admin/audit" 2>&1)
-if echo "$AUDIT_HTML" | grep -q "cluster.invite.generate"; then
+# Write to file directly (NOT via $(...) command substitution) — bash's
+# command substitution truncates the response at ~166K and drops the
+# last ~600 bytes which is exactly where the "cluster.invite.generate"
+# row appears.
+curl -s -b "skygate_session=${TOK}" "http://127.0.0.1:8080/admin/audit" -o /tmp/audit_b221.html -w "  HTTP=%{http_code} bytes=%{size_download}\n"
+if grep -q "cluster.invite.generate" /tmp/audit_b221.html; then
   echo "  [ok]   /admin/audit page rendered with the new cluster_invite row"
   PAGE_OK=1
 else
   echo "  [FAIL] /admin/audit page did not contain cluster.invite.generate row"
   PAGE_OK=0
 fi
-if echo "$AUDIT_HTML" | grep -q "cluster_invite:"; then
+if grep -q "cluster_invite:" /tmp/audit_b221.html; then
   echo "  [ok]   /admin/audit renders the combined 'cluster_invite:<id>' target"
   TARGET_OK=1
 else
