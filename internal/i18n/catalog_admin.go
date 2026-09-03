@@ -1417,6 +1417,13 @@ var enAdmin = map[string]string{
 	"derp_dashboard.probes_help":         "How many times the probe has run total, and how many of those failed (in parentheses, red). If 0/0 — probe hasn't run yet. If (5) of 12 — 5 of the last 12 probes failed.",
 	"derp_dashboard.own_vs_public_help":  "<strong>own</strong> = your own DERP server (configured via /admin/derp/relays). <strong>public</strong> = Tailscale's public DERP (28 regions worldwide).",
 	"derp_dashboard.status_help":         "<strong>healthy</strong> = the last probe succeeded. <strong>degraded</strong> = the probe failed (hover the pill to see the error). <strong>unknown</strong> = the probe has not run yet.",
+	// 2026-09-03: v1.5.2 (B228) — DERP dashboard
+	// "hide unavailable" filter. Mirrors the RU
+	// block in catalog_admin.go above.
+	"derp_dashboard.show_unavailable":    "Show unavailable",
+	"derp_dashboard.show_all":            "Show all",
+	"derp_dashboard.shown_of_total":      "Showing <strong>%d</strong> of <strong>%d</strong> DERPs",
+	"derp_dashboard.all_degraded":        "All known DERPs are currently unavailable or haven't been probed yet. Clear the filter to see the full list.",
 
 	"acl.rules_count":   "rules",
 	"acl.table_action":  "Action",

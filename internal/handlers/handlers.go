@@ -215,6 +215,11 @@ type exitRulesRunner interface {
 	// auto-reconciler. Wraps exit_rules.Service.ReconcileDeviceExitNodePrefs
 	// for the boot-time goroutine in RunPreferredExitReconciler.
 	ReconcileDeviceExitNodePrefs(ctx context.Context, n exit_rules.ReconcilerNotifier) ([]exit_rules.ReconcilerChange, error)
+	// 2026-09-03: v1.5.2 (B231) — preferred-exit
+	// hostname-rename migrator. Same surface shape as
+	// ReconcileDeviceExitNodePrefs (returns a list of
+	// changes for the caller's log + alerter).
+	MigrateRenamedDevicePrefs(ctx context.Context, n exit_rules.ReconcilerNotifier) ([]exit_rules.RenameMigration, error)
 }
 
 // SetAdminService wires the admin feature service into the
@@ -349,21 +354,32 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 	}
 }
 
-// RunPreferredExitReconciler — v1.5.2 (B229) — boot-time
-// goroutine that calls exitRulesSvc.ReconcileDeviceExitNodePrefs
-// on a ticker. Mirrors RunDomainAutoUpdater (initial run
-// at boot, then on tick). Live-mode controlled by
-// SKYGATE_PREFERRED_RECONCILER_LIVE — read on every tick
-// so the operator can flip the switch without a redeploy.
+// RunPreferredExitReconciler — v1.5.2 (B229, B231) —
+// boot-time goroutine that calls
+// exitRulesSvc.ReconcileDeviceExitNodePrefs +
+// MigrateRenamedDevicePrefs on a ticker. Mirrors
+// RunDomainAutoUpdater (initial run at boot, then on
+// tick). Two flags control behaviour:
+//   - SKYGATE_PREFERRED_RECONCILER_LIVE: live-mode
+//     (writes) vs dry-run (logs only). Read on every
+//     tick so the operator can flip the switch without
+//     a redeploy. Safety belt — never exposed via UI.
+//   - global_settings.preferred_reconcile_enabled (DB)
+//     + SKYGATE_PREFERRED_RECONCILE_ENABLED (env): on/
+//     off toggle. The DB row wins once written; env
+//     var is the default at first start (when no row
+//     exists). The /admin/system_tests page writes
+//     the DB row.
 //
-// The function logs a one-line summary per tick (number of
-// changes applied/skipped) + sends a rate-limited Telegram
-// alert for each new (hostname, reason) bucket. Every
-// change is recorded in audit_log with action
-// `preferred_exit_reconciled` (handled inside
-// exitRulesSvc.applyReconcilerChange).
+// Every change (create / update from main
+// reconciler; rename / orphan-candidate from rename
+// migrator) is recorded in audit_log with the
+// appropriate action. A rate-limited Telegram alert
+// fires for each new (hostname, reason) bucket.
 //
 // 2026-09-03: v1.5.2 (B229).
+// 2026-09-03: v1.5.2 (B231) — add the per-tick enabled
+//   toggle + the rename migrator sub-tick.
 func (a *App) RunPreferredExitReconciler(ctx context.Context, notifier interface {
 	SendAlert(text string) int64
 }, interval time.Duration) {
@@ -377,31 +393,87 @@ func (a *App) RunPreferredExitReconciler(ctx context.Context, notifier interface
 	log.Printf("preferred-reconciler: starting (interval=%s, live=%v)", interval, live)
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	// checkEnabled mirrors the dns_autoupdate_enabled
+	// pattern (see RunDomainAutoUpdater above): read
+	// the env var, then the DB row, then default to
+	// "on" (matches the start-up gate's default-true
+	// fallback). The DB row wins once written.
+	checkEnabled := func() bool {
+		// Env override: if the operator wants to
+		// force-off via env without UI, this is the
+		// belt. We treat any of "0", "false", "no",
+		// "off" as off, and "1", "true", "yes", or
+		// unset (defer to DB) as on.
+		if v := strings.ToLower(strings.TrimSpace(os.Getenv("SKYGATE_PREFERRED_RECONCILE_ENABLED"))); v != "" {
+			return v == "1" || v == "true" || v == "yes"
+		}
+		// DB override: the /admin/system_tests
+		// toggle writes "preferred_reconcile_enabled"
+		// here. Empty row → defer to default-on
+		// (consistent with RunDomainAutoUpdater).
+		row, err := db.GetGlobalSetting(a.DB.Current(), "preferred_reconcile_enabled", "")
+		if err != nil {
+			log.Printf("preferred-reconciler: read global_settings: %v (assuming enabled)", err)
+			return true
+		}
+		if row == "" {
+			return true // no UI override yet — start-up gate decided
+		}
+		return row == "1" || row == "true"
+	}
+	// firstEnabledState tracks the previous-tick
+	// enabled state so we can fire a one-shot
+	// Telegram alert when the operator toggles the
+	// reconciler OFF. Mirrors the
+	// "B227 tag-autoupdate disabled" alert pattern.
+	firstEnabledState := checkEnabled()
 	// Run once immediately at boot so the operator
 	// sees the first dry-run log line on startup
 	// (gives them a chance to review before flipping
 	// SKYGATE_PREFERRED_RECONCILER_LIVE).
-	changes, err := a.exitRulesSvc.ReconcileDeviceExitNodePrefs(ctx, notifier)
-	if err != nil {
-		log.Printf("preferred-reconciler: initial: %v", err)
-	} else {
-		logLiveSummary("initial", changes, live)
+	runOnce := func(stage string) {
+		enabled := checkEnabled()
+		live := exit_rules.PreferredExitReconcilerLive()
+		// One-shot alert on disable (operator flipped
+		// OFF after it was ON). We only emit on the
+		// transition; subsequent ticks while OFF are
+		// silent.
+		if firstEnabledState && !enabled {
+			notifier.SendAlert("❌ preferred-exit auto-reconcile (B229/B231) DISABLED — new device_rules will not be auto-pinned until re-enabled. Re-enable: /admin/system_tests")
+			firstEnabledState = false
+		}
+		if !enabled {
+			log.Printf("preferred-reconciler: %s: disabled (skip — re-enable via /admin/system_tests or SKYGATE_PREFERRED_RECONCILE_ENABLED)", stage)
+			return
+		}
+		firstEnabledState = true
+		// Step 1: main reconciler (auto-create pref
+		// from device_rules + refresh stale tag).
+		changes, err := a.exitRulesSvc.ReconcileDeviceExitNodePrefs(ctx, notifier)
+		if err != nil {
+			log.Printf("preferred-reconciler: %s reconcile: %v", stage, err)
+		} else {
+			logLiveSummary(stage+":reconcile", changes, live)
+		}
+		// Step 2: rename migrator (B231) — orphan
+		// detection + rename auto-migrate. Inherits
+		// the live flag from the main reconciler
+		// (it's a write, requires live mode).
+		migChanges, migErr := a.exitRulesSvc.MigrateRenamedDevicePrefs(ctx, notifier)
+		if migErr != nil {
+			log.Printf("preferred-reconciler: %s rename-migrate: %v", stage, migErr)
+		} else {
+			logMigrateSummary(stage+":rename", migChanges, live)
+		}
 	}
+	runOnce("initial")
 	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("preferred-reconciler: stopping")
 			return
 		case <-t.C:
-			// Re-read the live flag every tick so the
-			// operator can flip it without a redeploy.
-			live := exit_rules.PreferredExitReconcilerLive()
-			changes, err := a.exitRulesSvc.ReconcileDeviceExitNodePrefs(ctx, notifier)
-			if err != nil {
-				log.Printf("preferred-reconciler: %v", err)
-				continue
-			}
-			logLiveSummary("tick", changes, live)
+			runOnce("tick")
 		}
 	}
 }
@@ -432,6 +504,33 @@ func logLiveSummary(stage string, changes []exit_rules.ReconcilerChange, live bo
 		mode = "LIVE"
 	}
 	log.Printf("preferred-reconciler: %s summary [%s]: created=%d updated=%d skipped=%d", stage, mode, created, updated, skipped)
+}
+
+// logMigrateSummary — v1.5.2 (B231) — counterpart to
+// logLiveSummary for the B230 rename migrator. Renders
+// a one-line "renamed N orphan-candidate M" summary.
+//
+// 2026-09-03: v1.5.2 (B231).
+func logMigrateSummary(stage string, changes []exit_rules.RenameMigration, live bool) {
+	if len(changes) == 0 {
+		return
+	}
+	migrated, orphans, ambiguous := 0, 0, 0
+	for _, c := range changes {
+		switch c.Classification {
+		case exit_rules.ClassificationRename:
+			migrated++
+		case exit_rules.ClassificationOrphan:
+			orphans++
+		case exit_rules.ClassificationAmbiguous:
+			ambiguous++
+		}
+	}
+	mode := "DRY-RUN"
+	if live {
+		mode = "LIVE"
+	}
+	log.Printf("preferred-reconciler: %s summary [%s]: renamed=%d orphan-candidates=%d ambiguous=%d", stage, mode, migrated, orphans, ambiguous)
 }
 
 // AdminTelegram is a thin wrapper preserved for the existing

@@ -1812,6 +1812,14 @@ func main() {
 	// domain→/32 refresh for operators who disabled self-update
 	// in .env. See internal/feature/admin/settings_dns_autoupdate.go.
 	mux.Handle("POST /admin/system_tests/dns-autoupdate-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsDNSAutoToggle)))
+	// 2026-09-03: v1.5.2 (B231) — preferred-exit auto-
+	// reconciler toggle. Mirrors the DNS-autoupdater
+	// pattern: DB-backed with env-var default. The
+	// /admin/system_tests page exposes the toggle;
+	// the goroutine in RunPreferredExitReconciler
+	// (handlers.go) reads it on every tick. See
+	// internal/feature/admin/settings_pref_reconcile.go.
+	mux.Handle("POST /admin/system_tests/preferred-reconcile-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsPrefReconcileToggle)))
 	// 2026-07-27: v0.29.0 — self-update page. Shows
 	// current vs latest GitHub release + copy-pasteable
 	// manual steps for the detected install kind. The

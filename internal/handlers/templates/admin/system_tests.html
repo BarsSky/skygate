@@ -246,6 +246,63 @@
   </div>
 </div>
 
+{{/* 2026-09-03: v1.5.2 (B231) — preferred-exit auto-reconciler
+     toggle. Mirrors the DNS-autoupdater card above:
+     DB-backed (global_settings.preferred_reconcile_enabled)
+     with env-var default (SKYGATE_PREFERRED_RECONCILE_ENABLED,
+     default true). The /admin/system_tests page writes the
+     DB row; the goroutine in RunPreferredExitReconciler
+     reads it on every tick.
+
+     Two safety belts stay env-only (not exposed in UI):
+       - SKYGATE_PREFERRED_RECONCILE_LIVE: live vs dry-run
+         (writes vs logs only). A UI button that toggles
+         "live" would be too dangerous — operators flip
+         the env, redeploy, watch the dry-run log for a
+         few ticks first.
+       - SKYGATE_PREFERRED_RECONCILE_INTERVAL: tick cadence.
+
+     See internal/feature/admin/settings_pref_reconcile.go
+     and internal/feature/exit_rules/reconciler.go. */}}
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div style="flex:1;min-width:280px">
+      <h3 style="margin:0"><i class="fa-solid fa-bullseye"></i> {{t "title.pref_reconciler"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">
+        Background goroutine (B229) that auto-creates <code>device_exit_node_prefs</code>
+        rows for any device with unanimous <code>device_rules</code> pointing at one exit-node,
+        and refreshes stale tags (B188/V061 migration gap). Runs every
+        <code>{{if .Cfg}}{{.Cfg.PrefReconcileInterval}}{{else}}1h{{end}}</code>.
+        Without this reconciler, the operator's "device → emilia" rule is
+        <em>allowed</em> but not <em>pinned</em> — Tailscale routes through the default
+        exit, not emilia. (B231) also auto-migrates the pref when the operator
+        renames a device in headscale.
+      </p>
+      <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:12px">
+        State:
+        {{if .PrefReconcileEnabled}}
+          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> ENABLED</span>
+          &nbsp;(DB row in global_settings overrides env on next tick)
+        {{else}}
+          <span class="tag tag-warn"><i class="fa-solid fa-circle-pause"></i> DISABLED</span>
+          &nbsp;(new device_rules will NOT be auto-pinned — operator must set the
+          🎯 on /my/devices per device)
+        {{end}}
+      </p>
+    </div>
+    <form method="post" action="/admin/system_tests/preferred-reconcile-toggle" style="display:inline">
+      <input type="hidden" name="enabled" value="{{if .PrefReconcileEnabled}}0{{else}}1{{end}}">
+      <button type="submit" class="btn {{if .PrefReconcileEnabled}}btn-warn{{else}}btn-primary{{end}}">
+        {{if .PrefReconcileEnabled}}
+          <i class="fa-solid fa-circle-pause"></i> Disable preferred-reconciler
+        {{else}}
+          <i class="fa-solid fa-circle-play"></i> Enable preferred-reconciler
+        {{end}}
+      </button>
+    </form>
+  </div>
+</div>
+
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>

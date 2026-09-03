@@ -64,6 +64,13 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 	// s.Cfg.DNSAutoUpdateEnabled so the operator sees the
 	// SAME effective state the goroutine would use.
 	dnsAutoEnabled := db.GetGlobalSettingBool(s.dbc(), globalSettingsKeyDNSAutoUpdate, s.Cfg.DNSAutoUpdateEnabled)
+	// 2026-09-03: v1.5.2 (B231) — read the effective
+	// preferred-exit auto-reconciler state. Same
+	// precedence model as the DNS-autoupdater: DB row
+	// wins after the first UI toggle; otherwise the env
+	// (default true). The /admin/system_tests page
+	// uses this to render the toggle's current state.
+	prefReconcileEnabled := db.GetGlobalSettingBool(s.dbc(), globalSettingsKeyPrefReconcile, s.Cfg.PrefReconcileEnabled)
 	// TD-8 (2026-08-18): read the ?tab= and ?window= query
 	// params. Default tab is "tests" (the original grid);
 	// default window is "7d". Unknown values fall back to
@@ -90,7 +97,9 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 		"RecentRuns":            recent,
 		"FlashError":            r.URL.Query().Get("err"),
 		"DNSAutoUpdateEnabled":  dnsAutoEnabled,
+		"PrefReconcileEnabled": prefReconcileEnabled,
 		"FlashDNSAutoToggled":   r.URL.Query().Get("dns_auto_toggled"),
+		"FlashPrefReconcileToggled": r.URL.Query().Get("pref_reconcile_toggled"),
 		"Now":                   now,
 		"Tab":                   tab,
 		"Window":                windowStr,

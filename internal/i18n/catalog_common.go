@@ -147,6 +147,8 @@ var ruCommon = map[string]string{
 	// keep this distinction: turning off skygate self-update
 	// MUST NOT silently turn off domain→/32 refresh.
 	"title.dns_autoupdater"          : "DNS-autoupdater (обновление /32 для доменов)",
+	"title.pref_reconciler"          : "Preferred-exit auto-reconciler (B229/B231)",
+	"pref_reconciler.required"       : "Auto-creates device_exit_node_prefs from device_rules + refreshes stale tags. Without it, exit-rules are ALLOWED but not PINNED (Tailscale routes via default exit, not the chosen one).",
 	"dns_autoupdater.required"       : "Нужен для любого доменного правила: иначе /32 устаревают после ротации Cloudflare и правило перестаёт матчить реальные IP.",
 	"dns_autoupdater.rot_warning"    : "домен правила будут устаревать по мере ротации Cloudflare",
 	// 2026-08-09 v0.33.1.26 — per-test status on the
@@ -334,6 +336,8 @@ var enCommon = map[string]string{
 	// RU block above for the design rationale (must be
 	// separate from the skygate self-update banner).
 	"title.dns_autoupdater"          : "DNS autoupdater (domain→/32 refresh)",
+	"title.pref_reconciler"          : "Preferred-exit auto-reconciler (B229/B231)",
+	"pref_reconciler.required"       : "Auto-creates device_exit_node_prefs from device_rules + refreshes stale tags. Without it, exit-rules are ALLOWED but not PINNED (Tailscale routes via default exit, not the chosen one).",
 	"dns_autoupdater.required"       : "Required for any domain rule: without it, /32 entries rot as Cloudflare rotates IPs and the rule stops matching real traffic.",
 	"dns_autoupdater.rot_warning"    : "domain rules will rot as Cloudflare rotates IPs",
 	// 2026-08-09 v0.33.1.26 — see RU block above.

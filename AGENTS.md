@@ -4247,6 +4247,139 @@ in the same commit. Don't let the tracker drift.
     — not derivable from any single device's
     rules). If a future B230 wants this, it's a
     separate function.
+  - **B231 (v1.5.2+, 2026-09-03) — preferred-exit
+    reconciler UI toggle + hostname-rename
+    migrator**. Two pieces on top of B229:
+    1. **UI toggle** — `global_settings.preferred_reconcile_enabled`
+       (DB) with `SKYGATE_PREFERRED_RECONCILE_ENABLED`
+       (env) override, mirrors the
+       `dns_autoupdate_enabled` pattern. Default
+       on. /admin/system_tests exposes a toggle
+       card (ENABLED / DISABLED tag + flip button)
+       that writes the DB row. The goroutine in
+       `RunPreferredExitReconciler` reads the
+       toggle on every tick (env → DB → default-on)
+       and skips the tick entirely when off. One-
+       shot Telegram alert fires the first tick
+       after the operator flips OFF (so the
+       operator knows immediately their rules
+       will no longer be auto-pinned). The
+       `SKYGATE_PREFERRED_RECONCILER_LIVE` env
+       (dry-run vs live) stays env-only by design
+       — a UI button that toggles "live" would be
+       too dangerous (one click = writes to DB).
+    2. **Hostname-rename migrator** — when the
+       operator renames a device in headscale
+       (e.g. `cyborg` → `cyborg-v2`),
+       `device_exit_node_prefs` keeps the OLD
+       hostname while `node_owner_map` switches to
+       the new one, leaving an orphan pref that
+       B229 can't see (because B229 iterates
+       pairs that exist in `device_rules`, but
+       `device_rules` is keyed by the OLD hostname
+       too — so the rename orphans BOTH the pref
+       and the rules). B231 detects three
+       classes:
+       - **Normal**: the (user, hostname) pair is
+         in `node_owner_map` as expected → no-op
+       - **Rename**: the pair is missing, but
+         exactly ONE row in `node_owner_map` shares
+         the same (user, tag) → AUTO-MIGRATE
+         the pref to the new hostname
+         (transactional UPSERT new + DELETE old,
+         re-enables via_enabled=1). Audit +
+         rate-limited Telegram alert
+       - **Ambiguous**: the pair is missing AND
+         >1 row shares the same tag → do nothing
+         auto; log + alert with the candidate
+         hostnames so the operator picks the
+         right one on /my/devices
+       - **Orphan**: the pair is missing AND NO
+         row matches the tag → device was likely
+         permanently deleted. Do NOT auto-delete
+         (operator might re-register the device
+         with the same tag, in which case the
+         pref is the operator's only memory of
+         "this user used to want emilia"). Just
+         log + alert with the manual DELETE SQL
+    The migrator runs inside the same B229
+    goroutine (after the main reconcile) so it
+    inherits the enabled toggle + the live/dry-
+    run flag. New file:
+    `internal/feature/exit_rules/reconciler_rename.go`
+    (~480 lines): `OrphanClassification` enum +
+    `RenameMigration` struct + pure
+    `ClassifyRenameMigration(state)
+    OrphanClassification` (the unit-testable
+    decision function) + `MigrateRenamedDevicePrefs`
+    orchestrator + `classifyRenamePref` (DB lookups)
+    + `applyRenameMigration` (live-mode UPSERT +
+    DELETE in a transaction, re-enables via=1).
+    New file:
+    `internal/feature/admin/settings_pref_reconcile.go`
+    (~85 lines): `PostAdminSystemTestsPrefReconcileToggle`
+    handler + `globalSettingsKeyPrefReconcile` const.
+    Modified:
+    `internal/handlers/handlers.go` —
+    `RunPreferredExitReconciler` reads the toggle
+    every tick + calls `MigrateRenamedDevicePrefs`
+    after the main reconcile; new
+    `logMigrateSummary` helper. `exitRulesRunner`
+    interface adds `MigrateRenamedDevicePrefs`.
+    `cmd/skygate/main.go` — new route POST
+    /admin/system_tests/preferred-reconcile-toggle.
+    `internal/config/config.go` — new
+    `PrefReconcileEnabled bool` field +
+    `SKYGATE_PREFERRED_RECONCILE_ENABLED` env var
+    (default "true").
+    `internal/feature/admin/system_tests_handlers.go` —
+    reads the DB row + passes `PrefReconcileEnabled`
+    in the page data.
+    `internal/handlers/templates/admin/system_tests.html` —
+    new toggle card (mirrors the DNS-autoupdater
+    card above).
+    `internal/i18n/catalog_common.go` — new keys
+    `title.pref_reconciler` + `pref_reconciler.required`
+    in BOTH RU and EN (the EN was missing from
+    B229/B228 — also back-fills the 4 missing EN
+    keys from the B228 DERP dashboard
+    "show_unavailable" feature).
+    **Tests** (10 Test functions in
+    `internal/feature/exit_rules/reconciler_rename_b231_test.go`):
+    - `TestClassifyRenameMigration_Normal`
+    - `_Rename` (the live "operator renames
+      device" case)
+    - `_Ambiguous` (operator has 2 devices with
+      same tag)
+    - `_Orphan` (device fully deleted)
+    - `_OrphanWithStaleTag` (defensive: legacy
+      `tag:exit-emilia` form)
+    - `_TwoHostsSameTagReal` (realistic case)
+    - `_EmptyHostname` (defensive: per-USER slot)
+    - `TestShouldAlert_RenameReasonRateLimited`
+    - `_AmbiguousReasonRateLimited`
+    - `_OrphanReasonRateLimited`
+    The B229 tests still pass (10 Test functions
+    in `reconciler_b229_test.go`). 12 B-check
+    contracts in `scripts/check_b231.sh` (UI
+    toggle + reconciler_rename + tests + i18n +
+    AGENTS + build). All pass.
+    **Out of scope** (B232+ candidates):
+    - Auto-DELETE orphan prefs (too dangerous —
+      operator might re-register the device with
+      a different tag, in which case the orphan
+      pref is the operator's only memory of the
+      old intent)
+    - Per-USER rename migration
+      (`user_exit_node_prefs` keyed on
+      `user_id` only — no hostname dimension to
+      migrate)
+    - Ambiguous disambiguation: when the
+      classifier returns `Ambiguous` (multiple
+      devices share the same tag), B231 logs
+      + alerts but doesn't auto-pick. A future
+      UI could show a "pick the right one"
+      prompt.
   - **B228 (v1.5.2+, 2026-09-03) — DERP dashboard
     "hide unavailable" filter**. Closes the operator's
     2026-09-03 report: `/admin/derp/dashboard` showed

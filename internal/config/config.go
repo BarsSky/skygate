@@ -98,6 +98,16 @@ type Config struct {
 	// SKYGATE_PREFERRED_RECONCILER_LIVE (read every
 	// tick inside the goroutine).
 	PrefReconcileInterval time.Duration
+	// 2026-09-03: v1.5.2 (B231) — env-var default for
+	// the preferred-exit auto-reconciler on/off toggle.
+	// The /admin/system_tests page writes a DB row
+	// (global_settings.preferred_reconcile_enabled) that
+	// overrides this on the next tick (mirrors the
+	// DNSAutoUpdateEnabled pattern in
+	// settings_dns_autoupdate.go). Default true
+	// (consistent with the start-up gate's "default-on
+	// when no DB row exists" policy).
+	PrefReconcileEnabled bool
 	// 2026-08-09: v0.33.1.25 (B77) — node-discovery
 	// autoupdater period. The goroutine in
 	// internal/nodeownership/auto.go polls headscale every
@@ -495,6 +505,7 @@ func Load() (*Config, error) {
 		DerpLANNet:    getenv("SKYGATE_DERP_LAN_NET", "192.0.2.0/24"),
 		DNSAutoCheck:       getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
 		PrefReconcileInterval: getDuration("SKYGATE_PREFERRED_RECONCILE_INTERVAL", 1*time.Hour),
+		PrefReconcileEnabled:  getenv("SKYGATE_PREFERRED_RECONCILE_ENABLED", "true") == "true",
 		// 2026-08-09: v0.33.1.25 (B77) — node-discovery
 		// autoupdater. Default 5m (same as DNSAutoCheck);
 		// set SKYGATE_NODE_DISCOVERY_INTERVAL=off to disable.
