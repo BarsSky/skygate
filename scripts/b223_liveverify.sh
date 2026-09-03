@@ -75,8 +75,10 @@ echo "=== Step 4: confirm tailscaled is not running (expected on this agent) ===
 # but tailscaled is broken. The orchestrator's
 # runDiscoveryTicker would fail silently in the
 # background; the HTTP handler surfaces the
-# error to the operator.
-docker exec "$SKYGATE_CONTAINER" tailscale status --json 2>&1 | head -1
+# error to the operator. We use || true so the
+# script's set -e doesn't abort on the non-zero
+# exit from `tailscale status`.
+docker exec "$SKYGATE_CONTAINER" tailscale status --json > /dev/null 2>&1 || echo "  (tailscaled not running — as expected on this agent)"
 echo ""
 
 echo "=== Step 5: POST /admin/cluster/discover (FAILURE path: tailscaled down) ==="
