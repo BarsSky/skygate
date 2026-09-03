@@ -2992,6 +2992,83 @@ in the same commit. Don't let the tracker drift.
       (the `node_leave.detail.last_state` is
       `"draining"` — set before the DELETE)
     - cleanup: DELETE the temp rows
+  - **B218 (v1.5.0+, 2026-09-03) — /admin/cluster
+    Phase 2.5 `bootstrap_standby.sh` refactor.**
+    Closes the "init flow for standbys is hand-rolled
+    in a shell script with inline SQL — no way to
+    register a standby from inside skygate" gap.
+    Pre-B218 the only path to register a new standby
+    was either (a) provision the box via
+    `scripts/bootstrap_standby.sh` (heavy — pulls
+    S3, starts docker, writes inline SQL for
+    `audit_log`), or (b) call
+    `skygate init --role=skygate,patroni-primary,...`
+    (B211) which was designed for the PRIMARY and
+    would silently set
+    `cluster_database.primary_node_id = this node`
+    + issue a fresh invite (wrong for a standby —
+    would break the existing primary's role).
+    Post-B218: (1) `skygate init` now accepts 4
+    role PRESETS —
+    `--role=primary` /
+    `--role=standby` /
+    `--role=db-replica` /
+    `--role=control` —
+    that expand to the canonical role list (e.g.
+    `--role=standby` → `'skygate-standby,patroni-replica'`);
+    (2) the explicit role-list API
+    (`--role=skygate,patroni-primary`) is preserved
+    unchanged (B211 backward compat — pre-B218
+    scripts don't need editing); (3) the
+    `runInitBootstrap` flow detects standby mode
+    from the role list (`skygate-standby` present,
+    `skygate` absent) and skips the two primary-only
+    steps — `cluster_database.primary_node_id`
+    assignment + standby invite issuance — so calling
+    `skygate init --role=standby` on a new standby
+    is a safe no-op for the cluster's primary
+    designation (the existing primary keeps its
+    role); (4) the `cluster_audit` `node_init` row
+    (B215) still fires in standby mode (it's the
+    canonical "this node joined" event, regardless
+    of role); (5) `isStandbyRole` pure helper
+    centralizes the detection logic so future code
+    (e.g. `skygate status`) can use the same
+    definition. 20 B-check contracts in
+    `scripts/check_b218.sh` (18 source-pin + 2
+    go-runtime, skipped when go is not on PATH).
+    2 unit tests in
+    `cmd/skygate/init_b218_test.go`
+    (`TestParseRolesCSV_Presets` 11 sub-cases incl.
+    4 presets + 2 backward-compat + 4 edge cases;
+    `TestIsStandbyRole` 8 sub-cases incl. pure
+    primary, pure standby, both-`skygate` invalid,
+    `db-replica` only, empty/nil). 1 new file:
+    `cmd/skygate/init_b218_test.go` (~95 lines:
+    2 test functions + 19 sub-cases). 1 modified:
+    `cmd/skygate/init.go` (+~80 lines: `parseRolesCSV`
+    preset expansion + `isStandbyRole` helper +
+    standby mode detection in `runInitBootstrap` +
+    skip primary-claim + skip invite-issuance +
+    updated docstring with preset table).
+    `bootstrap_standby.sh` is unchanged for B218
+    — the operator can now choose between the
+    heavy provisioning path (the existing script)
+    and the lightweight registration path
+    (`skygate init --role=standby` on an already-
+    provisioned box). Both are documented in this
+    section. Live-verify on the agent
+    (`scripts/b218_liveverify.sh`): run
+    `skygate init --role=standby` on the agent
+    (the standby role preset) → assert the
+    `cluster_node` row appears with
+    `roles={skygate-standby,patroni-replica}` +
+    the `cluster_database.primary_node_id` is
+    UNCHANGED (still points to the original primary
+    — `node-19f12b05607b` for the agent) + the
+    `cluster_audit` `node_init` row fires + no
+    standby invite token is printed (empty first
+    line of stdout).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

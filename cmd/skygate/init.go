@@ -197,19 +197,44 @@ func printInitUsage() {
 //
 // Usage:
 //
-//	skygate init [--role=skygate,db-primary,control] [--ttl 24h]
+//	skygate init [--role=<roles>] [--ttl 24h]
+//
+//	--role accepts either a comma-separated list of
+//	canonical roles (e.g. "skygate,patroni-primary,control")
+//	or one of the B218 presets:
+//
+//	  primary    → skygate + patroni-primary + control
+//	  standby    → skygate-standby + patroni-replica
+//	  db-replica → patroni-replica
+//	  control    → skygate + control
+//
+//	Primary mode (default, --role=skygate) writes the
+//	cluster_database.primary_node_id row + issues a
+//	standby invite token. Standby mode (--role=standby
+//	or any role list containing "skygate-standby" but
+//	not "skygate") skips both — the primary is already
+//	set by another node, and a fresh invite isn't
+//	needed because the standby joins via an existing
+//	invite the primary issued when it was bootstrapped.
 func runInitBootstrap(args []string) error {
 	fs := flag.NewFlagSet("init bootstrap", flag.ContinueOnError)
-	roleCSV := fs.String("role", "skygate", "comma-separated role list for THIS node (default: skygate)")
-	ttlHours := fs.Int("ttl-hours", 24, "standby invite token TTL in hours")
+	roleCSV := fs.String("role", "skygate", "comma-separated role list for THIS node (default: skygate) — accepts presets 'primary' / 'standby' / 'db-replica' / 'control'")
+	ttlHours := fs.Int("ttl-hours", 24, "standby invite token TTL in hours (primary mode only)")
 	stateFile := fs.String("state-file", initStateFile, "where to write the init state JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	roles := parseRolesCSV(*roleCSV)
 	if len(roles) == 0 {
-		return errors.New("init: --role is empty (use at least one of skygate / skygate-standby)")
+		return errors.New("init: --role is empty (use at least one of skygate / skygate-standby, or a preset like 'standby' / 'primary' / 'db-replica' / 'control')")
 	}
+	// B218: detect standby mode from the role list. A
+	// standby run skips the "this node is primary" +
+	// "issue standby invite" steps (those are
+	// primary-only). The detection rule:
+	// "skygate-standby" role present, "skygate"
+	// role absent. See isStandbyRole for the rationale.
+	standbyMode := isStandbyRole(roles)
 
 	// 1. Config + DB.
 	cfg, err := config.Load()
@@ -245,21 +270,32 @@ func runInitBootstrap(args []string) error {
 		return fmt.Errorf("init: upsert node: %w", err)
 	}
 
-	// 4. Set cluster_database (this node = primary).
-	cd := &db.ClusterDatabase{
-		ID:             cluster.DefaultClusterID,
-		ClusterID:      cluster.DefaultClusterID,
-		PrimaryNodeID:  nodeID,
-		ReplicaNodeIDs: db.StringArray{},
-		DSNTemplate:    "",
-		DBName:         "",
-		Username:       "",
-		SSLMode:        "disable",
-		CurrentDSN:     cfg.DBDSN,
-		UpdatedBy:      hostname,
-	}
-	if err := db.SetClusterDatabase(d, cd); err != nil {
-		return fmt.Errorf("init: set cluster_database: %w", err)
+	// 4. Set cluster_database (this node = primary) —
+	//    ONLY in primary mode. In standby mode the
+	//    primary is already set (by a previous
+	//    `skygate init` on the primary box), and
+	//    overwriting it would break the HA chain.
+	//    Standbys don't write to cluster_database
+	//    at all — they only read it (via
+	//    /admin/database, the B203 watchdog, etc).
+	if !standbyMode {
+		cd := &db.ClusterDatabase{
+			ID:             cluster.DefaultClusterID,
+			ClusterID:      cluster.DefaultClusterID,
+			PrimaryNodeID:  nodeID,
+			ReplicaNodeIDs: db.StringArray{},
+			DSNTemplate:    "",
+			DBName:         "",
+			Username:       "",
+			SSLMode:        "disable",
+			CurrentDSN:     cfg.DBDSN,
+			UpdatedBy:      hostname,
+		}
+		if err := db.SetClusterDatabase(d, cd); err != nil {
+			return fmt.Errorf("init: set cluster_database: %w", err)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "init: standby mode — skipping cluster_database.primary_node_id assignment (primary is set elsewhere)\n")
 	}
 
 	// 5. Issue standby invite token. The standby's
@@ -270,9 +306,23 @@ func runInitBootstrap(args []string) error {
 	//    still requires the standby to send its
 	//    actual hostname, which the join handler
 	//    matches against the invite's TH field).
-	_, standbyToken, standbyExpires, err := cluster.IssueInvite(d, cluster.DefaultClusterID, cluster.NodeRoleStandby, "", *ttlHours, cfg.SecretKeyHex)
-	if err != nil {
-		return fmt.Errorf("init: issue standby invite: %w", err)
+	//
+	//    B218: in standby mode, skip this step. A
+	//    standby doesn't issue invites — the primary
+	//    did that when it was bootstrapped. The
+	//    standby's "join" path uses the cluster's
+	//    CURRENT primary's invite, not a fresh one.
+	var standbyToken string
+	var standbyExpires time.Time
+	if !standbyMode {
+		_, tok, exp, err := cluster.IssueInvite(d, cluster.DefaultClusterID, cluster.NodeRoleStandby, "", *ttlHours, cfg.SecretKeyHex)
+		if err != nil {
+			return fmt.Errorf("init: issue standby invite: %w", err)
+		}
+		standbyToken = tok
+		standbyExpires = exp
+	} else {
+		fmt.Fprintf(os.Stderr, "init: standby mode — skipping standby invite issuance (use the existing primary's invite, or run `skygate cluster invite` on the primary)\n")
 	}
 
 	// 6. Persist init state. Errors here are
@@ -308,6 +358,10 @@ func runInitBootstrap(args []string) error {
 	// Print to stdout in a scriptable format:
 	//   line 1: standby token (this is what
 	//           bootstrap_standby.sh reads on stdin)
+	//           — empty string in standby mode (no
+	//           token issued); bootstrap_standby.sh
+	//           sees the empty line and uses an existing
+	//           invite from the primary.
 	//   line 2: node_id
 	//   line 3: hostname
 	//   (the other fields go to stderr — they're
@@ -315,10 +369,19 @@ func runInitBootstrap(args []string) error {
 	fmt.Println(standbyToken)
 	fmt.Println(nodeID)
 	fmt.Println(hostname)
+	if standbyMode {
+		// Standby: no token, no expiry, no chain set
+		// by us. The standby's bootstrap_standby.sh
+		// will use an existing invite (printed to
+		// stderr by the primary, or fetched via
+		// `skygate cluster invite --role=skygate-standby`
+		// on the primary).
+	} else {
+		fmt.Fprintf(os.Stderr, "init: standby invite expires_at=%s (ttl=%dh)\n",
+			standbyExpires.Format(time.RFC3339), *ttlHours)
+	}
 	fmt.Fprintf(os.Stderr, "init: cluster_id=%s node_id=%s hostname=%s roles=%s skygate_version=%s\n",
 		cluster.DefaultClusterID, nodeID, hostname, strings.Join(roles, ","), skygateVersion)
-	fmt.Fprintf(os.Stderr, "init: standby invite expires_at=%s (ttl=%dh)\n",
-		standbyExpires.Format(time.RFC3339), *ttlHours)
 	if stateErr != nil {
 		fmt.Fprintf(os.Stderr, "init: warning: could not write %s: %v (cluster state is still correct in DB)\n",
 			*stateFile, stateErr)
@@ -545,6 +608,27 @@ func runInitStandbyInvite(args []string) error {
 // into ["skygate", "db-primary", "control"], trimming
 // whitespace + dropping empty entries. Returns nil
 // for an empty input.
+//
+// B218: also accepts a small set of role PRESETS that
+// expand to the canonical role list. The presets are
+// shortcuts for the common case (`--role=standby` is
+// much easier to type than `--role=skygate-standby,patroni-replica`
+// and ensures the operator uses the same role list as
+// the other standbys in the cluster).
+//
+// Presets:
+//   "primary"    → ["skygate", "patroni-primary", "control"]
+//   "standby"    → ["skygate-standby", "patroni-replica"]
+//   "db-replica" → ["patroni-replica"]
+//   "control"    → ["skygate", "control"]
+//
+// A role list is considered a preset if EVERY element
+// (after split + trim) matches a known preset name.
+// Mixing a preset with explicit roles is NOT allowed —
+// the operator must choose either the full preset or
+// spell out the roles explicitly. This keeps the semantics
+// clear: a preset is a complete role list, not a
+// fragment.
 func parseRolesCSV(s string) []string {
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
@@ -555,7 +639,48 @@ func parseRolesCSV(s string) []string {
 		}
 		out = append(out, p)
 	}
+	// B218 preset expansion. If the operator passed
+	// a single preset keyword, return the expanded
+	// role list. Otherwise return the parsed list
+	// as-is (so backward compatibility is preserved:
+	// `--role=skygate,patroni-primary` still works).
+	if len(out) == 1 {
+		switch out[0] {
+		case "primary":
+			return []string{"skygate", "patroni-primary", "control"}
+		case "standby":
+			return []string{"skygate-standby", "patroni-replica"}
+		case "db-replica":
+			return []string{"patroni-replica"}
+		case "control":
+			return []string{"skygate", "control"}
+		}
+	}
 	return out
+}
+
+// isStandbyRole returns true if the role list describes
+// a standby (not a primary). B218: this drives the
+// "skip primary claim + skip standby invite issuance"
+// branches in runInitBootstrap. The rule: a row is a
+// standby if it has the "skygate-standby" role AND does
+// NOT have the "skygate" role. The asymmetry comes from
+// the fact that "skygate" means "this node is the
+// active control plane" while "skygate-standby" means
+// "this node is a standby for the active control
+// plane" — they're mutually exclusive.
+func isStandbyRole(roles []string) bool {
+	hasSkygate := false
+	hasStandby := false
+	for _, r := range roles {
+		if r == "skygate" {
+			hasSkygate = true
+		}
+		if r == "skygate-standby" {
+			hasStandby = true
+		}
+	}
+	return hasStandby && !hasSkygate
 }
 
 // writeInitState persists the init state JSON to the
