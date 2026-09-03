@@ -1931,8 +1931,25 @@ func main() {
 	// wins on conflict with .env. The watchdog enforces
 	// this by always reading cluster_database; if the row
 	// is empty (no override), the env-DSN pool stays.
+	wdCfg := watchdog.DefaultConfig()
+	// B225.2 (Phase 4.4 follow-up): the
+	// watchdog's Notifier is wired from
+	// app.Notifier. When the operator has
+	// configured a Telegram bot, the watchdog
+	// pushes a "PG health DEGRADED" alert on
+	// 3 consecutive failed reads of the
+	// cluster_database table (= 15s of
+	// unreachable DB with the default 5s
+	// Interval), and a "PG health recovered"
+	// alert on the next successful read. When
+	// no bot is configured, the
+	// NoopNotifierSink drops alerts silently
+	// — the watchdog's "dbmigrate-watchdog"
+	// log line on the same event is the
+	// durable record.
+	wdCfg.Notifier = schedulerNotifierSink(app.Notifier)
 	wd := watchdog.NewDBSwap(
-		watchdog.DefaultConfig(),
+		wdCfg,
 		d, // d is *db.ResettableDB, satisfies watchdog.DBMigrator
 		func(ctx context.Context) (*watchdog.ClusterDatabaseRow, error) {
 			row, err := db.GetClusterDatabase(d.DB, "skygate-staging")

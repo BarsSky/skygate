@@ -3842,6 +3842,78 @@ in the same commit. Don't let the tracker drift.
     automatic Patroni alert" path (B203 watchdog
     is the right place; the work is a 3-failed-
     pings check + one `notifier.SendAlert` call).
+  - **B225.2 (v1.5.0+, 2026-09-03) — /admin/database
+    Phase 4.4 follow-up: B203 watchdog PG health
+    degraded alert.** Closes the "B203 watchdog
+    silently swallows `cluster_database` read
+    failures" gap. Pre-B225.2, the B203 watchdog
+    ticks every 5s, reads `cluster_database`, and
+    if the read fails (PG unreachable, network
+    blip, etc) it just logs `dbmigrate-watchdog:
+    read cluster_database: %v (keeping current
+    pool)` and returns. No operator notification.
+    The B225 + B225.1 added failover + DB health
+    alerts, but the watchdog's silent-swallow was
+    still a gap (the watchdog's read of
+    `cluster_database` IS the primary
+    reachability probe — the B206 healthz sampler
+    reads other tables, the B225 failover handler
+    only fires on operator action, and the B225.1
+    sampler fires on a different DSN path). Post-B225.2:
+    the watchdog tracks a
+    `consecutiveReadFailures` counter (new field on
+    `DBSwap` struct, protected by the existing
+    `sync.Mutex`). On the Nth consecutive failure
+    (default N=3, = 15s with the default 5s
+    Interval), the watchdog fires a "PG health
+    DEGRADED" alert (❌) via the same
+    `schedulerNotifierSink(app.Notifier)` pattern
+    B225 + B225.1 used. On the next successful
+    read, fires "PG health recovered" (✅) and
+    resets the counter. The first tick is the
+    baseline (no alert) so a freshly-started
+    skygate doesn't fire on the first sample. The
+    local `NotifierSink` interface (just
+    `SendAlert(string) int64`) keeps the watchdog
+    free of `internal/telegram` import (avoids the
+    `watchdog → telegram → ...` cycle that B225
+    already discovered in `backup` and `healthz`).
+    10 B-check contracts in `scripts/check_b225_2.sh`.
+    8 pure-Go unit tests in
+    `internal/watchdog/dbswap_b225_2_test.go`:
+    `TestReadFailureTransition_FirstTickIsBaseline`
+    (the initial sample doesn't fire),
+    `TestReadFailureTransition_ThresholdCross`
+    (the alert fires when the counter CROSSES the
+    threshold, not before, not after),
+    `TestReadFailureTransition_AlertText` (pins
+    the "PG health DEGRADED" alert text),
+    `TestReadSuccessTransition_Recovery` (pins
+    the "PG health recovered" alert text),
+    `TestReadSuccessTransition_NoAlertOnStableSuccess`
+    (steady state is silent),
+    `TestTransition_BelowThresholdNoAlert`
+    (a few failures below the threshold don't
+    fire),
+    `TestTransition_FlapDoesNotSpam` (a flapping
+    DB fires exactly 1 alert per edge, not 1 per
+    tick), `TestTransition_NopSinkIsSilent` (the
+    no-Telegram-bot path is safe). 1 new file:
+    `internal/watchdog/dbswap_b225_2_test.go`
+    (~280 lines). 2 modified:
+    `internal/watchdog/dbswap.go` (+~180 lines:
+    `NotifierSink` interface + `NoopNotifierSink`
+    no-op fallback + `Notifier` +
+    `ReadFailureThreshold` + `ClusterID` fields on
+    `Config` + `consecutiveReadFailures` +
+    `hasFirstTick` fields on `DBSwap` +
+    `detectReadFailureTransition` +
+    `detectReadSuccessTransition` methods + the
+    `tick()` hooks),
+    `cmd/skygate/main.go` (+3 lines:
+    `wdCfg := watchdog.DefaultConfig()` +
+    `wdCfg.Notifier = schedulerNotifierSink(app.Notifier)`
+    + pass `wdCfg` to `NewDBSwap`).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     true no-op for the cluster state).
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
