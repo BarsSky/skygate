@@ -164,9 +164,24 @@ func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *h
 // B235: this is what the dashboard hero uses to
 // show "DERP WAW 105 ms" instead of the pre-B235
 // hardcoded "waw" placeholder.
+//
+// B235.2: the bundled controlplane DERP (region_id=901,
+// is_own=1) has region_code='' because the operator
+// didn't set one in derp_relays — it's the Tailscale
+// control plane's fallback, not a real geographic
+// region. Without a fallback the hero rendered "—"
+// even though the row had a healthy latency. This
+// function now falls back to a short label derived
+// from the host: "controlplane" → "cdn", or the
+// first label of the hostname otherwise. The fallback
+// is local to this function (the DB stays the source
+// of truth — region_code='' remains the operator's
+// choice, and a future /admin/derp edit can set a
+// real code).
 func (s *Service) bestHealthyDERP() (code string, latencyMs int, regionID int, ok bool) {
 	rows, err := s.dbc().QueryContext(context.Background(), `
-		SELECT region_id, COALESCE(region_code, ''), latency_ms
+		SELECT region_id, COALESCE(region_code, ''),
+		       COALESCE(host, ''), latency_ms
 		  FROM derp_health
 		 WHERE healthy = 1
 		   AND latency_ms > 0
@@ -180,13 +195,46 @@ func (s *Service) bestHealthyDERP() (code string, latencyMs int, regionID int, o
 	defer rows.Close()
 	if rows.Next() {
 		var rid int
-		var c string
+		var c, host string
 		var lat int
-		if err := rows.Scan(&rid, &c, &lat); err == nil {
+		if err := rows.Scan(&rid, &c, &host, &lat); err == nil {
+			// B235.2: fall back to a short label when
+			// region_code is empty. The bundled 901
+			// (controlplane.tailscale.com) is the most
+			// common case — show "cdn" so the hero
+			// displays something useful ("cdn 108 ms")
+			// instead of "—".
+			if c == "" {
+				c = shortHostLabel(host)
+			}
 			return c, lat, rid, true
 		}
 	}
 	return "", 0, 0, false
+}
+
+// shortHostLabel returns a short display label for a
+// DERP host. The bundled controlplane DERP (host =
+// "controlplane.tailscale.com") maps to "cdn".
+// Other hosts (e.g. "derp22b.tailscale.com") get
+// their first label (e.g. "derp22b") which is what
+// the admin dashboard's `.Name` pill would show.
+//
+// Pure function — easy to unit test.
+func shortHostLabel(host string) string {
+	if host == "" {
+		return ""
+	}
+	if host == "controlplane.tailscale.com" {
+		return "cdn"
+	}
+	// Split on the first dot.
+	for i, r := range host {
+		if r == '.' {
+			return host[:i]
+		}
+	}
+	return host
 }
 
 // GetDashboard renders the /dashboard page. Admin sees whole-tailnet
