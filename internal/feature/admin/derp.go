@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -63,6 +64,18 @@ type DerpStatus struct {
 	RegionID        string
 	RegionName      string
 	WhiteIP         string
+	// WhiteIPSource records WHERE the WhiteIP came from:
+	// "dns" (net.LookupHost of the derper's hostname — the
+	// public IP Tailscale clients actually dial), "egress"
+	// (detectEgressIP — the skygate container's own egress
+	// interface, usually wrong but better than empty),
+	// "derper_status" (parsed from the derper's own /debug
+	// HTML — the derper's view of the WhiteIP, which equals
+	// the source IP of the request — usually 172.18.0.x
+	// when querying from the skygate container). Used by
+	// the /admin/derp template to show a small annotation
+	// so the operator knows which IP they're looking at.
+	WhiteIPSource   string
 	UpTime          string
 	StartedAt       string
 	PID             string
@@ -161,6 +174,9 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		// collectDerpStatus. Left empty here (not hardcoded) to avoid
 		// leaking operator-specific egress IPs into the binary.
 		WhiteIP: "",
+		// B237.2: WhiteIPSource defaults to "" (no IP yet
+		// resolved); the orchestrator fills it in below.
+		WhiteIPSource: "",
 	}
 
 	// Try derper debug endpoints (in priority order)
@@ -236,12 +252,24 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		}
 	}
 
-	// Hostname (white IP) from outbound interface (best-effort, no actual HTTP needed).
-	// Empty until the probe below actually resolves the egress IP — do not hardcode
-	// operator-specific addresses here.
+	// Hostname (white IP) — the public IP Tailscale clients dial.
+	// B237.2: prefer DNS lookup of the derper's hostname (the
+	// source of truth for "where clients reach us"). The
+	// skygate container's own egress IP (was the pre-B237.2
+	// behaviour via detectEgressIP) is usually 172.18.0.x on
+	// the docker bridge — misleading on /admin/derp because
+	// that IP is unreachable from the public internet.
+	// Resolution order:
+	//   1. SKYGATE_DERP_HOSTNAME env var (the operator's
+	//      configured DERP hostname) + net.LookupHost
+	//   2. The derper status page's "TLS hostname" field
+	//      (already parsed into st.Hostname above)
+	//   3. Last resort: detectEgressIP() (skygate container's
+	//      own egress — usually wrong, but better than empty)
 	if st.WhiteIP == "" {
-		if ip, err := detectEgressIP(); err == nil {
+		if ip, src, ok := resolvePublicDERPIP(st.Hostname); ok {
 			st.WhiteIP = ip
+			st.WhiteIPSource = src
 		}
 	}
 
@@ -267,6 +295,87 @@ func detectEgressIP() (string, error) {
 		return "", fmt.Errorf("no ipv4 addr")
 	}
 	return ip.String(), nil
+}
+
+// resolvePublicDERPIP returns the public IP that Tailscale
+// clients actually use to reach the derper. Three sources
+// tried in order:
+//
+//  1. SKYGATE_DERP_HOSTNAME env var. The operator's
+//     configured DERP hostname (e.g. "derp.skynas.ru").
+//     We DNS-resolve it via net.LookupHost — the A record
+//     is the operator's authoritative answer for "what
+//     public IP does this DERP live at?". This is the
+//     only source that's reachable even when skygate's
+//     own derper is on a different host (the typical
+//     setup — skygate runs in a container, derper runs
+//     as systemd unit on the host).
+//
+//  2. The `derperHostname` parameter (parsed from
+//     st.Hostname, the TLS hostname field of the derper's
+//     own /debug HTML). Same DNS-lookup logic; useful as
+//     a fallback when SKYGATE_DERP_HOSTNAME is not set.
+//
+//  3. detectEgressIP() — the skygate container's own
+//     egress interface. Returns the source IP of a UDP
+//     dial. This is the OLD pre-B237.2 behaviour. It
+//     usually returns the docker-bridge IP (172.18.0.x)
+//     when skygate is containerised, which is NOT the
+//     public IP and misleading on the /admin/derp page.
+//     Kept as a last-resort fallback so the field is
+//     never empty.
+//
+// Returns (ip, source, ok). `source` is one of
+// "dns:env" / "dns:derper" / "egress" so the template
+// can show a small annotation.
+//
+// B237.2 — closes the "derper status page shows
+// 172.18.0.3 as the public IP" gap (operator's 2026-09-04
+// report: "на скрине указан неверный ip адрес (он
+// относится к контейнеру, а не публичному адресу
+// ресурса)").
+func resolvePublicDERPIP(derperHostname string) (ip, source string, ok bool) {
+	candidates := []struct {
+		hostname string
+		label    string
+	}{}
+	if env := strings.TrimSpace(os.Getenv("SKYGATE_DERP_HOSTNAME")); env != "" {
+		candidates = append(candidates, struct {
+			hostname string
+			label    string
+		}{env, "dns:env"})
+	}
+	if h := strings.TrimSpace(derperHostname); h != "" && h != "derp.example.com" {
+		// Skip the placeholder value from the seed
+		// (the collectDerpStatus function seeds the
+		// struct with "derp.example.com" when the
+		// derper's /debug endpoint is unreachable).
+		candidates = append(candidates, struct {
+			hostname string
+			label    string
+		}{h, "dns:derper"})
+	}
+	for _, c := range candidates {
+		if resolved, err := net.LookupHost(c.hostname); err == nil && len(resolved) > 0 {
+			// Pick the first IPv4 A record (Tailscale
+			// clients dial IPv4 by default; IPv6
+			// would also work but the /admin/derp
+			// page can't display both cleanly).
+			for _, addr := range resolved {
+				ip := net.ParseIP(addr).To4()
+				if ip != nil {
+					return ip.String(), c.label, true
+				}
+			}
+			// Only IPv6 — return the first one.
+			return resolved[0], c.label + " (v6)", true
+		}
+	}
+	// Last resort: skygate container's own egress.
+	if egress, err := detectEgressIP(); err == nil {
+		return egress, "egress", true
+	}
+	return "", "", false
 }
 
 func httpGet(url string, timeout time.Duration) ([]byte, error) {

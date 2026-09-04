@@ -3658,6 +3658,39 @@ run_check "B236" "Tailscale subnet-routes management on /admin/tailscale. Closes
 # 28 B-check contracts in scripts/check_b237.sh.
 run_check "B237" "Own DERP через skygate. Closes the 'derp_relays row exists but headscale doesn't know about it' gap. New GET /admin/derp/relays/derpmap.json endpoint serves a Tailscale-shaped derpmap (no authMW, CORS, no-cache). New POST /admin/derp/relays/apply-headscale button rewrites headscale's config.yaml's `derp.urls` block (idempotent, atomic write via tmp+mv) + `docker restart headscale` (10s timeout) + audit row derp_apply_headscale. shortNameFromHostname + publicDERPPortFromURL + rewriteDerpURLs are pure functions with 7 unit tests across 2 files. 28 B-check contracts in scripts/check_b237.sh." \
   'test -f scripts/check_b237.sh && bash scripts/check_b237.sh'
+# --- B237.2: correct Public IP on /admin/derp ---
+# Closes the operator's 2026-09-04 complaint that the
+# "Публичный IP" field on /admin/derp showed 172.18.0.3
+# (the skygate container's own egress IP via the docker
+# bridge) instead of the public IP Tailscale clients
+# actually dial. The pre-B237.2 `detectEgressIP()` dials
+# a UDP discard socket and reads the local addr — that
+# gives the source IP of the dialing process (skygate
+# container), NOT the public IP of the derper. The
+# fix: `resolvePublicDERPIP()` resolves the derper's
+# hostname via `net.LookupHost` (the DNS A record IS
+# the public IP — authoritative). Sources tried in
+# order:
+#   1. SKYGATE_DERP_HOSTNAME env var (operator's hostname
+#      override; default = derper's --hostname flag).
+#   2. The derper status page's parsed "TLS hostname"
+#      (when reachable).
+#   3. Last resort: `detectEgressIP()` (skygate's own
+#      egress — usually wrong, but better than empty).
+# WhiteIPSource field (new) records WHICH source the
+# resolver used ("dns:env" / "dns:derper" / "egress")
+# so the /admin/derp template can show a small
+# annotation. The placeholder hostname "derp.example.com"
+# from the seed struct is explicitly skipped (otherwise
+# the resolver would DNS-resolve example.com and show a
+# wrong IP). 4 unit tests in derp_b237_2_test.go:
+# TestResolvePublicDERPIP_EnvWins,
+# TestResolvePublicDERPIP_DerperHostnameFallback,
+# TestResolvePublicDERPIP_PlaceholderHostnameSkipped,
+# TestResolvePublicDERPIP_UnresolvableHostname. 17
+# B-check contracts in scripts/check_b237_2.sh.
+run_check "B237.2" "Correct Public IP on /admin/derp. Closes the 'shows 172.18.0.3 instead of the real public IP' gap. New resolvePublicDERPIP() uses net.LookupHost of the derper's hostname (the DNS A record IS the public IP). Sources: SKYGATE_DERP_HOSTNAME env var → derper status page TLS hostname → last-resort detectEgressIP(). WhiteIPSource field records which source was used ('dns:env' / 'dns:derper' / 'egress') for the template annotation. Placeholder 'derp.example.com' is explicitly skipped. 4 unit tests + 17 B-check contracts in scripts/check_b237_2.sh." \
+  'test -f scripts/check_b237_2.sh && bash scripts/check_b237_2.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

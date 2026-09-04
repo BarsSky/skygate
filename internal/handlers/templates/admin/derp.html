@@ -233,7 +233,10 @@
       <tr><td style="color:var(--text-muted)">{{t "derp.field_region"}}</td><td><code>{{.DerpStatus.RegionCode}} ({{.DerpStatus.RegionID}})</code> — {{.DerpStatus.RegionName}}</td></tr>
       <tr><td style="color:var(--text-muted)">{{t "derp.field_ws_endpoint"}}</td><td><code>wss://{{.DerpStatus.Hostname}}:{{.DerpStatus.DERPPort}}/derp</code></td></tr>
       <tr><td style="color:var(--text-muted)">{{t "derp.field_stun_endpoint"}}</td><td><code>{{.DerpStatus.Hostname}}:{{.DerpStatus.STUNPort}}</code> (UDP)</td></tr>
-      <tr><td style="color:var(--text-muted)">{{t "derp.field_public_ip"}}</td><td><code>{{.DerpStatus.WhiteIP}}</code></td></tr>
+      <tr><td style="color:var(--text-muted)">{{t "derp.field_public_ip"}}</td><td>
+        <code>{{.DerpStatus.WhiteIP}}</code>
+        {{if .DerpStatus.WhiteIPSource}}<span class="muted" style="font-size:11px;margin-left:6px" title="{{t (printf "derp.field_public_ip_source_help_%s" .DerpStatus.WhiteIPSource)}}">(<code>{{.DerpStatus.WhiteIPSource}}</code>)</span>{{end}}
+      </td></tr>
       <tr><td style="color:var(--text-muted)">{{t "derp.field_started"}}</td><td>{{.DerpStatus.StartedAt}}</td></tr>
       <tr><td style="color:var(--text-muted)">{{t "derp.field_uptime"}}</td><td>{{.DerpStatus.UpTime}}</td></tr>
       {{if .DerpStatus.Machine}}<tr><td style="color:var(--text-muted)">{{t "derp.field_machine"}}</td><td><code>{{.DerpStatus.Machine}}</code></td></tr>{{end}}
