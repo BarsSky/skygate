@@ -9,6 +9,13 @@
     <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-chart-line"></i> {{t "derp.relays_link_status"}}</a>
     <a href="/admin/derp/config" class="btn btn-secondary"><i class="fa-solid fa-sliders"></i> {{t "derp.relays_link_legacy"}}</a>
     <a href="/admin/integrations" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+    {{/* B237: one-click button to push the skygate derpmap URL into headscale's derp.urls config + restart headscale. */}}
+    <form method="POST" action="/admin/derp/relays/apply-headscale" style="display:inline" onsubmit="return confirm({{t "derp.relays_apply_headscale_confirm" | safeJSON}});">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button type="submit" class="btn btn-warn" title="{{t "derp.relays_apply_headscale_help"}}">
+        <i class="fa-solid fa-cloud-arrow-up"></i> {{t "derp.relays_apply_headscale_btn"}}
+      </button>
+    </form>
   </div>
 </div>
 

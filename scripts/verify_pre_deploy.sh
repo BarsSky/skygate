@@ -3608,6 +3608,56 @@ run_check "B234" "Fix 3 pre-existing CI test failures. The pre-close in Dump (B2
 # contracts in scripts/check_b236.sh.
 run_check "B236" "Tailscale subnet-routes management on /admin/tailscale. Closes the gap where skygate-host-1 had --advertise-routes=172.17.0.0/16,192.168.13.0/24,172.18.0.0/16 set manually (the 192.168.13.0/24 shadowed skyworker's direct LAN route to 192.168.13.67 on 2026-09-04). New POST handler set_advertise_routes writes via `tailscale set --advertise-routes=` (idempotent replace, NOT add). Validation: refuse the host's own LAN (auto-detected via `ip route` + `ip addr show`, SKYGATE_HOST_LAN_OVERRIDE override), refuse docker bridge ranges (172.17-172.32). 7 unit tests in internal/feature/admin/tailscale_b236_test.go (cidrOverlaps + detectHostLAN + dockerBridgeRanges + handler edge cases). 39 B-check contracts in scripts/check_b236.sh." \
   'test -f scripts/check_b236.sh && bash scripts/check_b236.sh'
+# --- B237: own DERP через skygate ---
+# Closes the design gap where the operator's own DERP
+# (derp.skynas.ru) was configured in skygate's derp_relays
+# table but invisible to headscale + Tailscale clients:
+#  1. headscale's derp.urls only pointed at the public
+#     Tailscale derpmap, so headscale never knew about the
+#     operator's relay and never advertised it to clients.
+#  2. The /admin/derp/relays page had no button to push the
+#     derp_relays config into headscale — the operator
+#     had to SSH + edit headscale config + restart headscale
+#     by hand.
+#  3. No Tailscale-shaped derpmap.json endpoint served by
+#     skygate — even if headscale had a derp.urls entry
+#     pointing at skygate, there's nothing to fetch.
+# B237 closes all three:
+#  a) GET /admin/derp/relays/derpmap.json serves a
+#     Tailscale-shaped derpmap (RegionID, RegionCode,
+#     RegionName, Nodes[Name/HostName/DERPPort/STUNPort]).
+#     No authMW (headscale inside the docker network fetches
+#     it from http://skygate:8080/...). CORS + no-cache.
+#  b) "Apply to headscale" button on /admin/derp/relays
+#     POSTs to /admin/derp/relays/apply-headscale which:
+#     - reads /home/admin/headscale/config/config.yaml
+#       (skygate bind-mounts the host's headscale config),
+#     - rewrites the `derp:` block to include both the
+#       public Tailscale derpmap URL + the skygate derpmap
+#       URL (idempotent — re-apply with same URL = no-op),
+#     - writes back atomically (tmp + mv),
+#     - `docker restart headscale` (10s timeout),
+#     - audit row derp_apply_headscale with config snippet
+#       + docker output.
+#  c) The /admin/derp/relays/add form (existing B116)
+#     already added the operator's own 900/mow row for
+#     derp.skynas.ru (manual one-time; future add/edit via
+#     the same form is operator-driven).
+# Pure helpers + idempotency + atomic writes are unit-tested:
+#   - shortNameFromHostname (5 cases)
+#   - publicDERPPortFromURL (6 cases incl. :443 default,
+#     explicit :8443, malformed URL, empty URL)
+#   - rewriteDerpURLs (5 cases: inserts-both, replaces-existing,
+#     idempotent, rejects-empty, flow-style)
+# Live-verify on the agent: (1) GET /admin/derp/relays/derpmap.json
+# returns 200 with a Tailscale-shaped JSON containing 2
+# regions (901 bundled + 900/mow); (2) POST /admin/derp/relays/apply-headscale
+# writes the new derp.urls to headscale config + restarts
+# headscale; (3) headscale's `nodes list --json` after
+# 60s shows the operator's own region in the `derp` map.
+# 28 B-check contracts in scripts/check_b237.sh.
+run_check "B237" "Own DERP через skygate. Closes the 'derp_relays row exists but headscale doesn't know about it' gap. New GET /admin/derp/relays/derpmap.json endpoint serves a Tailscale-shaped derpmap (no authMW, CORS, no-cache). New POST /admin/derp/relays/apply-headscale button rewrites headscale's config.yaml's `derp.urls` block (idempotent, atomic write via tmp+mv) + `docker restart headscale` (10s timeout) + audit row derp_apply_headscale. shortNameFromHostname + publicDERPPortFromURL + rewriteDerpURLs are pure functions with 7 unit tests across 2 files. 28 B-check contracts in scripts/check_b237.sh." \
+  'test -f scripts/check_b237.sh && bash scripts/check_b237.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

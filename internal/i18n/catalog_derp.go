@@ -115,6 +115,15 @@ var ruDerp = map[string]string{
 	"derp.relays_link_legacy"         : "Старая форма",
 	"derp.relays_link_manage"         : "Управление релеями",
 	"derp.relays_nav"                 : "Релеи",
+	// B237: one-click button that pushes the skygate
+	// derpmap.json URL into headscale's `derp.urls` config
+	// and restarts headscale. Closes the "I added the
+	// derp_relays row but headscale doesn't know about it"
+	// gap. The apply is idempotent (re-running with the
+	// same skygate URL is a no-op).
+	"derp.relays_apply_headscale_btn"   : "Apply to headscale",
+	"derp.relays_apply_headscale_help"  : "Записать URL skygate derpmap.json в headscale config + перезапустить headscale. Идемпотентно — повторный клик не дублирует URL.",
+	"derp.relays_apply_headscale_confirm": "Применить? headscale будет перезапущен (~5s downtime для control plane).",
 	"derp.relays_section_list"        : "Настроенные релеи",
 	"derp.relays_count"               : "Настроено: %d",
 	"derp.relays_col_hostname"        : "Имя",
@@ -325,6 +334,9 @@ var enDerp = map[string]string{
 	"derp.relays_link_legacy"         : "Legacy form",
 	"derp.relays_link_manage"         : "Manage relays",
 	"derp.relays_nav"                 : "Relays",
+	"derp.relays_apply_headscale_btn"   : "Apply to headscale",
+	"derp.relays_apply_headscale_help"  : "Write the skygate derpmap.json URL into headscale's config + restart headscale. Idempotent — re-clicking doesn't duplicate the URL.",
+	"derp.relays_apply_headscale_confirm": "Apply? headscale will be restarted (~5s downtime for the control plane).",
 	"derp.relays_section_list"        : "Configured relays",
 	"derp.relays_count"               : "Configured: %d",
 	"derp.relays_col_hostname"        : "Hostname",

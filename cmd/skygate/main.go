@@ -1448,6 +1448,23 @@ func main() {
 	// for the handler bodies + doc comments.
 	mux.Handle("GET /admin/derp/relays/init", authMW(http.HandlerFunc(adminSvc.GetAdminDerpRelaysInit)))
 	mux.Handle("POST /admin/derp/relays/init", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysInit)))
+	// B237 (v1.5.2+) — DERP map endpoint that headscale
+	// fetches via its `derp.urls` config. Returns the
+	// Tailscale-shaped derpmap.json of the operator's own
+	// + bundled DERP rows. No auth — the URL is documented
+	// only for the headscale config (lives on the same
+	// docker network, CORS allows headscale from any
+	// origin). The combined response is merged with the
+	// public Tailscale derpmap by headscale's
+	// `derp.Map.Updater` per update_frequency (24h default).
+	mux.Handle("GET /admin/derp/relays/derpmap.json", http.HandlerFunc(adminSvc.GetAdminDerpRelaysDerpmap))
+	// B237 (v1.5.2+) — "Apply derpmap URL to headscale"
+	// one-click button. Rewrites headscale's config.yaml
+	// `derp.urls` block to include the skygate derpmap.json
+	// URL, then `docker restart headscale` (skygate has
+	// /var/run/docker.sock mounted per docker-compose.yml).
+	// Admin-only + CSRF-protected.
+	mux.Handle("POST /admin/derp/relays/apply-headscale", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysApplyHeadscale)))
 
 	// v1.5.0 / B149 — /admin/ha (High Availability chain editor).
 	// The page renders the cluster topology, failover policy,

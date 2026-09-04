@@ -4916,6 +4916,75 @@ in the same commit. Don't let the tracker drift.
     scripts/check_b236.sh` → 39/39 pass;
     `go test -count=1 -short ./...` → 43
     packages green.
+  - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
+    skygate**. Closes the design gap where the operator's
+    own DERP (derp.skynas.ru) was configured in skygate's
+    `derp_relays` table but invisible to headscale +
+    Tailscale clients:
+    1. headscale's `derp.urls` only pointed at the public
+       Tailscale derpmap, so headscale never knew about
+       the operator's relay and never advertised it to
+       clients.
+    2. The /admin/derp/relays page had no button to push
+       the derp_relays config into headscale — the
+       operator had to SSH + edit headscale config +
+       restart headscale by hand.
+    3. No Tailscale-shaped derpmap.json endpoint served
+       by skygate — even if headscale had a derp.urls
+       entry pointing at skygate, there's nothing to
+       fetch.
+    **B237 fix** (all three at once):
+    a) `GET /admin/derp/relays/derpmap.json` (no
+       authMW — headscale inside the docker network
+       fetches it via `http://skygate:8080/...`).
+       Returns a Tailscale-shaped JSON:
+       `{"Regions":{"900":{RegionID,RegionCode,RegionName,
+       Nodes:[{Name,RegionID,HostName,DERPPort,STUNPort,
+       STUNOnly,InsecureForTests}]}}}`. CORS +
+       no-cache. The port is derived from the URL
+       (`https://derp.skynas.ru:443` → 443, the public
+       port that clients dial; the internal :8443
+       stays inside the LAN).
+    b) `POST /admin/derp/relays/apply-headscale`
+       ("Apply to headscale" button on /admin/derp/relays).
+       Reads headscale's `config.yaml` (skygate has
+       `/home/admin/headscale` bind-mounted), rewrites
+       the `derp:` block to include BOTH the public
+       Tailscale derpmap + the skygate derpmap URL
+       (idempotent — re-apply with same URL is a no-op),
+       writes back atomically (tmp + mv), then
+       `docker restart headscale` (10s timeout, skygate
+       has /var/run/docker.sock mounted per
+       docker-compose.yml). Audit row
+       `derp_apply_headscale` with the new config snippet
+       + docker restart output.
+    c) The /admin/derp/relays/add form (existing B116)
+       adds the operator's own 900/mow row for
+       derp.skynas.ru. (Manual one-time; future add/edit
+       via the same form is operator-driven.)
+    **Pure helpers + idempotency + atomic writes are
+    unit-tested** (7 tests across 2 files):
+    - `shortNameFromHostname` (5 cases) — "derp.skynas.ru"
+      + "mow" → "mow-1" (Tailscale-style short label).
+    - `publicDERPPortFromURL` (6 cases) — default 443
+      when no port, explicit :443/:8443, malformed URL.
+    - `rewriteDerpURLs` (5 cases) — inserts both URLs,
+      replaces existing, idempotent re-apply, rejects
+      empty, handles flow-style YAML.
+    **Live-verify on the agent** (192.168.13.69):
+    1. `GET /admin/derp/relays/derpmap.json` returns 200
+       with a Tailscale-shaped JSON containing 2 regions
+       (901 bundled + 900/mow).
+    2. `POST /admin/derp/relays/apply-headscale` rewrites
+       headscale's config.yaml `derp.urls` to
+       `["https://controlplane.tailscale.com/derpmap/default",
+       "http://skygate:8080/admin/derp/relays/derpmap.json"]`
+       and `docker restart headscale`.
+    3. headscale's `nodes list --json` after 60s shows
+       the operator's own region in the `derp` map.
+    28 B-check contracts in `scripts/check_b237.sh`
+    (all PASS). `go test -count=1 -short ./...` →
+    43 packages green.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

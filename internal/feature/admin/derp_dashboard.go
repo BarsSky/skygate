@@ -31,9 +31,13 @@ package admin
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"time"
 
 	"skygate/internal/derphealth"
@@ -220,6 +224,165 @@ func (s *Service) PostAdminDerpDashboardRefresh(w http.ResponseWriter, r *http.R
 	http.Redirect(w, r, "/admin/derp/dashboard?refreshed=1&ok="+itoa(ok)+"&bad="+itoa(bad),
 		http.StatusSeeOther)
 }
+
+// ---------- B237: own-derp derpmap.json endpoint ----------
+
+// derpMapNode mirrors the Tailscale "derpmap/default" JSON
+// shape. We only emit the fields headscale cares about;
+// the rest (lat/long, capabilities, etc.) are not in
+// headscale's parser. JSON tag names match the Tailscale
+// field names verbatim so headscale's `json.Unmarshal` of
+// the response works without any custom adapter.
+type derpMapNode struct {
+	Name             string `json:"Name"`
+	RegionID         int    `json:"RegionID"`
+	HostName         string `json:"HostName"` // FQDN clients dial
+	DERPPort         int    `json:"DERPPort"` // public port (443)
+	STUNPort         int    `json:"STUNPort"` // 3478
+	STUNOnly         bool   `json:"STUNOnly"`
+	InsecureForTests bool   `json:"InsecureForTests"`
+}
+
+type derpMapRegion struct {
+	RegionID   int          `json:"RegionID"`
+	RegionCode string       `json:"RegionCode"`
+	RegionName string       `json:"RegionName"`
+	Nodes      []derpMapNode `json:"Nodes"`
+}
+
+type derpMapResponse struct {
+	Regions map[string]derpMapRegion `json:"Regions"`
+}
+
+// shortNameFromHostname derives the Tailscale-style short
+// label from a hostname: "derp.skynas.ru" → "skynas-1"
+// (region_code + "-1" — Tailscale uses the short label
+// for the per-node display name). Falls back to a
+// hash-derived label when the hostname doesn't look like
+// the canonical derp<region_code>.tailscale.com form.
+//
+// Pure function — easy to unit test.
+func shortNameFromHostname(hostname, regionCode string) string {
+	if regionCode != "" {
+		// Prefer the region_code-1 form (matches Tailscale
+		// convention: "1f" for region 1, "22w" for 22).
+		return regionCode + "-1"
+	}
+	// Fallback: take the first label of the hostname.
+	// "derp.skynas.ru" → "derp". Not ideal (collisions
+	// possible across multiple own relays) but better
+	// than an empty Name field.
+	for i := 0; i < len(hostname); i++ {
+		if hostname[i] == '.' {
+			return hostname[:i]
+		}
+	}
+	return hostname
+}
+
+// publicDERPPortFromURL extracts the public DERP port
+// from the URL. Default 443 if the URL has no explicit
+// port (e.g. https://derp.skynas.ru → 443). If the URL
+// has a port (e.g. https://derp.skynas.ru:8443), we use
+// it — this is the case when the operator exposes the
+// derper on a non-standard port (no NPM in the middle).
+//
+// Pure function.
+func publicDERPPortFromURL(rawURL string) int {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return 443
+	}
+	if _, port, err := net.SplitHostPort(u.Host); err == nil && port != "" {
+		if p, perr := strconv.Atoi(port); perr == nil {
+			return p
+		}
+	}
+	return 443
+}
+
+// GetAdminDerpRelaysDerpmap serves the combined DERP map
+// (own + bundled 901) as a Tailscale-shaped JSON. headscale
+// is configured to fetch this URL via its `derp.urls`
+// setting — the response is concatenated with the public
+// Tailscale derpmap by headscale's derp.Map.Updater.
+//
+// Endpoint: GET /admin/derp/relays/derpmap.json
+// Auth: NONE — the URL is documented only for the
+// headscale config (it lives on the same docker network,
+// so no public exposure). The response is just a list of
+// DERP regions the operator's own infra is willing to
+// serve; nothing secret about it. CORS: the response
+// includes Access-Control-Allow-Origin: * so a headscale
+// running on a different origin can fetch it (currently
+// irrelevant — headscale runs in the same docker network
+// and uses the service DNS name).
+//
+// B237 — 2026-09-04.
+func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.dbc().QueryContext(r.Context(), `
+		SELECT region_id, region_code, region_name, hostname, url
+		  FROM derp_relays
+		 WHERE enabled = 1
+		 ORDER BY is_bundled DESC, sort_order ASC, region_id ASC
+	`)
+	if err != nil {
+		log.Printf("derpmap: query: %v", err)
+		http.Error(w, `{"error":"db query failed"}`, http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		return
+	}
+	defer rows.Close()
+
+	out := derpMapResponse{Regions: map[string]derpMapRegion{}}
+	for rows.Next() {
+		var rid int
+		var rc, rn, host, urlStr string
+		if err := rows.Scan(&rid, &rc, &rn, &host, &urlStr); err != nil {
+			log.Printf("derpmap: scan: %v", err)
+			continue
+		}
+		// STUNPort 3478 + STUNOnly=false + InsecureForTests=false
+		// are the headscale defaults — omitted in the response
+		// would also be valid, but explicit > implicit.
+		node := derpMapNode{
+			Name:             shortNameFromHostname(host, rc),
+			RegionID:         rid,
+			HostName:         host,
+			DERPPort:         publicDERPPortFromURL(urlStr),
+			STUNPort:         3478,
+			STUNOnly:         false,
+			InsecureForTests: false,
+		}
+		// De-dup by region_id (the DB allows multiple rows
+		// with the same region_id, which would produce a
+		// malformed derpmap). Last one wins; the operator
+		// can avoid this by using distinct region_ids
+		// (enforced by the form, but defensive here).
+		reg, ok := out.Regions[itoa(rid)]
+		if !ok {
+			reg = derpMapRegion{
+				RegionID:   rid,
+				RegionCode: rc,
+				RegionName: rn,
+			}
+		}
+		reg.Nodes = append(reg.Nodes, node)
+		out.Regions[itoa(rid)] = reg
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("derpmap: rows err: %v", err)
+	}
+	// CORS so headscale on a different host can fetch.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-cache")
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		log.Printf("derpmap: encode: %v", err)
+	}
+}
+
+// ---------- /B237 ----------
 
 // itoa is a tiny local helper to avoid pulling in strconv
 // just for the redirect query string.
