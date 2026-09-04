@@ -159,11 +159,15 @@ func TestSSHDumpTransport_Dump_FakeSsh(t *testing.T) {
 	// 44 0a) + some padding, so the framework's
 	// downstream magic-byte check would accept it.
 	const body = "PGD\n0123456789ABCDEF"
+	// Use printf '%s' (NOT cat <<EOF) so the body
+	// doesn't get a trailing newline appended. The
+	// previous heredoc form added 1 byte, which the
+	// test compared against `body` and failed
+	// (the Linux CI bug surfaced once the B234
+	// pre-close fix made the dump actually succeed).
 	script := `#!/bin/sh
 # B202.5 test fake — does NOT contact any host.
-cat <<'EOF'
-` + body + `
-EOF
+printf '%s' '` + body + `'
 echo "NOTICE: fake ssh: pg_dump started" 1>&2
 echo "NOTICE: fake ssh: pg_dump finished" 1>&2
 exit 0
