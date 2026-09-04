@@ -11,6 +11,78 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 > changed in each version; the v0.6 → v0.32 history is preserved in
 > git history (`git log v0.6.0..v0.33.0 -- CHANGELOG.md`).
 
+## [v1.5.0] — 2026-09-04
+
+The first stable v1.5.x release. v1.5.0-alpha1 (2026-08-19)
+shipped the HA chain (B145 / B149 / B150) + certsync (B147)
++ `/admin/certificates` (B148). v1.5.0 adds the DERP /
+Tailscale / exit-rules fixes developed in the 2026-09-04
+incident response: B235 (DERP health fix), B235.1-B235.3
+(DERP map shape + short-label pill), B236 (subnet-routes
+management), B237 (own DERP via skygate + Apply to headscale),
+B237.1 (SKYGATE_HEADSCALE_CONFIG_PATH + bind-mount fix),
+B237.2 (correct Public IP display via DNS lookup), B237.7
+(reconciler default-flip to LIVE), B237.8 (operator docs).
+
+See [RELEASE-NOTES-v1.5.0.md](RELEASE-NOTES-v1.5.0.md) for
+the full post-mortem + verification checklist.
+
+### Added
+
+- **HA chain + elector + pluggable DNS provider** (B145).
+- **In-app certsync scheduler** (B147).
+- **`/admin/certificates` page** (B148).
+- **`/admin/ha` page** (B149).
+- **`/admin/deploy` page + skygate deploy CLI** (B150).
+- **skygate-managed DERP map** (B237): `derp_relays` table →
+  `/admin/derp/relays/derpmap.json` → headscale `derp.urls`.
+- **One-click "Apply to headscale"** (B237): rewrites
+  `config.yaml` + `docker restart headscale` from the
+  web UI.
+- **Tailscale subnet-routes management on /admin/tailscale**
+  (B236): form, validation (no self-LAN, no docker-bridge,
+  valid CIDR), `tailscale set --advertise-routes=...`.
+- **Exit-rules auto-reconciler (B229) defaults to LIVE**
+  (B237.7): opt-out via
+  `SKYGATE_PREFERRED_RECONCILER_LIVE=false/0/no/off`.
+- **Correct Public IP on /admin/derp** (B237.2): DNS
+  lookup of `SKYGATE_DERP_HOSTNAME`, with a
+  `(dns:env)` / `(dns:derper)` / `(egress)` source
+  annotation.
+
+### Fixed
+
+- **/admin/derp/dashboard public-DERP degraded display**
+  (B235 + B235.1 + B235.2 + B235.3): short label `1f`
+  was being used as Host; now uses FQDN
+  `derp1f.tailscale.com`. RegionCode moved from node
+  to region. `.Name=<short>` pill next to the host.
+  `id` tooltip explains the Tailscale region_id
+  semantics. `derp_health.name` column persists the
+  short label.
+- **500-1700ms latency from skygate-host-1 to
+  derp.skynas.ru** (B236): Tailscale subnet-router
+  loop. skygate-host-1 was advertising its own LAN
+  (`192.168.13.0/24`) as a subnet route, which
+  shadowed direct Ethernet on every Tailscale client.
+- **YouTube on cyborg + basic failed for ~24h**
+  (B237 + B237.7): the B229 reconciler was in DRY-RUN
+  mode by default, so it correctly identified the
+  unanimous `emilia` pref for cyborg + basic every hour
+  and silently logged "would CREATE" without writing.
+  Without the pref, headscale's grant for the
+  YouTube CIDR had no `via:` clause → Tailscale
+  clients on those devices weren't pinned to emilia
+  → YouTube failed.
+
+## [v1.5.0-alpha1] — 2026-08-19
+
+Pre-release: HA chain + certsync + /admin/certificates
+deployed in v0.33.0 → v1.5.0-alpha1. B146 (reg.ru IP
+sub-limit) still blocked; v1.5.0 ships without B146
+(the auto-DNS-01 for Let's Encrypt via reg.ru is
+the only feature gated on it).
+
 ## [v0.33.1.17] — 2026-08-06
 
 ### Added
