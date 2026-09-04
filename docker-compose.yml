@@ -237,16 +237,16 @@ services:
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-bootstrap.sh:/usr/local/bin/headscale-bootstrap.sh:ro
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
       - /home/admin/headscale:/home/admin/headscale
-      # B237: skygate rewrites headscale's config.yaml's
-      # `derp:` block on /admin/derp/relays/apply-headscale
-      # POST. The skygate container reads + writes this
-      # file directly (no SSH, no separate mount process),
-      # then `docker restart headscale` (10s timeout).
-      # The path is overridable via SKYGATE_HEADSCALE_CONFIG_PATH
-      # env var for non-standard deployments; the default
-      # is /home/admin/headscale/config/config.yaml (this
-      # bind mount) which matches the SKYGATE_HEADSCALE_PATH
-      # convention used elsewhere.
+      # B237: bind-mount the host's headscale config dir
+      # into the skygate container so /admin/derp/relays/
+      # apply-headscale can read + rewrite the config
+      # without SSH. The path uses ${SKYGATE_HEADSCALE_HOST_DIR:-/home/admin/headscale}
+      # so operators with non-standard paths (e.g.
+      # /home/skyadmin/headscale on this host) just set
+      # the env var in .env — no docker-compose.yml edit
+      # needed. Matches the SKYGATE_HEADSCALE_CONFIG_PATH
+      # env var the B237 handler reads.
+      - ${SKYGATE_HEADSCALE_HOST_DIR:-/home/admin/headscale}:${SKYGATE_HEADSCALE_HOST_DIR:-/home/admin/headscale}
       # 2026-08-04 v0.33.1: SSH key for the `tailscale set --advertise-routes=`
       # step in SyncAdvertisedRoutes. The pre-v0.33.1 code hard-coded
       # `-F /home/admin/.ssh/config` (the legacy operator's home) which
