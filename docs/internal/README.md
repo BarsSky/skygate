@@ -19,6 +19,9 @@ in code" policy extension to documentation.
 | `wal-g-notes.md` | (moved from `deploy/pg-ha/wal-g/README.md`) Wal-G backup/restore procedure with operator-specific paths and IPs | Operator's specific backup architecture |
 | `oidc-headscale.md` | B161.4 headscale.conf snippet + e2e verification (with example Tailscale client) for the skygate OIDC provider | Generic runbook, but the "4 values that must match" table is specific to the skygate + headscale pairing |
 | `plans/refactor-v0.6.0.md` | v0.6.0 refactor plan, historical | Historical planning doc, not relevant to current code |
+| `tailnet-advertised-routes.md` | B236: Tailscale subnet-routes on `skygate-host-1` — the hard rule "never advertise a subnet the host is itself in", the 540-1700ms routing loop it caused, the verification commands. References the operator's specific LAN | Documents the B236 root cause + fix; uses operator's real LAN values because the example needs to be specific to make the loop reproducible |
+| `exit-rules-reconciler.md` | B229 + B237.7: the three-layer architecture (`device_rules` → `device_exit_node_prefs` → headscale `via:` grants), the B229 reconciler's `PlanDevicePrefChange` decision matrix, why B237.7 flipped the default from DRY-RUN to LIVE | Documents the B237.7 root cause; reference doc for the build-time contract tests in `reconciler_b237_7_test.go` |
+| `2026-09-04-tailnet-fixes.md` | The 2026-09-04 incident post-mortem: 4 separate issues (B235 / B236 / B237 / B237.2 / B237.7) all caused by configuration drift, the current `.env` configuration, the verification checklist. One-stop reference for any operator coming back to this stack after weeks away | Single-point reference for everything that broke on 2026-09-04 and how it was fixed |
 
 ## Maintenance
 

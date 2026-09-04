@@ -144,6 +144,80 @@ GET of the new page.
 Direct `.env` + `./deploy/deploy.sh` editing is no longer
 required for any DERP change.
 
+## B237: skygate-managed derpmap.json endpoint + headscale re-apply (2026-09-04)
+
+As of v1.5.2 (B237), the `derp_relays` table is also
+the source of a **skygate-managed derpmap.json** that
+headscale fetches and merges with the public Tailscale
+derpmap. This means:
+
+- **Single source of truth**: every DERP row in
+  `derp_relays` (operator's own + bundled 901) shows
+  up in headscale's `derp.urls` automatically once
+  the operator clicks "Apply to headscale".
+- **No SSH to headscale host** required. The button
+  rewrites `/home/admin/headscale/config/config.yaml`
+  (configurable via `SKYGATE_HEADSCALE_CONFIG_PATH`)
+  and `docker restart headscale` — all from the
+  skygate UI.
+- **Idempotent**: re-apply with the same skygate URL
+  is a no-op (rewriteDerpURLs dedupes).
+- **Audit**: every apply writes a `derp_apply_headscale`
+  row in the `exit_rule_logs` table with the new
+  config snippet + docker restart output.
+
+Endpoint: `GET /admin/derp/relays/derpmap.json`
+(returns a Tailscale-shaped JSON with the operator's
+own + bundled DERP rows; no authMW because headscale
+inside the docker network fetches it from
+`http://skygate:8080/...`).
+
+Apply button: `POST /admin/derp/relays/apply-headscale`
+on the `/admin/derp/relays` page. The button is
+admin-only + CSRF-protected + onsubmit=confirm().
+
+See `docs/internal/2026-09-04-tailnet-fixes.md` for
+the B237 root cause (pre-B237 the operator had to
+SSH into the headscale host and edit config.yaml by
+hand — a `rwxr-x---` anti-pattern).
+
+## B237.2: correct Public IP display on /admin/derp (2026-09-04)
+
+As of v1.5.2 (B237.2), the "Публичный IP" field on
+`/admin/derp` shows the **real** public IP the derper
+listens on, not the skygate container's docker-bridge
+egress IP.
+
+**Mechanism:**
+1. `resolvePublicDERPIP()` tries:
+   - `SKYGATE_DERP_HOSTNAME` env var (operator's
+     hostname override, e.g. `derp.example.com`).
+   - The derper status page's parsed "TLS hostname".
+   - Last-resort: `detectEgressIP()` (skygate
+     container's own egress — usually wrong, but
+     better than empty).
+2. `net.LookupHost(hostname)` returns the DNS A
+   record, which IS the public IP. For
+   `derp.example.com` this returns `203.0.113.50`.
+3. A new `WhiteIPSource` field records which
+   source the resolver used (`dns:env` /
+   `dns:derper` / `egress`).
+4. The template shows a small annotation
+   `(dns:env)` next to the IP, with a tooltip
+   explaining the source.
+
+**Configuration:**
+```ini
+# Set the operator's DERP hostname so the resolver
+# uses the correct DNS A record:
+SKYGATE_DERP_HOSTNAME=derp.example.com
+```
+
+**Pre-B237.2:** `/admin/derp` showed `198.51.100.10`
+(skygate container's docker-bridge IP, RFC 5737 example),
+which was misleading — the real public IP is the
+DNS A record of the operator's `SKYGATE_DERP_HOSTNAME`.
+
 ## See also
 
 - `docs/headplane.md` — the same "use existing / bundled" pattern,
