@@ -151,6 +151,7 @@ var pgMigrations = []MigrationEntry{
 	{66, "v0.66 (B211): cluster_node UNIQUE (cluster_id, hostname)", "migrations_v0_66_b211.go", migrateV066PG},
 	{67, "v0.67 (B221): audit_log.target_type + target_id (Phase 4.1 generic audit log)", "migrations_v0_67_b221.go", migrateV067PG},
 	{68, "v0.68 (B232): repair device_rules_natural_key_uniq shape drift (B188.2 ON CONFLICT 6-col)", "migrations_v0_68_b232.go", migrateV068PG},
+	{69, "v0.69 (B235.3): derp_health.name column for the B235 .Name short-label pill", "migrations_v0_69_b235_3.go", migrateV069PG},
 }
 
 // PGMigrations returns the list of migrations the current

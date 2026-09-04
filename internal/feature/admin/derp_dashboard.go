@@ -57,7 +57,7 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 	// GetAdminACLsImport, etc).
 	c := s.Backend.CurrentUser(r)
 	rows, err := s.dbc().QueryContext(r.Context(), `
-		SELECT region_id, is_own, host, url, region_code, region_name,
+		SELECT region_id, is_own, host, url, name, region_code, region_name,
 		       locality, country, latency_ms, last_check, healthy,
 		       last_error, probes_total, probes_failed
 		  FROM derp_health
@@ -78,7 +78,7 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 		var latency sql.NullInt64
 		var lastCheck int64
 		if err := rows.Scan(&r.RegionID, &isOwn, &r.Host, &r.URL,
-			&r.RegionCode, &r.RegionName, &r.Locality, &r.Country,
+			&r.Name, &r.RegionCode, &r.RegionName, &r.Locality, &r.Country,
 			&latency, &lastCheck, &healthy, &r.LastError,
 			&r.ProbesTotal, &r.ProbesFailed); err != nil {
 			log.Printf("derp dashboard: scan: %v", err)

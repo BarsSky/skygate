@@ -181,7 +181,7 @@ func PersistToDB(db *sql.DB) func(context.Context, DERPInfo, int, bool, error) e
 		}
 		_, err := db.ExecContext(ctx, upsertQuery,
 			d.RegionID, boolToInt(d.IsOwn), d.Host, d.URL,
-			d.RegionCode, d.RegionName, d.Locality, d.Country,
+			d.Name, d.RegionCode, d.RegionName, d.Locality, d.Country,
 			nullableInt(lat, healthy),
 			time.Now().Unix(),
 			boolToInt(healthy),

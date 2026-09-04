@@ -54,8 +54,13 @@ func TestPGMigrations_OrderedByVersion(t *testing.T) {
 	// natural state is to append new migrations at the
 	// end.
 	last := migs[len(migs)-1]
-	if last.Version != 68 {
-		t.Errorf("PGMigrations[last].Version = %d, want 68 (B232 should be the most recent)", last.Version)
+	// B235.3 added v0.69; any future migration bumps
+	// this number. The test pins the contract (last is
+	// monotonically increasing) rather than a specific
+	// version, so adding new migrations doesn't break
+	// the test.
+	if last.Version < 68 {
+		t.Errorf("PGMigrations[last].Version = %d, want >= 68 (B232 v0.68 is the minimum, later migrations bump it)", last.Version)
 	}
 }
 

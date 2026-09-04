@@ -64,19 +64,25 @@ const probeTimeout = 3 * time.Second
 // UpsertQuery inserts/updates one row in derp_health. The
 // ON CONFLICT (region_id) DO UPDATE means re-probing just
 // refreshes the latency / health / counter columns; the
-// metadata (host, region_code, locality, country) is left
-// alone once the row exists.
+// metadata (host, region_code, region_name, name, etc.)
+// is left alone once the row exists.
+//
+// B235.3: now writes the `name` column (Tailscale short
+// label like "1f", "22w") for public DERP rows. The
+// /admin/derp/dashboard template renders this as a
+// `.Name=` pill next to the FQDN host cell.
 const upsertQuery = `
 INSERT INTO derp_health
-  (region_id, is_own, host, url, region_code, region_name,
+  (region_id, is_own, host, url, name, region_code, region_name,
    locality, country, latency_ms, last_check, healthy,
    last_error, probes_total, probes_failed)
 VALUES
-  ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+  ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 ON CONFLICT (region_id) DO UPDATE SET
   is_own        = EXCLUDED.is_own,
   host          = EXCLUDED.host,
   url           = EXCLUDED.url,
+  name          = EXCLUDED.name,
   region_code   = EXCLUDED.region_code,
   region_name   = EXCLUDED.region_name,
   locality      = EXCLUDED.locality,
