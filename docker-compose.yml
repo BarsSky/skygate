@@ -174,6 +174,16 @@ services:
       # secrets sections below (which already use the
       # `${...:-...}` form).
       - SKYGATE_HOST_REPO_PATH=${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}
+      # B237: skygate's /admin/derp/relays/apply-headscale
+      # button reads + rewrites headscale's config.yaml.
+      # Default is /home/admin/headscale/config/config.yaml
+      # (the SKYGATE_HEADSCALE_PATH convention from B116).
+      # Operators with non-standard paths (e.g. /home/skyadmin/
+      # headscale on this host) set SKYGATE_HEADSCALE_CONFIG_PATH
+      # in .env to override. The B237 handler reads
+      # this env var; if unset, falls back to the default
+      # below.
+      - SKYGATE_HEADSCALE_CONFIG_PATH=${SKYGATE_HEADSCALE_CONFIG_PATH:-/home/admin/headscale/config/config.yaml}
     volumes:
       # Bind-mount source code - any change is picked up on container restart.
       # Uses ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate} (NOT `./`)
@@ -227,6 +237,16 @@ services:
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-bootstrap.sh:/usr/local/bin/headscale-bootstrap.sh:ro
       - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/deploy/headscale-users/headscale-deprovision.sh:/usr/local/bin/headscale-deprovision.sh:ro
       - /home/admin/headscale:/home/admin/headscale
+      # B237: skygate rewrites headscale's config.yaml's
+      # `derp:` block on /admin/derp/relays/apply-headscale
+      # POST. The skygate container reads + writes this
+      # file directly (no SSH, no separate mount process),
+      # then `docker restart headscale` (10s timeout).
+      # The path is overridable via SKYGATE_HEADSCALE_CONFIG_PATH
+      # env var for non-standard deployments; the default
+      # is /home/admin/headscale/config/config.yaml (this
+      # bind mount) which matches the SKYGATE_HEADSCALE_PATH
+      # convention used elsewhere.
       # 2026-08-04 v0.33.1: SSH key for the `tailscale set --advertise-routes=`
       # step in SyncAdvertisedRoutes. The pre-v0.33.1 code hard-coded
       # `-F /home/admin/.ssh/config` (the legacy operator's home) which

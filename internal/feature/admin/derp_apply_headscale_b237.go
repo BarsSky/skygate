@@ -110,11 +110,16 @@ func firstLines(s string, n int) string {
 // headscale. Returns the new file content + docker
 // restart output. Pure orchestration — the YAML
 // rewriting is the only logic; the rest is plumbing.
+//
+// The config path is taken from SKYGATE_HEADSCALE_CONFIG_PATH
+// (env var, set in docker-compose.yml). If the env var is
+// empty OR the file at the given path doesn't exist, we
+// try the well-known defaults: /home/admin/headscale/config/
+// config.yaml, /home/skyadmin/headscale/config/config.yaml,
+// /opt/headscale/config/config.yaml. The first one that
+// reads successfully wins.
 func applyHeadscaleDerpURLsConfig(skygateURL string) (rewritten string, dockerOut string, err error) {
-	configPath := os.Getenv("SKYGATE_HEADSCALE_CONFIG_PATH")
-	if configPath == "" {
-		configPath = "/home/admin/headscale/config/config.yaml"
-	}
+	configPath := resolveHeadscaleConfigPath()
 	containerName := os.Getenv("SKYGATE_HEADSCALE_CONTAINER")
 	if containerName == "" {
 		containerName = "headscale"
@@ -150,6 +155,40 @@ func readHeadscaleConfig(path string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// resolveHeadscaleConfigPath finds the headscale config
+// file. Tries in order: SKYGATE_HEADSCALE_CONFIG_PATH env
+// var (if non-empty), /home/admin/headscale/config/config.yaml,
+// /home/skyadmin/headscale/config/config.yaml,
+// /opt/headscale/config/config.yaml. Returns the first one
+// that `cat` succeeds on.
+func resolveHeadscaleConfigPath() string {
+	candidates := []string{}
+	if v := strings.TrimSpace(os.Getenv("SKYGATE_HEADSCALE_CONFIG_PATH")); v != "" {
+		candidates = append(candidates, v)
+	}
+	candidates = append(candidates,
+		"/home/admin/headscale/config/config.yaml",
+		"/home/skyadmin/headscale/config/config.yaml",
+		"/opt/headscale/config/config.yaml",
+	)
+	for _, p := range candidates {
+		if _, err := exec.Command("test", "-r", p).Output(); err == nil {
+			// `test -r` returns empty output + exit 0 if the
+			// file is readable. Anything else is a miss.
+			if out, err2 := exec.Command("test", "-r", p).CombinedOutput(); err2 == nil && len(out) == 0 {
+				return p
+			}
+		}
+	}
+	// Fallback to the env var (which is the default in
+	// docker-compose.yml); the read will fail with a clear
+	// "read X: no such file" error if the path is wrong.
+	if v := os.Getenv("SKYGATE_HEADSCALE_CONFIG_PATH"); v != "" {
+		return v
+	}
+	return "/home/admin/headscale/config/config.yaml"
 }
 
 // writeHeadscaleConfig writes the config back. Uses a
