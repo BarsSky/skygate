@@ -229,12 +229,35 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 // the changes it would make (false). Reads
 // SKYGATE_PREFERRED_RECONCILER_LIVE from the env on each
 // call so the operator can flip the switch at runtime
-// without a redeploy. Default is "off" (dry-run).
+// without a redeploy.
 //
-// 2026-09-03: v1.5.2 (B229).
+// 2026-09-04: v1.5.2 (B237.7) — default flipped to TRUE
+// (auto-reconcile ON). The original default was false
+// (DRY-RUN) so a misconfigured operator couldn't
+// accidentally clobber manual device_exit_node_prefs
+// rows. But the B237.7 root cause was the opposite:
+// the operator never flipped live=true, so for ~24h
+// cyborg+basic were without prefs (their device_rules
+// said emilia, but no `via:` clause reached headscale —
+// the YouTube rules were decorative). The new default
+// is the safe choice: auto-reconcile does the right
+// thing (only writes the unanimity-derived tag, never
+// overwrites a manual pref without flagging it).
+// Operators who want dry-run can still set
+// SKYGATE_PREFERRED_RECONCILER_LIVE=false to opt out
+// (re-read on every tick, no redeploy needed).
+//
+// 2026-09-03: v1.5.2 (B229) — original default false.
 func PreferredExitReconcilerLive() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("SKYGATE_PREFERRED_RECONCILER_LIVE")))
-	return v == "true" || v == "1" || v == "yes"
+	if v == "false" || v == "0" || v == "no" || v == "off" {
+		return false
+	}
+	// Default: true (LIVE). The opt-out above is the
+	// only way to disable it; an unset / unknown /
+	// "yes" / "1" / "true" env var all keep
+	// auto-reconcile on.
+	return true
 }
 
 // alertThrottle per (hostname, reason) — rate-limit the

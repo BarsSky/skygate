@@ -3658,6 +3658,35 @@ run_check "B236" "Tailscale subnet-routes management on /admin/tailscale. Closes
 # 28 B-check contracts in scripts/check_b237.sh.
 run_check "B237" "Own DERP через skygate. Closes the 'derp_relays row exists but headscale doesn't know about it' gap. New GET /admin/derp/relays/derpmap.json endpoint serves a Tailscale-shaped derpmap (no authMW, CORS, no-cache). New POST /admin/derp/relays/apply-headscale button rewrites headscale's config.yaml's `derp.urls` block (idempotent, atomic write via tmp+mv) + `docker restart headscale` (10s timeout) + audit row derp_apply_headscale. shortNameFromHostname + publicDERPPortFromURL + rewriteDerpURLs are pure functions with 7 unit tests across 2 files. 28 B-check contracts in scripts/check_b237.sh." \
   'test -f scripts/check_b237.sh && bash scripts/check_b237.sh'
+# --- B237.7: build-time contract for the preferred-exit auto-reconciler ---
+# Closes the B237.7 root cause: SKYGATE_PREFERRED_RECONCILER_LIVE
+# defaulted to false (DRY-RUN), so the B229 reconciler never
+# WROTE device_exit_node_prefs in production — cyborg+basic
+# were without prefs for ~24h, the headscale `via:` clause
+# never reached the policy, and YouTube rules on those
+# devices were decorative. B237.7:
+#   1. Flips the default to TRUE (LIVE / auto-reconcile ON).
+#      The opt-out (SKYGATE_PREFERRED_RECONCILER_LIVE=false/0/no/off)
+#      is honored; unset / unknown / "true" / "1" / "yes" all
+#      keep auto-reconcile on. The defensive default was a footgun.
+#   2. Comprehensive build-time test (reconciler_b237_7_test.go):
+#      - PlanDevicePrefChange_CreatesWhenUnanimous (B229 happy path)
+#      - PlanDevicePrefChange_SkipsWhenSplit (operator must pick)
+#      - PlanDevicePrefChange_NoOpWhenCanonicalTagMissing
+#      - PlanDevicePrefChange_UpdatesStaleTag
+#      - PlanDevicePrefChange_ReEnablesViaFlag (V061 migration catch-up)
+#      - PlanDevicePrefChange_NoOpWhenAlreadyCorrect
+#      - PlanDevicePrefChange_OrphanUserID (regression guard for
+#        the michail/basic case where user_id has no portal_users row)
+#      - PreferredExitReconcilerLive_DefaultTrue_B237_7
+#   3. Updated old B229 tests (reconciler_b229_test.go):
+#      - Replaced TestPreferredExitReconcilerLive_DefaultOff with
+#        TestPreferredExitReconcilerLive_DefaultOn_B237_7
+#      - Tightened OtherValuesOff to only the explicit opt-out
+#        values (false/0/no/off) since the default flipped.
+# 10 B-check contracts in scripts/check_b237_7.sh.
+run_check "B237.7" "Build-time contract for the preferred-exit auto-reconciler. Flips SKYGATE_PREFERRED_RECONCILER_LIVE default from false to true so the B229 reconciler actually writes device_exit_node_prefs (the 2026-09-04 cyborg+basic YouTube outage was caused by the operator never flipping the env var to live). 8 new unit tests in reconciler_b237_7_test.go + 2 updated B229 tests. 10 B-check contracts in scripts/check_b237_7.sh." \
+  'test -f scripts/check_b237_7.sh && bash scripts/check_b237_7.sh'
 # --- B237.2: correct Public IP on /admin/derp ---
 # Closes the operator's 2026-09-04 complaint that the
 # "Публичный IP" field on /admin/derp showed 172.18.0.3

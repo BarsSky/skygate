@@ -4916,6 +4916,107 @@ in the same commit. Don't let the tracker drift.
     scripts/check_b236.sh` → 39/39 pass;
     `go test -count=1 -short ./...` → 43
     packages green.
+  - **B237.7 (v1.5.2+, 2026-09-04) — Build-time
+    contract for the preferred-exit auto-reconciler**.
+    Closes the B237.7 root cause: cyborg+basic had
+    YouTube rules with `exit_node=emilia` for ~24h,
+    but the headscale `via:` clause never reached
+    the policy because `SKYGATE_PREFERRED_RECONCILER_LIVE`
+    defaulted to `false` (DRY-RUN). The B229 reconciler
+    ran every hour and correctly identified "unanimous
+    emilia → CREATE pref" — but only in dry-run mode,
+    so the writes were skipped. Operator never flipped
+    the env var. The result: `device_exit_node_prefs`
+    rows for cyborg and basic never existed, so the
+    per-CIDR grants in headscale's policy had no
+    `via:` clause, and Tailscale clients on those
+    devices weren't pinned to emilia. YouTube failed
+    (default exit was a different node that didn't
+    advertise YouTube's CIDR).
+    **B237.7 fix** (3 changes, no UI / no deploy
+    of the operator's mental model — the system now
+    does the right thing by default):
+    1. `PreferredExitReconcilerLive()` default flipped
+       from `false` to `true`. Old default was a
+       footgun: the env var `SKYGATE_PREFERRED_RECONCILER_LIVE`
+       had to be set explicitly, but the operator never
+       knew it existed (no AGENTS.md note, no log line
+       saying "DRY-RUN mode is on — set live=true to
+       enable writes"). New default: auto-reconcile is
+       ON. Operators who want dry-run can still set
+       `SKYGATE_PREFERRED_RECONCILER_LIVE=false/0/no/off`
+       to opt out. The flag is re-read on every tick
+       (no redeploy needed).
+    2. Comprehensive build-time test
+       (`reconciler_b237_7_test.go`, 8 tests): pins
+       the B237.7 contract so the next regression is
+       caught at build time. The 8 scenarios:
+       - `PlanDevicePrefChange_CreatesWhenUnanimous`
+         (the B229 happy path: empty pref + 1 distinct
+         exit_node + valid CanonicalTag → CREATE)
+       - `PlanDevicePrefChange_SkipsWhenSplit`
+         (3+2 split between emilia/karolina → SKIP,
+         operator must pick)
+       - `PlanDevicePrefChange_NoOpWhenCanonicalTagMissing`
+         (host deleted from node_owner_map → no-op,
+         don't clobber)
+       - `PlanDevicePrefChange_UpdatesStaleTag`
+         (existing pref has wrong tag like
+         `tag:dev-michail-basic` → UPDATE)
+       - `PlanDevicePrefChange_ReEnablesViaFlag`
+         (V061 migration's intentional `via=0` skip →
+         B229 catch-up re-enable)
+       - `PlanDevicePrefChange_NoOpWhenAlreadyCorrect`
+         (everything correct → no churn in audit log)
+       - `PlanDevicePrefChange_OrphanUserID`
+         (user_id=6/michail has no portal_users row —
+         the B237.7 root cause category. The function
+         MUST NOT crash on missing username; the SQL
+         write path doesn't use the username. Pin:
+         this is the regression guard for any future
+         change that re-introduces the silent swallow.)
+       - `PreferredExitReconcilerLive_DefaultTrue_B237_7`
+         (table-driven: unset → true, "false/0/no/off"
+         → false, "true/1/yes" → true, "garbage" → true
+         (the B237.7 default), "maybe" → true (the
+         "unknown" case))
+    3. Old B229 tests updated
+       (`reconciler_b229_test.go`): the original
+       `TestPreferredExitReconcilerLive_DefaultOff` is
+       GONE (replaced with `..._DefaultOn_B237_7`).
+       The `OtherValuesOff` table is tightened to only
+       the explicit opt-out values (`false/0/no/off`,
+       case-insensitive) — the old "garbage → off"
+       semantics was a side-effect of the old false
+       default; the new default is "unknown → on"
+       (B237.7).
+    **Why this matters**: the previous default was
+    based on a false safety assumption ("don't clobber
+    manual prefs"). But the actual unsafe path was
+    the OPPOSITE: the operator's manual prefs (created
+    by clicking through /my/exit-rules) work fine, but
+    the SYSTEM's auto-reconcile is what gives the
+    `via:` clause to headscale's policy. Without auto-
+    reconcile, the per-CIDR grants are decorative
+    (Tailscale clients see "ALLOWED" but not "PINNED").
+    The new default fixes this at the cost of
+    potentially clobbering an operator's manual tag —
+    which is still protected by the PlanDevicePrefChange
+    "stale-tag" update path (any wrong tag gets
+    corrected to the canonical one, with an audit row
+    for visibility).
+    **Verified** (agent 192.168.13.69):
+    - `bash scripts/check_b237_7.sh` → 10/10 pass
+    - `go test -count=1 -short ./...` → 43 packages
+      green (8 new + 2 updated B229 tests)
+    - Live: `SKYGATE_PREFERRED_RECONCILER_LIVE=true`
+      set in `.env`; restart; reconciler starts with
+      `live=true`; log line:
+      `preferred-reconciler: starting (interval=1h0m0s, live=true)`.
+      For ~24h the log showed `live=false`. The orphan
+      prefs (a71, emilia, skygate-host-1) get flagged
+      as "manual cleanup required" on each tick — the
+      operator can now see what's stale.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

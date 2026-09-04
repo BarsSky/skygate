@@ -26,14 +26,21 @@ import (
 	"time"
 )
 
-// TestPreferredExitReconcilerLive_DefaultOff pins the
-// default behaviour: env unset → false (dry-run).
-func TestPreferredExitReconcilerLive_DefaultOff(t *testing.T) {
+// TestPreferredExitReconcilerLive_DefaultOn_B237_7 pins the
+// B237.7 default behaviour: env unset → true (LIVE /
+// auto-reconcile ON). The original B229 default was false
+// (DRY-RUN), but that was the root cause of the cyborg+basic
+// YouTube outage: the operator never flipped live=true, so
+// the unanimity-derived device_exit_node_prefs were never
+// written, and the headscale `via:` clause never reached
+// the policy. See the B237.7 section of AGENTS.md for the
+// full post-mortem.
+func TestPreferredExitReconcilerLive_DefaultOn_B237_7(t *testing.T) {
 	if err := os.Unsetenv("SKYGATE_PREFERRED_RECONCILER_LIVE"); err != nil {
 		t.Fatalf("unsetenv: %v", err)
 	}
-	if PreferredExitReconcilerLive() {
-		t.Fatal("unset env should yield false (dry-run)")
+	if !PreferredExitReconcilerLive() {
+		t.Fatal("unset env should yield true (B237.7 default)")
 	}
 }
 
@@ -52,9 +59,13 @@ func TestPreferredExitReconcilerLive_TrueVariants(t *testing.T) {
 }
 
 // TestPreferredExitReconcilerLive_OtherValuesOff pins
-// that unknown values are treated as off (defensive).
+// the explicit opt-out: "false" / "0" / "no" / "off" all
+// flip live-mode off. (B237.7 changed the default — the
+// original "unknown values are off" semantics was a
+// defensive default; the new default is "unknown values
+// are on" so auto-reconcile works without explicit config.)
 func TestPreferredExitReconcilerLive_OtherValuesOff(t *testing.T) {
-	for _, v := range []string{"", "0", "false", "no", "off", "garbage"} {
+	for _, v := range []string{"false", "FALSE", "0", "no", "NO", "off", "OFF"} {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("SKYGATE_PREFERRED_RECONCILER_LIVE", v)
 			if PreferredExitReconcilerLive() {
