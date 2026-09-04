@@ -4622,6 +4622,62 @@ in the same commit. Don't let the tracker drift.
       drift risk as CREATE INDEX).
     These are deferred — B233 is the minimum
     viable audit that catches the B232 bug class.
+  - **B234 (v1.5.2+, 2026-09-04) — fix 3 pre-existing
+    CI test failures (race + pre-close)**. Closes
+    3 test failures that had been silently breaking
+    CI on Linux (the `go test -race -count=1` job)
+    since the B202.5 / B206 / B189 deploys. The
+    failures only surface with `-race` + a real
+    Linux runtime; the local `go test ./...` (no
+    race) and Windows-only operator testing never
+    hit them. This is a B233-class test-coverage
+    lesson: even when tests pass, the absence of
+    `-race` in local CI-equivalent allows real bugs
+    to ship.
+    **Fix 1**: `internal/dbmigrate/ssh_transport.go`
+    (B202.5) — `outCloseErr := out.Close()` was
+    called IMMEDIATELY after `os.Create(destPath)`,
+    before the `io.Copy(out, stdout)` goroutine had
+    a chance to write. The pre-close meant the
+    goroutine tried to write to a closed file
+    descriptor, failing with "file already closed"
+    in the Linux CI. Fix: removed the pre-close.
+    The file is now closed once, after `wg.Wait()`
+    ensures the io.Copy has finished. Updated the
+    comment to document the B202.5 Linux CI bug.
+    **Fix 2**: `internal/derphealth/derphealth_test.go`
+    — `persistCalls++` was called from 3 goroutines
+    without synchronization. `-race` caught it as
+    a data race. Fix: `atomic.Int64` for
+    `persistCalls.Add(1)` + `persistCalls.Load()`.
+    **Fix 3**: `internal/feature/healthz/db_health_b206_test.go`
+    — `logged = append(logged, format)` was called
+    from the sampler tick goroutine while the test
+    goroutine iterated `logged`. `-race` caught
+    the slice header race. Fix: `sync.Mutex`
+    around both the append in the log closure
+    AND the iteration in the test goroutine.
+    **Fix 4 (B234 fixup)**: `internal/dbmigrate/ssh_transport_test.go`
+    — after the B234-1 pre-close fix, the test
+    surfaced a second bug: the fake ssh script used
+    `cat <<EOF` to emit the canned body, which
+    appended a trailing newline. The test fixture
+    body was 20 bytes (no newline) but the actual
+    output was 21 bytes. Fix: use `printf '%s'` so
+    the body is emitted verbatim, no trailing
+    newline. This was masked before the pre-close
+    fix (the dump failed before the content check
+    ran).
+    **Verified**: `go test -race -count=1 ./...`
+    passes on both Windows (local) and Linux
+    (agent). CI run 33839468411 (the B234 fixup
+    commit) is the first SUCCESS in the
+    pre-B234 series (B228, B229, B231, B232, B233,
+    B234 all FAILED `go test ./... (race + verbose)`).
+    Not a B-block in the traditional sense (no new
+    feature, just fixing tests that were broken
+    since 2026-08 era), but a critical CI fix that
+    unblocks every future B-block.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

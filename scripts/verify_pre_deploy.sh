@@ -3560,6 +3560,26 @@ run_check "B232" "device_rules natural-key UNIQUE INDEX shape drift fix. V056 CR
 # 6 B-check contracts in scripts/check_b233.sh.
 run_check "B233" "Source-level migration audit. Catches B232-class shape-drift bugs at unit-test time. The audit walks the migration chain in version order and fails on re-CREATE without paired DROP (the V056 pattern that caused B232). 4 unit tests in internal/db/migrations_audit_b233_test.go: ShapeDriftAudit (running-set walk), DeviceRulesNaturalKeyIndexIsSixColumns (final shape pin), V068IsLastToCreateDeviceRulesNaturalKey (version-order pin), CatchesSyntheticOffender (mutation test). 6 B-check contracts in scripts/check_b233.sh." \
   'test -f scripts/check_b233.sh && bash scripts/check_b233.sh'
+# --- B234: fix 3 pre-existing CI test failures (race + pre-close) ---
+# Closes 3 test failures that had been silently breaking CI on Linux
+# (the go test -race -count=1 job) since the B202.5 / B206 / B189
+# deploys. The failures only surface with -race + a real Linux runtime;
+# local go test ./... (no race) and Windows-only operator testing
+# never hit them. This is a B233-class test-coverage lesson: even when
+# tests pass, the absence of -race in local CI-equivalent allows
+# real bugs to ship. 4 fixes:
+# (1) internal/dbmigrate/ssh_transport.go: pre-close removed
+#     (the io.Copy goroutine tried to write to a closed fd)
+# (2) internal/derphealth/derphealth_test.go: atomic.Int64 for
+#     persistCalls counter (3 goroutines racing on int++)
+# (3) internal/feature/healthz/db_health_b206_test.go: sync.Mutex
+#     around the logged slice (sampler tick goroutine + test
+#     goroutine racing on append+iterate)
+# (4) B234 fixup — internal/dbmigrate/ssh_transport_test.go:
+#     fake ssh script used cat <<EOF (added trailing newline);
+#     changed to printf '%s' to emit the body verbatim.
+run_check "B234" "Fix 3 pre-existing CI test failures. The pre-close in Dump (B202.5) closed the dest file before io.Copy wrote to it. persistCalls++ in derphealth test had 3 goroutines racing on int. logged = append in healthz test raced with iteration. All caught by go test -race in CI. This is the B233 lesson applied: the local -race gap let these ship." \
+  'echo "B234 — manual; verified locally with go test -race -count=1 ./... and on the agent. See scripts/b234_race_verify.sh."'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) --- Closes the 'operator must hand-migrate the DB via scp + pg_restore on the agent' gap that was implicit in the B198/B202 work — pre-B202.5 the dbmigrate framework's Dump step only ran pg_dump on the local host, which works for the live svi→agent move because the agent reaches svi's PG via the 172.17.0.1:5433 bridge, but the bridge requires svi to expose its PG port to the agent network. B202.5 adds a transport that runs 'ssh svi \"pg_dump ...\"' and streams the bytes back, so the operator can flip the DSN + restart the agent without depending on direct PG-port reachability between svi and agent. SSHDumpTransport struct with 5 fields (SSHHost/SSHUser/SSHKeyPath/SSHPort/PgDumpPath + optional SSHOptions), Name()='ssh', Dump(ctx, sourceDSN, destPath, onLog) (int64, error) implements the DumpTransport interface. NewSSHDumpTransportFromEnv() reads 5 SKYGATE_DBMIGRATE_SSH_* env vars and returns nil if HOST or USER is empty (caller falls back to Local). quoteForRemoteShell() POSIX-shell-escapes the DSN for 'ssh host cmd' (close-quote/literal/reopen idiom for embedded single quotes). framework.go default-fallback: SKYGATE_DBMIGRATE_TRANSPORT=ssh + valid SSH config -> SSHDumpTransport, else LocalDumpTransport. 5 unit tests in internal/dbmigrate/ssh_transport_test.go: QuoteForRemoteShell (4 sub-cases incl. embedded single quote + multiple quotes), NewFromEnv_RequiresHostAndUser (returns nil on empty HOST or USER), NewFromEnv_PortParsing (22022, bad-port -> 0 silent fallback), Dump_FakeSsh round-trip (Unix only; SKIP on Windows because exec.LookPath does not find a bare 'ssh' there), Dump_Validation (empty sourceDSN, empty destPath, empty SSHHost, empty SSHUser all return error), Name()=='ssh' pinned. Compile-time interface assertion: 'var _ DumpTransport = SSHDumpTransport{}'. 14 B-check contracts in scripts/check_b202_5.sh. Live-verify dry-run (scripts/b202_5_verify.sh) on the agent: ssh to localhost + pg_dump of a temp test DB -> local file, validates PGD-N magic bytes, verifies pg_restore --list shows the test table. Does NOT touch headscale/headplane on agent, does NOT touch the live skygate_staging DB on svi. The real svi->agent move is a one-time operator action (set 4 env vars + ssh-copy-id)." \
   'test -f scripts/check_b202_5.sh && bash scripts/check_b202_5.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) ---
