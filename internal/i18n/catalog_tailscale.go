@@ -44,6 +44,21 @@ var ruTailscale = map[string]string{
 	"tailscale.legacy_docker_secret"     : "Примечание: если в этом деплое ранее был настроен Tailscale через docker-secret, он имеет приоритет над web-UI ключом. Чтобы переключиться на web-UI — обратитесь к администратору сервера.",
 	"tailscale.generate_btn"              : "Сгенерировать автоматически",
 	"tailscale.generate_help"             : "Запросит preauth key у headscale для пользователя <code>%s</code> (1 час, reusable). Используйте, если skygate уже зарегистрирован в headscale — копировать ключ вручную из /admin/headscale больше не нужно.",
+	// v0.69.1 (B236) — manage --advertise-routes from /admin/tailscale.
+	// Closes the gap where skygate-host-1 had
+	// --advertise-routes=172.17.0.0/16,192.168.13.0/24,172.18.0.0/16
+	// set manually (the 192.168.13.0/24 shadowed skyworker's
+	// direct LAN route to 192.168.13.67 on 2026-09-04).
+	"tailscale.advertise_routes_heading"        : "Advertise-routes (subnet-routes этого узла)",
+	"tailscale.advertise_routes_empty"          : "ничего не рекламируется (правильное состояние, если skygate-host-1 не используется как subnet-router)",
+	"tailscale.advertise_routes_approved_note"  : "headscale одобрил %d маршрут(ов) — это то, что реально попало в tailnet",
+	"tailscale.advertise_routes_help"           : "Какие подсети этот skygate анонсирует в tailnet. Обычно должно быть пусто (skygate не должен быть subnet-router). <b>Запрещено</b> рекламировать LAN самого skygate-host-1 (например <code>192.168.13.0/24</code>) — это перебивает прямой маршрут у LAN-клиентов. Также запрещены docker bridge сети (<code>172.17-172.32</code>) — они недоступны извне хоста. Поле пустое = ничего не рекламируется.",
+	"tailscale.advertise_routes_label"          : "CIDR-ы через запятую (или пусто)",
+	"tailscale.advertise_routes_placeholder"    : "10.0.0.0/24, 10.1.0.0/16, 2001:db8::/32",
+	"tailscale.advertise_routes_hint"           : "Пример: <code>10.0.0.0/24</code> — для случая когда skygate-контейнер должен быть gateway в локальную сеть. Оставьте пустым если skygate сам по себе ничего не роутит.",
+	"tailscale.advertise_routes_save"           : "Применить",
+	"tailscale.advertise_routes_clear"          : "Очистить (не рекламировать ничего)",
+	"tailscale.advertise_routes_confirm"        : "Применить новые advertise-routes? Headscale может отклонить часть из них согласно policy (auto_approve.routes).",
 	// v0.33.1.13 — login server (SKYGATE_TS_LOGIN_SERVER) editable from web UI.
 	// The value persists in global_settings (key "tailscale.login_server")
 	// and survives container restarts / migrations / VM clones. The env
@@ -133,4 +148,15 @@ var enTailscale = map[string]string{
 	"tailscale.restart_btn"                : "Restart skygate",
 	"tailscale.restart_confirm"            : "Restart skygate? The page will be unreachable for ~30s.",
 	"tailscale.restart_in_progress"        : "Restart triggered. Page will return in ~30s.",
+	// v0.69.1 (B236) — manage --advertise-routes from /admin/tailscale.
+	"tailscale.advertise_routes_heading"        : "Advertise-routes (subnet-routes this node advertises)",
+	"tailscale.advertise_routes_empty"          : "none (correct state when skygate-host-1 is not used as a subnet-router)",
+	"tailscale.advertise_routes_approved_note"  : "headscale approved %d route(s) — this is what actually entered the tailnet",
+	"tailscale.advertise_routes_help"           : "Which subnets this skygate advertises to the tailnet. Usually empty (skygate is not a subnet-router). <b>Forbidden</b>: the host's own LAN (e.g. <code>192.168.13.0/24</code>) — shadows direct Ethernet routes on LAN clients. Also forbidden: docker bridge networks (<code>172.17-172.32</code>) — they're unreachable from outside the host. Empty field = no advertising.",
+	"tailscale.advertise_routes_label"          : "CIDRs (comma-separated, or empty)",
+	"tailscale.advertise_routes_placeholder"    : "10.0.0.0/24, 10.1.0.0/16, 2001:db8::/32",
+	"tailscale.advertise_routes_hint"           : "Example: <code>10.0.0.0/24</code> for when the skygate container should be a gateway into a local network. Leave empty if skygate itself doesn't route anything.",
+	"tailscale.advertise_routes_save"           : "Apply",
+	"tailscale.advertise_routes_clear"          : "Clear (advertise nothing)",
+	"tailscale.advertise_routes_confirm"        : "Apply new advertise-routes? Headscale may reject some per its policy (auto_approve.routes).",
 }

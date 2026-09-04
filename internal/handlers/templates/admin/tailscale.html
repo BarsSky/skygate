@@ -74,6 +74,21 @@
     <p class="sub" style="font-style:italic">{{t "tailscale.status_routes_empty"}}</p>
     {{end}}
     {{end}}
+
+    {{/* B236: advertised routes (what THIS node advertises to the tailnet). */}}
+    <h4 style="margin-top:1rem">{{t "tailscale.advertise_routes_heading"}}</h4>
+    {{if .State.AdvertisedRoutes}}
+    <ul style="margin:.4rem 0 0 1.2rem;line-height:1.7;font-family:monospace;font-size:.85em">
+      {{range .State.AdvertisedRoutes}}<li><code>{{.}}</code></li>{{end}}
+    </ul>
+    {{else}}
+    <p class="sub" style="font-style:italic">{{t "tailscale.advertise_routes_empty"}}</p>
+    {{end}}
+    {{if .State.AdvertisedRoutesApproved}}
+    <p class="sub" style="font-size:12px;color:var(--text-muted)">
+      {{tf "tailscale.advertise_routes_approved_note" (len .State.AdvertisedRoutesApproved) | safeHTML}}
+    </p>
+    {{end}}
   </div>
 
   <div class="card" style="grid-column:1 / -1">
@@ -131,6 +146,31 @@
         </div>
       </div>
       <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.login_server_save"}}</button>
+    </form>
+  </div>
+
+  {{/* B236: subnet routes (advertise-routes) form. */}}
+  <div class="card" style="grid-column:1 / -1">
+    <h3><i class="fa-solid fa-route"></i> {{t "tailscale.advertise_routes_heading"}}</h3>
+    <p class="sub">{{t "tailscale.advertise_routes_help" | safeHTML}}</p>
+    <form action="/admin/tailscale" method="POST" autocomplete="off"
+          onsubmit="return confirm({{t "tailscale.advertise_routes_confirm" | safeJSON}});">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="set_advertise_routes">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="set_advertise_routes">
+      <div class="form-group">
+        <label>{{t "tailscale.advertise_routes_label"}}</label>
+        <input type="text" name="advertise_routes" class="form-control"
+               value="{{range $i, $r := .State.AdvertisedRoutes}}{{if $i}},{{end}}{{$r}}{{end}}"
+               placeholder="{{t "tailscale.advertise_routes_placeholder"}}">
+        <div class="sub" style="margin-top:.3rem">{{t "tailscale.advertise_routes_hint" | safeHTML}}</div>
+      </div>
+      <button type="submit" class="btn btn-warn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.advertise_routes_save"}}</button>
+      <a href="/admin/tailscale?action=set_advertise_routes" class="btn btn-secondary" style="margin-left:.5rem"
+         onclick="event.preventDefault(); var f=this.closest('form'); f.querySelector('[name=advertise_routes]').value=''; f.submit();">
+        <i class="fa-solid fa-broom"></i> {{t "tailscale.advertise_routes_clear"}}
+      </a>
     </form>
   </div>
 

@@ -4831,6 +4831,91 @@ in the same commit. Don't let the tracker drift.
     latencies (1f ~105ms, 22w ~5ms, 3e ~180ms,
     etc.) once the cron has ticked at least
     once with the new code.
+  - **B236 (v1.5.2+, 2026-09-04) — Tailscale
+    subnet-routes management on /admin/tailscale**.
+    Closes the design gap where skygate-host-1 had
+    `--advertise-routes=172.17.0.0/16,192.168.13.0/24,172.18.0.0/16`
+    set manually (no UI to view/manage it) and
+    the operator had to SSH + `tailscale set
+    --advertise-routes=...` by hand. B236 surfaces
+    the current advertised routes (from `tailscale
+    status --json` .Prefs.AdvertiseRoutes +
+    .Self.PrimaryRoutes) on /admin/tailscale and
+    adds a form that writes via `tailscale set
+    --advertise-routes=` (idempotent replace, NOT
+    add — using `tailscale up` would re-introduce
+    the B185 "all-or-nothing" trap when the
+    persisted state has --advertise-tags set).
+    **Validation rules** (refused with a 4xx-style
+    flash, never silently accepted):
+    1. Each CIDR must parse via net.ParseCIDR.
+    2. No CIDR may overlap with this host's own
+       LAN (auto-detected via `ip route` + `ip
+       addr show`, overridable via
+       `SKYGATE_HOST_LAN_OVERRIDE` env var).
+       Advertising your own LAN shadows LAN
+       clients' direct Ethernet routes — the
+       2026-09-04 skyworker incident, where
+       skygate-host-1 at 192.168.13.69 had
+       `--advertise-routes=192.168.13.0/24` and
+       LAN client skyworker at 192.168.13.20 lost
+       direct IP access to sibling 192.168.13.67
+       NPM. Tailscale daemon picks the Tailscale
+       subnet route (metric 0) over the direct
+       Ethernet route (metric 256), so the LAN
+       client's traffic goes via Tailscale →
+       skygate-host-1 → LAN, but skygate-host-1
+       has no hairpin route back to LAN siblings on
+       other physical hosts.
+    3. No CIDR may overlap with a docker bridge
+       range (172.17-172.32 — unreachable from
+       outside the host, would just confuse the
+       tailnet if accepted). `dockerBridgeRanges`
+       in tailscale.go pins the deny list; the
+       unit test `TestDockerBridgeRanges_Pins172_17_18`
+       is the regression guard.
+    4. Max 32 entries (sanity cap so a typo doesn't
+       blow up headscale's ACL with hundreds of
+       routes).
+    **Audit row**: `tailscale_advertise_routes`
+    with `before=... after=...` for grep-ability.
+    **Files**:
+    - `internal/feature/admin/tailscale.go`
+      (TailscaleState + AdvertisedRoutes fields,
+       `tailscaleAdvertisedRoutes()` + `detectHostLAN()`
+       + `cidrOverlaps()` + `handleTailscaleSetAdvertiseRoutes()`
+       + `dockerBridgeRanges` deny list + new `set_advertise_routes`
+       case in `PostAdminTailscale`)
+    - `internal/handlers/templates/admin/tailscale.html`
+      (new form + advertised-routes list section +
+       Clear button + onsubmit=confirm() guard)
+    - `internal/i18n/catalog_tailscale.go` (10 new
+       keys: advertise_routes_heading/empty/approved_note/
+       help/label/placeholder/hint/save/clear/confirm
+       in RU + EN lock-step)
+    - `internal/feature/admin/tailscale_b236_test.go`
+       (7 unit tests: TestCidrOverlaps 7 cases incl.
+       IPv6 + tailscale CGNAT, TestCidrOverlaps_MalformedReturnsFalse,
+       TestDetectHostLAN_Override, TestDetectHostLAN_OverrideRejected,
+       TestDockerBridgeRanges_Pins172_17_18,
+       TestTailscaleAdvertisedRoutes_NotRunning,
+       TestValidateAdvertiseRoutes_RejectsOwnLAN)
+    - `scripts/check_b236.sh` (39 B-check contracts)
+    **Operator action** (post-deploy): on
+    skygate-host-1, open /admin/tailscale, find
+    the "Advertise-routes" card, leave the field
+    EMPTY (the correct state — skygate-host-1
+    is not a subnet-router), click "Apply". This
+    removes `172.17.0.0/16, 192.168.13.0/24,
+    172.18.0.0/16` from `--advertise-routes` in
+    one click. After this the LAN client
+    (skyworker) gets its direct Ethernet route
+    to 192.168.13.67 back (Tailscale no longer
+    shadows 192.168.13.0/24).
+    **Verified** (agent 192.168.13.69): `bash
+    scripts/check_b236.sh` → 39/39 pass;
+    `go test -count=1 -short ./...` → 43
+    packages green.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

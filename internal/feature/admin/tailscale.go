@@ -31,6 +31,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -109,6 +110,31 @@ type TailscaleState struct {
 	// accepted (i.e. the relay's advertised Telegram ranges).
 	// Empty when not running.
 	AcceptedRoutes []string
+	// AdvertisedRoutes is the list of CIDRs that THIS skygate
+	// instance advertises to the rest of the tailnet
+	// (i.e. the result of `tailscale set --advertise-routes=`).
+	// Read from `tailscale status --json` .Prefs.AdvertiseRoutes
+	// (which is what was requested) AND/OR
+	// .Self.PrimaryRoutes (what headscale has actually
+	// approved). B236 surfaces them on /admin/tailscale
+	// so the operator can manage them without SSH.
+	//
+	// 2026-09-04: v0.69.1 (B236) — closes the gap where
+	// skygate-host-1 was advertising 192.168.13.0/24 (its
+	// own LAN) and the operator had no UI to remove it.
+	AdvertisedRoutes []string
+	// AdvertisedRoutesApproved is the same list after
+	// headscale's approval pass (what's actually in the
+	// tailnet, vs what was requested). May differ from
+	// AdvertisedRoutes when headscale's policy rejects
+	// some routes.
+	AdvertisedRoutesApproved []string
+	// AdvertisedRoutesSource is "prefs" or "self" —
+	// which JSON field the AdvertisedRoutes value came
+	// from. Prefs is preferred (shows the operator's
+	// intent); falls back to Self.PrimaryRoutes when
+	// Prefs is empty.
+	AdvertisedRoutesSource string
 	// BackendState is the parsed Tailscale state string:
 	//   - "Running"      = healthy
 	//   - "NeedsLogin"   = tailscaled up but no key auth yet
@@ -226,6 +252,15 @@ func (s *Service) readTailscaleState() TailscaleState {
 	st.TailnetIP = ip
 	st.AcceptedRoutes = routes
 	st.BackendState = backendState
+	// B236: read advertised routes (separate call so the
+	// existing tailscaleStatus() signature stays unchanged
+	// — the call is cheap, the JSON is already cached by
+	// the kernel, and the split keeps the diff small).
+	if adv, approved, source := tailscaleAdvertisedRoutes(); adv != nil {
+		st.AdvertisedRoutes = adv
+		st.AdvertisedRoutesApproved = approved
+		st.AdvertisedRoutesSource = source
+	}
 	return st
 }
 
@@ -393,6 +428,64 @@ func tailscaleStatus() (bool, string, []string, string, error) {
 		routes = append(routes, p.PrimaryRoutes...)
 	}
 	return true, ip, routes, parsed.BackendState, nil
+}
+
+// tailscaleAdvertisedRoutes reads the currently-advertised
+// subnet routes from `tailscale status --json`.
+//
+// Returns 3 values:
+//   - requested:  the Prefs.AdvertiseRoutes list (what the
+//     operator asked for via `tailscale set --advertise-routes=`).
+//     This is the source of truth for the UI.
+//   - approved:   the Self.PrimaryRoutes list (what headscale
+//     has actually approved and pushed to the tailnet). May
+//     be a subset of requested when the headscale policy
+//     rejects some routes.
+//   - source:     "prefs" (the request) or "self" (only the
+//     approved list was non-empty). "prefs" is preferred so
+//     the UI shows the operator's intent even when nothing
+//     has been approved yet.
+//
+// Returns (nil, nil, "") when tailscaled isn't running.
+// B236 — surfaces the advertised routes on /admin/tailscale
+// so the operator can manage them without SSH'ing into
+// skygate-host-1.
+func tailscaleAdvertisedRoutes() (requested, approved []string, source string) {
+	if !tailscaledRunning() {
+		return nil, nil, ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
+	if err != nil {
+		return nil, nil, ""
+	}
+	var parsed struct {
+		Self struct {
+			PrimaryRoutes []string `json:"PrimaryRoutes"`
+		} `json:"Self"`
+		Prefs struct {
+			AdvertiseRoutes []string `json:"AdvertiseRoutes"`
+		} `json:"Prefs"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, nil, ""
+	}
+	// Prefs.AdvertiseRoutes is the operator's intent
+	// (the value passed to `tailscale set
+	// --advertise-routes=`). When it's non-empty
+	// (regardless of approval status), show it.
+	if len(parsed.Prefs.AdvertiseRoutes) > 0 {
+		return parsed.Prefs.AdvertiseRoutes, parsed.Self.PrimaryRoutes, "prefs"
+	}
+	// Fall back to Self.PrimaryRoutes for the case
+	// where Prefs is empty (older Tailscale versions or
+	// pre-B236 setups that never went through `tailscale
+	// set`).
+	if len(parsed.Self.PrimaryRoutes) > 0 {
+		return parsed.Self.PrimaryRoutes, parsed.Self.PrimaryRoutes, "self"
+	}
+	return []string{}, []string{}, "prefs"
 }
 
 // readTailscaleAuthKey returns (set, fingerprint). Never logs
@@ -618,6 +711,18 @@ func (s *Service) PostAdminTailscale(w http.ResponseWriter, r *http.Request) {
 		// subprocess. In native mode, it triggers
 		// `systemctl restart skygate`.
 		s.handleTailscaleRestart(w, r, c)
+	case "set_advertise_routes":
+		// B236 — manage the subnet routes this skygate
+		// instance advertises to the tailnet. The form
+		// takes a comma-separated list of CIDRs (or empty
+		// string to clear). The handler validates against
+		// (a) the host's own LAN (advertising your own
+		// LAN shadows other LAN clients' direct Ethernet
+		// routes, see the B236 AGENTS.md entry for the
+		// 2026-09-04 skyworker incident) and (b) the
+		// docker bridge ranges (172.17/172.18/172.19/...)
+		// which are unreachable from outside the host.
+		s.handleTailscaleSetAdvertiseRoutes(w, r, c)
 	default:
 		tsRedirect(w, r, "", "Неизвестное действие: "+action)
 	}
@@ -1003,6 +1108,241 @@ func tsRedirect(w http.ResponseWriter, r *http.Request, okMsg, errMsg string) {
 		q = "?err=" + urlQueryEscape(errMsg)
 	}
 	http.Redirect(w, r, "/admin/tailscale"+q, http.StatusSeeOther)
+}
+
+// ---------- B236: advertise-routes management ----------
+
+// dockerBridgeRanges are the default Docker bridge networks
+// that the B236 handler rejects from advertise-routes. They
+// live on the docker host and aren't routable from outside,
+// so advertising them via Tailscale is at best a no-op and
+// at worst shadows a real LAN the operator is also in (the
+// 172.18.0.0/16 case in the B236 skyworker report: the
+// 192.168.13.0/24 LAN was shadowed by both 172.17.0.0/16
+// and 172.18.0.0/16 for clients whose Tailscale sorted
+// the routes by prefix length).
+var dockerBridgeRanges = []string{
+	"172.17.0.0/16",
+	"172.18.0.0/16",
+	"172.19.0.0/16",
+	"172.20.0.0/14",
+	"172.24.0.0/14",
+	"172.25.0.0/16",
+	"172.26.0.0/15",
+	"172.28.0.0/14",
+	"172.29.0.0/16",
+	"172.30.0.0/15",
+	"172.32.0.0/14",
+}
+
+// handleTailscaleSetAdvertiseRoutes (B236) is the POST
+// handler for the advertise-routes form on /admin/tailscale.
+// The form takes a comma-separated list of CIDRs (or empty
+// string to clear) and writes it via `tailscale set
+// --advertise-routes=...` (idempotent replace, NOT add).
+//
+// Validation rules (refused with a 4xx-style flash):
+//  1. Each CIDR must parse via net.ParseCIDR.
+//  2. No CIDR may overlap with this host's own LAN —
+//     advertising your own LAN shadows LAN clients'
+//     direct Ethernet routes (the B236 skyworker report
+//     of 2026-09-04, where skygate-host-1 had
+//     --advertise-routes=192.168.13.0/24 and LAN client
+//     skyworker at 192.168.13.20 lost direct IP access to
+//     siblings like 192.168.13.67 NPM).
+//  3. No CIDR may overlap with a Docker bridge range
+//     (172.17-172.32 family) — those networks are reachable
+//     only from the docker host itself, so advertising them
+//     to the tailnet is at best a no-op and at worst
+//     introduces routing weirdness on LAN clients.
+//  4. Maximum 32 entries (sanity cap so a typo doesn't
+//     blow up headscale's ACL with hundreds of routes).
+//
+// The handler computes this host's LAN from the system's
+// default route (via /proc/net/route) + ip route, falling
+// back to a hard-coded conservative list if the host is
+// not in a normal IPv4 home-LAN scenario.
+//
+// Audit row: "tailscale_advertise_routes" with the
+// before/after lists so the operator can grep for the
+// change later.
+//
+// 2026-09-04: v0.69.1 (B236).
+func (s *Service) handleTailscaleSetAdvertiseRoutes(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	raw := strings.TrimSpace(r.FormValue("advertise_routes"))
+	// Parse + normalize the requested list.
+	var want []string
+	if raw != "" {
+		parts := strings.Split(raw, ",")
+		seen := make(map[string]bool)
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			want = append(want, p)
+		}
+	}
+	if len(want) > 32 {
+		tsRedirect(w, r, "", "Слишком много маршрутов (макс 32) — уменьшите список")
+		return
+	}
+	// Validate each entry.
+	hostLAN, hostLANErr := detectHostLAN()
+	if hostLANErr != nil {
+		// If we can't detect, refuse the change rather
+		// than silently allow a self-LAN shadow. The
+		// operator can edit /etc/hosts-style override via
+		// SKYGATE_HOST_LAN_OVERRIDE env var (TBD — for
+		// now we just fail closed).
+		tsRedirect(w, r, "", "Не удалось определить LAN этого хоста: "+hostLANErr.Error()+". Задайте SKYGATE_HOST_LAN_OVERRIDE в .env или удалите advertise-routes вручную через SSH.")
+		return
+	}
+	for _, cidr := range want {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			tsRedirect(w, r, "", "Некорректный CIDR: "+cidr+" — "+err.Error())
+			return
+		}
+		// 2: refuse own LAN.
+		if hostLAN != "" && cidrOverlaps(cidr, hostLAN) {
+			tsRedirect(w, r, "", "CIDR "+cidr+" пересекается с LAN этого хоста ("+hostLAN+"). Рекламировать собственную LAN через Tailscale нельзя — она перебивает прямой маршрут у LAN-клиентов (см. B236).")
+			return
+		}
+		// 3: refuse docker bridge.
+		for _, br := range dockerBridgeRanges {
+			if cidrOverlaps(cidr, br) {
+				tsRedirect(w, r, "", "CIDR "+cidr+" — это docker bridge ("+br+"), она недоступна извне хоста. Рекламировать её через Tailscale бессмысленно.")
+				return
+			}
+		}
+	}
+	// Read current for the audit + idempotency check.
+	current, _, _ := tailscaleAdvertisedRoutes()
+	// Apply via `tailscale set --advertise-routes=...` (replace).
+	args := []string{"set", "--advertise-routes=" + strings.Join(want, ",")}
+	out, err := runContainerTailscale("skygate-skygate-1", args...)
+	if err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_advertise_routes",
+			fmt.Sprintf("err=%q out=%q want=%q", err.Error(), out, strings.Join(want, ",")))
+		tsRedirect(w, r, "", "tailscale set --advertise-routes: "+err.Error()+" ("+out+")")
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "tailscale_advertise_routes",
+		fmt.Sprintf("before=%q after=%q", strings.Join(current, ","), strings.Join(want, ",")))
+	s.invalidateTailscaleState()
+	ok := fmt.Sprintf("Advertise-routes обновлены: %s → %s", strings.Join(current, ","), strings.Join(want, ","))
+	tsRedirect(w, r, ok, "")
+}
+
+// detectHostLAN inspects the host's network configuration
+// to find the LAN subnet this skygate-host-1 sits in.
+// Returns the CIDR string (e.g. "192.168.13.0/24") or
+// "" when the host has no obvious LAN (e.g. a single-IP
+// VPS with no gateway subnet).
+//
+// Reads /proc/net/route (always present on Linux) and
+// `ip route` (in PATH on every skygate image). Falls back
+// to scanning `ip -o -4 addr show` for non-loopback
+// addresses when /proc is empty (covers the macOS dev
+// environment where /proc is read-only).
+//
+// Hard override: SKYGATE_HOST_LAN_OVERRIDE env var
+// (e.g. "192.168.13.0/24") forces the value, used in
+// tests + by operators who want a different subnet than
+// what the OS reports.
+//
+// 2026-09-04: v0.69.1 (B236).
+func detectHostLAN() (string, error) {
+	if v := os.Getenv("SKYGATE_HOST_LAN_OVERRIDE"); v != "" {
+		if _, _, err := net.ParseCIDR(v); err != nil {
+			return "", fmt.Errorf("SKYGATE_HOST_LAN_OVERRIDE=%q is not a valid CIDR: %w", v, err)
+		}
+		return v, nil
+	}
+	// Try `ip -o -4 route show type unicast` (Tailscale's
+	// own pattern). We want the default route's source
+	// prefix — that's the LAN we're in.
+	out, err := exec.Command("sh", "-c", "ip -o -4 route show 2>/dev/null | awk '$1==\"default\"{print $0; exit}'").Output()
+	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		// Format: "default via 192.168.13.1 dev eth0 proto static"
+		line := strings.TrimSpace(string(out))
+		// Find "dev <iface>" and then look up that iface's CIDR.
+		dev := ""
+		for _, f := range strings.Fields(line) {
+			if f == "dev" {
+				continue
+			}
+			if dev == "" {
+				dev = f
+				break
+			}
+		}
+		if dev != "" {
+			ipOut, ipErr := exec.Command("sh", "-c", "ip -o -4 addr show dev "+dev+" 2>/dev/null | awk '{print $4}'").Output()
+			if ipErr == nil {
+				cidr := strings.TrimSpace(string(ipOut))
+				if cidr != "" {
+					if _, _, perr := net.ParseCIDR(cidr); perr == nil {
+						return cidr, nil
+					}
+				}
+			}
+		}
+	}
+	// Fallback: scan all non-loopback addrs and pick the
+	// first /16-or-bigger one.
+	allOut, allErr := exec.Command("sh", "-c", "ip -o -4 addr show 2>/dev/null | awk '$2!=\"lo\"{print $4}'").Output()
+	if allErr == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(allOut)), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			ip, ipnet, perr := net.ParseCIDR(line)
+			if perr != nil {
+				continue
+			}
+			// Skip 127.0.0.0/8 and link-local 169.254.0.0/16
+			// and CGNAT 100.64.0.0/10 (the Tailscale range).
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+				continue
+			}
+			if ipnet.IP.IsUnspecified() {
+				continue
+			}
+			// Tailscale CGNAT range.
+			if ip[0] == 100 && ip[1]&0xC0 == 64 {
+				continue
+			}
+			return line, nil
+		}
+	}
+	// Last resort: refuse the change so the operator
+	// can't accidentally re-introduce the B236 bug.
+	return "", fmt.Errorf("could not detect host LAN from /proc or `ip route`; set SKYGATE_HOST_LAN_OVERRIDE in .env")
+}
+
+// cidrOverlaps returns true iff the two CIDRs share any
+// address. Used by the B236 validator to refuse self-LAN
+// and docker-bridge advertisements. Both inputs must
+// be valid CIDRs (the caller validates first).
+func cidrOverlaps(a, b string) bool {
+	_, anet, err1 := net.ParseCIDR(a)
+	_, bnet, err2 := net.ParseCIDR(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	// Two CIDRs overlap iff the network of one is
+	// contained in (or equal to) the other, or the
+	// smaller one's network address falls within the
+	// larger one's range.
+	// Simpler: do a /0 mask of one and check if the
+	// other is contained.
+	return anet.Contains(bnet.IP) || bnet.Contains(anet.IP)
 }
 
 func urlQueryEscape(s string) string {

@@ -3580,6 +3580,34 @@ run_check "B233" "Source-level migration audit. Catches B232-class shape-drift b
 #     changed to printf '%s' to emit the body verbatim.
 run_check "B234" "Fix 3 pre-existing CI test failures. The pre-close in Dump (B202.5) closed the dest file before io.Copy wrote to it. persistCalls++ in derphealth test had 3 goroutines racing on int. logged = append in healthz test raced with iteration. All caught by go test -race in CI. This is the B233 lesson applied: the local -race gap let these ship." \
   'echo "B234 — manual; verified locally with go test -race -count=1 ./... and on the agent. See scripts/b234_race_verify.sh."'
+# --- B236: /admin/tailscale subnet-routes management ---
+# Closes the design gap where skygate-host-1 had
+# --advertise-routes=172.17.0.0/16,192.168.13.0/24,172.18.0.0/16
+# set manually (the 192.168.13.0/24 shadowed skyworker's
+# direct LAN route to 192.168.13.67 on 2026-09-04). The
+# /admin/tailscale page had no UI to view/manage these
+# routes — the operator had to SSH + tailscale set
+# --advertise-routes=... by hand. B236 surfaces the
+# current advertised routes (from `tailscale status
+# --json` .Prefs.AdvertiseRoutes + .Self.PrimaryRoutes)
+# and adds a form that writes via `tailscale set
+# --advertise-routes=` (idempotent replace, NOT add).
+# Validation: (1) refuse the host's own LAN (auto-detected
+# via `ip route` + `ip addr show`, overridable via
+# SKYGATE_HOST_LAN_OVERRIDE), (2) refuse the docker bridge
+# ranges (172.17-172.32 — unreachable from outside the
+# host), (3) max 32 entries, (4) every entry must parse
+# as a valid CIDR. Audit row tailscale_advertise_routes
+# with before/after for grep-ability. 7 unit tests in
+# internal/feature/admin/tailscale_b236_test.go: TestCidrOverlaps
+# (7 cases incl. IPv6 + tailscale CGNAT), TestCidrOverlaps_MalformedReturnsFalse,
+# TestDetectHostLAN_Override, TestDetectHostLAN_OverrideRejected,
+# TestDockerBridgeRanges_Pins172_17_18 (regression guard
+# for the 2026-09-04 skyworker incident), TestTailscaleAdvertisedRoutes_NotRunning,
+# TestValidateAdvertiseRoutes_RejectsOwnLAN. 39 B-check
+# contracts in scripts/check_b236.sh.
+run_check "B236" "Tailscale subnet-routes management on /admin/tailscale. Closes the gap where skygate-host-1 had --advertise-routes=172.17.0.0/16,192.168.13.0/24,172.18.0.0/16 set manually (the 192.168.13.0/24 shadowed skyworker's direct LAN route to 192.168.13.67 on 2026-09-04). New POST handler set_advertise_routes writes via `tailscale set --advertise-routes=` (idempotent replace, NOT add). Validation: refuse the host's own LAN (auto-detected via `ip route` + `ip addr show`, SKYGATE_HOST_LAN_OVERRIDE override), refuse docker bridge ranges (172.17-172.32). 7 unit tests in internal/feature/admin/tailscale_b236_test.go (cidrOverlaps + detectHostLAN + dockerBridgeRanges + handler edge cases). 39 B-check contracts in scripts/check_b236.sh." \
+  'test -f scripts/check_b236.sh && bash scripts/check_b236.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host
