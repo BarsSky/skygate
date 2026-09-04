@@ -32,30 +32,42 @@ const mapFetchTimeout = 30 * time.Second
 
 // derpMapResponse mirrors the structure of Tailscale's
 // derpmap/default JSON. The fields we use:
-//   - Regions[id].Nodes[0].HostName  : FQDN ("derp1f.tailscale.com")
-//     — used as the probe host and as the URL host. THIS is
-//     what the TLS handshake dials.
-//   - Regions[id].Nodes[0].Name     : short label ("1f"). Kept
-//     for display ("DERP 1f" vs "DERP derp1f.tailscale.com")
-//     but NOT for network operations — B235 fix; pre-B235
-//     the code used `n.Name` for Host, which is the SHORT
-//     label and not a resolvable DNS name, so every public
-//     DERP probe failed with "no such host" and the
+//   - Regions[id].RegionCode   : IATA-ish 3-letter code
+//     ("nyc", "waw", "sin"). Tailscale puts this on the
+//     REGION level, not the node — pre-B235.1 my struct
+//     had it on the node, so the field was always empty
+//     and the main-page "Active DERP" hero showed
+//     "ms" without a region code.
+//   - Regions[id].RegionName   : human-readable city
+//     ("New York City"). Same level.
+//   - Regions[id].Nodes[0].HostName  : FQDN
+//     ("derp1f.tailscale.com") — used as the probe host
+//     and as the URL host. THIS is what the TLS
+//     handshake dials.
+//   - Regions[id].Nodes[0].Name     : short label ("1f").
+//     Kept for display ("DERP 1f" vs "DERP
+//     derp1f.tailscale.com") but NOT for network
+//     operations — B235 fix; pre-B235 the code used
+//     `n.Name` for Host, which is the SHORT label and
+//     not a resolvable DNS name, so every public DERP
+//     probe failed with "no such host" and the
 //     dashboard showed 28/28 as "degraded".
-//   - Regions[id].Nodes[0].RegionCode : IATA-ish 3-letter code
-//   - Regions[id].Nodes[0].Locality : human-readable city
-//   - Regions[id].Nodes[0].Country  : 2-letter ISO code
-// Other fields (lat/long, capabilities, etc.) are read-
-// only here; we don't preserve them to keep the struct
-// minimal. Add as needed.
+//   - Regions[id].Nodes[0].Locality + Country : node-
+//     level metadata, same shape as the region-level
+//     fields (Tailscale keeps them on both, for
+//     backwards compat).
+// Other fields (lat/long, capabilities, etc.) are
+// not preserved to keep the struct minimal.
 type derpMapResponse struct {
 	Regions map[string]struct {
+		RegionID   int    `json:"RegionID"`
+		RegionCode string `json:"RegionCode"`
+		RegionName string `json:"RegionName"`
 		Nodes []struct {
-			Name       string `json:"Name"`
-			HostName   string `json:"HostName"`
-			RegionCode string `json:"RegionCode"`
-			Locality   string `json:"Locality,omitempty"`
-			Country    string `json:"Country,omitempty"`
+			Name     string `json:"Name"`
+			HostName string `json:"HostName"`
+			Locality string `json:"Locality,omitempty"`
+			Country  string `json:"Country,omitempty"`
 		} `json:"Nodes"`
 	} `json:"Regions"`
 }
@@ -129,8 +141,8 @@ func FetchPublicDERPs(ctx context.Context, httpClient *http.Client) ([]DERPInfo,
 		}
 		out = append(out, DERPInfo{
 			RegionID:   id,
-			RegionCode: n.RegionCode,
-			RegionName: n.RegionCode, // map doesn't include a long name
+			RegionCode: r.RegionCode,
+			RegionName: r.RegionName,
 			Locality:   n.Locality,
 			Country:    n.Country,
 			Host:       host,

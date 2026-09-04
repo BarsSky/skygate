@@ -28,7 +28,7 @@ import (
 // `n.HostName`. The fixture below mirrors the
 // actual Tailscale derpmap/default response shape
 // (Name + HostName fields both present in every
-// node).
+// node; RegionCode on the region, not the node).
 func TestFetchPublicDERPs_HostIsFQDN_NotShortLabel(t *testing.T) {
 	// Synthetic derpmap response with 3 regions
 	// (Warsaw, New York, Singapore) using the real
@@ -38,6 +38,7 @@ func TestFetchPublicDERPs_HostIsFQDN_NotShortLabel(t *testing.T) {
 	    "1": {
 	      "RegionID": 1,
 	      "RegionCode": "nyc",
+	      "RegionName": "New York City",
 	      "Nodes": [
 	        {"Name": "1f", "RegionID": 1, "HostName": "derp1f.tailscale.com", "IPv4": "199.38.181.104", "CanPort80": true}
 	      ]
@@ -45,6 +46,7 @@ func TestFetchPublicDERPs_HostIsFQDN_NotShortLabel(t *testing.T) {
 	    "22": {
 	      "RegionID": 22,
 	      "RegionCode": "waw",
+	      "RegionName": "Warsaw",
 	      "Nodes": [
 	        {"Name": "22w", "RegionID": 22, "HostName": "derp22w.tailscale.com", "IPv4": "5.181.27.221", "CanPort80": true}
 	      ]
@@ -52,6 +54,7 @@ func TestFetchPublicDERPs_HostIsFQDN_NotShortLabel(t *testing.T) {
 	    "3": {
 	      "RegionID": 3,
 	      "RegionCode": "sin",
+	      "RegionName": "Singapore",
 	      "Nodes": [
 	        {"Name": "3e", "RegionID": 3, "HostName": "derp3e.tailscale.com", "IPv4": "8.39.127.21", "CanPort80": true}
 	      ]
@@ -122,6 +125,7 @@ func TestFetchPublicDERPs_FallsBackToNameWhenHostNameEmpty(t *testing.T) {
 	    "1": {
 	      "RegionID": 1,
 	      "RegionCode": "nyc",
+	      "RegionName": "New York City",
 	      "Nodes": [
 	        {"Name": "1f", "RegionID": 1, "IPv4": "199.38.181.104"}
 	      ]
@@ -206,6 +210,53 @@ func TestFetchPublicDERPs_HTTPError(t *testing.T) {
 	}
 }
 
+// TestFetchPublicDERPs_RegionCodeFromRegionLevel pins
+// the B235.1 fix: Tailscale puts RegionCode on the
+// REGION object, not the NODE object. Pre-B235.1
+// the struct had `RegionCode string` on the node
+// (a Tailscale field that DOESN'T exist), so
+// RegionCode was always empty. Post-B235.1 the
+// struct has it on the region and the field is
+// populated correctly. Live-verified: the main
+// page's "Active DERP" hero went from "ms" (no
+// region code) to "waw 73ms" (with code) for the
+// lowest-latency public DERP.
+func TestFetchPublicDERPs_RegionCodeFromRegionLevel(t *testing.T) {
+	const body = `{
+	  "Regions": {
+	    "22": {
+	      "RegionID": 22,
+	      "RegionCode": "waw",
+	      "RegionName": "Warsaw",
+	      "Nodes": [{"Name": "22w", "HostName": "derp22w.tailscale.com"}]
+	    }
+	  }
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	prev := PublicMapURL
+	PublicMapURL = srv.URL
+	defer func() { PublicMapURL = prev }()
+
+	got, err := FetchPublicDERPs(context.Background(), srv.Client())
+	if err != nil {
+		t.Fatalf("FetchPublicDERPs: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 DERP, got %d", len(got))
+	}
+	if got[0].RegionCode != "waw" {
+		t.Errorf("RegionCode = %q, want %q (B235.1 fix: RegionCode lives on the region, not the node)",
+			got[0].RegionCode, "waw")
+	}
+	if got[0].RegionName != "Warsaw" {
+		t.Errorf("RegionName = %q, want %q", got[0].RegionName, "Warsaw")
+	}
+}
+
 // TestFetchPublicDERPs_RegionIDFromMapKey pins
 // that the region_id is parsed from the map key
 // string (Tailscale uses string keys in the
@@ -223,9 +274,9 @@ func TestFetchPublicDERPs_HTTPError(t *testing.T) {
 func TestFetchPublicDERPs_RegionIDFromMapKey(t *testing.T) {
 	const body = `{
 	  "Regions": {
-	    "1":   {"RegionID": 1,   "RegionCode": "nyc", "Nodes": [{"Name": "1f",  "HostName": "derp1f.tailscale.com"}]},
-	    "22":  {"RegionID": 22,  "RegionCode": "waw", "Nodes": [{"Name": "22w", "HostName": "derp22w.tailscale.com"}]},
-	    "901": {"RegionID": 901, "RegionCode": "xxx", "Nodes": [{"Name": "901a","HostName": "controlplane.tailscale.com"}]}
+	    "1":   {"RegionID": 1,   "RegionCode": "nyc", "RegionName": "New York City", "Nodes": [{"Name": "1f",  "HostName": "derp1f.tailscale.com"}]},
+	    "22":  {"RegionID": 22,  "RegionCode": "waw", "RegionName": "Warsaw",        "Nodes": [{"Name": "22w", "HostName": "derp22w.tailscale.com"}]},
+	    "901": {"RegionID": 901, "RegionCode": "xxx", "RegionName": "Bundled",       "Nodes": [{"Name": "901a","HostName": "controlplane.tailscale.com"}]}
 	  }
 	}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
