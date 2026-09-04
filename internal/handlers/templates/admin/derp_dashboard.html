@@ -83,7 +83,7 @@
     <tbody>
       {{range .DERPs}}
       <tr style="{{if eq .RegionID $.Recommended}}background: rgba(46, 204, 113, 0.12); font-weight: 600{{end}}">
-        <td style="padding:0.3rem 0.6rem"><code>{{.RegionID}}</code></td>
+        <td style="padding:0.3rem 0.6rem"><code title="{{t "derp_dashboard.col_id_help"}}" style="cursor: help; border-bottom: 1px dotted var(--text-muted)">{{.RegionID}}</code></td>
         <td style="padding:0.3rem 0.6rem">
           {{if .IsOwn}}
             <span class="pill pill-info">{{t "derp_dashboard.type_own"}}</span>
@@ -98,6 +98,7 @@
         </td>
         <td style="padding:0.3rem 0.6rem; font-family: monospace; font-size: 0.9em">
           <code>{{.Host}}</code>
+          {{if .Name}}<span class="pill" style="margin-left: 0.4rem; font-family: var(--font-mono); font-size: 0.85em" title="Tailscale short label">.Name={{.Name}}</span>{{end}}
         </td>
         <td style="padding:0.3rem 0.6rem; text-align: right; font-variant-numeric: tabular-nums"
             title="{{if le .LatencyMs 50}}{{t "derp_dashboard.latency_good_help"}}{{else if le .LatencyMs 150}}{{t "derp_dashboard.latency_ok_help"}}{{else}}{{t "derp_dashboard.latency_bad_help"}}{{end}}">

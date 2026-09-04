@@ -30,8 +30,21 @@
     <div class="icon"><i class="fa-solid fa-tower-broadcast"></i></div>
     <div class="body">
       <div class="label">{{t "dashboard.metric_active_derp"}}</div>
-      <div class="value">{{.TailnetMetrics.ActiveDERP}}</div>
-      <div class="sub">{{t "dashboard.metric_active_derp_sub"}}</div>
+      <div class="value">
+        {{if .TailnetMetrics.ActiveDERP}}
+          {{.TailnetMetrics.ActiveDERP}}
+          {{if .TailnetMetrics.ActiveDERPLatencyMs}}
+            <span class="sub" style="margin-left: 0.5rem; color: var(--text-muted)">{{.TailnetMetrics.ActiveDERPLatencyMs}} ms</span>
+          {{end}}
+        {{else}}—{{end}}
+      </div>
+      <div class="sub">
+        {{if .TailnetMetrics.ActiveDERPRegionID}}
+          {{tf "dashboard.metric_active_derp_sub_with_id" .TailnetMetrics.ActiveDERPRegionID}}
+        {{else}}
+          {{t "dashboard.metric_active_derp_sub"}}
+        {{end}}
+      </div>
     </div>
   </div>
   <div class="metric">
@@ -98,8 +111,21 @@
     <div class="icon"><i class="fa-solid fa-tower-broadcast"></i></div>
     <div class="body">
       <div class="label">{{t "dashboard.metric_best_derp"}}</div>
-      <div class="value">{{.TailnetMetrics.ActiveDERP}}</div>
-      <div class="sub">{{t "dashboard.metric_active_derp_sub"}}</div>
+      <div class="value">
+        {{if .TailnetMetrics.ActiveDERP}}
+          {{.TailnetMetrics.ActiveDERP}}
+          {{if .TailnetMetrics.ActiveDERPLatencyMs}}
+            <span class="sub" style="margin-left: 0.5rem; color: var(--text-muted)">{{.TailnetMetrics.ActiveDERPLatencyMs}} ms</span>
+          {{end}}
+        {{else}}—{{end}}
+      </div>
+      <div class="sub">
+        {{if .TailnetMetrics.ActiveDERPRegionID}}
+          {{tf "dashboard.metric_active_derp_sub_with_id" .TailnetMetrics.ActiveDERPRegionID}}
+        {{else}}
+          {{t "dashboard.metric_active_derp_sub"}}
+        {{end}}
+      </div>
     </div>
   </div>
   {{end}}

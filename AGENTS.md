@@ -4678,6 +4678,159 @@ in the same commit. Don't let the tracker drift.
     feature, just fixing tests that were broken
     since 2026-08 era), but a critical CI fix that
     unblocks every future B-block.
+  - **B235 (v1.5.2+, 2026-09-04) — DERP
+    `HostName` fix + main-page real ping +
+    region_id tooltip**. Closes the B189-era bug
+    in `FetchPublicDERPs` that used `n.Name`
+    (Tailscale's internal short label, e.g.
+    `"1f"`, `"22w"`) as the `Host` field. That's
+    NOT a resolvable DNS name — `tls.Dial("1f:443")`
+    fails with "no such host" — so every public
+    DERP probe failed and `/admin/derp/dashboard`
+    showed 28/28 as degraded with "—" in every
+    column. The own DERP (controlplane.tailscale.com)
+    was fine because it goes through `FetchOwnDERPs`
+    (which uses the operator-configured `derp_relays.hostname`
+    column, not the Tailscale map). Operator
+    surfaced this with "почему доступные derp
+    сервера только локальный на странице
+    admin/derp/dashboard а на главной пишет
+    что использует сейчас derp waw... в списках
+    waw нет".
+    **B235 fix**:
+    1. `internal/derphealth/types.go` splits
+       `DERPInfo` into two fields:
+       - `Host string` (FQDN, e.g.
+         `"derp1f.tailscale.com"`) — used for
+         the actual TLS probe and the URL.
+       - `Name string` (short label, e.g.
+         `"1f"`) — preserved for the
+         dashboard's display pill
+         (e.g. `derp1f.tailscale.com` + a
+         `.Name=1f` chip next to it).
+       Empty `Name` for own DERP rows (the
+       operator configures hostname but not a
+       short label). Distinct from the pre-B235
+       code which conflated the two.
+    2. `internal/derphealth/map.go` `FetchPublicDERPs`
+       uses `n.HostName` (the FQDN) for the
+       network-touching fields. Defensive
+       fallback: if a future Tailscale API change
+       drops `HostName` from a node, fall back
+       to `n.Name` (so the probe at least has
+       something to dial — the fallback is
+       hypothetical; the 28-region Tailscale map
+       always includes `HostName`).
+    3. `PublicMapURL` is a `var` (not `const`)
+       so unit tests can override it via
+       `httptest.NewServer`. Production code
+       never writes to it.
+    4. `internal/feature/my/dashboard.go`
+       `bestHealthyDERP()` queries the same
+       `derp_health` source the admin dashboard
+       uses (lowest-latency healthy DERP, own
+       first). Returns `(region_code,
+       latency_ms, region_id, ok)`. The
+       `TailnetMetrics` struct gains
+       `ActiveDERPLatencyMs` +
+       `ActiveDERPRegionID`. The hero replaces
+       the hardcoded `"waw"` placeholder with
+       the actual current recommendation.
+       `ok=false` (table empty on first cron
+       tick after skygate start) renders `—`
+       in the value cell — no stale fallback.
+    5. `internal/handlers/templates/dashboard.html`
+       renders the latency in `ms` next to
+       the region_code, and the region_id in
+       the sub-text via
+       `{{tf "dashboard.metric_active_derp_sub_with_id" .ActiveDERPRegionID}}`
+       (RU+EN, contains a `%d` placeholder).
+       The `{{tf}}` form is required —
+       `{{t}}` with args fails
+       `TestTemplateArgsMatchCatalog` (a
+       regression guard from the v0.16.6 layout.html
+       bug). Both the admin and the user hero
+       blocks use the same template
+       sub-fragment (the `{{if .IsAdmin}}` /
+       `{{else}}` already splits above).
+    6. `internal/handlers/templates/admin/derp_dashboard.html`
+       adds a `title="{{t "derp_dashboard.col_id_help"}}"`
+       tooltip on the ID column. The tooltip
+       text (RU+EN) explains: "Tailscale-assigned
+       numeric region ID (region_id в их API).
+       1=NYC, 22=Warsaw, 28=Helsinki, 901=bundled
+       controlplane. Это не display-order —
+       фиксированный Tailscale ID, используется
+       в их derpmap API и headscale ACL rules
+       (tag:region-N)." — answers the
+       operator's "что это за id" question.
+       The Host cell renders a
+       `<span class="pill">.Name=...</span>` chip
+       when `Name` is non-empty, giving the
+       Tailscale-style visual
+       `derp1f.tailscale.com` + `.Name=1f`.
+    7. `internal/i18n/catalog_my.go` (RU+EN)
+       adds `dashboard.metric_active_derp_sub_with_id`
+       = `"Tailscale region_id %d (см.
+       /admin/derp/dashboard)"`. The sub-text
+       now shows the actual Tailscale-assigned
+       ID rather than a static "relay" label.
+    8. `internal/i18n/catalog_admin.go` (RU+EN)
+       adds `derp_dashboard.col_id_help` with
+       the region_id explainer (above).
+    9. 5 new unit tests in
+       `internal/derphealth/map_b235_test.go`:
+       - `TestFetchPublicDERPs_HostIsFQDN_NotShortLabel`
+         — direct regression test for the
+         B189-era bug. Pin: Host=`derp1f.tailscale.com`,
+         Name=`1f`, URL=`https://derp1f.tailscale.com`.
+       - `TestFetchPublicDERPs_FallsBackToNameWhenHostNameEmpty`
+         — pins the defensive fallback for
+         future API changes.
+       - `TestFetchPublicDERPs_EmptyMap_HTTP`
+         — pins the "no regions" empty-map
+         defensive path (complements the
+         pre-existing `TestFetchPublicDERPs_EmptyMap`
+         which only tests JSON unmarshal of
+         the empty body, not the full fetch
+         path).
+       - `TestFetchPublicDERPs_HTTPError`
+         — pins that HTTP failures return
+         an error (not a panic). Caller
+         (FetchAllDERPs) handles the fallback
+         to own-only data.
+       - `TestFetchPublicDERPs_RegionIDFromMapKey`
+         — pins the 901 bundled-controlplane
+         case (the dashboard's `Recommended`
+         matching relies on exact RegionID
+         equality).
+    **Existing 28 derp_health rows backfill on
+    the next ProbeAll tick** (5 min after deploy).
+    The `upsertQuery`'s `ON CONFLICT (region_id)
+    DO UPDATE` overwrites `host` with the new
+    FQDN value, so `derp_health` self-heals
+    without a manual SQL. Operator can also
+    force the backfill immediately by clicking
+    "Refresh" on `/admin/derp/dashboard` (which
+    triggers a one-shot probe via
+    `RunOnceNow`).
+    **Verified**: `go test -count=1 ./...`
+    passes on Windows (43 packages, all
+    green). `TestTemplateArgsMatchCatalog`
+    regression test pinned the
+    `{{t}}`→`{{tf}}` switch for the
+    `%d` placeholder. 19 B-check contracts in
+    `scripts/check_b235.sh` (A.1-A.7 source,
+    B.1-B.5 templates, C.1-C.4 i18n, D.1-D.3
+    tests, E.1-E.3 build+tests). Live-verify
+    on the agent (192.168.13.69):
+    `docker logs skygate-skygate-1 --since 5m
+    | grep derphealth: probed` — pre-B235 showed
+    28/28 `ok=0, bad=28` (the B189 bug);
+    post-B235 shows the real Tailscale-assigned
+    latencies (1f ~105ms, 22w ~5ms, 3e ~180ms,
+    etc.) once the cron has ticked at least
+    once with the new code.
   - **B207_fix (v1.5.0+, 2026-09-02) — clear the
     B207 verify test artifact from cluster_database.
     current_dsn so the B203 skygate-watchdog doesn't

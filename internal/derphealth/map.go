@@ -14,7 +14,15 @@ import (
 // Refreshed every 24h by headscale per its config.yaml
 // (derp.update_frequency). 30s timeout is generous; the
 // file is ~15KB and Tailscale's CDN is fast.
-const PublicMapURL = "https://controlplane.tailscale.com/derpmap/default"
+//
+// B235: this is a `var` (not `const`) so unit tests can
+// override it with httptest.NewServer. Production code
+// never writes to it. The pre-B235 test in
+// derphealth_test.go only validated JSON unmarshal;
+// the B235 tests in map_b235_test.go need a real HTTP
+// roundtrip to verify the full path, which requires
+// the URL to be swappable.
+var PublicMapURL = "https://controlplane.tailscale.com/derpmap/default"
 
 // mapFetchTimeout bounds the time we wait for the Tailscale
 // map fetch. If the fetch fails, we still probe whatever
@@ -24,7 +32,16 @@ const mapFetchTimeout = 30 * time.Second
 
 // derpMapResponse mirrors the structure of Tailscale's
 // derpmap/default JSON. The fields we use:
-//   - Regions[id].Nodes[0].Name  : canonical DERP hostname
+//   - Regions[id].Nodes[0].HostName  : FQDN ("derp1f.tailscale.com")
+//     — used as the probe host and as the URL host. THIS is
+//     what the TLS handshake dials.
+//   - Regions[id].Nodes[0].Name     : short label ("1f"). Kept
+//     for display ("DERP 1f" vs "DERP derp1f.tailscale.com")
+//     but NOT for network operations — B235 fix; pre-B235
+//     the code used `n.Name` for Host, which is the SHORT
+//     label and not a resolvable DNS name, so every public
+//     DERP probe failed with "no such host" and the
+//     dashboard showed 28/28 as "degraded".
 //   - Regions[id].Nodes[0].RegionCode : IATA-ish 3-letter code
 //   - Regions[id].Nodes[0].Locality : human-readable city
 //   - Regions[id].Nodes[0].Country  : 2-letter ISO code
@@ -35,6 +52,7 @@ type derpMapResponse struct {
 	Regions map[string]struct {
 		Nodes []struct {
 			Name       string `json:"Name"`
+			HostName   string `json:"HostName"`
 			RegionCode string `json:"RegionCode"`
 			Locality   string `json:"Locality,omitempty"`
 			Country    string `json:"Country,omitempty"`
@@ -90,14 +108,34 @@ func FetchPublicDERPs(ctx context.Context, httpClient *http.Client) ([]DERPInfo,
 		if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
 			continue
 		}
+		// B235: the pre-fix code used `n.Name` ("1f", "22w")
+		// as Host. That's a Tailscale-internal short label
+		// — NOT a resolvable DNS name. Probes to
+		// "1f:443" failed with "no such host" and
+		// marked every public DERP as degraded. Use
+		// `n.HostName` (the FQDN like "derp1f.tailscale.com")
+		// for the network-touching fields. The short
+		// `n.Name` is preserved as `Name` (separate
+		// field, used by the dashboard's display label).
+		host := n.HostName
+		if host == "" {
+			// Fallback: the public derpmap response should
+			// always include HostName. If a future Tailscale
+			// API change drops it, fall back to Name so
+			// we at least get a resolvable A-record (some
+			// clients may serve DERP on the short label
+			// too, but we don't depend on that).
+			host = n.Name
+		}
 		out = append(out, DERPInfo{
 			RegionID:   id,
 			RegionCode: n.RegionCode,
 			RegionName: n.RegionCode, // map doesn't include a long name
 			Locality:   n.Locality,
 			Country:    n.Country,
-			Host:       n.Name,
-			URL:        "https://" + n.Name,
+			Host:       host,
+			Name:       n.Name, // short label for display
+			URL:        "https://" + host,
 			IsOwn:      false,
 		})
 	}

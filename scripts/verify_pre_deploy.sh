@@ -3580,6 +3580,42 @@ run_check "B233" "Source-level migration audit. Catches B232-class shape-drift b
 #     changed to printf '%s' to emit the body verbatim.
 run_check "B234" "Fix 3 pre-existing CI test failures. The pre-close in Dump (B202.5) closed the dest file before io.Copy wrote to it. persistCalls++ in derphealth test had 3 goroutines racing on int. logged = append in healthz test raced with iteration. All caught by go test -race in CI. This is the B233 lesson applied: the local -race gap let these ship." \
   'echo "B234 — manual; verified locally with go test -race -count=1 ./... and on the agent. See scripts/b234_race_verify.sh."'
+# --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
+# Closes the B189-era bug in FetchPublicDERPs that used n.Name
+# (Tailscale's internal short label "1f", "22w") as the Host
+# field — that's NOT a resolvable DNS name, so every public
+# DERP probe failed with "no such host" and /admin/derp/dashboard
+# showed 28/28 as degraded. B235 pins n.HostName (FQDN like
+# "derp1f.tailscale.com") as the actual network host, preserves
+# n.Name as a separate `Name` field for the dashboard's display
+# label, and adds 5 unit tests in
+# internal/derphealth/map_b235_test.go (HostIsFQDN_NotShortLabel,
+# FallsBackToNameWhenHostNameEmpty, EmptyMap_HTTP, HTTPError,
+# RegionIDFromMapKey) that pin the fix + the defensive fallback
+# + the 901 bundled-controlplane case. main-page fix:
+# /dashboard hero no longer hardcodes "waw" — bestHealthyDERP()
+# in internal/feature/my/dashboard.go queries the same derp_health
+# source the admin dashboard uses, returning (region_code,
+# latency_ms, region_id, ok). ActiveDERPLatencyMs +
+# ActiveDERPRegionID are rendered alongside ActiveDERP. The
+# /admin/derp/dashboard ID column gets a tooltip
+# (derp_dashboard.col_id_help, RU+EN) explaining "1=NYC,
+# 22=Warsaw, 28=Helsinki, 901=bundled controlplane, NOT
+# display-order — Tailscale-assigned ID used in derpmap API +
+# headscale ACL rules (tag:region-N)". The Host cell renders
+# a .Name pill when present (derp1f.tailscale.com + .Name=1f)
+# for Tailscale-style visual parity. New i18n keys in RU+EN
+# (dashboard.metric_active_derp_sub_with_id + col_id_help) +
+# the {{tf "..." .arg}} form for the %d placeholder
+# (regression guard: {{t}} with args fails
+# TestTemplateArgsMatchCatalog). PublicMapURL is a `var` (not
+# const) so unit tests can override it via httptest.NewServer.
+# Existing 28 derp_health rows with host='1f'/'22w'/'3e' backfill
+# to FQDN on the next ProbeAll tick (5 min after deploy) — the
+# upsertQuery ON CONFLICT DO UPDATE overwrites host too. 19
+# B-check contracts in scripts/check_b235.sh.
+run_check "B235" "DERP HostName fix + main-page ping. The pre-B189 /admin/derp/dashboard showed 28/28 public DERP as degraded because FetchPublicDERPs stored n.Name ('1f') as Host. B235 pins n.HostName (FQDN) as Host, preserves n.Name as separate Name field, adds 5 unit tests in map_b235_test.go. /dashboard hero now uses bestHealthyDERP() (same derp_health source as admin) — ActiveDERPLatencyMs + ActiveDERPRegionID rendered alongside ActiveDERP, replacing the hardcoded 'waw' placeholder. /admin/derp/dashboard ID column gets a col_id_help tooltip (RU+EN) explaining the Tailscale region_id semantics; .Name pill rendered on the Host cell. PublicMapURL const->var for test override. 19 B-check contracts in scripts/check_b235.sh." \
+  'test -f scripts/check_b235.sh && bash scripts/check_b235.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) --- Closes the 'operator must hand-migrate the DB via scp + pg_restore on the agent' gap that was implicit in the B198/B202 work — pre-B202.5 the dbmigrate framework's Dump step only ran pg_dump on the local host, which works for the live svi→agent move because the agent reaches svi's PG via the 172.17.0.1:5433 bridge, but the bridge requires svi to expose its PG port to the agent network. B202.5 adds a transport that runs 'ssh svi \"pg_dump ...\"' and streams the bytes back, so the operator can flip the DSN + restart the agent without depending on direct PG-port reachability between svi and agent. SSHDumpTransport struct with 5 fields (SSHHost/SSHUser/SSHKeyPath/SSHPort/PgDumpPath + optional SSHOptions), Name()='ssh', Dump(ctx, sourceDSN, destPath, onLog) (int64, error) implements the DumpTransport interface. NewSSHDumpTransportFromEnv() reads 5 SKYGATE_DBMIGRATE_SSH_* env vars and returns nil if HOST or USER is empty (caller falls back to Local). quoteForRemoteShell() POSIX-shell-escapes the DSN for 'ssh host cmd' (close-quote/literal/reopen idiom for embedded single quotes). framework.go default-fallback: SKYGATE_DBMIGRATE_TRANSPORT=ssh + valid SSH config -> SSHDumpTransport, else LocalDumpTransport. 5 unit tests in internal/dbmigrate/ssh_transport_test.go: QuoteForRemoteShell (4 sub-cases incl. embedded single quote + multiple quotes), NewFromEnv_RequiresHostAndUser (returns nil on empty HOST or USER), NewFromEnv_PortParsing (22022, bad-port -> 0 silent fallback), Dump_FakeSsh round-trip (Unix only; SKIP on Windows because exec.LookPath does not find a bare 'ssh' there), Dump_Validation (empty sourceDSN, empty destPath, empty SSHHost, empty SSHUser all return error), Name()=='ssh' pinned. Compile-time interface assertion: 'var _ DumpTransport = SSHDumpTransport{}'. 14 B-check contracts in scripts/check_b202_5.sh. Live-verify dry-run (scripts/b202_5_verify.sh) on the agent: ssh to localhost + pg_dump of a temp test DB -> local file, validates PGD-N magic bytes, verifies pg_restore --list shows the test table. Does NOT touch headscale/headplane on agent, does NOT touch the live skygate_staging DB on svi. The real svi->agent move is a one-time operator action (set 4 env vars + ssh-copy-id)." \
   'test -f scripts/check_b202_5.sh && bash scripts/check_b202_5.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) ---

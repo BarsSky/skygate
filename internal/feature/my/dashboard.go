@@ -13,6 +13,8 @@ package my
 // internal/handlers/handlers_dashboard.go (198 lines).
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -41,7 +43,29 @@ type TailnetMetrics struct {
 	OnlineNodes    int
 	ExitNodesCount int
 	UsersCount     int
-	ActiveDERP     string
+	// B235: ActiveDERP is the region_code of the
+	// lowest-latency healthy DERP (own first, then
+	// public). ActiveDERPLatencyMs is its current
+	// probe latency. ActiveDERPRegionID is the
+	// Tailscale-assigned numeric ID (matches the
+	// "ID" column on /admin/derp/dashboard). All
+	// three are empty/zero when no healthy DERP
+	// exists in derp_health yet (the cron runs every
+	// 5 min; right after skygate start the table is
+	// empty for the first tick).
+	//
+	// Pre-B235 these were a hardcoded "waw" /
+	// "could be parsed from netcheck but kept simple
+	// here" — which produced the confusing
+	// situation where the dashboard hero showed
+	// "DERP WAW" but /admin/derp/dashboard showed
+	// only the own DERP. B235 makes the two
+	// consistent: the hero shows the actual current
+	// recommendation, with the same source of truth
+	// as the admin dashboard.
+	ActiveDERP           string
+	ActiveDERPLatencyMs  int
+	ActiveDERPRegionID   int
 	// User-scoped metrics (populated when called with a username)
 	MyTotalNodes     int
 	MyOnlineNodes    int
@@ -114,8 +138,55 @@ func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *h
 	if myUserID != 0 {
 		m.MyPreauthKeys = s.countMyPreAuthKeys(myUserID, nodes)
 	}
-	m.ActiveDERP = "waw" // could be parsed from netcheck but kept simple here
+	// B235: pull the actual lowest-latency healthy DERP
+	// from derp_health (the same source the admin
+	// dashboard uses). Empty string + zero latency
+	// when the table hasn't been populated yet
+	// (first cron tick after skygate start, or
+	// long-running outage). The hero renders "—" in
+	// that case instead of a stale hardcoded value.
+	if code, lat, rid, ok := s.bestHealthyDERP(); ok {
+		m.ActiveDERP = code
+		m.ActiveDERPLatencyMs = lat
+		m.ActiveDERPRegionID = rid
+	}
 	return m
+}
+
+// bestHealthyDERP returns the region_code + latency + region_id
+// of the lowest-latency healthy DERP from derp_health. Own
+// DERP'ы are preferred (is_own=1) on equal latency.
+// Returns ok=false when the table has no healthy rows yet
+// (the cron runs every 5 min; the first tick after
+// skygate start leaves the table empty until ProbeAll
+// writes the first batch of results).
+//
+// B235: this is what the dashboard hero uses to
+// show "DERP WAW 105 ms" instead of the pre-B235
+// hardcoded "waw" placeholder.
+func (s *Service) bestHealthyDERP() (code string, latencyMs int, regionID int, ok bool) {
+	rows, err := s.dbc().QueryContext(context.Background(), `
+		SELECT region_id, COALESCE(region_code, ''), latency_ms
+		  FROM derp_health
+		 WHERE healthy = 1
+		   AND latency_ms > 0
+		 ORDER BY is_own DESC, latency_ms ASC
+		 LIMIT 1
+	`)
+	if err != nil {
+		log.Printf("dashboard: bestHealthyDERP query: %v", err)
+		return "", 0, 0, false
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var rid int
+		var c string
+		var lat int
+		if err := rows.Scan(&rid, &c, &lat); err == nil {
+			return c, lat, rid, true
+		}
+	}
+	return "", 0, 0, false
 }
 
 // GetDashboard renders the /dashboard page. Admin sees whole-tailnet

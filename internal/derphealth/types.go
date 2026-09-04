@@ -26,9 +26,21 @@ type DERPInfo struct {
 	RegionName string `json:"region_name"`
 	Locality   string `json:"locality"`
 	Country    string `json:"country"`
-	Host       string `json:"host"`
-	URL        string `json:"url"`
-	IsOwn      bool   `json:"is_own"`
+	// Host is the FQDN used for the probe (e.g.
+	// "derp1f.tailscale.com"). B235 fix: pre-B235
+	// this was the SHORT label ("1f", "22w") — not
+	// a resolvable DNS name — so every public DERP
+	// probe failed with "no such host". See
+	// map.go FetchPublicDERPs for the parse step.
+	Host string `json:"host"`
+	// Name is the SHORT label ("1f", "22w") used for
+	// dashboard display. Distinct from Host since
+	// the dashboard shows both (e.g. "derp1f (1f) WAW").
+	// Empty for own DERP rows (the operator configures
+	// the hostname but not a short label).
+	Name string `json:"name,omitempty"`
+	URL   string `json:"url"`
+	IsOwn bool   `json:"is_own"`
 }
 
 // HealthRow is the live state of a DERP as cached in
