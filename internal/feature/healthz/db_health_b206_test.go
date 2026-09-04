@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -98,9 +99,22 @@ func TestSampler_NilSource_NoCrash(t *testing.T) {
 	// A nil DBSource must not crash the tick. The
 	// sampler should log the error (captured in the
 	// capture-buffer logger) and continue.
-	var logged []string
+	//
+	// The sampler runs in a background goroutine, so
+	// the log callback and the test's read of `logged`
+	// race without synchronization. `go test -race`
+	// catches this. We use a mutex around the slice
+	// (append + read) instead of a sync.Map because
+	// the access pattern is a simple append-and-
+	// iterate, which a Mutex models more directly.
+	var (
+		logMu  sync.Mutex
+		logged []string
+	)
 	log := func(format string, args ...any) {
+		logMu.Lock()
 		logged = append(logged, format)
+		logMu.Unlock()
 	}
 	cfg := DefaultDBHealthConfig()
 	cfg.Logger = log
@@ -110,6 +124,8 @@ func TestSampler_NilSource_NoCrash(t *testing.T) {
 	defer s.Stop()
 	// Give the tick ~50ms to run.
 	time.Sleep(50 * time.Millisecond)
+	logMu.Lock()
+	defer logMu.Unlock()
 	found := false
 	for _, l := range logged {
 		// The log line changed when we split the nil

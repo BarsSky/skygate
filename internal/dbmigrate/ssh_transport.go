@@ -242,10 +242,13 @@ func (t SSHDumpTransport) Dump(ctx context.Context, sourceDSN, destPath string, 
 	if err != nil {
 		return 0, fmt.Errorf("dbmigrate: ssh: create dest file: %w", err)
 	}
-	// Track close errors so we can surface them at the
-	// end (a partial write that fails to fsync would
-	// otherwise look successful).
-	outCloseErr := out.Close()
+	// We close `out` ONLY after the io.Copy goroutine
+	// completes (see `outCloseErr = out.Close()` below
+	// after wg.Wait()). Closing here would race with
+	// the goroutine — it would try to write into a
+	// closed file descriptor and fail with
+	// "file already closed" (the B202.5 Linux CI bug
+	// fixed in 2026-09-04 B234).
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -271,10 +274,10 @@ func (t SSHDumpTransport) Dump(ctx context.Context, sourceDSN, destPath string, 
 
 	runErr := cmd.Wait()
 	wg.Wait()
-	// Close again to surface any deferred fsync error.
-	if outCloseErr == nil {
-		outCloseErr = out.Close()
-	}
+	// Close after the io.Copy goroutine has finished
+	// writing; surface any deferred fsync error here.
+	var outCloseErr error
+	outCloseErr = out.Close()
 
 	if runErr != nil {
 		_ = os.Remove(destPath)

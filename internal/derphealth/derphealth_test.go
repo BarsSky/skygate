@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -72,17 +73,17 @@ func TestProbeAll_PersistCount(t *testing.T) {
 		{RegionID: 2, RegionCode: "ok2", Host: "127.0.0.1:2"},
 		{RegionID: 3, RegionCode: "ok3", Host: "127.0.0.1:3"},
 	}
-	persistCalls := 0
+	persistCalls := atomic.Int64{}
 	persist := func(ctx context.Context, d DERPInfo, lat int, healthy bool, err error) error {
-		persistCalls++
+		persistCalls.Add(1)
 		return nil
 	}
 	results := ProbeAll(context.Background(), derps, &http.Client{Timeout: 200 * time.Millisecond}, persist)
 	if len(results) != 3 {
 		t.Fatalf("want 3 results, got %d", len(results))
 	}
-	if persistCalls != 3 {
-		t.Fatalf("want persist called 3 times, got %d", persistCalls)
+	if got := persistCalls.Load(); got != 3 {
+		t.Fatalf("want persist called 3 times, got %d", got)
 	}
 	for _, r := range results {
 		if r.Healthy {
