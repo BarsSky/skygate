@@ -5017,6 +5017,73 @@ in the same commit. Don't let the tracker drift.
       prefs (a71, emilia, skygate-host-1) get flagged
       as "manual cleanup required" on each tick — the
       operator can now see what's stale.
+  - **B237.10 (v1.5.2+, 2026-09-04) — Auto-update
+    pathspec bug fix**. Closes the 2026-09-04 live
+    bug on the operator's VM (skygate running on
+    commit `e2d0b9e`, between v1.5.0-alpha1 and
+    v1.5.0): the "Push update" form on /admin/update
+    has no `target` field, so it falls back to
+    `target = s.BuildVersion`. For an untagged-commit
+    deploy, `git describe --tags --always` returns
+    just the short SHA (no tag ancestor near the
+    commit), so `version = e2d0b9e` and `BuildVersion
+    = "e2d0b9e" + "+" + "e2d0b9e" = "e2d0b9e+e2d0b9e"`
+    (commit hash twice — the duplicate-commit pattern
+    from main.go's `version + "+" + commit` concat,
+    which only adds `+<commit>` when `version` has no
+    "-g" suffix). The `normalizeUpdateTarget` helper
+    then prepends "v" (because the input has no
+    "v"/"skygate-"/"main"/"HEAD" prefix), producing
+    `"ve2d0b9e+e2d0b9e"` — a string that can never
+    be a valid git ref (the "v" is a display
+    convention, the "+" is invalid in a git pathspec).
+    `git checkout ve2d0b9e+e2d0b9e` errors with
+    `pathspec 've2d0b9e+e2d0b9e' did not match any
+    file(s) known to git`, the orchestrator rolls
+    back, and the auto-update is silently broken. The
+    "Apply" button (which posts a tagged release like
+    `v1.5.0`) was unaffected because release tags
+    don't have the `+<commit>` suffix — so this bug
+    only manifests on the manual "Push update" path
+    between releases.
+    **B237.10 fix** introduces a single conversion
+    point `update.GitRefForBuildLabel(s)` that:
+    1. Strips the `+<commit>` suffix (the only
+       transformation that's always required — `+`
+       is the ONE character that's always invalid in
+       a git pathspec).
+    2. Strips a leading `v` only when the remainder
+       is a pure hex SHA (so legitimate `v1.5.0`
+       semver tags are untouched). The isAllHex
+       check (the dot in `1.5.0` is not hex) is the
+       key safety property.
+    Both `PostAdminUpdateApply` and
+    `PostAdminUpdatePush` pass
+    `update.GitRefForBuildLabel(target)` to the
+    orchestrator; the orchestrator ALSO calls
+    `GitRefForBuildLabel` on its end as
+    defense-in-depth (so a future caller that forgets
+    to pre-process still gets a valid git pathspec).
+    Display `target` stays untouched (page + audit +
+    log show the human-readable form, the operator's
+    mental model is preserved). 15 subtests in
+    `TestGitRefForBuildLabel` cover every historical
+    build-label shape + the live regression case
+    (`ve2d0b9e+e2d0b9e` → `e2d0b9e`).
+    `TestGitRefForBuildLabel_NeverPlusOrSpace` is
+    an exhaustive safety net: for every input, the
+    result must not contain `+` or ` ` (both
+    invalid in a git pathspec). `TestIsAllHex` pins
+    the `v<hex>` vs `v<semver>` case distinction.
+    **Verified** (agent 192.168.13.69):
+    - `bash scripts/check_b237_10.sh` → 19/19 pass
+    - `go test -count=1 -short ./internal/update/...`
+      → 31 tests pass (15 GitRefForBuildLabel +
+      15 IsAllHex + 1 NeverPlusOrSpace + 8 existing
+      ShortSHA)
+    - `go test -count=1 -short ./...` → 43
+      packages green (no regression)
+    - `go build ./...` → clean
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

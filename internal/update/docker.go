@@ -208,7 +208,23 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 		u.failWithRollback(ctx, fmt.Errorf("git fetch: %w", err), backupTag)
 		return
 	}
-	if err := u.runGit(ctx, "checkout", target); err != nil {
+	// 2026-09-04 (B237.10): the `target` arg may carry
+	// the BuildVersion's "+<commit>" suffix (e.g.
+	// "ve2d0b9e+e2d0b9e" for an untagged-commit deploy
+	// where `git describe --tags --always` returns just
+	// the short SHA). The `+` is invalid in a git
+	// pathspec, so `git checkout` would error with
+	// "pathspec did not match any file(s) known to
+	// git". GitRefForBuildLabel strips the "+<commit>"
+	// (and any stale "v" prefix added by
+	// normalizeUpdateTarget) so the ref is always a
+	// valid git pathspec. Callers in feature/admin/update.go
+	// already pre-process, but we re-process here as
+	// defense-in-depth — `git checkout` failing for an
+	// invalid pathspec is the LAST thing we want to
+	// debug from a state file.
+	gitRef := GitRefForBuildLabel(target)
+	if err := u.runGit(ctx, "checkout", gitRef); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("git checkout: %w", err), backupTag)
 		return
 	}
@@ -730,6 +746,97 @@ func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration)
 		}
 	}
 }
+
+// GitRefForBuildLabel converts a build label / display
+// target into a valid git ref that can be passed to
+// `git checkout` (or any other `git <ref>` command).
+//
+// The build label has THREE historical shapes, all of which
+// must round-trip through this helper without breaking:
+//
+//  1. Tagged release:    "v1.5.0"
+//     → "v1.5.0"          (valid tag, no transformation)
+//
+//  2. Describe-style:    "v1.5.0-3-gabc1234"  (git describe
+//                        on a commit N ahead of v1.5.0)
+//     → "v1.5.0-3-gabc1234"  (valid pseudo-tag, no transform)
+//
+//  3. Describe + dup:    "v1.5.0-3-gabc1234+abc1234"
+//     → "v1.5.0-3-gabc1234"  (strip the "+<commit>" suffix
+//                             added by main.go's BuildVersion
+//                             concatenation when `version`
+//                             already contains "-g<hex>")
+//
+//  4. Plain tag + commit: "v1.5.0+abc1234"
+//     → "v1.5.0"            (strip the "+<commit>")
+//
+//  5. Untagged build (operator live, 2026-09-04):
+//     "e2d0b9e+e2d0b9e"  — no tag ancestor near the commit,
+//     `git describe --tags --always` returns just the short
+//     SHA, so `version = e2d0b9e` and the main.go concat
+//     produces "<sha>+<sha>". The `+` is not a valid
+//     character in a git pathspec, so `git checkout e2d0b9e
+//     +e2d0b9e` errors with "pathspec did not match any
+//     file(s) known to git".
+//     → "e2d0b9e"           (strip the "+<commit>" and the
+//                             stale "v" prefix that
+//                             normalizeUpdateTarget may have
+//                             added — see below)
+//
+//  6. After normalizeUpdateTarget prepends "v":
+//     "ve2d0b9e+e2d0b9e"   — the normalizeUpdateTarget helper
+//     adds a "v" prefix to bare inputs that don't look like
+//     a ref (no "v" / "skygate-" / "main" / "HEAD" prefix).
+//     "e2d0b9e+e2d0b9e" doesn't start with "v", so
+//     normalize makes it "ve2d0b9e+e2d0b9e" — a string that
+//     can never be a valid git ref (the "v" is just a display
+//     convention).
+//     → "e2d0b9e"           (the leading "v" is stripped only
+//                             when the remainder is a pure hex
+//                             SHA, NOT a semver like "1.5.0")
+//
+// The "+<commit>" strip is the critical part — `+` is the
+// one character that always makes a git pathspec invalid,
+// and BuildVersion's concatenation is the only path that
+// produces it. The leading-"v" strip is a defense-in-depth
+// for the normalizeUpdateTarget + BuildVersion interaction
+// (the form posts `target=ve2d0b9e+e2d0b9e` because the
+// "Push update" form has no `target` field and falls back
+// to `target = s.BuildVersion` after normalize).
+//
+// The isAllHex check is the key: "v1.5.0" → "1.5.0" is
+// NOT all-hex (dot is not hex), so we keep the "v" and
+// "v1.5.0" passes through unchanged. "ve2d0b9e" →
+// "e2d0b9e" IS all-hex, so we strip the "v". This means
+// the helper is safe to call on any display string —
+// legitimate semver tags are untouched, and the two broken
+// patterns (5 + 6) get cleanly reduced to a plain SHA.
+func GitRefForBuildLabel(s string) string {
+	if s == "" {
+		return s
+	}
+	// Step 1: strip the "+<commit>" suffix. This is the
+	// only transformation that's ALWAYS required (any
+	// remaining "+" makes the ref invalid as a pathspec).
+	if i := strings.Index(s, "+"); i >= 0 {
+		s = s[:i]
+	}
+	// Step 2: defense-in-depth — if what remains looks
+	// like a "v<hex>" (a short commit with a stray "v"
+	// prefix added by normalizeUpdateTarget), strip the
+	// "v" so we end up with a plain SHA that git
+	// checkout can resolve. We check the remainder is
+	// pure hex (no dots, no dashes) so legitimate
+	// semver tags like "v1.5.0" are NOT affected.
+	if len(s) > 1 && s[0] == 'v' && isAllHex(s[1:]) {
+		s = s[1:]
+	}
+	return s
+}
+
+// isAllHex is defined in checker.go (same package) and
+// reused here. The signature is identical — both files
+// can call it freely.
 
 // shortSHA returns the first 8 hex chars of a build label
 // (e.g. "v0.28.6-21-ge3ce6f0+e3ce6f0" → "e3ce6f0"). Used

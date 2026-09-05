@@ -45,6 +45,140 @@ func TestShortSHA(t *testing.T) {
 	}
 }
 
+// TestGitRefForBuildLabel pins the contract that the
+// build label → git ref conversion produces a valid
+// git pathspec, regardless of which historical shape the
+// label has. The 2026-09-04 live bug was that the
+// "Push update" form posts a target of
+// "ve2d0b9e+e2d0b9e" (BuildVersion for an untagged-
+// commit deploy) which `git checkout` rejects because
+// "+" is not a valid pathspec character. This helper
+// is the single point that makes the conversion safe.
+//
+// Format coverage (matches the live cases + every
+// documented BuildVersion shape):
+//   "v1.5.0"                     → "v1.5.0"            (clean tag, untouched)
+//   "v1.5.0-3-gabc1234"          → "v1.5.0-3-gabc1234" (describe-style, untouched)
+//   "v1.5.0+abc1234"             → "v1.5.0"            (tag + commit, strip +...)
+//   "v1.5.0-3-gabc1234+abc1234"  → "v1.5.0-3-gabc1234" (describe + dup, strip +...)
+//   "e2d0b9e+e2d0b9e"            → "e2d0b9e"           (untagged deploy, strip +...)
+//   "ve2d0b9e+e2d0b9e"           → "e2d0b9e"           (operator live 2026-09-04, strip +... + v)
+//   "abc1234"                    → "abc1234"           (raw SHA, untouched)
+//   ""                           → ""                  (no-op)
+func TestGitRefForBuildLabel(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"clean-tag", "v1.5.0", "v1.5.0"},
+		{"describe-style", "v1.5.0-3-gabc1234", "v1.5.0-3-gabc1234"},
+		{"tag-plus-commit", "v1.5.0+abc1234", "v1.5.0"},
+		{"describe-plus-dup", "v1.5.0-3-gabc1234+abc1234", "v1.5.0-3-gabc1234"},
+		{"untagged-deploy", "e2d0b9e+e2d0b9e", "e2d0b9e"},
+		{"operator-live-2026-09-04", "ve2d0b9e+e2d0b9e", "e2d0b9e"},
+		{"raw-sha", "abc1234", "abc1234"},
+		{"empty", "", ""},
+		{"v-prefix-untagged-only", "ve2d0b9e", "e2d0b9e"},  // defense-in-depth: v + hex
+		{"v-prefix-semver-untouched", "v1.5.0", "v1.5.0"},  // semver: dot is not hex, keep v
+		{"prerelease-with-plus", "v2.0.0-beta.1+meta", "v2.0.0-beta.1"},
+		{"long-sha-untouched", "abcdef1234567890", "abcdef1234567890"},
+		{"uppercase-hex-with-v-stripped", "vABCDEF1", "ABCDEF1"}, // mixed-case hex IS hex → "v" stripped
+		{"v-prefix-untagged-no-plus", "ve2d0b9e", "e2d0b9e"},
+		// Regression: pre-B237.10 "ve2d0b9e+e2d0b9e" was a fatal
+		// "pathspec did not match" error. This test MUST pass.
+		{"regression-2026-09-04-live", "ve2d0b9e+e2d0b9e", "e2d0b9e"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := GitRefForBuildLabel(tc.input)
+			if got != tc.want {
+				t.Errorf("GitRefForBuildLabel(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+			// Defensive: the result must never contain a "+"
+			// (the only character that's guaranteed-invalid
+			// in a git pathspec). Any test case that produces
+			// a "+" in the result is a contract violation.
+			if strings.Contains(got, "+") {
+				t.Errorf("GitRefForBuildLabel(%q) = %q contains '+' — invalid git pathspec", tc.input, got)
+			}
+		})
+	}
+}
+
+// TestGitRefForBuildLabel_NeverPlusOrSpace — exhaustive
+// safety net: for every historical build-label shape the
+// orchestrator could encounter, the result must not
+// contain "+" or " " (both invalid in a git pathspec)
+// and must not be empty when the input is non-empty.
+func TestGitRefForBuildLabel_NeverPlusOrSpace(t *testing.T) {
+	inputs := []string{
+		"v1.5.0",
+		"v1.5.0-3-gabc1234",
+		"v1.5.0+abc1234",
+		"v1.5.0-3-gabc1234+abc1234",
+		"e2d0b9e+e2d0b9e",
+		"ve2d0b9e+e2d0b9e",
+		"abc1234",
+		"vabc1234",
+		"v0.33.1.42",
+		"v0.33.1.42-3-gdeadbeef",
+		"v0.33.1.42-3-gdeadbeef+deadbeef",
+		"0.33.1.42",
+		"skygate-pre-update-e2d0b9e",
+		"main",
+		"HEAD",
+	}
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			got := GitRefForBuildLabel(in)
+			if got == "" {
+				t.Errorf("GitRefForBuildLabel(%q) returned empty (ref must be non-empty for non-empty input)", in)
+			}
+			if strings.ContainsAny(got, "+ \t\n") {
+				t.Errorf("GitRefForBuildLabel(%q) = %q contains invalid pathspec character", in, got)
+			}
+		})
+	}
+}
+
+// TestIsAllHex pins the contract used by
+// GitRefForBuildLabel to decide whether to strip a
+// leading "v" — "v" + hex = "v<sha>" (strip), "v" +
+// non-hex = "v<semver>" (keep).
+//
+// Note: isAllHex returns true for the empty string
+// (vacuously — the for loop never executes). This is
+// fine for GitRefForBuildLabel because we have a
+// separate `if s == ""` guard at the top, so we never
+// call isAllHex("") in practice. The test pins the
+// existing behavior so a future refactor can't silently
+// change it.
+func TestIsAllHex(t *testing.T) {
+	cases := []struct {
+		input string
+		want  bool
+	}{
+		{"", true}, // vacuous: empty string passes the hex check
+		{"0", true},
+		{"abc1234", true},
+		{"ABCDEF1", true},
+		{"0123456789abcdefABCDEF", true},
+		{"xyz", false},
+		{"1.5.0", false},  // dot is not hex
+		{"abc-1234", false}, // dash is not hex
+		{"abc 1234", false}, // space is not hex
+		{"abc!", false},     // punctuation is not hex
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := isAllHex(tc.input); got != tc.want {
+				t.Errorf("isAllHex(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDetectHostOwner_EnvOverride pins the contract that
 // SKYGATE_HOST_OWNER env var overrides the auto-detection
 // (operator escape hatch for non-standard UID layouts).

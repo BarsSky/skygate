@@ -517,7 +517,22 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		switch installKind {
 		case update.InstallDocker:
 			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
-			u.Run(ctx, target)
+			// 2026-09-04 (B237.10): the `target` arg may
+			// carry the BuildVersion's "+<commit>" suffix
+			// (e.g. "ve2d0b9e+e2d0b9e" for an untagged-
+			// commit deploy where the "Push update" form
+			// has no `target` field and falls back to
+			// `target = s.BuildVersion`). The "+" is
+			// invalid in a git pathspec, so `git checkout`
+			// errors with "pathspec did not match any
+			// file(s) known to git" and the orchestrator
+			// rolls back without changing anything.
+			// GitRefForBuildLabel strips the "+<commit>"
+			// and any stale "v" prefix so the ref is a
+			// valid git pathspec. The display `target`
+			// above stays untouched (page + audit + log
+			// show the human-readable form).
+			u.Run(ctx, update.GitRefForBuildLabel(target))
 		default:
 			// Systemd / bare: not yet implemented. The
 			// failure path is "PhaseFailed with manual
@@ -634,7 +649,13 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 		switch installKind {
 		case update.InstallDocker:
 			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
-			u.Run(ctx, target)
+			// 2026-09-04 (B237.10): see PostAdminUpdateApply
+			// for the rationale — `target` may carry a
+			// "+<commit>" suffix that breaks `git checkout`.
+			// GitRefForBuildLabel converts the display
+			// target to a valid git ref while leaving the
+			// display / audit / log strings untouched.
+			u.Run(ctx, update.GitRefForBuildLabel(target))
 		default:
 			store.Log(update.LogError, "auto-updater for "+installKind.String()+" not yet implemented; see manual steps below")
 			store.Fail(fmt.Errorf("auto-updater for %s not yet implemented (v0.29.0 Phase 2 covers Docker only)", installKind))

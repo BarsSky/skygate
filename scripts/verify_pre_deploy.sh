@@ -3720,6 +3720,48 @@ run_check "B237.7" "Build-time contract for the preferred-exit auto-reconciler. 
 # B-check contracts in scripts/check_b237_2.sh.
 run_check "B237.2" "Correct Public IP on /admin/derp. Closes the 'shows 172.18.0.3 instead of the real public IP' gap. New resolvePublicDERPIP() uses net.LookupHost of the derper's hostname (the DNS A record IS the public IP). Sources: SKYGATE_DERP_HOSTNAME env var → derper status page TLS hostname → last-resort detectEgressIP(). WhiteIPSource field records which source was used ('dns:env' / 'dns:derper' / 'egress') for the template annotation. Placeholder 'derp.example.com' is explicitly skipped. 4 unit tests + 17 B-check contracts in scripts/check_b237_2.sh." \
   'test -f scripts/check_b237_2.sh && bash scripts/check_b237_2.sh'
+# --- B237.10: auto-update pathspec bug fix ---
+# Closes the 2026-09-04 live bug on the operator's VM: the
+# "Push update" form has no target field, so it falls back to
+# `target = s.BuildVersion`. For an untagged-commit deploy
+# (commit `e2d0b9e` is between v1.5.0-alpha1 and v1.5.0),
+# `git describe --tags --always` returns just the short SHA,
+# and `BuildVersion = "e2d0b9e" + "+" + "e2d0b9e" =
+# "e2d0b9e+e2d0b9e"`. After `normalizeUpdateTarget` prepends
+# "v" (because the input has no "v"/"skygate-"/"main"/"HEAD"
+# prefix), the target becomes "ve2d0b9e+e2d0b9e" — a string
+# that can never be a valid git ref. `git checkout
+# ve2d0b9e+e2d0b9e` errors with "pathspec did not match any
+# file(s) known to git", the orchestrator rolls back, and the
+# auto-update is silently broken. The "Apply" button (which
+# posts a tagged release like v1.5.0) was unaffected because
+# release tags don't have the "+<commit>" suffix.
+#
+# B237.10 fix introduces a single conversion point
+# `update.GitRefForBuildLabel(s)` that strips the "+<commit>"
+# suffix (the only character that's always invalid in a git
+# pathspec) and a leading "v" only when the remainder is a
+# pure hex SHA (so legitimate "v1.5.0" semver tags are
+# untouched). Both `PostAdminUpdateApply` and
+# `PostAdminUpdatePush` pass `update.GitRefForBuildLabel(target)`
+# to the orchestrator; the orchestrator also calls it on its
+# end as defense-in-depth (so a future caller that forgets to
+# pre-process still gets a valid git pathspec). Display
+# `target` stays untouched (page + audit + log show the
+# human-readable form, the operator's mental model is
+# preserved).
+#
+# 15 subtests in TestGitRefForBuildLabel cover every
+# historical build-label shape + the live regression case
+# ("ve2d0b9e+e2d0b9e" → "e2d0b9e"). TestIsAllHex pins the
+# "v<hex>" vs "v<semver>" case distinction (the dot in
+# "1.5.0" is the key — not hex → "v" kept).
+# TestGitRefForBuildLabel_NeverPlusOrSpace is an exhaustive
+# safety net: for every historical shape, the result must
+# not contain "+" or " " (both invalid in a git pathspec).
+# 19 B-check contracts in scripts/check_b237_10.sh.
+run_check "B237.10" "Auto-update pathspec bug fix. Closes the 2026-09-04 live bug where the 'Push update' form posts 've2d0b9e+e2d0b9e' (BuildVersion for an untagged-commit deploy + normalizeUpdateTarget's v-prepend) and `git checkout` errors with 'pathspec did not match any file(s) known to git' because '+' is invalid in a git pathspec. New `update.GitRefForBuildLabel(s)` strips the '+<commit>' suffix and a leading 'v' only when the remainder is a pure hex SHA. Both `PostAdminUpdateApply` and `PostAdminUpdatePush` pass `update.GitRefForBuildLabel(target)` to the orchestrator; the orchestrator also re-processes on its end as defense-in-depth. Display target stays untouched (page + audit + log show the human-readable form). 15 subtests in TestGitRefForBuildLabel + 15 cases in TestIsAllHex + 15 inputs in TestGitRefForBuildLabel_NeverPlusOrSpace + the regression-2026-09-04-live subtest pinning the live fix. 19 B-check contracts in scripts/check_b237_10.sh." \
+  'test -f scripts/check_b237_10.sh && bash scripts/check_b237_10.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host
