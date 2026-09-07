@@ -1,0 +1,39 @@
+[Unit]
+Description=Skygate — cleanup smoke.sh test artifacts
+Documentation=https://github.com/BarsSky/skygate
+# We don't need network-online.target (psql connects to a
+# local socket). Just basic-syslog so the journal captures
+# stdout/stderr.
+After=basic.target
+# If postgres is in a docker container, wait for the docker
+# service to be up. Local postgres: After=postgresql.service
+# (operator uncomment if not using docker-compose).
+# After=docker.service
+[Service]
+Type=oneshot
+# The script itself uses sudo -u postgres psql — it must run
+# as a user that's allowed to sudo to postgres. skyadmin is
+# the canonical operator-side user (matches the deploy/
+# scripts + the systemd unit at deploy/install-{debian,rh}.sh).
+User=skyadmin
+# WorkingDirectory must point at the source tree so the
+# relative path scripts/cleanup_smoke_artifacts.sh resolves.
+# /home/skyadmin/skygate is the canonical install path
+# (set via SKYGATE_HOST_REPO_PATH in the B237 install scripts).
+WorkingDirectory=/home/skyadmin/skygate
+ExecStart=/home/skyadmin/skygate/scripts/cleanup_smoke_artifacts.sh
+# Don't restart on failure. The next timer tick will try
+# again; if the DB is genuinely down, a restart-loop will
+# just spam the journal without making progress.
+Restart=no
+# Stdout/stderr go to the journal (journalctl -u
+# skymate-cleanup-smoke.service). No log file by default
+# (matches the other skygate systemd units which use
+# StandardOutput=journal + StandardError=journal).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=skygate-cleanup
+# Hard cap on runtime: 5 minutes. The actual script takes
+# <1s for typical DB sizes (a few dozen rows); the cap is
+# just defense-in-depth against a hung psql connection.
+TimeoutStartSec=300

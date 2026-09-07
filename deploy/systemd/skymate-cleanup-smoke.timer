@@ -1,0 +1,22 @@
+[Unit]
+Description=Skygate — daily smoke.sh artifact cleanup
+Documentation=https://github.com/BarsSky/skygate
+[Timer]
+# Run once a day at 04:00 local time. The exact minute
+# doesn't matter (the script is idempotent and the DB
+# size is bounded) but 04:00 is past the typical
+# operator's last smoke.sh run and well before the next
+# morning's traffic.
+OnCalendar=*-*-* 04:00:00
+# Add 1-5 minutes of random jitter so multiple skygate
+# hosts on the same fleet don't all hit the DB at
+# exactly 04:00:00. (Mostly relevant for HA setups;
+# single-host deploys get the same 4:00-4:05 window
+# every day.)
+RandomizedDelaySec=300
+# If the host was off at the scheduled time, run as
+# soon as it boots up (within 5 minutes). Catches the
+# "VM rebooted overnight" case.
+Persistent=true
+[Install]
+WantedBy=timers.target

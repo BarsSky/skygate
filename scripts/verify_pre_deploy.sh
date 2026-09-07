@@ -3806,6 +3806,28 @@ run_check "B237.15" "Deployment variants. Adds 5 deploy surfaces beyond the orig
 # 10 B-check contracts in scripts/check_b237_16.sh.
 run_check "B237.16" "TD-2 + TD-14 staticcheck contract. Fixes 2 numeric-status-code stragglers (tags_test.go:66 had 404, e2e_test.go:399 had 302 — both now use http.StatusXxx constants) and pins the contract via 10 B-checks (manual greps for http.Error/WriteHeader/Redirect with numeric codes, plus a staticcheck-driven SA1012/ST1013 check when the tool is on PATH, plus sanity checks that the canonical constants are still in use). 10 B-check contracts in scripts/check_b237_16.sh." \
   'test -f scripts/check_b237_16.sh && bash scripts/check_b237_16.sh'
+# --- B237.17: TD-9 smoke-artifact daily cleanup ---
+# Closes the "smoke.sh leaves smoke_mesh_<pid> users +
+# smoke-mesh-<pid> meshes in the live DB on a failed run"
+# accumulation. Pre-B237.17 the only path was: re-run
+# smoke.sh to completion (which re-runs step 13.8
+# cleanup) or the operator manually DELETE'd rows via
+# psql. A failed/interrupted smoke.sh run left 2 rows
+# per incident, accumulating over weeks.
+# B237.17 fix:
+#   - scripts/cleanup_smoke_artifacts.sh — idempotent
+#     daily script: BEGIN/COMMIT around the deletes
+#     (CASCADE handles mesh_members + per-user dependents),
+#     24h grace window (don't kill in-flight smoke.sh
+#     runs), 24h-N row audit row, sudo -u postgres psql
+#     (matches clear_test_dsn.sh:36 pattern)
+#   - deploy/systemd/skymate-cleanup-smoke.service +
+#     .timer — Type=oneshot, daily 04:00, RandomizedDelaySec
+#     300 (avoids fleet-wide thundering herd on HA),
+#     Persistent=true (catches up after VM reboot)
+#   - 16 B-check contracts in scripts/check_b237_17.sh
+run_check "B237.17" "TD-9 smoke-artifact daily cleanup. Closes the smoke.sh artifact accumulation by adding scripts/cleanup_smoke_artifacts.sh (idempotent daily script: BEGIN/COMMIT + CASCADE + 24h grace window + audit_log row) + deploy/systemd/skymate-cleanup-smoke.{service,timer} (Type=oneshot, daily 04:00 with RandomizedDelaySec 300 + Persistent=true). 16 B-check contracts in scripts/check_b237_17.sh (file inventory + bash syntax + the canonical sudo -u postgres psql pattern matching clear_test_dsn.sh + the 24h grace window + audit row + systemd Type/OnCalendar/RandomizedDelaySec/Persistent)." \
+  'test -f scripts/check_b237_17.sh && bash scripts/check_b237_17.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

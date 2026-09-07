@@ -5226,6 +5226,67 @@ in the same commit. Don't let the tracker drift.
     doesn't touch PLANS.md because that's a
     separate documentation update (operator can
     flip the status when they review).
+  - **B237.17 (v1.5.2+, 2026-09-07) — TD-9
+    smoke-artifact daily cleanup**. Closes the
+    "smoke.sh leaves smoke_mesh_<pid> users +
+    smoke-mesh-<pid> meshes in the live DB on a
+    failed run" accumulation. Pre-B237.17 the
+    only path was: re-run smoke.sh to completion
+    (which re-runs step 13.8 cleanup) OR the
+    operator manually DELETE'd rows via psql. A
+    failed/interrupted smoke.sh run left 2 rows
+    per incident, accumulating over weeks.
+    **B237.17 fix**:
+    - `scripts/cleanup_smoke_artifacts.sh` —
+      idempotent daily script. BEGIN/COMMIT
+      around the deletes (the CASCADE on the
+      meshes table handles mesh_members; the
+      CASCADE on portal_users handles devices,
+      preauth_keys, exit_rules, audit rows for
+      that user). 24h grace window so an
+      in-flight smoke.sh run is NOT killed
+      (smoke.sh takes ~10s typical, but 24h
+      covers VM pauses + overnight runs). 24h-N
+      row audit row written (action=
+      smoke_artifacts_purge) so the operator
+      can see "when did the last cleanup
+      happen" via /admin/audit. Uses
+      `sudo -u postgres psql -d skygate_staging`
+      (the canonical operator-side pattern,
+      matches `clear_test_dsn.sh:36` from
+      B207-fix).
+    - `deploy/systemd/skymate-cleanup-smoke.service` +
+      `.timer` — Type=oneshot, daily at 04:00
+      local, RandomizedDelaySec=300 (avoids
+      fleet-wide thundering herd on HA
+      setups), Persistent=true (catches up if
+      the VM was off at 04:00). Service runs as
+      `skyadmin` user, WorkingDirectory=
+      `/home/skyadmin/skygate`, ExecStart= the
+      script (no sudo prefix; the script does
+      its own sudo to postgres). TimeoutStartSec=
+      300 as defense-in-depth against a hung
+      psql connection (typical runtime: <1s
+      for a few dozen rows).
+    **Verified** (local):
+    - `bash scripts/check_b237_17.sh` → 16/16
+      pass (file inventory + bash syntax + the
+      canonical sudo -u postgres psql pattern
+      matching clear_test_dsn.sh + the 24h grace
+      window + audit row + systemd
+      Type/OnCalendar/RandomizedDelaySec/Persistent)
+    - `bash -n scripts/cleanup_smoke_artifacts.sh`
+      → clean
+    - `go build ./...` → clean (no Go changes)
+    **Live-verify pending**: the operator
+    needs to `systemctl enable --now
+    skymate-cleanup-smoke.timer` on the live VM
+    (one command). The first daily tick at
+    04:00 will log to `journalctl -u
+    skymate-cleanup-smoke`. Idempotent so even
+    a manual first-run (`bash
+    scripts/cleanup_smoke_artifacts.sh`) is
+    safe.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

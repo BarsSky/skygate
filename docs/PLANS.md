@@ -280,15 +280,28 @@ work has been moved to TD-14 below.
   adds a "history" tab
 
 **[TD-9] Subnet-router `cleanup_smoke_artifacts` periodic**
-- **Status:** DONE-ONCE; needs a cron
-- **Effort:** ~30 min
-- **Scope:** add a daily cron on the VM that runs
-  `scripts/cleanup_smoke_artifacts.sh` (or equivalent)
-  to prevent smoke-mesh test data from accumulating in
-  the live DB
-- **Why medium:** low priority — the operator's manual
-  cleanup in v0.33.1.36 already removed the historical
-  30 rows; ongoing accumulation is slow
+- **Status:** DONE in **B237.17** (v1.5.2+, commit TBD).
+  `scripts/cleanup_smoke_artifacts.sh` — idempotent
+  daily script. `sudo -u postgres psql -d skygate_staging`
+  (canonical operator-side pattern, matches
+  `clear_test_dsn.sh:36` from B207-fix). BEGIN/COMMIT
+  around the deletes (CASCADE handles mesh_members on
+  the meshes table + devices/preauth_keys/exit_rules
+  on the portal_users side). 24h grace window so an
+  in-flight smoke.sh run is NOT killed. 24h-N row
+  audit row written (`action=smoke_artifacts_purge`).
+  `deploy/systemd/skymate-cleanup-smoke.{service,timer}` —
+  Type=oneshot, daily at 04:00 local, RandomizedDelaySec
+  300 (avoids fleet-wide thundering herd on HA),
+  Persistent=true (catches up after VM reboot). The
+  service runs as `skyadmin`, WorkingDirectory=
+  `/home/skyadmin/skygate`, ExecStart= the script.
+  16-contract B-check in `scripts/check_b237_17.sh`.
+- **Effort:** DONE (was ~30 min; actual was about the same)
+- **Scope:** DONE — `bash scripts/check_b237_17.sh` → 16/16 pass
+- **Why medium:** DONE (operator enables the timer with
+  `systemctl enable --now skymate-cleanup-smoke.timer` —
+  one command, then the daily tick runs the cleanup)
 
 ### LOW priority — nice to have
 
