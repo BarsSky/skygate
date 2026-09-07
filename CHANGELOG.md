@@ -27,6 +27,115 @@ B237.2 (correct Public IP display via DNS lookup), B237.7
 See [RELEASE-NOTES-v1.5.0.md](RELEASE-NOTES-v1.5.0.md) for
 the full post-mortem + verification checklist.
 
+## [v1.5.2] — 2026-09-07
+
+Hotfix release on top of v1.5.0. No new features; 1
+BL-2 phase closed (Phase 2: B146); 1 live bug fixed
+(B237.10 — auto-update pathspec); 1 UX bug fixed
+(B237.19 — exit-rules form errors); 1 hotfix
+(B237.15 — deployment variants for ghcr / podman /
+systemd / Windows); 3 LOW-priority tech-debt items
+closed (TD-2 / TD-9 / TD-10). All fixes are
+backward-compatible.
+
+See [RELEASE-NOTES-v1.5.2.md](RELEASE-NOTES-v1.5.2.md)
+for the full per-B-block detail + file list +
+live-verify checklist.
+
+### Fixed
+
+- **Auto-update "Push update" form** (B237.10): the
+  pre-fix code did `git checkout <BuildVersion>` which
+  contained the `+` character (invalid in git
+  pathspec) and failed silently with a rollback. The
+  new `update.GitRefForBuildLabel(s)` helper strips
+  the `+<commit>` suffix + a leading `v` when the
+  remainder is a pure hex SHA, so legitimate `v1.5.0`
+  semver tags pass through unchanged.
+- **`/my/exit-rules` form validation** (B237.19):
+  the pre-fix `PostMyExitRule` called `http.Error(w,
+  ..., 400)` on validation failures which rendered a
+  giant plain-text page and lost the form values.
+  The new `buildFormErrorRedirectURL` helper +
+  `?err=<msg>&form_*` redirect preserves the form
+  values + renders the error as a flash banner.
+- **Duplicate banner wording** (B237.19): changed
+  from `alert-danger` (red, "delete to update") to
+  `alert-info` (blue, "autoupdater handles it"). The
+  operator was reading the banner as "the new rule
+  failed" when in reality the new rule was never
+  created (it was the old `/32` from the first add).
+- **TD-2 (numeric status codes) + TD-14 (SA1012
+  false-positives) cleanup** (B237.16): closes the
+  last 2 stragglers of the v1.2.0 work
+  (`internal/headscale/tags_test.go:66` had `404`
+  and `internal/oidc/e2e_test.go:399` had `302`;
+  both now use `http.StatusXxx` constants).
+  `staticcheck ./...` reports 0 ST1013 + 0 SA1012.
+  Also fixes the stale `s.DB` → `s.dbc()` lookups
+  in `scripts/check_b140.sh` and
+  `scripts/check_b141.sh`.
+- **TD-9 (smoke.sh artifact accumulation) cleanup**
+  (B237.17): new `scripts/cleanup_smoke_artifacts.sh`
+  + `deploy/systemd/skymate-cleanup-smoke.{service,timer}`
+  (daily 04:00, `RandomizedDelaySec=300`,
+  `Persistent=true`). 24h grace window so in-flight
+  smoke.sh runs are NOT killed. Audit row written.
+  Belt-and-suspenders to the in-app B143 scheduler.
+
+### Added
+
+- **TD-10 (stale `headscale_user_id` reconciliation
+  cron)** (B237.18): new `internal/headscale/reconcile.go`
+  with 4 outcomes (ok / linked / relinked / orphan).
+  **NEVER** auto-deletes portal_users rows; orphan
+  outcomes write an audit row + leave the ID alone.
+  In-app cron via `StartReconcileCron(ctx, db, hs,
+  interval)` with `sync.Once` guard. Default 1h
+  interval (`SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL`).
+  Disabled via
+  `SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED=false`
+  for air-gapped installs.
+- **Deployment variants (V1–V8)** (B237.15): 5 new
+  deploy surfaces beyond the original in-container-
+  build compose:
+  - `docker-compose.ghcr.yml` (full setup, pulls
+    `ghcr.io/BarsSky/skygate:v1.5.0`, no in-container
+    build).
+  - `docker-compose.lite.yml` (sky-only, no
+    headscale/DERP/headplane/`docker.sock` —
+    smallest possible attack surface).
+  - `deploy/install.sh` + `install-{debian,rh,alpine,bare}.sh`
+    (autodetect single-file + per-OS scripts with
+    systemd/OpenRC support).
+  - `deploy/Setup-Skygate-Win.ps1` (PowerShell 5.1+,
+    `New-Service` + REG_MULTI_SZ env).
+  - `.github/workflows/release.yml` (on tag push:
+    ghcr image + Go binary tarballs for
+    linux/darwin × amd64/arm64 + windows-amd64 +
+    SHA256SUMS + GitHub Release).
+  - `Dockerfile.prebuilt` (multi-stage, alpine
+    runtime + prebuilt Go binary baked in, ~30 MB
+    image, ~2s first start).
+- **Phase 2 reg.ru DNS live test** (B146): new
+  `scripts/b146_regapi_live.sh` (bash + curl + Python
+  parser) that productionizes the working auth
+  pattern confirmed against the live reg.ru API on
+  2026-08-18 (top-level form fields + mTLS cert,
+  password NOT inside `input_data` JSON). Handles
+  the 4 known 2026-08-18 failure modes (NO_AUTH +
+  ACCESS_DENIED_FROM_IP + DOMAIN_NOT_FOUND + generic
+  ERROR) with actionable error messages. The live
+  test itself is NOT in the verify-pre catalog
+  (requires the operator's cert + key + creds in
+  env); the operator runs it directly on the live
+  VM to verify end-to-end.
+- **README "Deployment variants" section**: 5 new
+  variants (ghcr / lite / podman / systemd /
+  Windows) + "Upgrading" table.
+
+
+
 ### Added
 
 - **HA chain + elector + pluggable DNS provider** (B145).

@@ -48,15 +48,22 @@ bad() { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 
 # A.1 no `http.Error(..., <num>)` calls anywhere in the source
 # (matches 3-digit numeric literals in the http.Error call
-# signature; excludes doc strings + PLANS.md which describe
-# the cleanup itself)
+# signature; excludes doc strings + comments that mention
+# http.Error in passing — we filter to lines that don't start
+# with // and don't contain "called http.Error" or "pre-fix" etc.)
 n_st1013_error=$(grep -rE 'http\.Error\([^)]*,\s*[^,]+,\s*[0-9]{3}\)' \
-    --include='*.go' . 2>/dev/null | wc -l)
+    --include='*.go' . 2>/dev/null \
+    | grep -vE '^\s*//' \
+    | grep -vE 'Pre-fix|pre-fix|called http\.Error' \
+    | wc -l)
 if [ "$n_st1013_error" -eq 0 ]; then
     ok "A.1 no http.Error(..., <num>) calls (TD-2 contract: 0 occurrences)"
 else
     bad "A.1 found $n_st1013_error http.Error calls with numeric status codes (should use http.StatusXxx constants)"
-    grep -rnE 'http\.Error\([^)]*,\s*[^,]+,\s*[0-9]{3}\)' --include='*.go' . 2>/dev/null | head -5
+    grep -rnE 'http\.Error\([^)]*,\s*[^,]+,\s*[0-9]{3}\)' --include='*.go' . 2>/dev/null \
+        | grep -vE '^\s*//' \
+        | grep -vE 'Pre-fix|pre-fix|called http\.Error' \
+        | head -5
 fi
 
 # A.2 no `http.Redirect(..., <num>)` calls anywhere in the source
