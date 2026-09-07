@@ -5567,6 +5567,64 @@ in the same commit. Don't let the tracker drift.
     `//nolint:staticcheck` first and it didn't take
     (the warnings persisted); switching to
     `//lint:ignore U1000 <reason>` resolved them.
+  - **B237.21 (v1.5.2+, 2026-09-07) — `skygate
+    regapi-credentials` CLI subcommand**. Closes the
+    "only path to set reg.ru creds is the /admin/ha
+    form" gap. Pre-B237.21 the operator's one-shot
+    bootstrap flow (clone repo → start skygate →
+    set creds → run B146 live test) required a
+    browser session to log in to /admin/ha. B237.21
+    adds 4 CLI verbs that mirror the form's behavior
+    end-to-end:
+    1. **`set`** — write creds encrypted with
+       `SKYGATE_SECRET_KEY` + stored in
+       `global_settings` (via `extcreds.Store.Save`).
+       Supports `--password-file=<path>` for safer
+       shell history (chmod 0600 the file instead
+       of leaking the password via `ps` / `history`).
+    2. **`show`** — print current creds with the
+       password masked (`maskSecret` helper — first 2
+       + last 2 chars visible, the rest as `*`) and
+       the cert PEM summarized (byte count only — the
+       cert IS a secret).
+    3. **`test`** — call `extcreds.Store.TestConnection`
+       (the same code path the /admin/ha "Test" button
+       uses). Sanity check before running
+       `scripts/b146_regapi_live.sh` so a misconfigured
+       creds set gives an actionable error early
+       (instead of the less-actionable "live test
+       failed" error from the curl-based test).
+    4. **`delete`** — explicit clear of the 5
+       `global_settings` rows (for the cert-rotation
+       case where the operator wants to start fresh).
+       Idempotent; requires `--yes` to confirm.
+    The CLI uses the SAME `extcreds.Store` as the
+    /admin/ha form — single source of truth. New
+    `db.DeleteGlobalSetting` helper + `Store.Delete()`
+    method (B237.21 prerequisites). New test file
+    `cmd/skygate/regapi_credentials_test.go` with 6
+    unit tests (`TestMaskSecret_Short` +
+    `TestMaskSecret_Long` + `TestCertSummary` +
+    `TestEnvOr` + `TestRunRegAPICredsSubcommand_UnknownVerb`
+    + `TestRunRegAPICredsSubcommand_MissingVerb`).
+    15 B-check contracts in
+    `scripts/check_b237_21.sh`.
+    **Live-verify pending** (operator-side):
+    ```
+    skygate regapi-credentials set \
+        --login=kanagaenko@mail.ru \
+        --password='<alternative password>' \
+        --zone=skynas.ru \
+        --cert-path=/home/skyadmin/skygate-secrets/regapi/cert.pem
+    skygate regapi-credentials test
+    bash scripts/b146_regapi_live.sh
+    ```
+    The `set` should print "regapi-credentials set:
+    ok (provider=external login=... zone=...,
+    cert=1399 bytes, secret key: 64 chars)".
+    The `test` should print "regapi-credentials test:
+    PASS (latency=N ms)" with no `result.Status` of
+    `auth_error` or `network_error`.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

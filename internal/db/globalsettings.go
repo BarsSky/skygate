@@ -116,6 +116,23 @@ func SetGlobalSettingTx(tx *sql.Tx, key, value string) error {
 	return setGlobalSetting(qTx{tx}, key, value)
 }
 
+// DeleteGlobalSetting removes the row for the given key.
+// 2026-09-07 (B237.21): added for the regapi-credentials
+// `delete` subcommand. The pre-fix operator-side path was
+// to manually `DELETE FROM global_settings WHERE key = ...`
+// via psql (error-prone — wrong key name = silent no-op).
+// A typed helper + a `skygate regapi-credentials delete`
+// CLI subcommand is the same UX as SetGlobalSetting has.
+// If the row doesn't exist, this is a no-op (DELETE
+// returns 0 rows affected, which is not an error).
+func DeleteGlobalSetting(d *sql.DB, key string) error {
+	_, err := d.Exec(`DELETE FROM global_settings WHERE key = $1`, key)
+	if err != nil {
+		return fmt.Errorf("db: delete global setting %q: %w", key, err)
+	}
+	return nil
+}
+
 func setGlobalSetting(q Querier, key, value string) error {
 	_, err := q.Exec(`
 		INSERT INTO global_settings (key, value, updated_at)

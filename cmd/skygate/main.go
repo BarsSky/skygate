@@ -271,6 +271,21 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "regapi-credentials":
+			// B237.21 (v1.5.2+) — CLI mirror of the
+			// /admin/ha "External DNS" form. Pre-B237.21
+			// the only path to set the reg.ru creds was
+			// the web form, which blocks the operator's
+			// "one-shot bootstrap" flow (clone repo →
+			// start skygate → set creds via CLI → run
+			// b146_regapi_live.sh). The dispatcher
+			// handles 4 verbs: set / show / test / delete.
+			// Full per-verb docs in regapi_credentials.go.
+			if err := runRegAPICredsSubcommand(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
+				os.Exit(1)
+			}
+			return
 		case "migrate-only":
 			// Open the DB (which runs all pending
 			// migrations as part of Open() per the
@@ -365,6 +380,7 @@ func main() {
 			fmt.Println("  backup-show-config      print backup-related config as key=value pairs")
 			fmt.Println("  cleanup-smoke-meshes    delete smoke-mesh cruft (B143) — one-shot manual trigger")
 			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
+			fmt.Println("  regapi-credentials     External DNS provider creds: set / show / test / delete (B237.21)")
 			fmt.Println("  init [verb]             cluster bootstrap CLI: bootstrap / status / standby-invite (B211)")
 			fmt.Println("  join [verb]             cluster join CLI: <token> / status (B212 — DSN bootstrap + next-steps)")
 			fmt.Println("  migrate [verb]          in-DB schema migration CLI: up / status (B213); 'down' is a stub")

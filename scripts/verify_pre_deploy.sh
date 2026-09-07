@@ -3952,6 +3952,29 @@ run_check "B237.19" "Exit-rules form-error flash + duplicate banner UX. Fixes 2 
 # (down from 23 pre-fix).
 run_check "B237.20" "TD-12 + TD-13 staticcheck-100%-clean. Removes the last 23 staticcheck warnings: 3 outright deletions (queryReachable in database.go, mu sync.Mutex field on Elector, mu sync.Mutex field on stubDriver), 19 //lint:ignore U1000 directives on test stubs that satisfy interface contracts (database/sql/driver, http.ResponseWriter, B210.1 type alias), 1 S1021 fix (var/assignment merge in dbmigrate/ssh_transport.go:279). staticcheck ./... reports 0 issues (down from 23 pre-fix). 9 B-check contracts in scripts/check_b237_20.sh (staticcheck reports 0 + 19 //lint:ignore directives in the right files + 3 deletions + build clean + 3 affected packages still pass + verify_pre_deploy.sh + AGENTS.md)." \
   'test -f scripts/check_b237_20.sh && bash scripts/check_b237_20.sh'
+# --- B237.21: skygate regapi-credentials CLI subcommand ---
+# Closes the "only path to set reg.ru creds is the
+# /admin/ha form" gap. Pre-B237.21 the operator's
+# one-shot bootstrap flow (clone repo → start skygate →
+# set creds → run B146 live test) required a browser
+# session to log in to /admin/ha. B237.21 adds 4 CLI
+# verbs (set / show / test / delete) that mirror the
+# form's behavior end-to-end:
+#   - set: write creds (encrypted with SKYGATE_SECRET_KEY
+#          + stored in global_settings). Supports
+#          --password-file= for safer shell history.
+#   - show: print current creds with the secrets masked.
+#   - test: in-app TestConnection call (sanity check
+#          before running scripts/b146_regapi_live.sh).
+#   - delete: explicit clear of the 5 global_settings
+#            rows (for the cert-rotation case).
+# The CLI uses the SAME extcreds.Store as the /admin/ha
+# form — single source of truth. New
+# db.DeleteGlobalSetting helper + Store.Delete() method
+# (B237.21 prerequisites).
+# 15 B-check contracts in scripts/check_b237_21.sh.
+run_check "B237.21" "skygate regapi-credentials CLI subcommand. Adds 4 CLI verbs (set / show / test / delete) that mirror the /admin/ha External DNS form end-to-end, closing the 'only path to set reg.ru creds is the web form' gap. The set verb writes creds encrypted with SKYGATE_SECRET_KEY + stored in global_settings; supports --password-file= for safer shell history. The show verb masks secrets (maskSecret helper). The test verb is the in-app TestConnection call (sanity check before the B146 live test). The delete verb is explicit clear of the 5 global_settings rows. New db.DeleteGlobalSetting helper + Store.Delete() method. 15 B-check contracts in scripts/check_b237_21.sh (source: 4-verb dispatcher + Store.Delete + DeleteGlobalSetting; wire-up: main.go case + help text; security: password masked + cert PEM not printed + password-file support; tests: 6 unit tests + build clean; registration: verify_pre_deploy.sh + AGENTS.md)." \
+  'test -f scripts/check_b237_21.sh && bash scripts/check_b237_21.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

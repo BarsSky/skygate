@@ -220,6 +220,30 @@ func (s *Store) Load() (Credentials, error) {
 	}, nil
 }
 
+// Delete clears the 5 global_settings rows that hold
+// the credentials. 2026-09-07 (B237.21): added for
+// the regapi-credentials `delete` CLI subcommand.
+//
+// Idempotent: a no-op if the rows don't exist (e.g.
+// the operator runs `delete` twice). Returns the FIRST
+// error (if any) — we don't aggregate, because a
+// partial delete is a state the operator should see
+// immediately (not have to wait for the loop to finish).
+//
+// The 5 rows are NOT deleted in a single transaction
+// because the 5 keys are independent (the failure modes
+// are orthogonal — see Save's comment for the same
+// reasoning).
+func (s *Store) Delete() error {
+	keys := []string{ProviderKey, LoginKey, ZoneKey, CertPEMKey, PasswordKey}
+	for _, k := range keys {
+		if err := db.DeleteGlobalSetting(s.DB, k); err != nil {
+			return fmt.Errorf("dnsexternal: delete %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
 // IsConfigured returns true if the credentials look
 // complete enough for a TestConnection to be attempted
 // (cert PEM + password both present + zone set). Used by
