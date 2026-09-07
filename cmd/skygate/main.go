@@ -447,6 +447,52 @@ func main() {
 		log.Printf("warn: ensure headscale user: %v", err)
 	}
 
+	// B237.18 (closes TD-10) — headscale_user_id
+	// reconciliation cron. 1h interval (configurable
+	// via SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL;
+	// 0 = use the package default). Detects 4
+	// outcomes per portal_users row: ok (link still
+	// valid), linked (was NULL/0, found by username
+	// in headscale → updated), relinked (had a stale
+	// ID, found by username → updated), orphan
+	// (had an ID, neither the ID nor the username
+	// exists in headscale → audit row, no auto-delete).
+	// Disabled by setting
+	// SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED=false
+	// (air-gapped installs where headscale is
+	// unreachable).
+	//
+	// Why AFTER ensureHeadscaleUser: the reconciliation
+	// reads from headscale, so the headscale client
+	// must exist. The local `hs` variable holds the
+	// shared client; we pass it directly to the cron.
+	//
+	// Why we don't just use app.HSGlobalFn(): the cron
+	// runs in a background goroutine that survives
+	// across the (rare) v0.12.0+ per-user headscale
+	// swap. app.HSGlobalFn() is the right hook for
+	// request-scoped code (it always returns the
+	// CURRENT headscale), but the cron captures a
+	// reference at startup. For the 1h interval this
+	// is fine — if the operator swaps headscale, the
+	// next reconcile cycle uses the new config via a
+	// skygate restart. If we wanted true hot-reload,
+	// we'd wrap the cron in a similar closure as the
+	// derphealth probe (which reads from a config
+	// struct per tick). That's a future B-block.
+	if cfg.ReconcileHeadscaleUsers {
+		if err := headscale.StartReconcileCron(
+			context.Background(),
+			d.DB,
+			hs,
+			cfg.ReconcileHeadscaleUsersInterval,
+		); err != nil {
+			log.Printf("reconcile cron: %v (continuing without background reconciliation)", err)
+		}
+	} else {
+		log.Printf("reconcile cron: disabled (SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED=false)")
+	}
+
 	// 2026-08-10: v0.33.1.41 — Issue 4 technical user.
 	// Provision the 'infra' headscale user and link to the
 	// portal_users row that V054 created. Idempotent (V054

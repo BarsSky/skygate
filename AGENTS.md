@@ -5287,6 +5287,87 @@ in the same commit. Don't let the tracker drift.
     a manual first-run (`bash
     scripts/cleanup_smoke_artifacts.sh`) is
     safe.
+  - **B237.18 (v1.5.2+, 2026-09-07) — TD-10
+    headscale_user_id reconciliation**. Closes the
+    "portal_users.headscale_user_id goes stale after
+    a headscale delete+recreate" gap. Pre-B237.18
+    the only path to detect a stale ID was: notice
+    a rule pointing at a no-op (Tailscale silently
+    treats the user as missing, the rule doesn't
+    fire, the operator notices when the device
+    "doesn't get the right exit node") + run psql
+    + UPDATE by hand. A delete+recreate in headscale
+    left the portal_users row pointing at a dead
+    ID indefinitely.
+    **B237.18 fix**:
+    - `internal/headscale/reconcile.go` — the
+      per-row reconciliation function with 4
+      outcomes (ok / linked / relinked / orphan).
+      **NEVER** auto-deletes portal_users rows;
+      orphan outcomes write an audit row +
+      leave the ID alone for the operator to
+      review (this is the most important
+      contract — D.5 in the B-check enforces
+      it). Per-row transactions; a single bad
+      row doesn't poison the cycle.
+    - `internal/headscale/reconcile_cron.go` —
+      the `StartReconcileCron(ctx, db, hs, interval)`
+      + `RunOnceNow(ctx, db, hs)` entry points.
+      Default 1h interval (configurable via
+      `SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL`;
+      0 = use the package default). `sync.Once`
+      guard prevents double-spawn on concurrent
+      main.go + page-triggered starts. Same
+      pattern as `derphealth.StartCron` (B189).
+    - `internal/config/config.go` — adds
+      `ReconcileHeadscaleUsers` (bool, default
+      true) + `ReconcileHeadscaleUsersInterval`
+      (time.Duration, default 0 → use package
+      default). The "default ON" choice mirrors
+      the v1.5.0 plan's "do the right thing
+      by default" principle — the operator who
+      DOESN'T want reconciliation can opt out
+      with `SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED=false`
+      (air-gapped installs where headscale is
+      unreachable).
+    - `cmd/skygate/main.go` — wires the cron
+      AFTER `headscale.New(...)` + AFTER
+      `ensureHeadscaleUser(...)` so the headscale
+      client exists AND the admin user is in
+      headscale by the time the first tick
+      runs. Gated on `cfg.ReconcileHeadscaleUsers`.
+    - `internal/headscale/reconcile_test.go` —
+      10 pure-Go unit tests (sentinel errors,
+      JSON outcome stability, default interval
+      pin, int64 parsing edge cases). No DB
+      needed for the unit tests; integration
+      tests against a live PG would be in a
+      separate file (per the b188_3 pattern).
+    **Verified** (local):
+    - `bash scripts/check_b237_18.sh` → 17/17
+      pass (file inventory + ReconcileUsers
+      signature + the 4 outcome constants + the
+      NEVER-DELETE guard + the sync.Once cron
+      guard + config fields + main.go wire-up
+      + 10 unit tests + verify_pre_deploy.sh +
+      AGENTS.md + PLANS.md + go build clean)
+    - `go test -count=1 -short ./internal/headscale/...`
+      → 10 unit tests pass, no failures
+    - `go build ./...` → clean
+    **Live-verify pending**: the cron runs
+    once on startup + every 1h. The operator
+    should see "reconcile: cron enabled
+    (interval=1h, ...)" in the skygate log
+    after the next deploy. First cycle log:
+    "reconcile: <N> portal_users checked
+    (hs_users=<M>, ok=<X>, linked=<Y>,
+    relinked=<Z>, orphans=<W>, errors=0,
+    took=...)". The `/admin/audit` page should
+    show the summary `headscale_user_reconcile`
+    row + the per-row relinked/orphan rows.
+    The /admin/headscale page (when wired in a
+    follow-up B-block) will have a "Reconcile
+    now" button that calls `RunOnceNow`.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

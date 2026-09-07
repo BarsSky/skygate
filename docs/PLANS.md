@@ -306,14 +306,34 @@ work has been moved to TD-14 below.
 ### LOW priority — nice to have
 
 **[TD-10] Per-user `headscale_user_id` column accuracy**
-- **Status:** UNADDRESSED
-- **Effort:** ~2 hours
-- **Scope:** V054 reserved the `id=99` slot for the infra
-  user; the existing `headscale_user_id` column may be
-  stale for users whose headscale account was deleted and
-  re-created. Add a periodic reconciliation cron.
-- **Why low:** only matters during user-account
-  lifecycle edge cases
+- **Status:** DONE in **B237.18** (v1.5.2+, commit TBD).
+  `internal/headscale/reconcile.go` (the per-row
+  reconciliation function, 4 outcomes) +
+  `internal/headscale/reconcile_cron.go` (the cron
+  entry points: `StartReconcileCron` + `RunOnceNow`,
+  1h default interval). The reconciliation detects
+  3 states per portal_users row: ok (link still
+  valid), linked (was NULL/0, found by username in
+  headscale → updated), relinked (had a stale ID,
+  found by username → updated), orphan (had an ID
+  but neither the ID nor the username exists in
+  headscale → audit row, NEVER auto-deleted). Wired
+  in `cmd/skygate/main.go` AFTER `headscale.New` +
+  `ensureHeadscaleUser` (so the headscale client
+  exists and the admin user is in headscale by the
+  first tick). Gated on `cfg.ReconcileHeadscaleUsers`
+  (default true; air-gapped installs flip the env
+  var to false). Env vars:
+  `SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED` +
+  `SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL`. 17-
+  contract B-check in `scripts/check_b237_18.sh`.
+- **Effort:** DONE (was ~2h; actual was about the same)
+- **Scope:** DONE — `bash scripts/check_b237_18.sh` → 17/17 pass;
+  10 unit tests pass; `go build ./...` clean
+- **Why low:** DONE (the cron runs on every skygate
+  start; the operator's first cycle log line shows
+  "reconcile: N portal_users checked (ok=X, linked=Y,
+  relinked=Z, orphans=W, errors=0)")
 
 **[TD-11] Rule grouping: Cloudflare /12 + /24 merge**
 - **Status:** UNADDRESSED

@@ -3828,6 +3828,36 @@ run_check "B237.16" "TD-2 + TD-14 staticcheck contract. Fixes 2 numeric-status-c
 #   - 16 B-check contracts in scripts/check_b237_17.sh
 run_check "B237.17" "TD-9 smoke-artifact daily cleanup. Closes the smoke.sh artifact accumulation by adding scripts/cleanup_smoke_artifacts.sh (idempotent daily script: BEGIN/COMMIT + CASCADE + 24h grace window + audit_log row) + deploy/systemd/skymate-cleanup-smoke.{service,timer} (Type=oneshot, daily 04:00 with RandomizedDelaySec 300 + Persistent=true). 16 B-check contracts in scripts/check_b237_17.sh (file inventory + bash syntax + the canonical sudo -u postgres psql pattern matching clear_test_dsn.sh + the 24h grace window + audit row + systemd Type/OnCalendar/RandomizedDelaySec/Persistent)." \
   'test -f scripts/check_b237_17.sh && bash scripts/check_b237_17.sh'
+# --- B237.18: TD-10 headscale_user_id reconciliation ---
+# Closes the "portal_users.headscale_user_id goes stale
+# after a headscale delete+recreate" gap. Pre-B237.18 the
+# only path to detect a stale ID was: notice a rule pointing
+# at a no-op + run psql + UPDATE by hand. A delete+recreate
+# in headscale left the portal_users row pointing at a
+# dead ID indefinitely. B237.18 fix:
+#   - internal/headscale/reconcile.go — the per-row
+#     reconciliation function with 4 outcomes
+#     (ok/linked/relinked/orphan). NEVER auto-deletes
+#     portal_users rows; orphan outcomes write an audit
+#     row + leave the ID alone for the operator to review.
+#   - internal/headscale/reconcile_cron.go — the
+#     StartReconcileCron / RunOnceNow entry points
+#     (derphealth/cron.go pattern: sync.Once guard +
+#     1h default interval).
+#   - internal/config/config.go — adds
+#     ReconcileHeadscaleUsers + ReconcileHeadscaleUsersInterval
+#     (env vars SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED
+#     + SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL).
+#   - cmd/skygate/main.go — wires the cron after the
+#     headscale client is created + after
+#     ensureHeadscaleUser (so the admin user is in
+#     headscale by the time the first tick runs).
+#   - internal/headscale/reconcile_test.go — 10 pure-Go
+#     unit tests (sentinel errors, JSON outcome stability,
+#     default interval, int64 parsing edge cases).
+# 17 B-check contracts in scripts/check_b237_18.sh.
+run_check "B237.18" "TD-10 headscale_user_id reconciliation. Closes the stale-headscale_user_id gap by adding an in-app cron that runs every 1h (configurable via SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL) and reconciles each portal_users row against the live headscale user list. 4 outcomes: ok (link still valid) / linked (was NULL/0, found by username → updated) / relinked (had stale ID, found by username → updated) / orphan (had an ID, neither ID nor username exists in headscale → audit row, NEVER auto-deleted). Disabled via SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED=false for air-gapped installs. 17 B-check contracts in scripts/check_b237_18.sh (file inventory + ReconcileUsers signature + the 4 outcome constants + the NEVER-DELETE guard + the sync.Once cron guard + config fields + main.go wire-up + 10 unit tests + verify_pre_deploy.sh + AGENTS.md + PLANS.md)." \
+  'test -f scripts/check_b237_18.sh && bash scripts/check_b237_18.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

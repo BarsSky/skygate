@@ -404,6 +404,21 @@ type Config struct {
 	HASelfRoleOverride        HARole
 	HAOnTransition            func(from, to string, memberName string) // optional, set in main.go
 	DNSProvider               string
+	// 2026-09-07 (B237.18, closes TD-10) — periodic
+	// reconciliation of portal_users.headscale_user_id
+	// against the live headscale user list. Default ON
+	// (the operator wants stale IDs detected without
+	// opt-in; air-gapped installs that can't reach
+	// headscale can flip the env var to false — the
+	// cron becomes a no-op and /admin/headscale's
+	// "Reconcile now" button still works for an
+	// explicit attempt). Interval default = 1h
+	// (DefaultReconcileInterval in the headscale
+	// package). Changing the default changes the
+	// operator's stale-id window — see the B-check
+	// for the pin.
+	ReconcileHeadscaleUsers       bool
+	ReconcileHeadscaleUsersInterval time.Duration
 	GitHubToken         string
 	// 2026-08-17 (B124) — DevBuild marks the running binary
 	// as a dev/edge build. The /admin/update page shows a
@@ -684,6 +699,16 @@ func Load() (*Config, error) {
 		// promotion risk during the ramp-up.
 		HAEnabled:                 getenv("SKYGATE_HA_ENABLED", "false") == "true",
 		HAHeartbeatInterval:       getDuration("SKYGATE_HA_HEARTBEAT_INTERVAL", 5*time.Second),
+		// 2026-09-07 (B237.18) — see the field
+		// comment above for the rationale. The 0
+		// sentinel for the interval triggers the
+		// package's own default (1h), so the
+		// operator can opt into "use the package
+		// default" by simply not setting the env
+		// var. We document this in the env-var
+		// table in AGENTS.md.
+		ReconcileHeadscaleUsers:       getenv("SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED", "true") == "true",
+		ReconcileHeadscaleUsersInterval: getDuration("SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL", 0),
 		HAMissedThreshold:         getInt("SKYGATE_HA_MISSED_THRESHOLD", 3),
 		HASelfRoleOverride:        HARole(getenv("SKYGATE_HA_ROLE", "auto")),
 		DNSProvider:               getenv("SKYGATE_DNS_PROVIDER", ""),
