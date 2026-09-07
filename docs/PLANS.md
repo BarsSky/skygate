@@ -336,15 +336,48 @@ work has been moved to TD-14 below.
   relinked=Z, orphans=W, errors=0)")
 
 **[TD-11] Rule grouping: Cloudflare /12 + /24 merge**
-- **Status:** UNADDRESSED
-- **Effort:** ~1 day
-- **Scope:** the current rule storage has one row per
-  `/32` (or `/24`) per domain. For a domain with 16
-  Cloudflare anycast IPs, that's 16 rows per device. A
-  merge pass would group them under the parent domain
-  and store the count.
-- **Why low:** cosmetic; the /admin/exit-rules page
-  paginates so the volume is manageable
+- **Status:** DONE in **B237.22** (v1.5.2+, 2026-09-07) via
+  Approach G (UI-only). The pre-B237.22 `/my/exit-rules` +
+  `/admin/exit-rules` pages showed all 15 per-CIDR rows
+  for a Cloudflare-backed domain as a flat list — correct
+  but visually noisy (live data 2026-08: 46/151 = 30% of
+  device_rules rows are CDN-derivable from 5 distinct
+  parent_domains). Approach G groups them at the VIEW
+  LAYER under a collapsible `<details>` header showing
+  Source + CDN badge + "X диапазонов" count; the
+  per-CIDR rows stay individually editable (each keeps
+  its own remove button + audit log entry). Storage
+  unchanged: no migration, no schema change, no
+  autoupdate change, no SyncAdvertisedRoutes change.
+  Natural key (user_id, device_id, exit_node_id,
+  target_type, target_value) preserved.
+- **Why low (resolved):** the visual noise was the
+  cosmetic complaint; with the grouping it's now
+  manageable. The 15-row list collapses to a 1-row
+  header for the operator, while power users can still
+  expand to see the per-CIDR details.
+- **Decision rationale (Approach G chosen over A-F):**
+  - "не наложит ли это ограничения на текущую работу
+    правил и доступа" — Approach B (storage grouping)
+    would lose the ability to lock specific CIDR / block
+    specific Cloudflare ranges.
+  - "ресур cloudflare может быть залочен как и любой
+    другой внешний ресурс" — per-CIDR rows MUST stay
+    individually editable.
+  - "нужны именно правила на конкретный ресурс делать
+    полный проброс не надо - ломает всю логику" — each
+    row = specific CIDR, not opaque marker.
+- **Files:**
+  `internal/feature/exit_rules/cdn_group.go` (helpers
+  + my-side struct), `cdn_group_admin.go` (admin-side
+  struct), `internal/feature/exit_rules/form_my.go`
+  + `form_admin.go` (wire-up),
+  `internal/handlers/templates/exit_rules.html` +
+  `admin/exit_rules.html` (UI),
+  `internal/i18n/catalog_exit_rules.go` (1 new key
+  `exit_rules.cdn_group_count` RU+EN).
+  32-contract B-check in
+  `scripts/check_b237_22.sh`.
 
 **[TD-12] 30 ST1013-style noise items**
 - **Status:** DONE in **B237.20** (v1.5.2+). The actual

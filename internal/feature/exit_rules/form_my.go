@@ -284,6 +284,71 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		groupedByHostname[hn][r.ExitNodeID] = append(groupedByHostname[hn][r.ExitNodeID], r)
 	}
 
+	// 2026-09-07: B237.22 / TD-11 (Approach G) — UI-only
+	// CDN-grouping. Each (host, exitNode) tuple's rules are
+	// pre-grouped into CDN groups (parent_domain markers) +
+	// ungrouped (manual) rules. The template iterates this
+	// instead of the raw []db.DeviceRule slice. See
+	// cdn_group.go + cdn_group_test.go for the helper.
+	//
+	// Why a parallel structure instead of changing
+	// groupedByHostname's value type: form_my.go's iteration
+	// ordering is sensitive (the count badge on the
+	// exitNode-level <details> reads `len $rules`). The
+	// CDN-grouped view also needs to know the per-group
+	// rule count separately, so a parallel structure with
+	// the same (host, exitNode) key is cleaner than
+	// overloading the existing one.
+	groupedByHostnameCDN := map[string]map[string]CDNDisplayView{}
+	for hn, byExit := range groupedByHostname {
+		groupedByHostnameCDN[hn] = map[string]CDNDisplayView{}
+		for exitNode, rulesForTuple := range byExit {
+			// Convert db.DeviceRule → RuleRow (the
+			// projection cdn_group.go operates on). All
+			// fields the my-template reads (ID,
+			// TargetType, TargetValue, ParentDomain,
+			// Action) are in RuleRow.
+			rows := make([]RuleRow, len(rulesForTuple))
+			for i, r := range rulesForTuple {
+				rows[i] = RuleRow{
+					ID:           int64(r.ID),
+					UserID:       int64(r.UserID),
+					DeviceID:     r.DeviceID,
+					ExitNode:     r.ExitNodeID,
+					TargetType:   r.TargetType,
+					TargetValue:  r.TargetValue,
+					ParentDomain: r.ParentDomain,
+					Action:       r.Action,
+				}
+			}
+			groups, ungrouped := GroupRulesByCDN(rows)
+			items := make([]CDNDisplayItem, 0, len(groups)+1)
+			totalCount := 0
+			for _, g := range groups {
+				items = append(items, CDNDisplayItem{
+					IsCDNGroup: true,
+					Source:     g.Source,
+					CDN:        g.CDN,
+					Count:      g.Count,
+					Rules:      g.Rules,
+				})
+				totalCount += g.Count
+			}
+			if len(ungrouped) > 0 {
+				items = append(items, CDNDisplayItem{
+					IsCDNGroup: false,
+					Count:      len(ungrouped),
+					Rules:      ungrouped,
+				})
+				totalCount += len(ungrouped)
+			}
+			groupedByHostnameCDN[hn][exitNode] = CDNDisplayView{
+				Items:      items,
+				TotalCount: totalCount,
+			}
+		}
+	}
+
 	// Total rules count (all enabled)
 	totalRules := 0
 	maxTotal := 0
@@ -507,6 +572,14 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"DeviceNames":       deviceNames,
 		"Grouped":           grouped,
 		"GroupedByHostname": groupedByHostname,
+		// 2026-09-07: B237.22 / TD-11 — UI-only CDN-grouped
+		// view. Same shape as GroupedByHostname but each
+		// (host, exitNode) value is []CDNDisplayItem
+		// instead of []db.DeviceRule. The template iterates
+		// this and renders CDN groups as <details>
+		// headers + the per-CIDR rows underneath. Storage
+		// is unchanged; only the view layer is affected.
+		"GroupedByHostnameCDN": groupedByHostnameCDN,
 		// 2026-08-25 (B182): per-rule headscale-state status
 		// for the three-state ✅/⏳/⚠️ badge. See the
 		// for-loop above for the four possible values.

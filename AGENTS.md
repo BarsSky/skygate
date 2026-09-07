@@ -5609,6 +5609,138 @@ in the same commit. Don't let the tracker drift.
     + `TestRunRegAPICredsSubcommand_MissingVerb`).
     15 B-check contracts in
     `scripts/check_b237_21.sh`.
+  - **B237.22 (v1.5.2+, 2026-09-07) — UI-only CDN
+    grouping on `/my/exit-rules` + `/admin/exit-rules`
+    (TD-11 / Approach G)**. Closes the
+    "noisy 15-row-per-Cloudflare-domain list" gap.
+    Live data (2026-08): **46 of 151 device_rules rows
+    (30%) are CDN-derivable from 5 distinct
+    parent_domains** (Cloudflare: discordapp.com,
+    production.cloudflare.docker.com; Google: youtube.com,
+    gcr.io; Akamai: agent.minimax.io). Pre-B237.22 the
+    `/my/exit-rules` + `/admin/exit-rules` pages showed
+    all 15 per-CIDR rows as a flat list — correct but
+    visually noisy. Approach G (UI-only) was chosen over
+    Approaches A-F (storage / migration / autoupdate
+    changes) for the operator's hard reasons:
+    - "не наложит ли это ограничения на текущую работу
+      правил и доступа" — Approach B (storage grouping)
+      would lose the ability to lock specific CIDR /
+      block specific Cloudflare ranges.
+    - "ресур cloudflare может быть залочен как и любой
+      другой внешний ресурс" — per-CIDR rows MUST remain
+      individually editable (each row keeps its own
+      remove button + audit log entry).
+    - "нужны именно правила на конкретный ресурс делать
+      полный проброс не надо - ломает всю логику" — each
+      row = specific CIDR, not opaque marker.
+    - "каждый пользователь будет иметь свое к конкретному
+      устройству и exit node не пересикаясь с другими" —
+      natural key (user_id, device_id, exit_node_id,
+      target_type, target_value) is unchanged (each user
+      keeps isolated access per (device, exit_node)).
+    **What B237.22 changes**: only the view layer. New
+    helpers in `cdn_group.go` (`GroupRulesByCDN` +
+    `IsCDNGroupMarker` + `ParseCDNGroupMarker` +
+    `CDNDisplayItem` + `CDNDisplayView`) and
+    `cdn_group_admin.go` (parallel admin-side with
+    `GroupAdminRulesByCDN` + `CDNDisplayItemAdmin` +
+    `CDNDisplayViewAdmin`). `form_my.go` + `form_admin.go`
+    pass the CDN-grouped view to the templates. Templates
+    iterate `CDNDisplayView.Items`; each `IsCDNGroup=true`
+    item renders a collapsible `<details>` header with
+    Source + CDN badge + "X диапазонов" count + the
+    per-CIDR rows underneath. Ungrouped rules render as a
+    flat table (same per-rule markup).
+    **What B237.22 does NOT change** (the hard
+    constraints):
+    - **No storage change**: each rule is still a
+      separate row in `device_rules`. The grouping is
+      purely a view-layer concern.
+    - **No migration**: zero schema changes, zero data
+      backfill. The pre-B237.22 DB is identical to the
+      post-B237.22 DB.
+    - **No autoupdate change**: `cdn.go` (the
+      autoupdater that inserts per-CIDR rules when a
+      domain is on a known CDN) is untouched. The
+      same 15 CIDRs go into the same `device_rules`
+      rows.
+    - **No SyncAdvertisedRoutes change**: headscale
+      still gets the same ACL.
+    - **No "remove all 15" button**: each CIDR stays
+      individually deletable. The operator must
+      intentionally remove each CIDR they don't want
+      (no bulk delete that would erase exceptions).
+    - **No "edit the grouped rule" form**: there is no
+      such concept (the rows are independent).
+    - **No filter / search change**: existing
+      `applyFilter()` JS works on the rendered `<tr>`s
+      regardless of which table they came from.
+    **Unit tests** (15 total):
+    - `cdn_group_test.go` (9 tests): `TestIsCDNGroupMarker`
+      (11 sub-cases — pre-fix 3 were wrong about
+      case-sensitivity), `TestParseCDNGroupMarker`
+      (10 sub-cases), `TestGroupRulesByCDN_Empty`,
+      `TestGroupRulesByCDN_AllUngrouped`,
+      `TestGroupRulesByCDN_SingleGroup`,
+      `TestGroupRulesByCDN_MultipleGroups` (pre-fix
+      expected sort by CDN, actual sorts by Source —
+      fixed), `TestGroupRulesByCDN_Mixed`,
+      `TestGroupRulesByCDN_MultipleCDNs` (same-Source
+      tiebreaker test — fixed by adding secondary sort
+      by CDN), `TestGroupRulesByCDN_OrderIndependence`.
+    - `cdn_group_admin_test.go` (6 tests): all
+      admin-side cases + a `TestGroupAdminRulesByCDN_PreservesAnnotations`
+      regression that pins the B178/B182/B184
+      annotation fields (Applicable,
+      ApprovedInHeadscale, PreferredHost) are preserved
+      through the grouping.
+    **i18n** (RU + EN):
+    - `exit_rules.cdn_group_count` — "X диапазонов" /
+      "X ranges" (the per-group badge text).
+    **B-check**: 32 contracts in
+    `scripts/check_b237_22.sh`:
+    - A. source contract: cdn_group.go + cdn_group_admin.go
+      + 4 helpers + 4 structs
+    - B. wire-up contract: form_my + form_admin pass the
+      view; NodesCDN field in devNodeGroup
+    - C. template contract: 2 surfaces iterate + branch
+      on IsCDNGroup; TotalCount used for the per-(host,
+      exitNode) badge
+    - D. storage UNCHANGED contract: cdn_group.go +
+      cdn_group_admin.go header pins UI-only / no
+      migration; no cdn_group column in db migrations;
+      cdn.go autoupdate logic preserved
+    - E. tests contract: 9 + 6 tests present, all pass
+    - F. i18n contract: cdn_group_count with %d
+      placeholder in both RU and EN
+    - G. registration contract: AGENTS.md + docs/PLANS.md
+      mention B237.22
+    - H. verify_pre_deploy.sh includes check_b237_22
+    - I. build + vet + staticcheck clean for the new
+      files
+    **Live-verify pending** (operator-side, on
+    192.168.13.69):
+    ```
+    # 1. /my/exit-rules — should show 5 CDN groups
+    #    collapsed + 1 ungrouped-rules section.
+    #    Each group renders as <details> with the
+    #    "X диапазонов" badge.
+    curl -b cookies.txt https://skygate.skynas.ru/my/exit-rules
+    # 2. /admin/exit-rules — same pattern across all
+    #    users/devices.
+    # 3. Confirm the per-(host, exitNode) "N rules" badge
+    #    shows the SAME count as pre-B237.22 (the
+    #    TotalCount pre-computation is correct).
+    ```
+    **Known remaining gap (NOT B237.22)**: nodes already
+    on the synthetic "tagged-devices" headscale user
+    with no live dev-tag are skipped by all 4 backfill
+    strategies (A/C/D/E — see B175) — operator must apply
+    the tag manually via `headscale nodes tag --force`
+    for legacy nodes; going forward, B175 + B176 cover
+    the new path. B237.22 is orthogonal: it groups
+    EXISTING per-CIDR rows for display, not the backfill.
     **Live-verify pending** (operator-side):
     ```
     skygate regapi-credentials set \

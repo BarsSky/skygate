@@ -242,6 +242,13 @@ var ruExitRules = map[string]string{
 	"cleanup_smoke.removed"             : "Удалено %d smoke-mesh строк",
 	"cleanup_smoke.no_rows"             : "Мусор не найден",
 	"cleanup_smoke.failed"              : "Очистка не удалась: %s",
+	// 2026-09-07 (B237.22 / TD-11): UI-only CDN-grouping
+	// for the rules list. The "X диапазонов" badge
+	// appears in the per-(host, exitNode) section header
+	// when one of the rules has a parent_domain marker
+	// (e.g. "cdn:cloudflare:discordapp.com"). See
+	// cdn_group.go for the grouping contract.
+	"exit_rules.cdn_group_count"        : "%d диапазонов",
 	"exit_rules_nodes.title"            : "Exit nodes (sync)",
 	"exit_rules_nodes.subtitle"         : "Sync advertised-routes на exit-узлах",
 	"exit_rules_nodes.sync"             : "Sync",
@@ -463,6 +470,9 @@ var enExitRules = map[string]string{
 	"cleanup_smoke.removed"             : "Removed %d smoke-mesh rows",
 	"cleanup_smoke.no_rows"             : "No cruft found",
 	"cleanup_smoke.failed"              : "Cleanup failed: %s",
+	// 2026-09-07 (B237.22 / TD-11): same key as RU — see
+	// the RU comment for the contract.
+	"exit_rules.cdn_group_count"        : "%d ranges",
 	"exit_rules_nodes.title"            : "Exit nodes (sync)",
 	"exit_rules_nodes.subtitle"         : "Sync advertised-routes to exit nodes",
 	"exit_rules_nodes.sync"             : "Sync",

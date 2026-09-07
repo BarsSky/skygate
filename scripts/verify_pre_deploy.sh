@@ -3975,6 +3975,24 @@ run_check "B237.20" "TD-12 + TD-13 staticcheck-100%-clean. Removes the last 23 s
 # 15 B-check contracts in scripts/check_b237_21.sh.
 run_check "B237.21" "skygate regapi-credentials CLI subcommand. Adds 4 CLI verbs (set / show / test / delete) that mirror the /admin/ha External DNS form end-to-end, closing the 'only path to set reg.ru creds is the web form' gap. The set verb writes creds encrypted with SKYGATE_SECRET_KEY + stored in global_settings; supports --password-file= for safer shell history. The show verb masks secrets (maskSecret helper). The test verb is the in-app TestConnection call (sanity check before the B146 live test). The delete verb is explicit clear of the 5 global_settings rows. New db.DeleteGlobalSetting helper + Store.Delete() method. 15 B-check contracts in scripts/check_b237_21.sh (source: 4-verb dispatcher + Store.Delete + DeleteGlobalSetting; wire-up: main.go case + help text; security: password masked + cert PEM not printed + password-file support; tests: 6 unit tests + build clean; registration: verify_pre_deploy.sh + AGENTS.md)." \
   'test -f scripts/check_b237_21.sh && bash scripts/check_b237_21.sh'
+# --- B237.22: UI-only CDN grouping on /my/exit-rules + /admin/exit-rules (TD-11 / Approach G) ---
+# Closes the 'noisy 15-row-per-Cloudflare-domain list' gap.
+# Live data (2026-08): 46 of 151 device_rules rows (30%) are
+# CDN-derivable from 5 distinct parent_domains. Approach G
+# (UI-only, no storage change) chosen over A-F (storage
+# migration) because: (1) per-CIDR rows stay individually
+# editable (operator concern: 'ресур cloudflare может быть
+# залочен как и любой другой внешний ресурс'), (2) natural
+# key (user_id, device_id, exit_node_id, target_type,
+# target_value) is unchanged (each user keeps isolated
+# access), (3) zero migration risk. New helpers in
+# cdn_group.go (GroupRulesByCDN + IsCDNGroupMarker +
+# ParseCDNGroupMarker) and cdn_group_admin.go
+# (GroupAdminRulesByCDN). 14+6=20 unit tests. 1 new i18n key
+# (cdn_group_count) in RU+EN. 32 B-check contracts in
+# scripts/check_b237_22.sh.
+run_check "B237.22" "UI-only CDN grouping on /my/exit-rules + /admin/exit-rules (TD-11 / Approach G). Closes the 'noisy 15-row-per-Cloudflare-domain list' gap (live: 46/151 = 30% of rows are CDN-derivable from 5 distinct parent_domains). Approach G = UI-only grouping, NO storage change, NO migration, NO schema change, NO autoupdate change. Per-CIDR rows stay individually editable + auditable (operator's hard constraint: 'не наложит ли это ограничения на текущую работу правил и доступа ... нужны именно правила на конкретный ресурс делать полный проброс не надо - ломает всю логику'). New cdn_group.go (GroupRulesByCDN, IsCDNGroupMarker, ParseCDNGroupMarker, CDNDisplayItem, CDNDisplayView) + cdn_group_admin.go (parallel admin-side). form_my.go + form_admin.go pass the CDN-grouped view to the templates. Templates iterate CDNDisplayView.Items; each IsCDNGroup item renders a collapsible <details> header with Source + CDN badge + 'X диапазонов' count + the per-CIDR rows underneath. Ungrouped rules render as a flat table (same per-rule markup). 14 unit tests in cdn_group_test.go (6 PASS pre-fix + 3 fixes for case-insensitive prefix + sort by Source + secondary CDN sort) + 6 tests in cdn_group_admin_test.go (preserves B178/B182/B184 annotation fields). 1 new i18n key (exit_rules.cdn_group_count) in RU+EN. 32 B-check contracts in scripts/check_b237_22.sh (source: cdn_group.go + cdn_group_admin.go + 4 helpers + 4 structs; wire-up: form_my + form_admin + NodesCDN field; templates: 2 surfaces iterate + branch on IsCDNGroup; storage UNCHANGED contract; tests: 9 + 6 + passing; i18n: cdn_group_count with %d; AGENTS.md + PLANS.md mention; verify_pre_deploy.sh registration; build/vet/staticcheck clean)." \
+  'test -f scripts/check_b237_22.sh && bash scripts/check_b237_22.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

@@ -366,6 +366,15 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		DeviceName string
 		Count      int
 		Nodes      map[string][]AdminRule
+		// 2026-09-07: B237.22 / TD-11 (Approach G) —
+		// parallel CDN-grouped view. Same (exitNode) keys
+		// as Nodes, but the value is a CDNDisplayViewAdmin
+		// (CDN groups + ungrouped tail + pre-computed
+		// TotalCount). The admin template iterates
+		// NodesCDN to render the collapsible CDN-group
+		// headers. Storage unchanged; only the view layer
+		// is affected.
+		NodesCDN map[string]CDNDisplayViewAdmin
 	}
 	type userGroup struct {
 		UserCount  int
@@ -481,7 +490,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		}
 		dg, ok := ug.Devices[rule.DeviceID]
 		if !ok {
-			dg = devNodeGroup{DeviceName: rule.DeviceName, Nodes: map[string][]AdminRule{}}
+			dg = devNodeGroup{DeviceName: rule.DeviceName, Nodes: map[string][]AdminRule{}, NodesCDN: map[string]CDNDisplayViewAdmin{}}
 		}
 		dg.Nodes[rule.ExitNode] = append(dg.Nodes[rule.ExitNode], rule)
 		dg.Count++
@@ -492,6 +501,45 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 			ug.LoadPct = ug.UserCount * 100 / ug.UserLimit
 		}
 		groupedByUser[rule.UserName] = ug
+	}
+
+	// 2026-09-07: B237.22 / TD-11 — build the CDN-grouped
+	// view per (user, device, exitNode) tuple. Same
+	// shape as form_my.go's groupedByHostnameCDN. Iterates
+	// groupedByUser AFTER the main loop so we can
+	// process the per-exitNode slice in one Group call.
+	for userName, ug := range groupedByUser {
+		for devID, dg := range ug.Devices {
+			for exitNode, rulesForTuple := range dg.Nodes {
+				groups, ungrouped := GroupAdminRulesByCDN(rulesForTuple)
+				items := make([]CDNDisplayItemAdmin, 0, len(groups)+1)
+				totalCount := 0
+				for _, g := range groups {
+					items = append(items, CDNDisplayItemAdmin{
+						IsCDNGroup: true,
+						Source:     g.Source,
+						CDN:        g.CDN,
+						Count:      g.Count,
+						Rules:      g.Rules,
+					})
+					totalCount += g.Count
+				}
+				if len(ungrouped) > 0 {
+					items = append(items, CDNDisplayItemAdmin{
+						IsCDNGroup: false,
+						Count:      len(ungrouped),
+						Rules:      ungrouped,
+					})
+					totalCount += len(ungrouped)
+				}
+				dg.NodesCDN[exitNode] = CDNDisplayViewAdmin{
+					Items:      items,
+					TotalCount: totalCount,
+				}
+			}
+			ug.Devices[devID] = dg
+		}
+		groupedByUser[userName] = ug
 	}
 	_ = totalPct
 

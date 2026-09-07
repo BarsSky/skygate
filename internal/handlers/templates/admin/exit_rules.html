@@ -88,51 +88,81 @@
           <summary style="cursor:pointer;padding:3px 6px;background:var(--bg);border-radius:3px;display:flex;align-items:center;gap:6px;font-size:12px">
             <i class="fa-solid fa-route"></i>
             <span class="tag tag-info">{{$exitNode}}</span>
-            <span style="color:var(--text-muted)">{{tf "exit_rules_admin.rules_count" (len $rules)}}</span>
+            {{/* 2026-09-07: B237.22 — read the total from
+                 the CDN-grouped view (pre-computed) so the
+                 count matches what the operator sees
+                 pre-B237.22 (a flat list of N rows per
+                 (user, device, exitNode) tuple). */}}
+            {{$cdnView := index $devData.NodesCDN $exitNode}}
+            <span style="color:var(--text-muted)">{{tf "exit_rules_admin.rules_count" $cdnView.TotalCount}}</span>
           </summary>
           <div class="table-wrap" style="margin-top:6px">
-            <table>
-              <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
-              {{range $rules}}<tr>
-                <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                <td><span class="tag">{{.TargetType}}</span></td>
-                <td class="col-target"><code>{{.TargetValue}}</code></td>
-                <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
-                <td class="col-preferred">
-                  {{/* 2026-08-25 (B182): three-state preferred-exit-node badge.
-                       State 1 (wrong exit-node, ⚠️ red): rule.ExitNode differs
-                         from the device's preferred exit-node. B178's
-                         "Applicable" check is false. Dead rule for this
-                         device. Tooltip: "выбрано: <X>, предпочитается: <Y>".
-                       State 2 (pending, ⏳ yellow): rule.ExitNode matches the
-                         device's preferred, but headscale has NOT
-                         approved the rule's target CIDR yet. The
-                         autoupdater will resolve it on the next 5-min
-                         tick, or the operator can hit "Пере-синхронизировать"
-                         on /admin/exit-nodes. Tooltip: "rule's target
-                         not in headscale ApprovedRoutes for <exit-node>".
-                       State 3 (approved, ✅ green): rule.ExitNode matches
-                         the device's preferred AND the target CIDR is in
-                         headscale ApprovedRoutes. The rule is fully
-                         working. Tooltip: "target approved in headscale
-                         for <exit-node>". */}}
-                  {{if not .Applicable}}
-                    <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
-                  {{else if .ApprovedInHeadscale}}
-                    <span class="tag tag-success" title="{{tf "exit_rules_admin.approved_in_headscale_title" .ExitNode}}"><i class="fa-solid fa-check"></i></span>
-                  {{else}}
-                    <span class="tag tag-warning" title="{{tf "exit_rules_admin.pending_in_headscale_title" .ExitNode .TargetValue}}"><i class="fa-solid fa-clock"></i></span>
-                  {{end}}
-                </td>
-                <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
-                <td class="col-delete">
-                  <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" .ID}}')">
-                    <input type="hidden" name="id" value="{{.ID}}">
-                    <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
-                  </form>
-                </td>
-              </tr>{{end}}
-            </table>
+            {{range $item := $cdnView.Items}}
+              {{if $item.IsCDNGroup}}
+                {{/* CDN group: collapsible header + per-CIDR rows. */}}
+                <details open style="margin:6px 0;border:1px solid var(--border);border-radius:4px;background:var(--bg-elev)">
+                  <summary style="cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:5px;font-size:11px">
+                    <i class="fa-solid fa-cloud"></i>
+                    <span><b>{{$item.Source}}</b></span>
+                    <span class="tag tag-info">{{$item.CDN}}</span>
+                    <span style="color:var(--text-muted)">{{tf "exit_rules.cdn_group_count" $item.Count}}</span>
+                    <span style="margin-left:auto;font-size:10px;color:var(--text-muted)">▼</span>
+                  </summary>
+                  <table style="margin:0">
+                    <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
+                    {{range $item.Rules}}<tr>
+                      <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                      <td><span class="tag">{{.TargetType}}</span></td>
+                      <td class="col-target"><code>{{.TargetValue}}</code></td>
+                      <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                      <td class="col-preferred">
+                        {{if not .Applicable}}
+                          <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
+                        {{else if .ApprovedInHeadscale}}
+                          <span class="tag tag-success" title="{{tf "exit_rules_admin.approved_in_headscale_title" .ExitNode}}"><i class="fa-solid fa-check"></i></span>
+                        {{else}}
+                          <span class="tag tag-warning" title="{{tf "exit_rules_admin.pending_in_headscale_title" .ExitNode .TargetValue}}"><i class="fa-solid fa-clock"></i></span>
+                        {{end}}
+                      </td>
+                      <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
+                      <td class="col-delete">
+                        <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" .ID}}')">
+                          <input type="hidden" name="id" value="{{.ID}}">
+                          <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+                        </form>
+                      </td>
+                    </tr>{{end}}
+                  </table>
+                </details>
+              {{else}}
+                {{/* Ungrouped-rules tail: flat table, no header. */}}
+                <table>
+                  <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
+                  {{range $item.Rules}}<tr>
+                    <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                    <td><span class="tag">{{.TargetType}}</span></td>
+                    <td class="col-target"><code>{{.TargetValue}}</code></td>
+                    <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                    <td class="col-preferred">
+                      {{if not .Applicable}}
+                        <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
+                      {{else if .ApprovedInHeadscale}}
+                        <span class="tag tag-success" title="{{tf "exit_rules_admin.approved_in_headscale_title" .ExitNode}}"><i class="fa-solid fa-check"></i></span>
+                      {{else}}
+                        <span class="tag tag-warning" title="{{tf "exit_rules_admin.pending_in_headscale_title" .ExitNode .TargetValue}}"><i class="fa-solid fa-clock"></i></span>
+                      {{end}}
+                    </td>
+                    <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
+                    <td class="col-delete">
+                      <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" .ID}}')">
+                        <input type="hidden" name="id" value="{{.ID}}">
+                        <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+                      </form>
+                    </td>
+                  </tr>{{end}}
+                </table>
+              {{end}}
+            {{end}}
           </div>
         </details>
         {{end}}
