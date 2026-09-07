@@ -1,0 +1,364 @@
+name: release
+
+# V8 (B237.15) — release workflow.
+# Triggered ONLY by tag pushes matching v* (e.g. v1.5.0, v1.5.2-alpha1).
+# Skips pre-releases for the `:latest` tag (alpha/beta/rc go only to
+# the versioned tag, so production can pin to `:vX.Y.Z` without ever
+# pulling a pre-release by accident).
+#
+# On each tag, publishes:
+#   1. Docker image to ghcr.io/BarsSky/skygate
+#      - ghcr.io/BarsSky/skygate:v1.5.0          (every tag, including pre-releases)
+#      - ghcr.io/BarsSky/skygate:latest          (stable tags only — no -rc/-alpha/-beta)
+#      - ghcr.io/BarsSky/skygate:v1.5            (major.minor, for "track latest patch")
+#      - ghcr.io/BarsSky/skygate:v1              (major, for "track latest minor")
+#   2. Go binary tarballs to GitHub Releases (the artifact V3/V4 install
+#      scripts pull):
+#      - skygate-v1.5.0-linux-amd64.tar.gz       (binary + SHA256)
+#      - skygate-v1.5.0-linux-arm64.tar.gz
+#      - skygate-v1.5.0-darwin-amd64.tar.gz
+#      - skygate-v1.5.0-darwin-arm64.tar.gz
+#      - skygate-v1.5.0-windows-amd64.zip        (skygate.exe + SHA256)
+#   3. SHA256SUMS file alongside the release
+#
+# Why a SEPARATE workflow (not combined with ci.yml):
+#   - ci.yml runs on every push to main + every PR. The release
+#     workflow runs ONLY on tag pushes. A combined workflow would
+#     have to either (a) build a release image on every PR (slow,
+#     wastes GHCR quota) or (b) gate on `startsWith(github.ref, 'refs/tags/')`
+#     which works but is harder to reason about than a separate file.
+#   - Per the project convention (B100+), one workflow = one job family.
+#   - Easier to test in isolation: tag a fake release branch, watch
+#     only this workflow fire.
+#
+# Why ghcr.io (not Docker Hub):
+#   - Free for public repos, no rate limit on pulls
+#   - Same org as the code (BarsSky)
+#   - Built-in to GitHub Actions (GITHUB_TOKEN has push permission)
+#   - Operator already uses similar pattern (ghcr.io/BarsSky/skygate
+#     would be the registry path)
+#
+# Why a MULTI-STAGE Dockerfile.prebuilt (not the existing single-stage
+# in-container-build Dockerfile):
+#   - The existing Dockerfile has the operator's local dev flow baked
+#     in: it does `go mod download && go build` inside the entrypoint
+#     so a bind-mounted source tree becomes a working binary. That's
+#     the right thing for `./:/app` development, but it means:
+#       (a) Image is ~600 MB (full Go toolchain + alpine)
+#       (b) First start takes 60-120s (go mod + go build)
+#       (c) Image always reflects "dev" unless the bind-mount's git
+#           tree has a tag
+#   - Dockerfile.prebuilt bakes the Go binary at CI build time:
+#       (a) Image is ~30 MB (alpine + binary + runtime deps)
+#       (b) First start is ~2s (just tailscale up + exec)
+#       (c) Image always reflects the tag it was built from
+#   - Both images share the same entrypoint.sh + the same
+#     runtime config (env vars, ports, volumes). The only
+#     difference is `SKYGATE_PREBUILT=1` which the entrypoint
+#     checks to skip the build step.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'   # v1.5.0, v1.5.0-rc.1, v1.5.0-alpha1, v1.5.2.1
+
+# Cancel in-progress run when a new tag is pushed
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # for gh release create
+  packages: write   # for ghcr.io push
+
+jobs:
+  # ============================================================
+  # Job 1: Docker image → ghcr.io/BarsSky/skygate
+  # ============================================================
+  docker:
+    name: docker image (linux/amd64 + linux/arm64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: linux, arch: amd64 }
+          - { os: linux, arch: arm64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # need full history for `git describe`
+
+      - name: Extract version metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Strip leading 'v' for numeric operations, keep 'v' for tag refs
+          REF="${GITHUB_REF_NAME}"   # e.g. v1.5.0 or v1.5.0-rc.1
+          VERSION="${REF#v}"          # 1.5.0 or 1.5.0-rc.1
+          MAJOR_MINOR=$(echo "$VERSION" | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
+          MAJOR=$(echo "$VERSION" | sed -E 's/^([0-9]+).*/\1/')
+          # Pre-release detection: anything after the first '-' in
+          # the version. "1.5.0" → no pre-release. "1.5.0-rc.1" → pre-release.
+          if echo "$VERSION" | grep -q '-'; then
+            IS_PRERELEASE="true"
+          else
+            IS_PRERELEASE="false"
+          fi
+          # Short commit for the image label
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "version=$VERSION"          >> "$GITHUB_OUTPUT"
+          echo "major_minor=$MAJOR_MINOR"  >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR"              >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA"      >> "$GITHUB_OUTPUT"
+          echo "[meta] version=$VERSION  major_minor=$MAJOR_MINOR  major=$MAJOR  pre=$IS_PRERELEASE"
+
+      - name: Set up QEMU (for cross-arch builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.prebuilt
+          platforms: linux/${{ matrix.platform.arch }}
+          push: true
+          # Always tag the exact version. Add the floating tags
+          # (latest / major.minor / major) only for stable releases
+          # and only on the amd64 build (so the manifest is consistent
+          # across arches — the arm64 build only tags the version).
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/skygate:v${{ steps.meta.outputs.version }}
+            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:latest', github.repository_owner) || '' }}
+            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', github.repository_owner, steps.meta.outputs.major_minor) || '' }}
+            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', github.repository_owner, steps.meta.outputs.major) || '' }}
+          labels: |
+            org.opencontainers.image.title=skygate
+            org.opencontainers.image.description=Self-service web portal for Tailscale and headscale
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=v${{ steps.meta.outputs.version }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================
+  # Job 2: Go binary tarballs → GitHub Release
+  # ============================================================
+  binaries:
+    name: go binary tarballs (linux/darwin/windows × amd64/arm64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64, ext: tar.gz, archive_dir: linux-amd64   }
+          - { goos: linux,   goarch: arm64, ext: tar.gz, archive_dir: linux-arm64   }
+          - { goos: darwin,  goarch: amd64, ext: tar.gz, archive_dir: darwin-amd64  }
+          - { goos: darwin,  goarch: arm64, ext: tar.gz, archive_dir: darwin-arm64  }
+          - { goos: windows, goarch: amd64, ext: zip,   archive_dir: windows-amd64  }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Resolve version + short sha
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="${GITHUB_REF_NAME}"
+          VERSION="${REF#v}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "version=$VERSION"    >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          BINARY_NAME="skygate"
+          if [ "$GOOS" = "windows" ]; then
+            BINARY_NAME="skygate.exe"
+          fi
+          OUTPUT_DIR="dist/${{ matrix.archive_dir }}"
+          mkdir -p "$OUTPUT_DIR"
+          echo "[build] GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=$CGO_ENABLED"
+          # 2026-08-12 v1.3.1: CGO_ENABLED=0 (postgres-only, no SQLite)
+          # produces a 24 MB static binary. The build tags are the
+          # same as the existing Dockerfile's entrypoint does.
+          go build -buildvcs=false -trimpath \
+            -ldflags "-s -w -X main.version=v${{ steps.meta.outputs.version }} -X main.commit=${{ steps.meta.outputs.short_sha }} -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o "$OUTPUT_DIR/$BINARY_NAME" \
+            ./cmd/skygate
+          # Show the size so the operator can sanity-check
+          ls -lh "$OUTPUT_DIR/$BINARY_NAME"
+
+      - name: Compute SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "dist/${{ matrix.archive_dir }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            sha256sum skygate.exe > skygate.exe.sha256
+          else
+            sha256sum skygate > skygate.sha256
+          fi
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "dist/${{ matrix.archive_dir }}"
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            # Windows: zip with the .exe + .sha256 at the archive root
+            zip -j "../skygate-v${{ steps.meta.outputs.version }}-${{ matrix.archive_dir }}.zip" \
+              skygate.exe skygate.exe.sha256
+          else
+            # POSIX: tar.gz with the binary + sha at the root (NOT
+            # inside a subdir — the install scripts expect a flat layout
+            # so they can `tar -xzf ... && ./skygate` directly).
+            tar -czf "../skygate-v${{ steps.meta.outputs.version }}-${{ matrix.archive_dir }}.tar.gz" \
+              skygate skygate.sha256
+          fi
+          ls -lh "../skygate-v${{ steps.meta.outputs.version }}-${{ matrix.archive_dir }}.${{ matrix.ext }}"
+
+      - name: Upload to workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: skygate-${{ matrix.archive_dir }}
+          path: dist/skygate-v${{ steps.meta.outputs.version }}-${{ matrix.archive_dir }}.${{ matrix.ext }}
+          retention-days: 14
+
+  # ============================================================
+  # Job 3: Compute SHA256SUMS across all binaries
+  # (depends on binaries job so the sums cover all platforms)
+  # ============================================================
+  sums:
+    name: SHA256SUMS
+    runs-on: ubuntu-24.04
+    needs: binaries
+    timeout-minutes: 5
+    steps:
+      - name: Download all tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          # The .sha256 inside each archive is a 2-line file
+          # ("<hash>  <filename>"). We want a SINGLE file that
+          # lists every archive + its hash, in a format that
+          # `sha256sum -c` can verify against.
+          rm -f skygate.exe.sha256 skygate.sha256 2>/dev/null || true
+          sha256sum skygate-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload SHA256SUMS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+          retention-days: 14
+
+  # ============================================================
+  # Job 4: GitHub Release with all artifacts
+  # (depends on docker + binaries + sums)
+  # ============================================================
+  release:
+    name: github release
+    runs-on: ubuntu-24.04
+    needs: [docker, sums]
+    timeout-minutes: 10
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="${GITHUB_REF_NAME}"
+          VERSION="${REF#v}"
+          # "Is this a pre-release?" matches the docker job's logic.
+          # softprops/action-gh-release expects `prerelease: true|false`
+          # as a string.
+          if echo "$VERSION" | grep -q '-'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Read release notes
+        # Reads RELEASE-NOTES-vX.Y.Z.md if it exists (the operator
+        # typically writes one for each release per the v1.5.0
+        # convention). Falls back to auto-generated notes if missing.
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          NOTES_FILE="RELEASE-NOTES-v${VERSION}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "notes_path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+            echo "[notes] using $NOTES_FILE"
+          else
+            echo "notes_path=" >> "$GITHUB_OUTPUT"
+            echo "[notes] no $NOTES_FILE; falling back to auto-generated notes"
+          fi
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          # If we have a hand-written RELEASE-NOTES-vX.Y.Z.md, use it.
+          # Otherwise let GitHub auto-generate from commits.
+          body_path: ${{ steps.notes.outputs.notes_path }}
+          fail_on_unmatched_files: false
+          files: |
+            dist/skygate-*.tar.gz
+            dist/skygate-*.zip
+            dist/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

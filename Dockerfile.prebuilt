@@ -1,0 +1,151 @@
+# Dockerfile.prebuilt — multi-stage build for CI release (B237.15, V8).
+#
+# This is the ALTERNATE to the original single-stage Dockerfile which
+# does an in-container build via entrypoint.sh (suitable for the
+# operator's local `./:/app` dev path). Use THIS Dockerfile when:
+#   - You want a small image (~30 MB vs ~600 MB for the dev one)
+#   - You want fast first-start (~2s vs ~60-120s for go mod + go build)
+#   - You want the image to always reflect the exact tag/commit it
+#     was built from (no "dev" fallback for missing .git bind-mount)
+#   - You're pulling from ghcr.io (the docker-compose.ghcr.yml variant)
+#
+# How it differs from the original Dockerfile:
+#   - The original does `go mod download && go build` inside the
+#     entrypoint at container start (so the operator can edit code
+#     on the host, restart the container, and see changes). This
+#     requires the full Go toolchain in the image.
+#   - This one builds the Go binary at CI time, in a separate
+#     builder stage, and copies the static binary into a slim
+#     runtime alpine image. No Go, no go modules, no compile time.
+#
+# Both Dockerfiles share:
+#   - The same entrypoint.sh (with a SKYGATE_PREBUILT=1 env var
+#     that the entrypoint checks to skip the build step)
+#   - The same env vars (HEADSCALE_URL, SKYGATE_JWT_SECRET, etc.)
+#   - The same volumes (/app/data, /app/data/ts)
+#   - The same ports (8080)
+#   - The same Tailscale opt-in (TS_AUTHKEY_FILE unset = skip tailscaled)
+#
+# Build context: project root (same as the original Dockerfile).
+# Build invocation: `docker build -f Dockerfile.prebuilt -t skygate:local .`
+# (used by .github/workflows/release.yml with build-push-action)
+
+# ============================================================
+# Stage 1: Go builder — produces a static 24 MB binary
+# ============================================================
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /src
+
+# Cache go.mod/go.sum layer separately from the source so
+# `docker build` doesn't re-download modules on every code change.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Now copy the rest. The .dockerignore (which excludes .git, data/,
+# node_modules/, etc.) keeps the build context small.
+COPY . .
+
+# The CI workflow passes these via --build-arg.
+# Local builds get "dev"/"unknown" placeholders (matching the
+# in-container-build fallback in the entrypoint).
+ARG GIT_VER=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+# CGO_ENABLED=0 is safe post-v1.3.1 (sqlite removal): the only DB
+# driver is github.com/jackc/pgx/v5, a pure-Go PostgreSQL driver.
+# No `import "C"` exists anywhere in the source. Result: a 24 MB
+# static binary that links against nothing — runs on scratch, alpine,
+# distroless, etc.
+#
+# -trimpath strips absolute paths from the binary (reproducible
+# builds, smaller debug info). -buildvcs=false avoids VCS injection
+# errors when the build context doesn't have a .git/ directory.
+#
+# -s -w strips the symbol table and DWARF debug info (smaller
+# binary; we don't ship a debugger-in-the-image use case).
+RUN CGO_ENABLED=0 \
+    go build -buildvcs=false -trimpath -s -w \
+      -ldflags "-X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}" \
+      -o /out/skygate \
+      ./cmd/skygate
+
+# Sanity check: the binary must be a real ELF / Mach-O / PE, not a
+# script. CI fails fast here if the build silently produced junk.
+RUN [ -s /out/skygate ] && file /out/skygate | head -1
+
+# ============================================================
+# Stage 2: Runtime — slim alpine + the prebuilt binary
+# ============================================================
+FROM alpine:3.20
+
+# Runtime deps. tailscaled wants iptables + ip6tables (for
+# --accept-routes + subnet-router advertisement); openssh-client is
+# used by the B81/B85 SyncAdvertisedRoutes path (`ssh -p <port>
+# <user>@<host>` to approve routes on the relay); bash is needed
+# by internal/backup/runner.go (exec's backup.sh which uses
+# bashisms). ca-certificates is required for any HTTPS call
+# (Telegram webhook, headscale API, GitHub release checks).
+#
+# libcap is required by tailscaled (setcap on the binary).
+#
+# NOTE: git is NOT in this list — the prebuilt image doesn't need
+# it (the binary is already built). The dev Dockerfile's entrypoint
+# installs git on first start; this image is permanently git-free.
+RUN apk add --no-cache \
+        ca-certificates \
+        tzdata \
+        iptables \
+        ip6tables \
+        libcap \
+        openssh-client \
+        bash \
+        curl
+
+# Copy the prebuilt binary. The COPY happens in the same layer as
+# the apk add above to keep the runtime image to ~3 layers total.
+COPY --from=builder /out/skygate /app/skygate
+
+# Copy the entrypoint. The same entrypoint.sh is used by both
+# Dockerfiles — the difference is the SKYGATE_PREBUILT=1 env var
+# (set below) which makes the entrypoint skip the build step.
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Writable dirs the entrypoint / skygate need:
+#   /app           — bind-mount target for the operator's source
+#                    tree (dev mode) OR just the skygate home
+#                    (prebuilt mode). 777 so any uid can write.
+#   /app/data      — the SQLite/Postgres data dir (or just logs
+#                    in prebuilt mode). 777 for the same reason.
+#   /var/lib/tailscale + /var/run/tailscale — tailscaled state +
+#                    control socket (when tailscale is enabled).
+RUN mkdir -p /app /app/data /var/lib/tailscale /var/run/tailscale && \
+    chmod 777 /app /app/data && \
+    chmod 700 /var/lib/tailscale /var/run/tailscale
+
+# Tailscale binaries (in-image, not sidecar). Same as the dev
+# Dockerfile — we keep tailscale INSIDE the skygate container
+# because the B236 + B167 design relies on it (skygate-host-1
+# exits through the relay's subnet routes).
+COPY --from=ghcr.io/tailscale/tailscale:latest /usr/local/bin/tailscale /usr/local/bin/tailscale
+COPY --from=ghcr.io/tailscale/tailscale:latest /usr/local/bin/tailscaled /usr/local/bin/tailscaled
+RUN chmod +x /usr/local/bin/tailscale /usr/local/bin/tailscaled
+
+# Default to the prebuilt path. The entrypoint checks this and
+# skips `go mod download && go build` (saves ~60s on first start).
+# The dev Dockerfile (single-stage, in-container build) doesn't
+# set this — the entrypoint builds the binary from the bind-mounted
+# source.
+ENV SKYGATE_PREBUILT=1
+
+# /healthz is the standard liveness probe. Operators using
+# docker-compose.ghcr.yml + Kubernetes should set
+# livenessProbe.httpGet.path=/healthz port=8080.
+EXPOSE 8080
+
+# Run the entrypoint. Same as the dev Dockerfile — the only
+# difference is the build step inside is skipped via
+# SKYGATE_PREBUILT=1.
+ENTRYPOINT ["/entrypoint.sh"]

@@ -185,9 +185,270 @@ curl -I http://localhost:8080/login         # should return 200
 Default admin: `admin` (rename on first login recommended) + the
 password you set in `SKYGATE_ADMIN_PASS`.
 
-For the full cross-platform install (Windows, restore from backup,
-DERP relay, headplane sidecar, PostgreSQL backend) see
-[docs/deploy.md](docs/deploy.md).
+## Deployment variants
+
+The Quick start above is the "build from source via bind-mount"
+path. It's the most flexible (live code reload on the operator's
+VM) but the slowest first start (~60-120s for `go mod download` +
+`go build`). For most operators, **one of the prebuilt variants
+below is simpler and faster**.
+
+Pick the variant that matches your environment. Each one is
+a self-contained `docker compose -f X up -d` or a one-liner.
+
+| Variant | When to use | One-liner |
+|---|---|---|
+| **[`docker-compose.ghcr.yml`](#docker-compose-pull-from-ghcr-prebuilt)** *(recommended)* | Production on Linux. You have a headscale somewhere (own VM, cluster, or SaaS). You want fast first-start + auto-updates via image pull. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install-docker.sh \| sudo bash -s -- -f docker-compose.ghcr.yml` |
+| **[`docker-compose.lite.yml`](#docker-compose-lite-sky-only)** | You already have headscale somewhere and just want skygate as a UI in front of it. No headscale container, no DERP, no headplane — the smallest possible attack surface. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install-docker.sh \| sudo bash -s -- -f docker-compose.lite.yml` |
+| **[`docker-compose.yml`](#original-build-from-source)** *(in-container build)* | The original. You want to edit code on the host and have skygate rebuild on restart (live dev). Slower first start, but no Docker image to pull. | `git clone https://github.com/BarsSky/skygate && cd skygate && cp .env.example .env && nano .env && docker compose up -d --build` |
+| **[`deploy/install.sh`](#bare-metal-systemd-or-openrc)** *(Linux no-Docker)* | You don't want Docker at all. systemd (Debian/Ubuntu/RHEL/Fedora) or OpenRC (Alpine). One-liner, autodetects your distro. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install.sh \| sudo bash` |
+| **[`deploy/Setup-Skygate-Win.ps1`](#windows-native)** | Native Windows service. No WSL, no Hyper-V. Pulls the Windows binary zip from GitHub Releases + registers as a service via `New-Service`. | `iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/Setup-Skygate-Win.ps1'))` (Run as Administrator) |
+| **[Podman Compose](#podman-compose-rootless)** | You use Podman instead of Docker (rootless daemon, no daemon, no root). Same compose file as the Docker variants. | `podman compose -f docker-compose.ghcr.yml up -d` |
+
+### Docker compose: pull from ghcr (prebuilt)
+
+```bash
+# 1. Get the secrets (same as Quick start)
+openssl rand -hex 32                          # SKYGATE_JWT_SECRET
+docker exec <headscale> headscale apikeys create --expiration 365d   # HEADSCALE_API_KEY
+
+# 2. Get the compose file + .env.example
+curl -fsSL -o docker-compose.ghcr.yml \
+  https://raw.githubusercontent.com/BarsSky/skygate/main/docker-compose.ghcr.yml
+curl -fsSL -o .env.example \
+  https://raw.githubusercontent.com/BarsSky/skygate/main/.env.example
+cp .env.example .env && nano .env
+# Fill in HEADSCALE_URL, HEADSCALE_API_KEY, SKYGATE_JWT_SECRET, SKYGATE_ADMIN_PASS
+
+# 3. Pull + run (1 command; no build step; 2-3s first start vs 60-120s)
+docker compose -f docker-compose.ghcr.yml up -d
+
+# 4. Open in browser
+curl -I http://localhost:8080/login   # should return 200
+```
+
+The image is `ghcr.io/BarsSky/skygate:VERSION`. Pin to `v1.5.0`
+in `.env` (`SKYGATE_IMAGE=ghcr.io/BarsSky/skygate:v1.5.0`) for
+reproducible production deploys. Use `:latest` for non-prod
+where you want auto-rollforward.
+
+To upgrade to a new version:
+
+```bash
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+The image is built + published by `.github/workflows/release.yml`
+on every tag push. See "Upgrades" below for the auto-update
+wiring.
+
+### Docker compose: lite (sky-only)
+
+Same as the ghcr variant above, but doesn't include a headscale
+container, DERP relay, or headplane. Use this if you already
+have a headscale instance reachable over the network and don't
+need any of the operator-side tooling.
+
+```bash
+# 1. Get secrets
+openssl rand -hex 32                                  # SKYGATE_JWT_SECRET
+ssh <headscale-host> headscale apikeys create --expiration 365d   # HEADSCALE_API_KEY
+
+# 2. Get the compose file
+curl -fsSL -o docker-compose.lite.yml \
+  https://raw.githubusercontent.com/BarsSky/skygate/main/docker-compose.lite.yml
+curl -fsSL -o .env.example \
+  https://raw.githubusercontent.com/BarsSky/skygate/main/.env.example
+cp .env.example .env && nano .env
+# Set HEADSCALE_URL to your existing headscale, e.g.
+#   HEADSCALE_URL=http://headscale.example.com:50444
+#   HEADSCALE_URL=http://100.64.0.1:50444
+# Set HEADSCALE_API_KEY to that headscale's API key
+
+# 3. Run
+docker compose -f docker-compose.lite.yml up -d
+```
+
+What the lite variant does NOT do (vs the full `docker-compose.ghcr.yml`):
+
+- No headscale container (you provide your own)
+- No DERP relay (you use Tailscale's public DERP servers)
+- No headplane sidecar
+- No `docker.sock` mount (no in-container auto-updater; you
+  `docker compose pull && docker compose up -d` by hand)
+- No `.ssh` mount (no B202.5 SSHDumpTransport)
+- No `/home/admin/headscale` mount (no /admin/derp/relays/apply-headscale)
+
+If you need any of those, use the full variant.
+
+### Original: build from source
+
+The Quick start at the top of the README. Suitable for the
+operator's local dev (live code reload via bind-mount). Not
+recommended for production — the prebuilt variants are faster
+and easier to upgrade.
+
+### Bare metal: systemd or OpenRC
+
+No Docker at all. The installer autodetects your distro
+(Debian/Ubuntu/RHEL/Fedora/Alpine) and dispatches to the right
+per-OS script. The binary is pulled from GitHub Releases
+(skips the in-container build step), verified against
+SHA256SUMS, dropped at `/usr/local/bin/skygate`, and started
+as a system service.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install.sh | sudo bash
+```
+
+Or pin to a specific version:
+
+```bash
+SKYGATE_VERSION=v1.5.0 curl -fsSL .../install.sh | sudo bash
+```
+
+Or for air-gapped installs (skip the SHA256 verify):
+
+```bash
+SKYGATE_SKIP_VERIFY=1 SKYGATE_VERSION=v1.5.0 bash install.sh
+```
+
+The installer creates the `skygate` system user, the
+`/var/lib/skygate` data dir, and a starter `/etc/skygate/skygate.env`.
+The operator fills in `HEADSCALE_URL` + `HEADSCALE_API_KEY` and
+runs `systemctl restart skygate`. After that, the service
+auto-restarts on crash and auto-starts on boot.
+
+For Alpine (OpenRC) the service name is the same (`skygate`),
+but `rc-service` is the CLI instead of `systemctl`. The installer
+dispatches to the right command based on the detected init.
+
+If you don't want a service manager at all (e.g. you're running
+skygate under tmux / supervisord / your own init), use
+`install-bare.sh` directly:
+
+```bash
+curl -fsSL .../install-bare.sh | sudo SKYGATE_VERSION=v1.5.0 bash
+```
+
+### Podman Compose (rootless)
+
+Podman Compose reads the same `docker-compose.yml` /
+`docker-compose.ghcr.yml` / `docker-compose.lite.yml` files as
+Docker Compose. The differences are operational, not syntactic:
+
+```bash
+# Install podman + podman-compose (distro-specific, e.g. on Debian:)
+sudo apt install podman podman-compose
+
+# Run the same compose file:
+podman compose -f docker-compose.ghcr.yml up -d
+```
+
+SELinux notes (RHEL/Fedora hosts): podman runs rootless by
+default, which means the container can't see host bind-mounts
+that are 0700/0750 (the UID inside the container is different
+from the host's UID). For the tailscale state dir, use `:Z` on
+the bind-mount to relabel:
+
+```yaml
+volumes:
+  - ./data/ts:/var/lib/tailscale:Z
+```
+
+Or run with `--userns=keep-id` to map the host UID into the
+container.
+
+For systemd-managed rootless podman (the recommended setup on
+RHEL/Fedora), generate a per-user unit:
+
+```bash
+# After `podman compose up -d` works:
+cd ~/.config/systemd/user
+podman generate systemd --new --name skygate > skygate.service
+systemctl --user enable skygate.service
+loginctl enable-linger $USER   # so the service runs without an active login
+```
+
+### Windows (native)
+
+Native Windows service via `New-Service`. No WSL, no Hyper-V.
+PowerShell 5.1+ (ships with Windows 10/11 + Server 2016+).
+
+```powershell
+# Run as Administrator in PowerShell
+iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/Setup-Skygate-Win.ps1'))
+```
+
+Or download + run from a local file:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing -OutFile Setup-Skygate-Win.ps1 `
+  https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/Setup-Skygate-Win.ps1
+.\Setup-Skygate-Win.ps1
+```
+
+Pin to a specific version:
+
+```powershell
+.\Setup-Skygate-Win.ps1 -Version v1.5.0
+```
+
+The installer downloads the Windows binary zip from GitHub
+Releases, verifies the SHA256, drops the binary at
+`C:\Program Files\Skygate\skygate.exe`, writes a starter
+`C:\ProgramData\Skygate\skygate.env`, and registers as a
+Windows service named `Skygate` (auto-start). After it
+returns, fill in `HEADSCALE_URL` + `HEADSCALE_API_KEY` in
+`C:\ProgramData\Skygate\skygate.env` and run
+`Restart-Service Skygate`.
+
+For WSL2 instead of native, see [docs/deploy.md §7](docs/deploy.md#7-windows-specifics).
+
+### Upgrading
+
+| Variant | Upgrade command |
+|---|---|
+| `docker-compose.ghcr.yml` / `.lite.yml` | `docker compose -f <file> pull && docker compose -f <file> up -d` |
+| `docker-compose.yml` (in-container build) | `/admin/update` button on the web UI (auto-rollback) OR `git pull && docker compose up -d --build` |
+| systemd (`install.sh`) | `SKYGATE_VERSION=vX.Y.Z /usr/local/bin/skygate-upgrade` (provided by the installer as a 3-line wrapper) OR rerun `install.sh` |
+| Windows (Service) | `.\Setup-Skygate-Win.ps1 -Version vX.Y.Z` (re-runs the installer) |
+
+For the "auto-update" path, the ghcr variant supports
+`watchtower` or the in-container skygate auto-updater (the
+`/admin/update` button). The systemd install doesn't have
+auto-update (by design — the operator decides when to
+restart the service). The Windows install doesn't have
+auto-update (use scheduled task + a 30-line PowerShell
+script if you want it; not shipped).
+
+### Why so many variants?
+
+Different ops teams have different constraints:
+
+- **Docker compose (prebuilt)**: most production deployments.
+  Standard tooling, easy to upgrade, easy to back up (just
+  tar the named volume).
+- **Docker compose (in-container build)**: the operator's local
+  dev. Live code reload, no separate image to manage.
+- **Bare metal systemd**: the "no Docker" case. Some operators
+  don't want a container runtime on their auth gateway. The
+  systemd install is a single binary + a single unit file —
+  the smallest possible surface.
+- **Bare metal OpenRC**: the Alpine case (musl libc, not glibc;
+  OpenRC instead of systemd).
+- **Podman Compose**: the "rootless" case. Some operators
+  refuse to run a Docker daemon (root inside the daemon =
+  root on the host). Podman is daemonless + rootless.
+- **Windows native**: the "no Linux" case. Some operators
+  are Windows-only and don't want WSL.
+
+All variants share the same `.env` file format + the same
+runtime config (HEADSCALE_URL, HEADSCALE_API_KEY,
+SKYGATE_JWT_SECRET, SKYGATE_ADMIN_PASS, SKYGATE_PORT, etc.).
+Moving between variants is `docker compose down` on one +
+`install.sh` (or `Setup-Skygate-Win.ps1`) on the other.
 
 ## Tailscale: OFF by default (v0.32.15+)
 

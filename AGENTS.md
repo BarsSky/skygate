@@ -5084,6 +5084,99 @@ in the same commit. Don't let the tracker drift.
     - `go test -count=1 -short ./...` → 43
       packages green (no regression)
     - `go build ./...` → clean
+  - **B237.15 (v1.5.2+, 2026-09-07) — Deployment
+    variants**. Closes the operator ask of 2026-09-07:
+    "README only documents one deployment path; write
+    more with the simplicity-first principle". Adds 5
+    deploy surfaces beyond the original in-container-
+    build compose:
+    1. **V1 + V5: prebuilt-image docker compose**.
+       `docker-compose.ghcr.yml` (full setup, pulls
+       `ghcr.io/BarsSky/skygate`, no in-container build)
+       + `docker-compose.lite.yml` (sky-only, no
+       headscale container, no DERP, no headplane —
+       for users with headscale already running
+       somewhere reachable). The prebuilt path starts
+       in ~2s vs ~60-120s for the in-container build
+       (no `go mod download` + `go build`).
+    2. **V2: podman compose** (doc-only section in
+       README.md — `podman compose -f docker-compose.ghcr.yml
+       up -d` works as-is; the section is just an
+       operator-facing note about rootless + SELinux).
+    3. **V3 + V4: bare-metal systemd/OpenRC
+       installers**. `deploy/install.sh` autodetects
+       the host OS (Debian/Ubuntu, RHEL/Fedora/Rocky,
+       Alpine) and dispatches to `deploy/install-{debian,
+       rh,alpine,bare}.sh`. The per-OS scripts:
+         - download the tarball from GitHub Releases
+         - verify SHA256 against the SHA256SUMS file
+         - install /usr/local/bin/skygate (static
+           binary, no Go on the host required)
+         - create the `skygate` system user + dirs
+         - drop a systemd unit / OpenRC service
+         - write a starter /etc/skygate/skygate.env
+         - enable + start the service
+         - print the 3 next steps (edit env, restart,
+           open browser).
+       One-liner: `curl -fsSL .../install.sh | sudo bash`.
+       `install-bare.sh` is for the "no service manager"
+       case (macOS dev, embedded Linux, your own
+       supervisor).
+    4. **V6: Windows native installer**.
+       `deploy/Setup-Skygate-Win.ps1` downloads the
+       Windows zip from GitHub Releases, verifies
+       SHA256, drops the binary at
+       `C:\Program Files\Skygate\skygate.exe`, writes
+       `C:\ProgramData\Skygate\skygate.env`, registers
+       as a Windows service via `New-Service`
+       (the service's Environment registry key is the
+       Windows equivalent of systemd's EnvironmentFile=),
+       starts the service. Self-elevates if not run
+       as Administrator. One-liner: `iex ((New-Object
+       System.Net.WebClient).DownloadString('.../Setup-
+       Skygate-Win.ps1'))` (Run as Administrator).
+    5. **V8: release workflow** (the prerequisite for
+       all of the above — publishes the image + the
+       tarballs on tag push via `.github/workflows/release.yml`
+       + `Dockerfile.prebuilt` + `entrypoint.sh`'s
+       `SKYGATE_PREBUILT=1` guard). On every `v*` tag
+       push:
+         - Docker image to `ghcr.io/BarsSky/skygate`
+           with tags `vX.Y.Z`, `latest` (stable only),
+           `vX.Y`, `vX` (all stable-only)
+         - Go binary tarballs for linux/darwin ×
+           amd64/arm64 + windows-amd64
+         - SHA256SUMS
+         - GitHub Release with all artifacts + the
+           `RELEASE-NOTES-vX.Y.Z.md` body if present.
+    The release workflow uses the EXISTING `entrypoint.sh`
+    (zero churn for the operator's local dev path) +
+    the NEW `Dockerfile.prebuilt` (multi-stage, alpine
+    runtime, ~30 MB image, prebuilt Go binary baked
+    in). `entrypoint.sh` is patched to skip the build
+    step when `SKYGATE_PREBUILT=1` is set; the dev
+    path (no env var) is unchanged.
+    All variants share the same `.env` schema +
+    the same runtime config (HEADSCALE_URL,
+    HEADSCALE_API_KEY, SKYGATE_JWT_SECRET,
+    SKYGATE_ADMIN_PASS, SKYGATE_PORT). Moving
+    between them is a `docker compose down` on one
+    + an `install.sh` (or `Setup-Skygate-Win.ps1`)
+    on the other.
+    **Verified** (local):
+    - `bash scripts/check_b237_15.sh` → 50/50 pass
+      (file inventory + entrypoint guard + README
+      sections + PowerShell syntax + asset-naming
+      contract between release.yml and install scripts)
+    - `bash -n deploy/install*.sh` → all clean
+    - PowerShell parser on Setup-Skygate-Win.ps1 → no
+      errors
+    - `go build ./...` → clean (no Go changes)
+    **Live-verify pending**: the actual install flow
+    needs a real tag push to test the release
+    workflow end-to-end (the workflow file is
+    syntactically valid but the test must wait for
+    the operator to tag v1.5.1+).
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

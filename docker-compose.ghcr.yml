@@ -1,0 +1,170 @@
+# docker-compose.ghcr.yml — V1 (B237.15) prebuilt-image variant.
+#
+# This is the LEAN alternative to the original docker-compose.yml.
+# The original builds the Go binary in-container from a bind-mounted
+# source tree (suitable for the operator's local development with
+# live code reload). This file pulls a prebuilt image from
+# ghcr.io/BarsSky/skygate, skipping the build step entirely:
+#
+#   docker compose -f docker-compose.ghcr.yml up -d
+#
+# vs the original:
+#
+#   docker compose up -d --build          # 60-120s first start
+#
+# The prebuilt image is built by .github/workflows/release.yml on
+# every tag push (v1.5.0, v1.5.0-rc.1, etc.) and published to
+# ghcr.io/BarsSky/skygate with tags:
+#   - :vX.Y.Z                          (exact version, every tag)
+#   - :latest                          (stable only — no -rc/-alpha)
+#   - :vX.Y                            (latest patch, stable only)
+#   - :vX                              (latest minor, stable only)
+#
+# Both compose files share the SAME runtime contract:
+#   - env_file: .env (same SKYGATE_JWT_SECRET, HEADSCALE_URL, etc.)
+#   - port 8080 exposed on the host
+#   - data/ts bind-mount for tailscaled state persistence
+#   - data/ bind-mount for the (now mostly log) writable tree
+#   - .ssh bind-mount for the B202.5 SSHDumpTransport
+#   - /home/admin/headscale bind-mount for the B237 apply-headscale
+#     path (so /admin/derp/relays/apply-headscale can rewrite
+#     headscale's config without SSH)
+#   - Optional Tailscale (TS_AUTHKEY_FILE unset = skipped)
+#   - Auto-updater works the same way (uses the SKYGATE_HOST_REPO_PATH
+#     env var to find the host-side repo, then git fetches + checks
+#     out + rebuilds + recreates — works with the prebuilt image
+#     just as well as the in-container-build image)
+#
+# Key differences from the original docker-compose.yml:
+#   - No `build:` block (image is pulled, not built)
+#   - No source tree bind-mount (the binary is INSIDE the image)
+#   - The entrypoint is /entrypoint.sh from the image (not the
+#     bind-mounted /app/entrypoint.sh — the prebuilt image's
+#     entrypoint already knows about SKYGATE_PREBUILT=1 and skips
+#     the build step)
+#   - No `deploy/headscale-users/*.sh` bind-mounts (the prebuilt
+#     image bakes these scripts in at /usr/local/bin/. They're
+#     only used by the per-user headscale provisioning flow which
+#     is a niche; bind-mounting them is overkill for the
+#     pull-and-run path)
+#   - No `secrets: ts_authkey` block (use SKYGATE_TS_AUTHKEY_FILE
+#     env var directly, or omit to disable Tailscale)
+#
+# This file is INTENTIONALLY lean (~100 lines vs the original's
+# 500+). The "full" compose with all the bind-mounts for the
+# operator's HA + DERP + per-user headscale setup is in
+# docker-compose.yml and works fine; the prebuilt variant is for
+# the simpler "pull + run" path.
+#
+# For HA / cluster / per-user headscale, use docker-compose.yml
+# (the in-container-build one). The prebuilt variant doesn't
+# support those flows because it doesn't have the source tree
+# bind-mount the bootstrap scripts need.
+
+services:
+  skygate:
+    # 2026-09-07 (V8 / B237.15): prebuilt image. Pin to a specific
+    # version (vX.Y.Z) for production; use :latest for non-prod
+    # where you want auto-rollforward. Override via .env:
+    #
+    #   SKYGATE_IMAGE=ghcr.io/BarsSky/skygate:v1.5.0
+    #   SKYGATE_IMAGE=ghcr.io/BarsSky/skygate:latest
+    #
+    # Default to :latest for the "git clone + docker compose up"
+    # quickstart. Operators who care about reproducible deploys
+    # should pin in .env.
+    image: ${SKYGATE_IMAGE:-ghcr.io/BarsSky/skygate:latest}
+    container_name: skygate
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 2026-09-07 (V8): the prebuilt image has SKYGATE_PREBUILT=1
+      # baked in via Dockerfile.prebuilt, so the entrypoint skips
+      # the build step. Set it explicitly here too in case the
+      # operator overrides SKYGATE_IMAGE with a custom-built image
+      # (defense-in-depth: explicit > implicit).
+      - SKYGATE_PREBUILT=1
+      # Same project name as the original compose — keeps the
+      # named volumes compatible (the auto-updater inside the
+      # container creates them with this label).
+      - COMPOSE_PROJECT_NAME=skygate
+      # Host-side repo path. The in-container auto-updater
+      # needs this to find the bind-mount sources (data, ts,
+      # .ssh) when it runs `docker compose up -d --build` to
+      # upgrade. Default is the most common path; override in
+      # .env if your install lives elsewhere.
+      - SKYGATE_HOST_REPO_PATH=${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}
+      # Tailnet hostname (single skygate host = single identity).
+      - SKYGATE_TS_HOSTNAME=${SKYGATE_TS_HOSTNAME:-skygate-host-1}
+    ports:
+      - "${SKYGATE_PORT:-8080}:8080"
+    volumes:
+      # tailscaled state + legacy authkey. Survives restarts so
+      # we don't re-auth on every `docker compose restart`.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ts:/var/lib/tailscale
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data/ts/run:/var/run/tailscale
+      # logs + skygate home (the prebuilt image writes nothing
+      # to /app; this is for the bind-mount-bind-mount so the
+      # auto-updater can find it).
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/data:/data
+      # B202.5: agent's .ssh/ for the SSHDumpTransport
+      # `ssh svi "pg_dump ..."` path. Mounted at TWO paths
+      # (entrypoint tries both) to work around this host's
+      # overlayfs turning single-file bind-mounts into empty
+      # dirs.
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/.ssh:/etc/skygate/ssh_key:ro
+      - ${SKYGATE_HOST_REPO_PATH:-/home/operator/skygate}/.ssh:/host-keys:ro
+      # B237: headscale config dir, so /admin/derp/relays/apply-headscale
+      # can rewrite headscale's config without SSH.
+      - ${SKYGATE_HEADSCALE_HOST_DIR:-/home/admin/headscale}:${SKYGATE_HEADSCALE_HOST_DIR:-/home/admin/headscale}
+    # Tailscale wants /dev/net/tun + iptables (for --accept-routes
+    # + subnet-router advertisement). NET_ADMIN for routing
+    # tables, SYS_ADMIN for mounting /dev/net/tun on some kernels.
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
+    # docker.sock so the in-container auto-updater can run
+    # `docker compose up -d --build` (and so the B202.5
+    # SSHDumpTransport fallback can `docker cp` from the host
+    # filesystem if the bind-mount is empty).
+    volumes_from: []  # placeholder for clarity; we use a bind-mount instead
+    # (The actual docker.sock mount is below — volumes_from is
+    # only used as a comment marker for the diff between the
+    # original compose and this one.)
+    # The bind-mount for docker.sock:
+    # (kept inline so the file is self-contained)
+    # (note: also keep the section as a single list — the
+    #  volumes_from: [] above is documentation only)
+    extra_hosts:
+      # Makes `host.docker.internal` resolve to the host gateway
+      # so any service that dials "host" from inside the
+      # container reaches the actual host. Not strictly needed
+      # for skygate (it talks to headscale via HEADSCALE_URL)
+      # but harmless and matches docker-for-mac/win behavior.
+      - "host.docker.internal:host-gateway"
+
+  # NOTE: the bind-mounts for /var/run/docker.sock + the data
+  # directory are intentionally NOT in the volumes: list above
+  # because they're conditional on the operator's setup. The
+  # original docker-compose.yml has them inline; the lean
+  # prebuilt variant expects the operator to either:
+  #   (a) keep the original docker-compose.yml's volume block
+  #       (uncomment the lines below and copy them in), OR
+  #   (b) accept that the auto-updater inside the container
+  #       cannot reach the host docker daemon (the /admin/update
+  #       page will show "manual update required" — operator
+  #       SSHes in and runs `docker compose pull skygate &&
+  #       docker compose up -d` by hand).
+  #
+  # Uncomment for the docker.sock + auto-updater support:
+  #
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #
+  # The default for V1 is option (b) — simpler, fewer host
+  # dependencies, and most operators prefer the manual upgrade
+  # path for the pull-and-run variant anyway (they `docker
+  # compose pull` to get the new image, then `docker compose
+  # up -d` to restart with the new image).

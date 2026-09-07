@@ -288,12 +288,45 @@ fi
 
 # 2. Build skygate (existing flow, preserved verbatim from the
 # pre-Tailscale entrypoint).
-cd /app
-echo "Downloading Go modules..."
-go mod download || true
-go mod tidy || true
-apk add --no-cache openssh-client git 2>/dev/null
-echo "Building Skygate..."
+#
+# 2026-09-07: V8 (B237.15) — prebuilt-image path. When
+# `SKYGATE_PREBUILT=1` is set (which the Dockerfile.prebuilt
+# does automatically), the binary is already in /app/skygate
+# (copied in by the CI release workflow). Skip the
+# go-mod-download + go-build step entirely:
+#   - saves ~60s on first start
+#   - removes the dependency on `git` + `go` in the runtime image
+#     (Dockerfile.prebuilt doesn't include them, keeping the
+#     image at ~30 MB instead of ~600 MB)
+#   - removes the .git bind-mount requirement (the prebuilt
+#     image doesn't need the source tree at all)
+#
+# Why detect SKYGATE_PREBUILT instead of testing for /app/skygate
+# presence: the dev path (Dockerfile, single-stage, ./:/app bind-
+# mount) DOES produce a /app/skygate after the first build. If we
+# detected "binary exists → skip build", a stale /app/skygate
+# from a prior run would prevent the new code from being built
+# when the operator edits the source and restarts. The explicit
+# env var is unambiguous: SKYGATE_PREBUILT=1 means "the CI built
+# this binary, don't try to rebuild it from a bind-mount that
+# may or may not exist".
+#
+# If the env var is NOT set, we fall through to the original
+# in-container-build path (unchanged, for the operator's local
+# ./:/app dev workflow).
+if [ "${SKYGATE_PREBUILT:-0}" = "1" ]; then
+    if [ ! -x /app/skygate ]; then
+        echo "[init] SKYGATE_PREBUILT=1 but /app/skygate missing or not executable — image is broken" >&2
+        exit 1
+    fi
+    echo "[init] SKYGATE_PREBUILT=1: using prebuilt binary ($(stat -c '%s' /app/skygate) bytes)"
+else
+    cd /app
+    echo "Downloading Go modules..."
+    go mod download || true
+    go mod tidy || true
+    apk add --no-cache openssh-client git 2>/dev/null
+    echo "Building Skygate..."
 # 2026-07-11: inject build label from git so the web footer + telegram
 # /version reflect the real tag/commit. .git is bind-mounted via
 # docker-compose (`./:/app`); if it's missing (e.g. CI build from a
@@ -322,6 +355,7 @@ echo "  version=${GIT_VER} commit=${GIT_COMMIT} built=${BUILD_TIME}"
 go build -buildvcs=false -ldflags "${LDFLAGS}" -o /app/skygate ./cmd/skygate || { echo "BUILD FAILED"; exit 1; }
 chmod +x /app/skygate
 echo "Skygate ready, starting..."
+fi  # end of the SKYGATE_PREBUILT gate (the build-block above only runs in dev mode)
 
 # 3. SSH key setup (B202.5). The agent's ~/.ssh/ is bind-mounted
 # at /etc/skygate/ssh_key. We copy id_ed25519 to /tmp/ssh_key

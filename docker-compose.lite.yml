@@ -1,0 +1,115 @@
+# docker-compose.lite.yml — V5 (B237.15) skygate-only variant.
+#
+# This is the MINIMAL prebuilt-image setup for users who ALREADY
+# have a headscale instance running somewhere reachable and just
+# want skygate as a portal UI in front of it. No headscale
+# container here, no DERP relay, no headplane, no PG cluster —
+# just the skygate container pointing at an external headscale.
+#
+# Quick start (3 commands):
+#
+#   1. Edit .env: set HEADSCALE_URL to your existing headscale
+#      instance (e.g. http://headscale.example.com:50444 or
+#      http://100.64.0.1:50444 for a Tailscale-IP-only headscale).
+#      Set HEADSCALE_API_KEY to the API key from that headscale.
+#   2. docker compose -f docker-compose.lite.yml up -d
+#   3. Open http://localhost:8080/login
+#
+# When to use this vs the full docker-compose.yml:
+#
+#   docker-compose.lite.yml (this file)
+#     - You already have headscale somewhere (another VM, a
+#       container managed by something else, a SaaS, etc.)
+#     - You DON'T need DERP relay (you use Tailscale's public
+#       DERP servers)
+#     - You DON'T need headplane (you manage the headscale ACL
+#       via headscale's CLI or skygate's own /admin/headscale/acl)
+#     - You DON'T need the per-user headscale provisioning flow
+#       (deploy/headscale-users/headscale-bootstrap.sh) — that's
+#       only for the v0.23.0 multi-tenant self-service flow
+#     - You want the SMALLEST possible attack surface (one
+#       container, no docker.sock, no host bind-mounts beyond
+#       tailscale state)
+#
+#   docker-compose.yml (the original, in-container-build)
+#     - You want the all-in-one: skygate + headscale + DERP +
+#       headplane in one compose project
+#     - You DO need the per-user headscale provisioning flow
+#     - You need to be able to apply ACL changes from
+#       /admin/derp/relays/apply-headscale (which needs the
+#       headscale config bind-mount)
+#     - You build the binary in-container (live code reload)
+#
+#   docker-compose.ghcr.yml (V1, the prebuilt-image full setup)
+#     - Same as docker-compose.yml but pulls a prebuilt image
+#       instead of building in-container
+#     - Faster first start (~2s vs ~60-120s)
+#     - No source tree bind-mount (the binary is INSIDE the
+#       image, not on the host)
+#
+# This file is INTENTIONALLY minimal (~50 lines). The full setup
+# has 500+ lines of bind-mounts + secrets + networks; the lite
+# variant strips it all down to "skygate + tailscale state + port".
+
+services:
+  skygate:
+    # 2026-09-07 (V8 / B237.15): prebuilt image. Same registry
+    # + tag scheme as docker-compose.ghcr.yml.
+    image: ${SKYGATE_IMAGE:-ghcr.io/BarsSky/skygate:latest}
+    container_name: skygate
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # The prebuilt image already has SKYGATE_PREBUILT=1 baked
+      # in. We set it explicitly here so the entrypoint skips
+      # the build step even if the operator builds a custom image
+      # from the original Dockerfile (defense-in-depth).
+      - SKYGATE_PREBUILT=1
+      # Tailnet hostname for this single skygate host. Only
+      # matters if Tailscale is enabled (SKYGATE_TS_AUTHKEY_FILE
+      # is set in .env).
+      - SKYGATE_TS_HOSTNAME=${SKYGATE_TS_HOSTNAME:-skygate-host-1}
+    ports:
+      - "${SKYGATE_PORT:-8080}:8080"
+    volumes:
+      # tailscaled state. ONLY this single bind-mount — the
+      # lite variant doesn't need anything else from the host.
+      # tailscale state survives container restarts so we
+      # don't re-auth on every restart.
+      - ./data/ts:/var/lib/tailscale
+      - ./data/ts/run:/var/run/tailscale
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
+    healthcheck:
+      # /healthz is the standard skygate liveness probe. 30s
+      # interval, 5s timeout, 3 retries before marking
+      # unhealthy. docker compose ps will show "(healthy)"
+      # once the container is up + serving.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # docker.sock: NOT mounted. The lite variant assumes the
+    # operator doesn't need the in-container auto-updater
+    # (they'll `docker compose pull && docker compose up -d`
+    # by hand on the host when a new release ships). This
+    # keeps the attack surface small — a compromised skygate
+    # can't escape to the host.
+    #
+    # .ssh: NOT mounted. The lite variant assumes the
+    # operator doesn't need the B202.5 SSHDumpTransport
+    # (`ssh svi "pg_dump ..."` for cross-host DB migrations
+    # from the deploy/pg-ha cluster). The standard
+    # skygate → headscale flow doesn't need it.
+    #
+    # headscale config dir: NOT mounted. The lite variant
+    # assumes headscale is managed elsewhere (own docker
+    # compose, k8s, SaaS, etc.). The /admin/derp/relays/
+    # apply-headscale button won't work in the lite variant
+    # — operators who need it should use the full
+    # docker-compose.yml + docker-compose.ghcr.yml.

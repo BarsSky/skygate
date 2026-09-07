@@ -3762,6 +3762,36 @@ run_check "B237.2" "Correct Public IP on /admin/derp. Closes the 'shows 172.18.0
 # 19 B-check contracts in scripts/check_b237_10.sh.
 run_check "B237.10" "Auto-update pathspec bug fix. Closes the 2026-09-04 live bug where the 'Push update' form posts 've2d0b9e+e2d0b9e' (BuildVersion for an untagged-commit deploy + normalizeUpdateTarget's v-prepend) and `git checkout` errors with 'pathspec did not match any file(s) known to git' because '+' is invalid in a git pathspec. New `update.GitRefForBuildLabel(s)` strips the '+<commit>' suffix and a leading 'v' only when the remainder is a pure hex SHA. Both `PostAdminUpdateApply` and `PostAdminUpdatePush` pass `update.GitRefForBuildLabel(target)` to the orchestrator; the orchestrator also re-processes on its end as defense-in-depth. Display target stays untouched (page + audit + log show the human-readable form). 15 subtests in TestGitRefForBuildLabel + 15 cases in TestIsAllHex + 15 inputs in TestGitRefForBuildLabel_NeverPlusOrSpace + the regression-2026-09-04-live subtest pinning the live fix. 19 B-check contracts in scripts/check_b237_10.sh." \
   'test -f scripts/check_b237_10.sh && bash scripts/check_b237_10.sh'
+# --- B237.15: deployment variants ---
+# Closes the 2026-09-07 operator ask: "README only documents
+# one deployment path; write more with the simplicity-first
+# principle". Adds 5 deploy surfaces:
+#   V1 + V5: prebuilt-image docker compose
+#     (docker-compose.ghcr.yml + docker-compose.lite.yml,
+#      pulls ghcr.io/BarsSky/skygate, no in-container build)
+#   V2: podman compose (doc-only section in README.md)
+#   V3 + V4: bare-metal systemd/OpenRC installer
+#     (deploy/install.sh autodetects + dispatches to
+#      deploy/install-{debian,rh,alpine,bare}.sh)
+#   V6: Windows native installer
+#     (deploy/Setup-Skygate-Win.ps1 uses New-Service)
+#   V8: release workflow (the prerequisite for all of the
+#      above — publishes the image + the tarballs on tag
+#      push via .github/workflows/release.yml +
+#      Dockerfile.prebuilt). Also patches entrypoint.sh
+#      to skip the build step when SKYGATE_PREBUILT=1 is
+#      set (the Dockerfile.prebuilt bakes this in).
+# All variants share the same .env schema + the same
+# runtime config (HEADSCALE_URL, HEADSCALE_API_KEY,
+# SKYGATE_JWT_SECRET). Moving between them is a
+# `docker compose down` on one + an install on the other.
+# 50 B-check contracts in scripts/check_b237_15.sh (covers
+# the file inventory + the entrypoint guard + the README
+# sections + the PowerShell syntax + the asset-naming
+# contract between release.yml and the install scripts —
+# if the names drift, every install fails at download time).
+run_check "B237.15" "Deployment variants. Adds 5 deploy surfaces beyond the original in-container-build compose: prebuilt-image ghcr compose (V1 + V5), podman compose (V2, doc-only), bare-metal systemd/OpenRC installers (V3 + V4) with autodetect single-file + per-OS scripts for Debian/Ubuntu/RHEL/Fedora/Alpine/bare, Windows native installer (V6, New-Service + REG_MULTI_SZ env), and the release workflow (V8, .github/workflows/release.yml + Dockerfile.prebuilt + entrypoint.sh SKYGATE_PREBUILT guard) that publishes all the artifacts. All variants share the same .env schema. 50 B-check contracts in scripts/check_b237_15.sh." \
+  'test -f scripts/check_b237_15.sh && bash scripts/check_b237_15.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host
