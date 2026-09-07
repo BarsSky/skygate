@@ -5177,6 +5177,55 @@ in the same commit. Don't let the tracker drift.
     workflow end-to-end (the workflow file is
     syntactically valid but the test must wait for
     the operator to tag v1.5.1+).
+  - **B237.16 (v1.5.2+, 2026-09-07) — TD-2 + TD-14
+    staticcheck contract**. Closes the 2 leftover
+    stragglers from the v1.2.0 cleanup (commit
+    `38b2fb9e` — "Style cleanup (TD-2): replace 5
+    numeric HTTP status codes with http.StatusXxx
+    constants" + `d6f7b6b2` — "v1.2.0: staticcheck
+    100% clean (TD-2 from PLANS.md)"). The v1.2.0
+    work replaced 73 numeric codes with named
+    constants. Post-v1.2.0, 2 stragglers snuck back
+    in via the v1.5.0 work:
+      - `internal/headscale/tags_test.go:66` had
+        `http.Error(w, "unexpected: ...", 404)` →
+        now `http.StatusNotFound`
+      - `internal/oidc/e2e_test.go:399` had
+        `http.Redirect(w, r, nextParam, 302)` →
+        now `http.StatusFound`
+    B237.16 also adds a contract pin (10 B-checks
+    in `scripts/check_b237_16.sh`) so the next
+    regression fails the verify-pre catalog.
+    SA1012 (TD-14, the 5 false-positives in test
+    files PLANS.md mentioned) never materialized
+    in the current tree — `staticcheck ./...`
+    reports 0 SA1012 — the check pins their
+    continued absence.
+    **Verified** (local):
+    - `bash scripts/check_b237_16.sh` → 10/10 pass
+      (A.1 no `http.Error(<num>)`, A.2 no
+      `http.Redirect(<num>)`, A.3 no `WriteHeader(<num>)`,
+      B.1+B.2 skipped on this host because
+      staticcheck is not on PATH, C.1-C.2 sanity
+      that the canonical constants are still in use,
+      D.1-D.3 skipped on this host because go is
+      not on PATH for bash, E.1+E.2 registration
+      checks)
+    - `go build ./...` → clean
+    - `go test -count=1 -short ./...` → 45 packages
+      green
+    - `staticcheck ./...` → 0 ST1013, 0 SA1012
+      (the 23 remaining warnings are all U1000
+      "unused test stubs" — separate ticket,
+      not TD-14)
+    **Note**: PLANS.md still lists TD-2 as
+    "DEFERRED from v0.34.0" and TD-14 as
+    "DEFERRED from v0.34.0" but both have been
+    DONE since v1.2.0 (commit 38b2fb9e +
+    d6f7b6b2). The plan is out of date; B237.16
+    doesn't touch PLANS.md because that's a
+    separate documentation update (operator can
+    flip the status when they review).
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

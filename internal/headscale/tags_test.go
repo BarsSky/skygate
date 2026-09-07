@@ -63,7 +63,7 @@ func TestAddTag_PreservesExistingTags(t *testing.T) {
 			)))
 			return
 		}
-		http.Error(w, "unexpected: "+r.Method+" "+r.URL.Path, 404)
+		http.Error(w, "unexpected: "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 	}))
 	defer srv.Close()
 

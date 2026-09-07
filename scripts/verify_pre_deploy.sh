@@ -3792,6 +3792,20 @@ run_check "B237.10" "Auto-update pathspec bug fix. Closes the 2026-09-04 live bu
 # if the names drift, every install fails at download time).
 run_check "B237.15" "Deployment variants. Adds 5 deploy surfaces beyond the original in-container-build compose: prebuilt-image ghcr compose (V1 + V5), podman compose (V2, doc-only), bare-metal systemd/OpenRC installers (V3 + V4) with autodetect single-file + per-OS scripts for Debian/Ubuntu/RHEL/Fedora/Alpine/bare, Windows native installer (V6, New-Service + REG_MULTI_SZ env), and the release workflow (V8, .github/workflows/release.yml + Dockerfile.prebuilt + entrypoint.sh SKYGATE_PREBUILT guard) that publishes all the artifacts. All variants share the same .env schema. 50 B-check contracts in scripts/check_b237_15.sh." \
   'test -f scripts/check_b237_15.sh && bash scripts/check_b237_15.sh'
+# --- B237.16: TD-2 + TD-14 staticcheck contract ---
+# Closes the leftover stragglers from the v1.2.0 staticcheck
+# cleanup (commit 38b2fb9e replaced 73 numeric HTTP status codes
+# with http.StatusXxx constants). Post-v1.2.0, 2 stragglers
+# snuck back in via the v1.5.0 work:
+#   - internal/headscale/tags_test.go:66 (404 → http.StatusNotFound)
+#   - internal/oidc/e2e_test.go:399       (302 → http.StatusFound)
+# B237.16 fixes both + adds a contract pin (10 B-checks) so
+# the next regression fails the verify-pre catalog. SA1012
+# (TD-14, 5 false-positives in test files) never materialized
+# in the current tree — the check pins their continued absence.
+# 10 B-check contracts in scripts/check_b237_16.sh.
+run_check "B237.16" "TD-2 + TD-14 staticcheck contract. Fixes 2 numeric-status-code stragglers (tags_test.go:66 had 404, e2e_test.go:399 had 302 — both now use http.StatusXxx constants) and pins the contract via 10 B-checks (manual greps for http.Error/WriteHeader/Redirect with numeric codes, plus a staticcheck-driven SA1012/ST1013 check when the tool is on PATH, plus sanity checks that the canonical constants are still in use). 10 B-check contracts in scripts/check_b237_16.sh." \
+  'test -f scripts/check_b237_16.sh && bash scripts/check_b237_16.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

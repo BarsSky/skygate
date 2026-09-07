@@ -396,7 +396,7 @@ func TestE2E_HeadscaleClientFlow(t *testing.T) {
 		// and same-origin, redirect to it; otherwise
 		// fall back to /dashboard (this matches the
 		// real PostLogin behaviour — see service.go).
-		http.Redirect(w, r, nextParam, 302)
+		http.Redirect(w, r, nextParam, http.StatusFound)
 	}
 	// Wire the mock login handlers into the test mux.
 	// The /login GET is on the same path the real
