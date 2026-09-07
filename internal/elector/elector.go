@@ -70,7 +70,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 )
 
@@ -159,11 +158,10 @@ type DBSource = skygatedb.DBSource
 // Elector is the running ticker. Construct with NewElector,
 // then call Start to launch the goroutine.
 type Elector struct {
-	cfg     Config
-	src     DBSource
-	mu      sync.Mutex
-	stop    chan struct{}
-	done    chan struct{}
+	cfg  Config
+	src  DBSource
+	stop chan struct{}
+	done chan struct{}
 }
 
 // NewElector constructs the elector. The DBSource is

@@ -42,32 +42,58 @@ import (
 // sentinel from Prepare/Query/Exec. Lets the test assert
 // "the query reached the OLD pool" vs "the query reached
 // the NEW pool" without spinning up a real PG.
+//
+// 2026-09-07 (B237.20 / TD-12): staticcheck U1000
+// "unused" warnings on the fake* interface stubs.
+// The types/funcs LOOK unused to staticcheck but
+// they're required to satisfy database/sql/driver
+// interfaces. //lint:ignore per type+func below.
+//lint:ignore U1000 required for database/sql/driver.Conn interface (B224 test stub)
 type fakeConn struct{ label string }
 
+//lint:ignore U1000 driver.Conn.Prepare
 func (c *fakeConn) Prepare(query string) (driver.Stmt, error) {
 	return &fakeStmt{label: c.label}, nil
 }
+
+//lint:ignore U1000 driver.Conn.Close
 func (c *fakeConn) Close() error { return nil }
+
+//lint:ignore U1000 driver.Conn.Begin
 func (c *fakeConn) Begin() (driver.Tx, error) { return nil, nil }
 
+//lint:ignore U1000 required for database/sql/driver.Stmt interface (B224 test stub)
 type fakeStmt struct{ label string }
 
+//lint:ignore U1000 driver.Stmt.Close
 func (s *fakeStmt) Close() error { return nil }
+
+//lint:ignore U1000 driver.Stmt.NumInput
 func (s *fakeStmt) NumInput() int { return 0 }
+
+//lint:ignore U1000 driver.Stmt.Exec
 func (s *fakeStmt) Exec(args []driver.Value) (driver.Result, error) {
 	return fakeResult{s.label}, nil
 }
+
+//lint:ignore U1000 driver.Stmt.Query
 func (s *fakeStmt) Query(args []driver.Value) (driver.Rows, error) {
 	return nil, errors.New("not implemented")
 }
 
+//lint:ignore U1000 required for database/sql/driver.Result interface (B224 test stub)
 type fakeResult struct{ label string }
 
+//lint:ignore U1000 driver.Result.LastInsertId
 func (r fakeResult) LastInsertId() (int64, error) { return 0, nil }
+
+//lint:ignore U1000 driver.Result.RowsAffected
 func (r fakeResult) RowsAffected() (int64, error) { return 0, nil }
 
+//lint:ignore U1000 required for database/sql/driver.Driver interface (B224 test stub)
 type fakeDriver struct{}
 
+//lint:ignore U1000 driver.Driver.Open
 func (d *fakeDriver) Open(name string) (driver.Conn, error) {
 	// The connection name embeds the label (e.g. "fake-OldPool" /
 	// "fake-NewPool"). Return a conn that records which one

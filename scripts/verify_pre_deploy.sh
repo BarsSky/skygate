@@ -3922,6 +3922,36 @@ run_check "B146" "Phase 2 reg.ru DNS live test (BL-2). Productionizes the workin
 # page-data wiring + template + i18n RU/EN + 4 unit tests).
 run_check "B237.19" "Exit-rules form-error flash + duplicate banner UX. Fixes 2 operator-reported bugs from 2026-09-07: (1) PostMyExitRule now redirects with ?err= instead of http.Error (giant plain-text page), preserving the form values via the form_* query params; the template renders .err as a flash banner. (2) The duplicate banner's color changed from alert-danger to alert-info (it's informational, not an error) + the wording is updated to 'Domain already covered — the autoupdater will keep it current' (no more 'delete to update' hint — the autoupdater handles updates). 14 B-check contracts in scripts/check_b237_19.sh (helper function + URL shape + 7 handler call sites + page-data wiring + template + i18n RU/EN + 4 unit tests + verify_pre_deploy.sh + AGENTS.md)." \
   'test -f scripts/check_b237_19.sh && bash scripts/check_b237_19.sh'
+# --- B237.20: TD-12 + TD-13 staticcheck-100%-clean ---
+# Closes the last 23 staticcheck warnings (TD-12: 22
+# U1000 "unused code" on test stubs that satisfy interface
+# contracts, 1 S1021 "merge variable + assignment" in
+# dbmigrate/ssh_transport.go:279). B237.20 fix:
+#   - 3 outright deletions: `queryReachable` in
+#     internal/feature/admin/database.go (U1000, never
+#     called), `mu sync.Mutex` field on the Elector
+#     (U1000, never used; + removed the now-unused
+#     `sync` import), `mu sync.Mutex` field on
+#     stubDriver in internal/db/swapdb_b203_test.go
+#     (U1000, never used).
+#   - 19 //lint:ignore U1000 directives on test stubs
+#     that LOOK unused to staticcheck but are required to
+#     satisfy database/sql/driver, http.ResponseWriter,
+#     or the B210.1 source-compat type alias.
+#   - 1 S1021 fix: merged the `var outCloseErr error;
+#     outCloseErr = out.Close()` split-decl into
+#     `outCloseErr := out.Close()`.
+# TD-13 ("~917 lines of testutil.go stubs") was the
+# pre-TD-12 audit target. The actual findings: the 917
+# lines were mostly legitimate test fixtures, not stubs
+# to delete. The cleanup above (3 deletions + 19
+# //lint:ignore + 1 S1021 fix) is the productive part
+# of the audit; the rest of testutil.go is a follow-up
+# if a real duplication problem surfaces.
+# After B237.20: staticcheck ./... reports 0 issues
+# (down from 23 pre-fix).
+run_check "B237.20" "TD-12 + TD-13 staticcheck-100%-clean. Removes the last 23 staticcheck warnings: 3 outright deletions (queryReachable in database.go, mu sync.Mutex field on Elector, mu sync.Mutex field on stubDriver), 19 //lint:ignore U1000 directives on test stubs that satisfy interface contracts (database/sql/driver, http.ResponseWriter, B210.1 type alias), 1 S1021 fix (var/assignment merge in dbmigrate/ssh_transport.go:279). staticcheck ./... reports 0 issues (down from 23 pre-fix). 9 B-check contracts in scripts/check_b237_20.sh (staticcheck reports 0 + 19 //lint:ignore directives in the right files + 3 deletions + build clean + 3 affected packages still pass + verify_pre_deploy.sh + AGENTS.md)." \
+  'test -f scripts/check_b237_20.sh && bash scripts/check_b237_20.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

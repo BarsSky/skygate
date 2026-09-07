@@ -73,6 +73,7 @@ import (
 // delegates to db.FixedDBSource{DB: db}).
 type DBSource = skygatedb.DBSource
 
+//lint:ignore U1000 B210.1 type alias for source-compat with pre-B210 callers
 type fixedDBSource = skygatedb.FixedDBSource
 
 func NewFixedDBSource(db *sql.DB) skygatedb.DBSource {

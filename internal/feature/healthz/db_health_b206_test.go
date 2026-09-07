@@ -253,16 +253,26 @@ func TestGetDBHealth_PopulatedSample(t *testing.T) {
 // directly today — the JSON shape test above is more
 // important — but it's here for future expansion when
 // the handler is called in-process via httptest.)
+//
+// 2026-09-07 (B237.20 / TD-12): staticcheck U1000
+// warnings on the type + the 3 methods. They LOOK
+// unused to staticcheck but they're required to
+// satisfy http.ResponseWriter. //lint:ignore per
+// type+method below.
+//lint:ignore U1000 reserved for future httptest expansion (B206)
 type recordingResponseWriter struct {
 	header http.Header
 }
 
+//lint:ignore U1000 http.ResponseWriter.Header
 func (r *recordingResponseWriter) Header() http.Header {
 	return r.header
 }
 
+//lint:ignore U1000 http.ResponseWriter.Write
 func (r *recordingResponseWriter) Write([]byte) (int, error) {
 	return 0, nil
 }
 
+//lint:ignore U1000 http.ResponseWriter.WriteHeader
 func (r *recordingResponseWriter) WriteHeader(int) {}

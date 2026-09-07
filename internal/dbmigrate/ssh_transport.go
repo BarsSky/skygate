@@ -276,8 +276,7 @@ func (t SSHDumpTransport) Dump(ctx context.Context, sourceDSN, destPath string, 
 	wg.Wait()
 	// Close after the io.Copy goroutine has finished
 	// writing; surface any deferred fsync error here.
-	var outCloseErr error
-	outCloseErr = out.Close()
+	outCloseErr := out.Close()
 
 	if runErr != nil {
 		_ = os.Remove(destPath)

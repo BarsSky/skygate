@@ -23,7 +23,6 @@ import (
 // *stubConn. We count Open/Close calls to verify the
 // wrapper calls Close on the old pool.
 type stubDriver struct {
-	mu        sync.Mutex
 	openCount int32
 	closeCount int32
 }

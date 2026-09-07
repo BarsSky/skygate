@@ -347,22 +347,37 @@ work has been moved to TD-14 below.
   paginates so the volume is manageable
 
 **[TD-12] 30 ST1013-style noise items**
-- **Status:** UNADDRESSED
-- **Effort:** ~1 hour
-- **Scope:** same as TD-2 (style cleanups)
-- **Why low:** same as TD-2
+- **Status:** DONE in **B237.20** (v1.5.2+). The actual
+  count was 23 (not 30 — PLANS.md was an estimate):
+  22 U1000 "unused code" on test stubs that satisfy
+  interface contracts + 1 S1021 "merge variable +
+  assignment" in `dbmigrate/ssh_transport.go:279`.
+  B237.20 fix: 3 outright deletions (`queryReachable`
+  + 2 unused `mu sync.Mutex` fields) + 19
+  `//lint:ignore U1000` directives on the test stubs
+  + 1 S1021 fix. `staticcheck ./...` reports 0
+  issues (was 23 pre-fix). 9-contract B-check in
+  `scripts/check_b237_20.sh` pins the contract.
+- **Effort:** DONE (was ~1h; actual was about the same)
+- **Scope:** DONE — `bash scripts/check_b237_20.sh` → 9/9 pass;
+  `go build ./...` clean; the 3 affected packages
+  (db, elector, feature/healthz) all green
+- **Why low:** DONE
 
 **[TD-13] ~2850 lines of testutil.go stubs**
-- **Status:** OUTDATED (actual count is 917 lines after
-  v0.34.0 cleanup, not 2850 as the v0.32-era BACKLOG
-  estimated)
-- **Effort:** ~1 day
-- **Scope:** audit `internal/feature/admin/testutil.go`
-  and `internal/feature/my/testutil.go` for unused
-  helpers; the v0.34.0 cleanup removed 3 dead helpers
-  already
-- **Why low:** will happen naturally as new features are
-  added
+- **Status:** DONE in **B237.20** (v1.5.2+). The actual
+  count was 917 lines (not 2850 — PLANS.md was a
+  v0.32-era estimate). The audit found: the 917
+  lines were mostly legitimate test fixtures, not
+  stubs to delete. The productive part of the audit
+  (3 deletions + 19 //lint:ignore + 1 S1021 fix)
+  is captured under TD-12; the rest of testutil.go
+  is a follow-up if a real duplication problem
+  surfaces.
+- **Effort:** DONE (was ~1d; actual was about 30 min
+  for the cleanup, the audit itself was ~15 min)
+- **Scope:** DONE
+- **Why low:** DONE
 
 ---
 

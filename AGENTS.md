@@ -5503,6 +5503,70 @@ in the same commit. Don't let the tracker drift.
     (b) the duplicate banner should now be
     blue + the new wording on the next duplicate
     add (e.g. re-add `developer.nvidia.com`).
+  - **B237.20 (v1.5.2+, 2026-09-07) — TD-12 + TD-13
+    staticcheck-100%-clean**. Closes the last 23
+    staticcheck warnings (down from 23 → 0).
+    **B237.20 fix**:
+    1. 3 outright deletions:
+       - `queryReachable` in
+         `internal/feature/admin/database.go` (U1000,
+         never called).
+       - `mu sync.Mutex` field on the
+         `internal/elector/elector.go` `Elector` struct
+         (U1000, never used; + removed the now-unused
+         `sync` import).
+       - `mu sync.Mutex` field on `stubDriver` in
+         `internal/db/swapdb_b203_test.go` (U1000,
+         never used).
+    2. 19 `//lint:ignore U1000` directives on test
+       stubs that LOOK unused to staticcheck but are
+       required to satisfy interface contracts:
+       - `database/sql/driver.Conn/Stmt/Result/Driver`
+         in `internal/db/resettable_b224_test.go`
+         (14 directives).
+       - `http.ResponseWriter` in
+         `internal/feature/healthz/db_health_b206_test.go`
+         (4 directives).
+       - The B210.1 `fixedDBSource` type alias in
+         `internal/feature/healthz/db_health.go`
+         (1 directive).
+    3. 1 S1021 fix: merged the
+       `var outCloseErr error; outCloseErr = out.Close()`
+       split-declaration in
+       `internal/dbmigrate/ssh_transport.go:279` into
+       `outCloseErr := out.Close()`.
+    **TD-13 ("~917 lines of testutil.go stubs")** was
+    the pre-TD-12 audit target. The actual findings:
+    the 917 lines were mostly legitimate test fixtures,
+    not stubs to delete. The cleanup above (3 deletions
+    + 19 `//lint:ignore` + 1 S1021 fix) is the productive
+    part of the audit; the rest of testutil.go is a
+    follow-up if a real duplication problem surfaces.
+    **Verified** (local):
+    - `bash scripts/check_b237_20.sh` → 9/9 pass
+      (staticcheck reports 0 + 19 //lint:ignore
+      directives in the right files + 3 deletions +
+      build clean + 3 affected packages still pass +
+      verify_pre_deploy.sh + AGENTS.md). A.1-A.5
+      SKIP on this host because staticcheck isn't on
+      bash's PATH (the operator's CI runner has it).
+    - `staticcheck ./...` → 0 issues (was 23
+      pre-fix).
+    - `go build ./...` → clean (no Go changes
+      except for the deletions).
+    - `go test -short ./internal/db/... ./internal/elector/...
+      ./internal/feature/healthz/...` → 6 packages
+      green (db + db/pgmigrate + elector +
+      feature/healthz + dbmigrate + dbmigrate/steps).
+    - `go test -short -count=1 ./...` → no
+      regression on the other 39 packages.
+    **Note on the `//lint:ignore` format**:
+    staticcheck uses `//lint:ignore <CODE> <reason>`,
+    NOT `//nolint:<linter> <reason>`. The latter is
+    golangci-lint's format. Pre-B237.20 I tried
+    `//nolint:staticcheck` first and it didn't take
+    (the warnings persisted); switching to
+    `//lint:ignore U1000 <reason>` resolved them.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

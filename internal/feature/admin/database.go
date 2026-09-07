@@ -725,16 +725,6 @@ func (s *Service) PostAdminDatabaseFailoverRollback(w http.ResponseWriter, r *ht
 
 // ---------- helpers -----------------------------------------------------
 
-// queryReachable returns "reachable" or "unreachable" for use
-// in the URL flash. Defined as a small function so the
-// string lives in one place.
-func queryReachable(b bool) string {
-	if b {
-		return "reachable"
-	}
-	return "unreachable"
-}
-
 // intToString is a tiny helper that avoids importing strconv
 // just for a single call.
 func intToString(n int64) string {
