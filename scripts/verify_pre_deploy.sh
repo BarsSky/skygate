@@ -3889,6 +3889,39 @@ run_check "B237.18" "TD-10 headscale_user_id reconciliation. Closes the stale-he
 #   - 11 B-check contracts in scripts/check_b146.sh.
 run_check "B146" "Phase 2 reg.ru DNS live test (BL-2). Productionizes the working auth pattern (top-level form fields + mTLS, password NOT in input_data — the pre-fix pattern returned NO_AUTH) as scripts/b146_regapi_live.sh (bash + curl + Python parser, 4 actionable error codes: NO_AUTH, ACCESS_DENIED_FROM_IP, DOMAIN_NOT_FOUND, generic). 11 B-check contracts in scripts/check_b146.sh (script inventory + bash syntax + the 4 known error codes + PASS/FAIL/SKIP output format + cert/key file path docs + HA execution doc references + verify_pre_deploy.sh + AGENTS.md). The live test itself SKIPs without the operator's env vars set — the operator runs it directly on the live VM with SKYGATE_DNS_REGAPI_{USER,PASSWORD,ZONE}=... to verify the integration end-to-end." \
   'test -f scripts/check_b146.sh && bash scripts/check_b146.sh'
+# --- B237.19: exit-rules form-error flash + duplicate banner UX ---
+# Closes the two operator-reported bugs (2026-09-07):
+#   Bug 1: PostMyExitRule called http.Error(w, ..., 400) on
+#          validation failures (invalid IP, limit exceeded,
+#          device not owned, etc.) which rendered a giant
+#          plain-text page and lost the form values the
+#          operator had typed.
+#   Bug 2: the "duplicate" banner wording was misleading
+#          ("Удалите существующее, если нужно обновить")
+#          and the alert-danger color made it look like an
+#          error — the operator interpreted it as "the new
+#          rule failed to add" when in reality the new rule
+#          was never created (it was the old /32 from the
+#          first add of the same domain).
+# B237.19 fix:
+#   1. PostMyExitRule now calls http.Redirect to
+#      /my/exit-rules?err=<msg>&form_* via the new
+#      buildFormErrorRedirectURL helper. The template
+#      renders .err as a flash banner above the form.
+#   2. The duplicate banner's color changed from
+#      alert-danger (red) to alert-info (blue) — it's
+#      informational, not an error. The wording was
+#      updated: "Домен X уже покрыт правилом — автообновление
+#      будет поддерживать его актуальность" / "Domain X
+#      is already covered by an existing rule — the
+#      autoupdater will keep it current." No more
+#      "delete to update" hint (the autoupdater handles
+#      updates; the user doesn't need to delete).
+# 14 B-check contracts in scripts/check_b237_19.sh
+# (helper function + URL shape + 7 handler call sites +
+# page-data wiring + template + i18n RU/EN + 4 unit tests).
+run_check "B237.19" "Exit-rules form-error flash + duplicate banner UX. Fixes 2 operator-reported bugs from 2026-09-07: (1) PostMyExitRule now redirects with ?err= instead of http.Error (giant plain-text page), preserving the form values via the form_* query params; the template renders .err as a flash banner. (2) The duplicate banner's color changed from alert-danger to alert-info (it's informational, not an error) + the wording is updated to 'Domain already covered — the autoupdater will keep it current' (no more 'delete to update' hint — the autoupdater handles updates). 14 B-check contracts in scripts/check_b237_19.sh (helper function + URL shape + 7 handler call sites + page-data wiring + template + i18n RU/EN + 4 unit tests + verify_pre_deploy.sh + AGENTS.md)." \
+  'test -f scripts/check_b237_19.sh && bash scripts/check_b237_19.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

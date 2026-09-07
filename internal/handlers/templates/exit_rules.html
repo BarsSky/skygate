@@ -61,12 +61,22 @@
 
 {{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules.added_ok"}}</div>{{end}}
 {{if .partial}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{t "exit_rules.partial"}}</div>{{end}}
+{{/* 2026-09-07 (B237.19): form-error flash. The POST handler
+     used to call http.Error which rendered a giant plain-text
+     page; now the handler redirects back with ?err=<msg>
+     and the user's form values are preserved via the form_*
+     query params. We render the error in the same alert UI
+     as the duplicate banner so the form surface is consistent. */}}
+{{if .err}}<div class="alert alert-danger" id="form-error-banner">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  {{tf "exit_rules.form_error" .err}}
+</div>{{end}}
 {{/* B123: duplicate alert now carries the blocking IP, the parent_domain
      (if the IP is owned by a DNS-tracked /32 from another domain), and a
      link to the rule row that already covers the target. The .existing
      variable is still accepted as back-compat for .target. */}}
-{{if .duplicate}}<div class="alert alert-danger" id="duplicate-alert">
-  <i class="fa-solid fa-triangle-exclamation"></i>
+{{if .duplicate}}<div class="alert alert-info" id="duplicate-alert">
+  <i class="fa-solid fa-circle-info"></i>
   {{tf "exit_rules.duplicate" .target}}
   {{if .blocking_ip}}<br><small>{{t "exit_rules.duplicate_blocking"}} <code>{{.blocking_ip}}</code></small>{{end}}
   {{if .parent_domain}}<br><small>{{t "exit_rules.duplicate_parent"}} <code>{{.parent_domain}}</code></small>{{end}}

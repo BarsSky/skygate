@@ -23,10 +23,33 @@ var ruExitRules = map[string]string{
 	"exit_rules.add_rule_title"         : "Добавить правило",
 	"exit_rules.added_ok"               : "Правило добавлено — ACL обновлён, exit-node синхронизирован",
 	"exit_rules.partial"                : "Часть IP уже были в правилах — добавлены только новые",
-	"exit_rules.duplicate"              : "Правило для %s уже существует — не дублируем. Удалите существующее, если нужно обновить.",
-	"exit_rules.duplicate_blocking"     : "Блокирующий IP:",
-	"exit_rules.duplicate_parent"       : "Уже обслуживается доменом:",
-	"exit_rules.duplicate_view"         : "→ к правилу #%d",
+	// 2026-09-07 (B237.19): form-error flash banner
+	// shown above the form when the form's POST handler
+	// rejects the values (invalid IP, limit exceeded,
+	// device not owned, etc.). Pre-fix this was a giant
+	// plain-text page from http.Error; post-fix the
+	// handler redirects back with ?err= and the template
+	// shows the message here so the user can fix + retry
+	// without losing their form values.
+	"exit_rules.form_error"             : "Не удалось добавить правило: %s",
+	// 2026-09-07 (B237.19): the previous wording
+	// ("Правило для X уже существует — не дублируем. Удалите
+	//  существующее, если нужно обновить.") sounded like an
+	// error and was easy to misread as "the new rule failed
+	// to add". The reality: a domain rule DNS-resolves into
+	// /32 rules; the SECOND add of the same domain hits the
+	// existing /32 dedup (because the /32 for the resolved
+	// IP is already there from the first add). The new rule
+	// was never created — the user is seeing the OLD rule
+	// in the list, and the banner is just confirming "this
+	// domain is already covered". Reworded to make that
+	// clearer: "Domain already covered" + the existing rule
+	// link, no scary "delete to update" hint (the autoupdater
+	// handles updates; the user doesn't need to delete).
+	"exit_rules.duplicate"              : "Домен %s уже покрыт правилом — автообновление будет поддерживать его актуальность.",
+	"exit_rules.duplicate_blocking"     : "Уже покрытый IP:",
+	"exit_rules.duplicate_parent"       : "Источник:",
+	"exit_rules.duplicate_view"         : "→ перейти к правилу #%d",
 	"exit_rules.dns_pending"            : "Домен добавлен, но DNS пока не отвечает: %s. Autoupdater попробует при следующем цикле (до 5 минут).",
 	"exit_rules.deleted"                : "Правило удалено",
 	// 2026-08-06: preferred-mismatch cross-check (v0.33.1.16
@@ -238,9 +261,22 @@ var enExitRules = map[string]string{
 	"exit_rules.add_rule_title"         : "Add rule",
 	"exit_rules.added_ok"               : "Rule added — ACL updated, exit node synced",
 	"exit_rules.partial"                : "Some IPs were already in rules — only new ones were added",
-	"exit_rules.duplicate"              : "A rule for %s already exists — not duplicating. Remove the existing one to update.",
-	"exit_rules.duplicate_blocking"     : "Blocking IP:",
-	"exit_rules.duplicate_parent"       : "Already tracked by domain:",
+	// 2026-09-07 (B237.19): form-error flash banner
+	// shown above the form when the form's POST handler
+	// rejects the values. EN copy.
+	"exit_rules.form_error"             : "Could not add rule: %s",
+	// 2026-09-07 (B237.19): the previous wording
+	// ("A rule for X already exists — not duplicating. Remove
+	//  the existing one to update.") sounded like an error
+	// and was easy to misread as "the new rule failed to add".
+	// A domain rule DNS-resolves into /32 rules; the SECOND
+	// add of the same domain hits the existing /32 dedup.
+	// Reworded: "Domain already covered" + the existing rule
+	// link, no scary "delete to update" hint (the autoupdater
+	// handles updates; the user doesn't need to delete).
+	"exit_rules.duplicate"              : "Domain %s is already covered by an existing rule — the autoupdater will keep it current.",
+	"exit_rules.duplicate_blocking"     : "Already-covered IP:",
+	"exit_rules.duplicate_parent"       : "Source:",
 	"exit_rules.duplicate_view"         : "→ jump to rule #%d",
 	"exit_rules.dns_pending"            : "Domain added, but DNS is not responding yet: %s. Autoupdater will retry on the next cycle (up to 5 minutes).",
 	"exit_rules.deleted"                : "Rule deleted",

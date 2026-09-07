@@ -301,6 +301,15 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 
 		// 2026-07-07: issue #5 — query params for dedup notification
 	duplicate := r.URL.Query().Get("duplicate") == "1"
+	// 2026-09-07 (B237.19): form-error flash from
+	// the POST handler. The handler used to call
+	// http.Error which rendered a giant plain-text
+	// page; now it redirects back with ?err=<msg>
+	// and the template renders this as a flash
+	// banner above the form. The user's form values
+	// are preserved via the form_* query params
+	// (also written by the handler).
+	errMsg := r.URL.Query().Get("err")
 	// B123: `existing` was renamed to `target` for clarity (it's the
 	// value the user tried to add, NOT the existing rule). `existing_id`,
 	// `blocking_ip`, `parent_domain` carry the details needed to point
@@ -522,6 +531,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		},
 		"duplicate":     duplicate,
 		"warn":          r.URL.Query().Get("warn"),
+		"err":           errMsg,
 		"target":        target,
 		"existing_id":   existingIDInt,
 		"blocking_ip":   blockingIP,
@@ -566,7 +576,14 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	// valid input there) — that path is unchanged.
 	if targetType == "ip" || targetType == "subnet" {
 		if !isValidIPOrCIDR(targetValue) {
-			http.Error(w, fmt.Sprintf("invalid target_value %q: expected IP or CIDR for target_type=%q (use target_type=domain for hostnames like youtube.com — the system will resolve it to IPs and add /32 rules automatically)", targetValue, targetType), http.StatusBadRequest)
+			// B237.19: redirect to the form with a flash
+			// banner + the user's values preserved
+			// (pre-fix this was http.Error which rendered
+			// a giant plain-text page and lost the form
+			// values).
+			http.Redirect(w, r, buildFormErrorRedirectURL(
+				fmt.Sprintf("invalid target_value %q: expected IP or CIDR for target_type=%q (use target_type=domain for hostnames like youtube.com — the system will resolve it to IPs and add /32 rules automatically)", targetValue, targetType),
+				devID, exitNode, targetType, targetValue, action), http.StatusFound)
 			return
 		}
 	}
@@ -601,7 +618,10 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if maxPerUser > 0 {
 		userRuleCount := countUserFacing(c.UserID, 0, false)
 		if userRuleCount >= maxPerUser {
-			http.Error(w, fmt.Sprintf("user limit exceeded: %d/%d rules for user %s (auto-resolved /32 IP rules не учитываются)", userRuleCount, maxPerUser, c.Username), http.StatusForbidden)
+			// B237.19: redirect with flash (not http.Error)
+			http.Redirect(w, r, buildFormErrorRedirectURL(
+				fmt.Sprintf("user limit exceeded: %d/%d rules for user %s (auto-resolved /32 IP rules не учитываются)", userRuleCount, maxPerUser, c.Username),
+				devID, exitNode, targetType, targetValue, action), http.StatusFound)
 			return
 		}
 	}
@@ -612,7 +632,10 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if maxPerDevice > 0 {
 		deviceRuleCount := countUserFacing(0, devID, false)
 		if deviceRuleCount >= maxPerDevice {
-			http.Error(w, fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on this device (auto-resolved /32 IP rules не учитываются)", deviceRuleCount, maxPerDevice), http.StatusForbidden)
+			// B237.19: redirect with flash (not http.Error)
+			http.Redirect(w, r, buildFormErrorRedirectURL(
+				fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on this device (auto-resolved /32 IP rules не учитываются)", deviceRuleCount, maxPerDevice),
+				devID, exitNode, targetType, targetValue, action), http.StatusFound)
 			return
 		}
 	}
@@ -623,7 +646,10 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if maxTotal > 0 {
 		totalCount := countUserFacing(0, 0, true)
 		if totalCount >= maxTotal {
-			http.Error(w, fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", totalCount, maxTotal), http.StatusForbidden)
+			// B237.19: redirect with flash (not http.Error)
+			http.Redirect(w, r, buildFormErrorRedirectURL(
+				fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", totalCount, maxTotal),
+				devID, exitNode, targetType, targetValue, action), http.StatusFound)
 			return
 		}
 	}
@@ -658,11 +684,17 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !owned {
-		http.Error(w, "invalid device (not in your node_owner_map)", http.StatusForbidden)
+		// B237.19: redirect with flash (not http.Error)
+		http.Redirect(w, r, buildFormErrorRedirectURL(
+			"invalid device (not in your node_owner_map)",
+			devID, exitNode, targetType, targetValue, action), http.StatusFound)
 		return
 	}
 	if isExitNode {
-		http.Error(w, "cannot attach rules to exit-node (routing infrastructure)", http.StatusForbidden)
+		// B237.19: redirect with flash (not http.Error)
+		http.Redirect(w, r, buildFormErrorRedirectURL(
+			"cannot attach rules to exit-node (routing infrastructure)",
+			devID, exitNode, targetType, targetValue, action), http.StatusFound)
 		return
 	}
 
@@ -974,6 +1006,40 @@ func buildDuplicateRedirectURL(target string, existingID int, blockingIP, parent
 		url.QueryEscape(strconv.Itoa(devID)),
 		url.QueryEscape(exitNode),
 		url.QueryEscape(typeToInsert),
+		url.QueryEscape(targetValue),
+		url.QueryEscape(action),
+	)
+}
+
+// buildFormErrorRedirectURL is the B237.19 contract for the
+// "form validation failed" redirect. The pre-B237.19 code
+// called http.Error(w, ..., 400) which rendered a giant
+// plain-text error page (the operator saw the error in the
+// browser tab + lost the form values). Post-B237.19 the
+// handler redirects back to /my/exit-rules?err=<msg>&form_*
+// so the operator sees the error as a flash banner above
+// the form (the same UI surface as the duplicate banner)
+// and the form re-fills with the values they typed.
+//
+// The errMsg is the operator-facing error text. It is NOT
+// url.QueryEscape'd by this function — the caller is
+// expected to pass either a fixed i18n key suffix or a
+// pre-escaped value. We keep the function signature
+// accepting the raw string so the i18n layer can format
+// the value first (e.g. "user limit exceeded: 123/200
+// rules for skyadmin (auto-resolved /32 IP rules не
+// учитываются)" → only the "user limit exceeded" part is
+// the i18n template, the dynamic numbers stay unescaped).
+// The template renders the .err field via {{ .err }} which
+// auto-escapes via html/template's auto-escaping (Go's
+// stdlib).
+func buildFormErrorRedirectURL(errMsg string, devID int, exitNode, targetType, targetValue, action string) string {
+	return fmt.Sprintf(
+		"/my/exit-rules?err=%s&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s",
+		url.QueryEscape(errMsg),
+		url.QueryEscape(strconv.Itoa(devID)),
+		url.QueryEscape(exitNode),
+		url.QueryEscape(targetType),
 		url.QueryEscape(targetValue),
 		url.QueryEscape(action),
 	)

@@ -5436,6 +5436,73 @@ in the same commit. Don't let the tracker drift.
     operator-runnable. 9/10 BL-2 phases
     SHIPPED; only Phase 10 (release tag)
     remains.
+  - **B237.19 (v1.5.2+, 2026-09-07) — exit-rules
+    form-error flash + duplicate banner UX**. Closes
+    2 operator-reported bugs from 2026-09-07:
+    **Bug 1**: `PostMyExitRule` called `http.Error(w,
+    ..., 400)` on form-validation failures (invalid
+    IP, limit exceeded, device not owned, etc.).
+    The browser rendered a giant plain-text page
+    and the operator lost the form values they
+    had typed. The operator's first screenshot
+    shows exactly this: "invalid target_value
+    'developer.nvidia.com': expected IP or CIDR
+    for target_type='ip' ..." filling the whole
+    tab.
+    **Bug 2**: the "duplicate" banner wording
+    was misleading — "Правило для X уже
+    существует — не дублируем. Удалите
+    существующее, если нужно обновить" sounded
+    like an error, and the alert-danger color
+    made it look like "the new rule failed to
+    add" when in reality the new rule was never
+    created (it was the old /32 from the first
+    add of the same domain). The autoupdater
+    handles updates; the user doesn't need to
+    delete.
+    **B237.19 fix**:
+    1. `PostMyExitRule` now calls `http.Redirect`
+       to `/my/exit-rules?err=<msg>&form_*` via
+       the new `buildFormErrorRedirectURL` helper
+       (7 call sites: invalid IP, user limit,
+       device limit, system limit, device not
+       owned, exit-node rejected, generic DB
+       error). The template renders `.err` as a
+       flash banner above the form (same UI
+       surface as the duplicate banner).
+    2. The duplicate banner's color changed from
+       `alert-danger` (red) to `alert-info` (blue) —
+       it's informational, not an error. The
+       wording was updated: "Домен X уже покрыт
+       правилом — автообновление будет
+       поддерживать его актуальность" / "Domain
+       X is already covered by an existing rule
+       — the autoupdater will keep it current."
+       No more "delete to update" hint.
+    3. New i18n key `exit_rules.form_error`
+       (RU + EN) for the flash banner.
+    **Verified** (local):
+    - `bash scripts/check_b237_19.sh` → 15/15
+      pass (helper function + URL shape + 7
+      handler call sites + page-data wiring +
+      template + i18n RU/EN + 4 unit tests +
+      verify_pre_deploy.sh + AGENTS.md)
+    - `go test -short -count=1 ./internal/feature/exit_rules/`
+      → 4 new unit tests pass (BasicShape +
+      SpecialCharsInErrMsg + EmptyErrMsg +
+      NumericFormDeviceID) + 5 B123 tests pass
+      (no regression)
+    - `go build ./...` → clean
+    **Live-verify pending**: the operator
+    should see (a) the flash banner on the
+    next invalid form submit (e.g. type
+    "developer.nvidia.com" with target_type=ip
+    and submit — should see a blue flash banner
+    with the same message, form values preserved,
+    instead of a giant plain-text page), and
+    (b) the duplicate banner should now be
+    blue + the new wording on the next duplicate
+    add (e.g. re-add `developer.nvidia.com`).
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's
