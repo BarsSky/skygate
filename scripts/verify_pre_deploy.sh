@@ -3858,6 +3858,37 @@ run_check "B237.17" "TD-9 smoke-artifact daily cleanup. Closes the smoke.sh arti
 # 17 B-check contracts in scripts/check_b237_18.sh.
 run_check "B237.18" "TD-10 headscale_user_id reconciliation. Closes the stale-headscale_user_id gap by adding an in-app cron that runs every 1h (configurable via SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL) and reconciles each portal_users row against the live headscale user list. 4 outcomes: ok (link still valid) / linked (was NULL/0, found by username → updated) / relinked (had stale ID, found by username → updated) / orphan (had an ID, neither ID nor username exists in headscale → audit row, NEVER auto-deleted). Disabled via SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED=false for air-gapped installs. 17 B-check contracts in scripts/check_b237_18.sh (file inventory + ReconcileUsers signature + the 4 outcome constants + the NEVER-DELETE guard + the sync.Once cron guard + config fields + main.go wire-up + 10 unit tests + verify_pre_deploy.sh + AGENTS.md + PLANS.md)." \
   'test -f scripts/check_b237_18.sh && bash scripts/check_b237_18.sh'
+# --- B146: Phase 2 reg.ru DNS live test (BL-2) ---
+# Productionizes the working auth pattern that B145 +
+# B161.4 confirmed against the live reg.ru API on
+# 2026-08-18 (top-level form fields, mTLS cert,
+# password NOT inside input_data JSON). Pre-B146 the
+# pattern was a 5-line curl invocation the operator
+# ran by hand from the live VM; the integration was
+# never pinned as a repeatable test the operator
+# could re-run after a cert/password rotation.
+# B146 fix:
+#   - scripts/b146_regapi_live.sh — bash script that
+#     calls the v2 /zone/get_resource_records endpoint
+#     with the operator's cert + key + login +
+#     password, parses the response with a tiny Python
+#     one-liner, and reports a grep-able PASS/FAIL/SKIP
+#     line. Handles the 4 known 2026-08-18 failure
+#     modes (NO_AUTH + ACCESS_DENIED_FROM_IP +
+#     DOMAIN_NOT_FOUND + RECORD_NOT_FOUND) with
+#     actionable error messages.
+#   - scripts/check_b146.sh — B-check that pins the
+#     contract (script exists + is executable +
+#     handles the right error codes + has the right
+#     output format + is documented in AGENTS.md).
+#     The LIVE TEST itself is not in the verify-pre
+#     catalog (requires the operator's cert + key +
+#     creds in env, which aren't true on a CI
+#     runner). The operator runs the script
+#     directly to verify end-to-end on the live VM.
+#   - 11 B-check contracts in scripts/check_b146.sh.
+run_check "B146" "Phase 2 reg.ru DNS live test (BL-2). Productionizes the working auth pattern (top-level form fields + mTLS, password NOT in input_data — the pre-fix pattern returned NO_AUTH) as scripts/b146_regapi_live.sh (bash + curl + Python parser, 4 actionable error codes: NO_AUTH, ACCESS_DENIED_FROM_IP, DOMAIN_NOT_FOUND, generic). 11 B-check contracts in scripts/check_b146.sh (script inventory + bash syntax + the 4 known error codes + PASS/FAIL/SKIP output format + cert/key file path docs + HA execution doc references + verify_pre_deploy.sh + AGENTS.md). The live test itself SKIPs without the operator's env vars set — the operator runs it directly on the live VM with SKYGATE_DNS_REGAPI_{USER,PASSWORD,ZONE}=... to verify the integration end-to-end." \
+  'test -f scripts/check_b146.sh && bash scripts/check_b146.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

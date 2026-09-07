@@ -282,8 +282,8 @@ UI sections in `/admin/ha`:
 
 | # | Question | Blocker for | Operator answer | Status |
 |---|---|---|---|---|
-| 1 | reg.ru API credentials (user + password) | Phase 2, 4 | **NEEDED** — see "How to provide" below; cert is registered but reg.ru v2 API still requires HTTP Basic (login + alternative password) | ⏳ PENDING |
-| 2 | reg.ru API IP whitelist — add both VM public IPs | Phase 2 | **NEEDED** if reg.ru has IP whitelist enabled (likely required for API) | ⏳ PENDING |
+| 1 | reg.ru API credentials (user + password) | Phase 2, 4 | **NEEDED** — see "How to provide" below; cert is registered but reg.ru v2 API still requires HTTP Basic (login + alternative password) | ✅ DONE 2026-09-07 (operator provided login + alternative password) |
+| 2 | reg.ru API IP whitelist — add both VM public IPs | Phase 2 | **NEEDED** if reg.ru has IP whitelist enabled (likely required for API) | ✅ DONE 2026-09-07 (operator confirmed the IP whitelist is filled) |
 | 3 | Tailscale Funnel: NO (decided 2026-08-18) | n/a | DECIDED (decision #4) | ✅ DONE |
 | 4 | S3 bucket `s3://skygate-ha/` creation status | Phase 3+ | **RESOLVED** — reusing `s3://skygate-backups/ha/` prefix (existing bucket, same IAM) | ✅ DONE 2026-08-18 |
 | 5 | S3 IAM credentials for skygate process | Phase 3+ | **RESOLVED** — using existing backup.s3_* credentials (skygate-test / skygate-test-pass-2026 / endpoint http://172.18.0.5:9000) | ✅ DONE 2026-08-18 |
@@ -621,5 +621,26 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **Phase 8 (init-headplane.sh)** — runs as part of any fresh deploy, BEFORE the first `docker compose up -d headplane`. On a re-deploy with an existing key, the NEEDS_KEY gate skips re-mint. The script is idempotent.
 - **Phase 9 (dr_drill.sh)** — operator runs in a low-traffic maintenance window (Sunday 03:00 UTC recommended). The 5 steps walk the operator through the actual failure modes the chain was designed to handle. After the drill, the operator can tag the release (`git tag v1.5.0` per Phase 10).
 - **Status**: 8/10 phases SHIPPED. Only B146 + Phase 10 (release tag) remain. Phase 10 is a single `git tag` + GitHub release, not blocked on anything but the operator's blessing.
+
+### 2026-09-07 (B146 — Phase 2 reg.ru DNS live test productionized + Q1/Q2 RESOLVED)
+- **Q1 + Q2 RESOLVED** (per operator's 2026-09-07 message): reg.ru API creds provided (login + alternative password), IP whitelist already filled. The remaining 2 open questions on the §4 status table are now ✅ DONE.
+- **B146 SHIPPED** — productionizes the working auth pattern (top-level form fields + mTLS cert, password NOT inside input_data JSON — the pre-fix pattern returned NO_AUTH, this is the discovered-working shape from B161.4) as a repeatable test the operator can re-run after a cert/password rotation.
+  - `scripts/b146_regapi_live.sh` (NEW) — bash + curl + Python parser. The script:
+    1. Preflight: cert + key on disk + 3 env vars (SKYGATE_DNS_REGAPI_USER + _PASSWORD + _ZONE). SKIPs (exit 2) with a precise reason if any are missing — operator can fix the prereq without guessing.
+    2. curl POST to `https://api.<zone>/api/regru2/zone/get_resource_records` with --cert + --key + 5 form fields (username + password + output_content_type + input_format + input_data + subdomain). The auth pattern is the B161.4-working shape.
+    3. Python parses the JSON response, extracts the A-record IP for `<subdomain>.<zone>`. Reports PASS + IP (with optional comparison against SKYGATE_PUBLIC_IP for failover-drill verification).
+    4. Handles the 4 known 2026-08-18 failure modes with actionable error messages:
+       - `NO_AUTH` → "auth pattern is wrong, or the cert is not registered, or the alternative password is wrong"
+       - `ACCESS_DENIED_FROM_IP` → "add this VM's public IP to the reg.ru 'API IP whitelist' (Настройки → Безопасность)"
+       - `DOMAIN_NOT_FOUND` → "the zone field is wrong, or the account doesn't own the domain"
+       - generic ERROR → echo with the code + text
+  - `scripts/check_b146.sh` (NEW) — 11 B-check contracts (file inventory + bash syntax + the 4 known error codes + PASS/FAIL/SKIP output format + cert/key file path docs + HA execution doc references + verify_pre_deploy.sh + AGENTS.md). The live test itself is NOT in the verify-pre catalog (requires the operator's cert + key + creds in env, which aren't true on a CI runner).
+  - `scripts/verify_pre_deploy.sh` — `B146` row added to the catalog.
+- **What's still needed for Phase 2 to be 100% DONE on the live VM** (operator-side, not code):
+  1. The operator pastes cert + login + password + zone into the `/admin/ha` "External DNS" form (or sets the env vars and triggers a `skygate regapi-credentials set` subcommand — see BL-3 follow-up below). The form writes the credentials to `global_settings` (encrypted with SKYGATE_SECRET_KEY).
+  2. Operator restarts skygate so the cron + the form's "Test connection" button can read the new creds.
+  3. Operator runs `bash scripts/b146_regapi_live.sh` to verify end-to-end. Expected output: `PASS: skynas.ru/skygate -> <IP>`. If the response is `NO_AUTH` or `ACCESS_DENIED_FROM_IP`, the script's actionable error message tells the operator exactly which prereq is missing.
+- **BL-3 follow-up noted**: there's no `skygate regapi-credentials set` CLI subcommand. The /admin/ha form is the only path to write the creds. For the operator's "one-shot bootstrap" flow (which prefers CLI over the browser), this is a future B-block. The B146 fix doesn't add it — it's outside the Phase 2 scope.
+- **Status**: 9/10 phases SHIPPED. Only Phase 10 (release tag) remains. Phase 10 is a single `git tag` + GitHub release, not blocked on anything but the operator's blessing.
 
 

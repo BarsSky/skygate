@@ -5368,6 +5368,74 @@ in the same commit. Don't let the tracker drift.
     The /admin/headscale page (when wired in a
     follow-up B-block) will have a "Reconcile
     now" button that calls `RunOnceNow`.
+  - **B146 (v1.5.0, 2026-09-07) — Phase 2 reg.ru DNS
+    live test productionized**. Closes the
+    Phase 2 (BL-2) work that was blocked on
+    Q1 (reg.ru creds) + Q2 (IP whitelist) per
+    §4 of `docs/internal/ha-v1.5.0-execution.md`.
+    The operator provided both on 2026-09-07
+    (login + alternative password; the IP
+    whitelist was already filled). B146
+    productionizes the working auth pattern
+    that B145 + B161.4 confirmed against the
+    live reg.ru API on 2026-08-18 (top-level
+    form fields + mTLS cert, password NOT
+    inside input_data JSON — the pre-fix
+    pattern returned NO_AUTH, this is the
+    discovered-working shape).
+    **B146 fix**:
+    - `scripts/b146_regapi_live.sh` (NEW) —
+      bash + curl + Python one-liner. The
+      script does the 4-step preflight
+      (cert + key on disk + 3 env vars set),
+      POSTs to the v2 /zone/get_resource_records
+      endpoint with the right auth pattern,
+      parses the JSON response, and reports
+      a grep-able `PASS:` / `FAIL:` / `SKIP:`
+      line. Handles the 4 known 2026-08-18
+      failure modes (NO_AUTH +
+      ACCESS_DENIED_FROM_IP + DOMAIN_NOT_FOUND +
+      generic ERROR) with actionable error
+      messages that tell the operator
+      exactly which prereq is missing.
+    - `scripts/check_b146.sh` (NEW) — 11
+      B-check contracts (file inventory +
+      bash syntax + the 4 known error codes
+      + the PASS/FAIL/SKIP output format +
+      cert/key file path docs + HA execution
+      doc references + verify_pre_deploy.sh +
+      AGENTS.md). The live test itself is
+      NOT in the verify-pre catalog (requires
+      the operator's cert + key + creds in
+      env, which aren't true on a CI runner).
+    - `scripts/verify_pre_deploy.sh` —
+      `B146` row added to the catalog.
+    - `docs/internal/ha-v1.5.0-execution.md`
+      §6 status log + §4 open questions
+      updated (Q1 + Q2 marked ✅ DONE 2026-09-07).
+    **Verified** (local):
+    - `bash scripts/check_b146.sh` → 11/11 pass
+    - `bash -n scripts/b146_regapi_live.sh` →
+      clean
+    - `go build ./...` → clean (no Go changes)
+    **Live-verify pending**: the operator
+    needs to:
+    1. Paste cert + login + password + zone
+       into the `/admin/ha` "External DNS"
+       form (or set the env vars + trigger a
+       future `skygate regapi-credentials set`
+       subcommand — the B146 fix doesn't add
+       it; it's a BL-3 follow-up).
+    2. Restart skygate so the cron + the
+       form's "Test connection" button can
+       read the new creds.
+    3. Run `bash scripts/b146_regapi_live.sh`
+       to verify end-to-end. Expected output:
+       `PASS: skynas.ru/skygate -> <IP>`.
+    The B146 contract is now live and
+    operator-runnable. 9/10 BL-2 phases
+    SHIPPED; only Phase 10 (release tag)
+    remains.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's
