@@ -479,17 +479,38 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			for _, cidr := range cdnCIDRs {
 				// B125: rely on the UNIQUE INDEX
 				// device_rules_natural_key_uniq (added in
-				// migrateV056PG) + ON CONFLICT DO NOTHING to
-				// close the SELECT-then-INSERT race that
-				// previously let duplicate rows accumulate.
+				// migrateV056PG, re-created in migrateV068PG as
+				// 6-col to match B188.2's intent) + ON CONFLICT
+				// DO NOTHING to close the SELECT-then-INSERT race
+				// that previously let duplicate rows accumulate.
 				// The pre-check SELECT is still useful for the
 				// cdnAdded counter (to know if a NEW row was
 				// created vs an existing one was hit), but the
 				// race is closed by the conflict target.
+				//
+				// 2026-09-07 (B237.23): conflict target is 6
+				// columns (WITH parent_domain) to match the
+				// 6-col UNIQUE INDEX on the live DB and the
+				// qInsertDeviceRule contract in queries.go.
+				// The pre-B237.23 5-col target (B183) was a
+				// silent code/index drift: V068 (B232) recreated
+				// the index as 6-col but didn't update sync.go,
+				// so every INSERT here hit
+				// `no unique or exclusion constraint matching`
+				// and the `if err != nil { continue }` below
+				// silently swallowed it. Net effect: /32 rows
+				// for the 15 Cloudflare CIDRs were never
+				// created when the marker (cdn:cloudflare:foo)
+				// already had rows under a DIFFERENT marker
+				// (cdn:cloudflare:discordapp.com); the autoupdate
+				// logged `added=0` and the UI's B184 status
+				// check saw "no resolved subnets" → ⏳ orange
+				// forever (false positive — the rules work,
+				// karolina's ApprovedRoutes has the IP).
 				tag, err := s.dbc().Exec(
 					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
 					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
-					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
+					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
 					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker)
 				if err != nil {
 					continue
@@ -564,26 +585,30 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			}
 			// B125: use ON CONFLICT DO NOTHING (against the
 			// UNIQUE INDEX device_rules_natural_key_uniq from
-			// migrateV056PG, REDEFINED in migrateV060PG to
-			// drop parent_domain) instead of the pre-check +
-			// INSERT race. The pre-check is preserved for the
-			// "shared IP between domains" case (B123 alert
-			// UX) — when another domain already added the
-			// /32, the conflict target skips silently.
+			// migrateV056PG, re-created in migrateV068PG as
+			// 6-col) instead of the pre-check + INSERT race.
+			// The pre-check is preserved for the "shared IP
+			// between domains" case (B123 alert UX) — when
+			// another domain already added the /32, the
+			// conflict target skips silently.
 			//
-			// 2026-08-25 (B183): the conflict target is 5
-			// columns (without parent_domain) — the pre-B183
-			// 6-column target let two parent_domains resolving
-			// to the same /32 (e.g. discord.com and
-			// discordapp.com both → 1.2.3.4) each get their
-			// own row. The 5-column target ensures the
-			// (user, device, exit, type, value) tuple maps
-			// to at most ONE rule row, with the first
-			// parent_domain winning.
+			// 2026-09-07 (B237.23): conflict target is 6
+			// columns (WITH parent_domain) to match the
+			// 6-col UNIQUE INDEX on the live DB. Pre-B237.23
+			// the 5-col target (B183) silently failed every
+			// INSERT because V068 (B232) recreated the index
+			// as 6-col but didn't update sync.go. With 6-col
+			// ON CONFLICT, two parent_domains resolving to
+			// the same /32 (e.g. www.harness.io and
+			// harness.io both → 44.246.83.163) each get
+			// their own row — the B184 status check
+			// correctly finds the /32 for the parent_domain
+			// it's looking for. See B237.23 entry in
+			// AGENTS.md for the full regression analysis.
 			tag, ierr := s.dbc().Exec(
 				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
 				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
-				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
+				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
 				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain)
 			if ierr != nil {
 				continue

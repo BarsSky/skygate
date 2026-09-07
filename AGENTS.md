@@ -744,6 +744,26 @@ in the same commit. Don't let the tracker drift.
     (queries pg_index), Idempotent (run twice = same
     state), PreservesDistinctNaturalKeys (4 different keys
     all survive).
+    **2026-09-07 (B237.23)**: the B183 5-col ON CONFLICT design
+    was **silently reverted** by B232 (V068, B188.2-era repair)
+    re-creating the index as 6-col WITHOUT updating `sync.go`.
+    The result was a code/index drift: every autoupdate INSERT
+    hit `no unique or exclusion constraint matching` and was
+    silently swallowed by `if err != nil { continue }`. Net
+    effect: `/32` rows for new autoupdate claims never got
+    inserted, B184 status check saw "no resolved subnets",
+    every Cloudflare / multi-CDN-domain rule rendered as
+    ⏳ orange (false positive — the rules work, headscale
+    ApprovedRoutes has the IP). B237.23 fixes the drift by
+    restoring 6-col ON CONFLICT in `sync.go` (matches
+    `qInsertDeviceRule` in `queries.go:416` + live index +
+    the B184 status check's `parent_domain` lookup). See
+    `scripts/check_b237_23.sh` for the contract, and the
+    2026-09-07 entry in this section for the regression
+    timeline. The V060 migration code itself is unchanged
+    (the B183 dedup CTE is preserved for the cases where
+    the 6-col ON CONFLICT hits a true conflict — the
+    ROW_NUMBER() in the CTE handles it).
 
   - **B184 (v1.5.2)**: DOMAIN rule status propagates from
     its resolved subnets in `/admin/exit-rules` + `/my/exit-rules`
@@ -5741,7 +5761,144 @@ in the same commit. Don't let the tracker drift.
     for legacy nodes; going forward, B175 + B176 cover
     the new path. B237.22 is orthogonal: it groups
     EXISTING per-CIDR rows for display, not the backfill.
-    **Live-verify pending** (operator-side):
+  - **B237.23 (v1.5.2+, 2026-09-07) — fix autoupdate
+    `ON CONFLICT` code/index drift (B183 vs B232
+    regression)**. Closes the silent autoupdate-failure
+    bug surfaced by B237.22's ⏳ orange status check:
+    `auth.docker.io` (Cloudflare), `harness.io`,
+    `cdn-registry-1.docker.io`, `limit-test-...` and
+    `cascade-verify-...` all rendered ⏳ orange in the
+    `/my/exit-rules` UI even though the rules work
+    end-to-end (the IPs are in `karolina`'s
+    `headscale ApprovedRoutes`). Operator's
+    investigation (2026-09-07) revealed the autoupdate
+    logs `added=0` for every domain whose `/32` subnet
+    rows should have been created.
+    **Root cause** (regression analysis):
+    - V056 (B125, 2026-08-17) intended to create a 6-col
+      `device_rules_natural_key_uniq` (with `parent_domain`)
+      but used `CREATE UNIQUE INDEX IF NOT EXISTS` which is
+      a **silent no-op** when an index with the same name
+      already exists with a different column list.
+    - B188.2 changed `qInsertDeviceRule` to a 6-col
+      `ON CONFLICT` to match V056's intent. On FRESH DBs
+      this worked; on upgrades the V056 statement was a
+      no-op and the 5-col index (from v0.55) stayed, so
+      every INSERT with a 6-col ON CONFLICT failed with
+      `no unique or exclusion constraint matching`.
+    - B183 (V060, 2026-08-25) **reverted the design** to
+      5-col index + 5-col ON CONFLICT (separate concern:
+      "first parent_domain wins" for Cloudflare
+      duplicate-CIDR dedup). It was internally consistent
+      (5-col index + 5-col code).
+    - B232 (V068, 2026-09-04) re-created the index as
+      6-col to match B188.2's intent (closing the live
+      "db error on /my/exit-rules POST" symptom) — but
+      **didn't update `sync.go`**. The result was a
+      code/index drift: index = 6-col (V068), code =
+      5-col (B183) — every autoupdate INSERT
+      `DomainAutoUpdater` ran hit
+      `no unique or exclusion constraint matching` and
+      the `if err != nil { continue }` at sync.go:594 +
+      :496 silently swallowed the error. Net effect:
+      `/32` rows for the autoupdate's 15 Cloudflare CIDRs
+      were never created (because the same 15 CIDRs
+      already exist for `cdn:cloudflare:discordapp.com`
+      via the 5-col ON CONFLICT in the pre-B232 world;
+      post-B232, every INSERT failed silently). B184
+      then saw "no resolved subnets" → ⏳ orange
+      forever. The 5-col design is also INCOMPATIBLE
+      with the B184 status check (which looks for
+      `parent_domain = <rule's marker>` and finds nothing
+      for the "loser" parent_domains) and the B237.22
+      UI grouping (which renders each `parent_domain`
+      as a separate `<details>` group).
+    **B237.23 fix**: restore 6-col `ON CONFLICT` in
+    `sync.go` (both clauses: the CDN-range INSERT at
+    line ~492 and the per-IP /32 INSERT at line ~587),
+    matching `qInsertDeviceRule` in `queries.go:416`
+    and the live 6-col `device_rules_natural_key_uniq`
+    from V068. Also updates `acl_b188_3_integration_test.go`
+    test helper (which still had the 5-col target from
+    B183) and `scripts/check_b183.sh` contract E to
+    assert "5-col target is GONE, 6-col target is
+    PRESENT" (instead of "5-col is present" — the
+    B183 design is no longer current).
+    **Why 6-col is the right design for the current
+    implementation** (vs B183's 5-col "first
+    parent_domain wins"):
+    1. The 6-col design allows each `parent_domain` to
+       have its own `/32` rows. B184 looks for
+       `parent_domain = <rule's target_or_marker>` and
+       finds the right rows for each domain. With 5-col
+       "first wins", every Cloudflare domain past the
+       first one would have NO rows owned by it → ⏳
+       orange permanently.
+    2. B237.22 UI grouping (5 distinct
+       `cdn:cloudflare:*` markers) requires per-marker
+       rows; with 5-col "first wins" only 1 of the 5
+       would actually own the CIDR rows.
+    3. Tailscale's ApprovedRoutes is a SET — the 5-col
+       "no duplicates" benefit is moot; Tailscale
+       de-duplicates the routes on the client.
+    4. `qInsertDeviceRule` (form path) uses 6-col ON
+       CONFLICT; the autoupdate was the only path using
+       5-col, causing the form-vs-autoupdate asymmetry
+       that was hard to debug.
+    **What B237.23 changes** (small, surgical):
+    - `internal/feature/exit_rules/sync.go`: both
+      `ON CONFLICT` clauses 5-col → 6-col
+      (`(user_id, device_id, exit_node_id,
+      target_type, target_value, parent_domain)`)
+    - `internal/acl/acl_b188_3_integration_test.go:138`:
+      test helper 5-col → 6-col (matches the
+      `b188_3SeedRule` docstring's own description of
+      the "live shape per migrateV068PG / B232 /
+      B188.2 / qInsertDeviceRule in queries.go:416")
+    - `scripts/check_b183.sh` contract E: replace
+      "5-col ON CONFLICT must be present" with
+      "5-col ON CONFLICT must be GONE, 6-col must be
+      PRESENT" (the B183 design is no longer current;
+      V068's 6-col index is the canonical state)
+    **What B237.23 does NOT change**:
+    - `migrateV060PG` (B183's dedup CTE) is **unchanged**
+      — it's still the right thing to do on a DB
+      that needs dedup. The CTE handles
+      `parent_domain` selection via `ROW_NUMBER()` and
+      runs as a one-time dedup pass; the new 6-col
+      ON CONFLICT handles future INSERTs.
+    - `migrateV068PG` (B232) is **unchanged** — its
+      6-col index is the final shape.
+    - `qInsertDeviceRule` is **unchanged** — it was
+      already 6-col (B188.2).
+    - Storage layout is **unchanged** — each
+      `parent_domain` continues to own its own `/32`
+      rows for the 5 CDN-tracked parent_domains on
+      karolina.
+    **B-check**: 14 contracts in `scripts/check_b237_23.sh`
+    (source: sync.go 6-col ON CONFLICT x2 + b188_3 test
+    helper 6-col + check_b183 E-reverted; wire-up:
+    unit tests pass; live VM: 6-col index, code, and
+    qInsertDeviceRule all in agreement; AGENTS.md +
+    PLANS.md mention).
+    **Live-verify pending** (operator-side on
+    192.168.13.69):
+    ```
+    # 1. /admin/exit-rule_rules — after deploy, the
+    #    `auth.docker.io`, `harness.io`,
+    #    `cdn-registry-1.docker.io`, `limit-test-...`
+    #    rules should transition ⏳ orange → ✅ green
+    #    within 5 min of the next autoupdate tick
+    #    (interval=5m0s).
+    # 2. The new /32 rows should be visible in
+    #    device_rules with `parent_domain = 'cdn:cloudflare:auth.docker.io'`
+    #    (and similar for the other 4 parent_domains).
+    # 3. karolina's ApprovedRoutes should remain
+    #    unchanged (Tailscale de-dups the 15 CIDRs
+    #    across parent_domains).
+    # 4. `skygate migrate status` should still report
+    #    V068 applied (no new migrations in B237.23).
+    ```
     ```
     skygate regapi-credentials set \
         --login=kanagaenko@mail.ru \

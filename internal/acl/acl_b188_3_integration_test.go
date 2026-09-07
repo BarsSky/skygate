@@ -127,15 +127,21 @@ func b188_3SeedNodeOwner(t *testing.T, d *sql.DB, nodeID, username, hostname, ta
 // function falls back to src="*" and the test's
 // per-device grant assertions don't match.
 //
-// Uses ON CONFLICT DO NOTHING (with the B183 natural-key
+// Uses ON CONFLICT DO NOTHING (with the 6-col natural-key
 // unique index on (user_id, device_id, exit_node_id,
-// target_type, target_value)) so re-runs are idempotent.
+// target_type, target_value, parent_domain) — the live
+// shape per migrateV068PG / B232 / B188.2 / qInsertDeviceRule
+// in queries.go:416) so re-runs are idempotent. The pre-B237.23
+// 5-col target (B183) was silently wrong against the 6-col
+// index; see B237.23 entry in AGENTS.md for the regression
+// analysis (V068 forgot to revert sync.go's autoupdate
+// ON CONFLICT after the index was recreated as 6-col).
 func b188_3SeedRule(t *testing.T, d *sql.DB, userID int64, deviceID int, username, deviceHostname, exitNode, targetType, target string) {
 	t.Helper()
 	b188_3Exec(t, d,
 		`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled, user_name, device_hostname)
 		 VALUES ($1, $2, $3, $4, $5, 'accept', 1, $6, $7)
-		 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value) DO NOTHING`,
+		 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
 		userID, deviceID, exitNode, targetType, target, username, deviceHostname,
 	)
 }

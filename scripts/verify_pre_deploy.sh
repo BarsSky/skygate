@@ -3993,6 +3993,38 @@ run_check "B237.21" "skygate regapi-credentials CLI subcommand. Adds 4 CLI verbs
 # scripts/check_b237_22.sh.
 run_check "B237.22" "UI-only CDN grouping on /my/exit-rules + /admin/exit-rules (TD-11 / Approach G). Closes the 'noisy 15-row-per-Cloudflare-domain list' gap (live: 46/151 = 30% of rows are CDN-derivable from 5 distinct parent_domains). Approach G = UI-only grouping, NO storage change, NO migration, NO schema change, NO autoupdate change. Per-CIDR rows stay individually editable + auditable (operator's hard constraint: 'не наложит ли это ограничения на текущую работу правил и доступа ... нужны именно правила на конкретный ресурс делать полный проброс не надо - ломает всю логику'). New cdn_group.go (GroupRulesByCDN, IsCDNGroupMarker, ParseCDNGroupMarker, CDNDisplayItem, CDNDisplayView) + cdn_group_admin.go (parallel admin-side). form_my.go + form_admin.go pass the CDN-grouped view to the templates. Templates iterate CDNDisplayView.Items; each IsCDNGroup item renders a collapsible <details> header with Source + CDN badge + 'X диапазонов' count + the per-CIDR rows underneath. Ungrouped rules render as a flat table (same per-rule markup). 14 unit tests in cdn_group_test.go (6 PASS pre-fix + 3 fixes for case-insensitive prefix + sort by Source + secondary CDN sort) + 6 tests in cdn_group_admin_test.go (preserves B178/B182/B184 annotation fields). 1 new i18n key (exit_rules.cdn_group_count) in RU+EN. 32 B-check contracts in scripts/check_b237_22.sh (source: cdn_group.go + cdn_group_admin.go + 4 helpers + 4 structs; wire-up: form_my + form_admin + NodesCDN field; templates: 2 surfaces iterate + branch on IsCDNGroup; storage UNCHANGED contract; tests: 9 + 6 + passing; i18n: cdn_group_count with %d; AGENTS.md + PLANS.md mention; verify_pre_deploy.sh registration; build/vet/staticcheck clean)." \
   'test -f scripts/check_b237_22.sh && bash scripts/check_b237_22.sh'
+# --- B237.23: fix autoupdate ON CONFLICT code/index drift (B183 vs B232 regression) ---
+# Closes the silent autoupdate-failure bug surfaced by B237.22's
+# ⏳ orange status check: auth.docker.io (Cloudflare), harness.io,
+# cdn-registry-1.docker.io, limit-test-... and cascade-verify-... all
+# rendered ⏳ orange in /my/exit-rules even though the rules work
+# end-to-end (IPs in karolina's headscale ApprovedRoutes). Root cause:
+# V056 (B125) intended 6-col UNIQUE INDEX but `CREATE UNIQUE INDEX
+# IF NOT EXISTS` was a silent no-op on upgrade DBs (5-col index from
+# v0.55 stayed). B188.2 changed qInsertDeviceRule to 6-col ON CONFLICT.
+# B183 (V060) reverted to 5-col index + 5-col ON CONFLICT (separate
+# "first parent_domain wins" dedup). B232 (V068) re-created the
+# index as 6-col (closed live "db error on /my/exit-rules POST") BUT
+# did NOT update sync.go. Code/index drift: index=6-col, code=5-col.
+# Every autoupdate INSERT in DomainAutoUpdater hit
+# `no unique or exclusion constraint matching` and was silently
+# swallowed by `if err != nil { continue }`. Net effect: /32 rows
+# for the 15 Cloudflare CIDRs were never created (the same 15 CIDRs
+# already exist for cdn:cloudflare:discordapp.com; post-V068, the
+# 5-col ON CONFLICT in the pre-V068 world became a no-match against
+# the new 6-col index, so every INSERT failed silently). B184 then
+# saw "no resolved subnets" → ⏳ orange forever. B237.23 fix:
+# restore 6-col ON CONFLICT in sync.go (both CDN-range + per-IP /32
+# INSERTs), matching qInsertDeviceRule in queries.go:416 + the live
+# 6-col device_rules_natural_key_uniq from V068. Also updates
+# acl_b188_3_integration_test.go:138 test helper + check_b183.sh
+# contract E (asserts "5-col target is GONE, 6-col is PRESENT").
+# migrateV060PG (B183 dedup CTE) and migrateV068PG (B232 index
+# repair) are UNCHANGED — the dedup logic and the final index shape
+# are correct, the missing piece was just the sync.go ON CONFLICT.
+# 14 contracts in scripts/check_b237_23.sh.
+run_check "B237.23" "fix autoupdate ON CONFLICT code/index drift (B183 vs B232 regression). Restores 6-col ON CONFLICT in sync.go to match the live 6-col device_rules_natural_key_uniq (V068) + qInsertDeviceRule in queries.go:416. Closes the silent autoupdate-failure bug surfaced by B237.22's ⏳ orange status check (auth.docker.io / harness.io / cdn-registry-1.docker.io rendered ⏳ orange even though the rules work end-to-end). sync.go 2x 5-col → 6-col ON CONFLICT (CDN-range + per-IP /32 INSERTs at ~492 and ~587), acl_b188_3_integration_test.go:138 test helper 5-col → 6-col, check_b183.sh contract E asserts 5-col is GONE + 6-col is PRESENT. migrateV060PG (B183 dedup CTE) and migrateV068PG (B232 6-col index repair) are unchanged — only sync.go + the test helper were missing. 14 contracts in scripts/check_b237_23.sh (source: sync.go 2x 6-col + 0x 5-col; wire-up: qInsertDeviceRule 6-col + b188_3 helper 6-col; tests: 9 cdn_group + 6 cdn_group_admin + acl b188_3 all pass; live VM: 6-col index + 0x 5-col source; AGENTS.md + PLANS.md mention)." \
+  'test -f scripts/check_b237_23.sh && bash scripts/check_b237_23.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host

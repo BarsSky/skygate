@@ -63,8 +63,13 @@ check_ge() {
 count() {
   local n
   n=$(grep -cE "$2" "$1" 2>/dev/null) || n=0
-  n=${n:-0}
-  echo "$n" | tr -d '\n'
+  # B237.23: `grep -c` returns "" (empty) on no match, not "0".
+  # The `:-` default only catches unset, not empty. Force empty to 0.
+  if [ -z "$n" ]; then n=0; fi
+  # CRLF-safe: strip both \r and \n (the source files are CRLF
+  # in this repo, and on a no-match the trailing \r from the
+  # echo command would slip through `tr -d "\n"` alone).
+  printf '%s' "$n" | tr -d '\r\n'
 }
 
 echo "=== B183 contracts ==="
@@ -99,17 +104,25 @@ check_ge "D-row-number" 1 "$(count "$REPO/internal/db/migrations_pg.go" 'ROW_NUM
 check_ge "D-cdn-prefix" 1 "$(count "$REPO/internal/db/migrations_pg.go" "WHEN parent_domain LIKE 'cdn:%'")"
 check_ge "D-order-desc" 1 "$(count "$REPO/internal/db/migrations_pg.go" 'id DESC')"
 
-# E. sync.go ON CONFLICT clauses are 5-column (no parent_domain)
-# The pre-B183 string was 6-column including parent_domain.
-# After B183 it should be 5-column.
-PRE_B183_6COL=$(count "$REPO/internal/feature/exit_rules/sync.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\)')
-if [ "$PRE_B183_6COL" = "0" ]; then
-  check_eq "E-pre" "0" "0"
+# E. sync.go ON CONFLICT clauses are 6-column (with parent_domain)
+# matching the live 6-col UNIQUE INDEX on device_rules
+# (migrateV068PG / B232) and qInsertDeviceRule in queries.go.
+# 2026-09-07 (B237.23): the pre-B237.23 5-col target (B183) was
+# silently wrong — every autoupdate INSERT hit
+# `no unique or exclusion constraint matching` and was
+# silently swallowed by `if err != nil { continue }`,
+# causing ⏳ orange false-positives on the UI's B184 status
+# check. V068 (B232) recreated the index as 6-col but
+# didn't update sync.go; B237.23 finishes the revert.
+B183_5COL=$(count "$REPO/internal/feature/exit_rules/sync.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value\) DO NOTHING')
+B237_23_6COL=$(count "$REPO/internal/feature/exit_rules/sync.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\) DO NOTHING')
+if [ "$B183_5COL" = "0" ] && [ "$B237_23_6COL" -ge 1 ]; then
+  echo "  PASS [E-b183-reverted+6col-restored] 5-col=0 (reverted), 6-col=$B237_23_6COL (restored)"
+  PASS=$((PASS+1))
 else
-  check_eq "E-pre" "0" "$PRE_B183_6COL (pre-B183 6-col ON CONFLICT still present)"
+  echo "  FAIL [E-b183-reverted+6col-restored] 5-col=$B183_5COL (want 0), 6-col=$B237_23_6COL (want >= 1) — see B237.23 in AGENTS.md"
+  FAIL=$((FAIL+1))
 fi
-POST_B183_5COL=$(count "$REPO/internal/feature/exit_rules/sync.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value\) DO NOTHING')
-check_ge "E-post" 1 "$POST_B183_5COL"
 
 # F. The dedup is a single SQL statement (no app-level loop)
 # Counts the number of DELETE statements in the migration —

@@ -335,6 +335,23 @@ work has been moved to TD-14 below.
   "reconcile: N portal_users checked (ok=X, linked=Y,
   relinked=Z, orphans=W, errors=0)")
 
+**[B237.23 / B183+B232 regression] autoupdate ON CONFLICT
+code/index drift**
+- **Status:** DONE in **B237.23** (v1.5.2+, 2026-09-07). Live
+  investigation of the B237.22-deployed ⏳ orange
+  status badges surfaced a silent autoupdate failure:
+  every `DomainAutoUpdater` INSERT hit `no unique or
+  exclusion constraint matching` and was silently
+  swallowed by `if err != nil { continue }`. V056
+  (B125) + B188.2 (6-col design) + B183 (V060, 5-col
+  revert) + B232 (V068, 6-col index repair, but no
+  code revert) produced a code/index drift that
+  persisted for 3 days on the live DB. B237.23
+  restores 6-col `ON CONFLICT` in `sync.go` to match
+  the live 6-col index + `qInsertDeviceRule` + B184
+  status check. 14 contracts in `scripts/check_b237_23.sh`.
+  See AGENTS.md B237.23 entry for the full timeline.
+
 **[TD-11] Rule grouping: Cloudflare /12 + /24 merge**
 - **Status:** DONE in **B237.22** (v1.5.2+, 2026-09-07) via
   Approach G (UI-only). The pre-B237.22 `/my/exit-rules` +
