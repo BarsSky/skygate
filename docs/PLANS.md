@@ -147,15 +147,22 @@ the squash (estimated, depends on pack efficiency).
   opening multiple pages.
 
 **[TD-2] Style cleanup (ST1013, 68 items)**
-- **Status:** DEFERRED from v0.34.0
-- **Effort:** ~1-2 hours (mechanical replacement)
-- **Scope:** replace `http.Error(w, "...", 403)` with
-  `http.Error(w, "...", http.StatusForbidden)` (and similar
-  for 401, 404, 405, 409, 500, 503) across 68 lines in
-  `internal/feature/admin/*.go`
-- **Why high:** staticcheck noise — every CI run warns
-  about these. The fix is mechanical and the project
-  should not have 68 style violations in main.
+- **Status:** DONE in v1.2.0 (commit `38b2fb9e` + `d6f7b6b2`).
+  The actual count was 5, not 68 (the v0.34.0-era estimate
+  was wildly off — most of the 68 had been fixed by the
+  B62-B188 refactor work that landed before v1.2.0).
+  2 stragglers (the 404 in `tags_test.go:66` + the 302
+  in `e2e_test.go:399`) slipped back in via the v1.5.0
+  work and were fixed in **B237.16** (v1.5.2+, commit
+  `7a3dcfd7`). 10-contract B-check in
+  `scripts/check_b237_16.sh` pins the contract so a
+  regression fails the verify-pre catalog.
+- **Effort:** DONE (was ~1-2 hours when it actually ran)
+- **Scope:** DONE — `staticcheck ./...` reports 0 ST1013
+  on the current tree. The 23 remaining staticcheck
+  warnings are all U1000 (unused test stubs) — separate
+  ticket, not part of TD-2.
+- **Why high:** DONE
 
 **[TD-3] Mobile-responsive UI (NEW)**
 - **Status:** DONE in v1.1.0 (combined with TD-1)
@@ -198,15 +205,16 @@ the v0.34.0-era `docs/PLANS.md` used for the SA1012
 work has been moved to TD-14 below.
 
 **[TD-14] Style cleanup (SA1012, 5 items)** *(renumbered from TD-3 in v1.1.0)*
-- **Status:** DEFERRED from v0.34.0
-- **Effort:** ~30 min
-- **Scope:** in test files that intentionally pass `nil`
-  context (e.g. `Run(nil, nil)` tests for nil-handling
-  paths), add a `//nolint:staticcheck // intentional nil
-  test` comment so the next staticcheck run doesn't warn
-  about them
-- **Why high:** same as TD-2 (low risk, but every CI
-  run warns until done)
+- **Status:** DONE — the 5 false-positives never materialized
+  in the current tree. `staticcheck ./...` reports 0 SA1012.
+  B237.16's B-check (section B.1) pins the continued
+  absence so a future test that DOES trip SA1012 fails
+  the verify-pre catalog.
+- **Effort:** ~30 min (was the estimate; ended up being
+  0 — the false-positives were never created, the
+  v0.34.0-era estimate was just wrong)
+- **Scope:** DONE — no code changes needed
+- **Why high:** DONE (pin in B237.16)
 
 ### MEDIUM priority — fix in v1.x
 
@@ -232,22 +240,33 @@ work has been moved to TD-14 below.
   to know the relay hostname
 
 **[TD-6] /admin/exit-nodes edit UI for `accept_routes` (Issue 3)**
-- **Status:** UNADDRESSED
-- **Effort:** ~2 hours
-- **Scope:** add a checkbox on /admin/exit-nodes to toggle
-  `accept_routes` per node (currently only settable via
-  CLI or direct DB)
-- **Why medium:** minor UX gap; not blocking any operator
-  workflow
+- **Status:** DONE in v1.4.0 (B140, commit `e869650f`).
+  Per-row `<select>` for `1` / `0` / `-1` (true / default /
+  false) on /admin/exit-nodes with `PostAdminExitNodeSetAcceptRoutes`
+  handler + `parseAcceptRoutesFormValue` parser + 6 unit
+  tests in `exit_nodes_b140_test.go` + 7-contract B-check
+  in `scripts/check_b140.sh` (all green as of
+  2026-09-07). The B-check was looking for `s.DB`
+  (stale; pre-dbc() rename) and the
+  fix landed in B237.16.
+- **Effort:** DONE (was ~2 hours when it actually ran)
+- **Scope:** DONE — `bash scripts/check_b140.sh` →
+  7/7 pass
+- **Why medium:** DONE
 
 **[TD-7] /admin/users HSOrphans "Add as skygate user" button (Issue 5)**
-- **Status:** UNADDRESSED
-- **Effort:** ~4 hours
-- **Scope:** when a headscale user exists but has no
-  portal_users row (orphaned from a delete), show a button
-  to re-create the portal_users entry
-- **Why medium:** rare error path but the recovery is
-  currently manual (SQL + API)
+- **Status:** DONE in v1.4.0 (B141, same commit `e869650f`
+  as TD-6). `PostAdminHSOrphanAdopt` handler + the
+  `?adopted=` / `?already_adopted=` flash banners +
+  4 unit tests in `users_b141_test.go` + 8-contract
+  B-check in `scripts/check_b141.sh` (all green as of
+  2026-09-07). The B-check was looking for `s.DB`
+  (stale; pre-dbc() rename) and the fix landed in
+  B237.16.
+- **Effort:** DONE (was ~4 hours when it actually ran)
+- **Scope:** DONE — `bash scripts/check_b141.sh` →
+  8/8 pass
+- **Why medium:** DONE
 
 **[TD-8] Mesh `system_tests_runs` recording**
 - **Status:** PARTIAL (system_tests_runs table is in PG
@@ -441,26 +460,34 @@ work has been moved to TD-14 below.
   modal
 - Effort: ~1.5 days (combined into single release)
 
-**v1.2.0 — Style cleanup (TD-2)**
-- Replace 68 numeric HTTP status codes with `http.StatusXxx`
-  constants
-- The 5 SA1012 false-positives are now TD-14 (renumbered
-  from TD-3 in v1.1.0 when TD-3 was reassigned to mobile-
-  responsive UI)
-- Effort: ~2 hours
+**v1.2.0 — Style cleanup (TD-2, TD-14)**
+- **DONE** in v1.2.0 (commit `38b2fb9e` + `d6f7b6b2`).
+  Replaced 5 numeric HTTP status codes with `http.StatusXxx`
+  constants (the v0.34.0-era estimate of 68 was wildly
+  off — most had been fixed by the B62-B188 refactor work
+  that landed before v1.2.0). The 5 SA1012 false-positives
+  (TD-14) never materialized in the current tree.
+- 2 stragglers (the 404 in `tags_test.go:66` + the 302 in
+  `e2e_test.go:399`) slipped back in via the v1.5.0 work
+  and were fixed in **B237.16** (v1.5.2+, commit `7a3dcfd7`).
+  10-contract B-check in `scripts/check_b237_16.sh` pins
+  the contract so a regression fails the verify-pre catalog.
 
 **v1.3.0 — Backup S3 (TD-4)**
 - Add S3 destination to /admin/backup/config
 - New `internal/backup/dest_s3.go` (aws-sdk-go-v2)
 - Verify-pre catalog check for S3 endpoint connectivity
-  (the pre-v1.1.0 plan said "B96" — but B96 is now taken
-  by TD-1, so this release will use a new B number)
 - Effort: ~half a day
 
 **v1.4.0 — UI quality-of-life (TD-6, TD-7)**
-- /admin/exit-nodes `accept_routes` toggle
-- /admin/users HSOrphans "Add as skygate user" button
-- Effort: ~6 hours
+- **DONE** in v1.4.0 (B140 + B141, commit `e869650f`).
+  /admin/exit-nodes `accept_routes` per-row toggle +
+  /admin/users HSOrphans "Add as skygate user" button.
+  Both B-checks (`check_b140.sh` + `check_b141.sh`) are
+  green; both were briefly broken by the `s.DB` → `s.dbc()`
+  rename that landed in v1.5.0 and the B-check fixes
+  were bundled into B237.16.
+- Effort: was ~6 hours; actual was about the same.
 
 **v1.5.0 — HA Tier 1 (BL-2) — UNBLOCKED 2026-08-18**
 - `svyatoslava-1` VM available, S3 bucket configured, Patroni + etcd in place

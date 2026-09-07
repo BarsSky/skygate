@@ -115,7 +115,7 @@ echo "=== C. admin/users.go: PostAdminHSOrphanAdopt + validateHSOrphanName + net
 c_handler=$(grep -cE 'func \(s \*Service\) PostAdminHSOrphanAdopt' "${ADMIN_USERS_GO}" || true)
 c_validator=$(grep -cE '^func validateHSOrphanName' "${ADMIN_USERS_GO}" || true)
 c_url_import=$(grep -cE '^\s*"net/url"' "${ADMIN_USERS_GO}" || true)
-c_handler_uses_db=$(grep -cE 'db\.InsertPortalUserAdopt\(s\.DB' "${ADMIN_USERS_GO}" || true)
+c_handler_uses_db=$(grep -cE 'db\.InsertPortalUserAdopt\(s\.dbc' "${ADMIN_USERS_GO}" || true)
 c_handler_uses_validator=$(grep -cE 'validateHSOrphanName\(hsName\)' "${ADMIN_USERS_GO}" || true)
 c_audit=$(grep -cE 'hs_orphan_adopt' "${ADMIN_USERS_GO}" || true)
 if [ "${c_handler}" -ge 1 ] && [ "${c_validator}" -ge 1 ] && [ "${c_url_import}" -ge 1 ] && [ "${c_handler_uses_db}" -ge 1 ] && [ "${c_handler_uses_validator}" -ge 1 ] && [ "${c_audit}" -ge 1 ]; then

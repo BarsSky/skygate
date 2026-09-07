@@ -102,7 +102,7 @@ echo "=== C. admin/exit_nodes.go: PostAdminExitNodeSetAcceptRoutes + parseAccept
 c_handler=$(grep -cE 'func \(s \*Service\) PostAdminExitNodeSetAcceptRoutes' "${ADMIN_EXIT_GO}" || true)
 c_parser=$(grep -cE '^func parseAcceptRoutesFormValue' "${ADMIN_EXIT_GO}" || true)
 c_errors_import=$(grep -cE '^\s*"errors"' "${ADMIN_EXIT_GO}" || true)
-c_handler_uses_q=$(grep -cE 'db\.SetExitServerAcceptRoutes\(s\.DB' "${ADMIN_EXIT_GO}" || true)
+c_handler_uses_q=$(grep -cE 'db\.SetExitServerAcceptRoutes\(s\.dbc' "${ADMIN_EXIT_GO}" || true)
 c_handler_uses_err=$(grep -cE 'errors\.Is\(err, db\.ErrExitServerNotFound\)' "${ADMIN_EXIT_GO}" || true)
 c_audit=$(grep -cE 'exit_node_set_accept_routes' "${ADMIN_EXIT_GO}" || true)
 if [ "${c_handler}" -ge 1 ] && [ "${c_parser}" -ge 1 ] && [ "${c_errors_import}" -ge 1 ] && [ "${c_handler_uses_q}" -ge 1 ] && [ "${c_handler_uses_err}" -ge 1 ] && [ "${c_audit}" -ge 1 ]; then
