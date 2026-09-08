@@ -1,7 +1,7 @@
 # Skygate HA Architecture — Tier 1 (hot standby)
 
-**Status**: design-only. Not yet implemented.
-**Last updated**: 2026-07-30
+**Status**: Tier 1 (active-passive) **code-side implemented** as of v1.5.0 (B145–B153). Operator-side phases (Phase 0 Tailscale mesh, Phase 7 svyatoslava-1 bootstrap, Phase 9 live DR drill) remain for v1.5.0 release per `docs/internal/ha-v1.5.0-execution.md`. Tier 2+ out of scope.
+**Last updated**: 2026-09-08
 **See also**: [`docs/v0.27.0-postgres-ha.md`](v0.27.0-postgres-ha.md)
 (the full 18-day plan, including Phase 2 PG HA setup, Phase 3
 VM migration, Phase 4 DR drills, Phase 5 DNS cutover). This
@@ -78,7 +78,7 @@ daily cron → /var/backups/skygate/latest/
 
 ---
 
-## Tier 1 — target (NOT YET IMPLEMENTED, blocked on operator's 2nd VM + S3 + etcd)
+## Tier 1 — implemented (v1.5.0, B145–B153)
 
 ```
                           ┌──────────────────────────────┐
@@ -162,13 +162,22 @@ RTO is "snappy enough" for the operator's stated use case.
 
 This work is tracked as Priority 3 in
 [`docs/BACKLOG.md`](BACKLOG.md#priority-3--ha-skygate-host-2--tier-1-hot-standby-blocked-on-2nd-vm--etcd-quorum--s3).
-**Blocked on**:
-- skygate-host-2 VM provisioning (operator)
-- S3 bucket for WAL archive (operator)
-- etcd quorum decision (1 node = no quorum, 3 nodes = need
-  3rd VM; 2 nodes doesn't work for etcd)
+**Operator-side remaining (code-side DONE)**:
+- Phase 0: Tailscale mesh between svyatoslava-1 + skygate-host-1
+  (subnet routes approved on headscale side)
+- Phase 7: svyatoslava-1 bootstrap (run `scripts/bootstrap_standby.sh`
+  on the new VM; script provisions Patroni replica + headscale
+  replica + skygate in standby role + certsync)
+- Phase 9: live DR drill (operator picks a maintenance window
+  and runs `scripts/dr_drill.sh`; Q9 in `ha-v1.5.0-execution.md` §4)
 
-The full implementation plan is
-[`docs/v0.27.0-postgres-ha.md`](v0.27.0-postgres-ha.md). This
-file is the executive summary; that one is the 18-day
-step-by-step.
+The full implementation tracker is
+[`docs/internal/ha-v1.5.0-execution.md`](ha-v1.5.0-execution.md).
+This file is the executive summary; that one is the per-tick
+checklist with the 26 code-side ticks all marked [x] as of
+2026-09-08 (after B145 / B146 / B148 / B149 / B150 / B151 / B152 /
+B153 / B237.24 — the release.yml + Dockerfile + Go-1.25 fixes
+that unblocked the v1.5.0 release pipeline).
+
+Tier 0.5 (active-router with Litestream) and Tier 2
+(active-active, multi-region) are not in scope.
