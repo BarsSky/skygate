@@ -337,7 +337,7 @@ work has been moved to TD-14 below.
 
 **[B237.24 / release.yml lowercase] `ghcr.io/BarsSky/skygate`
 mixed-case docker tag bug**
-- **Status:** DONE in **B237.24** (v1.5.2+, 2026-09-08). The
+- **Status:** DONE in **B237.24.1** (v1.5.2+, 2026-09-08). The
   `.github/workflows/release.yml` `Build + push` step used
   `${{ github.repository_owner }}` directly in the `tags:`
   field. GitHub evaluates this to `BarsSky` (the operator's
@@ -351,20 +351,35 @@ mixed-case docker tag bug**
   `ghcr.io/barssky/skygate` for either release. The v1.5.0
   release was published manually (the operator clicked
   "Publish" in the GitHub UI without docker); v1.5.2 stayed
-  as a draft. **Fix**: append `| lower` to the GitHub Actions
-  expression (4 tag lines total). **Trigger**: the operator
-  force-moved the v1.5.2 tag to a new commit (218a02ac) and
-  asked me to investigate; the `gh run view --log-failed`
-  surfaced the lowercase error. **The v1.5.2 tag was deleted**
-  (both local + remote) + the draft v1.5.2 GitHub release
-  cleaned up, per the operator's rule: "delete the tag if
-  CI failed". The release will be re-tagged after B237.24
-  is committed + the release workflow re-runs and passes.
-  **Permanent guard**: `scripts/check_b237_24.sh` (10
-  contracts) pins the lowercase contract + checks that the
-  v1.5.2 tag is absent (so a future force-move + bypass
-  without re-running CI gets caught at the next
-  `verify_pre_deploy.sh`).
+  as a draft. **Fix (B237.24 initial, commit `1cd2ece6`)**:
+  append `| lower` to the GitHub Actions expression. **Fix
+  (B237.24.1, current)**: pre-compute the lowercase owner
+  in the meta step (bash `tr '[:upper:]' '[:lower:]'`) and
+  expose it as `steps.meta.outputs.lower_owner`. The
+  pre-compute approach works in both plain expressions AND
+  `format()` arg lists (the `| lower` pipe does NOT work in
+  `format()` arg lists — GitHub Actions parses those args as
+  literal values, not sub-expressions: `(Line: 157, Col: 17):
+  Unexpected symbol: '|'.`).
+  **Trigger**: the operator force-moved the v1.5.2 tag to a
+  new commit (218a02ac) and asked me to investigate; the
+  `gh run view --log-failed` surfaced the lowercase error.
+  **The v1.5.2 tag was deleted** (both local + remote,
+  twice — once for the original CI failure on commit
+  218a02ac, once for the B237.24 `format()` parse error) +
+  the draft v1.5.2 GitHub release cleaned up, per the
+  operator's rule: "delete the tag if CI failed". The
+  release will be re-tagged after B237.24.1 is committed +
+  the release workflow re-runs and passes.
+  **Permanent guard**: `scripts/check_b237_24.sh` (9
+  contracts: 4 tag lines use `lower_owner` + 1 no-raw
+  `github.repository_owner` in tag paths + 1 meta step
+  computes `lower_owner` via `tr` + 1 'lowercase'
+  documented in comments + 1 AGENTS.md mention + 1 PLANS.md
+  mention + 1 live v1.5.2 tag is absent + 1 live v1.5.2
+  release is absent + 2 go build/vet regression) pins the
+  lowercase contract so a future change can't silently
+  regress it.
 
 **[B237.23 / B183+B232 regression] autoupdate ON CONFLICT
 code/index drift**

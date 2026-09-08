@@ -56,36 +56,47 @@ skip() { echo "  SKIP  $1"; }
 
 # --- A. release.yml has the lowercase filter on every docker tag ---
 
-# A.1 Count lines that contain 'github.repository_owner' AND '| lower' (lowercase filter present)
-# Use wc -l (always exit 0) instead of `grep -c || echo 0` (which double-counts "0" on no-match).
-A1=$(grep -E 'github.repository_owner.*\| lower' .github/workflows/release.yml 2>/dev/null | wc -l)
-# Count lines that contain 'github.repository_owner' but NOT '| lower' (the legacy bug)
-A2=$(grep -E 'github.repository_owner' .github/workflows/release.yml 2>/dev/null | grep -vE '\| lower' | wc -l)
-# Expectation: A1 >= 4 (at least 4 tag lines: version, latest, major.minor,
-# major — the comment block may also contain `| lower` in prose, which is
-# fine). The KEY guarantee is A2 == 0: NO tag line is missing the `| lower`
-# filter. A1 is informational; A2 is the safety property.
+# A.1 Count tag lines that use the pre-computed `steps.meta.outputs.lower_owner`.
+# B237.24 design: the meta step pre-computes `lower_owner` from
+# `GITHUB_REPOSITORY_OWNER` (lowercased via `tr '[:upper:]' '[:lower:]'`),
+# and the 4 tag lines (version + latest + vX.Y + vX) all use
+# `${{ steps.meta.outputs.lower_owner }}`. This is the SAFE pattern because
+# `${{ ... | lower }}` works in plain expressions but NOT inside
+# `format('...', arg)` calls — the format() function rejects pipes in
+# its arg list. Pre-computing avoids the parse error.
+A1=$(grep -E 'steps\.meta\.outputs\.lower_owner' .github/workflows/release.yml 2>/dev/null | wc -l)
+# A.2 Count tag lines that still use raw `github.repository_owner` (the
+# legacy bug pattern that builds `ghcr.io/BarsSky/skygate:...` and fails).
+A2=$(grep -E 'ghcr\.io/.*github\.repository_owner[^.]' .github/workflows/release.yml 2>/dev/null | wc -l)
+# Expectation: A1 >= 4 (at least 4 tag lines use lower_owner), A2 == 0
+# (no tag line uses raw github.repository_owner).
 if [ "$A1" -ge 4 ] && [ "$A2" = "0" ]; then
-  ok "A.1 release.yml: all ghcr.io tag lines have '| lower' (A1=$A1 hits, A2=$A2 missing — 0 missing is the safety property)"
+  ok "A.1 release.yml: all ghcr.io tag lines use steps.meta.outputs.lower_owner (A1=$A1 hits, A2=$A2 raw — 0 raw is the safety property)"
 else
-  bad "A.1 release.yml: A1=$A1 hits with '| lower' (expect >=4), A2=$A2 missing (expect 0 missing)"
+  bad "A.1 release.yml: A1=$A1 hits with lower_owner (expect >=4), A2=$A2 raw github.repository_owner (expect 0 raw)"
 fi
 
-# A.2 No raw `github.repository_owner` in tag paths (the legacy bug pattern)
-# Count lines that have `ghcr.io/...repository_owner` but NOT `| lower`.
-A2_BARS=$(grep -E 'ghcr.io.*github.repository_owner' .github/workflows/release.yml 2>/dev/null | grep -vE '\| lower' | wc -l)
-if [ "$A2_BARS" = "0" ]; then
-  ok "A.2 release.yml: no raw 'github.repository_owner' in tag paths (only '| lower' filtered)"
-else
-  bad "A.2 release.yml: $A2_BARS raw 'github.repository_owner' in tag paths (must use '| lower')"
-fi
-
-# A.3 Comment in release.yml documents the lowercase fix
-A3=$(grep -E 'lowercase' .github/workflows/release.yml 2>/dev/null | wc -l)
+# A.3 The meta step actually computes lower_owner (GITHUB_REPOSITORY_OWNER
+# piped through tr '[:upper:]' '[:lower:]'). If this is missing, the
+# `${{ steps.meta.outputs.lower_owner }}` references in tag lines will
+# produce empty strings and the docker push will fail.
+# Use grep -F (fixed string) — the literal `tr '[:upper:]' '[:lower:]'`
+# has square brackets that ERE would interpret as a character class.
+A3=$(grep -cF "tr '[:upper:]' '[:lower:]'" .github/workflows/release.yml 2>/dev/null)
+A3=${A3:-0}
 if [ "$A3" -ge 1 ]; then
-  ok "A.3 release.yml: 'lowercase' documented in comments (A3=$A3 hit(s))"
+  ok "A.3 release.yml: meta step computes lower_owner via tr (A3=$A3 hit(s))"
 else
-  bad "A.3 release.yml: 'lowercase' not documented in comments (operator needs context to remember)"
+  bad "A.3 release.yml: meta step does NOT compute lower_owner — tag lines will be empty"
+fi
+
+# A.4 Comment in release.yml documents the lowercase fix (so future
+# contributors know why this matters).
+A4=$(grep -E 'lowercase' .github/workflows/release.yml 2>/dev/null | wc -l)
+if [ "$A4" -ge 1 ]; then
+  ok "A.4 release.yml: 'lowercase' documented in comments (A4=$A4 hit(s))"
+else
+  bad "A.4 release.yml: 'lowercase' not documented in comments (operator needs context to remember)"
 fi
 
 # --- B. AGENTS.md mentions B237.24 ---

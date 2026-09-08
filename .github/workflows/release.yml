@@ -110,12 +110,23 @@ jobs:
           fi
           # Short commit for the image label
           SHORT_SHA=$(git rev-parse --short HEAD)
+          # B237.24 (v1.5.2+): the ghcr.io repository path MUST be
+          # lowercase. The `${{ github.repository_owner | lower }}`
+          # filter works in plain `${{ ... }}` expressions but NOT
+          # inside `format('...', arg)` calls (the `format` function
+          # rejects pipe operators in its arg list — GitHub Actions
+          # parses the args as literal values, not sub-expressions).
+          # We pre-compute the lowercase owner here and pass it as a
+          # step output, so the tag lines can use the clean
+          # `${{ steps.meta.outputs.lower_owner }}` everywhere.
+          LOWER_OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
           echo "version=$VERSION"          >> "$GITHUB_OUTPUT"
           echo "major_minor=$MAJOR_MINOR"  >> "$GITHUB_OUTPUT"
           echo "major=$MAJOR"              >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA"      >> "$GITHUB_OUTPUT"
-          echo "[meta] version=$VERSION  major_minor=$MAJOR_MINOR  major=$MAJOR  pre=$IS_PRERELEASE"
+          echo "lower_owner=$LOWER_OWNER"  >> "$GITHUB_OUTPUT"
+          echo "[meta] version=$VERSION  major_minor=$MAJOR_MINOR  major=$MAJOR  pre=$IS_PRERELEASE  owner=$LOWER_OWNER"
 
       - name: Set up QEMU (for cross-arch builds)
         uses: docker/setup-qemu-action@v3
@@ -146,19 +157,30 @@ jobs:
           # MUST be lowercase. docker/build-push-action@v6 rejects
           # mixed-case repository names with
           #   "repository name must be lowercase"
-          # We use `${{ github.repository_owner | lower }}` to force
-          # lowercase even when the GitHub org is mixed-case
-          # (operator's account is "BarsSky", which would otherwise
-          # build as `ghcr.io/BarsSky/skygate:...` and fail). The
-          # `| lower` filter is a GitHub Actions built-in — it does
-          # not depend on any action. See scripts/check_b237_24.sh
-          # which pins this contract so a future change can't
-          # silently regress it.
+          # The operator's account is "BarsSky" (mixed-case) — without
+          # a lowercase filter, the docker image would be tagged
+          # `ghcr.io/BarsSky/skygate:...` and the push would fail.
+          # The pre-B237.24 release.yml used
+          # `${{ github.repository_owner }}` directly; that bug
+          # silently broke the v1.5.0 and v1.5.2 docker images
+          # (both release workflow runs failed with the same error).
+          # B237.24 fix: the meta step pre-computes
+          # `lower_owner = $GITHUB_REPOSITORY_OWNER | tr ...` and
+          # exposes it as `steps.meta.outputs.lower_owner`. We use
+          # that pre-computed value in all 4 tag lines below
+          # (version + latest + vX.Y + vX). Note: `${{ ... | lower }}`
+          # works in plain expressions but NOT inside
+          # `format('...', arg)` calls — the `format` function parses
+          # its args as literal values, not sub-expressions, so a
+          # pipe inside the arg list is a syntax error. That's why
+          # we pre-compute. See scripts/check_b237_24.sh which
+          # pins this contract so a future change can't silently
+          # regress it.
           tags: |
-            ghcr.io/${{ github.repository_owner | lower }}/skygate:v${{ steps.meta.outputs.version }}
-            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:latest', github.repository_owner | lower) || '' }}
-            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', github.repository_owner | lower, steps.meta.outputs.major_minor) || '' }}
-            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', github.repository_owner | lower, steps.meta.outputs.major) || '' }}
+            ghcr.io/${{ steps.meta.outputs.lower_owner }}/skygate:v${{ steps.meta.outputs.version }}
+            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:latest', steps.meta.outputs.lower_owner) || '' }}
+            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', steps.meta.outputs.lower_owner, steps.meta.outputs.major_minor) || '' }}
+            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', steps.meta.outputs.lower_owner, steps.meta.outputs.major) || '' }}
           labels: |
             org.opencontainers.image.title=skygate
             org.opencontainers.image.description=Self-service web portal for Tailscale and headscale

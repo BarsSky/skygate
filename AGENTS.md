@@ -5936,17 +5936,29 @@ in the same commit. Don't let the tracker drift.
     ghcr.io/barssky/skygate:v1.5.2` returns 404. Operators
     using V1-V5 deploy surfaces (per B237.15) get a 404 unless
     they `docker build` from source.
-    **B237.24 fix**: append `| lower` to the GitHub Actions
-    expression (GitHub Actions supports the `| lower` filter on
-    any string value):
+    **B237.24 initial fix** (commit `1cd2ece6`): append `| lower`
+    to the GitHub Actions expression. This works in plain
+    `${{ ... }}` expressions but **NOT inside `format()` arg
+    lists** (GitHub Actions parses `format('...', arg)` args
+    as literal values, not sub-expressions — a pipe in the arg
+    list is a parse error: `(Line: 157, Col: 17): Unexpected
+    symbol: '|'.`).
+    **B237.24.1 fix** (commit, 2026-09-08): pre-compute the
+    lowercase owner in the meta step:
     ```yaml
-    # Before (B237.15):
-    ghcr.io/${{ github.repository_owner }}/skygate:v${{ ... }}
-    # After (B237.24):
-    ghcr.io/${{ github.repository_owner | lower }}/skygate:v${{ ... }}
+    # In the meta step (bash):
+    LOWER_OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+    echo "lower_owner=$LOWER_OWNER" >> "$GITHUB_OUTPUT"
+    # In the tag lines:
+    ghcr.io/${{ steps.meta.outputs.lower_owner }}/skygate:v${{ ... }}
+    format('ghcr.io/{0}/skygate:latest', steps.meta.outputs.lower_owner)
     ```
-    Also add the `| lower` filter to the `latest`, `vX.Y`,
-    and `vX` floating tags (4 tag lines total).
+    This works in BOTH plain expressions and `format()` arg
+    lists because the value is pre-computed (a plain string
+    interpolation, no filters needed). The `tr '[:upper:]'
+    '[:lower:]'` is a bash builtin that works on the
+    `$GITHUB_REPOSITORY_OWNER` env var without any action
+    dependency.
     **Why this wasn't caught earlier**: the operator
     force-moved the v1.5.2 tag to a new commit (218a02ac) and
     asked me to investigate; the `gh run view --log-failed`
@@ -5955,9 +5967,10 @@ in the same commit. Don't let the tracker drift.
     (no docker image ever pushed). The lesson: **always
     check `gh run list --workflow release` after a tag push
     before assuming the release succeeded.**
-    **B237.24 also adds a permanent guard** —
-    `scripts/check_b237_24.sh` (10 contracts: 4 in release.yml
-    itself + 1 no-raw-`BarsSky` in tags + 1 comment docs the
+    **B237.24.1 also adds a permanent guard** —
+    `scripts/check_b237_24.sh` (9 contracts: 4 in release.yml
+    itself + 1 no-raw-`BarsSky` in tags + 1 meta step
+    computes `lower_owner` via `tr` + 1 comment docs the
     fix + 1 AGENTS.md mention + 1 PLANS.md mention + 1 live
     `gh release view v1.5.2` is absent check + 1 live
     `git ls-remote v1.5.2` tag is absent check + 2 go
@@ -5966,15 +5979,23 @@ in the same commit. Don't let the tracker drift.
     future force-move + bypass without re-running CI gets
     caught at the next `verify_pre_deploy.sh` run).
     **What was deleted**: the v1.5.2 tag (both local and
-    remote) + the draft v1.5.2 GitHub release. The release
-    will be re-tagged after B237.24 is committed + the
-    release workflow re-runs and passes.
-    **Files**:
-    - `.github/workflows/release.yml` — `| lower` filter
-      added to all 4 ghcr.io tag lines.
-    - `scripts/check_b237_24.sh` — NEW (10 contracts).
-    - `scripts/verify_pre_deploy.sh` — B237.24 registered.
-    - `docs/PLANS.md` — B237.24 entry.
+    remote) + the draft v1.5.2 GitHub release (twice — once
+    for the original CI failure on commit 218a02ac, once for
+    the B237.24 format() parse error). The release will be
+    re-tagged after B237.24.1 is committed + the release
+    workflow re-runs and passes.
+    **Files (B237.24.1)**:
+    - `.github/workflows/release.yml` — meta step adds
+      `LOWER_OWNER` + `lower_owner` output; all 4 tag lines
+      use `${{ steps.meta.outputs.lower_owner }}` instead of
+      `| lower`.
+    - `scripts/check_b237_24.sh` — updated: A.1 checks
+      `steps.meta.outputs.lower_owner` (6 hits: 4 tag lines
+      + 2 doc-comment references), A.3 checks meta step
+      computes `lower_owner` via `tr`, A.4 checks
+      'lowercase' documented.
+    - `AGENTS.md` — this entry.
+    - `docs/PLANS.md` — B237.24.1 entry.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's
