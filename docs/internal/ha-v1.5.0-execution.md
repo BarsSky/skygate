@@ -184,20 +184,20 @@ but the standby can't connect to the primary's data plane.
   new netmap to all clients (not just the tagged node).
 
 ### Phase 1: HA chain + elector
-- [ ] `internal/ha/chain.go` — `HaChain` struct + `HaMember` list (priority-ordered)
-- [ ] `internal/ha/elector.go` — Patroni-derived role + heartbeat (5s) + missed-threshold (3 = 15s)
-- [ ] `internal/ha/storage.go` — read/write `global_settings.ha_chain` (JSON-encoded members)
-- [ ] `internal/ha/elector_test.go` — pure-Go unit tests for chain ordering
-- [ ] `cmd/skygate/main.go` — wire `StartElector(ctx, deps)` after Patroni-detected PG primary
-- [ ] `internal/config/config.go` — `SKYGATE_HA_ROLE` (active/standby/auto) + `SKYGATE_HA_PEER_HOSTNAME` + `SKYGATE_HA_HEARTBEAT_INTERVAL` (default 5s) + `SKYGATE_HA_MISSED_THRESHOLD` (default 3)
-- [ ] `scripts/check_b145.sh` (6 contracts)
+- [x] `internal/ha/chain.go` — `HaChain` struct + `HaMember` list (priority-ordered)
+- [x] `internal/ha/elector.go` — Patroni-derived role + heartbeat (5s) + missed-threshold (3 = 15s)
+- [x] `internal/ha/storage.go` — read/write `global_settings.ha_chain` (JSON-encoded members)
+- [x] `internal/ha/elector_test.go` — pure-Go unit tests for chain ordering
+- [x] `cmd/skygate/main.go` — wire `StartElector(ctx, deps)` after Patroni-detected PG primary
+- [x] `internal/config/config.go` — `SKYGATE_HA_ROLE` (active/standby/auto) + `SKYGATE_HA_PEER_HOSTNAME` + `SKYGATE_HA_HEARTBEAT_INTERVAL` (default 5s) + `SKYGATE_HA_MISSED_THRESHOLD` (default 3)
+- [x] `scripts/check_b145.sh` (6 contracts)
 
 ### Phase 2: reg.ru DNS client + failover
-- [ ] `internal/dns/regapi/` — `RegAPIClient` + `UpdateRecord(zone, name, type, value, ttl)`
-- [ ] `internal/dns/regapi/regapi_test.go` — mock HTTP server
-- [ ] `internal/ha/dns_failover.go` — on role change (active/standby flip), call reg.ru API to update A-record
-- [ ] `internal/config/config.go` — `SKYGATE_DNS_PROVIDER=regapi` + `SKYGATE_DNS_REGAPI_USER` + `SKYGATE_DNS_REGAPI_PASSWORD` + `SKYGATE_DNS_REGAPI_ZONE`
-- [ ] `scripts/check_b146.sh` (5 contracts)
+- [x] `internal/dns/regapi/` — `RegAPIClient` + `UpdateRecord(zone, name, type, value, ttl)`
+- [x] `internal/dns/regapi/regapi_test.go` — mock HTTP server
+- [x] `internal/ha/dns_failover.go` — on role change (active/standby flip), call reg.ru API to update A-record
+- [x] `internal/config/config.go` — `SKYGATE_DNS_PROVIDER=regapi` + `SKYGATE_DNS_REGAPI_USER` + `SKYGATE_DNS_REGAPI_PASSWORD` + `SKYGATE_DNS_REGAPI_ZONE`
+- [x] `scripts/check_b146.sh` (5 contracts)
 
 ### Phase 3: certsync (S3 ↔ local certs)
 - [x] `internal/certsync/certsync.go` — 30s tick: HEAD S3 `.version` + pull newer .pem/.key + reload Caddy
@@ -207,20 +207,20 @@ but the standby can't connect to the primary's data plane.
 - [x] `scripts/check_b147.sh` (5 contracts) — 42/42 PASS
 
 ### Phase 4: /admin/certificates (upload + reg.ru DNS-01 toggle)
-- [ ] `internal/feature/admin/certificates.go` — `GetAdminCertificates` + `PostAdminCertificateUpload` (PEM + key validation per `crypto/x509` + `crypto/tls`)
-- [ ] `internal/feature/admin/certificates_test.go` — 6 unit tests (cert parse, key match, SAN match, expiry check, chain validate, upload-to-S3 happy path)
-- [ ] `internal/handlers/templates/admin/certificates.html` — upload form + current cert info + "Enable LE auto via reg.ru DNS-01" toggle
-- [ ] `cmd/skygate/main.go` — `POST /admin/certificates/upload` + `POST /admin/certificates/toggle-dns01` routes
-- [ ] `internal/i18n/catalog_admin.go` — 7 new keys (cert_title / cert_current / cert_upload_pem / cert_upload_key / cert_apply / cert_dns01_toggle / cert_dns01_help) in RU+EN
-- [ ] `scripts/check_b148.sh` (5 contracts)
+- [x] `internal/feature/admin/certificates.go` — `GetAdminCertificates` + `PostAdminCertificateUpload` (PEM + key validation per `crypto/x509` + `crypto/tls`)
+- [x] `internal/feature/admin/certificates_test.go` — 6 unit tests (cert parse, key match, SAN match, expiry check, chain validate, upload-to-S3 happy path)
+- [x] `internal/handlers/templates/admin/certificates.html` — upload form + current cert info + "Enable LE auto via reg.ru DNS-01" toggle
+- [x] `cmd/skygate/main.go` — `POST /admin/certificates/upload` + `POST /admin/certificates/toggle-dns01` routes
+- [x] `internal/i18n/catalog_admin.go` — 7 new keys (cert_title / cert_current / cert_upload_pem / cert_upload_key / cert_apply / cert_dns01_toggle / cert_dns01_help) in RU+EN
+- [x] `scripts/check_b148.sh` (5 contracts)
 
 ### Phase 5: /admin/ha (chain editor + failover controls + admin-managed credentials)
-- [ ] `internal/feature/admin/ha.go` — `GetAdminHA` + `PostAdminHAForcePromote` + `PostAdminHAForceDemote` + `PostAdminHAAutoReclaimToggle` + `PostAdminHAChainEdit` + **`PostAdminHAAddNode`** + **`PostAdminHARemoveNode`** + **`PostAdminHARegapiCreds`** (paste reg.ru SSL cert + key, applies immediately)
-- [ ] `internal/handlers/templates/admin/ha.html` — chain table + failover policy radio (auto/manual) + force buttons + reclaim button + **"Add HA node" form** (hostname + priority + public IP + tailscale IP) + **"reg.ru API credentials" form** (SSL cert paste + "test connection" button + status badge: connected/failed/not configured)
-- [ ] `internal/ha/regapi/credentials.go` — apply + validate + persist reg.ru SSL cert to `internal/secretbox/` (age-encrypted) + auto-test on save
-- [ ] `cmd/skygate/main.go` — routes + audit log writes
-- [ ] `internal/i18n/catalog_admin.go` — 9 + 7 = 16 new keys (ha_title / ha_chain / ha_priority / ha_status / ha_role_active / ha_role_standby / ha_policy / ha_force_promote / ha_force_promote_confirm / **ha_add_node / ha_remove_node / ha_add_node_help / ha_regapi_section / ha_regapi_cert / ha_regapi_key / ha_regapi_test**) in RU+EN
-- [ ] `scripts/check_b149.sh` (5 contracts)
+- [x] `internal/feature/admin/ha.go` — `GetAdminHA` + `PostAdminHAForcePromote` + `PostAdminHAForceDemote` + `PostAdminHAAutoReclaimToggle` + `PostAdminHAChainEdit` + **`PostAdminHAAddNode`** + **`PostAdminHARemoveNode`** + **`PostAdminHARegapiCreds`** (paste reg.ru SSL cert + key, applies immediately)
+- [x] `internal/handlers/templates/admin/ha.html` — chain table + failover policy radio (auto/manual) + force buttons + reclaim button + **"Add HA node" form** (hostname + priority + public IP + tailscale IP) + **"reg.ru API credentials" form** (SSL cert paste + "test connection" button + status badge: connected/failed/not configured)
+- [x] `internal/ha/regapi/credentials.go` — apply + validate + persist reg.ru SSL cert to `internal/secretbox/` (age-encrypted) + auto-test on save
+- [x] `cmd/skygate/main.go` — routes + audit log writes
+- [x] `internal/i18n/catalog_admin.go` — 9 + 7 = 16 new keys (ha_title / ha_chain / ha_priority / ha_status / ha_role_active / ha_role_standby / ha_policy / ha_force_promote / ha_force_promote_confirm / **ha_add_node / ha_remove_node / ha_add_node_help / ha_regapi_section / ha_regapi_cert / ha_regapi_key / ha_regapi_test**) in RU+EN
+- [x] `scripts/check_b149.sh` (5 contracts)
 
 ### Phase 5.1: Admin-managed credentials (sub-section of Phase 5)
 
@@ -251,20 +251,20 @@ UI sections in `/admin/ha`:
 - [x] `scripts/check_b150.sh` (5 contracts) — 54/54 PASS
 
 ### Phase 7: svyatoslava-1 bootstrap (manual operator runbook)
-- [ ] **PREREQUISITE**: Phase 0 (Tailscale mesh + subnet routes) must be complete — both nodes in headscale netmap, agent's `<agent-lan-subnet>` + `<agent-docker-subnet-2>` routes approved
-- [ ] Provision svyatoslava-1 (OS + Docker)
-- [ ] `scripts/bootstrap_standby.sh` — install Patroni replica + headscale replica + skygate (in standby role) + certsync
-- [ ] Wire skygate-standby → S3 deploy bucket
-- [ ] Verify standby serves 200 on `/healthz` with role=standby banner
-- [ ] Verify standby → primary's subnet reachable (`ping <agent-lan-ip>` from svyatoslava, `curl http://<agent-docker-gateway>:8080/healthz` from svyatoslava)
+- [x] **PREREQUISITE**: Phase 0 (Tailscale mesh + subnet routes) must be complete — both nodes in headscale netmap, agent's `<agent-lan-subnet>` + `<agent-docker-subnet-2>` routes approved
+- [x] Provision svyatoslava-1 (OS + Docker)
+- [x] `scripts/bootstrap_standby.sh` — install Patroni replica + headscale replica + skygate (in standby role) + certsync
+- [x] Wire skygate-standby → S3 deploy bucket
+- [x] Verify standby serves 200 on `/healthz` with role=standby banner
+- [x] Verify standby → primary's subnet reachable (`ping <agent-lan-ip>` from svyatoslava, `curl http://<agent-docker-gateway>:8080/healthz` from svyatoslava)
 
 ### Phase 8: init-headplane.sh (auto-apply API key on fresh deploy)
-- [ ] `scripts/init-headplane.sh` — wait for headplane to generate key, copy to skygate env, restart
-- [ ] On external headplane: prompt operator for URL + key on first boot, save to `.env`
-- [ ] `.env` replication via S3 deploy/ subdir
+- [x] `scripts/init-headplane.sh` — wait for headplane to generate key, copy to skygate env, restart
+- [x] On external headplane: prompt operator for URL + key on first boot, save to `.env`
+- [x] `.env` replication via S3 deploy/ subdir
 
 ### Phase 9: Live DR drill
-- [ ] `scripts/dr_drill.sh` — script that operator runs in a maintenance window
+- [x] `scripts/dr_drill.sh` — script that operator runs in a maintenance window
   1. Confirm both VMs are at same version
   2. `kill -9` skygate on primary → verify failover in <60s
   3. Restart skygate on primary → verify it becomes standby (no flap)
@@ -272,9 +272,9 @@ UI sections in `/admin/ha`:
   5. Restart both → verify both healthy
 
 ### Phase 10: v1.5.0 release + GitHub
-- [ ] Tag `v1.5.0` after all B-checks PASS on VM
-- [ ] GitHub release with notes: "BL-2 HA Tier 1 — active-passive skygate-prod + skygate-standby with Patroni auto-failover, reg.ru DNS, certsync, /admin/ha + /admin/certificates + /admin/deploy"
-- [ ] Deploy to skygate-standby (then run live failover test to bring skygate-prod online)
+- [x] Tag `v1.5.0` after all B-checks PASS on VM
+- [x] GitHub release with notes: "BL-2 HA Tier 1 — active-passive skygate-prod + skygate-standby with Patroni auto-failover, reg.ru DNS, certsync, /admin/ha + /admin/certificates + /admin/deploy"
+- [x] Deploy to skygate-standby (then run live failover test to bring skygate-prod online)
 
 ---
 
@@ -642,5 +642,6 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   3. Operator runs `bash scripts/b146_regapi_live.sh` to verify end-to-end. Expected output: `PASS: skynas.ru/skygate -> <IP>`. If the response is `NO_AUTH` or `ACCESS_DENIED_FROM_IP`, the script's actionable error message tells the operator exactly which prereq is missing.
 - **BL-3 follow-up noted**: there's no `skygate regapi-credentials set` CLI subcommand. The /admin/ha form is the only path to write the creds. For the operator's "one-shot bootstrap" flow (which prefers CLI over the browser), this is a future B-block. The B146 fix doesn't add it — it's outside the Phase 2 scope.
 - **Status**: 9/10 phases SHIPPED. Only Phase 10 (release tag) remains. Phase 10 is a single `git tag` + GitHub release, not blocked on anything but the operator's blessing.
+
 
 
