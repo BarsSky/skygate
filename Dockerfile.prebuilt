@@ -63,11 +63,21 @@ ARG BUILD_TIME=unknown
 # builds, smaller debug info). -buildvcs=false avoids VCS injection
 # errors when the build context doesn't have a .git/ directory.
 #
-# -s -w strips the symbol table and DWARF debug info (smaller
-# binary; we don't ship a debugger-in-the-image use case).
+# -s -w in -ldflags strips the symbol table and DWARF debug info
+# (smaller binary; we don't ship a debugger-in-the-image use case).
+# B237.24.3 (v1.5.2+, 2026-09-08): the pre-B237.24.3 Dockerfile
+# had `-s -w` as DIRECT `go build` flags (outside `-ldflags`).
+# Go 1.25 rejects that with "flag provided but not defined: -s"
+# → exit 2 → docker build fails → no image pushed to ghcr.io.
+# The pre-B237.24.3 syntax was a silent pre-Go-1.25 bug; v1.5.0
+# + v1.5.2 docker images were never actually built (the operator
+# published releases manually without docker). The release.yml
+# workflow is the FIRST place this bug surfaces (locally `go build
+# ./cmd/skygate` works because we don't pass `-s -w` at the
+# command line). Fix: move `-s -w` into `-ldflags`.
 RUN CGO_ENABLED=0 \
-    go build -buildvcs=false -trimpath -s -w \
-      -ldflags "-X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}" \
+    go build -buildvcs=false -trimpath \
+      -ldflags "-s -w -X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}" \
       -o /out/skygate \
       ./cmd/skygate
 
