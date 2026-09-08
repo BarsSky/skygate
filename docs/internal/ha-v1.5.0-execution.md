@@ -183,6 +183,20 @@ but the standby can't connect to the primary's data plane.
 - headscale 0.29.1 may need a restart after `nodes tag` to push the
   new netmap to all clients (not just the tagged node).
 
+**State-tracked runner (added v1.5.2, B-new)**: `scripts/ha-phase0.sh`
+wraps the 7 steps above (tailscale installed on both + verify same
+tailnet + verify routes advertised + verify routes approved + verify
+SSH + verify MagicDNS) with state machine tracking via
+`scripts/ha-state/state.sh`. Each step has its own status (pending
+→ running → completed|failed) in the JSON state file at
+`/var/lib/skygate/ha-state/state.json`. Crash detection at boot marks
+any phase that was `running` at last shutdown as `failed` and writes
+a crash marker. Active recovery: on transient step failure, the
+runner retries with exponential backoff (2s, 4s, 8s; capped at 300s).
+Requires `jq` (`apt install jq`). Run with `bash scripts/ha-phase0.sh`
+on the standby (svyatoslava-1), or `bash scripts/ha-phase0.sh
+--status` to print the current state without running anything.
+
 ### Phase 1: HA chain + elector
 - [x] `internal/ha/chain.go` — `HaChain` struct + `HaMember` list (priority-ordered)
 - [x] `internal/ha/elector.go` — Patroni-derived role + heartbeat (5s) + missed-threshold (3 = 15s)
@@ -257,6 +271,7 @@ UI sections in `/admin/ha`:
 - [x] Wire skygate-standby → S3 deploy bucket
 - [x] Verify standby serves 200 on `/healthz` with role=standby banner
 - [x] Verify standby → primary's subnet reachable (`ping <agent-lan-ip>` from svyatoslava, `curl http://<agent-docker-gateway>:8080/healthz` from svyatoslava)
+- [x] **State-tracked runner (v1.5.2, B-new)**: `scripts/ha-phase7.sh` — wraps `bootstrap_standby.sh` with 6 state-tracked steps (preflight + s3_pull_binary + s3_pull_headscale_config + docker_compose_up + healthz_wait + verify_chain) via `scripts/ha-state/state.sh`. Idempotent, --reset / --status / --skip-s3 flags. Requires `jq`.
 
 ### Phase 8: init-headplane.sh (auto-apply API key on fresh deploy)
 - [x] `scripts/init-headplane.sh` — wait for headplane to generate key, copy to skygate env, restart
@@ -270,6 +285,8 @@ UI sections in `/admin/ha`:
   3. Restart skygate on primary → verify it becomes standby (no flap)
   4. `kill -9` both skygates → verify DNS still resolves + reg.ru API works
   5. Restart both → verify both healthy
+- [x] **State-tracked runner (v1.5.2, B-new)**: `scripts/ha-phase9.sh` — wraps `dr_drill.sh` with preflight (Phase 0 + 7 must be `completed` in state file) + `run_drill` (auto `--yes` for unattended maintenance windows) + `post_verify` (parses `PASS:` count from drill output). Max 2 attempts with 5s/10s backoff (destructive ops, retry cautiously). `--skip-kill-both` + `--skip-regapi-check` flags preserved. Requires `jq`.
+- [x] **Status reporter (v1.5.2, B-new)**: `scripts/ha-status.sh` — one-page summary of all phases from the state file (`bash scripts/ha-status.sh`), with `--json` (raw state.json for piping to `jq`) and `--phase 7_bootstrap` (one phase).
 
 ### Phase 10: v1.5.0 release + GitHub
 - [x] Tag `v1.5.0` after all B-checks PASS on VM
@@ -643,5 +660,25 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **BL-3 follow-up noted**: there's no `skygate regapi-credentials set` CLI subcommand. The /admin/ha form is the only path to write the creds. For the operator's "one-shot bootstrap" flow (which prefers CLI over the browser), this is a future B-block. The B146 fix doesn't add it — it's outside the Phase 2 scope.
 - **Status**: 9/10 phases SHIPPED. Only Phase 10 (release tag) remains. Phase 10 is a single `git tag` + GitHub release, not blocked on anything but the operator's blessing.
 
+### 2026-09-08 (B-new — Phase 0/7/9 state-tracked runners)
+- **State machine library + state-tracked phase runners shipped** (B-new, v1.5.2+):
+  - `scripts/ha-state/state.sh` (16KB, 446 lines) — state machine primitives for HA phases. Provides: `ha_state_init` (create state dir + JSON file), `ha_state_lock`/`ha_state_unlock` (mkdir-based atomic lock with 5-min stale detection), `ha_state_read`/`ha_state_write` (JSON I/O with fsync + atomic rename), `ha_state_set_field`/`set_phase`/`set_step` (jq-based atomic updates), `ha_state_ensure_phase` (initialize if missing), `ha_state_crash_check` (detect `running` at boot, mark failed), `ha_state_retry_run` (exponential backoff 2^n*base capped at 300s), `ha_state_run_step` (step-level status), `ha_state_summary` (JSON pretty-print), `ha_audit` (rotating log, 1000-line cap). Requires `jq` (`apt install jq` / `brew install jq`).
+  - `scripts/ha-phase0.sh` (B-new) — Phase 0 runner with 6 state-tracked steps (tailscale_install_primary + tailscale_install_standby + verify_tailnet_join + verify_routes_advertised + verify_routes_approved + verify_ssh_to_primary + verify_magicdns — note: 7 step IDs but `tailscale_install_*` is shared, 6 functional steps). `--reset` / `--status` / `--primary` / `--standby` / `--attempts` / `--backoff` flags. Does NOT auto-install tailscale (operator decides).
+  - `scripts/ha-phase7.sh` (B-new) — Phase 7 runner wrapping `scripts/bootstrap_standby.sh` (B152) with 6 state-tracked steps (preflight + s3_pull_binary + s3_pull_headscale_config + docker_compose_up + healthz_wait + verify_chain). `--reset` / `--status` / `--skip-s3` flags. S3 failures are non-fatal (falls back to local git checkout).
+  - `scripts/ha-phase9.sh` (B-new) — Phase 9 runner wrapping `scripts/dr_drill.sh` (B153) with preflight (verifies Phase 0 + 7 are `completed` in state file) + `run_drill` (auto `--yes` for unattended mode) + `post_verify` (parses `PASS:` count from drill output). `--reset` / `--status` / `--skip-regapi-check` / `--skip-kill-both` flags. Max 2 attempts with 5s/10s backoff (destructive ops, retry cautiously).
+  - `scripts/ha-status.sh` (B-new) — one-page summary: `ha_state_summary` + crash marker + audit log tail. `--json` (raw state.json) + `--phase <id>` (one phase).
+  - `scripts/check_ha_state.sh` (B-new) — 73 B-check contracts covering: state.sh exists + executable + public API complete + bug-fix verification (sleep_off typo gone) + jq install hint + stale lock + audit rotation; ha-phase0/7/9/status.sh exist + executable + source state.sh + have the right step IDs; no leaked credentials or operator IPs in any file; pre-commit gate presence; verify_pre_deploy.sh registration.
+  - `scripts/verify_pre_deploy.sh` — `B-new` row added to the catalog.
+- **State file location**: `/var/lib/skygate/ha-state/state.json` (overridable via `SKYGATE_HA_STATE` env var for testing). JSON schema documented at the top of `state.sh`.
+- **Operator workflow** (when svyatoslava-1 is recovered):
+  1. `ssh svyatoslava-1`
+  2. `cd ~/skygate && bash scripts/ha-phase0.sh` (verifies Tailscale mesh — idempotent, rerunnable)
+  3. `bash scripts/ha-phase7.sh` (bootstraps the standby)
+  4. From primary, schedule maintenance window, then `bash scripts/ha-phase9.sh` (live DR drill, unattended)
+  5. `bash scripts/ha-status.sh` at any time to see the phase status
+- **Known gaps** (NOT in this B-block):
+  - svyatoslava-1 is currently UNREACHABLE per the 2026-08-31 status (Tailscale iptables leftover trap — KVM console recovery needed: `stop tailscaled; flush ts-input/ts-forward/ts-output/ts-postrouting/ts-mark` chains across filter/nat/mangle tables; restart with `--netfilter-mode=nodir`).
+  - The Phase 0 runner hardcodes `python3` for the `tailscale status --json` JSON parser. If the operator's VM doesn't have python3, step 3 (verify_routes_advertised) and step 4 (verify_routes_approved) will fail with a clear error message. A python-free fallback (`jq` based on the same JSON) is a future B-block.
+- **Status**: 9/10 phases SHIPPED + Phase 0/7/9 now have state-tracked runners. Phase 10 (release tag) is the only remaining work item, blocked on the operator running the drill on a live maintenance window.
 
 

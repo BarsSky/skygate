@@ -5456,6 +5456,140 @@ in the same commit. Don't let the tracker drift.
     operator-runnable. 9/10 BL-2 phases
     SHIPPED; only Phase 10 (release tag)
     remains.
+  - **B-new (v1.5.2, 2026-09-08) — HA Phase 0/7/9
+    state-tracked runners**. Closes the
+    "active recovery + state tracking" gap in the
+    HA chain (the B145-B150 code surfaces are
+    SHIPPED, but the operator-driven runbooks for
+    Phase 0/7/9 had no state machine — re-runs were
+    best-effort, not idempotent, no crash detection
+    on boot, no audit trail). 5 new files:
+    - `scripts/ha-state/state.sh` (16KB, 446 lines)
+      — state machine library. Provides:
+      `ha_state_init` (create state dir + JSON),
+      `ha_state_lock`/`ha_state_unlock` (mkdir-based
+      atomic lock with 5-min stale detection —
+      POSIX-portable, no `flock` needed),
+      `ha_state_read`/`ha_state_write` (JSON I/O with
+      `fsync` + atomic rename),
+      `ha_state_set_field`/`set_phase`/`set_step`
+      (jq-based atomic updates),
+      `ha_state_ensure_phase` (initialize if missing),
+      `ha_state_crash_check` (detect `running` at
+      boot, mark failed, write crash marker),
+      `ha_state_retry_run` (exponential backoff
+      2^n*base capped at 300s, max attempts via
+      `MAX_ATTEMPTS`),
+      `ha_state_run_step` (step-level status),
+      `ha_state_summary` (JSON pretty-print),
+      `ha_audit` (rotating log, 1000-line cap).
+      Requires `jq` (`apt install jq` / `brew
+      install jq`).
+    - `scripts/ha-phase0.sh` (B-new) — Phase 0
+      (Tailscale mesh) runner with 7 state-tracked
+      steps: `tailscale_install_primary` +
+      `tailscale_install_standby` +
+      `verify_tailnet_join` +
+      `verify_routes_advertised` +
+      `verify_routes_approved` +
+      `verify_ssh_to_primary` + `verify_magicdns`.
+      Flags: `--reset` / `--status` / `--primary
+      <host>` / `--standby <host>` / `--attempts N`
+      / `--backoff <sec>`. Does NOT auto-install
+      tailscale (operator decides). Env vars:
+      `SKYGATE_STANDBY_HOST` (default
+      `svyatoslava-1`) + `SKYGATE_PRIMARY_HOST`
+      (default `skygate-host-1`).
+    - `scripts/ha-phase7.sh` (B-new) — Phase 7
+      (bootstrap the standby) runner wrapping
+      `scripts/bootstrap_standby.sh` (B152) with
+      6 state-tracked steps: `preflight` +
+      `s3_pull_binary` + `s3_pull_headscale_config`
+      + `docker_compose_up` + `healthz_wait` +
+      `verify_chain`. Flags: `--reset` / `--status`
+      / `--skip-s3` (skip S3 pull, use local git
+      checkout) / `--attempts` / `--backoff` /
+      `--standby`. S3 failures are non-fatal (falls
+      back to local). The preflight step validates
+      `SKYGATE_HA_ROLE=standby` in `.env` — phase
+      fails fast if the host isn't configured as
+      standby.
+    - `scripts/ha-phase9.sh` (B-new) — Phase 9
+      (live DR drill) runner wrapping
+      `scripts/dr_drill.sh` (B153) with 3
+      state-tracked steps: `preflight` +
+      `run_drill` + `post_verify`. Preflight
+      verifies Phase 0 (`0_mesh`) + Phase 7
+      (`7_bootstrap`) are `completed` in the state
+      file — if not, the drill refuses to start
+      (operator must complete the prerequisite
+      phases first). `run_drill` auto-passes
+      `--yes` to `dr_drill.sh` for unattended
+      maintenance windows. `post_verify` parses
+      the `PASS:` count from the drill output.
+      Max 2 attempts (destructive ops, retry
+      cautiously). Flags: `--reset` / `--status` /
+      `--skip-regapi-check` / `--skip-kill-both` /
+      `--attempts` / `--backoff`.
+    - `scripts/ha-status.sh` (B-new) — one-page
+      summary: `ha_state_summary` + crash marker
+      presence + audit log tail. Flags: `--json`
+      (raw state.json for piping to `jq`) +
+      `--phase <id>` (one phase). Useful for
+      "is the standby bootstrapped yet?" or
+      "when was the last DR drill?".
+    - `scripts/check_ha_state.sh` (B-new) — 73
+      B-check contracts covering: state.sh
+      exists + executable + public API complete
+      + bug-fix verification (the
+      `sleep_off` typo we caught on first review,
+      now gone) + jq install hint + stale lock +
+      audit rotation; ha-phase0/7/9/status.sh
+      exist + executable + source state.sh + have
+      the right step IDs; no leaked credentials
+      or operator IPs (192.168.13.69,
+      skygate_admin_pass) in any file; pre-commit
+      gate presence (.githooks/pre-commit blocks
+      192.168.13.69 + skygate_admin_pass);
+      verify_pre_deploy.sh registration.
+    - `scripts/verify_pre_deploy.sh` — `B-new`
+      row added to the catalog (after B153).
+    - State file location: `/var/lib/skygate/ha-state/state.json`
+      (overridable via `SKYGATE_HA_STATE` env var
+      for testing). Audit log:
+      `/var/lib/skygate/ha-state/audit.log`.
+      Lock file: `/var/lib/skygate/ha-state/.lock`.
+      Crash marker: `/var/lib/skygate/ha-state/.crash`.
+    - **Bug fix during B-new development**: the
+      first version of `state.sh` had a typo
+      `ha_log "  backing off ${sleep_off}${sleep_sec}s ..."`
+      where `sleep_off` was undefined. Caught by
+      `bash -n` + manual review; the unused
+      `${sleep_off}` was removed, leaving just
+      `${sleep_sec}`.
+    - **Known gap (NOT in this B-block)**:
+      `ha-phase0.sh` step 3 (`verify_routes_advertised`)
+      and step 4 (`verify_routes_approved`) use
+      `python3` to parse the `tailscale status --json`
+      output. If the operator's VM doesn't have
+      `python3`, those 2 steps will fail with a
+      clear error message. A `python3`-free fallback
+      (using `jq` on the same JSON, since `jq` is
+      already a state machine dependency) is a
+      future B-block.
+    - **Operator workflow** (when svyatoslava-1
+      is recovered): `ssh svyatoslava-1` →
+      `cd ~/skygate && bash scripts/ha-phase0.sh`
+      → `bash scripts/ha-phase7.sh` → from primary,
+      schedule a maintenance window, then
+      `bash scripts/ha-phase9.sh`. At any time,
+      `bash scripts/ha-status.sh` shows the current
+      phase status.
+    - **Status**: 9/10 BL-2 phases SHIPPED + Phase
+      0/7/9 now have state-tracked runners. Phase
+      10 (release tag) is the only remaining work
+      item, blocked on the operator running the
+      drill on a live maintenance window.
   - **B237.19 (v1.5.2+, 2026-09-07) — exit-rules
     form-error flash + duplicate banner UX**. Closes
     2 operator-reported bugs from 2026-09-07:
