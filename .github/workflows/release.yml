@@ -337,11 +337,47 @@ jobs:
     needs: [docker, sums]
     timeout-minutes: 10
     steps:
-      - name: Download all artifacts
+      - name: Download release artifacts
+        # B237.24.4 (v1.5.2+, 2026-09-08): the pre-B237.24.4 release
+        # job used `actions/download-artifact@v4` with
+        # `merge-multiple: true` and downloaded ALL 8 artifacts
+        # (5 binaries + SHA256SUMS + 2 dockerbuild metadata). The
+        # merge-multiple path tries to extract all 8 in parallel
+        # and fails after 5 retries if any one of them is slow
+        # (especially the dockerbuild metadata which contains the
+        # Docker buildx logs and is a few hundred KB).
+        # The release ONLY needs the 5 binaries + SHA256SUMS —
+        # the docker image is already pushed to ghcr.io by the
+        # docker job, and the dockerbuild artifact is just buildx
+        # logs (useful for debugging, not for the release).
+        # Use `pattern: 'skygate-*'` to download just the binary
+        # archives (skygate-linux-amd64, skygate-linux-arm64,
+        # skygate-darwin-amd64, skygate-darwin-arm64,
+        # skygate-windows-amd64) and the SHA256SUMS artifact.
+        # Each is downloaded to its own subdirectory, then the
+        # subsequent step flattens them into `dist/`.
         uses: actions/download-artifact@v4
         with:
           path: dist
-          merge-multiple: true
+          pattern: |
+            skygate-*
+            SHA256SUMS
+
+      - name: Flatten artifact subdirectories
+        # The download-artifact@v4 step (even with pattern:)
+        # creates a subdirectory per artifact under `path`. The
+        # Create release step below expects everything flat in
+        # `dist/`. Move files up one level so the glob in
+        # `files: |` works.
+        run: |
+          set -euo pipefail
+          cd dist
+          # Move every file from any subdirectory up to dist/
+          # (skip dirs themselves; only files).
+          find . -mindepth 2 -type f -exec mv -v '{}' . \;
+          # Clean up empty subdirectories.
+          find . -mindepth 1 -type d -empty -delete
+          ls -lh
 
       - name: List artifacts
         run: ls -lh dist/
