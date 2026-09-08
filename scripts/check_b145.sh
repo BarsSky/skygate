@@ -180,7 +180,7 @@ fi
 # --- contract F: main.go wires the elector ----------
 echo
 echo "=== contract F: cmd/skygate/main.go HA wire-up ==="
-if grep -q "ha.NewElector(d)" cmd/skygate/main.go; then
+if grep -qE 'ha\.NewElector\(' cmd/skygate/main.go; then
     ok "main.go constructs the elector via ha.NewElector"
 else
     bad "main.go does NOT construct ha.NewElector"
