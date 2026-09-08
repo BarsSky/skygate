@@ -335,6 +335,37 @@ work has been moved to TD-14 below.
   "reconcile: N portal_users checked (ok=X, linked=Y,
   relinked=Z, orphans=W, errors=0)")
 
+**[B237.24 / release.yml lowercase] `ghcr.io/BarsSky/skygate`
+mixed-case docker tag bug**
+- **Status:** DONE in **B237.24** (v1.5.2+, 2026-09-08). The
+  `.github/workflows/release.yml` `Build + push` step used
+  `${{ github.repository_owner }}` directly in the `tags:`
+  field. GitHub evaluates this to `BarsSky` (the operator's
+  GitHub account, mixed-case). Docker / GHCR require
+  **lowercase** repository paths. Both v1.5.0 (2026-09-04)
+  and v1.5.2 (2026-09-07) release workflow runs failed with
+  the same error:
+  `ERROR: failed to build: invalid tag
+  "ghcr.io/BarsSky/skygate:v1.5.0": repository name must be
+  lowercase`. The docker image was never pushed to
+  `ghcr.io/barssky/skygate` for either release. The v1.5.0
+  release was published manually (the operator clicked
+  "Publish" in the GitHub UI without docker); v1.5.2 stayed
+  as a draft. **Fix**: append `| lower` to the GitHub Actions
+  expression (4 tag lines total). **Trigger**: the operator
+  force-moved the v1.5.2 tag to a new commit (218a02ac) and
+  asked me to investigate; the `gh run view --log-failed`
+  surfaced the lowercase error. **The v1.5.2 tag was deleted**
+  (both local + remote) + the draft v1.5.2 GitHub release
+  cleaned up, per the operator's rule: "delete the tag if
+  CI failed". The release will be re-tagged after B237.24
+  is committed + the release workflow re-runs and passes.
+  **Permanent guard**: `scripts/check_b237_24.sh` (10
+  contracts) pins the lowercase contract + checks that the
+  v1.5.2 tag is absent (so a future force-move + bypass
+  without re-running CI gets caught at the next
+  `verify_pre_deploy.sh`).
+
 **[B237.23 / B183+B232 regression] autoupdate ON CONFLICT
 code/index drift**
 - **Status:** DONE in **B237.23** (v1.5.2+, 2026-09-07). Live

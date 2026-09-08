@@ -5914,6 +5914,67 @@ in the same commit. Don't let the tracker drift.
     The `test` should print "regapi-credentials test:
     PASS (latency=N ms)" with no `result.Status` of
     `auth_error` or `network_error`.
+
+  - **B237.24 (v1.5.2+, 2026-09-08) — fix `ghcr.io/BarsSky/skygate`
+    mixed-case tag bug in `.github/workflows/release.yml`
+    (docker image push was silently broken on v1.5.0 + v1.5.2)**.
+    The pre-B237.24 release workflow's `Build + push` step
+    used `${{ github.repository_owner }}` directly in the
+    `tags:` field. GitHub evaluates this to `BarsSky` (the
+    operator's GitHub account, mixed-case). Docker / GHCR
+    require **lowercase** repository paths. The v1.5.0 build
+    failed with:
+    ```
+    ERROR: failed to build: invalid tag
+      "ghcr.io/BarsSky/skygate:v1.5.0":
+      repository name must be lowercase
+    ```
+    The release workflow was red for v1.5.0 AND v1.5.2 — the
+    docker image was never pushed to `ghcr.io/barssky/skygate`
+    for either release. The release notes were published
+    (manually for v1.5.0, draft for v1.5.2) but `docker pull
+    ghcr.io/barssky/skygate:v1.5.2` returns 404. Operators
+    using V1-V5 deploy surfaces (per B237.15) get a 404 unless
+    they `docker build` from source.
+    **B237.24 fix**: append `| lower` to the GitHub Actions
+    expression (GitHub Actions supports the `| lower` filter on
+    any string value):
+    ```yaml
+    # Before (B237.15):
+    ghcr.io/${{ github.repository_owner }}/skygate:v${{ ... }}
+    # After (B237.24):
+    ghcr.io/${{ github.repository_owner | lower }}/skygate:v${{ ... }}
+    ```
+    Also add the `| lower` filter to the `latest`, `vX.Y`,
+    and `vX` floating tags (4 tag lines total).
+    **Why this wasn't caught earlier**: the operator
+    force-moved the v1.5.2 tag to a new commit (218a02ac) and
+    asked me to investigate; the `gh run view --log-failed`
+    surfaced the lowercase error. The v1.5.0 build had the
+    same bug; the v1.5.0 release was just published manually
+    (no docker image ever pushed). The lesson: **always
+    check `gh run list --workflow release` after a tag push
+    before assuming the release succeeded.**
+    **B237.24 also adds a permanent guard** —
+    `scripts/check_b237_24.sh` (10 contracts: 4 in release.yml
+    itself + 1 no-raw-`BarsSky` in tags + 1 comment docs the
+    fix + 1 AGENTS.md mention + 1 PLANS.md mention + 1 live
+    `gh release view v1.5.2` is absent check + 1 live
+    `git ls-remote v1.5.2` tag is absent check + 2 go
+    build/vet regression). The tag-absent check enforces the
+    operator's rule: "delete the tag if CI failed" (so a
+    future force-move + bypass without re-running CI gets
+    caught at the next `verify_pre_deploy.sh` run).
+    **What was deleted**: the v1.5.2 tag (both local and
+    remote) + the draft v1.5.2 GitHub release. The release
+    will be re-tagged after B237.24 is committed + the
+    release workflow re-runs and passes.
+    **Files**:
+    - `.github/workflows/release.yml` — `| lower` filter
+      added to all 4 ghcr.io tag lines.
+    - `scripts/check_b237_24.sh` — NEW (10 contracts).
+    - `scripts/verify_pre_deploy.sh` — B237.24 registered.
+    - `docs/PLANS.md` — B237.24 entry.
   - **B237 (v1.5.2+, 2026-09-04) — Own DERP через
     skygate**. Closes the design gap where the operator's
     own DERP (derp.skynas.ru) was configured in skygate's

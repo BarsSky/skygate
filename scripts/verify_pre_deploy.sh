@@ -4025,6 +4025,24 @@ run_check "B237.22" "UI-only CDN grouping on /my/exit-rules + /admin/exit-rules 
 # 14 contracts in scripts/check_b237_23.sh.
 run_check "B237.23" "fix autoupdate ON CONFLICT code/index drift (B183 vs B232 regression). Restores 6-col ON CONFLICT in sync.go to match the live 6-col device_rules_natural_key_uniq (V068) + qInsertDeviceRule in queries.go:416. Closes the silent autoupdate-failure bug surfaced by B237.22's ⏳ orange status check (auth.docker.io / harness.io / cdn-registry-1.docker.io rendered ⏳ orange even though the rules work end-to-end). sync.go 2x 5-col → 6-col ON CONFLICT (CDN-range + per-IP /32 INSERTs at ~492 and ~587), acl_b188_3_integration_test.go:138 test helper 5-col → 6-col, check_b183.sh contract E asserts 5-col is GONE + 6-col is PRESENT. migrateV060PG (B183 dedup CTE) and migrateV068PG (B232 6-col index repair) are unchanged — only sync.go + the test helper were missing. 14 contracts in scripts/check_b237_23.sh (source: sync.go 2x 6-col + 0x 5-col; wire-up: qInsertDeviceRule 6-col + b188_3 helper 6-col; tests: 9 cdn_group + 6 cdn_group_admin + acl b188_3 all pass; live VM: 6-col index + 0x 5-col source; AGENTS.md + PLANS.md mention)." \
   'test -f scripts/check_b237_23.sh && bash scripts/check_b237_23.sh'
+# --- B237.24: fix ghcr.io/BarsSky/skygate mixed-case docker tag bug in release.yml ---
+# Closes the silent release-workflow bug that left the v1.5.0 + v1.5.2
+# docker images never pushed to ghcr.io. The Build + push step used
+# `${{ github.repository_owner }}` directly (= "BarsSky"), and Docker /
+# GHCR require lowercase. v1.5.0 was published manually (no docker);
+# v1.5.2 stayed as a draft. Trigger: operator force-moved the v1.5.2
+# tag + asked me to investigate, gh run view --log-failed surfaced
+# the lowercase error. Fix: append `| lower` to the GitHub Actions
+# expression (4 tag lines). The v1.5.2 tag was deleted (local +
+# remote) + the draft release cleaned up per the operator's rule
+# "delete the tag if CI failed". Re-tag happens after the release
+# workflow re-runs and passes. Permanent guard: scripts/check_b237_24.sh
+# (10 contracts: 4 in release.yml + 1 no-raw-BarsSky + 1 lowercase
+# documented + 1 AGENTS.md mention + 1 PLANS.md mention + 1 live
+# v1.5.2 tag is absent + 1 live v1.5.2 release is absent + 2 go
+# build/vet regression).
+run_check "B237.24" "fix ghcr.io/BarsSky/skygate mixed-case docker tag bug. The .github/workflows/release.yml Build + push step used \`\${{ github.repository_owner }}\` directly (= BarsSky, mixed-case). Docker / GHCR require lowercase. Both v1.5.0 (2026-09-04) and v1.5.2 (2026-09-07) release workflow runs failed with the same error; the docker image was never pushed to ghcr.io/barssky/skygate for either release. v1.5.0 was published manually (no docker); v1.5.2 stayed as a draft. Fix: append \`| lower\` to the GitHub Actions expression on all 4 ghcr.io tag lines (version + latest + vX.Y + vX). Trigger: operator force-moved the v1.5.2 tag to a new commit and asked me to investigate; \`gh run view --log-failed\` surfaced the lowercase error. v1.5.2 tag was deleted (local + remote) + the draft v1.5.2 GitHub release cleaned up, per the operator's rule 'delete the tag if CI failed'. Re-tag happens after the release workflow re-runs and passes. 10 contracts in scripts/check_b237_24.sh: 4 in release.yml (all 4 tag lines have \`| lower\`) + 1 no-raw-BarsSky in tag paths + 1 lowercase documented in comments + 1 AGENTS.md mention + 1 PLANS.md mention + 1 live v1.5.2 tag is absent (so a future force-move + bypass without re-running CI gets caught) + 1 live v1.5.2 release is absent + 2 go build/vet regression." \
+  'test -f scripts/check_b237_24.sh && bash scripts/check_b237_24.sh'
 # --- B235: DERP HostName fix + main-page ping + region_id tooltip ---
 # Closes the B189-era bug in FetchPublicDERPs that used n.Name
 # (Tailscale's internal short label "1f", "22w") as the Host
