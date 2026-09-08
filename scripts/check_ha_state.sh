@@ -42,10 +42,14 @@ ok()   { PASS=$((PASS+1)); echo "  [PASS] $1"; }
 nok()  { FAIL=$((FAIL+1)); fails+=("$1"); echo "  [FAIL] $1"; }
 hdr()  { echo ""; echo "=== $1 ==="; }
 
-# --- 1. state.sh exists + executable + has the right header ---
+# --- 1. state.sh exists + bash-syntax OK + has the right header ---
 hdr "1. scripts/ha-state/state.sh"
 [ -f scripts/ha-state/state.sh ] && ok "state.sh exists" || nok "state.sh missing"
-[ -x scripts/ha-state/state.sh ] && ok "state.sh executable" || nok "state.sh NOT executable (chmod +x)"
+if bash -n scripts/ha-state/state.sh 2>/dev/null; then
+    ok "state.sh bash syntax OK (bash -n)"
+else
+    nok "state.sh has bash syntax errors (bash -n)"
+fi
 grep -q "state machine primitives for skygate HA phases" scripts/ha-state/state.sh \
     && ok "state.sh header present" || nok "state.sh header missing"
 
@@ -90,10 +94,14 @@ else
     nok "audit log rotation MISSING"
 fi
 
-# --- 4. ha-phase0.sh exists + sources state.sh + has 6 steps ---
+# --- 4. ha-phase0.sh exists + bash-syntax OK + sources state.sh + has 6 steps ---
 hdr "4. scripts/ha-phase0.sh"
 [ -f scripts/ha-phase0.sh ] && ok "ha-phase0.sh exists" || nok "ha-phase0.sh missing"
-[ -x scripts/ha-phase0.sh ] && ok "ha-phase0.sh executable" || nok "ha-phase0.sh NOT executable (chmod +x)"
+if bash -n scripts/ha-phase0.sh 2>/dev/null; then
+    ok "ha-phase0.sh bash syntax OK (bash -n)"
+else
+    nok "ha-phase0.sh has bash syntax errors (bash -n)"
+fi
 grep -q "ha-state/state.sh" scripts/ha-phase0.sh \
     && ok "ha-phase0.sh sources state.sh" || nok "ha-phase0.sh does NOT source state.sh"
 # the 6 step IDs (verify_magicdns is the 6th)
@@ -107,10 +115,14 @@ for step in tailscale_install_primary tailscale_install_standby verify_tailnet_j
     fi
 done
 
-# --- 5. ha-phase7.sh exists + sources state.sh + has 6 steps ---
+# --- 5. ha-phase7.sh exists + bash-syntax OK + sources state.sh + has 6 steps ---
 hdr "5. scripts/ha-phase7.sh"
 [ -f scripts/ha-phase7.sh ] && ok "ha-phase7.sh exists" || nok "ha-phase7.sh missing"
-[ -x scripts/ha-phase7.sh ] && ok "ha-phase7.sh executable" || nok "ha-phase7.sh NOT executable (chmod +x)"
+if bash -n scripts/ha-phase7.sh 2>/dev/null; then
+    ok "ha-phase7.sh bash syntax OK (bash -n)"
+else
+    nok "ha-phase7.sh has bash syntax errors (bash -n)"
+fi
 grep -q "ha-state/state.sh" scripts/ha-phase7.sh \
     && ok "ha-phase7.sh sources state.sh" || nok "ha-phase7.sh does NOT source state.sh"
 # the 6 step IDs
@@ -127,10 +139,14 @@ grep -q "\\-\\-reset" scripts/ha-phase7.sh && ok "--reset flag present" || nok "
 grep -q "\\-\\-status" scripts/ha-phase7.sh && ok "--status flag present" || nok "--status MISSING"
 grep -q "\\-\\-skip-s3" scripts/ha-phase7.sh && ok "--skip-s3 flag present" || nok "--skip-s3 MISSING"
 
-# --- 6. ha-phase9.sh exists + sources state.sh + wraps dr_drill.sh ---
+# --- 6. ha-phase9.sh exists + bash-syntax OK + sources state.sh + wraps dr_drill.sh ---
 hdr "6. scripts/ha-phase9.sh"
 [ -f scripts/ha-phase9.sh ] && ok "ha-phase9.sh exists" || nok "ha-phase9.sh missing"
-[ -x scripts/ha-phase9.sh ] && ok "ha-phase9.sh executable" || nok "ha-phase9.sh NOT executable (chmod +x)"
+if bash -n scripts/ha-phase9.sh 2>/dev/null; then
+    ok "ha-phase9.sh bash syntax OK (bash -n)"
+else
+    nok "ha-phase9.sh has bash syntax errors (bash -n)"
+fi
 grep -q "ha-state/state.sh" scripts/ha-phase9.sh \
     && ok "ha-phase9.sh sources state.sh" || nok "ha-phase9.sh does NOT source state.sh"
 grep -q "dr_drill.sh" scripts/ha-phase9.sh \
@@ -143,10 +159,14 @@ grep -q "ha_state_get_phase_status 0_mesh" scripts/ha-phase9.sh \
 grep -q "ha_state_get_phase_status 7_bootstrap" scripts/ha-phase9.sh \
     && ok "preflight checks Phase 7 status" || nok "preflight does NOT check Phase 7"
 
-# --- 7. ha-status.sh exists + sources state.sh + has --json + --phase ---
+# --- 7. ha-status.sh exists + bash-syntax OK + sources state.sh + has --json + --phase ---
 hdr "7. scripts/ha-status.sh"
 [ -f scripts/ha-status.sh ] && ok "ha-status.sh exists" || nok "ha-status.sh missing"
-[ -x scripts/ha-status.sh ] && ok "ha-status.sh executable" || nok "ha-status.sh NOT executable (chmod +x)"
+if bash -n scripts/ha-status.sh 2>/dev/null; then
+    ok "ha-status.sh bash syntax OK (bash -n)"
+else
+    nok "ha-status.sh has bash syntax errors (bash -n)"
+fi
 grep -q "ha-state/state.sh" scripts/ha-status.sh \
     && ok "ha-status.sh sources state.sh" || nok "ha-status.sh does NOT source state.sh"
 grep -q "\\-\\-json" scripts/ha-status.sh && ok "--json flag present" || nok "--json MISSING"
@@ -170,7 +190,11 @@ done
 
 # --- 9. pre-commit gate catches the same patterns (defense in depth) ---
 hdr "9. pre-commit gate presence"
-[ -x .githooks/pre-commit ] && ok ".githooks/pre-commit exists" || nok ".githooks/pre-commit MISSING"
+[ -f .githooks/pre-commit ] && ok ".githooks/pre-commit exists" || nok ".githooks/pre-commit MISSING"
+# Note: we check `exists` not `executable` because Windows filesystems
+# don't track the exec bit. The operator must run `chmod +x .githooks/*`
+# once after cloning; the file's content (the patterns below) is what
+# actually enforces the gate, not the file mode.
 grep -q "192\\.168\\.13\\.69" .githooks/pre-commit \
     && ok "pre-commit blocks 192.168.13.69" || nok "pre-commit does NOT block 192.168.13.69"
 grep -q "skygate_admin_pass" .githooks/pre-commit \
