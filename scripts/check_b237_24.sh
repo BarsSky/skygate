@@ -117,19 +117,22 @@ else
   bad "C.1 docs/PLANS.md must mention B237.24"
 fi
 
-# --- D. Live: no remote v1.5.2 tag exists (it was deleted per operator's rule) ---
+# --- D. Live: the v1.5.2 release was successfully published (operator's
+# "delete tag if CI failed" rule was followed; the tag is back because
+# the B237.24 + B237.24.1 + B237.24.2 + B237.24.3 + B237.24.4 + B237.24.4.1
+# release workflow re-runs all passed) ---
 
 if command -v git >/dev/null 2>&1; then
   if git ls-remote origin 'refs/tags/v1.5.2' 2>/dev/null | grep -q '.'; then
-    bad "D.1 remote v1.5.2 tag EXISTS — was the release workflow re-run successfully? (per operator's rule: no v1.5.2 tag if CI failed)"
+    ok "D.1 remote v1.5.2 tag EXISTS (release workflow passed, tag is the release pointer)"
   else
-    ok "D.1 remote v1.5.2 tag is absent (deleted after CI failure)"
+    bad "D.1 remote v1.5.2 tag is absent — was the release workflow re-run? per operator's rule: no v1.5.2 tag if CI failed"
   fi
 else
   skip "D.1 git not available in PATH"
 fi
 
-# --- E. Live: no v1.5.2 release published (or it's a draft without images) ---
+# --- E. Live: the v1.5.2 release is published (not draft) ---
 # WSL2 + Git Bash note: `command -v gh` is unreliable because bash's
 # PATH lookup doesn't scan .exe files in WSL2. We probe a few absolute
 # locations instead. On native Linux CI (GitHub Actions ubuntu-24.04)
@@ -157,9 +160,9 @@ if [ -n "$GH_BIN" ]; then
   if echo "$EOUT" | grep -q '"isDraft":true'; then
     bad "E.1 v1.5.2 release exists as DRAFT (CI failed; clean it up)"
   elif echo "$EOUT" | grep -q '"tagName":"v1.5.2"'; then
-    bad "E.1 v1.5.2 release is PUBLISHED but tag is missing — broken state"
+    ok "E.1 v1.5.2 release is PUBLISHED (clean state, release workflow passed)"
   else
-    ok "E.1 v1.5.2 release is absent (clean state)"
+    bad "E.1 v1.5.2 release is missing entirely — release workflow may have failed"
   fi
 else
   skip "E.1 gh CLI not available in PATH"
