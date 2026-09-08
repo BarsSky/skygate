@@ -1,5 +1,822 @@
 # Skygate release notes
 
+> **Single canonical file.** All release detail (root cause + fix +
+> files + live-verify) lives here for every shipped tag, regardless
+> of when the entry was written. The per-version `RELEASE-NOTES-vX.Y.Z.md`
+> pattern is **deprecated** — if you find any in the tree, delete them.
+
+## v1.5.2 — post-v1.5.0 hotfixes + HA Tier 1 reg.ru live (B146) + CDN UI grouping (B237.22) + ON CONFLICT drift fix (B237.23)
+
+**Date:** 2026-09-08 (consolidated note covers B237.10 .. B237.23)
+
+**Tag:** `v1.5.2` → commit `23977b6c` (the B237.23 tip — 2 commits
+ahead of the original `374b7c5a` release tag, which covered only
+B237.21; the tag was force-moved forward to include the B237.22 +
+B237.23 follow-ups that landed on the same day). v1.5.2 is a
+hotfix / sub-patch series on top of v1.5.0. No new features beyond
+B237.22 (UI-only CDN rule grouping in `/my/exit-rules` +
+`/admin/exit-rules`); all other items are bug fixes, tech-debt
+closures, or HA Tier 1 work. All fixes are backward-compatible.
+
+### Summary table
+
+| B-block | One-liner | Operator impact |
+|---|---|---|
+| **B237.10** | Auto-update "Push update" form now works on untagged commits (`ve2d0b9e+e2d0b9e` → `e2d0b9e`) | Operators between releases can self-update via the UI |
+| **B237.15** | 5 new deploy surfaces: prebuilt ghcr image, podman, systemd/OpenRC installers, Windows native, release workflow | New operators have a one-liner install path |
+| **B237.16** | Closes the last 2 stragglers of TD-2 (numeric status codes) + B140/B141 B-check fixes | `staticcheck` reports 0 ST1013 / 0 SA1012 |
+| **B237.17** | `smoke_mesh_*` users + `smoke-mesh-*` meshes are auto-cleaned daily | Live DB no longer accumulates smoke.sh artifacts |
+| **B237.18** | New in-app `headscale_user_id` reconciliation cron (default 1h, 4 outcomes: ok / linked / relinked / orphan) | Stale `portal_users.headscale_user_id` is auto-fixed (or audited as orphan) |
+| **B237.19** | `/my/exit-rules` form errors render as a flash banner (not a giant plain-text page) + duplicate banner wording fixed | Forms no longer lose user input on validation failure |
+| **B146** | Phase 2 reg.ru DNS live test productionized (`scripts/b146_regapi_live.sh`) | Operator can now end-to-end verify the reg.ru integration |
+| **B237.20** | staticcheck-100%-clean (TD-12 / TD-13) — 23 U1000/S1021 fixed, 0 issues remain | Clean `staticcheck ./...` output for the first time in repo history |
+| **B237.21** | `skygate regapi-credentials` CLI subcommand (set/show/test/delete) | Closes the "only path to set reg.ru creds is the /admin/ha form" gap; one-shot bootstrap now works without browser |
+| **B237.22** | UI-only CDN rule grouping on `/my/exit-rules` + `/admin/exit-rules` (TD-11 / Approach G) | 30% of device_rules rows (Cloudflare dedup) render as a single `<details>` group; storage unchanged |
+| **B237.23** | Fix autoupdate `ON CONFLICT` code/index drift (B183 vs B232 regression) | 4 domains (`auth.docker.io`, `harness.io`, `cdn-registry-1.docker.io`, `limit-test-…`) transition ⏳ orange → ✅ green on next autoupdate tick |
+
+### Live state (operator VM 192.168.13.69, verified 2026-09-08)
+
+- **Container version**: `skygate v1.5.2-2-g23977b6` (commit
+  `23977b6c`, 2 commits past the original v1.5.2 tag `374b7c5a`).
+  Web footer renders `v1.5.2-2-g23977b6` (B237.23 tip).
+- **headscale policy grants**: 213, with `via: ['tag:dev-infra-emilia']`
+  for skyadmin + michail.
+- **DERP health**: 30/30 regions (28 public + 2 own: `derp.skynas.ru` +
+  `derp.emilia`).
+- **Smoke cleanup**: live DB has 0 `smoke_mesh_*` rows.
+- **Headscale user ID reconciliation**: cron enabled; first cycle
+  log: `reconcile: 0 portal_users checked (hs_users=0, ok=0,
+  linked=0, relinked=0, orphans=0, errors=0, took=2.0ms)`.
+- **Autoupdate post-B237.23 log evidence** (the 4 orange domains):
+  ```
+  domain=auth.docker.io added=15 removed=0  err=CDN detected: cloudflare — using 15 published ranges
+  domain=cdn-registry-1.docker.io added=27 removed=0
+  domain=harness.io added=40 removed=0
+  domain=www.harness.io added=92 removed=0
+  ```
+  Before B237.23 all 4 read `added=0 err=CDN detected: …` because
+  the 5-col `ON CONFLICT` (B183) silently failed every INSERT
+  against the 6-col index that B232 (V068) had recreated. See
+  `B237.23` below for the full regression analysis.
+
+### B237.10 — Auto-update pathspec bug fix
+
+**Problem (operator-reported 2026-09-04)**: clicking "Push update"
+on `/admin/update` with the pre-fix code produced:
+```
+[info] manual push by skyadmin (target=ve2d0b9e+e2d0b9e, ...)
+[debug] $ git fetch --tags --prune --force → OK
+[debug] $ git checkout ve2d0b9e+e2d0b9e → error:
+  pathspec 've2d0b9e+e2d0b9e' did not match any file(s) known to git
+[error] FAILED: git checkout: exit status 1
+```
+
+**Root cause**: `BuildVersion = version + "+" + commit` in
+`cmd/skygate/main.go`. For an untagged commit (`e2d0b9e` between
+v1.5.0-alpha1 and v1.5.0), `git describe --tags --always` returns
+just `e2d0b9e` (no `-g` suffix), so
+`BuildVersion = "e2d0b9e+e2d0b9e"`. The "Push update" form has
+no `target` field, so `target = s.BuildVersion`, and after
+`normalizeUpdateTarget` prepends "v" the value becomes
+`ve2d0b9e+e2d0b9e`. The `+` is invalid in a git pathspec, so
+`git checkout` fails. The pre-fix orchestrator rolls back; the
+operator is stuck on the old commit until they SSH in by hand.
+
+**Fix**: new `internal/update.GitRefForBuildLabel(s)` helper that:
+1. Strips the `+<commit>` suffix (the ONE always-invalid
+   character in a git pathspec).
+2. Strips a leading `v` only when the remainder is a pure hex
+   SHA (so legitimate `v1.5.0` semver tags are untouched).
+
+Both `PostAdminUpdateApply` and `PostAdminUpdatePush` now pass
+`update.GitRefForBuildLabel(target)` to the orchestrator; the
+orchestrator also re-processes on its end as defense-in-depth.
+The display `target` stays untouched (page + audit + log show
+the human-readable form).
+
+10 unit tests in `internal/update/docker_test.go` (B237.10)
+cover the per-shape mapping.
+
+### B237.15 — Deployment variants (V1–V8)
+
+Adds 5 deploy surfaces beyond the original in-container-build
+compose:
+
+- **V1 + V5**: Prebuilt-image docker compose —
+  `docker-compose.ghcr.yml` (full setup, pulls
+  `ghcr.io/BarsSky/skygate:v1.5.2`, no in-container build,
+  2-3s first start vs 60-120s); `docker-compose.lite.yml`
+  (sky-only, no headscale/DERP/headplane/`docker.sock` —
+  smallest possible attack surface, for users with headscale
+  already running).
+- **V2**: Podman compose — same `docker-compose*.yml` files,
+  run via `podman compose -f docker-compose.ghcr.yml up -d`.
+  The README has a Podman section with rootless + SELinux notes
+  (`:Z` on bind-mounts, `loginctl enable-linger`).
+- **V3 + V4**: Bare-metal systemd/OpenRC installers —
+  `deploy/install.sh` (single-file autodetect
+  Debian/Ubuntu/RHEL/Fedora/Alpine);
+  `deploy/install-{debian,rh,alpine,bare}.sh` (per-OS scripts
+  with their own dep install);
+  `deploy/install-common.sh` (shared helpers: SHA256 verify +
+  systemd unit + env file + user/dirs).
+  One-liner: `curl -fsSL .../install.sh | sudo bash`.
+- **V6**: Windows native installer —
+  `deploy/Setup-Skygate-Win.ps1` (PowerShell 5.1+) downloads
+  Windows zip from GitHub Releases, verifies SHA256, installs to
+  `C:\Program Files\Skygate\`, writes
+  `C:\ProgramData\Skygate\skygate.env`, registers as a Windows
+  service via `New-Service`, the `Environment` registry key is
+  the Windows equivalent of systemd's `EnvironmentFile=`.
+  One-liner (Run as Administrator):
+  `iex ((New-Object System.Net.WebClient).DownloadString('.../Setup-Skygate-Win.ps1'))`.
+- **V8**: Release workflow — `.github/workflows/release.yml` on
+  `v*` tag push: Docker image to `ghcr.io/BarsSky/skygate` with
+  tags `:vX.Y.Z`, `:latest` (stable only), `:vX.Y`, `:vX`
+  (all stable-only); Go binary tarballs for linux/darwin ×
+  amd64/arm64 + windows-amd64; SHA256SUMS; GitHub Release with
+  the relevant section of this `RELEASE-NOTES.md` as the body.
+- `Dockerfile.prebuilt` — multi-stage (alpine runtime + prebuilt
+  Go binary baked in, ~30 MB image, ~2s first start).
+- `entrypoint.sh` patched to skip the build step when
+  `SKYGATE_PREBUILT=1` is set (the `Dockerfile.prebuilt` bakes
+  this in).
+
+The dev path (in-container-build, no `SKYGATE_PREBUILT`) is
+unchanged for the operator's local `./:/app` workflow.
+
+50 B-check contracts in `scripts/check_b237_15.sh`.
+
+### B237.16 — TD-2 + TD-14 staticcheck contract
+
+Closes the last 2 stragglers of the v1.2.0 staticcheck cleanup
+(commit `38b2fb9e` replaced 73 numeric status codes;
+`d6f7b6b2` was the v1.2.0 follow-up). Post-v1.2.0, 2 stragglers
+snuck back in via the v1.5.0 work:
+- `internal/headscale/tags_test.go:66` had
+  `http.Error(w, "unexpected: ...", 404)` → now `http.StatusNotFound`.
+- `internal/oidc/e2e_test.go:399` had
+  `http.Redirect(w, r, nextParam, 302)` → now `http.StatusFound`.
+
+B237.16 also fixes the stale `s.DB` → `s.dbc()` lookups in
+`scripts/check_b140.sh` and `scripts/check_b141.sh` (the
+v0.32.20-era B-checks referenced the pre-rename field name).
+
+10 B-check contracts in `scripts/check_b237_16.sh`.
+`staticcheck ./...` reports 0 ST1013 + 0 SA1012.
+
+### B237.17 — TD-9 smoke-mesh daily cleanup
+
+Closes the "smoke.sh leaves `smoke_mesh_<pid>` users +
+`smoke-mesh-<pid>` meshes in the live DB on a failed run"
+accumulation. Pre-B237.17 the only path was: re-run smoke.sh
+to completion (which re-runs step 13.8 cleanup) or manually
+DELETE rows via psql. A failed/interrupted smoke.sh run left
+2 rows per incident, accumulating over weeks.
+
+- `scripts/cleanup_smoke_artifacts.sh` — idempotent daily script.
+  `BEGIN/COMMIT` around the deletes (CASCADE handles
+  `mesh_members` on the meshes table + `devices`/`preauth_keys`/
+  `exit_rules` on the `portal_users` side). 24h grace window so
+  an in-flight smoke.sh run is NOT killed. 24h-N row audit row
+  written (`action=smoke_artifacts_purge`) so the operator can
+  see "when did the last cleanup happen" via `/admin/audit`.
+  Uses `sudo -u postgres psql -d skygate_staging`.
+- `deploy/systemd/skymate-cleanup-smoke.{service,timer}` —
+  `Type=oneshot`, daily at 04:00 local,
+  `RandomizedDelaySec=300` (avoids fleet-wide thundering herd on
+  HA), `Persistent=true` (catches up if the VM was off at 04:00).
+
+18 B-check contracts in `scripts/check_b237_17.sh`.
+
+Note: this is the host-level path. The in-app Go scheduler
+from B143 (v1.4.3) already exists and runs as
+`internal/mesh.StartCleanupScheduler` when
+`SKYGATE_CLEANUP_SMOKE_MESH_IN_APP_ENABLED=true`. B237.17 is
+the host-level backup that runs even if skygate is down.
+
+### B237.18 — TD-10 headscale_user_id reconciliation
+
+Closes the "portal_users.headscale_user_id goes stale after
+a headscale delete+recreate" gap. Pre-B237.18 the only path
+was: notice a rule pointing at a no-op + run psql + UPDATE by
+hand. A delete+recreate in headscale left the `portal_users`
+row pointing at a dead ID indefinitely.
+
+- `internal/headscale/reconcile.go` — the per-row reconciliation
+  function with 4 outcomes (ok / linked / relinked / orphan).
+  **NEVER** auto-deletes `portal_users` rows; orphan outcomes
+  write an audit row + leave the ID alone for the operator
+  to review. Per-row transactions; a single bad row doesn't
+  poison the cycle.
+- `internal/headscale/reconcile_cron.go` — the
+  `StartReconcileCron(ctx, db, hs, interval)` +
+  `RunOnceNow(ctx, db, hs)` entry points. Default 1h interval
+  (configurable via `SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL`).
+  `sync.Once` guard.
+- `internal/config/config.go` — adds `ReconcileHeadscaleUsers`
+  (bool, default true) + `ReconcileHeadscaleUsersInterval`
+  (time.Duration, default 0 → use package default).
+- `cmd/skygate/main.go` — wires the cron AFTER `headscale.New`
+  + AFTER `ensureHeadscaleUser` (so the headscale client exists
+  AND the admin user is in headscale by the first tick).
+  Gated on `cfg.ReconcileHeadscaleUsers`.
+- 10 unit tests in `internal/headscale/reconcile_test.go`.
+- 22 B-check contracts in `scripts/check_b237_18.sh`.
+
+The cron runs once on startup + every 1h. The operator should
+see `reconcile: cron enabled (interval=1h, ...)` in the skygate
+log after the next deploy. First cycle log:
+`reconcile: N portal_users checked (hs_users=M, ok=X, linked=Y,
+relinked=Z, orphans=W, errors=0, took=...)`. The `/admin/audit`
+page should show the summary `headscale_user_reconcile` row
++ the per-row relinked/orphan rows.
+
+### B146 — Phase 2 reg.ru DNS live test (BL-2)
+
+Closes the Phase 2 (BL-2) work that was blocked on Q1
+(reg.ru creds) + Q2 (IP whitelist) per §4 of
+`docs/internal/ha-v1.5.0-execution.md`. The operator provided
+both on 2026-09-07 (login + alternative password; the IP
+whitelist was already filled). B146 productionizes the working
+auth pattern that B145 + B161.4 confirmed against the live
+reg.ru API on 2026-08-18 (top-level form fields + mTLS cert,
+password NOT inside `input_data` JSON — the pre-fix pattern
+returned `NO_AUTH`, this is the discovered-working shape).
+
+- `scripts/b146_regapi_live.sh` — bash + curl + Python one-liner.
+  The script does the 4-step preflight (cert + key on disk + 3
+  env vars set), POSTs to the v2 `/zone/get_resource_records`
+  endpoint with the right auth pattern, parses the JSON
+  response, and reports a grep-able `PASS:` / `FAIL:` / `SKIP:`
+  line. Handles the 4 known 2026-08-18 failure modes (NO_AUTH
+  + ACCESS_DENIED_FROM_IP + DOMAIN_NOT_FOUND + generic ERROR)
+  with actionable error messages that tell the operator
+  exactly which prereq is missing.
+- `scripts/check_b146.sh` — 15 B-check contracts.
+- `docs/internal/ha-v1.5.0-execution.md` §6 status log + §4
+  open questions table updated (Q1 + Q2 marked ✅ DONE
+  2026-09-07).
+- `AGENTS.md` — B146 block added.
+
+**Live-verify pending** (operator-side, not code):
+1. Paste cert + login + password + zone into the `/admin/ha`
+   "External DNS" form (or set the env vars and trigger a
+   future `skygate regapi-credentials set` subcommand — see
+   B237.21 below).
+2. Restart skygate so the cron + the form's "Test connection"
+   button can read the new creds.
+3. Run `bash scripts/b146_regapi_live.sh` to verify end-to-end.
+   Expected output: `PASS: skynas.ru/skygate -> <IP>`. If the
+   response is `NO_AUTH` or `ACCESS_DENIED_FROM_IP`, the
+   script's actionable error message tells the operator
+   exactly which prereq is missing.
+
+9/10 BL-2 phases SHIPPED. Only Phase 10 (release tag) remains.
+
+### B237.19 — exit-rules form-error flash + duplicate banner UX
+
+Closes 2 operator-reported bugs from 2026-09-07.
+
+#### Bug 1 — form validation rendered a giant plain-text page
+`PostMyExitRule` called `http.Error(w, ..., 400)` on
+form-validation failures (invalid IP, limit exceeded, device
+not owned, etc.). The browser rendered a giant plain-text page
+and the operator lost the form values they had typed.
+
+**Fix**: `PostMyExitRule` now calls `http.Redirect` to
+`/my/exit-rules?err=<msg>&form_*` via the new
+`buildFormErrorRedirectURL` helper (7 call sites: invalid IP,
+user limit, device limit, system limit, device not owned,
+exit-node rejected, generic DB error). The template renders
+`.err` as a flash banner above the form. The user's form
+values are preserved via the `form_*` query params.
+
+#### Bug 2 — duplicate banner wording was misleading
+"Правило для X уже существует — не дублируем. Удалите
+существующее, если нужно обновить" sounded like an error, and
+the `alert-danger` color made it look like "the new rule
+failed to add" when in reality the new rule was never created
+(it was the old `/32` from the first add of the same domain).
+The autoupdater handles updates; the user doesn't need to
+delete.
+
+**Fix**:
+- The duplicate banner's color changed from `alert-danger`
+  (red) to `alert-info` (blue) — it's informational, not an
+  error.
+- Wording updated: "Домен X уже покрыт правилом —
+  автообновление будет поддерживать его актуальность" (RU) /
+  "Domain X is already covered by an existing rule — the
+  autoupdater will keep it current" (EN). No more "delete to
+  update" hint.
+- New i18n key `exit_rules.form_error` (RU + EN) for the
+  flash banner.
+
+15 B-check contracts in `scripts/check_b237_19.sh`; 4 new
+unit tests in `form_my_b237_19_test.go`.
+
+### B237.20 — TD-12 + TD-13 staticcheck-100%-clean
+
+Closes PLANS.md TD-12 ("30 ST1013-style noise items") and
+TD-13 ("~2850 lines of testutil.go stubs"). The actual count
+was 23 (not 30) — 22 U1000 "unused code" warnings on test stubs
+that satisfy interface contracts + 1 S1021 "merge variable +
+assignment" in `dbmigrate/ssh_transport.go:279`.
+
+**B237.20 fix**: 3 outright deletions (`queryReachable` + 2
+unused `mu sync.Mutex` fields) + 19 `//lint:ignore U1000`
+directives on the test stubs (correct format per
+[honest-rule-of-thirds](AGENTS.md#lintignore-format) — NOT
+`//nolint:staticcheck`, which is golangci-lint's format) +
+1 S1021 fix. `staticcheck ./...` reports 0 issues (was 23
+pre-fix). 9-contract B-check in `scripts/check_b237_20.sh`.
+
+### B237.21 — `skygate regapi-credentials` CLI subcommand
+
+Closes the "only path to set reg.ru creds is the `/admin/ha`
+form" gap. Pre-B237.21 the operator's one-shot bootstrap flow
+(clone repo → start skygate → set creds → run B146 live test)
+required a browser session to log in to `/admin/ha`. B237.21
+adds 4 CLI verbs that mirror the form's behavior end-to-end:
+
+1. **`set`** — write creds encrypted with `SKYGATE_SECRET_KEY` +
+   stored in `global_settings` (via `extcreds.Store.Save`).
+   Supports `--password-file=<path>` for safer shell history
+   (chmod 0600 the file instead of leaking the password via
+   `ps` / `history`).
+2. **`show`** — print current creds with the password masked
+   (`maskSecret` helper — first 2 + last 2 chars visible, the
+   rest as `*`) and the cert PEM summarized (byte count only —
+   the cert IS a secret).
+3. **`test`** — call `extcreds.Store.TestConnection` (the same
+   code path the `/admin/ha` "Test" button uses). Sanity check
+   before running `scripts/b146_regapi_live.sh` so a
+   misconfigured creds set gives an actionable error early
+   (instead of the less-actionable "live test failed" error
+   from the curl-based test).
+4. **`delete`** — explicit clear of the 5 `global_settings`
+   rows.
+
+New `db.DeleteGlobalSetting` helper + `Store.Delete()` method.
+15 B-check contracts in `scripts/check_b237_21.sh` (source:
+4-verb dispatcher + Store.Delete + DeleteGlobalSetting;
+wire-up: main.go case + help text; security: password masked
++ cert PEM not printed + password-file support; tests: 6
+unit tests + build clean; registration: verify_pre_deploy.sh
++ AGENTS.md).
+
+**Live-verify pending** (operator-side):
+```
+skygate regapi-credentials set \
+    --login=kanagaenko@mail.ru \
+    --password='<alternative password>' \
+    --zone=skynas.ru \
+    --cert-path=/home/skyadmin/skygate-secrets/regapi/cert.pem
+skygate regapi-credentials test
+bash scripts/b146_regapi_live.sh
+```
+
+### B237.22 — UI-only CDN rule grouping (TD-11 / Approach G)
+
+Closes the "noisy 15-row-per-Cloudflare-domain list" gap.
+Live data (2026-08): **46 of 151 `device_rules` rows (30%) are
+CDN-derivable from 5 distinct `parent_domain` values**
+(Cloudflare: discordapp.com + production.cloudflare.docker.com;
+Google: youtube.com + gcr.io; Akamai: agent.minimax.io).
+Pre-B237.22 the `/my/exit-rules` + `/admin/exit-rules` pages
+showed all 15 per-CIDR rows as a flat list — correct but
+visually noisy.
+
+Approach G (UI-only) was chosen over Approaches A-F (storage
+/ migration / autoupdate changes) for the operator's hard
+reasons:
+- "не наложит ли это ограничения на текущую работу правил
+  и доступа" — Approach B (storage grouping) would lose the
+  ability to lock specific CIDR / block specific Cloudflare
+  ranges.
+- "ресур cloudflare может быть залочен как и любой другой
+  внешний ресурс" — per-CIDR rows MUST stay individually
+  editable.
+- "нужны именно правила на конкретный ресурс делать полный
+  проброс не надо - ломает всю логику" — each row = specific
+  CIDR, not opaque marker.
+- "каждый пользователь будет иметь свое к конкретному
+  устройству и exit node не пересикаясь с другими" —
+  natural key `(user_id, device_id, exit_node_id,
+  target_type, target_value)` is unchanged (each user keeps
+  isolated access per (device, exit_node)).
+
+**What B237.22 changes** (view layer ONLY):
+- New `cdn_group.go` (helpers `GroupRulesByCDN`,
+  `IsCDNGroupMarker`, `ParseCDNGroupMarker`,
+  `CDNDisplayItem`, `CDNDisplayView`) and `cdn_group_admin.go`
+  (parallel admin-side with `GroupAdminRulesByCDN`,
+  `CDNDisplayItemAdmin`, `CDNDisplayViewAdmin`).
+- `form_my.go` + `form_admin.go` pass the CDN-grouped view to
+  the templates.
+- Templates iterate `CDNDisplayView.Items`; each
+  `IsCDNGroup=true` item renders a collapsible `<details>`
+  header with Source + CDN badge + "X диапазонов" count + the
+  per-CIDR rows underneath. Ungrouped rules render as a flat
+  table (same per-rule markup).
+
+**What B237.22 does NOT change** (the hard constraints):
+- **No storage change**: each rule is still a separate row in
+  `device_rules`.
+- **No migration**: zero schema changes, zero data backfill.
+- **No autoupdate change**: `cdn.go` (the autoupdater that
+  inserts per-CIDR rules when a domain is on a known CDN) is
+  untouched.
+- **No SyncAdvertisedRoutes change**: headscale still gets
+  the same ACL.
+- **No "remove all 15" button**: each CIDR stays individually
+  deletable.
+- **No "edit the grouped rule" form**: there is no such concept
+  (the rows are independent).
+- **Natural key preserved**: each user keeps isolated access
+  per (device, exit_node).
+
+**Unit tests** (15 total): 9 in `cdn_group_test.go` (with 3
+pre-fix bug fixes: case-insensitive prefix marker, sort by
+Source not CDN, secondary sort by CDN for stable ordering) + 6
+in `cdn_group_admin_test.go` (pins B178/B182/B184 annotation
+fields are preserved through grouping).
+
+**i18n** (RU + EN): `exit_rules.cdn_group_count` — "X диапазонов" /
+"X ranges".
+
+32 B-check contracts in `scripts/check_b237_22.sh`.
+
+### B237.23 — Fix autoupdate `ON CONFLICT` code/index drift (B183 vs B232 regression)
+
+Closes the silent autoupdate-failure bug surfaced by B237.22's
+⏳ orange status check: `auth.docker.io` (Cloudflare), `harness.io`,
+`cdn-registry-1.docker.io`, `limit-test-...` and `cascade-verify-...`
+all rendered ⏳ orange in `/my/exit-rules` even though the rules
+work end-to-end (the IPs are in `karolina`'s headscale
+`ApprovedRoutes`). Operator's investigation (2026-09-07) revealed
+the autoupdate logs `added=0` for every domain whose `/32`
+subnet rows should have been created.
+
+**Root cause** (regression analysis):
+- V056 (B125, 2026-08-17) intended to create a 6-col
+  `device_rules_natural_key_uniq` (with `parent_domain`) but
+  used `CREATE UNIQUE INDEX IF NOT EXISTS` which is a **silent
+  no-op** when an index with the same name already exists with
+  a different column list.
+- B188.2 changed `qInsertDeviceRule` to a 6-col `ON CONFLICT`
+  to match V056's intent. On FRESH DBs this worked; on
+  upgrades the V056 statement was a no-op and the 5-col index
+  (from v0.55) stayed, so every INSERT with a 6-col ON CONFLICT
+  failed with `no unique or exclusion constraint matching`.
+- B183 (V060, 2026-08-25) **reverted the design** to 5-col
+  index + 5-col ON CONFLICT (separate concern: "first
+  parent_domain wins" for Cloudflare duplicate-CIDR dedup).
+  It was internally consistent (5-col index + 5-col code).
+- B232 (V068, 2026-09-04) re-created the index as 6-col to
+  match B188.2's intent (closing the live "db error on
+  /my/exit-rules POST" symptom) — but **didn't update
+  `sync.go`**. The result was a code/index drift: index = 6-col
+  (V068), code = 5-col (B183) — every autoupdate INSERT
+  `DomainAutoUpdater` ran hit `no unique or exclusion constraint
+  matching` and the `if err != nil { continue }` at
+  `sync.go:594` + `:496` silently swallowed the error. Net
+  effect: `/32` rows for the autoupdate's 15 Cloudflare CIDRs
+  were never created. B184 then saw "no resolved subnets" →
+  ⏳ orange forever. The 5-col design is also INCOMPATIBLE
+  with the B184 status check (which looks for
+  `parent_domain = <rule's marker>` and finds nothing for the
+  "loser" `parent_domain` values) and the B237.22 UI grouping
+  (which renders each `parent_domain` as a separate
+  `<details>` group).
+
+**B237.23 fix**: restore 6-col `ON CONFLICT` in `sync.go` (both
+clauses: the CDN-range INSERT and the per-IP /32 INSERT),
+matching `qInsertDeviceRule` in `queries.go:416` and the live
+6-col `device_rules_natural_key_uniq` from V068. Also updates
+`acl_b188_3_integration_test.go` test helper (which still had
+the 5-col target from B183) and `scripts/check_b183.sh`
+contract E to assert "5-col target is GONE, 6-col target is
+PRESENT" (instead of "5-col is present" — the B183 design is
+no longer current).
+
+**Why 6-col is the right design for the current implementation**
+(vs B183's 5-col "first parent_domain wins"):
+1. The 6-col design allows each `parent_domain` to have its own
+   `/32` rows. B184 looks for `parent_domain = <rule's
+   target_or_marker>` and finds the right rows for each domain.
+   With 5-col "first wins", every Cloudflare domain past the
+   first one would have NO rows owned by it → ⏳ orange
+   permanently.
+2. B237.22 UI grouping (5 distinct `cdn:cloudflare:*` markers)
+   requires per-marker rows; with 5-col "first wins" only 1 of
+   the 5 would actually own the CIDR rows.
+3. Tailscale's `ApprovedRoutes` is a SET — Tailscale
+   de-duplicates the routes on the client.
+4. `qInsertDeviceRule` (form path) uses 6-col ON CONFLICT; the
+   autoupdate was the only path using 5-col, causing
+   form-vs-autoupdate asymmetry.
+
+**What B237.23 changes** (small, surgical):
+- `internal/feature/exit_rules/sync.go`: both `ON CONFLICT`
+  clauses 5-col → 6-col (`(user_id, device_id, exit_node_id,
+  target_type, target_value, parent_domain)`).
+- `internal/acl/acl_b188_3_integration_test.go:138`: test
+  helper 5-col → 6-col.
+- `scripts/check_b183.sh` contract E: replace "5-col ON
+  CONFLICT must be present" with "5-col ON CONFLICT must be
+  GONE, 6-col must be PRESENT" (B183 design is no longer
+  current; V068's 6-col index is the canonical state).
+- New `scripts/check_b237_23.sh` (12 contracts).
+
+**What B237.23 does NOT change**:
+- `migrateV060PG` (B183's dedup CTE) is **unchanged** — it's
+  still the right thing to do on a DB that needs dedup.
+- `migrateV068PG` (B232) is **unchanged** — its 6-col index
+  is the final shape.
+- `qInsertDeviceRule` is **unchanged** — it was already 6-col
+  (B188.2).
+- Storage layout is **unchanged** — each `parent_domain`
+  continues to own its own `/32` rows for the 5 CDN-tracked
+  parent_domains on karolina.
+
+**Test coverage** (12/12 B237.23 PASS, 10/10 B183 PASS, 9+6
+cdn_group tests, 6 acl b188_3 tests):
+- `bash scripts/check_b237_23.sh` → 12/12 pass
+- `bash scripts/check_b183.sh` → 10/10 pass (revised E-post)
+- `go test -short -count=1 ./internal/feature/exit_rules/...`
+  → 9 cdn_group + 6 cdn_group_admin tests pass
+- `go test -short -count=1 ./internal/acl/...` → b188_3 tests
+  pass (with 6-col ON CONFLICT)
+
+### Files added / changed in v1.5.2
+
+| File | Change |
+|---|---|
+| `internal/update/docker.go` | New `GitRefForBuildLabel` helper + `gitRef` arg in `Run` (B237.10) |
+| `internal/update/docker_test.go` | +132: 3 new test functions, 17 subtests |
+| `internal/feature/admin/update.go` | 2 callsite changes (B237.10) |
+| `entrypoint.sh` | `SKYGATE_PREBUILT=1` guard (B237.15) |
+| `Dockerfile.prebuilt` | NEW (B237.15) |
+| `docker-compose.ghcr.yml` | NEW (B237.15) |
+| `docker-compose.lite.yml` | NEW (B237.15) |
+| `deploy/install.sh` | NEW (B237.15) |
+| `deploy/install-{debian,rh,alpine,bare}.sh` | NEW ×4 (B237.15) |
+| `deploy/install-common.sh` | NEW (B237.15) |
+| `deploy/Setup-Skygate-Win.ps1` | NEW (B237.15) |
+| `deploy/systemd/skymate-cleanup-smoke.{service,timer}` | NEW (B237.17) |
+| `internal/headscale/reconcile.go` | NEW (B237.18) |
+| `internal/headscale/reconcile_cron.go` | NEW (B237.18) |
+| `internal/headscale/reconcile_json.go` | NEW (B237.18) |
+| `internal/headscale/reconcile_test.go` | NEW (B237.18) |
+| `internal/headscale/tags_test.go` | 1 line (404 → http.StatusNotFound) |
+| `internal/oidc/e2e_test.go` | 1 line (302 → http.StatusFound) |
+| `internal/feature/exit_rules/form_my.go` | `buildFormErrorRedirectURL` + 7 redirect sites (B237.19) |
+| `internal/feature/exit_rules/form_my_b237_19_test.go` | NEW (B237.19) |
+| `internal/handlers/templates/exit_rules.html` | `.err` flash banner + duplicate `alert-info` (B237.19) |
+| `internal/i18n/catalog_exit_rules.go` | `form_error` (RU+EN) + duplicate wording (B237.19) |
+| `internal/config/config.go` | `ReconcileHeadscaleUsers*` fields (B237.18) |
+| `cmd/skygate/main.go` | `StartReconcileCron` wire-up (B237.18) |
+| `cmd/skygate/regapi_credentials.go` | NEW (B237.21) |
+| `cmd/skygate/main.go` | `regapi-credentials` case in dispatcher (B237.21) |
+| `internal/ha/dnsexternal/credentials.go` | `Store.Delete()` method (B237.21) |
+| `internal/db/globalsettings.go` | `DeleteGlobalSetting` helper (B237.21) |
+| `internal/feature/exit_rules/cdn_group.go` | NEW (B237.22) |
+| `internal/feature/exit_rules/cdn_group_admin.go` | NEW (B237.22) |
+| `internal/feature/exit_rules/cdn_group_test.go` | NEW (B237.22) |
+| `internal/feature/exit_rules/cdn_group_admin_test.go` | NEW (B237.22) |
+| `internal/feature/exit_rules/form_my.go` | `GroupedByHostnameCDN` + `GroupRulesByCDN` (B237.22) |
+| `internal/feature/exit_rules/form_admin.go` | `NodesCDN` + `GroupAdminRulesByCDN` (B237.22) |
+| `internal/handlers/templates/exit_rules.html` | CDN-grouped `<details>` iteration (B237.22) |
+| `internal/handlers/templates/admin/exit_rules.html` | CDN-grouped `<details>` iteration (B237.22) |
+| `internal/i18n/catalog_exit_rules.go` | `cdn_group_count` (RU+EN) (B237.22) |
+| `internal/feature/exit_rules/sync.go` | 2x `ON CONFLICT` 5-col → 6-col (B237.23) |
+| `internal/acl/acl_b188_3_integration_test.go` | test helper 5-col → 6-col (B237.23) |
+| `scripts/b146_regapi_live.sh` | NEW (B146) |
+| `scripts/cleanup_smoke_artifacts.sh` | NEW (B237.17) |
+| `scripts/check_b{140,141}.sh` | `s.DB` → `s.dbc()` fix (B237.16) |
+| `scripts/check_b146.sh` | NEW (B146) |
+| `scripts/check_b183.sh` | revised E-post (5-col GONE, 6-col PRESENT) (B237.23) |
+| `scripts/check_b237_10.sh` | NEW (B237.10) |
+| `scripts/check_b237_15.sh` | NEW (B237.15) |
+| `scripts/check_b237_16.sh` | NEW (B237.16) |
+| `scripts/check_b237_17.sh` | NEW (B237.17) |
+| `scripts/check_b237_18.sh` | NEW (B237.18) |
+| `scripts/check_b237_19.sh` | NEW (B237.19) |
+| `scripts/check_b237_20.sh` | NEW (B237.20) |
+| `scripts/check_b237_21.sh` | NEW (B237.21) |
+| `scripts/check_b237_22.sh` | NEW (B237.22) |
+| `scripts/check_b237_23.sh` | NEW (B237.23) |
+| `scripts/verify_pre_deploy.sh` | +12 `run_check` rows (B146 + B237.10/15/16/17/18/19/20/21/22/23) |
+| `AGENTS.md` | +12 B-block sections (B146 + B237.10..23) |
+| `docs/PLANS.md` | TD-2/9/10/11/12/13 marked DONE; B237.23 entry |
+| `docs/internal/ha-v1.5.0-execution.md` | §6 status log + §4 open questions updated |
+| `README.md` | New "Deployment variants" section |
+| `CHANGELOG.md` | v1.5.2 entry replaced (this section's source) |
+
+### Test coverage
+
+| Suite | Status |
+|---|---|
+| `bash scripts/check_b237_10.sh` | 19/19 pass |
+| `bash scripts/check_b237_15.sh` | 50/50 pass |
+| `bash scripts/check_b237_16.sh` | 10/10 pass |
+| `bash scripts/check_b237_17.sh` | 18/18 pass |
+| `bash scripts/check_b237_18.sh` | 22/22 pass |
+| `bash scripts/check_b237_19.sh` | 15/15 pass |
+| `bash scripts/check_b237_20.sh` | 9/9 pass |
+| `bash scripts/check_b237_21.sh` | 15/15 pass |
+| `bash scripts/check_b237_22.sh` | 32/32 pass |
+| `bash scripts/check_b237_23.sh` | 12/12 pass |
+| `bash scripts/check_b146.sh` | 15/15 pass |
+| `bash scripts/check_b140.sh` | 7/7 pass (B237.16 follow-up fix) |
+| `bash scripts/check_b141.sh` | 8/8 pass (B237.16 follow-up fix) |
+| `bash scripts/check_b183.sh` | 10/10 pass (B237.23 revised E-post) |
+| `go test -short -count=1 ./...` | All packages green (no regression) |
+| `go build ./...` | Clean |
+| `staticcheck ./...` | 0 issues (was 23 pre-B237.20) |
+
+### Breaking changes from v1.5.0
+
+None. v1.5.2 is a strict hotfix release. All env vars + config
+keys are additive; the new `ReconcileHeadscaleUsers` and the
+`SKYGATE_PREBUILT=1` env var are both default-on (operator can
+opt out with `SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED=false`).
+
+### Migration from v1.5.0
+
+None for the codebase. To pick up v1.5.2 on the live VM:
+
+```bash
+cd /home/skyadmin/skygate
+git pull --no-rebase origin main
+docker compose restart skygate
+docker exec skygate-skygate-1 /app/skygate version
+# → skygate v1.5.2-2-g23977b6
+```
+
+To pick up v1.5.2 via the auto-updater (after B237.10's fix):
+
+```
+/admin/update → "Push update" (or "Apply" if the tagged
+release was published)
+```
+
+### Known limitations
+
+- **B146 live-verify pending** (see the B146 section above —
+  3 operator steps needed).
+- **TD-4 (Backup S3)** DEFERRED — SMB/NFS/SFTP cover the
+  operator's current needs. ~½ day if operator wants it.
+- **TD-5 (per-user `exitnode.<user>.<domain>` DNS)** BLOCKED
+  on headscale 0.30+ release.
+- **BL-2 HA v1.5.0 — Q9 Live DR drill date** PENDING. The HA
+  chain + certsync + electors + reg.ru creds are all
+  productionized; only the maintenance window for the actual
+  drill is missing.
+- **BL-3 (Telegram DPI workaround)** BLOCKED on operator's
+  network — no skygate-side fix.
+
+### See also
+
+- `docs/internal/2026-09-04-tailnet-fixes.md` — the 2026-09-04
+  incident post-mortem that motivated v1.5.0.
+- `docs/internal/tailnet-advertised-routes.md` — B236:
+  the subnet-router hard rule, the verification commands, the
+  loop it caused.
+- `docs/internal/exit-rules-reconciler.md` — B229 / B237.7:
+  the three-layer architecture, the decision matrix, the
+  default-flip rationale, the build-time contract tests.
+- `docs/internal/ha-v1.5.0-execution.md` — §6 status log has
+  the 2026-09-07 B146 entry + the Q1 + Q2 "✅ DONE" updates.
+- `docs/PLANS.md` — TD-2 / TD-9 / TD-10 / TD-11 / TD-12 /
+  TD-13 marked DONE in v1.5.2; TD-4 / TD-5 / TD-8 / BL-2 Q9
+  / BL-3 still open.
+- `AGENTS.md` — B146 + B237.10 / B237.15 / B237.16 /
+  B237.17 / B237.18 / B237.19 / B237.20 / B237.21 / B237.22
+  / B237.23 sections with code-level details + file lists.
+- `README.md` — new "Deployment variants" section covers
+  all 5 V1–V8 deploy surfaces.
+
+---
+
+*Released 2026-09-08. SHA: 23977b6c (B237.23 tip; tag
+`v1.5.2` force-moved from 374b7c5a to include B237.22 +
+B237.23).*
+
+## v1.5.0 — DERP relay integration, headscale policy via:-clause, /admin/derp fixes
+
+**Date:** 2026-09-04
+
+> v1.5.0 is the stable release of the B145/B147/B148/B149/B150
+> HA-chain work that shipped as `v1.5.0-alpha1` on 2026-08-19,
+> plus the full set of DERP / Tailscale / exit-rules fixes
+> that were developed in the 2026-09-04 incident response
+> (B235 / B235.1 / B235.2 / B235.3 / B236 / B237 / B237.1 /
+> B237.2 / B237.7 / B237.8). Read the post-mortem
+> [docs/internal/2026-09-04-tailnet-fixes.md](docs/internal/2026-09-04-tailnet-fixes.md)
+> for the full chain of root causes and the current
+> configuration.
+
+### What's in v1.5.0
+
+#### HA chain (B145/B149/B150 — shipped in v1.5.0-alpha1)
+- **HA chain + elector + pluggable DNS provider** (B145):
+  leader election between skygate instances with pluggable DNS
+  provider (reg.ru or mock).
+- **`/admin/certificates` page** (B148 / BL-2 Phase 4):
+  upload + reg.ru DNS-01 toggle.
+- **In-app certsync scheduler** (B147 / BL-2 Phase 3).
+- **`/admin/ha` page** (B149): HA chain editor + failover
+  controls + reg.ru credentials.
+- **`/admin/deploy` page + skygate deploy CLI** (B150 /
+  BL-2 Phase 6).
+
+#### DERP / Tailscale / exit-rules fixes (B235..B237.8)
+- **B235** — `FetchPublicDERPs` `n.HostName` (FQDN) instead of
+  `n.Name` (Tailscale short label "1f") as the Host. Closes the
+  28/28 public DERP "degraded" symptom on `/admin/derp/dashboard`.
+- **B235.1 + B235.2 + B235.3** — DERP map shape + short-label
+  pill + region_id tooltip on `/admin/derp/dashboard`.
+- **B236** — subnet-routes management: hard rule "subnet-router
+  must be the only device advertising the same CIDR" + the
+  3-state UI (advertised / approved / mismatch) on
+  `/admin/exit-nodes`.
+- **B237** — own DERP via skygate: `TailscaleDERP` + `Apply to
+  headscale` buttons on `/admin/derp/dashboard`. Closes the
+  derp.skynas.ru + derp.emilia "not advertising" gap that
+  appeared after the B189 incident.
+- **B237.1** — `SKYGATE_HEADSCALE_CONFIG_PATH` env var +
+  bind-mount for the headscale config. Closes the "container
+  has no /etc/skygate/headscale-config.yaml" symptom.
+- **B237.2** — correct Public IP display via DNS lookup
+  (instead of `r.RemoteAddr` which gave the Tailscale IP).
+- **B237.7** — exit-rules reconciler default-flip from "manual
+  button" to "LIVE" (autoupdate every 5 min by default).
+- **B237.8** — operator docs for the above.
+
+#### Files in v1.5.0
+- `internal/headscale/nodes.go` — `FetchPublicDERPs` Host fix
+  (B235)
+- `internal/derphealth/health.go` + `internal/handlers/templates/
+  admin/derp_dashboard.html` — region_id tooltip + short-label
+  pill (B235.1/2/3)
+- `internal/feature/exit_rules/reconciler.go` — default-flip
+  to LIVE (B237.7)
+- `internal/feature/admin/derp_dashboard.go` + `internal/
+  derp_relay.go` — own DERP via skygate (B237)
+- `internal/feature/admin/certificates.go` + `/admin/certificates`
+  — cert upload + DNS-01 (B148)
+- `internal/ha/{chain,elector,provider_regapi,provider_mock,
+  certsync,planner,role}.go` — HA chain core (B145)
+- `internal/feature/admin/ha.go` + `/admin/ha` — chain editor +
+  failover (B149)
+- `internal/feature/admin/deploy.go` + `cmd/skygate/deploy.go` —
+  deploy CLI + UI (B150)
+- `internal/handlers/layout.go` + `layout.html` — DERP / HA /
+  certsync / deploy sub-tabs
+- `docs/internal/2026-09-04-tailnet-fixes.md` — post-mortem
+- `docs/internal/tailnet-advertised-routes.md` — B236 deep-dive
+- `docs/internal/exit-rules-reconciler.md` — B229 / B237.7
+  contract
+- `docs/PLANS.md` — TD-2 / TD-6 / TD-7 marked DONE in v1.5.0
+
+#### Test coverage (v1.5.0)
+- `bash scripts/check_b235.sh` → 19/19 pass
+- `bash scripts/check_b237.sh` → all B237.x sub-checks pass
+- `go test -short ./...` → 28/28 green (post-PG cutover)
+- `go build ./...` → clean
+- `staticcheck ./...` → 0 ST1013, 0 SA1012 (post-B237.16)
+  plus 23 U1000 (cleared by B237.20)
+
+#### Live state (operator VM 192.168.13.69, verified 2026-09-04)
+- 151 `device_rules` rows (5 CDN-tracked parent_domains contribute
+  46 rows, 30%; rest are manual + autoupdate-derived)
+- 213 headscale policy grants
+- 30 DERP regions healthy (28 public + 2 own)
+- 0 `smoke_mesh_*` rows in DB
+
+#### Migration from v1.4.x to v1.5.0
+- The `subnet-router` headscale tag must be set on the 3
+  subnet-router nodes (emilia + karolina + sharlotta). The
+  B236 fix script `internal/feature/exit_nodes/subnet_router_
+  backfill.go` handles this automatically.
+- `SKYGATE_HEADSCALE_CONFIG_PATH` env var must be set (defaults
+  to `/etc/headscale/config.yaml` on the operator's VM).
+- DERP health probe cron must be enabled:
+  `SKYGATE_DERP_HEALTH_CRON_ENABLED=true`.
+
+#### Known limitations at v1.5.0
+- **BL-2 HA Tier 1** — 8/10 phases done, 2 remaining
+  (Q9 Live DR drill date, Phase 10 release tag).
+- **BL-3 Telegram DPI workaround** — operator-side, no
+  skygate-side fix.
+- **TD-4 Backup S3** DEFERRED.
+- **TD-5 per-user DNS** BLOCKED on headscale 0.30+.
+
+---
+
 ## v1.3.20 — /admin/update redesign + real time-of-day auto-update (B128 + B129 + B130)
 
 **Date:** 2026-08-18

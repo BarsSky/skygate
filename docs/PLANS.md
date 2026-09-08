@@ -1,6 +1,6 @@
 # Skygate plans & technical debt
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-09-08 (B237.22 + B237.23 deployed on top of v1.5.2)
 **Maintained by:** Mavis (skygate) + operator
 **Status:** live roadmap; updated after every release
 

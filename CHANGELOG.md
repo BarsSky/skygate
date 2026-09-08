@@ -10,6 +10,48 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 > for every shipped tag. This file is the at-a-glance list of what
 > changed in each version; the v0.6 → v0.32 history is preserved in
 > git history (`git log v0.6.0..v0.33.0 -- CHANGELOG.md`).
+>
+> **Single release-notes file.** Per-version `RELEASE-NOTES-vX.Y.Z.md`
+> is **deprecated** — if you find any in the tree, delete them. The
+> canonical notes for every shipped tag live in the linked
+> `RELEASE-NOTES.md` above.
+
+## [v1.5.2] — 2026-09-08
+
+**Tag:** `v1.5.2` → commit `23977b6c` (B237.23 tip; force-moved
+from the original `374b7c5a` to include the B237.22 + B237.23
+follow-ups that shipped on the same day). Hotfix + sub-patch
+series on top of v1.5.0. All backward-compatible.
+
+**11 B-blocks ship in v1.5.2** (consolidated note covers them
+all; per-B-block detail in [RELEASE-NOTES.md](RELEASE-NOTES.md)):
+
+| # | Summary |
+|---|---|
+| B237.10 | Auto-update "Push update" form works on untagged commits (the `+` in pathspec fix) |
+| B237.15 | 5 new deploy surfaces: prebuilt ghcr image, podman, systemd/OpenRC, Windows native, release workflow |
+| B237.16 | Closes the last 2 stragglers of TD-2 (numeric status codes) + B140/B141 B-check `s.DB` → `s.dbc()` fix |
+| B237.17 | `smoke_mesh_*` users + `smoke-mesh-*` meshes auto-cleaned daily (TD-9) |
+| B237.18 | In-app `headscale_user_id` reconciliation cron, default 1h, 4 outcomes (TD-10) |
+| B237.19 | `/my/exit-rules` form errors render as a flash banner (not a giant plain-text page) + duplicate banner wording fixed |
+| B146 | Phase 2 reg.ru DNS live test productionized (`scripts/b146_regapi_live.sh`) — closes the "live reg.ru creds verification" gap |
+| B237.20 | staticcheck-100%-clean (TD-12 + TD-13) — 23 U1000/S1021 fixed, 0 issues remain |
+| B237.21 | `skygate regapi-credentials` CLI subcommand (set/show/test/delete) — closes the "only path to set reg.ru creds is the /admin/ha form" gap |
+| B237.22 | UI-only CDN rule grouping on `/my/exit-rules` + `/admin/exit-rules` (TD-11 / Approach G) — 30% of device_rules rows render as a single `<details>` group |
+| B237.23 | Fix autoupdate `ON CONFLICT` code/index drift (B183 vs B232 regression) — 4 domains transition ⏳ orange → ✅ green |
+
+**Net new features vs v1.5.0**: B237.22 (CDN UI grouping). All
+other items are bug fixes, tech-debt closures (TD-2/9/10/12/13),
+or HA Tier 1 work (B146). The 23 staticcheck warnings cleared
+in B237.20 are the last LOW-priority item from PLANS.md.
+
+**Live state on the operator VM** (192.168.13.69): container
+`skygate v1.5.2-2-g23977b6`, 30/30 DERP regions healthy, 213
+headscale policy grants, 0 smoke-mesh rows, 0 headscale-user-id
+orphans. 9/10 BL-2 HA Tier 1 phases done (Q9 Live DR drill
+date is the only remaining). 12 B237.22 CDN groups visible
+on `/my/exit-rules` + `/admin/exit-rules` for the 5 distinct
+parent_domains on karolina.
 
 ## [v1.5.0] — 2026-09-04
 
@@ -24,23 +66,8 @@ B237.1 (SKYGATE_HEADSCALE_CONFIG_PATH + bind-mount fix),
 B237.2 (correct Public IP display via DNS lookup), B237.7
 (reconciler default-flip to LIVE), B237.8 (operator docs).
 
-See [RELEASE-NOTES-v1.5.0.md](RELEASE-NOTES-v1.5.0.md) for
-the full post-mortem + verification checklist.
-
-## [v1.5.2] — 2026-09-07
-
-Hotfix release on top of v1.5.0. No new features; 1
-BL-2 phase closed (Phase 2: B146); 1 live bug fixed
-(B237.10 — auto-update pathspec); 1 UX bug fixed
-(B237.19 — exit-rules form errors); 1 hotfix
-(B237.15 — deployment variants for ghcr / podman /
-systemd / Windows); 3 LOW-priority tech-debt items
-closed (TD-2 / TD-9 / TD-10). All fixes are
-backward-compatible.
-
-See [RELEASE-NOTES-v1.5.2.md](RELEASE-NOTES-v1.5.2.md)
-for the full per-B-block detail + file list +
-live-verify checklist.
+See [RELEASE-NOTES.md](RELEASE-NOTES.md) for the full
+post-mortem + verification checklist.
 
 ### Fixed
 
