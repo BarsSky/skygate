@@ -114,6 +114,61 @@ the squash (estimated, depends on pack efficiency).
 
 ---
 
+
+**[Priority 2 — PG cutover live-VM status (2026-09-08)]**
+- **Status:** BL-1 code-side DONE across v1.3.0 + v1.3.1 + v1.3.2.
+  The internal/db package is fully PG-only: driver_postgres.go
+  + migrations_pg.go + placeholders_postgres.go +
+  on_conflict_postgres.go + 
+ow_unix_postgres.go + the
+  MigratePostgres on every Open. SQLite drivers and
+  mattn/go-sqlite3 are out of go.mod. The only remaining
+  items on the live VM are operational (not code).
+- **Live state (2026-09-08):** the live VM's PG sidecar has
+  the skygate_staging database with **0 tables in public
+  schema**. Migration chain did NOT re-apply after a recent
+  container reset. Symptom: skygate logs
+  "reconcile: query portal_users: sql: database is closed"
+  on every hourly tick; live psql returns
+  unction strftime(unknown, unknown) does not exist for
+  any 
+ow()-style query (strftime() is defined by
+  migrateV050PG; its absence confirms the chain didn't
+  run). The migration_tracking table is also missing from
+  public schema.
+- **Root cause hypothesis:** the migration tracker skipped all
+  migrations as "already applied" because the tracker
+  references tables that no longer exist after the volume
+  reset. The MigratePostgres on every Open does not
+  detect a missing schema (it only runs new migrations
+  since the last recorded version).
+- **Operator fix (manual, on the live VM):**
+  1. ssh to the operator's VM (see /admin/cluster Topology)
+  2. drop+recreate the skygate_staging database:
+     docker exec skygate-pg-test psql -d skygate_staging
+     -U <DB-ADMIN-USER> -c 'DROP DATABASE skygate_staging;
+     CREATE DATABASE skygate_staging OWNER <DB-ADMIN-USER>;'
+  3. Restart the skygate container so the in-process
+     MigratePostgres re-applies the full chain from
+     v0.0.0:
+     docker restart skygate-skygate-1
+  4. Wait for MigratePostgres to finish (~30s, watch
+     docker logs -f skygate-skygate-1 for the
+     "skygate migrate: applied N migrations" line).
+  5. Verify with
+     docker exec skygate-pg-test psql -d skygate_staging
+     -U <DB-ADMIN-USER> -c 'SELECT count(*) FROM portal_users'.
+- **Diagnostic + reusable lesson:** see project memory entry
+  "skygate live PG can be empty if skygate-pg-test container
+  was reset without re-running migrations" (2026-09-08).
+  The migration logic should be self-healing on schema-missing
+  OR an explicit skygate migrate up CLI subcommand should
+  exist as a break-glass for operators.
+- **Code-side next step:** consider adding a
+  MigratePostgresForce() helper that detects a missing
+  public schema (no pg_tables) and re-applies the full chain
+  from v0.0.0. This is a low-priority follow-up ticket, not
+  part of Priority 2 (which is closed code-side).
 ## Technical debt (pending; not in v1.0.0)
 
 ### HIGH priority — fix in v1.1.0 or v1.2.0
