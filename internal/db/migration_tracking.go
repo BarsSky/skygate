@@ -64,13 +64,27 @@ func SetMigrationIntegrityMode(mode MigrationIntegrityMode) {
 
 // ensureMigrationTrackingTable creates the applied_migrations
 // table if it doesn't exist. Idempotent.
+//
+// B-mod-pg18-strftime-fix (2026-09-09): the DEFAULT clause for
+// applied_at used `strftime('%s', 'now')` which is **SQLite-only**
+// (returns unix seconds as INTEGER). PostgreSQL has no `strftime`
+// function — `extract(epoch from now())::bigint` is the PG
+// equivalent. Without this fix, skygate cannot create the
+// applied_migrations table on PG 18 (or any PG version):
+//
+//	ERROR: function strftime(unknown, unknown) does not exist
+//	       (SQLSTATE 42883)
+//
+// This was the only SQLite-leftover in the migration tracking
+// code. The rest of the migration SQL (in migrations_pg.go) uses
+// PG-native EXTRACT(EPOCH FROM now())::bigint already.
 func ensureMigrationTrackingTable(d *sql.DB) error {
 	_, err := d.Exec(`
 		CREATE TABLE IF NOT EXISTS applied_migrations (
-			version     INTEGER PRIMARY KEY,
+			version     BIGINT  PRIMARY KEY,
 			sha256      TEXT    NOT NULL,
 			source_file TEXT    NOT NULL DEFAULT '',
-			applied_at  INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+			applied_at  BIGINT  NOT NULL DEFAULT (extract(epoch from now())::bigint),
 			first_seen  TEXT    NOT NULL DEFAULT ''
 		)
 	`)
