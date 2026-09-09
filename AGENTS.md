@@ -14998,3 +14998,90 @@ exit 1 с "Fix: <actionable>", а НЕ silent restart, который operator
 - `scripts/check_b_db_dsn_reachable.sh` (new) — 12 contracts
 - `scripts/verify_pre_deploy.sh` (modified) — B-mod-db-retry registered
 - `AGENTS.md` (this entry)
+
+## B-mod-pg-bypass (v1.5.2+, 2026-09-09) — PG runtime integrity check + agent/svi topology
+
+**Topology fix** (operator 2026-09-09): clarified the deploy topology:
+
+| VM | Role | Tailscale IP | Public IP | Notes |
+|---|---|---|---|---|
+| **agent (192.168.13.69)** | dev/staging skygate + primary Patroni PG | skygate-host-1-1 (100.64.0.22) | 192.168.13.69 | Local dev. Standalone PG (Patroni bypassed). |
+| **svyatoslava-1 (45.152.198.217)** | production skygate + standby Patroni replica | 100.64.0.24 | 45.152.198.217 (gateway-blocked from agent) | Currently NOT REACHABLE from agent due to operator's gateway block. |
+| **karolina (193.233.130.178:18022)** | Russian VPS, jump host | — | 193.233.130.178:18022 | SSH ProxyCommand for svi. |
+
+**The 2026-09-09 outage** (post-mortem):
+
+- **2026-09-08 16:36:30** PG received `fast shutdown request` (visible in journalctl:
+  `Sep 08 16:36:30 agent postgresql[899200]: LOG: received fast shutdown request`).
+  Trigger unknown — could be operator manual `systemctl stop postgresql`, could be
+  something else. Pre-B-mod-db-retry this would have been invisible until next deploy.
+- **Post-shutdown**: Patroni tried to elect leader, but etcd on svi
+  (`http://45.152.198.217:2379`) is **unreachable** due to operator's gateway block.
+  Patroni logged `waiting on etcd` every 6 seconds, forever — **silent infinite wait**.
+  PG never came back up.
+- **2026-09-09 12:28**: my B-mod-core deploy attempts rebuilt skygate binary → entrypoint
+  restarted skygate → `db.OpenDSN` failed → exit 1 → restart loop. The "(healthy)"
+  healthcheck misled operator for ~24 hours.
+- **Root cause** of the silent infinite wait: **Patroni cannot start PG without
+  etcd quorum**, and etcd on svi was unreachable. There was no fallback path.
+  B-mod-db-retry's entrypoint pre-flight check correctly detected this in 3 seconds
+  (vs 5-7s restart loop), but the underlying PG-down issue remained until manual
+  intervention.
+
+**Fix** (B-mod-pg-bypass, 2026-09-09):
+
+1. **Restore PG on agent** (bypass Patroni since etcd unreachable):
+   - `sudo systemctl stop patroni` — stop the etcd-waiting loop
+   - `sudo pg_ctlcluster 16 main start` — start PG standalone (no HA quorum check)
+   - Result: PG up on 172.17.0.1:5433, `skygate_staging` DB has 43 tables,
+     `applied_migrations` has 51 rows, skygate-skygate-1 starts and reports
+     `Up X seconds (healthy)`
+   - **HA chain remains broken** — agent is standalone, svi unreachable
+   - When svi reachability is restored (operator's gateway fix), Patroni can
+     be re-enabled with `sudo systemctl start patroni`
+
+2. **B-check `scripts/check_b_pg_alive.sh`** (10 contracts, 9 PASS on agent):
+   - **A**: `pg_isready -h host -p port -U admin` succeeds
+   - **B**: `skygate_staging` DB has tables (non-empty)
+   - **C**: `portal_users` table exists (proves migrations ran)
+   - **D**: `audit_log` table exists
+   - **E**: `applied_migrations` table exists (migration tracking is ON)
+   - **F**: `applied_migrations` has >= 10 rows
+   - **G**: at least one migration applied in the last 30 days
+     (uses PG's `to_timestamp(unix_seconds)`, NOT SQLite's `datetime(unix, 'unixepoch')`)
+   - **H**: Patroni state info (Leader/Replica/stopped) — never fatal, just observability
+   - **I**: SKYGATE_DB_DSN parseable
+   - **J**: `/var/lib/postgresql/X/` data dir exists
+   - Designed to run ON the skygate VM (not dev box) — contracts A-H skip
+     gracefully when pg_isready/psql/systemctl are unavailable
+   - Registered in `verify_pre_deploy.sh` as `B-mod-pg-bypass` with a note
+     "must be run on skygate VM" (so devs don't get confused by skip messages)
+
+3. **AGENTS.md update**: documented agent/svi topology so future deploys
+   know which VM is dev/staging and which is production.
+
+**Reusable lesson** (cross-project, HIGH value):
+
+> **"Patroni silent wait на unreachable etcd = production PG down silent"
+> = самый опасный failure mode для HA PostgreSQL.** Patroni не становится
+> leader без etcd quorum, и его default behavior — retry `waiting on etcd`
+> бесконечно (без backoff, без escalation, без алерта). Для production это
+> unacceptable — нужна либо (a) **etcd watchdog** который alerts когда
+> quorum lost > 5 min, либо (b) **bypass скрипт** который allow start PG
+> standalone при `SKYGATE_HA_BYPASS=1` env var (с audit log row),
+> либо (c) **etcd cluster on same host as Patroni** (3-node local etcd,
+> no external dependency). Без одного из этих — production PG висит
+> silent в degraded state до следующего deploy.
+
+**Future-proof plan** (operator's roadmap, deferred):
+
+- skygatev2 + headv2 на **svyatoslava-1** (svi) как полигон для:
+  - авторазвертывания проекта под новым адресом
+  - проверки авторазвертывания кластера
+- Восстановление reachability svi через gateway fix (operator action)
+- После fix — `sudo systemctl start patroni` на agent восстанавливает HA chain
+
+**Files** (B-mod-pg-bypass, 2026-09-09):
+- `scripts/check_b_pg_alive.sh` (new) — 10 contracts, 9 PASS on agent VM
+- `scripts/verify_pre_deploy.sh` (modified) — B-mod-pg-bypass registered
+- `AGENTS.md` (this entry)
