@@ -70,6 +70,48 @@ command -v git    >/dev/null 2>&1 || die "git not found"
 [ -d "$PROJECT_DIR" ] || die "project dir $PROJECT_DIR not found"
 [ -f "$ENV_FILE" ]  || die ".env not found at $ENV_FILE — copy from primary + set HEADPLANE_HEADSCALE__API_KEY"
 
+# --- step 0: Tailscale auth (B-new v1.5.2+, 2026-09-09) ---
+# Pre-B-new: operator ran `tailscale up` manually with a preauth key
+# generated without --user mapping. The new node ended up in the
+# synthetic `tagged-devices` headscale user, breaking per-DEVICE grants
+# (B175 Strategy E gap). Post-B-new: operator runs
+# `deploy/scripts/create-standby-preauth.sh` on the primary to mint
+# a key with the correct user (default: infra), then passes it here.
+# Optional: if SKYGATE_STANDBY_TS_AUTHKEY is unset, we assume Tailscale
+# is already joined (legacy path) and skip this step.
+if [ -n "${SKYGATE_STANDBY_TS_AUTHKEY:-}" ]; then
+    log "[0/6] Tailscale auth (B-new)"
+    command -v tailscale >/dev/null 2>&1 || die "tailscale CLI not found — install tailscale first (curl -fsSL https://tailscale.com/install.sh | sh)"
+    # Idempotent: skip if already in tailnet
+    if tailscale status --json 2>/dev/null | python3 -c "import json,sys
+try:
+    d = json.load(sys.stdin)
+    # BackendState: 'NoState' | 'NeedsLogin' | 'Starting' | 'Running'
+    bs = d.get('BackendState', '')
+    if bs == 'Running' and d.get('SelfNode', {}).get('Online'):
+        sys.exit(0)
+    sys.exit(1)
+except Exception:
+    sys.exit(1)" >/dev/null 2>&1; then
+        log "  tailscale already joined — skipping auth"
+    else
+        # Default hostname = the VM's hostname; allow override via env
+        TS_HOSTNAME="${SKYGATE_STANDBY_TS_HOSTNAME:-$(hostname)}"
+        # Use --netfilter-mode=nodir (B179 safety): do NOT install iptables
+        # rules that block the public IP. Same as B179 recovery command.
+        log "  tailscale up --hostname=$TS_HOSTNAME --netfilter-mode=nodir"
+        sudo tailscale up --login-server=https://head.skynas.ru \
+            --authkey="$SKYGATE_STANDBY_TS_AUTHKEY" \
+            --hostname="$TS_HOSTNAME" \
+            --accept-routes --accept-dns=false --netfilter-mode=nodir 2>&1 | tail -5 \
+            || die "tailscale up failed — check the authkey (single-use? expired? wrong user?)"
+        log "  tailscale up OK, waiting 5s for state sync"
+        sleep 5
+    fi
+else
+    log "[0/6] Tailscale auth: SKYGATE_STANDBY_TS_AUTHKEY not set — assuming Tailscale is already joined (legacy path)"
+fi
+
 # --- env helpers (mirrors deploy/lib/env.sh) ---
 getenv() {
     local key="$1" default="${2:-}"

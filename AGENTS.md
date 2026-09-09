@@ -14565,3 +14565,138 @@ test fixtures; the v0.32.29 pass moved them all to env.
 as a placeholder, and add a comment pointing at the env var.
 The operator can override at deploy time without touching
 code.
+
+## B-new-standby (v1.5.2+, 2026-09-09) — HA standby auto-provisioning
+
+**Closes the gap where new HA standbys (e.g. svyatoslava-1) ended up
+in the synthetic `tagged-devices` headscale user** instead of the
+real `infra` user, breaking per-DEVICE Tailscale grants and causing
+the standby to be invisible to `skygate-host-1-1` over the
+Tailscale mesh.
+
+### Why this matters
+
+Pre-B-new-standby, the operator bootstrapped a new HA standby by:
+
+1. Installing Tailscale + Docker on the new VM.
+2. Running `headscale preauthkeys create` on the primary **without
+   `--user <id>`**. Headscale's default fallback put the new node
+   in the synthetic `tagged-devices` user.
+3. Running `headscale nodes tag -i 45 --tags
+   'tag:dev-skyadmin-skyworker,tag:private'` **manually** after
+   the auth, to attach the per-DEVICE tag.
+4. Going to `/admin/devices` and clicking "Sync from headscale" to
+   upsert into `node_owner_map`.
+
+Even after step 4, the per-DEVICE grants in the headscale policy
+**still didn't include the new standby**, because
+`qSelectPerUserDeviceTags` (in `internal/db/queries.go`) JOINs
+`node_owner_map` with `portal_users`, and `tagged-devices` is NOT
+a portal user. So the per-DEVICE grant block emitted
+`tag:dev-skyadmin-{a71,cyborg,...}` without the standby. Result:
+the standby could ping the exit nodes (emilia/karolina/sharlotta)
+via the catch-all `* → tag:dev-infra-<exit>` grants, but it
+**could not reach the primary skygate-host-1-1** over Tailscale
+(no grant between `tag:dev-skyadmin-skyworker` and
+`tag:dev-infra-skygate-host-1-1`).
+
+### The fix (B-new-standby)
+
+Two new pieces of code, both shipped in this B-block:
+
+1. **`deploy/scripts/create-standby-preauth.sh`** — a small
+   script that runs on the **primary (skygate)** host to mint a
+   Tailscale preauth key for the new standby, with the **correct
+   headscale user mapping** (default `infra` = user id `85`, since
+   standbys run etcd/Patroni — infra services). The script:
+   - Accepts `--hostname <name>` (required), `--user <id|name>`
+   (default `85`), `--expiration 24h`, `--reusable`,
+   `--acls <list>` (default `tag:dev-infra-<hostname>` — this is
+   the B175 Strategy E auto-tag, applied at auth time so the
+   new node is born in the right user with the right tag).
+   - Runs `docker exec headscale headscale preauthkeys create
+   --user $USER_ID --expiration $EXPIRATION --tags
+   $ACLS` and prints the resulting `hskey-auth-XXX` on stdout.
+   - Records an `ha.preauth.create` audit row in skygate's
+   `audit_log` table (best-effort, fails silently if no DB
+   access).
+   - Validates: docker present, headscale container running,
+   user name resolves to a numeric id via `headscale users
+   list -o json`.
+
+2. **The new step 0 in `scripts/bootstrap_standby.sh`** — the
+   Tailscale auth block. Runs on the **new standby VM** during
+   bootstrap. It:
+   - Accepts `SKYGATE_STANDBY_TS_AUTHKEY` (and optionally
+   `SKYGATE_STANDBY_TS_HOSTNAME`) as env vars.
+   - If the env var is **unset**, falls back to the legacy path
+   ("assuming Tailscale is already joined" — for operators
+   who set up Tailscale manually).
+   - If the env var is set AND tailscale is not already in the
+   tailnet, runs `sudo tailscale up
+   --login-server=https://head.skynas.ru
+   --authkey=$SKYGATE_STANDBY_TS_AUTHKEY
+   --hostname=$TS_HOSTNAME --accept-routes
+   --accept-dns=false --netfilter-mode=nodir`.
+   - **B179 safety**: uses `--netfilter-mode=nodir` (NEVER
+   `--netfilter-mode=off` — that's the trap that re-occurs on
+   every new standby if you use the wrong mode).
+   - **Idempotency**: skips `tailscale up` if `tailscale status
+   --json` shows `BackendState=Running` and the self node is
+   online.
+   - Dies (`exit 1`) on `tailscale up` failure with a clear
+   message ("check the authkey (single-use? expired? wrong
+   user?)") so the operator knows the authkey is the
+   likely culprit.
+
+### The new operator runbook
+
+```bash
+# On the PRIMARY (skygate) host, mint a preauth key for the new standby:
+NEW_KEY=$(bash deploy/scripts/create-standby-preauth.sh --hostname svyatoslava-2)
+# → prints: hskey-auth-XXXXXXXX (capture this!)
+
+# SSH to the new standby VM:
+ssh svyatoslava-2
+cd ~/skygate
+export SKYGATE_STANDBY_TS_AUTHKEY="$NEW_KEY"
+bash scripts/bootstrap_standby.sh
+# → step 0 runs tailscale up with the auth key, registers the
+#   node under user=infra with tag:dev-infra-svyatoslava-2,
+#   then continues with the S3 pull + docker compose up flow.
+#   On the next policy reapply (next /admin/tailnet-policy
+#   regenerate, or after a sync-from-headscale), the new node
+#   will appear in the per-DEVICE grants automatically.
+```
+
+### Files / cross-references
+
+- `deploy/scripts/create-standby-preauth.sh` (new, B-new-standby)
+- `scripts/bootstrap_standby.sh` (modified, +~50 lines for the
+  step 0 Tailscale auth block)
+- `scripts/check_b_standby_provision.sh` (new B-check, 16
+  contracts)
+- `scripts/verify_pre_deploy.sh` (registers
+  `check_b_standby_provision.sh` in the catalog as the
+  `B-new-standby` row)
+- `docs/internal/ha-v1.5.0-execution.md` §3 Phase 7 (the
+  operator runbook)
+- `internal/acl/acl_perdevice.go` (the per-DEVICE grant block
+  that needed the per-DEVICE tag to fire — unchanged, this is
+  the consumer of the new tag)
+
+### Reusable lesson (cross-project, HIGH value)
+
+**When auto-deploying infrastructure that interacts with a
+grants-based policy system (Tailscale, AWS IAM, GCP IAM,
+Kubernetes RBAC, etc.), the provisioning step MUST bind the
+new identity to the right user/role at creation time.** A
+post-hoc `user → role` reassignment (`headscale nodes tag`
+on a node that was already created in the wrong user) does
+NOT work if the policy generator joins on the user identity
+(`GetPerUserDeviceTags` JOIN with `portal_users`). The
+mismatch is invisible at creation time (the node works, the
+tag is set, the audit log looks fine) and only surfaces as a
+"per-DEVICE grant missing" symptom weeks later, after the
+operator has already wired up monitoring on the wrong
+identity.

@@ -272,6 +272,25 @@ UI sections in `/admin/ha`:
 - [x] Verify standby serves 200 on `/healthz` with role=standby banner
 - [x] Verify standby → primary's subnet reachable (`ping <agent-lan-ip>` from svyatoslava, `curl http://<agent-docker-gateway>:8080/healthz` from svyatoslava)
 - [x] **State-tracked runner (v1.5.2, B-new)**: `scripts/ha-phase7.sh` — wraps `bootstrap_standby.sh` with 6 state-tracked steps (preflight + s3_pull_binary + s3_pull_headscale_config + docker_compose_up + healthz_wait + verify_chain) via `scripts/ha-state/state.sh`. Idempotent, --reset / --status / --skip-s3 flags. Requires `jq`.
+- [x] **Auto-provisioning (v1.5.2, B-new-standby, 2026-09-09)**: `deploy/scripts/create-standby-preauth.sh` (mints a Tailscale preauth key with the correct headscale user mapping — default user 85 = `infra` for standbys running etcd/Patroni, attaches `tag:dev-infra-<hostname>` ACL so the new node gets the per-DEVICE grant on first contact via B175 Strategy E, writes `ha.preauth.create` audit row) + the new step 0 in `scripts/bootstrap_standby.sh` (Tailscale auth block that reads `SKYGATE_STANDBY_TS_AUTHKEY`, runs `tailscale up --login-server=https://head.skynas.ru --netfilter-mode=nodir` with idempotency check, gracefully falls back to legacy path when authkey unset, dies on tailscale up failure). **Closes the gap where new standbys ended up in the synthetic `tagged-devices` headscale user** (which `GetPerUserDeviceTags` JOIN with `portal_users` excludes → no per-DEVICE grants → standby invisible to skygate-host-1-1 over Tailscale). **B179 safety**: `--netfilter-mode=nodir` (NOT `off`) so the new standby never re-creates the iptables ts-input trap. 20 contracts in `scripts/check_b_standby_provision.sh`.
+
+**New operator runbook (replaces the old manual Tailscale setup)**:
+```bash
+# On PRIMARY (skygate) — mint a preauth key for the new standby:
+NEW_KEY=$(bash deploy/scripts/create-standby-preauth.sh --hostname svyatoslava-2)
+# → prints: hskey-auth-XXXXXXXX (capture this!)
+
+# On the NEW STANDBY VM:
+ssh svyatoslava-2
+cd ~/skygate
+export SKYGATE_STANDBY_TS_AUTHKEY="$NEW_KEY"
+bash scripts/bootstrap_standby.sh
+# → step 0 runs tailscale up with the auth key, registers the
+#   node under user=infra with tag:dev-infra-svyatoslava-2,
+#   then continues with the S3 pull + docker compose up flow.
+#   On the next policy reapply, the new node appears in the
+#   per-DEVICE grants automatically.
+```
 
 ### Phase 8: init-headplane.sh (auto-apply API key on fresh deploy)
 - [x] `scripts/init-headplane.sh` — wait for headplane to generate key, copy to skygate env, restart
