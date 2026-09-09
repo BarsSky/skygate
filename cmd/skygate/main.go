@@ -34,6 +34,8 @@ import (
 	"skygate/internal/feature/healthz"
 	"skygate/internal/headscale_version"
 	"skygate/internal/metrics"
+	"skygate/internal/module"
+	tailscalemod "skygate/internal/module/tailscale"
 	"skygate/internal/release"
 	"skygate/internal/db"
 	"skygate/internal/watchdog"
@@ -532,6 +534,48 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+
+	// 2026-09-09 (B-mod-core) — wire the module Plugin API Manager.
+	//
+	// The Manager owns the lifecycle of all skygate modules
+	// (Tailscale is Module #1). Modules are registered
+	// statically here, initialized (Init validates prereqs +
+	// loads state), started (only if state.Enabled=true),
+	// and monitored by a 30s health loop. On shutdown the
+	// Manager gracefully stops every running module.
+	//
+	// In B-mod-core we register only the Tailscale STUB
+	// (a no-op module that returns StateNotInstalled). The
+	// real B-mod-tailscale implementation will replace the
+	// stub without changing this wiring code.
+	//
+	// The audit log callback writes every state transition
+	// to the audit_log table (the same one /admin/audit shows)
+	// so the operator can see "module.tailscale.init:ok" etc.
+	// without SSH'ing into the VM.
+	moduleMgr := module.NewManager(
+		"/var/lib/skygate/modules",  // dataDir: per-module state
+		"/var/run/skygate/modules",  // socketDir: per-module sockets (unused in B-mod-core)
+		func(action, detail string) {
+			// Best-effort audit write. We don't fail the
+			// boot if the audit log is unavailable — the
+			// audit row is operator debugging, not a
+			// correctness requirement.
+			_ = db.AppendAuditLogWithTarget(
+				app.DB.Current(), 0, "system",
+				action, detail, "module", "",
+			)
+		},
+	)
+	moduleMgr.SetEnv(collectModuleEnv(cfg))
+	if err := moduleMgr.Register(tailscalemod.NewStub()); err != nil {
+		log.Printf("warn: register tailscale stub: %v", err)
+	}
+	if err := moduleMgr.InitAll(context.Background()); err != nil {
+		log.Printf("warn: module InitAll: %v", err)
+	}
+	moduleMgr.StartHealthLoop(context.Background())
+	defer moduleMgr.StopAll(context.Background())
 	// 2026-07-27: v0.29.0 — initialize the auto-update
 	// state store. Loads any persisted state from the
 	// status file so a restart renders the most recent
@@ -3657,4 +3701,34 @@ func haProviderName(name string) string {
 		return "none"
 	}
 	return name
+}
+
+// collectModuleEnv builds the env map that the module.Manager
+// passes to each module's Init(). Only SKYGATE_TS_* env vars
+// are collected in B-mod-core (just enough for the Tailscale
+// stub to read SKYGATE_TS_INSTALL_MODE). Future modules
+// (headplane, telegram, derp) will add their own prefixes.
+//
+// Reads from os.Environ() — the same source os.Getenv uses —
+// so the values are exactly what the rest of skygate sees.
+//
+// (B-mod-core, 2026-09-09)
+func collectModuleEnv(_ *config.Config) map[string]string {
+	out := map[string]string{}
+	for _, kv := range os.Environ() {
+		// Split on first '=' (values may contain '=').
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		k := kv[:i]
+		v := kv[i+1:]
+		// Only pass SKYGATE_TS_* to the Tailscale module.
+		// Other modules (future) will get their own
+		// prefixes (e.g. SKYGATE_HP_* for headplane).
+		if strings.HasPrefix(k, "SKYGATE_TS_") {
+			out[k] = v
+		}
+	}
+	return out
 }
