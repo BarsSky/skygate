@@ -109,7 +109,17 @@
 - **25 grants в текущей policy** (verified 2026-09-09): 5 per-user (skyadmin/michail/guest/daniil/infra), 7 per-device для skyadmin-*, 3 per-device для michail-*, 5 per-device для infra-*, 3 catch-all `* → tag:dev-infra-<exit>`, 2 per-device with `via=`.
 
 ### 2.4. Bootstrap standby flow
-- **Tailscale NOT installed** на чистой VM. `bootstrap_standby.sh` step 0 требует `tailscale` бинарь. **Pre-B-new-standby оператор делал это руками. Post — нужен `curl -fsSL https://tailscale.com/install.sh | sh` ДО bootstrap.** ⚠️ Нужно добавить в `install-debian.sh`!
+- **⚠️ Tailscale NOT installed by `install-debian.sh`** (verified 2026-09-09). `install-debian.sh` ставит только skygate binary + systemd, **НЕ ставит Tailscale**. `bootstrap_standby.sh` step 0 (NEW B-new-standby) делает `command -v tailscale || die "tailscale CLI not found — install tailscale first"`. На свежем VM после `install-debian.sh` step 0 **упадёт**.
+  - **Tailscale НЕТ в дефолтных Debian репах** (verified https://tailscale.com/download/linux/debian-bookworm) — нужно сначала добавить Tailscale's own apt repo:
+    ```bash
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+    sudo apt-get update && sudo apt-get install -y tailscale
+    ```
+  - **Phase 7 fix**: добавить этот блок в `install-debian.sh` ПОСЛЕ существующего `apt-get install` (строки 60-67) — ДО `enable_and_start_service`. Также `install-alpine.sh` (apk) и `install-rh.sh` (dnf) — добавить эквивалент для каждой ОС.
+  - **Альтернатива**: добавить pre-check в `bootstrap_standby.sh` step 0: `if ! command -v tailscale; then install via curl; fi`. Менее чисто, но fallback для existing bootstrap.
+  - **Документация в коде**: `install-common.sh:310` имеет comment "the systemd install path doesn't use Tailscale at all" — **OUTDATED** после B-new-standby. Нужно обновить comment.
+  - **Subnet-router path** (`deploy/subnet-router/setup.sh:9`): "The host must already have tailscale installed" — explicit pre-req, но не enforced.
 - **Docker NOT installed** — аналогично. `bootstrap_standby.sh` требует `docker` и `docker compose`.
 - **S3 credentials** — pre-existing, должны быть в `.env` от primary. Без них `bootstrap_standby.sh` падает на step 2 (silently — non-fatal warning).
 - **HEADPLANE_HEADSCALE__API_KEY** — копируется из primary `.env`. Если истек — re-init на primary через `scripts/init-headplane.sh`.
@@ -380,3 +390,12 @@
 - **Tailscale grants на svi ↔ skygate** — отсутствуют (Phase 1-4 закроют).
 - **`/var/lib/skygate/ha-state/` создание** — не покрыто ни `install-debian.sh`, ни `bootstrap_standby.sh`. Phase 7 кандидат на добавление.
 - **Tailscale/Docker install на чистой VM** — не покрыто `bootstrap_standby.sh` step 0. Нужно добавить pre-step в `install-debian.sh` или перед bootstrap.
+  - **Tailscale** (verified 2026-09-09): `install-debian.sh` НЕ устанавливает Tailscale. Tailscale package не в дефолтных Debian репах, нужен свой apt-repo (`https://pkgs.tailscale.com/stable/debian/bookworm`). **Fix**: добавить в `install-debian.sh` после строки 67 (после `apt-get install ... systemd`):
+    ```bash
+    # Tailscale (для bootstrap_standby.sh step 0)
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+    sudo apt-get update -qq && sudo apt-get install -y tailscale
+    ```
+  - **Аналогично для `install-alpine.sh`** (apk add tailscale после добавления community repo) и **`install-rh.sh`** (dnf install tailscale после добавления tailscale.repo).
+  - **Pre-check в `bootstrap_standby.sh` step 0** (fallback): если `command -v tailscale` fail — установить через `curl -fsSL https://tailscale.com/install.sh | sudo sh`.
