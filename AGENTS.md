@@ -14700,3 +14700,122 @@ tag is set, the audit log looks fine) and only surfaces as a
 "per-DEVICE grant missing" symptom weeks later, after the
 operator has already wired up monitoring on the wrong
 identity.
+
+## B-mod-core (v1.5.2+, 2026-09-09) — Plugin API for skygate modules
+
+**Architectural shift**: skygate moves from "monolith with in-tree
+features" to "core + plugin API + modules". Tailscale is Module #1 —
+proof of concept for the plugin API. Future modules (headplane, telegram
+bot, DERP server) will reuse the same `Module` interface + `Manager`
+lifecycle + `State` persistence.
+
+**Why now**: operator 2026-09-09 asked for a Tailscale architecture
+that respects the "skygate = channel, not control" principle — Tailscale
+is opt-in (default = not installed), supports 3 install modes (in-container
+sidecar / OS-level systemd / none), and exposes 4 sub-features (cluster
+HA mesh / Telegram API relay / DERP relay / exit-node) via dedicated flags.
+Embedding this in the existing `internal/feature/admin/tailscale.go`
+would be a 1000+ line patch; building a generic plugin API first makes
+Tailscale #1 and leaves room for clean additions.
+
+**The fix (B-mod-core)**:
+
+1. **`internal/module/module.go`** — `Module` interface with 9 methods:
+   `Name() string` + `Init(ctx, ModuleConfig) error` + `Start(ctx) error` +
+   `Stop(ctx) error` + `Status() ModuleStatus` + `Health() HealthStatus` +
+   `SubFeatures() []SubFeature` + `EnableSubFeature(ctx, name) error` +
+   `DisableSubFeature(ctx, name) error`. Plus `ModuleConfig` (DataDir +
+   SocketDir + Env + AuditLog), `ModuleStatus` (State + InstalledAt +
+   StartedAt + LastError + Info), `HealthStatus` (Healthy + LastCheck +
+   Checks + LastError), `SubFeature` (Name + Description + Enabled +
+   Requires + Impact). 5 sentinel errors: `ErrNotInstalled` +
+   `ErrAlreadyRunning` + `ErrAlreadyStopped` + `ErrSubFeatureNotFound` +
+   `ErrSubFeatureRequires`.
+
+2. **`internal/module/state.go`** — `State` struct persisted at
+   `/var/lib/skygate/modules/<name>/state.json` via atomic write
+   (write to `state.json.tmp` + `os.Rename`). Fields: Name + State +
+   Enabled + InstallMode + InstalledAt + StartedAt + SubFeatures (map
+   name -> bool) + LastHealth + LastError + Info. `loadState` returns
+   a fresh `State` if the file is missing (no error). `stateChanged`
+   helper for diff-based save avoidance (avoids disk writes on every
+   30s health tick).
+
+3. **`internal/module/manager.go`** — `Manager` struct with 14
+   methods: `NewManager(dataDir, socketDir, auditLog)` +
+   `SetEnv` + `SetHealthInterval` + `Register(mod)` (rejects duplicates)
+   + `InitAll(ctx)` (calls Init on every registered module, marks
+   failed modules as `StateError` but continues) + `StartEnabled(ctx)`
+   (starts modules with `state.Enabled=true`) + `Start(ctx, name)` +
+   `Stop(ctx, name)` (both idempotent) + `StopAll(ctx)` (shutdown) +
+   `Get(name)` + `List()` (returns `[]ModuleInfo` snapshot) +
+   `Enable(name)` + `Disable(name)` + `EnableSubFeature(ctx, module, sub)`
+   (validates `Requires` list) + `DisableSubFeature(ctx, module, sub)`
+   + `StartHealthLoop(ctx)` + `StopHealthLoop()` + `healthLoop` (30s
+   tick) + `checkAllHealth` + `checkOneHealth` (transitions
+   `Running -> Error` on unhealthy, recovers on next healthy tick).
+
+4. **`internal/module/module_test.go`** — 14 unit tests covering
+   `loadState` missing-file + roundtrip, `stateChanged` per-field
+   (Name / State / Enabled / InstallMode / SubFeatures / Info /
+   LastError), `Manager.Register` duplicate + nil guards, `Get`/`List`,
+   `InitAll` success + failure modes, `Start`/`Stop` idempotency,
+   `Enable`/`Disable` state flag + audit, `StartEnabled` only-starts-enabled,
+   `EnableSubFeature` `Requires` validation (can't enable `exit` before
+   `cluster`), `healthLoop` state transitions (`Running <-> Error`).
+
+5. **`scripts/check_b_module_core.sh`** — 12 contracts (all PASS):
+   module.go exists, Module interface has 9 methods, State struct has
+   10 fields, loadState+saveState exist, atomic write pattern used
+   (`.tmp` + `os.Rename`), Manager struct + 14 methods exist, sentinel
+   errors defined (5 of 5), 13+ test functions, `go test ./internal/module/...`
+   passes, `docs/internal/architecture-modules.md` exists with Plugin API
+   + Module interface sections.
+
+6. **`docs/internal/architecture-modules.md`** — full design doc
+   (12 sections, ~180 lines): plugin API principles + Module interface
+   + Manager lifecycle + State persistence + SubFeatures pattern +
+   admin panel + detection (3 install modes) + Tailscale-as-Module-#1
+   design + roadmap (B-mod-core → B-mod-tailscale → B-mod-install →
+   B-mod-admin → B-mod-bcheck → 4 sub-features) + B-check coverage +
+   "what we don't do" (deferred).
+
+**Key design decisions** (cross-reference for future module authors):
+
+1. **Tailscale = канал, не контроль** — модули Tailscale НЕ требуют
+   root на хосте; in-container sidecar изолирует; OS-level только когда
+   HA standby критически зависит (нужен до старта docker).
+2. **3 install modes** — `in_container` (Docker sidecar, default для primary),
+   `os_level` (apt + systemd, обязателен для standby), `none` (default,
+   если не нужен).
+3. **Sub-features внутри модуля** — Tailscale module: `cluster` / `telegram`
+   / `derp` / `exit`. Каждый — bool flag в state.json, env override через
+   `SKYGATE_TS_*`.
+4. **Idempotency** — `Start`/`Stop`/`Enable`/`Disable` повторные вызовы
+   = no-op; `Init` повторный = re-init un-initialized модулей.
+5. **Atomic state write** — write to `.tmp` + `os.Rename`. Crash mid-write
+   = old state (readable) or new state (complete), never half-written.
+6. **Health loop** — 30s tick, transitions `Running <-> Error`. В StateError
+   модуль остаётся в этом состоянии до manual recovery
+   (`/admin/modules/{name}/restart`) — НЕ auto-restart (предотвращает
+   crash loop).
+7. **Plugin API = static registration** — `Register()` в `main.go`, не
+   dynamic loading `.so`. Динамические плагины — на будущее.
+8. **Existing `/admin/tailscale` страница сохранена** — это low-level
+   escape hatch (paste key, start/stop tailscaled). Новый `/admin/modules`
+   = module-level control (install / enable / sub-features).
+
+**Live-verify на skygate VM (2026-09-09)**: TBD (B-mod-core сам по себе
+не требует live-verify — это pure Go package; B-mod-tailscale будет
+требовать deploy на VM).
+
+**Reusable lesson** (cross-project, HIGH value):
+**Когда приложение хочет вырасти из "монолит с in-tree фичами" в
+"ядро + плагины" — начни с interface + lifecycle + persistent state,
+а не с конкретного модуля.** Plugin API форсирует модули думать о
+lifecycle (Init/Start/Stop/Health) и crash recovery (atomic state
+write) с первого дня. Конкретный модуль (Tailscale) — это
+доказательство концепции, не ядро. Без plugin API каждый новый
+модуль изобретает свой lifecycle (Tailscale имел `tailscaleStateMu`
+кэш на 5s — без plugin API это решение копи-пастилось бы в каждый
+новый модуль).
