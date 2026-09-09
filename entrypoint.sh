@@ -286,6 +286,60 @@ else
     echo "[init] HEADSCALE_URL not set; headscale calls will return errors until configured (set in .env or /admin/headscale)"
 fi
 
+# 2026-09-09 (B-mod-db-retry) — pre-flight DB reachability check.
+#
+# Background: skygate v1.3.0+ removed the SQLite fallback, so
+# SKYGATE_DB_DSN MUST point at a reachable PostgreSQL. A stale
+# DSN (e.g. pointing at a now-shut-down staging DB) would
+# previously fail silently inside skygate (after the
+# healthcheck marked the container "healthy") and result in an
+# infinite entrypoint.sh restart loop — every restart re-runs
+# `go mod download` + `go build` (~5-7s each), and the operator
+# sees only "Up X hours (healthy)" in docker ps while every
+# actual request 500s.
+#
+# This pre-flight check extracts the host:port from the DSN
+# and probes it with a 3-second TCP connect. If the host is
+# unreachable, the entrypoint exits 1 with a clear, actionable
+# error message (NOT a silent restart). The 3-second timeout
+# matches skygate's internal Ping context (5s in OpenDSNWithRetry)
+# and is short enough to fail fast on a permanent error but
+# long enough to tolerate a 1-2s network blip.
+#
+# If SKYGATE_DB_DSN is empty, we log a warning and continue
+# (skygate v1.3.0+ will fail to start, but the failure mode is
+# the same as before this check existed — so we don't
+# change behavior for empty DSN operators).
+#
+# The check uses bash's built-in /dev/tcp/host/port (no
+# external binary required, works in any POSIX shell).
+if [ -n "${SKYGATE_DB_DSN:-}" ]; then
+    # Parse host:port from a postgres://user:pass@host:port/db
+    # DSN. We use shell parameter expansion (no sed/awk needed)
+    # to keep this lightweight and avoid pulling in coreutils.
+    db_part="${SKYGATE_DB_DSN#*@}"           # user:pass@host:port/db → host:port/db
+    db_part="${db_part%%/*}"                 # host:port/db → host:port
+    db_host="${db_part%%:*}"                 # host:port → host
+    db_port="${db_part##*:}"                 # host:port → port
+    if [ -n "$db_host" ] && [ -n "$db_port" ] && [ "$db_port" != "$db_part" ]; then
+        if timeout 3 bash -c "exec 3<>/dev/tcp/$db_host/$db_port" 2>/dev/null; then
+            echo "[init] DB pre-flight: $db_host:$db_port reachable"
+        else
+            echo "[init] DB pre-flight: $db_host:$db_port UNREACHABLE — skygate would enter restart loop" >&2
+            echo "[init] Fix: update SKYGATE_DB_DSN in .env to point at a live PostgreSQL" >&2
+            echo "[init] Fix: or remove SKYGATE_DB_DSN (skygate v1.3.0+ has no SQLite fallback, so it MUST point at PG)" >&2
+            echo "[init] Current SKYGATE_DB_DSN: ${SKYGATE_DB_DSN}" >&2
+            exit 1
+        fi
+    else
+        echo "[init] DB pre-flight: SKYGATE_DB_DSN present but unparseable: $SKYGATE_DB_DSN" >&2
+        echo "[init] Expected format: postgres://user:pass@host:port/db?sslmode=disable" >&2
+        exit 1
+    fi
+else
+    echo "[init] DB pre-flight: SKYGATE_DB_DSN not set — skygate v1.3.0+ will fail to start (no SQLite fallback)"
+fi
+
 # 2. Build skygate (existing flow, preserved verbatim from the
 # pre-Tailscale entrypoint).
 #

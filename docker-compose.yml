@@ -362,9 +362,20 @@ services:
     # for headscale either, so on a cold reboot skygate
     # logged 25s of "headscale unreachable" errors before
     # headscale came up. The B91 fix adds a 60s non-blocking
-    # pre-flight wait in entrypoint.sh; on a healthy system
-    # headscale answers in 5-10s and skygate starts cleanly.
-    restart: unless-stopped
+    # 2026-09-09 (B-mod-db-retry): change restart policy from
+    # `unless-stopped` (infinite restart loop on any error) to
+    # `on-failure:5` (stop after 5 retries). Combined with the
+    # entrypoint.sh pre-flight DB check (which exits 1 with a
+    # clear "Fix: update SKYGATE_DB_DSN" message when the DB
+    # is unreachable), this prevents the silent restart loop
+    # that masked the 2026-09-09 'skygate Up 23 hours but
+    # actually broken' bug. Operators see the container exit
+    # + a clear log message within ~10s of a permanent error
+    # (instead of an invisible 5-7s restart loop that masks
+    # the root cause). Pre-flight wait in entrypoint.sh; on
+    # a healthy system headscale answers in 5-10s and skygate
+    # starts cleanly.
+    restart: on-failure:5
 
   # 2026-08-12: v1.3.1 (Phase 2 of SQLite removal) — PostgreSQL 15.
   # skygate is now PG-only (commit b1baa4a removed mattn/go-sqlite3 and

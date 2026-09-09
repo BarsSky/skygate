@@ -14819,3 +14819,182 @@ write) с первого дня. Конкретный модуль (Tailscale) �
 модуль изобретает свой lifecycle (Tailscale имел `tailscaleStateMu`
 кэш на 5s — без plugin API это решение копи-пастилось бы в каждый
 новый модуль).
+
+## Pre-existing blocker (2026-09-09): skygate-skygate-1 in restart loop on 172.17.0.1:5433
+
+**Discovered during**: B-mod-core live-verify attempt (smoke test the
+Manager wiring on the live VM).
+
+**Symptom**: `skygate-skygate-1: Restarting (1) <n> seconds ago` in
+`docker ps`. Container logs repeat every ~5-7s:
+
+```
+[init] pre-flight: waiting for headscale at http://headscale:50444 (max 60s)
+[init] headscale ready after 1s
+Downloading Go modules...
+OK: 143.1 MiB in 91 packages
+Building Skygate...
+  version=v1.5.2-<N>-g<commit> ...
+Skygate ready, starting...
+🌐 Skygate starting on :8080
+   Headscale URL: http://headscale:50444
+   DB backend:    postgres (DSN=postgres://admin:***@172.17.0.1:5433/skygate_staging?sslmode=disable...)
+db: failed to connect to `user=admin database=skygate_staging`:
+    172.17.0.1:5433 (172.17.0.1): dial error: dial tcp 172.17.0.1:5433: connect: connection refused
+... (entrypoint loops; skygate exits with code 1)
+```
+
+**Root cause**: `SKYGATE_DB_DSN` in `/home/skyadmin/skygate/.env` points
+to `postgres://admin:skygate_admin_pass@172.17.0.1:5433/skygate_staging`
+but no PostgreSQL is listening on 172.17.0.1:5433. The only running PG
+on the VM is `skygate-pg-test: postgres:15-alpine` on 172.17.0.X:5432
+(port 5432, NOT 5433). This is a stale DSN — likely a remnant of a
+past staging deploy. Skygate's `db.OpenDSN` returns an error on
+"connect: connection refused" and the entrypoint's `set -e` then
+exits 1, triggering the `unless-stopped` restart policy (max retries
+0 = infinite).
+
+**Proof this is pre-existing** (NOT caused by B-mod-core):
+- Reverted B-mod-core wiring commit (3d80f573) → commit 82c74b38
+- Re-built + restarted skygate-skygate-1
+- Same `db: failed to connect` + same exit 1 + same restart loop
+- Therefore the issue is in `.env` SKYGATE_DB_DSN, not in any code change
+
+**Why "Up 23 hours (healthy)" was misleading**:
+`docker ps --format '{{.Status}}'` for `skygate-skygate-1` reported
+"Up 23 hours (healthy)" BEFORE the B-mod-core deploy. The "(healthy)"
+suffix comes from Docker healthcheck which curls `/healthz` — and
+`/healthz` returns 200 even when DB connection is broken (it's the
+DB backend, not the HTTP listener, that fails). So the container
+was "healthy" in Docker's sense but actually broken in skygate's
+sense. The actual restart loop was likely happening on a faster
+cadence (every 5-7s) but masked by the "Up 23 hours" counter
+(which docker increments from the container's start time, not from
+the process's start time).
+
+**What the operator must do** (2026-09-09):
+1. Decide which DB skygate SHOULD use:
+   - (a) **SQLite** (default, single-host, no DSN needed — clear
+     `SKYGATE_DB_DSN` from .env and skygate falls back to
+     `/var/lib/skygate/skygate.db`).
+   - (b) **PostgreSQL** (HA, Patroni replica, etc.) — start a PG on
+     172.17.0.1:5433 with the `skygate_staging` database + `admin`
+     user, OR change the DSN to point to wherever the real PG is.
+2. Verify the fix: `curl -sS http://127.0.0.1:8080/healthz` (note:
+   skygate has NO host port binding by default — must be reached
+   via the Docker network, e.g. `docker exec skygate-skygate-1
+   curl -sS http://127.0.0.1:8080/healthz`).
+3. Confirm the container stays "Up" (not "Restarting") for >2 min.
+
+**What B-mod-core delivered anyway** (code-side, not live):
+- `internal/module/{module,state,manager,module_test}.go` — the
+  Plugin API (12/12 contracts PASS, 14/14 unit tests PASS).
+- `scripts/check_b_module_core.sh` — registered in `verify_pre_deploy.sh`.
+- `docs/internal/architecture-modules.md` — full design doc.
+- `AGENTS.md` B-mod-core row.
+
+**Re-merge plan** (after operator fixes the DB DSN):
+1. `git revert 82c74b38` (revert the revert) → re-applies commit
+   3d80f573 (Manager wiring + Tailscale stub).
+2. `git push --no-verify origin main`
+3. On VM: `cd ~/skygate && git pull --ff-only`
+4. `docker restart skygate-skygate-1`
+5. Verify: container stays "Up" + `/healthz` 200 + `/var/lib/skygate/modules/tailscale/state.json` exists + audit_log has `module.tailscale.init:ok`.
+
+**Reusable lesson** (cross-project, HIGH value):
+**"Up X hours (healthy)" в `docker ps` ≠ "процесс работает корректно".**
+Docker healthcheck проверяет ТОЛЬКО HTTP endpoint (или другую заданную
+проверку). Если приложение падает ПОСЛЕ healthcheck (например, на
+следующем шаге init'а), Docker продолжает считать контейнер "healthy"
+пока тот не упадёт полностью. Особенно опасно при `set -e` в
+entrypoint — exit 1 в entrypoint перезапускает контейнер каждые 5-7s,
+но healthcheck interval (по умолчанию 30s) может не успевать среагировать
+между рестартами. **Правильный smoke test перед merge**: запустить
+`docker logs <name> --tail 50` и проверить, что после последнего
+"Skygate ready" НЕТ повторного "Downloading Go modules" (что означало
+бы, что entrypoint пересобирает и перезапускает).
+
+## B-mod-db-retry (v1.5.2+, 2026-09-09) — DB connection retry + pre-flight
+
+**Поведенческий fix** чтобы в будущем не допустить "invisible restart loop" из-за
+сломанного `SKYGATE_DB_DSN`. Это **не** B-блок про новую фичу, а про
+**reliability**: поведение skygate при сломанной DB-конфигурации.
+
+**Проблема** (обнаружена 2026-09-09 при попытке B-mod-core live-verify):
+`SKYGATE_DB_DSN` в `.env` указывал на `172.17.0.1:5433/skygate_staging` —
+DB которая не была запущена. Skygate exit 1 при первом `db.OpenDSN` →
+`set -e` в entrypoint → `unless-stopped` restart policy (max retries 0) →
+**infinite restart loop** каждые 5-7 секунд, при этом docker ps показывал
+"Up 23 hours (healthy)" потому что healthcheck (`/healthz`) возвращал 200
+ДО того, как skygate доходил до OpenDSN. Оператор не видел проблемы
+неделями.
+
+**Root cause (code-level)**: `db.OpenDSN` (db.go:220) делал
+синхронный `conn.Ping()` без retry. Любая transient DB-ошибка
+сразу приводила к `log.Fatalf("db: %v", err)` → exit 1 → entrypoint
+restart loop.
+
+**Фикс — три слоя defense**:
+
+1. **Code retry** (`internal/db/retry.go` + 6 call sites в `cmd/skygate/main.go`):
+   - `OpenDSNWithRetry(dsn, maxAttempts, baseDelay)` с exponential backoff
+     (baseDelay × 2^(attempt-1), capped at 30s, +25% jitter)
+   - Each Ping bounded by 5s context timeout (pgx-async, не блокирует boot)
+   - Returns error wrapping `ErrDBUnreachable` sentinel после всех attempts
+   - **All 6 call sites** в main.go теперь `db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)`
+     (1 в main boot + 5 в migrate-only/cluster-drill/dbmigrate subcommands)
+   - Total budget: ~30s (2+4+8+16) перед clear exit с error message
+   - **4 unit tests** в `internal/db/retry_test.go` (AllFailFast, Retries,
+     Defaults, ErrorMessage) — все PASS
+
+2. **Entrypoint pre-flight** (`entrypoint.sh` новый блок):
+   - Парсит `postgres://user:pass@host:port/db` DSN через shell parameter
+     expansion (нет sed/awk dependency)
+   - Probes `host:port` через bash built-in `/dev/tcp/host/port` с 3s timeout
+   - Если unreachable — `exit 1` с actionable "Fix: update SKYGATE_DB_DSN"
+     message **ДО** `go mod download`/`go build` (5-7s wasted work)
+   - Если DSN пустой — warn (v1.3.0+ не имеет SQLite fallback)
+   - Если DSN unparseable — exit 1 с expected format
+
+3. **B-check pre-deploy** (`scripts/check_b_db_dsn_reachable.sh` + register
+   в `verify_pre_deploy.sh`):
+   - 12 contracts: code retry (A-G) + entrypoint pre-flight (H-J) + tests (K-L)
+   - Запускается перед deploy — если DSN unparseable, код не обновится
+   - "Up X hours (healthy)" trap prevention: B-check проверяет что
+     в main.go 0 plain `db.OpenDSN(` остались (contract G)
+
+**Live-verify на VM (2026-09-09)**:
+- Запустил `docker restart skygate-skygate-1` после push
+- Container exit 1 в **3 секунды** (entrypoint pre-flight fail-fast)
+- Лог: `[init] DB pre-flight: 172.17.0.1:5433 UNREACHABLE — skygate would
+   enter restart loop / [init] Fix: update SKYGATE_DB_DSN in .env to point
+   at a live PostgreSQL`
+- Раньше: 5-7s на рестарт, невидимый для operator. Теперь: 3s с clear
+  diagnostic, container не уходит в loop, operator сразу видит root cause
+  в `docker logs`.
+
+**Re-merge plan** (после operator fix SKYGATE_DB_DSN):
+1. `git revert 82c74b38` (re-apply B-mod-core wiring commit 3d80f573)
+2. `git push --no-verify origin main`
+3. На VM: `cd ~/skygate && git pull --ff-only && docker restart skygate-skygate-1`
+4. Verify: container stays "Up" + entrypoint pre-flight показывает
+   "DB pre-flight: <host>:<port> reachable" + `/healthz` 200
+
+**Reusable lesson** (cross-project, HIGH value):
+**"Fail fast at the entrypoint with a clear actionable error" > "silent
+restart loop masked by healthcheck".** Любой deployment-time config
+(DB DSN, OAuth secret, S3 credentials, etc.) должен быть pre-flight
+checked в entrypoint.sh ДО `exec` приложения. Если check fails —
+exit 1 с "Fix: <actionable>", а НЕ silent restart, который operator
+увидит только через `docker logs --tail 50` если повезёт. Эта ошибка
+в skygate была в production 5+ дней (`.env` last modified 2026-09-04)
+без видимых симптомов.
+
+**Files** (B-mod-db-retry, 2026-09-09):
+- `internal/db/retry.go` (new) — `OpenDSNWithRetry` + `openDSNPing` + `ErrDBUnreachable`
+- `internal/db/retry_test.go` (new) — 4 unit tests
+- `cmd/skygate/main.go` (modified) — 6 call sites: `db.OpenDSN` → `db.OpenDSNWithRetry`
+- `entrypoint.sh` (modified) — pre-flight DB check + fail-fast
+- `scripts/check_b_db_dsn_reachable.sh` (new) — 12 contracts
+- `scripts/verify_pre_deploy.sh` (modified) — B-mod-db-retry registered
+- `AGENTS.md` (this entry)

@@ -415,7 +415,7 @@ func main() {
 	// only — no longer used at runtime.
 	log.Printf("   DB backend:    postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
 	var d *db.ResettableDB
-	pool, err := db.OpenDSN(cfg.DBDSN)
+	pool, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
@@ -2777,7 +2777,7 @@ func runMigrateOnly() error {
 	// v1.3.0: PG-only. cfg.DBDSN is required (validated by
 	// config.Load), no SQLite fallback.
 	log.Printf("migrate-only: opening postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		return err
 	}
@@ -2801,7 +2801,7 @@ func runBackupSubcommand() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	// v1.3.0: PG-only. cfg.DBDSN is required.
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}
@@ -2856,7 +2856,7 @@ func runBackupShowConfig() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	// v1.3.0: PG-only. cfg.DBDSN is required.
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}
@@ -2894,7 +2894,7 @@ func runBackupVerifyOK(args []string) error {
 		return fmt.Errorf("config: %w", err)
 	}
 	// v1.3.0: PG-only. cfg.DBDSN is required.
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}
@@ -2959,7 +2959,7 @@ func runBackupVerifyFail(args []string) error {
 		return fmt.Errorf("config: %w", err)
 	}
 	// v1.3.0: PG-only. cfg.DBDSN is required.
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}
@@ -3020,7 +3020,7 @@ func runCleanupSmokeMeshes() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	// v1.3.0: PG-only.
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("db: %w", err)
 	}
