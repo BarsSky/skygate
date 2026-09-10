@@ -262,3 +262,43 @@ type SubFeature struct {
 	// Display-only.
 	Impact string
 }
+
+// Installer is the optional Module interface for the
+// install path. Modules that have an install step
+// (e.g. Tailscale — apt install + systemctl + tailscale up)
+// implement this so the /admin/modules UI can show an
+// "Install" button that runs the install.
+//
+// Modules that don't have an install step (e.g. modules
+// that assume the daemon is already running on the host
+// — B209.1 attach-mode Tailscale) simply don't implement
+// Installer. The /admin/modules UI hides the Install
+// button in that case.
+//
+// Install is a separate method from the Module interface
+// (B-mod-admin, 2026-09-10) because install is *out-of-band*
+// from the Manager's lifecycle — the Manager doesn't
+// auto-install on first Start; the operator explicitly
+// chooses the install mode (os_level / in_container /
+// attach) on the /admin/modules/{name}/install form.
+type Installer interface {
+	// Install runs the install path for the chosen mode
+	// (configured via SKYGATE_<NAME>_INSTALL_MODE env var
+	// or the install form's mode field). Idempotent —
+	// second call skips the heavy steps if the daemon is
+	// already present.
+	//
+	// Returns nil on success. On error, returns a wrapped
+	// error describing the failing step (apt install failed,
+	// docker run failed, tailscale up non-zero, etc.).
+	Install(ctx context.Context) error
+}
+
+// compile-time guard: Module + Installer must both be
+// satisfied for modules that ship with an install path.
+// tailscale.Module satisfies both — see
+// internal/module/tailscale/tailscale.go.
+var (
+	_ Module    = (Module)(nil)
+	_ Installer = (Installer)(nil)
+)

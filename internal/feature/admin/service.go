@@ -24,6 +24,7 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
+	"skygate/internal/module"
 	"skygate/internal/monitoring"
 	"skygate/internal/sidecar"
 	"skygate/internal/telegram"
@@ -299,4 +300,15 @@ type Service struct {
 	PatroniURL string
 
 	telegramProbeCache serviceProbeCache
+
+	// v1.5.2+ / B-mod-admin (2026-09-10) — module.Manager
+	// for the /admin/modules list + /admin/modules/{name}
+	// detail pages. Wired from cmd/skygate/main.go at boot
+	// (the same Manager the boot-time lifecycle uses). Nil
+	// = the /admin/modules pages render a "Manager not
+	// registered" flash and refuse POST actions — the
+	// pre-B-mod-core state where the wiring is reverted
+	// (commit 82c74b38). Set this field as soon as the
+	// B-mod-core Manager is wired back in main.go.
+	Modules *module.Manager
 }

@@ -1793,6 +1793,15 @@ func main() {
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(adminSvc.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegram)))
 	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegramPost)))
+	// v1.5.2+ / B-mod-admin (2026-09-10): /admin/modules
+	// list + /admin/modules/{name} detail + POST handlers
+	// for install/start/stop/enable/disable/sub/{name}.
+	// CSRF-protected; cookie skygate_modules_csrf is minted
+	// on every GET (see AdminModulesList / AdminModuleDetail).
+	mux.Handle("GET /admin/modules", authMW(http.HandlerFunc(adminSvc.AdminModulesList)))
+	mux.Handle("GET /admin/modules/{name}", authMW(http.HandlerFunc(adminSvc.AdminModuleDetail)))
+	mux.Handle("POST /admin/modules/{name}/{action}", authMW(http.HandlerFunc(adminSvc.AdminModulePost)))
+	mux.Handle("GET /admin/modules/csrf", authMW(http.HandlerFunc(adminSvc.AdminModulesListCSRF)))
 	// v0.33.1.9: Tailscale web-UI management (status + auth key
 	// paste + start/stop). Pairs with the /admin/telegram
 	// egress-relay card (v0.33.1.8) — the user pastes a

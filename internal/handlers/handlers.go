@@ -193,6 +193,12 @@ type App struct {
 type adminSvcHandle interface {
 	AdminTelegram(w http.ResponseWriter, r *http.Request)
 	AdminTelegramPost(w http.ResponseWriter, r *http.Request)
+	// v1.5.2+ / B-mod-admin (2026-09-10): /admin/modules
+	// + /admin/modules/{name} handlers.
+	AdminModulesList(w http.ResponseWriter, r *http.Request)
+	AdminModuleDetail(w http.ResponseWriter, r *http.Request)
+	AdminModulePost(w http.ResponseWriter, r *http.Request)
+	AdminModulesListCSRF(w http.ResponseWriter, r *http.Request)
 }
 
 // exitRulesRunner is the surface the legacy *App needs from
@@ -549,6 +555,44 @@ func (a *App) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 func (a *App) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 	if a.adminSvc != nil {
 		a.adminSvc.AdminTelegramPost(w, r)
+		return
+	}
+	http.Error(w, "admin service not wired", http.StatusInternalServerError)
+}
+
+// AdminModulesList renders /admin/modules (B-mod-admin).
+func (a *App) AdminModulesList(w http.ResponseWriter, r *http.Request) {
+	if a.adminSvc != nil {
+		a.adminSvc.AdminModulesList(w, r)
+		return
+	}
+	http.Error(w, "admin service not wired", http.StatusInternalServerError)
+}
+
+// AdminModuleDetail renders /admin/modules/{name} (B-mod-admin).
+func (a *App) AdminModuleDetail(w http.ResponseWriter, r *http.Request) {
+	if a.adminSvc != nil {
+		a.adminSvc.AdminModuleDetail(w, r)
+		return
+	}
+	http.Error(w, "admin service not wired", http.StatusInternalServerError)
+}
+
+// AdminModulePost dispatches /admin/modules/{name}/{action} POSTs
+// (B-mod-admin).
+func (a *App) AdminModulePost(w http.ResponseWriter, r *http.Request) {
+	if a.adminSvc != nil {
+		a.adminSvc.AdminModulePost(w, r)
+		return
+	}
+	http.Error(w, "admin service not wired", http.StatusInternalServerError)
+}
+
+// AdminModulesListCSRF refreshes the CSRF cookie for the
+// /admin/modules forms (B-mod-admin).
+func (a *App) AdminModulesListCSRF(w http.ResponseWriter, r *http.Request) {
+	if a.adminSvc != nil {
+		a.adminSvc.AdminModulesListCSRF(w, r)
 		return
 	}
 	http.Error(w, "admin service not wired", http.StatusInternalServerError)

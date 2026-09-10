@@ -41,6 +41,7 @@ var perFeatureRU = []map[string]string{
 	ruHelp,
 	ruBot,
 	ruUpdate,
+	ruModules,
 }
 
 var perFeatureEN = []map[string]string{
@@ -57,6 +58,7 @@ var perFeatureEN = []map[string]string{
 	enHelp,
 	enBot,
 	enUpdate,
+	enModules,
 }
 
 // mergeMaps concatenates N maps into a single map.

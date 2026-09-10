@@ -1,0 +1,84 @@
+{{define "admin/modules.html"}}
+<!doctype html>
+<html lang="{{.I18nLang}}">
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}} — Skygate</title>
+  <link rel="stylesheet" href="/static/css/skygate.css">
+  <style>
+    .modules-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    .modules-table th, .modules-table td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid #ddd; }
+    .modules-table th { background: #f5f5f5; font-weight: 600; }
+    .modules-state { font-family: monospace; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85em; }
+    .modules-state.running     { background: #d4edda; color: #155724; }
+    .modules-state.installed   { background: #d1ecf1; color: #0c5460; }
+    .modules-state.stopped     { background: #f8d7da; color: #721c24; }
+    .modules-state.not_installed { background: #e2e3e5; color: #383d41; }
+    .modules-state.starting    { background: #fff3cd; color: #856404; }
+    .modules-state.stopping    { background: #fff3cd; color: #856404; }
+    .modules-state.error       { background: #f5c6cb; color: #721c24; }
+    .modules-actions { white-space: nowrap; }
+    .modules-actions form { display: inline-block; margin: 0 0.15rem 0 0; }
+    .modules-actions button { padding: 0.25rem 0.6rem; font-size: 0.85rem; cursor: pointer; border: 1px solid #888; border-radius: 4px; background: #fff; }
+    .modules-actions button:hover { background: #f0f0f0; }
+    .modules-not-wired { padding: 1rem; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; color: #856404; margin: 1rem 0; }
+    .flash-ok { padding: 0.6rem; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; color: #155724; margin: 0.5rem 0; }
+    .flash-err { padding: 0.6rem; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+  {{template "layout_sidebar" .}}
+  <main class="content">
+    <h1>{{.Title}}</h1>
+    {{if .Subtitle}}<p class="subtitle">{{.Subtitle}}</p>{{end}}
+
+    {{if .FlashOK}}<div class="flash-ok">{{.FlashOK}}</div>{{end}}
+    {{if .FlashError}}<div class="flash-err">{{.FlashError}}</div>{{end}}
+
+    {{if .NotWired}}
+      <div class="modules-not-wired">
+        <strong>Manager not wired.</strong> {{.NotWiredMsg}}
+      </div>
+    {{else}}
+      <table class="modules-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>State</th>
+            <th>Install mode</th>
+            <th>Installed at</th>
+            <th>Started at</th>
+            <th>Sub-features</th>
+            <th>Actions</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Modules}}
+            <tr>
+              <td><code>{{.Name}}</code></td>
+              <td><span class="modules-state {{.State}}">{{.State}}</span></td>
+              <td>{{.InstallMode}}</td>
+              <td>{{if .InstalledAt}}{{.InstalledAt}}{{else}}—{{end}}</td>
+              <td>{{if .StartedAt}}{{.StartedAt}}{{else}}—{{end}}</td>
+              <td>{{if .HasSubFeat}}yes{{else}}no{{end}}</td>
+              <td class="modules-actions">
+                {{range .Actions}}
+                  <form method="post" action="{{.URL}}">
+                    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                    <button type="submit">{{.LabelText}}</button>
+                  </form>
+                {{end}}
+              </td>
+              <td><a href="/admin/modules/{{.Name}}">→</a></td>
+            </tr>
+          {{else}}
+            <tr><td colspan="8"><em>No modules registered.</em></td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{end}}
+  </main>
+</body>
+</html>
+{{end}}
