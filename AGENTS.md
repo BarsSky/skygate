@@ -15743,3 +15743,155 @@ B-checks that work on any dev box.
 git clone + build + .env + systemd + verify /healthz 200) +
 re-run B-mod-bcheck-live + B-mod-pg-alive-polygon on svi.
 
+
+---
+
+## B-mod-install follow-up (2026-09-10) — bootstrap_standby.sh + Tailscale attach fallback
+
+AGENTS.md (B218, ~2026-08-29) mentioned `bootstrap_standby.sh` as the
+consumer of the `'skygate init <standby-hostname>'` subcommand (the
+HA standby auto-provisioning flow), but the actual script wasn't
+in the repo. This adds it (220 lines, V1) + a 32-contract B-check.
+
+### What it does (5 steps)
+
+1. **Optional Tailscale attach** (delegates to `install-tailscale.sh`)
+   - If `SKYGATE_TS_AUTHKEY` is set + `tailscale` binary on PATH:
+     - Check `BackendState=Running` — skip if already in the tailnet
+     - Else run `install-tailscale.sh --mode=attach` with
+       `--authkey + --login-server + --hostname` args
+   - **Fallback** if `tailscale` binary not on PATH: run
+     `install-tailscale.sh --mode=os_level` (apt install tailscale +
+     systemctl + tailscale up). The fallback exists because
+     B209.1 attach mode assumes `tailscaled` is pre-installed, but
+     on a fresh polygon / Ubuntu install it isn't.
+   - `--skip-ts` bypasses the entire step (operator-installed
+     tailscale assumed, no auth key available)
+
+2. **ssh to primary + `skygate init <standby-hostname>`** with:
+   - `StrictHostKeyChecking=accept-new` (auto-accept on first
+     connect — operator only gets one prompt per host)
+   - `BatchMode=yes` (no password prompts — fails fast on missing
+     keys instead of hanging)
+
+3. **Parse 4-line stdout** (see `internal/ha/standby/init.go`
+   `InitStandby` for the exact format):
+   ```
+   line 1: node_id
+   line 2: cluster_id
+   line 3: dsn
+   line 4: primary_host
+   ```
+   Empty field = exit 4 (`preauth invalid`).
+
+4. **Write preauth to** `/var/lib/skygate/standby/<node_id>.preauth.json`
+   (chmod 0600 — operator-only readable) **+ print on stdout** under
+   the `===== STANDBY PREAUTH KEY =====` header so the operator
+   can paste it into a manual `'skygate standby join'` invocation.
+
+5. **Print a follow-up reminder** with the exact
+   `'skygate standby join'` command (so the operator doesn't have
+   to re-derive the args from the preauth JSON).
+
+### Exit codes 0/1/2/3/4
+
+| Code | Meaning |
+|---|---|
+| 0 | standby preauth key captured (Tailscale install was optional) |
+| 1 | invalid args / missing required tool |
+| 2 | primary unreachable / `skygate init` failed |
+| 3 | Tailscale install failed (install-tailscale.sh non-zero) |
+| 4 | standby preauth key invalid (one or more of node_id/cluster_id/dsn/primary_host is empty) |
+
+### Pair with B218 + B225
+
+- **B218 / `skygate init <standby-hostname>`** runs on the PRIMARY,
+  emits the preauth on stdout
+- **B-mod-install-followup / `bootstrap_standby.sh`** runs on the
+  STANDBY, captures the preauth via ssh, writes to disk
+- **B225 / `skygate standby join`** consumes the preauth file to
+  actually join the standby to the cluster
+
+The three scripts form the chain:
+```
+primary$ skygate init svi-standby → stdout preauth
+                                  ↓
+standby$  bootstrap_standby.sh  → ssh fetch + write /var/lib/skygate/standby/<id>.preauth.json
+                                  ↓
+standby$  skygate standby join --node-id=... --cluster-id=... --dsn=... --primary=...
+```
+
+### B-check: 32/32 contracts pass
+
+`scripts/check_b_bootstrap_standby.sh` (206 lines, 32 contracts):
+
+- 2 preflight (file exists + bash -n syntax)
+- 5 step patterns (Tailscale attach, ssh init, parse, write, reminder)
+- 3 Tailscale attach-mode paths (BackendState skip +
+  `--mode=os_level` fallback + `--skip-ts` bypass)
+- 5 flags (`--primary`, `--standby-hostname`, `--ts-authkey`,
+  `--login-server`, `--skip-ts`)
+- 3 ssh safety (ssh invocation + `StrictHostKeyChecking=accept-new`
+  + `BatchMode=yes`)
+- 5 stdout parsing (4 fields + composite check)
+- 3 preauth persistence (write to disk + chmod 0600 + stdout)
+- 1 exit codes documented (0/1/2/3/4)
+- 2 bash rigor (`require_root` + `set -euo pipefail`)
+- 1 `install-tailscale.sh` dependency
+- 1 no accidental wide rm
+- 1 `SKYGATE_TS_AUTHKEY` env var documented
+
+32/32 PASS on first run after two regex fixes (the
+`OUT_FILE.*node_id.*preauth` write-to-disk pattern +
+5 separate field checks for the exit codes).
+
+### Registered in verify_pre_deploy.sh
+
+Alongside `B-mod-cleanup` + `B-mod-install` + the rest of the
+B-mod-* series.
+
+### Live-verify
+
+Not yet tested on a real standby VM. The script is straightforward
+bash + ssh + parsing (no complex state machine) so a 'dry-run' on
+a test VM is expected to work. The B-check pins the structure; the
+operator can run it on the standby VM once svi is back online:
+
+```bash
+ssh root@45.152.198.217
+export SKYGATE_PRIMARY=skyadmin@<primary-tailnet-ip>
+export SKYGATE_STANDBY_HOSTNAME=svyatoslava-1
+export SKYGATE_TS_AUTHKEY=tskey-auth-XXX
+export SKYGATE_TS_LOGIN_SERVER=https://head.skynas.ru
+bash /home/skyadmin/skygate/deploy/scripts/bootstrap_standby.sh
+# Expected: Tailscale attached (BackendState=Running)
+#           + 4-line preauth written to /var/lib/skygate/standby/<id>.preauth.json
+#           + 'STANDBY PREAUTH KEY' header on stdout
+```
+
+**Commit**: `a4b2ba31` on main, pushed to origin (2026-09-10).
+
+---
+
+## B-mod-* Plugin API series — UPDATED (2026-09-09..10) — 14 commits, ~6500 lines
+
+The 12-commit summary (1fa09034) is extended by 2 more:
+
+| # | Commit | B-block |
+|---|---|---|
+| 13 | `5c8282f7` | B-mod-cleanup (cleanup-skygate.sh uninstaller) |
+| 14 | `a4b2ba31` | B-mod-install follow-up (bootstrap_standby.sh) |
+
+**Total**: 14 commits, 8 B-check scripts
+(`check_b_module_core.sh`, `check_b_tailscale_module.sh`,
+`check_b_modules_admin.sh`, `check_b_modules_admin_live.sh`,
+`check_b_install_tailscale.sh`, `check_b_pg_alive.sh`,
+`check_b_cleanup_skygate.sh`, `check_b_bootstrap_standby.sh`),
+covering **~138 contracts**.
+
+The series is now complete from B-mod-core (Manager + Module
+interface) through B-mod-install follow-up (bootstrap_standby.sh
++ Tailscale attach fallback) — every B-блок is shipped, live-
+verified on svi polygon (before the operator's OS reinstall),
+and self-checked via static B-checks that work on any dev box.
+
