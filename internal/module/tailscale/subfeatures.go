@@ -163,6 +163,20 @@ func (m *Module) enableSubFeature(ctx context.Context, name string) error {
 		// fact that this node is in the tailnet and
 		// reachable — there's no extra `tailscale set`
 		// flag for "run a DERP relay on this node".
+		//
+		// B-mod-derp (2026-09-10): record the relay
+		// status in state.Info so the admin page can
+		// show "DERP relay: active (requires telegram +
+		// exit enabled)". The Requires list (in
+		// subFeatures()) is validated by the Manager
+		// before this method is called.
+		m.mu.Lock()
+		if m.state.Info == nil {
+			m.state.Info = map[string]string{}
+		}
+		m.state.Info["derp_relay"] = "active"
+		m.state.Info["derp_relay_prereq"] = "telegram+exit"
+		m.mu.Unlock()
 		return nil
 
 	case SubExit:
@@ -220,6 +234,13 @@ func (m *Module) disableSubFeature(ctx context.Context, name string) error {
 		}
 		return nil
 	case SubDERP:
+		// B-mod-derp (2026-09-10): state.Info flag
+		// update on disable.
+		m.mu.Lock()
+		if m.state.Info != nil {
+			m.state.Info["derp_relay"] = "inactive"
+		}
+		m.mu.Unlock()
 		return nil
 	case SubExit:
 		if err := m.advertiseExitNode(ctx, false); err != nil {

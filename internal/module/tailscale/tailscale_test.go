@@ -515,6 +515,50 @@ func TestEnableSubFeature_Cluster(t *testing.T) {
 	}
 }
 
+// TestEnableSubFeature_Derp (B-mod-derp, 2026-09-10)
+// verifies the DERP relay sub-feature records state.Info
+// without any host-side effect. The DERP relay is just
+// "this node is in the tailnet + reachable" — there's
+// no extra 'tailscale set' flag to run. The Requires
+// list (telegram + exit) is validated by the Manager
+// before this method is called, so we don't re-check
+// it here.
+func TestEnableSubFeature_Derp(t *testing.T) {
+	m, _, _ := newTestModule(t, InstallModeOSLevel)
+	// Pre-mark telegram + exit as enabled (the Manager
+	// would do this in real life; the test bypasses the
+	// Requires check by calling enableSubFeature
+	// directly, but the state flag logic is what we
+	// test here).
+	m.state.SubFeatures[SubTelegram] = true
+	m.state.SubFeatures[SubExit] = true
+
+	// Enable: state.Info[derp_relay] = active
+	if err := m.EnableSubFeature(context.Background(), SubDERP); err != nil {
+		t.Fatalf("EnableSubFeature(derp): %v", err)
+	}
+	if m.state.SubFeatures[SubDERP] != true {
+		t.Error("state.SubFeatures[derp] = false, want true after enable")
+	}
+	if got := m.state.Info["derp_relay"]; got != "active" {
+		t.Errorf("state.Info[derp_relay] = %q, want %q", got, "active")
+	}
+	if got := m.state.Info["derp_relay_prereq"]; got != "telegram+exit" {
+		t.Errorf("state.Info[derp_relay_prereq] = %q, want %q", got, "telegram+exit")
+	}
+
+	// Disable: state.Info[derp_relay] = inactive
+	if err := m.DisableSubFeature(context.Background(), SubDERP); err != nil {
+		t.Fatalf("DisableSubFeature(derp): %v", err)
+	}
+	if m.state.SubFeatures[SubDERP] != false {
+		t.Error("state.SubFeatures[derp] = true, want false after disable")
+	}
+	if got := m.state.Info["derp_relay"]; got != "inactive" {
+		t.Errorf("state.Info[derp_relay] = %q, want %q", got, "inactive")
+	}
+}
+
 // TestDisableSubFeature_Telegram verifies disableTelegram
 // removes the 91.108.56.0/22 route.
 func TestDisableSubFeature_Telegram(t *testing.T) {

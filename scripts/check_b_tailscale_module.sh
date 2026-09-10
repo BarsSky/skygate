@@ -233,6 +233,34 @@ else
     fail "B-mod-telegram: 91.108.56.0/22 in 2+ places" "found ${CIDR_COUNT}"
 fi
 
+# --- B-mod-derp (2026-09-10): derp sub-feature records state.Info ---
+if grep -q 'derp_relay' "${PKG_DIR}/subfeatures.go"; then
+    pass "B-mod-derp: derp sub-feature references state.Info[derp_relay]"
+else
+    fail "B-mod-derp: derp_relay in subfeatures.go" "missing"
+fi
+if grep -B 1 -A 4 'derp_relay.*active' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..derp_relay..\].=.active'; then
+    pass "B-mod-derp: enable sets derp_relay = active"
+else
+    fail "B-mod-derp: enable sets derp_relay = active" "missing"
+fi
+if grep -B 1 -A 3 'derp_relay.*inactive' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..derp_relay..\].=.inactive'; then
+    pass "B-mod-derp: disable sets derp_relay = inactive"
+else
+    fail "B-mod-derp: disable sets derp_relay = inactive" "missing"
+fi
+# Requires chain (DERP requires telegram + exit)
+if grep -A 20 'SubDERP' "${PKG_DIR}/subfeatures.go" | grep -q 'Requires: \[\]string{SubTelegram, SubExit}'; then
+    pass "B-mod-derp: Requires chain [telegram exit] preserved"
+else
+    fail "B-mod-derp: Requires [telegram exit]" "missing"
+fi
+if grep -q 'TestEnableSubFeature_Derp' "${PKG_DIR}/tailscale_test.go"; then
+    pass "B-mod-derp: TestEnableSubFeature_Derp unit test present"
+else
+    fail "B-mod-derp: TestEnableSubFeature_Derp unit test" "missing"
+fi
+
 # --- contract 12: Manager.LoadState / Manager.SaveState public wrappers ---
 # B-mod-tailscale requires these so the module package can read/write
 # state.json from outside the module package.
