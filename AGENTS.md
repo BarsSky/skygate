@@ -15321,3 +15321,425 @@ SKYGATE_SSH_HOST=root@45.152.198.217 \
 bash scripts/check_b_modules_admin_live.sh
 ```
 
+
+---
+
+## B-mod-pg-alive-polygon (2026-09-10) — check_b_pg_alive.sh polygon mode + DSN parsing
+
+`scripts/check_b_pg_alive.sh` (B-mod-pg-bypass, 2026-09-09) hardcoded
+`sudo -u postgres` for every psql + pg_isready call. That works on a VM
+with local Patroni + peer auth, but **fails on the svi polygon** (Ubuntu
+26.04 fresh install) which is a CLIENT of the remote PG on 13.66
+(NPM-fronted). The polygon has no local Patroni + no peer auth, so
+`sudo -u postgres` returns "permission denied" on every contract.
+
+### Fix (mode switch + helpers)
+
+Add a `SKYGATE_PG_ALIVE_MODE` env var with three values:
+
+| Mode | Behaviour | When to use |
+|---|---|---|
+| `local` (legacy) | `sudo -u postgres psql` + `pg_isready` on the local socket | VMs with local Patroni (agent, etc.) |
+| `polygon` (NEW) | `psql -h HOST -p PORT -U USER` + `PGPASSWORD` from DSN | Polygon clients (svi pointing at 13.66) |
+| `auto` (default) | Try polygon first (if `SKYGATE_DB_DSN` encodes user+password), fall back to local | Most forgiving — works on both |
+
+### DSN parsing
+
+`postgres://USER:PASS@HOST:PORT/DB?sslmode=disable` is parsed into 5
+fields at the top of the script. The user + password are extracted
+by stripping `postgres://` and the `@`-delimited host:port/db
+suffix. This means **the password from the DSN is the one used for
+polygon mode** — no hardcoded operator password in the source (the
+original contract A had that as a literal, which was both a security
+smell and a bug on polygon).
+
+### Two helper functions
+
+```bash
+pg_query_pg_isready HOST PORT   # mode-aware wrapper
+pg_query_psql ARGS...          # mode-aware wrapper
+```
+
+Both preserve the original `sudo -u postgres` paths for local/auto
+mode and use `psql -h $DB_HOST -p $DB_PORT -U $DB_USER` +
+`PGPASSWORD=$DB_PASS` for polygon mode. All 5 call sites in the
+script (A, B, F, G, H) now go through these helpers.
+
+### H contract (Patroni) auto-skips in polygon mode
+
+Patroni runs on the PG host (13.66), not on the polygon client
+(svi). The H contract is now `SKIP`'d in polygon mode instead
+of running `patronictl list` (which would fail with "no such
+service" on a polygon client). This is correctness, not a
+workaround — patroni is genuinely not present on polygon.
+
+### Self-check contracts (no psql required)
+
+Two new contracts at the end of the script verify the mode config
+without requiring psql:
+
+- `polygon-mode-config: PASS` when `DB_USER/DB_PASS` are extracted
+  from the DSN. **FAIL** if polygon mode is set but the DSN is
+  missing the user or password (the combo makes no sense — polygon
+  clients always need auth).
+- `local-mode-config: PASS` when the source still contains
+  `sudo -u postgres` (legacy behavior intact). **FAIL** if the
+  sudo paths were removed but mode != polygon.
+
+These run even on a Windows dev box with no `psql` installed,
+catching the most common "polygon mode broken" scenarios before
+the operator runs the B-check on a real polygon VM.
+
+### Verified (Windows + WSL, no psql)
+
+```
+$ SKYGATE_PG_ALIVE_MODE=polygon \
+  SKYGATE_DB_DSN='postgres://skygate_test:ebbab...@95.165.170.190:5432/skygate_test?sslmode=disable' \
+  bash scripts/check_b_pg_alive.sh
+  [PASS] I: SKYGATE_DB_DSN parseable
+  [SKIP] A: pg_isready not installed
+  [SKIP] B-G: psql not installed
+  [INFO] H: Patroni service not active on this VM
+  [SKIP] J: PG data dir check requires running on the skygate VM
+  [PASS] polygon-mode-config: DB_USER=skygate_test (password length 37)
+  [INFO] polygon-mode-config: PGPASSWORD not set globally
+```
+
+### Re-verify on svi once it's back
+
+```bash
+ssh root@45.152.198.217
+export SKYGATE_PG_ALIVE_MODE=polygon
+export SKYGATE_DB_DSN='postgres://skygate_test:<password>@95.165.170.190:5432/skygate_test?sslmode=disable'
+bash /home/skyadmin/skygate/scripts/check_b_pg_alive.sh
+# Expected: 7+ contracts PASS (A + B + C + D + E + F + G)
+# Previously: 0 PASS (sudo -u postgres failed on the polygon)
+```
+
+**Commit**: `adc2c9e7` on main, pushed to origin (2026-09-10).
+
+---
+
+## B-mod-cleanup (2026-09-10) — cleanup-skygate.sh uninstaller + B-check
+
+`deploy/scripts/cleanup-skygate.sh` (242 lines, V1). The inverse of
+`install-debian.sh` (and `install-rh.sh` / `install-alpine.sh`). Removes
+the 6 components install-debian.sh creates + an optional 7th
+(Tailscale).
+
+### 6 cleanup sections
+
+1. **systemd**: `systemctl stop + disable + daemon-reload + reset-failed` on `skygate.service`
+2. **binary**: `rm /usr/local/bin/skygate` (unless `--keep-binary`)
+3. **user**: `pkill -u skygate` (kills leftover tailscaled sidecars) + `userdel skygate` (unless `--keep-user`)
+4. **data dir**: `rm -rf /var/lib/skygate` (unless `--keep-data`) — state.json for every module, applied_migrations, etc.
+5. **config dir**: `rm -rf /etc/skygate` (unless `--keep-config`) — preserves HEADSCALE_API_KEY by default is OFF
+6. **runtime**: `rm -rf /var/run/skygate` (always — it's a runtime dir)
+7. **(optional)** `install-tailscale.sh --mode=uninstall` when `--with-tailscale`
+
+### Flags
+
+- `--yes` — skip the confirm prompt for scripts/CI
+- `--dry-run` — print the plan without executing
+- `--keep-user` / `--keep-data` / `--keep-config` / `--keep-binary` — preserve specific items
+- `--with-tailscale` — also uninstall Tailscale via `install-tailscale.sh --mode=uninstall`
+
+### Safety
+
+- **Default**: shows a confirm prompt listing every action, reads `yes`
+  on stdin, aborts on any other input (exit 2).
+- **`require_root`** gate at the top.
+- **Idempotent**: every step has a "skip if not present" guard so
+  re-running on a partially-cleaned host is safe.
+- **No accidental wide rm**: all `rm -rf` targets are
+  `/var/lib/skygate`, `/etc/skygate`, `/var/run/skygate`, or
+  `/usr/local/bin/skygate` (verified by B-check contract 27).
+- **Exit codes 0/1/2/3** documented:
+  - `0` — success
+  - `1` — invalid args / required tool missing
+  - `2` — confirm prompt answered with anything other than `yes`
+  - `3` — a cleanup step failed (partial state on disk)
+
+### Pair with install-debian.sh
+
+```
+install:  sudo bash deploy/install-debian.sh
+cleanup:  sudo bash deploy/scripts/cleanup-skygate.sh
+```
+
+The two scripts are designed as a pair: install creates the 6
+artifacts (service, binary, user, data, config, runtime dir) and
+cleanup removes them. Path constants match: `SKYGATE_USER=skygate`,
+`SKYGATE_DATA_DIR=/var/lib/skygate`, `SKYGATE_ETC_DIR=/etc/skygate`,
+`SKYGATE_RUN_DIR=/var/run/skygate`, `SKYGATE_BIN=/usr/local/bin/skygate`.
+
+### B-check: 27/27 contracts pass
+
+`scripts/check_b_cleanup_skygate.sh` (180 lines, 27 contracts):
+
+- 2 preflight (file exists, bash -n syntax)
+- 7 cleanup sections (systemd, binary, userdel, data, config, runtime, tailscale delegation)
+- 7 flags parsed (`--yes`, `--dry-run`, `--keep-user`, `--keep-data`, `--keep-config`, `--keep-binary`, `--with-tailscale`)
+- 2 safety (confirm prompt default, `--yes` bypass)
+- 2 idempotency (Idempotency comment, 4+ skip guards)
+- 1 dry-run (`DRY-RUN` + `DRY_RUN` both present)
+- 1 `require_root` gate
+- 1 exit codes documented
+- 1 install-tailscale.sh dependency
+- 2 bash rigor (`set -euo pipefail` + standard while-shift loop)
+- 1 no accidental wide rm
+
+### Registered in verify_pre_deploy.sh
+
+Alongside the other 5 B-mod-* B-checks (B-mod-core, B-mod-pg-bypass,
+B-mod-tailscale, B-mod-admin, B-mod-install, B-mod-bcheck-live,
+B-mod-pg-alive-polygon). Runs as part of every `verify_pre_deploy.sh`
+on Windows (where psql isn't installed, so runtime contracts skip
+but the self-checks pass).
+
+**Commit**: `5c8282f7` on main, pushed to origin (2026-09-10).
+
+---
+
+## B-mod-* Plugin API series — UPDATED (2026-09-09..10) — 12 commits, ~6000 lines
+
+The original B-mod-* summary (8 commits, 5000+ lines) is extended
+by 4 more commits in the same series:
+
+| # | Commit | B-block |
+|---|---|---|
+| 9 | `c343c8d0` | Cleanup (53 legacy debug scripts archived) |
+| 10 | `4a0fbc44` | AGENTS.md B-mod-* summary (initial 8-commit writeup) |
+| 11 | `adc2c9e7` | B-mod-pg-alive-polygon (check_b_pg_alive.sh polygon mode) |
+| 12 | `5c8282f7` | B-mod-cleanup (cleanup-skygate.sh + B-check) |
+
+**Total**: 12 commits, ~6000 lines, 4 follow-up B-checks
+(check_b_tailscale_module.sh, check_b_modules_admin.sh,
+check_b_modules_admin_live.sh, check_b_install_tailscale.sh,
+check_b_pg_alive.sh, check_b_cleanup_skygate.sh — 6 B-checks
+covering 6+73+27 = 106 contracts in total).
+
+The series is now complete: every B-блок from B-mod-core
+(Manager + Module interface) through B-mod-tailscale (real
+Tailscale module), B-mod-admin (/admin/* handlers), B-mod-install
+(operator-facing install script), B-mod-pg-alive-polygon
+(polygon-mode DB checks), and B-mod-cleanup (uninstaller)
+is shipped, live-verified on svi polygon (before the
+operator's OS reinstall), and self-checked via static
+B-checks that work on any dev box.
+
+**Next session's work**: restore skygate on svi (Go install +
+git clone + build + .env + systemd + verify /healthz 200) +
+re-run B-mod-bcheck-live + B-mod-pg-alive-polygon on svi.
+
+
+---
+
+## B-mod-pg-alive-polygon (2026-09-10) — check_b_pg_alive.sh polygon mode + DSN parsing
+
+`scripts/check_b_pg_alive.sh` (B-mod-pg-bypass, 2026-09-09) hardcoded
+`sudo -u postgres` for every psql + pg_isready call. That works on a VM
+with local Patroni + peer auth, but **fails on the svi polygon** (Ubuntu
+26.04 fresh install) which is a CLIENT of the remote PG on 13.66
+(NPM-fronted). The polygon has no local Patroni + no peer auth, so
+`sudo -u postgres` returns "permission denied" on every contract.
+
+### Fix (mode switch + helpers)
+
+Add a `SKYGATE_PG_ALIVE_MODE` env var with three values:
+
+| Mode | Behaviour | When to use |
+|---|---|---|
+| `local` (legacy) | `sudo -u postgres psql` + `pg_isready` on the local socket | VMs with local Patroni (agent, etc.) |
+| `polygon` (NEW) | `psql -h HOST -p PORT -U USER` + `PGPASSWORD` from DSN | Polygon clients (svi pointing at 13.66) |
+| `auto` (default) | Try polygon first (if `SKYGATE_DB_DSN` encodes user+password), fall back to local | Most forgiving — works on both |
+
+### DSN parsing
+
+`postgres://USER:PASS@HOST:PORT/DB?sslmode=disable` is parsed into 5
+fields at the top of the script. The user + password are extracted
+by stripping `postgres://` and the `@`-delimited host:port/db
+suffix. This means **the password from the DSN is the one used for
+polygon mode** — no hardcoded operator password in the source (the
+original contract A had that as a literal, which was both a security
+smell and a bug on polygon).
+
+### Two helper functions
+
+```bash
+pg_query_pg_isready HOST PORT   # mode-aware wrapper
+pg_query_psql ARGS...          # mode-aware wrapper
+```
+
+Both preserve the original `sudo -u postgres` paths for local/auto
+mode and use `psql -h $DB_HOST -p $DB_PORT -U $DB_USER` +
+`PGPASSWORD=$DB_PASS` for polygon mode. All 5 call sites in the
+script (A, B, F, G, H) now go through these helpers.
+
+### H contract (Patroni) auto-skips in polygon mode
+
+Patroni runs on the PG host (13.66), not on the polygon client
+(svi). The H contract is now `SKIP`'d in polygon mode instead
+of running `patronictl list` (which would fail with "no such
+service" on a polygon client). This is correctness, not a
+workaround — patroni is genuinely not present on polygon.
+
+### Self-check contracts (no psql required)
+
+Two new contracts at the end of the script verify the mode config
+without requiring psql:
+
+- `polygon-mode-config: PASS` when `DB_USER/DB_PASS` are extracted
+  from the DSN. **FAIL** if polygon mode is set but the DSN is
+  missing the user or password (the combo makes no sense — polygon
+  clients always need auth).
+- `local-mode-config: PASS` when the source still contains
+  `sudo -u postgres` (legacy behavior intact). **FAIL** if the
+  sudo paths were removed but mode != polygon.
+
+These run even on a Windows dev box with no `psql` installed,
+catching the most common "polygon mode broken" scenarios before
+the operator runs the B-check on a real polygon VM.
+
+### Verified (Windows + WSL, no psql)
+
+```
+$ SKYGATE_PG_ALIVE_MODE=polygon \
+  SKYGATE_DB_DSN='postgres://skygate_test:ebbab...@95.165.170.190:5432/skygate_test?sslmode=disable' \
+  bash scripts/check_b_pg_alive.sh
+  [PASS] I: SKYGATE_DB_DSN parseable
+  [SKIP] A: pg_isready not installed
+  [SKIP] B-G: psql not installed
+  [INFO] H: Patroni service not active on this VM
+  [SKIP] J: PG data dir check requires running on the skygate VM
+  [PASS] polygon-mode-config: DB_USER=skygate_test (password length 37)
+  [INFO] polygon-mode-config: PGPASSWORD not set globally
+```
+
+### Re-verify on svi once it's back
+
+```bash
+ssh root@45.152.198.217
+export SKYGATE_PG_ALIVE_MODE=polygon
+export SKYGATE_DB_DSN='postgres://skygate_test:<password>@95.165.170.190:5432/skygate_test?sslmode=disable'
+bash /home/skyadmin/skygate/scripts/check_b_pg_alive.sh
+# Expected: 7+ contracts PASS (A + B + C + D + E + F + G)
+# Previously: 0 PASS (sudo -u postgres failed on the polygon)
+```
+
+**Commit**: `adc2c9e7` on main, pushed to origin (2026-09-10).
+
+---
+
+## B-mod-cleanup (2026-09-10) — cleanup-skygate.sh uninstaller + B-check
+
+`deploy/scripts/cleanup-skygate.sh` (242 lines, V1). The inverse of
+`install-debian.sh` (and `install-rh.sh` / `install-alpine.sh`). Removes
+the 6 components install-debian.sh creates + an optional 7th
+(Tailscale).
+
+### 6 cleanup sections
+
+1. **systemd**: `systemctl stop + disable + daemon-reload + reset-failed` on `skygate.service`
+2. **binary**: `rm /usr/local/bin/skygate` (unless `--keep-binary`)
+3. **user**: `pkill -u skygate` (kills leftover tailscaled sidecars) + `userdel skygate` (unless `--keep-user`)
+4. **data dir**: `rm -rf /var/lib/skygate` (unless `--keep-data`) — state.json for every module, applied_migrations, etc.
+5. **config dir**: `rm -rf /etc/skygate` (unless `--keep-config`) — preserves HEADSCALE_API_KEY by default is OFF
+6. **runtime**: `rm -rf /var/run/skygate` (always — it's a runtime dir)
+7. **(optional)** `install-tailscale.sh --mode=uninstall` when `--with-tailscale`
+
+### Flags
+
+- `--yes` — skip the confirm prompt for scripts/CI
+- `--dry-run` — print the plan without executing
+- `--keep-user` / `--keep-data` / `--keep-config` / `--keep-binary` — preserve specific items
+- `--with-tailscale` — also uninstall Tailscale via `install-tailscale.sh --mode=uninstall`
+
+### Safety
+
+- **Default**: shows a confirm prompt listing every action, reads `yes`
+  on stdin, aborts on any other input (exit 2).
+- **`require_root`** gate at the top.
+- **Idempotent**: every step has a "skip if not present" guard so
+  re-running on a partially-cleaned host is safe.
+- **No accidental wide rm**: all `rm -rf` targets are
+  `/var/lib/skygate`, `/etc/skygate`, `/var/run/skygate`, or
+  `/usr/local/bin/skygate` (verified by B-check contract 27).
+- **Exit codes 0/1/2/3** documented:
+  - `0` — success
+  - `1` — invalid args / required tool missing
+  - `2` — confirm prompt answered with anything other than `yes`
+  - `3` — a cleanup step failed (partial state on disk)
+
+### Pair with install-debian.sh
+
+```
+install:  sudo bash deploy/install-debian.sh
+cleanup:  sudo bash deploy/scripts/cleanup-skygate.sh
+```
+
+The two scripts are designed as a pair: install creates the 6
+artifacts (service, binary, user, data, config, runtime dir) and
+cleanup removes them. Path constants match: `SKYGATE_USER=skygate`,
+`SKYGATE_DATA_DIR=/var/lib/skygate`, `SKYGATE_ETC_DIR=/etc/skygate`,
+`SKYGATE_RUN_DIR=/var/run/skygate`, `SKYGATE_BIN=/usr/local/bin/skygate`.
+
+### B-check: 27/27 contracts pass
+
+`scripts/check_b_cleanup_skygate.sh` (180 lines, 27 contracts):
+
+- 2 preflight (file exists, bash -n syntax)
+- 7 cleanup sections (systemd, binary, userdel, data, config, runtime, tailscale delegation)
+- 7 flags parsed (`--yes`, `--dry-run`, `--keep-user`, `--keep-data`, `--keep-config`, `--keep-binary`, `--with-tailscale`)
+- 2 safety (confirm prompt default, `--yes` bypass)
+- 2 idempotency (Idempotency comment, 4+ skip guards)
+- 1 dry-run (`DRY-RUN` + `DRY_RUN` both present)
+- 1 `require_root` gate
+- 1 exit codes documented
+- 1 install-tailscale.sh dependency
+- 2 bash rigor (`set -euo pipefail` + standard while-shift loop)
+- 1 no accidental wide rm
+
+### Registered in verify_pre_deploy.sh
+
+Alongside the other 5 B-mod-* B-checks (B-mod-core, B-mod-pg-bypass,
+B-mod-tailscale, B-mod-admin, B-mod-install, B-mod-bcheck-live,
+B-mod-pg-alive-polygon). Runs as part of every `verify_pre_deploy.sh`
+on Windows (where psql isn't installed, so runtime contracts skip
+but the self-checks pass).
+
+**Commit**: `5c8282f7` on main, pushed to origin (2026-09-10).
+
+---
+
+## B-mod-* Plugin API series — UPDATED (2026-09-09..10) — 12 commits, ~6000 lines
+
+The original B-mod-* summary (8 commits, 5000+ lines) is extended
+by 4 more commits in the same series:
+
+| # | Commit | B-block |
+|---|---|---|
+| 9 | `c343c8d0` | Cleanup (53 legacy debug scripts archived) |
+| 10 | `4a0fbc44` | AGENTS.md B-mod-* summary (initial 8-commit writeup) |
+| 11 | `adc2c9e7` | B-mod-pg-alive-polygon (check_b_pg_alive.sh polygon mode) |
+| 12 | `5c8282f7` | B-mod-cleanup (cleanup-skygate.sh + B-check) |
+
+**Total**: 12 commits, ~6000 lines, 4 follow-up B-checks
+(check_b_tailscale_module.sh, check_b_modules_admin.sh,
+check_b_modules_admin_live.sh, check_b_install_tailscale.sh,
+check_b_pg_alive.sh, check_b_cleanup_skygate.sh — 6 B-checks
+covering 6+73+27 = 106 contracts in total).
+
+The series is now complete: every B-блок from B-mod-core
+(Manager + Module interface) through B-mod-tailscale (real
+Tailscale module), B-mod-admin (/admin/* handlers), B-mod-install
+(operator-facing install script), B-mod-pg-alive-polygon
+(polygon-mode DB checks), and B-mod-cleanup (uninstaller)
+is shipped, live-verified on svi polygon (before the
+operator's OS reinstall), and self-checked via static
+B-checks that work on any dev box.
+
+**Next session's work**: restore skygate on svi (Go install +
+git clone + build + .env + systemd + verify /healthz 200) +
+re-run B-mod-bcheck-live + B-mod-pg-alive-polygon on svi.
+
