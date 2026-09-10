@@ -46,6 +46,8 @@ import (
 	"skygate/internal/middleware"
 	oidcsvc "skygate/internal/oidc"
 	"skygate/internal/mesh"
+	"skygate/internal/module"
+	tailscalemod "skygate/internal/module/tailscale"
 	"skygate/internal/keynotify"
 	"skygate/internal/tokenrotate"
 	"skygate/internal/nodeownership"
@@ -1145,6 +1147,66 @@ func main() {
 	// it. The wrappers exist for the test surface only — new
 	// routes go directly to adminSvc via mux.HandleFunc below.
 	app.SetAdminService(adminSvc)
+
+	// v1.5.2+ / B-mod-core re-merge (2026-09-10) — wire
+	// the module.Plugin API Manager.
+	//
+	// The Manager owns the lifecycle of all skygate modules
+	// (Tailscale is Module #1; cluster, telegram, derp, exit
+	// are its 4 opt-in sub-features). Modules are registered
+	// statically below, initialized (Init validates prereqs +
+	// loads state), started (only if state.Enabled=true), and
+	// monitored by a 30s health loop. On shutdown the Manager
+	// gracefully stops every running module.
+	//
+	// In B-mod-core + B-mod-tailscale we register the REAL
+	// Tailscale module (B-mod-tailscale replaced the original
+	// stub from 3d80f573). The 4 sub-features (cluster /
+	// telegram / derp / exit) are opt-in via
+	// /admin/modules/{name} (B-mod-admin).
+	//
+	// The audit log callback writes every state transition
+	// to the audit_log table (the same one /admin/audit shows)
+	// so the operator can see "module.tailscale.init:ok" etc.
+	// without SSH'ing into the VM.
+	//
+	// Pre-B-mod-core re-merge this was reverted in 82c74b38
+	// because the Manager required a real SKYGATE_DB_DSN,
+	// and the agent was running on bypass-PG (Patroni was
+	// stopped at the time). 82c74b38 left the Manager
+	// package in place but unwired; the operator can re-enable
+	// it as soon as the DB is back. Now (2026-09-10): the
+	// svi polygon has PG 18.6 on 13.66 (B-mod-pg-bypass +
+	// skygate_test user + DSN), so we can re-enable.
+	moduleMgr := module.NewManager(
+		"/var/lib/skygate/modules",  // dataDir: per-module state
+		"/var/run/skygate/modules",  // socketDir: per-module sockets (unused in B-mod-core)
+		func(action, detail string) {
+			// Best-effort audit write. We don't fail
+			// the boot if the audit log is unavailable
+			// — the audit row is operator debugging,
+			// not a correctness requirement.
+			_ = db.AppendAuditLogWithTarget(
+				app.DB.Current(), 0, "system",
+				action, detail, "module", "",
+			)
+		},
+	)
+	moduleMgr.SetEnv(collectModuleEnv(cfg))
+	if err := moduleMgr.Register(tailscalemod.NewModule()); err != nil {
+		log.Printf("warn: register tailscale module: %v", err)
+	}
+	if err := moduleMgr.InitAll(context.Background()); err != nil {
+		log.Printf("warn: module InitAll: %v", err)
+	}
+	moduleMgr.StartHealthLoop(context.Background())
+	defer moduleMgr.StopAll(context.Background())
+
+	// v1.5.2+ / B-mod-admin (2026-09-10) — hand the
+	// Manager to the admin Service so /admin/modules
+	// can render the list + detail pages and dispatch
+	// install/start/stop POSTs.
+	adminSvc.Modules = moduleMgr
 
 	// refactor-v0.30 Phase B step 4 (2026-07-29): exit_rules
 	// feature service. Owns /my/exit-rules + the /admin/exit-rules
@@ -3666,4 +3728,41 @@ func haProviderName(name string) string {
 		return "none"
 	}
 	return name
+}
+
+// collectModuleEnv builds the env map that the
+// module.Manager passes to each module's Init(). Only
+// SKYGATE_TS_* env vars are collected in B-mod-core (just
+// enough for the Tailscale module to read
+// SKYGATE_TS_INSTALL_MODE / SKYGATE_TS_LOGIN_SERVER /
+// SKYGATE_TS_AUTHKEY / SKYGATE_TS_HOSTNAME /
+// SKYGATE_TS_CONTAINER_NAME). Future modules (headplane,
+// telegram, derp, exit) will add their own prefixes.
+//
+// Reads from os.Environ() — the same source os.Getenv
+// uses — so the values are exactly what the rest of
+// skygate sees.
+//
+// v1.5.2+ / B-mod-core re-merge (2026-09-10): the
+// original 3d80f573 commit had this helper; the 82c74b38
+// revert removed it (along with the Manager wiring).
+// Restored here.
+func collectModuleEnv(_ *config.Config) map[string]string {
+	out := map[string]string{}
+	for _, kv := range os.Environ() {
+		// Split on first '=' (values may contain '=').
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		k := kv[:i]
+		v := kv[i+1:]
+		// Only pass SKYGATE_TS_* to the Tailscale module.
+		// Other modules (future) will get their own
+		// prefixes (e.g. SKYGATE_HP_* for headplane).
+		if strings.HasPrefix(k, "SKYGATE_TS_") {
+			out[k] = v
+		}
+	}
+	return out
 }
