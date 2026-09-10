@@ -457,14 +457,34 @@ func TestEnableSubFeature_Exit(t *testing.T) {
 	m, mock, _ := newTestModule(t, InstallModeOSLevel)
 	// tailscale set --advertise-exit-node=true
 	mock.onRun("tailscale", "", "", 0, nil)
+	before := time.Now().UTC()
 	if err := m.EnableSubFeature(context.Background(), SubExit); err != nil {
 		t.Fatalf("EnableSubFeature(exit): %v", err)
 	}
+	after := time.Now().UTC()
 	if !mock.hasCallNamed("tailscale", "--advertise-exit-node=true") {
 		t.Error("--advertise-exit-node=true was not set")
 	}
 	if !m.state.SubFeatures[SubExit] {
 		t.Error("state.SubFeatures[exit] = false, want true")
+	}
+	// B-mod-exit (2026-09-10): state.Info records the
+	// advertise status + the timestamp (RFC3339, UTC).
+	if got := m.state.Info["exit_node"]; got != "advertised" {
+		t.Errorf("state.Info[exit_node] = %q, want %q", got, "advertised")
+	}
+	tsStr := m.state.Info["exit_node_advertised_at"]
+	if tsStr == "" {
+		t.Fatal("state.Info[exit_node_advertised_at] is empty after enable")
+	}
+	ts, err := time.Parse(time.RFC3339, tsStr)
+	if err != nil {
+		t.Fatalf("state.Info[exit_node_advertised_at] = %q is not RFC3339: %v", tsStr, err)
+	}
+	// Timestamp must be between before and after (with a
+	// tiny epsilon for clock granularity).
+	if ts.Before(before.Add(-time.Second)) || ts.After(after.Add(time.Second)) {
+		t.Errorf("state.Info[exit_node_advertised_at] = %v, want between %v and %v", ts, before, after)
 	}
 }
 

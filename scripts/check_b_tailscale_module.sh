@@ -261,6 +261,41 @@ else
     fail "B-mod-derp: TestEnableSubFeature_Derp unit test" "missing"
 fi
 
+# --- B-mod-exit (2026-09-10): exit sub-feature records state.Info ---
+if grep -q 'exit_node' "${PKG_DIR}/subfeatures.go"; then
+    pass "B-mod-exit: exit sub-feature references state.Info[exit_node]"
+else
+    fail "B-mod-exit: exit_node in subfeatures.go" "missing"
+fi
+if grep -B 1 -A 4 'exit_node.*advertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..exit_node..\].=.advertised'; then
+    pass "B-mod-exit: enable sets exit_node = advertised"
+else
+    fail "B-mod-exit: enable sets exit_node = advertised" "missing"
+fi
+if grep -B 1 -A 3 'exit_node.*unadvertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..exit_node..\].=.unadvertised'; then
+    pass "B-mod-exit: disable sets exit_node = unadvertised"
+else
+    fail "B-mod-exit: disable sets exit_node = unadvertised" "missing"
+fi
+if grep -q 'exit_node_advertised_at' "${PKG_DIR}/subfeatures.go"; then
+    pass "B-mod-exit: state.Info[exit_node_advertised_at] RFC3339 timestamp recorded"
+else
+    fail "B-mod-exit: exit_node_advertised_at in subfeatures.go" "missing"
+fi
+# Disable should also clear the timestamp (no stale data)
+if grep -B 2 -A 5 'exit_node.*unadvertised' "${PKG_DIR}/subfeatures.go" | grep -q 'delete.*exit_node_advertised_at'; then
+    pass "B-mod-exit: disable clears exit_node_advertised_at (no stale data)"
+else
+    fail "B-mod-exit: disable clears exit_node_advertised_at" "missing"
+fi
+# --advertise-exit-node=true/false still in the code (B-mod-tailscale contract)
+if grep -q -- '--advertise-exit-node=true' "${PKG_DIR}/subfeatures.go" && \
+   grep -q -- '--advertise-exit-node=false' "${PKG_DIR}/subfeatures.go"; then
+    pass "B-mod-exit: --advertise-exit-node=true/false still in code (B-mod-tailscale contract)"
+else
+    fail "B-mod-exit: --advertise-exit-node=true/false" "missing"
+fi
+
 # --- contract 12: Manager.LoadState / Manager.SaveState public wrappers ---
 # B-mod-tailscale requires these so the module package can read/write
 # state.json from outside the module package.

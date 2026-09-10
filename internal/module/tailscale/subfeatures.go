@@ -53,6 +53,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"skygate/internal/module"
 )
@@ -180,9 +181,25 @@ func (m *Module) enableSubFeature(ctx context.Context, name string) error {
 		return nil
 
 	case SubExit:
+		// Advertise this node as a Tailscale exit node. Other
+		// tailnet devices can use it to route all their
+		// traffic through this node's internet connection.
+		//
+		// B-mod-exit (2026-09-10): record the advertise
+		// status + timestamp in state.Info so the admin
+		// page can show "Exit node: advertised (since
+		// 2026-09-10T11:34:46Z — pending headscale admin
+		// approval)".
 		if err := m.advertiseExitNode(ctx, true); err != nil {
 			return fmt.Errorf("enable exit: %w", err)
 		}
+		m.mu.Lock()
+		if m.state.Info == nil {
+			m.state.Info = map[string]string{}
+		}
+		m.state.Info["exit_node"] = "advertised"
+		m.state.Info["exit_node_advertised_at"] = time.Now().UTC().Format(time.RFC3339)
+		m.mu.Unlock()
 		return nil
 
 	default:
@@ -243,9 +260,17 @@ func (m *Module) disableSubFeature(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		return nil
 	case SubExit:
+		// B-mod-exit (2026-09-10): state.Info flag
+		// update on disable.
 		if err := m.advertiseExitNode(ctx, false); err != nil {
 			return fmt.Errorf("disable exit: %w", err)
 		}
+		m.mu.Lock()
+		if m.state.Info != nil {
+			m.state.Info["exit_node"] = "unadvertised"
+			delete(m.state.Info, "exit_node_advertised_at")
+		}
+		m.mu.Unlock()
 		return nil
 	default:
 		return module.ErrSubFeatureNotFound
