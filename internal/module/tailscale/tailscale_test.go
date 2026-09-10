@@ -441,6 +441,14 @@ func TestEnableSubFeature_Telegram(t *testing.T) {
 	if !m.state.SubFeatures[SubTelegram] {
 		t.Error("state.SubFeatures[telegram] = false, want true")
 	}
+	// B-mod-telegram (2026-09-10): state.Info records
+	// the route status + CIDR for the admin page.
+	if got := m.state.Info["telegram_route"]; got != "advertised" {
+		t.Errorf("state.Info[telegram_route] = %q, want %q", got, "advertised")
+	}
+	if got := m.state.Info["telegram_cidr"]; got != "91.108.56.0/22" {
+		t.Errorf("state.Info[telegram_cidr] = %q, want %q", got, "91.108.56.0/22")
+	}
 }
 
 // TestEnableSubFeature_Exit verifies enableExit

@@ -139,9 +139,22 @@ func (m *Module) enableSubFeature(ctx context.Context, name string) error {
 		// approve-routes` before it becomes visible to
 		// other peers (this is a Tailscale/headscale ACL
 		// feature, not a skygate one).
+		//
+		// B-mod-telegram (2026-09-10): record the
+		// advertised state + CIDR in state.Info so the
+		// /admin/modules/tailscale detail page can show
+		// "Telegram API route: 91.108.56.0/22 (advertised
+		// — pending headscale admin approval)".
 		if err := m.advertiseRoutes(ctx, []string{"91.108.56.0/22"}); err != nil {
 			return fmt.Errorf("enable telegram: %w", err)
 		}
+		m.mu.Lock()
+		if m.state.Info == nil {
+			m.state.Info = map[string]string{}
+		}
+		m.state.Info["telegram_route"] = "advertised"
+		m.state.Info["telegram_cidr"] = "91.108.56.0/22"
+		m.mu.Unlock()
 		return nil
 
 	case SubDERP:
@@ -185,6 +198,9 @@ func (m *Module) disableSubFeature(ctx context.Context, name string) error {
 		// advertised-routes to whatever was advertised
 		// BEFORE telegram was enabled, minus the Telegram
 		// route. We track this in m.lastAdvertisedRoutes.
+		//
+		// B-mod-telegram (2026-09-10): update state.Info
+		// flags to reflect "unadvertised" after disable.
 		m.mu.Lock()
 		var prev []string
 		if m.lastAdvertisedRoutes != nil {
@@ -194,6 +210,9 @@ func (m *Module) disableSubFeature(ctx context.Context, name string) error {
 					prev = append(prev, r)
 				}
 			}
+		}
+		if m.state.Info != nil {
+			m.state.Info["telegram_route"] = "unadvertised"
 		}
 		m.mu.Unlock()
 		if err := m.advertiseRoutes(ctx, prev); err != nil {

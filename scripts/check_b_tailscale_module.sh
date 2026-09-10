@@ -204,6 +204,35 @@ else
     fail "B-mod-cluster: TestEnableSubFeature_Cluster unit test" "missing"
 fi
 
+# --- B-mod-telegram (2026-09-10): telegram sub-feature records state.Info ---
+if grep -q 'telegram_route' "${PKG_DIR}/subfeatures.go"; then
+    pass "B-mod-telegram: telegram sub-feature references state.Info[telegram_route]"
+else
+    fail "B-mod-telegram: telegram_route in subfeatures.go" "missing"
+fi
+if grep -q 'telegram_cidr' "${PKG_DIR}/subfeatures.go"; then
+    pass "B-mod-telegram: state.Info[telegram_cidr] = 91.108.56.0/22 recorded"
+else
+    fail "B-mod-telegram: telegram_cidr in subfeatures.go" "missing"
+fi
+if grep -B 1 -A 4 'telegram_route.*advertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..telegram_route..\].=.advertised'; then
+    pass "B-mod-telegram: enable sets telegram_route = advertised"
+else
+    fail "B-mod-telegram: enable sets telegram_route = advertised" "missing"
+fi
+if grep -B 1 -A 3 'telegram_route.*unadvertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..telegram_route..\].=.unadvertised'; then
+    pass "B-mod-telegram: disable sets telegram_route = unadvertised"
+else
+    fail "B-mod-telegram: disable sets telegram_route = unadvertised" "missing"
+fi
+# 91.108.56.0/22 CIDR constant is referenced 2+ times (enable + disable)
+CIDR_COUNT=$(grep -c '91.108.56.0/22' "${PKG_DIR}/subfeatures.go" || true)
+if [ "$CIDR_COUNT" -ge 2 ]; then
+    pass "B-mod-telegram: 91.108.56.0/22 referenced in ${CIDR_COUNT} places (constant)"
+else
+    fail "B-mod-telegram: 91.108.56.0/22 in 2+ places" "found ${CIDR_COUNT}"
+fi
+
 # --- contract 12: Manager.LoadState / Manager.SaveState public wrappers ---
 # B-mod-tailscale requires these so the module package can read/write
 # state.json from outside the module package.
