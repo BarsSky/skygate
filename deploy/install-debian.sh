@@ -27,7 +27,14 @@
 
 set -euo pipefail
 
-. "$(dirname "$0")/install-common.sh"
+# SCRIPT_DIR / REPO_ROOT are used by step 7 (B-mod-install
+# delegate to install-tailscale.sh). SCRIPT_DIR is the
+# deploy/ dir, REPO_ROOT is the project root (one level
+# above deploy/).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+. "${SCRIPT_DIR}/install-common.sh"
 
 # Sanity: only run on Debian-family
 . /etc/os-release
@@ -96,3 +103,49 @@ enable_and_start_service "skygate"
 
 # -------- 6. done --------
 print_next_steps "$SKYGATE_PORT" "skygate"
+
+# -------- 7. optional Tailscale install (B-mod-install, 2026-09-10) --------
+# If the operator pre-set SKYGATE_TS_INSTALL_MODE (or
+# SKYGATE_TS_AUTHKEY), the install-debian.sh path
+# delegates to install-tailscale.sh for the Tailscale
+# install. This is the "single command" flow operators
+# want — `curl install.sh | sudo SKYGATE_TS_INSTALL_MODE=attach
+# SKYGATE_TS_AUTHKEY=tskey-auth-XXX bash`.
+#
+# The script is opt-in: if no SKYGATE_TS_* env vars are
+# set, this step is a no-op (the operator can run
+# install-tailscale.sh manually later).
+if [ -n "${SKYGATE_TS_INSTALL_MODE:-}" ] || [ -n "${SKYGATE_TS_AUTHKEY:-}" ]; then
+    if [ -f "${REPO_ROOT}/deploy/scripts/install-tailscale.sh" ]; then
+        echo "[install-debian] B-mod-install: delegating to install-tailscale.sh (mode=${SKYGATE_TS_INSTALL_MODE:-unset})"
+        # Build the args from env. AUTHKEY is passed
+        # only if set; LOGIN_SERVER from /etc/skygate/skygate.env
+        # if present (it has the right value post-install).
+        ts_args=(--mode="${SKYGATE_TS_INSTALL_MODE:-attach}")
+        if [ -n "${SKYGATE_TS_AUTHKEY:-}" ]; then
+            ts_args+=(--authkey="${SKYGATE_TS_AUTHKEY}")
+        fi
+        if [ -n "${SKYGATE_TS_LOGIN_SERVER:-}" ]; then
+            ts_args+=(--login-server="${SKYGATE_TS_LOGIN_SERVER}")
+        elif [ -f "${SKYGATE_ETC_DIR}/skygate.env" ]; then
+            # Auto-pick from skygate.env (HEADSCALE_URL line).
+            # Comment lines start with # — skip them.
+            # Match `HEADSCALE_URL=` or `SKYGATE_HEADSCALE_URL=`.
+            login_url=$(grep -E '^(SKYGATE_)?HEADSCALE_URL=' "${SKYGATE_ETC_DIR}/skygate.env" 2>/dev/null | tail -1 | sed -E 's/^[^=]+=//' || true)
+            if [ -n "$login_url" ]; then
+                ts_args+=(--login-server="$login_url")
+            fi
+        fi
+        if [ -n "${SKYGATE_TS_HOSTNAME:-}" ]; then
+            ts_args+=(--hostname="${SKYGATE_TS_HOSTNAME}")
+        fi
+        if [ -n "${SKYGATE_TS_CONTAINER_NAME:-}" ]; then
+            ts_args+=(--container-name="${SKYGATE_TS_CONTAINER_NAME}")
+        fi
+        if ! bash "${REPO_ROOT}/deploy/scripts/install-tailscale.sh" "${ts_args[@]}"; then
+            echo "[install-debian] WARN: install-tailscale.sh failed (continuing — skygate is up, operator can re-run install-tailscale.sh manually)" >&2
+        fi
+    else
+        echo "[install-debian] WARN: SKYGATE_TS_* set but install-tailscale.sh not found at ${REPO_ROOT}/deploy/scripts/" >&2
+    fi
+fi
