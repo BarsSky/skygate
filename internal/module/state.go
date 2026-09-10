@@ -103,6 +103,30 @@ const stateFile = "state.json"
 // this mutex.
 var stateMu sync.Mutex
 
+// LoadState is the public API for reading a module's persistent
+// state. Modules call this from Init() (and on demand from
+// Status()/Health() if they need to read other modules' state).
+// Returns the same values as the private loadState below.
+//
+// B-mod-tailscale (2026-09-10): added as a public wrapper so
+// modules outside the module package can read state. The
+// underlying loadState stays private (the package's own
+// helpers like Manager.initOne use it directly).
+func LoadState(dataDir, name string) (*State, error) {
+	return loadState(dataDir, name)
+}
+
+// SaveState is the public API for writing a module's persistent
+// state. Modules call this from Install() (which is not in the
+// Module interface — installs are out-of-band from the
+// Manager's lifecycle). The Manager's Start/Stop/Enable/Disable
+// call the private saveState directly.
+//
+// Returns the same error as the private saveState below.
+func SaveState(dataDir string, s *State) error {
+	return saveState(dataDir, s)
+}
+
 // loadState reads the per-module state from disk. Returns:
 //   - (&State{Name: name}, nil) if the file doesn't exist
 //     (fresh module, never been installed)
