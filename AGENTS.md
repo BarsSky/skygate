@@ -15085,3 +15085,138 @@ exit 1 с "Fix: <actionable>", а НЕ silent restart, который operator
 - `scripts/check_b_pg_alive.sh` (new) — 10 contracts, 9 PASS on agent VM
 - `scripts/verify_pre_deploy.sh` (modified) — B-mod-pg-bypass registered
 - `AGENTS.md` (this entry)
+
+---
+
+## B-mod-pg18-strftime-fix (2026-09-10) — applied_migrations DEFAULT uses PG-native EXTRACT
+
+**Symptom** (svi polygon, 2026-09-09): skygate restart-loop in
+journal on first start against a fresh PostgreSQL 18.6 database:
+
+`
+ERROR: function strftime(unknown, unknown) does not exist
+       (SQLSTATE 42883)
+`
+
+pplied_migrations table failed to create because the DEFAULT
+clause on pplied_at used strftime('%s', 'now') — a SQLite
+function that PostgreSQL doesn't have natively. 70+ migrations
+never ran, /healthz returned 500, skygate-skygate-1 flapped.
+
+**Root cause** — chicken-and-egg in the migration system:
+
+1. driver_postgres.go:198 calls ensureMigrationTrackingTable(d)
+   BEFORE the pgMigrations loop.
+2. ensureMigrationTrackingTable (migration_tracking.go:81-95)
+   creates pplied_migrations with DEFAULT
+   (strftime('%s', 'now')) — fails on PG.
+3. migrateV050PG (migrations_pg.go:963-967) defines
+   CREATE OR REPLACE FUNCTION strftime(format text, ts text) RETURNS bigint
+   as a SQLite-compat shim for subsequent migrations
+   (V050, V051, queries.go, node_owner_map.go, secrets.go,
+   telegram_login_tokens.go, integrations.go).
+4. But V050 runs AFTER ensureMigrationTrackingTable — so the
+   shim isn't defined when the tracking table is created.
+
+**Fix** — minimal, no API change:
+
+ensureMigrationTrackingTable now uses PG-native
+EXTRACT(EPOCH FROM now())::bigint for the DEFAULT clause:
+
+`sql
+CREATE TABLE IF NOT EXISTS applied_migrations (
+    version     BIGINT  PRIMARY KEY,
+    sha256      TEXT    NOT NULL,
+    source_file TEXT    NOT NULL DEFAULT '',
+    applied_at  BIGINT  NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+    first_seen  TEXT    NOT NULL DEFAULT ''
+)
+`
+
+Also bumped ersion from INTEGER to BIGINT to match the
+canonical migrateV049PG definition (migrations_pg.go:922) so
+the two CREATE TABLE statements agree on the schema.
+
+migrateV050PG is unchanged — its strftime shim still runs
+as a regular migration and continues to be the compatibility
+layer for the 12+ inline strftime('%s','now') sites in the
+SQL queries.
+
+**Live verification** (svi polygon, 2026-09-10, after
+operator's OS reinstall of 45.152.198.217):
+
+1. Installed Go 1.25.0 via official tarball (apt's golang-go is
+   1.24.x, too old for skygate which requires go 1.25+).
+2. Created skygate user (system, /bin/false, no home dir);
+   /var/lib/skygate owned by skygate.
+3. git clone https://github.com/BarsSky/skygate.git → HEAD
+   = 20052463 (B-mod-pg18-strftime-fix, the commit on top
+   of 644e0bac B-mod-pg-bypass).
+4. go build -o /usr/local/bin/skygate ./cmd/skygate — 42s,
+   30 MB binary.
+5. Strings check confirmed the fix is in the binary:
+   pplied_at BIGINT NOT NULL DEFAULT (extract(epoch from now())::bigint).
+6. Reset skygate_test password on 13.66 (pg-test) via
+   ALTER USER skygate_test PASSWORD '...' — works **without
+   superuser** because PostgreSQL allows users to change
+   **their own** password. (See
+   ### PostgreSQL self-password reset in agent memory for
+   the cross-project tip — only works for self, NOT for other
+   users.)
+7. Wrote /etc/skygate/skygate.env (chmod 600, skygate:skygate)
+   with SKYGATE_DB_DSN, SKYGATE_JWT_SECRET, etc. — important:
+   HEADSCALE_URL (NOT SKYGATE_HEADSCALE_URL — the env var
+   has no SKYGATE_ prefix per config.go:474).
+8. Added `<headscale-LAN-IP> headscale` to `/etc/hosts` so the
+   default URL `http://headscale:50444` resolves. Alternative
+   is to set `HEADSCALE_URL=http://<headscale-LAN-IP>:50444` in
+   the env. (LAN IP redacted from this public repo — see
+   `deploy/snippets/skygate.env.example` or `dns/skynas.ru` for
+   the operator's inventory.)
+9. /etc/systemd/system/skygate.service (skygate user,
+   Restart=on-failure, hardened with NoNewPrivileges,
+   ProtectSystem=full, ProtectHome=true,
+   ReadWritePaths=/var/lib/skygate).
+10. systemctl daemon-reload && systemctl enable --now skygate
+    → ctive (running).
+11. /healthz → HTTP 200, {"build":"dev","instance_id":"unconfigured","status":"ok","timestamp":"2026-09-10T09:08:32Z"}.
+12. psql -h 95.165.170.190 -U skygate_test -d skygate_test -c
+    "SELECT count(*) FROM applied_migrations" → **48 rows** (V020
+    through V069, with V040/V052/V062-as-skip/V064-as-skip gaps
+    preserved per the pre-existing comments in
+    driver_postgres.go:103-105).
+13. psql -c "SELECT count(*) FROM information_schema.tables
+    WHERE table_schema='public'" → **41 tables** (matches the
+    full migration chain output).
+
+**Warning lines in journal** (non-fatal, expected for a polygon
+install):
+
+- oidc: SKYGATE_OIDC_ISSUER not set — OIDC routes return 503
+  until configured. Polygon doesn't run OIDC.
+- sidecar.ListAllNodes: dial tcp: lookup headscale — resolves
+  now that /etc/hosts has the entry; was 5xx for the first
+  60s before the second restart.
+- certsync: lookup s3..amazonaws.com — backup certsync
+  endpoint not configured for polygon. Not in deploy scope.
+- 
+econcile: ListUsers — fails on the fake
+  HEADSCALE_API_KEY=sk_test_polygon_fake_key_for_svi_install_2026_09_09,
+  as expected. Will work against real headscale on agent (13.69).
+
+**Known remaining gap** (NOT B-mod-pg18-strftime-fix): the
+fake headscale API key blocks the device-tag backfill and the
+exit-node health monitor. Polygon doesn't need real Headscale
+for now — its purpose is the install + migration chain + /healthz
+smoke test. Real headscale on agent (13.69) has the real key.
+
+**Files** (B-mod-pg18-strftime-fix, 2026-09-10):
+
+- internal/db/migration_tracking.go (modified) — DEFAULT
+  clause change + ersion BIGINT + comment block
+- AGENTS.md (this entry)
+
+**Commit**: 20052463 on main, pushed to origin
+(operator verified: git log --oneline -1 on svi shows
+2005246 B-mod-pg18-strftime-fix: applied_migrations DEFAULT
+uses PG-native EXTRACT).
