@@ -18,6 +18,7 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -512,3 +513,78 @@ func findInfo(mgr *Manager, name string) (ModuleInfo, bool) {
 	}
 	return ModuleInfo{}, false
 }
+
+// TestSetDBC_WiringToInitConfig verifies that SetDBC's
+// accessor is passed to every registered module's
+// ModuleConfig.DBC during InitAll. v1.5.2+ / B-mod-core
+// re-merge (2026-09-10) added SetDBC so the real
+// B-mod-tailscale module (which needs cfg.DBC() to
+// read audit_log + write its own audit rows) can be
+// wired via Manager.
+func TestSetDBC_WiringToInitConfig(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(dir, dir+"/sock", func(string, string) {})
+	// Capture the DBC the module sees inside Init.
+	var seenDBC func() *sql.DB
+	sm := &statefulTestModule{onInit: func(cfg ModuleConfig) error {
+		seenDBC = cfg.DBC
+		return nil
+	}}
+	if err := mgr.Register(sm); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// SetDBC with nil → Init sees nil DBC.
+	mgr.SetDBC(nil)
+	if err := mgr.InitAll(context.Background()); err != nil {
+		t.Fatalf("InitAll: %v", err)
+	}
+	if seenDBC != nil {
+		t.Errorf("DBC: got %p, want nil (SetDBC(nil) before Init)", seenDBC)
+	}
+	// SetDBC with a real accessor → Init sees the same func.
+	called := 0
+	want := func() *sql.DB { called++; return nil }
+	mgr2 := NewManager(dir, dir+"/sock", func(string, string) {})
+	var seen2 func() *sql.DB
+	sm2 := &statefulTestModule{onInit: func(cfg ModuleConfig) error {
+		seen2 = cfg.DBC
+		return nil
+	}}
+	_ = mgr2.Register(sm2)
+	mgr2.SetDBC(want)
+	if err := mgr2.InitAll(context.Background()); err != nil {
+		t.Fatalf("InitAll: %v", err)
+	}
+	if seen2 == nil {
+		t.Fatal("DBC: got nil, want non-nil (SetDBC(want) before Init)")
+	}
+	// Call the captured accessor to prove it's the same func.
+	_ = seen2()
+	if called != 1 {
+		t.Errorf("captured DBC was called %d times, want 1", called)
+	}
+}
+
+// statefulTestModule is a minimal Module that lets the
+// test set the Init behavior (so TestSetDBC_WiringToInitConfig
+// can capture the ModuleConfig passed to Init). The
+// other methods are no-ops returning healthy + not
+// installed.
+type statefulTestModule struct {
+	onInit func(ModuleConfig) error
+}
+
+func (s *statefulTestModule) Name() string                                { return "test" }
+func (s *statefulTestModule) Init(_ context.Context, cfg ModuleConfig) error {
+	if s.onInit != nil {
+		return s.onInit(cfg)
+	}
+	return nil
+}
+func (s *statefulTestModule) Start(_ context.Context) error  { return nil }
+func (s *statefulTestModule) Stop(_ context.Context) error   { return nil }
+func (s *statefulTestModule) Status() ModuleStatus            { return ModuleStatus{State: StateNotInstalled} }
+func (s *statefulTestModule) Health() HealthStatus            { return HealthStatus{Healthy: true} }
+func (s *statefulTestModule) SubFeatures() []SubFeature       { return nil }
+func (s *statefulTestModule) EnableSubFeature(_ context.Context, _ string) error  { return nil }
+func (s *statefulTestModule) DisableSubFeature(_ context.Context, _ string) error { return nil }

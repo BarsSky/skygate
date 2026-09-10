@@ -21,6 +21,7 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -79,6 +80,14 @@ type Manager struct {
 	// Default 30s; overridable via SetHealthInterval (for
 	// tests that want faster checks).
 	healthInterval time.Duration
+
+	// dbc returns the *sql.DB for skygate's database.
+	// Set via SetDBC. Passed to every module's
+	// ModuleConfig.DBC so modules can read/write the
+	// audit_log + applied_migrations + their own tables
+	// without each one re-opening a pool. nil = no DB
+	// access (modules that don't need DB still work).
+	dbc func() *sql.DB
 }
 
 // NewManager creates a Manager with the given data dir + audit log
@@ -117,6 +126,24 @@ func (m *Manager) SetEnv(env map[string]string) {
 	for k, v := range env {
 		m.env[k] = v
 	}
+}
+
+// SetDBC wires a database accessor that initOne will
+// pass to every module's ModuleConfig.DBC. nil disables
+// DB access (modules that don't need the DB still work,
+// but their Init() can no longer call cfg.DBC()).
+//
+// v1.5.2+ / B-mod-core re-merge (2026-09-10): the
+// original 3d80f573 wiring did not set DBC because the
+// B-mod-core Tailscale stub didn't need it. The real
+// B-mod-tailscale tailscale.Module.Init() now requires
+// DBC (so the module can read audit_log + write its own
+// audit rows + check applied_migrations). This setter
+// is the wire for that requirement.
+func (m *Manager) SetDBC(dbc func() *sql.DB) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dbc = dbc
 }
 
 // SetHealthInterval overrides the default 30s health check interval.
@@ -196,6 +223,7 @@ func (m *Manager) initOne(ctx context.Context, name string) error {
 	dataDir := m.dataDir
 	socketDir := m.socketDir
 	env := m.env
+	dbc := m.dbc
 	m.mu.Unlock()
 
 	// Load persistent state (or create a fresh one).
@@ -220,6 +248,7 @@ func (m *Manager) initOne(ctx context.Context, name string) error {
 		DataDir:   dataDir + "/" + name,
 		SocketDir: socketDir + "/" + name,
 		Env:       envCopy,
+		DBC:       dbc,
 		AuditLog:  auditLog,
 	}
 

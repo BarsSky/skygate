@@ -1193,6 +1193,13 @@ func main() {
 		},
 	)
 	moduleMgr.SetEnv(collectModuleEnv(cfg))
+	// v1.5.2+ / B-mod-core re-merge (2026-09-10): the
+	// real Tailscale module (B-mod-tailscale) requires
+	// a DBC accessor in ModuleConfig so it can read
+	// audit_log + write its own audit rows + check
+	// applied_migrations. The Manager.SetDBC setter is
+	// the wire for that requirement.
+	moduleMgr.SetDBC(func() *sql.DB { return app.DB.Current() })
 	if err := moduleMgr.Register(tailscalemod.NewModule()); err != nil {
 		log.Printf("warn: register tailscale module: %v", err)
 	}
