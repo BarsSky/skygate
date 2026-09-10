@@ -182,6 +182,28 @@ else
     fail "DERP sub-feature Requires [telegram exit]" "Requires chain missing or wrong"
 fi
 
+# --- B-mod-cluster (2026-09-10): cluster sub-feature records state.Info ---
+if grep -q 'cluster_filter' "${PKG_DIR}/subfeatures.go"; then
+    pass "B-mod-cluster: cluster sub-feature references state.Info[cluster_filter]"
+else
+    fail "B-mod-cluster: cluster_filter in subfeatures.go" "missing"
+fi
+if grep -B 1 -A 8 'case SubCluster:' "${PKG_DIR}/subfeatures.go" | grep -q 'cluster_filter.*active'; then
+    pass "B-mod-cluster: enable sets cluster_filter = active"
+else
+    fail "B-mod-cluster: enable sets cluster_filter = active" "missing"
+fi
+if grep -B 1 -A 10 'case SubCluster:' "${PKG_DIR}/subfeatures.go" | grep -q 'cluster_filter.*inactive'; then
+    pass "B-mod-cluster: disable sets cluster_filter = inactive"
+else
+    fail "B-mod-cluster: disable sets cluster_filter = inactive" "missing"
+fi
+if grep -q 'TestEnableSubFeature_Cluster' "${PKG_DIR}/tailscale_test.go"; then
+    pass "B-mod-cluster: TestEnableSubFeature_Cluster unit test present"
+else
+    fail "B-mod-cluster: TestEnableSubFeature_Cluster unit test" "missing"
+fi
+
 # --- contract 12: Manager.LoadState / Manager.SaveState public wrappers ---
 # B-mod-tailscale requires these so the module package can read/write
 # state.json from outside the module package.

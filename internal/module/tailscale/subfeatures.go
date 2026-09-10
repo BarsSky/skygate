@@ -118,9 +118,19 @@ func (m *Module) subFeatures() []module.SubFeature {
 func (m *Module) enableSubFeature(ctx context.Context, name string) error {
 	switch name {
 	case SubCluster:
-		// No host-side effect — just an audit row. The
-		// cluster filter is applied in skygate's
-		// /admin/cluster page, not in tailscaled.
+		// B-mod-cluster (2026-09-10): the cluster
+		// sub-feature has no host-side effect on
+		// tailscaled (the filter is applied in skygate's
+		// /admin/cluster page). What we DO record is
+		// state.Info["cluster_filter"] = "active" so the
+		// /admin/modules/tailscale detail page can show
+		// the filter status alongside the audit history.
+		m.mu.Lock()
+		if m.state.Info == nil {
+			m.state.Info = map[string]string{}
+		}
+		m.state.Info["cluster_filter"] = "active"
+		m.mu.Unlock()
 		return nil
 
 	case SubTelegram:
@@ -156,9 +166,18 @@ func (m *Module) enableSubFeature(ctx context.Context, name string) error {
 // disableSubFeature reverses the side effect. Idempotent.
 // For "cluster" + "derp" there's nothing to undo (no host-side
 // effect was applied in the first place).
+//
+// B-mod-cluster (2026-09-10): for "cluster" we DO have a
+// state-side effect to undo — clear state.Info["cluster_filter"]
+// so the admin page reflects "inactive" after disable.
 func (m *Module) disableSubFeature(ctx context.Context, name string) error {
 	switch name {
 	case SubCluster:
+		m.mu.Lock()
+		if m.state.Info != nil {
+			m.state.Info["cluster_filter"] = "inactive"
+		}
+		m.mu.Unlock()
 		return nil
 	case SubTelegram:
 		// Remove the Telegram API subnet route from the

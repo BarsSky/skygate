@@ -470,6 +470,43 @@ func TestEnableSubFeature_Unknown(t *testing.T) {
 	}
 }
 
+// TestEnableSubFeature_Cluster (B-mod-cluster, 2026-09-10)
+// verifies the cluster sub-feature records state.Info
+// ["cluster_filter"] = "active" on enable + "inactive" on
+// disable. The actual Tailscale filter is applied in
+// /admin/cluster (out of scope for this B-block) — the
+// tailscale module just records the operator's intent.
+func TestEnableSubFeature_Cluster(t *testing.T) {
+	m, _, _ := newTestModule(t, InstallModeOSLevel)
+	// Enable: state.Info["cluster_filter"] = "active"
+	if err := m.EnableSubFeature(context.Background(), SubCluster); err != nil {
+		t.Fatalf("EnableSubFeature(cluster): %v", err)
+	}
+	if m.state.SubFeatures[SubCluster] != true {
+		t.Error("state.SubFeatures[cluster] = false, want true after enable")
+	}
+	if got := m.state.Info["cluster_filter"]; got != "active" {
+		t.Errorf("state.Info[cluster_filter] = %q, want %q", got, "active")
+	}
+	// Disable: state.Info["cluster_filter"] = "inactive"
+	if err := m.DisableSubFeature(context.Background(), SubCluster); err != nil {
+		t.Fatalf("DisableSubFeature(cluster): %v", err)
+	}
+	if m.state.SubFeatures[SubCluster] != false {
+		t.Error("state.SubFeatures[cluster] = true, want false after disable")
+	}
+	if got := m.state.Info["cluster_filter"]; got != "inactive" {
+		t.Errorf("state.Info[cluster_filter] = %q, want %q", got, "inactive")
+	}
+	// Idempotency: re-enable doesn't error.
+	if err := m.EnableSubFeature(context.Background(), SubCluster); err != nil {
+		t.Errorf("re-enable: %v", err)
+	}
+	if got := m.state.Info["cluster_filter"]; got != "active" {
+		t.Errorf("re-enable: state.Info[cluster_filter] = %q, want %q", got, "active")
+	}
+}
+
 // TestDisableSubFeature_Telegram verifies disableTelegram
 // removes the 91.108.56.0/22 route.
 func TestDisableSubFeature_Telegram(t *testing.T) {
