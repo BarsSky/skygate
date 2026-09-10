@@ -1,0 +1,36 @@
+docs: add auto-deploy-test-plan.md (Phase 0-7)
+
+Detailed plan for debugging + testing the auto-deployment pipeline.
+Covers modules, narrow places, 7 test phases, svi strategy,
+metrics, timeline, rollback.
+
+Triggered by the 2026-09-09 session: discovered that svi
+(svyatoslava-1) was unreachable from skygate over Tailscale
+because the preauth key was created without --user mapping,
+landing the new node in the synthetic 'tagged-devices'
+headscale user. B-new-standby (commit 5c357851) added the
+proper fix; this plan covers the broader deployment testing
+so future auto-deploys (new skygate copy OR new cluster
+replica) work end-to-end.
+
+Plan structure (9 sections):
+- Section 0: Current state (what works / what doesn't)
+- Section 1: Module map (24 modules across deploy/scripts/internal)
+- Section 2: Narrow places in auto-deploy (8 categories:
+  Tailscale provisioning, headscale user mapping, policy
+  generation, bootstrap standby, HA state machine, DR drill,
+  pre-deploy verification, network-layer blocks)
+- Section 3: Test phases (0-7) — audit, grants validation,
+  re-deploy svi, create-standby-preauth, policy reapply,
+  fresh skygate deploy, DR drill, regression tests + new
+  B-checks
+- Section 4: svi strategy (when to use, when NOT to)
+- Section 5: Success metrics
+- Section 6: What we don't do (deferred)
+- Section 7: Timeline (1-2 days)
+- Section 8: Rollback plan per phase
+- Section 9: Known issues (out of scope)
+
+Total: 382 lines. Targets svi as the test replica (no critical
+workload), karolina jump for SSH access, B-check framework
+for regression coverage.

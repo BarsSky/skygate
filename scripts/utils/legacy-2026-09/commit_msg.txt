@@ -1,0 +1,74 @@
+B-new-standby (v1.5.2+): HA standby auto-provisioning with correct user mapping
+
+Closes the gap where new HA standbys (e.g. svyatoslava-1) ended up
+in the synthetic "tagged-devices" headscale user instead of the real
+"infra" user, breaking per-DEVICE Tailscale grants and causing the
+standby to be invisible to skygate-host-1-1 over the Tailscale mesh.
+
+Root cause (verified via headscale policy inspection 2026-09-09):
+- qSelectPerUserDeviceTags (internal/db/queries.go) JOINs
+  node_owner_map with portal_users to build tagsByUser
+- "tagged-devices" is NOT in portal_users — it's a synthetic
+  fallback headscale creates when no user mapping is provided
+  at auth time
+- Net effect: per-DEVICE grants in the headscale policy never
+  include the new standby
+
+Two new pieces of code:
+
+1. deploy/scripts/create-standby-preauth.sh (new, ~170 lines)
+   - Runs on the PRIMARY (skygate) host to mint a Tailscale preauth
+     key for the new standby with the correct headscale user
+     mapping
+   - Default user: infra (id=85) because HA standbys run
+     etcd/Patroni (infra services)
+   - Default ACL: tag:dev-infra-<hostname> so the new node
+     gets the per-DEVICE grant on first contact via B175
+     Strategy E
+   - Validates: docker present, headscale container running,
+     resolves user names to numeric ids via headscale users list
+   - Records ha.preauth.create audit row in skygate DB
+
+2. scripts/bootstrap_standby.sh (modified, +42 lines)
+   - New step 0: Tailscale auth block, runs BEFORE the
+     S3-pull + docker-compose-up flow
+   - Reads SKYGATE_STANDBY_TS_AUTHKEY env var
+   - If unset, falls back to legacy path for operators who set
+     up Tailscale manually
+   - Idempotency: skips tailscale up if BackendState=Running
+   - B179 safety: uses --netfilter-mode=nodir (NEVER off —
+     that's the trap that re-creates the ts-input iptables rule
+     from the previous session)
+   - Dies on tailscale up failure with clear message
+
+New B-check (scripts/check_b_standby_provision.sh, 20 contracts
+all PASS):
+- A-F: create-standby-preauth.sh file checks + args + docker exec
+  + ACL tag + audit row
+- G-M: bootstrap_standby.sh step 0 + env var + --netfilter-mode
+  + idempotency + login server + fallback + die-on-failure
+- N-P: verify_pre_deploy.sh registration + AGENTS.md mention +
+  ha-v1.5.0-execution.md mention
+
+New operator runbook (replaces the old manual Tailscale setup):
+  # On PRIMARY (skygate) — mint a preauth key for the new standby:
+  NEW_KEY=$(bash deploy/scripts/create-standby-preauth.sh --hostname svyatoslava-2)
+  # -> prints: hskey-auth-XXXXXXXX
+
+  # On the NEW STANDBY VM:
+  ssh svyatoslava-2
+  cd ~/skygate
+  export SKYGATE_STANDBY_TS_AUTHKEY="$NEW_KEY"
+  bash scripts/bootstrap_standby.sh
+
+Existing svyatoslava-1 fix is separate (operator can re-provision
+or add node_owner_map row + custom grant).
+
+Files:
+- deploy/scripts/create-standby-preauth.sh (new, 170 lines)
+- scripts/bootstrap_standby.sh (modified, +42 lines)
+- scripts/check_b_standby_provision.sh (new, 220 lines, 20 B-checks)
+- scripts/verify_pre_deploy.sh (registers new B-check)
+- AGENTS.md (B-new-standby section + reusable lesson)
+- docs/internal/ha-v1.5.0-execution.md (Phase 7 updated with
+  new operator runbook)

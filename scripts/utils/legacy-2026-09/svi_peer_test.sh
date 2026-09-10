@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set +e
+# Test svi's Tailscale mesh connectivity to specific peers
+ssh -o ConnectTimeout=15 -o BatchMode=yes skyadmin@192.168.13.69 "ssh svi 'echo == ping karolina ==; ping -c 2 -W 3 100.64.0.2 2>&1 | tail -3; echo; echo == ping emilia ==; ping -c 2 -W 3 100.64.0.3 2>&1 | tail -3; echo; echo == ping sharlotta ==; ping -c 2 -W 3 100.64.0.4 2>&1 | tail -3; echo; echo == tailscale ping karolina ==; tailscale ping -c 1 100.64.0.2 2>&1 | head -3; echo; echo == tailscale ping skygate-host-1-1 ==; tailscale ping -c 1 100.64.0.22 2>&1 | head -3; echo; echo == tailscale status --json peer keys ==; tailscale status --json 2>&1 | python3 -c \"import json,sys; d=json.load(sys.stdin); print(chr(112)+chr(101)+chr(101)+chr(114)+chr(32)+chr(99)+chr(111)+chr(117)+chr(110)+chr(116), len(d.get(chr(112)+chr(101)+chr(101)+chr(114),{})))\" 2>&1' 2>&1" 2>&1 | head -30

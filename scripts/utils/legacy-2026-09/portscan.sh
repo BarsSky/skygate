@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set +e
+echo "=== port scan 45.152.198.217 from skygate ==="
+ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 'for p in 22 53 80 443 2222 2379 41641 50443 50444 50445 8080 22 21 25 110 143 993 995 3389 5900 5432 3306 6379 11211 27017 8000 8888 19999 10000 222 3128 4443 5000 7443 8008 8001 3128 8883 9090 9200 9418 8006 8086 81 8081 8443 443 800 22222 5222 5672 7474 8083 8085 8880 8800; do out=$(timeout 1 nc -zv 45.152.198.217 $p 2>&1); echo "$out" | grep -q "succeeded" && echo "  $p: OPEN"; done; echo "DONE"' 2>&1

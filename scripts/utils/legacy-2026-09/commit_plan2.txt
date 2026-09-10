@@ -1,0 +1,33 @@
+docs: update auto-deploy-test-plan.md (Tailscale install gap)
+
+The user's question "точно ли есть в репозиториях debian пакет tailscale?"
+uncovered a critical gap in the auto-deploy pipeline:
+
+- tailscale package is NOT in default Debian repos (verified via
+  https://tailscale.com/download/linux/debian-bookworm)
+- tailscale is in tailscale's own apt repo
+  (https://pkgs.tailscale.com/stable/debian/bookworm)
+- install-debian.sh does NOT install Tailscale (only skygate binary)
+- install-common.sh:310 has outdated comment claiming
+  "the systemd install path doesn't use Tailscale at all"
+  (this was true pre-B-new-standby but is wrong now)
+- bootstrap_standby.sh step 0 (NEW B-new-standby) requires
+  tailscale binary and dies if missing
+- deploy/subnet-router/setup.sh:9 has explicit pre-req comment
+  "The host must already have tailscale installed" — but no
+  install script enforces it
+
+So on a fresh VM, install-debian.sh → operator SSHes in → runs
+bootstrap_standby.sh → step 0 dies because tailscale is missing.
+
+Updated plan:
+- Section 2.4 (Bootstrap standby flow) now documents the gap
+  with the actual fix (add Tailscale repo to install-debian.sh
+  + equivalent for install-alpine.sh and install-rh.sh)
+- Section 9 (Known issues) gets the same fix with a concrete
+  code snippet
+- Phase 7 (Regression tests + new B-checks) will cover this
+  gap with a new check_b_tailscale_installed.sh
+
+Plan still: 9 sections, 382+20 lines. No structural changes,
+just the new gap + fix.
