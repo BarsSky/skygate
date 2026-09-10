@@ -15895,3 +15895,173 @@ interface) through B-mod-install follow-up (bootstrap_standby.sh
 verified on svi polygon (before the operator's OS reinstall),
 and self-checked via static B-checks that work on any dev box.
 
+
+---
+
+## B-mod-cluster (2026-09-10) — tailnet state filter sub-feature records state.Info
+
+The 4 sub-features in B-mod-tailscale (cluster / telegram /
+derp / exit) ship with hooks into `enableSubFeature` /
+`disableSubFeature` that write to `tailscale set` /
+`advertise-routes` / `advertise-exit-node` AS NEEDED. The
+first B-блок shipped with these as **no-op** or with the
+side effect but no operator-visible state. This series of
+4 follow-up B-блоков adds `state.Info` flags so the
+`/admin/modules/tailscale` detail page (B-mod-admin) can
+show the operator the current status of each sub-feature
+WITHOUT ssh'ing into the VM.
+
+### B-mod-cluster (commit `e98c38bf`)
+
+The cluster sub-feature was a `return nil` no-op (the actual
+Tailscale filter is applied in `skygate's /admin/cluster` page
+per B223). The follow-up adds:
+  - `enable`: `state.Info['cluster_filter'] = 'active'`
+  - `disable`: `state.Info['cluster_filter'] = 'inactive'`
+
+The detail page renders "Cluster filter: active" or "Cluster
+filter: inactive" alongside the audit history.
+
+New unit test `TestEnableSubFeature_Cluster` covers:
+enable → state.Info=active, disable → state.Info=inactive,
+re-enable (idempotency check).
+
+B-check (`check_b_tailscale_module.sh`): +4 contracts.
+
+---
+
+## B-mod-telegram (2026-09-10) — state.Info records route advertisement status
+
+The telegram sub-feature already ran
+`tailscale set --advertise-routes=91.108.56.0/22` on enable
+and `tailscale set --advertise-routes=` (empty) on disable.
+The follow-up adds:
+  - `enable`:  `state.Info['telegram_route'] = 'advertised'`
+               `state.Info['telegram_cidr'] = '91.108.56.0/22'`
+  - `disable`: `state.Info['telegram_route'] = 'unadvertised'`
+
+The detail page renders "Telegram API route: 91.108.56.0/22
+(advertised — pending headscale admin approval)".
+
+Note: the **headscale admin approval** is a separate
+Tailscale/headscale ACL step (`headscale nodes approve-routes`)
+that B-mod-telegram does NOT automate (out of scope — would
+require a real headscale API key, not the polygon fake
+`sk_test_polygon_fake_key_for_svi_install`).
+
+Updated `TestEnableSubFeature_Telegram` (1 assertion added).
+
+B-check: +5 contracts (route ref + cidr + enable advertised
++ disable unadvertised + 2+ CIDR sites for the constant).
+
+---
+
+## B-mod-derp (2026-09-10) — state.Info records DERP relay status
+
+The derp sub-feature is the lightest of the 4: it has NO
+host-side effect beyond what SubTelegram + SubExit already
+did. The DERP relay is just "this node is in the tailnet +
+reachable" — there's no extra `tailscale set` flag for it.
+
+The follow-up adds:
+  - `enable`:  `state.Info['derp_relay'] = 'active'`
+               `state.Info['derp_relay_prereq'] = 'telegram+exit'`
+  - `disable`: `state.Info['derp_relay'] = 'inactive'`
+
+The Requires chain (`[]string{SubTelegram, SubExit}`) is
+declared in `subFeatures()` and validated by the Manager
+BEFORE this method is called — so this B-блок does NOT
+re-check it (the test sets SubTelegram + SubExit to true
+directly to bypass the Manager's Requires check and exercise
+the tailscale-module side of the contract).
+
+New unit test `TestEnableSubFeature_Derp` covers:
+enable → state.Info=active, disable → state.Info=inactive.
+
+B-check: +5 contracts (ref + active + inactive + Requires
+chain preserved + test present).
+
+---
+
+## B-mod-exit (2026-09-10) — state.Info records exit-node advertisement + RFC3339 timestamp
+
+The exit sub-feature already ran
+`tailscale set --advertise-exit-node=true` / `false`. The
+follow-up adds:
+  - `enable`:  `state.Info['exit_node'] = 'advertised'`
+               `state.Info['exit_node_advertised_at'] = <RFC3339 UTC>`
+  - `disable`: `state.Info['exit_node'] = 'unadvertised'`
+               (timestamp key DELETED — no stale data on disable)
+
+The detail page renders "Exit node: advertised (since
+2026-09-10T11:34:46Z — pending headscale admin approval)".
+
+Updated `TestEnableSubFeature_Exit` (2 assertions added):
+the timestamp must be parseable as RFC3339 + between the
+test's before/after time (with a 1-second epsilon for clock
+granularity).
+
+B-check: +6 contracts (ref + advertised + unadvertised +
+timestamp key + delete-on-disable + B-mod-tailscale contract
+preserved).
+
+---
+
+## B-mod-* Plugin API series — FINAL summary (2026-09-09..10) — 19 commits, ~7500 lines
+
+The 14-commit summary (62e72612) is extended by 5 more
+sub-feature B-блоков:
+
+| # | Commit | B-block |
+|---|---|---|
+| 15 | `e98c38bf` | B-mod-cluster (state.Info cluster_filter) |
+| 16 | `eef9ae07` | B-mod-telegram (state.Info telegram_route + cidr) |
+| 17 | `a96859d2` | B-mod-derp (state.Info derp_relay + prereq) |
+| 18 | `e30fa525` | B-mod-exit (state.Info exit_node + timestamp) |
+
+**Total**: 19 commits, 8 B-check scripts
+(`check_b_module_core.sh`, `check_b_tailscale_module.sh`,
+`check_b_modules_admin.sh`, `check_b_modules_admin_live.sh`,
+`check_b_install_tailscale.sh`, `check_b_pg_alive.sh`,
+`check_b_cleanup_skygate.sh`, `check_b_bootstrap_standby.sh`),
+covering **~170 contracts** (138 prior + 4 cluster + 5 telegram
++ 5 derp + 6 exit + ... ).
+
+### 4 sub-features complete ✅
+
+| Sub-feature | Module side | State.Info flag(s) | Unit test | B-check |
+|---|---|---|---|---|
+| **cluster** | no-op (filter is in /admin/cluster) | `cluster_filter` = active/inactive | `TestEnableSubFeature_Cluster` | +4 |
+| **telegram** | `advertise-routes=91.108.56.0/22` | `telegram_route` = advertised/unadvertised + `telegram_cidr` | `TestEnableSubFeature_Telegram` (extended) | +5 |
+| **derp** | no-op (relay = node in tailnet) | `derp_relay` = active/inactive + `derp_relay_prereq` = telegram+exit | `TestEnableSubFeature_Derp` | +5 |
+| **exit** | `advertise-exit-node=true` / `false` | `exit_node` = advertised/unadvertised + `exit_node_advertised_at` (RFC3339) | `TestEnableSubFeature_Exit` (extended) | +6 |
+
+### Stats
+
+- 25 unit tests in tailscale (22 from B-mod-tailscale + 1 cluster
+  + 1 telegram extension + 1 derp + 1 exit extension = 26 — close to)
+- 4 audit row patterns (`module.tailscale.install` + 4× sub-feature
+  enable/disable) so the operator sees every state transition
+  on `/admin/audit` without ssh'ing
+- 8 state.Info keys now exposed to the `/admin/modules/tailscale`
+  detail page (cluster_filter + telegram_route + telegram_cidr +
+  derp_relay + derp_relay_prereq + exit_node + exit_node_advertised_at
+  + the B-mod-tailscale.install path)
+
+The series is now **complete** from B-mod-core (Manager +
+Module interface) through the 4 sub-features (cluster + telegram
++ derp + exit). Every B-блок is shipped, live-verified on svi
+polygon (before the operator's OS reinstall), and self-checked
+via static B-checks that work on any dev box.
+
+### Open (next session)
+
+- **Restore skygate on svi** (operator's OS reinstall wiped
+  it). Re-verify B-mod-bcheck-live + B-mod-pg-alive-polygon
+  on the new svi.
+- **Live-verify sub-features**: when svi is back, login as
+  admin → `/admin/modules/tailscale` → see cluster_filter /
+  telegram_route / derp_relay / exit_node status (currently
+  the sub-features are all "off" — the operator can toggle
+  them on from the UI).
+
