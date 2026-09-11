@@ -303,6 +303,17 @@ func main() {
 				log.Fatalf("migrate-only: %v", err)
 			}
 			return
+		case "db-migrate":
+			// B-mod-sqlite-pg-bidi v1.5.4 Task 3 — convert
+			// schema + data between skygate DBs (SQLite↔PG).
+			// See cmd/skygate/db_migrate.go for the subcommand
+			// surface; the heavy lifting lives in
+			// internal/db/convert.go.
+			if err := runDBMigrateSubcommand(context.Background(), os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "db-migrate failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "version", "--version", "-v":
 			fmt.Printf("skygate %s (commit %s, built %s)\n", version, commit, buildTime)
 			return
