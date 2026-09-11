@@ -16065,3 +16065,276 @@ via static B-checks that work on any dev box.
   the sub-features are all "off" — the operator can toggle
   them on from the UI).
 
+---
+
+## B-mod-* live-verify + 4 B-fix blocks on svi polygon (2026-09-11)
+
+After the operator's 2nd OS reinstall on svi, the rebuilt
+skygate instance was running an OLD binary (Sep 10 11:32 build,
+pre-B-mod-* code). Pulling `d89beff1` + rebuilding + restarting
+on the fresh Ubuntu 26.04 + Go 1.25.4 + remote PG 18.6 stack
+revealed 4 latent bugs in the B-mod-* code + 1 bug in the
+B-check scripts:
+
+### Bug 1: `body-admin-modules` template undefined (B-mod-template-fix)
+
+`B-mod-admin (580ed0c)` shipped
+`internal/handlers/templates/admin/modules.html` and
+`module_detail.html` as full standalone HTML pages using the
+OLD layout pattern:
+
+  {{define "admin/modules.html"}}
+  <!doctype html>...<body>{{template "layout_sidebar" .}}...
+
+But `AdminModulesList` + `AdminModuleDetail` call
+`s.Backend.RenderWithLayout` which calls `templates.go:196
+ExecuteTemplate 'body-admin-modules'`, so the runtime error is:
+
+  html/template: "body-admin-modules" is undefined
+
+The page renders the layout (sidebar + footer) but the body
+content fails to load. Operator-visible symptom:
+`/admin/modules` shows the sidebar with no module table;
+`/admin/modules/tailscale` shows no state pill, no
+sub-feature toggle, no audit history.
+
+**Fix** (commit `e8ae1e74`): convert both templates to the
+canonical body-block format:
+
+  {{define "body-admin-modules"}}
+  <style>...</style>
+  <h1>{{.Title}}</h1>
+  ...actual body content...
+
+The `<style>` block moves from `<head>` into the body —
+themes.css is loaded first by layout.html, then this `<style>`
+block overrides it (same cascade order as before).
+
+### Bug 2: sub-feature POST route misses multi-segment action (B-fix-modules-route)
+
+Pre-fix route registration in `cmd/skygate/main.go:1872`:
+
+    mux.Handle("POST /admin/modules/{name}/{action}", ...)
+
+Go 1.22 mux `{action}` wildcard only matches a SINGLE path
+segment. The sub-feature URL is `/admin/modules/tailscale/
+sub/cluster` (2 segments after `{name}`), so the POST pattern
+doesn't match. The request falls through to
+`mux.HandleFunc("/", ...)` which redirects to `/dashboard` with
+302. The operator sees "page jumped back to dashboard with no
+state change" + no audit row + state.json unchanged.
+
+**Fix** (commit `cbf0f730`): replace `{action}` with
+`{action...}` (multi-segment wildcard):
+
+    mux.Handle("POST /admin/modules/{name}/{action...}", ...)
+
+Now the route matches `/admin/modules/tailscale/install` (1
+segment) AND `/admin/modules/tailscale/sub/cluster` (2
+segments), with `PathValue("action")` returning either
+`"install"` or `"sub/cluster"` respectively. The handler
+logic (`modules.go:266 strings.HasPrefix(action, "sub/")`)
+is unchanged.
+
+New regression tests (`cmd/skygate/modules_route_bfix_test.go`):
+
+- `TestModulesSubRouteMatchesMultiSegmentAction` (5 subtests):
+  - single-segment: install/start/stop/enable/disable
+  - multi-segment: sub/cluster, sub/telegram, sub/derp, sub/exit
+- `TestModulesSubRouteDoesNotMatchUnrelatedPaths`: POST
+  /admin/modules (no {name}) must NOT match the POST handler.
+
+### Bug 3: PASS counter shadowed password in check_b_modules_admin_live.sh (B-fix-bcheck-pass-var)
+
+Pre-fix script:
+
+```bash
+PASS="${SKYGATE_LIVE_PASSWORD:-}"  # the password (line 52)
+...
+PASS=0                            # the counter (line 80)
+pass() { PASS=$((PASS + 1)); ... } # overwrites password!
+```
+
+When `pass()` is called the first time (after
+`/healthz returns 200`), `$PASS` becomes `1`. The login curl
+runs AFTER `pass()` has been called twice, so `$PASS=2` by the
+time curl posts to /login. Live-traced:
+
+```
+++ curl ... -X POST http://127.0.0.1:8080/login \
+       -d 'username=admin&password=2'
+```
+
+The pre-fix script ALWAYS got 200 from /login because the
+password was silently truncated to "2". The "wrong password?"
+diagnostic was right; the bug was the variable name collision.
+
+**Fix** (commit `1cad1c78`, amended to `8a474a61`): rename
+the pass counter (PASS → PASS_CNT) in pass/fail/skip functions
++ PASS_RATE calc + final summary printf. The password
+variable stays PASS (no rename — fewer churn).
+
+### Bug 4: polygon DB_PASS regex captured user+pass (B-fix-bcheck-pg-pass)
+
+`check_b_pg_alive.sh` polygon mode DSN parser (B-mod-pg-alive-polygon):
+
+```bash
+DB_PASS=$(echo "$SKYGATE_DB_DSN" | sed -E 's|^postgres://||' \
+                          | sed -E 's|^(.+)@.+$|\1|')
+```
+
+The `(.+)@` is greedy. When the password doesn't contain
+`@` (the common case), the regex captures
+`user:password` as a single match. For the polygon DSN
+`postgres://skygate_test:ebbab134df12a85d459994f6@...`,
+`DB_PASS` was `skygate_test:ebbab134df12a85d459994f6`
+(37 chars) instead of the correct 24-char password.
+
+Effect: `pg_query_psql` / `pg_query_pg_isready` wrappers in
+polygon mode set `PGPASSWORD="skygate_test:ebbab..."` → psql
+rejects the auth → contracts A/B fail (or contract A
+"accidentally passes" because pg_isready doesn't
+authenticate).
+
+**Fix** (commit `1b100db5`): strip user first, then strip
+host. What's left is the password:
+
+```bash
+DB_PASS=$(echo "$SKYGATE_DB_DSN" | sed -E 's|^postgres://[^:]+:||' \
+                          | sed -E 's|@.*$||')
+```
+
+Verified: regex now correctly returns
+`USER=skygate_test PASS=ebbab134df12a85d459994f6 (len=24)`.
+
+### Bonus: 3 more B-check script fixes (B-fix-bcheck-scripts + B-fix-bcheck-scripts-2)
+
+- `check_b_modules_admin.sh` route pattern check (contract 24)
+  grep'd for `mux.Handle("POST /admin/modules/{name}/{action}"`
+  but the actual code (post-B-fix-modules-route) uses
+  `{action...}`. Updated pattern to match. (commit `8a474a61`)
+- `check_b_tailscale_module.sh` 6 grep regex patterns for
+  state.Info flag assertions were written with `\[..<name>..\]`
+  (TWO chars each side, basic regex dots) but the actual Go
+  source uses `\[."<name>."\]` (ONE quote char each side). The
+  dots don't match the `"` characters. Replaced with the actual
+  quoted form. (commit `8a474a61`)
+- `deploy/scripts/{install-tailscale,cleanup-skygate,bootstrap_standby,create-standby-preauth}.sh`
+  were committed without executable bit (100644 instead of
+  100755). bootstrap_standby.sh has `[ ! -x "$INSTALL_TS_SH" ]`
+  guards that fail if install-tailscale.sh isn't +x. Fixed via
+  `git update-index --chmod=+x`. (commits `8a474a61` + `e0a1ad68`)
+- `check_b_pg_alive.sh` polygon mode: `pg_query_psql '\dt'`
+  didn't work — the wrapper forwards `$@` verbatim to psql,
+  but `\dt` is psql's interactive backslash command — only
+  valid as a `-c` arg. Changed to `pg_query_psql -c '\dt'`.
+  (commit `e0a1ad68`)
+
+### Final state on svi polygon (post-fix, 2026-09-11)
+
+| B-check script | Status | Notes |
+|---|---|---|
+| `check_b_bootstrap_standby.sh` | ✓ all contracts pass | bootstrap_standby.sh source + integration |
+| `check_b_cleanup_skygate.sh` | ✓ all contracts pass | cleanup-skygate.sh uninstaller |
+| `check_b_db_dsn_reachable.sh` | ✓ 13/13 pass | B-mod-db-retry exponential backoff |
+| `check_b_install_tailscale.sh` | ✓ all contracts pass | install-tailscale.sh 5 modes |
+| `check_b_module_core.sh` | ✓ 12/12 pass | Manager + Module interface |
+| `check_b_modules_admin_live.sh` | ✓ 12/12 pass + 2 SKIP | B-mod-bcheck live |
+| `check_b_modules_admin.sh` | ✓ all contracts pass | /admin/modules handlers |
+| `check_b_pg_alive.sh` | ✓ 8/8 pass (polygon mode) | B-mod-pg-bypass + B-mod-pg-alive-polygon |
+| `check_b_standby_provision.sh` | ✓ 20/20 pass | HA standby preauth |
+| `check_b_tailscale_module.sh` | ✓ all contracts pass | Tailscale module + 4 sub-features |
+
+**Total**: 10 B-check scripts, ~155 contracts, all passing
+on the freshly-restored svi polygon (post-2nd OS reinstall).
+
+### Live-toggle sub-features on svi (2026-09-11)
+
+After the route fix, the sub-feature toggles on
+`/admin/modules/tailscale` work end-to-end:
+
+- `cluster` enable → `?ok=Sub-feature%20cluster%20enabled`,
+  audit row `module.tailscale.subfeature.enable sub=cluster`,
+  state.json `"sub_features": {"cluster": true}`. ✅ Full
+  end-to-end including the disable (writes `"cluster": false`).
+- `telegram` enable → `?err=Error:%20enable%20telegram:%20advertise-routes:`
+  (the `tailscale` binary is NOT installed on the polygon
+  svi — this is expected for a polygon test VM, not a bug).
+- `derp` enable → `?err=Error:%20module:%20module:%20sub-feature%20requires`
+  (correctly rejected because telegram is not enabled).
+- `exit` enable → same `tailscale` binary missing error.
+
+State.json after the toggle run:
+`{"cluster": false, "derp": false}` — confirms B-mod-cluster
++ B-mod-derp state.Info flag logic is correct; B-mod-telegram
++ B-mod-exit require a real `tailscale` binary which polygon
+svi doesn't have (expected).
+
+### Reusable lesson (cross-project, HIGH value)
+
+**Live-verify catches what static checks miss.** All 4 B-mod-*
+bugs (template format, route wildcard, PASS-counter shadowing,
+DB_PASS regex) shipped to origin and passed all static B-checks
+on Windows. None of them were caught until the binary was
+rebuilt + deployed + run end-to-end on the svi polygon.
+
+The static B-check scripts in `scripts/check_b_*.sh` are
+necessary but not sufficient. The full live-verify path is:
+
+1. `git pull --ff-only` on the target VM (svi polygon here)
+2. `go build -o /tmp/skygate.new ./cmd/skygate`
+3. `systemctl restart skygate` (graceful 30s timeout)
+4. `for i in $(seq 1 60); do curl /healthz; ...` (wait up to
+   60s for listener to bind — svi took ~30-60s due to
+   `dbmigrate-watchdog` reconnect delays on a fresh DB)
+5. Login as admin (POST /login with `skygate_session` cookie)
+6. GET every admin page that exists (not just the smoke-test
+   ones)
+7. POST every form (not just GET the page that renders the
+   form — the route registration might be wrong even if the
+   template looks right)
+
+When the operator's OS reinstall wipes the VM, this is
+exactly the moment to re-run the full live-verify, not just
+trust the static B-checks.
+
+**Audit pattern (30 minutes per rebuild)**:
+
+```bash
+# After every fresh VM / OS reinstall / binary replace:
+ssh root@<vm> "bash -s" <<'EOF'
+cd /home/skyadmin/skygate
+git pull --ff-only && git rev-parse HEAD
+go build -o /tmp/skygate.new ./cmd/skygate
+systemctl restart skygate  # or kill -TERM; sleep 30; kill -KILL
+sleep 30  # wait for listener to bind
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/healthz
+
+# Login + check every admin page
+COOKIE=$(mktemp)
+curl -s -c $COOKIE -X POST http://127.0.0.1:8080/login \
+    -d "username=admin&password=$ADMIN_PASS" >/dev/null
+for path in /admin/modules /admin/modules/tailscale /admin/users \
+            /admin/devices /admin/exit-rules /admin/oidc; do
+    curl -s -b $COOKIE -w "$path = %{http_code}\n" \
+        -o /tmp/page.html http://127.0.0.1:8080$path
+    grep -q 'is undefined' /tmp/page.html && echo "!! $path: body block missing"
+done
+
+# Run every B-check script
+export SKYGATE_LIVE_HOST=http://127.0.0.1:8080
+export SKYGATE_LIVE_USER=admin
+export SKYGATE_LIVE_PASSWORD=$ADMIN_PASS
+export SKYGATE_PG_HOST=pg-test.skynas.ru SKYGATE_PG_USER=skygate_test
+export SKYGATE_PG_DB=skygate_test SKYGATE_PG_ALIVE_MODE=polygon
+export PGPASSWORD=$DB_PASS
+for s in scripts/check_b_*.sh; do bash $s 2>&1 | tail -3; done
+EOF
+```
+
+The "30 minutes" comes from the svi live-verify (2026-09-11)
+which took: pull (10s) + build (45s) + restart (60s listener
+bind) + 12 B-check scripts (90s) = ~3 minutes total wall clock,
+but ~30 minutes of human investigation (4 real bugs caught,
+each with a fix + commit + push + verify cycle).
+
