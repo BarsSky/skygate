@@ -1,60 +1,131 @@
 package handlers
 
 import (
+	"io"
 	"net/http"
+	"path"
 	"path/filepath"
 	"strings"
+
+	"skygate/internal/staticfs"
 )
 
-// StaticHandler serves files from ./static directory.
-// Mounted in main.go: mux.HandleFunc("/static/", app.StaticHandler)
+// Note: we use `path.Clean` (POSIX forward-slash semantics) here, NOT
+// `filepath.Clean` (OS-specific separators). HTTP request paths always
+// use forward slashes, and `http.ServeFileFS` expects forward-slash
+// names relative to the FS root. Using `filepath.Clean` on Windows
+// silently converts separators to backslash, breaking the lookup.
 //
-// Sends `Cache-Control: public, max-age=31536000, immutable` for files
-// with a content-hash in the path (the typical Vite/webpack build
-// pattern: `app.<hash>.js`, `app.<hash>.css`). For files WITHOUT a
-// content-hash (themes.css, font-awesome.min.css, the .woff2 webfonts
-// that we ship as `static/webfonts/fa-solid-900.woff2` etc.), the
-// cache is set to 1 day with a `must-revalidate` directive so the
-// browser re-checks but doesn't block rendering on the cached copy.
-// This is the standard pattern for static assets that may ship in
-// future versions: long cache when the URL is content-addressed,
-// short cache + revalidate when it's versioned by directory.
+// hasContentHash() below still uses `filepath.Ext` + `filepath.Base`
+// for filename parsing — those work on either separator because they
+// operate on the final path component, not the full path.
+
+// 2026-09-11 (B-mod-static-embed): static assets are now embedded in the
+// binary via the staticfs.FS embed.FS instead of being read from disk at
+// request time.
+//
+// Pre-change, http.ServeFile(w, r, "./static/"+clean) required the
+// ./static/ directory to exist on disk at the binary's working directory.
+// This broke the prebuilt Docker image (Dockerfile.prebuilt does not
+// COPY static/ — the binary ran but every /static/* request returned
+// 404, rendering the web panel without CSS/JS/webfonts/favicon).
+//
+// Post-change, the entire static/ directory is compiled into the binary
+// via the staticfs package at the repo root (Go's //go:embed requires
+// files to live in the same directory as the source file). The dev path
+// (./:/app bind-mount) still works because the embed.FS is built from
+// the same source tree. The prebuilt path works because the binary IS
+// the static tree.
+//
+// Mounted in main.go:
+//   mux.HandleFunc("/static/", app.StaticHandler)
+//   mux.HandleFunc("/favicon.svg", app.FaviconHandler)
+
+// StaticHandler serves files from the embedded static/ directory.
+// Sets Cache-Control: public, max-age=31536000, immutable for files
+// with a content-hash in the path (Vite/webpack pattern:
+// app.<hash>.js, app.<hash>.css), else public, max-age=86400,
+// must-revalidate. This matches the pre-B-mod-static-embed behavior
+// bit-for-bit (verified by TestStaticHandler_CacheControl*).
 func (a *App) StaticHandler(w http.ResponseWriter, r *http.Request) {
-	// Strip "/static/" prefix
 	p := strings.TrimPrefix(r.URL.Path, "/static/")
 	if p == "" || p == "/" {
 		p = "index.html"
 	}
-	// Prevent path traversal: clean and ensure p stays inside ./static
-	clean := filepath.Clean(p)
+	// path.Clean (POSIX forward-slash), not filepath.Clean (OS-specific).
+	// See package comment above for why.
+	clean := path.Clean(p)
 	if strings.HasPrefix(clean, "..") || strings.Contains(clean, "/../") {
 		http.NotFound(w, r)
 		return
 	}
-	// Set Cache-Control based on whether the path looks content-hashed
-	// (e.g. `app.abc123def.js`). Vite uses a 8+ char hex hash by default.
-	if hasContentHash(clean) {
-		// Immutable for 1 year — the file content for this URL is permanent.
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		// 1 day cache, must revalidate. Long enough to avoid re-fetching
-		// during a normal admin session, short enough that a release
-		// (which renames the file or bumps a version param) takes effect
-		// within 24h.
-		w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
+
+	// Set Cache-Control BEFORE the Open check so that even 404 responses
+	// for content-hashed URLs (a future Vite scenario) preserve the
+	// immutable cache header — verified by TestStaticHandler_CacheControlContentHashed.
+	// http.NotFound (which we use on Open failure) preserves pre-set headers,
+	// unlike http.ServeFileFS which clears them.
+	setStaticCacheControl(w, clean)
+
+	// Open the file ourselves so we can use http.ServeContent (which
+	// preserves our Cache-Control header) instead of http.ServeFileFS
+	// (which clears headers on 404, verified empirically).
+	f, err := staticfs.FS.Open(path.Join("static", clean))
+	if err != nil {
+		http.NotFound(w, r)
+		return
 	}
-	http.ServeFile(w, r, "./static/"+clean)
+	defer f.Close()
+
+	// http.ServeContent handles Content-Type detection, Last-Modified,
+	// and Range requests. embed.FS files satisfy io.ReadSeeker (they
+	// implement Read+ReadAt+Seek+Close), so the type assertion succeeds.
+	rc, ok := f.(io.ReadSeeker)
+	if !ok {
+		// embed.FS files always satisfy ReadSeeker; this is defensive.
+		http.Error(w, "internal: embedded file is not seekable", http.StatusInternalServerError)
+		return
+	}
+	stat, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeContent(w, r, clean, stat.ModTime(), rc)
 }
 
-// FaviconHandler serves the site favicon. We ship a single SVG and let the
-// browser decide what to do with it. Also acts as /favicon.ico so legacy
-// browsers don't http.StatusNotFound.
-//
-// Cached for 1 day — favicon rarely changes; browsers refresh on their own.
+// FaviconHandler serves the site favicon from the embedded static/favicon.svg.
+// Same Content-Type + Cache-Control as the pre-B-mod-static-embed version.
+// Uses the same Open-then-ServeContent pattern as StaticHandler — see the
+// long comment there for why we don't use http.ServeFileFS.
 func (a *App) FaviconHandler(w http.ResponseWriter, r *http.Request) {
+	f, err := staticfs.FS.Open("static/favicon.svg")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
-	http.ServeFile(w, r, "./static/favicon.svg")
+	rc, ok := f.(io.ReadSeeker)
+	if !ok {
+		http.Error(w, "internal: embedded favicon is not seekable", http.StatusInternalServerError)
+		return
+	}
+	stat, _ := f.Stat()
+	http.ServeContent(w, r, "favicon.svg", stat.ModTime(), rc)
+}
+
+// setStaticCacheControl writes the Cache-Control header based on whether
+// the path looks content-hashed (e.g. `app.abc123def.js`). Extracted
+// from the inline conditional in StaticHandler for clarity. Vite uses
+// an 8+ char hex hash by default; we accept 6+ chars as conservative.
+func setStaticCacheControl(w http.ResponseWriter, p string) {
+	if hasContentHash(p) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
 }
 
 // hasContentHash returns true if the file name appears to contain a

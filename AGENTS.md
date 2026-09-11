@@ -16270,6 +16270,103 @@ State.json after the toggle run:
 + B-mod-exit require a real `tailscale` binary which polygon
 svi doesn't have (expected).
 
+### B-mod-static-embed (2026-09-11) — embed static/ into the binary via embed.FS
+
+**Проблема** (найдена 2026-09-11 при аудите sidecar-сценария, см.
+`docs/internal/2026-09-11-skygate-adoption-audit.md`):
+
+Оператор развернул skygate как sidecar к существующему headscale на
+VM `188.253.20.31`. Использовал `ghcr.io/barssky/skygate:latest`
+(prebuilt-путь через `Dockerfile.prebuilt`). Бинарь стартовал,
+`/healthz` отвечал, `/login` отдавал HTML — но **CSS/JS/webfonts
+отдавали 404**, страница рендерилась голым HTML без тем, шрифтов
+и иконок. Доков по этому не было, оператор разбирался несколько часов.
+
+**Root cause**: `internal/handlers/static.go` использовал
+`http.ServeFile(w, r, "./static/"+clean)` — чтение с диска. Для
+prebuilt-образа (CI собирает бинарь, в `Dockerfile.prebuilt` НЕТ
+`COPY static/`) на диске нет `static/`, поэтому все запросы
+`/static/css/themes.css`, `/static/webfonts/fa-solid-900.woff2`,
+`/favicon.svg` уходили в 404.
+
+Dev-путь (`./:/app` bind-mount) работал случайно — `./static/`
+есть на хосте разработчика.
+
+**Фикс** (commits B-mod-static-embed series):
+
+1. **Новый пакет `internal/staticfs/`** с `//go:embed static`,
+   экспортирующий `staticfs.FS` (`embed.FS`). Файлы `static/`
+   скопированы в `internal/staticfs/static/` для доступа `embed`
+   (Go embed требует файлы в том же package directory). На
+   prebuilt-пути содержимое копии компилится в бинарь.
+
+2. **`internal/handlers/static.go`** переписан:
+   - `StaticHandler`: `staticfs.FS.Open(path.Join("static", clean))`
+     → manual `f.(io.ReadSeeker)` type-assert → `http.ServeContent`.
+   - `FaviconHandler`: тот же паттерн.
+   - Используется `path.Clean` (POSIX forward-slash), НЕ
+     `filepath.Clean` — последний на Windows даёт backslash, что
+     ломает lookup в `embed.FS` (бага не было видно на Linux dev,
+     но на Windows dev/test 100% репро).
+   - `setStaticCacheControl` теперь вызывается ДО `Open`, чтобы
+     cache header сохранялся даже на 404 — `http.ServeFileFS`
+     стирает headers на 404 (проверено эмпирически, контраст
+     с `http.Error` который headers сохраняет).
+
+3. **Семь unit-тестов** в `internal/handlers/static_test.go`:
+   - `TestStaticHandler_ServesThemesCSS` (200 + `text/css` + body
+     содержит `:root`)
+   - `TestStaticHandler_ServesWebfont` (200 + body > 100 bytes
+     + wOF2 magic)
+   - `TestStaticHandler_PathTraversal` (`/static/../etc/passwd`
+     + варианты → 404)
+   - `TestStaticHandler_NotFoundOnMissing` (404 на missing file)
+   - `TestStaticHandler_CacheControlContentHashed` (immutable для
+     content-hashed URL — guards future Vite build)
+   - `TestStaticHandler_CacheControlNonHashed` (must-revalidate
+     для обычных файлов)
+   - `TestFaviconHandler_ReturnsSVG` (200 + `image/svg+xml` +
+     cache header)
+
+4. **B-check скрипт** `scripts/check_b_mod_static_embed.sh` — 6
+   контрактов:
+   - A: `internal/staticfs/staticfs.go` содержит `//go:embed static`
+   - B: `internal/handlers/static.go` НЕ использует
+     `http.ServeFile(w, r, "./static/")` (вне комментариев)
+   - C: импорт + использование `staticfs.FS`
+   - D: `go build` succeeds, бинарь ≥ 25 MB (проверка на
+     реальное встраивание)
+   - E: `go vet ./internal/handlers/...` clean
+   - F: все 7 тестов pass
+
+**Verification** (2026-09-11, local PowerShell direct, WSL bash
+script имеет quoting-проблемы с `C:\Program Files\Go\bin\go.exe`
+на этой машине — работает в Linux CI):
+
+```
+PASS embed.FS directive at line 29
+PASS disk read removed
+PASS staticfs.FS referenced
+PASS build OK (29.9 MB)
+PASS vet clean
+PASS all 7 tests pass (TestStaticHandler_ServesThemesCSS,
+     TestStaticHandler_ServesWebfont, TestStaticHandler_PathTraversal,
+     TestStaticHandler_NotFoundOnMissing,
+     TestStaticHandler_CacheControlContentHashed,
+     TestStaticHandler_CacheControlNonHashed,
+     TestFaviconHandler_ReturnsSVG)
+```
+
+Бинарь вырос с ~22 MB до ~30 MB (+8 MB на embedded webfonts).
+
+**Известное ограничение** (НЕ требует фикса, но worth noting):
+
+`static/` теперь живёт в двух местах: оригинал в корне (для dev
+path через bind-mount `./:/app`) и копия в `internal/staticfs/static/`.
+При добавлении новых ассетов нужно копировать в оба места. Можно
+автоматизировать через `Makefile` target или `go:generate` —
+отдельная задача, если оператор запросит.
+
 ### Reusable lesson (cross-project, HIGH value)
 
 **Live-verify catches what static checks miss.** All 4 B-mod-*
