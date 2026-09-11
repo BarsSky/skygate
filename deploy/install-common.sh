@@ -326,7 +326,11 @@ SKYGATE_DB_DSN=
 # from headscale" to fully automatic on first boot. Default:
 # empty (auto-sync OFF). Set to 'true' for the sidecar flow.
 # See docs/sidecar-mode.md "First-run adoption" + docs/install-dry-run-report.md.
-SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=
+# Note: the \${SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN:-} expansion
+# means the calling environment's value (set by install.sh's
+# export + install-debian.sh's --import-existing= flag) flows
+# into this file. Default empty if unset.
+SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=${SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN:-}
 
 # === Optional: Tailscale in-container ===
 # Set TS_AUTHKEY_FILE to /etc/skygate/ts_authkey (after writing
