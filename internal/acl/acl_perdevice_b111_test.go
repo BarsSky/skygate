@@ -59,20 +59,31 @@ func TestGetInfraExitNodeTags_ExitNodesOnly(t *testing.T) {
 	// Post-phase-3 expected state: 4 exit nodes + 1
 	// skygate host. The skygate is filtered out; the 4
 	// exit tags are returned sorted.
+	//
+	// 2026-09-11 (post-B-redact-v1.5.3 df846541): the original
+	// test had the operator's real polygon hostname
+	// (`svyatoslava-1`) which the B-redact commit replaced
+	// with `<polygon-vm-hostname>`. The placeholder sorts
+	// FIRST (ASCII `<` is 0x3C, before letters) instead of
+	// LAST where the real `svyatoslava-1` sorted (s > s, but
+	// v > h). Use a constant fictional hostname (`zagorsk`)
+	// that sorts after `sharlotta` so the test's "sorted"
+	// contract still holds without leaking the real name.
+	const polygonVMHostname = "zagorsk"
 	got := getInfraExitNodeTags(map[string][]string{
 		"infra": {
 			"tag:dev-infra-skygate-host-1",
 			"tag:dev-infra-sharlotta",
 			"tag:dev-infra-emilia",
 			"tag:dev-infra-karolina",
-			"tag:dev-infra-<polygon-vm-hostname>",
+			"tag:dev-infra-" + polygonVMHostname,
 		},
 	})
 	want := []string{
 		"tag:dev-infra-emilia",
 		"tag:dev-infra-karolina",
 		"tag:dev-infra-sharlotta",
-		"tag:dev-infra-<polygon-vm-hostname>",
+		"tag:dev-infra-" + polygonVMHostname,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
