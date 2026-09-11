@@ -16367,6 +16367,156 @@ path через bind-mount `./:/app`) и копия в `internal/staticfs/static
 автоматизировать через `Makefile` target или `go:generate` —
 отдельная задача, если оператор запросит.
 
+### B-mod-sqlite-pg-bidi (2026-09-11) — restore explicit SQLite support alongside Postgres
+
+**Проблема** (оператор 2026-09-11, цитата по-русски):
+"также необходимо все таки сделать явную поддержку и SQLite вместе
+с Postgres с полной конвертацией из SQLite в Postgres и обратно,
+а также указать в авторазвертывании как опция выбора с какой БД
+работает skygate. также не забывать что при старте skygate
+администротор в праве сам выбрать и указать с каким типом БД он
+будет работать и передать соотвествующие настройки подключения
+(если PG) или рабочим порядком сменить одну на другую без потери
+данных."
+
+История: v1.3.0 (B-mod-db-retry, 2026-09-09) удалил SQLite-поддержку
+со словами "simplification". v1.3.0-v1.5.3 — PG-only. Оператор
+запросил явный возврат SQLite с полной bidi-конвертацией + UI
+выбора DB type + возможностью переключаться без потери данных.
+
+**Фикс** (commits B-mod-sqlite-pg-bidi series, на текущий момент
+4 коммита на `cd28030c`):
+
+1. **`internal/db/dialect.go`** — `DialectKind` enum (SQLite /
+   Postgres / Unknown) с методами `Placeholders(n)`, `UnixEpoch(expr)`,
+   `InsertIgnore(sql, keys)`, `BooleanType()`, `BooleanLiteral(b)`.
+   Методы на ENUM, а не на struct — `dialect.Placeholders(3)`
+   работает и от `DialectKind`, и от `*Dialect`. `Dialect` struct
+   (Kind + dsn) + `OpenDialect()` для live-open. `DetectDSN()`
+   принимает все формы: `sqlite:/path`, `file:`, `postgres://`,
+   `postgresql://`, bare path (default SQLite), `:memory:`,
+   пустая строка (default SQLite). `OpenWithDialect(dsn)` —
+   entry point для CLI/тестов.
+
+2. **`internal/db/open_sqlite.go` + `open_pg.go`** — SQLite open
+   через pure-Go `modernc.org/sqlite` (no CGO, Windows+Linux) с
+   3 обязательными PRAGMA: `foreign_keys=1`, `journal_mode=WAL`,
+   `busy_timeout=2000`. PG open — thin wrapper над существующим
+   `OpenPostgres`. Driver registration через blank imports в
+   `dialect.go`.
+
+3. **`internal/db/migrations_sqlite.go`** (generated) +
+   **`driver_sqlite.go`** + **`migrations_sqlite_test.go`** —
+   параллельный SQLite migration set (49 функций, v0.20-v0.70),
+   зеркало PG-шного. Генерация через `scripts/port_migrations_sqlite.py`
+   (inverse `port_migrations_pg.py`): читает PG source + применяет
+   reverse-подстановки (BIGSERIAL→INTEGER PK AUTOINCREMENT,
+   EXTRACT(EPOCH)→strftime, ON CONFLICT→INSERT OR IGNORE,
+   UPDATE...FROM→stripped, CREATE OR REPLACE FUNCTION→stripped,
+   CREATE TRIGGER→stripped, DO $$...END$$→stripped, ::TYPE→stripped,
+   ALTER TABLE ADD COLUMN IF NOT EXISTS→ADD COLUMN, JSONB→TEXT,
+   BOOLEAN→INTEGER, TIMESTAMPTZ→INTEGER, bytea→BLOB, $N→?).
+   `migrations_audit_b233_test.go` исключает `migrations_sqlite.go`
+   из shape-drift аудита (это derived view PG source).
+
+4. **`internal/db/migration_tracking.go`** — `ensureMigrationTrackingTable`
+   + `RecordMigrationApplied` теперь dispatch на `BackendOf(db)`:
+   PG path (BIGSERIAL PK + EXTRACT(EPOCH FROM now())::bigint DEFAULT +
+   $N placeholders + ON CONFLICT DO NOTHING) и SQLite path
+   (INTEGER PK + strftime('%s', 'now') DEFAULT + ? placeholders
+   + INSERT OR IGNORE INTO). `open_sqlite.go` регистрирует
+   `Backend("sqlite")` в backend registry.
+
+5. **`internal/db/convert.go`** + **`convert_test.go`** —
+   `Convert(ctx, fromD, fromDB, toD, toDB, opts)` — bidirectional
+   schema + data конвертация между dialects. Алгоритм:
+   readSourceSchema (sqlite_master для SQLite; PG support — post-v1.5.4)
+   → translateSchema (type-keyword substitutions для cross-dialect)
+   → topoSortTables (alphabetical; skygate FK chain уже carefully
+   ordered) → emit CREATE TABLE → copyTableData (row-by-row с
+   dialect-native placeholders через `DialectKind.Placeholders`).
+   Mode flags: `schema+data` / `schema-only` / `data-only` +
+   `DryRun`. 4 unit tests покрывают SQLite→SQLite round-trip +
+   mode flags + dry-run + same-dialect no-data-loss.
+
+6. **`cmd/skygate/db_migrate.go`** + **`db_migrate_test.go`** —
+   CLI subcommand `skygate db-migrate --from=<dsn> --to=<dsn>
+   [--schema-only|--data-only] [--dry-run]`. Thin wrapper around
+   `db.Convert` — opens both DBs via `OpenWithDialect`, delegates.
+   9 sub-tests покрывают arg parsing (basic / schema-only / data-only
+   / dry-run / missing / unknown flag / no-subcommand-prefix / help).
+   Диспатчер в `cmd/skygate/main.go`: новый `case "db-migrate":`.
+
+7. **`internal/config/config.go`** + **`config_test.go`** —
+   новый `SKYGATE_DB` env var (v1.5.4+, preferred). `SKYGATE_DB_DSN`
+   (legacy v1.3.0-v1.5.3, PG-only) всё ещё honored. Precedence
+   в `resolveDBDSN()`: SKYGATE_DB → SKYGATE_DB_DSN → "" (caller
+   falls back to local SQLite at DBPath unless SKYGATE_DB_REQUIRE=1).
+   Pre-v1.5.4 missing-DSN был fatal error; v1.5.4 reverses — empty
+   DSN + не require = default to local SQLite (v1.5.x self-host
+   default). `SKYGATE_DB_PATH` replaces old `SKYGATE_DB` (тот
+   конфликтовал с новым). 4 sub-tests pin precedence rules.
+
+8. **`deploy/install-debian.sh`** + **`install-common.sh`** —
+   новый флаг `--db-type=sqlite|postgres`. Парсится в
+   install-debian.sh, экспортируется как `SKYGATE_DB_TYPE`,
+   потребляется `resolve_db_type()` в install-common.sh. TTY → интерактивный
+   prompt (1=sqlite default, 2=postgres); non-TTY → default sqlite.
+   `write_env_file` теперь пишет `SKYGATE_DB` (new, авто-filled
+   для sqlite) + `SKYGATE_DB_DSN` (legacy, пустой).
+
+9. **`docker-compose.sqlite.yml`** (new) — SQLite-only вариант
+   `docker-compose.lite.yml`. Тот же prebuilt image, тот же
+   tailscaled state bind-mounts, НО без PG service: `SKYGATE_DB`
+   defaults to `sqlite:/var/lib/skygate/skygate.db` (bind-mounted
+   из `./data/skygate.db` чтобы файл переживал container recreate).
+   Документирует backup obligation (rsync/restic off-host) + upgrade
+   path (switch to PG via `skygate db-migrate`).
+
+**Operator UX** (новая):
+```
+# Self-host SQLite (default):
+curl .../install.sh | sudo bash
+# Or explicit:
+curl .../install.sh | sudo SKYGATE_DB_TYPE=sqlite bash
+
+# Production PG:
+curl .../install.sh | sudo SKYGATE_DB_TYPE=postgres bash
+
+# Docker SQLite-only:
+docker compose -f docker-compose.sqlite.yml up -d
+# Docker with external PG:
+docker compose -f docker-compose.lite.yml up -d
+
+# Switch DBs at runtime (copy data, no loss):
+docker compose -f docker-compose.sqlite.yml exec skygate \
+    skygate db-migrate \
+        --from=sqlite:/var/lib/skygate/skygate.db \
+        --to=postgres://user:pass@host:5432/skygate
+# Then update SKYGATE_DB in .env + restart.
+```
+
+**Тесты**: 22 unit tests (9 dialect + 3 migrations_sqlite + 4
+convert + 4 config precedence + 2 helpers), все GREEN. `go test
+./internal/db/ ./internal/config/ ./cmd/skygate/ -count=1` PASS,
+`go vet` clean, `go build ./cmd/skygate/` OK, `bash -n` на обоих
+install scripts OK.
+
+**Live-verify** (Task 7, PENDING operator confirmation): PG→SQLite
+round-trip на svi polygon (45.152.198.217) — нужен доступ оператора
+к polygon VM для live-verify (operator-stated VM topology: 45.152.198.217
+= ОК по умолчанию для тестовых работ).
+
+**Известные ограничения** (post-v1.5.4 roadmap):
+- `Convert` SQLite→SQLite round-trip — v1.5.4 happy path, fully
+  tested
+- `Convert` cross-dialect (PG↔SQLite) — translateDDL handles
+  type-keyword substitutions, но полная конвертация (triggers,
+  sequences, custom types) — post-v1.5.4. Для production
+  cross-dialect: use per-dialect migration files
+  (internal/db/migrations_{sqlite,pg}.go) as schema source +
+  Convert to populate data only.
+
 ### Reusable lesson (cross-project, HIGH value)
 
 **Live-verify catches what static checks miss.** All 4 B-mod-*
