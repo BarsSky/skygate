@@ -7,15 +7,19 @@ name: release
 # pulling a pre-release by accident).
 #
 # On each tag, publishes:
-#   1. Docker image to ghcr.io/BarsSky/skygate
-#      - ghcr.io/BarsSky/skygate:v1.5.0          (every tag, including pre-releases)
-#      - ghcr.io/BarsSky/skygate:latest          (stable tags only — no -rc/-alpha/-beta)
-#      - ghcr.io/BarsSky/skygate:v1.5            (major.minor, for "track latest patch")
-#      - ghcr.io/BarsSky/skygate:v1              (major, for "track latest minor")
+#   1. Docker image to ghcr.io/barssky/skygate
+#      - ghcr.io/barssky/skygate:v1.5.0          (every tag, including pre-releases)
+#      - ghcr.io/barssky/skygate:latest          (stable tags only — no -rc/-alpha/-beta)
+#      - ghcr.io/barssky/skygate:v1.5            (major.minor, for "track latest patch")
+#      - ghcr.io/barssky/skygate:v1              (major, for "track latest minor")
+#      - linux/amd64 only — see Job 1 header for the
+#        Issue #4 closure rationale (drop arm64)
 #   2. Go binary tarballs to GitHub Releases (the artifact V3/V4 install
 #      scripts pull):
 #      - skygate-v1.5.0-linux-amd64.tar.gz       (binary + SHA256)
-#      - skygate-v1.5.0-linux-arm64.tar.gz
+#      - skygate-v1.5.0-linux-arm64.tar.gz       (Go binary, NOT a Docker image — operators
+#                                                 on ARM hosts can run it natively or
+#                                                 buildx their own Docker image from source)
 #      - skygate-v1.5.0-darwin-amd64.tar.gz
 #      - skygate-v1.5.0-darwin-arm64.tar.gz
 #      - skygate-v1.5.0-windows-amd64.zip        (skygate.exe + SHA256)
@@ -73,18 +77,32 @@ permissions:
 
 jobs:
   # ============================================================
-  # Job 1: Docker image → ghcr.io/BarsSky/skygate
+  # Job 1: Docker image → ghcr.io/barssky/skygate
   # ============================================================
+  # 2026-09-11 (Issue #4 closure): single-arch x86_64 only.
+  #
+  # The pre-v1.5.4 release built linux/amd64 + linux/arm64 in
+  # parallel matrix jobs. Both jobs pushed the same tag (vX.Y.Z);
+  # docker/build-push-action@v6 doesn't compose the two pushes into
+  # a manifest list — the second push overwrites the first, leaving
+  # `docker pull :v1.5.2` with "no matching manifest for linux/amd64
+  # in the manifest list entries" on amd64 hosts (the arm64 job ran
+  # second and won the tag).
+  #
+  # Operator decision 2026-09-11: drop arm64. Reasons:
+  #   - Issue #4 manifests in production (13.66 amd64 host) and
+  #     blocks the auto-deploy flow
+  #   - The Go binary tarballs (Job 2) STILL ship linux-arm64 +
+  #     darwin-arm64 + windows-amd64 — operators on ARM Macs/hosts
+  #     can `docker buildx build --platform linux/arm64` themselves
+  #     from the released source if needed
+  #   - Adding multi-arch back is a future B-block (imagetools
+  #     create or single build-push-action with platforms list) —
+  #     not in scope for this fix
   docker:
-    name: docker image (linux/amd64 + linux/arm64)
+    name: docker image (linux/amd64 only)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - { os: linux, arch: amd64 }
-          - { os: linux, arch: arm64 }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -129,9 +147,6 @@ jobs:
           echo "lower_owner=$LOWER_OWNER"  >> "$GITHUB_OUTPUT"
           echo "[meta] version=$VERSION  major_minor=$MAJOR_MINOR  major=$MAJOR  pre=$IS_PRERELEASE  owner=$LOWER_OWNER"
 
-      - name: Set up QEMU (for cross-arch builds)
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -147,12 +162,18 @@ jobs:
         with:
           context: .
           file: Dockerfile.prebuilt
-          platforms: linux/${{ matrix.platform.arch }}
+          # 2026-09-11 (Issue #4 closure): single-arch linux/amd64.
+          # Pre-v1.5.4 this was `linux/${{ matrix.platform.arch }}`
+          # with amd64+arm64 in a matrix — both jobs pushed the same
+          # tag, the second push overwrote the first, leaving amd64
+          # hosts with "no matching manifest for linux/amd64" on
+          # `:v1.5.2`. Single-arch build means the floating tags
+          # (latest / vX.Y / vX) are emitted unconditionally (no
+          # `matrix.platform.arch == 'amd64'` guard needed).
+          platforms: linux/amd64
           push: true
           # Always tag the exact version. Add the floating tags
-          # (latest / major.minor / major) only for stable releases
-          # and only on the amd64 build (so the manifest is consistent
-          # across arches — the arm64 build only tags the version).
+          # (latest / major.minor / major) only for stable releases.
           #
           # B237.24 (v1.5.2+, 2026-09-08): the ghcr.io tag path
           # MUST be lowercase. docker/build-push-action@v6 rejects
@@ -179,9 +200,9 @@ jobs:
           # regress it.
           tags: |
             ghcr.io/${{ steps.meta.outputs.lower_owner }}/skygate:v${{ steps.meta.outputs.version }}
-            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:latest', steps.meta.outputs.lower_owner) || '' }}
-            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', steps.meta.outputs.lower_owner, steps.meta.outputs.major_minor) || '' }}
-            ${{ matrix.platform.arch == 'amd64' && steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', steps.meta.outputs.lower_owner, steps.meta.outputs.major) || '' }}
+            ${{ steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:latest', steps.meta.outputs.lower_owner) || '' }}
+            ${{ steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', steps.meta.outputs.lower_owner, steps.meta.outputs.major_minor) || '' }}
+            ${{ steps.meta.outputs.is_prerelease != 'true' && format('ghcr.io/{0}/skygate:v{1}', steps.meta.outputs.lower_owner, steps.meta.outputs.major) || '' }}
           labels: |
             org.opencontainers.image.title=skygate
             org.opencontainers.image.description=Self-service web portal for Tailscale and headscale

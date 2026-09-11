@@ -22,6 +22,33 @@ in the same commit. Don't let the tracker drift.
 
 ---
 
+## Docker image is linux/amd64-only (v1.5.4+, Issue #4 closure)
+
+**Don't propose adding linux/arm64 to the Docker image** — it
+was deliberately dropped 2026-09-11 (Issue #4 close-out). The
+pre-v1.5.4 release.yml had an amd64+arm64 matrix that pushed
+the same tag twice; the second push overwrote the first,
+leaving `:v1.5.2` with "no matching manifest for linux/amd64"
+on amd64 hosts.
+
+**What's still multi-arch:** the **Go binary tarballs** in the
+release (linux/darwin × amd64/arm64 + windows-amd64) — operators
+on ARM Macs/hosts can run those natively, or `docker buildx
+build --platform linux/arm64` from the released source if they
+need a Docker image on ARM.
+
+**Re-enabling multi-arch Docker is a future B-block**, not in
+scope for the Issue #4 fix. The clean options when we revisit:
+1. Single `build-push-action` with
+   `platforms: linux/amd64,linux/arm64` (compose one manifest)
+2. Two `buildx` jobs + `docker buildx imagetools create` to
+   merge after both jobs push
+
+See `.github/workflows/release.yml` Job 1 header for the full
+operator decision rationale.
+
+---
+
 ## Release status
 
 * **Current**: v1.5.2-alpha1 (commit `66b17a3` on VM remote,
