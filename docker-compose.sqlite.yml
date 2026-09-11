@@ -38,7 +38,7 @@
 services:
   skygate:
     # Prebuilt image (same registry + tag as docker-compose.ghcr.yml).
-    image: ${SKYGATE_IMAGE:-ghcr.io/BarsSky/skygate:latest}
+    image: ${SKYGATE_IMAGE:-ghcr.io/barssky/skygate:latest}
     container_name: skygate
     restart: unless-stopped
     env_file:

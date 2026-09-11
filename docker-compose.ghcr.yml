@@ -4,7 +4,7 @@
 # The original builds the Go binary in-container from a bind-mounted
 # source tree (suitable for the operator's local development with
 # live code reload). This file pulls a prebuilt image from
-# ghcr.io/BarsSky/skygate, skipping the build step entirely:
+# ghcr.io/barssky/skygate, skipping the build step entirely:
 #
 #   docker compose -f docker-compose.ghcr.yml up -d
 #
@@ -14,7 +14,7 @@
 #
 # The prebuilt image is built by .github/workflows/release.yml on
 # every tag push (v1.5.0, v1.5.0-rc.1, etc.) and published to
-# ghcr.io/BarsSky/skygate with tags:
+# ghcr.io/barssky/skygate with tags:
 #   - :vX.Y.Z                          (exact version, every tag)
 #   - :latest                          (stable only — no -rc/-alpha)
 #   - :vX.Y                            (latest patch, stable only)
@@ -67,13 +67,13 @@ services:
     # version (vX.Y.Z) for production; use :latest for non-prod
     # where you want auto-rollforward. Override via .env:
     #
-    #   SKYGATE_IMAGE=ghcr.io/BarsSky/skygate:v1.5.0
-    #   SKYGATE_IMAGE=ghcr.io/BarsSky/skygate:latest
+    #   SKYGATE_IMAGE=ghcr.io/barssky/skygate:v1.5.0
+    #   SKYGATE_IMAGE=ghcr.io/barssky/skygate:latest
     #
     # Default to :latest for the "git clone + docker compose up"
     # quickstart. Operators who care about reproducible deploys
     # should pin in .env.
-    image: ${SKYGATE_IMAGE:-ghcr.io/BarsSky/skygate:latest}
+    image: ${SKYGATE_IMAGE:-ghcr.io/barssky/skygate:latest}
     container_name: skygate
     restart: unless-stopped
     env_file:
