@@ -1518,6 +1518,17 @@ func main() {
 	// until this button is clicked. /sync_nodes bot command hits
 	// the same DB helper.
 	mux.Handle("POST /admin/devices/sync-from-headscale", authMW(http.HandlerFunc(adminSvc.PostAdminDevicesSyncFromHeadscale)))
+	// B-mod-first-run-adoption T4-T5: bulk-claim handler. The
+	// operator's escape hatch for "I imported headscale users
+	// as portal users, now I need to attach their existing
+	// nodes" — every node_owner_map row matching that headscale
+	// user gets its tagged_by_user_id set to the portal user.
+	// Closes the operator-side gap where nodes joined via
+	// `headscale preauthkeys create` (not via /my/preauth)
+	// don't get auto-attributed by nodeownership.Backfill
+	// (Strategies A/C/D/E all need a preauth key or existing
+	// tag to match).
+	mux.Handle("POST /admin/devices/claim-all-for-user", authMW(http.HandlerFunc(adminSvc.PostAdminDevicesClaimAllForUser)))
 	// 2026-08-09: v0.33.1.20 — "Force resync all tags" admin
 	// action. Iterates every portal user and runs the
 	// per-user backfill (the same helper /my/devices runs
