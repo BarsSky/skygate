@@ -34,9 +34,10 @@ canonical template is `.env.example`. Required variables are marked
 | Var | Default | What it does |
 |---|---|---|
 | `SKYGATE_PORT` | `8080` | HTTP listen port |
-| `SKYGATE_DB` | `/data/skygate.db` | **LEGACY** (v0.32.x). Pre-v1.3.0 SQLite file path. v1.3.0+ ignores this — the runtime is PG-only. Kept for backward compat with the v0.32.x-era `/data` bind mount. |
-| `SKYGATE_DB_DSN` | `postgres://skygate:${PG_DB_PASSWORD}@postgres:5432/skygate?sslmode=disable` | **v1.3.0+ REQUIRED.** libpq URL form. The runtime opens this DSN at every `db.OpenDSN` call and runs `MigratePostgres` on it. For external PG (HA Patroni, RDS), replace `postgres` with the host/port of your cluster. |
-| `PG_DB_PASSWORD` | (empty) | **v1.3.0+ REQUIRED for local-PG.** Generate with `openssl rand -hex 24`. The `postgres` docker service reads this as `POSTGRES_PASSWORD` and bakes it into `pg_authid` on first init. The same value goes into `SKYGATE_DB_DSN`. |
+| `SKYGATE_DB` | `sqlite:/var/lib/skygate/skygate.db` | **v1.5.4+ UNIFIED SELECTOR.** Two formats are accepted: `sqlite:/path/to/file.db` (single-host embedded, no PG required) or `postgres://user:pass@host:5432/db?sslmode=disable` (PG — same as `SKYGATE_DB_DSN` below). Detected by `db.DetectDSN`. Pre-v1.5.4 only `SKYGATE_DB_DSN` was honored and the runtime was PG-only (v1.3.0 commit `b1baa4a` removed SQLite). v1.5.4 (B-mod-sqlite-pg-bidi, commits `42caa34f`..`cd28030c`) restored SQLite using the pure-Go `modernc.org/sqlite` driver and added bidirectional conversion via `skygate db-migrate`. See `docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md`. |
+| `SKYGATE_DB_DSN` | `postgres://skygate:${PG_DB_PASSWORD}@postgres:5432/skygate?sslmode=disable` | **v1.5.4+ LEGACY COMPAT (v1.3.0–v1.5.3).** Still honored when `SKYGATE_DB` is unset, so v1.3.0–v1.5.3 PG deployments keep working without edits. New deployments should set `SKYGATE_DB` instead. libpq URL form; the runtime opens this DSN at every `db.OpenDSN` call and runs `MigratePostgres` on it. For external PG (HA Patroni, RDS), replace `postgres` with the host/port of your cluster. |
+| `PG_DB_PASSWORD` | (empty) | **REQUIRED for local-PG (docker-compose `local-pg` profile).** Generate with `openssl rand -hex 24`. The `postgres` docker service reads this as `POSTGRES_PASSWORD` and bakes it into `pg_authid` on first init. The same value goes into `SKYGATE_DB_DSN` (or `SKYGATE_DB` if you use the postgres:// form there). |
+| `SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN` | `false` | **v1.5.4+ (B-mod-first-run-adoption T7).** When true, the first-run banner on `/admin/devices` offers to bulk-claim all pre-existing headscale nodes (matched by username) into the portal_users ownership map on first boot. Default false preserves existing deployments. New deployments adopting an EXISTING headscale (no fresh preauth keys, all users pre-created) should set this to true before first login. See `docs/sidecar-mode.md` "First-run adoption". |
 | `SKYGATE_JWT_SECRET` | — **[required]** | HS256 secret for session cookies. Generate with `openssl rand -hex 32`. |
 | `SKYGATE_ADMIN_USER` | `admin` | Initial admin username (bootstrapped on first start) |
 | `SKYGATE_ADMIN_PASS` | — **[required]** | Initial admin password (bootstrapped on first start; ignored if `portal_users` already has the user) |
@@ -266,10 +267,17 @@ What `--from-path` does:
        a partially-populated database.
     d. For external PG (Patroni, RDS), use the operator's psql client
        with the appropriate `-h host -p port -U user -d db` flags.
-11. **If `skygate.db` is in the backup (v0.32.x legacy archive)**,
-    the operator is on a pre-v1.3.0 SQLite archive. v1.3.0+ cannot
-    read SQLite. See "PostgreSQL migration from SQLite" below for the
-    one-time conversion.
+11. **If `skygate.db` is in the backup**:
+    - **v1.5.4+ deployments:** `skygate.db` is a current SQLite
+      archive (not just legacy). The skygate binary will read
+      it directly — no conversion needed. Just point
+      `SKYGATE_DB=sqlite:/path/to/skygate.db` and start.
+    - **v0.32.x legacy archives (pre-v1.3.0):** the archive
+      was produced when the runtime was still SQLite-only.
+      The v1.5.4+ binary CAN read it directly (SQLite was
+      restored in v1.5.4) but you may also want to migrate
+      to PG using `skygate db-migrate --from=sqlite:/path
+      --to=postgres://...` — see §11 below.
 12. Starts skygate.
 13. (DERP, if enabled) restores `derper.conf` + `derpmap.json`.
 
