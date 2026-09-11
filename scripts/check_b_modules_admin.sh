@@ -140,7 +140,7 @@ section "Routes"
 for route in \
     'mux.Handle("GET /admin/modules"' \
     'mux.Handle("GET /admin/modules/{name}"' \
-    'mux.Handle("POST /admin/modules/{name}/{action}"' \
+    'mux.Handle("POST /admin/modules/{name}/{action...}"' \
     'mux.Handle("GET /admin/modules/csrf"'; do
     if grep -q "${route}" "${REPO_ROOT}/cmd/skygate/main.go"; then
         pass "route ${route} registered"

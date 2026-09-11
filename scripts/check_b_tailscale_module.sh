@@ -215,12 +215,12 @@ if grep -q 'telegram_cidr' "${PKG_DIR}/subfeatures.go"; then
 else
     fail "B-mod-telegram: telegram_cidr in subfeatures.go" "missing"
 fi
-if grep -B 1 -A 4 'telegram_route.*advertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..telegram_route..\].=.advertised'; then
+if grep -B 1 -A 4 'telegram_route.*advertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\["telegram_route"\] = "advertised"'; then
     pass "B-mod-telegram: enable sets telegram_route = advertised"
 else
     fail "B-mod-telegram: enable sets telegram_route = advertised" "missing"
 fi
-if grep -B 1 -A 3 'telegram_route.*unadvertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..telegram_route..\].=.unadvertised'; then
+if grep -B 1 -A 3 'telegram_route.*unadvertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\["telegram_route"\] = "unadvertised"'; then
     pass "B-mod-telegram: disable sets telegram_route = unadvertised"
 else
     fail "B-mod-telegram: disable sets telegram_route = unadvertised" "missing"
@@ -239,12 +239,12 @@ if grep -q 'derp_relay' "${PKG_DIR}/subfeatures.go"; then
 else
     fail "B-mod-derp: derp_relay in subfeatures.go" "missing"
 fi
-if grep -B 1 -A 4 'derp_relay.*active' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..derp_relay..\].=.active'; then
+if grep -B 1 -A 4 'derp_relay.*active' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\["derp_relay"\] = "active"'; then
     pass "B-mod-derp: enable sets derp_relay = active"
 else
     fail "B-mod-derp: enable sets derp_relay = active" "missing"
 fi
-if grep -B 1 -A 3 'derp_relay.*inactive' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..derp_relay..\].=.inactive'; then
+if grep -B 1 -A 3 'derp_relay.*inactive' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\["derp_relay"\] = "inactive"'; then
     pass "B-mod-derp: disable sets derp_relay = inactive"
 else
     fail "B-mod-derp: disable sets derp_relay = inactive" "missing"
@@ -267,12 +267,12 @@ if grep -q 'exit_node' "${PKG_DIR}/subfeatures.go"; then
 else
     fail "B-mod-exit: exit_node in subfeatures.go" "missing"
 fi
-if grep -B 1 -A 4 'exit_node.*advertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..exit_node..\].=.advertised'; then
+if grep -B 1 -A 4 'exit_node.*advertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\["exit_node"\] = "advertised"'; then
     pass "B-mod-exit: enable sets exit_node = advertised"
 else
     fail "B-mod-exit: enable sets exit_node = advertised" "missing"
 fi
-if grep -B 1 -A 3 'exit_node.*unadvertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\[..exit_node..\].=.unadvertised'; then
+if grep -B 1 -A 3 'exit_node.*unadvertised' "${PKG_DIR}/subfeatures.go" | grep -q 'm.state.Info\["exit_node"\] = "unadvertised"'; then
     pass "B-mod-exit: disable sets exit_node = unadvertised"
 else
     fail "B-mod-exit: disable sets exit_node = unadvertised" "missing"
