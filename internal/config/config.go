@@ -12,12 +12,19 @@ import (
 type Config struct {
 	Port               string
 	DBPath             string
-	// DBDSN is the optional PostgreSQL connection string. If set
-	// (e.g. "postgres://skygate:pass@host:5432/skygate?sslmode=disable"),
-	// skygate connects to PG instead of SQLite. Set via SKYGATE_DB_DSN
-	// env var. Phase 4.1 of the v0.33.0 PG cutover (no live change
-	// in production unless this is set). See
-	// `docs/v0.33.0-pg-cutover-runbook.md` for the cutover sequence.
+	// DBDSN is the connection string for whichever DB the operator
+	// chose at install time. Supports SQLite (bare path or sqlite:/
+	// prefix) and PostgreSQL (postgres:// URL).
+	//
+	// Set via SKYGATE_DB env var (v1.5.4+, B-mod-sqlite-pg-bidi).
+	// Legacy SKYGATE_DB_DSN env var (v1.3.0-v1.5.3, PG-only) is
+	// still honored for backward compat — see New() for the
+	// precedence rules.
+	//
+	// For the full deployment walkthrough (sqlite vs postgres,
+	// --db-type flag on install-debian.sh, switch DBs without data
+	// loss), see docs/deploy.md and the B-mod-sqlite-pg-bidi plan
+	// at docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md.
 	DBDSN              string
 	HeadscaleURL       string
 	HeadscaleKey       string
@@ -469,8 +476,8 @@ type Config struct {
 func Load() (*Config, error) {
 	c := &Config{
 		Port:               getenv("SKYGATE_PORT", "8080"),
-		DBPath:             getenv("SKYGATE_DB", "/var/lib/skygate/skygate.db"),
-		DBDSN:              os.Getenv("SKYGATE_DB_DSN"),
+		DBPath:             getenv("SKYGATE_DB_PATH", "/var/lib/skygate/skygate.db"),
+		DBDSN:              resolveDBDSN(),
 		HeadscaleURL:       getenv("HEADSCALE_URL", "http://headscale:50444"),
 		HeadscaleKey:       os.Getenv("HEADSCALE_API_KEY"),
 		HeadplaneExternalURL: os.Getenv("HEADPLANE_EXTERNAL_URL"),
@@ -733,12 +740,22 @@ func Load() (*Config, error) {
 		UpdateStatePath: getenv("SKYGATE_UPDATE_STATE_PATH", "/data/skygate-update-status.json"),
 	}
 
-	// v1.3.0: PostgreSQL is mandatory. SQLite is no longer
-	// supported. A missing DSN is a fatal config error, not a
-	// silent fallback to a local file (which would be insecure
-	// for any deployment with multiple skygate instances).
+	// v1.5.4: SQLite support restored (B-mod-sqlite-pg-bidi).
+	// The DBDSN is now OPTIONAL — if empty, skygate falls back to
+	// a local SQLite file at DBPath (the v1.5.x self-host default).
+	// Operators who want PG set SKYGATE_DB=postgres://... or
+	// SKYGATE_DB_DSN=postgres://... (legacy).
+	//
+	// A missing DSN is NOT a fatal error anymore — it's a
+	// soft default to the local SQLite file. To explicitly fail
+	// on empty DB (force the operator to choose), set
+	// SKYGATE_DB_REQUIRE=1 in the environment.
+	if c.DBDSN == "" && getenv("SKYGATE_DB_REQUIRE", "") != "1" {
+		// Empty DSN + no explicit require → default to local SQLite.
+		c.DBDSN = c.DBPath
+	}
 	if c.DBDSN == "" {
-		return nil, fmt.Errorf("SKYGATE_DB_DSN is required (PostgreSQL-only as of v1.3.0; SQLite is no longer supported); see docs/deploy.md#postgresql")
+		return nil, fmt.Errorf("SKYGATE_DB is empty (set SKYGATE_DB=sqlite:/path or SKYGATE_DB=postgres://... — or SKYGATE_DB_PATH for the default SQLite location)")
 	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = "dev-only-insecure-jwt-secret-do-not-use-in-prod"
@@ -789,6 +806,33 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// resolveDBDSN returns the DB connection string for the operator's
+// chosen backend. Precedence (v1.5.4+, B-mod-sqlite-pg-bidi):
+//
+//  1. SKYGATE_DB (newer, preferred) — accepts any form DetectDSN
+//     understands: sqlite:/path, postgres://url, bare path,
+//     :memory:, file: URI
+//  2. SKYGATE_DB_DSN (legacy v1.3.0-v1.5.3 PG-only) — for backward
+//     compat with existing PG deployments that haven't switched
+//     to SKYGATE_DB yet
+//  3. "" — caller (New()) falls back to the local SQLite default
+//     (DBPath) unless SKYGATE_DB_REQUIRE=1 forces an error
+//
+// Operators can switch DBs without code changes by updating
+// SKYGATE_DB (or SKYGATE_DB_DSN) and restarting skygate. The
+// `skygate db-migrate` subcommand (B-mod-sqlite-pg-bidi Task 3)
+// is the safe way to copy data between the two DSNs before the
+// switch.
+func resolveDBDSN() string {
+	if v := os.Getenv("SKYGATE_DB"); v != "" {
+		return v
+	}
+	if v := os.Getenv("SKYGATE_DB_DSN"); v != "" {
+		return v
+	}
+	return ""
 }
 
 // deriveControlURL returns the URL clients (Tailscale) should be pointed at.

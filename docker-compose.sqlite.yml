@@ -1,0 +1,87 @@
+# docker-compose.sqlite.yml — B-mod-sqlite-pg-bidi v1.5.4
+# SQLite-only variant of docker-compose.lite.yml.
+#
+# The skygate v1.5.4+ binary supports SQLite as the backend DB
+# alongside PostgreSQL. This file is the SQLite-only compose
+# project — same as docker-compose.lite.yml, but with SKYGATE_DB
+# pre-set to a bind-mounted SQLite file (no PG service required).
+#
+# Quick start (3 commands):
+#
+#   1. (Optional) Edit .env: set SKYGATE_DB if you want a custom
+#      SQLite path. Default: ./data/skygate.db (bind-mounted
+#      from the host so the DB survives container recreates).
+#   2. docker compose -f docker-compose.sqlite.yml up -d
+#   3. Open http://localhost:8080/login
+#
+# When to use this vs docker-compose.lite.yml:
+#
+#   docker-compose.sqlite.yml (this file)
+#     - Single-host deployment, no PG container needed
+#     - Self-contained (DB lives in a bind-mounted file)
+#     - Lowest ops overhead — no PG cluster, no replication
+#     - The DB file ./data/skygate.db MUST be backed up off-host
+#       (rsync, restic, etc.) — there is no replication
+#
+#   docker-compose.lite.yml (PG version)
+#     - Requires an external PG instance (set SKYGATE_DB=postgres://...)
+#     - Suitable for HA / multi-host deployments
+#
+# Switch between SQLite and PG at any time with `skygate db-migrate`:
+#     docker compose -f docker-compose.sqlite.yml exec skygate \
+#         skygate db-migrate \
+#             --from=sqlite:/var/lib/skygate/skygate.db \
+#             --to=postgres://user:pass@host:5432/skygate
+#     # Then update SKYGATE_DB in .env and restart.
+# See docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md.
+
+services:
+  skygate:
+    # Prebuilt image (same registry + tag as docker-compose.ghcr.yml).
+    image: ${SKYGATE_IMAGE:-ghcr.io/BarsSky/skygate:latest}
+    container_name: skygate
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # SKYGATE_PREBUILT=1 skips the in-container build step.
+      - SKYGATE_PREBUILT=1
+      # Default SKYGATE_DB to the bind-mounted SQLite file.
+      # Operators can override in .env (or set SKYGATE_DB_DSN
+      # for the legacy v1.3.0-v1.5.3 path).
+      - SKYGATE_DB=${SKYGATE_DB:-sqlite:/var/lib/skygate/skygate.db}
+      - SKYGATE_TS_HOSTNAME=${SKYGATE_TS_HOSTNAME:-skygate-host-1}
+    ports:
+      - "${SKYGATE_PORT:-8080}:8080"
+    volumes:
+      # SQLite DB file. Bind-mounted so the data survives container
+      # recreates. The DB file is created on first run by the
+      # migrator (Task 2: migrations_sqlite.go applies v0.20-v0.70
+      # to the empty file).
+      #
+      # BACKUP STRATEGY: the operator MUST back up this file
+      # off-host periodically (rsync, restic, etc.) — there is
+      # no replication in the SQLite path. See docs/deploy.md §11
+      # for the recommended backup cadence + script.
+      - ./data/skygate.db:/var/lib/skygate/skygate.db
+      # tailscaled state. Same bind-mount pattern as the lite
+      # variant — Tailscale state survives container restarts so
+      # we don't re-auth on every restart.
+      - ./data/ts:/var/lib/tailscale
+      - ./data/ts/run:/var/run/tailscale
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
+    healthcheck:
+      # /healthz is the standard skygate liveness probe.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Notes (same as docker-compose.lite.yml):
+    #   - docker.sock NOT mounted (no in-container auto-updater)
+    #   - .ssh NOT mounted (no B202.5 SSHDumpTransport)
+    #   - headscale config dir NOT mounted (headscale is external)

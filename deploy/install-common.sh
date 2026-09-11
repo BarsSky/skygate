@@ -24,6 +24,83 @@
 # We split (1) and (3)'s service-manager bits into the per-OS
 # script; (2) and the rest of (3) live here in install-common.
 
+# -------- B-mod-sqlite-pg-bidi v1.5.4: --db-type flag handling --------
+# The operator can choose the DB backend at install time via:
+#   --db-type=sqlite    (default for self-host, no PG needed)
+#   --db-type=postgres  (prod / HA, requires external PG instance)
+#
+# The flag is parsed by the per-OS install script and exported as
+# SKYGATE_DB_TYPE before this file is sourced. If unset, the
+# installer prompts the operator interactively (TTY-only).
+#
+# The SKYGATE_DB_TYPE env var is consumed by write_env_file below
+# to populate SKYGATE_DB (the new env var that B-mod-sqlite-pg-bidi
+# v1.5.4 added to support both dialects). Legacy SKYGATE_DB_DSN
+# is still honored for backward compat with existing v1.3.0-v1.5.3
+# PG deployments.
+
+# resolve_db_type: read SKYGATE_DB_TYPE from env, prompt if unset.
+# Sets SKYGATE_DB to the appropriate default DSN for the chosen
+# type. Exports SKYGATE_DB so write_env_file picks it up.
+#
+# Args:
+#   $1 = SKYGATE_DATA_DIR (used for the SQLite default path)
+#
+# Behavior:
+#   SKYGATE_DB_TYPE=sqlite    → SKYGATE_DB=sqlite:/.../skygate.db
+#   SKYGATE_DB_TYPE=postgres  → SKYGATE_DB= (operator must fill in)
+#   SKYGATE_DB_TYPE unset + TTY → interactive prompt
+#   SKYGATE_DB_TYPE unset + non-TTY → defaults to sqlite
+#   SKYGATE_DB already set → no-op (operator explicitly set it)
+resolve_db_type() {
+    local data_dir="$1"
+
+    # If SKYGATE_DB is already set (operator override), respect it.
+    if [ -n "${SKYGATE_DB:-}" ]; then
+        echo "[install] SKYGATE_DB already set: $SKYGATE_DB"
+        export SKYGATE_DB
+        return 0
+    fi
+
+    # If SKYGATE_DB_DSN is set (legacy v1.3.0-v1.5.3), keep it.
+    # SKYGATE_DB takes precedence, so SKYGATE_DB_DSN only wins if
+    # SKYGATE_DB is unset. The write_env_file below documents the
+    # precedence.
+    local db_type="${SKYGATE_DB_TYPE:-}"
+
+    # If still unset, prompt (TTY) or default to sqlite (non-TTY).
+    if [ -z "$db_type" ]; then
+        if [ -t 0 ]; then
+            echo "[install] Choose DB backend:"
+            echo "  1) sqlite  (default, single-host, no PG needed)"
+            echo "  2) postgres (HA / prod, requires external PG instance)"
+            read -r -p "Enter choice [1]: " choice
+            case "${choice:-1}" in
+                2|postgres|pg) db_type="postgres" ;;
+                *)             db_type="sqlite" ;;
+            esac
+        else
+            db_type="sqlite"
+        fi
+    fi
+
+    case "$db_type" in
+        sqlite)
+            export SKYGATE_DB="sqlite:${data_dir}/skygate.db"
+            echo "[install] DB type: sqlite -> SKYGATE_DB=$SKYGATE_DB"
+            ;;
+        postgres|pg)
+            export SKYGATE_DB=""
+            echo "[install] DB type: postgres — fill SKYGATE_DB in /etc/skygate/skygate.env"
+            echo "         Format: postgres://skygate:<password>@<host>:5432/skygate?sslmode=disable"
+            ;;
+        *)
+            echo "ERROR: unknown --db-type='$db_type' (use sqlite or postgres)" >&2
+            return 1
+            ;;
+    esac
+}
+
 # -------- shared helpers (sourced) --------
 
 # resolve_release_url: turn "latest" or "vX.Y.Z" into the actual
@@ -196,6 +273,10 @@ write_env_file() {
     local jwt_secret
     jwt_secret="$(head -c 32 /dev/urandom | xxd -p -c 64)"
 
+    # Resolve the DB type (sqlite default / postgres / explicit
+    # override) — sets SKYGATE_DB for the heredoc below.
+    resolve_db_type "$data_dir"
+
     cat > "$env_file" <<EOF
 # /etc/skygate/skygate.env — systemd EnvironmentFile for skygate.
 #
@@ -223,12 +304,18 @@ HEADSCALE_API_KEY=
 # generated for you below — keep it secret, rotate periodically.
 SKYGATE_JWT_SECRET=${jwt_secret}
 
-# === Database ===
-# Default: SQLite at \${SKYGATE_DATA_DIR}/skygate.db (single file,
-# zero setup, suitable for single-host deploys).
-# For HA: switch to PostgreSQL. The DSN format is
-#   postgres://skygate:<password>@<host>:5432/skygate?sslmode=disable
-# See docs/deploy.md §10 for the full HA setup.
+# === Database (B-mod-sqlite-pg-bidi v1.5.4) ===
+# Set SKYGATE_DB to one of:
+#   - sqlite:/var/lib/skygate/skygate.db    (default — single-host, no PG needed)
+#   - /var/lib/skygate/skygate.db            (bare path = SQLite)
+#   - postgres://skygate:<password>@<host>:5432/skygate?sslmode=disable
+# SKYGATE_DB takes precedence over the legacy SKYGATE_DB_DSN
+# (which is still honored for v1.3.0-v1.5.3 backward compat).
+# See docs/deploy.md §10 + the B-mod-sqlite-pg-bidi plan at
+# docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md.
+SKYGATE_DB=sqlite:${SKYGATE_DATA_DIR}/skygate.db
+# Legacy env var (v1.3.0-v1.5.3, PG-only). Leave empty unless
+# you specifically need to fall back to the old naming.
 SKYGATE_DB_DSN=
 
 # === Optional: Tailscale in-container ===

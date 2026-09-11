@@ -27,6 +27,22 @@
 
 set -euo pipefail
 
+# B-mod-sqlite-pg-bidi v1.5.4: parse --db-type=sqlite|postgres
+# BEFORE sourcing install-common.sh so resolve_db_type sees the
+# right value when write_env_file runs.
+DB_TYPE=""
+for arg in "$@"; do
+    case "$arg" in
+        --db-type=*)
+            DB_TYPE="${arg#--db-type=}"
+            shift
+            ;;
+    esac
+done
+if [ -n "$DB_TYPE" ]; then
+    export SKYGATE_DB_TYPE="$DB_TYPE"
+fi
+
 # SCRIPT_DIR / REPO_ROOT are used by step 7 (B-mod-install
 # delegate to install-tailscale.sh). SCRIPT_DIR is the
 # deploy/ dir, REPO_ROOT is the project root (one level

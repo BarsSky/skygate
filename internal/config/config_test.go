@@ -95,3 +95,40 @@ func TestGetEnvHelpers(t *testing.T) {
 		t.Error("getDuration should fall back on garbage input")
 	}
 }
+
+// TestResolveDBDSN_SkygateDBWins pins the precedence rule from
+// B-mod-sqlite-pg-bidi (v1.5.4):
+//   - SKYGATE_DB takes precedence over SKYGATE_DB_DSN (the legacy
+//     v1.3.0-v1.5.3 PG-only env var)
+//   - If both are unset, return "" (caller falls back to local
+//     SQLite at DBPath unless SKYGATE_DB_REQUIRE=1)
+func TestResolveDBDSN_SkygateDBWins(t *testing.T) {
+	t.Run("only SKYGATE_DB set", func(t *testing.T) {
+		t.Setenv("SKYGATE_DB", "sqlite:/tmp/skygate.db")
+		t.Setenv("SKYGATE_DB_DSN", "")
+		if got := resolveDBDSN(); got != "sqlite:/tmp/skygate.db" {
+			t.Errorf("resolveDBDSN = %q, want sqlite:/tmp/skygate.db", got)
+		}
+	})
+	t.Run("only SKYGATE_DB_DSN set (legacy)", func(t *testing.T) {
+		t.Setenv("SKYGATE_DB", "")
+		t.Setenv("SKYGATE_DB_DSN", "postgres://u:p@host/d")
+		if got := resolveDBDSN(); got != "postgres://u:p@host/d" {
+			t.Errorf("resolveDBDSN = %q, want postgres://u:p@host/d", got)
+		}
+	})
+	t.Run("both set, SKYGATE_DB wins", func(t *testing.T) {
+		t.Setenv("SKYGATE_DB", "sqlite:/var/lib/skygate/skygate.db")
+		t.Setenv("SKYGATE_DB_DSN", "postgres://u:p@host/d")
+		if got := resolveDBDSN(); got != "sqlite:/var/lib/skygate/skygate.db" {
+			t.Errorf("resolveDBDSN = %q, want SKYGATE_DB to win", got)
+		}
+	})
+	t.Run("both unset, return empty", func(t *testing.T) {
+		t.Setenv("SKYGATE_DB", "")
+		t.Setenv("SKYGATE_DB_DSN", "")
+		if got := resolveDBDSN(); got != "" {
+			t.Errorf("resolveDBDSN = %q, want empty (caller falls back)", got)
+		}
+	})
+}

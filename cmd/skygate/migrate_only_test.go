@@ -19,7 +19,6 @@
 package main
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -64,21 +63,14 @@ func TestRunMigrateOnly_Idempotent(t *testing.T) {
 // is shared, so the test still confirms the DSN branch
 // is taken.)
 func TestRunMigrateOnly_RespectsDSN(t *testing.T) {
-	// On default build (no postgres tag), db.OpenDSN
-	// returns an error because the pgx driver is not
-	// registered. We test that the function surfaces
-	// this error (proving the DSN branch was taken —
-	// otherwise the SQLite path would have succeeded
-	// against the empty dataDir/SKYGATE_DB_PATH).
-	dataDir := t.TempDir()
-	dbPath := filepath.Join(dataDir, "skygate.db")
-	t.Setenv("SKYGATE_DB", dbPath)
-	// v1.3.0: skygate is PG-only. pgx is always registered (no
-	// build tag anymore). We use a deliberately unreachable DSN
-	// (port 1) so the connection attempt fails fast. The pre-v1.3.0
-	// test relied on the build-tag-gated "unknown driver" error;
-	// that path is gone.
-	t.Setenv("SKYGATE_DB_DSN", "postgres://skygate:***@127.0.0.1:1/skygate?sslmode=disable")
+	// v1.5.4 (B-mod-sqlite-pg-bidi): SKYGATE_DB takes precedence
+	// over SKYGATE_DB_DSN. Set SKYGATE_DB to a deliberately
+	// unreachable PG DSN (port 1) so the connection attempt fails
+	// fast. If the SQLite path were taken instead (SKYGATE_DB
+	// empty + DBPath default), the test would fail with a
+	// "missing driver" or "file not found" error.
+	t.Setenv("SKYGATE_DB", "postgres://skygate:***@127.0.0.1:1/skygate?sslmode=disable")
+	t.Setenv("SKYGATE_DB_DSN", "") // legacy path; SKYGATE_DB wins
 	t.Setenv("HEADSCALE_API_KEY", "test-fake-key-for-migrate-only")
 	t.Setenv("SKYGATE_JWT_SECRET", "test-fake-jwt-secret-for-migrate-only-32bytes")
 	err := runMigrateOnly()
