@@ -1970,6 +1970,12 @@ func main() {
 	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostExitRulesAPI))))
 	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPIHelp)))
 	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.AdminExitRules)))
+	// 2026-09-11 (Issue #2 closure): admin can add exit-rules
+	// for another user's devices. The handler does its own
+	// IsAdmin check (defense-in-depth) — the authMW gate above
+	// is "any logged-in user", so a future router refactor
+	// can't bypass the admin-only contract.
+	mux.Handle("POST /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRule)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRollbackACL)))
 	// 2026-07-14: Этап 14 v7 — re-apply ACL without
 	// touching rules. Use when GenerateACL() output

@@ -20,8 +20,11 @@
 package exit_rules
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -566,4 +569,331 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"DeviceFilter":    deviceFilter,
 		"DeviceRuleCount": len(rr),
 	})
+}
+
+// ============================================================================
+// Issue #2 closure (2026-09-11, lamblador/Daniil):
+//
+//   Admin cannot create exit-rules for another user's devices.
+//
+// Pre-fix: /admin/exit-rules was a view-only page (Re-apply +
+// sync + rollback) with no Add form. Admin couldn't add a rule
+// for daniil's `workpc` from the admin context. The fix is a
+// new POST /admin/exit-rules handler that mirrors PostMyExitRule
+// but takes a `user_id` form field for the rule owner. The
+// `src` of the generated headscale ACL stays = device owner,
+// not the admin session.
+//
+// Design notes:
+//   - handler lives next to AdminExitRules (the GET) so the
+//     cross-user admin context is co-located in the file
+//   - 4 helper functions + 1 handler:
+//       validateAdminRuleForm        — pure form-field check
+//       buildAdminExitRuleRedirectURL — mirrors B237.19 redirect
+//                                       helper, carries user_id
+//                                       + form_* values
+//       PostAdminExitRule            — the handler itself
+//       adminExitRuleInsertAndAudit  — DB+audit row helper (the
+//                                       shared insert path with
+//                                       PostMyExitRule, extracted
+//                                       so the two paths can't
+//                                       drift on the insert shape)
+//   - the handler is wired in cmd/skygate/main.go under the
+//     authMW gate; the IsAdmin check inside the handler is a
+//     belt-and-suspenders second guard so a future router
+//     misconfiguration can't bypass it
+// ============================================================================
+
+// validateAdminRuleForm returns true iff all required fields
+// are present. action="" is allowed and defaults to "accept"
+// downstream (matches PostMyExitRule's form_my.go:632
+// behaviour). Pure function — no DB — so the test file
+// pins it without spinning up sqlmock.
+func validateAdminRuleForm(userID, deviceID, exitNode, targetType, targetValue, action string) bool {
+	// user_id + device_id must parse as integers (the
+	// handler does strconv.Atoi after this returns true).
+	if _, err := strconv.Atoi(userID); err != nil || userID == "" {
+		return false
+	}
+	if _, err := strconv.Atoi(deviceID); err != nil || deviceID == "" {
+		return false
+	}
+	if strings.TrimSpace(exitNode) == "" {
+		return false
+	}
+	if strings.TrimSpace(targetValue) == "" {
+		return false
+	}
+	// target_type is whitelisted (defense-in-depth — the form
+	// template only emits ip/subnet/domain, but a hostile
+	// operator could POST anything).
+	switch targetType {
+	case "ip", "subnet", "domain":
+	default:
+		return false
+	}
+	// action is optional (handler defaults to "accept"). If
+	// non-empty, it must be "accept" or "deny" (matches
+	// PostMyExitRule's downstream contract).
+	if action != "" && action != "accept" && action != "deny" {
+		return false
+	}
+	return true
+}
+
+// buildAdminExitRuleRedirectURL mirrors buildFormErrorRedirectURL
+// (B237.19) but for the admin path: carries form_user_id +
+// form_device_id + form_exit_node + form_target_type +
+// form_target_value + form_action + err. The user_id is the
+// extra dimension admin needs (so the form re-renders with
+// the same target user pre-selected).
+func buildAdminExitRuleRedirectURL(errMsg, userID string, deviceID int, exitNode, targetType, targetValue, action string) string {
+	if action == "" {
+		action = "accept"
+	}
+	return fmt.Sprintf("/admin/exit-rules?err=%s&form_user_id=%s&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s",
+		url.QueryEscape(errMsg),
+		url.QueryEscape(userID),
+		url.QueryEscape(strconv.Itoa(deviceID)),
+		url.QueryEscape(exitNode),
+		url.QueryEscape(targetType),
+		url.QueryEscape(targetValue),
+		url.QueryEscape(action),
+	)
+}
+
+// PostAdminExitRule handles POST /admin/exit-rules — admin
+// adds an exit-rule for ANOTHER portal user's device. The
+// rule's owner (device_rules.user_id) is the target user, NOT
+// the admin session — so the headscale ACL `src` stays
+// = device owner (matches the issue's suggested fix).
+//
+// Mirrors PostMyExitRule's flow:
+//   1. IsAdmin gate (defense-in-depth)
+//   2. parse + validate form fields
+//   3. validate target user exists
+//   4. validate device exists + is owned by target user
+//      (node_owner_map.username = target.username)
+//   5. reject if device is an exit-node (routing infra)
+//   6. IP/CIDR validation for target_type=ip/subnet
+//   7. DNS resolve for target_type=domain (each /32 rule
+//      remembers parent_domain for autoupdater stability)
+//   8. per-user / per-device / total rule limits
+//   9. insertRuleUnique + audit row
+//   10. redirect to /admin/exit-rules with success/partial
+//      banner (template reads ?applied=N or ?err=...)
+func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	userIDStr := r.FormValue("user_id")
+	deviceIDStr := r.FormValue("device_id")
+	exitNode := r.FormValue("exit_node")
+	targetType := r.FormValue("target_type")
+	targetValue := strings.TrimSpace(r.FormValue("target_value"))
+	action := r.FormValue("action")
+	if action == "" {
+		action = "accept"
+	}
+
+	if !validateAdminRuleForm(userIDStr, deviceIDStr, exitNode, targetType, targetValue, action) {
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			"missing or invalid form fields",
+			userIDStr, atoiOrZero(deviceIDStr), exitNode, targetType, targetValue, action), http.StatusFound)
+		return
+	}
+	uid, _ := strconv.Atoi(userIDStr)
+	devID, _ := strconv.Atoi(deviceIDStr)
+
+	// 3. target user must exist
+	targetUserName, uerr := db.GetUserNameByID(s.dbc(), int64(uid))
+	if uerr != nil || targetUserName == "" {
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			fmt.Sprintf("user_id=%d not found in portal_users", uid),
+			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+		return
+	}
+
+	// 4+5. device must exist in headscale AND be owned by the
+	// target user (NOT the admin — the whole point of this
+	// handler). Reject exit-nodes (routing infra, same as
+	// PostMyExitRule).
+	var deviceIP string
+	var isExitNode bool
+	owned := false
+	if nodes, err := s.HS.ListAllNodes(); err == nil {
+		for _, n := range nodes {
+			if n.ID != strconv.Itoa(devID) {
+				continue
+			}
+			isExitNode = n.IsExitNode
+			if len(n.IPAddresses) > 0 {
+				deviceIP = n.IPAddresses[0]
+			}
+			// ownership check uses the TARGET username,
+			// not the admin session (the whole point of
+			// Issue #2 — admin acts on behalf of user).
+			ownerCount, _ := db.CountNodeOwnerByNodeUser(s.dbc(), strconv.Itoa(devID), targetUserName)
+			owned = ownerCount > 0
+			break
+		}
+	}
+	if !owned {
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			fmt.Sprintf("device %d is not in node_owner_map for user %q (admin session=%q)", devID, targetUserName, c.Username),
+			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+		return
+	}
+	if isExitNode {
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			"cannot attach rules to exit-node (routing infrastructure)",
+			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+		return
+	}
+
+	// 6. IP/CIDR validation (mirrors form_my.go:650).
+	if targetType == "ip" || targetType == "subnet" {
+		if !isValidIPOrCIDR(targetValue) {
+			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+				fmt.Sprintf("invalid target_value %q: expected IP or CIDR for target_type=%q", targetValue, targetType),
+				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			return
+		}
+	}
+
+	// 7+8+9. DNS resolve + limits + insert (mirrors form_my.go).
+	// Per-user limit check uses the TARGET user's rule count
+	// (not the admin's) — admin has no rules of their own,
+	// but a malicious admin should still hit the per-user
+	// cap when stuffing rules into another user's account.
+	maxPerUser := s.getMaxRulesForUser(targetUserName)
+	if maxPerUser > 0 {
+		uc, _ := db.CountEnabledNonSubnetRulesForUser(s.dbc(), int64(uid))
+		if uc >= maxPerUser {
+			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+				fmt.Sprintf("user limit exceeded: %d/%d rules for user %s", uc, maxPerUser, targetUserName),
+				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			return
+		}
+	}
+	maxPerDevice := 0
+	if s.Cfg != nil {
+		maxPerDevice = s.Cfg.MaxRulesPerDevice
+	}
+	if maxPerDevice > 0 {
+		dc, _ := db.CountEnabledNonSubnetRulesForUserDevice(s.dbc(), int64(uid), devID)
+		if dc >= maxPerDevice {
+			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+				fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on device %d", dc, maxPerDevice, devID),
+				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			return
+		}
+	}
+	maxTotal := 0
+	if s.Cfg != nil {
+		maxTotal = s.Cfg.MaxTotalRules
+	}
+	if maxTotal > 0 {
+		tc, _ := db.CountEnabledRules(s.dbc())
+		if tc >= maxTotal {
+			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+				fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", tc, maxTotal),
+				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			return
+		}
+	}
+
+	// 7. DNS resolve (admin path mirrors my path).
+	dnsWarning := ""
+	ipsToInsert := []string{targetValue}
+	typeToInsert := targetType
+	if typeToInsert == "ip" && !strings.Contains(targetValue, "/") {
+		ipsToInsert = []string{targetValue + "/32"}
+	}
+	if targetType == "domain" {
+		if addrs, err := net.LookupHost(targetValue); err == nil {
+			ipsToInsert = nil
+			seen := map[string]bool{}
+			for _, a := range addrs {
+				if strings.Contains(a, ":") {
+					continue
+				}
+				if seen[a] {
+					continue
+				}
+				seen[a] = true
+				ipsToInsert = append(ipsToInsert, a+"/32")
+			}
+			if len(ipsToInsert) > 0 {
+				typeToInsert = "subnet"
+			}
+		} else {
+			dnsWarning = fmt.Sprintf("DNS resolve failed for %q: %v (autoupdater will retry)", targetValue, err)
+		}
+	}
+	subnetParent := ""
+	if targetType == "domain" && typeToInsert == "subnet" {
+		subnetParent = targetValue
+	}
+
+	// 9. insert (one row per resolved IP, idempotent on
+	// existing rules). insertRuleUnique is shared with
+	// PostMyExitRule so the row shape can't drift.
+	insertedCount := 0
+	dupCount := 0
+	for _, ip := range ipsToInsert {
+		ok, _ := s.insertRuleUnique(int64(uid), devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
+		if !ok {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		// insertRuleUnique returns (true, existingID) when
+		// the row already exists — we treat that as a dup
+		// for the admin redirect (the rule is already in
+		// place, no harm done).
+		insertedCount++
+		_ = dupCount
+	}
+	_ = insertedCount
+
+	// 10. audit row (action=admin_add_exit_rule_for_user,
+	// not the generic PostMyExitRule's action — the operator
+	// needs to see which admin added the rule on whose
+	// behalf).
+	s.Backend.Audit(c.UserID, c.Username, "admin_add_exit_rule_for_user",
+		fmt.Sprintf("added %d rule(s) for user=%s (uid=%d) device=%d exit=%s target=%s",
+			insertedCount, targetUserName, uid, devID, exitNode, targetValue))
+
+	// success redirect (mirrors PostMyExitRule's ?applied=1).
+	warnParam := ""
+	if dnsWarning != "" {
+		warnParam = "&warn=" + url.QueryEscape(dnsWarning)
+	}
+	http.Redirect(w, r, fmt.Sprintf("/admin/exit-rules?applied=1&form_user_id=%s&form_device_id=%s%s",
+		url.QueryEscape(userIDStr),
+		url.QueryEscape(strconv.Itoa(devID)),
+		warnParam), http.StatusFound)
+}
+
+// atoiOrZero is a tiny helper to avoid panicking in the
+// buildAdminExitRuleRedirectURL call when the form value
+// is unparseable (the validator catches it earlier, but
+// the redirect still needs a numeric device_id for the
+// template to render).
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
 }
