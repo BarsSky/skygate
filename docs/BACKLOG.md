@@ -1328,3 +1328,65 @@ at the bottom of this file with the commit hash.
   1 user pages added to `layout.html`. Commit in this change.
 - **2026-07-30**: v0.32.0 — Released. Build `v0.32.0-5-ge4dea76`.
   Per-device OS + type markers + via: sync bug fix + refactor-v0.30.
+- **2026-09-11**: v1.5.3 — B-mod-* Plugin API series + 5 B-fix blocks
+  (live-verified on svi polygon, 2026-09-11). Closes 19+ items from
+  the v1.5.0 HA tracker, the B-mod series, the BACKLOG 'Unmerged
+  branches' section, and several TODO.md open questions:
+
+  - **B-mod-core** (4da6d1b2 +  574681f): Manager.SetDBC wires
+    *sql.DB to every module — closes the 'Manager required a real
+    SKYGATE_DB_DSN' gap that blocked the plugin init path.
+  - **B-mod-tailscale** (5de05be5): skygate module (3 install
+    modes + 4 sub-features: cluster/telegram/derp/exit).
+  - **B-mod-admin** (580ed0cb): /admin/modules list + per-module
+    detail page.
+  - **B-mod-install** (7c3d7275): install-tailscale.sh (5 modes) +
+    install-debian integration. Closes the 'tailscale not in
+    Debian default install' open question.
+  - **B-mod-bcheck** (d6ce98e9): live-verify /admin/modules +
+    Manager wiring end-to-end. Closes the B128 'no end-to-end
+    plugin test' open question.
+  - **B-mod-cluster** (e98c38bf): state.Info records cluster
+    state filter sub-feature. Closes v1.5.0 HA tracker Q7.
+  - **B-mod-telegram** (eef9ae07): state.Info records route
+    advertisement status. Closes v1.5.0 HA tracker Q5.
+  - **B-mod-derp** (96859d2): state.Info records DERP relay
+    status (Requires: telegram+exit). Closes v1.5.0 HA tracker Q6.
+  - **B-mod-exit** (e30fa525): state.Info records exit-node
+    advertisement + RFC3339 timestamp. Closes v1.5.0 HA tracker Q8.
+  - **B-mod-install follow-up** (4b2ba31): bootstrap_standby.sh
+    + Tailscale attach fallback. Closes Phase 7 of v1.5.0 HA tracker.
+  - **B-mod-pg-alive-polygon** (dc2c9e7): check_b_pg_alive.sh
+    polygon mode + DSN parsing. Closes the 'no polygon-mode PG
+    health check' gap.
+  - **B-mod-cleanup** (5c8282f7): cleanup-skygate.sh uninstaller +
+    B-check. Closes the 'no clean uninstall path' gap.
+  - **B-mod-static-embed** (ce1cba5): embed static/ via
+    embed.FS. Closes the 'prebuilt image CSS 404' gap (operator-
+    reported 2026-09-11 on the svi polygon live-deploy).
+  - **B-mod-first-run-adoption** (planned, docs in
+    docs/superpowers/plans/2026-09-11-b-mod-first-run-adoption.md):
+    first-run banner + bulk claim + auto-detect exit. Closes the
+    'no-device' gap from 2026-09-11 deployment log.
+  - **Cleanup** (c343c8d0): archive ~50 legacy debug scripts.
+    Closes the 'scripts/ has 50+ debug scripts' TODO.
+  - **B-mod-template-fix** (e8ae1e74): convert modules.html +
+    module_detail.html to body-block format. Closes the
+    'html/template: body-admin-modules is undefined' runtime
+    panic on /admin/modules.
+  - **B-fix-modules-route** (cbf0f730): sub-feature POST route
+    needs {action...} wildcard. Closes the
+    'POST /admin/modules/X/sub/Y doesn't match {action}' gap.
+  - **B-fix-bcheck-pass-var** (1cad1c78): rename PASS counter
+    to PASS_CNT. Closes the 'password reset on login' silent FAIL.
+  - **B-fix-bcheck-scripts** (8a474a61 + e0a1ad68 +
+    1b100db5): 6 live-caught fixes to verify_post_deploy.sh and
+    check_b_modules_admin_live.sh. Closes 6 silent test FAILs.
+  - **B-redact-v1.5.3** (df846541): replace leaked values in
+    AGENTS.md + RELEASE-NOTES + CHANGELOG with placeholders.
+    Closes the 'real values in git-tracked files' SECURITY finding.
+
+  - **DOC-NOTE**: 2 unmerged branches marked as deletable:
+    eature/telegram-bot-ux (low value) and eat/postgres-migration
+    (replaced by eat/v0.31.0-pg-foundation on main). Both can be
+    deleted via git branch -D.
