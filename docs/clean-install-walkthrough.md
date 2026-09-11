@@ -68,10 +68,22 @@ SKYGATE_BASE_DOMAIN=hs.your-domain.com
 SKYGATE_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p -c 64)
 SKYGATE_TS_HOSTNAME=skygate-host-1
 
-# DB: pick one. v1.5.4 supports both.
-# Option A: SQLite (default for self-host, no PG needed)
-# (no SKYGATE_DB env — defaults to ./data/skygate.db)
-# Option B: PostgreSQL (prod / HA, requires external PG)
+# DB: pick one. v1.5.4 supports both. The SKYGATE_DB env var is
+# the unified selector — `sqlite:/path` or `postgres://...` —
+# detected by db.DetectDSN. Pre-v1.5.4 this was SKYGATE_DB_DSN
+# only (PG-only); v1.5.4 restored SQLite and added SKYGATE_DB.
+#
+# Option A: SQLite (default for self-host, no PG needed).
+#   SKYGATE_DB is UNSET in the heredoc → the SQLite compose
+#   file defaults to sqlite:/var/lib/skygate/skygate.db
+#   (bind-mounted from ./data/skygate.db on the host).
+#   Nothing to do here for Option A.
+#
+# Option B: PostgreSQL (prod / HA, requires external PG).
+#   ↓↓↓ UNCOMMENT the next line + replace <password> and <host>
+#   ↓↓↓ BEFORE the first boot, or skygate will crash-loop with
+#   ↓↓↓ "unknown DSN format" (the default SQLite path won't
+#   ↓↓↓ match the lite compose file's empty SKYGATE_DB).
 # SKYGATE_DB=postgres://skygate:<password>@<host>:5432/skygate?sslmode=disable
 
 # B-mod-first-run-adoption T7 — auto-import on first boot.
@@ -108,8 +120,16 @@ existing headscale nodes already imported.
 psql -h <pg-host> -U postgres -c "CREATE USER skygate WITH PASSWORD '<password>';"
 psql -h <pg-host> -U postgres -c "CREATE DATABASE skygate OWNER skygate;"
 
-# 2. Edit .env to set SKYGATE_DB:
-# SKYGATE_DB=postgres://skygate:<password>@<pg-host>:5432/skygate?sslmode=disable
+# 2. Edit .env:
+#    a) UNCOMMENT the SKYGATE_DB=postgres://... line from Step 1
+#       (the heredoc leaves it commented out by default — see
+#       the "Option B: PostgreSQL" comment block there).
+#    b) Replace <password> and <host> with your real values.
+#    Final form:
+#       SKYGATE_DB=postgres://skygate:<password>@<pg-host>:5432/skygate?sslmode=disable
+#    (Or use the legacy SKYGATE_DB_DSN env var — same format,
+#     still honored when SKYGATE_DB is unset, for v1.3.0-v1.5.3
+#     PG-deployment backward compat.)
 
 # 3. Bring it up.
 docker compose -f docker-compose.lite.yml up -d
