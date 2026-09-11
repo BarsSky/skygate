@@ -201,7 +201,13 @@ if [ "$SKIP_RUNTIME" = "false" ]; then
 
     # B-G. Tables + audit_log (only if psql is available)
     if command -v psql >/dev/null 2>&1; then
-        if pg_query_psql '\dt' >/tmp/check_b_pg_alive_tables.log 2>&1; then
+        # Use -c '\dt' so the wrapper passes the SQL via psql's
+        # -c flag (the B-mod-pg-alive-polygon wrapper forwards
+        # "$@" verbatim to psql, so the call needs to be a
+        # proper -c arg, not a raw "\dt" string which psql
+        # would reject). The polygon-mode wrapper sets
+        # PGPASSWORD + -h/-p/-U automatically.
+        if pg_query_psql -c '\dt' >/tmp/check_b_pg_alive_tables.log 2>&1; then
             tables=$(grep -E '^ public \|' /tmp/check_b_pg_alive_tables.log | awk '{print $3}' | tr '\n' ',' | sed 's/,$//')
             if echo "$tables" | grep -q 'portal_users'; then
                 ok "C: portal_users table exists"
