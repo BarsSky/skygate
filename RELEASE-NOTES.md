@@ -10513,3 +10513,61 @@ scripts/check_b_modules_admin_live.sh (with
 SKYGATE_LIVE_HOST=https://skygate.skynas.ru + the admin
 password + the skygate_test DB password) to re-verify the
 live contracts.
+
+### Update: post-rebuild live-verify (2026-09-11)
+
+After the operator's 2nd OS reinstall on svi polygon,
+pulling `d89beff1` + rebuilding + restarting on the fresh
+Ubuntu 26.04 + Go 1.25.4 + remote PG 18.6 stack surfaced 4
+latent bugs in the B-mod-* code + 1 bug in the B-check scripts.
+All 5 were fixed in the B-fix-* commits listed above.
+
+**Live state after the rebuild** (HEAD = `32272311` on
+origin/main, 2026-09-11 12:00 UTC):
+
+- `/healthz` = 200 on svi polygon (HTTP listener on IPv6 [::]:8080
+  only — curl with happy-eyeballs works for both 127.0.0.1 and
+  [::1])
+- `/admin/modules` = 200, body renders the `<code>tailscale</code>`
+  row + state pill (`modules-state not_installed`)
+- `/admin/modules/tailscale` = 200, body renders the 4
+  sub-feature rows + Health section + Audit history (last 20)
+- Login as admin (POST /login with the generated SKYGATE_ADMIN_PASS)
+  returns 302 + sets the `skygate_session` JWT cookie
+- Sub-feature toggles work end-to-end:
+  - `cluster` enable → 303 → `?ok=Sub-feature%20cluster%20enabled`,
+    audit row `module.tailscale.subfeature.enable sub=cluster`,
+    state.json `"sub_features": {"cluster": true}`. ✅ Full
+    e2e (the toggle + the state change + the audit row).
+  - `telegram` + `exit` enable → 303 → `?err=Error: enable telegram:
+    advertise-routes: %!s(<nil>) (stdout="" stderr="")`. Expected
+    because polygon svi doesn't have the `tailscale` binary —
+    the state change was correctly REJECTED (state.json still has
+    no telegram entry, confirming the Manager persists state
+    AFTER the side-effect succeeds — no half-state).
+  - `derp` enable → 303 → `?err=Error: module: sub-feature
+    requires other sub-features to be enabled first: derp
+    requires telegram`. ✅ Correctly rejected via the
+    Manager's Requires validation (derp needs telegram + exit).
+
+- ALL 10 B-check scripts PASS on svi polygon (~155 contracts):
+  - check_b_bootstrap_standby.sh ✓ all
+  - check_b_cleanup_skygate.sh ✓ all
+  - check_b_db_dsn_reachable.sh ✓ 13/13
+  - check_b_install_tailscale.sh ✓ all
+  - check_b_module_core.sh ✓ 12/12
+  - check_b_modules_admin_live.sh ✓ 12/12 (2 SKIP optional)
+  - check_b_modules_admin.sh ✓ all
+  - check_b_pg_alive.sh ✓ 8/8 (polygon mode, DSN parseable, password
+    length 24)
+  - check_b_standby_provision.sh ✓ 20/20
+  - check_b_tailscale_module.sh ✓ all
+
+**Reusable lesson**: live-verify catches what static B-checks
+miss. The 5 B-fix blocks above all shipped to origin and
+passed every static B-check on Windows. None were caught
+until the binary was rebuilt + deployed + run end-to-end on
+the svi polygon. The full live-verify pattern (pull → build →
+restart → wait → healthz → login → every page → every form →
+every B-check) is documented in `AGENTS.md §B-mod-* live-verify`
+as a 30-minute audit script.

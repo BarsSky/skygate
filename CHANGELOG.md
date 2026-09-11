@@ -18,15 +18,17 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 
 ## [v1.5.3] — 2026-09-11
 
-**Tag:** TBD (B-mod-* series — 20 commits on top of v1.5.2;
+**Tag:** TBD (B-mod-* series — 25 commits on top of v1.5.2;
 the `B-mod-core` Manager wiring was reverted in `82c74b38`
 immediately after v1.5.2 shipped because Patroni + etcd on
 the svi polygon were unreachable at the time, so this is
 the first v1.5.x release that ships the Manager wired
 + a real Tailscale module).
 
-**17 B-blocks ship in v1.5.3** (consolidated note covers them
-all; per-B-block detail in [RELEASE-NOTES.md](RELEASE-NOTES.md)):
+**17 B-blocks ship in v1.5.3** + **5 B-fix blocks** (live-caught
+during the svi polygon re-verify on 2026-09-11; consolidated
+note covers them all; per-B-block detail in
+[RELEASE-NOTES.md](RELEASE-NOTES.md)):
 
 | # | Summary |
 |---|---|
@@ -44,6 +46,12 @@ all; per-B-block detail in [RELEASE-NOTES.md](RELEASE-NOTES.md)):
 | B-mod-telegram | telegram sub-feature: `state.Info['telegram_route']` + `telegram_cidr` (operator-visible status without ssh) |
 | B-mod-derp | derp sub-feature: `state.Info['derp_relay']` + `derp_relay_prereq` |
 | B-mod-exit | exit sub-feature: `state.Info['exit_node']` + `exit_node_advertised_at` (RFC3339 timestamp) |
+| B-mod-template-fix | admin/modules.html + admin/module_detail.html converted from full-HTML to body-block format (live-caught: `body-admin-modules is undefined` error) |
+| B-fix-modules-route | Sub-feature POST route changed from `{action}` to `{action...}` (multi-segment wildcard) so `/admin/modules/tailscale/sub/cluster` matches |
+| B-fix-bcheck-pass-var | check_b_modules_admin_live.sh: renamed `PASS` counter to `PASS_CNT` to stop shadowing the password variable |
+| B-fix-bcheck-scripts | check_b_modules_admin.sh route pattern + check_b_tailscale_module.sh 6 state.Info grep regex + 4 deploy/scripts +x bits |
+| B-fix-bcheck-scripts-2 | check_b_pg_alive.sh: polygon `pg_query_psql '\dt'` → `-c '\dt'` + create-standby-preauth.sh +x bit |
+| B-fix-bcheck-pg-pass | check_b_pg_alive.sh polygon mode: `DB_PASS` regex fixed (greedy `(.+)@` captured `user:password`) |
 
 **Net new feature**: B-mod-* Plugin API. Tailscale is now
 Module #1 — opt-in via the new `/admin/modules` page.
@@ -52,12 +60,17 @@ opt-in toggles with state.Info flags so the operator sees
 their current status on the detail page (without ssh'ing
 into the VM and parsing `tailscale status`).
 
-**Live state on the svi polygon** (45.152.198.217, pre-OS-reinstall):
-`module.tailscale.init | ok` audit row visible in
-`audit_log`. /healthz 200. /admin/modules 302 to /login.
-The B-mod-bcheck live contracts run automatically as soon as
-svi is back (re-install after the operator's OS reinstall
-at 2026-09-10 wiped the state).
+**Live state on the svi polygon** (45.152.198.217, 2026-09-11
+post-rebuild): `module.tailscale.init | ok` audit row visible
+in `audit_log`. /healthz 200. /admin/modules renders the
+tailscale row + state pill. /admin/modules/tailscale renders
+the 4 sub-feature rows + health checks + audit history. The
+4 sub-features are end-to-end live-toggleable via the UI:
+cluster (no tailscale binary required), telegram + exit (require
+the tailscale binary which polygon svi doesn't have), derp
+(correctly rejected via Requires validation when telegram is
+off). ALL 10 B-check scripts pass (~155 contracts total) on
+the freshly-restored svi polygon (post-2nd OS reinstall).
 
 ## [v1.5.2] — 2026-09-08
 
