@@ -65,29 +65,47 @@ func SetMigrationIntegrityMode(mode MigrationIntegrityMode) {
 // ensureMigrationTrackingTable creates the applied_migrations
 // table if it doesn't exist. Idempotent.
 //
-// B-mod-pg18-strftime-fix (2026-09-09): the DEFAULT clause for
-// applied_at used `strftime('%s', 'now')` which is **SQLite-only**
-// (returns unix seconds as INTEGER). PostgreSQL has no `strftime`
-// function — `extract(epoch from now())::bigint` is the PG
-// equivalent. Without this fix, skygate cannot create the
-// applied_migrations table on PG 18 (or any PG version):
+// B-mod-sqlite-pg-bidi (v1.5.4): dispatches on BackendOf(d) so
+// the same function works on PG (extract(epoch from now())::bigint)
+// AND SQLite (strftime('%s','now')). The pre-1.5.4 version was
+// PG-only and crashed SQLite with "no such function: extract"
+// (SQLite has no EXTRACT keyword). The PG-side SQL was the
+// B-mod-pg18-strftime-fix (2026-09-09): the previous DEFAULT used
+// `strftime('%s', 'now')` which is SQLite-only; PG has no
+// strftime — `extract(epoch from now())::bigint` is the PG
+// equivalent. The fix was to route the DEFAULT through the
+// dialect-aware helper.
 //
-//	ERROR: function strftime(unknown, unknown) does not exist
-//	       (SQLSTATE 42883)
-//
-// This was the only SQLite-leftover in the migration tracking
-// code. The rest of the migration SQL (in migrations_pg.go) uses
-// PG-native EXTRACT(EPOCH FROM now())::bigint already.
+// Both branches produce the same shape: version BIGINT/INTEGER PK,
+// sha256 TEXT, source_file TEXT default '', applied_at default
+// unix-epoch-as-integer, first_seen TEXT default ''.
 func ensureMigrationTrackingTable(d *sql.DB) error {
-	_, err := d.Exec(`
-		CREATE TABLE IF NOT EXISTS applied_migrations (
-			version     BIGINT  PRIMARY KEY,
-			sha256      TEXT    NOT NULL,
-			source_file TEXT    NOT NULL DEFAULT '',
-			applied_at  BIGINT  NOT NULL DEFAULT (extract(epoch from now())::bigint),
-			first_seen  TEXT    NOT NULL DEFAULT ''
-		)
-	`)
+	var ddl string
+	if BackendOf(d) == Backend("sqlite") {
+		ddl = `
+			CREATE TABLE IF NOT EXISTS applied_migrations (
+				version     INTEGER PRIMARY KEY,
+				sha256      TEXT    NOT NULL,
+				source_file TEXT    NOT NULL DEFAULT '',
+				applied_at  INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+				first_seen  TEXT    NOT NULL DEFAULT ''
+			)
+		`
+	} else {
+		// Pre-1.5.4 path: PG-only (or no backend registered, which
+		// historically meant legacy OpenDSN → PG). Kept as the
+		// default so existing live PG deployments don't break.
+		ddl = `
+			CREATE TABLE IF NOT EXISTS applied_migrations (
+				version     BIGINT  PRIMARY KEY,
+				sha256      TEXT    NOT NULL,
+				source_file TEXT    NOT NULL DEFAULT '',
+				applied_at  BIGINT  NOT NULL DEFAULT (extract(epoch from now())::bigint),
+				first_seen  TEXT    NOT NULL DEFAULT ''
+			)
+		`
+	}
+	_, err := d.Exec(ddl)
 	if err != nil {
 		return fmt.Errorf("ensure applied_migrations: %w", err)
 	}
@@ -131,12 +149,29 @@ func normalizeMigrationSQL(s string) string {
 // run. With the DO NOTHING, RecordMigrationApplied is
 // truly idempotent — the only "real" errors are
 // transient (DB down, FK violation), which we surface.
+//
+// B-mod-sqlite-pg-bidi (v1.5.4): dispatches on BackendOf(d)
+// so the same function works on PG (ON CONFLICT (version) DO
+// NOTHING with $1, $2, $3, $4 placeholders) AND SQLite
+// (INSERT OR IGNORE INTO applied_migrations ... with ?
+// placeholders).
 func RecordMigrationApplied(d *sql.DB, version int, sha256Hex, sourceFile, firstSeenVersion string) error {
-	_, err := d.Exec(`
-		INSERT INTO applied_migrations (version, sha256, source_file, first_seen)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (version) DO NOTHING
-	`, version, sha256Hex, sourceFile, firstSeenVersion)
+	var query string
+	if BackendOf(d) == Backend("sqlite") {
+		// SQLite: INSERT OR IGNORE with ? placeholders.
+		query = `
+			INSERT OR IGNORE INTO applied_migrations (version, sha256, source_file, first_seen)
+			VALUES (?, ?, ?, ?)
+		`
+	} else {
+		// PG: INSERT ... ON CONFLICT (version) DO NOTHING with $N placeholders.
+		query = `
+			INSERT INTO applied_migrations (version, sha256, source_file, first_seen)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (version) DO NOTHING
+		`
+	}
+	_, err := d.Exec(query, version, sha256Hex, sourceFile, firstSeenVersion)
 	if err != nil {
 		return fmt.Errorf("record migration v%d: %w", version, err)
 	}

@@ -44,11 +44,13 @@ import (
 // an error if the parent directory is missing). The first open creates
 // an empty SQLite DB; MigrateSQLite (Task 2) then applies the schema.
 func openSQLite(dsn string) (*sql.DB, error) {
+	var db *sql.DB
 	if dsn == "" || dsn == ":memory:" {
 		// In-memory DSN — modernc.org accepts ":memory:" directly
 		// OR "file::memory:?cache=shared". The bare ":memory:" form
 		// gives a private in-memory DB per *sql.DB (no shared cache).
-		db, err := sql.Open("sqlite", ":memory:")
+		var err error
+		db, err = sql.Open("sqlite", ":memory:")
 		if err != nil {
 			return nil, fmt.Errorf("sqlite open :memory:: %w", err)
 		}
@@ -56,39 +58,44 @@ func openSQLite(dsn string) (*sql.DB, error) {
 			db.Close()
 			return nil, fmt.Errorf("sqlite ping :memory:: %w", err)
 		}
-		return db, nil
-	}
-
-	// File DSN — normalise to modernc.org "file:" URI form and append
-	// the three required PRAGMAs. If the DSN already has a "?" we use
-	// "&" as the separator; otherwise we use "?".
-	finalDSN := dsn
-	if !strings.HasPrefix(strings.ToLower(finalDSN), "file:") &&
-		!strings.HasPrefix(strings.ToLower(finalDSN), "sqlite:") {
-		// Bare path — convert to file: URI.
-		finalDSN = "file:" + finalDSN
-	}
-
-	// Append PRAGMAs unless the DSN already has _pragma= (caller
-	// supplied their own). We don't try to merge; if the caller
-	// supplies their own, we trust them.
-	if !strings.Contains(finalDSN, "_pragma=") {
-		sep := "?"
-		if strings.Contains(finalDSN, "?") {
-			sep = "&"
+	} else {
+		// File DSN — normalise to modernc.org "file:" URI form and
+		// append the three required PRAGMAs. If the DSN already has
+		// a "?" we use "&" as the separator; otherwise we use "?".
+		finalDSN := dsn
+		if !strings.HasPrefix(strings.ToLower(finalDSN), "file:") &&
+			!strings.HasPrefix(strings.ToLower(finalDSN), "sqlite:") {
+			// Bare path — convert to file: URI.
+			finalDSN = "file:" + finalDSN
 		}
-		finalDSN += sep + "_pragma=foreign_keys(1)" +
-			"&_pragma=journal_mode(WAL)" +
-			"&_pragma=busy_timeout(2000)"
+
+		// Append PRAGMAs unless the DSN already has _pragma= (caller
+		// supplied their own). We don't try to merge; if the caller
+		// supplies their own, we trust them.
+		if !strings.Contains(finalDSN, "_pragma=") {
+			sep := "?"
+			if strings.Contains(finalDSN, "?") {
+				sep = "&"
+			}
+			finalDSN += sep + "_pragma=foreign_keys(1)" +
+				"&_pragma=journal_mode(WAL)" +
+				"&_pragma=busy_timeout(2000)"
+		}
+
+		var err error
+		db, err = sql.Open("sqlite", finalDSN)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite open %q: %w", dsn, err)
+		}
+		if err := db.Ping(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("sqlite ping %q: %w", dsn, err)
+		}
 	}
 
-	db, err := sql.Open("sqlite", finalDSN)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite open %q: %w", dsn, err)
-	}
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("sqlite ping %q: %w", dsn, err)
-	}
+	// Register the backend so BackendOf(db) returns "sqlite" (not
+	// empty). The migration tracking + conversion tool rely on
+	// BackendOf to dispatch DDL fragments.
+	registerBackend(db, Backend("sqlite"))
 	return db, nil
 }

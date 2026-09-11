@@ -93,6 +93,17 @@ func testdataMigrationFiles(t *testing.T) []string {
 		if strings.HasSuffix(base, "_test.go") {
 			continue
 		}
+		// B-mod-sqlite-pg-bidi (v1.5.4): the SQLite migration set
+		// is generated from the PG migration set via
+		// scripts/port_migrations_sqlite.py. The audit runs only
+		// against the AUTHORITATIVE PG migration files — the
+		// generated SQLite file would have the same CREATE INDEX
+		// patterns (without paired DROP) by construction, which
+		// would falsely flag the PG source. Skip the generated
+		// file from the audit.
+		if strings.HasPrefix(base, "migrations_sqlite.") {
+			continue
+		}
 		out = append(out, m)
 	}
 	sort.Strings(out)
