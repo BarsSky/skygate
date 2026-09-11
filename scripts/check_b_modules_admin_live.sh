@@ -77,7 +77,7 @@ while [ $# -gt 0 ]; do
 done
 
 # === counters ===
-PASS=0
+PASS_CNT=0
 FAIL=0
 SKIP=0
 TOTAL=0
@@ -87,7 +87,7 @@ YEL=$'\033[1;33m'
 CYN=$'\033[0;36m'
 RST=$'\033[0m'
 
-pass() { PASS=$((PASS + 1)); TOTAL=$((TOTAL + 1)); printf '%s PASS %s [live %d] %s\n' "${GRN}" "${RST}" "${TOTAL}" "$1"; }
+pass() { PASS_CNT=$((PASS_CNT + 1)); TOTAL=$((TOTAL + 1)); printf '%s PASS %s [live %d] %s\n' "${GRN}" "${RST}" "${TOTAL}" "$1"; }
 fail() { FAIL=$((FAIL + 1)); TOTAL=$((TOTAL + 1)); printf '%s FAIL %s [live %d] %s\n' "${RED}" "${RST}" "${TOTAL}" "$1"; if [ $# -ge 2 ]; then printf '           %s\n' "$2"; fi; }
 skip() { SKIP=$((SKIP + 1)); TOTAL=$((TOTAL + 1)); printf '%s SKIP %s [live %d] %s\n' "${CYN}" "${RST}" "${TOTAL}" "$1"; if [ $# -ge 2 ]; then printf '           %s\n' "$2"; fi; }
 section() { printf '\n%s== %s ==%s\n' "${YEL}" "$1" "${RST}"; }
@@ -119,7 +119,7 @@ if [ "$HTTP_HEALTHZ" = "200" ]; then
 else
     fail "/healthz returns 200" "got $HTTP_HEALTHZ"
     section "Summary"
-    printf '  Total: %d  Pass: %d  Fail: %d  Skip: %d\n' "${TOTAL}" "${PASS}" "${FAIL}" "${SKIP}"
+    printf '  Total: %d  Pass: %d  Fail: %d  Skip: %d\n' "${TOTAL}" "${PASS_CNT}" "${FAIL}" "${SKIP}"
     exit 1
 fi
 
@@ -298,9 +298,9 @@ fi
 
 # === summary ===
 section "Summary"
-PASS_RATE=$((PASS * 100 / (TOTAL > 0 ? TOTAL : 1)))
+PASS_RATE=$((PASS_CNT * 100 / (TOTAL > 0 ? TOTAL : 1)))
 printf '  Total: %d  Pass: %d  Fail: %d  Skip: %d  (%d%% pass rate, ignoring skips)\n' \
-    "${TOTAL}" "${PASS}" "${FAIL}" "${SKIP}" "${PASS_RATE}"
+    "${TOTAL}" "${PASS_CNT}" "${FAIL}" "${SKIP}" "${PASS_RATE}"
 if [ "${FAIL}" -eq 0 ]; then
     if [ "${SKIP}" -gt 0 ]; then
         printf '%s✓ B-mod-bcheck live: all live contracts pass (%d skipped)%s\n' "${GRN}" "${SKIP}" "${RST}"
