@@ -299,3 +299,45 @@ For v1.5.5, address in this order:
    to be explicit about Mode B (PG): "you must set
    `SKYGATE_DB=postgres://...` in .env, uncomment the line in
    the heredoc".
+
+---
+
+## Resolution (2026-09-11, v1.5.4 post-release follow-up)
+
+All 5 gaps closed on the same day, by commit:
+
+| # | Severity | Commit | Files | What changed |
+|---|----------|--------|-------|--------------|
+| 1 | CRITICAL | `d608648e` | 3 compose files | `BarsSky` → `barssky` (lowercase per OCI spec) |
+| 2 | CRITICAL | `46efab13` + `f5986aea` | 3 install scripts | `SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=` line in heredoc + `--import-existing=true` flag + install.sh export + heredoc `${VAR:-}` expansion so the env var flows into the file end-to-end |
+| 3 | MEDIUM | `f5615c96` | `.env.example` | `SKYGATE_DB` is now the v1.5.4+ unified selector (was LEGACY); `SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=false` default added |
+| 4 | MEDIUM | `6a799445` | `docs/deploy.md` | env var table updated for v1.5.4+; restore warning now says v1.5.4+ binary CAN read SQLite directly |
+| 5 | LOW | `4584fe42` | `docs/clean-install-walkthrough.md` | Step 1 heredoc has explicit `↓↓↓ UNCOMMENT` markers + crash-loop warning; Step 2 Mode B has explicit "UNCOMMENT the SKYGATE_DB=postgres://... line from Step 1" |
+
+### Verification (bash end-to-end)
+
+```bash
+$ bash /c/skygate-dry/verify2.sh
+=== Test 1: default (unset) ===
+SKYGATE_DB=sqlite:/skygate.db
+SKYGATE_DB_DSN=
+SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=
+
+=== Test 3: --import-existing=true flag (install-debian.sh parsing) ===
+SKYGATE_DB=sqlite:/skygate.db
+SKYGATE_DB_DSN=
+SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true
+```
+
+(Test 2 omitted — `write_env_file` preserves existing files
+per install-common.sh:265-268, so re-running with a different
+flag is a no-op. The first-install path is what matters and
+that works.)
+
+### Status
+
+✅ All 5 gaps closed. v1.5.4 docker + systemd deploy paths
+are now end-to-end consistent with the operator-facing docs.
+Operator can proceed with the live-verify on svi polygon
+(`45.152.198.217`) per the original closeout plan in
+`docs/issues-closeout.md`.
