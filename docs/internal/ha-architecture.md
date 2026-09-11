@@ -1,6 +1,6 @@
 # Skygate HA Architecture — Tier 1 (hot standby)
 
-**Status**: Tier 1 (active-passive) **code-side implemented** as of v1.5.0 (B145–B153). Operator-side phases (Phase 0 Tailscale mesh, Phase 7 svyatoslava-1 bootstrap, Phase 9 live DR drill) remain for v1.5.0 release per `docs/internal/ha-v1.5.0-execution.md`. Tier 2+ out of scope.
+**Status**: Tier 1 (active-passive) **code-side implemented** as of v1.5.0 (B145–B153). Operator-side phases (Phase 0 Tailscale mesh, Phase 7 <polygon-vm-hostname> bootstrap, Phase 9 live DR drill) remain for v1.5.0 release per `docs/internal/ha-v1.5.0-execution.md`. Tier 2+ out of scope.
 **Last updated**: 2026-09-08
 **See also**: [`docs/v0.27.0-postgres-ha.md`](v0.27.0-postgres-ha.md)
 (the full 18-day plan, including Phase 2 PG HA setup, Phase 3
@@ -163,9 +163,9 @@ RTO is "snappy enough" for the operator's stated use case.
 This work is tracked as Priority 3 in
 [`docs/BACKLOG.md`](BACKLOG.md#priority-3--ha-skygate-host-2--tier-1-hot-standby-blocked-on-2nd-vm--etcd-quorum--s3).
 **Operator-side remaining (code-side DONE)**:
-- Phase 0: Tailscale mesh between svyatoslava-1 + skygate-host-1
+- Phase 0: Tailscale mesh between <polygon-vm-hostname> + skygate-host-1
   (subnet routes approved on headscale side)
-- Phase 7: svyatoslava-1 bootstrap (run `scripts/bootstrap_standby.sh`
+- Phase 7: <polygon-vm-hostname> bootstrap (run `scripts/bootstrap_standby.sh`
   on the new VM; script provisions Patroni replica + headscale
   replica + skygate in standby role + certsync)
 - Phase 9: live DR drill (operator picks a maintenance window

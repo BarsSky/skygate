@@ -10,7 +10,7 @@ echo ""
 echo "=== INPUT chain (B179 trap was here too) ==="
 ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "sudo iptables -L INPUT -n -v 2>&1 | head -30" 2>&1
 echo ""
-echo "=== any block for 45.152.198.217 (svyatoslava) ==="
+echo "=== any block for <polygon-vm-public-ip> (svyatoslava) ==="
 ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "sudo iptables-save 2>&1 | grep -i '45\.152\|svyat' | head -20" 2>&1
 echo ""
 echo "=== persistent iptables rules (saved to /etc/iptables) ==="

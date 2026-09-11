@@ -194,7 +194,7 @@ the squash (estimated, depends on pack efficiency).
 - Effort: was ~6 hours; actual was about the same.
 
 **v1.5.0 — HA Tier 1 (BL-2) — UNBLOCKED 2026-08-18**
-- `svyatoslava-1` VM available, S3 bucket configured, Patroni + etcd in place
+- `<polygon-vm-hostname>` VM available, S3 bucket configured, Patroni + etcd in place
 - Active-Passive with priority chain (`skygate` P1 / `skygate-standby` P2)
 - Patroni auto-failover (existing config, **NOT touched**)
 - external DNS provider failover (pluggable adapter)

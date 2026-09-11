@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set +e
 echo "=== Recheck from this Windows host ==="
-ping -n 3 -w 4 45.152.198.217 2>&1 | tail -4
+ping -n 3 -w 4 <polygon-vm-public-ip> 2>&1 | tail -4
 echo ""
 echo "=== Recheck from skygate ==="
-ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "echo '-- 22 --'; timeout 5 nc -zv 45.152.198.217 22 2>&1; echo '-- 53 --'; timeout 5 nc -zv 45.152.198.217 53 2>&1; echo '-- 2222 --'; timeout 5 nc -zv 45.152.198.217 2222 2>&1; echo '-- 80 --'; timeout 5 nc -zv 45.152.198.217 80 2>&1; echo '-- 443 --'; timeout 5 nc -zv 45.152.198.217 443 2>&1" 2>&1
+ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "echo '-- 22 --'; timeout 5 nc -zv <polygon-vm-public-ip> 22 2>&1; echo '-- 53 --'; timeout 5 nc -zv <polygon-vm-public-ip> 53 2>&1; echo '-- 2222 --'; timeout 5 nc -zv <polygon-vm-public-ip> 2222 2>&1; echo '-- 80 --'; timeout 5 nc -zv <polygon-vm-public-ip> 80 2>&1; echo '-- 443 --'; timeout 5 nc -zv <polygon-vm-public-ip> 443 2>&1" 2>&1
 echo ""
 echo "=== headscale node 45 (svyat) last_seen ==="
 ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "docker exec headscale headscale nodes list -o json 2>/dev/null | python3 -c '

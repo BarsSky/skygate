@@ -3,7 +3,7 @@
 These ~50 scripts were created during the 2026-08..2026-09
 debugging sessions for:
 
-- **svi polygon** (svyatoslava-1) — the B-mod series
+- **svi polygon** (<polygon-vm-hostname>) — the B-mod series
   install / live-verify target. Reinstalled by the
   operator on 2026-09-09 and 2026-09-10 (twice), so most
   of these scripts reference hostnames / IPs / Tailscale

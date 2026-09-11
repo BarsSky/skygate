@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Deep probe of 45.152.198.217 — all common ports + traceroute
+# Deep probe of <polygon-vm-public-ip> — all common ports + traceroute
 set +e
-echo "=== port scan of 45.152.198.217 (top 20 ports) ==="
+echo "=== port scan of <polygon-vm-public-ip> (top 20 ports) ==="
 for p in 22 80 443 2222 2379 50443 41641 8080 50444 50445 19999 53 110 143 25 465 587 993 995 3389 5900 5432 3306 6379 27017 8888 8000 8883; do
-    out=$(timeout 3 nc -zv -w 2 45.152.198.217 $p 2>&1)
+    out=$(timeout 3 nc -zv -w 2 <polygon-vm-public-ip> $p 2>&1)
     if echo "$out" | grep -q "succeeded\|open"; then
         echo "  $p: OPEN"
     fi
 done
 echo ""
-echo "=== traceroute to 45.152.198.217 (Windows tracert) ==="
-tracert -d -h 10 -w 2 45.152.198.217 2>&1 | head -20
+echo "=== traceroute to <polygon-vm-public-ip> (Windows tracert) ==="
+tracert -d -h 10 -w 2 <polygon-vm-public-ip> 2>&1 | head -20
 echo ""
-echo "=== whois on 45.152.198.217 (if available) ==="
-nslookup 45.152.198.217 2>&1 | head -10
+echo "=== whois on <polygon-vm-public-ip> (if available) ==="
+nslookup <polygon-vm-public-ip> 2>&1 | head -10
 echo ""
-echo "=== check if 45.152.198.217 is on the same /24 as 95.165.170.190 ==="
+echo "=== check if <polygon-vm-public-ip> is on the same /24 as 95.165.170.190 ==="
 echo "95.165.170.190: routes through (operator says svyatoslava pings this)"
 nslookup 95.165.170.190 2>&1 | head -5
 echo ""
@@ -30,4 +30,4 @@ for k,p in peers.items():
 '" 2>&1
 echo ""
 echo "=== can we SSH to svyatoslava via skygate tailscale (jumphost)? ==="
-ssh -o ConnectTimeout=8 -o BatchMode=yes skyadmin@192.168.13.69 'nc -zv -w 3 45.152.198.217 22 2>&1' 2>&1
+ssh -o ConnectTimeout=8 -o BatchMode=yes skyadmin@192.168.13.69 'nc -zv -w 3 <polygon-vm-public-ip> 22 2>&1' 2>&1

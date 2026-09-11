@@ -26,7 +26,7 @@ try:
 except Exception as e:
     print(\"error:\", e, r.stdout[:200])
 print()
-print(\"NODE 45 (svyatoslava-1) user:\")
+print(\"NODE 45 (<polygon-vm-hostname>) user:\")
 r2 = subprocess.run([\"docker\", \"exec\", \"headscale\", \"headscale\", \"nodes\", \"list\", \"-o\", \"json\"], capture_output=True, text=True)
 try:
     nodes = json.loads(r2.stdout)

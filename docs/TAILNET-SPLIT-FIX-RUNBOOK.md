@@ -34,9 +34,9 @@ ssh skyadmin@192.168.13.69 "docker exec headscale headscale preauthkeys list -o 
 
 ### VPS nodes (4) — operator SSHs from laptop
 - [ ] **emilia** (100.64.0.3, VPS `<operator-exit-vps-public-ip>`)
-- [ ] **karolina** (100.64.0.2, headscale alias for svyatoslava-1, VPS 193.233.130.178)
+- [ ] **karolina** (100.64.0.2, headscale alias for <polygon-vm-hostname>, VPS 193.233.130.178)
 - [ ] **sharlotta** (100.64.0.4, VPS)
-- [ ] **svyatoslava-1** (100.64.0.15, if separate host from karolina)
+- [ ] **<polygon-vm-hostname>** (100.64.0.15, if separate host from karolina)
 
 ### Home devices (10 online + 3 offline) — operator does manually
 - [ ] **skyworker** (100.64.0.1, online, home desktop)
@@ -53,7 +53,7 @@ ssh skyadmin@192.168.13.69 "docker exec headscale headscale preauthkeys list -o 
 - [ ] **basic** (100.64.0.14, OFFLINE)
 - [ ] **cyborg** (100.64.0.13, OFFLINE)
 
-Total to-do: **13 home devices** + **3 VPS** (if karolina≠svyatoslava-1) = 16 manual actions.
+Total to-do: **13 home devices** + **3 VPS** (if karolina≠<polygon-vm-hostname>) = 16 manual actions.
 
 ---
 
@@ -134,7 +134,7 @@ skybars              100.64.0.5      tcp=OK XXms
 skyworker            100.64.0.1      tcp=OK XXms
 a71                  100.64.0.19     tcp=OK XXms
 olesya               100.64.0.16     tcp=OK XXms
-svyatoslava-1        100.64.0.15     tcp=OK XXms
+<polygon-vm-hostname>        100.64.0.15     tcp=OK XXms
 nothing-phone-2      100.64.0.6      tcp=OK XXms
 ... (one line per online peer)
 

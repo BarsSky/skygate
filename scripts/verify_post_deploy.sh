@@ -1478,7 +1478,7 @@ if [ "$QUICK" = 0 ]; then
   # Walks HAProxy :5000 (primary) and checks archive_mode + archive_command.
   # If archive_mode is on AND archive_command contains "wal-g", AND
   # pg_stat_archiver.archived_count > 0 → PASS. The svyatoslava primary
-  # is at 45.152.198.217 behind HAProxy :5000 on skygate-vm.
+  # is at <polygon-vm-public-ip> behind HAProxy :5000 on skygate-vm.
   R30_OUT=$(ssh_vm "PGPASSWORD=$PRIMARY_PASS psql -h 127.0.0.1 -p 5000 -U admin -d skygate_staging -tA -c \"
     SELECT
       (SELECT setting FROM pg_settings WHERE name='archive_mode') || '|' ||

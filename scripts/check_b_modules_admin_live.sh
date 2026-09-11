@@ -225,7 +225,7 @@ if command -v psql >/dev/null 2>&1; then
     if [ -z "${PGPASSWORD:-}" ]; then
         # Use a default that matches the polygon setup.
         # operator can override via SKYGATE_PG_PASSWORD env.
-        export PGPASSWORD="${SKYGATE_PG_PASSWORD:-ebbab134df12a85d459994f6}"
+        export PGPASSWORD="${SKYGATE_PG_PASSWORD:-<REDACTED>}"
     fi
     if INIT_ROW=$(psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -tA -c "SELECT action, detail FROM audit_log WHERE action = 'module.tailscale.init' ORDER BY created_at DESC LIMIT 1;" 2>/dev/null); then
         if [ -n "$INIT_ROW" ]; then

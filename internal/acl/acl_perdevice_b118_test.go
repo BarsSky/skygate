@@ -97,7 +97,7 @@ func TestB118_TagOwnerFromName_HyphenOnlyAfterPrefix(t *testing.T) {
 
 func TestB118_TagOwnerFromName_AllFourInfraExits(t *testing.T) {
 	// The 4 live infra exit/host nodes (post-v1.3.19.1, 2026-08-17:
-	// svyatoslava-1 / HA mirror was retired by the operator).
+	// <polygon-vm-hostname> / HA mirror was retired by the operator).
 	// All parse to `infra@`. This is the regression test
 	// for the pre-fix bug where they emitted as skyadmin@.
 	for _, name := range []string{

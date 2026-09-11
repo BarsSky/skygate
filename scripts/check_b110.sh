@@ -106,7 +106,7 @@ for sym in allNodesReachabilityTest vpsToVPSLatencyTest splitSuspectedTest vpsHo
   fi
 done
 # All 5 VPS hostnames must be in the vpsHostnameSet map.
-for host in emilia karolina sharlotta skygate-host-1 svyatoslava-1; do
+for host in emilia karolina sharlotta skygate-host-1 <polygon-vm-hostname>; do
   if ! grep -q "\"$host\"" "$GO_FILE"; then
     err "B110 FAIL: $GO_FILE missing VPS hostname \"$host\" in vpsHostnameSet"
   fi

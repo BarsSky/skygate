@@ -46,7 +46,7 @@ func setUpTailnetSelfOverride(t *testing.T, hostname string) {
 
 func TestVpsHostnameSet_IncludesKnownVPS(t *testing.T) {
 	vps := vpsHostnameSet()
-	for _, want := range []string{"emilia", "karolina", "sharlotta", "skygate-host-1", "svyatoslava-1"} {
+	for _, want := range []string{"emilia", "karolina", "sharlotta", "skygate-host-1", "<polygon-vm-hostname>"} {
 		if !vps[want] {
 			t.Errorf("vpsHostnameSet() missing %q", want)
 		}
@@ -136,7 +136,7 @@ func TestAllNodesReachabilityTest_SplitScenario_FailsBelow60(t *testing.T) {
 		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
 		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
 		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
+		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true},
 		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
 		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true},
 		// home-LAN — these should be SKIPPED, not probed.
@@ -189,7 +189,7 @@ func TestAllNodesReachabilityTest_OneUnreachable_Passes(t *testing.T) {
 		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
 		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
 		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
+		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true},
 		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
 		// home-LAN — skipped
 		{ID: "6", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
@@ -437,7 +437,7 @@ func TestSplitSuspectedTest_ManyUnreachable_Fails(t *testing.T) {
 		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
 		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
 		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "svyatoslava-1", IPAddresses: []string{"100.64.0.15"}, Online: true},
+		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true},
 		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
 		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true},
 		// home-LAN — should be SKIPPED

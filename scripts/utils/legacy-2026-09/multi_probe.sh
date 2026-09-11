@@ -2,8 +2,8 @@
 # Probe from multiple angles - run ping native (no Select-Object in bash)
 set +e
 echo "=== 1. From this Windows host (ping.exe) ==="
-echo "--> 45.152.198.217 (svyatoslava public)"
-ping -n 3 -w 4 45.152.198.217 2>&1 | head -8
+echo "--> <polygon-vm-public-ip> (svyatoslava public)"
+ping -n 3 -w 4 <polygon-vm-public-ip> 2>&1 | head -8
 echo ""
 echo "--> 95.165.170.190 (NPM fronting)"
 ping -n 3 -w 4 95.165.170.190 2>&1 | head -8

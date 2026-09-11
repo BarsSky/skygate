@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Final diagnosis of svyatoslava-1 — confirm dead state
+# Final diagnosis of <polygon-vm-hostname> — confirm dead state
 set +e
-echo "=== svyatoslava-1 connectivity matrix ==="
+echo "=== <polygon-vm-hostname> connectivity matrix ==="
 echo ""
-echo "1. Direct public IP 45.152.198.217:22"
-ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@45.152.198.217 'echo OK' 2>&1 | head -2
+echo "1. Direct public IP <polygon-vm-public-ip>:22"
+ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@<polygon-vm-public-ip> 'echo OK' 2>&1 | head -2
 echo ""
 echo "2. Tailscale IP 100.64.0.24 (from skygate)"
 ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 'ssh -o ConnectTimeout=3 -o BatchMode=yes skyadmin@100.64.0.24 "echo OK" 2>&1 | head -2' 2>&1 | head -2
@@ -20,9 +20,9 @@ for n in json.load(sys.stdin):
 '" 2>&1
 echo ""
 echo "4. Tailscale route on skygate (table 52)"
-ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "ip route show table 52 2>&1; echo '==='; echo 'svyatoslava-1 (100.64.0.24) NOT in table 52 = no peer'" 2>&1
+ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "ip route show table 52 2>&1; echo '==='; echo '<polygon-vm-hostname> (100.64.0.24) NOT in table 52 = no peer'" 2>&1
 echo ""
-echo "5. svyatoslava-1 in skygate's peer list (status --json)?"
+echo "5. <polygon-vm-hostname> in skygate's peer list (status --json)?"
 ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "tailscale status --json 2>&1 | python3 -c '
 import json,sys
 d=json.load(sys.stdin)
@@ -33,4 +33,4 @@ print(f\"  svyatoslava in peer list: {bool(svyat)}\")
 '" 2>&1
 echo ""
 echo "6. systemd-resolved stub listener (127.0.0.53:53) misbehaving"
-ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "dig +short +tries=1 +time=2 @127.0.0.53 svyatoslava-1 2>&1; echo '==='; getent hosts svyatoslava-1 2>&1" 2>&1
+ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "dig +short +tries=1 +time=2 @127.0.0.53 <polygon-vm-hostname> 2>&1; echo '==='; getent hosts <polygon-vm-hostname> 2>&1" 2>&1

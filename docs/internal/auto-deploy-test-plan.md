@@ -9,7 +9,7 @@
 
 **Развернуто:**
 - skygate (192.168.13.69, agent) — primary, skygate-host-1-1 (100.64.0.22) в Tailscale
-- svi (45.152.198.217, svyatoslava-1) — standby/HA replica, 100.64.0.24
+- svi (<polygon-vm-public-ip>, <polygon-vm-hostname>) — standby/HA replica, 100.64.0.24
 - karolina (193.233.130.178:18022) — российский VPS, jump host
 
 **Что работает (подтверждено в сессии 2026-09-09):**
@@ -25,12 +25,12 @@
 
 **Что НЕ работает (выявлено в этой сессии):**
 - ❌ svi НЕ ВИДИТ skygate-host-1-1 в Tailscale mesh (grants policy фильтрует — нужен grant `tag:dev-skyadmin-skyworker ↔ tag:dev-infra-skygate-host-1-1`)
-- ❌ 45.152.198.217 (публичный IP svi) НЕ достижим с skygate и с Windows-хоста — **блок на роутере оператора 192.168.13.1 или 192.168.1.254** (НЕ на svi, НЕ на хостере)
+- ❌ <polygon-vm-public-ip> (публичный IP svi) НЕ достижим с skygate и с Windows-хоста — **блок на роутере оператора 192.168.13.1 или 192.168.1.254** (НЕ на svi, НЕ на хостере)
 - ❌ svi в headscale user `tagged-devices` (synthetic, id=2147459555), а не в `infra` (id=85) — нужно re-provision или workaround
 - ❌ headscale binary Go-side cache: после `UPDATE nodes SET user_id=85` в SQLite + `docker restart headscale` CLI продолжает показывать `tagged-devices`. **Workaround: re-provision через новый preauth flow**.
 
 **Что проверено со стороны оператора (per user feedback 2026-09-09):**
-- ✅ Из другой сети (не WiFi) 45.152.198.217 пингуется → **проблема точно в локалке оператора, не в svi**
+- ✅ Из другой сети (не WiFi) <polygon-vm-public-ip> пингуется → **проблема точно в локалке оператора, не в svi**
 - ✅ svi alive (operator пингует 95.165.170.190 с неё)
 - ✅ `ssh svi` с skygate через karolina jump работает
 - ❌ Прямой `ssh svi@100.64.0.24` не работает (Tailscale grants filter)
@@ -97,7 +97,7 @@
 
 ### 2.2. Headscale user mapping (КРИТИЧНО — основной bug)
 - **`tagged-devices` user trap**: если preauth key без `--user`, нода попадает в synthetic user (id=2147459555, sentinel). JOIN `qSelectPerUserDeviceTags` с `portal_users` его не видит → нода не в grants. **Это основная причина почему svi не видит skygate в mesh.**
-- **tagOwners ownership**: tag `tag:dev-infra-svyatoslava-1` должен быть в `tagOwners` для `infra@tsnet.skynas.ru` (а не `skyadmin@`). Если user переехал, но tagOwners не обновлен — `headscale nodes tag --force` сработает, но grants не будут использовать.
+- **tagOwners ownership**: tag `tag:dev-infra-<polygon-vm-hostname>` должен быть в `tagOwners` для `infra@tsnet.skynas.ru` (а не `skyadmin@`). Если user переехал, но tagOwners не обновлен — `headscale nodes tag --force` сработает, но grants не будут использовать.
 - **headscale binary Go-side cache** (B237-mystery, verified 2026-09-09): `docker restart headscale` не сбрасывает кэш user. DB показывает `user_id=85`, CLI показывает `tagged-devices`. **Workaround: re-provision через new preauth flow, не DB UPDATE.**
 - **node 2147459555** (synthetic `tagged-devices` user) — не появляется в `headscale users list` (только 6 реальных users), но CLI его возвращает для нод без валидного user mapping.
 
@@ -124,7 +124,7 @@
 - **S3 credentials** — pre-existing, должны быть в `.env` от primary. Без них `bootstrap_standby.sh` падает на step 2 (silently — non-fatal warning).
 - **HEADPLANE_HEADSCALE__API_KEY** — копируется из primary `.env`. Если истек — re-init на primary через `scripts/init-headplane.sh`.
 - **/healthz check timeout** — 60s default. На медленных VM может не хватить. Нужно настраиваемое.
-- **DNS for svi hostname** — `bootstrap_standby.sh` использует `$(hostname)` для S3 path. Если svi-hostname != svyatoslava-1, S3 pull fail.
+- **DNS for svi hostname** — `bootstrap_standby.sh` использует `$(hostname)` для S3 path. Если svi-hostname != <polygon-vm-hostname>, S3 pull fail.
 
 ### 2.5. HA state machine
 - **jq required** — без jq все ha-phase*.sh падают. `apt install jq` в `install-common.sh` обязателен (B-check I проверяет).
@@ -141,12 +141,12 @@
 
 ### 2.7. Pre-deploy verification
 - **`.githooks/pre-commit` active** — требует `git config core.hooksPath .githooks` после клонирования. Если забыли — credentials не guard.
-- **Pre-commit hook blocks**: `192.168.13.69`, `skygate_admin_pass`. `45.152.198.217` НЕ блокируется (проверено). Use `--no-verify` как workaround.
+- **Pre-commit hook blocks**: `192.168.13.69`, `skygate_admin_pass`. `<polygon-vm-public-ip>` НЕ блокируется (проверено). Use `--no-verify` как workaround.
 - **B-check outdated** — если новый скрипт добавлен без записи в `verify_pre_deploy.sh`, он не запустится в CI/pre-deploy. (см. как B-new + B-new-standby зарегистрированы — 258 строк run_check).
-- **B-check на приватные IP** — `check_b_standby_provision.sh` НЕ проверяет что код не содержит `45.152.198.217`. ⚠️ Можно добавить как новый контракт.
+- **B-check на приватные IP** — `check_b_standby_provision.sh` НЕ проверяет что код не содержит `<polygon-vm-public-ip>`. ⚠️ Можно добавить как новый контракт.
 
 ### 2.8. Network-layer blocks (operator's local network, not skygate)
-- **Operator's gateway 192.168.13.1 / 192.168.1.254 блокирует 45.152.198.217** (verified 2026-09-09). Не наш scope, но документируем в runbook как "operator action required".
+- **Operator's gateway 192.168.13.1 / 192.168.1.254 блокирует <polygon-vm-public-ip>** (verified 2026-09-09). Не наш scope, но документируем в runbook как "operator action required".
 - **Workaround**: `ssh svi` через karolina jump (ProxyCommand в `~/.ssh/config`).
 - **Tailscale mesh на svi** — svi видит karolina/emilia/sharlotta (3 exit nodes), НЕ видит skygate-host-1-1 (grants filter).
 - **Tailscale mesh на skygate** — skygate видит karolina/emilia/sharlotta (те же 3 exit nodes), НЕ видит svi (та же grants filter).
@@ -162,7 +162,7 @@
 1. На skygate: запустить все 258 B-checks (`bash scripts/verify_pre_deploy.sh`). Записать pass/fail.
 2. На skygate: `docker ps`, `docker exec headscale headscale nodes list`, `docker exec headscale headscale policy get` — задокументировать state.
 3. На svi (через jump): `docker ps`, `tailscale status`, `systemctl status tailscaled` — задокументировать state.
-4. Проверить reachability: ping 45.152.198.217 с skygate, ping 192.168.13.69 с svi. Задокументировать что работает/не работает.
+4. Проверить reachability: ping <polygon-vm-public-ip> с skygate, ping 192.168.13.69 с svi. Задокументировать что работает/не работает.
 5. Снять "baseline" — текущее состояние до изменений.
 6. Сохранить backup: `headscale policy get -o json > /tmp/policy.baseline.json` (восстановить при rollback).
 
@@ -188,7 +188,7 @@
 **Предусловия:** svi взята из эксплуатации (operator останавливает Patroni replica).
 
 **Шаги:**
-1. На skygate: `NEW_KEY=$(bash deploy/scripts/create-standby-preauth.sh --hostname svyatoslava-1-test)` — минт test key.
+1. На skygate: `NEW_KEY=$(bash deploy/scripts/create-standby-preauth.sh --hostname <polygon-vm-hostname>-test)` — минт test key.
 2. На svi: `export SKYGATE_STANDBY_TS_AUTHKEY="$NEW_KEY"` + `bash scripts/bootstrap_standby.sh --reset` — re-bootstrap.
 3. Проверить step 0 выполнение:
    - tailscale status был Running → skip ✓
@@ -223,7 +223,7 @@
 2. `docker exec headscale headscale policy check -f /tmp/policy.json` — должна пройти без errors.
 3. `headscale policy get -o json` → проверить что:
    - Есть grant `tag:dev-skyadmin-skyworker` (или новый тег) с DST включающим svi
-   - Есть grant `tag:dev-infra-svyatoslava-1 ↔ tag:dev-infra-skygate-host-1-1`
+   - Есть grant `tag:dev-infra-<polygon-vm-hostname> ↔ tag:dev-infra-skygate-host-1-1`
 4. На svi: `tailscale ping 100.64.0.22` — должен быть `pong`.
 5. На skygate: `tailscale ping 100.64.0.24` — должен быть `pong`.
 6. SSH test: `ssh svi echo OK` из skygate через Tailscale (не через jump).
@@ -295,7 +295,7 @@
    - `check_b_tailscale_grants.sh` — emit per-DEVICE grants и проверить что новые ноды попадают
    - `check_b_node_owner_map.sh` — все ноды в node_owner_map с правильным username
    - `check_b_tag_owners.sh` — все `tag:dev-*` теги в `tagOwners`
-   - `check_b_45_152_198.sh` — нет 45.152.198.217 в tracked code (вместо этого — env vars)
+   - `check_b_45_152_198.sh` — нет <polygon-vm-public-ip> в tracked code (вместо этого — env vars)
 4. Запустить на skygate + svi.
 
 **Deliverable:** новые B-check скрипты + полный каталог B-checks в `scripts/`.
@@ -304,7 +304,7 @@
 
 ## 4. Стратегия использования svi
 
-**svi = svyatoslava-1, 100.64.0.24, текущее состояние:**
+**svi = <polygon-vm-hostname>, 100.64.0.24, текущее состояние:**
 - etcd запущен (skygate-etcd container)
 - Tailscale Running, user `tagged-devices` (НЕ `infra`)
 - HA chain role: standby (предположительно)
@@ -347,7 +347,7 @@
 - **Метрики / observability** (Prometheus, Grafana) — пока логи в `/var/log/skygate/`
 - **Multi-region / multi-DC** — не в scope текущего проекта
 - **svi direct Tailscale mesh fix** (tagged-devices → infra user) — handled by Phase 2 (re-deploy), НЕ by DB UPDATE
-- **Operator's local network block (45.152.198.217)** — operator action, document as known issue
+- **Operator's local network block (<polygon-vm-public-ip>)** — operator action, document as known issue
 
 ---
 
@@ -384,7 +384,7 @@
 
 ## 9. Known issues (out of scope, документируем)
 
-- **Operator's gateway блокирует 45.152.198.217** — нужно проверить firewall на 192.168.13.1 или 192.168.1.254. Workaround: `ssh svi` через karolina jump.
+- **Operator's gateway блокирует <polygon-vm-public-ip>** — нужно проверить firewall на 192.168.13.1 или 192.168.1.254. Workaround: `ssh svi` через karolina jump.
 - **headscale binary Go-side cache** — workaround: re-provision (не DB UPDATE).
 - **node 2147459555** (`tagged-devices` sentinel) — не реальный user, не появляется в `headscale users list`.
 - **Tailscale grants на svi ↔ skygate** — отсутствуют (Phase 1-4 закроют).

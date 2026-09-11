@@ -3012,7 +3012,7 @@ run_check "B109" "desktop breadcrumb padding-left 40px (breathing room from 220p
 # доступа". Live symptom: headscale says 10 nodes are online but
 # skygate-host-1's `tailscale status` shows only 4 — a tailnet split
 # where the home-LAN cluster (skybars, skyworker, a71, olesya,
-# svyatoslava-1, nothing-phone-2) is invisible from the server. Root
+# <polygon-vm-hostname>, nothing-phone-2) is invisible from the server. Root
 # cause analysis + fix procedure in docs/tailnet-diagnostics.md.
 # B110 pins 7 contracts in scripts/check_b110.sh:
 #   1. internal/feature/admin/system_tests_tailnet.go has 3 new
@@ -3049,7 +3049,7 @@ run_check "B110" "tailnet reachability/speed/split diagnostics (3 Go tests + she
 # with the new tag:dev-infra-skygate-host-1 in any grant.
 # B111 closes the gap with three changes:
 #   1. isInfraNode adds rule 3: any tag == "tag:exit-node"
-#      (catches emilia, karolina, sharlotta, svyatoslava-1).
+#      (catches emilia, karolina, sharlotta, <polygon-vm-hostname>).
 #   2. BackfillInfra changes from INSERT OR IGNORE to
 #      active UPDATE — nodes matching isInfraNode that are
 #      currently in a user-portal bucket get re-attributed

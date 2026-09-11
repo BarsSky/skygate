@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set +e
-echo "=== from skygate: traceroute to 45.152.198.217 ==="
-ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 "which traceroute; which tracepath; which mtr; echo '---'; (traceroute -n -w 2 -m 10 45.152.198.217 2>&1 || tracepath -n -m 10 45.152.198.217 2>&1) | head -15" 2>&1
+echo "=== from skygate: traceroute to <polygon-vm-public-ip> ==="
+ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 "which traceroute; which tracepath; which mtr; echo '---'; (traceroute -n -w 2 -m 10 <polygon-vm-public-ip> 2>&1 || tracepath -n -m 10 <polygon-vm-public-ip> 2>&1) | head -15" 2>&1
 echo ""
 echo "=== from skygate: same traceroute to 95.165.170.190 (control) ==="
 ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 "traceroute -n -w 2 -m 10 95.165.170.190 2>&1 | head -15" 2>&1
@@ -18,8 +18,8 @@ echo ""
 echo "=== from this Windows: nslookup skynas.ru 192.168.13.1 (gateway DNS) ==="
 nslookup skynas.ru 192.168.13.1 2>&1 | head -10
 echo ""
-echo "=== check HTTP/HTTPS response on 45.152.198.217 (does it 302 redirect?) ==="
-ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 "curl -v --max-time 5 http://45.152.198.217/ 2>&1 | head -20" 2>&1
+echo "=== check HTTP/HTTPS response on <polygon-vm-public-ip> (does it 302 redirect?) ==="
+ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 "curl -v --max-time 5 http://<polygon-vm-public-ip>/ 2>&1 | head -20" 2>&1
 echo ""
-echo "=== from Windows: traceroute to 45.152.198.217 ==="
-tracert -d -h 10 -w 3 45.152.198.217 2>&1 | Select-Object -First 15
+echo "=== from Windows: traceroute to <polygon-vm-public-ip> ==="
+tracert -d -h 10 -w 3 <polygon-vm-public-ip> 2>&1 | Select-Object -First 15

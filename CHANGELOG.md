@@ -60,7 +60,7 @@ opt-in toggles with state.Info flags so the operator sees
 their current status on the detail page (without ssh'ing
 into the VM and parsing `tailscale status`).
 
-**Live state on the svi polygon** (45.152.198.217, 2026-09-11
+**Live state on the svi polygon** (<polygon-vm-public-ip>, 2026-09-11
 post-rebuild): `module.tailscale.init | ok` audit row visible
 in `audit_log`. /healthz 200. /admin/modules renders the
 tailscale row + state pill. /admin/modules/tailscale renders

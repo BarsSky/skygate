@@ -107,14 +107,14 @@ skygate DB (node_owner_map):
   node_id=3   username='skyadmin'    hostname='emilia'   ← exit node, NOT in infra
   node_id=4   username='skyadmin'    hostname='sharlotta'  ← exit node
   node_id=11  username='skyadmin'    hostname='karolina'   ← exit node
-  node_id=30  username='svyatoslava' hostname='svyatoslava-1'  ← exit node
+  node_id=30  username='svyatoslava' hostname='<polygon-vm-hostname>'  ← exit node
 
 headscale (actual tags):
   skygate-host-1  tags=['tag:dev-skyadmin-skygate-vm', 'tag:private']  ← skyadmin!
   emilia          tags=['tag:dev-skyadmin-emilia', 'tag:exit-node', 'tag:private']
   karolina        tags=['tag:dev-skyadmin-karolina', 'tag:exit-node', 'tag:private']
   sharlotta       tags=['tag:dev-skyadmin-sharlotta', 'tag:exit-node', 'tag:private']
-  svyatoslava-1   tags=['tag:private']
+  <polygon-vm-hostname>   tags=['tag:private']
 
 policy (generated from DB):
   tagOwners.tag:dev-skyadmin-emilia: ['skyadmin@<baseDomain>']
@@ -132,7 +132,7 @@ grants:
 So **the actual problem is NOT that skygate-host-1 has 0 grants**
 (it has 9 mesh grants, but they're all to other `tag:dev-skyadmin-*`
 devices). The problem is that the **other 6 online nodes**
-(skybars, skyworker, a71, olesya, svyatoslava-1, nothing-phone-2)
+(skybars, skyworker, a71, olesya, <polygon-vm-hostname>, nothing-phone-2)
 ARE in the skyadmin mesh but **not visible from skygate-host-1
 because of how the Tailscale map is rendered when the user
 identity (skyadmin) has 14 devices but only 1 of them is
@@ -161,7 +161,7 @@ $ docker exec skygate-skygate-1 tailscale status | head
 ```
 
 skygate-host-1 sees only 4 nodes. headscale says 10 online.
-The 6 missing are: skybars, skyworker, a71, olesya, svyatoslava-1,
+The 6 missing are: skybars, skyworker, a71, olesya, <polygon-vm-hostname>,
 nothing-phone-2.
 
 Looking at the policy:
@@ -174,7 +174,7 @@ Looking at the policy:
   self. Why?
 
 **The answer: 3 of the missing nodes are NOT skyadmin devices.**
-`nothing-phone-2` is michail, `olesya` is michail, `svyatoslava-1`
+`nothing-phone-2` is michail, `olesya` is michail, `<polygon-vm-hostname>`
 is svyatoslava. So those 3 are not in the skyadmin mesh — that's
 correct per the policy.
 
@@ -232,19 +232,19 @@ For each of these 5 nodes (4 VPS + 1 skygate container):
   `tag:dev-infra-emilia`
 - karolina: same pattern
 - sharlotta: same pattern
-- svyatoslava-1: **add** `tag:dev-infra-svyatoslava-1,tag:exit-node`
-  (currently has only `tag:private`; svyatoslava-1 is the
+- <polygon-vm-hostname>: **add** `tag:dev-infra-<polygon-vm-hostname>,tag:exit-node`
+  (currently has only `tag:private`; <polygon-vm-hostname> is the
   future skygate-host-2 per the B93 design)
 
 This requires `tailscale up --authkey=<KEY> --advertise-tags=...`
 on each device. Tailscale doesn't support changing tags without
 re-registration, so expect ~3-5 min downtime per node.
 
-**Why svyatoslava-1 needs `tag:exit-node` explicitly** (not just
-`tag:dev-infra-svyatoslava-1`): isInfraNode rule 2 (hostname
-prefix `skygate-host-`) does NOT match `svyatoslava-1`. Rule 3
+**Why <polygon-vm-hostname> needs `tag:exit-node` explicitly** (not just
+`tag:dev-infra-<polygon-vm-hostname>`): isInfraNode rule 2 (hostname
+prefix `skygate-host-`) does NOT match `<polygon-vm-hostname>`. Rule 3
 (any `tag:exit-node`) is the trigger. Without `tag:exit-node`,
-BackfillInfra UPDATE will not fire and svyatoslava-1 will stay
+BackfillInfra UPDATE will not fire and <polygon-vm-hostname> will stay
 in the `svyatoslava` portal-user bucket (a leftover from earlier
 experiments — see the historical context in
 `docs/B111-INFRA-RETAG-RUNBOOK.md`).
@@ -254,7 +254,7 @@ experiments — see the historical context in
 1. **skygate-host-1 first** (the broken node — fixes skygate
    visibility of the other 9 skyadmin devices).
 2. **VPS-side next** (emilia, karolina, sharlotta,
-   svyatoslava-1). Each is one `tailscale up --authkey=<KEY>
+   <polygon-vm-hostname>). Each is one `tailscale up --authkey=<KEY>
    --advertise-tags=tag:dev-infra-<name>` invocation.
 3. **No re-tag of the other 9 skyadmin devices needed** — they
    keep their `tag:dev-skyadmin-X` tags and continue to be in
@@ -276,7 +276,7 @@ The next policy reapply will:
   longer fires)
 - Emit the B111 `* → tag:dev-infra-<exit>` catch-alls so
   every skyadmin/michail/etc. device can still use emilia,
-  karolina, sharlotta, svyatoslava-1 as exit nodes
+  karolina, sharlotta, <polygon-vm-hostname> as exit nodes
 
 ### Step 4: verify
 

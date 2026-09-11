@@ -277,14 +277,14 @@ user removed (5/5 left in `portal_users`).
 The B93 infra user (introduced 2026-07-12) was incomplete —
 isInfraNode only matched `skygate-host-*` hostname prefix or
 `tag:dev-infra-*` exact tag, missing all 4 relay VPSs (emilia,
-karolina, sharlotta) and the 2nd-host candidate (svyatoslava-1)
+karolina, sharlotta) and the 2nd-host candidate (<polygon-vm-hostname>)
 that had `tag:exit-node` but no `tag:dev-infra-*`. Operator
 needed skygate-host-1 (Telegram bot) to reach all 4 exit nodes
 but the per-device mesh in the `infra` bucket was empty (only 1
 node: skygate-host-1). B111 completed B93 with:
 
   1. `isInfraNode` rule 3: any node tagged `tag:exit-node` is
-     infra-class. Catches all 4 relay VPSs + svyatoslava-1.
+     infra-class. Catches all 4 relay VPSs + <polygon-vm-hostname>.
   2. `BackfillInfra` changes from `INSERT OR IGNORE` to active
      `UPDATE` — re-attributes user-portal nodes (skyadmin,
      michail, guest, daniil, svyatoslava) to `infra` when
@@ -300,12 +300,12 @@ Phase 3 deployment steps (committed by Mavis, operator runbook
 in `docs/B111-INFRA-RETAG-RUNBOOK.md`):
 
   1. Update headscale policy — add 4 `tagOwners` for
-     `tag:dev-infra-{emilia,karolina,sharlotta,svyatoslava-1}`
+     `tag:dev-infra-{emilia,karolina,sharlotta,<polygon-vm-hostname>}`
      (catch-22: tagOwners must exist BEFORE
      `headscale nodes tag --force` accepts the new tag).
   2. `headscale nodes tag --force -i <ID> -t <NEW_TAGS>` for
      5 nodes (skygate-host-1, emilia, karolina, sharlotta,
-     svyatoslava-1). Server-side change, tailscale clients
+     <polygon-vm-hostname>). Server-side change, tailscale clients
      pick up new tags on netmap sync (~10s).
   3. `UPDATE node_owner_map` (5 rows) via psql on the primary
      `172.17.0.1:5000` (NOT `localhost:5432` — read-only
@@ -315,7 +315,7 @@ in `docs/B111-INFRA-RETAG-RUNBOOK.md`):
      skygate container — busybox wget doesn't support cookies).
   5. Verify: ping 4 exit nodes from skygate-host-1 (all
      reachable: emilia 51ms, karolina 143ms, sharlotta
-     166ms, svyatoslava-1 5ms).
+     166ms, <polygon-vm-hostname> 5ms).
   6. Delete `svyatoslava` portal user (id=11) + headscale
      user (id=84) — both via CASCADE on the portal_users
      row + `headscale users destroy --identifier 84 --force`.
@@ -375,7 +375,7 @@ host-1.state) + `/tmp/rollback_nom.sql` (DB rollback).
 **What was delivered**: pre-B153 the operator had no structured way to verify the HA chain actually works under failure. B153 is a 5-step live DR drill (verify version match + kill active + verify failover within 60s + verify no-flap rejoin + optional kill-both). 3 operator flags (`--yes` unattended, `--skip-regapi-check`, `--skip-kill-both`). Polls `/readyz` for the B145 role banner, NEVER uses `docker compose down -v` (no data destruction). 18 B-check contracts in `scripts/check_b153.sh` (ALL PASS).
 
 **Operator action (after deploy)**:
-1. Wait for the operator to provision svyatoslava-1
+1. Wait for the operator to provision <polygon-vm-hostname>
 2. Operator runs `scripts/bootstrap_standby.sh` on the new VM
 3. Operator schedules a maintenance window + runs `scripts/dr_drill.sh`
 4. After the drill passes, tag `v1.5.0` (Phase 10)
@@ -700,7 +700,7 @@ then this is blocked.
 ## Priority 3 — HA Tier 1 hot standby (BL-2) — UNBLOCKED 2026-08-18, target v1.5.0
 
 **Status**: **UNBLOCKED** as of 2026-08-18. The 2nd VM
-(`svyatoslava-1`) is available, S3 bucket configured, Patroni +
+(`<polygon-vm-hostname>`) is available, S3 bucket configured, Patroni +
 etcd cluster in place (`<operator-vm-public-ip>:2379`).
 
 **Locked-in design decisions** (from operator reply 2026-08-18):
@@ -710,7 +710,7 @@ etcd cluster in place (`<operator-vm-public-ip>:2379`).
 | Public DNS FQDN | `skygate.<your-domain>` | operator (DNS provider is operator-specific) |
 | Active node name | `skygate` (in headscale) | operator — "skygate-prod был confusing" |
 | Standby node name | `skygate-standby` | derived |
-| Active VM (today) | `svyatoslava-1` (new) | operator — "текуший проект на svyatoslava-1 и будет основным" |
+| Active VM (today) | `<polygon-vm-hostname>` (new) | operator — "текуший проект на <polygon-vm-hostname> и будет основным" |
 | Standby VM (today) | `192.168.13.69` (current `<operator-public-ip>`) | operator — current VM becomes дублером |
 | HA topology | Active-Passive with priority chain (NOT Active-Active) | operator — "стоит делать сразу с учетом приоритета" |
 | Starter chain | 2 nodes (P1 + P2) | operator — "Starter chain пока из двух" |
@@ -738,7 +738,7 @@ etcd cluster in place (`<operator-vm-public-ip>:2379`).
   (no change in v1.5.0)
 
 **What's needed (now unblocked)**:
-- ~~2nd VM~~ — DONE (svyatoslava-1)
+- ~~2nd VM~~ — DONE (<polygon-vm-hostname>)
 - ~~etcd cluster~~ — DONE (<operator-vm-public-ip>:2379)
 - ~~S3 bucket~~ — DONE (operator-confirmed)
 - external DNS provider credentials — **NEEDED** (operator to provide)

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set +e
-# SSH jump from skygate -> karolina -> 45.152.198.217
+# SSH jump from skygate -> karolina -> <polygon-vm-public-ip>
 # Use heredoc to avoid quoting issues
 ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new root@karolina 'cat > /tmp/jump.sh' << 'JUMP_EOF'
 #!/bin/bash
-exec ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new root@45.152.198.217 "\$@"
+exec ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new root@<polygon-vm-public-ip> "\$@"
 JUMP_EOF
 chmod +x /tmp/jump.sh
 echo '== test from karolina via jump =='

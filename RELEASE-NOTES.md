@@ -1348,7 +1348,7 @@ Theme registration: `ThemeMint = "mint"` constant in
 
 **Live build label:** `v1.3.11-25-g0352f40` (deployed to VM).
 
-## v1.3.19.1 — svyatoslava-1 (HA mirror) removed + B118 finalized
+## v1.3.19.1 — <polygon-vm-hostname> (HA mirror) removed + B118 finalized
 
 **Date:** 2026-08-17
 **Scope:** Two hotfixes (B119 code fix + B120 CSS/layout fix).
@@ -1497,7 +1497,7 @@ on mobile.
 
 **Live build label:** `v1.3.11-23-g99dd4ad` (deployed to VM).
 
-## v1.3.19.1 — svyatoslava-1 (HA mirror) removed + B118 finalized
+## v1.3.19.1 — <polygon-vm-hostname> (HA mirror) removed + B118 finalized
 
 **Date:** 2026-08-17
 **Scope:** Hotfix — `TagToHostname` (exported helper in
@@ -1620,13 +1620,13 @@ leave `dev-infra-emilia` unchanged — the v1.3.18.1 bug).
 2. `docker restart skygate-skygate-1` (entrypoint will
    rebuild from reverted source)
 
-## v1.3.19.1 — svyatoslava-1 (HA mirror) removed + B118 finalized
+## v1.3.19.1 — <polygon-vm-hostname> (HA mirror) removed + B118 finalized
 
 **Date:** 2026-08-17
 **Scope:** Hotfix — operator cleanup + B118 B-check fix.
 
 **Operator trigger (2026-08-17):** "старые тэги по svyatoslava
-надо почистить вес что оффлайн оно уже не рабочее" — svyatoslava-1
+надо почистить вес что оффлайн оно уже не рабочее" — <polygon-vm-hostname>
 (HA mirror, headscale id=30) is offline and not working, remove
 its tag references entirely.
 
@@ -1643,7 +1643,7 @@ its tag references entirely.
 
 2. **Destructive changes** (operator-side, NOT a code deploy):
    - `docker exec headscale headscale nodes delete --force -i 30`
-     → "Node deleted" (id=30 = svyatoslava-1 HA mirror).
+     → "Node deleted" (id=30 = <polygon-vm-hostname> HA mirror).
      Headscale nodes count: 16 → 15.
    - `DELETE FROM node_owner_map WHERE node_id = '30';` → 1 row
      deleted. node_owner_map: 16 → 15 rows.
@@ -1673,9 +1673,9 @@ its tag references entirely.
 **Live state post-cleanup (v=1148):**
 
 - **4 infra tags** (was 5): emilia, karolina, sharlotta,
-  skygate-host-1. svyatoslava-1 GONE.
+  skygate-host-1. <polygon-vm-hostname> GONE.
 - **15 tagOwners total** (was 21).
-- **0 references to svyatoslava-1 OR svyatoslava-legacy**
+- **0 references to <polygon-vm-hostname> OR svyatoslava-legacy**
   in latest policy.
 - `tag:exit-node` still owned by `infra@`.
 - `tag:public` still owned by `skyadmin@`.
@@ -1686,13 +1686,13 @@ its tag references entirely.
 - **Contract E (5 → 4)**: B-check `check_b118.sh` now expects
   exactly 4 `tag:dev-infra-*` rows in node_owner_map and
   exactly 4 in policy tagOwners.
-- **New contract G (v1.3.19.1)**: 5 sub-checks pin svyatoslava-1
+- **New contract G (v1.3.19.1)**: 5 sub-checks pin <polygon-vm-hostname>
   removal — policy (text-search ILIKE), `node_owner_map`
   (exact match), `tagOwners` (jsonb key check), counts
   (4 in policy, 4 in nom).
 - **Test update**: `acl_perdevice_b118_test.go` renamed
   `TestB118_TagOwnerFromName_AllFiveInfraExits` →
-  `TestB118_TagOwnerFromName_AllFourInfraExits` (svyatoslava-1
+  `TestB118_TagOwnerFromName_AllFourInfraExits` (<polygon-vm-hostname>
   removed from regression list).
 - 3 files changed (`check_b118.sh` + `acl_perdevice_b118_test.go`
   + AGENTS.md/RELEASE-NOTES). +83/-9 lines.
@@ -1759,7 +1759,7 @@ in the live policy even though the DB had `infra@`.
   serve different roles; do NOT delete duplicates.
 
 **Live state (v=1147, pre-v1.3.19.1 cleanup):** 5 infra tags all →
-`infra@` (emilia, karolina, sharlotta, svyatoslava-1, skygate-host-1).
+`infra@` (emilia, karolina, sharlotta, <polygon-vm-hostname>, skygate-host-1).
 `tag:exit-node` → `infra@`. `tag:public` → `skyadmin@` (unchanged).
 20 tagOwners total. 0 malformed hosts. Build `v1.3.11-18-gb0cacf6`
 deployed to VM.
@@ -2132,7 +2132,7 @@ packages green.
 **Date:** 2026-08-13
 **Scope:** Completes the v0.32.x-era B93 + B111 work:
 infra user owns the 5 technical nodes (skygate-host-1,
-emilia, karolina, sharlotta, svyatoslava-1) instead
+emilia, karolina, sharlotta, <polygon-vm-hostname>) instead
 of the user-portal users. Plus a Phase 3 operator
 re-tag of those 5 nodes (server-side via
 `headscale nodes tag --force`, not `tailscale up`
@@ -2175,7 +2175,7 @@ diagnostics:
   <60%.
 - `tailnet.vps_to_vps_latency` — TCP latency matrix
   between VPS-class nodes (emilia / karolina /
-  sharlotta / skygate-host-1 / svyatoslava-1).
+  sharlotta / skygate-host-1 / <polygon-vm-hostname>).
   Surfaces "one of the VPS relays is degraded".
 - `tailnet.split_suspected` — explicit split
   detector. If 2+ nodes are unreachable AND
@@ -2185,7 +2185,7 @@ diagnostics:
 **Bug observed:** 2026-08-13, headscale `nodes list`
 shows 17 nodes, 10 online. `docker exec skygate-skygate-1
 tailscale status` shows only 4 peers. 6 of the 10
-online nodes (skybars, skyworker, a71, svyatoslava-1,
+online nodes (skybars, skyworker, a71, <polygon-vm-hostname>,
 olesya, nothing-phone-2) are invisible from
 skygate-host-1. Pre-B93/B111, this was due to policy
 isolation between the `tagged-devices` user buckets
@@ -7033,7 +7033,7 @@ hygiene" issues on /admin/devices:
    `node_owner_map.username=skyadmin` because the backfill
    had claimed it for skyadmin via the temporal fallback.
    When svyatoslava later got their own device (id=30),
-   headscale auto-renamed it to `svyatoslava-1` to avoid
+   headscale auto-renamed it to `<polygon-vm-hostname>` to avoid
    the name collision. The operator had no UI to transfer
    a node from one portal user to another.
 
@@ -10480,7 +10480,7 @@ othing to commit, working tree clean).
 ### Live-verify state
 
 Pre-operator-OS-reinstall (2026-09-10), live-verified on
-the svi polygon (45.152.198.217, Ubuntu 26.04 fresh):
+the svi polygon (<polygon-vm-public-ip>, Ubuntu 26.04 fresh):
 
 `
 $ systemctl status skygate --no-pager

@@ -23,7 +23,7 @@ package admin
 //   - `docker exec skygate-skygate-1 tailscale status` shows
 //     only 4 peers (emilia, karolina, sharlotta, skygate-host-1).
 //   - 6 of the 10 online nodes (skybars, skyworker, a71,
-//     svyatoslava-1, olesya, nothing-phone-2) are invisible.
+//     <polygon-vm-hostname>, olesya, nothing-phone-2) are invisible.
 //   - The two clusters do NOT correlate with preauth_key.id
 //     (visible: 8, 9, 65, 191; hidden: 19, 61, 63, 129, 180, 189).
 //
@@ -88,10 +88,10 @@ func vpsHostnameSet() map[string]bool {
 		"karolina":         true,
 		"sharlotta":        true,
 		"skygate-host-1":   true,
-		// svyatoslava-1 is the actual hostname for karolina's
+		// <polygon-vm-hostname> is the actual hostname for karolina's
 		// Tailscale IP (headscale records both; karolina
 		// appears in `tailscale status` as a peer of self).
-		"svyatoslava-1":    true,
+		"<polygon-vm-hostname>":    true,
 	}
 }
 

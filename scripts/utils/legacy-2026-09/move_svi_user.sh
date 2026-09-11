@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set +e
-# Move node 45 (svyatoslava-1) to user 'infra' (id=85) directly in headscale DB.
+# Move node 45 (<polygon-vm-hostname>) to user 'infra' (id=85) directly in headscale DB.
 # This is the only way to fix svi's user mapping since headscale v0.29.1
 # doesn't have a 'nodes move' CLI command.
 ssh skyadmin@192.168.13.69 '

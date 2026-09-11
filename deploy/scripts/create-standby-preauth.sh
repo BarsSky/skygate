@@ -5,7 +5,7 @@
 #
 # Background
 # ----------
-# Pre-B-new: when operator bootstrapped a new HA standby (e.g. svyatoslava-1),
+# Pre-B-new: when operator bootstrapped a new HA standby (e.g. <polygon-vm-hostname>),
 # they ran `headscale preauthkeys create` by hand with NO --user flag.
 # Headscale's default fallback put the new node in the synthetic
 # `tagged-devices` user, not the real `infra` or `skyadmin` user.

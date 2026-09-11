@@ -42,7 +42,7 @@
 # deployment; update it after each new node is added.
 #
 # Hardcoded operator fleet (2026-08-13):
-#   VPS:     emilia, karolina, sharlotta, skygate-host-1, svyatoslava-1
+#   VPS:     emilia, karolina, sharlotta, skygate-host-1, <polygon-vm-hostname>
 #   Home:    skybars, skyworker, a71, olesya, svyatoslava-legacy,
 #            basic, base, skybars-1, cyborg, nothing-phone-2,
 #            desktop-cuo0tfb, msi

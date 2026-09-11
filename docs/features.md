@@ -377,7 +377,7 @@ SKYGATE_TOKEN_AUTOROTATE_ENABLED=true
 1. skygate-host-1 падает → Patroni переключает PG на standby.
 2. `ha_elector.go` замечает missed heartbeat > 15s.
 3. `ha_elector.go` дёргает `dns.UpdateRecord` (reg.ru / cloudflare / etc.).
-4. DNS резолвит в svyatoslava-1 (P2) в течение TTL.
+4. DNS резолвит в <polygon-vm-hostname> (P2) в течение TTL.
 5. Telegram-алерт оператору.
 6. certsync на новой ноде подтягивает актуальный сертификат из S3.
 

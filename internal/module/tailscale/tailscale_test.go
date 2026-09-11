@@ -715,7 +715,7 @@ func TestOsHostname_StripsDomain(t *testing.T) {
 	// sanity-check the helper with a synthetic input via
 	// strings.Index — the helper is 2 lines, this is a
 	// thin test.
-	if idx := strings.Index("envious-blush.ptr.network", "."); idx <= 0 {
+	if idx := strings.Index("polygon-vm.ptr.example", "."); idx <= 0 {
 		t.Error("strings.Index test setup failed")
 	}
 }

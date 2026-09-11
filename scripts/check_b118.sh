@@ -230,41 +230,41 @@ if [ -n "${DSN:-}" ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# Contract G: v1.3.19.1 — svyatoslava-1 is REMOVED entirely
-# (svyatoslava-1 / headscale node id=30 was the HA mirror, but the
+# Contract G: v1.3.19.1 — <polygon-vm-hostname> is REMOVED entirely
+# (<polygon-vm-hostname> / headscale node id=30 was the HA mirror, but the
 #  operator declared it offline + not working 2026-08-17. The
 #  cleanup deleted the headscale node + the node_owner_map row +
 #  re-applied policy. Live state should have ZERO references.)
 # ------------------------------------------------------------------------------
 echo
-echo "=== G. v1.3.19.1: svyatoslava-1 is REMOVED (HA mirror retired) ==="
+echo "=== G. v1.3.19.1: <polygon-vm-hostname> is REMOVED (HA mirror retired) ==="
 if [ -n "${DSN:-}" ]; then
-    # 1. Policy: 0 references to svyatoslava-1
+    # 1. Policy: 0 references to <polygon-vm-hostname>
     out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
-        "SELECT count(*) FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots) AND config::text ILIKE '%svyatoslava-1%';" 2>/dev/null)
+        "SELECT count(*) FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots) AND config::text ILIKE '%<polygon-vm-hostname>%';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "0" ]; then
-        ok "live policy: 0 references to svyatoslava-1 (v1.3.19.1 cleanup held)"
+        ok "live policy: 0 references to <polygon-vm-hostname> (v1.3.19.1 cleanup held)"
     else
-        bad "live policy: ${cnt} references to svyatoslava-1 (re-apply or check sync.go auto-add)"
+        bad "live policy: ${cnt} references to <polygon-vm-hostname> (re-apply or check sync.go auto-add)"
     fi
-    # 2. node_owner_map: 0 rows for svyatoslava-1
+    # 2. node_owner_map: 0 rows for <polygon-vm-hostname>
     out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
-        "SELECT count(*) FROM node_owner_map WHERE tag = 'tag:dev-infra-svyatoslava-1';" 2>/dev/null)
+        "SELECT count(*) FROM node_owner_map WHERE tag = 'tag:dev-infra-<polygon-vm-hostname>';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "0" ]; then
-        ok "nom: 0 rows for tag:dev-infra-svyatoslava-1 (v1.3.19.1 cleanup held)"
+        ok "nom: 0 rows for tag:dev-infra-<polygon-vm-hostname> (v1.3.19.1 cleanup held)"
     else
-        bad "nom: ${cnt} rows for tag:dev-infra-svyatoslava-1 (BackfillInfra re-added — check sync.go)"
+        bad "nom: ${cnt} rows for tag:dev-infra-<polygon-vm-hostname> (BackfillInfra re-added — check sync.go)"
     fi
-    # 3. tagOwners: 0 entries for tag:dev-infra-svyatoslava-1
+    # 3. tagOwners: 0 entries for tag:dev-infra-<polygon-vm-hostname>
     out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
-        "SELECT count(*) FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots))) WHERE key = 'tag:dev-infra-svyatoslava-1';" 2>/dev/null)
+        "SELECT count(*) FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots))) WHERE key = 'tag:dev-infra-<polygon-vm-hostname>';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "0" ]; then
-        ok "tagOwners: 0 entries for tag:dev-infra-svyatoslava-1 (v1.3.19.1 cleanup held)"
+        ok "tagOwners: 0 entries for tag:dev-infra-<polygon-vm-hostname> (v1.3.19.1 cleanup held)"
     else
-        bad "tagOwners: ${cnt} entries for tag:dev-infra-svyatoslava-1"
+        bad "tagOwners: ${cnt} entries for tag:dev-infra-<polygon-vm-hostname>"
     fi
     # 4. tag:dev-infra-* count: should be exactly 4 (was 5 pre-cleanup)
     out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
@@ -273,7 +273,7 @@ if [ -n "${DSN:-}" ]; then
     if [ "${cnt}" = "4" ]; then
         ok "tagOwners: exactly 4 tag:dev-infra-* entries (emilia, karolina, sharlotta, skygate-host-1)"
     else
-        bad "tagOwners: ${cnt} tag:dev-infra-* entries (expected 4 after svyatoslava-1 removal)"
+        bad "tagOwners: ${cnt} tag:dev-infra-* entries (expected 4 after <polygon-vm-hostname> removal)"
     fi
     # 5. node_owner_map count: should be exactly 4
     out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
@@ -282,7 +282,7 @@ if [ -n "${DSN:-}" ]; then
     if [ "${cnt}" = "4" ]; then
         ok "nom: exactly 4 tag:dev-infra-* rows (emilia, karolina, sharlotta, skygate-host-1)"
     else
-        bad "nom: ${cnt} tag:dev-infra-* rows (expected 4 after svyatoslava-1 removal)"
+        bad "nom: ${cnt} tag:dev-infra-* rows (expected 4 after <polygon-vm-hostname> removal)"
     fi
 fi
 

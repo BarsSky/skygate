@@ -6,7 +6,7 @@ ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 '
 cat >> /home/skyadmin/.ssh/config << "EOF"
 
 Host svi
-    HostName 45.152.198.217
+    HostName <polygon-vm-public-ip>
     User root
     ProxyCommand ssh -W %h:%p -o StrictHostKeyChecking=accept-new root@karolina
     StrictHostKeyChecking accept-new

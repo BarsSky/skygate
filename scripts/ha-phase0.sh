@@ -8,7 +8,7 @@
 # Prerequisites
 # -------------
 # - skygate-host-1 (primary) is running with tailscale up
-# - svyatoslava-1 (standby) is reachable via SSH from this host
+# - <polygon-vm-hostname> (standby) is reachable via SSH from this host
 # - HEADSCALE__API_KEY is set in the env (for tailscale commands)
 # - The pre-existing 192.168.13.0/24 + 172.18.0.0/16 + 172.17.0.0/16
 #   subnets are advertised by skygate-host-1 (operator's existing
@@ -19,7 +19,7 @@
 # 1. Pre-flight: both nodes have tailscale installed and joined
 # 2. Verify subnet routes are advertised on skygate-host-1
 # 3. Verify skygate-host-1 routes are approved in headscale
-# 4. Tailscale SSH from svyatoslava-1 to skygate-host-1 works
+# 4. Tailscale SSH from <polygon-vm-hostname> to skygate-host-1 works
 # 5. Tailnet MagicDNS resolves both hostnames
 # 6. Write audit + state file
 #
@@ -34,7 +34,7 @@
 #
 # Usage
 # -----
-#   ssh svyatoslava-1
+#   ssh <polygon-vm-hostname>
 #   cd ~/skygate
 #   bash scripts/ha-phase0.sh
 #   # or --reset to re-run from scratch (idempotent)
@@ -55,7 +55,7 @@ MAX_ATTEMPTS=3
 BASE_BACKOFF=2
 DO_RESET=0
 DO_STATUS=0
-STANDBY_HOST="${SKYGATE_STANDBY_HOST:-svyatoslava-1}"
+STANDBY_HOST="${SKYGATE_STANDBY_HOST:-<polygon-vm-hostname>}"
 PRIMARY_HOST="${SKYGATE_PRIMARY_HOST:-skygate-host-1}"
 
 while [ $# -gt 0 ]; do

@@ -8,7 +8,7 @@
 # Background
 # ----------
 # The HA chain (B145) is `skygate` (P1, active) + `skygate-standby`
-# (P2, standby). When the operator provisions a new VM (svyatoslava-1
+# (P2, standby). When the operator provisions a new VM (<polygon-vm-hostname>
 # or any host with a public IP + Tailscale), this script wires it
 # up as the standby. After it runs:
 #
@@ -20,7 +20,7 @@
 #
 # Where to run this
 # -----------------
-# On the NEW standby host (svyatoslava-1), AFTER:
+# On the NEW standby host (<polygon-vm-hostname>), AFTER:
 #   1. OS is installed (Ubuntu 22.04+ recommended)
 #   2. Docker + docker-compose-plugin installed
 #   3. Tailscale is installed and joined to the headscale tailnet
@@ -32,7 +32,7 @@
 #
 # Usage
 # -----
-#   ssh svyatoslava-1
+#   ssh <polygon-vm-hostname>
 #   git clone <skygate-repo> ~/skygate
 #   cd ~/skygate
 #   # Edit .env: set HEADPLANE_HEADSCALE__API_KEY + skygate-specific values

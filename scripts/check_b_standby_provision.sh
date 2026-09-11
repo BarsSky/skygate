@@ -5,7 +5,7 @@
 #
 # What this verifies
 # ------------------
-# Closes the gap where new HA standbys (e.g. svyatoslava-1) ended up in
+# Closes the gap where new HA standbys (e.g. <polygon-vm-hostname>) ended up in
 # the synthetic `tagged-devices` headscale user (because preauth keys
 # were minted without --user mapping), breaking per-DEVICE Tailscale
 # grants and causing the standby to be invisible to skygate-host-1-1.

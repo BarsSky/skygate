@@ -65,14 +65,14 @@ func TestGetInfraExitNodeTags_ExitNodesOnly(t *testing.T) {
 			"tag:dev-infra-sharlotta",
 			"tag:dev-infra-emilia",
 			"tag:dev-infra-karolina",
-			"tag:dev-infra-svyatoslava-1",
+			"tag:dev-infra-<polygon-vm-hostname>",
 		},
 	})
 	want := []string{
 		"tag:dev-infra-emilia",
 		"tag:dev-infra-karolina",
 		"tag:dev-infra-sharlotta",
-		"tag:dev-infra-svyatoslava-1",
+		"tag:dev-infra-<polygon-vm-hostname>",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)

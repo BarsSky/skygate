@@ -10,7 +10,7 @@
 #
 # Usage
 # =====
-#   # On VPSes (emilia, karolina, sharlotta, svyatoslava-1):
+#   # On VPSes (emilia, karolina, sharlotta, <polygon-vm-hostname>):
 #   PREAUTH_KEY=hskey-auth-... bash /path/to/fix_tailnet_split.sh
 #
 #   # On home devices (skybars, skyworker, a71, olesya, etc.):

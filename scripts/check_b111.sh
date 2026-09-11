@@ -76,7 +76,7 @@ if [ ! -f "$AUTO_FILE" ]; then
   err "B111 FAIL: $AUTO_FILE not found"
 else
   if ! perl -0777 -ne 'exit !(/isInfraNode.*?tag:exit-node/s)' "$AUTO_FILE" 2>/dev/null; then
-    err "B111 FAIL: isInfraNode missing tag:exit-node rule (B111) — exit nodes (emilia/karolina/sharlotta/svyatoslava-1) won't match"
+    err "B111 FAIL: isInfraNode missing tag:exit-node rule (B111) — exit nodes (emilia/karolina/sharlotta/<polygon-vm-hostname>) won't match"
   else
     pass "isInfraNode has tag:exit-node rule"
   fi

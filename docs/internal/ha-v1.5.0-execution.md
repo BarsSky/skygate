@@ -1,6 +1,6 @@
 # v1.5.0 — HA skygate-prod + skygate-standby (BL-2) — Execution Tracker
 
-**Status**: UNBLOCKED (2nd VM `svyatoslava-1` available, S3 configured, Patroni + etcd already in place)
+**Status**: UNBLOCKED (2nd VM `<polygon-vm-hostname>` available, S3 configured, Patroni + etcd already in place)
 **Target release**: v1.5.0
 **Started**: 2026-08-18
 **Author**: Mavis (skygate)
@@ -20,7 +20,7 @@
 | 5 | **External DNS via reg.ru API** | reg.ru is the registrar | no Cloudflare dependency, reg.ru has its own API |
 | 6 | **Active-Passive with priority chain** (not Active-Active) | operator reply 2026-08-18 | "стоит учесть что дубликатов может быть несколько и стоит делать сразу с учетом того что они могут иметь приоритет" |
 | 7 | **Starter chain: 2 nodes** (P1=`skygate`, P2=`skygate-standby`) | operator reply 2026-08-18 | "Starter chain пока из двух как ты указал" |
-| 8 | **Active = svyatoslava-1 (the new VM)**, current `<operator-public-ip>` becomes standby | operator reply 2026-08-18 | "текуший проект на VM передет на svyatoslava-1 и будет основным а текущий активный станет дублером" |
+| 8 | **Active = <polygon-vm-hostname> (the new VM)**, current `<operator-public-ip>` becomes standby | operator reply 2026-08-18 | "текуший проект на VM передет на <polygon-vm-hostname> и будет основным а текущий активный станет дублером" |
 | 9 | **Public IP on svyatoslava: yes** | operator reply 2026-08-18 | "public ip на svyatoslava есть" |
 | 10 | **Failover: auto + manual override** | operator reply 2026-08-18 | "сделал авто но оставил возможность и в ручную" |
 | 11 | **Auto-reclaim: default OFF** (when P1 returns, no auto-flip; manual "Reclaim primary" button) | derived from operator's anti-flap intent | avoids flap |
@@ -100,7 +100,7 @@ SKYGATE_DNS_ROUTE53_ZONE_ID=<your-zone-id>
 | Component | Current | Target |
 |---|---|---|
 | Primary VM | `192.168.13.69` (public `<operator-public-ip>`) — runs headscale + skygate + PG-primary | **becomes `skygate-standby`** (P2) |
-| Standby VM | none | **`svyatoslava-1`** — new skygate-prod (P1) |
+| Standby VM | none | **`<polygon-vm-hostname>`** — new skygate-prod (P1) |
 | Patroni | running async replication, etcd at `<operator-vm-public-ip>:2379` | unchanged (per decision #12) |
 | External DNS | unknown (need to confirm reg.ru API access) | reg.ru API client in `internal/dns/regapi/` |
 | Tailscale/headscale | tsnet.<your-domain> base domain, `head.<your-domain>` API | unchanged; add `skygate` and `skygate-standby` node identities |
@@ -116,7 +116,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 ### Phase 0: Tailscale mesh prerequisite (operator-side pre-flight)
 
 **Why this is a separate phase**: the HA chain (Phase 1+) and the
-svyatoslava-1 bootstrap (Phase 7) both require both nodes to be on
+<polygon-vm-hostname> bootstrap (Phase 7) both require both nodes to be on
 the same Tailscale mesh with **subnet routes advertised + approved**
 so that the standby can reach the primary's Postgres/MinIO/headplane
 behind the Docker bridge. Without this, `bootstrap_standby.sh` runs
@@ -139,10 +139,10 @@ but the standby can't connect to the primary's data plane.
    docker exec headscale headscale nodes approve-routes -i "$AGENT_ID" \
      --routes <agent-docker-subnet-1>,<agent-docker-subnet-2>,<agent-lan-subnet>
    ```
-2. **svyatoslava-1 (operator-public-IP)**:
+2. **<polygon-vm-hostname> (operator-public-IP)**:
    ```bash
    tailscale up --login-server=https://head.skynas.ru \
-     --authkey=$SKYGATE_KEY --hostname=svyatoslava-1 \
+     --authkey=$SKYGATE_KEY --hostname=<polygon-vm-hostname> \
      --accept-routes --accept-dns=false --netfilter-mode=off
    ```
 3. **Tag BOTH nodes for grant-based netmap visibility** — headscale
@@ -178,7 +178,7 @@ but the standby can't connect to the primary's data plane.
   `--statedir=` flag (no `--socket`) creates a state dir but
   **no socket**, so `tailscale up` hangs. Fix:
   `sudo kill <old-pid>; sudo systemctl start tailscaled`.
-- svyatoslava-1's `tailscale up` can take 60+ min on first run
+- <polygon-vm-hostname>'s `tailscale up` can take 60+ min on first run
   (slow NAT routing). Use 24h preauth keys (1h expires mid-handshake).
 - headscale 0.29.1 may need a restart after `nodes tag` to push the
   new netmap to all clients (not just the tagged node).
@@ -194,7 +194,7 @@ any phase that was `running` at last shutdown as `failed` and writes
 a crash marker. Active recovery: on transient step failure, the
 runner retries with exponential backoff (2s, 4s, 8s; capped at 300s).
 Requires `jq` (`apt install jq`). Run with `bash scripts/ha-phase0.sh`
-on the standby (svyatoslava-1), or `bash scripts/ha-phase0.sh
+on the standby (<polygon-vm-hostname>), or `bash scripts/ha-phase0.sh
 --status` to print the current state without running anything.
 
 ### Phase 1: HA chain + elector
@@ -264,9 +264,9 @@ UI sections in `/admin/ha`:
 - [x] `internal/i18n/catalog_admin.go` — 10 new keys in RU+EN (plan said 8, expanded to 10 to cover the test_failover_title/help/button + dry_run_label)
 - [x] `scripts/check_b150.sh` (5 contracts) — 54/54 PASS
 
-### Phase 7: svyatoslava-1 bootstrap (manual operator runbook)
+### Phase 7: <polygon-vm-hostname> bootstrap (manual operator runbook)
 - [x] **PREREQUISITE**: Phase 0 (Tailscale mesh + subnet routes) must be complete — both nodes in headscale netmap, agent's `<agent-lan-subnet>` + `<agent-docker-subnet-2>` routes approved
-- [x] Provision svyatoslava-1 (OS + Docker)
+- [x] Provision <polygon-vm-hostname> (OS + Docker)
 - [x] `scripts/bootstrap_standby.sh` — install Patroni replica + headscale replica + skygate (in standby role) + certsync
 - [x] Wire skygate-standby → S3 deploy bucket
 - [x] Verify standby serves 200 on `/healthz` with role=standby banner
@@ -324,8 +324,8 @@ bash scripts/bootstrap_standby.sh
 | 4 | S3 bucket `s3://skygate-ha/` creation status | Phase 3+ | **RESOLVED** — reusing `s3://skygate-backups/ha/` prefix (existing bucket, same IAM) | ✅ DONE 2026-08-18 |
 | 5 | S3 IAM credentials for skygate process | Phase 3+ | **RESOLVED** — using existing backup.s3_* credentials (skygate-test / skygate-test-pass-2026 / endpoint http://172.18.0.5:9000) | ✅ DONE 2026-08-18 |
 | 6 | Auto-failover default: ON or OFF? | Phase 1 | DECIDED — default ON (per operator's "сделал авто"), with manual override | ✅ DONE 2026-08-18 |
-| 7 | svyatoslava-1 hostname in headscale | Phase 7 | DECIDED — rename to `skygate` (decision #2) | ✅ DONE |
-| 8 | Caddy installation on svyatoslava-1 (LE + reg.ru plugin) | Phase 4 | **REMOVED** — decided on-site during Phase 4 impl (standard apt install + caddyserver.com binary) | 🗑️ REMOVED 2026-08-18 |
+| 7 | <polygon-vm-hostname> hostname in headscale | Phase 7 | DECIDED — rename to `skygate` (decision #2) | ✅ DONE |
+| 8 | Caddy installation on <polygon-vm-hostname> (LE + reg.ru plugin) | Phase 4 | **REMOVED** — decided on-site during Phase 4 impl (standard apt install + caddyserver.com binary) | 🗑️ REMOVED 2026-08-18 |
 | 9 | Live DR drill date | Phase 9 | **NEEDED before Phase 9** — operator to pick a maintenance window | ⏳ PENDING (not blocking) |
 | 10 | Backup bucket already in S3: name + IAM | Phase 3 reference | **RESOLVED** — see Q4/Q5 | ✅ DONE 2026-08-18 |
 
@@ -350,7 +350,7 @@ bash scripts/bootstrap_standby.sh
 
 1. Log in: https://www.reg.ru/user/
 2. Navigate: "Настройки" → "Безопасность" → "API IP whitelist"
-3. If whitelist is enabled: add `<svyatoslava-1-public-ip>` and `<current-VM-public-ip>` (<operator-public-ip>)
+3. If whitelist is enabled: add `<<polygon-vm-hostname>-public-ip>` and `<current-VM-public-ip>` (<operator-public-ip>)
 4. If whitelist is disabled: nothing to do
 5. Tell me which case applies (so I document the right behavior in the deploy script)
 
@@ -363,7 +363,7 @@ bash scripts/bootstrap_standby.sh
 | reg.ru API rate-limited | 5-10s timeout on DNS update + retry once | low |
 | Tailscale split-brain during failover | Patroni state is ground truth; tiebreak by `patronictl list` JSON | low |
 | reg.ru API misconfigured → active stuck with old IP | Manual `Force demote` button in /admin/ha + alert via Telegram | low |
-| Operator forgets to run `bootstrap_standby.sh` on svyatoslava-1 | Phase 7 is a hard gate before Phase 10 release | medium |
+| Operator forgets to run `bootstrap_standby.sh` on <polygon-vm-hostname> | Phase 7 is a hard gate before Phase 10 release | medium |
 | S3 IAM too permissive | Use scoped credentials (only `s3://skygate-ha/*` for skygate process) | medium |
 | Cert upload bypasses validation → Caddy breaks | `crypto/x509` parse + chain check + key match in handler | low |
 | Heartbeat flaps on transient network hiccup | Missed-threshold 3 (= 15s), not 1 (= 5s) | low |
@@ -399,7 +399,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **Plan update per operator**: `/admin/ha` page must support admin-managed HA node CRUD + reg.ru credentials (no SSH or `.env` edit required after initial deploy)
   - Phase 5 expanded: 4 new methods (`PostAdminHAAddNode`, `PostAdminHARemoveNode`, `PostAdminHARegapiCreds`) + 7 new i18n keys
   - Phase 5.1: explicit sub-section documenting the admin-managed credentials design
-- IP whitelist: **REVISED** — likely DOES apply to API calls (per reg.ru docs). The 2 IPs in screenshot are operator's personal IPs (<operator-personal-ip-1>/32, <operator-personal-ip-2>/32). For API to work from skygate VM, must add `<operator-public-ip>/32` + new svyatoslava-1 public IP/32. **TBD**: needs verification via first API call after cert registration
+- IP whitelist: **REVISED** — likely DOES apply to API calls (per reg.ru docs). The 2 IPs in screenshot are operator's personal IPs (<operator-personal-ip-1>/32, <operator-personal-ip-2>/32). For API to work from skygate VM, must add `<operator-public-ip>/32` + new <polygon-vm-hostname> public IP/32. **TBD**: needs verification via first API call after cert registration
 - Status: cert regenerated with EKU + saved, awaiting operator registration in reg.ru; meanwhile Phase 1 (chain + elector) can start independently
 
 ### 2026-08-18 (cert registered, API test reveals HTTP Basic needed)
@@ -503,7 +503,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   6. (Phase 2 / B146 dependent) Once the reg.ru IP whitelist is sorted: paste the cert + password into the "External DNS" form, click "Test connection" — should see a Test OK / FAILED line.
 - **B149 unblocks**:
   - Phase 6 (B150 / /admin/deploy) — the chain is operator-editable now, so the deploy page can read it for "deploy to a specific node" actions.
-  - Phase 7 (svyatoslava-1 bootstrap) — the operator can add the standby to the chain from the web UI without SSH / .env editing.
+  - Phase 7 (<polygon-vm-hostname> bootstrap) — the operator can add the standby to the chain from the web UI without SSH / .env editing.
 - **B150 (Phase 6 / /admin/deploy) ready to start next** — independent of reg.ru, only depends on B149 (which is shipped) and the existing `/admin/services` patterns.
 
 ### 2026-08-19 (B150 — Phase 6 /admin/deploy page + skygate deploy CLI SHIPPED)
@@ -535,7 +535,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   4. Open `/admin/deploy` in a browser — should see the 4 sections (cluster topology, deploy controls, HA actions, audit log). Click "Test-failover" — should render the dry-run result as an info banner.
 - **B150 unblocks**:
   - Phase 9 (Live DR drill) — the operator can now trigger a forced failover from either the web UI or the CLI; the dry-run tool is the safe rehearsal step before the real cutover.
-  - Phase 7 (svyatoslava-1 bootstrap) — the bootstrap script can drive the new node's deploy via `skygate deploy-push` + `skygate ha promote` from the operator's laptop, no SSH to svyatoslava-1 required.
+  - Phase 7 (<polygon-vm-hostname> bootstrap) — the bootstrap script can drive the new node's deploy via `skygate deploy-push` + `skygate ha promote` from the operator's laptop, no SSH to <polygon-vm-hostname> required.
 - **Next independent element**: Phase 3 (B147) certsync — the Caddy plugin + 3-mode cert acquisition (HTTP-01 / DNS-01 / file upload). Independent of reg.ru rate limit; only needs a Caddy binary + S3 bucket.
 
 ### 2026-08-19 (B147 — Phase 3 in-app certsync scheduler SHIPPED)
@@ -564,7 +564,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   5. (Live S3 push test) `aws s3 cp cert.pem s3://skygate-backups/certs/cert.pem` + `aws s3 cp key.pem s3://skygate-backups/certs/key.pem` + bump `.version` (write a new VersionFile JSON with a higher `version` integer + the new SHA + `uploaded_at`) → within 30s the standby should pull + write the new cert.pem/key.pem + log `certsync: applied version=N ...` + write a `certsync.pull` audit row.
 - **B147 unblocks**:
   - Phase 4 (B148) /admin/certificates page (upload + reg.ru DNS-01 toggle) — the cert upload form on the new page writes to the same `certs/cert.pem` + `certs/key.pem` S3 keys, then bumps `.version`. The certsync scheduler picks it up on the next tick and propagates to all nodes.
-  - Phase 7 (svyatoslava-1 bootstrap) — the new node's deploy script can upload its initial cert to the same S3 keys, then enable the certsync scheduler. The node's first boot will pull the cert within 30s of starting the scheduler.
+  - Phase 7 (<polygon-vm-hostname> bootstrap) — the new node's deploy script can upload its initial cert to the same S3 keys, then enable the certsync scheduler. The node's first boot will pull the cert within 30s of starting the scheduler.
 - **Next independent element**: Phase 4 (B148) /admin/certificates page — the upload form + reg.ru DNS-01 toggle + cert renewal status display. Uses the same S3 layout as B147, so the certsync scheduler picks up the upload on the next tick. No new infrastructure required.
 
 ### 2026-08-19 (B148 — Phase 4 /admin/certificates page + DNS-01 toggle READY FOR COMMIT)
@@ -592,7 +592,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   - The form supports both file upload (multipart/form-data) and textarea paste. The handler prefers the file (larger inputs, no newlines stripped by the browser).
 - **B148 unblocks**:
   - Phase 4.5 (LE certbot + reg.ru DNS-01) — when B146 is unblocked, the DNS-01 toggle stored by B148 becomes the "operator wants auto-renewal" signal that the v1.5.x flow reads + acts on.
-  - Phase 7 (svyatoslava-1 bootstrap) — the new node's deploy script can use the same B148 surface (or the B147 surface directly) to upload its initial cert to S3, then enable the certsync scheduler.
+  - Phase 7 (<polygon-vm-hostname> bootstrap) — the new node's deploy script can use the same B148 surface (or the B147 surface directly) to upload its initial cert to S3, then enable the certsync scheduler.
 - **All BL-2 plan independent elements now SHIPPED**: B145 (HA chain) + B147 (certsync) + B148 (/admin/certificates) + B149 (/admin/ha) + B150 (/admin/deploy). Only B146 (reg.ru DNS client) remains, blocked on operator's user-level IP whitelist (reg.ru UI → Настройки пользователя → API IP addresses).
 
 ---
@@ -619,23 +619,23 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   - Ran `tailscale up --login-server=https://head.skynas.ru --authkey=... --hostname=skygate-host-1 --accept-routes --advertise-routes=<agent-docker-subnets>+<agent-lan-subnet>` — node registered as id=43 (given_name=skygate-host-1-1 because id=33 is the old Tailscale-SaaS node of the same hostname).
   - Approved routes on headscale: `headscale nodes approve-routes -i 43 --routes <agent-docker-subnets>+<agent-lan-subnet>`.
   - Tagged id=43 with `tag:dev-skyadmin-skygate-host-1,tag:private`.
-- **Actions taken on svyatoslava-1 (<svyatoslava-public-ip>)**:
+- **Actions taken on <polygon-vm-hostname> (<svyatoslava-public-ip>)**:
   - Deleted expired old node id=36 (`headscale nodes delete -i 36 --force`).
-  - Created fresh preauth key, ran `tailscale up --login-server=https://head.skynas.ru --authkey=... --hostname=svyatoslava-1 --accept-routes --accept-dns=false --netfilter-mode=off` — node registered as id=44, Tailscale IP 100.64.0.23.
+  - Created fresh preauth key, ran `tailscale up --login-server=https://head.skynas.ru --authkey=... --hostname=<polygon-vm-hostname> --accept-routes --accept-dns=false --netfilter-mode=off` — node registered as id=44, Tailscale IP 100.64.0.23.
   - Tagged id=44 with `tag:dev-skyadmin-skyworker,tag:private`.
-- **🚨 BLOCKER (still open)**: svyatoslava-1 server became unreachable mid-unblock (port 22 + 41641 timed out at 12:25 UTC). Headscale still shows it as `online=true` (stale last_seen=12:10:36). Operator must verify the VM is up before Phase 7 can proceed.
+- **🚨 BLOCKER (still open)**: <polygon-vm-hostname> server became unreachable mid-unblock (port 22 + 41641 timed out at 12:25 UTC). Headscale still shows it as `online=true` (stale last_seen=12:10:36). Operator must verify the VM is up before Phase 7 can proceed.
 - **🚨 BLOCKER (still open)**: even after tagging, the new nodes (id=43, id=44) are NOT in the existing peers' netmaps (karolina/emilia/sharlotta still only see themselves). Likely cause: headscale 0.29.1 doesn't recompute netmap for tagged-node changes without a headscale restart, OR grants-based policy + Noise protocol have a visibility bug. Workarounds: (a) restart headscale service, (b) inspect the policy for `autogroup:tagged-devices` grant that should include all tagged nodes regardless of user, (c) fall back to classic `acls: [{...}]` instead of grants.
-- **Status**: Phase 0 steps 1-3 done, step 4 (verify bidirectional ping) cannot complete until (a) svyatoslava-1 server is back and (b) headscale netmap visibility is resolved. Phase 7 (bootstrap_standby.sh) is blocked on these two issues.
+- **Status**: Phase 0 steps 1-3 done, step 4 (verify bidirectional ping) cannot complete until (a) <polygon-vm-hostname> server is back and (b) headscale netmap visibility is resolved. Phase 7 (bootstrap_standby.sh) is blocked on these two issues.
 
-### 2026-08-31 (Phase 0 RESOLVED — svyatoslava-1 in mesh, ready for Phase 7)
+### 2026-08-31 (Phase 0 RESOLVED — <polygon-vm-hostname> in mesh, ready for Phase 7)
 - **All Phase 0 blockers RESOLVED**. Tailscale mesh is up bidirectionally:
-  - svyatoslava-1-1 (id=45, IP 100.64.0.24, tags `tag:dev-skyadmin-skyworker,tag:private`)
+  - <polygon-vm-hostname>-1 (id=45, IP 100.64.0.24, tags `tag:dev-skyadmin-skyworker,tag:private`)
   - skygate-host-1-1 (id=43, IP 100.64.0.22, tags `tag:dev-skyadmin-skygate-host-1,tag:private`)
-- **Root cause of the outage** (svyatoslava-1 went dark at 12:25 UTC): `--netfilter-mode=off` does NOT clean up iptables rules left by a PREVIOUS `tailscale up` session in default `on` mode. The stale `ts-input` chain with REJECT policy blocked all non-Tailscale traffic (SSH, ICMP). Fix: full state wipe + `--netfilter-mode=nodivert` re-auth (the nodivert mode doesn't add/remove rules at all, so the broken chain from the previous session is the only one in place — and we manually flushed it). Recovery script: `tmp/svyatoslava_iptables_flush.sh`.
+- **Root cause of the outage** (<polygon-vm-hostname> went dark at 12:25 UTC): `--netfilter-mode=off` does NOT clean up iptables rules left by a PREVIOUS `tailscale up` session in default `on` mode. The stale `ts-input` chain with REJECT policy blocked all non-Tailscale traffic (SSH, ICMP). Fix: full state wipe + `--netfilter-mode=nodivert` re-auth (the nodivert mode doesn't add/remove rules at all, so the broken chain from the previous session is the only one in place — and we manually flushed it). Recovery script: `tmp/svyatoslava_iptables_flush.sh`.
 - **The 6-command recovery (operator pasted via VNC)**: `systemctl stop tailscaled; pkill -9 tailscaled; iptables -F/-X ts-*; iptables -P INPUT ACCEPT; systemctl start tailscaled; tailscale up --netfilter-mode=nodivert ...` — got SSH back, but `tailscale up` hung at `weird: regen=true but server says NodeKeyExpired` because the OLD machine key from deleted id=36 was still in the local state. Required an additional `rm /var/lib/tailscale/tailscaled.state` + `rm -rf /var/lib/tailscale/{files,profile-data}` for a clean re-auth.
 - **Netmap visibility gotcha** (second blocker): headscale grants-based policy in 0.29.1 was missing the `tag:dev-skyadmin-skyworker` ↔ `tag:dev-skyadmin-skygate-host-1` cross-grant. Even after tagging both nodes, they didn't appear in each other's netmaps because no grant allowed the traffic. **Fix**: 5 new grants added to headscale policy: (1) skyworker → skygate-host-1, (2) skygate-host-1 → skyworker, (3) skyworker → agent LANs (192.168.13.0/24, 172.17.0.0/16, 172.18.0.0/16), (4) skygate-host-1 → same LANs, (5) skygate-host-1 → autogroup:internet. After `docker restart headscale` + `headscale policy set -f /etc/headscale/policy.json`, both nodes see each other in their netmaps.
-- **Bidirectional ping verified**: `agent → 100.64.0.24 = pong via 45.152.198.217:41641 in 6ms`. `svyatoslava → 100.64.0.22 = 0.05ms (direct LAN)`. `svyatoslava → 8.8.8.8 = 285ms via NAT`. `svyatoslava → head.skynas.ru = HTTP 405` (server reachable, just no GET / on openresty). ✅
-- **🚨 NEW BLOCKER (not HA-related, hoster issue)**: svyatoslava-1's PUBLIC IP (45.152.198.217) became unreachable from outside (~13:50 UTC, no warning, no hoster maintenance notice). agent can't ping it, operator can't SSH to it, only Tailscale mesh works. iptables-legacy + iptables-nft both clean (`policy ACCEPT`, no ts-input). Likely a hoster network problem (the VM is on a private 10.0.0.x subnet NAT'd to 45.152.198.217 — host-side NAT lost the route). **Impact on HA**: minor — svyatoslava is reachable from agent via Tailscale (100.64.0.24), which is what the HA standby needs (it's NOT publicly accessible; agent is the only public-facing node). The HA fail-over works as long as agent can reach svyatoslava via Tailscale, which it can.
+- **Bidirectional ping verified**: `agent → 100.64.0.24 = pong via <polygon-vm-public-ip>:41641 in 6ms`. `svyatoslava → 100.64.0.22 = 0.05ms (direct LAN)`. `svyatoslava → 8.8.8.8 = 285ms via NAT`. `svyatoslava → head.skynas.ru = HTTP 405` (server reachable, just no GET / on openresty). ✅
+- **🚨 NEW BLOCKER (not HA-related, hoster issue)**: <polygon-vm-hostname>'s PUBLIC IP (<polygon-vm-public-ip>) became unreachable from outside (~13:50 UTC, no warning, no hoster maintenance notice). agent can't ping it, operator can't SSH to it, only Tailscale mesh works. iptables-legacy + iptables-nft both clean (`policy ACCEPT`, no ts-input). Likely a hoster network problem (the VM is on a private 10.0.0.x subnet NAT'd to <polygon-vm-public-ip> — host-side NAT lost the route). **Impact on HA**: minor — svyatoslava is reachable from agent via Tailscale (100.64.0.24), which is what the HA standby needs (it's NOT publicly accessible; agent is the only public-facing node). The HA fail-over works as long as agent can reach svyatoslava via Tailscale, which it can.
 - **Phase 7 (bootstrap_standby.sh) — now ready to run**. svyatoslava has: /usr/local/bin/skygate (18.4MB), /home/skyadmin/skygate-pg-ha/{etcd,patroni,patroni-data,patroni.yml.template}, patroni.service enabled, etcd + psql + docker + git installed. Missing: skygate repo clone + .env + skygate-standby docker-compose service. The bootstrap script handles these but needs:
   1. `git clone <skygate-repo> /home/skyadmin/skygate` on svyatoslava (Tailscale-routed from agent)
   2. `scp agent:/home/skyadmin/skygate/.env svyatoslava:/home/skyadmin/skygate/.env` (with SKYGATE_HA_ROLE=standby + HEADPLANE_HEADSCALE__API_KEY)
@@ -648,8 +648,8 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   - `scripts/bootstrap_standby.sh` (B152, Phase 7) — operator SSHes to the new VM + runs this script. 6-step flow: pre-flight idempotency check + S3-pull skygate binary from `ha/deploy/<hostname>/` (B150 deploy surface) + S3-pull headscale config from `ha/headscale-config/` (same ACL policy as primary) + `docker compose up -d` + poll `/healthz` 60s + verify `ha_chain` registration in DB. Validates 3 required env vars (SKYGATE_HA_ROLE=standby + SKYGATE_HA_ENABLED=true + HEADPLANE_HEADSCALE__API_KEY non-empty). Writes `ha.bootstrap` audit row. Idempotent. 18 contracts in `scripts/check_b152.sh` (ALL PASS).
   - `scripts/dr_drill.sh` (B153, Phase 9) — operator-driven 5-step live DR drill. Step 1: verify both nodes on the same skygate version (abort if mismatch). Step 2: kill active (`docker kill -9`), verify standby takes over within 60s. Step 3: restart the original active, verify it rejoins as standby (NO flap, per Decision #11 auto-reclaim is OFF). Step 4: verify DNS resolves to the right IP (B146 reg.ru). Step 5 (optional, `--skip-kill-both`): kill BOTH nodes + restart, verify self-heal within 90s. 3 flags: `--yes` (unattended), `--skip-regapi-check` (skip step 4 if reg.ru not yet unblocked), `--skip-kill-both` (skip step 5 for the first run). Polls `/readyz` for the B145 role banner. NEVER uses `docker compose down -v` (no data destruction). 18 contracts in `scripts/check_b153.sh` (ALL PASS).
 - **All BL-2 plan independent elements now SHIPPED**: B145 (HA chain) + B147 (certsync) + B148 (/admin/certificates) + B149 (/admin/ha) + B150 (/admin/deploy) + **B151 (init-headplane.sh) + B152 (bootstrap_standby.sh) + B153 (dr_drill.sh)**. Only B146 (reg.ru DNS live client) remains as a code element, blocked on operator's reg.ru IP whitelist.
-- **Phase 7 (svyatoslava-1 bootstrap)** — now runnable end-to-end on the new VM once it's provisioned. The operator:
-  1. Provisions svyatoslava-1 (OS + Docker + Tailscale + SSH + Patroni etcd access)
+- **Phase 7 (<polygon-vm-hostname> bootstrap)** — now runnable end-to-end on the new VM once it's provisioned. The operator:
+  1. Provisions <polygon-vm-hostname> (OS + Docker + Tailscale + SSH + Patroni etcd access)
   2. Clones the skygate repo + copies .env from the primary (or re-runs `deploy.sh`)
   3. Sets `SKYGATE_HA_ROLE=standby` in .env
   4. Runs `bash scripts/bootstrap_standby.sh` — the script does the rest
@@ -689,14 +689,14 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   - `scripts/check_ha_state.sh` (B-new) — 73 B-check contracts covering: state.sh exists + executable + public API complete + bug-fix verification (sleep_off typo gone) + jq install hint + stale lock + audit rotation; ha-phase0/7/9/status.sh exist + executable + source state.sh + have the right step IDs; no leaked credentials or operator IPs in any file; pre-commit gate presence; verify_pre_deploy.sh registration.
   - `scripts/verify_pre_deploy.sh` — `B-new` row added to the catalog.
 - **State file location**: `/var/lib/skygate/ha-state/state.json` (overridable via `SKYGATE_HA_STATE` env var for testing). JSON schema documented at the top of `state.sh`.
-- **Operator workflow** (when svyatoslava-1 is recovered):
-  1. `ssh svyatoslava-1`
+- **Operator workflow** (when <polygon-vm-hostname> is recovered):
+  1. `ssh <polygon-vm-hostname>`
   2. `cd ~/skygate && bash scripts/ha-phase0.sh` (verifies Tailscale mesh — idempotent, rerunnable)
   3. `bash scripts/ha-phase7.sh` (bootstraps the standby)
   4. From primary, schedule maintenance window, then `bash scripts/ha-phase9.sh` (live DR drill, unattended)
   5. `bash scripts/ha-status.sh` at any time to see the phase status
 - **Known gaps** (NOT in this B-block):
-  - svyatoslava-1 is currently UNREACHABLE per the 2026-08-31 status (Tailscale iptables leftover trap — KVM console recovery needed: `stop tailscaled; flush ts-input/ts-forward/ts-output/ts-postrouting/ts-mark` chains across filter/nat/mangle tables; restart with `--netfilter-mode=nodir`).
+  - <polygon-vm-hostname> is currently UNREACHABLE per the 2026-08-31 status (Tailscale iptables leftover trap — KVM console recovery needed: `stop tailscaled; flush ts-input/ts-forward/ts-output/ts-postrouting/ts-mark` chains across filter/nat/mangle tables; restart with `--netfilter-mode=nodir`).
   - The Phase 0 runner hardcodes `python3` for the `tailscale status --json` JSON parser. If the operator's VM doesn't have python3, step 3 (verify_routes_advertised) and step 4 (verify_routes_approved) will fail with a clear error message. A python-free fallback (`jq` based on the same JSON) is a future B-block.
 - **Status**: 9/10 phases SHIPPED + Phase 0/7/9 now have state-tracked runners. Phase 10 (release tag) is the only remaining work item, blocked on the operator running the drill on a live maintenance window.
 

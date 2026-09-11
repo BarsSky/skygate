@@ -5498,7 +5498,7 @@ in the same commit. Don't let the tracker drift.
       / `--backoff <sec>`. Does NOT auto-install
       tailscale (operator decides). Env vars:
       `SKYGATE_STANDBY_HOST` (default
-      `svyatoslava-1`) + `SKYGATE_PRIMARY_HOST`
+      `<polygon-vm-hostname>`) + `SKYGATE_PRIMARY_HOST`
       (default `skygate-host-1`).
     - `scripts/ha-phase7.sh` (B-new) — Phase 7
       (bootstrap the standby) runner wrapping
@@ -5577,8 +5577,8 @@ in the same commit. Don't let the tracker drift.
       (using `jq` on the same JSON, since `jq` is
       already a state machine dependency) is a
       future B-block.
-    - **Operator workflow** (when svyatoslava-1
-      is recovered): `ssh svyatoslava-1` →
+    - **Operator workflow** (when <polygon-vm-hostname>
+      is recovered): `ssh <polygon-vm-hostname>` →
       `cd ~/skygate && bash scripts/ha-phase0.sh`
       → `bash scripts/ha-phase7.sh` → from primary,
       schedule a maintenance window, then
@@ -6935,7 +6935,7 @@ in the same commit. Don't let the tracker drift.
     verified end-to-end**:
     Operator 2026-08-31 hit `500 Internal Server
     Error: invalid pre auth key` while re-auth'ing
-    svyatoslava-1 against headscale. Suspected cause:
+    <polygon-vm-hostname> against headscale. Suspected cause:
     recent OIDC work (B161 / B167 / B168) may have
     broken the classic preauth path. Actual cause:
     the key the operator had was stale (issued on
@@ -7981,7 +7981,7 @@ in the same commit. Don't let the tracker drift.
     system test was reporting correctly throughout
     (it was just the UI that was wrong).
 
-* **Previous**: v1.3.19.1 — svyatoslava-1 (HA mirror, headscale
+* **Previous**: v1.3.19.1 — <polygon-vm-hostname> (HA mirror, headscale
   id=30) removed per operator directive 2026-08-17
   ("старые тэги по svyatoslava надо почистить вес что
   оффлайн оно уже не рабочее"). `make verify-pre`
@@ -7995,7 +7995,7 @@ in the same commit. Don't let the tracker drift.
        node_owner_map.tsv 568, node_30.json, MANIFEST.md,
        rollback.sql).
     2. `headscale nodes delete --force -i 30` (id=30 was the
-       HA mirror given_name=svyatoslava-1). Confirmed: 15
+       HA mirror given_name=<polygon-vm-hostname>). Confirmed: 15
        nodes remain in headscale.
     3. `DELETE FROM node_owner_map WHERE node_id = '30';` (1
        row deleted).
@@ -8006,9 +8006,9 @@ in the same commit. Don't let the tracker drift.
        Re-apply returned HTTP 303 (success).
   - **Live state post-cleanup** (v=1148):
     - 4 infra tags (was 5): emilia, karolina, sharlotta,
-      skygate-host-1. svyatoslava-1 GONE.
+      skygate-host-1. <polygon-vm-hostname> GONE.
     - 15 tagOwners total (was 21).
-    - 0 references to svyatoslava-1 OR svyatoslava-legacy
+    - 0 references to <polygon-vm-hostname> OR svyatoslava-legacy
       in latest policy.
     - tag:exit-node still owned by `infra@`.
     - tag:public still owned by `skyadmin@`.
@@ -8017,10 +8017,10 @@ in the same commit. Don't let the tracker drift.
     now expects exactly 4 `tag:dev-infra-*` rows in
     node_owner_map and exactly 4 in policy tagOwners.
   - **New B118 contract G (v1.3.19.1)**: 5 sub-checks
-    pin svyatoslava-1 removal — policy / node_owner_map /
+    pin <polygon-vm-hostname> removal — policy / node_owner_map /
     tagOwners / count. Test `acl_perdevice_b118_test.go`
     renamed `TestB118_TagOwnerFromName_AllFiveInfraExits` →
-    `TestB118_TagOwnerFromName_AllFourInfraExits` (svyatoslava-1
+    `TestB118_TagOwnerFromName_AllFourInfraExits` (<polygon-vm-hostname>
     removed from regression list).
   - 3 files changed (`check_b118.sh` + `acl_perdevice_b118_test.go`
     + 0 code; the destructive change was operator-side via
@@ -8088,14 +8088,14 @@ in the same commit. Don't let the tracker drift.
     - F. `tag:dev-skyadmin-svyatoslava-legacy` is GONE
       (text-search, not jsonb).
     - Plus **G (v1.3.19.1)**: 5 sub-checks pinning the
-      svyatoslava-1 removal (policy / node_owner_map /
+      <polygon-vm-hostname> removal (policy / node_owner_map /
       tagOwners / counts).
   - `scripts/verify_pre_deploy.sh`: registered B118.
   - `go test ./internal/acl/ -run TestB118_` PASS
     (7/7 sub-tests).
   - 2 files added + 2 modified, +567/-15 lines.
   - **Live state (pre-v1.3.19.1)**: 5 infra tags all → `infra@`
-    (emilia, karolina, sharlotta, svyatoslava-1,
+    (emilia, karolina, sharlotta, <polygon-vm-hostname>,
     skygate-host-1). `tag:exit-node` → `infra@`. Snapshot
     v=1147 (16 tagOwners, 0 malformed hosts). `tag:public`
     → `skyadmin@` (unchanged). Build `v1.3.11-18-gb0cacf6`
@@ -8378,7 +8378,7 @@ in the same commit. Don't let the tracker drift.
   - **Phase 3 (v1.3.11 deployment)**: operator re-tag of 5
     nodes in headscale (`tag:dev-skyadmin-X` →
     `tag:dev-infra-X,tag:exit-node,tag:private`):
-    skygate-host-1, emilia, karolina, sharlotta, svyatoslava-1.
+    skygate-host-1, emilia, karolina, sharlotta, <polygon-vm-hostname>.
     4 tagOwners added to policy (catch-22: tagOwners need to
     exist BEFORE `headscale nodes tag --force`). All 5 nodes
     re-attributed to `infra` user in `node_owner_map`. Svyatoslava
@@ -8394,7 +8394,7 @@ in the same commit. Don't let the tracker drift.
     diagnosed in B110). The "split" was actually policy
     isolation between the `tagged-devices` user (where
     skygate-host-1 had `tag:dev-skyadmin-skygate-vm`) and
-    the `svyatoslava` user (where svyatoslava-1 had
+    the `svyatoslava` user (where <polygon-vm-hostname> had
     `tag:private`) — both inside the `tagged-devices`
     headscale user, but with different per-device ACL tags
     that the mesh grants couldn't bridge.
@@ -8406,7 +8406,7 @@ in the same commit. Don't let the tracker drift.
   - 9 files changed, +562/-15 lines. Live build
     `v1.3.11-2-g4a4899d`. 4 ping tests from skygate-host-1
     to all 4 exit nodes: emilia 51ms, karolina 143ms,
-    sharlotta 166ms, svyatoslava-1 5ms (all reachable).
+    sharlotta 166ms, <polygon-vm-hostname> 5ms (all reachable).
   - **Snapshot for Phase 3 rollback** at
     `/tmp/b111_phase3_full_20260813_163219/` (policy.json
     54811 bytes, headscale_nodes.json 37047 bytes,
@@ -8653,7 +8653,7 @@ to reflect a deliberate design change.
 | **v1.3.18 hotfix** | ACL tagOwners dedup: `emittedTagOwners` set + first-write-wins `emitTagOwner()` closure in BOTH `GenerateACLForPlane` AND `GenerateACLWithViaForPlane` (was 4 emit paths duplicating `tag:dev-infra-*` keys after Phase 3 / B111). No new B-check (deferred to openTestDB harness; covered indirectly by `acl.reapply` system test). | (no `check_b118.sh` yet) |
 | **v1.3.18.1 hotfix** | `tagToHost` helper extended to strip `tag:dev-infra-X` / `tag:exit-X` / `tag:X` / `X` prefixes. Covered indirectly by the `exit_rules.preferred_mismatch` system test (now PASSes; was FAIL post-v1.3.18 due to the legacy prefix strip). | (no `check_b119.sh` yet) |
 | **B118 (v1.3.19)** | tag-owner-from-name: via loop parses owner from `tag:dev-<user>-<device>` → `<user>@domain`; `tag:exit-node` owned by `infra@` in 2 emit sites; svyatoslava-legacy GONE. Source grep + live DB. | `bash scripts/check_b118.sh` (16 contracts: 6 source/live + 5 v1.3.19.1 sub-checks, B-check fix `e32e12f` for max(version) filter) |
-| **v1.3.19.1 hotfix (operator cleanup)** | svyatoslava-1 / headscale id=30 (HA mirror) removed: snapshot → `headscale nodes delete --force -i 30` → `DELETE FROM node_owner_map` → re-apply policy. 4 infra tags remain (was 5): emilia, karolina, sharlotta, skygate-host-1. | covered by B118 contract G (5 sub-checks) |
+| **v1.3.19.1 hotfix (operator cleanup)** | <polygon-vm-hostname> / headscale id=30 (HA mirror) removed: snapshot → `headscale nodes delete --force -i 30` → `DELETE FROM node_owner_map` → re-apply policy. 4 infra tags remain (was 5): emilia, karolina, sharlotta, skygate-host-1. | covered by B118 contract G (5 sub-checks) |
 | **B119 (v1.3.19.2)** | `TagToHostname` (exported helper) extended to handle `tag:dev-infra-X` (v1.3.18.1 only fixed the LOCAL `tagToHost` closure in `system_tests.go`; missed the exported helper used by /my/exit-rules + /admin/exit-rules + /admin/devices). Pre-fix returned `dev-infra-karolina` for `tag:dev-infra-karolina` → 240 false-positive preferred-mismatches on the UI banner. | `bash scripts/check_b119.sh` (8 contracts A-H, 9 sub-checks) |
 | **B120 (v1.3.19.2)** | admin-breadcrumb sidebar offset: the breadcrumb was a SIBLING of `.shell` inside `<main>`, but only `.shell` had `margin-left:220px` — the breadcrumb had no left offset, so its leftmost 220px sat under the fixed sidebar. Fix: mirror the `.shell` margin-left pattern for `.admin-breadcrumb` (3 rules: desktop 220px, collapsed 52px, mobile 0). 4 new Go unit tests in `layout_v1_3_19_2_test.go` + B107 regex fix (to handle the new `main .admin-breadcrumb` selector). | `bash scripts/check_b120.sh` (5 contracts A-E) |
 | **B121 (v1.3.19.2 follow-up)** | Three things in one: (1) new "Mint" theme (silver `#f5f7f6` bg + mint-green `#10b981` accent) for comfortable long admin sessions; (2) thin themed scrollbar (8px WebKit + `scrollbar-width: thin` Firefox, colors from `--border`/`--border-strong`); (3) dark-theme form contrast bump (Linear/NVIDIA/Sentry inputs: `border-width: 1.5px` + `box-shadow: inset 0 1px 2px rgba(0,0,0,0.2)` + Linear/NVIDIA `background: #1a1a1a` elevated above `--bg`). All themes now have a 4px focus ring + 1px lift for tactile feedback. | `bash scripts/check_b121.sh` (18 sub-checks, 6 contracts A-F) |
@@ -11537,7 +11537,7 @@ explaining why.
     other field (ssh, groups, tagOwners, hosts) — only
     acls[] is mutated. Idempotent on rule fingerprint
     (re-adding the same rule returns the existing ID).
-    Solves the 2026-08-04 incident where svyatoslava-1
+    Solves the 2026-08-04 incident where <polygon-vm-hostname>
     joined the headscale but couldn't reach skygate-vm
     because the policy had 0 acls (default deny).
   - **`Admin Test Page`** (new `internal/feature/admin/system_tests.go`,
@@ -11545,7 +11545,7 @@ explaining why.
     in-process test suite (6 tests across network/db/headscale
     categories) and stores results in `system_tests_runs`.
     Includes the `headscale.acl_admin_present` check that
-    would have caught the svyatoslava-1 incident at the
+    would have caught the <polygon-vm-hostname> incident at the
     "is admin rule present?" level. 5s per-test timeout,
     history strip shows the last 20 runs.
   - **Catalog extended to B42 / R32**: B38-B42 (build-time
@@ -14568,7 +14568,7 @@ code.
 
 ## B-new-standby (v1.5.2+, 2026-09-09) — HA standby auto-provisioning
 
-**Closes the gap where new HA standbys (e.g. svyatoslava-1) ended up
+**Closes the gap where new HA standbys (e.g. <polygon-vm-hostname>) ended up
 in the synthetic `tagged-devices` headscale user** instead of the
 real `infra` user, breaking per-DEVICE Tailscale grants and causing
 the standby to be invisible to `skygate-host-1-1` over the
@@ -15006,7 +15006,7 @@ exit 1 с "Fix: <actionable>", а НЕ silent restart, который operator
 | VM | Role | Tailscale IP | Public IP | Notes |
 |---|---|---|---|---|
 | **agent (192.168.13.69)** | dev/staging skygate + primary Patroni PG | skygate-host-1-1 (100.64.0.22) | 192.168.13.69 | Local dev. Standalone PG (Patroni bypassed). |
-| **svyatoslava-1 (45.152.198.217)** | production skygate + standby Patroni replica | 100.64.0.24 | 45.152.198.217 (gateway-blocked from agent) | Currently NOT REACHABLE from agent due to operator's gateway block. |
+| **<polygon-vm-hostname> (<polygon-vm-public-ip>)** | production skygate + standby Patroni replica | 100.64.0.24 | <polygon-vm-public-ip> (gateway-blocked from agent) | Currently NOT REACHABLE from agent due to operator's gateway block. |
 | **karolina (193.233.130.178:18022)** | Russian VPS, jump host | — | 193.233.130.178:18022 | SSH ProxyCommand for svi. |
 
 **The 2026-09-09 outage** (post-mortem):
@@ -15016,7 +15016,7 @@ exit 1 с "Fix: <actionable>", а НЕ silent restart, который operator
   Trigger unknown — could be operator manual `systemctl stop postgresql`, could be
   something else. Pre-B-mod-db-retry this would have been invisible until next deploy.
 - **Post-shutdown**: Patroni tried to elect leader, but etcd on svi
-  (`http://45.152.198.217:2379`) is **unreachable** due to operator's gateway block.
+  (`http://<polygon-vm-public-ip>:2379`) is **unreachable** due to operator's gateway block.
   Patroni logged `waiting on etcd` every 6 seconds, forever — **silent infinite wait**.
   PG never came back up.
 - **2026-09-09 12:28**: my B-mod-core deploy attempts rebuilt skygate binary → entrypoint
@@ -15075,7 +15075,7 @@ exit 1 с "Fix: <actionable>", а НЕ silent restart, который operator
 
 **Future-proof plan** (operator's roadmap, deferred):
 
-- skygatev2 + headv2 на **svyatoslava-1** (svi) как полигон для:
+- skygatev2 + headv2 на **<polygon-vm-hostname>** (svi) как полигон для:
   - авторазвертывания проекта под новым адресом
   - проверки авторазвертывания кластера
 - Восстановление reachability svi через gateway fix (operator action)
@@ -15143,7 +15143,7 @@ layer for the 12+ inline strftime('%s','now') sites in the
 SQL queries.
 
 **Live verification** (svi polygon, 2026-09-10, after
-operator's OS reinstall of 45.152.198.217):
+operator's OS reinstall of <polygon-vm-public-ip>):
 
 1. Installed Go 1.25.0 via official tarball (apt's golang-go is
    1.24.x, too old for skygate which requires go 1.25+).
@@ -15201,7 +15201,7 @@ install):
   endpoint not configured for polygon. Not in deploy scope.
 - 
 econcile: ListUsers — fails on the fake
-  HEADSCALE_API_KEY=sk_test_polygon_fake_key_for_svi_install_2026_09_09,
+  HEADSCALE_API_KEY=<REDACTED>,
   as expected. Will work against real headscale on agent (13.69).
 
 **Known remaining gap** (NOT B-mod-pg18-strftime-fix): the
@@ -15310,14 +15310,14 @@ be wired into `verify_pre_deploy.sh` for offline
 builds. To re-verify on svi once it's back:
 
 ```bash
-SKYGATE_LIVE_HOST=http://45.152.198.217:8080 \
+SKYGATE_LIVE_HOST=http://<polygon-vm-public-ip>:8080 \
 SKYGATE_LIVE_USER=skyadmin \
 SKYGATE_LIVE_PASSWORD=<admin-password> \
 SKYGATE_PG_HOST=95.165.170.190 \
 SKYGATE_PG_USER=skygate_test \
 SKYGATE_PG_DB=skygate_test \
 SKYGATE_PG_PASSWORD=<skygate_test-password> \
-SKYGATE_SSH_HOST=root@45.152.198.217 \
+SKYGATE_SSH_HOST=root@<polygon-vm-public-ip> \
 bash scripts/check_b_modules_admin_live.sh
 ```
 
@@ -15408,7 +15408,7 @@ $ SKYGATE_PG_ALIVE_MODE=polygon \
 ### Re-verify on svi once it's back
 
 ```bash
-ssh root@45.152.198.217
+ssh root@<polygon-vm-public-ip>
 export SKYGATE_PG_ALIVE_MODE=polygon
 export SKYGATE_DB_DSN='postgres://skygate_test:<password>@95.165.170.190:5432/skygate_test?sslmode=disable'
 bash /home/skyadmin/skygate/scripts/check_b_pg_alive.sh
@@ -15619,7 +15619,7 @@ $ SKYGATE_PG_ALIVE_MODE=polygon \
 ### Re-verify on svi once it's back
 
 ```bash
-ssh root@45.152.198.217
+ssh root@<polygon-vm-public-ip>
 export SKYGATE_PG_ALIVE_MODE=polygon
 export SKYGATE_DB_DSN='postgres://skygate_test:<password>@95.165.170.190:5432/skygate_test?sslmode=disable'
 bash /home/skyadmin/skygate/scripts/check_b_pg_alive.sh
@@ -15858,9 +15858,9 @@ a test VM is expected to work. The B-check pins the structure; the
 operator can run it on the standby VM once svi is back online:
 
 ```bash
-ssh root@45.152.198.217
+ssh root@<polygon-vm-public-ip>
 export SKYGATE_PRIMARY=skyadmin@<primary-tailnet-ip>
-export SKYGATE_STANDBY_HOSTNAME=svyatoslava-1
+export SKYGATE_STANDBY_HOSTNAME=<polygon-vm-hostname>
 export SKYGATE_TS_AUTHKEY=tskey-auth-XXX
 export SKYGATE_TS_LOGIN_SERVER=https://head.skynas.ru
 bash /home/skyadmin/skygate/deploy/scripts/bootstrap_standby.sh
@@ -16186,8 +16186,8 @@ DB_PASS=$(echo "$SKYGATE_DB_DSN" | sed -E 's|^postgres://||' \
 The `(.+)@` is greedy. When the password doesn't contain
 `@` (the common case), the regex captures
 `user:password` as a single match. For the polygon DSN
-`postgres://skygate_test:ebbab134df12a85d459994f6@...`,
-`DB_PASS` was `skygate_test:ebbab134df12a85d459994f6`
+`postgres://skygate_test:<REDACTED>@...`,
+`DB_PASS` was `skygate_test:<REDACTED>`
 (37 chars) instead of the correct 24-char password.
 
 Effect: `pg_query_psql` / `pg_query_pg_isready` wrappers in
@@ -16205,7 +16205,7 @@ DB_PASS=$(echo "$SKYGATE_DB_DSN" | sed -E 's|^postgres://[^:]+:||' \
 ```
 
 Verified: regex now correctly returns
-`USER=skygate_test PASS=ebbab134df12a85d459994f6 (len=24)`.
+`USER=skygate_test PASS=<REDACTED> (len=24)`.
 
 ### Bonus: 3 more B-check script fixes (B-fix-bcheck-scripts + B-fix-bcheck-scripts-2)
 
@@ -16325,7 +16325,7 @@ done
 export SKYGATE_LIVE_HOST=http://127.0.0.1:8080
 export SKYGATE_LIVE_USER=admin
 export SKYGATE_LIVE_PASSWORD=$ADMIN_PASS
-export SKYGATE_PG_HOST=pg-test.skynas.ru SKYGATE_PG_USER=skygate_test
+export SKYGATE_PG_HOST=<polygon-pg-host> SKYGATE_PG_USER=skygate_test
 export SKYGATE_PG_DB=skygate_test SKYGATE_PG_ALIVE_MODE=polygon
 export PGPASSWORD=$DB_PASS
 for s in scripts/check_b_*.sh; do bash $s 2>&1 | tail -3; done

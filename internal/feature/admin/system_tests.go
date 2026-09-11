@@ -1066,7 +1066,7 @@ var TestRegistry = []SystemTestDef{
 			// tag format). After the post-B111 migration
 			// to "tag:dev-infra-emilia" (and the analogous
 			// infra tags for karolina / sharlotta /
-			// svyatoslava-1), the helper returned
+			// <polygon-vm-hostname>), the helper returned
 			// "dev-infra-emilia" instead of "emilia", so
 			// every rule whose exit_node_id is "emilia"
 			// showed up as a mismatch against

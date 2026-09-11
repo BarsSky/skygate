@@ -16,7 +16,7 @@
 #
 # Where to run this
 # -----------------
-# On the NEW standby host (svyatoslava-1), AFTER Phase 0 (Tailscale mesh)
+# On the NEW standby host (<polygon-vm-hostname>), AFTER Phase 0 (Tailscale mesh)
 # has succeeded on BOTH primary and standby. The Phase 0 mesh is the
 # prerequisite: the standby needs Tailscale + MagicDNS before it can be
 # bootstrapped (it uses Tailscale to pull the skygate binary from S3).
@@ -28,7 +28,7 @@
 #
 # Usage
 # -----
-#   ssh svyatoslava-1
+#   ssh <polygon-vm-hostname>
 #   cd ~/skygate
 #   bash scripts/ha-phase7.sh
 #   # or --reset to re-run from scratch (idempotent)
@@ -51,7 +51,7 @@ BASE_BACKOFF=2
 DO_RESET=0
 DO_STATUS=0
 SKIP_S3=0
-STANDBY_HOST="${SKYGATE_STANDBY_HOST:-svyatoslava-1}"
+STANDBY_HOST="${SKYGATE_STANDBY_HOST:-<polygon-vm-hostname>}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --reset) DO_RESET=1; shift;;

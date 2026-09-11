@@ -3,8 +3,8 @@ set +e
 # Setup /tmp/svi-jump wrapper on skygate for easy access
 ssh -o ConnectTimeout=10 -o BatchMode=yes skyadmin@192.168.13.69 "cat > /tmp/svi-jump.sh << 'JUMP_EOF'
 #!/bin/bash
-# Jump to svi (svyatoslava-1) via karolina
-exec ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o ProxyCommand='ssh -W %h:%p -o StrictHostKeyChecking=accept-new root@karolina' root@45.152.198.217 \"\$@\"
+# Jump to svi (<polygon-vm-hostname>) via karolina
+exec ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o ProxyCommand='ssh -W %h:%p -o StrictHostKeyChecking=accept-new root@karolina' root@<polygon-vm-public-ip> \"\$@\"
 JUMP_EOF
 chmod +x /tmp/svi-jump.sh
 cat /tmp/svi-jump.sh

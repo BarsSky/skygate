@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Resolve: who is 45.152.198.217 now? Find svyatoslava's real IP
+# Resolve: who is <polygon-vm-public-ip> now? Find svyatoslava's real IP
 set +e
-echo "=== full DNS response from 45.152.198.217:53 (capture 512 bytes) ==="
+echo "=== full DNS response from <polygon-vm-public-ip>:53 (capture 512 bytes) ==="
 ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 'python3 -c "
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.settimeout(3)
 # query for skynas.ru
 header = b\"\xab\xcd\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x05skynas\x02ru\x00\x00\x01\x00\x01\"
-s.sendto(header, (\"45.152.198.217\", 53))
+s.sendto(header, (\"<polygon-vm-public-ip>\", 53))
 data, addr = s.recvfrom(4096)
 print(\"got\", len(data), \"bytes\")
 # decode answer
@@ -39,21 +39,21 @@ for _ in range(ancount):
     i += rdlen
 "' 2>&1
 echo ""
-echo "=== check if 45.152.198.217 is on a /24 known to be operator's ==="
+echo "=== check if <polygon-vm-public-ip> is on a /24 known to be operator's ==="
 ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "
-    echo '== 45.152.198.217 =='
-    ip route get 45.152.198.217 2>&1
+    echo '== <polygon-vm-public-ip> =='
+    ip route get <polygon-vm-public-ip> 2>&1
     echo '== 95.165.170.190 =='
     ip route get 95.165.170.190 2>&1
     echo '== arp table (local subnet) =='
     cat /proc/net/arp 2>&1
 " 2>&1 | head -20
 echo ""
-echo "=== can skygate reach 45.152.198.217 on port 53? ==="
-ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "timeout 3 nc -zv 45.152.198.217 53 2>&1; echo '---'; echo 'queries from skygate:'; dig +short +time=3 +tries=1 @45.152.198.217 example.com 2>&1; dig +short +time=3 +tries=1 @45.152.198.217 svyatoslava-1.skynas.ru 2>&1" 2>&1
+echo "=== can skygate reach <polygon-vm-public-ip> on port 53? ==="
+ssh -o ConnectTimeout=5 -o BatchMode=yes skyadmin@192.168.13.69 "timeout 3 nc -zv <polygon-vm-public-ip> 53 2>&1; echo '---'; echo 'queries from skygate:'; dig +short +time=3 +tries=1 @<polygon-vm-public-ip> example.com 2>&1; dig +short +time=3 +tries=1 @<polygon-vm-public-ip> <polygon-vm-hostname>.skynas.ru 2>&1" 2>&1
 echo ""
 echo "=== try common svyatoslava hostnames ==="
-for h in svyatoslava svyatoslava-1 skyworker-standby svyatoslava.skynas.ru svyatoslava-1.skynas.ru; do
+for h in svyatoslava <polygon-vm-hostname> skyworker-standby svyatoslava.skynas.ru <polygon-vm-hostname>.skynas.ru; do
     echo "  $h:"
     timeout 3 nslookup $h 2>&1 | head -5
 done

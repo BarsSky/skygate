@@ -125,7 +125,7 @@ func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser ma
 // tags map to exit nodes vs skygate VMs vs future
 // infrastructure. The operator decides what "exit node"
 // means; today it's 4 VPS nodes (emilia, karolina, sharlotta,
-// svyatoslava-1) plus the catch-all `* → tag:exit-node` for
+// <polygon-vm-hostname>) plus the catch-all `* → tag:exit-node` for
 // any node that headscale tags `tag:exit-node`. Future
 // operator-added exit nodes are automatically picked up
 // because BackfillInfra (with the v1.3.11 isInfraNode

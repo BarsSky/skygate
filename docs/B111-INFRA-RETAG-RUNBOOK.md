@@ -35,30 +35,30 @@ docker exec skygate-skygate-1 bash /app/scripts/tailnet_probe.sh
 | 2 | emilia | `tag:dev-skyadmin-emilia,tag:exit-node,tag:private` | `tag:dev-infra-emilia,tag:exit-node,tag:private` | VPS relay |
 | 3 | karolina | `tag:dev-skyadmin-karolina,tag:exit-node,tag:private` | `tag:dev-infra-karolina,tag:exit-node,tag:private` | VPS relay |
 | 4 | sharlotta | `tag:dev-skyadmin-sharlotta,tag:exit-node,tag:private` | `tag:dev-infra-sharlotta,tag:exit-node,tag:private` | VPS relay |
-| 5 | svyatoslava-1 | `tag:private` (only) | `tag:dev-infra-svyatoslava-1,tag:exit-node,tag:private` | VPS relay (= skygate-host-2 for HA) |
+| 5 | <polygon-vm-hostname> | `tag:private` (only) | `tag:dev-infra-<polygon-vm-hostname>,tag:exit-node,tag:private` | VPS relay (= skygate-host-2 for HA) |
 
-**Critical for svyatoslava-1**: this node's hostname is
-`svyatoslava-1` (NOT `skygate-host-*`), so isInfraNode rule 2
+**Critical for <polygon-vm-hostname>**: this node's hostname is
+`<polygon-vm-hostname>` (NOT `skygate-host-*`), so isInfraNode rule 2
 (hostname prefix) does NOT match. Without `tag:exit-node`
 added, isInfraNode returns false and BackfillInfra UPDATE
 will not move the node to `infra`. The node would stay in
 the `svyatoslava` portal-user bucket (leftover from earlier
 experiments) and remain invisible to skygate-host-1.
 
-**Why svyatoslava-1 is in the infra bucket (operator's design)**: this
+**Why <polygon-vm-hostname> is in the infra bucket (operator's design)**: this
 is the future **skygate-host-2** (the HA partner of skygate-host-1,
 per the B93/v1.3.11 design). The `svyatoslava` portal user
 (id=11) is a leftover from earlier per-user-egress experiments
 and is NOT needed — after the Phase 3 re-tag + BackfillInfra
-UPDATE, svyatoslava-1 moves to `infra` and the `svyatoslava`
+UPDATE, <polygon-vm-hostname> moves to `infra` and the `svyatoslava`
 portal user becomes dormant (0 nodes). It can be left in
 `portal_users` for audit history, or deleted in a follow-up
 cleanup.
 
-**Why svyatoslava-1 needs `tag:exit-node`**: skygate-host-1
+**Why <polygon-vm-hostname> needs `tag:exit-node`**: skygate-host-1
 needs to see this node as a potential egress target for the
 Telegram bot. Without `tag:exit-node`, the
-`* → tag:exit-node` catch-all doesn't include svyatoslava-1,
+`* → tag:exit-node` catch-all doesn't include <polygon-vm-hostname>,
 and skygate-host-1 can't route Telegram API traffic through
 it. Adding `tag:exit-node` makes the catch-all match AND
 satisfies isInfraNode rule 3 (so BackfillInfra UPDATE fires).
@@ -103,7 +103,7 @@ sudo tailscale up \
 
 **For each of the 5 infra nodes**, the printed command will have
 `--advertise-tags=tag:dev-skyadmin-<hostname>` (or no tags for
-svyatoslava-1). **Replace** with the new infra tag:
+<polygon-vm-hostname>). **Replace** with the new infra tag:
 
 | Node | Replace | With |
 |------|---------|------|
@@ -111,7 +111,7 @@ svyatoslava-1). **Replace** with the new infra tag:
 | emilia | `--advertise-tags=tag:dev-skyadmin-emilia,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-emilia,tag:exit-node,tag:private` |
 | karolina | `--advertise-tags=tag:dev-skyadmin-karolina,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-karolina,tag:exit-node,tag:private` |
 | sharlotta | `--advertise-tags=tag:dev-skyadmin-sharlotta,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-sharlotta,tag:exit-node,tag:private` |
-| svyatoslava-1 | `--advertise-tags=tag:private` (no exit-node tag yet — and no infra tag) | `--advertise-tags=tag:dev-infra-svyatoslava-1,tag:exit-node,tag:private` |
+| <polygon-vm-hostname> | `--advertise-tags=tag:private` (no exit-node tag yet — and no infra tag) | `--advertise-tags=tag:dev-infra-<polygon-vm-hostname>,tag:exit-node,tag:private` |
 
 **The other `tag:*` tags MUST be preserved** (tag:exit-node,
 tag:private) so the node still functions as an exit node.
@@ -171,7 +171,7 @@ docker exec skygate-skygate-1 bash /app/scripts/tailnet_probe.sh
 | emilia headscale tag | `tag:dev-skyadmin-emilia` | `tag:dev-infra-emilia` |
 | karolina headscale tag | `tag:dev-skyadmin-karolina` | `tag:dev-infra-karolina` |
 | sharlotta headscale tag | `tag:dev-skyadmin-sharlotta` | `tag:dev-infra-sharlotta` |
-| svyatoslava-1 headscale tag | `tag:private` | `tag:dev-infra-svyatoslava-1` |
+| <polygon-vm-hostname> headscale tag | `tag:private` | `tag:dev-infra-<polygon-vm-hostname>` |
 | `node_owner_map` for these 5 | mixed skyadmin/michail/svyatoslava | `username='infra'` (via BackfillInfra UPDATE on next skygate restart) |
 | Policy grants for `tag:dev-infra-*` | 0 (no matching devices) | mesh (5 nodes × 4 peers) + 4 `* → tag:dev-infra-<exit>` catch-alls |
 

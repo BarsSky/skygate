@@ -297,7 +297,7 @@ func BackfillInfra(dbConn db.DBSource, nodes []headscale.NodeView) {
 		// logic used INSERT OR IGNORE which preserved the
 		// existing owner; that worked for skygate-host-1
 		// (a fresh node) but left exit nodes (emilia,
-		// karolina, sharlotta, svyatoslava-1) stranded in
+		// karolina, sharlotta, <polygon-vm-hostname>) stranded in
 		// the user-portal bucket from a B69/B89 backfill.
 		// Without this UPDATE, the per-infra public-access
 		// grants (added in B111) miss the exit nodes, and

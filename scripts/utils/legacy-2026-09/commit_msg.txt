@@ -1,6 +1,6 @@
 B-new-standby (v1.5.2+): HA standby auto-provisioning with correct user mapping
 
-Closes the gap where new HA standbys (e.g. svyatoslava-1) ended up
+Closes the gap where new HA standbys (e.g. <polygon-vm-hostname>) ended up
 in the synthetic "tagged-devices" headscale user instead of the real
 "infra" user, breaking per-DEVICE Tailscale grants and causing the
 standby to be invisible to skygate-host-1-1 over the Tailscale mesh.
@@ -61,7 +61,7 @@ New operator runbook (replaces the old manual Tailscale setup):
   export SKYGATE_STANDBY_TS_AUTHKEY="$NEW_KEY"
   bash scripts/bootstrap_standby.sh
 
-Existing svyatoslava-1 fix is separate (operator can re-provision
+Existing <polygon-vm-hostname> fix is separate (operator can re-provision
 or add node_owner_map row + custom grant).
 
 Files:

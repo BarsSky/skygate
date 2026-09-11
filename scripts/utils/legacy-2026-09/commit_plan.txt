@@ -5,7 +5,7 @@ Covers modules, narrow places, 7 test phases, svi strategy,
 metrics, timeline, rollback.
 
 Triggered by the 2026-09-09 session: discovered that svi
-(svyatoslava-1) was unreachable from skygate over Tailscale
+(<polygon-vm-hostname>) was unreachable from skygate over Tailscale
 because the preauth key was created without --user mapping,
 landing the new node in the synthetic 'tagged-devices'
 headscale user. B-new-standby (commit 5c357851) added the

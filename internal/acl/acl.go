@@ -511,7 +511,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// node's Tailscale IP (100.64.0.X) directly. Without
 	// these catch-alls, skyadmin's android/cyborg/
 	// nothing-phone-2 etc. would lose the ability to use
-	// emilia/karolina/sharlotta/svyatoslava-1 as exit
+	// emilia/karolina/sharlotta/<polygon-vm-hostname> as exit
 	// nodes the moment we move those nodes to the 'infra'
 	// bucket.
 	//

@@ -166,7 +166,7 @@
 >   `layout_v1_3_19_2_b121_test.go`). B107 regex updated to
 >   handle the new `main .admin-breadcrumb` selector. DEPLOYED
 >   (build `v1.3.11-25-g0352f40`).
-> - **v1.3.19.1** (2026-08-17): svyatoslava-1 (HA mirror, headscale id=30)
+> - **v1.3.19.1** (2026-08-17): <polygon-vm-hostname> (HA mirror, headscale id=30)
 >   removed per operator directive. Snapshot-then-act: snapshot at
 >   `/tmp/svyatoslava1_cleanup_20260817_104048/`, then
 >   `headscale nodes delete --force -i 30` +
@@ -229,7 +229,7 @@
 >   v1.3.13 deploy; live VM is v1.3.11 build from Phase 3).
 > - **v1.3.11** (2026-08-13): B93+B111 Phase 3 complete — 5 nodes
 >   re-tagged to `tag:dev-infra-*` (skygate-host-1, emilia, karolina,
->   sharlotta, svyatoslava-1), svyatoslava portal user removed (5/5 left),
+>   sharlotta, <polygon-vm-hostname>), svyatoslava portal user removed (5/5 left),
 >   B111 catch-alls `* → tag:dev-infra-X` active in policy, DEPLOYED
 >   to live VM (build `v1.3.11-2-g4a4899d`).
 > - **v1.3.10** (2026-08-13): B110 tailnet reachability/speed/split
@@ -429,8 +429,8 @@ B101-B116, B118-B125) but the pre-existing ones remain.
   cold-standby flow viable (operator brings up skygate-
   host-2 from a recent backup on a 2nd VM when host-1
   dies), but the recovery time is hours, not minutes.
-- **Prerequisite (DONE 2026-08-13)**: svyatoslava-1 is now
-  in the `infra` bucket with `tag:dev-infra-svyatoslava-1,
+- **Prerequisite (DONE 2026-08-13)**: <polygon-vm-hostname> is now
+  in the `infra` bucket with `tag:dev-infra-<polygon-vm-hostname>,
   tag:exit-node, tag:private` (Phase 3 / B111). A 2nd
   skygate host provisioned on svyatoslava VM would
   auto-attribute to the infra bucket via BackfillInfra
