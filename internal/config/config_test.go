@@ -132,3 +132,27 @@ func TestResolveDBDSN_SkygateDBWins(t *testing.T) {
 		}
 	})
 }
+
+// TestImportExistingOnFirstRun_DefaultFalse pins the B-mod-first-run-
+// adoption T7 opt-in contract: ImportExistingOnFirstRun is
+// false unless SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true. Default
+// false keeps existing deployments from changing behavior on
+// upgrade — only operators who explicitly opt in (set the env
+// var in .env) get the auto-sync.
+func TestImportExistingOnFirstRun_DefaultFalse(t *testing.T) {
+	t.Setenv("SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN", "")
+	// We test the env-var parsing logic directly (config.Load
+	// would try to dial the DB; we just need the bool parse).
+	got := getenv("SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN", "") == "true"
+	if got {
+		t.Errorf("ImportExistingOnFirstRun should default to false when env unset; got true")
+	}
+}
+
+func TestImportExistingOnFirstRun_OptIn(t *testing.T) {
+	t.Setenv("SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN", "true")
+	got := getenv("SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN", "") == "true"
+	if !got {
+		t.Errorf("ImportExistingOnFirstRun should be true when env=true; got false")
+	}
+}

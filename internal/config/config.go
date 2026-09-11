@@ -62,6 +62,22 @@ type Config struct {
 	// set SKYGATE_DERP_PEER_NPM in .env to the real NPM
 	// address on their LAN.
 	DerpPeerNPM string
+	// ImportExistingOnFirstRun: if true AND node_owner_map is
+	// empty AND at least one portal_user exists, run
+	// SyncNodesFromHeadscale + exit-server auto-detect once on
+	// startup. Default false (the operator must explicitly opt
+	// in for the auto-sync to happen). Set via
+	// SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true in .env.
+	//
+	// B-mod-first-run-adoption T7: the operator's "deploy
+	// skygate as a sidecar to existing headscale" flow. With
+	// this flag + the auto-detect, the operator goes from
+	// "I see an empty /admin/devices page" to "my existing
+	// headscale nodes are already imported" with a single env
+	// var set in .env. The flag is opt-in (default false) so
+	// existing skygate deployments don't suddenly change
+	// behavior on upgrade.
+	ImportExistingOnFirstRun bool
 	// DerpLANNet is the operator's LAN CIDR (used to
 	// classify DERP peer connections as "lan" vs "ws_admin"
 	// vs "ws_relay"). Default "192.0.2.0/24" (RFC 5737).
@@ -727,6 +743,11 @@ func Load() (*Config, error) {
 		// SKYGATE_GITHUB_REPO_OWNER / _NAME.
 		GitHubOwner: getenv("SKYGATE_GITHUB_REPO_OWNER", "BarsSky"),
 		GitHubRepo:  getenv("SKYGATE_GITHUB_REPO_NAME", "skygate"),
+		// B-mod-first-run-adoption T7: first-run auto-sync flag.
+		// Default false (opt-in). Operators with a pre-existing
+		// headscale deployment set this to "true" in .env to
+		// auto-import nodes + exit-servers on first boot.
+		ImportExistingOnFirstRun: getenv("SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN", "") == "true",
 		// v0.29.0: auto-updater paths. RepoPath
 		// auto-detects: inside a container, default to /app
 		// (the bind-mount point in docker-compose.yml).

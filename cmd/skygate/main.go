@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -542,6 +543,21 @@ func main() {
 	// original owner we don't know is attributed to the bootstrap admin.
 	if err := backfillNodeOwners(d.DB, hs, cfg.BootstrapAdminUser); err != nil {
 		log.Printf("warn: backfill node owners: %v", err)
+	}
+
+	// B-mod-first-run-adoption T7: first-run auto-sync. When the
+	// operator sets SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true AND
+	// node_owner_map is empty AND at least one portal_user exists,
+	// sync all headscale nodes into node_owner_map + auto-detect
+	// exit-servers (T6). The operator's "deploy skygate as a
+	// sidecar to an existing headscale" flow goes from manual
+	// "click Sync from headscale" to fully automatic on first
+	// boot. The flag is opt-in (default false) so existing
+	// deployments don't change behavior on upgrade.
+	if cfg.ImportExistingOnFirstRun {
+		if err := runFirstRunAutoSync(context.Background(), d.DB, hs); err != nil {
+			log.Printf("warn: first-run auto-sync: %v (operator can run 'Sync from headscale' manually on /admin/devices)", err)
+		}
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
@@ -3221,6 +3237,107 @@ func bootstrapAdmin(d *sql.DB, username, password string) error {
 		return err
 	}
 	log.Printf("✅ bootstrap admin created: %q", username)
+	return nil
+}
+
+// runFirstRunAutoSync — B-mod-first-run-adoption T7.
+//
+// When SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true AND node_owner_map
+// is empty AND at least one portal_user exists, runs
+// SyncNodesFromHeadscale + auto-detect exit-servers (T6) once on
+// startup. Closes the operator's "deploy skygate as a sidecar to
+// existing headscale" gap — the operator goes from "empty
+// /admin/devices page" to "my existing headscale nodes are
+// already imported" with a single env var.
+//
+// Returns an error (logged + skipped, doesn't block startup) so
+// unit tests can exercise the happy path without forking a
+// subprocess.
+func runFirstRunAutoSync(ctx context.Context, d *sql.DB, hs *headscale.Client) error {
+	// Guard 1: skip if node_owner_map already has rows. The
+	// operator has already done the sync manually; the auto-sync
+	// would be a no-op anyway and could surprise them.
+	var nomCount int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_owner_map`).Scan(&nomCount); err != nil {
+		return fmt.Errorf("count node_owner_map: %w", err)
+	}
+	if nomCount > 0 {
+		// Silent no-op — node_owner_map is populated, the
+		// operator has already done the sync. The pre-existing
+		// "Sync from headscale" button is the canonical
+		// refresh path from here on.
+		return nil
+	}
+	// Guard 2: skip if no portal_users exist. A fresh deploy
+	// with SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true but no
+	// admin yet should NOT auto-sync (the headscale users
+	// would have no portal-side mapping).
+	var portalUserCount int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM portal_users`).Scan(&portalUserCount); err != nil {
+		return fmt.Errorf("count portal_users: %w", err)
+	}
+	if portalUserCount == 0 {
+		return nil
+	}
+
+	// Happy path: sync all headscale nodes into node_owner_map
+	// + auto-detect exit-servers.
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		return fmt.Errorf("headscale ListAllNodes: %w", err)
+	}
+	log.Printf("first-run: auto-syncing %d nodes from headscale (empty node_owner_map, %d portal users)", len(nodes), portalUserCount)
+
+	// Build []db.SyncNodeInfo from the headscale view. The
+	// helper at headscale.Client.ListAllNodes already
+	// populated NodeView.IsExitNode (from hasExitNodeTag),
+	// so T6's auto-detect kicks in for free during sync.
+	// (Before T6 existed, the operator had to manually
+	// create each exit-server after this auto-sync.)
+	syncInfos := make([]db.SyncNodeInfo, 0, len(nodes))
+	for _, n := range nodes {
+		tag := ""
+		for _, t := range n.Tags {
+			if len(t) > 4 && t[:4] == "tag:" {
+				tag = t
+				break
+			}
+		}
+		hsUID := int64(0)
+		if n.UserID != "" {
+			if v, perr := strconv.ParseInt(n.UserID, 10, 64); perr == nil {
+				hsUID = v
+			}
+		}
+		host := n.Hostname
+		if host == "" {
+			host = n.ID
+		}
+		syncInfos = append(syncInfos, db.SyncNodeInfo{
+			ID:         n.ID,
+			Hostname:   host,
+			Tag:        tag,
+			Username:   n.UserName,
+			HSUserID:   hsUID,
+			TaggedBy:   0, // 0 = system sync
+			IsExitNode: n.IsExitNode,
+		})
+	}
+
+	ins, upd, err := db.SyncNodesFromHeadscale(d, syncInfos)
+	if err != nil {
+		return fmt.Errorf("SyncNodesFromHeadscale: %w", err)
+	}
+
+	// Audit row (system actor = 0, since no logged-in user
+	// triggered this — it ran on startup).
+	detail := fmt.Sprintf(`{"nodes_total":%d,"inserted":%d,"updated":%d}`, len(nodes), ins, upd)
+	if err := db.AppendAuditLogWithTarget(d, 0, "system", "first_run_auto_sync", detail,
+		"system", "first_run_auto_sync"); err != nil {
+		log.Printf("first-run: audit row failed: %v (sync succeeded; audit row missing)", err)
+	}
+
+	log.Printf("first-run: auto-sync complete (inserted=%d updated=%d); exit-servers auto-detected for IsExitNode nodes", ins, upd)
 	return nil
 }
 
