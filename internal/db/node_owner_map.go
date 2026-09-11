@@ -29,6 +29,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"log"
 )
 
 // ErrNodeOwnerNotFound is returned by GetNodeOwner when no row
@@ -613,6 +614,15 @@ type SyncNodeInfo struct {
 	// admin button passes the clicker's user id; the bot's
 	// /sync_nodes path also passes 0.
 	TaggedBy int64
+	// IsExitNode is set by the caller from the headscale
+	// adapter's NodeView.IsExitNode (which already runs
+	// hasExitNodeTag on tag:exit-node / name-prefix /
+	// default-route signals). When true,
+	// SyncNodesFromHeadscale auto-creates an exit_servers
+	// row for this node — closes the operator's
+	// "I imported 50 nodes and now have to manually add
+	// each exit-server" gap (B-mod-first-run-adoption T6).
+	IsExitNode bool
 }
 
 // RecoverOwnerUsernameFromPreauth looks up the portal_users.username
@@ -740,8 +750,50 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 		} else {
 			updated++
 		}
+
+		// B-mod-first-run-adoption T6: auto-detect exit-nodes.
+		// When the headscale adapter flagged this node as an
+		// exit-node (tag:exit-node / name-prefix / default-route
+		// signals — see headscale.hasExitNodeTag), INSERT a
+		// corresponding exit_servers row so the operator doesn't
+		// have to manually create one for each existing exit
+		// node during first-run adoption. Idempotent via
+		// PRIMARY KEY (node_id); the helper is a no-op for
+		// non-exit nodes (IsExitNode=false → INSERT is skipped).
+		// Failures here are logged + skipped — sync of the
+		// node_owner_map rows is the primary deliverable; the
+		// exit_servers row is a nice-to-have for the operator.
+		if n.IsExitNode {
+			if err := upsertExitServerFromSyncNode(d, n); err != nil {
+				log.Printf("auto-detect exit-node %s: %v (sync continued)", n.ID, err)
+			}
+		}
 	}
 	return inserted, updated, nil
+}
+
+// upsertExitServerFromSyncNode is the auto-detect helper called
+// from SyncNodesFromHeadscale when the headscale adapter flagged
+// the node as an exit-node. INSERTs (or refreshes the hostname of)
+// the corresponding exit_servers row. Idempotent via PRIMARY KEY
+// on node_id.
+//
+// The SQLite exit_servers table (v0.20 migration) has the
+// minimum columns for first-run adoption: node_id, hostname,
+// tailscale_ip, enabled, created_at. The full schema (with
+// ssh_target, ssh_key_path, accept_routes, ssh_port) is the
+// PG-only later-additions. The SQLite variant intentionally
+// stores less — the operator can edit ssh_target etc. via the
+// /admin/exit-nodes page after the auto-detect.
+func upsertExitServerFromSyncNode(d *sql.DB, n SyncNodeInfo) error {
+	_, err := d.Exec(
+		`INSERT INTO exit_servers (node_id, hostname, tailscale_ip, enabled, created_at)
+		 VALUES (?, ?, '', 1, strftime('%s', 'now'))
+		 ON CONFLICT(node_id) DO UPDATE SET
+		   hostname = excluded.hostname`,
+		n.ID, n.Hostname,
+	)
+	return err
 }
 
 // SetDeviceMetaNodeOwner updates the os + device_type columns on

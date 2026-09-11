@@ -339,12 +339,13 @@ func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *ht
 			}
 		}
 		syncInfos = append(syncInfos, db.SyncNodeInfo{
-			ID:       n.ID,
-			Hostname: n.Hostname,
-			Tag:      tag,
-			Username: n.UserName,
-			HSUserID: hsUID,
-			TaggedBy: c.UserID,
+			ID:         n.ID,
+			Hostname:   n.Hostname,
+			Tag:        tag,
+			Username:   n.UserName,
+			HSUserID:   hsUID,
+			TaggedBy:   c.UserID,
+			IsExitNode: n.IsExitNode, // B-mod-first-run-adoption T6: auto-detect exit-servers
 		})
 	}
 	ins, upd, err := db.SyncNodesFromHeadscale(s.dbc(), syncInfos)
