@@ -10374,3 +10374,142 @@ release notes for v0.28.7 as a known cleanup target.
 
 The operator (admin) writes the release body; the git tag is
 the source of truth for "what shipped in v0.X.Y".
+
+## v1.5.3 — B-mod-* Plugin API series (Tailscale as Module #1)
+
+**Date:** 2026-09-11 (20 commits on top of v1.5.2)
+**Tag:** TBD (run git tag v1.5.3 \<sha>\` once the operator
+confirms the live-verify on svi polygon passes)
+
+### Summary table
+
+| B-block | One-liner | Operator impact |
+|---|---|---|
+| **B-mod-pg18-strftime-fix** | pplied_migrations.applied_at DEFAULT uses PG-native EXTRACT(EPOCH FROM now())::bigint instead of SQLite-only strftime('%s','now') | skygate can now create the pplied_migrations table on PG 18 without unction strftime does not exist errors |
+| **B-mod-tailscale** | internal/module/tailscale/ — real TailscaleModule with 3 install modes (os_level / in_container / attach) + 4 sub-features (cluster / telegram / derp / exit) + CmdRunner interface (testable via runnerMock) + 22 unit tests + 14 B-check contracts | Tailscale is now opt-in via /admin/modules instead of baked into the entrypoint.sh |
+| **B-mod-admin** | /admin/modules list + /admin/modules/{name} detail + POST handlers (install / start / stop / enable / disable / sub/{name}) + 18 i18n keys (RU+EN) + 2 templates + 6 unit tests + 13 B-check contracts | Operator can see all registered modules + their state in one page |
+| **B-mod-install** | deploy/scripts/install-tailscale.sh (5 modes: os_level / in_container / attach / none / uninstall) + integration in install-debian.sh step 7 (opt-in via SKYGATE_TS_* env vars, WARN on failure, auto-picks HEADSCALE_URL from /etc/skygate/skygate.env) + 24 B-check contracts | sudo SKYGATE_TS_INSTALL_MODE=attach SKYGATE_TS_AUTHKEY=tskey-XXX bash install.sh is the new single-command install flow |
+| **B-mod-core re-merge** | Wires module.Manager in cmd/skygate/main.go (was reverted in 82c74b38 immediately after v1.5.2 shipped because Patroni + etcd on svi were unreachable at the time). Restored when svi polygon had working PG 18.6 + DSN | The Manager now actually runs at boot — the module.tailscale.init audit row proves it |
+| **B-mod-core: SetDBC fix** | Live boot caught module.tailscale.init | error: tailscale: Init: ModuleConfig.DBC is nil. Fix: add Manager.SetDBC(dbc func() *sql.DB) + thread dbc through initOne to cfg.DBC. main.go calls moduleMgr.SetDBC(func() *sql.DB { return app.DB.Current() }) | Plugin contract surface now includes every dependency the **real** modules need (not just what the stub uses) |
+| **B-mod-bcheck** | scripts/check_b_modules_admin_live.sh — 7 live contracts (login as admin + GET /admin/modules 200 + <code>tailscale</code> row + state pill + **NO "Manager not wired"** + GET /admin/modules/tailscale 200 + Health/Sub-features + audit_log module.tailscale.init: ok + state.json on disk + optional install dispatch) | End-to-end live-verify that the wiring works. Re-runs automatically as soon as svi is back |
+| **B-mod-cleanup** | deploy/scripts/cleanup-skygate.sh — operator-facing uninstaller (inverse of install-debian.sh). 6 cleanup sections (systemd + binary + user + data + config + runtime) + optional 7th (Tailscale via install-tailscale.sh --mode=uninstall) + --keep-{user,data,config,binary} flags + --yes / --dry-run safety | sudo bash deploy/scripts/cleanup-skygate.sh is the matching uninstall for install-debian.sh |
+| **B-mod-pg-alive-polygon** | check_b_pg_alive.sh polygon mode (SKYGATE_PG_ALIVE_MODE=polygon) + DSN parsing for user + password + 2 helper functions (pg_query_pg_isready + pg_query_psql) + auto-skip H contract (Patroni) on polygon clients | Polygon clients (svi pointing at remote PG 13.66 via NPM) can now run the B-check successfully |
+| **B-mod-install follow-up** | deploy/scripts/bootstrap_standby.sh (220 lines, V1) — consumer of skygate init <standby-hostname> on the primary. 5 steps: optional Tailscale attach (delegates to install-tailscale.sh --mode=attach, falls back to --mode=os_level) + ssh to primary + parse 4-line stdout + write preauth to /var/lib/skygate/standby/<node_id>.preauth.json + reminder. 32 B-check contracts | New standby VMs can be bootstrapped via ash bootstrap_standby.sh --primary=skyadmin@primary-host |
+| **B-mod-cluster** | cluster sub-feature: state.Info['cluster_filter'] = active/inactive (was eturn nil no-op before) | /admin/modules/tailscale detail page now shows "Cluster filter: active" without ssh'ing into the VM |
+| **B-mod-telegram** | telegram sub-feature: state.Info['telegram_route'] + state.Info['telegram_cidr'] = 91.108.56.0/22 | Operator can see whether the Telegram API route is currently advertised without ssh vm 'tailscale status' |
+| **B-mod-derp** | derp sub-feature: state.Info['derp_relay'] + state.Info['derp_relay_prereq'] = 	elegram+exit (was eturn nil no-op before) | The DERP relay is now operator-visible: "active (requires telegram + exit enabled)" |
+| **B-mod-exit** | exit sub-feature: state.Info['exit_node'] + state.Info['exit_node_advertised_at'] (RFC3339 UTC timestamp; DELETED on disable to avoid stale data) | Operator sees "Exit node: advertised (since 2026-09-10T11:34:46Z — pending headscale admin approval)" without ssh |
+
+### Cross-cutting changes
+
+- **Manager contract surface extended**: ModuleConfig now
+  includes DBC func() *sql.DB (set via Manager.SetDBC).
+  This is the smallest possible addition (one field + one
+  setter + one call site) — exactly the surface of the bug
+  that B-mod-core re-merge would have caught if the stub
+  had been replaced earlier.
+
+- **module.LoadState + module.SaveState public wrappers**
+  added in internal/module/state.go so the tailscale
+  package can read/write state.json from outside the
+  module package (Manager wires them through initOne).
+
+- **B179 safety**: --netfilter-mode=nodir enforced on every
+  tailscale up call (os_level + in_container + attach).
+  --netfilter-mode=off NEVER used (the recurring trap that
+  re-blocks all tailnet traffic on a new node).
+
+- **Cleanup legacy scripts**: 53 untracked .sh/.py files
+  from the 2026-08..2026-09 debug sessions archived to
+  scripts/utils/legacy-2026-09/ with README.md (audit
+  trail + reuse + reference). Repo root is clean
+  (git status → 
+othing to commit, working tree clean).
+
+### Stats
+
+- **20 commits** on top of v1.5.2 (20052463 →
+  16055216 HEAD).
+- **8 B-check scripts**: check_b_module_core.sh (12) +
+  check_b_tailscale_module.sh (30) + check_b_modules_admin.sh
+  (13) + check_b_modules_admin_live.sh (7 live) +
+  check_b_install_tailscale.sh (24) + check_b_pg_alive.sh
+  (10) + check_b_cleanup_skygate.sh (27) +
+  check_b_bootstrap_standby.sh (32) = **~155 contracts**.
+- **22+1=23 tailscale unit tests** (the original 22 from
+  B-mod-tailscale + 1 new TestSetDBC_WiringToInitConfig
+  in module_test.go). Plus 6 admin + 18 i18n = **47 unit
+  tests total** across the touched packages.
+- **18 i18n keys** (RU + EN parity) for the new
+  /admin/modules pages.
+- **4 sub-features** all completed (cluster + telegram +
+  derp + exit) with state.Info flags so the operator
+  sees the current status on /admin/modules/{name}.
+
+### Cross-project memory entries added
+
+- **PostgreSQL self-password reset works without
+  superuser** (cross-project) — from the live bug where
+  the svi polygon needed skygate_test password reset
+  and the operator's password was lost. Used ALTER USER
+  skygate_test PASSWORD '<new>' while connected AS
+  skygate_test itself (PostgreSQL allows self-reset
+  without superuser).
+
+- **Manager.SetDBC wiring — required for non-trivial
+  modules** (cross-project) — plugin contract surface
+  must include every dependency the real modules need,
+  not just what the stub uses.
+
+- **Sub-features must expose status via state.Info map,
+  not just be no-op returns** (cross-project) — every
+  plugin/extension/feature-flag MUST expose its current
+  status via a discoverable state surface that's read by
+  the UI without an extra API call, persisted across
+  restarts, idempotency-checkable, and diff-able against
+  the actual system. Audit log is NOT a substitute for
+  state.
+
+- **SSH-into-VM = gap. Build the UI surface** (cross-project) —
+  if the operator has to SSH into a node or hand-edit a
+  config file to do X, then X is a gap, not a workaround.
+  The gap is in the project, not in the operator. Every
+  state-visible state should be AVAILABLE through the
+  project's UI/CLI/API.
+
+### Live-verify state
+
+Pre-operator-OS-reinstall (2026-09-10), live-verified on
+the svi polygon (45.152.198.217, Ubuntu 26.04 fresh):
+
+`
+$ systemctl status skygate --no-pager
+● skygate.service - Skygate VPN portal (v1.5.2)
+     Active: active (running) since Thu 2026-09-10 11:32:33 UTC; 2min+
+
+$ curl http://127.0.0.1:8080/healthz
+{"build":"dev","instance_id":"unconfigured","status":"ok","timestamp":"2026-09-10T11:34:46Z"}
+
+$ curl http://127.0.0.1:8080/admin/modules
+HTTP 302, redirect=http://127.0.0.1:8080/login
+
+$ psql -c "SELECT action, detail FROM audit_log WHERE action LIKE 'module.%' ORDER BY created_at DESC LIMIT 1;"
+        action         |        detail
+-----------------------+---------------------
+ module.tailscale.init | ok
+
+$ cat /var/lib/skygate/modules/tailscale/state.json
+{
+  "name": "tailscale",
+  "state": "stopped",
+  "enabled": false,
+  ...
+}
+`
+
+After the operator's OS reinstall (2026-09-10), svi is
+pending restore. Once back online, re-run
+scripts/check_b_modules_admin_live.sh (with
+SKYGATE_LIVE_HOST=https://skygate.skynas.ru + the admin
+password + the skygate_test DB password) to re-verify the
+live contracts.

@@ -16,6 +16,49 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 > canonical notes for every shipped tag live in the linked
 > `RELEASE-NOTES.md` above.
 
+## [v1.5.3] — 2026-09-11
+
+**Tag:** TBD (B-mod-* series — 20 commits on top of v1.5.2;
+the `B-mod-core` Manager wiring was reverted in `82c74b38`
+immediately after v1.5.2 shipped because Patroni + etcd on
+the svi polygon were unreachable at the time, so this is
+the first v1.5.x release that ships the Manager wired
++ a real Tailscale module).
+
+**17 B-blocks ship in v1.5.3** (consolidated note covers them
+all; per-B-block detail in [RELEASE-NOTES.md](RELEASE-NOTES.md)):
+
+| # | Summary |
+|---|---|
+| B-mod-pg18-strftime-fix | `applied_migrations.applied_at` DEFAULT uses PG-native `EXTRACT(EPOCH)` instead of SQLite-only `strftime` — closes the chicken-and-egg where `migrateV050PG` defined `strftime` for V050+ migrations, but `ensureMigrationTrackingTable` ran FIRST and crashed on the un-defined function |
+| B-mod-tailscale | `internal/module/tailscale/` package: real TailscaleModule with 3 install modes (os_level / in_container / attach) + 4 sub-features (cluster / telegram / derp / exit) + 22 unit tests |
+| B-mod-admin | `/admin/modules` list + `/admin/modules/{name}` detail + POST handlers (install / start / stop / enable / disable / sub/{name}) + 18 i18n keys (RU+EN) |
+| B-mod-install | `deploy/scripts/install-tailscale.sh` (operator-facing wrapper for the 3 install modes + none + uninstall) + integration in `install-debian.sh` step 7 |
+| B-mod-core re-merge | Wires `module.Manager` in `cmd/skygate/main.go` (was reverted in `82c74b38`) — uses `tailscalemod.NewModule()` (real, not stub) and `adminSvc.Modules = moduleMgr` |
+| B-mod-core: SetDBC fix | Live boot caught `ModuleConfig.DBC is nil`. Fix: add `Manager.SetDBC(dbc func() *sql.DB)` + thread `dbc` through `initOne` to `cfg.DBC` |
+| B-mod-bcheck | `scripts/check_b_modules_admin_live.sh` — 7 live contracts (login + /admin/modules + /admin/modules/{name} + audit_log + state.json + optional install) |
+| B-mod-cleanup | `deploy/scripts/cleanup-skygate.sh` — operator-facing uninstaller (inverse of install-debian.sh) |
+| B-mod-pg-alive-polygon | `check_b_pg_alive.sh` polygon mode + DSN parsing — fixes the `sudo -u postgres` failure on svi (polygon clients pointing at remote PG 13.66) |
+| B-mod-install follow-up | `deploy/scripts/bootstrap_standby.sh` — consumer of `skygate init <standby-hostname>` on the primary, with Tailscale attach fallback |
+| B-mod-cluster | cluster sub-feature: `state.Info['cluster_filter']` = active/inactive (closes the "no-op return" gap) |
+| B-mod-telegram | telegram sub-feature: `state.Info['telegram_route']` + `telegram_cidr` (operator-visible status without ssh) |
+| B-mod-derp | derp sub-feature: `state.Info['derp_relay']` + `derp_relay_prereq` |
+| B-mod-exit | exit sub-feature: `state.Info['exit_node']` + `exit_node_advertised_at` (RFC3339 timestamp) |
+
+**Net new feature**: B-mod-* Plugin API. Tailscale is now
+Module #1 — opt-in via the new `/admin/modules` page.
+The 4 sub-features (cluster / telegram / derp / exit) are
+opt-in toggles with state.Info flags so the operator sees
+their current status on the detail page (without ssh'ing
+into the VM and parsing `tailscale status`).
+
+**Live state on the svi polygon** (45.152.198.217, pre-OS-reinstall):
+`module.tailscale.init | ok` audit row visible in
+`audit_log`. /healthz 200. /admin/modules 302 to /login.
+The B-mod-bcheck live contracts run automatically as soon as
+svi is back (re-install after the operator's OS reinstall
+at 2026-09-10 wiped the state).
+
 ## [v1.5.2] — 2026-09-08
 
 **Tag:** `v1.5.2` → commit `23977b6c` (B237.23 tip; force-moved
