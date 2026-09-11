@@ -1869,7 +1869,13 @@ func main() {
 	// on every GET (see AdminModulesList / AdminModuleDetail).
 	mux.Handle("GET /admin/modules", authMW(http.HandlerFunc(adminSvc.AdminModulesList)))
 	mux.Handle("GET /admin/modules/{name}", authMW(http.HandlerFunc(adminSvc.AdminModuleDetail)))
-	mux.Handle("POST /admin/modules/{name}/{action}", authMW(http.HandlerFunc(adminSvc.AdminModulePost)))
+	// B-fix-modules-route (2026-09-11): the sub-feature toggle URL is
+	// /admin/modules/{name}/sub/{subname} — TWO segments after {name}.
+	// Go 1.22 mux {action} only matches a single segment, so the
+	// pre-fix route silently fell through to the `/` catch-all handler
+	// which 302'd to /dashboard. Use {action...} wildcard to capture
+	// the multi-segment sub-feature path.
+	mux.Handle("POST /admin/modules/{name}/{action...}", authMW(http.HandlerFunc(adminSvc.AdminModulePost)))
 	mux.Handle("GET /admin/modules/csrf", authMW(http.HandlerFunc(adminSvc.AdminModulesListCSRF)))
 	// v0.33.1.9: Tailscale web-UI management (status + auth key
 	// paste + start/stop). Pairs with the /admin/telegram
