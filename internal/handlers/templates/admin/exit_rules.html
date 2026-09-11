@@ -20,6 +20,54 @@
 {{if .rolled}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.rolled_back"}}</div>{{end}}
 {{if .reapplied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.reapplied"}}</div>{{end}}
 
+{{/* 2026-09-11 (Issue #2 closure): admin add form.
+     Lets admin add an exit-rule for another portal user's
+     device. The handler (PostAdminExitRule) preserves the
+     TARGET user as device_rules.user_id, so the headscale
+     ACL src stays = device owner — admin acts on behalf
+     of the user but doesn't impersonate them at the ACL
+     layer. */}}
+{{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.add_form_applied"}}</div>{{end}}
+{{if .err}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{.err}}</div>{{end}}
+<div class="card">
+  <h3><i class="fa-solid fa-plus"></i> {{t "exit_rules_admin.add_form_title"}}</h3>
+  <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px 0">{{t "exit_rules_admin.add_form_help"}}</p>
+  <form method="post" action="/admin/exit-rules" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;align-items:end">
+    <label style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_user_id"}}</span>
+      <input type="number" name="user_id" value="{{.form_user_id}}" required style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_device_id"}}</span>
+      <input type="number" name="device_id" value="{{.form_device_id}}" required style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_exit_node"}}</span>
+      <input type="text" name="exit_node" value="{{.form_exit_node}}" required placeholder="emilia" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_target_type"}}</span>
+      <select name="target_type" required style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+        <option value="ip"{{if eq .form_target_type "ip"}} selected{{end}}>ip</option>
+        <option value="subnet"{{if eq .form_target_type "subnet"}} selected{{end}}>subnet</option>
+        <option value="domain"{{if eq .form_target_type "domain"}} selected{{end}}>domain</option>
+      </select>
+    </label>
+    <label style="display:flex;flex-direction:column;gap:2px;grid-column:1/2">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_target_value"}}</span>
+      <input type="text" name="target_value" value="{{.form_target_value}}" required placeholder="1.2.3.4 or example.com" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_action"}}</span>
+      <select name="action" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+        <option value="accept"{{if or (not .form_action) (eq .form_action "accept")}} selected{{end}}>accept</option>
+        <option value="deny"{{if eq .form_action "deny"}} selected{{end}}>deny</option>
+      </select>
+    </label>
+    <button type="submit" class="btn btn-primary" style="grid-column:2/3;justify-self:end"><i class="fa-solid fa-plus"></i> {{t "exit_rules_admin.add_form_submit"}}</button>
+  </form>
+</div>
+
 {{/* 2026-08-06: preferred-mismatch banner. Surfaces the count of
      rules whose exit_node_id doesn't match the device's preferred
      exit-node. Tells the admin "your rules are configured but

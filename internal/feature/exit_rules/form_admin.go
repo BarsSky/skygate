@@ -568,6 +568,21 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// rule count scoped to this device only.
 		"DeviceFilter":    deviceFilter,
 		"DeviceRuleCount": len(rr),
+		// 2026-09-11 (Issue #2 closure): admin add form state.
+		// The form posts to /admin/exit-rules and redirects
+		// back here with ?err=...&form_*=... on validation
+		// failure, or ?applied=1 on success. The template
+		// renders the form with the user's typed values
+		// preserved (B237.19 flash-banner UX, mirrored from
+		// /my/exit-rules).
+		"err":              r.URL.Query().Get("err"),
+		"applied":          r.URL.Query().Get("applied") == "1",
+		"form_user_id":     r.URL.Query().Get("form_user_id"),
+		"form_device_id":   r.URL.Query().Get("form_device_id"),
+		"form_exit_node":   r.URL.Query().Get("form_exit_node"),
+		"form_target_type": r.URL.Query().Get("form_target_type"),
+		"form_target_value":r.URL.Query().Get("form_target_value"),
+		"form_action":      r.URL.Query().Get("form_action"),
 	})
 }
 
