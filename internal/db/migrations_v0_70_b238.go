@@ -1,6 +1,6 @@
 package db
 
-// migrations_v0_70_b236.go — v0.70 (B236) — portal_users
+// migrations_v0_70_b238.go — v0.70 (B238) — portal_users
 // AFTER UPDATE audit trigger.
 //
 // Operator 2026-09-11: someone rotated the
@@ -13,7 +13,7 @@ package db
 // SKYGATE_ADMIN_PASS env var, so login started returning
 // 401 for the operator.
 //
-// B236 closes the visibility gap at the DB level: an
+// B238 closes the visibility gap at the DB level: an
 // AFTER UPDATE trigger on portal_users writes one
 // `password_change_db` audit row whenever
 // `OLD.password_hash IS DISTINCT FROM NEW.password_hash`
@@ -27,7 +27,7 @@ package db
 //
 // Coexistence with the UI `password_change` audit row:
 // POST /password_change writes 'password_change' (via
-// feature/auth/service.go:376). B236's trigger ALSO
+// feature/auth/service.go:376). B238's trigger ALSO
 // fires and writes 'password_change_db'. Two rows is
 // intentional — the UI row attributes the change to the
 // actor (user_id), the DB row attributes it to the
@@ -37,7 +37,7 @@ package db
 // UI row in the same timeframe), the operator knows
 // the password was changed outside the UI.
 //
-// 2026-09-11: v0.70 (B236).
+// 2026-09-11: v0.70 (B238).
 
 import (
 	"database/sql"

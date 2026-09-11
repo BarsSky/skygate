@@ -16435,3 +16435,70 @@ bind) + 12 B-check scripts (90s) = ~3 minutes total wall clock,
 but ~30 minutes of human investigation (4 real bugs caught,
 each with a fix + commit + push + verify cycle).
 
+  - **B238 (v1.5.2+, 2026-09-11) — portal_users
+    AFTER UPDATE audit trigger (catches out-of-band
+    password_hash rotations)**. Operator 2026-09-11:
+    the `skyadmin` portal_users password_hash in
+    skygate_staging was rotated OUTSIDE skygate (a
+    cost-10 bcrypt hash via an external CLI, not via
+    the /password_change form which uses
+    auth.HashPassword at cost-12). The skygate UI
+    never logged a `password_change` audit row for
+    the rotation, but the new hash no longer matched
+    SKYGATE_ADMIN_PASS, so login started returning
+    401 for the operator with no visible reason —
+    audit_log showed 11+ `login_fail` rows for
+    skyadmin over the week and zero matching
+    `password_change` / `user_password_reset` rows
+    since 2026-02. B238 closes the visibility gap at
+    the DB level: an AFTER UPDATE trigger on
+    portal_users writes one `password_change_db`
+    audit row whenever `OLD.password_hash IS
+    DISTINCT FROM NEW.password_hash` (regardless of
+    WHO did the UPDATE — skygate UI, psql, a one-off
+    recovery script, an ORM, etc.). Detail captures
+    both hash prefixes (7 chars of each — bcrypt
+    version + cost + first salt bytes) plus
+    `pg_current_xact_id` so the operator can
+    correlate the row with whatever Postgres logs
+    captured the same transaction. Coexistence with
+    the existing UI rows: `POST /password_change`
+    writes `password_change` (UI, actor attributed to
+    user_id via feature/auth/service.go:376); `POST
+    /admin/users/{id}/reset` writes
+    `user_password_reset` (admin-initiated); B238's
+    trigger writes `password_change_db` (DB-level
+    safety net, txid-attributed). When a
+    `password_change_db` row appears with no
+    matching UI row in the same timeframe, the
+    operator knows the password was rotated outside
+    skygate (the actual 2026-09-11 root cause).
+    Files: `internal/db/migrations_v0_70_b238.go`
+    (migrateV070PG: CREATE OR REPLACE FUNCTION
+    portal_users_audit_trigger + DROP/CREATE TRIGGER
+    portal_users_audit AFTER UPDATE FOR EACH ROW);
+    `internal/db/migrations_v0_70_b238_test.go`
+    (source-level tests pinning shape + driver
+    registration + v0.70 B238 label);
+    `internal/db/driver_postgres.go` (register v0.70
+    B238 in the pgMigrations slice);
+    `scripts/check_b238.sh` (8-contract B-check
+    covering migration shape, idempotency, trigger
+    DDL, OLD/NEW guard, action + 3-part detail,
+    driver registration, source-level tests pass,
+    `go build ./...` clean). Live-verified on 13.69
+    2026-09-11 12:23Z: trigger fires on
+    `UPDATE portal_users SET password_hash = '...'`
+    (audit_log row id=10582 with
+    `old_prefix=$2a$12$ new_prefix=$2a$12$
+    txid=932960`); trigger correctly SKIPS same-
+    value UPDATEs and non-password UPDATEs
+    (theme change → no row). NOTE on file naming:
+    B238 was originally committed as
+    `migrations_v0_70_b236.go` (commit `92301304`)
+    but the existing B236 in this file refers to
+    the Tailscale subnet-routes management feature
+    (2026-09-04), so the follow-up commit renames
+    the files to `b238` to avoid the AGENTS.md
+    collision.
+

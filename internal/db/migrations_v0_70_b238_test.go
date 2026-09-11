@@ -1,6 +1,6 @@
 package db
 
-// migrations_v0_70_b236_test.go — v0.70 (B236) —
+// migrations_v0_70_b238_test.go — v0.70 (B238) —
 // source-level test that pins the migration shape.
 //
 // Coverage:
@@ -16,7 +16,7 @@ package db
 //   - driver_postgres.go has the v0.70 entry pointing at
 //     the right source file
 //
-// 2026-09-11: v0.70 (B236).
+// 2026-09-11: v0.70 (B238).
 
 import (
 	"os"
@@ -62,17 +62,17 @@ func TestMigrateV070PG_Registered(t *testing.T) {
 	if !strings.Contains(src, `migrateV070PG`) {
 		t.Errorf("migrateV070PG not in driver_postgres.go dispatch")
 	}
-	if !strings.Contains(src, `migrations_v0_70_b236.go`) {
+	if !strings.Contains(src, `migrations_v0_70_b238.go`) {
 		t.Errorf("migrateV070PG entry doesn't reference its source file")
 	}
-	if !strings.Contains(src, `70, "v0.70 (B236): portal_users AFTER UPDATE audit trigger`) {
-		t.Errorf("migrateV070PG entry doesn't have the v0.70 B236 label")
+	if !strings.Contains(src, `70, "v0.70 (B238): portal_users AFTER UPDATE audit trigger`) {
+		t.Errorf("migrateV070PG entry doesn't have the v0.70 B238 label")
 	}
 }
 
 func readV070Source(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile("migrations_v0_70_b236.go")
+	b, err := os.ReadFile("migrations_v0_70_b238.go")
 	if err != nil {
 		t.Fatalf("read migration source: %v", err)
 	}
