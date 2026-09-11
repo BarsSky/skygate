@@ -31,16 +31,28 @@ set -euo pipefail
 # BEFORE sourcing install-common.sh so resolve_db_type sees the
 # right value when write_env_file runs.
 DB_TYPE=""
+# B-mod-first-run-adoption T7: parse --import-existing=true
+# to pre-populate SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true in
+# the systemd env file (closes the dry-run gap from
+# docs/install-dry-run-report.md).
+IMPORT_EXISTING=""
 for arg in "$@"; do
     case "$arg" in
         --db-type=*)
             DB_TYPE="${arg#--db-type=}"
             shift
             ;;
+        --import-existing=*)
+            IMPORT_EXISTING="${arg#--import-existing=}"
+            shift
+            ;;
     esac
 done
 if [ -n "$DB_TYPE" ]; then
     export SKYGATE_DB_TYPE="$DB_TYPE"
+fi
+if [ -n "$IMPORT_EXISTING" ]; then
+    export SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN="$IMPORT_EXISTING"
 fi
 
 # SCRIPT_DIR / REPO_ROOT are used by step 7 (B-mod-install

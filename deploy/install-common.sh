@@ -318,6 +318,16 @@ SKYGATE_DB=sqlite:${SKYGATE_DATA_DIR}/skygate.db
 # you specifically need to fall back to the old naming.
 SKYGATE_DB_DSN=
 
+# === First-run auto-sync (B-mod-first-run-adoption T7) ===
+# If 'true' AND node_owner_map is empty AND at least one
+# portal_user exists, run SyncNodesFromHeadscale + exit-server
+# auto-detect on first boot. The "deploy skygate as a sidecar
+# to an existing headscale" flow goes from manual "click Sync
+# from headscale" to fully automatic on first boot. Default:
+# empty (auto-sync OFF). Set to 'true' for the sidecar flow.
+# See docs/sidecar-mode.md "First-run adoption" + docs/install-dry-run-report.md.
+SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=
+
 # === Optional: Tailscale in-container ===
 # Set TS_AUTHKEY_FILE to /etc/skygate/ts_authkey (after writing
 # the authkey file) to enable in-container tailscaled. Default:
@@ -485,6 +495,15 @@ print_next_steps() {
      Required keys (already in the file with placeholders):
        HEADSCALE_URL=        # e.g. http://localhost:50444
        HEADSCALE_API_KEY=    # from 'headscale apikeys create'
+
+     Optional (B-mod-first-run-adoption T7 — sidecar adoption):
+       SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true
+       # If you're deploying skygate NEXT TO an existing headscale
+       # that already has nodes, set this to "true" so skygate
+       # auto-imports them on first boot. See docs/sidecar-mode.md
+       # "First-run adoption" + docs/install-dry-run-report.md.
+       # Default empty = auto-sync OFF (you'll have to click
+       # 'Sync from headscale' on /admin/devices manually).
 
   2. Restart the service to pick up the new env:
 

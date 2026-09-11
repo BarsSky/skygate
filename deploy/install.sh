@@ -142,5 +142,11 @@ echo "[install] dispatching to $PER_OS"
 export GITHUB_OWNER GITHUB_REPO SKYGATE_VERSION SKYGATE_CHANNEL
 export SKYGATE_PORT SKYGATE_USER SKYGATE_DATA_DIR SKYGATE_ETC_DIR
 export SKYGATE_BIN SKIP_VERIFY
+# B-mod-first-run-adoption T7: pass-through the auto-sync flag
+# so the per-OS installer (e.g. install-debian.sh's write_env_file)
+# can pre-populate it in /etc/skygate/skygate.env. Default empty
+# (auto-sync OFF). Set SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=true
+# in the calling environment for the sidecar flow.
+export SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN
 
 exec "$PER_OS" "$@"
