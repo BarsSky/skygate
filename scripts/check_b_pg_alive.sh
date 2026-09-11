@@ -139,7 +139,11 @@ else
     # (between :// and :), then password (between user
     # and @).
     DB_USER=$(echo "$SKYGATE_DB_DSN" | sed -E 's|^postgres://([^:]+):.*|\1|')
-    DB_PASS=$(echo "$SKYGATE_DB_DSN" | sed -E 's|^postgres://||' | sed -E 's|^(.+)@.+$|\1|')
+    # Strip postgres://USER: then strip @HOST — what's left is the password.
+    # The previous version's `^(.+)@.+$` greedy match captured user+password
+    # when the password contained special characters (verified live on svi
+    # 2026-09-11 with password e...f6 — got "skygate_test:ebbab134..." instead).
+    DB_PASS=$(echo "$SKYGATE_DB_DSN" | sed -E 's|^postgres://[^:]+:||' | sed -E 's|@.*$||')
 fi
 
 if [ "$SKIP_RUNTIME" = "false" ]; then
