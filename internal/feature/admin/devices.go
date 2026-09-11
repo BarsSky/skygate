@@ -236,6 +236,18 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// B-mod-first-run-adoption T3: wire the first-run banner.
+	// Shows on /admin/devices when node_owner_map is empty AND
+	// headscale has un-adopted users — the classic "I just
+	// installed skygate as a sidecar to an existing headscale,
+	// where do I sync my nodes?" state. Operator reported this
+	// gap in the 2026-09-11 deployment log.
+	firstRunShow, _ := s.firstRunNeedsBanner(r.Context())
+	firstRunUnadopted := 0
+	if firstRunShow {
+		firstRunUnadopted = s.firstRunUnadoptedCount(r.Context())
+	}
+
 	s.Backend.RenderWithLayout(w, r, "admin/devices.html", c, map[string]any{
 		"Nodes":             deviceRowsWithDead,
 		"Users":             users,
@@ -277,6 +289,14 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		// so the operator doesn't see "tagged-devices"
 		// (the synthetic headscale user) as a target.
 		"TransferTargets": transferTargets(skygateUserByName),
+		// B-mod-first-run-adoption T3: banner state for the
+		// template. .FirstRunBanner is the human-readable
+		// "you have N un-adopted headscale users" hint;
+		// .FirstRunUnadoptedCount is the integer for the
+		// template's "Sync N users now" button. Both are
+		// empty/0 when the banner is hidden.
+		"FirstRunBanner":         firstRunShow,
+		"FirstRunUnadoptedCount": firstRunUnadopted,
 	})
 }
 

@@ -37,6 +37,36 @@
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
 {{end}}
 
+{{/* B-mod-first-run-adoption T3: first-run banner. Shown when
+     node_owner_map is empty AND headscale has un-adopted users.
+     The classic "I just installed skygate as a sidecar to an
+     existing headscale, where do I sync my existing nodes?"
+     state. Operator reported this gap in the 2026-09-11
+     deployment log. The "Sync from headscale" button below
+     closes the loop — clicking it populates node_owner_map
+     from headscale's existing data, and the banner disappears
+     on the next page load. */}}
+{{if .FirstRunBanner}}
+{{if gt .FirstRunUnadoptedCount 0}}
+<div class="alert alert-warn" style="margin-bottom:12px">
+  <i class="fa-solid fa-circle-info"></i>
+  <strong>Setup incomplete:</strong>
+  headscale has <strong>{{.FirstRunUnadoptedCount}}</strong> un-adopted
+  user{{if gt .FirstRunUnadoptedCount 1}}s{{end}}
+  (node_owner_map is empty).
+  Click <em>Sync from headscale</em> below to import the existing
+  nodes.
+</div>
+{{else}}
+<div class="alert alert-warn" style="margin-bottom:12px">
+  <i class="fa-solid fa-circle-info"></i>
+  <strong>Setup incomplete:</strong>
+  headscale has users that aren't yet linked to skygate portal users.
+  Click <em>Sync from headscale</em> below to import.
+</div>
+{{end}}
+{{end}}
+
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-server"></i>{{t "devices.title_all"}}</h2>
