@@ -113,6 +113,33 @@ bootstrap admin (defaults to `admin` / `admin` — **change
 immediately**), and verify `/admin/devices` shows your
 existing headscale nodes already imported.
 
+#### Verify SKYGATE_ADMIN_USER ↔ headscale admin sync (v1.5.2+)
+
+After first login, run the admin-user-sync B-check to verify the
+bootstrap admin is consistent across skygate + headscale:
+
+```bash
+bash scripts/check_b_admin_user_sync.sh
+# Expected output:
+#   PASS  A: exactly one admin in portal_users
+#   PASS  B: portal admin name (skyadmin) == SKYGATE_ADMIN_USER
+#   PASS  C: admin has headscale_user_id=86
+#   PASS  D: headscale has user with id=86 (name=skyadmin)
+#   PASS  E: headscale name (skyadmin) == portal name (skyadmin)
+```
+
+If any contract FAILs (drift detected), `/admin/users` shows a
+banner with the appropriate remediation:
+- "Adopt as Admin" button — when headscale has the expected user
+  but portal doesn't have a matching row (POST
+  /admin/users/HSOrphan/adopt with promote_to_admin=true).
+- Per-row "Rename" button — when the portal admin's username
+  doesn't match SKYGATE_ADMIN_USER (POST /admin/users/{id}/rename).
+
+See `docs/internal/ha-v1.5.0-execution.md` and the
+`B-mod-admin-user-sync` row in `AGENTS.md` for the full design
+notes (option c, full rename flow).
+
 ### Mode B: PostgreSQL (recommended for prod)
 
 ```bash

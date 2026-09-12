@@ -16679,3 +16679,101 @@ each with a fix + commit + push + verify cycle).
     the files to `b238` to avoid the AGENTS.md
     collision.
 
+## B-mod-admin-user-sync (2026-09-12) — SKYGATE_ADMIN_USER ↔ headscale admin drift remediation (option c, full rename flow)
+
+**Проблема** (оператор 2026-09-12, цитата): "по поводу SKYGATE_USER
+необходимо при подключении к headscale либо принимать как админа
+главного пользователя в headscale и делать такого же
+администратором с переименованием (при этом если через вебинтерфейс
+то должно быть информирование с подтверждением что администратор
+skygate будет переименован аналогично с headscale или наоборот,
+стоит изучить вопрос подробнее чтобы определить как лучше и как
+оно сейчас)".
+
+**Pre-fix state** (как было): skygate создавал admin-пользователя в
+portal_users + headscale при первом старте, но bootstrap flow был
+идемпотентный — если оператор менял `SKYGATE_ADMIN_USER` в .env
+после первого деплоя, НИЧЕГО не обновлялось. Drifted состояния
+обнаруживались только через ручной SQL или `bash check_b_admin_user_sync.sh`,
+а remediation требовал SSH + `docker exec headscale headscale users
+rename -i <id> <new>` + `UPDATE portal_users` вручную + restart
+skygate. 3 шага + 2 команды = неприемлемый gap.
+
+**3 варианта** рассмотрены (см. `docs/superpowers/plans/2026-09-12-b-mod-admin-user-sync.md`):
+  - (a) Только detection (B-check, banner) — закрывает alert gap,
+    но не remediation.
+  - (b) Auto-sync at boot (rename headscale-side to match
+    SKYGATE_ADMIN_USER) — опасно: silent rename при рестарте =
+    data loss для ACL tagOwners + SSH rules, которые ссылаются
+    на старые имена.
+  - (c) Full rename flow (B-check + orphan adopt promotion + rename
+    handler + startup detection + UI confirmation) — **выбран**.
+    Оператор контролирует КАЖДЫЙ rename (с confirm dialog), а
+    skygate делает только то что оператор явно сказал.
+
+**Фикс** (7 commits `0379893d..f241ed63`, ~1500 lines):
+
+1. **`scripts/check_b_admin_user_sync.sh`** (commit `0379893d`, T1) —
+   B-check с 5 contracts:
+   - A: ровно один admin в portal_users (FAIL если 0 или >1)
+   - B: portal admin name == SKYGATE_ADMIN_USER
+   - C: headscale_user_id IS NOT NULL
+   - D: headscale has user with the matching id
+   - E: headscale name == portal name (WARN на drift, FAIL с --strict)
+   Live verified 2026-09-12 на 13.69 (5/5 contracts PASS).
+
+2. **`deploy/install-common.sh` + `install-debian.sh`** (commit `ee55afae`, T2) —
+   3 standalone-invocation bugs fixed: defaults block для 12
+   env vars; SKIP_VERIFY fallback to SKYGATE_SKIP_VERIFY;
+   SHA256SUMS download gated on skip_verify flag.
+
+3. **`internal/headscale/users.go` RenameUser + `users_rename_test.go`**
+   (commit `33a4faac`, T3) — POST /api/v1/user/{id}/rename/{new_name}
+   (NO body, NOT POST /api/v1/user/{id}/rename с {"name":..."} body).
+   url.PathEscape на new name, InvalidateCache после success,
+   *APIError surfaced на 5xx. Live verified на 13.69 — rename
+   skyadmin→skyadmin-test→skyadmin работает, кэш инвалидируется.
+
+4. **`internal/feature/admin/users.go` PostAdminUserRename + UI + i18n**
+   (commit `86e8b4f1`, T4) — single-button rename per row в
+   /admin/users/{id}. Покрывает: validation pattern (lowercase/digits/_/-),
+   no-op short-circuit (new==current → skip headscale), 500
+   "expected exactly one user" → friendly ?err= flash, UNIQUE
+   constraint violation на portal_users.username → 500 с audit
+   row + advisory "HEADSCALE ALREADY RENAMED — revert via CLI".
+
+5. **`db.InsertPortalUserAdoptAdmin` + handler dispatch**
+   (commit `c9ca555f`, T5) — `promote_to_admin=true` form field на
+   orphan-adopt path. Defensive: ONLY literal "true" promotes
+   (не "on"/"yes"/"1" — будущий checkbox UI не должен случайно
+   promote). TDD: 3 unit tests + 5 defensive-value tests.
+
+6. **`internal/feature/admin/users_sync_banner.go` + template banner**
+   (commit `f241ed63`, T6) — startup drift detection. 9 unit tests
+   pin the pure decision logic across 7 cases (none / adopt /
+   promote / hidden). Banner shows "Adopt as Admin" кнопку с
+   hidden `promote_to_admin=true` + hs_id когда drift detected.
+   Promote-to-admin handler (PostAdminUserPromote) → T6.1 (deferred).
+
+**Verified end-to-end** (T9, live на 13.69):
+- `bash scripts/check_b_admin_user_sync.sh` → 5/5 PASS (skyadmin, hs_id=86)
+- `go test ./...` → 54 packages, 0 failures
+- `go build ./...` → success
+- `go vet ./...` → clean
+- live rename probe: `POST /api/v1/user/86/rename/skyadmin-test` → 200
+  {"user":{"id":"86","name":"skyadmin-test",...}}, restore → OK
+
+**Known remaining gaps** (NOT B-mod-admin-user-sync):
+- PostAdminUserPromote handler (T6.1) — promote button is
+  banner-only text; operator must `UPDATE portal_users SET
+  is_admin=1` by hand if the linked admin's is_admin flips to 0.
+- Duplicate headscale user (id=1 + id=86 both named skyadmin — pre-existing)
+  blocks the rename; operator must delete one via PostAdminDeleteUser
+  first. B-check (T1) contract E WARN flags this; the new handler
+  (T4) returns a friendly ?err= flash with "delete the duplicate first".
+- Live rename of admin user breaks ACL tagOwners + SSH rules that
+  reference the old name (this is by design — operator confirms
+  before rename; but the tagOwners rebuild happens on the next ACL
+  apply cycle). Documented in `docs/features.md` (admin user section).
+
+
