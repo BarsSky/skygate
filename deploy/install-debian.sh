@@ -64,6 +64,21 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 . "${SCRIPT_DIR}/install-common.sh"
 
+# 2026-09-12: defaults for SKYGATE_* env vars so this script works
+# STANDALONE (`sudo SKYGATE_VERSION=v1.5.0 bash install-debian.sh`)
+# without requiring install.sh to dispatch with env exports. The
+# install.sh dispatcher sets these explicitly (so the operator's
+# --db-type / --port / --user flow wins), but a direct invocation
+# should still work without a "set -u: unbound variable" crash.
+: "${SKYGATE_PORT:=8080}"
+: "${SKYGATE_USER:=skygate}"
+: "${SKYGATE_DATA_DIR:=/var/lib/skygate}"
+: "${SKYGATE_ETC_DIR:=/etc/skygate}"
+: "${SKYGATE_BIN:=/usr/local/bin/skygate}"
+: "${SKIP_VERIFY:=${SKYGATE_SKIP_VERIFY:-0}}"
+: "${SKYGATE_VERSION:=latest}"
+export SKYGATE_PORT SKYGATE_USER SKYGATE_DATA_DIR SKYGATE_ETC_DIR SKYGATE_BIN SKIP_VERIFY SKYGATE_VERSION
+
 # Sanity: only run on Debian-family
 . /etc/os-release
 case "$ID" in

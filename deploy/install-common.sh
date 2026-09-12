@@ -24,6 +24,32 @@
 # We split (1) and (3)'s service-manager bits into the per-OS
 # script; (2) and the rest of (3) live here in install-common.
 
+# -------- 2026-09-12: defaults for env vars (B-install-debian-fix) --------
+# The caller (install-debian.sh / install-rh.sh / install-alpine.sh)
+# inherits `set -euo pipefail`, which propagates to this file via
+# sourcing. Without defaults, an unset env var on a standalone
+# invocation crashes with "unbound variable" before the function
+# body even runs. The defaults here let this file work both:
+#   - Called via install.sh (env exported upstream — defaults are no-ops)
+#   - Called standalone (env vars unset — defaults apply)
+: "${GITHUB_OWNER:=BarsSky}"
+: "${GITHUB_REPO:=skygate}"
+: "${SKYGATE_VERSION:=latest}"
+: "${SKYGATE_CHANNEL:=stable}"
+: "${SKYGATE_PORT:=8080}"
+: "${SKYGATE_USER:=skygate}"
+: "${SKYGATE_DATA_DIR:=/var/lib/skygate}"
+: "${SKYGATE_ETC_DIR:=/etc/skygate}"
+: "${SKYGATE_BIN:=/usr/local/bin/skygate}"
+: "${SKIP_VERIFY:=${SKYGATE_SKIP_VERIFY:-0}}"
+: "${SKYGATE_DB_TYPE:=}"
+: "${SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN:=}"
+# Note: SKIP_VERIFY is intentionally NOT exported — it's a
+# per-invocation flag, not a runtime value. The download function
+# reads it from the env via "$SKIP_VERIFY" in the calling script's
+# scope, not via export.
+export GITHUB_OWNER GITHUB_REPO SKYGATE_VERSION SKYGATE_CHANNEL SKYGATE_PORT SKYGATE_USER SKYGATE_DATA_DIR SKYGATE_ETC_DIR SKYGATE_BIN SKYGATE_DB_TYPE SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN
+
 # -------- B-mod-sqlite-pg-bidi v1.5.4: --db-type flag handling --------
 # The operator can choose the DB backend at install time via:
 #   --db-type=sqlite    (default for self-host, no PG needed)
@@ -175,9 +201,35 @@ download_and_verify() {
         return 1
     fi
     echo "[install] downloading $sums_url"
-    if ! curl -fsSL --retry 3 --retry-delay 2 -o "$work/SHA256SUMS" "$sums_url"; then
-        echo "ERROR: failed to download SHA256SUMS from $sums_url" >&2
-        return 1
+    # 2026-09-12: SKIP_VERIFY=1 also skips the SHA256SUMS download.
+    # Some releases (notably v1.5.3) publish a tarball but not the
+    # SHA256SUMS file (a release pipeline hiccup). Without this
+    # fallback, an operator who sets SKIP_VERIFY=1 still fails the
+    # install because the SHA256SUMS URL 404s. With this fallback,
+    # SKIP_VERIFY=1 means "trust whatever you can download".
+    #
+    # Important: SKYGATE_SKIP_VERIFY=1 must reach this script
+    # even under sudo. The default Ubuntu sudoers ships with
+    # `Defaults env_reset`, which strips the env. Operators must
+    # either run the script as root directly or use `sudo -E`
+    # to preserve the env var. install.sh handles this for the
+    # default dispatch path; standalone calls (sudo bash
+    # install-debian.sh) need `sudo -E`.
+    if [ "$skip_verify" = "1" ]; then
+        echo "[install] SKYGATE_SKIP_VERIFY=1, skipping SHA256SUMS download"
+        SKIP_SUMS_DOWNLOAD=1
+    else
+        SKIP_SUMS_DOWNLOAD=0
+    fi
+    if [ "$SKIP_SUMS_DOWNLOAD" != "1" ]; then
+        if ! curl -fsSL --retry 3 --retry-delay 2 -o "$work/SHA256SUMS" "$sums_url"; then
+            echo "ERROR: failed to download SHA256SUMS from $sums_url" >&2
+            echo "If the release doesn't ship a SHA256SUMS file (some" >&2
+            echo "releases do — e.g. v1.5.3), re-run with" >&2
+            echo "  SKYGATE_SKIP_VERIFY=1 sudo -E bash install-debian.sh" >&2
+            echo "(the 'sudo -E' preserves the env across sudo's env_reset)." >&2
+            return 1
+        fi
     fi
 
     if [ "$skip_verify" != "1" ]; then
