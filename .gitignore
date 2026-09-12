@@ -48,6 +48,31 @@ copy_*.sh
 debug_*.sh
 /debug.sh
 debug.sh
+
+# ---- One-shot investigation scripts (B243 live-debug + reconcile investigation) ----
+# Any file matching __* in the root is a one-off probe / debug /
+# install / verify script that was created during live ops.
+# `__` prefix is the convention; scripts/verify_*.sh + scripts/
+# check_b_*.sh are the production ones (committed, referenced by
+# Makefile / verify_pre_deploy.sh).
+__*.sh
+__*.txt
+__*.py
+__*.md
+
+# Python __pycache__ from scripts/__*.py (the probe scripts above)
+__pycache__/
+
+# PowerShell artifact: stray "=NNN" files (0 bytes) that get created
+# when a redirect token is mistyped (e.g. `> =140`). Harmless; just
+# noise in `git status`.
+=*
+
+# Pre-B243 rollback insurance (preserved on the VM at
+# /home/skyadmin/skygate/internal/headscale/reconcile.go.b243-pre,
+# then deleted after live verified). When the fix ships to git
+# the .pre file should be removed.
+*.b243-pre
 reset_*.sh
 fix_*.sh
 cleanup_*.sh
