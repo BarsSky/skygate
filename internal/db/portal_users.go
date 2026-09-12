@@ -497,6 +497,8 @@ func InsertPortalUser(d *sql.DB, username, passwordHash string, isAdmin bool, hs
 // Behavior:
 //   - is_admin is hardcoded to 0 (adopted users are never admin;
 //     admin can promote them after via the existing edit flow).
+//     For the "promote to admin" variant see InsertPortalUserAdoptAdmin
+//     (T5 of admin-user-sync, 2026-09-12).
 //   - theme / font_family / font_scale / selection_bg are NOT
 //     set explicitly — the V057 column defaults ('linear' /
 //     'manrope' / 0 / '') apply. This matches the behaviour of
@@ -518,6 +520,40 @@ func InsertPortalUserAdopt(d *sql.DB, username, passwordHash string, hsID int64)
 		// row when the conflict fires (the conflict path doesn't
 		// project id). Treat this as "already adopted", not as
 		// an error — the handler will render a friendly flash.
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
+// InsertPortalUserAdoptAdmin is the T5 variant of InsertPortalUserAdopt
+// that lets the operator adopt an orphan AS THE SKYGATE ADMIN USER.
+// This closes the "I have a headscale user that should be the skygate
+// admin, but the B141 adopt button always created is_admin=0" gap.
+//
+// 2026-09-12: v1.5.2 admin-user-sync T5. The handler reads the
+// promote_to_admin form field on the /admin/users HSOrphans row
+// and dispatches to either InsertPortalUserAdopt (no flag) or
+// InsertPortalUserAdoptAdmin (flag set).
+//
+// The companion startup detection (T6) also uses this path: when
+// SKYGATE_ADMIN_USER doesn't match any portal user, the dashboard
+// banner offers "Adopt as Admin" instead of the regular "Adopt"
+// button — T5 is what makes the banner's button work.
+//
+// Same return contract as InsertPortalUserAdopt: (id, true, nil)
+// on insert, (0, false, nil) on no-op duplicate, (0, false, err)
+// on real DB error.
+func InsertPortalUserAdoptAdmin(d *sql.DB, username, passwordHash string, isAdmin bool, hsID int64) (int64, bool, error) {
+	adminI := 0
+	if isAdmin {
+		adminI = 1
+	}
+	var id int64
+	err := d.QueryRow(qInsertPortalUserAdoptAdmin, username, passwordHash, adminI, hsID).Scan(&id)
+	if err == sql.ErrNoRows {
 		return 0, false, nil
 	}
 	if err != nil {

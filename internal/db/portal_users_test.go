@@ -483,6 +483,106 @@ func TestGetOtherHSUserIDs(t *testing.T) {
 	}
 }
 
+// --- InsertPortalUserAdopt / InsertPortalUserAdoptAdmin ---
+//
+// 2026-09-12: v1.5.2 admin-user-sync T5 — InsertPortalUserAdoptAdmin
+// is the parameterized is_admin variant of InsertPortalUserAdopt.
+// Tests cover both the original (T1 B141) and the new (T5) variant
+// so a future refactor that flips the default is_admin back to 0
+// (the pre-T5 behaviour) trips the test, not the operator.
+func TestInsertPortalUserAdopt(t *testing.T) {
+	d := openTestDB(t)
+
+	id, inserted, err := InsertPortalUserAdopt(d, "orphan1", "h", 100)
+	if err != nil {
+		t.Fatalf("InsertPortalUserAdopt: %v", err)
+	}
+	if !inserted {
+		t.Errorf("inserted = false, want true (first INSERT should succeed)")
+	}
+	if id == 0 {
+		t.Errorf("id = 0, want > 0")
+	}
+
+	// Read back: is_admin must be 0 (the pre-T5 behaviour).
+	var adminI int
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id).Scan(&adminI); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if adminI != 0 {
+		t.Errorf("InsertPortalUserAdopt is_admin = %d, want 0 (pre-T5 default)", adminI)
+	}
+
+	// Duplicate username → inserted=false, no error.
+	id2, inserted2, err := InsertPortalUserAdopt(d, "orphan1", "h2", 200)
+	if err != nil {
+		t.Errorf("InsertPortalUserAdopt duplicate: want nil err (ON CONFLICT), got %v", err)
+	}
+	if inserted2 {
+		t.Errorf("InsertPortalUserAdopt duplicate: inserted = true, want false")
+	}
+	if id2 != 0 {
+		t.Errorf("InsertPortalUserAdopt duplicate: id = %d, want 0", id2)
+	}
+}
+
+func TestInsertPortalUserAdoptAdmin(t *testing.T) {
+	d := openTestDB(t)
+
+	// isAdmin=true → adminI must be 1.
+	id, inserted, err := InsertPortalUserAdoptAdmin(d, "newadmin", "h", true, 100)
+	if err != nil {
+		t.Fatalf("InsertPortalUserAdoptAdmin isAdmin=true: %v", err)
+	}
+	if !inserted {
+		t.Errorf("isAdmin=true: inserted = false, want true")
+	}
+	if id == 0 {
+		t.Errorf("isAdmin=true: id = 0, want > 0")
+	}
+	var adminI int
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id).Scan(&adminI); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if adminI != 1 {
+		t.Errorf("isAdmin=true: adminI = %d, want 1", adminI)
+	}
+
+	// isAdmin=false → adminI must be 0.
+	id2, inserted2, err := InsertPortalUserAdoptAdmin(d, "newuser", "h", false, 101)
+	if err != nil {
+		t.Fatalf("InsertPortalUserAdoptAdmin isAdmin=false: %v", err)
+	}
+	if !inserted2 {
+		t.Errorf("isAdmin=false: inserted = false, want true")
+	}
+	if id2 == 0 {
+		t.Errorf("isAdmin=false: id = 0, want > 0")
+	}
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id2).Scan(&adminI); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if adminI != 0 {
+		t.Errorf("isAdmin=false: adminI = %d, want 0", adminI)
+	}
+
+	// Duplicate username with promote_to_admin=true → no-op
+	// (returns (0, false, nil)), NOT a hard UNIQUE violation.
+	// Important: the operator clicking "Adopt as Admin" twice
+	// on the same orphan must not surface as an error — T5
+	// preserves the B141 idempotency contract.
+	id3, inserted3, err := InsertPortalUserAdoptAdmin(d, "newadmin", "h", true, 999)
+	if err != nil {
+		t.Errorf("InsertPortalUserAdoptAdmin duplicate: want nil err, got %v", err)
+	}
+	if inserted3 {
+		t.Errorf("InsertPortalUserAdoptAdmin duplicate: inserted = true, want false")
+	}
+	if id3 != 0 {
+		t.Errorf("InsertPortalUserAdoptAdmin duplicate: id = %d, want 0", id3)
+	}
+}
+
 // --- InsertPortalUser ---
 
 func TestInsertPortalUser(t *testing.T) {

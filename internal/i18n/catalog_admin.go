@@ -38,6 +38,9 @@ var ruAdmin = map[string]string{
 	"users.hs_orphan_adopt_help":              "Создать portal-аккаунт для этого headscale-юзера. Задайте начальный пароль (>=6 символов) — пользователь сможет войти в skygate. ON CONFLICT(username) DO NOTHING: повторный клик = no-op (никаких дублей).",
 	"users.hs_orphan_adopt_password_ph":       "Пароль (>=6)",
 	"users.hs_orphan_adopted_flash":           "Adopted: %s",
+	// 2026-09-12: v1.5.2 admin-user-sync T5 — promote_to_admin variant
+	"users.hs_orphan_adopt_promote_btn":       "Adopt as Admin",
+	"users.hs_orphan_adopt_promote_help":      "Создать portal-аккаунт С is_admin=1 (для SKYGATE_ADMIN_USER drift). Используйте когда check_b_admin_user_sync.sh обнаружил расхождение между SKYGATE_ADMIN_USER и headscale admin user.",
 	// 2026-09-12: v1.5.2 admin-user-sync T4 — rename button on /admin/users/{id}
 	"users.rename_btn":                       "Переименовать",
 	"users.rename_form_label":                "Новое имя (lowercase letters, digits, _ и -)",
@@ -878,6 +881,9 @@ var enAdmin = map[string]string{
 	"users.hs_orphan_adopt_help":              "Create a portal account for this headscale user. Set an initial password (>=6 chars) — the user will be able to log into skygate. ON CONFLICT(username) DO NOTHING: a second click is a no-op (no duplicates).",
 	"users.hs_orphan_adopt_password_ph":       "Password (>=6)",
 	"users.hs_orphan_adopted_flash":           "Adopted: %s",
+	// 2026-09-12: v1.5.2 admin-user-sync T5 — promote_to_admin variant
+	"users.hs_orphan_adopt_promote_btn":       "Adopt as Admin",
+	"users.hs_orphan_adopt_promote_help":      "Create a portal account WITH is_admin=1 (for SKYGATE_ADMIN_USER drift). Use when check_b_admin_user_sync.sh detected a mismatch between SKYGATE_ADMIN_USER and the headscale admin user.",
 	// 2026-09-12: v1.5.2 admin-user-sync T4 — rename button on /admin/users/{id}
 	"users.rename_btn":                       "Rename",
 	"users.rename_form_label":                "New name (lowercase letters, digits, _ and -)",

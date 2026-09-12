@@ -260,6 +260,14 @@ const (
 	// the INSERT — the V057 migration's column defaults
 	// ('linear' / 'manrope' / 0 / '') apply on insert.
 	qInsertPortalUserAdopt = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, 0, $3) ON CONFLICT(username) DO NOTHING RETURNING id`
+	// 2026-09-12: v1.5.2 admin-user-sync T5 — promote_to_admin flag
+	// on the orphan-adopt path. is_admin is parameterized (NOT
+	// hardcoded to 0 like qInsertPortalUserAdopt) so the operator
+	// can adopt an orphan that should be the skygate admin user.
+	// The companion handler (PostAdminHSOrphanAdopt) reads the
+	// promote_to_admin form field and dispatches to either
+	// InsertPortalUserAdopt or InsertPortalUserAdoptAdmin.
+	qInsertPortalUserAdoptAdmin = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4) ON CONFLICT(username) DO NOTHING RETURNING id`
 	qUpdatePasswordHash    = `UPDATE portal_users SET password_hash = $1 WHERE id = $2`
 	qUpdatePortalUsername  = `UPDATE portal_users SET username = $1 WHERE id = $2`
 	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = $1`

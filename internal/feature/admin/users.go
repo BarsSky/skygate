@@ -230,11 +230,22 @@ func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 //      normally valid — but the operator could click an old
 //      bookmarked page after the orphan was deleted).
 //   4. INSERT into portal_users with the headscale username +
-//      bcrypt-hashed password + headscale_user_id, is_admin=0.
+//      bcrypt-hashed password + headscale_user_id.
+//
+//      is_admin behavior:
+//        - promote_to_admin form field absent or != "true" →
+//          InsertPortalUserAdopt (is_admin=0; the B141 default).
+//        - promote_to_admin == "true" → InsertPortalUserAdoptAdmin
+//          (is_admin=1; added in v1.5.2 admin-user-sync T5,
+//          2026-09-12). This is what the startup detection
+//          banner (T6) calls when SKYGATE_ADMIN_USER drift is
+//          detected.
+//
 //      ON CONFLICT(username) DO NOTHING closes the concurrent
 //      adopt race (atomic primitive; see portal_users.go:
 //      InsertPortalUserAdopt).
-//   5. Audit log "hs_orphan_adopt" with username + hs_id + outcome.
+//   5. Audit log "hs_orphan_adopt" with username + hs_id +
+//      outcome + is_admin.
 //   6. 303 redirect to /admin/users?adopted=<username> on success
 //      or ?err=... on failure (no-op duplicate gets a separate
 //      ?already_adopted=<username> flash so the operator can
@@ -257,6 +268,15 @@ func (s *Service) PostAdminHSOrphanAdopt(w http.ResponseWriter, r *http.Request)
 		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape("password too short (min 6)"), http.StatusSeeOther)
 		return
 	}
+	// T5: promote_to_admin flag. The startup-detection banner
+	// (T6) sets this when SKYGATE_ADMIN_USER drift is detected;
+	// the regular per-row button does NOT set it (preserves B141
+	// behaviour). Only an explicit "true" string promotes — any
+	// other value (empty, "on", "1", "yes") falls through to
+	// is_admin=0 so a future checkbox-style UI doesn't
+	// accidentally promote users.
+	promote := strings.TrimSpace(r.FormValue("promote_to_admin")) == "true"
+
 	// Fetch the headscale user by id. The orphan list is built
 	// from ListUsers(), so the id is normally valid — but we
 	// re-validate here so a stale form (orphan deleted between
@@ -287,7 +307,15 @@ func (s *Service) PostAdminHSOrphanAdopt(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "hash: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	newID, inserted, err := db.InsertPortalUserAdopt(s.dbc(), hsName, hash, hsID)
+
+	// T5: dispatch on promote_to_admin.
+	var newID int64
+	var inserted bool
+	if promote {
+		newID, inserted, err = db.InsertPortalUserAdoptAdmin(s.dbc(), hsName, hash, true, hsID)
+	} else {
+		newID, inserted, err = db.InsertPortalUserAdopt(s.dbc(), hsName, hash, hsID)
+	}
 	if err != nil {
 		http.Error(w, "insert: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -296,12 +324,14 @@ func (s *Service) PostAdminHSOrphanAdopt(w http.ResponseWriter, r *http.Request)
 		// ON CONFLICT fired — another adopt (or a manual
 		// INSERT) already created the row. Don't treat as
 		// error; the operator gets a distinct flash so they
-		// know it was a no-op.
-		s.Backend.Audit(c.UserID, c.Username, "hs_orphan_adopt", fmt.Sprintf("hs_id=%s username=%s outcome=already_adopted id=%d", hsIDStr, hsName, newID))
+		// know it was a no-op. Audit row carries promote_admin
+		// so the operator can tell from the log which path
+		// they tried.
+		s.Backend.Audit(c.UserID, c.Username, "hs_orphan_adopt", fmt.Sprintf("hs_id=%s username=%s outcome=already_adopted id=%d promote_admin=%v", hsIDStr, hsName, newID, promote))
 		http.Redirect(w, r, "/admin/users?already_adopted="+url.QueryEscape(hsName), http.StatusSeeOther)
 		return
 	}
-	s.Backend.Audit(c.UserID, c.Username, "hs_orphan_adopt", fmt.Sprintf("hs_id=%s username=%s outcome=inserted id=%d", hsIDStr, hsName, newID))
+	s.Backend.Audit(c.UserID, c.Username, "hs_orphan_adopt", fmt.Sprintf("hs_id=%s username=%s outcome=inserted id=%d promote_admin=%v", hsIDStr, hsName, newID, promote))
 	http.Redirect(w, r, "/admin/users?adopted="+url.QueryEscape(hsName), http.StatusSeeOther)
 }
 
