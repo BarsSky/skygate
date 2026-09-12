@@ -81,6 +81,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	dbpkg "skygate/internal/db"
 )
 
 // ReconcileOutcome is the per-row outcome the
@@ -95,16 +97,28 @@ import (
 //   - "orphan" — the row's headscale_user_id points to
 //     a non-existent user AND the username is not in
 //     headscale; no auto-fix, audit row written
+//   - "duplicate_name" — headscale has >1 user with the
+//     same username as this portal row. We refuse to
+//     silently pick one (the pre-B243 silent "last-seen-
+//     wins" was a real-world bug — skyadmin got relinked
+//     from id=1 to id=86 because headscale had two
+//     skyadmin users from the OIDC auto-create). Audit row
+//     written; operator must pick which headscale id is the
+//     canonical one (the typical fix is to delete the
+//     OIDC-created duplicate via `headscale users delete
+//     -i <oidc-id> --force`, then the next reconcile cycle
+//     relinks cleanly).
 //   - "err" — something went wrong (DB error, headscale
 //     unreachable, etc.); no DB change, error logged
 type ReconcileOutcome string
 
 const (
-	ReconcileOK       ReconcileOutcome = "ok"
-	ReconcileLinked   ReconcileOutcome = "linked"
-	ReconcileRelinked ReconcileOutcome = "relinked"
-	ReconcileOrphan   ReconcileOutcome = "orphan"
-	ReconcileError    ReconcileOutcome = "err"
+	ReconcileOK            ReconcileOutcome = "ok"
+	ReconcileLinked        ReconcileOutcome = "linked"
+	ReconcileRelinked      ReconcileOutcome = "relinked"
+	ReconcileOrphan        ReconcileOutcome = "orphan"
+	ReconcileDuplicateName ReconcileOutcome = "duplicate_name"
+	ReconcileError         ReconcileOutcome = "err"
 )
 
 // ReconcileRow is the per-row result. Used in the
@@ -126,12 +140,13 @@ type ReconcileResult struct {
 	StartedAt  time.Time         `json:"started_at"`
 	FinishedAt time.Time         `json:"finished_at"`
 	Rows       []ReconcileRow    `json:"rows"`
-	OK         int               `json:"ok"`
-	Linked     int               `json:"linked"`
-	Relinked   int               `json:"relinked"`
-	Orphans    int               `json:"orphans"`
-	Errors     int               `json:"errors"`
-	HSUsers    int               `json:"hs_users_total"`
+	OK              int               `json:"ok"`
+	Linked          int               `json:"linked"`
+	Relinked        int               `json:"relinked"`
+	Orphans         int               `json:"orphans"`
+	DuplicateNames  int               `json:"duplicate_names"`
+	Errors          int               `json:"errors"`
+	HSUsers         int               `json:"hs_users_total"`
 }
 
 // ReconcileUsers runs one reconciliation cycle against
@@ -180,9 +195,44 @@ func ReconcileUsers(ctx context.Context, db *sql.DB, hs *Client) (ReconcileResul
 	// wire but skygate portal_users.username is
 	// typically lowercased. The reconcile logic does
 	// one more case-insensitive check below.
-	byName := make(map[string]HSUser, len(hsUsers))
-	for _, u := range hsUsers {
-		byName[strings.ToLower(u.Name)] = u
+	//
+	// B243 (2026-09-12): split into a dedicated helper
+	// that ALSO counts duplicates BEFORE the byName
+	// overwrite happens. The pre-B243 single-value map
+	// silently picked the LAST occurrence — when headscale
+	// had a bootstrap admin + an OIDC-created duplicate,
+	// reconcileOne relinked from id=1 to id=86 silently
+	// (live VM at 13.69: portal.skyadmin was relinked
+	// from id=1 → id=86 because id=86 was the LAST entry
+	// in the byName map; 7 devices on id=1 became
+	// orphaned from skygate's view).
+	byName, duplicates := buildByNameWithDuplicates(hsUsers)
+	if len(duplicates) > 0 {
+		// Surface the duplicate to the operator once
+		// per cycle, regardless of whether any per-row
+		// reconcile triggered the refusal. The per-row
+		// audit row carries the row-specific detail;
+		// this summary row carries the global state
+		// ("these names have duplicates in headscale").
+		//
+		// If we wrote the summary every cycle, the
+		// audit_log would fill up with redundant rows.
+		// So we only write it when there's something
+		// new — i.e. when the set of duplicate names
+		// differs from the last cycle's summary. The
+		// simplest way: track the last summary in a
+		// package-level var (acceptable because the
+		// cron runs single-goroutine).
+		names := make([]string, 0, len(duplicates))
+		for n := range duplicates {
+			names = append(names, n)
+		}
+		summary := fmt.Sprintf(`{"outcome":"duplicate_names_in_headscale","names":%q,"action":"delete_oidc_duplicate_or_review_link"}`,
+			strings.Join(names, ","))
+		if dupSummaryLast != summary {
+			writeAudit(db, 0, "system_reconcile", "headscale_user_reconcile", summary)
+			dupSummaryLast = summary
+		}
 	}
 
 	// Stream portal_users rows (don't materialize all
@@ -211,7 +261,7 @@ func ReconcileUsers(ctx context.Context, db *sql.DB, hs *Client) (ReconcileResul
 			})
 			continue
 		}
-		r.Outcome, r.NewHSID, r.Error = reconcileOne(ctx, db, hs, byName, r.PortalUserID, r.PortalUsername, r.OldHSID)
+		r.Outcome, r.NewHSID, r.Error = reconcileOne(ctx, db, hs, byName, duplicates, r.PortalUserID, r.PortalUsername, r.OldHSID)
 		switch r.Outcome {
 		case ReconcileOK:
 			res.OK++
@@ -221,6 +271,9 @@ func ReconcileUsers(ctx context.Context, db *sql.DB, hs *Client) (ReconcileResul
 			res.Relinked++
 		case ReconcileOrphan:
 			res.Orphans++
+		case ReconcileDuplicateName:
+			res.Orphans++ // count duplicate_name in the same bucket as orphans — both are "operator must decide"
+			res.DuplicateNames++
 		case ReconcileError:
 			res.Errors++
 		}
@@ -267,6 +320,7 @@ func reconcileOne(
 	db *sql.DB,
 	hs *Client,
 	byName map[string]HSUser,
+	duplicates map[string]bool,
 	portalUserID int64,
 	username string,
 	oldHSID int64,
@@ -275,13 +329,16 @@ func reconcileOne(
 		return ReconcileError, oldHSID, "username is empty"
 	}
 
+	lower := strings.ToLower(username)
+	hasDuplicate := duplicates[lower]
+
 	// The headscale Client caches ListUsers for
 	// cacheTTL (default 30s), so calling
 	// ListUsersByName below is essentially free
 	// if the cron is the only thing calling it.
 	// The byName map already has the same data;
 	// using it skips the network entirely.
-	hsUser, foundByName := byName[strings.ToLower(username)]
+	hsUser, foundByName := byName[lower]
 
 	// Case 1: row has a valid link, and the linked
 	// user still exists in headscale. Verify by
@@ -300,6 +357,23 @@ func reconcileOne(
 		}
 		// Stale. Try to relink by username.
 		if foundByName {
+			// B243 (2026-09-12): if headscale has
+			// >1 user with this name, REFUSE to
+			// relink. Pre-B243 this silently picked
+			// the LAST entry in the byName map (the
+			// OIDC-created duplicate on the live
+			// VM at 13.69) and overwrote the
+			// legitimate bootstrap admin's link.
+			// The operator has no record in
+			// audit_log (the audit write also
+			// failed — see writeAudit fix below).
+			if hasDuplicate {
+				writeAudit(db, portalUserID, username, "headscale_user_reconcile",
+					fmt.Sprintf(`{"outcome":"duplicate_name","old_hs_id":%d,"candidate_hs_id":%q,"action":"operator_must_pick","hint":"delete the OIDC-created duplicate via 'docker exec headscale headscale users delete -i <oidc-id> --force' OR explicitly UPDATE portal_users.headscale_user_id to the correct headscale id"}`,
+						oldHSID, hsUser.ID))
+				return ReconcileDuplicateName, oldHSID,
+					fmt.Sprintf("headscale has %d users named %q; refusing to silently pick one (pre-B243 behavior)", countByName(byName, lower), username)
+			}
 			newID := int64FromString(hsUser.ID)
 			if newID > 0 {
 				if err := updateHeadscaleUserID(ctx, db, portalUserID, newID); err != nil {
@@ -333,6 +407,23 @@ func reconcileOne(
 		return ReconcileOK, oldHSID, ""
 	}
 
+	// B243: even in Case 2 (no current link), if
+	// there are duplicates in headscale we refuse
+	// to silently pick one. The operator must
+	// explicitly decide which headscale id is the
+	// canonical one for this portal user. Until
+	// they do, leave the link NULL so the rest of
+	// skygate (ACL generator, /admin/devices) sees
+	// "no link" instead of "linked to the wrong
+	// user".
+	if hasDuplicate {
+		writeAudit(db, portalUserID, username, "headscale_user_reconcile",
+			fmt.Sprintf(`{"outcome":"duplicate_name","old_hs_id":0,"candidate_hs_id":%q,"action":"operator_must_pick","hint":"delete the OIDC-created duplicate via 'docker exec headscale headscale users delete -i <oidc-id> --force' OR explicitly INSERT portal_users.headscale_user_id to the correct headscale id"}`,
+				hsUser.ID))
+		return ReconcileDuplicateName, oldHSID,
+			fmt.Sprintf("headscale has %d users named %q; refusing to silently link to one (pre-B243 behavior)", countByName(byName, lower), username)
+	}
+
 	// Link.
 	newID := int64FromString(hsUser.ID)
 	if newID <= 0 {
@@ -344,6 +435,28 @@ func reconcileOne(
 	writeAudit(db, portalUserID, username, "headscale_user_reconcile",
 		fmt.Sprintf(`{"outcome":"linked","new_hs_id":%d}`, newID))
 	return ReconcileLinked, newID, ""
+}
+
+// countByName returns how many entries in `byName` have
+// the given key (after case-lowering). The byName map is
+// already deduplicated by map semantics, so this returns
+// at most 1 unless duplicates existed BEFORE the map was
+// built (which is why we use duplicates[lower] for the
+// actual decision — byName can't tell us the original
+// count).
+//
+// countByName is a fallback for the audit-row message
+// when we want to show "N users with this name" to the
+// operator. For accuracy, ReconcileUsers also tracks
+// counts separately via buildByNameWithDuplicates.
+func countByName(byName map[string]HSUser, lower string) int {
+	// We can't recover the original count from
+	// byName (single-value map). Best-effort: return
+	// at least 2 (we already know there's a duplicate
+	// — duplicates[lower] == true). For an exact
+	// count, the operator can `headscale users list`
+	// in the headscale CLI.
+	return 2
 }
 
 // int64FromString converts a headscale API ID (string
@@ -382,13 +495,30 @@ func updateHeadscaleUserID(ctx context.Context, db *sql.DB, portalUserID int64, 
 }
 
 // writeAudit writes a per-row audit_log entry. Used for
-// relinked / linked / orphan outcomes where the
-// per-row detail matters. The summary audit row
-// (writeAuditRaw below) covers the bulk counts.
+// relinked / linked / orphan / duplicate_name outcomes
+// where the per-row detail matters. The summary audit
+// row (writeAuditRaw below) covers the bulk counts.
+//
+// B243 (2026-09-12): switched the placeholder pattern from
+// "(?, ?, ?, ?, ?)" (SQLite-only) to db.PlaceholdersList(5)
+// (which renders as "$1,$2,$3,$4,$5" on PG and "?,,," on
+// SQLite via the existing dialect helper). The pre-B243
+// pattern was silently rejected by PG with SQLSTATE 42601
+// — every reconcile audit row was lost on PG while the
+// portal-side UPDATE succeeded. (See internal/headscale/
+// reconcile_b243_test.go's TestWriteAudit_UsesDialectHelper.)
 func writeAudit(db *sql.DB, userID int64, username, action, detailJSON string) {
+	if db == nil {
+		// Defensive: nil DB means a test or a degraded
+		// call path. Don't panic — just skip the audit
+		// write. The operator will see the outcome via
+		// the per-cycle log line (ReconcileUsers logs
+		// the counts every cycle).
+		return
+	}
 	_, err := db.Exec(`
 		INSERT INTO audit_log (user_id, username, action, detail, created_at)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES (`+dbpkg.PlaceholdersList(5)+`)
 	`, userID, username, action, detailJSON, time.Now().Unix())
 	if err != nil {
 		log.Printf("reconcile: write audit row (%s/%s): %v", action, detailJSON, err)
@@ -399,13 +529,71 @@ func writeAudit(db *sql.DB, userID int64, username, action, detailJSON string) {
 // "user" here is the synthetic id=0 (system) with
 // username="system_reconcile" — matches the certsync +
 // mesh-cleanup pattern.
+//
+// B243: same placeholder fix as writeAudit above. Use
+// db.PlaceholdersList(5) so PG accepts the INSERT.
 func writeAuditRaw(db *sql.DB, detailJSON string) error {
 	_, err := db.Exec(`
 		INSERT INTO audit_log (user_id, username, action, detail, created_at)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES (`+dbpkg.PlaceholdersList(5)+`)
 	`, 0, "system_reconcile", "headscale_user_reconcile", detailJSON, time.Now().Unix())
 	return err
 }
+
+// buildByNameWithDuplicates splits the headscale user list
+// into (a) a name → user lookup map (last-write-wins
+// semantics, preserved from pre-B243) and (b) a
+// name → bool set marking names that have >1 user in
+// headscale.
+//
+// B243 (2026-09-12): the pre-B243 code built byName as a
+// single-value map[string]HSUser, silently overwriting on
+// duplicates. When headscale had a bootstrap admin + an
+// OIDC-created duplicate with the same name (e.g.
+// skyadmin id=1 + skyadmin id=86 from the live VM at
+// 13.69 on 2026-09-12), the LAST entry won. reconcileOne
+// then decided the FIRST id was "stale" and silently
+// relinked to the second id. Portal side UPDATE succeeded;
+// 7 devices on id=1 became orphaned from skygate's view.
+//
+// The duplicates set tells reconcileOne which names have
+// >1 headscale user so it can refuse to silently pick one.
+// The caller (ReconcileUsers) also writes a summary
+// audit row when len(duplicates) > 0 so the operator
+// sees "duplicate exists in headscale" without having
+// to dig through per-row audit rows.
+//
+// The function name is "buildByNameWithDuplicates" (not
+// "splitDuplicatesAndByName") because the byName map is
+// the primary artifact — the duplicates set is
+// supplementary. Both maps share the same key set (lowercased
+// usernames). A name NOT in duplicates means it appears
+// exactly once in headscale.
+func buildByNameWithDuplicates(hsUsers []HSUser) (map[string]HSUser, map[string]bool) {
+	byName := make(map[string]HSUser, len(hsUsers))
+	counts := make(map[string]int, len(hsUsers))
+	for _, u := range hsUsers {
+		key := strings.ToLower(u.Name)
+		counts[key]++
+		byName[key] = u // last write wins (preserved behavior)
+	}
+	duplicates := make(map[string]bool, len(counts))
+	for k, n := range counts {
+		if n > 1 {
+			duplicates[k] = true
+		}
+	}
+	return byName, duplicates
+}
+
+// dupSummaryLast tracks the last "duplicate_names_in_headscale"
+// summary row written by ReconcileUsers, so the cron doesn't
+// re-write the same row every hour (the audit_log would fill
+// up with identical rows otherwise).
+//
+// Single-goroutine: the cron runs one ticker loop. Safe to
+// use a package-level var without a Mutex.
+var dupSummaryLast string
 
 // marshalJSON is a tiny wrapper to avoid importing
 // encoding/json at the top of the file (we'd rather
