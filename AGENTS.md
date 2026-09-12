@@ -16776,4 +16776,81 @@ skygate. 3 шага + 2 команды = неприемлемый gap.
   before rename; but the tagOwners rebuild happens on the next ACL
   apply cycle). Documented in `docs/features.md` (admin user section).
 
+## B243 (2026-09-12, B237.18 follow-up) — reconcile cron: PG placeholders + duplicate refusal
+
+**Проблема** (обнаружено 2026-09-12 при разборе B-mod-admin-user-sync).
+Поверхностно — operator's /admin/devices для skyadmin показывает 0
+устройств при том что headscale id=1 имеет 7. Глубже — три бага
+внутри `internal/headscale/reconcile.go`:
+
+**Bug 1 — SQLite-only placeholders на PG (audit_log INSERT).**
+`writeAudit` (line 391) и `writeAuditRaw` (line 405) использовали
+literal `VALUES (?, ?, ?, ?, ?)`. pgx/extended-protocol PostgreSQL
+требует `$1,$2,...` — `?` отвергается с `SQLSTATE 42601 syntax
+error at or near ","`. UPDATE прошёл, audit row **потерян** на PG.
+В docker logs было видно эту ошибку на каждом цикле, но никто не
+смотрел. **Fix**: `VALUES (`+db.PlaceholdersList(5)+`)` (helper
+уже использовался везде в проекте, см. `db/audit_log.go` —
+только reconcile.go отступил от convention).
+
+**Bug 2 — silent relink на duplicate.** `reconcileOne` строил
+`byName := map[string]HSUser{}` через `byName[u.Name] = u` —
+последняя запись перезаписывает предыдущую. Когда в headscale
+был bootstrap admin (id=1) + OIDC duplicate (id=86, оба named
+"skyadmin"), byName["skyadmin"] = id=86. reconcileOne видел
+"portal.id=1 → hs_id=1 is stale (id=1 not in byName), username
+matches id=86, relink!" и silently relinked. 7 устройств на
+id=1 стали orphaned из skygate's view. **Fix**:
+`buildByNameWithDuplicates` считает duplicates **до** построения
+byName. Новый outcome `duplicate_name` отказывается от relink и
+пишет audit row с hint: "delete the OIDC-created duplicate via
+'docker exec headscale headscale users delete -i <oidc-id>
+--force'".
+
+**Bug 3 — no summary signal.** Per-row audit row трудно найти
+через /admin/audit filter. **Fix**: per-cycle summary row
+`{"outcome":"duplicate_names_in_headscale","names":"skyadmin,...",
+"action":"delete_oidc_duplicate_or_review_link"}` пишется ОДИН
+раз (deduped via package-level `dupSummaryLast` var — single-
+goroutine cron, mutex не нужен).
+
+**8 unit tests** в `internal/headscale/reconcile_b243_test.go`:
+- `TestReconcileOutcome_DuplicateNameStringPinsValue` — literal-string contract (changing it breaks /admin/audit filters)
+- `TestReconcileOne_DuplicateName_RefusesSilentRelink` — direct regression for live skyadmin id=1→id=86
+- `TestReconcileOne_DuplicateName_NoRelinkWhenLinkedToDuplicate` — current-link OK, don't churn
+- `TestReconcileOne_NoDuplicates_DoesNotRefuse` — happy-path не должен regress
+- `TestReconcileOne_EmptyUsername_Errors` — pinned
+- `TestBuildByNameWithDuplicates` (3 sub-cases)
+- `TestWriteAudit_UsesDialectHelper` — static source-level check for pre-B243 pattern
+
+**Files**: `internal/headscale/reconcile.go` (+267/-12 lines),
+`internal/headscale/reconcile_b243_test.go` (+272 lines, new file).
+Commit `fb529dd2`.
+
+**Verified**: `go test ./...` → ok (54 packages, 0 failures),
+`go build ./...` → success, `go vet ./...` → clean.
+
+**Live verification**: код собран, но **не задеплоен** на 13.69.
+Operator должен:
+1. Rebuild + restart `skygate-skygate-1`
+2. Подождать один reconcile cycle (~1h или вручную через
+   `RunOnceNow` / `/admin/headscale/reconcile`)
+3. В skygate logs увидеть новый summary row
+   "outcome":"duplicate_names_in_headscale","names":"skyadmin"
+4. Audit row `{"outcome":"duplicate_name","old_hs_id":1,...,"hint":
+   "delete the OIDC-created duplicate via 'docker exec headscale
+   headscale users delete -i <oidc-id> --force'"}` появится в
+   `audit_log`
+5. `docker exec headscale headscale users delete -i 86 --force`
+6. Следующий reconcile cycle: skyadmin → id=1 (правильный)
+7. `/admin/devices` показывает 7 устройств skyadmin
+
+**Cross-project lesson** (in agent memory, 2026-09-12):
+reconciliation logic MUST (a) use dialect-aware placeholders
+(`db.PlaceholdersList`, NEVER raw `?` or `$N`), (b) handle
+duplicates explicitly (refuse, never silently pick), (c)
+verify the audit log write succeeded (UPDATE without audit is
+worse than no UPDATE — silent state change with no record).
+
+
 
