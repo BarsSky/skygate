@@ -1451,6 +1451,20 @@ func main() {
 	mux.Handle("POST /admin/users", authMW(http.HandlerFunc(adminSvc.PostAdminUser)))
 	mux.Handle("POST /admin/users/{id}/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDeleteUser)))
 	mux.Handle("POST /admin/users/{id}/reset-password", authMW(http.HandlerFunc(adminSvc.PostAdminUserResetPassword)))
+	// v1.5.2 admin-user-sync (option c) T4: "Rename" button on
+	// /admin/users/{id}. Pre-T4 the operator had to SSH into the
+	// VM, run `docker exec headscale headscale users rename -i
+	// <id> <new>`, UPDATE portal_users.username by hand, and
+	// restart skygate so cached state refreshed — a 3-step +
+	// 2-command gap every time SKYGATE_ADMIN_USER drifted from
+	// the headscale admin user. T4 wraps that into a single
+	// button per row: PostAdminUserRename calls
+	// HSGlobalFn().RenameUser (T3) + db.UpdatePortalUsername,
+	// emits an audit row, and surfaces headscale-side errors as
+	// friendly ?err= flashes (duplicate-name conflict gets a
+	// distinct message so the operator can clean up the dup
+	// before retrying).
+	mux.Handle("POST /admin/users/{id}/rename", authMW(http.HandlerFunc(adminSvc.PostAdminUserRename)))
 	// v1.4.0 B141: "Adopt as skygate user" button on the
 	// /admin/users HSOrphans list. The pre-B141 admin UI only
 	// DISPLAYED the orphans list — to adopt one the operator had

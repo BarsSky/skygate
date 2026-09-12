@@ -10,6 +10,17 @@
 {{if .FlashHSOrphanExists}}
 <div class="alert alert-warning"><i class="fa-solid fa-circle-info"></i> already adopted: <code>{{.FlashHSOrphanExists}}</code></div>
 {{end}}
+{{if .FlashRenamed}}
+{{/*
+  2026-09-12 (v1.5.2 admin-user-sync T4): flash for a successful
+  rename. The handler (PostAdminUserRename) emits ?renamed=<old>
+  on success; we render the "old → new" arrow by reading the
+  current row's username from the .Users slice. If the operator
+  just renamed themselves, the current row reflects the new
+  name; the audit log captures both old+new.
+*/}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{tf "users.rename_renamed_flash" .FlashRenamed ""}}</div>
+{{end}}
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}
@@ -59,6 +70,26 @@
             <summary class="btn btn-sm"><i class="fa-solid fa-ellipsis-vertical"></i></summary>
             <div class="user-actions-menu">
               <a href="/admin/users/{{.ID}}/subnet" class="btn btn-sm" style="display:inline-flex;align-items:center;gap:4px"><i class="fa-solid fa-network-wired"></i> {{t "user_subnet.open_button"}}</a>
+              {{/*
+                2026-09-12 (v1.5.2 admin-user-sync T4): per-row
+                "Rename" form. Pre-T4 the operator had to SSH into
+                the VM, run `headscale users rename` + UPDATE
+                portal_users + restart skygate — a 3-step + 2-command
+                gap. T4 wraps all of that into one form per row.
+                The confirmation dialog names both the old + new
+                username (so the operator can spot a typo before
+                committing) AND the headscale API path (so they can
+                see what the backend call will be).
+                The handler (PostAdminUserRename) handles the no-op
+                case (new == current), the duplicate-name case
+                (?err= flash with explicit message), and the
+                headscale-not-linked case (skip HS, do portal
+                UPDATE only — useful for cleaning up orphan rows).
+              */}}
+              <form method="post" action="/admin/users/{{.ID}}/rename" class="user-rename-form" onsubmit="var n=this.new_username.value.trim(); if(!n||n==='{{.Username}}'){return true} return confirm('{{tf "users.rename_confirm" .Username "%NEW%" .ID "%NEW%" "%NEW%"}}'.replace(/%NEW%/g, n))">
+                <input type="text" name="new_username" required pattern="[a-z0-9_-]+" minlength="1" placeholder="{{t "users.rename_form_ph"}}" class="ufg-input-sm" style="width:140px" title="{{t "users.rename_form_label"}}">
+                <button type="submit" class="btn btn-sm" title="{{t "users.rename_form_label"}}"><i class="fa-solid fa-i-cursor"></i> {{t "users.rename_btn"}}</button>
+              </form>
               <form method="post" action="/admin/users/{{.ID}}/reset-password" class="user-reset-form" onsubmit="return confirm('{{tf "users.reset_confirm" .Username}}')">
                 <input type="password" name="new_password" required minlength="6" placeholder="{{t "users.reset_password_placeholder"}}" class="ufg-input-sm">
                 <button type="submit" class="btn btn-sm" title="{{t "users.reset_password"}}"><i class="fa-solid fa-key"></i> {{t "users.reset_password"}}</button>

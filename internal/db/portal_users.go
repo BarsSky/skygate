@@ -539,6 +539,30 @@ func UpdatePasswordHash(d *sql.DB, id int64, passwordHash string) (int64, error)
 	return res.RowsAffected()
 }
 
+// UpdatePortalUsername sets portal_users.username for the given id.
+// Used by PostAdminUserRename (admin-triggered rename) which pairs
+// the skygate-side UPDATE with the headscale-side RenameUser call.
+//
+// 2026-09-12: v1.5.2 admin-user-sync T4. Pre-T4 there was no
+// rename API in skygate; the operator had to UPDATE portal_users
+// by hand after running `headscale users rename`. T4 wraps both
+// into a single button per row on /admin/users/{id}.
+//
+// Returns the number of rows affected (0 = user vanished between
+// the form load and the UPDATE — caller should treat as 404).
+//
+// Note: portal_users.username has a UNIQUE constraint. If the new
+// name collides with an existing portal user, this returns the
+// underlying constraint violation as a regular error — the handler
+// surfaces that as a friendly err= flash, NOT a 500.
+func UpdatePortalUsername(d *sql.DB, id int64, newUsername string) (int64, error) {
+	res, err := d.Exec(qUpdatePortalUsername, newUsername, id)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeletePortalUserByID removes the row for `id`. The PostAdminDeleteUser
 // handler is responsible for cleaning up dependent tables
 // (preauth_keys, audit_log, personal_api_tokens) — this helper only

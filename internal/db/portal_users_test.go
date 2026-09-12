@@ -560,6 +560,54 @@ func TestUpdatePasswordHash(t *testing.T) {
 	}
 }
 
+// --- UpdatePortalUsername ---
+//
+// 2026-09-12: v1.5.2 admin-user-sync T4. The pre-T4 portal-side
+// rename had to be done by hand via SQL UPDATE; T4 wraps the
+// skygate-side UPDATE into the rename handler so the operator
+// doesn't have to touch the DB.
+func TestUpdatePortalUsername(t *testing.T) {
+	d := openTestDB(t)
+	id := seedPortalUser(t, d, "renameme", "h", false, 0)
+
+	affected, err := UpdatePortalUsername(d, id, "renamed")
+	if err != nil {
+		t.Fatalf("UpdatePortalUsername: %v", err)
+	}
+	if affected != 1 {
+		t.Errorf("affected = %d, want 1", affected)
+	}
+
+	// Read back via GetUserNameByID.
+	got, err := GetUserNameByID(d, id)
+	if err != nil {
+		t.Fatalf("GetUserNameByID after update: %v", err)
+	}
+	if got != "renamed" {
+		t.Errorf("after update got %q, want renamed", got)
+	}
+
+	// Update non-existent id → affected = 0, no error.
+	affected, err = UpdatePortalUsername(d, 9999, "ghost")
+	if err != nil {
+		t.Errorf("UpdatePortalUsername missing id: %v", err)
+	}
+	if affected != 0 {
+		t.Errorf("missing id affected = %d, want 0", affected)
+	}
+
+	// Duplicate username → UNIQUE constraint violation.
+	otherID := seedPortalUser(t, d, "other", "h", false, 0)
+	_, err = UpdatePortalUsername(d, id, "other")
+	if err == nil {
+		t.Errorf("UpdatePortalUsername to existing username: want error (UNIQUE violation), got nil")
+	}
+	// Other user is unaffected.
+	if _, err := GetUserNameByID(d, otherID); err != nil {
+		t.Errorf("GetUserNameByID(other) after failed rename: %v", err)
+	}
+}
+
 // --- DeletePortalUserByID ---
 
 func TestDeletePortalUserByID(t *testing.T) {

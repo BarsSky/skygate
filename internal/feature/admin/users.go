@@ -6,8 +6,9 @@ package admin
 // internal/handlers/handlers_admin_users.go.
 //
 // Handlers: GetAdminUsers, PostAdminUser, PostAdminDeleteUser,
-// PostAdminUserResetPassword. Helper: extractIDFromPath (also
-// used by devices.go for /admin/nodes/{id}/tag|untag).
+// PostAdminHSOrphanAdopt, PostAdminUserResetPassword,
+// PostAdminUserRename. Helper: extractIDFromPath (also used by
+// devices.go for /admin/nodes/{id}/tag|untag).
 
 import (
 	"errors"
@@ -21,6 +22,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 	"skygate/internal/subnet"
 )
 
@@ -88,10 +90,15 @@ func (s *Service) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 		// PostAdminHSOrphanAdopt). Back-compat: the existing
 		// redirects continue to work (the template renders the
 		// banners only when the param is non-empty).
+		//
+		// 2026-09-12 (v1.5.2 admin-user-sync T4): added
+		// FlashRenamed for the ?renamed=<old_username> param that
+		// PostAdminUserRename emits on success.
 		"FlashSuccess":       r.URL.Query().Get("ok"),
 		"FlashError":         r.URL.Query().Get("err"),
 		"FlashHSOrphanAdopt": r.URL.Query().Get("adopted"),
 		"FlashHSOrphanExists": r.URL.Query().Get("already_adopted"),
+		"FlashRenamed":       r.URL.Query().Get("renamed"),
 	})
 }
 
@@ -363,4 +370,140 @@ func (s *Service) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Requ
 		go s.Notifier.SendAlert(fmt.Sprintf("🔑 Password reset by %s\nuser: %s (id=%d)", c.Username, username, id))
 	}
 	http.Redirect(w, r, "/admin/users?reset=1", http.StatusFound)
+}
+
+// PostAdminUserRename is the v1.5.2 admin-user-sync (option c)
+// "Rename" button on /admin/users/{id}. Pre-T4 the operator had
+// to SSH into the VM, run `docker exec headscale headscale users
+// rename -i <id> <new>`, UPDATE portal_users.username by hand,
+// and restart skygate so cached state refreshed — the operator
+// reported this as a 3-step + 2-command gap every time
+// SKYGATE_ADMIN_USER drifted from the headscale admin user.
+//
+// T4 wraps that into a single POST:
+//   1. Validate the new name against the portal-users pattern
+//      (lowercase letters, digits, _ and -; same as PostAdminUser)
+//      → 400 BEFORE hitting headscale if invalid.
+//   2. No-op short-circuit: if new == current, redirect without
+//      calling headscale. Pre-fix this hit headscale every time
+//      and produced a stale-cache 500 ("expected exactly one user,
+//      found 2" when the rename target matched an existing row).
+//   3. If the user has a headscale_user_id linked:
+//        a. Call HSGlobalFn().RenameUser(hsID, newUsername). This
+//           posts to POST /api/v1/user/{id}/rename/{new_name} (NO
+//           body — see internal/headscale/users.go RenameUser).
+//        b. If the call returns *APIError with StatusCode=500
+//           and body matching "expected exactly one user", redirect
+//           with err= explaining the operator must delete the
+//           duplicate headscale user first. Don't UPDATE the
+//           portal row — we want the rename to be atomic across
+//           both systems.
+//        c. Any other *APIError → 500 with audit row.
+//   4. UPDATE portal_users.username = newUsername (helper:
+//      db.UpdatePortalUsername). 0 rows affected → 404.
+//   5. Audit log "admin_user_rename" with id + old + new + hs_id.
+//   6. 303 redirect to /admin/users?renamed=<old>.
+//
+// Admin-only. Wire-up is in cmd/skygate/main.go.
+func (s *Service) PostAdminUserRename(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	idStr := extractIDFromPath(r.URL.Path)
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	newName := strings.TrimSpace(r.FormValue("new_username"))
+	if newName == "" {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape("new_username required"), http.StatusSeeOther)
+		return
+	}
+	// Same pattern as PostAdminUser (users.go:118).
+	if !regexp.MustCompile(`^[a-z0-9_-]+$`).MatchString(newName) {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape("new_username: lowercase letters, digits, _ and - only"), http.StatusSeeOther)
+		return
+	}
+
+	oldName, hsID, err := db.GetUserNameAndHSByID(s.dbc(), id)
+	if errors.Is(err, db.ErrUserNotFound) {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape("user not found"), http.StatusSeeOther)
+		return
+	}
+	if err != nil {
+		http.Error(w, "lookup: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// No-op short-circuit: don't hit headscale if the name
+	// didn't change. Pre-T4 this hit headscale every time and
+	// surfaced the cache-stale 500 to the operator.
+	if newName == oldName {
+		s.Backend.Audit(c.UserID, c.Username, "admin_user_rename", fmt.Sprintf("id=%d %s hs_id=%d outcome=noop", id, oldName, hsID.Int64))
+		http.Redirect(w, r, "/admin/users?renamed="+url.QueryEscape(oldName), http.StatusSeeOther)
+		return
+	}
+
+	hsCall := "ok"
+	if hsID.Valid && hsID.Int64 > 0 {
+		hsClient := s.HSGlobalFn()
+		if hsClient == nil {
+			http.Redirect(w, r, "/admin/users?err="+url.QueryEscape("headscale client not available"), http.StatusSeeOther)
+			return
+		}
+		if _, err := hsClient.RenameUser(hsID.Int64, newName); err != nil {
+			// Distinguish the headscale-side duplicate-name
+			// conflict (500 "expected exactly one user, found
+			// N") from generic API errors. Pre-T4 these were
+			// both surfaced as opaque 500s; the operator had to
+			// SSH into the VM to read headscale logs.
+			apiErr := &headscale.APIError{}
+			if errors.As(err, &apiErr) && apiErr.StatusCode == 500 && strings.Contains(apiErr.Body, "expected exactly one user") {
+				s.Backend.Audit(c.UserID, c.Username, "admin_user_rename", fmt.Sprintf("id=%d %s hs_id=%d outcome=headscale_duplicate", id, oldName, hsID.Int64))
+				http.Redirect(w, r,
+					"/admin/users?err="+url.QueryEscape(fmt.Sprintf("headscale already has a user named %q — delete the duplicate first (id=%d)", newName, hsID.Int64)),
+					http.StatusSeeOther)
+				return
+			}
+			// Any other APIError / network / generic error →
+			// 500 with an audit row so the operator can see
+			// the failure context.
+			s.Backend.Audit(c.UserID, c.Username, "admin_user_rename", fmt.Sprintf("id=%d %s hs_id=%d outcome=headscale_err err=%v", id, oldName, hsID.Int64, err))
+			http.Error(w, "headscale rename: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Portal user has no headscale link — we still allow
+		// the skygate-side UPDATE so the operator can clean up
+		// an orphan row without first having to create the HS
+		// counterpart.
+		hsCall = "skipped_no_hs_link"
+	}
+
+	affected, err := db.UpdatePortalUsername(s.dbc(), id, newName)
+	if err != nil {
+		// Likely UNIQUE constraint violation (another portal
+		// user already has newName). The headscale side has
+		// already been renamed; we MUST NOT silently leave
+		// them out of sync. Audit and 500.
+		s.Backend.Audit(c.UserID, c.Username, "admin_user_rename", fmt.Sprintf("id=%d %s hs_id=%d outcome=portal_update_err err=%v HEADSCALE_ALREADY_RENAMED", id, oldName, hsID.Int64, err))
+		http.Error(w, "portal update: "+err.Error()+fmt.Sprintf(" (HEADSCALE ALREADY RENAMED to %q — revert via `docker exec headscale headscale users rename -i %d %s`)", newName, hsID.Int64, oldName), http.StatusInternalServerError)
+		return
+	}
+	if affected == 0 {
+		// Row vanished between GetUserNameAndHSByID and the
+		// UPDATE — operator probably clicked Delete in another
+		// tab. Don't proceed; the headscale rename already
+		// happened, so the next login attempt will create an
+		// orphan headscale user that needs cleanup.
+		s.Backend.Audit(c.UserID, c.Username, "admin_user_rename", fmt.Sprintf("id=%d %s hs_id=%d outcome=portal_missing_after_get HEADSCALE_ALREADY_RENAMED", id, oldName, hsID.Int64))
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape("user vanished mid-rename — headscale already renamed, portal row missing"), http.StatusSeeOther)
+		return
+	}
+
+	s.Backend.Audit(c.UserID, c.Username, "admin_user_rename", fmt.Sprintf("id=%d old=%s new=%s hs_id=%d outcome=%s", id, oldName, newName, hsID.Int64, hsCall))
+	http.Redirect(w, r, "/admin/users?renamed="+url.QueryEscape(oldName), http.StatusSeeOther)
 }
