@@ -41,7 +41,7 @@ fi
 # user before deleting. We use the same dual
 # check (live user_name + snapshot node_owner_map)
 # as PostMyDeviceRenew.
-if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.DB, c\.Username\)' internal/feature/my/devices.go; then
+if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.dbc\(\), c\.Username\)' internal/feature/my/devices.go; then
     ok "PostMyDeviceDelete scope-checks via node_owner_map snapshot"
 else
     bad "PostMyDeviceDelete: snapshot scope-check MISSING"

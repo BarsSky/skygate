@@ -47,7 +47,7 @@ fi
 # user before extending. We check the same
 # pattern as B155 PostMyKeyReissue: ListAllNodes
 # + user_id scope check.
-if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.DB, c\.Username\)' internal/feature/my/devices.go; then
+if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.dbc\(\), c\.Username\)' internal/feature/my/devices.go; then
     ok "PostMyDeviceRenew scope-checks via node_owner_map"
 else
     bad "PostMyDeviceRenew MISSING the user-scope check"
