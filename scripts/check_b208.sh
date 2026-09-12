@@ -76,11 +76,13 @@ file_exists "internal/feature/admin/dbsource.go" \
     && check "internal/feature/admin/dbsource.go exists" ok \
     || check "internal/feature/admin/dbsource.go exists" fail
 
-# 2. DBSource interface
-grep_q '^type DBSource interface' "internal/feature/admin/dbsource.go" \
-    && check "DBSource interface defined" ok \
-    || check "DBSource interface defined" fail
-grep -A2 'type DBSource interface' "internal/feature/admin/dbsource.go" | grep -q 'Current() \*sql\.DB' \
+# 2. DBSource interface (canonical definition lives in
+#    internal/db/dbsource.go since B210.1; admin's dbsource.go
+#    just re-exports it via `type DBSource = db.DBSource`).
+grep -rE '^type DBSource interface' internal/db/dbsource.go internal/feature/admin/dbsource.go 2>/dev/null | grep -q . \
+    && check "DBSource interface defined (in internal/db or admin)" ok \
+    || check "DBSource interface defined (in internal/db or admin)" fail
+grep -A2 'type DBSource interface' "internal/db/dbsource.go" | grep -q 'Current() \*sql\.DB' \
     && check "DBSource has Current() *sql.DB" ok \
     || check "DBSource has Current() *sql.DB" fail
 

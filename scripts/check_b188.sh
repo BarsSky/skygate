@@ -257,15 +257,16 @@ fi
 # (a71, basic) to tag:dev-infra-emilia; the migration is
 # idempotent so re-runs are no-ops.
 if [ -d /home/skyadmin/skygate ]; then
-  if command -v psql >/dev/null 2>&1; then
-    GHOST_COUNT=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
-      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:exit-%'" 2>/dev/null)
+  if command -v docker >/dev/null 2>&1; then
+    PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
+    GHOST_COUNT=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:exit-%'" 2>/dev/null | head -1)
     check_eq "V-no-ghost-device-rows" "0" "${GHOST_COUNT:-<err>}"
-    GHOST_USER_COUNT=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
-      "SELECT COUNT(*) FROM user_exit_node_prefs WHERE exit_node_tag LIKE 'tag:exit-%'" 2>/dev/null)
+    GHOST_USER_COUNT=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+      "SELECT COUNT(*) FROM user_exit_node_prefs WHERE exit_node_tag LIKE 'tag:exit-%'" 2>/dev/null | head -1)
     check_eq "V-no-ghost-user-rows" "0" "${GHOST_USER_COUNT:-<err>}"
   else
-    echo "  SKIP [V] psql not available"
+    echo "  SKIP [V] docker not available"
   fi
 else
   echo "  SKIP [V] not on VM"
@@ -274,12 +275,13 @@ fi
 # W. (VM-only) post-migration via_enabled=1 for rows
 # pointing at a real headscale tag. The v0.28.5 re-run.
 if [ -d /home/skyadmin/skygate ]; then
-  if command -v psql >/dev/null 2>&1; then
-    RE_ENABLED=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
-      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE via_enabled = 1 AND exit_node_tag LIKE 'tag:dev-infra-%'" 2>/dev/null)
+  if command -v docker >/dev/null 2>&1; then
+    PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
+    RE_ENABLED=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE via_enabled = 1 AND exit_node_tag LIKE 'tag:dev-infra-%'" 2>/dev/null | head -1)
     check_ge "W-via-enabled-reenabled" 1 "${RE_ENABLED:-0}"
   else
-    echo "  SKIP [W] psql not available"
+    echo "  SKIP [W] docker not available"
   fi
 else
   echo "  SKIP [W] not on VM"
@@ -338,12 +340,13 @@ check_ge "Z4-TD17-test-file-exists" 1 "$Z4"
 # form (tag:dev-<user>-<host>) — the form should be rejected
 # at write time and the live data must be clean.
 if [ -d /home/skyadmin/skygate ]; then
-  if command -v psql >/dev/null 2>&1; then
-    USER_DEV_TAGS=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
-      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:dev-_%' AND exit_node_tag NOT LIKE 'tag:dev-infra-%'" 2>/dev/null)
+  if command -v docker >/dev/null 2>&1; then
+    PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
+    USER_DEV_TAGS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:dev-_%' AND exit_node_tag NOT LIKE 'tag:dev-infra-%'" 2>/dev/null | head -1)
     check_eq "AA-no-user-device-devtag-in-prefs" "0" "${USER_DEV_TAGS:-<err>}"
   else
-    echo "  SKIP [AA] psql not available"
+    echo "  SKIP [AA] docker not available"
   fi
 else
   echo "  SKIP [AA] not on VM"

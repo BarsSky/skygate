@@ -97,20 +97,27 @@ fi
 # username is correctly populated and /my_status no longer
 # replies "no username".
 if [ -d /home/skyadmin/skygate ]; then
-  if command -v psql >/dev/null 2>&1; then
-    USERNAME=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc "
+  # Use the same pattern as check_b_admin_user_sync.sh:
+  # `docker exec <PG_CONTAINER> psql ...` — no need to know
+  # the host/port because we're inside the PG container's
+  # network. The pre-fix hardcoded 172.17.0.1:5000 broke
+  # after the v1.3.0 PG-only migration (which moved PG to
+  # the 172.18.0.3 / skygate-pg-local container).
+  if command -v docker >/dev/null 2>&1; then
+    PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
+    USERNAME=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc "
       SELECT p.username
         FROM telegram_bindings b
         JOIN portal_users p ON p.id = b.portal_user_id
        WHERE b.chat_id = 328946535
-    " 2>/dev/null)
+    " 2>/dev/null | head -1)
     if [ -n "$USERNAME" ]; then
       check_eq "F" "skyadmin" "$USERNAME"
     else
       check_eq "F" "skyadmin" "<empty — pre-B187 bug would be present>"
     fi
   else
-    echo "  SKIP [F] psql not available"
+    echo "  SKIP [F] docker not available"
   fi
 else
   echo "  SKIP [F] not on VM"
