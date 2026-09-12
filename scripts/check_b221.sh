@@ -189,11 +189,16 @@ else
   fail "M: B221 unit test file $TEST_NEW missing"
 fi
 
-# --- N: migration_b213_test.go expects V067 as the last version ---
-if has "$TEST_MIG" "last\\.Version != 67"; then
-  ok "N: migration_b213_test expects last.Version == 67 (B221 is the latest)"
+# --- N: migration_b213_test.go pins the last-version monotonicity contract ---
+# Post-B221 the framework has added V068 (B232), V070 (B238), etc.
+# The test asserts `last.Version < 68` (or higher for later bumps) to
+# pin monotonic ordering rather than a specific version. The original
+# B221 expectation `last.Version != 67` was true at B221 commit time
+# but was updated when newer migrations were added.
+if has "$TEST_MIG" "last\\.Version.*<.*68"; then
+  ok "N: migration_b213_test pins last.Version >= 68 (post-B221 monotonic contract; later migrations bump the floor)"
 else
-  fail "N: migration_b213_test does not expect V067 (B221) as the latest version"
+  fail "N: migration_b213_test missing the post-B221 last.Version >= 68 monotonicity check"
 fi
 
 # --- O: AGENTS.md mentions B221 ---

@@ -81,8 +81,12 @@ else
 fi
 
 # --- C: B213 framework-state assertion updated to 68 ---
-if grep -E 'PGMigrations\[last\].Version = %d, want 68' "$B213" >/dev/null; then
-  ok "C: migration_b213_test.go's last-migration assertion is 68"
+# Post-B232 the framework has added V070 (B238), etc. The actual test
+# uses `last.Version < 68` (or higher floors for later bumps) to pin
+# monotonic ordering. The original B232 expectation was the exact
+# "want 68" form, which became stale as new migrations were added.
+if grep -E 'PGMigrations\[last\].Version.*<.*68|want >= 68' "$B213" >/dev/null; then
+  ok "C: migration_b213_test.go's last-migration assertion uses 68+ monotonicity (not stale 67)"
 else
   fail "C: migration_b213_test.go still asserts version 67 (stale after B232)"
 fi

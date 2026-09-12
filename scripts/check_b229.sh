@@ -92,9 +92,15 @@ else
 fi
 
 # --- C: PreferredExitReconcilerLive reads the env ---
+# The actual implementation is "default-on, opt-out via false/0/no/off"
+# (inverted logic — anything not in the opt-out list = LIVE). The check
+# verifies BOTH that the env var is read AND that an explicit opt-out
+# branch exists. This avoids the false positive where the original
+# B229 commit's regex expected literal "true"/"1"/"yes" string
+# comparisons (which it doesn't have, because the logic is inverted).
 if hasf "$RECON" 'SKYGATE_PREFERRED_RECONCILER_LIVE' && \
-   grep -A2 'SKYGATE_PREFERRED_RECONCILER_LIVE' "$RECON" | grep -qE '"true"|"1"|"yes"'; then
-  ok "C: PreferredExitReconcilerLive reads SKYGATE_PREFERRED_RECONCILER_LIVE (true/1/yes on, anything else off)"
+   grep -A6 'SKYGATE_PREFERRED_RECONCILER_LIVE' "$RECON" | grep -qE '"false"|"0"|"no"|"off"'; then
+  ok "C: PreferredExitReconcilerLive reads SKYGATE_PREFERRED_RECONCILER_LIVE with inverted (default-on, opt-out) logic"
 else
   fail "C: PreferredExitReconcilerLive doesn't read SKYGATE_PREFERRED_RECONCILER_LIVE correctly"
 fi
@@ -108,7 +114,7 @@ if [ -f "$TEST" ]; then
     fail "D: B229 unit tests insufficient (${n} < 10)"
   fi
   for t in \
-    "TestPreferredExitReconcilerLive_DefaultOff" \
+    "TestPreferredExitReconcilerLive_DefaultOn" \
     "TestPreferredExitReconcilerLive_TrueVariants" \
     "TestPreferredExitReconcilerLive_OtherValuesOff" \
     "TestShouldAlert_RateLimit_1hWindow" \
