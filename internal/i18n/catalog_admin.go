@@ -47,6 +47,11 @@ var ruAdmin = map[string]string{
 	"users.rename_form_ph":                   "например: skyadmin-v2",
 	"users.rename_confirm":                   "Переименовать %s в %s? Будет изменено и в headscale (POST /api/v1/user/%d/rename/%s), и в skygate. Если в headscale уже есть пользователь с именем %q, операция вернёт ошибку — удалите дубль и повторите.",
 	"users.rename_renamed_flash":             "Переименован: %s → %s",
+	// 2026-09-12: v1.5.2 admin-user-sync T6 — drift banner
+	"users.sync_drift_title":                 "SKYGATE_ADMIN_USER drift detected",
+	"users.sync_drift_adopt_desc":            "В headscale есть пользователь %q, но в skygate нет соответствующего portal-аккаунта. Создайте portal-аккаунт с is_admin=1, чтобы восстановить синхронизацию (T5 promote_to_admin path).",
+	"users.sync_drift_promote_desc":          "В skygate есть пользователь %q с привязкой к headscale, но is_admin=0 (должен быть 1). Запустите: UPDATE portal_users SET is_admin=1 WHERE username=<этот пользователь>.",
+	"users.sync_drift_promote_helper":        "PostAdminUserPromote handler добавим в T6.1 (per-row Promote button, как B169 per-row delete).",
 	"users.username_placeholder":              "например: alice",
 	"audit.title":                             "Audit log",
 	"audit.subtitle":                          "Последние действия в системе",
@@ -890,6 +895,11 @@ var enAdmin = map[string]string{
 	"users.rename_form_ph":                   "e.g. skyadmin-v2",
 	"users.rename_confirm":                   "Rename %s to %s? Both headscale (POST /api/v1/user/%d/rename/%s) and skygate will be updated. If headscale already has a user named %q, the operation will fail — delete the duplicate first and retry.",
 	"users.rename_renamed_flash":             "Renamed: %s → %s",
+	// 2026-09-12: v1.5.2 admin-user-sync T6 — drift banner
+	"users.sync_drift_title":                 "SKYGATE_ADMIN_USER drift detected",
+	"users.sync_drift_adopt_desc":            "Headscale has a user named %q, but skygate has no matching portal account. Create the portal account with is_admin=1 to re-sync (T5 promote_to_admin path).",
+	"users.sync_drift_promote_desc":          "skygate has a user %q linked to headscale, but is_admin=0 (should be 1). Run: UPDATE portal_users SET is_admin=1 WHERE username=<that user>.",
+	"users.sync_drift_promote_helper":        "PostAdminUserPromote handler lands in T6.1 (per-row Promote button, mirrors B169 per-row delete).",
 	"users.username_placeholder":              "e.g. alice",
 	"audit.title":                             "Audit log",
 	"audit.subtitle":                          "Recent actions in the system",

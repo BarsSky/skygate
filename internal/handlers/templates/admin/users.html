@@ -21,6 +21,48 @@
 */}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{tf "users.rename_renamed_flash" .FlashRenamed ""}}</div>
 {{end}}
+{{if eq .AdminSyncMode "adopt_as_admin"}}
+{{/*
+  2026-09-12 (v1.5.2 admin-user-sync T6): SKYGATE_ADMIN_USER
+  drift detected — headscale has a user with the configured
+  admin name, but portal_users has no matching row. The
+  banner offers "Adopt as Admin" (the T5 promote_to_admin
+  path: creates the portal row with is_admin=1).
+*/}}
+<div class="alert alert-warning" style="border-color:var(--warning)">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "users.sync_drift_title"}}</strong>
+  <span style="color:var(--text-muted);font-size:13px;margin-left:8px">
+    {{tf "users.sync_drift_adopt_desc" .AdminSyncFacts.ExpectedAdminUsername}}
+  </span>
+  <form method="post" action="/admin/users/HSOrphan/adopt" style="display:inline-flex;gap:6px;align-items:center;margin-top:8px" title="{{t "users.hs_orphan_adopt_promote_help"}}">
+    <input type="hidden" name="hs_id" value="{{.AdminSyncFacts.HeadscaleExpectedID}}">
+    <input type="hidden" name="promote_to_admin" value="true">
+    <input type="password" name="password" required minlength="6" placeholder="{{t "users.hs_orphan_adopt_password_ph"}}" class="ufg-input-sm" style="width:160px">
+    <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-user-plus"></i> {{t "users.hs_orphan_adopt_promote_btn"}}</button>
+  </form>
+</div>
+{{end}}
+{{if eq .AdminSyncMode "promote_to_admin"}}
+{{/*
+  T6 variant: portal has a row with the right username and
+  linked HS, but is_admin somehow flipped to 0. Banner offers
+  "Promote" (single UPDATE). The handler for this isn't added
+  in T6 — it lands in a follow-up (PostAdminUserPromote) since
+  it's a per-row button that mirrors B169's per-row delete.
+  For now the banner just explains the drift.
+*/}}
+<div class="alert alert-warning" style="border-color:var(--warning)">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "users.sync_drift_title"}}</strong>
+  <span style="color:var(--text-muted);font-size:13px;margin-left:8px">
+    {{tf "users.sync_drift_promote_desc" .AdminSyncFacts.ExpectedAdminUsername}}
+  </span>
+  <p style="font-size:12px;color:var(--text-muted);margin:6px 0 0">
+    {{t "users.sync_drift_promote_helper"}}
+  </p>
+</div>
+{{end}}
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}

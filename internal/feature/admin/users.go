@@ -77,6 +77,18 @@ func (s *Service) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 2026-09-12 (v1.5.2 admin-user-sync T6): detect SKYGATE_ADMIN_USER
+	// drift and render a banner with the appropriate remediation
+	// button. Banner only shows when the pure decision function
+	// returns a non-None mode — see users_sync_banner.go for the
+	// cases. Failures (DB / headscale down) hide the banner — never
+	// show an erroneous nag.
+	expectedAdmin := ""
+	if s.Cfg != nil {
+		expectedAdmin = s.Cfg.BootstrapAdminUser
+	}
+	syncMode, syncFacts := s.adminUserSyncBanner(r.Context(), expectedAdmin)
+
 	s.Backend.RenderWithLayout(w, r, "admin/users.html", c, map[string]any{
 		"Users":     users,
 		"HSOrphans": orphans,
@@ -94,11 +106,18 @@ func (s *Service) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 		// 2026-09-12 (v1.5.2 admin-user-sync T4): added
 		// FlashRenamed for the ?renamed=<old_username> param that
 		// PostAdminUserRename emits on success.
+		//
+		// 2026-09-12 (v1.5.2 admin-user-sync T6): added
+		// AdminSyncMode + AdminSyncFacts so the template can
+		// render the appropriate "Adopt as Admin" / "Promote"
+		// banner when SKYGATE_ADMIN_USER drift is detected.
 		"FlashSuccess":       r.URL.Query().Get("ok"),
 		"FlashError":         r.URL.Query().Get("err"),
 		"FlashHSOrphanAdopt": r.URL.Query().Get("adopted"),
 		"FlashHSOrphanExists": r.URL.Query().Get("already_adopted"),
 		"FlashRenamed":       r.URL.Query().Get("renamed"),
+		"AdminSyncMode":      syncMode.String(),
+		"AdminSyncFacts":     syncFacts,
 	})
 }
 
