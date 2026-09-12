@@ -137,8 +137,37 @@ if [ -n "$PROD_HOST" ] && [ -n "$SSH_KEY" ]; then
             bad "loopback: 127.0.0.1:8080/healthz returned $loop_status"
         fi
     fi
+    echo ""
+    echo "=== contract 6 (optional): headscale OIDC + DERP config not disabled ==="
+    # 2026-09-12 (post-incident): the docker restart triggered a chicken-
+    # and-egg deadlock between skygate (pre-flight waits for headscale)
+    # and headscale (OIDC init blocks on skygate). Recovery required
+    # commenting out oidc.issuer + skygate DERP URL in headscale config.
+    # Contract 6 catches the inverse: if either is commented out, fail.
+    headscale_state=$(ssh -i "$SSH_KEY" -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no \
+        "hermes-debug@${PROD_HOST}" \
+        '# Check for the OIDC-disabled marker comment OR commented-out issuer line
+         if sudo grep -qE "^[[:space:]]*#[[:space:]]*oidc:.*disabled.*deadlock" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
+             echo OIDC_DISABLED;
+         elif sudo grep -qE "^[[:space:]]*#[[:space:]]*issuer:" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
+             echo OIDC_DISABLED;
+         elif sudo grep -qE "^[[:space:]]*#[[:space:]]*- http://skygate:8080" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
+             echo DERP_DISABLED;
+         else
+             echo OK;
+         fi' 2>&1) || headscale_state="SSH_FAIL"
+    if [ "$headscale_state" = "OK" ]; then
+        ok "headscale config: OIDC + DERP enabled"
+    elif [ "$headscale_state" = "OIDC_DISABLED" ]; then
+        bad "headscale config: OIDC block is COMMENTED OUT (was disabled to break a startup deadlock; should be re-enabled now that skygate is Up)"
+    elif [ "$headscale_state" = "DERP_DISABLED" ]; then
+        bad "headscale config: skygate DERP URL is COMMENTED OUT (was disabled to break a startup deadlock; should be re-enabled now that skygate is Up)"
+    else
+        echo "  SKIP  SSH probe failed (host unreachable)"
+    fi
 else
     echo "=== contract 5 (optional): SSH probe — SKIPPED (set SKYGATE_PROD_HOST='' to disable, or check SSH key exists) ==="
+    echo "=== contract 6 (optional): headscale config check — SKIPPED (contract 5 not available) ==="
 fi
 
 echo ""
