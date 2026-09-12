@@ -48,9 +48,11 @@
 
 5. **172.18.0.3:5432 (local-pg) shows UNREACHABLE from probe** — same probe-context bug as above. The PG IS reachable from inside skygate-skygate-1 (per /readyz `db:ok`); the probe is testing from the wrong network namespace.
 
-6. **`172.17.0.1:5433` reference in skygate `.env`** — STALE. Pre-B-mod-sqlite-pg-bidi the PG lived on the docker bridge at 172.17.0.1; it now lives at 172.18.0.3 (skygate-pg-local). Already fixed by `SKYGATE_DB_DSN` + `SKYGATE_DB` env vars (both point to 172.18.0.3). The leftover `172.17.0.1:5433` in `.env` is unused (skygate prefers `SKYGATE_DB` over `SKYGATE_DB_DSN`).
+6. **`172.17.0.1:5433` reference in skygate `.env`** — FIXED 2026-09-12. Pre-B-mod-sqlite-pg-bidi the PG lived on the docker bridge at 172.17.0.1; it now lives at 172.18.0.3 (skygate-pg-local). `SKYGATE_DB_DSN` was updated from `172.17.0.1:5433` to `172.18.0.3:5432` (backup at `.env.bak.b118.20260912_214026`). skygate uses `SKYGATE_DB` (already correct) over `SKYGATE_DB_DSN` (now also correct).
 
 7. **3 .env stale values on the host** — fixed 2026-09-12: `SKYGATE_DB` set to PG DSN, `SKYGATE_DBMIGRATE_TRANSPORT=ssh → local`, SSH host/key commented out. Backup at `/home/skyadmin/skygate/.env.bak.20260912_155352`.
+
+8. **STALE native postgres on host (orphaned)** — pid=862, `/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main`, listening on `0.0.0.0:5433` (NOT a Docker container — native install). Last write 2026-09-12 10:09:02 (predates recovery cascade by ~1h20min). Currently NOT being written to by skygate (which uses skygate-pg-local @ 172.18.0.3). This is an orphan from the pre-v1.3.0 days when skygate connected to a native PG on the host. Was the source of B118 contract FAIL — the stale PG had pre-cleanup data with 5 `tag:dev-infra-*` entries instead of the live 4. **Safe to stop**: `sudo systemctl stop postgresql@16-main` (or kill pid 862). Frozen snapshot from 10:09:02 UTC, not referenced by any running service after the .env fix.
 
 ## B-check coverage map (verify_pre_deploy.sh FAIL summary)
 
@@ -82,7 +84,7 @@
 | B11 | `DROP INDEX IF EXISTS` flagged as "destructive DDL" | false positive — needs `IF EXISTS` exclusion |
 | B6 / B111 | ACL per-device grant ordering test | cosmetic test ordering |
 | B93 | `s.DB` vs actual `s.dbc()` | **FIXED** (commit `8dfb0eb4`) |
-| B118 | tag-owner-from-name | needs investigation |
+| B118 | tag-owner-from-name | **FIXED** 2026-09-12 (.env fix `SKYGATE_DB_DSN` → live PG) |
 | B135 | Manrope font CSS | needs check-script update |
 | B146 | 14 pass / 1 fail | minor |
 | B160 | `s.DB` vs actual `s.dbc()` | **FIXED** (commit `8dfb0eb4`) |
@@ -140,6 +142,8 @@ ACL test ordering (B6/B111), TD-series minor (TD-15/16/18), partial contract fai
 - 2 skyadmin-only orphan rows deleted (node_id=44, 45 with hs_id=2147455555 overflow)
 - 3 michail orphan rows LEFT ALONE per operator instruction
 - reconcile.go.b243-pre deleted (no longer needed)
+- `SKYGATE_DB_DSN` fixed 2026-09-12: `172.17.0.1:5433` → `172.18.0.3:5432` (was pointing at stale native postgres)
+- B118 check ran clean 19/19 after .env fix; stale host postgres identified for cleanup
 
 ### Phase: Check-script hygiene (this turn)
 - `b93b010c` chmod +x on check_td182.sh
