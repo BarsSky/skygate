@@ -8,6 +8,7 @@ package headscale
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -156,4 +157,58 @@ func (c *Client) deleteUserCmd(userID int64) *exec.Cmd {
 	return exec.Command("docker", "exec", c.ExecContainer, "headscale", "users", "delete",
 		"-i", strconv.FormatInt(userID, 10),
 		"--force")
+}
+
+// RenameUser renames an existing headscale user. The new name goes in
+// the URL path (NOT the request body) — this is the headscale v0.20+
+// gRPC HTTP gateway shape; the pre-0.20 endpoint was
+// POST /api/v1/user/{id}/rename with a {"name":"..."} body. The two
+// are visually similar but headscale v0.29 silently ignores the body
+// and only reads the path.
+//
+// Used by PostAdminUserRename (feature/admin/users.go) when the
+// operator resolves a SKYGATE_ADMIN_USER ↔ headscale admin drift
+// detected by check_b_admin_user_sync.sh (T1). After a successful
+// rename the user cache is invalidated so the next ListUsers() call
+// fetches the new name instead of serving a stale entry for the
+// cacheTTL (5s by default).
+//
+// Returns the updated *HSUser, the *APIError on headscale rejection
+// (e.g. duplicate-name conflict: 500 "expected exactly one user,
+// found 2"; the operator must delete the duplicate first).
+func (c *Client) RenameUser(userID int64, newName string) (*HSUser, error) {
+	if newName == "" {
+		return nil, fmt.Errorf("RenameUser: newName is empty")
+	}
+	// URL-path-encode the new name so "+" doesn't decode to " " on
+	// the server side. path.Join leaves + alone; url.PathEscape
+	// encodes it to %2B which headscale's gRPC gateway decodes
+	// back to +.
+	escaped := url.PathEscape(newName)
+	path := fmt.Sprintf("/api/v1/user/%d/rename/%s", userID, escaped)
+	var resp struct {
+		User HSUser `json:"user"`
+	}
+	// c.do sends no body when the body arg is nil — headscale
+	// v0.20+ takes the new name from the path, NOT the body.
+	if err := c.do("POST", path, nil, &resp); err != nil {
+		return nil, err
+	}
+	// Invalidate the user cache so the next ListUsers() fetches
+	// the new name. We do this BEFORE returning so a caller that
+	// immediately re-lists (e.g. PostAdminUserRename → redirect →
+	// GetAdminUsers) sees the fresh name.
+	c.InvalidateCache()
+	if resp.User.ID == "" {
+		// Defensive: headscale v0.29 always returns a populated
+		// user envelope on success. If it's empty we treat it as
+		// an APIError so the handler can surface a clear message.
+		return nil, &APIError{
+			Method:     "POST",
+			Path:       path,
+			StatusCode: 0,
+			Body:       "empty response: missing user envelope",
+		}
+	}
+	return &resp.User, nil
 }
