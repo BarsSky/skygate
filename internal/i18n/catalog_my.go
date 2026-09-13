@@ -283,6 +283,28 @@ var ruMy = map[string]string{
 	"devices.delete_admin_btn"                   : "Delete",
 	"devices.delete_admin_help"                  : "Remove this device from headscale entirely (use for orphan / duplicate / stuck devices). Cannot be undone.",
 	"devices.delete_admin_confirm"               : "Delete this device from headscale? This cannot be undone.",
+	// B-mod-reregister (2026-09-13): per-row re-register button
+	// for nodes in the headscale synthetic "tagged-devices"
+	// sentinel user (id=2147455555). The handler deletes the
+	// ghost node + issues a fresh 24h reusable preauth key bound
+	// to the current portal user + renders the result page so
+	// the user reconnects with `tailscale up --authkey=<key>`.
+	"devices.reregister_btn"                     : "Перерегистрировать",
+	"devices.reregister_title"                   : "Удалить это устройство из headscale и выпустить новый preauth-ключ для вашего аккаунта. Используйте этот ключ на устройстве с `tailscale up --authkey=<ключ>`.",
+	"devices.reregister_confirm"                 : "Перерегистрировать устройство \"%s\"? Оно будет удалено из headscale, и вам нужно будет подключить его заново с новым ключом.",
+	"devices.reregister_err_no_user"             : "К вашему аккаунту не привязан headscale-пользователь",
+	"devices.reregister_err_key_failed"          : "Устройство удалено, но новый preauth-ключ не удалось выпустить: %s — перейдите на /my/preauth чтобы выпустить ключ вручную",
+	"devices.reregister_err_wrong_user"          : "Это устройство уже привязано к реальному пользователю. Используйте Delete вместо Re-register.",
+	"devices.reregister_err_already_gone"        : "Устройство уже удалено из headscale — обновите страницу и перевыпустите ключ через /my/preauth",
+	// B-mod-reregister banner: shown at top of /my/devices when
+	// the user has at least one ghost node in tagged-devices.
+	"devices.reregister_banner_title"            : "Требуется перерегистрация устройств",
+	"devices.reregister_banner_body_one"         : "<b>%d устройство</b> в вашем списке зарегистрировано в headscale через \"ghost\" preauth-ключ (install-time, без указания пользователя). Используйте кнопку «Перерегистрировать» чтобы удалить его в headscale и получить новый ключ для вашего аккаунта.",
+	"devices.reregister_banner_body_many"        : "<b>%d устройств</b> в вашем списке зарегистрировано в headscale через \"ghost\" preauth-ключ (install-time, без указания пользователя). Используйте кнопку «Перерегистрировать» чтобы удалить каждое в headscale и получить новый ключ для вашего аккаунта.",
+	// B-mod-reregister result-page banner: shown on
+	// /my/preauth_result.html when the new key replaces a
+	// specific device (vs a generic /my/preauth issuance).
+	"devices.reregister_result_banner"           : "Этот ключ заменяет устройство <code>%s</code>, которое было удалено из headscale как \"ghost\" preauth-ключ. Подключите устройство заново командой:<br><code>tailscale up --authkey=&lt;ключ&gt;</code>",
 	"devices.refresh"                            : "Обновить список",
 	"devices.user"                               : "Пользователь",
 	"devices.user_facing"                        : "User-facing",
@@ -745,6 +767,20 @@ var enMy = map[string]string{
 	"devices.delete_admin_btn"                   : "Delete",
 	"devices.delete_admin_help"                  : "Remove this device from headscale entirely (use for orphan / duplicate / stuck devices). Cannot be undone.",
 	"devices.delete_admin_confirm"               : "Delete this device from headscale? This cannot be undone.",
+	// B-mod-reregister (2026-09-13): per-row re-register button
+	// for nodes in the headscale synthetic "tagged-devices"
+	// sentinel user (id=2147455555). See RU section for full design.
+	"devices.reregister_btn"                     : "Re-register",
+	"devices.reregister_title"                   : "Delete this device from headscale and issue a new preauth key for your account. Use the new key on the device with `tailscale up --authkey=<key>`.",
+	"devices.reregister_confirm"                 : "Re-register device \"%s\"? It will be deleted from headscale, and you will need to reconnect the device with the new key.",
+	"devices.reregister_err_no_user"             : "Your account has no headscale user linked",
+	"devices.reregister_err_key_failed"          : "Device deleted, but the new preauth key failed: %s — go to /my/preauth to issue a key manually",
+	"devices.reregister_err_wrong_user"          : "This device already belongs to a real user. Use Delete instead of Re-register.",
+	"devices.reregister_err_already_gone"        : "Device was already removed from headscale — refresh the page and re-issue a key via /my/preauth",
+	"devices.reregister_banner_title"            : "Device re-registration required",
+	"devices.reregister_banner_body_one"         : "<b>%d device</b> on your list was registered in headscale via a \"ghost\" preauth key (install-time, without --user). Use the Re-register button to delete it in headscale and get a new key for your account.",
+	"devices.reregister_banner_body_many"        : "<b>%d devices</b> on your list were registered in headscale via a \"ghost\" preauth key (install-time, without --user). Use the Re-register button to delete each in headscale and get a new key for your account.",
+	"devices.reregister_result_banner"           : "This key replaces device <code>%s</code>, which was removed from headscale as a \"ghost\" preauth key. Reconnect the device with:<br><code>tailscale up --authkey=&lt;key&gt;</code>",
 	"devices.refresh"                            : "Refresh list",
 	"devices.user"                               : "User",
 	"devices.user_facing"                        : "User-facing",

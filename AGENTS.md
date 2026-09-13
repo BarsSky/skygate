@@ -4098,6 +4098,46 @@ operator decision rationale.
     **Surface**:
     - `internal/nodeownership/auto_alert.go` (new,
       ~330 lines): `TagAlertSink` struct +
+    - `B227.1` (B-mod-reregister, 2026-09-13): per-row
+      Re-register button on /my/devices for nodes in the
+      headscale synthetic "tagged-devices" sentinel user
+      (id=2147455555). Closes the operator's 2026-09-13
+      report ("не убить живую систему" — the only pre-fix
+      recovery was SSH + headscale CLI + manual node
+      delete + manual /my/preauth, too many steps). Post-fix:
+      the per-row Re-register button (only visible when
+      n.UserName == "tagged-devices" AND the user owns
+      the row via node_owner_map snapshot) deletes the
+      ghost node in headscale via hsClient.DeleteNode +
+      runs devicedelete.Delete for full local cleanup +
+      issues a fresh 24h REUSABLE preauth key bound to the
+      current user + renders the preauth_result.html page
+      with a "this key replaces <hostname>" banner so the
+      user reconnects with `tailscale up --authkey=<key>`.
+      The banner at the top of /my/devices shows
+      "X devices need re-registration" when any rows
+      have IsTaggedGhost=true. The wrong-user scope-check
+      refuses real-user nodes (the operator should use
+      Delete instead). 8 contracts in scripts/check_b_mod_reregister.sh.
+      Files:
+      - `internal/feature/my/devices.go` — handler +
+        IsTaggedGhost field + inline TaggedGhostCount in
+        the render block (avoiding the countTaggedGhosts()
+        helper that triggered a Go parser edge case).
+      - `internal/handlers/templates/user/devices.html` —
+        per-row Re-register form + page-top ghost-node banner.
+      - `internal/handlers/templates/user/preauth_result.html` —
+        ReregisteredFor banner when the key replaces a
+        specific device.
+      - `cmd/skygate/main.go` — route wired at
+        POST /my/devices/{id}/reregister.
+      - `internal/i18n/catalog_my.go` — 11 RU + 11 EN keys
+        (banner + button + result + 4 errors).
+      - `scripts/check_b_mod_reregister.sh` — 9 contracts.
+      - `internal/feature/my/devices_reregister_test.go` — 3
+        pure-Go tests (route pattern, tagged-ghost shape,
+        wrong-user scope-check).
+
       `AlertSink` interface (minimal local
       interface, mirrors the `monitoring.NotifierSink`
       pattern — avoids importing internal/telegram

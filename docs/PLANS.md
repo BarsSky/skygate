@@ -1,6 +1,6 @@
 # Skygate plans & technical debt
 
-**Last updated:** 2026-09-13 (B237.24 + B237.24.1 ghcr.io lowercase path guard)
+**Last updated:** 2026-09-13 (B237.24 + B237.24.1 + B-mod-reregister per-row Re-register for tagged-devices ghosts)
 **Maintained by:** Mavis (skygate) + operator
 **Status:** live roadmap; updated after every release
 

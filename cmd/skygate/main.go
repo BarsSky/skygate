@@ -1395,6 +1395,18 @@ func main() {
 	// purged return 410 Gone (mirrors the B160.1
 	// pattern).
 	mux.Handle("POST /my/devices/{id}/delete", authMW(http.HandlerFunc(mySvc.PostMyDeviceDelete)))
+	// B-mod-reregister (2026-09-13): per-row re-register for nodes
+	// in the synthetic "tagged-devices" sentinel user (id=2147455555).
+	// Pre-B-mod-reregister these ghost nodes had no recovery path —
+	// headscale 0.29.1 has no `nodes move` CLI, and /my/preauth
+	// alone wouldn't help (the existing node is in tagged-devices,
+	// not the user's namespace, so Backfill never attributes it).
+	// The handler deletes the ghost + issues a fresh reusable 24h
+	// preauth key bound to the current user + renders the result
+	// page so the user reconnects with `tailscale up --authkey=<key>`
+	// under the correct user. Backfill's Strategy A picks up the new
+	// node on the next /my/devices load.
+	mux.Handle("POST /my/devices/{id}/reregister", authMW(http.HandlerFunc(mySvc.PostMyDeviceReregister)))
 	// B155 (v1.5.0): per-row preauth key reissue.
 	// Mirrors B153's /my/token/{id}/renew pattern:
 	// reissue button on /my/keys (POST, no JS).

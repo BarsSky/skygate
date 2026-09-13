@@ -59,6 +59,27 @@
 </div>
 {{end}}
 
+{{/* B-mod-reregister (2026-09-13): ghost-node banner. Shown only when
+     the user has at least one device in the synthetic tagged-devices
+     sentinel user (id=2147455555). The preauth key on those devices
+     was created at install time WITHOUT a --user flag, so headscale
+     placed them in the default fallback user. The per-row
+     Re-register button on each row is the fix. We render the
+     banner just before the subnet card so it's the first thing the
+     user sees after the post-delete flash. Suppressed when count=0
+     so the page stays clean for healthy tailnets. */}}
+{{if gt .TaggedGhostCount 0}}
+<div class="alert alert-warning" style="margin-top:8px">
+  <i class="fa-solid fa-ghost"></i>
+  <strong>{{t "devices.reregister_banner_title"}}</strong><br>
+  {{if eq .TaggedGhostCount 1}}
+    {{tf "devices.reregister_banner_body_one" .TaggedGhostCount}}
+  {{else}}
+    {{tf "devices.reregister_banner_body_many" .TaggedGhostCount}}
+  {{end}}
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-network-wired"></i>{{t "my_devices.subnet_card_title"}}</h3>
   {{if .SubnetCIDR}}
@@ -345,6 +366,29 @@
               <i class="fa-solid fa-trash"></i>{{t "devices.delete"}}
             </button>
           </form>
+          {{/* B-mod-reregister (2026-09-13): for nodes that headscale
+               shows in the synthetic "tagged-devices" user
+               (id=2147455555) we offer a one-click escape hatch.
+               Without this, the only recovery was SSH + headscale
+               CLI + manual node delete + manual /my/preauth —
+               too many steps for the operator's 2026-09-13 report.
+               The button is shown only when IsTaggedGhost is true
+               (live-tagged OR snapshot-tagged). The handler deletes
+               the ghost node + issues a fresh 24h reusable preauth
+               key bound to the current portal user + renders the
+               result page so the user reconnects with
+               `tailscale up --authkey=<key>`. The confirm() guard
+               matches the operator's "не убить живую систему"
+               rule — the device is currently NOT connected
+               (lastSeen=null for all tagged-devices ghosts), so
+               the click is safe. */}}
+          {{if .IsTaggedGhost}}
+          <form method="post" action="/my/devices/{{.ID}}/reregister" style="margin-top:6px;display:inline" onsubmit="return confirm('{{tf "devices.reregister_confirm" .Hostname}}')">
+            <button type="submit" class="btn btn-warning" style="padding:2px 8px;font-size:11px" title="{{t "devices.reregister_title"}}">
+              <i class="fa-solid fa-arrows-rotate"></i>{{t "devices.reregister_btn"}}
+            </button>
+          </form>
+          {{end}}
         </td>
         <td>
           {{if .IsSubnetRouter}}

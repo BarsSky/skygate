@@ -20,6 +20,20 @@
 </div>
 {{end}}
 
+{{/* B-mod-reregister (2026-09-13): shown when this key was issued
+     from the per-row Re-register button on /my/devices (vs the
+     generic /my/preauth issuance). The banner tells the user
+     which device this key replaces — without it they'd have to
+     cross-reference the URL back to the /my/devices table. The
+     ReregisteredFor field is empty for normal /my/preauth
+     issuances, so the banner is suppressed. */}}
+{{if .ReregisteredFor}}
+<div class="alert alert-warning" style="margin-bottom:8px">
+  <i class="fa-solid fa-arrows-rotate"></i>
+  {{tf "devices.reregister_result_banner" .ReregisteredFor}}
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-key"></i>{{t "devices.preauth_key"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.warning"}} (instructions for <b>{{.OSLabel}}</b>):</p>
