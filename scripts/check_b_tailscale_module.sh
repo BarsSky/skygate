@@ -61,18 +61,30 @@ if [ ! -d "${PKG_DIR}" ]; then
 fi
 pass "package directory exists (${PKG_DIR})"
 
-if ! command -v go >/dev/null 2>&1; then
-    if [ -x "/mnt/c/Program Files/Go/bin/go.exe" ]; then
-        export PATH="/mnt/c/Program Files/Go/bin:$PATH"
-    elif [ -x "/c/Program Files/Go/bin/go.exe" ]; then
-        export PATH="/c/Program Files/Go/bin:$PATH"
-    fi
+# Same Windows-Git-Bash go-discovery pattern used by
+# verify_pre_deploy.sh: capture go's absolute path into
+# $GO_BIN instead of mutating $PATH, because bash splits
+# "Program Files" on the space and breaks PATH lookup.
+GO_BIN=""
+if command -v go >/dev/null 2>&1; then
+    GO_BIN="$(command -v go)"
+else
+    for cand in \
+        "/mnt/c/Program Files/Go/bin/go.exe" \
+        "/c/Program Files/Go/bin/go.exe" \
+        "/usr/local/go/bin/go" \
+        "/opt/go/bin/go"; do
+        if [ -x "$cand" ]; then
+            GO_BIN="$cand"
+            break
+        fi
+    done
 fi
-if ! command -v go >/dev/null 2>&1; then
+if [ -z "$GO_BIN" ]; then
     fail "go is on PATH" "go not found in PATH or standard install locations"
     exit 1
 fi
-GO_VERSION="$(go version 2>&1)"
+GO_VERSION="$("$GO_BIN" version 2>&1)"
 pass "go is on PATH (${GO_VERSION})"
 
 # --- contract 1: package files exist ---
@@ -87,21 +99,21 @@ done
 
 # --- contract 2: package compiles ---
 section "Compile"
-if go build ./internal/module/tailscale/... 2>&1 | grep -q .; then
+if "$GO_BIN" build ./internal/module/tailscale/... 2>&1 | grep -q .; then
     fail "tailscale package builds" "go build returned output"
 else
     pass "tailscale package builds"
 fi
 
 # --- contract 3: vet clean ---
-if go vet ./internal/module/tailscale/... 2>&1 | grep -q .; then
+if "$GO_BIN" vet ./internal/module/tailscale/... 2>&1 | grep -q .; then
     fail "go vet clean" "go vet returned warnings"
 else
     pass "go vet clean"
 fi
 
 # --- contract 4: unit tests pass ---
-TEST_OUT="$(go test -count=1 -timeout=60s ./internal/module/tailscale/... 2>&1)"
+TEST_OUT="$("$GO_BIN" test -count=1 -timeout=60s ./internal/module/tailscale/... 2>&1)"
 if printf '%s' "${TEST_OUT}" | grep -q '^FAIL'; then
     fail "unit tests pass" "see output above"
     printf '%s\n' "${TEST_OUT}" | sed 's/^/           /'

@@ -32,16 +32,30 @@ section() { printf '\n%s== %s ==%s\n' "${YEL}" "$1" "${RST}"; }
 
 # --- preflight ---
 section "Preflight"
-if ! command -v go >/dev/null 2>&1; then
-    if [ -x "/mnt/c/Program Files/Go/bin/go.exe" ]; then
-        export PATH="/mnt/c/Program Files/Go/bin:$PATH"
-    fi
+# Same Windows-Git-Bash go-discovery pattern as
+# verify_pre_deploy.sh: capture go's absolute path into
+# $GO_BIN instead of mutating $PATH, because bash splits
+# "Program Files" on the space and breaks PATH lookup.
+GO_BIN=""
+if command -v go >/dev/null 2>&1; then
+    GO_BIN="$(command -v go)"
+else
+    for cand in \
+        "/mnt/c/Program Files/Go/bin/go.exe" \
+        "/c/Program Files/Go/bin/go.exe" \
+        "/usr/local/go/bin/go" \
+        "/opt/go/bin/go"; do
+        if [ -x "$cand" ]; then
+            GO_BIN="$cand"
+            break
+        fi
+    done
 fi
-if ! command -v go >/dev/null 2>&1; then
+if [ -z "$GO_BIN" ]; then
     fail "go on PATH" "go not found"
     exit 1
 fi
-pass "go on PATH ($(go version 2>&1))"
+pass "go on PATH ($("$GO_BIN" version 2>&1))"
 
 # --- 1. files exist ---
 section "File presence"
@@ -60,19 +74,19 @@ done
 
 # --- 2. compile + vet ---
 section "Compile + vet"
-if go build ./... 2>&1 | grep -q .; then
+if "$GO_BIN" build ./... 2>&1 | grep -q .; then
     fail "go build ./..." "build returned output"
 else
     pass "go build ./... clean"
 fi
-if go vet ./... 2>&1 | grep -q .; then
+if "$GO_BIN" vet ./... 2>&1 | grep -q .; then
     fail "go vet ./..." "vet returned warnings"
 else
     pass "go vet ./... clean"
 fi
 
 # --- 3. unit tests pass ---
-TEST_OUT="$(go test -count=1 -timeout=60s -run 'TestAdmin|TestActionsFor|TestInstallModeDisplay|TestUrlEscape' ./internal/feature/admin/... 2>&1)"
+TEST_OUT="$("$GO_BIN" test -count=1 -timeout=60s -run 'TestAdmin|TestActionsFor|TestInstallModeDisplay|TestUrlEscape' ./internal/feature/admin/... 2>&1)"
 if printf '%s' "${TEST_OUT}" | grep -q '^FAIL'; then
     fail "modules tests pass" "see output"
     printf '%s\n' "${TEST_OUT}" | sed 's/^/           /' | head -20
