@@ -254,10 +254,10 @@ func TestBuildByNameWithDuplicates_NoDuplicates(t *testing.T) {
 // MUST be safe for the "headscale returned 0 users" edge case.
 func TestBuildByNameWithDuplicates_EmptyAndNil(t *testing.T) {
 	byName, duplicates := buildByNameWithDuplicates(nil)
-	if byName != nil && len(byName) != 0 {
+	if len(byName) != 0 {
 		t.Errorf("byName = %v, want empty", byName)
 	}
-	if duplicates != nil && len(duplicates) != 0 {
+	if len(duplicates) != 0 {
 		t.Errorf("duplicates = %v, want empty", duplicates)
 	}
 }

@@ -38,6 +38,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -264,7 +265,7 @@ func runRegAPICredsTest(args []string) error {
 	if !store.IsConfigured() {
 		return errors.New("regapi-credentials test: not configured (no cert + no password in the DB — run `skygate regapi-credentials set` first)")
 	}
-	res, err := store.TestConnection(nil)
+	res, err := store.TestConnection(context.TODO())
 	if err != nil {
 		// Same UX as the /admin/ha form: even on
 		// FAIL we print the result so the operator

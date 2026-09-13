@@ -1,6 +1,6 @@
 # Skygate plans & technical debt
 
-**Last updated:** 2026-09-08 (B237.22 + B237.23 deployed on top of v1.5.2)
+**Last updated:** 2026-09-13 (B237.24 + B237.24.1 ghcr.io lowercase path guard)
 **Maintained by:** Mavis (skygate) + operator
 **Status:** live roadmap; updated after every release
 
