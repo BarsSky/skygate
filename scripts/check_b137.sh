@@ -41,11 +41,26 @@ if ! echo "test" | grep -P "test" >/dev/null 2>&1; then
   USE_PYTHON_GREP=1
 fi
 
+# Pick a python that actually runs (Git Bash on Windows has the
+# Microsoft Store stub for 'python3'; see check_b131.sh).
+if [ "$USE_PYTHON_GREP" -eq 1 ]; then
+  PY=""
+  for candidate in python3 python py; do
+    bin=$(command -v "${candidate}" 2>/dev/null) || continue
+    out=$("${bin}" -c 'print("ok")' 2>/dev/null) || continue
+    if [ "${out}" = "ok" ]; then
+      PY="${bin}"
+      break
+    fi
+  done
+fi
+
 count_matches() {
   local pattern="$1"
   local file="$2"
   if [ "$USE_PYTHON_GREP" -eq 1 ]; then
-    python3 -c "
+    if [ -z "${PY}" ]; then echo 0; return; fi
+    "${PY}" -c "
 import sys,re
 s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
 print(len(re.findall(sys.argv[2], s, re.MULTILINE)))

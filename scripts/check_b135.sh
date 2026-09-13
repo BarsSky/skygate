@@ -46,16 +46,34 @@ pass() { echo "  PASS  $*"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL  $*"; FAIL=$((FAIL+1)); }
 warn() { echo "  WARN  $*"; WARN=$((WARN+1)); }
 
-# Cross-platform grep: fall back to python3 if -P is missing (Windows)
+# Cross-platform grep: fall back to python if -P is missing (Windows)
 USE_PYTHON_GREP=0
 if ! echo "test" | grep -P "test" >/dev/null 2>&1; then
   USE_PYTHON_GREP=1
 fi
 
+# Pick a python that actually runs. On Windows Git Bash, 'python3'
+# is a Microsoft Store stub that exits 1 with "Python was not found".
+# 'python' resolves to the real install (C:/Python314/python.exe).
+# On Linux, 'python3' is the real one. Probe so we don't trust
+# `command -v`.
+if [ "$USE_PYTHON_GREP" -eq 1 ]; then
+  PY=""
+  for candidate in python3 python py; do
+    bin=$(command -v "${candidate}" 2>/dev/null) || continue
+    out=$("${bin}" -c 'print("ok")' 2>/dev/null) || continue
+    if [ "${out}" = "ok" ]; then
+      PY="${bin}"
+      break
+    fi
+  done
+fi
+
 pygrep() {
   local pattern="$1"
   local file="$2"
-  python3 -c "
+  if [ -z "${PY}" ]; then return 1; fi
+  "${PY}" -c "
 import sys,re
 s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
 m=re.search(sys.argv[2], s, re.MULTILINE)
@@ -67,7 +85,8 @@ if m:
 pygrep_count() {
   local pattern="$1"
   local file="$2"
-  python3 -c "
+  if [ -z "${PY}" ]; then echo 0; return; fi
+  "${PY}" -c "
 import sys,re
 s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
 print(len(re.findall(sys.argv[2], s, re.MULTILINE)))

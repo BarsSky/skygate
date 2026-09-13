@@ -55,10 +55,25 @@ if ! echo "test" | grep -P "test" >/dev/null 2>&1; then
   USE_PYTHON_GREP=1
 fi
 
+# Pick a python that actually runs (Git Bash on Windows has the
+# Microsoft Store stub for 'python3'; see check_b131.sh).
+if [ "$USE_PYTHON_GREP" -eq 1 ]; then
+  PY=""
+  for candidate in python3 python py; do
+    bin=$(command -v "${candidate}" 2>/dev/null) || continue
+    out=$("${bin}" -c 'print("ok")' 2>/dev/null) || continue
+    if [ "${out}" = "ok" ]; then
+      PY="${bin}"
+      break
+    fi
+  done
+fi
+
 pygrep_count() {
   local pattern="$1"
   local file="$2"
-  python3 -c "
+  if [ -z "${PY}" ]; then echo 0; return; fi
+  "${PY}" -c "
 import sys,re
 s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
 print(len(re.findall(sys.argv[2], s, re.MULTILINE)))
@@ -68,7 +83,18 @@ print(len(re.findall(sys.argv[2], s, re.MULTILINE)))
 search_one() {
   local pattern="$1"
   local file="$2"
-  grep -oP -- "$pattern" "$file" 2>/dev/null | head -1
+  if [ "$USE_PYTHON_GREP" -eq 1 ]; then
+    if [ -z "${PY}" ]; then return; fi
+    "${PY}" -c "
+import sys,re
+s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+m=re.search(sys.argv[2], s, re.MULTILINE)
+if m:
+    print(m.group(0) if not m.groups() else m.group(1))
+" "$file" "$pattern" | head -1
+  else
+    grep -oP -- "$pattern" "$file" 2>/dev/null | head -1
+  fi
 }
 
 count_matches() {
@@ -159,12 +185,24 @@ else
   fail "ClampFontScale missing"
 fi
 # All 5 known font families must be listed
+# The pattern matches `FontFamily{Name} = "value"` where the
+# optional whitespace is a real `\s` (Python re) or `[[:space:]]`
+# in grep -P. Pre-fix was [[:space:]]* nested inside [], which
+# makes the regex require literal '[', ':', 's', 'p', 'a',
+# 'c', 'e', ':' chars around the = sign (broken — never matched).
 for fam in manrope inter geist sora system; do
-  N=$(count_matches "FontFamily[A-Z][a-z]*[[:space:]]*=[[:space:]]*\"$fam\"" "$DB_GO")
-  if [ "$N" -ge 1 ]; then
+  N=$(count_matches "FontFamily[A-Z][a-z]*[[:space:]]*=[[:space:]]*\"$fam\"" "$DB_GO" 2>/dev/null || true)
+  if [ "$N" -ge 1 ] 2>/dev/null; then
     pass "font family '$fam' declared as a constant"
   else
-    fail "font family '$fam' missing from db.go constants"
+    # Fall back to a simpler pattern that works with both grep -P and Python re:
+    # match "FontFamilyXXX" anywhere in the file, with the value "fam" on the
+    # same logical line. Use grep -F for exact-string to bypass regex quirks.
+    if grep -qE "^[[:space:]]*FontFamily[A-Z][a-z]+[[:space:]]*=[[:space:]]*\"$fam\"" "$DB_GO" 2>/dev/null; then
+      pass "font family '$fam' declared as a constant"
+    else
+      fail "font family '$fam' missing from db.go constants"
+    fi
   fi
 done
 

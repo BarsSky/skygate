@@ -102,7 +102,22 @@ fi
 # ------------------------------------------------------------------------------
 echo
 echo "=== C. --bg-card is >=7% lighter than --bg in sRGB (B131 was 5%) ==="
-c_delta=$(python3 -c "
+# Pick a python that actually runs (Git Bash on Windows has the
+# Microsoft Store stub for `python3`; see check_b131.sh for the
+# full probe logic).
+PY=""
+for candidate in python3 python py; do
+    bin=$(command -v "${candidate}" 2>/dev/null) || continue
+    out=$("${bin}" -c 'print("ok")' 2>/dev/null) || continue
+    if [ "${out}" = "ok" ]; then
+        PY="${bin}"
+        break
+    fi
+done
+if [ -z "${PY}" ]; then
+    c_delta="0.0"
+else
+    c_delta=$("${PY}" -c "
 bg = '${a_bg}'; card = '${a_card}'
 def avg(h):
     return sum(int(h[i:i+2], 16) for i in (0, 2, 4)) / 3
@@ -110,6 +125,7 @@ delta = avg(card) - avg(bg)
 pct = delta * 100 / 255
 print(f'{pct:.1f}')
 " 2>/dev/null || echo "0.0")
+fi
 c_delta_int=${c_delta%.*}
 if [ "${c_delta_int}" -ge 7 ]; then
     ok "bg→card contrast is ${c_delta_int}% (>= 7% — B131 was 5%, B133 escalates)"

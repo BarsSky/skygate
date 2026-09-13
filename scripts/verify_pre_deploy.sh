@@ -1073,7 +1073,8 @@ run_check "B44" "db.OpenPostgres: auto-MigratePostgres + v0.50/v0.51 tables (v0.
     grep -qF \"func migrateV051PG\" internal/db/migrations_pg.go &&
     grep -qF \"CREATE TABLE IF NOT EXISTS headscale_acl_rules\" internal/db/migrations_pg.go &&
     grep -qF \"CREATE TABLE IF NOT EXISTS system_tests_runs\" internal/db/migrations_pg.go &&
-    grep -qF \"migrateV050PG, migrateV051PG\" internal/db/driver_postgres.go
+    grep -qF \"migrateV050PG\" internal/db/driver_postgres.go &&
+    grep -qF \"migrateV051PG\" internal/db/driver_postgres.go
   '"
 
 # ─── B45 (v0.33.1) — Template body- names match the

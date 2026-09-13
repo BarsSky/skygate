@@ -130,7 +130,32 @@ echo
 echo "=== C. --bg-card is >=5% lighter than --bg in sRGB ==="
 # Use python for the sRGB luminance delta — bash integer
 # arithmetic is fragile with hex colors.
-c_delta=$(python3 -c "
+#
+# Pick a python that actually runs. On Windows, Git Bash has
+# BOTH python3 (the Microsoft Store stub, "Python was not
+# found") AND python (the real install like C:/Python314/python).
+# The stub exits 0 to `command -v` so we can't just pick the
+# first match — we have to probe. Strategy:
+#   1. Try python3 with a real script; if it returns the
+#      expected stdout, use it.
+#   2. Else try python with the same script.
+#   3. Else fall back to "0.0" (the FAIL signal the operator
+#      sees; the comment in check_b135 / check_b134 explains
+#      the cascade).
+PY=""
+for candidate in python3 python py; do
+    bin=$(command -v "${candidate}" 2>/dev/null) || continue
+    # probe — Microsoft Store stub exits non-zero on any -c call
+    out=$("${bin}" -c 'print("ok")' 2>/dev/null) || continue
+    if [ "${out}" = "ok" ]; then
+        PY="${bin}"
+        break
+    fi
+done
+if [ -z "${PY}" ]; then
+    c_delta="0.0"
+else
+    c_delta=$("${PY}" -c "
 bg = '${a_bg}'; card = '${a_card}'
 def avg(h):
     return sum(int(h[i:i+2], 16) for i in (0, 2, 4)) / 3
@@ -138,6 +163,7 @@ delta = avg(card) - avg(bg)
 pct = delta * 100 / 255
 print(f'{pct:.1f}')
 " 2>/dev/null || echo "0.0")
+fi
 c_delta_int=${c_delta%.*}
 if [ "${c_delta_int}" -ge 5 ]; then
     ok "bg→card contrast is ${c_delta_int}% (>= 5% minimum for comfortable dark theme)"

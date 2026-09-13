@@ -45,11 +45,32 @@ if ! echo "test" | grep -P "test" >/dev/null 2>&1; then
   USE_PYTHON_GREP=1
 fi
 
+# Pick a python that actually runs. On Windows Git Bash, 'python3'
+# is a Microsoft Store stub (exits 1 with "Python was not found")
+# while 'python' resolves to the real install (e.g.
+# C:/Python314/python.exe). On Linux, 'python3' is the real one.
+# Probe with a trivial print so we don't trust `command -v`.
+if [ "$USE_PYTHON_GREP" -eq 1 ]; then
+  PY=""
+  for candidate in python3 python py; do
+    bin=$(command -v "${candidate}" 2>/dev/null) || continue
+    out=$("${bin}" -c 'print("ok")' 2>/dev/null) || continue
+    if [ "${out}" = "ok" ]; then
+      PY="${bin}"
+      break
+    fi
+  done
+fi
+
 match_count() {
   local pattern="$1"
   local file="$2"
   if [ "$USE_PYTHON_GREP" -eq 1 ]; then
-    python3 -c "import sys,re; s=open(sys.argv[1],encoding='utf-8',errors='replace').read(); print(len(re.findall(sys.argv[2], s, re.MULTILINE)))" "$file" "$pattern" | tr -d '\n\r '
+    if [ -z "${PY}" ]; then
+      echo 0
+    else
+      "${PY}" -c "import sys,re; s=open(sys.argv[1],encoding='utf-8',errors='replace').read(); print(len(re.findall(sys.argv[2], s, re.MULTILINE)))" "$file" "$pattern" | tr -d '\n\r '
+    fi
   else
     grep -cP "$pattern" "$file" 2>/dev/null | tr -d '\n\r ' || echo 0
   fi
