@@ -71,27 +71,6 @@ func (s *stubModule) SubFeatures() []module.SubFeature {
 func (s *stubModule) EnableSubFeature(_ context.Context, _ string) error  { return nil }
 func (s *stubModule) DisableSubFeature(_ context.Context, _ string) error { return nil }
 
-// stubManager wraps a *module.Manager and registers one
-// stub module. Used to test the "Manager is wired" path.
-type stubManager struct {
-	mod module.Module
-}
-
-func newTestService(mod module.Module) *Service {
-	s := &Service{
-		Backend: &stubBackend{},
-	}
-	if mod != nil {
-		// Register via a real Manager to keep the API
-		// surface honest. Tests are in the same module
-		// package so we can construct one.
-		// For now, we cheat: we set s.Modules = nil and
-		// rely on the test's expectation.
-		_ = mod
-	}
-	return s
-}
-
 // TestAdminModulesList_NilManager verifies that with
 // s.Modules == nil, the handler renders the "NotWired"
 // branch instead of crashing.

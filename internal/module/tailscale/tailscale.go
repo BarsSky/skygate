@@ -74,11 +74,6 @@ type Module struct {
 	// --advertise-exit-node. Used by Health() to detect
 	// drift (e.g. operator reset the routes manually).
 	lastAdvertiseExit bool
-
-	// initOnce guards Init() so a double-init returns
-	// ErrAlreadyRunning instead of re-running the
-	// install path.
-	initOnce sync.Once
 }
 
 // NewModule returns a Module with the production execRunner.

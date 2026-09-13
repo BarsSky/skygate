@@ -28,8 +28,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
-	"sync"
 	"time"
 )
 
@@ -96,12 +94,6 @@ type State struct {
 // stateFile is the on-disk filename. Constant so callers don't
 // typo it. B-mod-core convention.
 const stateFile = "state.json"
-
-// stateMu guards the in-memory state cache. The Manager can be
-// called from multiple goroutines (HTTP handlers + periodic
-// health check loop), so all reads/writes to State go through
-// this mutex.
-var stateMu sync.Mutex
 
 // LoadState is the public API for reading a module's persistent
 // state. Modules call this from Init() (and on demand from
@@ -225,20 +217,10 @@ func saveState(dataDir string, s *State) error {
 	return nil
 }
 
-// stateKey returns the sorted sub-feature names. Helper for
-// stable state diffing (used in tests + in the Manager's
-// "did the sub-feature state change?" check).
-func (s *State) subFeatureNames() []string {
-	if len(s.SubFeatures) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(s.SubFeatures))
-	for k := range s.SubFeatures {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
+// stateKey placeholder — was used for stable state diffing. Removed in
+// B95 cleanup (2026-09-13): no callers, dead code. The Manager's
+// "did the sub-feature state change?" check is implemented via
+// deep-equal comparison on SubFeatures instead.
 
 // stateChanged returns true if the two states differ in any
 // field that the Manager persists. Used to avoid writing
