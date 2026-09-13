@@ -82,16 +82,20 @@ import (
 // THIS deployment. If the operator later adopts strict
 // tags (e.g. tag:vps), this function can be replaced
 // with a tag-based check.
+// vpsHostnameSet returns the 4 VPS-class Tailscale hostnames
+// the operator's deployment classifies as VPS-class. The 5th
+// entry that used to live here was a literal placeholder for
+// the polygon VM (svi at <polygon-vm-public-ip>), which the
+// operator removed per the 2026-08-17 directive ("старые тэги
+// по svyatoslava надо почистить вес что"). The 4 remaining
+// VPS hostnames are: emilia, karolina, sharlotta, skygate-host-1.
+// Mirrors B118 contract G ("4 infra tags remain, was 5").
 func vpsHostnameSet() map[string]bool {
 	return map[string]bool{
-		"emilia":           true,
-		"karolina":         true,
-		"sharlotta":        true,
-		"skygate-host-1":   true,
-		// <polygon-vm-hostname> is the actual hostname for karolina's
-		// Tailscale IP (headscale records both; karolina
-		// appears in `tailscale status` as a peer of self).
-		"<polygon-vm-hostname>":    true,
+		"emilia":         true,
+		"karolina":       true,
+		"sharlotta":      true,
+		"skygate-host-1": true,
 	}
 }
 

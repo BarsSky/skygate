@@ -46,7 +46,9 @@ func setUpTailnetSelfOverride(t *testing.T, hostname string) {
 
 func TestVpsHostnameSet_IncludesKnownVPS(t *testing.T) {
 	vps := vpsHostnameSet()
-	for _, want := range []string{"emilia", "karolina", "sharlotta", "skygate-host-1", "<polygon-vm-hostname>"} {
+	// 4 VPS hostnames (was 5 pre-2026-08-17; polygon VM removed
+	// per operator directive). Mirrors B118 contract G.
+	for _, want := range []string{"emilia", "karolina", "sharlotta", "skygate-host-1"} {
 		if !vps[want] {
 			t.Errorf("vpsHostnameSet() missing %q", want)
 		}

@@ -105,10 +105,14 @@ for sym in allNodesReachabilityTest vpsToVPSLatencyTest splitSuspectedTest vpsHo
     pass "Go file has $sym"
   fi
 done
-# All 5 VPS hostnames must be in the vpsHostnameSet map.
-for host in emilia karolina sharlotta skygate-host-1 <polygon-vm-hostname>; do
+# All 4 VPS hostnames must be in the vpsHostnameSet map (was 5
+# pre-2026-08-17; polygon VM removed per operator directive).
+# Mirrors B118 contract G ("4 infra tags remain, was 5").
+for host in emilia karolina sharlotta skygate-host-1; do
   if ! grep -q "\"$host\"" "$GO_FILE"; then
     err "B110 FAIL: $GO_FILE missing VPS hostname \"$host\" in vpsHostnameSet"
+  else
+    pass "Go file has VPS hostname \"$host\""
   fi
 done
 # Category must be "network" for all 3 (matches B98).
