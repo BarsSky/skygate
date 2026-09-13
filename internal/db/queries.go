@@ -270,6 +270,7 @@ const (
 	qInsertPortalUserAdoptAdmin = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4) ON CONFLICT(username) DO NOTHING RETURNING id`
 	qUpdatePasswordHash    = `UPDATE portal_users SET password_hash = $1 WHERE id = $2`
 	qUpdatePortalUsername  = `UPDATE portal_users SET username = $1 WHERE id = $2`
+	qUpdatePortalUserIsAdmin = `UPDATE portal_users SET is_admin = $1 WHERE id = $2`
 	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = $1`
 )
 

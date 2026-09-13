@@ -47,10 +47,11 @@
 {{/*
   T6 variant: portal has a row with the right username and
   linked HS, but is_admin somehow flipped to 0. Banner offers
-  "Promote" (single UPDATE). The handler for this isn't added
-  in T6 — it lands in a follow-up (PostAdminUserPromote) since
-  it's a per-row button that mirrors B169's per-row delete.
-  For now the banner just explains the drift.
+  a single-click "Promote" button (T6.1 follow-up, 2026-09-13).
+  POSTs to /admin/users/{id}/promote, which is a single UPDATE
+  flipping is_admin 0 → 1 + an 'admin_promote' audit row. Idempotent:
+  a re-click on an already-admin row short-circuits with
+  already_admin=<username> flash (no DB change, no audit row).
 */}}
 <div class="alert alert-warning" style="border-color:var(--warning)">
   <i class="fa-solid fa-triangle-exclamation"></i>
@@ -58,6 +59,9 @@
   <span style="color:var(--text-muted);font-size:13px;margin-left:8px">
     {{tf "users.sync_drift_promote_desc" .AdminSyncFacts.ExpectedAdminUsername}}
   </span>
+  <form method="post" action="/admin/users/{{.AdminSyncFacts.PortalAdminID}}/promote" style="display:inline-flex;gap:6px;align-items:center;margin-top:8px" title="{{t "users.sync_drift_promote_btn_help"}}">
+    <button type="submit" class="btn btn-sm btn-primary" onclick="return confirm('{{t "users.sync_drift_promote_confirm"}}')"><i class="fa-solid fa-user-shield"></i> {{t "users.sync_drift_promote_btn"}}</button>
+  </form>
   <p style="font-size:12px;color:var(--text-muted);margin:6px 0 0">
     {{t "users.sync_drift_promote_helper"}}
   </p>

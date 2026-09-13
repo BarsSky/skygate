@@ -599,6 +599,26 @@ func UpdatePortalUsername(d *sql.DB, id int64, newUsername string) (int64, error
 	return res.RowsAffected()
 }
 
+// SetPortalUserIsAdmin flips is_admin to `isAdmin` for the row with
+// the given id. Used by the v1.5.2 admin-user-sync T6.1 promote
+// handler (POST /admin/users/{id}/promote) — when the drift banner
+// detects that the row with the right username + linked HS somehow
+// has is_admin=0, the operator clicks Promote and this helper
+// flips the bit. Returns RowsAffected so the caller can detect
+// the no-op case (idempotent re-click on an already-admin row
+// returns 0 rows changed).
+func SetPortalUserIsAdmin(d *sql.DB, id int64, isAdmin bool) (int64, error) {
+	v := 0
+	if isAdmin {
+		v = 1
+	}
+	res, err := d.Exec(qUpdatePortalUserIsAdmin, v, id)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeletePortalUserByID removes the row for `id`. The PostAdminDeleteUser
 // handler is responsible for cleaning up dependent tables
 // (preauth_keys, audit_log, personal_api_tokens) — this helper only

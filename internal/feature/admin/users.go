@@ -185,6 +185,69 @@ func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/users", http.StatusFound)
 }
 
+// PostAdminUserPromote is the v1.5.2 admin-user-sync T6.1
+// "Promote" button INSIDE the AdminSyncPromoteToAdmin banner on
+// /admin/users (rendered when a portal row exists with the right
+// username + linked HS but is_admin somehow flipped to 0).
+//
+// Pre-T6.1 the banner just explained the drift — the operator had
+// to open the per-row edit form and click "Promote to admin"
+// there. T6.1 collapses this into a single click on the drift
+// banner itself, mirroring T5's "Adopt as Admin" form inside the
+// adopt banner.
+//
+// Flow:
+//   1. Parse {id} from path (the portal_users row to promote).
+//   2. Admin-only check. Non-admin → 403.
+//   3. Fetch the row's current is_admin + username via
+//      GetUserNameAndHSByID. Missing row → 400 (shouldn't happen
+//      in practice — the banner only renders for known users).
+//   4. Idempotency: if is_admin is already 1, redirect with
+//      already_admin=<username> flash (no DB change, no audit row).
+//   5. SetPortalUserIsAdmin(1) — single UPDATE.
+//   6. Audit row: action='admin_promote', detail includes the
+//      username + the operator's claims.Username so the log shows
+//      "who clicked Promote" for the post-mortem.
+//
+// Wire-up: POST /admin/users/{id}/promote in cmd/skygate/main.go.
+func (s *Service) PostAdminUserPromote(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	idStr := extractIDFromPath(r.URL.Path)
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	username, _, err := db.GetUserNameAndHSByID(s.dbc(), id)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	// Read current is_admin to detect the no-op case.
+	var isAdmin int
+	if err := s.dbc().QueryRow(`SELECT is_admin FROM portal_users WHERE id = $1`, id).Scan(&isAdmin); err != nil {
+		http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if isAdmin == 1 {
+		// Already admin — idempotent UX (the banner doesn't show
+		// in this case, but a stale reload + click race could).
+		http.Redirect(w, r, "/admin/users?already_admin="+url.QueryEscape(username), http.StatusSeeOther)
+		return
+	}
+	if _, err := db.SetPortalUserIsAdmin(s.dbc(), id, true); err != nil {
+		http.Error(w, "promote failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "admin_promote",
+		fmt.Sprintf("user=%q promoted to admin (drift fix)", username))
+	http.Redirect(w, r, "/admin/users?ok="+url.QueryEscape("promoted "+username+" to admin"), http.StatusSeeOther)
+}
+
 // PostAdminDeleteUser deletes a portal user + cascades to headscale,
 // preauth keys, audit log, and personal API tokens. Admin-only.
 // The user can't delete themselves.

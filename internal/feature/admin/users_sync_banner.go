@@ -95,6 +95,12 @@ type AdminSyncFacts struct {
 	// is the second-pass check for the case where the admin row
 	// is linked but somehow is_admin flipped to 0).
 	PortalAdminIsAdmin bool
+	// PortalAdminID is the id of the linked admin row (the row
+	// that owns the linked-admin check). Used by the T6.1
+	// AdminSyncPromoteToAdmin banner to render the per-row
+	// /admin/users/{id}/promote form action. 0 when the banner
+	// isn't in promote mode.
+	PortalAdminID int64
 
 	// HeadscaleHasExpected is true when headscale has a user
 	// with name == ExpectedAdminUsername. Used to choose
@@ -181,7 +187,7 @@ func (s *Service) adminUserSyncBanner(ctx context.Context, expectedAdmin string)
 		return AdminSyncNone, facts
 	}
 
-	// Query 1: the linked-admin row (count + username in one
+	// Query 1: the linked-admin row (count + username + id in one
 	// round-trip). The WHERE filters are: is_admin=1 AND
 	// headscale_user_id IS NOT NULL — the B-check (T1) contract.
 	// is_admin is trivially 1 for every row that survives the
@@ -189,10 +195,10 @@ func (s *Service) adminUserSyncBanner(ctx context.Context, expectedAdmin string)
 	// third column — PortalAdminIsAdmin = true whenever the
 	// count is 1.
 	err := conn.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(MIN(username), '')
+		SELECT COUNT(*), COALESCE(MIN(username), ''), COALESCE(MIN(id), 0)
 		FROM portal_users
 		WHERE is_admin = 1 AND headscale_user_id IS NOT NULL
-	`).Scan(&facts.PortalAdminCount, &facts.PortalAdminUsername)
+	`).Scan(&facts.PortalAdminCount, &facts.PortalAdminUsername, &facts.PortalAdminID)
 	if err != nil {
 		log.Printf("[admin-sync-banner] portal admin count: %v (banner hidden)", err)
 		return AdminSyncNone, facts
@@ -205,6 +211,7 @@ func (s *Service) adminUserSyncBanner(ctx context.Context, expectedAdmin string)
 		facts.PortalAdminIsAdmin = true
 	} else {
 		facts.PortalAdminUsername = ""
+		facts.PortalAdminID = 0
 		facts.PortalAdminIsAdmin = false
 	}
 
@@ -224,6 +231,35 @@ func (s *Service) adminUserSyncBanner(ctx context.Context, expectedAdmin string)
 			facts.HeadscaleExpectedID, _ = strconv.ParseInt(u.ID, 10, 64)
 			break
 		}
+	}
+
+	// Query 3 (T6.1, 2026-09-13): Case D — the right username but
+	// is_admin=0 case. The Query 1 filter (is_admin=1) deliberately
+	// excludes this row, so PortalAdminCount stays 0 and Case A
+	// would otherwise fire (adopt). We need to detect "right
+	// username + linked HS but is_admin=0" so the banner can offer
+	// a Promote remediation instead of an Adopt that would CREATE
+	// a duplicate row.
+	if facts.PortalAdminCount == 0 && facts.HeadscaleHasExpected {
+		var demotedID int64
+		err := conn.QueryRowContext(ctx, `
+			SELECT id FROM portal_users
+			WHERE username = $1 AND headscale_user_id IS NOT NULL AND is_admin = 0
+			LIMIT 1
+		`, expectedAdmin).Scan(&demotedID)
+		if err == nil && demotedID > 0 {
+			// Override the Case A facts so the decision function
+			// routes us to AdminSyncPromoteToAdmin instead of
+			// AdminSyncAdoptAsAdmin. We synthesise a "count==1,
+			// username matches, is_admin=0" facts shape.
+			facts.PortalAdminCount = 1
+			facts.PortalAdminUsername = expectedAdmin
+			facts.PortalAdminID = demotedID
+			facts.PortalAdminIsAdmin = false
+		}
+		// err != nil (sql.ErrNoRows) is the expected "no demoted
+		// row" case — leave facts at their Case A shape so the
+		// banner offers Adopt.
 	}
 
 	return adminUserSyncBannerFromFacts(facts)

@@ -1476,6 +1476,14 @@ func main() {
 	// (the second click gets a friendly "already adopted" flash
 	// instead of an error).
 	mux.Handle("POST /admin/users/HSOrphan/adopt", authMW(http.HandlerFunc(adminSvc.PostAdminHSOrphanAdopt)))
+	// 2026-09-13: v1.5.2 admin-user-sync T6.1 — Promote button on
+	// the AdminSyncPromoteToAdmin drift banner (portal row has the
+	// right username + linked HS but is_admin somehow flipped to 0).
+	// Single UPDATE that flips is_admin 0 → 1 + writes an
+	// 'admin_promote' audit row. Idempotent: a re-click on an
+	// already-admin row short-circuits with already_admin=<username>
+	// flash (no DB change, no audit row).
+	mux.Handle("POST /admin/users/{id}/promote", authMW(http.HandlerFunc(adminSvc.PostAdminUserPromote)))
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// (multi-tailnet). /admin/control-planes is the landing;
 	// /admin/users/{id}/plane is the per-user edit form.
