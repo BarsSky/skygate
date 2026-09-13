@@ -23,8 +23,13 @@
 #   D. table font-size is 14px (was 13px)
 #   E. title-row h2 is 24px (was 22px)
 #   F. button font-size is 14px (was 13px)
-#   G. layout.html includes the Manrope Google Fonts <link>
-#   H. layout.html has the fonts.gstatic.com preconnect
+#   G. layout.html references Manrope as a font option
+#      (the B136 per-user display-prefs block lives here)
+#   H. post-B158 self-hosted Manrope: themes.css has 4
+#      @font-face rules for Manrope (400/500/600/700) AND
+#      all 4 woff2 files exist in static/webfonts/. Replaces
+#      the pre-B158 "fonts.gstatic.com preconnect" contract
+#      that B158 deliberately removed.
 #   I. B131 / B133 / B134 contracts still pass (we didn't break
 #      the contrast bump or the wrapper-removal fix while
 #      reflowing the typography)
@@ -148,21 +153,48 @@ else
 fi
 
 echo
-echo "=== G. layout.html includes the Manrope Google Fonts <link> ==="
-N=$(count_matches 'Manrope' "$LAYOUT_HTML")
+echo "=== G. layout.html has the B136 per-user font override block ==="
+# Pre-B158 this contract was "layout.html includes the
+# Manrope Google Fonts <link>" — obsolete after B158. Post-
+# B158 the layout still wires up the font choice via the
+# B136 <style id='user-display-prefs'> block, where the
+# DisplayFont value (one of system/inter/geist/sora) is
+# resolved to the matching --font declaration. Manrope
+# itself is the DEFAULT in themes.css (no per-user block
+# needed) — the B136 block only overrides to Inter/Geist/
+# Sora/System when the user picks one.
+N=$(count_matches 'DisplayFont' "$LAYOUT_HTML")
 if [ "$N" -ge 1 ]; then
-  pass "layout.html has Manrope in a <link> (count: $N)"
+  pass "layout.html has the B136 DisplayFont override block (count: $N)"
 else
-  fail "layout.html does NOT reference Manrope"
+  fail "layout.html does NOT have the B136 DisplayFont block"
 fi
 
 echo
-echo "=== H. layout.html has the fonts.gstatic.com preconnect ==="
-N=$(count_matches 'fonts\.gstatic\.com' "$LAYOUT_HTML")
-if [ "$N" -ge 1 ]; then
-  pass "layout.html preconnects to fonts.gstatic.com (count: $N)"
+echo "=== H. post-B158 self-hosted Manrope (themes.css @font-face + static/webfonts/ woff2) ==="
+# B158 (v1.5.0) moved all 6 fonts off fonts.googleapis.com
+# into /static/webfonts/. The B135 contract that pinned the
+# Google Fonts preconnect is obsolete — B158 removed it on
+# purpose (operator reported 'net::ERR_CONNECTION_TIMED_OUT'
+# on 2026-08-20). The post-B158 contract that pins "Manrope
+# still renders correctly" is: themes.css has 4 @font-face
+# rules for Manrope (400/500/600/700) AND all 4 woff2 files
+# exist in static/webfonts/. We check both halves here; B158
+# check_b158.sh pins the broader contract across all 6 fonts.
+N=$(count_matches "font-family:'Manrope'" "$THEMES_CSS")
+if [ "$N" -ge 4 ]; then
+  pass "themes.css has $N @font-face rules for Manrope (need at least 4 for 400/500/600/700)"
 else
-  fail "layout.html does NOT preconnect to fonts.gstatic.com"
+  fail "themes.css has only $N Manrope @font-face rules (need ≥4)"
+fi
+N_WOFF2=0
+for w in 400 500 600 700; do
+  [ -f "$PROJECT_ROOT/static/webfonts/manrope-latin-$w-normal.woff2" ] && N_WOFF2=$((N_WOFF2+1))
+done
+if [ "$N_WOFF2" -eq 4 ]; then
+  pass "static/webfonts/ has all 4 Manrope woff2 files (400/500/600/700)"
+else
+  fail "static/webfonts/ is missing Manrope woff2 files (have $N_WOFF2/4)"
 fi
 
 echo
