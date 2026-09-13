@@ -90,20 +90,6 @@ func setupRenameTestDB(t *testing.T) *sql.DB {
 	return sqlDB
 }
 
-// openInMemoryDBForRenameTest wraps the test DB setup. Used by
-// setupRenameDB so individual tests get a clean DB per case.
-func openInMemoryDBForRenameTest() (string, *sql.DB, error) {
-	_, sqlDB, err := db.OpenWithDialect(":memory:")
-	if err != nil {
-		return "", nil, err
-	}
-	if err := db.ApplyMigrations(sqlDB, db.DialectSQLite); err != nil {
-		sqlDB.Close()
-		return "", nil, err
-	}
-	return "", sqlDB, nil
-}
-
 // TestPostAdminUserRename_HappyPath asserts the success path:
 // the headscale user is renamed, portal_users.username is updated,
 // and the audit row is emitted with old/new/hs_id/outcome.
