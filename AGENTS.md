@@ -16894,3 +16894,61 @@ worse than no UPDATE — silent state change with no record).
 
 
 
+
+## B-mod-reregister-fix1 (2026-09-14) — unescape <b> in re-register banner
+
+**Проблема** (обнаружено operator screenshot 2026-09-14 на /my/devices).
+Banner показывал literal HTML теги:
+`
+Требуется перерегистрация устройств
+
+<b>4 устройств</b> в вашем списке зарегистрировано...
+`
+Go templates auto-escape {{t "key"}} / {{tf "key" .arg}}. i18n strings содержали <b>%d</b> <br> <code>...</code> — они **escape'ятся** до &lt;b&gt; и видны буквально.
+
+**Fix**:
+
+  1. **internal/i18n/catalog_my.go** (RU + EN, 4 keys) — убрал HTML tags:
+     - devices.reregister_banner_body_one: <b>%d устройство</b>... → %d устройство...
+     - devices.reregister_banner_body_many: <b>%d устройств</b>... → %d устройств...
+     - devices.reregister_result_banner: <code>%s</code>...<br><code>...</code> → plain text + монospace через CSS
+  2. **devices.html** — заменил {{tf "key" .count}} на:
+     `
+     <b>{{.TaggedGhostCount}}</b> {{t "devices.reregister_banner_body_one"}}
+     `
+     Обёртка в <b> теперь в template (auto-escape безопасно — это int).
+  3. **preauth_result.html** — добавил отдельный <div style="font-family:monospace">tailscale up --authkey={{.PreauthKey}}</div>
+     вместо inline <code> в i18n string.
+
+**Verified**: go build ./... ok, go test -count=1 -v -run TestReregister ./internal/feature/my/... 3/3 PASS.
+
+**Commit**: dde9a68a (vm remote: -mod-reregister-fix1).
+
+---
+
+## B-mod-reregister-fix2 (2026-09-14) — HTML-in-i18n audit script
+
+**Масштаб проблемы**: scan internal/i18n/catalog_*.go показал **340 i18n keys** содержащих raw HTML tags (<b>, <i>, <code>, <br>, etc.).
+
+Из них:
+- **226 wrapped** с | safeHTML в template calls (safe)
+- **114 unwrapped** — нужен manual review
+
+**Why not batch-fix**: многие из 114 (ot.help.*) — это **Telegram bot strings** которые отображаются через Telegram API, не Go templates. Telegram имеет свой renderer (HTML/Markdown), не HTML escape.
+
+**Fix**: scripts/check_html_in_i18n.sh — audit-only скрипт (не blocking) который:
+  1. Находит все i18n keys с raw HTML tags (через grep на <[a-zA-Z])
+  2. Находит все ключи обёрнутые в | safeHTML в templates
+  3. Cross-reference: показывает unwrapped keys для operator review
+  4. Exit 0 всегда — это **report, not gate**
+
+**Output на текущем коде**: 340 HTML keys, 226 wrapped, 114 unwrapped.
+
+**Operator work** (отдельные PR по фичам):
+  - Для каждой unwrapped key: либо добавить | safeHTML в template, либо убрать HTML из i18n
+
+**Pattern fix (preferred for new i18n strings)**:
+  - **Не использовать** HTML в i18n strings — plain text всегда рендерится правильно
+  - Если HTML нужен (bold/italic/links) — {{t "key" | safeHTML}} + добавить check в B-check
+
+**Commit**: 854d0dec (vm remote: -mod-reregister-fix2-html-audit).
