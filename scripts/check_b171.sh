@@ -29,9 +29,13 @@
 # 2. db.DeleteRulesByDeviceID + qDeleteRulesByDeviceID —
 #    the new SQL primitive that cleans the orphaned
 #    device_rules rows in one query.
-# 3. db.DeleteNodeOwnerByNodeTagCounted — the
-#    row-counted variant of the existing helper (needed
-#    so the audit row can include the count).
+# 3. db.DeleteNodeOwnerByNodeTagCounted + (B187)
+#    db.DeleteNodeOwnerByNodeIDOnly — the row-counted
+#    variants needed so the audit row can include the
+#    count. B187 added DeleteNodeOwnerByNodeIDOnly
+#    after the live e2e caught that
+#    DeleteNodeOwnerByNodeTagCounted silently matched
+#    0 rows when real rows had non-empty tags.
 # 4. PostMyDeviceDelete (B162 rewire) — now calls
 #    devicedelete.Delete + passes deleted_rules=N +
 #    acl_err=... in the redirect.
@@ -233,23 +237,34 @@ else
     bad "db.DeleteRulesByDeviceID helper MISSING or has the wrong signature"
 fi
 
-# B.4 — the DeleteNodeOwnerByNodeTagCounted helper
-# exists (B171 needs the row count for the audit
-# log; the pre-B171 DeleteNodeOwnerByNodeTag returns
-# just error, which doesn't expose the count).
-if grep -qE '^func DeleteNodeOwnerByNodeTagCounted\(d dbExec, nodeID, tag string\) \(int64, error\) \{' internal/db/node_owner_map.go; then
-    ok "db.DeleteNodeOwnerByNodeTagCounted helper defined with the canonical signature"
+# B.4 — the row-counted helper exists (B171 needs the row
+# count for the audit log). Pre-B187 the counted variant
+# was DeleteNodeOwnerByNodeTagCounted; B187 added
+# DeleteNodeOwnerByNodeIDOnly to fix the silent-skip bug
+# (real rows have non-empty tag, the old query required
+# tag="" which matched 0 rows). The contract is "the
+# function returns (int64, error) so the count flows to
+# the audit row" — either implementation satisfies it.
+if grep -qE '^func DeleteNodeOwnerByNodeTagCounted\(d dbExec, nodeID, tag string\) \(int64, error\) \{' internal/db/node_owner_map.go && \
+   grep -qE '^func DeleteNodeOwnerByNodeIDOnly\(d dbExec, nodeID string\) \(int64, error\) \{' internal/db/node_owner_map.go; then
+    ok "db.DeleteNodeOwnerByNodeTagCounted + DeleteNodeOwnerByNodeIDOnly helpers defined (B171 + B187)"
 else
-    bad "db.DeleteNodeOwnerByNodeTagCounted helper MISSING (the audit row can't include the cleaned count)"
+    bad "row-counted node_owner_map cleanup helper MISSING (the audit row can't include the cleaned count)"
 fi
 
 # B.5 — the new devicedelete package's Delete()
 # uses the Counted variant (so the audit row
 # gets the count). A regression that called the
 # non-counted variant would compile but lose the
-# audit info.
-if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > /tmp/_b171_awk.txt && grep -q 'DeleteNodeOwnerByNodeTagCounted' /tmp/_b171_awk.txt; then
-    ok "devicedelete.Delete uses DeleteNodeOwnerByNodeTagCounted (count flows to the audit row)"
+# audit info. B187 switched from
+# DeleteNodeOwnerByNodeTagCounted to
+# DeleteNodeOwnerByNodeIDOnly (same (int64, error)
+# return, just no tag filter — the live e2e
+# scripts/b_mod_reregister_live.sh caught the
+# silent skip on 2026-09-14).
+if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > /tmp/_b171_awk.txt && \
+   grep -qE 'DeleteNodeOwnerByNodeTagCounted|DeleteNodeOwnerByNodeIDOnly' /tmp/_b171_awk.txt; then
+    ok "devicedelete.Delete uses a row-counted helper (count flows to the audit row)"
 else
     bad "devicedelete.Delete uses the non-counted variant (audit row would lose the count)"
 fi
