@@ -36,8 +36,13 @@ if [ -z "${HS_CLI}" ]; then
     exit 2
 fi
 
-# Check we can actually reach a headscale instance (docker or remote)
-if "${HS_CLI}" users list >/dev/null 2>&1; then
+# Check we can actually reach a headscale instance (docker or remote).
+# Use bash array so HS_CLI="docker exec headscale headscale" splits
+# correctly into ["docker", "exec", "headscale", "headscale"].
+# eval is safe here because HS_CLI is operator-controlled (set via
+# HEADSCALE_CLI env var) and never touches user input.
+HS_ARGS=( $HS_CLI )
+if "${HS_ARGS[@]}" users list >/dev/null 2>&1; then
     HS_OK=1
 else
     skip "headscale CLI installed but 'users list' failed — is a headscale instance running locally?"
@@ -50,7 +55,7 @@ echo
 
 # --- A.1: Every user device has tag:dev-<user>-<hostname> ---
 echo "--- A.1 every user device has tag:dev-<user>-<hostname> ---"
-NODES_JSON=$("${HS_CLI}" nodes list -o json 2>/dev/null || true)
+NODES_JSON=$("${HS_ARGS[@]}" nodes list -o json 2>/dev/null || true)
 if [ -z "${NODES_JSON}" ]; then
     skip "headscale nodes list returned no JSON"
     exit 2
