@@ -22,7 +22,22 @@
 # SAFETY:
 #   - The script creates a NEW test ghost (test-rereg-<timestamp>) so
 #     we don't touch the 16 install-time ghosts the operator is
-#     investigating.
+#     investigating. HOWEVER, headscale v0.29.1+ deprecated `nodes
+#     register --key` and the new `auth register --auth-id` requires
+#     a `hskey-authreq-` prefix key (NOT the `hskey-auth-` prefix
+#     that `preauthkeys create` returns). ghost creation via CLI
+#     FAILS on 0.29.1+ — the install-time ghosts were created via
+#     the deprecated gRPC `RegisterNode` method which is no longer
+#     exposed in the CLI.
+#   - To run on headscale 0.29.1+, the operator must either:
+#       (a) supply SKYGATE_LIVE_GHOST_ID=<id> — uses one of the
+#           existing install-time ghosts as the test target (the
+#           ghost WILL be deleted by step 4; pick a disposable one),
+#       (b) or: temporarily downgrade headscale to ≤0.23.x to
+#           re-enable `nodes register --key`,
+#       (c) or: skip the live e2e and rely on the structural
+#           B-check (scripts/check_b_mod_reregister.sh) + Go unit
+#           tests (internal/feature/my/devices_reregister_test.go).
 #   - The script uses a real portal user (defaults to skyadmin; can
 #     be overridden via SKYGATE_LIVE_USER). The user's existing
 #     devices are NOT affected (only the test ghost is).
@@ -35,6 +50,7 @@
 #   SKYGATE_LIVE_HOST=http://192.168.13.69:8080 \
 #   SKYGATE_LIVE_USER=skyadmin \
 #   SKYGATE_LIVE_PASSWORD='<password>' \
+#   SKYGATE_LIVE_GHOST_ID=3  # OPTIONAL: use existing ghost (skip step 1)
 #   bash scripts/b_mod_reregister_live.sh
 #
 # Exit codes:
@@ -44,14 +60,17 @@
 
 set -uo pipefail
 
-PASS=0; FAIL=0
-# NOTE: with `set -u`, accessing `$*` or `$@` in a function called
-# with NO arguments triggers "unbound variable" — even with the
-# `:-` default. The fix: use positional `$1` with `${1:-}` default.
-# This works because `$1` IS bound to empty string when no args,
-# unlike `$*`/`$@` which `set -u` treats as truly unset.
-ok()    { echo "  PASS  ${1:-}"; PASS=$((PASS+1)); }
-bad()   { echo "  FAIL  ${1:-}"; FAIL=$((FAIL+1)); }
+# Counter vars are NAMED DIFFERENTLY from the password var (`PASS`).
+# CRITICAL: with `set -u`, `declare -i PASS=0` makes `PASS` an integer
+# type. When the script later does `PASS="${SKYGATE_LIVE_PASSWORD:-}"`,
+# bash 5.2.21 tries to assign the password string as an integer, which
+# fails on `%` / `@` with "invalid arithmetic operator" (surfaced as
+# "t: unbound variable" with set -u). Using `_COUNT` suffix avoids the
+# collision while keeping `$((...))` arithmetic.
+PASS_COUNT=0
+FAIL_COUNT=0
+ok()    { echo "  PASS  ${1:-}"; PASS_COUNT=$((PASS_COUNT+1)); }
+bad()   { echo "  FAIL  ${1:-}"; FAIL_COUNT=$((FAIL_COUNT+1)); }
 
 HOST="${SKYGATE_LIVE_HOST:-}"
 USER="${SKYGATE_LIVE_USER:-}"
@@ -111,34 +130,63 @@ ok "psql found"
 echo
 
 # ---------------------------------------------------------------------
-# Step 1: create a synthetic ghost node in headscale
+# Step 1: create a synthetic ghost node in headscale (OR use existing)
 # ---------------------------------------------------------------------
-echo "--- Step 1: create synthetic ghost node in headscale ---"
-TEST_HOST="test-rereg-$(date +%s)"
-# Get target user's headscale user id (via skygate DB)
-USER_HS_ID=$(psql "${DB_DSN}" -At -c "SELECT headscale_user_id FROM portal_users WHERE username='${USER}'" 2>/dev/null | head -1)
-if [ -z "${USER_HS_ID}" ] || [ "${USER_HS_ID}" = "" ]; then
-    bad "could not find headscale_user_id for ${USER}"
-    exit 1
-fi
-ok "${USER} headscale_user_id = ${USER_HS_ID}"
-
-# Create a reusable 1h preauth key for the user
-PREAUTH_OUT=$("${HS_ARGS[@]}" preauthkeys create -u "${USER_HS_ID}" --expiration 1h --reusable --output json 2>/dev/null)
-PREAUTH_KEY=$(echo "${PREAUTH_OUT}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
-if [ -z "${PREAUTH_KEY}" ]; then
-    bad "could not create preauth key via headscale"
-    exit 1
-fi
-ok "preauth key created (24h reusable)"
-
-# Register a node WITHOUT --user (simulates the install-time
-# ghost pattern). headscale 0.29.2 may require --user, so we
-# use --user tagged-devices to force the synthetic user.
-echo "  registering test node ${TEST_HOST} in tagged-devices sentinel..."
-# headscale nodes register --user <name> --key <key> <name>
-"${HS_ARGS[@]}" nodes register --user tagged-devices --key "${PREAUTH_KEY}" "${TEST_HOST}" 2>&1 | head -5
-GHOST_ID=$("${HS_ARGS[@]}" nodes list -o json 2>/dev/null | python3 -c "
+echo "--- Step 1: prepare test ghost node in headscale ---"
+# If SKYGATE_LIVE_GHOST_ID is set, use an EXISTING install-time ghost
+# instead of creating one (headscale 0.29.1+ cannot create ghosts via
+# CLI — see SAFETY block above).
+EXISTING_GHOST_ID="${SKYGATE_LIVE_GHOST_ID:-}"
+TEST_HOST=""
+if [ -n "${EXISTING_GHOST_ID}" ]; then
+    # Validate the ghost exists in headscale + belongs to tagged-devices sentinel
+    EXISTING_INFO=$("${HS_ARGS[@]}" nodes list -i "${EXISTING_GHOST_ID}" -o json 2>/dev/null)
+    EXISTING_USER=$(echo "${EXISTING_INFO}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+nodes = d if isinstance(d, list) else d.get('nodes', [])
+if nodes:
+    n = nodes[0]
+    user = n.get('user', {})
+    name = user.get('name') if isinstance(user, dict) else user
+    print(f'{n.get(\"givenName\") or n.get(\"name\")}|{name}')
+" 2>/dev/null)
+    EXISTING_HOST="${EXISTING_INFO%|*}"
+    EXISTING_USER_NAME="${EXISTING_INFO##*|}"
+    if [ -z "${EXISTING_HOST}" ]; then
+        bad "SKYGATE_LIVE_GHOST_ID=${EXISTING_GHOST_ID} not found in headscale"
+        exit 1
+    fi
+    if [ "${EXISTING_USER_NAME}" != "tagged-devices" ]; then
+        bad "ghost ${EXISTING_GHOST_ID} belongs to '${EXISTING_USER_NAME}' (expected 'tagged-devices' sentinel)"
+        exit 1
+    fi
+    GHOST_ID="${EXISTING_GHOST_ID}"
+    TEST_HOST="${EXISTING_HOST}"
+    ok "using existing ghost: id=${GHOST_ID} host=${TEST_HOST} (will be deleted by step 4)"
+else
+    # Try to create a NEW ghost via CLI (works on headscale ≤0.23.x).
+    # On 0.29.1+, this WILL fail — see the message at the end of step 1.
+    TEST_HOST="test-rereg-$(date +%s)"
+    USER_HS_ID=$(psql "${DB_DSN}" -At -c "SELECT headscale_user_id FROM portal_users WHERE username='${USER}'" 2>/dev/null | head -1)
+    if [ -z "${USER_HS_ID}" ] || [ "${USER_HS_ID}" = "" ]; then
+        bad "could not find headscale_user_id for ${USER}"
+        exit 1
+    fi
+    ok "${USER} headscale_user_id = ${USER_HS_ID}"
+    PREAUTH_OUT=$("${HS_ARGS[@]}" preauthkeys create -u "${USER_HS_ID}" --expiration 1h --reusable --output json 2>/dev/null)
+    PREAUTH_KEY=$(echo "${PREAUTH_OUT}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
+    if [ -z "${PREAUTH_KEY}" ]; then
+        bad "could not create preauth key via headscale"
+        exit 1
+    fi
+    ok "preauth key created"
+    REG_OUT=$("${HS_ARGS[@]}" auth register --user tagged-devices --auth-id "${PREAUTH_KEY}" "${TEST_HOST}" 2>&1)
+    if echo "${REG_OUT}" | grep -qE "Error|Failed|invalid"; then
+        REG_OUT=$("${HS_ARGS[@]}" nodes register --user tagged-devices --key "${PREAUTH_KEY}" "${TEST_HOST}" 2>&1)
+    fi
+    echo "${REG_OUT}" | head -5
+    GHOST_ID=$("${HS_ARGS[@]}" nodes list -o json 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 nodes = d if isinstance(d, list) else d.get('nodes', [])
@@ -147,11 +195,16 @@ for n in nodes:
         print(n.get('id', ''))
         break
 " 2>/dev/null)
-if [ -z "${GHOST_ID}" ]; then
-    bad "could not find test ghost node ${TEST_HOST} after registration"
-    exit 1
+    if [ -z "${GHOST_ID}" ]; then
+        echo
+        echo "  *** GHOST CREATION FAILED on headscale $(sudo docker exec headscale headscale version 2>/dev/null | head -1 | awk '{print $3}') ***"
+        echo "  *** To run this e2e on 0.29.1+, set SKYGATE_LIVE_GHOST_ID=<id>  ***"
+        echo "  *** of an existing install-time ghost (will be deleted by step 4) ***"
+        bad "could not create test ghost ${TEST_HOST} via CLI"
+        exit 1
+    fi
+    ok "test ghost created: ${TEST_HOST} (id=${GHOST_ID})"
 fi
-ok "test ghost registered: ${TEST_HOST} (id=${GHOST_ID}, user=tagged-devices)"
 echo
 
 # ---------------------------------------------------------------------
@@ -276,12 +329,31 @@ echo
 # Step 6: verify wrong-user scope-check guard
 # ---------------------------------------------------------------------
 echo "--- Step 6: cross-user reregister attempt → 404 ---"
-# Create ANOTHER ghost, but try to reregister it as ${USER} (who
-# doesn't own it). The handler should refuse with 404.
-TEST_HOST2="test-rereg2-$(date +%s)"
-PREAUTH2=$("${HS_ARGS[@]}" preauthkeys create -u "${USER_HS_ID}" --expiration 1h --output json 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
-"${HS_ARGS[@]}" nodes register --user tagged-devices --key "${PREAUTH2}" "${TEST_HOST2}" 2>&1 | head -2
-GHOST2_ID=$("${HS_ARGS[@]}" nodes list -o json 2>/dev/null | python3 -c "
+# Step 6 only runs if SKYGATE_LIVE_USER2 (a SECOND portal user) is
+# provided. We create a ghost owned by USER2 (snapshot maps to
+# USER2's node_owner_map row), then USER1 tries to reregister it.
+# The handler should refuse with 404 — USER1 doesn't own the
+# snapshot row, so the lookup fails.
+USER2="${SKYGATE_LIVE_USER2:-}"
+PASS2="${SKYGATE_LIVE_PASSWORD2:-}"
+if [ -z "${USER2}" ] || [ -z "${PASS2}" ]; then
+    echo "  SKIP: SKYGATE_LIVE_USER2 / SKYGATE_LIVE_PASSWORD2 not set (Step 6 is opt-in)"
+    echo "  to enable: set both env vars to a 2nd portal user + password"
+else
+    PW2_ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "${PASS2}" 2>/dev/null)
+    COOKIE_JAR2=$(mktemp)
+    LOGIN2_RESP=$(curl -s -i -c "${COOKIE_JAR2}" -d "username=${USER2}&password=${PW2_ENC}" "${HOST}/login" 2>&1)
+    if ! echo "${LOGIN2_RESP}" | grep -q "302\|303"; then
+        bad "USER2 (${USER2}) login failed — Step 6 skipped"
+    else
+        SESSION2=$(grep "skygate_session" "${COOKIE_JAR2}" | awk '{print $7}')
+        ok "USER2 (${USER2}) logged in"
+        # Create ghost2 owned by USER2 in tagged-devices sentinel
+        USER2_HS_ID=$(psql "${DB_DSN}" -At -c "SELECT headscale_user_id FROM portal_users WHERE username='${USER2}'" 2>/dev/null | head -1)
+        TEST_HOST2="test-rereg2-$(date +%s)"
+        PREAUTH2=$("${HS_ARGS[@]}" preauthkeys create -u "${USER2_HS_ID}" --expiration 1h --output json 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
+        "${HS_ARGS[@]}" nodes register --user tagged-devices --key "${PREAUTH2}" "${TEST_HOST2}" 2>&1 | head -2
+        GHOST2_ID=$("${HS_ARGS[@]}" nodes list -o json 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 nodes = d if isinstance(d, list) else d.get('nodes', [])
@@ -290,29 +362,46 @@ for n in nodes:
         print(n.get('id', ''))
         break
 " 2>/dev/null)
-# Snapshot the ghost into ${USER}'s node_owner_map so the handler
-# sees it as a scope-match candidate. Then the wrong-user check
-# should still reject because n.UserName == 'tagged-devices' AND
-# snapshot maps it to ${USER}, but the handler ALSO checks
-# !isTaggedGhost and refuses — wait, actually the handler ALLOWS
-# tagged-devices ghosts when the user owns the snapshot. So this
-# step needs a different setup: create a ghost owned by a
-# DIFFERENT real user (skyadmin), then try to reregister as
-# michail (who doesn't own the snapshot). That tests the
-# wrong-user scope-check.
-echo "  (Step 6 uses a different user as the owner; requires a 2nd user)"
-
-# Cleanup the second test ghost
-if [ -n "${GHOST2_ID}" ]; then
-    "${HS_ARGS[@]}" nodes delete -i "${GHOST2_ID}" --force 2>&1 | head -2
-    ok "test ghost 2 deleted (cleanup)"
+        if [ -z "${GHOST2_ID}" ]; then
+            bad "could not create USER2's test ghost — Step 6 skipped"
+        else
+            ok "USER2's ghost registered: ${TEST_HOST2} (id=${GHOST2_ID})"
+            # Hit /my/devices as USER2 first to snapshot the ghost
+            curl -s -H "Cookie: skygate_session=${SESSION2}" "${HOST}/my/devices" >/dev/null 2>&1
+            # Now USER1 tries to reregister USER2's ghost — expect 404
+            WRONG_HTTP=$(curl -s -o /tmp/__wrong_body.html -w '%{http_code}' -H "Cookie: skygate_session=${SESSION}" -X POST "${HOST}/my/devices/${GHOST2_ID}/reregister" 2>&1)
+            if [ "${WRONG_HTTP}" = "404" ] || [ "${WRONG_HTTP}" = "403" ]; then
+                ok "USER1 → USER2's ghost reregister returned ${WRONG_HTTP} (scope-check guard works)"
+            else
+                bad "USER1 → USER2's ghost reregister returned ${WRONG_HTTP} (expected 404 or 403)"
+                echo "    body: $(head -c 300 /tmp/__wrong_body.html)"
+            fi
+            # Verify ghost2 STILL exists (refused, not deleted)
+            sleep 1
+            STILL_THERE=$("${HS_ARGS[@]}" nodes list -i "${GHOST2_ID}" -o json 2>/dev/null | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+nodes = d if isinstance(d, list) else d.get('nodes', [])
+print(len(nodes))
+" 2>/dev/null)
+            if [ "${STILL_THERE}" = "1" ]; then
+                ok "USER2's ghost is intact after USER1's refused attempt (no data leak)"
+            else
+                bad "USER2's ghost was MODIFIED after USER1's refused attempt (${STILL_THERE} nodes)"
+            fi
+            # Cleanup USER2's ghost
+            "${HS_ARGS[@]}" nodes delete -i "${GHOST2_ID}" --force 2>&1 | head -2
+            ok "USER2's test ghost deleted (cleanup)"
+        fi
+    fi
+    rm -f "${COOKIE_JAR2}"
 fi
 echo
 
 echo "=== b_mod_reregister summary ==="
-echo "  PASS: ${PASS}"
-echo "  FAIL: ${FAIL}"
-if [ "${FAIL}" -eq 0 ]; then
+echo "  PASS: ${PASS_COUNT}"
+echo "  FAIL: ${FAIL_COUNT}"
+if [ "${FAIL_COUNT}" -eq 0 ]; then
     echo
     echo "b_mod_reregister LIVE e2e: all steps passed."
     exit 0
