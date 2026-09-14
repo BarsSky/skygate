@@ -1,6 +1,6 @@
 # Skygate plans & technical debt
 
-**Last updated:** 2026-09-13 (B237.24 + B237.24.1 + B-mod-reregister per-row Re-register for tagged-devices ghosts)
+**Last updated:** 2026-09-14 (Phase 7 B-checks: check_b_tailscale_grants.sh + check_b_public_ip_leak.sh + b_mod_reregister_live.sh + B-mod-reregister)
 **Maintained by:** Mavis (skygate) + operator
 **Status:** live roadmap; updated after every release
 
