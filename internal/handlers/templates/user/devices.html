@@ -73,9 +73,9 @@
   <i class="fa-solid fa-ghost"></i>
   <strong>{{t "devices.reregister_banner_title"}}</strong><br>
   {{if eq .TaggedGhostCount 1}}
-    {{tf "devices.reregister_banner_body_one" .TaggedGhostCount}}
+    <b>{{.TaggedGhostCount}}</b> {{t "devices.reregister_banner_body_one"}}
   {{else}}
-    {{tf "devices.reregister_banner_body_many" .TaggedGhostCount}}
+    <b>{{.TaggedGhostCount}}</b> {{t "devices.reregister_banner_body_many"}}
   {{end}}
 </div>
 {{end}}

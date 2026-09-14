@@ -298,13 +298,25 @@ var ruMy = map[string]string{
 	"devices.reregister_err_already_gone"        : "Устройство уже удалено из headscale — обновите страницу и перевыпустите ключ через /my/preauth",
 	// B-mod-reregister banner: shown at top of /my/devices when
 	// the user has at least one ghost node in tagged-devices.
+	//
+	// 2026-09-14: B-mod-reregister-fix1 — the prev "<b>%d</b>"
+	// was HTML-escaped to "&lt;b&gt;4 устройств&lt;/b&gt;" by
+	// Go templates. Moved the bold wrapper into the template so
+	// the {{tf ...}} helper renders plain text; the template
+	// wraps {{.TaggedGhostCount}} in <b> on the calling side.
 	"devices.reregister_banner_title"            : "Требуется перерегистрация устройств",
-	"devices.reregister_banner_body_one"         : "<b>%d устройство</b> в вашем списке зарегистрировано в headscale через \"ghost\" preauth-ключ (install-time, без указания пользователя). Используйте кнопку «Перерегистрировать» чтобы удалить его в headscale и получить новый ключ для вашего аккаунта.",
-	"devices.reregister_banner_body_many"        : "<b>%d устройств</b> в вашем списке зарегистрировано в headscale через \"ghost\" preauth-ключ (install-time, без указания пользователя). Используйте кнопку «Перерегистрировать» чтобы удалить каждое в headscale и получить новый ключ для вашего аккаунта.",
+	"devices.reregister_banner_body_one"         : "%d устройство в вашем списке зарегистрировано в headscale через \"ghost\" preauth-ключ (install-time, без указания пользователя). Используйте кнопку «Перерегистрировать» чтобы удалить его в headscale и получить новый ключ для вашего аккаунта.",
+	"devices.reregister_banner_body_many"        : "%d устройств в вашем списке зарегистрированы в headscale через \"ghost\" preauth-ключ (install-time, без указания пользователя). Используйте кнопку «Перерегистрировать» чтобы удалить каждое в headscale и получить новый ключ для вашего аккаунта.",
 	// B-mod-reregister result-page banner: shown on
 	// /my/preauth_result.html when the new key replaces a
 	// specific device (vs a generic /my/preauth issuance).
-	"devices.reregister_result_banner"           : "Этот ключ заменяет устройство <code>%s</code>, которое было удалено из headscale как \"ghost\" preauth-ключ. Подключите устройство заново командой:<br><code>tailscale up --authkey=&lt;ключ&gt;</code>",
+	//
+	// 2026-09-14: same fix — removed HTML tags. The "<key>" runs
+	// verbatim in plain text (the i18n string already tells the
+	// user the key was just issued on screen). For full monospace
+	// styling a follow-up could split into 3 i18n keys + 3 template
+	// slots; for now readable text is sufficient.
+	"devices.reregister_result_banner"           : "Этот ключ заменяет устройство %s, которое было удалено из headscale как \"ghost\" preauth-ключ. Подключите устройство заново командой: tailscale up --authkey=<ключ>",
 	"devices.refresh"                            : "Обновить список",
 	"devices.user"                               : "Пользователь",
 	"devices.user_facing"                        : "User-facing",
@@ -778,9 +790,9 @@ var enMy = map[string]string{
 	"devices.reregister_err_wrong_user"          : "This device already belongs to a real user. Use Delete instead of Re-register.",
 	"devices.reregister_err_already_gone"        : "Device was already removed from headscale — refresh the page and re-issue a key via /my/preauth",
 	"devices.reregister_banner_title"            : "Device re-registration required",
-	"devices.reregister_banner_body_one"         : "<b>%d device</b> on your list was registered in headscale via a \"ghost\" preauth key (install-time, without --user). Use the Re-register button to delete it in headscale and get a new key for your account.",
-	"devices.reregister_banner_body_many"        : "<b>%d devices</b> on your list were registered in headscale via a \"ghost\" preauth key (install-time, without --user). Use the Re-register button to delete each in headscale and get a new key for your account.",
-	"devices.reregister_result_banner"           : "This key replaces device <code>%s</code>, which was removed from headscale as a \"ghost\" preauth key. Reconnect the device with:<br><code>tailscale up --authkey=&lt;key&gt;</code>",
+	"devices.reregister_banner_body_one"         : "%d device on your list was registered in headscale via a \"ghost\" preauth key (install-time, without --user). Use the Re-register button to delete it in headscale and get a new key for your account.",
+	"devices.reregister_banner_body_many"        : "%d devices on your list were registered in headscale via a \"ghost\" preauth key (install-time, without --user). Use the Re-register button to delete each in headscale and get a new key for your account.",
+	"devices.reregister_result_banner"           : "This key replaces device %s, which was removed from headscale as a \"ghost\" preauth key. Reconnect the device with: tailscale up --authkey=<key>",
 	"devices.refresh"                            : "Refresh list",
 	"devices.user"                               : "User",
 	"devices.user_facing"                        : "User-facing",
