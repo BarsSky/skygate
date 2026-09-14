@@ -365,6 +365,22 @@ func DeleteNodeOwnerByNodeTagCounted(d dbExec, nodeID, tag string) (int64, error
 	return res.RowsAffected()
 }
 
+// DeleteNodeOwnerByNodeIDOnly deletes EVERY row for the given
+// node_id regardless of tag or username. Used by
+// devicedelete.Delete (B171+) which doesn't have a fixed
+// username/tag filter. The pre-existing DeleteNodeOwnerByNodeTag
+// requires tag to match — passing tag="" silently skipped deletion
+// for the reregister + admin-delete paths (the actual rows have
+// tags like 'tag:dev-<user>-<host>'). The live e2e
+// (scripts/b_mod_reregister_live.sh) caught this on 2026-09-14.
+func DeleteNodeOwnerByNodeIDOnly(d dbExec, nodeID string) (int64, error) {
+	res, err := d.Exec(qDeleteNodeOwnerByNodeIDOnly, nodeID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // UpdateNodeOwnerTag sets a new tag for an existing row, keyed by
 // node_id. The (username, headscale_user_id, hostname) columns
 // are preserved — only tag and tagged_by_user_id are changed.

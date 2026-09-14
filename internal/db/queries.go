@@ -543,6 +543,17 @@ const (
 	qSelectNodeOwnerByNodeID    = `SELECT node_id FROM node_owner_map WHERE node_id = $1 AND username = $2`
 	qDeleteNodeOwnerByID        = `DELETE FROM node_owner_map WHERE node_id = $1 AND username = $2`
 	qDeleteNodeOwnerByNodeTag   = `DELETE FROM node_owner_map WHERE node_id = $1 AND tag = $2`
+	// qDeleteNodeOwnerByNodeIDOnly deletes ALL rows for a given
+	// node_id regardless of tag or username. Used by
+	// devicedelete.Delete (B171+) which doesn't have a fixed
+	// username/tag (the reregister path uses the user's tag, the
+	// admin-delete path uses whatever tag was on the row). The
+	// existing qDeleteNodeOwnerByID / qDeleteNodeOwnerByNodeTag
+	// require either username or tag to match, which silently
+	// skipped deletion when tag was passed as "" — the B171 bug
+	// the live e2e (scripts/b_mod_reregister_live.sh) caught on
+	// 2026-09-14.
+	qDeleteNodeOwnerByNodeIDOnly = `DELETE FROM node_owner_map WHERE node_id = $1`
 	qCountNodeOwnerByNodeUser   = `SELECT COUNT(*) FROM node_owner_map WHERE node_id = $1 AND username = $2`
 	qInsertOrReplaceNodeOwner   = `INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at) VALUES ($1, $2, $3, $4, $5, ` + nowUnix + `) ON CONFLICT(node_id) DO UPDATE SET headscale_user_id = excluded.headscale_user_id, username = excluded.username, tag = excluded.tag, tagged_by_user_id = excluded.tagged_by_user_id, tagged_at = excluded.tagged_at`
 	qUpdateNodeOwnerTag         = `UPDATE node_owner_map SET tag = $1, tagged_by_user_id = $2, tagged_at = ` + nowUnix + ` WHERE node_id = $3 AND username = $4`

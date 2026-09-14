@@ -191,8 +191,17 @@ func Delete(ctx context.Context, deps Deps, nodeID int64, hostname, userNameForP
 	res := Result{}
 
 	// 1. node_owner_map cleanup.
-	if nDeleted, err := db.DeleteNodeOwnerByNodeTagCounted(deps.DB, fmt.Sprintf("%d", nodeID), ""); err != nil {
-		log.Printf("devicedelete: DeleteNodeOwnerByNodeTag id=%d err=%v", nodeID, err)
+	//
+	// Pre-fix (B171 bug, caught 2026-09-14 by
+	// scripts/b_mod_reregister_live.sh): the SQL
+	// qDeleteNodeOwnerByNodeTag required tag = $2, and devicedelete
+	// passed "" — but real rows have tag='tag:dev-<user>-<host>',
+	// so the WHERE silently matched 0 rows and the snapshot stayed
+	// stale (headplane would re-show the deleted device on next
+	// page load). Use the new qDeleteNodeOwnerByNodeIDOnly query
+	// which deletes ALL rows for node_id regardless of tag.
+	if nDeleted, err := db.DeleteNodeOwnerByNodeIDOnly(deps.DB, fmt.Sprintf("%d", nodeID)); err != nil {
+		log.Printf("devicedelete: DeleteNodeOwnerByNodeIDOnly id=%d err=%v", nodeID, err)
 		if deps.AuditFn != nil {
 			deps.AuditFn("device_delete_node_owner_cleanup_failed",
 				fmt.Sprintf("id=%d err=%v", nodeID, err))

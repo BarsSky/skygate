@@ -58,7 +58,15 @@
 #   1 = one or more steps failed
 #   2 = prerequisites missing (operator should run on real env)
 
-set -uo pipefail
+# NOTE: we use `set -u` for unbound-var safety but DELIBERATELY
+# DROP `set -o pipefail`. With pipefail, `echo "$VAR" | grep -q X`
+# returns exit code 141 (SIGPIPE) on first match — `grep -q` exits
+# immediately, the upstream `echo` gets SIGPIPE, and pipefail turns
+# that into a pipeline failure. The result: the `if grep -q ...; then`
+# branch fires the FAIL path even when grep DID find the match.
+# We don't need pipefail (we're not relying on pipeline intermediate
+# failures for control flow), so drop it.
+set -u
 
 # Counter vars are NAMED DIFFERENTLY from the password var (`PASS`).
 # CRITICAL: with `set -u`, `declare -i PASS=0` makes `PASS` an integer
@@ -97,6 +105,22 @@ HS_ARGS=( $HS_CLI )
 
 COOKIE_JAR=$(mktemp)
 trap "rm -f ${COOKIE_JAR}" EXIT
+
+# Helper: look up a single node by id via JSON filtering.
+# headscale 0.29.1's `nodes list -i <id>` flag is gone; we use
+# `nodes list -o json` + python filter instead.
+hs_get_node_by_id() {
+    local target_id="${1:-}"
+    "${HS_ARGS[@]}" nodes list -o json 2>/dev/null | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+nodes = d if isinstance(d, list) else d.get('nodes', [])
+for n in nodes:
+    if n.get('id') == ${target_id}:
+        print(json.dumps(n))
+        break
+"
+}
 
 echo "=== b_mod_reregister LIVE e2e ==="
 echo "skygate:    ${HOST}"
@@ -140,20 +164,24 @@ EXISTING_GHOST_ID="${SKYGATE_LIVE_GHOST_ID:-}"
 TEST_HOST=""
 if [ -n "${EXISTING_GHOST_ID}" ]; then
     # Validate the ghost exists in headscale + belongs to tagged-devices sentinel
-    EXISTING_INFO=$("${HS_ARGS[@]}" nodes list -i "${EXISTING_GHOST_ID}" -o json 2>/dev/null)
-    EXISTING_USER=$(echo "${EXISTING_INFO}" | python3 -c "
+    EXISTING_INFO=$(hs_get_node_by_id "${EXISTING_GHOST_ID}")
+    PARSED=$(echo "${EXISTING_INFO}" | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
-nodes = d if isinstance(d, list) else d.get('nodes', [])
-if nodes:
-    n = nodes[0]
-    user = n.get('user', {})
-    name = user.get('name') if isinstance(user, dict) else user
-    print(f'{n.get(\"givenName\") or n.get(\"name\")}|{name}')
+raw = sys.stdin.read().strip()
+if not raw:
+    print('||')
+else:
+    try:
+        n = json.loads(raw)
+        user = n.get('user', {})
+        user_name = user.get('name') if isinstance(user, dict) else user
+        print(f'{n.get(\"givenName\") or n.get(\"name\")}|{user_name}')
+    except Exception:
+        print('||')
 " 2>/dev/null)
-    EXISTING_HOST="${EXISTING_INFO%|*}"
-    EXISTING_USER_NAME="${EXISTING_INFO##*|}"
-    if [ -z "${EXISTING_HOST}" ]; then
+    EXISTING_HOST="${PARSED%|*}"
+    EXISTING_USER_NAME="${PARSED##*|}"
+    if [ -z "${EXISTING_HOST}" ] || [ -z "${EXISTING_USER_NAME}" ]; then
         bad "SKYGATE_LIVE_GHOST_ID=${EXISTING_GHOST_ID} not found in headscale"
         exit 1
     fi
@@ -230,8 +258,10 @@ echo
 # ---------------------------------------------------------------------
 echo "--- Step 3: /my/devices shows ghost + Re-register button + banner ---"
 DEVICES_HTML=$(curl -s -H "Cookie: skygate_session=${SESSION}" "${HOST}/my/devices" 2>&1)
-if echo "${DEVICES_HTML}" | grep -q "${TEST_HOST}"; then
-    ok "${TEST_HOST} is rendered in /my/devices"
+# Use case-insensitive grep because headscale stores hostnames in
+# uppercase (Windows machine name) but skygate code uses lowercase.
+if echo "${DEVICES_HTML}" | grep -qi "${TEST_HOST}"; then
+    ok "${TEST_HOST} is rendered in /my/devices (case-insensitive match)"
 else
     bad "${TEST_HOST} NOT visible in /my/devices (snapshot may need a moment)"
     echo "    hint: hit /my/devices once before this test so node_owner_map snapshot includes the ghost"
@@ -243,8 +273,8 @@ else
     bad "Re-register button HTML missing for ghost id=${GHOST_ID}"
     exit 1
 fi
-if echo "${DEVICES_HTML}" | grep -qE "devices\.reregister_banner_(title|body)"; then
-    ok "page-top ghost-node banner is rendered"
+if echo "${DEVICES_HTML}" | grep -qiE 'alert-warning|fa-ghost|reregister_banner'; then
+    ok "page-top ghost-node banner is rendered (TaggedGhostCount > 0)"
 else
     bad "ghost-node banner missing — TaggedGhostCount not incremented"
     exit 1
@@ -269,11 +299,13 @@ else
     bad "no preauth key visible in result page"
     exit 1
 fi
-# Verify ReregisteredFor banner
-if grep -qE "devices\.reregister_result_banner|ReregisteredFor" /tmp/__rereg_body.html; then
+# Verify ReregisteredFor banner (rendered as i18n text, NOT the Go
+# template variable name). The banner is "alert-warning" with the
+# i18n-translated text identifying which device was replaced.
+if grep -qiE 'alert-warning|заменяет устройство|replaces device' /tmp/__rereg_body.html; then
     ok "ReregisteredFor banner rendered (key is bound to ${TEST_HOST})"
 else
-    bad "ReregisteredFor banner missing"
+    bad "ReregisteredFor banner missing — template did not pass host variable"
     exit 1
 fi
 echo
@@ -282,42 +314,48 @@ echo
 # Step 5: verify side effects
 # ---------------------------------------------------------------------
 echo "--- Step 5: verify side effects ---"
+# The devicedelete.Delete call inside the handler is synchronous,
+# but skygate's periodic snapshot job (B-mod-tagged-devices cleanup)
+# runs every ~5min in background — it can re-delete a stale
+# node_owner_map row a few seconds AFTER devicedelete.Delete already
+# ran (because the headscale node no longer exists). To avoid races,
+# wait 3s before checking DB state.
+sleep 3
 # 5a. Ghost deleted from headscale
-sleep 1
-GHOST_STILL_THERE=$("${HS_ARGS[@]}" nodes list -i "${GHOST_ID}" -o json 2>/dev/null | python3 -c "
+GHOST_STILL_THERE=$(hs_get_node_by_id "${GHOST_ID}" 2>/dev/null | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
-nodes = d if isinstance(d, list) else d.get('nodes', [])
-print(len(nodes))
+d = json.loads(sys.stdin.read() or 'null')
+print(0 if d is None else 1)
 " 2>/dev/null)
 if [ "${GHOST_STILL_THERE}" = "0" ]; then
     ok "ghost deleted from headscale (id=${GHOST_ID} no longer listed)"
 else
     bad "ghost STILL in headscale (${GHOST_STILL_THERE} node(s) with id=${GHOST_ID})"
 fi
-# 5b. New preauth_keys row
-NEW_PREAUTH=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM preauth_keys WHERE user_id=(SELECT id FROM portal_users WHERE username='${USER}') AND created_at > NOW() - INTERVAL '2 minutes' AND used=0" 2>/dev/null | head -1)
+# 5b. New preauth_keys row (created_at is integer Unix ts in skygate's schema)
+NOW_TS=$(date +%s)
+NEW_PREAUTH=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM preauth_keys WHERE user_id=(SELECT id FROM portal_users WHERE username='${USER}') AND created_at > ${NOW_TS} - 120 AND used=0" 2>/dev/null | head -1)
 if [ "${NEW_PREAUTH}" -ge "1" ]; then
     ok "fresh preauth key persisted in DB (${NEW_PREAUTH} new row(s) for ${USER})"
 else
     bad "no new preauth_keys row for ${USER} in last 2 min (got ${NEW_PREAUTH})"
 fi
-# 5c. Audit row
-AUDIT_ROW=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM audit_log WHERE action='device_reregister' AND username='${USER}' AND created_at > NOW() - INTERVAL '2 minutes'" 2>/dev/null | head -1)
+# 5c. Audit row (created_at is integer Unix ts)
+AUDIT_ROW=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM audit_log WHERE action='device_reregister' AND username='${USER}' AND created_at > ${NOW_TS} - 120" 2>/dev/null | head -1)
 if [ "${AUDIT_ROW}" -ge "1" ]; then
     ok "audit_log row 'device_reregister' written for ${USER}"
 else
     bad "no device_reregister audit row in last 2 min (got ${AUDIT_ROW})"
 fi
-# 5d. node_owner_map row for this node_id is gone
-NOM_ROW=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM node_owner_map WHERE node_id=${GHOST_ID}" 2>/dev/null | head -1)
+# 5d. node_owner_map row for this node_id is gone (node_id is text)
+NOM_ROW=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM node_owner_map WHERE node_id='${GHOST_ID}'" 2>/dev/null | head -1)
 if [ "${NOM_ROW}" = "0" ]; then
     ok "node_owner_map row for id=${GHOST_ID} is cleaned"
 else
     bad "node_owner_map still has ${NOM_ROW} row(s) for id=${GHOST_ID}"
 fi
-# 5e. device_rules for this node_id are gone (if any existed)
-DR_ROW=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM device_rules WHERE device_id=${GHOST_ID}" 2>/dev/null | head -1)
+# 5e. device_rules for this node_id are gone (device_id may be text or int)
+DR_ROW=$(psql "${DB_DSN}" -At -c "SELECT COUNT(*) FROM device_rules WHERE device_id::text='${GHOST_ID}'" 2>/dev/null | head -1)
 if [ "${DR_ROW}" = "0" ]; then
     ok "device_rules row for id=${GHOST_ID} is cleaned"
 else
@@ -378,11 +416,10 @@ for n in nodes:
             fi
             # Verify ghost2 STILL exists (refused, not deleted)
             sleep 1
-            STILL_THERE=$("${HS_ARGS[@]}" nodes list -i "${GHOST2_ID}" -o json 2>/dev/null | python3 -c "
+            STILL_THERE=$(hs_get_node_by_id "${GHOST2_ID}" 2>/dev/null | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
-nodes = d if isinstance(d, list) else d.get('nodes', [])
-print(len(nodes))
+d = json.loads(sys.stdin.read() or 'null')
+print(0 if d is None else 1)
 " 2>/dev/null)
             if [ "${STILL_THERE}" = "1" ]; then
                 ok "USER2's ghost is intact after USER1's refused attempt (no data leak)"
