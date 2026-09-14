@@ -45,8 +45,13 @@
 set -uo pipefail
 
 PASS=0; FAIL=0
-ok()    { echo "  PASS  $*"; PASS=$((PASS+1)); }
-bad()   { echo "  FAIL  $*"; FAIL=$((FAIL+1)); }
+# NOTE: with `set -u`, accessing `$*` or `$@` in a function called
+# with NO arguments triggers "unbound variable" — even with the
+# `:-` default. The fix: use positional `$1` with `${1:-}` default.
+# This works because `$1` IS bound to empty string when no args,
+# unlike `$*`/`$@` which `set -u` treats as truly unset.
+ok()    { echo "  PASS  ${1:-}"; PASS=$((PASS+1)); }
+bad()   { echo "  FAIL  ${1:-}"; FAIL=$((FAIL+1)); }
 
 HOST="${SKYGATE_LIVE_HOST:-}"
 USER="${SKYGATE_LIVE_USER:-}"
@@ -66,6 +71,10 @@ fi
 # Where headscale is reachable
 HEADSCALE_HOST="${HEADSCALE_HOST:-localhost:50444}"
 HS_CLI="${HEADSCALE_CLI:-headscale}"
+# bash array so HS_CLI="docker exec headscale headscale" splits
+# correctly into ["docker", "exec", "headscale", "headscale"]
+# instead of being treated as one literal command name.
+HS_ARGS=( $HS_CLI )
 
 COOKIE_JAR=$(mktemp)
 trap "rm -f ${COOKIE_JAR}" EXIT
@@ -86,13 +95,14 @@ if ! curl -s -o /dev/null -w '%{http_code}' "${HOST}/healthz" 2>/dev/null | grep
     exit 1
 fi
 ok "skygate /healthz returns 200"
-if ! command -v "${HS_CLI%% *}" >/dev/null 2>&1; then
-    if ! command -v "${HS_CLI}" >/dev/null 2>&1; then
-        bad "headscale CLI not on PATH (set HEADSCALE_CLI)"
-        exit 1
-    fi
+# HEADSCALE_CLI can be 'docker exec headscale headscale' (multi-word
+# wrapper). Verify the FIRST word is on PATH.
+HS_FIRST="${HS_CLI%% *}"
+if ! command -v "${HS_FIRST}" >/dev/null 2>&1; then
+    bad "headscale wrapper first-word '${HS_FIRST}' not on PATH (set HEADSCALE_CLI to a real headscale path or 'docker exec ...' wrapper)"
+    exit 1
 fi
-ok "headscale CLI found"
+ok "headscale wrapper found: ${HS_CLI}"
 if ! command -v psql >/dev/null 2>&1; then
     bad "psql not on PATH — needed for step 5 audit_log check"
     exit 1
@@ -114,7 +124,7 @@ fi
 ok "${USER} headscale_user_id = ${USER_HS_ID}"
 
 # Create a reusable 1h preauth key for the user
-PREAUTH_OUT=$(${HS_CLI} preauthkeys create -u "${USER_HS_ID}" --expiration 1h --reusable --output json 2>/dev/null)
+PREAUTH_OUT=$("${HS_ARGS[@]}" preauthkeys create -u "${USER_HS_ID}" --expiration 1h --reusable --output json 2>/dev/null)
 PREAUTH_KEY=$(echo "${PREAUTH_OUT}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
 if [ -z "${PREAUTH_KEY}" ]; then
     bad "could not create preauth key via headscale"
@@ -127,8 +137,8 @@ ok "preauth key created (24h reusable)"
 # use --user tagged-devices to force the synthetic user.
 echo "  registering test node ${TEST_HOST} in tagged-devices sentinel..."
 # headscale nodes register --user <name> --key <key> <name>
-${HS_CLI} nodes register --user tagged-devices --key "${PREAUTH_KEY}" "${TEST_HOST}" 2>&1 | head -5
-GHOST_ID=$(${HS_CLI} nodes list -o json 2>/dev/null | python3 -c "
+"${HS_ARGS[@]}" nodes register --user tagged-devices --key "${PREAUTH_KEY}" "${TEST_HOST}" 2>&1 | head -5
+GHOST_ID=$("${HS_ARGS[@]}" nodes list -o json 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 nodes = d if isinstance(d, list) else d.get('nodes', [])
@@ -221,7 +231,7 @@ echo
 echo "--- Step 5: verify side effects ---"
 # 5a. Ghost deleted from headscale
 sleep 1
-GHOST_STILL_THERE=$(${HS_CLI} nodes list -i "${GHOST_ID}" -o json 2>/dev/null | python3 -c "
+GHOST_STILL_THERE=$("${HS_ARGS[@]}" nodes list -i "${GHOST_ID}" -o json 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 nodes = d if isinstance(d, list) else d.get('nodes', [])
@@ -269,9 +279,9 @@ echo "--- Step 6: cross-user reregister attempt → 404 ---"
 # Create ANOTHER ghost, but try to reregister it as ${USER} (who
 # doesn't own it). The handler should refuse with 404.
 TEST_HOST2="test-rereg2-$(date +%s)"
-PREAUTH2=$(${HS_CLI} preauthkeys create -u "${USER_HS_ID}" --expiration 1h --output json 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
-${HS_CLI} nodes register --user tagged-devices --key "${PREAUTH2}" "${TEST_HOST2}" 2>&1 | head -2
-GHOST2_ID=$(${HS_CLI} nodes list -o json 2>/dev/null | python3 -c "
+PREAUTH2=$("${HS_ARGS[@]}" preauthkeys create -u "${USER_HS_ID}" --expiration 1h --output json 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
+"${HS_ARGS[@]}" nodes register --user tagged-devices --key "${PREAUTH2}" "${TEST_HOST2}" 2>&1 | head -2
+GHOST2_ID=$("${HS_ARGS[@]}" nodes list -o json 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 nodes = d if isinstance(d, list) else d.get('nodes', [])
@@ -294,7 +304,7 @@ echo "  (Step 6 uses a different user as the owner; requires a 2nd user)"
 
 # Cleanup the second test ghost
 if [ -n "${GHOST2_ID}" ]; then
-    ${HS_CLI} nodes delete -i "${GHOST2_ID}" --force 2>&1 | head -2
+    "${HS_ARGS[@]}" nodes delete -i "${GHOST2_ID}" --force 2>&1 | head -2
     ok "test ghost 2 deleted (cleanup)"
 fi
 echo
@@ -310,3 +320,4 @@ fi
 echo
 echo "b_mod_reregister LIVE e2e: one or more steps failed."
 exit 1
+

@@ -12,9 +12,11 @@
 set -uo pipefail
 
 PASS=0; FAIL=0; SKIP=0
-ok()    { echo "  PASS  $*"; PASS=$((PASS+1)); }
-bad()   { echo "  FAIL  $*"; FAIL=$((FAIL+1)); }
-skip()  { echo "  SKIP  $*"; SKIP=$((SKIP+1)); }
+# Use `${1:-}` instead of `$*` so the function is safe to call
+# with no args under `set -u`.
+ok()    { echo "  PASS  ${1:-}"; PASS=$((PASS+1)); }
+bad()   { echo "  FAIL  ${1:-}"; FAIL=$((FAIL+1)); }
+skip()  { echo "  SKIP  ${1:-}"; SKIP=$((SKIP+1)); }
 
 HOST="${SKYGATE_LIVE_HOST:-}"
 USER="${SKYGATE_LIVE_USER:-}"

@@ -17,9 +17,13 @@
 set -uo pipefail
 
 PASS=0; FAIL=0; SKIP=0
-ok()    { echo "  PASS  $*"; PASS=$((PASS+1)); }
-bad()   { echo "  FAIL  $*"; FAIL=$((FAIL+1)); }
-skip()  { echo "  SKIP  $*"; SKIP=$((SKIP+1)); }
+# NOTE: with `set -u`, accessing `$*`/`$@` in a function called
+# with NO arguments triggers "unbound variable" — even with the
+# `:-` default. Use `$1` with `${1:-}` instead, which is bound
+# to an empty string when no args are passed.
+ok()    { echo "  PASS  ${1:-}"; PASS=$((PASS+1)); }
+bad()   { echo "  FAIL  ${1:-}"; FAIL=$((FAIL+1)); }
+skip()  { echo "  SKIP  ${1:-}"; SKIP=$((SKIP+1)); }
 
 HS_CLI="${HEADSCALE_CLI:-}"
 if [ -z "${HS_CLI}" ]; then
