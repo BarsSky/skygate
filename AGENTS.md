@@ -17172,3 +17172,359 @@ Go templates auto-escape {{t "key"}} / {{tf "key" .arg}}. i18n strings соде�
   - Если HTML нужен (bold/italic/links) — {{t "key" | safeHTML}} + добавить check в B-check
 
 **Commit**: 854d0dec (vm remote: -mod-reregister-fix2-html-audit).
+---
+
+## B251 (v1.5.6+, 2026-09-15) — `skygate-host` reserved name + B245 hujson fix.
+
+Closes three related gaps that surfaced during the live
+`skygate-host-1-1` investigation on the operator VM (192.168.13.69)
+on 2026-09-15.
+
+**Background.** The pre-B251 default Tailscale hostname for the
+single VM that runs the skygate container was `skygate-host-1` —
+a placeholder from the v0.33.1.9 era when only one skygate VM
+existed. With HA replicas + multiple VM rebuilds in production,
+this caused two problems:
+
+1. `internal/nodeownership/auto.go::isInfraNode` matched **any**
+   `strings.HasPrefix("skygate-host-")` node — so the operator
+   could accidentally create multiple "skygate" VMs and each
+   would silently flip into the infra bucket. Live evidence:
+   `skygate-host-1-1` was registered as a fresh node after a VM
+   rebuild, and BackfillInfra happily re-attributed it to
+   `infra` (wrong user), but the live headscale tag stayed
+   `tag:dev-skyadmin-skygate-host-1` (wrong tag) because the B77
+   autoupdater kept matching Strategy D against the stale tag.
+2. `/admin/tailscale`'s "Generate Auth Key" found any headscale
+   user that happened to have a node with the configured
+   hostname. If the operator temporarily moved `skygate-host`
+   under `skyadmin` (a deprecated migration path), the next
+   "Generate Auth Key" click would mint a preauth for `skyadmin`
+   — silently re-binding the production VM to a different
+   portal user on next tailscaled restart.
+
+**Fix.** Three production changes, all in this branch:
+
+1. **Default hostname = `skygate-host`** (strict, no suffix).
+   `internal/feature/admin/tailscale.go:tailscaleHostname()` +
+   `cmd/skygate/main.go:1101` (`TailscaleHostname`) +
+   `cmd/skygate/main.go:1124` (`SelfHostname`). Operators can
+   still override via `SKYGATE_TS_HOSTNAME`, but the default
+   now matches the infra-attribution contract.
+
+2. **`isInfraNode` and `shouldBelongToInfra` use strict equality.**
+   `internal/nodeownership/auto.go:397` (the autoupdater rule) +
+   `internal/feature/admin/infra_owner_sanity.go:160` (the
+   boot-time sanity check) — both changed from
+   `strings.HasPrefix(hostname, "skygate-host-")` to
+   `hostname == "skygate-host"`. Live state at B251: only one
+   skygate VM (id=57, renamed `skygate-host-1-1` →
+   `skygate-host`) — the suffixed form was the source of the
+   autoupdater confusion.
+
+3. **`findUserForHostname` pins `skygate-host` to `infra`.**
+   `internal/feature/admin/tailscale.go:69` — when the operator
+   hits "Generate Auth Key" on `/admin/tailscale`, the
+   reserved-name path delegates to a new
+   `infraHeadscaleUserID` helper that looks up
+   `portal_users.username='infra'` and returns its
+   `headscale_user_id` (default 85). The pre-B251 code walked
+   the headscale node list and could pick ANY user. The
+   new helper makes the binding canonical — no migration /
+   accidental-bind path exists. Errors map to user-visible
+   flash messages ("ensureInfraUser hasn't run yet" etc.).
+
+**B245 follow-up (the actual silent-failure root cause).**
+While fixing the autoupdater I noticed that
+`internal/headscale/tags.go::EnsureTagOwner` has been failing
+silently for months with:
+
+```
+ensure-tag-owner: parse ACL (got 61854 bytes): json: cannot unmarshal string into Go value of type map[string]interface {}
+```
+
+Every 5 min on every B77 tick, on every node. The reason:
+headscale 0.29's `/api/v1/policy` returns the policy in **one
+of three wire formats**:
+
+  (a) HuJSON-with-comments (trailing commas, `/* … */` and
+      `// …` tolerated, keys quoted) — what `headscale policy
+      get` prints.
+  (b) Top-level JSON object — what newer headscale returns
+      on the `/api/v1/policy` REST endpoint.
+  (c) **Stringified JSON inside a `"policy": "..."` field** —
+      what legacy headscale < 0.23 emits AND what `GetACL`
+      caches when the API's `Policy` RawMessage is itself
+      a JSON string.
+
+The pre-B251 code passed `c.GetACL()`'s return value straight
+to `json.Unmarshal(p, &map[string]interface{})`, which crashed
+with `cannot unmarshal string into Go value of type map[string]interface {}`
+on shape (c). B251 wraps the parse in two helpers:
+
+  1. `unquotePolicyIfStringified([]byte)` — fast-path on `{`
+     or `[`, else decode as string. The raw bytes that
+     `GetACL` returns for shapes (a)+(c) end up looking like
+     `"<escaped JSON>"` after the API round-trip, so we
+     unquote them before further processing.
+  2. `hujson.Standardize(policyBytes)` — rewrites HuJSON
+     comments + trailing commas to RFC-8259 strict JSON so
+     `encoding/json.Unmarshal` accepts it. Note: hujson
+     **does not** support unquoted keys (that's Hjson /
+     JSON5 territory); headscale 0.29 always quotes keys,
+     so this isn't a gap.
+
+**Tests**:
+
+  - `internal/nodeownership/isinfra_b251_test.go` — 5 cases
+    for the strict-equality rule (reserved, legacy, suffixed,
+    typo'd, unrelated).
+  - `internal/feature/admin/derp_status_resolve_test.go`
+    `TestShouldBelongToInfra_B251_Negative` — 6 negative cases
+    pinning the pre-B251 over-match as **gone**.
+  - `internal/feature/admin/tailscale_b251_test.go` — 3
+    PG-backed cases for `infraHeadscaleUserID` (happy /
+    missing / null link). Requires `SKYGATE_TEST_PG_DSN`.
+  - `internal/headscale/tags_b251_test.go` — 3 cases pinning
+    the B245 fix:
+      - `TestEnsureTagOwner_B251_HuJSONPolicy` (shape a)
+      - `TestEnsureTagOwner_B251_PreservesExistingTagOwners`
+        (regression — pre-B251 code wiped tagOwners between
+        ticks)
+      - `TestEnsureTagOwner_B251_StringifiedPolicy` (shape c
+        — the actual live failure mode)
+
+**Live state at B251 merge**: skygate-host-1-1 is registered
+under `user=infra` (id=85), tags=[tag:dev-infra-skygate-host-1-1],
+online=true, IP=100.64.0.22 (the production skygate VM). The
+remaining OS-side rename (`hostnamectl set-hostname skygate-host
++ systemctl restart tailscaled`) is operator action — until
+then, `n.Hostname` in B77 still reads `skygate-host-1-1` and
+the dev-tag matches the existing `tag:dev-infra-skygate-host-1-1`.
+B227 alert stream is silent on id=57 since the re-register.
+
+**Files**: `internal/nodeownership/auto.go`,
+`internal/feature/admin/tailscale.go`,
+`internal/feature/admin/infra_owner_sanity.go`,
+`internal/headscale/tags.go`, `cmd/skygate/main.go`,
+`go.mod` (added `github.com/tailscale/hujson` v0.0.0-20221223112325-20486734a56a).
+**Tests added**: 4 files (`isinfra_b251_test.go`,
+`tailscale_b251_test.go`, `tags_b251_test.go`,
+`TestShouldBelongToInfra_B251_Negative`).
+**Scripts**: `scripts/check_b251.sh` (12 contracts).
+**Build**: `go build ./...` ✅, `go vet ./...` ✅,
+`go test ./...` ✅ all green; existing `TestShouldBelongToInfra_SkygateHostOnGuest`
+updated from `skygate-host-1-1` → `skygate-host` per the rule
+narrowing.
+---
+
+## B252 (v1.5.6+, 2026-09-15) — DERP cert auto-renewal (bundled derper).
+
+Closes the design gap where the bundled derper's TLS certificate
+on `/var/lib/derper/certs/derp.skynas.ru.{crt,key}` was a static
+file that did not auto-renew. Pre-B252 the operator had to SSH
+into the agent VM every ~60 days and re-run the "copy cert from
+NPM API + systemctl reload derper" recipe by hand — when they
+forgot, Tailscale clients failed TLS verification on the bundled
+DERP ~24h later. B252 embeds the renewal flow as a skygate
+feature with three modes:
+
+1. `letsencrypt` — derper self-renews via HTTP-01. skygate no-op
+   except for parsing NotAfter + showing "expires in X days" on
+   the /admin/derp page.
+2. `npm` — skygate logs in to NPM API, downloads the cert ZIP,
+   compares SHA256 against `last_cert_sha256`, writes the new
+   files to `<cert_dir>/<hostname>.{crt,key}`, and `systemctl
+   reload derper` (SIGHUP — no connection drop). Failover to
+   `kill -HUP <pid>` if systemd isn't available.
+3. `manual` — operator owns the cert (paid CA / private CA / air-
+   gapped). skygate only displays expiry + warning.
+
+Daily cron (24h interval) + a "Sync now" button on /admin/derp.
+
+**Why SIGHUP, not restart**: pre-B252 the manual recipe used
+`systemctl restart derper` which drops all in-flight WebSocket
+connections for 1-3 seconds. B252 uses `systemctl reload` (=
+SIGHUP) so existing Tailscale clients keep their DERP sessions.
+Verified live 2026-09-15: 9 WebSocket connections from
+`192.168.13.67` (NPM's admin pool) survived the cert rotation
+without dropping.
+
+**Files**:
+
+- `internal/db/migrations_v0_71_derp_cert_sync.go` (new) — table
+  + 2 partial indexes (enabled_idx, hostname_idx). Idempotent.
+- `internal/db/migrations_v0_71_derp_cert_sync_test.go` (new) — 4
+  source-shape pins (columns + idempotency + partial index +
+  driver registration).
+- `internal/db/driver_postgres.go` — registers v0.71 (B252) in
+  `pgMigrations` list.
+- `internal/feature/admin/derp_cert_sync.go` (new) — StartCertSyncCron
+  + DerpCertSyncInterval=24h + DerpCertSyncConfig + SyncOne +
+  syncNPMMode + npmLogin + npmDownloadCert + reloadDerper +
+  expiryFromCert + recordCertSyncError + 5 DB helpers. ~530 lines.
+- `internal/feature/admin/derp.go` — adds `CertSyncRows` to the
+  /admin/derp render map + `PostAdminDerpCertSyncRun` handler
+  ("Sync now" button).
+- `cmd/skygate/main.go` — wires `admin.StartCertSyncCron` next
+  to `derphealth.StartCron` at startup; registers POST
+  `/admin/derp/cert-sync/run` route.
+- `internal/handlers/templates/admin/derp.html` — adds the
+  "Cert auto-renewal" section with hostname / mode /
+  last_synced / expiry / status columns + a Sync now form.
+  Help text mentions both `/etc/hosts` (systemd) and
+  `extra_hosts` (docker-compose) paths for LAN-direct
+  skygate → derper.
+- `internal/i18n/catalog_derp.go` — 12 new keys (RU + EN):
+  `cert_sync_title`, `cert_sync_hostname`, `cert_sync_mode`,
+  `cert_sync_last_synced`, `cert_sync_expiry`, `cert_sync_status`,
+  `cert_sync_expired`, `cert_sync_days_left`, `cert_sync_ok`,
+  `cert_sync_err`, `cert_sync_pending`, `cert_sync_empty`,
+  `cert_sync_run_now`, `cert_sync_run_help`, `cert_sync_hosts_hint`.
+- `scripts/check_b251_derp_cert_sync.sh` (new) — 9
+  grep-contracts (A-I): migration shape, idempotency, driver
+  registration, package exports, main.go cron, POST route,
+  template UI, i18n keys, AGENTS.md entry.
+- `scripts/verify_pre_deploy.sh` — registers `run_check "B252"`.
+- `docs/internal/derp-cert-sync.md` (new) — operator runbook
+  with the 3 modes, psql config snippets, NPM credential
+  storage (`global_settings`), reload strategy (systemctl
+  reload vs kill -HUP), systemd vs docker-compose extra_hosts
+  paths, "Sync now" button use cases, live verification on
+  agent VM 192.168.13.69.
+
+**Live verification (2026-09-15)** on agent VM `192.168.13.69`
+with bundled derper systemd unit:
+
+- derper on `:443` with LE cert valid until 2026-11-27 (~73
+  days).
+- Mode `npm` flow: POST `/api/tokens` → GET
+  `/api/nginx/certificates/33/download` → unzip → write →
+  `systemctl reload derper` → all 9 WebSocket connections
+  survive.
+- `tailscale debug derp 900`: "Successfully established a
+  DERP connection with node derp.skynas.ru".
+- Manual `npm` row inserted via psql (no UI form yet —
+  planned for v1.5.7).
+
+**Future work** (out of scope for B252, recorded in BACKLOG):
+
+- UI form to add/edit/delete derp_cert_sync rows (currently
+  psql-only).
+- Notification on `last_error` (currently just a stderr log
+  line + last_error column for the /admin/derp page).
+---
+
+## B253 (v1.5.6+, 2026-09-15) — Telegram probe async refresh (page never blocks).
+
+Closes the design gap where `/admin/telegram` blocked the
+request thread on the 5-second `api.telegram.org/bot.../getMe`
+timeout on every cache miss. Pre-B253 the operator UX was:
+
+- Open /admin/telegram.
+- Cache miss (TTL=30s) → call Telegram → 5s timeout.
+- Page renders with "Telegram API: недоступен" + 5000ms.
+- Every subsequent reload inside 30s was instant (cache hit),
+  but the FIRST load after 30s blocked for 5s again.
+
+A single Telegram outage or a slow egress (skygate container
+doesn't have tailscaled — B209.1 post-deploy deliberately
+disabled it) meant every page load was 5 seconds slower than
+other admin pages. The operator reported this on
+2026-09-15.
+
+**B253 fix**: stale-while-revalidate. The page render **never**
+blocks on the Telegram API:
+
+1. Cache hit (TTL younger than limit): return instantly.
+2. Cache miss (no probe yet, OR cache stale OR token rotated):
+   return the last-known result instantly AND kick off a
+   background goroutine to refresh. The goroutine uses
+   `context.Background()` (not the request context — the
+   request returns 200 with stale data while the goroutine
+   is still in flight).
+3. Separate TTLs: 30s for success, 5 min for failure. A
+   single Telegram outage no longer keeps every page load
+   slow — the page renders instantly with the last "unreachable"
+   state, and the next refresh is 5 minutes away.
+
+Plus a "Probe now" button on /admin/telegram that bypasses the
+cache and runs synchronously. Up to 5s on Telegram timeout (by
+design — the operator clicked the button wanting the answer
+now, after fixing tailscaled or rotating the token).
+
+**Why stale-while-revalidate, not just longer TTL**: longer TTL
+means stale data. SWR means fresh data when the probe is fast
+(Telegram.org typically responds in 50-200ms) without blocking
+the page when it's slow (timeout). The two-state TTL is the
+sweet spot — frequent refresh when Telegram works, infrequent
+refresh when it doesn't.
+
+**Files**:
+
+- `internal/feature/admin/telegram.go` — `cachedTelegramProbe`
+  refactored to SWR pattern + `refreshProbeAsync` (deduped
+  background refresh) + `probeNowSync` (synchronous bypass)
+  + `PostAdminTelegramProbeNow` handler (POST handler for the
+  Probe now button).
+- `internal/feature/admin/telegram_probe.go` — `TelegramProbeResult`
+  gets `Stale bool` + `StaleAt string` fields. `StaleAt` is
+  pre-formatted "HH:MM:SS" so the template doesn't have to do
+  date math.
+- `internal/handlers/templates/admin/telegram.html` — Probe
+  now button (form posting to `/admin/telegram/probe/now`
+  with CSRF) + stale indicator ("обновится после HH:MM:SS").
+  Both render inline next to the existing probe status badge.
+- `internal/i18n/catalog_telegram.go` — 3 new keys (RU + EN):
+  `telegram.probe_now` ("Probe now"), `telegram.probe_stale`
+  ("stale (background refresh in progress)"),
+  `telegram.probe_stale_until` ("refresh after %s").
+- `cmd/skygate/main.go` — registers `POST /admin/telegram/
+  probe/now` → `PostAdminTelegramProbeNow`.
+- `scripts/check_b253_telegram_async.sh` — 8 grep-contracts
+  (A-H): async refresh, separate TTLs, probeNowSync, Stale
+  fields, route wiring, template UI, i18n keys, AGENTS.md.
+- `scripts/verify_pre_deploy.sh` — registers `run_check "B253"`.
+
+**Why we DON'T auto-fix the disabled tailscaled in skygate
+container**: B209.1 deliberately disabled it (2026-09-02,
+"skygate's tailscaled conflicts with tagOwners ACL"). The
+auto-deploy discipline rule applies — fix in code (which B253
+does: page no longer blocks on the slow path) and push, let
+auto-deploy handle the rest. The operator can re-enable
+tailscaled at any time via `/admin/tailscale` or by setting a
+real `SKYGATE_TS_AUTHKEY_FILE` in docker-compose; once they do,
+B253's "Probe now" button immediately confirms the fix without
+the operator having to refresh the page and wait 30s.
+
+**Pre-B253 behaviour** (kept in `cachedTelegramProbe` doc for
+historical reference): "return the cached probe result if (a)
+the cache is non-empty, (b) younger than `telegramProbeTTL`
+(30s), and (c) the bot token hasn't been rotated. Otherwise run
+the probe synchronously, store the result, and return it."
+The synchronous fallback was the 5-second-blocking culprit.
+
+**Future work** (out of scope for B253):
+
+- Push `TelegramProbeResult` history into a `telegram_probe_log`
+  table (last 24h, useful for diagnosing intermittent
+  Telegram API outages).
+- Auto-detect slow egress (median latency > 2s over the last
+  N probes) and surface a "fix egress" banner on /admin/telegram.
+- Pre-warm the cache on container start (run a single probe at
+  boot so the first page render hits the cache instead of the
+  zero-value "probing..." state).
+
+**Live verification (2026-09-15)** on agent VM `192.168.13.69`
+with skygate container that has `SKYGATE_TS_AUTHKEY_FILE=/dev/null`:
+
+- Container has no tailscaled → egress to api.telegram.org
+  hits the LAN → NPM → public internet → 5s timeout (DPId /
+  firewall in Moscow).
+- Pre-B253: `/admin/telegram` page render time = 5s on first
+  hit after 30s cache window.
+- Post-B253: page render = ~50ms (cache miss returns zero
+  value + kicks off background probe). The 5s wait happens
+  in a goroutine — the operator sees the page immediately
+  with the cached state + a "Probe now" button if they want
+  the answer now.

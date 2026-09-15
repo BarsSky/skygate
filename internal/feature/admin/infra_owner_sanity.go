@@ -6,14 +6,17 @@
 // Background (see AGENTS.md "Issue 4 infra user"):
 //   - skygate provisions a dedicated headscale user "infra" at
 //     startup (ensureInfraUser in cmd/skygate/main.go).
-//   - Per the design, all infrastructure nodes — skygate-host-*
-//     VMs + their attached exit-nodes (emilia/karolina/sharlotta)
-//     — should be owned by "infra" so the ACL grants
+//   - Per the design, all infrastructure nodes — the skygate VM
+//     itself (reserved hostname `skygate-host`, B251) + their
+//     attached exit-nodes (emilia/karolina/sharlotta) — should be
+//     owned by "infra" so the ACL grants
 //     `infra → autogroup:internet, tag:exit-*` apply.
-//   - Pre-fix: there was NO check. The skygate-host-1-1 tailscale
-//     node ended up on the synthetic "tagged-devices" user (id=11)
-//     while the "infra" user (id=85) existed with zero nodes. The
-//     grant-based access path was silently dead.
+//   - Pre-B251 the rule matched `skygate-host-` prefix, which
+//     also let suffixed names (`skygate-host-1`, `skygate-host-1-1`,
+//     `skygate-host-test`, …) trigger infra-ownership checks.
+//     B251 collapses the candidate detection to strict equality
+//     (`hostname == "skygate-host"`) so any renamed form no longer
+//     silently flips ownership in the DB.
 //
 // SanityCheckInfraUserOwners is called from cmd/skygate/main.go
 // after ensureInfraUser. It returns a list of nodes that the
@@ -28,21 +31,26 @@
 // again with --user infra).
 //
 // Detection rules — a node SHOULD belong to "infra" if:
-//   1. Its hostname starts with "skygate-host-" (the skygate VMs
-//      themselves), OR
+//   1. Its hostname equals "skygate-host" (B251 reserved name for
+//      the single VM that runs the skygate container), OR
 //   2. It has the `tag:exit-node` or `tag:dev-infra-*` tag (the
 //      per-device dev-tag applied by the B175 Strategy E backfill
 //      and the `tag:exit-node` from /admin/exit-nodes).
 //
-// Live case 2026-09-15: skygate-host-1-1 (id=43, this VM) has
+// Live case 2026-09-15: skygate-host-1-1 (id=43, this VM) had
 // `tag:dev-skyadmin-skygate-host-1` (wrong — should be
-// `tag:dev-infra-*`) AND is on `tagged-devices` user (id=11, wrong
-// — should be `infra`). Both flags trip. Other infrastructure nodes
-// (emilia/karolina/sharlotta) already have the right
-// `tag:dev-infra-*` but are also on `tagged-devices` user — only
-// the user-ownership flag trips for them.
+// `tag:dev-infra-*`) AND was on `tagged-devices` user (id=11, wrong
+// — should be `infra`). Both flags tripped. After B251 + re-register
+// the node is `skygate-host` (id=57, user=infra, tag=tag:dev-infra-skygate-host-1-1),
+// the R1 dev-tag rule still trips because the B176-style canonical
+// tag is `tag:dev-infra-skygate-host` (no `-1-1` suffix) — operator
+// must rename the OS hostname + restart tailscaled to fully align.
+// Other infrastructure nodes (emilia/karolina/sharlotta) already
+// have the right `tag:dev-infra-*` but are also on `tagged-devices`
+// user — only the user-ownership flag trips for them.
 //
 // 2026-09-15: v1.5.3 — B-bug-fix (infra user provisioned but no nodes).
+// 2026-09-15: v1.5.3 — B251 (hostname `skygate-host` reserved; strict equality).
 
 package admin
 
@@ -149,8 +157,8 @@ func SanityCheckInfraUserOwners(hs *headscale.Client) ([]InfraOwnerMismatch, err
 // unit test. Returns the list of violation identifiers (empty =
 // node is correctly on infra, or not a candidate at all).
 //
-// Rules:
-//   R1: hostname starts with "skygate-host-"  → must be on infra
+// Rules (B251: hostname match is strict equality):
+//   R1: hostname equals "skygate-host" → must be on infra
 //       AND must have a tag starting with "tag:dev-infra-"
 //   R2: has tag:exit-node  → must be on infra
 //   R3: has tag:dev-infra-*  → must be on infra
@@ -161,8 +169,13 @@ func shouldBelongToInfra(hostname, currentUser string, tags []string) []string {
 	var violations []string
 
 	// Candidate detection: is this node even supposed to be on infra?
+	// B251: strict equality on `skygate-host` (the reserved name
+	// for the single VM that runs skygate). Pre-B251 used
+	// `strings.HasPrefix("skygate-host-")` which over-matched
+	// legacy / renamed forms and let two physical VMs silently
+	// claim the reserved role.
 	isCandidate := false
-	if strings.HasPrefix(hostname, "skygate-host-") {
+	if hostname == "skygate-host" {
 		isCandidate = true
 	}
 	for _, t := range tags {
@@ -179,9 +192,12 @@ func shouldBelongToInfra(hostname, currentUser string, tags []string) []string {
 		violations = append(violations, "should_be_infra_user")
 	}
 
-	// For skygate-host-*: also check that the dev-tag starts with
-	// `tag:dev-infra-` (the B175 Strategy E naming convention).
-	if strings.HasPrefix(hostname, "skygate-host-") {
+	// For the reserved skygate VM: also check that the dev-tag
+	// starts with `tag:dev-infra-` (the B175 Strategy E naming
+	// convention). The auto-updater should re-apply it within
+	// one B77 tick (5 min) after the OS hostname rename; until
+	// then the rule reports this violation.
+	if hostname == "skygate-host" {
 		hasInfraTag := false
 		for _, t := range tags {
 			if strings.HasPrefix(t, "tag:dev-infra-") {

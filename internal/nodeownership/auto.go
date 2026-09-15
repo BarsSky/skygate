@@ -223,23 +223,28 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 //      sets this when the B77 Strategy D matches an
 //      infra node; future migrations may set it
 //      programmatically).
-//   2. Node hostname starts with "skygate-host-"
-//      AND has no node_owner_map row yet (the
-//      INSERT OR IGNORE handles the "no row yet"
-//      check). Captures the existing skygate-host-1
-//      node, which has tag:dev-skyadmin-skygate-vm
-//      (skyadmin owner) but is the actual skygate
-//      infrastructure node.
+//   2. Node hostname equals "skygate-host" (B251: the
+//      pre-B251 `skygate-host-` prefix was too wide —
+//      it matched `skygate-host-1`, `skygate-host-1-1`,
+//      and any other suffix the admin tenant might add
+//      during migration, letting two physical VMs claim
+//      the reserved role). The INSERT OR IGNORE handles
+//      the "no row yet" check. Captures the single skygate
+//      VM (whose Tailscale hostname is set by
+//      SKYGATE_TS_HOSTNAME; defaults to `skygate-host`)
+//      even when its existing node_owner_map row is owned
+//      by a different portal user from the previous era.
 //
 // Why both rules:
 //   - Rule 1 covers FUTURE nodes the operator marks
 //     with `tag:dev-infra-*`.
-//   - Rule 2 covers the LIVE skygate-host-1 node
-//     that the operator tagged manually with
-//     `tag:dev-skyadmin-skygate-vm` (no infra tag
-//     present). Without rule 2, that node would
-//     stay owned by 'skyadmin' and the per-infra
-//     ACL grant wouldn't apply.
+//   - Rule 2 covers the LIVE skygate VM (hostname
+//     `skygate-host`) whose tag is still skyadmin-owned
+//     from a pre-B251 era (e.g. `tag:dev-skyadmin-skygate-host-1`
+//     when the operator used `skygate-host-1` and never
+//     re-tagged after the B251 rename). Without rule 2,
+//     that node would stay owned by 'skyadmin' and the
+//     per-infra ACL grant wouldn't apply.
 //
 // The function does NOT move an existing row from
 // 'skyadmin' to 'infra' (the INSERT OR IGNORE is
@@ -373,9 +378,18 @@ func BackfillInfra(dbConn db.DBSource, nodes []headscale.NodeView) {
 // Rules (first match wins):
 //   1. Any tag matches `tag:dev-infra-*` — explicit
 //      infra ownership.
-//   2. Hostname starts with "skygate-host-" — the
-//      skygate VM itself, regardless of which user
-//      currently owns it in headscale.
+//   2. Hostname equals "skygate-host" — the skygate VM
+//      itself (B251: strict equality; the pre-B251
+//      `strings.HasPrefix("skygate-host-")` rule also
+//      matched suffixed forms like `skygate-host-1` /
+//      `skygate-host-1-1`, which let the operator
+//      accidentally create multiple "skygate" VMs and
+//      conflated infra-attribution with the cluster's
+//      internal naming). The reserved name `skygate-host`
+//      is now produced by /admin/tailscale's default
+//      (cmd/skygate/main.go SKYGATE_TS_HOSTNAME) and
+//      rejected as a duplicate by findUserForHostname
+//      when issued for a non-infra headscale user.
 //   3. Any tag equals `tag:exit-node` — an exit node
 //      (relay VPS that advertises 0.0.0.0/0 + ::/0).
 //      Added in v1.3.11 (B111) per operator request:
@@ -394,5 +408,5 @@ func isInfraNode(n headscale.NodeView) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(n.Hostname, "skygate-host-")
+	return n.Hostname == "skygate-host"
 }

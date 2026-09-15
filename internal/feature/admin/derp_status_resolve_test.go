@@ -43,10 +43,41 @@ func TestResolveDERPPort_EmptyEnvFallsBackToDefault(t *testing.T) {
 // by scripts/check_derp_relays_auto.sh (live e2e against the operator's
 // VM).
 
+// TestShouldBelongToInfra_B251_Negative covers the B251 reserved-name
+// change: pre-B251 shouldBelongToInfra also matched suffixed forms
+// like `skygate-host-1`, `skygate-host-1-1`, `skygate-host-test`
+// (any string with the `skygate-host-` prefix). B251 narrows the
+// candidate detection to strict equality on `skygate-host`. The
+// suffixed forms must NOT trigger infra-ownership violations
+// anymore — they're treated as ordinary non-infra nodes.
+func TestShouldBelongToInfra_B251_Negative(t *testing.T) {
+	for _, hostname := range []string{
+		"skygate-host-1",     // legacy v0.33.1.9 placeholder
+		"skygate-host-1-1",   // post-B227.1 rename
+		"skygate-host-test",  // hypothetical typo
+		"skygate-host-foo",   // hypothetical operator typo
+		"skyhosts-host",      // contains `skygate-host` but doesn't start with it
+		"some-other-host",
+	} {
+		violations := shouldBelongToInfra(
+			hostname,
+			"tagged-devices",
+			[]string{"tag:dev-skyadmin-skygate-host-1"},
+		)
+		if len(violations) != 0 {
+			t.Errorf("hostname=%q should NOT trigger infra-ownership violations under B251 strict equality, got %v", hostname, violations)
+		}
+	}
+}
+
 func TestShouldBelongToInfra_SkygateHostOnGuest(t *testing.T) {
-	// Live case 2026-09-15: skygate-host-1-1 with wrong user + wrong tag.
+	// Live case 2026-09-15: skygate-host with wrong user + wrong tag.
+	// B251: hostname match is strict equality (`hostname == "skygate-host"`),
+	// not prefix match. The pre-B251 form `skygate-host-1-1` no longer
+	// matches the infra-candidate check at all (a different B251
+	// regression test below covers the negative path).
 	violations := shouldBelongToInfra(
-		"skygate-host-1-1",
+		"skygate-host",
 		"tagged-devices", // currentUser != "infra"
 		[]string{"tag:dev-skyadmin-skygate-host-1", "tag:private"}, // no tag:dev-infra-*
 	)

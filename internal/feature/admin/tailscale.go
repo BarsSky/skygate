@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -51,15 +52,34 @@ import (
 //
 // findUserForHostname resolves the headscale user that should
 // own a preauth key for the configured Tailscale hostname
-// (default "skygate-host-1"). It walks the headscale node list
-// (not the user list) because a fresh container doesn't
-// necessarily have a User row in headscale yet — the user is
-// created on the first node registration. Looking for a node
-// with the matching hostname (via the admin's ListAllNodes
-// path) is the most reliable signal: if a node named
-// "skygate-host-1" exists in headscale, the user behind it
-// is by construction the one this skygate instance registered
-// as, and that's who we want a new preauth key for.
+// (default "skygate-host").
+//
+// Two paths, depending on hostname:
+//
+//  1. Reserved hostname "skygate-host" (B251):
+//     Always returns the headscale user that backs the
+//     `infra` portal user (default `id=85`). This is the
+//     single VM that runs the skygate container itself,
+//     and it's always infra-owned per the operator's 2026-08-13
+//     directive ("infra user будет владеть skygate + exit nodes").
+//     We do NOT search the live node list, because the
+//     pre-B251 behaviour fell back to whatever headscale
+//     user happened to have a node with that hostname — so
+//     if the operator ever temporarily moved `skygate-host`
+//     under `skyadmin` (a deprecated path), the next "Generate
+//     Auth Key" click would mint a key for `skyadmin`, which
+//     would re-bind the production VM to a different portal
+//     user. Skipping the search makes the binding canonical.
+//
+//  2. Any other hostname: walks the live headscale node list
+//     and returns the UserID of the first node that matches.
+//     The previous behaviour (kept for non-reserved
+//     hostnames) is the most reliable signal: a fresh
+//     container doesn't necessarily have a User row in
+//     headscale yet — the user is created on the first node
+//     registration. Looking for a node with the matching
+//     hostname (via the admin's ListAllNodes path) tells us
+//     who this skygate instance previously registered as.
 //
 // Returns the headscale user ID (int64, suitable for
 // CreatePreauthKey's userID param) and the user.Name for
@@ -69,6 +89,14 @@ import (
 func (s *Service) findUserForHostname(ctx context.Context, hs *headscale.Client, hostname string) (int64, string, error) {
 	if hs == nil {
 		return 0, "", fmt.Errorf("headscale client not configured")
+	}
+	// B251 reserved-name shortcut: pin to infra unconditionally.
+	if hostname == "skygate-host" {
+		uid, err := s.infraHeadscaleUserID(ctx)
+		if err != nil {
+			return 0, "", err
+		}
+		return uid, "infra", nil
 	}
 	listCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
@@ -91,6 +119,39 @@ func (s *Service) findUserForHostname(ctx context.Context, hs *headscale.Client,
 		return uid, n.UserName, nil
 	}
 	return 0, "", fmt.Errorf("no node with hostname %q in headscale (register once first, or use /admin/headscale to create a preauth key manually)", hostname)
+}
+
+// infraHeadscaleUserID returns the headscale user ID backing
+// the `infra` portal user. B251 added this helper so the
+// reserved-name path in findUserForHostname has one place to
+// look up the canonical mapping instead of inlining the
+// DB query. Looks up `portal_users.username='infra'` and
+// returns its `headscale_user_id` column.
+//
+// Returns (0, error) when:
+//   - no `infra` row exists (operator hasn't run ensureInfraUser
+//     yet — skygate boot pre-flight must create the row first)
+//   - `headscale_user_id` is NULL or 0 (ensureInfraUser hasn't
+//     linked yet, OR the test schema defaulted it to 0)
+//   - the portal_users table itself isn't reachable
+func (s *Service) infraHeadscaleUserID(ctx context.Context) (int64, error) {
+	conn := s.dbc()
+	if conn == nil {
+		return 0, fmt.Errorf("infra lookup: nil db source")
+	}
+	row := conn.QueryRowContext(ctx,
+		`SELECT headscale_user_id FROM portal_users WHERE username = 'infra'`)
+	var uid sql.NullInt64
+	if err := row.Scan(&uid); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("infra user missing in portal_users (run ensureInfraUser before /admin/tailscale)")
+		}
+		return 0, fmt.Errorf("infra lookup: %w", err)
+	}
+	if !uid.Valid || uid.Int64 == 0 {
+		return 0, fmt.Errorf("infra headscale_user_id not linked (ensureInfraUser hasn't completed)")
+	}
+	return uid.Int64, nil
 }
 
 // TailscaleState is the shape the template consumes.
@@ -337,7 +398,18 @@ func (s *Service) tailscaleHostname() string {
 	if s.TailscaleHostname != "" {
 		return s.TailscaleHostname
 	}
-	return "skygate-host-1"
+	// B251: hostname `skygate-host` is reserved for the
+	// single VM that runs the skygate container itself
+	// (the `infra` headscale user). The pre-B251 default
+	// `skygate-host-1` was a placeholder from v0.33.1.9
+	// when only one skygate VM existed; with HA and
+	// replicas the un-suffixed form is canonical and
+	// `isInfraNode` in internal/nodeownership matches it
+	// strictly. Operators overriding via SKYGATE_TS_HOSTNAME
+	// retain the old behaviour (the prefix `skygate-host-`
+	// was deprecated in B251 — only the exact reserved
+	// name moves into `infra` automatically).
+	return "skygate-host"
 }
 
 // tailscaleStateDir is the --statedir tailscaled writes to.

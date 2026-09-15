@@ -453,6 +453,19 @@ func main() {
 		log.Printf("derp cron: %v (continuing without background probes)", err)
 	}
 
+	// B251 (v1.5.6+, 2026-09-15) — DERP cert auto-renewal cron.
+	// 24h interval (LE renews at 30 days remaining, so once-a-day
+	// fires within 1 day of every renewal). Each row in derp_cert_sync
+	// runs its mode-specific flow: npm=fetch+write+SIGHUP,
+	// letsencrypt=monitor-expiry, manual=monitor-expiry. Failures
+	// are recorded per-row (last_error) so a single bad row doesn't
+	// block the rest. The cron is no-op after the first successful
+	// StartCertSyncCron call so a reload / main.go re-run doesn't
+	// double-start the loop.
+	if err := adminsvc.StartCertSyncCron(context.Background(), d.DB); err != nil {
+		log.Printf("derp cert sync cron: %v (continuing without auto-renewal)", err)
+	}
+
 	// 2026-09-15 (B-bug-fix): auto-register the bundled derper in
 	// derp_relays if /var/lib/derper/derper.conf exists AND no
 	// bundled row is already present. Live case: agent VM
@@ -1085,7 +1098,14 @@ func main() {
 		// Save/Start/Stop buttons.
 		TailscaleAuthKeyPath: tailscaleEnvOr("SKYGATE_TS_AUTHKEY_PATH", "/data/ts/authkey"),
 		TailscaleLoginServer:  tailscaleEnvOr("SKYGATE_TS_LOGIN_SERVER", "https://head.example.com"),
-		TailscaleHostname:     tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host-1"),
+		// B251: hostname `skygate-host` is reserved for the
+		// single VM that runs the skygate container itself
+		// (registered via /admin/tailscale). The previous
+		// default `skygate-host-1` was a placeholder from
+		// the v0.33.1.9 era; v1.5.2 collapses it to the
+		// reserved name so BackfillInfra can attribute the
+		// node to `infra` strictly on hostname equality.
+		TailscaleHostname:     tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host"),
 
 		// v1.5.0 / B149 — /admin/ha page.
 		//
@@ -1101,7 +1121,8 @@ func main() {
 		// (the same name the operator SSHes into). The
 		// /admin/ha "Self role" column reads this to render
 		// the active/standby/unreachable badge.
-		SelfHostname: tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host-1"),
+		// B251: align with TailscaleHostname default `skygate-host`.
+		SelfHostname: tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host"),
 
 		// v1.5.0+ / B200 — invite signing key. cfg.SecretKeyHex
 		// is the raw SKYGATE_SECRET_KEY (also used for JWT
@@ -1657,6 +1678,11 @@ func main() {
 	mux.Handle("POST /admin/acls/import", authMW(http.HandlerFunc(adminSvc.PostAdminACLsImport)))
 	mux.Handle("POST /admin/acls/import/apply", authMW(http.HandlerFunc(adminSvc.PostAdminACLsImportApply)))
 	mux.Handle("GET /admin/derp", authMW(http.HandlerFunc(adminSvc.GetAdminDERP)))
+	// 2026-09-15: v1.5.6+ (B251) — bundled derper cert auto-renewal.
+	// The "Cert auto-renewal" section on /admin/derp surfaces the
+	// derp_cert_sync rows; the "Sync now" button POSTs here so
+	// the operator doesn't have to wait for the daily cron tick.
+	mux.Handle("POST /admin/derp/cert-sync/run", authMW(http.HandlerFunc(adminSvc.PostAdminDerpCertSyncRun)))
 	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
 	// integration config. The /admin/integrations landing page
 	// shows the current state of every pluggable component;
@@ -1976,6 +2002,14 @@ func main() {
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(adminSvc.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegram)))
 	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegramPost)))
+	// B253 (v1.5.6+, 2026-09-15): "Probe now" button on /admin/telegram
+	// bypasses the cache + the stale-while-revalidate background
+	// refresh. Operator hits this after fixing the network path
+	// (re-enabled tailscaled in skygate container, rotated the
+	// bot token, etc.) to see an immediate result instead of
+	// waiting for the next async-refresh tick (5 min on failure,
+	// 30s on success).
+	mux.Handle("POST /admin/telegram/probe/now", authMW(http.HandlerFunc(adminSvc.PostAdminTelegramProbeNow)))
 	// v1.5.2+ / B-mod-admin (2026-09-10): /admin/modules
 	// list + /admin/modules/{name} detail + POST handlers
 	// for install/start/stop/enable/disable/sub/{name}.

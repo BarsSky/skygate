@@ -8,11 +8,14 @@
 package headscale
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/tailscale/hujson" // B251/B245: headscale 0.29 returns ACL as HuJSON
 )
 
 // TagPublicTag marks a node as accessible to all users (via ACL).
@@ -199,12 +202,35 @@ func (c *Client) EnsureTagOwner(tag string, owners []string) error {
 	if err != nil {
 		return fmt.Errorf("ensure-tag-owner: get ACL: %w", err)
 	}
-	// Parse the policy HuJSON. The current headscale policy
-	// schema is {acls:[...], tagOwners:{...}, ...}; we parse
-	// into a generic map so a future headscale schema bump
-	// doesn't break us (we only touch tagOwners).
+	// Parse the policy. headscale 0.29 returns the policy in
+	// one of two shapes:
+	//
+	//   (a) JSON object directly: `{"acls":[...], "tagOwners":{...}, ...}`
+	//       — what `headscale policy get` prints and what newer
+	//       headscale versions emit on the /api/v1/policy endpoint.
+	//
+	//   (b) Stringified JSON: `{"policy": "{...stringified JSON...}"}`
+	//       — what the legacy headscale < 0.23 wire format used,
+	//       AND what `c.GetACL` falls back to when the API
+	//       returns a quoted `Policy` field. The pre-B251 code
+	//       passed this stringified blob straight to
+	//       `json.Unmarshal(p, &p)` and died with:
+	//         `json: cannot unmarshal string into Go value of type map[string]interface {}`
+	//
+	// B251 unifies both: we unquote the stringified form (a),
+	// then hujson.Standardize() tolerates comments + trailing
+	// commas in the unwrapped policy bytes (b), and only then
+	// do we json.Unmarshal into the generic map.
+	policyBytes, unquoteErr := unquotePolicyIfStringified([]byte(policy))
+	if unquoteErr != nil {
+		return fmt.Errorf("ensure-tag-owner: unquote stringified policy (got %d bytes): %w", len(policy), unquoteErr)
+	}
+	policyBytes, hujErr := hujson.Standardize(policyBytes)
+	if hujErr != nil {
+		return fmt.Errorf("ensure-tag-owner: standardize HuJSON (got %d bytes): %w", len(policy), hujErr)
+	}
 	var p map[string]interface{}
-	if err := json.Unmarshal([]byte(policy), &p); err != nil {
+	if err := json.Unmarshal(policyBytes, &p); err != nil {
 		return fmt.Errorf("ensure-tag-owner: parse ACL (got %d bytes): %w", len(policy), err)
 	}
 	tagOwnersRaw, ok := p["tagOwners"]
@@ -235,6 +261,34 @@ func (c *Client) EnsureTagOwner(tag string, owners []string) error {
 	}
 	// SetPolicy clears the ACL cache; we don't need a second call.
 	return nil
+}
+
+// unquotePolicyIfStringified inspects the policy bytes returned
+// by GetACL. If they're a JSON string literal (the legacy
+// headscale wire format that wrapped the policy in `"…"`), it
+// unquotes it. If they're already a JSON object, it returns the
+// bytes unchanged. Returns an error if the payload is neither
+// a valid JSON string nor a JSON object.
+//
+// B251: pre-B251 EnsureTagOwner passed stringified bytes straight
+// to json.Unmarshal into a map, which crashed with:
+//   `cannot unmarshal string into Go value of type map[string]interface {}`
+// on the live skygate VM (skygate-host-1-1 incident, 2026-09-15).
+func unquotePolicyIfStringified(raw []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return raw, fmt.Errorf("empty policy bytes")
+	}
+	// Fast path — already a JSON object/array.
+	if trimmed[0] == '{' || trimmed[0] == '[' {
+		return raw, nil
+	}
+	// Slow path — must be a JSON string literal. Decode it.
+	var s string
+	if err := json.Unmarshal(trimmed, &s); err != nil {
+		return raw, fmt.Errorf("policy is neither object nor string literal: %w", err)
+	}
+	return []byte(s), nil
 }
 
 // IsPublic returns whether an HSNode carries the tag:public tag.
