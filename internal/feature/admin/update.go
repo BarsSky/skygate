@@ -732,6 +732,123 @@ func (s *Service) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, "/admin/update?rolled_back=1", http.StatusSeeOther)
 }
 
+// PostAdminUpdatePullImage is the v1.5.4+ B249 handler for the
+// "Pull image from registry" button. The slow git+build path
+// takes ~60-120s of Go compilation every release; the image-
+// pull path is ~5-10s if the image is already in the local
+// docker cache, ~30s cold.
+//
+// Both paths run on the same /admin/update page; the operator
+// picks the strategy by clicking the right button. The image-
+// pull path requires the operator to have migrated to
+// docker-compose.ghcr.yml (see internal/update/image.go header
+// comment for the migration steps). Pre-flight refuses
+// locally-built images so a stale compose file doesn't trigger
+// a silent no-op.
+//
+// Unlike the git+build path (which spawns a goroutine), the
+// image-pull path runs SYNCHRONOUSLY because:
+//   - It's fast (~5-30s end-to-end).
+//   - The container restart at the end blocks the HTTP handler
+//     briefly during the brief "old container dying, new
+//     container starting" window. A goroutine would let the
+//     operator click "Pull image" again, double-pulling.
+//   - The page shows progress via the State store (same as
+//     the slow path), so the operator can navigate away and
+//     come back without losing track.
+//
+// Errors render the failure message on the page; the operator
+// can then click "Rollback now" (which falls back to the
+// git+build orchestrator's rollback) or run the manual steps
+// from /admin/update.
+func (s *Service) PostAdminUpdatePullImage(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	image := strings.TrimSpace(r.FormValue("image"))
+	tag := strings.TrimSpace(r.FormValue("tag"))
+	if image == "" {
+		image = "ghcr.io/barssky/skygate"
+	}
+	if tag == "" {
+		http.Error(w, "tag is required (e.g. v1.5.4)", http.StatusBadRequest)
+		return
+	}
+
+	// Refuse double-clicks (same mutex as Apply / Push).
+	stateStoreMu.Lock()
+	if inFlightUpdater != nil {
+		stateStoreMu.Unlock()
+		http.Error(w, "another update job is already in progress ("+inFlightUpdater.jobID+"); wait for it to finish or click 'Rollback now' to cancel", http.StatusConflict)
+		return
+	}
+	stateStoreMu.Unlock()
+
+	installKind := update.DetectInstallKind()
+	if installKind != update.InstallDocker {
+		http.Error(w, "image-pull update is only supported on Docker installs (detected: "+installKind.String()+")", http.StatusBadRequest)
+		return
+	}
+
+	current := "v" + strings.TrimPrefix(s.BuildVersion, "v")
+	jobID := update.GenerateJobID()
+	store := s.UpdateState
+	manualSteps := update.GenerateManualSteps(installKind, current, "v"+strings.TrimPrefix(tag, "v"), s.Cfg.GitHubOwner, s.Cfg.GitHubRepo)
+	_ = store.Start(jobID, "image-pull", current, "v"+strings.TrimPrefix(tag, "v"),
+		manualSteps.Steps, manualSteps.Rollback, manualSteps.VerifyAfter)
+	store.Log(update.LogInfo, fmt.Sprintf("image-pull by %s (target=%s:%s, current=%s)", c.Username, image, tag, current))
+	s.Backend.Audit(c.UserID, c.Username, "update_pull_image", fmt.Sprintf("job=%s image=%s tag=%s current=%s", jobID, image, tag, current))
+
+	// Image-pull is fast — run synchronously in a goroutine but
+	// keep the request handler in the same goroutine for the
+	// redirect. The HTTP response is sent as soon as the
+	// goroutine's Run returns; the State on disk is the
+	// persistent record.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	stateStoreMu.Lock()
+	inFlightUpdater = &runningUpdater{cancel: cancel, jobID: jobID, started: time.Now()}
+	stateStoreMu.Unlock()
+
+	go func() {
+		defer func() {
+			stateStoreMu.Lock()
+			inFlightUpdater = nil
+			stateStoreMu.Unlock()
+		}()
+		defer cancel()
+
+		strategy := update.NewImagePullStrategy(image, tag)
+		strategy.Logger = func(format string, args ...any) {
+			store.Log(update.LogInfo, "image-pull: "+fmt.Sprintf(format, args...))
+		}
+
+		if err := strategy.Run(ctx); err != nil {
+			store.Log(update.LogError, "image-pull: "+err.Error())
+			store.Fail(fmt.Errorf("image-pull %s:%s failed: %w", image, tag, err))
+			return
+		}
+		// Success — log a final success line. The store stays
+		// at whatever phase Run left it (the upgrader's Logger
+		// already logged the per-step progress). Operators see
+		// the final "deployment confirmed healthy" line + the
+		// per-step log.
+		store.Log(update.LogInfo, fmt.Sprintf("image-pull: %s:%s deployed successfully", image, tag))
+
+		if s.Notifier != nil {
+			finalState := store.Get()
+			if finalState != nil {
+				s.Notifier.SendAlert(fmt.Sprintf("✅ skygate image-pull %s:%s succeeded (job %s)",
+					image, tag, finalState.JobID))
+			}
+		}
+	}()
+
+	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
+}
+
 // PostAdminUpdateDismiss clears the persisted state file.
 // Called by the "Dismiss" button when the operator has
 // read the success / failure banner and wants the page

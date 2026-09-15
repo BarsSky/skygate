@@ -4199,6 +4199,9 @@ run_check "TD-18.2" "fix /admin/derp/dashboard page that rendered with no conten
 run_check "B244" "documentation/code consistency pin (10 grep-contracts on Go version, README drift, catalog typos, doubled paths). Closes the 'doc drift invisible until manual audit' gap from 2026-09-14 doc audit. Future drift fails the same verify-pre pipeline as code regressions." \
   'test -f scripts/check_b244.sh && bash scripts/check_b244.sh'
 
+run_check "B249" "image-pull update path (fast ~5-30s alternative to git+build): internal/update/image.go with ImagePullStrategy struct + Run + imageIsFromRegistry classifier + pollHealthz + backup-tag rename + ghcr.yml preference; internal/update/shell.go with shellExec var override for tests; internal/feature/admin/update.go PostAdminUpdatePullImage handler; cmd/skygate/main.go POST /admin/update/pull-image route; update.html pull-image form; 10 i18n keys (RU + EN); 6 unit tests in image_b249_test.go covering registry classifier + tag extraction + sanitize + pre-flight refusal of locally-built images + same-tag no-op + happy path + rollback on compose-up failure. 21 grep-contracts in scripts/check_b249.sh." \
+  'test -f scripts/check_b249.sh && bash scripts/check_b249.sh'
+
 # --- B-bug-fix (2026-09-15): agent VM 192.168.13.69 regression cluster ---
 # Closes the 5-layer "DERP unreachable + Telegram API timeout" bug where:
 #   1. derp.go hardcoded DERPPort: "443" (masked a derper running on :8443 plain HTTP)

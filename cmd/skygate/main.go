@@ -2127,6 +2127,10 @@ func main() {
 	// restart right now, without waiting for a newer
 	// release to be detected.
 	mux.Handle("POST /admin/update/push", authMW(http.HandlerFunc(adminSvc.PostAdminUpdatePush)))
+	// B249 (v1.5.4): the image-pull update path — fast (~5-30s)
+	// alternative to the git+build path above. Same UI page,
+	// separate button. Requires docker-compose.ghcr.yml.
+	mux.Handle("POST /admin/update/pull-image", authMW(http.HandlerFunc(adminSvc.PostAdminUpdatePullImage)))
 	// 2026-08-03: v0.32.20 — UI toggle for auto-update. The
 	// operator flips the auto-update mode on /admin/update
 	// without editing .env or restarting skygate. Persisted in

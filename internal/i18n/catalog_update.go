@@ -43,6 +43,16 @@ var ruUpdate = map[string]string{
 	"update.push_help"             : "Запустить оркестратор обновления вручную (независимо от флага auto-update). Используйте если хотите принудительно пересобрать и перезапустить текущую сборку.",
 	"update.push_confirm"          : "Запустить оркестратор обновления вручную? Это перезапустит контейнер (3-5 минут). При любой ошибке — авто-откат.",
 	"update.auto_disabled_banner"  : "Авто-обновление отключено (SKYGATE_AUTO_UPDATE_ENABLED=false). Чтобы применить обновление — нажмите «Протолкнуть обновление» ниже.",
+	// B249 (v1.5.4): the image-pull update button. Faster than
+	// "Протолкнуть обновление" (~5-30s vs ~60-120s) but requires
+	// docker-compose.ghcr.yml + SKYGATE_IMAGE in .env. The
+	// pre-flight refuses locally-built images so the operator
+	// sees a clear error if they haven't migrated.
+	"update.image_pull"                  : "Pull образ",
+	"update.image_pull_help"             : "Быстрое обновление через `docker pull` (~5-30s). Требуется docker-compose.ghcr.yml + SKYGATE_IMAGE в .env. На локально-собранных образах — отказ с подсказкой.",
+	"update.image_pull_confirm"          : "Скачать новый образ из registry и перезапустить контейнер? Это перезапустит skygate (~5-30s).",
+	"update.image_pull_tag_required"     : "Укажите tag (например v1.5.4) — без него docker pull не сработает.",
+	"update.image_pull_image_placeholder" : "registry/image",
 	"update.auto_enabled_banner"   : "Авто-обновление включено (SKYGATE_AUTO_UPDATE_ENABLED=true). При появлении новой версии — кнопка «Обновить» появится ниже.",
 	"update.auto_toggle_on"        : "Включить авто-обновление",
 	"update.auto_toggle_off"       : "Отключить авто-обновление",
@@ -119,6 +129,12 @@ var enUpdate = map[string]string{
 	"update.push_confirm"          : "Manually trigger the update orchestrator? This will restart the container (3-5 minutes). On any failure — automatic rollback.",
 	"update.auto_disabled_banner"  : "Auto-update is disabled (SKYGATE_AUTO_UPDATE_ENABLED=false). To apply an update, click \"Push update\" below — it works regardless of the flag.",
 	"update.auto_enabled_banner"   : "Auto-update is enabled (SKYGATE_AUTO_UPDATE_ENABLED=true). When a newer release is detected, the \"Update\" button appears below for one-click apply.",
+	// B249 (v1.5.4): image-pull update button labels.
+	"update.image_pull"                  : "Pull image",
+	"update.image_pull_help"             : "Fast update via `docker pull` (~5-30s). Requires docker-compose.ghcr.yml + SKYGATE_IMAGE in .env. Refuses locally-built images with a clear migration hint.",
+	"update.image_pull_confirm"          : "Pull the new image from the registry and restart the container? This will restart skygate (~5-30s).",
+	"update.image_pull_tag_required"     : "Specify a tag (e.g. v1.5.4) — without it, docker pull has nothing to fetch.",
+	"update.image_pull_image_placeholder" : "registry/image",
 	"update.auto_toggle_on"        : "Enable auto-update",
 	"update.auto_toggle_off"       : "Disable auto-update",
 	"update.rollback_now"          : "Rollback now",

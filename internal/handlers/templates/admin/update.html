@@ -168,6 +168,20 @@
           <i class="fa-solid fa-cloud-arrow-up"></i> {{t "update.push"}}
         </button>
       </form>
+      {{/* B249 (v1.5.4): the image-pull update button. Faster than
+           the git+build "Push update" above (~5-30s vs ~60-120s)
+           but requires the operator to have migrated to
+           docker-compose.ghcr.yml (see internal/update/image.go
+           for the migration steps). The pre-flight refuses
+           locally-built images so a stale compose file doesn't
+           trigger a silent no-op. */}}
+      <form method="post" action="/admin/update/pull-image" style="display:inline" onsubmit="var t=this.tag.value.trim(); if(!t||!t.match(/^v?[0-9]/)){alert('{{t "update.image_pull_tag_required"}}');return false} return confirm('{{t "update.image_pull_confirm"}}')">
+        <input type="text" name="image" value="ghcr.io/barssky/skygate" placeholder="{{t "update.image_pull_image_placeholder"}}" style="font-size:12px;padding:4px 6px;width:160px;font-family:ui-monospace,monospace">
+        <input type="text" name="tag" placeholder="v1.5.4" style="font-size:12px;padding:4px 6px;width:80px;font-family:ui-monospace,monospace" required>
+        <button type="submit" class="btn btn-sm" title="{{t "update.image_pull_help"}}">
+          <i class="fa-solid fa-docker"></i> {{t "update.image_pull"}}
+        </button>
+      </form>
     </div>
   </div>
 
