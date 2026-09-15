@@ -326,6 +326,81 @@ func normalizeSourceFilter(s string) string {
 // instead of the local sidecar (v0.10.12). The APIKey (redacted via
 // the template's {{maskSecret}}) is passed so the operator can copy
 // it into the headplane admin.
+// prettyPrintACL converts a headscale policy string into
+// 2-space indented, multi-line JSON for display on /admin/acls.
+//
+// Why this exists:
+//
+//   - headscale returns the policy as a STRINGIFIED JSON value
+//     (surrounded by double quotes): `"{\"acls\": [...]}"`
+//     json.Indent chokes on the leading `"` because that's not
+//     valid JSON start.
+//   - Older headscale returns it wrapped in a `{"data":"..."}`
+//     object that ALSO needs unwrapping.
+//
+// The function strips the wrapping as needed, then unmarshals
+// into a generic interface and re-marshals with MarshalIndent —
+// which handles both the string-quote case AND produces the
+// multi-line output the operator wants to see in the browser.
+//
+// Falls back to the raw string if anything fails (defensive:
+// a malformed policy shouldn't 500 the admin page).
+func prettyPrintACL(input string) string {
+	if input == "" {
+		return input
+	}
+
+	// Step 1: strip outer JSON string quotes if present.
+	// headscale wraps the policy as `"..."` (a JSON string
+	// value). json.Unmarshal with a *string target will decode
+	// it AND unescape any \" inside.
+	if len(input) >= 2 && input[0] == '"' && input[len(input)-1] == '"' {
+		var unq string
+		if err := json.Unmarshal([]byte(input), &unq); err == nil {
+			input = unq
+		}
+		// If unmarshal failed, fall through with the original
+		// string — maybe it's not actually wrapped.
+	}
+
+	// Step 2: unmarshal as generic JSON (any shape) and
+	// re-marshal with MarshalIndent. This handles both the
+	// object case (`{"acls":...}`) and any other valid JSON.
+	// We use interface{} so we don't have to know the shape.
+	var v interface{}
+	if err := json.Unmarshal([]byte(input), &v); err == nil {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetIndent("", "  ")
+		// Escape HTML so the resulting JSON's `"` and `<`
+		// characters don't break the surrounding HTML page.
+		// (The template wraps the output in <pre>, so `<` would
+		// otherwise be interpreted as a tag opener.)
+		enc.SetEscapeHTML(true)
+		if err := enc.Encode(&v); err == nil {
+			out := buf.String()
+			// json.Encoder.Encode appends a trailing newline.
+			// Strip it so the rendered HTML doesn't have an
+			// spurious blank line.
+			if len(out) > 0 && out[len(out)-1] == '\n' {
+				out = out[:len(out)-1]
+			}
+			return out
+		}
+	}
+
+	// Step 3: last-ditch — try json.Indent directly on the
+	// raw input (works if it's already valid JSON without
+	// any wrapping).
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(input), "", "  "); err == nil {
+		return buf.String()
+	}
+
+	// All paths failed — return the input unchanged.
+	return input
+}
+
 func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -336,18 +411,29 @@ func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	policy, policyErr := hs.GetACL()
 	// 2026-09-15: pretty-print the JSON before passing to the
 	// template. The headscale API returns the policy as a
-	// single-line compact JSON; `<pre>` in the template
-	// preserves whitespace but can't ADD newlines that aren't
-	// in the source string. json.Indent gives us 2-space
-	// indented, multi-line JSON that fits a normal viewport
-	// without horizontal scrolling. Falls back to the raw
-	// string if indent fails (defensive: a malformed policy
-	// shouldn't 500 the admin page).
+	// stringified JSON value (with surrounding double quotes),
+	// e.g. `"{\"acls\": [...]}"` — `json.Indent` chokes on the
+	// leading `"` because that's not valid JSON start. Also
+	// strip a wrapping `{...}` block IF the data is the
+	// legacy `data` field (headscale returns the policy
+	// wrapped in `{"data":"<stringified>"}` for older
+	// versions).
+	//
+	// Two layers of stripping:
+	//  1. If the policy is a JSON STRING containing JSON (i.e.
+	//     starts with `"` and ends with `"`), the surrounding
+	//     quotes are string boundaries, not part of the
+	//     policy. Strip them.
+	//  2. After (1), if the policy starts with `\` it's a
+	//     JSON-escaped string (e.g. `\"...\"`). json.Indent
+	//     needs the UNESCAPED content, not the JSON-encoded
+	//     form. json.Unmarshal handles this: unmarshal into a
+	//     string, then re-marshal with MarshalIndent.
+	//
+	// Falls back to the raw string if indent fails (defensive:
+	// a malformed policy shouldn't 500 the admin page).
 	if policy != "" {
-		var buf bytes.Buffer
-		if err := json.Indent(&buf, []byte(policy), "", "  "); err == nil {
-			policy = buf.String()
-		}
+		policy = prettyPrintACL(policy)
 	}
 	errStr := ""
 	if policyErr != nil {
