@@ -22,7 +22,9 @@ package admin
 // operator scope to one or the other.
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -332,6 +334,21 @@ func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	}
 	hs := s.HSGlobalFn()
 	policy, policyErr := hs.GetACL()
+	// 2026-09-15: pretty-print the JSON before passing to the
+	// template. The headscale API returns the policy as a
+	// single-line compact JSON; `<pre>` in the template
+	// preserves whitespace but can't ADD newlines that aren't
+	// in the source string. json.Indent gives us 2-space
+	// indented, multi-line JSON that fits a normal viewport
+	// without horizontal scrolling. Falls back to the raw
+	// string if indent fails (defensive: a malformed policy
+	// shouldn't 500 the admin page).
+	if policy != "" {
+		var buf bytes.Buffer
+		if err := json.Indent(&buf, []byte(policy), "", "  "); err == nil {
+			policy = buf.String()
+		}
+	}
 	errStr := ""
 	if policyErr != nil {
 		errStr = policyErr.Error()

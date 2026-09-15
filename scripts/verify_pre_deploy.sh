@@ -4202,6 +4202,9 @@ run_check "B244" "documentation/code consistency pin (10 grep-contracts on Go ve
 run_check "B249" "image-pull update path (fast ~5-30s alternative to git+build): internal/update/image.go with ImagePullStrategy struct + Run + imageIsFromRegistry classifier + pollHealthz + backup-tag rename + ghcr.yml preference; internal/update/shell.go with shellExec var override for tests; internal/feature/admin/update.go PostAdminUpdatePullImage handler; cmd/skygate/main.go POST /admin/update/pull-image route; update.html pull-image form; 10 i18n keys (RU + EN); 6 unit tests in image_b249_test.go covering registry classifier + tag extraction + sanitize + pre-flight refusal of locally-built images + same-tag no-op + happy path + rollback on compose-up failure. 21 grep-contracts in scripts/check_b249.sh." \
   'test -f scripts/check_b249.sh && bash scripts/check_b249.sh'
 
+run_check "B250" "ACL page UI fixes (/admin/acls): JSON pretty-print via json.Indent (handler-side) so <pre> shows the policy multi-line instead of one squeezed line; v0.17.0 tag-subnet-router info card declares --text/--text-muted/--text-subtle CSS variable overrides so light text cascades to children on the dark background. 5 unit tests in admin_acls_b250_test.go pin the pretty-print behaviour (hosts block + empty string + malformed fallback + idempotent + multi-line output). 8 grep-contracts in scripts/check_b250.sh. Other dark-info-card files (user_subnet.html, subnets.html, user_control_plane.html) listed in check_b250.sh as B-followup targets." \
+  'test -f scripts/check_b250.sh && bash scripts/check_b250.sh'
+
 # --- B-bug-fix (2026-09-15): agent VM 192.168.13.69 regression cluster ---
 # Closes the 5-layer "DERP unreachable + Telegram API timeout" bug where:
 #   1. derp.go hardcoded DERPPort: "443" (masked a derper running on :8443 plain HTTP)
