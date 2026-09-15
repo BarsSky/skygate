@@ -4182,3 +4182,54 @@ run_check "B203.1" "GetClusterDatabase NULL safety fix (B203 live follow-up). Th
 run_check "TD-18.2" "fix /admin/derp/dashboard page that rendered with no content + theme reset to default + a 500 error at the bottom: render template: layout.html:197:15: executing layout at error calling gt: invalid type for comparison. Root cause: the B189 handler GetAdminDerpDashboard (and its POST sibling) passed nil for the JWT claims arg to s.Backend.RenderWithLayout. When c is nil, renderWithLayout (handlers.go:464) skips the notification auto-inject block at lines 500-532 — it does NOT set data[UnreadCount]. The layout template (layout.html:197) then evaluates {{if gt .UnreadCount 0}} on a missing key, which Go gt fails on with invalid type for comparison. The error halts template execution, so the rest of the body (DERP table) never renders AND the head-level theme CSS injection (downstream of the failing line) does not run — so the user sees the default theme instead of the B121 silver+mint. Fix: extract claims via c := s.Backend.CurrentUser(r) in both handlers and pass c to RenderWithLayout (3 nil-arg sites replaced). Every other admin handler (GetAdminAudit, GetAdminACLsImport, GetAdminControlPlanes, etc) was already doing this — derp_dashboard was the only outlier. 8 contracts in scripts/check_td182.sh." \
   'test -f scripts/check_td182.sh && bash scripts/check_td182.sh'
 
+# --- B244: documentation/code consistency pin (auto-prevent 2026-09-14 doc-audit drift) ---
+# Closes the "doc drift invisible until manual audit" gap surfaced by the
+# 2026-09-14 documentation audit (docs/internal/2026-09-14-doc-audit.md):
+# Go version drift in PROJECT.md + README, stale 66/66/27-pkgs/v0.33.1.17
+# status block, doubled docs/internal/internal/ paths, install-docker.sh
+# phantom refs, RU bot typos (&gt;>. / raw <ключ>), etc. The check is a
+# series of literal greps that fail CI on any of those drift patterns
+# returning a match. Adding a new drift = also add a contract in
+# scripts/check_b244.sh. 10 contracts: C1 Go version match go.mod, C2
+# PROJECT.md no Go 1.23 / no (SQLite), C3 no 66/66 literal in README
+# files, C4 no "27 packages" literal, C5 no "Status (v0.33.1.17)" literal,
+# C6 no install-docker.sh reference, C7 no doubled docs/internal/internal/,
+# C8 no &gt;>. in catalog_bot.go, C9 no raw <ключ> in catalog_bot.go,
+# C10 this verify_pre_deploy entry.
+run_check "B244" "documentation/code consistency pin (10 grep-contracts on Go version, README drift, catalog typos, doubled paths). Closes the 'doc drift invisible until manual audit' gap from 2026-09-14 doc audit. Future drift fails the same verify-pre pipeline as code regressions." \
+  'test -f scripts/check_b244.sh && bash scripts/check_b244.sh'
+
+# --- B-bug-fix (2026-09-15): agent VM 192.168.13.69 regression cluster ---
+# Closes the 5-layer "DERP unreachable + Telegram API timeout" bug where:
+#   1. derp.go hardcoded DERPPort: "443" (masked a derper running on :8443 plain HTTP)
+#   2. EnsureBundledDerpRelay never auto-registered (DERP_BUNDLED_ENABLED=0)
+#   3. /admin/telegram troubleshooting pointed at the wrong knob
+#   4. No infra user assignment audit (skygate-host-1-1 on tagged-devices)
+#   5. No B-check contract pinning any of the above
+# Fix: new helper files (derp_status_resolve.go, derp_relays_auto.go,
+# infra_owner_sanity.go) + telegram.html conditional hints +
+# i18n keys + main.go wiring + AGENTS.md entry + this verify-pre contract.
+# 22 contracts in scripts/check_b_derp_fix.sh across 6 sections.
+run_check "B-bug-fix" "DERP + infra-user drift cluster on agent VM 192.168.13.69. Live case 2026-09-15: derper systemd unit was active but listening on :8443 plain HTTP (no LE cert because the HTTP-01 challenge can't reach derper through NPM port 80), headscale's bundled derpmap had no region 900 row because derp.bundled_enabled=0 prevented AutoMigrateDerpRelays, skygate-host-1-1 ended up on the 'tagged-devices' headscale user (id=11) instead of 'infra' (id=85) so the ACL grant 'infra → autogroup:internet, tag:exit-*' was silently dead, and the /admin/telegram troubleshooting banner pointed at 'tailscale up --advertise-routes on relay' when the actual cause was the operator's deliberate SKYGATE_TS_AUTHKEY_FILE=/dev/null. B-bug-fix: (A) new resolveDERPPort / resolveSTUNPort helpers in internal/feature/admin/derp_status_resolve.go that read DERP_HTTP_PORT / DERP_STUN_PORT env first, then the bundled derp_relays row, then '443' / '3478' fallback; the hardcoded seed values in derp.go are gone. (B) new EnsureBundledDerpRelay in derp_relays_auto.go wired into cmd/skygate/main.go boot sequence (idempotent — checks derper.conf + bundled row + per-hostname global_settings marker). (C) new SanityCheckInfraUserOwners in infra_owner_sanity.go wired into main.go after ensureInfraUser (read-only — pure-function rule engine in shouldBelongToInfra). (D) telegram.html troubleshooting block now fires probe_tip_container_off when State.Container.Available is false, and probe_tip_container_no_accept when State.Container.RouteAll is false (new i18n keys RU + EN in catalog_telegram.go). (E) 8 unit tests in derp_status_resolve_test.go (TestResolveDERPPort_EnvPriority, TestResolveDERPPort_EmptyEnvFallsBackToDefault, TestShouldBelongToInfra_SkygateHostOnGuest, TestShouldBelongToInfra_SkygateHostOnInfra, TestShouldBelongToInfra_ExitNodeOnGuest, TestShouldBelongToInfra_NonInfraNode, TestShouldBelongToInfra_ExitNodeTagButUserNotInfra) + AGENTS.md B-bug-fix entry." \
+  'test -f scripts/check_b_derp_fix.sh && bash scripts/check_b_derp_fix.sh'
+
+# --- B-derper-cert (2026-09-15): derper systemd unit certmode/port trap ---
+# Closes the silent "derper refuses LE on a non-443 port" bug. The pre-fix
+# systemd unit had `--a=:8443 --certmode=letsencrypt` — per `derper --help`:
+# "Serves HTTPS if the port is 443 and/or -certmode is manual, otherwise
+# HTTP." derper saw port != 443 AND certmode != manual → refused to acquire
+# a cert → fell back to plain HTTP on :8443 → clients got a TLS cert from
+# NPM (LE for derp.skynas.ru, valid 2026-11-27) but the underlying
+# connection was HTTP → Tailscale DERP-over-HTTP/2 silently failed. The
+# fix: corrected deploy/systemd/derper.service has --certmode=manual +
+# --certdir=/var/lib/derper/certs + --a=:8443. Operator still has to
+# (1) copy the LE cert from NPM to /var/lib/derper/certs/ + (2) flip NPM
+# to SSL pass-through for /derp (the unit alone won't help). 9 contracts
+# in scripts/check_b_derper_cert.sh: A (ExecStart has manual, no LE),
+# B (certdir is /var/lib/derper/certs, NOT certsync's path),
+# C (--a=:8443, not :443), D (the manual-caveat is documented in the
+# unit comment), E (AGENTS.md mentions B-derper-cert), F (certsync writes
+# to /var/lib/skygate/certs/, not /var/lib/derper/certs/), G (go vet).
+run_check "B-derper-cert" "derper systemd unit certmode/port trap. derper --help: 'Serves HTTPS if the port is 443 and/or -certmode is manual, otherwise HTTP.' The pre-fix deploy/systemd/derper.service had --a=:8443 --certmode=letsencrypt (the worst combination: port != 443, certmode != manual) — derper refused to acquire a cert, fell back to plain HTTP, and clients saw a valid LE cert at :443 (from NPM doing TLS termination) but the underlying derper connection was HTTP. DERP-over-HTTP/2 silently failed. B-derper-cert: corrected ExecStart has --certmode=manual --certdir=/var/lib/derper/certs --a=:8443. Operator prerequisites (manual, NOT in this block): copy the LE cert from NPM's /data/nginx/proxy_host/ to /var/lib/derper/certs/{cert.pem,key.pem} + flip NPM to SSL pass-through for /derp. Without the cert files in certdir, derper will still serve HTTP (the trap is layer 1; the missing certs are layer 2). 9 contracts in scripts/check_b_derper_cert.sh." \
+  'test -f scripts/check_b_derper_cert.sh && bash scripts/check_b_derper_cert.sh'
+

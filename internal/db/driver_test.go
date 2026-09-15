@@ -6,13 +6,20 @@ import (
 	"testing"
 )
 
-// TestDetectBackend covers the dsn-prefix detection logic. v1.3.0:
-// skygate is PG-only; the only valid prefix is postgres:// /
-// postgresql://. Any other string is treated as a malformed PG
-// DSN (returns BackendPostgres anyway, because the next Open/Ping
-// will fail loudly). This is intentional: a pre-v1.3.0 file path
-// passed to OpenDSN now fails at Ping with "connection refused"
-// instead of silently opening a SQLite file.
+// TestDetectBackend covers the dsn-prefix detection logic. v1.5.4
+// (B246-dialect-retry): both PG and SQLite are first-class backends
+// again. The dispatch is:
+//
+//   - postgres:// / postgresql:// (any case) → BackendPostgres
+//   - sqlite: / file: / :memory: / bare path → BackendSQLite
+//   - anything else with "://" but no recognised scheme → BackendPostgres
+//     (legacy: pre-v1.3.0 PG-only fallback so the next Open/Ping
+//     fails loudly on the unrecognised URL)
+//
+// The test pins all four cases. Pre-v1.5.4 (B246) this test expected
+// bare paths to return BackendPostgres (the v1.3.0 PG-only contract);
+// that behaviour was changed by B-mod-sqlite-pg-bidi + B246 to
+// restore SQLite as a first-class backend.
 func TestDetectBackend(t *testing.T) {
 	cases := []struct {
 		dsn  string
@@ -27,14 +34,22 @@ func TestDetectBackend(t *testing.T) {
 		// With query string
 		{"postgres://user:pass@host:5432/db?sslmode=disable", BackendPostgres},
 		{"postgresql://skygate:secret@10.0.0.1:5432/skygate?sslmode=disable&pool_max_conns=10", BackendPostgres},
-		// v1.3.0: file paths are no longer SQLite — they are
-		// treated as malformed PG DSNs. The next Open/Ping
-		// fails with a loud error.
-		{"/var/lib/skygate/skygate.db", BackendPostgres},
-		{"./skygate.db", BackendPostgres},
-		{"/tmp/t.db", BackendPostgres},
-		{"skygate.db", BackendPostgres},
-		{"", BackendPostgres},
+		// v1.5.4 (B246): file paths ARE SQLite — the self-host
+		// default. The dialect layer's openSQLite creates the file
+		// if missing and applies the standard PRAGMAs.
+		{"/var/lib/skygate/skygate.db", BackendSQLite},
+		{"./skygate.db", BackendSQLite},
+		{"/tmp/t.db", BackendSQLite},
+		{"skygate.db", BackendSQLite},
+		{"", BackendSQLite},
+		{":memory:", BackendSQLite},
+		{"sqlite:/data/skygate.db", BackendSQLite},
+		{"file:/data/skygate.db", BackendSQLite},
+		{"FILE:/data/skygate.db", BackendSQLite},
+		{"SQLITE::memory:", BackendSQLite},
+		// Has "://" but no recognised scheme — fallback to PG so
+		// the next Open/Ping fails loudly on the unknown URL.
+		{"mysql://user:pass@host:3306/db", BackendPostgres},
 	}
 	for _, c := range cases {
 		got := DetectBackend(c.dsn)
@@ -58,8 +73,9 @@ func TestBackendOfNil(t *testing.T) {
 // backend must panic — that would mean the caller is opening the
 // same connection under two different engines, which is a bug.
 //
-// v1.3.0: re-registered with BackendPostgres (the only valid
-// value). Pre-v1.3.0 used BackendSQLite which no longer exists.
+// v1.5.4 (B246): re-registered with BackendPostgres OR BackendSQLite
+// (both are valid values now). Pre-v1.5.4 only BackendPostgres was
+// accepted.
 func TestRegisterBackendIdempotent(t *testing.T) {
 	// We need a real *sql.DB pointer that lives long enough
 	// to test the register/BackendOf round-trip. Use the

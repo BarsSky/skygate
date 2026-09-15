@@ -7,6 +7,8 @@
 package headscale
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,12 +17,14 @@ import (
 	"time"
 )
 
-// ACLPolicy is the /api/v1/policy response. Different headscale
-// versions populate either `policy` (string) or `data` (string); we
-// honour both in GetACL.
+// ACLPolicy is the /api/v1/policy response. headscale 0.29.x
+// populates `policy` as a NESTED OBJECT (the parsed HuJSON),
+// not a stringified blob. Older headscale versions used a
+// string. We honour both in GetACL — the nested-object case
+// is re-marshalled to a string before caching.
 type ACLPolicy struct {
-	Policy string `json:"policy"`
-	Data   string `json:"data"`
+	Policy json.RawMessage `json:"policy"`
+	Data   json.RawMessage `json:"data"`
 }
 
 // PolicyBody is the request/response for headscale policy API.
@@ -48,12 +52,43 @@ func (c *Client) GetACL() (string, error) {
 	var p ACLPolicy
 	err := c.do("GET", "/api/v1/policy", nil, &p)
 	if err == nil {
-		if s := strings.TrimSpace(p.Policy); s != "" {
+		// Resolve which field wins: Policy (current shape,
+		// object or stringified) takes precedence over Data
+		// (legacy stringified hujson blob). Empty values
+		// (including the JSON literal `""` of length 2)
+		// are skipped — we fall through to the other field.
+		if raw := bytes.TrimSpace(p.Policy); isNonEmptyPolicyField(raw) {
+			if raw[0] == '{' || raw[0] == '[' {
+				// headscale 0.29.x returns the
+				// policy as a JSON OBJECT (the
+				// parsed HuJSON), not a stringified
+				// blob. Store as-is so we don't
+				// double-encode on the PUT side.
+				// EnsureTagOwner does its own
+				// json.Marshal of the parsed map.
+				c.cacheACL = string(raw)
+				c.cacheACLAt = time.Now()
+				return c.cacheACL, nil
+			}
+			s := strings.TrimSpace(string(raw))
 			c.cacheACL = s
 			c.cacheACLAt = time.Now()
 			return s, nil
 		}
-		if s := strings.TrimSpace(p.Data); s != "" {
+		if raw := bytes.TrimSpace(p.Data); isNonEmptyPolicyField(raw) {
+			// The legacy `data` field carries a
+			// JSON-stringified policy blob (the value
+			// is wrapped in `"…"`). Unquote it before
+			// caching so the rest of the pipeline
+			// (EnsureTagOwner, SetPolicy) sees the
+			// raw policy document.
+			s := string(raw)
+			if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+				var unq string
+				if err := json.Unmarshal([]byte(s), &unq); err == nil {
+					s = unq
+				}
+			}
 			c.cacheACL = s
 			c.cacheACLAt = time.Now()
 			return s, nil
@@ -137,4 +172,20 @@ func (c *Client) clearACLCache() {
 	defer c.cacheMu.Unlock()
 	c.cacheACL = ""
 	c.cacheACLAt = time.Time{}
+}
+
+// isNonEmptyPolicyField returns true if the raw policy field
+// carries a usable policy. The JSON literal `""` (two double-
+// quotes, length 2) is an explicit empty marker from headscale
+// and is treated the same as a missing field.
+func isNonEmptyPolicyField(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if len(raw) == 2 && raw[0] == '"' && raw[1] == '"' {
+		return false
+	}
+	// Bare whitespace also means "no policy".
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !(len(trimmed) == 2 && trimmed[0] == '"' && trimmed[1] == '"')
 }

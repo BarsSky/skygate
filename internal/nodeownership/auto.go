@@ -77,11 +77,18 @@ import (
 //     be added)
 //   - UntagNode(nodeID, tag) — remove a tag (called
 //     during a rename when the OLD dev-tag is stale)
+//   - EnsureTagOwner(tag, owners) — B245: pre-populate
+//     a brand-new tag in headscale's tagOwners before
+//     AddTag. Idempotent (no-op if tag is already
+//     listed). Closes the cyborg/2026-09-15 gap where
+//     the autoupdater was stuck because the dev-tag
+//     didn't exist in tagOwners yet.
 type nodeLister interface {
 	InvalidateCache()
 	ListAllNodes() ([]headscale.NodeView, error)
 	AddTag(nodeID int64, tag string) error
 	UntagNode(nodeID int64, tag string) error
+	EnsureTagOwner(tag string, owners []string) error
 }
 
 // AutoBackfill runs `Backfill` against every portal user

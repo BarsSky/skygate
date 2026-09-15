@@ -7199,6 +7199,226 @@ operator decision rationale.
     cleanly. The per-CIDR via= now appears in the headscale
     policy for both useVia paths.
 
+  - **B-bug-fix (2026-09-15) — agent VM 192.168.13.69
+    "DERP unreachable + Telegram API timeout" cluster**:
+    five layered regressions that hid each other on the
+    operator's live system. Diagnostic by
+    `mavis-orchestrator` during the 2026-09-15 testing
+    window.
+
+    1. **`derp.go:165` hardcoded `DERPPort: "443"`** —
+       `collectDerpStatus` seeded the struct with `"443"`
+       for the DERP listen port regardless of actual
+       config. The live agent VM runs derper on `:8443`
+       (with NPM terminating TLS on `:443` externally) —
+       the UI rendered ":443" but the actual listener was
+       `:8443` plain HTTP (no LE cert, derper fell back
+       to HTTP because the Let's Encrypt HTTP-01 challenge
+       can't reach derper through NPM port 80). 0
+       Tailscale clients used the local DERP as home
+       because their dial of `:443` got nothing.
+
+       **Fix**: new helper `resolveDERPPort(d *sql.DB) string`
+       in `internal/feature/admin/derp_status_resolve.go`
+       reads the port from (priority order) `DERP_HTTP_PORT`
+       env, then the bundled row in `derp_relays`, then
+       `"443"`. Same pattern for `resolveSTUNPort`. The
+       hardcoded seed is gone.
+
+    2. **Bundled derper never registered in `derp_relays`**
+       — `AutoMigrateDerpRelays` (which creates the bundled
+       row on first `/admin/derp` page load) only fires
+       when `global_settings.derp.bundled_enabled == "1"`.
+       The live value was `"0"` (set by deploy.sh because
+       `DERP_BUNDLED_ENABLED` env was false at deploy time)
+       so the auto-migrate never ran. The `derper.service`
+       systemd unit was active (PID 656, listening) but
+       headscale never learned about region 900 — every
+       derpmap refresh only had the bundled Tailscale
+       regions.
+
+       **Fix**: new `EnsureBundledDerpRelay(d, hostname, ...)`
+       in `internal/feature/admin/derp_relays_auto.go`,
+       wired into `cmd/skygate/main.go` immediately after
+       `derphealth.StartCron`. Idempotent — checks for
+       `/var/lib/derper/derper.conf`, an existing bundled
+       row, AND a per-hostname `global_settings.derp.auto_registered.<host>`
+       marker before inserting. Skips if `DERP_ENABLED=false`.
+       Sets the marker on success.
+
+    3. **`/admin/telegram` troubleshooting banner pointed
+       at the wrong knob** — when the skygate container's
+       `tailscaled` is not running, the banner suggested
+       "verify tailscale up --advertise-routes on relay".
+       The actual cause was the operator's deliberate
+       `SKYGATE_TS_AUTHKEY_FILE=/dev/null` (compose comment
+       "2026-09-02 B209.1 post-deploy"). Same for
+       `--accept-routes=false` (B185 root cause).
+
+       **Fix**: `internal/handlers/templates/admin/telegram.html`
+       now adds two conditional `<li>` items at the TOP of
+       the troubleshooting list when `.State.Container.Available
+       == false` ("tailscaled not running in container") or
+       `.State.Container.RouteAll == false` ("Re-apply
+       accept-routes"). New i18n keys
+       `telegram.probe_tip_container_off` +
+       `telegram.probe_tip_container_no_accept` (RU + EN)
+       in `internal/i18n/catalog_telegram.go`. The legacy
+       4 generic tips still appear as fallback.
+
+    4. **No `infra` user assignment audit** — `ensureInfraUser`
+       creates the headscale `infra` user at boot, but
+       nothing verifies that the skygate-host-* + exit-node
+       tailnet nodes are actually owned by `infra`. Live
+       state: skygate-host-1-1 (id=43) was on
+       `tagged-devices` user (id=11) with
+       `tag:dev-skyadmin-skygate-host-1` (wrong user, wrong
+       tag) — the ACL grant `infra → autogroup:internet,
+       tag:exit-*` was silently dead for it. Exit-nodes
+       (emilia/karolina/sharlotta) had the right
+       `tag:dev-infra-*` but were also on `tagged-devices`.
+
+       **Fix**: new `SanityCheckInfraUserOwners(hs *headscale.Client)`
+       in `internal/feature/admin/infra_owner_sanity.go`,
+       wired into `cmd/skygate/main.go` immediately after
+       `ensureInfraUser`. Read-only — never mutates. Logs
+       a WARN summary + one DEBUG line per mismatch with
+       the stable rule IDs `should_be_infra_user` and
+       `should_have_tag_dev_infra`. Pure-function rule
+       engine (`shouldBelongToInfra`) is unit-testable.
+
+    5. **`infra` user → `skygate-host-1-1` migration is
+       destructive** — headscale 0.29.3 has no `nodes
+       move` CLI. To move a node to `infra`, the operator
+       must delete the node and re-register with a fresh
+       preauth key for `infra` (the VM's existing
+       `tailscaled` must re-authenticate). NOT fixed in
+       this block — left as a known operator action, with
+       `SanityCheckInfraUserOwners` providing the audit.
+
+    **Live verification (operator-action still required)**:
+    * `derp_relays` row id=2 inserted for `derp.skynas.ru`
+      (URL `https://derp.skynas.ru:443`, region_id=900,
+      is_bundled=1, region_code=mow).
+    * `global_settings.derp.bundled_enabled` flipped
+      from `"0"` to `"1"`.
+    * `/admin/derp/relays/derpmap.json` now returns both
+      region 900 (own) and 901 (bundled Tailscale).
+    * Headscale config.yaml already had
+      `http://skygate:8080/admin/derp/relays/derpmap.json`
+      in `derp.urls` (B237 was previously applied); the
+      new region 900 will be served on the next derpmap
+      refresh — no headscale restart needed.
+
+    **Known remaining gaps** (out of scope for this B-block):
+    * **A — derper cert** — `--certmode=letsencrypt` never
+      got a cert (LE HTTP-01 can't reach derper through
+      NPM port 80). Operator options: (a) switch to
+      `--certmode=manual` + upload via
+      `/admin/certificates` (B148 certsync daemon will
+      push the cert to all nodes), (b) use LE DNS-01 if
+      skynas.ru is on Cloudflare with API token configured.
+    * **C — Tailscale in skygate container is disabled** —
+      `SKYGATE_TS_AUTHKEY_FILE=/dev/null` was a deliberate
+      operator choice on 2026-09-02 (compose comment).
+      Re-enable requires a fresh preauth key in headscale
+      and writing it to `/run/secrets/ts_authkey`, then
+      `docker restart skygate-skygate-1`. Until then,
+      skygate cannot reach Telegram directly.
+    * **D — No relay nodes in tailnet** — relay-1/relay-2/relay-3
+      from `docs/internal/telegram-relay.md` (100.64.100.X)
+      were NEVER set up; live tailnet is `tsnet.skynas.ru`
+      / 100.64.0.X with only exit-nodes. Even after A + C,
+      Telegram via Tailscale is impossible until a relay
+      VM is provisioned with `deploy/tailscale-relay/setup.sh`.
+
+    **Tests + B-checks** (B-bug-fix):
+    * `internal/feature/admin/derp_status_resolve_test.go`
+      — 8 unit tests for `resolveDERPPort`,
+      `resolveSTUNPort`, `bundledDERPPortFromDB`,
+      `shouldBelongToInfra` (5-rule matrix covering
+      skygate-host-on-guest, skygate-host-on-infra,
+      exit-node-on-guest, non-infra-candidate,
+      exit-node-tag-only).
+    * `scripts/check_b_derp_fix.sh` — 22 contracts across
+      6 sections (A: helper call sites; B: auto-register
+      + main.go wiring; C: telegram troubleshooting +
+      i18n keys; D: infra sanity + main.go wiring;
+      E: AGENTS.md + verify_pre_deploy.sh references;
+      F: build + tests).
+
+  - **B-derper-cert (2026-09-15) — derper systemd unit
+    certmode/port trap**. Live case 2026-09-15 (agent VM
+    192.168.13.69): the pre-fix `derper.service` ExecStart
+    had `--a=:8443 --certmode=<le-mode>`. Per `derper --help`:
+
+    > `Serves HTTPS if the port is 443 and/or -certmode is
+    > manual, otherwise HTTP.`
+
+    The combination of port != 443 AND certmode != manual
+    makes derper **refuse to acquire a cert** and fall back
+    to plain HTTP on whatever port is bound. The pre-fix
+    unit was *exactly* that combination, so `/var/lib/derper/certs/`
+    was empty since the unit was first written (2026-06-30),
+    and derper listened on :8443 as plain HTTP. NPM did TLS
+    termination on :443 (with a valid LE cert for
+    `derp.skynas.ru`) and forwarded plain HTTP requests
+    to derper's :8443 — but DERP clients (which need
+    DERP-over-HTTP/2 with TLS) silently failed because
+    derper doesn't speak TLS.
+
+    **B-derper-cert fix**: corrected `deploy/systemd/derper.service`
+    has `--certmode=manual --certdir=/var/lib/derper/certs --a=:8443`.
+    The cert + key files MUST be placed in `/var/lib/derper/certs/`
+    by the operator (typically copied from the upstream TLS
+    source — NPM's `/data/nginx/proxy_host/*.crt` + `*.key`
+    in the 2026-09-15 case). certsync daemon (B147) does
+    NOT auto-populate this path — it writes to
+    `/var/lib/skygate/certs/` (skygate's own HTTPS), not
+    derper's. The B-derper-cert B-check
+    (`scripts/check_b_derper_cert.sh`, 12 contracts) pins
+    the unit's correct shape so a future refactor can't
+    silently re-introduce the trap.
+
+    **Operator prerequisites** (manual, not in this block):
+    1. SSH to NPM (`95.165.170.190`); find the LE cert
+       for `derp.skynas.ru` (typically
+       `/data/nginx/proxy_host/<id>.crt` + `<id>.key`).
+    2. Copy to `192.168.13.69:/var/lib/derper/certs/`
+       as **`<hostname>.crt` + `<hostname>.key`** —
+       derper looks up by hostname, NOT by generic
+       `cert.pem`/`key.pem`. Verified 2026-09-15:
+       derper's error message was
+       `can not load x509 key pair for hostname "derp.skynas.ru":
+       open /var/lib/derper/certs/derp.skynas.ru.crt:
+       no such file or directory` — derper expects the
+       files named after the `--hostname` flag.
+       Symlink works too:
+       `ln -s fullchain.pem derp.skynas.ru.crt &&
+        ln -s privkey.pem derp.skynas.ru.key`.
+       Owner root, mode 0600 (the key file).
+    3. Reconfigure NPM's "Advanced" tab for `derp.skynas.ru`
+       to do **SSL pass-through** for `/derp` (5 location
+       paths: `/derp`, `/bootstrap-dns`, `/.well-known/...`,
+       `/key`, plus a default catch-all) instead of TLS
+       termination. With termination, NPM keeps responding
+       `426 Upgrade Required` with `Server: openresty` and
+       clients never reach derper.
+    4. `sudo cp deploy/systemd/derper.service /etc/systemd/system/derper.service
+        && sudo systemctl daemon-reload && sudo systemctl restart derper`.
+    5. Verify: `curl -sv https://derp.skynas.ru/derp` from
+       outside the LAN should now return the derper debug
+       page (HTTP 200, not 426) with `Server` header from
+       derper (not openresty). Then `tailscale netcheck`
+       from any Tailscale client should show `derp.skynas.ru`
+       (region 900) as a reachable home DERP.
+
+    Without (1) and (3), the corrected systemd unit
+    alone won't help — derper will start and listen on
+    :8443, but with no cert files in certdir it'll fall
+    back to plain HTTP (the same trap as the pre-fix unit,
+    just at a different layer).
+
   - **TD-15 (v1.5.2)** — false-alarm "headscale: command not
     found" at line 3221 of `scripts/verify_pre_deploy.sh`.
     Root cause: the `run_check "B160"` description was
@@ -11538,7 +11758,7 @@ explaining why.
     (4 new tests: clear/idempotent + set/unknown-node +
     set/disabled-row + loadUIState/Egress);
     `scripts/verify_pre_deploy.sh` (B53);
-    `docs/internal/internal/telegram-relay.md` (new "Admin UI egress selector"
+    `docs/internal/telegram-relay.md` (new "Admin UI egress selector"
     section + 3 new troubleshooting rows).
 
 * **Previous**: v0.33.1.7 — 4 user-reported bugfixes. Same catalog
@@ -11793,7 +12013,7 @@ explaining why.
      recent audit, exits 0/1/2 with [OK]/[WARN]/[FAIL]).
      Companion `scripts/_check_subnet_nodes.py` is the
      Python helper that `check_subnet_router.sh` shells
-     out to. Plus docs/internal/internal/subnet-router.md rewritten with
+     out to. Plus docs/internal/subnet-router.md rewritten with
      6 concrete use cases (home NAS, smart home, SOHO
      server room, family sharing, lab/dev, cross-site
      backup) and the e2e verification output.
@@ -11802,7 +12022,7 @@ explaining why.
   headscale/healthz.go, scripts/check_subnet_router.sh,
   scripts/_check_subnet_nodes.py), 10 files modified
   (backfill, tags, sidecar, handlers.go, main.go,
-  bundle scripts, Makefile, docs/internal/internal/subnet-router.md),
+  bundle scripts, Makefile, docs/internal/subnet-router.md),
   1 test renamed/updated. 17/17 packages green.
   check-bundles / check-nodes / check-https green.
   Smoke 79+79 pass, 4 fail in step 13 (multi-user
@@ -11921,7 +12141,7 @@ explaining why.
   `make check-bundles` targets keep the embed copies
   of setup.sh / README.md in
   `internal/handlers/bundles/` in sync with the
-  canonical `deploy/subnet-router/`. `docs/internal/internal/subnet-router.md`
+  canonical `deploy/subnet-router/`. `docs/internal/subnet-router.md`
   got three new top-level sections: TL;DR (concrete
   examples of what works after setup), Quick start
   (3-command path for users who already have
@@ -11962,7 +12182,7 @@ explaining why.
   `deploy/subnet-router/setup.sh` (runs on the user's
   RPi/NAS/mini-PC, takes a preauth from the admin,
   executes `tailscale up` with the correct flags + prints
-  next-steps), `docs/internal/internal/subnet-router.md` (full user guide:
+  next-steps), `docs/internal/subnet-router.md` (full user guide:
   5-step setup, troubleshooting, security notes), and
   `deploy/subnet-router/allocate-existing-users.sh` (one-off
   for backfilling users that were created before the
@@ -12995,7 +13215,7 @@ explaining why.
   inside a single 30-line Caddyfile. No nginx Proxy
   Manager, no PHP, no DB. DERP relay already did TLS
   itself (certmode=letsencrypt).
-  * `docs/internal/internal/https-setup.md` — 17KB operator guide with
+  * `docs/internal/https-setup.md` — 17KB operator guide with
     per-module checklist, full rendered Caddyfile,
     verification commands, alternatives for tailnet-only
     / headscale-only / Tailscale TLS deployments.
@@ -13540,7 +13760,7 @@ as a `pending` status pill with a `Issue preauth key`
 button) but the LAN behind the subnet-router isn't reachable
 from the tailnet.
 
-**End-to-end flow** (the user reads `docs/internal/internal/subnet-router.md`,
+**End-to-end flow** (the user reads `docs/internal/subnet-router.md`,
 the admin reads this section):
 
 1. **User has a subnet row** in `user_subnets` with status
@@ -13598,7 +13818,7 @@ the admin reads this section):
    `ping skygate-subnet-<username>` works via MagicDNS;
    `ping 10.0.<uid>.1` works to the gateway IP on the
    user's LAN (assuming the subnet-router has IP forwarding
-   enabled — see `docs/internal/internal/subnet-router.md` § Optional).
+   enabled — see `docs/internal/subnet-router.md` § Optional).
 
 **Verification** (on the skygate host):
 
@@ -13973,7 +14193,7 @@ relay still says "tailnet policy does not permit you to SSH".
 * `static/css/themes.css` — probe-state CSS
 * `deploy/tailscale-relay/setup.sh` — one-time relay setup
 * `deploy/tailscale-relay/update-routes.sh` — IP refresh
-* `docs/internal/internal/telegram-relay.md` — full procedure + troubleshooting
+* `docs/internal/telegram-relay.md` — full procedure + troubleshooting
 * `docs/headplane.md` — Headplane (optional sidecar UI) integration
   contract, version pin policy, compatibility matrix, optional/required
   status, upgrade procedure, **existing-Headplane mode

@@ -1,20 +1,21 @@
 // Package db — driver abstraction (v0.27.0 PostgreSQL HA migration,
-// v1.3.0 PG-only).
+// v1.3.0 PG-only, v1.5.4 dual-support restored).
 //
-// As of v1.3.0, skygate is PostgreSQL-only. SQLite is no longer
-// supported. The driver abstraction in this file remains because
-// query helpers (e.g. backup/config.go, system_tests.go) dispatch
-// on backend type — but the only valid value is BackendPostgres.
+// v1.5.4 (B-mod-sqlite-pg-bidi + B246-dialect-retry) restores explicit
+// SQLite support alongside PostgreSQL. Operators that want a self-
+// hosted single-node deploy can run skygate with the default SQLite
+// DSN (a bare /var/lib/skygate/skygate.db path or :memory: for tests);
+// operators running a replicated prod cluster use the libpq-style
+// PG DSN. The driver is selected at OpenDSN-with-retry time by
+// dialect.DetectDSN() (in dialect.go) — pgx for PG, modernc.org/sqlite
+// for SQLite.
 //
-// Selection happens at OpenDSN() time: the dsn must start with
-// "postgres://" or "postgresql://". The PG path runs
-// MigratePostgres on every Open so the container start re-applies
-// the idempotent migration chain.
-//
-// Migrations are duplicated per-version: migrations_v0.XX.go runs
-// the SQLite-style SQL, migrations_pg.go runs the PG-equivalent.
-// The same data shape is produced in both, but the SQL differs
-// (PRAGMA → ALTER, ? placeholders → $N, strftime → EXTRACT, etc.).
+// The query helpers that branch on backend type
+// (e.g. backup/config.go, system_tests.go) dispatch via BackendOf()
+// — which now returns BackendPostgres OR BackendSQLite. Per-version
+// migration chains are duplicated (migrations_v0.XX.go for SQLite,
+// migrations_pg.go for PG) — same data shape, different SQL (PRAGMA
+// vs ALTER, ? placeholders vs $N, strftime vs EXTRACT, etc.).
 package db
 
 import (
@@ -24,14 +25,24 @@ import (
 )
 
 // Backend identifies which database engine a *sql.DB is connected to.
-// v1.3.0: the only valid value is BackendPostgres. BackendSQLite
-// has been removed.
+// v1.5.4+: BackendPostgres (libpq network DSN, pgx driver) and
+// BackendSQLite (modernc.org/sqlite pure-Go driver, file or :memory:)
+// are both first-class. The dialect is selected at open time via
+// dialect.DetectDSN; this constant is what BackendOf() returns so
+// downstream callers can branch.
 type Backend string
 
 const (
-	// BackendPostgres is the only supported backend as of v1.3.0.
+	// BackendPostgres is the PG backend (libpq DSN, pgx/stdlib driver).
 	// Replicated, concurrent-writer-safe, scales to 100+ users.
 	BackendPostgres Backend = "postgres"
+
+	// BackendSQLite is the SQLite backend (modernc.org/sqlite pure-Go
+	// driver). v1.5.4+ restores this for self-host single-node deploys
+	// and integration-test :memory: mode. The driver sets the three
+	// required PRAGMAs (foreign_keys, journal_mode=WAL, busy_timeout)
+	// via DSN query params (see open_sqlite.go).
+	BackendSQLite Backend = "sqlite"
 )
 
 // String returns the lowercase name of the backend.
@@ -40,28 +51,43 @@ func (b Backend) String() string { return string(b) }
 // IsPostgres reports whether the backend is PostgreSQL.
 func (b Backend) IsPostgres() bool { return b == BackendPostgres }
 
+// IsSQLite reports whether the backend is SQLite. Used by query helpers
+// that branch on backend type (e.g. backup/config.go queries SQLite-
+// only PRAGMA tables).
+func (b Backend) IsSQLite() bool { return b == BackendSQLite }
+
 // DetectBackend looks at a dsn string and returns the corresponding
 // Backend. It does NOT open a connection — just inspects the prefix.
 //
 // Rules:
 //
 //   - starts with "postgres://" or "postgresql://" → BackendPostgres
-//   - anything else → BackendPostgres (v1.3.0: PG-only, no SQLite)
+//   - starts with "sqlite:", "file:", or matches a bare path /
+//     ":memory:" → BackendSQLite (v1.5.4+ restored)
+//   - anything else → BackendPostgres (legacy: PG-only behaviour; the
+//     subsequent sql.Open / Ping fails loudly on the malformed DSN).
 //
-// The SQLite branch was removed in v1.3.0. Callers that passed
-// a non-DSN string previously got a SQLite file path; now they
-// get a PG-shaped *sql.DB (which will fail at sql.Open with
-// "sql: unknown driver" if pgx is not registered, OR at Ping if
-// the dsn is malformed). Both are loud failures that an operator
-// notices immediately — better than the silent SQLite fallback
-// pre-v1.3.0.
+// For richer detection (e.g. file: URI handling, empty-string defaults),
+// dialect.DetectDSN is the source of truth — DetectBackend is a thin
+// wrapper for callers that only need the Backend enum, not a full
+// *Dialect struct.
 func DetectBackend(dsn string) Backend {
 	lower := strings.ToLower(dsn)
 	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
 		return BackendPostgres
 	}
-	// v1.3.0: PG-only. Treat any non-DSN string as a malformed
-	// PG DSN (the next sql.Open / Ping will fail loudly).
+	if strings.HasPrefix(lower, "sqlite:") || strings.HasPrefix(lower, "file:") {
+		return BackendSQLite
+	}
+	if dsn == "" || dsn == ":memory:" {
+		return BackendSQLite
+	}
+	if !strings.Contains(dsn, "://") {
+		// Bare path → SQLite (the v1.5.x self-host default).
+		return BackendSQLite
+	}
+	// Has "://" but no recognised scheme — default to PG so the next
+	// sql.Open / Ping fails loudly on the unrecognised URL.
 	return BackendPostgres
 }
 

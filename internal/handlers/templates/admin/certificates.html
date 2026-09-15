@@ -82,7 +82,7 @@
       <tr><td style="color:var(--text-muted)">{{t "cert_sha256"}}</td><td><code style="font-size:11px">{{.Data.CurrentCert.SHA256}}</code></td></tr>
       {{if .Data.CurrentCert.DNSNames}}
       <tr>
-        <td style="color:var(--text-muted);vertical-align:top">DNS names</td>
+        <td style="color:var(--text-muted);vertical-align:top">{{t "cert_dns_names"}}</td>
         <td>
           {{range .Data.CurrentCert.DNSNames}}
             <code style="font-size:11px;display:inline-block;margin:2px 4px 2px 0;padding:2px 6px;background:var(--bg-muted);border-radius:3px">{{.}}</code>

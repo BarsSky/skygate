@@ -50,19 +50,19 @@
 {{if gt .FirstRunUnadoptedCount 0}}
 <div class="alert alert-warn" style="margin-bottom:12px">
   <i class="fa-solid fa-circle-info"></i>
-  <strong>Setup incomplete:</strong>
+  <strong>{{t "devices.first_run_incomplete"}}</strong>
   headscale has <strong>{{.FirstRunUnadoptedCount}}</strong> un-adopted
   user{{if gt .FirstRunUnadoptedCount 1}}s{{end}}
   (node_owner_map is empty).
-  Click <em>Sync from headscale</em> below to import the existing
+  Click <em>{{t "devices.sync_from_headscale"}}</em> below to import the existing
   nodes.
 </div>
 {{else}}
 <div class="alert alert-warn" style="margin-bottom:12px">
   <i class="fa-solid fa-circle-info"></i>
-  <strong>Setup incomplete:</strong>
+  <strong>{{t "devices.first_run_incomplete"}}</strong>
   headscale has users that aren't yet linked to skygate portal users.
-  Click <em>Sync from headscale</em> below to import.
+  Click <em>{{t "devices.sync_from_headscale"}}</em> below to import.
 </div>
 {{end}}
 {{end}}
@@ -74,7 +74,7 @@
   </div>
   <div>
     <form method="post" action="/admin/devices/sync-from-headscale" style="display:inline" title="Re-read every node from headscale and upsert into node_owner_map. Use after tagging a device directly via the headscale CLI so the bot's /exit_nodes sees it.">
-      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-arrows-rotate"></i> Sync from headscale</button>
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-arrows-rotate"></i> {{t "devices.sync_from_headscale"}}</button>
     </form>
     {{/* 2026-08-09: v0.33.1.20 — "Force resync all tags" button.
          Iterates every portal user and runs nodeownership.Backfill

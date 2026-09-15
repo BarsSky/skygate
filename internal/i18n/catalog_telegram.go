@@ -49,6 +49,16 @@ var ruTelegram = map[string]string{
 	"telegram.probe_tip_approve"        : "Проверьте, что headscale подтвердил subnet-маршруты relay: <code>docker exec headscale headscale nodes list</code> → сравните <code>advertised-routes</code> vs <code>enabled-routes</code>.",
 	"telegram.probe_tip_update"         : "Запустите <code>make tailscale-update-telegram-routes</code> на relay, если Telegram добавил новые IP-диапазоны.",
 	"telegram.probe_tip_docs"           : "См. <a href=\"/docs/internal/internal/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/internal/internal/telegram-relay.md</a> для полной инструкции.",
+	// 2026-09-15 (B-bug-fix): conditional hints that fire when
+	// the live container's tailscaled is down / has accept-routes
+	// off — the most common reason "Telegram API: недоступен" on
+	// the live agent VM 192.168.13.69 (operator set
+	// SKYGATE_TS_AUTHKEY_FILE=/dev/null on 2026-09-02 to disable
+	// tailscale in the container). Pre-fix the banner always
+	// showed the 4 generic "tailscale up --advertise-routes on
+	// relay" tips, which pointed at the wrong knob.
+	"telegram.probe_tip_container_off"  : "В контейнере skygate <strong>tailscaled не запущен</strong> — <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> или пустой authkey. Запустите: <code>/admin/tailscale</code> (Start) ИЛИ убедитесь, что в <code>docker-compose.yml</code> указан реальный <code>TS_AUTHKEY_FILE</code> и перезапустите skygate.",
+	"telegram.probe_tip_container_no_accept" : "В контейнере skygate <strong>tailscale set --accept-routes=false</strong> — subnet-маршруты relay игнорируются. Нажмите «Re-apply accept-routes» в карточке <em>Container tailscale state</em> ниже.",
 	"telegram.token_help_botfather"     : "Получите токен через @BotFather → <code>/newbot</code>. См. <code>docs/TELEGRAM.md</code>.",
 	"telegram.chat_id_help"             : "Где бот уже запущен. Узнать: <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.",
 	"telegram.test_help"                : "Отправляет сообщение в Telegram через уже сохранённый токен. Без токена кнопка неактивна.",
@@ -141,6 +151,9 @@ var enTelegram = map[string]string{
 	"telegram.probe_tip_approve"        : "Check that headscale has approved the relay's subnet routes: <code>docker exec headscale headscale nodes list</code> → look for the relay's <code>advertised-routes</code> vs <code>enabled-routes</code>.",
 	"telegram.probe_tip_update"         : "Run <code>make tailscale-update-telegram-routes</code> on the relay if Telegram added new IP ranges.",
 	"telegram.probe_tip_docs"           : "See <a href=\"/docs/internal/internal/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/internal/internal/telegram-relay.md</a> for the full setup procedure.",
+	// 2026-09-15 (B-bug-fix): see RU counterpart above.
+	"telegram.probe_tip_container_off"  : "In the skygate container <strong>tailscaled is not running</strong> — <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> or an empty authkey. Fix: open <code>/admin/tailscale</code> (Start) OR set a real <code>TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
+	"telegram.probe_tip_container_no_accept" : "In the skygate container <strong>tailscale set --accept-routes=false</strong> — the relay's subnet routes are ignored. Click the \"Re-apply accept-routes\" button in the <em>Container tailscale state</em> card below.",
 	"telegram.token_help_botfather"     : "Get a token via @BotFather → <code>/newbot</code>. See <code>docs/TELEGRAM.md</code>.",
 	"telegram.chat_id_help"             : "Where the bot has already started. Find out: <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.",
 	"telegram.test_help"                : "Sends a message to Telegram using the already-saved token. Without a token the button is disabled.",

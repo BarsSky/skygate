@@ -8,6 +8,7 @@
 package headscale
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -149,6 +150,91 @@ func (c *Client) AddTag(nodeID int64, want string) error {
 	}
 	current = append(current, want)
 	return c.TagNode(nodeID, current...)
+}
+
+// EnsureTagOwner is the B245 (v1.5.2+) fix for the "tag not in
+// tagOwners" chicken-and-egg that the B77 autoupdater used to
+// hit on brand-new dev-tags for orphan devices (e.g. cyborg on
+// 2026-09-15 — headscale rejected `nodes tag -i 56 -t
+// 'tag:dev-skyadmin-cyborg'` with `InvalidArgument: are invalid or
+// not permitted` because tagOwners never listed the tag, so the
+// autoupdater could never apply it, so tagOwners never grew the
+// entry — permanent stuck state).
+//
+// Semantics:
+//   - Idempotent: if `tag` is already in tagOwners with any owners,
+//     this is a no-op (the existing entry is preserved — we don't
+//     accidentally widen or rewrite it).
+//   - If `tag` is missing, the entry is added with the supplied
+//     owners and the policy is re-applied via SetPolicy (which
+//     handles the database-mode API + file-mode fallback itself).
+//   - The cache (cacheACL) is invalidated on success so the next
+//     GetACL re-reads.
+//
+// Callers should pass the full headscale user identifier
+// (`<username>@<baseDomain>`), e.g. `skyadmin@tsnet.skynas.ru`.
+// Pass `tagged-devices@<baseDomain>` as a second owner when the
+// tag should also be auto-applicable by the synthetic sentinel
+// (which is the case for `tag:dev-<user>-<device>` dev-tags —
+// orphaned devices in the sentinel need the same grants as their
+// eventual owning user).
+//
+// Returns nil if the tag is already in tagOwners, or after
+// successfully adding it. Returns an error if the policy update
+// failed (e.g. headscale API unreachable); the caller (Backfill)
+// decides whether to proceed with AddTag anyway (current behavior:
+// fall through to AddTag which will likely also fail, surface via
+// the B227 alert sink).
+func (c *Client) EnsureTagOwner(tag string, owners []string) error {
+	if c == nil {
+		return fmt.Errorf("ensure-tag-owner: nil client")
+	}
+	if tag == "" {
+		return fmt.Errorf("ensure-tag-owner: empty tag")
+	}
+	if len(owners) == 0 {
+		return fmt.Errorf("ensure-tag-owner: empty owners list for tag %q", tag)
+	}
+	policy, err := c.GetACL()
+	if err != nil {
+		return fmt.Errorf("ensure-tag-owner: get ACL: %w", err)
+	}
+	// Parse the policy HuJSON. The current headscale policy
+	// schema is {acls:[...], tagOwners:{...}, ...}; we parse
+	// into a generic map so a future headscale schema bump
+	// doesn't break us (we only touch tagOwners).
+	var p map[string]interface{}
+	if err := json.Unmarshal([]byte(policy), &p); err != nil {
+		return fmt.Errorf("ensure-tag-owner: parse ACL (got %d bytes): %w", len(policy), err)
+	}
+	tagOwnersRaw, ok := p["tagOwners"]
+	if !ok || tagOwnersRaw == nil {
+		tagOwnersRaw = map[string]interface{}{}
+		p["tagOwners"] = tagOwnersRaw
+	}
+	tagOwners, ok := tagOwnersRaw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("ensure-tag-owner: tagOwners is %T, not object", tagOwnersRaw)
+	}
+	// Idempotent: already-present tag is no-op.
+	if existing, ok := tagOwners[tag]; ok {
+		if existing != nil {
+			// The tag exists with some owners; preserve as-is.
+			return nil
+		}
+	}
+	tagOwners[tag] = owners
+	// Marshal back. Use 2-space indent for readability (headscale
+	// accepts both compact and indented HuJSON).
+	out, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return fmt.Errorf("ensure-tag-owner: marshal: %w", err)
+	}
+	if err := c.SetPolicy(string(out)); err != nil {
+		return fmt.Errorf("ensure-tag-owner: set policy (added %q with %d owners): %w", tag, len(owners), err)
+	}
+	// SetPolicy clears the ACL cache; we don't need a second call.
+	return nil
 }
 
 // IsPublic returns whether an HSNode carries the tag:public tag.

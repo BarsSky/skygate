@@ -453,6 +453,32 @@ func main() {
 		log.Printf("derp cron: %v (continuing without background probes)", err)
 	}
 
+	// 2026-09-15 (B-bug-fix): auto-register the bundled derper in
+	// derp_relays if /var/lib/derper/derper.conf exists AND no
+	// bundled row is already present. Live case: agent VM
+	// 192.168.13.69 had a running derper (systemd unit active
+	// since 2026-09-12) but no derp_relays row for region 900,
+	// because AutoMigrateDerpRelays only fires when
+	// global_settings.derp.bundled_enabled=="1" — and that key
+	// was set to "0" by deploy.sh. Result: headscale never learned
+	// about region 900 and 0 Tailscale clients used the local
+	// DERP. Idempotent — safe to call on every boot.
+	derpHostname := os.Getenv("SKYGATE_DERP_HOSTNAME")
+	if derpHostname == "" {
+		derpHostname = os.Getenv("DERP_HOSTNAME")
+	}
+	if derpHostname != "" {
+		if inserted, reason, err := adminsvc.EnsureBundledDerpRelay(d.DB, derpHostname, "", "", ""); err != nil {
+			log.Printf("derp_relays_auto: insert failed: %v (continuing — headscale still has bundled Tailscale DERP)", err)
+		} else if inserted {
+			log.Printf("derp_relays_auto: inserted bundled derp_relays row for %q (region 900)", derpHostname)
+		} else {
+			log.Printf("derp_relays_auto: no-op for %q — %s", derpHostname, reason)
+		}
+	} else {
+		log.Printf("derp_relays_auto: SKYGATE_DERP_HOSTNAME / DERP_HOSTNAME not set — skipping bundled derper auto-register")
+	}
+
 	// 2026-07-07: issue #6 — ensure parent_domain column exists for domain auto-updater
 	if _, err := d.DB.Exec("ALTER TABLE device_rules ADD COLUMN parent_domain TEXT DEFAULT ''"); err != nil {
 		// column may already exist; log only if it's not a duplicate-column error
@@ -530,6 +556,22 @@ func main() {
 	// the link is already set).
 	if err := ensureInfraUser(d.DB, hs); err != nil {
 		log.Printf("warn: ensure infra user: %v", err)
+	}
+
+	// 2026-09-15 (B-bug-fix): verify that infrastructure nodes
+	// (skygate-host-* + tag:exit-node + tag:dev-infra-*) are
+	// actually owned by the 'infra' headscale user. Live case
+	// 2026-09-15 (agent VM 192.168.13.69): skygate-host-1-1 was
+	// on `tagged-devices` (id=11) while the `infra` user
+	// (id=85) had zero nodes — the ACL grant
+	// `infra → autogroup:internet, tag:exit-*` was dead. This
+	// check surfaces the drift at boot (stderr) so the operator
+	// sees it without needing to run a manual audit. The check
+	// is READ-ONLY; the actual migration (delete + re-register
+	// with --user infra) requires operator action via
+	// /admin/devices because it's destructive.
+	if _, err := adminsvc.SanityCheckInfraUserOwners(hs); err != nil {
+		log.Printf("warn: infra-sanity: %v (continuing — drift will show on /admin/devices)", err)
 	}
 
 	// Bootstrap Telegram credentials: copy from .env to DB once on
@@ -3525,7 +3567,14 @@ func ensureInfraUser(d *sql.DB, hs *headscale.Client) error {
 	// path that says "created the user" must end with a
 	// non-empty link.
 	if created.ID == "" {
-		users, lerr := hs.ListUsers()
+		// B247: use ListUsersFresh so the just-created user is visible
+		// even if the cache from the earlier `existing, err := hs.ListUsers()`
+		// call at line 3536 is still warm. Pre-B247 the stale cache made
+		// this loop's `for ... u.Name == "infra"` never match, and the
+		// function returned the cryptic "response shape may have changed"
+		// error — but the user was actually created successfully, just
+		// not visible in the cached list.
+		users, lerr := hs.ListUsersFresh()
 		if lerr != nil {
 			return fmt.Errorf("infra: create returned empty ID and re-list failed: %w", lerr)
 		}

@@ -1,0 +1,53 @@
+# ============================================================================
+# /etc/systemd/system/derper.service
+# B-derper-cert (2026-09-15): corrected ExecStart. Pre-fix the systemd unit
+# had --a=:8443 --certmode=letsencrypt which made derper REFUSE to acquire
+# a cert (per derper --help: "Serves HTTPS if the port is 443 and/or
+# -certmode is manual, otherwise HTTP") — derper fell back to plain HTTP
+# on :8443, and the only reason clients saw a TLS cert at all was that
+# NPM did TLS termination. With NPM forwarding /derp requests to derper's
+# plain HTTP, Tailscale clients (which need DERP-over-HTTP/2 with TLS)
+# silently failed — see scripts/check_b_derp_fix.sh contract B-derper-cert.
+#
+# Fix: --certmode=manual + --certdir=/var/lib/derper/certs. The cert
+# + key files MUST be placed there by the operator (typically copied
+# from the upstream TLS source — NPM in the skygate-2026-09-15 case,
+# see docs/internal/telegram-relay.md and the AGENTS.md B-derper-cert
+# entry). certsync daemon (B147) does NOT auto-populate this path —
+# it writes to /var/lib/skygate/certs/ (skygate's own HTTPS), not
+# derper's.
+#
+# IMPORTANT: derper looks up the cert files by hostname, NOT by
+# generic names. The operator MUST place the files as:
+#     /var/lib/derper/certs/derp.skynas.ru.crt
+#     /var/lib/derper/certs/derp.skynas.ru.key
+# (mode 0600, owner root). Symlinks work too. Verified 2026-09-15:
+# derper's error on missing cert was:
+#   "can not load x509 key pair for hostname \"derp.skynas.ru\":
+#    open /var/lib/derper/certs/derp.skynas.ru.crt:
+#    no such file or directory"
+#
+# IMPORTANT: the pre-fix unit had <port> != 443 AND --certmode=LE,
+# which derper interprets as "don't acquire a cert, serve plain HTTP"
+# (per derper --help). NEVER combine --certmode=<le-mode> with a
+# non-443 listen address — it silently produces a broken derper.
+#
+# NPM (95.165.170.190) MUST also be reconfigured to do SSL pass-through
+# for /derp instead of TLS termination, otherwise the public-facing
+# TLS endpoint stays on NPM's openresty and DERP clients never reach
+# derper's HTTPS endpoint. Operator's NPM config change is out of
+# scope for this systemd unit — see the AGENTS.md entry.
+# ============================================================================
+[Unit]
+Description=Tailscale DERP server (B-derper-cert: --certmode=manual)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/derper -c /var/lib/derper/derper.conf --hostname=derp.skynas.ru --certmode=manual --certdir=/var/lib/derper/certs --a=:8443 --http-port=80 --stun --verify-clients=false
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

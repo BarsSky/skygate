@@ -202,6 +202,8 @@ var ruMy = map[string]string{
 	"devices.expired_hint_no_activity"           : "Нет данных о последней активности — устройство было принудительно удалено или никогда не подключалось",
 	"devices.expired_hint_near_expiry"           : "Устройство было онлайн в момент истечения — скорее всего, выполнен `tailscale logout`",
 	"devices.expired_hint_while_offline"         : "Устройство было оффлайн, когда истёк TTL — переподключите, чтобы продлить",
+	"devices.first_run_incomplete"               : "Настройка не завершена:",
+	"devices.sync_from_headscale"                : "Sync from headscale",
 	// B162 (v1.5.1): per-row device delete UX. The
 	// button is rendered next to the Renew button
 	// for every device with Expiry!="" (we don't
@@ -486,6 +488,8 @@ var ruMy = map[string]string{
 	"keys.cleanup_none"                          : "Нет истёкших ключей для очистки",
 	"preauth.title"                              : "Preauth ключ создан",
 	"preauth.warning"                            : "Скопируйте ключ сейчас — он больше не будет показан.",
+	"preauth.subtitle"                           : "Одноразовый, действителен %s",
+	"preauth.single_use_alert"                   : "Одноразовый, истекает через %s. Не делитесь с другими.",
 	"preauth.command"                            : "Команда для Tailscale:",
 	"preauth.copy_command"                       : "Скопировать команду",
 	"preauth.copy_key"                           : "Скопировать ключ",
@@ -721,6 +725,8 @@ var enMy = map[string]string{
 	"devices.expired_hint_no_activity"           : "No recent activity recorded — the device was force-removed or never came back online",
 	"devices.expired_hint_near_expiry"           : "Device was online when the key expired — most likely a `tailscale logout`",
 	"devices.expired_hint_while_offline"         : "Device was offline when the TTL ran out — reconnect to renew the session",
+	"devices.first_run_incomplete"               : "Setup incomplete:",
+	"devices.sync_from_headscale"                : "Sync from headscale",
 	// B162 (v1.5.1): per-row device delete UX.
 	"devices.delete"                             : "Delete",
 	"devices.delete_title"                       : "Delete device from headscale",
@@ -807,7 +813,7 @@ var enMy = map[string]string{
 	"dashboard.metric_exit_nodes_sub"            : "advertise 0.0.0.0/0",
 	"dashboard.metric_active_derp"               : "Active DERP",
 	"dashboard.metric_active_derp_sub"           : "relay",
-	"dashboard.metric_active_derp_sub_with_id"   : "Tailscale region_id %d (см. /admin/derp/dashboard)",
+	"dashboard.metric_active_derp_sub_with_id"   : "Tailscale region_id %d (see /admin/derp/dashboard)",
 	"dashboard.metric_users"                     : "Users",
 	"dashboard.metric_users_sub"                 : "in tailnet",
 	"dashboard.metric_preauth"                   : "Preauth keys",
@@ -962,6 +968,8 @@ var enMy = map[string]string{
 	"keys.cleanup_none"                          : "No expired keys to clean up",
 	"preauth.title"                              : "Preauth key created",
 	"preauth.warning"                            : "Copy the key now — it will not be shown again.",
+	"preauth.subtitle"                           : "One-time use, valid for %s",
+	"preauth.single_use_alert"                   : "Single-use, expires in %s. Do not share with others.",
 	"preauth.command"                            : "Tailscale command:",
 	"preauth.copy_command"                       : "Copy command",
 	"preauth.copy_key"                           : "Copy key",

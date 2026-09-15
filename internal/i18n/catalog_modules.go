@@ -60,6 +60,10 @@ var ruModules = map[string]string{
 	"modules.flash_subfeature_on":  "Sub-feature %s включена",
 	"modules.flash_subfeature_off": "Sub-feature %s выключена",
 	"modules.flash_error":          "Ошибка: %s",
+	"module_detail.col_when_utc":    "Когда (UTC)",
+	"module_detail.col_action":      "Действие",
+	"module_detail.col_by":          "Кем",
+	"module_detail.col_detail":      "Детали",
 }
 
 var enModules = map[string]string{
@@ -105,4 +109,8 @@ var enModules = map[string]string{
 	"modules.flash_subfeature_on":  "Sub-feature %s enabled",
 	"modules.flash_subfeature_off": "Sub-feature %s disabled",
 	"modules.flash_error":          "Error: %s",
+	"module_detail.col_when_utc":    "When (UTC)",
+	"module_detail.col_action":      "Action",
+	"module_detail.col_by":          "By",
+	"module_detail.col_detail":      "Detail",
 }

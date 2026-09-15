@@ -239,6 +239,16 @@ var ruExitRules = map[string]string{
 	"cleanup.merge_confirm"             : "Слить %d дублей?",
 	"cleanup.delete_orphans"            : "Удалить orphan-ы",
 	"cleanup.delete_orphans_confirm"    : "Удалить %d orphan-правил?",
+	"cleanup.col_total_rules"           : "Всего правил",
+	"cleanup.col_distinct_device_id"    : "Уникальных device_id",
+	"cleanup.col_distinct_hostname"     : "Уникальных hostname",
+	"cleanup.col_to_merge"              : "К слиянию",
+	"cleanup.col_to_backfill_device_ip" : "К заполнению device_ip",
+	"cleanup.col_stale_device_id"       : "Устаревших device_id",
+	"cleanup.col_hostname"              : "Hostname",
+	"cleanup.col_canonical_device_id"   : "Канонический device_id",
+	"cleanup.col_all_device_id_in_group": "Все device_id в группе",
+	"cleanup.col_rules"                 : "Правил",
 	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
 	// cleanup scheduler. The /admin/system_tests
 	// page (post-TD-8) renders these — the cleanup
@@ -265,6 +275,12 @@ var ruExitRules = map[string]string{
 	"exit_rules_nodes.sync"             : "Sync",
 	"exit_rules_nodes.syncing"          : "Синхронизация...",
 	"exit_rules_nodes.last_sync"        : "Последняя синхронизация: %s",
+	"exit_rules_nodes.col_name"         : "Имя",
+	"exit_rules_nodes.col_rules"        : "Правил",
+	"exit_rules_nodes.col_load"         : "Загрузка",
+	"exit_rules_nodes.col_available"    : "Доступно",
+	"exit_rules_nodes.col_approved"     : "Одобрено",
+	"exit_rules_nodes.col_last_sync"    : "Последний sync",
 }
 
 var enExitRules = map[string]string{
@@ -482,6 +498,16 @@ var enExitRules = map[string]string{
 	"cleanup.merge_confirm"             : "Merge %d duplicates?",
 	"cleanup.delete_orphans"            : "Delete orphans",
 	"cleanup.delete_orphans_confirm"    : "Delete %d orphan rules?",
+	"cleanup.col_total_rules"           : "Total rules",
+	"cleanup.col_distinct_device_id"    : "Distinct device_id",
+	"cleanup.col_distinct_hostname"     : "Distinct hostname",
+	"cleanup.col_to_merge"              : "To merge",
+	"cleanup.col_to_backfill_device_ip" : "To backfill device_ip",
+	"cleanup.col_stale_device_id"       : "Stale device_id",
+	"cleanup.col_hostname"              : "Hostname",
+	"cleanup.col_canonical_device_id"   : "Canonical device_id",
+	"cleanup.col_all_device_id_in_group": "All device_id in group",
+	"cleanup.col_rules"                 : "Rules",
 	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
 	// cleanup scheduler — see ru side for the full
 	// contract.
@@ -500,4 +526,10 @@ var enExitRules = map[string]string{
 	"exit_rules_nodes.sync"             : "Sync",
 	"exit_rules_nodes.syncing"          : "Syncing...",
 	"exit_rules_nodes.last_sync"        : "Last sync: %s",
+	"exit_rules_nodes.col_name"         : "Name",
+	"exit_rules_nodes.col_rules"        : "Rules",
+	"exit_rules_nodes.col_load"         : "Load",
+	"exit_rules_nodes.col_available"    : "Available",
+	"exit_rules_nodes.col_approved"     : "Approved",
+	"exit_rules_nodes.col_last_sync"    : "Last sync",
 }

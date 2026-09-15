@@ -161,9 +161,22 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	// systemctl/ss from inside the container can't see it. Instead we
 	// query the derper's own debug endpoint at 192.0.2.1:8443/debug/
 	// which is reachable from the container via the host bridge.
+	//
+	// 2026-09-15 (B-bug-fix): DERPPort / STUNPort were hardcoded
+	// "443" / "3478" which silently masked a broken derper running
+	// on :8443 (the operator had NPM terminating TLS on :443). See
+	// derp_status_resolve.go for the resolution order.
+	derpPort := resolveDERPPort(s.dbc())
+	if derpPort == "" {
+		derpPort = "443"
+	}
+	stunPort := resolveSTUNPort(s.dbc())
+	if stunPort == "" {
+		stunPort = "3478"
+	}
 	st := DerpStatus{
-		DERPPort:   "443",
-		STUNPort:   "3478",
+		DERPPort:   derpPort,
+		STUNPort:   stunPort,
 		Version:    "1.70.0",
 		Hostname:   "derp.example.com",
 		RegionCode: "mow",

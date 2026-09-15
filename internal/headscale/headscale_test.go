@@ -451,8 +451,13 @@ func fakeACLHS(t *testing.T, status int, body string) (*httptest.Server, *Client
 // TestGetACLCacheMissThenHit verifies that the first GetACL hits
 // the API and the second call within cacheTTL returns the cached
 // value without a second API roundtrip.
+//
+// 2026-09-15 (B245 prep): headscale 0.29.x returns "policy" as a
+// JSON OBJECT (the parsed HuJSON), not a stringified blob. The
+// fake fixture mirrors this — GetACL stores the raw JSON
+// bytes in the cache.
 func TestGetACLCacheMissThenHit(t *testing.T) {
-	srv, c, hits := fakeACLHS(t, http.StatusOK, `{"policy":"{}","data":""}`)
+	srv, c, hits := fakeACLHS(t, http.StatusOK, `{"policy":{},"data":""}`)
 	c.cacheTTL = time.Hour // long enough that the second call is a cache hit
 	first, err := c.GetACL()
 	if err != nil {
@@ -476,7 +481,8 @@ func TestGetACLCacheMissThenHit(t *testing.T) {
 
 // TestGetACLHonoursDataField covers the alternative response
 // shape: headscale versions before 0.22 populate the "data"
-// field instead of "policy". GetACL must return it.
+// field instead of "policy". GetACL must return it. The legacy
+// format uses a stringified hujson; GetACL unwraps it.
 func TestGetACLHonoursDataField(t *testing.T) {
 	_, c, _ := fakeACLHS(t, http.StatusOK, `{"policy":"","data":"old-shape-policy"}`)
 	got, err := c.GetACL()
@@ -491,14 +497,16 @@ func TestGetACLHonoursDataField(t *testing.T) {
 // TestGetACLPrefersPolicyOverData covers the precedence rule:
 // when BOTH fields are populated, "policy" wins (it's the
 // canonical field in current headscale; "data" is a legacy
-// holdover).
+// holdover). The current-shape policy field is an object; the
+// legacy data field is a stringified blob — when both are
+// populated, the object wins.
 func TestGetACLPrefersPolicyOverData(t *testing.T) {
-	_, c, _ := fakeACLHS(t, http.StatusOK, `{"policy":"new-shape","data":"old-shape"}`)
+	_, c, _ := fakeACLHS(t, http.StatusOK, `{"policy":{"new":"shape"},"data":"old-shape"}`)
 	got, err := c.GetACL()
 	if err != nil {
 		t.Fatalf("GetACL: %v", err)
 	}
-	if got != "new-shape" {
+	if got != `{"new":"shape"}` {
 		t.Errorf("got %q, want new-shape (Policy field should win)", got)
 	}
 }

@@ -73,6 +73,25 @@
     <div class="sub" style="margin-top:.5rem">
       <strong>{{t "telegram.probe_troubleshooting"}}</strong>
       <ul style="margin:.4rem 0 0 1.2rem;line-height:1.5">
+        {{/* B-bug-fix (2026-09-15): the pre-fix block listed 4 generic
+            tips in the same order regardless of the actual root
+            cause. For the live case (operator disabled Tailscale in
+            the skygate container via SKYGATE_TS_AUTHKEY_FILE=/dev/null,
+            which the docker-compose comment "2026-09-02 B209.1
+            post-deploy" explicitly chose) the banner used to show
+            "check tailscale up --advertise-routes on relay" which
+            pointed the operator at the wrong knob. We now surface
+            the actual cause first:
+              1. tailscaled not running in container   → restart on host
+              2. tailscale set --accept-routes=false   → one-click button
+              3. no relay VM advertising the routes   → set up relay
+            The legacy 4 tips still appear as fallback when no
+            container-state issue is detected. */}}
+        {{if not .State.Container.Available}}
+          <li><strong style="color:varc#a00)">{{t "telegram.probe_tip_container_off" | safeHTML}}</strong></li>
+        {{else if not .State.Container.RouteAll}}
+          <li><strong style="color:varc#a00)">{{t "telegram.probe_tip_container_no_accept" | safeHTML}}</strong></li>
+        {{end}}
         <li>{{t "telegram.probe_tip_advertise" | safeHTML}}</li>
         <li>{{t "telegram.probe_tip_approve" | safeHTML}}</li>
         <li>{{t "telegram.probe_tip_update" | safeHTML}}</li>

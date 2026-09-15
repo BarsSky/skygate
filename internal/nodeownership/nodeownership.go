@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -623,6 +624,38 @@ func Backfill(
 			// with headscale.
 			if hs != nil {
 				if nodeIDInt, err := strconv.ParseInt(n.ID, 10, 64); err == nil {
+					// B245 (v1.5.2+): pre-populate the tag in
+					// headscale's tagOwners before AddTag.
+					// Without this, brand-new dev-tags
+					// (e.g. tag:dev-skyadmin-cyborg for a
+					// brand-new device) are rejected by
+					// headscale as "are invalid or not
+					// permitted" — and since they were never
+					// successfully applied, headscale never
+					// auto-adds them to tagOwners, so the
+					// autoupdater is stuck forever (the
+					// cyborg/2026-09-15 incident). EnsureTagOwner
+					// is idempotent: if the tag is already in
+					// tagOwners, no-op; if not, add it with
+					// the user's headscale identifier + the
+					// tagged-devices sentinel so the orphan can
+					// be auto-attributed.
+					//
+					// Failure here is non-fatal — we fall
+					// through to AddTag which will surface its
+					// own error via the B227 alert sink. The
+					// log line below is the operator-side
+					// signal that pre-population failed
+					// (separate from the AddTag error).
+					if baseDomain := os.Getenv("SKYGATE_BASE_DOMAIN"); baseDomain != "" && portalUsername != "" {
+						owners := []string{
+							portalUsername + "@" + baseDomain,
+							"tagged-devices@" + baseDomain,
+						}
+						if err := hs.EnsureTagOwner(devTag, owners); err != nil {
+							log.Printf("warn: ensure tag-owner %q for owners=%v: %v — falling through to AddTag (the next step will likely also fail with InvalidArgument if the policy update didn't take)", devTag, owners, err)
+						}
+					}
 					if err := hs.AddTag(nodeIDInt, devTag); err != nil {
 						// B177: keep existing tags as fallback.
 						// The next /my/devices load will retry

@@ -60,17 +60,63 @@ func (c *Client) ListUsers() ([]HSUser, error) {
 	return nil, err
 }
 
+// InvalidateUsersCache clears the cached user list. Called by
+// CreateUser/DeleteUser/RenameUser so the next ListUsers() picks up
+// the change immediately instead of waiting for cacheTTL to expire.
+//
+// B247 (2026-09-15): before this, CreateUser's fallback path
+// (`POST` returned empty ID) would call ListUsers — but ListUsers
+// returned the STALE cache from before the POST, so the newly-created
+// user was missing from the result. The fallback's `for ... if
+// users[i].Name == name` loop would then never match, and the caller
+// in cmd/skygate/main.go ensureInfraUser would log
+// "create returned empty ID and 'infra' not in headscale user list
+// (response shape may have changed)". Cache invalidation on success
+// + ListUsersFresh for the fallback path closes this gap.
+func (c *Client) InvalidateUsersCache() {
+	c.cacheMu.Lock()
+	c.cacheUsers = nil
+	c.cacheUsersAt = time.Time{}
+	c.cacheMu.Unlock()
+}
+
+// ListUsersFresh forces a fresh API call by invalidating the cache
+// first, then calling ListUsers. Use this in code paths that need
+// the latest user list (e.g. CreateUser's fallback after an empty-ID
+// POST response, DeleteUser's pre-flight node enumeration).
+func (c *Client) ListUsersFresh() ([]HSUser, error) {
+	c.InvalidateUsersCache()
+	return c.ListUsers()
+}
+
 // CreateUser creates a new headscale user, or returns the existing one
 // if the API call fails with a duplicate-name error. The headscale
 // admin API does not consistently return the created user, so on
 // failure we list users and look up by name as a best-effort fallback.
+//
+// B247 (2026-09-15): on the success path the user-list cache is
+// invalidated so the next ListUsers() sees the new user. On the
+// fallback path ListUsersFresh is used instead of ListUsers so the
+// just-created user is found (pre-B247 the cache was still warm from
+// a ListUsers call minutes/seconds before, and would not contain the
+// user we just created). The "response shape may have changed" warning
+// in cmd/skygate/main.go ensureInfraUser was caused by this stale
+// cache + missing user.
 func (c *Client) CreateUser(name string) (*HSUser, error) {
 	var u HSUser
 	err := c.do("POST", "/api/v1/user", map[string]string{"name": name}, &u)
 	if err == nil && u.ID != "" {
+		// Success — invalidate cache so next ListUsers sees the
+		// new user (without invalidation the cache from a prior
+		// ListUsers call would still be served for cacheTTL).
+		c.InvalidateUsersCache()
 		return &u, nil
 	}
-	users, lerr := c.ListUsers()
+	// Fallback: headscale POST returned 200/201 but the response body
+	// had no `id` field (0.29.x inconsistency). Use FRESH list — the
+	// cache might still be warm from a ListUsers call BEFORE our POST,
+	// so a cached ListUsers wouldn't see the user we just created.
+	users, lerr := c.ListUsersFresh()
 	if lerr != nil {
 		if err != nil {
 			return nil, fmt.Errorf("create err: %v; list err: %v", err, lerr)
@@ -94,6 +140,13 @@ func (c *Client) CreateUser(name string) (*HSUser, error) {
 // this user, and then call users delete. Returns the underlying CLI
 // error if both passes fail.
 func (c *Client) DeleteUser(userID int64) error {
+	// B247: invalidate the user-list cache so the next ListUsers
+	// doesn't return a stale entry for the user we're about to delete.
+	// Pre-B247 the cache stayed warm until cacheTTL expired, and admin
+	// pages that re-listed users right after a delete still showed the
+	// gone user as present (the API call would 404 on detail but the
+	// list view was sourced from cache).
+	c.InvalidateUsersCache()
 	// First, delete all nodes owned by this user (headscale refuses to delete user with active nodes)
 	if c.ExecContainer != "" {
 		cmd := exec.Command("docker", "exec", c.ExecContainer, "headscale", "nodes", "list", "-o", "json")

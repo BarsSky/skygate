@@ -134,7 +134,7 @@
       </h3>
       {{if .DerpStatus.ActiveTCP}}
       <table>
-        <thead><tr><th>IP</th><th>Hostname</th><th>Type</th></tr></thead>
+        <thead><tr><th>{{t "derp.col_ip"}}</th><th>{{t "derp.field_hostname"}}</th><th>{{t "derp.col_type"}}</th></tr></thead>
         <tbody>
           {{range .DerpStatus.ActiveTCP}}
           <tr>
@@ -162,7 +162,7 @@
       </h3>
       {{if .DerpStatus.ActiveUDP}}
       <table>
-        <thead><tr><th>IP</th><th>Hostname</th><th>Type</th></tr></thead>
+        <thead><tr><th>{{t "derp.col_ip"}}</th><th>{{t "derp.field_hostname"}}</th><th>{{t "derp.col_type"}}</th></tr></thead>
         <tbody>
           {{range .DerpStatus.ActiveUDP}}
           <tr>

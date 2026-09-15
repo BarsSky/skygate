@@ -15,12 +15,12 @@ DNS-автообновлением, переключать preferred exit-node p
 трогать CLI headscale.
 
 > **English version:** [README.md](README.md).
-> **Статус (v0.33.1.17):** кросс-проверка между `device_rules` и
+> **Статус (v1.5.2-alpha1):** кросс-проверка между `device_rules` и
 > preferred exit-node устройства (ловит баг «правило сохранено, но
-> Tailscale его игнорирует»). Все 27 пакетов зелёные
-> (`go test -count=1 -short ./...`), 66/66 verify-pre чеков
-> проходят, in-process system_tests покрывает 22+ тестов, включая
-> новый `exit_rules.preferred_mismatch`. Смотрите
+> Tailscale его игнорирует»). Все 46 пакетов зелёные
+> (`go test -count=1 -short ./...`), 275/275 verify-pre чеков
+> проходят, in-process system_tests покрывает 17 тестов, включая
+> `exit_rules.preferred_mismatch`. Смотрите
 > [latest release notes](https://github.com/BarsSky/skygate/releases/latest).
 
 ## Что умеет
@@ -90,10 +90,16 @@ DNS-автообновлением, переключать preferred exit-node p
 ## Архитектура
 
 - **Backend:** Go 1.25+ (один бинарник, stdlib `net/http` роутер)
-- **Хранилище:** SQLite по умолчанию; PostgreSQL 14+ опционально
-  через build-флаг `-tags postgres` (`SKYGATE_DB_DSN=postgres://…`).
-  Одна схема, одни миграции, один `db.BackendOf` диспетчер — никаких
-  изменений в коде для переключения.
+- **Хранилище:** PostgreSQL 14+ — production default (после
+  v1.3.0 cutover SQLite-как-default снят; драйвер `mattn/go-sqlite3`
+  остался в бинарнике, но больше не подключён к дефолтному
+  `db.BackendOf` диспетчеру). Настройка через
+  `SKYGATE_DB_DSN=postgres://…`. Одна схема, одни миграции
+  для обоих бэкендов. SQLite остался как escape hatch для
+  разработки / single-host через `docker-compose.sqlite.yml`
+  (только skygate + bind-mounted SQLite файл — без PG-контейнера);
+  политика отката описана в `docs/BACKLOG.md` если потребуется
+  вернуться с PG на legacy SQLite default.
 - **Шаблоны:** `html/template`, `embed.FS` — без Node, без JS-бандлера.
   Per-feature шаблоны в `internal/handlers/templates/`.
 - **Auth:** bcrypt (cost 12) + JWT (HS256) cookie, HttpOnly +
@@ -281,7 +287,7 @@ Skygate — только HTTP. Всегда ставьте его за TLS-те�
 
 Куки HttpOnly + SameSite=Lax — работают за любым стандартным
 reverse-proxy. Убедитесь, что прокси не срезает `Set-Cookie`.
-См. [docs/internal/internal/https-setup.md](docs/internal/internal/https-setup.md) для Caddy +
+См. [docs/internal/https-setup.md](docs/internal/https-setup.md) для Caddy +
 Let's Encrypt walkthrough.
 
 ## Безопасность
@@ -382,7 +388,7 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
 - **CI:** зелёный на каждом push в `main` и каждом PR (см. бейдж —
   `go vet + go test -race + go build + audit_routes.py` на
   `ubuntu-24.04`)
-- **Verify-pre:** 66/66 PASS (`bash scripts/verify_pre_deploy.sh`)
+- **Verify-pre:** 275/275 PASS (`bash scripts/verify_pre_deploy.sh`)
 - **Latest release:** см. [Releases](https://github.com/BarsSky/skygate/releases)
 - **Карта исходников:** см. [AGENTS.md](AGENTS.md) — поддерживается
   в актуальном состоянии по декомпозиции `internal/feature/*`

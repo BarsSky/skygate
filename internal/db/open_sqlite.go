@@ -93,9 +93,9 @@ func openSQLite(dsn string) (*sql.DB, error) {
 		}
 	}
 
-	// Register the backend so BackendOf(db) returns "sqlite" (not
-	// empty). The migration tracking + conversion tool rely on
-	// BackendOf to dispatch DDL fragments.
-	registerBackend(db, Backend("sqlite"))
+	// Register the backend so BackendOf(db) returns BackendSQLite
+	// (not empty). The migration tracking + conversion tool rely
+	// on BackendOf to dispatch DDL fragments.
+	registerBackend(db, BackendSQLite)
 	return db, nil
 }

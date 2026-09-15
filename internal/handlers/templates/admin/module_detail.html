@@ -82,7 +82,7 @@
   <h2>Audit history (last 20)</h2>
   {{if .View.Audit}}
     <table class="audit-table">
-      <thead><tr><th>When (UTC)</th><th>Action</th><th>By</th><th>Detail</th></tr></thead>
+      <thead><tr><th>{{t "module_detail.col_when_utc"}}</th><th>{{t "module_detail.col_action"}}</th><th>{{t "module_detail.col_by"}}</th><th>{{t "module_detail.col_detail"}}</th></tr></thead>
       <tbody>
         {{range .View.Audit}}
           <tr>

@@ -31,6 +31,8 @@
 package headscale
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -203,5 +205,145 @@ func TestTagNode_ReplacesEntireSet(t *testing.T) {
 	}
 	if strings.Contains(call, "tag:dev-skyadmin-emilia") {
 		t.Errorf("TagNode should NOT preserve unrelated tags (this is the bug the handler had); got: %s", call)
+	}
+}
+
+// TestEnsureTagOwner_AddsWhenMissing pins the B245 contract:
+// when a brand-new tag (e.g. tag:dev-skyadmin-cyborg for a
+// just-attached device) is NOT in tagOwners, EnsureTagOwner
+// must (1) fetch the current policy, (2) add the tag with the
+// supplied owners, (3) re-apply the policy via PUT, (4) be
+// idempotent on the second call (no PUT if the tag is now
+// present).
+//
+// This is the cyborg/2026-09-15 fix: without EnsureTagOwner,
+// the B77 autoupdater tried `headscale nodes tag -i 56 -t
+// 'tag:dev-skyadmin-cyborg'`, headscale rejected it with
+// `InvalidArgument: requested tags [...] are invalid or not
+// permitted` because the tag wasn't in tagOwners, and the
+// autoupdater was stuck forever (tag never applied → never
+// auto-added to tagOwners).
+func TestEnsureTagOwner_AddsWhenMissing(t *testing.T) {
+	// headscale policy stub. Initially missing the tag;
+	// records each PUT so we can verify it was applied.
+	var policyMu sync.Mutex
+	policy := map[string]interface{}{
+		"acls":      []interface{}{},
+		"tagOwners": map[string]interface{}{},
+	}
+	var putCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v1/policy":
+			policyMu.Lock()
+			defer policyMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"policy": policy})
+		case r.Method == "PUT" && r.URL.Path == "/api/v1/policy":
+			policyMu.Lock()
+			defer policyMu.Unlock()
+			putCount++
+			// The PUT body is PolicyBody{Policy: <hujson string>}
+			// (SetPolicy wraps the policy string in this
+			// struct). Decode it and unwrap.
+			var pb struct {
+				Policy json.RawMessage `json:"policy"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&pb); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			// The inner `policy` may be a stringified hujson
+			// OR a JSON object (headscale 0.29.x returns it
+			// as an object). Decode as a generic map for
+			// the test stub's purposes.
+			raw := bytes.TrimSpace(pb.Policy)
+			if len(raw) == 0 {
+				http.Error(w, "empty policy body", http.StatusBadRequest)
+				return
+			}
+			if raw[0] == '"' {
+				// stringified hujson — unwrap
+				var s string
+				if err := json.Unmarshal(raw, &s); err != nil {
+					http.Error(w, "bad stringified policy: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+				if err := json.Unmarshal([]byte(s), &policy); err != nil {
+					http.Error(w, "bad policy hujson: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+			} else {
+				// direct JSON object
+				if err := json.Unmarshal(raw, &policy); err != nil {
+					http.Error(w, "bad policy json: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"policy":"ok"}`))
+		default:
+			http.Error(w, "unexpected: "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "fake-token")
+
+	// First call: tag is missing — must be added.
+	if err := c.EnsureTagOwner(
+		"tag:dev-skyadmin-cyborg",
+		[]string{"skyadmin@tsnet.skynas.ru", "tagged-devices@tsnet.skynas.ru"},
+	); err != nil {
+		t.Fatalf("EnsureTagOwner (1st call): %v", err)
+	}
+	if putCount != 1 {
+		t.Errorf("PUT count = %d, want 1 (tag was missing, must be added)", putCount)
+	}
+	// Verify the new tagOwners entry.
+	to, _ := policy["tagOwners"].(map[string]interface{})
+	if _, ok := to["tag:dev-skyadmin-cyborg"]; !ok {
+		t.Errorf("tagOwners missing tag:dev-skyadmin-cyborg after EnsureTagOwner; got: %v", to)
+	}
+
+	// Second call: tag is now present — must be a no-op
+	// (no PUT issued). Idempotency contract.
+	if err := c.EnsureTagOwner(
+		"tag:dev-skyadmin-cyborg",
+		[]string{"different@owner.invalid"},
+	); err != nil {
+		t.Fatalf("EnsureTagOwner (2nd call, idempotent): %v", err)
+	}
+	if putCount != 1 {
+		t.Errorf("PUT count = %d, want 1 (tag was present, EnsureTagOwner must be no-op)", putCount)
+	}
+	// Owner list preserved — the second call must NOT
+	// widen or rewrite the entry (would surprise the
+	// operator who configured the first set).
+	ownersRaw, _ := to["tag:dev-skyadmin-cyborg"].([]interface{})
+	if len(ownersRaw) != 2 {
+		t.Errorf("owner count = %d, want 2 (preserve first set)", len(ownersRaw))
+	}
+}
+
+// TestEnsureTagOwner_RejectsEmptyInputs pins the defensive
+// guard contract: empty tag, empty owners, and nil client must
+// all return a clear error so Backfill can log it and skip the
+// AddTag fallback (no silent nil-deref).
+func TestEnsureTagOwner_RejectsEmptyInputs(t *testing.T) {
+	c := New("http://unused.invalid", "fake-token")
+
+	if err := c.EnsureTagOwner("", []string{"x@x"}); err == nil {
+		t.Error("EnsureTagOwner(empty tag): got nil, want error")
+	}
+	if err := c.EnsureTagOwner("tag:foo", nil); err == nil {
+		t.Error("EnsureTagOwner(nil owners): got nil, want error")
+	}
+	if err := c.EnsureTagOwner("tag:foo", []string{}); err == nil {
+		t.Error("EnsureTagOwner(empty owners): got nil, want error")
+	}
+	var nilC *Client
+	if err := nilC.EnsureTagOwner("tag:foo", []string{"x"}); err == nil {
+		t.Error("EnsureTagOwner(nil receiver): got nil, want error")
 	}
 }

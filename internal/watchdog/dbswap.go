@@ -70,11 +70,13 @@ package watchdog
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 
+	"skygate/internal/db"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 )
 
@@ -328,14 +330,34 @@ func (w *DBSwap) tick() {
 
 	row, err := w.reader(ctx)
 	if err != nil {
-		// Most common case: no cluster_database row
-		// yet (fresh deploy). Log at info, not warn,
-		// so the operator doesn't get alert fatigue.
+		// B248 (2026-09-15): ErrClusterDatabaseNotFound is the
+		// FRESH-DEPLOY or no-admin-override state — the
+		// cluster_database table exists but has no row for our
+		// cluster_id. This is INFORMATIONAL, not a DB outage:
+		// the env-DSN pool stays in effect, and we should NOT
+		// count this as a failure or fire the "PG health
+		// DEGRADED" alert. Pre-B248 the watchdog's B225.2 logic
+		// lumped this in with true I/O errors, so every fresh
+		// deploy would fire a false-positive "PG health DEGRADED"
+		// alert after 15 seconds (= 3 ticks × 5s Interval).
+		//
+		// Other errors (connection refused, timeout, schema
+		// mismatch) still count toward the failure threshold —
+		// only the "no row" sentinel is exempted.
+		if errors.Is(err, db.ErrClusterDatabaseNotFound) {
+			w.cfg.Logger("dbmigrate-watchdog: cluster_database row not present (fresh deploy or no override configured; keeping env-DSN pool)")
+			// B225.2: a "row is nil but no error" is the
+			// success-equivalent transition (no DSN to swap to,
+			// but the DB is reachable and the cluster_database
+			// schema is intact). Reset the failure counter +
+			// fire recovery if needed.
+			w.detectReadSuccessTransition()
+			return
+		}
+		// True I/O / connection error — increment the
+		// failure counter + fire the "PG health DEGRADED"
+		// alert on the edge (counter crossing the threshold).
 		w.cfg.Logger("dbmigrate-watchdog: read cluster_database: %v (keeping current pool)", err)
-		// B225.2: increment the consecutive
-		// failure counter + fire the
-		// "PG health DEGRADED" alert on the
-		// edge (counter crossing the threshold).
 		w.detectReadFailureTransition(err)
 		return
 	}

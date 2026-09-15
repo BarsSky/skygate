@@ -23,15 +23,20 @@
 // directly with their chosen maxAttempts + baseDelay (typically
 // read from the SKYGATE_DB_RETRY_* env vars at the call site).
 //
+// v1.5.4 (B246): SQLite is a first-class backend again (restored by
+// B-mod-sqlite-pg-bidi), so openDSNPing dispatches on dialect:
+// postgres://... → BackendPostgres + MigratePostgres;
+// :memory:, file:..., bare /path, sqlite:... → BackendSQLite +
+// MigrateSQLite.
+//
 // Verified during the B-mod-core live-verify attempt: the live
 // skygate-skygate-1 was in a restart loop because
 // SKYGATE_DB_DSN=postgres://admin:skygate_admin_pass@172.17.0.1:5433/skygate_staging
 // pointed at a database that no longer exists (only
 // skygate-pg-test on :5432 is up). The fix is two-part:
-//   1. Operator must update SKYGATE_DB_DSN to a reachable PG
-//      (or remove it to use the previous SQLite fallback — but
-//      note: v1.3.0+ removed SQLite entirely, so the DSN MUST
-//      point at a live PG).
+//   1. Operator must update SKYGATE_DB_DSN to a reachable DB
+//      (postgres:// for PG, file:/path or sqlite:/path for SQLite,
+//      or :memory: for tests).
 //   2. This retry helper prevents transient DB issues from
 //      escalating into restart loops in the future.
 //
@@ -139,22 +144,50 @@ func OpenDSNWithRetry(dsn string, maxAttempts int, baseDelay time.Duration) (*sq
 // `conn.Ping()` without a context, which can block for the
 // driver's default dial timeout (15-30s for pgx). With a
 // context we cap it at 5s.
+//
+// v1.5.4 (B246): dispatches on the dialect (SQLite or PostgreSQL)
+// detected from the DSN via dialect.DetectDSN. Pre-B246 this
+// helper hard-coded `sql.Open("pgx", dsn)` and silently broke
+// SQLite mode (the open succeeded with the pgx driver name but
+// every subsequent query failed because pgx doesn't understand
+// SQLite SQL). The migration step is dispatched per-dialect too:
+// MigratePostgres for PG, MigrateSQLite for SQLite — both are
+// idempotent and re-applied on every Open.
 func openDSNPing(dsn string, ctx context.Context) (*sql.DB, error) {
-	conn, err := sql.Open("pgx", dsn)
+	dialect := DetectDSN(dsn)
+	if dialect.Kind == DialectUnknown {
+		return nil, fmt.Errorf("openDSNPing: unknown DSN scheme %q "+
+			"(use sqlite:/path, file: URI, :memory:, postgres://user:pass@host/db, or bare /path)",
+			dsn)
+	}
+	conn, err := dialect.OpenDialect()
 	if err != nil {
-		return nil, fmt.Errorf("sql.Open: %w", err)
+		return nil, fmt.Errorf("dialect open %q: %w", dsn, err)
 	}
 	if err := conn.PingContext(ctx); err != nil {
 		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("ping %q: %w", dsn, err)
 	}
 	conn.SetMaxOpenConns(10)
 	conn.SetMaxIdleConns(5)
-	if err := MigratePostgres(conn); err != nil {
+	switch dialect.Kind {
+	case DialectPostgres:
+		if err := MigratePostgres(conn); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("migrate postgres: %w", err)
+		}
+		registerBackend(conn, BackendPostgres)
+	case DialectSQLite:
+		if err := MigrateSQLite(conn); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("migrate sqlite: %w", err)
+		}
+		registerBackend(conn, BackendSQLite)
+	default:
+		// Should be unreachable — DetectDSN checked above.
 		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("openDSNPing: unhandled dialect kind %v", dialect.Kind)
 	}
-	registerBackend(conn, BackendPostgres)
 	return conn, nil
 }
 

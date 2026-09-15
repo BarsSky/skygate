@@ -14,7 +14,7 @@ device management, and ACL automation.
 ## Architecture
 
 ```
-NPM Proxy -> Skygate (Go 1.23, SQLite) -> Headscale v0.29 API
+NPM Proxy -> Skygate (Go 1.25, PostgreSQL 14+) -> Headscale v0.29 API
                   |
            Headplane UI
            DERP relay (optional)

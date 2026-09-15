@@ -271,7 +271,7 @@
 
 **Шаги:**
 1. Audit существующих B-checks (top-10 для auto-deploy):
-   - `check_b86.sh` — preauth rotate
+   - **B86 — preauth rotate** (inline-only in `verify_pre_deploy.sh`; no `check_b86.sh` delegation script — see note below)
    - `check_b145.sh` — HA chain
    - `check_b149.sh` — /admin/ha
    - `check_b150.sh` — /admin/deploy
@@ -284,6 +284,9 @@
    - `check_b202_5.sh` — SSHDumpTransport
    - `check_b_new.sh` — ha-state machine (73 contracts)
    - `check_b_standby_provision.sh` — provisioning (20 contracts)
+
+   > **Note on B86 (inline-only):** The B86 preauth-rotate contract is implemented as one of the inline `run_check` invocations inside `scripts/verify_pre_deploy.sh` (search for `B86` in that file), not as a standalone `scripts/check_b86.sh` delegatable script. All other entries in this Phase 7 list are real `scripts/check_b*.sh` files that the verify-pre loop calls via `test -f … && bash …`. The 2026-09-14 doc audit confirmed there are no broken delegations for any other B-number; B86 is the only intentional inline-only entry.
+
 2. Identify gaps — что НЕ покрыто B-checkами:
    - Tailscale grants policy (per-DEVICE grant после reapply)
    - node_owner_map ↔ portal_users JOIN

@@ -2,7 +2,7 @@
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-key"></i>{{t "preauth.title"}}</h2>
-    <div class="sub">One-time use, valid for {{.Expires}}</div>
+    <div class="sub">{{tf "preauth.subtitle" .Expires}}</div>
   </div>
 </div>
 
@@ -44,7 +44,7 @@
     <div>
       <strong>{{t "preauth.warning"}} <code>{{.Username}}</code></strong>
       <br>
-      Single-use, expires in {{.Expires}}. Do not share with others.
+      {{tf "preauth.single_use_alert" .Expires}}
     </div>
   </div>
 </div>

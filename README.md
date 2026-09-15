@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/BarsSky/skygate/actions/workflows/ci.yml/badge.svg)](https://github.com/BarsSky/skygate/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/BarsSky/skygate?label=Latest)](https://github.com/BarsSky/skygate/releases/latest)
+[![RU](https://img.shields.io/badge/README-Русский-blue)](README.ru.md)
 ![Headscale](https://img.shields.io/badge/headscale-0.29.x-green)
 ![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -13,11 +14,11 @@ exit-node rules with DNS auto-update, switch preferred exit-nodes per
 device, and (optionally) interact with the whole thing from a Telegram
 bot — without ever touching the headscale CLI.
 
-> **Status (v0.33.1.17):** cross-check between `device_rules` and the
+> **Status (v1.5.2-alpha1):** cross-check between `device_rules` and the
 > device's preferred exit-node (catches the "rule saved but Tailscale
-> ignores it" bug). All 27 packages green (`go test -count=1 -short
-> ./...`), 66/66 verify-pre checks pass, in-process system_tests cover
-> 22+ tests including the new `exit_rules.preferred_mismatch`.
+> ignores it" bug). All 46 packages green (`go test -count=1 -short
+> ./...`), 275/275 verify-pre checks pass, in-process system_tests cover
+> 17 tests including `exit_rules.preferred_mismatch`.
 > See the [latest release notes](https://github.com/BarsSky/skygate/releases/latest).
 
 ## What it does
@@ -85,10 +86,16 @@ For **ops** (Telegram bot, optional but recommended):
 ## Architecture
 
 - **Backend:** Go 1.25+ (single binary, stdlib `net/http` router)
-- **Storage:** SQLite by default; PostgreSQL 14+ optional via
-  `-tags postgres` build flag (`SKYGATE_DB_DSN=postgres://…`). Same
-  schema, same migrations, same `db.BackendOf` dispatch — no code
-  changes needed to switch.
+- **Storage:** PostgreSQL 14+ is the production default
+  (the v1.3.0 cutover removed the SQLite production path; the
+  `mattn/go-sqlite3` driver is built in but no longer wired to the
+  default `db.BackendOf` dispatch). Configure with
+  `SKYGATE_DB_DSN=postgres://…`. Same schema, same migrations
+  across both backends. SQLite is still available as a development
+  / single-host escape hatch via `docker-compose.sqlite.yml`
+  (skygate-only with a bind-mounted SQLite file — no PG container
+  required); see `docs/BACKLOG.md` for the rollback policy if you
+  need to revert from PG back to the legacy SQLite default.
 - **Templates:** `html/template`, `embed.FS` — no Node, no JS bundler.
   Per-feature templates under `internal/handlers/templates/`.
 - **Auth:** bcrypt (cost 12) + JWT (HS256) cookie, HttpOnly +
@@ -198,8 +205,8 @@ a self-contained `docker compose -f X up -d` or a one-liner.
 
 | Variant | When to use | One-liner |
 |---|---|---|
-| **[`docker-compose.ghcr.yml`](#docker-compose-pull-from-ghcr-prebuilt)** *(recommended)* | Production on Linux. You have a headscale somewhere (own VM, cluster, or SaaS). You want fast first-start + auto-updates via image pull. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install-docker.sh \| sudo bash -s -- -f docker-compose.ghcr.yml` |
-| **[`docker-compose.lite.yml`](#docker-compose-lite-sky-only)** | You already have headscale somewhere and just want skygate as a UI in front of it. No headscale container, no DERP, no headplane — the smallest possible attack surface. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install-docker.sh \| sudo bash -s -- -f docker-compose.lite.yml` |
+| **[`docker-compose.ghcr.yml`](#docker-compose-pull-from-ghcr-prebuilt)** *(recommended)* | Production on Linux. You have a headscale somewhere (own VM, cluster, or SaaS). You want fast first-start + auto-updates via image pull. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install.sh \| sudo bash -s -- -f docker-compose.ghcr.yml` |
+| **[`docker-compose.lite.yml`](#docker-compose-lite-sky-only)** | You already have headscale somewhere and just want skygate as a UI in front of it. No headscale container, no DERP, no headplane — the smallest possible attack surface. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install.sh \| sudo bash -s -- -f docker-compose.lite.yml` |
 | **[`docker-compose.yml`](#original-build-from-source)** *(in-container build)* | The original. You want to edit code on the host and have skygate rebuild on restart (live dev). Slower first start, but no Docker image to pull. | `git clone https://github.com/BarsSky/skygate && cd skygate && cp .env.example .env && nano .env && docker compose up -d --build` |
 | **[`deploy/install.sh`](#bare-metal-systemd-or-openrc)** *(Linux no-Docker)* | You don't want Docker at all. systemd (Debian/Ubuntu/RHEL/Fedora) or OpenRC (Alpine). One-liner, autodetects your distro. | `curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/install.sh \| sudo bash` |
 | **[`deploy/Setup-Skygate-Win.ps1`](#windows-native)** | Native Windows service. No WSL, no Hyper-V. Pulls the Windows binary zip from GitHub Releases + registers as a service via `New-Service`. | `iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/Setup-Skygate-Win.ps1'))` (Run as Administrator) |
@@ -536,7 +543,7 @@ Skygate is HTTP only. Always put it behind a TLS terminator.
 
 Cookies are HttpOnly + SameSite=Lax — works behind any standard
 reverse proxy. Make sure the proxy does NOT strip the `Set-Cookie`
-header. See [docs/internal/internal/https-setup.md](docs/internal/internal/https-setup.md) for a Caddy
+header. See [docs/internal/https-setup.md](docs/internal/https-setup.md) for a Caddy
 + Let's Encrypt walkthrough.
 
 ## Security
@@ -636,7 +643,7 @@ R1–R27 runtime), and the VM-vs-Windows working rules.
 - **CI:** green on every push to `main` and every PR (see badge —
   `go vet + go test -race + go build + audit_routes.py` on
   `ubuntu-24.04`)
-- **Verify-pre:** 66/66 PASS (`bash scripts/verify_pre_deploy.sh`)
+- **Verify-pre:** 275/275 PASS (`bash scripts/verify_pre_deploy.sh`)
 - **Latest release:** see [Releases](https://github.com/BarsSky/skygate/releases)
 - **Source code map:** see [AGENTS.md](AGENTS.md) — kept up to date
   with the latest `internal/feature/*` decomposition

@@ -16,12 +16,12 @@
 <div class="card">
   <h3><i class="fa-solid fa-magnifying-glass"></i> Plan</h3>
   <table class="kv" style="width:auto">
-    <tr><th>Total rules</th><td>{{.Plan.TotalRules}}</td></tr>
-    <tr><th>Distinct device_id</th><td>{{.Plan.DistinctDevIDs}}</td></tr>
-    <tr><th>Distinct hostname</th><td>{{.Plan.DistinctHosts}}</td></tr>
-    <tr><th>To merge</th><td>{{.Plan.MergedIDs}}</td></tr>
-    <tr><th>To backfill device_ip</th><td>{{.Plan.ResolvedIPs}}</td></tr>
-    <tr><th>Stale device_id</th><td>{{range $i,$d := .Plan.StaleDevIDs}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}</td></tr>
+    <tr><th>{{t "cleanup.col_total_rules"}}</th><td>{{.Plan.TotalRules}}</td></tr>
+    <tr><th>{{t "cleanup.col_distinct_device_id"}}</th><td>{{.Plan.DistinctDevIDs}}</td></tr>
+    <tr><th>{{t "cleanup.col_distinct_hostname"}}</th><td>{{.Plan.DistinctHosts}}</td></tr>
+    <tr><th>{{t "cleanup.col_to_merge"}}</th><td>{{.Plan.MergedIDs}}</td></tr>
+    <tr><th>{{t "cleanup.col_to_backfill_device_ip"}}</th><td>{{.Plan.ResolvedIPs}}</td></tr>
+    <tr><th>{{t "cleanup.col_stale_device_id"}}</th><td>{{range $i,$d := .Plan.StaleDevIDs}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}</td></tr>
   </table>
 </div>
 
@@ -29,7 +29,7 @@
   <h3><i class="fa-solid fa-layer-group"></i> Groups by hostname</h3>
   <div class="table-wrap">
     <table>
-      <tr><th>Hostname</th><th>Canonical device_id</th><th>All device_id in group</th><th>Rules</th></tr>
+      <tr><th>{{t "cleanup.col_hostname"}}</th><th>{{t "cleanup.col_canonical_device_id"}}</th><th>{{t "cleanup.col_all_device_id_in_group"}}</th><th>{{t "cleanup.col_rules"}}</th></tr>
       {{range .Plan.Groups}}
       <tr>
         <td>
