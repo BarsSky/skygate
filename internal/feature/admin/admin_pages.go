@@ -326,6 +326,337 @@ func normalizeSourceFilter(s string) string {
 // instead of the local sidecar (v0.10.12). The APIKey (redacted via
 // the template's {{maskSecret}}) is passed so the operator can copy
 // it into the headplane admin.
+// ACLGrant is a single entry from headscale's policy.grants[]
+// (or policy.ssh[]). We parse the full shape so the template
+// can show a categorised table view instead of the raw JSON blob.
+type ACLGrant struct {
+	Src     []string `json:"src"`
+	Dst     []string `json:"dst"`
+	IP      []string `json:"ip,omitempty"`
+	Via     []string `json:"via,omitempty"`
+	Users   []string `json:"users,omitempty"` // only for SSH rules
+}
+
+// ACLCategory groups grants by purpose. The category ID is
+// stable (used as map key + i18n key) and the DisplayName is
+// shown in the template via t "acl.category.<ID>".
+type ACLCategory struct {
+	ID          string     // e.g. "per_user_main", "cidr_outbound" — used for i18n
+	DisplayName string     // resolved via t "acl.category.<id>"
+	Summary     string     // short helper sentence shown next to title
+	Grants      []ACLGrant // members of this category, in source order
+}
+
+// ACLPolicyView is what the /admin/acls template renders. It
+// holds the categorised grants + auxiliary metadata + the raw
+// JSON for the "show source" toggle.
+type ACLPolicyView struct {
+	TotalGrants    int
+	TotalSSH       int
+	TotalHosts     int
+	TotalTagOwners int
+	TotalGroups    int
+	Categories     []ACLCategory
+	SSH            []ACLGrant
+	TagOwners      []map[string][]string
+	Groups         map[string][]string
+	RawJSON        string // pretty-printed, used by the "raw JSON" details
+	ParseError     string // if grouping fails (rare), show the error and fall back to raw
+}
+
+// classifyGrantID assigns a grant to one of the 7 categories.
+// The order matters — most-specific patterns first so a grant
+// matches the right bucket.
+//
+// Categories:
+//
+//   - per_user_main:    src contains user@host AND dst contains
+//                       h-user-X-subnet. The "main" grant each
+//                       portal user gets on adoption.
+//   - per_user_self:    src contains user@host AND dst contains
+//                       user@host:* (self-access only, no subnet).
+//                       Falls back from per_user_main when the
+//                       user's subnet isn't allocated.
+//   - per_device_inet:  src is a single tag:dev-X-Y, dst contains
+//                       autogroup:internet, no h-rule. The
+//                       "default internet" grant most devices get.
+//   - cidr_outbound:    dst contains h-rule-X-Y (per-IP CIDR
+//                       access). The hundreds of granular grants
+//                       that route specific IP ranges through
+//                       specific exit nodes via tag:dev-infra-*.
+//                       Sub-grouped by the first `via` tag in
+//                       the template (one row per exit-node).
+//   - infra_mesh:       src is tag:dev-infra-* AND dst contains
+//                       tag:dev-infra-*. The mesh between exit
+//                       nodes themselves.
+//   - tag_mesh:         both src and dst are tag:dev-* (per-device
+//                       tag-to-tag access within a user's fleet)
+//                       but not matching the buckets above.
+//   - wildcard:         either src or dst contains "*". Catch-all
+//                       default-allow rules.
+//   - other:            fallback for anything that doesn't match
+//                       (reported as `other` for visibility).
+func classifyGrantID(g ACLGrant) string {
+	src := g.Src
+	dst := g.Dst
+
+	hasUserSrc := false
+	for _, s := range src {
+		if strings.Contains(s, "@") {
+			hasUserSrc = true
+			break
+		}
+	}
+
+	hasUserSubnetDst := false
+	for _, s := range dst {
+		if strings.HasPrefix(s, "h-user-") {
+			hasUserSubnetDst = true
+			break
+		}
+	}
+
+	hasHRuleDst := false
+	for _, s := range dst {
+		if strings.HasPrefix(s, "h-rule-") {
+			hasHRuleDst = true
+			break
+		}
+	}
+
+	hasAutogroupInternetDst := false
+	for _, s := range dst {
+		if s == "autogroup:internet" {
+			hasAutogroupInternetDst = true
+			break
+		}
+	}
+
+	hasWildcard := false
+	hasSelfAccess := false
+	for _, s := range src {
+		if s == "*" || s == "*:*" {
+			hasWildcard = true
+		}
+	}
+	for _, s := range dst {
+		if s == "*" || s == "*:*" {
+			hasWildcard = true
+		}
+		// "user@host:*" or "user@host:80" — self-access pattern where
+		// the dst is a user principal followed by ":*". This catches
+		// both `infra@x:*` and `skyadmin@x:80`.
+		if strings.HasSuffix(s, ":*") && strings.Contains(s, "@") {
+			hasSelfAccess = true
+		}
+	}
+
+	hasInfraSrc := false
+	for _, s := range src {
+		if strings.HasPrefix(s, "tag:dev-infra-") {
+			hasInfraSrc = true
+			break
+		}
+	}
+	hasInfraDst := false
+	for _, s := range dst {
+		if strings.HasPrefix(s, "tag:dev-infra-") {
+			hasInfraDst = true
+			break
+		}
+	}
+	hasDevSrc := false
+	for _, s := range src {
+		if strings.HasPrefix(s, "tag:dev-") && !strings.HasPrefix(s, "tag:dev-infra-") {
+			hasDevSrc = true
+			break
+		}
+	}
+	hasDevDst := false
+	for _, s := range dst {
+		if strings.HasPrefix(s, "tag:dev-") && !strings.HasPrefix(s, "tag:dev-infra-") {
+			hasDevDst = true
+			break
+		}
+	}
+
+	switch {
+	case hasUserSrc && hasUserSubnetDst:
+		return "per_user_main"
+	case hasUserSrc && hasSelfAccess:
+		return "per_user_self"
+	case hasHRuleDst:
+		return "cidr_outbound"
+	case hasInfraSrc && hasInfraDst:
+		return "infra_mesh"
+	// B252: tag → autogroup:internet without h-rule covers
+	// BOTH end-user devices (tag:dev-X-Y) AND infra tags
+	// (tag:dev-infra-Z) AND public tags (tag:public). All share
+	// the same intent: "this tag gets unfiltered internet".
+	case (hasDevSrc || hasInfraSrc || anyIsTagPublic(src)) && hasAutogroupInternetDst && !hasHRuleDst:
+		return "per_device_inet"
+	case hasDevSrc && hasDevDst:
+		return "tag_mesh"
+	case hasWildcard:
+		return "wildcard"
+	default:
+		return "other"
+	}
+}
+
+// anyIsTagPublic returns true if any element of src is exactly
+// "tag:public" (the public-tag catch-all used by exit-nodes).
+// We don't use this for general tag matching — only the
+// special "public" tag which represents "any node exposed via
+// exit-node" in headscale.
+func anyIsTagPublic(src []string) bool {
+	for _, s := range src {
+		if s == "tag:public" {
+			return true
+		}
+	}
+	return false
+}
+
+// categoryOrder is the render order: most operational-impactful
+// first (per-user + per-device internet), then the bulk
+// (CIDR outbound), then mesh + wildcard at the end.
+var categoryOrder = []string{
+	"per_user_main",
+	"per_user_self",
+	"per_device_inet",
+	"cidr_outbound",
+	"infra_mesh",
+	"tag_mesh",
+	"wildcard",
+	"other",
+}
+
+// cidrSubGroupKey picks the secondary bucket inside the
+// "cidr_outbound" category. Rules within cidr_outbound are
+// sub-grouped by the first `via` tag (the exit node they
+// route through), so 130 rules become "30 rules via emilia,
+// 30 rules via karolina, ..." rows. Empty via gets its own
+// "no-route" bucket so the operator can spot malformed rules.
+func cidrSubGroupKey(g ACLGrant) string {
+	if len(g.Via) == 0 {
+		return "(no via — bug?)"
+	}
+	return g.Via[0]
+}
+
+// parseACLPolicy takes the pretty-printed policy string from
+// headscale, decodes it, classifies every grant into a
+// category, and returns a template-friendly ACLPolicyView.
+//
+// Errors are surfaced via the returned ACLPolicyView.ParseError;
+// the caller renders a degraded view (just the raw JSON)
+// when parsing fails, instead of crashing the admin page.
+func parseACLPolicy(pretty string) (*ACLPolicyView, error) {
+	if pretty == "" {
+		return &ACLPolicyView{RawJSON: pretty}, nil
+	}
+
+	// The pretty string is wrapped in HTML-escaped quotes
+	// (SetEscapeHTML=true on the encoder). Unescape before
+	// feeding to json.Unmarshal.
+	var raw map[string]json.RawMessage
+	unescaped := unescapeHTML(pretty)
+	if err := json.Unmarshal([]byte(unescaped), &raw); err != nil {
+		return nil, fmt.Errorf("parse policy as JSON: %w", err)
+	}
+
+	view := &ACLPolicyView{
+		RawJSON: pretty,
+		Groups:  map[string][]string{},
+	}
+
+	// Decode each top-level section independently so a
+	// malformed section doesn't tank the whole parse.
+	if v, ok := raw["grants"]; ok {
+		var grants []ACLGrant
+		if err := json.Unmarshal(v, &grants); err == nil {
+			view.TotalGrants = len(grants)
+		}
+	}
+	if v, ok := raw["ssh"]; ok {
+		var ssh []ACLGrant
+		if err := json.Unmarshal(v, &ssh); err == nil {
+			view.SSH = ssh
+			view.TotalSSH = len(ssh)
+		}
+	}
+	if v, ok := raw["hosts"]; ok {
+		var hosts map[string][]string
+		if err := json.Unmarshal(v, &hosts); err == nil {
+			view.TotalHosts = len(hosts)
+		}
+	}
+	if v, ok := raw["tagOwners"]; ok {
+		var tagOwners map[string][]string
+		if err := json.Unmarshal(v, &tagOwners); err == nil {
+			view.TotalTagOwners = len(tagOwners)
+			for k, v := range tagOwners {
+				view.TagOwners = append(view.TagOwners, map[string][]string{k: v})
+			}
+		}
+	}
+	if v, ok := raw["groups"]; ok {
+		var groups map[string][]string
+		if err := json.Unmarshal(v, &groups); err == nil {
+			view.Groups = groups
+			view.TotalGroups = len(groups)
+		}
+	}
+
+	// Re-parse grants for classification (the first
+	// Unmarshal above discarded them).
+	var grants []ACLGrant
+	if v, ok := raw["grants"]; ok {
+		_ = json.Unmarshal(v, &grants)
+	}
+
+	// Bucket grants into categories.
+	buckets := make(map[string][]ACLGrant, len(categoryOrder))
+	for _, g := range grants {
+		id := classifyGrantID(g)
+		buckets[id] = append(buckets[id], g)
+	}
+
+	// Emit categories in render order.
+	for _, id := range categoryOrder {
+		gs, ok := buckets[id]
+		if !ok || len(gs) == 0 {
+			continue
+		}
+		view.Categories = append(view.Categories, ACLCategory{
+			ID:          id,
+			DisplayName: id, // template uses t "acl.category.<id>" — keep ID stable
+			Grants:      gs,
+		})
+	}
+
+	return view, nil
+}
+
+// unescapeHTML is the reverse of html.EscapeString. We can't
+// import html/template at the call-site because this function
+// runs in the handler, not in the template engine. The five
+// chars html/template escapes are: & < > " '. We replace
+// them so json.Unmarshal can parse the policy without choking
+// on &#34; etc.
+func unescapeHTML(s string) string {
+	r := strings.NewReplacer(
+		"&amp;", "&",
+		"&lt;", "<",
+		"&gt;", ">",
+		"&quot;", `"`,
+		"&#34;", `"`,
+		"&#39;", "'",
+	)
+	return r.Replace(s)
+}
+
 // prettyPrintACL converts a headscale policy string into
 // 2-space indented, multi-line JSON for display on /admin/acls.
 //
@@ -432,8 +763,19 @@ func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 	//
 	// Falls back to the raw string if indent fails (defensive:
 	// a malformed policy shouldn't 500 the admin page).
+	policyView := &ACLPolicyView{RawJSON: ""}
 	if policy != "" {
-		policy = prettyPrintACL(policy)
+		pretty := prettyPrintACL(policy)
+		policyView.RawJSON = pretty
+		view, err := parseACLPolicy(pretty)
+		if err != nil {
+			// Don't tank the page — set ParseError so the
+			// template can show a yellow banner + the raw
+			// JSON underneath.
+			policyView.ParseError = err.Error()
+		} else {
+			policyView = view
+		}
 	}
 	errStr := ""
 	if policyErr != nil {
@@ -448,7 +790,7 @@ func (s *Service) GetAdminACLs(w http.ResponseWriter, r *http.Request) {
 		headplaneURL = s.ControlURL + "/admin/"
 	}
 	s.Backend.RenderWithLayout(w, r, "admin/acls.html", c, map[string]any{
-		"Policy":       policy,
+		"PolicyView":   policyView,
 		"Error":        errStr,
 		"HeadplaneURL": headplaneURL,
 		"APIKey":       s.HeadscaleKey,

@@ -11,7 +11,6 @@
   <p style="color:var(--text-muted);margin-bottom:16px">
     {{t "acls.subtitle"}}.
   </p>
-
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <a href="https://tsnet.example.com/admin/acls" target="_blank" rel="noopener" class="btn">
       <i class="fa-solid fa-arrow-up-right-from-square"></i>{{t "acls.external"}}
@@ -21,9 +20,19 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-file-code"></i>{{t "acls.title"}}</h3>
-  {{if .Policy}}
-  <pre>{{.Policy}}</pre>
-  {{else}}
+
+  {{if .PolicyView.ParseError}}
+  <div class="alert alert-warning" style="margin-top:0">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <div>
+      <strong>{{t "acls.parse_warning_title"}}</strong>
+      <p style="margin:6px 0 0;font-size:12px;color:var(--text-muted)">{{.PolicyView.ParseError}}</p>
+      <p style="margin:6px 0 0;font-size:12px;color:var(--text-muted)">{{t "acls.parse_warning_body"}}</p>
+    </div>
+  </div>
+  {{end}}
+
+  {{if not .PolicyView.RawJSON}}
   <div class="alert alert-danger" style="margin-top:0">
     <i class="fa-solid fa-circle-exclamation"></i>
     <div>
@@ -32,7 +41,139 @@
       <span style="color:var(--text-subtle);font-size:12px">{{.Error}}</span>
     </div>
   </div>
+  {{else}}
+  {{/* === Summary card === */}}
+  <div style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 16px;font-size:13px">
+    <span class="ufg-chip"><strong>{{.PolicyView.TotalGrants}}</strong> {{t "acls.summary_grants"}}</span>
+    {{if gt .PolicyView.TotalSSH 0}}
+    <span class="ufg-chip"><strong>{{.PolicyView.TotalSSH}}</strong> {{t "acls.summary_ssh"}}</span>
+    {{end}}
+    {{if gt .PolicyView.TotalHosts 0}}
+    <span class="ufg-chip"><strong>{{.PolicyView.TotalHosts}}</strong> {{t "acls.summary_hosts"}}</span>
+    {{end}}
+    {{if gt .PolicyView.TotalTagOwners 0}}
+    <span class="ufg-chip"><strong>{{.PolicyView.TotalTagOwners}}</strong> {{t "acls.summary_tagOwners"}}</span>
+    {{end}}
+    {{if gt .PolicyView.TotalGroups 0}}
+    <span class="ufg-chip"><strong>{{.PolicyView.TotalGroups}}</strong> {{t "acls.summary_groups"}}</span>
+    {{end}}
+  </div>
+
+  {{/* === Categorised grants === */}}
+  {{range $catIdx, $cat := .PolicyView.Categories}}
+  <details class="acl-category" {{if eq $catIdx 0}}open{{end}} style="margin-bottom:8px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px">
+    <summary style="cursor:pointer;font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;list-style:none">
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;transition:transform 0.15s"></i>
+      {{t (printf "acls.category.%s.name" $cat.ID)}}
+      <span class="ufg-chip" style="font-size:11px">{{len $cat.Grants}}</span>
+    </summary>
+
+    <table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
+      <thead>
+        <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.src"}}</th>
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.dst"}}</th>
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.via"}}</th>
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.users"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $gIdx, $g := $cat.Grants}}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace;vertical-align:top">
+            {{range $sIdx, $s := $g.Src}}{{if $sIdx}}<br>{{end}}<code>{{$s}}</code>{{end}}
+          </td>
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace;vertical-align:top">
+            {{range $dIdx, $d := $g.Dst}}{{if $dIdx}}<br>{{end}}<code>{{$d}}</code>{{end}}
+          </td>
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace;vertical-align:top;color:var(--text-muted)">
+            {{if $g.Via}}{{range $vIdx, $v := $g.Via}}{{if $vIdx}}<br>{{end}}<code>{{$v}}</code>{{end}}{{else}}—{{end}}
+          </td>
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace;vertical-align:top;color:var(--text-muted)">
+            {{if $g.Users}}{{range $uIdx, $u := $g.Users}}{{if $uIdx}}<br>{{end}}<code>{{$u}}</code>{{end}}{{else}}—{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </details>
   {{end}}
+
+  {{/* === SSH separately (it's not in grants[]) === */}}
+  {{if gt (len .PolicyView.SSH) 0}}
+  <details style="margin-bottom:8px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px;margin-top:16px">
+    <summary style="cursor:pointer;font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;list-style:none">
+      <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
+      {{t "acls.ssh_title"}}
+      <span class="ufg-chip" style="font-size:11px">{{len .PolicyView.SSH}}</span>
+    </summary>
+    <table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
+      <thead>
+        <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.src"}}</th>
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.dst"}}</th>
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.users"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $g := .PolicyView.SSH}}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace;vertical-align:top">
+            {{range $sIdx, $s := $g.Src}}{{if $sIdx}}<br>{{end}}<code>{{$s}}</code>{{end}}
+          </td>
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace;vertical-align:top">
+            {{range $dIdx, $d := $g.Dst}}{{if $dIdx}}<br>{{end}}<code>{{$d}}</code>{{end}}
+          </td>
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace;vertical-align:top;color:var(--text-muted)">
+            {{range $uIdx, $u := $g.Users}}{{if $uIdx}}<br>{{end}}<code>{{$u}}</code>{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+
+  {{/* === tagOwners + groups metadata === */}}
+  {{if gt (len .PolicyView.TagOwners) 0}}
+  <details style="margin-bottom:8px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px">
+    <summary style="cursor:pointer;font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;list-style:none">
+      <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
+      {{t "acls.tagOwners_title"}}
+      <span class="ufg-chip" style="font-size:11px">{{len .PolicyView.TagOwners}}</span>
+    </summary>
+    <table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
+      <thead>
+        <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.tag"}}</th>
+          <th style="padding:4px 8px;font-weight:500">{{t "acls.col.owners"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $tIdx, $t := .PolicyView.TagOwners}}
+        {{range $tag, $owners := $t}}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace"><code>{{$tag}}</code></td>
+          <td style="padding:4px 8px;font-family:ui-monospace,monospace">
+            {{range $oIdx, $o := $owners}}{{if $oIdx}}<br>{{end}}<code>{{$o}}</code>{{end}}
+          </td>
+        </tr>
+        {{end}}
+        {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+
+  {{/* === Raw JSON (collapsed by default — for technical users) === */}}
+  <details style="margin-top:16px;border-top:1px dashed var(--border);padding-top:8px">
+    <summary style="cursor:pointer;color:var(--text-muted);font-size:12px;list-style:none">
+      <i class="fa-solid fa-chevron-right" style="font-size:10px"></i>
+      {{t "acls.raw_json_title"}}
+    </summary>
+    <pre style="margin-top:8px;font-size:11px;max-height:400px;overflow:auto">{{.PolicyView.RawJSON}}</pre>
+  </details>
+
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
     <a href="/admin/acls/export" class="btn btn-sm">
       <i class="fa-solid fa-download"></i> {{t "acls.export_btn"}}
@@ -44,6 +185,7 @@
       <i class="fa-solid fa-network-wired"></i> {{t "admin.subnets.title"}}
     </a>
   </div>
+  {{end}}
 </div>
 
 <div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8;color:#e0f2fe;--text:#e0f2fe;--text-muted:#bae6fd;--text-subtle:#7dd3fc">

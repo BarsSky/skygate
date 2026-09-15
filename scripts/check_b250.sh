@@ -47,8 +47,8 @@ check "GetAdminACLs pretty-prints via json.Indent" \
   grep -q 'json.Indent' internal/feature/admin/admin_pages.go
 
 # A3. Template wraps Policy in <pre> (preserves the indented newlines).
-check "internal/handlers/templates/admin/acls.html has <pre>{{.Policy}}</pre>" \
-  grep -q '<pre>{{.Policy}}</pre>' internal/handlers/templates/admin/acls.html
+check "internal/handlers/templates/admin/acls.html wraps raw JSON in <pre> (PolicyView.RawJSON or legacy .Policy)" \
+  grep -qE '<pre[^>]*>({{.*PolicyView.RawJSON|.Policy}})' internal/handlers/templates/admin/acls.html
 
 echo ""
 echo "=== B. Dark info card text contrast (acls.html) ==="
