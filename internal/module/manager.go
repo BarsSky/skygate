@@ -688,11 +688,22 @@ func (m *Manager) healthLoop(ctx context.Context, interval time.Duration) {
 	defer close(m.healthDone)
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	// 2026-09-16 (B254 fix): copy m.healthStop under the lock.
+	// StopHealthLoop writes `m.healthStop = nil` under m.mu;
+	// reading `m.healthStop` in the select below (unlocked) is
+	// racy per `go test -race`. Capturing the channel under the
+	// same lock that writes to it eliminates the read/write
+	// race. The local `stop` is then read by the select forever
+	// (send/recv on a closed channel returns the zero value), so
+	// semantics are preserved.
+	m.mu.Lock()
+	stop := m.healthStop
+	m.mu.Unlock()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.healthStop:
+		case <-stop:
 			return
 		case <-t.C:
 			m.checkAllHealth(ctx)

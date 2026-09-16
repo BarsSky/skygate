@@ -85,7 +85,16 @@ func (f *fakeModule) Stop(_ context.Context) error {
 	return f.stopErr
 }
 func (f *fakeModule) Status() ModuleStatus { return f.state }
-func (f *fakeModule) Health() HealthStatus { return f.healthResult }
+// 2026-09-16 (B254 fix): added lock — the test flips f.healthResult
+// (under f.mu) while the healthLoop goroutine calls Health() (without
+// lock) which read+returned the same field. With `-race`, Go's race
+// detector flags this as a Data Race. The fix is symmetric: Health()
+// takes the same mutex the writers use.
+func (f *fakeModule) Health() HealthStatus {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.healthResult
+}
 func (f *fakeModule) SubFeatures() []SubFeature {
 	return f.subFeatures
 }
@@ -464,20 +473,27 @@ func TestManager_HealthLoop_StateTransition(t *testing.T) {
 	a.mu.Unlock()
 
 	// Wait for the loop to detect the change.
+	// 2026-09-16 (B254 fix): hold RLock for both the lookup AND
+	// the State read — production code (manager.checkOneHealth
+	// line 750) writes `state.State = StateError` under m.mu.Lock(),
+	// so reading it without the lock races. Same RLock pattern
+	// used for the post-read at line 490.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		mgr.mu.RLock()
 		st := mgr.states["tailscale"]
+		ok := st != nil && st.State == StateError
 		mgr.mu.RUnlock()
-		if st != nil && st.State == StateError {
+		if ok {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	mgr.mu.RLock()
 	st := mgr.states["tailscale"]
+	stateOK := st != nil && st.State == StateError
 	mgr.mu.RUnlock()
-	if st == nil || st.State != StateError {
+	if !stateOK {
 		t.Errorf("state after unhealthy: got %v, want %v", st, StateError)
 	}
 
@@ -487,20 +503,26 @@ func TestManager_HealthLoop_StateTransition(t *testing.T) {
 	a.mu.Unlock()
 
 	deadline = time.Now().Add(2 * time.Second)
+	// 2026-09-16 (B254 fix): same RLock pattern — lock held
+	// across the State read (matches the post-read below at
+	// line 515). Production manager writes state.State under
+	// m.mu.Lock().
 	for time.Now().Before(deadline) {
 		mgr.mu.RLock()
 		st := mgr.states["tailscale"]
+		ok := st != nil && st.State == StateRunning
 		mgr.mu.RUnlock()
-		if st != nil && st.State == StateRunning {
+		if ok {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	mgr.mu.RLock()
-	st = mgr.states["tailscale"]
+	recoveredSt := mgr.states["tailscale"]
+	recoveredOK := recoveredSt != nil && recoveredSt.State == StateRunning
 	mgr.mu.RUnlock()
-	if st == nil || st.State != StateRunning {
-		t.Errorf("state after recovery: got %v, want %v", st, StateRunning)
+	if !recoveredOK {
+		t.Errorf("state after recovery: got %v, want %v", recoveredSt, StateRunning)
 	}
 }
 
