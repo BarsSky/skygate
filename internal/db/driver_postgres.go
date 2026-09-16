@@ -153,6 +153,7 @@ var pgMigrations = []MigrationEntry{
 	{68, "v0.68 (B232): repair device_rules_natural_key_uniq shape drift (B188.2 ON CONFLICT 6-col)", "migrations_v0_68_b232.go", migrateV068PG},
 	{69, "v0.69 (B235.3): derp_health.name column for the B235 .Name short-label pill", "migrations_v0_69_b235_3.go", migrateV069PG},
 	{70, "v0.70 (B238): portal_users AFTER UPDATE audit trigger (catches out-of-band password_hash rotations)", "migrations_v0_70_b238.go", migrateV070PG},
+	{71, "v0.71 (B252): derp_cert_sync table (cert auto-renewal state for bundled derper)", "migrations_v0_71_derp_cert_sync.go", migrateV071PG},
 }
 
 // PGMigrations returns the list of migrations the current

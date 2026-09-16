@@ -212,6 +212,26 @@ jobs:
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # 2026-09-15 (B253 fix): disable SLSA provenance attestation.
+          # docker/build-push-action@v6 generates a separate OCI
+          # attestation manifest tagged with `unknown/unknown`
+          # platform (no architecture field) alongside the image.
+          # The GitHub Actions "Installation" widget iterates over
+          # ALL manifests attached to the tag and shows install
+          # instructions for each — so the operator saw two
+          # `docker pull` rows (one for amd64, one for the
+          # unknown attestation) even though only one image is
+          # actually built. Setting provenance=false suppresses
+          # the attestation so the install widget shows one
+          # image. Trade-off: lose the SLSA supply-chain
+          # attestation. The GitHub-native "provenance" UI
+          # (Actions run → Summary → "Provenance") still works
+          # because that comes from the workflow run metadata,
+          # not from this OCI attestation.
+          provenance: false
+          # Same rationale for SBOM (cyclonedx JSON attached as
+          # another unattributed manifest). Suppress for parity.
+          sbom: false
 
   # ============================================================
   # Job 2: Go binary tarballs → GitHub Release

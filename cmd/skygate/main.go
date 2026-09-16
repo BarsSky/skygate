@@ -1682,7 +1682,17 @@ func main() {
 	// The "Cert auto-renewal" section on /admin/derp surfaces the
 	// derp_cert_sync rows; the "Sync now" button POSTs here so
 	// the operator doesn't have to wait for the daily cron tick.
-	mux.Handle("POST /admin/derp/cert-sync/run", authMW(http.HandlerFunc(adminSvc.PostAdminDerpCertSyncRun)))
+	//
+	// 2026-09-15: TEMPORARILY DISABLED (route still registered as
+	// 501 Not Implemented). The PostAdminDerpCertSyncRun handler
+	// lives in the in-progress internal/feature/admin/derp_cert_sync.go
+	// (B252.1 follow-up — not yet merged). Until that lands, the
+	// "Sync now" button on /admin/derp returns 501 so the page
+	// still renders cleanly. Re-enable the line above once
+	// scripts/check_b252_derp_cert_sync.sh is wired.
+	mux.Handle("POST /admin/derp/cert-sync/run", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "derp cert sync handler not yet implemented (B252.1 follow-up)", http.StatusNotImplemented)
+	})))
 	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
 	// integration config. The /admin/integrations landing page
 	// shows the current state of every pluggable component;
@@ -2009,7 +2019,16 @@ func main() {
 	// bot token, etc.) to see an immediate result instead of
 	// waiting for the next async-refresh tick (5 min on failure,
 	// 30s on success).
-	mux.Handle("POST /admin/telegram/probe/now", authMW(http.HandlerFunc(adminSvc.PostAdminTelegramProbeNow)))
+	//
+	// 2026-09-15: TEMPORARILY DISABLED (route still registered as
+	// 501 Not Implemented). The PostAdminTelegramProbeNow handler
+	// is part of the B253 follow-up (not yet merged). Until then
+	// the "Probe now" button returns 501 so the page still loads.
+	// Re-enable the line above once scripts/check_b253_telegram_async.sh
+	// is wired.
+	mux.Handle("POST /admin/telegram/probe/now", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "telegram probe handler not yet implemented (B253 follow-up)", http.StatusNotImplemented)
+	})))
 	// v1.5.2+ / B-mod-admin (2026-09-10): /admin/modules
 	// list + /admin/modules/{name} detail + POST handlers
 	// for install/start/stop/enable/disable/sub/{name}.
