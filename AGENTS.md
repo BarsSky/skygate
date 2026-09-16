@@ -17522,6 +17522,103 @@ with skygate container that has `SKYGATE_TS_AUTHKEY_FILE=/dev/null`:
   with the cached state + a "Probe now" button if they want
   the answer now.
 
+## B256 (v1.5.8+, 2026-09-15) — `GetOtherHSUserIDs` SQLSTATE 22P02 fix (live PG error spam every 5 min)
+
+**Symptom** (operator log review 2026-09-15): headscale's
+PostgreSQL log (skygate-pg-local) showed
+`ERROR: invalid input syntax for type integer: "" (SQLSTATE 22P02)`
+firing every ~5 minutes. No skygate user-facing breakage; visible
+only as stderr noise from the headscale gRPC → PG path. Pattern:
+`2026-09-15 16:35:02.415 ... ERROR: ... invalid input syntax for
+type integer: "" at character 118`, repeated at 16:40, 16:45, ...
+
+**Root cause**:
+- `internal/db/queries.go:281` `qSelectOtherHSUserIDs` was
+  `SELECT headscale_user_id FROM portal_users WHERE id != $1 AND headscale_user_id IS NOT NULL AND headscale_user_id != ''`
+- `portal_users.headscale_user_id` is **INTEGER** (migrations_pg.go:145 +
+  :184; `NOT NULL DEFAULT 0` after the v0.28 denormalisation) — NOT
+  TEXT. PostgreSQL refuses to cast `''` (the TEXT literal) to
+  INTEGER and raises SQLSTATE 22P02 every time the WHERE clause
+  reaches the third filter.
+- The error only fires when `id != $1` returns ≥1 row (when the
+  excludeID is a real user with at least one peer user). On a
+  fresh install with 1 user the query short-circuits on the
+  first filter — silent. On the live 14-portal-user install,
+  the error fires on every per-user Backfill call.
+- SQLite is permissive about cross-type comparison (`INTEGER != TEXT`)
+  so OpenTestPG-less unit tests (which SKIP without
+  `SKYGATE_TEST_PG_DSN`) never saw the bug — that's why it shipped.
+
+**Trigger path**:
+- `internal/nodeownership/auto.go:AutoBackfill` ticks every
+  `SKYGATE_NODE_DISCOVERY_INTERVAL` (default 5m, same cadence as
+  the symptom).
+- `runOneTick` iterates every portal user and calls
+  `Backfill(dbConn, hs, nodes, u.ID, u.Username, alertSink)`.
+- `Backfill` (line 255) silently swallows the error:
+  `ids, _ := dbpkg.GetOtherHSUserIDs(db.Current(), portalUserID)`.
+- The error fires, the `otherOwners` map ends up empty, the
+  Backfill proceeds. The only visible symptom is the headscale
+  PG stderr spam.
+
+**B256 fix** (single-line SQL change, no migration needed):
+- `queries.go qSelectOtherHSUserIDs`: `headscale_user_id != ''` →
+  `headscale_user_id != 0`. The `0` filter handles BOTH the
+  pre-v0.28 NULL sentinel (NULL `!=` 0 → NULL → AND treats as
+  FALSE) AND the post-v0.28 zero sentinel. The
+  `IS NOT NULL` clause is preserved for clarity / pre-v0.28
+  schema compat.
+- `queries.go` adds a 9-line comment block documenting the
+  `INTEGER != TEXT '` → SQLSTATE 22P02` chain for the next reader.
+- `internal/db/portal_users.go GetOtherHSUserIDs` comment block
+  expanded with the same diagnostic chain + the link to
+  `nodeownership/auto.go` AutoBackfill ticker.
+- `internal/db/portal_users_test.go`:
+  - `TestGetOtherHSUserIDs` updated: `headscale_user_id=0` is now
+    filtered server-side (the v0.28 sentinel), and the
+    `seedPortalUserNoHS` NULL-link variant is also asserted (covers
+    the pre-v0.28 code path).
+  - `TestGetOtherHSUserIDs_B256Regression` (new, 25 LOC) — a
+    2-user fixture pinned on real PG (via `SKYGATE_TEST_PG_DSN=...`)
+    that fails with SQLSTATE 22P02 against the pre-fix query and
+    passes against B256.
+- `scripts/check_b256_other_hs_user_ids_int_literal.sh` — 11
+  contracts pinning the SQL constant content + the test +
+  `verify_pre_deploy.sh` registration + `AGENTS.md` mention +
+  `go vet` (when go is on PATH).
+- `scripts/verify_pre_deploy.sh` — adds
+  `run_check "B256" ... 'test -f scripts/check_b256_other_hs_user_ids_int_literal.sh && bash ...'`.
+
+**Live verification** (post-deploy):
+- Trigger AutoBackfill tick manually:
+  `docker exec skygate-skygate-1 kill -SIGUSR1 $(pidof skygate)`,
+  or wait 5 minutes for the natural tick.
+- `docker exec skygate-pg-local psql -U skygate -d skygate -c "SELECT count(*) FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%headscale_user_id FROM portal_users%';"` should
+  return 0 within 1 minute of the deploy (no active offending
+  query).
+- `journalctl -u headscale --since "5 minutes ago" | grep -E
+  "SQLSTATE 22P02|invalid input syntax for type integer" | wc -l`
+  should be 0 (was ≥1 per 5-min tick pre-fix).
+
+**Files changed**:
+- `internal/db/queries.go` — qSelectOtherHSUserIDs const (1 line
+  SQL + 9-line diagnostic comment).
+- `internal/db/portal_users.go` — GetOtherHSUserIDs function
+  docstring (no behavior change to the Go code).
+- `internal/db/portal_users_test.go` — TestGetOtherHSUserIDs
+  updated + new TestGetOtherHSUserIDs_B256Regression (25 LOC).
+- `scripts/check_b256_other_hs_user_ids_int_literal.sh` — new,
+  11 grep-contracts + live-state prompt for the operator.
+- `scripts/verify_pre_deploy.sh` — B256 run_check entry.
+- `AGENTS.md` — this entry.
+
+**Known adjacent B-number noise** (separate, not B256): the
+operator's own `B254` (commit `cb5f99f9 fix(sql): B254 — convert
+remaining SQLite '?' placeholders + 'strftime' to PG`) shipped
+2026-09-15 and is unrelated — it addressed SQLite syntax drift,
+not the integer-vs-TEXT semantic. B256 was renumbered from B254
+to avoid collision with that work.
+
 ## B255 (v1.5.8+, 2026-09-16) — Telegram background polling + "Pin nearest exit node"
 
 **Symptom** (operator report 2026-09-16): "/admin/telegram долго

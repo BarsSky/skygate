@@ -453,24 +453,33 @@ func TestGetPortalUsernames(t *testing.T) {
 }
 
 // --- GetOtherHSUserIDs ---
+//
+// 2026-09-15 (B256) — added TestGetOtherHSUserIDs_B256Regression,
+// which fails on PG with SQLSTATE 22P02 against the pre-fix query
+// (`headscale_user_id != ''`). The original TestGetOtherHSUserIDs
+// was updated so `hsID=0` (the post-v0.28 unlinked sentinel) is
+// filtered server-side rather than passed through to callers.
 
 func TestGetOtherHSUserIDs(t *testing.T) {
 	d := openTestDB(t)
 	me := seedPortalUser(t, d, "me", "h", true, 100)
 	seedPortalUser(t, d, "other1", "h", false, 200)
-	// The SELECT has "headscale_user_id != ''", which only filters
-	// the empty string. NULL is filtered by the IS NOT NULL clause.
-	// Integer 0 is neither (it's a real value, just zero) so it
-	// passes through — callers that need to treat "0" as "no link"
-	// filter downstream. This test documents that behaviour.
+	// B256: headscale_user_id=0 is the "not yet linked" sentinel
+	// (migrations_pg.go v0.28 denormalisation, NOT NULL DEFAULT 0).
+	// The fix filters this server-side so callers only see users
+	// with a real headscale link. Pre-fix the query returned "0"
+	// and called this a feature; post-fix it correctly omits it.
 	seedPortalUser(t, d, "other2", "h", false, 0)
+	// NULL link (pre-v0.28 schema path) is also filtered — the
+	// IS NOT NULL clause handles it. Cover both code paths.
+	seedPortalUserNoHS(t, d, "other3", "h", false)
 
 	ids, err := GetOtherHSUserIDs(d, me)
 	if err != nil {
 		t.Fatalf("GetOtherHSUserIDs: %v", err)
 	}
 	sort.Strings(ids)
-	want := []string{"0", "200"}
+	want := []string{"200"}
 	if len(ids) != len(want) {
 		t.Fatalf("got %v, want %v", ids, want)
 	}
@@ -478,6 +487,41 @@ func TestGetOtherHSUserIDs(t *testing.T) {
 		if ids[i] != want[i] {
 			t.Errorf("ids[%d] = %q, want %q", i, ids[i], want[i])
 		}
+	}
+}
+
+// TestGetOtherHSUserIDs_B256Regression locks in the fix for the
+// 2026-09-15 production error:
+//
+//	ERROR: invalid input syntax for type integer: "" (SQLSTATE 22P02)
+//
+// which fired every ~5 min on the live VM (the AutoBackfill ticker
+// in internal/nodeownership/auto.go runs Backfill per portal user
+// on the SKYGATE_NODE_DISCOVERY_INTERVAL, default 5m). Each tick
+// triggered the qSelectOtherHSUserIDs query, which compared
+// INTEGER headscale_user_id against the literal TEXT ''; PG refused
+// the cast and bubbled the error back. The fix (queries.go
+// qSelectOtherHSUserIDs) drops the empty-string filter in favour
+// of `!= 0` (the post-v0.28 unlinked sentinel).
+//
+// This regression test exercises the EXACT code path that fired on
+// live: a 2-user fixture where the `other` user has a non-NULL
+// headscale_user_id. Before B256 that returned SQLSTATE 22P02; with
+// B256 it returns the integer-encoded id string.
+func TestGetOtherHSUserIDs_B256Regression(t *testing.T) {
+	d := openTestDB(t)
+	me := seedPortalUser(t, d, "me", "h", true, 100)
+	// other has headscale_user_id=200 — exactly the live-trigger
+	// case (the pre-fix `WHERE id != $1` returned ≥1 row, so PG
+	// reached the `headscale_user_id != ''` cast and errored).
+	seedPortalUser(t, d, "other", "h", false, 200)
+
+	ids, err := GetOtherHSUserIDs(d, me)
+	if err != nil {
+		t.Fatalf("GetOtherHSUserIDs: %v (B256 regression — pre-fix this was SQLSTATE 22P02 on PG)", err)
+	}
+	if len(ids) != 1 || ids[0] != "200" {
+		t.Fatalf("B256 regression: got %v, want [\"200\"]", ids)
 	}
 }
 

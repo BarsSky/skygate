@@ -448,10 +448,21 @@ func ListControlPlanes(d *sql.DB) ([]ControlPlaneUserCount, error) {
 }
 
 // GetOtherHSUserIDs returns the headscale_user_id values of every
-// portal user EXCEPT excludeID, skipping NULLs and empty strings.
-// Used by backfillNodeOwnership to build a "is this node already
-// claimed by someone else" lookup. Returns an empty slice if no
-// other users have a hs id (the common case on a fresh install).
+// portal user EXCEPT excludeID, skipping NULL and zero rows.
+// headscale_user_id is INTEGER NOT NULL DEFAULT 0 (migrations_pg.go:
+// 145 + :184); 0 means "not yet linked" so rows where it equals 0
+// are filtered server-side. Returns an empty slice if no other users
+// have a non-zero hs id (common on a fresh install or after a
+// headscale unlink).
+//
+// 2026-09-15 (B256) — the previous filter was `headscale_user_id !=
+// ''`, which is a TEXT literal comparison against an INTEGER column.
+// SQLite is permissive and the test suite skipped on PG (no
+// SKYGATE_TEST_PG_DSN), so the bug shipped to production where
+// PostgreSQL raises SQLSTATE 22P02 every time the query plan reaches
+// the empty-string cast. See queries.go qSelectOtherHSUserIDs for the
+// full diagnostic chain and the upgrade note in nodeownership's
+// 5-min AutoBackfill goroutine (internal/nodeownership/auto.go).
 func GetOtherHSUserIDs(d *sql.DB, excludeID int64) ([]string, error) {
 	rows, err := d.Query(qSelectOtherHSUserIDs, excludeID)
 	if err != nil {

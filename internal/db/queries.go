@@ -275,10 +275,22 @@ const (
 )
 
 // qSelectOtherHSUserIDs returns the headscale_user_id values of every
-// portal user EXCEPT the one whose id matches `?`. Used by
-// backfillNodeOwnership's Strategy A to short-circuit a node already
+// portal user EXCEPT the one whose id matches `$1`. Used by
+// nodeownership.Backfill's Strategy A to short-circuit a node already
 // claimed by a different portal user.
-const qSelectOtherHSUserIDs = `SELECT headscale_user_id FROM portal_users WHERE id != $1 AND headscale_user_id IS NOT NULL AND headscale_user_id != ''`
+//
+// 2026-09-15 (B256) — was `headscale_user_id != ''`. port_users.headscale_user_id
+// is INTEGER (migrations_pg.go:145 + :184, NOT NULL DEFAULT 0 after
+// the v0.28 denormalisation). PostgreSQL refuses to cast `''` to
+// integer and raises SQLSTATE 22P02 "invalid input syntax for type
+// integer: """ the moment the `id != $1` filter returns ≥1 row —
+// which is every per-user Backfill call from the AutoBackfill 5-min
+// ticker. SQLite is permissive about cross-type comparison so the
+// bug was invisible to OpenTestPG-less unit tests (which is why it
+// shipped). Filter `!= 0` instead — covers both the pre-v0.28 NULL
+// sentinel (NULL != 0 → NULL → AND treats as FALSE) and the
+// post-v0.28 zero sentinel.
+const qSelectOtherHSUserIDs = `SELECT headscale_user_id FROM portal_users WHERE id != $1 AND headscale_user_id IS NOT NULL AND headscale_user_id != 0`
 
 // ---------------------------------------------------------------
 // devices  —  v0.25 migration
