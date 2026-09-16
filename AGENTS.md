@@ -51,9 +51,9 @@ operator decision rationale.
 
 ## Release status
 
-* **Current**: v1.5.7-13-gf25acd7 (commit `f25acd7` on VM remote,
-  B253 + B254 PG compat + B255 + **B257 device adoption for
-  pre-existing headscale instances** shipped) — **B167 OIDC config
+* **Current**: v1.5.7-15-g899f834 (commit `899f834` on VM remote,
+  B253 + B254 PG compat + B255 + B257 + **B258 /admin/tailscale
+  disabled-state UI** shipped) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
