@@ -473,7 +473,11 @@ operator decision rationale.
     synthetic user, empty portal username)
     + firstTagOrFallback preservation
     + idempotency.
-  - **B176 + B175.1 (v1.5.2)**: dev-tag
+  - **B257 (v1.5.8+, 2026-09-15)**: `scripts/check_hygiene.sh` +
+  `.gitignore` `/tmp/*.{sh,html,json,log,go,txt,py}` patterns
+  (audit-only infrastructure for the operator's "what weighs
+  how much in the working tree + build cache + VM" question).
+- **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip
     rewrite. Operator 2026-08-25
