@@ -51,16 +51,9 @@ operator decision rationale.
 
 ## Release status
 
-* **Current**: v1.5.2-alpha1 (commit `66b17a3` on VM remote,
-  `7d90af2f` B170 + `45ab8ff9` B171 +
-  `40f8c81b` B172 +
-  `6b1c241` B173 +
-  `9bbb750` B173.1 +
-  `794b9c6` B174 +
-  `e4e1ac7` B175 +
-  `66b17a3` B176 + B175.1 in flight + B177–B183 already
-  shipped + **B184 DOMAIN status propagation
-  (uncommitted, in this branch)**) — **B167 OIDC config
+* **Current**: v1.5.7-8-gc2f5826 (commit `c2f5826` on VM remote,
+  B253 + B254 PG compat + **B255 Telegram background polling
+  + Pin nearest exit node** shipped) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
