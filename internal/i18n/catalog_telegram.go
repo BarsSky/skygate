@@ -92,6 +92,15 @@ var ruTelegram = map[string]string{
 	"telegram.egress_no_relays"         : "Нет enabled exit-nodes. Сначала добавьте relay через <a href=\"/admin/exit-nodes\" target=\"_blank\" rel=\"noopener\">/admin/exit-nodes</a>.",
 	"telegram.egress_node_required"     : "Выберите relay",
 	"telegram.egress_audit"             : "relay=%s routes=%d ssh=%s",
+	// 2026-09-16 (B255): one-click "Pin nearest exit node".
+	// The button calls POST /admin/telegram with
+	// action=set_nearest_egress; the handler measures latency
+	// from skygate-host tailscaled via `tailscale status --json`
+	// (PeerLatency) and reuses the set_egress SSH path.
+	"telegram.egress_nearest_apply"     : "Закрепить ближайший exit node",
+	"telegram.egress_nearest_apply_help": "— измеряет задержку от skygate-host до каждого enabled relay через <code>tailscale status --json</code> и применяет маршруты на самый быстрый.",
+	"telegram.egress_nearest_apply_confirm": "Измерить задержку и применить каноничный Telegram-CIDR на ближайший relay?",
+	"telegram.egress_nearest_no_latency": "tailscaled на skygate-host не запущен — измерить задержку невозможно. Откройте <a href=\"/admin/tailscale\" target=\"_blank\" rel=\"noopener\">/admin/tailscale</a> и нажмите Start. Будет выбран первый enabled relay.",
 	// 2026-08-25 (B185): container tailscale diagnostic (RU)
 	"telegram.container_title"           : "Container tailscale state",
 	"telegram.container_subtitle"        : "Live <code>docker exec skygate-skygate-1 tailscale status --json</code>. Если <code>RouteAll=false</code>, контейнер не примет subnet-маршруты от egress relay и probe останется <code>unreachable</code> (см. B185).",
@@ -187,6 +196,11 @@ var enTelegram = map[string]string{
 	"telegram.egress_no_relays"         : "No enabled exit-nodes. Add one first via <a href=\"/admin/exit-nodes\" target=\"_blank\" rel=\"noopener\">/admin/exit-nodes</a>.",
 	"telegram.egress_node_required"     : "Pick a relay",
 	"telegram.egress_audit"             : "relay=%s routes=%d ssh=%s",
+	// 2026-09-16 (B255): one-click "Pin nearest exit node" (EN).
+	"telegram.egress_nearest_apply"     : "Pin nearest exit node",
+	"telegram.egress_nearest_apply_help": "— measures latency from skygate-host to each enabled relay via <code>tailscale status --json</code> and applies routes to the fastest one.",
+	"telegram.egress_nearest_apply_confirm": "Measure latency and apply the canonical Telegram-CIDR to the nearest relay?",
+	"telegram.egress_nearest_no_latency": "tailscaled on skygate-host is not running — latency cannot be measured. Open <a href=\"/admin/tailscale\" target=\"_blank\" rel=\"noopener\">/admin/tailscale</a> and click Start. The first enabled relay will be picked as a fallback.",
 	// 2026-08-25 (B185): container tailscale diagnostic (EN)
 	"telegram.container_title"           : "Container tailscale state",
 	"telegram.container_subtitle"        : "Live <code>docker exec skygate-skygate-1 tailscale status --json</code>. If <code>RouteAll=false</code>, the container will not accept subnet routes from the egress relay and the probe will stay <code>unreachable</code> (see B185).",

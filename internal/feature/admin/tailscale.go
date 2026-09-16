@@ -438,7 +438,13 @@ func tailscaleAvailable() bool {
 // writes to /var/run/tailscale/tailscaled.sock when it's up;
 // the bind-mount in docker-compose.yml makes the path
 // accessible from inside the skygate container.
-func tailscaledRunning() bool {
+func tailscaledRunning() bool { return tailscaledRunningFn() }
+
+// tailscaledRunningFn is the indirection used by unit tests
+// to stub the "is tailscaled up?" check without touching the
+// host's actual unix socket. Production code calls
+// tailscaledRunning; tests override this var.
+var tailscaledRunningFn = func() bool {
 	socket := "/var/run/tailscale/tailscaled.sock"
 	if _, err := os.Stat(socket); err != nil {
 		return false

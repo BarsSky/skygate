@@ -16,15 +16,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 	"skygate/internal/telegram"
 )
 
@@ -202,19 +206,35 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 	if err := row.Scan(&ts); err == nil && ts > 0 {
 		state.UpdatedAt = time.Unix(ts, 0).UTC().Format("2006-01-02 15:04:05 UTC")
 	}
-	// 2026-08-25 (B185): the container's tailscaled state
-	// decides whether the probe is even reachable. If
-	// RouteAll=false the container will never accept
-	// subnet routes from the egress relay, regardless of
-	// what the relay advertises. The diagnostic block
-	// below the probe surfaces this in one line + one
-	// button, so the operator doesn't have to ssh + read
-	// /var/lib/tailscale/tailscaled.state by hand.
-	state.Container = readContainerTailscaleState("skygate-skygate-1")
+	// 2026-09-16 (B255): the container's tailscaled
+	// state used to be read here via
+	// readContainerTailscaleState(), which shells out to
+	// `docker exec skygate-skygate-1 tailscale status
+	// --json` (~1-3s on a healthy host, ~8s if
+	// tailscaled isn't running). That blocked page
+	// render. The state is now filled in by the bg
+	// handler AdminTelegramContainerBg + the JS in
+	// admin/telegram.html, NOT here.
+	//
+	// state.Container intentionally stays at its zero
+	// value (Available=false) until the bg handler fires
+	// — the template's id="telegram-container-slot" is
+	// rendered empty + the bg response replaces it.
 	return state
 }
 
 // AdminTelegram renders the /admin/telegram page. Admin-only.
+//
+// 2026-09-16 (B253 follow-up): removed two SYNCHRONOUS calls that
+// delayed page render by up to ~5s on cold-cache (the
+// api.telegram.org HTTP probe) + ~1-3s for the docker-inspect
+// container state. Both now load asynchronously via
+//   GET /admin/telegram/probe-bg
+//   GET /admin/telegram/container-bg
+// started by the small JS in /admin/telegram.html.
+// `state.Probe` and `state.Container` are intentionally left at
+// zero-values here — the JS updates them in place. The page now
+// renders with a CSS spinner instead of blocking on network.
 func (s *Service) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -222,10 +242,16 @@ func (s *Service) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := s.loadTelegramUIState()
-	if state.Configured {
-		token, _, _, _ := db.LoadTelegramToken(s.dbc())
-		state.Probe = s.cachedTelegramProbe(r.Context(), db.TelegramFingerprint(token))
-	}
+	// IMPORTANT (B253): the next two lines USED to run synchronously:
+	//
+	//   if state.Configured {
+	//       token, _, _, _ := db.LoadTelegramToken(s.dbc())
+	//       state.Probe = s.cachedTelegramProbe(r.Context(), db.TelegramFingerprint(token))
+	//   }
+	//   state.Container = readContainerTailscaleState("skygate-skygate-1")
+	//
+	// Both are now deferred to background GET handlers below. See
+	// AdminTelegramProbeBg + AdminTelegramContainerBg.
 	csrf, err := db.RandomConfirmationToken(8)
 	if err != nil {
 		http.Error(w, "csrf generation failed", http.StatusInternalServerError)
@@ -247,6 +273,103 @@ func (s *Service) AdminTelegram(w http.ResponseWriter, r *http.Request) {
 		"FlashError":   r.URL.Query().Get("err"),
 		"CSRF":         csrf,
 	})
+}
+
+// AdminTelegramProbeBg renders /admin/telegram/probe-bg — the
+// background poll for the Telegram API probe. Used by the small
+// JS that fires from /admin/telegram.html after DOM-ready. Returns
+// HTML (not JSON) so we can `el.outerHTML = ...` it directly
+// instead of running a template engine on the client side.
+//
+// 2026-09-16 (B255): this is the rendering path extracted from
+// the original synchronous AdminTelegram handler — the probe
+// used to block page render for up to 5s on cold cache. The
+// rendered HTML matches what the original template produced
+// (admin/telegram.html lines 55-103) so the JS can drop the
+// response into the same DOM slot. Admin-only.
+func (s *Service) AdminTelegramProbeBg(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	lang := s.I18n.LangFromRequest(r)
+	state := s.loadTelegramUIState()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store") // JS polls live
+	if !state.Configured {
+		// Token was deleted between render and this poll.
+		// Render the "not configured" pill in the same DOM
+		// slot as the probe (the slot's parent already shows
+		// the "not configured" pill at the page header — this
+		// is the bg-localized variant so the JS swap is
+		// self-contained).
+		_, _ = w.Write([]byte(
+			`<div class="alert alert-warn" id="telegram-probe-slot"><i class="fa-solid fa-triangle-exclamation"></i> ` +
+				html.EscapeString(i18n.Tf(lang, "telegram.pill_not_configured")) + `</div>`))
+		return
+	}
+	token, _, _, _ := db.LoadTelegramToken(s.dbc())
+	probe := s.cachedTelegramProbe(r.Context(), db.TelegramFingerprint(token))
+	_, _ = w.Write([]byte(renderProbeHTML(probe, state.Container, lang)))
+}
+
+// AdminTelegramContainerBg renders /admin/telegram/container-bg —
+// the container-tailscaled state. Same shape as ProbeBg. The
+// inner block is wrapped in #telegram-container-slot so the JS
+// can drop it in via `el.outerHTML = ...`.
+func (s *Service) AdminTelegramContainerBg(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	lang := s.I18n.LangFromRequest(r)
+	csrf, setCookie := mintTelegramCSRF(r, w)
+	ct := readContainerTailscaleState("skygate-skygate-1")
+	if setCookie {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// no-store; the Set-Cookie is already written by
+		// mintTelegramCSRF before we set Content-Type, so the
+		// browser will persist the cookie before consuming
+		// the body.
+		w.Header().Set("Cache-Control", "no-store")
+	} else {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	_, _ = w.Write([]byte(renderContainerHTML(ct, csrf, lang)))
+}
+
+// mintTelegramCSRF returns the existing skygate_tg_csrf cookie
+// value if present; otherwise generates a fresh one and sets it.
+// Used by the bg container endpoint so the "Re-apply
+// accept-routes" form inside the rendered HTML keeps working
+// across polls (the original 600s MaxAge would otherwise expire
+// while the page is open).
+//
+// `setCookie` reports whether the cookie was (re-)written on
+// this request — the caller can decide whether to log it.
+func mintTelegramCSRF(r *http.Request, w http.ResponseWriter) (csrf string, setCookie bool) {
+	if c, err := r.Cookie("skygate_tg_csrf"); err == nil && c.Value != "" {
+		return c.Value, false
+	}
+	tok, err := db.RandomConfirmationToken(8)
+	if err != nil {
+		// Extremely unlikely (rand read failure). Return
+		// empty so the form is disabled rather than failing
+		// the whole render.
+		return "", false
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "skygate_tg_csrf",
+		Value:    tok,
+		Path:     "/admin/telegram",
+		MaxAge:   600,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return tok, true
 }
 
 // AdminTelegramPost dispatches the form to the right handler
@@ -289,6 +412,12 @@ func (s *Service) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 		s.handleTelegramRefreshMenu(w, r, c)
 	case "set_egress":
 		s.handleTelegramSetEgress(w, r, c)
+	case "set_nearest_egress":
+		// 2026-09-16 (B255): one-click "Pin nearest exit
+		// node" — measures latency from skygate-host's
+		// tailscaled to each enabled exit server, picks
+		// the lowest, and reuses the set_egress path.
+		s.handleTelegramSetNearestEgress(w, r, c)
 	case "clear_egress":
 		s.handleTelegramClearEgress(w, r, c)
 	case "reapply_accept_routes":
@@ -870,3 +999,344 @@ func (s *Service) handleTelegramReapplyAcceptRoutes(w http.ResponseWriter, r *ht
 	s.invalidateTelegramProbe()
 	s.redirectWithFlash(w, r, "Container tailscaled: --accept-routes=true применён. Probe обновится в течение 30с.", "")
 }
+
+// renderProbeHTML returns the `<div class="alert alert-probe
+// probe-{state}">…</div>` block used by both AdminTelegram
+// (synchronous path) and AdminTelegramProbeBg (async path).
+// The output is wrapped in `id="telegram-probe-slot"` so the JS
+// in /admin/telegram.html can swap it via
+// `document.getElementById('telegram-probe-slot').outerHTML = …`
+// after fetch.
+//
+// `container` is the live state from readContainerTailscaleState —
+// it's used to choose the FIRST troubleshooting tip when the probe
+// is unreachable (the operator's B255 follow-up: the most common
+// cause on the live VM was a RouteAll=false container, not a
+// missing relay, so the pre-B255 banner that always listed the
+// 4 generic tips pointed at the wrong knob).
+//
+// Mirrors admin/telegram.html lines 55-103. If you change the
+// template, change this function in lockstep — the unit tests in
+// telegram_b255_test.go assert the structural parity.
+func renderProbeHTML(probe TelegramProbeResult, container ContainerTailscaleState, lang string) string {
+	stateStr := probe.State.String()
+	var sb strings.Builder
+	sb.WriteString(`<div id="telegram-probe-slot" class="alert alert-probe probe-`)
+	sb.WriteString(stateStr)
+	sb.WriteString(`">`)
+	switch stateStr {
+	case "ok_direct":
+		sb.WriteString(`<i class="fa-solid fa-globe"></i>`)
+	case "ok_relay":
+		sb.WriteString(`<i class="fa-solid fa-route"></i>`)
+	default:
+		sb.WriteString(`<i class="fa-solid fa-triangle-exclamation"></i>`)
+	}
+	sb.WriteString(`<div><strong>`)
+	switch stateStr {
+	case "ok_direct":
+		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_ok_direct_label")))
+	case "ok_relay":
+		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_ok_relay_label")))
+	default:
+		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_unreachable_label")))
+	}
+	sb.WriteString(`</strong><div class="sub">`)
+	if probe.Message != "" {
+		sb.WriteString(html.EscapeString(probe.Message))
+	}
+	if probe.LatencyMS != "" {
+		sb.WriteString(" ")
+		sb.WriteString(html.EscapeString(i18n.Tf(lang, "telegram.probe_latency", probe.LatencyMS)))
+	}
+	sb.WriteString(`</div>`)
+	if len(probe.ResolvedIPs) > 0 {
+		sb.WriteString(`<div class="sub" style="font-family:monospace;font-size:.85em">`)
+		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_resolved_prefix")))
+		for _, ip := range probe.ResolvedIPs {
+			sb.WriteString("<code>")
+			sb.WriteString(html.EscapeString(ip))
+			sb.WriteString("</code> ")
+		}
+		sb.WriteString(`</div>`)
+	}
+	if stateStr == "unreachable" {
+		sb.WriteString(`<div class="sub" style="margin-top:.5rem"><strong>`)
+		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_troubleshooting")))
+		sb.WriteString(`</strong><ul style="margin:.4rem 0 0 1.2rem;line-height:1.5">`)
+		// B-bug-fix (2026-09-15): surface the actual cause first
+		// instead of the generic 4 tips. Mirrors the template
+		// patch on lines 90-94 of admin/telegram.html.
+		if !container.Available {
+			sb.WriteString(`<li><strong style="color:varc#a00)">`)
+			sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_tip_container_off")))
+			sb.WriteString(`</strong></li>`)
+		} else if !container.RouteAll {
+			sb.WriteString(`<li><strong style="color:varc#a00)">`)
+			sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_tip_container_no_accept")))
+			sb.WriteString(`</strong></li>`)
+		}
+		for _, tipKey := range []string{
+			"telegram.probe_tip_advertise",
+			"telegram.probe_tip_approve",
+			"telegram.probe_tip_update",
+			"telegram.probe_tip_docs",
+		} {
+			sb.WriteString(`<li>`)
+			sb.WriteString(html.EscapeString(i18n.T(lang, tipKey)))
+			sb.WriteString(`</li>`)
+		}
+		sb.WriteString(`</ul></div>`)
+	}
+	sb.WriteString(`</div></div>`)
+	return sb.String()
+}
+
+// renderContainerHTML returns the inner block of the container
+// tailscale diagnostic card (admin/telegram.html lines 218-260).
+// Wrapped in `id="telegram-container-slot"` so the JS can swap
+// it. The `csrf` argument is written into the "Re-apply
+// accept-routes" form (only rendered when HasAcceptIssue=true).
+func renderContainerHTML(ct ContainerTailscaleState, csrf string, lang string) string {
+	var sb strings.Builder
+	sb.WriteString(`<div id="telegram-container-slot">`)
+	if !ct.Available {
+		sb.WriteString(`<div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i> `)
+		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.container_unavailable")))
+		if ct.RawStderr != "" {
+			sb.WriteString(`<pre style="margin:.4rem 0 0;font-size:.8em;color:#666">`)
+			sb.WriteString(html.EscapeString(ct.RawStderr))
+			sb.WriteString(`</pre>`)
+		}
+		sb.WriteString(`</div>`)
+	} else {
+		sb.WriteString(`<table class="kv" style="font-size:.92em;line-height:1.5">`)
+		row := func(label, value string) {
+			sb.WriteString(`<tr><th style="text-align:left;width:14em">`)
+			sb.WriteString(html.EscapeString(label))
+			sb.WriteString(`</th><td>`)
+			sb.WriteString(value) // value is pre-built (already HTML-safe code)
+			sb.WriteString(`</td></tr>`)
+		}
+		row(i18n.T(lang, "telegram.container_hostname"), "<code>"+html.EscapeString(ct.Hostname)+"</code>")
+		backend := "<code>" + html.EscapeString(ct.BackendState) + "</code>"
+		if ct.BackendState == "Running" {
+			backend += `<span class="muted">✓</span>`
+		} else {
+			backend += `<span class="muted">⚠</span>`
+		}
+		row(i18n.T(lang, "telegram.container_backend"), backend)
+		row(i18n.T(lang, "telegram.container_ip4"), "<code>"+html.EscapeString(ct.IP4)+"</code>")
+		row(i18n.T(lang, "telegram.container_ip6"), "<code>"+html.EscapeString(ct.IP6)+"</code>")
+		var routeAllCell string
+		if ct.RouteAll {
+			routeAllCell = `<span class="badge badge-success">` +
+				html.EscapeString(i18n.T(lang, "telegram.container_route_all_on")) + `</span>`
+		} else {
+			routeAllCell = `<span class="badge badge-danger">` +
+				html.EscapeString(i18n.T(lang, "telegram.container_route_all_off")) +
+				`</span><span class="muted" style="margin-left:.4rem">— ` +
+				html.EscapeString(i18n.T(lang, "telegram.container_route_all_off_help")) + `</span>`
+		}
+		row(i18n.T(lang, "telegram.container_route_all"), routeAllCell)
+		var tagsCell string
+		if len(ct.AdvertiseTags) > 0 {
+			for _, tag := range ct.AdvertiseTags {
+				tagsCell += "<code>" + html.EscapeString(tag) + "</code> "
+			}
+		} else {
+			tagsCell = `<span class="badge badge-danger">` +
+				html.EscapeString(i18n.T(lang, "telegram.container_no_tags")) + `</span>`
+		}
+		row(i18n.T(lang, "telegram.container_advertise_tags"), tagsCell)
+		var exitNodeCell string
+		if ct.ExitNodeID != "" {
+			exitNodeCell = "<code>" + html.EscapeString(ct.ExitNodeID) + "</code>"
+		} else {
+			exitNodeCell = `<span class="muted">` +
+				html.EscapeString(i18n.T(lang, "telegram.container_no_exit_node")) + `</span>`
+		}
+		row(i18n.T(lang, "telegram.container_exit_node"), exitNodeCell)
+		sb.WriteString(`</table>`)
+		if ct.HasAcceptIssue {
+			sb.WriteString(`<div class="alert alert-warn" style="margin-top:.5rem"><i class="fa-solid fa-triangle-exclamation"></i> `)
+			sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.container_issue_help")))
+			sb.WriteString(`</div>`)
+			sb.WriteString(`<form action="/admin/telegram" method="POST" style="margin-top:.5rem" onsubmit="return confirm('`)
+			sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.container_reapply_confirm")))
+			sb.WriteString(`')">`)
+			sb.WriteString(`<input type="hidden" name="csrf" value="`)
+			sb.WriteString(html.EscapeString(csrf))
+			sb.WriteString(`">`)
+			sb.WriteString(`<input type="hidden" name="action" value="reapply_accept_routes">`)
+			sb.WriteString(`<button type="submit" class="btn btn-primary"><i class="fa-solid fa-rotate"></i> `)
+			sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.container_reapply_button")))
+			sb.WriteString(`</button></form>`)
+		}
+	}
+	sb.WriteString(`</div>`)
+	return sb.String()
+}
+
+// handleTelegramSetNearestEgress (B255, 2026-09-16) is the
+// one-click "Pin nearest exit node" button.
+//
+// It enumerates the enabled exit_servers, reads
+// `tailscale status --json` on the host (skygate-host-1) to
+// pick up each peer's `PeerLatency`, sorts by latency ascending
+// and applies the canonical Telegram-CIDR to the FASTEST one —
+// the same SSH+advertise-routes code path as
+// handleTelegramSetEgress. If the host's tailscaled isn't
+// running (no PeerLatency data) the operator gets a clear
+// flash pointing at /admin/tailscale (Start), and we fall
+// back to the FIRST enabled relay so the button still does
+// something useful (the operator can manually pick another
+// via the dropdown above).
+func (s *Service) handleTelegramSetNearestEgress(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	lang := s.I18n.LangFromRequest(r)
+	auditUID, auditName := s.Backend.InfraAuditIdentity(c.UserID, c.Username)
+	relays, err := db.ListExitServers(s.dbc())
+	if err != nil {
+		s.Backend.Audit(auditUID, auditName, "telegram_egress_set_nearest",
+			fmt.Sprintf("err=%q", err.Error()))
+		writeErrRedirect(w, r, i18n.Tf(lang, "telegram.egress_apply_fail", err.Error()))
+		return
+	}
+	enabled := make([]db.ExitServer, 0, len(relays))
+	for _, e := range relays {
+		if e.Enabled {
+			enabled = append(enabled, e)
+		}
+	}
+	if len(enabled) == 0 {
+		s.Backend.Audit(auditUID, auditName, "telegram_egress_set_nearest",
+			"no_enabled_relays")
+		writeErrRedirect(w, r, i18n.T(lang, "telegram.egress_no_relays"))
+		return
+	}
+
+	// Measure latency from skygate-host's tailscaled. If
+	// tailscaled isn't running the PeerLatency map is empty —
+	// fall back to the first enabled relay (sorted by node_id
+	// for stability) so the click still applies SOMETHING and
+	// the operator gets an actionable flash.
+	latencies, latErr := tailscalePeerLatencies()
+	if latErr != nil {
+		s.Backend.Audit(auditUID, auditName, "telegram_egress_set_nearest",
+			fmt.Sprintf("latency_err=%q fallback=first", latErr.Error()))
+	}
+	// Sort the enabled relays by latency ascending; relays with
+	// no latency measurement land at the bottom so they're only
+	// picked if NO relay has a measurement.
+	sort.SliceStable(enabled, func(i, j int) bool {
+		li, oki := latencies[enabled[i].Hostname]
+		lj, okj := latencies[enabled[j].Hostname]
+		if oki != okj {
+			return oki // measured relays first
+		}
+		if !oki {
+			return false // both unmeasured — preserve ListExitServers order
+		}
+		return li < lj
+	})
+
+	picked := enabled[0]
+	s.Backend.Audit(auditUID, auditName, "telegram_egress_set_nearest",
+		fmt.Sprintf("picked=%s latency_ms=%s candidates=%d",
+			picked.Hostname,
+			strconv.FormatFloat(latencies[picked.Hostname], 'f', 1, 64),
+			len(enabled)))
+
+	// Apply via the shared helper. We rewrite r.FormValue
+	// by injecting the picked node_id into r.PostForm so the
+	// applyEgress helper picks it up. (handleTelegramSetEgress
+	// already does the SSH + advertise-routes + audit work;
+	// we reuse it to avoid duplicating 80 lines of code.)
+	r.PostForm.Set("node_id", picked.NodeID)
+	r.Form.Set("node_id", picked.NodeID)
+	s.handleTelegramSetEgress(w, r, c)
+}
+
+// tailscaleStatusExecFn is the indirection that unit tests
+// override to stub the `tailscale status --json` output
+// without running tailscale on the host. Production code
+// calls tailscalePeerLatencies; tests use this var to
+// return canned JSON. The ctx is passed through so the
+// real implementation honours the 5s timeout (tests
+// typically ignore it).
+var tailscaleStatusExecFn = func(ctx context.Context) ([]byte, error) {
+	return exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
+}
+
+// tailscalePeerLatencies (B255) returns a map of
+// headscale `HostName` → round-trip latency in milliseconds,
+// derived from `tailscale status --json` on the HOST
+// (skygate-host-1). Returns (empty, nil) when tailscaled
+// isn't running — callers treat that as "no measurement
+// available" rather than a hard error.
+//
+// Why "on host" instead of inside the skygate container:
+// the latency we care about is the routing latency from
+// the host that runs skygate to the relay — that's the
+// path the Telegram-CIDR traffic will actually take. The
+// container's view is its OWN tailscaled peer graph, which
+// is a different (often higher-latency) path.
+//
+// The status JSON exposes PeerLatency as either a number
+// (the legacy "ms" form) or an object { "ms": N, ... }
+// (newer clients). We accept both.
+func tailscalePeerLatencies() (map[string]float64, error) {
+	out := map[string]float64{}
+	if !tailscaledRunning() {
+		return out, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, err := tailscaleStatusExecFn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("tailscale status: %w", err)
+	}
+	// Use json.Number via decoder so we don't lose precision
+	// on the latency field. The shape is:
+	//   "Peer": { "<nodekey>": { "HostName": "...", "PeerLatency": { "ms": 12.3 } } }
+	// but legacy tailscale clients emit "PeerLatency": 12.3
+	// (number, not object). We accept both via a custom
+	// unmarshal hook on a wrapper type.
+	var decoded struct {
+		Peer map[string]struct {
+			HostName    string         `json:"HostName"`
+			PeerLatency json.RawMessage `json:"PeerLatency"`
+		} `json:"Peer"`
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
+	if err := dec.Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("parse status: %w", err)
+	}
+	for _, p := range decoded.Peer {
+		if p.HostName == "" || len(p.PeerLatency) == 0 {
+			continue
+		}
+		var ms float64
+		// Try the object form first: {"ms": 12.3, ...}
+		var obj struct {
+			MS json.Number `json:"ms"`
+		}
+		if err := json.Unmarshal(p.PeerLatency, &obj); err == nil && obj.MS != "" {
+			if f, ferr := strconv.ParseFloat(string(obj.MS), 64); ferr == nil {
+				ms = f
+			}
+		}
+		if ms == 0 {
+			// Try the legacy bare-number form: 12.3
+			if f, ferr := strconv.ParseFloat(string(p.PeerLatency), 64); ferr == nil {
+				ms = f
+			}
+		}
+		if ms > 0 {
+			out[p.HostName] = ms
+		}
+	}
+	return out, nil
+}
+

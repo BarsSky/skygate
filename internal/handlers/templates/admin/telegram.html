@@ -52,7 +52,7 @@
   filter in the template marks it as "trust this HTML").
 */}}
 {{if .State.Configured}}
-<div class="alert alert-probe probe-{{.State.Probe.State}}">
+<div id="telegram-probe-slot" class="alert alert-probe probe-{{.State.Probe.State}}">
   <i class="fa-solid {{if eq .State.Probe.State.String "ok_direct"}}fa-globe{{else if eq .State.Probe.State.String "ok_relay"}}fa-route{{else}}fa-triangle-exclamation{{end}}"></i>
   <div>
     <strong>
@@ -215,6 +215,7 @@
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-server"></i> {{t "telegram.container_title"}}</h3>
     <p class="sub">{{t "telegram.container_subtitle" | safeHTML}}</p>
+    <div id="telegram-container-slot">
     {{if not .State.Container.Available}}
       <div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i>
         {{t "telegram.container_unavailable"}}
@@ -258,6 +259,7 @@
       </form>
       {{end}}
     {{end}}
+    </div>
   </div>
 
   <div class="card" style="grid-column:1 / -1">
@@ -282,6 +284,19 @@
       </div>
       <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> {{t "telegram.egress_apply"}}</button>
     </form>
+    {{/* 2026-09-16 (B255): one-click "Pin nearest exit node" —
+        measures latency from skygate-host's tailscaled to each
+        enabled relay via `tailscale status --json` PeerLatency
+        and applies routes to the fastest one. The handler
+        (handleTelegramSetNearestEgress) reuses set_egress's SSH
+        + advertise-routes logic so the result is identical to a
+        manual pick. */}}
+    <form action="/admin/telegram" method="POST" style="margin-top:.5rem" onsubmit="return confirm('{{t "telegram.egress_nearest_apply_confirm"}}')">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="set_nearest_egress">
+      <button type="submit" class="btn"><i class="fa-solid fa-bolt"></i> {{t "telegram.egress_nearest_apply"}}</button>
+      <span class="muted" style="margin-left:.4rem">{{t "telegram.egress_nearest_apply_help" | safeHTML}}</span>
+    </form>
     {{if .State.Egress.SelectedNodeID}}
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.egress_clear"}}?')" style="margin-top:.5rem">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -301,5 +316,58 @@
     u.searchParams.delete('ok'); u.searchParams.delete('err');
     window.history.replaceState({}, '', u);
   }
+  {{/* 2026-09-16 (B255): background poll for the probe +
+     container diagnostic. The page renders with whatever
+     State.Probe / State.Container we already loaded
+     synchronously (probe cache TTL 30s, container no cache),
+     then the JS replaces #telegram-probe-slot and
+     #telegram-container-slot with fresh HTML from
+     /admin/telegram/probe-bg + /container-bg. Re-polls on a
+     cadence (probe 30s, container 15s) so the operator sees
+     the effect of a "Re-apply accept-routes" click within
+     ~15s without reloading the page. The endpoints are
+     admin-gated server-side; CSRF is not required for GET.
+     The two fetch calls are intentionally independent so
+     one slow endpoint doesn't block the other. */}}
+  (function() {
+    function fetchAndSwap(url, slotId, label) {
+      var slot = document.getElementById(slotId);
+      if (!slot) { return; }
+      fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+        .then(function(r) { if (!r.ok) { throw new Error('HTTP ' + r.status); } return r.text(); })
+        .then(function(html) {
+          var tmp = document.createElement('div');
+          tmp.innerHTML = html;
+          var fresh = tmp.firstChild;
+          if (fresh && slot.parentNode) {
+            slot.parentNode.replaceChild(fresh, slot);
+          }
+        })
+        .catch(function(err) {
+          // Don't break the page — leave the existing
+          // slot intact. Console-only so the operator
+          // can still diagnose via DevTools.
+          if (window.console && console.warn) {
+            console.warn('bg poll failed (' + label + '):', err);
+          }
+        });
+    }
+    function pollProbe() {
+      fetchAndSwap('/admin/telegram/probe-bg', 'telegram-probe-slot', 'probe');
+    }
+    function pollContainer() {
+      fetchAndSwap('/admin/telegram/container-bg', 'telegram-container-slot', 'container');
+    }
+    // First poll immediately (the page just rendered with
+    // cached/stale values) and then on a cadence. The probe
+    // endpoint has its own 30s server-side cache; we don't
+    // re-poll faster than that. The container endpoint has
+    // no cache so the 15s interval matches the operator's
+    // mental model after clicking "Re-apply accept-routes".
+    pollProbe();
+    pollContainer();
+    setInterval(pollProbe, 30000);
+    setInterval(pollContainer, 15000);
+  })();
 </script>
 {{end}}

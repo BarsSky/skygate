@@ -92,6 +92,7 @@ test_*.ps1
 # allowance is via the explicit `!` override below.
 !scripts/check_*.sh
 !scripts/test_*.sh
+!scripts/find_go.sh
 sg_*.ps1
 sg_*.sh
 /sg_*.html
@@ -102,6 +103,7 @@ sg_*.sh
 # left over from deploys). Production deploy lives in deploy/.
 # Anchored to root with leading /.
 /*.bat
+scripts/_find_go.bat
 # Root-level version-specific deploy scripts (deploy_v0.33.1.42.sh,
 # deploy_v33139_v2.sh, etc.). Canonical: deploy/deploy.sh.
 # (deploy_*.sh is already in the patterns above; this is for the

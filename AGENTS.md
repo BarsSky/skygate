@@ -17528,3 +17528,97 @@ with skygate container that has `SKYGATE_TS_AUTHKEY_FILE=/dev/null`:
   in a goroutine — the operator sees the page immediately
   with the cached state + a "Probe now" button if they want
   the answer now.
+
+## B255 (v1.5.8+, 2026-09-16) — Telegram background polling + "Pin nearest exit node"
+
+**Symptom** (operator report 2026-09-16): "/admin/telegram долго
+грузит при открытии страницы. Определение устройства skygate-host
+установлено корректно, но опрос api.telegram.org + docker exec
+для tailscale state блокируют рендер". Pre-B255 the AdminTelegram
+handler ran two synchronous slow ops on every render:
+1. `cachedTelegramProbe(r.Context(), ...)` — HTTP GET
+   api.telegram.org, 5s timeout, 30s cache → blocks cold-cache
+   loads for up to 5s.
+2. `readContainerTailscaleState("skygate-skygate-1")` —
+   `docker exec tailscale status --json`, 8s timeout, no cache →
+   blocks every GET for ~1-3s on a healthy host, ~8s when
+   tailscaled is down.
+
+**B255 fix** (3 parts):
+
+1. **Background poll endpoints**:
+   - `GET /admin/telegram/probe-bg`     → `AdminTelegramProbeBg`
+   - `GET /admin/telegram/container-bg` → `AdminTelegramContainerBg`
+   Both return HTML (not JSON) so the JS can do
+   `el.outerHTML = ...` directly without a client-side template
+   engine. `Cache-Control: no-store` so the browser doesn't
+   cache stale state.
+
+2. **JS poll** in `internal/handlers/templates/admin/telegram.html`:
+   - On DOM-ready: fetch both bg endpoints + replace
+     `#telegram-probe-slot` + `#telegram-container-slot`.
+   - Re-poll: probe every 30s (matches the server-side cache TTL),
+     container every 15s (no server cache, operator wants fast
+     feedback after "Re-apply accept-routes").
+   - Both fetches are independent so a slow endpoint doesn't
+     block the other. Errors log to console + leave the slot
+     intact (page never breaks).
+
+3. **"Pin nearest exit node" button** (the operator's
+   second ask): measures latency from skygate-host's tailscaled
+   to each enabled exit server via
+   `tailscale status --json` `PeerLatency`, picks the lowest
+   latency, and reuses the existing set_egress SSH +
+   advertise-routes path (`handleTelegramSetEgress`). The handler
+   is `handleTelegramSetNearestEgress`. If `tailscaled` on the
+   host isn't running, the handler audits the error + falls back
+   to the first enabled relay (sorted by node_id for stability)
+   so the click always does SOMETHING — the operator gets a
+   flash pointing at `/admin/tailscale` (Start).
+
+**Admin actions to verify tailscale is running** (operator
+follow-up):
+
+1. **`/admin/telegram`** — Container tailscale state card shows
+   live `RouteAll`, `AdvertiseTags`, `ExitNodeID` from
+   `docker exec skygate-skygate-1 tailscale status --json`.
+   If `RouteAll=false`, click "Re-apply accept-routes" to run
+   `tailscale set --accept-routes=true` inside the container.
+2. **`/admin/tailscale`** — Host tailscale state (the one the
+   "Pin nearest" button reads for latency). Shows
+   `BackendState`, peer list, advertised routes. "Start" button
+   if tailscaled isn't running.
+3. **`/admin/telegram` → "Pin nearest exit node"** — once both
+   host + container tailscaled are Running, this button
+   measures latency + applies Telegram-CIDR routes to the
+   fastest enabled relay (skygate SSHes in + runs
+   `tailscale set --advertise-routes=...`).
+
+**Files**:
+- `internal/feature/admin/telegram.go` — renderProbeHTML +
+  renderContainerHTML + handleTelegramSetNearestEgress +
+  tailscalePeerLatencies + AdminTelegramProbeBg +
+  AdminTelegramContainerBg + mintTelegramCSRF helper.
+- `internal/feature/admin/tailscale.go` — extracted
+  `tailscaledRunningFn` indirection (for tests).
+- `internal/handlers/templates/admin/telegram.html` — slot divs
+  + JS poll + "Pin nearest" button.
+- `cmd/skygate/main.go:2013` — registers
+  `GET /admin/telegram/probe-bg` + `/container-bg`.
+- `internal/i18n/catalog_telegram.go` — 4 new RU+EN keys
+  (`egress_nearest_apply`, `egress_nearest_apply_help`,
+  `egress_nearest_apply_confirm`, `egress_nearest_no_latency`).
+- `internal/feature/admin/telegram_b255_test.go` — 13 unit
+  tests (render helpers + latency parser + escape hardening +
+  legacy bare-number PeerLatency compat).
+- `scripts/check_b255_telegram_async.sh` — 11 sections (A-K)
+  pinning the contract.
+
+**Known gap** (not B255): the `tailscale status --json` PeerLatency
+field requires an active WireGuard session. If the host's
+tailscaled is in `NeedsLogin` state, PeerLatency is empty
+across ALL peers — the handler falls back to first enabled.
+The operator should run "Start" on `/admin/tailscale` once
+after a fresh deploy (skygate's `TS_AUTHKEY_FILE` env var
+must point to a real authkey).
+

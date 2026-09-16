@@ -2012,6 +2012,15 @@ func main() {
 	mux.Handle("GET /admin/settings", authMW(http.HandlerFunc(adminSvc.GetAdminSettings)))
 	mux.Handle("GET /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegram)))
 	mux.Handle("POST /admin/telegram", authMW(http.HandlerFunc(adminSvc.AdminTelegramPost)))
+	// B255 (v1.5.8+, 2026-09-16): background polling on
+	// /admin/telegram — the probe (api.telegram.org) + the
+	// container tailscaled state used to block the page
+	// render on first load (up to ~5s on cold-cache). The
+	// page now renders immediately with a CSS spinner slot;
+	// the JS in admin/telegram.html fetches these two GETs
+	// on DOM-ready and replaces the slots in place.
+	mux.Handle("GET /admin/telegram/probe-bg", authMW(http.HandlerFunc(adminSvc.AdminTelegramProbeBg)))
+	mux.Handle("GET /admin/telegram/container-bg", authMW(http.HandlerFunc(adminSvc.AdminTelegramContainerBg)))
 	// B253 (v1.5.6+, 2026-09-15): "Probe now" button on /admin/telegram
 	// bypasses the cache + the stale-while-revalidate background
 	// refresh. Operator hits this after fixing the network path
